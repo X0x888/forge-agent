@@ -1,0 +1,27 @@
+{
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$FORGE_HOOK_HELPERS/block-if-tests-fail.mjs\"",
+            "timeout": 120
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "bash|run_terminal_command",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node -e \"let d='';process.stdin.on('data',c=>d+=c);process.stdin.on('end',()=>{const j=JSON.parse(d);const cmd=(j.toolInput&&j.toolInput.command)||'';if(/rm\\\\s+-rf\\\\s+\\\\//.test(cmd)){console.log(JSON.stringify({decision:'deny',reason:'Refusing rm -rf /'}));process.exit(2);}console.log(JSON.stringify({decision:'allow'}));});\"",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -1,0 +1,381 @@
+#!/usr/bin/env node
+/**
+ * Forge — AI coding agent CLI
+ *
+ * Harness features ported / fixed relative to peers:
+ *  - Blocking Stop hooks (Claude Code) — Grok Build's Stop is passive only
+ *  - /goal relentless driver (Codex)
+ *  - Ultrawork max-autonomy mode (oh-my-claude)
+ *  - API key + OAuth/subscription auth where providers allow
+ *  - Multi-provider: xAI, Anthropic, OpenAI, OpenRouter, Google
+ */
+import { Command } from "commander";
+import fs from "node:fs";
+import path from "node:path";
+import { loadConfig, defaultConfigToml } from "./config/load.js";
+import type { ForgeConfig } from "./config/types.js";
+import { resolveAuth, describeAuth } from "./auth/resolve.js";
+import { loginInteractive, logout, printAuthStatus, supportsOAuth } from "./auth/login.js";
+import { createProvider } from "./providers/factory.js";
+import { createSession, loadSession, listSessions, saveSession } from "./session/session.js";
+import { HookRunner } from "./harness/hooks.js";
+import { PermissionGate } from "./agent/permissions.js";
+import { runAgentLoop } from "./agent/loop.js";
+import { runRepl } from "./tui/repl.js";
+import { forgeHome, ensureDir } from "./util/fs.js";
+import { log, setLogLevel } from "./util/log.js";
+import { armGoal, formatGoalStatus, loadGoal } from "./harness/goal.js";
+
+const VERSION = "0.1.0";
+
+async function main(): Promise<void> {
+  const program = new Command();
+  program
+    .name("forge")
+    .description(
+      "Forge — AI coding agent with blocking Stop hooks, /goal driver, and multi-provider auth",
+    )
+    .version(VERSION)
+    .option("-m, --model <model>", "Model id")
+    .option("-p, --provider <provider>", "Provider: xai|anthropic|openai|openrouter|google|custom")
+    .option("--base-url <url>", "Override API base URL")
+    .option("--permission-mode <mode>", "default|acceptEdits|plan|bypassPermissions")
+    .option("--ulw", "Start in ultrawork (max autonomy) mode")
+    .option("--goal <objective>", "Arm a relentless /goal on start")
+    .option("--new", "Force a new session")
+    .option("--session <id>", "Resume session id")
+    .option("--cwd <path>", "Workspace directory", process.cwd())
+    .option("--print-logs", "Verbose debug logs")
+    .option(
+      "--no-blocking-stop",
+      "Disable blocking Stop hooks (Grok-compatible passive mode)",
+    )
+    .argument("[prompt...]", "Optional initial prompt (also used by `forge run`)")
+    .action(async (promptParts: string[], opts) => {
+      if (opts.printLogs) setLogLevel("debug");
+      await ensureHome();
+      const config = buildConfig(opts);
+      const auth = resolveAuth(config);
+      if (!auth) {
+        log.error(
+          "Not authenticated. Run: forge login\n" +
+            "  or set XAI_API_KEY / ANTHROPIC_API_KEY / OPENAI_API_KEY / …",
+        );
+        process.exit(1);
+      }
+      // Align provider if auth auto-detected a different one
+      if (auth.provider !== config.provider) {
+        log.info(`Using provider ${auth.provider} from available credentials`);
+        config.provider = auth.provider;
+        if (!opts.model) {
+          config.model =
+            config.providers[auth.provider]?.defaultModel || config.model;
+        }
+      }
+
+      const provider = createProvider(config, auth);
+      const session = resolveSession(config, opts);
+      if (opts.ulw) {
+        session.meta.ultrawork = true;
+        saveSession(session);
+      }
+      if (opts.goal) {
+        armGoal(session.meta.id, String(opts.goal), "manual");
+        session.meta.ultrawork = true;
+        saveSession(session);
+        log.info("Goal armed:\n" + formatGoalStatus(loadGoal(session.meta.id)));
+      }
+
+      const hooks = new HookRunner(config, session.meta.cwd);
+      const prompt = promptParts?.length ? promptParts.join(" ") : undefined;
+
+      // Non-TTY or explicit prompt without interactive intent → single-shot
+      if (prompt && (!process.stdin.isTTY || process.env.FORGE_HEADLESS === "1")) {
+        await runHeadless({ config, provider, session, hooks, prompt });
+        return;
+      }
+
+      await runRepl({
+        config,
+        provider,
+        session,
+        hooks,
+        auth,
+        initialPrompt: prompt,
+      });
+    });
+
+  program
+    .command("run")
+    .description("Headless one-shot agent run (CI / scripts)")
+    .argument("<prompt...>", "Prompt to run")
+    .option("-m, --model <model>", "Model id")
+    .option("-p, --provider <provider>", "Provider")
+    .option("--permission-mode <mode>", "Permission mode", "acceptEdits")
+    .option("--ulw", "Ultrawork mode")
+    .option("--goal <objective>", "Arm /goal")
+    .option("--cwd <path>", "Workspace", process.cwd())
+    .option("--json", "Emit JSON result on stdout")
+    .action(async (promptParts: string[], opts) => {
+      await ensureHome();
+      const config = buildConfig({ ...opts, permissionMode: opts.permissionMode });
+      const auth = resolveAuth(config);
+      if (!auth) {
+        log.error("Not authenticated. Run forge login or set an API key.");
+        process.exit(1);
+      }
+      const provider = createProvider(config, auth);
+      const session = createSession({
+        cwd: path.resolve(opts.cwd || process.cwd()),
+        provider: config.provider,
+        model: config.model,
+        ultrawork: Boolean(opts.ulw || opts.goal),
+      });
+      if (opts.goal) armGoal(session.meta.id, String(opts.goal), "manual");
+      const hooks = new HookRunner(config, session.meta.cwd);
+      const prompt = promptParts.join(" ");
+      const result = await runHeadless({
+        config,
+        provider,
+        session,
+        hooks,
+        prompt,
+        json: Boolean(opts.json),
+      });
+      if (opts.json) {
+        console.log(JSON.stringify(result, null, 2));
+      }
+    });
+
+  program
+    .command("login")
+    .description("Authenticate (API key or OAuth/subscription where allowed)")
+    .option("-p, --provider <provider>", "Provider", "xai")
+    .option("--api-key [key]", "Use API key (prompt if omitted)")
+    .option("--oauth", "Browser OAuth / subscription flow")
+    .option("--device", "Device-code flow (headless)")
+    .action(async (opts) => {
+      await ensureHome();
+      const provider = opts.provider as string;
+      let method: "api_key" | "oauth" | "device" = "api_key";
+      if (opts.device) method = "device";
+      else if (opts.oauth) method = "oauth";
+      else if (opts.apiKey !== undefined) method = "api_key";
+      else if (supportsOAuth(provider)) {
+        // Prefer OAuth when available; user can force --api-key
+        method = "oauth";
+      }
+      try {
+        await loginInteractive({
+          provider,
+          method,
+          apiKey: typeof opts.apiKey === "string" ? opts.apiKey : undefined,
+        });
+      } catch (err) {
+        log.error((err as Error).message);
+        process.exit(1);
+      }
+    });
+
+  program
+    .command("logout")
+    .description("Clear stored credentials")
+    .option("-p, --provider <provider>", "Provider (omit for all)")
+    .action((opts) => {
+      logout(opts.provider);
+    });
+
+  program
+    .command("auth")
+    .description("Show authentication status")
+    .action(() => {
+      printAuthStatus();
+      const config = loadConfig();
+      const auth = resolveAuth(config);
+      console.log(`\nActive resolution: ${describeAuth(auth)}`);
+    });
+
+  program
+    .command("sessions")
+    .description("List recent sessions")
+    .action(() => {
+      const list = listSessions(30);
+      if (!list.length) {
+        console.log("No sessions.");
+        return;
+      }
+      for (const s of list) {
+        console.log(
+          `${s.id}  ${s.updatedAt}  ${s.provider}/${s.model}  turns=${s.turnCount}  edits=${s.editCount}${s.ultrawork ? "  ULW" : ""}`,
+        );
+      }
+    });
+
+  program
+    .command("init")
+    .description("Write default config and example hooks into ~/.forge and .forge/")
+    .action(() => {
+      ensureHome();
+      const homeCfg = path.join(forgeHome(), "config.toml");
+      if (!fs.existsSync(homeCfg)) {
+        fs.writeFileSync(homeCfg, defaultConfigToml(), "utf8");
+        log.success(`Wrote ${homeCfg}`);
+      } else {
+        log.info(`Exists: ${homeCfg}`);
+      }
+      const projectDir = path.join(process.cwd(), ".forge");
+      ensureDir(projectDir);
+      ensureDir(path.join(projectDir, "hooks"));
+      const stopHook = path.join(projectDir, "hooks", "stop-goal-example.json");
+      if (!fs.existsSync(stopHook)) {
+        fs.writeFileSync(
+          stopHook,
+          JSON.stringify(
+            {
+              hooks: {
+                Stop: [
+                  {
+                    hooks: [
+                      {
+                        type: "command",
+                        command: "node -e " +
+                          JSON.stringify(
+                            `let d='';process.stdin.on('data',c=>d+=c);process.stdin.on('end',()=>{const j=JSON.parse(d);if(j.goalObjective&&!(j.lastAssistantMessage||'').includes('Goal achieved')){console.log(JSON.stringify({decision:'block',reason:'Goal still active — keep working: '+j.goalObjective.slice(0,200)}));}else{console.log(JSON.stringify({decision:'allow'}));}});`,
+                          ),
+                        timeout: 10,
+                      },
+                    ],
+                  },
+                ],
+              },
+            },
+            null,
+            2,
+          ) + "\n",
+          "utf8",
+        );
+        log.success(`Wrote example Stop hook: ${stopHook}`);
+      }
+      const agents = path.join(process.cwd(), "AGENTS.md");
+      if (!fs.existsSync(agents)) {
+        fs.writeFileSync(
+          agents,
+          `# AGENTS.md\n\nProject instructions for Forge (and other coding agents).\n\n## Build\n\n- Describe how to install, build, and test this repo.\n\n## Conventions\n\n- Note style, architecture, and non-obvious constraints.\n`,
+          "utf8",
+        );
+        log.success(`Wrote ${agents}`);
+      }
+      log.info("Done. Run: forge login && forge");
+    });
+
+  program
+    .command("models")
+    .description("List known models for configured providers")
+    .action(() => {
+      const config = loadConfig();
+      for (const [id, p] of Object.entries(config.providers)) {
+        const models = p.models?.length ? p.models.join(", ") : p.defaultModel || "(any)";
+        console.log(
+          `${id.padEnd(12)} default=${(p.defaultModel || "").padEnd(28)} oauth=${p.supportsOAuth ? "yes" : "no "}  models: ${models}`,
+        );
+      }
+    });
+
+  await program.parseAsync(process.argv);
+}
+
+function buildConfig(opts: Record<string, unknown>): ForgeConfig {
+  const cwd = path.resolve(String(opts.cwd || process.cwd()));
+  const overrides: Partial<ForgeConfig> = { workspace: cwd };
+  if (opts.model) overrides.model = String(opts.model);
+  if (opts.provider) overrides.provider = String(opts.provider) as ForgeConfig["provider"];
+  if (opts.baseUrl) overrides.baseUrl = String(opts.baseUrl);
+  if (opts.permissionMode) {
+    overrides.permissionMode = String(opts.permissionMode) as ForgeConfig["permissionMode"];
+  }
+  if (opts.blockingStop === false || opts.noBlockingStop) {
+    overrides.blockingStopHooks = false;
+  }
+  return loadConfig(overrides, cwd);
+}
+
+function resolveSession(
+  config: ForgeConfig,
+  opts: { session?: string; new?: boolean; cwd?: string },
+) {
+  if (opts.session) {
+    const s = loadSession(opts.session);
+    if (!s) {
+      log.error(`Session not found: ${opts.session}`);
+      process.exit(1);
+    }
+    return s;
+  }
+  return createSession({
+    cwd: path.resolve(String(opts.cwd || config.workspace || process.cwd())),
+    provider: String(config.provider),
+    model: config.model,
+    ultrawork: false,
+  });
+}
+
+async function ensureHome(): Promise<void> {
+  ensureDir(forgeHome());
+  ensureDir(path.join(forgeHome(), "hooks"));
+  ensureDir(path.join(forgeHome(), "sessions"));
+}
+
+async function runHeadless(opts: {
+  config: ForgeConfig;
+  provider: ReturnType<typeof createProvider>;
+  session: ReturnType<typeof createSession>;
+  hooks: HookRunner;
+  prompt: string;
+  json?: boolean;
+}) {
+  const permissions = new PermissionGate({ interactive: false });
+  await opts.hooks.run("SessionStart", {
+    sessionId: opts.session.meta.id,
+    cwd: opts.session.meta.cwd,
+    workspaceRoot: opts.config.workspace || opts.session.meta.cwd,
+  });
+
+  const result = await runAgentLoop({
+    config: opts.config,
+    provider: opts.provider,
+    session: opts.session,
+    hooks: opts.hooks,
+    permissions,
+    userMessage: opts.prompt,
+    stream: !opts.json,
+    onToken: opts.json
+      ? undefined
+      : (t) => {
+          process.stdout.write(t);
+        },
+  });
+
+  await opts.hooks.run("SessionEnd", {
+    sessionId: opts.session.meta.id,
+    cwd: opts.session.meta.cwd,
+    workspaceRoot: opts.config.workspace || opts.session.meta.cwd,
+  });
+  saveSession(opts.session);
+
+  if (!opts.json && result.finalText && !result.finalText.endsWith("\n")) {
+    process.stdout.write("\n");
+  }
+
+  return {
+    sessionId: opts.session.meta.id,
+    finalText: result.finalText,
+    turns: result.turns,
+    stopContinues: result.stopContinues,
+    editCount: opts.session.meta.editCount,
+  };
+}
+
+main().catch((err) => {
+  console.error(err);
+  process.exit(1);
+});

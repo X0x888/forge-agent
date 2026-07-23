@@ -1,0 +1,122 @@
+export type PermissionMode = "default" | "acceptEdits" | "plan" | "bypassPermissions";
+
+export type ProviderId =
+  | "xai"
+  | "anthropic"
+  | "openai"
+  | "openrouter"
+  | "google"
+  | "custom";
+
+export interface ProviderConfig {
+  id: ProviderId | string;
+  apiKeyEnv?: string;
+  baseUrl?: string;
+  /** OAuth / subscription login is available for this provider */
+  supportsOAuth?: boolean;
+  defaultModel?: string;
+  models?: string[];
+}
+
+export interface GoalConfig {
+  /** Master switch for the relentless /goal Stop driver */
+  enabled: boolean;
+  /** Consecutive no-progress blocks before stuck-wall release */
+  stuckThreshold: number;
+  /** Auto-arm goal from prose like "don't stop until …" */
+  autoArm: boolean;
+}
+
+export interface HookFileRef {
+  path: string;
+}
+
+export interface ForgeConfig {
+  provider: ProviderId | string;
+  model: string;
+  baseUrl?: string;
+  temperature: number;
+  maxTokens: number;
+  /** Max agent turns per user message (0 = unlimited) */
+  maxTurns: number;
+  permissionMode: PermissionMode;
+  /** Workspace root (defaults to cwd) */
+  workspace?: string;
+  systemPromptExtra?: string;
+  goal: GoalConfig;
+  /** When true, Stop hooks can block the agent from finishing (Claude Code semantics) */
+  blockingStopHooks: boolean;
+  /** Load Claude-compatible settings.json hooks */
+  compatClaudeHooks: boolean;
+  /** Load Cursor-compatible hooks.json */
+  compatCursorHooks: boolean;
+  /** Auto-compact when estimated context exceeds this fraction (0-1) */
+  autoCompactThreshold: number;
+  contextWindow: number;
+  providers: Record<string, ProviderConfig>;
+}
+
+export const DEFAULT_CONFIG: ForgeConfig = {
+  provider: "xai",
+  model: "grok-4",
+  temperature: 0.2,
+  maxTokens: 8192,
+  maxTurns: 0,
+  permissionMode: "default",
+  goal: {
+    enabled: true,
+    stuckThreshold: 3,
+    autoArm: true,
+  },
+  blockingStopHooks: true,
+  compatClaudeHooks: true,
+  compatCursorHooks: true,
+  autoCompactThreshold: 0.85,
+  contextWindow: 128_000,
+  providers: {
+    xai: {
+      id: "xai",
+      apiKeyEnv: "XAI_API_KEY",
+      baseUrl: "https://api.x.ai/v1",
+      supportsOAuth: true,
+      defaultModel: "grok-4",
+      models: ["grok-4", "grok-3", "grok-3-mini", "grok-2"],
+    },
+    anthropic: {
+      id: "anthropic",
+      apiKeyEnv: "ANTHROPIC_API_KEY",
+      baseUrl: "https://api.anthropic.com/v1",
+      supportsOAuth: false,
+      defaultModel: "claude-sonnet-4-20250514",
+      models: [
+        "claude-opus-4-20250514",
+        "claude-sonnet-4-20250514",
+        "claude-haiku-4-20250414",
+      ],
+    },
+    openai: {
+      id: "openai",
+      apiKeyEnv: "OPENAI_API_KEY",
+      baseUrl: "https://api.openai.com/v1",
+      supportsOAuth: true,
+      defaultModel: "gpt-4.1",
+      models: ["gpt-4.1", "gpt-4o", "o3", "o4-mini"],
+    },
+    openrouter: {
+      id: "openrouter",
+      apiKeyEnv: "OPENROUTER_API_KEY",
+      baseUrl: "https://openrouter.ai/api/v1",
+      supportsOAuth: false,
+      defaultModel: "anthropic/claude-sonnet-4",
+      models: [],
+    },
+    google: {
+      id: "google",
+      apiKeyEnv: "GOOGLE_API_KEY",
+      baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai",
+      supportsOAuth: false,
+      defaultModel: "gemini-2.5-pro",
+      models: ["gemini-2.5-pro", "gemini-2.5-flash"],
+    },
+  },
+};

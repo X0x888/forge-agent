@@ -1,0 +1,50 @@
+{
+  "name": "forge-agent",
+  "version": "0.1.0",
+  "description": "Forge — AI coding agent CLI with a first-class harness: blocking Stop hooks, /goal relentless drive, multi-provider API + subscription auth",
+  "type": "module",
+  "bin": {
+    "forge": "./dist/cli.js"
+  },
+  "main": "./dist/index.js",
+  "exports": {
+    ".": "./dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "tsx src/cli.ts",
+    "start": "node dist/cli.js",
+    "test": "tsx --test tests/**/*.test.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "keywords": [
+    "ai",
+    "agent",
+    "cli",
+    "coding-agent",
+    "harness",
+    "hooks",
+    "goal"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "chalk": "^5.4.1",
+    "commander": "^13.1.0",
+    "glob": "^11.0.1",
+    "open": "^10.1.0",
+    "ora": "^8.2.0",
+    "toml": "^3.0.0",
+    "zod": "^3.24.2"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.10",
+    "tsx": "^4.19.3",
+    "typescript": "^5.8.2"
+  },
+  "allowScripts": {
+    "esbuild@0.28.1": true
+  }
+}
