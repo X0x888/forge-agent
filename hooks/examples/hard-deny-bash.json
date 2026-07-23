@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "bash|run_terminal_command",
+        "hooks": [
+          {
+            "type": "command",
+            "timeout": 5,
+            "command": "node -e \"let d='';process.stdin.on('data',c=>d+=c);process.stdin.on('end',()=>{try{const j=JSON.parse(d||'{}');const cmd=String((j.toolInput&&j.toolInput.command)||'');const bad=[/rm\\\\s+.*-rf\\\\s+\\\\//,/rm\\\\s+.*-fr\\\\s+\\\\//,/mkfs\\\\b/,/curl.*\\\\|\\\\s*(ba)?sh/,/git\\\\s+push.*--force.*\\\\b(main|master)\\\\b/,/drop\\\\s+database/i,/shutdown|reboot|halt/];for(const re of bad){if(re.test(cmd)){console.log(JSON.stringify({decision:'deny',reason:'PreToolUse hard-deny: '+re}));process.exit(2);}}console.log(JSON.stringify({decision:'allow'}));}catch(e){console.log(JSON.stringify({decision:'allow'}));}});\"",
+          }
+        ]
+      }
+    ]
+  }
+}

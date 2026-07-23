@@ -3,6 +3,7 @@ import path from "node:path";
 import toml from "toml";
 import { forgeHome, readJsonFile } from "../util/fs.js";
 import { DEFAULT_CONFIG, type ForgeConfig, type ProviderId } from "./types.js";
+// DEFAULT_CONFIG used after merge for permission fallbacks
 
 function deepMerge<T extends Record<string, unknown>>(base: T, overlay: Partial<T>): T {
   const out: Record<string, unknown> = { ...base };
@@ -58,6 +59,15 @@ function normalizeConfigShape(raw: Record<string, unknown>): Partial<ForgeConfig
     }
     out.goal = g;
   }
+  // permission section: keep snake or already camel
+  if (out.permission && typeof out.permission === "object") {
+    const p = { ...(out.permission as Record<string, unknown>) };
+    // ensure arrays
+    for (const k of ["deny", "allow", "ask", "rules"] as const) {
+      if (p[k] === undefined) p[k] = k === "rules" ? [] : [];
+    }
+    out.permission = p;
+  }
   return out as Partial<ForgeConfig>;
 }
 
@@ -105,6 +115,9 @@ export function loadConfig(overrides: Partial<ForgeConfig> = {}, cwd = process.c
   if (process.env.FORGE_PERMISSION_MODE) {
     cfg.permissionMode = process.env.FORGE_PERMISSION_MODE as ForgeConfig["permissionMode"];
   }
+  if (process.env.FORGE_SANDBOX) {
+    cfg.sandbox = process.env.FORGE_SANDBOX as ForgeConfig["sandbox"];
+  }
   if (process.env.FORGE_BLOCKING_STOP === "0") cfg.blockingStopHooks = false;
   if (process.env.FORGE_BLOCKING_STOP === "1") cfg.blockingStopHooks = true;
   if (process.env.FORGE_GOAL_GATE === "0") cfg.goal.enabled = false;
@@ -115,23 +128,32 @@ export function loadConfig(overrides: Partial<ForgeConfig> = {}, cwd = process.c
 
   cfg = deepMerge(cfg as unknown as Record<string, unknown>, overrides as never) as unknown as ForgeConfig;
   cfg.workspace = cfg.workspace ? path.resolve(cfg.workspace) : cwd;
+  // ensure permission object always complete
+  cfg.permission = {
+    deny: cfg.permission?.deny ?? DEFAULT_CONFIG.permission.deny,
+    allow: cfg.permission?.allow ?? [],
+    ask: cfg.permission?.ask ?? [],
+    rules: cfg.permission?.rules ?? [],
+  };
+  if (!cfg.sandbox) cfg.sandbox = DEFAULT_CONFIG.sandbox;
   return cfg;
 }
 
 export function defaultConfigToml(): string {
   return `# Forge agent config — ~/.forge/config.toml
-# Docs: see README.md
+# Docs: see docs/SAFETY.md
 
 provider = "xai"
 model = "grok-4"
 temperature = 0.2
 max_tokens = 8192
-# 0 = unlimited turns per user message
 max_turns = 0
-permission_mode = "default"  # default | acceptEdits | plan | bypassPermissions
+permission_mode = "default"  # default | acceptEdits | plan | bypassPermissions | dontAsk
 
-# Claude Code parity: Stop hooks CAN block the agent from finishing.
-# Grok Build lacks this; Forge has it by design.
+# OS sandbox for bash (macOS: sandbox-exec, Linux: bwrap)
+# off | workspace | read-only | strict
+sandbox = "workspace"
+
 blocking_stop_hooks = true
 compat_claude_hooks = true
 compat_cursor_hooks = true
@@ -141,9 +163,19 @@ enabled = true
 stuck_threshold = 3
 auto_arm = true
 
+# Permission rules — deny always wins (including YOLO)
+[permission]
+deny = [
+  "Bash(rm -rf /)",
+  "Bash(rm -fr /)",
+  "Bash(rm -rf ~)",
+  "Bash(git push --force *main*)",
+]
+allow = []
+ask = []
+
 # Optional per-provider overrides
 # [providers.xai]
 # base_url = "https://api.x.ai/v1"
-# default_model = "grok-4"
 `;
 }

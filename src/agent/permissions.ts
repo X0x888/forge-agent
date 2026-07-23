@@ -1,21 +1,10 @@
-import type { PermissionMode } from "../config/types.js";
+import type { ForgeConfig, PermissionMode } from "../config/types.js";
 import readline from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
 import chalk from "chalk";
-
-const DANGEROUS_PATTERNS = [
-  /\brm\s+(-[a-zA-Z]*r[a-zA-Z]*f|-[a-zA-Z]*f[a-zA-Z]*r)/,
-  /\brm\s+--recursive/,
-  /\bmkfs\b/,
-  /\bdd\s+if=/,
-  /\bdrop\s+table\b/i,
-  /\bdrop\s+database\b/i,
-  /\bgit\s+push\s+.*--force/,
-  /\bgit\s+reset\s+--hard/,
-  /\bchmod\s+-R\s+777\b/,
-  /\bcurl\b.*\|\s*(ba)?sh\b/,
-  /\bwget\b.*\|\s*(ba)?sh\b/,
-];
+import { isSoftDangerousBash, checkBashHardDeny } from "./safety.js";
+import { compileRules, evaluateRules, type RulesEvaluation } from "./rules.js";
+import { commandCheckTargets } from "./shell-parse.js";
 
 const WRITE_TOOLS = new Set([
   "write_file",
@@ -29,6 +18,8 @@ export interface PermissionRequest {
   toolName: string;
   input: Record<string, unknown>;
   mode: PermissionMode;
+  workspace?: string;
+  config?: ForgeConfig;
 }
 
 export type PermissionDecision = "allow" | "deny" | "allow_session";
@@ -44,21 +35,84 @@ export class PermissionGate {
   isDangerous(toolName: string, toolInput: Record<string, unknown>): boolean {
     if (toolName === "bash" || toolName === "run_terminal_command") {
       const cmd = String(toolInput.command || "");
-      return DANGEROUS_PATTERNS.some((re) => re.test(cmd));
+      if (!checkBashHardDeny(cmd).ok) return true;
+      // any segment soft-dangerous?
+      return commandCheckTargets(cmd).some((s) => isSoftDangerousBash(s));
     }
     return false;
   }
 
   async request(req: PermissionRequest): Promise<PermissionDecision> {
     const { toolName, input: toolInput, mode } = req;
+    const workspace = req.workspace || process.cwd();
+    const config = req.config;
 
-    if (mode === "bypassPermissions") return "allow";
+    // 1. Hard deny ALWAYS (segment-aware) — even YOLO
+    if (toolName === "bash" || toolName === "run_terminal_command") {
+      const hard = checkBashHardDeny(String(toolInput.command || ""));
+      if (!hard.ok) {
+        console.error(chalk.red(`\n✖ HARD DENY [${hard.rule}]: ${hard.reason}\n`));
+        return "deny";
+      }
+    }
+
+    // 2. Config permission rules — deny always wins under YOLO
+    let rulesEval: RulesEvaluation | undefined;
+    if (config?.permission) {
+      const rules = compileRules(config.permission);
+      rulesEval = evaluateRules(rules, toolName, toolInput, workspace);
+      if (rulesEval.decision === "deny" && rulesEval.deny) {
+        console.error(
+          chalk.red(
+            `\n✖ RULE DENY: ${rulesEval.deny.rule.raw || rulesEval.deny.rule.pattern} (matched: ${rulesEval.deny.matched.slice(0, 60)})\n`,
+          ),
+        );
+        return "deny";
+      }
+    }
+
+    // 3. YOLO: auto-allow except ask rules on bash (Grok parity)
+    if (mode === "bypassPermissions") {
+      if (
+        rulesEval?.decision === "ask" &&
+        (toolName === "bash" || toolName === "run_terminal_command") &&
+        this.interactive &&
+        process.stdin.isTTY
+      ) {
+        return this.promptUser(toolName, toolInput, true);
+      }
+      return "allow";
+    }
+
+    // 4. dontAsk: deny anything not explicitly allowed / read-only
+    if (mode === "dontAsk") {
+      if (rulesEval?.decision === "allow") return "allow";
+      if (
+        ["read_file", "grep", "glob", "list_dir", "web_search", "todo_write", "Read", "Grep", "Glob"].includes(
+          toolName,
+        )
+      ) {
+        return "allow";
+      }
+      // read-only shell segments only? keep simple: deny writes/shell
+      console.error(chalk.yellow(`\n✖ dontAsk: denied ${toolName} (no allow rule)\n`));
+      return "deny";
+    }
+
     if (mode === "plan") {
-      // Plan mode: deny writes
       if (WRITE_TOOLS.has(toolName) || toolName === "bash" || toolName === "run_terminal_command") {
         return "deny";
       }
       return "allow";
+    }
+
+    // 5. Explicit allow rule short-circuits prompt
+    if (rulesEval?.decision === "allow") return "allow";
+
+    // 6. Explicit ask rule always prompts
+    if (rulesEval?.decision === "ask") {
+      if (!this.interactive || !process.stdin.isTTY) return "deny";
+      return this.promptUser(toolName, toolInput, true);
     }
 
     if (mode === "acceptEdits" && WRITE_TOOLS.has(toolName)) {
@@ -70,7 +124,6 @@ export class PermissionGate {
       return "allow";
     }
 
-    // Auto-allow safe reads
     if (
       ["read_file", "grep", "glob", "list_dir", "web_search", "Read", "Grep", "Glob"].includes(
         toolName,
@@ -79,12 +132,10 @@ export class PermissionGate {
       return "allow";
     }
 
-    // Dangerous always asks (unless bypass)
     const dangerous = this.isDangerous(toolName, toolInput);
     if (!dangerous && mode === "acceptEdits") return "allow";
 
     if (!this.interactive || !process.stdin.isTTY) {
-      // Headless: allow non-dangerous, deny dangerous
       return dangerous ? "deny" : "allow";
     }
 

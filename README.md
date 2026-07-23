@@ -2,7 +2,7 @@
 
 **Forge** is an open-source AI coding agent CLI with a **first-class harness** — the control plane that other tools partially implement.
 
-> **v0.4** — **ULW relentless cycle**: `/ulw` arms `cycle=1` so even soft prompts (`improve the code`) run research→waves→serendipity→review→repeat until you set **`/cycle 0`** (last wave). Plus v0.3 statusline, v0.2 abort/retries/sessions.
+> **v0.5** — **Safety stack**: OS sandbox for bash (`workspace` default), permission **deny/allow/ask** rules (deny wins under YOLO), **segment-aware** shell parsing. Plus v0.4 ULW cycle, v0.3 statusline.
 
 Key capability comparison:
 

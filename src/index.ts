@@ -1,7 +1,16 @@
 /** Public API for programmatic use of Forge. */
 export { loadConfig, defaultConfigToml } from "./config/load.js";
-export type { ForgeConfig, PermissionMode, ProviderId } from "./config/types.js";
+export type {
+  ForgeConfig,
+  PermissionMode,
+  ProviderId,
+  SandboxProfile,
+  PermissionRule,
+} from "./config/types.js";
 export { DEFAULT_CONFIG } from "./config/types.js";
+export { compileRules, evaluateRules } from "./agent/rules.js";
+export { splitShellSegments, commandCheckTargets } from "./agent/shell-parse.js";
+export { describeSandbox } from "./agent/sandbox.js";
 export { resolveAuth, describeAuth } from "./auth/resolve.js";
 export { loginInteractive, logout, supportsOAuth } from "./auth/login.js";
 export { importGrokCredentials, readGrokXaiSession } from "./auth/import-grok.js";

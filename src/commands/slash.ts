@@ -605,6 +605,21 @@ export function runDoctor(config: ForgeConfig): string {
   const auth = resolveAuth(config);
   lines.push(`Auth: ${describeAuth(auth)}`);
   lines.push(`Provider/model: ${config.provider} / ${config.model}`);
+  lines.push(`Permission mode: ${config.permissionMode}`);
+  lines.push(
+    `Sandbox: ${config.sandbox || "off"}` +
+      (config.sandbox && config.sandbox !== "off"
+        ? process.platform === "darwin"
+          ? " (macOS sandbox-exec)"
+          : process.platform === "linux"
+            ? " (Linux bwrap if installed)"
+            : " (limited on this OS)"
+        : ""),
+  );
+  const denyN = config.permission?.deny?.length || 0;
+  const allowN = config.permission?.allow?.length || 0;
+  const askN = config.permission?.ask?.length || 0;
+  lines.push(`Rules: deny=${denyN} allow=${allowN} ask=${askN} (deny wins under YOLO)`);
   lines.push(`Blocking Stop: ${config.blockingStopHooks ? "on" : "off"}`);
   lines.push(`Goal gate: ${config.goal.enabled ? "on" : "off"} (stuck=${config.goal.stuckThreshold})`);
   lines.push(`Workspace: ${config.workspace || process.cwd()}`);

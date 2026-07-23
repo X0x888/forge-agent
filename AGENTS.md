@@ -24,6 +24,7 @@ Binary entry: `src/cli.ts` → `dist/cli.js` (`bin: forge`).
 - `src/auth/` — credentials (never log tokens)
 - `src/statusline/` — provider-agnostic HUD (`forge status`); never invent plan metrics
 - `src/harness/ulw-cycle.ts` — ULW cycle flag 1/0; soft prompts expand to god-scope; Stop blocks while cycle=1
+- `src/agent/sandbox.ts` + `rules.ts` + `shell-parse.ts` — OS sandbox, deny/allow/ask rules, segment-aware shell checks
 
 ## Conventions
 

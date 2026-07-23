@@ -13,6 +13,8 @@ const execAsync = promisify(exec);
 export interface ToolContext {
   workspace: string;
   onEdit?: () => void;
+  /** OS sandbox profile for bash */
+  sandbox?: import("../../config/types.js").SandboxProfile;
 }
 
 export interface ToolResult {
@@ -192,11 +194,12 @@ function resolvePath(workspace: string, p: string): string {
 }
 
 function assertInWorkspace(workspace: string, target: string): void {
-  // Allow reads outside with warning only for absolute paths explicitly outside —
-  // writes must stay inside workspace for safety.
+  // Writes must stay inside workspace (or the real ~/.forge home for session files).
   if (!isWithinRoot(workspace, target)) {
-    // Allow home/.forge for session tools
-    if (target.includes(".forge")) return;
+    const forgeHome =
+      process.env.FORGE_HOME?.trim() ||
+      path.join(process.env.HOME || "", ".forge");
+    if (forgeHome && isWithinRoot(path.resolve(forgeHome), target)) return;
     throw new Error(
       `Path escapes workspace: ${target} (workspace: ${workspace}). Use a path under the project root.`,
     );
@@ -262,27 +265,63 @@ async function toolBash(
   const command = String(args.command || "");
   if (!command) return { output: "command is required", isError: true };
   const timeout = Number(args.timeout_ms) || 120_000;
+  const profile = ctx.sandbox ?? "workspace";
+
   try {
-    const { stdout, stderr } = await execAsync(command, {
+    const { execCommandSandboxed } = await import("./sandbox-exec.js");
+    const result = await execCommandSandboxed({
+      command,
       cwd: ctx.workspace,
-      timeout,
-      maxBuffer: 4 * 1024 * 1024,
+      timeoutMs: timeout,
+      profile,
       env: process.env,
     });
-    const out = [stdout, stderr].filter(Boolean).join("\n");
-    return { output: truncateMiddle(out || "(no output)") };
+    const out = [result.stdout, result.stderr].filter(Boolean).join("\n");
+    const meta =
+      result.sandboxed
+        ? `[sandbox:${result.backend}] `
+        : result.warning
+          ? `[sandbox:off — ${result.warning}] `
+          : "";
+    if (result.code && result.code !== 0) {
+      return {
+        output: truncateMiddle(
+          meta + (out || `Command failed (code ${result.code})`),
+        ),
+        isError: true,
+      };
+    }
+    return { output: truncateMiddle(meta + (out || "(no output)")) };
   } catch (err) {
-    const e = err as {
-      stdout?: string;
-      stderr?: string;
-      message?: string;
-      code?: number;
-    };
-    const out = [e.stdout, e.stderr, e.message].filter(Boolean).join("\n");
-    return {
-      output: truncateMiddle(out || `Command failed (code ${e.code})`),
-      isError: true,
-    };
+    // Fallback to plain exec if sandbox module fails
+    try {
+      const { stdout, stderr } = await execAsync(command, {
+        cwd: ctx.workspace,
+        timeout,
+        maxBuffer: 4 * 1024 * 1024,
+        env: process.env,
+      });
+      const out = [stdout, stderr].filter(Boolean).join("\n");
+      return {
+        output: truncateMiddle(
+          `[sandbox:fallback] ${out || "(no output)"}`,
+        ),
+      };
+    } catch (err2) {
+      const e = err2 as {
+        stdout?: string;
+        stderr?: string;
+        message?: string;
+        code?: number;
+      };
+      const out = [e.stdout, e.stderr, e.message, (err as Error).message]
+        .filter(Boolean)
+        .join("\n");
+      return {
+        output: truncateMiddle(out || `Command failed (code ${e.code})`),
+        isError: true,
+      };
+    }
   }
 }
 

@@ -19,6 +19,7 @@ import {
   isSoftPrompt,
 } from "../harness/ulw-cycle.js";
 import { PermissionGate } from "./permissions.js";
+import { hardSafetyCheck } from "./safety.js";
 import { TOOL_DEFINITIONS, executeTool } from "./tools/index.js";
 import { buildSystemPrompt } from "./system-prompt.js";
 import { log } from "../util/log.js";
@@ -454,6 +455,21 @@ async function prepareToolResult(opts: {
     toolInput = { raw: tc.function.arguments };
   }
 
+  // Hard safety — never skipped by YOLO / bypassPermissions
+  const hard = hardSafetyCheck(name, toolInput, workspace);
+  if (!hard.ok) {
+    log.error(`HARD DENY [${hard.rule}]: ${hard.reason}`);
+    await hooks.run("PermissionDenied", {
+      ...baseHookCtx(session, config),
+      toolName: name,
+      toolInput,
+    });
+    return {
+      toolCallId: tc.id,
+      content: `HARD DENY [${hard.rule}]: ${hard.reason}`,
+    };
+  }
+
   const pre = await hooks.run("PreToolUse", {
     ...baseHookCtx(session, config),
     toolName: name,
@@ -477,6 +493,8 @@ async function prepareToolResult(opts: {
     toolName: name,
     input: toolInput,
     mode: config.permissionMode,
+    workspace,
+    config,
   });
   if (perm === "deny") {
     await hooks.run("PermissionDenied", {
@@ -499,6 +517,7 @@ async function prepareToolResult(opts: {
     tc.function.arguments,
     {
       workspace,
+      sandbox: config.sandbox,
       onEdit: () => {
         session.meta.editCount += 1;
       },

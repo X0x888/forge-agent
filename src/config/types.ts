@@ -1,4 +1,31 @@
-export type PermissionMode = "default" | "acceptEdits" | "plan" | "bypassPermissions";
+export type PermissionMode =
+  | "default"
+  | "acceptEdits"
+  | "plan"
+  | "bypassPermissions"
+  | "dontAsk";
+
+/** OS sandbox profile for bash child processes */
+export type SandboxProfile = "off" | "workspace" | "read-only" | "strict";
+
+export type PermissionAction = "deny" | "allow" | "ask";
+
+export interface PermissionRule {
+  action: PermissionAction;
+  /** Tool name or * (Bash, bash, Edit, Write, Read, …) */
+  tool: string;
+  /** Glob/wildcard pattern for command or path */
+  pattern: string;
+  raw?: string;
+}
+
+export interface PermissionConfig {
+  deny: string[];
+  allow: string[];
+  ask: string[];
+  /** Structured rules (merged after string arrays) */
+  rules: PermissionRule[];
+}
 
 export type ProviderId =
   | "xai"
@@ -40,6 +67,13 @@ export interface ForgeConfig {
   /** Max agent turns per user message (0 = unlimited) */
   maxTurns: number;
   permissionMode: PermissionMode;
+  /**
+   * OS sandbox for bash: off | workspace | read-only | strict
+   * Default workspace — write confined to CWD + ~/.forge + temp.
+   */
+  sandbox: SandboxProfile;
+  /** Allow/deny/ask rules (deny always wins, including under YOLO) */
+  permission: PermissionConfig;
   /** Workspace root (defaults to cwd) */
   workspace?: string;
   systemPromptExtra?: string;
@@ -63,6 +97,24 @@ export const DEFAULT_CONFIG: ForgeConfig = {
   maxTokens: 8192,
   maxTurns: 0,
   permissionMode: "default",
+  sandbox: "workspace",
+  permission: {
+    deny: [
+      "Bash(rm -rf /)",
+      "Bash(rm -fr /)",
+      "Bash(rm -rf ~)",
+      "Bash(rm -rf $HOME)",
+      "Bash(git push --force *main*)",
+      "Bash(git push --force *master*)",
+      "Bash(git push *main* --force*)",
+      "Bash(git push *master* --force*)",
+      "Write(/etc/**)",
+      "Edit(/etc/**)",
+    ],
+    allow: [],
+    ask: [],
+    rules: [],
+  },
   goal: {
     enabled: true,
     stuckThreshold: 3,

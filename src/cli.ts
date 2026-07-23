@@ -36,7 +36,7 @@ import {
   runStatusWatch,
 } from "./statusline/index.js";
 
-const VERSION = "0.4.0";
+const VERSION = "0.5.0";
 
 async function main(): Promise<void> {
   const program = new Command();
@@ -49,7 +49,32 @@ async function main(): Promise<void> {
     .option("-m, --model <model>", "Model id")
     .option("-p, --provider <provider>", "Provider: xai|anthropic|openai|openrouter|google|custom")
     .option("--base-url <url>", "Override API base URL")
-    .option("--permission-mode <mode>", "default|acceptEdits|plan|bypassPermissions")
+    .option(
+      "--permission-mode <mode>",
+      "default|acceptEdits|plan|bypassPermissions|dontAsk",
+    )
+    .option(
+      "--sandbox <profile>",
+      "OS sandbox for bash: off|workspace|read-only|strict",
+    )
+    .option(
+      "--deny <rule>",
+      "Permission deny rule (repeatable), e.g. 'Bash(rm *)'",
+      (v: string, acc: string[]) => acc.concat(v),
+      [] as string[],
+    )
+    .option(
+      "--allow <rule>",
+      "Permission allow rule (repeatable)",
+      (v: string, acc: string[]) => acc.concat(v),
+      [] as string[],
+    )
+    .option(
+      "--ask <rule>",
+      "Permission ask rule (repeatable)",
+      (v: string, acc: string[]) => acc.concat(v),
+      [] as string[],
+    )
     .option("--ulw", "Start in ultrawork (max autonomy) mode")
     .option("--goal <objective>", "Arm a relentless /goal on start")
     .option("--new", "Force a new session")
@@ -406,10 +431,26 @@ function buildConfig(opts: Record<string, unknown>): ForgeConfig {
   if (opts.permissionMode) {
     overrides.permissionMode = String(opts.permissionMode) as ForgeConfig["permissionMode"];
   }
+  if (opts.sandbox) {
+    overrides.sandbox = String(opts.sandbox) as ForgeConfig["sandbox"];
+  }
   if (opts.blockingStop === false || opts.noBlockingStop) {
     overrides.blockingStopHooks = false;
   }
-  return loadConfig(overrides, cwd);
+  const cfg = loadConfig(overrides, cwd);
+  // CLI --deny/--allow/--ask append to config rules
+  const extraDeny = Array.isArray(opts.deny) ? (opts.deny as string[]) : [];
+  const extraAllow = Array.isArray(opts.allow) ? (opts.allow as string[]) : [];
+  const extraAsk = Array.isArray(opts.ask) ? (opts.ask as string[]) : [];
+  if (extraDeny.length || extraAllow.length || extraAsk.length) {
+    cfg.permission = {
+      deny: [...(cfg.permission?.deny || []), ...extraDeny],
+      allow: [...(cfg.permission?.allow || []), ...extraAllow],
+      ask: [...(cfg.permission?.ask || []), ...extraAsk],
+      rules: cfg.permission?.rules || [],
+    };
+  }
+  return cfg;
 }
 
 function resolveSession(
