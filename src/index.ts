@@ -4,6 +4,7 @@ export type { ForgeConfig, PermissionMode, ProviderId } from "./config/types.js"
 export { DEFAULT_CONFIG } from "./config/types.js";
 export { resolveAuth, describeAuth } from "./auth/resolve.js";
 export { loginInteractive, logout, supportsOAuth } from "./auth/login.js";
+export { importGrokCredentials, readGrokXaiSession } from "./auth/import-grok.js";
 export { createProvider } from "./providers/factory.js";
 export { runAgentLoop } from "./agent/loop.js";
 export { HookRunner } from "./harness/hooks.js";
@@ -28,3 +29,12 @@ export {
 } from "./session/session.js";
 export { withRetry, isRetryableError } from "./util/retry.js";
 export { completeSlash, handleSlash, runDoctor } from "./commands/slash.js";
+export {
+  collectSnapshots,
+  renderHud,
+  renderTmux,
+  runStatusWatch,
+  heartbeatSession,
+  releaseSession,
+} from "./statusline/index.js";
+export type { StatusSnapshot, PlanUsageInfo } from "./statusline/types.js";

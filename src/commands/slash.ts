@@ -67,6 +67,8 @@ export const SLASH_COMMANDS = [
   "/sessions",
   "/auth",
   "/doctor",
+  "/statusline",
+  "/hud",
   "/quit",
 ] as const;
 
@@ -77,14 +79,14 @@ export function completeSlash(line: string): string[] {
   return SLASH_COMMANDS.filter((c) => c.startsWith(t.toLowerCase()));
 }
 
-export function handleSlash(
+export async function handleSlash(
   line: string,
   opts: {
     session: SessionData;
     config: ForgeConfig;
     hooks: HookRunner;
   },
-): SlashResult {
+): Promise<SlashResult> {
   const trimmed = line.trim();
   if (!trimmed.startsWith("/")) return { handled: false };
 
@@ -389,6 +391,25 @@ export function handleSlash(
       return { handled: true, output: runDoctor(opts.config) };
     }
 
+    case "/statusline":
+    case "/hud": {
+      const { collectSnapshots, renderHud } = await import("../statusline/index.js");
+      const snaps = await collectSnapshots({
+        sessionId: opts.session.meta.id,
+        fetchPlan: true,
+        config: opts.config,
+      });
+      const hud = renderHud(snaps, { width: process.stdout.columns });
+      return {
+        handled: true,
+        output:
+          hud +
+          chalk.dim(
+            "\n\nLive pane: forge status --watch   ·   tmux: #(forge status --tmux --plain)",
+          ),
+      };
+    }
+
     default:
       return {
         handled: true,
@@ -517,10 +538,12 @@ Forge slash commands
   /sessions             List recent sessions
   /auth                 Show stored credentials
   /doctor               Environment health check
+  /statusline · /hud    Native statusline snapshot
   /quit                 Exit
 
 Tips
 ────
   Tab completes slash commands · Ctrl+C aborts the current run
+  Live HUD pane: forge status --watch
   Blocking Stop hooks + /goal are the harness differentiators
 `.trim();

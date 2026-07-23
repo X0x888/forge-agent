@@ -22,6 +22,7 @@ Binary entry: `src/cli.ts` → `dist/cli.js` (`bin: forge`).
 - `src/agent/` — loop, tools, permissions
 - `src/providers/` — LLM clients
 - `src/auth/` — credentials (never log tokens)
+- `src/statusline/` — provider-agnostic HUD (`forge status`); never invent plan metrics
 
 ## Conventions
 

@@ -2,7 +2,7 @@
 
 **Forge** is an open-source AI coding agent CLI with a **first-class harness** — the control plane that other tools partially implement.
 
-> **v0.2** — abortable runs, slash autocomplete, `/context` `/cost` `/rewind` `/export` `/copy` `/doctor`, parallel read-only tools, API retries, richer tool UX, session titles + resume by prefix.
+> **v0.3** — native **provider-agnostic statusline** (`forge status` / `--watch` / `--tmux`): context bar, tokens, git, liveness, optional plan/credits when the auth path exposes them (Grok sub, Codex local limits, …). Plus v0.2: abort, retries, `/context` `/cost` `/rewind` `/export` `/copy` `/doctor`.
 
 Key capability comparison:
 
@@ -203,7 +203,18 @@ Max-autonomy mode: open todos block Stop; system prompt instructs no session-def
 | `/resume [id]` | Resume by id/prefix |
 | `/sessions` | Recent sessions |
 | `/doctor` | Env health check |
+| `/statusline` / `/hud` | Native statusline snapshot |
 | `/quit` | Exit |
+
+### Statusline HUD
+
+```bash
+forge status              # one-shot
+forge status --watch      # live second pane
+forge status --tmux       # for tmux status-right
+```
+
+Works for **any** auth method: always shows session context/tokens/git/liveness; plan credits only when the provider exposes them (e.g. SuperGrok via imported Grok session). See [docs/STATUSLINE.md](docs/STATUSLINE.md).
 
 Tab completes slash commands. **Ctrl+C** aborts the current agent run (again to exit).
 

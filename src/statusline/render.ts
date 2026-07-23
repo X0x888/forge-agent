@@ -1,0 +1,272 @@
+import chalk from "chalk";
+import type { StatusSnapshot, StatuslineRenderOptions, PlanUsageInfo } from "./types.js";
+import { formatTokens, formatCost } from "../util/format.js";
+
+function colorEnabled(opts: StatuslineRenderOptions): boolean {
+  if (opts.plain || opts.color === false) return false;
+  if (process.env.NO_COLOR != null) return false;
+  return Boolean(opts.color ?? process.stdout.isTTY);
+}
+
+function paint(
+  enabled: boolean,
+  text: string,
+  style: "dim" | "cyan" | "green" | "yellow" | "red" | "magenta" | "blue" | "bold",
+): string {
+  if (!enabled) return text;
+  switch (style) {
+    case "dim":
+      return chalk.dim(text);
+    case "cyan":
+      return chalk.cyan(text);
+    case "green":
+      return chalk.green(text);
+    case "yellow":
+      return chalk.yellow(text);
+    case "red":
+      return chalk.red(text);
+    case "magenta":
+      return chalk.magenta(text);
+    case "blue":
+      return chalk.blue(text);
+    case "bold":
+      return chalk.bold(text);
+  }
+}
+
+function shortModel(model: string): string {
+  // anthropic/claude-sonnet-4 → sonnet-4 ; grok-4 → grok-4
+  const base = model.includes("/") ? model.split("/").pop()! : model;
+  return base.replace(/^claude-/, "").replace(/-\d{8}$/, "");
+}
+
+function formatDuration(sec: number): string {
+  if (sec < 60) return `${sec}s`;
+  if (sec < 3600) {
+    const m = Math.floor(sec / 60);
+    const s = sec % 60;
+    return s ? `${m}m ${s}s` : `${m}m`;
+  }
+  const h = Math.floor(sec / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  return m ? `${h}h ${m}m` : `${h}h`;
+}
+
+function contextBar(pct: number, width = 12): string {
+  const filled = Math.round((pct / 100) * width);
+  return "█".repeat(Math.max(0, filled)) + "░".repeat(Math.max(0, width - filled));
+}
+
+function barColor(
+  enabled: boolean,
+  pct: number,
+  bar: string,
+): string {
+  if (!enabled) return bar;
+  if (pct >= 90) return chalk.red(bar);
+  if (pct >= 70) return chalk.yellow(bar);
+  return chalk.green(bar);
+}
+
+function liveGlyph(liveness: StatusSnapshot["liveness"], enabled: boolean): string {
+  const map = {
+    live: { g: "●", s: "green" as const },
+    idle: { g: "○", s: "yellow" as const },
+    stale: { g: "◌", s: "dim" as const },
+    unknown: { g: "·", s: "dim" as const },
+  };
+  const m = map[liveness];
+  return paint(enabled, m.g, m.s) + paint(enabled, ` ${liveness}`, "dim");
+}
+
+function formatPlan(plan: PlanUsageInfo | undefined, enabled: boolean): string | null {
+  if (!plan) return null;
+  // Skip pure "N/A" notes for API keys — keep HUD dense
+  if (
+    plan.note &&
+    plan.percent == null &&
+    plan.remaining == null &&
+    /API key|N\/A|not applicable|session tokens only|no plan adapter/i.test(plan.note)
+  ) {
+    return null;
+  }
+
+  const parts: string[] = [];
+  if (plan.percent != null) {
+    const p = `use:${plan.percent}%`;
+    parts.push(
+      plan.percent >= 90
+        ? paint(enabled, p, "red")
+        : plan.percent >= 70
+          ? paint(enabled, p, "yellow")
+          : paint(enabled, p, "cyan"),
+    );
+  }
+  if (plan.remaining != null) {
+    const unit = plan.unit === "credits" ? "" : plan.unit ? ` ${plan.unit}` : "";
+    parts.push(paint(enabled, `${formatCompact(plan.remaining)}${unit} left`, "dim"));
+  } else if (plan.used != null && plan.limit != null) {
+    parts.push(
+      paint(enabled, `${formatCompact(plan.used)}/${formatCompact(plan.limit)}`, "dim"),
+    );
+  }
+  if (plan.resetsAt) {
+    const left = resetCountdown(plan.resetsAt);
+    if (left) parts.push(paint(enabled, left, "dim"));
+  } else if (plan.periodLabel) {
+    parts.push(paint(enabled, plan.periodLabel, "dim"));
+  }
+  if (plan.product && parts.length) {
+    // product only when we have numeric plan data
+  }
+  if (!parts.length && plan.note) {
+    return paint(enabled, plan.note.slice(0, 48), "dim");
+  }
+  if (!parts.length) return null;
+  return parts.join("  ");
+}
+
+function formatCompact(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1000) return `${(n / 1000).toFixed(n >= 10_000 ? 0 : 1)}k`;
+  return String(Math.round(n * 10) / 10);
+}
+
+function resetCountdown(iso: string): string | null {
+  const t = Date.parse(iso);
+  if (Number.isNaN(t)) return null;
+  const sec = Math.floor((t - Date.now()) / 1000);
+  if (sec <= 0) return "reset soon";
+  if (sec < 3600) return `reset ${Math.ceil(sec / 60)}m`;
+  if (sec < 86400) return `reset ${Math.ceil(sec / 3600)}h`;
+  return `reset ${Math.ceil(sec / 86400)}d`;
+}
+
+function renderSession(
+  snap: StatusSnapshot,
+  opts: StatuslineRenderOptions,
+): string {
+  const c = colorEnabled(opts);
+  const width = opts.width ?? process.stdout.columns ?? 100;
+
+  // Line 1: project · git · provider/model · auth · flags · live
+  const l1: string[] = [];
+  l1.push(paint(c, snap.projectLabel, "bold"));
+  if (snap.git) {
+    const dirty = snap.git.dirty ? "*" : "";
+    l1.push(paint(c, `git:${snap.git.branch}${dirty}`, "cyan"));
+  }
+  l1.push(
+    paint(c, `${snap.provider}/${shortModel(snap.model)}`, "blue"),
+  );
+  if (snap.authMethod && snap.authMethod !== "unknown") {
+    const auth =
+      snap.authMethod === "subscription"
+        ? "sub"
+        : snap.authMethod === "api_key"
+          ? "key"
+          : snap.authMethod;
+    l1.push(paint(c, auth, "dim"));
+  }
+  if (snap.tags.length) {
+    l1.push(paint(c, snap.tags.join(" "), "magenta"));
+  }
+  const goal = snap.goal;
+  if (goal?.active) {
+    l1.push(paint(c, "GOAL", "yellow"));
+  }
+  l1.push(liveGlyph(snap.liveness, c));
+
+  // Line 2: context bar · duration · tokens · plan · todos
+  const l2: string[] = [];
+  const bar = contextBar(snap.context.percent);
+  l2.push(
+    barColor(c, snap.context.percent, bar) +
+      paint(
+        c,
+        ` ${snap.context.percent}% (${formatTokens(snap.context.usedTokens)}/${formatTokens(snap.context.windowTokens)})`,
+        "dim",
+      ),
+  );
+  l2.push(paint(c, formatDuration(snap.durationSec), "dim"));
+  if (snap.tokens.totalTokens > 0) {
+    let tok = `tok:${formatTokens(snap.tokens.totalTokens)}`;
+    if (snap.tokens.estimatedUsd != null && snap.tokens.estimatedUsd > 0) {
+      tok += ` ~${formatCost(snap.tokens.estimatedUsd)}`;
+    }
+    l2.push(paint(c, tok, "dim"));
+  }
+  const planStr = formatPlan(snap.plan, c);
+  if (planStr) l2.push(planStr);
+  if (snap.openTodos > 0) {
+    l2.push(paint(c, `todos:${snap.openTodos}`, "yellow"));
+  }
+  if (snap.turnCount > 0) {
+    l2.push(paint(c, `t:${snap.turnCount}`, "dim"));
+  }
+
+  let line1 = l1.join("  ");
+  let line2 = l2.join("  ");
+
+  // Width-fit: shed low-priority tails
+  if (width > 20) {
+    line1 = shed(line1, width);
+    line2 = shed(line2, width);
+  }
+
+  if (opts.singleLine || opts.tmux) {
+    return [line1, line2].join(" │ ");
+  }
+  return `${line1}\n${line2}`;
+}
+
+function shed(line: string, width: number): string {
+  // Strip ANSI for length check
+  // eslint-disable-next-line no-control-regex
+  const plain = line.replace(/\x1b\[[0-9;]*m/g, "");
+  if (plain.length <= width) return line;
+  // Truncate plain and give up on perfect ANSI — prefer shorter content
+  const parts = line.split("  ");
+  while (parts.length > 2) {
+    parts.pop();
+    const next = parts.join("  ");
+    // eslint-disable-next-line no-control-regex
+    if (next.replace(/\x1b\[[0-9;]*m/g, "").length <= width) return next;
+  }
+  return parts.join("  ").slice(0, width);
+}
+
+export function renderHud(
+  snaps: StatusSnapshot[],
+  opts: StatuslineRenderOptions = {},
+): string {
+  const c = colorEnabled(opts);
+  if (!snaps.length) {
+    return paint(c, "forge-status · no sessions yet — run: forge", "dim");
+  }
+  return snaps.map((s) => renderSession(s, opts)).join("\n");
+}
+
+export function renderTmux(snap: StatusSnapshot | undefined): string {
+  if (!snap) return "forge:idle";
+  const pct = snap.context.percent;
+  const live = snap.liveness === "live" ? "●" : "○";
+  const parts = [
+    `forge`,
+    shortModel(snap.model),
+    snap.projectLabel,
+    snap.git ? `${snap.git.branch}${snap.git.dirty ? "*" : ""}` : "",
+    `ctx:${pct}%`,
+    live,
+  ].filter(Boolean);
+  if (snap.plan?.percent != null) parts.push(`use:${snap.plan.percent}%`);
+  else if (snap.plan?.remaining != null) {
+    parts.push(`${formatCompact(snap.plan.remaining)}left`);
+  }
+  if (snap.goal?.active) parts.push("GOAL");
+  return parts.join(" ");
+}
+
+export function snapshotsToJson(snaps: StatusSnapshot[]): string {
+  return JSON.stringify({ sessions: snaps, generatedAt: new Date().toISOString() }, null, 2);
+}

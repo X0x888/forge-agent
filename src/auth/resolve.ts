@@ -1,6 +1,8 @@
 import type { ForgeConfig, ProviderId } from "../config/types.js";
 import { getCredential, isExpired } from "./store.js";
 import type { ResolvedAuth } from "./types.js";
+import { readGrokXaiSession } from "./import-grok.js";
+import { nowEpoch } from "../util/fs.js";
 
 const ENV_KEYS: Record<string, string[]> = {
   xai: ["XAI_API_KEY", "GROK_API_KEY"],
@@ -16,10 +18,10 @@ const ENV_KEYS: Record<string, string[]> = {
  * 1. Environment API keys for the active provider
  * 2. Stored OAuth/subscription tokens (if not expired)
  * 3. Stored API keys
+ * 4. Live Grok Build session (~/.grok/auth.json) when provider is xai
+ * 5. Any other provider env key (auto-detect)
  *
- * Note: interactive OAuth/subscription tokens take precedence over stored
- * API keys only when no env key is set — matching Grok's "session first,
- * API key fallback" pattern, inverted here so CI env keys always win.
+ * CI env keys always win so automation stays deterministic.
  */
 export function resolveAuth(
   config: ForgeConfig,
@@ -70,10 +72,26 @@ export function resolveAuth(
         accountLabel: cred.accountLabel ?? cred.subscription,
       };
     }
-    // Expired — try refresh is handled by login flow; treat as missing
+    // Expired — try live Grok session below for xai
   }
 
-  // 3. Fallback: any other env key the user might have (auto-detect)
+  // 3. Reuse Grok Build subscription session for xAI
+  if (provider === "xai" || provider === "grok") {
+    const grok = readGrokXaiSession();
+    if (grok && (!grok.expiresAt || grok.expiresAt > nowEpoch())) {
+      return {
+        provider: "xai",
+        method: "subscription",
+        token: grok.accessToken,
+        baseUrl: baseUrl ?? "https://api.x.ai/v1",
+        accountLabel: grok.email
+          ? `grok:${grok.email}`
+          : "grok:~/.grok/auth.json",
+      };
+    }
+  }
+
+  // 4. Fallback: any other env key the user might have (auto-detect)
   for (const [pid, names] of Object.entries(ENV_KEYS)) {
     for (const name of names) {
       const v = process.env[name]?.trim();

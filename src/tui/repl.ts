@@ -22,6 +22,7 @@ import {
 import { detectProjectHints, getGitSnapshot } from "../util/git-context.js";
 import { createProvider } from "../providers/factory.js";
 import { resolveAuth } from "../auth/resolve.js";
+import { heartbeatSession, releaseSession } from "../statusline/active.js";
 
 export async function runRepl(opts: {
   config: ForgeConfig;
@@ -35,6 +36,23 @@ export async function runRepl(opts: {
   const permissions = new PermissionGate({ interactive: true });
 
   printBanner(config, auth, session);
+
+  heartbeatSession({
+    sessionId: session.meta.id,
+    cwd: session.meta.cwd,
+    provider: session.meta.provider,
+    model: config.model,
+  });
+  // Keep liveness fresh while idle in the REPL
+  const hbTimer = setInterval(() => {
+    heartbeatSession({
+      sessionId: session.meta.id,
+      cwd: session.meta.cwd,
+      provider: session.meta.provider,
+      model: config.model,
+    });
+  }, 8_000);
+  hbTimer.unref?.();
 
   await hooks.run("SessionStart", {
     sessionId: session.meta.id,
@@ -84,7 +102,7 @@ export async function runRepl(opts: {
       return;
     }
 
-    let slash = handleSlash(text, { session, config, hooks });
+    let slash = await handleSlash(text, { session, config, hooks });
     if (slash.replaceSession) {
       session = slash.replaceSession;
       // Recreate hooks for new session cwd if needed
@@ -173,6 +191,8 @@ export async function runRepl(opts: {
 
   const shutdown = async () => {
     if (busy && abortController) abortController.abort();
+    clearInterval(hbTimer);
+    releaseSession(session.meta.id);
     await hooks.run("SessionEnd", {
       sessionId: session.meta.id,
       cwd: session.meta.cwd,
@@ -225,7 +245,7 @@ function printBanner(
   const cwd = config.workspace || session.meta.cwd;
   const git = getGitSnapshot(cwd);
   const hints = detectProjectHints(cwd);
-  console.log(chalk.bold.cyan("\n  ⚒  Forge") + chalk.dim(` v0.2.0`));
+  console.log(chalk.bold.cyan("\n  ⚒  Forge") + chalk.dim(` v0.3.0`));
   console.log(
     chalk.dim(
       `  ${auth.provider}/${config.model} · ${describeAuth(auth)}\n` +
@@ -234,7 +254,7 @@ function printBanner(
         ` · Stop: ${config.blockingStopHooks ? "blocking" : "passive"}` +
         (git.branch ? ` · ${git.branch}${git.dirty ? "*" : ""}` : "") +
         (hints.length ? ` · ${hints.join("+")}` : "") +
-        `\n  /help · /goal · /ulw · Tab completes commands · Ctrl+C aborts run\n`,
+        `\n  /help · /goal · /statusline · forge status --watch · Ctrl+C aborts run\n`,
     ),
   );
 }

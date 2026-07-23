@@ -9,6 +9,7 @@ import {
   nowIso,
 } from "../util/fs.js";
 import type { ChatMessage } from "../providers/types.js";
+import { heartbeatSession } from "../statusline/active.js";
 
 export interface SessionMeta {
   id: string;
@@ -78,6 +79,16 @@ export function saveSession(data: SessionData): void {
   const dir = sessionDir(data.meta.id);
   ensureDir(dir);
   writeJsonFile(path.join(dir, "session.json"), data);
+  try {
+    heartbeatSession({
+      sessionId: data.meta.id,
+      cwd: data.meta.cwd,
+      provider: data.meta.provider,
+      model: data.meta.model,
+    });
+  } catch {
+    /* never fail save on statusline */
+  }
 }
 
 export function loadSession(id: string): SessionData | null {

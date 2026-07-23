@@ -16,6 +16,7 @@ import { loadConfig, defaultConfigToml } from "./config/load.js";
 import type { ForgeConfig } from "./config/types.js";
 import { resolveAuth, describeAuth } from "./auth/resolve.js";
 import { loginInteractive, logout, printAuthStatus, supportsOAuth } from "./auth/login.js";
+import { importGrokCredentials } from "./auth/import-grok.js";
 import { createProvider } from "./providers/factory.js";
 import { createSession, loadSession, listSessions, saveSession } from "./session/session.js";
 import { HookRunner } from "./harness/hooks.js";
@@ -26,8 +27,15 @@ import { forgeHome, ensureDir } from "./util/fs.js";
 import { log, setLogLevel } from "./util/log.js";
 import { armGoal, formatGoalStatus, loadGoal } from "./harness/goal.js";
 import { runDoctor } from "./commands/slash.js";
+import {
+  collectSnapshots,
+  renderHud,
+  renderTmux,
+  snapshotsToJson,
+  runStatusWatch,
+} from "./statusline/index.js";
 
-const VERSION = "0.2.0";
+const VERSION = "0.3.0";
 
 async function main(): Promise<void> {
   const program = new Command();
@@ -150,21 +158,52 @@ async function main(): Promise<void> {
 
   program
     .command("login")
-    .description("Authenticate (API key or OAuth/subscription where allowed)")
+    .description("Authenticate (API key, Grok subscription import, or OAuth)")
     .option("-p, --provider <provider>", "Provider", "xai")
     .option("--api-key [key]", "Use API key (prompt if omitted)")
-    .option("--oauth", "Browser OAuth / subscription flow")
+    .option(
+      "--from-grok",
+      "Import SuperGrok / xAI session from ~/.grok/auth.json (recommended if you use Grok Build)",
+    )
+    .option("--oauth", "Browser OAuth flow (needs a registered client id)")
     .option("--device", "Device-code flow (headless)")
     .action(async (opts) => {
       await ensureHome();
       const provider = opts.provider as string;
+
+      if (opts.fromGrok || (provider === "xai" && !opts.apiKey && !opts.oauth && !opts.device)) {
+        // Default xAI login path: reuse Grok Build subscription session when present
+        if (opts.fromGrok || !opts.apiKey) {
+          const result = importGrokCredentials();
+          if (result.imported) {
+            log.success(
+              `Imported Grok subscription session${result.email ? ` (${result.email})` : ""}`,
+            );
+            if (result.expiresAt) {
+              log.dim(
+                `Expires ${new Date(result.expiresAt * 1000).toISOString()} — re-run grok login + forge login --from-grok when expired`,
+              );
+            }
+            log.info("Try: forge");
+            return;
+          }
+          if (opts.fromGrok) {
+            log.error(result.reason || "Import failed");
+            process.exit(1);
+          }
+          // Fall through to other methods if auto-import missed
+          log.warn(result.reason || "No Grok session to import — trying other methods");
+        }
+      }
+
       let method: "api_key" | "oauth" | "device" = "api_key";
       if (opts.device) method = "device";
       else if (opts.oauth) method = "oauth";
       else if (opts.apiKey !== undefined) method = "api_key";
-      else if (supportsOAuth(provider)) {
-        // Prefer OAuth when available; user can force --api-key
+      else if (supportsOAuth(provider) && provider !== "xai") {
         method = "oauth";
+      } else {
+        method = "api_key";
       }
       try {
         await loginInteractive({
@@ -290,6 +329,60 @@ async function main(): Promise<void> {
     .action((opts) => {
       const config = buildConfig(opts);
       console.log(runDoctor(config));
+    });
+
+  program
+    .command("status")
+    .description(
+      "Native statusline HUD (provider-agnostic: tokens always; plan/credits when available)",
+    )
+    .option("--watch", "Live refresh (default 1s)")
+    .option("--interval <ms>", "Watch interval ms", "1000")
+    .option("--session <id>", "Focus session id / prefix")
+    .option("--cwd <path>", "Filter sessions by workspace")
+    .option("--all", "Show all recent sessions")
+    .option("--json", "Machine-readable JSON")
+    .option("--tmux", "Single-line plain output for tmux status-right")
+    .option("--plain", "No color")
+    .option("--no-plan", "Skip network plan/billing probe")
+    .action(async (opts) => {
+      const collectOpts = {
+        sessionId: opts.session as string | undefined,
+        cwd: opts.cwd as string | undefined,
+        all: Boolean(opts.all),
+        fetchPlan: opts.plan !== false,
+        config: loadConfig({}, opts.cwd || process.cwd()),
+      };
+
+      if (opts.watch) {
+        const ac = new AbortController();
+        process.on("SIGINT", () => ac.abort());
+        await runStatusWatch({
+          ...collectOpts,
+          intervalMs: Number(opts.interval) || 1000,
+          json: Boolean(opts.json),
+          plain: Boolean(opts.plain),
+          tmux: Boolean(opts.tmux),
+          signal: ac.signal,
+        });
+        return;
+      }
+
+      const snaps = await collectSnapshots(collectOpts);
+      if (opts.json) {
+        console.log(snapshotsToJson(snaps));
+        return;
+      }
+      if (opts.tmux) {
+        console.log(renderTmux(snaps[0]));
+        return;
+      }
+      console.log(
+        renderHud(snaps, {
+          plain: Boolean(opts.plain),
+          width: process.stdout.columns,
+        }),
+      );
     });
 
   await program.parseAsync(process.argv);
