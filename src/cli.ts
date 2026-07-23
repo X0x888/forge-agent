@@ -25,8 +25,9 @@ import { runRepl } from "./tui/repl.js";
 import { forgeHome, ensureDir } from "./util/fs.js";
 import { log, setLogLevel } from "./util/log.js";
 import { armGoal, formatGoalStatus, loadGoal } from "./harness/goal.js";
+import { runDoctor } from "./commands/slash.js";
 
-const VERSION = "0.1.0";
+const VERSION = "0.2.0";
 
 async function main(): Promise<void> {
   const program = new Command();
@@ -281,6 +282,16 @@ async function main(): Promise<void> {
       }
     });
 
+  program
+    .command("doctor")
+    .description("Check auth, Node version, config, and harness settings")
+    .option("-p, --provider <provider>", "Provider override")
+    .option("--cwd <path>", "Workspace", process.cwd())
+    .action((opts) => {
+      const config = buildConfig(opts);
+      console.log(runDoctor(config));
+    });
+
   await program.parseAsync(process.argv);
 }
 
@@ -372,6 +383,9 @@ async function runHeadless(opts: {
     turns: result.turns,
     stopContinues: result.stopContinues,
     editCount: opts.session.meta.editCount,
+    aborted: result.aborted,
+    promptTokens: result.promptTokens,
+    completionTokens: result.completionTokens,
   };
 }
 

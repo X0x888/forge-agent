@@ -8,31 +8,75 @@ import {
   formatGoalStatus,
 } from "../harness/goal.js";
 import type { SessionData } from "../session/session.js";
-import { saveSession, listSessions, compactMessages } from "../session/session.js";
+import {
+  saveSession,
+  listSessions,
+  compactMessages,
+  rewindSession,
+  exportSessionMarkdown,
+  lastAssistantText,
+  clearConversation,
+  createSession,
+  loadSession,
+  estimateTokens,
+} from "../session/session.js";
 import type { HookRunner } from "../harness/hooks.js";
 import type { ForgeConfig } from "../config/types.js";
 import { describeAuth, resolveAuth } from "../auth/resolve.js";
 import { printAuthStatus } from "../auth/login.js";
-import { estimateTokens } from "../session/session.js";
+import {
+  estimateCostUsd,
+  formatCost,
+  formatTokens,
+} from "../util/format.js";
 import chalk from "chalk";
+import fs from "node:fs";
+import path from "node:path";
+import { execSync } from "node:child_process";
 
 export interface SlashResult {
-  /** If true, do not send to the model */
   handled: boolean;
-  /** Message to print to the user */
   output?: string;
-  /** If set, quit the REPL */
   quit?: boolean;
-  /** Replace user message with this before model (e.g. stripped /ulw) */
   forwardPrompt?: string;
-  /** Session was mutated */
   session?: SessionData;
+  /** REPL should replace its session pointer */
+  replaceSession?: SessionData;
 }
 
-/**
- * Handle slash commands. Returns handled=false for unknown commands
- * so the agent can treat them as normal text if desired.
- */
+export const SLASH_COMMANDS = [
+  "/help",
+  "/goal",
+  "/ulw",
+  "/ulw-off",
+  "/hooks",
+  "/status",
+  "/context",
+  "/cost",
+  "/todos",
+  "/model",
+  "/permissions",
+  "/compact",
+  "/rewind",
+  "/undo",
+  "/export",
+  "/copy",
+  "/new",
+  "/clear",
+  "/resume",
+  "/sessions",
+  "/auth",
+  "/doctor",
+  "/quit",
+] as const;
+
+export function completeSlash(line: string): string[] {
+  const t = line.trim();
+  if (!t.startsWith("/")) return [];
+  if (t.includes(" ")) return [];
+  return SLASH_COMMANDS.filter((c) => c.startsWith(t.toLowerCase()));
+}
+
 export function handleSlash(
   line: string,
   opts: {
@@ -107,13 +151,21 @@ export function handleSlash(
     case "/session-info": {
       const g = loadGoal(opts.session.meta.id);
       const auth = resolveAuth(opts.config);
+      const est = estimateTokens(opts.session.messages);
+      const cost = estimateCostUsd(
+        String(opts.config.provider),
+        opts.session.meta.totalPromptTokens,
+        opts.session.meta.totalCompletionTokens,
+      );
       const lines = [
         `Session: ${opts.session.meta.id}`,
+        `Title: ${opts.session.meta.title || "(untitled)"}`,
         `Provider/model: ${opts.session.meta.provider} / ${opts.session.meta.model}`,
         `Auth: ${describeAuth(auth)}`,
         `Ultrawork: ${opts.session.meta.ultrawork ? "ON" : "OFF"}`,
         `Turns: ${opts.session.meta.turnCount}  Edits: ${opts.session.meta.editCount}`,
-        `Messages: ${opts.session.messages.length}  ~tokens: ${estimateTokens(opts.session.messages)}`,
+        `Messages: ${opts.session.messages.length}  ~ctx tokens: ${formatTokens(est)} / ${formatTokens(opts.config.contextWindow)}`,
+        `Usage: in=${formatTokens(opts.session.meta.totalPromptTokens)} out=${formatTokens(opts.session.meta.totalCompletionTokens)}  est ${formatCost(cost)}`,
         `Todos open: ${opts.session.todos.filter((t) => t.status === "pending" || t.status === "in_progress").length}`,
         `Blocking Stop hooks: ${opts.config.blockingStopHooks ? "ON" : "OFF"}`,
         g?.objective
@@ -121,6 +173,43 @@ export function handleSlash(
           : "Goal: (none)",
       ];
       return { handled: true, output: lines.join("\n") };
+    }
+
+    case "/context": {
+      const est = estimateTokens(opts.session.messages);
+      const pct = Math.min(100, Math.round((est / opts.config.contextWindow) * 100));
+      const barLen = 24;
+      const filled = Math.round((pct / 100) * barLen);
+      const bar = "█".repeat(filled) + "░".repeat(barLen - filled);
+      const byRole: Record<string, number> = {};
+      for (const m of opts.session.messages) {
+        const n = estimateTokens([m]);
+        byRole[m.role] = (byRole[m.role] || 0) + n;
+      }
+      const roleLines = Object.entries(byRole)
+        .map(([r, n]) => `  ${r.padEnd(10)} ${formatTokens(n)}`)
+        .join("\n");
+      return {
+        handled: true,
+        output: `Context  [${bar}] ${pct}%\n  ~${formatTokens(est)} / ${formatTokens(opts.config.contextWindow)}\nBy role:\n${roleLines}`,
+      };
+    }
+
+    case "/cost": {
+      const cost = estimateCostUsd(
+        String(opts.config.provider),
+        opts.session.meta.totalPromptTokens,
+        opts.session.meta.totalCompletionTokens,
+      );
+      return {
+        handled: true,
+        output: [
+          `Session usage (this session)`,
+          `  prompt:      ${formatTokens(opts.session.meta.totalPromptTokens)}`,
+          `  completion:  ${formatTokens(opts.session.meta.totalCompletionTokens)}`,
+          `  est. cost:   ${formatCost(cost)}  (rough; not a bill)`,
+        ].join("\n"),
+      };
     }
 
     case "/todos": {
@@ -143,9 +232,13 @@ export function handleSlash(
 
     case "/model": {
       if (!arg) {
+        const pcfg = opts.config.providers[opts.config.provider];
+        const models = pcfg?.models?.length
+          ? pcfg.models.join(", ")
+          : pcfg?.defaultModel || "(any)";
         return {
           handled: true,
-          output: `Current model: ${opts.config.model}\nUsage: /model <name>`,
+          output: `Current model: ${opts.config.model}\nKnown: ${models}\nUsage: /model <name>`,
         };
       }
       opts.config.model = arg;
@@ -155,16 +248,83 @@ export function handleSlash(
     }
 
     case "/compact": {
-      // lazy import avoided — compactMessages already available via session module
-      return handleCompact(opts.session);
+      const before = opts.session.messages.length;
+      opts.session.messages = compactMessages(opts.session.messages);
+      saveSession(opts.session);
+      return {
+        handled: true,
+        output: `Compacted ${before} → ${opts.session.messages.length} messages`,
+        session: opts.session,
+      };
+    }
+
+    case "/rewind":
+    case "/undo": {
+      const n = arg ? Math.max(1, parseInt(arg, 10) || 1) : 1;
+      const removed = rewindSession(opts.session, n);
+      return {
+        handled: true,
+        output:
+          removed > 0
+            ? `Rewound ${n} user turn(s); removed ${removed} message(s).`
+            : "Nothing to rewind.",
+        session: opts.session,
+      };
+    }
+
+    case "/export": {
+      const md = exportSessionMarkdown(opts.session);
+      if (arg) {
+        const p = path.resolve(arg);
+        fs.writeFileSync(p, md, "utf8");
+        return { handled: true, output: `Exported to ${p}` };
+      }
+      return { handled: true, output: md };
+    }
+
+    case "/copy": {
+      const text = lastAssistantText(opts.session);
+      if (!text) return { handled: true, output: "No assistant message to copy." };
+      try {
+        if (process.platform === "darwin") {
+          execSync("pbcopy", { input: text });
+        } else if (process.platform === "linux") {
+          execSync("xclip -selection clipboard", { input: text });
+        } else {
+          return {
+            handled: true,
+            output: text.slice(0, 2000) + (text.length > 2000 ? "\n…" : ""),
+          };
+        }
+        return { handled: true, output: `Copied last assistant reply (${text.length} chars).` };
+      } catch {
+        return {
+          handled: true,
+          output: "Clipboard unavailable. Last reply:\n\n" + text.slice(0, 2000),
+        };
+      }
     }
 
     case "/new":
     case "/clear": {
+      if (cmd === "/clear" && arg !== "hard") {
+        clearConversation(opts.session);
+        return {
+          handled: true,
+          output: "Conversation cleared (same session id). Use /new for a fresh session.",
+          session: opts.session,
+        };
+      }
+      const s = createSession({
+        cwd: opts.session.meta.cwd,
+        provider: opts.config.provider,
+        model: opts.config.model,
+        ultrawork: opts.session.meta.ultrawork,
+      });
       return {
         handled: true,
-        output:
-          "Start a fresh session with: forge --new\n(Or exit and re-run forge.) Mid-REPL wipe is intentionally avoided so harness state stays consistent.",
+        output: `New session ${s.meta.id.slice(0, 8)}`,
+        replaceSession: s,
       };
     }
 
@@ -175,15 +335,24 @@ export function handleSlash(
           handled: true,
           output:
             list.length === 0
-              ? "No sessions. Usage: /resume <session-id>"
-              : `Usage: /resume <session-id>\n\nRecent:\n${list
-                  .map((s) => `  ${s.id}  ${s.updatedAt}  ${s.model}`)
-                  .join("\n")}\n\nOr: forge --session <id>`,
+              ? "No sessions. Usage: /resume <session-id-prefix>"
+              : `Usage: /resume <session-id-prefix>\n\nRecent:\n${list
+                  .map(
+                    (s) =>
+                      `  ${s.id.slice(0, 8)}  ${(s.title || "").slice(0, 40).padEnd(40)}  ${s.model}`,
+                  )
+                  .join("\n")}`,
         };
       }
+      const loaded = loadSession(arg);
+      if (!loaded) {
+        return { handled: true, output: `Session not found: ${arg}` };
+      }
+      opts.config.model = loaded.meta.model;
       return {
         handled: true,
-        output: `Resume from shell: forge --session ${arg}`,
+        output: `Resumed ${loaded.meta.id.slice(0, 8)} — ${loaded.meta.title || "untitled"} (${loaded.messages.length} msgs)`,
+        replaceSession: loaded,
       };
     }
 
@@ -195,7 +364,7 @@ export function handleSlash(
         output: list
           .map(
             (s) =>
-              `${s.id.slice(0, 8)}  ${s.updatedAt}  ${s.model}  turns=${s.turnCount}${s.ultrawork ? " ULW" : ""}`,
+              `${s.id.slice(0, 8)}  ${s.updatedAt.slice(0, 19)}  ${(s.title || "").slice(0, 36).padEnd(36)}  ${s.model}  t=${s.turnCount}${s.ultrawork ? " ULW" : ""}`,
           )
           .join("\n"),
       };
@@ -216,23 +385,16 @@ export function handleSlash(
       return { handled: true, output: `Permission mode: ${arg}` };
     }
 
+    case "/doctor": {
+      return { handled: true, output: runDoctor(opts.config) };
+    }
+
     default:
       return {
         handled: true,
         output: `Unknown command: ${cmd}. Type /help for commands.`,
       };
   }
-}
-
-function handleCompact(session: SessionData): SlashResult {
-  const before = session.messages.length;
-  session.messages = compactMessages(session.messages);
-  saveSession(session);
-  return {
-    handled: true,
-    output: `Compacted ${before} → ${session.messages.length} messages`,
-    session,
-  };
 }
 
 function handleGoal(arg: string, session: SessionData): SlashResult {
@@ -246,24 +408,18 @@ function handleGoal(arg: string, session: SessionData): SlashResult {
   switch (verb.toLowerCase()) {
     case "pause": {
       const g = pauseGoal(sid);
-      return {
-        handled: true,
-        output: g ? "Goal paused." : "No active goal.",
-      };
+      return { handled: true, output: g ? "Goal paused." : "No active goal." };
     }
     case "resume":
     case "unpause": {
       const g = resumeGoal(sid);
-      // Enable ultrawork when resuming so stop-guard is meaningful
       if (g) {
         session.meta.ultrawork = true;
         saveSession(session);
       }
       return {
         handled: true,
-        output: g
-          ? `Goal resumed.\n${formatGoalStatus(g)}`
-          : "No goal to resume.",
+        output: g ? `Goal resumed.\n${formatGoalStatus(g)}` : "No goal to resume.",
         session,
       };
     }
@@ -292,7 +448,6 @@ function handleGoal(arg: string, session: SessionData): SlashResult {
       };
     }
     default: {
-      // Entire arg is the objective
       const g = armGoal(sid, arg, "manual");
       session.meta.ultrawork = true;
       saveSession(session);
@@ -303,6 +458,37 @@ function handleGoal(arg: string, session: SessionData): SlashResult {
       };
     }
   }
+}
+
+export function runDoctor(config: ForgeConfig): string {
+  const lines: string[] = [chalk.bold("Forge doctor"), ""];
+  const auth = resolveAuth(config);
+  lines.push(`Auth: ${describeAuth(auth)}`);
+  lines.push(`Provider/model: ${config.provider} / ${config.model}`);
+  lines.push(`Blocking Stop: ${config.blockingStopHooks ? "on" : "off"}`);
+  lines.push(`Goal gate: ${config.goal.enabled ? "on" : "off"} (stuck=${config.goal.stuckThreshold})`);
+  lines.push(`Workspace: ${config.workspace || process.cwd()}`);
+
+  const node = process.version;
+  lines.push(`Node: ${node}`);
+  const major = parseInt(node.slice(1), 10);
+  if (major < 20) lines.push(chalk.red("  ⚠ Node 20+ required"));
+
+  // Quick network check to base URL host (HEAD not always allowed)
+  const pcfg = config.providers[config.provider];
+  const base = config.baseUrl || pcfg?.baseUrl;
+  if (base && auth) {
+    lines.push(`API base: ${base}`);
+  } else if (!auth) {
+    lines.push(chalk.yellow("  ⚠ Not authenticated — forge login or set an API key env var"));
+  }
+
+  const home = process.env.FORGE_HOME || path.join(process.env.HOME || "", ".forge");
+  lines.push(`FORGE_HOME: ${home}`);
+  lines.push(`  config: ${fs.existsSync(path.join(home, "config.toml")) ? "yes" : "no"}`);
+  lines.push(`  auth:   ${fs.existsSync(path.join(home, "auth.json")) ? "yes" : "no"}`);
+
+  return lines.join("\n");
 }
 
 const HELP_TEXT = `
@@ -316,17 +502,25 @@ Forge slash commands
   /ulw-off              Disable ultrawork
   /hooks                List loaded hooks
   /status               Session + auth + goal status
+  /context              Context window usage bar
+  /cost                 Token usage + rough cost
   /todos                Show agent todos
   /model <name>         Switch model
   /permissions <mode>   default|acceptEdits|plan|bypassPermissions
   /compact              Compact conversation
+  /rewind [n]           Undo last n user turns (/undo)
+  /export [path]        Export session as markdown
+  /copy                 Copy last assistant reply
+  /new                  Fresh session
+  /clear                Clear messages (same session)
+  /resume [id]          Resume a prior session
   /sessions             List recent sessions
   /auth                 Show stored credentials
+  /doctor               Environment health check
   /quit                 Exit
 
-Harness highlights
-──────────────────
-  • Blocking Stop hooks (Claude Code parity — Grok Build lacks this)
-  • /goal relentless driver with stuck-wall escape
-  • API key + OAuth/subscription auth (where providers allow)
+Tips
+────
+  Tab completes slash commands · Ctrl+C aborts the current run
+  Blocking Stop hooks + /goal are the harness differentiators
 `.trim();

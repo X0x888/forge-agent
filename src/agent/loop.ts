@@ -1,11 +1,13 @@
 import chalk from "chalk";
 import type { ForgeConfig } from "../config/types.js";
-import type { LLMProvider, ChatMessage, ToolCall } from "../providers/types.js";
+import type { LLMProvider, ToolCall } from "../providers/types.js";
 import type { SessionData, TodoItem } from "../session/session.js";
 import {
   saveSession,
   estimateTokens,
   compactMessages,
+  maybeSetTitle,
+  markUserTurn,
 } from "../session/session.js";
 import { HookRunner, type HookContext } from "../harness/hooks.js";
 import { runStopGuard } from "../harness/stop-guard.js";
@@ -14,6 +16,25 @@ import { PermissionGate } from "./permissions.js";
 import { TOOL_DEFINITIONS, executeTool } from "./tools/index.js";
 import { buildSystemPrompt } from "./system-prompt.js";
 import { log } from "../util/log.js";
+import { withRetry } from "../util/retry.js";
+import {
+  formatToolStart,
+  formatToolEnd,
+  truncateMiddle,
+  formatTokens,
+  estimateCostUsd,
+  formatCost,
+} from "../util/format.js";
+
+export interface LoopEvents {
+  onToken?: (token: string) => void;
+  onToolStart?: (name: string, args: Record<string, unknown>) => void;
+  onToolEnd?: (
+    name: string,
+    result: { isError?: boolean; ms: number; bytes: number },
+  ) => void;
+  onStatus?: (msg: string) => void;
+}
 
 export interface LoopOptions {
   config: ForgeConfig;
@@ -23,8 +44,10 @@ export interface LoopOptions {
   permissions: PermissionGate;
   userMessage: string;
   stream?: boolean;
+  signal?: AbortSignal;
+  events?: LoopEvents;
+  /** @deprecated use events.onToken */
   onToken?: (token: string) => void;
-  /** Max stop-continue cycles for goal/hooks (safety) */
   maxStopContinues?: number;
 }
 
@@ -33,7 +56,22 @@ export interface LoopResult {
   turns: number;
   stopContinues: number;
   aborted: boolean;
+  promptTokens: number;
+  completionTokens: number;
 }
+
+const READ_ONLY = new Set([
+  "read_file",
+  "Read",
+  "grep",
+  "Grep",
+  "glob",
+  "Glob",
+  "list_dir",
+  "ListDir",
+  "web_search",
+  "WebSearch",
+]);
 
 function baseHookCtx(session: SessionData, config: ForgeConfig): HookContext {
   return {
@@ -72,6 +110,10 @@ function applyTodos(
     .join("\n")}`;
 }
 
+function assertNotAborted(signal?: AbortSignal): void {
+  if (signal?.aborted) throw new Error("Aborted");
+}
+
 export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
   const {
     config,
@@ -81,9 +123,18 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
     permissions,
     userMessage,
     stream = true,
+    signal,
   } = opts;
+  const events: LoopEvents = {
+    onToken: opts.events?.onToken || opts.onToken,
+    onToolStart: opts.events?.onToolStart,
+    onToolEnd: opts.events?.onToolEnd,
+    onStatus: opts.events?.onStatus,
+  };
   const maxStopContinues = opts.maxStopContinues ?? 50;
   const workspace = config.workspace || session.meta.cwd;
+  const startPrompt = session.meta.totalPromptTokens;
+  const startComp = session.meta.totalCompletionTokens;
 
   // Auto-arm goal from prose
   if (config.goal.autoArm && config.goal.enabled) {
@@ -97,13 +148,11 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
     }
   }
 
-  // UserPromptSubmit hook
   await hooks.run("UserPromptSubmit", {
     ...baseHookCtx(session, config),
     prompt: userMessage,
   });
 
-  // Ensure system message
   const goal = loadGoal(session.meta.id);
   const system = buildSystemPrompt({
     config,
@@ -117,6 +166,8 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
     session.messages[0] = { role: "system", content: system };
   }
 
+  maybeSetTitle(session, userMessage);
+  markUserTurn(session);
   session.messages.push({ role: "user", content: userMessage });
   session.meta.turnCount += 1;
   saveSession(session);
@@ -124,130 +175,157 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
   let turns = 0;
   let stopContinues = 0;
   let finalText = "";
+  let aborted = false;
   const maxTurns = config.maxTurns > 0 ? config.maxTurns : 200;
 
-  while (turns < maxTurns) {
-    turns += 1;
+  try {
+    while (turns < maxTurns) {
+      assertNotAborted(signal);
+      turns += 1;
 
-    // Auto-compact
-    const est = estimateTokens(session.messages);
-    if (est > config.contextWindow * config.autoCompactThreshold) {
-      await hooks.run("PreCompact", baseHookCtx(session, config));
-      session.messages = compactMessages(session.messages);
-      await hooks.run("PostCompact", baseHookCtx(session, config));
-      saveSession(session);
-      log.dim("Compacted conversation history");
-    }
-
-    // Call model
-    let response;
-    try {
-      if (stream && opts.onToken) {
-        process.stderr.write(chalk.dim("\n"));
-        response = await provider.chatStream(
-          {
-            model: config.model,
-            messages: session.messages,
-            tools: TOOL_DEFINITIONS,
-            temperature: config.temperature,
-            max_tokens: config.maxTokens,
-          },
-          (delta) => {
-            if (delta.content) {
-              opts.onToken?.(delta.content);
-            }
-          },
-        );
-        process.stderr.write("\n");
-      } else {
-        response = await provider.chat({
-          model: config.model,
-          messages: session.messages,
-          tools: TOOL_DEFINITIONS,
-          temperature: config.temperature,
-          max_tokens: config.maxTokens,
-        });
-        if (response.message.content && opts.onToken) {
-          opts.onToken(response.message.content);
-        }
+      const est = estimateTokens(session.messages);
+      if (est > config.contextWindow * config.autoCompactThreshold) {
+        events.onStatus?.("Compacting conversation…");
+        await hooks.run("PreCompact", baseHookCtx(session, config));
+        session.messages = compactMessages(session.messages);
+        await hooks.run("PostCompact", baseHookCtx(session, config));
+        saveSession(session);
+        log.dim("Compacted conversation history");
       }
-    } catch (err) {
-      await hooks.run("StopFailure", {
-        ...baseHookCtx(session, config),
-        stopReason: (err as Error).message,
-      });
-      throw err;
-    }
 
-    if (response.usage) {
-      session.meta.totalPromptTokens += response.usage.prompt_tokens;
-      session.meta.totalCompletionTokens += response.usage.completion_tokens;
-    }
+      let response;
+      try {
+        response = await withRetry(
+          async () => {
+            assertNotAborted(signal);
+            if (stream && events.onToken) {
+              return provider.chatStream(
+                {
+                  model: config.model,
+                  messages: session.messages,
+                  tools: TOOL_DEFINITIONS,
+                  temperature: config.temperature,
+                  max_tokens: config.maxTokens,
+                },
+                (delta) => {
+                  if (signal?.aborted) return;
+                  if (delta.content) events.onToken?.(delta.content);
+                },
+              );
+            }
+            const r = await provider.chat({
+              model: config.model,
+              messages: session.messages,
+              tools: TOOL_DEFINITIONS,
+              temperature: config.temperature,
+              max_tokens: config.maxTokens,
+            });
+            if (r.message.content && events.onToken) {
+              events.onToken(r.message.content);
+            }
+            return r;
+          },
+          { retries: 3, label: `${config.provider} chat`, signal },
+        );
+      } catch (err) {
+        if ((err as Error).message === "Aborted" || signal?.aborted) {
+          aborted = true;
+          break;
+        }
+        await hooks.run("StopFailure", {
+          ...baseHookCtx(session, config),
+          stopReason: (err as Error).message,
+        });
+        throw err;
+      }
 
-    const assistantMsg = response.message;
-    session.messages.push(assistantMsg);
-    finalText = assistantMsg.content || "";
-    saveSession(session);
+      if (response.usage) {
+        session.meta.totalPromptTokens += response.usage.prompt_tokens;
+        session.meta.totalCompletionTokens += response.usage.completion_tokens;
+      }
 
-    const toolCalls = assistantMsg.tool_calls;
-    if (!toolCalls || toolCalls.length === 0) {
-      // Attempt stop — may be blocked by harness
-      const stopResult = await runStopGuard({
+      const assistantMsg = response.message;
+      session.messages.push(assistantMsg);
+      finalText = assistantMsg.content || "";
+      saveSession(session);
+
+      const toolCalls = assistantMsg.tool_calls;
+      if (!toolCalls || toolCalls.length === 0) {
+        const stopResult = await runStopGuard({
+          config,
+          hooks,
+          ctx: baseHookCtx(session, config),
+          ultrawork: session.meta.ultrawork,
+          openTodoCount: openTodos(session.todos),
+          editCount: session.meta.editCount,
+          lastAssistantMessage: finalText,
+        });
+
+        if (stopResult.allowStop) {
+          if (stopResult.systemMessage) log.dim(stopResult.systemMessage);
+          break;
+        }
+
+        stopContinues += 1;
+        if (stopContinues > maxStopContinues) {
+          log.warn(
+            `Stop-continue cap (${maxStopContinues}) reached — releasing to prevent infinite loop`,
+          );
+          break;
+        }
+
+        const inject =
+          stopResult.additionalContext ||
+          stopResult.reason ||
+          "Stop was blocked. Continue working.";
+        log.info(
+          chalk.magenta(`↻ Stop blocked by harness (continue #${stopContinues})`),
+        );
+        log.dim(inject.slice(0, 300));
+        session.messages.push({ role: "user", content: inject });
+        saveSession(session);
+        continue;
+      }
+
+      await runToolCalls({
+        toolCalls,
+        session,
         config,
         hooks,
-        ctx: baseHookCtx(session, config),
-        ultrawork: session.meta.ultrawork,
-        openTodoCount: openTodos(session.todos),
-        editCount: session.meta.editCount,
-        lastAssistantMessage: finalText,
+        permissions,
+        workspace,
+        signal,
+        events,
       });
-
-      if (stopResult.allowStop) {
-        if (stopResult.systemMessage) {
-          log.dim(stopResult.systemMessage);
-        }
-        break;
-      }
-
-      // Blocked — inject re-anchor and continue
-      stopContinues += 1;
-      if (stopContinues > maxStopContinues) {
-        log.warn(
-          `Stop-continue cap (${maxStopContinues}) reached — releasing to prevent infinite loop`,
-        );
-        break;
-      }
-
-      const inject =
-        stopResult.additionalContext ||
-        stopResult.reason ||
-        "Stop was blocked. Continue working.";
-      log.info(chalk.magenta(`↻ Stop blocked by harness (continue #${stopContinues})`));
-      log.dim(inject.slice(0, 300));
-      session.messages.push({
-        role: "user",
-        content: inject,
-      });
-      saveSession(session);
-      continue;
     }
+  } catch (err) {
+    if ((err as Error).message === "Aborted" || signal?.aborted) {
+      aborted = true;
+    } else {
+      throw err;
+    }
+  }
 
-    // Execute tool calls
-    await runToolCalls({
-      toolCalls,
-      session,
-      config,
-      hooks,
-      permissions,
-      workspace,
-    });
+  const promptTokens = session.meta.totalPromptTokens - startPrompt;
+  const completionTokens = session.meta.totalCompletionTokens - startComp;
+  if (promptTokens + completionTokens > 0) {
+    const cost = estimateCostUsd(
+      String(config.provider),
+      promptTokens,
+      completionTokens,
+    );
+    events.onStatus?.(
+      `tokens in=${formatTokens(promptTokens)} out=${formatTokens(completionTokens)} · est ${formatCost(cost)}`,
+    );
   }
 
   return {
     finalText,
     turns,
     stopContinues,
-    aborted: false,
+    aborted,
+    promptTokens,
+    completionTokens,
   };
 }
 
@@ -258,102 +336,170 @@ async function runToolCalls(opts: {
   hooks: HookRunner;
   permissions: PermissionGate;
   workspace: string;
+  signal?: AbortSignal;
+  events?: LoopEvents;
 }): Promise<void> {
-  const { toolCalls, session, config, hooks, permissions, workspace } = opts;
+  const { toolCalls, session, config, hooks, permissions, workspace, signal, events } =
+    opts;
 
-  for (const tc of toolCalls) {
-    const name = tc.function.name;
-    let toolInput: Record<string, unknown> = {};
-    try {
-      toolInput = JSON.parse(tc.function.arguments || "{}") as Record<string, unknown>;
-    } catch {
-      toolInput = { raw: tc.function.arguments };
-    }
-
-    // PreToolUse
-    const pre = await hooks.run("PreToolUse", {
-      ...baseHookCtx(session, config),
-      toolName: name,
-      toolInput,
-      toolUseId: tc.id,
-    });
-
-    if (pre.blocked || pre.decision === "deny") {
-      session.messages.push({
-        role: "tool",
-        tool_call_id: tc.id,
-        content: `Tool denied by hook: ${pre.reason || "denied"}`,
-      });
-      await hooks.run("PermissionDenied", {
-        ...baseHookCtx(session, config),
-        toolName: name,
-        toolInput,
-      });
-      continue;
-    }
-
-    // Permission gate
-    const perm = await permissions.request({
-      toolName: name,
-      input: toolInput,
-      mode: config.permissionMode,
-    });
-    if (perm === "deny") {
-      session.messages.push({
-        role: "tool",
-        tool_call_id: tc.id,
-        content: "Tool denied by permission gate",
-      });
-      await hooks.run("PermissionDenied", {
-        ...baseHookCtx(session, config),
-        toolName: name,
-        toolInput,
-      });
-      continue;
-    }
-
-    log.dim(`→ ${name}(${summarizeArgs(toolInput)})`);
-
-    const result = await executeTool(
-      name,
-      tc.function.arguments,
-      {
-        workspace,
-        onEdit: () => {
-          session.meta.editCount += 1;
-        },
-      },
-      (todos, merge) => applyTodos(session, todos, merge),
-    );
-
-    if (result.isError) {
-      await hooks.run("PostToolUseFailure", {
-        ...baseHookCtx(session, config),
-        toolName: name,
-        toolInput,
-        toolOutput: result.output,
-        toolUseId: tc.id,
-      });
+  // Sequential by default; batch consecutive read-only tools in parallel
+  // but append results in original order (providers are picky about this).
+  let i = 0;
+  while (i < toolCalls.length) {
+    assertNotAborted(signal);
+    if (READ_ONLY.has(toolCalls[i].function.name)) {
+      const batch: ToolCall[] = [];
+      while (
+        i < toolCalls.length &&
+        READ_ONLY.has(toolCalls[i].function.name) &&
+        batch.length < 8
+      ) {
+        batch.push(toolCalls[i]);
+        i++;
+      }
+      const results = await Promise.all(
+        batch.map((tc) =>
+          prepareToolResult({
+            tc,
+            session,
+            config,
+            hooks,
+            permissions,
+            workspace,
+            signal,
+            events,
+          }),
+        ),
+      );
+      for (const r of results) {
+        session.messages.push({
+          role: "tool",
+          tool_call_id: r.toolCallId,
+          content: r.content,
+        });
+      }
+      saveSession(session);
     } else {
-      await hooks.run("PostToolUse", {
-        ...baseHookCtx(session, config),
-        toolName: name,
-        toolInput,
-        toolOutput: result.output,
-        toolUseId: tc.id,
+      const r = await prepareToolResult({
+        tc: toolCalls[i],
+        session,
+        config,
+        hooks,
+        permissions,
+        workspace,
+        signal,
+        events,
       });
+      session.messages.push({
+        role: "tool",
+        tool_call_id: r.toolCallId,
+        content: r.content,
+      });
+      saveSession(session);
+      i++;
     }
-
-    session.messages.push({
-      role: "tool",
-      tool_call_id: tc.id,
-      content: result.output,
-    });
-    saveSession(session);
   }
 }
 
-function summarizeArgs(args: Record<string, unknown>): string {
-  const s = JSON.stringify(args);
-  return s.length > 80 ? s.slice(0, 77) + "…" : s;
+async function prepareToolResult(opts: {
+  tc: ToolCall;
+  session: SessionData;
+  config: ForgeConfig;
+  hooks: HookRunner;
+  permissions: PermissionGate;
+  workspace: string;
+  signal?: AbortSignal;
+  events?: LoopEvents;
+}): Promise<{ toolCallId: string; content: string }> {
+  const { tc, session, config, hooks, permissions, workspace, signal, events } = opts;
+  assertNotAborted(signal);
+
+  const name = tc.function.name;
+  let toolInput: Record<string, unknown> = {};
+  try {
+    toolInput = JSON.parse(tc.function.arguments || "{}") as Record<string, unknown>;
+  } catch {
+    toolInput = { raw: tc.function.arguments };
+  }
+
+  const pre = await hooks.run("PreToolUse", {
+    ...baseHookCtx(session, config),
+    toolName: name,
+    toolInput,
+    toolUseId: tc.id,
+  });
+
+  if (pre.blocked || pre.decision === "deny") {
+    await hooks.run("PermissionDenied", {
+      ...baseHookCtx(session, config),
+      toolName: name,
+      toolInput,
+    });
+    return {
+      toolCallId: tc.id,
+      content: `Tool denied by hook: ${pre.reason || "denied"}`,
+    };
+  }
+
+  const perm = await permissions.request({
+    toolName: name,
+    input: toolInput,
+    mode: config.permissionMode,
+  });
+  if (perm === "deny") {
+    await hooks.run("PermissionDenied", {
+      ...baseHookCtx(session, config),
+      toolName: name,
+      toolInput,
+    });
+    return { toolCallId: tc.id, content: "Tool denied by permission gate" };
+  }
+
+  if (events?.onToolStart) {
+    events.onToolStart(name, toolInput);
+  } else {
+    console.error(formatToolStart(name, toolInput));
+  }
+
+  const t0 = Date.now();
+  const result = await executeTool(
+    name,
+    tc.function.arguments,
+    {
+      workspace,
+      onEdit: () => {
+        session.meta.editCount += 1;
+      },
+    },
+    (todos, merge) => applyTodos(session, todos, merge),
+  );
+  const ms = Date.now() - t0;
+  const output = truncateMiddle(result.output);
+  const bytes = Buffer.byteLength(output, "utf8");
+
+  if (events?.onToolEnd) {
+    events.onToolEnd(name, { isError: result.isError, ms, bytes });
+  } else {
+    console.error(formatToolEnd(name, { isError: result.isError, ms, bytes }));
+  }
+
+  if (result.isError) {
+    await hooks.run("PostToolUseFailure", {
+      ...baseHookCtx(session, config),
+      toolName: name,
+      toolInput,
+      toolOutput: output,
+      toolUseId: tc.id,
+    });
+  } else {
+    await hooks.run("PostToolUse", {
+      ...baseHookCtx(session, config),
+      toolName: name,
+      toolInput,
+      toolOutput: output,
+      toolUseId: tc.id,
+    });
+  }
+
+  return { toolCallId: tc.id, content: output };
 }

@@ -2,6 +2,7 @@ import type { ForgeConfig } from "../config/types.js";
 import type { GoalState } from "../harness/goal.js";
 import fs from "node:fs";
 import path from "node:path";
+import { formatGitForPrompt, getGitSnapshot } from "../util/git-context.js";
 
 function loadProjectRules(workspace: string): string {
   const candidates = [
@@ -33,6 +34,7 @@ export function buildSystemPrompt(opts: {
 }): string {
   const { config, workspace } = opts;
   const rules = loadProjectRules(workspace);
+  const git = formatGitForPrompt(getGitSnapshot(workspace));
 
   const parts: string[] = [
     `You are Forge, an autonomous AI coding agent running in a terminal harness.`,
@@ -41,14 +43,16 @@ export function buildSystemPrompt(opts: {
     `Root: ${workspace}`,
     `Provider: ${config.provider}  Model: ${config.model}`,
     `Permission mode: ${config.permissionMode}`,
+    git ? git : "",
     ``,
     `## Operating principles`,
     `- Think before acting. Prefer verification (run tests, read files) over speculation.`,
     `- Make focused, correct changes. Explain why briefly when it matters.`,
-    `- Use tools: bash, read_file, write_file, search_replace, grep, glob, todo_write.`,
-    `- Prefer specialized file tools over bash for reads/edits.`,
+    `- Use tools: bash, read_file, write_file, search_replace, grep, glob, list_dir, todo_write, web_search.`,
+    `- Prefer specialized file tools over bash for reads/edits/listing.`,
     `- Track multi-step work with todo_write.`,
     `- Do not invent file contents — read them.`,
+    `- After edits, run the cheapest relevant check (typecheck/test) when practical.`,
     ``,
     `## Harness (what makes Forge different from Grok Build)`,
     `- **Blocking Stop hooks**: when you try to finish a turn, Stop hooks may block you and force continuation with additional instructions. This is intentional — keep working.`,

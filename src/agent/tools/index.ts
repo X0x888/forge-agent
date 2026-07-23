@@ -6,6 +6,7 @@ import path from "node:path";
 import { glob } from "glob";
 import type { ToolDefinition } from "../../providers/types.js";
 import { isWithinRoot } from "../../util/fs.js";
+import { truncateMiddle } from "../../util/format.js";
 
 const execAsync = promisify(exec);
 
@@ -124,6 +125,22 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   {
     type: "function",
     function: {
+      name: "list_dir",
+      description: "List entries in a directory (names + type). Prefer over bash ls.",
+      parameters: {
+        type: "object",
+        properties: {
+          path: {
+            type: "string",
+            description: "Directory path relative to workspace (default: .)",
+          },
+        },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
       name: "todo_write",
       description:
         "Update the session todo list. Use for multi-step tasks to track progress.",
@@ -219,6 +236,9 @@ export async function executeTool(
       case "glob":
       case "Glob":
         return await toolGlob(args, ctx);
+      case "list_dir":
+      case "ListDir":
+        return await toolListDir(args, ctx);
       case "todo_write":
         if (!todoHandler) return { output: "todo_write not available", isError: true };
         return {
@@ -250,7 +270,7 @@ async function toolBash(
       env: process.env,
     });
     const out = [stdout, stderr].filter(Boolean).join("\n");
-    return { output: out.slice(0, 100_000) || "(no output)" };
+    return { output: truncateMiddle(out || "(no output)") };
   } catch (err) {
     const e = err as {
       stdout?: string;
@@ -260,7 +280,7 @@ async function toolBash(
     };
     const out = [e.stdout, e.stderr, e.message].filter(Boolean).join("\n");
     return {
-      output: out.slice(0, 100_000) || `Command failed (code ${e.code})`,
+      output: truncateMiddle(out || `Command failed (code ${e.code})`),
       isError: true,
     };
   }
@@ -276,8 +296,12 @@ async function toolRead(
   const offset = Math.max(1, Number(args.offset) || 1);
   const limit = Number(args.limit) || lines.length;
   const slice = lines.slice(offset - 1, offset - 1 + limit);
-  const numbered = slice.map((l, i) => `${offset + i}|${l}`).join("\n");
-  return { output: numbered || "(empty file)" };
+  const numbered = slice.map((l, i) => `${String(offset + i).padStart(6)}|${l}`).join("\n");
+  const header =
+    lines.length > slice.length
+      ? `File: ${path.relative(ctx.workspace, filePath) || filePath} (${lines.length} lines, showing ${offset}-${offset + slice.length - 1})\n`
+      : `File: ${path.relative(ctx.workspace, filePath) || filePath} (${lines.length} lines)\n`;
+  return { output: truncateMiddle(header + (numbered || "(empty file)"), 120_000) };
 }
 
 async function toolWrite(
@@ -387,6 +411,31 @@ async function toolGlob(
   files.sort();
   return {
     output: files.length ? files.slice(0, 200).join("\n") : "No files matched",
+  };
+}
+
+async function toolListDir(
+  args: Record<string, unknown>,
+  ctx: ToolContext,
+): Promise<ToolResult> {
+  const rel = String(args.path || ".");
+  const dir = resolvePath(ctx.workspace, rel);
+  const entries = await fsp.readdir(dir, { withFileTypes: true });
+  entries.sort((a, b) => {
+    if (a.isDirectory() !== b.isDirectory()) return a.isDirectory() ? -1 : 1;
+    return a.name.localeCompare(b.name);
+  });
+  const lines = entries
+    .filter((e) => e.name !== ".git" && e.name !== "node_modules")
+    .slice(0, 500)
+    .map((e) => {
+      const kind = e.isDirectory() ? "dir " : e.isSymbolicLink() ? "link" : "file";
+      return `${kind}  ${e.name}${e.isDirectory() ? "/" : ""}`;
+    });
+  return {
+    output: lines.length
+      ? `${path.relative(ctx.workspace, dir) || "."}\n${lines.join("\n")}`
+      : "(empty directory)",
   };
 }
 

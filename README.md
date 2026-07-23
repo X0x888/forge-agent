@@ -1,6 +1,10 @@
 # Forge
 
-**Forge** is an open-source AI coding agent CLI with a **first-class harness** — the control plane that other tools partially implement:
+**Forge** is an open-source AI coding agent CLI with a **first-class harness** — the control plane that other tools partially implement.
+
+> **v0.2** — abortable runs, slash autocomplete, `/context` `/cost` `/rewind` `/export` `/copy` `/doctor`, parallel read-only tools, API retries, richer tool UX, session titles + resume by prefix.
+
+Key capability comparison:
 
 | Capability | Claude Code | Codex | Grok Build | **Forge** |
 |---|---|---|---|---|
@@ -186,12 +190,22 @@ Max-autonomy mode: open todos block Stop; system prompt instructs no session-def
 | `/ulw [task]` | Ultrawork on |
 | `/hooks` | List hooks |
 | `/status` | Session / auth / goal |
+| `/context` | Context window bar |
+| `/cost` | Token usage + rough $ |
 | `/todos` | Agent todos |
 | `/model <id>` | Switch model |
 | `/permissions <mode>` | `default` \| `acceptEdits` \| `plan` \| `bypassPermissions` |
 | `/compact` | Compact history |
+| `/rewind [n]` | Undo last n turns |
+| `/export [path]` | Export session markdown |
+| `/copy` | Clipboard last reply |
+| `/new` / `/clear` | Fresh or wipe conversation |
+| `/resume [id]` | Resume by id/prefix |
 | `/sessions` | Recent sessions |
+| `/doctor` | Env health check |
 | `/quit` | Exit |
+
+Tab completes slash commands. **Ctrl+C** aborts the current agent run (again to exit).
 
 ---
 

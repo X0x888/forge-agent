@@ -22,4 +22,9 @@ export {
   loadSession,
   saveSession,
   listSessions,
+  rewindSession,
+  exportSessionMarkdown,
+  compactMessages,
 } from "./session/session.js";
+export { withRetry, isRetryableError } from "./util/retry.js";
+export { completeSlash, handleSlash, runDoctor } from "./commands/slash.js";

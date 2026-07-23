@@ -6,11 +6,22 @@ import type { SessionData } from "../session/session.js";
 import { HookRunner } from "../harness/hooks.js";
 import { PermissionGate } from "../agent/permissions.js";
 import { runAgentLoop } from "../agent/loop.js";
-import { handleSlash } from "../commands/slash.js";
-import { saveSession } from "../session/session.js";
+import { handleSlash, completeSlash } from "../commands/slash.js";
+import { saveSession, estimateTokens } from "../session/session.js";
+import { loadGoal } from "../harness/goal.js";
 import { log } from "../util/log.js";
 import { describeAuth } from "../auth/resolve.js";
 import type { ResolvedAuth } from "../auth/types.js";
+import {
+  formatToolStart,
+  formatToolEnd,
+  formatTokens,
+  estimateCostUsd,
+  formatCost,
+} from "../util/format.js";
+import { detectProjectHints, getGitSnapshot } from "../util/git-context.js";
+import { createProvider } from "../providers/factory.js";
+import { resolveAuth } from "../auth/resolve.js";
 
 export async function runRepl(opts: {
   config: ForgeConfig;
@@ -20,17 +31,10 @@ export async function runRepl(opts: {
   auth: ResolvedAuth;
   initialPrompt?: string;
 }): Promise<void> {
-  const { config, provider, session, hooks, auth } = opts;
+  let { config, provider, session, hooks, auth } = opts;
   const permissions = new PermissionGate({ interactive: true });
 
-  console.log(chalk.bold.cyan("\n  ⚒  Forge — agent CLI with a real harness\n"));
-  console.log(
-    chalk.dim(
-      `  ${auth.provider}/${config.model} · ${describeAuth(auth)}\n` +
-        `  session ${session.meta.id.slice(0, 8)} · Stop hooks: ${config.blockingStopHooks ? "blocking" : "passive"}\n` +
-        `  /help for commands · /goal <obj> to arm relentless drive · /ulw for max autonomy\n`,
-    ),
-  );
+  printBanner(config, auth, session);
 
   await hooks.run("SessionStart", {
     sessionId: session.meta.id,
@@ -38,19 +42,32 @@ export async function runRepl(opts: {
     workspaceRoot: config.workspace || session.meta.cwd,
   });
 
+  let busy = false;
+  let abortController: AbortController | null = null;
+
   const rl = readline.createInterface({
     input: process.stdin,
     output: process.stdout,
     terminal: true,
+    historySize: 200,
+    completer: (line: string) => {
+      const hits = completeSlash(line);
+      return [hits.length ? hits : completeSlash("/"), line] as [
+        string[],
+        string,
+      ];
+    },
   });
 
   const prompt = () => {
-    const flags = [
-      session.meta.ultrawork ? chalk.magenta("ULW") : "",
-    ]
-      .filter(Boolean)
-      .join(" ");
-    const prefix = flags ? chalk.dim(`[${flags}] `) : "";
+    const flags: string[] = [];
+    if (session.meta.ultrawork) flags.push(chalk.magenta("ULW"));
+    const g = loadGoal(session.meta.id);
+    if (g?.objective && !g.paused && g.status === "active") {
+      flags.push(chalk.yellow("GOAL"));
+    }
+    if (config.permissionMode === "plan") flags.push(chalk.blue("PLAN"));
+    const prefix = flags.length ? chalk.dim(`[${flags.join(" ")}] `) : "";
     rl.setPrompt(prefix + chalk.green("forge") + chalk.dim(" › "));
     rl.prompt();
   };
@@ -62,7 +79,27 @@ export async function runRepl(opts: {
       return;
     }
 
-    const slash = handleSlash(text, { session, config, hooks });
+    if (busy) {
+      log.warn("Still working — press Ctrl+C to abort, then try again.");
+      return;
+    }
+
+    let slash = handleSlash(text, { session, config, hooks });
+    if (slash.replaceSession) {
+      session = slash.replaceSession;
+      // Recreate hooks for new session cwd if needed
+      hooks = new HookRunner(config, session.meta.cwd);
+      // Provider may need refresh if model/provider changed
+      const a = resolveAuth(config);
+      if (a) {
+        auth = a;
+        provider = createProvider(config, auth);
+      }
+      if (slash.output) console.log(slash.output);
+      prompt();
+      return;
+    }
+
     if (slash.handled && !slash.forwardPrompt) {
       if (slash.output) console.log(slash.output);
       if (slash.quit) {
@@ -76,8 +113,12 @@ export async function runRepl(opts: {
     const userMessage = slash.forwardPrompt || text;
     if (slash.output) console.log(slash.output);
 
+    busy = true;
+    abortController = new AbortController();
+    rl.pause();
+
     try {
-      rl.pause();
+      process.stdout.write("\n");
       const result = await runAgentLoop({
         config,
         provider,
@@ -86,27 +127,52 @@ export async function runRepl(opts: {
         permissions,
         userMessage,
         stream: true,
-        onToken: (t) => {
-          process.stdout.write(t);
+        signal: abortController.signal,
+        events: {
+          onToken: (t) => process.stdout.write(t),
+          onToolStart: (name, args) => {
+            console.error(formatToolStart(name, args));
+          },
+          onToolEnd: (name, r) => {
+            console.error(formatToolEnd(name, r));
+          },
+          onStatus: (msg) => log.dim(msg),
         },
       });
+
       if (result.finalText && !result.finalText.endsWith("\n")) {
         process.stdout.write("\n");
+      }
+      if (result.aborted) {
+        console.log(chalk.yellow("\n⚠ Run aborted."));
       }
       if (result.stopContinues > 0) {
         log.dim(
           `Harness continued ${result.stopContinues} time(s) via Stop block`,
         );
       }
+      if (result.promptTokens + result.completionTokens > 0) {
+        const cost = estimateCostUsd(
+          String(config.provider),
+          result.promptTokens,
+          result.completionTokens,
+        );
+        log.dim(
+          `turn tokens in=${formatTokens(result.promptTokens)} out=${formatTokens(result.completionTokens)} · est ${formatCost(cost)} · ctx ~${formatTokens(estimateTokens(session.messages))}`,
+        );
+      }
     } catch (err) {
       log.error((err as Error).message);
     } finally {
+      busy = false;
+      abortController = null;
       rl.resume();
       prompt();
     }
   };
 
   const shutdown = async () => {
+    if (busy && abortController) abortController.abort();
     await hooks.run("SessionEnd", {
       sessionId: session.meta.id,
       cwd: session.meta.cwd,
@@ -121,9 +187,23 @@ export async function runRepl(opts: {
     void handleLine(line);
   });
 
+  let sigintArmed = false;
   rl.on("SIGINT", () => {
-    console.log(chalk.dim("\n(Interrupted — type /quit to exit)"));
-    prompt();
+    if (busy && abortController) {
+      console.log(chalk.yellow("\nAborting current run… (Ctrl+C again to exit)"));
+      abortController.abort();
+      return;
+    }
+    if (sigintArmed) {
+      void shutdown();
+      return;
+    }
+    sigintArmed = true;
+    console.log(chalk.dim("\n(Ctrl+C again to exit, or type /quit)"));
+    setTimeout(() => {
+      sigintArmed = false;
+    }, 1500);
+    if (!busy) prompt();
   });
 
   rl.on("close", () => {
@@ -135,4 +215,26 @@ export async function runRepl(opts: {
   } else {
     prompt();
   }
+}
+
+function printBanner(
+  config: ForgeConfig,
+  auth: ResolvedAuth,
+  session: SessionData,
+): void {
+  const cwd = config.workspace || session.meta.cwd;
+  const git = getGitSnapshot(cwd);
+  const hints = detectProjectHints(cwd);
+  console.log(chalk.bold.cyan("\n  ⚒  Forge") + chalk.dim(` v0.2.0`));
+  console.log(
+    chalk.dim(
+      `  ${auth.provider}/${config.model} · ${describeAuth(auth)}\n` +
+        `  session ${session.meta.id.slice(0, 8)}` +
+        (session.meta.title ? ` · ${session.meta.title.slice(0, 40)}` : "") +
+        ` · Stop: ${config.blockingStopHooks ? "blocking" : "passive"}` +
+        (git.branch ? ` · ${git.branch}${git.dirty ? "*" : ""}` : "") +
+        (hints.length ? ` · ${hints.join("+")}` : "") +
+        `\n  /help · /goal · /ulw · Tab completes commands · Ctrl+C aborts run\n`,
+    ),
+  );
 }
