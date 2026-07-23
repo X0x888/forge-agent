@@ -42,6 +42,11 @@ import {
   loadUlwCycle,
   ulwKickoffMessage,
 } from "../harness/ulw-cycle.js";
+import {
+  COMMAND_PARAMS,
+  formatParamMenu,
+  resolveParamChoice,
+} from "../tui/complete.js";
 
 export interface SlashResult {
   handled: boolean;
@@ -88,6 +93,9 @@ export function completeSlash(line: string): string[] {
   if (t.includes(" ")) return [];
   return SLASH_COMMANDS.filter((c) => c.startsWith(t.toLowerCase()));
 }
+
+/** @deprecated use forgeCompleter — kept for tests */
+export { forgeCompleter } from "../tui/complete.js";
 
 export async function handleSlash(
   line: string,
@@ -154,18 +162,41 @@ export async function handleSlash(
     }
 
     case "/cycle": {
-      if (!arg || arg === "status") {
+      if (!arg) {
+        return {
+          handled: true,
+          output:
+            formatParamMenu("/cycle", COMMAND_PARAMS.cycle) +
+            "\n\n" +
+            formatUlwStatus(loadUlwCycle(opts.session.meta.id)),
+        };
+      }
+      if (arg === "status") {
         return {
           handled: true,
           output: formatUlwStatus(loadUlwCycle(opts.session.meta.id)),
         };
       }
-      const flag = parseCycleArg(arg);
+      // number menu: 1/2/3 map via resolveParamChoice, or parseCycleArg
+      const fromMenu = resolveParamChoice(arg, COMMAND_PARAMS.cycle);
+      const flag =
+        fromMenu === "status"
+          ? null
+          : fromMenu === "1" || fromMenu === "0"
+            ? (Number(fromMenu) as 0 | 1)
+            : parseCycleArg(arg);
+      if (fromMenu === "status") {
+        return {
+          handled: true,
+          output: formatUlwStatus(loadUlwCycle(opts.session.meta.id)),
+        };
+      }
       if (flag === null) {
         return {
           handled: true,
           output:
-            "Usage: /cycle 1 | /cycle 0 | /cycle status\n  1 = continue relentless waves\n  0 = last cycle (finish current wave, then stop)",
+            chalk.yellow(`Unknown: ${arg}\n`) +
+            formatParamMenu("/cycle", COMMAND_PARAMS.cycle),
         };
       }
       let state = setCycleFlag(opts.session.meta.id, flag);
@@ -290,20 +321,38 @@ export async function handleSlash(
     }
 
     case "/model": {
+      const pcfg = opts.config.providers[opts.config.provider];
+      const models = pcfg?.models?.length
+        ? pcfg.models
+        : pcfg?.defaultModel
+          ? [pcfg.defaultModel]
+          : [];
+      const choices = models.map((m) => ({
+        value: m,
+        description: m === opts.config.model ? "current" : "available",
+      }));
       if (!arg) {
-        const pcfg = opts.config.providers[opts.config.provider];
-        const models = pcfg?.models?.length
-          ? pcfg.models.join(", ")
-          : pcfg?.defaultModel || "(any)";
         return {
           handled: true,
-          output: `Current model: ${opts.config.model}\nKnown: ${models}\nUsage: /model <name>`,
+          output:
+            (choices.length
+              ? formatParamMenu("/model", choices, opts.config.model)
+              : `Current model: ${opts.config.model}\nUsage: /model <name>`) +
+            chalk.dim("\nTip: Tab completes model names."),
         };
       }
-      opts.config.model = arg;
-      opts.session.meta.model = arg;
+      const resolved =
+        resolveParamChoice(arg, choices) ||
+        // allow free-form model ids not in the list
+        arg;
+      opts.config.model = resolved;
+      opts.session.meta.model = resolved;
       saveSession(opts.session);
-      return { handled: true, output: `Model set to ${arg}`, session: opts.session };
+      return {
+        handled: true,
+        output: `Model set to ${resolved}`,
+        session: opts.session,
+      };
     }
 
     case "/compact": {
@@ -430,18 +479,31 @@ export async function handleSlash(
     }
 
     case "/permissions": {
+      const choices = COMMAND_PARAMS.permissions;
       if (!arg) {
         return {
           handled: true,
-          output: `Mode: ${opts.config.permissionMode}\nUsage: /permissions default|acceptEdits|plan|bypassPermissions`,
+          output: formatParamMenu(
+            "/permissions",
+            choices,
+            opts.config.permissionMode,
+          ),
         };
       }
-      const modes = ["default", "acceptEdits", "plan", "bypassPermissions"] as const;
-      if (!(modes as readonly string[]).includes(arg)) {
-        return { handled: true, output: `Unknown mode: ${arg}` };
+      const resolved = resolveParamChoice(arg, choices);
+      if (!resolved) {
+        return {
+          handled: true,
+          output:
+            chalk.yellow(`Unknown mode: ${arg}\n`) +
+            formatParamMenu("/permissions", choices, opts.config.permissionMode),
+        };
       }
-      opts.config.permissionMode = arg as ForgeConfig["permissionMode"];
-      return { handled: true, output: `Permission mode: ${arg}` };
+      opts.config.permissionMode = resolved as ForgeConfig["permissionMode"];
+      return {
+        handled: true,
+        output: `Permission mode: ${resolved}${resolved === "bypassPermissions" ? " (always approve)" : ""}`,
+      };
     }
 
     case "/doctor": {
@@ -585,7 +647,7 @@ Forge slash commands
   /cost                 Token usage + rough cost
   /todos                Show agent todos
   /model <name>         Switch model
-  /permissions <mode>   default|acceptEdits|plan|bypassPermissions
+  /permissions [mode]   Menu if empty; Tab / numbers / aliases (yolo, always…)
   /compact              Compact conversation
   /rewind [n]           Undo last n user turns (/undo)
   /export [path]        Export session as markdown
@@ -601,7 +663,9 @@ Forge slash commands
 
 Tips
 ────
-  Tab completes slash commands · Ctrl+C aborts the current run
-  Live HUD pane: forge status --watch
-  Blocking Stop hooks + /goal are the harness differentiators
+  ↑ / ↓           Command history (persisted in ~/.forge/history)
+  Tab             Autocomplete commands and parameters
+  /permissions    Shows numbered modes — pick 1–4 or type name
+  Ctrl+C          Abort run; twice at prompt to exit
+  Live HUD: forge status --watch
 `.trim();

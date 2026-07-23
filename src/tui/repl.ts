@@ -6,7 +6,7 @@ import type { SessionData } from "../session/session.js";
 import { HookRunner } from "../harness/hooks.js";
 import { PermissionGate } from "../agent/permissions.js";
 import { runAgentLoop } from "../agent/loop.js";
-import { handleSlash, completeSlash } from "../commands/slash.js";
+import { handleSlash } from "../commands/slash.js";
 import { saveSession, estimateTokens } from "../session/session.js";
 import { loadGoal } from "../harness/goal.js";
 import { log } from "../util/log.js";
@@ -24,6 +24,8 @@ import { createProvider } from "../providers/factory.js";
 import { resolveAuth } from "../auth/resolve.js";
 import { heartbeatSession, releaseSession } from "../statusline/active.js";
 import { loadUlwCycle } from "../harness/ulw-cycle.js";
+import { loadHistory, appendHistory } from "./history.js";
+import { makeCompleter } from "./complete.js";
 
 export async function runRepl(opts: {
   config: ForgeConfig;
@@ -44,7 +46,6 @@ export async function runRepl(opts: {
     provider: session.meta.provider,
     model: config.model,
   });
-  // Keep liveness fresh while idle in the REPL
   const hbTimer = setInterval(() => {
     heartbeatSession({
       sessionId: session.meta.id,
@@ -64,19 +65,20 @@ export async function runRepl(opts: {
   let busy = false;
   let abortController: AbortController | null = null;
 
+  const savedHistory = loadHistory(300);
+  // Node 20+: history option — oldest first, most recent last
   const rl = readline.createInterface({
     input: process.stdin,
     output: process.stdout,
     terminal: true,
-    historySize: 200,
-    completer: (line: string) => {
-      const hits = completeSlash(line);
-      return [hits.length ? hits : completeSlash("/"), line] as [
-        string[],
-        string,
-      ];
-    },
+    historySize: 300,
+    history: savedHistory,
+    completer: makeCompleter(() => config),
+    // Show completions when Tab with multiple matches (Node prints them)
   });
+
+  // Ensure completer works when paused/resumed
+  // (some Node versions need terminal true for ↑/↓ history — already set)
 
   const prompt = () => {
     const flags: string[] = [];
@@ -90,6 +92,11 @@ export async function runRepl(opts: {
       flags.push(chalk.yellow("GOAL"));
     }
     if (config.permissionMode === "plan") flags.push(chalk.blue("PLAN"));
+    if (config.permissionMode === "bypassPermissions") {
+      flags.push(chalk.red("YOLO"));
+    } else if (config.permissionMode === "acceptEdits") {
+      flags.push(chalk.green("auto"));
+    }
     const prefix = flags.length ? chalk.dim(`[${flags.join(" ")}] `) : "";
     rl.setPrompt(prefix + chalk.green("forge") + chalk.dim(" › "));
     rl.prompt();
@@ -102,6 +109,8 @@ export async function runRepl(opts: {
       return;
     }
 
+    appendHistory(text);
+
     if (busy) {
       log.warn("Still working — press Ctrl+C to abort, then try again.");
       return;
@@ -110,9 +119,7 @@ export async function runRepl(opts: {
     let slash = await handleSlash(text, { session, config, hooks });
     if (slash.replaceSession) {
       session = slash.replaceSession;
-      // Recreate hooks for new session cwd if needed
       hooks = new HookRunner(config, session.meta.cwd);
-      // Provider may need refresh if model/provider changed
       const a = resolveAuth(config);
       if (a) {
         auth = a;
@@ -257,9 +264,10 @@ function printBanner(
         `  session ${session.meta.id.slice(0, 8)}` +
         (session.meta.title ? ` · ${session.meta.title.slice(0, 40)}` : "") +
         ` · Stop: ${config.blockingStopHooks ? "blocking" : "passive"}` +
+        ` · perms: ${config.permissionMode}` +
         (git.branch ? ` · ${git.branch}${git.dirty ? "*" : ""}` : "") +
         (hints.length ? ` · ${hints.join("+")}` : "") +
-        `\n  /ulw <task> · /cycle 0|1 · /goal · /statusline · Ctrl+C aborts run\n`,
+        `\n  ↑↓ history · Tab complete · /permissions (menu) · /quit to exit\n`,
     ),
   );
 }
