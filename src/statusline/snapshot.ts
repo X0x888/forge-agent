@@ -6,6 +6,7 @@ import {
   type SessionData,
 } from "../session/session.js";
 import { loadGoal } from "../harness/goal.js";
+import { loadUlwCycle } from "../harness/ulw-cycle.js";
 import { loadConfig } from "../config/load.js";
 import { resolveAuth } from "../auth/resolve.js";
 import { getGitSnapshot } from "../util/git-context.js";
@@ -87,6 +88,8 @@ export function sessionToSnapshot(
   ).length;
   const tags: string[] = [];
   if (meta.ultrawork) tags.push("ULW");
+  const ulw = loadUlwCycle(meta.id);
+  if (ulw?.enabled) tags.push(ulw.cycle === 1 ? "c=1" : "c=0");
   if (opts.permissionMode === "plan") tags.push("PLAN");
 
   return {

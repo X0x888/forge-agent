@@ -19,6 +19,16 @@ export {
 } from "./harness/goal.js";
 export { runStopGuard } from "./harness/stop-guard.js";
 export {
+  armUlwCycle,
+  setCycleFlag,
+  loadUlwCycle,
+  disarmUlwCycle,
+  evaluateUlwAtStop,
+  isSoftPrompt,
+  expandUlwMandate,
+  formatUlwStatus,
+} from "./harness/ulw-cycle.js";
+export {
   createSession,
   loadSession,
   saveSession,

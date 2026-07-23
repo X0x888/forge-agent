@@ -2,7 +2,7 @@
 
 **Forge** is an open-source AI coding agent CLI with a **first-class harness** — the control plane that other tools partially implement.
 
-> **v0.3** — native **provider-agnostic statusline** (`forge status` / `--watch` / `--tmux`): context bar, tokens, git, liveness, optional plan/credits when the auth path exposes them (Grok sub, Codex local limits, …). Plus v0.2: abort, retries, `/context` `/cost` `/rewind` `/export` `/copy` `/doctor`.
+> **v0.4** — **ULW relentless cycle**: `/ulw` arms `cycle=1` so even soft prompts (`improve the code`) run research→waves→serendipity→review→repeat until you set **`/cycle 0`** (last wave). Plus v0.3 statusline, v0.2 abort/retries/sessions.
 
 Key capability comparison:
 
@@ -170,14 +170,23 @@ forge run "continue" --goal "…"
 
 Auto-arm from prose (default on): prompts like `don't stop until tests pass` or `goal: …` arm the same driver.
 
-### 3. Ultrawork (`/ulw`)
+### 3. Ultrawork cycle (`/ulw` + `/cycle`)
 
-Max-autonomy mode: open todos block Stop; system prompt instructs no session-deferral.
+Max-autonomy **relentless loop**. Soft prompts like `improve the code` are expanded to god-scope (research → waves → serendipity → review → repeat).
+
+| Flag | Meaning |
+|------|---------|
+| **`cycle=1`** (default on `/ulw`) | Keep going — Stop is blocked between waves |
+| **`cycle=0`** | Last wave — finish current work, attest `**Cycle complete.**`, then Stop |
 
 ```text
-/ulw refactor the auth module and leave tests green
+/ulw improve the code          # cycle=1 even for weak prompts
+/cycle 0                       # you're satisfied — finish this wave
+/cycle 1                       # resume relentless loops
 /ulw-off
 ```
+
+See [docs/ULW.md](docs/ULW.md).
 
 ---
 
@@ -187,7 +196,9 @@ Max-autonomy mode: open todos block Stop; system prompt instructs no session-def
 |---|---|
 | `/help` | Help |
 | `/goal …` | Goal lifecycle |
-| `/ulw [task]` | Ultrawork on |
+| `/ulw [task]` | ULW + cycle=1 (soft prompts OK) |
+| `/cycle 1` / `0` | Continue waves / last wave then stop |
+| `/ulw-off` | Disarm ULW + cycle |
 | `/hooks` | List hooks |
 | `/status` | Session / auth / goal |
 | `/context` | Context window bar |

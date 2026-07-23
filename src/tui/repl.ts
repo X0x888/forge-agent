@@ -23,6 +23,7 @@ import { detectProjectHints, getGitSnapshot } from "../util/git-context.js";
 import { createProvider } from "../providers/factory.js";
 import { resolveAuth } from "../auth/resolve.js";
 import { heartbeatSession, releaseSession } from "../statusline/active.js";
+import { loadUlwCycle } from "../harness/ulw-cycle.js";
 
 export async function runRepl(opts: {
   config: ForgeConfig;
@@ -80,6 +81,10 @@ export async function runRepl(opts: {
   const prompt = () => {
     const flags: string[] = [];
     if (session.meta.ultrawork) flags.push(chalk.magenta("ULW"));
+    const ulw = loadUlwCycle(session.meta.id);
+    if (ulw?.enabled) {
+      flags.push(ulw.cycle === 1 ? chalk.magenta("c=1") : chalk.yellow("c=0"));
+    }
     const g = loadGoal(session.meta.id);
     if (g?.objective && !g.paused && g.status === "active") {
       flags.push(chalk.yellow("GOAL"));
@@ -245,7 +250,7 @@ function printBanner(
   const cwd = config.workspace || session.meta.cwd;
   const git = getGitSnapshot(cwd);
   const hints = detectProjectHints(cwd);
-  console.log(chalk.bold.cyan("\n  ⚒  Forge") + chalk.dim(` v0.3.0`));
+  console.log(chalk.bold.cyan("\n  ⚒  Forge") + chalk.dim(` v0.4.0`));
   console.log(
     chalk.dim(
       `  ${auth.provider}/${config.model} · ${describeAuth(auth)}\n` +
@@ -254,7 +259,7 @@ function printBanner(
         ` · Stop: ${config.blockingStopHooks ? "blocking" : "passive"}` +
         (git.branch ? ` · ${git.branch}${git.dirty ? "*" : ""}` : "") +
         (hints.length ? ` · ${hints.join("+")}` : "") +
-        `\n  /help · /goal · /statusline · forge status --watch · Ctrl+C aborts run\n`,
+        `\n  /ulw <task> · /cycle 0|1 · /goal · /statusline · Ctrl+C aborts run\n`,
     ),
   );
 }

@@ -12,6 +12,12 @@ import {
 import { HookRunner, type HookContext } from "../harness/hooks.js";
 import { runStopGuard } from "../harness/stop-guard.js";
 import { loadGoal, detectAutoGoal, armGoal } from "../harness/goal.js";
+import {
+  loadUlwCycle,
+  armUlwCycle,
+  ulwKickoffMessage,
+  isSoftPrompt,
+} from "../harness/ulw-cycle.js";
 import { PermissionGate } from "./permissions.js";
 import { TOOL_DEFINITIONS, executeTool } from "./tools/index.js";
 import { buildSystemPrompt } from "./system-prompt.js";
@@ -131,7 +137,11 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
     onToolEnd: opts.events?.onToolEnd,
     onStatus: opts.events?.onStatus,
   };
-  const maxStopContinues = opts.maxStopContinues ?? 50;
+  // ULW cycle needs more stop-continues than a normal turn
+  const ulwArmed = Boolean(loadUlwCycle(session.meta.id)?.enabled);
+  const maxStopContinues =
+    opts.maxStopContinues ??
+    (ulwArmed ? Number(process.env.FORGE_ULW_MAX_CONTINUES) || 200 : 50);
   const workspace = config.workspace || session.meta.cwd;
   const startPrompt = session.meta.totalPromptTokens;
   const startComp = session.meta.totalCompletionTokens;
@@ -148,17 +158,39 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
     }
   }
 
+  // If session is already in ULW but cycle state missing, (re)arm from this message
+  let effectiveUserMessage = userMessage;
+  if (session.meta.ultrawork) {
+    let ulw = loadUlwCycle(session.meta.id);
+    if (!ulw?.enabled) {
+      ulw = armUlwCycle(session.meta.id, userMessage, { cycle: 1 });
+      log.info(
+        `ULW cycle armed (cycle=1)${ulw.softPrompt ? " — soft prompt expanded to god-scope" : ""}`,
+      );
+      effectiveUserMessage = ulwKickoffMessage(ulw);
+    } else if (isSoftPrompt(userMessage) && !userMessage.includes("ULW runtime controls")) {
+      // Soft follow-ups under ULW still get cycle framing without resetting wave hard
+      const refreshed = armUlwCycle(session.meta.id, userMessage, {
+        cycle: ulw.cycle,
+      });
+      effectiveUserMessage = ulwKickoffMessage(refreshed);
+      log.info("ULW soft follow-up — re-expanded mandate, cycle preserved");
+    }
+  }
+
   await hooks.run("UserPromptSubmit", {
     ...baseHookCtx(session, config),
-    prompt: userMessage,
+    prompt: effectiveUserMessage,
   });
 
   const goal = loadGoal(session.meta.id);
+  const ulwCycle = loadUlwCycle(session.meta.id);
   const system = buildSystemPrompt({
     config,
     workspace,
     goal,
-    ultrawork: session.meta.ultrawork,
+    ultrawork: session.meta.ultrawork || Boolean(ulwCycle?.enabled),
+    ulwCycle,
   });
   if (session.messages.length === 0 || session.messages[0]?.role !== "system") {
     session.messages.unshift({ role: "system", content: system });
@@ -168,7 +200,7 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
 
   maybeSetTitle(session, userMessage);
   markUserTurn(session);
-  session.messages.push({ role: "user", content: userMessage });
+  session.messages.push({ role: "user", content: effectiveUserMessage });
   session.meta.turnCount += 1;
   saveSession(session);
 

@@ -26,6 +26,7 @@ import { runRepl } from "./tui/repl.js";
 import { forgeHome, ensureDir } from "./util/fs.js";
 import { log, setLogLevel } from "./util/log.js";
 import { armGoal, formatGoalStatus, loadGoal } from "./harness/goal.js";
+import { armUlwCycle } from "./harness/ulw-cycle.js";
 import { runDoctor } from "./commands/slash.js";
 import {
   collectSnapshots,
@@ -35,7 +36,7 @@ import {
   runStatusWatch,
 } from "./statusline/index.js";
 
-const VERSION = "0.3.0";
+const VERSION = "0.4.0";
 
 async function main(): Promise<void> {
   const program = new Command();
@@ -84,9 +85,13 @@ async function main(): Promise<void> {
 
       const provider = createProvider(config, auth);
       const session = resolveSession(config, opts);
+      const prompt = promptParts?.length ? promptParts.join(" ") : undefined;
       if (opts.ulw) {
         session.meta.ultrawork = true;
+        const mandate = prompt || "improve the codebase";
+        armUlwCycle(session.meta.id, mandate, { cycle: 1 });
         saveSession(session);
+        log.info(`ULW cycle=1 armed for: ${mandate.slice(0, 80)}`);
       }
       if (opts.goal) {
         armGoal(session.meta.id, String(opts.goal), "manual");
@@ -96,7 +101,6 @@ async function main(): Promise<void> {
       }
 
       const hooks = new HookRunner(config, session.meta.cwd);
-      const prompt = promptParts?.length ? promptParts.join(" ") : undefined;
 
       // Non-TTY or explicit prompt without interactive intent → single-shot
       if (prompt && (!process.stdin.isTTY || process.env.FORGE_HEADLESS === "1")) {
@@ -140,9 +144,14 @@ async function main(): Promise<void> {
         model: config.model,
         ultrawork: Boolean(opts.ulw || opts.goal),
       });
+      const prompt = promptParts.join(" ");
+      if (opts.ulw || opts.goal) {
+        session.meta.ultrawork = true;
+        armUlwCycle(session.meta.id, prompt, { cycle: 1 });
+        saveSession(session);
+      }
       if (opts.goal) armGoal(session.meta.id, String(opts.goal), "manual");
       const hooks = new HookRunner(config, session.meta.cwd);
-      const prompt = promptParts.join(" ");
       const result = await runHeadless({
         config,
         provider,

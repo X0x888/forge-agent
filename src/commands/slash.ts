@@ -33,6 +33,15 @@ import chalk from "chalk";
 import fs from "node:fs";
 import path from "node:path";
 import { execSync } from "node:child_process";
+import {
+  armUlwCycle,
+  disarmUlwCycle,
+  setCycleFlag,
+  parseCycleArg,
+  formatUlwStatus,
+  loadUlwCycle,
+  ulwKickoffMessage,
+} from "../harness/ulw-cycle.js";
 
 export interface SlashResult {
   handled: boolean;
@@ -49,6 +58,7 @@ export const SLASH_COMMANDS = [
   "/goal",
   "/ulw",
   "/ulw-off",
+  "/cycle",
   "/hooks",
   "/status",
   "/context",
@@ -111,28 +121,71 @@ export async function handleSlash(
     case "/ultrawork":
     case "/autowork": {
       opts.session.meta.ultrawork = true;
+      const mandate = arg || "improve the codebase";
+      const state = armUlwCycle(opts.session.meta.id, mandate, { cycle: 1 });
       saveSession(opts.session);
-      if (!arg) {
-        return {
-          handled: true,
-          output: "Ultrawork mode ON. Send a task, or: /ulw <task>",
-          session: opts.session,
-        };
-      }
+      const banner = [
+        chalk.magenta("⚡ ULW ON") +
+          chalk.dim(`  cycle=${state.cycle} (CONTINUE)  soft=${state.softPrompt ? "yes" : "no"}`),
+        chalk.dim(
+          "Soft prompts still drive the harness: research → waves → serendipity → review → repeat.",
+        ),
+        chalk.dim("User stop: /cycle 0  (finish last wave) · /ulw-off  (disarm)"),
+        formatUlwStatus(state),
+      ].join("\n");
+      // Always forward an expanded kickoff so even bare `/ulw` or soft text runs the cycle
       return {
         handled: true,
-        forwardPrompt: arg,
-        output: chalk.magenta("⚡ Ultrawork mode ON"),
+        forwardPrompt: ulwKickoffMessage(state),
+        output: banner,
         session: opts.session,
       };
     }
 
     case "/ulw-off": {
       opts.session.meta.ultrawork = false;
+      disarmUlwCycle(opts.session.meta.id);
       saveSession(opts.session);
       return {
         handled: true,
-        output: "Ultrawork mode OFF",
+        output: "Ultrawork + cycle driver OFF",
+        session: opts.session,
+      };
+    }
+
+    case "/cycle": {
+      if (!arg || arg === "status") {
+        return {
+          handled: true,
+          output: formatUlwStatus(loadUlwCycle(opts.session.meta.id)),
+        };
+      }
+      const flag = parseCycleArg(arg);
+      if (flag === null) {
+        return {
+          handled: true,
+          output:
+            "Usage: /cycle 1 | /cycle 0 | /cycle status\n  1 = continue relentless waves\n  0 = last cycle (finish current wave, then stop)",
+        };
+      }
+      let state = setCycleFlag(opts.session.meta.id, flag);
+      if (!state) {
+        // Auto-arm ULW if user sets cycle without /ulw
+        opts.session.meta.ultrawork = true;
+        state = armUlwCycle(opts.session.meta.id, "continue prior mandate", {
+          cycle: flag,
+        });
+        saveSession(opts.session);
+      }
+      const msg =
+        flag === 1
+          ? chalk.magenta("cycle=1 CONTINUE") +
+            " — harness will keep blocking Stop and forcing the next wave."
+          : chalk.yellow("cycle=0 LAST") +
+            " — finish the current wave, review, attest **Cycle complete.** then Stop is allowed.";
+      return {
+        handled: true,
+        output: `${msg}\n${formatUlwStatus(state)}`,
         session: opts.session,
       };
     }
@@ -152,6 +205,7 @@ export async function handleSlash(
     case "/status":
     case "/session-info": {
       const g = loadGoal(opts.session.meta.id);
+      const ulw = loadUlwCycle(opts.session.meta.id);
       const auth = resolveAuth(opts.config);
       const est = estimateTokens(opts.session.messages);
       const cost = estimateCostUsd(
@@ -165,6 +219,9 @@ export async function handleSlash(
         `Provider/model: ${opts.session.meta.provider} / ${opts.session.meta.model}`,
         `Auth: ${describeAuth(auth)}`,
         `Ultrawork: ${opts.session.meta.ultrawork ? "ON" : "OFF"}`,
+        ulw?.enabled
+          ? `ULW cycle: ${ulw.cycle} ${ulw.cycle === 1 ? "CONTINUE" : "LAST"}  wave=${ulw.wave}  mandate=${ulw.mandate.slice(0, 60)}`
+          : `ULW cycle: off`,
         `Turns: ${opts.session.meta.turnCount}  Edits: ${opts.session.meta.editCount}`,
         `Messages: ${opts.session.messages.length}  ~ctx tokens: ${formatTokens(est)} / ${formatTokens(opts.config.contextWindow)}`,
         `Usage: in=${formatTokens(opts.session.meta.totalPromptTokens)} out=${formatTokens(opts.session.meta.totalCompletionTokens)}  est ${formatCost(cost)}`,
@@ -519,8 +576,9 @@ Forge slash commands
   /goal <objective>     Arm relentless goal driver (Codex-style)
   /goal                 Show goal status
   /goal pause|resume|clear|done
-  /ulw [task]           Enable ultrawork (max autonomy)
-  /ulw-off              Disable ultrawork
+  /ulw [task]           Arm ULW + cycle=1 (soft prompts OK: "improve the code")
+  /cycle 1|0|status     Continue waves (1) or last wave then stop (0)
+  /ulw-off              Disarm ULW + cycle driver
   /hooks                List loaded hooks
   /status               Session + auth + goal status
   /context              Context window usage bar

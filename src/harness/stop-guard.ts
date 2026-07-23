@@ -4,7 +4,8 @@
  * Composes:
  *  1. User-defined Stop hooks (blocking)
  *  2. /goal relentless driver
- *  3. Ultrawork mode (no-defer: block premature stops when work is open)
+ *  3. ULW cycle driver (cycle=1 loop / cycle=0 last-wave)
+ *  4. Ultrawork open-todos backstop
  */
 import type { ForgeConfig } from "../config/types.js";
 import type { HookRunner, HookContext, HookResult } from "./hooks.js";
@@ -13,13 +14,13 @@ import {
   loadGoal,
   type GoalDecision,
 } from "./goal.js";
+import { evaluateUlwAtStop, loadUlwCycle, type UlwStopDecision } from "./ulw-cycle.js";
 
 export interface StopGuardInput {
   config: ForgeConfig;
   hooks: HookRunner;
   ctx: HookContext;
   ultrawork: boolean;
-  /** Open todos still pending */
   openTodoCount: number;
   editCount: number;
   lastAssistantMessage: string;
@@ -31,18 +32,19 @@ export interface StopGuardResult {
   additionalContext?: string;
   systemMessage?: string;
   goal?: GoalDecision;
+  ulw?: UlwStopDecision;
   hook?: HookResult;
 }
 
 export async function runStopGuard(input: StopGuardInput): Promise<StopGuardResult> {
   const { config, hooks, ctx } = input;
 
-  // 1. User hooks first
   const goal = loadGoal(ctx.sessionId);
+  const ulw = loadUlwCycle(ctx.sessionId);
   const hookCtx: HookContext = {
     ...ctx,
     goalObjective: goal?.objective,
-    ultrawork: input.ultrawork,
+    ultrawork: input.ultrawork || Boolean(ulw?.enabled),
     editCount: input.editCount,
     lastAssistantMessage: input.lastAssistantMessage,
     stopReason: "agent_end",
@@ -52,7 +54,6 @@ export async function runStopGuard(input: StopGuardInput): Promise<StopGuardResu
   if (config.blockingStopHooks) {
     hookResult = await hooks.run("Stop", hookCtx);
   } else {
-    // Passive only (Grok-compatible mode)
     hookResult = await hooks.run("Stop", hookCtx);
     hookResult = { ...hookResult, blocked: false, decision: "allow" };
   }
@@ -67,7 +68,7 @@ export async function runStopGuard(input: StopGuardInput): Promise<StopGuardResu
     };
   }
 
-  // 2. Goal driver
+  // Goal driver
   const goalDecision = evaluateGoalAtStop({
     sessionId: ctx.sessionId,
     lastAssistantMessage: input.lastAssistantMessage,
@@ -96,15 +97,51 @@ export async function runStopGuard(input: StopGuardInput): Promise<StopGuardResu
     };
   }
 
-  // 3. Ultrawork: block stop when open todos remain and agent didn't attest done
+  // ULW relentless cycle (even for soft prompts)
+  const stuckThreshold =
+    Number(process.env.FORGE_ULW_STUCK_THRESHOLD) ||
+    config.goal.stuckThreshold ||
+    5;
+
+  const ulwDecision = evaluateUlwAtStop({
+    sessionId: ctx.sessionId,
+    lastAssistantMessage: input.lastAssistantMessage,
+    editCount: input.editCount,
+    openTodoCount: input.openTodoCount,
+    stuckThreshold,
+  });
+
+  if (ulwDecision.stuckReleased || ulwDecision.lastCycleReleased) {
+    return {
+      allowStop: true,
+      systemMessage: ulwDecision.reason,
+      goal: goalDecision,
+      ulw: ulwDecision,
+      hook: hookResult,
+    };
+  }
+
+  if (ulwDecision.block) {
+    return {
+      allowStop: false,
+      reason: ulwDecision.reason,
+      additionalContext: ulwDecision.reanchor,
+      systemMessage: ulwDecision.reason,
+      goal: goalDecision,
+      ulw: ulwDecision,
+      hook: hookResult,
+    };
+  }
+
+  // Backstop: ultrawork session flag with open todos (if cycle state missing)
   if (input.ultrawork && input.openTodoCount > 0) {
-    const attested = /\*\*Goal achieved\.\*\*|all tasks complete|TODOS? COMPLETE/i.test(
+    const attested = /\*\*Goal achieved\.\*\*|\*\*Cycle complete\.\*\*|all tasks complete/i.test(
       input.lastAssistantMessage || "",
     );
     if (!attested) {
       const msg = [
         `[Forge ultrawork] Stop blocked — ${input.openTodoCount} open todo(s) remain.`,
-        `Continue working the next unfinished item. Do not stop mid-mandate.`,
+        `Continue the next unfinished item, or set /cycle 0 and finish the last wave with **Cycle complete.**`,
       ].join("\n");
       return {
         allowStop: false,
@@ -113,6 +150,7 @@ export async function runStopGuard(input: StopGuardInput): Promise<StopGuardResu
         systemMessage: msg,
         hook: hookResult,
         goal: goalDecision,
+        ulw: ulwDecision,
       };
     }
   }
@@ -123,5 +161,6 @@ export async function runStopGuard(input: StopGuardInput): Promise<StopGuardResu
     systemMessage: hookResult.systemMessage,
     hook: hookResult,
     goal: goalDecision,
+    ulw: ulwDecision,
   };
 }
