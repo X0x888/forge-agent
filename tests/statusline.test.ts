@@ -1,19 +1,49 @@
-import { describe, it } from "node:test";
+import { describe, it, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { createSession, saveSession } from "../src/session/session.js";
 import { sessionToSnapshot } from "../src/statusline/snapshot.js";
-import { renderHud, renderTmux } from "../src/statusline/render.js";
+import {
+  renderHud,
+  renderTmux,
+  renderCompactStrip,
+} from "../src/statusline/render.js";
 import {
   heartbeatSession,
   computeLiveness,
   releaseSession,
 } from "../src/statusline/active.js";
+import {
+  beginTurn,
+  endTurn,
+  setPhase,
+  _resetActivityForTests,
+} from "../src/statusline/activity.js";
 import { collectPlanUsage } from "../src/statusline/plan.js";
+import {
+  startBackgroundTask,
+  _resetTasksForTests,
+  listTasks,
+} from "../src/agent/tools/background-tasks.js";
+import {
+  buildPromptFlags,
+  renderTurnFooter,
+  formatBackgroundTasksList,
+  createWorkingIndicator,
+  clipAnsi,
+  visibleWidth,
+} from "../src/tui/status-bar.js";
+import type { ForgeConfig } from "../src/config/types.js";
+import type { ResolvedAuth } from "../src/auth/types.js";
 
 describe("statusline", () => {
+  beforeEach(() => {
+    _resetActivityForTests();
+    _resetTasksForTests();
+  });
+
   it("builds snapshot and renders without plan inventing numbers", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-sl-"));
     process.env.FORGE_HOME = tmp;
@@ -42,6 +72,9 @@ describe("statusline", () => {
     const tmux = renderTmux(snap);
     assert.match(tmux, /forge/);
     assert.match(tmux, /ctx:/);
+
+    const strip = renderCompactStrip(snap, { plain: true, width: 100 });
+    assert.match(strip, /%/);
   });
 
   it("tracks live heartbeat", () => {
@@ -56,6 +89,121 @@ describe("statusline", () => {
     const { liveness } = computeLiveness("abc-123", new Date().toISOString());
     assert.equal(liveness, "live");
     releaseSession("abc-123");
+  });
+
+  it("reports working when busy heartbeat is set", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-sl-work-"));
+    process.env.FORGE_HOME = tmp;
+    heartbeatSession({
+      sessionId: "work-1",
+      cwd: tmp,
+      provider: "xai",
+      model: "grok-4",
+      busy: true,
+      phase: "thinking",
+    });
+    const { liveness } = computeLiveness("work-1", new Date().toISOString());
+    assert.equal(liveness, "working");
+    releaseSession("work-1");
+  });
+
+  it("snapshot includes activity when mid-turn in this process", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-sl-act-"));
+    process.env.FORGE_HOME = tmp;
+    const s = createSession({ cwd: tmp, provider: "xai", model: "grok-4" });
+    saveSession(s);
+    heartbeatSession({
+      sessionId: s.meta.id,
+      cwd: tmp,
+      provider: "xai",
+      model: "grok-4",
+    });
+    beginTurn();
+    setPhase("tool", "bash npm test");
+    const snap = sessionToSnapshot(s, { authMethod: "api_key" });
+    assert.ok(snap.activity?.busy);
+    assert.equal(snap.activity?.phase, "tool");
+    assert.match(snap.activity?.detail || "", /bash/);
+    assert.equal(snap.liveness, "working");
+
+    const hud = renderHud([snap], { plain: true, width: 120 });
+    assert.match(hud, /tool:|thinking|working/i);
+
+    endTurn();
+    releaseSession(s.meta.id);
+  });
+
+  it("renders background tasks in HUD", async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-sl-bg-"));
+    process.env.FORGE_HOME = tmp;
+    const s = createSession({ cwd: tmp, provider: "xai", model: "grok-4" });
+    saveSession(s);
+    heartbeatSession({
+      sessionId: s.meta.id,
+      cwd: tmp,
+      provider: "xai",
+      model: "grok-4",
+    });
+
+    const started = await startBackgroundTask({
+      command: "sleep 30",
+      cwd: tmp,
+      profile: "off",
+      missingBackend: "fallback",
+    });
+    assert.equal(started.ok, true);
+    assert.ok(listTasks().some((t) => t.status === "running"));
+
+    const snap = sessionToSnapshot(s, { authMethod: "api_key" });
+    assert.ok((snap.activity?.bgRunning ?? 0) >= 1);
+    assert.ok(snap.backgroundTasks?.some((t) => t.status === "running"));
+
+    const hud = renderHud([snap], { plain: true, width: 120 });
+    assert.match(hud, /bg:|sleep/);
+
+    const list = formatBackgroundTasksList();
+    assert.match(list, /sleep|running/i);
+
+    _resetTasksForTests();
+    endTurn();
+    releaseSession(s.meta.id);
+  });
+
+  it("prompt flags and turn footer surface session health", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-sl-prompt-"));
+    process.env.FORGE_HOME = tmp;
+    const s = createSession({ cwd: tmp, provider: "xai", model: "grok-4" });
+    s.meta.ultrawork = true;
+    s.meta.totalPromptTokens = 500;
+    s.meta.totalCompletionTokens = 100;
+    s.todos = [
+      { id: "1", content: "ship", status: "in_progress" },
+    ];
+    saveSession(s);
+
+    const config = {
+      provider: "xai",
+      model: "grok-4",
+      contextWindow: 128_000,
+      permissionMode: "default",
+      blockingStopHooks: true,
+    } as ForgeConfig;
+    const auth = {
+      provider: "xai",
+      method: "api_key",
+      token: "test",
+    } as ResolvedAuth;
+
+    const flags = buildPromptFlags({ config, session: s, auth });
+    assert.match(flags, /ULW/);
+
+    const footer = renderTurnFooter(
+      { config, session: s, auth },
+      { promptTokens: 100, completionTokens: 50, stopContinues: 1 },
+    );
+    assert.match(footer, /ctx/);
+    assert.match(footer, /todos:1/);
+    assert.match(footer, /harness/);
   });
 
   it("plan adapter is honest for api_key and copilot", async () => {
@@ -83,5 +231,64 @@ describe("statusline", () => {
     };
     const hud = renderHud([snap], { plain: true, width: 100 });
     assert.doesNotMatch(hud, /billed per token/);
+  });
+
+  it("working indicator pause is refcounted", () => {
+    const w = createWorkingIndicator();
+    w.start();
+    assert.equal(w.pauseDepth(), 0);
+    w.pause();
+    w.pause();
+    assert.equal(w.pauseDepth(), 2);
+    w.resume();
+    assert.equal(w.pauseDepth(), 1);
+    w.resume();
+    assert.equal(w.pauseDepth(), 0);
+    w.stop();
+
+    const colored = "\x1b[32mhello\x1b[0m world";
+    assert.equal(visibleWidth(colored), "hello world".length);
+    const clipped = clipAnsi(colored, 5);
+    assert.ok(visibleWidth(clipped) <= 5);
+  });
+
+  it("parallel tool hold stays until all pending settle", () => {
+    // Mirrors REPL contract: pendingTools++ on phase tool, -- on settled
+    const w = createWorkingIndicator();
+    w.start();
+    let pending = 0;
+    let toolHold = false;
+    const setToolHold = (on: boolean) => {
+      if (on && !toolHold) {
+        w.pause();
+        toolHold = true;
+      } else if (!on && toolHold) {
+        w.resume();
+        toolHold = false;
+      }
+    };
+    const onPhaseTool = () => {
+      pending += 1;
+      setToolHold(true);
+    };
+    const onSettled = () => {
+      pending = Math.max(0, pending - 1);
+      if (pending === 0) setToolHold(false);
+    };
+
+    // A and B enter tool phase (A still in permission)
+    onPhaseTool();
+    onPhaseTool();
+    assert.equal(pending, 2);
+    assert.equal(w.pauseDepth(), 1);
+    // B finishes while A still waiting
+    onSettled();
+    assert.equal(pending, 1);
+    assert.equal(w.pauseDepth(), 1); // still held for A
+    // A finishes
+    onSettled();
+    assert.equal(pending, 0);
+    assert.equal(w.pauseDepth(), 0);
+    w.stop();
   });
 });

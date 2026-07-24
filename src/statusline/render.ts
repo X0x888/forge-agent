@@ -71,12 +71,88 @@ function barColor(
 function liveGlyph(liveness: StatusSnapshot["liveness"], enabled: boolean): string {
   const map = {
     live: { g: "●", s: "green" as const },
+    working: { g: "◉", s: "magenta" as const },
     idle: { g: "○", s: "yellow" as const },
     stale: { g: "◌", s: "dim" as const },
     unknown: { g: "·", s: "dim" as const },
   };
-  const m = map[liveness];
+  const m = map[liveness] || map.unknown;
   return paint(enabled, m.g, m.s) + paint(enabled, ` ${liveness}`, "dim");
+}
+
+function formatActivity(snap: StatusSnapshot, enabled: boolean): string | null {
+  const a = snap.activity;
+  if (!a) return null;
+  const parts: string[] = [];
+  if (a.busy && a.phase && a.phase !== "idle") {
+    const label =
+      a.phase === "tool" && a.detail
+        ? `tool:${shortLabel(a.detail, 24)}`
+        : a.phase === "thinking"
+          ? "thinking…"
+          : a.phase === "compacting"
+            ? "compacting…"
+            : a.phase === "stop_guard"
+              ? "harness…"
+              : a.phase === "waiting"
+                ? "bg wait…"
+                : a.phase;
+    parts.push(paint(enabled, label, "magenta"));
+    if (a.turnElapsedSec != null && a.turnElapsedSec > 0) {
+      parts.push(paint(enabled, formatDuration(a.turnElapsedSec), "dim"));
+    }
+  }
+  if (a.bgRunning > 0) {
+    const hint = a.bgHint ? shortLabel(a.bgHint, 28) : "";
+    parts.push(
+      paint(
+        enabled,
+        hint ? `bg:${a.bgRunning} ${hint}` : `bg:${a.bgRunning}`,
+        "yellow",
+      ),
+    );
+  }
+  return parts.length ? parts.join("  ") : null;
+}
+
+function shortLabel(s: string, max: number): string {
+  const one = s.replace(/\s+/g, " ").trim();
+  return one.length > max ? one.slice(0, max - 1) + "…" : one;
+}
+
+function formatBgTasks(snap: StatusSnapshot, enabled: boolean): string | null {
+  const tasks = snap.backgroundTasks;
+  if (!tasks?.length) return null;
+  const running = tasks.filter((t) => t.status === "running");
+  const recent = tasks
+    .filter((t) => t.status !== "running")
+    .slice(-2)
+    .reverse();
+  const lines: string[] = [];
+  for (const t of running) {
+    lines.push(
+      paint(enabled, "  ↻", "yellow") +
+        paint(enabled, ` ${t.id.slice(0, 14)}  ${formatDuration(t.elapsedSec)}  `, "dim") +
+        paint(enabled, t.command, "cyan"),
+    );
+  }
+  for (const t of recent) {
+    const mark =
+      t.status === "completed"
+        ? paint(enabled, "  ✓", "green")
+        : t.status === "failed"
+          ? paint(enabled, "  ✗", "red")
+          : paint(enabled, "  ·", "dim");
+    lines.push(
+      mark +
+        paint(
+          enabled,
+          ` ${t.id.slice(0, 14)}  ${t.status}  ${t.command}`,
+          "dim",
+        ),
+    );
+  }
+  return lines.length ? lines.join("\n") : null;
 }
 
 function formatPlan(plan: PlanUsageInfo | undefined, enabled: boolean): string | null {
@@ -204,6 +280,13 @@ function renderSession(
   if (snap.turnCount > 0) {
     l2.push(paint(c, `t:${snap.turnCount}`, "dim"));
   }
+  if (snap.editCount > 0) {
+    l2.push(paint(c, `edits:${snap.editCount}`, "dim"));
+  }
+
+  // Line 3 (optional): live activity + background
+  const act = formatActivity(snap, c);
+  const bgBlock = formatBgTasks(snap, c);
 
   let line1 = l1.join("  ");
   let line2 = l2.join("  ");
@@ -215,9 +298,14 @@ function renderSession(
   }
 
   if (opts.singleLine || opts.tmux) {
-    return [line1, line2].join(" │ ");
+    const bits = [line1, line2];
+    if (act) bits.push(act);
+    return bits.join(" │ ");
   }
-  return `${line1}\n${line2}`;
+  const lines = [line1, line2];
+  if (act) lines.push(shed(act, width > 20 ? width : 100));
+  if (bgBlock && !opts.singleLine) lines.push(bgBlock);
+  return lines.join("\n");
 }
 
 function shed(line: string, width: number): string {
@@ -250,7 +338,12 @@ export function renderHud(
 export function renderTmux(snap: StatusSnapshot | undefined): string {
   if (!snap) return "forge:idle";
   const pct = snap.context.percent;
-  const live = snap.liveness === "live" ? "●" : "○";
+  const live =
+    snap.liveness === "working"
+      ? "◉"
+      : snap.liveness === "live"
+        ? "●"
+        : "○";
   const parts = [
     `forge`,
     shortModel(snap.model),
@@ -259,12 +352,59 @@ export function renderTmux(snap: StatusSnapshot | undefined): string {
     `ctx:${pct}%`,
     live,
   ].filter(Boolean);
+  if (snap.activity?.busy) {
+    parts.push(snap.activity.phase || "work");
+  }
+  if ((snap.activity?.bgRunning ?? 0) > 0) {
+    parts.push(`bg:${snap.activity!.bgRunning}`);
+  }
   if (snap.plan?.percent != null) parts.push(`use:${snap.plan.percent}%`);
   else if (snap.plan?.remaining != null) {
     parts.push(`${formatCompact(snap.plan.remaining)}left`);
   }
   if (snap.goal?.active) parts.push("GOAL");
   return parts.join(" ");
+}
+
+/**
+ * Compact single-line strip for REPL prompt / post-turn footer.
+ * Prefer dense signal over pretty bars when width is tight.
+ */
+export function renderCompactStrip(
+  snap: StatusSnapshot,
+  opts: StatuslineRenderOptions & { showActivity?: boolean } = {},
+): string {
+  const c = colorEnabled(opts);
+  const width = opts.width ?? process.stdout.columns ?? 100;
+  const parts: string[] = [];
+
+  parts.push(
+    barColor(c, snap.context.percent, contextBar(snap.context.percent, 8)) +
+      paint(c, ` ${snap.context.percent}%`, "dim"),
+  );
+  if (snap.tokens.totalTokens > 0) {
+    let tok = formatTokens(snap.tokens.totalTokens);
+    if (snap.tokens.estimatedUsd != null && snap.tokens.estimatedUsd > 0) {
+      tok += ` ~${formatCost(snap.tokens.estimatedUsd)}`;
+    }
+    parts.push(paint(c, tok, "dim"));
+  }
+  if (snap.openTodos > 0) {
+    parts.push(paint(c, `todos:${snap.openTodos}`, "yellow"));
+  }
+  if ((snap.activity?.bgRunning ?? 0) > 0) {
+    parts.push(paint(c, `bg:${snap.activity!.bgRunning}`, "yellow"));
+  }
+  if (opts.showActivity !== false) {
+    const act = formatActivity(snap, c);
+    if (act) parts.push(act);
+  }
+  if (snap.goal?.active) parts.push(paint(c, "GOAL", "yellow"));
+  if (snap.tags.includes("ULW")) parts.push(paint(c, "ULW", "magenta"));
+
+  parts.push(liveGlyph(snap.liveness, c));
+
+  return shed(parts.join("  "), width);
 }
 
 export function snapshotsToJson(snaps: StatusSnapshot[]): string {

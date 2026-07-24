@@ -7,7 +7,7 @@
 
 export type AuthMethod = "api_key" | "oauth" | "subscription" | "unknown";
 
-export type Liveness = "live" | "idle" | "stale" | "unknown";
+export type Liveness = "live" | "working" | "idle" | "stale" | "unknown";
 
 export interface GitInfo {
   branch: string;
@@ -61,6 +61,27 @@ export interface GoalInfo {
   blocks?: number;
 }
 
+/** What the agent is doing right now (in-process or last heartbeat). */
+export interface ActivityInfo {
+  busy: boolean;
+  phase: string;
+  detail?: string;
+  /** Seconds into current agent turn */
+  turnElapsedSec?: number;
+  /** Running background shell tasks */
+  bgRunning: number;
+  bgTotal?: number;
+  bgHint?: string;
+}
+
+export interface BackgroundTaskSummary {
+  id: string;
+  status: string;
+  command: string;
+  elapsedSec: number;
+  exitCode?: number | null;
+}
+
 export interface StatusSnapshot {
   sessionId: string;
   title?: string;
@@ -88,6 +109,10 @@ export interface StatusSnapshot {
   /** Subscription / plan quota when available for this auth path */
   plan?: PlanUsageInfo;
   goal?: GoalInfo;
+  /** Live agent activity (thinking / tool / bg) when known */
+  activity?: ActivityInfo;
+  /** Background tasks for this process (when collect is local) */
+  backgroundTasks?: BackgroundTaskSummary[];
   /** Extra free-form tags e.g. ["plan-mode"] */
   tags: string[];
   collectedAt: string;

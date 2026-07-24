@@ -11,8 +11,14 @@ import { loadConfig } from "../config/load.js";
 import { resolveAuth } from "../auth/resolve.js";
 import { getGitSnapshot } from "../util/git-context.js";
 import { estimateCostUsd } from "../util/format.js";
-import { computeLiveness } from "./active.js";
+import { computeLiveness, getActiveEntry } from "./active.js";
 import { collectPlanUsage } from "./plan.js";
+import {
+  getActivity,
+  activityElapsedSec,
+  type SessionActivity,
+} from "./activity.js";
+import { listTasks } from "../agent/tools/background-tasks.js";
 import type {
   StatusSnapshot,
   CollectOptions,
@@ -20,7 +26,79 @@ import type {
   ContextInfo,
   TokenUsageInfo,
   GoalInfo,
+  ActivityInfo,
+  BackgroundTaskSummary,
 } from "./types.js";
+
+function summarizeCommand(cmd: string, max = 48): string {
+  const one = cmd.replace(/\s+/g, " ").trim();
+  return one.length > max ? one.slice(0, max - 1) + "…" : one;
+}
+
+function collectBackgroundSummaries(): BackgroundTaskSummary[] {
+  try {
+    return listTasks().map((t) => ({
+      id: t.id,
+      status: t.status,
+      command: summarizeCommand(t.command),
+      elapsedSec: Math.max(
+        0,
+        Math.floor(((t.endedAt || Date.now()) - t.startedAt) / 1000),
+      ),
+      exitCode: t.exitCode,
+    }));
+  } catch {
+    return [];
+  }
+}
+
+function buildActivity(
+  sessionId: string,
+  bg: BackgroundTaskSummary[],
+  localActivity?: SessionActivity,
+): ActivityInfo | undefined {
+  const running = bg.filter((t) => t.status === "running");
+  const local = localActivity || getActivity();
+  const active = getActiveEntry(sessionId);
+
+  // Prefer in-process activity when this PID owns the session
+  const sameProcess = active && active.pid === process.pid;
+  if (sameProcess && (local.busy || local.bgRunning > 0 || running.length)) {
+    return {
+      busy: local.busy || running.length > 0,
+      phase: local.busy ? local.phase : running.length ? "waiting" : "idle",
+      detail: local.detail || (running[0] ? running[0].command : undefined),
+      turnElapsedSec: local.busy ? activityElapsedSec(local) : undefined,
+      bgRunning: Math.max(local.bgRunning, running.length),
+      bgTotal: Math.max(local.bgTotal, bg.length),
+      bgHint: local.bgHint || running[0]?.command,
+    };
+  }
+
+  // Cross-process: use heartbeat fields from active registry
+  if (active && (active.busy || (active.bgRunning ?? 0) > 0)) {
+    return {
+      busy: Boolean(active.busy) || (active.bgRunning ?? 0) > 0,
+      phase: active.phase || (active.busy ? "thinking" : "idle"),
+      detail: active.phaseDetail,
+      bgRunning: active.bgRunning ?? 0,
+      bgHint: active.phaseDetail,
+    };
+  }
+
+  if (running.length) {
+    return {
+      busy: true,
+      phase: "waiting",
+      detail: running[0].command,
+      bgRunning: running.length,
+      bgTotal: bg.length,
+      bgHint: running[0].command,
+    };
+  }
+
+  return undefined;
+}
 
 function projectLabel(cwd: string, levels = 2): string {
   const parts = path.resolve(cwd).split(path.sep).filter(Boolean);
@@ -91,6 +169,17 @@ export function sessionToSnapshot(
   const ulw = loadUlwCycle(meta.id);
   if (ulw?.enabled) tags.push(ulw.cycle === 1 ? "c=1" : "c=0");
   if (opts.permissionMode === "plan") tags.push("PLAN");
+  if (opts.permissionMode === "bypassPermissions") tags.push("YOLO");
+  else if (opts.permissionMode === "acceptEdits") tags.push("auto");
+
+  const bg = collectBackgroundSummaries();
+  const activity = buildActivity(meta.id, bg);
+
+  // Prefer working when activity says so
+  let live = liveness;
+  if (activity?.busy && (live === "live" || live === "idle" || live === "unknown")) {
+    live = "working";
+  }
 
   return {
     sessionId: meta.id,
@@ -105,7 +194,7 @@ export function sessionToSnapshot(
     updatedAt: meta.updatedAt,
     durationSec: durationSec(meta.createdAt),
     idleSec,
-    liveness,
+    liveness: live,
     turnCount: meta.turnCount,
     editCount: meta.editCount,
     openTodos,
@@ -121,6 +210,8 @@ export function sessionToSnapshot(
     context: buildContext(session, opts.windowTokens || 128_000),
     tokens: buildTokens(session, meta.provider),
     goal: buildGoal(meta.id),
+    activity,
+    backgroundTasks: bg.length ? bg : undefined,
     tags,
     collectedAt: new Date().toISOString(),
   };
@@ -154,7 +245,8 @@ export async function collectSnapshots(
       sessions.sort((a, b) => {
         const la = computeLiveness(a.meta.id, a.meta.updatedAt).liveness;
         const lb = computeLiveness(b.meta.id, b.meta.updatedAt).liveness;
-        const score = (l: string) => (l === "live" ? 0 : l === "idle" ? 1 : 2);
+        const score = (l: string) =>
+          l === "working" ? 0 : l === "live" ? 1 : l === "idle" ? 2 : 3;
         const d = score(la) - score(lb);
         if (d !== 0) return d;
         return a.meta.updatedAt < b.meta.updatedAt ? 1 : -1;

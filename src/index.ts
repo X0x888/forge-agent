@@ -67,8 +67,18 @@ export {
   collectSnapshots,
   renderHud,
   renderTmux,
+  renderCompactStrip,
   runStatusWatch,
   heartbeatSession,
   releaseSession,
+  getActivity,
+  beginTurn,
+  endTurn,
+  setPhase,
 } from "./statusline/index.js";
-export type { StatusSnapshot, PlanUsageInfo } from "./statusline/types.js";
+export type {
+  StatusSnapshot,
+  PlanUsageInfo,
+  ActivityInfo,
+  Liveness,
+} from "./statusline/types.js";

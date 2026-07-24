@@ -33,6 +33,13 @@ import {
   formatCost,
 } from "../util/format.js";
 
+export type LoopPhase =
+  | "thinking"
+  | "tool"
+  | "compacting"
+  | "stop_guard"
+  | "waiting";
+
 export interface LoopEvents {
   onToken?: (token: string) => void;
   onToolStart?: (name: string, args: Record<string, unknown>) => void;
@@ -40,7 +47,15 @@ export interface LoopEvents {
     name: string,
     result: { isError?: boolean; ms: number; bytes: number },
   ) => void;
+  /**
+   * Fired once per tool attempt after onPhase("tool"), including hard-deny
+   * and permission-deny paths that never reach onToolStart/onToolEnd.
+   * Used by the REPL to keep the spinner paused across parallel batches.
+   */
+  onToolSettled?: (name: string) => void;
   onStatus?: (msg: string) => void;
+  /** Rich phase updates for in-REPL working indicator / HUD */
+  onPhase?: (phase: LoopPhase, detail?: string) => void;
 }
 
 export interface LoopOptions {
@@ -140,7 +155,9 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
     onToken: opts.events?.onToken || opts.onToken,
     onToolStart: opts.events?.onToolStart,
     onToolEnd: opts.events?.onToolEnd,
+    onToolSettled: opts.events?.onToolSettled,
     onStatus: opts.events?.onStatus,
+    onPhase: opts.events?.onPhase,
   };
   // ULW cycle needs more stop-continues than a normal turn
   const ulwArmed = Boolean(loadUlwCycle(session.meta.id)?.enabled);
@@ -222,6 +239,7 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
 
       const est = estimateTokens(session.messages);
       if (est > config.contextWindow * config.autoCompactThreshold) {
+        events.onPhase?.("compacting");
         events.onStatus?.("Compacting conversation…");
         await hooks.run("PreCompact", baseHookCtx(session, config));
         session.messages = compactMessages(session.messages);
@@ -230,6 +248,7 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
         log.dim("Compacted conversation history");
       }
 
+      events.onPhase?.("thinking");
       let response;
       try {
         response = await withRetry(
@@ -288,6 +307,7 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
 
       const toolCalls = assistantMsg.tool_calls;
       if (!toolCalls || toolCalls.length === 0) {
+        events.onPhase?.("stop_guard");
         const stopResult = await runStopGuard({
           config,
           hooks,
@@ -321,6 +341,7 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
         log.dim(inject.slice(0, 300));
         session.messages.push({ role: "user", content: inject });
         saveSession(session);
+        events.onPhase?.("thinking");
         continue;
       }
 
@@ -334,6 +355,7 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
         signal,
         events,
       });
+      events.onPhase?.("thinking");
     }
   } catch (err) {
     if ((err as Error).message === "Aborted" || signal?.aborted) {
@@ -459,6 +481,20 @@ async function prepareToolResult(opts: {
     toolInput = { raw: tc.function.arguments };
   }
 
+  // Announce tool phase BEFORE permission prompts so the REPL can pause
+  // the working spinner and not clobber interactive Allow? lines.
+  const toolDetail =
+    typeof toolInput.command === "string"
+      ? `${name} ${String(toolInput.command).slice(0, 40)}`
+      : typeof toolInput.path === "string"
+        ? `${name} ${String(toolInput.path).slice(0, 40)}`
+        : name;
+  events?.onPhase?.("tool", toolDetail);
+
+  const settle = () => {
+    events?.onToolSettled?.(name);
+  };
+
   // Hard safety — never skipped by YOLO / bypassPermissions
   const hard = hardSafetyCheck(name, toolInput, workspace);
   if (!hard.ok) {
@@ -468,6 +504,7 @@ async function prepareToolResult(opts: {
       toolName: name,
       toolInput,
     });
+    settle();
     return {
       toolCallId: tc.id,
       content: `HARD DENY [${hard.rule}]: ${hard.reason}`,
@@ -487,6 +524,7 @@ async function prepareToolResult(opts: {
       toolName: name,
       toolInput,
     });
+    settle();
     return {
       toolCallId: tc.id,
       content: `Tool denied by hook: ${pre.reason || "denied"}`,
@@ -506,6 +544,7 @@ async function prepareToolResult(opts: {
       toolName: name,
       toolInput,
     });
+    settle();
     return {
       toolCallId: tc.id,
       content: `Tool denied by permission gate: ${perm.reason}${perm.rule ? ` [${perm.rule}]` : ""}`,
@@ -519,20 +558,26 @@ async function prepareToolResult(opts: {
   }
 
   const t0 = Date.now();
-  const result = await executeTool(
-    name,
-    tc.function.arguments,
-    {
-      workspace,
-      sandbox: config.sandbox,
-      sandboxNetwork: config.sandboxNetwork,
-      sandboxMissingBackend: config.sandboxMissingBackend,
-      onEdit: () => {
-        session.meta.editCount += 1;
+  let result;
+  try {
+    result = await executeTool(
+      name,
+      tc.function.arguments,
+      {
+        workspace,
+        sandbox: config.sandbox,
+        sandboxNetwork: config.sandboxNetwork,
+        sandboxMissingBackend: config.sandboxMissingBackend,
+        onEdit: () => {
+          session.meta.editCount += 1;
+        },
       },
-    },
-    (todos, merge) => applyTodos(session, todos, merge),
-  );
+      (todos, merge) => applyTodos(session, todos, merge),
+    );
+  } catch (err) {
+    settle();
+    throw err;
+  }
   const ms = Date.now() - t0;
   const output = truncateMiddle(result.output);
   const bytes = Buffer.byteLength(output, "utf8");
@@ -542,6 +587,7 @@ async function prepareToolResult(opts: {
   } else {
     console.error(formatToolEnd(name, { isError: result.isError, ms, bytes }));
   }
+  settle();
 
   if (result.isError) {
     await hooks.run("PostToolUseFailure", {

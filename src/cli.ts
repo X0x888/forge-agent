@@ -36,7 +36,7 @@ import {
   runStatusWatch,
 } from "./statusline/index.js";
 
-const VERSION = "0.5.0";
+const VERSION = "0.8.0";
 
 async function main(): Promise<void> {
   const program = new Command();

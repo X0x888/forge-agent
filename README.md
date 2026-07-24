@@ -200,7 +200,8 @@ See [docs/ULW.md](docs/ULW.md).
 | `/cycle 1` / `0` | Continue waves / last wave then stop |
 | `/ulw-off` | Disarm ULW + cycle |
 | `/hooks` | List hooks |
-| `/status` | Session / auth / goal |
+| `/status` · `/hud` | Full inline HUD + session detail (no second panel) |
+| `/tasks` | Background shell tasks (running / recent) |
 | `/context` | Context window bar |
 | `/cost` | Token usage + rough $ |
 | `/todos` | Agent todos |
@@ -214,18 +215,26 @@ See [docs/ULW.md](docs/ULW.md).
 | `/resume [id]` | Resume by id/prefix |
 | `/sessions` | Recent sessions |
 | `/doctor` | Env health check |
-| `/statusline` / `/hud` | Native statusline snapshot |
 | `/quit` | Exit |
 
-### Statusline HUD
+### Status (inline — no second panel required)
+
+Status is **built into the REPL**:
+
+- **Prompt strip** — context %, tokens, todos, `bg:N`, liveness above every prompt
+- **Working indicator** — spinner + phase (`thinking` / `tool` / `compact` / `harness`) while the agent runs
+- **Turn footer** — compact ctx / turn cost / bg summary after each turn
+- **`/status`** — full two-line HUD + session details when you want more
+
+Optional external pane / tmux still works:
 
 ```bash
 forge status              # one-shot
-forge status --watch      # live second pane
+forge status --watch      # optional live second pane
 forge status --tmux       # for tmux status-right
 ```
 
-Works for **any** auth method: always shows session context/tokens/git/liveness; plan credits only when the provider exposes them (e.g. SuperGrok via imported Grok session). See [docs/STATUSLINE.md](docs/STATUSLINE.md).
+Works for **any** auth method: always shows session context/tokens/git/liveness/activity; plan credits only when the provider exposes them (e.g. SuperGrok via imported Grok session). See [docs/STATUSLINE.md](docs/STATUSLINE.md).
 
 Tab completes slash commands. **Ctrl+C** aborts the current agent run (again to exit).
 

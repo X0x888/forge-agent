@@ -16,6 +16,7 @@ import type {
 } from "../../config/types.js";
 import { defaultNetworkForProfile } from "../../config/types.js";
 import { detectSandboxBackend } from "../sandbox.js";
+import { syncBackgroundCounts } from "../../statusline/activity.js";
 
 export type TaskStatus = "running" | "completed" | "failed" | "killed" | "timeout";
 
@@ -57,6 +58,19 @@ function pruneOld(): void {
     const t = done.shift()!;
     tasks.delete(t.id);
   }
+}
+
+function publishBgActivity(): void {
+  const all = [...tasks.values()];
+  const running = all.filter((t) => t.status === "running");
+  const hint = running[0]
+    ? running[0].command.replace(/\s+/g, " ").slice(0, 48)
+    : undefined;
+  syncBackgroundCounts({
+    running: running.length,
+    total: all.length,
+    hint,
+  });
 }
 
 interface SpawnPlan {
@@ -304,6 +318,7 @@ export async function startBackgroundTask(opts: {
     child,
   };
   tasks.set(id, task);
+  publishBgActivity();
 
   const timeoutMs = opts.timeoutMs ?? 30 * 60_000; // 30m default for background
   const timer = setTimeout(() => {
@@ -323,6 +338,7 @@ export async function startBackgroundTask(opts: {
       task.status = "timeout";
       task.endedAt = Date.now();
       task.error = `Timed out after ${timeoutMs}ms`;
+      publishBgActivity();
     }
   }, timeoutMs);
   timer.unref?.();
@@ -339,6 +355,7 @@ export async function startBackgroundTask(opts: {
       task.endedAt = task.endedAt || Date.now();
     }
     task.child = undefined;
+    publishBgActivity();
   });
   child.on("error", (err) => {
     clearTimeout(timer);
@@ -347,6 +364,7 @@ export async function startBackgroundTask(opts: {
     task.error = err.message;
     task.endedAt = Date.now();
     task.child = undefined;
+    publishBgActivity();
   });
 
   return { ok: true, task };
@@ -438,6 +456,7 @@ export function killTask(id: string): string {
   }
   task.status = "killed";
   task.endedAt = Date.now();
+  publishBgActivity();
   return `Killed task ${id} (pid ${task.pid ?? "n/a"})`;
 }
 
@@ -451,4 +470,5 @@ export function _resetTasksForTests(): void {
     }
   }
   tasks.clear();
+  publishBgActivity();
 }

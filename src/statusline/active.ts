@@ -16,6 +16,14 @@ export interface ActiveEntry {
   heartbeatAt: string;
   /** epoch seconds */
   heartbeatEpoch: number;
+  /** Agent is mid-turn (thinking / tools) */
+  busy?: boolean;
+  /** idle | thinking | tool | compacting | stop_guard | waiting */
+  phase?: string;
+  /** Tool name or short detail */
+  phaseDetail?: string;
+  /** Running background shell tasks */
+  bgRunning?: number;
 }
 
 export interface ActiveRegistry {
@@ -51,6 +59,10 @@ export function heartbeatSession(opts: {
   cwd: string;
   provider: string;
   model: string;
+  busy?: boolean;
+  phase?: string;
+  phaseDetail?: string;
+  bgRunning?: number;
 }): void {
   const reg = loadActiveRegistry();
   const now = nowEpoch();
@@ -64,6 +76,11 @@ export function heartbeatSession(opts: {
     startedAt: prev?.startedAt || nowIso(),
     heartbeatAt: nowIso(),
     heartbeatEpoch: now,
+    busy: opts.busy ?? prev?.busy,
+    phase: opts.phase ?? prev?.phase,
+    phaseDetail:
+      opts.phaseDetail !== undefined ? opts.phaseDetail : prev?.phaseDetail,
+    bgRunning: opts.bgRunning ?? prev?.bgRunning,
   };
   // GC dead pids
   for (const [id, e] of Object.entries(reg.sessions)) {
@@ -85,7 +102,7 @@ export function getActiveEntry(sessionId: string): ActiveEntry | undefined {
   return reg.sessions[sessionId];
 }
 
-export type Liveness = "live" | "idle" | "stale" | "unknown";
+export type Liveness = "live" | "working" | "idle" | "stale" | "unknown";
 
 export function computeLiveness(
   sessionId: string,
@@ -99,7 +116,13 @@ export function computeLiveness(
   const active = getActiveEntry(sessionId);
   if (active && isPidAlive(active.pid)) {
     const hbAge = nowEpoch() - active.heartbeatEpoch;
-    if (hbAge <= 15) return { liveness: "live", idleSec };
+    if (hbAge <= 15) {
+      // Mid-turn or background work → "working" so HUD shows more than live
+      if (active.busy || (active.bgRunning ?? 0) > 0) {
+        return { liveness: "working", idleSec };
+      }
+      return { liveness: "live", idleSec };
+    }
     if (hbAge <= 120) return { liveness: "idle", idleSec };
   }
 

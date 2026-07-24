@@ -68,6 +68,9 @@ export const SLASH_COMMANDS = [
   "/cycle",
   "/hooks",
   "/status",
+  "/statusline",
+  "/hud",
+  "/tasks",
   "/context",
   "/cost",
   "/todos",
@@ -84,8 +87,6 @@ export const SLASH_COMMANDS = [
   "/sessions",
   "/auth",
   "/doctor",
-  "/statusline",
-  "/hud",
   "/quit",
 ] as const;
 
@@ -105,6 +106,7 @@ export async function handleSlash(
     session: SessionData;
     config: ForgeConfig;
     hooks: HookRunner;
+    auth?: import("../auth/types.js").ResolvedAuth;
   },
 ): Promise<SlashResult> {
   const trimmed = line.trim();
@@ -236,35 +238,69 @@ export async function handleSlash(
     }
 
     case "/status":
-    case "/session-info": {
-      const g = loadGoal(opts.session.meta.id);
-      const ulw = loadUlwCycle(opts.session.meta.id);
-      const auth = resolveAuth(opts.config);
-      const est = estimateTokens(opts.session.messages);
-      const cost = estimateCostUsd(
-        String(opts.config.provider),
-        opts.session.meta.totalPromptTokens,
-        opts.session.meta.totalCompletionTokens,
-      );
-      const lines = [
-        `Session: ${opts.session.meta.id}`,
-        `Title: ${opts.session.meta.title || "(untitled)"}`,
-        `Provider/model: ${opts.session.meta.provider} / ${opts.session.meta.model}`,
-        `Auth: ${describeAuth(auth)}`,
-        `Ultrawork: ${opts.session.meta.ultrawork ? "ON" : "OFF"}`,
-        ulw?.enabled
-          ? `ULW cycle: ${ulw.cycle} ${ulw.cycle === 1 ? "CONTINUE" : "LAST"}  wave=${ulw.wave}  mandate=${ulw.mandate.slice(0, 60)}`
-          : `ULW cycle: off`,
-        `Turns: ${opts.session.meta.turnCount}  Edits: ${opts.session.meta.editCount}`,
-        `Messages: ${opts.session.messages.length}  ~ctx tokens: ${formatTokens(est)} / ${formatTokens(opts.config.contextWindow)}`,
-        `Usage: in=${formatTokens(opts.session.meta.totalPromptTokens)} out=${formatTokens(opts.session.meta.totalCompletionTokens)}  est ${formatCost(cost)}`,
-        `Todos open: ${opts.session.todos.filter((t) => t.status === "pending" || t.status === "in_progress").length}`,
-        `Blocking Stop hooks: ${opts.config.blockingStopHooks ? "ON" : "OFF"}`,
-        g?.objective
-          ? `Goal: [${g.status}] ${g.objective.slice(0, 80)}`
-          : "Goal: (none)",
-      ];
-      return { handled: true, output: lines.join("\n") };
+    case "/session-info":
+    case "/statusline":
+    case "/hud": {
+      const auth = opts.auth || resolveAuth(opts.config);
+      if (!auth) {
+        return { handled: true, output: "Not authenticated." };
+      }
+      const { formatSessionDetails } = await import("../tui/status-bar.js");
+      const { collectPlanUsage } = await import("../statusline/plan.js");
+      const { sessionToSnapshot } = await import("../statusline/snapshot.js");
+      const { renderHud } = await import("../statusline/render.js");
+
+      // Full HUD with optional plan probe (same data as forge status)
+      const snap = sessionToSnapshot(opts.session, {
+        windowTokens: opts.config.contextWindow,
+        authMethod: auth.method as import("../statusline/types.js").AuthMethod,
+        authLabel: auth.accountLabel,
+        permissionMode: opts.config.permissionMode,
+      });
+      try {
+        snap.plan = await collectPlanUsage({
+          provider: opts.session.meta.provider,
+          authMethod: snap.authMethod,
+        });
+      } catch {
+        /* plan optional */
+      }
+      const hud = renderHud([snap], { width: process.stdout.columns });
+      const detail = formatSessionDetails({
+        config: opts.config,
+        session: opts.session,
+        auth,
+      });
+      return {
+        handled: true,
+        output:
+          hud +
+          "\n" +
+          detail +
+          chalk.dim(
+            "\n\nTip: status is always on the prompt line. Live external pane still available: forge status --watch",
+          ),
+      };
+    }
+
+    case "/tasks":
+    case "/bg": {
+      const { formatBackgroundTasksList } = await import("../tui/status-bar.js");
+      const { listTasks } = await import("../agent/tools/background-tasks.js");
+      const tasks = listTasks();
+      const running = tasks.filter((t) => t.status === "running").length;
+      const header =
+        chalk.bold("Background tasks") +
+        chalk.dim(
+          `  (${running} running / ${tasks.length} tracked in this process)`,
+        );
+      return {
+        handled: true,
+        output: `${header}\n${formatBackgroundTasksList()}\n` +
+          chalk.dim(
+            "Agent starts these via bash { background: true }. Poll: get_task_output · kill: kill_task",
+          ),
+      };
     }
 
     case "/context": {
@@ -545,25 +581,6 @@ export async function handleSlash(
       return { handled: true, output: runDoctor(opts.config) };
     }
 
-    case "/statusline":
-    case "/hud": {
-      const { collectSnapshots, renderHud } = await import("../statusline/index.js");
-      const snaps = await collectSnapshots({
-        sessionId: opts.session.meta.id,
-        fetchPlan: true,
-        config: opts.config,
-      });
-      const hud = renderHud(snaps, { width: process.stdout.columns });
-      return {
-        handled: true,
-        output:
-          hud +
-          chalk.dim(
-            "\n\nLive pane: forge status --watch   ·   tmux: #(forge status --tmux --plain)",
-          ),
-      };
-    }
-
     default:
       return {
         handled: true,
@@ -697,7 +714,8 @@ Forge slash commands
   /cycle 1|0|status     Continue waves (1) or last wave then stop (0)
   /ulw-off              Disarm ULW + cycle driver
   /hooks                List loaded hooks
-  /status               Session + auth + goal status
+  /status · /hud        Full inline HUD + session details (no second panel)
+  /tasks                Background shell tasks (running / recent)
   /context              Context window usage bar
   /cost                 Token usage + rough cost
   /todos                Show agent todos
@@ -713,8 +731,15 @@ Forge slash commands
   /sessions             List recent sessions
   /auth                 Show stored credentials
   /doctor               Environment health check
-  /statusline · /hud    Native statusline snapshot
   /quit                 Exit
+
+Status (always on — no second panel)
+────────────────────────────────────
+  Prompt line     Context %, tokens, todos, bg:N, ULW/GOAL flags, liveness
+  While working   Spinner + phase (thinking / tool / compact / harness)
+  After each turn Compact footer (ctx · turn tokens · bg · goal)
+  /status         Full two-line HUD + session detail
+  forge status --watch   Optional external pane / tmux (still available)
 
 Tips
 ────
@@ -722,5 +747,4 @@ Tips
   Tab             Autocomplete commands and parameters
   /permissions    Shows numbered modes — pick 1–4 or type name
   Ctrl+C          Abort run; twice at prompt to exit
-  Live HUD: forge status --watch
 `.trim();

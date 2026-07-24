@@ -1,52 +1,103 @@
 # Forge statusline
 
-Native, **provider-agnostic** HUD for Forge — not a Grok-only reader of `~/.grok/` artifacts.
+Native, **provider-agnostic** HUD for Forge — integrated into the REPL so you do **not** need a second panel.
 
 ```
-my-app  git:main*  xai/grok-4  sub  ULW  GOAL  ● live
-████░░░░░░░░  32% (12.4k/128k)  9m 45s  tok:18.2k ~$0.04  use:12%  1.2k left  reset 6d  todos:2
+████░░░░  32%  18.2k ~$0.04  todos:2  ● live
+[ULW c=1 GOAL] forge ›
+```
+
+While the agent works:
+
+```
+⠋ ⚒ thinking… 12s
+  ▸ bash command=npm test
+  ✓ bash  842ms  1.2KB
+⠋ ⚒ tool bash npm test  14s  bg:1
+```
+
+After each turn:
+
+```
+──  ctx 32% (12.4k/128k)  turn in=1.2k out=400 ~$0.01  todos:2
 ```
 
 ## Design
 
 | Principle | Behavior |
 |-----------|----------|
+| **Inline first** | Prompt strip + working spinner + turn footer live in the main REPL |
 | **Native** | Reads `~/.forge/sessions/*` + `active_sessions.json` written by this CLI |
 | **Generic** | Same layout for xAI, Anthropic, OpenAI/Codex, Copilot, OpenRouter, Google |
 | **Honest** | Never invents plan/credit numbers; segments omit when unavailable |
-| **Always useful** | Context bar, tokens, git, model, liveness work for every auth path |
+| **Working-aware** | Shows `thinking` / `tool` / `compacting` / `harness` / background tasks |
 
-### What always shows
+### Always-on (in REPL)
+
+| Surface | When | Shows |
+|---------|------|--------|
+| **Prompt strip** | Idle, above `forge ›` | Context bar, tokens, todos, `bg:N`, liveness |
+| **Prompt flags** | Idle input | `ULW`, `c=1/0`, `GOAL`, `PLAN`/`YOLO`/`auto`, `bg:N` |
+| **Working indicator** | Mid-turn (stderr) | Spinner + phase + elapsed + bg count |
+| **Turn footer** | After every agent turn | Context %, turn tokens/cost, todos, bg, harness continues |
+| **`/status`** | On demand | Full 2-line HUD + session detail + bg task list |
+
+### Optional external pane
+
+Still available for tmux / multi-session monitoring — not required for normal use:
+
+```bash
+forge status              # one-shot
+forge status --watch      # live external pane
+forge status --tmux --plain
+```
+
+### What always shows (HUD)
 
 - Project path (last 2 segments)
 - Git branch / dirty (when in a repo)
 - Provider + model
 - Auth method shorthand: `sub` | `key` | `oauth`
-- Flags: `ULW`, `GOAL`, `PLAN`
-- Liveness: `● live` / `○ idle` / `◌ stale`
+- Flags: `ULW`, `GOAL`, `PLAN`, `YOLO`, `auto`
+- Liveness: `◉ working` / `● live` / `○ idle` / `◌ stale`
 - Context bar + % + estimated tokens / window
-- Session duration
-- Session token totals (+ rough $ when rates known)
-- Open todos, turn count
+- Session duration, token totals (+ rough $ when rates known)
+- Open todos, turn count, edit count
+- **Activity** when mid-turn: `thinking…` / `tool:…` / `compacting…`
+- **Background tasks**: `bg:N` + command hints; full list under `/tasks`
 
 ### What shows when available
 
 | Auth path | Plan / quota segment |
 |-----------|----------------------|
-| **Grok / xAI subscription** (`forge login --from-grok`) | Best-effort SuperGrok credits via Grok billing proxy (`use:N%`, remaining, reset) |
-| **xAI API key** | No credits bar — session tokens + est. cost only |
-| **OpenAI API key** | Session tokens + est. cost |
-| **OpenAI / Codex subscription** | Local rate-limit files under `~/.codex/` if present; else note only |
+| **Grok / xAI subscription** (`forge login --from-grok`) | Best-effort SuperGrok credits via Grok billing proxy |
+| **xAI / OpenAI / Anthropic API key** | Session tokens + est. cost only |
+| **OpenAI / Codex subscription** | Local rate-limit files under `~/.codex/` if present |
 | **GitHub Copilot** | Explicit note: quota not exposed to third-party CLIs |
-| **Anthropic / OpenRouter / Google keys** | Session tokens + est. cost |
 
 ## Usage
+
+### Inside the REPL (preferred)
+
+```text
+# Just use forge — status is already on the prompt
+forge
+
+# Full HUD + session detail + background tasks
+/status
+/hud
+
+# Background shell tasks only
+/tasks
+```
+
+### CLI
 
 ```bash
 # One-shot (best matching recent session)
 forge status
 
-# Live pane (second terminal) — like grok-statusline --watch
+# Live pane (optional second terminal)
 forge status --watch
 
 # Filter
@@ -62,13 +113,6 @@ forge status --tmux --plain
 forge status --no-plan
 ```
 
-In the REPL:
-
-```text
-/statusline
-/hud
-```
-
 ### tmux
 
 ```tmux
@@ -76,15 +120,24 @@ set -g status-right '#(forge status --tmux --plain) | %H:%M'
 set -g status-interval 2
 ```
 
-### Side-by-side
+## Working status & background tasks
 
-```bash
-# pane 1
-forge
+The agent loop publishes phase updates:
 
-# pane 2
-forge status --watch --cwd "$(pwd)"
-```
+| Phase | Meaning |
+|-------|---------|
+| `thinking` | Waiting on / streaming the model |
+| `tool` | Running a tool (name + short arg) |
+| `compacting` | Auto-compacting context |
+| `stop_guard` | Harness Stop evaluation (goal / ULW / hooks) |
+| `waiting` | Snapshot-only: agent idle but background shells still running (prompt shows `bg:N`) |
+
+Background bash (`background: true`) is tracked in-process:
+
+- Prompt shows `bg:N` while any task is running
+- Heartbeats write `busy` / `phase` / `bgRunning` to `active_sessions.json`
+- External `forge status --watch` therefore shows **working**, not only live
+- `/tasks` lists id, status, elapsed, command
 
 ## vs grok-statusline
 
@@ -92,9 +145,9 @@ forge status --watch --cwd "$(pwd)"
 |--|-----------------|--------------|
 | Target CLI | Grok Build | Forge |
 | Session source | `~/.grok/` | `~/.forge/sessions/` |
+| In-REPL integration | External reader only | **Built into prompt / spinner / footer** |
 | Multi-provider | Grok-centric | Built for multi-auth |
+| Working phase | Limited | thinking / tool / harness / bg |
 | SuperGrok credits | Yes | Yes when xAI sub auth available |
-| Copilot / Codex | N/A | Degrades gracefully |
-| tmux / watch | Yes | Yes |
 
-They can coexist: use `grok-statusline` while in Grok Build; use `forge status` while in Forge.
+They can coexist: use `grok-statusline` while in Grok Build; use Forge’s inline HUD while in Forge.

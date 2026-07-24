@@ -7,25 +7,37 @@ import { HookRunner } from "../harness/hooks.js";
 import { PermissionGate } from "../agent/permissions.js";
 import { runAgentLoop } from "../agent/loop.js";
 import { handleSlash } from "../commands/slash.js";
-import { saveSession, estimateTokens } from "../session/session.js";
-import { loadGoal } from "../harness/goal.js";
+import { saveSession } from "../session/session.js";
 import { log } from "../util/log.js";
 import { describeAuth } from "../auth/resolve.js";
 import type { ResolvedAuth } from "../auth/types.js";
 import {
   formatToolStart,
   formatToolEnd,
-  formatTokens,
-  estimateCostUsd,
-  formatCost,
 } from "../util/format.js";
 import { detectProjectHints, getGitSnapshot } from "../util/git-context.js";
 import { createProvider } from "../providers/factory.js";
 import { resolveAuth } from "../auth/resolve.js";
 import { heartbeatSession, releaseSession } from "../statusline/active.js";
-import { loadUlwCycle } from "../harness/ulw-cycle.js";
+import {
+  beginTurn,
+  endTurn,
+  setPhase,
+  getActivity,
+  syncBackgroundCounts,
+} from "../statusline/activity.js";
+import { listTasks } from "../agent/tools/background-tasks.js";
 import { loadHistory, appendHistory } from "./history.js";
 import { makeCompleter } from "./complete.js";
+import {
+  buildPromptFlags,
+  renderIdleStatusLine,
+  renderTurnFooter,
+  createWorkingIndicator,
+  type StatusBarContext,
+} from "./status-bar.js";
+
+const VERSION = "0.8.0";
 
 export async function runRepl(opts: {
   config: ForgeConfig;
@@ -40,21 +52,52 @@ export async function runRepl(opts: {
 
   printBanner(config, auth, session);
 
-  heartbeatSession({
-    sessionId: session.meta.id,
-    cwd: session.meta.cwd,
-    provider: session.meta.provider,
-    model: config.model,
-  });
-  const hbTimer = setInterval(() => {
+  let lastKnownBgRunning = 0;
+
+  const refreshIdlePromptFlags = () => {
+    if (busy || !process.stdout.isTTY) return;
+    try {
+      const prefix = buildPromptFlags(statusCtx());
+      rl.setPrompt(prefix + chalk.green("forge") + chalk.dim(" › "));
+      // Redisplay prompt without accepting a new line
+      rl.prompt(true);
+    } catch {
+      /* readline may be closed */
+    }
+  };
+
+  const pulseHeartbeat = () => {
+    const act = getActivity();
+    const bgRunning = listTasks().filter((t) => t.status === "running").length;
+    if (bgRunning !== act.bgRunning) {
+      syncBackgroundCounts({
+        running: bgRunning,
+        total: listTasks().length,
+        hint: act.bgHint,
+      });
+    }
+    // Live-update prompt flags when bg tasks finish while idle
+    if (!busy && bgRunning !== lastKnownBgRunning) {
+      lastKnownBgRunning = bgRunning;
+      lastStatusStrip = "";
+      refreshIdlePromptFlags();
+    } else {
+      lastKnownBgRunning = bgRunning;
+    }
     heartbeatSession({
       sessionId: session.meta.id,
       cwd: session.meta.cwd,
       provider: session.meta.provider,
       model: config.model,
+      busy: act.busy,
+      phase: act.phase,
+      phaseDetail: act.detail,
+      bgRunning: Math.max(act.bgRunning, bgRunning),
     });
-  }, 8_000);
-  hbTimer.unref?.();
+  };
+
+  // statusCtx / lastStatusStrip / rl are declared below; heartbeat uses them
+  // after rl is created — first pulse is deferred until then.
 
   await hooks.run("SessionStart", {
     sessionId: session.meta.id,
@@ -64,9 +107,14 @@ export async function runRepl(opts: {
 
   let busy = false;
   let abortController: AbortController | null = null;
+  const working = createWorkingIndicator();
+  /**
+   * Tools currently between onPhase("tool") and onToolSettled
+   * (includes permission prompts — not only running tools).
+   */
+  let pendingTools = 0;
 
   const savedHistory = loadHistory(300);
-  // Node 20+: history option — oldest first, most recent last
   const rl = readline.createInterface({
     input: process.stdin,
     output: process.stdout,
@@ -74,30 +122,26 @@ export async function runRepl(opts: {
     historySize: 300,
     history: savedHistory,
     completer: makeCompleter(() => config),
-    // Show completions when Tab with multiple matches (Node prints them)
   });
 
-  // Ensure completer works when paused/resumed
-  // (some Node versions need terminal true for ↑/↓ history — already set)
+  const statusCtx = (): StatusBarContext => ({ config, session, auth });
+  /** Avoid reprinting an identical strip on every empty Enter */
+  let lastStatusStrip = "";
 
-  const prompt = () => {
-    const flags: string[] = [];
-    if (session.meta.ultrawork) flags.push(chalk.magenta("ULW"));
-    const ulw = loadUlwCycle(session.meta.id);
-    if (ulw?.enabled) {
-      flags.push(ulw.cycle === 1 ? chalk.magenta("c=1") : chalk.yellow("c=0"));
+  pulseHeartbeat();
+  const hbTimer = setInterval(pulseHeartbeat, 4_000);
+  hbTimer.unref?.();
+
+  const prompt = (opts?: { forceStatus?: boolean }) => {
+    // Idle status strip above the input — replaces need for side-panel HUD
+    if (process.stdout.isTTY) {
+      const strip = renderIdleStatusLine(statusCtx());
+      if (strip && (opts?.forceStatus || strip !== lastStatusStrip)) {
+        console.log(strip);
+        lastStatusStrip = strip;
+      }
     }
-    const g = loadGoal(session.meta.id);
-    if (g?.objective && !g.paused && g.status === "active") {
-      flags.push(chalk.yellow("GOAL"));
-    }
-    if (config.permissionMode === "plan") flags.push(chalk.blue("PLAN"));
-    if (config.permissionMode === "bypassPermissions") {
-      flags.push(chalk.red("YOLO"));
-    } else if (config.permissionMode === "acceptEdits") {
-      flags.push(chalk.green("auto"));
-    }
-    const prefix = flags.length ? chalk.dim(`[${flags.join(" ")}] `) : "";
+    const prefix = buildPromptFlags(statusCtx());
     rl.setPrompt(prefix + chalk.green("forge") + chalk.dim(" › "));
     rl.prompt();
   };
@@ -116,7 +160,7 @@ export async function runRepl(opts: {
       return;
     }
 
-    let slash = await handleSlash(text, { session, config, hooks });
+    let slash = await handleSlash(text, { session, config, hooks, auth });
     if (slash.replaceSession) {
       session = slash.replaceSession;
       hooks = new HookRunner(config, session.meta.cwd);
@@ -144,8 +188,36 @@ export async function runRepl(opts: {
     if (slash.output) console.log(slash.output);
 
     busy = true;
+    pendingTools = 0;
     abortController = new AbortController();
     rl.pause();
+    beginTurn();
+    pulseHeartbeat();
+    working.start();
+
+    let sawToken = false;
+    /** Single-depth holds — only pause/resume when flipping false→true / true→false */
+    let streamHold = false;
+    let toolHold = false;
+
+    const setStreamHold = (on: boolean) => {
+      if (on && !streamHold) {
+        working.pause();
+        streamHold = true;
+      } else if (!on && streamHold) {
+        working.resume();
+        streamHold = false;
+      }
+    };
+    const setToolHold = (on: boolean) => {
+      if (on && !toolHold) {
+        working.pause();
+        toolHold = true;
+      } else if (!on && toolHold) {
+        working.resume();
+        toolHold = false;
+      }
+    };
 
     try {
       process.stdout.write("\n");
@@ -159,16 +231,55 @@ export async function runRepl(opts: {
         stream: true,
         signal: abortController.signal,
         events: {
-          onToken: (t) => process.stdout.write(t),
+          onToken: (t) => {
+            if (!sawToken) {
+              // Streaming text — hide spinner; tool hold not active yet
+              setStreamHold(true);
+              sawToken = true;
+            }
+            process.stdout.write(t);
+          },
           onToolStart: (name, args) => {
+            setStreamHold(false);
+            sawToken = false;
             console.error(formatToolStart(name, args));
           },
           onToolEnd: (name, r) => {
             console.error(formatToolEnd(name, r));
           },
-          onStatus: (msg) => log.dim(msg),
+          onToolSettled: () => {
+            pendingTools = Math.max(0, pendingTools - 1);
+            if (pendingTools === 0) setToolHold(false);
+          },
+          onPhase: (phase, detail) => {
+            setPhase(phase, detail);
+            working.setPhase(phase, detail);
+            pulseHeartbeat();
+            if (phase === "tool") {
+              // Count from phase entry (covers permission prompts + parallel batch)
+              pendingTools += 1;
+              setStreamHold(false);
+              setToolHold(true);
+            } else if (
+              (phase === "thinking" ||
+                phase === "compacting" ||
+                phase === "stop_guard") &&
+              pendingTools === 0
+            ) {
+              setToolHold(false);
+              setStreamHold(false);
+              sawToken = false;
+            }
+          },
+          onStatus: (msg) => {
+            working.pause();
+            log.dim(msg);
+            working.resume();
+          },
         },
       });
+
+      working.stop();
 
       if (result.finalText && !result.finalText.endsWith("\n")) {
         process.stdout.write("\n");
@@ -181,29 +292,34 @@ export async function runRepl(opts: {
           `Harness continued ${result.stopContinues} time(s) via Stop block`,
         );
       }
-      if (result.promptTokens + result.completionTokens > 0) {
-        const cost = estimateCostUsd(
-          String(config.provider),
-          result.promptTokens,
-          result.completionTokens,
-        );
-        log.dim(
-          `turn tokens in=${formatTokens(result.promptTokens)} out=${formatTokens(result.completionTokens)} · est ${formatCost(cost)} · ctx ~${formatTokens(estimateTokens(session.messages))}`,
-        );
-      }
+
+      // Post-turn footer — always-on session health without /status
+      console.log(
+        renderTurnFooter(statusCtx(), {
+          promptTokens: result.promptTokens,
+          completionTokens: result.completionTokens,
+          stopContinues: result.stopContinues,
+        }),
+      );
+      lastStatusStrip = ""; // force fresh strip after turn
     } catch (err) {
+      working.stop();
       log.error((err as Error).message);
     } finally {
+      endTurn();
       busy = false;
       abortController = null;
+      pulseHeartbeat();
       rl.resume();
-      prompt();
+      prompt({ forceStatus: true });
     }
   };
 
   const shutdown = async () => {
     if (busy && abortController) abortController.abort();
+    working.stop();
     clearInterval(hbTimer);
+    endTurn();
     releaseSession(session.meta.id);
     await hooks.run("SessionEnd", {
       sessionId: session.meta.id,
@@ -222,6 +338,7 @@ export async function runRepl(opts: {
   let sigintArmed = false;
   rl.on("SIGINT", () => {
     if (busy && abortController) {
+      working.stop();
       console.log(chalk.yellow("\nAborting current run… (Ctrl+C again to exit)"));
       abortController.abort();
       return;
@@ -257,7 +374,7 @@ function printBanner(
   const cwd = config.workspace || session.meta.cwd;
   const git = getGitSnapshot(cwd);
   const hints = detectProjectHints(cwd);
-  console.log(chalk.bold.cyan("\n  ⚒  Forge") + chalk.dim(` v0.4.0`));
+  console.log(chalk.bold.cyan("\n  ⚒  Forge") + chalk.dim(` v${VERSION}`));
   console.log(
     chalk.dim(
       `  ${auth.provider}/${config.model} · ${describeAuth(auth)}\n` +
@@ -267,7 +384,8 @@ function printBanner(
         ` · perms: ${config.permissionMode}` +
         (git.branch ? ` · ${git.branch}${git.dirty ? "*" : ""}` : "") +
         (hints.length ? ` · ${hints.join("+")}` : "") +
-        `\n  ↑↓ history · Tab complete · /permissions (menu) · /quit to exit\n`,
+        `\n  Status is inline — no second panel needed · /status for full HUD\n` +
+        `  ↑↓ history · Tab complete · /tasks for background · /quit to exit\n`,
     ),
   );
 }
