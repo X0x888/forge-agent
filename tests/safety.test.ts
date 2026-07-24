@@ -6,6 +6,9 @@ import {
   checkWritePathHardDeny,
 } from "../src/agent/safety.js";
 import { PermissionGate } from "../src/agent/permissions.js";
+import { DEFAULT_CONFIG } from "../src/config/types.js";
+import path from "node:path";
+import os from "node:os";
 
 describe("hard safety (even under YOLO)", () => {
   const denials = [
@@ -58,7 +61,7 @@ describe("hard safety (even under YOLO)", () => {
       input: { command: "rm -rf /" },
       mode: "bypassPermissions",
     });
-    assert.equal(r, "deny");
+    assert.equal(r.decision, "deny");
   });
 
   it("bypassPermissions allows normal project cleanup", async () => {
@@ -68,7 +71,7 @@ describe("hard safety (even under YOLO)", () => {
       input: { command: "rm -rf dist" },
       mode: "bypassPermissions",
     });
-    assert.equal(r, "allow");
+    assert.equal(r.decision, "allow");
   });
 
   it("blocks write to /etc", () => {
@@ -83,5 +86,38 @@ describe("hard safety (even under YOLO)", () => {
       "/tmp/proj",
     );
     assert.equal(v.ok, false);
+  });
+
+  it("blocks write to forge auth.json", () => {
+    const home = os.homedir();
+    const auth = path.join(home, ".forge", "auth.json");
+    const v = checkWritePathHardDeny(auth, "/tmp/proj");
+    assert.equal(v.ok, false);
+  });
+});
+
+describe("external directory gate", () => {
+  it("denies outside path in dontAsk", async () => {
+    const g = new PermissionGate({ interactive: false });
+    const r = await g.request({
+      toolName: "read_file",
+      input: { path: "/etc/hosts" },
+      mode: "dontAsk",
+      workspace: "/tmp/proj",
+      config: { ...DEFAULT_CONFIG, readOutsideWorkspace: "deny" },
+    });
+    assert.equal(r.decision, "deny");
+  });
+
+  it("allows workspace-relative reads", async () => {
+    const g = new PermissionGate({ interactive: false });
+    const r = await g.request({
+      toolName: "read_file",
+      input: { path: "src/index.ts" },
+      mode: "default",
+      workspace: "/tmp/proj",
+      config: DEFAULT_CONFIG,
+    });
+    assert.equal(r.decision, "allow");
   });
 });

@@ -5,7 +5,9 @@
  * Fail closed on known disaster patterns; everything else is the model's risk.
  */
 import path from "node:path";
-import { commandCheckTargets } from "./shell-parse.js";
+import os from "node:os";
+import { commandCheckTargets, safetySegments, tokenizeSimple, normalizeSegment } from "./shell-parse.js";
+import { forgeHome } from "../util/fs.js";
 
 export type SafetyVerdict =
   | { ok: true }
@@ -13,7 +15,6 @@ export type SafetyVerdict =
 
 /** Patterns that are never allowed via bash, regardless of permission mode. */
 const HARD_DENY: Array<{ rule: string; re: RegExp; reason: string }> = [
-  // Filesystem annihilation — match common rm -rf / forms
   {
     rule: "rm-rf-root",
     re: /\brm\b[^\n;|&]*\s(-[a-zA-Z]*r[a-zA-Z]*f[a-zA-Z]*|-[a-zA-Z]*f[a-zA-Z]*r[a-zA-Z]*|--recursive)[^\n;|&]*(\s|^)\/(\s|$|;|&|\|)/,
@@ -39,7 +40,6 @@ const HARD_DENY: Array<{ rule: string; re: RegExp; reason: string }> = [
     re: /\brm\b[^\n;|&]*(-[a-zA-Z]*r[a-zA-Z]*f[a-zA-Z]*|-[a-zA-Z]*f[a-zA-Z]*r[a-zA-Z]*)[^\n;|&]*\s+\.\.(\s|\/|$)/,
     reason: "Refusing recursive delete of parent directory",
   },
-  // Disk / device destruction
   {
     rule: "mkfs",
     re: /\bmkfs(\.\w+)?\b/,
@@ -55,7 +55,6 @@ const HARD_DENY: Array<{ rule: string; re: RegExp; reason: string }> = [
     re: /\bdiskutil\s+(erase|partition)Disk\b/i,
     reason: "Refusing diskutil erase/partition",
   },
-  // Privilege + remote code
   {
     rule: "curl-pipe-shell",
     re: /\b(curl|wget)\b[^\n;|&]*\|\s*(ba)?sh\b/,
@@ -66,7 +65,6 @@ const HARD_DENY: Array<{ rule: string; re: RegExp; reason: string }> = [
     re: /\bsudo\s+[^\n;|&]*\brm\s+[^\n;|&]*-[a-zA-Z]*r/,
     reason: "Refusing sudo recursive rm",
   },
-  // Git catastrophe on shared branches
   {
     rule: "force-push-main",
     re: /\bgit\s+push\b[^\n;|&]*--force(-with-lease)?[^\n;|&]*\b(main|master)\b/,
@@ -82,13 +80,11 @@ const HARD_DENY: Array<{ rule: string; re: RegExp; reason: string }> = [
     re: /\bgit\s+clean\b[^\n;|&]*-[a-zA-Z]*f[a-zA-Z]*d[a-zA-Z]*x/,
     reason: "Refusing git clean -fdx (destroys untracked + ignored)",
   },
-  // DB wipe
   {
     rule: "drop-database",
     re: /\bdrop\s+database\b/i,
     reason: "Refusing DROP DATABASE",
   },
-  // Fork bombs / kernel
   {
     rule: "fork-bomb",
     re: /:\(\)\s*\{\s*:\|:&\s*\}\s*;?/,
@@ -101,10 +97,6 @@ const HARD_DENY: Array<{ rule: string; re: RegExp; reason: string }> = [
   },
 ];
 
-/**
- * Soft-dangerous: still allowed in bypass, but flagged for logging / non-bypass ask.
- * Kept separate so YOLO stays useful without enabling planet-killers.
- */
 export const SOFT_DANGEROUS: RegExp[] = [
   /\brm\s+(-[a-zA-Z]*r[a-zA-Z]*f|-[a-zA-Z]*f[a-zA-Z]*r)/,
   /\brm\s+--recursive/,
@@ -118,12 +110,81 @@ export function isSoftDangerousBash(command: string): boolean {
   return SOFT_DANGEROUS.some((re) => re.test(command));
 }
 
+/** Structured rm -rf of catastrophic targets (supplements regex). */
+function structuredRmDeny(segment: string): SafetyVerdict | null {
+  const toks = tokenizeSimple(normalizeSegment(segment));
+  if (toks[0] !== "rm") return null;
+  const flags = toks.filter((t) => t.startsWith("-") && t !== "-");
+  const recursive =
+    flags.some((f) => /r/i.test(f.replace(/^--/, "")) && !f.startsWith("--")) ||
+    flags.includes("--recursive") ||
+    flags.some((f) => f === "-rf" || f === "-fr" || /^-[a-zA-Z]*r[a-zA-Z]*f/.test(f) || /^-[a-zA-Z]*f[a-zA-Z]*r/.test(f));
+  if (!recursive) return null;
+  const targets = toks.filter((t) => !t.startsWith("-") || t === "-");
+  // drop "rm"
+  const paths = targets.slice(1);
+  const home = os.homedir().replace(/\\/g, "/");
+  for (const raw of paths) {
+    const t = raw.replace(/\\/g, "/");
+    if (t === "/" || t === "/*" || t === "*") {
+      return {
+        ok: false,
+        reason: "Refusing recursive delete targeting filesystem root/wildcard",
+        rule: "rm-rf-structured",
+      };
+    }
+    if (t === "~" || t === "$HOME" || t === home || t === home + "/") {
+      return {
+        ok: false,
+        reason: "Refusing recursive delete of home directory",
+        rule: "rm-rf-structured-home",
+      };
+    }
+  }
+  return null;
+}
+
+/** curl/wget segment piped to shell: check adjacent segments of full command. */
+function structuredCurlPipeSh(command: string): SafetyVerdict | null {
+  const segs = safetySegments(command);
+  for (let i = 0; i < segs.length - 1; i++) {
+    const a = primaryWord(segs[i]);
+    const b = primaryWord(segs[i + 1]);
+    if ((a === "curl" || a === "wget") && (b === "sh" || b === "bash" || b === "zsh")) {
+      return {
+        ok: false,
+        reason: "Refusing curl|sh / wget|sh remote code execution",
+        rule: "curl-pipe-shell-structured",
+      };
+    }
+  }
+  // also full string for `curl x | sh` when split works
+  if (/\b(curl|wget)\b/.test(command) && /\|\s*(ba)?sh\b/.test(command)) {
+    return {
+      ok: false,
+      reason: "Refusing curl|sh / wget|sh remote code execution",
+      rule: "curl-pipe-shell-structured",
+    };
+  }
+  return null;
+}
+
+function primaryWord(segment: string): string {
+  return tokenizeSimple(normalizeSegment(segment))[0] || "";
+}
+
 export function checkBashHardDeny(command: string): SafetyVerdict {
   const cmd = command.trim();
   if (!cmd) return { ok: true };
-  // Segment-aware: `ls && rm -rf /` must deny even if only one segment is bad
+
+  const pipe = structuredCurlPipeSh(cmd);
+  if (pipe) return pipe;
+
   const targets = commandCheckTargets(cmd);
   for (const segment of targets) {
+    const structured = structuredRmDeny(segment);
+    if (structured) return structured;
+
     for (const rule of HARD_DENY) {
       if (rule.re.test(segment)) {
         return {
@@ -137,7 +198,6 @@ export function checkBashHardDeny(command: string): SafetyVerdict {
   return { ok: true };
 }
 
-/** Paths that must never be written even if somehow resolved. */
 const FORBIDDEN_WRITE_PREFIXES = [
   "/etc",
   "/System",
@@ -152,12 +212,24 @@ const FORBIDDEN_WRITE_PREFIXES = [
   "/var/root",
 ];
 
+function isSensitiveHomePath(p: string): boolean {
+  return (
+    /\/(\.ssh|\.gnupg)\//.test(p) ||
+    /\/\.(bashrc|zshrc|profile|zprofile|bash_profile)$/.test(p) ||
+    /\/\.forge\/auth\.json$/.test(p) ||
+    /\/\.forge\/hooks\//.test(p) ||
+    /\/\.forge\/permissions\.json$/.test(p) ||
+    /\/Library\/Application Support\/Claude\//i.test(p) ||
+    /\/\.cursor\/mcp\.json$/.test(p) ||
+    /\/\.config\/gh\//.test(p)
+  );
+}
+
 export function checkWritePathHardDeny(
   absolutePath: string,
   workspace: string,
 ): SafetyVerdict {
   const p = absolutePath.replace(/\\/g, "/");
-  // Always block known system paths
   for (const prefix of FORBIDDEN_WRITE_PREFIXES) {
     if (p === prefix || p.startsWith(prefix + "/")) {
       return {
@@ -167,16 +239,31 @@ export function checkWritePathHardDeny(
       };
     }
   }
-  // Block writing SSH keys / shell rc in home even if agent tries absolute path
-  const homeish =
-    /\/(\.ssh|\.gnupg)\//.test(p) ||
-    /\/\.(bashrc|zshrc|profile|zprofile|bash_profile)$/.test(p);
-  if (homeish && !p.startsWith(workspace.replace(/\\/g, "/") + "/")) {
-    return {
-      ok: false,
-      reason: "Refusing write to sensitive home config outside workspace",
-      rule: "write-sensitive-home",
-    };
+  // Always block sensitive home/config paths even inside a workspace named oddly
+  if (isSensitiveHomePath(p)) {
+    const forge = forgeHome().replace(/\\/g, "/");
+    // allow writes under workspace only if NOT sensitive forge/auth — still deny auth/hooks
+    if (/\/\.forge\/(auth\.json|permissions\.json)$/.test(p) || /\/\.forge\/hooks\//.test(p)) {
+      return {
+        ok: false,
+        reason: "Refusing write to Forge credentials/hooks",
+        rule: "write-forge-protected",
+      };
+    }
+    if (!p.startsWith(workspace.replace(/\\/g, "/") + "/") && !p.startsWith(forge + "/sessions")) {
+      return {
+        ok: false,
+        reason: "Refusing write to sensitive home config outside workspace",
+        rule: "write-sensitive-home",
+      };
+    }
+    if (/\/(\.ssh|\.gnupg)\//.test(p) || /\/\.(bashrc|zshrc|profile|zprofile|bash_profile)$/.test(p)) {
+      return {
+        ok: false,
+        reason: "Refusing write to sensitive home config",
+        rule: "write-sensitive-home",
+      };
+    }
   }
   return { ok: true };
 }

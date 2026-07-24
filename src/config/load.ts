@@ -2,8 +2,15 @@ import fs from "node:fs";
 import path from "node:path";
 import toml from "toml";
 import { forgeHome, readJsonFile } from "../util/fs.js";
-import { DEFAULT_CONFIG, type ForgeConfig, type ProviderId } from "./types.js";
-// DEFAULT_CONFIG used after merge for permission fallbacks
+import {
+  DEFAULT_CONFIG,
+  type ForgeConfig,
+  type PermissionConfig,
+  type ProviderId,
+  type SandboxMissingBackend,
+  type SandboxNetwork,
+  type ReadOutsideWorkspace,
+} from "./types.js";
 
 function deepMerge<T extends Record<string, unknown>>(base: T, overlay: Partial<T>): T {
   const out: Record<string, unknown> = { ...base };
@@ -40,6 +47,9 @@ function normalizeConfigShape(raw: Record<string, unknown>): Partial<ForgeConfig
     context_window: "contextWindow",
     base_url: "baseUrl",
     system_prompt_extra: "systemPromptExtra",
+    sandbox_network: "sandboxNetwork",
+    sandbox_missing_backend: "sandboxMissingBackend",
+    read_outside_workspace: "readOutsideWorkspace",
   };
   for (const [snake, camel] of Object.entries(map)) {
     if (snake in out && !(camel in out)) {
@@ -59,10 +69,8 @@ function normalizeConfigShape(raw: Record<string, unknown>): Partial<ForgeConfig
     }
     out.goal = g;
   }
-  // permission section: keep snake or already camel
   if (out.permission && typeof out.permission === "object") {
     const p = { ...(out.permission as Record<string, unknown>) };
-    // ensure arrays
     for (const k of ["deny", "allow", "ask", "rules"] as const) {
       if (p[k] === undefined) p[k] = k === "rules" ? [] : [];
     }
@@ -89,10 +97,45 @@ function loadJson(file: string): Partial<ForgeConfig> {
 }
 
 /**
- * Load config with precedence (later wins):
+ * Grok-style trust: project configs may only *add* deny rules, never remove
+ * global denials. Allow/ask from project still merge normally.
+ */
+export function mergePermissionTrust(
+  globalPerm: PermissionConfig | undefined,
+  projectPerm: PermissionConfig | undefined,
+  base: PermissionConfig,
+): PermissionConfig {
+  const gDeny = new Set([...(base.deny || []), ...(globalPerm?.deny || [])]);
+  const pDeny = projectPerm?.deny || [];
+  const deny = [...gDeny];
+  for (const d of pDeny) {
+    if (!gDeny.has(d)) deny.push(d);
+  }
+  return {
+    deny,
+    allow: [
+      ...(base.allow || []),
+      ...(globalPerm?.allow || []),
+      ...(projectPerm?.allow || []),
+    ],
+    ask: [
+      ...(base.ask || []),
+      ...(globalPerm?.ask || []),
+      ...(projectPerm?.ask || []),
+    ],
+    rules: [
+      ...(base.rules || []),
+      ...(globalPerm?.rules || []),
+      ...(projectPerm?.rules || []),
+    ],
+  };
+}
+
+/**
+ * Load config with precedence (later wins, with deny-trust exception):
  * 1. DEFAULT_CONFIG
- * 2. ~/.forge/config.toml | config.json
- * 3. <cwd>/.forge/config.toml | config.json
+ * 2. ~/.forge/config.toml | config.json  (global)
+ * 3. <cwd>/.forge/config.toml | config.json  (project — cannot drop global denies)
  * 4. environment variables
  * 5. explicit CLI overrides
  */
@@ -103,10 +146,54 @@ export function loadConfig(overrides: Partial<ForgeConfig> = {}, cwd = process.c
   const projectToml = loadToml(path.join(cwd, ".forge", "config.toml"));
   const projectJson = loadJson(path.join(cwd, ".forge", "config.json"));
 
-  let cfg = deepMerge(DEFAULT_CONFIG as unknown as Record<string, unknown>, globalToml as never) as unknown as ForgeConfig;
-  cfg = deepMerge(cfg as unknown as Record<string, unknown>, globalJson as never) as unknown as ForgeConfig;
-  cfg = deepMerge(cfg as unknown as Record<string, unknown>, projectToml as never) as unknown as ForgeConfig;
+  // Merge without project first
+  let globalMerged = deepMerge(
+    DEFAULT_CONFIG as unknown as Record<string, unknown>,
+    globalToml as never,
+  ) as unknown as ForgeConfig;
+  globalMerged = deepMerge(
+    globalMerged as unknown as Record<string, unknown>,
+    globalJson as never,
+  ) as unknown as ForgeConfig;
+
+  const globalPermission = {
+    deny: globalMerged.permission?.deny ?? DEFAULT_CONFIG.permission.deny,
+    allow: globalMerged.permission?.allow ?? [],
+    ask: globalMerged.permission?.ask ?? [],
+    rules: globalMerged.permission?.rules ?? [],
+  };
+
+  // Project overlay for non-permission fields
+  let cfg = deepMerge(
+    globalMerged as unknown as Record<string, unknown>,
+    projectToml as never,
+  ) as unknown as ForgeConfig;
   cfg = deepMerge(cfg as unknown as Record<string, unknown>, projectJson as never) as unknown as ForgeConfig;
+
+  // Trusted permission merge
+  const projectPermission = {
+    deny: [
+      ...((projectToml.permission as PermissionConfig | undefined)?.deny || []),
+      ...((projectJson.permission as PermissionConfig | undefined)?.deny || []),
+    ],
+    allow: [
+      ...((projectToml.permission as PermissionConfig | undefined)?.allow || []),
+      ...((projectJson.permission as PermissionConfig | undefined)?.allow || []),
+    ],
+    ask: [
+      ...((projectToml.permission as PermissionConfig | undefined)?.ask || []),
+      ...((projectJson.permission as PermissionConfig | undefined)?.ask || []),
+    ],
+    rules: [
+      ...((projectToml.permission as PermissionConfig | undefined)?.rules || []),
+      ...((projectJson.permission as PermissionConfig | undefined)?.rules || []),
+    ],
+  };
+  cfg.permission = mergePermissionTrust(
+    globalPermission,
+    projectPermission,
+    DEFAULT_CONFIG.permission,
+  );
 
   // Environment overrides
   if (process.env.FORGE_PROVIDER) cfg.provider = process.env.FORGE_PROVIDER as ProviderId;
@@ -118,6 +205,16 @@ export function loadConfig(overrides: Partial<ForgeConfig> = {}, cwd = process.c
   if (process.env.FORGE_SANDBOX) {
     cfg.sandbox = process.env.FORGE_SANDBOX as ForgeConfig["sandbox"];
   }
+  if (process.env.FORGE_SANDBOX_NETWORK) {
+    cfg.sandboxNetwork = process.env.FORGE_SANDBOX_NETWORK as SandboxNetwork;
+  }
+  if (process.env.FORGE_SANDBOX_MISSING_BACKEND) {
+    cfg.sandboxMissingBackend = process.env
+      .FORGE_SANDBOX_MISSING_BACKEND as SandboxMissingBackend;
+  }
+  if (process.env.FORGE_READ_OUTSIDE) {
+    cfg.readOutsideWorkspace = process.env.FORGE_READ_OUTSIDE as ReadOutsideWorkspace;
+  }
   if (process.env.FORGE_BLOCKING_STOP === "0") cfg.blockingStopHooks = false;
   if (process.env.FORGE_BLOCKING_STOP === "1") cfg.blockingStopHooks = true;
   if (process.env.FORGE_GOAL_GATE === "0") cfg.goal.enabled = false;
@@ -128,7 +225,7 @@ export function loadConfig(overrides: Partial<ForgeConfig> = {}, cwd = process.c
 
   cfg = deepMerge(cfg as unknown as Record<string, unknown>, overrides as never) as unknown as ForgeConfig;
   cfg.workspace = cfg.workspace ? path.resolve(cfg.workspace) : cwd;
-  // ensure permission object always complete
+
   cfg.permission = {
     deny: cfg.permission?.deny ?? DEFAULT_CONFIG.permission.deny,
     allow: cfg.permission?.allow ?? [],
@@ -136,6 +233,12 @@ export function loadConfig(overrides: Partial<ForgeConfig> = {}, cwd = process.c
     rules: cfg.permission?.rules ?? [],
   };
   if (!cfg.sandbox) cfg.sandbox = DEFAULT_CONFIG.sandbox;
+  if (!cfg.sandboxMissingBackend) {
+    cfg.sandboxMissingBackend = DEFAULT_CONFIG.sandboxMissingBackend;
+  }
+  if (!cfg.readOutsideWorkspace) {
+    cfg.readOutsideWorkspace = DEFAULT_CONFIG.readOutsideWorkspace;
+  }
   return cfg;
 }
 
@@ -153,6 +256,12 @@ permission_mode = "default"  # default | acceptEdits | plan | bypassPermissions 
 # OS sandbox for bash (macOS: sandbox-exec, Linux: bwrap)
 # off | workspace | read-only | strict
 sandbox = "workspace"
+# unrestricted | blocked  (unset: workspace=open, read-only/strict=blocked)
+# sandbox_network = "unrestricted"
+# fail-closed (default) | fallback
+sandbox_missing_backend = "fail-closed"
+# ask | allow | deny — file/path access outside workspace
+read_outside_workspace = "ask"
 
 blocking_stop_hooks = true
 compat_claude_hooks = true
@@ -164,6 +273,7 @@ stuck_threshold = 3
 auto_arm = true
 
 # Permission rules — deny always wins (including YOLO)
+# Project .forge/config.toml may only ADD deny rules, never remove global ones.
 [permission]
 deny = [
   "Bash(rm -rf /)",

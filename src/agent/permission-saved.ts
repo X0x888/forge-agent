@@ -1,0 +1,110 @@
+/**
+ * Persisted "always allow" permission rules (OpenCode PermissionSaved-inspired).
+ * Scoped by workspace root; file mode 0600.
+ */
+import path from "node:path";
+import { createHash } from "node:crypto";
+import { forgeHome, readJsonFile, writeJsonFile, nowIso } from "../util/fs.js";
+
+export interface SavedAllow {
+  id: string;
+  /** Workspace root hash or "*" for global */
+  workspaceKey: string;
+  /** bash | read_file | write_file | external_directory | … */
+  tool: string;
+  /** Pattern e.g. "git status *" */
+  pattern: string;
+  createdAt: string;
+}
+
+interface Store {
+  version: 1;
+  allows: SavedAllow[];
+}
+
+const EMPTY: Store = { version: 1, allows: [] };
+
+function storePath(): string {
+  return path.join(forgeHome(), "permissions.json");
+}
+
+export function workspaceKey(workspace: string): string {
+  const abs = path.resolve(workspace);
+  return createHash("sha256").update(abs).digest("hex").slice(0, 16);
+}
+
+export function loadSavedAllows(workspace?: string): SavedAllow[] {
+  const store = readJsonFile<Store>(storePath(), EMPTY);
+  if (!workspace) return store.allows;
+  const key = workspaceKey(workspace);
+  return store.allows.filter((a) => a.workspaceKey === key || a.workspaceKey === "*");
+}
+
+export function addSavedAllow(opts: {
+  workspace: string;
+  tool: string;
+  pattern: string;
+  global?: boolean;
+}): SavedAllow {
+  const store = readJsonFile<Store>(storePath(), EMPTY);
+  const entry: SavedAllow = {
+    id: `pa_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
+    workspaceKey: opts.global ? "*" : workspaceKey(opts.workspace),
+    tool: opts.tool,
+    pattern: opts.pattern,
+    createdAt: nowIso(),
+  };
+  // dedupe
+  const exists = store.allows.some(
+    (a) =>
+      a.workspaceKey === entry.workspaceKey &&
+      a.tool === entry.tool &&
+      a.pattern === entry.pattern,
+  );
+  if (!exists) {
+    store.allows.push(entry);
+    writeJsonFile(storePath(), store, 0o600);
+  }
+  return entry;
+}
+
+export function removeSavedAllow(id: string): boolean {
+  const store = readJsonFile<Store>(storePath(), EMPTY);
+  const before = store.allows.length;
+  store.allows = store.allows.filter((a) => a.id !== id);
+  if (store.allows.length === before) return false;
+  writeJsonFile(storePath(), store, 0o600);
+  return true;
+}
+
+export function clearSavedAllows(workspace?: string): number {
+  const store = readJsonFile<Store>(storePath(), EMPTY);
+  const before = store.allows.length;
+  if (!workspace) {
+    store.allows = [];
+  } else {
+    const key = workspaceKey(workspace);
+    store.allows = store.allows.filter((a) => a.workspaceKey !== key);
+  }
+  writeJsonFile(storePath(), store, 0o600);
+  return before - store.allows.length;
+}
+
+/** Convert saved allows into rule strings for compileRules. */
+export function savedAsAllowRules(workspace: string): string[] {
+  return loadSavedAllows(workspace).map((a) => {
+    const tool =
+      a.tool === "bash"
+        ? "Bash"
+        : a.tool === "write_file"
+          ? "Write"
+          : a.tool === "search_replace"
+            ? "Edit"
+            : a.tool === "read_file"
+              ? "Read"
+              : a.tool === "external_directory"
+                ? "external_directory"
+                : a.tool;
+    return `${tool}(${a.pattern})`;
+  });
+}

@@ -8,6 +8,22 @@ export type PermissionMode =
 /** OS sandbox profile for bash child processes */
 export type SandboxProfile = "off" | "workspace" | "read-only" | "strict";
 
+/**
+ * Child-bash network policy.
+ * Parent Node process (LLM API) is never sandboxed.
+ */
+export type SandboxNetwork = "unrestricted" | "blocked";
+
+/**
+ * When sandbox profile != off but OS backend is missing:
+ * fail-closed — deny bash (default, Grok-style)
+ * fallback — warn and run unsandboxed (legacy)
+ */
+export type SandboxMissingBackend = "fail-closed" | "fallback";
+
+/** How to treat file reads outside the workspace */
+export type ReadOutsideWorkspace = "ask" | "allow" | "deny";
+
 export type PermissionAction = "deny" | "allow" | "ask";
 
 export interface PermissionRule {
@@ -72,6 +88,19 @@ export interface ForgeConfig {
    * Default workspace — write confined to CWD + ~/.forge + temp.
    */
   sandbox: SandboxProfile;
+  /**
+   * Override child-bash network policy.
+   * When unset: workspace/off → unrestricted; read-only/strict → blocked.
+   */
+  sandboxNetwork?: SandboxNetwork;
+  /**
+   * Missing sandbox-exec/bwrap behavior. Default fail-closed.
+   */
+  sandboxMissingBackend: SandboxMissingBackend;
+  /**
+   * File reads outside workspace. Default ask (interactive) / deny (headless dangerous).
+   */
+  readOutsideWorkspace: ReadOutsideWorkspace;
   /** Allow/deny/ask rules (deny always wins, including under YOLO) */
   permission: PermissionConfig;
   /** Workspace root (defaults to cwd) */
@@ -90,6 +119,20 @@ export interface ForgeConfig {
   providers: Record<string, ProviderConfig>;
 }
 
+/** Default network policy for a sandbox profile (Grok-aligned). */
+export function defaultNetworkForProfile(profile: SandboxProfile): SandboxNetwork {
+  if (profile === "read-only" || profile === "strict") return "blocked";
+  return "unrestricted";
+}
+
+export function resolveSandboxNetwork(config: {
+  sandbox: SandboxProfile;
+  sandboxNetwork?: SandboxNetwork;
+}): SandboxNetwork {
+  if (config.sandboxNetwork) return config.sandboxNetwork;
+  return defaultNetworkForProfile(config.sandbox);
+}
+
 export const DEFAULT_CONFIG: ForgeConfig = {
   provider: "xai",
   model: "grok-4",
@@ -98,6 +141,8 @@ export const DEFAULT_CONFIG: ForgeConfig = {
   maxTurns: 0,
   permissionMode: "default",
   sandbox: "workspace",
+  sandboxMissingBackend: "fail-closed",
+  readOutsideWorkspace: "ask",
   permission: {
     deny: [
       "Bash(rm -rf /)",

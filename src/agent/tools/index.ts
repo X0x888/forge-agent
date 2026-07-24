@@ -15,6 +15,8 @@ export interface ToolContext {
   onEdit?: () => void;
   /** OS sandbox profile for bash */
   sandbox?: import("../../config/types.js").SandboxProfile;
+  sandboxNetwork?: import("../../config/types.js").SandboxNetwork;
+  sandboxMissingBackend?: import("../../config/types.js").SandboxMissingBackend;
 }
 
 export interface ToolResult {
@@ -266,6 +268,7 @@ async function toolBash(
   if (!command) return { output: "command is required", isError: true };
   const timeout = Number(args.timeout_ms) || 120_000;
   const profile = ctx.sandbox ?? "workspace";
+  const missingBackend = ctx.sandboxMissingBackend ?? "fail-closed";
 
   try {
     const { execCommandSandboxed } = await import("./sandbox-exec.js");
@@ -274,15 +277,26 @@ async function toolBash(
       cwd: ctx.workspace,
       timeoutMs: timeout,
       profile,
+      network: ctx.sandboxNetwork,
+      missingBackend,
       env: process.env,
     });
+    if (result.failClosed) {
+      return {
+        output: truncateMiddle(
+          result.stderr ||
+            "Sandbox backend unavailable (fail-closed). Install bwrap / Xcode CLT, or set sandbox=off.",
+        ),
+        isError: true,
+      };
+    }
     const out = [result.stdout, result.stderr].filter(Boolean).join("\n");
-    const meta =
-      result.sandboxed
-        ? `[sandbox:${result.backend}] `
-        : result.warning
-          ? `[sandbox:off — ${result.warning}] `
-          : "";
+    const net = result.network ? ` net=${result.network}` : "";
+    const meta = result.sandboxed
+      ? `[sandbox:${result.backend}${net}] `
+      : result.warning
+        ? `[sandbox:off — ${result.warning}] `
+        : "";
     if (result.code && result.code !== 0) {
       return {
         output: truncateMiddle(
@@ -293,7 +307,15 @@ async function toolBash(
     }
     return { output: truncateMiddle(meta + (out || "(no output)")) };
   } catch (err) {
-    // Fallback to plain exec if sandbox module fails
+    // Only fall back to plain exec when sandbox is explicitly off or fallback mode
+    if (profile !== "off" && missingBackend === "fail-closed") {
+      return {
+        output: truncateMiddle(
+          `Sandbox error (fail-closed): ${(err as Error).message}`,
+        ),
+        isError: true,
+      };
+    }
     try {
       const { stdout, stderr } = await execAsync(command, {
         cwd: ctx.workspace,

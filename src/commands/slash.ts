@@ -22,6 +22,8 @@ import {
 } from "../session/session.js";
 import type { HookRunner } from "../harness/hooks.js";
 import type { ForgeConfig } from "../config/types.js";
+import { resolveSandboxNetwork } from "../config/types.js";
+import { describeSandbox, detectSandboxBackend } from "../agent/sandbox.js";
 import { describeAuth, resolveAuth } from "../auth/resolve.js";
 import { printAuthStatus } from "../auth/login.js";
 import {
@@ -480,14 +482,47 @@ export async function handleSlash(
 
     case "/permissions": {
       const choices = COMMAND_PARAMS.permissions;
+      const sub = arg.trim();
+      if (sub === "list" || sub.startsWith("list ")) {
+        const { loadSavedAllows } = await import("../agent/permission-saved.js");
+        const ws = opts.config.workspace || process.cwd();
+        const allows = loadSavedAllows(ws);
+        if (!allows.length) {
+          return { handled: true, output: "No saved allow rules for this workspace." };
+        }
+        return {
+          handled: true,
+          output: allows
+            .map((a) => `${a.id}  ${a.tool}(${a.pattern})  ws=${a.workspaceKey}`)
+            .join("\n"),
+        };
+      }
+      if (sub === "clear") {
+        const { clearSavedAllows } = await import("../agent/permission-saved.js");
+        const n = clearSavedAllows(opts.config.workspace || process.cwd());
+        return { handled: true, output: `Cleared ${n} saved allow rule(s) for this workspace.` };
+      }
+      if (sub.startsWith("revoke ")) {
+        const id = sub.slice("revoke ".length).trim();
+        const { removeSavedAllow } = await import("../agent/permission-saved.js");
+        const ok = removeSavedAllow(id);
+        return {
+          handled: true,
+          output: ok ? `Revoked ${id}` : `No saved rule with id ${id}`,
+        };
+      }
       if (!arg) {
         return {
           handled: true,
-          output: formatParamMenu(
-            "/permissions",
-            choices,
-            opts.config.permissionMode,
-          ),
+          output:
+            formatParamMenu(
+              "/permissions",
+              choices,
+              opts.config.permissionMode,
+            ) +
+            chalk.dim(
+              "\nAlso: /permissions list | clear | revoke <id>",
+            ),
         };
       }
       const resolved = resolveParamChoice(arg, choices);
@@ -606,16 +641,21 @@ export function runDoctor(config: ForgeConfig): string {
   lines.push(`Auth: ${describeAuth(auth)}`);
   lines.push(`Provider/model: ${config.provider} / ${config.model}`);
   lines.push(`Permission mode: ${config.permissionMode}`);
-  lines.push(
-    `Sandbox: ${config.sandbox || "off"}` +
-      (config.sandbox && config.sandbox !== "off"
-        ? process.platform === "darwin"
-          ? " (macOS sandbox-exec)"
-          : process.platform === "linux"
-            ? " (Linux bwrap if installed)"
-            : " (limited on this OS)"
-        : ""),
-  );
+  {
+    const net = resolveSandboxNetwork(config);
+    const backend = detectSandboxBackend();
+    lines.push(`Sandbox: ${describeSandbox(config.sandbox || "off", net)}`);
+    lines.push(
+      `Sandbox backend: ${backend.available ? backend.backend : "NONE"}` +
+        (config.sandbox !== "off" && !backend.available
+          ? config.sandboxMissingBackend === "fail-closed"
+            ? chalk.red(" — FAIL-CLOSED (bash denied)")
+            : chalk.yellow(" — fallback unsandboxed")
+          : ""),
+    );
+    lines.push(`Missing backend policy: ${config.sandboxMissingBackend || "fail-closed"}`);
+    lines.push(`Read outside workspace: ${config.readOutsideWorkspace || "ask"}`);
+  }
   const denyN = config.permission?.deny?.length || 0;
   const allowN = config.permission?.allow?.length || 0;
   const askN = config.permission?.ask?.length || 0;

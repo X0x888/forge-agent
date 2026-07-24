@@ -213,3 +213,151 @@ export function primaryCommand(segment: string): string {
   const toks = tokenizeSimple(normalizeSegment(segment));
   return toks[0] || "";
 }
+
+/**
+ * Detect shell redirections that can write outside tools (Warp ContainsRedirection).
+ * Tracks quotes so `echo "a > b"` is not a false positive.
+ */
+export function containsRedirection(command: string): boolean {
+  const s = command;
+  let quote: '"' | "'" | null = null;
+  let escaped = false;
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i];
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (quote) {
+      if (ch === "\\" && quote === '"') {
+        escaped = true;
+        continue;
+      }
+      if (ch === quote) quote = null;
+      continue;
+    }
+    if (ch === "\\") {
+      escaped = true;
+      continue;
+    }
+    if (ch === '"' || ch === "'") {
+      quote = ch;
+      continue;
+    }
+    // > >> >& n> n>> < << <<< <>
+    if (ch === ">") return true;
+    if (ch === "<" && s[i + 1] === ">") return true;
+    if (ch === "<" && s[i + 1] === "<") return true;
+  }
+  return false;
+}
+
+/** True if command uses a pipe (not ||). */
+export function containsPipe(command: string): boolean {
+  const segs = splitShellSegments(command);
+  // splitShellSegments treats | as boundary — multiple segments from pipes
+  // Also detect raw pipe while respecting quotes
+  let quote: '"' | "'" | null = null;
+  let escaped = false;
+  for (let i = 0; i < command.length; i++) {
+    const ch = command[i];
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (quote) {
+      if (ch === "\\" && quote === '"') {
+        escaped = true;
+        continue;
+      }
+      if (ch === quote) quote = null;
+      continue;
+    }
+    if (ch === "\\") {
+      escaped = true;
+      continue;
+    }
+    if (ch === '"' || ch === "'") {
+      quote = ch;
+      continue;
+    }
+    if (ch === "|") {
+      // skip || (or) — only real pipes count
+      if (command[i + 1] === "|") {
+        i++;
+        continue;
+      }
+      return true;
+    }
+  }
+  return false;
+}
+
+const PATH_FILE_COMMANDS = new Set([
+  "rm",
+  "rmdir",
+  "cp",
+  "mv",
+  "chmod",
+  "chown",
+  "cat",
+  "head",
+  "tail",
+  "touch",
+  "mkdir",
+  "ln",
+  "install",
+  "tee",
+  "truncate",
+]);
+
+/**
+ * Extract path-like arguments from a normalized segment for workspace checks.
+ * Skips flags; returns tokens that look like paths.
+ */
+export function extractPathArgs(segment: string): string[] {
+  const norm = normalizeSegment(segment);
+  const toks = tokenizeSimple(norm);
+  if (toks.length === 0) return [];
+  const cmd = toks[0];
+  if (!PATH_FILE_COMMANDS.has(cmd)) return [];
+  const paths: string[] = [];
+  for (let i = 1; i < toks.length; i++) {
+    const t = toks[i];
+    if (t.startsWith("-") && t !== "-") continue;
+    // skip destination after cp/mv when multiple — still collect all path-like
+    if (
+      t.includes("/") ||
+      t.startsWith("~") ||
+      t.startsWith(".") ||
+      t.includes("*") ||
+      /^[A-Za-z0-9_.-]+\.[A-Za-z0-9]+$/.test(t)
+    ) {
+      paths.push(t);
+    }
+  }
+  return paths;
+}
+
+/** All path-like args across segments of a full command. */
+export function extractCommandPaths(command: string): string[] {
+  const out: string[] = [];
+  for (const seg of splitShellSegments(command)) {
+    out.push(...extractPathArgs(seg));
+  }
+  // redirection targets: cmd > /tmp/x
+  const re = /(?:^|[\s])(?:>>?|>&)\s*([^\s|&;]+)/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(command)) !== null) {
+    const t = m[1];
+    if (t && !t.startsWith("&")) out.push(t);
+  }
+  return out;
+}
+
+/**
+ * Structured targets for hard-safety: normalized segments only (no full string).
+ */
+export function safetySegments(command: string): string[] {
+  return splitShellSegments(command).map(normalizeSegment).filter(Boolean);
+}

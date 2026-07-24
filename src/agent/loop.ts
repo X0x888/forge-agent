@@ -496,13 +496,16 @@ async function prepareToolResult(opts: {
     workspace,
     config,
   });
-  if (perm === "deny") {
+  if (perm.decision === "deny") {
     await hooks.run("PermissionDenied", {
       ...baseHookCtx(session, config),
       toolName: name,
       toolInput,
     });
-    return { toolCallId: tc.id, content: "Tool denied by permission gate" };
+    return {
+      toolCallId: tc.id,
+      content: `Tool denied by permission gate: ${perm.reason}${perm.rule ? ` [${perm.rule}]` : ""}`,
+    };
   }
 
   if (events?.onToolStart) {
@@ -518,6 +521,8 @@ async function prepareToolResult(opts: {
     {
       workspace,
       sandbox: config.sandbox,
+      sandboxNetwork: config.sandboxNetwork,
+      sandboxMissingBackend: config.sandboxMissingBackend,
       onEdit: () => {
         session.meta.editCount += 1;
       },

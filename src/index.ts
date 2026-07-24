@@ -5,12 +5,27 @@ export type {
   PermissionMode,
   ProviderId,
   SandboxProfile,
+  SandboxNetwork,
+  SandboxMissingBackend,
   PermissionRule,
 } from "./config/types.js";
-export { DEFAULT_CONFIG } from "./config/types.js";
+export {
+  DEFAULT_CONFIG,
+  resolveSandboxNetwork,
+  defaultNetworkForProfile,
+} from "./config/types.js";
 export { compileRules, evaluateRules } from "./agent/rules.js";
-export { splitShellSegments, commandCheckTargets } from "./agent/shell-parse.js";
-export { describeSandbox } from "./agent/sandbox.js";
+export {
+  splitShellSegments,
+  commandCheckTargets,
+  containsRedirection,
+  extractCommandPaths,
+} from "./agent/shell-parse.js";
+export {
+  describeSandbox,
+  detectSandboxBackend,
+  execCommandSandboxed,
+} from "./agent/sandbox.js";
 export { resolveAuth, describeAuth } from "./auth/resolve.js";
 export { loginInteractive, logout, supportsOAuth } from "./auth/login.js";
 export { importGrokCredentials, readGrokXaiSession } from "./auth/import-grok.js";

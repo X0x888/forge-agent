@@ -58,6 +58,14 @@ async function main(): Promise<void> {
       "OS sandbox for bash: off|workspace|read-only|strict",
     )
     .option(
+      "--sandbox-network <mode>",
+      "Child bash network: unrestricted|blocked",
+    )
+    .option(
+      "--sandbox-missing <mode>",
+      "When sandbox backend missing: fail-closed|fallback (default fail-closed)",
+    )
+    .option(
       "--deny <rule>",
       "Permission deny rule (repeatable), e.g. 'Bash(rm *)'",
       (v: string, acc: string[]) => acc.concat(v),
@@ -433,6 +441,14 @@ function buildConfig(opts: Record<string, unknown>): ForgeConfig {
   }
   if (opts.sandbox) {
     overrides.sandbox = String(opts.sandbox) as ForgeConfig["sandbox"];
+  }
+  if (opts.sandboxNetwork) {
+    overrides.sandboxNetwork = String(opts.sandboxNetwork) as ForgeConfig["sandboxNetwork"];
+  }
+  if (opts.sandboxMissing) {
+    overrides.sandboxMissingBackend = String(
+      opts.sandboxMissing,
+    ) as ForgeConfig["sandboxMissingBackend"];
   }
   if (opts.blockingStop === false || opts.noBlockingStop) {
     overrides.blockingStopHooks = false;

@@ -4,19 +4,29 @@
  * Profiles (inspired by Grok Build):
  *   off       — no confinement
  *   workspace — write: CWD + ~/.forge + temp; read: everywhere; network: yes
- *   read-only — write: ~/.forge + temp only; read: everywhere
- *   strict    — write: CWD + ~/.forge + temp; read: CWD + system libs (best-effort)
+ *   read-only — write: ~/.forge + temp only; network: blocked
+ *   strict    — write: CWD + ~/.forge + temp; network: blocked
  *
  * macOS: sandbox-exec (Seatbelt)
- * Linux: bwrap (bubblewrap) when available; otherwise warn + soft mode
- * Windows: off (not supported)
+ * Linux: bwrap (bubblewrap) when available
+ * Windows: not supported
+ *
+ * missingBackend (default fail-closed):
+ *   fail-closed — do not run unsandboxed; return error
+ *   fallback    — warn + run unsandboxed (legacy)
  */
 import { spawn } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { forgeHome } from "../util/fs.js";
-import type { SandboxProfile } from "../config/types.js";
+import type {
+  SandboxMissingBackend,
+  SandboxNetwork,
+  SandboxProfile,
+} from "../config/types.js";
+import { defaultNetworkForProfile } from "../config/types.js";
+import { logSandboxEvent } from "./sandbox-log.js";
 
 export interface SandboxRunOpts {
   command: string;
@@ -24,6 +34,9 @@ export interface SandboxRunOpts {
   timeoutMs: number;
   env?: NodeJS.ProcessEnv;
   profile: SandboxProfile;
+  /** Override profile network default */
+  network?: SandboxNetwork;
+  missingBackend?: SandboxMissingBackend;
 }
 
 export interface SandboxRunResult {
@@ -33,6 +46,9 @@ export interface SandboxRunResult {
   sandboxed: boolean;
   backend: string;
   warning?: string;
+  /** True when sandbox was required but unavailable and fail-closed refused run */
+  failClosed?: boolean;
+  network?: SandboxNetwork;
 }
 
 function which(bin: string): string | null {
@@ -49,11 +65,48 @@ function which(bin: string): string | null {
   return null;
 }
 
+export function detectSandboxBackend(): {
+  platform: string;
+  backend: "sandbox-exec" | "bwrap" | "none";
+  available: boolean;
+  path: string | null;
+} {
+  const platform = process.platform;
+  if (platform === "darwin") {
+    const p = which("sandbox-exec");
+    return {
+      platform,
+      backend: p ? "sandbox-exec" : "none",
+      available: Boolean(p),
+      path: p,
+    };
+  }
+  if (platform === "linux") {
+    const p = which("bwrap");
+    return {
+      platform,
+      backend: p ? "bwrap" : "none",
+      available: Boolean(p),
+      path: p,
+    };
+  }
+  return { platform, backend: "none", available: false, path: null };
+}
+
+export function profileRestrictsNetwork(
+  profile: SandboxProfile,
+  override?: SandboxNetwork,
+): boolean {
+  const net = override ?? defaultNetworkForProfile(profile);
+  return net === "blocked";
+}
+
 function seatbeltProfile(opts: {
   profile: SandboxProfile;
   cwd: string;
   forge: string;
   tmp: string;
+  restrictNetwork: boolean;
 }): string {
   const cwd = opts.cwd;
   const forge = opts.forge;
@@ -62,7 +115,6 @@ function seatbeltProfile(opts: {
   const varTmp = "/var/tmp";
   const privateVarTmp = "/private/var/tmp";
 
-  // writable subpaths
   const writePaths =
     opts.profile === "read-only"
       ? [forge, tmp, privateTmp, varTmp, privateVarTmp]
@@ -72,9 +124,10 @@ function seatbeltProfile(opts: {
     .map((p) => `  (subpath ${JSON.stringify(p)})`)
     .join("\n");
 
-  // strict: deny reads outside cwd+system — seatbelt read deny is noisy;
-  // we allow read * and rely on write restriction as the main control.
-  // (Full strict read confinement needs more platform work.)
+  const networkClause = opts.restrictNetwork
+    ? `(deny network*)\n(deny network-outbound)\n(deny network-inbound)`
+    : `(allow network*)`;
+
   return `
 (version 1)
 (debug deny)
@@ -105,7 +158,7 @@ ${writeAllow}
 (allow sysctl-read)
 (allow mach-lookup)
 (allow mach-priv-host-port)
-(allow network*)
+${networkClause}
 `.trim();
 }
 
@@ -144,9 +197,21 @@ function runRaw(
   });
 }
 
+function missingBackendMessage(platform: string): string {
+  if (platform === "darwin") {
+    return "sandbox-exec not found. Install Xcode Command Line Tools, or set sandbox=off / sandbox_missing_backend=fallback.";
+  }
+  if (platform === "linux") {
+    return "bwrap (bubblewrap) not found. Install bubblewrap, or set sandbox=off / sandbox_missing_backend=fallback.";
+  }
+  return `Sandbox not supported on ${platform}. Use WSL/Linux/macOS, or set sandbox=off.`;
+}
+
 /** Run a shell command, optionally sandboxed. */
 export async function runSandboxed(opts: SandboxRunOpts): Promise<SandboxRunResult> {
   const profile = opts.profile || "off";
+  const network = opts.network ?? defaultNetworkForProfile(profile);
+  const restrictNetwork = network === "blocked";
   const shell = process.env.SHELL || "/bin/bash";
   const shellArgs = ["-c", opts.command];
 
@@ -160,43 +225,42 @@ export async function runSandboxed(opts: SandboxRunOpts): Promise<SandboxRunResu
       ...r,
       sandboxed: false,
       backend: "none",
+      network,
     };
   }
 
   const platform = process.platform;
   const forge = forgeHome();
   const tmp = os.tmpdir();
+  const detected = detectSandboxBackend();
 
   // --- macOS Seatbelt ---
   if (platform === "darwin") {
-    const sb = which("sandbox-exec");
+    const sb = detected.path;
     if (sb) {
       const profileText = seatbeltProfile({
         profile,
         cwd: path.resolve(opts.cwd),
         forge: path.resolve(forge),
         tmp: path.resolve(tmp),
+        restrictNetwork,
       });
-      // write temp profile
       const profPath = path.join(
         tmp,
         `forge-sbx-${process.pid}-${Date.now()}.sb`,
       );
       try {
         fs.writeFileSync(profPath, profileText, { mode: 0o600 });
-        const r = await runRaw(
-          sb,
-          ["-f", profPath, shell, ...shellArgs],
-          {
-            cwd: opts.cwd,
-            timeoutMs: opts.timeoutMs,
-            env: opts.env,
-          },
-        );
+        const r = await runRaw(sb, ["-f", profPath, shell, ...shellArgs], {
+          cwd: opts.cwd,
+          timeoutMs: opts.timeoutMs,
+          env: opts.env,
+        });
         return {
           ...r,
           sandboxed: true,
           backend: "sandbox-exec",
+          network,
         };
       } finally {
         try {
@@ -212,14 +276,14 @@ export async function runSandboxed(opts: SandboxRunOpts): Promise<SandboxRunResu
       code: 1,
       sandboxed: false,
       backend: "none",
-      warning:
-        "sandbox-exec not found; running unsandboxed. Install Xcode CLT or set sandbox=off.",
+      network,
+      warning: missingBackendMessage("darwin"),
     };
   }
 
   // --- Linux: bubblewrap ---
   if (platform === "linux") {
-    const bwrap = which("bwrap");
+    const bwrap = detected.path;
     if (bwrap) {
       const cwd = path.resolve(opts.cwd);
       const args: string[] = [
@@ -228,11 +292,9 @@ export async function runSandboxed(opts: SandboxRunOpts): Promise<SandboxRunResu
         "/proc",
         "--dev",
         "/dev",
-        // read-only root
         "--ro-bind",
         "/",
         "/",
-        // writable binds
         "--bind",
         tmp,
         tmp,
@@ -240,26 +302,23 @@ export async function runSandboxed(opts: SandboxRunOpts): Promise<SandboxRunResu
       if (profile !== "read-only") {
         args.push("--bind", cwd, cwd);
       }
-      // forge home always writable for session state if tools need it
       try {
         fs.mkdirSync(forge, { recursive: true });
       } catch {
         /* */
       }
       args.push("--bind", path.resolve(forge), path.resolve(forge));
-      // tmp vars
-      args.push("--chdir", cwd);
-      if (profile === "strict" || profile === "read-only") {
-        // still allow network for package managers in workspace; strict
-        // network block would break npm — keep network for now
+      if (restrictNetwork) {
+        args.push("--unshare-net");
       }
+      args.push("--chdir", cwd);
       args.push("--", shell, ...shellArgs);
       const r = await runRaw(bwrap, args, {
         cwd: opts.cwd,
         timeoutMs: opts.timeoutMs,
         env: opts.env,
       });
-      return { ...r, sandboxed: true, backend: "bwrap" };
+      return { ...r, sandboxed: true, backend: "bwrap", network };
     }
     return {
       stdout: "",
@@ -267,8 +326,8 @@ export async function runSandboxed(opts: SandboxRunOpts): Promise<SandboxRunResu
       code: 1,
       sandboxed: false,
       backend: "none",
-      warning:
-        "bwrap (bubblewrap) not found; running unsandboxed. Install bubblewrap or set sandbox=off. Hard deny rules still apply.",
+      network,
+      warning: missingBackendMessage("linux"),
     };
   }
 
@@ -278,54 +337,98 @@ export async function runSandboxed(opts: SandboxRunOpts): Promise<SandboxRunResu
     code: 1,
     sandboxed: false,
     backend: "none",
-    warning: `Sandbox not supported on ${platform}; running unsandboxed.`,
+    network,
+    warning: missingBackendMessage(platform),
   };
 }
 
 /**
  * Execute command with sandbox when profile != off.
- * On sandbox backend missing, falls back to unsandboxed with warning in stderr.
+ * Default fail-closed when backend missing.
  */
-export async function execCommandSandboxed(opts: SandboxRunOpts): Promise<SandboxRunResult> {
+export async function execCommandSandboxed(
+  opts: SandboxRunOpts,
+): Promise<SandboxRunResult> {
+  const missingBackend = opts.missingBackend ?? "fail-closed";
+  const network = opts.network ?? defaultNetworkForProfile(opts.profile);
+
   if (opts.profile === "off") {
     const r = await runRaw(process.env.SHELL || "/bin/bash", ["-c", opts.command], {
       cwd: opts.cwd,
       timeoutMs: opts.timeoutMs,
       env: opts.env,
     });
-    return { ...r, sandboxed: false, backend: "none" };
+    return { ...r, sandboxed: false, backend: "none", network };
   }
 
-  const result = await runSandboxed(opts);
-  if (!result.sandboxed && result.warning) {
-    // fallback unsandboxed so agent can still work, but flag clearly
-    const r = await runRaw(process.env.SHELL || "/bin/bash", ["-c", opts.command], {
-      cwd: opts.cwd,
-      timeoutMs: opts.timeoutMs,
-      env: opts.env,
+  const result = await runSandboxed({ ...opts, network });
+  if (result.sandboxed) {
+    return result;
+  }
+
+  // Backend missing
+  if (missingBackend === "fail-closed") {
+    const msg =
+      result.warning ||
+      "Sandbox backend unavailable; refusing to run unsandboxed (fail-closed).";
+    logSandboxEvent({
+      type: "fail_closed",
+      profile: opts.profile,
+      reason: msg,
+      command: opts.command,
+      network,
     });
     return {
-      ...r,
+      stdout: "",
+      stderr: `[forge sandbox] FAIL-CLOSED: ${msg}`,
+      code: 1,
       sandboxed: false,
       backend: "none",
-      warning: result.warning,
-      stderr:
-        (result.warning ? `[forge sandbox] ${result.warning}\n` : "") + (r.stderr || ""),
+      warning: msg,
+      failClosed: true,
+      network,
     };
   }
-  return result;
+
+  // legacy fallback
+  logSandboxEvent({
+    type: "fallback",
+    profile: opts.profile,
+    reason: result.warning || "unsandboxed fallback",
+    command: opts.command,
+    network,
+  });
+  const r = await runRaw(process.env.SHELL || "/bin/bash", ["-c", opts.command], {
+    cwd: opts.cwd,
+    timeoutMs: opts.timeoutMs,
+    env: opts.env,
+  });
+  return {
+    ...r,
+    sandboxed: false,
+    backend: "none",
+    warning: result.warning,
+    network,
+    stderr:
+      (result.warning ? `[forge sandbox] ${result.warning}\n` : "") + (r.stderr || ""),
+  };
 }
 
-export function describeSandbox(profile: SandboxProfile): string {
+export function describeSandbox(
+  profile: SandboxProfile,
+  network?: SandboxNetwork,
+): string {
+  const net = network ?? defaultNetworkForProfile(profile);
+  const netLabel = net === "blocked" ? "network blocked" : "network open";
   switch (profile) {
     case "off":
-      return "off (no OS confinement)";
+      return `off (no OS confinement; ${netLabel})`;
     case "workspace":
-      return "workspace (write: CWD + ~/.forge + temp)";
+      return `workspace (write: CWD + ~/.forge + temp; ${netLabel})`;
     case "read-only":
-      return "read-only (write: ~/.forge + temp only)";
+      return `read-only (write: ~/.forge + temp only; ${netLabel})`;
     case "strict":
-      return "strict (write: CWD + ~/.forge + temp; tighter where supported)";
+      return `strict (write: CWD + ~/.forge + temp; ${netLabel})`;
     default:
       return String(profile);
   }
