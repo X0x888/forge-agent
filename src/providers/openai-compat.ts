@@ -37,15 +37,23 @@ export class OpenAICompatProvider implements LLMProvider {
     };
   }
 
-  async chat(req: ChatRequest): Promise<ChatResponse> {
-    const body = {
+  private buildBody(req: ChatRequest, stream: boolean): Record<string, unknown> {
+    const body: Record<string, unknown> = {
       model: req.model,
       messages: req.messages,
       tools: req.tools,
       temperature: req.temperature,
       max_tokens: req.max_tokens,
-      stream: false,
+      stream,
     };
+    if (req.reasoning_effort) {
+      body.reasoning_effort = req.reasoning_effort;
+    }
+    return body;
+  }
+
+  async chat(req: ChatRequest): Promise<ChatResponse> {
+    const body = this.buildBody(req, false);
     const resp = await fetch(`${this.baseUrl}/chat/completions`, {
       method: "POST",
       headers: this.headers(),
@@ -78,14 +86,7 @@ export class OpenAICompatProvider implements LLMProvider {
     req: ChatRequest,
     onDelta: (delta: StreamDelta) => void,
   ): Promise<ChatResponse> {
-    const body = {
-      model: req.model,
-      messages: req.messages,
-      tools: req.tools,
-      temperature: req.temperature,
-      max_tokens: req.max_tokens,
-      stream: true,
-    };
+    const body = this.buildBody(req, true);
     const resp = await fetch(`${this.baseUrl}/chat/completions`, {
       method: "POST",
       headers: this.headers(),

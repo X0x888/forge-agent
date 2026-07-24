@@ -205,7 +205,8 @@ See [docs/ULW.md](docs/ULW.md).
 | `/context` | Context window bar |
 | `/cost` | Token usage + rough $ |
 | `/todos` | Agent todos |
-| `/model <id>` | Switch model (persists in `~/.forge/preferences.json`) |
+| `/model <id> [effort]` | Switch model; optional `low`\|`medium`\|`high` (persists) |
+| `/effort [level]` | Reasoning effort for models that support it (e.g. grok-4.5) |
 | `/permissions <mode>` | `default` \| `acceptEdits` \| `plan` \| `bypassPermissions` (persists) |
 | `/compact` | Compact history |
 | `/rewind [n]` | Undo last n turns |
@@ -246,7 +247,8 @@ Tab completes slash commands. While the agent is working you can still run **liv
 
 ```toml
 provider = "xai"
-model = "grok-4"
+model = "grok-4.5"
+reasoning_effort = "high"   # low | medium | high (grok-4.5+)
 permission_mode = "default"
 blocking_stop_hooks = true
 
@@ -256,7 +258,7 @@ stuck_threshold = 3
 auto_arm = true
 ```
 
-Interactive `/model` and `/permissions` choices are saved to `~/.forge/preferences.json` and apply on every new session (any folder). Precedence: defaults → global config → project config → **preferences** → env → CLI flags. Env/`-m`/`--permission-mode` still win for one-shot overrides. `/resume` still restores that session’s model for the resumed conversation.
+Interactive `/model`, `/effort`, and `/permissions` choices are saved to `~/.forge/preferences.json` and apply on every new session (any folder). Precedence: defaults → global config → project config → **preferences** → env → CLI flags. Env/`-m`/`--effort`/`--permission-mode` still win for one-shot overrides. `/resume` still restores that session’s model for the resumed conversation.
 
 Environment:
 
@@ -265,6 +267,7 @@ Environment:
 | `XAI_API_KEY` / `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / … | Provider keys |
 | `FORGE_HOME` | Config root (default `~/.forge`) |
 | `FORGE_MODEL` / `FORGE_PROVIDER` / `FORGE_BASE_URL` | Overrides |
+| `FORGE_EFFORT` / `FORGE_REASONING_EFFORT` | `low` \| `medium` \| `high` |
 | `FORGE_BLOCKING_STOP=0` | Passive Stop blocks |
 | `FORGE_GOAL_STUCK_THRESHOLD` | Stuck-wall N |
 | `FORGE_LOG_LEVEL` | `debug` \| `info` \| `warn` \| `error` |

@@ -7,6 +7,7 @@
  */
 import chalk from "chalk";
 import type { ForgeConfig } from "../config/types.js";
+import { resolveReasoningEffort } from "../config/reasoning.js";
 import type { SessionData } from "../session/session.js";
 import type { ResolvedAuth } from "../auth/types.js";
 import { describeAuth } from "../auth/resolve.js";
@@ -410,11 +411,16 @@ export function formatSessionDetails(ctx: StatusBarContext): string {
   const g = loadGoal(session.meta.id);
   const ulw = loadUlwCycle(session.meta.id);
   const est = estimateTokens(session.messages);
+  const effort = resolveReasoningEffort(config.model, config.reasoningEffort);
   const lines = [
     chalk.dim("─".repeat(Math.min(48, process.stdout.columns || 48))),
     chalk.dim(`session  ${session.meta.id.slice(0, 8)}`) +
       (session.meta.title ? chalk.dim(` · ${session.meta.title.slice(0, 40)}`) : ""),
     chalk.dim(`auth     ${describeAuth(auth)}`),
+    chalk.dim(
+      `model    ${config.provider}/${config.model}` +
+        (effort ? ` · effort ${effort}` : ""),
+    ),
     chalk.dim(
       `perms    ${config.permissionMode}  ·  Stop ${config.blockingStopHooks ? "blocking" : "passive"}`,
     ),

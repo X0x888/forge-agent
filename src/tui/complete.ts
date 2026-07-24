@@ -3,6 +3,12 @@
  * Returns [matches, sharedPrefix] for readline.completer.
  */
 import type { ForgeConfig } from "../config/types.js";
+import {
+  REASONING_EFFORT_DESCRIPTIONS,
+  effortLevelsForModel,
+  modelSupportsReasoningEffort,
+  resolveReasoningEffort,
+} from "../config/reasoning.js";
 import { SLASH_COMMANDS } from "../commands/slash.js";
 
 export interface ParamChoice {
@@ -59,6 +65,23 @@ export const COMMAND_PARAMS: Record<string, ParamChoice[]> = {
   ],
   undo: [
     { value: "1", description: "Undo last user turn" },
+  ],
+  effort: [
+    {
+      value: "high",
+      description: REASONING_EFFORT_DESCRIPTIONS.high,
+      aliases: ["h", "max", "deep"],
+    },
+    {
+      value: "medium",
+      description: REASONING_EFFORT_DESCRIPTIONS.medium,
+      aliases: ["m", "med", "mid"],
+    },
+    {
+      value: "low",
+      description: REASONING_EFFORT_DESCRIPTIONS.low,
+      aliases: ["l", "min", "minimal"],
+    },
   ],
 };
 
@@ -164,6 +187,26 @@ export function forgeCompleter(
       value: m,
       description: m === config.model ? "current" : "available",
     }));
+  }
+
+  // Effort levels for the active model (when supported)
+  if (cmd === "effort" && config) {
+    if (modelSupportsReasoningEffort(config.model)) {
+      const levels = effortLevelsForModel(config.model);
+      const current = resolveReasoningEffort(
+        config.model,
+        config.reasoningEffort,
+      );
+      choices = levels.map((e) => ({
+        value: e,
+        description:
+          REASONING_EFFORT_DESCRIPTIONS[e] +
+          (e === current ? " ← current" : ""),
+        aliases: COMMAND_PARAMS.effort?.find((c) => c.value === e)?.aliases,
+      }));
+    } else {
+      choices = [];
+    }
   }
 
   if (!choices.length) {

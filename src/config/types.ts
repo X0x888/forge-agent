@@ -1,3 +1,7 @@
+import type { ReasoningEffort } from "./reasoning.js";
+
+export type { ReasoningEffort } from "./reasoning.js";
+
 export type PermissionMode =
   | "default"
   | "acceptEdits"
@@ -85,6 +89,11 @@ export interface HookFileRef {
 export interface ForgeConfig {
   provider: ProviderId | string;
   model: string;
+  /**
+   * Reasoning effort for models that support it (e.g. grok-4.5: low|medium|high).
+   * Omitted from API requests when the active model does not support effort.
+   */
+  reasoningEffort?: ReasoningEffort;
   baseUrl?: string;
   temperature: number;
   maxTokens: number;
@@ -148,7 +157,8 @@ export function resolveSandboxNetwork(config: {
 
 export const DEFAULT_CONFIG: ForgeConfig = {
   provider: "xai",
-  model: "grok-4",
+  model: "grok-4.5",
+  reasoningEffort: "high",
   temperature: 0.2,
   maxTokens: 8192,
   maxTurns: 0,
@@ -182,15 +192,15 @@ export const DEFAULT_CONFIG: ForgeConfig = {
   compatClaudeHooks: true,
   compatCursorHooks: true,
   autoCompactThreshold: 0.85,
-  contextWindow: 128_000,
+  contextWindow: 500_000,
   providers: {
     xai: {
       id: "xai",
       apiKeyEnv: "XAI_API_KEY",
       baseUrl: "https://api.x.ai/v1",
       supportsOAuth: true,
-      defaultModel: "grok-4",
-      models: ["grok-4", "grok-3", "grok-3-mini", "grok-2"],
+      defaultModel: "grok-4.5",
+      models: ["grok-4.5", "grok-4", "grok-3", "grok-3-mini", "grok-2"],
     },
     anthropic: {
       id: "anthropic",

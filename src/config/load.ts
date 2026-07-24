@@ -12,6 +12,7 @@ import {
   type ReadOutsideWorkspace,
 } from "./types.js";
 import { applyPreferences, loadPreferences } from "./preferences.js";
+import { parseReasoningEffort } from "./reasoning.js";
 
 function deepMerge<T extends Record<string, unknown>>(base: T, overlay: Partial<T>): T {
   const out: Record<string, unknown> = { ...base };
@@ -52,6 +53,8 @@ function normalizeConfigShape(raw: Record<string, unknown>): Partial<ForgeConfig
     sandbox_network: "sandboxNetwork",
     sandbox_missing_backend: "sandboxMissingBackend",
     read_outside_workspace: "readOutsideWorkspace",
+    reasoning_effort: "reasoningEffort",
+    effort: "reasoningEffort",
   };
   for (const [snake, camel] of Object.entries(map)) {
     if (snake in out && !(camel in out)) {
@@ -146,6 +149,7 @@ export function applySafeProjectOverlay(
 
   // Safe / useful project knobs
   if (projectRaw.model) cfg.model = projectRaw.model;
+  if (projectRaw.reasoningEffort) cfg.reasoningEffort = projectRaw.reasoningEffort;
   if (typeof projectRaw.temperature === "number") cfg.temperature = projectRaw.temperature;
   if (typeof projectRaw.maxTokens === "number") cfg.maxTokens = projectRaw.maxTokens;
   if (typeof projectRaw.maxTurns === "number") cfg.maxTurns = projectRaw.maxTurns;
@@ -242,7 +246,7 @@ export function applySafeProjectOverlay(
  * 1. DEFAULT_CONFIG
  * 2. ~/.forge/config.toml | config.json  (global)
  * 3. <cwd>/.forge/config.toml | config.json  (project — safe overlay only)
- * 4. ~/.forge/preferences.json  (last /model + /permissions — all sessions/folders)
+ * 4. ~/.forge/preferences.json  (last /model + /permissions + /effort — all sessions/folders)
  * 5. environment variables
  * 6. explicit CLI overrides
  */
@@ -302,13 +306,21 @@ export function loadConfig(overrides: Partial<ForgeConfig> = {}, cwd = process.c
     DEFAULT_CONFIG.permission,
   );
 
-  // Interactive preferences (slash /model, /permissions) — beat static config
+  // Interactive preferences (slash /model, /permissions, /effort) — beat static config
   applyPreferences(cfg, loadPreferences());
 
   // Environment overrides
   if (process.env.FORGE_PROVIDER) cfg.provider = process.env.FORGE_PROVIDER as ProviderId;
   if (process.env.FORGE_MODEL) cfg.model = process.env.FORGE_MODEL;
   if (process.env.FORGE_BASE_URL) cfg.baseUrl = process.env.FORGE_BASE_URL;
+  {
+    const effortRaw =
+      process.env.FORGE_REASONING_EFFORT || process.env.FORGE_EFFORT;
+    if (effortRaw) {
+      const e = parseReasoningEffort(effortRaw);
+      if (e) cfg.reasoningEffort = e;
+    }
+  }
   if (process.env.FORGE_PERMISSION_MODE) {
     cfg.permissionMode = process.env.FORGE_PERMISSION_MODE as ForgeConfig["permissionMode"];
   }
@@ -349,6 +361,11 @@ export function loadConfig(overrides: Partial<ForgeConfig> = {}, cwd = process.c
   if (!cfg.readOutsideWorkspace) {
     cfg.readOutsideWorkspace = DEFAULT_CONFIG.readOutsideWorkspace;
   }
+  // Coerce string effort from TOML/JSON if still unparsed
+  if (typeof (cfg as { reasoningEffort?: unknown }).reasoningEffort === "string") {
+    const e = parseReasoningEffort(String(cfg.reasoningEffort));
+    cfg.reasoningEffort = e ?? undefined;
+  }
   return cfg;
 }
 
@@ -357,7 +374,9 @@ export function defaultConfigToml(): string {
 # Docs: see docs/SAFETY.md
 
 provider = "xai"
-model = "grok-4"
+model = "grok-4.5"
+# low | medium | high  (only sent for models that support it, e.g. grok-4.5)
+reasoning_effort = "high"
 temperature = 0.2
 max_tokens = 8192
 max_turns = 0

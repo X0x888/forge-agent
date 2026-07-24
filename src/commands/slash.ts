@@ -23,6 +23,15 @@ import {
 import type { HookRunner } from "../harness/hooks.js";
 import type { ForgeConfig } from "../config/types.js";
 import { resolveSandboxNetwork } from "../config/types.js";
+import {
+  REASONING_EFFORT_DESCRIPTIONS,
+  defaultEffortForModel,
+  effortLevelsForModel,
+  modelSupportsReasoningEffort,
+  parseReasoningEffort,
+  resolveReasoningEffort,
+  type ReasoningEffort,
+} from "../config/reasoning.js";
 import { loadPreferences, savePreferences } from "../config/preferences.js";
 import { describeSandbox, detectSandboxBackend } from "../agent/sandbox.js";
 import { describeAuth, resolveAuth } from "../auth/resolve.js";
@@ -92,7 +101,7 @@ const LIVE_READONLY = new Set([
 ]);
 
 /** Harness control commands safe mid-turn (no forwardPrompt). */
-const LIVE_CONTROL = new Set(["/cycle", "/ulw-off"]);
+const LIVE_CONTROL = new Set(["/cycle", "/ulw-off", "/effort"]);
 
 const LIVE_GOAL_VERBS = new Set([
   "",
@@ -128,6 +137,8 @@ export function classifyLiveSlash(line: string): LiveSlashKind {
       const a = arg.toLowerCase();
       if (!a || a === "status" || a === "3" /* menu status */) return "readonly";
     }
+    // bare /effort shows the menu; setting a level is control
+    if (cmd === "/effort" && !arg) return "readonly";
     return "control";
   }
   if (cmd === "/goal") {
@@ -163,6 +174,7 @@ export const SLASH_COMMANDS = [
   "/cost",
   "/todos",
   "/model",
+  "/effort",
   "/permissions",
   "/compact",
   "/rewind",
@@ -478,36 +490,172 @@ export async function handleSlash(
         : pcfg?.defaultModel
           ? [pcfg.defaultModel]
           : [];
-      const choices = models.map((m) => ({
-        value: m,
-        description: m === opts.config.model ? "current" : "available",
-      }));
+      const choices = models.map((m) => {
+        const effortHint = modelSupportsReasoningEffort(m)
+          ? ` · effort ${defaultEffortForModel(m) ?? "—"}`
+          : "";
+        return {
+          value: m,
+          description:
+            (m === opts.config.model ? "current" : "available") + effortHint,
+        };
+      });
       if (!arg) {
+        const curEffort = resolveReasoningEffort(
+          opts.config.model,
+          opts.config.reasoningEffort,
+        );
+        const effortLine = modelSupportsReasoningEffort(opts.config.model)
+          ? chalk.dim(
+              `\nCurrent effort: ${curEffort ?? "—"}  (change with /effort or /model <name> <low|medium|high>)`,
+            )
+          : chalk.dim("\nCurrent model does not support reasoning effort.");
         return {
           handled: true,
           output:
             (choices.length
               ? formatParamMenu("/model", choices, opts.config.model)
-              : `Current model: ${opts.config.model}\nUsage: /model <name>`) +
+              : `Current model: ${opts.config.model}\nUsage: /model <name> [effort]`) +
+            effortLine +
             chalk.dim("\nTip: Tab completes model names."),
         };
       }
+      // /model <name> [effort] — last token may be an effort level
+      const tokens = arg.split(/\s+/).filter(Boolean);
+      let modelArg = arg;
+      let effortArg: string | undefined;
+      if (tokens.length >= 2) {
+        const maybeEffort = parseReasoningEffort(tokens[tokens.length - 1]!);
+        if (maybeEffort) {
+          effortArg = tokens[tokens.length - 1];
+          modelArg = tokens.slice(0, -1).join(" ");
+        }
+      }
       const resolved =
-        resolveParamChoice(arg, choices) ||
+        resolveParamChoice(modelArg, choices) ||
         // allow free-form model ids not in the list
-        arg;
+        modelArg;
       opts.config.model = resolved;
       opts.session.meta.model = resolved;
+
+      let effortNote = "";
+      if (effortArg) {
+        const e = parseReasoningEffort(effortArg);
+        if (!e) {
+          effortNote = chalk.yellow(
+            `\nIgnored effort "${effortArg}" (use low|medium|high)`,
+          );
+        } else if (!modelSupportsReasoningEffort(resolved)) {
+          effortNote = chalk.yellow(
+            `\n${resolved} does not support reasoning effort (value kept in prefs for other models)`,
+          );
+          opts.config.reasoningEffort = e;
+          try {
+            savePreferences({ model: resolved, reasoningEffort: e });
+          } catch {
+            /* ignore */
+          }
+        } else if (!effortLevelsForModel(resolved).includes(e)) {
+          effortNote = chalk.yellow(
+            `\n${e} not valid for ${resolved}; using ${defaultEffortForModel(resolved)}`,
+          );
+          const d = defaultEffortForModel(resolved)!;
+          opts.config.reasoningEffort = d;
+          try {
+            savePreferences({ model: resolved, reasoningEffort: d });
+          } catch {
+            /* ignore */
+          }
+        } else {
+          opts.config.reasoningEffort = e;
+          try {
+            savePreferences({ model: resolved, reasoningEffort: e });
+          } catch {
+            /* ignore */
+          }
+          effortNote = ` · effort ${e}`;
+        }
+      } else {
+        try {
+          savePreferences({ model: resolved });
+        } catch {
+          /* never fail slash on prefs I/O */
+        }
+        if (modelSupportsReasoningEffort(resolved)) {
+          const e = resolveReasoningEffort(resolved, opts.config.reasoningEffort);
+          effortNote = ` · effort ${e}`;
+        }
+      }
+
       saveSession(opts.session);
+      return {
+        handled: true,
+        output: `Model set to ${resolved}${effortNote} (saved for future sessions)`,
+        session: opts.session,
+      };
+    }
+
+    case "/effort": {
+      const model = opts.config.model;
+      if (!modelSupportsReasoningEffort(model)) {
+        return {
+          handled: true,
+          output:
+            chalk.yellow(
+              `${model} does not support reasoning effort.\n`,
+            ) +
+            chalk.dim(
+              "Supported today: grok-4.5 (low|medium|high). Switch with /model grok-4.5",
+            ),
+        };
+      }
+      const levels = effortLevelsForModel(model);
+      const choices = levels.map((e) => ({
+        value: e,
+        description: REASONING_EFFORT_DESCRIPTIONS[e],
+      }));
+      const current =
+        resolveReasoningEffort(model, opts.config.reasoningEffort) ??
+        defaultEffortForModel(model);
+      if (!arg) {
+        return {
+          handled: true,
+          output:
+            formatParamMenu("/effort", choices, current) +
+            chalk.dim(
+              "\nAliases: l/low, m/medium/med, h/high  ·  applies on next model call  [live]",
+            ),
+        };
+      }
+      const resolved =
+        resolveParamChoice(arg, choices) || parseReasoningEffort(arg);
+      if (!resolved || !levels.includes(resolved as ReasoningEffort)) {
+        return {
+          handled: true,
+          output:
+            chalk.yellow(`Unknown effort: ${arg}\n`) +
+            formatParamMenu("/effort", choices, current),
+        };
+      }
+      const level = resolved as ReasoningEffort;
+      opts.config.reasoningEffort = level;
       try {
-        savePreferences({ model: resolved });
+        savePreferences({ reasoningEffort: level });
       } catch {
         /* never fail slash on prefs I/O */
       }
+      // Mid-run: notice so the agent is aware on the next LLM call
+      try {
+        pushLiveNotice(
+          opts.session.meta.id,
+          `User set reasoning effort to ${level} (applies to subsequent model calls).`,
+        );
+      } catch {
+        /* optional */
+      }
       return {
         handled: true,
-        output: `Model set to ${resolved} (saved for future sessions)`,
-        session: opts.session,
+        output: `Reasoning effort: ${level} for ${model} (saved for future sessions)`,
       };
     }
 
@@ -823,12 +971,17 @@ export function runDoctor(config: ForgeConfig): string {
   const lines: string[] = [chalk.bold("Forge doctor"), ""];
   const auth = resolveAuth(config);
   lines.push(`Auth: ${describeAuth(auth)}`);
-  lines.push(`Provider/model: ${config.provider} / ${config.model}`);
+  {
+    const effort = resolveReasoningEffort(config.model, config.reasoningEffort);
+    const effortSuffix = effort ? ` · effort=${effort}` : "";
+    lines.push(`Provider/model: ${config.provider} / ${config.model}${effortSuffix}`);
+  }
   lines.push(`Permission mode: ${config.permissionMode}`);
   {
     const prefs = loadPreferences();
     const bits = [
       prefs.model ? `model=${prefs.model}` : null,
+      prefs.reasoningEffort ? `effort=${prefs.reasoningEffort}` : null,
       prefs.permissionMode ? `permission_mode=${prefs.permissionMode}` : null,
     ].filter(Boolean);
     lines.push(
@@ -896,7 +1049,8 @@ Forge slash commands
   /context              Context window usage bar  [live]
   /cost                 Token usage + rough cost  [live]
   /todos                Show agent todos  [live]
-  /model <name>         Switch model (persists across sessions/folders)
+  /model <name> [effort] Switch model; optional low|medium|high (persists)
+  /effort [level]       Reasoning effort for current model (low|medium|high)  [live]
   /permissions [mode]   Menu if empty; Tab / numbers / aliases (yolo, always…)
                         Mode persists across sessions/folders
   /compact              Compact conversation

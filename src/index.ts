@@ -9,12 +9,22 @@ export type {
   SandboxNetwork,
   SandboxMissingBackend,
   PermissionRule,
+  ReasoningEffort,
 } from "./config/types.js";
 export {
   DEFAULT_CONFIG,
   resolveSandboxNetwork,
   defaultNetworkForProfile,
 } from "./config/types.js";
+export {
+  parseReasoningEffort,
+  resolveReasoningEffort,
+  modelSupportsReasoningEffort,
+  effortLevelsForModel,
+  defaultEffortForModel,
+  REASONING_EFFORTS,
+} from "./config/reasoning.js";
+export { buildChatRequest } from "./agent/loop.js";
 export { compileRules, evaluateRules } from "./agent/rules.js";
 export {
   splitShellSegments,

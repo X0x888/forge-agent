@@ -97,7 +97,10 @@ export function buildBaselineSystemPrompt(opts: {
     ``,
     `## Workspace`,
     `Root: ${workspace}`,
-    `Provider: ${config.provider}  Model: ${config.model}`,
+    `Provider: ${config.provider}  Model: ${config.model}` +
+      (config.reasoningEffort
+        ? `  Reasoning effort: ${config.reasoningEffort}`
+        : ""),
     `Permission mode: ${config.permissionMode}`,
     git ? git : "",
     ``,

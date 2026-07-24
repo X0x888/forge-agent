@@ -1,6 +1,6 @@
 /**
  * Durable user preferences for interactive selections that should stick
- * across sessions and folders (e.g. /model, /permissions).
+ * across sessions and folders (e.g. /model, /permissions, /effort).
  *
  * Stored at ~/.forge/preferences.json (mode 0600).
  * Applied after static config (global + project), before env / CLI overrides.
@@ -8,11 +8,16 @@
 import path from "node:path";
 import { forgeHome, readJsonFile, writeJsonFile, nowIso } from "../util/fs.js";
 import type { PermissionMode } from "./types.js";
+import {
+  parseReasoningEffort,
+  type ReasoningEffort,
+} from "./reasoning.js";
 
 export interface UserPreferences {
   version: 1;
   model?: string;
   permissionMode?: PermissionMode;
+  reasoningEffort?: ReasoningEffort;
   updatedAt?: string;
 }
 
@@ -42,6 +47,10 @@ export function loadPreferences(): UserPreferences {
   ) {
     out.permissionMode = raw.permissionMode as PermissionMode;
   }
+  if (typeof raw.reasoningEffort === "string") {
+    const e = parseReasoningEffort(raw.reasoningEffort);
+    if (e) out.reasoningEffort = e;
+  }
   if (typeof raw.updatedAt === "string") out.updatedAt = raw.updatedAt;
   return out;
 }
@@ -53,6 +62,7 @@ export function loadPreferences(): UserPreferences {
 export function savePreferences(patch: {
   model?: string;
   permissionMode?: PermissionMode;
+  reasoningEffort?: ReasoningEffort;
 }): UserPreferences {
   const cur = loadPreferences();
   if (patch.model !== undefined) {
@@ -65,6 +75,9 @@ export function savePreferences(patch: {
     }
     cur.permissionMode = patch.permissionMode;
   }
+  if (patch.reasoningEffort !== undefined) {
+    cur.reasoningEffort = patch.reasoningEffort;
+  }
   cur.version = 1;
   cur.updatedAt = nowIso();
   writeJsonFile(preferencesPath(), cur, 0o600);
@@ -72,11 +85,15 @@ export function savePreferences(patch: {
 }
 
 /** Apply loaded preferences onto a config object (mutates and returns it). */
-export function applyPreferences<T extends { model: string; permissionMode: PermissionMode }>(
-  cfg: T,
-  prefs: UserPreferences = loadPreferences(),
-): T {
+export function applyPreferences<
+  T extends {
+    model: string;
+    permissionMode: PermissionMode;
+    reasoningEffort?: ReasoningEffort;
+  },
+>(cfg: T, prefs: UserPreferences = loadPreferences()): T {
   if (prefs.model) cfg.model = prefs.model;
   if (prefs.permissionMode) cfg.permissionMode = prefs.permissionMode;
+  if (prefs.reasoningEffort) cfg.reasoningEffort = prefs.reasoningEffort;
   return cfg;
 }

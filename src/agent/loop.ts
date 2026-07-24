@@ -1,6 +1,12 @@
 import chalk from "chalk";
 import type { ForgeConfig } from "../config/types.js";
-import type { LLMProvider, ToolCall } from "../providers/types.js";
+import { resolveReasoningEffort } from "../config/reasoning.js";
+import type {
+  ChatMessage,
+  ChatRequest,
+  LLMProvider,
+  ToolCall,
+} from "../providers/types.js";
 import type { SessionData, TodoItem } from "../session/session.js";
 import {
   saveSession,
@@ -119,6 +125,22 @@ const READ_ONLY = new Set([
   "get_task_output",
   "task_output",
 ]);
+
+/** Build provider chat request including reasoning_effort when supported. */
+export function buildChatRequest(
+  config: ForgeConfig,
+  messages: ChatMessage[],
+): ChatRequest {
+  const effort = resolveReasoningEffort(config.model, config.reasoningEffort);
+  return {
+    model: config.model,
+    messages,
+    tools: TOOL_DEFINITIONS,
+    temperature: config.temperature,
+    max_tokens: config.maxTokens,
+    ...(effort ? { reasoning_effort: effort } : {}),
+  };
+}
 
 function baseHookCtx(session: SessionData, config: ForgeConfig): HookContext {
   return {
@@ -308,26 +330,16 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
             assertNotAborted(signal);
             if (stream && events.onToken) {
               return provider.chatStream(
-                {
-                  model: config.model,
-                  messages: session.messages,
-                  tools: TOOL_DEFINITIONS,
-                  temperature: config.temperature,
-                  max_tokens: config.maxTokens,
-                },
+                buildChatRequest(config, session.messages),
                 (delta) => {
                   if (signal?.aborted) return;
                   if (delta.content) events.onToken?.(delta.content);
                 },
               );
             }
-            const r = await provider.chat({
-              model: config.model,
-              messages: session.messages,
-              tools: TOOL_DEFINITIONS,
-              temperature: config.temperature,
-              max_tokens: config.maxTokens,
-            });
+            const r = await provider.chat(
+              buildChatRequest(config, session.messages),
+            );
             if (r.message.content && events.onToken) {
               events.onToken(r.message.content);
             }

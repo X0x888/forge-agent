@@ -14,6 +14,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { loadConfig, defaultConfigToml } from "./config/load.js";
 import type { ForgeConfig } from "./config/types.js";
+import { parseReasoningEffort } from "./config/reasoning.js";
 import { resolveAuth, describeAuth } from "./auth/resolve.js";
 import { loginInteractive, logout, printAuthStatus, supportsOAuth } from "./auth/login.js";
 import { importGrokCredentials } from "./auth/import-grok.js";
@@ -49,6 +50,14 @@ async function main(): Promise<void> {
     .option("-m, --model <model>", "Model id")
     .option("-p, --provider <provider>", "Provider: xai|anthropic|openai|openrouter|google|custom")
     .option("--base-url <url>", "Override API base URL")
+    .option(
+      "--effort <level>",
+      "Reasoning effort for supported models: low|medium|high",
+    )
+    .option(
+      "--reasoning-effort <level>",
+      "Alias for --effort",
+    )
     .option(
       "--permission-mode <mode>",
       "default|acceptEdits|plan|bypassPermissions|dontAsk",
@@ -157,6 +166,8 @@ async function main(): Promise<void> {
     .argument("<prompt...>", "Prompt to run")
     .option("-m, --model <model>", "Model id")
     .option("-p, --provider <provider>", "Provider")
+    .option("--effort <level>", "Reasoning effort: low|medium|high")
+    .option("--reasoning-effort <level>", "Alias for --effort")
     .option("--permission-mode <mode>", "Permission mode", "acceptEdits")
     .option("--ulw", "Ultrawork mode")
     .option("--goal <objective>", "Arm /goal")
@@ -436,6 +447,19 @@ function buildConfig(opts: Record<string, unknown>): ForgeConfig {
   if (opts.model) overrides.model = String(opts.model);
   if (opts.provider) overrides.provider = String(opts.provider) as ForgeConfig["provider"];
   if (opts.baseUrl) overrides.baseUrl = String(opts.baseUrl);
+  {
+    const effortRaw = opts.effort ?? opts.reasoningEffort;
+    if (effortRaw != null && String(effortRaw).trim()) {
+      const e = parseReasoningEffort(String(effortRaw));
+      if (!e) {
+        log.error(
+          `Invalid --effort "${effortRaw}". Use low, medium, or high.`,
+        );
+        process.exit(1);
+      }
+      overrides.reasoningEffort = e;
+    }
+  }
   if (opts.permissionMode) {
     overrides.permissionMode = String(opts.permissionMode) as ForgeConfig["permissionMode"];
   }
