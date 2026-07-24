@@ -133,9 +133,58 @@ export async function runRepl(opts: {
   });
 
   const statusCtx = (): StatusBarContext => ({ config, session, auth });
-  const working = createWorkingIndicator({ getContext: statusCtx });
   /** Avoid reprinting an identical strip on every empty Enter */
   let lastStatusStrip = "";
+  /** Spinner frame for prompt-docked live status */
+  let liveFrame = 0;
+  /** When true, token stream has taken stdout — re-dock prompt after */
+  let streamActive = false;
+
+  /**
+   * Mid-run prompt — THE visible status dock (spin + phase + live ›).
+   * Always starts on a fresh line so tokens/spinner cannot erase it.
+   */
+  const livePrompt = (opts?: { freshLine?: boolean }) => {
+    try {
+      if (opts?.freshLine !== false) {
+        // Ensure we are not appending to a half-written model line
+        process.stdout.write("\n");
+      }
+      rl.setPrompt(
+        buildLivePrompt(statusCtx(), {
+          frame: liveFrame,
+          phase: getActivity().phase,
+          detail: getActivity().detail,
+        }),
+      );
+      rl.prompt();
+    } catch {
+      /* readline may be closed */
+    }
+  };
+
+  const working = createWorkingIndicator({
+    getContext: statusCtx,
+    // Critical: no \r spinner — it was wiping live › off the terminal
+    dockInPrompt: true,
+    onTick: (frame) => {
+      if (!busy || streamActive) return;
+      liveFrame = frame;
+      try {
+        rl.setPrompt(
+          buildLivePrompt(statusCtx(), {
+            frame,
+            phase: getActivity().phase,
+            detail: getActivity().detail,
+          }),
+        );
+        // true = preserve current input buffer while redrawing
+        rl.prompt(true);
+      } catch {
+        /* ignore */
+      }
+    },
+  });
 
   pulseHeartbeat();
   const hbTimer = setInterval(pulseHeartbeat, 4_000);
@@ -153,19 +202,6 @@ export async function runRepl(opts: {
     const prefix = buildPromptFlags(statusCtx());
     rl.setPrompt(prefix + chalk.green("forge") + chalk.dim(" › "));
     rl.prompt();
-  };
-
-  /**
-   * Mid-run prompt — always re-shown so /cycle 0 has a visible place to type
-   * and clear feedback after each control.
-   */
-  const livePrompt = () => {
-    try {
-      rl.setPrompt(buildLivePrompt(statusCtx()));
-      rl.prompt();
-    } catch {
-      /* readline may be closed */
-    }
   };
 
   const handleLine = async (line: string) => {
@@ -292,14 +328,21 @@ export async function runRepl(opts: {
     beginTurn();
     pulseHeartbeat();
 
-    // Native live chrome: header + working status + open live › line
+    // Native live chrome: header + docked live › prompt (status lives IN the prompt)
     process.stdout.write("\n");
     console.log(renderLiveRunHeader(statusCtx()));
+    console.log(
+      chalk.bold.cyan("  ↓  controls open here — look for ") +
+        chalk.bold.white("live ›") +
+        chalk.bold.cyan("  at the bottom while working"),
+    );
+    streamActive = false;
+    liveFrame = 0;
     working.start();
-    livePrompt();
+    livePrompt({ freshLine: true });
 
     let sawToken = false;
-    /** Tool phase holds spinner off for clean tool/permission lines */
+    /** Tool phase: pause prompt refresh so tool logs stay clean */
     let toolHold = false;
 
     const setToolHold = (on: boolean) => {
@@ -310,6 +353,13 @@ export async function runRepl(opts: {
         working.resume();
         toolHold = false;
       }
+    };
+
+    /** After model text or tools, re-dock the live line on a new row */
+    const redockLive = () => {
+      streamActive = false;
+      working.setStreaming(false);
+      livePrompt({ freshLine: true });
     };
 
     try {
@@ -325,13 +375,19 @@ export async function runRepl(opts: {
         events: {
           onToken: (t) => {
             if (!sawToken) {
-              // Streaming tokens on stdout — suppress \r status (keeps ticks)
+              // Leave the live › line above; stream on following lines
+              process.stdout.write("\n");
               working.setStreaming(true);
+              streamActive = true;
               sawToken = true;
             }
             process.stdout.write(t);
           },
           onToolStart: (name, args) => {
+            if (streamActive || sawToken) {
+              process.stdout.write("\n");
+            }
+            streamActive = false;
             working.setStreaming(false);
             sawToken = false;
             console.error(formatToolStart(name, args));
@@ -343,8 +399,8 @@ export async function runRepl(opts: {
             pendingTools = Math.max(0, pendingTools - 1);
             if (pendingTools === 0) {
               setToolHold(false);
-              // Between tools — re-offer live input
-              livePrompt();
+              // Between tools — re-dock live › under tool output
+              redockLive();
             }
           },
           onPhase: (phase, detail) => {
@@ -353,6 +409,7 @@ export async function runRepl(opts: {
             pulseHeartbeat();
             if (phase === "tool") {
               pendingTools += 1;
+              streamActive = false;
               working.setStreaming(false);
               sawToken = false;
               setToolHold(true);
@@ -363,11 +420,17 @@ export async function runRepl(opts: {
               pendingTools === 0
             ) {
               setToolHold(false);
-              working.setStreaming(false);
-              sawToken = false;
+              if (streamActive || sawToken) {
+                redockLive();
+                sawToken = false;
+              } else {
+                working.setStreaming(false);
+                streamActive = false;
+                // Refresh prompt in place for phase change
+                livePrompt({ freshLine: false });
+              }
               if (phase === "stop_guard") {
-                // Harness decision point — best moment for /cycle 0
-                livePrompt();
+                redockLive();
               }
             }
           },
@@ -380,6 +443,7 @@ export async function runRepl(opts: {
       });
 
       working.stop();
+      streamActive = false;
 
       if (result.finalText && !result.finalText.endsWith("\n")) {
         process.stdout.write("\n");

@@ -262,9 +262,67 @@ export function renderBusyStatusLine(
   return bits.filter(Boolean).join(" ");
 }
 
-/** Prompt string while an agent turn is in progress. */
-export function buildLivePrompt(ctx: StatusBarContext): string {
-  return buildPromptFlags(ctx) + chalk.cyan("live") + chalk.dim(" › ");
+/**
+ * Prompt string while an agent turn is in progress.
+ * This IS the mid-run status dock (spinner + phase + harness) — not a bare
+ * "live ›" that gets wiped by the stderr spinner or token stream.
+ */
+export function buildLivePrompt(
+  ctx: StatusBarContext,
+  opts?: { phase?: AgentPhase; detail?: string; frame?: number },
+): string {
+  const act = getActivity();
+  const phase = opts?.phase ?? act.phase;
+  const detail =
+    opts?.detail ??
+    (act.phase === "thinking" && act.detail === undefined && act.busy
+      ? undefined
+      : act.detail);
+  const frame = opts?.frame ?? Math.floor(Date.now() / 80);
+  const spin = SPINNER_FRAMES[frame % SPINNER_FRAMES.length];
+  const turnSec = activityElapsedSec(act);
+  const effort = resolveReasoningEffort(ctx.config.model, ctx.config.reasoningEffort);
+  const ulw = loadUlwCycle(ctx.session.meta.id);
+
+  let phaseLabel: string;
+  if (phase === "tool" && detail) {
+    phaseLabel = `tool ${shortDetail(detail, 20)}`;
+  } else if (phase === "compacting") phaseLabel = "compact";
+  else if (phase === "stop_guard") phaseLabel = "harness";
+  else if (phase === "waiting") phaseLabel = "wait";
+  else if (detail === "streaming") phaseLabel = "reply";
+  else phaseLabel = "think";
+
+  const left: string[] = [
+    chalk.magenta(spin),
+    chalk.magenta("⚒"),
+    chalk.cyan("LIVE"),
+    chalk.dim(phaseLabel),
+  ];
+  if (turnSec > 0) left.push(chalk.dim(formatSec(turnSec)));
+  if (ulw?.enabled) {
+    left.push(
+      ulw.cycle === 1
+        ? chalk.magenta(formatUlwBadge(ulw))
+        : chalk.yellow(formatUlwBadge(ulw)),
+    );
+  }
+  if (effort) left.push(chalk.dim(effort));
+  if (act.bgRunning > 0) left.push(chalk.yellow(`bg:${act.bgRunning}`));
+
+  // Right side: explicit control affordance so it cannot be missed
+  const hint =
+    ulw?.enabled && ulw.cycle === 1
+      ? chalk.dim(" /cycle 0")
+      : chalk.dim(" /status");
+
+  return (
+    left.join(" ") +
+    hint +
+    " " +
+    chalk.bold.cyan("live") +
+    chalk.bold.cyan(" › ")
+  );
 }
 
 /** Visible confirmation after a mid-run control command. */
@@ -393,19 +451,30 @@ export interface WorkingIndicator {
 export interface WorkingIndicatorOpts {
   /** Live session context for rich mid-run status (model, ULW, effort). */
   getContext?: () => StatusBarContext | null;
+  /**
+   * When true, do NOT paint a competing \r spinner on stderr.
+   * The REPL docks status into the `live ›` prompt instead (recommended).
+   */
+  dockInPrompt?: boolean;
+  /** Called on each tick when dockInPrompt — refresh the readline prompt. */
+  onTick?: (frame: number, phase: AgentPhase, detail?: string) => void;
 }
 
 /**
- * Native mid-run status on stderr.
+ * Native mid-run status on stderr — OR prompt-docked mode for the REPL.
  *
- * - Spinning \r line when not streaming tokens (thinking / tools / harness)
- * - Quiet during token stream, with a newline heartbeat every ~10s
- * - Rich label includes model, effort, ULW cycle, and /cycle 0 hint
+ * dockInPrompt=true (REPL):
+ *   No \r spinner (it erased `live ›`). Ticks call onTick so the prompt
+ *   itself animates (spin + phase + ULW).
+ *
+ * dockInPrompt=false (fallback / tests):
+ *   Spinning \r line; quiet during token stream with ~10s newline ticks.
  */
 export function createWorkingIndicator(
   opts: WorkingIndicatorOpts = {},
 ): WorkingIndicator {
   const isTty = Boolean(process.stderr.isTTY);
+  const dockInPrompt = Boolean(opts.dockInPrompt);
   let frame = 0;
   let timer: ReturnType<typeof setInterval> | null = null;
   let pauseDepth = 0;
@@ -450,6 +519,13 @@ export function createWorkingIndicator(
   };
 
   const paint = () => {
+    // Prompt-docked mode: never \r — that fought the live › line
+    if (dockInPrompt) {
+      if (running && pauseDepth === 0 && !streaming) {
+        opts.onTick?.(frame, phase, detail);
+      }
+      return;
+    }
     if (!running || pauseDepth > 0 || !isTty || streaming) return;
     const text = label();
     const width = process.stderr.columns || 80;
@@ -464,12 +540,21 @@ export function createWorkingIndicator(
     const now = Date.now();
     if (now - lastTickAt < TICK_MS) return;
     lastTickAt = now;
-    // Newline status so streaming stdout is not garbled by \r
+    if (dockInPrompt) {
+      // Reminder that controls stay open during long streams
+      process.stderr.write(
+        "\n" +
+          chalk.dim("  ⚒ still working · controls open at ") +
+          chalk.cyan("live ›") +
+          chalk.dim("  (e.g. /cycle 0)\n"),
+      );
+      return;
+    }
     process.stderr.write("\n" + chalk.dim(label()) + "\n");
   };
 
   const clearLine = () => {
-    if (!isTty) return;
+    if (dockInPrompt || !isTty) return;
     const width = process.stderr.columns || 80;
     process.stderr.write("\r" + " ".repeat(width) + "\r");
   };
@@ -481,7 +566,7 @@ export function createWorkingIndicator(
       streaming = false;
       frame = 0;
       lastTickAt = Date.now();
-      if (!isTty) {
+      if (!isTty && !dockInPrompt) {
         process.stderr.write(chalk.dim("  ⚒ working…\n"));
         return;
       }
@@ -490,7 +575,7 @@ export function createWorkingIndicator(
         frame += 1;
         if (streaming) tickNewline();
         else paint();
-      }, 80);
+      }, dockInPrompt ? 200 : 80);
       timer.unref?.();
       paint();
     },
@@ -502,7 +587,6 @@ export function createWorkingIndicator(
     setStreaming(on) {
       if (streaming === on) return;
       if (on) {
-        // Leaving spin mode — clear the \r line so it does not sit on a token line
         clearLine();
         streaming = true;
         lastTickAt = Date.now();
