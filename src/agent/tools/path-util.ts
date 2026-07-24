@@ -1,5 +1,9 @@
 import path from "node:path";
 import { forgeHome, isWithinRoot, realpathWithinRoot } from "../../util/fs.js";
+import {
+  isProtectedWritePath,
+  protectedWriteReason,
+} from "../protected-paths.js";
 
 export function resolvePath(workspace: string, p: string): string {
   if (path.isAbsolute(p)) return path.resolve(p);
@@ -7,26 +11,55 @@ export function resolvePath(workspace: string, p: string): string {
 }
 
 /**
- * Writes must stay inside workspace or ~/.forge (session files).
- * Uses realpath to defeat symlink escapes.
+ * Writes must stay inside workspace or ~/.forge/sessions|logs|tmp.
+ * Uses realpath to defeat symlink escapes; blocks credentials/.git hooks.
  */
 export async function assertWritablePath(
   workspace: string,
   target: string,
 ): Promise<string> {
+  const logical = path.resolve(target);
+
+  // Fast path: logical protected check before realpath
+  if (isProtectedWritePath(logical)) {
+    throw new Error(protectedWriteReason(logical));
+  }
+
   const ws = await realpathWithinRoot(workspace, target);
-  if (ws.ok) return ws.path;
+  if (ws.ok) {
+    if (isProtectedWritePath(ws.path)) {
+      throw new Error(protectedWriteReason(ws.path));
+    }
+    return ws.path;
+  }
 
   const home = forgeHome();
   const fh = await realpathWithinRoot(home, target);
-  if (fh.ok) return fh.path;
+  if (fh.ok) {
+    if (isProtectedWritePath(fh.path)) {
+      throw new Error(protectedWriteReason(fh.path));
+    }
+    // Only sessions/logs/tmp under forge home
+    const p = fh.path.replace(/\\/g, "/");
+    const forge = home.replace(/\\/g, "/");
+    if (
+      p.startsWith(`${forge}/sessions/`) ||
+      p.startsWith(`${forge}/logs/`) ||
+      p.startsWith(`${forge}/tmp/`)
+    ) {
+      return fh.path;
+    }
+    throw new Error(
+      `Refusing write under ~/.forge outside sessions/logs/tmp: ${fh.path}`,
+    );
+  }
 
-  // Also allow logical within-root when neither path exists yet under a new tree
-  // that is still under workspace by path.resolve (no symlink leap).
-  const logical = path.resolve(target);
-  if (isWithinRoot(workspace, logical) || isWithinRoot(home, logical)) {
-    // Prefer reporting the realpath failure if an ancestor escaped.
+  // Logical within-root when path does not exist yet (no symlink leap)
+  if (isWithinRoot(workspace, logical)) {
     if (ws.reason.includes("escapes")) throw new Error(ws.reason);
+    if (isProtectedWritePath(logical)) {
+      throw new Error(protectedWriteReason(logical));
+    }
     return logical;
   }
 
@@ -44,6 +77,14 @@ export async function resolveReadablePath(
   try {
     const checked = await realpathWithinRoot(workspace, logical);
     if (checked.ok) return checked.path;
+    // Symlink escaped workspace — still return logical for soft read of missing;
+    // caller may read outside only if permission gate allowed it.
+    if (checked.reason.includes("escapes")) {
+      // Prefer denying escape: return path that will fail or be outside
+      return checked.reason.includes("→")
+        ? logical
+        : logical;
+    }
   } catch {
     /* */
   }

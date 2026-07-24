@@ -1,7 +1,7 @@
 {
   "name": "forge-agent",
-  "version": "0.7.1",
-  "description": "Forge — AI coding agent CLI with harness (Stop/goal/ULW), fail-closed sandbox, and quality tools (rg, realpath, web_fetch SSRF, background bash)",
+  "version": "0.8.0",
+  "description": "Forge — AI coding agent CLI with harness (Stop/goal/ULW), Bar A daily-driver safety (fail-closed headless, segment-strict allows, protected paths), and quality tools",
   "type": "module",
   "bin": {
     "forge": "./dist/cli.js"

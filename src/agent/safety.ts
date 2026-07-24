@@ -6,8 +6,14 @@
  */
 import path from "node:path";
 import os from "node:os";
-import { commandCheckTargets, safetySegments, tokenizeSimple, normalizeSegment } from "./shell-parse.js";
+import {
+  commandCheckTargets,
+  safetySegments,
+  tokenizeSimple,
+  normalizeSegment,
+} from "./shell-parse.js";
 import { forgeHome } from "../util/fs.js";
+import { isProtectedWritePath, protectedWriteReason } from "./protected-paths.js";
 
 export type SafetyVerdict =
   | { ok: true }
@@ -27,7 +33,7 @@ const HARD_DENY: Array<{ rule: string; re: RegExp; reason: string }> = [
   },
   {
     rule: "rm-rf-home",
-    re: /\brm\b[^\n;|&]*(-[a-zA-Z]*r[a-zA-Z]*f[a-zA-Z]*|-[a-zA-Z]*f[a-zA-Z]*r[a-zA-Z]*)[^\n;|&]*(~|\$HOME|\/Users\/[^/\s]+\/?|\/home\/[^/\s]+\/?)(\s|$|;|&|\|)/,
+    re: /\brm\b[^\n;|&]*(-[a-zA-Z]*r[a-zA-Z]*f[a-zA-Z]*|-[a-zA-Z]*f[a-zA-Z]*r[a-zA-Z]*)[^\n;|&]*(~|\$\{?HOME\}?|\/Users\/[^/\s]+\/?|\/home\/[^/\s]+\/?)(\s|$|;|&|\|)/,
     reason: "Refusing recursive delete of home directory",
   },
   {
@@ -39,6 +45,11 @@ const HARD_DENY: Array<{ rule: string; re: RegExp; reason: string }> = [
     rule: "rm-rf-dotdot",
     re: /\brm\b[^\n;|&]*(-[a-zA-Z]*r[a-zA-Z]*f[a-zA-Z]*|-[a-zA-Z]*f[a-zA-Z]*r[a-zA-Z]*)[^\n;|&]*\s+\.\.(\s|\/|$)/,
     reason: "Refusing recursive delete of parent directory",
+  },
+  {
+    rule: "find-delete",
+    re: /\bfind\b[\s\S]*\s-delete\b/,
+    reason: "Refusing find … -delete (broad destructive walk)",
   },
   {
     rule: "mkfs",
@@ -67,17 +78,27 @@ const HARD_DENY: Array<{ rule: string; re: RegExp; reason: string }> = [
   },
   {
     rule: "force-push-main",
-    re: /\bgit\s+push\b[^\n;|&]*--force(-with-lease)?[^\n;|&]*\b(main|master)\b/,
+    re: /\bgit\b[\s\S]*\bpush\b[^\n;|&]*--force(-with-lease)?[^\n;|&]*\b(main|master)\b/,
     reason: "Refusing force-push to main/master",
   },
   {
     rule: "force-push-main-order",
-    re: /\bgit\s+push\b[^\n;|&]*\b(main|master)\b[^\n;|&]*--force(-with-lease)?/,
+    re: /\bgit\b[\s\S]*\bpush\b[^\n;|&]*\b(main|master)\b[^\n;|&]*--force(-with-lease)?/,
     reason: "Refusing force-push to main/master",
   },
   {
+    rule: "force-push-main-short",
+    re: /\bgit\b[\s\S]*\bpush\b[^\n;|&]*\s-f(\s|$)[^\n;|&]*\b(main|master)\b/,
+    reason: "Refusing force-push (-f) to main/master",
+  },
+  {
+    rule: "force-push-main-short-order",
+    re: /\bgit\b[\s\S]*\bpush\b[^\n;|&]*\b(main|master)\b[^\n;|&]*\s-f(\s|$)/,
+    reason: "Refusing force-push (-f) to main/master",
+  },
+  {
     rule: "git-clean-fdx",
-    re: /\bgit\s+clean\b[^\n;|&]*-[a-zA-Z]*f[a-zA-Z]*d[a-zA-Z]*x/,
+    re: /\bgit\b[\s\S]*\bclean\b[^\n;|&]*-[a-zA-Z]*f[a-zA-Z]*d[a-zA-Z]*x/,
     reason: "Refusing git clean -fdx (destroys untracked + ignored)",
   },
   {
@@ -95,20 +116,50 @@ const HARD_DENY: Array<{ rule: string; re: RegExp; reason: string }> = [
     re: /\b(shutdown|reboot|halt|poweroff)\b/,
     reason: "Refusing system power command",
   },
+  {
+    rule: "node-rm-root",
+    // Matches rmSync("/") with optional escapes: "/", \\"/\\", '/'
+    re: /\brmSync\s*\(\s*(?:\\?["'`])\/(?:\\?["'`])/,
+    reason: "Refusing Node recursive delete of filesystem root",
+  },
+  {
+    rule: "python-rmtree-root",
+    re: /\brmtree\s*\(\s*(?:\\?["'`])\/(?:\\?["'`])/,
+    reason: "Refusing Python rmtree of filesystem root",
+  },
+  {
+    rule: "fs-rm-root-recursive",
+    re: /\b(rmSync|rmdirSync|rmtree)\b[\s\S]{0,80}(?:\\?["'`])\/(?:\\?["'`])[\s\S]{0,80}recursive\s*:\s*true/,
+    reason: "Refusing language-runtime recursive delete of filesystem root",
+  },
 ];
 
 export const SOFT_DANGEROUS: RegExp[] = [
   /\brm\s+(-[a-zA-Z]*r[a-zA-Z]*f|-[a-zA-Z]*f[a-zA-Z]*r)/,
   /\brm\s+--recursive/,
-  /\bgit\s+push\s+.*--force/,
-  /\bgit\s+reset\s+--hard/,
+  /\bgit\s+[\s\S]*\bpush\s+[\s\S]*--force/,
+  /\bgit\s+[\s\S]*\bpush\s+[\s\S]*\s-f(\s|$)/,
+  /\bgit\s+[\s\S]*\breset\s+--hard/,
   /\bchmod\s+-R\s+777\b/,
   /\bdrop\s+table\b/i,
+  /\bnpm\s+publish\b/,
+  /\bpnpm\s+publish\b/,
+  /\byarn\s+npm\s+publish\b/,
+  /\bcurl\b[\s\S]*\s(-X\s*POST|-X\s*PUT|-d\s|--data|--upload-file|-T\s)/i,
+  /\bwget\b[\s\S]*\s(--post-data|--method=POST)/i,
 ];
 
 export function isSoftDangerousBash(command: string): boolean {
   return SOFT_DANGEROUS.some((re) => re.test(command));
 }
+
+const HOME_TARGETS = new Set([
+  "~",
+  "$HOME",
+  "${HOME}",
+  "${home}",
+  "$home",
+]);
 
 /** Structured rm -rf of catastrophic targets (supplements regex). */
 function structuredRmDeny(segment: string): SafetyVerdict | null {
@@ -118,10 +169,15 @@ function structuredRmDeny(segment: string): SafetyVerdict | null {
   const recursive =
     flags.some((f) => /r/i.test(f.replace(/^--/, "")) && !f.startsWith("--")) ||
     flags.includes("--recursive") ||
-    flags.some((f) => f === "-rf" || f === "-fr" || /^-[a-zA-Z]*r[a-zA-Z]*f/.test(f) || /^-[a-zA-Z]*f[a-zA-Z]*r/.test(f));
+    flags.some(
+      (f) =>
+        f === "-rf" ||
+        f === "-fr" ||
+        /^-[a-zA-Z]*r[a-zA-Z]*f/.test(f) ||
+        /^-[a-zA-Z]*f[a-zA-Z]*r/.test(f),
+    );
   if (!recursive) return null;
   const targets = toks.filter((t) => !t.startsWith("-") || t === "-");
-  // drop "rm"
   const paths = targets.slice(1);
   const home = os.homedir().replace(/\\/g, "/");
   for (const raw of paths) {
@@ -133,7 +189,7 @@ function structuredRmDeny(segment: string): SafetyVerdict | null {
         rule: "rm-rf-structured",
       };
     }
-    if (t === "~" || t === "$HOME" || t === home || t === home + "/") {
+    if (HOME_TARGETS.has(t) || t === home || t === home + "/") {
       return {
         ok: false,
         reason: "Refusing recursive delete of home directory",
@@ -144,7 +200,73 @@ function structuredRmDeny(segment: string): SafetyVerdict | null {
   return null;
 }
 
-/** curl/wget segment piped to shell: check adjacent segments of full command. */
+/** Structured force-push to main/master (handles git -C, -f, flag order). */
+function structuredGitForceMain(segment: string): SafetyVerdict | null {
+  const toks = tokenizeSimple(normalizeSegment(segment));
+  if (toks[0] !== "git") return null;
+
+  // Peel git global options: -C path, -c key=val, --git-dir=…
+  let i = 1;
+  while (i < toks.length) {
+    const t = toks[i];
+    if (t === "-C" || t === "-c") {
+      i += 2;
+      continue;
+    }
+    if (t.startsWith("--git-dir") || t.startsWith("--work-tree")) {
+      i += t.includes("=") ? 1 : 2;
+      continue;
+    }
+    if (t.startsWith("-") && t !== "-" && !t.startsWith("--")) {
+      // clustered short opts before subcommand — rare; skip single token
+      i += 1;
+      continue;
+    }
+    break;
+  }
+  if (toks[i] !== "push") return null;
+  const rest = toks.slice(i + 1);
+  const force =
+    rest.includes("--force") ||
+    rest.includes("--force-with-lease") ||
+    rest.some((t) => t === "-f" || /^-[a-zA-Z]*f[a-zA-Z]*$/.test(t));
+  if (!force) return null;
+  const refs = rest.filter((t) => !t.startsWith("-"));
+  // refs like origin main, or HEAD:main, or main
+  const hitsMain = refs.some((r) => {
+    const base = r.includes(":") ? r.split(":").pop()! : r;
+    return base === "main" || base === "master" || base.endsWith("/main") || base.endsWith("/master");
+  });
+  if (hitsMain || (refs.length >= 2 && (refs[1] === "main" || refs[1] === "master"))) {
+    return {
+      ok: false,
+      reason: "Refusing force-push to main/master",
+      rule: "git-force-push-main-structured",
+    };
+  }
+  // `git push -f` with no ref often defaults to current branch — still dangerous if on main;
+  // deny bare force-push without explicit non-main ref when only remote given
+  if (refs.length <= 1 && force) {
+    // remote only or nothing — treat as force-push of current branch: soft-dangerous, not hard
+    return null;
+  }
+  return null;
+}
+
+function structuredFindDelete(segment: string): SafetyVerdict | null {
+  const toks = tokenizeSimple(normalizeSegment(segment));
+  if (toks[0] !== "find") return null;
+  if (toks.includes("-delete")) {
+    return {
+      ok: false,
+      reason: "Refusing find … -delete (broad destructive walk)",
+      rule: "find-delete-structured",
+    };
+  }
+  return null;
+}
+
+/** curl/wget segment piped to shell */
 function structuredCurlPipeSh(command: string): SafetyVerdict | null {
   const segs = safetySegments(command);
   for (let i = 0; i < segs.length - 1; i++) {
@@ -158,7 +280,6 @@ function structuredCurlPipeSh(command: string): SafetyVerdict | null {
       };
     }
   }
-  // also full string for `curl x | sh` when split works
   if (/\b(curl|wget)\b/.test(command) && /\|\s*(ba)?sh\b/.test(command)) {
     return {
       ok: false,
@@ -182,7 +303,10 @@ export function checkBashHardDeny(command: string): SafetyVerdict {
 
   const targets = commandCheckTargets(cmd);
   for (const segment of targets) {
-    const structured = structuredRmDeny(segment);
+    const structured =
+      structuredRmDeny(segment) ||
+      structuredGitForceMain(segment) ||
+      structuredFindDelete(segment);
     if (structured) return structured;
 
     for (const rule of HARD_DENY) {
@@ -239,10 +363,17 @@ export function checkWritePathHardDeny(
       };
     }
   }
-  // Always block sensitive home/config paths even inside a workspace named oddly
+
+  if (isProtectedWritePath(absolutePath)) {
+    return {
+      ok: false,
+      reason: protectedWriteReason(absolutePath),
+      rule: "write-protected-path",
+    };
+  }
+
   if (isSensitiveHomePath(p)) {
     const forge = forgeHome().replace(/\\/g, "/");
-    // allow writes under workspace only if NOT sensitive forge/auth — still deny auth/hooks
     if (/\/\.forge\/(auth\.json|permissions\.json)$/.test(p) || /\/\.forge\/hooks\//.test(p)) {
       return {
         ok: false,

@@ -26,6 +26,23 @@ const WRITE_TOOLS = new Set([
   "Edit",
 ]);
 
+const READ_ONLY_TOOLS = new Set([
+  "read_file",
+  "grep",
+  "glob",
+  "list_dir",
+  "web_search",
+  "web_fetch",
+  "todo_write",
+  "get_task_output",
+  "Read",
+  "Grep",
+  "Glob",
+  "WebFetch",
+  "WebSearch",
+  "ListDir",
+]);
+
 export interface PermissionRequest {
   toolName: string;
   input: Record<string, unknown>;
@@ -56,9 +73,22 @@ export class PermissionGate {
       const cmd = String(toolInput.command || "");
       if (!checkBashHardDeny(cmd).ok) return true;
       if (containsRedirection(cmd)) return true;
+      if (containsPipe(cmd)) return true;
       return commandCheckTargets(cmd).some((s) => isSoftDangerousBash(s));
     }
     return false;
+  }
+
+  private isNonInteractive(): boolean {
+    return !this.interactive || !process.stdin.isTTY;
+  }
+
+  /** acceptEdits: every segment must look read-only, no pipes/redirects. */
+  private isReadOnlyShell(cmd: string): boolean {
+    if (containsRedirection(cmd) || containsPipe(cmd)) return false;
+    const segments = commandCheckTargets(cmd);
+    const check = segments.length ? segments : [cmd];
+    return check.every((s) => isReadOnlyCommand(normalizeSegment(s)));
   }
 
   async request(req: PermissionRequest): Promise<PermissionResult> {
@@ -93,8 +123,7 @@ export class PermissionGate {
         });
       }
       if (ext.decision !== "ask") return ext;
-      // need prompt for ask
-      if (!this.interactive || !process.stdin.isTTY) {
+      if (this.isNonInteractive()) {
         return { decision: "deny", reason: "external_directory requires approval (non-interactive)" };
       }
       return this.promptUser(toolName, toolInput, true, {
@@ -114,7 +143,6 @@ export class PermissionGate {
         ask: config.permission?.ask,
         rules: config.permission?.rules,
       });
-      // session always patterns as allow
       for (const key of this.sessionPatterns) {
         const [tool, ...rest] = key.split(":");
         const pat = rest.join(":");
@@ -143,8 +171,7 @@ export class PermissionGate {
       if (
         rulesEval?.decision === "ask" &&
         (toolName === "bash" || toolName === "run_terminal_command") &&
-        this.interactive &&
-        process.stdin.isTTY
+        !this.isNonInteractive()
       ) {
         return this.promptUser(toolName, toolInput, true, { workspace });
       }
@@ -156,24 +183,7 @@ export class PermissionGate {
       if (rulesEval?.decision === "allow") {
         return { decision: "allow", reason: "allow_rule" };
       }
-      if (
-        [
-          "read_file",
-          "grep",
-          "glob",
-          "list_dir",
-          "web_search",
-          "web_fetch",
-          "todo_write",
-          "get_task_output",
-          "Read",
-          "Grep",
-          "Glob",
-          "WebFetch",
-        ].includes(toolName)
-
-      ) {
-        // still respect readOutsideWorkspace deny
+      if (READ_ONLY_TOOLS.has(toolName)) {
         if (toolName === "read_file" || toolName === "Read") {
           const p = String(toolInput.path || "");
           if (p) {
@@ -201,14 +211,14 @@ export class PermissionGate {
       return { decision: "allow", reason: "plan_read" };
     }
 
-    // 6. Explicit allow
+    // 6. Explicit allow (segment-strict for bash)
     if (rulesEval?.decision === "allow") {
       return { decision: "allow", reason: "allow_rule" };
     }
 
     // 7. Explicit ask
     if (rulesEval?.decision === "ask") {
-      if (!this.interactive || !process.stdin.isTTY) {
+      if (this.isNonInteractive()) {
         return { decision: "deny", reason: "ask_rule_noninteractive" };
       }
       return this.promptUser(toolName, toolInput, true, { workspace });
@@ -222,53 +232,63 @@ export class PermissionGate {
       return { decision: "allow", reason: "session_tool" };
     }
 
-    // Bash: session command-prefix patterns already in rules via sessionPatterns
-
-    if (
-      [
-        "read_file",
-        "grep",
-        "glob",
-        "list_dir",
-        "web_search",
-        "web_fetch",
-        "get_task_output",
-        "Read",
-        "Grep",
-        "Glob",
-        "WebFetch",
-        "WebSearch",
-      ].includes(toolName)
-    ) {
+    if (READ_ONLY_TOOLS.has(toolName)) {
       return { decision: "allow", reason: "read_only_tool" };
     }
 
-    // acceptEdits + read-only shell (Warp-inspired)
+    // acceptEdits + read-only shell (Warp-inspired) — every segment
     if (
       mode === "acceptEdits" &&
       (toolName === "bash" || toolName === "run_terminal_command")
     ) {
       const cmd = String(toolInput.command || "");
-      if (!containsRedirection(cmd) && !containsPipe(cmd)) {
-        const segments = commandCheckTargets(cmd).filter(
-          (s, i, arr) => i < arr.length - 1 || arr.length === 1,
-        );
-        const check = segments.length ? segments : [cmd];
-        if (check.every((s) => isReadOnlyCommand(normalizeSegment(s)))) {
-          return { decision: "allow", reason: "read_only_command" };
-        }
+      if (this.isReadOnlyShell(cmd)) {
+        return { decision: "allow", reason: "read_only_command" };
       }
     }
 
     const dangerous = this.isDangerous(toolName, toolInput);
-    if (!dangerous && mode === "acceptEdits" && toolName !== "bash" && toolName !== "run_terminal_command") {
+    if (
+      !dangerous &&
+      mode === "acceptEdits" &&
+      toolName !== "bash" &&
+      toolName !== "run_terminal_command"
+    ) {
       return { decision: "allow", reason: "acceptEdits_safe" };
     }
 
-    if (!this.interactive || !process.stdin.isTTY) {
-      return dangerous
-        ? { decision: "deny", reason: "dangerous_noninteractive" }
-        : { decision: "allow", reason: "noninteractive_safe" };
+    // ── Fail-closed non-interactive (Bar A daily-driver) ──────────────
+    // Headless default used to allow "safe-looking" shell (e.g. npm publish).
+    // Now: shell/writes require allow-rules, YOLO, or acceptEdits+read-only/writes.
+    if (this.isNonInteractive()) {
+      if (toolName === "bash" || toolName === "run_terminal_command") {
+        logSandboxEvent({
+          type: "rule_deny",
+          reason: "shell_noninteractive_deny",
+          command: String(toolInput.command || ""),
+        });
+        return {
+          decision: "deny",
+          reason:
+            "shell_noninteractive_deny: headless shell requires an allow rule, acceptEdits+read-only, or bypassPermissions",
+        };
+      }
+      if (WRITE_TOOLS.has(toolName)) {
+        return {
+          decision: "deny",
+          reason:
+            "write_noninteractive_deny: headless writes require acceptEdits, allow rule, or bypassPermissions",
+        };
+      }
+      if (toolName === "kill_task") {
+        return { decision: "allow", reason: "kill_task_noninteractive" };
+      }
+      return {
+        decision: "deny",
+        reason: dangerous
+          ? "dangerous_noninteractive"
+          : "noninteractive_require_approval",
+      };
     }
 
     return this.promptUser(toolName, toolInput, dangerous, { workspace });
@@ -314,9 +334,11 @@ export class PermissionGate {
           : path.isAbsolute(raw)
             ? path.resolve(raw)
             : path.resolve(workspace, raw);
-        // skip wildcards-only
         if (raw.includes("*") && !raw.includes("/")) continue;
-        if (!isWithinRoot(workspace, abs) && (path.isAbsolute(raw) || raw.startsWith("~") || raw.startsWith(".."))) {
+        if (
+          !isWithinRoot(workspace, abs) &&
+          (path.isAbsolute(raw) || raw.startsWith("~") || raw.startsWith(".."))
+        ) {
           outside.push(abs);
         }
       }
@@ -324,7 +346,6 @@ export class PermissionGate {
 
     if (outside.length === 0) return null;
 
-    // session allow for external
     for (const p of outside) {
       const key = `external_directory:${path.dirname(p)}/*`;
       if (this.sessionPatterns.has(key) || this.sessionPatterns.has("external_directory:*")) {
@@ -341,7 +362,6 @@ export class PermissionGate {
     }
 
     if (mode === "bypassPermissions") {
-      // YOLO still allows external unless deny policy — intentional for power users
       return null;
     }
 
@@ -412,7 +432,6 @@ export class PermissionGate {
         }
         return { decision: "allow", reason: `always:${pattern}` };
       }
-      // y / yes / empty = once
       return { decision: "allow", reason: "user_once" };
     } finally {
       rl.close();
@@ -424,7 +443,6 @@ function alwaysPatternFromCommandTokens(command: string): string {
   const segs = commandCheckTargets(command);
   const seg = segs[0] || command;
   const toks = tokenizeSimple(normalizeSegment(seg));
-  // drop pure flags for arity
   const words: string[] = [];
   for (const t of toks) {
     if (t.startsWith("-") && words.length > 0) continue;

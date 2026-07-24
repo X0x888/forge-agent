@@ -3,11 +3,17 @@
  *
  * Evaluation order: deny > ask > allow
  * Deny ALWAYS applies, including under bypassPermissions (YOLO).
- * Ask still prompts for bash segments under YOLO (Grok parity).
+ *
+ * Bash allow is **segment-strict**: every top-level segment must match an
+ * allow rule. `Bash(git status)` must NOT approve `git status && curl …`.
  */
 import path from "node:path";
 import type { PermissionRule, PermissionAction } from "../config/types.js";
-import { commandCheckTargets, primaryCommand } from "./shell-parse.js";
+import {
+  commandCheckTargets,
+  primaryCommand,
+  normalizeSegment,
+} from "./shell-parse.js";
 
 export interface RuleMatch {
   action: PermissionAction;
@@ -23,6 +29,8 @@ export interface RulesEvaluation {
   deny?: RuleMatch;
   ask?: RuleMatch;
   allow?: RuleMatch;
+  /** For bash: segments that did not match any allow rule */
+  unmatchedSegments?: string[];
 }
 
 /** Parse Claude/Grok style string: Bash(rm …), Edit(path-glob), Read(…) */
@@ -77,7 +85,6 @@ function toolMatches(ruleTool: string, actual: string): boolean {
   const r = normalizeToolName(ruleTool);
   if (r === "*" || r === "any") return true;
   if (r === a) return true;
-  // Bash matches bash
   if (r === "bash" && (a === "bash" || a === "run_terminal_command")) return true;
   return false;
 }
@@ -85,13 +92,10 @@ function toolMatches(ruleTool: string, actual: string): boolean {
 /**
  * Convert a rule pattern to a RegExp.
  * Supports * wildcards (not full glob ** unless written as *).
- * "rm -rf *" → /^rm -rf [\s\S]*$/i with word-ish start
  */
 export function patternToRegExp(pattern: string): RegExp {
   let p = pattern.trim();
-  // strip trailing :* (Claude Bash(git commit:*) form)
   if (p.endsWith(":*")) p = p.slice(0, -2) + "*";
-  // escape regex specials except *
   let re = "";
   for (let i = 0; i < p.length; i++) {
     const ch = p[i];
@@ -99,7 +103,6 @@ export function patternToRegExp(pattern: string): RegExp {
     else if (/[.+?^${}()|[\]\\]/.test(ch)) re += "\\" + ch;
     else re += ch;
   }
-  // prefix match for command rules without leading *
   if (!pattern.trim().startsWith("*")) {
     return new RegExp("^" + re, "i");
   }
@@ -109,7 +112,6 @@ export function patternToRegExp(pattern: string): RegExp {
 function pathMatchesGlob(filePath: string, pattern: string, workspace: string): boolean {
   const rel = path.relative(workspace, path.resolve(workspace, filePath)).replace(/\\/g, "/");
   const abs = path.resolve(workspace, filePath).replace(/\\/g, "/");
-  // very small glob: ** / * 
   const toRe = (g: string) => {
     let s = "";
     for (let i = 0; i < g.length; i++) {
@@ -128,16 +130,14 @@ function pathMatchesGlob(filePath: string, pattern: string, workspace: string): 
   return re.test(rel) || re.test(abs) || re.test(path.basename(filePath));
 }
 
-function matchBashRule(rule: PermissionRule, command: string): string | null {
-  const targets = commandCheckTargets(command);
-  const re = patternToRegExp(rule.pattern || "*");
-  for (const t of targets) {
-    if (re.test(t) || re.test(primaryCommand(t))) return t;
-    // also prefix style: pattern "git" matches "git status"
-    const pat = (rule.pattern || "").replace(/\*$/, "").trim();
-    if (pat && (t === pat || t.startsWith(pat + " "))) return t;
-  }
-  return null;
+/** Does a single shell segment match a bash rule pattern? */
+export function segmentMatchesBashPattern(segment: string, pattern: string): boolean {
+  const seg = normalizeSegment(segment);
+  const re = patternToRegExp(pattern || "*");
+  if (re.test(seg) || re.test(primaryCommand(seg))) return true;
+  const pat = (pattern || "").replace(/\*$/, "").trim();
+  if (pat && (seg === pat || seg.startsWith(pat + " "))) return true;
+  return false;
 }
 
 function matchPathRule(
@@ -151,12 +151,89 @@ function matchPathRule(
   return null;
 }
 
+function evaluateBashRules(
+  rules: PermissionRule[],
+  command: string,
+): RulesEvaluation {
+  const targets = commandCheckTargets(command);
+  const segments = targets.length ? targets : [command.trim()].filter(Boolean);
+  const matches: RuleMatch[] = [];
+  let deny: RuleMatch | undefined;
+  let ask: RuleMatch | undefined;
+
+  const bashRules = rules.filter((r) => toolMatches(r.tool, "bash"));
+
+  // Deny: any segment matching any deny rule → deny whole command
+  for (const seg of segments) {
+    for (const rule of bashRules) {
+      if (rule.action !== "deny") continue;
+      if (segmentMatchesBashPattern(seg, rule.pattern || "*")) {
+        const m: RuleMatch = { action: "deny", rule, matched: seg };
+        matches.push(m);
+        if (!deny) deny = m;
+      }
+    }
+  }
+  if (deny) return { decision: "deny", matches, deny };
+
+  // Ask: any segment matching ask → ask (before allow)
+  for (const seg of segments) {
+    for (const rule of bashRules) {
+      if (rule.action !== "ask") continue;
+      if (segmentMatchesBashPattern(seg, rule.pattern || "*")) {
+        const m: RuleMatch = { action: "ask", rule, matched: seg };
+        matches.push(m);
+        if (!ask) ask = m;
+      }
+    }
+  }
+  if (ask) return { decision: "ask", matches, ask };
+
+  // Allow: EVERY segment must match at least one allow rule
+  const allowRules = bashRules.filter((r) => r.action === "allow");
+  if (!allowRules.length || !segments.length) {
+    return { decision: "none", matches };
+  }
+
+  const unmatched: string[] = [];
+  let firstAllow: RuleMatch | undefined;
+  for (const seg of segments) {
+    let hit: RuleMatch | undefined;
+    for (const rule of allowRules) {
+      if (segmentMatchesBashPattern(seg, rule.pattern || "*")) {
+        hit = { action: "allow", rule, matched: seg };
+        matches.push(hit);
+        if (!firstAllow) firstAllow = hit;
+        break;
+      }
+    }
+    if (!hit) unmatched.push(seg);
+  }
+
+  if (unmatched.length === 0 && firstAllow) {
+    return { decision: "allow", matches, allow: firstAllow };
+  }
+
+  // Partial allow is not an allow — fall through to prompt / fail-closed
+  return {
+    decision: "none",
+    matches,
+    allow: firstAllow,
+    unmatchedSegments: unmatched,
+  };
+}
+
 export function evaluateRules(
   rules: PermissionRule[],
   toolName: string,
   toolInput: Record<string, unknown>,
   workspace: string,
 ): RulesEvaluation {
+  const t = normalizeToolName(toolName);
+  if (t === "bash" || t === "run_terminal_command") {
+    return evaluateBashRules(rules, String(toolInput.command || ""));
+  }
+
   const matches: RuleMatch[] = [];
   let deny: RuleMatch | undefined;
   let ask: RuleMatch | undefined;
@@ -166,10 +243,7 @@ export function evaluateRules(
     if (!toolMatches(rule.tool, toolName)) continue;
 
     let matched: string | null = null;
-    const t = normalizeToolName(toolName);
-    if (t === "bash" || t === "run_terminal_command") {
-      matched = matchBashRule(rule, String(toolInput.command || ""));
-    } else if (
+    if (
       t === "read_file" ||
       t === "write_file" ||
       t === "search_replace" ||
@@ -178,12 +252,7 @@ export function evaluateRules(
       t === "list_dir"
     ) {
       matched = matchPathRule(rule, toolInput, workspace);
-      // grep/glob may use path as directory
-      if (!matched && toolInput.path) {
-        matched = matchPathRule(rule, toolInput, workspace);
-      }
     } else {
-      // generic: pattern against JSON
       const re = patternToRegExp(rule.pattern || "*");
       const blob = JSON.stringify(toolInput);
       if (re.test(blob)) matched = blob.slice(0, 80);
@@ -197,7 +266,6 @@ export function evaluateRules(
     if (rule.action === "allow" && !allow) allow = m;
   }
 
-  // priority
   if (deny) return { decision: "deny", matches, deny, ask, allow };
   if (ask) return { decision: "ask", matches, deny, ask, allow };
   if (allow) return { decision: "allow", matches, deny, ask, allow };
@@ -239,14 +307,10 @@ export function defaultDenyRules(): PermissionRule[] {
       "Bash(rm -rf ~)",
       "Bash(rm -rf $HOME)",
       "Bash(*mkfs*)",
-      "Bash(*curl*|*sh*)", // weak; hard safety is primary
       "Edit(**/.ssh/**)",
       "Write(**/.ssh/**)",
       "Edit(/etc/**)",
       "Write(/etc/**)",
     ],
-  }).filter((r) => {
-    // drop the weak curl rule - hard safety handles it better
-    return !(r.pattern || "").includes("curl");
   });
 }

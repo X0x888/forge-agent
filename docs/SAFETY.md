@@ -122,14 +122,44 @@ Wrappers peeled: `env`, `timeout`, `nice`, `stdbuf`, `time`, `command`, plus lea
 Append-only events (no secrets): `~/.forge/logs/sandbox.jsonl`  
 Types: `fail_closed`, `fallback`, `hard_deny`, `rule_deny`, `external_dir`, …
 
+## Bar A (v0.8) — personal daily driver on trusted repos
+
+Designed for **you on your machine**, interactive REPL or headless with explicit modes — not for untrusted clones.
+
+| Control | Behavior |
+|---------|----------|
+| Headless shell | **Denied** unless allow-rule covers **every** segment, `acceptEdits`+read-only command, or `bypassPermissions` |
+| Headless writes | **Denied** unless `acceptEdits`, allow rule, or YOLO |
+| Allow rules | **Segment-strict**: `Bash(git status)` does **not** approve `git status && curl …` |
+| Project `.forge/config` | May set model / tighter sandbox / extra denies; **cannot** set `base_url`, `bypassPermissions`, `sandbox=off`, `missing_backend=fallback`, `read_outside=allow` |
+| Protected writes | Native tools refuse `~/.forge/auth.json`, hooks, `.git/hooks|config|HEAD`, SSH material; realpath blocks symlink escape |
+
+Recommended daily defaults:
+
+```toml
+# ~/.forge/config.toml
+permission_mode = "default"   # or acceptEdits for faster edits
+sandbox = "workspace"         # or "strict" when riskier
+sandbox_missing_backend = "fail-closed"
+```
+
+```bash
+# Headless CI-style on a trusted repo
+forge run "…" --permission-mode acceptEdits
+# Power user YOLO (still hard-deny + sandbox + deny rules)
+forge run "…" --permission-mode bypassPermissions
+```
+
 ## Residual risk
 
 - Sandbox is **OS best-effort** (Seatbelt/bwrap), not a VM.  
 - Light shell parser (no tree-sitter) can miss exotic obfuscation (`eval`, base64, nested scripts).  
 - Pattern rules can miss novel forms.  
 - Network open on `workspace` still allows exfil if the model is compromised / prompt-injected.  
+- Project **hooks** still auto-load on trusted repos (you own the tree).  
 - Prefer disposable clones or git worktrees for YOLO + ULW.  
-- Windows has no OS sandbox backend.
+- Windows has no OS sandbox backend.  
+- **Not** a full untrusted-repo / multi-tenant product bar.
 
 ## Comparison snapshot
 

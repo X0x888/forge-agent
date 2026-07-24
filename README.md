@@ -2,7 +2,7 @@
 
 **Forge** is an open-source AI coding agent CLI with a **first-class harness** — the control plane that other tools partially implement.
 
-> **v0.7.1** — **Tool quality**: realpath containment, secret env scrub, ripgrep grep, managed truncation, fuzzy edits (line-trim + block-anchor), **`web_fetch` + SSRF**, **background bash** (`get_task_output` / `kill_task`). Plus **v0.6 safety stack** and harness (blocking Stop, `/goal`, ULW).
+> **v0.8.0** — **Bar A daily-driver**: fail-closed headless shell/writes, **segment-strict** allow rules, expanded hard-deny, protected `.forge`/`.git` paths, project config cannot YOLO / redirect credentials / turn sandbox off. Builds on v0.7 tool quality + v0.6 safety stack + harness (blocking Stop, `/goal`, ULW).
 
 Key capability comparison:
 

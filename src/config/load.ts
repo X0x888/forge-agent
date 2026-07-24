@@ -132,10 +132,114 @@ export function mergePermissionTrust(
 }
 
 /**
- * Load config with precedence (later wins, with deny-trust exception):
+ * Bar A footgun guard: project `.forge/config` must not weaken the host safety
+ * posture (credential redirect, YOLO, sandbox off, missing-backend fallback,
+ * unrestricted outside reads). Global ~/.forge + env + CLI still can.
+ */
+export function applySafeProjectOverlay(
+  globalCfg: ForgeConfig,
+  projectRaw: Partial<ForgeConfig>,
+): ForgeConfig {
+  const cfg = { ...globalCfg };
+
+  // Safe / useful project knobs
+  if (projectRaw.model) cfg.model = projectRaw.model;
+  if (typeof projectRaw.temperature === "number") cfg.temperature = projectRaw.temperature;
+  if (typeof projectRaw.maxTokens === "number") cfg.maxTokens = projectRaw.maxTokens;
+  if (typeof projectRaw.maxTurns === "number") cfg.maxTurns = projectRaw.maxTurns;
+  if (projectRaw.systemPromptExtra) cfg.systemPromptExtra = projectRaw.systemPromptExtra;
+  if (typeof projectRaw.autoCompactThreshold === "number") {
+    cfg.autoCompactThreshold = projectRaw.autoCompactThreshold;
+  }
+  if (typeof projectRaw.contextWindow === "number") {
+    cfg.contextWindow = projectRaw.contextWindow;
+  }
+  if (projectRaw.goal && typeof projectRaw.goal === "object") {
+    cfg.goal = { ...cfg.goal, ...projectRaw.goal };
+  }
+
+  // permissionMode: allow default|acceptEdits|plan|dontAsk — never project YOLO
+  if (projectRaw.permissionMode) {
+    if (projectRaw.permissionMode === "bypassPermissions") {
+      console.error(
+        "forge: ignoring project permission_mode=bypassPermissions (set in ~/.forge or CLI)",
+      );
+    } else {
+      cfg.permissionMode = projectRaw.permissionMode;
+    }
+  }
+
+  // sandbox: allow tighter profiles; never sandbox=off from project
+  if (projectRaw.sandbox) {
+    if (projectRaw.sandbox === "off") {
+      console.error(
+        "forge: ignoring project sandbox=off (set in ~/.forge or CLI / FORGE_SANDBOX)",
+      );
+    } else {
+      cfg.sandbox = projectRaw.sandbox;
+    }
+  }
+
+  // network: project may only tighten to blocked
+  if (projectRaw.sandboxNetwork === "blocked") {
+    cfg.sandboxNetwork = "blocked";
+  } else if (projectRaw.sandboxNetwork === "unrestricted") {
+    // only if global already unrestricted — do not open network from project alone
+    if (globalCfg.sandboxNetwork === "unrestricted" || !globalCfg.sandboxNetwork) {
+      /* leave default-from-profile */
+    }
+  }
+
+  // missing backend: project cannot force fallback
+  if (projectRaw.sandboxMissingBackend === "fail-closed") {
+    cfg.sandboxMissingBackend = "fail-closed";
+  } else if (projectRaw.sandboxMissingBackend === "fallback") {
+    console.error(
+      "forge: ignoring project sandbox_missing_backend=fallback (set globally if you must)",
+    );
+  }
+
+  // outside workspace: project may tighten to deny/ask, never allow
+  if (projectRaw.readOutsideWorkspace === "allow") {
+    console.error(
+      "forge: ignoring project read_outside_workspace=allow (set in ~/.forge or CLI)",
+    );
+  } else if (
+    projectRaw.readOutsideWorkspace === "deny" ||
+    projectRaw.readOutsideWorkspace === "ask"
+  ) {
+    cfg.readOutsideWorkspace = projectRaw.readOutsideWorkspace;
+  }
+
+  // baseUrl / provider / providers: never from project (credential redirect)
+  if (projectRaw.baseUrl && projectRaw.baseUrl !== globalCfg.baseUrl) {
+    console.error(
+      "forge: ignoring project base_url (credential redirect risk; set in ~/.forge or FORGE_BASE_URL)",
+    );
+  }
+  if (projectRaw.provider && projectRaw.provider !== globalCfg.provider) {
+    console.error(
+      "forge: ignoring project provider override (set in ~/.forge or FORGE_PROVIDER)",
+    );
+  }
+
+  // blockingStopHooks: project may only force true
+  if (projectRaw.blockingStopHooks === true) {
+    cfg.blockingStopHooks = true;
+  } else if (projectRaw.blockingStopHooks === false) {
+    console.error(
+      "forge: ignoring project blocking_stop_hooks=false (set FORGE_BLOCKING_STOP=0 globally)",
+    );
+  }
+
+  return cfg;
+}
+
+/**
+ * Load config with precedence (later wins, with deny-trust + project safety):
  * 1. DEFAULT_CONFIG
  * 2. ~/.forge/config.toml | config.json  (global)
- * 3. <cwd>/.forge/config.toml | config.json  (project — cannot drop global denies)
+ * 3. <cwd>/.forge/config.toml | config.json  (project — safe overlay only)
  * 4. environment variables
  * 5. explicit CLI overrides
  */
@@ -163,12 +267,12 @@ export function loadConfig(overrides: Partial<ForgeConfig> = {}, cwd = process.c
     rules: globalMerged.permission?.rules ?? [],
   };
 
-  // Project overlay for non-permission fields
-  let cfg = deepMerge(
-    globalMerged as unknown as Record<string, unknown>,
-    projectToml as never,
-  ) as unknown as ForgeConfig;
-  cfg = deepMerge(cfg as unknown as Record<string, unknown>, projectJson as never) as unknown as ForgeConfig;
+  const projectRaw = deepMerge(
+    projectToml as Record<string, unknown>,
+    projectJson as never,
+  ) as Partial<ForgeConfig>;
+
+  let cfg = applySafeProjectOverlay(globalMerged, projectRaw);
 
   // Trusted permission merge
   const projectPermission = {
@@ -274,6 +378,7 @@ auto_arm = true
 
 # Permission rules — deny always wins (including YOLO)
 # Project .forge/config.toml may only ADD deny rules, never remove global ones.
+# Project cannot set: base_url, bypassPermissions, sandbox=off, missing-backend fallback.
 [permission]
 deny = [
   "Bash(rm -rf /)",
@@ -284,7 +389,7 @@ deny = [
 allow = []
 ask = []
 
-# Optional per-provider overrides
+# Optional per-provider overrides (global ~/.forge only — not project)
 # [providers.xai]
 # base_url = "https://api.x.ai/v1"
 `;
