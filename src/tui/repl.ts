@@ -6,7 +6,12 @@ import type { SessionData } from "../session/session.js";
 import { HookRunner } from "../harness/hooks.js";
 import { PermissionGate } from "../agent/permissions.js";
 import { runAgentLoop } from "../agent/loop.js";
-import { handleSlash } from "../commands/slash.js";
+import {
+  handleSlash,
+  isLiveSafeSlash,
+  classifyLiveSlash,
+  LIVE_CONTROLS_HINT,
+} from "../commands/slash.js";
 import { saveSession } from "../session/session.js";
 import { log } from "../util/log.js";
 import { describeAuth } from "../auth/resolve.js";
@@ -155,8 +160,60 @@ export async function runRepl(opts: {
 
     appendHistory(text);
 
+    // ── Mid-run input ──────────────────────────────────────────────────
+    // Keep stdin open during agent turns so users can steer the harness
+    // without aborting (/cycle 0, /ulw-off, /goal pause, /status, …).
+    // Conversation mutators and new prompts still require idle (or Ctrl+C).
     if (busy) {
-      log.warn("Still working — press Ctrl+C to abort, then try again.");
+      if (!text.startsWith("/")) {
+        log.warn(
+          `Still working — ${LIVE_CONTROLS_HINT}`,
+        );
+        return;
+      }
+      const liveKind = classifyLiveSlash(text);
+      if (liveKind === "idle-only" || !isLiveSafeSlash(text)) {
+        log.warn(
+          `That command needs an idle prompt. ${LIVE_CONTROLS_HINT}`,
+        );
+        return;
+      }
+
+      working.pause();
+      try {
+        const slash = await handleSlash(text, { session, config, hooks, auth });
+        if (slash.session) session = slash.session;
+        if (slash.replaceSession) {
+          // Session swap mid-run would desync the agent loop — refuse.
+          log.warn(
+            "Cannot switch sessions while a run is in progress. Ctrl+C first.",
+          );
+          return;
+        }
+        if (slash.forwardPrompt) {
+          log.warn(
+            "That command would start a new turn mid-run. Ctrl+C first, then retry.",
+          );
+          return;
+        }
+        if (slash.output) {
+          console.log(
+            "\n" +
+              chalk.cyan("── live ──") +
+              "\n" +
+              slash.output +
+              "\n" +
+              chalk.cyan("──────────"),
+          );
+        }
+        if (slash.quit || liveKind === "quit") {
+          if (abortController) abortController.abort();
+          await shutdown();
+          return;
+        }
+      } finally {
+        working.resume();
+      }
       return;
     }
 
@@ -190,7 +247,7 @@ export async function runRepl(opts: {
     busy = true;
     pendingTools = 0;
     abortController = new AbortController();
-    rl.pause();
+    // Intentionally do NOT rl.pause() — live controls need stdin while working.
     beginTurn();
     pulseHeartbeat();
     working.start();
@@ -310,7 +367,6 @@ export async function runRepl(opts: {
       busy = false;
       abortController = null;
       pulseHeartbeat();
-      rl.resume();
       prompt({ forceStatus: true });
     }
   };

@@ -44,7 +44,10 @@ import {
   formatUlwStatus,
   loadUlwCycle,
   ulwKickoffMessage,
+  formatUlwCounts,
+  ULW_LIVE_CONTROLS_HINT,
 } from "../harness/ulw-cycle.js";
+import { pushLiveNotice } from "../harness/live-notices.js";
 import {
   COMMAND_PARAMS,
   formatParamMenu,
@@ -60,6 +63,90 @@ export interface SlashResult {
   /** REPL should replace its session pointer */
   replaceSession?: SessionData;
 }
+
+/**
+ * Mid-run slash policy.
+ *
+ * While the agent is busy, users must still steer the harness without aborting.
+ * Only commands that (a) do not start a new agent turn and (b) do not mutate
+ * the in-flight message list are live-safe. Control commands write harness
+ * state that stop-guard reloads from disk; optional live-notices reach the
+ * model on the next LLM call.
+ */
+export type LiveSlashKind = "control" | "readonly" | "quit" | "idle-only";
+
+/** Read-only / status commands safe mid-turn. */
+const LIVE_READONLY = new Set([
+  "/help",
+  "/?",
+  "/hooks",
+  "/status",
+  "/statusline",
+  "/hud",
+  "/tasks",
+  "/context",
+  "/cost",
+  "/todos",
+  "/auth",
+  "/doctor",
+]);
+
+/** Harness control commands safe mid-turn (no forwardPrompt). */
+const LIVE_CONTROL = new Set(["/cycle", "/ulw-off"]);
+
+const LIVE_GOAL_VERBS = new Set([
+  "",
+  "status",
+  "pause",
+  "resume",
+  "unpause",
+  "clear",
+  "done",
+]);
+
+export function parseSlashLine(line: string): { cmd: string; arg: string } | null {
+  const trimmed = line.trim();
+  if (!trimmed.startsWith("/")) return null;
+  const space = trimmed.indexOf(" ");
+  const cmd = (space === -1 ? trimmed : trimmed.slice(0, space)).toLowerCase();
+  const arg = space === -1 ? "" : trimmed.slice(space + 1).trim();
+  return { cmd, arg };
+}
+
+/**
+ * Classify whether a slash line may run while an agent turn is in progress.
+ */
+export function classifyLiveSlash(line: string): LiveSlashKind {
+  const parsed = parseSlashLine(line);
+  if (!parsed) return "idle-only";
+  const { cmd, arg } = parsed;
+  if (cmd === "/quit" || cmd === "/exit" || cmd === "/q") return "quit";
+  if (LIVE_READONLY.has(cmd)) return "readonly";
+  if (LIVE_CONTROL.has(cmd)) {
+    // /cycle status (or bare menu) is read-only; flag flips are control
+    if (cmd === "/cycle") {
+      const a = arg.toLowerCase();
+      if (!a || a === "status" || a === "3" /* menu status */) return "readonly";
+    }
+    return "control";
+  }
+  if (cmd === "/goal") {
+    const verb = (arg.split(/\s+/)[0] || "").toLowerCase();
+    // bare /goal or known control verbs — not arm/set (those start new drive intent)
+    if (LIVE_GOAL_VERBS.has(verb)) return verb === "" || verb === "status" ? "readonly" : "control";
+    // "/goal set …" or "/goal <objective>" arms a goal — idle only
+    return "idle-only";
+  }
+  return "idle-only";
+}
+
+export function isLiveSafeSlash(line: string): boolean {
+  const k = classifyLiveSlash(line);
+  return k === "control" || k === "readonly" || k === "quit";
+}
+
+export const LIVE_CONTROLS_HINT =
+  `${ULW_LIVE_CONTROLS_HINT} · /goal pause · /status  ·  Ctrl+C aborts the turn`;
 
 export const SLASH_COMMANDS = [
   "/help",
@@ -139,11 +226,13 @@ export async function handleSlash(
       saveSession(opts.session);
       const banner = [
         chalk.magenta("⚡ ULW ON") +
-          chalk.dim(`  cycle=${state.cycle} (CONTINUE)  soft=${state.softPrompt ? "yes" : "no"}`),
+          chalk.dim(
+            `  ${formatUlwCounts(state)} (CONTINUE)  soft=${state.softPrompt ? "yes" : "no"}`,
+          ),
         chalk.dim(
           "Soft prompts still drive the harness: research → waves → serendipity → review → repeat.",
         ),
-        chalk.dim("User stop: /cycle 0  (finish last wave) · /ulw-off  (disarm)"),
+        chalk.cyan(ULW_LIVE_CONTROLS_HINT),
         formatUlwStatus(state),
       ].join("\n");
       // Always forward an expanded kickoff so even bare `/ulw` or soft text runs the cycle
@@ -156,12 +245,19 @@ export async function handleSlash(
     }
 
     case "/ulw-off": {
+      const sid = opts.session.meta.id;
       opts.session.meta.ultrawork = false;
-      disarmUlwCycle(opts.session.meta.id);
+      disarmUlwCycle(sid);
       saveSession(opts.session);
+      pushLiveNotice(
+        sid,
+        "User disarmed ULW mid-run (/ulw-off). The cycle driver will no longer block Stop. Wrap up cleanly; do not start a new ULW wave.",
+      );
       return {
         handled: true,
-        output: "Ultrawork + cycle driver OFF",
+        output:
+          "Ultrawork + cycle driver OFF" +
+          chalk.dim("\n  (applies immediately to harness; agent notified on next model call)"),
         session: opts.session,
       };
     }
@@ -204,14 +300,26 @@ export async function handleSlash(
             formatParamMenu("/cycle", COMMAND_PARAMS.cycle),
         };
       }
-      let state = setCycleFlag(opts.session.meta.id, flag);
+      const sid = opts.session.meta.id;
+      let state = setCycleFlag(sid, flag);
       if (!state) {
         // Auto-arm ULW if user sets cycle without /ulw
         opts.session.meta.ultrawork = true;
-        state = armUlwCycle(opts.session.meta.id, "continue prior mandate", {
+        state = armUlwCycle(sid, "continue prior mandate", {
           cycle: flag,
         });
         saveSession(opts.session);
+      }
+      if (flag === 1) {
+        pushLiveNotice(
+          sid,
+          "User set cycle=1 (CONTINUE) mid-run. Keep the research → implement → serendipity → review loop. Do not stop until the user sets cycle=0 or /ulw-off.",
+        );
+      } else {
+        pushLiveNotice(
+          sid,
+          "User set cycle=0 (LAST) mid-run. Finish the *current* wave only: complete open work, review the diff, attest **Cycle complete.** Do NOT start a new ambitious wave.",
+        );
       }
       const msg =
         flag === 1
@@ -221,7 +329,11 @@ export async function handleSlash(
             " — finish the current wave, review, attest **Cycle complete.** then Stop is allowed.";
       return {
         handled: true,
-        output: `${msg}\n${formatUlwStatus(state)}`,
+        output:
+          `${msg}\n${formatUlwStatus(state)}` +
+          chalk.dim(
+            "\n  (flag written now — stop-guard honors it on next Stop; agent notified on next model call)",
+          ),
         session: opts.session,
       };
     }
@@ -613,7 +725,19 @@ function handleGoal(arg: string, session: SessionData): SlashResult {
   switch (verb.toLowerCase()) {
     case "pause": {
       const g = pauseGoal(sid);
-      return { handled: true, output: g ? "Goal paused." : "No active goal." };
+      if (g) {
+        pushLiveNotice(
+          sid,
+          "User paused /goal mid-run. Stop is no longer forced by the goal driver until /goal resume.",
+        );
+      }
+      return {
+        handled: true,
+        output: g
+          ? "Goal paused." +
+            chalk.dim("\n  (applies immediately to harness; agent notified on next model call)")
+          : "No active goal.",
+      };
     }
     case "resume":
     case "unpause": {
@@ -621,23 +745,46 @@ function handleGoal(arg: string, session: SessionData): SlashResult {
       if (g) {
         session.meta.ultrawork = true;
         saveSession(session);
+        pushLiveNotice(
+          sid,
+          `User resumed /goal mid-run. Objective remains active: ${g.objective.slice(0, 200)}. Continue until **Goal achieved.** or the user pauses/clears.`,
+        );
       }
       return {
         handled: true,
-        output: g ? `Goal resumed.\n${formatGoalStatus(g)}` : "No goal to resume.",
+        output: g
+          ? `Goal resumed.\n${formatGoalStatus(g)}` +
+            chalk.dim("\n  (applies immediately to harness; agent notified on next model call)")
+          : "No goal to resume.",
         session,
       };
     }
     case "clear": {
       clearGoal(sid);
-      return { handled: true, output: "Goal cleared." };
+      pushLiveNotice(
+        sid,
+        "User cleared /goal mid-run. The goal driver will no longer block Stop.",
+      );
+      return {
+        handled: true,
+        output:
+          "Goal cleared." +
+          chalk.dim("\n  (applies immediately to harness; agent notified on next model call)"),
+      };
     }
     case "done": {
       const g = markGoalDone(sid, restText || undefined);
+      if (g) {
+        pushLiveNotice(
+          sid,
+          "User marked /goal done mid-run. Treat the objective as released; wrap up without further goal-driven waves.",
+        );
+      }
       return {
         handled: true,
         output: g
-          ? `Goal marked achieved.${restText ? ` (${restText})` : ""}`
+          ? `Goal marked achieved.${restText ? ` (${restText})` : ""}` +
+            chalk.dim("\n  (applies immediately to harness; agent notified on next model call)")
           : "No active goal.",
       };
     }
@@ -731,17 +878,17 @@ Forge slash commands
 ────────────────────
   /help                 Show this help
   /goal <objective>     Arm relentless goal driver (Codex-style)
-  /goal                 Show goal status
-  /goal pause|resume|clear|done
+  /goal                 Show goal status  [live]
+  /goal pause|resume|clear|done   [live]
   /ulw [task]           Arm ULW + cycle=1 (soft prompts OK: "improve the code")
-  /cycle 1|0|status     Continue waves (1) or last wave then stop (0)
-  /ulw-off              Disarm ULW + cycle driver
-  /hooks                List loaded hooks
-  /status · /hud        Full inline HUD + session details (no second panel)
-  /tasks                Background shell tasks (running / recent)
-  /context              Context window usage bar
-  /cost                 Token usage + rough cost
-  /todos                Show agent todos
+  /cycle 1|0|status     Continue waves (1) or last wave then stop (0)  [live]
+  /ulw-off              Disarm ULW + cycle driver  [live]
+  /hooks                List loaded hooks  [live]
+  /status · /hud        Full inline HUD + session details (no second panel)  [live]
+  /tasks                Background shell tasks (running / recent)  [live]
+  /context              Context window usage bar  [live]
+  /cost                 Token usage + rough cost  [live]
+  /todos                Show agent todos  [live]
   /model <name>         Switch model (persists across sessions/folders)
   /permissions [mode]   Menu if empty; Tab / numbers / aliases (yolo, always…)
                         Mode persists across sessions/folders
@@ -753,9 +900,9 @@ Forge slash commands
   /clear                Clear messages (same session)
   /resume [id]          Resume a prior session
   /sessions             List recent sessions
-  /auth                 Show stored credentials
-  /doctor               Environment health check
-  /quit                 Exit
+  /auth                 Show stored credentials  [live]
+  /doctor               Environment health check  [live]
+  /quit                 Exit  [live — aborts run then exits]
 
 Status (always on — no second panel)
 ────────────────────────────────────
@@ -770,5 +917,8 @@ Tips
   ↑ / ↓           Command history (persisted in ~/.forge/history)
   Tab             Autocomplete commands and parameters
   /permissions    Shows numbered modes — pick 1–4 or type name
-  Ctrl+C          Abort run; twice at prompt to exit
+  Live controls   While the agent is working you can still type:
+                  /cycle 0  ·  /cycle 1  ·  /ulw-off  ·  /goal pause  ·  /status
+                  (no need to Ctrl+C first — harness updates apply at next Stop)
+  Ctrl+C          Abort the current turn; twice at idle prompt to exit
 `.trim();

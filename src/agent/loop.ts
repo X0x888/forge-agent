@@ -17,7 +17,14 @@ import {
   armUlwCycle,
   ulwKickoffMessage,
   isSoftPrompt,
+  formatUlwCounts,
+  formatUlwBadge,
+  ULW_LIVE_CONTROLS_HINT,
 } from "../harness/ulw-cycle.js";
+import {
+  drainLiveNotices,
+  formatLiveNoticesMessage,
+} from "../harness/live-notices.js";
 import { PermissionGate } from "./permissions.js";
 import { hardSafetyCheck } from "./safety.js";
 import { TOOL_DEFINITIONS, executeTool } from "./tools/index.js";
@@ -248,6 +255,20 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
         log.dim("Compacted conversation history");
       }
 
+      // Mid-run user controls (/cycle, /ulw-off, /goal pause, …) enqueue notices
+      // so the model sees them on the next call without aborting the turn.
+      const liveNotices = drainLiveNotices(session.meta.id);
+      if (liveNotices.length) {
+        session.messages.push({
+          role: "user",
+          content: formatLiveNoticesMessage(liveNotices),
+        });
+        saveSession(session);
+        events.onStatus?.(
+          `Applied mid-run control${liveNotices.length > 1 ? "s" : ""}`,
+        );
+      }
+
       events.onPhase?.("thinking");
       let response;
       try {
@@ -307,7 +328,13 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
 
       const toolCalls = assistantMsg.tool_calls;
       if (!toolCalls || toolCalls.length === 0) {
-        events.onPhase?.("stop_guard");
+        const ulwBeforeStop = loadUlwCycle(session.meta.id);
+        events.onPhase?.(
+          "stop_guard",
+          ulwBeforeStop?.enabled
+            ? formatUlwBadge(ulwBeforeStop)
+            : undefined,
+        );
         const stopResult = await runStopGuard({
           config,
           hooks,
@@ -335,9 +362,21 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
           stopResult.additionalContext ||
           stopResult.reason ||
           "Stop was blocked. Continue working.";
-        log.info(
-          chalk.magenta(`↻ Stop blocked by harness (continue #${stopContinues})`),
-        );
+        const ulwAfter = loadUlwCycle(session.meta.id);
+        if (ulwAfter?.enabled) {
+          log.info(
+            chalk.magenta(
+              `↻ ULW ${formatUlwCounts(ulwAfter)} — Stop blocked (continue #${stopContinues})`,
+            ),
+          );
+          log.dim(ULW_LIVE_CONTROLS_HINT);
+        } else {
+          log.info(
+            chalk.magenta(
+              `↻ Stop blocked by harness (continue #${stopContinues})`,
+            ),
+          );
+        }
         log.dim(inject.slice(0, 300));
         session.messages.push({ role: "user", content: inject });
         saveSession(session);

@@ -12,6 +12,10 @@ import {
   loadUlwCycle,
   parseCycleArg,
   disarmUlwCycle,
+  formatUlwCounts,
+  formatUlwBadge,
+  formatUlwStatus,
+  ULW_LIVE_CONTROLS_HINT,
 } from "../src/harness/ulw-cycle.js";
 import { runStopGuard } from "../src/harness/stop-guard.js";
 import { HookRunner } from "../src/harness/hooks.js";
@@ -57,10 +61,26 @@ describe("ulw cycle", () => {
     });
     assert.equal(d1.block, true);
     assert.match(d1.reanchor || "", /cycle=1|CONTINUE/i);
+    assert.match(d1.reanchor || "", /wave=1/);
+    assert.match(d1.reanchor || "", /Live mid-run|\/cycle 0/);
 
     const st = loadUlwCycle(sid)!;
     assert.equal(st.wave, 1);
     assert.equal(st.cycle, 1);
+    assert.equal(formatUlwCounts(st), "cycle=1 wave=1 blocks=1");
+    assert.equal(formatUlwBadge(st), "c=1 w=1 b=1");
+  });
+
+  it("status and live hint surface counts for users", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-ulw-hint-"));
+    process.env.FORGE_HOME = tmp;
+    const sid = "ulw-hint";
+    const s = armUlwCycle(sid, "improve", { cycle: 1 });
+    const status = formatUlwStatus(s);
+    assert.match(status, /cycle=1 wave=0 blocks=0/);
+    assert.match(status, /Live mid-run/);
+    assert.match(ULW_LIVE_CONTROLS_HINT, /\/cycle 0/);
+    assert.match(ULW_LIVE_CONTROLS_HINT, /\/ulw-off/);
   });
 
   it("cycle=0 releases only on Cycle complete attestation", () => {

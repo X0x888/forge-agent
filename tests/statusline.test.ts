@@ -37,6 +37,7 @@ import {
 } from "../src/tui/status-bar.js";
 import type { ForgeConfig } from "../src/config/types.js";
 import type { ResolvedAuth } from "../src/auth/types.js";
+import { armUlwCycle } from "../src/harness/ulw-cycle.js";
 
 describe("statusline", () => {
   beforeEach(() => {
@@ -181,6 +182,8 @@ describe("statusline", () => {
     ];
     saveSession(s);
 
+    armUlwCycle(s.meta.id, "improve", { cycle: 1 });
+
     const config = {
       provider: "xai",
       model: "grok-4",
@@ -196,6 +199,8 @@ describe("statusline", () => {
 
     const flags = buildPromptFlags({ config, session: s, auth });
     assert.match(flags, /ULW/);
+    assert.match(flags, /c=1/);
+    assert.match(flags, /w=0/);
 
     const footer = renderTurnFooter(
       { config, session: s, auth },
@@ -204,6 +209,8 @@ describe("statusline", () => {
     assert.match(footer, /ctx/);
     assert.match(footer, /todos:1/);
     assert.match(footer, /harness/);
+    assert.match(footer, /ULW c=1 w=0/);
+    assert.match(footer, /\/cycle 0/);
   });
 
   it("plan adapter is honest for api_key and copilot", async () => {

@@ -11,7 +11,11 @@ import type { SessionData } from "../session/session.js";
 import type { ResolvedAuth } from "../auth/types.js";
 import { describeAuth } from "../auth/resolve.js";
 import { loadGoal } from "../harness/goal.js";
-import { loadUlwCycle } from "../harness/ulw-cycle.js";
+import {
+  loadUlwCycle,
+  formatUlwBadge,
+  ULW_LIVE_CONTROLS_HINT,
+} from "../harness/ulw-cycle.js";
 import { sessionToSnapshot } from "../statusline/snapshot.js";
 import { renderCompactStrip, renderHud } from "../statusline/render.js";
 import {
@@ -49,10 +53,15 @@ export function buildLiveSnapshot(ctx: StatusBarContext) {
 export function buildPromptFlags(ctx: StatusBarContext): string {
   const flags: string[] = [];
   const { session, config } = ctx;
-  if (session.meta.ultrawork) flags.push(chalk.magenta("ULW"));
   const ulw = loadUlwCycle(session.meta.id);
   if (ulw?.enabled) {
-    flags.push(ulw.cycle === 1 ? chalk.magenta("c=1") : chalk.yellow("c=0"));
+    flags.push(chalk.magenta("ULW"));
+    const badge = formatUlwBadge(ulw);
+    flags.push(
+      ulw.cycle === 1 ? chalk.magenta(badge) : chalk.yellow(badge),
+    );
+  } else if (session.meta.ultrawork) {
+    flags.push(chalk.magenta("ULW"));
   }
   const g = loadGoal(session.meta.id);
   if (g?.objective && !g.paused && g.status === "active") {
@@ -175,6 +184,15 @@ export function renderTurnFooter(
   if (turn.stopContinues && turn.stopContinues > 0) {
     parts.push(chalk.magenta(`harness×${turn.stopContinues}`));
   }
+  const ulw = loadUlwCycle(ctx.session.meta.id);
+  if (ulw?.enabled) {
+    parts.push(
+      ulw.cycle === 1
+        ? chalk.magenta(`ULW ${formatUlwBadge(ulw)}`)
+        : chalk.yellow(`ULW ${formatUlwBadge(ulw)}`),
+    );
+    parts.push(chalk.dim("hint: /cycle 0"));
+  }
   if (snap.goal?.active) parts.push(chalk.yellow("GOAL"));
 
   let line = parts.join("  ");
@@ -233,7 +251,9 @@ export function createWorkingIndicator(): WorkingIndicator {
     } else if (phase === "compacting") {
       body = chalk.yellow("compacting…");
     } else if (phase === "stop_guard") {
-      body = chalk.magenta("harness check…");
+      body = chalk.magenta(
+        detail ? `harness ${shortDetail(detail)}` : "harness check…",
+      );
     } else if (phase === "waiting") {
       body = chalk.yellow(`waiting on bg${detail ? `: ${shortDetail(detail)}` : "…"}`);
     } else {
@@ -405,9 +425,10 @@ export function formatSessionDetails(ctx: StatusBarContext): string {
   if (ulw?.enabled) {
     lines.push(
       chalk.dim(
-        `ulw      cycle=${ulw.cycle} wave=${ulw.wave}  ${ulw.mandate.slice(0, 50)}`,
+        `ulw      ${formatUlwBadge(ulw)}  blocks=${ulw.blocks}  ${ulw.mandate.slice(0, 50)}`,
       ),
     );
+    lines.push(chalk.dim(`         ${ULW_LIVE_CONTROLS_HINT}`));
   }
   if (g?.objective) {
     lines.push(

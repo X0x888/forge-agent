@@ -85,10 +85,12 @@ export function buildSystemPrompt(opts: {
 
   if (ulwOn) {
     const cycle = opts.ulwCycle?.cycle ?? 1;
+    const wave = opts.ulwCycle?.wave ?? 0;
+    const blocks = opts.ulwCycle?.blocks ?? 0;
     parts.push(
       ``,
       `## ULTRAWORK + RELENTLESS CYCLE ACTIVE`,
-      `cycle flag = **${cycle}** ${cycle === 1 ? "(CONTINUE — do not stop between waves)" : "(LAST — finish current wave only)"}`,
+      `Counters: **cycle=${cycle} wave=${wave} blocks=${blocks}**  ${cycle === 1 ? "(CONTINUE — do not stop between waves)" : "(LAST — finish current wave only)"}`,
       opts.ulwCycle?.mandate ? `Mandate: ${opts.ulwCycle.mandate}` : "",
       opts.ulwCycle?.softPrompt
         ? `This began as a SOFT prompt — you already expanded it to god-scope. Do not ask the user what to improve; discover and ship.`
@@ -105,10 +107,11 @@ export function buildSystemPrompt(opts: {
       `### Soft prompts`,
       `Phrases like "improve the code" are full authorization to scan the whole project and ship real improvements. Never reply only with advice.`,
       ``,
-      `### User controls (independent of you)`,
+      `### User controls (independent of you — work mid-turn, no abort required)`,
       `- \`/cycle 1\` — keep looping (default when /ulw arms)`,
       `- \`/cycle 0\` — user is satisfied enough: finish THIS wave, review, attest **Cycle complete.**, then Stop is allowed`,
       `- \`/ulw-off\` — disarm the driver`,
+      `- The REPL accepts these **while you are still working**; do not ask the user to wait for you to finish before they can steer.`,
       ``,
       `### Pause only for`,
       `Missing credentials, hard external blockers, destructive shared-state without confirmation, unfamiliar in-progress state you cannot interpret.`,

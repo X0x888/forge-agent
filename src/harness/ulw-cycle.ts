@@ -171,18 +171,42 @@ export function disarmUlwCycle(sessionId: string): void {
   saveUlwCycle(s);
 }
 
+/**
+ * Compact counters for HUD / logs: `cycle=1 wave=3 blocks=5`.
+ * Wave increments each time the driver re-anchors Stop while cycle=1.
+ */
+export function formatUlwCounts(s: Pick<UlwCycleState, "cycle" | "wave" | "blocks">): string {
+  return `cycle=${s.cycle} wave=${s.wave} blocks=${s.blocks}`;
+}
+
+/** One-line badge for prompt flags / footers: `c=1 w=3 b=5`. */
+export function formatUlwBadge(s: Pick<UlwCycleState, "cycle" | "wave" | "blocks">): string {
+  const parts = [`c=${s.cycle}`, `w=${s.wave}`];
+  if (s.blocks > 0) parts.push(`b=${s.blocks}`);
+  return parts.join(" ");
+}
+
+/**
+ * Shown to humans during ULW turns (stop re-anchor logs, kickoff, status).
+ * Mirrors live mid-run slash policy in the REPL.
+ */
+export const ULW_LIVE_CONTROLS_HINT =
+  "Live mid-run (type while working — no Ctrl+C): /cycle 0 last wave · /cycle 1 continue · /ulw-off disarm";
+
 export function formatUlwStatus(s: UlwCycleState | null): string {
   if (!s || !s.enabled) {
     return [
       "ULW cycle: OFF",
       "  Arm with: /ulw <task>   or   /ulw improve the code",
       "  Cycle flag: set with /cycle 1 (continue) or /cycle 0 (last wave then stop)",
+      `  ${ULW_LIVE_CONTROLS_HINT}`,
     ].join("\n");
   }
   return [
-    `ULW cycle: ON  |  cycle=${s.cycle} ${s.cycle === 1 ? "(CONTINUE — relentless)" : "(LAST — finish current wave)"}  |  wave=${s.wave}  blocks=${s.blocks}`,
+    `ULW cycle: ON  |  ${formatUlwCounts(s)}  ${s.cycle === 1 ? "(CONTINUE — relentless)" : "(LAST — finish current wave)"}`,
     `  Mandate: ${s.mandate}`,
     `  Soft prompt expanded: ${s.softPrompt ? "yes" : "no"}`,
+    `  ${ULW_LIVE_CONTROLS_HINT}`,
     `  User controls:`,
     `    /cycle 1   — keep looping waves forever (until stuck-wall)`,
     `    /cycle 0   — treat current work as the LAST cycle; agent finishes wave then stops`,
@@ -261,9 +285,9 @@ function buildCycleReanchor(
 ): string {
   if (opts.mode === "continue") {
     return [
-      `[Forge ULW cycle driver] Stop blocked — cycle=1 (CONTINUE).`,
+      `[Forge ULW cycle driver] Stop blocked — ${formatUlwCounts(s)} (CONTINUE).`,
       `Mandate: ${s.mandate}`,
-      `Wave about to start: ${s.wave}  (blocks so far: ${s.blocks}, stuck-streak tracked)`,
+      `Wave about to start: ${s.wave}  (Stop blocks so far: ${s.blocks}; stuck-streak tracked)`,
       ``,
       `Execute the ULW CYCLE (do not skip steps):`,
       `1. RESEARCH — re-scan gaps vs mandate; update todo_write with concrete items.`,
@@ -280,13 +304,14 @@ function buildCycleReanchor(
         ? `Open todos: ${opts.openTodos} — clear or complete them before claiming a wave done.`
         : `No open todos recorded — create a short wave plan via todo_write then execute.`,
       ``,
-      `User control: cycle is an independent flag. /cycle 0 = finish current wave as last. /cycle 1 = keep going.`,
+      `User control (independent flag): /cycle 0 = finish current wave as last · /cycle 1 = keep going · /ulw-off = disarm.`,
+      `${ULW_LIVE_CONTROLS_HINT}`,
       `Do not stop. Do not ask permission to continue. Next tool calls now.`,
     ].join("\n");
   }
 
   return [
-    `[Forge ULW cycle driver] Stop blocked — cycle=0 (LAST CYCLE).`,
+    `[Forge ULW cycle driver] Stop blocked — ${formatUlwCounts(s)} (LAST CYCLE).`,
     `Mandate: ${s.mandate}`,
     `Wave: ${s.wave}  — finish THIS wave completely, then attest and stop.`,
     ``,
@@ -300,6 +325,9 @@ function buildCycleReanchor(
     opts.openTodos > 0
       ? `Still ${opts.openTodos} open todo(s) — close them or cancel with reason.`
       : `No open todos — review + attest if the wave is truly done.`,
+    ``,
+    `${ULW_LIVE_CONTROLS_HINT}`,
+    `User may flip back to /cycle 1 if they want more waves after all.`,
   ].join("\n");
 }
 
@@ -309,10 +337,11 @@ export function ulwKickoffMessage(state: UlwCycleState): string {
     state.expandedMandate,
     ``,
     `## ULW runtime controls (read carefully)`,
-    `- cycle flag RIGHT NOW: **${state.cycle}** ${state.cycle === 1 ? "(CONTINUE relentless loops)" : "(LAST cycle)"}`,
-    `- The user can flip this any time with /cycle 0 or /cycle 1 — it is independent of your opinion of "done".`,
+    `- Counters RIGHT NOW: **${formatUlwCounts(state)}**  ${state.cycle === 1 ? "(CONTINUE relentless loops)" : "(LAST cycle)"}`,
+    `- The user can flip cycle any time with /cycle 0 or /cycle 1 — including while you are mid-turn (live controls). Independent of your opinion of "done".`,
     `- While cycle=1, the harness will block Stop and force the research→implement→serendipity→review→repeat loop.`,
     `- When cycle=0, finish the current wave and attest **Cycle complete.**`,
+    `- ${ULW_LIVE_CONTROLS_HINT}`,
     ``,
     `Start Wave 1 now: research first, then ship.`,
   ].join("\n");

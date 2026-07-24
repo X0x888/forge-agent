@@ -51,6 +51,9 @@ export {
   isSoftPrompt,
   expandUlwMandate,
   formatUlwStatus,
+  formatUlwCounts,
+  formatUlwBadge,
+  ULW_LIVE_CONTROLS_HINT,
 } from "./harness/ulw-cycle.js";
 export {
   createSession,
@@ -62,7 +65,19 @@ export {
   compactMessages,
 } from "./session/session.js";
 export { withRetry, isRetryableError } from "./util/retry.js";
-export { completeSlash, handleSlash, runDoctor } from "./commands/slash.js";
+export {
+  completeSlash,
+  handleSlash,
+  runDoctor,
+  classifyLiveSlash,
+  isLiveSafeSlash,
+  LIVE_CONTROLS_HINT,
+} from "./commands/slash.js";
+export {
+  pushLiveNotice,
+  drainLiveNotices,
+  formatLiveNoticesMessage,
+} from "./harness/live-notices.js";
 export {
   collectSnapshots,
   renderHud,
