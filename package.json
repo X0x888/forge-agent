@@ -1,7 +1,7 @@
 {
   "name": "forge-agent",
-  "version": "0.9.0",
-  "description": "Forge — AI coding agent CLI with harness (Stop/goal/ULW), production reliability (Retry-After, abortable streams, JSON repair, doom-loop, OAuth refresh), Bar A daily-driver safety, and quality tools",
+  "version": "0.9.1",
+  "description": "Forge — AI coding agent CLI with harness (Stop/goal/ULW), production reliability (Retry-After, abortable streams, JSON repair, doom-loop, overflow recovery, OAuth refresh), Bar A daily-driver safety, and quality tools",
   "type": "module",
   "bin": {
     "forge": "./dist/cli.js"

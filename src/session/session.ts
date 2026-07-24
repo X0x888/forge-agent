@@ -17,8 +17,9 @@ import {
 export {
   compactMessagesStructured,
   buildStructuredSummary,
+  pruneOversizedMessageBodies,
 } from "./compaction.js";
-export type { CompactContext, CompactResult } from "./compaction.js";
+export type { CompactContext, CompactResult, PruneBodiesResult } from "./compaction.js";
 
 export interface SessionMeta {
   id: string;
@@ -244,17 +245,50 @@ export function pruneSessions(opts?: {
   };
 }
 
+/**
+ * Conservative token estimate for agent transcripts (code/JSON-heavy).
+ * Prefer overshooting slightly so auto-compact fires before the provider
+ * hard-rejects (~500k on grok-4.5). chars/4 under-counted and let HUD show
+ * ~85% while the API already saw 100%+.
+ */
+const CHARS_PER_TOKEN = 3.2;
+/** Per-message role/framing overhead (provider chat templates). */
+const MSG_FRAME_TOKENS = 6;
+
 export function estimateTokens(messages: ChatMessage[]): number {
   let chars = 0;
+  let msgs = 0;
   for (const m of messages) {
+    msgs += 1;
     chars += (m.content || "").length;
+    if (m.tool_call_id) chars += m.tool_call_id.length + 12;
     if (m.tool_calls) {
       for (const tc of m.tool_calls) {
-        chars += tc.function.name.length + tc.function.arguments.length;
+        chars +=
+          (tc.function.name || "").length +
+          (tc.function.arguments || "").length +
+          32;
       }
     }
   }
-  return Math.ceil(chars / 4);
+  return Math.ceil(chars / CHARS_PER_TOKEN) + msgs * MSG_FRAME_TOKENS;
+}
+
+/**
+ * Full request estimate including tool schemas (sent every turn, not in history).
+ */
+export function estimateRequestTokens(
+  messages: ChatMessage[],
+  extras?: { toolsJsonChars?: number; reserveTokens?: number },
+): number {
+  let n = estimateTokens(messages);
+  if (extras?.toolsJsonChars && extras.toolsJsonChars > 0) {
+    n += Math.ceil(extras.toolsJsonChars / CHARS_PER_TOKEN) + 48;
+  }
+  if (extras?.reserveTokens && extras.reserveTokens > 0) {
+    n += extras.reserveTokens;
+  }
+  return n;
 }
 
 export function compactMessages(

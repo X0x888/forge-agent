@@ -114,6 +114,29 @@ describe("format + slash complete", () => {
       ),
       true,
     );
+    // Real xAI grok-4.5 wording (was missed by older regex → ULW died at ~85%)
+    assert.equal(
+      isContextOverflowError(
+        new Error(
+          '✖ xai API error 400: {"code":"invalid-argument","error":"This model\'s maximum prompt length is 500000 but the request contains 500644 tokens."}',
+        ),
+      ),
+      true,
+    );
+    assert.equal(
+      isContextOverflowError(
+        new ProviderApiError({
+          provider: "xai",
+          status: 400,
+          body: JSON.stringify({
+            code: "invalid-argument",
+            error:
+              "This model's maximum prompt length is 500000 but the request contains 500644 tokens.",
+          }),
+        }),
+      ),
+      true,
+    );
     assert.equal(
       isContextOverflowError(
         new ProviderApiError({
@@ -125,6 +148,10 @@ describe("format + slash complete", () => {
       true,
     );
     assert.equal(retryable(new Error("API error 503 overloaded")), true);
+    assert.equal(
+      isContextOverflowError(new Error("invalid api key")),
+      false,
+    );
 
     let calls = 0;
     await assert.rejects(
@@ -139,6 +166,40 @@ describe("format + slash complete", () => {
       /maximum context length/i,
     );
     assert.equal(calls, 1, "overflow must not be retried with same payload");
+  });
+
+  it("estimates tokens conservatively and prunes oversized bodies", async () => {
+    const {
+      estimateTokens,
+      estimateRequestTokens,
+      pruneOversizedMessageBodies,
+    } = await import("../src/session/session.js");
+    const messages = [
+      { role: "system" as const, content: "sys" },
+      { role: "user" as const, content: "hello world" },
+      {
+        role: "tool" as const,
+        tool_call_id: "t1",
+        content: "X".repeat(20_000),
+      },
+    ];
+    const est = estimateTokens(messages);
+    // chars/3.2 + framing must exceed naive chars/4
+    const naive = Math.ceil(
+      ("sys".length + "hello world".length + 20_000 + "t1".length + 12) / 4,
+    );
+    assert.ok(est > naive, `expected conservative est ${est} > naive ${naive}`);
+    const withTools = estimateRequestTokens(messages, { toolsJsonChars: 5_000 });
+    assert.ok(withTools > est);
+
+    const pruned = pruneOversizedMessageBodies(messages, {
+      maxToolChars: 1_000,
+      maxAssistantChars: 2_000,
+      maxToolArgChars: 500,
+    });
+    assert.ok(pruned.pruned >= 1);
+    assert.ok((pruned.messages[2].content || "").length < 20_000);
+    assert.match(pruned.messages[2].content || "", /pruned/i);
   });
 
   it("completes slash commands", () => {

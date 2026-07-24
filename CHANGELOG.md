@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.9.1 — Context overflow + ULW survival
+
+- **xAI overflow detect**: match `maximum prompt length is N but the request contains M tokens` (was missed → run died raw 400)
+- **Conservative token estimate** (~3.2 chars/tok + framing + tool schemas) so HUD/auto-compact no longer lag ~15% behind the API
+- **Progressive overflow recovery**: prune oversized tool/assistant bodies → keep 8→4→2 → nuclear; then re-issue
+- **ULW re-admit after overflow**: long tool-only waves never hit Stop (`wave=0 blocks=0 cycle=1`); recovery now re-anchors mandate instead of hard death
+- **92% headroom compact** before riding the absolute model max
+
 ## 0.9.0 — Production reliability
 
 Learned from OpenCode / peer agent loops; aimed at expert daily-driver and CI use.

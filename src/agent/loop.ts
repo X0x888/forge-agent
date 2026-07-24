@@ -11,9 +11,11 @@ import type { SessionData, TodoItem } from "../session/session.js";
 import {
   saveSession,
   estimateTokens,
+  estimateRequestTokens,
   compactMessages,
   maybeSetTitle,
   markUserTurn,
+  pruneOversizedMessageBodies,
 } from "../session/session.js";
 import { HookRunner, type HookContext } from "../harness/hooks.js";
 import { runStopGuard } from "../harness/stop-guard.js";
@@ -297,12 +299,20 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
   let aborted = false;
   let overflowCompactAttempted = false;
   const maxTurns = config.maxTurns > 0 ? config.maxTurns : 200;
+  /** Tool schemas are sent every turn but not stored in session history. */
+  const toolsJsonChars = JSON.stringify(TOOL_DEFINITIONS).length;
+
+  const requestTokenEstimate = (): number =>
+    estimateRequestTokens(session.messages, { toolsJsonChars });
 
   /**
    * Compact history. Returns true if message count or estimated tokens dropped.
    * Callers use this to avoid thrashing compact every turn when already minimal.
    */
-  const forceCompact = async (reason: string): Promise<boolean> => {
+  const forceCompact = async (
+    reason: string,
+    keepLast?: number,
+  ): Promise<boolean> => {
     const beforeCount = session.messages.length;
     const beforeTok = estimateTokens(session.messages);
     events.onPhase?.("compacting");
@@ -310,8 +320,9 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
     await hooks.run("PreCompact", baseHookCtx(session, config));
     const ulwNow = loadUlwCycle(session.meta.id);
     const goalNow = loadGoal(session.meta.id);
-    // Aggressive keep window on overflow recovery
-    const keep = reason === "overflow" ? 8 : 12;
+    const keep =
+      keepLast ??
+      (reason.startsWith("overflow") ? 8 : 12);
     session.messages = compactMessages(session.messages, keep, {
       ulw: ulwNow,
       goal: goalNow,
@@ -337,6 +348,88 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
     return reduced;
   };
 
+  /** Shrink huge tool/assistant bodies without dropping turns. */
+  const forcePruneBodies = (
+    reason: string,
+    limits: { maxToolChars: number; maxAssistantChars: number; maxToolArgChars: number },
+  ): boolean => {
+    const beforeTok = estimateTokens(session.messages);
+    const result = pruneOversizedMessageBodies(session.messages, limits);
+    if (result.pruned === 0) return false;
+    session.messages = result.messages;
+    const healed = repairToolCallPairing(session.messages);
+    if (healed.changed) session.messages = healed.messages;
+    saveSession(session);
+    const afterTok = estimateTokens(session.messages);
+    log.dim(
+      `Pruned ${result.pruned} oversized body(ies) (${reason}; ~${beforeTok}→${afterTok} tok)`,
+    );
+    return afterTok < beforeTok * 0.98;
+  };
+
+  /**
+   * Progressive overflow recovery: prune bodies → shrink keep window → nuclear.
+   * Returns true if anything was reduced. Does not re-issue the chat itself.
+   */
+  const recoverContextOverflow = async (): Promise<boolean> => {
+    events.onPhase?.("compacting");
+    events.onStatus?.("Context overflow — progressive compact…");
+    let any = false;
+    const target = config.contextWindow * Math.min(config.autoCompactThreshold, 0.75);
+
+    // 1) Soft prune of huge tool dumps still in the keep window
+    if (
+      forcePruneBodies("overflow-prune", {
+        maxToolChars: 6_000,
+        maxAssistantChars: 12_000,
+        maxToolArgChars: 4_000,
+      })
+    ) {
+      any = true;
+    }
+    if (requestTokenEstimate() < target) return any;
+
+    // 2) Structured compact with shrinking keep windows
+    for (const keep of [8, 4, 2]) {
+      if (await forceCompact(`overflow-k${keep}`, keep)) any = true;
+      if (requestTokenEstimate() < target) return any;
+      if (
+        forcePruneBodies(`overflow-prune-k${keep}`, {
+          maxToolChars: keep <= 2 ? 1_500 : 3_000,
+          maxAssistantChars: keep <= 2 ? 3_000 : 6_000,
+          maxToolArgChars: keep <= 2 ? 1_000 : 2_000,
+        })
+      ) {
+        any = true;
+      }
+      if (requestTokenEstimate() < target) return any;
+    }
+    return any;
+  };
+
+  /** After overflow recovery under ULW/goal: re-anchor without waiting for Stop. */
+  const admitAfterOverflowRecovery = (): void => {
+    const ulwNow = loadUlwCycle(session.meta.id);
+    const goalNow = loadGoal(session.meta.id);
+    const parts: string[] = [
+      "[Forge] Context overflow recovered — history was compacted/pruned so the run can continue.",
+      "Do not re-scan the whole workspace from zero. Use the compact summary + recent tail, verify only what you still need, then continue the highest-impact remaining work.",
+    ];
+    if (ulwNow?.enabled) {
+      parts.push(
+        `ULW still ACTIVE: ${formatUlwCounts(ulwNow)} ${ulwNow.cycle === 1 ? "(CONTINUE)" : "(LAST)"}. Mandate: ${ulwNow.mandate}`,
+        "Stop never fired before the overflow (common on long tool-only waves) — that is why wave/blocks may still be low. Keep executing the cycle; the harness will re-anchor on the next clean Stop.",
+        ULW_LIVE_CONTROLS_HINT,
+      );
+    }
+    if (goalNow?.objective && goalNow.status === "active" && !goalNow.paused) {
+      parts.push(`Goal still ACTIVE: ${goalNow.objective}`);
+    }
+    session.messages.push({ role: "user", content: parts.join("\n") });
+    admitHarnessState(session, config);
+    saveSession(session);
+  };
+
   /** After a no-op threshold compact, don't re-attempt until messages grow. */
   let skipThresholdCompactUntilCount = 0;
 
@@ -345,14 +438,27 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
       assertNotAborted(signal);
       turns += 1;
 
-      const est = estimateTokens(session.messages);
+      // Include tool-schema overhead; chars/3.2 estimate (see estimateTokens).
+      const est = requestTokenEstimate();
       const overThreshold =
         est > config.contextWindow * config.autoCompactThreshold;
+      // Hard headroom: even if under auto_compact_threshold, don't ride the
+      // provider's absolute max (xAI rejects at model max prompt length).
+      const nearHardLimit = est > config.contextWindow * 0.92;
       if (
-        overThreshold &&
+        (overThreshold || nearHardLimit) &&
         session.messages.length > skipThresholdCompactUntilCount
       ) {
-        const reduced = await forceCompact("threshold");
+        let reduced = await forceCompact(
+          nearHardLimit && !overThreshold ? "headroom" : "threshold",
+        );
+        if (!reduced && nearHardLimit) {
+          reduced = forcePruneBodies("threshold-prune", {
+            maxToolChars: 4_000,
+            maxAssistantChars: 8_000,
+            maxToolArgChars: 2_500,
+          });
+        }
         if (!reduced) {
           // Avoid compacting every turn when already minimal but still "over"
           skipThresholdCompactUntilCount = session.messages.length;
@@ -436,31 +542,64 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
         try {
           response = await doChat();
         } catch (err) {
-          // Context overflow: compact once then re-issue (never retry same payload)
+          // Context overflow: progressive compact then re-issue (never same payload)
           if (isContextOverflowError(err)) {
             if (overflowCompactAttempted) {
+              const ulwDead = loadUlwCycle(session.meta.id);
+              const ulwNote =
+                ulwDead?.enabled && ulwDead.cycle === 1
+                  ? ` ULW remains armed (${formatUlwCounts(ulwDead)}) — after /compact or /new, re-issue the mandate; cycle does not auto-clear on provider death.`
+                  : "";
               throw new Error(
-                `Context still overflows after compact: ${(err as Error).message || err}. ` +
-                  `Start a new session (/new) or raise context_window / lower history.`,
+                `Context still overflows after progressive compact: ${(err as Error).message || err}. ` +
+                  `Start a new session (/new) or raise context_window / lower history.${ulwNote}`,
               );
             }
             overflowCompactAttempted = true;
             log.warn(
-              "Provider reported context overflow — forcing compact and retrying once",
+              "Provider reported context overflow — progressive compact + one re-issue",
             );
-            await forceCompact("overflow");
+            await recoverContextOverflow();
+            admitAfterOverflowRecovery();
             events.onPhase?.("thinking");
             try {
               response = await doChat();
+              // Success: allow another recovery later if context grows again
               overflowCompactAttempted = false;
+              skipThresholdCompactUntilCount = 0;
             } catch (err2) {
               if (isContextOverflowError(err2)) {
-                throw new Error(
-                  `Context still overflows after compact: ${(err2 as Error).message || err2}. ` +
-                    `Start a new session (/new) or raise context_window / lower history.`,
+                // Last-ditch nuclear prune + tiny keep, then one more try
+                log.warn(
+                  "Overflow persists after first recovery — nuclear prune + keep=2",
                 );
+                forcePruneBodies("overflow-nuclear", {
+                  maxToolChars: 800,
+                  maxAssistantChars: 1_500,
+                  maxToolArgChars: 400,
+                });
+                await forceCompact("overflow-nuclear", 2);
+                try {
+                  response = await doChat();
+                  overflowCompactAttempted = false;
+                  skipThresholdCompactUntilCount = 0;
+                } catch (err3) {
+                  if (isContextOverflowError(err3)) {
+                    const ulwDead = loadUlwCycle(session.meta.id);
+                    const ulwNote =
+                      ulwDead?.enabled && ulwDead.cycle === 1
+                        ? ` ULW remains armed (${formatUlwCounts(ulwDead)}) — session history was compacted; resume with a smaller request or /new.`
+                        : "";
+                    throw new Error(
+                      `Context still overflows after progressive compact: ${(err3 as Error).message || err3}. ` +
+                        `Start a new session (/new) or raise context_window / lower history.${ulwNote}`,
+                    );
+                  }
+                  throw err3;
+                }
+              } else {
+                throw err2;
               }
-              throw err2;
             }
           } else {
             // One-shot OAuth recovery: 401/expired bearer mid-session

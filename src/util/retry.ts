@@ -51,11 +51,19 @@ export function isContextOverflowError(err: unknown): boolean {
   return isContextOverflowMessage(msg);
 }
 
+/**
+ * Detect provider "prompt too large" phrasing across vendors.
+ *
+ * xAI (observed): `This model's maximum prompt length is 500000 but the
+ * request contains 500644 tokens.` — older patterns only matched
+ * "context length", so overflow recovery never fired and ULW died mid-cycle.
+ */
 function isContextOverflowMessage(msg: string): boolean {
+  if (/rate.?limit/i.test(msg)) return false;
   return (
-    /context.?length|context.?window|maximum.?context|max.?context|prompt.?too.?long|too.?many.?tokens|token.?limit|request.?too.?large|exceeds?.?(the )?(maximum|model)|input.?too.?long|context_length_exceeded|string.?too.?long|reduce.?the.?length/i.test(
+    /context.?length|context.?window|maximum.?context|max.?context|prompt.?too.?long|too.?many.?tokens|token.?limit|request.?too.?large|exceeds?.?(the )?(maximum|model)|input.?too.?long|context_length_exceeded|string.?too.?long|reduce.?the.?length|maximum.?prompt.?length|prompt.?length|max(?:imum)?.?prompt|request contains \d[\d,]* tokens|prompt is too long|tokens? (?:exceed|over|above)|over the (?:maximum|limit)|invalid-argument[\s\S]{0,120}token/i.test(
       msg,
-    ) && !/rate.?limit/i.test(msg)
+    )
   );
 }
 

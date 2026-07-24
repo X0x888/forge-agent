@@ -81,6 +81,9 @@ export {
   rewindSession,
   exportSessionMarkdown,
   compactMessages,
+  estimateTokens,
+  estimateRequestTokens,
+  pruneOversizedMessageBodies,
 } from "./session/session.js";
 export {
   withRetry,
@@ -155,6 +158,7 @@ export {
 export {
   compactMessagesStructured,
   buildStructuredSummary,
+  pruneOversizedMessageBodies as pruneMessageBodies,
 } from "./session/compaction.js";
 export {
   acquireSessionLock,

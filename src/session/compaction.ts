@@ -204,3 +204,102 @@ function clip(s: string, n: number): string {
   const t = s.replace(/\s+/g, " ").trim();
   return t.length <= n ? t : `${t.slice(0, n - 1)}…`;
 }
+
+export interface PruneBodiesResult {
+  messages: ChatMessage[];
+  pruned: number;
+}
+
+/**
+ * In-place shrink of huge tool/assistant bodies while keeping message shape.
+ * Used when keep-window compaction alone cannot free enough tokens (common
+ * when a few tool results are tens of KB each).
+ */
+export function pruneOversizedMessageBodies(
+  messages: ChatMessage[],
+  opts?: {
+    maxToolChars?: number;
+    maxAssistantChars?: number;
+    maxToolArgChars?: number;
+  },
+): PruneBodiesResult {
+  const maxTool = opts?.maxToolChars ?? 6_000;
+  const maxAsst = opts?.maxAssistantChars ?? 12_000;
+  const maxArg = opts?.maxToolArgChars ?? 4_000;
+  let pruned = 0;
+
+  const out = messages.map((m) => {
+    if (m.role === "tool") {
+      const c = m.content || "";
+      if (c.length > maxTool) {
+        pruned += 1;
+        return {
+          ...m,
+          content:
+            c.slice(0, Math.floor(maxTool * 0.7)) +
+            `\n\n… [pruned ${c.length - maxTool} chars for context recovery — re-run tool or read full output path if still needed] …\n\n` +
+            c.slice(-(Math.floor(maxTool * 0.2))),
+        };
+      }
+      return m;
+    }
+
+    if (m.role === "assistant") {
+      let next: ChatMessage = m;
+      const c = m.content || "";
+      if (c.length > maxAsst) {
+        pruned += 1;
+        next = {
+          ...next,
+          content:
+            c.slice(0, Math.floor(maxAsst * 0.75)) +
+            `\n… [pruned assistant text for context recovery]`,
+        };
+      }
+      if (m.tool_calls?.length) {
+        let argsPruned = false;
+        const tool_calls = m.tool_calls.map((tc) => {
+          const args = tc.function.arguments || "";
+          if (args.length <= maxArg) return tc;
+          argsPruned = true;
+          const preview = args.slice(0, Math.max(80, maxArg - 80));
+          return {
+            ...tc,
+            function: {
+              ...tc.function,
+              // Valid JSON stub — raw truncation often breaks the next API call
+              arguments: JSON.stringify({
+                _pruned: true,
+                _originalChars: args.length,
+                _preview: preview,
+              }),
+            },
+          };
+        });
+        if (argsPruned) {
+          pruned += 1;
+          next = { ...next, tool_calls };
+        }
+      }
+      return next;
+    }
+
+    if (m.role === "user") {
+      const c = m.content || "";
+      // Leave short harness admits alone; cap only pathological dumps
+      if (c.length > maxAsst * 2) {
+        pruned += 1;
+        return {
+          ...m,
+          content:
+            c.slice(0, maxAsst) +
+            `\n… [pruned user message for context recovery]`,
+        };
+      }
+    }
+
+    return m;
+  });
+
+  return { messages: pruned > 0 ? out : messages, pruned };
+}

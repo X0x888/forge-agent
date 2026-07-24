@@ -7,7 +7,10 @@ What experts should expect from Forge in long, unattended, or CI runs.
 | Behavior | Detail |
 |---|---|
 | **Retry-After** | `429` / `5xx` honor `Retry-After` and `retry-after-ms` (capped at 2 min) |
-| **Context overflow** | Not retried with the same payload; force compact once then re-issue (OpenCode-style) |
+| **Context overflow** | Detected across vendors (incl. xAI `maximum prompt length`); not retried with the same payload; progressive prune + compact (keep 8→4→2) then re-issue |
+| **Token estimate** | Conservative (~3.2 chars/token + per-message framing + tool-schema overhead) so auto-compact fires before the hard API max |
+| **Headroom compact** | Also compacts when estimate exceeds 92% of `context_window`, not only `auto_compact_threshold` |
+| **ULW after overflow** | Re-admits mandate/cycle after recovery so long tool-only waves do not die with `cycle=1 wave=0` and no resume guidance |
 | **Compact thrash guard** | Threshold compact that does not shrink history is not repeated until the message list grows |
 | **Structured errors** | `ProviderApiError` carries status + headers; retry classifier uses them |
 | **Abortable streams** | `AbortSignal` cancels `fetch` and releases the SSE reader (Ctrl+C works mid-token) |
@@ -43,7 +46,7 @@ What experts should expect from Forge in long, unattended, or CI runs.
 
 | Behavior | Detail |
 |---|---|
-| **Threshold auto-compact** | When estimated tokens exceed `context_window * auto_compact_threshold` |
+| **Threshold auto-compact** | When estimated request tokens exceed `context_window * auto_compact_threshold` (or 92% headroom) |
 | **`finish_reason=length`** | Continues generation instead of treating truncation as a final answer |
 | **`content_filter`** | Surfaces provider safety blocks and steers the model to narrow scope (no infinite retry of the same phrasing) |
 | **Empty assistant** | Nudges the model to continue rather than stopping on a blank turn |
