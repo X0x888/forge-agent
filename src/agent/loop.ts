@@ -47,7 +47,11 @@ import {
 } from "../harness/todo-gate.js";
 import { PermissionGate } from "./permissions.js";
 import { hardSafetyCheck } from "./safety.js";
-import { TOOL_DEFINITIONS, executeTool } from "./tools/index.js";
+import {
+  TOOL_DEFINITIONS,
+  executeTool,
+  normalizeToolName,
+} from "./tools/index.js";
 import { buildBaselineSystemPrompt } from "./system-prompt.js";
 import { log } from "../util/log.js";
 import { withRetry } from "../util/retry.js";
@@ -641,7 +645,9 @@ async function prepareToolResult(opts: {
   } = opts;
   assertNotAborted(signal);
 
-  const name = tc.function.name;
+  const name = normalizeToolName(tc.function.name);
+  // Keep the call object consistent for any downstream logging
+  tc.function.name = name;
   let toolInput: Record<string, unknown> = {};
   try {
     toolInput = JSON.parse(tc.function.arguments || "{}") as Record<string, unknown>;

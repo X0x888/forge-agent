@@ -37,8 +37,11 @@ import { loadHistory, appendHistory } from "./history.js";
 import { makeCompleter } from "./complete.js";
 import {
   buildPromptFlags,
+  buildLivePrompt,
   renderIdleStatusLine,
+  renderLiveRunHeader,
   renderTurnFooter,
+  formatLiveControlFeedback,
   createWorkingIndicator,
   type StatusBarContext,
 } from "./status-bar.js";
@@ -113,7 +116,6 @@ export async function runRepl(opts: {
 
   let busy = false;
   let abortController: AbortController | null = null;
-  const working = createWorkingIndicator();
   /**
    * Tools currently between onPhase("tool") and onToolSettled
    * (includes permission prompts — not only running tools).
@@ -131,6 +133,7 @@ export async function runRepl(opts: {
   });
 
   const statusCtx = (): StatusBarContext => ({ config, session, auth });
+  const working = createWorkingIndicator({ getContext: statusCtx });
   /** Avoid reprinting an identical strip on every empty Enter */
   let lastStatusStrip = "";
 
@@ -138,8 +141,8 @@ export async function runRepl(opts: {
   const hbTimer = setInterval(pulseHeartbeat, 4_000);
   hbTimer.unref?.();
 
+  /** Idle prompt (forge ›) with status strip above. */
   const prompt = (opts?: { forceStatus?: boolean }) => {
-    // Idle status strip above the input — replaces need for side-panel HUD
     if (process.stdout.isTTY) {
       const strip = renderIdleStatusLine(statusCtx());
       if (strip && (opts?.forceStatus || strip !== lastStatusStrip)) {
@@ -152,10 +155,24 @@ export async function runRepl(opts: {
     rl.prompt();
   };
 
+  /**
+   * Mid-run prompt — always re-shown so /cycle 0 has a visible place to type
+   * and clear feedback after each control.
+   */
+  const livePrompt = () => {
+    try {
+      rl.setPrompt(buildLivePrompt(statusCtx()));
+      rl.prompt();
+    } catch {
+      /* readline may be closed */
+    }
+  };
+
   const handleLine = async (line: string) => {
     const text = line.trim();
     if (!text) {
-      prompt();
+      if (busy) livePrompt();
+      else prompt();
       return;
     }
 
@@ -169,18 +186,26 @@ export async function runRepl(opts: {
     if (busy) {
       if (!text.startsWith("/")) {
         pushInterjection(session.meta.id, text);
-        log.info(
-          chalk.cyan(
-            `↳ Queued mid-run message (will apply on next model step). ${LIVE_CONTROLS_HINT}`,
+        console.log(
+          formatLiveControlFeedback(
+            "(message)",
+            `Queued for next model step.\n${LIVE_CONTROLS_HINT}`,
+            "info",
           ),
         );
+        livePrompt();
         return;
       }
       const liveKind = classifyLiveSlash(text);
       if (liveKind === "idle-only" || !isLiveSafeSlash(text)) {
-        log.warn(
-          `That command needs an idle prompt. ${LIVE_CONTROLS_HINT}`,
+        console.log(
+          formatLiveControlFeedback(
+            text,
+            `That command needs an idle prompt (Ctrl+C to abort the run first).\n${LIVE_CONTROLS_HINT}`,
+            "warn",
+          ),
         );
+        livePrompt();
         return;
       }
 
@@ -189,26 +214,34 @@ export async function runRepl(opts: {
         const slash = await handleSlash(text, { session, config, hooks, auth });
         if (slash.session) session = slash.session;
         if (slash.replaceSession) {
-          // Session swap mid-run would desync the agent loop — refuse.
-          log.warn(
-            "Cannot switch sessions while a run is in progress. Ctrl+C first.",
+          console.log(
+            formatLiveControlFeedback(
+              text,
+              "Cannot switch sessions while a run is in progress. Ctrl+C first.",
+              "warn",
+            ),
           );
+          livePrompt();
           return;
         }
         if (slash.forwardPrompt) {
-          log.warn(
-            "That command would start a new turn mid-run. Ctrl+C first, then retry.",
+          console.log(
+            formatLiveControlFeedback(
+              text,
+              "That command would start a new turn mid-run. Ctrl+C first, then retry.",
+              "warn",
+            ),
           );
+          livePrompt();
           return;
         }
         if (slash.output) {
           console.log(
-            "\n" +
-              chalk.cyan("── live ──") +
-              "\n" +
-              slash.output +
-              "\n" +
-              chalk.cyan("──────────"),
+            formatLiveControlFeedback(text, slash.output, "ok"),
+          );
+        } else {
+          console.log(
+            formatLiveControlFeedback(text, "Applied.", "ok"),
           );
         }
         if (slash.quit || liveKind === "quit") {
@@ -218,7 +251,10 @@ export async function runRepl(opts: {
         }
       } finally {
         working.resume();
+        working.repaint();
       }
+      // Always restore the live input line so the next control is obvious
+      livePrompt();
       return;
     }
 
@@ -255,22 +291,17 @@ export async function runRepl(opts: {
     // Intentionally do NOT rl.pause() — live controls need stdin while working.
     beginTurn();
     pulseHeartbeat();
+
+    // Native live chrome: header + working status + open live › line
+    process.stdout.write("\n");
+    console.log(renderLiveRunHeader(statusCtx()));
     working.start();
+    livePrompt();
 
     let sawToken = false;
-    /** Single-depth holds — only pause/resume when flipping false→true / true→false */
-    let streamHold = false;
+    /** Tool phase holds spinner off for clean tool/permission lines */
     let toolHold = false;
 
-    const setStreamHold = (on: boolean) => {
-      if (on && !streamHold) {
-        working.pause();
-        streamHold = true;
-      } else if (!on && streamHold) {
-        working.resume();
-        streamHold = false;
-      }
-    };
     const setToolHold = (on: boolean) => {
       if (on && !toolHold) {
         working.pause();
@@ -282,7 +313,6 @@ export async function runRepl(opts: {
     };
 
     try {
-      process.stdout.write("\n");
       const result = await runAgentLoop({
         config,
         provider,
@@ -295,14 +325,14 @@ export async function runRepl(opts: {
         events: {
           onToken: (t) => {
             if (!sawToken) {
-              // Streaming text — hide spinner; tool hold not active yet
-              setStreamHold(true);
+              // Streaming tokens on stdout — suppress \r status (keeps ticks)
+              working.setStreaming(true);
               sawToken = true;
             }
             process.stdout.write(t);
           },
           onToolStart: (name, args) => {
-            setStreamHold(false);
+            working.setStreaming(false);
             sawToken = false;
             console.error(formatToolStart(name, args));
           },
@@ -311,16 +341,20 @@ export async function runRepl(opts: {
           },
           onToolSettled: () => {
             pendingTools = Math.max(0, pendingTools - 1);
-            if (pendingTools === 0) setToolHold(false);
+            if (pendingTools === 0) {
+              setToolHold(false);
+              // Between tools — re-offer live input
+              livePrompt();
+            }
           },
           onPhase: (phase, detail) => {
             setPhase(phase, detail);
             working.setPhase(phase, detail);
             pulseHeartbeat();
             if (phase === "tool") {
-              // Count from phase entry (covers permission prompts + parallel batch)
               pendingTools += 1;
-              setStreamHold(false);
+              working.setStreaming(false);
+              sawToken = false;
               setToolHold(true);
             } else if (
               (phase === "thinking" ||
@@ -329,8 +363,12 @@ export async function runRepl(opts: {
               pendingTools === 0
             ) {
               setToolHold(false);
-              setStreamHold(false);
+              working.setStreaming(false);
               sawToken = false;
+              if (phase === "stop_guard") {
+                // Harness decision point — best moment for /cycle 0
+                livePrompt();
+              }
             }
           },
           onStatus: (msg) => {
@@ -445,8 +483,8 @@ function printBanner(
         ` · perms: ${config.permissionMode}` +
         (git.branch ? ` · ${git.branch}${git.dirty ? "*" : ""}` : "") +
         (hints.length ? ` · ${hints.join("+")}` : "") +
-        `\n  Status is inline — no second panel needed · /status for full HUD\n` +
-        `  ↑↓ history · Tab complete · /tasks for background · /quit to exit\n`,
+        `\n  Native live status while working · type at live › mid-run (/cycle 0)\n` +
+        `  ↑↓ history · Tab complete · /tasks · /status · /quit\n`,
     ),
   );
 }

@@ -8,6 +8,23 @@ import type {
 } from "./types.js";
 
 /**
+ * Merge a streamed tool-name delta into the accumulator.
+ *
+ * Providers differ: some send one full name, some re-send the full name on
+ * every chunk, some send growing prefixes, some send true fragments.
+ * Naive `+=` turns a repeated full name into `bashbash` (broken tools).
+ */
+export function mergeStreamedToolName(current: string, delta: string): string {
+  if (!delta) return current;
+  if (!current) return delta;
+  if (delta === current) return current;
+  if (delta.startsWith(current)) return delta; // growing prefix
+  if (current.startsWith(delta)) return current; // shorter re-send
+  // True fragment append (rare for names, common pattern for args)
+  return current + delta;
+}
+
+/**
  * OpenAI-compatible chat completions client.
  * Works with xAI, OpenAI, OpenRouter, Google OpenAI-compat endpoint, and custom proxies.
  */
@@ -148,15 +165,20 @@ export class OpenAICompatProvider implements LLMProvider {
             for (const tc of delta.tool_calls) {
               const idx = tc.index;
               if (!toolCalls[idx]) {
+                // Start empty — never seed name then append (xAI/OpenAI often
+                // re-send the full name each chunk → "bashbash").
                 toolCalls[idx] = {
                   id: tc.id || `call_${idx}`,
                   type: "function",
-                  function: { name: tc.function?.name || "", arguments: "" },
+                  function: { name: "", arguments: "" },
                 };
               }
               if (tc.id) toolCalls[idx].id = tc.id;
               if (tc.function?.name) {
-                toolCalls[idx].function.name += tc.function.name;
+                toolCalls[idx].function.name = mergeStreamedToolName(
+                  toolCalls[idx].function.name,
+                  tc.function.name,
+                );
               }
               if (tc.function?.arguments) {
                 toolCalls[idx].function.arguments += tc.function.arguments;

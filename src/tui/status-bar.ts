@@ -37,6 +37,8 @@ export interface StatusBarContext {
   auth: ResolvedAuth;
 }
 
+const SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+
 function authMethodOf(auth: ResolvedAuth): AuthMethod {
   return (auth.method as AuthMethod) || "unknown";
 }
@@ -136,6 +138,162 @@ function shortModel(model: string): string {
   return base.replace(/^claude-/, "").replace(/-\d{8}$/, "");
 }
 
+/**
+ * Multi-line chrome printed once when an agent turn starts.
+ * Makes mid-run controls discoverable (Grok-Build-like, native to Forge).
+ */
+export function renderLiveRunHeader(ctx: StatusBarContext): string {
+  const { config, session } = ctx;
+  const effort = resolveReasoningEffort(config.model, config.reasoningEffort);
+  const ulw = loadUlwCycle(session.meta.id);
+  const g = loadGoal(session.meta.id);
+  const w = Math.min(process.stdout.columns || 72, 72);
+  const bar = "─".repeat(Math.max(20, w - 2));
+
+  const modelBits = [
+    `${config.provider}/${shortModel(config.model)}`,
+    effort ? `effort ${effort}` : null,
+    config.permissionMode === "bypassPermissions"
+      ? "YOLO"
+      : config.permissionMode === "acceptEdits"
+        ? "auto"
+        : null,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+
+  const harnessBits: string[] = [];
+  if (ulw?.enabled) {
+    harnessBits.push(
+      chalk.magenta(
+        `ULW ${formatUlwBadge(ulw)} ${ulw.cycle === 1 ? "CONTINUE" : "LAST"}`,
+      ),
+    );
+  } else if (session.meta.ultrawork) {
+    harnessBits.push(chalk.magenta("ULW"));
+  }
+  if (g?.objective && !g.paused && g.status === "active") {
+    harnessBits.push(chalk.yellow("GOAL"));
+  }
+
+  const lines = [
+    chalk.cyan(`┌${bar}`),
+    chalk.cyan("│ ") + chalk.bold("live run") + chalk.dim("  (input stays open — no Ctrl+C needed)"),
+    chalk.cyan("│ ") + chalk.dim(modelBits),
+  ];
+  if (harnessBits.length) {
+    lines.push(chalk.cyan("│ ") + harnessBits.join("  "));
+  }
+  lines.push(
+    chalk.cyan("│ ") +
+      chalk.dim("controls: ") +
+      chalk.white("/cycle 0") +
+      chalk.dim(" last · ") +
+      chalk.white("/cycle 1") +
+      chalk.dim(" continue · ") +
+      chalk.white("/ulw-off") +
+      chalk.dim(" · ") +
+      chalk.white("/status") +
+      chalk.dim(" · free-text queues"),
+  );
+  lines.push(
+    chalk.cyan("│ ") +
+      chalk.dim("type at the ") +
+      chalk.cyan("live ›") +
+      chalk.dim(" line below while the agent works"),
+  );
+  lines.push(chalk.cyan(`└${bar}`));
+  return lines.join("\n");
+}
+
+/**
+ * One-line busy status used by the working indicator (mid-reply, not only idle).
+ */
+export function renderBusyStatusLine(
+  ctx: StatusBarContext,
+  phase: AgentPhase,
+  detail?: string,
+  frame = 0,
+): string {
+  const act = getActivity();
+  const turnSec = activityElapsedSec(act);
+  const spin = SPINNER_FRAMES[frame % SPINNER_FRAMES.length];
+  const effort = resolveReasoningEffort(ctx.config.model, ctx.config.reasoningEffort);
+  const ulw = loadUlwCycle(ctx.session.meta.id);
+
+  let body: string;
+  if (phase === "tool" && detail) {
+    body = `tool ${chalk.cyan(shortDetail(detail, 28))}`;
+  } else if (phase === "compacting") {
+    body = chalk.yellow("compacting…");
+  } else if (phase === "stop_guard") {
+    body = chalk.magenta(
+      detail ? `harness ${shortDetail(detail, 24)}` : "harness…",
+    );
+  } else if (phase === "waiting") {
+    body = chalk.yellow(
+      `waiting on bg${detail ? `: ${shortDetail(detail, 20)}` : "…"}`,
+    );
+  } else if (phase === "thinking" && detail === "streaming") {
+    body = chalk.dim("replying…");
+  } else {
+    body = chalk.dim("thinking…");
+  }
+
+  const bits: string[] = [
+    `${chalk.magenta(spin)} ${chalk.magenta("⚒")}`,
+    body,
+    turnSec > 0 ? chalk.dim(formatSec(turnSec)) : "",
+    chalk.dim(`${ctx.config.provider}/${shortModel(ctx.config.model)}`),
+  ];
+  if (effort) bits.push(chalk.dim(effort));
+  if (ulw?.enabled) {
+    bits.push(
+      ulw.cycle === 1
+        ? chalk.magenta(formatUlwBadge(ulw))
+        : chalk.yellow(formatUlwBadge(ulw)),
+    );
+  }
+  if (act.bgRunning > 0) bits.push(chalk.yellow(`bg:${act.bgRunning}`));
+  if (ulw?.enabled && ulw.cycle === 1) {
+    bits.push(chalk.dim("/cycle 0"));
+  }
+
+  return bits.filter(Boolean).join(" ");
+}
+
+/** Prompt string while an agent turn is in progress. */
+export function buildLivePrompt(ctx: StatusBarContext): string {
+  return buildPromptFlags(ctx) + chalk.cyan("live") + chalk.dim(" › ");
+}
+
+/** Visible confirmation after a mid-run control command. */
+export function formatLiveControlFeedback(
+  command: string,
+  output: string,
+  kind: "ok" | "warn" | "info" = "ok",
+): string {
+  const color =
+    kind === "warn" ? chalk.yellow : kind === "info" ? chalk.dim : chalk.green;
+  const title =
+    kind === "warn"
+      ? "live (needs idle)"
+      : kind === "info"
+        ? "live"
+        : "live ✓ applied";
+  const body = output.trim() || "(no output)";
+  return (
+    "\n" +
+    color(`── ${title} · ${command.trim()} ──`) +
+    "\n" +
+    body +
+    "\n" +
+    color("────────────────────────") +
+    "\n" +
+    chalk.dim("live › still open — type another control or wait for the run")
+  );
+}
+
 /** Full HUD for /status — same as forge status, for this session. */
 export function renderSessionHud(
   ctx: StatusBarContext,
@@ -205,13 +363,16 @@ export function renderTurnFooter(
 
 // ─── Working indicator (mid-turn) ───────────────────────────────────────────
 
-const SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
-
 export interface WorkingIndicator {
   /** Start spinner / phase display */
   start: () => void;
   /** Update phase text (thinking / tool / compact…) */
   setPhase: (phase: AgentPhase, detail?: string) => void;
+  /**
+   * While model tokens stream on stdout, suppress \r paints (they garble the
+   * reply) but keep periodic newline status ticks so the run never goes dark.
+   */
+  setStreaming: (on: boolean) => void;
   /**
    * Pause spinner (refcount). Nested pause/resume safe for parallel tools
    * and permission prompts.
@@ -221,64 +382,90 @@ export interface WorkingIndicator {
   resume: () => void;
   /** Clear line and stop */
   stop: () => void;
+  /** Force a paint (e.g. after live slash updates harness state) */
+  repaint: () => void;
   /** True while indicator owns the line */
   active: () => boolean;
   /** Current pause depth (for tests) */
   pauseDepth: () => number;
 }
 
+export interface WorkingIndicatorOpts {
+  /** Live session context for rich mid-run status (model, ULW, effort). */
+  getContext?: () => StatusBarContext | null;
+}
+
 /**
- * In-place working line on stderr so stdout token streams stay clean.
- * Uses \r redraw; safe when TTY. Falls back to one-shot dim lines when not.
- * Pause is reference-counted so parallel tools / permission prompts nest safely.
+ * Native mid-run status on stderr.
+ *
+ * - Spinning \r line when not streaming tokens (thinking / tools / harness)
+ * - Quiet during token stream, with a newline heartbeat every ~10s
+ * - Rich label includes model, effort, ULW cycle, and /cycle 0 hint
  */
-export function createWorkingIndicator(): WorkingIndicator {
+export function createWorkingIndicator(
+  opts: WorkingIndicatorOpts = {},
+): WorkingIndicator {
   const isTty = Boolean(process.stderr.isTTY);
   let frame = 0;
   let timer: ReturnType<typeof setInterval> | null = null;
   let pauseDepth = 0;
   let running = false;
+  let streaming = false;
   let phase: AgentPhase = "thinking";
   let detail: string | undefined;
+  let lastTickAt = 0;
+  const TICK_MS = 10_000;
 
   const label = (): string => {
+    const ctx = opts.getContext?.() ?? null;
+    if (ctx) {
+      const paintPhase =
+        streaming && phase === "thinking" ? "thinking" : phase;
+      const paintDetail =
+        streaming && phase === "thinking" ? "streaming" : detail;
+      return renderBusyStatusLine(ctx, paintPhase, paintDetail, frame);
+    }
+    // Fallback when no context (tests / headless callers)
     const act = getActivity();
     const turnSec = activityElapsedSec(act);
-    const phaseSec = phaseElapsedSec(act);
     const spin = SPINNER_FRAMES[frame % SPINNER_FRAMES.length];
     let body: string;
-    if (phase === "tool" && detail) {
+    if (streaming) body = chalk.dim("replying…");
+    else if (phase === "tool" && detail) {
       body = `tool ${chalk.cyan(shortDetail(detail))}`;
-    } else if (phase === "compacting") {
-      body = chalk.yellow("compacting…");
-    } else if (phase === "stop_guard") {
+    } else if (phase === "compacting") body = chalk.yellow("compacting…");
+    else if (phase === "stop_guard") {
       body = chalk.magenta(
         detail ? `harness ${shortDetail(detail)}` : "harness check…",
       );
     } else if (phase === "waiting") {
-      body = chalk.yellow(`waiting on bg${detail ? `: ${shortDetail(detail)}` : "…"}`);
-    } else {
-      body = chalk.dim("thinking…");
-    }
-    const time =
-      turnSec > 0
-        ? chalk.dim(` ${formatSec(turnSec)}`)
-        : phaseSec > 0
-          ? chalk.dim(` ${formatSec(phaseSec)}`)
-          : "";
+      body = chalk.yellow(
+        `waiting on bg${detail ? `: ${shortDetail(detail)}` : "…"}`,
+      );
+    } else body = chalk.dim("thinking…");
+    const time = turnSec > 0 ? chalk.dim(` ${formatSec(turnSec)}`) : "";
     const bg =
       act.bgRunning > 0 ? chalk.yellow(`  bg:${act.bgRunning}`) : "";
     return `${chalk.magenta(spin)} ${chalk.magenta("⚒")} ${body}${time}${bg}`;
   };
 
   const paint = () => {
-    if (!running || pauseDepth > 0 || !isTty) return;
+    if (!running || pauseDepth > 0 || !isTty || streaming) return;
     const text = label();
     const width = process.stderr.columns || 80;
     const plainLen = visibleWidth(text);
     const pad = Math.max(0, Math.min(width, plainLen + 4) - plainLen);
     const line = clipAnsi(text + " ".repeat(pad), width);
     process.stderr.write("\r" + line);
+  };
+
+  const tickNewline = () => {
+    if (!running || pauseDepth > 0) return;
+    const now = Date.now();
+    if (now - lastTickAt < TICK_MS) return;
+    lastTickAt = now;
+    // Newline status so streaming stdout is not garbled by \r
+    process.stderr.write("\n" + chalk.dim(label()) + "\n");
   };
 
   const clearLine = () => {
@@ -291,7 +478,9 @@ export function createWorkingIndicator(): WorkingIndicator {
     start() {
       running = true;
       pauseDepth = 0;
+      streaming = false;
       frame = 0;
+      lastTickAt = Date.now();
       if (!isTty) {
         process.stderr.write(chalk.dim("  ⚒ working…\n"));
         return;
@@ -299,7 +488,8 @@ export function createWorkingIndicator(): WorkingIndicator {
       if (timer) clearInterval(timer);
       timer = setInterval(() => {
         frame += 1;
-        paint();
+        if (streaming) tickNewline();
+        else paint();
       }, 80);
       timer.unref?.();
       paint();
@@ -307,7 +497,19 @@ export function createWorkingIndicator(): WorkingIndicator {
     setPhase(p, d) {
       phase = p;
       detail = d;
-      if (running && pauseDepth === 0) paint();
+      if (running && pauseDepth === 0 && !streaming) paint();
+    },
+    setStreaming(on) {
+      if (streaming === on) return;
+      if (on) {
+        // Leaving spin mode — clear the \r line so it does not sit on a token line
+        clearLine();
+        streaming = true;
+        lastTickAt = Date.now();
+      } else {
+        streaming = false;
+        if (running && pauseDepth === 0) paint();
+      }
     },
     pause() {
       if (!running) return;
@@ -317,16 +519,20 @@ export function createWorkingIndicator(): WorkingIndicator {
     resume() {
       if (!running) return;
       if (pauseDepth > 0) pauseDepth -= 1;
-      if (pauseDepth === 0) paint();
+      if (pauseDepth === 0 && !streaming) paint();
     },
     stop() {
       running = false;
+      streaming = false;
       pauseDepth = 0;
       if (timer) {
         clearInterval(timer);
         timer = null;
       }
       clearLine();
+    },
+    repaint() {
+      if (running && pauseDepth === 0 && !streaming) paint();
     },
     active: () => running,
     pauseDepth: () => pauseDepth,
