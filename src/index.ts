@@ -37,9 +37,13 @@ export {
   detectSandboxBackend,
   execCommandSandboxed,
 } from "./agent/sandbox.js";
-export { resolveAuth, describeAuth } from "./auth/resolve.js";
+export { resolveAuth, resolveAuthFresh, describeAuth } from "./auth/resolve.js";
 export { loginInteractive, logout, supportsOAuth } from "./auth/login.js";
 export { importGrokCredentials, readGrokXaiSession } from "./auth/import-grok.js";
+export {
+  refreshCredentialIfNeeded,
+  isAuthFailureMessage,
+} from "./auth/refresh.js";
 export { createProvider } from "./providers/factory.js";
 export { runAgentLoop } from "./agent/loop.js";
 export { HookRunner } from "./harness/hooks.js";
@@ -69,13 +73,53 @@ export {
 export {
   createSession,
   loadSession,
+  loadSessionMeta,
   saveSession,
   listSessions,
+  deleteSession,
+  pruneSessions,
   rewindSession,
   exportSessionMarkdown,
   compactMessages,
 } from "./session/session.js";
-export { withRetry, isRetryableError } from "./util/retry.js";
+export {
+  withRetry,
+  isRetryableError,
+  isContextOverflowError,
+  computeRetryDelayMs,
+} from "./util/retry.js";
+export {
+  mergeAbortSignals,
+  providerTimeoutMs,
+  isTimeoutError,
+  DEFAULT_PROVIDER_TIMEOUT_MS,
+} from "./util/abort.js";
+export { getForgeVersion } from "./util/version.js";
+export { log, setLogLevel, getLogLevel } from "./util/log.js";
+export { shellCompletionScript } from "./util/completion-script.js";
+export {
+  toolOutputStats,
+  pruneToolOutputsSync,
+  boundToolOutput,
+} from "./agent/tools/truncate.js";
+export {
+  logSandboxEvent,
+  sandboxLogStats,
+  sandboxLogPath,
+} from "./agent/sandbox-log.js";
+export {
+  parseToolArguments,
+  closeIncompleteJson,
+} from "./util/json-repair.js";
+export {
+  repairToolCallPairing,
+  alignKeepBoundary,
+} from "./session/message-repair.js";
+export {
+  ProviderApiError,
+  isProviderApiError,
+  parseRetryAfterMs,
+} from "./providers/errors.js";
 export {
   completeSlash,
   handleSlash,
@@ -112,6 +156,16 @@ export {
   compactMessagesStructured,
   buildStructuredSummary,
 } from "./session/compaction.js";
+export {
+  acquireSessionLock,
+  releaseSessionLock,
+  readSessionLock,
+  formatLockHolder,
+} from "./session/lock.js";
+export {
+  DoomLoopTracker,
+  toolFingerprint,
+} from "./agent/doom-loop.js";
 export {
   buildBaselineSystemPrompt,
   buildSystemPrompt,

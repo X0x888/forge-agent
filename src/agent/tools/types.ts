@@ -11,6 +11,8 @@ export interface ToolContext {
   sandbox?: SandboxProfile;
   sandboxNetwork?: SandboxNetwork;
   sandboxMissingBackend?: SandboxMissingBackend;
+  /** Propagated from agent loop so long tools can cooperatively cancel */
+  signal?: AbortSignal;
 }
 
 export interface ToolResult {

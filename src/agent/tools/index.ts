@@ -9,6 +9,7 @@ import { toolGlob, toolListDir } from "./glob-list.js";
 import { toolWebSearch } from "./web-search.js";
 import { toolWebFetch } from "./web-fetch.js";
 import { toolGetTaskOutput, toolKillTask } from "./task-tools.js";
+import { parseToolArguments } from "../../util/json-repair.js";
 
 export type { ToolContext, ToolResult } from "./types.js";
 export { TOOL_DEFINITIONS };
@@ -69,15 +70,14 @@ export async function executeTool(
   todoHandler?: TodoHandler,
 ): Promise<ToolResult> {
   name = normalizeToolName(name);
-  let args: Record<string, unknown> = {};
-  try {
-    args = JSON.parse(rawArgs || "{}") as Record<string, unknown>;
-  } catch {
+  const parsed = parseToolArguments(rawArgs);
+  if (!parsed.ok) {
     return {
-      output: `Invalid JSON arguments for ${name}: ${rawArgs}\nPlease rewrite the input as valid JSON.`,
+      output: `Invalid JSON arguments for ${name}: ${parsed.error}\nRaw: ${parsed.raw}\nPlease rewrite the input as valid JSON.`,
       isError: true,
     };
   }
+  const args = parsed.value;
 
   try {
     switch (name) {

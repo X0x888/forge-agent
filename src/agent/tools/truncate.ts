@@ -3,6 +3,7 @@
  * when output exceeds line/byte limits, keep a head+tail preview and write the
  * full body under ~/.forge/tool-output/ so the model can re-read it.
  */
+import fs from "node:fs";
 import fsp from "node:fs/promises";
 import path from "node:path";
 import { ensureDirAsync, forgeHome } from "../../util/fs.js";
@@ -11,6 +12,10 @@ import { truncateMiddle } from "../../util/format.js";
 export const DEFAULT_MAX_LINES = 2000;
 export const DEFAULT_MAX_BYTES = 50 * 1024;
 export const BASH_MAX_CHARS = 80_000;
+/** Keep newest N full-output dumps (experts generate many during ULW). */
+export const DEFAULT_TOOL_OUTPUT_KEEP = 80;
+/** Also drop dumps older than this many days. */
+export const DEFAULT_TOOL_OUTPUT_MAX_AGE_DAYS = 14;
 
 export interface TruncateOptions {
   maxLines?: number;
@@ -26,17 +31,108 @@ export interface ManagedOutput {
   outputPath?: string;
 }
 
-function toolOutputDir(): string {
+export function toolOutputDir(): string {
   return path.join(forgeHome(), "tool-output");
 }
 
 export async function saveFullOutput(text: string): Promise<string> {
   const dir = toolOutputDir();
   await ensureDirAsync(dir);
+  // Best-effort prune so long ULW sessions don't fill the disk
+  try {
+    pruneToolOutputsSync();
+  } catch {
+    /* never block a tool on prune */
+  }
   const name = `tool_${Date.now()}_${Math.random().toString(36).slice(2, 8)}.txt`;
   const file = path.join(dir, name);
   await fsp.writeFile(file, text, "utf8");
   return file;
+}
+
+export interface ToolOutputStats {
+  dir: string;
+  files: number;
+  bytes: number;
+}
+
+/** Sync stats for doctor / CLI (best-effort). */
+export function toolOutputStats(): ToolOutputStats {
+  const dir = toolOutputDir();
+  let files = 0;
+  let bytes = 0;
+  try {
+    if (!fs.existsSync(dir)) return { dir, files: 0, bytes: 0 };
+    for (const name of fs.readdirSync(dir)) {
+      try {
+        const st = fs.statSync(path.join(dir, name));
+        if (!st.isFile()) continue;
+        files += 1;
+        bytes += st.size;
+      } catch {
+        /* */
+      }
+    }
+  } catch {
+    /* */
+  }
+  return { dir, files, bytes };
+}
+
+export interface PruneToolOutputsResult {
+  deleted: number;
+  kept: number;
+  freedBytes: number;
+}
+
+/**
+ * Prune ~/.forge/tool-output dumps: keep newest `keep`, drop older than maxAgeDays.
+ */
+export function pruneToolOutputsSync(opts?: {
+  keep?: number;
+  maxAgeDays?: number;
+}): PruneToolOutputsResult {
+  const keep = opts?.keep ?? DEFAULT_TOOL_OUTPUT_KEEP;
+  const maxAgeDays = opts?.maxAgeDays ?? DEFAULT_TOOL_OUTPUT_MAX_AGE_DAYS;
+  const dir = toolOutputDir();
+  if (!fs.existsSync(dir)) {
+    return { deleted: 0, kept: 0, freedBytes: 0 };
+  }
+  const cutoff =
+    maxAgeDays > 0 ? Date.now() - maxAgeDays * 86_400_000 : 0;
+  type Entry = { name: string; path: string; mtime: number; size: number };
+  const entries: Entry[] = [];
+  for (const name of fs.readdirSync(dir)) {
+    const p = path.join(dir, name);
+    try {
+      const st = fs.statSync(p);
+      if (!st.isFile()) continue;
+      entries.push({ name, path: p, mtime: st.mtimeMs, size: st.size });
+    } catch {
+      /* */
+    }
+  }
+  entries.sort((a, b) => b.mtime - a.mtime);
+  let deleted = 0;
+  let freedBytes = 0;
+  entries.forEach((e, i) => {
+    const tooOld = cutoff > 0 && e.mtime < cutoff;
+    const overKeep = i >= keep;
+    if (tooOld || overKeep) {
+      try {
+        fs.unlinkSync(e.path);
+        deleted += 1;
+        freedBytes += e.size;
+      } catch {
+        /* */
+      }
+    }
+  });
+  return {
+    deleted,
+    kept: entries.length - deleted,
+    freedBytes,
+  };
 }
 
 /**

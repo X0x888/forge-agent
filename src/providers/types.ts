@@ -67,9 +67,15 @@ export interface StreamDelta {
 
 export interface LLMProvider {
   readonly id: string;
-  chat(req: ChatRequest): Promise<ChatResponse>;
+  chat(req: ChatRequest, signal?: AbortSignal): Promise<ChatResponse>;
   chatStream(
     req: ChatRequest,
     onDelta: (delta: StreamDelta) => void,
+    signal?: AbortSignal,
   ): Promise<ChatResponse>;
+  /**
+   * Hot-swap bearer / API key after OAuth refresh without rebuilding the client.
+   * Optional — providers that ignore it simply cannot recover mid-session from 401.
+   */
+  updateCredentials?(token: string): void;
 }

@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { loadConfig } from "../src/config/load.js";
+import { loadConfig, defaultConfigToml } from "../src/config/load.js";
 import {
   loadPreferences,
   savePreferences,
@@ -14,6 +14,14 @@ import { resolveAuth } from "../src/auth/resolve.js";
 import { isProtectedWritePath } from "../src/agent/protected-paths.js";
 
 describe("auth + config", () => {
+  it("defaultConfigToml keeps production safety defaults", () => {
+    const t = defaultConfigToml();
+    assert.match(t, /blocking_stop_hooks = true/);
+    assert.match(t, /sandbox_missing_backend = "fail-closed"/);
+    assert.match(t, /PRODUCTION\.md|RELIABILITY\.md/);
+    assert.match(t, /FORGE_PROVIDER_TIMEOUT_MS|FORGE_LOG_JSON|FORGE_HEADLESS/);
+  });
+
   it("loads defaults and env overrides", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-cfg-"));
     process.env.FORGE_HOME = tmp;

@@ -1,0 +1,31 @@
+# Security Policy
+
+## Supported versions
+
+| Version | Supported |
+|---|---|
+| 0.9.x | ✅ |
+| < 0.9 | Best-effort |
+
+## Reporting a vulnerability
+
+Please **do not** open a public issue for security bugs that could enable:
+
+- Arbitrary code execution outside the intended sandbox profile
+- Credential / token exfiltration from `~/.forge/auth.json`
+- Bypass of hard-deny shell rules or workspace write containment
+
+Email or private channel preferred when available; otherwise open a minimal public issue without exploit details and request a secure contact.
+
+## Hardening already in place
+
+- Auth store written mode `0600`
+- Fail-closed headless permissions
+- Segment-strict allow rules; deny wins under YOLO
+- Protected paths (`.git`, `.forge`, credentials)
+- OS sandbox profiles (`workspace` / `read-only` / `strict`) with fail-closed missing backend
+- SSRF guards on `web_fetch`
+- Shell env scrubbing for secret-looking variables
+- Project config cannot force `bypassPermissions`, turn sandbox off, or redirect credential paths
+
+See [docs/SAFETY.md](./docs/SAFETY.md) and [docs/PRODUCTION.md](./docs/PRODUCTION.md).

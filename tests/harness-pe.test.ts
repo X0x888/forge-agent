@@ -305,6 +305,9 @@ describe("prompt profile + baseline system", () => {
     assert.match(text, /SERENDIPITY/i);
     // Live counters should NOT be baked as the only source — protocol is static
     assert.match(text, /Live counters\/mandate are injected mid-conversation/i);
+    assert.match(text, /Reliability \(runtime self-heal\)/);
+    assert.match(text, /doom-loop/i);
+    assert.match(text, /Context overflow|overflow/i);
   });
 });
 

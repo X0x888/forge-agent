@@ -42,3 +42,10 @@ Binary entry: `src/cli.ts` → `dist/cli.js` (`bin: forge`).
 1. `blockingStopHooks` defaults to **true** — this is the Grok gap we close.
 2. `/goal` stuck-wall must always be able to release (never infinite trap without progress).
 3. Auth files written mode `0600`.
+
+## Production reliability (v0.9+)
+
+See `docs/RELIABILITY.md` and `docs/PRODUCTION.md`. Highlights: Retry-After, abortable streams/bash,
+JSON arg repair, orphan tool_call heal, doom-loop, OAuth refresh (start + mid-run 401), session locks,
+`finish_reason=length` continue, stream usage, `meta.json` session sidecar, `forge sessions prune`,
+`forge completion`, `forge doctor --json`, `npm run smoke`.

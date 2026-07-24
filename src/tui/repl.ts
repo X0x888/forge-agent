@@ -45,8 +45,14 @@ import {
   createWorkingIndicator,
   type StatusBarContext,
 } from "./status-bar.js";
+import {
+  acquireSessionLock,
+  releaseSessionLock,
+  formatLockHolder,
+} from "../session/lock.js";
 
-const VERSION = "0.8.0";
+import { getForgeVersion } from "../util/version.js";
+const VERSION = getForgeVersion();
 
 export async function runRepl(opts: {
   config: ForgeConfig;
@@ -58,6 +64,21 @@ export async function runRepl(opts: {
 }): Promise<void> {
   let { config, provider, session, hooks, auth } = opts;
   const permissions = new PermissionGate({ interactive: true });
+
+  // Exclusive session lock — warn (don't hard-fail) if another live process holds it
+  {
+    const lock = acquireSessionLock(session.meta.id);
+    if (!lock.ok && lock.holder) {
+      log.warn(
+        `Session ${session.meta.id.slice(0, 8)} is locked by ${formatLockHolder(lock.holder)}. ` +
+          `Continuing may race writes — prefer one REPL per session, or /new.`,
+      );
+    } else if (lock.stolen && lock.holder) {
+      log.dim(
+        `Took over stale session lock from ${formatLockHolder(lock.holder)}`,
+      );
+    }
+  }
 
   printBanner(config, auth, session);
 
@@ -296,7 +317,14 @@ export async function runRepl(opts: {
 
     let slash = await handleSlash(text, { session, config, hooks, auth });
     if (slash.replaceSession) {
+      releaseSessionLock(session.meta.id);
       session = slash.replaceSession;
+      const lock = acquireSessionLock(session.meta.id);
+      if (!lock.ok && lock.holder) {
+        log.warn(
+          `Resumed session locked by ${formatLockHolder(lock.holder)} — writes may race`,
+        );
+      }
       hooks = new HookRunner(config, session.meta.cwd);
       const a = resolveAuth(config);
       if (a) {
@@ -484,6 +512,7 @@ export async function runRepl(opts: {
     clearInterval(hbTimer);
     endTurn();
     releaseSession(session.meta.id);
+    releaseSessionLock(session.meta.id);
     await hooks.run("SessionEnd", {
       sessionId: session.meta.id,
       cwd: session.meta.cwd,

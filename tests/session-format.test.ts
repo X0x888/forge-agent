@@ -50,6 +50,27 @@ describe("session helpers", () => {
   });
 });
 
+describe("git context formatting", () => {
+  it("formats dirty ahead/behind details", async () => {
+    const { formatGitForPrompt } = await import("../src/util/git-context.js");
+    const s = formatGitForPrompt({
+      root: "/repo",
+      branch: "main",
+      dirty: true,
+      changedFiles: 3,
+      ahead: 2,
+      behind: 1,
+      upstream: "origin/main",
+      remote: "git@x:y.git",
+    });
+    assert.match(s, /main/);
+    assert.match(s, /dirty, 3 files/);
+    assert.match(s, /ahead 2/);
+    assert.match(s, /behind 1/);
+    assert.match(s, /origin\/main/);
+  });
+});
+
 describe("format + slash complete", () => {
   it("truncates middle preserving head and tail", () => {
     const s = "A".repeat(100) + "MID" + "B".repeat(100);
@@ -69,6 +90,55 @@ describe("format + slash complete", () => {
     assert.equal(isRetryableError(new Error("API error 429 rate limit")), true);
     assert.equal(isRetryableError(new Error("Aborted")), false);
     assert.equal(isRetryableError(new Error("invalid api key")), false);
+  });
+
+  it("does not retry context overflow", async () => {
+    const {
+      isContextOverflowError,
+      isRetryableError: retryable,
+      withRetry,
+    } = await import("../src/util/retry.js");
+    const { ProviderApiError } = await import("../src/providers/errors.js");
+    const overflow = new Error(
+      "API error 400: This model's maximum context length is 128000 tokens",
+    );
+    assert.equal(isContextOverflowError(overflow), true);
+    assert.equal(retryable(overflow), false);
+    assert.equal(
+      isContextOverflowError(
+        new ProviderApiError({
+          provider: "xai",
+          status: 400,
+          body: "context_length_exceeded: reduce the length of the messages",
+        }),
+      ),
+      true,
+    );
+    assert.equal(
+      isContextOverflowError(
+        new ProviderApiError({
+          provider: "openai",
+          status: 413,
+          body: "payload too large",
+        }),
+      ),
+      true,
+    );
+    assert.equal(retryable(new Error("API error 503 overloaded")), true);
+
+    let calls = 0;
+    await assert.rejects(
+      () =>
+        withRetry(
+          async () => {
+            calls += 1;
+            throw overflow;
+          },
+          { retries: 3, baseDelayMs: 1, maxDelayMs: 5 },
+        ),
+      /maximum context length/i,
+    );
+    assert.equal(calls, 1, "overflow must not be retried with same payload");
   });
 
   it("completes slash commands", () => {

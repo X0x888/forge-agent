@@ -57,6 +57,9 @@ export async function toolBash(
 
   try {
     const { execCommandSandboxed } = await import("./sandbox-exec.js");
+    if (ctx.signal?.aborted) {
+      return { output: "Aborted", isError: true };
+    }
     const result = await execCommandSandboxed({
       command,
       cwd: ctx.workspace,
@@ -65,11 +68,19 @@ export async function toolBash(
       network: ctx.sandboxNetwork,
       missingBackend,
       env,
+      signal: ctx.signal,
     });
     if (result.failClosed) {
       const managed = await boundToolOutput(
         result.stderr ||
           "Sandbox backend unavailable (fail-closed). Install bwrap / Xcode CLT, or set sandbox=off.",
+        { maxChars: BASH_MAX_CHARS },
+      );
+      return { output: managed.text, isError: true };
+    }
+    if (ctx.signal?.aborted || result.code === 130) {
+      const managed = await boundToolOutput(
+        result.stderr || "Aborted",
         { maxChars: BASH_MAX_CHARS },
       );
       return { output: managed.text, isError: true };
@@ -93,6 +104,9 @@ export async function toolBash(
     });
     return { output: managed.text };
   } catch (err) {
+    if (ctx.signal?.aborted) {
+      return { output: "Aborted", isError: true };
+    }
     if (profile !== "off" && missingBackend === "fail-closed") {
       const managed = await boundToolOutput(
         `Sandbox error (fail-closed): ${(err as Error).message}`,
@@ -106,6 +120,7 @@ export async function toolBash(
         timeout,
         maxBuffer: 4 * 1024 * 1024,
         env,
+        signal: ctx.signal,
       });
       const out = [stdout, stderr].filter(Boolean).join("\n");
       const managed = await boundToolOutput(
@@ -114,6 +129,9 @@ export async function toolBash(
       );
       return { output: managed.text };
     } catch (err2) {
+      if (ctx.signal?.aborted) {
+        return { output: "Aborted", isError: true };
+      }
       const e = err2 as {
         stdout?: string;
         stderr?: string;

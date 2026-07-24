@@ -37,6 +37,8 @@ export interface SandboxRunOpts {
   /** Override profile network default */
   network?: SandboxNetwork;
   missingBackend?: SandboxMissingBackend;
+  /** Cancel in-flight child (Ctrl+C / turn abort) */
+  signal?: AbortSignal;
 }
 
 export interface SandboxRunResult {
@@ -165,9 +167,18 @@ ${networkClause}
 function runRaw(
   file: string,
   args: string[],
-  opts: { cwd: string; timeoutMs: number; env?: NodeJS.ProcessEnv },
+  opts: {
+    cwd: string;
+    timeoutMs: number;
+    env?: NodeJS.ProcessEnv;
+    signal?: AbortSignal;
+  },
 ): Promise<{ stdout: string; stderr: string; code: number | null }> {
   return new Promise((resolve) => {
+    if (opts.signal?.aborted) {
+      resolve({ stdout: "", stderr: "Aborted", code: 130 });
+      return;
+    }
     const child = spawn(file, args, {
       cwd: opts.cwd,
       env: opts.env || process.env,
@@ -176,10 +187,40 @@ function runRaw(
     });
     let stdout = "";
     let stderr = "";
+    let settled = false;
+    const finish = (result: {
+      stdout: string;
+      stderr: string;
+      code: number | null;
+    }) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      opts.signal?.removeEventListener("abort", onAbort);
+      resolve(result);
+    };
+    const killChild = () => {
+      try {
+        child.kill("SIGTERM");
+      } catch {
+        /* */
+      }
+      setTimeout(() => {
+        try {
+          child.kill("SIGKILL");
+        } catch {
+          /* */
+        }
+      }, 2000);
+    };
     const timer = setTimeout(() => {
-      child.kill("SIGTERM");
-      setTimeout(() => child.kill("SIGKILL"), 2000);
+      killChild();
     }, opts.timeoutMs);
+    const onAbort = () => {
+      stderr = (stderr ? stderr + "\n" : "") + "Aborted";
+      killChild();
+    };
+    opts.signal?.addEventListener("abort", onAbort, { once: true });
     child.stdout?.on("data", (d) => {
       stdout += d.toString();
     });
@@ -187,12 +228,18 @@ function runRaw(
       stderr += d.toString();
     });
     child.on("error", (err) => {
-      clearTimeout(timer);
-      resolve({ stdout, stderr: stderr + "\n" + err.message, code: 1 });
+      finish({
+        stdout,
+        stderr: stderr + "\n" + err.message,
+        code: opts.signal?.aborted ? 130 : 1,
+      });
     });
     child.on("close", (code) => {
-      clearTimeout(timer);
-      resolve({ stdout, stderr, code });
+      finish({
+        stdout,
+        stderr,
+        code: opts.signal?.aborted ? 130 : code,
+      });
     });
   });
 }
@@ -220,6 +267,7 @@ export async function runSandboxed(opts: SandboxRunOpts): Promise<SandboxRunResu
       cwd: opts.cwd,
       timeoutMs: opts.timeoutMs,
       env: opts.env,
+      signal: opts.signal,
     });
     return {
       ...r,
@@ -255,6 +303,7 @@ export async function runSandboxed(opts: SandboxRunOpts): Promise<SandboxRunResu
           cwd: opts.cwd,
           timeoutMs: opts.timeoutMs,
           env: opts.env,
+          signal: opts.signal,
         });
         return {
           ...r,
@@ -317,6 +366,7 @@ export async function runSandboxed(opts: SandboxRunOpts): Promise<SandboxRunResu
         cwd: opts.cwd,
         timeoutMs: opts.timeoutMs,
         env: opts.env,
+        signal: opts.signal,
       });
       return { ...r, sandboxed: true, backend: "bwrap", network };
     }
@@ -357,6 +407,7 @@ export async function execCommandSandboxed(
       cwd: opts.cwd,
       timeoutMs: opts.timeoutMs,
       env: opts.env,
+      signal: opts.signal,
     });
     return { ...r, sandboxed: false, backend: "none", network };
   }

@@ -46,7 +46,10 @@ describe("live mid-run slash policy", () => {
     assert.equal(classifyLiveSlash("/todos"), "readonly");
     assert.equal(classifyLiveSlash("/goal"), "readonly");
     assert.equal(classifyLiveSlash("/goal status"), "readonly");
+    assert.equal(classifyLiveSlash("/sessions"), "readonly");
+    assert.equal(classifyLiveSlash("/sessions list"), "readonly");
     assert.ok(isLiveSafeSlash("/status"));
+    assert.ok(isLiveSafeSlash("/sessions"));
   });
 
   it("allows quit mid-run (abort then exit)", () => {
@@ -64,8 +67,11 @@ describe("live mid-run slash policy", () => {
     assert.equal(classifyLiveSlash("/clear"), "idle-only");
     assert.equal(classifyLiveSlash("/rewind"), "idle-only");
     assert.equal(classifyLiveSlash("/model grok-4"), "idle-only");
+    assert.equal(classifyLiveSlash("/sessions delete abc"), "idle-only");
+    assert.equal(classifyLiveSlash("/sessions prune"), "idle-only");
     assert.equal(classifyLiveSlash("not a slash"), "idle-only");
     assert.equal(isLiveSafeSlash("/ulw fix it"), false);
+    assert.equal(isLiveSafeSlash("/sessions delete x"), false);
   });
 
   it("exposes a usable hint string", () => {

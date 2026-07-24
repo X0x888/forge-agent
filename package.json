@@ -1,21 +1,29 @@
 {
   "name": "forge-agent",
-  "version": "0.8.0",
-  "description": "Forge — AI coding agent CLI with harness (Stop/goal/ULW), Bar A daily-driver safety (fail-closed headless, segment-strict allows, protected paths), and quality tools",
+  "version": "0.9.0",
+  "description": "Forge — AI coding agent CLI with harness (Stop/goal/ULW), production reliability (Retry-After, abortable streams, JSON repair, doom-loop, OAuth refresh), Bar A daily-driver safety, and quality tools",
   "type": "module",
   "bin": {
     "forge": "./dist/cli.js"
   },
   "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
   "exports": {
-    ".": "./dist/index.js"
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "dev": "tsx src/cli.ts",
     "start": "node dist/cli.js",
-    "test": "tsx --test tests/**/*.test.ts",
-    "typecheck": "tsc -p tsconfig.json --noEmit"
+    "test": "mkdir -p .tmp && TMPDIR=\"$PWD/.tmp\" tsx --test tests/**/*.test.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "prepack": "npm run build",
+    "check": "npm run typecheck && npm test",
+    "ci": "npm run check && npm run smoke",
+    "smoke": "npm run build && node dist/cli.js --version && (node dist/cli.js doctor --json >/dev/null || true) && node dist/cli.js completion bash >/dev/null && node dist/cli.js models --json >/dev/null && node dist/cli.js prune-tool-output --json >/dev/null"
   },
   "engines": {
     "node": ">=20"
@@ -27,9 +35,33 @@
     "coding-agent",
     "harness",
     "hooks",
-    "goal"
+    "goal",
+    "ulw",
+    "xai",
+    "anthropic"
   ],
   "license": "MIT",
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE",
+    "CHANGELOG.md",
+    "docs",
+    "hooks",
+    "AGENTS.md",
+    "CONTRIBUTING.md",
+    "SECURITY.md",
+    "install.sh",
+    ".env.example"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/forge-agent/forge"
+  },
+  "homepage": "https://github.com/forge-agent/forge#readme",
+  "bugs": {
+    "url": "https://github.com/forge-agent/forge/issues"
+  },
   "dependencies": {
     "chalk": "^5.4.1",
     "commander": "^13.1.0",

@@ -371,7 +371,7 @@ export function loadConfig(overrides: Partial<ForgeConfig> = {}, cwd = process.c
 
 export function defaultConfigToml(): string {
   return `# Forge agent config — ~/.forge/config.toml
-# Docs: see docs/SAFETY.md
+# Docs: docs/SAFETY.md · docs/PRODUCTION.md · docs/RELIABILITY.md
 
 provider = "xai"
 model = "grok-4.5"
@@ -392,9 +392,14 @@ sandbox_missing_backend = "fail-closed"
 # ask | allow | deny — file/path access outside workspace
 read_outside_workspace = "ask"
 
+# Harness: keep true for production (Stop hooks can force continue)
 blocking_stop_hooks = true
 compat_claude_hooks = true
 compat_cursor_hooks = true
+
+# Context: auto-compact when estimated tokens exceed this fraction of context_window
+# auto_compact_threshold = 0.85
+# context_window = 500000
 
 [goal]
 enabled = true
@@ -417,5 +422,6 @@ ask = []
 # Optional per-provider overrides (global ~/.forge only — not project)
 # [providers.xai]
 # base_url = "https://api.x.ai/v1"
+# Env: FORGE_PROVIDER_TIMEOUT_MS, FORGE_MAX_RUN_MS, FORGE_LOG_JSON, FORGE_HEADLESS — see .env.example
 `;
 }

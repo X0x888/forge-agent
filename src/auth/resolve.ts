@@ -3,6 +3,8 @@ import { getCredential, isExpired } from "./store.js";
 import type { ResolvedAuth } from "./types.js";
 import { readGrokXaiSession } from "./import-grok.js";
 import { nowEpoch } from "../util/fs.js";
+import { refreshCredentialIfNeeded } from "./refresh.js";
+import { log } from "../util/log.js";
 
 const ENV_KEYS: Record<string, string[]> = {
   xai: ["XAI_API_KEY", "GROK_API_KEY"],
@@ -114,4 +116,31 @@ export function describeAuth(auth: ResolvedAuth | null): string {
   if (!auth) return "not authenticated";
   const label = auth.accountLabel ? ` (${auth.accountLabel})` : "";
   return `${auth.provider} via ${auth.method}${label}`;
+}
+
+/**
+ * Resolve auth, proactively refreshing OAuth/subscription tokens when expired.
+ * Prefer this over resolveAuth() at session start and before long headless runs.
+ */
+export async function resolveAuthFresh(
+  config: ForgeConfig,
+  providerOverride?: string,
+): Promise<ResolvedAuth | null> {
+  const provider = (providerOverride ?? config.provider) as string;
+
+  // Env keys never need refresh
+  const envFirst = resolveAuth(config, providerOverride);
+  if (envFirst?.method === "api_key" && envFirst.accountLabel?.startsWith("env:")) {
+    return envFirst;
+  }
+
+  // Try refresh for the active provider's stored credential
+  const refreshed = await refreshCredentialIfNeeded(provider);
+  if (refreshed.refreshed) {
+    log.info(`OAuth token refreshed for ${provider}`);
+  } else if (!refreshed.ok && refreshed.error?.includes("expired")) {
+    log.warn(`Auth for ${provider}: ${refreshed.error}`);
+  }
+
+  return resolveAuth(config, providerOverride);
 }

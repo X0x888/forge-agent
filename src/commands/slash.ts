@@ -11,6 +11,8 @@ import type { SessionData } from "../session/session.js";
 import {
   saveSession,
   listSessions,
+  deleteSession,
+  pruneSessions,
   compactMessages,
   rewindSession,
   exportSessionMarkdown,
@@ -36,6 +38,11 @@ import { loadPreferences, savePreferences } from "../config/preferences.js";
 import { describeSandbox, detectSandboxBackend } from "../agent/sandbox.js";
 import { describeAuth, resolveAuth } from "../auth/resolve.js";
 import { printAuthStatus } from "../auth/login.js";
+import { getCredential, isExpired } from "../auth/store.js";
+import { providerTimeoutMs } from "../util/abort.js";
+import { getForgeVersion } from "../util/version.js";
+import { toolOutputStats } from "../agent/tools/truncate.js";
+import { sandboxLogStats } from "../agent/sandbox-log.js";
 import {
   estimateCostUsd,
   formatCost,
@@ -98,6 +105,7 @@ const LIVE_READONLY = new Set([
   "/todos",
   "/auth",
   "/doctor",
+  "/sessions", // list only — delete/prune classified below
 ]);
 
 /** Harness control commands safe mid-turn (no forwardPrompt). */
@@ -130,6 +138,12 @@ export function classifyLiveSlash(line: string): LiveSlashKind {
   if (!parsed) return "idle-only";
   const { cmd, arg } = parsed;
   if (cmd === "/quit" || cmd === "/exit" || cmd === "/q") return "quit";
+  if (cmd === "/sessions") {
+    // bare list is readonly; delete/prune mutate disk — idle-only
+    const verb = (arg.split(/\s+/)[0] || "").toLowerCase();
+    if (!verb || verb === "list") return "readonly";
+    return "idle-only";
+  }
   if (LIVE_READONLY.has(cmd)) return "readonly";
   if (LIVE_CONTROL.has(cmd)) {
     // /cycle status (or bare menu) is read-only; flag flips are control
@@ -776,16 +790,51 @@ export async function handleSlash(
     }
 
     case "/sessions": {
+      const parts = arg.split(/\s+/).filter(Boolean);
+      const sub = (parts[0] || "").toLowerCase();
+      if (sub === "delete" || sub === "rm" || sub === "remove") {
+        const target = parts[1] || "";
+        if (!target) {
+          return { handled: true, output: "Usage: /sessions delete <id-prefix>" };
+        }
+        if (target === opts.session.meta.id || opts.session.meta.id.startsWith(target)) {
+          return {
+            handled: true,
+            output: "Cannot delete the active session. /new first, then delete.",
+          };
+        }
+        const ok = deleteSession(target);
+        return {
+          handled: true,
+          output: ok ? `Deleted session ${target}` : `Session not found: ${target}`,
+        };
+      }
+      if (sub === "prune") {
+        const keepArg = parts.find((p) => p.startsWith("--keep="));
+        const keep = keepArg ? Number(keepArg.split("=")[1]) : 50;
+        const result = pruneSessions({
+          keep: Number.isFinite(keep) && keep > 0 ? keep : 50,
+          protectIds: [opts.session.meta.id],
+        });
+        return {
+          handled: true,
+          output: `Pruned ${result.deleted.length} session(s); kept ${result.kept} (active protected). CLI: forge sessions prune --keep 50`,
+        };
+      }
       const list = listSessions(15);
       if (!list.length) return { handled: true, output: "No sessions yet." };
       return {
         handled: true,
-        output: list
-          .map(
-            (s) =>
-              `${s.id.slice(0, 8)}  ${s.updatedAt.slice(0, 19)}  ${(s.title || "").slice(0, 36).padEnd(36)}  ${s.model}  t=${s.turnCount}${s.ultrawork ? " ULW" : ""}`,
-          )
-          .join("\n"),
+        output:
+          list
+            .map(
+              (s) =>
+                `${s.id.slice(0, 8)}  ${s.updatedAt.slice(0, 19)}  ${(s.title || "").slice(0, 36).padEnd(36)}  ${s.model}  t=${s.turnCount}${s.ultrawork ? " ULW" : ""}`,
+            )
+            .join("\n") +
+          chalk.dim(
+            "\n\n/sessions delete <id>  ·  /sessions prune [--keep=50]  ·  /resume <id>",
+          ),
       };
     }
 
@@ -969,8 +1018,39 @@ function handleGoal(arg: string, session: SessionData): SlashResult {
 
 export function runDoctor(config: ForgeConfig): string {
   const lines: string[] = [chalk.bold("Forge doctor"), ""];
+  const issues: string[] = [];
+  lines.push(`Version: ${getForgeVersion()}`);
   const auth = resolveAuth(config);
   lines.push(`Auth: ${describeAuth(auth)}`);
+  if (!auth) {
+    issues.push("Not authenticated — run forge login or set an API key env var");
+  } else if (auth.method !== "api_key") {
+    // Surface expiry for OAuth/subscription without printing tokens
+    const cred = getCredential(String(auth.provider));
+    if (cred?.expiresAt) {
+      const exp = new Date(cred.expiresAt * 1000).toISOString();
+      if (isExpired(cred, 0)) {
+        lines.push(chalk.red(`  Token EXPIRED at ${exp}`));
+        if (cred.refreshToken) {
+          lines.push(
+            chalk.yellow(
+              "  refresh_token present — will try auto-refresh on next start",
+            ),
+          );
+        } else {
+          issues.push(
+            `OAuth token expired for ${auth.provider} and no refresh_token — re-login`,
+          );
+        }
+      } else {
+        lines.push(
+          chalk.dim(
+            `  Token expires ${exp}${cred.refreshToken ? " · refresh_token=yes" : ""}`,
+          ),
+        );
+      }
+    }
+  }
   {
     const effort = resolveReasoningEffort(config.model, config.reasoningEffort);
     const effortSuffix = effort ? ` · effort=${effort}` : "";
@@ -1000,6 +1080,13 @@ export function runDoctor(config: ForgeConfig): string {
             : chalk.yellow(" — fallback unsandboxed")
           : ""),
     );
+    if (config.sandbox !== "off" && !backend.available) {
+      if (config.sandboxMissingBackend === "fail-closed") {
+        issues.push(
+          "Sandbox backend missing under fail-closed — bash tools will be denied (install bwrap/Xcode CLT or set sandbox=off)",
+        );
+      }
+    }
     lines.push(`Missing backend policy: ${config.sandboxMissingBackend || "fail-closed"}`);
     lines.push(`Read outside workspace: ${config.readOutsideWorkspace || "ask"}`);
   }
@@ -1008,13 +1095,32 @@ export function runDoctor(config: ForgeConfig): string {
   const askN = config.permission?.ask?.length || 0;
   lines.push(`Rules: deny=${denyN} allow=${allowN} ask=${askN} (deny wins under YOLO)`);
   lines.push(`Blocking Stop: ${config.blockingStopHooks ? "on" : "off"}`);
+  if (!config.blockingStopHooks) {
+    lines.push(chalk.yellow("  ⚠ Blocking Stop is OFF — harness Stop hooks cannot force continue"));
+  }
   lines.push(`Goal gate: ${config.goal.enabled ? "on" : "off"} (stuck=${config.goal.stuckThreshold})`);
   lines.push(`Workspace: ${config.workspace || process.cwd()}`);
+  lines.push(
+    `Context: window=${config.contextWindow} autoCompact@${Math.round((config.autoCompactThreshold || 0.8) * 100)}% maxTurns=${config.maxTurns}`,
+  );
+  {
+    const maxRun = process.env.FORGE_MAX_RUN_MS?.trim();
+    const maxRunNote =
+      maxRun && /^\d+$/.test(maxRun) && Number(maxRun) >= 5_000
+        ? ` · max-run=${Math.round(Number(maxRun) / 1000)}s`
+        : "";
+    lines.push(
+      `Reliability: Retry-After · abortable streams · JSON repair · orphan tool heal · doom-loop · overflow→compact · OAuth refresh · provider timeout=${Math.round(providerTimeoutMs() / 1000)}s${maxRunNote}`,
+    );
+  }
 
   const node = process.version;
   lines.push(`Node: ${node}`);
   const major = parseInt(node.slice(1), 10);
-  if (major < 20) lines.push(chalk.red("  ⚠ Node 20+ required"));
+  if (major < 20) {
+    lines.push(chalk.red("  ⚠ Node 20+ required"));
+    issues.push(`Node ${node} is below 20`);
+  }
 
   // Quick network check to base URL host (HEAD not always allowed)
   const pcfg = config.providers[config.provider];
@@ -1028,7 +1134,68 @@ export function runDoctor(config: ForgeConfig): string {
   const home = process.env.FORGE_HOME || path.join(process.env.HOME || "", ".forge");
   lines.push(`FORGE_HOME: ${home}`);
   lines.push(`  config: ${fs.existsSync(path.join(home, "config.toml")) ? "yes" : "no"}`);
-  lines.push(`  auth:   ${fs.existsSync(path.join(home, "auth.json")) ? "yes" : "no"}`);
+  const authPath = path.join(home, "auth.json");
+  if (fs.existsSync(authPath)) {
+    try {
+      const st = fs.statSync(authPath);
+      const mode = (st.mode & 0o777).toString(8);
+      const modeOk = (st.mode & 0o077) === 0;
+      lines.push(`  auth:   yes (mode ${mode}${modeOk ? "" : chalk.red(" — should be 600")})`);
+      if (!modeOk) issues.push("auth.json is group/world-readable — expected mode 0600");
+    } catch {
+      lines.push(`  auth:   yes`);
+    }
+  } else {
+    lines.push(`  auth:   no`);
+  }
+  try {
+    const sessN = listSessions(10_000).length;
+    lines.push(
+      `  sessions: ${sessN}` +
+        (sessN > 80
+          ? chalk.yellow(" — consider: forge sessions prune --keep 50")
+          : ""),
+    );
+  } catch {
+    /* */
+  }
+  try {
+    const st = toolOutputStats();
+    if (st.files > 0) {
+      const mb = (st.bytes / (1024 * 1024)).toFixed(1);
+      lines.push(
+        `  tool-output: ${st.files} files · ${mb} MB` +
+          (st.files > 100
+            ? chalk.yellow(" — auto-pruned on next large tool result")
+            : ""),
+      );
+    } else {
+      lines.push(`  tool-output: empty`);
+    }
+  } catch {
+    /* optional */
+  }
+  try {
+    const sl = sandboxLogStats();
+    if (sl.exists || sl.backupBytes > 0) {
+      const kb = (sl.bytes / 1024).toFixed(0);
+      const bak =
+        sl.backupBytes > 0
+          ? ` + ${(sl.backupBytes / 1024).toFixed(0)} KB backup`
+          : "";
+      lines.push(`  sandbox-log: ${kb} KB${bak}`);
+    }
+  } catch {
+    /* optional */
+  }
+
+  lines.push("");
+  if (issues.length === 0) {
+    lines.push(chalk.green("✓ No blocking issues detected"));
+  } else {
+    lines.push(chalk.yellow(`⚠ ${issues.length} issue(s):`));
+    for (const i of issues) lines.push(chalk.yellow(`  • ${i}`));
+  }
 
   return lines.join("\n");
 }
@@ -1060,7 +1227,7 @@ Forge slash commands
   /new                  Fresh session
   /clear                Clear messages (same session)
   /resume [id]          Resume a prior session
-  /sessions             List recent sessions
+  /sessions [delete|prune]  List / delete / prune sessions
   /auth                 Show stored credentials  [live]
   /doctor               Environment health check  [live]
   /quit                 Exit  [live — aborts run then exits]

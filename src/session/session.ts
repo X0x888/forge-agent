@@ -88,6 +88,12 @@ export function saveSession(data: SessionData): void {
   const dir = sessionDir(data.meta.id);
   ensureDir(dir);
   writeJsonFile(path.join(dir, "session.json"), data);
+  // Sidecar meta for fast list/prune without parsing multi-MB histories
+  try {
+    writeJsonFile(path.join(dir, "meta.json"), data.meta);
+  } catch {
+    /* non-fatal */
+  }
   try {
     heartbeatSession({
       sessionId: data.meta.id,
@@ -100,6 +106,24 @@ export function saveSession(data: SessionData): void {
   }
 }
 
+/** Load meta only (prefers meta.json sidecar; falls back to full session). */
+export function loadSessionMeta(idOrPrefix: string): SessionMeta | null {
+  const full = resolveSessionId(idOrPrefix);
+  if (!full) return null;
+  const metaPath = path.join(sessionDir(full), "meta.json");
+  const fromSide = readJsonFile<SessionMeta | null>(metaPath, null);
+  if (fromSide?.id) return fromSide;
+  const s = loadSession(full);
+  if (!s?.meta) return null;
+  // Backfill sidecar so subsequent list/prune stay cheap (legacy sessions)
+  try {
+    writeJsonFile(metaPath, s.meta);
+  } catch {
+    /* non-fatal */
+  }
+  return s.meta;
+}
+
 export function loadSession(id: string): SessionData | null {
   // Allow short prefix match
   const full = resolveSessionId(id);
@@ -110,18 +134,27 @@ export function loadSession(id: string): SessionData | null {
   );
 }
 
+function sessionDirLooksValid(dir: string): boolean {
+  return (
+    fs.existsSync(path.join(dir, "session.json")) ||
+    fs.existsSync(path.join(dir, "meta.json"))
+  );
+}
+
 /** Resolve full session id from prefix (min 4 chars). */
 export function resolveSessionId(prefixOrId: string): string | null {
   const root = path.join(forgeHome(), "sessions");
   ensureDir(root);
-  if (fs.existsSync(path.join(root, prefixOrId, "session.json"))) {
+  if (sessionDirLooksValid(path.join(root, prefixOrId))) {
     return prefixOrId;
   }
   if (prefixOrId.length < 4) return null;
   try {
     const matches = fs
       .readdirSync(root)
-      .filter((id) => id.startsWith(prefixOrId));
+      .filter(
+        (id) => id.startsWith(prefixOrId) && sessionDirLooksValid(path.join(root, id)),
+      );
     if (matches.length === 1) return matches[0];
   } catch {
     /* */
@@ -134,17 +167,81 @@ export function listSessions(limit = 20): SessionMeta[] {
   ensureDir(root);
   let ids: string[] = [];
   try {
-    ids = fs.readdirSync(root);
+    ids = fs.readdirSync(root).filter((id) => {
+      try {
+        return fs.statSync(path.join(root, id)).isDirectory();
+      } catch {
+        return false;
+      }
+    });
   } catch {
     return [];
   }
   const metas: SessionMeta[] = [];
   for (const id of ids) {
-    const s = loadSession(id);
-    if (s) metas.push(s.meta);
+    // Prefer sidecar meta.json — avoids parsing huge session.json histories
+    const meta = loadSessionMeta(id);
+    if (meta) metas.push(meta);
   }
   metas.sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : -1));
   return metas.slice(0, limit);
+}
+
+/** Delete a session directory (and lock). Returns true if removed. */
+export function deleteSession(idOrPrefix: string): boolean {
+  const full = resolveSessionId(idOrPrefix);
+  if (!full) return false;
+  const dir = sessionDir(full);
+  try {
+    fs.rmSync(dir, { recursive: true, force: true });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export interface PruneSessionsResult {
+  deleted: string[];
+  kept: number;
+  scanned: number;
+}
+
+/**
+ * Prune old sessions for disk hygiene (experts accumulate many ULW runs).
+ * Keeps the newest `keep` sessions; optionally also drops anything older than `maxAgeDays`.
+ * Never deletes `protectIds` (e.g. the active REPL session).
+ */
+export function pruneSessions(opts?: {
+  keep?: number;
+  maxAgeDays?: number;
+  protectIds?: string[];
+}): PruneSessionsResult {
+  const keep = opts?.keep ?? 50;
+  const maxAgeDays = opts?.maxAgeDays;
+  const protect = new Set(opts?.protectIds || []);
+  const all = listSessions(10_000);
+  const cutoff =
+    maxAgeDays != null && maxAgeDays > 0
+      ? Date.now() - maxAgeDays * 86_400_000
+      : null;
+
+  const deleted: string[] = [];
+  // Newest first from listSessions
+  all.forEach((meta, index) => {
+    if (protect.has(meta.id)) return;
+    const tooOld =
+      cutoff != null && Date.parse(meta.updatedAt || "") < cutoff;
+    const overKeep = index >= keep;
+    if (tooOld || overKeep) {
+      if (deleteSession(meta.id)) deleted.push(meta.id);
+    }
+  });
+
+  return {
+    deleted,
+    kept: all.length - deleted.length,
+    scanned: all.length,
+  };
 }
 
 export function estimateTokens(messages: ChatMessage[]): number {

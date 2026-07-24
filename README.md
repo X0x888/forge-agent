@@ -2,7 +2,7 @@
 
 **Forge** is an open-source AI coding agent CLI with a **first-class harness** — the control plane that other tools partially implement.
 
-> **v0.8.0** — **Bar A daily-driver**: fail-closed headless shell/writes, **segment-strict** allow rules, expanded hard-deny, protected `.forge`/`.git` paths, project config cannot YOLO / redirect credentials / turn sandbox off. Builds on v0.7 tool quality + v0.6 safety stack + harness (blocking Stop, `/goal`, ULW).
+> **v0.9.0** — **Production reliability**: Retry-After backoff, abortable streams + bash, JSON tool-arg repair, orphan tool_call heal, `finish_reason=length` continue, context-overflow→compact, OAuth refresh (start + mid-run 401), doom-loop detection, session locks + `meta.json` sidecar + prune, `forge doctor --json` / `completion` / `npm run smoke`. Builds on v0.8 Bar A daily-driver safety + harness (blocking Stop, `/goal`, ULW).
 
 Key capability comparison:
 
@@ -13,8 +13,10 @@ Key capability comparison:
 | Ultrawork / no-defer autonomy mode | via oh-my-claude | — | limited | ✅ |
 | API key auth | ✅ | ✅ | ✅ | ✅ |
 | OAuth / subscription (where provider allows) | ✅ | ✅ | ✅ | ✅ |
+| OAuth **refresh** + long-session auth | ✅ | ✅ | partial | ✅ |
 | Multi-provider (xAI, Anthropic, OpenAI, OpenRouter, Google) | limited | limited | xAI-first | ✅ |
 | Claude / Cursor hook compatibility | n/a | — | ✅ | ✅ |
+| Stream/tool **self-heal** (JSON repair, orphan tools, doom-loop) | partial | partial | partial | ✅ |
 
 > **Why this exists:** Grok Build has hooks, but `Stop` cannot block the agent. Harnesses that depend on “don’t stop until tests pass” or Codex-style `/goal` simply don’t work there. Forge implements those semantics natively.
 
@@ -27,6 +29,7 @@ cd CLI
 npm install
 npm run build
 npm link          # puts `forge` on your PATH
+eval "$(forge completion bash)"   # optional
 ```
 
 Or run without linking:
@@ -188,6 +191,20 @@ Max-autonomy **relentless loop**. Soft prompts like `improve the code` are expan
 
 See [docs/ULW.md](docs/ULW.md).
 
+### 4. Production reliability (v0.9)
+
+Forge is built for long expert sessions and CI, not just demos:
+
+- **Retry-After** backoff on `429`/`5xx`; provider wall-clock timeout (default 5m, `FORGE_PROVIDER_TIMEOUT_MS`)
+- **Abortable** streams + sandboxed bash (Ctrl+C actually stops work)
+- **Self-heal**: truncated JSON tool args, orphaned `tool_call` pairs after abort/compact, empty/`length` model turns
+- **Doom-loop** detection when the same tool+args repeat
+- **OAuth refresh** at start and once mid-run on `401`
+- **Session locks** so two REPLs don’t thrash the same `session.json`
+- Accurate **stream token usage** for `/cost`
+
+Full contract: [docs/RELIABILITY.md](docs/RELIABILITY.md) · expert checklist: [docs/PRODUCTION.md](docs/PRODUCTION.md) · release notes: [CHANGELOG.md](CHANGELOG.md)
+
 ---
 
 ## Slash commands
@@ -214,7 +231,7 @@ See [docs/ULW.md](docs/ULW.md).
 | `/copy` | Clipboard last reply |
 | `/new` / `/clear` | Fresh or wipe conversation |
 | `/resume [id]` | Resume by id/prefix |
-| `/sessions` | Recent sessions |
+| `/sessions` | List sessions · `delete <id>` · `prune` |
 | `/doctor` | Env health check |
 | `/quit` | Exit |
 

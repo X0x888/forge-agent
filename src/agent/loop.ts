@@ -54,7 +54,13 @@ import {
 } from "./tools/index.js";
 import { buildBaselineSystemPrompt } from "./system-prompt.js";
 import { log } from "../util/log.js";
-import { withRetry } from "../util/retry.js";
+import { withRetry, isContextOverflowError } from "../util/retry.js";
+import { parseToolArguments } from "../util/json-repair.js";
+import { repairToolCallPairing } from "../session/message-repair.js";
+import { DoomLoopTracker } from "./doom-loop.js";
+import { refreshCredentialIfNeeded, isAuthFailureMessage } from "../auth/refresh.js";
+import { resolveAuth } from "../auth/resolve.js";
+import { isProviderApiError } from "../providers/errors.js";
 import {
   formatToolStart,
   formatToolEnd,
@@ -190,7 +196,6 @@ function assertNotAborted(signal?: AbortSignal): void {
 export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
   const {
     config,
-    provider,
     session,
     hooks,
     permissions,
@@ -198,6 +203,9 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
     stream = true,
     signal,
   } = opts;
+  // Mutable so mid-run OAuth refresh can hot-swap the bearer token
+  let provider = opts.provider;
+  let authRefreshAttempted = false;
   const events: LoopEvents = {
     onToken: opts.events?.onToken || opts.onToken,
     onToolStart: opts.events?.onToolStart,
@@ -214,6 +222,7 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
   const workspace = config.workspace || session.meta.cwd;
   const startPrompt = session.meta.totalPromptTokens;
   const startComp = session.meta.totalCompletionTokens;
+  const doomLoop = new DoomLoopTracker({ threshold: 3 });
 
   // Auto-arm goal from prose
   if (config.goal.autoArm && config.goal.enabled) {
@@ -286,7 +295,50 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
   let stopContinues = 0;
   let finalText = "";
   let aborted = false;
+  let overflowCompactAttempted = false;
   const maxTurns = config.maxTurns > 0 ? config.maxTurns : 200;
+
+  /**
+   * Compact history. Returns true if message count or estimated tokens dropped.
+   * Callers use this to avoid thrashing compact every turn when already minimal.
+   */
+  const forceCompact = async (reason: string): Promise<boolean> => {
+    const beforeCount = session.messages.length;
+    const beforeTok = estimateTokens(session.messages);
+    events.onPhase?.("compacting");
+    events.onStatus?.(`Compacting conversation (${reason})…`);
+    await hooks.run("PreCompact", baseHookCtx(session, config));
+    const ulwNow = loadUlwCycle(session.meta.id);
+    const goalNow = loadGoal(session.meta.id);
+    // Aggressive keep window on overflow recovery
+    const keep = reason === "overflow" ? 8 : 12;
+    session.messages = compactMessages(session.messages, keep, {
+      ulw: ulwNow,
+      goal: goalNow,
+      todos: session.todos,
+      sessionId: session.meta.id,
+    });
+    const healed = repairToolCallPairing(session.messages);
+    if (healed.changed) session.messages = healed.messages;
+    await hooks.run("PostCompact", baseHookCtx(session, config));
+    saveSession(session);
+    const afterTok = estimateTokens(session.messages);
+    const reduced =
+      session.messages.length < beforeCount || afterTok < beforeTok * 0.98;
+    if (reduced) {
+      log.dim(
+        `Compacted conversation history (${reason}; ~${beforeTok}→${afterTok} tok)`,
+      );
+    } else {
+      log.dim(
+        `Compact skipped/no-op (${reason}; history already near keep window)`,
+      );
+    }
+    return reduced;
+  };
+
+  /** After a no-op threshold compact, don't re-attempt until messages grow. */
+  let skipThresholdCompactUntilCount = 0;
 
   try {
     while (turns < maxTurns) {
@@ -294,21 +346,34 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
       turns += 1;
 
       const est = estimateTokens(session.messages);
-      if (est > config.contextWindow * config.autoCompactThreshold) {
-        events.onPhase?.("compacting");
-        events.onStatus?.("Compacting conversation…");
-        await hooks.run("PreCompact", baseHookCtx(session, config));
-        const ulwNow = loadUlwCycle(session.meta.id);
-        const goalNow = loadGoal(session.meta.id);
-        session.messages = compactMessages(session.messages, 12, {
-          ulw: ulwNow,
-          goal: goalNow,
-          todos: session.todos,
-          sessionId: session.meta.id,
-        });
-        await hooks.run("PostCompact", baseHookCtx(session, config));
-        saveSession(session);
-        log.dim("Compacted conversation history (structured harness summary)");
+      const overThreshold =
+        est > config.contextWindow * config.autoCompactThreshold;
+      if (
+        overThreshold &&
+        session.messages.length > skipThresholdCompactUntilCount
+      ) {
+        const reduced = await forceCompact("threshold");
+        if (!reduced) {
+          // Avoid compacting every turn when already minimal but still "over"
+          skipThresholdCompactUntilCount = session.messages.length;
+        } else {
+          skipThresholdCompactUntilCount = 0;
+        }
+      }
+
+      // Heal illegal tool_call / tool_result sequences before every provider call
+      // (abort mid-batch, crash recovery, compact edge cases → API 400 otherwise).
+      {
+        const healed = repairToolCallPairing(session.messages);
+        if (healed.changed) {
+          session.messages = healed.messages;
+          saveSession(session);
+          if (healed.filledOrphanToolCalls > 0) {
+            log.dim(
+              `Repaired ${healed.filledOrphanToolCalls} orphaned tool_call(s) before provider turn`,
+            );
+          }
+        }
       }
 
       // Safe provider-turn boundary: admit harness deltas, live slash, free-text
@@ -327,30 +392,105 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
       }
 
       events.onPhase?.("thinking");
-      let response;
+      let response: Awaited<ReturnType<typeof provider.chat>> | undefined;
       try {
-        response = await withRetry(
-          async () => {
-            assertNotAborted(signal);
-            if (stream && events.onToken) {
-              return provider.chatStream(
+        const doChat = () =>
+          withRetry(
+            async () => {
+              assertNotAborted(signal);
+              if (stream && events.onToken) {
+                return provider.chatStream(
+                  buildChatRequest(config, session.messages),
+                  (delta) => {
+                    if (signal?.aborted) return;
+                    if (delta.content) events.onToken?.(delta.content);
+                  },
+                  signal,
+                );
+              }
+              const r = await provider.chat(
                 buildChatRequest(config, session.messages),
-                (delta) => {
-                  if (signal?.aborted) return;
-                  if (delta.content) events.onToken?.(delta.content);
-                },
+                signal,
+              );
+              if (r.message.content && events.onToken) {
+                events.onToken(r.message.content);
+              }
+              return r;
+            },
+            {
+              retries: 3,
+              label: `${config.provider} chat`,
+              signal,
+              onRetry: ({ delayMs, attempt, retries }) => {
+                events.onStatus?.(
+                  `Retry ${attempt}/${retries} in ${Math.round(delayMs)}ms…`,
+                );
+                events.onPhase?.(
+                  "waiting",
+                  `retry in ${Math.round(delayMs)}ms`,
+                );
+              },
+            },
+          );
+
+        try {
+          response = await doChat();
+        } catch (err) {
+          // Context overflow: compact once then re-issue (never retry same payload)
+          if (isContextOverflowError(err)) {
+            if (overflowCompactAttempted) {
+              throw new Error(
+                `Context still overflows after compact: ${(err as Error).message || err}. ` +
+                  `Start a new session (/new) or raise context_window / lower history.`,
               );
             }
-            const r = await provider.chat(
-              buildChatRequest(config, session.messages),
+            overflowCompactAttempted = true;
+            log.warn(
+              "Provider reported context overflow — forcing compact and retrying once",
             );
-            if (r.message.content && events.onToken) {
-              events.onToken(r.message.content);
+            await forceCompact("overflow");
+            events.onPhase?.("thinking");
+            try {
+              response = await doChat();
+              overflowCompactAttempted = false;
+            } catch (err2) {
+              if (isContextOverflowError(err2)) {
+                throw new Error(
+                  `Context still overflows after compact: ${(err2 as Error).message || err2}. ` +
+                    `Start a new session (/new) or raise context_window / lower history.`,
+                );
+              }
+              throw err2;
             }
-            return r;
-          },
-          { retries: 3, label: `${config.provider} chat`, signal },
-        );
+          } else {
+            // One-shot OAuth recovery: 401/expired bearer mid-session
+            const msg = err instanceof Error ? err.message : String(err);
+            const authFail =
+              isAuthFailureMessage(msg) ||
+              (isProviderApiError(err) &&
+                (err.status === 401 || err.status === 403));
+            if (!authFail || authRefreshAttempted) throw err;
+            authRefreshAttempted = true;
+            events.onStatus?.("Auth failure — attempting token refresh…");
+            const refreshed = await refreshCredentialIfNeeded(
+              String(config.provider),
+              { force: true },
+            );
+            if (!refreshed.ok || !refreshed.credential) {
+              throw err;
+            }
+            const auth = resolveAuth(config);
+            if (!auth?.token || !provider.updateCredentials) {
+              throw err;
+            }
+            provider.updateCredentials(auth.token);
+            log.info(
+              "Refreshed credentials after auth failure — retrying chat",
+            );
+            events.onStatus?.("Credentials refreshed — retrying");
+            response = await doChat();
+          }
+        }
       } catch (err) {
         if ((err as Error).message === "Aborted" || signal?.aborted) {
           aborted = true;
@@ -361,6 +501,10 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
           stopReason: (err as Error).message,
         });
         throw err;
+      }
+
+      if (!response) {
+        throw new Error("Provider returned no response");
       }
 
       if (response.usage) {
@@ -375,6 +519,83 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
       saveSession(session);
 
       const toolCalls = assistantMsg.tool_calls;
+      const finishReason = response.finish_reason || "";
+
+      // Output truncated by max_tokens — continue generation instead of Stop
+      if (
+        (!toolCalls || toolCalls.length === 0) &&
+        (finishReason === "length" || finishReason === "max_tokens")
+      ) {
+        stopContinues += 1;
+        if (stopContinues > maxStopContinues) {
+          log.warn("max_tokens continuation cap reached — releasing");
+          break;
+        }
+        log.info(
+          chalk.yellow(
+            `↻ Output truncated (finish_reason=${finishReason}) — continuing (#${stopContinues})`,
+          ),
+        );
+        session.messages.push({
+          role: "user",
+          content:
+            "[Forge] Your previous reply was cut off by the output token limit (finish_reason=length). " +
+            "Continue exactly where you left off. Do not repeat completed work. " +
+            "If you were about to call tools, call them now.",
+        });
+        saveSession(session);
+        events.onPhase?.("thinking");
+        continue;
+      }
+
+      // Content filter / safety refusal — surface clearly, don't spin forever
+      if (
+        (!toolCalls || toolCalls.length === 0) &&
+        (finishReason === "content_filter" ||
+          finishReason === "content_filtered" ||
+          finishReason === "safety")
+      ) {
+        log.warn(
+          `Model stopped for content filter (finish_reason=${finishReason})`,
+        );
+        finalText =
+          finalText ||
+          `[Forge] The provider blocked this response (finish_reason=${finishReason}). Rephrase the request or continue with a narrower scope.`;
+        // Inject steerage and continue the loop (skip Stop) so ULW/goal keep driving
+        // with a narrower approach rather than spinning on the same blocked phrasing.
+        session.messages.push({
+          role: "user",
+          content:
+            `[Forge] Previous completion hit a content filter (${finishReason}). ` +
+            `Do not retry the same phrasing. Narrow scope, avoid disallowed content, and continue the legitimate engineering task with tools.`,
+        });
+        saveSession(session);
+        stopContinues += 1;
+        if (stopContinues > maxStopContinues) break;
+        events.onPhase?.("thinking");
+        continue;
+      }
+
+      // Empty assistant turn (provider glitch) — nudge once
+      if (
+        (!toolCalls || toolCalls.length === 0) &&
+        !(finalText || "").trim()
+      ) {
+        stopContinues += 1;
+        if (stopContinues > maxStopContinues) break;
+        log.warn(
+          `Empty model response (finish_reason=${finishReason || "unknown"}) — nudging continue #${stopContinues}`,
+        );
+        session.messages.push({
+          role: "user",
+          content:
+            "[Forge] Previous model response was empty. Continue the task: think briefly, then act with tools or a concrete reply. Do not stop.",
+        });
+        saveSession(session);
+        events.onPhase?.("thinking");
+        continue;
+      }
+
       if (!toolCalls || toolCalls.length === 0) {
         const ulwBeforeStop = loadUlwCycle(session.meta.id);
         events.onPhase?.(
@@ -450,12 +671,19 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
         signal,
         events,
         turn: turns,
+        doomLoop,
       });
       events.onPhase?.("thinking");
     }
   } catch (err) {
     if ((err as Error).message === "Aborted" || signal?.aborted) {
       aborted = true;
+      // Fill any tool_calls left without results so the next turn doesn't 400
+      const healed = repairToolCallPairing(session.messages);
+      if (healed.changed) {
+        session.messages = healed.messages;
+        saveSession(session);
+      }
     } else {
       throw err;
     }
@@ -547,6 +775,7 @@ async function runToolCalls(opts: {
   signal?: AbortSignal;
   events?: LoopEvents;
   turn?: number;
+  doomLoop?: DoomLoopTracker;
 }): Promise<void> {
   const {
     toolCalls,
@@ -558,6 +787,7 @@ async function runToolCalls(opts: {
     signal,
     events,
     turn = 0,
+    doomLoop,
   } = opts;
 
   // Sequential by default; batch consecutive read-only tools in parallel
@@ -587,6 +817,7 @@ async function runToolCalls(opts: {
             signal,
             events,
             turn,
+            doomLoop,
           }),
         ),
       );
@@ -609,6 +840,7 @@ async function runToolCalls(opts: {
         signal,
         events,
         turn,
+        doomLoop,
       });
       session.messages.push({
         role: "tool",
@@ -631,6 +863,7 @@ async function prepareToolResult(opts: {
   signal?: AbortSignal;
   events?: LoopEvents;
   turn?: number;
+  doomLoop?: DoomLoopTracker;
 }): Promise<{ toolCallId: string; content: string }> {
   const {
     tc,
@@ -642,17 +875,47 @@ async function prepareToolResult(opts: {
     signal,
     events,
     turn = 0,
+    doomLoop,
   } = opts;
   assertNotAborted(signal);
 
   const name = normalizeToolName(tc.function.name);
   // Keep the call object consistent for any downstream logging
   tc.function.name = name;
-  let toolInput: Record<string, unknown> = {};
-  try {
-    toolInput = JSON.parse(tc.function.arguments || "{}") as Record<string, unknown>;
-  } catch {
+  if (!name) {
+    // Match normal tool lifecycle so REPL pendingTools accounting stays balanced
+    events?.onPhase?.("tool", "(unnamed)");
+    events?.onToolSettled?.("(unnamed)");
+    return {
+      toolCallId: tc.id,
+      content:
+        "Tool call missing function name (stream glitch). Re-issue the tool call with a valid name.",
+    };
+  }
+  const parsedArgs = parseToolArguments(tc.function.arguments);
+  let toolInput: Record<string, unknown>;
+  let argsRepairNote: string | undefined;
+  if (parsedArgs.ok) {
+    toolInput = parsedArgs.value;
+    if (parsedArgs.repaired) {
+      argsRepairNote = parsedArgs.note || "repaired truncated JSON";
+      // Persist repaired args so retries / logs see valid JSON
+      try {
+        tc.function.arguments = JSON.stringify(toolInput);
+      } catch {
+        /* keep original */
+      }
+    }
+  } else {
     toolInput = { raw: tc.function.arguments };
+    argsRepairNote = parsedArgs.error;
+  }
+
+  // Doom-loop: identical tool+args streak → warn (still execute once more)
+  const doomHit = doomLoop?.observe(name, toolInput) ?? null;
+  if (doomHit) {
+    log.warn(doomHit.message.slice(0, 200));
+    events?.onStatus?.(`doom-loop: ${name} ×${doomHit.count}`);
   }
 
   // Announce tool phase BEFORE permission prompts so the REPL can pause
@@ -731,17 +994,33 @@ async function prepareToolResult(opts: {
     console.error(formatToolStart(name, toolInput));
   }
 
+  if (argsRepairNote && !parsedArgs.ok) {
+    settle();
+    if (events?.onToolEnd) {
+      events.onToolEnd(name, { isError: true, ms: 0, bytes: 0 });
+    }
+    return {
+      toolCallId: tc.id,
+      content: `Invalid JSON arguments for ${name}: ${argsRepairNote}\nRaw (truncated): ${String(tc.function.arguments || "").slice(0, 400)}\nPlease rewrite the input as valid JSON.`,
+    };
+  }
+
   const t0 = Date.now();
   let result;
   try {
+    // Pass already-parsed object when repair succeeded to avoid double-parse drift
+    const rawForExec = parsedArgs.ok
+      ? JSON.stringify(toolInput)
+      : tc.function.arguments;
     result = await executeTool(
       name,
-      tc.function.arguments,
+      rawForExec,
       {
         workspace,
         sandbox: config.sandbox,
         sandboxNetwork: config.sandboxNetwork,
         sandboxMissingBackend: config.sandboxMissingBackend,
+        signal,
         onEdit: () => {
           session.meta.editCount += 1;
         },
@@ -793,5 +1072,12 @@ async function prepareToolResult(opts: {
     });
   }
 
-  return { toolCallId: tc.id, content: output };
+  let content = output;
+  if (argsRepairNote && parsedArgs.ok) {
+    content = `[note: tool arguments were auto-repaired (${argsRepairNote})]\n${content}`;
+  }
+  if (doomHit) {
+    content = `${content}\n\n${doomHit.message}`;
+  }
+  return { toolCallId: tc.id, content };
 }

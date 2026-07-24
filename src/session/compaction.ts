@@ -11,6 +11,10 @@ import type { GoalState } from "../harness/goal.js";
 import type { UlwCycleState } from "../harness/ulw-cycle.js";
 import type { TodoItem } from "./session.js";
 import { formatUlwCounts } from "../harness/ulw-cycle.js";
+import {
+  alignKeepBoundary,
+  repairToolCallPairing,
+} from "./message-repair.js";
 
 export interface CompactContext {
   ulw?: UlwCycleState | null;
@@ -48,16 +52,17 @@ export function compactMessagesStructured(
     return { messages, droppedCount: 0, summary: "" };
   }
 
-  const dropped = rest.slice(0, rest.length - keepLast);
-  const kept = rest.slice(-keepLast);
+  // Never cut inside a tool_call batch — providers reject unpaired tool results
+  const { dropped, kept: keptRaw } = alignKeepBoundary(rest, keepLast);
   const summary = buildStructuredSummary(dropped, opts?.context);
+  const repaired = repairToolCallPairing([
+    ...system,
+    { role: "user", content: summary },
+    ...keptRaw,
+  ]);
 
   return {
-    messages: [
-      ...system,
-      { role: "user", content: summary },
-      ...kept,
-    ],
+    messages: repaired.messages,
     droppedCount: dropped.length,
     summary,
   };

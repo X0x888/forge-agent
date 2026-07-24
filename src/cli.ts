@@ -10,16 +10,24 @@
  *  - Multi-provider: xAI, Anthropic, OpenAI, OpenRouter, Google
  */
 import { Command } from "commander";
+import chalk from "chalk";
 import fs from "node:fs";
 import path from "node:path";
 import { loadConfig, defaultConfigToml } from "./config/load.js";
 import type { ForgeConfig } from "./config/types.js";
 import { parseReasoningEffort } from "./config/reasoning.js";
-import { resolveAuth, describeAuth } from "./auth/resolve.js";
+import { resolveAuth, resolveAuthFresh, describeAuth } from "./auth/resolve.js";
 import { loginInteractive, logout, printAuthStatus, supportsOAuth } from "./auth/login.js";
 import { importGrokCredentials } from "./auth/import-grok.js";
 import { createProvider } from "./providers/factory.js";
-import { createSession, loadSession, listSessions, saveSession } from "./session/session.js";
+import {
+  createSession,
+  loadSession,
+  listSessions,
+  saveSession,
+  deleteSession,
+  pruneSessions,
+} from "./session/session.js";
 import { HookRunner } from "./harness/hooks.js";
 import { PermissionGate } from "./agent/permissions.js";
 import { runAgentLoop } from "./agent/loop.js";
@@ -37,7 +45,14 @@ import {
   runStatusWatch,
 } from "./statusline/index.js";
 
-const VERSION = "0.8.0";
+import { getForgeVersion } from "./util/version.js";
+import { shellCompletionScript } from "./util/completion-script.js";
+import {
+  pruneToolOutputsSync,
+  toolOutputStats,
+} from "./agent/tools/truncate.js";
+import { sandboxLogStats } from "./agent/sandbox-log.js";
+const VERSION = getForgeVersion();
 
 async function main(): Promise<void> {
   const program = new Command();
@@ -47,6 +62,20 @@ async function main(): Promise<void> {
       "Forge — AI coding agent with blocking Stop hooks, /goal driver, and multi-provider auth",
     )
     .version(VERSION)
+    .addHelpText(
+      "after",
+      `
+Examples:
+  forge login
+  forge doctor --json
+  forge run "fix CI" --permission-mode acceptEdits --json
+  forge sessions prune --keep 50
+  forge prune-tool-output --keep 80
+  eval "$(forge completion bash)"
+
+Docs: docs/PRODUCTION.md · docs/RELIABILITY.md · docs/ULW.md
+`,
+    )
     .option("-m, --model <model>", "Model id")
     .option("-p, --provider <provider>", "Provider: xai|anthropic|openai|openrouter|google|custom")
     .option("--base-url <url>", "Override API base URL")
@@ -107,7 +136,7 @@ async function main(): Promise<void> {
       if (opts.printLogs) setLogLevel("debug");
       await ensureHome();
       const config = buildConfig(opts);
-      const auth = resolveAuth(config);
+      const auth = await resolveAuthFresh(config);
       if (!auth) {
         log.error(
           "Not authenticated. Run: forge login\n" +
@@ -146,7 +175,16 @@ async function main(): Promise<void> {
 
       // Non-TTY or explicit prompt without interactive intent → single-shot
       if (prompt && (!process.stdin.isTTY || process.env.FORGE_HEADLESS === "1")) {
-        await runHeadless({ config, provider, session, hooks, prompt });
+        const result = await runHeadless({
+          config,
+          provider,
+          session,
+          hooks,
+          prompt,
+        });
+        if (result.timedOut) process.exitCode = 124;
+        else if (result.aborted) process.exitCode = 130;
+        else if (!result.finalText && result.turns === 0) process.exitCode = 1;
         return;
       }
 
@@ -176,7 +214,7 @@ async function main(): Promise<void> {
     .action(async (promptParts: string[], opts) => {
       await ensureHome();
       const config = buildConfig({ ...opts, permissionMode: opts.permissionMode });
-      const auth = resolveAuth(config);
+      const auth = await resolveAuthFresh(config);
       if (!auth) {
         log.error("Not authenticated. Run forge login or set an API key.");
         process.exit(1);
@@ -207,6 +245,10 @@ async function main(): Promise<void> {
       if (opts.json) {
         console.log(JSON.stringify(result, null, 2));
       }
+      // CI-friendly exit codes: wall-clock timeout=124, abort=130, empty=1
+      if (result.timedOut) process.exitCode = 124;
+      else if (result.aborted) process.exitCode = 130;
+      else if (!result.finalText && result.turns === 0) process.exitCode = 1;
     });
 
   program
@@ -281,27 +323,79 @@ async function main(): Promise<void> {
   program
     .command("auth")
     .description("Show authentication status")
-    .action(() => {
+    .action(async () => {
       printAuthStatus();
       const config = loadConfig();
-      const auth = resolveAuth(config);
+      const auth = await resolveAuthFresh(config);
       console.log(`\nActive resolution: ${describeAuth(auth)}`);
     });
 
   program
     .command("sessions")
-    .description("List recent sessions")
-    .action(() => {
-      const list = listSessions(30);
+    .description("List, delete, or prune sessions")
+    .argument("[action]", "list (default) | delete <id> | prune")
+    .argument("[id]", "Session id/prefix for delete")
+    .option("--keep <n>", "Prune: keep newest N sessions", "50")
+    .option("--max-age-days <n>", "Prune: also drop sessions older than N days")
+    .option("--json", "Machine-readable JSON")
+    .option("-n, --limit <n>", "List limit", "30")
+    .action((action: string | undefined, id: string | undefined, opts) => {
+      const act = (action || "list").toLowerCase();
+      if (act === "delete" || act === "rm" || act === "remove") {
+        const target = id || "";
+        if (!target) {
+          log.error("Usage: forge sessions delete <id>");
+          process.exit(1);
+        }
+        const ok = deleteSession(target);
+        if (!ok) {
+          log.error(`Session not found: ${target}`);
+          process.exit(1);
+        }
+        if (opts.json) console.log(JSON.stringify({ deleted: true, id: target }));
+        else log.success(`Deleted session ${target}`);
+        return;
+      }
+      if (act === "prune") {
+        const result = pruneSessions({
+          keep: Number(opts.keep) || 50,
+          maxAgeDays: opts.maxAgeDays != null ? Number(opts.maxAgeDays) : undefined,
+        });
+        if (opts.json) {
+          console.log(JSON.stringify(result, null, 2));
+        } else {
+          log.success(
+            `Pruned ${result.deleted.length} session(s); kept ${result.kept} (scanned ${result.scanned})`,
+          );
+          if (result.deleted.length && result.deleted.length <= 20) {
+            for (const d of result.deleted) console.log(`  - ${d}`);
+          }
+        }
+        return;
+      }
+      // list (default); allow `forge sessions` and `forge sessions list`
+      if (act !== "list" && action && !id) {
+        // treat first arg as filter prefix when not a known action
+      }
+      const list = listSessions(Number(opts.limit) || 30);
+      if (opts.json) {
+        console.log(JSON.stringify({ sessions: list }, null, 2));
+        return;
+      }
       if (!list.length) {
         console.log("No sessions.");
         return;
       }
       for (const s of list) {
         console.log(
-          `${s.id}  ${s.updatedAt}  ${s.provider}/${s.model}  turns=${s.turnCount}  edits=${s.editCount}${s.ultrawork ? "  ULW" : ""}`,
+          `${s.id}  ${s.updatedAt}  ${s.provider}/${s.model}  turns=${s.turnCount}  edits=${s.editCount}${s.ultrawork ? "  ULW" : ""}${s.title ? `  ${s.title.slice(0, 40)}` : ""}`,
         );
       }
+      console.log(
+        chalk.dim(
+          `\n  forge sessions delete <id>  ·  forge sessions prune --keep 50 [--max-age-days 30]`,
+        ),
+      );
     });
 
   program
@@ -358,14 +452,27 @@ async function main(): Promise<void> {
         );
         log.success(`Wrote ${agents}`);
       }
-      log.info("Done. Run: forge login && forge");
+      log.info("Done. Next: forge login && forge doctor && forge");
+      log.dim("Docs: docs/PRODUCTION.md · docs/RELIABILITY.md · eval \"$(forge completion bash)\"");
     });
 
   program
     .command("models")
     .description("List known models for configured providers")
-    .action(() => {
+    .option("--json", "Machine-readable JSON")
+    .action((opts) => {
       const config = loadConfig();
+      if (opts.json) {
+        const rows = Object.entries(config.providers).map(([id, p]) => ({
+          provider: id,
+          defaultModel: p.defaultModel || null,
+          supportsOAuth: Boolean(p.supportsOAuth),
+          models: p.models?.length ? p.models : p.defaultModel ? [p.defaultModel] : [],
+          baseUrl: p.baseUrl || null,
+        }));
+        console.log(JSON.stringify({ providers: rows }, null, 2));
+        return;
+      }
       for (const [id, p] of Object.entries(config.providers)) {
         const models = p.models?.length ? p.models.join(", ") : p.defaultModel || "(any)";
         console.log(
@@ -375,13 +482,107 @@ async function main(): Promise<void> {
     });
 
   program
+    .command("completion")
+    .description("Print shell completion script (bash|zsh|fish)")
+    .argument("[shell]", "bash | zsh | fish", "bash")
+    .action((shell: string) => {
+      console.log(shellCompletionScript(String(shell || "bash").toLowerCase()));
+    });
+
+  program
+    .command("prune-tool-output")
+    .description("Prune ~/.forge/tool-output full dumps (disk hygiene)")
+    .option("--keep <n>", "Keep newest N files", "80")
+    .option("--max-age-days <n>", "Also drop files older than N days", "14")
+    .option("--json", "Machine-readable JSON")
+    .action((opts) => {
+      const before = toolOutputStats();
+      const result = pruneToolOutputsSync({
+        keep: Number(opts.keep) || 80,
+        maxAgeDays: Number(opts.maxAgeDays) || 14,
+      });
+      if (opts.json) {
+        console.log(
+          JSON.stringify({ before, ...result, after: toolOutputStats() }, null, 2),
+        );
+        return;
+      }
+      log.success(
+        `Pruned ${result.deleted} tool-output file(s); kept ${result.kept}` +
+          (result.freedBytes
+            ? ` · freed ${(result.freedBytes / 1024).toFixed(0)} KB`
+            : ""),
+      );
+      if (before.files === 0) log.dim("tool-output was already empty");
+    });
+
+  program
     .command("doctor")
     .description("Check auth, Node version, config, and harness settings")
     .option("-p, --provider <provider>", "Provider override")
     .option("--cwd <path>", "Workspace", process.cwd())
+    .option("--json", "Machine-readable summary on stdout")
     .action((opts) => {
       const config = buildConfig(opts);
-      console.log(runDoctor(config));
+      const text = runDoctor(config);
+      if (opts.json) {
+        const auth = resolveAuth(config);
+        const ok =
+          /No blocking issues detected/.test(text) ||
+          (!/⚠ \d+ issue/.test(text) && Boolean(auth));
+        let sessionCount = 0;
+        try {
+          sessionCount = listSessions(10_000).length;
+        } catch {
+          /* */
+        }
+        let toolOutput = { files: 0, bytes: 0 };
+        try {
+          const st = toolOutputStats();
+          toolOutput = { files: st.files, bytes: st.bytes };
+        } catch {
+          /* */
+        }
+        let sandboxLog = { bytes: 0, backupBytes: 0 };
+        try {
+          const sl = sandboxLogStats();
+          sandboxLog = { bytes: sl.bytes, backupBytes: sl.backupBytes };
+        } catch {
+          /* */
+        }
+        const maxRunMsRaw = process.env.FORGE_MAX_RUN_MS?.trim();
+        const maxRunMs =
+          maxRunMsRaw && /^\d+$/.test(maxRunMsRaw) && Number(maxRunMsRaw) >= 5_000
+            ? Number(maxRunMsRaw)
+            : null;
+        console.log(
+          JSON.stringify(
+            {
+              ok,
+              version: VERSION,
+              provider: config.provider,
+              model: config.model,
+              auth: describeAuth(auth),
+              authenticated: Boolean(auth),
+              blockingStop: config.blockingStopHooks,
+              permissionMode: config.permissionMode,
+              sandbox: config.sandbox,
+              sessionCount,
+              toolOutput,
+              sandboxLog,
+              providerTimeoutMs: providerTimeoutMs(),
+              maxRunMs,
+              node: process.version,
+              report: text,
+            },
+            null,
+            2,
+          ),
+        );
+        if (!ok) process.exitCode = 1;
+        return;
+      }
+      console.log(text);
     });
 
   program
@@ -528,26 +729,96 @@ async function runHeadless(opts: {
   json?: boolean;
 }) {
   const permissions = new PermissionGate({ interactive: false });
+  // Headless always sets FORGE_HEADLESS so permission gate stays fail-closed
+  if (!process.env.FORGE_HEADLESS) process.env.FORGE_HEADLESS = "1";
+
+  const ac = new AbortController();
+  let timedOut = false;
+  const onSigInt = () => {
+    if (!ac.signal.aborted) {
+      log.warn("SIGINT — aborting headless run…");
+      ac.abort();
+    }
+  };
+  const onSigTerm = () => {
+    if (!ac.signal.aborted) ac.abort();
+  };
+  process.on("SIGINT", onSigInt);
+  process.on("SIGTERM", onSigTerm);
+
+  // Optional wall-clock deadline for CI (FORGE_MAX_RUN_MS, min 5s)
+  let maxRunTimer: ReturnType<typeof setTimeout> | undefined;
+  const maxRunRaw = process.env.FORGE_MAX_RUN_MS?.trim();
+  if (maxRunRaw && /^\d+$/.test(maxRunRaw)) {
+    const ms = Number(maxRunRaw);
+    if (ms >= 5_000) {
+      maxRunTimer = setTimeout(() => {
+        if (!ac.signal.aborted) {
+          timedOut = true;
+          log.warn(`FORGE_MAX_RUN_MS=${ms} exceeded — aborting headless run`);
+          ac.abort();
+        }
+      }, ms);
+      maxRunTimer.unref?.();
+    }
+  }
+
   await opts.hooks.run("SessionStart", {
     sessionId: opts.session.meta.id,
     cwd: opts.session.meta.cwd,
     workspaceRoot: opts.config.workspace || opts.session.meta.cwd,
   });
 
-  const result = await runAgentLoop({
-    config: opts.config,
-    provider: opts.provider,
-    session: opts.session,
-    hooks: opts.hooks,
-    permissions,
-    userMessage: opts.prompt,
-    stream: !opts.json,
-    onToken: opts.json
-      ? undefined
-      : (t) => {
-          process.stdout.write(t);
-        },
-  });
+  let result;
+  try {
+    result = await runAgentLoop({
+      config: opts.config,
+      provider: opts.provider,
+      session: opts.session,
+      hooks: opts.hooks,
+      permissions,
+      userMessage: opts.prompt,
+      stream: !opts.json,
+      signal: ac.signal,
+      onToken: opts.json
+        ? undefined
+        : (t) => {
+            process.stdout.write(t);
+          },
+    });
+  } catch (err) {
+    await opts.hooks.run("SessionEnd", {
+      sessionId: opts.session.meta.id,
+      cwd: opts.session.meta.cwd,
+      workspaceRoot: opts.config.workspace || opts.session.meta.cwd,
+    });
+    saveSession(opts.session);
+    process.off("SIGINT", onSigInt);
+    process.off("SIGTERM", onSigTerm);
+    if (maxRunTimer) clearTimeout(maxRunTimer);
+    const message = (err as Error).message || String(err);
+    if (opts.json) {
+      console.log(
+        JSON.stringify(
+          {
+            ok: false,
+            error: message,
+            timedOut,
+            sessionId: opts.session.meta.id,
+            editCount: opts.session.meta.editCount,
+          },
+          null,
+          2,
+        ),
+      );
+      process.exit(timedOut ? 124 : 1);
+    }
+    throw err;
+  } finally {
+    if (maxRunTimer) clearTimeout(maxRunTimer);
+    process.off("SIGINT", onSigInt);
+    process.off("SIGTERM", onSigTerm);
+  }
 
   await opts.hooks.run("SessionEnd", {
     sessionId: opts.session.meta.id,
@@ -561,14 +832,18 @@ async function runHeadless(opts: {
   }
 
   return {
+    ok: !result.aborted && !timedOut,
     sessionId: opts.session.meta.id,
     finalText: result.finalText,
     turns: result.turns,
     stopContinues: result.stopContinues,
     editCount: opts.session.meta.editCount,
     aborted: result.aborted,
+    timedOut,
     promptTokens: result.promptTokens,
     completionTokens: result.completionTokens,
+    model: opts.config.model,
+    provider: opts.config.provider,
   };
 }
 
