@@ -94,3 +94,59 @@ export function isWithinRoot(root: string, target: string): boolean {
     resolvedTarget.startsWith(resolvedRoot + path.sep)
   );
 }
+
+/**
+ * Resolve a path and check it stays under `root` after realpath/symlink
+ * expansion. For non-existent targets, realpath the deepest existing ancestor
+ * and re-join remaining segments (so write-to-new-file still gets containment).
+ */
+export async function realpathWithinRoot(
+  root: string,
+  target: string,
+): Promise<{ ok: true; path: string } | { ok: false; reason: string }> {
+  const resolvedRoot = path.resolve(root);
+  let realRoot: string;
+  try {
+    realRoot = await fsp.realpath(resolvedRoot);
+  } catch {
+    realRoot = resolvedRoot;
+  }
+
+  const logical = path.resolve(target);
+  let realTarget: string;
+  try {
+    realTarget = await fsp.realpath(logical);
+  } catch {
+    // Walk up until an existing ancestor is found, then re-join.
+    let cursor = logical;
+    const missing: string[] = [];
+    while (true) {
+      try {
+        const ancestor = await fsp.realpath(cursor);
+        realTarget = path.join(ancestor, ...missing.reverse());
+        break;
+      } catch {
+        const parent = path.dirname(cursor);
+        if (parent === cursor) {
+          return {
+            ok: false,
+            reason: `Cannot resolve path (no existing ancestor): ${logical}`,
+          };
+        }
+        missing.push(path.basename(cursor));
+        cursor = parent;
+      }
+    }
+  }
+
+  if (
+    realTarget === realRoot ||
+    realTarget.startsWith(realRoot + path.sep)
+  ) {
+    return { ok: true, path: realTarget };
+  }
+  return {
+    ok: false,
+    reason: `Path escapes workspace after symlink resolution: ${logical} → ${realTarget} (root: ${realRoot})`,
+  };
+}

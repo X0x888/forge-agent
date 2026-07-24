@@ -157,9 +157,21 @@ export class PermissionGate {
         return { decision: "allow", reason: "allow_rule" };
       }
       if (
-        ["read_file", "grep", "glob", "list_dir", "web_search", "todo_write", "Read", "Grep", "Glob"].includes(
-          toolName,
-        )
+        [
+          "read_file",
+          "grep",
+          "glob",
+          "list_dir",
+          "web_search",
+          "web_fetch",
+          "todo_write",
+          "get_task_output",
+          "Read",
+          "Grep",
+          "Glob",
+          "WebFetch",
+        ].includes(toolName)
+
       ) {
         // still respect readOutsideWorkspace deny
         if (toolName === "read_file" || toolName === "Read") {
@@ -178,7 +190,12 @@ export class PermissionGate {
     }
 
     if (mode === "plan") {
-      if (WRITE_TOOLS.has(toolName) || toolName === "bash" || toolName === "run_terminal_command") {
+      if (
+        WRITE_TOOLS.has(toolName) ||
+        toolName === "bash" ||
+        toolName === "run_terminal_command" ||
+        toolName === "kill_task"
+      ) {
         return { decision: "deny", reason: "plan_mode" };
       }
       return { decision: "allow", reason: "plan_read" };
@@ -208,9 +225,20 @@ export class PermissionGate {
     // Bash: session command-prefix patterns already in rules via sessionPatterns
 
     if (
-      ["read_file", "grep", "glob", "list_dir", "web_search", "Read", "Grep", "Glob"].includes(
-        toolName,
-      )
+      [
+        "read_file",
+        "grep",
+        "glob",
+        "list_dir",
+        "web_search",
+        "web_fetch",
+        "get_task_output",
+        "Read",
+        "Grep",
+        "Glob",
+        "WebFetch",
+        "WebSearch",
+      ].includes(toolName)
     ) {
       return { decision: "allow", reason: "read_only_tool" };
     }

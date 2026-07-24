@@ -78,6 +78,10 @@ const READ_ONLY = new Set([
   "ListDir",
   "web_search",
   "WebSearch",
+  "web_fetch",
+  "WebFetch",
+  "get_task_output",
+  "task_output",
 ]);
 
 function baseHookCtx(session: SessionData, config: ForgeConfig): HookContext {

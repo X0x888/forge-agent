@@ -9,3 +9,7 @@ Sources inspected locally under `Documents/open source/`:
 | **Warp** | Redirection blocks auto-exec, denylist precedence, explainable permission reasons, read-only command heuristic |
 
 See `docs/SAFETY.md` for the live policy. Wave 4 (Docker/devbox isolation) is intentionally deferred.
+
+## Tool-quality follow-on (v0.7)
+
+Same sources also drove **tool** improvements (not only authorization): realpath containment, shell env secret scrub, managed tool-output truncation, ripgrep-backed grep, line-trimmed edit fallback, richer tool descriptions. See `docs/TOOLS.md`.
