@@ -121,6 +121,12 @@ export function describeAuth(auth: ResolvedAuth | null): string {
 /**
  * Resolve auth, proactively refreshing OAuth/subscription tokens when expired.
  * Prefer this over resolveAuth() at session start and before long headless runs.
+ *
+ * Order when the stored session is stale:
+ * 1. Env API keys (never expire in-process)
+ * 2. OAuth refresh_token exchange (if network + client_id allow)
+ * 3. Re-import a live Grok Build session from ~/.grok/auth.json (xAI)
+ * 4. Fall through to resolveAuth (may still use non-expired Grok live read)
  */
 export async function resolveAuthFresh(
   config: ForgeConfig,
@@ -138,8 +144,41 @@ export async function resolveAuthFresh(
   const refreshed = await refreshCredentialIfNeeded(provider);
   if (refreshed.refreshed) {
     log.info(`OAuth token refreshed for ${provider}`);
-  } else if (!refreshed.ok && refreshed.error?.includes("expired")) {
-    log.warn(`Auth for ${provider}: ${refreshed.error}`);
+  } else if (!refreshed.ok && refreshed.error) {
+    // SuperGrok refresh is often blocked (CF/client); try Grok file next.
+    if (/expired|refresh failed|no refresh/i.test(refreshed.error)) {
+      log.dim(`Auth refresh for ${provider}: ${refreshed.error}`);
+    }
+  }
+
+  // If still expired/missing for xAI, pull the newest ~/.grok session (6h TTL,
+  // but Grok Build keeps it warm while you use Grok — same as local sessions).
+  if (provider === "xai" || provider === "grok") {
+    const after = resolveAuth(config, providerOverride);
+    const cred = getCredential("xai");
+    const needGrok =
+      !after ||
+      (cred &&
+        cred.method !== "api_key" &&
+        isExpired(cred, 120) &&
+        after.method !== "api_key");
+    if (needGrok || !after) {
+      try {
+        const { importGrokCredentials } = await import("./import-grok.js");
+        const imp = importGrokCredentials();
+        if (imp.imported) {
+          log.info(
+            `Re-imported Grok session${imp.email ? ` (${imp.email})` : ""}${
+              imp.expiresAt
+                ? ` — expires ${new Date(imp.expiresAt * 1000).toISOString()}`
+                : ""
+            }`,
+          );
+        }
+      } catch {
+        /* import is best-effort */
+      }
+    }
   }
 
   return resolveAuth(config, providerOverride);

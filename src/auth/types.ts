@@ -9,6 +9,8 @@ export interface StoredCredential {
   accessToken: string;
   refreshToken?: string;
   expiresAt?: number; // epoch seconds
+  /** OIDC client id used to obtain the token (needed for refresh_token grant) */
+  clientId?: string;
   /** Display email / account label when known */
   accountLabel?: string;
   /** Subscription product name if method === subscription */

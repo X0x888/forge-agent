@@ -70,6 +70,7 @@ export function upsertOAuth(
     accessToken: string;
     refreshToken?: string;
     expiresAt?: number;
+    clientId?: string;
     accountLabel?: string;
     method?: AuthMethod;
     subscription?: string;
@@ -81,6 +82,7 @@ export function upsertOAuth(
     accessToken: opts.accessToken,
     refreshToken: opts.refreshToken,
     expiresAt: opts.expiresAt,
+    clientId: opts.clientId,
     accountLabel: opts.accountLabel,
     subscription: opts.subscription,
     updatedAt: nowIso(),

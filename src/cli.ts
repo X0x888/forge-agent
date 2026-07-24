@@ -276,8 +276,14 @@ Docs: docs/PRODUCTION.md · docs/RELIABILITY.md · docs/ULW.md
               `Imported Grok subscription session${result.email ? ` (${result.email})` : ""}`,
             );
             if (result.expiresAt) {
+              const hours = Math.max(
+                0,
+                (result.expiresAt - Math.floor(Date.now() / 1000)) / 3600,
+              );
               log.dim(
-                `Expires ${new Date(result.expiresAt * 1000).toISOString()} — re-run grok login + forge login --from-grok when expired`,
+                `Access token expires ${new Date(result.expiresAt * 1000).toISOString()} (~${hours.toFixed(1)}h). ` +
+                  `SuperGrok sessions are ~6h; Forge re-imports ~/.grok/auth.json on start when stale. ` +
+                  `For multi-day runs use: forge login --api-key`,
               );
             }
             log.info("Try: forge");

@@ -65,7 +65,13 @@ export async function refreshCredentialIfNeeded(
   }
 
   const profile = TOKEN_URLS[provider];
-  if (!profile) {
+  // Prefer the client_id that originally issued the session (Grok Build OIDC).
+  // Default "forge-cli" is rejected by auth.x.ai for SuperGrok refresh tokens.
+  const clientId =
+    cred.clientId?.trim() ||
+    process.env.FORGE_XAI_CLIENT_ID?.trim() ||
+    profile?.clientId;
+  if (!profile || !clientId) {
     return {
       ok: false,
       error: `no refresh endpoint configured for ${provider}`,
@@ -76,11 +82,15 @@ export async function refreshCredentialIfNeeded(
   try {
     const resp = await fetch(profile.tokenUrl, {
       method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+        Accept: "application/json",
+        "User-Agent": "forge-cli",
+      },
       body: new URLSearchParams({
         grant_type: "refresh_token",
         refresh_token: cred.refreshToken,
-        client_id: profile.clientId,
+        client_id: clientId,
       }),
       signal: AbortSignal.timeout(20_000),
     });
@@ -106,6 +116,7 @@ export async function refreshCredentialIfNeeded(
       expiresAt: json.expires_in
         ? nowEpoch() + json.expires_in
         : cred.expiresAt,
+      clientId,
       method: cred.method,
       subscription: cred.subscription,
       accountLabel: cred.accountLabel,

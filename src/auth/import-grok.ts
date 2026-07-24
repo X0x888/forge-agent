@@ -126,6 +126,7 @@ export function importGrokCredentials(): GrokImportResult {
     accessToken: session.accessToken,
     refreshToken: session.refreshToken,
     expiresAt: session.expiresAt,
+    clientId: session.clientId,
     method: "subscription",
     subscription: "Grok / SuperGrok (imported)",
     accountLabel: session.email
