@@ -1,4 +1,4 @@
-import type { ForgeConfig } from "../config/types.js";
+import type { ForgeConfig, PromptProfile } from "../config/types.js";
 import type { GoalState } from "../harness/goal.js";
 import type { UlwCycleState } from "../harness/ulw-cycle.js";
 import fs from "node:fs";
@@ -27,17 +27,70 @@ function loadProjectRules(workspace: string): string {
   return chunks.join("\n\n");
 }
 
-export function buildSystemPrompt(opts: {
+/**
+ * Resolve prompt profile.
+ * - explicit config.promptProfile wins
+ * - else ULW/ultrawork → autonomous
+ * - else default
+ */
+export function resolvePromptProfile(opts: {
   config: ForgeConfig;
-  workspace: string;
-  goal?: GoalState | null;
   ultrawork?: boolean;
   ulwCycle?: UlwCycleState | null;
+}): PromptProfile {
+  if (opts.config.promptProfile) return opts.config.promptProfile;
+  if (opts.ulwCycle?.enabled || opts.ultrawork) return "autonomous";
+  return "default";
+}
+
+function profileBlock(profile: PromptProfile): string[] {
+  if (profile === "concise") {
+    return [
+      `## Response profile: concise`,
+      `- Prefer short, direct answers. Minimize preamble.`,
+      `- For simple Q&A, a few lines suffice. For multi-step coding, still verify with tools.`,
+    ];
+  }
+  if (profile === "autonomous") {
+    return [
+      `## Response profile: autonomous`,
+      `- Keep working until the user mandate / goal / wave is fully resolved — do not yield early with "let me know if…".`,
+      `- Prefer action + verification over advice-only replies.`,
+      `- When you say you will do X, make the tool call in the same turn.`,
+      `- Research → implement → verify. Use todos for multi-step work.`,
+    ];
+  }
+  return [
+    `## Response profile: default`,
+    `- Be clear and proportionate: concise for Q&A, thorough for multi-step engineering.`,
+  ];
+}
+
+/**
+ * Baseline system prompt — stable within a context epoch.
+ *
+ * Live ULW counters, mandate flips, and open-todo counts are admitted as
+ * mid-conversation harness messages (see context-admit.ts), not rewritten here
+ * every wave. That keeps the system prefix cache-friendly across providers.
+ */
+export function buildBaselineSystemPrompt(opts: {
+  config: ForgeConfig;
+  workspace: string;
+  ultrawork?: boolean;
+  ulwCycle?: UlwCycleState | null;
+  profile?: PromptProfile;
 }): string {
   const { config, workspace } = opts;
   const rules = loadProjectRules(workspace);
   const git = formatGitForPrompt(getGitSnapshot(workspace));
   const ulwOn = Boolean(opts.ulwCycle?.enabled || opts.ultrawork);
+  const profile =
+    opts.profile ??
+    resolvePromptProfile({
+      config,
+      ultrawork: opts.ultrawork,
+      ulwCycle: opts.ulwCycle,
+    });
 
   const parts: string[] = [
     `You are Forge, an autonomous AI coding agent running in a terminal harness.`,
@@ -47,6 +100,8 @@ export function buildSystemPrompt(opts: {
     `Provider: ${config.provider}  Model: ${config.model}`,
     `Permission mode: ${config.permissionMode}`,
     git ? git : "",
+    ``,
+    ...profileBlock(profile),
     ``,
     `## Operating principles`,
     `- Think before acting. Prefer verification (run tests, read files) over speculation.`,
@@ -66,6 +121,9 @@ export function buildSystemPrompt(opts: {
     `- **Blocking Stop hooks**: Stop may be blocked with re-anchor instructions — keep working.`,
     `- **/goal driver**: active goals block Stop until **Goal achieved.** or stuck-wall.`,
     `- **/ulw cycle**: when armed, cycle=1 forces research→implement→serendipity→review→repeat; cycle=0 means finish last wave then **Cycle complete.**`,
+    `- **Mid-conversation harness updates**: live cycle/wave/mandate/todo counts arrive as \`[Forge harness — mid-conversation update]\` messages. Obey the latest over stale ones.`,
+    `- **Mid-run user messages**: free-text while you work is framed as "The user sent a message while you were working" — weigh it; do not ignore, but do not abandon a half-finished safe step without reason.`,
+    `- **Live slash controls** (no abort required): \`/cycle 0|1\`, \`/ulw-off\`, \`/goal pause|resume\`.`,
     ``,
     `## Safety`,
     `- Never exfiltrate secrets. Never run destructive commands without necessity.`,
@@ -78,23 +136,17 @@ export function buildSystemPrompt(opts: {
       ``,
       `## PLAN MODE`,
       `- You may read and search freely.`,
-      `- Do NOT edit files or run mutating shell commands — propose a concrete plan instead.`,
-      `- Structure: goal, steps, files touched, risks, verification.`,
+      `- Mutations are **permission-denied** (writes, bash, kill_task) — not merely discouraged.`,
+      `- Propose a concrete plan: goal, steps, files touched, risks, verification.`,
+      `- Use todo_write only to structure the plan; do not implement.`,
     );
   }
 
   if (ulwOn) {
-    const cycle = opts.ulwCycle?.cycle ?? 1;
-    const wave = opts.ulwCycle?.wave ?? 0;
-    const blocks = opts.ulwCycle?.blocks ?? 0;
     parts.push(
       ``,
-      `## ULTRAWORK + RELENTLESS CYCLE ACTIVE`,
-      `Counters: **cycle=${cycle} wave=${wave} blocks=${blocks}**  ${cycle === 1 ? "(CONTINUE — do not stop between waves)" : "(LAST — finish current wave only)"}`,
-      opts.ulwCycle?.mandate ? `Mandate: ${opts.ulwCycle.mandate}` : "",
-      opts.ulwCycle?.softPrompt
-        ? `This began as a SOFT prompt — you already expanded it to god-scope. Do not ask the user what to improve; discover and ship.`
-        : "",
+      `## ULTRAWORK + RELENTLESS CYCLE (protocol)`,
+      `Live counters/mandate are injected mid-conversation when they change — do not invent cycle/wave numbers.`,
       ``,
       `### Cycle protocol (every wave)`,
       `1. **RESEARCH the gap** — inventory repo, tests, git status, FIXMEs, failing commands, UX holes. Produce a short prioritized gap list.`,
@@ -111,7 +163,7 @@ export function buildSystemPrompt(opts: {
       `- \`/cycle 1\` — keep looping (default when /ulw arms)`,
       `- \`/cycle 0\` — user is satisfied enough: finish THIS wave, review, attest **Cycle complete.**, then Stop is allowed`,
       `- \`/ulw-off\` — disarm the driver`,
-      `- The REPL accepts these **while you are still working**; do not ask the user to wait for you to finish before they can steer.`,
+      `- Free-text mid-run is also accepted (interjection) — treat as steering, not optional color.`,
       ``,
       `### Pause only for`,
       `Missing credentials, hard external blockers, destructive shared-state without confirmation, unfamiliar in-progress state you cannot interpret.`,
@@ -119,17 +171,13 @@ export function buildSystemPrompt(opts: {
     );
   }
 
-  if (opts.goal && opts.goal.objective && !opts.goal.paused && opts.goal.status === "active") {
-    parts.push(
-      ``,
-      `## ACTIVE GOAL (relentless driver armed)`,
-      `Objective: ${opts.goal.objective}`,
-      `Acceptance criteria:`,
-      ...opts.goal.criteria.map((c, i) => `  ${i + 1}. ${c}`),
-      `When complete: attest **Goal achieved.** with ✅/❌ per criterion + evidence.`,
-      `The harness will block Stop until you do (or hit stuck-wall).`,
-    );
-  }
+  // Goal protocol (static) — live objective admitted mid-conversation
+  parts.push(
+    ``,
+    `## Goal protocol`,
+    `When a goal is active (see harness updates): work until criteria are met, then attest **Goal achieved.** with ✅/❌ per criterion + evidence.`,
+    `The harness blocks Stop until you do (or hit stuck-wall).`,
+  );
 
   if (rules) {
     parts.push(``, `## Project rules`, rules);
@@ -139,5 +187,44 @@ export function buildSystemPrompt(opts: {
     parts.push(``, `## Extra instructions`, config.systemPromptExtra);
   }
 
-  return parts.filter((p) => p !== undefined).join("\n");
+  return parts.filter((p) => p !== undefined && p !== "").join("\n");
+}
+
+/**
+ * @deprecated Prefer buildBaselineSystemPrompt + mid-conversation admissions.
+ * Kept for callers that want a single combined system string (includes a
+ * snapshot of live ULW/goal when provided).
+ */
+export function buildSystemPrompt(opts: {
+  config: ForgeConfig;
+  workspace: string;
+  goal?: GoalState | null;
+  ultrawork?: boolean;
+  ulwCycle?: UlwCycleState | null;
+}): string {
+  const baseline = buildBaselineSystemPrompt(opts);
+  const extras: string[] = [];
+  if (opts.ulwCycle?.enabled) {
+    const s = opts.ulwCycle;
+    extras.push(
+      ``,
+      `## Live ULW snapshot (also admitted mid-conversation)`,
+      `Counters: **cycle=${s.cycle} wave=${s.wave} blocks=${s.blocks}**`,
+      s.mandate ? `Mandate: ${s.mandate}` : "",
+    );
+  }
+  if (
+    opts.goal &&
+    opts.goal.objective &&
+    !opts.goal.paused &&
+    opts.goal.status === "active"
+  ) {
+    extras.push(
+      ``,
+      `## Live goal snapshot`,
+      `Objective: ${opts.goal.objective}`,
+      ...opts.goal.criteria.map((c, i) => `  ${i + 1}. ${c}`),
+    );
+  }
+  return [baseline, ...extras].filter((p) => p !== undefined && p !== "").join("\n");
 }

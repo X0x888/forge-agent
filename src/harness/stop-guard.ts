@@ -5,7 +5,8 @@
  *  1. User-defined Stop hooks (blocking)
  *  2. /goal relentless driver
  *  3. ULW cycle driver (cycle=1 loop / cycle=0 last-wave)
- *  4. Ultrawork open-todos backstop
+ *  4. TodoGate (open todos under ULW)
+ *  5. Ultrawork open-todos backstop
  */
 import type { ForgeConfig } from "../config/types.js";
 import type { HookRunner, HookContext, HookResult } from "./hooks.js";
@@ -15,6 +16,7 @@ import {
   type GoalDecision,
 } from "./goal.js";
 import { evaluateUlwAtStop, loadUlwCycle, type UlwStopDecision } from "./ulw-cycle.js";
+import { evaluateTodoGateAtStop } from "./todo-gate.js";
 
 export interface StopGuardInput {
   config: ForgeConfig;
@@ -34,6 +36,8 @@ export interface StopGuardResult {
   goal?: GoalDecision;
   ulw?: UlwStopDecision;
   hook?: HookResult;
+  /** True when Stop was blocked by TodoGate */
+  todoGate?: boolean;
 }
 
 export async function runStopGuard(input: StopGuardInput): Promise<StopGuardResult> {
@@ -133,6 +137,27 @@ export async function runStopGuard(input: StopGuardInput): Promise<StopGuardResu
     };
   }
 
+  // TodoGate: open todos under ULW (cycle state or session flag)
+  const todoGate = evaluateTodoGateAtStop({
+    sessionId: ctx.sessionId,
+    ulwEnabled: Boolean(ulw?.enabled),
+    ultraworkFlag: input.ultrawork,
+    openTodoCount: input.openTodoCount,
+    lastAssistantMessage: input.lastAssistantMessage,
+  });
+  if (todoGate.block) {
+    return {
+      allowStop: false,
+      reason: todoGate.reason,
+      additionalContext: todoGate.reanchor,
+      systemMessage: todoGate.reason,
+      hook: hookResult,
+      goal: goalDecision,
+      ulw: ulwDecision,
+      todoGate: true,
+    };
+  }
+
   // Backstop: ultrawork session flag with open todos (if cycle state missing)
   if (input.ultrawork && input.openTodoCount > 0) {
     const attested = /\*\*Goal achieved\.\*\*|\*\*Cycle complete\.\*\*|all tasks complete/i.test(
@@ -151,6 +176,7 @@ export async function runStopGuard(input: StopGuardInput): Promise<StopGuardResu
         hook: hookResult,
         goal: goalDecision,
         ulw: ulwDecision,
+        todoGate: true,
       };
     }
   }

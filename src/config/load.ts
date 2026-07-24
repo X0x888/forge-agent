@@ -48,6 +48,7 @@ function normalizeConfigShape(raw: Record<string, unknown>): Partial<ForgeConfig
     context_window: "contextWindow",
     base_url: "baseUrl",
     system_prompt_extra: "systemPromptExtra",
+    prompt_profile: "promptProfile",
     sandbox_network: "sandboxNetwork",
     sandbox_missing_backend: "sandboxMissingBackend",
     read_outside_workspace: "readOutsideWorkspace",

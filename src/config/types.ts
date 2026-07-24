@@ -5,6 +5,14 @@ export type PermissionMode =
   | "bypassPermissions"
   | "dontAsk";
 
+/**
+ * System-prompt personality layer.
+ * - default: balanced
+ * - concise: short answers (OpenCode-style)
+ * - autonomous: keep-going until done (used automatically under ULW)
+ */
+export type PromptProfile = "default" | "concise" | "autonomous";
+
 /** OS sandbox profile for bash child processes */
 export type SandboxProfile = "off" | "workspace" | "read-only" | "strict";
 
@@ -106,6 +114,11 @@ export interface ForgeConfig {
   /** Workspace root (defaults to cwd) */
   workspace?: string;
   systemPromptExtra?: string;
+  /**
+   * Prompt personality. When unset, ULW sessions use `autonomous` and
+   * normal sessions use `default`.
+   */
+  promptProfile?: PromptProfile;
   goal: GoalConfig;
   /** When true, Stop hooks can block the agent from finishing (Claude Code semantics) */
   blockingStopHooks: boolean;

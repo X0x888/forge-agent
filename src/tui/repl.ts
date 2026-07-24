@@ -12,6 +12,7 @@ import {
   classifyLiveSlash,
   LIVE_CONTROLS_HINT,
 } from "../commands/slash.js";
+import { pushInterjection } from "../harness/interjection.js";
 import { saveSession } from "../session/session.js";
 import { log } from "../util/log.js";
 import { describeAuth } from "../auth/resolve.js";
@@ -163,11 +164,15 @@ export async function runRepl(opts: {
     // ── Mid-run input ──────────────────────────────────────────────────
     // Keep stdin open during agent turns so users can steer the harness
     // without aborting (/cycle 0, /ulw-off, /goal pause, /status, …).
-    // Conversation mutators and new prompts still require idle (or Ctrl+C).
+    // Free-text is queued as a Grok-style interjection (drained next LLM call).
+    // Conversation mutators and new agent turns still require idle (or Ctrl+C).
     if (busy) {
       if (!text.startsWith("/")) {
-        log.warn(
-          `Still working — ${LIVE_CONTROLS_HINT}`,
+        pushInterjection(session.meta.id, text);
+        log.info(
+          chalk.cyan(
+            `↳ Queued mid-run message (will apply on next model step). ${LIVE_CONTROLS_HINT}`,
+          ),
         );
         return;
       }

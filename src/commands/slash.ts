@@ -146,7 +146,7 @@ export function isLiveSafeSlash(line: string): boolean {
 }
 
 export const LIVE_CONTROLS_HINT =
-  `${ULW_LIVE_CONTROLS_HINT} · /goal pause · /status  ·  Ctrl+C aborts the turn`;
+  `${ULW_LIVE_CONTROLS_HINT} · free-text queues mid-run · /goal pause · /status  ·  Ctrl+C aborts the turn`;
 
 export const SLASH_COMMANDS = [
   "/help",
@@ -513,11 +513,18 @@ export async function handleSlash(
 
     case "/compact": {
       const before = opts.session.messages.length;
-      opts.session.messages = compactMessages(opts.session.messages);
+      const ulw = loadUlwCycle(opts.session.meta.id);
+      const goal = loadGoal(opts.session.meta.id);
+      opts.session.messages = compactMessages(opts.session.messages, 12, {
+        ulw,
+        goal,
+        todos: opts.session.todos,
+        sessionId: opts.session.meta.id,
+      });
       saveSession(opts.session);
       return {
         handled: true,
-        output: `Compacted ${before} → ${opts.session.messages.length} messages`,
+        output: `Compacted ${before} → ${opts.session.messages.length} messages (structured harness summary)`,
         session: opts.session,
       };
     }

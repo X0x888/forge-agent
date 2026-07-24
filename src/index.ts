@@ -3,6 +3,7 @@ export { loadConfig, defaultConfigToml } from "./config/load.js";
 export type {
   ForgeConfig,
   PermissionMode,
+  PromptProfile,
   ProviderId,
   SandboxProfile,
   SandboxNetwork,
@@ -78,6 +79,34 @@ export {
   drainLiveNotices,
   formatLiveNoticesMessage,
 } from "./harness/live-notices.js";
+export {
+  pushInterjection,
+  drainInterjections,
+  formatInterjection,
+  formatInterjectionsMessage,
+  formatUserQuery,
+} from "./harness/interjection.js";
+export {
+  snapshotHarness,
+  admitHarnessIfChanged,
+  renderHarnessAdmission,
+  fingerprintSnapshot,
+} from "./harness/context-admit.js";
+export {
+  evaluateTodoGateAtStop,
+  maybeTodoNudge,
+  noteTodoWrite,
+  resetTodoNudgeForPrompt,
+} from "./harness/todo-gate.js";
+export {
+  compactMessagesStructured,
+  buildStructuredSummary,
+} from "./session/compaction.js";
+export {
+  buildBaselineSystemPrompt,
+  buildSystemPrompt,
+  resolvePromptProfile,
+} from "./agent/system-prompt.js";
 export {
   collectSnapshots,
   renderHud,

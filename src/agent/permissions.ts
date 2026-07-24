@@ -199,6 +199,7 @@ export class PermissionGate {
       return { decision: "deny", reason: "dontAsk" };
     }
 
+    // Plan mode: permission-enforced (not prompt-only). Mutating tools denied.
     if (mode === "plan") {
       if (
         WRITE_TOOLS.has(toolName) ||
@@ -206,8 +207,14 @@ export class PermissionGate {
         toolName === "run_terminal_command" ||
         toolName === "kill_task"
       ) {
-        return { decision: "deny", reason: "plan_mode" };
+        return {
+          decision: "deny",
+          reason:
+            "plan_mode: mutations denied — read/search/todo_write only; exit plan mode to implement",
+          rule: "plan_mode",
+        };
       }
+      // todo_write, reads, grep, web_* allowed for research + plan structure
       return { decision: "allow", reason: "plan_read" };
     }
 

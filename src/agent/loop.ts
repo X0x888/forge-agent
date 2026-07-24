@@ -25,10 +25,24 @@ import {
   drainLiveNotices,
   formatLiveNoticesMessage,
 } from "../harness/live-notices.js";
+import {
+  drainInterjections,
+  formatInterjectionsMessage,
+} from "../harness/interjection.js";
+import {
+  snapshotHarness,
+  admitHarnessIfChanged,
+} from "../harness/context-admit.js";
+import {
+  resetTodoNudgeForPrompt,
+  noteTodoWrite,
+  noteAssistantTurn,
+  maybeTodoNudge,
+} from "../harness/todo-gate.js";
 import { PermissionGate } from "./permissions.js";
 import { hardSafetyCheck } from "./safety.js";
 import { TOOL_DEFINITIONS, executeTool } from "./tools/index.js";
-import { buildSystemPrompt } from "./system-prompt.js";
+import { buildBaselineSystemPrompt } from "./system-prompt.js";
 import { log } from "../util/log.js";
 import { withRetry } from "../util/retry.js";
 import {
@@ -214,16 +228,20 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
 
   const goal = loadGoal(session.meta.id);
   const ulwCycle = loadUlwCycle(session.meta.id);
-  const system = buildSystemPrompt({
+  const harnessActive =
+    session.meta.ultrawork || Boolean(ulwCycle?.enabled) || Boolean(goal?.objective && goal.status === "active" && !goal.paused);
+
+  // Baseline system only — live ULW/goal counters admitted mid-conversation
+  const system = buildBaselineSystemPrompt({
     config,
     workspace,
-    goal,
     ultrawork: session.meta.ultrawork || Boolean(ulwCycle?.enabled),
     ulwCycle,
   });
   if (session.messages.length === 0 || session.messages[0]?.role !== "system") {
     session.messages.unshift({ role: "system", content: system });
-  } else {
+  } else if (session.messages[0].content !== system) {
+    // Update baseline only when content actually changed (profile/mode/rules)
     session.messages[0] = { role: "system", content: system };
   }
 
@@ -231,6 +249,11 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
   markUserTurn(session);
   session.messages.push({ role: "user", content: effectiveUserMessage });
   session.meta.turnCount += 1;
+  resetTodoNudgeForPrompt(session.meta.id);
+
+  // Admit initial harness snapshot (ULW/goal/todos) once at prompt start
+  admitHarnessState(session, config);
+
   saveSession(session);
 
   let turns = 0;
@@ -249,24 +272,32 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
         events.onPhase?.("compacting");
         events.onStatus?.("Compacting conversation…");
         await hooks.run("PreCompact", baseHookCtx(session, config));
-        session.messages = compactMessages(session.messages);
+        const ulwNow = loadUlwCycle(session.meta.id);
+        const goalNow = loadGoal(session.meta.id);
+        session.messages = compactMessages(session.messages, 12, {
+          ulw: ulwNow,
+          goal: goalNow,
+          todos: session.todos,
+          sessionId: session.meta.id,
+        });
         await hooks.run("PostCompact", baseHookCtx(session, config));
         saveSession(session);
-        log.dim("Compacted conversation history");
+        log.dim("Compacted conversation history (structured harness summary)");
       }
 
-      // Mid-run user controls (/cycle, /ulw-off, /goal pause, …) enqueue notices
-      // so the model sees them on the next call without aborting the turn.
-      const liveNotices = drainLiveNotices(session.meta.id);
-      if (liveNotices.length) {
-        session.messages.push({
-          role: "user",
-          content: formatLiveNoticesMessage(liveNotices),
-        });
+      // Safe provider-turn boundary: admit harness deltas, live slash, free-text
+      drainSafeBoundaryMessages(session, config, events);
+
+      // Soft todo nudge under ULW/goal (does not block)
+      const nudge = maybeTodoNudge({
+        sessionId: session.meta.id,
+        harnessActive,
+        openTodoCount: openTodos(session.todos),
+      });
+      if (nudge) {
+        session.messages.push({ role: "user", content: nudge });
         saveSession(session);
-        events.onStatus?.(
-          `Applied mid-run control${liveNotices.length > 1 ? "s" : ""}`,
-        );
+        events.onStatus?.("Todo nudge");
       }
 
       events.onPhase?.("thinking");
@@ -324,6 +355,7 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
       const assistantMsg = response.message;
       session.messages.push(assistantMsg);
       finalText = assistantMsg.content || "";
+      noteAssistantTurn(session.meta.id);
       saveSession(session);
 
       const toolCalls = assistantMsg.tool_calls;
@@ -370,6 +402,12 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
             ),
           );
           log.dim(ULW_LIVE_CONTROLS_HINT);
+        } else if (stopResult.todoGate) {
+          log.info(
+            chalk.magenta(
+              `↻ TodoGate blocked Stop (continue #${stopContinues})`,
+            ),
+          );
         } else {
           log.info(
             chalk.magenta(
@@ -379,6 +417,8 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
         }
         log.dim(inject.slice(0, 300));
         session.messages.push({ role: "user", content: inject });
+        // Re-admit harness after stop re-anchor (wave/blocks may have changed)
+        admitHarnessState(session, config);
         saveSession(session);
         events.onPhase?.("thinking");
         continue;
@@ -393,6 +433,7 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
         workspace,
         signal,
         events,
+        turn: turns,
       });
       events.onPhase?.("thinking");
     }
@@ -427,6 +468,59 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
   };
 }
 
+/** Admit harness snapshot if changed; push as user message. */
+function admitHarnessState(
+  session: SessionData,
+  config: ForgeConfig,
+): void {
+  const snap = snapshotHarness({
+    ulw: loadUlwCycle(session.meta.id),
+    goal: loadGoal(session.meta.id),
+    todos: session.todos,
+    permissionMode: config.permissionMode,
+  });
+  const msg = admitHarnessIfChanged(session.meta.id, snap);
+  if (msg) {
+    session.messages.push({ role: "user", content: msg });
+  }
+}
+
+/**
+ * Safe provider-turn boundary: live slash notices + free-text interjections
+ * + harness admissions (OpenCode-style admit at boundary, not async push).
+ */
+function drainSafeBoundaryMessages(
+  session: SessionData,
+  config: ForgeConfig,
+  events?: LoopEvents,
+): void {
+  const liveNotices = drainLiveNotices(session.meta.id);
+  if (liveNotices.length) {
+    session.messages.push({
+      role: "user",
+      content: formatLiveNoticesMessage(liveNotices),
+    });
+    events?.onStatus?.(
+      `Applied mid-run control${liveNotices.length > 1 ? "s" : ""}`,
+    );
+  }
+
+  const interjections = drainInterjections(session.meta.id);
+  if (interjections.length) {
+    session.messages.push({
+      role: "user",
+      content: formatInterjectionsMessage(interjections),
+    });
+    events?.onStatus?.(
+      `Queued mid-run message${interjections.length > 1 ? "s" : ""} from user`,
+    );
+  }
+
+  // Harness may have changed via live /cycle etc.
+  admitHarnessState(session, config);
+  saveSession(session);
+}
+
 async function runToolCalls(opts: {
   toolCalls: ToolCall[];
   session: SessionData;
@@ -436,9 +530,19 @@ async function runToolCalls(opts: {
   workspace: string;
   signal?: AbortSignal;
   events?: LoopEvents;
+  turn?: number;
 }): Promise<void> {
-  const { toolCalls, session, config, hooks, permissions, workspace, signal, events } =
-    opts;
+  const {
+    toolCalls,
+    session,
+    config,
+    hooks,
+    permissions,
+    workspace,
+    signal,
+    events,
+    turn = 0,
+  } = opts;
 
   // Sequential by default; batch consecutive read-only tools in parallel
   // but append results in original order (providers are picky about this).
@@ -466,6 +570,7 @@ async function runToolCalls(opts: {
             workspace,
             signal,
             events,
+            turn,
           }),
         ),
       );
@@ -487,6 +592,7 @@ async function runToolCalls(opts: {
         workspace,
         signal,
         events,
+        turn,
       });
       session.messages.push({
         role: "tool",
@@ -508,8 +614,19 @@ async function prepareToolResult(opts: {
   workspace: string;
   signal?: AbortSignal;
   events?: LoopEvents;
+  turn?: number;
 }): Promise<{ toolCallId: string; content: string }> {
-  const { tc, session, config, hooks, permissions, workspace, signal, events } = opts;
+  const {
+    tc,
+    session,
+    config,
+    hooks,
+    permissions,
+    workspace,
+    signal,
+    events,
+    turn = 0,
+  } = opts;
   assertNotAborted(signal);
 
   const name = tc.function.name;
@@ -611,8 +728,20 @@ async function prepareToolResult(opts: {
           session.meta.editCount += 1;
         },
       },
-      (todos, merge) => applyTodos(session, todos, merge),
+      (todos, merge) => {
+        const out = applyTodos(session, todos, merge);
+        if (name === "todo_write" || name === "TodoWrite") {
+          noteTodoWrite(session.meta.id, turn);
+        }
+        return out;
+      },
     );
+    if (
+      !result.isError &&
+      (name === "todo_write" || name === "TodoWrite")
+    ) {
+      noteTodoWrite(session.meta.id, turn);
+    }
   } catch (err) {
     settle();
     throw err;

@@ -43,10 +43,41 @@ UserPromptSubmit hooks
 2. **`/goal` driver** (if armed and not paused)
    - no `**Goal achieved.**` attestation → continue
    - stuck-wall (N no-edit Stop attempts) → release + surface to user
-3. **Ultrawork open-todos**
-   - pending/in_progress todos without completion attestation → continue
+3. **ULW cycle driver** (`cycle=1` re-anchor / `cycle=0` last-wave attestation)
+4. **TodoGate** — open todos under ULW without `**Cycle complete.**` / `**Goal achieved.**`
+5. **Ultrawork open-todos backstop** (session flag if cycle state missing)
 
-Safety: a hard cap (`maxStopContinues`, default 50) prevents infinite continue loops at the process level.
+Safety: a hard cap (`maxStopContinues`, default 50; ULW default 200) prevents infinite continue loops at the process level.
+
+## Mid-conversation context (OpenCode-inspired)
+
+The **baseline system prompt** stays stable within a session epoch (workspace, tools, ULW *protocol*, project rules). Live harness fields (cycle/wave/mandate, goal objective, open todo counts) are **admitted** as chronological user messages:
+
+```text
+[Forge harness — mid-conversation update]
+## ULW
+ON | cycle=1 wave=3 blocks=5 (CONTINUE)
+…
+```
+
+Admission runs only at a **safe provider-turn boundary** (before each model call), after promoting live slash notices and free-text interjections.
+
+## Free-text interjection (Grok-inspired)
+
+While the agent is busy, non-slash input is queued (not rejected). On the next model step:
+
+```text
+The user sent a message while you were working:
+<user_query>
+…
+</user_query>
+```
+
+No forced “drop everything” instruction — the model weighs the interjection against in-flight work.
+
+## Structured compaction
+
+Auto-compact and `/compact` produce a sectioned summary (mandate, goal, todos, user messages, tool sketch) so long ULW sessions keep the objective after history pruning.
 
 ## `/goal` state machine
 

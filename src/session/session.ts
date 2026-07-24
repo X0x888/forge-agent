@@ -10,6 +10,15 @@ import {
 } from "../util/fs.js";
 import type { ChatMessage } from "../providers/types.js";
 import { heartbeatSession } from "../statusline/active.js";
+import {
+  compactMessagesStructured,
+  type CompactContext,
+} from "./compaction.js";
+export {
+  compactMessagesStructured,
+  buildStructuredSummary,
+} from "./compaction.js";
+export type { CompactContext, CompactResult } from "./compaction.js";
 
 export interface SessionMeta {
   id: string;
@@ -154,17 +163,9 @@ export function estimateTokens(messages: ChatMessage[]): number {
 export function compactMessages(
   messages: ChatMessage[],
   keepLast = 12,
+  context?: CompactContext,
 ): ChatMessage[] {
-  if (messages.length <= keepLast + 2) return messages;
-  const system = messages.filter((m) => m.role === "system");
-  const rest = messages.filter((m) => m.role !== "system");
-  const dropped = rest.slice(0, Math.max(0, rest.length - keepLast));
-  const kept = rest.slice(-keepLast);
-  const summary: ChatMessage = {
-    role: "user",
-    content: `[Conversation compacted — ${dropped.length} earlier messages summarized]\nKey points from earlier turns were retained in session state. Continue from the recent context below.`,
-  };
-  return [...system, summary, ...kept];
+  return compactMessagesStructured(messages, { keepLast, context }).messages;
 }
 
 /** Set title from first user message if unset. */

@@ -52,3 +52,24 @@ Stuck-wall: N consecutive Stop attempts with **no file edits** (default same as 
 ## State
 
 `~/.forge/sessions/<id>/ulw.json` — independent of the model’s opinion of “done”.
+
+## Prompt engineering (runtime)
+
+Forge ports several runtime PE patterns from Grok Build / OpenCode:
+
+| Mechanism | Behavior |
+|-----------|----------|
+| **Soft → god-scope** | Weak prompts expand at arm time (`expandUlwMandate`) |
+| **Baseline system** | Stable protocol (cache-friendly); no live wave counters in system |
+| **Harness admission** | `[Forge harness — mid-conversation update]` when cycle/wave/goal/todos change |
+| **Free-text interjection** | Mid-run non-slash text: `The user sent a message while you were working:` + `<user_query>` |
+| **Structured compact** | `/compact` and auto-compact preserve mandate, goal, todos, user messages |
+| **TodoNudge / TodoGate** | Soft reminder + Stop block while open todos remain under ULW |
+| **Prompt profile** | ULW defaults to `autonomous` (keep-going); config `prompt_profile` overrides |
+
+Live mid-run (no Ctrl+C):
+
+```text
+/cycle 0                  # harness control
+finish the auth tests first   # free-text interjection (queued)
+```
