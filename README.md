@@ -205,8 +205,8 @@ See [docs/ULW.md](docs/ULW.md).
 | `/context` | Context window bar |
 | `/cost` | Token usage + rough $ |
 | `/todos` | Agent todos |
-| `/model <id>` | Switch model |
-| `/permissions <mode>` | `default` \| `acceptEdits` \| `plan` \| `bypassPermissions` |
+| `/model <id>` | Switch model (persists in `~/.forge/preferences.json`) |
+| `/permissions <mode>` | `default` \| `acceptEdits` \| `plan` \| `bypassPermissions` (persists) |
 | `/compact` | Compact history |
 | `/rewind [n]` | Undo last n turns |
 | `/export [path]` | Export session markdown |
@@ -255,6 +255,8 @@ enabled = true
 stuck_threshold = 3
 auto_arm = true
 ```
+
+Interactive `/model` and `/permissions` choices are saved to `~/.forge/preferences.json` and apply on every new session (any folder). Precedence: defaults → global config → project config → **preferences** → env → CLI flags. Env/`-m`/`--permission-mode` still win for one-shot overrides. `/resume` still restores that session’s model for the resumed conversation.
 
 Environment:
 

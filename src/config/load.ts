@@ -11,6 +11,7 @@ import {
   type SandboxNetwork,
   type ReadOutsideWorkspace,
 } from "./types.js";
+import { applyPreferences, loadPreferences } from "./preferences.js";
 
 function deepMerge<T extends Record<string, unknown>>(base: T, overlay: Partial<T>): T {
   const out: Record<string, unknown> = { ...base };
@@ -240,8 +241,9 @@ export function applySafeProjectOverlay(
  * 1. DEFAULT_CONFIG
  * 2. ~/.forge/config.toml | config.json  (global)
  * 3. <cwd>/.forge/config.toml | config.json  (project — safe overlay only)
- * 4. environment variables
- * 5. explicit CLI overrides
+ * 4. ~/.forge/preferences.json  (last /model + /permissions — all sessions/folders)
+ * 5. environment variables
+ * 6. explicit CLI overrides
  */
 export function loadConfig(overrides: Partial<ForgeConfig> = {}, cwd = process.cwd()): ForgeConfig {
   const home = forgeHome();
@@ -298,6 +300,9 @@ export function loadConfig(overrides: Partial<ForgeConfig> = {}, cwd = process.c
     projectPermission,
     DEFAULT_CONFIG.permission,
   );
+
+  // Interactive preferences (slash /model, /permissions) — beat static config
+  applyPreferences(cfg, loadPreferences());
 
   // Environment overrides
   if (process.env.FORGE_PROVIDER) cfg.provider = process.env.FORGE_PROVIDER as ProviderId;

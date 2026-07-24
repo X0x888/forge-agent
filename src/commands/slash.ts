@@ -23,6 +23,7 @@ import {
 import type { HookRunner } from "../harness/hooks.js";
 import type { ForgeConfig } from "../config/types.js";
 import { resolveSandboxNetwork } from "../config/types.js";
+import { loadPreferences, savePreferences } from "../config/preferences.js";
 import { describeSandbox, detectSandboxBackend } from "../agent/sandbox.js";
 import { describeAuth, resolveAuth } from "../auth/resolve.js";
 import { printAuthStatus } from "../auth/login.js";
@@ -386,9 +387,14 @@ export async function handleSlash(
       opts.config.model = resolved;
       opts.session.meta.model = resolved;
       saveSession(opts.session);
+      try {
+        savePreferences({ model: resolved });
+      } catch {
+        /* never fail slash on prefs I/O */
+      }
       return {
         handled: true,
-        output: `Model set to ${resolved}`,
+        output: `Model set to ${resolved} (saved for future sessions)`,
         session: opts.session,
       };
     }
@@ -571,9 +577,16 @@ export async function handleSlash(
         };
       }
       opts.config.permissionMode = resolved as ForgeConfig["permissionMode"];
+      try {
+        savePreferences({
+          permissionMode: resolved as ForgeConfig["permissionMode"],
+        });
+      } catch {
+        /* never fail slash on prefs I/O */
+      }
       return {
         handled: true,
-        output: `Permission mode: ${resolved}${resolved === "bypassPermissions" ? " (always approve)" : ""}`,
+        output: `Permission mode: ${resolved}${resolved === "bypassPermissions" ? " (always approve)" : ""} (saved for future sessions)`,
       };
     }
 
@@ -659,6 +672,16 @@ export function runDoctor(config: ForgeConfig): string {
   lines.push(`Provider/model: ${config.provider} / ${config.model}`);
   lines.push(`Permission mode: ${config.permissionMode}`);
   {
+    const prefs = loadPreferences();
+    const bits = [
+      prefs.model ? `model=${prefs.model}` : null,
+      prefs.permissionMode ? `permission_mode=${prefs.permissionMode}` : null,
+    ].filter(Boolean);
+    lines.push(
+      `Preferences: ${bits.length ? bits.join(" ") : "(none)"}  (~/.forge/preferences.json)`,
+    );
+  }
+  {
     const net = resolveSandboxNetwork(config);
     const backend = detectSandboxBackend();
     lines.push(`Sandbox: ${describeSandbox(config.sandbox || "off", net)}`);
@@ -719,8 +742,9 @@ Forge slash commands
   /context              Context window usage bar
   /cost                 Token usage + rough cost
   /todos                Show agent todos
-  /model <name>         Switch model
+  /model <name>         Switch model (persists across sessions/folders)
   /permissions [mode]   Menu if empty; Tab / numbers / aliases (yolo, always…)
+                        Mode persists across sessions/folders
   /compact              Compact conversation
   /rewind [n]           Undo last n user turns (/undo)
   /export [path]        Export session as markdown

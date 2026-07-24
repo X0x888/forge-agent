@@ -20,6 +20,7 @@ export function isProtectedWritePath(absolutePath: string): boolean {
   if (
     p === `${forge}/auth.json` ||
     p === `${forge}/permissions.json` ||
+    p === `${forge}/preferences.json` ||
     p.startsWith(`${forge}/hooks/`)
   ) {
     return true;
@@ -38,8 +39,10 @@ export function isProtectedWritePath(absolutePath: string): boolean {
     if (
       p === `${forge}/config.toml` ||
       p === `${forge}/config.json` ||
+      p === `${forge}/preferences.json` ||
       p.endsWith("/auth.json") ||
-      p.endsWith("/permissions.json")
+      p.endsWith("/permissions.json") ||
+      p.endsWith("/preferences.json")
     ) {
       return true;
     }
