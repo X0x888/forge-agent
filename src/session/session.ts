@@ -22,6 +22,8 @@ import {
   clearFileMutations,
   type RestoreMutationsResult,
 } from "./mutations.js";
+import { copyUlwCycle } from "../harness/ulw-cycle.js";
+import { copyGoal } from "../harness/goal.js";
 export {
   compactMessagesStructured,
   buildStructuredSummary,
@@ -324,6 +326,18 @@ export function forkSession(
   // Fork inherits mutation journal so /undo still restores pre-images.
   try {
     copyFileMutations(source.meta.id, id);
+  } catch {
+    /* best-effort */
+  }
+  // Fork inherits ULW + /goal harness drivers (sidecar files keyed by session id).
+  // Without this, /fork mid-ULW silently drops the relentless cycle — a production footgun.
+  try {
+    copyUlwCycle(source.meta.id, id);
+  } catch {
+    /* best-effort */
+  }
+  try {
+    copyGoal(source.meta.id, id);
   } catch {
     /* best-effort */
   }

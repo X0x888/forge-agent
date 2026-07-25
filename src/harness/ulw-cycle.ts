@@ -163,6 +163,26 @@ export function setCycleFlag(sessionId: string, cycle: CycleFlag): UlwCycleState
   return s;
 }
 
+/**
+ * Copy ULW cycle state onto a forked session id (expert branch keeps the driver).
+ * No-op when source has no armed/persisted state.
+ */
+export function copyUlwCycle(fromId: string, toId: string): UlwCycleState | null {
+  if (!fromId || !toId || fromId === toId) return null;
+  const src = loadUlwCycle(fromId);
+  if (!src) return null;
+  const next: UlwCycleState = {
+    ...src,
+    sessionId: toId,
+    // Fresh stuck counters on the branch — progress is independent
+    stuckBlocks: 0,
+    lastBlockEditCount: 0,
+    updatedAt: nowIso(),
+  };
+  saveUlwCycle(next);
+  return next;
+}
+
 export function disarmUlwCycle(sessionId: string): void {
   const s = loadUlwCycle(sessionId);
   if (!s) return;

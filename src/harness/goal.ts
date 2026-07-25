@@ -152,6 +152,27 @@ export function markGoalDone(sessionId: string, reason?: string): GoalState | nu
   return g;
 }
 
+/**
+ * Copy /goal state onto a forked session id so the branch keeps the driver.
+ * Skips cleared/empty goals. Resets stuck counters for the new timeline.
+ */
+export function copyGoal(fromId: string, toId: string): GoalState | null {
+  if (!fromId || !toId || fromId === toId) return null;
+  const src = loadGoal(fromId);
+  if (!src || !src.objective) return null;
+  if (src.status === "cleared") return null;
+  const next: GoalState = {
+    ...src,
+    sessionId: toId,
+    stuckBlocks: 0,
+    lastBlockEditCount: 0,
+    lastBlockEpoch: 0,
+    // Keep achieved/paused status as-is so experts can inspect; active stays active
+  };
+  saveGoal(next);
+  return next;
+}
+
 export function formatGoalStatus(g: GoalState | null): string {
   if (!g || !g.objective) return "No active goal. Set one with /goal <objective>";
   const lines = [

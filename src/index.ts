@@ -53,6 +53,7 @@ export {
   resumeGoal,
   clearGoal,
   loadGoal,
+  copyGoal,
   evaluateGoalAtStop,
   formatGoalStatus,
 } from "./harness/goal.js";
@@ -61,6 +62,7 @@ export {
   armUlwCycle,
   setCycleFlag,
   loadUlwCycle,
+  copyUlwCycle,
   disarmUlwCycle,
   evaluateUlwAtStop,
   isSoftPrompt,

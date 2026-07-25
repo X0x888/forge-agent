@@ -10,6 +10,7 @@ import {
   isSoftPrompt,
   expandUlwMandate,
   loadUlwCycle,
+  copyUlwCycle,
   parseCycleArg,
   disarmUlwCycle,
   formatUlwCounts,
@@ -17,6 +18,8 @@ import {
   formatUlwStatus,
   ULW_LIVE_CONTROLS_HINT,
 } from "../src/harness/ulw-cycle.js";
+import { armGoal, copyGoal, loadGoal } from "../src/harness/goal.js";
+import { createSession, forkSession } from "../src/session/session.js";
 import { runStopGuard } from "../src/harness/stop-guard.js";
 import { HookRunner } from "../src/harness/hooks.js";
 import { DEFAULT_CONFIG } from "../src/config/types.js";
@@ -156,5 +159,34 @@ describe("ulw cycle", () => {
     assert.equal(r.allowStop, false);
     assert.ok(r.ulw?.block);
     disarmUlwCycle(sid);
+  });
+
+  it("forkSession copies ULW + goal harness sidecars", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-fork-harness-"));
+    process.env.FORGE_HOME = tmp;
+    const s = createSession({ cwd: tmp, provider: "xai", model: "m" });
+    s.meta.ultrawork = true;
+    armUlwCycle(s.meta.id, "ship the feature", { cycle: 1 });
+    setCycleFlag(s.meta.id, 1);
+    armGoal(s.meta.id, "all tests green");
+    const forked = forkSession(s, { title: "branch" });
+    const ulw = loadUlwCycle(forked.meta.id);
+    assert.ok(ulw);
+    assert.equal(ulw!.enabled, true);
+    assert.equal(ulw!.cycle, 1);
+    assert.equal(ulw!.sessionId, forked.meta.id);
+    assert.match(ulw!.mandate, /ship the feature/);
+    // Source still has its own state
+    assert.equal(loadUlwCycle(s.meta.id)?.sessionId, s.meta.id);
+
+    const g = loadGoal(forked.meta.id);
+    assert.ok(g);
+    assert.equal(g!.status, "active");
+    assert.match(g!.objective, /tests green/);
+    assert.equal(g!.sessionId, forked.meta.id);
+
+    // Direct copy helpers are idempotent for missing source
+    assert.equal(copyUlwCycle("missing", forked.meta.id), null);
+    assert.equal(copyGoal("missing", forked.meta.id), null);
   });
 });
