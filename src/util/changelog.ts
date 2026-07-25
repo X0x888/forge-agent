@@ -115,7 +115,7 @@ export function formatWhatsNew(opts?: {
     return [
       `Forge ${version}`,
       `No CHANGELOG.md found in this install.`,
-      `See https://github.com/forge-agent/forge/blob/main/CHANGELOG.md`,
+      `See https://github.com/X0x888/forge-agent/blob/main/CHANGELOG.md`,
     ].join("\n");
   }
 

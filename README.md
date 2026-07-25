@@ -28,10 +28,12 @@ Key capability comparison:
 ## Install
 
 ```bash
-cd CLI
+git clone https://github.com/X0x888/forge-agent.git
+cd forge-agent
 npm install
 npm run build
 npm link          # puts `forge` on your PATH
+# or: ./install.sh
 eval "$(forge completion bash)"   # optional
 ```
 

@@ -66,11 +66,11 @@
   ],
   "repository": {
     "type": "git",
-    "url": "https://github.com/forge-agent/forge"
+    "url": "https://github.com/X0x888/forge-agent"
   },
-  "homepage": "https://github.com/forge-agent/forge#readme",
+  "homepage": "https://github.com/X0x888/forge-agent#readme",
   "bugs": {
-    "url": "https://github.com/forge-agent/forge/issues"
+    "url": "https://github.com/X0x888/forge-agent/issues"
   },
   "dependencies": {
     "chalk": "^5.4.1",

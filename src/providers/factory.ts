@@ -15,7 +15,7 @@ export function createProvider(config: ForgeConfig, auth: ResolvedAuth): LLMProv
 
   const extraHeaders: Record<string, string> = {};
   if (provider === "openrouter") {
-    extraHeaders["HTTP-Referer"] = "https://github.com/forge-agent/forge";
+    extraHeaders["HTTP-Referer"] = "https://github.com/X0x888/forge-agent";
     extraHeaders["X-Title"] = "Forge Agent CLI";
   }
 

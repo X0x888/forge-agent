@@ -152,7 +152,7 @@ export async function toolWebFetch(
   try {
     let current = await assertUrlSafe(raw, allowLocal);
     const headers: Record<string, string> = {
-      "User-Agent": "ForgeAgent/0.9 (+https://github.com/forge-agent; web_fetch)",
+      "User-Agent": "ForgeAgent/0.9 (+https://github.com/X0x888/forge-agent; web_fetch)",
       Accept:
         format === "html"
           ? "text/html,application/xhtml+xml;q=0.9,*/*;q=0.1"

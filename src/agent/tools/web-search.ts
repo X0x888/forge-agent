@@ -8,7 +8,7 @@ import { boundToolOutput } from "./truncate.js";
 import { mergeAbortSignals } from "../../util/abort.js";
 import { readBodyCapped } from "./web-fetch.js";
 
-const UA = "ForgeAgent/0.9 (+https://github.com/forge-agent; web_search)";
+const UA = "ForgeAgent/0.9 (+https://github.com/X0x888/forge-agent; web_search)";
 const SEARCH_TIMEOUT_MS = 15_000;
 /** Cap HTML scrape body so a hostile/huge page cannot OOM the process. */
 const MAX_HTML_BYTES = 2 * 1024 * 1024;
