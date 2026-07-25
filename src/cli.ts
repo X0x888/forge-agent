@@ -102,6 +102,7 @@ import {
   sandboxLogPath,
   sandboxLogStats,
 } from "./agent/sandbox-log.js";
+import { mutationsJournalStats } from "./session/mutations.js";
 const VERSION = getForgeVersion();
 
 async function main(): Promise<void> {
@@ -1283,6 +1284,12 @@ Project instructions for Forge (and other coding agents).
         } catch {
           /* */
         }
+        let undoJournal = { sessions: 0, bytes: 0, entries: 0 };
+        try {
+          undoJournal = mutationsJournalStats();
+        } catch {
+          /* */
+        }
         let backgroundTasks = { running: 0, total: 0 };
         try {
           const tasks = listTasks();
@@ -1347,6 +1354,7 @@ Project instructions for Forge (and other coding agents).
               toolOutput,
               sandboxLog,
               metrics,
+              undoJournal,
               backgroundTasks,
               savedAllows,
               secureFiles,

@@ -26,7 +26,7 @@ Production recovery, review, and onboarding learned from OpenCode (snapshot/reve
 ### Incident triage
 - **`/logs [n|path]`** (live-safe) + **`forge logs`**: tail sandbox/safety events from `~/.forge/logs/sandbox.jsonl` (no secrets; Warp-inspired)
 - Shell completion + smoke cover `logs`
-- **Doctor** surfaces `undo-journal:` aggregate (`mutations.jsonl` session/entry/byte counts) when present
+- **Doctor** surfaces `undo-journal:` aggregate (`mutations.jsonl` session/entry/byte counts) when present; **`forge doctor --json`** includes `undoJournal: { sessions, bytes, entries }`
 
 ### Docs / tests
 - RELIABILITY + PRODUCTION + README note file-aware undo and new slash commands

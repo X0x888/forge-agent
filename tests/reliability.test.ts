@@ -403,8 +403,12 @@ describe("doctor surfaces reliability", () => {
     {
       const { defaultBashTimeoutMs, defaultBashBackgroundTimeoutMs } =
         await import("../src/util/env.js");
+      const { mutationsJournalStats } = await import(
+        "../src/session/mutations.js"
+      );
       const bashTimeoutMs = defaultBashTimeoutMs();
       const bashBackgroundTimeoutMs = defaultBashBackgroundTimeoutMs();
+      const undoJournal = mutationsJournalStats();
       assert.equal(bashTimeoutMs, 120_000);
       assert.equal(bashBackgroundTimeoutMs, 30 * 60_000);
       // Shape experts/CI should read from forge doctor --json
@@ -412,10 +416,14 @@ describe("doctor surfaces reliability", () => {
         ...payload,
         bashTimeoutMs,
         bashBackgroundTimeoutMs,
+        undoJournal,
       };
       assert.equal(typeof doctorJsonShape.bashTimeoutMs, "number");
       assert.equal(typeof doctorJsonShape.bashBackgroundTimeoutMs, "number");
       assert.ok(doctorJsonShape.bashTimeoutMs >= 5_000);
+      assert.equal(typeof doctorJsonShape.undoJournal.sessions, "number");
+      assert.equal(typeof doctorJsonShape.undoJournal.bytes, "number");
+      assert.equal(typeof doctorJsonShape.undoJournal.entries, "number");
     }
     assert.equal(payload.secureFiles.auth.exists, false);
     assert.equal(payload.secureFiles.auth.modeOk, null);

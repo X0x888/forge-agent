@@ -63,6 +63,7 @@ CI (GitHub Actions) runs `npm run check` + `npm run smoke` on Node 20 and 22.
   "toolOutput": { "files": 2, "bytes": 12345 },
   "sandboxLog": { "bytes": 4096, "backupBytes": 0 },
   "metrics": { "events": 12, "bytes": 4096 },
+  "undoJournal": { "sessions": 2, "bytes": 8192, "entries": 14 },
   "backgroundTasks": { "running": 0, "total": 0 },
   "savedAllows": 0,
   "secureFiles": {

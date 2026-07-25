@@ -95,7 +95,7 @@ Invalid numeric values fall back to defaults (never crash the agent).
 
 ```bash
 forge doctor          # auth, sandbox backend, auth.json mode, blocking Stop, session count (exit 1 if issues)
-forge doctor --json   # CI-friendly summary (exit 1 when unhealthy; includes secureFiles + issues[] + sessionsLocked + sessionsPinned)
+forge doctor --json   # CI-friendly summary (exit 1 when unhealthy; includes secureFiles + issues[] + sessionsLocked + sessionsPinned + undoJournal)
 forge auth            # stored credentials + active resolution (refreshes OAuth)
 FORGE_LOG_JSON=1 forge run "…"   # structured logs on stderr
 forge run "next" --continue --json   # multi-step same-cwd resume (no session id)
