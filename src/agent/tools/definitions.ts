@@ -34,18 +34,22 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       name: "get_task_output",
       description:
         "Read status and recent stdout/stderr of a background bash task by task_id. " +
-        "Poll until status is completed/failed/killed/timeout.",
+        "Poll until status is completed/failed/killed/timeout. " +
+        "Omit task_id to list active tasks in this process.",
       parameters: {
         type: "object",
         properties: {
-          task_id: { type: "string" },
+          task_id: {
+            type: "string",
+            description: "Background task id from bash background=true (omit to list)",
+          },
           tail: { type: "number", description: "Max lines of each stream (default 200)" },
           stream: {
             type: "string",
             description: "stdout | stderr | both (default both)",
           },
         },
-        required: ["task_id"],
+        // No required: task_id optional — empty call lists active tasks
       },
     },
   },
@@ -53,13 +57,18 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     type: "function",
     function: {
       name: "kill_task",
-      description: "Terminate a background bash task by task_id (SIGTERM then SIGKILL).",
+      description:
+        "Terminate a background bash task by task_id (SIGTERM then SIGKILL). " +
+        "Omit task_id to list active tasks (parity with get_task_output).",
       parameters: {
         type: "object",
         properties: {
-          task_id: { type: "string" },
+          task_id: {
+            type: "string",
+            description: "Background task id (omit to list active tasks)",
+          },
         },
-        required: ["task_id"],
+        // No required: omit task_id to list actives (provider-friendly vs required: [])
       },
     },
   },
@@ -69,8 +78,9 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       name: "read_file",
       description:
         "Read a file (or list a directory). Returns content with line numbers as NNNNNN|line. " +
-        "Default: up to 2000 lines from offset. For large files, pass offset/limit or use grep. " +
-        "Binary files are refused. Prefer absolute or workspace-relative paths.",
+        "Default: up to 2000 lines from offset. For large files (≥2 MiB soft hint), pass offset/limit or use grep. " +
+        "Binary files are refused. Missing paths include “did you mean?” typo hints. " +
+        "Prefer absolute or workspace-relative paths.",
       parameters: {
         type: "object",
         properties: {
@@ -88,7 +98,8 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       name: "write_file",
       description:
         "Create or overwrite a file with the given content. Prefer search_replace for existing files. " +
-        "Writes must stay inside the workspace.",
+        "Atomic write (tmp+rename); creates parent directories automatically. " +
+        "Refuses directory targets (pass a file path). Writes must stay inside the workspace.",
       parameters: {
         type: "object",
         properties: {
@@ -104,7 +115,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     function: {
       name: "search_replace",
       description:
-        "Replace an exact string in a file. Read the file first — line-number prefixes from read_file are NOT part of the file. " +
+        "Replace an exact string in a file (not a directory). Read the file first — line-number prefixes from read_file are NOT part of the file. " +
         "old_string must match exactly once unless replace_all is true. " +
         "Falls back to line-trimmed then block-anchor fuzzy matching. Preserves BOM and CRLF.",
       parameters: {
@@ -127,6 +138,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
         "Apply one multi-file patch (add/update/delete/move). Prefer for coordinated edits across several files. " +
         "Use OpenAI/OpenCode patch grammar with *** Begin Patch / *** End Patch markers. " +
         "All hunks are validated before any write; file writes are atomic. " +
+        "Missing update/delete targets include path typo hints. " +
         "For a single small edit, search_replace is fine.",
       parameters: {
         type: "object",
@@ -146,8 +158,9 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     function: {
       name: "grep",
       description:
-        "Search file contents with a regex (uses ripgrep when available). " +
-        "Prefer over bash rg/grep. Results are capped; refine pattern or path if truncated.",
+        "Search file contents with a regex (uses ripgrep when available; JS fallback otherwise). " +
+        "Prefer over bash rg/grep. path may be a file or directory. " +
+        "Missing paths error with hints (not a false empty match). Results are capped.",
       parameters: {
         type: "object",
         properties: {
@@ -165,12 +178,17 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     type: "function",
     function: {
       name: "glob",
-      description: "Find files matching a glob pattern. Prefer over bash find.",
+      description:
+        "Find files matching a glob pattern. Prefer over bash find. " +
+        "Missing search root is an error with path hints (not “No files matched”).",
       parameters: {
         type: "object",
         properties: {
           pattern: { type: "string" },
-          path: { type: "string" },
+          path: {
+            type: "string",
+            description: "Directory to search under (default: workspace root)",
+          },
         },
         required: ["pattern"],
       },
@@ -180,7 +198,9 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     type: "function",
     function: {
       name: "list_dir",
-      description: "List entries in a directory (names + type). Prefer over bash ls.",
+      description:
+        "List entries in a directory (names + type). Prefer over bash ls. " +
+        "Missing directories error with path-not-found hints.",
       parameters: {
         type: "object",
         properties: {
@@ -228,7 +248,8 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       name: "web_search",
       description:
         "Search the web for up-to-date information. Returns titles, URLs, and snippets. " +
-        "Best-effort structured results; for a known URL use web_fetch instead of bash curl.",
+        "Best-effort structured results; for a known URL use web_fetch instead of bash curl. " +
+        "Honors turn abort (Ctrl+C / FORGE_MAX_RUN_MS) with a 15s per-request timeout.",
       parameters: {
         type: "object",
         properties: {
@@ -246,7 +267,9 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       description:
         "Fetch a public http(s) URL and return text (HTML stripped by default). " +
         "SSRF-protected: private/loopback/link-local addresses are blocked unless allow_local=true " +
-        "and the host is explicit localhost/127.0.0.1. Prefer this over bash curl for docs/pages.",
+        "and the host is explicit localhost/127.0.0.1. Invalid HTML numeric entities never throw. " +
+        "Honors turn abort through body read (Ctrl+C / FORGE_MAX_RUN_MS). " +
+        "Prefer this over bash curl for docs/pages.",
       parameters: {
         type: "object",
         properties: {

@@ -139,6 +139,30 @@ Exit code `2` is an alternate deny/block signal (Claude Code convention).
 
 OAuth requires a provider-accepted public client id. When exchange fails, Forge falls back to API-key paste rather than lying about a subscription session.
 
+## Production loop self-heal (v0.9+)
+
+Beyond Stop/goal/ULW, the agent loop includes expert-grade recovery so long runs survive provider glitches:
+
+| Mechanism | Behavior |
+|---|---|
+| **Doom-loop** | Identical tool+args ×N → strategy-change nudge (`FORGE_DOOM_LOOP_THRESHOLD`, default 3) |
+| **Error-streak** | N consecutive tool errors → circuit-breaker nudge (`FORGE_ERROR_STREAK_THRESHOLD`, default 5) |
+| **JSON arg repair** | Truncated / fenced tool args repaired when possible |
+| **Orphan tool heal** | Abort/compact never leaves unpaired `tool_calls` |
+| **Overflow → compact** | Progressive prune + keep 8→4→2; ULW mandate re-admitted |
+| **`finish_reason=length`** | Continues generation instead of stopping mid-answer |
+| **Empty / content_filter** | Nudge or narrow-scope steer (no blind infinite retry) |
+| **OAuth mid-run 401** | One forced refresh + hot-swap bearer |
+
+See [RELIABILITY.md](./RELIABILITY.md) for the full operator contract.
+
+## Session continuity (expert UX)
+
+- Bare interactive `forge` **auto-resumes** the newest same-cwd session (≤14d), skipping foreign live locks
+- `forge --new` / `FORGE_NO_AUTO_RESUME=1` / `/new` for a clean slate
+- `forge run --session <id>` for multi-step CI (fresh by default)
+- `/title`, `/bell`, session fork/export/import for long-running incident work
+
 ## What we deliberately did not copy
 
 - Full TUI (Ink/Bubbletea) — REPL first; TUI can layer later

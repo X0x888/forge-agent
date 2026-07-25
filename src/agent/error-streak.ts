@@ -114,6 +114,9 @@ export function isCountableToolError(content: string, isError?: boolean): boolea
   if (/^HARD DENY\b/i.test(s)) return false;
   if (/^Tool denied by (hook|permission gate)\b/i.test(s)) return false;
   if (/^\[Forge doom-loop\]/i.test(s) && s.length < 40) return false;
+  // User/turn cancel is not model thrash — don't fire the circuit breaker.
+  if (/^Aborted\b/i.test(s) || /^Aborted$/i.test(s)) return false;
+  if (/\b(aborted by user|turn aborted|request aborted)\b/i.test(s)) return false;
   return true;
 }
 

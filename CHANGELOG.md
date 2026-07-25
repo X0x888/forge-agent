@@ -7,6 +7,46 @@ Learned from Grok Build (consecutive-failure circuit breaker) and OpenCode (sess
 ### Reliability / smartness
 - **Error-streak circuit breaker**: 5 consecutive tool errors (different args OK) inject a hard strategy-change nudge; permission/hard denies excluded
 - **Tunable loop guards**: `FORGE_DOOM_LOOP_THRESHOLD`, `FORGE_ERROR_STREAK_THRESHOLD`, `FORGE_ULW_MAX_CONTINUES` (invalid values fall back safely)
+- **Background task teardown**: REPL exit + headless run end force-kill in-process `background=true` shells; `beforeExit`/`exit` safety net; SessionEnd runs before kill so hooks can observe tasks
+- **Doctor** surfaces in-process background task counts + saved always-allow count; flags `auth.json` / `permissions.json` / `preferences.json` mode `0600`; `--json` includes structured `secureFiles` + `issues[]`; **Blocking Stop OFF** is a doctor issue; CI `ok` from `runDoctorCheck()` (never chalk/report regex); plain `forge doctor` also exits `1` on issues
+- **`web_fetch` htmlToText**: invalid / out-of-range numeric entities no longer throw `RangeError` (keeps original token)
+- **path-not-found hints**: typo tolerance via edit distance (e.g. `readmi.md` → `readme.md`), not substring-only
+- **Shared `editDistance` / `stringSimilarity`** (`util/string-distance`) used by path-hints + block-anchor edit-match; stale “Levenshtein deferred” comment fixed
+- **`glob` missing search root**: reports `Directory not found` + path hints instead of a false “No files matched”
+- **`forge run`**: sandbox / network / missing-backend flags + `--deny`/`--allow`/`--ask`/`--base-url` (parity with top-level CLI); help documents exit codes 0/1/124/130
+- **`grep` missing path**: errors with path hints instead of a false “No matches found”; JS fallback searches a single-file `path` correctly
+- **Shell completion**: richer fish/zsh/bash for `run` (sandbox/deny/allow/ask) and `sessions export|import|prune` (`--format md|json`, `--out`, `--keep`, …)
+- **`read_file`**: soft large-file size hint (≥2 MiB) steers agents toward offset/limit or grep
+- **`write_file`**: structured errors (no throw-through); notes when parent directories were created
+- **`/copy`**: multi-backend clipboard (`pbcopy` / `wl-copy` / `xclip` / `xsel` / `clip` / `clip.exe`) with clear fallback preview; **live-safe** mid-run
+- **`forge sessions export`**: rejects unknown `--format` (md|json only; validated before session lookup)
+- **Tool schemas**: model-facing descriptions for read/write/grep/glob/list_dir document path hints, parent-dir creates, large-file guidance
+- **Session import/load**: import rejects invalid message roles; `loadSession` soft-drops corrupt roles/todos, heals orphan tool_call pairs, and **re-saves** when healed so disk stays clean; `listSessions` / `loadSessionMeta` skip corrupt dirs; prune age filter ignores invalid timestamps
+- **Session lock**: corrupt lock JSON / invalid pid treated as absent; invalid `acquiredAt` age → stale steal; lock files mode `0600`
+- **`apply_patch` path hints**: missing update/delete targets suggest nearby typos (parity with read/edit/grep)
+- **Task tool schemas**: `kill_task` / `get_task_output` omit `task_id` from required (empty call lists actives; no empty `required: []`)
+- **write_file / search_replace**: refuse directory targets with a clear message (no opaque `EISDIR`)
+- **`apply_patch` add/update**: clear errors when path is a directory (no opaque `EISDIR`); add distinguishes dir vs file
+- **`/diff` shell-safe**: filter args via `execFileSync` argv (no shell interpolation); deny write/exec git options (`--output`, `--ext-diff`, `--git-dir`, …); `git-context` also argv-based
+- **sessions prune/delete**: never deletes sessions held by another live process (foreign `session.lock`); prune reports `skippedLocked`; delete refuses locked sessions unless `--force` (bash/zsh/fish completion includes `--force`)
+- **Doctor sessions**: text line + `doctor --json` `sessionsLocked` count foreign live locks
+- **`/diff` help**: documents argv-safe pathspecs/refs-only filters
+- **`/resume`**: warns when target session has a foreign live lock; recent list shows LOCK tags
+- **`forge sessions` list footer**: documents `delete [--force]`
+- **`forge sessions list --cwd`**: filter sessions by workspace path (multi-project experts)
+- **`listSessions({ cwd, query, limit })`**: native filter before limit; `/sessions` defaults to same-cwd, supports `all` / `search <q>`
+- **`forge sessions list -q/--query`**: CLI title/id search; `/resume` picker defaults to same-cwd (`/resume all` for global)
+- **`forge status --cwd`**: uses native `listSessions({ cwd })` so multi-project HUD is not starved by other workspaces
+- **`forge` / `forge run --title`**: label sessions at create (CI-friendly; searchable via `-q` / `/sessions search`)
+- **`web_fetch` / `web_search`**: honor turn abort signal (Ctrl+C / `FORGE_MAX_RUN_MS`); fetch signal stays live through body read; headless JSON includes `title`
+- **Abort ≠ error-streak**: cooperative `Aborted` tool results excluded from circuit breaker; loop fail-fast after aborted tool batch
+- **`forge sessions list`**: shows project basename when not filtered by `--cwd` (multi-project scan)
+- **`/new [title]`**: optional searchable label on fresh REPL sessions; Tab completes `/sessions` / `/resume` verbs
+- **`forge run`**: rejects empty/whitespace prompts before auth/session create (no orphan sessions, no API spend); help documents empty-prompt + `--title`
+- **`kill_task` without id**: lists active tasks (parity with `get_task_output`) so agents can recover the id
+- **permission-saved + auth store**: never mutate shared empty JSON fallbacks (always-allow / credential corruption fix)
+- **`readJsonFile`**: clones object/array fallbacks so shared `EMPTY` constants cannot be corrupted
+- **`/permissions list`** live-safe mid-run; menu numbers never assign `list`/`clear` as a permission mode
 - **Richer retry HUD**: status shows human wait (`1.2s`) + HTTP reason / Retry-After
 - **Session crash recovery**: load promotes newest leftover atomic-write tmp when `session.json` is missing/corrupt
 - **`apply_patch` tool**: multi-file add/update/delete/move (OpenAI/OpenCode patch grammar); validate-then-apply; hard-deny path scan
@@ -15,14 +55,15 @@ Learned from Grok Build (consecutive-failure circuit breaker) and OpenCode (sess
 - **metrics.jsonl**: counter-only run telemetry (`~/.forge/metrics.jsonl`); headless JSON includes `durationMs`; auto-prune ~2000 events / 2 MiB; `forge prune-metrics`
 
 ### Expert UX
-- **`forge sessions show|export|import|fork`** — inspect, markdown/JSON export/import, branch a session
+- **`forge sessions show|export|import|fork|delete [--force]|list --cwd`** — inspect, markdown/JSON export/import, branch; lock-safe delete/prune; multi-project list filter
 - **`/title` / `/rename`** — show/set/clear session title (live-safe mid-run)
 - **`/bell [on|off|test]`** — optional terminal BEL on turn end (pref + `FORGE_BELL`); long-run attention
-- **Interactive auto-resume** — bare `forge` continues newest same-cwd session (≤14d); skips foreign live locks; `--new` / `FORGE_NO_AUTO_RESUME=1` for fresh
-- **`forge doctor --json`** exposes doom-loop / error-streak / ULW continue thresholds + perm-ask timeout
-- **`/fork`**, **`/export [--json]`**, **`/diff`**, **`/metrics`** in the REPL (diff/metrics live-safe)
-- Richer bash completion for sessions show/export/import/fork
-- Doctor surfaces metrics + perm-ask-timeout
+- **Interactive auto-resume** — bare `forge` continues newest same-cwd session (≤14d); skips foreign live locks (with skip count in resume log); `--new` / `FORGE_NO_AUTO_RESUME=1` for fresh
+- **Richer model catalogs** for OpenAI / OpenRouter / Google (`forge models`)
+- **`forge doctor --json`** exposes doom-loop / error-streak / ULW continue thresholds, perm-ask timeout, bell, auto-resume, **`sessionsLocked`**
+- **`/fork`**, **`/export [--json]`**, **`/diff`** (shell-safe), **`/metrics`** in the REPL (diff/metrics live-safe)
+- Richer bash completion for sessions show/export/import/fork/delete (`--force`)
+- Doctor surfaces metrics + perm-ask-timeout + foreign-locked session count
 - **Readable permission previews** for `apply_patch` (A/M/D ops list instead of raw patch dump)
 - **Stream resilience**: OpenAI-compat + Anthropic SSE `error` events + fully empty streams throw as retryable (dropped connection)
 - **Soft-dangerous** `git commit/push --no-verify` (and `commit -n`, not dry-run `-n` on other verbs) so acceptEdits still prompts
@@ -31,8 +72,8 @@ Learned from Grok Build (consecutive-failure circuit breaker) and OpenCode (sess
 - **`forge sessions` / `/sessions` / `/status` / `forge status`** surface lock holders (HUD tags `LOCK:<pid>` for foreign live locks)
 
 ### Tests / docs
-- Coverage for error-streak, fork/export JSON, tmp recovery, apply_patch, atomic write, metrics, perm timeout, env parsers, bell, title, same-cwd auto-resume
-- `docs/RELIABILITY.md` + `docs/PRODUCTION.md` + `docs/TOOLS.md` + `.env.example` + `AGENTS.md` updated
+- Coverage for error-streak, fork/export JSON, tmp recovery, apply_patch, atomic write, metrics, perm timeout, env parsers, bell, title, same-cwd auto-resume, bg kill-all, lock-skip resume, permission-saved, readJsonFile isolation, inspectSecureFile / doctor secureFiles
+- `docs/RELIABILITY.md` + `docs/PRODUCTION.md` + `docs/TOOLS.md` + `docs/HARNESS.md` + `.env.example` + `AGENTS.md` updated
 
 ## 0.9.1 — Context overflow + ULW survival
 

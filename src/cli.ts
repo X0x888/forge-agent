@@ -25,14 +25,16 @@ import {
   loadSession,
   listSessions,
   saveSession,
-  deleteSession,
+  deleteSessionDetailed,
   pruneSessions,
+  sessionHasForeignLiveLock,
   forkSession,
   exportSessionMarkdown,
   exportSessionJson,
   importSessionJson,
   formatSessionSummary,
   findRecentSessionForCwd,
+  setSessionTitle,
 } from "./session/session.js";
 import {
   appendSessionMetrics,
@@ -48,13 +50,19 @@ import {
 } from "./session/lock.js";
 import { HookRunner } from "./harness/hooks.js";
 import { PermissionGate } from "./agent/permissions.js";
+import {
+  killAllRunningTasks,
+  listTasks,
+  installBackgroundTaskExitHook,
+} from "./agent/tools/background-tasks.js";
+import { loadSavedAllows } from "./agent/permission-saved.js";
 import { runAgentLoop } from "./agent/loop.js";
 import { runRepl } from "./tui/repl.js";
-import { forgeHome, ensureDir } from "./util/fs.js";
+import { forgeHome, ensureDir, inspectSecureFile } from "./util/fs.js";
 import { log, setLogLevel } from "./util/log.js";
 import { armGoal, formatGoalStatus, loadGoal } from "./harness/goal.js";
-import { armUlwCycle } from "./harness/ulw-cycle.js";
-import { runDoctor } from "./commands/slash.js";
+import { armUlwCycle, loadUlwCycle, formatUlwCounts } from "./harness/ulw-cycle.js";
+import { runDoctorCheck } from "./commands/slash.js";
 import {
   collectSnapshots,
   renderHud,
@@ -153,6 +161,7 @@ Docs: docs/PRODUCTION.md · docs/RELIABILITY.md · docs/ULW.md
       "Force a new session (default resumes newest same-cwd session in the REPL)",
     )
     .option("--session <id>", "Resume session id/prefix")
+    .option("--title <text>", "Label for a new session (searchable via list -q / /sessions search)")
     .option("--cwd <path>", "Workspace directory", process.cwd())
     .option("--print-logs", "Verbose debug logs")
     .option(
@@ -236,21 +245,80 @@ Docs: docs/PRODUCTION.md · docs/RELIABILITY.md · docs/ULW.md
 
   program
     .command("run")
-    .description("Headless one-shot agent run (CI / scripts)")
+    .description(
+      "Headless one-shot agent run (CI / scripts). Exit: 0 ok · 1 error/empty · 124 FORGE_MAX_RUN_MS · 130 abort",
+    )
     .argument("<prompt...>", "Prompt to run")
     .option("-m, --model <model>", "Model id")
     .option("-p, --provider <provider>", "Provider")
+    .option("--base-url <url>", "Override API base URL")
     .option("--effort <level>", "Reasoning effort: low|medium|high")
     .option("--reasoning-effort <level>", "Alias for --effort")
     .option("--permission-mode <mode>", "Permission mode", "acceptEdits")
+    .option(
+      "--sandbox <profile>",
+      "OS sandbox for bash: off|workspace|read-only|strict",
+    )
+    .option(
+      "--sandbox-network <mode>",
+      "Child bash network: unrestricted|blocked",
+    )
+    .option(
+      "--sandbox-missing <mode>",
+      "When sandbox backend missing: fail-closed|fallback (default fail-closed)",
+    )
+    .option(
+      "--deny <rule>",
+      "Permission deny rule (repeatable), e.g. 'Bash(rm *)'",
+      (v: string, acc: string[]) => acc.concat(v),
+      [] as string[],
+    )
+    .option(
+      "--allow <rule>",
+      "Permission allow rule (repeatable)",
+      (v: string, acc: string[]) => acc.concat(v),
+      [] as string[],
+    )
+    .option(
+      "--ask <rule>",
+      "Permission ask rule (repeatable)",
+      (v: string, acc: string[]) => acc.concat(v),
+      [] as string[],
+    )
     .option("--ulw", "Ultrawork mode")
     .option("--goal <objective>", "Arm /goal")
     .option("--cwd <path>", "Workspace", process.cwd())
     .option("--session <id>", "Resume session id/prefix (continue prior headless run)")
     .option("--new", "Force a new session (default when --session omitted)")
+    .option("--title <text>", "Label for a new session (CI-friendly; searchable via list -q)")
     .option("--json", "Emit JSON result on stdout")
+    .addHelpText(
+      "after",
+      `
+Exit codes:
+  0    success
+  1    error, empty/whitespace prompt, empty run, or unauthenticated
+  124  wall-clock timeout (FORGE_MAX_RUN_MS)
+  130  aborted (SIGINT)
+
+Empty prompts exit 1 before auth/session create (no orphan sessions, no API spend).
+Label runs: --title <label> (searchable via forge sessions list -q / /sessions search).
+
+CI tips: forge doctor --json · --permission-mode acceptEdits · --sandbox workspace · --title ci-job
+Docs: docs/PRODUCTION.md
+`,
+    )
     .action(async (promptParts: string[], opts, command) => {
       await ensureHome();
+      // Validate prompt before auth/session side effects (no orphan empty sessions).
+      const prompt = (promptParts || []).join(" ").trim();
+      if (!prompt) {
+        log.error(
+          "Empty prompt. Usage: forge run \"your task\" [--title label] [--json]",
+        );
+        process.exitCode = 1;
+        process.exit(1);
+      }
       const config = buildConfig({ ...opts, permissionMode: opts.permissionMode });
       const auth = await resolveAuthFresh(config);
       if (!auth) {
@@ -291,9 +359,13 @@ Docs: docs/PRODUCTION.md · docs/RELIABILITY.md · docs/ULW.md
           provider: config.provider,
           model: config.model,
           ultrawork: Boolean(opts.ulw || opts.goal),
+          title: typeof opts.title === "string" ? opts.title : undefined,
         });
       }
-      const prompt = promptParts.join(" ");
+      // Allow --title on resume to relabel (experts tagging CI pipelines)
+      if (opts.title && typeof opts.title === "string" && opts.session) {
+        setSessionTitle(session, opts.title);
+      }
       if (opts.ulw || opts.goal) {
         session.meta.ultrawork = true;
         armUlwCycle(session.meta.id, prompt, { cycle: 1 });
@@ -406,11 +478,11 @@ Docs: docs/PRODUCTION.md · docs/RELIABILITY.md · docs/ULW.md
   program
     .command("sessions")
     .description(
-      "List, show, export, import, fork, delete, or prune sessions",
+      "List, show, export, import, fork, delete (--force if locked), or prune sessions",
     )
     .argument(
       "[action]",
-      "list (default) | show <id> | export <id> | import <file> | fork <id> | delete <id> | prune",
+      "list (default) | show <id> | export <id> | import <file> | fork <id> | delete <id> [--force] | prune",
     )
     .argument("[id]", "Session id/prefix or import file path")
     .option("--keep <n>", "Prune: keep newest N sessions", "50")
@@ -418,23 +490,56 @@ Docs: docs/PRODUCTION.md · docs/RELIABILITY.md · docs/ULW.md
     .option("--json", "Machine-readable JSON")
     .option("--out <path>", "Export: write to file (default stdout)")
     .option("--format <fmt>", "Export format: md|json (default md)", "md")
-    .option("--cwd <path>", "Import: workspace cwd override")
+    .option(
+      "--cwd <path>",
+      "List: filter by workspace cwd · Import: workspace cwd override",
+    )
+    .option(
+      "-q, --query <text>",
+      "List: case-insensitive id/title substring filter",
+    )
     .option("-n, --limit <n>", "List limit", "30")
-    .action((action: string | undefined, id: string | undefined, opts) => {
+    .option("--force", "Delete even if another live process holds the session lock")
+    .action(
+      (
+        action: string | undefined,
+        id: string | undefined,
+        opts: Record<string, unknown>,
+        command: { optsWithGlobals: () => Record<string, unknown>; getOptionValueSource?: (n: string) => string | undefined; parent?: { getOptionValueSource?: (n: string) => string | undefined } },
+      ) => {
+      // Commander may attach --cwd to the parent program when both define it;
+      // prefer optsWithGlobals + explicit CLI source for list filtering.
+      const globalOpts = {
+        ...command.optsWithGlobals(),
+        ...opts,
+      } as Record<string, unknown>;
+      const cwdExplicit =
+        command.getOptionValueSource?.("cwd") === "cli" ||
+        command.parent?.getOptionValueSource?.("cwd") === "cli";
       const act = (action || "list").toLowerCase();
       if (act === "delete" || act === "rm" || act === "remove") {
         const target = id || "";
         if (!target) {
-          log.error("Usage: forge sessions delete <id>");
+          log.error("Usage: forge sessions delete <id> [--force]");
           process.exit(1);
         }
-        const ok = deleteSession(target);
-        if (!ok) {
-          log.error(`Session not found: ${target}`);
+        const result = deleteSessionDetailed(target, {
+          force: Boolean(globalOpts.force),
+        });
+        if (!result.ok) {
+          if (result.reason === "locked") {
+            log.error(
+              `Session locked: ${result.id?.slice(0, 8) || target}` +
+                (result.detail ? ` — ${result.detail}` : ""),
+            );
+          } else {
+            log.error(`Session not found: ${target}`);
+          }
           process.exit(1);
         }
-        if (opts.json) console.log(JSON.stringify({ deleted: true, id: target }));
-        else log.success(`Deleted session ${target}`);
+        if (globalOpts.json)
+          console.log(JSON.stringify({ deleted: true, id: result.id }));
+        else log.success(`Deleted session ${result.id}`);
         return;
       }
       if (act === "show" || act === "info" || act === "get") {
@@ -449,7 +554,7 @@ Docs: docs/PRODUCTION.md · docs/RELIABILITY.md · docs/ULW.md
           process.exit(1);
         }
         const lock = readSessionLock(s.meta.id);
-        if (opts.json) {
+        if (globalOpts.json) {
           console.log(
             JSON.stringify(
               {
@@ -485,18 +590,23 @@ Docs: docs/PRODUCTION.md · docs/RELIABILITY.md · docs/ULW.md
           log.error("Usage: forge sessions export <id> [--format md|json] [--out path]");
           process.exit(1);
         }
+        // Validate format before session lookup so bad flags fail fast.
+        const fmt = String(globalOpts.format || "md").toLowerCase();
+        if (fmt !== "md" && fmt !== "markdown" && fmt !== "json") {
+          log.error(`Unknown export format "${fmt}". Use md or json.`);
+          process.exit(1);
+        }
         const s = loadSession(target);
         if (!s) {
           log.error(`Session not found: ${target}`);
           process.exit(1);
         }
-        const fmt = String(opts.format || "md").toLowerCase();
         const body =
           fmt === "json" ? exportSessionJson(s) : exportSessionMarkdown(s);
-        if (opts.out) {
-          const p = path.resolve(String(opts.out));
+        if (globalOpts.out) {
+          const p = path.resolve(String(globalOpts.out));
           fs.writeFileSync(p, body, "utf8");
-          if (opts.json) console.log(JSON.stringify({ ok: true, path: p, format: fmt }));
+          if (globalOpts.json) console.log(JSON.stringify({ ok: true, path: p, format: fmt }));
           else log.success(`Exported ${fmt} → ${p}`);
         } else {
           process.stdout.write(body.endsWith("\n") ? body : body + "\n");
@@ -516,10 +626,15 @@ Docs: docs/PRODUCTION.md · docs/RELIABILITY.md · docs/ULW.md
         }
         try {
           const raw = fs.readFileSync(p, "utf8");
+          // Only honor --cwd for import when explicitly passed (not parent default)
+          const importCwd =
+            cwdExplicit && globalOpts.cwd
+              ? path.resolve(String(globalOpts.cwd))
+              : undefined;
           const s = importSessionJson(raw, {
-            cwd: opts.cwd ? path.resolve(String(opts.cwd)) : undefined,
+            cwd: importCwd,
           });
-          if (opts.json) {
+          if (globalOpts.json) {
             console.log(
               JSON.stringify({
                 ok: true,
@@ -552,7 +667,7 @@ Docs: docs/PRODUCTION.md · docs/RELIABILITY.md · docs/ULW.md
           process.exit(1);
         }
         const forked = forkSession(s);
-        if (opts.json) {
+        if (globalOpts.json) {
           console.log(
             JSON.stringify({
               ok: true,
@@ -572,14 +687,21 @@ Docs: docs/PRODUCTION.md · docs/RELIABILITY.md · docs/ULW.md
       }
       if (act === "prune") {
         const result = pruneSessions({
-          keep: Number(opts.keep) || 50,
-          maxAgeDays: opts.maxAgeDays != null ? Number(opts.maxAgeDays) : undefined,
+          keep: Number(globalOpts.keep) || 50,
+          maxAgeDays:
+            globalOpts.maxAgeDays != null
+              ? Number(globalOpts.maxAgeDays)
+              : undefined,
         });
-        if (opts.json) {
+        if (globalOpts.json) {
           console.log(JSON.stringify(result, null, 2));
         } else {
           log.success(
-            `Pruned ${result.deleted.length} session(s); kept ${result.kept} (scanned ${result.scanned})`,
+            `Pruned ${result.deleted.length} session(s); kept ${result.kept} (scanned ${result.scanned}` +
+              (result.skippedLocked
+                ? `; skipped ${result.skippedLocked} locked`
+                : "") +
+              `)`,
           );
           if (result.deleted.length && result.deleted.length <= 20) {
             for (const d of result.deleted) console.log(`  - ${d}`);
@@ -591,11 +713,28 @@ Docs: docs/PRODUCTION.md · docs/RELIABILITY.md · docs/ULW.md
       if (act !== "list" && action && !id) {
         // treat first arg as filter prefix when not a known action
       }
-      const list = listSessions(Number(opts.limit) || 30);
-      if (opts.json) {
+      const limit = Number(globalOpts.limit) || 30;
+      // Only filter when --cwd was explicitly passed (parent default cwd is ignored).
+      // listSessions applies cwd/query before limit so multi-project lists stay complete.
+      const cwdFilter =
+        cwdExplicit && globalOpts.cwd
+          ? path.resolve(String(globalOpts.cwd))
+          : null;
+      const queryFilter =
+        typeof globalOpts.query === "string" && globalOpts.query.trim()
+          ? globalOpts.query.trim()
+          : null;
+      const list = listSessions({
+        limit,
+        ...(cwdFilter ? { cwd: cwdFilter } : {}),
+        ...(queryFilter ? { query: queryFilter } : {}),
+      });
+      if (globalOpts.json) {
         console.log(
           JSON.stringify(
             {
+              cwd: cwdFilter,
+              query: queryFilter,
               sessions: list.map((s) => {
                 const lock = readSessionLock(s.id);
                 return {
@@ -618,22 +757,45 @@ Docs: docs/PRODUCTION.md · docs/RELIABILITY.md · docs/ULW.md
         return;
       }
       if (!list.length) {
-        console.log("No sessions.");
+        const bits: string[] = [];
+        if (cwdFilter) bits.push(`cwd ${cwdFilter}`);
+        if (queryFilter) bits.push(`query ${JSON.stringify(queryFilter)}`);
+        console.log(
+          bits.length ? `No sessions for ${bits.join(" · ")}.` : "No sessions.",
+        );
         return;
       }
+      // When listing across workspaces, show project basename so multi-project
+      // experts can tell sessions apart without --cwd.
+      const showCwdCol = !cwdFilter;
       for (const s of list) {
         const lock = readSessionLock(s.id);
         const lockNote = lock ? `  LOCK ${formatLockHolder(lock)}` : "";
+        let cwdNote = "";
+        if (showCwdCol && s.cwd) {
+          try {
+            cwdNote = `  ${path.basename(path.resolve(s.cwd))}`;
+          } catch {
+            cwdNote = `  ${path.basename(s.cwd)}`;
+          }
+        }
         console.log(
-          `${s.id}  ${s.updatedAt}  ${s.provider}/${s.model}  turns=${s.turnCount}  edits=${s.editCount}${s.ultrawork ? "  ULW" : ""}${s.title ? `  ${s.title.slice(0, 40)}` : ""}${lockNote}`,
+          `${s.id}  ${s.updatedAt}  ${s.provider}/${s.model}  turns=${s.turnCount}  edits=${s.editCount}${s.ultrawork ? "  ULW" : ""}${s.title ? `  ${s.title.slice(0, 40)}` : ""}${cwdNote}${lockNote}`,
         );
       }
+      const filterNotes: string[] = [];
+      if (cwdFilter) filterNotes.push(`cwd=${cwdFilter}`);
+      if (queryFilter) filterNotes.push(`q=${JSON.stringify(queryFilter)}`);
       console.log(
         chalk.dim(
-          `\n  forge sessions show|export|import|fork|delete <id>  ·  prune --keep 50`,
+          `\n  forge sessions show|export|import|fork|delete <id> [--force]  ·  prune --keep 50` +
+            (filterNotes.length
+              ? `  ·  filtered ${filterNotes.join(" ")}`
+              : "  ·  list --cwd <path> · list -q <text>"),
         ),
       );
-    });
+    },
+    );
 
   program
     .command("init")
@@ -684,7 +846,27 @@ Docs: docs/PRODUCTION.md · docs/RELIABILITY.md · docs/ULW.md
       if (!fs.existsSync(agents)) {
         fs.writeFileSync(
           agents,
-          `# AGENTS.md\n\nProject instructions for Forge (and other coding agents).\n\n## Build\n\n- Describe how to install, build, and test this repo.\n\n## Conventions\n\n- Note style, architecture, and non-obvious constraints.\n`,
+          `# AGENTS.md
+
+Project instructions for Forge (and other coding agents).
+
+## Build
+
+- Install: \`npm install\`
+- Build / typecheck / test: describe the real commands for this repo
+- CI entrypoint if any
+
+## Conventions
+
+- Language, module system, style, architecture boundaries
+- Non-obvious constraints (auth, migrations, generated code)
+
+## Safety / production notes for agents
+
+- Prefer small focused diffs; run the cheapest relevant check after edits
+- Do not weaken fail-closed sandbox or commit secrets
+- Long autonomous work: use ULW/\`/goal\` only when the user wants relentless execution
+`,
           "utf8",
         );
         log.success(`Wrote ${agents}`);
@@ -779,15 +961,17 @@ Docs: docs/PRODUCTION.md · docs/RELIABILITY.md · docs/ULW.md
     .option("--json", "Machine-readable summary on stdout")
     .action((opts) => {
       const config = buildConfig(opts);
-      const text = runDoctor(config);
       if (opts.json) {
+        const check = runDoctorCheck(config);
         const auth = resolveAuth(config);
-        const ok =
-          /No blocking issues detected/.test(text) ||
-          (!/⚠ \d+ issue/.test(text) && Boolean(auth));
         let sessionCount = 0;
+        let sessionsLocked = 0;
         try {
-          sessionCount = listSessions(10_000).length;
+          const sessions = listSessions(10_000);
+          sessionCount = sessions.length;
+          for (const s of sessions) {
+            if (sessionHasForeignLiveLock(s.id)) sessionsLocked += 1;
+          }
         } catch {
           /* */
         }
@@ -812,6 +996,40 @@ Docs: docs/PRODUCTION.md · docs/RELIABILITY.md · docs/ULW.md
         } catch {
           /* */
         }
+        let backgroundTasks = { running: 0, total: 0 };
+        try {
+          const tasks = listTasks();
+          backgroundTasks = {
+            running: tasks.filter((t) => t.status === "running").length,
+            total: tasks.length,
+          };
+        } catch {
+          /* */
+        }
+        let savedAllows = 0;
+        try {
+          savedAllows = loadSavedAllows(
+            config.workspace || process.cwd(),
+          ).length;
+        } catch {
+          /* */
+        }
+        const home = forgeHome();
+        const secureFiles = {
+          auth: inspectSecureFile(path.join(home, "auth.json")),
+          permissions: inspectSecureFile(path.join(home, "permissions.json")),
+          preferences: inspectSecureFile(path.join(home, "preferences.json")),
+        };
+        // CI contract: structured check.ok (issues array) — never chalk/report regex.
+        // secureFiles.modeOk is also enforced so mode drift cannot hide behind report text.
+        const secureFilesOk = Object.values(secureFiles).every(
+          (f) => f.modeOk !== false,
+        );
+        const ok =
+          check.ok &&
+          secureFilesOk &&
+          check.blockingStop &&
+          check.authenticated;
         const maxRunMsRaw = process.env.FORGE_MAX_RUN_MS?.trim();
         const maxRunMs =
           maxRunMsRaw && /^\d+$/.test(maxRunMsRaw) && Number(maxRunMsRaw) >= 5_000
@@ -832,14 +1050,19 @@ Docs: docs/PRODUCTION.md · docs/RELIABILITY.md · docs/ULW.md
               provider: config.provider,
               model: config.model,
               auth: describeAuth(auth),
-              authenticated: Boolean(auth),
-              blockingStop: config.blockingStopHooks,
+              authenticated: check.authenticated,
+              blockingStop: check.blockingStop,
               permissionMode: config.permissionMode,
               sandbox: config.sandbox,
               sessionCount,
+              sessionsLocked,
               toolOutput,
               sandboxLog,
               metrics,
+              backgroundTasks,
+              savedAllows,
+              secureFiles,
+              issues: check.issues,
               providerTimeoutMs: providerTimeoutMs(),
               maxRunMs,
               permissionAskTimeoutMs: permAskTimeoutMs || null,
@@ -851,7 +1074,7 @@ Docs: docs/PRODUCTION.md · docs/RELIABILITY.md · docs/ULW.md
                 process.env.FORGE_NO_AUTO_RESUME !== "1" &&
                 process.env.FORGE_NO_AUTO_RESUME !== "true",
               node: process.version,
-              report: text,
+              report: check.report,
             },
             null,
             2,
@@ -860,7 +1083,11 @@ Docs: docs/PRODUCTION.md · docs/RELIABILITY.md · docs/ULW.md
         if (!ok) process.exitCode = 1;
         return;
       }
-      console.log(text);
+      // Plain doctor: same health signal as --json (exit 1 on issues) so
+      // scripts that forget --json still fail closed in CI.
+      const check = runDoctorCheck(config);
+      console.log(check.report);
+      if (!check.ok) process.exitCode = 1;
     });
 
   program
@@ -978,6 +1205,7 @@ function resolveSession(
     session?: string;
     new?: boolean;
     cwd?: string;
+    title?: string;
     /** When true and no --session/--new, resume newest same-cwd session. */
     autoResume?: boolean;
   },
@@ -988,6 +1216,9 @@ function resolveSession(
       log.error(`Session not found: ${opts.session}`);
       process.exit(1);
     }
+    if (typeof opts.title === "string" && opts.title.trim()) {
+      setSessionTitle(s, opts.title);
+    }
     return s;
   }
   const cwd = path.resolve(String(opts.cwd || config.workspace || process.cwd()));
@@ -995,15 +1226,41 @@ function resolveSession(
     opts.new ||
     process.env.FORGE_NO_AUTO_RESUME === "1" ||
     process.env.FORGE_NO_AUTO_RESUME === "true";
-  if (opts.autoResume && !noAuto) {
+  // Explicit --title on a fresh start should not silently attach to auto-resume.
+  const wantTitle =
+    typeof opts.title === "string" && opts.title.trim().length > 0;
+  if (opts.autoResume && !noAuto && !wantTitle) {
     try {
-      const recent = findRecentSessionForCwd(cwd);
-      if (recent) {
-        const s = loadSession(recent.id);
+      const hit = findRecentSessionForCwd(cwd);
+      if (hit?.meta) {
+        const s = loadSession(hit.meta.id);
         if (s) {
           const title = s.meta.title || "untitled";
+          const skipNote =
+            hit.skippedLocked > 0
+              ? ` (skipped ${hit.skippedLocked} locked session${hit.skippedLocked === 1 ? "" : "s"})`
+              : "";
+          const flags: string[] = [];
+          try {
+            const ulw = loadUlwCycle(s.meta.id);
+            if (ulw?.enabled) flags.push(formatUlwCounts(ulw));
+          } catch {
+            /* */
+          }
+          try {
+            const g = loadGoal(s.meta.id);
+            if (g?.objective && g.status === "active") {
+              flags.push(g.paused ? "GOAL:paused" : "GOAL");
+            }
+          } catch {
+            /* */
+          }
+          if (s.meta.ultrawork && !flags.some((f) => f.startsWith("ULW") || f.includes("cycle="))) {
+            flags.push("ULW");
+          }
+          const flagNote = flags.length ? ` · ${flags.join(" · ")}` : "";
           log.info(
-            `Resumed ${s.meta.id.slice(0, 8)} — ${title} (${s.messages.length} msgs). Use --new for a fresh session.`,
+            `Resumed ${s.meta.id.slice(0, 8)} — ${title} (${s.messages.length} msgs)${flagNote}${skipNote}. Use --new for a fresh session.`,
           );
           // Keep provider/model from live config when CLI/prefs differ, but preserve session history
           if (config.model && s.meta.model !== config.model) {
@@ -1014,6 +1271,10 @@ function resolveSession(
           }
           return s;
         }
+      } else if (hit && hit.skippedLocked > 0) {
+        log.info(
+          `Starting fresh session — ${hit.skippedLocked} same-cwd session${hit.skippedLocked === 1 ? "" : "s"} locked by other process(es). Use --session <id> to attach anyway.`,
+        );
       }
     } catch {
       /* fall through to new session */
@@ -1024,6 +1285,7 @@ function resolveSession(
     provider: String(config.provider),
     model: config.model,
     ultrawork: false,
+    title: wantTitle ? String(opts.title) : undefined,
   });
 }
 
@@ -1044,6 +1306,7 @@ async function runHeadless(opts: {
   const permissions = new PermissionGate({ interactive: false });
   // Headless always sets FORGE_HEADLESS so permission gate stays fail-closed
   if (!process.env.FORGE_HEADLESS) process.env.FORGE_HEADLESS = "1";
+  installBackgroundTaskExitHook();
 
   // Same session lock as REPL — concurrent forge run --session / REPL must not race
   const lock = acquireSessionLock(opts.session.meta.id);
@@ -1097,6 +1360,14 @@ async function runHeadless(opts: {
     }
   };
 
+  const cleanupBg = (): void => {
+    try {
+      killAllRunningTasks({ force: true });
+    } catch {
+      /* never fail exit on bg cleanup */
+    }
+  };
+
   await opts.hooks.run("SessionStart", {
     sessionId: opts.session.meta.id,
     cwd: opts.session.meta.cwd,
@@ -1131,6 +1402,7 @@ async function runHeadless(opts: {
     process.off("SIGINT", onSigInt);
     process.off("SIGTERM", onSigTerm);
     if (maxRunTimer) clearTimeout(maxRunTimer);
+    cleanupBg();
     releaseLock();
     const message = (err as Error).message || String(err);
     appendSessionMetrics(
@@ -1160,6 +1432,7 @@ async function runHeadless(opts: {
             error: message,
             timedOut,
             sessionId: opts.session.meta.id,
+            title: opts.session.meta.title || null,
             editCount: opts.session.meta.editCount,
             durationMs: Date.now() - t0,
           },
@@ -1192,6 +1465,7 @@ async function runHeadless(opts: {
     const payload = {
       ok: !result.aborted && !timedOut,
       sessionId: opts.session.meta.id,
+      title: opts.session.meta.title || null,
       finalText: result.finalText,
       turns: result.turns,
       stopContinues: result.stopContinues,
@@ -1225,6 +1499,7 @@ async function runHeadless(opts: {
     );
     return payload;
   } finally {
+    cleanupBg();
     releaseLock();
   }
 }

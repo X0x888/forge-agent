@@ -7,6 +7,10 @@ import path from "node:path";
 import { executeTool } from "../src/agent/tools/index.js";
 import { locateEdit, applyMatch } from "../src/agent/tools/edit-match.js";
 import { createShellEnv } from "../src/agent/tools/env-policy.js";
+import {
+  editDistance,
+  pathNotFoundHint,
+} from "../src/agent/tools/path-hints.js";
 import { boundToolOutput } from "../src/agent/tools/truncate.js";
 import { realpathWithinRoot } from "../src/util/fs.js";
 import { detectLineEnding, joinBom, splitBom, toLineEnding } from "../src/agent/tools/text.js";
@@ -200,21 +204,190 @@ describe("executeTool integration", () => {
       ctx,
     );
     assert.equal(w.isError, true);
-    assert.match(w.output, /escapes workspace/i);
+    assert.match(w.output, /escapes workspace|write_file failed/i);
   });
 
-  it("path hints on missing read", async () => {
+  it("write_file creates parent dirs and notes it", async () => {
+    const ws = path.join(tmpRoot, "ws-write-parents");
+    await fsp.mkdir(ws, { recursive: true });
+    const ctx = { workspace: ws, sandbox: "off" as const };
+    const w = await executeTool(
+      "write_file",
+      JSON.stringify({
+        path: "nested/deep/file.ts",
+        content: "export const n = 1;\n",
+      }),
+      ctx,
+    );
+    assert.equal(w.isError, undefined, w.output);
+    assert.match(w.output, /Wrote nested\/deep\/file\.ts/);
+    assert.match(w.output, /created parent directories/i);
+    const body = await fsp.readFile(
+      path.join(ws, "nested", "deep", "file.ts"),
+      "utf8",
+    );
+    assert.match(body, /export const n = 1/);
+
+    // Second write into existing parents — no parent note
+    const w2 = await executeTool(
+      "write_file",
+      JSON.stringify({
+        path: "nested/deep/file.ts",
+        content: "export const n = 2;\n",
+      }),
+      ctx,
+    );
+    assert.equal(w2.isError, undefined, w2.output);
+    assert.doesNotMatch(w2.output, /created parent directories/i);
+  });
+
+  it("write_file and search_replace refuse directory targets", async () => {
+    const ws = path.join(tmpRoot, "ws-write-dir");
+    await fsp.mkdir(path.join(ws, "subdir"), { recursive: true });
+    const ctx = { workspace: ws, sandbox: "off" as const };
+    const w = await executeTool(
+      "write_file",
+      JSON.stringify({ path: "subdir", content: "nope" }),
+      ctx,
+    );
+    assert.equal(w.isError, true);
+    assert.match(w.output, /is a directory/i);
+    assert.doesNotMatch(w.output, /EISDIR/i);
+
+    const e = await executeTool(
+      "search_replace",
+      JSON.stringify({
+        path: "subdir",
+        old_string: "a",
+        new_string: "b",
+      }),
+      ctx,
+    );
+    assert.equal(e.isError, true);
+    assert.match(e.output, /is a directory/i);
+  });
+
+  it("path hints on missing read (typo distance)", async () => {
     const ws = path.join(tmpRoot, "ws-hint");
     await fsp.mkdir(ws, { recursive: true });
     await fsp.writeFile(path.join(ws, "readme.md"), "# hi\n");
     const ctx = { workspace: ws, sandbox: "off" as const };
+    // "readmi.md" is 1 edit from "readme.md" — substring match alone misses this
     const r = await executeTool(
       "read_file",
       JSON.stringify({ path: "readmi.md" }),
       ctx,
     );
     assert.equal(r.isError, true);
-    assert.match(r.output, /not found|Did you mean|workspace root/i);
+    assert.match(r.output, /Did you mean/i);
+    assert.match(r.output, /readme\.md/);
+    assert.match(r.output, /workspace root/i);
+  });
+
+  it("read_file soft-hints on large files (≥2 MiB)", async () => {
+    const ws = path.join(tmpRoot, "ws-large");
+    await fsp.mkdir(ws, { recursive: true });
+    const big = path.join(ws, "big.txt");
+    // Non-null padding (truncate would be all \\0 → binary refuse)
+    const chunk = "abcdefghijklmnopqrstuvwxyz012345\n"; // 33 bytes
+    const target = 2 * 1024 * 1024 + 64;
+    const reps = Math.ceil(target / chunk.length);
+    await fsp.writeFile(big, chunk.repeat(reps));
+    const ctx = { workspace: ws, sandbox: "off" as const };
+    const r = await executeTool(
+      "read_file",
+      JSON.stringify({ path: "big.txt", limit: 5 }),
+      ctx,
+    );
+    assert.equal(r.isError, undefined, r.output);
+    assert.match(r.output, /bytes/);
+    assert.match(r.output, /prefer smaller limit|grep/i);
+  });
+});
+
+describe("path-hints", () => {
+  it("editDistance is symmetric and handles basics", async () => {
+    assert.equal(editDistance("abc", "abc"), 0);
+    assert.equal(editDistance("abc", "ab"), 1);
+    assert.equal(editDistance("kitten", "sitting"), 3);
+    assert.equal(editDistance("readme.md", "readmi.md"), 1);
+    assert.equal(editDistance("a", "b"), 1);
+    const { stringSimilarity } = await import("../src/util/string-distance.js");
+    assert.equal(stringSimilarity("abc", "abc"), 1);
+    assert.ok(stringSimilarity("kitten", "sitting") > 0.5);
+    assert.ok(stringSimilarity("ab", "xy") < 0.5);
+  });
+
+  it("pathNotFoundHint suggests typos and always notes workspace", async () => {
+    const ws = path.join(tmpRoot, "ws-ph");
+    await fsp.mkdir(ws, { recursive: true });
+    await fsp.writeFile(path.join(ws, "config.toml"), "x=1\n");
+    await fsp.writeFile(path.join(ws, "package.json"), "{}\n");
+
+    const typo = await pathNotFoundHint(path.join(ws, "config.tml"), ws);
+    assert.match(typo, /Did you mean/);
+    assert.match(typo, /config\.toml/);
+    assert.match(typo, new RegExp(`workspace root is ${ws.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
+
+    const missingParent = await pathNotFoundHint(
+      path.join(ws, "no-such-dir", "file.ts"),
+      ws,
+    );
+    assert.doesNotMatch(missingParent, /Did you mean/);
+    assert.match(missingParent, /workspace root/);
+  });
+});
+
+describe("glob / list_dir missing paths", () => {
+  it("glob reports missing search root (not empty match) + hints", async () => {
+    const ws = path.join(tmpRoot, "ws-glob");
+    await fsp.mkdir(ws, { recursive: true });
+    await fsp.mkdir(path.join(ws, "src"));
+    const ctx = { workspace: ws, sandbox: "off" as const };
+
+    const missing = await executeTool(
+      "glob",
+      JSON.stringify({ pattern: "**/*.ts", path: "srcx" }),
+      ctx,
+    );
+    assert.equal(missing.isError, true);
+    assert.match(missing.output, /Directory not found for glob/i);
+    assert.match(missing.output, /Did you mean|workspace root/i);
+    assert.doesNotMatch(missing.output, /No files matched/);
+
+    const empty = await executeTool(
+      "glob",
+      JSON.stringify({ pattern: "**/*.nope", path: "src" }),
+      ctx,
+    );
+    assert.equal(empty.isError, undefined, empty.output);
+    assert.match(empty.output, /No files matched/);
+
+    const listed = await executeTool(
+      "list_dir",
+      JSON.stringify({ path: "srcx" }),
+      ctx,
+    );
+    assert.equal(listed.isError, true);
+    assert.match(listed.output, /Directory not found/i);
+
+    const grepped = await executeTool(
+      "grep",
+      JSON.stringify({ pattern: "foo", path: "srcx" }),
+      ctx,
+    );
+    assert.equal(grepped.isError, true);
+    assert.match(grepped.output, /Path not found for grep/i);
+
+    // Single-file path (JS fallback path must not use glob cwd=file)
+    await fsp.writeFile(path.join(ws, "src", "hit.ts"), "const foo = 1;\n");
+    const fileHit = await executeTool(
+      "grep",
+      JSON.stringify({ pattern: "foo", path: "src/hit.ts" }),
+      ctx,
+    );
+    assert.equal(fileHit.isError, undefined, fileHit.output);
+    assert.match(fileHit.output, /foo/);
   });
 });
 

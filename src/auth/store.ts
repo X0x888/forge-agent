@@ -3,14 +3,21 @@ import { forgeHome, readJsonFile, writeJsonFile, nowIso, nowEpoch } from "../uti
 import type { AuthStore, StoredCredential, AuthMethod } from "./types.js";
 import type { ProviderId } from "../config/types.js";
 
-const EMPTY: AuthStore = { version: 1, credentials: {} };
+function emptyAuthStore(): AuthStore {
+  return { version: 1, credentials: {} };
+}
 
 export function authPath(): string {
   return path.join(forgeHome(), "auth.json");
 }
 
 export function loadAuthStore(): AuthStore {
-  return readJsonFile<AuthStore>(authPath(), EMPTY);
+  const raw = readJsonFile<AuthStore>(authPath(), emptyAuthStore());
+  // Copy so callers never mutate a shared fallback object
+  return {
+    version: 1,
+    credentials: { ...(raw.credentials || {}) },
+  };
 }
 
 export function saveAuthStore(store: AuthStore): void {
@@ -38,7 +45,7 @@ export function clearCredential(provider: string): void {
 }
 
 export function clearAllCredentials(): void {
-  saveAuthStore(EMPTY);
+  saveAuthStore(emptyAuthStore());
 }
 
 export function listCredentials(): StoredCredential[] {

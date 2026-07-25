@@ -43,7 +43,8 @@ export function mergeAbortSignals(
   if (timeoutMs > 0 && !ctrl.signal.aborted) {
     timer = setTimeout(() => {
       if (!ctrl.signal.aborted) {
-        ctrl.abort(new Error(`Provider request timed out after ${timeoutMs}ms`));
+        // Generic wording — used by providers and tools (web_fetch/web_search).
+        ctrl.abort(new Error(`Request timed out after ${timeoutMs}ms`));
       }
     }, timeoutMs);
     // Don't keep the process alive solely for the provider timer

@@ -6,17 +6,17 @@ Lessons applied from local open-source trees under `Documents/open source/` (Gro
 
 | Tool | Notes |
 |------|--------|
-| `bash` | OS sandbox + **secret-name env scrub**. `background=true` → `task_id`. Large output: managed truncate under `~/.forge/tool-output/`. |
-| `get_task_output` | Poll background task status + tail of stdout/stderr. |
-| `kill_task` | SIGTERM/SIGKILL a background task. |
-| `read_file` | Default **2000 lines**, long-line clip, binary refuse, directory list, path-not-found hints. |
-| `write_file` / `search_replace` | **realpath** containment; **atomic write** (tmp+rename); **BOM/CRLF**; exact → line-trimmed → **block-anchor** fuzzy; short diff. |
-| `apply_patch` | Multi-file add/update/delete/move (OpenAI/OpenCode `*** Begin Patch` grammar). Validates all hunks before write; atomic per file. |
-| `grep` | Prefers system **ripgrep**; JS fallback if `rg` missing. |
-| `glob` / `list_dir` | Standard discovery; list_dir hints on miss. |
+| `bash` | OS sandbox + **secret-name env scrub**. `background=true` → `task_id`. Large output: managed truncate under `~/.forge/tool-output/`. REPL exit + headless run end **force-kill** leftover bg shells. |
+| `get_task_output` | Poll background task status + tail of stdout/stderr. Omit `task_id` to list active tasks. |
+| `kill_task` | SIGTERM/SIGKILL a background task. Omit `task_id` to list active tasks (recover ids). |
+| `read_file` | Default **2000 lines**, long-line clip, binary refuse, directory list, path-not-found hints; soft size hint ≥2 MiB. |
+| `write_file` / `search_replace` | **realpath** containment; **atomic write** (tmp+rename, auto parent dirs); write notes when parents were created; refuse directory targets clearly; **BOM/CRLF**; exact → line-trimmed → **block-anchor** fuzzy; short diff. |
+| `apply_patch` | Multi-file add/update/delete/move (OpenAI/OpenCode `*** Begin Patch` grammar). Validates all hunks before write; atomic per file; missing update/delete targets get path typo hints. |
+| `grep` | Prefers system **ripgrep**; JS fallback if `rg` missing. Missing path → error + hints; single-file path works in both backends. |
+| `glob` / `list_dir` | Standard discovery; missing search root → error + path hints (not a false empty match). |
 | `todo_write` | Session todos. |
-| `web_search` | DuckDuckGo Instant Answer (best-effort). |
-| `web_fetch` | Public http(s) fetch with **SSRF** guards, redirect re-check, HTML→text, size/timeout caps. |
+| `web_search` | DuckDuckGo Instant Answer (best-effort). Honors turn abort + 15s timeout. |
+| `web_fetch` | Public http(s) fetch with **SSRF** guards, redirect re-check, HTML→text (invalid numeric entities never throw), size/timeout caps. Merged turn abort signal stays live through body read. |
 
 ## Layout
 
@@ -28,7 +28,7 @@ src/agent/tools/
   atomic-write.ts   # tmp+rename file writes
   path-util.ts      # realpath containment
   truncate.ts       # managed overflow to disk
-  path-hints.ts     # “did you mean?”
+  path-hints.ts     # “did you mean?” (substring + edit-distance typos)
   env-policy.ts     # shell env scrub
   edit-match.ts     # exact + line-trimmed
   text.ts           # BOM / CRLF
@@ -52,5 +52,6 @@ Not model tools, but production daily-driver surfaces experts use alongside tool
 
 ## Tests
 
-`tests/tools-quality.test.ts` — edit match, env scrub, truncation, symlink escape, executeTool I/O.  
-`tests/apply-patch.test.ts` — multi-file patch parse/apply, hard-deny paths, atomic write.
+`tests/tools-quality.test.ts` — edit match, path-hints (typo distance), env scrub, truncation, symlink escape, executeTool I/O.  
+`tests/apply-patch.test.ts` — multi-file patch parse/apply, hard-deny paths, atomic write.  
+`tests/tools-next.test.ts` — SSRF, web_fetch htmlToText, block-anchor, background tasks.

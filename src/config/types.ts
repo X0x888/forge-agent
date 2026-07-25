@@ -220,7 +220,15 @@ export const DEFAULT_CONFIG: ForgeConfig = {
       baseUrl: "https://api.openai.com/v1",
       supportsOAuth: true,
       defaultModel: "gpt-4.1",
-      models: ["gpt-4.1", "gpt-4o", "o3", "o4-mini"],
+      models: [
+        "gpt-4.1",
+        "gpt-4.1-mini",
+        "gpt-4o",
+        "gpt-4o-mini",
+        "o3",
+        "o3-mini",
+        "o4-mini",
+      ],
     },
     openrouter: {
       id: "openrouter",
@@ -228,7 +236,15 @@ export const DEFAULT_CONFIG: ForgeConfig = {
       baseUrl: "https://openrouter.ai/api/v1",
       supportsOAuth: false,
       defaultModel: "anthropic/claude-sonnet-4",
-      models: [],
+      // Common aliases; OpenRouter accepts many more via free-form model ids
+      models: [
+        "anthropic/claude-sonnet-4",
+        "anthropic/claude-opus-4",
+        "openai/gpt-4.1",
+        "openai/o3",
+        "google/gemini-2.5-pro",
+        "x-ai/grok-4",
+      ],
     },
     google: {
       id: "google",
@@ -236,7 +252,12 @@ export const DEFAULT_CONFIG: ForgeConfig = {
       baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai",
       supportsOAuth: false,
       defaultModel: "gemini-2.5-pro",
-      models: ["gemini-2.5-pro", "gemini-2.5-flash"],
+      models: [
+        "gemini-2.5-pro",
+        "gemini-2.5-flash",
+        "gemini-2.5-flash-lite",
+        "gemini-2.0-flash",
+      ],
     },
   },
 };

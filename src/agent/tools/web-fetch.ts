@@ -1,16 +1,42 @@
 /**
  * Fetch a URL with SSRF protection, size/timeout limits, HTML→text.
+ * Honors ToolContext.signal so Ctrl+C / FORGE_MAX_RUN_MS cancel in-flight fetches.
  */
-import type { ToolResult } from "./types.js";
+import type { ToolContext, ToolResult } from "./types.js";
 import { assertUrlSafe } from "./ssrf.js";
 import { boundToolOutput, DEFAULT_MAX_BYTES } from "./truncate.js";
+import { mergeAbortSignals } from "../../util/abort.js";
 
 const MAX_RESPONSE_BYTES = 5 * 1024 * 1024;
 const DEFAULT_TIMEOUT_MS = 30_000;
 const MAX_TIMEOUT_MS = 120_000;
 const MAX_REDIRECTS = 5;
 
-function htmlToText(html: string): string {
+function isAbortLike(err: unknown, signal?: AbortSignal): boolean {
+  if (signal?.aborted) return true;
+  if (!err || typeof err !== "object") return false;
+  const name = String((err as { name?: string }).name || "");
+  const msg = err instanceof Error ? err.message : String(err);
+  return name === "AbortError" || /aborted/i.test(msg) || msg === "Aborted";
+}
+
+/** Safe code point → string; invalid / out-of-range entities keep original text. */
+function decodeCodePoint(n: number, original: string): string {
+  if (!Number.isFinite(n) || n < 0 || n > 0x10ffff) return original;
+  // Surrogate halves are not valid Unicode scalar values
+  if (n >= 0xd800 && n <= 0xdfff) return original;
+  try {
+    return String.fromCodePoint(n);
+  } catch {
+    return original;
+  }
+}
+
+/**
+ * Strip tags + decode common entities for web_fetch text/markdown mode.
+ * Exported for unit tests (malformed entities must never throw).
+ */
+export function htmlToText(html: string): string {
   let s = html;
   s = s.replace(/<script[\s\S]*?<\/script>/gi, "");
   s = s.replace(/<style[\s\S]*?<\/style>/gi, "");
@@ -24,10 +50,12 @@ function htmlToText(html: string): string {
     .replace(/&gt;/g, ">")
     .replace(/&quot;/g, '"')
     .replace(/&#39;/g, "'")
-    .replace(/&#x([0-9a-f]+);/gi, (_, h) =>
-      String.fromCodePoint(parseInt(h, 16)),
+    .replace(/&#x([0-9a-f]+);/gi, (full, h: string) =>
+      decodeCodePoint(parseInt(h, 16), full),
     )
-    .replace(/&#(\d+);/g, (_, d) => String.fromCodePoint(Number(d)));
+    .replace(/&#(\d+);/g, (full, d: string) =>
+      decodeCodePoint(Number(d), full),
+    );
   s = s.replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n");
   s = s.replace(/[ \t]{2,}/g, " ");
   return s.trim();
@@ -35,22 +63,24 @@ function htmlToText(html: string): string {
 
 async function fetchOnce(
   url: URL,
-  timeoutMs: number,
   headers: Record<string, string>,
+  signal: AbortSignal,
 ): Promise<Response> {
   return fetch(url, {
     method: "GET",
     headers,
     redirect: "manual",
-    signal: AbortSignal.timeout(timeoutMs),
+    signal,
   });
 }
 
 export async function toolWebFetch(
   args: Record<string, unknown>,
+  ctx: ToolContext = { workspace: process.cwd() },
 ): Promise<ToolResult> {
   const raw = String(args.url || "").trim();
   if (!raw) return { output: "url is required", isError: true };
+  if (ctx.signal?.aborted) return { output: "Aborted", isError: true };
 
   const format = String(args.format || "markdown").toLowerCase();
   const allowLocal = Boolean(args.allow_local);
@@ -63,6 +93,8 @@ export async function toolWebFetch(
     ),
   );
 
+  // Keep merged signal alive through body read (not just headers).
+  const { signal, dispose } = mergeAbortSignals(ctx.signal, timeoutMs);
   try {
     let current = await assertUrlSafe(raw, allowLocal);
     const headers: Record<string, string> = {
@@ -76,7 +108,8 @@ export async function toolWebFetch(
 
     let resp: Response | null = null;
     for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
-      resp = await fetchOnce(current, timeoutMs, headers);
+      if (signal.aborted) return { output: "Aborted", isError: true };
+      resp = await fetchOnce(current, headers, signal);
       if (resp.status >= 300 && resp.status < 400) {
         const loc = resp.headers.get("location");
         if (!loc) {
@@ -109,6 +142,7 @@ export async function toolWebFetch(
     }
 
     const buf = Buffer.from(await resp.arrayBuffer());
+    if (signal.aborted) return { output: "Aborted", isError: true };
     if (buf.length > MAX_RESPONSE_BYTES) {
       return {
         output: `Response too large (${buf.length} bytes > ${MAX_RESPONSE_BYTES})`,
@@ -154,9 +188,14 @@ export async function toolWebFetch(
     });
     return { output: managed.text };
   } catch (err) {
+    if (isAbortLike(err, signal) || isAbortLike(err, ctx.signal)) {
+      return { output: "Aborted", isError: true };
+    }
     return {
       output: `web_fetch failed: ${(err as Error).message}`,
       isError: true,
     };
+  } finally {
+    dispose();
   }
 }

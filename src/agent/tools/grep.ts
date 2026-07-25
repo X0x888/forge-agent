@@ -5,6 +5,7 @@ import path from "node:path";
 import { glob } from "glob";
 import type { ToolContext, ToolResult } from "./types.js";
 import { resolvePath } from "./path-util.js";
+import { pathNotFoundHint } from "./path-hints.js";
 import { boundToolOutput } from "./truncate.js";
 
 function findRg(): string | null {
@@ -21,6 +22,27 @@ function findRg(): string | null {
     }
   }
   return null;
+}
+
+
+async function assertSearchRoot(
+  searchPath: string,
+  label: string,
+  workspace: string,
+): Promise<ToolResult | null> {
+  try {
+    const st = await fsp.stat(searchPath);
+    if (!st.isDirectory() && !st.isFile()) {
+      return { output: `grep path is not a file or directory: ${label}`, isError: true };
+    }
+    return null;
+  } catch {
+    const hint = await pathNotFoundHint(searchPath, workspace);
+    return {
+      output: `Path not found for grep: ${label}\n${hint}`,
+      isError: true,
+    };
+  }
 }
 
 function runRg(
@@ -59,6 +81,9 @@ async function toolGrepJs(
   const searchPath = args.path
     ? resolvePath(ctx.workspace, String(args.path))
     : ctx.workspace;
+  const pathLabel = args.path ? String(args.path) : ".";
+  const badRoot = await assertSearchRoot(searchPath, pathLabel, ctx.workspace);
+  if (badRoot) return badRoot;
   const globPat = args.glob ? String(args.glob) : "**/*";
   const headLimit = Number(args.head_limit) || 50;
   const flags = args.case_insensitive ? "i" : "";
@@ -69,13 +94,20 @@ async function toolGrepJs(
     return { output: `Invalid regex: ${pattern}`, isError: true };
   }
 
-  const files = await glob(globPat, {
-    cwd: searchPath,
-    nodir: true,
-    absolute: true,
-    ignore: ["**/node_modules/**", "**/.git/**", "**/dist/**"],
-    dot: false,
-  });
+  // Single-file path: search that file only (glob cwd=file is invalid).
+  let files: string[];
+  const st = await fsp.stat(searchPath);
+  if (st.isFile()) {
+    files = [searchPath];
+  } else {
+    files = await glob(globPat, {
+      cwd: searchPath,
+      nodir: true,
+      absolute: true,
+      ignore: ["**/node_modules/**", "**/.git/**", "**/dist/**"],
+      dot: false,
+    });
+  }
 
   const matches: string[] = [];
   for (const file of files) {
@@ -117,6 +149,9 @@ export async function toolGrep(
   const searchPath = args.path
     ? resolvePath(ctx.workspace, String(args.path))
     : ctx.workspace;
+  const pathLabel = args.path ? String(args.path) : ".";
+  const badRoot = await assertSearchRoot(searchPath, pathLabel, ctx.workspace);
+  if (badRoot) return badRoot;
   const headLimit = Number(args.head_limit) || 50;
   const rgArgs = [
     "--line-number",

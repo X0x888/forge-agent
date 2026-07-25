@@ -829,6 +829,9 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
         doomLoop,
         errorStreak,
       });
+      // Tools that cooperatively return "Aborted" still leave signal.aborted set —
+      // exit the loop immediately rather than starting another provider turn.
+      assertNotAborted(signal);
       events.onPhase?.("thinking");
     }
   } catch (err) {

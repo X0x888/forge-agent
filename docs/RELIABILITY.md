@@ -31,7 +31,7 @@ What experts should expect from Forge in long, unattended, or CI runs.
 | **Doom-loop** | Same tool + same args ×N injects a hard strategy-change nudge (OpenCode-inspired; default N=3, override `FORGE_DOOM_LOOP_THRESHOLD`) |
 | **Error-streak** | N consecutive tool errors (any args) injects a circuit-breaker nudge (Grok-inspired; default N=5, override `FORGE_ERROR_STREAK_THRESHOLD`); permission/hard denies do not count |
 | **Atomic file writes** | `write_file` / `search_replace` / `apply_patch` write via tmp+rename |
-| **apply_patch** | Multi-file patch tool; all hunks validated before disk mutation; protected-path hard deny |
+| **apply_patch** | Multi-file patch tool; all hunks validated before disk mutation; protected-path hard deny; missing update/delete targets suggest nearby path typos |
 | **Permission ask timeout** | Optional `FORGE_PERMISSION_TIMEOUT_MS` auto-denies stalled interactive prompts (min 5s) |
 | **metrics.jsonl** | Append-only run counters (tokens, edits, duration) under `~/.forge/metrics.jsonl` — no prompts/secrets; auto-prunes past ~2000 events / 2 MiB; `forge prune-metrics --keep 500` |
 
@@ -41,12 +41,13 @@ What experts should expect from Forge in long, unattended, or CI runs.
 |---|---|
 | **OAuth refresh** | `resolveAuthFresh` exchanges `refresh_token` before start when near expiry |
 | **Mid-run 401** | One forced refresh + `provider.updateCredentials` then retry chat |
-| **auth.json mode** | Written `0600`; `/doctor` flags group/world-readable files |
-| **Session lock** | REPL and `forge run` acquire `session.lock`; warn if another live pid holds it; steal stale locks |
+| **Sensitive JSON mode** | `auth.json`, `permissions.json`, `preferences.json` written `0600`; `/doctor` flags group/world-readable files; `forge doctor --json` exposes structured `secureFiles` (`exists` / `mode` / `modeOk`) and sets `ok: false` when any `modeOk` is false |
+| **Session lock** | REPL and `forge run` acquire `session.lock`; warn if another live pid holds it; steal stale locks; corrupt lock JSON / invalid pid treated as absent; invalid `acquiredAt` → stale |
 | **Atomic session write** | `session.json` written via tmp+rename; load recovers newest leftover tmp after crash |
-| **Session fork/export/import** | `forge sessions fork\|export\|import\|show` and `/fork` / `/export [--json]` for expert branching & artifacts |
+| **JSON store isolation** | `readJsonFile` clones object fallbacks; auth + always-allow stores never share mutable empty constants |
+| **Session fork/export/import** | `forge sessions fork\|export\|import\|show` and `/fork` / `/export [--json]` for expert branching & artifacts; import rejects bad roles; load soft-sanitizes corrupt on-disk messages, heals orphan tool_call pairs, and **re-saves** when healed; `listSessions({cwd,query,limit})` filters before limit (CLI `--cwd`/`-q`, `/sessions` same-cwd default); corrupt dirs skipped (doctor/`/sessions` never throw) |
 | **meta.json sidecar** | Each save writes lightweight meta for fast list/prune (no full history parse) |
-| **sessions prune/delete** | `forge sessions prune --keep 50` / `/sessions prune` (active session protected) |
+| **sessions prune/delete** | `forge sessions prune --keep 50` / `/sessions prune` (active protected; foreign live locks skipped); `delete` refuses foreign locks unless `--force` |
 | **tool-output prune** | Full dumps under `~/.forge/tool-output` auto-pruned (keep 80 / 14d); `forge prune-tool-output` |
 | **sandbox.jsonl rotate** | Safety event log rotates at 2 MiB (keeps one `.1` backup); never logs secrets |
 
@@ -62,6 +63,9 @@ What experts should expect from Forge in long, unattended, or CI runs.
 | **Headless session resume** | `forge run … --session <id>` continues a prior headless/REPL session (multi-step CI) |
 | **Headless wall-clock** | Optional `FORGE_MAX_RUN_MS` aborts the run (exit 124; JSON `timedOut: true`) |
 | **Bash abort** | Sandbox/`runRaw` children receive SIGTERM on turn abort |
+| **Web tool abort** | `web_fetch` / `web_search` merge turn signal + timeout so Ctrl+C / `FORGE_MAX_RUN_MS` cancel in-flight HTTP |
+| **Abort hygiene** | Cooperative `Aborted` tool results do not count toward error-streak; loop asserts abort immediately after tool batches |
+| **Background task teardown** | REPL exit and headless `forge run` end force-kill in-process `background=true` shells; `beforeExit`/`exit` safety net; SessionEnd runs before kill so hooks can observe tasks |
 | **Parallel reads** | Up to 8 consecutive read-only tools run in parallel; results stay ordered |
 
 ## Operator env knobs
@@ -84,8 +88,8 @@ Invalid numeric values fall back to defaults (never crash the agent).
 ## Operator checks
 
 ```bash
-forge doctor          # auth, sandbox backend, auth.json mode, blocking Stop, session count
-forge doctor --json   # CI-friendly summary (exit 1 when unhealthy; still prints JSON)
+forge doctor          # auth, sandbox backend, auth.json mode, blocking Stop, session count (exit 1 if issues)
+forge doctor --json   # CI-friendly summary (exit 1 when unhealthy; includes secureFiles + issues[] + sessionsLocked)
 forge auth            # stored credentials + active resolution (refreshes OAuth)
 FORGE_LOG_JSON=1 forge run "…"   # structured logs on stderr
 forge sessions prune --keep 50   # disk hygiene
@@ -99,6 +103,8 @@ npm run ci            # check + smoke (GitHub Actions entrypoint)
 
 ## Non-negotiables (still)
 
-1. `blockingStopHooks` defaults **true**
+1. `blockingStopHooks` defaults **true** — doctor treats OFF as an issue; `forge doctor --json` sets `ok: false` when `blockingStop` is false (structured field + `issues[]`, never chalk/report regex)
 2. `/goal` stuck-wall can always release
-3. Auth files mode `0600`
+3. Auth / preferences / permissions files mode `0600`
+
+`runDoctorCheck()` returns `{ report, issues, ok, authenticated, blockingStop }` — `forge doctor --json` and library consumers should use that, not scrape the human report.

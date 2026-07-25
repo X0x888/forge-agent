@@ -1,3 +1,4 @@
+import fs from "node:fs";
 import fsp from "node:fs/promises";
 import path from "node:path";
 import type { ToolContext, ToolResult } from "./types.js";
@@ -36,6 +37,21 @@ export async function toolEdit(
       output: "No changes to apply: old_string and new_string are identical.",
       isError: true,
     };
+  }
+
+  // Refuse directory targets — readFile EISDIR is opaque to models.
+  try {
+    if (fs.existsSync(filePath) && fs.statSync(filePath).isDirectory()) {
+      const rel = path.relative(ctx.workspace, filePath) || filePath;
+      return {
+        output:
+          `search_replace failed: ${rel} is a directory. ` +
+          `Pass a file path inside it.`,
+        isError: true,
+      };
+    }
+  } catch {
+    /* fall through */
   }
 
   let rawContent: string;

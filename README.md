@@ -2,7 +2,7 @@
 
 **Forge** is an open-source AI coding agent CLI with a **first-class harness** — the control plane that other tools partially implement.
 
-> **v0.9.2** — **Production reliability**: Retry-After, abortable/empty-SSE streams, JSON repair, orphan tool heal, doom-loop + **error-streak**, **apply_patch**, atomic writes, overflow→compact, OAuth refresh, session lock (REPL + `forge run`) / fork/export/import, **`forge run --session`**, **metrics.jsonl**, permission ask timeout, `forge doctor --json` / `completion` / `npm run smoke`. Builds on v0.8 Bar A safety + harness (blocking Stop, `/goal`, ULW).
+> **v0.9.2** — **Production reliability**: Retry-After, abortable streams/tools (bash + web_fetch/web_search), empty-SSE retry, JSON repair, orphan tool heal, doom-loop + **error-streak** (abort ≠ streak), **apply_patch**, atomic writes, overflow→compact, OAuth refresh, session lock + **same-cwd auto-resume**, fork/export/import, **`listSessions({cwd,query})`** / `sessions list --cwd`/`-q` / `/sessions` search, **`--title`** / `/new [title]`, **lock-safe prune/delete** (`--force`), shell-safe **`/diff`**, **`forge run --session`** (empty-prompt guard, sandbox/deny, exit 0/1/124/130), **metrics.jsonl**, permission ask timeout, bg-task teardown, `/title` `/bell` `/copy` (live), structured **`forge doctor --json`** (`issues[]`/`secureFiles`/`sessionsLocked`, exit 1), path-hint typos, `completion` / `npm run smoke`. Builds on v0.8 Bar A safety + harness (blocking Stop, `/goal`, ULW).
 
 Key capability comparison:
 
@@ -65,9 +65,12 @@ forge
 forge --new
 
 # 4. Headless / CI
-forge run "add a healthcheck endpoint and tests" --ulw --permission-mode acceptEdits --json
-# Multi-step CI: resume the same session
+forge doctor --json                 # exit 1 if unhealthy (auth, Blocking Stop, 0600 files, …)
+forge run "add a healthcheck endpoint and tests" \
+  --ulw --permission-mode acceptEdits --sandbox workspace --json
+# Multi-step CI: resume the same session (exit 0/1/124/130 — see forge run --help)
 forge run "continue from last failure" --session <id> --json
+forge run "ship it" --title ci-pipeline-42 --json   # label + searchable via sessions list -q
 ```
 
 Bare interactive `forge` continues your latest workspace session (OpenCode-style). Use `forge --new`, `/new`, or `FORGE_NO_AUTO_RESUME=1` for a clean slate. Headless `forge run` still starts fresh unless you pass `--session`.
@@ -209,7 +212,7 @@ Forge is built for long expert sessions and CI, not just demos:
 - **Doom-loop** + **error-streak** circuit breakers (identical args ×3; any errors ×5)
 - **`apply_patch`** multi-file edits + **atomic** file writes
 - **OAuth refresh** at start and once mid-run on `401`
-- **Session locks**, fork/export/import, crash tmp recovery, **metrics.jsonl**
+- **Session locks**, fork/export/import, crash tmp recovery, lock-safe prune/delete, **metrics.jsonl**
 - **`forge run --session <id>`** multi-step headless CI resume
 - Accurate **stream token usage** for `/cost`; optional `FORGE_PERMISSION_TIMEOUT_MS`
 
@@ -235,18 +238,19 @@ Full contract: [docs/RELIABILITY.md](docs/RELIABILITY.md) · expert checklist: [
 | `/todos` | Agent todos |
 | `/model <id> [effort]` | Switch model; optional `low`\|`medium`\|`high` (persists) |
 | `/effort [level]` | Reasoning effort for models that support it (e.g. grok-4.5) |
-| `/permissions <mode>` | `default` \| `acceptEdits` \| `plan` \| `bypassPermissions` (persists) |
+| `/permissions <mode>` | `default` \| `acceptEdits` \| `plan` \| `bypassPermissions` (persists); `list`/`clear`/`revoke` for saved always-allows |
 | `/compact` | Compact history |
 | `/rewind [n]` | Undo last n turns |
 | `/export [path] [--json]` | Export session markdown or JSON |
 | `/fork [title]` | Branch session into a new id |
 | `/title [name\|clear]` | Show / set / clear session title (`/rename`) |
 | `/bell [on\|off\|test]` | Terminal BEL when a turn ends (long-run attention) |
-| `/diff [path]` | Git status + diff (live-safe) |
-| `/copy` | Clipboard last reply |
+| `/diff [path]` | Git status + diff (live-safe; argv + filter allowlist — no shell injection) |
+| `/copy` | Clipboard last reply (pbcopy/wl-copy/xclip/…; live-safe) |
 | `/new` / `/clear` | Fresh or wipe conversation |
 | `/resume [id]` | Resume by id/prefix |
-| `/sessions` | List · `delete` · `prune` (CLI also: `show`/`export`/`import`/`fork`) |
+| `/new [title]` | Fresh session with optional searchable label (`forge --title` / `forge run --title`) |
+| `/sessions` | List (same-cwd) · `all` · `search <q>` · `delete [--force]` · `prune` (CLI: `list --cwd`/`-q`, `show`/`export`/`import`/`fork`) |
 | `/doctor` | Env health check |
 | `/quit` | Exit |
 

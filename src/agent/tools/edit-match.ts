@@ -1,7 +1,10 @@
 /**
- * Conservative edit matching: exact → line-trimmed (OpenCode/Grok inspired).
- * Block-anchor + Levenshtein deferred; when fuzzy applies, caller should note it.
+ * Conservative edit matching: exact → line-trimmed → block-anchor
+ * (OpenCode/Grok inspired). Block-anchor uses Levenshtein similarity on
+ * middle lines when first/last anchors match.
  */
+
+import { stringSimilarity } from "../../util/string-distance.js";
 
 export type MatchKind = "exact" | "line_trimmed" | "block_anchor";
 
@@ -14,31 +17,8 @@ export interface MatchResult {
 
 const BLOCK_SIMILARITY = 0.65;
 
-function levenshtein(a: string, b: string): number {
-  if (a === "" || b === "") return Math.max(a.length, b.length);
-  const m = a.length;
-  const n = b.length;
-  // Rolling two rows for memory
-  let prev = Array.from({ length: n + 1 }, (_, j) => j);
-  let curr = new Array<number>(n + 1);
-  for (let i = 1; i <= m; i++) {
-    curr[0] = i;
-    for (let j = 1; j <= n; j++) {
-      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
-      curr[j] = Math.min(prev[j] + 1, curr[j - 1] + 1, prev[j - 1] + cost);
-    }
-    [prev, curr] = [curr, prev];
-  }
-  return prev[n];
-}
-
 function lineSim(a: string, b: string): number {
-  const ta = a.trim();
-  const tb = b.trim();
-  if (ta === tb) return 1;
-  const maxLen = Math.max(ta.length, tb.length);
-  if (maxLen === 0) return 1;
-  return 1 - levenshtein(ta, tb) / maxLen;
+  return stringSimilarity(a.trim(), b.trim());
 }
 
 function findExactAll(content: string, find: string): number {

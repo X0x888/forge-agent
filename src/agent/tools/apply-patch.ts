@@ -7,6 +7,7 @@ import fsp from "node:fs/promises";
 import path from "node:path";
 import type { ToolContext, ToolResult } from "./types.js";
 import { resolvePath, assertWritablePath } from "./path-util.js";
+import { pathNotFoundHint } from "./path-hints.js";
 import { applyUpdateChunks, parsePatch } from "./patch.js";
 import { atomicWriteFile } from "./atomic-write.js";
 
@@ -63,8 +64,17 @@ export async function toolApplyPatch(
         return { output: (err as Error).message, isError: true };
       }
       if (fs.existsSync(abs)) {
+        let kind = "path";
+        try {
+          kind = fs.statSync(abs).isDirectory() ? "directory" : "file";
+        } catch {
+          /* keep generic */
+        }
         return {
-          output: `apply_patch failed: cannot add existing file ${hunk.path}`,
+          output:
+            kind === "directory"
+              ? `apply_patch failed: cannot add ${hunk.path} — path is an existing directory (use a file path inside it)`
+              : `apply_patch failed: cannot add existing file ${hunk.path}`,
           isError: true,
         };
       }
@@ -88,8 +98,9 @@ export async function toolApplyPatch(
         return { output: (err as Error).message, isError: true };
       }
       if (!fs.existsSync(abs)) {
+        const hint = await pathNotFoundHint(logical, ctx.workspace);
         return {
-          output: `apply_patch failed: delete target missing: ${hunk.path}`,
+          output: `apply_patch failed: delete target missing: ${hunk.path}${hint ? `\n${hint}` : ""}`,
           isError: true,
         };
       }
@@ -117,10 +128,21 @@ export async function toolApplyPatch(
       return { output: (err as Error).message, isError: true };
     }
     if (!fs.existsSync(abs)) {
+      const hint = await pathNotFoundHint(logical, ctx.workspace);
       return {
-        output: `apply_patch failed: update target missing: ${hunk.path}`,
+        output: `apply_patch failed: update target missing: ${hunk.path}${hint ? `\n${hint}` : ""}`,
         isError: true,
       };
+    }
+    try {
+      if (fs.statSync(abs).isDirectory()) {
+        return {
+          output: `apply_patch failed: update target is a directory: ${hunk.path} (pass a file path)`,
+          isError: true,
+        };
+      }
+    } catch {
+      /* fall through to read */
     }
     let original: string;
     try {

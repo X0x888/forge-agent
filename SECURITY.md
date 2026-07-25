@@ -20,13 +20,16 @@ Email or private channel preferred when available; otherwise open a minimal publ
 ## Hardening already in place
 
 - Auth store written mode `0600`
+- Preferences + saved always-allow rules (`preferences.json`, `permissions.json`) written mode `0600` (`forge doctor` / `doctor --json` flags otherwise and exits `1`)
 - Fail-closed headless permissions
 - Segment-strict allow rules; deny wins under YOLO
 - Protected paths (`.git`, `.forge`, credentials) — including paths inside `apply_patch` hunks
 - OS sandbox profiles (`workspace` / `read-only` / `strict`) with fail-closed missing backend
 - Atomic file writes (tmp+rename) for `write_file` / `search_replace` / `apply_patch`
+- Session file lock (`session.lock`) on REPL + `forge run`; auto-resume skips foreign live locks
 - SSRF guards on `web_fetch`
 - Shell env scrubbing for secret-looking variables
 - Project config cannot force `bypassPermissions`, turn sandbox off, or redirect credential paths
+- JSON config loaders clone object fallbacks (no shared mutable empty stores)
 
 See [docs/SAFETY.md](./docs/SAFETY.md) and [docs/PRODUCTION.md](./docs/PRODUCTION.md).

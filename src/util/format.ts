@@ -147,13 +147,13 @@ export function estimateCostUsd(
   promptTokens: number,
   completionTokens: number,
 ): number {
-  // Very rough mid-tier averages ($/1M tokens)
+  // Very rough mid-tier averages ($/1M tokens) — HUD/cost estimates only
   const rates: Record<string, { in: number; out: number }> = {
     xai: { in: 3, out: 15 },
     anthropic: { in: 3, out: 15 },
     openai: { in: 2.5, out: 10 },
     openrouter: { in: 3, out: 15 },
-    google: { in: 1.25, out: 5 },
+    google: { in: 1.25, out: 10 },
   };
   const r = rates[provider] || { in: 3, out: 12 };
   return (promptTokens * r.in + completionTokens * r.out) / 1_000_000;

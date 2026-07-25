@@ -37,7 +37,20 @@ function pidAlive(pid: number): boolean {
 export function readSessionLock(sessionId: string): SessionLockInfo | null {
   try {
     const raw = fs.readFileSync(lockPath(sessionId), "utf8");
-    return JSON.parse(raw) as SessionLockInfo;
+    const data = JSON.parse(raw) as Partial<SessionLockInfo> | null;
+    if (!data || typeof data !== "object" || Array.isArray(data)) return null;
+    const pid = Number(data.pid);
+    // Corrupt / incomplete lock files are treated as absent so acquire can
+    // recover instead of blocking forever on garbage JSON.
+    if (!Number.isFinite(pid) || pid <= 0) return null;
+    return {
+      pid: Math.trunc(pid),
+      hostname: typeof data.hostname === "string" ? data.hostname : "unknown",
+      acquiredAt:
+        typeof data.acquiredAt === "string" ? data.acquiredAt : "",
+      sessionId:
+        typeof data.sessionId === "string" ? data.sessionId : sessionId,
+    };
   } catch {
     return null;
   }
@@ -68,7 +81,10 @@ export function acquireSessionLock(
   const existing = readSessionLock(sessionId);
 
   if (existing) {
-    const age = Date.now() - Date.parse(existing.acquiredAt || "") || Infinity;
+    const acquiredMs = Date.parse(existing.acquiredAt || "");
+    const age = Number.isFinite(acquiredMs)
+      ? Date.now() - acquiredMs
+      : Infinity;
     const alive = pidAlive(existing.pid);
     const mine = existing.pid === process.pid;
     if (mine) {
@@ -113,6 +129,11 @@ function writeLock(sessionId: string): void {
   const tmp = `${file}.${process.pid}.tmp`;
   fs.writeFileSync(tmp, JSON.stringify(info, null, 2) + "\n", { mode: 0o600 });
   fs.renameSync(tmp, file);
+  try {
+    fs.chmodSync(file, 0o600);
+  } catch {
+    /* windows / some FS ignore mode */
+  }
 }
 
 /** Release only if we own the lock. */

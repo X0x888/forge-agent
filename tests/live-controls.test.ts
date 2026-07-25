@@ -6,6 +6,7 @@ import path from "node:path";
 import {
   classifyLiveSlash,
   isLiveSafeSlash,
+  isSafeDiffFilterArg,
   handleSlash,
   LIVE_CONTROLS_HINT,
 } from "../src/commands/slash.js";
@@ -48,16 +49,24 @@ describe("live mid-run slash policy", () => {
     assert.equal(classifyLiveSlash("/goal status"), "readonly");
     assert.equal(classifyLiveSlash("/sessions"), "readonly");
     assert.equal(classifyLiveSlash("/sessions list"), "readonly");
+    assert.equal(classifyLiveSlash("/sessions all"), "readonly");
+    assert.equal(classifyLiveSlash("/sessions search incident"), "readonly");
+    assert.equal(classifyLiveSlash("/sessions incident-42"), "readonly");
     assert.equal(classifyLiveSlash("/diff"), "readonly");
     assert.equal(classifyLiveSlash("/metrics"), "readonly");
     assert.equal(classifyLiveSlash("/cost"), "readonly");
     assert.equal(classifyLiveSlash("/title"), "readonly");
     assert.equal(classifyLiveSlash("/rename"), "readonly");
+    assert.equal(classifyLiveSlash("/permissions"), "readonly");
+    assert.equal(classifyLiveSlash("/permissions list"), "readonly");
+    assert.equal(classifyLiveSlash("/copy"), "readonly");
     assert.ok(isLiveSafeSlash("/status"));
     assert.ok(isLiveSafeSlash("/sessions"));
     assert.ok(isLiveSafeSlash("/diff"));
     assert.ok(isLiveSafeSlash("/metrics"));
     assert.ok(isLiveSafeSlash("/title"));
+    assert.ok(isLiveSafeSlash("/permissions list"));
+    assert.ok(isLiveSafeSlash("/copy"));
   });
 
   it("allows title rename mid-run as control", () => {
@@ -90,9 +99,12 @@ describe("live mid-run slash policy", () => {
     assert.equal(classifyLiveSlash("/model grok-4"), "idle-only");
     assert.equal(classifyLiveSlash("/sessions delete abc"), "idle-only");
     assert.equal(classifyLiveSlash("/sessions prune"), "idle-only");
+    assert.equal(classifyLiveSlash("/permissions clear"), "idle-only");
+    assert.equal(classifyLiveSlash("/permissions bypassPermissions"), "idle-only");
     assert.equal(classifyLiveSlash("not a slash"), "idle-only");
     assert.equal(isLiveSafeSlash("/ulw fix it"), false);
     assert.equal(isLiveSafeSlash("/sessions delete x"), false);
+    assert.equal(isLiveSafeSlash("/permissions clear"), false);
   });
 
   it("exposes a usable hint string", () => {
@@ -214,5 +226,63 @@ describe("mid-run /cycle affects stop-guard without abort", () => {
 
     const notices = drainLiveNotices(session.meta.id);
     assert.ok(notices.some((n) => /disarm|ulw-off/i.test(n)));
+  });
+
+  it("/diff does not shell-interpolate filter args", async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-diff-safe-"));
+    process.env.FORGE_HOME = tmp;
+    // Marker must NOT be created if injection were possible via shell
+    const marker = path.join(tmp, "pwned-diff-marker");
+    const session = createSession({
+      cwd: process.cwd(), // real git repo
+      provider: "xai",
+      model: "test",
+    });
+    const hooks = new HookRunner(DEFAULT_CONFIG, tmp);
+    const evil = `/diff ; touch ${marker}`;
+    const r = await handleSlash(evil, {
+      session,
+      config: { ...DEFAULT_CONFIG, workspace: process.cwd() },
+      hooks,
+    });
+    assert.equal(r.handled, true);
+    assert.equal(fs.existsSync(marker), false, "shell injection must not run");
+    // Either a normal git error/output or unavailable — never side-effect
+    assert.ok(typeof r.output === "string" && r.output.length > 0);
+  });
+
+  it("isSafeDiffFilterArg allowlists pathspecs and denies write sinks", () => {
+    assert.equal(isSafeDiffFilterArg("src/cli.ts"), true);
+    assert.equal(isSafeDiffFilterArg("HEAD"), true);
+    assert.equal(isSafeDiffFilterArg("main...HEAD"), true);
+    assert.equal(isSafeDiffFilterArg("--cached"), true);
+    assert.equal(isSafeDiffFilterArg("--name-only"), true);
+    assert.equal(isSafeDiffFilterArg("-U5"), true);
+    assert.equal(isSafeDiffFilterArg("--"), true);
+    assert.equal(isSafeDiffFilterArg("--output=/tmp/x"), false);
+    assert.equal(isSafeDiffFilterArg("--output"), false);
+    assert.equal(isSafeDiffFilterArg("--ext-diff"), false);
+    assert.equal(isSafeDiffFilterArg("--git-dir=/tmp"), false);
+    assert.equal(isSafeDiffFilterArg("-c"), false);
+  });
+
+  it("/diff rejects --output write sink before invoking git", async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-diff-out-"));
+    process.env.FORGE_HOME = tmp;
+    const sink = path.join(tmp, "evil-diff-out");
+    const session = createSession({
+      cwd: process.cwd(),
+      provider: "xai",
+      model: "test",
+    });
+    const hooks = new HookRunner(DEFAULT_CONFIG, tmp);
+    const r = await handleSlash(`/diff --output=${sink}`, {
+      session,
+      config: { ...DEFAULT_CONFIG, workspace: process.cwd() },
+      hooks,
+    });
+    assert.equal(r.handled, true);
+    assert.match(String(r.output || ""), /Rejected \/diff filter/i);
+    assert.equal(fs.existsSync(sink), false);
   });
 });

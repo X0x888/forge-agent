@@ -1,4 +1,4 @@
-import { execSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import path from "node:path";
 import fs from "node:fs";
 
@@ -17,13 +17,14 @@ export interface GitSnapshot {
   upstream?: string;
 }
 
+/** Argv-based git (no shell) — args are fixed literals from this module. */
 function git(
-  args: string,
+  args: string[],
   cwd: string,
   timeout = 2000,
 ): string | null {
   try {
-    return execSync(`git ${args}`, {
+    return execFileSync("git", args, {
       cwd,
       encoding: "utf8",
       stdio: ["ignore", "pipe", "ignore"],
@@ -37,20 +38,22 @@ function git(
 /** Best-effort git summary for system prompt / banner (never throws). */
 export function getGitSnapshot(cwd: string): GitSnapshot {
   try {
-    const root = git("rev-parse --show-toplevel", cwd);
+    const root = git(["rev-parse", "--show-toplevel"], cwd);
     if (!root) return {};
-    const branch = git("rev-parse --abbrev-ref HEAD", root) || undefined;
-    const status = git("status --porcelain", root, 3000) || "";
+    const branch =
+      git(["rev-parse", "--abbrev-ref", "HEAD"], root) || undefined;
+    const status = git(["status", "--porcelain"], root, 3000) || "";
     const changedFiles = status
       ? status.split("\n").filter((l) => l.trim()).length
       : 0;
-    const remote = git("config --get remote.origin.url", root) || undefined;
+    const remote =
+      git(["config", "--get", "remote.origin.url"], root) || undefined;
 
     let ahead: number | undefined;
     let behind: number | undefined;
     let upstream: string | undefined;
     const ab = git(
-      "rev-list --left-right --count @{upstream}...HEAD",
+      ["rev-list", "--left-right", "--count", "@{upstream}...HEAD"],
       root,
       3000,
     );
@@ -63,8 +66,15 @@ export function getGitSnapshot(cwd: string): GitSnapshot {
       }
     }
     upstream =
-      git("rev-parse --abbrev-ref --symbolic-full-name @{upstream}", root) ||
-      undefined;
+      git(
+        [
+          "rev-parse",
+          "--abbrev-ref",
+          "--symbolic-full-name",
+          "@{upstream}",
+        ],
+        root,
+      ) || undefined;
 
     return {
       root,

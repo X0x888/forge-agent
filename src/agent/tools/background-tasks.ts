@@ -460,6 +460,45 @@ export function killTask(id: string): string {
   return `Killed task ${id} (pid ${task.pid ?? "n/a"})`;
 }
 
+/**
+ * Terminate all in-process background shell tasks (REPL exit / process teardown).
+ * SIGTERM first; optional immediate SIGKILL for hard exit paths.
+ * Returns how many running tasks were signalled.
+ */
+export function killAllRunningTasks(opts?: {
+  /** When true, send SIGKILL immediately (no 2s grace). Default false. */
+  force?: boolean;
+}): number {
+  let n = 0;
+  for (const task of tasks.values()) {
+    if (task.status !== "running") continue;
+    n += 1;
+    try {
+      if (opts?.force) {
+        task.child?.kill("SIGKILL");
+      } else {
+        task.child?.kill("SIGTERM");
+        const child = task.child;
+        setTimeout(() => {
+          try {
+            if (task.status === "running" || task.status === "killed") {
+              child?.kill("SIGKILL");
+            }
+          } catch {
+            /* */
+          }
+        }, 1500);
+      }
+    } catch {
+      /* */
+    }
+    task.status = "killed";
+    task.endedAt = Date.now();
+  }
+  if (n > 0) publishBgActivity();
+  return n;
+}
+
 /** Test helper */
 export function _resetTasksForTests(): void {
   for (const t of tasks.values()) {
@@ -471,4 +510,25 @@ export function _resetTasksForTests(): void {
   }
   tasks.clear();
   publishBgActivity();
+}
+
+let exitHookInstalled = false;
+
+/**
+ * Best-effort safety net: if the process dies without going through REPL/headless
+ * teardown, still try to kill in-process background shells.
+ * Idempotent; safe to call multiple times.
+ */
+export function installBackgroundTaskExitHook(): void {
+  if (exitHookInstalled) return;
+  exitHookInstalled = true;
+  const run = () => {
+    try {
+      killAllRunningTasks({ force: true });
+    } catch {
+      /* */
+    }
+  };
+  process.once("exit", run);
+  process.once("beforeExit", run);
 }

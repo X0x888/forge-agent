@@ -22,7 +22,19 @@ interface Store {
   allows: SavedAllow[];
 }
 
-const EMPTY: Store = { version: 1, allows: [] };
+/** Fresh empty store (readJsonFile also clones object fallbacks). */
+function emptyStore(): Store {
+  return { version: 1, allows: [] };
+}
+
+function loadStore(): Store {
+  const raw = readJsonFile<Store>(storePath(), emptyStore());
+  // Defensive copy so callers never mutate a shared fallback or stale ref
+  return {
+    version: 1,
+    allows: Array.isArray(raw.allows) ? [...raw.allows] : [],
+  };
+}
 
 function storePath(): string {
   return path.join(forgeHome(), "permissions.json");
@@ -34,7 +46,7 @@ export function workspaceKey(workspace: string): string {
 }
 
 export function loadSavedAllows(workspace?: string): SavedAllow[] {
-  const store = readJsonFile<Store>(storePath(), EMPTY);
+  const store = loadStore();
   if (!workspace) return store.allows;
   const key = workspaceKey(workspace);
   return store.allows.filter((a) => a.workspaceKey === key || a.workspaceKey === "*");
@@ -46,7 +58,7 @@ export function addSavedAllow(opts: {
   pattern: string;
   global?: boolean;
 }): SavedAllow {
-  const store = readJsonFile<Store>(storePath(), EMPTY);
+  const store = loadStore();
   const entry: SavedAllow = {
     id: `pa_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
     workspaceKey: opts.global ? "*" : workspaceKey(opts.workspace),
@@ -69,7 +81,7 @@ export function addSavedAllow(opts: {
 }
 
 export function removeSavedAllow(id: string): boolean {
-  const store = readJsonFile<Store>(storePath(), EMPTY);
+  const store = loadStore();
   const before = store.allows.length;
   store.allows = store.allows.filter((a) => a.id !== id);
   if (store.allows.length === before) return false;
@@ -78,7 +90,7 @@ export function removeSavedAllow(id: string): boolean {
 }
 
 export function clearSavedAllows(workspace?: string): number {
-  const store = readJsonFile<Store>(storePath(), EMPTY);
+  const store = loadStore();
   const before = store.allows.length;
   if (!workspace) {
     store.allows = [];

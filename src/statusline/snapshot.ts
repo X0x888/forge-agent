@@ -259,12 +259,13 @@ export async function collectSnapshots(
     const s = loadSession(opts.sessionId);
     if (s) sessions = [s];
   } else {
-    const metas = listSessions(opts.all ? 50 : 20);
+    // Native cwd filter before limit so multi-project experts don't miss
+    // same-cwd sessions buried under other workspaces' recent activity.
+    const metas = listSessions({
+      limit: opts.all ? 50 : 20,
+      ...(opts.cwd ? { cwd: opts.cwd } : {}),
+    });
     for (const m of metas) {
-      if (opts.cwd) {
-        const resolved = path.resolve(opts.cwd);
-        if (path.resolve(m.cwd) !== resolved) continue;
-      }
       const s = loadSession(m.id);
       if (s) sessions.push(s);
     }

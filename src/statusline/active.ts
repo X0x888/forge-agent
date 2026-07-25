@@ -36,7 +36,14 @@ function registryPath(): string {
 }
 
 export function loadActiveRegistry(): ActiveRegistry {
-  return readJsonFile<ActiveRegistry>(registryPath(), { version: 1, sessions: {} });
+  const raw = readJsonFile<ActiveRegistry>(registryPath(), {
+    version: 1,
+    sessions: {},
+  });
+  return {
+    version: 1,
+    sessions: { ...(raw.sessions || {}) },
+  };
 }
 
 export function saveActiveRegistry(reg: ActiveRegistry): void {

@@ -71,15 +71,17 @@ ask = [
 | Key | Meaning |
 |-----|---------|
 | `y` | Allow once |
-| `a` | Always allow this command **prefix** (arity-aware, e.g. `git status *`); persisted under `~/.forge/permissions.json` |
+| `a` | Always allow this command **prefix** (arity-aware, e.g. `git status *`); persisted under `~/.forge/permissions.json` (mode `0600`) |
 | `s` | Session-always for this **tool name** |
 | `n` | Reject |
 
 ```text
-/permissions list
+/permissions list              # live-safe mid-run
 /permissions clear
 /permissions revoke <id>
 ```
+
+`forge doctor` reports saved always-allow count and flags a world-readable `permissions.json`.
 
 ### External directory (OpenCode)
 
@@ -160,7 +162,8 @@ forge run "…" --permission-mode bypassPermissions
 - Project **hooks** still auto-load on trusted repos (you own the tree).  
 - Prefer disposable clones or git worktrees for YOLO + ULW.  
 - Windows has no OS sandbox backend.  
-- **Not** a full untrusted-repo / multi-tenant product bar.
+- **Not** a full untrusted-repo / multi-tenant product bar.  
+- REPL `/diff` uses argv-based `git` (`execFileSync`) so filter args are not shell-interpolated; filter tokens are allowlisted (pathspecs/refs + read-only flags only — no `--output` / `--ext-diff` / `--git-dir`).
 
 ## Comparison snapshot
 

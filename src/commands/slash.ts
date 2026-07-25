@@ -11,8 +11,9 @@ import type { SessionData } from "../session/session.js";
 import {
   saveSession,
   listSessions,
-  deleteSession,
+  deleteSessionDetailed,
   pruneSessions,
+  sessionHasForeignLiveLock,
   compactMessages,
   rewindSession,
   exportSessionMarkdown,
@@ -25,6 +26,7 @@ import {
   loadSession,
   estimateTokens,
 } from "../session/session.js";
+// readSessionLock already imported below for /sessions list
 import type { HookRunner } from "../harness/hooks.js";
 import type { ForgeConfig } from "../config/types.js";
 import { resolveSandboxNetwork } from "../config/types.js";
@@ -43,13 +45,17 @@ import { describeAuth, resolveAuth } from "../auth/resolve.js";
 import { printAuthStatus } from "../auth/login.js";
 import { getCredential, isExpired } from "../auth/store.js";
 import { providerTimeoutMs } from "../util/abort.js";
+import { copyToClipboard } from "../util/clipboard.js";
 import { envPositiveInt } from "../util/env.js";
 import { isBellEnabled } from "../util/attention.js";
+import { inspectSecureFile } from "../util/fs.js";
 import { getForgeVersion } from "../util/version.js";
 import { toolOutputStats } from "../agent/tools/truncate.js";
+import { listTasks } from "../agent/tools/background-tasks.js";
+import { loadSavedAllows } from "../agent/permission-saved.js";
 import { sandboxLogStats } from "../agent/sandbox-log.js";
 import { metricsStats } from "../session/metrics.js";
-import { readSessionLock } from "../session/lock.js";
+import { readSessionLock, formatLockHolder } from "../session/lock.js";
 import { permissionAskTimeoutMs } from "../agent/permissions.js";
 import {
   estimateCostUsd,
@@ -59,7 +65,8 @@ import {
 import chalk from "chalk";
 import fs from "node:fs";
 import path from "node:path";
-import { execSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
+import { tokenizeSimple } from "../agent/shell-parse.js";
 import {
   armUlwCycle,
   disarmUlwCycle,
@@ -115,6 +122,7 @@ const LIVE_READONLY = new Set([
   "/auth",
   "/doctor",
   "/diff",
+  "/copy", // clipboard last assistant reply — no session mutation
   "/sessions", // list only — delete/prune classified below
 ]);
 
@@ -156,9 +164,31 @@ export function classifyLiveSlash(line: string): LiveSlashKind {
   const { cmd, arg } = parsed;
   if (cmd === "/quit" || cmd === "/exit" || cmd === "/q") return "quit";
   if (cmd === "/sessions") {
-    // bare list is readonly; delete/prune mutate disk — idle-only
+    // list/search variants are readonly; delete/prune mutate disk — idle-only
     const verb = (arg.split(/\s+/)[0] || "").toLowerCase();
-    if (!verb || verb === "list") return "readonly";
+    if (
+      !verb ||
+      verb === "list" ||
+      verb === "ls" ||
+      verb === "all" ||
+      verb === "global" ||
+      verb === "-a" ||
+      verb === "q" ||
+      verb === "search" ||
+      verb === "find"
+    ) {
+      return "readonly";
+    }
+    // bare title/id query is also readonly (no disk mutation)
+    if (verb !== "delete" && verb !== "rm" && verb !== "remove" && verb !== "prune") {
+      return "readonly";
+    }
+    return "idle-only";
+  }
+  if (cmd === "/permissions") {
+    // bare menu / list are safe mid-run; mode changes + clear/revoke mutate prefs/disk
+    const verb = (arg.split(/\s+/)[0] || "").toLowerCase();
+    if (!verb || verb === "list" || verb === "status") return "readonly";
     return "idle-only";
   }
   if (LIVE_READONLY.has(cmd)) return "readonly";
@@ -189,6 +219,61 @@ export function classifyLiveSlash(line: string): LiveSlashKind {
 export function isLiveSafeSlash(line: string): boolean {
   const k = classifyLiveSlash(line);
   return k === "control" || k === "readonly" || k === "quit";
+}
+
+/**
+ * Allowlist for `/diff` filter tokens after shell-safe argv split.
+ * Blocks write sinks (`--output`), external diff/exec, and unknown flags.
+ * Exported for unit tests.
+ */
+export function isSafeDiffFilterArg(token: string): boolean {
+  if (!token || token.includes("\0")) return false;
+  // Pathspecs / refs / revisions (no leading dash, or single "-" for stdin pathspec rare)
+  if (token === "-") return false;
+  if (!token.startsWith("-")) return true;
+  // Double-dash ends options; allow as separator before pathspecs
+  if (token === "--") return true;
+  // Read-only diff presentation flags experts commonly pass
+  const allowedExact = new Set([
+    "--cached",
+    "--staged",
+    "--name-only",
+    "--name-status",
+    "--stat",
+    "--numstat",
+    "--shortstat",
+    "--compact-summary",
+    "--no-color",
+    "--color=never",
+    "--no-ext-diff",
+    "--no-textconv",
+    "--binary",
+    "--full-index",
+    "--find-renames",
+    "--find-copies",
+    "--break-rewrites",
+    "--ignore-space-change",
+    "--ignore-all-space",
+    "--ignore-blank-lines",
+    "--function-context",
+    "-w",
+    "-b",
+    "-R",
+    "-M",
+    "-C",
+    "-B",
+  ]);
+  if (allowedExact.has(token)) return true;
+  // -U3 / --unified=3
+  if (/^-U\d+$/.test(token)) return true;
+  if (/^--unified=\d+$/.test(token)) return true;
+  if (/^--stat=\d+$/.test(token)) return true;
+  // Explicitly reject known write / exec / config mutators even if unknown-flag policy changes
+  const denied =
+    /^(--output(=|$)|-o$|--output-indicator|--ext-diff|--textconv|--exec-path(=|$)|--git-dir(=|$)|--work-tree(=|$)|--namespace(=|$)|-c$|--config(=|$)|--upload-pack(=|$)|--receive-pack(=|$))/;
+  if (denied.test(token)) return false;
+  // Any other dashed token is denied (fail closed)
+  return false;
 }
 
 export const LIVE_CONTROLS_HINT =
@@ -464,7 +549,7 @@ export async function handleSlash(
         handled: true,
         output: `${header}\n${formatBackgroundTasksList()}\n` +
           chalk.dim(
-            "Agent starts these via bash { background: true }. Poll: get_task_output · kill: kill_task",
+            "Agent starts these via bash { background: true }. Poll: get_task_output · kill: kill_task · exit force-kills leftovers",
           ),
       };
     }
@@ -867,52 +952,67 @@ export async function handleSlash(
     case "/diff": {
       const cwd = opts.session.meta.cwd || opts.config.workspace || process.cwd();
       const extra = arg || "";
-      try {
-        // Safe read-only git view for experts reviewing agent work
-        const stat = execSync("git status --short", {
+      // Argv-based git only — never interpolate user text into a shell string
+      // (prevents `/diff '; rm -rf /'` style injection).
+      const filterArgs = extra ? tokenizeSimple(extra) : [];
+      if (filterArgs.some((t) => t.includes("\0"))) {
+        return {
+          handled: true,
+          output: "Invalid /diff filter (nul byte).",
+        };
+      }
+      // Deny git options that write files or change git context (read-only view).
+      const bad = filterArgs.find((t) => !isSafeDiffFilterArg(t));
+      if (bad) {
+        return {
+          handled: true,
+          output:
+            `Rejected /diff filter token: ${bad}\n` +
+            `Allowed: pathspecs, refs (HEAD, main, abc123), and read-only flags ` +
+            `(--cached, --staged, --name-only, --name-status, --stat, -U<n>).`,
+        };
+      }
+      const git = (
+        args: string[],
+        timeoutMs: number,
+        maxBuffer = 1024 * 1024,
+      ): string =>
+        execFileSync("git", args, {
           cwd,
           encoding: "utf8",
           stdio: ["ignore", "pipe", "pipe"],
-          timeout: 8000,
-        }).trim();
+          timeout: timeoutMs,
+          maxBuffer,
+        });
+      try {
+        // Safe read-only git view for experts reviewing agent work
+        const stat = git(["status", "--short"], 8000).trim();
         let statDiff = "";
         try {
-          statDiff = execSync(extra ? `git --no-pager diff --stat ${extra}` : "git --no-pager diff --stat HEAD", {
-            cwd,
-            encoding: "utf8",
-            stdio: ["ignore", "pipe", "pipe"],
-            timeout: 12_000,
-          }).trim();
+          statDiff = git(
+            filterArgs.length
+              ? ["--no-pager", "diff", "--stat", ...filterArgs]
+              : ["--no-pager", "diff", "--stat", "HEAD"],
+            12_000,
+          ).trim();
         } catch {
-          statDiff = execSync("git --no-pager diff --stat", {
-            cwd,
-            encoding: "utf8",
-            stdio: ["ignore", "pipe", "pipe"],
-            timeout: 12_000,
-          }).trim();
+          statDiff = git(["--no-pager", "diff", "--stat"], 12_000).trim();
         }
         let patch = "";
         try {
-          patch = execSync(
-            extra
-              ? `git --no-pager diff --no-color ${extra}`
-              : "git --no-pager diff --no-color HEAD",
-            {
-              cwd,
-              encoding: "utf8",
-              stdio: ["ignore", "pipe", "pipe"],
-              timeout: 15_000,
-              maxBuffer: 2 * 1024 * 1024,
-            },
+          patch = git(
+            filterArgs.length
+              ? ["--no-pager", "diff", "--no-color", ...filterArgs]
+              : ["--no-pager", "diff", "--no-color", "HEAD"],
+            15_000,
+            2 * 1024 * 1024,
           );
         } catch {
-          patch = execSync("git --no-pager diff --no-color", {
-            cwd,
-            encoding: "utf8",
-            stdio: ["ignore", "pipe", "pipe"],
-            timeout: 15_000,
-            maxBuffer: 2 * 1024 * 1024,
-          });
+          patch = git(
+            ["--no-pager", "diff", "--no-color"],
+            15_000,
+            2 * 1024 * 1024,
+          );
         }
         const max = 12_000;
         const body =
@@ -925,7 +1025,7 @@ export async function handleSlash(
           stat ? `status:\n${stat}` : "status: clean",
           statDiff ? `\nstat:\n${statDiff}` : "",
           body.trim() ? `\ndiff:\n${body}` : "\n(no unstaged/HEAD diff)",
-          extra ? `\n(filter: ${extra})` : "",
+          filterArgs.length ? `\n(filter: ${filterArgs.join(" ")})` : "",
         ]
           .filter(Boolean)
           .join("\n");
@@ -941,24 +1041,18 @@ export async function handleSlash(
     case "/copy": {
       const text = lastAssistantText(opts.session);
       if (!text) return { handled: true, output: "No assistant message to copy." };
-      try {
-        if (process.platform === "darwin") {
-          execSync("pbcopy", { input: text });
-        } else if (process.platform === "linux") {
-          execSync("xclip -selection clipboard", { input: text });
-        } else {
-          return {
-            handled: true,
-            output: text.slice(0, 2000) + (text.length > 2000 ? "\n…" : ""),
-          };
-        }
-        return { handled: true, output: `Copied last assistant reply (${text.length} chars).` };
-      } catch {
+      const result = copyToClipboard(text);
+      if (result.ok) {
         return {
           handled: true,
-          output: "Clipboard unavailable. Last reply:\n\n" + text.slice(0, 2000),
+          output: `Copied last assistant reply (${text.length} chars via ${result.backend}).`,
         };
       }
+      const preview = text.slice(0, 2000) + (text.length > 2000 ? "\n…" : "");
+      return {
+        handled: true,
+        output: `Clipboard unavailable (${result.error}). Last reply:\n\n${preview}`,
+      };
     }
 
     case "/new":
@@ -971,33 +1065,49 @@ export async function handleSlash(
           session: opts.session,
         };
       }
+      // /new [title] — optional label (parity with forge --title / createSession title)
+      const titleArg =
+        cmd === "/new" && arg.trim() ? arg.trim() : undefined;
       const s = createSession({
         cwd: opts.session.meta.cwd,
         provider: opts.config.provider,
         model: opts.config.model,
         ultrawork: opts.session.meta.ultrawork,
+        title: titleArg,
       });
+      const titleNote = s.meta.title ? ` — ${s.meta.title}` : "";
       return {
         handled: true,
-        output: `New session ${s.meta.id.slice(0, 8)}`,
+        output: `New session ${s.meta.id.slice(0, 8)}${titleNote}`,
         replaceSession: s,
       };
     }
 
     case "/resume": {
-      if (!arg) {
-        const list = listSessions(10);
+      if (!arg || arg === "all" || arg === "global" || arg === "-a") {
+        const ws = opts.session.meta.cwd || opts.config.workspace || process.cwd();
+        const showAll = arg === "all" || arg === "global" || arg === "-a";
+        const list = listSessions({
+          limit: 10,
+          ...(showAll ? {} : { cwd: ws }),
+        });
+        const scope = showAll ? "all workspaces" : `cwd=${ws}`;
         return {
           handled: true,
           output:
             list.length === 0
-              ? "No sessions. Usage: /resume <session-id-prefix>"
-              : `Usage: /resume <session-id-prefix>\n\nRecent:\n${list
-                  .map(
-                    (s) =>
-                      `  ${s.id.slice(0, 8)}  ${(s.title || "").slice(0, 40).padEnd(40)}  ${s.model}`,
-                  )
-                  .join("\n")}`,
+              ? showAll
+                ? "No sessions. Usage: /resume <session-id-prefix>"
+                : `No sessions for this workspace. Try: /resume all`
+              : `Usage: /resume <session-id-prefix>  ·  ${scope}\n\nRecent:\n${list
+                  .map((s) => {
+                    const lock = readSessionLock(s.id);
+                    const lockNote = lock ? `  LOCK pid ${lock.pid}` : "";
+                    const cwdNote =
+                      showAll && s.cwd ? `  ${path.basename(s.cwd)}` : "";
+                    return `  ${s.id.slice(0, 8)}  ${(s.title || "").slice(0, 40).padEnd(40)}  ${s.model}${lockNote}${cwdNote}`;
+                  })
+                  .join("\n")}${showAll ? "" : chalk.dim("\n\n/resume all — every workspace")}`,
         };
       }
       const loaded = loadSession(arg);
@@ -1005,9 +1115,17 @@ export async function handleSlash(
         return { handled: true, output: `Session not found: ${arg}` };
       }
       opts.config.model = loaded.meta.model;
+      let lockWarn = "";
+      if (sessionHasForeignLiveLock(loaded.meta.id)) {
+        const lock = readSessionLock(loaded.meta.id);
+        lockWarn =
+          `\n⚠ Session is locked by another live process` +
+          (lock ? ` (${formatLockHolder(lock)})` : "") +
+          `. Concurrent writes may race — prefer one writer, or wait until the other REPL exits.`;
+      }
       return {
         handled: true,
-        output: `Resumed ${loaded.meta.id.slice(0, 8)} — ${loaded.meta.title || "untitled"} (${loaded.messages.length} msgs)`,
+        output: `Resumed ${loaded.meta.id.slice(0, 8)} — ${loaded.meta.title || "untitled"} (${loaded.messages.length} msgs)${lockWarn}`,
         replaceSession: loaded,
       };
     }
@@ -1018,7 +1136,10 @@ export async function handleSlash(
       if (sub === "delete" || sub === "rm" || sub === "remove") {
         const target = parts[1] || "";
         if (!target) {
-          return { handled: true, output: "Usage: /sessions delete <id-prefix>" };
+          return {
+            handled: true,
+            output: "Usage: /sessions delete <id-prefix> [--force]",
+          };
         }
         if (target === opts.session.meta.id || opts.session.meta.id.startsWith(target)) {
           return {
@@ -1026,10 +1147,23 @@ export async function handleSlash(
             output: "Cannot delete the active session. /new first, then delete.",
           };
         }
-        const ok = deleteSession(target);
+        const force = parts.some((p) => p === "--force" || p === "-f");
+        const result = deleteSessionDetailed(target, { force });
+        if (result.ok) {
+          return { handled: true, output: `Deleted session ${result.id}` };
+        }
+        if (result.reason === "locked") {
+          return {
+            handled: true,
+            output:
+              `Session locked by another live process` +
+              (result.id ? ` (${result.id.slice(0, 8)})` : "") +
+              `. Use /sessions delete ${target} --force to override.`,
+          };
+        }
         return {
           handled: true,
-          output: ok ? `Deleted session ${target}` : `Session not found: ${target}`,
+          output: `Session not found: ${target}`,
         };
       }
       if (sub === "prune") {
@@ -1039,13 +1173,61 @@ export async function handleSlash(
           keep: Number.isFinite(keep) && keep > 0 ? keep : 50,
           protectIds: [opts.session.meta.id],
         });
+        const lockNote = result.skippedLocked
+          ? `; skipped ${result.skippedLocked} foreign-locked`
+          : "";
         return {
           handled: true,
-          output: `Pruned ${result.deleted.length} session(s); kept ${result.kept} (active protected). CLI: forge sessions prune --keep 50`,
+          output: `Pruned ${result.deleted.length} session(s); kept ${result.kept} (active protected${lockNote}). CLI: forge sessions prune --keep 50`,
         };
       }
-      const list = listSessions(15);
-      if (!list.length) return { handled: true, output: "No sessions yet." };
+      // Default: same-cwd sessions (multi-project experts). /sessions all|global for everything.
+      // /sessions q <text> or /sessions search <text> filters by id/title substring.
+      const ws = opts.session.meta.cwd || opts.config.workspace || process.cwd();
+      let listMode: "cwd" | "all" = "cwd";
+      let query: string | undefined;
+      if (sub === "all" || sub === "global" || sub === "-a") {
+        listMode = "all";
+      } else if (sub === "q" || sub === "search" || sub === "find") {
+        query = parts.slice(1).join(" ").trim() || undefined;
+        if (!query) {
+          return {
+            handled: true,
+            output: "Usage: /sessions search <id-or-title-substring>",
+          };
+        }
+        listMode = "all";
+      } else if (sub && !["list", "ls"].includes(sub)) {
+        // bare query token: /sessions incident
+        query = parts.join(" ").trim() || undefined;
+        listMode = "all";
+      }
+      const list = listSessions({
+        limit: 15,
+        ...(listMode === "cwd" && !query ? { cwd: ws } : {}),
+        ...(query ? { query } : {}),
+      });
+      if (!list.length) {
+        if (query) {
+          return {
+            handled: true,
+            output: `No sessions matching ${JSON.stringify(query)}.`,
+          };
+        }
+        if (listMode === "cwd") {
+          return {
+            handled: true,
+            output: `No sessions for this workspace.\nTry: /sessions all  ·  CLI: forge sessions list --cwd .`,
+          };
+        }
+        return { handled: true, output: "No sessions yet." };
+      }
+      const scopeNote =
+        query
+          ? `search=${JSON.stringify(query)}`
+          : listMode === "cwd"
+            ? `cwd=${ws}`
+            : "all workspaces";
       return {
         handled: true,
         output:
@@ -1058,19 +1240,28 @@ export async function handleSlash(
                 opts.session.meta.id.startsWith(s.id.slice(0, 8))
                   ? " *"
                   : "";
-              return `${s.id.slice(0, 8)}  ${s.updatedAt.slice(0, 19)}  ${(s.title || "").slice(0, 36).padEnd(36)}  ${s.model}  t=${s.turnCount}${s.ultrawork ? " ULW" : ""}${active}${lockNote}`;
+              const cwdNote =
+                listMode === "all" && s.cwd
+                  ? `  ${path.basename(s.cwd)}`
+                  : "";
+              return `${s.id.slice(0, 8)}  ${s.updatedAt.slice(0, 19)}  ${(s.title || "").slice(0, 36).padEnd(36)}  ${s.model}  t=${s.turnCount}${s.ultrawork ? " ULW" : ""}${active}${lockNote}${cwdNote}`;
             })
             .join("\n") +
           chalk.dim(
-            "\n\n* = active  ·  /sessions delete <id>  ·  prune [--keep=50]  ·  /resume <id>\nCLI: forge sessions show|export|import|fork <id>",
+            `\n\n* = active  ·  ${scopeNote}  ·  /sessions [all|search <q>]  ·  delete <id> [--force]  ·  prune [--keep=50]  ·  /resume <id>\nCLI: forge sessions list --cwd .  ·  show|export|import|fork|delete <id>`,
           ),
       };
     }
 
     case "/permissions": {
       const choices = COMMAND_PARAMS.permissions;
+      const modeChoices = choices.filter((c) =>
+        ["default", "acceptEdits", "plan", "bypassPermissions"].includes(c.value),
+      );
       const sub = arg.trim();
-      if (sub === "list" || sub.startsWith("list ")) {
+      const verb = (sub.split(/\s+/)[0] || "").toLowerCase();
+      // Management verbs (also via menu numbers after modes)
+      if (verb === "list" || sub.startsWith("list ")) {
         const { loadSavedAllows } = await import("../agent/permission-saved.js");
         const ws = opts.config.workspace || process.cwd();
         const allows = loadSavedAllows(ws);
@@ -1084,13 +1275,19 @@ export async function handleSlash(
             .join("\n"),
         };
       }
-      if (sub === "clear") {
+      if (verb === "clear") {
         const { clearSavedAllows } = await import("../agent/permission-saved.js");
         const n = clearSavedAllows(opts.config.workspace || process.cwd());
         return { handled: true, output: `Cleared ${n} saved allow rule(s) for this workspace.` };
       }
-      if (sub.startsWith("revoke ")) {
-        const id = sub.slice("revoke ".length).trim();
+      if (verb === "revoke") {
+        const id = sub.slice(verb.length).trim();
+        if (!id) {
+          return {
+            handled: true,
+            output: "Usage: /permissions revoke <id>  (see /permissions list)",
+          };
+        }
         const { removeSavedAllow } = await import("../agent/permission-saved.js");
         const ok = removeSavedAllow(id);
         return {
@@ -1104,7 +1301,7 @@ export async function handleSlash(
           output:
             formatParamMenu(
               "/permissions",
-              choices,
+              modeChoices,
               opts.config.permissionMode,
             ) +
             chalk.dim(
@@ -1112,13 +1309,43 @@ export async function handleSlash(
             ),
         };
       }
+      // Resolve against full choices so Tab numbers for list/clear still work,
+      // but never assign management verbs as permissionMode.
       const resolved = resolveParamChoice(arg, choices);
       if (!resolved) {
         return {
           handled: true,
           output:
             chalk.yellow(`Unknown mode: ${arg}\n`) +
-            formatParamMenu("/permissions", choices, opts.config.permissionMode),
+            formatParamMenu("/permissions", modeChoices, opts.config.permissionMode),
+        };
+      }
+      if (resolved === "list") {
+        const { loadSavedAllows } = await import("../agent/permission-saved.js");
+        const ws = opts.config.workspace || process.cwd();
+        const allows = loadSavedAllows(ws);
+        if (!allows.length) {
+          return { handled: true, output: "No saved allow rules for this workspace." };
+        }
+        return {
+          handled: true,
+          output: allows
+            .map((a) => `${a.id}  ${a.tool}(${a.pattern})  ws=${a.workspaceKey}`)
+            .join("\n"),
+        };
+      }
+      if (resolved === "clear") {
+        const { clearSavedAllows } = await import("../agent/permission-saved.js");
+        const n = clearSavedAllows(opts.config.workspace || process.cwd());
+        return {
+          handled: true,
+          output: `Cleared ${n} saved allow rule(s) for this workspace.`,
+        };
+      }
+      if (resolved === "revoke") {
+        return {
+          handled: true,
+          output: "Usage: /permissions revoke <id>  (see /permissions list)",
         };
       }
       opts.config.permissionMode = resolved as ForgeConfig["permissionMode"];
@@ -1245,7 +1472,54 @@ function handleGoal(arg: string, session: SessionData): SlashResult {
   }
 }
 
-export function runDoctor(config: ForgeConfig): string {
+/**
+ * Report presence + mode bits for sensitive JSON under FORGE_HOME.
+ * Owner-only (0600) is required; group/world bits become doctor issues.
+ * Uses inspectSecureFile so text + --json share one mode check.
+ */
+function pushSecureFileStatus(
+  lines: string[],
+  issues: string[],
+  filePath: string,
+  label: string,
+  opts?: { required?: boolean; missingLabel?: string },
+): void {
+  const name = label.padEnd(16);
+  const info = inspectSecureFile(filePath);
+  if (!info.exists) {
+    if (opts?.required || opts?.missingLabel !== undefined) {
+      lines.push(`  ${name} ${opts?.missingLabel ?? "no"}`);
+    }
+    return;
+  }
+  if (info.mode != null) {
+    const modeOk = info.modeOk !== false;
+    lines.push(
+      `  ${name} yes (mode ${info.mode}${modeOk ? "" : chalk.red(" — should be 600")})`,
+    );
+    if (!modeOk) {
+      issues.push(`${label} is group/world-readable — expected mode 0600`);
+    }
+    return;
+  }
+  lines.push(`  ${name} yes`);
+}
+
+/** Structured doctor result — CI should prefer `ok`/`issues` over report-text regex. */
+export interface DoctorResult {
+  report: string;
+  issues: string[];
+  /** True when no blocking issues (auth missing, insecure modes, Blocking Stop OFF, …). */
+  ok: boolean;
+  authenticated: boolean;
+  blockingStop: boolean;
+}
+
+/**
+ * Full doctor check with structured fields for `forge doctor --json`.
+ * Text report remains human-oriented (chalk); `ok`/`issues` are the CI contract.
+ */
+export function runDoctorCheck(config: ForgeConfig): DoctorResult {
   const lines: string[] = [chalk.bold("Forge doctor"), ""];
   const issues: string[] = [];
   lines.push(`Version: ${getForgeVersion()}`);
@@ -1287,6 +1561,19 @@ export function runDoctor(config: ForgeConfig): string {
   }
   lines.push(`Permission mode: ${config.permissionMode}`);
   {
+    try {
+      const ws = config.workspace || process.cwd();
+      const allows = loadSavedAllows(ws);
+      if (allows.length > 0) {
+        lines.push(
+          `Saved always-allows: ${allows.length} for this workspace (/permissions list · clear)`,
+        );
+      }
+    } catch {
+      /* optional */
+    }
+  }
+  {
     const prefs = loadPreferences();
     const bits = [
       prefs.model ? `model=${prefs.model}` : null,
@@ -1327,6 +1614,10 @@ export function runDoctor(config: ForgeConfig): string {
   lines.push(`Blocking Stop: ${config.blockingStopHooks ? "on" : "off"}`);
   if (!config.blockingStopHooks) {
     lines.push(chalk.yellow("  ⚠ Blocking Stop is OFF — harness Stop hooks cannot force continue"));
+    // Non-negotiable for production harness reliability (see AGENTS.md).
+    issues.push(
+      "Blocking Stop is OFF — enable blockingStopHooks (default true) so Stop hooks can force continue",
+    );
   }
   lines.push(`Goal gate: ${config.goal.enabled ? "on" : "off"} (stuck=${config.goal.stuckThreshold})`);
   lines.push(`Workspace: ${config.workspace || process.cwd()}`);
@@ -1377,24 +1668,35 @@ export function runDoctor(config: ForgeConfig): string {
   const home = process.env.FORGE_HOME || path.join(process.env.HOME || "", ".forge");
   lines.push(`FORGE_HOME: ${home}`);
   lines.push(`  config: ${fs.existsSync(path.join(home, "config.toml")) ? "yes" : "no"}`);
-  const authPath = path.join(home, "auth.json");
-  if (fs.existsSync(authPath)) {
-    try {
-      const st = fs.statSync(authPath);
-      const mode = (st.mode & 0o777).toString(8);
-      const modeOk = (st.mode & 0o077) === 0;
-      lines.push(`  auth:   yes (mode ${mode}${modeOk ? "" : chalk.red(" — should be 600")})`);
-      if (!modeOk) issues.push("auth.json is group/world-readable — expected mode 0600");
-    } catch {
-      lines.push(`  auth:   yes`);
-    }
-  } else {
-    lines.push(`  auth:   no`);
-  }
+  // Sensitive JSON stores must be owner-only (0600)
+  pushSecureFileStatus(lines, issues, path.join(home, "auth.json"), "auth", {
+    required: false,
+    missingLabel: "no",
+  });
+  pushSecureFileStatus(
+    lines,
+    issues,
+    path.join(home, "permissions.json"),
+    "permissions.json",
+  );
+  pushSecureFileStatus(
+    lines,
+    issues,
+    path.join(home, "preferences.json"),
+    "preferences.json",
+  );
   try {
-    const sessN = listSessions(10_000).length;
+    const sessions = listSessions(10_000);
+    const sessN = sessions.length;
+    let lockedN = 0;
+    for (const s of sessions) {
+      if (sessionHasForeignLiveLock(s.id)) lockedN += 1;
+    }
     lines.push(
       `  sessions: ${sessN}` +
+        (lockedN > 0
+          ? chalk.dim(` · ${lockedN} foreign-locked`)
+          : "") +
         (sessN > 80
           ? chalk.yellow(" — consider: forge sessions prune --keep 50")
           : ""),
@@ -1443,6 +1745,18 @@ export function runDoctor(config: ForgeConfig): string {
   } catch {
     /* optional */
   }
+  try {
+    // In-process only — useful when /doctor runs mid-REPL with bg shells alive
+    const tasks = listTasks();
+    const running = tasks.filter((t) => t.status === "running").length;
+    if (tasks.length > 0) {
+      lines.push(
+        `  background-tasks: ${running} running · ${tasks.length} total (this process)`,
+      );
+    }
+  } catch {
+    /* optional */
+  }
 
   lines.push("");
   if (issues.length === 0) {
@@ -1452,7 +1766,18 @@ export function runDoctor(config: ForgeConfig): string {
     for (const i of issues) lines.push(chalk.yellow(`  • ${i}`));
   }
 
-  return lines.join("\n");
+  return {
+    report: lines.join("\n"),
+    issues: [...issues],
+    ok: issues.length === 0,
+    authenticated: Boolean(auth),
+    blockingStop: config.blockingStopHooks !== false,
+  };
+}
+
+/** Human-readable doctor report (slash `/doctor` and plain `forge doctor`). */
+export function runDoctor(config: ForgeConfig): string {
+  return runDoctorCheck(config).report;
 }
 
 const HELP_TEXT = `
@@ -1475,19 +1800,19 @@ Forge slash commands
   /model <name> [effort] Switch model; optional low|medium|high (persists)
   /effort [level]       Reasoning effort for current model (low|medium|high)  [live]
   /permissions [mode]   Menu if empty; Tab / numbers / aliases (yolo, always…)
-                        Mode persists across sessions/folders
+                        Mode persists · list|clear|revoke for saved always-allows
   /compact              Compact conversation
   /rewind [n]           Undo last n user turns (/undo)
   /export [path] [--json]  Export session as markdown or JSON
   /fork [title]         Branch session into a new id (keep original)
   /title [name|clear]   Show / set / clear session title (/rename)  [live]
   /bell [on|off|test]   Terminal BEL when a turn ends (long-run attention)  [live]
-  /diff [path]          Git status + diff (review agent edits)  [live]
-  /copy                 Copy last assistant reply
-  /new                  Fresh session
+  /diff [path]          Git status + diff (argv-safe; pathspecs/refs only)  [live]
+  /copy                 Copy last assistant reply (pbcopy/wl-copy/xclip/…)  [live]
+  /new [title]          Fresh session (optional searchable label)
   /clear                Clear messages (same session)
-  /resume [id]          Resume a prior session
-  /sessions [delete|prune]  List / delete / prune (CLI: show|export|import|fork)
+  /resume [id|all]      Resume a prior session (picker defaults to same-cwd)
+  /sessions [all|search|delete|prune]  List (cwd default) / search / delete [--force] / prune
   /auth                 Show stored credentials  [live]
   /doctor               Environment health check  [live]
   /quit                 Exit  [live — aborts run then exits]
@@ -1504,7 +1829,7 @@ Tips
 ────
   ↑ / ↓           Command history (persisted in ~/.forge/history)
   Tab             Autocomplete commands and parameters
-  /permissions    Shows numbered modes — pick 1–4 or type name
+  /permissions    Modes 1–4 · list|clear|revoke for saved always-allows
   Live controls   While the agent is working you can still type:
                   /cycle 0  ·  /cycle 1  ·  /ulw-off  ·  /goal pause  ·  /status
                   (no need to Ctrl+C first — harness updates apply at next Stop)

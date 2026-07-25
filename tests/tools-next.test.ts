@@ -10,10 +10,13 @@ import {
   isBlockedForHost,
   isNonPublicIp,
 } from "../src/agent/tools/ssrf.js";
+import { htmlToText } from "../src/agent/tools/web-fetch.js";
 import { locateEdit, applyMatch } from "../src/agent/tools/edit-match.js";
 import {
   _resetTasksForTests,
   killTask,
+  killAllRunningTasks,
+  listTasks,
   readTaskOutput,
 } from "../src/agent/tools/background-tasks.js";
 
@@ -106,6 +109,35 @@ describe("block_anchor edit", () => {
   });
 });
 
+describe("web_fetch htmlToText", () => {
+  it("decodes common entities and strips tags/scripts", () => {
+    const out = htmlToText(
+      "<html><script>evil()</script><style>.x{}</style><body><h1>Hi&nbsp;&amp;&lt;x&gt;</h1><br>line</body></html>",
+    );
+    assert.match(out, /Hi &<x>/);
+    assert.match(out, /line/);
+    assert.doesNotMatch(out, /evil|script|style|\.x/i);
+    assert.doesNotMatch(out, /<h1>/);
+  });
+
+  it("never throws on invalid / out-of-range numeric entities", () => {
+    // Previously String.fromCodePoint threw RangeError on these
+    const nasty =
+      "ok &#x110000; &#xFFFFFFFF; &#999999999; &#xD800; &#xDFFF; &#-1; end";
+    assert.doesNotThrow(() => htmlToText(nasty));
+    const out = htmlToText(nasty);
+    assert.match(out, /^ok /);
+    assert.match(out, / end$/);
+    // Invalid entities preserved (or safely dropped) — must not crash the tool
+    assert.ok(out.includes("&#x110000;") || out.includes("ok"));
+  });
+
+  it("decodes valid hex/decimal code points", () => {
+    assert.equal(htmlToText("A&#x41;B&#66;C"), "AABBC");
+    assert.equal(htmlToText("smile &#x1F600;"), "smile 😀");
+  });
+});
+
 describe("web_fetch live local server", () => {
   it("fetches HTML and strips tags; blocks default local without allow_local", async () => {
     const server = http.createServer((_req, res) => {
@@ -133,6 +165,25 @@ describe("web_fetch live local server", () => {
     assert.equal(ok.isError, undefined, ok.output);
     assert.match(ok.output, /Hello Forge/);
     assert.doesNotMatch(ok.output, /<h1>/);
+
+    // Pre-aborted signal must cancel before network I/O
+    const ac = new AbortController();
+    ac.abort();
+    const aborted = await executeTool(
+      "web_fetch",
+      JSON.stringify({ url, allow_local: true }),
+      { workspace: tmpRoot, sandbox: "off", signal: ac.signal },
+    );
+    assert.equal(aborted.isError, true);
+    assert.match(aborted.output, /Aborted/i);
+
+    const searchAborted = await executeTool(
+      "web_search",
+      JSON.stringify({ query: "forge agent" }),
+      { workspace: tmpRoot, sandbox: "off", signal: ac.signal },
+    );
+    assert.equal(searchAborted.isError, true);
+    assert.match(searchAborted.output, /Aborted/i);
 
     await new Promise<void>((resolve, reject) =>
       server.close((e) => (e ? reject(e) : resolve())),
@@ -214,5 +265,108 @@ describe("background bash tasks", () => {
     const snap = await readTaskOutput(taskId, { tail: 20 });
     assert.match(snap, /status: killed|status: failed|status: completed/);
     void killTask; // imported for types
+  });
+
+  it("killAllRunningTasks stops every running bg shell", async () => {
+    _resetTasksForTests();
+    const ws = path.join(tmpRoot, "ws-killall");
+    await fsp.mkdir(ws, { recursive: true });
+    const ctx = { workspace: ws, sandbox: "off" as const };
+    for (let i = 0; i < 2; i++) {
+      const start = await executeTool(
+        "bash",
+        JSON.stringify({ command: "sleep 60", background: true }),
+        ctx,
+      );
+      assert.equal(start.isError, undefined, start.output);
+    }
+    assert.equal(listTasks().filter((t) => t.status === "running").length, 2);
+    const n = killAllRunningTasks({ force: true });
+    assert.equal(n, 2);
+    assert.equal(listTasks().filter((t) => t.status === "running").length, 0);
+    assert.ok(listTasks().every((t) => t.status === "killed"));
+    // Idempotent
+    assert.equal(killAllRunningTasks({ force: true }), 0);
+  });
+});
+
+describe("task-tools error paths", () => {
+  it("get_task_output / kill_task require task_id and list actives when present", async () => {
+    _resetTasksForTests();
+    const ws = path.join(tmpRoot, "ws-task-err");
+    await fsp.mkdir(ws, { recursive: true });
+    const ctx = { workspace: ws, sandbox: "off" as const };
+
+    const emptyOut = await executeTool("get_task_output", "{}", ctx);
+    assert.equal(emptyOut.isError, true);
+    assert.match(emptyOut.output, /task_id is required/i);
+    assert.match(emptyOut.output, /No background tasks/i);
+
+    const emptyKill = await executeTool("kill_task", "{}", ctx);
+    assert.equal(emptyKill.isError, true);
+    assert.match(emptyKill.output, /task_id is required/i);
+    assert.match(emptyKill.output, /No background tasks/i);
+
+    const unknown = await executeTool(
+      "get_task_output",
+      JSON.stringify({ task_id: "nope-xyz" }),
+      ctx,
+    );
+    assert.equal(unknown.isError, true);
+    assert.match(unknown.output, /Unknown task_id/i);
+
+    const start = await executeTool(
+      "bash",
+      JSON.stringify({ command: "sleep 30", background: true }),
+      ctx,
+    );
+    assert.equal(start.isError, undefined, start.output);
+    const m = start.output.match(/task_id[:\s]+([a-zA-Z0-9_-]+)/i);
+    assert.ok(m, start.output);
+
+    const listOut = await executeTool("get_task_output", "{}", ctx);
+    assert.equal(listOut.isError, true);
+    assert.match(listOut.output, /Active tasks/i);
+    assert.match(listOut.output, new RegExp(m![1]));
+
+    const listKill = await executeTool("kill_task", "{}", ctx);
+    assert.equal(listKill.isError, true);
+    assert.match(listKill.output, /Active tasks/i);
+    assert.match(listKill.output, new RegExp(m![1]));
+
+    killAllRunningTasks({ force: true });
+  });
+});
+
+describe("TOOL_DEFINITIONS agent guidance", () => {
+  it("documents path hints, parent dirs, and large-file guidance", async () => {
+    const { TOOL_DEFINITIONS } = await import(
+      "../src/agent/tools/definitions.js"
+    );
+    const byName = Object.fromEntries(
+      TOOL_DEFINITIONS.map((t) => [t.function.name, t.function.description]),
+    );
+    const byFull = Object.fromEntries(
+      TOOL_DEFINITIONS.map((t) => [t.function.name, t.function]),
+    );
+    assert.match(byName.read_file || "", /did you mean|typo/i);
+    assert.match(byName.read_file || "", /2 MiB|large/i);
+    assert.match(byName.write_file || "", /parent director/i);
+    assert.match(byName.write_file || "", /directory target|Refuses directory/i);
+    assert.match(byName.search_replace || "", /not a directory/i);
+    assert.match(byName.glob || "", /path hints|No files matched/i);
+    assert.match(byName.grep || "", /Missing paths|hints/i);
+    assert.match(byName.list_dir || "", /path-not-found|hints/i);
+    assert.match(byName.web_fetch || "", /entities never throw|SSRF/i);
+    assert.match(byName.web_fetch || "", /abort|Ctrl\+C|FORGE_MAX_RUN_MS/i);
+    assert.match(byName.web_search || "", /abort|Ctrl\+C|FORGE_MAX_RUN_MS/i);
+    assert.match(byName.kill_task || "", /Omit task_id|list active|get_task_output/i);
+    assert.match(byName.get_task_output || "", /Omit task_id|list active/i);
+    assert.match(byName.apply_patch || "", /typo|path hint/i);
+    // Schema must match runtime: omit task_id lists actives (not required)
+    const killReq = byFull.kill_task?.parameters?.required || [];
+    const getReq = byFull.get_task_output?.parameters?.required || [];
+    assert.ok(!killReq.includes("task_id"));
+    assert.ok(!getReq.includes("task_id"));
   });
 });

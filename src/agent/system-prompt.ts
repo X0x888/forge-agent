@@ -115,7 +115,7 @@ export function buildBaselineSystemPrompt(opts: {
     `- search_replace: match exact text from the file (not line-number prefixes). Add context if multiple matches.`,
     `- apply_patch: multi-file add/update/delete/move with *** Begin Patch … *** End Patch (prefer for coordinated edits).`,
     `- Long builds/tests: bash with background=true, then get_task_output(task_id); kill_task if needed.`,
-    `- Docs/pages: prefer web_fetch(url) over bash curl (SSRF-safe). Use web_search for discovery.`,
+    `- Docs/pages: prefer web_fetch(url) over bash curl (SSRF-safe). Use web_search for discovery. Both honor turn abort (Ctrl+C / FORGE_MAX_RUN_MS).`,
     `- Oversize tool results may be truncated with a path to the full output under ~/.forge/tool-output/.`,
     `- Track multi-step work with todo_write.`,
     `- Do not invent file contents — read them.`,

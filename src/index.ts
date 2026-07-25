@@ -77,7 +77,12 @@ export {
   saveSession,
   listSessions,
   deleteSession,
+  deleteSessionDetailed,
+  sessionHasForeignLiveLock,
   pruneSessions,
+  type DeleteSessionResult,
+  type ListSessionsOpts,
+  type PruneSessionsResult,
   rewindSession,
   exportSessionMarkdown,
   exportSessionJson,
@@ -85,6 +90,7 @@ export {
   forkSession,
   setSessionTitle,
   findRecentSessionForCwd,
+  type RecentSessionHit,
   formatSessionSummary,
   recoverSessionFromTmp,
   compactMessages,
@@ -93,7 +99,25 @@ export {
   pruneOversizedMessageBodies,
 } from "./session/session.js";
 export { envPositiveInt, envNonNegInt } from "./util/env.js";
+export { editDistance, stringSimilarity } from "./util/string-distance.js";
+export { copyToClipboard } from "./util/clipboard.js";
+export type { ClipboardResult } from "./util/clipboard.js";
 export { isBellEnabled, maybeRingBell } from "./util/attention.js";
+export {
+  forgeHome,
+  readJsonFile,
+  writeJsonFile,
+  ensureDir,
+  inspectSecureFile,
+} from "./util/fs.js";
+export {
+  loadSavedAllows,
+  addSavedAllow,
+  removeSavedAllow,
+  clearSavedAllows,
+  savedAsAllowRules,
+  workspaceKey,
+} from "./agent/permission-saved.js";
 export {
   withRetry,
   isRetryableError,
@@ -123,6 +147,14 @@ export {
   boundToolOutput,
 } from "./agent/tools/truncate.js";
 export {
+  listTasks,
+  killTask,
+  killAllRunningTasks,
+  getTask,
+  readTaskOutput,
+  installBackgroundTaskExitHook,
+} from "./agent/tools/background-tasks.js";
+export {
   logSandboxEvent,
   sandboxLogStats,
   sandboxLogPath,
@@ -144,10 +176,13 @@ export {
   completeSlash,
   handleSlash,
   runDoctor,
+  runDoctorCheck,
   classifyLiveSlash,
   isLiveSafeSlash,
+  isSafeDiffFilterArg,
   LIVE_CONTROLS_HINT,
 } from "./commands/slash.js";
+export type { DoctorResult } from "./commands/slash.js";
 export {
   pushLiveNotice,
   drainLiveNotices,

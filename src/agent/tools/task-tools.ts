@@ -47,7 +47,28 @@ export async function toolKillTask(
   args: Record<string, unknown>,
 ): Promise<ToolResult> {
   const id = String(args.task_id || args.id || "").trim();
-  if (!id) return { output: "task_id is required", isError: true };
+  if (!id) {
+    // Parity with get_task_output: list active tasks so the agent can pick an id.
+    const all = listTasks();
+    if (!all.length) {
+      return {
+        output:
+          "task_id is required. No background tasks in this process yet. Start one with bash { background: true }.",
+        isError: true,
+      };
+    }
+    return {
+      output:
+        "task_id is required. Active tasks:\n" +
+        all
+          .map(
+            (t) =>
+              `- ${t.id} [${t.status}] ${t.command.slice(0, 80)}${t.command.length > 80 ? "…" : ""}`,
+          )
+          .join("\n"),
+      isError: true,
+    };
+  }
   const msg = killTask(id);
   if (msg.startsWith("Unknown") || msg.startsWith("Failed")) {
     return { output: msg, isError: true };

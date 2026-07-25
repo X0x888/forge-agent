@@ -1,3 +1,5 @@
+import fs from "node:fs";
+import fsp from "node:fs/promises";
 import path from "node:path";
 import type { ToolContext, ToolResult } from "./types.js";
 import { resolvePath, assertWritablePath } from "./path-util.js";
@@ -9,11 +11,44 @@ export async function toolWrite(
 ): Promise<ToolResult> {
   const raw = String(args.path || "");
   if (!raw) return { output: "path is required", isError: true };
-  const logical = resolvePath(ctx.workspace, raw);
-  const filePath = await assertWritablePath(ctx.workspace, logical);
-  await atomicWriteFile(filePath, String(args.content ?? ""), {
-    encoding: "utf8",
-  });
-  ctx.onEdit?.();
-  return { output: `Wrote ${path.relative(ctx.workspace, filePath) || filePath}` };
+  try {
+    const logical = resolvePath(ctx.workspace, raw);
+    const filePath = await assertWritablePath(ctx.workspace, logical);
+    // Refuse directory targets early — EISDIR from rename is opaque to models.
+    try {
+      if (fs.existsSync(filePath) && fs.statSync(filePath).isDirectory()) {
+        const rel = path.relative(ctx.workspace, filePath) || filePath;
+        return {
+          output:
+            `write_file failed: ${rel} is a directory. ` +
+            `Pass a file path (e.g. ${rel.replace(/\/$/, "")}/filename.ext).`,
+          isError: true,
+        };
+      }
+    } catch {
+      /* race / permission — fall through to atomic write */
+    }
+    const dir = path.dirname(filePath);
+    let createdParents = false;
+    try {
+      await fsp.access(dir);
+    } catch {
+      createdParents = true;
+    }
+    await atomicWriteFile(filePath, String(args.content ?? ""), {
+      encoding: "utf8",
+    });
+    ctx.onEdit?.();
+    const rel = path.relative(ctx.workspace, filePath) || filePath;
+    return {
+      output:
+        `Wrote ${rel}` +
+        (createdParents ? " (created parent directories)" : ""),
+    };
+  } catch (err) {
+    return {
+      output: `write_file failed: ${(err as Error).message}`,
+      isError: true,
+    };
+  }
 }

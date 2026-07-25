@@ -16,9 +16,9 @@ Requirements: **Node.js 20+**.
 
 See [AGENTS.md](./AGENTS.md). Non-negotiables:
 
-1. `blockingStopHooks` defaults **true**
+1. `blockingStopHooks` defaults **true** (`forge doctor` treats OFF as an issue / exit 1)
 2. `/goal` stuck-wall must be able to release
-3. Auth files mode `0600`
+3. Sensitive JSON under `~/.forge` mode `0600` (`auth.json`, `permissions.json`, `preferences.json`)
 
 ## Tests
 

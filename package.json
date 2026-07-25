@@ -1,7 +1,7 @@
 {
   "name": "forge-agent",
   "version": "0.9.2",
-  "description": "Forge — AI coding agent CLI with harness (Stop/goal/ULW), production reliability (Retry-After, abortable/empty-SSE streams, JSON repair, doom-loop, error-streak, apply_patch, overflow recovery, session fork/export/import/auto-resume, metrics.jsonl, OAuth refresh), Bar A daily-driver safety, and quality tools",
+  "description": "Forge — AI coding agent CLI with harness (Stop/goal/ULW), production reliability (Retry-After, abortable/empty-SSE streams, JSON repair, doom-loop, error-streak, apply_patch, overflow recovery, session fork/export/import/auto-resume, lock-safe prune/delete, shell-safe /diff, metrics.jsonl, OAuth refresh, bg-task teardown, structured doctor --json + sessionsLocked, multi-backend /copy), Bar A daily-driver safety, and quality tools",
   "type": "module",
   "bin": {
     "forge": "./dist/cli.js"
@@ -38,7 +38,14 @@
     "goal",
     "ulw",
     "xai",
-    "anthropic"
+    "anthropic",
+    "openai",
+    "production",
+    "reliability",
+    "stop-hooks",
+    "session",
+    "multi-provider",
+    "doctor"
   ],
   "license": "MIT",
   "files": [

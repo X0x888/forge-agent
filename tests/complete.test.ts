@@ -23,6 +23,9 @@ describe("tab completion", () => {
     const [hits] = forgeCompleter("/permissions ");
     assert.ok(hits.length >= 4);
     assert.ok(hits.every((h) => h.startsWith("/permissions ")));
+    assert.ok(hits.some((h) => h.includes("list")));
+    assert.ok(hits.some((h) => h.includes("clear")));
+    assert.ok(hits.some((h) => h.includes("revoke")));
   });
 
   it("completes cycle params", () => {
@@ -47,17 +50,23 @@ describe("param resolve + menu", () => {
     const c = COMMAND_PARAMS.permissions;
     assert.equal(resolveParamChoice("1", c), "default");
     assert.equal(resolveParamChoice("4", c), "bypassPermissions");
+    assert.equal(resolveParamChoice("5", c), "list");
     assert.equal(resolveParamChoice("yolo", c), "bypassPermissions");
     assert.equal(resolveParamChoice("always", c), "bypassPermissions");
     assert.equal(resolveParamChoice("accept", c), "acceptEdits");
     assert.equal(resolveParamChoice("bypass", c), "bypassPermissions");
+    assert.equal(resolveParamChoice("list", c), "list");
   });
 
   it("formats a menu with current marker", () => {
-    const menu = formatParamMenu("/permissions", COMMAND_PARAMS.permissions, "default");
+    const modes = COMMAND_PARAMS.permissions.filter((c) =>
+      ["default", "acceptEdits", "plan", "bypassPermissions"].includes(c.value),
+    );
+    const menu = formatParamMenu("/permissions", modes, "default");
     assert.match(menu, /1\.\s+default/);
     assert.match(menu, /current/);
     assert.match(menu, /bypassPermissions/);
+    assert.ok(!menu.includes("list"));
   });
 
   it("completes models from config", () => {

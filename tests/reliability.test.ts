@@ -309,6 +309,8 @@ describe("doctor surfaces reliability", () => {
     assert.match(out, /Node:/);
     assert.match(out, /Blocking Stop/);
     assert.match(out, /sessions:/);
+    // foreign-locked count is optional (0 locks → no suffix)
+    assert.match(out, /sessions: \d+/);
   });
 
   it("doctor report + hygiene helpers expose CI contract fields", async () => {
@@ -319,18 +321,44 @@ describe("doctor surfaces reliability", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-doc-json-"));
     process.env.FORGE_HOME = tmp;
     const { loadConfig } = await import("../src/config/load.js");
-    const { runDoctor } = await import("../src/commands/slash.js");
+    const { runDoctor, runDoctorCheck } = await import(
+      "../src/commands/slash.js"
+    );
     const { getForgeVersion } = await import("../src/util/version.js");
     const { toolOutputStats } = await import("../src/agent/tools/truncate.js");
     const { sandboxLogStats } = await import("../src/agent/sandbox-log.js");
     const { metricsStats } = await import("../src/session/metrics.js");
     const { listSessions } = await import("../src/session/session.js");
+    const { inspectSecureFile, writeJsonFile, forgeHome } = await import(
+      "../src/util/fs.js"
+    );
     const cfg = loadConfig({}, tmp);
-    const report = runDoctor(cfg);
+    const check = runDoctorCheck(cfg);
+    const report = check.report;
+    assert.equal(runDoctor(cfg), report);
+    const home = forgeHome();
+    const secureFiles = {
+      auth: inspectSecureFile(path.join(home, "auth.json")),
+      permissions: inspectSecureFile(path.join(home, "permissions.json")),
+      preferences: inspectSecureFile(path.join(home, "preferences.json")),
+    };
+    const secureFilesOk = Object.values(secureFiles).every(
+      (f) => f.modeOk !== false,
+    );
+    // CI ok is structured — never chalk/report regex
+    const { sessionHasForeignLiveLock } = await import(
+      "../src/session/session.js"
+    );
+    const sessions = listSessions(10_000);
+    let sessionsLocked = 0;
+    for (const s of sessions) {
+      if (sessionHasForeignLiveLock(s.id)) sessionsLocked += 1;
+    }
     const payload = {
-      ok: /No blocking issues detected/.test(report),
+      ok: check.ok && secureFilesOk && check.blockingStop,
       version: getForgeVersion(),
-      sessionCount: listSessions(10_000).length,
+      sessionCount: sessions.length,
+      sessionsLocked,
       toolOutput: (() => {
         const st = toolOutputStats();
         return { files: st.files, bytes: st.bytes };
@@ -343,20 +371,58 @@ describe("doctor surfaces reliability", () => {
         const m = metricsStats();
         return { events: m.events, bytes: m.bytes };
       })(),
-      blockingStop: cfg.blockingStopHooks,
+      secureFiles,
+      blockingStop: check.blockingStop,
+      issues: check.issues,
       report,
     };
     assert.equal(typeof payload.ok, "boolean");
+    assert.equal(typeof check.ok, "boolean");
+    assert.ok(Array.isArray(check.issues));
     assert.match(payload.version, /^\d+\.\d+\.\d+/);
     assert.equal(typeof payload.sessionCount, "number");
+    assert.equal(typeof payload.sessionsLocked, "number");
+    assert.ok(payload.sessionsLocked >= 0);
+    assert.ok(payload.sessionsLocked <= payload.sessionCount);
     assert.equal(typeof payload.toolOutput.files, "number");
     assert.equal(typeof payload.toolOutput.bytes, "number");
     assert.equal(typeof payload.sandboxLog.bytes, "number");
     assert.equal(typeof payload.metrics.events, "number");
     assert.equal(typeof payload.metrics.bytes, "number");
     assert.equal(typeof payload.blockingStop, "boolean");
+    assert.equal(payload.blockingStop, true);
+    assert.equal(payload.secureFiles.auth.exists, false);
+    assert.equal(payload.secureFiles.auth.modeOk, null);
     assert.match(payload.report, /Forge doctor/);
     assert.match(payload.report, /metrics:/);
+
+    // World-readable auth must fail modeOk (and doctor report).
+    // Write with 0644 directly (sandbox may block chmodSync).
+    const authPath = path.join(home, "auth.json");
+    fs.writeFileSync(
+      authPath,
+      JSON.stringify({ version: 1, credentials: {} }, null, 2) + "\n",
+      { mode: 0o644 },
+    );
+    // Some FS ignore mode on write — only assert when mode stuck as world-readable
+    const st = fs.statSync(authPath);
+    if ((st.mode & 0o077) !== 0) {
+      const bad = inspectSecureFile(authPath);
+      assert.equal(bad.exists, true);
+      assert.equal(bad.modeOk, false);
+      const checkBad = runDoctorCheck(cfg);
+      assert.equal(checkBad.ok, false);
+      assert.ok(
+        checkBad.issues.some((i) => /auth|0600|world-readable/i.test(i)),
+      );
+      assert.match(checkBad.report, /auth.*should be 600|group\/world-readable/i);
+    } else {
+      // Still verify inspectSecureFile shape on a secure file
+      writeJsonFile(authPath, { version: 1, credentials: {} }, 0o600);
+      const good = inspectSecureFile(authPath);
+      assert.equal(good.exists, true);
+      assert.equal(good.modeOk, true);
+    }
   });
 
   it("flags missing auth as an issue", async () => {
@@ -386,6 +452,31 @@ describe("doctor surfaces reliability", () => {
     assert.match(out, /Not authenticated|not authenticated/i);
     assert.match(out, /issue/i);
   });
+
+  it("flags Blocking Stop OFF as a doctor issue (non-negotiable)", async () => {
+    const fs = await import("node:fs");
+    const os = await import("node:os");
+    const path = await import("node:path");
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-doc-bstop-"));
+    process.env.FORGE_HOME = tmp;
+    const { loadConfig } = await import("../src/config/load.js");
+    const { runDoctor, runDoctorCheck } = await import(
+      "../src/commands/slash.js"
+    );
+    const cfg = loadConfig({}, tmp);
+    cfg.blockingStopHooks = false;
+    const check = runDoctorCheck(cfg);
+    assert.equal(check.ok, false);
+    assert.equal(check.blockingStop, false);
+    assert.ok(check.issues.some((i) => /Blocking Stop is OFF/i.test(i)));
+    assert.match(check.report, /Blocking Stop: off/i);
+    assert.doesNotMatch(check.report, /No blocking issues detected/);
+    // Default remains on
+    const on = runDoctorCheck(loadConfig({}, tmp));
+    assert.equal(on.blockingStop, true);
+    assert.match(on.report, /Blocking Stop: on/i);
+    assert.equal(runDoctor(cfg), check.report);
+  });
 });
 
 describe("provider abort helpers", () => {
@@ -404,7 +495,7 @@ describe("provider abort helpers", () => {
     await new Promise((r) => setTimeout(r, 50));
     assert.equal(s2.aborted, true);
     assert.equal(
-      isTimeoutError(new Error("Provider request timed out after 300000ms")),
+      isTimeoutError(new Error("Request timed out after 300000ms")),
       true,
     );
     assert.equal(isTimeoutError(new Error("Aborted")), false);
@@ -465,6 +556,39 @@ describe("env parsers", () => {
     process.env[key] = "0";
     assert.equal(envNonNegInt(key, 3), 0);
     delete process.env[key];
+  });
+});
+
+describe("readJsonFile fallback isolation", () => {
+  it("does not return a shared mutable object fallback", async () => {
+    const fs = await import("node:fs");
+    const os = await import("node:os");
+    const path = await import("node:path");
+    const { readJsonFile } = await import("../src/util/fs.js");
+    const missing = path.join(
+      os.tmpdir(),
+      `forge-missing-json-${process.pid}-${Date.now()}.json`,
+    );
+    const EMPTY = { version: 1 as const, items: [] as string[] };
+    const a = readJsonFile<typeof EMPTY>(missing, EMPTY);
+    a.items.push("mutated");
+    const b = readJsonFile<typeof EMPTY>(missing, EMPTY);
+    assert.deepEqual(b.items, []);
+    assert.deepEqual(EMPTY.items, []);
+    // corrupt file also clones fallback
+    const bad = path.join(
+      os.tmpdir(),
+      `forge-bad-json-${process.pid}-${Date.now()}.json`,
+    );
+    fs.writeFileSync(bad, "{not json", "utf8");
+    const c = readJsonFile<typeof EMPTY>(bad, EMPTY);
+    c.items.push("x");
+    assert.deepEqual(readJsonFile<typeof EMPTY>(bad, EMPTY).items, []);
+    try {
+      fs.unlinkSync(bad);
+    } catch {
+      /* */
+    }
   });
 });
 
@@ -537,6 +661,8 @@ describe("error-streak", () => {
       isCountableToolError("Tool denied by permission gate: nope", true),
       false,
     );
+    assert.equal(isCountableToolError("Aborted", true), false);
+    assert.equal(isCountableToolError("Aborted by user", true), false);
     assert.equal(isCountableToolError("File not found: a.ts", true), true);
     assert.equal(t.observeError("read_file", "missing a"), null);
     assert.equal(t.observeError("edit", "no match"), null);
@@ -608,6 +734,130 @@ describe("session fork / export / tmp recover", () => {
     assert.equal(imported.messages.length, 2);
     assert.equal(imported.meta.title, "restored");
 
+    // Corrupt roles / todos must not poison the agent loop
+    assert.throws(
+      () =>
+        importSessionJson(
+          JSON.stringify({
+            format: "forge-session-v1",
+            messages: [{ role: "hacker", content: "x" }],
+          }),
+        ),
+      /role must be system\|user\|assistant\|tool/i,
+    );
+    assert.throws(
+      () =>
+        importSessionJson(
+          JSON.stringify({
+            format: "forge-session-v1",
+            messages: ["not-an-object"],
+          }),
+        ),
+      /must be an object/i,
+    );
+    const withBadTodos = importSessionJson(
+      JSON.stringify({
+        format: "forge-session-v1",
+        messages: [{ role: "user", content: "hi" }],
+        todos: [
+          { id: "ok", content: "work", status: "pending" },
+          { id: "bad", content: "x", status: "nope" },
+          { content: "missing-id", status: "pending" },
+        ],
+      }),
+    );
+    assert.equal(withBadTodos.todos.length, 1);
+    assert.equal(withBadTodos.todos[0]?.id, "ok");
+
+    // loadSession soft-drops invalid roles from on-disk corruption
+    {
+      const dirty = createSession({
+        cwd: tmp,
+        provider: "xai",
+        model: "m",
+      });
+      dirty.messages = [
+        { role: "user", content: "keep" },
+        { role: "hacker" as "user", content: "drop" },
+        { role: "assistant", content: "ok" },
+      ];
+      dirty.todos = [
+        { id: "t", content: "x", status: "pending" },
+        { id: "bad", content: "y", status: "nope" as "pending" },
+      ];
+      saveSession(dirty);
+      // Bypass saveSession normalize by writing raw JSON
+      const dir = sessionDir(dirty.meta.id);
+      const raw = JSON.parse(
+        fs.readFileSync(path.join(dir, "session.json"), "utf8"),
+      );
+      raw.messages.push({ role: "evil", content: "nope" });
+      raw.todos.push({ id: "z", content: "z", status: "bogus" });
+      fs.writeFileSync(
+        path.join(dir, "session.json"),
+        JSON.stringify(raw, null, 2),
+      );
+      const loaded = loadSession(dirty.meta.id);
+      assert.ok(loaded);
+      assert.ok(loaded!.messages.every((m) =>
+        ["system", "user", "assistant", "tool"].includes(m.role),
+      ));
+      assert.ok(!loaded!.messages.some((m) => m.content === "nope"));
+      assert.ok(loaded!.todos.every((t) =>
+        ["pending", "in_progress", "completed", "cancelled"].includes(t.status),
+      ));
+    }
+
+    // loadSession heals orphan tool_calls left by a crash mid-batch and re-saves
+    {
+      const mid = createSession({ cwd: tmp, provider: "xai", model: "m" });
+      mid.messages = [
+        { role: "user", content: "run" },
+        {
+          role: "assistant",
+          content: null,
+          tool_calls: [
+            {
+              id: "call_a",
+              type: "function",
+              function: { name: "bash", arguments: '{"command":"ls"}' },
+            },
+            {
+              id: "call_b",
+              type: "function",
+              function: { name: "bash", arguments: '{"command":"pwd"}' },
+            },
+          ],
+        },
+        { role: "tool", tool_call_id: "call_a", content: "ok" },
+        // call_b result missing — would 400 the next provider request
+      ];
+      saveSession(mid);
+      // Write raw incomplete transcript (bypass any save-time heal)
+      const midPath = path.join(sessionDir(mid.meta.id), "session.json");
+      const rawMid = JSON.parse(fs.readFileSync(midPath, "utf8"));
+      rawMid.messages = mid.messages;
+      fs.writeFileSync(midPath, JSON.stringify(rawMid, null, 2));
+      const healed = loadSession(mid.meta.id);
+      assert.ok(healed);
+      const tools = healed!.messages.filter((m) => m.role === "tool");
+      assert.equal(tools.length, 2);
+      assert.ok(tools.some((t) => t.tool_call_id === "call_b"));
+      assert.ok(
+        tools.some(
+          (t) =>
+            t.tool_call_id === "call_b" &&
+            /interrupted|no result/i.test(String(t.content || "")),
+        ),
+      );
+      // Disk should now contain the synthetic tool result (dirty re-save)
+      const onDisk = JSON.parse(fs.readFileSync(midPath, "utf8"));
+      const diskTools = (onDisk.messages || []).filter(
+        (m: { role?: string }) => m.role === "tool",
+      );
+      assert.equal(diskTools.length, 2);
+    }
+
     // Simulate crash: only atomic tmp remains
     const dir = sessionDir(s.meta.id);
     const primary = path.join(dir, "session.json");
@@ -652,10 +902,12 @@ describe("session fork / export / tmp recover", () => {
     saveSession(other);
     const hit = findRecentSessionForCwd(tmp);
     assert.ok(hit);
-    assert.equal(hit!.id, a.meta.id);
+    assert.ok(hit!.meta);
+    assert.equal(hit!.meta!.id, a.meta.id);
+    assert.equal(hit!.skippedLocked, 0);
     assert.equal(findRecentSessionForCwd(path.join(tmp, "nope")), null);
     // Age filter: maxAgeDays=0 disables age cut
-    assert.ok(findRecentSessionForCwd(tmp, { maxAgeDays: 0 }));
+    assert.ok(findRecentSessionForCwd(tmp, { maxAgeDays: 0 })?.meta);
     // Stale sessions beyond maxAgeDays are ignored (patch meta sidecars;
     // saveSession would refresh updatedAt to now). Age *all* same-cwd metas
     // including forks/imports created earlier in this test.
@@ -699,7 +951,7 @@ describe("session fork / export / tmp recover", () => {
       }),
     );
     // Dead foreign pid should NOT skip
-    assert.equal(findRecentSessionForCwd(tmp)!.id, locked.meta.id);
+    assert.equal(findRecentSessionForCwd(tmp)!.meta!.id, locked.meta.id);
     // Live foreign pid (use our own pid but claim foreign — pid===self is not foreign)
     // Simulate live foreign by writing pid 1 if alive on this host
     fs.writeFileSync(
@@ -716,15 +968,46 @@ describe("session fork / export / tmp recover", () => {
     try {
       process.kill(1, 0);
       assert.ok(afterSkip);
-      assert.equal(afterSkip!.id, unlocked.meta.id);
+      assert.ok(afterSkip!.meta);
+      assert.equal(afterSkip!.meta!.id, unlocked.meta.id);
+      assert.equal(afterSkip!.skippedLocked, 1);
     } catch {
-      assert.equal(afterSkip!.id, locked.meta.id);
+      assert.ok(afterSkip!.meta);
+      assert.equal(afterSkip!.meta!.id, locked.meta.id);
+      assert.equal(afterSkip!.skippedLocked, 0);
     }
     // skipLocked:false always returns newest regardless
     assert.equal(
-      findRecentSessionForCwd(tmp, { skipLocked: false })!.id,
+      findRecentSessionForCwd(tmp, { skipLocked: false })!.meta!.id,
       locked.meta.id,
     );
+
+    // When every same-cwd candidate is locked → meta null + skipped count
+    const lockPath2 = path.join(
+      tmp,
+      "sessions",
+      unlocked.meta.id,
+      "session.lock",
+    );
+    fs.writeFileSync(
+      lockPath2,
+      JSON.stringify({
+        pid: 1,
+        hostname: "other-host",
+        acquiredAt: new Date().toISOString(),
+        sessionId: unlocked.meta.id,
+      }),
+    );
+    try {
+      process.kill(1, 0);
+      const allLocked = findRecentSessionForCwd(tmp);
+      assert.ok(allLocked);
+      assert.equal(allLocked!.meta, null);
+      assert.ok(allLocked!.skippedLocked >= 1);
+      assert.ok(allLocked!.candidates >= 1);
+    } catch {
+      /* pid 1 not alive on this host — skip all-locked assertion */
+    }
   });
 });
 
@@ -860,6 +1143,57 @@ describe("session lock", () => {
     assert.equal(releaseSessionLock(s.meta.id), true);
     assert.equal(readSessionLock(s.meta.id), null);
   });
+
+  it("treats corrupt lock JSON and invalid acquiredAt as recoverable", async () => {
+    const fs = await import("node:fs");
+    const os = await import("node:os");
+    const path = await import("node:path");
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-lock-bad-"));
+    process.env.FORGE_HOME = tmp;
+    const { createSession, sessionDir } = await import(
+      "../src/session/session.js"
+    );
+    const {
+      acquireSessionLock,
+      readSessionLock,
+      releaseSessionLock,
+    } = await import("../src/session/lock.js");
+    const s = createSession({ cwd: tmp, provider: "xai", model: "m" });
+    const lockFile = path.join(sessionDir(s.meta.id), "session.lock");
+
+    // Garbage JSON → treated as absent
+    fs.writeFileSync(lockFile, "{not-json", "utf8");
+    assert.equal(readSessionLock(s.meta.id), null);
+    const a1 = acquireSessionLock(s.meta.id);
+    assert.equal(a1.ok, true);
+    assert.equal(a1.owned, true);
+    releaseSessionLock(s.meta.id);
+
+    // Missing/invalid pid → absent
+    fs.writeFileSync(
+      lockFile,
+      JSON.stringify({ hostname: "x", acquiredAt: new Date().toISOString() }),
+      "utf8",
+    );
+    assert.equal(readSessionLock(s.meta.id), null);
+
+    // Valid foreign-looking pid with invalid acquiredAt → stale steal
+    fs.writeFileSync(
+      lockFile,
+      JSON.stringify({
+        pid: process.pid + 99999,
+        hostname: "other",
+        acquiredAt: "not-a-date",
+        sessionId: s.meta.id,
+      }),
+      "utf8",
+    );
+    const a2 = acquireSessionLock(s.meta.id, { ttlMs: 60_000 });
+    assert.equal(a2.ok, true);
+    assert.equal(a2.owned, true);
+    assert.equal(a2.stolen, true);
+    releaseSessionLock(s.meta.id);
+  });
 });
 
 describe("sandbox log rotation", () => {
@@ -926,7 +1260,7 @@ describe("tool-output prune", () => {
 });
 
 describe("shell completion", () => {
-  it("emits bash completion function", async () => {
+  it("emits bash/zsh/fish completions with run sandbox + sessions export flags", async () => {
     const { shellCompletionScript } = await import(
       "../src/util/completion-script.js"
     );
@@ -939,10 +1273,77 @@ describe("shell completion", () => {
     assert.match(out, /--session/);
     assert.match(out, /top_flags/);
     assert.match(out, /--new/);
-    assert.match(shellCompletionScript("zsh"), /compdef/);
+    assert.match(out, /--sandbox/);
+    assert.match(out, /--sandbox-network/);
+    assert.match(out, /--deny/);
+    assert.match(out, /--format/);
+    assert.match(out, /md json markdown/);
+    assert.match(out, /--max-age-days/);
+    assert.match(out, /delete\) COMPREPLY=.*--force/);
+    assert.match(out, /list\) COMPREPLY=.*--cwd/);
+    assert.match(out, /list\) COMPREPLY=.*--query/);
+    assert.match(out, /--title/);
+    const zsh = shellCompletionScript("zsh");
+    assert.match(zsh, /compdef/);
+    assert.match(zsh, /--sandbox/);
+    assert.match(zsh, /--format/);
+    assert.match(zsh, /--title/);
+    assert.match(zsh, /delete\).*--force|values 'delete' --json --force/);
+    assert.match(zsh, /values 'list' --json --limit -n --cwd --query -q/);
     const fish = shellCompletionScript("fish");
     assert.match(fish, /complete -c forge/);
     assert.match(fish, /l new/);
+    assert.match(fish, /sandbox/);
+    assert.match(fish, /__fish_seen_subcommand_from run/);
+    assert.match(fish, /l format/);
+    assert.match(fish, /md json markdown/);
+    assert.match(fish, /l force/);
+    assert.match(fish, /l query/);
+    assert.match(fish, /l title/);
+  });
+});
+
+describe("sessions list cwd filter", () => {
+  it("filters listSessions by cwd and query before limit", async () => {
+    const fs = await import("node:fs");
+    const os = await import("node:os");
+    const path = await import("node:path");
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-list-cwd-"));
+    process.env.FORGE_HOME = tmp;
+    const { createSession, listSessions, setSessionTitle, saveSession } =
+      await import("../src/session/session.js");
+    const a = path.join(tmp, "proj-a");
+    const b = path.join(tmp, "proj-b");
+    fs.mkdirSync(a);
+    fs.mkdirSync(b);
+    createSession({ cwd: a, provider: "xai", model: "m" });
+    const s2 = createSession({ cwd: a, provider: "xai", model: "m" });
+    setSessionTitle(s2, "incident-42-hotfix");
+    saveSession(s2);
+    createSession({ cwd: b, provider: "xai", model: "m" });
+    const all = listSessions(50);
+    assert.equal(all.length, 3);
+    const byCwd = listSessions({ limit: 50, cwd: a });
+    assert.equal(byCwd.length, 2);
+    assert.ok(byCwd.every((s) => path.resolve(s.cwd!) === path.resolve(a)));
+    // limit applies after filter (would miss if filter ran post-slice)
+    const limited = listSessions({ limit: 1, cwd: a });
+    assert.equal(limited.length, 1);
+    const byQuery = listSessions({ limit: 50, query: "incident-42" });
+    assert.equal(byQuery.length, 1);
+    assert.match(byQuery[0]!.title || "", /incident-42/);
+    const bareLimit = listSessions(2);
+    assert.equal(bareLimit.length, 2);
+    const titled = createSession({
+      cwd: a,
+      provider: "xai",
+      model: "m",
+      title: "ci-pipeline-99",
+    });
+    assert.equal(titled.meta.title, "ci-pipeline-99");
+    const byCreateTitle = listSessions({ limit: 50, query: "ci-pipeline-99" });
+    assert.equal(byCreateTitle.length, 1);
+    assert.equal(byCreateTitle[0]!.id, titled.meta.id);
   });
 });
 
@@ -1024,6 +1425,48 @@ describe("session meta sidecar", () => {
     assert.equal(meta?.title, "legacy");
     assert.ok(fs.existsSync(metaPath), "should backfill meta.json");
   });
+
+  it("listSessions skips corrupt session dirs without throwing", async () => {
+    const fs = await import("node:fs");
+    const os = await import("node:os");
+    const path = await import("node:path");
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-corrupt-list-"));
+    process.env.FORGE_HOME = tmp;
+    const {
+      createSession,
+      saveSession,
+      listSessions,
+      sessionDir,
+    } = await import("../src/session/session.js");
+    const good = createSession({ cwd: tmp, provider: "xai", model: "m" });
+    good.meta.title = "good";
+    saveSession(good);
+
+    // Garbage session directory (invalid JSON + no valid meta)
+    const badId = "00000000-0000-4000-8000-000000000099";
+    const badDir = path.join(tmp, "sessions", badId);
+    fs.mkdirSync(badDir, { recursive: true });
+    fs.writeFileSync(path.join(badDir, "session.json"), "{not-json");
+    fs.writeFileSync(path.join(badDir, "meta.json"), "null");
+
+    // Truncated / wrong-shape meta
+    const bad2 = "00000000-0000-4000-8000-000000000098";
+    const bad2Dir = path.join(tmp, "sessions", bad2);
+    fs.mkdirSync(bad2Dir, { recursive: true });
+    fs.writeFileSync(
+      path.join(bad2Dir, "meta.json"),
+      JSON.stringify({ notAnId: true }),
+    );
+
+    assert.doesNotThrow(() => listSessions(50));
+    const list = listSessions(50);
+    assert.ok(list.some((m) => m.id === good.meta.id));
+    assert.ok(!list.some((m) => m.id === badId || m.id === bad2));
+    // loadSessionMeta must also be null-safe
+    const { loadSessionMeta } = await import("../src/session/session.js");
+    assert.equal(loadSessionMeta(badId), null);
+    void sessionDir;
+  });
 });
 
 describe("session prune", () => {
@@ -1054,6 +1497,176 @@ describe("session prune", () => {
     const pruned = pruneSessions({ keep: 1 });
     assert.ok(pruned.deleted.length >= 1);
     assert.equal(listSessions(10).length, 1);
+    assert.equal(typeof pruned.skippedLocked, "number");
+  });
+
+  it("/new [title] labels the fresh session", async () => {
+    const fs = await import("node:fs");
+    const os = await import("node:os");
+    const path = await import("node:path");
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-new-title-"));
+    process.env.FORGE_HOME = tmp;
+    const { createSession, listSessions } = await import(
+      "../src/session/session.js"
+    );
+    const { handleSlash } = await import("../src/commands/slash.js");
+    const { DEFAULT_CONFIG } = await import("../src/config/types.js");
+    const { HookRunner } = await import("../src/harness/hooks.js");
+    const current = createSession({ cwd: tmp, provider: "xai", model: "m" });
+    const hooks = new HookRunner(DEFAULT_CONFIG, tmp);
+    const r = await handleSlash("/new incident-hotfix", {
+      session: current,
+      config: { ...DEFAULT_CONFIG, workspace: tmp },
+      hooks,
+    });
+    assert.equal(r.handled, true);
+    assert.ok(r.replaceSession);
+    assert.equal(r.replaceSession!.meta.title, "incident-hotfix");
+    assert.match(String(r.output || ""), /incident-hotfix/);
+    const found = listSessions({ limit: 10, query: "incident-hotfix" });
+    assert.equal(found.length, 1);
+    assert.equal(found[0]!.id, r.replaceSession!.meta.id);
+  });
+
+  it("/resume warns on foreign live lock", async () => {
+    const fs = await import("node:fs");
+    const os = await import("node:os");
+    const path = await import("node:path");
+    const { spawn } = await import("node:child_process");
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-resume-lock-"));
+    process.env.FORGE_HOME = tmp;
+    const {
+      createSession,
+      sessionDir,
+    } = await import("../src/session/session.js");
+    const { handleSlash } = await import("../src/commands/slash.js");
+    const { DEFAULT_CONFIG } = await import("../src/config/types.js");
+    const { HookRunner } = await import("../src/harness/hooks.js");
+    const holder = spawn(process.execPath, ["-e", "setInterval(()=>{}, 1000)"], {
+      stdio: "ignore",
+    });
+    try {
+      const target = createSession({ cwd: tmp, provider: "xai", model: "m" });
+      const current = createSession({ cwd: tmp, provider: "xai", model: "m" });
+      fs.writeFileSync(
+        path.join(sessionDir(target.meta.id), "session.lock"),
+        JSON.stringify({
+          pid: holder.pid,
+          hostname: "other",
+          acquiredAt: new Date().toISOString(),
+          sessionId: target.meta.id,
+        }),
+        "utf8",
+      );
+      const hooks = new HookRunner(DEFAULT_CONFIG, tmp);
+      const r = await handleSlash(`/resume ${target.meta.id.slice(0, 8)}`, {
+        session: current,
+        config: { ...DEFAULT_CONFIG, workspace: tmp },
+        hooks,
+      });
+      assert.equal(r.handled, true);
+      assert.match(String(r.output || ""), /Resumed/i);
+      assert.match(String(r.output || ""), /locked by another live process/i);
+      assert.ok(r.replaceSession);
+      assert.equal(r.replaceSession!.meta.id, target.meta.id);
+    } finally {
+      holder.kill("SIGKILL");
+    }
+  });
+
+  it("deleteSession refuses foreign live locks unless force", async () => {
+    const fs = await import("node:fs");
+    const os = await import("node:os");
+    const path = await import("node:path");
+    const { spawn } = await import("node:child_process");
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-del-lock-"));
+    process.env.FORGE_HOME = tmp;
+    const {
+      createSession,
+      deleteSession,
+      deleteSessionDetailed,
+      sessionDir,
+      listSessions,
+    } = await import("../src/session/session.js");
+    const holder = spawn(process.execPath, ["-e", "setInterval(()=>{}, 1000)"], {
+      stdio: "ignore",
+    });
+    try {
+      const s = createSession({ cwd: tmp, provider: "xai", model: "m" });
+      fs.writeFileSync(
+        path.join(sessionDir(s.meta.id), "session.lock"),
+        JSON.stringify({
+          pid: holder.pid,
+          hostname: "other",
+          acquiredAt: new Date().toISOString(),
+          sessionId: s.meta.id,
+        }),
+        "utf8",
+      );
+      assert.equal(deleteSession(s.meta.id), false);
+      const detailed = deleteSessionDetailed(s.meta.id);
+      assert.equal(detailed.ok, false);
+      if (!detailed.ok) assert.equal(detailed.reason, "locked");
+      assert.ok(listSessions(5).some((m) => m.id === s.meta.id));
+      assert.equal(deleteSession(s.meta.id, { force: true }), true);
+      assert.equal(listSessions(5).some((m) => m.id === s.meta.id), false);
+    } finally {
+      holder.kill("SIGKILL");
+    }
+  });
+
+  it("pruneSessions skips foreign live locks", async () => {
+    const fs = await import("node:fs");
+    const os = await import("node:os");
+    const path = await import("node:path");
+    const { spawn } = await import("node:child_process");
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-prune-lock-"));
+    process.env.FORGE_HOME = tmp;
+    const {
+      createSession,
+      listSessions,
+      pruneSessions,
+      sessionDir,
+      saveSession,
+    } = await import("../src/session/session.js");
+    // Hold a real live foreign pid (sandbox may block kill(1,0))
+    const holder = spawn(process.execPath, ["-e", "setInterval(()=>{}, 1000)"], {
+      stdio: "ignore",
+    });
+    try {
+      const keep = createSession({ cwd: tmp, provider: "xai", model: "m" });
+      const locked = createSession({ cwd: tmp, provider: "xai", model: "m" });
+      const old = createSession({ cwd: tmp, provider: "xai", model: "m" });
+      // Age locked + old so keep=1 would delete both without lock protection
+      locked.meta.updatedAt = new Date(
+        Date.now() - 20 * 86_400_000,
+      ).toISOString();
+      saveSession(locked);
+      old.meta.updatedAt = new Date(Date.now() - 30 * 86_400_000).toISOString();
+      saveSession(old);
+      keep.meta.updatedAt = new Date().toISOString();
+      saveSession(keep);
+      const lockFile = path.join(sessionDir(locked.meta.id), "session.lock");
+      fs.writeFileSync(
+        lockFile,
+        JSON.stringify({
+          pid: holder.pid,
+          hostname: "other-host",
+          acquiredAt: new Date().toISOString(),
+          sessionId: locked.meta.id,
+        }),
+        "utf8",
+      );
+      const pruned = pruneSessions({ keep: 1 });
+      assert.ok(pruned.skippedLocked >= 1);
+      assert.ok(
+        listSessions(10).some((s) => s.id === locked.meta.id),
+        "foreign-locked session must survive prune",
+      );
+      assert.ok(pruned.deleted.includes(old.meta.id));
+    } finally {
+      holder.kill("SIGKILL");
+    }
   });
 });
 
@@ -1139,5 +1752,19 @@ describe("stream tool name merge + executeTool repair", () => {
     );
     assert.equal(r.isError, undefined);
     assert.match(r.output, /got 1/);
+  });
+});
+
+describe("clipboard helper", () => {
+  it("copyToClipboard returns structured result", async () => {
+    const { copyToClipboard } = await import("../src/util/clipboard.js");
+    // Empty string is still valid clipboard content
+    const r = copyToClipboard("forge-clipboard-test");
+    assert.equal(typeof r.ok, "boolean");
+    if (r.ok) {
+      assert.ok(r.backend.length > 0);
+    } else {
+      assert.match(r.error, /clipboard|pbcopy|clip|wl-copy|xclip|xsel/i);
+    }
   });
 });

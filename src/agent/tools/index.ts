@@ -119,10 +119,10 @@ export async function executeTool(
         };
       case "web_search":
       case "WebSearch":
-        return await toolWebSearch(args);
+        return await toolWebSearch(args, ctx);
       case "web_fetch":
       case "WebFetch":
-        return await toolWebFetch(args);
+        return await toolWebFetch(args, ctx);
       default:
         return {
           output: `Unknown tool: ${name}. Available: ${AVAILABLE}.`,

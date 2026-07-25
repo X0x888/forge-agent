@@ -4,7 +4,10 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { createSession, saveSession } from "../src/session/session.js";
-import { sessionToSnapshot } from "../src/statusline/snapshot.js";
+import {
+  sessionToSnapshot,
+  collectSnapshots,
+} from "../src/statusline/snapshot.js";
 import {
   renderHud,
   renderTmux,
@@ -353,5 +356,36 @@ describe("statusline", () => {
     assert.equal(pending, 0);
     assert.equal(w.pauseDepth(), 0);
     w.stop();
+  });
+
+  it("collectSnapshots --cwd uses native listSessions filter before limit", async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-sl-cwd-"));
+    process.env.FORGE_HOME = tmp;
+    const a = path.join(tmp, "proj-a");
+    const b = path.join(tmp, "proj-b");
+    fs.mkdirSync(a);
+    fs.mkdirSync(b);
+    // Flood other workspace so a post-limit filter would miss proj-a
+    for (let i = 0; i < 25; i++) {
+      createSession({ cwd: b, provider: "xai", model: "m" });
+    }
+    const target = createSession({ cwd: a, provider: "xai", model: "m" });
+    target.meta.title = "status-cwd-hit";
+    saveSession(target);
+
+    const snaps = await collectSnapshots({
+      cwd: a,
+      all: true,
+      fetchPlan: false,
+    });
+    assert.ok(snaps.length >= 1);
+    assert.ok(
+      snaps.every((s) => path.resolve(s.cwd) === path.resolve(a)),
+      "all snapshots should be for cwd filter",
+    );
+    assert.ok(
+      snaps.some((s) => s.sessionId === target.meta.id),
+      "same-cwd session must not be starved by other workspaces",
+    );
   });
 });

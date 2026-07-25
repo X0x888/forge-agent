@@ -3,26 +3,44 @@
  * 1) DuckDuckGo Instant Answer JSON
  * 2) DuckDuckGo HTML lite scrape (titles + links) when IA is empty
  */
-import type { ToolResult } from "./types.js";
+import type { ToolContext, ToolResult } from "./types.js";
 import { boundToolOutput } from "./truncate.js";
+import { mergeAbortSignals } from "../../util/abort.js";
 
 const UA = "ForgeAgent/0.9 (+https://github.com/forge-agent; web_search)";
+const SEARCH_TIMEOUT_MS = 15_000;
+
+function isAbortLike(err: unknown, signal?: AbortSignal): boolean {
+  if (signal?.aborted) return true;
+  if (!err || typeof err !== "object") return false;
+  const name = String((err as { name?: string }).name || "");
+  const msg = err instanceof Error ? err.message : String(err);
+  return (
+    name === "AbortError" ||
+    /aborted/i.test(msg) ||
+    msg === "Aborted"
+  );
+}
 
 export async function toolWebSearch(
   args: Record<string, unknown>,
+  ctx: ToolContext = { workspace: process.cwd() },
 ): Promise<ToolResult> {
   const query = String(args.query || "").trim();
   if (!query) return { output: "query is required", isError: true };
+  if (ctx.signal?.aborted) return { output: "Aborted", isError: true };
   const n = Math.min(10, Math.max(1, Number(args.num_results) || 5));
 
   try {
-    const ia = await duckDuckGoInstantAnswer(query, n);
+    const ia = await duckDuckGoInstantAnswer(query, n, ctx.signal);
+    if (ctx.signal?.aborted) return { output: "Aborted", isError: true };
     if (ia.length) {
       const managed = await boundToolOutput(ia.join("\n\n"));
       return { output: managed.text };
     }
 
-    const html = await duckDuckGoHtmlLite(query, n);
+    const html = await duckDuckGoHtmlLite(query, n, ctx.signal);
+    if (ctx.signal?.aborted) return { output: "Aborted", isError: true };
     if (html.length) {
       const managed = await boundToolOutput(
         [
@@ -41,6 +59,9 @@ export async function toolWebSearch(
         `or open a known docs URL with web_fetch when network is allowed.`,
     };
   } catch (err) {
+    if (isAbortLike(err, ctx.signal)) {
+      return { output: "Aborted", isError: true };
+    }
     return {
       output: `web_search failed: ${(err as Error).message}`,
       isError: true,
@@ -51,42 +72,48 @@ export async function toolWebSearch(
 async function duckDuckGoInstantAnswer(
   query: string,
   n: number,
+  external?: AbortSignal,
 ): Promise<string[]> {
   const url = `https://api.duckduckgo.com/?q=${encodeURIComponent(query)}&format=json&no_html=1&skip_disambig=1`;
-  const resp = await fetch(url, {
-    headers: { "User-Agent": UA, Accept: "application/json" },
-    signal: AbortSignal.timeout(15_000),
-  });
-  if (!resp.ok) return [];
-  const data = (await resp.json()) as {
-    AbstractText?: string;
-    AbstractURL?: string;
-    Heading?: string;
-    RelatedTopics?: Array<{
-      Text?: string;
-      FirstURL?: string;
-      Topics?: Array<{ Text?: string; FirstURL?: string }>;
-    }>;
-    Results?: Array<{ Text?: string; FirstURL?: string }>;
-  };
-  const lines: string[] = [];
-  if (data.Heading || data.AbstractText) {
-    lines.push(
-      `## ${data.Heading || query}\n${data.AbstractText || ""}\n${data.AbstractURL || ""}`.trim(),
-    );
-  }
-  const push = (text?: string, href?: string) => {
-    if (lines.length >= n + 1) return;
-    if (text && href) lines.push(`- ${text}\n  ${href}`);
-  };
-  for (const item of data.RelatedTopics || []) {
-    push(item.Text, item.FirstURL);
-    if (item.Topics) {
-      for (const t of item.Topics) push(t.Text, t.FirstURL);
+  const { signal, dispose } = mergeAbortSignals(external, SEARCH_TIMEOUT_MS);
+  try {
+    const resp = await fetch(url, {
+      headers: { "User-Agent": UA, Accept: "application/json" },
+      signal,
+    });
+    if (!resp.ok) return [];
+    const data = (await resp.json()) as {
+      AbstractText?: string;
+      AbstractURL?: string;
+      Heading?: string;
+      RelatedTopics?: Array<{
+        Text?: string;
+        FirstURL?: string;
+        Topics?: Array<{ Text?: string; FirstURL?: string }>;
+      }>;
+      Results?: Array<{ Text?: string; FirstURL?: string }>;
+    };
+    const lines: string[] = [];
+    if (data.Heading || data.AbstractText) {
+      lines.push(
+        `## ${data.Heading || query}\n${data.AbstractText || ""}\n${data.AbstractURL || ""}`.trim(),
+      );
     }
+    const push = (text?: string, href?: string) => {
+      if (lines.length >= n + 1) return;
+      if (text && href) lines.push(`- ${text}\n  ${href}`);
+    };
+    for (const item of data.RelatedTopics || []) {
+      push(item.Text, item.FirstURL);
+      if (item.Topics) {
+        for (const t of item.Topics) push(t.Text, t.FirstURL);
+      }
+    }
+    for (const item of data.Results || []) push(item.Text, item.FirstURL);
+    return lines;
+  } finally {
+    dispose();
   }
-  for (const item of data.Results || []) push(item.Text, item.FirstURL);
-  return lines;
 }
 
 interface HtmlHit {
@@ -102,19 +129,25 @@ interface HtmlHit {
 async function duckDuckGoHtmlLite(
   query: string,
   n: number,
+  external?: AbortSignal,
 ): Promise<HtmlHit[]> {
   const url = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`;
-  const resp = await fetch(url, {
-    headers: {
-      "User-Agent": UA,
-      Accept: "text/html",
-    },
-    signal: AbortSignal.timeout(15_000),
-    redirect: "follow",
-  });
-  if (!resp.ok) return [];
-  const html = await resp.text();
-  return parseDdgHtml(html, n);
+  const { signal, dispose } = mergeAbortSignals(external, SEARCH_TIMEOUT_MS);
+  try {
+    const resp = await fetch(url, {
+      headers: {
+        "User-Agent": UA,
+        Accept: "text/html",
+      },
+      signal,
+      redirect: "follow",
+    });
+    if (!resp.ok) return [];
+    const html = await resp.text();
+    return parseDdgHtml(html, n);
+  } finally {
+    dispose();
+  }
 }
 
 /** Exported for unit tests. */

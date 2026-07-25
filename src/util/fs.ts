@@ -17,13 +17,33 @@ export async function ensureDirAsync(dir: string): Promise<void> {
   await fsp.mkdir(dir, { recursive: true });
 }
 
+/**
+ * Clone object/array fallbacks so callers never mutate a shared constant
+ * (e.g. `const EMPTY = { … }` passed into readJsonFile).
+ */
+function cloneFallback<T>(fallback: T): T {
+  if (fallback === null || typeof fallback !== "object") return fallback;
+  try {
+    if (typeof structuredClone === "function") {
+      return structuredClone(fallback);
+    }
+  } catch {
+    /* fall through */
+  }
+  try {
+    return JSON.parse(JSON.stringify(fallback)) as T;
+  } catch {
+    return fallback;
+  }
+}
+
 export function readJsonFile<T>(file: string, fallback: T): T {
   try {
-    if (!fs.existsSync(file)) return fallback;
+    if (!fs.existsSync(file)) return cloneFallback(fallback);
     const raw = fs.readFileSync(file, "utf8");
     return JSON.parse(raw) as T;
   } catch {
-    return fallback;
+    return cloneFallback(fallback);
   }
 }
 
@@ -32,7 +52,7 @@ export async function readJsonFileAsync<T>(file: string, fallback: T): Promise<T
     const raw = await fsp.readFile(file, "utf8");
     return JSON.parse(raw) as T;
   } catch {
-    return fallback;
+    return cloneFallback(fallback);
   }
 }
 
@@ -45,6 +65,25 @@ export function writeJsonFile(file: string, data: unknown, mode = 0o600): void {
     fs.chmodSync(file, mode);
   } catch {
     /* windows */
+  }
+}
+
+/** CI-friendly mode check for sensitive files under FORGE_HOME. */
+export function inspectSecureFile(filePath: string): {
+  exists: boolean;
+  mode: string | null;
+  modeOk: boolean | null;
+} {
+  try {
+    if (!fs.existsSync(filePath)) {
+      return { exists: false, mode: null, modeOk: null };
+    }
+    const st = fs.statSync(filePath);
+    const mode = (st.mode & 0o777).toString(8);
+    const modeOk = (st.mode & 0o077) === 0;
+    return { exists: true, mode, modeOk };
+  } catch {
+    return { exists: false, mode: null, modeOk: null };
   }
 }
 

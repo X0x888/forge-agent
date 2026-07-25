@@ -38,6 +38,18 @@ export const COMMAND_PARAMS: Record<string, ParamChoice[]> = {
       description: "Always approve everything (full YOLO)",
       aliases: ["bypass", "yolo", "always", "auto"],
     },
+    {
+      value: "list",
+      description: "Show saved always-allow rules for this workspace",
+    },
+    {
+      value: "clear",
+      description: "Clear saved always-allows for this workspace",
+    },
+    {
+      value: "revoke",
+      description: "Revoke one saved rule: /permissions revoke <id>",
+    },
   ],
   cycle: [
     { value: "1", description: "CONTINUE — relentless waves (Stop blocked)" },
@@ -71,6 +83,21 @@ export const COMMAND_PARAMS: Record<string, ParamChoice[]> = {
   ],
   fork: [
     { value: "experiment", description: "Optional title for the forked session" },
+  ],
+  new: [
+    {
+      value: "incident-label",
+      description: "Optional title for the new session (searchable)",
+    },
+  ],
+  resume: [
+    { value: "all", description: "List sessions from every workspace", aliases: ["global", "-a"] },
+  ],
+  sessions: [
+    { value: "all", description: "List every workspace (default is same-cwd)", aliases: ["global", "-a"] },
+    { value: "search", description: "Filter by id/title: /sessions search <q>", aliases: ["q", "find"] },
+    { value: "delete", description: "Delete session: /sessions delete <id> [--force]", aliases: ["rm", "remove"] },
+    { value: "prune", description: "Prune old sessions (active protected)" },
   ],
   title: [
     { value: "clear", description: "Clear title (auto-fills from next user msg)" },

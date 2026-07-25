@@ -116,7 +116,7 @@ forge status
 forge status --watch
 
 # Filter
-forge status --cwd ~/proj
+forge status --cwd ~/proj   # native listSessions cwd filter (before limit)
 forge status --session abc123
 forge status --all
 

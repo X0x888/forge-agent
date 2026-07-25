@@ -33,7 +33,11 @@ import {
   getActivity,
   syncBackgroundCounts,
 } from "../statusline/activity.js";
-import { listTasks } from "../agent/tools/background-tasks.js";
+import {
+  listTasks,
+  killAllRunningTasks,
+  installBackgroundTaskExitHook,
+} from "../agent/tools/background-tasks.js";
 import { loadHistory, appendHistory } from "./history.js";
 import { makeCompleter } from "./complete.js";
 import {
@@ -65,6 +69,7 @@ export async function runRepl(opts: {
 }): Promise<void> {
   let { config, provider, session, hooks, auth } = opts;
   const permissions = new PermissionGate({ interactive: true });
+  installBackgroundTaskExitHook();
 
   // Exclusive session lock — warn (don't hard-fail) if another live process holds it
   {
@@ -540,12 +545,22 @@ export async function runRepl(opts: {
     endTurn();
     releaseSession(session.meta.id);
     releaseSessionLock(session.meta.id);
+    // SessionEnd first so hooks can still observe in-flight bg tasks
     await hooks.run("SessionEnd", {
       sessionId: session.meta.id,
       cwd: session.meta.cwd,
       workspaceRoot: config.workspace || session.meta.cwd,
     });
     saveSession(session);
+    // Don't leave orphaned background shells after the REPL exits
+    try {
+      const killed = killAllRunningTasks({ force: true });
+      if (killed > 0) {
+        log.dim(`Stopped ${killed} background task${killed === 1 ? "" : "s"} on exit`);
+      }
+    } catch {
+      /* never block exit */
+    }
     rl.close();
     process.exit(0);
   };
@@ -604,7 +619,8 @@ function printBanner(
         (git.branch ? ` · ${git.branch}${git.dirty ? "*" : ""}` : "") +
         (hints.length ? ` · ${hints.join("+")}` : "") +
         `\n  Native live status while working · type at live › mid-run (/cycle 0)\n` +
-        `  ↑↓ history · Tab complete · /tasks · /status · /quit\n`,
+        `  ↑↓ history · Tab complete · /tasks · /status · /title · /bell · /quit\n` +
+        `  Fresh session: forge --new  ·  resume is automatic for this cwd\n`,
     ),
   );
 }

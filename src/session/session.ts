@@ -14,12 +14,14 @@ import {
   compactMessagesStructured,
   type CompactContext,
 } from "./compaction.js";
+import { repairToolCallPairing } from "./message-repair.js";
 export {
   compactMessagesStructured,
   buildStructuredSummary,
   pruneOversizedMessageBodies,
 } from "./compaction.js";
 export type { CompactContext, CompactResult, PruneBodiesResult } from "./compaction.js";
+export { repairToolCallPairing } from "./message-repair.js";
 
 export interface SessionMeta {
   id: string;
@@ -59,9 +61,12 @@ export function createSession(opts: {
   provider: string;
   model: string;
   ultrawork?: boolean;
+  /** Optional expert label (also settable later via /title or setSessionTitle). */
+  title?: string;
 }): SessionData {
   const id = randomUUID();
   const now = nowIso();
+  const title = (opts.title ?? "").replace(/\s+/g, " ").trim().slice(0, 72);
   const data: SessionData = {
     meta: {
       id,
@@ -76,6 +81,7 @@ export function createSession(opts: {
       totalPromptTokens: 0,
       totalCompletionTokens: 0,
       userTurnMarks: [],
+      ...(title ? { title } : {}),
     },
     messages: [],
     todos: [],
@@ -109,20 +115,41 @@ export function saveSession(data: SessionData): void {
 
 /** Load meta only (prefers meta.json sidecar; falls back to full session). */
 export function loadSessionMeta(idOrPrefix: string): SessionMeta | null {
-  const full = resolveSessionId(idOrPrefix);
-  if (!full) return null;
-  const metaPath = path.join(sessionDir(full), "meta.json");
-  const fromSide = readJsonFile<SessionMeta | null>(metaPath, null);
-  if (fromSide?.id) return fromSide;
-  const s = loadSession(full);
-  if (!s?.meta) return null;
-  // Backfill sidecar so subsequent list/prune stay cheap (legacy sessions)
   try {
-    writeJsonFile(metaPath, s.meta);
+    const full = resolveSessionId(idOrPrefix);
+    if (!full) return null;
+    const metaPath = path.join(sessionDir(full), "meta.json");
+    const fromSide = readJsonFile<SessionMeta | null>(metaPath, null);
+    if (fromSide?.id && typeof fromSide.id === "string") {
+      // Soft-normalize required string fields so list/doctor never crash
+      return {
+        ...fromSide,
+        id: fromSide.id,
+        cwd: String(fromSide.cwd || ""),
+        provider: String(fromSide.provider || "unknown"),
+        model: String(fromSide.model || "unknown"),
+        createdAt: String(fromSide.createdAt || ""),
+        updatedAt: String(fromSide.updatedAt || fromSide.createdAt || ""),
+        ultrawork: Boolean(fromSide.ultrawork),
+        turnCount: Number(fromSide.turnCount) || 0,
+        editCount: Number(fromSide.editCount) || 0,
+        totalPromptTokens: Number(fromSide.totalPromptTokens) || 0,
+        totalCompletionTokens: Number(fromSide.totalCompletionTokens) || 0,
+      };
+    }
+    const s = loadSession(full);
+    if (!s?.meta) return null;
+    // Backfill sidecar so subsequent list/prune stay cheap (legacy sessions)
+    try {
+      writeJsonFile(metaPath, s.meta);
+    } catch {
+      /* non-fatal */
+    }
+    return s.meta;
   } catch {
-    /* non-fatal */
+    // Corrupt session dir must never break list/doctor
+    return null;
   }
-  return s.meta;
 }
 
 /**
@@ -141,17 +168,29 @@ export function loadSession(id: string): SessionData | null {
   const dir = sessionDir(full);
   const primary = path.join(dir, "session.json");
   const fromPrimary = readJsonFile<SessionData | null>(primary, null);
-  if (fromPrimary?.meta?.id) return fromPrimary;
+  if (fromPrimary?.meta?.id) {
+    const norm = normalizeLoadedSession(fromPrimary);
+    // Persist heals (orphan tool pairs / dropped bad roles) so disk stays clean
+    if (norm.session && norm.dirty) {
+      try {
+        saveSession(norm.session);
+      } catch {
+        /* still return in-memory heal */
+      }
+    }
+    return norm.session;
+  }
 
   const recovered = recoverSessionFromTmp(dir);
   if (recovered) {
+    const cleaned = normalizeLoadedSession(recovered);
     // Promote recovered payload so subsequent loads are normal
     try {
-      saveSession(recovered);
+      if (cleaned.session) saveSession(cleaned.session);
     } catch {
       /* still return in-memory recovery */
     }
-    return recovered;
+    return cleaned.session;
   }
   return null;
 }
@@ -180,6 +219,7 @@ export function recoverSessionFromTmp(dir: string): SessionData | null {
   for (const t of tmps) {
     const data = readJsonFile<SessionData | null>(t.p, null);
     if (data?.meta?.id && Array.isArray(data.messages)) {
+      // Return raw payload; loadSession normalizes + promotes to primary
       return data;
     }
   }
@@ -264,6 +304,9 @@ export function importSessionJson(
   if (!Array.isArray(obj.messages)) {
     throw new Error("Invalid session JSON: messages[] required");
   }
+  const messages = sanitizeImportedMessages(obj.messages);
+  const todos = sanitizeImportedTodos(obj.todos);
+  const healed = repairToolCallPairing(messages);
   const now = nowIso();
   const id = randomUUID();
   const src = obj.meta || {};
@@ -284,14 +327,134 @@ export function importSessionJson(
       totalPromptTokens: Number(src.totalPromptTokens) || 0,
       totalCompletionTokens: Number(src.totalCompletionTokens) || 0,
       userTurnMarks: Array.isArray(src.userTurnMarks)
-        ? [...src.userTurnMarks]
+        ? src.userTurnMarks
+            .map((n) => Number(n))
+            .filter(
+              (n) =>
+                Number.isInteger(n) && n >= 0 && n < healed.messages.length,
+            )
         : [],
     },
-    messages: structuredClone(obj.messages),
-    todos: Array.isArray(obj.todos) ? structuredClone(obj.todos) : [],
+    messages: healed.messages,
+    todos,
   };
   saveSession(data);
   return data;
+}
+
+const VALID_ROLES = new Set(["system", "user", "assistant", "tool"]);
+
+/**
+ * Soft-normalize a session loaded from disk/tmp.
+ * Drops invalid-role messages and bad todos so a corrupt session.json cannot
+ * crash the REPL or poison the provider request. Returns null if unusable.
+ * `dirty` means the caller should re-save so disk matches the healed transcript.
+ */
+function normalizeLoadedSession(
+  data: SessionData,
+): { session: SessionData | null; dirty: boolean } {
+  if (!data?.meta?.id) return { session: null, dirty: false };
+  const rawMsgs = Array.isArray(data.messages) ? data.messages : [];
+  const beforeLen = rawMsgs.length;
+  const messages: ChatMessage[] = [];
+  let dropped = 0;
+  for (const m of rawMsgs) {
+    if (!m || typeof m !== "object" || Array.isArray(m)) {
+      dropped += 1;
+      continue;
+    }
+    const msg = m as unknown as Record<string, unknown>;
+    const role = String(msg.role || "");
+    if (!VALID_ROLES.has(role)) {
+      dropped += 1;
+      continue;
+    }
+    const clone = structuredClone(msg) as unknown as ChatMessage;
+    clone.role = role as ChatMessage["role"];
+    if (clone.content == null) clone.content = "";
+    messages.push(clone);
+  }
+  // Heal orphan tool_calls / tool results after role filtering so the next
+  // provider request never 400s on an illegal sequence from a crash mid-batch.
+  const healed = repairToolCallPairing(messages);
+  data.messages = healed.messages;
+  const todosBefore = Array.isArray(data.todos) ? data.todos.length : 0;
+  data.todos = sanitizeImportedTodos(data.todos);
+  let marksDirty = false;
+  if (!Array.isArray(data.meta.userTurnMarks)) {
+    data.meta.userTurnMarks = [];
+    marksDirty = true;
+  } else {
+    const nextMarks = data.meta.userTurnMarks
+      .map((n) => Number(n))
+      .filter(
+        (n) =>
+          Number.isInteger(n) && n >= 0 && n < data.messages.length,
+      );
+    if (
+      nextMarks.length !== data.meta.userTurnMarks.length ||
+      nextMarks.some((n, i) => n !== data.meta.userTurnMarks![i])
+    ) {
+      marksDirty = true;
+    }
+    data.meta.userTurnMarks = nextMarks;
+  }
+  const dirty =
+    dropped > 0 ||
+    healed.changed ||
+    beforeLen !== messages.length ||
+    todosBefore !== data.todos.length ||
+    marksDirty;
+  return { session: data, dirty };
+}
+
+/** Strict validate + clone messages so corrupt exports cannot poison the agent loop. */
+function sanitizeImportedMessages(raw: unknown[]): ChatMessage[] {
+  const out: ChatMessage[] = [];
+  for (let i = 0; i < raw.length; i++) {
+    const m = raw[i];
+    if (!m || typeof m !== "object" || Array.isArray(m)) {
+      throw new Error(`Invalid session JSON: messages[${i}] must be an object`);
+    }
+    const msg = m as Record<string, unknown>;
+    const role = String(msg.role || "");
+    if (!VALID_ROLES.has(role)) {
+      throw new Error(
+        `Invalid session JSON: messages[${i}].role must be system|user|assistant|tool (got "${role || "missing"}")`,
+      );
+    }
+    const clone = structuredClone(msg) as unknown as ChatMessage;
+    clone.role = role as ChatMessage["role"];
+    if (clone.content == null) clone.content = "";
+    out.push(clone);
+  }
+  return out;
+}
+
+function sanitizeImportedTodos(raw: unknown): TodoItem[] {
+  if (!Array.isArray(raw)) return [];
+  const out: TodoItem[] = [];
+  const statuses = new Set([
+    "pending",
+    "in_progress",
+    "completed",
+    "cancelled",
+  ]);
+  for (const t of raw) {
+    if (!t || typeof t !== "object" || Array.isArray(t)) continue;
+    const item = t as Record<string, unknown>;
+    const id = String(item.id || "").trim();
+    const content = String(item.content || "").trim();
+    const status = String(item.status || "pending");
+    if (!id || !content) continue;
+    if (!statuses.has(status)) continue;
+    out.push({
+      id,
+      content,
+      status: status as TodoItem["status"],
+    });
+  }
+  return out;
 }
 
 /** Compact human summary for `forge sessions show`. */
@@ -349,7 +512,42 @@ export function resolveSessionId(prefixOrId: string): string | null {
   return null;
 }
 
-export function listSessions(limit = 20): SessionMeta[] {
+export interface ListSessionsOpts {
+  /** Max sessions to return (default 20). */
+  limit?: number;
+  /** Only sessions whose cwd resolves equal to this path. */
+  cwd?: string;
+  /**
+   * Case-insensitive substring match against id and title.
+   * Useful for multi-project experts locating labeled sessions.
+   */
+  query?: string;
+}
+
+/**
+ * List sessions newest-first.
+ * Accepts a bare limit number (legacy) or {@link ListSessionsOpts}.
+ * Filters (cwd/query) apply before the limit so multi-project lists stay complete.
+ */
+export function listSessions(
+  limitOrOpts: number | ListSessionsOpts = 20,
+): SessionMeta[] {
+  const opts: ListSessionsOpts =
+    typeof limitOrOpts === "number" ? { limit: limitOrOpts } : limitOrOpts || {};
+  const limit =
+    typeof opts.limit === "number" && Number.isFinite(opts.limit) && opts.limit > 0
+      ? Math.floor(opts.limit)
+      : 20;
+  let cwdFilter: string | null = null;
+  if (opts.cwd) {
+    try {
+      cwdFilter = path.resolve(opts.cwd);
+    } catch {
+      cwdFilter = null;
+    }
+  }
+  const query = (opts.query || "").trim().toLowerCase();
+
   const root = path.join(forgeHome(), "sessions");
   ensureDir(root);
   let ids: string[] = [];
@@ -366,12 +564,43 @@ export function listSessions(limit = 20): SessionMeta[] {
   }
   const metas: SessionMeta[] = [];
   for (const id of ids) {
-    // Prefer sidecar meta.json — avoids parsing huge session.json histories
-    const meta = loadSessionMeta(id);
-    if (meta) metas.push(meta);
+    // Prefer sidecar meta.json — avoids parsing huge session.json histories.
+    // One corrupt dir must never break the whole list (doctor /sessions).
+    try {
+      const meta = loadSessionMeta(id);
+      if (!meta) continue;
+      if (cwdFilter) {
+        if (!meta.cwd) continue;
+        try {
+          if (path.resolve(meta.cwd) !== cwdFilter) continue;
+        } catch {
+          continue;
+        }
+      }
+      if (query) {
+        const hay = `${meta.id} ${meta.title || ""}`.toLowerCase();
+        if (!hay.includes(query)) continue;
+      }
+      metas.push(meta);
+    } catch {
+      /* skip */
+    }
   }
-  metas.sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : -1));
+  metas.sort((a, b) => {
+    const au = a.updatedAt || "";
+    const bu = b.updatedAt || "";
+    return au < bu ? 1 : au > bu ? -1 : 0;
+  });
   return metas.slice(0, limit);
+}
+
+export interface RecentSessionHit {
+  /** Null when every same-cwd candidate was skipped (e.g. all foreign-locked). */
+  meta: SessionMeta | null;
+  /** How many same-cwd sessions were skipped due to foreign live locks. */
+  skippedLocked: number;
+  /** Same-cwd candidates considered (after age filter). */
+  candidates: number;
 }
 
 /**
@@ -381,48 +610,56 @@ export function listSessions(limit = 20): SessionMeta[] {
  * Skips sessions held by another live process (foreign session.lock) so
  * experts don't auto-attach into a concurrent REPL by accident.
  *
+ * Returns null only when there are no same-cwd candidates at all.
+ * When candidates exist but all are locked, returns `{ meta: null, skippedLocked, candidates }`.
+ *
  * @param maxAgeDays drop candidates older than this (default 14); 0 = no age filter
  */
 export function findRecentSessionForCwd(
   cwd: string,
   opts?: { maxAgeDays?: number; limitScan?: number; skipLocked?: boolean },
-): SessionMeta | null {
+): RecentSessionHit | null {
   const target = path.resolve(cwd);
   const maxAgeDays = opts?.maxAgeDays ?? 14;
   const skipLocked = opts?.skipLocked !== false;
   const cutoff =
     maxAgeDays > 0 ? Date.now() - maxAgeDays * 24 * 60 * 60 * 1000 : 0;
-  const scan = listSessions(opts?.limitScan ?? 200);
+  // listSessions already filters by cwd; only age + lock remain.
+  const scan = listSessions({
+    limit: opts?.limitScan ?? 200,
+    cwd: target,
+  });
+  let skippedLocked = 0;
+  let candidates = 0;
   for (const m of scan) {
-    if (!m.cwd) continue;
-    try {
-      if (path.resolve(m.cwd) !== target) continue;
-    } catch {
-      continue;
-    }
     if (cutoff > 0) {
       const t = Date.parse(m.updatedAt || "");
       if (!Number.isFinite(t) || t < cutoff) continue;
     }
-    if (skipLocked && sessionHasForeignLiveLock(m.id)) continue;
-    return m;
+    candidates += 1;
+    if (skipLocked && sessionHasForeignLiveLock(m.id)) {
+      skippedLocked += 1;
+      continue;
+    }
+    return { meta: m, skippedLocked, candidates };
   }
-  return null;
+  if (candidates === 0) return null;
+  return { meta: null, skippedLocked, candidates };
 }
 
 /** True when another live pid holds session.lock (not this process). */
-function sessionHasForeignLiveLock(sessionId: string): boolean {
+export function sessionHasForeignLiveLock(sessionId: string): boolean {
   try {
-    // Lazy import path via dynamic require-style to avoid circular init issues:
-    // lock.ts imports sessionDir from this module.
+    // Inline read (lock.ts imports sessionDir from this module — avoid cycle).
     const lockFile = path.join(sessionDir(sessionId), "session.lock");
     if (!fs.existsSync(lockFile)) return false;
     const raw = fs.readFileSync(lockFile, "utf8");
-    const info = JSON.parse(raw) as { pid?: number };
+    const info = JSON.parse(raw) as { pid?: unknown };
     const pid = Number(info?.pid);
-    if (!pid || pid === process.pid) return false;
+    // Match lock.ts validation: invalid pid → treat as absent
+    if (!Number.isFinite(pid) || pid <= 0 || pid === process.pid) return false;
     try {
-      process.kill(pid, 0);
+      process.kill(Math.trunc(pid), 0);
       return true; // foreign + alive
     } catch {
       return false; // dead pid → treat as free
@@ -432,16 +669,43 @@ function sessionHasForeignLiveLock(sessionId: string): boolean {
   }
 }
 
-/** Delete a session directory (and lock). Returns true if removed. */
-export function deleteSession(idOrPrefix: string): boolean {
+export type DeleteSessionResult =
+  | { ok: true; id: string }
+  | { ok: false; reason: "not_found" | "locked"; id?: string; detail?: string };
+
+/**
+ * Delete a session directory (and lock).
+ * Refuses when another live process holds session.lock unless `force: true`.
+ */
+export function deleteSession(
+  idOrPrefix: string,
+  opts?: { force?: boolean },
+): boolean {
+  return deleteSessionDetailed(idOrPrefix, opts).ok;
+}
+
+/** Structured delete for CLI/REPL messaging. */
+export function deleteSessionDetailed(
+  idOrPrefix: string,
+  opts?: { force?: boolean },
+): DeleteSessionResult {
   const full = resolveSessionId(idOrPrefix);
-  if (!full) return false;
+  if (!full) return { ok: false, reason: "not_found" };
+  if (!opts?.force && sessionHasForeignLiveLock(full)) {
+    return {
+      ok: false,
+      reason: "locked",
+      id: full,
+      detail:
+        "session is locked by another live process (pass --force to delete anyway)",
+    };
+  }
   const dir = sessionDir(full);
   try {
     fs.rmSync(dir, { recursive: true, force: true });
-    return true;
+    return { ok: true, id: full };
   } catch {
-    return false;
+    return { ok: false, reason: "not_found", id: full };
   }
 }
 
@@ -449,21 +713,27 @@ export interface PruneSessionsResult {
   deleted: string[];
   kept: number;
   scanned: number;
+  /** Sessions skipped because another live process holds session.lock */
+  skippedLocked: number;
 }
 
 /**
  * Prune old sessions for disk hygiene (experts accumulate many ULW runs).
  * Keeps the newest `keep` sessions; optionally also drops anything older than `maxAgeDays`.
  * Never deletes `protectIds` (e.g. the active REPL session).
+ * Never deletes sessions held by another live process (foreign session.lock).
  */
 export function pruneSessions(opts?: {
   keep?: number;
   maxAgeDays?: number;
   protectIds?: string[];
+  /** Skip foreign live locks (default true). */
+  skipLocked?: boolean;
 }): PruneSessionsResult {
   const keep = opts?.keep ?? 50;
   const maxAgeDays = opts?.maxAgeDays;
   const protect = new Set(opts?.protectIds || []);
+  const skipLocked = opts?.skipLocked !== false;
   const all = listSessions(10_000);
   const cutoff =
     maxAgeDays != null && maxAgeDays > 0
@@ -471,13 +741,19 @@ export function pruneSessions(opts?: {
       : null;
 
   const deleted: string[] = [];
+  let skippedLocked = 0;
   // Newest first from listSessions
   all.forEach((meta, index) => {
     if (protect.has(meta.id)) return;
+    const ts = Date.parse(meta.updatedAt || "");
     const tooOld =
-      cutoff != null && Date.parse(meta.updatedAt || "") < cutoff;
+      cutoff != null && Number.isFinite(ts) && ts < cutoff;
     const overKeep = index >= keep;
     if (tooOld || overKeep) {
+      if (skipLocked && sessionHasForeignLiveLock(meta.id)) {
+        skippedLocked += 1;
+        return;
+      }
       if (deleteSession(meta.id)) deleted.push(meta.id);
     }
   });
@@ -486,6 +762,7 @@ export function pruneSessions(opts?: {
     deleted,
     kept: all.length - deleted.length,
     scanned: all.length,
+    skippedLocked,
   };
 }
 

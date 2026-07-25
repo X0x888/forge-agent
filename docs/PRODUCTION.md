@@ -9,14 +9,19 @@ Use this before putting Forge on a critical path (CI, shared machines, long ULW 
 npm run check                # typecheck + full test suite
 npm run smoke                # build + CLI binary smoke
 npm run ci                   # check + smoke (GitHub Actions)
-forge doctor                 # human report
-forge doctor --json          # CI: exit 1 if unhealthy
+forge doctor                 # human report (exit 1 if issues)
+forge doctor --json          # CI: structured JSON + exit 1 if unhealthy
 forge auth                   # refresh OAuth if needed
 eval "$(forge completion bash)"   # optional shell completions
 forge sessions prune --keep 50
+forge sessions list --cwd .          # filter by workspace (native listSessions cwd)
+forge sessions list -q incident      # id/title substring filter
+forge run "fix" --title ci-pipeline-42 --json   # label headless session at create
+# empty/whitespace prompts exit 1 before any API call
+# REPL: /sessions (same-cwd) · /sessions all · /sessions search incident · /resume (same-cwd) · /new [title]
 forge sessions show <id>
-forge sessions export <id> --format json --out ./session.json
-forge sessions import ./session.json
+forge sessions export <id> --format json --out ./session.json   # md|json only
+forge sessions import ./session.json   # rejects invalid message roles
 forge sessions fork <id>
 forge prune-tool-output
 forge prune-metrics --keep 500
@@ -38,15 +43,39 @@ CI (GitHub Actions) runs `npm run check` + `npm run smoke` on Node 20 and 22.
   "permissionMode": "default",
   "sandbox": "workspace",
   "sessionCount": 3,
+  "sessionsLocked": 0,
   "toolOutput": { "files": 2, "bytes": 12345 },
   "sandboxLog": { "bytes": 4096, "backupBytes": 0 },
   "metrics": { "events": 12, "bytes": 4096 },
+  "backgroundTasks": { "running": 0, "total": 0 },
+  "savedAllows": 0,
+  "secureFiles": {
+    "auth": { "exists": true, "mode": "600", "modeOk": true },
+    "permissions": { "exists": false, "mode": null, "modeOk": null },
+    "preferences": { "exists": true, "mode": "600", "modeOk": true }
+  },
+  "issues": [],
+  "providerTimeoutMs": 300000,
+  "maxRunMs": null,
+  "permissionAskTimeoutMs": null,
+  "doomLoopThreshold": 3,
+  "errorStreakThreshold": 5,
+  "ulwMaxContinues": 200,
+  "bellOnTurnEnd": false,
+  "autoResume": true,
   "node": "v22.x.x",
   "report": "…full text report…"
 }
 ```
 
-Exit code `1` when `ok` is false (still prints JSON first).
+Exit code `1` when `ok` is false (still prints JSON first). Thresholds reflect env knobs (`FORGE_DOOM_LOOP_THRESHOLD`, etc.).
+
+**CI `ok` contract** (structured — never parse chalk `report` text):
+
+- `ok === false` when `issues` is non-empty (auth missing, insecure modes, Blocking Stop OFF, Node &lt; 20, …)
+- `ok === false` when any `secureFiles.*.modeOk` is `false`
+- `ok === false` when `blockingStop` is `false` or `authenticated` is `false`
+- Prefer `issues[]` + structured fields over regex on `report`
 
 ## Auth
 
@@ -56,7 +85,7 @@ Exit code `1` when `ok` is false (still prints JSON first).
 | `forge login --from-grok` | SuperGrok subscription reuse |
 | `forge login --oauth` / `--device` | Interactive / headless OAuth |
 
-- `auth.json` must be mode `0600` (doctor flags otherwise)
+- `auth.json`, `permissions.json`, and `preferences.json` must be mode `0600` (doctor flags otherwise)
 - Long sessions: OAuth refresh runs at start and once on mid-run `401`
 
 ## Safety defaults (do not weaken lightly)
@@ -73,6 +102,7 @@ export XAI_API_KEY=…
 export FORGE_LOG_JSON=1
 forge run "fix tests and open a PR description" \
   --permission-mode acceptEdits \
+  --sandbox workspace \
   --json
 # Resume a prior headless session (multi-step CI pipelines):
 # forge run "continue from last failure" --session <id> --json
@@ -90,6 +120,7 @@ forge run "fix tests and open a PR description" \
 {
   "ok": true,
   "sessionId": "…",
+  "title": "ci-pipeline-42",
   "finalText": "…",
   "turns": 12,
   "stopContinues": 2,
@@ -106,17 +137,20 @@ forge run "fix tests and open a PR description" \
 
 Each headless/REPL turn also appends a counter-only line to `~/.forge/metrics.jsonl` (no prompts or secrets).
 
-On thrown errors with `--json`, stdout is `{ "ok": false, "error": "…", "timedOut": false, "sessionId": "…", "editCount": N }` and the process exits `1` (or `124` if `timedOut`).
+On thrown errors with `--json`, stdout is `{ "ok": false, "error": "…", "timedOut": false, "sessionId": "…", "title": null, "editCount": N }` and the process exits `1` (or `124` if `timedOut`). Label new runs with `forge run … --title <label>` (searchable via `forge sessions list -q`).
 
 ## Long ULW / goal runs
 
 - Prefer `/cycle 0` when satisfied (last wave) rather than killing the process
-- `forge sessions prune --keep 50` periodically
+- `forge sessions prune --keep 50` periodically (skips foreign live locks; reports `skippedLocked`)
+- `forge sessions delete <id>` refuses foreign live locks unless `--force`
 - `/fork` or `forge sessions fork <id>` before risky experiments (keeps original)
 - `/title "incident-42"` to label long-running sessions in `/sessions` lists
 - `/bell on` (or `FORGE_BELL=1`) for a terminal BEL when long ULW/goal turns finish
 - Bare `forge` resumes the newest same-cwd session (≤14d); skips sessions with a foreign live lock; use `--new` or `FORGE_NO_AUTO_RESUME=1` for a clean slate
-- `forge sessions export <id> --format json` for incident artifacts
+- `/resume <id>` warns if the target has a foreign live lock (concurrent writers may race)
+- `forge sessions export <id> --format json` for incident artifacts (`--format` must be `md` or `json`)
+- `forge sessions import` rejects invalid message roles; on-disk load soft-drops corrupt roles/todos so a bad `session.json` cannot poison the agent loop
 - `forge prune-tool-output` if `~/.forge/tool-output` grows large (also auto-pruned)
 - Provider timeout: `FORGE_PROVIDER_TIMEOUT_MS` (default 300000)
 - Context overflow: harness force-compacts once and re-issues; if still too large, start `/new` or raise `context_window`
@@ -129,4 +163,4 @@ See [RELIABILITY.md](./RELIABILITY.md) for Retry-After, abort, JSON repair, doom
 
 1. Blocking Stop defaults **on**
 2. Goal stuck-wall can always release
-3. Auth files mode **0600**
+3. Sensitive JSON under `~/.forge` mode **0600** (`auth.json`, `permissions.json`, `preferences.json`)

@@ -113,6 +113,60 @@ describe("toolApplyPatch", () => {
     assert.match(result.output, /missing/i);
   });
 
+  it("suggests nearby path when update target is a typo", async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-patch-hint-"));
+    fs.writeFileSync(path.join(tmp, "readme.md"), "hello\n");
+    const result = await toolApplyPatch(
+      {
+        patchText: `*** Begin Patch
+*** Update File: readme.mdd
+@@
+-hello
++hi
+*** End Patch`,
+      },
+      { workspace: tmp },
+    );
+    assert.equal(result.isError, true);
+    assert.match(result.output, /missing/i);
+    assert.match(result.output, /readme\.md/i);
+  });
+
+  it("refuses add when path is an existing directory", async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-patch-addir-"));
+    fs.mkdirSync(path.join(tmp, "src"));
+    const result = await toolApplyPatch(
+      {
+        patchText: `*** Begin Patch
+*** Add File: src
++nope
+*** End Patch`,
+      },
+      { workspace: tmp },
+    );
+    assert.equal(result.isError, true);
+    assert.match(result.output, /directory/i);
+  });
+
+  it("refuses update when path is a directory (no EISDIR)", async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-patch-updir-"));
+    fs.mkdirSync(path.join(tmp, "src"));
+    const result = await toolApplyPatch(
+      {
+        patchText: `*** Begin Patch
+*** Update File: src
+@@
+-a
++b
+*** End Patch`,
+      },
+      { workspace: tmp },
+    );
+    assert.equal(result.isError, true);
+    assert.match(result.output, /directory/i);
+    assert.doesNotMatch(result.output, /EISDIR/i);
+  });
+
   it("executeTool routes apply_patch", async () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-patch-"));
     const r = await executeTool(

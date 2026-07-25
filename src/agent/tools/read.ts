@@ -7,6 +7,8 @@ import { boundToolOutput, DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES } from "./truncat
 
 const DEFAULT_READ_LIMIT = 2000;
 const MAX_LINE_LENGTH = 2000;
+/** Soft size hint — still stream via offset/limit; avoid loading multi‑GB blobs blindly. */
+const LARGE_FILE_BYTES = 2 * 1024 * 1024;
 
 function isProbablyBinary(buf: Buffer): boolean {
   const n = Math.min(buf.length, 8192);
@@ -77,10 +79,14 @@ export async function toolRead(
 
   const end = offset + slice.length - 1;
   const more = offset - 1 + slice.length < lines.length;
+  const largeHint =
+    stat.size >= LARGE_FILE_BYTES
+      ? `; ${stat.size} bytes — prefer smaller limit/offset or grep for targeted reads`
+      : "";
   const header =
     `File: ${path.relative(ctx.workspace, filePath) || filePath} (${lines.length} lines, showing ${offset}-${end}` +
     (more ? `; use offset=${end + 1} for more` : "") +
-    `)\n`;
+    `${largeHint})\n`;
 
   const body = header + (numbered || "(empty file)");
   const managed = await boundToolOutput(body, {
