@@ -630,7 +630,7 @@ function printBanner(
     if (!prefs.seenWelcomeTip) {
       console.log(
         chalk.cyan(
-          `  Tip: /share · /files · /pin · /retry · /stats · forge tips · /sessions search\n`,
+          `  Tip: /undo · /retry · /init · /review · /logs · /share · /pin · forge tips\n`,
         ),
       );
       savePreferences({ seenWelcomeTip: true });
