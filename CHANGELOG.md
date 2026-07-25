@@ -1,5 +1,42 @@
 # Changelog
 
+## 0.9.4 — Expert UX (retry, pin, stats, resume-by-title)
+
+Daily-driver session operations and orientation for long-running experts. Builds on 0.9.3 reliability.
+
+### Sessions & resume
+- **`forge run --continue`**: headless same-cwd resume (≤14d, skips foreign locks) — multi-step CI without copying session ids (OpenCode-style)
+- **Resume by title**: `/resume <title>` · `forge --session <title>` · `sessions show|export|fork|delete|path|pin` resolve unique exact/substring titles (and last-prompt); ambiguous matches list candidates
+- **`lastUserPreview`**: session meta sidecar stores last user prompt (80 chars) for `/sessions` · `forge sessions list` · `-q` search · `sessions show`
+- **Relative ages** in session lists: `just now` / `5m` / `3h` / `2d` instead of raw ISO timestamps
+- **Resume orientation**: auto-resume / `/resume` / `forge run --session` show last turn + mutated files
+- **`/last [n]`**: peek last N user/assistant turns (live-safe)
+- **`/files [writes|n]`**: paths touched by tools this session (R/A/M/P/D tags; live-safe)
+- **`/path [id|json|copy]`** · **`forge sessions path <id|title>`**: on-disk session dir / `session.json` (live-safe; optional clipboard)
+- **`sessions show`**: relative age, path line, files snippet, last-turn peek; JSON includes `path`
+
+### Pin / prune hygiene
+- **`/pin` / `/unpin`** (live-safe) + **`forge sessions pin|unpin`**: protect sessions from prune (`meta.pinned`; lists show `PIN`)
+- **Fork clears pin**; import never inherits pin; status/prompt show `PIN` badge
+- **`/sessions pinned`** · **`forge sessions list --pinned`**
+- **Prune** reports `skippedPinned`; doctor plain + `--json` **`sessionsPinned`**
+
+### Recovery & handoff
+- **`/retry` / `/again` [prompt]**: rewind last user turn and re-run (optional rewritten prompt)
+- **`/share`**: pasteable session card (resume/export cmds + optional clipboard)
+- **`/done` / `/pause` / `/unpause`**: live-safe shorthands for `/goal done|pause|resume`
+
+### Usage & discovery
+- **`forge stats` / `/stats [days]`**: usage dashboard from metrics.jsonl (runs, tokens, est. cost, providers, projects) + session inventory (incl. pinned)
+- **`forge news` / `/news` [n]**: in-app what's-new from packaged CHANGELOG (`forge changelog` alias; `--json`)
+- **`forge tips` / `/tips`**: expert cheat sheet
+- **First-run welcome tip** in REPL banner (once; `preferences.seenWelcomeTip`)
+- **Install / banner / help**: surface `/news` · `/retry` · `/last` · `forge tips` · `--continue` · `stats`
+
+### Docs / tests
+- README, PRODUCTION, AGENTS, shell completion updated for the expert surface
+- Tests: changelog, retry/last/files/pin/path, resume-by-title, continue, stats, live-controls, session-format
+
 ## 0.9.3 — Production lock & fetch hardening
 
 Professional production polish on the 0.9.2 reliability surface after VM self-improvement review.
@@ -63,31 +100,6 @@ Learned from Grok Build (consecutive-failure circuit breaker) and OpenCode (sess
 - **`forge sessions list`**: shows project basename when not filtered by `--cwd` (multi-project scan)
 - **`/new [title]`**: optional searchable label on fresh REPL sessions; Tab completes `/sessions` / `/resume` verbs
 - **`forge run`**: rejects empty/whitespace prompts before auth/session create (no orphan sessions, no API spend); help documents empty-prompt + `--title`
-- **`forge stats` / `/stats [days]`**: usage dashboard from metrics.jsonl (runs, tokens, est. cost, providers, projects) + session inventory
-- **`/share`**: pasteable session card (resume/export cmds + optional clipboard); **`/tips`** + **`forge tips`** expert cheat sheet
-- **First-run welcome tip** in REPL banner (once; `preferences.seenWelcomeTip`) highlighting `/share` · `/stats` · `forge tips`
-- **`/retry` / `/again` [prompt]**: rewind last user turn and re-run (optional rewritten prompt) — one-key recovery after a bad model turn
-- **`/last [n]`**: peek last N user/assistant turns (live-safe) — orient after resume without full `/export`
-- **Resume auto-peek**: bare `forge` same-cwd auto-resume, `forge --session`, `/resume <id>`, `forge run --session`, and `forge sessions show` surface the last turn so you know where you left off
-- **`forge news` / `/news` [n]**: in-app what's-new from packaged CHANGELOG (`forge changelog` alias; `--json`); omits empty `###` heads when bullets are truncated
-- **Install / banner**: `install.sh` + REPL banner surface `/news` · `/retry` · `/last` · `forge tips`
-- **`forge run --continue`**: headless same-cwd resume (≤14d, skips foreign locks) — multi-step CI without copying session ids (OpenCode-style)
-- **`/fork`**: includes last-turn peek (parity with resume surfaces)
-- **`/share` card** + **`sessions fork|import`**: surface `--continue`, `/last`/`/retry`/`forge news`
-- **CLI help examples**: top-level `--help` lists `--continue`, `forge news`, `forge tips`, `forge stats`
-- **`/done [note]`** + **`/pause`** + **`/unpause`**: live-safe shorthands for `/goal done|pause|resume` (avoids clashing with session `/resume`); live-controls hint surfaces them
-- **`lastUserPreview`**: session meta sidecar stores last user prompt (80 chars) for `/sessions` · `forge sessions list` · `-q` search · `sessions show`
-- **Resume by title**: `/resume <title>` · `forge --session <title>` · `sessions show|export|fork|delete` resolve unique exact/substring titles (and last-prompt); ambiguous matches list candidates
-- **Relative ages in session lists**: `/sessions` and `forge sessions list` show `just now` / `5m` / `3h` / `2d` instead of raw ISO timestamps
-- **`/files [writes|n]`**: list paths touched by tool calls this session (R/A/M/P/D tags; live-safe; great after resume)
-- **`sessions show` / resume picker**: relative age + mutated-files snippet on show; `/resume` picker ages match `/sessions`
-- **`/pin` / `/unpin`**: protect important sessions from `prune` (meta.pinned; lists show `PIN`; live-safe)
-- **`forge sessions pin|unpin <id|title>`** + share-card title resume / PIN flag
-- **Fork clears pin**; prompt/`/status` show `PIN` when the active session is protected
-- **Resume orientation**: auto-resume / `/resume` show last turn + mutated files; **`/sessions pinned`** · `forge sessions list --pinned`
-- **Doctor** surfaces pinned session count (plain + `--json` `sessionsPinned`); import preserves `lastUserPreview`, never inherits pin
-- **`sessions show` path line** + `resolveSessionDir` / `resolveSessionJsonPath` helpers; PRODUCTION checklist covers pin/files/resume-by-title
-- **`/path [id|json|copy]`** · **`forge sessions path <id|title>`**: print on-disk session dir / `session.json` (live-safe; optional clipboard); show JSON includes `path`
 - **`kill_task` without id**: lists active tasks (parity with `get_task_output`) so agents can recover the id
 - **permission-saved + auth store**: never mutate shared empty JSON fallbacks (always-allow / credential corruption fix)
 - **`readJsonFile`**: clones object/array fallbacks so shared `EMPTY` constants cannot be corrupted
@@ -105,7 +117,7 @@ Learned from Grok Build (consecutive-failure circuit breaker) and OpenCode (sess
 - **`/bell [on|off|test]`** — optional terminal BEL on turn end (pref + `FORGE_BELL`); long-run attention
 - **Interactive auto-resume** — bare `forge` continues newest same-cwd session (≤14d); skips foreign live locks (with skip count in resume log); `--new` / `FORGE_NO_AUTO_RESUME=1` for fresh
 - **Richer model catalogs** for OpenAI / OpenRouter / Google (`forge models`)
-- **`forge doctor --json`** exposes doom-loop / error-streak / ULW continue thresholds, perm-ask timeout, bell, auto-resume, **`sessionsLocked`**
+- **`forge doctor --json`** exposes doom-loop / error-streak / ULW continue thresholds, perm-ask timeout, bell, auto-resume, **`sessionsLocked`** (see 0.9.4 for `sessionsPinned`)
 - **`/fork`**, **`/export [--json]`**, **`/diff`** (shell-safe), **`/metrics`** in the REPL (diff/metrics live-safe)
 - Richer bash completion for sessions show/export/import/fork/delete (`--force`)
 - Doctor surfaces metrics + perm-ask-timeout + foreign-locked session count

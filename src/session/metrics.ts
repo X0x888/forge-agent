@@ -251,6 +251,8 @@ export interface UsageStats {
     locked: number;
     titled: number;
     ultrawork: number;
+    /** Pin-protected sessions (survive prune). */
+    pinned: number;
   };
 }
 
@@ -326,6 +328,7 @@ export function collectUsageStats(opts?: {
   let sessionLocked = 0;
   let sessionTitled = 0;
   let sessionUlw = 0;
+  let sessionPinned = 0;
   try {
     // Dynamic import avoided — listSessions is same package tree but metrics
     // must not create a hard cycle. Inline a light scan of meta.json only.
@@ -340,10 +343,12 @@ export function collectUsageStats(opts?: {
           const meta = JSON.parse(fs.readFileSync(metaPath, "utf8")) as {
             title?: string;
             ultrawork?: boolean;
+            pinned?: boolean;
           };
           sessionTotal += 1;
           if (meta.title) sessionTitled += 1;
           if (meta.ultrawork) sessionUlw += 1;
+          if (meta.pinned) sessionPinned += 1;
           const lockPath = path.join(dir, "session.lock");
           if (fs.existsSync(lockPath)) {
             try {
@@ -397,6 +402,7 @@ export function collectUsageStats(opts?: {
       locked: sessionLocked,
       titled: sessionTitled,
       ultrawork: sessionUlw,
+      pinned: sessionPinned,
     },
   };
 }
@@ -419,7 +425,7 @@ export function formatUsageStats(stats: UsageStats): string {
     `  mode:       headless=${stats.headlessRuns}  ULW=${stats.ulwRuns}`,
     `  tokens:     in=${formatTokens(stats.promptTokens)} out=${formatTokens(stats.completionTokens)}  est ${formatCost(stats.estCostUsd)}`,
     `  work:       turns=${stats.turns}  edits=${stats.edits}  wall≈${durMin.toFixed(1)}m`,
-    `  sessions:   ${stats.sessions.total} on disk  titled=${stats.sessions.titled}  ULW=${stats.sessions.ultrawork}  locked=${stats.sessions.locked}`,
+    `  sessions:   ${stats.sessions.total} on disk  titled=${stats.sessions.titled}  ULW=${stats.sessions.ultrawork}  pinned=${stats.sessions.pinned}  locked=${stats.sessions.locked}`,
     `By provider:`,
     top(stats.byProvider),
     `By model:`,

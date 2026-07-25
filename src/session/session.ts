@@ -719,7 +719,7 @@ export interface ListSessionsOpts {
   /** Only sessions whose cwd resolves equal to this path. */
   cwd?: string;
   /**
-   * Case-insensitive substring match against id and title.
+   * Case-insensitive substring match against id, title, and lastUserPreview.
    * Useful for multi-project experts locating labeled sessions.
    */
   query?: string;

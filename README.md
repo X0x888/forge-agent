@@ -2,7 +2,7 @@
 
 **Forge** is an open-source AI coding agent CLI with a **first-class harness** — the control plane that other tools partially implement.
 
-> **v0.9.3** — **Production reliability** + expert delight: Retry-After, abortable/stream-capped tools, JSON repair, orphan tool heal, doom-loop + error-streak, **apply_patch**, session lock + auto-resume, **`listSessions({cwd,query})`**, **`--title`** / `/new [title]`, resume-by-title, **`/files`**, **`/pin`**, **`forge stats`** / `/stats`, **`/share`** handoff card, **`/retry`** / `/again`, **`/last [n]`**, **`forge news`** / `/news`, **`forge run --continue`**, **`forge tips`**, first-run welcome tip, lock-safe prune/delete, shell-safe `/diff`, **`forge run --session`**, metrics.jsonl, structured **`doctor --json`**, `completion` / `npm run smoke`. Builds on v0.8 Bar A safety + harness (blocking Stop, `/goal`, ULW).
+> **v0.9.4** — **Expert UX** on the 0.9.3 reliability base: **`/retry`** / `/again`, **`/last`**, **`/files`**, **`/path`**, **`/pin`**, resume-by-title, **`forge run --continue`**, **`forge stats`** / `/stats`, **`/share`**, **`forge news`** / **`forge tips`**, first-run welcome tip, relative session ages, doctor **`sessionsPinned`**. Still includes Retry-After, stream-capped tools, doom-loop + error-streak, **apply_patch**, session lock + auto-resume, lock-safe prune/delete, shell-safe `/diff`, structured **`doctor --json`**, `completion` / `npm run smoke`. Builds on v0.8 Bar A safety + harness (blocking Stop, `/goal`, ULW).
 
 Key capability comparison:
 
@@ -204,7 +204,7 @@ Max-autonomy **relentless loop**. Soft prompts like `improve the code` are expan
 
 See [docs/ULW.md](docs/ULW.md).
 
-### 4. Production reliability (v0.9.3)
+### 4. Production reliability (v0.9.3+) + expert UX (v0.9.4)
 
 Forge is built for long expert sessions and CI, not just demos:
 
@@ -216,7 +216,8 @@ Forge is built for long expert sessions and CI, not just demos:
 - **OAuth refresh** at start and once mid-run on `401`
 - **Session locks** (headless fail-closed; optional `FORGE_FORCE_SESSION_LOCK=1`), fork/export/import (export mode `0600`), crash tmp recovery, lock-safe prune/delete, **metrics.jsonl**
 - **Stream-capped** `web_fetch` / search HTML bodies; **grep/glob** external-directory gate
-- **`forge run --session <id>`** multi-step headless CI resume
+- **`forge run --session <id|title>`** and **`--continue`** for multi-step headless CI without copying UUIDs
+- **Expert orientation**: `/last` · `/files` · `/path` · `/pin` · `/share` · `/retry` · `forge stats` · `forge news`
 - Accurate **stream token usage** for `/cost`; optional `FORGE_PERMISSION_TIMEOUT_MS`
 
 Full contract: [docs/RELIABILITY.md](docs/RELIABILITY.md) · expert checklist: [docs/PRODUCTION.md](docs/PRODUCTION.md) · release notes: [CHANGELOG.md](CHANGELOG.md)

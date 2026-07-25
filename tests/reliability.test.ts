@@ -1254,10 +1254,13 @@ describe("session metrics + permission timeout", () => {
     assert.ok(stats.byProvider.anthropic >= 1);
     assert.ok(stats.sessions.total >= 1);
     assert.ok(stats.sessions.titled >= 1);
+    assert.equal(typeof stats.sessions.pinned, "number");
+    assert.ok(stats.sessions.pinned >= 0);
     const textOut = formatUsageStats(stats);
     assert.match(textOut, /Forge usage/);
     assert.match(textOut, /runs:/);
     assert.match(textOut, /By provider/);
+    assert.match(textOut, /pinned=/);
   });
 });
 

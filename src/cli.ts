@@ -176,7 +176,7 @@ Docs: docs/PRODUCTION.md · docs/RELIABILITY.md · docs/ULW.md · forge news
       "--new",
       "Force a new session (default resumes newest same-cwd session in the REPL)",
     )
-    .option("--session <id>", "Resume session id/prefix")
+    .option("--session <id>", "Resume session id/prefix or unique title")
     .option("--title <text>", "Label for a new session (searchable via list -q / /sessions search)")
     .option("--cwd <path>", "Workspace directory", process.cwd())
     .option("--print-logs", "Verbose debug logs")
@@ -304,7 +304,10 @@ Docs: docs/PRODUCTION.md · docs/RELIABILITY.md · docs/ULW.md · forge news
     .option("--ulw", "Ultrawork mode")
     .option("--goal <objective>", "Arm /goal")
     .option("--cwd <path>", "Workspace", process.cwd())
-    .option("--session <id>", "Resume session id/prefix (continue prior headless run)")
+    .option(
+      "--session <id>",
+      "Resume session id/prefix or unique title (continue prior headless run)",
+    )
     .option(
       "--continue",
       "Resume newest same-cwd session (≤14d; skips foreign locks). Ignored with --session/--new",
@@ -547,7 +550,7 @@ Docs: docs/PRODUCTION.md
       "[action]",
       "list (default) | show <id> | path <id> | export <id> | import <file> | fork <id> | pin <id> | unpin <id> | delete <id> [--force] | prune",
     )
-    .argument("[id]", "Session id/prefix or import file path")
+    .argument("[id]", "Session id/prefix/title or import file path")
     .option("--keep <n>", "Prune: keep newest N sessions", "50")
     .option("--max-age-days <n>", "Prune: also drop sessions older than N days")
     .option("--json", "Machine-readable JSON")
@@ -559,7 +562,7 @@ Docs: docs/PRODUCTION.md
     )
     .option(
       "-q, --query <text>",
-      "List: case-insensitive id/title substring filter",
+      "List: case-insensitive id/title/last-prompt substring filter",
     )
     .option("--pinned", "List: only pin-protected sessions")
     .option("-n, --limit <n>", "List limit", "30")
@@ -1168,10 +1171,10 @@ Project instructions for Forge (and other coding agents).
           `Forge expert tips`,
           `  Live mid-run:  /cycle 0|1  ·  /ulw-off  ·  /pause  ·  /unpause  ·  /done  ·  /status`,
           `  Sessions:      /sessions  ·  /sessions search <q>  ·  /new [title]  ·  /share`,
-          `  Resume:        bare forge (same-cwd)  ·  /resume  ·  forge --session <id>`,
+          `  Resume:        bare forge (same-cwd)  ·  /resume <id|title>  ·  forge --session <id|title>`,
           `  CI:            forge run "…" --title job --json  ·  forge run "…" --continue  ·  forge doctor --json`,
           `  Safety:        /permissions plan|acceptEdits  ·  --sandbox workspace  ·  /diff (argv-safe)`,
-          `  Attention:     /bell on  ·  /copy  ·  /last  ·  /files  ·  /path  ·  /stats 7  ·  /share  ·  /retry`,
+          `  Attention:     /bell on  ·  /copy  ·  /last  ·  /files  ·  /path  ·  /pin  ·  /stats 7  ·  /share  ·  /retry`,
           `  Docs:          docs/PRODUCTION.md  ·  docs/RELIABILITY.md  ·  forge tips  ·  forge news  ·  /help`,
         ].join("\n"),
       );

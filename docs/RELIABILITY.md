@@ -91,10 +91,12 @@ Invalid numeric values fall back to defaults (never crash the agent).
 
 ```bash
 forge doctor          # auth, sandbox backend, auth.json mode, blocking Stop, session count (exit 1 if issues)
-forge doctor --json   # CI-friendly summary (exit 1 when unhealthy; includes secureFiles + issues[] + sessionsLocked)
+forge doctor --json   # CI-friendly summary (exit 1 when unhealthy; includes secureFiles + issues[] + sessionsLocked + sessionsPinned)
 forge auth            # stored credentials + active resolution (refreshes OAuth)
 FORGE_LOG_JSON=1 forge run "…"   # structured logs on stderr
-forge sessions prune --keep 50   # disk hygiene
+forge run "next" --continue --json   # multi-step same-cwd resume (no session id)
+forge stats --days 7 --json      # counter-only usage dashboard
+forge sessions prune --keep 50   # disk hygiene (skips locked + pinned)
 forge prune-tool-output          # prune ~/.forge/tool-output dumps
 forge prune-metrics --keep 500   # prune counter-only metrics.jsonl
 npm test              # full suite (uses workspace .tmp for tsx)

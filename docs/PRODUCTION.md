@@ -45,7 +45,7 @@ CI (GitHub Actions) runs `npm run check` + `npm run smoke` on Node 20 and 22.
 ```json
 {
   "ok": true,
-  "version": "0.9.3",
+  "version": "0.9.4",
   "provider": "xai",
   "model": "grok-4.5",
   "auth": "xai via …",
