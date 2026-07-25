@@ -1804,7 +1804,6 @@ describe("session prune", () => {
       listSessions,
       pruneSessions,
       sessionDir,
-      saveSession,
     } = await import("../src/session/session.js");
     // Hold a real live foreign pid (sandbox may block kill(1,0))
     const holder = spawn(process.execPath, ["-e", "setInterval(()=>{}, 1000)"], {
@@ -1814,15 +1813,16 @@ describe("session prune", () => {
       const keep = createSession({ cwd: tmp, provider: "xai", model: "m" });
       const locked = createSession({ cwd: tmp, provider: "xai", model: "m" });
       const old = createSession({ cwd: tmp, provider: "xai", model: "m" });
-      // Age locked + old so keep=1 would delete both without lock protection
-      locked.meta.updatedAt = new Date(
-        Date.now() - 20 * 86_400_000,
-      ).toISOString();
-      saveSession(locked);
-      old.meta.updatedAt = new Date(Date.now() - 30 * 86_400_000).toISOString();
-      saveSession(old);
-      keep.meta.updatedAt = new Date().toISOString();
-      saveSession(keep);
+      // Patch meta.json directly — saveSession() always rewrites updatedAt=now.
+      const patchAge = (id: string, daysAgo: number) => {
+        const p = path.join(sessionDir(id), "meta.json");
+        const raw = JSON.parse(fs.readFileSync(p, "utf8"));
+        raw.updatedAt = new Date(Date.now() - daysAgo * 86_400_000).toISOString();
+        fs.writeFileSync(p, JSON.stringify(raw));
+      };
+      patchAge(locked.meta.id, 20);
+      patchAge(old.meta.id, 30);
+      patchAge(keep.meta.id, 0);
       const lockFile = path.join(sessionDir(locked.meta.id), "session.lock");
       fs.writeFileSync(
         lockFile,
@@ -1840,7 +1840,14 @@ describe("session prune", () => {
         listSessions(10).some((s) => s.id === locked.meta.id),
         "foreign-locked session must survive prune",
       );
-      assert.ok(pruned.deleted.includes(old.meta.id));
+      assert.ok(
+        pruned.deleted.includes(old.meta.id),
+        "unlocked old session must be pruned when over keep",
+      );
+      assert.ok(
+        listSessions(10).some((s) => s.id === keep.meta.id),
+        "newest session must remain under keep=1",
+      );
     } finally {
       holder.kill("SIGKILL");
     }
