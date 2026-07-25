@@ -399,12 +399,23 @@ describe("doctor surfaces reliability", () => {
     assert.equal(typeof payload.metrics.bytes, "number");
     assert.equal(typeof payload.blockingStop, "boolean");
     assert.equal(payload.blockingStop, true);
-    // Operator knobs (bash timeouts) — defaults when env unset
+    // Operator knobs (bash timeouts) — defaults when env unset; mirror doctor --json fields
     {
       const { defaultBashTimeoutMs, defaultBashBackgroundTimeoutMs } =
         await import("../src/util/env.js");
-      assert.equal(defaultBashTimeoutMs(), 120_000);
-      assert.equal(defaultBashBackgroundTimeoutMs(), 30 * 60_000);
+      const bashTimeoutMs = defaultBashTimeoutMs();
+      const bashBackgroundTimeoutMs = defaultBashBackgroundTimeoutMs();
+      assert.equal(bashTimeoutMs, 120_000);
+      assert.equal(bashBackgroundTimeoutMs, 30 * 60_000);
+      // Shape experts/CI should read from forge doctor --json
+      const doctorJsonShape = {
+        ...payload,
+        bashTimeoutMs,
+        bashBackgroundTimeoutMs,
+      };
+      assert.equal(typeof doctorJsonShape.bashTimeoutMs, "number");
+      assert.equal(typeof doctorJsonShape.bashBackgroundTimeoutMs, "number");
+      assert.ok(doctorJsonShape.bashTimeoutMs >= 5_000);
     }
     assert.equal(payload.secureFiles.auth.exists, false);
     assert.equal(payload.secureFiles.auth.modeOk, null);

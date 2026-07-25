@@ -620,7 +620,7 @@ function printBanner(
         (git.branch ? ` · ${git.branch}${git.dirty ? "*" : ""}` : "") +
         (hints.length ? ` · ${hints.join("+")}` : "") +
         `\n  Native live status while working · type at live › mid-run (/cycle 0)\n` +
-        `  ↑↓ history · Tab complete · /tasks · /status · /share · /stats · /news · /tips · /quit\n` +
+        `  ↑↓ history · Tab complete · /tasks · /status · /undo · /logs · /share · /news · /tips · /quit\n` +
         `  Fresh session: forge --new  ·  resume is automatic for this cwd\n`,
     ),
   );
