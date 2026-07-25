@@ -15,6 +15,7 @@ Production recovery, review, and onboarding learned from OpenCode (snapshot/reve
 - **`/init [focus]`**: OpenCode-style guided `AGENTS.md` bootstrap / improve (forwards a high-signal research+write prompt)
 - **`/review [target]`**: OpenCode-style code review — `uncommitted` (default) · `staged` · `<commit>` · `<branch>` · `<pr#|url>`
 - **`/compact-and <prompt>`**: Warp-style compact then continue with a follow-up in one step
+- **`/fork-and-compact [prompt]`**: fork → compact the fork → optional continue (original history preserved)
 - **`/export` path writes mode `0600`** (parity with `forge sessions export --out`)
 - Help, tips, tab-complete updated
 

@@ -302,6 +302,30 @@ describe("/init and /compact-and slash commands", () => {
     assert.match(r.output || "", /Compacted/);
   });
 
+  it("/fork-and-compact branches, compacts fork, keeps original", async () => {
+    const s = createSession({ cwd: home, provider: "xai", model: "grok-4" });
+    for (let i = 0; i < 8; i++) {
+      s.messages.push({ role: "user", content: `u${i} `.repeat(20) });
+      s.messages.push({ role: "assistant", content: `a${i} `.repeat(20) });
+    }
+    const origLen = s.messages.length;
+    const origId = s.meta.id;
+    const hooks = new HookRunner(DEFAULT_CONFIG, home);
+    const r = await handleSlash("/fork-and-compact try plan B", {
+      session: s,
+      config: DEFAULT_CONFIG,
+      hooks,
+    });
+    assert.ok(r.replaceSession);
+    assert.notEqual(r.replaceSession!.meta.id, origId);
+    assert.ok(r.replaceSession!.messages.length < origLen);
+    assert.equal(r.forwardPrompt, "try plan B");
+    assert.match(r.output || "", /Forked/);
+    assert.match(r.output || "", /compacted/i);
+    // Original session object still has full history (fork is a copy)
+    assert.equal(s.messages.length, origLen);
+  });
+
   it("tab-complete lists /init and /compact-and", () => {
     assert.ok(completeSlash("/in").some((c) => c === "/init"));
     assert.ok(completeSlash("/compact").some((c) => c === "/compact-and" || c === "/compact"));

@@ -251,6 +251,7 @@ Full contract: [docs/RELIABILITY.md](docs/RELIABILITY.md) · expert checklist: [
 | `/permissions <mode>` | `default` \| `acceptEdits` \| `plan` \| `bypassPermissions` (persists); `list`/`clear`/`revoke` for saved always-allows |
 | `/compact` | Compact history |
 | `/compact-and <prompt>` | Compact then continue with follow-up (Warp-style) |
+| `/fork-and-compact [prompt]` | Fork, compact the fork, optional continue (original kept) |
 | `/init [focus]` | Guided `AGENTS.md` setup / improve (OpenCode-style) |
 | `/review [target]` | Code review: uncommitted (default) · staged · commit · branch · PR |
 | `/rewind [n]` | Undo last n turns **+ restore journaled files** (`/undo`) |

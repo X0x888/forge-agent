@@ -85,6 +85,12 @@ export const COMMAND_PARAMS: Record<string, ParamChoice[]> = {
       description: "Follow-up prompt after compact",
     },
   ],
+  "fork-and-compact": [
+    {
+      value: "try the alternate approach",
+      description: "Optional follow-up in the compacted fork",
+    },
+  ],
   init: [
     {
       value: "focus on test commands",

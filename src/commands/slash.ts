@@ -354,6 +354,7 @@ export const SLASH_COMMANDS = [
   "/permissions",
   "/compact",
   "/compact-and",
+  "/fork-and-compact",
   "/init",
   "/review",
   "/rewind",
@@ -1110,6 +1111,49 @@ export async function handleSlash(
       };
     }
 
+    case "/fork-and-compact": {
+      // Warp-inspired: branch session, compact the fork, optional follow-up prompt.
+      // Keeps the original history intact for later /resume.
+      const follow = (arg || "").trim();
+      const titleHint = follow
+        ? `fork+compact: ${follow}`.slice(0, 72)
+        : "fork+compact";
+      const forked = forkSession(opts.session, { title: titleHint });
+      const before = forked.messages.length;
+      const ulw = loadUlwCycle(forked.meta.id);
+      const goal = loadGoal(forked.meta.id);
+      forked.messages = compactMessages(forked.messages, 12, {
+        ulw,
+        goal,
+        todos: forked.todos,
+        sessionId: forked.meta.id,
+      });
+      saveSession(forked);
+      const base =
+        `Forked → ${forked.meta.id.slice(0, 8)} then compacted ${before} → ${forked.messages.length} msgs.\n` +
+        `  Original ${opts.session.meta.id.slice(0, 8)} unchanged (full history).\n` +
+        `  Resume original: /resume ${opts.session.meta.id.slice(0, 8)}`;
+      if (!follow) {
+        return {
+          handled: true,
+          output:
+            base +
+            chalk.dim(
+              "\n  Tip: /fork-and-compact <prompt> to continue immediately in the fork.",
+            ),
+          replaceSession: forked,
+        };
+      }
+      const preview =
+        follow.length > 120 ? `${follow.slice(0, 117).trimEnd()}…` : follow;
+      return {
+        handled: true,
+        output: `${base}\n  Continuing in fork…\n→ ${preview}`,
+        replaceSession: forked,
+        forwardPrompt: follow,
+      };
+    }
+
     case "/title":
     case "/rename": {
       // /title                 → show
@@ -1524,7 +1568,7 @@ export async function handleSlash(
           `  CI:            forge run "…" --title job --json  ·  forge run "…" --continue  ·  forge doctor --json`,
           `  Safety:        /permissions plan|acceptEdits  ·  --sandbox workspace  ·  /diff (argv-safe)`,
           `  Attention:     /bell on  ·  /copy  ·  /last  ·  /files  ·  /path  ·  /logs  ·  /stats 7  ·  /retry`,
-          `  Recovery:      /undo (chat+disk)  ·  /retry  ·  /compact-and <prompt>  ·  /init  ·  /review  ·  /fork`,
+          `  Recovery:      /undo  ·  /retry  ·  /compact-and  ·  /fork-and-compact  ·  /init  ·  /review  ·  /fork`,
           `  Docs:          docs/PRODUCTION.md  ·  docs/RELIABILITY.md  ·  /news  ·  /help`,
         ].join("\n"),
       };
@@ -2456,6 +2500,7 @@ Forge slash commands
                         Mode persists · list|clear|revoke for saved always-allows
   /compact              Compact conversation
   /compact-and <prompt> Compact then continue with follow-up (Warp-style)
+  /fork-and-compact [prompt]  Fork, compact the fork, optional continue (Warp-style)
   /init [focus]         Guided AGENTS.md setup / improve (OpenCode-style)
   /review [target]      Code review: uncommitted|staged|<commit>|<branch>|<pr#>
   /rewind [n]           Undo last n user turns + restore journaled files (/undo)

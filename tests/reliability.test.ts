@@ -305,6 +305,8 @@ describe("doctor surfaces reliability", () => {
     assert.match(out, /overflow→compact|overflow/);
     assert.match(out, /error-streak|doom-loop/);
     assert.match(out, /empty-SSE|abortable streams/);
+    assert.match(out, /file-aware undo|apply_patch/);
+    assert.match(out, /bash timeout=/);
     assert.match(out, /metrics\.jsonl|metrics:/);
     assert.match(out, /Node:/);
     assert.match(out, /Blocking Stop/);
