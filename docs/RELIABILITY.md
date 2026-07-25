@@ -75,6 +75,8 @@ What experts should expect from Forge in long, unattended, or CI runs.
 | Variable | Default | Purpose |
 |---|---|---|
 | `FORGE_PROVIDER_TIMEOUT_MS` | `300000` | Provider fetch/stream wall clock |
+| `FORGE_BASH_TIMEOUT_MS` | `120000` | Default foreground `bash` timeout (min 5s, max 30m) |
+| `FORGE_BASH_BG_TIMEOUT_MS` | `1800000` | Default background task timeout (min 30s, max 6h) |
 | `FORGE_MAX_RUN_MS` | off | Headless `forge run` wall-clock cap (exit 124) |
 | `FORGE_PERMISSION_TIMEOUT_MS` | off | Auto-deny stalled interactive Allow? prompts (min 5s) |
 | `FORGE_DOOM_LOOP_THRESHOLD` | `3` | Identical tool+args streak before strategy nudge |

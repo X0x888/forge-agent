@@ -91,6 +91,12 @@ export const COMMAND_PARAMS: Record<string, ParamChoice[]> = {
       description: "Optional focus for AGENTS.md bootstrap",
     },
   ],
+  review: [
+    { value: "uncommitted", description: "Working tree (default)" },
+    { value: "staged", description: "Staged changes only" },
+    { value: "main", description: "Diff main...HEAD" },
+    { value: "origin/main", description: "Diff origin/main...HEAD" },
+  ],
   rewind: [
     { value: "1", description: "Undo last user turn (+ restore journaled files)" },
     { value: "2", description: "Undo last 2 user turns (+ disk)" },

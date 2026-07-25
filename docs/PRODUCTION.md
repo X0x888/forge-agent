@@ -35,8 +35,9 @@ forge news                   # what's new from packaged CHANGELOG
 forge news 2 --json          # last 2 releases as JSON
 forge run "next" --continue --json   # headless same-cwd resume (no session id)
 # REPL: /share · /files · /pin · /stats · /tips · /news · /retry [prompt] · /last [n]
-# REPL: /undo [n] restores chat + journaled files · /init [focus] · /compact-and <prompt>
+# REPL: /undo [n] restores chat + journaled files · /init [focus] · /review [target] · /compact-and <prompt>
 # Resume (bare forge / /resume) peeks last turn + mutated files
+# Optional: FORGE_BASH_TIMEOUT_MS=600000 for long test suites
 ```
 
 CI (GitHub Actions) runs `npm run check` + `npm run smoke` on Node 20 and 22.
@@ -69,6 +70,8 @@ CI (GitHub Actions) runs `npm run check` + `npm run smoke` on Node 20 and 22.
   },
   "issues": [],
   "providerTimeoutMs": 300000,
+  "bashTimeoutMs": 120000,
+  "bashBackgroundTimeoutMs": 1800000,
   "maxRunMs": null,
   "permissionAskTimeoutMs": null,
   "doomLoopThreshold": 3,

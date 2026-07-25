@@ -86,7 +86,11 @@ import {
 } from "./util/changelog.js";
 import { shellCompletionScript } from "./util/completion-script.js";
 import { providerTimeoutMs } from "./util/abort.js";
-import { envPositiveInt } from "./util/env.js";
+import {
+  defaultBashBackgroundTimeoutMs,
+  defaultBashTimeoutMs,
+  envPositiveInt,
+} from "./util/env.js";
 import { isBellEnabled } from "./util/attention.js";
 import { permissionAskTimeoutMs } from "./agent/permissions.js";
 import {
@@ -1320,6 +1324,8 @@ Project instructions for Forge (and other coding agents).
               secureFiles,
               issues: check.issues,
               providerTimeoutMs: providerTimeoutMs(),
+              bashTimeoutMs: defaultBashTimeoutMs(),
+              bashBackgroundTimeoutMs: defaultBashBackgroundTimeoutMs(),
               maxRunMs,
               permissionAskTimeoutMs: permAskTimeoutMs || null,
               doomLoopThreshold,

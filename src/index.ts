@@ -117,7 +117,12 @@ export {
   estimateRequestTokens,
   pruneOversizedMessageBodies,
 } from "./session/session.js";
-export { envPositiveInt, envNonNegInt } from "./util/env.js";
+export {
+  envPositiveInt,
+  envNonNegInt,
+  defaultBashTimeoutMs,
+  defaultBashBackgroundTimeoutMs,
+} from "./util/env.js";
 export { editDistance, stringSimilarity } from "./util/string-distance.js";
 export { copyToClipboard } from "./util/clipboard.js";
 export type { ClipboardResult } from "./util/clipboard.js";

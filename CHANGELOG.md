@@ -1,8 +1,8 @@
 # Changelog
 
-## 0.9.5 — File-aware undo, /init, /compact-and
+## 0.9.5 — File-aware undo, /init, /review, /compact-and
 
-Production recovery and onboarding learned from OpenCode (snapshot/revert, guided AGENTS.md) and Warp (`/compact-and`).
+Production recovery, review, and onboarding learned from OpenCode (snapshot/revert, guided AGENTS.md, `/review`) and Warp (`/compact-and`).
 
 ### Recovery (disk + chat)
 - **File mutation journal**: successful `write_file` / `search_replace` / `apply_patch` ops append pre-images to `~/.forge/sessions/<id>/mutations.jsonl` (mode `0600`, ~1.5 MiB cap per body)
@@ -13,13 +13,18 @@ Production recovery and onboarding learned from OpenCode (snapshot/revert, guide
 
 ### Expert UX
 - **`/init [focus]`**: OpenCode-style guided `AGENTS.md` bootstrap / improve (forwards a high-signal research+write prompt)
+- **`/review [target]`**: OpenCode-style code review — `uncommitted` (default) · `staged` · `<commit>` · `<branch>` · `<pr#|url>`
 - **`/compact-and <prompt>`**: Warp-style compact then continue with a follow-up in one step
 - **`/export` path writes mode `0600`** (parity with `forge sessions export --out`)
 - Help, tips, tab-complete updated
 
+### Operator knobs
+- **`FORGE_BASH_TIMEOUT_MS`** (default 120s, min 5s, max 30m) and **`FORGE_BASH_BG_TIMEOUT_MS`** (default 30m) for CI/long builds
+- **`forge doctor --json`**: `bashTimeoutMs` · `bashBackgroundTimeoutMs`; plain doctor reliability line includes bash timeouts + file-aware undo
+
 ### Docs / tests
 - RELIABILITY + PRODUCTION + README note file-aware undo and new slash commands
-- Tests: `mutations-undo.test.ts` (journal, restore, fork/clear, slash `/undo` `/init` `/compact-and` export mode)
+- Tests: `mutations-undo.test.ts` (journal, restore, fork/clear, slash `/undo` `/init` `/review` `/compact-and` export mode, bash timeout env)
 
 ## 0.9.4 — Expert UX (retry, pin, stats, resume-by-title)
 

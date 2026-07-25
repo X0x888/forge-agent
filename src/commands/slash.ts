@@ -58,7 +58,11 @@ import { printAuthStatus } from "../auth/login.js";
 import { getCredential, isExpired } from "../auth/store.js";
 import { providerTimeoutMs } from "../util/abort.js";
 import { copyToClipboard } from "../util/clipboard.js";
-import { envPositiveInt } from "../util/env.js";
+import {
+  defaultBashBackgroundTimeoutMs,
+  defaultBashTimeoutMs,
+  envPositiveInt,
+} from "../util/env.js";
 import { isBellEnabled } from "../util/attention.js";
 import { inspectSecureFile } from "../util/fs.js";
 import { getForgeVersion } from "../util/version.js";
@@ -346,6 +350,7 @@ export const SLASH_COMMANDS = [
   "/compact",
   "/compact-and",
   "/init",
+  "/review",
   "/rewind",
   "/undo",
   "/retry",
@@ -981,6 +986,28 @@ export async function handleSlash(
       };
     }
 
+    case "/review": {
+      // OpenCode-inspired code review — scoped target + high-signal prompt.
+      const cwd =
+        opts.session.meta.cwd || opts.config.workspace || process.cwd();
+      const target = (arg || "").trim() || "uncommitted";
+      // Reject obvious injection in the free-text target (prompt still quotes it).
+      if (/[\0\r\n]/.test(target) || target.length > 200) {
+        return {
+          handled: true,
+          output:
+            "Invalid /review target. Use: (empty)|uncommitted|staged|<commit>|main|origin/main|<pr#|url>",
+        };
+      }
+      const prompt = buildReviewPrompt(target, cwd);
+      return {
+        handled: true,
+        output: `Reviewing ${target === "uncommitted" ? "uncommitted changes" : target}…`,
+        forwardPrompt: prompt,
+        session: opts.session,
+      };
+    }
+
     case "/rewind":
     case "/undo": {
       const n = arg ? Math.max(1, parseInt(arg, 10) || 1) : 1;
@@ -1461,7 +1488,7 @@ export async function handleSlash(
           `  CI:            forge run "…" --title job --json  ·  forge run "…" --continue  ·  forge doctor --json`,
           `  Safety:        /permissions plan|acceptEdits  ·  --sandbox workspace  ·  /diff (argv-safe)`,
           `  Attention:     /bell on  ·  /copy  ·  /last  ·  /files  ·  /path  ·  /stats 7  ·  /retry`,
-          `  Recovery:      /undo (chat+disk)  ·  /retry  ·  /compact-and <prompt>  ·  /init  ·  /fork`,
+          `  Recovery:      /undo (chat+disk)  ·  /retry  ·  /compact-and <prompt>  ·  /init  ·  /review  ·  /fork`,
           `  Docs:          docs/PRODUCTION.md  ·  docs/RELIABILITY.md  ·  /news  ·  /help`,
         ].join("\n"),
       };
@@ -2103,8 +2130,10 @@ export function runDoctorCheck(config: ForgeConfig): DoctorResult {
     const resumeNote = autoResumeOff
       ? " · auto-resume=off"
       : " · auto-resume=same-cwd";
+    const bashTo = defaultBashTimeoutMs();
+    const bashBg = defaultBashBackgroundTimeoutMs();
     lines.push(
-      `Reliability: Retry-After · abortable streams · empty-SSE retry · JSON repair · orphan tool heal · doom-loop@${doomN} · error-streak@${errN} · ulw-continues@${ulwCap} · apply_patch · overflow→compact · session lock/tmp-recover · metrics.jsonl · OAuth refresh · provider timeout=${Math.round(providerTimeoutMs() / 1000)}s${maxRunNote}${permNote}${bellNote}${resumeNote}`,
+      `Reliability: Retry-After · abortable streams · empty-SSE retry · JSON repair · orphan tool heal · doom-loop@${doomN} · error-streak@${errN} · ulw-continues@${ulwCap} · apply_patch · file-aware undo · overflow→compact · session lock/tmp-recover · metrics.jsonl · OAuth refresh · provider timeout=${Math.round(providerTimeoutMs() / 1000)}s · bash timeout=${Math.round(bashTo / 1000)}s (bg ${Math.round(bashBg / 1000)}s)${maxRunNote}${permNote}${bellNote}${resumeNote}`,
     );
   }
 
@@ -2247,6 +2276,79 @@ export function runDoctor(config: ForgeConfig): string {
   return runDoctorCheck(config).report;
 }
 
+/** OpenCode-inspired code review prompt (scoped target). */
+export function buildReviewPrompt(target: string, workspace: string): string {
+  const t = (target || "uncommitted").trim() || "uncommitted";
+  const lower = t.toLowerCase();
+  let scopeBlock: string;
+  if (
+    !t ||
+    lower === "uncommitted" ||
+    lower === "dirty" ||
+    lower === "working" ||
+    lower === "."
+  ) {
+    scopeBlock = `## Scope: uncommitted working tree
+1. \`git status --short\`
+2. \`git diff\` (unstaged) and \`git diff --cached\` (staged)
+3. For untracked files from status, read their full contents`;
+  } else if (lower === "staged" || lower === "cached" || lower === "--cached") {
+    scopeBlock = `## Scope: staged changes only
+1. \`git status --short\`
+2. \`git diff --cached\`
+3. Read full files for any staged paths that need context`;
+  } else if (/^#?\d+$/.test(t) || /github\.com\/.+\/pull\/\d+/i.test(t) || /^pr[#/]?\d+$/i.test(t)) {
+    const pr = t.replace(/^pr[#/]?/i, "").replace(/^#/, "");
+    scopeBlock = `## Scope: pull request ${pr}
+1. Prefer \`gh pr view ${pr}\` and \`gh pr diff ${pr}\` when \`gh\` is available
+2. Fallback: identify the base branch and \`git diff origin/main...HEAD\` (or the PR base)
+3. Read full files for non-obvious hunks`;
+  } else if (/^[0-9a-f]{7,40}$/i.test(t)) {
+    scopeBlock = `## Scope: commit ${t}
+1. \`git show ${t} --stat\`
+2. \`git show ${t} --format=fuller --no-color\`
+3. Read full files for non-obvious hunks`;
+  } else {
+    // Branch / ref — keep as a single token for the model; argv-safe when it shells.
+    scopeBlock = `## Scope: compare \`${t}\`…HEAD
+1. \`git status --short\`
+2. \`git log --oneline ${t}..HEAD\` (if valid)
+3. \`git diff ${t}...HEAD\` (three-dot when merge-base exists; else two-dot)
+4. Read full files for non-obvious hunks`;
+  }
+
+  return `You are a code reviewer. Review the changes in workspace \`${workspace}\` and provide actionable feedback.
+
+Target argument: \`${t}\`
+
+${scopeBlock}
+
+## Gathering context
+Diffs alone are not enough. After the diff, read the entire file(s) being modified to understand surrounding logic. Check AGENTS.md / CONTRIBUTING / style configs when relevant. Prefer executable sources of truth over prose.
+
+## What to look for (priority order)
+1. **Bugs** — logic errors, missing guards, race conditions, broken error handling, security (injection, path escape, secret leak)
+2. **Behavior changes** — unintentional API/CLI/contract shifts
+3. **Structure** — fights existing patterns; missing shared helpers
+4. **Performance** — only if obviously bad (unbounded O(n²), sync I/O on hot paths)
+
+## Discipline
+- Only review the changes — do not nitpick pre-existing code that was not modified
+- Be certain before calling something a bug; investigate first
+- Don't invent hypothetical problems; name the realistic scenario
+- Don't be a style zealot unless it violates established project conventions
+- No flattery. Matter-of-fact tone. Severity must match impact.
+
+## Output format
+1. Short summary (1–3 sentences)
+2. Findings ordered by severity (\`critical\` / \`high\` / \`medium\` / \`low\` / \`note\`)
+3. Each finding: file/symbol, why it matters, concrete fix suggestion
+4. If clean: say so briefly and note residual risks (tests not run, etc.)
+5. End with suggested verification commands (test/typecheck) when applicable
+
+Start by gathering the diff with tools, then read the important files, then write the review.`;
+}
+
 /** OpenCode-inspired AGENTS.md bootstrap prompt. */
 export function buildInitAgentsPrompt(focus: string, workspace: string): string {
   const focusBlock = focus
@@ -2319,6 +2421,7 @@ Forge slash commands
   /compact              Compact conversation
   /compact-and <prompt> Compact then continue with follow-up (Warp-style)
   /init [focus]         Guided AGENTS.md setup / improve (OpenCode-style)
+  /review [target]      Code review: uncommitted|staged|<commit>|<branch>|<pr#>
   /rewind [n]           Undo last n user turns + restore journaled files (/undo)
   /retry [prompt]       Rewind last turn (+ disk) + re-run (/again; optional rewrite)
   /export [path] [--json]  Export session as markdown or JSON (files mode 0600)

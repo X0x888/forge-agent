@@ -4,6 +4,10 @@ import type { ToolContext, ToolResult } from "./types.js";
 import { createShellEnv } from "./env-policy.js";
 import { boundToolOutput, BASH_MAX_CHARS } from "./truncate.js";
 import { startBackgroundTask } from "./background-tasks.js";
+import {
+  defaultBashBackgroundTimeoutMs,
+  defaultBashTimeoutMs,
+} from "../../util/env.js";
 
 const execAsync = promisify(exec);
 
@@ -16,13 +20,19 @@ function truthy(v: unknown): boolean {
   return false;
 }
 
+function resolveTimeoutMs(raw: unknown, fallback: number): number {
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n < 1) return fallback;
+  return Math.floor(n);
+}
+
 export async function toolBash(
   args: Record<string, unknown>,
   ctx: ToolContext,
 ): Promise<ToolResult> {
   const command = String(args.command || "");
   if (!command) return { output: "command is required", isError: true };
-  const timeout = Number(args.timeout_ms) || 120_000;
+  const timeout = resolveTimeoutMs(args.timeout_ms, defaultBashTimeoutMs());
   const profile = ctx.sandbox ?? "workspace";
   const missingBackend = ctx.sandboxMissingBackend ?? "fail-closed";
   const env = createShellEnv(process.env);
@@ -34,7 +44,10 @@ export async function toolBash(
       profile,
       network: ctx.sandboxNetwork,
       missingBackend,
-      timeoutMs: Number(args.timeout_ms) || 30 * 60_000,
+      timeoutMs: resolveTimeoutMs(
+        args.timeout_ms,
+        defaultBashBackgroundTimeoutMs(),
+      ),
     });
     if (!started.ok) {
       return {

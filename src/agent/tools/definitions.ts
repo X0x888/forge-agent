@@ -10,14 +10,16 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
         "Run a shell command in the workspace (builds, tests, git, package managers). " +
         "Do NOT use for file reads/edits/search/list — prefer read_file, search_replace, grep, glob, list_dir. " +
         "Set background=true for long jobs (returns task_id; poll with get_task_output, stop with kill_task). " +
-        "Avoid interactive flags, force-push, and secret exfiltration. Timeout default 120s (30m when background).",
+        "Avoid interactive flags, force-push, and secret exfiltration. " +
+        "Timeout default 120s foreground / 30m background (override FORGE_BASH_TIMEOUT_MS / FORGE_BASH_BG_TIMEOUT_MS).",
       parameters: {
         type: "object",
         properties: {
           command: { type: "string", description: "Shell command to run" },
           timeout_ms: {
             type: "number",
-            description: "Timeout in milliseconds (default 120000 foreground / 30min background)",
+            description:
+              "Timeout in milliseconds (default 120000 foreground / 30min background; env FORGE_BASH_TIMEOUT_MS / FORGE_BASH_BG_TIMEOUT_MS)",
           },
           background: {
             type: "boolean",

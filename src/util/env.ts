@@ -20,3 +20,15 @@ export function envNonNegInt(name: string, fallback: number): number {
   if (!Number.isFinite(n) || n < 0) return fallback;
   return Math.floor(n);
 }
+
+/** Default foreground bash timeout (ms). Min 5s, max 30m. */
+export function defaultBashTimeoutMs(): number {
+  const n = envPositiveInt("FORGE_BASH_TIMEOUT_MS", 120_000);
+  return Math.min(30 * 60_000, Math.max(5_000, n));
+}
+
+/** Default background bash task timeout (ms). Min 30s, max 6h. */
+export function defaultBashBackgroundTimeoutMs(): number {
+  const n = envPositiveInt("FORGE_BASH_BG_TIMEOUT_MS", 30 * 60_000);
+  return Math.min(6 * 60 * 60_000, Math.max(30_000, n));
+}

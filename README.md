@@ -2,7 +2,7 @@
 
 **Forge** is an open-source AI coding agent CLI with a **first-class harness** — the control plane that other tools partially implement.
 
-> **v0.9.5** — **File-aware `/undo`** (chat + journaled disk restore), **`/init`** (guided AGENTS.md), **`/compact-and`**, export mode `0600`. Builds on **v0.9.4** expert UX: **`/retry`**, **`/last`**, **`/files`**, **`/pin`**, resume-by-title, **`forge run --continue`**, **`forge stats`**, **`/share`**, **`forge news`** / **`tips`**. Still includes Retry-After, stream-capped tools, doom-loop + error-streak, **apply_patch**, session lock + auto-resume, structured **`doctor --json`**, `npm run smoke`. Harness: blocking Stop, `/goal`, ULW.
+> **v0.9.5** — **File-aware `/undo`** (chat + journaled disk restore), **`/init`**, **`/review`**, **`/compact-and`**, **`FORGE_BASH_TIMEOUT_MS`**, export mode `0600`. Builds on **v0.9.4** expert UX: **`/retry`**, **`/last`**, **`/files`**, **`/pin`**, resume-by-title, **`forge run --continue`**, **`forge stats`**, **`/share`**, **`forge news`** / **`tips`**. Still includes Retry-After, stream-capped tools, doom-loop + error-streak, **apply_patch**, session lock + auto-resume, structured **`doctor --json`**, `npm run smoke`. Harness: blocking Stop, `/goal`, ULW.
 
 Key capability comparison:
 
@@ -219,7 +219,8 @@ Forge is built for long expert sessions and CI, not just demos:
 - **Session locks** (headless fail-closed; optional `FORGE_FORCE_SESSION_LOCK=1`), fork/export/import (export mode `0600`), crash tmp recovery, lock-safe prune/delete, **metrics.jsonl**
 - **Stream-capped** `web_fetch` / search HTML bodies; **grep/glob** external-directory gate
 - **`forge run --session <id|title>`** and **`--continue`** for multi-step headless CI without copying UUIDs
-- **Expert orientation**: `/last` · `/files` · `/path` · `/pin` · `/share` · `/undo` (disk+chat) · `/init` · `/compact-and` · `/retry` · `forge stats` · `forge news`
+- **Expert orientation**: `/last` · `/files` · `/path` · `/pin` · `/share` · `/undo` (disk+chat) · `/init` · `/review` · `/compact-and` · `/retry` · `forge stats` · `forge news`
+- **Tunable bash timeouts**: `FORGE_BASH_TIMEOUT_MS` / `FORGE_BASH_BG_TIMEOUT_MS` (surfaced in `forge doctor --json`)
 - Accurate **stream token usage** for `/cost`; optional `FORGE_PERMISSION_TIMEOUT_MS`
 
 Full contract: [docs/RELIABILITY.md](docs/RELIABILITY.md) · expert checklist: [docs/PRODUCTION.md](docs/PRODUCTION.md) · release notes: [CHANGELOG.md](CHANGELOG.md)
@@ -251,6 +252,7 @@ Full contract: [docs/RELIABILITY.md](docs/RELIABILITY.md) · expert checklist: [
 | `/compact` | Compact history |
 | `/compact-and <prompt>` | Compact then continue with follow-up (Warp-style) |
 | `/init [focus]` | Guided `AGENTS.md` setup / improve (OpenCode-style) |
+| `/review [target]` | Code review: uncommitted (default) · staged · commit · branch · PR |
 | `/rewind [n]` | Undo last n turns **+ restore journaled files** (`/undo`) |
 | `/retry [prompt]` | Rewind last turn (+ disk) + re-run (`/again`; optional rewrite) |
 | `/files [writes\|n]` | Paths touched by tools this session (newest first; live-safe) |

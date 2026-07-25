@@ -20,7 +20,16 @@ import {
   formatRestoreResult,
 } from "../src/session/mutations.js";
 import { executeTool } from "../src/agent/tools/index.js";
-import { handleSlash, buildInitAgentsPrompt, completeSlash } from "../src/commands/slash.js";
+import {
+  handleSlash,
+  buildInitAgentsPrompt,
+  buildReviewPrompt,
+  completeSlash,
+} from "../src/commands/slash.js";
+import {
+  defaultBashTimeoutMs,
+  defaultBashBackgroundTimeoutMs,
+} from "../src/util/env.js";
 import { DEFAULT_CONFIG } from "../src/config/types.js";
 import { HookRunner } from "../src/harness/hooks.js";
 
@@ -313,6 +322,73 @@ describe("/init and /compact-and slash commands", () => {
     if (process.platform !== "win32") {
       const mode = fs.statSync(out).mode & 0o777;
       assert.equal(mode, 0o600);
+    }
+  });
+
+  it("buildReviewPrompt scopes uncommitted / branch / commit / pr", () => {
+    const u = buildReviewPrompt("uncommitted", "/ws");
+    assert.match(u, /uncommitted working tree/i);
+    assert.match(u, /git diff --cached/);
+    const b = buildReviewPrompt("main", "/ws");
+    assert.match(b, /main/);
+    assert.match(b, /three-dot|HEAD/);
+    const c = buildReviewPrompt("abc1234", "/ws");
+    assert.match(c, /git show abc1234/);
+    const p = buildReviewPrompt("42", "/ws");
+    assert.match(p, /pull request 42|gh pr/i);
+  });
+
+  it("/review forwards review prompt", async () => {
+    const s = createSession({ cwd: home, provider: "xai", model: "grok-4" });
+    const hooks = new HookRunner(DEFAULT_CONFIG, home);
+    const r = await handleSlash("/review staged", {
+      session: s,
+      config: { ...DEFAULT_CONFIG, workspace: home },
+      hooks,
+    });
+    assert.equal(r.handled, true);
+    assert.ok(r.forwardPrompt);
+    assert.match(r.forwardPrompt!, /code reviewer/i);
+    assert.match(r.forwardPrompt!, /staged/i);
+  });
+
+  it("/review rejects oversized / multiline targets", async () => {
+    const s = createSession({ cwd: home, provider: "xai", model: "grok-4" });
+    const hooks = new HookRunner(DEFAULT_CONFIG, home);
+    const r = await handleSlash("/review foo\nbar", {
+      session: s,
+      config: DEFAULT_CONFIG,
+      hooks,
+    });
+    assert.match(r.output || "", /Invalid/);
+    assert.equal(r.forwardPrompt, undefined);
+  });
+
+  it("tab-complete lists /review", () => {
+    assert.ok(completeSlash("/rev").some((c) => c === "/review"));
+  });
+
+  it("FORGE_BASH_TIMEOUT_MS clamps and falls back", () => {
+    const prev = process.env.FORGE_BASH_TIMEOUT_MS;
+    const prevBg = process.env.FORGE_BASH_BG_TIMEOUT_MS;
+    try {
+      delete process.env.FORGE_BASH_TIMEOUT_MS;
+      assert.equal(defaultBashTimeoutMs(), 120_000);
+      process.env.FORGE_BASH_TIMEOUT_MS = "1000"; // below min → 5s
+      assert.equal(defaultBashTimeoutMs(), 5_000);
+      process.env.FORGE_BASH_TIMEOUT_MS = "600000";
+      assert.equal(defaultBashTimeoutMs(), 600_000);
+      process.env.FORGE_BASH_TIMEOUT_MS = "nope";
+      assert.equal(defaultBashTimeoutMs(), 120_000);
+      delete process.env.FORGE_BASH_BG_TIMEOUT_MS;
+      assert.equal(defaultBashBackgroundTimeoutMs(), 30 * 60_000);
+      process.env.FORGE_BASH_BG_TIMEOUT_MS = "1000";
+      assert.equal(defaultBashBackgroundTimeoutMs(), 30_000);
+    } finally {
+      if (prev === undefined) delete process.env.FORGE_BASH_TIMEOUT_MS;
+      else process.env.FORGE_BASH_TIMEOUT_MS = prev;
+      if (prevBg === undefined) delete process.env.FORGE_BASH_BG_TIMEOUT_MS;
+      else process.env.FORGE_BASH_BG_TIMEOUT_MS = prevBg;
     }
   });
 
