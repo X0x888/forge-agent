@@ -190,6 +190,8 @@ export {
   logSandboxEvent,
   sandboxLogStats,
   sandboxLogPath,
+  readSandboxLogTail,
+  formatSandboxLogTail,
 } from "./agent/sandbox-log.js";
 export {
   parseToolArguments,

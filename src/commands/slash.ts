@@ -70,7 +70,11 @@ import { formatWhatsNew } from "../util/changelog.js";
 import { toolOutputStats } from "../agent/tools/truncate.js";
 import { listTasks } from "../agent/tools/background-tasks.js";
 import { loadSavedAllows } from "../agent/permission-saved.js";
-import { sandboxLogStats } from "../agent/sandbox-log.js";
+import {
+  formatSandboxLogTail,
+  sandboxLogPath,
+  sandboxLogStats,
+} from "../agent/sandbox-log.js";
 import {
   collectUsageStats,
   formatUsageStats,
@@ -150,6 +154,7 @@ const LIVE_READONLY = new Set([
   "/last", // peek recent turns — read-only
   "/files", // paths touched by tools — read-only
   "/path", // session on-disk directory — read-only
+  "/logs", // sandbox/safety event tail — read-only
   "/tips",
   "/news", // what's new from CHANGELOG
   "/changelog",
@@ -368,6 +373,7 @@ export const SLASH_COMMANDS = [
   "/last",
   "/files",
   "/path",
+  "/logs",
   "/tips",
   "/news",
   "/changelog",
@@ -1234,6 +1240,36 @@ export async function handleSlash(
       };
     }
 
+    case "/logs": {
+      // Warp-inspired safety log tail — live-safe, no secrets by design.
+      const parts = (arg || "").trim().split(/\s+/).filter(Boolean);
+      let limit = 30;
+      let wantPath = false;
+      for (const p of parts) {
+        if (p === "path" || p === "--path" || p === "-p") {
+          wantPath = true;
+          continue;
+        }
+        if (/^\d+$/.test(p)) {
+          limit = Math.min(200, Math.max(1, parseInt(p, 10)));
+          continue;
+        }
+        if (p === "all" || p === "--all") {
+          limit = 100;
+        }
+      }
+      if (wantPath) {
+        return {
+          handled: true,
+          output: sandboxLogPath(),
+        };
+      }
+      return {
+        handled: true,
+        output: formatSandboxLogTail(limit),
+      };
+    }
+
     case "/diff": {
       const cwd = opts.session.meta.cwd || opts.config.workspace || process.cwd();
       const extra = arg || "";
@@ -1487,7 +1523,7 @@ export async function handleSlash(
           `  Resume:        bare forge (same-cwd)  ·  /resume <title|id>  ·  forge --session <title|id>`,
           `  CI:            forge run "…" --title job --json  ·  forge run "…" --continue  ·  forge doctor --json`,
           `  Safety:        /permissions plan|acceptEdits  ·  --sandbox workspace  ·  /diff (argv-safe)`,
-          `  Attention:     /bell on  ·  /copy  ·  /last  ·  /files  ·  /path  ·  /stats 7  ·  /retry`,
+          `  Attention:     /bell on  ·  /copy  ·  /last  ·  /files  ·  /path  ·  /logs  ·  /stats 7  ·  /retry`,
           `  Recovery:      /undo (chat+disk)  ·  /retry  ·  /compact-and <prompt>  ·  /init  ·  /review  ·  /fork`,
           `  Docs:          docs/PRODUCTION.md  ·  docs/RELIABILITY.md  ·  /news  ·  /help`,
         ].join("\n"),
@@ -2429,6 +2465,7 @@ Forge slash commands
   /title [name|clear]   Show / set / clear session title (/rename)  [live]
   /bell [on|off|test]   Terminal BEL when a turn ends (long-run attention)  [live]
   /diff [path]          Git status + diff (argv-safe; pathspecs/refs only)  [live]
+  /logs [n|path]        Tail sandbox/safety events (~/.forge/logs/sandbox.jsonl)  [live]
   /copy                 Copy last assistant reply (pbcopy/wl-copy/xclip/…)  [live]
   /share [nocopy]       Pasteable session card + resume/export cmds (clipboard)  [live]
   /last [n]             Peek last n user/assistant turns (after resume)  [live]

@@ -22,9 +22,14 @@ Production recovery, review, and onboarding learned from OpenCode (snapshot/reve
 - **`FORGE_BASH_TIMEOUT_MS`** (default 120s, min 5s, max 30m) and **`FORGE_BASH_BG_TIMEOUT_MS`** (default 30m) for CI/long builds
 - **`forge doctor --json`**: `bashTimeoutMs` · `bashBackgroundTimeoutMs`; plain doctor reliability line includes bash timeouts + file-aware undo
 
+### Incident triage
+- **`/logs [n|path]`** (live-safe) + **`forge logs`**: tail sandbox/safety events from `~/.forge/logs/sandbox.jsonl` (no secrets; Warp-inspired)
+- Shell completion + smoke cover `logs`
+
 ### Docs / tests
 - RELIABILITY + PRODUCTION + README note file-aware undo and new slash commands
-- Tests: `mutations-undo.test.ts` (journal, restore, fork/clear, slash `/undo` `/init` `/review` `/compact-and` export mode, bash timeout env)
+- Tests: `mutations-undo.test.ts`, `logs.test.ts` (journal, restore, `/logs`, bash timeout env)
+- `.gitignore` covers `.tmp-*/` compile caches
 
 ## 0.9.4 — Expert UX (retry, pin, stats, resume-by-title)
 

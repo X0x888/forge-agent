@@ -137,6 +137,11 @@ export const COMMAND_PARAMS: Record<string, ParamChoice[]> = {
     { value: "all", description: "Reads + writes (default)", aliases: ["reads"] },
     { value: "20", description: "Limit to 20 paths" },
   ],
+  logs: [
+    { value: "20", description: "Last 20 sandbox/safety events" },
+    { value: "50", description: "Last 50 events" },
+    { value: "path", description: "Print sandbox.jsonl path only", aliases: ["--path", "-p"] },
+  ],
   path: [
     { value: "json", description: "Print session.json path only", aliases: ["--json", "-j"] },
     { value: "copy", description: "Copy path to clipboard", aliases: ["--copy", "-c", "clip"] },

@@ -51,6 +51,7 @@ What experts should expect from Forge in long, unattended, or CI runs.
 | **sessions prune/delete** | `forge sessions prune --keep 50` / `/sessions prune` (active protected; foreign live locks skipped); `delete` refuses foreign locks unless `--force` |
 | **tool-output prune** | Full dumps under `~/.forge/tool-output` auto-pruned (keep 80 / 14d); `forge prune-tool-output` |
 | **sandbox.jsonl rotate** | Safety event log rotates at 2 MiB (keeps one `.1` backup); never logs secrets |
+| **`/logs` · `forge logs`** | Tail recent sandbox/safety events (deny/fallback/hard_deny/…) for incident triage; `--json` / `--path` |
 
 ## Agent loop
 

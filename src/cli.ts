@@ -97,7 +97,11 @@ import {
   pruneToolOutputsSync,
   toolOutputStats,
 } from "./agent/tools/truncate.js";
-import { sandboxLogStats } from "./agent/sandbox-log.js";
+import {
+  formatSandboxLogTail,
+  sandboxLogPath,
+  sandboxLogStats,
+} from "./agent/sandbox-log.js";
 const VERSION = getForgeVersion();
 
 async function main(): Promise<void> {
@@ -122,6 +126,7 @@ Examples:
   forge stats --days 7
   forge news
   forge tips
+  forge logs
   forge prune-tool-output --keep 80
   forge prune-metrics --keep 500
   eval "$(forge completion bash)"
@@ -1143,6 +1148,28 @@ Project instructions for Forge (and other coding agents).
     });
 
   program
+    .command("logs")
+    .description(
+      "Tail sandbox/safety events (~/.forge/logs/sandbox.jsonl) — no secrets",
+    )
+    .option("-n, --lines <n>", "Number of recent events", "30")
+    .option("--path", "Print log file path only")
+    .option("--json", "Machine-readable JSON array")
+    .action(async (opts) => {
+      if (opts.path) {
+        console.log(sandboxLogPath());
+        return;
+      }
+      const n = Math.min(200, Math.max(1, Number(opts.lines) || 30));
+      if (opts.json) {
+        const { readSandboxLogTail } = await import("./agent/sandbox-log.js");
+        console.log(JSON.stringify(readSandboxLogTail(n), null, 2));
+        return;
+      }
+      console.log(formatSandboxLogTail(n));
+    });
+
+  program
     .command("stats")
     .description(
       "Usage dashboard from metrics.jsonl + session inventory (counter-only, no prompts)",
@@ -1178,7 +1205,8 @@ Project instructions for Forge (and other coding agents).
           `  Resume:        bare forge (same-cwd)  ·  /resume <id|title>  ·  forge --session <id|title>`,
           `  CI:            forge run "…" --title job --json  ·  forge run "…" --continue  ·  forge doctor --json`,
           `  Safety:        /permissions plan|acceptEdits  ·  --sandbox workspace  ·  /diff (argv-safe)`,
-          `  Attention:     /bell on  ·  /copy  ·  /last  ·  /files  ·  /path  ·  /pin  ·  /stats 7  ·  /share  ·  /retry`,
+          `  Attention:     /bell on  ·  /copy  ·  /last  ·  /files  ·  /path  ·  /logs  ·  /pin  ·  /stats 7  ·  /share  ·  /retry`,
+          `  Recovery:      /undo  ·  /retry  ·  /init  ·  /review  ·  /compact-and  ·  forge logs`,
           `  Docs:          docs/PRODUCTION.md  ·  docs/RELIABILITY.md  ·  forge tips  ·  forge news  ·  /help`,
         ].join("\n"),
       );

@@ -2,7 +2,7 @@
 
 **Forge** is an open-source AI coding agent CLI with a **first-class harness** — the control plane that other tools partially implement.
 
-> **v0.9.5** — **File-aware `/undo`** (chat + journaled disk restore), **`/init`**, **`/review`**, **`/compact-and`**, **`FORGE_BASH_TIMEOUT_MS`**, export mode `0600`. Builds on **v0.9.4** expert UX: **`/retry`**, **`/last`**, **`/files`**, **`/pin`**, resume-by-title, **`forge run --continue`**, **`forge stats`**, **`/share`**, **`forge news`** / **`tips`**. Still includes Retry-After, stream-capped tools, doom-loop + error-streak, **apply_patch**, session lock + auto-resume, structured **`doctor --json`**, `npm run smoke`. Harness: blocking Stop, `/goal`, ULW.
+> **v0.9.5** — **File-aware `/undo`**, **`/init`**, **`/review`**, **`/compact-and`**, **`/logs`** · **`forge logs`**, **`FORGE_BASH_TIMEOUT_MS`**, export mode `0600`. Builds on **v0.9.4** expert UX: **`/retry`**, **`/last`**, **`/files`**, **`/pin`**, resume-by-title, **`forge run --continue`**, **`forge stats`**, **`/share`**, **`forge news`** / **`tips`**. Still includes Retry-After, stream-capped tools, doom-loop + error-streak, **apply_patch**, session lock + auto-resume, structured **`doctor --json`**, `npm run smoke`. Harness: blocking Stop, `/goal`, ULW.
 
 Key capability comparison:
 
@@ -268,6 +268,7 @@ Full contract: [docs/RELIABILITY.md](docs/RELIABILITY.md) · expert checklist: [
 | `/title [name\|clear]` | Show / set / clear session title (`/rename`) |
 | `/bell [on\|off\|test]` | Terminal BEL when a turn ends (long-run attention) |
 | `/diff [path]` | Git status + diff (live-safe; argv + filter allowlist — no shell injection) |
+| `/logs [n\|path]` | Tail sandbox/safety events (`forge logs`; live-safe; no secrets) |
 | `/copy` | Clipboard last reply (pbcopy/wl-copy/xclip/…; live-safe) |
 | `/new` / `/clear` | Fresh or wipe conversation |
 | `/resume [id\|title]` | Resume by id prefix or unique `/title` (lists show relative ages + last prompt) |

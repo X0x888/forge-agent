@@ -101,3 +101,82 @@ export function sandboxLogStats(): SandboxLogStats {
   }
   return { path: p, bytes, backupBytes, exists };
 }
+
+/**
+ * Tail recent sandbox/safety events (newest last).
+ * Best-effort JSONL parse; corrupt lines skipped.
+ */
+export function readSandboxLogTail(limit = 30): SandboxLogEvent[] {
+  const n =
+    typeof limit === "number" && Number.isFinite(limit)
+      ? Math.min(200, Math.max(1, Math.floor(limit)))
+      : 30;
+  const file = sandboxLogPath();
+  let raw = "";
+  try {
+    // Read up to last ~512 KiB so huge logs don't blow memory
+    const st = fs.statSync(file);
+    const max = 512 * 1024;
+    if (st.size <= max) {
+      raw = fs.readFileSync(file, "utf8");
+    } else {
+      const fd = fs.openSync(file, "r");
+      try {
+        const buf = Buffer.alloc(max);
+        fs.readSync(fd, buf, 0, max, st.size - max);
+        raw = buf.toString("utf8");
+        // Drop partial first line
+        const nl = raw.indexOf("\n");
+        if (nl >= 0) raw = raw.slice(nl + 1);
+      } finally {
+        fs.closeSync(fd);
+      }
+    }
+  } catch {
+    return [];
+  }
+  const out: SandboxLogEvent[] = [];
+  for (const line of raw.split(/\r?\n/)) {
+    const t = line.trim();
+    if (!t) continue;
+    try {
+      const ev = JSON.parse(t) as SandboxLogEvent;
+      if (ev && typeof ev === "object" && typeof ev.type === "string") {
+        out.push(ev);
+      }
+    } catch {
+      /* skip */
+    }
+  }
+  return out.slice(-n);
+}
+
+/** Human-readable tail for `/logs` and incident triage. */
+export function formatSandboxLogTail(limit = 30): string {
+  const p = sandboxLogPath();
+  const events = readSandboxLogTail(limit);
+  if (!events.length) {
+    return (
+      `No sandbox/safety events yet.\n` +
+      `Log path: ${p}\n` +
+      `Events appear when bash is sandboxed, denied, or falls back.`
+    );
+  }
+  const lines = events.map((e) => {
+    const ts = (e.ts || "").replace("T", " ").replace(/\.\d+Z$/, "Z");
+    const bits = [
+      ts || "?",
+      e.type,
+      e.profile ? `profile=${e.profile}` : "",
+      e.backend ? `backend=${e.backend}` : "",
+      e.reason || "",
+      e.rule ? `rule=${e.rule}` : "",
+      e.command ? `cmd=${e.command}` : "",
+      e.path ? `path=${e.path}` : "",
+    ].filter(Boolean);
+    return bits.join("  ");
+  });
+  return (
+    `Sandbox/safety log (last ${events.length}) · ${p}\n` + lines.join("\n")
+  );
+}

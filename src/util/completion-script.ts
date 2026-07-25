@@ -1,7 +1,7 @@
 /** Shell completion scripts for expert terminals. */
 export function shellCompletionScript(shell: string): string {
   const cmds =
-    "run login logout auth sessions init models doctor stats tips news status completion prune-tool-output prune-metrics";
+    "run login logout auth sessions init models doctor stats tips news logs status completion prune-tool-output prune-metrics";
   const zshCmds = cmds.split(" ").join(" ");
   const runFlags =
     "--json --ulw --permission-mode --model --provider --base-url --goal --session --continue --new --title --sandbox --sandbox-network --sandbox-missing --deny --allow --ask --cwd --effort";
@@ -74,6 +74,9 @@ export function shellCompletionScript(shell: string): string {
       "        news|changelog)",
       "          _values 'news' --json 1 2 3",
       "          ;;",
+      "        logs)",
+      "          _values 'logs' --json --path --lines -n",
+      "          ;;",
       "        login)",
       "          _values 'login' --api-key --oauth --device --from-grok --provider",
       "          ;;",
@@ -137,6 +140,9 @@ export function shellCompletionScript(shell: string): string {
       'complete -c forge -n "__fish_seen_subcommand_from stats" -l days -d "Last N days"',
       'complete -c forge -n "__fish_seen_subcommand_from news" -l json -d "JSON"',
       'complete -c forge -n "__fish_seen_subcommand_from news" -a "1 2 3" -d "Release count"',
+      'complete -c forge -n "__fish_seen_subcommand_from logs" -l json -d "JSON"',
+      'complete -c forge -n "__fish_seen_subcommand_from logs" -l path -d "Print log path"',
+      'complete -c forge -n "__fish_seen_subcommand_from logs" -l lines -s n -d "Event count"',
       `complete -c forge -n "__fish_seen_subcommand_from sessions; and not __fish_seen_subcommand_from ${sessionsActions}" -a "${sessionsActions}"`,
       'complete -c forge -n "__fish_seen_subcommand_from sessions" -l json -d "JSON"',
       'complete -c forge -n "__fish_seen_subcommand_from sessions" -l out -d "Export output path"',
@@ -200,6 +206,7 @@ export function shellCompletionScript(shell: string): string {
     '    doctor|models|status|auth) COMPREPLY=( $(compgen -W "--json" -- "$cur") ) ;;',
     '    stats) COMPREPLY=( $(compgen -W "--json --days" -- "$cur") ) ;;',
     '    news|changelog) COMPREPLY=( $(compgen -W "--json 1 2 3" -- "$cur") ) ;;',
+    '    logs) COMPREPLY=( $(compgen -W "--json --path --lines -n" -- "$cur") ) ;;',
     `    run) COMPREPLY=( $(compgen -W "${runFlags}" -- "$cur") ) ;;`,
     '    login) COMPREPLY=( $(compgen -W "--api-key --oauth --device --from-grok --provider" -- "$cur") ) ;;',
     '    completion) COMPREPLY=( $(compgen -W "bash zsh fish" -- "$cur") ) ;;',

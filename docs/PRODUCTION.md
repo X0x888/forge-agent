@@ -33,9 +33,11 @@ forge stats --days 7 --json  # CI-friendly windowed counters
 forge tips                   # expert cheat sheet
 forge news                   # what's new from packaged CHANGELOG
 forge news 2 --json          # last 2 releases as JSON
+forge logs                   # tail sandbox/safety events (incident triage)
+forge logs -n 50 --json      # machine-readable safety log
 forge run "next" --continue --json   # headless same-cwd resume (no session id)
 # REPL: /share · /files · /pin · /stats · /tips · /news · /retry [prompt] · /last [n]
-# REPL: /undo [n] restores chat + journaled files · /init [focus] · /review [target] · /compact-and <prompt>
+# REPL: /undo [n] · /init · /review · /compact-and · /logs [n|path]
 # Resume (bare forge / /resume) peeks last turn + mutated files
 # Optional: FORGE_BASH_TIMEOUT_MS=600000 for long test suites
 ```
