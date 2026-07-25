@@ -349,6 +349,37 @@ describe("/init and /compact-and slash commands", () => {
     assert.ok(completeSlash("/compact").some((c) => c === "/compact-and" || c === "/compact"));
   });
 
+  it("/config is live-safe and never dumps secrets", async () => {
+    const s = createSession({ cwd: home, provider: "xai", model: "grok-4" });
+    s.meta.ultrawork = true;
+    s.meta.title = "cfg-demo";
+    const hooks = new HookRunner(DEFAULT_CONFIG, home);
+    const r = await handleSlash("/config", {
+      session: s,
+      config: {
+        ...DEFAULT_CONFIG,
+        workspace: home,
+        permissionMode: "acceptEdits",
+        sandbox: "workspace",
+      },
+      hooks,
+    });
+    assert.equal(r.handled, true);
+    assert.match(r.output || "", /Effective config/);
+    assert.match(r.output || "", /acceptEdits/);
+    assert.match(r.output || "", /workspace/);
+    assert.doesNotMatch(r.output || "", /api[_-]?key|sk-|xai-/i);
+    const j = await handleSlash("/config json", {
+      session: s,
+      config: { ...DEFAULT_CONFIG, workspace: home },
+      hooks,
+    });
+    const parsed = JSON.parse(j.output || "{}");
+    assert.equal(parsed.provider, "xai");
+    assert.equal(typeof parsed.env.FORGE_BASH_TIMEOUT_MS, "number");
+    assert.ok(!("apiKey" in parsed));
+  });
+
   it("/export to path uses mode 0600", async () => {
     const s = createSession({ cwd: home, provider: "xai", model: "grok-4" });
     s.messages.push({ role: "user", content: "secret-ish" });

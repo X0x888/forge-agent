@@ -158,6 +158,7 @@ const LIVE_READONLY = new Set([
   "/files", // paths touched by tools — read-only
   "/path", // session on-disk directory — read-only
   "/logs", // sandbox/safety event tail — read-only
+  "/config", // effective config snapshot — read-only
   "/tips",
   "/news", // what's new from CHANGELOG
   "/changelog",
@@ -378,6 +379,7 @@ export const SLASH_COMMANDS = [
   "/files",
   "/path",
   "/logs",
+  "/config",
   "/tips",
   "/news",
   "/changelog",
@@ -1351,6 +1353,95 @@ export async function handleSlash(
       };
     }
 
+    case "/config": {
+      // Live-safe effective config snapshot (no secrets — never dumps API keys).
+      const c = opts.config;
+      const wantJson =
+        /\b(json|--json|-j)\b/i.test(arg || "") ||
+        (arg || "").trim().toLowerCase() === "json";
+      const net = resolveSandboxNetwork(c);
+      const snap = {
+        provider: c.provider,
+        model: c.model,
+        reasoningEffort: c.reasoningEffort ?? null,
+        permissionMode: c.permissionMode,
+        sandbox: c.sandbox,
+        sandboxNetwork: net,
+        sandboxMissingBackend: c.sandboxMissingBackend ?? "fail-closed",
+        readOutsideWorkspace: c.readOutsideWorkspace ?? "ask",
+        blockingStopHooks: c.blockingStopHooks !== false,
+        promptProfile: c.promptProfile ?? "default",
+        contextWindow: c.contextWindow,
+        autoCompactThreshold: c.autoCompactThreshold,
+        maxTurns: c.maxTurns,
+        workspace: c.workspace || opts.session.meta.cwd || process.cwd(),
+        baseUrl: c.baseUrl || c.providers[c.provider]?.baseUrl || null,
+        goalEnabled: c.goal?.enabled !== false,
+        goalStuckThreshold: c.goal?.stuckThreshold ?? null,
+        rules: {
+          deny: c.permission?.deny?.length || 0,
+          allow: c.permission?.allow?.length || 0,
+          ask: c.permission?.ask?.length || 0,
+        },
+        session: {
+          id: opts.session.meta.id,
+          title: opts.session.meta.title || null,
+          ultrawork: Boolean(opts.session.meta.ultrawork),
+          pinned: Boolean(opts.session.meta.pinned),
+          turns: opts.session.meta.turnCount,
+          edits: opts.session.meta.editCount,
+        },
+        env: {
+          FORGE_BASH_TIMEOUT_MS: defaultBashTimeoutMs(),
+          FORGE_BASH_BG_TIMEOUT_MS: defaultBashBackgroundTimeoutMs(),
+          FORGE_PROVIDER_TIMEOUT_MS: providerTimeoutMs(),
+          FORGE_DOOM_LOOP_THRESHOLD: envPositiveInt(
+            "FORGE_DOOM_LOOP_THRESHOLD",
+            3,
+          ),
+          FORGE_ERROR_STREAK_THRESHOLD: envPositiveInt(
+            "FORGE_ERROR_STREAK_THRESHOLD",
+            5,
+          ),
+        },
+      };
+      if (wantJson) {
+        return {
+          handled: true,
+          output: JSON.stringify(snap, null, 2),
+        };
+      }
+      const lines = [
+        `Effective config (live-safe · no secrets)`,
+        `  provider/model:  ${snap.provider}/${snap.model}` +
+          (snap.reasoningEffort ? `  effort=${snap.reasoningEffort}` : ""),
+        `  permission:      ${snap.permissionMode}`,
+        `  sandbox:         ${snap.sandbox}  network=${snap.sandboxNetwork}  missing=${snap.sandboxMissingBackend}`,
+        `  read outside:    ${snap.readOutsideWorkspace}`,
+        `  blocking Stop:   ${snap.blockingStopHooks ? "on" : "OFF"}`,
+        `  profile:         ${snap.promptProfile}`,
+        `  context:         window=${snap.contextWindow} autoCompact@${Math.round((snap.autoCompactThreshold || 0.8) * 100)}% maxTurns=${snap.maxTurns}`,
+        `  goal gate:       ${snap.goalEnabled ? "on" : "off"}` +
+          (snap.goalStuckThreshold != null
+            ? `  stuck=${snap.goalStuckThreshold}`
+            : ""),
+        `  rules:           deny=${snap.rules.deny} allow=${snap.rules.allow} ask=${snap.rules.ask}`,
+        `  workspace:       ${snap.workspace}`,
+        snap.baseUrl ? `  api base:        ${snap.baseUrl}` : null,
+        `  session:         ${snap.session.id.slice(0, 8)}` +
+          (snap.session.title ? `  “${snap.session.title}”` : "") +
+          (snap.session.ultrawork ? "  ULW" : "") +
+          (snap.session.pinned ? "  PIN" : "") +
+          `  t=${snap.session.turns} e=${snap.session.edits}`,
+        `  timeouts:        provider=${Math.round(snap.env.FORGE_PROVIDER_TIMEOUT_MS / 1000)}s` +
+          `  bash=${Math.round(snap.env.FORGE_BASH_TIMEOUT_MS / 1000)}s` +
+          `  bash-bg=${Math.round(snap.env.FORGE_BASH_BG_TIMEOUT_MS / 1000)}s`,
+        `  loop guards:     doom@${snap.env.FORGE_DOOM_LOOP_THRESHOLD}  error-streak@${snap.env.FORGE_ERROR_STREAK_THRESHOLD}`,
+        chalk.dim(`  /config json · /doctor · /permissions · /model · /effort`),
+      ].filter(Boolean) as string[];
+      return { handled: true, output: lines.join("\n") };
+    }
+
     case "/diff": {
       const cwd = opts.session.meta.cwd || opts.config.workspace || process.cwd();
       const extra = arg || "";
@@ -1604,7 +1695,7 @@ export async function handleSlash(
           `  Resume:        bare forge (same-cwd)  ·  /resume <title|id>  ·  forge --session <title|id>`,
           `  CI:            forge run "…" --title job --json  ·  forge run "…" --continue  ·  forge doctor --json`,
           `  Safety:        /permissions plan|acceptEdits  ·  --sandbox workspace  ·  /diff (argv-safe)`,
-          `  Attention:     /bell on  ·  /copy  ·  /last  ·  /files  ·  /path  ·  /logs  ·  /stats 7  ·  /retry`,
+          `  Attention:     /bell on  ·  /copy  ·  /last  ·  /files  ·  /path  ·  /logs  ·  /config  ·  /stats 7  ·  /retry`,
           `  Recovery:      /undo  ·  /retry  ·  /compact-and  ·  /fork-and-compact  ·  /init  ·  /review  ·  /fork`,
           `  Docs:          docs/PRODUCTION.md  ·  docs/RELIABILITY.md  ·  /news  ·  /help`,
         ].join("\n"),
@@ -2560,6 +2651,7 @@ Forge slash commands
   /bell [on|off|test]   Terminal BEL when a turn ends (long-run attention)  [live]
   /diff [path]          Git status + diff (argv-safe; pathspecs/refs only)  [live]
   /logs [n|path]        Tail sandbox/safety events (~/.forge/logs/sandbox.jsonl)  [live]
+  /config [json]        Effective config snapshot (no secrets)  [live]
   /copy                 Copy last assistant reply (pbcopy/wl-copy/xclip/…)  [live]
   /share [nocopy]       Pasteable session card + resume/export cmds (clipboard)  [live]
   /last [n]             Peek last n user/assistant turns (after resume)  [live]

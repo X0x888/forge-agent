@@ -85,11 +85,14 @@ describe("live mid-run slash policy", () => {
     assert.equal(classifyLiveSlash("/logs"), "readonly");
     assert.equal(classifyLiveSlash("/logs 20"), "readonly");
     assert.equal(classifyLiveSlash("/logs path"), "readonly");
+    assert.equal(classifyLiveSlash("/config"), "readonly");
+    assert.equal(classifyLiveSlash("/config json"), "readonly");
     assert.equal(classifyLiveSlash("/pin status"), "readonly");
     assert.ok(isLiveSafeSlash("/status"));
     assert.ok(isLiveSafeSlash("/sessions"));
     assert.ok(isLiveSafeSlash("/files"));
     assert.ok(isLiveSafeSlash("/logs"));
+    assert.ok(isLiveSafeSlash("/config"));
     assert.ok(isLiveSafeSlash("/pin status"));
     assert.ok(isLiveSafeSlash("/diff"));
     assert.ok(isLiveSafeSlash("/metrics"));

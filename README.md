@@ -270,6 +270,7 @@ Full contract: [docs/RELIABILITY.md](docs/RELIABILITY.md) · expert checklist: [
 | `/bell [on\|off\|test]` | Terminal BEL when a turn ends (long-run attention) |
 | `/diff [path]` | Git status + diff (live-safe; argv + filter allowlist — no shell injection) |
 | `/logs [n\|path]` | Tail sandbox/safety events (`forge logs`; live-safe; no secrets) |
+| `/config [json]` | Effective config snapshot (live-safe; no secrets) |
 | `/copy` | Clipboard last reply (pbcopy/wl-copy/xclip/…; live-safe) |
 | `/new` / `/clear` | Fresh or wipe conversation |
 | `/resume [id\|title]` | Resume by id prefix or unique `/title` (lists show relative ages + last prompt) |

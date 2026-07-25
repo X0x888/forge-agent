@@ -148,6 +148,9 @@ export const COMMAND_PARAMS: Record<string, ParamChoice[]> = {
     { value: "50", description: "Last 50 events" },
     { value: "path", description: "Print sandbox.jsonl path only", aliases: ["--path", "-p"] },
   ],
+  config: [
+    { value: "json", description: "Machine-readable JSON snapshot", aliases: ["--json", "-j"] },
+  ],
   path: [
     { value: "json", description: "Print session.json path only", aliases: ["--json", "-j"] },
     { value: "copy", description: "Copy path to clipboard", aliases: ["--copy", "-c", "clip"] },
