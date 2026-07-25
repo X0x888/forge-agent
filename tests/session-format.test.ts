@@ -412,12 +412,20 @@ describe("format + slash complete", () => {
     assert.deepEqual(completeSlash("hello"), []);
   });
 
-  it("/fork includes last-turn peek", async () => {
+it("/fork includes last-turn peek", async () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-fork-peek-"));
     process.env.FORGE_HOME = tmp;
     const s = createSession({ cwd: tmp, provider: "xai", model: "grok-4" });
-    s.messages.push({ role: "user", content: "branch this work" });
+    s.messages.push({ role: "user", content: "before fork" });
     s.messages.push({ role: "assistant", content: "ready to fork" });
+    // Optional ULW so harness-copy line is exercised when present
+    try {
+      const { armUlwCycle } = await import("../src/harness/ulw-cycle.js");
+      armUlwCycle(s.meta.id, "keep going", { cycle: 1 });
+      s.meta.ultrawork = true;
+    } catch {
+      /* optional */
+    }
     const hooks = new HookRunner(DEFAULT_CONFIG, tmp);
     const r = await handleSlash("/fork experiment", {
       session: s,
@@ -427,8 +435,9 @@ describe("format + slash complete", () => {
     assert.equal(r.handled, true);
     assert.ok(r.replaceSession);
     assert.match(String(r.output || ""), /Forked session/i);
-    assert.match(String(r.output || ""), /branch this work/);
+    assert.match(String(r.output || ""), /before fork|ready to fork/);
     assert.match(String(r.output || ""), /\/last 3/);
+    assert.match(String(r.output || ""), /Harness copied:.*ULW/i);
   });
 
   it("resolveSessionId matches unique title and lastUserPreview", async () => {

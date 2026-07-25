@@ -1094,18 +1094,43 @@ export async function handleSlash(
 
     case "/fork": {
       const title = arg || undefined;
+      const srcId = opts.session.meta.id;
       const forked = forkSession(opts.session, title ? { title } : undefined);
       const peek = formatResumePeek(forked);
       const peekBlock = peek
         ? `\n\n${peek}\n${chalk.dim("(/last 3 for more · /retry to re-run)")}`
+        : "";
+      // Surface harness inheritance so experts know ULW/goal survived the branch.
+      const harnessBits: string[] = [];
+      try {
+        const ulw = loadUlwCycle(forked.meta.id);
+        if (ulw?.enabled) {
+          harnessBits.push(`ULW ${formatUlwCounts(ulw)}`);
+        }
+      } catch {
+        /* */
+      }
+      try {
+        const g = loadGoal(forked.meta.id);
+        if (g?.objective && g.status === "active" && !g.paused) {
+          harnessBits.push(`goal active`);
+        } else if (g?.objective && g.paused) {
+          harnessBits.push(`goal paused`);
+        }
+      } catch {
+        /* */
+      }
+      const harnessNote = harnessBits.length
+        ? `\n  Harness copied: ${harnessBits.join(" · ")}`
         : "";
       return {
         handled: true,
         output:
           `Forked session → ${forked.meta.id}\n` +
           `  msgs=${forked.messages.length} todos=${forked.todos.length}\n` +
-          `  Continuing in the fork. Original ${opts.session.meta.id.slice(0, 8)} unchanged.\n` +
-          `  Resume original later: /resume ${opts.session.meta.id.slice(0, 8)}` +
+          `  Continuing in the fork. Original ${srcId.slice(0, 8)} unchanged.\n` +
+          `  Resume original later: /resume ${srcId.slice(0, 8)}` +
+          harnessNote +
           peekBlock,
         replaceSession: forked,
       };
@@ -1129,10 +1154,19 @@ export async function handleSlash(
         sessionId: forked.meta.id,
       });
       saveSession(forked);
+      const harnessBits: string[] = [];
+      if (ulw?.enabled) harnessBits.push(`ULW ${formatUlwCounts(ulw)}`);
+      if (goal?.objective && goal.status === "active" && !goal.paused) {
+        harnessBits.push("goal active");
+      }
+      const harnessNote = harnessBits.length
+        ? `\n  Harness copied: ${harnessBits.join(" · ")}`
+        : "";
       const base =
         `Forked → ${forked.meta.id.slice(0, 8)} then compacted ${before} → ${forked.messages.length} msgs.\n` +
         `  Original ${opts.session.meta.id.slice(0, 8)} unchanged (full history).\n` +
-        `  Resume original: /resume ${opts.session.meta.id.slice(0, 8)}`;
+        `  Resume original: /resume ${opts.session.meta.id.slice(0, 8)}` +
+        harnessNote;
       if (!follow) {
         return {
           handled: true,

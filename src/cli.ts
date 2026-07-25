@@ -1206,7 +1206,7 @@ Project instructions for Forge (and other coding agents).
           `  CI:            forge run "…" --title job --json  ·  forge run "…" --continue  ·  forge doctor --json`,
           `  Safety:        /permissions plan|acceptEdits  ·  --sandbox workspace  ·  /diff (argv-safe)`,
           `  Attention:     /bell on  ·  /copy  ·  /last  ·  /files  ·  /path  ·  /logs  ·  /pin  ·  /stats 7  ·  /share  ·  /retry`,
-          `  Recovery:      /undo  ·  /retry  ·  /init  ·  /review  ·  /compact-and  ·  forge logs`,
+          `  Recovery:      /undo  ·  /retry  ·  /init  ·  /review  ·  /compact-and  ·  /fork-and-compact  ·  forge logs`,
           `  Docs:          docs/PRODUCTION.md  ·  docs/RELIABILITY.md  ·  forge tips  ·  forge news  ·  /help`,
         ].join("\n"),
       );
