@@ -15,7 +15,7 @@ import {
   pruneSessions,
   sessionHasForeignLiveLock,
   compactMessages,
-  rewindSession,
+  rewindSessionDetailed,
   exportSessionMarkdown,
   exportSessionJson,
   forkSession,
@@ -37,6 +37,7 @@ import {
   loadSession,
   estimateTokens,
 } from "../session/session.js";
+import { formatRestoreResult } from "../session/mutations.js";
 // readSessionLock already imported below for /sessions list
 import type { HookRunner } from "../harness/hooks.js";
 import type { ForgeConfig } from "../config/types.js";
@@ -343,6 +344,8 @@ export const SLASH_COMMANDS = [
   "/effort",
   "/permissions",
   "/compact",
+  "/compact-and",
+  "/init",
   "/rewind",
   "/undo",
   "/retry",
@@ -928,16 +931,73 @@ export async function handleSlash(
       };
     }
 
-    case "/rewind":
-    case "/undo": {
-      const n = arg ? Math.max(1, parseInt(arg, 10) || 1) : 1;
-      const removed = rewindSession(opts.session, n);
+    case "/compact-and": {
+      // Warp-inspired: compact then immediately continue with a follow-up prompt.
+      const follow = (arg || "").trim();
+      if (!follow) {
+        return {
+          handled: true,
+          output:
+            "Usage: /compact-and <follow-up prompt>\n" +
+            "Compacts history (structured harness summary) then runs the follow-up in the same turn.",
+          session: opts.session,
+        };
+      }
+      const before = opts.session.messages.length;
+      const ulw = loadUlwCycle(opts.session.meta.id);
+      const goal = loadGoal(opts.session.meta.id);
+      opts.session.messages = compactMessages(opts.session.messages, 12, {
+        ulw,
+        goal,
+        todos: opts.session.todos,
+        sessionId: opts.session.meta.id,
+      });
+      saveSession(opts.session);
+      const preview =
+        follow.length > 120 ? `${follow.slice(0, 117).trimEnd()}…` : follow;
       return {
         handled: true,
         output:
-          removed > 0
-            ? `Rewound ${n} user turn(s); removed ${removed} message(s).`
-            : "Nothing to rewind.",
+          `Compacted ${before} → ${opts.session.messages.length} messages, continuing…\n→ ${preview}`,
+        forwardPrompt: follow,
+        session: opts.session,
+      };
+    }
+
+    case "/init": {
+      // OpenCode-inspired guided AGENTS.md setup — forwards a high-signal prompt.
+      const focus = (arg || "").trim();
+      const prompt = buildInitAgentsPrompt(
+        focus,
+        opts.config.workspace || opts.session.meta.cwd || process.cwd(),
+      );
+      return {
+        handled: true,
+        output: focus
+          ? `Initializing / improving AGENTS.md (focus: ${focus.slice(0, 80)})…`
+          : "Initializing / improving AGENTS.md for this repository…",
+        forwardPrompt: prompt,
+        session: opts.session,
+      };
+    }
+
+    case "/rewind":
+    case "/undo": {
+      const n = arg ? Math.max(1, parseInt(arg, 10) || 1) : 1;
+      const result = rewindSessionDetailed(opts.session, n);
+      if (result.removed <= 0) {
+        return {
+          handled: true,
+          output: "Nothing to rewind.",
+          session: opts.session,
+        };
+      }
+      const diskNote = result.disk ? formatRestoreResult(result.disk) : "";
+      return {
+        handled: true,
+        output:
+          `Rewound ${result.turns || n} user turn(s); removed ${result.removed} message(s).` +
+          (diskNote ? `\n${diskNote}` : ""),
         session: opts.session,
       };
     }
@@ -957,23 +1017,25 @@ export async function handleSlash(
       }
       const rewritten = (arg || "").trim();
       const prompt = rewritten || prior;
-      const removed = rewindSession(opts.session, 1);
+      const result = rewindSessionDetailed(opts.session, 1);
       const preview =
         prompt.length > 120 ? `${prompt.slice(0, 117).trimEnd()}…` : prompt;
       const mode = rewritten ? "with rewritten prompt" : "same prompt";
+      const diskNote = result.disk ? formatRestoreResult(result.disk) : "";
       return {
         handled: true,
         output:
-          removed > 0
-            ? `Retrying last turn (${mode}; removed ${removed} msg(s))…\n→ ${preview}`
-            : `Retrying last turn (${mode})…\n→ ${preview}`,
+          (result.removed > 0
+            ? `Retrying last turn (${mode}; removed ${result.removed} msg(s))…\n→ ${preview}`
+            : `Retrying last turn (${mode})…\n→ ${preview}`) +
+          (diskNote ? `\n${diskNote}` : ""),
         forwardPrompt: prompt,
         session: opts.session,
       };
     }
 
     case "/export": {
-      // /export [path] [--json]
+      // /export [path] [--json] — files written mode 0600 (transcripts may hold secrets)
       const parts = arg ? arg.split(/\s+/).filter(Boolean) : [];
       const asJson = parts.some((p) => p === "--json" || p === "-j" || p === "json");
       const pathArg = parts.find((p) => !p.startsWith("-") && p !== "json");
@@ -982,10 +1044,15 @@ export async function handleSlash(
         : exportSessionMarkdown(opts.session);
       if (pathArg) {
         const p = path.resolve(pathArg);
-        fs.writeFileSync(p, body, "utf8");
+        fs.writeFileSync(p, body, { encoding: "utf8", mode: 0o600 });
+        try {
+          fs.chmodSync(p, 0o600);
+        } catch {
+          /* windows */
+        }
         return {
           handled: true,
-          output: `Exported ${asJson ? "JSON" : "markdown"} to ${p}`,
+          output: `Exported ${asJson ? "JSON" : "markdown"} to ${p} (mode 0600)`,
         };
       }
       return { handled: true, output: body };
@@ -1394,6 +1461,7 @@ export async function handleSlash(
           `  CI:            forge run "…" --title job --json  ·  forge run "…" --continue  ·  forge doctor --json`,
           `  Safety:        /permissions plan|acceptEdits  ·  --sandbox workspace  ·  /diff (argv-safe)`,
           `  Attention:     /bell on  ·  /copy  ·  /last  ·  /files  ·  /path  ·  /stats 7  ·  /retry`,
+          `  Recovery:      /undo (chat+disk)  ·  /retry  ·  /compact-and <prompt>  ·  /init  ·  /fork`,
           `  Docs:          docs/PRODUCTION.md  ·  docs/RELIABILITY.md  ·  /news  ·  /help`,
         ].join("\n"),
       };
@@ -2179,6 +2247,50 @@ export function runDoctor(config: ForgeConfig): string {
   return runDoctorCheck(config).report;
 }
 
+/** OpenCode-inspired AGENTS.md bootstrap prompt. */
+export function buildInitAgentsPrompt(focus: string, workspace: string): string {
+  const focusBlock = focus
+    ? `\nUser-provided focus or constraints (honor these):\n${focus}\n`
+    : "";
+  return `Create or update \`AGENTS.md\` for this repository at the workspace root (${workspace}).
+
+The goal is a compact instruction file that helps future Forge sessions avoid mistakes and ramp up quickly. Every line should answer: "Would an agent likely miss this without help?" If not, leave it out.
+${focusBlock}
+## How to investigate
+
+Read the highest-value sources first:
+- \`README*\`, root manifests (\`package.json\`, \`Cargo.toml\`, \`pyproject.toml\`, …), lockfiles
+- build, test, lint, formatter, typecheck, and codegen config
+- CI workflows and pre-commit / task runner config
+- existing instruction files (\`AGENTS.md\`, \`CLAUDE.md\`, \`.cursor/rules/\`, \`.cursorrules\`, \`.github/copilot-instructions.md\`)
+- repo-local Forge config (\`.forge/config.toml\`) if present
+
+If architecture is still unclear after reading config and docs, inspect a small number of representative code files to find the real entrypoints, package boundaries, and execution flow. Prefer reading the files that explain how the system is wired together over random leaf files.
+
+Prefer executable sources of truth over prose. If docs conflict with config or scripts, trust the executable source and only keep what you can verify.
+
+## What to extract
+
+Look for the highest-signal facts for an agent working in this repo:
+- exact developer commands, especially non-obvious ones (\`npm test\`, single-test invocation, typecheck)
+- required command order when it matters
+- monorepo or multi-package boundaries and real entrypoints
+- framework or toolchain quirks: generated code, migrations, special env loading
+- repo-specific style or workflow conventions that differ from defaults
+- testing quirks: fixtures, integration prerequisites, flaky or expensive suites
+- important constraints from existing instruction files worth preserving
+
+## Writing rules
+
+- Prefer short sections and bullets
+- Exclude generic software advice, long tutorials, exhaustive file trees, speculative claims
+- If \`AGENTS.md\` already exists, improve it in place rather than rewriting blindly
+- Preserve verified useful guidance; delete fluff or stale claims
+- After writing, briefly summarize what changed and why
+
+Do the research with tools, then write or update \`AGENTS.md\` now.`;
+}
+
 const HELP_TEXT = `
 Forge slash commands
 ────────────────────
@@ -2205,9 +2317,11 @@ Forge slash commands
   /permissions [mode]   Menu if empty; Tab / numbers / aliases (yolo, always…)
                         Mode persists · list|clear|revoke for saved always-allows
   /compact              Compact conversation
-  /rewind [n]           Undo last n user turns (/undo)
-  /retry [prompt]       Rewind last turn + re-run (/again; optional rewrite)
-  /export [path] [--json]  Export session as markdown or JSON
+  /compact-and <prompt> Compact then continue with follow-up (Warp-style)
+  /init [focus]         Guided AGENTS.md setup / improve (OpenCode-style)
+  /rewind [n]           Undo last n user turns + restore journaled files (/undo)
+  /retry [prompt]       Rewind last turn (+ disk) + re-run (/again; optional rewrite)
+  /export [path] [--json]  Export session as markdown or JSON (files mode 0600)
   /fork [title]         Branch session into a new id (keep original)
   /title [name|clear]   Show / set / clear session title (/rename)  [live]
   /bell [on|off|test]   Terminal BEL when a turn ends (long-run attention)  [live]

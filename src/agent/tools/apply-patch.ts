@@ -41,12 +41,14 @@ export async function toolApplyPatch(
         kind: "delete";
         rel: string;
         abs: string;
+        before: string;
       }
     | {
         kind: "update";
         rel: string;
         abs: string;
         content: string;
+        before: string;
         moveRel?: string;
         moveAbs?: string;
       };
@@ -111,10 +113,20 @@ export async function toolApplyPatch(
           isError: true,
         };
       }
+      let before = "";
+      try {
+        before = await fsp.readFile(abs, "utf8");
+      } catch (err) {
+        return {
+          output: `apply_patch failed: cannot read ${hunk.path} for delete: ${(err as Error).message}`,
+          isError: true,
+        };
+      }
       planned.push({
         kind: "delete",
         rel: path.relative(ctx.workspace, abs) || abs,
         abs,
+        before,
       });
       continue;
     }
@@ -178,10 +190,27 @@ export async function toolApplyPatch(
       rel: path.relative(ctx.workspace, abs) || abs,
       abs,
       content: next,
+      before: original,
       moveAbs,
       moveRel,
     });
   }
+
+  const journal = (
+    input: {
+      path: string;
+      kind: "create" | "update" | "delete";
+      before?: string;
+      skipped?: boolean;
+      reason?: string;
+    },
+  ) => {
+    try {
+      ctx.recordMutation?.(input);
+    } catch {
+      /* best-effort */
+    }
+  };
 
   const applied: string[] = [];
   try {
@@ -189,20 +218,56 @@ export async function toolApplyPatch(
       if (op.kind === "add") {
         await fsp.mkdir(path.dirname(op.abs), { recursive: true });
         await atomicWriteFile(op.abs, op.content);
+        journal({ path: op.abs, kind: "create" });
         applied.push(`A ${op.rel}`);
         ctx.onEdit?.();
       } else if (op.kind === "delete") {
         await fsp.unlink(op.abs);
+        const bytes = Buffer.byteLength(op.before, "utf8");
+        if (bytes > 1_500_000) {
+          journal({
+            path: op.abs,
+            kind: "delete",
+            skipped: true,
+            reason: `pre-image ${bytes} bytes exceeds journal cap`,
+          });
+        } else {
+          journal({ path: op.abs, kind: "delete", before: op.before });
+        }
         applied.push(`D ${op.rel}`);
         ctx.onEdit?.();
       } else {
         if (op.moveAbs && op.moveAbs !== op.abs) {
+          // Move = create at dest + delete source (journal both for undo)
           await fsp.mkdir(path.dirname(op.moveAbs), { recursive: true });
           await atomicWriteFile(op.moveAbs, op.content);
           await fsp.unlink(op.abs);
+          journal({ path: op.moveAbs, kind: "create" });
+          const bytes = Buffer.byteLength(op.before, "utf8");
+          if (bytes > 1_500_000) {
+            journal({
+              path: op.abs,
+              kind: "delete",
+              skipped: true,
+              reason: `pre-image ${bytes} bytes exceeds journal cap`,
+            });
+          } else {
+            journal({ path: op.abs, kind: "delete", before: op.before });
+          }
           applied.push(`M ${op.rel} → ${op.moveRel}`);
         } else {
           await atomicWriteFile(op.abs, op.content);
+          const bytes = Buffer.byteLength(op.before, "utf8");
+          if (bytes > 1_500_000) {
+            journal({
+              path: op.abs,
+              kind: "update",
+              skipped: true,
+              reason: `pre-image ${bytes} bytes exceeds journal cap`,
+            });
+          } else {
+            journal({ path: op.abs, kind: "update", before: op.before });
+          }
           applied.push(`M ${op.rel}`);
         }
         ctx.onEdit?.();

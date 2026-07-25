@@ -2,7 +2,7 @@
 
 **Forge** is an open-source AI coding agent CLI with a **first-class harness** — the control plane that other tools partially implement.
 
-> **v0.9.4** — **Expert UX** on the 0.9.3 reliability base: **`/retry`** / `/again`, **`/last`**, **`/files`**, **`/path`**, **`/pin`**, resume-by-title, **`forge run --continue`**, **`forge stats`** / `/stats`, **`/share`**, **`forge news`** / **`forge tips`**, first-run welcome tip, relative session ages, doctor **`sessionsPinned`**. Still includes Retry-After, stream-capped tools, doom-loop + error-streak, **apply_patch**, session lock + auto-resume, lock-safe prune/delete, shell-safe `/diff`, structured **`doctor --json`**, `completion` / `npm run smoke`. Builds on v0.8 Bar A safety + harness (blocking Stop, `/goal`, ULW).
+> **v0.9.5** — **File-aware `/undo`** (chat + journaled disk restore), **`/init`** (guided AGENTS.md), **`/compact-and`**, export mode `0600`. Builds on **v0.9.4** expert UX: **`/retry`**, **`/last`**, **`/files`**, **`/pin`**, resume-by-title, **`forge run --continue`**, **`forge stats`**, **`/share`**, **`forge news`** / **`tips`**. Still includes Retry-After, stream-capped tools, doom-loop + error-streak, **apply_patch**, session lock + auto-resume, structured **`doctor --json`**, `npm run smoke`. Harness: blocking Stop, `/goal`, ULW.
 
 Key capability comparison:
 
@@ -17,7 +17,7 @@ Key capability comparison:
 | Multi-provider (xAI, Anthropic, OpenAI, OpenRouter, Google) | limited | limited | xAI-first | ✅ |
 | Claude / Cursor hook compatibility | n/a | — | ✅ | ✅ |
 | Stream/tool **self-heal** (JSON repair, orphan tools, doom-loop, error-streak, empty-SSE) | partial | partial | partial | ✅ |
-| Multi-file **apply_patch** + atomic writes | partial | ✅ | partial | ✅ |
+| Multi-file **apply_patch** + atomic writes + **file-aware undo** | partial | ✅ | partial | ✅ |
 | Headless **session resume** + file lock | partial | partial | partial | ✅ |
 | Interactive **same-cwd auto-resume** + `/title` / `/bell` | partial | ✅ continue | — | ✅ |
 
@@ -206,7 +206,7 @@ Max-autonomy **relentless loop**. Soft prompts like `improve the code` are expan
 
 See [docs/ULW.md](docs/ULW.md).
 
-### 4. Production reliability (v0.9.3+) + expert UX (v0.9.4)
+### 4. Production reliability (v0.9.3+) + expert UX (v0.9.5)
 
 Forge is built for long expert sessions and CI, not just demos:
 
@@ -219,7 +219,7 @@ Forge is built for long expert sessions and CI, not just demos:
 - **Session locks** (headless fail-closed; optional `FORGE_FORCE_SESSION_LOCK=1`), fork/export/import (export mode `0600`), crash tmp recovery, lock-safe prune/delete, **metrics.jsonl**
 - **Stream-capped** `web_fetch` / search HTML bodies; **grep/glob** external-directory gate
 - **`forge run --session <id|title>`** and **`--continue`** for multi-step headless CI without copying UUIDs
-- **Expert orientation**: `/last` · `/files` · `/path` · `/pin` · `/share` · `/retry` · `forge stats` · `forge news`
+- **Expert orientation**: `/last` · `/files` · `/path` · `/pin` · `/share` · `/undo` (disk+chat) · `/init` · `/compact-and` · `/retry` · `forge stats` · `forge news`
 - Accurate **stream token usage** for `/cost`; optional `FORGE_PERMISSION_TIMEOUT_MS`
 
 Full contract: [docs/RELIABILITY.md](docs/RELIABILITY.md) · expert checklist: [docs/PRODUCTION.md](docs/PRODUCTION.md) · release notes: [CHANGELOG.md](CHANGELOG.md)
@@ -249,8 +249,10 @@ Full contract: [docs/RELIABILITY.md](docs/RELIABILITY.md) · expert checklist: [
 | `/effort [level]` | Reasoning effort for models that support it (e.g. grok-4.5) |
 | `/permissions <mode>` | `default` \| `acceptEdits` \| `plan` \| `bypassPermissions` (persists); `list`/`clear`/`revoke` for saved always-allows |
 | `/compact` | Compact history |
-| `/rewind [n]` | Undo last n turns |
-| `/retry [prompt]` | Rewind last turn + re-run (`/again`; optional rewrite) |
+| `/compact-and <prompt>` | Compact then continue with follow-up (Warp-style) |
+| `/init [focus]` | Guided `AGENTS.md` setup / improve (OpenCode-style) |
+| `/rewind [n]` | Undo last n turns **+ restore journaled files** (`/undo`) |
+| `/retry [prompt]` | Rewind last turn (+ disk) + re-run (`/again`; optional rewrite) |
 | `/files [writes\|n]` | Paths touched by tools this session (newest first; live-safe) |
 | `/path [id\|json]` | On-disk session directory / `session.json` (live-safe; CLI: `sessions path`) |
 | `/pin` / `/unpin` | Protect session from prune (lists show `PIN`; live-safe) |
@@ -259,7 +261,7 @@ Full contract: [docs/RELIABILITY.md](docs/RELIABILITY.md) · expert checklist: [
 | `/unpause` | Shorthand for `/goal resume` (live-safe; not session `/resume`) |
 | `/last [n]` | Peek last n user/assistant turns (live-safe; great after resume) |
 | `/news [n]` | What's new from CHANGELOG (`/changelog` · CLI: `forge news`) |
-| `/export [path] [--json]` | Export session markdown or JSON |
+| `/export [path] [--json]` | Export session markdown or JSON (files mode `0600`) |
 | `/fork [title]` | Branch session into a new id |
 | `/title [name\|clear]` | Show / set / clear session title (`/rename`) |
 | `/bell [on\|off\|test]` | Terminal BEL when a turn ends (long-run attention) |

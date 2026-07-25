@@ -90,6 +90,7 @@ export {
   type ListSessionsOpts,
   type PruneSessionsResult,
   rewindSession,
+  rewindSessionDetailed,
   exportSessionMarkdown,
   exportSessionJson,
   importSessionJson,

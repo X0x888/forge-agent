@@ -70,6 +70,28 @@ export async function toolEdit(
   const oldNative = toLineEnding(normalizeNewlines(oldStr), ending);
   const newNative = toLineEnding(normalizeNewlines(newStr), ending);
 
+  const journalUpdate = () => {
+    try {
+      const bytes = Buffer.byteLength(rawContent, "utf8");
+      if (bytes > 1_500_000) {
+        ctx.recordMutation?.({
+          path: filePath,
+          kind: "update",
+          skipped: true,
+          reason: `pre-image ${bytes} bytes exceeds journal cap`,
+        });
+      } else {
+        ctx.recordMutation?.({
+          path: filePath,
+          kind: "update",
+          before: rawContent,
+        });
+      }
+    } catch {
+      /* journal best-effort */
+    }
+  };
+
   const located = locateEdit(content, oldNative, replaceAll);
   if (!located.ok) {
     // Also try LF-normalized search against LF content if file is CRLF and model sent LF
@@ -83,6 +105,7 @@ export async function toolEdit(
         nextLf = toLineEnding(nextLf, ending);
         const final = joinBom(nextLf, bom);
         await atomicWriteFile(filePath, final, { encoding: "utf8" });
+        journalUpdate();
         ctx.onEdit?.();
         const rel = path.relative(ctx.workspace, filePath) || filePath;
         const note =
@@ -105,6 +128,7 @@ export async function toolEdit(
   const next = applyMatch(content, located.result, newNative, replaceAll);
   const final = joinBom(next, bom);
   await atomicWriteFile(filePath, final, { encoding: "utf8" });
+  journalUpdate();
   ctx.onEdit?.();
 
   const rel = path.relative(ctx.workspace, filePath) || filePath;

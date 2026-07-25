@@ -1,0 +1,297 @@
+/**
+ * Per-session file mutation journal for expert /undo that restores disk,
+ * not just chat history (OpenCode snapshot/revert inspired, lightweight).
+ *
+ * Stored as ~/.forge/sessions/<id>/mutations.jsonl (mode 0600).
+ * Each successful write_file / search_replace / apply_patch op appends one
+ * entry with pre-image (or create marker). Rewind restores in reverse.
+ */
+import fs from "node:fs";
+import fsp from "node:fs/promises";
+import path from "node:path";
+import { ensureDir, forgeHome, nowIso } from "../util/fs.js";
+
+/** Skip journaling (and restoring) bodies larger than this. */
+export const MAX_MUTATION_BYTES = 1_500_000;
+
+function sessionDir(id: string): string {
+  return path.join(forgeHome(), "sessions", id);
+}
+
+export type FileMutationKind = "create" | "update" | "delete";
+
+export interface FileMutation {
+  /** Absolute path on disk */
+  path: string;
+  kind: FileMutationKind;
+  /** Agent turn when the mutation landed (session.meta.turnCount). */
+  turn: number;
+  ts: string;
+  /** Pre-image for update/delete. Omitted for create or when skipped. */
+  before?: string;
+  /** True when body was too large / unreadable — restore will skip. */
+  skipped?: boolean;
+  reason?: string;
+}
+
+export interface RecordMutationInput {
+  path: string;
+  kind: FileMutationKind;
+  before?: string;
+  turn: number;
+  skipped?: boolean;
+  reason?: string;
+}
+
+export interface RestoreMutationsResult {
+  restored: string[];
+  failed: Array<{ path: string; error: string }>;
+  skipped: Array<{ path: string; reason: string }>;
+}
+
+function journalPath(sessionId: string): string {
+  return path.join(sessionDir(sessionId), "mutations.jsonl");
+}
+
+export function mutationsJournalPath(sessionId: string): string {
+  return journalPath(sessionId);
+}
+
+/** Append one mutation (best-effort; never throws into the agent loop). */
+export function appendFileMutation(
+  sessionId: string,
+  input: RecordMutationInput,
+): void {
+  try {
+    const dir = sessionDir(sessionId);
+    ensureDir(dir);
+    const entry: FileMutation = {
+      path: input.path,
+      kind: input.kind,
+      turn: input.turn,
+      ts: nowIso(),
+    };
+    if (input.skipped) {
+      entry.skipped = true;
+      if (input.reason) entry.reason = input.reason;
+    } else if (input.kind !== "create") {
+      const before = input.before ?? "";
+      const bytes = Buffer.byteLength(before, "utf8");
+      if (bytes > MAX_MUTATION_BYTES) {
+        entry.skipped = true;
+        entry.reason = `pre-image ${bytes} bytes exceeds ${MAX_MUTATION_BYTES}`;
+      } else {
+        entry.before = before;
+      }
+    }
+    const line = JSON.stringify(entry) + "\n";
+    fs.appendFileSync(journalPath(sessionId), line, { mode: 0o600 });
+    try {
+      fs.chmodSync(journalPath(sessionId), 0o600);
+    } catch {
+      /* windows */
+    }
+  } catch {
+    /* journal is best-effort */
+  }
+}
+
+/**
+ * Snapshot current file state and classify create vs update for journaling.
+ * Returns null when the path cannot be read as a file (caller may still write).
+ */
+export async function snapshotForWrite(
+  absPath: string,
+): Promise<{ kind: "create" | "update"; before?: string; skipped?: boolean; reason?: string }> {
+  try {
+    const st = await fsp.stat(absPath);
+    if (st.isDirectory()) {
+      return { kind: "update", skipped: true, reason: "path is a directory" };
+    }
+    if (st.size > MAX_MUTATION_BYTES) {
+      return {
+        kind: "update",
+        skipped: true,
+        reason: `existing file ${st.size} bytes exceeds journal cap`,
+      };
+    }
+    const before = await fsp.readFile(absPath, "utf8");
+    return { kind: "update", before };
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException)?.code;
+    if (code === "ENOENT") return { kind: "create" };
+    return {
+      kind: "update",
+      skipped: true,
+      reason: `cannot read pre-image: ${(err as Error).message}`,
+    };
+  }
+}
+
+export function readFileMutations(sessionId: string): FileMutation[] {
+  const file = journalPath(sessionId);
+  let raw: string;
+  try {
+    raw = fs.readFileSync(file, "utf8");
+  } catch {
+    return [];
+  }
+  const out: FileMutation[] = [];
+  for (const line of raw.split(/\r?\n/)) {
+    const t = line.trim();
+    if (!t) continue;
+    try {
+      const m = JSON.parse(t) as FileMutation;
+      if (m && typeof m.path === "string" && typeof m.kind === "string") {
+        out.push(m);
+      }
+    } catch {
+      /* skip corrupt line */
+    }
+  }
+  return out;
+}
+
+/** Drop journal entries with turn > keepThroughTurn (inclusive keep). */
+export function truncateMutationsAfterTurn(
+  sessionId: string,
+  keepThroughTurn: number,
+): FileMutation[] {
+  const all = readFileMutations(sessionId);
+  const kept = all.filter(
+    (m) => typeof m.turn === "number" && m.turn <= keepThroughTurn,
+  );
+  writeMutationsJournal(sessionId, kept);
+  return all.filter((m) => typeof m.turn === "number" && m.turn > keepThroughTurn);
+}
+
+function writeMutationsJournal(sessionId: string, entries: FileMutation[]): void {
+  const file = journalPath(sessionId);
+  try {
+    if (entries.length === 0) {
+      try {
+        fs.unlinkSync(file);
+      } catch {
+        /* missing ok */
+      }
+      return;
+    }
+    ensureDir(sessionDir(sessionId));
+    const body = entries.map((e) => JSON.stringify(e)).join("\n") + "\n";
+    const tmp = `${file}.${process.pid}.tmp`;
+    fs.writeFileSync(tmp, body, { mode: 0o600 });
+    fs.renameSync(tmp, file);
+    try {
+      fs.chmodSync(file, 0o600);
+    } catch {
+      /* */
+    }
+  } catch {
+    /* best-effort */
+  }
+}
+
+/** Clear the entire journal (e.g. /clear hard). */
+export function clearFileMutations(sessionId: string): void {
+  writeMutationsJournal(sessionId, []);
+}
+
+/**
+ * Copy journal when forking a session so the fork can still undo its history.
+ */
+export function copyFileMutations(fromId: string, toId: string): void {
+  const entries = readFileMutations(fromId);
+  if (!entries.length) return;
+  writeMutationsJournal(toId, entries);
+}
+
+/**
+ * Restore disk for mutations belonging to turns after `keepThroughTurn`.
+ * Applies in reverse chronological order. Truncates the journal afterward.
+ */
+export function restoreMutationsAfterTurn(
+  sessionId: string,
+  keepThroughTurn: number,
+): RestoreMutationsResult {
+  const doomed = truncateMutationsAfterTurn(sessionId, keepThroughTurn);
+  // Reverse: last mutation first
+  const ordered = doomed.slice().reverse();
+  const restored: string[] = [];
+  const failed: Array<{ path: string; error: string }> = [];
+  const skipped: Array<{ path: string; reason: string }> = [];
+
+  for (const m of ordered) {
+    if (m.skipped) {
+      skipped.push({
+        path: m.path,
+        reason: m.reason || "pre-image not journaled",
+      });
+      continue;
+    }
+    try {
+      if (m.kind === "create") {
+        // File was created in the undone turn — remove if still a file
+        if (fs.existsSync(m.path)) {
+          const st = fs.statSync(m.path);
+          if (st.isFile()) {
+            fs.unlinkSync(m.path);
+            restored.push(`- ${m.path}`);
+          } else {
+            skipped.push({
+              path: m.path,
+              reason: "create-restore target is not a regular file",
+            });
+          }
+        } else {
+          restored.push(`- ${m.path} (already absent)`);
+        }
+      } else if (m.kind === "delete" || m.kind === "update") {
+        const dir = path.dirname(m.path);
+        fs.mkdirSync(dir, { recursive: true });
+        const body = m.before ?? "";
+        const tmp = path.join(
+          dir,
+          `.${path.basename(m.path)}.${process.pid}.undo.tmp`,
+        );
+        fs.writeFileSync(tmp, body, "utf8");
+        fs.renameSync(tmp, m.path);
+        restored.push(
+          m.kind === "delete" ? `+ ${m.path}` : `~ ${m.path}`,
+        );
+      }
+    } catch (err) {
+      failed.push({
+        path: m.path,
+        error: (err as Error).message,
+      });
+    }
+  }
+
+  return { restored, failed, skipped };
+}
+
+/** Format restore result for slash output. */
+export function formatRestoreResult(r: RestoreMutationsResult): string {
+  const lines: string[] = [];
+  if (r.restored.length) {
+    lines.push(`Disk restored (${r.restored.length}):`);
+    for (const p of r.restored.slice(0, 30)) lines.push(`  ${p}`);
+    if (r.restored.length > 30) {
+      lines.push(`  … +${r.restored.length - 30} more`);
+    }
+  }
+  if (r.skipped.length) {
+    lines.push(`Skipped (${r.skipped.length}) — no pre-image / too large:`);
+    for (const s of r.skipped.slice(0, 10)) {
+      lines.push(`  ${s.path}: ${s.reason}`);
+    }
+  }
+  if (r.failed.length) {
+    lines.push(`Failed (${r.failed.length}):`);
+    for (const f of r.failed.slice(0, 10)) {
+      lines.push(`  ${f.path}: ${f.error}`);
+    }
+  }
+  if (!lines.length) return "";
+  return lines.join("\n");
+}

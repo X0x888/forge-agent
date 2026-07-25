@@ -63,4 +63,4 @@ default + search, `forge sessions prune` (skips foreign locks) / `delete --force
 path-not-found typo hints, session import/load message-role sanitization, `forge stats` /
 `/stats`, `/share` handoff card, `forge tips`, first-run welcome tip, `/retry`/`/again`,
 `/last [n]`, resume auto-peek, `forge news`/`/news`, `forge run --continue`,
-`/done`/`/pause`/`/unpause`, session `lastUserPreview` list snippets, resume-by-title, relative session ages, `/files`, `/path` (+ copy), `/pin` + `sessions pin` (fork clears pin; status PIN badge), resume orientation + `--pinned` list, doctor `sessionsPinned`, session path helpers, sessions show file snippet, `npm run smoke`.
+`/done`/`/pause`/`/unpause`, session `lastUserPreview` list snippets, resume-by-title, relative session ages, `/files`, `/path` (+ copy), `/pin` + `sessions pin` (fork clears pin; status PIN badge), resume orientation + `--pinned` list, doctor `sessionsPinned`, session path helpers, sessions show file snippet, file-aware `/undo` (`mutations.jsonl` pre-images), `/init`, `/compact-and`, `/export` mode `0600`, `npm run smoke`.

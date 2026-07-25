@@ -4,6 +4,7 @@ import path from "node:path";
 import type { ToolContext, ToolResult } from "./types.js";
 import { resolvePath, assertWritablePath } from "./path-util.js";
 import { atomicWriteFile } from "./atomic-write.js";
+import { snapshotForWrite } from "../../session/mutations.js";
 
 export async function toolWrite(
   args: Record<string, unknown>,
@@ -28,6 +29,7 @@ export async function toolWrite(
     } catch {
       /* race / permission — fall through to atomic write */
     }
+    const snap = await snapshotForWrite(filePath);
     const dir = path.dirname(filePath);
     let createdParents = false;
     try {
@@ -38,6 +40,17 @@ export async function toolWrite(
     await atomicWriteFile(filePath, String(args.content ?? ""), {
       encoding: "utf8",
     });
+    try {
+      ctx.recordMutation?.({
+        path: filePath,
+        kind: snap.kind,
+        before: snap.before,
+        skipped: snap.skipped,
+        reason: snap.reason,
+      });
+    } catch {
+      /* journal best-effort */
+    }
     ctx.onEdit?.();
     const rel = path.relative(ctx.workspace, filePath) || filePath;
     return {

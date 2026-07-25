@@ -79,12 +79,24 @@ export const COMMAND_PARAMS: Record<string, ParamChoice[]> = {
     },
   ],
   compact: [],
+  "compact-and": [
+    {
+      value: "continue with the next step",
+      description: "Follow-up prompt after compact",
+    },
+  ],
+  init: [
+    {
+      value: "focus on test commands",
+      description: "Optional focus for AGENTS.md bootstrap",
+    },
+  ],
   rewind: [
-    { value: "1", description: "Undo last user turn" },
-    { value: "2", description: "Undo last 2 user turns" },
+    { value: "1", description: "Undo last user turn (+ restore journaled files)" },
+    { value: "2", description: "Undo last 2 user turns (+ disk)" },
   ],
   undo: [
-    { value: "1", description: "Undo last user turn" },
+    { value: "1", description: "Undo last user turn (+ restore journaled files)" },
   ],
   retry: [
     {

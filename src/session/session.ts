@@ -16,6 +16,12 @@ import {
   type CompactContext,
 } from "./compaction.js";
 import { repairToolCallPairing } from "./message-repair.js";
+import {
+  restoreMutationsAfterTurn,
+  copyFileMutations,
+  clearFileMutations,
+  type RestoreMutationsResult,
+} from "./mutations.js";
 export {
   compactMessagesStructured,
   buildStructuredSummary,
@@ -23,6 +29,7 @@ export {
 } from "./compaction.js";
 export type { CompactContext, CompactResult, PruneBodiesResult } from "./compaction.js";
 export { repairToolCallPairing } from "./message-repair.js";
+export type { RestoreMutationsResult } from "./mutations.js";
 
 export interface SessionMeta {
   id: string;
@@ -314,6 +321,12 @@ export function forkSession(
     todos: structuredClone(source.todos || []),
   };
   saveSession(data);
+  // Fork inherits mutation journal so /undo still restores pre-images.
+  try {
+    copyFileMutations(source.meta.id, id);
+  } catch {
+    /* best-effort */
+  }
   return data;
 }
 
@@ -1081,11 +1094,31 @@ export function markUserTurn(session: SessionData): void {
   session.meta.userTurnMarks.push(session.messages.length);
 }
 
+export interface RewindSessionResult {
+  /** Messages removed from history. */
+  removed: number;
+  /** Turns rewound (user turns). */
+  turns: number;
+  /** Disk restore summary (empty when no journaled mutations). */
+  disk?: RestoreMutationsResult;
+}
+
 /**
  * Rewind to before the last N user turns (default 1).
- * Returns number of messages removed.
+ * Also restores journaled file mutations from those turns (OpenCode-inspired).
+ * Returns number of messages removed (legacy) — prefer rewindSessionDetailed.
  */
 export function rewindSession(session: SessionData, turns = 1): number {
+  return rewindSessionDetailed(session, turns).removed;
+}
+
+/**
+ * Rewind chat + restore disk mutations for the last N user turns.
+ */
+export function rewindSessionDetailed(
+  session: SessionData,
+  turns = 1,
+): RewindSessionResult {
   const marks = session.meta.userTurnMarks || [];
   if (marks.length === 0) {
     // Fallback: drop trailing messages until last user
@@ -1096,11 +1129,21 @@ export function rewindSession(session: SessionData, turns = 1): number {
         break;
       }
     }
-    if (cut < 0) return 0;
+    if (cut < 0) return { removed: 0, turns: 0 };
     const removed = session.messages.length - cut;
+    const prevTurn = session.meta.turnCount;
     session.messages = session.messages.slice(0, cut);
+    session.meta.turnCount = Math.max(0, session.meta.turnCount - 1);
+    const disk = restoreMutationsAfterTurn(
+      session.meta.id,
+      session.meta.turnCount,
+    );
     saveSession(session);
-    return removed;
+    return {
+      removed,
+      turns: prevTurn > session.meta.turnCount ? 1 : 0,
+      disk,
+    };
   }
   const n = Math.max(1, Math.min(turns, marks.length));
   const cut = marks[marks.length - n];
@@ -1108,8 +1151,12 @@ export function rewindSession(session: SessionData, turns = 1): number {
   session.messages = session.messages.slice(0, cut);
   session.meta.userTurnMarks = marks.slice(0, marks.length - n);
   session.meta.turnCount = Math.max(0, session.meta.turnCount - n);
+  const disk = restoreMutationsAfterTurn(
+    session.meta.id,
+    session.meta.turnCount,
+  );
   saveSession(session);
-  return removed;
+  return { removed, turns: n, disk };
 }
 
 export function exportSessionMarkdown(session: SessionData): string {
@@ -1600,5 +1647,11 @@ export function clearConversation(session: SessionData): void {
   session.meta.turnCount = 0;
   session.meta.title = undefined;
   session.meta.lastUserPreview = undefined;
+  // History gone — journal would restore against the wrong timeline.
+  try {
+    clearFileMutations(session.meta.id);
+  } catch {
+    /* best-effort */
+  }
   saveSession(session);
 }

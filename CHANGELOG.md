@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.9.5 — File-aware undo, /init, /compact-and
+
+Production recovery and onboarding learned from OpenCode (snapshot/revert, guided AGENTS.md) and Warp (`/compact-and`).
+
+### Recovery (disk + chat)
+- **File mutation journal**: successful `write_file` / `search_replace` / `apply_patch` ops append pre-images to `~/.forge/sessions/<id>/mutations.jsonl` (mode `0600`, ~1.5 MiB cap per body)
+- **`/undo` / `/rewind [n]`**: rewinds chat **and** restores journaled files for those turns (create→unlink, update/delete→pre-image)
+- **`/retry` / `/again`**: same disk restore before re-running the prompt
+- **Fork copies journal**; **`/clear` drops journal** (timeline reset)
+- Large / unreadable pre-images are skipped with an explicit note (never silent data loss claims)
+
+### Expert UX
+- **`/init [focus]`**: OpenCode-style guided `AGENTS.md` bootstrap / improve (forwards a high-signal research+write prompt)
+- **`/compact-and <prompt>`**: Warp-style compact then continue with a follow-up in one step
+- **`/export` path writes mode `0600`** (parity with `forge sessions export --out`)
+- Help, tips, tab-complete updated
+
+### Docs / tests
+- RELIABILITY + PRODUCTION + README note file-aware undo and new slash commands
+- Tests: `mutations-undo.test.ts` (journal, restore, fork/clear, slash `/undo` `/init` `/compact-and` export mode)
+
 ## 0.9.4 — Expert UX (retry, pin, stats, resume-by-title)
 
 Daily-driver session operations and orientation for long-running experts. Builds on 0.9.3 reliability.

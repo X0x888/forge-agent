@@ -17,6 +17,7 @@ import {
   markUserTurn,
   pruneOversizedMessageBodies,
 } from "../session/session.js";
+import { appendFileMutation } from "../session/mutations.js";
 import { HookRunner, type HookContext } from "../harness/hooks.js";
 import { runStopGuard } from "../harness/stop-guard.js";
 import { loadGoal, detectAutoGoal, armGoal } from "../harness/goal.js";
@@ -1194,6 +1195,16 @@ async function prepareToolResult(opts: {
         signal,
         onEdit: () => {
           session.meta.editCount += 1;
+        },
+        recordMutation: (input) => {
+          appendFileMutation(session.meta.id, {
+            path: input.path,
+            kind: input.kind,
+            before: input.before,
+            turn: session.meta.turnCount,
+            skipped: input.skipped,
+            reason: input.reason,
+          });
         },
       },
       (todos, merge) => {
