@@ -2,7 +2,7 @@
 
 **Forge** is an open-source AI coding agent CLI with a **first-class harness** — the control plane that other tools partially implement.
 
-> **v0.9.2** — **Production reliability**: Retry-After, abortable streams/tools (bash + web_fetch/web_search), empty-SSE retry, JSON repair, orphan tool heal, doom-loop + **error-streak** (abort ≠ streak), **apply_patch**, atomic writes, overflow→compact, OAuth refresh, session lock + **same-cwd auto-resume**, fork/export/import, **`listSessions({cwd,query})`** / `sessions list --cwd`/`-q` / `/sessions` search, **`--title`** / `/new [title]`, **lock-safe prune/delete** (`--force`), shell-safe **`/diff`**, **`forge run --session`** (empty-prompt guard, sandbox/deny, exit 0/1/124/130), **metrics.jsonl**, permission ask timeout, bg-task teardown, `/title` `/bell` `/copy` (live), structured **`forge doctor --json`** (`issues[]`/`secureFiles`/`sessionsLocked`, exit 1), path-hint typos, `completion` / `npm run smoke`. Builds on v0.8 Bar A safety + harness (blocking Stop, `/goal`, ULW).
+> **v0.9.3** — **Production reliability**: Retry-After, abortable + **stream-capped** web tools, empty-SSE retry, JSON repair, orphan tool heal, doom-loop + **error-streak** (abort ≠ streak), **apply_patch**, atomic writes, overflow→compact, OAuth refresh, session lock (**headless fail-closed**, `FORGE_FORCE_SESSION_LOCK=1`) + **same-cwd auto-resume**, fork/export/import (export `0600`), **`listSessions({cwd,query})`** / `sessions list --cwd`/`-q`, **`--title`** / `/new [title]`, **lock-safe prune/delete** (`--force`), shell-safe **`/diff`**, grep/glob external_directory, **`forge run --session`** (empty-prompt guard, exit 0/1/124/130), **metrics.jsonl**, bg-task teardown, `/title` `/bell` `/copy`, structured **`forge doctor --json`**, `completion` / `npm run smoke`. Builds on v0.8 Bar A safety + harness (blocking Stop, `/goal`, ULW).
 
 Key capability comparison:
 
@@ -202,7 +202,7 @@ Max-autonomy **relentless loop**. Soft prompts like `improve the code` are expan
 
 See [docs/ULW.md](docs/ULW.md).
 
-### 4. Production reliability (v0.9.2)
+### 4. Production reliability (v0.9.3)
 
 Forge is built for long expert sessions and CI, not just demos:
 
@@ -212,7 +212,8 @@ Forge is built for long expert sessions and CI, not just demos:
 - **Doom-loop** + **error-streak** circuit breakers (identical args ×3; any errors ×5)
 - **`apply_patch`** multi-file edits + **atomic** file writes
 - **OAuth refresh** at start and once mid-run on `401`
-- **Session locks**, fork/export/import, crash tmp recovery, lock-safe prune/delete, **metrics.jsonl**
+- **Session locks** (headless fail-closed; optional `FORGE_FORCE_SESSION_LOCK=1`), fork/export/import (export mode `0600`), crash tmp recovery, lock-safe prune/delete, **metrics.jsonl**
+- **Stream-capped** `web_fetch` / search HTML bodies; **grep/glob** external-directory gate
 - **`forge run --session <id>`** multi-step headless CI resume
 - Accurate **stream token usage** for `/cost`; optional `FORGE_PERMISSION_TIMEOUT_MS`
 

@@ -74,6 +74,60 @@ async function fetchOnce(
   });
 }
 
+/**
+ * Read response body with a hard byte cap. Stops as soon as maxBytes is exceeded
+ * so a missing/lying Content-Length cannot OOM the process.
+ */
+export async function readBodyCapped(
+  resp: Response,
+  maxBytes: number,
+  signal?: AbortSignal,
+): Promise<{ buf: Buffer; tooLarge: boolean }> {
+  if (!resp.body) {
+    const ab = await resp.arrayBuffer();
+    const buf = Buffer.from(ab);
+    if (buf.length > maxBytes) return { buf: Buffer.alloc(0), tooLarge: true };
+    return { buf, tooLarge: false };
+  }
+  const reader = resp.body.getReader();
+  const chunks: Buffer[] = [];
+  let total = 0;
+  try {
+    while (true) {
+      if (signal?.aborted) {
+        try {
+          await reader.cancel();
+        } catch {
+          /* */
+        }
+        const abortErr = new Error("Aborted");
+        abortErr.name = "AbortError";
+        throw abortErr;
+      }
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (!value?.length) continue;
+      total += value.length;
+      if (total > maxBytes) {
+        try {
+          await reader.cancel();
+        } catch {
+          /* */
+        }
+        return { buf: Buffer.alloc(0), tooLarge: true };
+      }
+      chunks.push(Buffer.from(value));
+    }
+  } finally {
+    try {
+      reader.releaseLock();
+    } catch {
+      /* */
+    }
+  }
+  return { buf: Buffer.concat(chunks, total), tooLarge: false };
+}
+
 export async function toolWebFetch(
   args: Record<string, unknown>,
   ctx: ToolContext = { workspace: process.cwd() },
@@ -135,20 +189,28 @@ export async function toolWebFetch(
 
     const cl = resp.headers.get("content-length");
     if (cl && Number(cl) > MAX_RESPONSE_BYTES) {
+      // Cancel body so the connection is not held open
+      try {
+        await resp.body?.cancel();
+      } catch {
+        /* */
+      }
       return {
         output: `Response too large (Content-Length ${cl} > ${MAX_RESPONSE_BYTES})`,
         isError: true,
       };
     }
 
-    const buf = Buffer.from(await resp.arrayBuffer());
+    // Stream with a hard byte cap — never trust Content-Length alone (missing/lying).
+    const body = await readBodyCapped(resp, MAX_RESPONSE_BYTES, signal);
     if (signal.aborted) return { output: "Aborted", isError: true };
-    if (buf.length > MAX_RESPONSE_BYTES) {
+    if (body.tooLarge) {
       return {
-        output: `Response too large (${buf.length} bytes > ${MAX_RESPONSE_BYTES})`,
+        output: `Response too large (> ${MAX_RESPONSE_BYTES} bytes)`,
         isError: true,
       };
     }
+    const buf = body.buf;
 
     const ctype = (resp.headers.get("content-type") || "").toLowerCase();
     if (

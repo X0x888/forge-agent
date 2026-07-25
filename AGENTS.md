@@ -46,17 +46,18 @@ Binary entry: `src/cli.ts` → `dist/cli.js` (`bin: forge`).
 ## Production reliability (v0.9+)
 
 See `docs/RELIABILITY.md` and `docs/PRODUCTION.md`. Highlights: Retry-After, abortable streams/bash,
-JSON arg repair, orphan tool_call heal (load/import + **re-save** when healed), doom-loop,
-error-streak circuit breaker, apply_patch (path typo hints; directory-target errors), atomic file
-writes, OAuth refresh (start + mid-run 401), session locks (corrupt lock / invalid `acquiredAt`
-recoverable), atomic session tmp recovery, session fork/export/import, headless session lock +
-`forge run --session`, metrics.jsonl, permission ask timeout, empty-SSE retry,
-`finish_reason=length` continue, stream usage, `meta.json` session sidecar, tunable loop guards
-(`FORGE_DOOM_LOOP_THRESHOLD`, `FORGE_ERROR_STREAK_THRESHOLD`), interactive same-cwd auto-resume,
-`/title`, `--title` on `forge`/`forge run`, `/bell` turn-end attention, background-task teardown on
-exit, JSON store isolation (`readJsonFile` clones fallbacks; auth/permissions/preferences mode
-`0600`), `listSessions({ cwd, query, limit })` + `forge sessions list --cwd`/`-q`, `/sessions`
-same-cwd default + search, `forge sessions prune` (skips foreign locks) / `delete --force`,
-shell-safe `/diff` (argv + filter allowlist), `forge completion`, `forge doctor` / `doctor --json`
-(structured `runDoctorCheck` + `issues[]` / `secureFiles`; exit 1 on issues), path-not-found typo
-hints, session import/load message-role sanitization, `npm run smoke`.
+stream-capped `web_fetch`/`web_search`, JSON arg repair, orphan tool_call heal (load/import +
+**re-save** when healed and no foreign lock), doom-loop, error-streak circuit breaker, apply_patch
+(path typo hints; directory-target errors), atomic file writes, OAuth refresh (start + mid-run 401),
+session locks (headless fail-closed; `FORGE_FORCE_SESSION_LOCK=1` override; live+bad timestamp held),
+atomic session tmp recovery, session fork/export/import (export `0600`), headless `forge run
+--session`, metrics.jsonl, permission ask timeout, empty-SSE retry, `finish_reason=length` continue,
+stream usage, `meta.json` session sidecar, tunable loop guards (`FORGE_DOOM_LOOP_THRESHOLD`,
+`FORGE_ERROR_STREAK_THRESHOLD`), interactive same-cwd auto-resume, `/title`, `--title` on
+`forge`/`forge run`, `/bell` turn-end attention, background-task teardown on exit, JSON store
+isolation (`readJsonFile` clones fallbacks; auth/permissions/preferences mode `0600`),
+`listSessions({ cwd, query, limit })` + `forge sessions list --cwd`/`-q`, `/sessions` same-cwd
+default + search, `forge sessions prune` (skips foreign locks) / `delete --force`, shell-safe `/diff`
+(argv + filter allowlist), external_directory on grep/glob, `forge completion`, `forge doctor` /
+`doctor --json` (structured `runDoctorCheck` + `issues[]` / `secureFiles`; exit 1 on issues),
+path-not-found typo hints, session import/load message-role sanitization, `npm run smoke`.

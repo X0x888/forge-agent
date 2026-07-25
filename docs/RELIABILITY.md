@@ -42,10 +42,10 @@ What experts should expect from Forge in long, unattended, or CI runs.
 | **OAuth refresh** | `resolveAuthFresh` exchanges `refresh_token` before start when near expiry |
 | **Mid-run 401** | One forced refresh + `provider.updateCredentials` then retry chat |
 | **Sensitive JSON mode** | `auth.json`, `permissions.json`, `preferences.json` written `0600`; `/doctor` flags group/world-readable files; `forge doctor --json` exposes structured `secureFiles` (`exists` / `mode` / `modeOk`) and sets `ok: false` when any `modeOk` is false |
-| **Session lock** | REPL and `forge run` acquire `session.lock`; warn if another live pid holds it; steal stale locks; corrupt lock JSON / invalid pid treated as absent; invalid `acquiredAt` → stale |
+| **Session lock** | REPL and `forge run` acquire `session.lock`; headless **fails closed** on a foreign live lock (exit 1) unless `FORGE_FORCE_SESSION_LOCK=1`; REPL still warns and continues; steal only dead pids or parseable age past TTL; corrupt lock JSON / invalid pid treated as absent; live pid + invalid `acquiredAt` is still held |
 | **Atomic session write** | `session.json` written via tmp+rename; load recovers newest leftover tmp after crash |
 | **JSON store isolation** | `readJsonFile` clones object fallbacks; auth + always-allow stores never share mutable empty constants |
-| **Session fork/export/import** | `forge sessions fork\|export\|import\|show` and `/fork` / `/export [--json]` for expert branching & artifacts; import rejects bad roles; load soft-sanitizes corrupt on-disk messages, heals orphan tool_call pairs, and **re-saves** when healed; `listSessions({cwd,query,limit})` filters before limit (CLI `--cwd`/`-q`, `/sessions` same-cwd default); corrupt dirs skipped (doctor/`/sessions` never throw) |
+| **Session fork/export/import** | `forge sessions fork\|export\|import\|show` and `/fork` / `/export [--json]` for expert branching & artifacts; export files written mode `0600`; import rejects bad roles; load soft-sanitizes corrupt on-disk messages, heals orphan tool_call pairs, and **re-saves** when healed only if no foreign live lock; `listSessions({cwd,query,limit})` filters before limit (CLI `--cwd`/`-q` or bare `forge sessions <query>`, `/sessions` same-cwd default); corrupt dirs skipped (doctor/`/sessions` never throw) |
 | **meta.json sidecar** | Each save writes lightweight meta for fast list/prune (no full history parse) |
 | **sessions prune/delete** | `forge sessions prune --keep 50` / `/sessions prune` (active protected; foreign live locks skipped); `delete` refuses foreign locks unless `--force` |
 | **tool-output prune** | Full dumps under `~/.forge/tool-output` auto-pruned (keep 80 / 14d); `forge prune-tool-output` |
@@ -63,7 +63,8 @@ What experts should expect from Forge in long, unattended, or CI runs.
 | **Headless session resume** | `forge run … --session <id>` continues a prior headless/REPL session (multi-step CI) |
 | **Headless wall-clock** | Optional `FORGE_MAX_RUN_MS` aborts the run (exit 124; JSON `timedOut: true`) |
 | **Bash abort** | Sandbox/`runRaw` children receive SIGTERM on turn abort |
-| **Web tool abort** | `web_fetch` / `web_search` merge turn signal + timeout so Ctrl+C / `FORGE_MAX_RUN_MS` cancel in-flight HTTP |
+| **Web tool abort** | `web_fetch` / `web_search` merge turn signal + timeout so Ctrl+C / `FORGE_MAX_RUN_MS` cancel in-flight HTTP; bodies stream-capped (`web_fetch` 5 MiB, search HTML 2 MiB) so missing Content-Length cannot OOM |
+| **grep abort** | `grep` honors turn `AbortSignal` (kills `rg` / stops JS fallback) |
 | **Abort hygiene** | Cooperative `Aborted` tool results do not count toward error-streak; loop asserts abort immediately after tool batches |
 | **Background task teardown** | REPL exit and headless `forge run` end force-kill in-process `background=true` shells; `beforeExit`/`exit` safety net; SessionEnd runs before kill so hooks can observe tasks |
 | **Parallel reads** | Up to 8 consecutive read-only tools run in parallel; results stay ordered |
@@ -78,6 +79,7 @@ What experts should expect from Forge in long, unattended, or CI runs.
 | `FORGE_DOOM_LOOP_THRESHOLD` | `3` | Identical tool+args streak before strategy nudge |
 | `FORGE_ERROR_STREAK_THRESHOLD` | `5` | Consecutive tool errors before circuit-breaker nudge |
 | `FORGE_ULW_MAX_CONTINUES` | `200` | Stop-continue cap while ULW is armed |
+| `FORGE_FORCE_SESSION_LOCK` | off | Headless: force-steal / continue despite a foreign live `session.lock` |
 | `FORGE_LOG_JSON` | off | Structured JSON logs on stderr |
 | `FORGE_BELL` | off | `1`/`0` force turn-end terminal BEL (overrides `/bell` preference) |
 | `FORGE_NO_AUTO_RESUME` | off | `1` disables interactive same-cwd session auto-resume |

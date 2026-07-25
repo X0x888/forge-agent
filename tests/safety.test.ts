@@ -109,6 +109,21 @@ describe("external directory gate", () => {
     assert.equal(r.decision, "deny");
   });
 
+  it("denies grep/glob absolute paths outside workspace", async () => {
+    const g = new PermissionGate({ interactive: false });
+    for (const toolName of ["grep", "glob"] as const) {
+      const r = await g.request({
+        toolName,
+        input: { path: "/etc", pattern: ".*", ...(toolName === "grep" ? {} : {}) },
+        mode: "dontAsk",
+        workspace: "/tmp/proj",
+        config: { ...DEFAULT_CONFIG, readOutsideWorkspace: "deny" },
+      });
+      assert.equal(r.decision, "deny", toolName);
+      assert.match(r.reason || "", /outside workspace/i);
+    }
+  });
+
   it("allows workspace-relative reads", async () => {
     const g = new PermissionGate({ interactive: false });
     const r = await g.request({

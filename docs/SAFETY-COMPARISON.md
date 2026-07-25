@@ -18,7 +18,7 @@ Same sources also drove **tool** improvements (not only authorization): realpath
 
 Fail-closed headless permissions, segment-strict bash allow rules, expanded hard-deny variants (`${HOME}`, `find -delete`, `git push -f`, `git -C …`), protected path writes, project config safety overlay (no project YOLO / base_url / sandbox off).
 
-## Production reliability follow-on (v0.9.2)
+## Production reliability follow-on (v0.9.3)
 
 Same sources plus Grok consecutive-failure patterns and OpenCode apply_patch / session hygiene:
 

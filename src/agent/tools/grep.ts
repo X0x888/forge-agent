@@ -49,8 +49,13 @@ function runRg(
   rg: string,
   args: string[],
   cwd: string,
-): Promise<{ stdout: string; stderr: string; code: number | null }> {
+  signal?: AbortSignal,
+): Promise<{ stdout: string; stderr: string; code: number | null; aborted?: boolean }> {
   return new Promise((resolve) => {
+    if (signal?.aborted) {
+      resolve({ stdout: "", stderr: "Aborted", code: 1, aborted: true });
+      return;
+    }
     const child = spawn(rg, args, {
       cwd,
       env: process.env,
@@ -58,6 +63,34 @@ function runRg(
     });
     let stdout = "";
     let stderr = "";
+    let settled = false;
+    const finish = (result: {
+      stdout: string;
+      stderr: string;
+      code: number | null;
+      aborted?: boolean;
+    }) => {
+      if (settled) return;
+      settled = true;
+      signal?.removeEventListener("abort", onAbort);
+      resolve(result);
+    };
+    const onAbort = () => {
+      try {
+        child.kill("SIGTERM");
+        setTimeout(() => {
+          try {
+            child.kill("SIGKILL");
+          } catch {
+            /* */
+          }
+        }, 500).unref?.();
+      } catch {
+        /* */
+      }
+      finish({ stdout, stderr: "Aborted", code: 1, aborted: true });
+    };
+    signal?.addEventListener("abort", onAbort, { once: true });
     child.stdout?.on("data", (d) => {
       stdout += d.toString();
     });
@@ -65,10 +98,10 @@ function runRg(
       stderr += d.toString();
     });
     child.on("error", (err) => {
-      resolve({ stdout, stderr: err.message, code: 1 });
+      finish({ stdout, stderr: err.message, code: 1 });
     });
     child.on("close", (code) => {
-      resolve({ stdout, stderr, code });
+      finish({ stdout, stderr, code });
     });
   });
 }
@@ -77,6 +110,7 @@ async function toolGrepJs(
   args: Record<string, unknown>,
   ctx: ToolContext,
 ): Promise<ToolResult> {
+  if (ctx.signal?.aborted) return { output: "Aborted", isError: true };
   const pattern = String(args.pattern || "");
   const searchPath = args.path
     ? resolvePath(ctx.workspace, String(args.path))
@@ -111,6 +145,7 @@ async function toolGrepJs(
 
   const matches: string[] = [];
   for (const file of files) {
+    if (ctx.signal?.aborted) return { output: "Aborted", isError: true };
     if (matches.length >= headLimit) break;
     let text: string;
     try {
@@ -140,6 +175,7 @@ export async function toolGrep(
 ): Promise<ToolResult> {
   const pattern = String(args.pattern || "");
   if (!pattern) return { output: "pattern is required", isError: true };
+  if (ctx.signal?.aborted) return { output: "Aborted", isError: true };
 
   const rg = findRg();
   if (!rg) {
@@ -168,7 +204,10 @@ export async function toolGrep(
   rgArgs.push("--glob", "!**/node_modules/**", "--glob", "!**/.git/**", "--glob", "!**/dist/**");
   rgArgs.push("--", pattern, searchPath);
 
-  const result = await runRg(rg, rgArgs, ctx.workspace);
+  const result = await runRg(rg, rgArgs, ctx.workspace, ctx.signal);
+  if (result.aborted || ctx.signal?.aborted) {
+    return { output: "Aborted", isError: true };
+  }
   // rg exit 1 = no matches
   if (result.code === 1 || (!result.stdout.trim() && !result.stderr.trim())) {
     return { output: "No matches found" };

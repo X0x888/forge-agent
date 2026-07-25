@@ -605,7 +605,13 @@ Docs: docs/PRODUCTION.md
           fmt === "json" ? exportSessionJson(s) : exportSessionMarkdown(s);
         if (globalOpts.out) {
           const p = path.resolve(String(globalOpts.out));
-          fs.writeFileSync(p, body, "utf8");
+          // Exports may contain secrets from agent transcripts — mode 0600.
+          fs.writeFileSync(p, body, { encoding: "utf8", mode: 0o600 });
+          try {
+            fs.chmodSync(p, 0o600);
+          } catch {
+            /* windows / some FS ignore mode */
+          }
           if (globalOpts.json) console.log(JSON.stringify({ ok: true, path: p, format: fmt }));
           else log.success(`Exported ${fmt} → ${p}`);
         } else {
@@ -710,9 +716,23 @@ Docs: docs/PRODUCTION.md
         return;
       }
       // list (default); allow `forge sessions` and `forge sessions list`
-      if (act !== "list" && action && !id) {
-        // treat first arg as filter prefix when not a known action
-      }
+      // Unknown first arg (e.g. `forge sessions incident`) is a title/id query,
+      // unless -q/--query already provided.
+      const knownSessionActions = new Set([
+        "list",
+        "ls",
+        "show",
+        "info",
+        "get",
+        "export",
+        "import",
+        "fork",
+        "clone",
+        "delete",
+        "rm",
+        "remove",
+        "prune",
+      ]);
       const limit = Number(globalOpts.limit) || 30;
       // Only filter when --cwd was explicitly passed (parent default cwd is ignored).
       // listSessions applies cwd/query before limit so multi-project lists stay complete.
@@ -720,10 +740,18 @@ Docs: docs/PRODUCTION.md
         cwdExplicit && globalOpts.cwd
           ? path.resolve(String(globalOpts.cwd))
           : null;
-      const queryFilter =
+      let queryFilter =
         typeof globalOpts.query === "string" && globalOpts.query.trim()
           ? globalOpts.query.trim()
           : null;
+      if (
+        !queryFilter &&
+        action &&
+        !knownSessionActions.has(act) &&
+        !id
+      ) {
+        queryFilter = String(action).trim();
+      }
       const list = listSessions({
         limit,
         ...(cwdFilter ? { cwd: cwdFilter } : {}),
@@ -1308,12 +1336,27 @@ async function runHeadless(opts: {
   if (!process.env.FORGE_HEADLESS) process.env.FORGE_HEADLESS = "1";
   installBackgroundTaskExitHook();
 
-  // Same session lock as REPL — concurrent forge run --session / REPL must not race
-  const lock = acquireSessionLock(opts.session.meta.id);
+  // Same session lock as REPL — concurrent forge run --session / REPL must not race.
+  // Headless defaults fail-closed on a foreign live lock (CI safety). Override with
+  // FORGE_FORCE_SESSION_LOCK=1 when an operator intentionally shares a session id.
+  const forceSessionLock =
+    process.env.FORGE_FORCE_SESSION_LOCK === "1" ||
+    process.env.FORGE_FORCE_SESSION_LOCK === "true";
+  const lock = acquireSessionLock(opts.session.meta.id, {
+    force: forceSessionLock,
+  });
   if (!lock.ok && lock.holder) {
+    if (!forceSessionLock) {
+      log.error(
+        `Session ${opts.session.meta.id.slice(0, 8)} is locked by ${formatLockHolder(lock.holder)}. ` +
+          `Refusing concurrent headless write. Wait for the other process, use a different --session, ` +
+          `or set FORGE_FORCE_SESSION_LOCK=1 to override.`,
+      );
+      process.exit(1);
+    }
     log.warn(
       `Session ${opts.session.meta.id.slice(0, 8)} is locked by ${formatLockHolder(lock.holder)}. ` +
-        `Continuing anyway — concurrent writes may race. Prefer one writer per session.`,
+        `FORGE_FORCE_SESSION_LOCK set — continuing; concurrent writes may race.`,
     );
   } else if (lock.stolen && lock.holder) {
     log.dim(

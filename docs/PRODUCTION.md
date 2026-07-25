@@ -34,7 +34,7 @@ CI (GitHub Actions) runs `npm run check` + `npm run smoke` on Node 20 and 22.
 ```json
 {
   "ok": true,
-  "version": "0.9.2",
+  "version": "0.9.3",
   "provider": "xai",
   "model": "grok-4.5",
   "auth": "xai via …",
@@ -106,8 +106,9 @@ forge run "fix tests and open a PR description" \
   --json
 # Resume a prior headless session (multi-step CI pipelines):
 # forge run "continue from last failure" --session <id> --json
-# (session.lock is acquired — avoid concurrent REPL + run on the same id)
-# Exit codes: 0 ok · 1 error/empty · 124 FORGE_MAX_RUN_MS · 130 abort (SIGINT)
+# session.lock: headless exits 1 if another live process holds the lock
+# (set FORGE_FORCE_SESSION_LOCK=1 only when you intentionally share a session id)
+# Exit codes: 0 ok · 1 error/empty/locked · 124 FORGE_MAX_RUN_MS · 130 abort (SIGINT)
 # Optional: FORGE_MAX_RUN_MS=1800000  # 30m wall-clock cap for CI
 # Optional interactive: FORGE_PERMISSION_TIMEOUT_MS=120000  # auto-deny stalled Allow? prompts
 # Optional tuning: FORGE_DOOM_LOOP_THRESHOLD=4 FORGE_ERROR_STREAK_THRESHOLD=8
@@ -149,7 +150,8 @@ On thrown errors with `--json`, stdout is `{ "ok": false, "error": "…", "timed
 - `/bell on` (or `FORGE_BELL=1`) for a terminal BEL when long ULW/goal turns finish
 - Bare `forge` resumes the newest same-cwd session (≤14d); skips sessions with a foreign live lock; use `--new` or `FORGE_NO_AUTO_RESUME=1` for a clean slate
 - `/resume <id>` warns if the target has a foreign live lock (concurrent writers may race)
-- `forge sessions export <id> --format json` for incident artifacts (`--format` must be `md` or `json`)
+- `forge sessions export <id> --format json` for incident artifacts (`--format` must be `md` or `json`; `--out` files mode `0600`)
+- `forge sessions <query>` treats unknown first arg as title/id search (same as `-q`)
 - `forge sessions import` rejects invalid message roles; on-disk load soft-drops corrupt roles/todos so a bad `session.json` cannot poison the agent loop
 - `forge prune-tool-output` if `~/.forge/tool-output` grows large (also auto-pruned)
 - Provider timeout: `FORGE_PROVIDER_TIMEOUT_MS` (default 300000)

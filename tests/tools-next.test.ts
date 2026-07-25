@@ -10,7 +10,7 @@ import {
   isBlockedForHost,
   isNonPublicIp,
 } from "../src/agent/tools/ssrf.js";
-import { htmlToText } from "../src/agent/tools/web-fetch.js";
+import { htmlToText, readBodyCapped } from "../src/agent/tools/web-fetch.js";
 import { locateEdit, applyMatch } from "../src/agent/tools/edit-match.js";
 import {
   _resetTasksForTests,
@@ -135,6 +135,39 @@ describe("web_fetch htmlToText", () => {
   it("decodes valid hex/decimal code points", () => {
     assert.equal(htmlToText("A&#x41;B&#66;C"), "AABBC");
     assert.equal(htmlToText("smile &#x1F600;"), "smile 😀");
+  });
+});
+
+describe("readBodyCapped", () => {
+  it("stops when body exceeds maxBytes without Content-Length", async () => {
+    const payload = Buffer.alloc(64 * 1024, 0x61); // 64 KiB of 'a'
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        // Push in chunks so the reader path is exercised
+        const chunk = 8 * 1024;
+        for (let off = 0; off < payload.length; off += chunk) {
+          controller.enqueue(payload.subarray(off, off + chunk));
+        }
+        controller.close();
+      },
+    });
+    const resp = new Response(stream, {
+      status: 200,
+      headers: { "Content-Type": "text/plain" },
+    });
+    const small = await readBodyCapped(resp, 16 * 1024);
+    assert.equal(small.tooLarge, true);
+    assert.equal(small.buf.length, 0);
+  });
+
+  it("returns full body when under cap", async () => {
+    const resp = new Response("hello forge", {
+      status: 200,
+      headers: { "Content-Type": "text/plain" },
+    });
+    const r = await readBodyCapped(resp, 1024);
+    assert.equal(r.tooLarge, false);
+    assert.equal(r.buf.toString("utf8"), "hello forge");
   });
 });
 

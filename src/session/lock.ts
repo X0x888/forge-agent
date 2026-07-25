@@ -82,9 +82,8 @@ export function acquireSessionLock(
 
   if (existing) {
     const acquiredMs = Date.parse(existing.acquiredAt || "");
-    const age = Number.isFinite(acquiredMs)
-      ? Date.now() - acquiredMs
-      : Infinity;
+    const ageKnown = Number.isFinite(acquiredMs);
+    const age = ageKnown ? Date.now() - acquiredMs : NaN;
     const alive = pidAlive(existing.pid);
     const mine = existing.pid === process.pid;
     if (mine) {
@@ -92,13 +91,16 @@ export function acquireSessionLock(
       writeLock(sessionId);
       return { ok: true, owned: true };
     }
-    const stale = !alive || age > ttl;
+    // Stale only when: dead pid, OR (parseable age AND past TTL).
+    // Live foreign pid with missing/invalid acquiredAt is still held — never
+    // treat unparseable age as Infinity and steal a live lock.
+    const stale = !alive || (ageKnown && age > ttl);
     if (!stale && !opts?.force) {
       return {
         ok: false,
         owned: false,
         holder: existing,
-        reason: `session locked by pid ${existing.pid} on ${existing.hostname} since ${existing.acquiredAt}`,
+        reason: `session locked by pid ${existing.pid} on ${existing.hostname} since ${existing.acquiredAt || "unknown"}`,
       };
     }
     // steal

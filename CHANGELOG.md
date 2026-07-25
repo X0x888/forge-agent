@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.9.3 — Production lock & fetch hardening
+
+Professional production polish on the 0.9.2 reliability surface after VM self-improvement review.
+
+### Reliability / safety
+- **`web_fetch` stream body cap**: reads via `ReadableStream` with a hard 5 MiB limit — missing/lying Content-Length cannot OOM the process; cancels body when oversize
+- **`web_search` HTML scrape** capped at 2 MiB via the same reader
+- **Headless session lock fail-closed**: `forge run` exits `1` when another live process holds `session.lock` (override `FORGE_FORCE_SESSION_LOCK=1`); REPL still warns and continues
+- **Live lock + bad `acquiredAt`**: no longer treated as stale/stealable — only dead pids or parseable age past TTL
+- **Heal re-save**: `loadSession` skips disk re-save when a foreign live lock is present (in-memory heal only)
+- **External directory gate** covers `grep` / `glob` absolute paths (same as `read_file`) so models cannot bypass with search tools
+- **`grep` abort**: honors turn `AbortSignal` (kills `rg`, cooperative JS fallback)
+- **Session export `--out`**: writes mode `0600` (transcripts may contain secrets)
+- **`forge sessions <query>`**: unknown first arg is title/id search (same as `-q`)
+- **`install.sh`**: executable mode restored (`100755`)
+
+### Docs / tests
+- `docs/RELIABILITY.md`, `docs/PRODUCTION.md`, `.env.example` document lock fail-closed + body caps
+- Tests: `readBodyCapped`, grep/glob external deny, live pid + invalid `acquiredAt` hold
+
 ## 0.9.2 — Error-streak, session ops, apply_patch
 
 Learned from Grok Build (consecutive-failure circuit breaker) and OpenCode (session branch/export, apply_patch).
@@ -22,7 +42,7 @@ Learned from Grok Build (consecutive-failure circuit breaker) and OpenCode (sess
 - **`forge sessions export`**: rejects unknown `--format` (md|json only; validated before session lookup)
 - **Tool schemas**: model-facing descriptions for read/write/grep/glob/list_dir document path hints, parent-dir creates, large-file guidance
 - **Session import/load**: import rejects invalid message roles; `loadSession` soft-drops corrupt roles/todos, heals orphan tool_call pairs, and **re-saves** when healed so disk stays clean; `listSessions` / `loadSessionMeta` skip corrupt dirs; prune age filter ignores invalid timestamps
-- **Session lock**: corrupt lock JSON / invalid pid treated as absent; invalid `acquiredAt` age → stale steal; lock files mode `0600`
+- **Session lock**: corrupt lock JSON / invalid pid treated as absent; dead pid or parseable age past TTL → stale steal; lock files mode `0600` (see 0.9.3 for headless fail-closed + live/bad-timestamp hold)
 - **`apply_patch` path hints**: missing update/delete targets suggest nearby typos (parity with read/edit/grep)
 - **Task tool schemas**: `kill_task` / `get_task_output` omit `task_id` from required (empty call lists actives; no empty `required: []`)
 - **write_file / search_replace**: refuse directory targets with a clear message (no opaque `EISDIR`)

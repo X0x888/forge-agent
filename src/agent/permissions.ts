@@ -327,7 +327,13 @@ export class PermissionGate {
       toolName === "search_replace" ||
       toolName === "Edit" ||
       toolName === "list_dir" ||
-      toolName === "ListDir"
+      toolName === "ListDir" ||
+      // Search tools can read outside workspace via absolute `path` — gate them
+      // the same as read_file so models cannot bypass with grep/glob of /etc, ~/.ssh, …
+      toolName === "grep" ||
+      toolName === "Grep" ||
+      toolName === "glob" ||
+      toolName === "Glob"
     ) {
       const p = String(toolInput.path || "");
       if (p) {

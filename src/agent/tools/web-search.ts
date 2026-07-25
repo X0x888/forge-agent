@@ -6,9 +6,12 @@
 import type { ToolContext, ToolResult } from "./types.js";
 import { boundToolOutput } from "./truncate.js";
 import { mergeAbortSignals } from "../../util/abort.js";
+import { readBodyCapped } from "./web-fetch.js";
 
 const UA = "ForgeAgent/0.9 (+https://github.com/forge-agent; web_search)";
 const SEARCH_TIMEOUT_MS = 15_000;
+/** Cap HTML scrape body so a hostile/huge page cannot OOM the process. */
+const MAX_HTML_BYTES = 2 * 1024 * 1024;
 
 function isAbortLike(err: unknown, signal?: AbortSignal): boolean {
   if (signal?.aborted) return true;
@@ -143,8 +146,9 @@ async function duckDuckGoHtmlLite(
       redirect: "follow",
     });
     if (!resp.ok) return [];
-    const html = await resp.text();
-    return parseDdgHtml(html, n);
+    const body = await readBodyCapped(resp, MAX_HTML_BYTES, signal);
+    if (body.tooLarge) return [];
+    return parseDdgHtml(body.buf.toString("utf8"), n);
   } finally {
     dispose();
   }

@@ -170,8 +170,9 @@ export function loadSession(id: string): SessionData | null {
   const fromPrimary = readJsonFile<SessionData | null>(primary, null);
   if (fromPrimary?.meta?.id) {
     const norm = normalizeLoadedSession(fromPrimary);
-    // Persist heals (orphan tool pairs / dropped bad roles) so disk stays clean
-    if (norm.session && norm.dirty) {
+    // Persist heals (orphan tool pairs / dropped bad roles) so disk stays clean.
+    // Skip re-save when another live process holds the lock — avoid racing writers.
+    if (norm.session && norm.dirty && !sessionHasForeignLiveLock(full)) {
       try {
         saveSession(norm.session);
       } catch {
@@ -184,9 +185,11 @@ export function loadSession(id: string): SessionData | null {
   const recovered = recoverSessionFromTmp(dir);
   if (recovered) {
     const cleaned = normalizeLoadedSession(recovered);
-    // Promote recovered payload so subsequent loads are normal
+    // Promote recovered payload so subsequent loads are normal (unless foreign lock)
     try {
-      if (cleaned.session) saveSession(cleaned.session);
+      if (cleaned.session && !sessionHasForeignLiveLock(full)) {
+        saveSession(cleaned.session);
+      }
     } catch {
       /* still return in-memory recovery */
     }

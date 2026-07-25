@@ -1177,7 +1177,7 @@ describe("session lock", () => {
     );
     assert.equal(readSessionLock(s.meta.id), null);
 
-    // Valid foreign-looking pid with invalid acquiredAt → stale steal
+    // Dead foreign pid with invalid acquiredAt → still steal (dead = stale)
     fs.writeFileSync(
       lockFile,
       JSON.stringify({
@@ -1193,6 +1193,35 @@ describe("session lock", () => {
     assert.equal(a2.owned, true);
     assert.equal(a2.stolen, true);
     releaseSessionLock(s.meta.id);
+
+    // Live foreign pid (pid 1 when alive) with invalid acquiredAt must NOT be
+    // treated as stale — only force steals live holders with bad timestamps.
+    try {
+      process.kill(1, 0);
+      fs.writeFileSync(
+        lockFile,
+        JSON.stringify({
+          pid: 1,
+          hostname: "other-host",
+          acquiredAt: "not-a-date",
+          sessionId: s.meta.id,
+        }),
+        "utf8",
+      );
+      const blocked = acquireSessionLock(s.meta.id, { ttlMs: 60_000 });
+      assert.equal(blocked.ok, false);
+      assert.equal(blocked.owned, false);
+      assert.ok(blocked.holder);
+      const forced = acquireSessionLock(s.meta.id, {
+        ttlMs: 60_000,
+        force: true,
+      });
+      assert.equal(forced.ok, true);
+      assert.equal(forced.stolen, true);
+      releaseSessionLock(s.meta.id);
+    } catch {
+      /* pid 1 not alive on this host — skip live-invalid-acquiredAt assertion */
+    }
   });
 });
 
