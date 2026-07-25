@@ -245,7 +245,13 @@ function renderSession(
     l1.push(paint(c, auth, "dim"));
   }
   if (snap.tags.length) {
-    l1.push(paint(c, snap.tags.join(" "), "magenta"));
+    const tagStr = snap.tags.join(" ");
+    // Foreign locks are yellow/red; other tags stay magenta
+    const lockish = snap.tags.some((t) => t.startsWith("LOCK:"));
+    l1.push(paint(c, tagStr, lockish ? "yellow" : "magenta"));
+  }
+  if (snap.lock && !snap.lock.mine && snap.lock.alive) {
+    l1.push(paint(c, `lock:pid${snap.lock.pid}`, "yellow"));
   }
   const goal = snap.goal;
   if (goal?.active) {
@@ -401,6 +407,9 @@ export function renderCompactStrip(
   }
   if (snap.goal?.active) parts.push(paint(c, "GOAL", "yellow"));
   if (snap.tags.includes("ULW")) parts.push(paint(c, "ULW", "magenta"));
+  if (snap.lock && !snap.lock.mine && snap.lock.alive) {
+    parts.push(paint(c, `LOCK:${snap.lock.pid}`, "yellow"));
+  }
 
   parts.push(liveGlyph(snap.liveness, c));
 

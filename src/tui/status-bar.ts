@@ -29,6 +29,7 @@ import {
 import { listTasks } from "../agent/tools/background-tasks.js";
 import { formatTokens, formatCost, estimateCostUsd } from "../util/format.js";
 import { estimateTokens } from "../session/session.js";
+import { readSessionLock, formatLockHolder } from "../session/lock.js";
 import type { AuthMethod } from "../statusline/types.js";
 
 export interface StatusBarContext {
@@ -718,6 +719,14 @@ export function formatSessionDetails(ctx: StatusBarContext): string {
       `msgs     ${session.messages.length}  ·  ~${formatTokens(est)} ctx  ·  turns ${session.meta.turnCount}  edits ${session.meta.editCount}`,
     ),
   ];
+  {
+    const lock = readSessionLock(session.meta.id);
+    lines.push(
+      chalk.dim(
+        `lock     ${lock ? formatLockHolder(lock) : "(none)"}`,
+      ),
+    );
+  }
   if (ulw?.enabled) {
     lines.push(
       chalk.dim(

@@ -16,6 +16,9 @@ import {
   compactMessages,
   rewindSession,
   exportSessionMarkdown,
+  exportSessionJson,
+  forkSession,
+  setSessionTitle,
   lastAssistantText,
   clearConversation,
   createSession,
@@ -40,9 +43,14 @@ import { describeAuth, resolveAuth } from "../auth/resolve.js";
 import { printAuthStatus } from "../auth/login.js";
 import { getCredential, isExpired } from "../auth/store.js";
 import { providerTimeoutMs } from "../util/abort.js";
+import { envPositiveInt } from "../util/env.js";
+import { isBellEnabled } from "../util/attention.js";
 import { getForgeVersion } from "../util/version.js";
 import { toolOutputStats } from "../agent/tools/truncate.js";
 import { sandboxLogStats } from "../agent/sandbox-log.js";
+import { metricsStats } from "../session/metrics.js";
+import { readSessionLock } from "../session/lock.js";
+import { permissionAskTimeoutMs } from "../agent/permissions.js";
 import {
   estimateCostUsd,
   formatCost,
@@ -102,14 +110,23 @@ const LIVE_READONLY = new Set([
   "/tasks",
   "/context",
   "/cost",
+  "/metrics",
   "/todos",
   "/auth",
   "/doctor",
+  "/diff",
   "/sessions", // list only — delete/prune classified below
 ]);
 
 /** Harness control commands safe mid-turn (no forwardPrompt). */
-const LIVE_CONTROL = new Set(["/cycle", "/ulw-off", "/effort"]);
+const LIVE_CONTROL = new Set([
+  "/cycle",
+  "/ulw-off",
+  "/effort",
+  "/title",
+  "/rename",
+  "/bell",
+]);
 
 const LIVE_GOAL_VERBS = new Set([
   "",
@@ -153,6 +170,10 @@ export function classifyLiveSlash(line: string): LiveSlashKind {
     }
     // bare /effort shows the menu; setting a level is control
     if (cmd === "/effort" && !arg) return "readonly";
+    // bare /title|/rename shows current title
+    if ((cmd === "/title" || cmd === "/rename") && !arg) return "readonly";
+    // bare /bell shows status
+    if (cmd === "/bell" && !arg) return "readonly";
     return "control";
   }
   if (cmd === "/goal") {
@@ -186,6 +207,7 @@ export const SLASH_COMMANDS = [
   "/tasks",
   "/context",
   "/cost",
+  "/metrics",
   "/todos",
   "/model",
   "/effort",
@@ -194,6 +216,11 @@ export const SLASH_COMMANDS = [
   "/rewind",
   "/undo",
   "/export",
+  "/fork",
+  "/title",
+  "/rename",
+  "/bell",
+  "/diff",
   "/copy",
   "/new",
   "/clear",
@@ -479,6 +506,27 @@ export async function handleSlash(
       };
     }
 
+    case "/metrics": {
+      const st = metricsStats();
+      const cost = estimateCostUsd(
+        String(opts.config.provider),
+        opts.session.meta.totalPromptTokens,
+        opts.session.meta.totalCompletionTokens,
+      );
+      return {
+        handled: true,
+        output: [
+          `Local metrics (counter-only, no prompts/secrets)`,
+          `  file:     ${st.path}`,
+          `  events:   ${st.events} · ${(st.bytes / 1024).toFixed(1)} KB`,
+          `This session:`,
+          `  tokens:   in=${formatTokens(opts.session.meta.totalPromptTokens)} out=${formatTokens(opts.session.meta.totalCompletionTokens)} · est ${formatCost(cost)}`,
+          `  turns:    ${opts.session.meta.turnCount}  edits=${opts.session.meta.editCount}`,
+          `  id:       ${opts.session.meta.id}`,
+        ].join("\n"),
+      };
+    }
+
     case "/todos": {
       if (opts.session.todos.length === 0) {
         return { handled: true, output: "No todos." };
@@ -706,13 +754,188 @@ export async function handleSlash(
     }
 
     case "/export": {
-      const md = exportSessionMarkdown(opts.session);
-      if (arg) {
-        const p = path.resolve(arg);
-        fs.writeFileSync(p, md, "utf8");
-        return { handled: true, output: `Exported to ${p}` };
+      // /export [path] [--json]
+      const parts = arg ? arg.split(/\s+/).filter(Boolean) : [];
+      const asJson = parts.some((p) => p === "--json" || p === "-j" || p === "json");
+      const pathArg = parts.find((p) => !p.startsWith("-") && p !== "json");
+      const body = asJson
+        ? exportSessionJson(opts.session)
+        : exportSessionMarkdown(opts.session);
+      if (pathArg) {
+        const p = path.resolve(pathArg);
+        fs.writeFileSync(p, body, "utf8");
+        return {
+          handled: true,
+          output: `Exported ${asJson ? "JSON" : "markdown"} to ${p}`,
+        };
       }
-      return { handled: true, output: md };
+      return { handled: true, output: body };
+    }
+
+    case "/fork": {
+      const title = arg || undefined;
+      const forked = forkSession(opts.session, title ? { title } : undefined);
+      return {
+        handled: true,
+        output:
+          `Forked session → ${forked.meta.id}\n` +
+          `  msgs=${forked.messages.length} todos=${forked.todos.length}\n` +
+          `  Continuing in the fork. Original ${opts.session.meta.id.slice(0, 8)} unchanged.\n` +
+          `  Resume original later: /resume ${opts.session.meta.id.slice(0, 8)}`,
+        replaceSession: forked,
+      };
+    }
+
+    case "/title":
+    case "/rename": {
+      // /title                 → show
+      // /title <name>          → set
+      // /title clear|none|-    → clear (auto-title may refill on next user msg)
+      const raw = (arg || "").trim();
+      if (!raw) {
+        return {
+          handled: true,
+          output: `Title: ${opts.session.meta.title || "(untitled)"}`,
+        };
+      }
+      const lower = raw.toLowerCase();
+      if (lower === "clear" || lower === "none" || lower === "-") {
+        setSessionTitle(opts.session, "");
+        return {
+          handled: true,
+          output: "Title cleared (will auto-set from next user message).",
+          session: opts.session,
+        };
+      }
+      const t = setSessionTitle(opts.session, raw);
+      return {
+        handled: true,
+        output: `Title set: ${t}`,
+        session: opts.session,
+      };
+    }
+
+    case "/bell": {
+      // /bell              → status
+      // /bell on|off|1|0   → persist preference
+      // /bell test         → ring once (if TTY)
+      const { isBellEnabled, maybeRingBell } = await import(
+        "../util/attention.js"
+      );
+      const raw = (arg || "").trim().toLowerCase();
+      if (!raw || raw === "status") {
+        const on = isBellEnabled();
+        const env = process.env.FORGE_BELL?.trim();
+        return {
+          handled: true,
+          output:
+            `Turn-end bell: ${on ? "on" : "off"}` +
+            (env ? ` (FORGE_BELL=${env})` : " (preference / default off)") +
+            `\n  /bell on|off   persist · /bell test   ring once · env FORGE_BELL=0|1 overrides`,
+        };
+      }
+      if (raw === "test" || raw === "ring") {
+        const rang = maybeRingBell({ force: true });
+        return {
+          handled: true,
+          output: rang
+            ? "Bell rang (if your terminal is muted you may not hear it)."
+            : "Bell skipped (stdout is not a TTY).",
+        };
+      }
+      if (["on", "1", "true", "yes", "enable"].includes(raw)) {
+        savePreferences({ bellOnTurnEnd: true });
+        return {
+          handled: true,
+          output:
+            "Turn-end bell ON (persisted). Override with FORGE_BELL=0 if needed.",
+        };
+      }
+      if (["off", "0", "false", "no", "disable"].includes(raw)) {
+        savePreferences({ bellOnTurnEnd: false });
+        return {
+          handled: true,
+          output: "Turn-end bell OFF (persisted).",
+        };
+      }
+      return {
+        handled: true,
+        output: "Usage: /bell [on|off|test|status]",
+      };
+    }
+
+    case "/diff": {
+      const cwd = opts.session.meta.cwd || opts.config.workspace || process.cwd();
+      const extra = arg || "";
+      try {
+        // Safe read-only git view for experts reviewing agent work
+        const stat = execSync("git status --short", {
+          cwd,
+          encoding: "utf8",
+          stdio: ["ignore", "pipe", "pipe"],
+          timeout: 8000,
+        }).trim();
+        let statDiff = "";
+        try {
+          statDiff = execSync(extra ? `git --no-pager diff --stat ${extra}` : "git --no-pager diff --stat HEAD", {
+            cwd,
+            encoding: "utf8",
+            stdio: ["ignore", "pipe", "pipe"],
+            timeout: 12_000,
+          }).trim();
+        } catch {
+          statDiff = execSync("git --no-pager diff --stat", {
+            cwd,
+            encoding: "utf8",
+            stdio: ["ignore", "pipe", "pipe"],
+            timeout: 12_000,
+          }).trim();
+        }
+        let patch = "";
+        try {
+          patch = execSync(
+            extra
+              ? `git --no-pager diff --no-color ${extra}`
+              : "git --no-pager diff --no-color HEAD",
+            {
+              cwd,
+              encoding: "utf8",
+              stdio: ["ignore", "pipe", "pipe"],
+              timeout: 15_000,
+              maxBuffer: 2 * 1024 * 1024,
+            },
+          );
+        } catch {
+          patch = execSync("git --no-pager diff --no-color", {
+            cwd,
+            encoding: "utf8",
+            stdio: ["ignore", "pipe", "pipe"],
+            timeout: 15_000,
+            maxBuffer: 2 * 1024 * 1024,
+          });
+        }
+        const max = 12_000;
+        const body =
+          patch.length > max
+            ? patch.slice(0, max) +
+              `\n\n… [${patch.length - max} chars truncated — use git diff in a terminal for full output]`
+            : patch;
+        const out = [
+          `cwd: ${cwd}`,
+          stat ? `status:\n${stat}` : "status: clean",
+          statDiff ? `\nstat:\n${statDiff}` : "",
+          body.trim() ? `\ndiff:\n${body}` : "\n(no unstaged/HEAD diff)",
+          extra ? `\n(filter: ${extra})` : "",
+        ]
+          .filter(Boolean)
+          .join("\n");
+        return { handled: true, output: out };
+      } catch (err) {
+        return {
+          handled: true,
+          output: `git diff unavailable: ${(err as Error).message?.slice(0, 200) || err}`,
+        };
+      }
     }
 
     case "/copy": {
@@ -827,13 +1050,19 @@ export async function handleSlash(
         handled: true,
         output:
           list
-            .map(
-              (s) =>
-                `${s.id.slice(0, 8)}  ${s.updatedAt.slice(0, 19)}  ${(s.title || "").slice(0, 36).padEnd(36)}  ${s.model}  t=${s.turnCount}${s.ultrawork ? " ULW" : ""}`,
-            )
+            .map((s) => {
+              const lock = readSessionLock(s.id);
+              const lockNote = lock ? `  LOCK pid ${lock.pid}` : "";
+              const active =
+                s.id === opts.session.meta.id ||
+                opts.session.meta.id.startsWith(s.id.slice(0, 8))
+                  ? " *"
+                  : "";
+              return `${s.id.slice(0, 8)}  ${s.updatedAt.slice(0, 19)}  ${(s.title || "").slice(0, 36).padEnd(36)}  ${s.model}  t=${s.turnCount}${s.ultrawork ? " ULW" : ""}${active}${lockNote}`;
+            })
             .join("\n") +
           chalk.dim(
-            "\n\n/sessions delete <id>  ·  /sessions prune [--keep=50]  ·  /resume <id>",
+            "\n\n* = active  ·  /sessions delete <id>  ·  prune [--keep=50]  ·  /resume <id>\nCLI: forge sessions show|export|import|fork <id>",
           ),
       };
     }
@@ -1063,6 +1292,7 @@ export function runDoctor(config: ForgeConfig): string {
       prefs.model ? `model=${prefs.model}` : null,
       prefs.reasoningEffort ? `effort=${prefs.reasoningEffort}` : null,
       prefs.permissionMode ? `permission_mode=${prefs.permissionMode}` : null,
+      prefs.bellOnTurnEnd ? "bell=on" : null,
     ].filter(Boolean);
     lines.push(
       `Preferences: ${bits.length ? bits.join(" ") : "(none)"}  (~/.forge/preferences.json)`,
@@ -1109,8 +1339,21 @@ export function runDoctor(config: ForgeConfig): string {
       maxRun && /^\d+$/.test(maxRun) && Number(maxRun) >= 5_000
         ? ` · max-run=${Math.round(Number(maxRun) / 1000)}s`
         : "";
+    const permTo = permissionAskTimeoutMs();
+    const permNote =
+      permTo > 0 ? ` · perm-ask-timeout=${Math.round(permTo / 1000)}s` : "";
+    const doomN = envPositiveInt("FORGE_DOOM_LOOP_THRESHOLD", 3);
+    const errN = envPositiveInt("FORGE_ERROR_STREAK_THRESHOLD", 5);
+    const ulwCap = envPositiveInt("FORGE_ULW_MAX_CONTINUES", 200);
+    const bellNote = isBellEnabled() ? " · bell=on" : "";
+    const autoResumeOff =
+      process.env.FORGE_NO_AUTO_RESUME === "1" ||
+      process.env.FORGE_NO_AUTO_RESUME === "true";
+    const resumeNote = autoResumeOff
+      ? " · auto-resume=off"
+      : " · auto-resume=same-cwd";
     lines.push(
-      `Reliability: Retry-After · abortable streams · JSON repair · orphan tool heal · doom-loop · overflow→compact · OAuth refresh · provider timeout=${Math.round(providerTimeoutMs() / 1000)}s${maxRunNote}`,
+      `Reliability: Retry-After · abortable streams · empty-SSE retry · JSON repair · orphan tool heal · doom-loop@${doomN} · error-streak@${errN} · ulw-continues@${ulwCap} · apply_patch · overflow→compact · session lock/tmp-recover · metrics.jsonl · OAuth refresh · provider timeout=${Math.round(providerTimeoutMs() / 1000)}s${maxRunNote}${permNote}${bellNote}${resumeNote}`,
     );
   }
 
@@ -1188,6 +1431,18 @@ export function runDoctor(config: ForgeConfig): string {
   } catch {
     /* optional */
   }
+  try {
+    const m = metricsStats();
+    if (m.events > 0) {
+      lines.push(
+        `  metrics: ${m.events} events · ${(m.bytes / 1024).toFixed(1)} KB (~/.forge/metrics.jsonl)`,
+      );
+    } else {
+      lines.push(`  metrics: empty`);
+    }
+  } catch {
+    /* optional */
+  }
 
   lines.push("");
   if (issues.length === 0) {
@@ -1215,6 +1470,7 @@ Forge slash commands
   /tasks                Background shell tasks (running / recent)  [live]
   /context              Context window usage bar  [live]
   /cost                 Token usage + rough cost  [live]
+  /metrics              Local metrics.jsonl + this session counters  [live]
   /todos                Show agent todos  [live]
   /model <name> [effort] Switch model; optional low|medium|high (persists)
   /effort [level]       Reasoning effort for current model (low|medium|high)  [live]
@@ -1222,12 +1478,16 @@ Forge slash commands
                         Mode persists across sessions/folders
   /compact              Compact conversation
   /rewind [n]           Undo last n user turns (/undo)
-  /export [path]        Export session as markdown
+  /export [path] [--json]  Export session as markdown or JSON
+  /fork [title]         Branch session into a new id (keep original)
+  /title [name|clear]   Show / set / clear session title (/rename)  [live]
+  /bell [on|off|test]   Terminal BEL when a turn ends (long-run attention)  [live]
+  /diff [path]          Git status + diff (review agent edits)  [live]
   /copy                 Copy last assistant reply
   /new                  Fresh session
   /clear                Clear messages (same session)
   /resume [id]          Resume a prior session
-  /sessions [delete|prune]  List / delete / prune sessions
+  /sessions [delete|prune]  List / delete / prune (CLI: show|export|import|fork)
   /auth                 Show stored credentials  [live]
   /doctor               Environment health check  [live]
   /quit                 Exit  [live — aborts run then exits]

@@ -11,6 +11,7 @@ import {
   splitBom,
   toLineEnding,
 } from "./text.js";
+import { atomicWriteFile } from "./atomic-write.js";
 
 export async function toolEdit(
   args: Record<string, unknown>,
@@ -65,7 +66,7 @@ export async function toolEdit(
         let nextLf = applyMatch(lfContent, alt.result, lfNew, replaceAll);
         nextLf = toLineEnding(nextLf, ending);
         const final = joinBom(nextLf, bom);
-        await fsp.writeFile(filePath, final, "utf8");
+        await atomicWriteFile(filePath, final, { encoding: "utf8" });
         ctx.onEdit?.();
         const rel = path.relative(ctx.workspace, filePath) || filePath;
         const note =
@@ -87,7 +88,7 @@ export async function toolEdit(
 
   const next = applyMatch(content, located.result, newNative, replaceAll);
   const final = joinBom(next, bom);
-  await fsp.writeFile(filePath, final, "utf8");
+  await atomicWriteFile(filePath, final, { encoding: "utf8" });
   ctx.onEdit?.();
 
   const rel = path.relative(ctx.workspace, filePath) || filePath;

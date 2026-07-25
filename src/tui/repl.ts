@@ -15,6 +15,7 @@ import {
 import { pushInterjection } from "../harness/interjection.js";
 import { saveSession } from "../session/session.js";
 import { log } from "../util/log.js";
+import { maybeRingBell } from "../util/attention.js";
 import { describeAuth } from "../auth/resolve.js";
 import type { ResolvedAuth } from "../auth/types.js";
 import {
@@ -493,7 +494,33 @@ export async function runRepl(opts: {
           stopContinues: result.stopContinues,
         }),
       );
+      // Optional attention for long background ULW/goal runs (default off)
+      maybeRingBell();
       lastStatusStrip = ""; // force fresh strip after turn
+      try {
+        const { appendSessionMetrics, buildRunEndMetrics } = await import(
+          "../session/metrics.js"
+        );
+        appendSessionMetrics(
+          buildRunEndMetrics({
+            sessionId: session.meta.id,
+            provider: String(config.provider),
+            model: config.model,
+            cwd: session.meta.cwd,
+            turns: result.turns,
+            stopContinues: result.stopContinues,
+            editCount: session.meta.editCount,
+            promptTokens: result.promptTokens,
+            completionTokens: result.completionTokens,
+            aborted: result.aborted,
+            ok: !result.aborted,
+            headless: false,
+            ultrawork: session.meta.ultrawork,
+          }),
+        );
+      } catch {
+        /* metrics never block REPL */
+      }
     } catch (err) {
       working.stop();
       log.error((err as Error).message);

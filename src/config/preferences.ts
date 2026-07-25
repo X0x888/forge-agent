@@ -18,6 +18,8 @@ export interface UserPreferences {
   model?: string;
   permissionMode?: PermissionMode;
   reasoningEffort?: ReasoningEffort;
+  /** Ring terminal BEL when a REPL turn finishes (long-run attention). */
+  bellOnTurnEnd?: boolean;
   updatedAt?: string;
 }
 
@@ -51,6 +53,9 @@ export function loadPreferences(): UserPreferences {
     const e = parseReasoningEffort(raw.reasoningEffort);
     if (e) out.reasoningEffort = e;
   }
+  if (typeof raw.bellOnTurnEnd === "boolean") {
+    out.bellOnTurnEnd = raw.bellOnTurnEnd;
+  }
   if (typeof raw.updatedAt === "string") out.updatedAt = raw.updatedAt;
   return out;
 }
@@ -63,6 +68,7 @@ export function savePreferences(patch: {
   model?: string;
   permissionMode?: PermissionMode;
   reasoningEffort?: ReasoningEffort;
+  bellOnTurnEnd?: boolean;
 }): UserPreferences {
   const cur = loadPreferences();
   if (patch.model !== undefined) {
@@ -77,6 +83,9 @@ export function savePreferences(patch: {
   }
   if (patch.reasoningEffort !== undefined) {
     cur.reasoningEffort = patch.reasoningEffort;
+  }
+  if (patch.bellOnTurnEnd !== undefined) {
+    cur.bellOnTurnEnd = Boolean(patch.bellOnTurnEnd);
   }
   cur.version = 1;
   cur.updatedAt = nowIso();

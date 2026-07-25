@@ -14,7 +14,12 @@ forge doctor --json          # CI: exit 1 if unhealthy
 forge auth                   # refresh OAuth if needed
 eval "$(forge completion bash)"   # optional shell completions
 forge sessions prune --keep 50
+forge sessions show <id>
+forge sessions export <id> --format json --out ./session.json
+forge sessions import ./session.json
+forge sessions fork <id>
 forge prune-tool-output
+forge prune-metrics --keep 500
 ```
 
 CI (GitHub Actions) runs `npm run check` + `npm run smoke` on Node 20 and 22.
@@ -24,7 +29,7 @@ CI (GitHub Actions) runs `npm run check` + `npm run smoke` on Node 20 and 22.
 ```json
 {
   "ok": true,
-  "version": "0.9.0",
+  "version": "0.9.2",
   "provider": "xai",
   "model": "grok-4.5",
   "auth": "xai via …",
@@ -35,6 +40,7 @@ CI (GitHub Actions) runs `npm run check` + `npm run smoke` on Node 20 and 22.
   "sessionCount": 3,
   "toolOutput": { "files": 2, "bytes": 12345 },
   "sandboxLog": { "bytes": 4096, "backupBytes": 0 },
+  "metrics": { "events": 12, "bytes": 4096 },
   "node": "v22.x.x",
   "report": "…full text report…"
 }
@@ -68,8 +74,14 @@ export FORGE_LOG_JSON=1
 forge run "fix tests and open a PR description" \
   --permission-mode acceptEdits \
   --json
+# Resume a prior headless session (multi-step CI pipelines):
+# forge run "continue from last failure" --session <id> --json
+# (session.lock is acquired — avoid concurrent REPL + run on the same id)
 # Exit codes: 0 ok · 1 error/empty · 124 FORGE_MAX_RUN_MS · 130 abort (SIGINT)
 # Optional: FORGE_MAX_RUN_MS=1800000  # 30m wall-clock cap for CI
+# Optional interactive: FORGE_PERMISSION_TIMEOUT_MS=120000  # auto-deny stalled Allow? prompts
+# Optional tuning: FORGE_DOOM_LOOP_THRESHOLD=4 FORGE_ERROR_STREAK_THRESHOLD=8
+# Optional ULW: FORGE_ULW_MAX_CONTINUES=300
 ```
 
 ### `forge run --json` success shape
@@ -86,10 +98,13 @@ forge run "fix tests and open a PR description" \
   "timedOut": false,
   "promptTokens": 1000,
   "completionTokens": 500,
+  "durationMs": 12345,
   "model": "grok-4.5",
   "provider": "xai"
 }
 ```
+
+Each headless/REPL turn also appends a counter-only line to `~/.forge/metrics.jsonl` (no prompts or secrets).
 
 On thrown errors with `--json`, stdout is `{ "ok": false, "error": "…", "timedOut": false, "sessionId": "…", "editCount": N }` and the process exits `1` (or `124` if `timedOut`).
 
@@ -97,6 +112,11 @@ On thrown errors with `--json`, stdout is `{ "ok": false, "error": "…", "timed
 
 - Prefer `/cycle 0` when satisfied (last wave) rather than killing the process
 - `forge sessions prune --keep 50` periodically
+- `/fork` or `forge sessions fork <id>` before risky experiments (keeps original)
+- `/title "incident-42"` to label long-running sessions in `/sessions` lists
+- `/bell on` (or `FORGE_BELL=1`) for a terminal BEL when long ULW/goal turns finish
+- Bare `forge` resumes the newest same-cwd session (≤14d); skips sessions with a foreign live lock; use `--new` or `FORGE_NO_AUTO_RESUME=1` for a clean slate
+- `forge sessions export <id> --format json` for incident artifacts
 - `forge prune-tool-output` if `~/.forge/tool-output` grows large (also auto-pruned)
 - Provider timeout: `FORGE_PROVIDER_TIMEOUT_MS` (default 300000)
 - Context overflow: harness force-compacts once and re-issues; if still too large, start `/new` or raise `context_window`

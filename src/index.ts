@@ -80,11 +80,20 @@ export {
   pruneSessions,
   rewindSession,
   exportSessionMarkdown,
+  exportSessionJson,
+  importSessionJson,
+  forkSession,
+  setSessionTitle,
+  findRecentSessionForCwd,
+  formatSessionSummary,
+  recoverSessionFromTmp,
   compactMessages,
   estimateTokens,
   estimateRequestTokens,
   pruneOversizedMessageBodies,
 } from "./session/session.js";
+export { envPositiveInt, envNonNegInt } from "./util/env.js";
+export { isBellEnabled, maybeRingBell } from "./util/attention.js";
 export {
   withRetry,
   isRetryableError,
@@ -100,6 +109,14 @@ export {
 export { getForgeVersion } from "./util/version.js";
 export { log, setLogLevel, getLogLevel } from "./util/log.js";
 export { shellCompletionScript } from "./util/completion-script.js";
+export {
+  summarizeToolArgs,
+  formatPermissionPreview,
+  formatRetryWait,
+  estimateCostUsd,
+  formatCost,
+  formatTokens,
+} from "./util/format.js";
 export {
   toolOutputStats,
   pruneToolOutputsSync,
@@ -167,9 +184,23 @@ export {
   formatLockHolder,
 } from "./session/lock.js";
 export {
+  appendSessionMetrics,
+  buildRunEndMetrics,
+  metricsStats,
+  metricsPath,
+  pruneMetrics,
+  METRICS_AUTO_PRUNE_KEEP,
+} from "./session/metrics.js";
+export { permissionAskTimeoutMs } from "./agent/permissions.js";
+export {
   DoomLoopTracker,
   toolFingerprint,
 } from "./agent/doom-loop.js";
+export {
+  ErrorStreakTracker,
+  isCountableToolError,
+  summarizeToolError,
+} from "./agent/error-streak.js";
 export {
   buildBaselineSystemPrompt,
   buildSystemPrompt,

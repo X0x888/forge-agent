@@ -1,7 +1,7 @@
 {
   "name": "forge-agent",
-  "version": "0.9.1",
-  "description": "Forge — AI coding agent CLI with harness (Stop/goal/ULW), production reliability (Retry-After, abortable streams, JSON repair, doom-loop, overflow recovery, OAuth refresh), Bar A daily-driver safety, and quality tools",
+  "version": "0.9.2",
+  "description": "Forge — AI coding agent CLI with harness (Stop/goal/ULW), production reliability (Retry-After, abortable/empty-SSE streams, JSON repair, doom-loop, error-streak, apply_patch, overflow recovery, session fork/export/import/auto-resume, metrics.jsonl, OAuth refresh), Bar A daily-driver safety, and quality tools",
   "type": "module",
   "bin": {
     "forge": "./dist/cli.js"
@@ -23,7 +23,7 @@
     "prepack": "npm run build",
     "check": "npm run typecheck && npm test",
     "ci": "npm run check && npm run smoke",
-    "smoke": "npm run build && node dist/cli.js --version && (node dist/cli.js doctor --json >/dev/null || true) && node dist/cli.js completion bash >/dev/null && node dist/cli.js models --json >/dev/null && node dist/cli.js prune-tool-output --json >/dev/null"
+    "smoke": "npm run build && node dist/cli.js --version && (node dist/cli.js doctor --json >/dev/null || true) && node dist/cli.js completion bash >/dev/null && node dist/cli.js models --json >/dev/null && node dist/cli.js prune-tool-output --json >/dev/null && node dist/cli.js prune-metrics --json >/dev/null"
   },
   "engines": {
     "node": ">=20"

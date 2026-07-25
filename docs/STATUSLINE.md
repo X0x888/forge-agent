@@ -73,7 +73,7 @@ forge status --tmux --plain
 - Git branch / dirty (when in a repo)
 - Provider + model
 - Auth method shorthand: `sub` | `key` | `oauth`
-- Flags: `ULW`, `GOAL`, `PLAN`, `YOLO`, `auto`
+- Flags: `ULW`, `GOAL`, `PLAN`, `YOLO`, `auto`, foreign `LOCK:<pid>` when another process holds the session
 - Liveness: `◉ working` / `● live` / `○ idle` / `◌ stale`
 - Context bar + % + estimated tokens / window
 - Session duration, token totals (+ rough $ when rates known)

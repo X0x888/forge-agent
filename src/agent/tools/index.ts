@@ -4,6 +4,7 @@ import { toolBash } from "./bash.js";
 import { toolRead } from "./read.js";
 import { toolWrite } from "./write.js";
 import { toolEdit } from "./edit.js";
+import { toolApplyPatch } from "./apply-patch.js";
 import { toolGrep } from "./grep.js";
 import { toolGlob, toolListDir } from "./glob-list.js";
 import { toolWebSearch } from "./web-search.js";
@@ -15,7 +16,7 @@ export type { ToolContext, ToolResult } from "./types.js";
 export { TOOL_DEFINITIONS };
 
 const AVAILABLE =
-  "bash, get_task_output, kill_task, read_file, write_file, search_replace, grep, glob, list_dir, todo_write, web_search, web_fetch";
+  "bash, get_task_output, kill_task, read_file, write_file, search_replace, apply_patch, grep, glob, list_dir, todo_write, web_search, web_fetch";
 
 /** Canonical tool ids (used for doubled-name recovery). */
 const CANONICAL_TOOLS = [
@@ -26,6 +27,7 @@ const CANONICAL_TOOLS = [
   "read_file",
   "write_file",
   "search_replace",
+  "apply_patch",
   "grep",
   "glob",
   "list_dir",
@@ -98,6 +100,9 @@ export async function executeTool(
       case "search_replace":
       case "Edit":
         return await toolEdit(args, ctx);
+      case "apply_patch":
+      case "ApplyPatch":
+        return await toolApplyPatch(args, ctx);
       case "grep":
       case "Grep":
         return await toolGrep(args, ctx);

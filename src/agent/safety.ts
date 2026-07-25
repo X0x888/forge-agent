@@ -140,6 +140,11 @@ export const SOFT_DANGEROUS: RegExp[] = [
   /\bgit\s+[\s\S]*\bpush\s+[\s\S]*--force/,
   /\bgit\s+[\s\S]*\bpush\s+[\s\S]*\s-f(\s|$)/,
   /\bgit\s+[\s\S]*\breset\s+--hard/,
+  // Skipping hooks can land unreviewed / unsafe commits or pushes
+  // Require commit/push verb so `git add -n` / dry-run flags are not flagged.
+  /\bgit\s+[\s\S]*\bcommit\b[\s\S]*--no-verify\b/,
+  /\bgit\s+[\s\S]*\bcommit\b[\s\S]*(?:\s|^)-n(?:\s|$)/,
+  /\bgit\s+[\s\S]*\bpush\b[\s\S]*--no-verify\b/,
   /\bchmod\s+-R\s+777\b/,
   /\bdrop\s+table\b/i,
   /\bnpm\s+publish\b/,
@@ -423,5 +428,32 @@ export function hardSafetyCheck(
     const abs = path.isAbsolute(p) ? path.resolve(p) : path.resolve(workspace, p);
     return checkWritePathHardDeny(abs, path.resolve(workspace));
   }
+  if (name === "apply_patch" || name === "ApplyPatch") {
+    const patchText = String(
+      toolInput.patchText ?? toolInput.patch_text ?? toolInput.patch ?? "",
+    );
+    const paths = extractPatchPaths(patchText);
+    const root = path.resolve(workspace);
+    for (const p of paths) {
+      const abs = path.isAbsolute(p) ? path.resolve(p) : path.resolve(workspace, p);
+      const v = checkWritePathHardDeny(abs, root);
+      if (!v.ok) return v;
+    }
+    return { ok: true };
+  }
   return { ok: true };
+}
+
+/** Best-effort path extraction from apply_patch text for hard-deny checks. */
+function extractPatchPaths(patchText: string): string[] {
+  const out: string[] = [];
+  for (const line of String(patchText || "").split(/\r?\n/)) {
+    const m = line.match(
+      /^\*\*\* (?:Add|Delete|Update) File:\s*(.+?)\s*$/,
+    );
+    if (m?.[1]) out.push(m[1].trim());
+    const move = line.match(/^\*\*\* Move to:\s*(.+?)\s*$/);
+    if (move?.[1]) out.push(move[1].trim());
+  }
+  return out;
 }

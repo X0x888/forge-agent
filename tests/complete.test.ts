@@ -29,6 +29,17 @@ describe("tab completion", () => {
     const [hits] = forgeCompleter("/cycle ");
     assert.ok(hits.some((h) => h.endsWith(" 1") || h.includes(" 1")));
   });
+
+  it("completes new expert slash commands", () => {
+    const [forkHits] = forgeCompleter("/for");
+    assert.ok(forkHits.some((h) => h.startsWith("/fork")));
+    const [diffHits] = forgeCompleter("/di");
+    assert.ok(diffHits.some((h) => h.startsWith("/diff")));
+    const [metHits] = forgeCompleter("/met");
+    assert.ok(metHits.some((h) => h.startsWith("/metrics")));
+    const [expHits] = forgeCompleter("/export ");
+    assert.ok(expHits.some((h) => h.includes("--json")));
+  });
 });
 
 describe("param resolve + menu", () => {

@@ -142,6 +142,30 @@ describe("Bar A: fail-closed noninteractive permissions", () => {
     assert.equal(r.decision, "allow");
   });
 
+  it("headless acceptEdits allows apply_patch; plan denies it", async () => {
+    const g = new PermissionGate({ interactive: false });
+    const patch = {
+      patchText: "*** Begin Patch\n*** Add File: a.ts\n+x\n*** End Patch",
+    };
+    const ok = await g.request({
+      toolName: "apply_patch",
+      input: patch,
+      mode: "acceptEdits",
+      workspace: "/tmp/proj",
+      config: DEFAULT_CONFIG,
+    });
+    assert.equal(ok.decision, "allow");
+    const plan = await g.request({
+      toolName: "apply_patch",
+      input: patch,
+      mode: "plan",
+      workspace: "/tmp/proj",
+      config: DEFAULT_CONFIG,
+    });
+    assert.equal(plan.decision, "deny");
+    assert.match(plan.reason, /plan/i);
+  });
+
   it("headless default denies file writes", async () => {
     const g = new PermissionGate({ interactive: false });
     const r = await g.request({

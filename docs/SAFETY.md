@@ -1,4 +1,4 @@
-# Forge safety (v0.6)
+# Forge safety (v0.9+)
 
 Patterns ported from open-source **Grok Build**, **OpenCode**, and **Warp** (local trees under `Documents/open source`).
 
@@ -112,7 +112,7 @@ Wrappers peeled: `env`, `timeout`, `nice`, `stdbuf`, `time`, `command`, plus lea
 | Mode | Behavior |
 |------|----------|
 | `default` | Prompt for writes/shell |
-| `acceptEdits` | Auto file edits; shell gated (read-only may pass) |
+| `acceptEdits` | Auto file edits; shell gated (read-only may pass; soft-dangerous like `git commit --no-verify` still asks) |
 | `bypassPermissions` | YOLO — **deny rules + hard safety + sandbox still apply** |
 | `dontAsk` | Deny unless allow rule / read-only tools |
 | `plan` | No writes/shell |
@@ -132,7 +132,8 @@ Designed for **you on your machine**, interactive REPL or headless with explicit
 | Headless writes | **Denied** unless `acceptEdits`, allow rule, or YOLO |
 | Allow rules | **Segment-strict**: `Bash(git status)` does **not** approve `git status && curl …` |
 | Project `.forge/config` | May set model / tighter sandbox / extra denies; **cannot** set `base_url`, `bypassPermissions`, `sandbox=off`, `missing_backend=fallback`, `read_outside=allow` |
-| Protected writes | Native tools refuse `~/.forge/auth.json`, hooks, `.git/hooks|config|HEAD`, SSH material; realpath blocks symlink escape |
+| Protected writes | Native tools (`write_file` / `search_replace` / `apply_patch`) refuse `~/.forge/auth.json`, hooks, `.git/hooks|config|HEAD`, SSH material; realpath blocks symlink escape; file writes are atomic (tmp+rename) |
+| Session lock | REPL + `forge run` take `session.lock`; warn on foreign live holders; auto-resume skips locked sessions |
 
 Recommended daily defaults:
 
@@ -163,7 +164,7 @@ forge run "…" --permission-mode bypassPermissions
 
 ## Comparison snapshot
 
-| Control | Grok Build | OpenCode | Warp | Forge v0.6 |
+| Control | Grok Build | OpenCode | Warp | Forge v0.9 |
 |---------|------------|----------|------|------------|
 | Fail-closed missing sandbox | yes | app-level | isolation platforms | **yes** |
 | Network block on strict | yes | — | product isolation | **yes** |

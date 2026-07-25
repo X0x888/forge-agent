@@ -125,21 +125,207 @@ export function loadSessionMeta(idOrPrefix: string): SessionMeta | null {
   return s.meta;
 }
 
+/**
+ * Load a session by id/prefix.
+ *
+ * Recovery order (crash-safe):
+ * 1. session.json
+ * 2. newest leftover atomic write tmp (`session.json.<pid>.tmp`)
+ *
+ * Atomic writes rename tmp → final; a kill mid-write can leave only the tmp.
+ */
 export function loadSession(id: string): SessionData | null {
   // Allow short prefix match
   const full = resolveSessionId(id);
   if (!full) return null;
-  return readJsonFile<SessionData | null>(
-    path.join(sessionDir(full), "session.json"),
-    null,
+  const dir = sessionDir(full);
+  const primary = path.join(dir, "session.json");
+  const fromPrimary = readJsonFile<SessionData | null>(primary, null);
+  if (fromPrimary?.meta?.id) return fromPrimary;
+
+  const recovered = recoverSessionFromTmp(dir);
+  if (recovered) {
+    // Promote recovered payload so subsequent loads are normal
+    try {
+      saveSession(recovered);
+    } catch {
+      /* still return in-memory recovery */
+    }
+    return recovered;
+  }
+  return null;
+}
+
+/** Best-effort recovery from atomic-write temp files left after a crash. */
+export function recoverSessionFromTmp(dir: string): SessionData | null {
+  let entries: string[] = [];
+  try {
+    entries = fs.readdirSync(dir);
+  } catch {
+    return null;
+  }
+  const tmps = entries
+    .filter((n) => n.startsWith("session.json.") && n.endsWith(".tmp"))
+    .map((n) => {
+      const p = path.join(dir, n);
+      try {
+        return { p, mtime: fs.statSync(p).mtimeMs };
+      } catch {
+        return null;
+      }
+    })
+    .filter((x): x is { p: string; mtime: number } => Boolean(x))
+    .sort((a, b) => b.mtime - a.mtime);
+
+  for (const t of tmps) {
+    const data = readJsonFile<SessionData | null>(t.p, null);
+    if (data?.meta?.id && Array.isArray(data.messages)) {
+      return data;
+    }
+  }
+  return null;
+}
+
+/**
+ * Fork a session into a new id (deep copy of messages/todos/meta counters).
+ * Useful before risky ULW waves or when branching an experiment.
+ */
+export function forkSession(
+  source: SessionData,
+  opts?: { title?: string },
+): SessionData {
+  const id = randomUUID();
+  const now = nowIso();
+  const data: SessionData = {
+    meta: {
+      ...structuredClone(source.meta),
+      id,
+      createdAt: now,
+      updatedAt: now,
+      title:
+        opts?.title ||
+        (source.meta.title
+          ? `fork of ${source.meta.title}`.slice(0, 72)
+          : `fork of ${source.meta.id.slice(0, 8)}`),
+      // Fresh turn marks relative to copied messages
+      userTurnMarks: [...(source.meta.userTurnMarks || [])],
+    },
+    messages: structuredClone(source.messages),
+    todos: structuredClone(source.todos || []),
+  };
+  saveSession(data);
+  return data;
+}
+
+/** Machine-readable session export for experts / CI artifacts. */
+export function exportSessionJson(session: SessionData): string {
+  return (
+    JSON.stringify(
+      {
+        meta: session.meta,
+        todos: session.todos,
+        messageCount: session.messages.length,
+        messages: session.messages,
+        exportedAt: nowIso(),
+        format: "forge-session-v1",
+      },
+      null,
+      2,
+    ) + "\n"
   );
 }
 
+/**
+ * Import a forge-session-v1 JSON export into a new session id.
+ * Does not reuse the original id (avoids clobbering live sessions).
+ */
+export function importSessionJson(
+  raw: string,
+  opts?: { cwd?: string; title?: string },
+): SessionData {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (err) {
+    throw new Error(`Invalid session JSON: ${(err as Error).message}`);
+  }
+  const obj = parsed as {
+    format?: string;
+    meta?: Partial<SessionMeta>;
+    messages?: ChatMessage[];
+    todos?: TodoItem[];
+  };
+  if (!obj || typeof obj !== "object") {
+    throw new Error("Invalid session JSON: expected object");
+  }
+  if (obj.format && obj.format !== "forge-session-v1") {
+    throw new Error(`Unsupported session format: ${obj.format}`);
+  }
+  if (!Array.isArray(obj.messages)) {
+    throw new Error("Invalid session JSON: messages[] required");
+  }
+  const now = nowIso();
+  const id = randomUUID();
+  const src = obj.meta || {};
+  const data: SessionData = {
+    meta: {
+      id,
+      createdAt: now,
+      updatedAt: now,
+      cwd: opts?.cwd || src.cwd || process.cwd(),
+      provider: String(src.provider || "xai"),
+      model: String(src.model || "unknown"),
+      title:
+        opts?.title ||
+        (src.title ? `import of ${src.title}`.slice(0, 72) : `import ${id.slice(0, 8)}`),
+      ultrawork: Boolean(src.ultrawork),
+      turnCount: Number(src.turnCount) || 0,
+      editCount: Number(src.editCount) || 0,
+      totalPromptTokens: Number(src.totalPromptTokens) || 0,
+      totalCompletionTokens: Number(src.totalCompletionTokens) || 0,
+      userTurnMarks: Array.isArray(src.userTurnMarks)
+        ? [...src.userTurnMarks]
+        : [],
+    },
+    messages: structuredClone(obj.messages),
+    todos: Array.isArray(obj.todos) ? structuredClone(obj.todos) : [],
+  };
+  saveSession(data);
+  return data;
+}
+
+/** Compact human summary for `forge sessions show`. */
+export function formatSessionSummary(session: SessionData): string {
+  const m = session.meta;
+  const openTodos = (session.todos || []).filter(
+    (t) => t.status === "pending" || t.status === "in_progress",
+  ).length;
+  const lines = [
+    `Session ${m.id}`,
+    `  title:    ${m.title || "(untitled)"}`,
+    `  updated:  ${m.updatedAt}`,
+    `  created:  ${m.createdAt}`,
+    `  cwd:      ${m.cwd}`,
+    `  model:    ${m.provider}/${m.model}`,
+    `  turns:    ${m.turnCount}  edits=${m.editCount}  msgs=${session.messages.length}`,
+    `  tokens:   in=${m.totalPromptTokens} out=${m.totalCompletionTokens}`,
+    `  todos:    ${session.todos?.length || 0} (${openTodos} open)`,
+    `  ultrawork:${m.ultrawork ? " yes" : " no"}`,
+  ];
+  return lines.join("\n");
+}
+
 function sessionDirLooksValid(dir: string): boolean {
-  return (
-    fs.existsSync(path.join(dir, "session.json")) ||
-    fs.existsSync(path.join(dir, "meta.json"))
-  );
+  if (fs.existsSync(path.join(dir, "session.json"))) return true;
+  if (fs.existsSync(path.join(dir, "meta.json"))) return true;
+  // Crash mid-atomic-write: only tmp remains
+  try {
+    return fs
+      .readdirSync(dir)
+      .some((n) => n.startsWith("session.json.") && n.endsWith(".tmp"));
+  } catch {
+    return false;
+  }
 }
 
 /** Resolve full session id from prefix (min 4 chars). */
@@ -186,6 +372,64 @@ export function listSessions(limit = 20): SessionMeta[] {
   }
   metas.sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : -1));
   return metas.slice(0, limit);
+}
+
+/**
+ * Newest session for a workspace cwd (path-normalized).
+ * Used by interactive REPL auto-resume (`forge` without --new/--session).
+ *
+ * Skips sessions held by another live process (foreign session.lock) so
+ * experts don't auto-attach into a concurrent REPL by accident.
+ *
+ * @param maxAgeDays drop candidates older than this (default 14); 0 = no age filter
+ */
+export function findRecentSessionForCwd(
+  cwd: string,
+  opts?: { maxAgeDays?: number; limitScan?: number; skipLocked?: boolean },
+): SessionMeta | null {
+  const target = path.resolve(cwd);
+  const maxAgeDays = opts?.maxAgeDays ?? 14;
+  const skipLocked = opts?.skipLocked !== false;
+  const cutoff =
+    maxAgeDays > 0 ? Date.now() - maxAgeDays * 24 * 60 * 60 * 1000 : 0;
+  const scan = listSessions(opts?.limitScan ?? 200);
+  for (const m of scan) {
+    if (!m.cwd) continue;
+    try {
+      if (path.resolve(m.cwd) !== target) continue;
+    } catch {
+      continue;
+    }
+    if (cutoff > 0) {
+      const t = Date.parse(m.updatedAt || "");
+      if (!Number.isFinite(t) || t < cutoff) continue;
+    }
+    if (skipLocked && sessionHasForeignLiveLock(m.id)) continue;
+    return m;
+  }
+  return null;
+}
+
+/** True when another live pid holds session.lock (not this process). */
+function sessionHasForeignLiveLock(sessionId: string): boolean {
+  try {
+    // Lazy import path via dynamic require-style to avoid circular init issues:
+    // lock.ts imports sessionDir from this module.
+    const lockFile = path.join(sessionDir(sessionId), "session.lock");
+    if (!fs.existsSync(lockFile)) return false;
+    const raw = fs.readFileSync(lockFile, "utf8");
+    const info = JSON.parse(raw) as { pid?: number };
+    const pid = Number(info?.pid);
+    if (!pid || pid === process.pid) return false;
+    try {
+      process.kill(pid, 0);
+      return true; // foreign + alive
+    } catch {
+      return false; // dead pid → treat as free
+    }
+  } catch {
+    return false;
+  }
 }
 
 /** Delete a session directory (and lock). Returns true if removed. */
@@ -304,6 +548,25 @@ export function maybeSetTitle(session: SessionData, userMessage: string): void {
   if (session.meta.title) return;
   const t = userMessage.replace(/\s+/g, " ").trim().slice(0, 72);
   if (t) session.meta.title = t;
+}
+
+/**
+ * Explicitly set (or clear) a session title. Empty/whitespace clears.
+ * Returns the stored title (undefined when cleared).
+ */
+export function setSessionTitle(
+  session: SessionData,
+  title: string | undefined | null,
+): string | undefined {
+  const t = (title ?? "").replace(/\s+/g, " ").trim().slice(0, 72);
+  if (!t) {
+    session.meta.title = undefined;
+    saveSession(session);
+    return undefined;
+  }
+  session.meta.title = t;
+  saveSession(session);
+  return t;
 }
 
 /** Record index of a new user turn for rewind support. */

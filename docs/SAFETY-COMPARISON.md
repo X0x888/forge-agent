@@ -17,3 +17,13 @@ Same sources also drove **tool** improvements (not only authorization): realpath
 ## Bar A daily-driver (v0.8)
 
 Fail-closed headless permissions, segment-strict bash allow rules, expanded hard-deny variants (`${HOME}`, `find -delete`, `git push -f`, `git -C …`), protected path writes, project config safety overlay (no project YOLO / base_url / sandbox off).
+
+## Production reliability follow-on (v0.9.2)
+
+Same sources plus Grok consecutive-failure patterns and OpenCode apply_patch / session hygiene:
+
+- Error-streak circuit breaker, empty-SSE retry, apply_patch + atomic writes
+- Session fork/export/import, headless `forge run --session`, session.lock on REPL + headless
+- metrics.jsonl, permission ask timeout, readable apply_patch permission previews
+
+See `docs/RELIABILITY.md` and `docs/PRODUCTION.md`.

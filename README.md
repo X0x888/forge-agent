@@ -2,7 +2,7 @@
 
 **Forge** is an open-source AI coding agent CLI with a **first-class harness** — the control plane that other tools partially implement.
 
-> **v0.9.0** — **Production reliability**: Retry-After backoff, abortable streams + bash, JSON tool-arg repair, orphan tool_call heal, `finish_reason=length` continue, context-overflow→compact, OAuth refresh (start + mid-run 401), doom-loop detection, session locks + `meta.json` sidecar + prune, `forge doctor --json` / `completion` / `npm run smoke`. Builds on v0.8 Bar A daily-driver safety + harness (blocking Stop, `/goal`, ULW).
+> **v0.9.2** — **Production reliability**: Retry-After, abortable/empty-SSE streams, JSON repair, orphan tool heal, doom-loop + **error-streak**, **apply_patch**, atomic writes, overflow→compact, OAuth refresh, session lock (REPL + `forge run`) / fork/export/import, **`forge run --session`**, **metrics.jsonl**, permission ask timeout, `forge doctor --json` / `completion` / `npm run smoke`. Builds on v0.8 Bar A safety + harness (blocking Stop, `/goal`, ULW).
 
 Key capability comparison:
 
@@ -16,7 +16,10 @@ Key capability comparison:
 | OAuth **refresh** + long-session auth | ✅ | ✅ | partial | ✅ |
 | Multi-provider (xAI, Anthropic, OpenAI, OpenRouter, Google) | limited | limited | xAI-first | ✅ |
 | Claude / Cursor hook compatibility | n/a | — | ✅ | ✅ |
-| Stream/tool **self-heal** (JSON repair, orphan tools, doom-loop) | partial | partial | partial | ✅ |
+| Stream/tool **self-heal** (JSON repair, orphan tools, doom-loop, error-streak, empty-SSE) | partial | partial | partial | ✅ |
+| Multi-file **apply_patch** + atomic writes | partial | ✅ | partial | ✅ |
+| Headless **session resume** + file lock | partial | partial | partial | ✅ |
+| Interactive **same-cwd auto-resume** + `/title` / `/bell` | partial | ✅ continue | — | ✅ |
 
 > **Why this exists:** Grok Build has hooks, but `Stop` cannot block the agent. Harnesses that depend on “don’t stop until tests pass” or Codex-style `/goal` simply don’t work there. Forge implements those semantics natively.
 
@@ -57,12 +60,17 @@ forge login --provider openai --device   # headless device code
 # 2. Init project scaffolding (config, example Stop hook, AGENTS.md)
 forge init
 
-# 3. Interactive REPL
+# 3. Interactive REPL (resumes newest same-cwd session ≤14d; --new for fresh)
 forge
+forge --new
 
 # 4. Headless / CI
-forge run "add a healthcheck endpoint and tests" --ulw --permission-mode acceptEdits
+forge run "add a healthcheck endpoint and tests" --ulw --permission-mode acceptEdits --json
+# Multi-step CI: resume the same session
+forge run "continue from last failure" --session <id> --json
 ```
+
+Bare interactive `forge` continues your latest workspace session (OpenCode-style). Use `forge --new`, `/new`, or `FORGE_NO_AUTO_RESUME=1` for a clean slate. Headless `forge run` still starts fresh unless you pass `--session`.
 
 ---
 
@@ -191,17 +199,19 @@ Max-autonomy **relentless loop**. Soft prompts like `improve the code` are expan
 
 See [docs/ULW.md](docs/ULW.md).
 
-### 4. Production reliability (v0.9)
+### 4. Production reliability (v0.9.2)
 
 Forge is built for long expert sessions and CI, not just demos:
 
 - **Retry-After** backoff on `429`/`5xx`; provider wall-clock timeout (default 5m, `FORGE_PROVIDER_TIMEOUT_MS`)
 - **Abortable** streams + sandboxed bash (Ctrl+C actually stops work)
 - **Self-heal**: truncated JSON tool args, orphaned `tool_call` pairs after abort/compact, empty/`length` model turns
-- **Doom-loop** detection when the same tool+args repeat
+- **Doom-loop** + **error-streak** circuit breakers (identical args ×3; any errors ×5)
+- **`apply_patch`** multi-file edits + **atomic** file writes
 - **OAuth refresh** at start and once mid-run on `401`
-- **Session locks** so two REPLs don’t thrash the same `session.json`
-- Accurate **stream token usage** for `/cost`
+- **Session locks**, fork/export/import, crash tmp recovery, **metrics.jsonl**
+- **`forge run --session <id>`** multi-step headless CI resume
+- Accurate **stream token usage** for `/cost`; optional `FORGE_PERMISSION_TIMEOUT_MS`
 
 Full contract: [docs/RELIABILITY.md](docs/RELIABILITY.md) · expert checklist: [docs/PRODUCTION.md](docs/PRODUCTION.md) · release notes: [CHANGELOG.md](CHANGELOG.md)
 
@@ -221,17 +231,22 @@ Full contract: [docs/RELIABILITY.md](docs/RELIABILITY.md) · expert checklist: [
 | `/tasks` | Background shell tasks (running / recent) |
 | `/context` | Context window bar |
 | `/cost` | Token usage + rough $ |
+| `/metrics` | Local metrics.jsonl + session counters |
 | `/todos` | Agent todos |
 | `/model <id> [effort]` | Switch model; optional `low`\|`medium`\|`high` (persists) |
 | `/effort [level]` | Reasoning effort for models that support it (e.g. grok-4.5) |
 | `/permissions <mode>` | `default` \| `acceptEdits` \| `plan` \| `bypassPermissions` (persists) |
 | `/compact` | Compact history |
 | `/rewind [n]` | Undo last n turns |
-| `/export [path]` | Export session markdown |
+| `/export [path] [--json]` | Export session markdown or JSON |
+| `/fork [title]` | Branch session into a new id |
+| `/title [name\|clear]` | Show / set / clear session title (`/rename`) |
+| `/bell [on\|off\|test]` | Terminal BEL when a turn ends (long-run attention) |
+| `/diff [path]` | Git status + diff (live-safe) |
 | `/copy` | Clipboard last reply |
 | `/new` / `/clear` | Fresh or wipe conversation |
 | `/resume [id]` | Resume by id/prefix |
-| `/sessions` | List sessions · `delete <id>` · `prune` |
+| `/sessions` | List · `delete` · `prune` (CLI also: `show`/`export`/`import`/`fork`) |
 | `/doctor` | Env health check |
 | `/quit` | Exit |
 

@@ -19,6 +19,7 @@ import {
   type SessionActivity,
 } from "./activity.js";
 import { listTasks } from "../agent/tools/background-tasks.js";
+import { readSessionLock } from "../session/lock.js";
 import type {
   StatusSnapshot,
   CollectOptions,
@@ -181,6 +182,32 @@ export function sessionToSnapshot(
     live = "working";
   }
 
+  let lock: StatusSnapshot["lock"];
+  try {
+    const info = readSessionLock(meta.id);
+    if (info) {
+      let alive = false;
+      try {
+        process.kill(info.pid, 0);
+        alive = true;
+      } catch {
+        alive = false;
+      }
+      const mine = info.pid === process.pid;
+      lock = {
+        pid: info.pid,
+        hostname: info.hostname,
+        acquiredAt: info.acquiredAt,
+        mine,
+        alive,
+      };
+      // Surface foreign live locks in tags for HUD / tmux
+      if (!mine && alive) tags.push(`LOCK:${info.pid}`);
+    }
+  } catch {
+    /* lock optional */
+  }
+
   return {
     sessionId: meta.id,
     title: meta.title,
@@ -212,6 +239,7 @@ export function sessionToSnapshot(
     goal: buildGoal(meta.id),
     activity,
     backgroundTasks: bg.length ? bg : undefined,
+    lock,
     tags,
     collectedAt: new Date().toISOString(),
   };

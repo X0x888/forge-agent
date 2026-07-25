@@ -22,8 +22,9 @@ Email or private channel preferred when available; otherwise open a minimal publ
 - Auth store written mode `0600`
 - Fail-closed headless permissions
 - Segment-strict allow rules; deny wins under YOLO
-- Protected paths (`.git`, `.forge`, credentials)
+- Protected paths (`.git`, `.forge`, credentials) — including paths inside `apply_patch` hunks
 - OS sandbox profiles (`workspace` / `read-only` / `strict`) with fail-closed missing backend
+- Atomic file writes (tmp+rename) for `write_file` / `search_replace` / `apply_patch`
 - SSRF guards on `web_fetch`
 - Shell env scrubbing for secret-looking variables
 - Project config cannot force `bypassPermissions`, turn sandbox off, or redirect credential paths

@@ -66,6 +66,24 @@ export const COMMAND_PARAMS: Record<string, ParamChoice[]> = {
   undo: [
     { value: "1", description: "Undo last user turn" },
   ],
+  export: [
+    { value: "--json", description: "Export machine-readable JSON" },
+  ],
+  fork: [
+    { value: "experiment", description: "Optional title for the forked session" },
+  ],
+  title: [
+    { value: "clear", description: "Clear title (auto-fills from next user msg)" },
+  ],
+  rename: [
+    { value: "clear", description: "Clear title (auto-fills from next user msg)" },
+  ],
+  bell: [
+    { value: "on", description: "Ring terminal BEL when a turn ends", aliases: ["1", "enable"] },
+    { value: "off", description: "Disable turn-end bell", aliases: ["0", "disable"] },
+    { value: "test", description: "Ring once now", aliases: ["ring"] },
+    { value: "status", description: "Show current bell setting" },
+  ],
   effort: [
     {
       value: "high",

@@ -27,7 +27,25 @@ import {
   saveSession,
   deleteSession,
   pruneSessions,
+  forkSession,
+  exportSessionMarkdown,
+  exportSessionJson,
+  importSessionJson,
+  formatSessionSummary,
+  findRecentSessionForCwd,
 } from "./session/session.js";
+import {
+  appendSessionMetrics,
+  buildRunEndMetrics,
+  metricsStats,
+  pruneMetrics,
+} from "./session/metrics.js";
+import {
+  acquireSessionLock,
+  releaseSessionLock,
+  readSessionLock,
+  formatLockHolder,
+} from "./session/lock.js";
 import { HookRunner } from "./harness/hooks.js";
 import { PermissionGate } from "./agent/permissions.js";
 import { runAgentLoop } from "./agent/loop.js";
@@ -48,6 +66,9 @@ import {
 import { getForgeVersion } from "./util/version.js";
 import { shellCompletionScript } from "./util/completion-script.js";
 import { providerTimeoutMs } from "./util/abort.js";
+import { envPositiveInt } from "./util/env.js";
+import { isBellEnabled } from "./util/attention.js";
+import { permissionAskTimeoutMs } from "./agent/permissions.js";
 import {
   pruneToolOutputsSync,
   toolOutputStats,
@@ -70,8 +91,11 @@ Examples:
   forge login
   forge doctor --json
   forge run "fix CI" --permission-mode acceptEdits --json
+  forge run "continue" --session <id> --json
   forge sessions prune --keep 50
+  forge sessions export <id> --format json --out ./session.json
   forge prune-tool-output --keep 80
+  forge prune-metrics --keep 500
   eval "$(forge completion bash)"
 
 Docs: docs/PRODUCTION.md · docs/RELIABILITY.md · docs/ULW.md
@@ -124,8 +148,11 @@ Docs: docs/PRODUCTION.md · docs/RELIABILITY.md · docs/ULW.md
     )
     .option("--ulw", "Start in ultrawork (max autonomy) mode")
     .option("--goal <objective>", "Arm a relentless /goal on start")
-    .option("--new", "Force a new session")
-    .option("--session <id>", "Resume session id")
+    .option(
+      "--new",
+      "Force a new session (default resumes newest same-cwd session in the REPL)",
+    )
+    .option("--session <id>", "Resume session id/prefix")
     .option("--cwd <path>", "Workspace directory", process.cwd())
     .option("--print-logs", "Verbose debug logs")
     .option(
@@ -156,8 +183,16 @@ Docs: docs/PRODUCTION.md · docs/RELIABILITY.md · docs/ULW.md
       }
 
       const provider = createProvider(config, auth);
-      const session = resolveSession(config, opts);
       const prompt = promptParts?.length ? promptParts.join(" ") : undefined;
+      const willHeadless = Boolean(
+        prompt && (!process.stdin.isTTY || process.env.FORGE_HEADLESS === "1"),
+      );
+      // Interactive REPL: resume newest same-cwd session (OpenCode --continue style)
+      // unless --new / --session / FORGE_NO_AUTO_RESUME. Headless always fresh unless --session.
+      const session = resolveSession(config, {
+        ...opts,
+        autoResume: !willHeadless,
+      });
       if (opts.ulw) {
         session.meta.ultrawork = true;
         const mandate = prompt || "improve the codebase";
@@ -211,8 +246,10 @@ Docs: docs/PRODUCTION.md · docs/RELIABILITY.md · docs/ULW.md
     .option("--ulw", "Ultrawork mode")
     .option("--goal <objective>", "Arm /goal")
     .option("--cwd <path>", "Workspace", process.cwd())
+    .option("--session <id>", "Resume session id/prefix (continue prior headless run)")
+    .option("--new", "Force a new session (default when --session omitted)")
     .option("--json", "Emit JSON result on stdout")
-    .action(async (promptParts: string[], opts) => {
+    .action(async (promptParts: string[], opts, command) => {
       await ensureHome();
       const config = buildConfig({ ...opts, permissionMode: opts.permissionMode });
       const auth = await resolveAuthFresh(config);
@@ -221,12 +258,41 @@ Docs: docs/PRODUCTION.md · docs/RELIABILITY.md · docs/ULW.md
         process.exit(1);
       }
       const provider = createProvider(config, auth);
-      const session = createSession({
-        cwd: path.resolve(opts.cwd || process.cwd()),
-        provider: config.provider,
-        model: config.model,
-        ultrawork: Boolean(opts.ulw || opts.goal),
-      });
+      const cwd = path.resolve(opts.cwd || process.cwd());
+      // Commander always applies option defaults — only treat --cwd as explicit
+      // when the user actually passed it on the CLI (so --session keeps its cwd).
+      const cwdExplicit = command?.getOptionValueSource?.("cwd") === "cli";
+      let session;
+      if (opts.session && !opts.new) {
+        session = loadSession(String(opts.session));
+        if (!session) {
+          log.error(`Session not found: ${opts.session}`);
+          process.exit(1);
+        }
+        // Align live config model with resumed session unless CLI overrode it
+        if (!opts.model) config.model = session.meta.model || config.model;
+        if (!opts.provider) {
+          config.provider = (session.meta.provider || config.provider) as typeof config.provider;
+        }
+        session.meta.provider = String(config.provider);
+        session.meta.model = config.model;
+        if (cwdExplicit) {
+          session.meta.cwd = cwd;
+        }
+        // Prefer session workspace for tools when not explicitly overridden
+        if (!cwdExplicit && session.meta.cwd) {
+          config.workspace = session.meta.cwd;
+        }
+        saveSession(session);
+        log.dim(`Resuming session ${session.meta.id.slice(0, 8)} (${session.messages.length} msgs)`);
+      } else {
+        session = createSession({
+          cwd,
+          provider: config.provider,
+          model: config.model,
+          ultrawork: Boolean(opts.ulw || opts.goal),
+        });
+      }
       const prompt = promptParts.join(" ");
       if (opts.ulw || opts.goal) {
         session.meta.ultrawork = true;
@@ -339,12 +405,20 @@ Docs: docs/PRODUCTION.md · docs/RELIABILITY.md · docs/ULW.md
 
   program
     .command("sessions")
-    .description("List, delete, or prune sessions")
-    .argument("[action]", "list (default) | delete <id> | prune")
-    .argument("[id]", "Session id/prefix for delete")
+    .description(
+      "List, show, export, import, fork, delete, or prune sessions",
+    )
+    .argument(
+      "[action]",
+      "list (default) | show <id> | export <id> | import <file> | fork <id> | delete <id> | prune",
+    )
+    .argument("[id]", "Session id/prefix or import file path")
     .option("--keep <n>", "Prune: keep newest N sessions", "50")
     .option("--max-age-days <n>", "Prune: also drop sessions older than N days")
     .option("--json", "Machine-readable JSON")
+    .option("--out <path>", "Export: write to file (default stdout)")
+    .option("--format <fmt>", "Export format: md|json (default md)", "md")
+    .option("--cwd <path>", "Import: workspace cwd override")
     .option("-n, --limit <n>", "List limit", "30")
     .action((action: string | undefined, id: string | undefined, opts) => {
       const act = (action || "list").toLowerCase();
@@ -361,6 +435,139 @@ Docs: docs/PRODUCTION.md · docs/RELIABILITY.md · docs/ULW.md
         }
         if (opts.json) console.log(JSON.stringify({ deleted: true, id: target }));
         else log.success(`Deleted session ${target}`);
+        return;
+      }
+      if (act === "show" || act === "info" || act === "get") {
+        const target = id || "";
+        if (!target) {
+          log.error("Usage: forge sessions show <id>");
+          process.exit(1);
+        }
+        const s = loadSession(target);
+        if (!s) {
+          log.error(`Session not found: ${target}`);
+          process.exit(1);
+        }
+        const lock = readSessionLock(s.meta.id);
+        if (opts.json) {
+          console.log(
+            JSON.stringify(
+              {
+                meta: s.meta,
+                todos: s.todos,
+                messageCount: s.messages.length,
+                lock: lock
+                  ? {
+                      pid: lock.pid,
+                      hostname: lock.hostname,
+                      acquiredAt: lock.acquiredAt,
+                      holder: formatLockHolder(lock),
+                    }
+                  : null,
+              },
+              null,
+              2,
+            ),
+          );
+        } else {
+          console.log(formatSessionSummary(s));
+          if (lock) {
+            console.log(`  lock:     ${formatLockHolder(lock)}`);
+          } else {
+            console.log(`  lock:     (none)`);
+          }
+        }
+        return;
+      }
+      if (act === "export") {
+        const target = id || "";
+        if (!target) {
+          log.error("Usage: forge sessions export <id> [--format md|json] [--out path]");
+          process.exit(1);
+        }
+        const s = loadSession(target);
+        if (!s) {
+          log.error(`Session not found: ${target}`);
+          process.exit(1);
+        }
+        const fmt = String(opts.format || "md").toLowerCase();
+        const body =
+          fmt === "json" ? exportSessionJson(s) : exportSessionMarkdown(s);
+        if (opts.out) {
+          const p = path.resolve(String(opts.out));
+          fs.writeFileSync(p, body, "utf8");
+          if (opts.json) console.log(JSON.stringify({ ok: true, path: p, format: fmt }));
+          else log.success(`Exported ${fmt} → ${p}`);
+        } else {
+          process.stdout.write(body.endsWith("\n") ? body : body + "\n");
+        }
+        return;
+      }
+      if (act === "import") {
+        const file = id || "";
+        if (!file) {
+          log.error("Usage: forge sessions import <export.json>");
+          process.exit(1);
+        }
+        const p = path.resolve(file);
+        if (!fs.existsSync(p)) {
+          log.error(`File not found: ${p}`);
+          process.exit(1);
+        }
+        try {
+          const raw = fs.readFileSync(p, "utf8");
+          const s = importSessionJson(raw, {
+            cwd: opts.cwd ? path.resolve(String(opts.cwd)) : undefined,
+          });
+          if (opts.json) {
+            console.log(
+              JSON.stringify({
+                ok: true,
+                id: s.meta.id,
+                title: s.meta.title,
+                messageCount: s.messages.length,
+              }),
+            );
+          } else {
+            log.success(
+              `Imported → ${s.meta.id} (${s.messages.length} msgs, ${s.todos.length} todos)`,
+            );
+            log.dim(`Resume with: forge --session ${s.meta.id.slice(0, 8)}`);
+          }
+        } catch (err) {
+          log.error((err as Error).message);
+          process.exit(1);
+        }
+        return;
+      }
+      if (act === "fork" || act === "clone") {
+        const target = id || "";
+        if (!target) {
+          log.error("Usage: forge sessions fork <id>");
+          process.exit(1);
+        }
+        const s = loadSession(target);
+        if (!s) {
+          log.error(`Session not found: ${target}`);
+          process.exit(1);
+        }
+        const forked = forkSession(s);
+        if (opts.json) {
+          console.log(
+            JSON.stringify({
+              ok: true,
+              sourceId: s.meta.id,
+              id: forked.meta.id,
+              title: forked.meta.title,
+              messageCount: forked.messages.length,
+            }),
+          );
+        } else {
+          log.success(
+            `Forked ${s.meta.id.slice(0, 8)} → ${forked.meta.id} (${forked.messages.length} msgs)`,
+          );
+          log.dim(`Resume with: forge --session ${forked.meta.id.slice(0, 8)}`);
+        }
         return;
       }
       if (act === "prune") {
@@ -386,7 +593,28 @@ Docs: docs/PRODUCTION.md · docs/RELIABILITY.md · docs/ULW.md
       }
       const list = listSessions(Number(opts.limit) || 30);
       if (opts.json) {
-        console.log(JSON.stringify({ sessions: list }, null, 2));
+        console.log(
+          JSON.stringify(
+            {
+              sessions: list.map((s) => {
+                const lock = readSessionLock(s.id);
+                return {
+                  ...s,
+                  lock: lock
+                    ? {
+                        pid: lock.pid,
+                        hostname: lock.hostname,
+                        acquiredAt: lock.acquiredAt,
+                        holder: formatLockHolder(lock),
+                      }
+                    : null,
+                };
+              }),
+            },
+            null,
+            2,
+          ),
+        );
         return;
       }
       if (!list.length) {
@@ -394,13 +622,15 @@ Docs: docs/PRODUCTION.md · docs/RELIABILITY.md · docs/ULW.md
         return;
       }
       for (const s of list) {
+        const lock = readSessionLock(s.id);
+        const lockNote = lock ? `  LOCK ${formatLockHolder(lock)}` : "";
         console.log(
-          `${s.id}  ${s.updatedAt}  ${s.provider}/${s.model}  turns=${s.turnCount}  edits=${s.editCount}${s.ultrawork ? "  ULW" : ""}${s.title ? `  ${s.title.slice(0, 40)}` : ""}`,
+          `${s.id}  ${s.updatedAt}  ${s.provider}/${s.model}  turns=${s.turnCount}  edits=${s.editCount}${s.ultrawork ? "  ULW" : ""}${s.title ? `  ${s.title.slice(0, 40)}` : ""}${lockNote}`,
         );
       }
       console.log(
         chalk.dim(
-          `\n  forge sessions delete <id>  ·  forge sessions prune --keep 50 [--max-age-days 30]`,
+          `\n  forge sessions show|export|import|fork|delete <id>  ·  prune --keep 50`,
         ),
       );
     });
@@ -524,6 +754,24 @@ Docs: docs/PRODUCTION.md · docs/RELIABILITY.md · docs/ULW.md
     });
 
   program
+    .command("prune-metrics")
+    .description("Prune ~/.forge/metrics.jsonl (keep newest N events)")
+    .option("--keep <n>", "Keep newest N events", "500")
+    .option("--json", "Machine-readable JSON")
+    .action((opts) => {
+      const before = metricsStats();
+      const result = pruneMetrics({ keep: Number(opts.keep) || 500 });
+      if (opts.json) {
+        console.log(JSON.stringify({ before, ...result }, null, 2));
+        return;
+      }
+      log.success(
+        `Pruned metrics: removed ${result.deleted}, kept ${result.kept} (was ${result.beforeEvents})`,
+      );
+      if (before.events === 0) log.dim("metrics.jsonl was already empty");
+    });
+
+  program
     .command("doctor")
     .description("Check auth, Node version, config, and harness settings")
     .option("-p, --provider <provider>", "Provider override")
@@ -557,11 +805,25 @@ Docs: docs/PRODUCTION.md · docs/RELIABILITY.md · docs/ULW.md
         } catch {
           /* */
         }
+        let metrics = { events: 0, bytes: 0 };
+        try {
+          const m = metricsStats();
+          metrics = { events: m.events, bytes: m.bytes };
+        } catch {
+          /* */
+        }
         const maxRunMsRaw = process.env.FORGE_MAX_RUN_MS?.trim();
         const maxRunMs =
           maxRunMsRaw && /^\d+$/.test(maxRunMsRaw) && Number(maxRunMsRaw) >= 5_000
             ? Number(maxRunMsRaw)
             : null;
+        const doomLoopThreshold = envPositiveInt("FORGE_DOOM_LOOP_THRESHOLD", 3);
+        const errorStreakThreshold = envPositiveInt(
+          "FORGE_ERROR_STREAK_THRESHOLD",
+          5,
+        );
+        const ulwMaxContinues = envPositiveInt("FORGE_ULW_MAX_CONTINUES", 200);
+        const permAskTimeoutMs = permissionAskTimeoutMs();
         console.log(
           JSON.stringify(
             {
@@ -577,8 +839,17 @@ Docs: docs/PRODUCTION.md · docs/RELIABILITY.md · docs/ULW.md
               sessionCount,
               toolOutput,
               sandboxLog,
+              metrics,
               providerTimeoutMs: providerTimeoutMs(),
               maxRunMs,
+              permissionAskTimeoutMs: permAskTimeoutMs || null,
+              doomLoopThreshold,
+              errorStreakThreshold,
+              ulwMaxContinues,
+              bellOnTurnEnd: isBellEnabled(),
+              autoResume:
+                process.env.FORGE_NO_AUTO_RESUME !== "1" &&
+                process.env.FORGE_NO_AUTO_RESUME !== "true",
               node: process.version,
               report: text,
             },
@@ -703,7 +974,13 @@ function buildConfig(opts: Record<string, unknown>): ForgeConfig {
 
 function resolveSession(
   config: ForgeConfig,
-  opts: { session?: string; new?: boolean; cwd?: string },
+  opts: {
+    session?: string;
+    new?: boolean;
+    cwd?: string;
+    /** When true and no --session/--new, resume newest same-cwd session. */
+    autoResume?: boolean;
+  },
 ) {
   if (opts.session) {
     const s = loadSession(opts.session);
@@ -713,8 +990,37 @@ function resolveSession(
     }
     return s;
   }
+  const cwd = path.resolve(String(opts.cwd || config.workspace || process.cwd()));
+  const noAuto =
+    opts.new ||
+    process.env.FORGE_NO_AUTO_RESUME === "1" ||
+    process.env.FORGE_NO_AUTO_RESUME === "true";
+  if (opts.autoResume && !noAuto) {
+    try {
+      const recent = findRecentSessionForCwd(cwd);
+      if (recent) {
+        const s = loadSession(recent.id);
+        if (s) {
+          const title = s.meta.title || "untitled";
+          log.info(
+            `Resumed ${s.meta.id.slice(0, 8)} — ${title} (${s.messages.length} msgs). Use --new for a fresh session.`,
+          );
+          // Keep provider/model from live config when CLI/prefs differ, but preserve session history
+          if (config.model && s.meta.model !== config.model) {
+            s.meta.model = config.model;
+          }
+          if (config.provider && s.meta.provider !== String(config.provider)) {
+            s.meta.provider = String(config.provider);
+          }
+          return s;
+        }
+      }
+    } catch {
+      /* fall through to new session */
+    }
+  }
   return createSession({
-    cwd: path.resolve(String(opts.cwd || config.workspace || process.cwd())),
+    cwd,
     provider: String(config.provider),
     model: config.model,
     ultrawork: false,
@@ -738,6 +1044,19 @@ async function runHeadless(opts: {
   const permissions = new PermissionGate({ interactive: false });
   // Headless always sets FORGE_HEADLESS so permission gate stays fail-closed
   if (!process.env.FORGE_HEADLESS) process.env.FORGE_HEADLESS = "1";
+
+  // Same session lock as REPL — concurrent forge run --session / REPL must not race
+  const lock = acquireSessionLock(opts.session.meta.id);
+  if (!lock.ok && lock.holder) {
+    log.warn(
+      `Session ${opts.session.meta.id.slice(0, 8)} is locked by ${formatLockHolder(lock.holder)}. ` +
+        `Continuing anyway — concurrent writes may race. Prefer one writer per session.`,
+    );
+  } else if (lock.stolen && lock.holder) {
+    log.dim(
+      `Took over stale session lock from ${formatLockHolder(lock.holder)}`,
+    );
+  }
 
   const ac = new AbortController();
   let timedOut = false;
@@ -770,12 +1089,21 @@ async function runHeadless(opts: {
     }
   }
 
+  const releaseLock = (): void => {
+    try {
+      releaseSessionLock(opts.session.meta.id);
+    } catch {
+      /* never fail exit on lock */
+    }
+  };
+
   await opts.hooks.run("SessionStart", {
     sessionId: opts.session.meta.id,
     cwd: opts.session.meta.cwd,
     workspaceRoot: opts.config.workspace || opts.session.meta.cwd,
   });
 
+  const t0 = Date.now();
   let result;
   try {
     result = await runAgentLoop({
@@ -803,7 +1131,27 @@ async function runHeadless(opts: {
     process.off("SIGINT", onSigInt);
     process.off("SIGTERM", onSigTerm);
     if (maxRunTimer) clearTimeout(maxRunTimer);
+    releaseLock();
     const message = (err as Error).message || String(err);
+    appendSessionMetrics(
+      buildRunEndMetrics({
+        sessionId: opts.session.meta.id,
+        provider: String(opts.config.provider),
+        model: opts.config.model,
+        cwd: opts.session.meta.cwd,
+        turns: 0,
+        stopContinues: 0,
+        editCount: opts.session.meta.editCount,
+        promptTokens: 0,
+        completionTokens: 0,
+        durationMs: Date.now() - t0,
+        aborted: ac.signal.aborted,
+        timedOut,
+        ok: false,
+        headless: true,
+        ultrawork: opts.session.meta.ultrawork,
+      }),
+    );
     if (opts.json) {
       console.log(
         JSON.stringify(
@@ -813,6 +1161,7 @@ async function runHeadless(opts: {
             timedOut,
             sessionId: opts.session.meta.id,
             editCount: opts.session.meta.editCount,
+            durationMs: Date.now() - t0,
           },
           null,
           2,
@@ -827,31 +1176,57 @@ async function runHeadless(opts: {
     process.off("SIGTERM", onSigTerm);
   }
 
-  await opts.hooks.run("SessionEnd", {
-    sessionId: opts.session.meta.id,
-    cwd: opts.session.meta.cwd,
-    workspaceRoot: opts.config.workspace || opts.session.meta.cwd,
-  });
-  saveSession(opts.session);
+  try {
+    await opts.hooks.run("SessionEnd", {
+      sessionId: opts.session.meta.id,
+      cwd: opts.session.meta.cwd,
+      workspaceRoot: opts.config.workspace || opts.session.meta.cwd,
+    });
+    saveSession(opts.session);
 
-  if (!opts.json && result.finalText && !result.finalText.endsWith("\n")) {
-    process.stdout.write("\n");
+    if (!opts.json && result.finalText && !result.finalText.endsWith("\n")) {
+      process.stdout.write("\n");
+    }
+
+    const durationMs = Date.now() - t0;
+    const payload = {
+      ok: !result.aborted && !timedOut,
+      sessionId: opts.session.meta.id,
+      finalText: result.finalText,
+      turns: result.turns,
+      stopContinues: result.stopContinues,
+      editCount: opts.session.meta.editCount,
+      aborted: result.aborted,
+      timedOut,
+      promptTokens: result.promptTokens,
+      completionTokens: result.completionTokens,
+      durationMs,
+      model: opts.config.model,
+      provider: opts.config.provider,
+    };
+    appendSessionMetrics(
+      buildRunEndMetrics({
+        sessionId: payload.sessionId,
+        provider: String(payload.provider),
+        model: payload.model,
+        cwd: opts.session.meta.cwd,
+        turns: payload.turns,
+        stopContinues: payload.stopContinues,
+        editCount: payload.editCount,
+        promptTokens: payload.promptTokens,
+        completionTokens: payload.completionTokens,
+        durationMs,
+        aborted: payload.aborted,
+        timedOut: payload.timedOut,
+        ok: payload.ok,
+        headless: true,
+        ultrawork: opts.session.meta.ultrawork,
+      }),
+    );
+    return payload;
+  } finally {
+    releaseLock();
   }
-
-  return {
-    ok: !result.aborted && !timedOut,
-    sessionId: opts.session.meta.id,
-    finalText: result.finalText,
-    turns: result.turns,
-    stopContinues: result.stopContinues,
-    editCount: opts.session.meta.editCount,
-    aborted: result.aborted,
-    timedOut,
-    promptTokens: result.promptTokens,
-    completionTokens: result.completionTokens,
-    model: opts.config.model,
-    provider: opts.config.provider,
-  };
 }
 
 main().catch((err) => {

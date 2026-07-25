@@ -69,6 +69,8 @@ function normalizeToolName(t: string): string {
     write_file: "write_file",
     search_replace: "search_replace",
     multiedit: "search_replace",
+    apply_patch: "apply_patch",
+    applypatch: "apply_patch",
     grep: "grep",
     glob: "glob",
     list_dir: "list_dir",
@@ -252,6 +254,18 @@ export function evaluateRules(
       t === "list_dir"
     ) {
       matched = matchPathRule(rule, toolInput, workspace);
+    } else if (t === "apply_patch") {
+      // Match against full patch body (paths live inside patchText)
+      const pat = (rule.pattern || "*").trim();
+      const blob = String(
+        toolInput.patchText ?? toolInput.patch_text ?? toolInput.patch ?? "",
+      );
+      if (pat === "*" || pat === "") {
+        matched = blob.slice(0, 80) || "*";
+      } else {
+        const re = patternToRegExp(pat);
+        if (re.test(blob)) matched = blob.slice(0, 80);
+      }
     } else {
       const re = patternToRegExp(rule.pattern || "*");
       const blob = JSON.stringify(toolInput);

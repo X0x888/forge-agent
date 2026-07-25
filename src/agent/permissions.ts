@@ -17,13 +17,16 @@ import { alwaysPatternFromTokens, isReadOnlyCommand } from "./shell-arity.js";
 import { addSavedAllow, savedAsAllowRules } from "./permission-saved.js";
 import { logSandboxEvent } from "./sandbox-log.js";
 import { isWithinRoot } from "../util/fs.js";
+import { formatPermissionPreview } from "../util/format.js";
 
 const WRITE_TOOLS = new Set([
   "write_file",
   "search_replace",
+  "apply_patch",
   "edit",
   "Write",
   "Edit",
+  "ApplyPatch",
 ]);
 
 const READ_ONLY_TOOLS = new Set([
@@ -385,12 +388,12 @@ export class PermissionGate {
     dangerous: boolean,
     opts: { workspace?: string; alwaysPattern?: string; reasonHint?: string } = {},
   ): Promise<PermissionResult> {
-    const preview = JSON.stringify(toolInput, null, 2).slice(0, 400);
-    const alwaysPat =
-      opts.alwaysPattern ||
-      (toolName === "bash" || toolName === "run_terminal_command"
-        ? alwaysPatternFromCommandTokens(String(toolInput.command || ""))
-        : `${toolName} *`);
+    const preview = formatPermissionPreview(toolName, toolInput, 500);
+    const timeoutMs = permissionAskTimeoutMs();
+    const timeoutNote =
+      timeoutMs > 0
+        ? ` (auto-deny in ${Math.round(timeoutMs / 1000)}s)`
+        : "";
 
     console.error(
       chalk.yellow(
@@ -398,14 +401,38 @@ export class PermissionGate {
       ),
     );
     const rl = readline.createInterface({ input, output });
+    let timer: ReturnType<typeof setTimeout> | undefined;
     try {
+      const question = rl.question(
+        `Allow? [y]es once / [a]lways this pattern / [s]ession tool / [n]o:${timeoutNote} `,
+      );
       const ans = (
-        await rl.question(
-          "Allow? [y]es once / [a]lways this pattern / [s]ession tool / [n]o: ",
-        )
+        await (timeoutMs > 0
+          ? Promise.race([
+              question,
+              new Promise<string>((resolve) => {
+                timer = setTimeout(() => resolve("__timeout__"), timeoutMs);
+                timer.unref?.();
+              }),
+            ])
+          : question)
       )
         .trim()
         .toLowerCase();
+
+      if (ans === "__timeout__") {
+        console.error(
+          chalk.red(
+            `\n✖ Permission timed out after ${Math.round(timeoutMs / 1000)}s — denying ${toolName}\n`,
+          ),
+        );
+        logSandboxEvent({
+          type: "rule_deny",
+          reason: `permission_ask_timeout:${toolName}`,
+          command: toolName,
+        });
+        return { decision: "deny", reason: "permission_ask_timeout" };
+      }
       if (ans === "n" || ans === "no") {
         return { decision: "deny", reason: "user_reject" };
       }
@@ -421,9 +448,11 @@ export class PermissionGate {
               ? "write_file"
               : toolName === "Edit"
                 ? "search_replace"
-                : toolName === "Read"
-                  ? "read_file"
-                  : toolName;
+                : toolName === "ApplyPatch"
+                  ? "apply_patch"
+                  : toolName === "Read"
+                    ? "read_file"
+                    : toolName;
         const pattern =
           opts.alwaysPattern ||
           (tool === "bash"
@@ -441,9 +470,22 @@ export class PermissionGate {
       }
       return { decision: "allow", reason: "user_once" };
     } finally {
+      if (timer) clearTimeout(timer);
       rl.close();
     }
   }
+}
+
+/**
+ * Interactive permission prompt timeout.
+ * FORGE_PERMISSION_TIMEOUT_MS — 0/unset = wait forever; min 5s when set.
+ */
+export function permissionAskTimeoutMs(): number {
+  const raw = process.env.FORGE_PERMISSION_TIMEOUT_MS?.trim();
+  if (!raw || !/^\d+$/.test(raw)) return 0;
+  const n = Number(raw);
+  if (n <= 0) return 0;
+  return Math.max(5_000, n);
 }
 
 function alwaysPatternFromCommandTokens(command: string): string {

@@ -1,5 +1,39 @@
 # Changelog
 
+## 0.9.2 — Error-streak, session ops, apply_patch
+
+Learned from Grok Build (consecutive-failure circuit breaker) and OpenCode (session branch/export, apply_patch).
+
+### Reliability / smartness
+- **Error-streak circuit breaker**: 5 consecutive tool errors (different args OK) inject a hard strategy-change nudge; permission/hard denies excluded
+- **Tunable loop guards**: `FORGE_DOOM_LOOP_THRESHOLD`, `FORGE_ERROR_STREAK_THRESHOLD`, `FORGE_ULW_MAX_CONTINUES` (invalid values fall back safely)
+- **Richer retry HUD**: status shows human wait (`1.2s`) + HTTP reason / Retry-After
+- **Session crash recovery**: load promotes newest leftover atomic-write tmp when `session.json` is missing/corrupt
+- **`apply_patch` tool**: multi-file add/update/delete/move (OpenAI/OpenCode patch grammar); validate-then-apply; hard-deny path scan
+- **Atomic file writes**: `write_file` / `search_replace` / `apply_patch` use tmp+rename (no truncated files on crash)
+- **Permission ask timeout**: `FORGE_PERMISSION_TIMEOUT_MS` auto-denies stalled interactive Allow? prompts
+- **metrics.jsonl**: counter-only run telemetry (`~/.forge/metrics.jsonl`); headless JSON includes `durationMs`; auto-prune ~2000 events / 2 MiB; `forge prune-metrics`
+
+### Expert UX
+- **`forge sessions show|export|import|fork`** — inspect, markdown/JSON export/import, branch a session
+- **`/title` / `/rename`** — show/set/clear session title (live-safe mid-run)
+- **`/bell [on|off|test]`** — optional terminal BEL on turn end (pref + `FORGE_BELL`); long-run attention
+- **Interactive auto-resume** — bare `forge` continues newest same-cwd session (≤14d); skips foreign live locks; `--new` / `FORGE_NO_AUTO_RESUME=1` for fresh
+- **`forge doctor --json`** exposes doom-loop / error-streak / ULW continue thresholds + perm-ask timeout
+- **`/fork`**, **`/export [--json]`**, **`/diff`**, **`/metrics`** in the REPL (diff/metrics live-safe)
+- Richer bash completion for sessions show/export/import/fork
+- Doctor surfaces metrics + perm-ask-timeout
+- **Readable permission previews** for `apply_patch` (A/M/D ops list instead of raw patch dump)
+- **Stream resilience**: OpenAI-compat + Anthropic SSE `error` events + fully empty streams throw as retryable (dropped connection)
+- **Soft-dangerous** `git commit/push --no-verify` (and `commit -n`, not dry-run `-n` on other verbs) so acceptEdits still prompts
+- **`forge run --session <id>`** resume prior headless/REPL session for multi-step CI pipelines
+- **Headless session lock** — `forge run` takes the same `session.lock` as the REPL (warn on conflict; steal stale)
+- **`forge sessions` / `/sessions` / `/status` / `forge status`** surface lock holders (HUD tags `LOCK:<pid>` for foreign live locks)
+
+### Tests / docs
+- Coverage for error-streak, fork/export JSON, tmp recovery, apply_patch, atomic write, metrics, perm timeout, env parsers, bell, title, same-cwd auto-resume
+- `docs/RELIABILITY.md` + `docs/PRODUCTION.md` + `docs/TOOLS.md` + `.env.example` + `AGENTS.md` updated
+
 ## 0.9.1 — Context overflow + ULW survival
 
 - **xAI overflow detect**: match `maximum prompt length is N but the request contains M tokens` (was missed → run died raw 400)
@@ -35,7 +69,7 @@ Learned from OpenCode / peer agent loops; aimed at expert daily-driver and CI us
 - `docs/RELIABILITY.md` — operator-facing production contract
 
 ### Tests
-- Expanded suite (**231** tests) covering reliability, sessions, doctor, completion, tool-output, sandbox log
+- Expanded suite (**251+** tests) covering reliability, sessions, doctor, completion, tool-output, sandbox log
 - **Context overflow recovery**: detect prompt-too-long, skip blind retries, force compact + one re-issue
 - **Compact thrash guard**: no-op threshold compacts are not repeated every turn
 - **`forge prune-tool-output`** + auto-prune of `~/.forge/tool-output` (keep 80 / 14d); doctor surfaces size

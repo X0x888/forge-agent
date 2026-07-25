@@ -301,7 +301,16 @@ export class AnthropicProvider implements LLMProvider {
                 stop_reason?: string;
               };
               usage?: { input_tokens?: number; output_tokens?: number };
+              error?: { type?: string; message?: string };
             };
+            // Anthropic error events mid-stream (overloaded, rate limit, etc.)
+            if (event.type === "error" || event.error) {
+              const msg =
+                event.error?.message ||
+                event.error?.type ||
+                "stream error";
+              throw new Error(`${this.id} stream error: ${msg}`);
+            }
             if (event.type === "message_start" && event.message) {
               id = event.message.id;
               model = event.message.model;
@@ -380,7 +389,9 @@ export class AnthropicProvider implements LLMProvider {
             }
           } catch (err) {
             if ((err as Error).message === "Aborted") throw err;
-            /* skip */
+            if (/timed out after/i.test((err as Error).message || "")) throw err;
+            if (/stream error:/i.test((err as Error).message || "")) throw err;
+            /* skip malformed SSE */
           }
         }
       }
@@ -405,6 +416,14 @@ export class AnthropicProvider implements LLMProvider {
         },
       });
       currentTool = null;
+    }
+
+    // Empty stream with no stop_reason is almost always a dropped connection —
+    // surface as retryable rather than a silent blank assistant turn.
+    if (!content && toolCalls.length === 0 && !finishReason && !usage) {
+      throw new Error(
+        `${this.id} stream ended with empty response (no content, tools, or finish_reason) — likely a dropped connection`,
+      );
     }
 
     return {

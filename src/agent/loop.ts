@@ -56,10 +56,16 @@ import {
 } from "./tools/index.js";
 import { buildBaselineSystemPrompt } from "./system-prompt.js";
 import { log } from "../util/log.js";
+import { envPositiveInt } from "../util/env.js";
 import { withRetry, isContextOverflowError } from "../util/retry.js";
 import { parseToolArguments } from "../util/json-repair.js";
 import { repairToolCallPairing } from "../session/message-repair.js";
 import { DoomLoopTracker } from "./doom-loop.js";
+import {
+  ErrorStreakTracker,
+  isCountableToolError,
+  summarizeToolError,
+} from "./error-streak.js";
 import { refreshCredentialIfNeeded, isAuthFailureMessage } from "../auth/refresh.js";
 import { resolveAuth } from "../auth/resolve.js";
 import { isProviderApiError } from "../providers/errors.js";
@@ -70,6 +76,8 @@ import {
   formatTokens,
   estimateCostUsd,
   formatCost,
+  formatRetryWait,
+  summarizeToolArgs,
 } from "../util/format.js";
 
 export type LoopPhase =
@@ -220,11 +228,16 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
   const ulwArmed = Boolean(loadUlwCycle(session.meta.id)?.enabled);
   const maxStopContinues =
     opts.maxStopContinues ??
-    (ulwArmed ? Number(process.env.FORGE_ULW_MAX_CONTINUES) || 200 : 50);
+    (ulwArmed ? envPositiveInt("FORGE_ULW_MAX_CONTINUES", 200) : 50);
   const workspace = config.workspace || session.meta.cwd;
   const startPrompt = session.meta.totalPromptTokens;
   const startComp = session.meta.totalCompletionTokens;
-  const doomLoop = new DoomLoopTracker({ threshold: 3 });
+  const doomLoop = new DoomLoopTracker({
+    threshold: envPositiveInt("FORGE_DOOM_LOOP_THRESHOLD", 3),
+  });
+  const errorStreak = new ErrorStreakTracker({
+    threshold: envPositiveInt("FORGE_ERROR_STREAK_THRESHOLD", 5),
+  });
 
   // Auto-arm goal from prose
   if (config.goal.autoArm && config.goal.enabled) {
@@ -527,14 +540,17 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
               retries: 3,
               label: `${config.provider} chat`,
               signal,
-              onRetry: ({ delayMs, attempt, retries }) => {
+              onRetry: ({ delayMs, attempt, retries, error }) => {
+                const why = isProviderApiError(error)
+                  ? `HTTP ${error.status}${error.retryAfterMs != null ? " (Retry-After)" : ""}`
+                  : error instanceof Error
+                    ? error.message.slice(0, 80)
+                    : "transient error";
+                const wait = formatRetryWait(delayMs);
                 events.onStatus?.(
-                  `Retry ${attempt}/${retries} in ${Math.round(delayMs)}ms…`,
+                  `Retry ${attempt}/${retries} in ${wait} — ${why}`,
                 );
-                events.onPhase?.(
-                  "waiting",
-                  `retry in ${Math.round(delayMs)}ms`,
-                );
+                events.onPhase?.("waiting", `retry ${wait}: ${why}`);
               },
             },
           );
@@ -811,6 +827,7 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
         events,
         turn: turns,
         doomLoop,
+        errorStreak,
       });
       events.onPhase?.("thinking");
     }
@@ -915,6 +932,7 @@ async function runToolCalls(opts: {
   events?: LoopEvents;
   turn?: number;
   doomLoop?: DoomLoopTracker;
+  errorStreak?: ErrorStreakTracker;
 }): Promise<void> {
   const {
     toolCalls,
@@ -927,6 +945,7 @@ async function runToolCalls(opts: {
     events,
     turn = 0,
     doomLoop,
+    errorStreak,
   } = opts;
 
   // Sequential by default; batch consecutive read-only tools in parallel
@@ -957,6 +976,7 @@ async function runToolCalls(opts: {
             events,
             turn,
             doomLoop,
+            errorStreak,
           }),
         ),
       );
@@ -980,6 +1000,7 @@ async function runToolCalls(opts: {
         events,
         turn,
         doomLoop,
+        errorStreak,
       });
       session.messages.push({
         role: "tool",
@@ -1003,6 +1024,7 @@ async function prepareToolResult(opts: {
   events?: LoopEvents;
   turn?: number;
   doomLoop?: DoomLoopTracker;
+  errorStreak?: ErrorStreakTracker;
 }): Promise<{ toolCallId: string; content: string }> {
   const {
     tc,
@@ -1015,6 +1037,7 @@ async function prepareToolResult(opts: {
     events,
     turn = 0,
     doomLoop,
+    errorStreak,
   } = opts;
   assertNotAborted(signal);
 
@@ -1059,12 +1082,8 @@ async function prepareToolResult(opts: {
 
   // Announce tool phase BEFORE permission prompts so the REPL can pause
   // the working spinner and not clobber interactive Allow? lines.
-  const toolDetail =
-    typeof toolInput.command === "string"
-      ? `${name} ${String(toolInput.command).slice(0, 40)}`
-      : typeof toolInput.path === "string"
-        ? `${name} ${String(toolInput.path).slice(0, 40)}`
-        : name;
+  const argSummary = summarizeToolArgs(toolInput, 48);
+  const toolDetail = argSummary ? `${name} ${argSummary}` : name;
   events?.onPhase?.("tool", toolDetail);
 
   const settle = () => {
@@ -1138,9 +1157,19 @@ async function prepareToolResult(opts: {
     if (events?.onToolEnd) {
       events.onToolEnd(name, { isError: true, ms: 0, bytes: 0 });
     }
+    let content =
+      `Invalid JSON arguments for ${name}: ${argsRepairNote}\nRaw (truncated): ${String(tc.function.arguments || "").slice(0, 400)}\nPlease rewrite the input as valid JSON.`;
+    if (errorStreak) {
+      const hit = errorStreak.observeError(name, summarizeToolError(content));
+      if (hit) {
+        log.warn(hit.message.split("\n")[0] || "error-streak");
+        events?.onStatus?.(`error-streak: ${hit.count} consecutive tool errors`);
+        content = `${content}\n\n${hit.message}`;
+      }
+    }
     return {
       toolCallId: tc.id,
-      content: `Invalid JSON arguments for ${name}: ${argsRepairNote}\nRaw (truncated): ${String(tc.function.arguments || "").slice(0, 400)}\nPlease rewrite the input as valid JSON.`,
+      content,
     };
   }
 
@@ -1218,5 +1247,20 @@ async function prepareToolResult(opts: {
   if (doomHit) {
     content = `${content}\n\n${doomHit.message}`;
   }
+
+  // Error-streak circuit breaker (different tools failing in a row)
+  if (errorStreak) {
+    if (isCountableToolError(content, result.isError)) {
+      const hit = errorStreak.observeError(name, summarizeToolError(content));
+      if (hit) {
+        log.warn(hit.message.split("\n")[0] || "error-streak");
+        events?.onStatus?.(`error-streak: ${hit.count} consecutive tool errors`);
+        content = `${content}\n\n${hit.message}`;
+      }
+    } else if (!result.isError) {
+      errorStreak.observeSuccess();
+    }
+  }
+
   return { toolCallId: tc.id, content };
 }

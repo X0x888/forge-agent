@@ -177,6 +177,83 @@ export class OpenAICompatProvider implements LLMProvider {
     let model = req.model;
     let usage: ChatResponse["usage"] | undefined;
 
+    const processSseLine = (line: string): void => {
+      const trimmed = line.trim();
+      if (!trimmed.startsWith("data:")) return;
+      const data = trimmed.slice(5).trim();
+      if (!data || data === "[DONE]") return;
+      let chunk: {
+        id?: string;
+        model?: string;
+        usage?: ChatResponse["usage"];
+        error?: { message?: string; type?: string; code?: string | number };
+        choices?: Array<{
+          delta?: {
+            content?: string | null;
+            tool_calls?: Array<{
+              index: number;
+              id?: string;
+              type?: "function";
+              function?: { name?: string; arguments?: string };
+            }>;
+          };
+          finish_reason?: string | null;
+        }>;
+      };
+      try {
+        chunk = JSON.parse(data) as typeof chunk;
+      } catch {
+        return; // skip malformed SSE data line
+      }
+      // OpenAI-compat error events mid-stream (rate limit, content filter, etc.)
+      if (chunk.error) {
+        const msg =
+          chunk.error.message ||
+          chunk.error.type ||
+          String(chunk.error.code || "stream error");
+        throw new Error(`${this.id} stream error: ${msg}`);
+      }
+      if (chunk.id) id = chunk.id;
+      if (chunk.model) model = chunk.model;
+      if (chunk.usage) usage = chunk.usage;
+      const choice = chunk.choices?.[0];
+      if (!choice) return;
+      const delta = choice.delta ?? {};
+      if (delta.content) {
+        content += delta.content;
+        onDelta({ content: delta.content });
+      }
+      if (delta.tool_calls) {
+        for (const tc of delta.tool_calls) {
+          const idx = tc.index;
+          if (!toolCalls[idx]) {
+            // Start empty — never seed name then append (xAI/OpenAI often
+            // re-send the full name each chunk → "bashbash").
+            toolCalls[idx] = {
+              id: tc.id || `call_${idx}`,
+              type: "function",
+              function: { name: "", arguments: "" },
+            };
+          }
+          if (tc.id) toolCalls[idx].id = tc.id;
+          if (tc.function?.name) {
+            toolCalls[idx].function.name = mergeStreamedToolName(
+              toolCalls[idx].function.name,
+              tc.function.name,
+            );
+          }
+          if (tc.function?.arguments) {
+            toolCalls[idx].function.arguments += tc.function.arguments;
+          }
+        }
+        onDelta({ tool_calls: delta.tool_calls });
+      }
+      if (choice.finish_reason) {
+        finishReason = choice.finish_reason;
+        onDelta({ finish_reason: choice.finish_reason });
+      }
+    };
+
     try {
       while (true) {
         if (merged.aborted) {
@@ -189,72 +266,22 @@ export class OpenAICompatProvider implements LLMProvider {
         const lines = buffer.split("\n");
         buffer = lines.pop() ?? "";
         for (const line of lines) {
-          const trimmed = line.trim();
-          if (!trimmed.startsWith("data:")) continue;
-          const data = trimmed.slice(5).trim();
-          if (data === "[DONE]") continue;
           try {
-            const chunk = JSON.parse(data) as {
-              id?: string;
-              model?: string;
-              usage?: ChatResponse["usage"];
-              choices?: Array<{
-                delta?: {
-                  content?: string | null;
-                  tool_calls?: Array<{
-                    index: number;
-                    id?: string;
-                    type?: "function";
-                    function?: { name?: string; arguments?: string };
-                  }>;
-                };
-                finish_reason?: string | null;
-              }>;
-            };
-            if (chunk.id) id = chunk.id;
-            if (chunk.model) model = chunk.model;
-            if (chunk.usage) usage = chunk.usage;
-            const choice = chunk.choices?.[0];
-            if (!choice) continue;
-            const delta = choice.delta ?? {};
-            if (delta.content) {
-              content += delta.content;
-              onDelta({ content: delta.content });
-            }
-            if (delta.tool_calls) {
-              for (const tc of delta.tool_calls) {
-                const idx = tc.index;
-                if (!toolCalls[idx]) {
-                  // Start empty — never seed name then append (xAI/OpenAI often
-                  // re-send the full name each chunk → "bashbash").
-                  toolCalls[idx] = {
-                    id: tc.id || `call_${idx}`,
-                    type: "function",
-                    function: { name: "", arguments: "" },
-                  };
-                }
-                if (tc.id) toolCalls[idx].id = tc.id;
-                if (tc.function?.name) {
-                  toolCalls[idx].function.name = mergeStreamedToolName(
-                    toolCalls[idx].function.name,
-                    tc.function.name,
-                  );
-                }
-                if (tc.function?.arguments) {
-                  toolCalls[idx].function.arguments += tc.function.arguments;
-                }
-              }
-              onDelta({ tool_calls: delta.tool_calls });
-            }
-            if (choice.finish_reason) {
-              finishReason = choice.finish_reason;
-              onDelta({ finish_reason: choice.finish_reason });
-            }
+            processSseLine(line);
           } catch (err) {
             if ((err as Error).message === "Aborted") throw err;
             if (/timed out after/i.test((err as Error).message || "")) throw err;
+            if (/stream error:/i.test((err as Error).message || "")) throw err;
             /* skip malformed SSE */
           }
+        }
+      }
+      // Flush trailing buffer (final event without newline)
+      if (buffer.trim()) {
+        try {
+          processSseLine(buffer);
+        } catch (err) {
+          if (/stream error:/i.test((err as Error).message || "")) throw err;
         }
       }
     } catch (err) {
@@ -272,6 +299,19 @@ export class OpenAICompatProvider implements LLMProvider {
 
     // Compact sparse toolCalls array (providers may skip indices)
     const compactTools = toolCalls.filter(Boolean);
+
+    // Empty stream with no finish_reason is almost always a dropped connection —
+    // surface as retryable rather than a silent blank assistant turn.
+    if (
+      !content &&
+      compactTools.length === 0 &&
+      !finishReason &&
+      !usage
+    ) {
+      throw new Error(
+        `${this.id} stream ended with empty response (no content, tools, or finish_reason) — likely a dropped connection`,
+      );
+    }
 
     const message: ChatMessage = {
       role: "assistant",

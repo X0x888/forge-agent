@@ -113,6 +113,17 @@ export interface StatusSnapshot {
   activity?: ActivityInfo;
   /** Background tasks for this process (when collect is local) */
   backgroundTasks?: BackgroundTaskSummary[];
+  /**
+   * Session file lock holder when present.
+   * `mine` is true when this process owns the lock.
+   */
+  lock?: {
+    pid: number;
+    hostname: string;
+    acquiredAt: string;
+    mine: boolean;
+    alive: boolean;
+  };
   /** Extra free-form tags e.g. ["plan-mode"] */
   tags: string[];
   collectedAt: string;

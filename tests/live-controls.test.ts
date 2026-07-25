@@ -48,8 +48,29 @@ describe("live mid-run slash policy", () => {
     assert.equal(classifyLiveSlash("/goal status"), "readonly");
     assert.equal(classifyLiveSlash("/sessions"), "readonly");
     assert.equal(classifyLiveSlash("/sessions list"), "readonly");
+    assert.equal(classifyLiveSlash("/diff"), "readonly");
+    assert.equal(classifyLiveSlash("/metrics"), "readonly");
+    assert.equal(classifyLiveSlash("/cost"), "readonly");
+    assert.equal(classifyLiveSlash("/title"), "readonly");
+    assert.equal(classifyLiveSlash("/rename"), "readonly");
     assert.ok(isLiveSafeSlash("/status"));
     assert.ok(isLiveSafeSlash("/sessions"));
+    assert.ok(isLiveSafeSlash("/diff"));
+    assert.ok(isLiveSafeSlash("/metrics"));
+    assert.ok(isLiveSafeSlash("/title"));
+  });
+
+  it("allows title rename mid-run as control", () => {
+    assert.equal(classifyLiveSlash("/title incident-42"), "control");
+    assert.equal(classifyLiveSlash("/rename clear"), "control");
+    assert.ok(isLiveSafeSlash("/title incident-42"));
+  });
+
+  it("allows /bell status and toggle mid-run", () => {
+    assert.equal(classifyLiveSlash("/bell"), "readonly");
+    assert.equal(classifyLiveSlash("/bell on"), "control");
+    assert.equal(classifyLiveSlash("/bell off"), "control");
+    assert.ok(isLiveSafeSlash("/bell test"));
   });
 
   it("allows quit mid-run (abort then exit)", () => {

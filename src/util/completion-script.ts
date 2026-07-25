@@ -1,7 +1,7 @@
 /** Shell completion scripts for expert terminals. */
 export function shellCompletionScript(shell: string): string {
   const cmds =
-    "run login logout auth sessions init models doctor status completion prune-tool-output";
+    "run login logout auth sessions init models doctor status completion prune-tool-output prune-metrics";
   const zshCmds = cmds.split(" ").join(" ");
   if (shell === "zsh") {
     return [
@@ -31,6 +31,8 @@ export function shellCompletionScript(shell: string): string {
       'complete -c forge -l permission-mode -d "Permission mode"',
       'complete -c forge -l ulw -d "Ultrawork"',
       'complete -c forge -l json -d "JSON output"',
+      'complete -c forge -l new -d "Force a new session (skip same-cwd auto-resume)"',
+      'complete -c forge -l session -d "Resume session id/prefix"',
       "",
     ].join("\n");
   }
@@ -41,17 +43,21 @@ export function shellCompletionScript(shell: string): string {
     "_forge_completions() {",
     '  local cur="${COMP_WORDS[COMP_CWORD]}"',
     `  local cmds="${cmds}"`,
+    '  local top_flags="--new --session --model --provider --permission-mode --ulw --goal --cwd --help --version"',
     "  if [[ ${COMP_CWORD} -eq 1 ]]; then",
-    '    COMPREPLY=( $(compgen -W "$cmds" -- "$cur") )',
+    '    COMPREPLY=( $(compgen -W "$cmds $top_flags" -- "$cur") )',
     "    return",
     "  fi",
     '  local prev="${COMP_WORDS[1]}"',
     '  case "$prev" in',
-    '    sessions) COMPREPLY=( $(compgen -W "list delete prune" -- "$cur") ) ;;',
+    '    sessions) COMPREPLY=( $(compgen -W "list show export import fork delete prune" -- "$cur") ) ;;',
     '    doctor|models|status|auth) COMPREPLY=( $(compgen -W "--json" -- "$cur") ) ;;',
-    '    run) COMPREPLY=( $(compgen -W "--json --ulw --permission-mode --model --provider" -- "$cur") ) ;;',
+    '    run) COMPREPLY=( $(compgen -W "--json --ulw --permission-mode --model --provider --goal --session --new" -- "$cur") ) ;;',
     '    login) COMPREPLY=( $(compgen -W "--api-key --oauth --device --from-grok --provider" -- "$cur") ) ;;',
     '    completion) COMPREPLY=( $(compgen -W "bash zsh fish" -- "$cur") ) ;;',
+    '    prune-tool-output|prune-metrics) COMPREPLY=( $(compgen -W "--json --keep" -- "$cur") ) ;;',
+    '    --new|--session|--model|--provider|--permission-mode|--ulw|--goal|--cwd|--help|--version)',
+    '      COMPREPLY=( $(compgen -W "$top_flags" -- "$cur") ) ;;',
     "  esac",
     "}",
     "complete -F _forge_completions forge",

@@ -122,6 +122,28 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   {
     type: "function",
     function: {
+      name: "apply_patch",
+      description:
+        "Apply one multi-file patch (add/update/delete/move). Prefer for coordinated edits across several files. " +
+        "Use OpenAI/OpenCode patch grammar with *** Begin Patch / *** End Patch markers. " +
+        "All hunks are validated before any write; file writes are atomic. " +
+        "For a single small edit, search_replace is fine.",
+      parameters: {
+        type: "object",
+        properties: {
+          patchText: {
+            type: "string",
+            description:
+              "Full patch text: *** Begin Patch … *** Add/Update/Delete File … *** End Patch",
+          },
+        },
+        required: ["patchText"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
       name: "grep",
       description:
         "Search file contents with a regex (uses ripgrep when available). " +

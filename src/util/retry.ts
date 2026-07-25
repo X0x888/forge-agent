@@ -77,6 +77,14 @@ export function isRetryableError(err: unknown): boolean {
   if (/aborted|abort/i.test(msg) && !/timeout/i.test(msg)) return false;
   if (/timed out after \d+ms/i.test(msg)) return true;
   if (/\b(408|429|500|502|503|504)\b/.test(msg)) return true;
+  // Dropped SSE / empty stream — retry with same payload is usually fine
+  if (
+    /stream ended with empty response|stream error:|dropped connection/i.test(
+      msg,
+    )
+  ) {
+    return true;
+  }
   if (
     /rate.?limit|overloaded|temporar|timeout|ECONNRESET|ETIMEDOUT|EAI_AGAIN|fetch failed|socket hang up|network/i.test(
       msg,
