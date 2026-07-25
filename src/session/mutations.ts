@@ -57,6 +57,62 @@ export function mutationsJournalPath(sessionId: string): string {
   return journalPath(sessionId);
 }
 
+export interface MutationsJournalStats {
+  /** Sessions that have a mutations.jsonl file. */
+  sessions: number;
+  /** Total journal files bytes. */
+  bytes: number;
+  /** Best-effort entry count (line count). */
+  entries: number;
+}
+
+/**
+ * Aggregate mutation-journal disk use across sessions (doctor / hygiene).
+ * Best-effort; never throws.
+ */
+export function mutationsJournalStats(limit = 500): MutationsJournalStats {
+  const root = path.join(forgeHome(), "sessions");
+  let sessions = 0;
+  let bytes = 0;
+  let entries = 0;
+  try {
+    const dirs = fs.readdirSync(root).slice(0, Math.max(1, limit));
+    for (const id of dirs) {
+      const file = path.join(root, id, "mutations.jsonl");
+      try {
+        const st = fs.statSync(file);
+        if (!st.isFile()) continue;
+        sessions += 1;
+        bytes += st.size;
+        // Cheap entry estimate: count newlines without loading huge bodies fully
+        if (st.size <= 256 * 1024) {
+          const raw = fs.readFileSync(file, "utf8");
+          entries += raw.split(/\n/).filter((l) => l.trim()).length;
+        } else {
+          // Sample last 64 KiB for a lower-bound line count + note via size
+          const fd = fs.openSync(file, "r");
+          try {
+            const n = Math.min(st.size, 64 * 1024);
+            const buf = Buffer.alloc(n);
+            fs.readSync(fd, buf, 0, n, st.size - n);
+            const text = buf.toString("utf8");
+            const lines = text.split(/\n/).filter((l) => l.trim()).length;
+            // Rough scale-up from sample (best-effort)
+            entries += Math.max(lines, Math.floor((st.size / n) * lines * 0.5));
+          } finally {
+            fs.closeSync(fd);
+          }
+        }
+      } catch {
+        /* missing */
+      }
+    }
+  } catch {
+    /* no sessions dir */
+  }
+  return { sessions, bytes, entries };
+}
+
 /** Append one mutation (best-effort; never throws into the agent loop). */
 export function appendFileMutation(
   sessionId: string,

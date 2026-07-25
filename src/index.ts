@@ -196,6 +196,20 @@ export {
   formatSandboxLogTail,
 } from "./agent/sandbox-log.js";
 export {
+  appendFileMutation,
+  readFileMutations,
+  mutationsJournalStats,
+  mutationsJournalPath,
+  restoreMutationsAfterTurn,
+  formatRestoreResult,
+  MAX_MUTATION_BYTES,
+} from "./session/mutations.js";
+export type {
+  FileMutation,
+  MutationsJournalStats,
+  RestoreMutationsResult,
+} from "./session/mutations.js";
+export {
   parseToolArguments,
   closeIncompleteJson,
 } from "./util/json-repair.js";

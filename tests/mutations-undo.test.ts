@@ -18,6 +18,7 @@ import {
   readFileMutations,
   restoreMutationsAfterTurn,
   formatRestoreResult,
+  mutationsJournalStats,
 } from "../src/session/mutations.js";
 import { executeTool } from "../src/agent/tools/index.js";
 import {
@@ -241,6 +242,23 @@ describe("file mutation journal + undo", () => {
     assert.match(text, /Disk restored/);
     assert.match(text, /Skipped/);
     assert.match(text, /too large/);
+  });
+
+  it("mutationsJournalStats counts sessions with journals", () => {
+    const s = createSession({
+      cwd: workspace,
+      provider: "xai",
+      model: "grok-4",
+    });
+    appendFileMutation(s.meta.id, {
+      path: path.join(workspace, "z"),
+      kind: "create",
+      turn: 1,
+    });
+    const st = mutationsJournalStats();
+    assert.ok(st.sessions >= 1);
+    assert.ok(st.bytes > 0);
+    assert.ok(st.entries >= 1);
   });
 });
 

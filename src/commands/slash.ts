@@ -37,7 +37,10 @@ import {
   loadSession,
   estimateTokens,
 } from "../session/session.js";
-import { formatRestoreResult } from "../session/mutations.js";
+import {
+  formatRestoreResult,
+  mutationsJournalStats,
+} from "../session/mutations.js";
 // readSessionLock already imported below for /sessions list
 import type { HookRunner } from "../harness/hooks.js";
 import type { ForgeConfig } from "../config/types.js";
@@ -2351,6 +2354,18 @@ export function runDoctorCheck(config: ForgeConfig): DoctorResult {
       );
     } else {
       lines.push(`  metrics: empty`);
+    }
+  } catch {
+    /* optional */
+  }
+  try {
+    const mj = mutationsJournalStats();
+    if (mj.sessions > 0) {
+      const kb = (mj.bytes / 1024).toFixed(1);
+      lines.push(
+        `  undo-journal: ${mj.sessions} session(s) · ~${mj.entries} entries · ${kb} KB` +
+          chalk.dim("  (mutations.jsonl · /undo restores disk)"),
+      );
     }
   } catch {
     /* optional */

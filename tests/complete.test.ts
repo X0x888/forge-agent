@@ -36,12 +36,28 @@ describe("tab completion", () => {
   it("completes new expert slash commands", () => {
     const [forkHits] = forgeCompleter("/for");
     assert.ok(forkHits.some((h) => h.startsWith("/fork")));
+    assert.ok(forkHits.some((h) => h.startsWith("/fork-and-compact")));
     const [diffHits] = forgeCompleter("/di");
     assert.ok(diffHits.some((h) => h.startsWith("/diff")));
     const [metHits] = forgeCompleter("/met");
     assert.ok(metHits.some((h) => h.startsWith("/metrics")));
     const [expHits] = forgeCompleter("/export ");
     assert.ok(expHits.some((h) => h.includes("--json")));
+    const [initHits] = forgeCompleter("/in");
+    assert.ok(initHits.some((h) => h.startsWith("/init")));
+    const [revHits] = forgeCompleter("/rev");
+    assert.ok(revHits.some((h) => h.startsWith("/review")));
+    const [logHits] = forgeCompleter("/lo");
+    assert.ok(logHits.some((h) => h.startsWith("/logs")));
+    const [undHits] = forgeCompleter("/un");
+    assert.ok(undHits.some((h) => h.startsWith("/undo") || h.startsWith("/unpause") || h.startsWith("/unpin")));
+    const [compHits] = forgeCompleter("/compact");
+    assert.ok(compHits.some((h) => h === "/compact" || h.startsWith("/compact")));
+    assert.ok(compHits.some((h) => h.startsWith("/compact-and")));
+    const [revParams] = forgeCompleter("/review ");
+    assert.ok(revParams.some((h) => h.includes("uncommitted") || h.includes("staged")));
+    const [logParams] = forgeCompleter("/logs ");
+    assert.ok(logParams.some((h) => h.includes("path") || h.includes("20")));
   });
 });
 
