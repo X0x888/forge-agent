@@ -27,9 +27,12 @@ Email or private channel preferred when available; otherwise open a minimal publ
 - OS sandbox profiles (`workspace` / `read-only` / `strict`) with fail-closed missing backend
 - Atomic file writes (tmp+rename) for `write_file` / `search_replace` / `apply_patch`
 - Session file lock (`session.lock`) on REPL + `forge run`; auto-resume skips foreign live locks
-- SSRF guards on `web_fetch`
+- Session export files mode `0600` (`forge sessions export --out`, `/export path`)
+- File mutation journal (`mutations.jsonl` mode `0600`) enables `/undo` disk restore without logging secrets
+- SSRF guards on `web_fetch` (stream body caps)
 - Shell env scrubbing for secret-looking variables
 - Project config cannot force `bypassPermissions`, turn sandbox off, or redirect credential paths
 - JSON config loaders clone object fallbacks (no shared mutable empty stores)
+- `/config` and `/logs` are live-safe and never dump API keys
 
 See [docs/SAFETY.md](./docs/SAFETY.md) and [docs/PRODUCTION.md](./docs/PRODUCTION.md).

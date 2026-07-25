@@ -37,7 +37,7 @@ forge logs                   # tail sandbox/safety events (incident triage)
 forge logs -n 50 --json      # machine-readable safety log
 forge run "next" --continue --json   # headless same-cwd resume (no session id)
 # REPL: /share · /files · /pin · /stats · /tips · /news · /retry [prompt] · /last [n]
-# REPL: /undo [n] · /init · /review · /compact-and · /fork-and-compact · /logs [n|path]
+# REPL: /undo [n] · /init · /review · /compact-and · /fork-and-compact · /logs [n|path] · /config [json]
 # Resume (bare forge / /resume) peeks last turn + mutated files
 # Optional: FORGE_BASH_TIMEOUT_MS=600000 for long test suites
 ```
