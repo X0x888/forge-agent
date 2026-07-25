@@ -368,6 +368,7 @@ describe("/init and /compact-and slash commands", () => {
     assert.match(r.output || "", /Effective config/);
     assert.match(r.output || "", /acceptEdits/);
     assert.match(r.output || "", /workspace/);
+    assert.match(r.output || "", /FORGE_HOME/);
     assert.doesNotMatch(r.output || "", /api[_-]?key|sk-|xai-/i);
     const j = await handleSlash("/config json", {
       session: s,
@@ -377,6 +378,8 @@ describe("/init and /compact-and slash commands", () => {
     const parsed = JSON.parse(j.output || "{}");
     assert.equal(parsed.provider, "xai");
     assert.equal(typeof parsed.env.FORGE_BASH_TIMEOUT_MS, "number");
+    assert.equal(typeof parsed.env.FORGE_HOME, "string");
+    assert.ok(parsed.env.FORGE_HOME.length > 0);
     assert.ok(!("apiKey" in parsed));
   });
 

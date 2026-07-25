@@ -58,6 +58,10 @@ describe("tab completion", () => {
     assert.ok(revParams.some((h) => h.includes("uncommitted") || h.includes("staged")));
     const [logParams] = forgeCompleter("/logs ");
     assert.ok(logParams.some((h) => h.includes("path") || h.includes("20")));
+    const [cfgHits] = forgeCompleter("/con");
+    assert.ok(cfgHits.some((h) => h.startsWith("/config")));
+    const [cfgParams] = forgeCompleter("/config ");
+    assert.ok(cfgParams.some((h) => h.includes("json")));
   });
 });
 

@@ -1392,6 +1392,9 @@ export async function handleSlash(
           edits: opts.session.meta.editCount,
         },
         env: {
+          FORGE_HOME:
+            process.env.FORGE_HOME ||
+            path.join(process.env.HOME || "", ".forge"),
           FORGE_BASH_TIMEOUT_MS: defaultBashTimeoutMs(),
           FORGE_BASH_BG_TIMEOUT_MS: defaultBashBackgroundTimeoutMs(),
           FORGE_PROVIDER_TIMEOUT_MS: providerTimeoutMs(),
@@ -1427,6 +1430,7 @@ export async function handleSlash(
             : ""),
         `  rules:           deny=${snap.rules.deny} allow=${snap.rules.allow} ask=${snap.rules.ask}`,
         `  workspace:       ${snap.workspace}`,
+        `  FORGE_HOME:      ${snap.env.FORGE_HOME}`,
         snap.baseUrl ? `  api base:        ${snap.baseUrl}` : null,
         `  session:         ${snap.session.id.slice(0, 8)}` +
           (snap.session.title ? `  “${snap.session.title}”` : "") +
