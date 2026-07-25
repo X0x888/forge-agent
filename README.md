@@ -2,7 +2,7 @@
 
 **Forge** is an open-source AI coding agent CLI with a **first-class harness** — the control plane that other tools partially implement.
 
-> **v0.9.3** — **Production reliability**: Retry-After, abortable + **stream-capped** web tools, empty-SSE retry, JSON repair, orphan tool heal, doom-loop + **error-streak** (abort ≠ streak), **apply_patch**, atomic writes, overflow→compact, OAuth refresh, session lock (**headless fail-closed**, `FORGE_FORCE_SESSION_LOCK=1`) + **same-cwd auto-resume**, fork/export/import (export `0600`), **`listSessions({cwd,query})`** / `sessions list --cwd`/`-q`, **`--title`** / `/new [title]`, **lock-safe prune/delete** (`--force`), shell-safe **`/diff`**, grep/glob external_directory, **`forge run --session`** (empty-prompt guard, exit 0/1/124/130), **metrics.jsonl**, bg-task teardown, `/title` `/bell` `/copy`, structured **`forge doctor --json`**, `completion` / `npm run smoke`. Builds on v0.8 Bar A safety + harness (blocking Stop, `/goal`, ULW).
+> **v0.9.3** — **Production reliability** + expert delight: Retry-After, abortable/stream-capped tools, JSON repair, orphan tool heal, doom-loop + error-streak, **apply_patch**, session lock + auto-resume, **`listSessions({cwd,query})`**, **`--title`** / `/new [title]`, resume-by-title, **`/files`**, **`/pin`**, **`forge stats`** / `/stats`, **`/share`** handoff card, **`/retry`** / `/again`, **`/last [n]`**, **`forge news`** / `/news`, **`forge run --continue`**, **`forge tips`**, first-run welcome tip, lock-safe prune/delete, shell-safe `/diff`, **`forge run --session`**, metrics.jsonl, structured **`doctor --json`**, `completion` / `npm run smoke`. Builds on v0.8 Bar A safety + harness (blocking Stop, `/goal`, ULW).
 
 Key capability comparison:
 
@@ -70,10 +70,12 @@ forge run "add a healthcheck endpoint and tests" \
   --ulw --permission-mode acceptEdits --sandbox workspace --json
 # Multi-step CI: resume the same session (exit 0/1/124/130 — see forge run --help)
 forge run "continue from last failure" --session <id> --json
+forge run "next step" --continue --json            # newest same-cwd session (no id copy)
 forge run "ship it" --title ci-pipeline-42 --json   # label + searchable via sessions list -q
+# Resume by title too: forge --session ci-pipeline-42  ·  /resume ci-pipeline-42
 ```
 
-Bare interactive `forge` continues your latest workspace session (OpenCode-style). Use `forge --new`, `/new`, or `FORGE_NO_AUTO_RESUME=1` for a clean slate. Headless `forge run` still starts fresh unless you pass `--session`.
+Bare interactive `forge` continues your latest workspace session (OpenCode-style). Use `forge --new`, `/new`, or `FORGE_NO_AUTO_RESUME=1` for a clean slate. Headless `forge run` starts fresh unless you pass `--session <id|title>` or `--continue` (newest same-cwd).
 
 ---
 
@@ -236,12 +238,24 @@ Full contract: [docs/RELIABILITY.md](docs/RELIABILITY.md) · expert checklist: [
 | `/context` | Context window bar |
 | `/cost` | Token usage + rough $ |
 | `/metrics` | Local metrics.jsonl + session counters |
+| `/stats [days]` | Usage dashboard (runs/tokens/cost/projects) · CLI: `forge stats` |
+| `/share` | Pasteable session card + resume/export commands (clipboard) |
+| `/tips` | Expert cheat sheet · CLI: `forge tips` |
 | `/todos` | Agent todos |
 | `/model <id> [effort]` | Switch model; optional `low`\|`medium`\|`high` (persists) |
 | `/effort [level]` | Reasoning effort for models that support it (e.g. grok-4.5) |
 | `/permissions <mode>` | `default` \| `acceptEdits` \| `plan` \| `bypassPermissions` (persists); `list`/`clear`/`revoke` for saved always-allows |
 | `/compact` | Compact history |
 | `/rewind [n]` | Undo last n turns |
+| `/retry [prompt]` | Rewind last turn + re-run (`/again`; optional rewrite) |
+| `/files [writes\|n]` | Paths touched by tools this session (newest first; live-safe) |
+| `/path [id\|json]` | On-disk session directory / `session.json` (live-safe; CLI: `sessions path`) |
+| `/pin` / `/unpin` | Protect session from prune (lists show `PIN`; live-safe) |
+| `/done [note]` | Shorthand for `/goal done` (live-safe mid-run) |
+| `/pause` | Shorthand for `/goal pause` (live-safe mid-run) |
+| `/unpause` | Shorthand for `/goal resume` (live-safe; not session `/resume`) |
+| `/last [n]` | Peek last n user/assistant turns (live-safe; great after resume) |
+| `/news [n]` | What's new from CHANGELOG (`/changelog` · CLI: `forge news`) |
 | `/export [path] [--json]` | Export session markdown or JSON |
 | `/fork [title]` | Branch session into a new id |
 | `/title [name\|clear]` | Show / set / clear session title (`/rename`) |
@@ -249,9 +263,9 @@ Full contract: [docs/RELIABILITY.md](docs/RELIABILITY.md) · expert checklist: [
 | `/diff [path]` | Git status + diff (live-safe; argv + filter allowlist — no shell injection) |
 | `/copy` | Clipboard last reply (pbcopy/wl-copy/xclip/…; live-safe) |
 | `/new` / `/clear` | Fresh or wipe conversation |
-| `/resume [id]` | Resume by id/prefix |
+| `/resume [id\|title]` | Resume by id prefix or unique `/title` (lists show relative ages + last prompt) |
 | `/new [title]` | Fresh session with optional searchable label (`forge --title` / `forge run --title`) |
-| `/sessions` | List (same-cwd) · `all` · `search <q>` · `delete [--force]` · `prune` (CLI: `list --cwd`/`-q`, `show`/`export`/`import`/`fork`) |
+| `/sessions` | List (same-cwd) · `all` · `pinned` · `search <q>` · `delete [--force]` · `prune` (CLI: `list --cwd`/`-q`/`--pinned`, `show`/`export`/`import`/`fork`/`pin`) |
 | `/doctor` | Env health check |
 | `/quit` | Exit |
 
@@ -274,7 +288,7 @@ forge status --tmux       # for tmux status-right
 
 Works for **any** auth method: always shows session context/tokens/git/liveness/activity; plan credits only when the provider exposes them (e.g. SuperGrok via imported Grok session). See [docs/STATUSLINE.md](docs/STATUSLINE.md).
 
-Tab completes slash commands. While the agent is working you can still run **live controls** (`/cycle 0`, `/cycle 1`, `/ulw-off`, `/goal pause`, `/status`, …) without aborting — harness state updates apply at the next model step. **Free-text** mid-run is queued as an interjection (Grok-style) for the next LLM call. **Ctrl+C** aborts the current agent turn (again at idle prompt to exit).
+Tab completes slash commands. While the agent is working you can still run **live controls** (`/cycle 0`, `/cycle 1`, `/ulw-off`, `/pause`, `/unpause`, `/done`, `/status`, …) without aborting — harness state updates apply at the next model step. **Free-text** mid-run is queued as an interjection (Grok-style) for the next LLM call. **Ctrl+C** aborts the current agent turn (again at idle prompt to exit).
 
 ---
 

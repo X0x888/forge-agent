@@ -8,6 +8,7 @@ import {
   writeJsonFile,
   nowIso,
 } from "../util/fs.js";
+import { formatRelativeTime } from "../util/format.js";
 import type { ChatMessage } from "../providers/types.js";
 import { heartbeatSession } from "../statusline/active.js";
 import {
@@ -31,6 +32,16 @@ export interface SessionMeta {
   provider: string;
   model: string;
   title?: string;
+  /**
+   * Compact last non-empty user prompt (for list/picker orientation).
+   * Updated on save; never secrets-bearing by design (user text only, clipped).
+   */
+  lastUserPreview?: string;
+  /**
+   * When true, `pruneSessions` never deletes this session (experts keep
+   * long-running incident / design threads across hygiene passes).
+   */
+  pinned?: boolean;
   ultrawork: boolean;
   turnCount: number;
   editCount: number;
@@ -54,6 +65,19 @@ export interface SessionData {
 
 export function sessionDir(id: string): string {
   return path.join(forgeHome(), "sessions", id);
+}
+
+/** Absolute path to a session directory (resolves id/prefix/title when possible). */
+export function resolveSessionDir(idOrPrefix: string): string | null {
+  const full = resolveSessionId(idOrPrefix);
+  if (!full) return null;
+  return sessionDir(full);
+}
+
+/** Absolute path to session.json for a resolved session. */
+export function resolveSessionJsonPath(idOrPrefix: string): string | null {
+  const dir = resolveSessionDir(idOrPrefix);
+  return dir ? path.join(dir, "session.json") : null;
 }
 
 export function createSession(opts: {
@@ -92,6 +116,14 @@ export function createSession(opts: {
 
 export function saveSession(data: SessionData): void {
   data.meta.updatedAt = nowIso();
+  // Keep list/picker preview fresh without loading full histories later.
+  try {
+    const preview = lastUserText(data).replace(/\s+/g, " ").trim().slice(0, 80);
+    if (preview) data.meta.lastUserPreview = preview;
+    else delete data.meta.lastUserPreview;
+  } catch {
+    /* never block save */
+  }
   const dir = sessionDir(data.meta.id);
   ensureDir(dir);
   writeJsonFile(path.join(dir, "session.json"), data);
@@ -113,39 +145,61 @@ export function saveSession(data: SessionData): void {
   }
 }
 
+/** Normalize meta sidecar fields so list/doctor never crash on partial JSON. */
+function normalizeSessionMeta(fromSide: SessionMeta): SessionMeta {
+  const out: SessionMeta = {
+    ...fromSide,
+    id: fromSide.id,
+    cwd: String(fromSide.cwd || ""),
+    provider: String(fromSide.provider || "unknown"),
+    model: String(fromSide.model || "unknown"),
+    createdAt: String(fromSide.createdAt || ""),
+    updatedAt: String(fromSide.updatedAt || fromSide.createdAt || ""),
+    ultrawork: Boolean(fromSide.ultrawork),
+    turnCount: Number(fromSide.turnCount) || 0,
+    editCount: Number(fromSide.editCount) || 0,
+    totalPromptTokens: Number(fromSide.totalPromptTokens) || 0,
+    totalCompletionTokens: Number(fromSide.totalCompletionTokens) || 0,
+  };
+  if (fromSide.pinned) out.pinned = true;
+  else delete out.pinned;
+  return out;
+}
+
+/**
+ * Read meta for a known full session directory id (no resolve/title lookup).
+ * Used by resolveSessionId title scan to avoid recursion.
+ */
+function readSessionMetaExact(fullId: string): SessionMeta | null {
+  try {
+    const metaPath = path.join(sessionDir(fullId), "meta.json");
+    const fromSide = readJsonFile<SessionMeta | null>(metaPath, null);
+    if (fromSide?.id && typeof fromSide.id === "string") {
+      return normalizeSessionMeta(fromSide);
+    }
+    // Fallback: session.json only (legacy / missing sidecar)
+    const primary = path.join(sessionDir(fullId), "session.json");
+    const data = readJsonFile<SessionData | null>(primary, null);
+    if (data?.meta?.id) {
+      try {
+        writeJsonFile(metaPath, data.meta);
+      } catch {
+        /* non-fatal */
+      }
+      return normalizeSessionMeta(data.meta);
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 /** Load meta only (prefers meta.json sidecar; falls back to full session). */
 export function loadSessionMeta(idOrPrefix: string): SessionMeta | null {
   try {
     const full = resolveSessionId(idOrPrefix);
     if (!full) return null;
-    const metaPath = path.join(sessionDir(full), "meta.json");
-    const fromSide = readJsonFile<SessionMeta | null>(metaPath, null);
-    if (fromSide?.id && typeof fromSide.id === "string") {
-      // Soft-normalize required string fields so list/doctor never crash
-      return {
-        ...fromSide,
-        id: fromSide.id,
-        cwd: String(fromSide.cwd || ""),
-        provider: String(fromSide.provider || "unknown"),
-        model: String(fromSide.model || "unknown"),
-        createdAt: String(fromSide.createdAt || ""),
-        updatedAt: String(fromSide.updatedAt || fromSide.createdAt || ""),
-        ultrawork: Boolean(fromSide.ultrawork),
-        turnCount: Number(fromSide.turnCount) || 0,
-        editCount: Number(fromSide.editCount) || 0,
-        totalPromptTokens: Number(fromSide.totalPromptTokens) || 0,
-        totalCompletionTokens: Number(fromSide.totalCompletionTokens) || 0,
-      };
-    }
-    const s = loadSession(full);
-    if (!s?.meta) return null;
-    // Backfill sidecar so subsequent list/prune stay cheap (legacy sessions)
-    try {
-      writeJsonFile(metaPath, s.meta);
-    } catch {
-      /* non-fatal */
-    }
-    return s.meta;
+    return readSessionMetaExact(full);
   } catch {
     // Corrupt session dir must never break list/doctor
     return null;
@@ -239,9 +293,12 @@ export function forkSession(
 ): SessionData {
   const id = randomUUID();
   const now = nowIso();
+  const meta = structuredClone(source.meta);
+  // Forks are experiments — never inherit pin (source stays protected).
+  delete meta.pinned;
   const data: SessionData = {
     meta: {
-      ...structuredClone(source.meta),
+      ...meta,
       id,
       createdAt: now,
       updatedAt: now,
@@ -313,6 +370,10 @@ export function importSessionJson(
   const now = nowIso();
   const id = randomUUID();
   const src = obj.meta || {};
+  const lastPrev =
+    typeof src.lastUserPreview === "string"
+      ? src.lastUserPreview.replace(/\s+/g, " ").trim().slice(0, 80)
+      : "";
   const data: SessionData = {
     meta: {
       id,
@@ -324,11 +385,13 @@ export function importSessionJson(
       title:
         opts?.title ||
         (src.title ? `import of ${src.title}`.slice(0, 72) : `import ${id.slice(0, 8)}`),
+      // Imports are new ids — never inherit pin (re-pin explicitly if needed).
       ultrawork: Boolean(src.ultrawork),
       turnCount: Number(src.turnCount) || 0,
       editCount: Number(src.editCount) || 0,
       totalPromptTokens: Number(src.totalPromptTokens) || 0,
       totalCompletionTokens: Number(src.totalCompletionTokens) || 0,
+      ...(lastPrev ? { lastUserPreview: lastPrev } : {}),
       userTurnMarks: Array.isArray(src.userTurnMarks)
         ? src.userTurnMarks
             .map((n) => Number(n))
@@ -341,6 +404,7 @@ export function importSessionJson(
     messages: healed.messages,
     todos,
   };
+  // If export lacked lastUserPreview, derive from messages on first save.
   saveSession(data);
   return data;
 }
@@ -466,10 +530,11 @@ export function formatSessionSummary(session: SessionData): string {
   const openTodos = (session.todos || []).filter(
     (t) => t.status === "pending" || t.status === "in_progress",
   ).length;
+  const age = formatRelativeTime(m.updatedAt);
   const lines = [
     `Session ${m.id}`,
     `  title:    ${m.title || "(untitled)"}`,
-    `  updated:  ${m.updatedAt}`,
+    `  updated:  ${m.updatedAt}${age && age !== "—" ? `  (${age})` : ""}`,
     `  created:  ${m.createdAt}`,
     `  cwd:      ${m.cwd}`,
     `  model:    ${m.provider}/${m.model}`,
@@ -477,7 +542,37 @@ export function formatSessionSummary(session: SessionData): string {
     `  tokens:   in=${m.totalPromptTokens} out=${m.totalCompletionTokens}`,
     `  todos:    ${session.todos?.length || 0} (${openTodos} open)`,
     `  ultrawork:${m.ultrawork ? " yes" : " no"}`,
-  ];
+    `  pinned:   ${m.pinned ? "yes (/unpin to allow prune)" : "no (/pin to keep)"}`,
+    `  path:     ${sessionDir(m.id)}`,
+    m.lastUserPreview
+      ? `  last you: ${m.lastUserPreview}`
+      : null,
+  ].filter((x): x is string => x != null);
+  // Orient experts inspecting a session from the CLI without a full export.
+  try {
+    const touched = listSessionTouchedFiles(session, {
+      limit: 8,
+      mutatedOnly: true,
+    });
+    if (touched.length) {
+      const bits = touched
+        .slice(0, 6)
+        .map((t) => t.path)
+        .join(", ");
+      const more = touched.length > 6 ? ` +${touched.length - 6}` : "";
+      lines.push(`  files:    ${bits}${more}  (/files writes)`);
+    }
+  } catch {
+    /* never break show on files */
+  }
+  try {
+    const peek = formatResumePeek(session, { maxChars: 180 });
+    if (peek) {
+      lines.push(``, peek, `  tip:     forge --session ${m.id.slice(0, 8)}  ·  /last 3  ·  /files  ·  /retry`);
+    }
+  } catch {
+    /* never break show on peek */
+  }
   return lines.join("\n");
 }
 
@@ -494,25 +589,128 @@ function sessionDirLooksValid(dir: string): boolean {
   }
 }
 
-/** Resolve full session id from prefix (min 4 chars). */
+/**
+ * Resolve full session id from:
+ * 1. exact directory id
+ * 2. unique id prefix (min 4 chars)
+ * 3. unique exact title (case-insensitive)
+ * 4. unique title / lastUserPreview substring (min 2 chars)
+ *
+ * Ambiguous matches return null (callers can listSessions({ query }) for hints).
+ */
 export function resolveSessionId(prefixOrId: string): string | null {
   const root = path.join(forgeHome(), "sessions");
   ensureDir(root);
-  if (sessionDirLooksValid(path.join(root, prefixOrId))) {
-    return prefixOrId;
+  const raw = (prefixOrId || "").trim();
+  if (!raw) return null;
+  if (sessionDirLooksValid(path.join(root, raw))) {
+    return raw;
   }
-  if (prefixOrId.length < 4) return null;
+  // Unique id prefix (min 4 chars) — UUID fragments stay first-class.
+  if (raw.length >= 4) {
+    try {
+      const matches = fs
+        .readdirSync(root)
+        .filter(
+          (id) => id.startsWith(raw) && sessionDirLooksValid(path.join(root, id)),
+        );
+      if (matches.length === 1) return matches[0];
+      if (matches.length > 1) return null;
+    } catch {
+      /* */
+    }
+  }
+  // Experts remember /title labels and last prompts — not UUID prefixes.
+  const q = raw.toLowerCase();
+  if (q.length < 2) return null;
   try {
-    const matches = fs
-      .readdirSync(root)
-      .filter(
-        (id) => id.startsWith(prefixOrId) && sessionDirLooksValid(path.join(root, id)),
-      );
-    if (matches.length === 1) return matches[0];
+    // Scan sidecars directly (avoid listSessions limit defaults).
+    const ids = fs.readdirSync(root).filter((id) => {
+      try {
+        return fs.statSync(path.join(root, id)).isDirectory();
+      } catch {
+        return false;
+      }
+    });
+    const metas: SessionMeta[] = [];
+    for (const id of ids) {
+      try {
+        // Exact-id read — never call loadSessionMeta (would re-enter resolve).
+        const meta = readSessionMetaExact(id);
+        if (meta) metas.push(meta);
+      } catch {
+        /* skip */
+      }
+    }
+    metas.sort((a, b) => {
+      const au = a.updatedAt || "";
+      const bu = b.updatedAt || "";
+      return bu.localeCompare(au);
+    });
+    const exactTitle = metas.filter(
+      (m) => (m.title || "").trim().toLowerCase() === q,
+    );
+    if (exactTitle.length === 1) return exactTitle[0].id;
+    if (exactTitle.length > 1) return null;
+    const soft = metas.filter((m) => {
+      const title = (m.title || "").toLowerCase();
+      const prev = (m.lastUserPreview || "").toLowerCase();
+      return title.includes(q) || prev.includes(q);
+    });
+    if (soft.length === 1) return soft[0].id;
   } catch {
     /* */
   }
   return null;
+}
+
+/** Suggest sessions when resolveSessionId fails (ambiguous / not found). */
+export function suggestSessions(
+  query: string,
+  opts: { limit?: number; cwd?: string } = {},
+): SessionMeta[] {
+  const q = (query || "").trim();
+  if (!q) return [];
+  const limit =
+    typeof opts.limit === "number" && opts.limit > 0 ? Math.floor(opts.limit) : 5;
+  return listSessions({
+    query: q,
+    limit,
+    ...(opts.cwd ? { cwd: opts.cwd } : {}),
+  });
+}
+
+/** Human error when id/title lookup fails — includes close matches when any. */
+export function formatSessionLookupMiss(
+  query: string,
+  opts: { cwd?: string; limit?: number } = {},
+): string {
+  const q = (query || "").trim() || "(empty)";
+  const hits = suggestSessions(q, {
+    limit: opts.limit ?? 5,
+    ...(opts.cwd ? { cwd: opts.cwd } : {}),
+  });
+  if (!hits.length) {
+    return (
+      `Session not found: ${q}\n` +
+      `Try: id prefix (≥4 chars) · exact /title · unique title substring · /sessions search ${q}`
+    );
+  }
+  const lines = hits.map((s) => {
+    const title = (s.title || "(untitled)").slice(0, 36);
+    const prev = s.lastUserPreview
+      ? `  “${s.lastUserPreview.slice(0, 28)}${s.lastUserPreview.length > 28 ? "…" : ""}”`
+      : "";
+    return `  ${s.id.slice(0, 8)}  ${title}${prev}`;
+  });
+  const multi = hits.length > 1;
+  return (
+    (multi
+      ? `Ambiguous session “${q}” — ${hits.length} matches:\n`
+      : `Session not found: ${q}\nDid you mean:\n`) +
+    lines.join("\n") +
+    `\nUse a longer id prefix or unique /title.`
+  );
 }
 
 export interface ListSessionsOpts {
@@ -525,6 +723,8 @@ export interface ListSessionsOpts {
    * Useful for multi-project experts locating labeled sessions.
    */
   query?: string;
+  /** When true, only pinned sessions. When false, only unpinned. */
+  pinned?: boolean;
 }
 
 /**
@@ -550,6 +750,8 @@ export function listSessions(
     }
   }
   const query = (opts.query || "").trim().toLowerCase();
+  const pinnedFilter =
+    typeof opts.pinned === "boolean" ? opts.pinned : undefined;
 
   const root = path.join(forgeHome(), "sessions");
   ensureDir(root);
@@ -580,8 +782,11 @@ export function listSessions(
           continue;
         }
       }
+      if (pinnedFilter === true && !meta.pinned) continue;
+      if (pinnedFilter === false && meta.pinned) continue;
       if (query) {
-        const hay = `${meta.id} ${meta.title || ""}`.toLowerCase();
+        const hay =
+          `${meta.id} ${meta.title || ""} ${meta.lastUserPreview || ""}`.toLowerCase();
         if (!hay.includes(query)) continue;
       }
       metas.push(meta);
@@ -718,6 +923,8 @@ export interface PruneSessionsResult {
   scanned: number;
   /** Sessions skipped because another live process holds session.lock */
   skippedLocked: number;
+  /** Sessions skipped because meta.pinned (expert keep forever) */
+  skippedPinned: number;
 }
 
 /**
@@ -746,8 +953,13 @@ export function pruneSessions(opts?: {
   const deleted: string[] = [];
   let skippedLocked = 0;
   // Newest first from listSessions
+  let skippedPinned = 0;
   all.forEach((meta, index) => {
     if (protect.has(meta.id)) return;
+    if (meta.pinned) {
+      skippedPinned += 1;
+      return;
+    }
     const ts = Date.parse(meta.updatedAt || "");
     const tooOld =
       cutoff != null && Number.isFinite(ts) && ts < cutoff;
@@ -766,6 +978,7 @@ export function pruneSessions(opts?: {
     kept: all.length - deleted.length,
     scanned: all.length,
     skippedLocked,
+    skippedPinned,
   };
 }
 
@@ -847,6 +1060,19 @@ export function setSessionTitle(
   session.meta.title = t;
   saveSession(session);
   return t;
+}
+
+/** Pin/unpin a session so prune never deletes it. Returns new pinned state. */
+export function setSessionPinned(session: SessionData, pinned: boolean): boolean {
+  if (pinned) session.meta.pinned = true;
+  else delete session.meta.pinned;
+  saveSession(session);
+  return Boolean(session.meta.pinned);
+}
+
+export function isSessionPinned(sessionOrMeta: SessionData | SessionMeta): boolean {
+  const m = "meta" in sessionOrMeta ? sessionOrMeta.meta : sessionOrMeta;
+  return Boolean(m.pinned);
 }
 
 /** Record index of a new user turn for rewind support. */
@@ -935,6 +1161,437 @@ export function lastAssistantText(session: SessionData): string {
   return "";
 }
 
+export type TouchedFileOp = "read" | "write" | "edit" | "delete" | "patch" | "other";
+
+export interface TouchedFile {
+  path: string;
+  /** Last mutating/read op seen for this path (newest wins). */
+  op: TouchedFileOp;
+  /** Tools that referenced the path (newest last, unique). */
+  tools: string[];
+  /** True if any write/edit/delete/patch touched it. */
+  mutated: boolean;
+}
+
+const PATH_ARG_KEYS = [
+  "path",
+  "file",
+  "filepath",
+  "file_path",
+  "filename",
+  "target",
+  "dest",
+  "destination",
+  "to",
+  "from",
+  "old_path",
+  "new_path",
+  "src",
+  "source",
+] as const;
+
+function classifyToolOp(tool: string): TouchedFileOp {
+  const t = tool.toLowerCase();
+  if (t === "read_file" || t === "read") return "read";
+  if (t === "write_file" || t === "write") return "write";
+  if (t === "search_replace" || t === "edit" || t === "str_replace") return "edit";
+  if (t === "apply_patch" || t === "applypatch") return "patch";
+  if (t.includes("delete") || t === "rm") return "delete";
+  return "other";
+}
+
+function opMutates(op: TouchedFileOp): boolean {
+  return op === "write" || op === "edit" || op === "delete" || op === "patch";
+}
+
+function pushTouchedPath(
+  map: Map<string, TouchedFile>,
+  order: string[],
+  rawPath: string,
+  tool: string,
+): void {
+  const p = String(rawPath || "").trim();
+  if (!p || p.length > 512) return;
+  // Skip obvious non-paths / URLs
+  if (/^https?:\/\//i.test(p)) return;
+  if (p.includes("\0")) return;
+  const op = classifyToolOp(tool);
+  const prev = map.get(p);
+  if (!prev) {
+    map.set(p, {
+      path: p,
+      op,
+      tools: [tool],
+      mutated: opMutates(op),
+    });
+    order.push(p);
+    return;
+  }
+  prev.op = op;
+  prev.mutated = prev.mutated || opMutates(op);
+  if (!prev.tools.includes(tool)) prev.tools.push(tool);
+}
+
+function collectPathsFromArgs(
+  map: Map<string, TouchedFile>,
+  order: string[],
+  tool: string,
+  args: Record<string, unknown>,
+): void {
+  for (const k of PATH_ARG_KEYS) {
+    const v = args[k];
+    if (typeof v === "string" && v.trim()) {
+      pushTouchedPath(map, order, v, tool);
+    }
+  }
+  // apply_patch: extract paths from patch grammar without full apply
+  const patch =
+    typeof args.patchText === "string"
+      ? args.patchText
+      : typeof args.patch === "string"
+        ? args.patch
+        : "";
+  if (patch && (tool === "apply_patch" || /Begin Patch/i.test(patch))) {
+    for (const line of patch.split(/\r?\n/)) {
+      const m = line.match(
+        /^\*\*\*\s+(?:Add|Update|Delete|Move)\s+File:\s+(.+)$/i,
+      );
+      if (m?.[1]) pushTouchedPath(map, order, m[1].trim(), tool);
+      const m2 = line.match(/^\*\*\*\s+Move\s+to:\s+(.+)$/i);
+      if (m2?.[1]) pushTouchedPath(map, order, m2[1].trim(), tool);
+    }
+  }
+}
+
+/**
+ * Paths referenced by tool calls in this session (newest last).
+ * Used by `/files` so experts can re-orient after resume without grepping history.
+ */
+export function listSessionTouchedFiles(
+  session: SessionData,
+  opts?: { limit?: number; mutatedOnly?: boolean },
+): TouchedFile[] {
+  const limit =
+    typeof opts?.limit === "number" && opts.limit > 0
+      ? Math.min(200, Math.floor(opts.limit))
+      : 40;
+  const map = new Map<string, TouchedFile>();
+  const order: string[] = [];
+  for (const m of session.messages) {
+    if (m.role !== "assistant" || !m.tool_calls?.length) continue;
+    for (const tc of m.tool_calls) {
+      const tool = tc.function?.name || "tool";
+      let args: Record<string, unknown> = {};
+      try {
+        // Lazy import avoided — keep session free of heavy deps; JSON.parse is enough
+        // for path extraction (truncated args still often have "path":"...").
+        const raw = tc.function?.arguments || "";
+        if (raw.trim()) {
+          const parsed = JSON.parse(raw) as unknown;
+          if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+            args = parsed as Record<string, unknown>;
+          }
+        }
+      } catch {
+        // Best-effort regex for "path":"..."
+        const raw = tc.function?.arguments || "";
+        const pm = raw.match(/"(?:path|file|filepath|file_path)"\s*:\s*"((?:\\.|[^"\\])*)"/);
+        if (pm?.[1]) {
+          try {
+            pushTouchedPath(
+              map,
+              order,
+              JSON.parse(`"${pm[1]}"`) as string,
+              tool,
+            );
+          } catch {
+            pushTouchedPath(map, order, pm[1].replace(/\\"/g, '"'), tool);
+          }
+        }
+        // apply_patch may still have *** lines even when JSON is broken
+        if (raw.includes("***")) {
+          collectPathsFromArgs(map, order, tool, { patchText: raw });
+        }
+        continue;
+      }
+      collectPathsFromArgs(map, order, tool, args);
+    }
+  }
+  let items = order.map((p) => map.get(p)!).filter(Boolean);
+  if (opts?.mutatedOnly) items = items.filter((t) => t.mutated);
+  // Newest last in order — reverse for display (newest first)
+  items = items.slice().reverse();
+  return items.slice(0, limit);
+}
+
+/** Human list for `/files` and resume orientation. */
+export function formatSessionTouchedFiles(
+  session: SessionData,
+  opts?: { limit?: number; mutatedOnly?: boolean },
+): string {
+  const items = listSessionTouchedFiles(session, opts);
+  if (!items.length) {
+    return opts?.mutatedOnly
+      ? "No file mutations recorded in this session yet."
+      : "No file paths recorded in tool calls yet.";
+  }
+  const lines = items.map((t) => {
+    const tag = t.mutated
+      ? t.op === "delete"
+        ? "D"
+        : t.op === "write"
+          ? "A"
+          : t.op === "patch"
+            ? "P"
+            : "M"
+      : "R";
+    const tools =
+      t.tools.length > 1 ? `  (${t.tools.slice(-3).join(", ")})` : `  (${t.tools[0]})`;
+    return `  ${tag}  ${t.path}${tools}`;
+  });
+  const scope = opts?.mutatedOnly ? "mutations" : "paths";
+  return (
+    `Session files (${items.length} ${scope}, newest first):\n` +
+    lines.join("\n") +
+    `\nR=read  A=write  M=edit  P=patch  D=delete  ·  /files writes  ·  /diff`
+  );
+}
+
+/**
+ * Most recent non-empty user message text (for /retry).
+ * Skips empty/whitespace-only turns.
+ */
+export function lastUserText(session: SessionData): string {
+  for (let i = session.messages.length - 1; i >= 0; i--) {
+    const m = session.messages[i];
+    if (m.role === "user") {
+      const t = (m.content || "").trim();
+      if (t) return t;
+    }
+  }
+  return "";
+}
+
+function clipPreview(text: string, max: number): string {
+  const t = (text || "").replace(/\s+/g, " ").trim();
+  if (!t) return "(empty)";
+  if (t.length <= max) return t;
+  return t.slice(0, Math.max(0, max - 1)).trimEnd() + "…";
+}
+
+/**
+ * Compact peek of the last N user/assistant turns (for /last after resume).
+ * Tool chatter is summarized; system messages skipped.
+ */
+export function formatRecentTurns(
+  session: SessionData,
+  opts?: { turns?: number; maxChars?: number },
+): string {
+  const turnsWanted = Math.max(1, Math.min(20, opts?.turns ?? 1));
+  const maxChars = Math.max(40, Math.min(2000, opts?.maxChars ?? 320));
+
+  type Block =
+    | { kind: "user"; text: string }
+    | { kind: "assistant"; text: string; tools: string[] };
+
+  const blocks: Block[] = [];
+  for (const m of session.messages) {
+    if (m.role === "system") continue;
+    if (m.role === "user") {
+      const text = (m.content || "").trim();
+      if (!text) continue;
+      blocks.push({ kind: "user", text });
+      continue;
+    }
+    if (m.role === "assistant") {
+      const tools = (m.tool_calls || []).map((tc) => tc.function.name);
+      const text = (m.content || "").trim();
+      const prev = blocks[blocks.length - 1];
+      if (prev && prev.kind === "assistant" && !text && tools.length) {
+        prev.tools.push(...tools);
+        continue;
+      }
+      blocks.push({ kind: "assistant", text, tools });
+      continue;
+    }
+    // tool results — fold into preceding assistant summary when present
+    if (m.role === "tool") {
+      const prev = blocks[blocks.length - 1];
+      if (prev && prev.kind === "assistant") {
+        if (!prev.tools.includes("tool")) prev.tools.push("·");
+      }
+    }
+  }
+
+  // Group into user-led turns (assistant-only preamble kept as its own turn)
+  type Turn = { user?: string; assistants: Array<{ text: string; tools: string[] }> };
+  const turns: Turn[] = [];
+  let cur: Turn | null = null;
+  for (const b of blocks) {
+    if (b.kind === "user") {
+      cur = { user: b.text, assistants: [] };
+      turns.push(cur);
+    } else {
+      if (!cur) {
+        cur = { assistants: [] };
+        turns.push(cur);
+      }
+      cur.assistants.push({ text: b.text, tools: b.tools });
+    }
+  }
+
+  if (turns.length === 0) {
+    return "No user/assistant turns in this session yet.";
+  }
+
+  const slice = turns.slice(-turnsWanted);
+  const startIdx = turns.length - slice.length + 1;
+  const lines: string[] = [
+    `Last ${slice.length} turn(s) of ${turns.length}` +
+      (session.meta.title ? ` — ${session.meta.title}` : "") +
+      ` · ${session.meta.id.slice(0, 8)}`,
+  ];
+
+  slice.forEach((t, i) => {
+    const n = startIdx + i;
+    lines.push("");
+    lines.push(`── turn ${n} ──`);
+    if (t.user) {
+      lines.push(`you:  ${clipPreview(t.user, maxChars)}`);
+    }
+    if (t.assistants.length === 0) {
+      lines.push(`forge: (no assistant reply yet)`);
+    } else {
+      const texts = t.assistants.map((a) => a.text).filter(Boolean);
+      const tools = t.assistants.flatMap((a) => a.tools).filter((x) => x && x !== "·");
+      const uniqTools = [...new Set(tools)];
+      const body = texts.join(" ").trim();
+      if (body) lines.push(`forge: ${clipPreview(body, maxChars)}`);
+      else if (uniqTools.length) lines.push(`forge: (tool calls only)`);
+      else lines.push(`forge: (empty)`);
+      if (uniqTools.length) {
+        const shown = uniqTools.slice(0, 8);
+        const more = uniqTools.length - shown.length;
+        lines.push(
+          `tools: ${shown.join(", ")}${more > 0 ? ` +${more}` : ""}`,
+        );
+      }
+    }
+  });
+
+  lines.push("");
+  lines.push("Tip: /retry · /copy · /export · /share");
+  return lines.join("\n");
+}
+
+/**
+ * Compact one-turn peek for resume banners (auto-resume + /resume).
+ * Returns empty string when the session has no user/assistant turns yet.
+ */
+export function formatResumePeek(
+  session: SessionData,
+  opts?: { maxChars?: number },
+): string {
+  const hasTurn = session.messages.some(
+    (m) =>
+      (m.role === "user" || m.role === "assistant") &&
+      Boolean((m.content || "").trim() || m.tool_calls?.length),
+  );
+  if (!hasTurn) return "";
+  // Drop the trailing tip line — resume banner already points at /last.
+  return formatRecentTurns(session, {
+    turns: 1,
+    maxChars: opts?.maxChars ?? 200,
+  })
+    .split("\n")
+    .filter((ln) => !/^Tip:/.test(ln))
+    .join("\n")
+    .trimEnd();
+}
+
+/**
+ * Resume orientation: last-turn peek + compact mutated-files line.
+ * Empty when neither is available.
+ */
+export function formatResumeOrientation(
+  session: SessionData,
+  opts?: { maxChars?: number; fileLimit?: number },
+): string {
+  const parts: string[] = [];
+  try {
+    const peek = formatResumePeek(session, { maxChars: opts?.maxChars });
+    if (peek) parts.push(peek);
+  } catch {
+    /* */
+  }
+  try {
+    const touched = listSessionTouchedFiles(session, {
+      limit: opts?.fileLimit ?? 6,
+      mutatedOnly: true,
+    });
+    if (touched.length) {
+      const bits = touched.map((t) => t.path).join(", ");
+      parts.push(`Files: ${bits}${touched.length >= (opts?.fileLimit ?? 6) ? "…" : ""}  (/files writes)`);
+    }
+  } catch {
+    /* */
+  }
+  return parts.join("\n");
+}
+
+/**
+ * Pasteable session card for handoff / Slack / tickets.
+ * No secrets — ids, labels, and resume/export commands only.
+ */
+export function formatSessionShareCard(
+  session: SessionData,
+  opts?: { includePreview?: boolean; previewChars?: number },
+): string {
+  const m = session.meta;
+  const id8 = m.id.slice(0, 8);
+  const title = (m.title || "untitled").slice(0, 72);
+  const cwd = m.cwd || "(unknown cwd)";
+  const flags = [
+    m.ultrawork ? "ULW" : null,
+    m.pinned ? "PIN" : null,
+  ].filter(Boolean);
+  const titleResume =
+    m.title && m.title !== "untitled"
+      ? `  forge --session ${JSON.stringify(m.title)}   # by /title`
+      : null;
+  const dir = sessionDir(m.id);
+  const lines = [
+    `Forge session ${id8} — ${title}`,
+    `  provider: ${m.provider}/${m.model}`,
+    `  cwd:      ${cwd}`,
+    `  path:     ${dir}`,
+    `  turns:    ${m.turnCount}  edits=${m.editCount}  msgs=${session.messages.length}`,
+    flags.length ? `  flags:    ${flags.join(" ")}` : null,
+    ``,
+    `Resume:`,
+    `  forge --session ${id8}`,
+    titleResume,
+    `  forge run "continue" --session ${id8} --json`,
+    `  forge run "next step" --continue --json   # newest same-cwd (no id)`,
+    `Export:`,
+    `  forge sessions export ${id8} --format md`,
+    `  forge sessions export ${id8} --format json --out ./session-${id8}.json`,
+    `Label:  /title "…"   ·   Keep: /pin   ·   Path: /path   ·   Search: forge sessions list -q ${JSON.stringify(title).slice(0, 40)}`,
+    `Peek:   /last 3  ·  /files  ·  /retry  ·  forge news`,
+  ].filter((x): x is string => x != null);
+
+  if (opts?.includePreview !== false) {
+    const preview = lastAssistantText(session).trim();
+    if (preview) {
+      const max = opts?.previewChars ?? 280;
+      const clip =
+        preview.length > max ? preview.slice(0, max).trimEnd() + "…" : preview;
+      lines.push(``, `Last assistant:`, clip);
+    }
+  }
+  return lines.join("\n");
+}
+
 export function clearConversation(session: SessionData): void {
   const system = session.messages.filter((m) => m.role === "system");
   session.messages = system;
@@ -942,5 +1599,6 @@ export function clearConversation(session: SessionData): void {
   session.meta.userTurnMarks = [];
   session.meta.turnCount = 0;
   session.meta.title = undefined;
+  session.meta.lastUserPreview = undefined;
   saveSession(session);
 }

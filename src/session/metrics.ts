@@ -5,7 +5,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { forgeHome, ensureDir, nowIso } from "../util/fs.js";
-import { estimateCostUsd } from "../util/format.js";
+import { estimateCostUsd, formatCost, formatTokens } from "../util/format.js";
 
 export interface SessionMetricsEvent {
   ts: string;
@@ -187,4 +187,245 @@ export function pruneMetrics(opts?: { keep?: number }): PruneMetricsResult {
   } catch {
     return empty;
   }
+}
+
+/** Read metrics events newest-last (file order). Best-effort; skips bad lines. */
+export function readMetricsEvents(opts?: {
+  limit?: number;
+}): SessionMetricsEvent[] {
+  const file = metricsPath();
+  try {
+    if (!fs.existsSync(file)) return [];
+    const lines = fs
+      .readFileSync(file, "utf8")
+      .split("\n")
+      .filter((l) => l.trim());
+    const limit =
+      typeof opts?.limit === "number" &&
+      Number.isFinite(opts.limit) &&
+      opts.limit > 0
+        ? Math.floor(opts.limit)
+        : lines.length;
+    const slice = lines.slice(-limit);
+    const out: SessionMetricsEvent[] = [];
+    for (const line of slice) {
+      try {
+        const ev = JSON.parse(line) as SessionMetricsEvent;
+        if (ev && typeof ev === "object" && ev.ts) out.push(ev);
+      } catch {
+        /* skip corrupt line */
+      }
+    }
+    return out;
+  } catch {
+    return [];
+  }
+}
+
+export interface UsageStats {
+  generatedAt: string;
+  metricsPath: string;
+  /** Events considered (after days filter). */
+  events: number;
+  /** Window in days (0 = all). */
+  days: number;
+  runs: number;
+  okRuns: number;
+  abortedRuns: number;
+  timedOutRuns: number;
+  headlessRuns: number;
+  ulwRuns: number;
+  promptTokens: number;
+  completionTokens: number;
+  estCostUsd: number;
+  durationMs: number;
+  turns: number;
+  edits: number;
+  byProvider: Record<string, number>;
+  byModel: Record<string, number>;
+  /** Top workspaces by run count (basename → count). */
+  byProject: Record<string, number>;
+  /** On-disk session inventory (not limited to metrics window). */
+  sessions: {
+    total: number;
+    locked: number;
+    titled: number;
+    ultrawork: number;
+  };
+}
+
+/**
+ * Aggregate counter-only usage for experts (`forge stats` / `/stats`).
+ * Never includes prompts or secrets.
+ */
+export function collectUsageStats(opts?: {
+  days?: number;
+  /** Max metrics lines to scan (default 5000). */
+  limit?: number;
+}): UsageStats {
+  const days =
+    typeof opts?.days === "number" && Number.isFinite(opts.days) && opts.days > 0
+      ? opts.days
+      : 0;
+  const cutoff =
+    days > 0 ? Date.now() - days * 24 * 60 * 60 * 1000 : 0;
+  const events = readMetricsEvents({ limit: opts?.limit ?? 5_000 });
+  const filtered = cutoff
+    ? events.filter((e) => {
+        const t = Date.parse(e.ts || "");
+        return Number.isFinite(t) && t >= cutoff;
+      })
+    : events;
+
+  const byProvider: Record<string, number> = {};
+  const byModel: Record<string, number> = {};
+  const byProject: Record<string, number> = {};
+  let runs = 0;
+  let okRuns = 0;
+  let abortedRuns = 0;
+  let timedOutRuns = 0;
+  let headlessRuns = 0;
+  let ulwRuns = 0;
+  let promptTokens = 0;
+  let completionTokens = 0;
+  let estCostUsd = 0;
+  let durationMs = 0;
+  let turns = 0;
+  let edits = 0;
+
+  for (const e of filtered) {
+    if (e.type !== "run_end" && e.type !== "session_end") continue;
+    runs += 1;
+    if (e.ok) okRuns += 1;
+    if (e.aborted) abortedRuns += 1;
+    if (e.timedOut) timedOutRuns += 1;
+    if (e.headless) headlessRuns += 1;
+    if (e.ultrawork) ulwRuns += 1;
+    promptTokens += Number(e.promptTokens) || 0;
+    completionTokens += Number(e.completionTokens) || 0;
+    estCostUsd += Number(e.estCostUsd) || 0;
+    durationMs += Number(e.durationMs) || 0;
+    turns += Number(e.turns) || 0;
+    edits += Number(e.editCount) || 0;
+    const prov = (e.provider || "unknown").slice(0, 40);
+    byProvider[prov] = (byProvider[prov] || 0) + 1;
+    const model = (e.model || "unknown").slice(0, 64);
+    byModel[model] = (byModel[model] || 0) + 1;
+    if (e.cwd) {
+      try {
+        const base = path.basename(path.resolve(e.cwd)).slice(0, 48) || e.cwd;
+        byProject[base] = (byProject[base] || 0) + 1;
+      } catch {
+        /* */
+      }
+    }
+  }
+
+  // Session inventory (sidecar meta — fast)
+  let sessionTotal = 0;
+  let sessionLocked = 0;
+  let sessionTitled = 0;
+  let sessionUlw = 0;
+  try {
+    // Dynamic import avoided — listSessions is same package tree but metrics
+    // must not create a hard cycle. Inline a light scan of meta.json only.
+    const root = path.join(forgeHome(), "sessions");
+    if (fs.existsSync(root)) {
+      for (const id of fs.readdirSync(root)) {
+        const dir = path.join(root, id);
+        try {
+          if (!fs.statSync(dir).isDirectory()) continue;
+          const metaPath = path.join(dir, "meta.json");
+          if (!fs.existsSync(metaPath)) continue;
+          const meta = JSON.parse(fs.readFileSync(metaPath, "utf8")) as {
+            title?: string;
+            ultrawork?: boolean;
+          };
+          sessionTotal += 1;
+          if (meta.title) sessionTitled += 1;
+          if (meta.ultrawork) sessionUlw += 1;
+          const lockPath = path.join(dir, "session.lock");
+          if (fs.existsSync(lockPath)) {
+            try {
+              const lock = JSON.parse(fs.readFileSync(lockPath, "utf8")) as {
+                pid?: unknown;
+              };
+              const pid = Number(lock?.pid);
+              if (Number.isFinite(pid) && pid > 0 && pid !== process.pid) {
+                try {
+                  process.kill(Math.trunc(pid), 0);
+                  sessionLocked += 1;
+                } catch {
+                  /* dead */
+                }
+              }
+            } catch {
+              /* */
+            }
+          }
+        } catch {
+          /* skip dir */
+        }
+      }
+    }
+  } catch {
+    /* */
+  }
+
+  return {
+    generatedAt: nowIso(),
+    metricsPath: metricsPath(),
+    events: filtered.length,
+    days,
+    runs,
+    okRuns,
+    abortedRuns,
+    timedOutRuns,
+    headlessRuns,
+    ulwRuns,
+    promptTokens,
+    completionTokens,
+    estCostUsd,
+    durationMs,
+    turns,
+    edits,
+    byProvider,
+    byModel,
+    byProject,
+    sessions: {
+      total: sessionTotal,
+      locked: sessionLocked,
+      titled: sessionTitled,
+      ultrawork: sessionUlw,
+    },
+  };
+}
+
+/** Human-readable multi-line stats report. */
+export function formatUsageStats(stats: UsageStats): string {
+  const top = (rec: Record<string, number>, n = 5): string => {
+    const entries = Object.entries(rec).sort((a, b) => b[1] - a[1]).slice(0, n);
+    if (!entries.length) return "  (none)";
+    return entries.map(([k, v]) => `  ${k}: ${v}`).join("\n");
+  };
+  const window =
+    stats.days > 0 ? `last ${stats.days}d` : "all recorded metrics";
+  const okPct =
+    stats.runs > 0 ? Math.round((stats.okRuns / stats.runs) * 100) : 0;
+  const durMin = stats.durationMs / 60_000;
+  return [
+    `Forge usage (${window})`,
+    `  runs:       ${stats.runs}  ok=${stats.okRuns} (${okPct}%)  aborted=${stats.abortedRuns}  timedOut=${stats.timedOutRuns}`,
+    `  mode:       headless=${stats.headlessRuns}  ULW=${stats.ulwRuns}`,
+    `  tokens:     in=${formatTokens(stats.promptTokens)} out=${formatTokens(stats.completionTokens)}  est ${formatCost(stats.estCostUsd)}`,
+    `  work:       turns=${stats.turns}  edits=${stats.edits}  wall≈${durMin.toFixed(1)}m`,
+    `  sessions:   ${stats.sessions.total} on disk  titled=${stats.sessions.titled}  ULW=${stats.sessions.ultrawork}  locked=${stats.sessions.locked}`,
+    `By provider:`,
+    top(stats.byProvider),
+    `By model:`,
+    top(stats.byModel),
+    `By project:`,
+    top(stats.byProject),
+    `  metrics: ${stats.events} events · ${stats.metricsPath}`,
+  ].join("\n");
 }

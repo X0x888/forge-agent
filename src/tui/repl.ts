@@ -57,6 +57,7 @@ import {
 } from "../session/lock.js";
 
 import { getForgeVersion } from "../util/version.js";
+import { loadPreferences, savePreferences } from "../config/preferences.js";
 const VERSION = getForgeVersion();
 
 export async function runRepl(opts: {
@@ -619,8 +620,22 @@ function printBanner(
         (git.branch ? ` · ${git.branch}${git.dirty ? "*" : ""}` : "") +
         (hints.length ? ` · ${hints.join("+")}` : "") +
         `\n  Native live status while working · type at live › mid-run (/cycle 0)\n` +
-        `  ↑↓ history · Tab complete · /tasks · /status · /title · /bell · /quit\n` +
+        `  ↑↓ history · Tab complete · /tasks · /status · /share · /stats · /news · /tips · /quit\n` +
         `  Fresh session: forge --new  ·  resume is automatic for this cwd\n`,
     ),
   );
+  // One-time expert tip for first interactive launch (persisted in preferences).
+  try {
+    const prefs = loadPreferences();
+    if (!prefs.seenWelcomeTip) {
+      console.log(
+        chalk.cyan(
+          `  Tip: /share · /files · /pin · /retry · /stats · forge tips · /sessions search\n`,
+        ),
+      );
+      savePreferences({ seenWelcomeTip: true });
+    }
+  } catch {
+    /* never block REPL on prefs */
+  }
 }

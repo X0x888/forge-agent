@@ -15,16 +15,27 @@ forge auth                   # refresh OAuth if needed
 eval "$(forge completion bash)"   # optional shell completions
 forge sessions prune --keep 50
 forge sessions list --cwd .          # filter by workspace (native listSessions cwd)
-forge sessions list -q incident      # id/title substring filter
+forge sessions list -q incident      # id/title/last-prompt substring filter
+forge sessions list --pinned         # only pin-protected sessions
 forge run "fix" --title ci-pipeline-42 --json   # label headless session at create
 # empty/whitespace prompts exit 1 before any API call
-# REPL: /sessions (same-cwd) · /sessions all · /sessions search incident · /resume (same-cwd) · /new [title]
-forge sessions show <id>
+# REPL: /sessions (same-cwd) · all · pinned · search · /resume <id|title> · /new [title] · /pin
+forge sessions show <id|title>       # relative age · files · path · last-turn peek
+forge sessions path <id|title>       # print ~/.forge/sessions/<id> (and session.json)
 forge sessions export <id> --format json --out ./session.json   # md|json only
-forge sessions import ./session.json   # rejects invalid message roles
-forge sessions fork <id>
+forge sessions import ./session.json   # rejects invalid message roles; never inherits pin
+forge sessions fork <id>             # fork clears pin (source stays protected)
+forge sessions pin <id|title>        # protect from prune · /pin in REPL
 forge prune-tool-output
 forge prune-metrics --keep 500
+forge stats                  # usage dashboard (runs/tokens/cost/projects)
+forge stats --days 7 --json  # CI-friendly windowed counters
+forge tips                   # expert cheat sheet
+forge news                   # what's new from packaged CHANGELOG
+forge news 2 --json          # last 2 releases as JSON
+forge run "next" --continue --json   # headless same-cwd resume (no session id)
+# REPL: /share · /files · /pin · /stats · /tips · /news · /retry [prompt] · /last [n]
+# Resume (bare forge / /resume) peeks last turn + mutated files
 ```
 
 CI (GitHub Actions) runs `npm run check` + `npm run smoke` on Node 20 and 22.
@@ -44,6 +55,7 @@ CI (GitHub Actions) runs `npm run check` + `npm run smoke` on Node 20 and 22.
   "sandbox": "workspace",
   "sessionCount": 3,
   "sessionsLocked": 0,
+  "sessionsPinned": 1,
   "toolOutput": { "files": 2, "bytes": 12345 },
   "sandboxLog": { "bytes": 4096, "backupBytes": 0 },
   "metrics": { "events": 12, "bytes": 4096 },
@@ -143,13 +155,15 @@ On thrown errors with `--json`, stdout is `{ "ok": false, "error": "…", "timed
 ## Long ULW / goal runs
 
 - Prefer `/cycle 0` when satisfied (last wave) rather than killing the process
-- `forge sessions prune --keep 50` periodically (skips foreign live locks; reports `skippedLocked`)
+- `forge sessions prune --keep 50` periodically (skips foreign live locks + pinned; reports `skippedLocked` / `skippedPinned`)
 - `forge sessions delete <id>` refuses foreign live locks unless `--force`
-- `/fork` or `forge sessions fork <id>` before risky experiments (keeps original)
-- `/title "incident-42"` to label long-running sessions in `/sessions` lists
+- `/fork` or `forge sessions fork <id>` before risky experiments (keeps original; fork clears pin)
+- `/title "incident-42"` to label long-running sessions; resume with `/resume incident-42` or `forge --session incident-42`
+- `/pin` (or `forge sessions pin <id>`) to protect important sessions from prune; `/sessions pinned` to list them
+- `/files` after resume to see paths the agent touched; `/last 3` for recent turns; `/path` (or `forge sessions path`) for the on-disk session dir
 - `/bell on` (or `FORGE_BELL=1`) for a terminal BEL when long ULW/goal turns finish
 - Bare `forge` resumes the newest same-cwd session (≤14d); skips sessions with a foreign live lock; use `--new` or `FORGE_NO_AUTO_RESUME=1` for a clean slate
-- `/resume <id>` warns if the target has a foreign live lock (concurrent writers may race)
+- `/resume <id|title>` warns if the target has a foreign live lock (concurrent writers may race); shows last turn + files
 - `forge sessions export <id> --format json` for incident artifacts (`--format` must be `md` or `json`; `--out` files mode `0600`)
 - `forge sessions <query>` treats unknown first arg as title/id search (same as `-q`)
 - `forge sessions import` rejects invalid message roles; on-disk load soft-drops corrupt roles/todos so a bad `session.json` cannot poison the agent loop

@@ -38,7 +38,14 @@ describe("live mid-run slash policy", () => {
     assert.equal(classifyLiveSlash("/goal resume"), "control");
     assert.equal(classifyLiveSlash("/goal clear"), "control");
     assert.equal(classifyLiveSlash("/goal done"), "control");
+    assert.equal(classifyLiveSlash("/done"), "control");
+    assert.equal(classifyLiveSlash("/done shipped"), "control");
+    assert.equal(classifyLiveSlash("/pause"), "control");
+    assert.equal(classifyLiveSlash("/unpause"), "control");
     assert.ok(isLiveSafeSlash("/cycle 0"));
+    assert.ok(isLiveSafeSlash("/done"));
+    assert.ok(isLiveSafeSlash("/pause"));
+    assert.ok(isLiveSafeSlash("/unpause"));
   });
 
   it("allows read-only status mid-run", () => {
@@ -50,8 +57,16 @@ describe("live mid-run slash policy", () => {
     assert.equal(classifyLiveSlash("/sessions"), "readonly");
     assert.equal(classifyLiveSlash("/sessions list"), "readonly");
     assert.equal(classifyLiveSlash("/sessions all"), "readonly");
+    assert.equal(classifyLiveSlash("/sessions pinned"), "readonly");
     assert.equal(classifyLiveSlash("/sessions search incident"), "readonly");
     assert.equal(classifyLiveSlash("/sessions incident-42"), "readonly");
+    assert.equal(classifyLiveSlash("/stats"), "readonly");
+    assert.equal(classifyLiveSlash("/stats 7"), "readonly");
+    assert.equal(classifyLiveSlash("/share"), "readonly");
+    assert.equal(classifyLiveSlash("/tips"), "readonly");
+    assert.equal(classifyLiveSlash("/news"), "readonly");
+    assert.equal(classifyLiveSlash("/news 2"), "readonly");
+    assert.equal(classifyLiveSlash("/changelog"), "readonly");
     assert.equal(classifyLiveSlash("/diff"), "readonly");
     assert.equal(classifyLiveSlash("/metrics"), "readonly");
     assert.equal(classifyLiveSlash("/cost"), "readonly");
@@ -60,19 +75,40 @@ describe("live mid-run slash policy", () => {
     assert.equal(classifyLiveSlash("/permissions"), "readonly");
     assert.equal(classifyLiveSlash("/permissions list"), "readonly");
     assert.equal(classifyLiveSlash("/copy"), "readonly");
+    assert.equal(classifyLiveSlash("/last"), "readonly");
+    assert.equal(classifyLiveSlash("/last 3"), "readonly");
+    assert.equal(classifyLiveSlash("/files"), "readonly");
+    assert.equal(classifyLiveSlash("/files writes"), "readonly");
+    assert.equal(classifyLiveSlash("/files 20"), "readonly");
+    assert.equal(classifyLiveSlash("/path"), "readonly");
+    assert.equal(classifyLiveSlash("/path json"), "readonly");
+    assert.equal(classifyLiveSlash("/pin status"), "readonly");
     assert.ok(isLiveSafeSlash("/status"));
     assert.ok(isLiveSafeSlash("/sessions"));
+    assert.ok(isLiveSafeSlash("/files"));
+    assert.ok(isLiveSafeSlash("/pin status"));
     assert.ok(isLiveSafeSlash("/diff"));
     assert.ok(isLiveSafeSlash("/metrics"));
     assert.ok(isLiveSafeSlash("/title"));
     assert.ok(isLiveSafeSlash("/permissions list"));
     assert.ok(isLiveSafeSlash("/copy"));
+    assert.ok(isLiveSafeSlash("/last 3"));
   });
 
   it("allows title rename mid-run as control", () => {
     assert.equal(classifyLiveSlash("/title incident-42"), "control");
     assert.equal(classifyLiveSlash("/rename clear"), "control");
     assert.ok(isLiveSafeSlash("/title incident-42"));
+  });
+
+  it("allows /pin toggle mid-run as control", () => {
+    assert.equal(classifyLiveSlash("/pin"), "control");
+    assert.equal(classifyLiveSlash("/pin on"), "control");
+    assert.equal(classifyLiveSlash("/unpin"), "control");
+    assert.equal(classifyLiveSlash("/pin toggle"), "control");
+    assert.ok(isLiveSafeSlash("/pin"));
+    assert.ok(isLiveSafeSlash("/pin on"));
+    assert.ok(isLiveSafeSlash("/unpin"));
   });
 
   it("allows /bell status and toggle mid-run", () => {
@@ -96,7 +132,10 @@ describe("live mid-run slash policy", () => {
     assert.equal(classifyLiveSlash("/new"), "idle-only");
     assert.equal(classifyLiveSlash("/clear"), "idle-only");
     assert.equal(classifyLiveSlash("/rewind"), "idle-only");
+    assert.equal(classifyLiveSlash("/retry"), "idle-only");
+    assert.equal(classifyLiveSlash("/again try harder"), "idle-only");
     assert.equal(classifyLiveSlash("/model grok-4"), "idle-only");
+    assert.equal(isLiveSafeSlash("/retry"), false);
     assert.equal(classifyLiveSlash("/sessions delete abc"), "idle-only");
     assert.equal(classifyLiveSlash("/sessions prune"), "idle-only");
     assert.equal(classifyLiveSlash("/permissions clear"), "idle-only");
@@ -110,6 +149,9 @@ describe("live mid-run slash policy", () => {
   it("exposes a usable hint string", () => {
     assert.match(LIVE_CONTROLS_HINT, /cycle 0/);
     assert.match(LIVE_CONTROLS_HINT, /ulw-off/);
+    assert.match(LIVE_CONTROLS_HINT, /\/done/);
+    assert.match(LIVE_CONTROLS_HINT, /\/pause/);
+    assert.match(LIVE_CONTROLS_HINT, /\/unpause/);
   });
 });
 
@@ -137,6 +179,86 @@ describe("live notices queue", () => {
   it("ignores empty messages", () => {
     pushLiveNotice("s1", "   ");
     assert.deepEqual(drainLiveNotices("s1"), []);
+  });
+});
+
+describe("/done and /pause goal shortcuts", () => {
+  it("marks goal achieved like /goal done", async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-done-"));
+    process.env.FORGE_HOME = tmp;
+    clearLiveNotices();
+    const session = createSession({
+      cwd: tmp,
+      provider: "xai",
+      model: "test",
+    });
+    const { armGoal, loadGoal } = await import("../src/harness/goal.js");
+    armGoal(session.meta.id, "ship the feature", "manual");
+    const hooks = new HookRunner(DEFAULT_CONFIG, tmp);
+    const r = await handleSlash("/done verified in CI", {
+      session,
+      config: DEFAULT_CONFIG,
+      hooks,
+    });
+    assert.equal(r.handled, true);
+    assert.match(String(r.output || ""), /Goal marked achieved/i);
+    const g = loadGoal(session.meta.id);
+    assert.ok(g);
+    assert.equal(g!.status, "achieved");
+    const notices = drainLiveNotices(session.meta.id);
+    assert.ok(notices.some((n) => /goal done|released/i.test(n)));
+  });
+
+  it("pauses goal like /goal pause", async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-pause-"));
+    process.env.FORGE_HOME = tmp;
+    clearLiveNotices();
+    const session = createSession({
+      cwd: tmp,
+      provider: "xai",
+      model: "test",
+    });
+    const { armGoal, loadGoal } = await import("../src/harness/goal.js");
+    armGoal(session.meta.id, "keep going", "manual");
+    const hooks = new HookRunner(DEFAULT_CONFIG, tmp);
+    const r = await handleSlash("/pause", {
+      session,
+      config: DEFAULT_CONFIG,
+      hooks,
+    });
+    assert.equal(r.handled, true);
+    assert.match(String(r.output || ""), /paused|Goal/i);
+    const g = loadGoal(session.meta.id);
+    assert.ok(g);
+    assert.equal(g!.paused, true);
+  });
+
+  it("unpauses goal like /goal resume", async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-unpause-"));
+    process.env.FORGE_HOME = tmp;
+    clearLiveNotices();
+    const session = createSession({
+      cwd: tmp,
+      provider: "xai",
+      model: "test",
+    });
+    const { armGoal, pauseGoal, loadGoal } = await import(
+      "../src/harness/goal.js"
+    );
+    armGoal(session.meta.id, "keep going", "manual");
+    pauseGoal(session.meta.id);
+    assert.equal(loadGoal(session.meta.id)?.paused, true);
+    const hooks = new HookRunner(DEFAULT_CONFIG, tmp);
+    const r = await handleSlash("/unpause", {
+      session,
+      config: DEFAULT_CONFIG,
+      hooks,
+    });
+    assert.equal(r.handled, true);
+    assert.match(String(r.output || ""), /resumed|Goal/i);
+    const g = loadGoal(session.meta.id);
+    assert.ok(g);
+    assert.equal(g!.paused, false);
   });
 });
 

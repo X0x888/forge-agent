@@ -20,6 +20,11 @@ export interface UserPreferences {
   reasoningEffort?: ReasoningEffort;
   /** Ring terminal BEL when a REPL turn finishes (long-run attention). */
   bellOnTurnEnd?: boolean;
+  /**
+   * When true, first-run expert tip was already shown (or suppressed).
+   * Missing/false → show once on next interactive REPL start.
+   */
+  seenWelcomeTip?: boolean;
   updatedAt?: string;
 }
 
@@ -56,6 +61,9 @@ export function loadPreferences(): UserPreferences {
   if (typeof raw.bellOnTurnEnd === "boolean") {
     out.bellOnTurnEnd = raw.bellOnTurnEnd;
   }
+  if (typeof raw.seenWelcomeTip === "boolean") {
+    out.seenWelcomeTip = raw.seenWelcomeTip;
+  }
   if (typeof raw.updatedAt === "string") out.updatedAt = raw.updatedAt;
   return out;
 }
@@ -69,11 +77,15 @@ export function savePreferences(patch: {
   permissionMode?: PermissionMode;
   reasoningEffort?: ReasoningEffort;
   bellOnTurnEnd?: boolean;
+  seenWelcomeTip?: boolean;
 }): UserPreferences {
   const cur = loadPreferences();
   if (patch.model !== undefined) {
     const m = patch.model.trim();
     if (m) cur.model = m;
+  }
+  if (patch.seenWelcomeTip !== undefined) {
+    cur.seenWelcomeTip = patch.seenWelcomeTip;
   }
   if (patch.permissionMode !== undefined) {
     if (!PERMISSION_MODES.has(patch.permissionMode)) {

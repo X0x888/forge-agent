@@ -1,7 +1,7 @@
 {
   "name": "forge-agent",
   "version": "0.9.3",
-  "description": "Forge — AI coding agent CLI with harness (Stop/goal/ULW), production reliability (Retry-After, abortable/empty-SSE streams, stream-capped web_fetch, JSON repair, doom-loop, error-streak, apply_patch, overflow recovery, session fork/export/import/auto-resume, lock-safe prune/delete, headless fail-closed session lock, shell-safe /diff, metrics.jsonl, OAuth refresh, bg-task teardown, structured doctor --json + sessionsLocked, multi-backend /copy), Bar A daily-driver safety, and quality tools",
+  "description": "Forge — AI coding agent CLI with harness (blocking Stop, /goal, ULW), production reliability (Retry-After, abortable streams, JSON repair, doom-loop, error-streak, apply_patch, overflow recovery, session lock/auto-resume, forge run --continue, lock-safe prune/delete, shell-safe /diff, metrics.jsonl, OAuth refresh, structured doctor --json), and expert UX (/retry, /last, /files, /pin, resume-by-title, /share, /stats, forge news, forge tips)",
   "type": "module",
   "bin": {
     "forge": "./dist/cli.js"
@@ -23,7 +23,7 @@
     "prepack": "npm run build",
     "check": "npm run typecheck && npm test",
     "ci": "npm run check && npm run smoke",
-    "smoke": "npm run build && node dist/cli.js --version && (node dist/cli.js doctor --json >/dev/null || true) && node dist/cli.js completion bash >/dev/null && node dist/cli.js models --json >/dev/null && node dist/cli.js prune-tool-output --json >/dev/null && node dist/cli.js prune-metrics --json >/dev/null"
+    "smoke": "npm run build && node dist/cli.js --version && (node dist/cli.js doctor --json >/dev/null || true) && node dist/cli.js completion bash >/dev/null && node dist/cli.js models --json >/dev/null && node dist/cli.js stats --json >/dev/null && node dist/cli.js news >/dev/null && node dist/cli.js prune-tool-output --json >/dev/null && node dist/cli.js prune-metrics --json >/dev/null"
   },
   "engines": {
     "node": ">=20"
@@ -45,7 +45,10 @@
     "stop-hooks",
     "session",
     "multi-provider",
-    "doctor"
+    "doctor",
+    "stats",
+    "retry",
+    "changelog"
   ],
   "license": "MIT",
   "files": [

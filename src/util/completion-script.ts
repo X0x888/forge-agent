@@ -1,17 +1,17 @@
 /** Shell completion scripts for expert terminals. */
 export function shellCompletionScript(shell: string): string {
   const cmds =
-    "run login logout auth sessions init models doctor status completion prune-tool-output prune-metrics";
+    "run login logout auth sessions init models doctor stats tips news status completion prune-tool-output prune-metrics";
   const zshCmds = cmds.split(" ").join(" ");
   const runFlags =
-    "--json --ulw --permission-mode --model --provider --base-url --goal --session --new --title --sandbox --sandbox-network --sandbox-missing --deny --allow --ask --cwd --effort";
+    "--json --ulw --permission-mode --model --provider --base-url --goal --session --continue --new --title --sandbox --sandbox-network --sandbox-missing --deny --allow --ask --cwd --effort";
   const topFlags =
     "--new --session --title --model --provider --permission-mode --ulw --goal --cwd --sandbox --help --version";
   const sessionsActions =
-    "list show export import fork delete prune";
+    "list show path export import fork pin unpin delete prune";
   const sessionsFlags =
-    "--json --out --format --keep --max-age-days --cwd --query -q --limit -n --force";
-  // --cwd: list filter + import override; --query/-q: list id/title filter
+    "--json --out --format --keep --max-age-days --cwd --query -q --pinned --limit -n --force";
+  // --cwd: list filter + import override; --query/-q: list id/title filter; --pinned
 
   if (shell === "zsh") {
     return [
@@ -54,9 +54,9 @@ export function shellCompletionScript(shell: string): string {
       "                _values 'delete' --json --force",
       "                ;;",
       "              list)",
-      "                _values 'list' --json --limit -n --cwd --query -q",
+      "                _values 'list' --json --limit -n --cwd --query -q --pinned",
       "                ;;",
-      "              show|fork)",
+      "              show|path|fork|pin|unpin)",
       "                _values 'flags' --json",
       "                ;;",
       "              *)",
@@ -67,6 +67,12 @@ export function shellCompletionScript(shell: string): string {
       "          ;;",
       "        doctor|models|status|auth)",
       "          _values 'flags' --json",
+      "          ;;",
+      "        stats)",
+      "          _values 'stats' --json --days",
+      "          ;;",
+      "        news|changelog)",
+      "          _values 'news' --json 1 2 3",
       "          ;;",
       "        login)",
       "          _values 'login' --api-key --oauth --device --from-grok --provider",
@@ -116,6 +122,7 @@ export function shellCompletionScript(shell: string): string {
       'complete -c forge -n "__fish_seen_subcommand_from run" -l base-url -d "API base URL"',
       'complete -c forge -n "__fish_seen_subcommand_from run" -l goal -d "Arm /goal"',
       'complete -c forge -n "__fish_seen_subcommand_from run" -l session -d "Resume session"',
+      'complete -c forge -n "__fish_seen_subcommand_from run" -l continue -d "Resume newest same-cwd session"',
       'complete -c forge -n "__fish_seen_subcommand_from run" -l new -d "New session"',
       'complete -c forge -n "__fish_seen_subcommand_from run" -l title -d "Label for a new session"',
       'complete -c forge -n "__fish_seen_subcommand_from run" -l deny -d "Deny rule"',
@@ -126,6 +133,10 @@ export function shellCompletionScript(shell: string): string {
       'complete -c forge -n "__fish_seen_subcommand_from models" -l json -d "JSON"',
       'complete -c forge -n "__fish_seen_subcommand_from status" -l json -d "JSON"',
       'complete -c forge -n "__fish_seen_subcommand_from auth" -l json -d "JSON"',
+      'complete -c forge -n "__fish_seen_subcommand_from stats" -l json -d "JSON"',
+      'complete -c forge -n "__fish_seen_subcommand_from stats" -l days -d "Last N days"',
+      'complete -c forge -n "__fish_seen_subcommand_from news" -l json -d "JSON"',
+      'complete -c forge -n "__fish_seen_subcommand_from news" -a "1 2 3" -d "Release count"',
       `complete -c forge -n "__fish_seen_subcommand_from sessions; and not __fish_seen_subcommand_from ${sessionsActions}" -a "${sessionsActions}"`,
       'complete -c forge -n "__fish_seen_subcommand_from sessions" -l json -d "JSON"',
       'complete -c forge -n "__fish_seen_subcommand_from sessions" -l out -d "Export output path"',
@@ -134,6 +145,7 @@ export function shellCompletionScript(shell: string): string {
       'complete -c forge -n "__fish_seen_subcommand_from sessions" -l max-age-days -d "Prune max age days"',
       'complete -c forge -n "__fish_seen_subcommand_from sessions" -l cwd -d "List filter or import cwd override"',
       'complete -c forge -n "__fish_seen_subcommand_from sessions" -l query -s q -d "List id/title substring filter"',
+      'complete -c forge -n "__fish_seen_subcommand_from sessions" -l pinned -d "List only pin-protected sessions"',
       'complete -c forge -n "__fish_seen_subcommand_from sessions" -l limit -d "List limit"',
       'complete -c forge -n "__fish_seen_subcommand_from sessions" -l force -d "Delete even if session is locked"',
       'complete -c forge -n "__fish_seen_subcommand_from login" -l api-key -d "API key"',
@@ -180,12 +192,14 @@ export function shellCompletionScript(shell: string): string {
     `        import) COMPREPLY=( $(compgen -W "--cwd --json" -- "$cur") ) ;;`,
     `        prune) COMPREPLY=( $(compgen -W "--keep --max-age-days --json" -- "$cur") ) ;;`,
     `        delete) COMPREPLY=( $(compgen -W "--json --force" -- "$cur") ) ;;`,
-    `        show|fork) COMPREPLY=( $(compgen -W "--json --limit -n" -- "$cur") ) ;;`,
-    `        list) COMPREPLY=( $(compgen -W "--json --limit -n --cwd --query -q" -- "$cur") ) ;;`,
+    `        show|path|fork|pin|unpin) COMPREPLY=( $(compgen -W "--json" -- "$cur") ) ;;`,
+    `        list) COMPREPLY=( $(compgen -W "--json --limit -n --cwd --query -q --pinned" -- "$cur") ) ;;`,
     `        *) COMPREPLY=( $(compgen -W "${sessionsFlags}" -- "$cur") ) ;;`,
     "      esac",
     "      ;;",
     '    doctor|models|status|auth) COMPREPLY=( $(compgen -W "--json" -- "$cur") ) ;;',
+    '    stats) COMPREPLY=( $(compgen -W "--json --days" -- "$cur") ) ;;',
+    '    news|changelog) COMPREPLY=( $(compgen -W "--json 1 2 3" -- "$cur") ) ;;',
     `    run) COMPREPLY=( $(compgen -W "${runFlags}" -- "$cur") ) ;;`,
     '    login) COMPREPLY=( $(compgen -W "--api-key --oauth --device --from-grok --provider" -- "$cur") ) ;;',
     '    completion) COMPREPLY=( $(compgen -W "bash zsh fish" -- "$cur") ) ;;',

@@ -21,6 +21,17 @@ import {
   forkSession,
   setSessionTitle,
   lastAssistantText,
+  lastUserText,
+  formatRecentTurns,
+  formatResumePeek,
+  formatResumeOrientation,
+  formatSessionShareCard,
+  formatSessionLookupMiss,
+  formatSessionTouchedFiles,
+  setSessionPinned,
+  resolveSessionDir,
+  resolveSessionJsonPath,
+  sessionDir,
   clearConversation,
   createSession,
   loadSession,
@@ -50,17 +61,23 @@ import { envPositiveInt } from "../util/env.js";
 import { isBellEnabled } from "../util/attention.js";
 import { inspectSecureFile } from "../util/fs.js";
 import { getForgeVersion } from "../util/version.js";
+import { formatWhatsNew } from "../util/changelog.js";
 import { toolOutputStats } from "../agent/tools/truncate.js";
 import { listTasks } from "../agent/tools/background-tasks.js";
 import { loadSavedAllows } from "../agent/permission-saved.js";
 import { sandboxLogStats } from "../agent/sandbox-log.js";
-import { metricsStats } from "../session/metrics.js";
+import {
+  collectUsageStats,
+  formatUsageStats,
+  metricsStats,
+} from "../session/metrics.js";
 import { readSessionLock, formatLockHolder } from "../session/lock.js";
 import { permissionAskTimeoutMs } from "../agent/permissions.js";
 import {
   estimateCostUsd,
   formatCost,
   formatTokens,
+  formatRelativeTime,
 } from "../util/format.js";
 import chalk from "chalk";
 import fs from "node:fs";
@@ -118,11 +135,19 @@ const LIVE_READONLY = new Set([
   "/context",
   "/cost",
   "/metrics",
+  "/stats",
   "/todos",
   "/auth",
   "/doctor",
   "/diff",
   "/copy", // clipboard last assistant reply — no session mutation
+  "/share", // pasteable session card — optional clipboard
+  "/last", // peek recent turns — read-only
+  "/files", // paths touched by tools — read-only
+  "/path", // session on-disk directory — read-only
+  "/tips",
+  "/news", // what's new from CHANGELOG
+  "/changelog",
   "/sessions", // list only — delete/prune classified below
 ]);
 
@@ -134,6 +159,8 @@ const LIVE_CONTROL = new Set([
   "/title",
   "/rename",
   "/bell",
+  "/pin",
+  "/unpin",
 ]);
 
 const LIVE_GOAL_VERBS = new Set([
@@ -173,6 +200,9 @@ export function classifyLiveSlash(line: string): LiveSlashKind {
       verb === "all" ||
       verb === "global" ||
       verb === "-a" ||
+      verb === "pinned" ||
+      verb === "pins" ||
+      verb === "pin" ||
       verb === "q" ||
       verb === "search" ||
       verb === "find"
@@ -204,6 +234,11 @@ export function classifyLiveSlash(line: string): LiveSlashKind {
     if ((cmd === "/title" || cmd === "/rename") && !arg) return "readonly";
     // bare /bell shows status
     if (cmd === "/bell" && !arg) return "readonly";
+    // /pin status is readonly; bare /pin pins (control). /unpin always mutates.
+    if (cmd === "/pin") {
+      const a = arg.toLowerCase();
+      if (a === "status" || a === "show") return "readonly";
+    }
     return "control";
   }
   if (cmd === "/goal") {
@@ -213,6 +248,12 @@ export function classifyLiveSlash(line: string): LiveSlashKind {
     // "/goal set …" or "/goal <objective>" arms a goal — idle only
     return "idle-only";
   }
+  // /done [note] — shorthand for /goal done (live control)
+  if (cmd === "/done") return "control";
+  // /pause — shorthand for /goal pause (live control)
+  if (cmd === "/pause") return "control";
+  // /unpause — shorthand for /goal resume (live control)
+  if (cmd === "/unpause") return "control";
   return "idle-only";
 }
 
@@ -277,11 +318,14 @@ export function isSafeDiffFilterArg(token: string): boolean {
 }
 
 export const LIVE_CONTROLS_HINT =
-  `${ULW_LIVE_CONTROLS_HINT} · free-text queues mid-run · /goal pause · /status  ·  Ctrl+C aborts the turn`;
+  `${ULW_LIVE_CONTROLS_HINT} · free-text queues mid-run · /pause · /unpause · /done · /status  ·  Ctrl+C aborts the turn`;
 
 export const SLASH_COMMANDS = [
   "/help",
   "/goal",
+  "/done",
+  "/pause",
+  "/unpause",
   "/ulw",
   "/ulw-off",
   "/cycle",
@@ -293,6 +337,7 @@ export const SLASH_COMMANDS = [
   "/context",
   "/cost",
   "/metrics",
+  "/stats",
   "/todos",
   "/model",
   "/effort",
@@ -300,13 +345,24 @@ export const SLASH_COMMANDS = [
   "/compact",
   "/rewind",
   "/undo",
+  "/retry",
+  "/again",
   "/export",
   "/fork",
   "/title",
   "/rename",
   "/bell",
+  "/pin",
+  "/unpin",
   "/diff",
   "/copy",
+  "/share",
+  "/last",
+  "/files",
+  "/path",
+  "/tips",
+  "/news",
+  "/changelog",
   "/new",
   "/clear",
   "/resume",
@@ -354,6 +410,23 @@ export async function handleSlash(
 
     case "/goal":
       return handleGoal(arg, opts.session);
+
+    case "/done": {
+      // Shorthand for /goal done [note] — live-safe mid-run control.
+      const note = arg.trim();
+      return handleGoal(note ? `done ${note}` : "done", opts.session);
+    }
+
+    case "/pause": {
+      // Shorthand for /goal pause — live-safe mid-run control.
+      return handleGoal("pause", opts.session);
+    }
+
+    case "/unpause": {
+      // Shorthand for /goal resume — live-safe mid-run control.
+      // (Avoid bare /resume — that switches sessions.)
+      return handleGoal("resume", opts.session);
+    }
 
     case "/ulw":
     case "/ultrawork":
@@ -608,6 +681,37 @@ export async function handleSlash(
           `  tokens:   in=${formatTokens(opts.session.meta.totalPromptTokens)} out=${formatTokens(opts.session.meta.totalCompletionTokens)} · est ${formatCost(cost)}`,
           `  turns:    ${opts.session.meta.turnCount}  edits=${opts.session.meta.editCount}`,
           `  id:       ${opts.session.meta.id}`,
+          chalk.dim(`Tip: /stats [days] or forge stats --days 7 for a full usage dashboard`),
+        ].join("\n"),
+      };
+    }
+
+    case "/stats": {
+      // /stats · /stats 7 · /stats --days=30
+      const raw = arg.trim();
+      let days = 0;
+      if (raw) {
+        const m = raw.match(/^(?:--days=)?(\d+)$/i);
+        if (m) days = Number(m[1]);
+        else if (/^\d+d$/i.test(raw)) days = Number(raw.slice(0, -1));
+      }
+      const stats = collectUsageStats({
+        days: Number.isFinite(days) && days > 0 ? days : 0,
+      });
+      const cost = estimateCostUsd(
+        String(opts.config.provider),
+        opts.session.meta.totalPromptTokens,
+        opts.session.meta.totalCompletionTokens,
+      );
+      return {
+        handled: true,
+        output: [
+          formatUsageStats(stats),
+          ``,
+          `This session:`,
+          `  tokens: in=${formatTokens(opts.session.meta.totalPromptTokens)} out=${formatTokens(opts.session.meta.totalCompletionTokens)} · est ${formatCost(cost)}`,
+          `  turns:  ${opts.session.meta.turnCount}  edits=${opts.session.meta.editCount}  id=${opts.session.meta.id.slice(0, 8)}`,
+          chalk.dim(`CLI: forge stats [--days N] [--json]`),
         ].join("\n"),
       };
     }
@@ -838,6 +942,36 @@ export async function handleSlash(
       };
     }
 
+    case "/retry":
+    case "/again": {
+      // Drop last user turn + re-run (optional rewritten prompt).
+      // Idle-only: mutates history and starts a new agent turn via forwardPrompt.
+      const prior = lastUserText(opts.session);
+      if (!prior) {
+        return {
+          handled: true,
+          output:
+            "Nothing to retry — no prior user turn in this session. Send a prompt first.",
+          session: opts.session,
+        };
+      }
+      const rewritten = (arg || "").trim();
+      const prompt = rewritten || prior;
+      const removed = rewindSession(opts.session, 1);
+      const preview =
+        prompt.length > 120 ? `${prompt.slice(0, 117).trimEnd()}…` : prompt;
+      const mode = rewritten ? "with rewritten prompt" : "same prompt";
+      return {
+        handled: true,
+        output:
+          removed > 0
+            ? `Retrying last turn (${mode}; removed ${removed} msg(s))…\n→ ${preview}`
+            : `Retrying last turn (${mode})…\n→ ${preview}`,
+        forwardPrompt: prompt,
+        session: opts.session,
+      };
+    }
+
     case "/export": {
       // /export [path] [--json]
       const parts = arg ? arg.split(/\s+/).filter(Boolean) : [];
@@ -860,13 +994,18 @@ export async function handleSlash(
     case "/fork": {
       const title = arg || undefined;
       const forked = forkSession(opts.session, title ? { title } : undefined);
+      const peek = formatResumePeek(forked);
+      const peekBlock = peek
+        ? `\n\n${peek}\n${chalk.dim("(/last 3 for more · /retry to re-run)")}`
+        : "";
       return {
         handled: true,
         output:
           `Forked session → ${forked.meta.id}\n` +
           `  msgs=${forked.messages.length} todos=${forked.todos.length}\n` +
           `  Continuing in the fork. Original ${opts.session.meta.id.slice(0, 8)} unchanged.\n` +
-          `  Resume original later: /resume ${opts.session.meta.id.slice(0, 8)}`,
+          `  Resume original later: /resume ${opts.session.meta.id.slice(0, 8)}` +
+          peekBlock,
         replaceSession: forked,
       };
     }
@@ -896,6 +1035,58 @@ export async function handleSlash(
       return {
         handled: true,
         output: `Title set: ${t}`,
+        session: opts.session,
+      };
+    }
+
+    case "/pin": {
+      // /pin · /pin on  → pin
+      // /pin off|clear  → unpin
+      // /pin status     → show
+      // /pin toggle     → flip
+      const raw = (arg || "").trim().toLowerCase();
+      if (raw === "status" || raw === "show") {
+        return {
+          handled: true,
+          output: opts.session.meta.pinned
+            ? "Pinned — prune will keep this session. /unpin to allow cleanup."
+            : "Not pinned. /pin to protect from prune.",
+          session: opts.session,
+        };
+      }
+      if (["off", "0", "false", "no", "clear", "unpin"].includes(raw)) {
+        setSessionPinned(opts.session, false);
+        return {
+          handled: true,
+          output: "Unpinned — prune may delete this session when old.",
+          session: opts.session,
+        };
+      }
+      if (raw === "toggle") {
+        const next = !opts.session.meta.pinned;
+        setSessionPinned(opts.session, next);
+        return {
+          handled: true,
+          output: next
+            ? "Pinned — protected from prune."
+            : "Unpinned — prune may delete when old.",
+          session: opts.session,
+        };
+      }
+      // bare /pin or /pin on → pin
+      setSessionPinned(opts.session, true);
+      return {
+        handled: true,
+        output: "Pinned — this session is protected from prune. /unpin to reverse.",
+        session: opts.session,
+      };
+    }
+
+    case "/unpin": {
+      setSessionPinned(opts.session, false);
+      return {
+        handled: true,
+        output: "Unpinned — prune may delete this session when old.",
         session: opts.session,
       };
     }
@@ -1055,6 +1246,170 @@ export async function handleSlash(
       };
     }
 
+    case "/last": {
+      // /last · /last 3 · /last 5 400  (turns, optional max chars per bubble)
+      const parts = arg.trim().split(/\s+/).filter(Boolean);
+      let turns = 1;
+      let maxChars = 320;
+      if (parts[0] && /^\d+$/.test(parts[0])) {
+        turns = Math.max(1, Math.min(20, parseInt(parts[0], 10)));
+      }
+      if (parts[1] && /^\d+$/.test(parts[1])) {
+        maxChars = Math.max(40, Math.min(2000, parseInt(parts[1], 10)));
+      }
+      return {
+        handled: true,
+        output: formatRecentTurns(opts.session, { turns, maxChars }),
+      };
+    }
+
+    case "/files": {
+      // /files · /files writes · /files 20 · /files mutations 30
+      const parts = arg.trim().toLowerCase().split(/\s+/).filter(Boolean);
+      let mutatedOnly = false;
+      let limit = 40;
+      for (const p of parts) {
+        if (
+          p === "writes" ||
+          p === "write" ||
+          p === "mutations" ||
+          p === "mutated" ||
+          p === "edits" ||
+          p === "m"
+        ) {
+          mutatedOnly = true;
+          continue;
+        }
+        if (p === "all" || p === "any" || p === "reads") {
+          mutatedOnly = false;
+          continue;
+        }
+        if (/^\d+$/.test(p)) {
+          limit = Math.max(1, Math.min(200, parseInt(p, 10)));
+        }
+      }
+      return {
+        handled: true,
+        output: formatSessionTouchedFiles(opts.session, { limit, mutatedOnly }),
+      };
+    }
+
+    case "/path": {
+      // /path · /path json · /path copy · /path <id|title>
+      const parts = arg.trim().split(/\s+/).filter(Boolean);
+      const wantJson = parts.some(
+        (p) => p === "json" || p === "--json" || p === "-j",
+      );
+      const wantCopy = parts.some(
+        (p) => p === "copy" || p === "--copy" || p === "-c" || p === "clip",
+      );
+      const target = parts.find(
+        (p) =>
+          !["json", "--json", "-j", "copy", "--copy", "-c", "clip"].includes(p),
+      );
+      let dir: string;
+      let jsonPath: string;
+      if (!target) {
+        dir = sessionDir(opts.session.meta.id);
+        jsonPath = path.join(dir, "session.json");
+      } else {
+        const resolved = resolveSessionDir(target);
+        if (!resolved) {
+          return {
+            handled: true,
+            output: formatSessionLookupMiss(target, {
+              cwd: opts.session.meta.cwd || opts.config.workspace,
+            }),
+          };
+        }
+        dir = resolved;
+        jsonPath =
+          resolveSessionJsonPath(target) || path.join(dir, "session.json");
+      }
+      const primary = wantJson ? jsonPath : dir;
+      if (wantCopy) {
+        const clip = copyToClipboard(primary);
+        const body = wantJson
+          ? primary
+          : `Session dir:  ${dir}\n` +
+            `session.json: ${jsonPath}\n` +
+            chalk.dim(`CLI: forge sessions path ${target || opts.session.meta.id.slice(0, 8)}`);
+        return {
+          handled: true,
+          output:
+            body +
+            (clip.ok
+              ? chalk.dim(`\n✓ Copied ${wantJson ? "session.json" : "dir"} path via ${clip.backend}`)
+              : chalk.dim(`\nClipboard unavailable (${clip.error || "no backend"})`)),
+        };
+      }
+      return {
+        handled: true,
+        output: wantJson
+          ? primary
+          : `Session dir:  ${dir}\n` +
+            `session.json: ${jsonPath}\n` +
+            chalk.dim(
+              `CLI: forge sessions path ${target || opts.session.meta.id.slice(0, 8)}  ·  /path copy`,
+            ),
+      };
+    }
+
+    case "/share": {
+      // /share · /share nocopy · /share --no-clip
+      const noClip = /\b(nocopy|no-?clip|--no-clip|--print-only)\b/i.test(arg);
+      const card = formatSessionShareCard(opts.session);
+      if (noClip) {
+        return { handled: true, output: card };
+      }
+      const result = copyToClipboard(card);
+      if (result.ok) {
+        return {
+          handled: true,
+          output:
+            card +
+            chalk.dim(
+              `\n\n✓ Copied share card (${card.length} chars via ${result.backend}).`,
+            ),
+        };
+      }
+      return {
+        handled: true,
+        output:
+          card +
+          chalk.dim(
+            `\n\nClipboard unavailable (${result.error || "no backend"}). Card printed above.`,
+          ),
+      };
+    }
+
+    case "/tips": {
+      return {
+        handled: true,
+        output: [
+          `Forge expert tips`,
+          `  Live mid-run:  /cycle 0|1  ·  /ulw-off  ·  /pause  ·  /unpause  ·  /done  ·  /status`,
+          `  Sessions:      /sessions  ·  pinned  ·  search <q>  ·  /new [title]  ·  /pin  ·  /path  ·  /share`,
+          `  Resume:        bare forge (same-cwd)  ·  /resume <title|id>  ·  forge --session <title|id>`,
+          `  CI:            forge run "…" --title job --json  ·  forge run "…" --continue  ·  forge doctor --json`,
+          `  Safety:        /permissions plan|acceptEdits  ·  --sandbox workspace  ·  /diff (argv-safe)`,
+          `  Attention:     /bell on  ·  /copy  ·  /last  ·  /files  ·  /path  ·  /stats 7  ·  /retry`,
+          `  Docs:          docs/PRODUCTION.md  ·  docs/RELIABILITY.md  ·  /news  ·  /help`,
+        ].join("\n"),
+      };
+    }
+
+    case "/news":
+    case "/changelog": {
+      // /news · /news 2 · /news 3
+      const nRaw = (arg.trim().split(/\s+/)[0] || "").replace(/^--count=/, "");
+      const n = nRaw && /^\d+$/.test(nRaw) ? parseInt(nRaw, 10) : 1;
+      return {
+        handled: true,
+        output: formatWhatsNew({ count: n }),
+      };
+    }
+
     case "/new":
     case "/clear": {
       if (cmd === "/clear" && arg !== "hard") {
@@ -1097,22 +1452,31 @@ export async function handleSlash(
           output:
             list.length === 0
               ? showAll
-                ? "No sessions. Usage: /resume <session-id-prefix>"
+                ? "No sessions. Usage: /resume <id-prefix|title>"
                 : `No sessions for this workspace. Try: /resume all`
-              : `Usage: /resume <session-id-prefix>  ·  ${scope}\n\nRecent:\n${list
+              : `Usage: /resume <id-prefix|title>  ·  ${scope}\n\nRecent:\n${list
                   .map((s) => {
                     const lock = readSessionLock(s.id);
                     const lockNote = lock ? `  LOCK pid ${lock.pid}` : "";
                     const cwdNote =
                       showAll && s.cwd ? `  ${path.basename(s.cwd)}` : "";
-                    return `  ${s.id.slice(0, 8)}  ${(s.title || "").slice(0, 40).padEnd(40)}  ${s.model}${lockNote}${cwdNote}`;
+                    const age = formatRelativeTime(s.updatedAt).padStart(8);
+                    const prev = (s.lastUserPreview || "").slice(0, 28);
+                    const prevNote = prev
+                      ? `  “${prev}${(s.lastUserPreview || "").length > 28 ? "…" : ""}”`
+                      : "";
+                    return `  ${s.id.slice(0, 8)}  ${age}  ${(s.title || "").slice(0, 28).padEnd(28)}  ${s.model}${prevNote}${lockNote}${cwdNote}`;
                   })
-                  .join("\n")}${showAll ? "" : chalk.dim("\n\n/resume all — every workspace")}`,
+                  .join("\n")}${showAll ? "" : chalk.dim("\n\n/resume all — every workspace · /resume <title>")}`,
         };
       }
       const loaded = loadSession(arg);
       if (!loaded) {
-        return { handled: true, output: `Session not found: ${arg}` };
+        const ws = opts.session.meta.cwd || opts.config.workspace || process.cwd();
+        return {
+          handled: true,
+          output: formatSessionLookupMiss(arg, { cwd: ws }),
+        };
       }
       opts.config.model = loaded.meta.model;
       let lockWarn = "";
@@ -1123,9 +1487,14 @@ export async function handleSlash(
           (lock ? ` (${formatLockHolder(lock)})` : "") +
           `. Concurrent writes may race — prefer one writer, or wait until the other REPL exits.`;
       }
+      const orient = formatResumeOrientation(loaded);
+      const pinNote = loaded.meta.pinned ? " · PIN" : "";
+      const peekBlock = orient
+        ? `\n\n${orient}\n${chalk.dim("(/last 3 · /files · /retry to re-run)")}`
+        : "";
       return {
         handled: true,
-        output: `Resumed ${loaded.meta.id.slice(0, 8)} — ${loaded.meta.title || "untitled"} (${loaded.messages.length} msgs)${lockWarn}`,
+        output: `Resumed ${loaded.meta.id.slice(0, 8)} — ${loaded.meta.title || "untitled"} (${loaded.messages.length} msgs)${pinNote}${lockWarn}${peekBlock}`,
         replaceSession: loaded,
       };
     }
@@ -1163,7 +1532,9 @@ export async function handleSlash(
         }
         return {
           handled: true,
-          output: `Session not found: ${target}`,
+          output: formatSessionLookupMiss(target, {
+            cwd: opts.session.meta.cwd || opts.config.workspace,
+          }),
         };
       }
       if (sub === "prune") {
@@ -1176,17 +1547,25 @@ export async function handleSlash(
         const lockNote = result.skippedLocked
           ? `; skipped ${result.skippedLocked} foreign-locked`
           : "";
+        const pinNote = result.skippedPinned
+          ? `; skipped ${result.skippedPinned} pinned`
+          : "";
         return {
           handled: true,
-          output: `Pruned ${result.deleted.length} session(s); kept ${result.kept} (active protected${lockNote}). CLI: forge sessions prune --keep 50`,
+          output: `Pruned ${result.deleted.length} session(s); kept ${result.kept} (active protected${lockNote}${pinNote}). CLI: forge sessions prune --keep 50`,
         };
       }
       // Default: same-cwd sessions (multi-project experts). /sessions all|global for everything.
       // /sessions q <text> or /sessions search <text> filters by id/title substring.
+      // /sessions pinned — only pin-protected sessions.
       const ws = opts.session.meta.cwd || opts.config.workspace || process.cwd();
       let listMode: "cwd" | "all" = "cwd";
       let query: string | undefined;
+      let pinnedOnly = false;
       if (sub === "all" || sub === "global" || sub === "-a") {
+        listMode = "all";
+      } else if (sub === "pinned" || sub === "pins" || sub === "pin") {
+        pinnedOnly = true;
         listMode = "all";
       } else if (sub === "q" || sub === "search" || sub === "find") {
         query = parts.slice(1).join(" ").trim() || undefined;
@@ -1204,10 +1583,17 @@ export async function handleSlash(
       }
       const list = listSessions({
         limit: 15,
-        ...(listMode === "cwd" && !query ? { cwd: ws } : {}),
+        ...(listMode === "cwd" && !query && !pinnedOnly ? { cwd: ws } : {}),
         ...(query ? { query } : {}),
+        ...(pinnedOnly ? { pinned: true } : {}),
       });
       if (!list.length) {
+        if (pinnedOnly) {
+          return {
+            handled: true,
+            output: "No pinned sessions. /pin on a session to protect it from prune.",
+          };
+        }
         if (query) {
           return {
             handled: true,
@@ -1222,8 +1608,9 @@ export async function handleSlash(
         }
         return { handled: true, output: "No sessions yet." };
       }
-      const scopeNote =
-        query
+      const scopeNote = pinnedOnly
+        ? "pinned only"
+        : query
           ? `search=${JSON.stringify(query)}`
           : listMode === "cwd"
             ? `cwd=${ws}`
@@ -1244,11 +1631,16 @@ export async function handleSlash(
                 listMode === "all" && s.cwd
                   ? `  ${path.basename(s.cwd)}`
                   : "";
-              return `${s.id.slice(0, 8)}  ${s.updatedAt.slice(0, 19)}  ${(s.title || "").slice(0, 36).padEnd(36)}  ${s.model}  t=${s.turnCount}${s.ultrawork ? " ULW" : ""}${active}${lockNote}${cwdNote}`;
+              const prev = (s.lastUserPreview || "").slice(0, 32);
+              const prevNote = prev
+                ? `  “${prev}${(s.lastUserPreview || "").length > 32 ? "…" : ""}”`
+                : "";
+              const age = formatRelativeTime(s.updatedAt).padStart(8);
+              return `${s.id.slice(0, 8)}  ${age}  ${(s.title || "").slice(0, 28).padEnd(28)}  ${s.model}  t=${s.turnCount}${s.ultrawork ? " ULW" : ""}${s.pinned ? " PIN" : ""}${active}${lockNote}${cwdNote}${prevNote}`;
             })
             .join("\n") +
           chalk.dim(
-            `\n\n* = active  ·  ${scopeNote}  ·  /sessions [all|search <q>]  ·  delete <id> [--force]  ·  prune [--keep=50]  ·  /resume <id>\nCLI: forge sessions list --cwd .  ·  show|export|import|fork|delete <id>`,
+            `\n\n* = active  ·  ${scopeNote}  ·  /sessions [all|pinned|search <q>]  ·  delete <id|title> [--force]  ·  prune [--keep=50]  ·  /resume <id|title>  ·  /pin\nCLI: forge sessions list --cwd . [--pinned]  ·  show|export|import|fork|pin|delete <id|title>`,
           ),
       };
     }
@@ -1689,16 +2081,23 @@ export function runDoctorCheck(config: ForgeConfig): DoctorResult {
     const sessions = listSessions(10_000);
     const sessN = sessions.length;
     let lockedN = 0;
+    let pinnedN = 0;
     for (const s of sessions) {
       if (sessionHasForeignLiveLock(s.id)) lockedN += 1;
+      if (s.pinned) pinnedN += 1;
     }
     lines.push(
       `  sessions: ${sessN}` +
+        (pinnedN > 0 ? chalk.dim(` · ${pinnedN} pinned`) : "") +
         (lockedN > 0
           ? chalk.dim(` · ${lockedN} foreign-locked`)
           : "") +
         (sessN > 80
-          ? chalk.yellow(" — consider: forge sessions prune --keep 50")
+          ? chalk.yellow(
+              pinnedN > 0
+                ? " — consider: forge sessions prune --keep 50 (pinned kept)"
+                : " — consider: forge sessions prune --keep 50",
+            )
           : ""),
     );
   } catch {
@@ -1787,6 +2186,9 @@ Forge slash commands
   /goal <objective>     Arm relentless goal driver (Codex-style)
   /goal                 Show goal status  [live]
   /goal pause|resume|clear|done   [live]
+  /done [note]          Shorthand for /goal done  [live]
+  /pause                Shorthand for /goal pause  [live]
+  /unpause              Shorthand for /goal resume  [live]
   /ulw [task]           Arm ULW + cycle=1 (soft prompts OK: "improve the code")
   /cycle 1|0|status     Continue waves (1) or last wave then stop (0)  [live]
   /ulw-off              Disarm ULW + cycle driver  [live]
@@ -1796,6 +2198,7 @@ Forge slash commands
   /context              Context window usage bar  [live]
   /cost                 Token usage + rough cost  [live]
   /metrics              Local metrics.jsonl + this session counters  [live]
+  /stats [days]         Usage dashboard (runs/tokens/cost/projects)  [live]
   /todos                Show agent todos  [live]
   /model <name> [effort] Switch model; optional low|medium|high (persists)
   /effort [level]       Reasoning effort for current model (low|medium|high)  [live]
@@ -1803,15 +2206,23 @@ Forge slash commands
                         Mode persists · list|clear|revoke for saved always-allows
   /compact              Compact conversation
   /rewind [n]           Undo last n user turns (/undo)
+  /retry [prompt]       Rewind last turn + re-run (/again; optional rewrite)
   /export [path] [--json]  Export session as markdown or JSON
   /fork [title]         Branch session into a new id (keep original)
   /title [name|clear]   Show / set / clear session title (/rename)  [live]
   /bell [on|off|test]   Terminal BEL when a turn ends (long-run attention)  [live]
   /diff [path]          Git status + diff (argv-safe; pathspecs/refs only)  [live]
   /copy                 Copy last assistant reply (pbcopy/wl-copy/xclip/…)  [live]
+  /share [nocopy]       Pasteable session card + resume/export cmds (clipboard)  [live]
+  /last [n]             Peek last n user/assistant turns (after resume)  [live]
+  /files [writes|n]     Paths touched by tools this session (newest first)  [live]
+  /path [id|json]       On-disk session directory / session.json path  [live]
+  /pin [on|off|toggle]  Protect session from prune (/unpin)  [live]
+  /tips                 Expert keyboard / CI cheat sheet  [live]
+  /news [n]             What's new from CHANGELOG (/changelog)  [live]
   /new [title]          Fresh session (optional searchable label)
   /clear                Clear messages (same session)
-  /resume [id|all]      Resume a prior session (picker defaults to same-cwd)
+  /resume [id|title|all] Resume by id prefix or unique /title (same-cwd picker)
   /sessions [all|search|delete|prune]  List (cwd default) / search / delete [--force] / prune
   /auth                 Show stored credentials  [live]
   /doctor               Environment health check  [live]

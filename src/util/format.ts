@@ -171,3 +171,36 @@ export function formatRetryWait(ms: number): string {
   if (ms < 10_000) return `${(ms / 1000).toFixed(1)}s`;
   return `${Math.round(ms / 1000)}s`;
 }
+
+/**
+ * Compact relative age for session pickers (e.g. "just now", "5m", "3h", "2d").
+ * Falls back to a short ISO date when older than ~60 days or unparseable.
+ */
+export function formatRelativeTime(
+  isoOrDate: string | number | Date | null | undefined,
+  nowMs: number = Date.now(),
+): string {
+  if (isoOrDate == null || isoOrDate === "") return "—";
+  let t: number;
+  if (isoOrDate instanceof Date) t = isoOrDate.getTime();
+  else if (typeof isoOrDate === "number") t = isoOrDate;
+  else t = Date.parse(String(isoOrDate));
+  if (!Number.isFinite(t)) {
+    const s = String(isoOrDate);
+    return s.length >= 10 ? s.slice(0, 10) : s.slice(0, 16) || "—";
+  }
+  const delta = nowMs - t;
+  // Future clock skew — show absolute-ish short form
+  if (delta < -60_000) {
+    return new Date(t).toISOString().slice(0, 10);
+  }
+  const sec = Math.max(0, Math.floor(delta / 1000));
+  if (sec < 45) return "just now";
+  const min = Math.floor(sec / 60);
+  if (min < 60) return `${min}m`;
+  const hr = Math.floor(min / 60);
+  if (hr < 48) return `${hr}h`;
+  const day = Math.floor(hr / 24);
+  if (day < 60) return `${day}d`;
+  return new Date(t).toISOString().slice(0, 10);
+}

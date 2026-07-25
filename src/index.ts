@@ -75,7 +75,13 @@ export {
   loadSession,
   loadSessionMeta,
   saveSession,
+  sessionDir,
+  resolveSessionDir,
+  resolveSessionJsonPath,
   listSessions,
+  resolveSessionId,
+  suggestSessions,
+  formatSessionLookupMiss,
   deleteSession,
   deleteSessionDetailed,
   sessionHasForeignLiveLock,
@@ -89,9 +95,21 @@ export {
   importSessionJson,
   forkSession,
   setSessionTitle,
+  setSessionPinned,
+  isSessionPinned,
   findRecentSessionForCwd,
   type RecentSessionHit,
   formatSessionSummary,
+  formatSessionShareCard,
+  lastAssistantText,
+  lastUserText,
+  listSessionTouchedFiles,
+  formatSessionTouchedFiles,
+  type TouchedFile,
+  type TouchedFileOp,
+  formatRecentTurns,
+  formatResumePeek,
+  formatResumeOrientation,
   recoverSessionFromTmp,
   compactMessages,
   estimateTokens,
@@ -131,12 +149,20 @@ export {
   DEFAULT_PROVIDER_TIMEOUT_MS,
 } from "./util/abort.js";
 export { getForgeVersion } from "./util/version.js";
+export {
+  formatWhatsNew,
+  loadChangelogReleases,
+  parseChangelog,
+  findChangelogPath,
+} from "./util/changelog.js";
+export type { ChangelogRelease } from "./util/changelog.js";
 export { log, setLogLevel, getLogLevel } from "./util/log.js";
 export { shellCompletionScript } from "./util/completion-script.js";
 export {
   summarizeToolArgs,
   formatPermissionPreview,
   formatRetryWait,
+  formatRelativeTime,
   estimateCostUsd,
   formatCost,
   formatTokens,
@@ -224,7 +250,12 @@ export {
   metricsStats,
   metricsPath,
   pruneMetrics,
+  readMetricsEvents,
+  collectUsageStats,
+  formatUsageStats,
   METRICS_AUTO_PRUNE_KEEP,
+  type UsageStats,
+  type SessionMetricsEvent,
 } from "./session/metrics.js";
 export { permissionAskTimeoutMs } from "./agent/permissions.js";
 export {

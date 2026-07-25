@@ -351,14 +351,17 @@ describe("doctor surfaces reliability", () => {
     );
     const sessions = listSessions(10_000);
     let sessionsLocked = 0;
+    let sessionsPinned = 0;
     for (const s of sessions) {
       if (sessionHasForeignLiveLock(s.id)) sessionsLocked += 1;
+      if (s.pinned) sessionsPinned += 1;
     }
     const payload = {
       ok: check.ok && secureFilesOk && check.blockingStop,
       version: getForgeVersion(),
       sessionCount: sessions.length,
       sessionsLocked,
+      sessionsPinned,
       toolOutput: (() => {
         const st = toolOutputStats();
         return { files: st.files, bytes: st.bytes };
@@ -384,6 +387,9 @@ describe("doctor surfaces reliability", () => {
     assert.equal(typeof payload.sessionsLocked, "number");
     assert.ok(payload.sessionsLocked >= 0);
     assert.ok(payload.sessionsLocked <= payload.sessionCount);
+    assert.equal(typeof payload.sessionsPinned, "number");
+    assert.ok(payload.sessionsPinned >= 0);
+    assert.ok(payload.sessionsPinned <= payload.sessionCount);
     assert.equal(typeof payload.toolOutput.files, "number");
     assert.equal(typeof payload.toolOutput.bytes, "number");
     assert.equal(typeof payload.sandboxLog.bytes, "number");
@@ -615,6 +621,8 @@ describe("attention bell", () => {
     assert.equal(isBellEnabled({ bellOnTurnEnd: false }), true);
     savePreferences({ bellOnTurnEnd: true });
     assert.equal(loadPreferences().bellOnTurnEnd, true);
+    savePreferences({ seenWelcomeTip: true });
+    assert.equal(loadPreferences().seenWelcomeTip, true);
     // force ring path is safe even when not a TTY (returns false)
     const rang = maybeRingBell({ force: true });
     assert.equal(typeof rang, "boolean");
@@ -901,6 +909,7 @@ describe("session fork / export / tmp recover", () => {
     other.meta.title = "other";
     saveSession(other);
     const hit = findRecentSessionForCwd(tmp);
+    // forge run --continue uses the same finder (newest unlocked same-cwd)
     assert.ok(hit);
     assert.ok(hit!.meta);
     assert.equal(hit!.meta!.id, a.meta.id);
@@ -1020,6 +1029,19 @@ describe("formatRetryWait", () => {
   });
 });
 
+describe("formatRelativeTime", () => {
+  it("formats compact ages for session pickers", async () => {
+    const { formatRelativeTime } = await import("../src/util/format.js");
+    const now = Date.parse("2026-04-01T12:00:00.000Z");
+    assert.equal(formatRelativeTime(new Date(now - 10_000).toISOString(), now), "just now");
+    assert.equal(formatRelativeTime(new Date(now - 5 * 60_000).toISOString(), now), "5m");
+    assert.equal(formatRelativeTime(new Date(now - 3 * 3600_000).toISOString(), now), "3h");
+    assert.equal(formatRelativeTime(new Date(now - 4 * 86400_000).toISOString(), now), "4d");
+    assert.equal(formatRelativeTime(null, now), "—");
+    assert.equal(formatRelativeTime("not-a-date", now), "not-a-date".slice(0, 10));
+  });
+});
+
 describe("permission / tool arg previews", () => {
   it("summarizes apply_patch instead of dumping full text", async () => {
     const { summarizeToolArgs, formatPermissionPreview } = await import(
@@ -1118,6 +1140,124 @@ describe("session metrics + permission timeout", () => {
     assert.equal(pruned.afterEvents, 3);
     assert.ok(pruned.deleted >= 3);
     assert.equal(metricsStats().events, 3);
+  });
+
+  it("formatSessionShareCard is pasteable without secrets", async () => {
+    const fs = await import("node:fs");
+    const os = await import("node:os");
+    const path = await import("node:path");
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-share-"));
+    process.env.FORGE_HOME = tmp;
+    const {
+      createSession,
+      formatSessionShareCard,
+      saveSession,
+      setSessionPinned,
+    } = await import("../src/session/session.js");
+    const s = createSession({
+      cwd: path.join(tmp, "ws"),
+      provider: "xai",
+      model: "m",
+      title: "handoff-42",
+    });
+    s.messages.push({ role: "user", content: "hi" });
+    s.messages.push({
+      role: "assistant",
+      content: "done with the fix — secret=should-not-matter",
+    });
+    s.meta.turnCount = 2;
+    s.meta.editCount = 1;
+    setSessionPinned(s, true);
+    saveSession(s);
+    const card = formatSessionShareCard(s);
+    assert.match(card, /Forge session/);
+    assert.match(card, /handoff-42/);
+    assert.match(card, /forge --session/);
+    assert.match(card, /handoff-42/); // title resume line
+    assert.match(card, /PIN/);
+    assert.match(card, /\/pin/);
+    assert.match(card, /--continue/);
+    assert.match(card, /sessions export/);
+    assert.match(card, /\/last 3/);
+    assert.match(card, /\/files/);
+    assert.match(card, /path:/i);
+    assert.match(card, /\/path/);
+    assert.match(card, /Last assistant:/);
+    assert.doesNotMatch(card, /api[_-]?key|sk-|password/i);
+  });
+
+  it("collectUsageStats aggregates runs and session inventory", async () => {
+    const fs = await import("node:fs");
+    const os = await import("node:os");
+    const path = await import("node:path");
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-usage-"));
+    process.env.FORGE_HOME = tmp;
+    const { createSession } = await import("../src/session/session.js");
+    const {
+      appendSessionMetrics,
+      collectUsageStats,
+      formatUsageStats,
+    } = await import("../src/session/metrics.js");
+    const a = path.join(tmp, "proj-a");
+    fs.mkdirSync(a);
+    createSession({
+      cwd: a,
+      provider: "xai",
+      model: "grok-test",
+      title: "t1",
+    });
+    appendSessionMetrics({
+      ts: new Date().toISOString(),
+      type: "run_end",
+      sessionId: "abc",
+      provider: "xai",
+      model: "grok-test",
+      cwd: a,
+      turns: 3,
+      stopContinues: 0,
+      editCount: 2,
+      promptTokens: 1000,
+      completionTokens: 200,
+      estCostUsd: 0.01,
+      durationMs: 5000,
+      ok: true,
+      headless: true,
+      ultrawork: true,
+    });
+    appendSessionMetrics({
+      ts: new Date().toISOString(),
+      type: "run_end",
+      sessionId: "def",
+      provider: "anthropic",
+      model: "claude-test",
+      cwd: a,
+      turns: 1,
+      stopContinues: 0,
+      editCount: 0,
+      promptTokens: 100,
+      completionTokens: 50,
+      estCostUsd: 0.002,
+      durationMs: 1000,
+      ok: false,
+      aborted: true,
+      headless: false,
+    });
+    const stats = collectUsageStats();
+    assert.equal(stats.runs, 2);
+    assert.equal(stats.okRuns, 1);
+    assert.equal(stats.abortedRuns, 1);
+    assert.equal(stats.headlessRuns, 1);
+    assert.equal(stats.ulwRuns, 1);
+    assert.equal(stats.promptTokens, 1100);
+    assert.equal(stats.completionTokens, 250);
+    assert.ok(stats.byProvider.xai >= 1);
+    assert.ok(stats.byProvider.anthropic >= 1);
+    assert.ok(stats.sessions.total >= 1);
+    assert.ok(stats.sessions.titled >= 1);
+    const textOut = formatUsageStats(stats);
+    assert.match(textOut, /Forge usage/);
+    assert.match(textOut, /runs:/);
+    assert.match(textOut, /By provider/);
   });
 });
 
@@ -1297,7 +1437,7 @@ describe("shell completion", () => {
     assert.match(out, /_forge_completions/);
     assert.match(out, /complete -F/);
     assert.match(out, /sessions/);
-    assert.match(out, /show export import fork delete prune/);
+    assert.match(out, /show path export import fork pin unpin delete prune/);
     assert.match(out, /prune-metrics/);
     assert.match(out, /--session/);
     assert.match(out, /top_flags/);
@@ -1311,14 +1451,18 @@ describe("shell completion", () => {
     assert.match(out, /delete\) COMPREPLY=.*--force/);
     assert.match(out, /list\) COMPREPLY=.*--cwd/);
     assert.match(out, /list\) COMPREPLY=.*--query/);
+    assert.match(out, /list\) COMPREPLY=.*--pinned/);
     assert.match(out, /--title/);
+    assert.match(out, /\bstats\b/);
+    assert.match(out, /stats\) COMPREPLY=.*--days/);
     const zsh = shellCompletionScript("zsh");
     assert.match(zsh, /compdef/);
     assert.match(zsh, /--sandbox/);
     assert.match(zsh, /--format/);
     assert.match(zsh, /--title/);
+    assert.match(zsh, /\bstats\b/);
     assert.match(zsh, /delete\).*--force|values 'delete' --json --force/);
-    assert.match(zsh, /values 'list' --json --limit -n --cwd --query -q/);
+    assert.match(zsh, /values 'list' --json --limit -n --cwd --query -q --pinned/);
     const fish = shellCompletionScript("fish");
     assert.match(fish, /complete -c forge/);
     assert.match(fish, /l new/);
@@ -1329,6 +1473,7 @@ describe("shell completion", () => {
     assert.match(fish, /l force/);
     assert.match(fish, /l query/);
     assert.match(fish, /l title/);
+    assert.match(fish, /stats/);
   });
 });
 

@@ -13,6 +13,7 @@ import { Command } from "commander";
 import chalk from "chalk";
 import fs from "node:fs";
 import path from "node:path";
+import { formatRelativeTime } from "./util/format.js";
 import { loadConfig, defaultConfigToml } from "./config/load.js";
 import type { ForgeConfig } from "./config/types.js";
 import { parseReasoningEffort } from "./config/reasoning.js";
@@ -33,12 +34,19 @@ import {
   exportSessionJson,
   importSessionJson,
   formatSessionSummary,
+  formatSessionLookupMiss,
   findRecentSessionForCwd,
   setSessionTitle,
+  setSessionPinned,
+  formatResumeOrientation,
+  resolveSessionDir,
+  resolveSessionJsonPath,
 } from "./session/session.js";
 import {
   appendSessionMetrics,
   buildRunEndMetrics,
+  collectUsageStats,
+  formatUsageStats,
   metricsStats,
   pruneMetrics,
 } from "./session/metrics.js";
@@ -72,6 +80,10 @@ import {
 } from "./statusline/index.js";
 
 import { getForgeVersion } from "./util/version.js";
+import {
+  formatWhatsNew,
+  loadChangelogReleases,
+} from "./util/changelog.js";
 import { shellCompletionScript } from "./util/completion-script.js";
 import { providerTimeoutMs } from "./util/abort.js";
 import { envPositiveInt } from "./util/env.js";
@@ -100,13 +112,17 @@ Examples:
   forge doctor --json
   forge run "fix CI" --permission-mode acceptEdits --json
   forge run "continue" --session <id> --json
+  forge run "next step" --continue --json
   forge sessions prune --keep 50
   forge sessions export <id> --format json --out ./session.json
+  forge stats --days 7
+  forge news
+  forge tips
   forge prune-tool-output --keep 80
   forge prune-metrics --keep 500
   eval "$(forge completion bash)"
 
-Docs: docs/PRODUCTION.md · docs/RELIABILITY.md · docs/ULW.md
+Docs: docs/PRODUCTION.md · docs/RELIABILITY.md · docs/ULW.md · forge news
 `,
     )
     .option("-m, --model <model>", "Model id")
@@ -289,7 +305,11 @@ Docs: docs/PRODUCTION.md · docs/RELIABILITY.md · docs/ULW.md
     .option("--goal <objective>", "Arm /goal")
     .option("--cwd <path>", "Workspace", process.cwd())
     .option("--session <id>", "Resume session id/prefix (continue prior headless run)")
-    .option("--new", "Force a new session (default when --session omitted)")
+    .option(
+      "--continue",
+      "Resume newest same-cwd session (≤14d; skips foreign locks). Ignored with --session/--new",
+    )
+    .option("--new", "Force a new session (default when --session/--continue omitted)")
     .option("--title <text>", "Label for a new session (CI-friendly; searchable via list -q)")
     .option("--json", "Emit JSON result on stdout")
     .addHelpText(
@@ -303,6 +323,7 @@ Exit codes:
 
 Empty prompts exit 1 before auth/session create (no orphan sessions, no API spend).
 Label runs: --title <label> (searchable via forge sessions list -q / /sessions search).
+Multi-step CI without copying ids: forge run "…" --continue --json
 
 CI tips: forge doctor --json · --permission-mode acceptEdits · --sandbox workspace · --title ci-job
 Docs: docs/PRODUCTION.md
@@ -331,12 +352,42 @@ Docs: docs/PRODUCTION.md
       // when the user actually passed it on the CLI (so --session keeps its cwd).
       const cwdExplicit = command?.getOptionValueSource?.("cwd") === "cli";
       let session;
+      let resumed = false;
       if (opts.session && !opts.new) {
         session = loadSession(String(opts.session));
         if (!session) {
-          log.error(`Session not found: ${opts.session}`);
+          log.error(formatSessionLookupMiss(String(opts.session)));
           process.exit(1);
         }
+        resumed = true;
+      } else if (opts.continue && !opts.new) {
+        // OpenCode-style headless continue: newest same-cwd session without copying ids.
+        try {
+          const hit = findRecentSessionForCwd(cwd);
+          if (hit?.meta) {
+            session = loadSession(hit.meta.id);
+            if (session) {
+              resumed = true;
+              const skipNote =
+                hit.skippedLocked > 0
+                  ? ` (skipped ${hit.skippedLocked} locked)`
+                  : "";
+              log.dim(
+                `Continuing ${session.meta.id.slice(0, 8)} — ${session.meta.title || "untitled"} (${session.messages.length} msgs)${skipNote}`,
+              );
+            }
+          } else if (hit && hit.skippedLocked > 0) {
+            log.warn(
+              `No unlocked same-cwd session to continue (${hit.skippedLocked} locked). Starting fresh. Use --session <id> to attach anyway.`,
+            );
+          } else {
+            log.dim("No prior same-cwd session to continue — starting fresh.");
+          }
+        } catch {
+          /* fall through to new session */
+        }
+      }
+      if (resumed && session) {
         // Align live config model with resumed session unless CLI overrode it
         if (!opts.model) config.model = session.meta.model || config.model;
         if (!opts.provider) {
@@ -352,7 +403,15 @@ Docs: docs/PRODUCTION.md
           config.workspace = session.meta.cwd;
         }
         saveSession(session);
-        log.dim(`Resuming session ${session.meta.id.slice(0, 8)} (${session.messages.length} msgs)`);
+        if (opts.session) {
+          log.dim(`Resuming session ${session.meta.id.slice(0, 8)} (${session.messages.length} msgs)`);
+        }
+        try {
+          const peek = formatResumeOrientation(session);
+          if (peek) log.dim(peek);
+        } catch {
+          /* */
+        }
       } else {
         session = createSession({
           cwd,
@@ -363,7 +422,11 @@ Docs: docs/PRODUCTION.md
         });
       }
       // Allow --title on resume to relabel (experts tagging CI pipelines)
-      if (opts.title && typeof opts.title === "string" && opts.session) {
+      if (
+        opts.title &&
+        typeof opts.title === "string" &&
+        (opts.session || opts.continue)
+      ) {
         setSessionTitle(session, opts.title);
       }
       if (opts.ulw || opts.goal) {
@@ -478,11 +541,11 @@ Docs: docs/PRODUCTION.md
   program
     .command("sessions")
     .description(
-      "List, show, export, import, fork, delete (--force if locked), or prune sessions",
+      "List, show, path, export, import, fork, pin/unpin, delete (--force if locked), or prune sessions",
     )
     .argument(
       "[action]",
-      "list (default) | show <id> | export <id> | import <file> | fork <id> | delete <id> [--force] | prune",
+      "list (default) | show <id> | path <id> | export <id> | import <file> | fork <id> | pin <id> | unpin <id> | delete <id> [--force] | prune",
     )
     .argument("[id]", "Session id/prefix or import file path")
     .option("--keep <n>", "Prune: keep newest N sessions", "50")
@@ -498,6 +561,7 @@ Docs: docs/PRODUCTION.md
       "-q, --query <text>",
       "List: case-insensitive id/title substring filter",
     )
+    .option("--pinned", "List: only pin-protected sessions")
     .option("-n, --limit <n>", "List limit", "30")
     .option("--force", "Delete even if another live process holds the session lock")
     .action(
@@ -533,13 +597,40 @@ Docs: docs/PRODUCTION.md
                 (result.detail ? ` — ${result.detail}` : ""),
             );
           } else {
-            log.error(`Session not found: ${target}`);
+            log.error(formatSessionLookupMiss(target));
           }
           process.exit(1);
         }
         if (globalOpts.json)
           console.log(JSON.stringify({ deleted: true, id: result.id }));
         else log.success(`Deleted session ${result.id}`);
+        return;
+      }
+      if (act === "path" || act === "dir" || act === "location") {
+        const target = id || "";
+        if (!target) {
+          log.error("Usage: forge sessions path <id|title>");
+          process.exit(1);
+        }
+        const dir = resolveSessionDir(target);
+        if (!dir) {
+          log.error(formatSessionLookupMiss(target));
+          process.exit(1);
+        }
+        const jsonPath =
+          resolveSessionJsonPath(target) || path.join(dir, "session.json");
+        if (globalOpts.json) {
+          console.log(
+            JSON.stringify(
+              { ok: true, id: path.basename(dir), dir, sessionJson: jsonPath },
+              null,
+              2,
+            ),
+          );
+        } else {
+          console.log(dir);
+          console.log(chalk.dim(jsonPath));
+        }
         return;
       }
       if (act === "show" || act === "info" || act === "get") {
@@ -550,17 +641,20 @@ Docs: docs/PRODUCTION.md
         }
         const s = loadSession(target);
         if (!s) {
-          log.error(`Session not found: ${target}`);
+          log.error(formatSessionLookupMiss(target));
           process.exit(1);
         }
         const lock = readSessionLock(s.meta.id);
         if (globalOpts.json) {
+          const dir = resolveSessionDir(s.meta.id);
           console.log(
             JSON.stringify(
               {
                 meta: s.meta,
                 todos: s.todos,
                 messageCount: s.messages.length,
+                path: dir,
+                sessionJson: dir ? path.join(dir, "session.json") : null,
                 lock: lock
                   ? {
                       pid: lock.pid,
@@ -598,7 +692,7 @@ Docs: docs/PRODUCTION.md
         }
         const s = loadSession(target);
         if (!s) {
-          log.error(`Session not found: ${target}`);
+          log.error(formatSessionLookupMiss(target));
           process.exit(1);
         }
         const body =
@@ -653,11 +747,49 @@ Docs: docs/PRODUCTION.md
             log.success(
               `Imported → ${s.meta.id} (${s.messages.length} msgs, ${s.todos.length} todos)`,
             );
-            log.dim(`Resume with: forge --session ${s.meta.id.slice(0, 8)}`);
+            log.dim(
+              `Resume with: forge --session ${s.meta.id.slice(0, 8)}  ·  or same-cwd: forge run "…" --continue`,
+            );
+            try {
+              const peek = formatResumeOrientation(s);
+              if (peek) log.dim(peek);
+            } catch {
+              /* */
+            }
           }
         } catch (err) {
           log.error((err as Error).message);
           process.exit(1);
+        }
+        return;
+      }
+      if (act === "pin" || act === "unpin") {
+        const target = id || "";
+        if (!target) {
+          log.error(`Usage: forge sessions ${act} <id|title>`);
+          process.exit(1);
+        }
+        const s = loadSession(target);
+        if (!s) {
+          log.error(formatSessionLookupMiss(target));
+          process.exit(1);
+        }
+        const pinned = setSessionPinned(s, act === "pin");
+        if (globalOpts.json) {
+          console.log(
+            JSON.stringify({
+              ok: true,
+              id: s.meta.id,
+              pinned,
+              title: s.meta.title || null,
+            }),
+          );
+        } else {
+          log.success(
+            pinned
+              ? `Pinned ${s.meta.id.slice(0, 8)}${s.meta.title ? ` — ${s.meta.title}` : ""} (protected from prune)`
+              : `Unpinned ${s.meta.id.slice(0, 8)}${s.meta.title ? ` — ${s.meta.title}` : ""}`,
+          );
         }
         return;
       }
@@ -669,7 +801,7 @@ Docs: docs/PRODUCTION.md
         }
         const s = loadSession(target);
         if (!s) {
-          log.error(`Session not found: ${target}`);
+          log.error(formatSessionLookupMiss(target));
           process.exit(1);
         }
         const forked = forkSession(s);
@@ -688,6 +820,12 @@ Docs: docs/PRODUCTION.md
             `Forked ${s.meta.id.slice(0, 8)} → ${forked.meta.id} (${forked.messages.length} msgs)`,
           );
           log.dim(`Resume with: forge --session ${forked.meta.id.slice(0, 8)}`);
+          try {
+            const peek = formatResumeOrientation(forked);
+            if (peek) log.dim(`${peek}\n(/last 3 · /retry · forge run --continue)`);
+          } catch {
+            /* */
+          }
         }
         return;
       }
@@ -707,6 +845,9 @@ Docs: docs/PRODUCTION.md
               (result.skippedLocked
                 ? `; skipped ${result.skippedLocked} locked`
                 : "") +
+              (result.skippedPinned
+                ? `; skipped ${result.skippedPinned} pinned`
+                : "") +
               `)`,
           );
           if (result.deleted.length && result.deleted.length <= 20) {
@@ -724,10 +865,15 @@ Docs: docs/PRODUCTION.md
         "show",
         "info",
         "get",
+        "path",
+        "dir",
+        "location",
         "export",
         "import",
         "fork",
         "clone",
+        "pin",
+        "unpin",
         "delete",
         "rm",
         "remove",
@@ -752,10 +898,12 @@ Docs: docs/PRODUCTION.md
       ) {
         queryFilter = String(action).trim();
       }
+      const pinnedOnly = Boolean(globalOpts.pinned);
       const list = listSessions({
         limit,
         ...(cwdFilter ? { cwd: cwdFilter } : {}),
         ...(queryFilter ? { query: queryFilter } : {}),
+        ...(pinnedOnly ? { pinned: true } : {}),
       });
       if (globalOpts.json) {
         console.log(
@@ -807,13 +955,19 @@ Docs: docs/PRODUCTION.md
             cwdNote = `  ${path.basename(s.cwd)}`;
           }
         }
+        const prev = (s.lastUserPreview || "").slice(0, 40);
+        const prevNote = prev
+          ? `  “${prev}${(s.lastUserPreview || "").length > 40 ? "…" : ""}”`
+          : "";
+        const age = formatRelativeTime(s.updatedAt).padStart(8);
         console.log(
-          `${s.id}  ${s.updatedAt}  ${s.provider}/${s.model}  turns=${s.turnCount}  edits=${s.editCount}${s.ultrawork ? "  ULW" : ""}${s.title ? `  ${s.title.slice(0, 40)}` : ""}${cwdNote}${lockNote}`,
+          `${s.id}  ${age}  ${s.provider}/${s.model}  turns=${s.turnCount}  edits=${s.editCount}${s.ultrawork ? "  ULW" : ""}${s.pinned ? "  PIN" : ""}${s.title ? `  ${s.title.slice(0, 40)}` : ""}${prevNote}${cwdNote}${lockNote}`,
         );
       }
       const filterNotes: string[] = [];
       if (cwdFilter) filterNotes.push(`cwd=${cwdFilter}`);
       if (queryFilter) filterNotes.push(`q=${JSON.stringify(queryFilter)}`);
+      if (pinnedOnly) filterNotes.push("pinned");
       console.log(
         chalk.dim(
           `\n  forge sessions show|export|import|fork|delete <id> [--force]  ·  prune --keep 50` +
@@ -982,6 +1136,74 @@ Project instructions for Forge (and other coding agents).
     });
 
   program
+    .command("stats")
+    .description(
+      "Usage dashboard from metrics.jsonl + session inventory (counter-only, no prompts)",
+    )
+    .option("--days <n>", "Only metrics from the last N days (default: all)")
+    .option("--json", "Machine-readable JSON")
+    .action((opts) => {
+      const daysRaw = opts.days != null ? Number(opts.days) : 0;
+      const days =
+        Number.isFinite(daysRaw) && daysRaw > 0 ? Math.floor(daysRaw) : 0;
+      const stats = collectUsageStats({ days });
+      if (opts.json) {
+        console.log(JSON.stringify(stats, null, 2));
+        return;
+      }
+      console.log(formatUsageStats(stats));
+      if (stats.runs === 0) {
+        log.dim(
+          "No run metrics yet — complete a forge run or REPL turn to populate ~/.forge/metrics.jsonl",
+        );
+      }
+    });
+
+  program
+    .command("tips")
+    .description("Expert cheat sheet (live controls, sessions, CI)")
+    .action(() => {
+      console.log(
+        [
+          `Forge expert tips`,
+          `  Live mid-run:  /cycle 0|1  ·  /ulw-off  ·  /pause  ·  /unpause  ·  /done  ·  /status`,
+          `  Sessions:      /sessions  ·  /sessions search <q>  ·  /new [title]  ·  /share`,
+          `  Resume:        bare forge (same-cwd)  ·  /resume  ·  forge --session <id>`,
+          `  CI:            forge run "…" --title job --json  ·  forge run "…" --continue  ·  forge doctor --json`,
+          `  Safety:        /permissions plan|acceptEdits  ·  --sandbox workspace  ·  /diff (argv-safe)`,
+          `  Attention:     /bell on  ·  /copy  ·  /last  ·  /files  ·  /path  ·  /stats 7  ·  /share  ·  /retry`,
+          `  Docs:          docs/PRODUCTION.md  ·  docs/RELIABILITY.md  ·  forge tips  ·  forge news  ·  /help`,
+        ].join("\n"),
+      );
+    });
+
+  program
+    .command("news")
+    .alias("changelog")
+    .description("What's new — highlights from packaged CHANGELOG.md")
+    .argument("[count]", "How many recent releases to show (default 1)", "1")
+    .option("--json", "Machine-readable JSON releases")
+    .action((countArg: string, opts: { json?: boolean }) => {
+      const n = Math.max(1, Math.min(10, parseInt(String(countArg || "1"), 10) || 1));
+      if (opts.json) {
+        const releases = loadChangelogReleases().slice(0, n);
+        console.log(
+          JSON.stringify(
+            {
+              version: getForgeVersion(),
+              count: releases.length,
+              releases,
+            },
+            null,
+            2,
+          ),
+        );
+        return;
+      }
+      console.log(formatWhatsNew({ count: n }));
+    });
+
+  program
     .command("doctor")
     .description("Check auth, Node version, config, and harness settings")
     .option("-p, --provider <provider>", "Provider override")
@@ -994,11 +1216,13 @@ Project instructions for Forge (and other coding agents).
         const auth = resolveAuth(config);
         let sessionCount = 0;
         let sessionsLocked = 0;
+        let sessionsPinned = 0;
         try {
           const sessions = listSessions(10_000);
           sessionCount = sessions.length;
           for (const s of sessions) {
             if (sessionHasForeignLiveLock(s.id)) sessionsLocked += 1;
+            if (s.pinned) sessionsPinned += 1;
           }
         } catch {
           /* */
@@ -1084,6 +1308,7 @@ Project instructions for Forge (and other coding agents).
               sandbox: config.sandbox,
               sessionCount,
               sessionsLocked,
+              sessionsPinned,
               toolOutput,
               sandboxLog,
               metrics,
@@ -1241,11 +1466,26 @@ function resolveSession(
   if (opts.session) {
     const s = loadSession(opts.session);
     if (!s) {
-      log.error(`Session not found: ${opts.session}`);
+      log.error(formatSessionLookupMiss(opts.session));
       process.exit(1);
     }
     if (typeof opts.title === "string" && opts.title.trim()) {
       setSessionTitle(s, opts.title);
+    }
+    // Explicit --session (interactive): same orientation peek as auto-resume.
+    if (opts.autoResume) {
+      try {
+        const title = s.meta.title || "untitled";
+        log.info(
+          `Resumed ${s.meta.id.slice(0, 8)} — ${title} (${s.messages.length} msgs)`,
+        );
+        const peek = formatResumeOrientation(s);
+        if (peek) {
+          log.dim(`${peek}\n(/last 3 for more · /retry to re-run)`);
+        }
+      } catch {
+        /* never block resume on peek */
+      }
     }
     return s;
   }
@@ -1290,6 +1530,15 @@ function resolveSession(
           log.info(
             `Resumed ${s.meta.id.slice(0, 8)} — ${title} (${s.messages.length} msgs)${flagNote}${skipNote}. Use --new for a fresh session.`,
           );
+          // Orient experts immediately after same-cwd auto-resume.
+          try {
+            const peek = formatResumeOrientation(s);
+            if (peek) {
+              log.dim(`${peek}\n(/last 3 for more · /retry to re-run)`);
+            }
+          } catch {
+            /* never block resume on peek */
+          }
           // Keep provider/model from live config when CLI/prefs differ, but preserve session history
           if (config.model && s.meta.model !== config.model) {
             s.meta.model = config.model;

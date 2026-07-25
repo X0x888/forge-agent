@@ -71,6 +71,9 @@ export function buildPromptFlags(ctx: StatusBarContext): string {
   if (g?.objective && !g.paused && g.status === "active") {
     flags.push(chalk.yellow("GOAL"));
   }
+  if (session.meta.pinned) {
+    flags.push(chalk.cyan("PIN"));
+  }
   if (config.permissionMode === "plan") flags.push(chalk.blue("PLAN"));
   if (config.permissionMode === "bypassPermissions") {
     flags.push(chalk.red("YOLO"));
@@ -706,7 +709,8 @@ export function formatSessionDetails(ctx: StatusBarContext): string {
   const lines = [
     chalk.dim("─".repeat(Math.min(48, process.stdout.columns || 48))),
     chalk.dim(`session  ${session.meta.id.slice(0, 8)}`) +
-      (session.meta.title ? chalk.dim(` · ${session.meta.title.slice(0, 40)}`) : ""),
+      (session.meta.title ? chalk.dim(` · ${session.meta.title.slice(0, 40)}`) : "") +
+      (session.meta.pinned ? chalk.cyan(" · PIN") : ""),
     chalk.dim(`auth     ${describeAuth(auth)}`),
     chalk.dim(
       `model    ${config.provider}/${config.model}` +
@@ -717,6 +721,9 @@ export function formatSessionDetails(ctx: StatusBarContext): string {
     ),
     chalk.dim(
       `msgs     ${session.messages.length}  ·  ~${formatTokens(est)} ctx  ·  turns ${session.meta.turnCount}  edits ${session.meta.editCount}`,
+    ),
+    chalk.dim(
+      `keep     ${session.meta.pinned ? "pinned (prune-safe) · /unpin" : "not pinned · /pin to protect from prune"}`,
     ),
   ];
   {

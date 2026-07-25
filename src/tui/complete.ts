@@ -64,6 +64,14 @@ export const COMMAND_PARAMS: Record<string, ParamChoice[]> = {
     { value: "done", description: "Mark goal achieved" },
     { value: "set", description: "Set goal: /goal set <objective>" },
   ],
+  done: [
+    {
+      value: "shipped",
+      description: "Optional note (alias of /goal done)",
+    },
+  ],
+  pause: [],
+  unpause: [],
   ulw: [
     {
       value: "improve the code",
@@ -78,8 +86,51 @@ export const COMMAND_PARAMS: Record<string, ParamChoice[]> = {
   undo: [
     { value: "1", description: "Undo last user turn" },
   ],
+  retry: [
+    {
+      value: "try a different approach",
+      description: "Optional rewritten prompt (default: same as last turn)",
+    },
+  ],
+  again: [
+    {
+      value: "be more thorough",
+      description: "Optional rewritten prompt (alias of /retry)",
+    },
+  ],
   export: [
     { value: "--json", description: "Export machine-readable JSON" },
+  ],
+  stats: [
+    { value: "7", description: "Last 7 days of metrics" },
+    { value: "30", description: "Last 30 days of metrics" },
+    { value: "90", description: "Last 90 days of metrics" },
+  ],
+  share: [
+    { value: "nocopy", description: "Print card only (skip clipboard)", aliases: ["--no-clip", "print"] },
+  ],
+  last: [
+    { value: "1", description: "Show the most recent turn" },
+    { value: "3", description: "Show last 3 turns" },
+    { value: "5", description: "Show last 5 turns" },
+  ],
+  files: [
+    { value: "writes", description: "Only mutations (write/edit/patch/delete)", aliases: ["mutations", "edits", "m"] },
+    { value: "all", description: "Reads + writes (default)", aliases: ["reads"] },
+    { value: "20", description: "Limit to 20 paths" },
+  ],
+  path: [
+    { value: "json", description: "Print session.json path only", aliases: ["--json", "-j"] },
+    { value: "copy", description: "Copy path to clipboard", aliases: ["--copy", "-c", "clip"] },
+  ],
+  news: [
+    { value: "1", description: "Latest release highlights" },
+    { value: "2", description: "Last 2 releases" },
+    { value: "3", description: "Last 3 releases" },
+  ],
+  changelog: [
+    { value: "1", description: "Latest release highlights" },
+    { value: "2", description: "Last 2 releases" },
   ],
   fork: [
     { value: "experiment", description: "Optional title for the forked session" },
@@ -92,11 +143,16 @@ export const COMMAND_PARAMS: Record<string, ParamChoice[]> = {
   ],
   resume: [
     { value: "all", description: "List sessions from every workspace", aliases: ["global", "-a"] },
+    {
+      value: "my-feature",
+      description: "Resume by unique /title (or id prefix ≥4)",
+    },
   ],
   sessions: [
     { value: "all", description: "List every workspace (default is same-cwd)", aliases: ["global", "-a"] },
-    { value: "search", description: "Filter by id/title: /sessions search <q>", aliases: ["q", "find"] },
-    { value: "delete", description: "Delete session: /sessions delete <id> [--force]", aliases: ["rm", "remove"] },
+    { value: "pinned", description: "Only pin-protected sessions", aliases: ["pins", "pin"] },
+    { value: "search", description: "Filter by id/title/last-prompt: /sessions search <q>", aliases: ["q", "find"] },
+    { value: "delete", description: "Delete session: /sessions delete <id|title> [--force]", aliases: ["rm", "remove"] },
     { value: "prune", description: "Prune old sessions (active protected)" },
   ],
   title: [
@@ -110,6 +166,15 @@ export const COMMAND_PARAMS: Record<string, ParamChoice[]> = {
     { value: "off", description: "Disable turn-end bell", aliases: ["0", "disable"] },
     { value: "test", description: "Ring once now", aliases: ["ring"] },
     { value: "status", description: "Show current bell setting" },
+  ],
+  pin: [
+    { value: "on", description: "Protect this session from prune", aliases: ["1", "true"] },
+    { value: "off", description: "Allow prune to delete this session", aliases: ["0", "false", "unpin"] },
+    { value: "toggle", description: "Flip pin state" },
+    { value: "status", description: "Show whether this session is pinned" },
+  ],
+  unpin: [
+    { value: "", description: "Remove pin (allow prune)" },
   ],
   effort: [
     {
