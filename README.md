@@ -78,7 +78,7 @@ forge run "ship it" --title ci-pipeline-42 --json   # label + searchable via ses
 # Relabel later: forge sessions title <id> my long label  ·  /title in REPL
 ```
 
-Bare interactive `forge` continues your latest workspace session (OpenCode-style). Use `forge --new`, `/new`, or `FORGE_NO_AUTO_RESUME=1` for a clean slate. Headless `forge run` starts fresh unless you pass `--session <id|title>` or `--continue` (newest same-cwd).
+Bare interactive `forge` continues your latest workspace session (OpenCode-style). Use `forge --new`, `/new`, or `FORGE_NO_AUTO_RESUME=1` for a clean slate. Headless starts fresh unless you pass `--session <id|title>` or `--continue` (newest same-cwd) — works on both `forge run "…"` and bare `forge "…"` (e.g. `FORGE_HEADLESS=1 forge "next" --continue`).
 
 ---
 

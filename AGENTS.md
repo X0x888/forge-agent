@@ -64,7 +64,7 @@ external_directory on grep/glob/list_dir, `forge completion`, `forge doctor` / `
 (structured `runDoctorCheck` + `issues[]` / `secureFiles`; exit 1 on issues), path-not-found typo
 hints, session import/load message-role sanitization, `forge stats` / `/stats`, `/share` handoff
 card, shared `formatExpertTips` (`forge tips`/`/tips`), first-run welcome tip, `/retry`/`/again`,
-`/last [n]`, resume auto-peek, `forge news`/`/news`, `forge run --continue`, `/done`/`/pause`/
+`/last [n]`, resume auto-peek, `forge news`/`/news`, `forge run --continue` / bare `forge --continue`, `/done`/`/pause`/
 `/unpause`, session `lastUserPreview` list snippets, resume-by-title, relative session ages,
 `/files`, `/path` (+ copy), `/pin` + `sessions pin` (fork clears pin; status PIN badge), resume
 orientation + `--pinned` list, doctor `sessionsPinned`, session path helpers, sessions show file

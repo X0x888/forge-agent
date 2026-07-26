@@ -123,6 +123,7 @@ Examples:
   forge run "fix CI" --permission-mode acceptEdits --json
   forge run "continue" --session <id> --json
   forge run "next step" --continue --json
+  forge "next step" --continue                 # bare headless same-cwd resume
   forge sessions prune --keep 50
   forge sessions export <id> --format json --out ./session.json
   forge stats --days 7
@@ -189,6 +190,10 @@ Docs: docs/PRODUCTION.md · docs/RELIABILITY.md · docs/ULW.md · forge news
       "Force a new session (default resumes newest same-cwd session in the REPL)",
     )
     .option("--session <id>", "Resume session id/prefix or unique title")
+    .option(
+      "--continue",
+      "Resume newest same-cwd session (headless bare forge parity with forge run --continue)",
+    )
     .option("--title <text>", "Label for a new session (searchable via list -q / /sessions search)")
     .option("--cwd <path>", "Workspace directory", process.cwd())
     .option("--print-logs", "Verbose debug logs")
@@ -225,10 +230,12 @@ Docs: docs/PRODUCTION.md · docs/RELIABILITY.md · docs/ULW.md · forge news
         prompt && (!process.stdin.isTTY || process.env.FORGE_HEADLESS === "1"),
       );
       // Interactive REPL: resume newest same-cwd session (OpenCode --continue style)
-      // unless --new / --session / FORGE_NO_AUTO_RESUME. Headless always fresh unless --session.
+      // unless --new / --session / FORGE_NO_AUTO_RESUME. Headless starts fresh unless
+      // --session or explicit --continue (parity with forge run --continue).
       const session = resolveSession(config, {
         ...opts,
         autoResume: !willHeadless,
+        continue: Boolean(opts.continue),
       });
       if (opts.ulw) {
         session.meta.ultrawork = true;
@@ -1756,6 +1763,12 @@ function resolveSession(
     title?: string;
     /** When true and no --session/--new, resume newest same-cwd session. */
     autoResume?: boolean;
+    /**
+     * Explicit --continue (bare forge / parent flag): resume newest same-cwd
+     * even when headless or FORGE_NO_AUTO_RESUME — parity with forge run --continue.
+     * Still respects --new and --session.
+     */
+    continue?: boolean;
   },
 ) {
   if (opts.session) {
@@ -1768,7 +1781,7 @@ function resolveSession(
       setSessionTitle(s, opts.title);
     }
     // Explicit --session (interactive): same orientation peek as auto-resume.
-    if (opts.autoResume) {
+    if (opts.autoResume || opts.continue) {
       try {
         const title = s.meta.title || "untitled";
         log.info(
@@ -1785,19 +1798,25 @@ function resolveSession(
     return s;
   }
   const cwd = path.resolve(String(opts.cwd || config.workspace || process.cwd()));
+  // Explicit --continue overrides FORGE_NO_AUTO_RESUME (same as forge run --continue).
   const noAuto =
     opts.new ||
-    process.env.FORGE_NO_AUTO_RESUME === "1" ||
-    process.env.FORGE_NO_AUTO_RESUME === "true";
+    (!opts.continue &&
+      (process.env.FORGE_NO_AUTO_RESUME === "1" ||
+        process.env.FORGE_NO_AUTO_RESUME === "true"));
   // Explicit --title on a fresh start should not silently attach to auto-resume.
+  // With --continue, --title relabels the resumed session (CI tagging).
   const wantTitle =
     typeof opts.title === "string" && opts.title.trim().length > 0;
-  if (opts.autoResume && !noAuto && !wantTitle) {
+  if ((opts.autoResume || opts.continue) && !noAuto && (!wantTitle || opts.continue)) {
     try {
       const hit = findRecentSessionForCwd(cwd);
       if (hit?.meta) {
         const s = loadSession(hit.meta.id);
         if (s) {
+          if (opts.continue && wantTitle) {
+            setSessionTitle(s, String(opts.title));
+          }
           const title = s.meta.title || "untitled";
           const skipNote =
             hit.skippedLocked > 0
@@ -1847,6 +1866,8 @@ function resolveSession(
         log.info(
           `Starting fresh session — ${hit.skippedLocked} same-cwd session${hit.skippedLocked === 1 ? "" : "s"} locked by other process(es). Use --session <id> to attach anyway.`,
         );
+      } else if (opts.continue) {
+        log.dim("No prior same-cwd session to continue — starting fresh.");
       }
     } catch {
       /* fall through to new session */

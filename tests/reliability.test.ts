@@ -2103,4 +2103,41 @@ describe("forge run --json early failures (CLI)", () => {
     assert.equal(missJson.reason, "session_not_found");
     assert.match(String(missJson.session || ""), /zzz-no-such-id-ever-47/);
   });
+
+  it("parent --continue is documented; export --json invalid_format is structured", async () => {
+    const { spawnSync } = await import("node:child_process");
+    const path = await import("node:path");
+    const fs = await import("node:fs");
+    const cli = path.join(process.cwd(), "dist", "cli.js");
+    if (!fs.existsSync(cli)) return;
+    const home = path.join(process.cwd(), ".tmp", `forge-continue-${process.pid}`);
+    fs.mkdirSync(home, { recursive: true });
+    const env = { ...process.env, FORGE_HOME: home };
+
+    const help = spawnSync(process.execPath, [cli, "--help"], {
+      env,
+      encoding: "utf8",
+    });
+    assert.equal(help.status, 0);
+    assert.match(help.stdout || "", /--continue/);
+    assert.match(help.stdout || "", /bare headless same-cwd resume/);
+
+    const tips = spawnSync(process.execPath, [cli, "tips"], {
+      env,
+      encoding: "utf8",
+    });
+    assert.equal(tips.status, 0);
+    assert.match(tips.stdout || "", /forge "…" --continue|forge "\u2026" --continue|--continue/);
+
+    const badFmt = spawnSync(
+      process.execPath,
+      [cli, "sessions", "export", "zzz-nope", "--format", "yaml", "--json"],
+      { env, encoding: "utf8" },
+    );
+    assert.notEqual(badFmt.status, 0);
+    const badJson = JSON.parse((badFmt.stdout || "").trim());
+    assert.equal(badJson.ok, false);
+    assert.equal(badJson.reason, "invalid_format");
+    assert.equal(badJson.format, "yaml");
+  });
 });

@@ -38,6 +38,7 @@ forge logs                   # tail sandbox/safety events (incident triage)
 forge logs -n 50 --json      # machine-readable safety log
 forge config --json          # effective config snapshot (no secrets)
 forge run "next" --continue --json   # headless same-cwd resume (no session id)
+forge "next" --continue              # bare headless same-cwd resume (parity)
 # REPL: /share · /files · /pin · /stats · /tips · /news · /retry [prompt] · /last [n]
 # REPL: /undo [n] · /init · /review · /compact-and · /fork-and-compact · /logs [n|path] · /config [json]
 # Resume (bare forge / /resume) peeks last turn + mutated files
