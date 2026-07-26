@@ -779,11 +779,9 @@ Docs: docs/PRODUCTION.md
               }),
             );
           } else log.success(`Exported ${fmt} → ${p}`);
-        } else if (globalOpts.json) {
-          // Rare: --json without --out still emits the artifact on stdout as text;
-          // experts wanting structured status should pass --out.
-          process.stdout.write(body.endsWith("\n") ? body : body + "\n");
         } else {
+          // Without --out, emit the artifact on stdout (md/json body).
+          // Structured status requires --out (see --json + --out above).
           process.stdout.write(body.endsWith("\n") ? body : body + "\n");
         }
         return;
@@ -796,7 +794,17 @@ Docs: docs/PRODUCTION.md
         }
         const p = path.resolve(file);
         if (!fs.existsSync(p)) {
-          log.error(`File not found: ${p}`);
+          if (globalOpts.json) {
+            console.log(
+              JSON.stringify({
+                ok: false,
+                reason: "not_found",
+                path: p,
+              }),
+            );
+          } else {
+            log.error(`File not found: ${p}`);
+          }
           process.exit(1);
         }
         try {
@@ -833,7 +841,19 @@ Docs: docs/PRODUCTION.md
             }
           }
         } catch (err) {
-          log.error((err as Error).message);
+          const message = (err as Error).message || String(err);
+          if (globalOpts.json) {
+            console.log(
+              JSON.stringify({
+                ok: false,
+                reason: "invalid",
+                path: p,
+                error: message,
+              }),
+            );
+          } else {
+            log.error(message);
+          }
           process.exit(1);
         }
         return;

@@ -20,7 +20,7 @@ Production recovery, review, and onboarding learned from OpenCode (snapshot/reve
 - **`/share` card**: includes `forge sessions title` headless relabel command
 - **Anthropic `refusal` → `content_filter`**: maps stop_reason so loop content-filter steerage/cap applies (parity with OpenAI-compat); exported as `mapAnthropicStopReason`
 - **`forge sessions path|list --json`**: includes `foreignLock` (list per-session); plain list + `/sessions`/`/resume` LOCK badge only for **foreign** live holders (own-pid locks are noise)
-- **`forge sessions delete --json`**: structured `{ ok, deleted, reason, id }` on lock/not-found failures (CI-friendly; still exit 1)
+- **`forge sessions delete|import --json`**: structured failure payloads (`ok:false`, `reason`, …) for CI (still exit 1)
 
 ### Recovery (disk + chat)
 - **File mutation journal**: successful `write_file` / `search_replace` / `apply_patch` ops append pre-images to `~/.forge/sessions/<id>/mutations.jsonl` (mode `0600`, ~1.5 MiB cap per body)
