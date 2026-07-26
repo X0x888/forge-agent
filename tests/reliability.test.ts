@@ -2398,6 +2398,17 @@ describe("forge run --json early failures (CLI)", () => {
     assert.equal(badJson.reason, "invalid_format");
     assert.equal(badJson.format, "yaml");
 
+    // Empty --format must not coerce to md
+    const emptyFmt = spawnSync(
+      process.execPath,
+      [cli, "sessions", "export", "zzz-nope", "--format", "", "--json"],
+      { env, encoding: "utf8" },
+    );
+    assert.notEqual(emptyFmt.status, 0);
+    const emptyFmtJ = JSON.parse((emptyFmt.stdout || "").trim());
+    assert.equal(emptyFmtJ.ok, false);
+    assert.equal(emptyFmtJ.reason, "invalid_format");
+
     // Export --out directory → structured is_directory (not uncaught EISDIR)
     const { createSession, saveSession } = await import(
       "../src/session/session.js"
@@ -2593,6 +2604,23 @@ describe("forge run --json early failures (CLI)", () => {
     const emptyBaseJ = JSON.parse((emptyBase.stdout || "").trim());
     assert.equal(emptyBaseJ.ok, false);
     assert.equal(emptyBaseJ.reason, "invalid_base_url");
+
+    // Empty --session must not silently start a fresh session
+    const emptySess = spawnSync(
+      process.execPath,
+      [cli, "run", "--json", "--session", "", "hi"],
+      {
+        env: {
+          ...env,
+          XAI_API_KEY: process.env.XAI_API_KEY || "sk-test-forge-cli",
+        },
+        encoding: "utf8",
+      },
+    );
+    assert.notEqual(emptySess.status, 0);
+    const emptySessJ = JSON.parse((emptySess.stdout || "").trim());
+    assert.equal(emptySessJ.ok, false);
+    assert.equal(emptySessJ.reason, "session_not_found");
 
     const permJson = JSON.parse((badPerm.stdout || "").trim());
     assert.equal(permJson.ok, false);

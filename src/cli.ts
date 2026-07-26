@@ -477,17 +477,38 @@ Docs: docs/PRODUCTION.md
         command?.parent?.getOptionValueSource?.("cwd") === "cli";
       let session;
       let resumed = false;
-      if (runOpts.session && !runOpts.new) {
-        session = loadSession(String(runOpts.session));
+      // --session present (including "") must not silently start fresh
+      const sessionFlag =
+        runOpts.session != null ? String(runOpts.session).trim() : "";
+      const sessionPassed = runOpts.session != null;
+      if (sessionPassed && !runOpts.new) {
+        if (!sessionFlag) {
+          const msg =
+            'Empty --session. Pass an id/prefix/title, or omit --session for a new run.';
+          if (wantJson) {
+            console.log(
+              JSON.stringify({
+                ok: false,
+                reason: "session_not_found",
+                session: String(runOpts.session),
+                error: msg,
+              }),
+            );
+          } else {
+            log.error(msg);
+          }
+          process.exit(1);
+        }
+        session = loadSession(sessionFlag);
         if (!session) {
-          const miss = formatSessionLookupMiss(String(runOpts.session));
+          const miss = formatSessionLookupMiss(sessionFlag);
           if (wantJson) {
             console.log(
               JSON.stringify({
                 ok: false,
                 error: miss,
                 reason: "session_not_found",
-                session: String(runOpts.session),
+                session: sessionFlag,
               }),
             );
           } else {
@@ -1056,19 +1077,26 @@ Docs: docs/PRODUCTION.md
           );
         }
         // Validate format before session lookup so bad flags fail fast.
-        const fmt = String(globalOpts.format || "md").toLowerCase();
+        // Empty --format '' must not coerce to md via || default.
+        const fmtRaw =
+          globalOpts.format != null
+            ? String(globalOpts.format).trim().toLowerCase()
+            : "md";
+        const fmt = fmtRaw || "";
         if (fmt !== "md" && fmt !== "markdown" && fmt !== "json") {
           if (globalOpts.json) {
             console.log(
               JSON.stringify({
                 ok: false,
                 reason: "invalid_format",
-                format: fmt,
-                error: `Unknown export format "${fmt}". Use md or json.`,
+                format: globalOpts.format != null ? String(globalOpts.format) : fmt,
+                error: `Unknown export format "${globalOpts.format ?? ""}". Use md or json.`,
               }),
             );
           } else {
-            log.error(`Unknown export format "${fmt}". Use md or json.`);
+            log.error(
+              `Unknown export format "${globalOpts.format ?? ""}". Use md or json.`,
+            );
           }
           process.exit(1);
         }
@@ -2429,16 +2457,34 @@ function resolveSession(
     json?: boolean;
   },
 ) {
-  if (opts.session) {
-    const s = loadSession(opts.session);
-    if (!s) {
-      const miss = formatSessionLookupMiss(opts.session);
+  if (opts.session != null) {
+    const sessionFlag = String(opts.session).trim();
+    if (!sessionFlag) {
+      const msg =
+        'Empty --session. Pass an id/prefix/title, or omit --session.';
       if (opts.json) {
         console.log(
           JSON.stringify({
             ok: false,
             reason: "session_not_found",
             session: String(opts.session),
+            error: msg,
+          }),
+        );
+      } else {
+        log.error(msg);
+      }
+      process.exit(1);
+    }
+    const s = loadSession(sessionFlag);
+    if (!s) {
+      const miss = formatSessionLookupMiss(sessionFlag);
+      if (opts.json) {
+        console.log(
+          JSON.stringify({
+            ok: false,
+            reason: "session_not_found",
+            session: sessionFlag,
             error: miss,
           }),
         );
