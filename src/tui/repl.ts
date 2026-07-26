@@ -488,7 +488,9 @@ export async function runRepl(opts: {
       }
       if (result.stopContinues > 0) {
         log.dim(
-          `Harness continued ${result.stopContinues} time(s) via Stop block`,
+          result.releasedOnContinueCap
+            ? `Harness continued ${result.stopContinues} time(s); released on continue-cap (safety valve)`
+            : `Harness continued ${result.stopContinues} time(s) via Stop block`,
         );
       }
 
@@ -515,6 +517,7 @@ export async function runRepl(opts: {
             cwd: session.meta.cwd,
             turns: result.turns,
             stopContinues: result.stopContinues,
+            releasedOnContinueCap: result.releasedOnContinueCap,
             editCount: session.meta.editCount,
             promptTokens: result.promptTokens,
             completionTokens: result.completionTokens,

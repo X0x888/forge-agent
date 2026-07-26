@@ -145,6 +145,7 @@ forge run "fix tests and open a PR description" \
   "finalText": "…",
   "turns": 12,
   "stopContinues": 2,
+  "releasedOnContinueCap": false,
   "editCount": 4,
   "aborted": false,
   "timedOut": false,
@@ -155,6 +156,8 @@ forge run "fix tests and open a PR description" \
   "provider": "xai"
 }
 ```
+
+`releasedOnContinueCap: true` means the shared stop-continue safety valve fired (length / content_filter / empty / Stop-block cap) — still `ok: true` unless aborted/timed out, so CI can alert without treating it as a hard failure.
 
 Each headless/REPL turn also appends a counter-only line to `~/.forge/metrics.jsonl` (no prompts or secrets).
 

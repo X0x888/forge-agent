@@ -126,6 +126,12 @@ export interface LoopResult {
   turns: number;
   stopContinues: number;
   aborted: boolean;
+  /**
+   * True when the shared stop-continue cap forced release (length / content_filter /
+   * empty / Stop-block). Headless JSON exposes this so CI can distinguish a clean
+   * completion from a harness safety valve — without treating it as a hard failure.
+   */
+  releasedOnContinueCap: boolean;
   promptTokens: number;
   completionTokens: number;
 }
@@ -311,6 +317,7 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
   let stopContinues = 0;
   let finalText = "";
   let aborted = false;
+  let releasedOnContinueCap = false;
   let overflowCompactAttempted = false;
   const maxTurns = config.maxTurns > 0 ? config.maxTurns : 200;
   /** Tool schemas are sent every turn but not stored in session history. */
@@ -685,6 +692,7 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
         stopContinues += 1;
         if (stopContinues > maxStopContinues) {
           log.warn("max_tokens continuation cap reached — releasing");
+          releasedOnContinueCap = true;
           // Headless JSON / CI: surface that we released on a truncated answer,
           // not a clean completion (parity with empty-response / content_filter).
           const capNote =
@@ -732,6 +740,7 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
         // Cap check before injecting steerage — avoid orphan user msgs when releasing.
         if (stopContinues > maxStopContinues) {
           log.warn("content-filter continue cap reached — releasing");
+          releasedOnContinueCap = true;
           const capNote =
             "[Forge] Content-filter continues hit the cap; releasing. Rephrase or narrow scope in a follow-up.";
           if (!finalText.includes("[Forge] Content-filter continues hit the cap")) {
@@ -760,6 +769,7 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
         stopContinues += 1;
         if (stopContinues > maxStopContinues) {
           log.warn("empty-response continue cap reached — releasing");
+          releasedOnContinueCap = true;
           finalText =
             "[Forge] Model returned empty responses until the continue cap; releasing. Retry or narrow the request.";
           break;
@@ -805,6 +815,7 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
           log.warn(
             `Stop-continue cap (${maxStopContinues}) reached — releasing to prevent infinite loop`,
           );
+          releasedOnContinueCap = true;
           // Avoid blank headless finalText when the last assistant turn was
           // tools-only or empty and the harness kept blocking until the cap.
           if (!(finalText || "").trim()) {
@@ -899,6 +910,7 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
     turns,
     stopContinues,
     aborted,
+    releasedOnContinueCap,
     promptTokens,
     completionTokens,
   };

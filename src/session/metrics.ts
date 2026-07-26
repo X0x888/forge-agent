@@ -16,6 +16,8 @@ export interface SessionMetricsEvent {
   cwd?: string;
   turns?: number;
   stopContinues?: number;
+  /** True when the agent loop released because the stop-continue cap was hit. */
+  releasedOnContinueCap?: boolean;
   editCount?: number;
   promptTokens?: number;
   completionTokens?: number;
@@ -76,6 +78,7 @@ export function buildRunEndMetrics(opts: {
   cwd?: string;
   turns: number;
   stopContinues: number;
+  releasedOnContinueCap?: boolean;
   editCount: number;
   promptTokens: number;
   completionTokens: number;
@@ -95,6 +98,9 @@ export function buildRunEndMetrics(opts: {
     cwd: opts.cwd,
     turns: opts.turns,
     stopContinues: opts.stopContinues,
+    ...(opts.releasedOnContinueCap
+      ? { releasedOnContinueCap: true }
+      : {}),
     editCount: opts.editCount,
     promptTokens: opts.promptTokens,
     completionTokens: opts.completionTokens,

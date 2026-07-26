@@ -1132,6 +1132,7 @@ describe("session metrics + permission timeout", () => {
         model: "m",
         turns: 2,
         stopContinues: 1,
+        releasedOnContinueCap: true,
         editCount: 3,
         promptTokens: 100,
         completionTokens: 50,
@@ -1147,6 +1148,7 @@ describe("session metrics + permission timeout", () => {
     assert.match(line, /"type":"run_end"/);
     assert.doesNotMatch(line, /api[_-]?key|sk-|password|secret/i);
     assert.match(line, /"estCostUsd":/);
+    assert.match(line, /"releasedOnContinueCap":true/);
 
     const { pruneMetrics } = await import("../src/session/metrics.js");
     for (let i = 0; i < 5; i++) {

@@ -61,7 +61,7 @@ What experts should expect from Forge in long, unattended, or CI runs.
 | **`finish_reason=length`** | Continues generation instead of treating truncation as a final answer (shared stop-continue cap); **at cap** appends a clear release note to `finalText` so headless JSON is not a silent partial |
 | **`content_filter`** | Surfaces provider safety blocks and steers the model to narrow scope; **cap checked before** injecting steerage (no orphan user msgs on release); **at cap** appends a release note to `finalText` |
 | **Empty assistant** | Nudges the model to continue rather than stopping on a blank turn; **cap checked before** nudge inject; **at cap** sets non-empty `finalText` |
-| **Stop-continue cap** | When harness keeps blocking Stop until the shared cap, empty `finalText` gets an explicit release message (tools-only last turn) |
+| **Stop-continue cap** | When harness keeps blocking Stop until the shared cap, empty `finalText` gets an explicit release message (tools-only last turn); loop sets `releasedOnContinueCap` (headless JSON + metrics) for CI visibility |
 | **Headless SIGINT/SIGTERM** | `forge run` aborts the in-flight loop cleanly (exit 130 when aborted) |
 | **Headless session resume** | `forge run … --session <id>` continues a prior headless/REPL session (multi-step CI) |
 | **Headless wall-clock** | Optional `FORGE_MAX_RUN_MS` aborts the run (exit 124; JSON `timedOut: true`) |
