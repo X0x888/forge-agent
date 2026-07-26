@@ -613,7 +613,17 @@ Docs: docs/PRODUCTION.md
           force: Boolean(globalOpts.force),
         });
         if (!result.ok) {
-          if (result.reason === "locked") {
+          if (globalOpts.json) {
+            console.log(
+              JSON.stringify({
+                ok: false,
+                deleted: false,
+                reason: result.reason,
+                id: result.id || null,
+                detail: result.detail || null,
+              }),
+            );
+          } else if (result.reason === "locked") {
             log.error(
               `Session locked: ${result.id?.slice(0, 8) || target}` +
                 (result.detail ? ` — ${result.detail}` : ""),
@@ -624,7 +634,9 @@ Docs: docs/PRODUCTION.md
           process.exit(1);
         }
         if (globalOpts.json)
-          console.log(JSON.stringify({ deleted: true, id: result.id }));
+          console.log(
+            JSON.stringify({ ok: true, deleted: true, id: result.id }),
+          );
         else log.success(`Deleted session ${result.id}`);
         return;
       }
