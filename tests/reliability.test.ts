@@ -2204,6 +2204,17 @@ describe("forge run --json early failures (CLI)", () => {
     const oj = JSON.parse((oauth.stdout || "").trim());
     assert.equal(oj.ok, false);
     assert.equal(oj.reason, "interactive_required");
+
+    // Parent -p must not be swallowed by login default xai
+    const badP = spawnSync(
+      process.execPath,
+      [cli, "login", "-p", "bogus", "--api-key", "sk-x", "--json"],
+      { env, encoding: "utf8" },
+    );
+    assert.notEqual(badP.status, 0);
+    const bj = JSON.parse((badP.stdout || "").trim());
+    assert.equal(bj.ok, false);
+    assert.equal(bj.reason, "invalid_provider");
   });
 
   it("forge auth --json never dumps tokens", async () => {

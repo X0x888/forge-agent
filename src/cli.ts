@@ -563,12 +563,21 @@ Docs: docs/PRODUCTION.md
     .option("--json", "Machine-readable JSON (never includes tokens)")
     .action(async (opts, command) => {
       await ensureHome();
-      const merged = {
-        ...(command?.optsWithGlobals?.() || {}),
-        ...opts,
-      } as Record<string, unknown>;
+      const globals = (command?.optsWithGlobals?.() || {}) as Record<string, unknown>;
+      const merged = { ...globals, ...opts } as Record<string, unknown>;
       const wantJson = Boolean(merged.json || opts.json);
-      const provider = String(merged.provider || opts.provider || "xai");
+      // Parent -p/--provider must not be clobbered by login's default "xai".
+      const localSrc = command?.getOptionValueSource?.("provider");
+      const parentSrc = command?.parent?.getOptionValueSource?.("provider");
+      let providerRaw = "xai";
+      if (localSrc === "cli" && opts.provider != null) {
+        providerRaw = String(opts.provider);
+      } else if (parentSrc === "cli" && globals.provider != null) {
+        providerRaw = String(globals.provider);
+      } else if (opts.provider != null) {
+        providerRaw = String(opts.provider);
+      }
+      const providerNorm = providerRaw.trim().toLowerCase();
       const failLogin = (reason: string, error: string, extra?: Record<string, unknown>) => {
         if (wantJson) {
           console.log(
@@ -576,7 +585,7 @@ Docs: docs/PRODUCTION.md
               ok: false,
               reason,
               error,
-              provider,
+              provider: providerNorm,
               ...extra,
             }),
           );
@@ -585,6 +594,14 @@ Docs: docs/PRODUCTION.md
         }
         process.exit(1);
       };
+      if (!PROVIDER_IDS.has(providerNorm)) {
+        failLogin(
+          "invalid_provider",
+          `Invalid --provider "${providerRaw}". Use xai|anthropic|openai|openrouter|google|custom.`,
+          { provider: providerRaw },
+        );
+      }
+      const provider = providerNorm === "grok" ? "xai" : providerNorm;
 
       if (opts.fromGrok || (provider === "xai" && !opts.apiKey && !opts.oauth && !opts.device)) {
         // Default xAI login path: reuse Grok Build subscription session when present
