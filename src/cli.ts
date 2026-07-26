@@ -1082,7 +1082,12 @@ Docs: docs/PRODUCTION.md
       const showCwdCol = !cwdFilter;
       for (const s of list) {
         const lock = readSessionLock(s.id);
-        const lockNote = lock ? `  LOCK ${formatLockHolder(lock)}` : "";
+        // Only surface foreign live locks in the list — own-pid locks are noise
+        // while the REPL/`forge run` that holds them is the current process.
+        let lockNote = "";
+        if (lock && sessionHasForeignLiveLock(s.id)) {
+          lockNote = `  LOCK ${formatLockHolder(lock)}`;
+        }
         let cwdNote = "";
         if (showCwdCol && s.cwd) {
           try {
