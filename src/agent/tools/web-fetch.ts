@@ -138,14 +138,22 @@ export async function toolWebFetch(
 
   const format = String(args.format || "markdown").toLowerCase();
   const allowLocal = Boolean(args.allow_local);
-  const timeoutMs = Math.min(
-    MAX_TIMEOUT_MS,
-    Math.max(
-      1000,
-      Number(args.timeout_ms) ||
-        (args.timeout ? Number(args.timeout) * 1000 : DEFAULT_TIMEOUT_MS),
-    ),
-  );
+  // timeout_ms: default 30s; clamp 1s–120s. 0/invalid → default (not 1s floor of 0).
+  let timeoutMs = DEFAULT_TIMEOUT_MS;
+  if (args.timeout_ms != null && String(args.timeout_ms).trim() !== "") {
+    const raw = Number(args.timeout_ms);
+    if (Number.isFinite(raw) && raw > 0) {
+      timeoutMs = Math.min(MAX_TIMEOUT_MS, Math.max(1000, Math.floor(raw)));
+    }
+  } else if (args.timeout != null && String(args.timeout).trim() !== "") {
+    const sec = Number(args.timeout);
+    if (Number.isFinite(sec) && sec > 0) {
+      timeoutMs = Math.min(
+        MAX_TIMEOUT_MS,
+        Math.max(1000, Math.floor(sec * 1000)),
+      );
+    }
+  }
 
   // Keep merged signal alive through body read (not just headers).
   const { signal, dispose } = mergeAbortSignals(ctx.signal, timeoutMs);

@@ -32,7 +32,12 @@ export async function toolWebSearch(
   const query = String(args.query || "").trim();
   if (!query) return { output: "query is required", isError: true };
   if (ctx.signal?.aborted) return { output: "Aborted", isError: true };
-  const n = Math.min(10, Math.max(1, Number(args.num_results) || 5));
+  // num_results: default 5, clamp 1–10 (0/invalid → 5, not silent empty)
+  let n = 5;
+  if (args.num_results != null && String(args.num_results).trim() !== "") {
+    const raw = Number(args.num_results);
+    if (Number.isFinite(raw) && raw >= 1) n = Math.min(10, Math.floor(raw));
+  }
 
   try {
     const ia = await duckDuckGoInstantAnswer(query, n, ctx.signal);

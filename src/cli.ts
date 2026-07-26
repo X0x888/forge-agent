@@ -1098,7 +1098,20 @@ Docs: docs/PRODUCTION.md
           maxAgeDays,
         });
         if (globalOpts.json) {
-          console.log(JSON.stringify(result, null, 2));
+          console.log(
+            JSON.stringify(
+              {
+                ok: true,
+                deleted: result.deleted,
+                kept: result.kept,
+                scanned: result.scanned,
+                skippedLocked: result.skippedLocked,
+                skippedPinned: result.skippedPinned,
+              },
+              null,
+              2,
+            ),
+          );
         } else {
           log.success(
             `Pruned ${result.deleted.length} session(s); kept ${result.kept} (scanned ${result.scanned}` +
@@ -1379,7 +1392,11 @@ Project instructions for Forge (and other coding agents).
       });
       if (opts.json) {
         console.log(
-          JSON.stringify({ before, ...result, after: toolOutputStats() }, null, 2),
+          JSON.stringify(
+            { ok: true, before, ...result, after: toolOutputStats() },
+            null,
+            2,
+          ),
         );
         return;
       }
@@ -1402,7 +1419,7 @@ Project instructions for Forge (and other coding agents).
       // 0 is valid at CLI; pruneMetrics floors to ≥1 internally
       const result = pruneMetrics({ keep: parseKeepCount(opts.keep, 500) });
       if (opts.json) {
-        console.log(JSON.stringify({ before, ...result }, null, 2));
+        console.log(JSON.stringify({ ok: true, before, ...result }, null, 2));
         return;
       }
       log.success(
@@ -1418,7 +1435,7 @@ Project instructions for Forge (and other coding agents).
     )
     .option("-n, --lines <n>", "Number of recent events", "30")
     .option("--path", "Print log file path only")
-    .option("--json", "Machine-readable JSON array")
+    .option("--json", "Machine-readable JSON { ok, path, count, limit, events }")
     .action(async (opts) => {
       if (opts.path) {
         console.log(sandboxLogPath());
@@ -1427,7 +1444,20 @@ Project instructions for Forge (and other coding agents).
       const n = Math.min(200, Math.max(1, Number(opts.lines) || 30));
       if (opts.json) {
         const { readSandboxLogTail } = await import("./agent/sandbox-log.js");
-        console.log(JSON.stringify(readSandboxLogTail(n), null, 2));
+        const events = readSandboxLogTail(n);
+        console.log(
+          JSON.stringify(
+            {
+              ok: true,
+              path: sandboxLogPath(),
+              count: events.length,
+              limit: n,
+              events,
+            },
+            null,
+            2,
+          ),
+        );
         return;
       }
       console.log(formatSandboxLogTail(n));
