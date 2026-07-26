@@ -639,7 +639,7 @@ function printBanner(
     if (!prefs.seenWelcomeTip) {
       console.log(
         chalk.cyan(
-          `  Tip: /undo · /retry · /init · /review · /logs · /share · /pin · forge tips\n`,
+          `  Tip: /undo · /retry · /clear hard · /config · /logs · /share · /pin · forge tips\n`,
         ),
       );
       savePreferences({ seenWelcomeTip: true });

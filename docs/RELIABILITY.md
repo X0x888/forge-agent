@@ -28,7 +28,7 @@ What experts should expect from Forge in long, unattended, or CI runs.
 | **Orphan tool_calls** | Abort mid-batch or compact cut injects synthetic tool results so the next API call does not 400 |
 | **Compact boundary** | Compaction never starts a keep-window on a bare `tool` message |
 | **Empty name** | Tool calls with blank names after stream glitches return a clear error instead of crashing |
-| **Doom-loop** | Same tool + same args ×N injects a hard strategy-change nudge (OpenCode-inspired; default N=3, override `FORGE_DOOM_LOOP_THRESHOLD`) |
+| **Doom-loop** | Same tool + same args ×N injects a hard strategy-change nudge (OpenCode-inspired; default N=3, override `FORGE_DOOM_LOOP_THRESHOLD`); fingerprints ignore transport-only fields (`timeout_ms`, `background`, `stream`, `tail`, `allow_local`) |
 | **Error-streak** | N consecutive tool errors (any args) injects a circuit-breaker nudge (Grok-inspired; default N=5, override `FORGE_ERROR_STREAK_THRESHOLD`); permission/hard denies do not count |
 | **Atomic file writes** | `write_file` / `search_replace` / `apply_patch` write via tmp+rename |
 | **File mutation journal** | Successful edits append pre-images to `sessions/<id>/mutations.jsonl` (mode `0600`, ~1.5 MiB/body cap) so `/undo` / `/retry` restore **disk + chat** (OpenCode-inspired; large bodies skipped with an explicit note) |
