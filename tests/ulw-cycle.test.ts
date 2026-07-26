@@ -189,4 +189,50 @@ describe("ulw cycle", () => {
     assert.equal(copyUlwCycle("missing", forked.meta.id), null);
     assert.equal(copyGoal("missing", forked.meta.id), null);
   });
+
+  it("clearConversation resets ULW/goal stuck-wall baselines", async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-clear-stuck-"));
+    process.env.FORGE_HOME = tmp;
+    const { clearConversation } = await import("../src/session/session.js");
+    const s = createSession({ cwd: tmp, provider: "xai", model: "m" });
+    armUlwCycle(s.meta.id, "keep going", { cycle: 1 });
+    armGoal(s.meta.id, "ship it");
+    // Simulate prior Stop blocks that advanced lastBlockEditCount
+    evaluateUlwAtStop({
+      sessionId: s.meta.id,
+      lastAssistantMessage: "still working",
+      editCount: 9,
+      openTodoCount: 0,
+      stuckThreshold: 20,
+    });
+    assert.equal(loadUlwCycle(s.meta.id)?.lastBlockEditCount, 9);
+    // Goal path
+    const { evaluateGoalAtStop } = await import("../src/harness/goal.js");
+    evaluateGoalAtStop({
+      sessionId: s.meta.id,
+      lastAssistantMessage: "still working",
+      editCount: 9,
+      stuckThreshold: 20,
+      enabled: true,
+    });
+    assert.equal(loadGoal(s.meta.id)?.lastBlockEditCount, 9);
+
+    s.meta.editCount = 9;
+    clearConversation(s);
+    assert.equal(s.meta.editCount, 0);
+    assert.equal(loadUlwCycle(s.meta.id)?.lastBlockEditCount, 0);
+    assert.equal(loadUlwCycle(s.meta.id)?.stuckBlocks, 0);
+    assert.equal(loadGoal(s.meta.id)?.lastBlockEditCount, 0);
+    assert.equal(loadGoal(s.meta.id)?.stuckBlocks, 0);
+    // Fresh edits should count as progress again (stuckBlocks stays 0)
+    const d = evaluateUlwAtStop({
+      sessionId: s.meta.id,
+      lastAssistantMessage: "did one edit",
+      editCount: 1,
+      openTodoCount: 0,
+      stuckThreshold: 20,
+    });
+    assert.equal(d.block, true);
+    assert.equal(loadUlwCycle(s.meta.id)?.stuckBlocks, 0); // progressed
+  });
 });

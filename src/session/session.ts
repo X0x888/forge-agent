@@ -22,8 +22,12 @@ import {
   clearFileMutations,
   type RestoreMutationsResult,
 } from "./mutations.js";
-import { copyUlwCycle } from "../harness/ulw-cycle.js";
-import { copyGoal } from "../harness/goal.js";
+import {
+  copyUlwCycle,
+  loadUlwCycle,
+  saveUlwCycle,
+} from "../harness/ulw-cycle.js";
+import { copyGoal, loadGoal, saveGoal } from "../harness/goal.js";
 export {
   compactMessagesStructured,
   buildStructuredSummary,
@@ -1669,6 +1673,28 @@ export function clearConversation(session: SessionData): void {
   // History gone — journal would restore against the wrong timeline.
   try {
     clearFileMutations(session.meta.id);
+  } catch {
+    /* best-effort */
+  }
+  // Reset stuck-wall baselines on harness sidecars. Otherwise lastBlockEditCount
+  // from the old timeline makes editCount=0 look like permanent no-progress.
+  try {
+    const ulw = loadUlwCycle(session.meta.id);
+    if (ulw) {
+      ulw.lastBlockEditCount = 0;
+      ulw.stuckBlocks = 0;
+      saveUlwCycle(ulw);
+    }
+  } catch {
+    /* best-effort */
+  }
+  try {
+    const g = loadGoal(session.meta.id);
+    if (g && g.objective) {
+      g.lastBlockEditCount = 0;
+      g.stuckBlocks = 0;
+      saveGoal(g);
+    }
   } catch {
     /* best-effort */
   }
