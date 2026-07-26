@@ -2545,6 +2545,55 @@ describe("forge run --json early failures (CLI)", () => {
     const emptyEffortJ = JSON.parse((emptyEffort.stdout || "").trim());
     assert.equal(emptyEffortJ.ok, false);
     assert.equal(emptyEffortJ.reason, "invalid_effort");
+
+    const emptyProv = spawnSync(
+      process.execPath,
+      [cli, "run", "--json", "-p", "", "hi"],
+      {
+        env: {
+          ...env,
+          XAI_API_KEY: process.env.XAI_API_KEY || "sk-test-forge-cli",
+        },
+        encoding: "utf8",
+      },
+    );
+    assert.notEqual(emptyProv.status, 0);
+    const emptyProvJ = JSON.parse((emptyProv.stdout || "").trim());
+    assert.equal(emptyProvJ.ok, false);
+    assert.equal(emptyProvJ.reason, "invalid_provider");
+
+    const emptyModel = spawnSync(
+      process.execPath,
+      [cli, "run", "--json", "-m", "", "hi"],
+      {
+        env: {
+          ...env,
+          XAI_API_KEY: process.env.XAI_API_KEY || "sk-test-forge-cli",
+        },
+        encoding: "utf8",
+      },
+    );
+    assert.notEqual(emptyModel.status, 0);
+    const emptyModelJ = JSON.parse((emptyModel.stdout || "").trim());
+    assert.equal(emptyModelJ.ok, false);
+    assert.equal(emptyModelJ.reason, "invalid_model");
+
+    const emptyBase = spawnSync(
+      process.execPath,
+      [cli, "run", "--json", "--base-url", "", "hi"],
+      {
+        env: {
+          ...env,
+          XAI_API_KEY: process.env.XAI_API_KEY || "sk-test-forge-cli",
+        },
+        encoding: "utf8",
+      },
+    );
+    assert.notEqual(emptyBase.status, 0);
+    const emptyBaseJ = JSON.parse((emptyBase.stdout || "").trim());
+    assert.equal(emptyBaseJ.ok, false);
+    assert.equal(emptyBaseJ.reason, "invalid_base_url");
+
     const permJson = JSON.parse((badPerm.stdout || "").trim());
     assert.equal(permJson.ok, false);
     assert.equal(permJson.reason, "invalid_permission_mode");

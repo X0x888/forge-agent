@@ -60,6 +60,7 @@ Production recovery, review, and onboarding learned from OpenCode (snapshot/reve
 - **`sessions export --out ''`**: structured `reason:usage` instead of treating empty as “no --out” and dumping the body on stdout
 - **Shell peels**: `nohup`/`setsid`/`watch`, `busybox sh -c`, `su -c`, and `script -c` unwrap for hard-deny; RELIABILITY docs the peel matrix
 - **Empty enum CLI flags**: `--permission-mode ''` / `--sandbox ''` / `--effort ''` (and sandbox-network/missing) fail with structured `invalid_*` instead of skipping validation and hitting the API
+- **Empty `--provider` / `--model` / `--base-url`**: structured `invalid_provider` · `invalid_model` · `invalid_base_url` (was truthy-skip → silent default / API error)
 - **`forge auth --json` when unauthenticated**: `ok:false` + `reason:unauthenticated` (still exit 1; was `ok:true` with only `authenticated:false`)
 
 ### Recovery (disk + chat)

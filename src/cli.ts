@@ -411,6 +411,7 @@ Exit codes:
   reason=empty_prompt | unauthenticated | session_not_found | locked
   | invalid_effort | invalid_permission_mode | invalid_sandbox
   | invalid_sandbox_network | invalid_sandbox_missing | invalid_provider
+  | invalid_model | invalid_base_url
   | missing_base_url  (custom without --base-url / FORGE_BASE_URL)
   | error | timeout | aborted  (mid-run catch path)
 
@@ -2270,10 +2271,22 @@ function buildConfig(opts: Record<string, unknown>): ForgeConfig {
   const cwd = path.resolve(String(opts.cwd || process.cwd()));
   const overrides: Partial<ForgeConfig> = { workspace: cwd };
   const wantJson = Boolean(opts.json);
-  if (opts.model) overrides.model = String(opts.model);
-  if (opts.provider) {
+  // != null so empty string "" fails closed (Commander sets "" for --flag '')
+  if (opts.model != null) {
+    const model = String(opts.model).trim();
+    if (!model) {
+      failInvalidFlag(
+        "invalid_model",
+        `Invalid --model "${opts.model}". Pass a non-empty model id.`,
+        { model: String(opts.model) },
+        { json: wantJson },
+      );
+    }
+    overrides.model = model;
+  }
+  if (opts.provider != null) {
     const raw = String(opts.provider).trim().toLowerCase();
-    if (!PROVIDER_IDS.has(raw)) {
+    if (!raw || !PROVIDER_IDS.has(raw)) {
       failInvalidFlag(
         "invalid_provider",
         `Invalid --provider "${opts.provider}". Use xai|anthropic|openai|openrouter|google|custom.`,
@@ -2284,7 +2297,18 @@ function buildConfig(opts: Record<string, unknown>): ForgeConfig {
     // grok is a friendly alias for xai (auth resolve already treats them alike)
     overrides.provider = (raw === "grok" ? "xai" : raw) as ProviderId;
   }
-  if (opts.baseUrl) overrides.baseUrl = String(opts.baseUrl);
+  if (opts.baseUrl != null) {
+    const base = String(opts.baseUrl).trim();
+    if (!base) {
+      failInvalidFlag(
+        "invalid_base_url",
+        `Invalid --base-url "${opts.baseUrl}". Pass a non-empty http(s) URL.`,
+        { baseUrl: String(opts.baseUrl) },
+        { json: wantJson },
+      );
+    }
+    overrides.baseUrl = base;
+  }
   // custom without an explicit base URL silently hits api.openai.com — fail fast.
   {
     const prov = String(overrides.provider || "").toLowerCase();
