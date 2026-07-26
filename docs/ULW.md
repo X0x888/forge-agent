@@ -66,6 +66,8 @@ Forge ports several runtime PE patterns from Grok Build / OpenCode:
 | **Structured compact** | `/compact` and auto-compact preserve mandate, goal, todos, user messages |
 | **TodoNudge / TodoGate** | Soft reminder + Stop block while open todos remain under ULW |
 | **Prompt profile** | ULW defaults to `autonomous` (keep-going); config `prompt_profile` overrides |
+| **Fork mid-ULW** | `/fork` / `/fork-and-compact` copy `ulw.json` + `goal.json` so the branch keeps the driver |
+| **File-aware undo** | `/undo` / `/retry` restore journaled disk mutations from the undone turns |
 
 Live mid-run (no Ctrl+C):
 

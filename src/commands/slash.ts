@@ -1622,6 +1622,7 @@ export async function handleSlash(
           `  Safety:        /permissions plan|acceptEdits  ·  --sandbox workspace  ·  /diff (argv-safe)`,
           `  Attention:     /bell on  ·  /copy  ·  /last  ·  /files  ·  /path  ·  /logs  ·  /config  ·  /stats 7  ·  /retry`,
           `  Recovery:      /undo  ·  /retry  ·  /compact-and  ·  /fork-and-compact  ·  /init  ·  /review  ·  /fork`,
+          `  CLI:           forge config --json  ·  forge logs  ·  forge doctor --json  ·  forge run --continue`,
           `  Docs:          docs/PRODUCTION.md  ·  docs/RELIABILITY.md  ·  /news  ·  /help`,
         ].join("\n"),
       };

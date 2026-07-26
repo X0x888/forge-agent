@@ -153,6 +153,8 @@ Beyond Stop/goal/ULW, the agent loop includes expert-grade recovery so long runs
 | **`finish_reason=length`** | Continues generation instead of stopping mid-answer |
 | **Empty / content_filter** | Nudge or narrow-scope steer (no blind infinite retry) |
 | **OAuth mid-run 401** | One forced refresh + hot-swap bearer |
+| **File-aware `/undo`** | `mutations.jsonl` pre-images for write/edit/patch; `/retry` restores disk too |
+| **Fork keeps harness** | `/fork` copies ULW + `/goal` sidecars (and mutation journal) onto the branch |
 
 See [RELIABILITY.md](./RELIABILITY.md) for the full operator contract.
 
@@ -160,8 +162,10 @@ See [RELIABILITY.md](./RELIABILITY.md) for the full operator contract.
 
 - Bare interactive `forge` **auto-resumes** the newest same-cwd session (≤14d), skipping foreign live locks
 - `forge --new` / `FORGE_NO_AUTO_RESUME=1` / `/new` for a clean slate
-- `forge run --session <id>` for multi-step CI (fresh by default)
-- `/title`, `/bell`, session fork/export/import for long-running incident work
+- `forge run --session <id|title>` and **`forge run --continue`** for multi-step CI
+- `/title`, `/bell`, `/pin`, session fork/export/import for long-running incident work
+- `/undo` · `/retry` · `/init` · `/review` · `/compact-and` · `/fork-and-compact` · `/logs` · `/config`
+- `forge config --json` · `forge logs` · `forge doctor --json` (`undoJournal`, `bashTimeoutMs`, …)
 
 ## What we deliberately did not copy
 

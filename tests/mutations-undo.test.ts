@@ -220,7 +220,7 @@ describe("file mutation journal + undo", () => {
     assert.equal(readFileMutations(f.meta.id).length, 1);
   });
 
-  it("clearConversation drops journal", () => {
+  it("clearConversation drops journal and progress counters", () => {
     const s = createSession({
       cwd: workspace,
       provider: "xai",
@@ -231,8 +231,20 @@ describe("file mutation journal + undo", () => {
       kind: "create",
       turn: 1,
     });
+    s.meta.editCount = 7;
+    s.meta.turnCount = 3;
+    s.meta.totalPromptTokens = 1000;
+    s.meta.totalCompletionTokens = 500;
+    s.meta.title = "old";
+    s.messages.push({ role: "user", content: "bye" });
     clearConversation(s);
     assert.equal(readFileMutations(s.meta.id).length, 0);
+    assert.equal(s.meta.editCount, 0);
+    assert.equal(s.meta.turnCount, 0);
+    assert.equal(s.meta.totalPromptTokens, 0);
+    assert.equal(s.meta.totalCompletionTokens, 0);
+    assert.equal(s.meta.title, undefined);
+    assert.equal(s.messages.filter((m) => m.role === "user").length, 0);
   });
 
   it("formatRestoreResult is human-readable", () => {

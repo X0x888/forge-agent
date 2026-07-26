@@ -1659,6 +1659,11 @@ export function clearConversation(session: SessionData): void {
   session.todos = [];
   session.meta.userTurnMarks = [];
   session.meta.turnCount = 0;
+  // Reset progress counters so ULW/goal stuck-wall does not treat pre-clear
+  // edits as "progress" on the wiped timeline (and /cost starts clean).
+  session.meta.editCount = 0;
+  session.meta.totalPromptTokens = 0;
+  session.meta.totalCompletionTokens = 0;
   session.meta.title = undefined;
   session.meta.lastUserPreview = undefined;
   // History gone — journal would restore against the wrong timeline.
