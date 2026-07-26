@@ -75,6 +75,7 @@ forge run "continue from last failure" --session <id> --json
 forge run "next step" --continue --json            # newest same-cwd session (no id copy)
 forge run "ship it" --title ci-pipeline-42 --json   # label + searchable via sessions list -q
 # Resume by title too: forge --session ci-pipeline-42  ·  /resume ci-pipeline-42
+# Relabel later: forge sessions title <id> my long label  ·  /title in REPL
 ```
 
 Bare interactive `forge` continues your latest workspace session (OpenCode-style). Use `forge --new`, `/new`, or `FORGE_NO_AUTO_RESUME=1` for a clean slate. Headless `forge run` starts fresh unless you pass `--session <id|title>` or `--continue` (newest same-cwd).

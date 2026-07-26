@@ -26,6 +26,7 @@ forge sessions export <id> --format json --out ./session.json   # md|json only
 forge sessions import ./session.json   # rejects invalid message roles; never inherits pin
 forge sessions fork <id>             # fork clears pin (source stays protected)
 forge sessions pin <id|title>        # protect from prune · /pin in REPL
+forge sessions title <id> my label   # headless relabel (multi-word ok) · /title in REPL
 forge prune-tool-output
 forge prune-metrics --keep 500
 forge stats                  # usage dashboard (runs/tokens/cost/projects)
