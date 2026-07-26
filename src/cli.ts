@@ -1047,8 +1047,10 @@ Docs: docs/PRODUCTION.md
               query: queryFilter,
               sessions: list.map((s) => {
                 const lock = readSessionLock(s.id);
+                const foreignLock = sessionHasForeignLiveLock(s.id);
                 return {
                   ...s,
+                  foreignLock,
                   lock: lock
                     ? {
                         pid: lock.pid,
