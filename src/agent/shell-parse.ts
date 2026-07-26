@@ -18,6 +18,11 @@ const WRAPPERS = new Set([
   "time",
   "command",
   "builtin",
+  "nohup",
+  "setsid",
+  "setuidgid",
+  "chpst",
+  "softlimit",
 ]);
 
 /** Shells that take `-c` / `-lc` script payloads we must peel for safety. */
@@ -28,6 +33,7 @@ const SHELL_BINARIES = new Set([
   "dash",
   "ksh",
   "fish",
+  "busybox", // busybox sh -c '…'
 ]);
 
 /**
@@ -190,9 +196,40 @@ export function stripEnvPrefixes(segment: string): string {
 export function peelShellDashC(segment: string): string | null {
   const parts = tokenizeSimple(stripEnvPrefixes(segment));
   if (parts.length < 3) return null;
-  const head = pathBase(parts[0]);
-  if (!SHELL_BINARIES.has(head)) return null;
+  let head = pathBase(parts[0]);
   let i = 1;
+  // busybox sh -c '…' / busybox ash -c '…'
+  if (head === "busybox" && parts.length >= 4) {
+    const sub = pathBase(parts[1]);
+    if (SHELL_BINARIES.has(sub) || sub === "ash") {
+      head = sub === "ash" ? "sh" : sub;
+      i = 2;
+    }
+  }
+  // su -c '…' / su user -c '…'
+  if (head === "su") {
+    // su [-] [user] -c cmd
+    while (i < parts.length) {
+      const t = parts[i];
+      if (t === "-c" || t === "-lc" || t === "-cl") {
+        i++;
+        break;
+      }
+      if (/^-[a-zA-Z]*c[a-zA-Z]*$/.test(t) && t.includes("c")) {
+        i++;
+        break;
+      }
+      if (t === "-" || t.startsWith("-")) {
+        i++;
+        continue;
+      }
+      // username
+      i++;
+    }
+    if (i >= parts.length) return null;
+    return parts[i].trim() || null;
+  }
+  if (!SHELL_BINARIES.has(head) && head !== "ash") return null;
   // Skip login/interactive/etc flags until we hit -c / -lc / combined -c…
   while (i < parts.length) {
     const t = parts[i];

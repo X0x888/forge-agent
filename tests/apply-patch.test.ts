@@ -115,6 +115,29 @@ describe("toolApplyPatch", () => {
     assert.equal(fs.readFileSync(path.join(tmp, "dst.txt"), "utf8"), "keep-me\n");
   });
 
+  it("fails closed when move destination is created earlier in the same patch", async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-patch-batch-"));
+    fs.writeFileSync(path.join(tmp, "a.ts"), "export const a = 1;\n");
+    const patch = `*** Begin Patch
+*** Add File: b.ts
++export const b = 2;
+*** Update File: a.ts
+*** Move to: b.ts
+@@
+-export const a = 1;
++export const a = 1;
+*** End Patch`;
+    const result = await toolApplyPatch({ patchText: patch }, { workspace: tmp });
+    assert.equal(result.isError, true);
+    assert.match(result.output, /earlier in this patch|already exists/i);
+    // Source untouched; dest not half-written from move
+    assert.equal(
+      fs.readFileSync(path.join(tmp, "a.ts"), "utf8"),
+      "export const a = 1;\n",
+    );
+    assert.equal(fs.existsSync(path.join(tmp, "b.ts")), false);
+  });
+
   it("fails closed when update target missing", async () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-patch-"));
     const result = await toolApplyPatch(

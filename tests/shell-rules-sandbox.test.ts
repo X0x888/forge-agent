@@ -64,6 +64,12 @@ describe("shell segment parsing", () => {
     assert.equal(v3.ok, false, JSON.stringify(v3));
     const v4 = checkBashHardDeny(`timeout 5 bash -c "rm -rf /"`);
     assert.equal(v4.ok, false, JSON.stringify(v4));
+    const v5 = checkBashHardDeny(`nohup bash -c "rm -rf /"`);
+    assert.equal(v5.ok, false, JSON.stringify(v5));
+    const v6 = checkBashHardDeny(`busybox sh -c "rm -rf /"`);
+    assert.equal(v6.ok, false, JSON.stringify(v6));
+    const v7 = checkBashHardDeny(`su -c "rm -rf /"`);
+    assert.equal(v7.ok, false, JSON.stringify(v7));
   });
 
   it("hard deny sees command substitution bodies", () => {

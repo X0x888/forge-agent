@@ -54,6 +54,16 @@ export async function toolApplyPatch(
       };
 
   const planned: Planned[] = [];
+  /** Paths this patch will create (add or move-dest) — for same-batch clobber checks. */
+  const willCreate = new Set<string>();
+  /** Paths this patch will delete (delete or move-source). */
+  const willDelete = new Set<string>();
+
+  const pathOccupied = (abs: string): boolean => {
+    if (willCreate.has(abs)) return true;
+    if (willDelete.has(abs)) return false;
+    return fs.existsSync(abs);
+  };
 
   // Validate + prepare all ops before mutating disk (fail closed on first bad hunk)
   for (const hunk of parsed.hunks) {
@@ -65,10 +75,14 @@ export async function toolApplyPatch(
       } catch (err) {
         return { output: (err as Error).message, isError: true };
       }
-      if (fs.existsSync(abs)) {
+      if (pathOccupied(abs)) {
         let kind = "path";
         try {
-          kind = fs.statSync(abs).isDirectory() ? "directory" : "file";
+          if (fs.existsSync(abs)) {
+            kind = fs.statSync(abs).isDirectory() ? "directory" : "file";
+          } else if (willCreate.has(abs)) {
+            kind = "file";
+          }
         } catch {
           /* keep generic */
         }
@@ -76,7 +90,9 @@ export async function toolApplyPatch(
           output:
             kind === "directory"
               ? `apply_patch failed: cannot add ${hunk.path} — path is an existing directory (use a file path inside it)`
-              : `apply_patch failed: cannot add existing file ${hunk.path}`,
+              : willCreate.has(abs)
+                ? `apply_patch failed: cannot add ${hunk.path} — path is already created earlier in this patch`
+                : `apply_patch failed: cannot add existing file ${hunk.path}`,
           isError: true,
         };
       }
@@ -88,6 +104,8 @@ export async function toolApplyPatch(
         abs,
         content,
       });
+      willCreate.add(abs);
+      willDelete.delete(abs);
       continue;
     }
 
@@ -99,28 +117,39 @@ export async function toolApplyPatch(
       } catch (err) {
         return { output: (err as Error).message, isError: true };
       }
-      if (!fs.existsSync(abs)) {
+      // Allow delete of a path added earlier in this patch (rare but valid).
+      const fromDisk = fs.existsSync(abs) && !willDelete.has(abs);
+      const fromBatch = willCreate.has(abs);
+      if (!fromDisk && !fromBatch) {
         const hint = await pathNotFoundHint(logical, ctx.workspace);
         return {
           output: `apply_patch failed: delete target missing: ${hunk.path}${hint ? `\n${hint}` : ""}`,
           isError: true,
         };
       }
-      const st = await fsp.stat(abs);
-      if (st.isDirectory()) {
-        return {
-          output: `apply_patch failed: refuse to delete directory ${hunk.path}`,
-          isError: true,
-        };
+      if (fromDisk) {
+        const st = await fsp.stat(abs);
+        if (st.isDirectory()) {
+          return {
+            output: `apply_patch failed: refuse to delete directory ${hunk.path}`,
+            isError: true,
+          };
+        }
       }
       let before = "";
-      try {
-        before = await fsp.readFile(abs, "utf8");
-      } catch (err) {
-        return {
-          output: `apply_patch failed: cannot read ${hunk.path} for delete: ${(err as Error).message}`,
-          isError: true,
-        };
+      if (fromDisk) {
+        try {
+          before = await fsp.readFile(abs, "utf8");
+        } catch (err) {
+          return {
+            output: `apply_patch failed: cannot read ${hunk.path} for delete: ${(err as Error).message}`,
+            isError: true,
+          };
+        }
+      } else {
+        // Deleting a same-batch add — recover content from planned add
+        const addOp = planned.find((p) => p.kind === "add" && p.abs === abs);
+        if (addOp && addOp.kind === "add") before = addOp.content;
       }
       planned.push({
         kind: "delete",
@@ -128,6 +157,8 @@ export async function toolApplyPatch(
         abs,
         before,
       });
+      willDelete.add(abs);
+      willCreate.delete(abs);
       continue;
     }
 
@@ -139,7 +170,9 @@ export async function toolApplyPatch(
     } catch (err) {
       return { output: (err as Error).message, isError: true };
     }
-    if (!fs.existsSync(abs)) {
+    const srcOnDisk = fs.existsSync(abs) && !willDelete.has(abs);
+    const srcFromBatch = willCreate.has(abs);
+    if (!srcOnDisk && !srcFromBatch) {
       const hint = await pathNotFoundHint(logical, ctx.workspace);
       return {
         output: `apply_patch failed: update target missing: ${hunk.path}${hint ? `\n${hint}` : ""}`,
@@ -147,7 +180,7 @@ export async function toolApplyPatch(
       };
     }
     try {
-      if (fs.statSync(abs).isDirectory()) {
+      if (srcOnDisk && fs.statSync(abs).isDirectory()) {
         return {
           output: `apply_patch failed: update target is a directory: ${hunk.path} (pass a file path)`,
           isError: true,
@@ -158,7 +191,12 @@ export async function toolApplyPatch(
     }
     let original: string;
     try {
-      original = await fsp.readFile(abs, "utf8");
+      if (srcOnDisk) {
+        original = await fsp.readFile(abs, "utf8");
+      } else {
+        const addOp = planned.find((p) => p.kind === "add" && p.abs === abs);
+        original = addOp && addOp.kind === "add" ? addOp.content : "";
+      }
     } catch (err) {
       return {
         output: `apply_patch failed: cannot read ${hunk.path}: ${(err as Error).message}`,
@@ -184,20 +222,24 @@ export async function toolApplyPatch(
         return { output: (err as Error).message, isError: true };
       }
       moveRel = path.relative(ctx.workspace, moveAbs) || moveAbs;
-      // Fail closed on clobber — silent overwrite loses the destination file
-      // and journals a create (undo cannot restore the prior dest body).
-      if (moveAbs !== abs && fs.existsSync(moveAbs)) {
+      // Fail closed on clobber — disk OR earlier hunk in this same patch.
+      if (moveAbs !== abs && pathOccupied(moveAbs)) {
         let kind = "path";
         try {
-          kind = fs.statSync(moveAbs).isDirectory() ? "directory" : "file";
+          if (fs.existsSync(moveAbs) && !willDelete.has(moveAbs)) {
+            kind = fs.statSync(moveAbs).isDirectory() ? "directory" : "file";
+          }
         } catch {
           /* keep generic */
         }
+        const sameBatch = willCreate.has(moveAbs);
         return {
           output:
             kind === "directory"
               ? `apply_patch failed: move destination is a directory: ${hunk.movePath} (use a file path)`
-              : `apply_patch failed: move destination already exists: ${hunk.movePath} (delete/rename it first, or update in place)`,
+              : sameBatch
+                ? `apply_patch failed: move destination already created earlier in this patch: ${hunk.movePath}`
+                : `apply_patch failed: move destination already exists: ${hunk.movePath} (delete/rename it first, or update in place)`,
           isError: true,
         };
       }
@@ -211,6 +253,12 @@ export async function toolApplyPatch(
       moveAbs,
       moveRel,
     });
+    if (moveAbs && moveAbs !== abs) {
+      willDelete.add(abs);
+      willCreate.delete(abs);
+      willCreate.add(moveAbs);
+      willDelete.delete(moveAbs);
+    }
   }
 
   const journal = (

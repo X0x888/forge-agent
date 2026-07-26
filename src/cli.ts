@@ -1078,8 +1078,29 @@ Docs: docs/PRODUCTION.md
         }
         const body =
           fmt === "json" ? exportSessionJson(s) : exportSessionMarkdown(s);
-        if (globalOpts.out) {
-          const p = path.resolve(String(globalOpts.out));
+        // Commander may set out="" when user passes --out ''; treat as usage miss.
+        // out != null means the flag was present (including empty string).
+        const outPassed = globalOpts.out != null;
+        const outRaw = outPassed ? String(globalOpts.out).trim() : "";
+        if (outPassed && !outRaw) {
+          if (globalOpts.json) {
+            console.log(
+              JSON.stringify({
+                ok: false,
+                reason: "usage",
+                error:
+                  "Export --out requires a file path (got empty). Example: --out ./session.md",
+              }),
+            );
+          } else {
+            log.error(
+              "Export --out requires a file path (got empty). Example: --out ./session.md",
+            );
+          }
+          process.exit(1);
+        }
+        if (outRaw) {
+          const p = path.resolve(outRaw);
           // Refuse directory targets early — writeFileSync EISDIR is opaque.
           try {
             if (fs.existsSync(p) && fs.statSync(p).isDirectory()) {

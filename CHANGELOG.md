@@ -56,6 +56,9 @@ Production recovery, review, and onboarding learned from OpenCode (snapshot/reve
 - **`env`/`timeout` + `bash -c`**: re-join peeled tokens with shell quoting so multi-word `-c` bodies stay intact (`/usr/bin/env bash -c "rm -rf /"` no longer peels to bare `rm`)
 - **`eval` / `xargs … bash -c` peels + runtime `system`/`execSync` rm-root**: hard-deny catches `eval "rm -rf /"`, `xargs bash -c "rm -rf /"`, and language-runtime shell deletes of `/` or `$HOME`
 - **Heredoc-aware shell split + strip**: `git commit` / `cat <<EOF` payloads mentioning catastrophic commands no longer false-positive hard-deny; `bash <<EOF` bodies still scanned
+- **`apply_patch` same-batch path tracking**: move/add refuse destinations created earlier in the same patch (was silent clobber across hunks)
+- **`sessions export --out ''`**: structured `reason:usage` instead of treating empty as “no --out” and dumping the body on stdout
+- **Shell peels**: `nohup`/`setsid`, `busybox sh -c`, and `su -c` unwrap for hard-deny
 
 ### Recovery (disk + chat)
 - **File mutation journal**: successful `write_file` / `search_replace` / `apply_patch` ops append pre-images to `~/.forge/sessions/<id>/mutations.jsonl` (mode `0600`, ~1.5 MiB cap per body)
