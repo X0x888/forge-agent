@@ -2173,6 +2173,39 @@ describe("forge run --json early failures (CLI)", () => {
     assert.match(String(missJson.session || ""), /zzz-no-such-id-ever-47/);
   });
 
+  it("forge login --json is quiet and never echoes the key", async () => {
+    const { spawnSync } = await import("node:child_process");
+    const path = await import("node:path");
+    const fs = await import("node:fs");
+    const cli = path.join(process.cwd(), "dist", "cli.js");
+    if (!fs.existsSync(cli)) return;
+    const home = path.join(process.cwd(), ".tmp", `forge-login-json-${process.pid}`);
+    fs.mkdirSync(home, { recursive: true });
+    const env = { ...process.env, FORGE_HOME: home };
+    const secret = "sk-login-json-secret-never-print";
+    const ok = spawnSync(
+      process.execPath,
+      [cli, "login", "--api-key", secret, "--json"],
+      { env, encoding: "utf8" },
+    );
+    assert.equal(ok.status, 0);
+    const j = JSON.parse((ok.stdout || "").trim());
+    assert.equal(j.ok, true);
+    assert.equal(j.method, "api_key");
+    assert.doesNotMatch(ok.stdout || "", new RegExp(secret));
+    assert.doesNotMatch(ok.stderr || "", new RegExp(secret));
+
+    const oauth = spawnSync(
+      process.execPath,
+      [cli, "login", "--oauth", "--json"],
+      { env, encoding: "utf8" },
+    );
+    assert.notEqual(oauth.status, 0);
+    const oj = JSON.parse((oauth.stdout || "").trim());
+    assert.equal(oj.ok, false);
+    assert.equal(oj.reason, "interactive_required");
+  });
+
   it("forge auth --json never dumps tokens", async () => {
     const { spawnSync } = await import("node:child_process");
     const path = await import("node:path");
@@ -2226,7 +2259,7 @@ describe("forge run --json early failures (CLI)", () => {
       encoding: "utf8",
     });
     assert.equal(tips.status, 0);
-    assert.match(tips.stdout || "", /forge "…" --continue|forge "\u2026" --continue|--continue/);
+    assert.match(tips.stdout || "", /forge auth --json|--continue|forge doctor --json/);
 
     const badFmt = spawnSync(
       process.execPath,

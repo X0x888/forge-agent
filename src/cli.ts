@@ -26,7 +26,11 @@ import type {
 import { parseReasoningEffort } from "./config/reasoning.js";
 import { resolveAuth, resolveAuthFresh, describeAuth } from "./auth/resolve.js";
 import { loginInteractive, logout, printAuthStatus, supportsOAuth } from "./auth/login.js";
-import { listCredentials, clearCredential } from "./auth/store.js";
+import {
+  listCredentials,
+  clearCredential,
+  upsertApiKey,
+} from "./auth/store.js";
 import { importGrokCredentials } from "./auth/import-grok.js";
 import { createProvider } from "./providers/factory.js";
 import {
@@ -556,15 +560,51 @@ Docs: docs/PRODUCTION.md
     )
     .option("--oauth", "Browser OAuth flow (needs a registered client id)")
     .option("--device", "Device-code flow (headless)")
-    .action(async (opts) => {
+    .option("--json", "Machine-readable JSON (never includes tokens)")
+    .action(async (opts, command) => {
       await ensureHome();
-      const provider = opts.provider as string;
+      const merged = {
+        ...(command?.optsWithGlobals?.() || {}),
+        ...opts,
+      } as Record<string, unknown>;
+      const wantJson = Boolean(merged.json || opts.json);
+      const provider = String(merged.provider || opts.provider || "xai");
+      const failLogin = (reason: string, error: string, extra?: Record<string, unknown>) => {
+        if (wantJson) {
+          console.log(
+            JSON.stringify({
+              ok: false,
+              reason,
+              error,
+              provider,
+              ...extra,
+            }),
+          );
+        } else {
+          log.error(error);
+        }
+        process.exit(1);
+      };
 
       if (opts.fromGrok || (provider === "xai" && !opts.apiKey && !opts.oauth && !opts.device)) {
         // Default xAI login path: reuse Grok Build subscription session when present
         if (opts.fromGrok || !opts.apiKey) {
           const result = importGrokCredentials();
           if (result.imported) {
+            if (wantJson) {
+              console.log(
+                JSON.stringify({
+                  ok: true,
+                  method: "from_grok",
+                  provider: "xai",
+                  accountLabel: result.email ? `grok:${result.email}` : null,
+                  expiresAt: result.expiresAt
+                    ? new Date(result.expiresAt * 1000).toISOString()
+                    : null,
+                }),
+              );
+              return;
+            }
             log.success(
               `Imported Grok subscription session${result.email ? ` (${result.email})` : ""}`,
             );
@@ -583,11 +623,16 @@ Docs: docs/PRODUCTION.md
             return;
           }
           if (opts.fromGrok) {
-            log.error(result.reason || "Import failed");
-            process.exit(1);
+            failLogin(
+              "grok_import_failed",
+              result.reason || "Import failed",
+              { email: result.email || null },
+            );
           }
           // Fall through to other methods if auto-import missed
-          log.warn(result.reason || "No Grok session to import — trying other methods");
+          if (!wantJson) {
+            log.warn(result.reason || "No Grok session to import — trying other methods");
+          }
         }
       }
 
@@ -600,15 +645,50 @@ Docs: docs/PRODUCTION.md
       } else {
         method = "api_key";
       }
+      // --json requires a non-interactive path (explicit API key).
+      if (wantJson && method !== "api_key") {
+        failLogin(
+          "interactive_required",
+          `login --json only supports --api-key (got method=${method}). Use forge login --api-key <key> --json.`,
+          { method },
+        );
+      }
+      if (wantJson && (opts.apiKey === undefined || opts.apiKey === true)) {
+        failLogin(
+          "api_key_required",
+          'login --json requires an explicit key: forge login --api-key <key> --json',
+        );
+      }
       try {
+        if (wantJson && method === "api_key") {
+          // Quiet path — no log.success noise mixed into CI stdout/stderr.
+          const key = String(opts.apiKey).trim();
+          if (!key) {
+            failLogin(
+              "api_key_required",
+              'login --json requires an explicit key: forge login --api-key <key> --json',
+            );
+          }
+          upsertApiKey(provider, key);
+          console.log(
+            JSON.stringify({
+              ok: true,
+              method: "api_key",
+              provider,
+              // never echo the key
+            }),
+          );
+          return;
+        }
         await loginInteractive({
           provider,
           method,
           apiKey: typeof opts.apiKey === "string" ? opts.apiKey : undefined,
         });
       } catch (err) {
-        log.error((err as Error).message);
-        process.exit(1);
+        failLogin("login_failed", (err as Error).message || String(err), {
+          method,
+        });
       }
     });
 
