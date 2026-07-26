@@ -37,10 +37,21 @@ export function toolFingerprint(
   name: string,
   input: Record<string, unknown>,
 ): string {
-  // Drop noisy / non-semantic fields
+  // Drop noisy / non-semantic fields so retries that only flip transport knobs
+  // (timeout, background, stream tail) still trip the doom-loop detector.
   const slim: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(input || {})) {
-    if (k === "timeout_ms" || k === "timeout" || k === "raw") continue;
+    if (
+      k === "timeout_ms" ||
+      k === "timeout" ||
+      k === "raw" ||
+      k === "background" ||
+      k === "stream" ||
+      k === "tail" ||
+      k === "allow_local"
+    ) {
+      continue;
+    }
     slim[k] = v;
   }
   return `${name}::${stableStringify(slim)}`;

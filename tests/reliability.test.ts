@@ -681,6 +681,18 @@ describe("doom-loop", () => {
       toolFingerprint("bash", { command: "ls", timeout_ms: 1 }),
       toolFingerprint("bash", { command: "ls", timeout_ms: 99 }),
     );
+    assert.equal(
+      toolFingerprint("bash", { command: "npm test", background: true }),
+      toolFingerprint("bash", { command: "npm test", background: false }),
+    );
+    assert.equal(
+      toolFingerprint("get_task_output", { task_id: "t1", tail: 50 }),
+      toolFingerprint("get_task_output", { task_id: "t1", tail: 200, stream: "stdout" }),
+    );
+    assert.equal(
+      toolFingerprint("web_fetch", { url: "https://example.com", allow_local: true }),
+      toolFingerprint("web_fetch", { url: "https://example.com", allow_local: false }),
+    );
   });
 });
 

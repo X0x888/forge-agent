@@ -52,7 +52,8 @@ stream-capped `web_fetch`/`web_search`, JSON arg repair, orphan tool_call heal (
 session locks (headless fail-closed; `FORGE_FORCE_SESSION_LOCK=1` override; live+bad timestamp held),
 atomic session tmp recovery, session fork/export/import (export `0600`), headless `forge run
 --session`, metrics.jsonl, permission ask timeout, empty-SSE retry, `finish_reason=length` continue (+ content_filter/empty cap hygiene),
-`releasedOnContinueCap` JSON/metrics + stats `continueCapReleases`, stream usage, `meta.json`
+`releasedOnContinueCap` / `hitMaxTurns` JSON/metrics + stats `continueCapReleases`/`maxTurnsHits`,
+`max_turns=0` unlimited, `forge sessions title`, stream usage, `meta.json`
 session sidecar, tunable loop guards (`FORGE_DOOM_LOOP_THRESHOLD`, `FORGE_ERROR_STREAK_THRESHOLD`),
 interactive same-cwd auto-resume, `/title`, `--title` on `forge`/`forge run`, `/bell` turn-end
 attention, background-task teardown on exit, JSON store isolation (`readJsonFile` clones

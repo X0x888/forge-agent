@@ -12,6 +12,7 @@ Production recovery, review, and onboarding learned from OpenCode (snapshot/reve
 - **`releasedOnContinueCap` / `hitMaxTurns`**: headless JSON + metrics when stop-continue cap or `max_turns` releases (not a clean Stop) — CI can alert without hard-failing; stats aggregates `continueCapReleases` + `maxTurnsHits`; `forge run --help` documents JSON fields; library exports `LoopResult`
 - **`max_turns = 0` is unlimited**: no longer silently capped at 200 (matches default config.toml comment); `/config` + doctor show `unlimited`; `forge config --json` includes `maxTurnsUnlimited`
 - **`forge sessions title <id> <name|clear>`**: headless relabel (parity with `/title`; multi-word labels joined; searchable via list `-q`)
+- **Doom-loop fingerprint**: ignore `background` / `stream` / `tail` / `allow_local` (plus existing timeout fields) so transport-only retries still trip
 
 ### Recovery (disk + chat)
 - **File mutation journal**: successful `write_file` / `search_replace` / `apply_patch` ops append pre-images to `~/.forge/sessions/<id>/mutations.jsonl` (mode `0600`, ~1.5 MiB cap per body)
