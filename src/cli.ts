@@ -568,7 +568,7 @@ Docs: docs/PRODUCTION.md
       "list (default) | show <id> | path <id> | export <id> | import <file> | fork <id> | pin <id> | unpin <id> | title <id> <name> | delete <id> [--force] | prune",
     )
     .argument("[id]", "Session id/prefix/title or import file path")
-    .argument("[extra]", "title: new label (or clear|none|- to unset)")
+    .argument("[extra...]", "title: new label words (or clear|none|- to unset)")
     .option("--keep <n>", "Prune: keep newest N sessions", "50")
     .option("--max-age-days <n>", "Prune: also drop sessions older than N days")
     .option("--json", "Machine-readable JSON")
@@ -589,7 +589,7 @@ Docs: docs/PRODUCTION.md
       (
         action: string | undefined,
         id: string | undefined,
-        extra: string | undefined,
+        extra: string[] | undefined,
         opts: Record<string, unknown>,
         command: { optsWithGlobals: () => Record<string, unknown>; getOptionValueSource?: (n: string) => string | undefined; parent?: { getOptionValueSource?: (n: string) => string | undefined } },
       ) => {
@@ -816,9 +816,13 @@ Docs: docs/PRODUCTION.md
         return;
       }
       if (act === "title" || act === "rename") {
-        // forge sessions title <id|title> <new-label|clear|none|->
+        // forge sessions title <id|title> <new label words…|clear|none|->
         const target = id || "";
-        const labelRaw = (extra || "").trim();
+        const labelRaw = (Array.isArray(extra) ? extra : [])
+          .map((x) => String(x || "").trim())
+          .filter(Boolean)
+          .join(" ")
+          .trim();
         if (!target || !labelRaw) {
           log.error(
             "Usage: forge sessions title <id|title> <name|clear|none|->",

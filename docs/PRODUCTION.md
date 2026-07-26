@@ -170,7 +170,7 @@ On thrown errors with `--json`, stdout is `{ "ok": false, "error": "…", "timed
 - `forge sessions prune --keep 50` periodically (skips foreign live locks + pinned; reports `skippedLocked` / `skippedPinned`)
 - `forge sessions delete <id>` refuses foreign live locks unless `--force`
 - `/fork` or `forge sessions fork <id>` before risky experiments (keeps original; fork clears pin)
-- `/title "incident-42"` to label long-running sessions; resume with `/resume incident-42` or `forge --session incident-42`
+- `/title "incident-42"` or `forge sessions title <id> incident-42` to label long-running sessions; resume with `/resume incident-42` or `forge --session incident-42`
 - `/pin` (or `forge sessions pin <id>`) to protect important sessions from prune; `/sessions pinned` to list them
 - `/files` after resume to see paths the agent touched; `/last 3` for recent turns; `/path` (or `forge sessions path`) for the on-disk session dir
 - `/bell on` (or `FORGE_BELL=1`) for a terminal BEL when long ULW/goal turns finish
