@@ -16,7 +16,7 @@ Production recovery, review, and onboarding learned from OpenCode (snapshot/reve
 - **`/review [target]`**: OpenCode-style code review — `uncommitted` (default) · `staged` · `<commit>` · `<branch>` · `<pr#|url>`
 - **`/compact-and <prompt>`**: Warp-style compact then continue with a follow-up in one step
 - **`/fork-and-compact [prompt]`**: fork → compact the fork → optional continue (original history preserved)
-- **`/config [json]`**: live-safe effective config snapshot (provider/model/sandbox/permissions/timeouts — **never** dumps API keys)
+- **`/config [json]`** · **`forge config [--json]`**: live-safe effective config snapshot (provider/model/sandbox/permissions/timeouts/FORGE_HOME — **never** dumps API keys)
 - **`/export` path writes mode `0600`** (parity with `forge sessions export --out`)
 - Help, tips, tab-complete updated
 

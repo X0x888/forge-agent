@@ -26,6 +26,8 @@ import {
   buildInitAgentsPrompt,
   buildReviewPrompt,
   completeSlash,
+  formatEffectiveConfig,
+  buildEffectiveConfigSnap,
 } from "../src/commands/slash.js";
 import {
   defaultBashTimeoutMs,
@@ -381,6 +383,14 @@ describe("/init and /compact-and slash commands", () => {
     assert.equal(typeof parsed.env.FORGE_HOME, "string");
     assert.ok(parsed.env.FORGE_HOME.length > 0);
     assert.ok(!("apiKey" in parsed));
+    // Headless forge config --json uses the same helper (no session)
+    const headless = formatEffectiveConfig(DEFAULT_CONFIG, { json: true });
+    const h = JSON.parse(headless);
+    assert.equal(h.session, null);
+    assert.equal(typeof h.env.FORGE_BASH_TIMEOUT_MS, "number");
+    const snap = buildEffectiveConfigSnap(DEFAULT_CONFIG);
+    assert.equal(snap.session, null);
+    assert.match(formatEffectiveConfig(DEFAULT_CONFIG), /Effective config/);
   });
 
   it("/export to path uses mode 0600", async () => {

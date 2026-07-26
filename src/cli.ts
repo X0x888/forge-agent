@@ -70,7 +70,7 @@ import { forgeHome, ensureDir, inspectSecureFile } from "./util/fs.js";
 import { log, setLogLevel } from "./util/log.js";
 import { armGoal, formatGoalStatus, loadGoal } from "./harness/goal.js";
 import { armUlwCycle, loadUlwCycle, formatUlwCounts } from "./harness/ulw-cycle.js";
-import { runDoctorCheck } from "./commands/slash.js";
+import { formatEffectiveConfig, runDoctorCheck } from "./commands/slash.js";
 import {
   collectSnapshots,
   renderHud,
@@ -128,6 +128,7 @@ Examples:
   forge news
   forge tips
   forge logs
+  forge config --json
   forge prune-tool-output --keep 80
   forge prune-metrics --keep 500
   eval "$(forge completion bash)"
@@ -1171,6 +1172,24 @@ Project instructions for Forge (and other coding agents).
     });
 
   program
+    .command("config")
+    .description(
+      "Print effective config snapshot (no secrets) — same as REPL /config",
+    )
+    .option("--json", "Machine-readable JSON")
+    .option("-p, --provider <provider>", "Provider override")
+    .option("-m, --model <model>", "Model override")
+    .option("--cwd <path>", "Workspace", process.cwd())
+    .action((opts) => {
+      const config = buildConfig(opts);
+      console.log(
+        formatEffectiveConfig(config, {
+          json: Boolean(opts.json),
+        }),
+      );
+    });
+
+  program
     .command("stats")
     .description(
       "Usage dashboard from metrics.jsonl + session inventory (counter-only, no prompts)",
@@ -1207,7 +1226,7 @@ Project instructions for Forge (and other coding agents).
           `  CI:            forge run "…" --title job --json  ·  forge run "…" --continue  ·  forge doctor --json`,
           `  Safety:        /permissions plan|acceptEdits  ·  --sandbox workspace  ·  /diff (argv-safe)`,
           `  Attention:     /bell on  ·  /copy  ·  /last  ·  /files  ·  /path  ·  /logs  ·  /config  ·  /pin  ·  /stats 7  ·  /share  ·  /retry`,
-          `  Recovery:      /undo  ·  /retry  ·  /init  ·  /review  ·  /compact-and  ·  /fork-and-compact  ·  forge logs`,
+          `  Recovery:      /undo  ·  /retry  ·  /init  ·  /review  ·  /compact-and  ·  /fork-and-compact  ·  forge logs  ·  forge config`,
           `  Docs:          docs/PRODUCTION.md  ·  docs/RELIABILITY.md  ·  forge tips  ·  forge news  ·  /help`,
         ].join("\n"),
       );

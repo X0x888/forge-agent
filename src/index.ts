@@ -227,12 +227,14 @@ export {
   handleSlash,
   runDoctor,
   runDoctorCheck,
+  buildEffectiveConfigSnap,
+  formatEffectiveConfig,
   classifyLiveSlash,
   isLiveSafeSlash,
   isSafeDiffFilterArg,
   LIVE_CONTROLS_HINT,
 } from "./commands/slash.js";
-export type { DoctorResult } from "./commands/slash.js";
+export type { DoctorResult, EffectiveConfigSnap } from "./commands/slash.js";
 export {
   pushLiveNotice,
   drainLiveNotices,

@@ -35,6 +35,7 @@ forge news                   # what's new from packaged CHANGELOG
 forge news 2 --json          # last 2 releases as JSON
 forge logs                   # tail sandbox/safety events (incident triage)
 forge logs -n 50 --json      # machine-readable safety log
+forge config --json          # effective config snapshot (no secrets)
 forge run "next" --continue --json   # headless same-cwd resume (no session id)
 # REPL: /share · /files · /pin · /stats · /tips · /news · /retry [prompt] · /last [n]
 # REPL: /undo [n] · /init · /review · /compact-and · /fork-and-compact · /logs [n|path] · /config [json]

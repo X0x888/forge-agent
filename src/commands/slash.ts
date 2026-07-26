@@ -1355,95 +1355,16 @@ export async function handleSlash(
 
     case "/config": {
       // Live-safe effective config snapshot (no secrets — never dumps API keys).
-      const c = opts.config;
       const wantJson =
         /\b(json|--json|-j)\b/i.test(arg || "") ||
         (arg || "").trim().toLowerCase() === "json";
-      const net = resolveSandboxNetwork(c);
-      const snap = {
-        provider: c.provider,
-        model: c.model,
-        reasoningEffort: c.reasoningEffort ?? null,
-        permissionMode: c.permissionMode,
-        sandbox: c.sandbox,
-        sandboxNetwork: net,
-        sandboxMissingBackend: c.sandboxMissingBackend ?? "fail-closed",
-        readOutsideWorkspace: c.readOutsideWorkspace ?? "ask",
-        blockingStopHooks: c.blockingStopHooks !== false,
-        promptProfile: c.promptProfile ?? "default",
-        contextWindow: c.contextWindow,
-        autoCompactThreshold: c.autoCompactThreshold,
-        maxTurns: c.maxTurns,
-        workspace: c.workspace || opts.session.meta.cwd || process.cwd(),
-        baseUrl: c.baseUrl || c.providers[c.provider]?.baseUrl || null,
-        goalEnabled: c.goal?.enabled !== false,
-        goalStuckThreshold: c.goal?.stuckThreshold ?? null,
-        rules: {
-          deny: c.permission?.deny?.length || 0,
-          allow: c.permission?.allow?.length || 0,
-          ask: c.permission?.ask?.length || 0,
-        },
-        session: {
-          id: opts.session.meta.id,
-          title: opts.session.meta.title || null,
-          ultrawork: Boolean(opts.session.meta.ultrawork),
-          pinned: Boolean(opts.session.meta.pinned),
-          turns: opts.session.meta.turnCount,
-          edits: opts.session.meta.editCount,
-        },
-        env: {
-          FORGE_HOME:
-            process.env.FORGE_HOME ||
-            path.join(process.env.HOME || "", ".forge"),
-          FORGE_BASH_TIMEOUT_MS: defaultBashTimeoutMs(),
-          FORGE_BASH_BG_TIMEOUT_MS: defaultBashBackgroundTimeoutMs(),
-          FORGE_PROVIDER_TIMEOUT_MS: providerTimeoutMs(),
-          FORGE_DOOM_LOOP_THRESHOLD: envPositiveInt(
-            "FORGE_DOOM_LOOP_THRESHOLD",
-            3,
-          ),
-          FORGE_ERROR_STREAK_THRESHOLD: envPositiveInt(
-            "FORGE_ERROR_STREAK_THRESHOLD",
-            5,
-          ),
-        },
+      return {
+        handled: true,
+        output: formatEffectiveConfig(opts.config, {
+          json: wantJson,
+          session: opts.session,
+        }),
       };
-      if (wantJson) {
-        return {
-          handled: true,
-          output: JSON.stringify(snap, null, 2),
-        };
-      }
-      const lines = [
-        `Effective config (live-safe · no secrets)`,
-        `  provider/model:  ${snap.provider}/${snap.model}` +
-          (snap.reasoningEffort ? `  effort=${snap.reasoningEffort}` : ""),
-        `  permission:      ${snap.permissionMode}`,
-        `  sandbox:         ${snap.sandbox}  network=${snap.sandboxNetwork}  missing=${snap.sandboxMissingBackend}`,
-        `  read outside:    ${snap.readOutsideWorkspace}`,
-        `  blocking Stop:   ${snap.blockingStopHooks ? "on" : "OFF"}`,
-        `  profile:         ${snap.promptProfile}`,
-        `  context:         window=${snap.contextWindow} autoCompact@${Math.round((snap.autoCompactThreshold || 0.8) * 100)}% maxTurns=${snap.maxTurns}`,
-        `  goal gate:       ${snap.goalEnabled ? "on" : "off"}` +
-          (snap.goalStuckThreshold != null
-            ? `  stuck=${snap.goalStuckThreshold}`
-            : ""),
-        `  rules:           deny=${snap.rules.deny} allow=${snap.rules.allow} ask=${snap.rules.ask}`,
-        `  workspace:       ${snap.workspace}`,
-        `  FORGE_HOME:      ${snap.env.FORGE_HOME}`,
-        snap.baseUrl ? `  api base:        ${snap.baseUrl}` : null,
-        `  session:         ${snap.session.id.slice(0, 8)}` +
-          (snap.session.title ? `  “${snap.session.title}”` : "") +
-          (snap.session.ultrawork ? "  ULW" : "") +
-          (snap.session.pinned ? "  PIN" : "") +
-          `  t=${snap.session.turns} e=${snap.session.edits}`,
-        `  timeouts:        provider=${Math.round(snap.env.FORGE_PROVIDER_TIMEOUT_MS / 1000)}s` +
-          `  bash=${Math.round(snap.env.FORGE_BASH_TIMEOUT_MS / 1000)}s` +
-          `  bash-bg=${Math.round(snap.env.FORGE_BASH_BG_TIMEOUT_MS / 1000)}s`,
-        `  loop guards:     doom@${snap.env.FORGE_DOOM_LOOP_THRESHOLD}  error-streak@${snap.env.FORGE_ERROR_STREAK_THRESHOLD}`,
-        chalk.dim(`  /config json · /doctor · /permissions · /model · /effort`),
-      ].filter(Boolean) as string[];
-      return { handled: true, output: lines.join("\n") };
     }
 
     case "/diff": {
@@ -2498,6 +2419,150 @@ export function runDoctorCheck(config: ForgeConfig): DoctorResult {
 /** Human-readable doctor report (slash `/doctor` and plain `forge doctor`). */
 export function runDoctor(config: ForgeConfig): string {
   return runDoctorCheck(config).report;
+}
+
+export interface EffectiveConfigSnap {
+  provider: string;
+  model: string;
+  reasoningEffort: string | null;
+  permissionMode: string;
+  sandbox: string;
+  sandboxNetwork: string;
+  sandboxMissingBackend: string;
+  readOutsideWorkspace: string;
+  blockingStopHooks: boolean;
+  promptProfile: string;
+  contextWindow: number;
+  autoCompactThreshold: number;
+  maxTurns: number;
+  workspace: string;
+  baseUrl: string | null;
+  goalEnabled: boolean;
+  goalStuckThreshold: number | null;
+  rules: { deny: number; allow: number; ask: number };
+  session: {
+    id: string | null;
+    title: string | null;
+    ultrawork: boolean;
+    pinned: boolean;
+    turns: number;
+    edits: number;
+  } | null;
+  env: {
+    FORGE_HOME: string;
+    FORGE_BASH_TIMEOUT_MS: number;
+    FORGE_BASH_BG_TIMEOUT_MS: number;
+    FORGE_PROVIDER_TIMEOUT_MS: number;
+    FORGE_DOOM_LOOP_THRESHOLD: number;
+    FORGE_ERROR_STREAK_THRESHOLD: number;
+  };
+}
+
+/** Build effective config snapshot (never includes secrets). */
+export function buildEffectiveConfigSnap(
+  config: ForgeConfig,
+  opts?: { session?: SessionData | null },
+): EffectiveConfigSnap {
+  const c = config;
+  const net = resolveSandboxNetwork(c);
+  const session = opts?.session;
+  return {
+    provider: c.provider,
+    model: c.model,
+    reasoningEffort: c.reasoningEffort ?? null,
+    permissionMode: c.permissionMode,
+    sandbox: c.sandbox,
+    sandboxNetwork: net,
+    sandboxMissingBackend: c.sandboxMissingBackend ?? "fail-closed",
+    readOutsideWorkspace: c.readOutsideWorkspace ?? "ask",
+    blockingStopHooks: c.blockingStopHooks !== false,
+    promptProfile: c.promptProfile ?? "default",
+    contextWindow: c.contextWindow,
+    autoCompactThreshold: c.autoCompactThreshold,
+    maxTurns: c.maxTurns,
+    workspace: c.workspace || session?.meta.cwd || process.cwd(),
+    baseUrl: c.baseUrl || c.providers[c.provider]?.baseUrl || null,
+    goalEnabled: c.goal?.enabled !== false,
+    goalStuckThreshold: c.goal?.stuckThreshold ?? null,
+    rules: {
+      deny: c.permission?.deny?.length || 0,
+      allow: c.permission?.allow?.length || 0,
+      ask: c.permission?.ask?.length || 0,
+    },
+    session: session
+      ? {
+          id: session.meta.id,
+          title: session.meta.title || null,
+          ultrawork: Boolean(session.meta.ultrawork),
+          pinned: Boolean(session.meta.pinned),
+          turns: session.meta.turnCount,
+          edits: session.meta.editCount,
+        }
+      : null,
+    env: {
+      FORGE_HOME:
+        process.env.FORGE_HOME || path.join(process.env.HOME || "", ".forge"),
+      FORGE_BASH_TIMEOUT_MS: defaultBashTimeoutMs(),
+      FORGE_BASH_BG_TIMEOUT_MS: defaultBashBackgroundTimeoutMs(),
+      FORGE_PROVIDER_TIMEOUT_MS: providerTimeoutMs(),
+      FORGE_DOOM_LOOP_THRESHOLD: envPositiveInt("FORGE_DOOM_LOOP_THRESHOLD", 3),
+      FORGE_ERROR_STREAK_THRESHOLD: envPositiveInt(
+        "FORGE_ERROR_STREAK_THRESHOLD",
+        5,
+      ),
+    },
+  };
+}
+
+/**
+ * Format effective config for `/config` and `forge config`.
+ * Never dumps API keys or credential material.
+ */
+export function formatEffectiveConfig(
+  config: ForgeConfig,
+  opts?: { json?: boolean; session?: SessionData | null },
+): string {
+  const snap = buildEffectiveConfigSnap(config, { session: opts?.session });
+  if (opts?.json) {
+    return JSON.stringify(snap, null, 2);
+  }
+  const sess = snap.session;
+  const lines = [
+    `Effective config (live-safe · no secrets)`,
+    `  provider/model:  ${snap.provider}/${snap.model}` +
+      (snap.reasoningEffort ? `  effort=${snap.reasoningEffort}` : ""),
+    `  permission:      ${snap.permissionMode}`,
+    `  sandbox:         ${snap.sandbox}  network=${snap.sandboxNetwork}  missing=${snap.sandboxMissingBackend}`,
+    `  read outside:    ${snap.readOutsideWorkspace}`,
+    `  blocking Stop:   ${snap.blockingStopHooks ? "on" : "OFF"}`,
+    `  profile:         ${snap.promptProfile}`,
+    `  context:         window=${snap.contextWindow} autoCompact@${Math.round((snap.autoCompactThreshold || 0.8) * 100)}% maxTurns=${snap.maxTurns}`,
+    `  goal gate:       ${snap.goalEnabled ? "on" : "off"}` +
+      (snap.goalStuckThreshold != null
+        ? `  stuck=${snap.goalStuckThreshold}`
+        : ""),
+    `  rules:           deny=${snap.rules.deny} allow=${snap.rules.allow} ask=${snap.rules.ask}`,
+    `  workspace:       ${snap.workspace}`,
+    `  FORGE_HOME:      ${snap.env.FORGE_HOME}`,
+    snap.baseUrl ? `  api base:        ${snap.baseUrl}` : null,
+    sess
+      ? `  session:         ${sess.id!.slice(0, 8)}` +
+        (sess.title ? `  “${sess.title}”` : "") +
+        (sess.ultrawork ? "  ULW" : "") +
+        (sess.pinned ? "  PIN" : "") +
+        `  t=${sess.turns} e=${sess.edits}`
+      : null,
+    `  timeouts:        provider=${Math.round(snap.env.FORGE_PROVIDER_TIMEOUT_MS / 1000)}s` +
+      `  bash=${Math.round(snap.env.FORGE_BASH_TIMEOUT_MS / 1000)}s` +
+      `  bash-bg=${Math.round(snap.env.FORGE_BASH_BG_TIMEOUT_MS / 1000)}s`,
+    `  loop guards:     doom@${snap.env.FORGE_DOOM_LOOP_THRESHOLD}  error-streak@${snap.env.FORGE_ERROR_STREAK_THRESHOLD}`,
+    chalk.dim(
+      sess
+        ? `  /config json · /doctor · /permissions · /model · /effort`
+        : `  forge config --json · forge doctor · forge tips`,
+    ),
+  ].filter(Boolean) as string[];
+  return lines.join("\n");
 }
 
 /** OpenCode-inspired code review prompt (scoped target). */
