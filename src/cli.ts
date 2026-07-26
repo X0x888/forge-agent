@@ -1078,13 +1078,19 @@ Docs: docs/PRODUCTION.md
         return;
       }
       if (act === "prune") {
+        // maxAgeDays: 0 = no age filter; unset/invalid → undefined (keep-only prune)
+        let maxAgeDays: number | undefined;
+        if (
+          globalOpts.maxAgeDays != null &&
+          String(globalOpts.maxAgeDays).trim() !== ""
+        ) {
+          const n = Number(String(globalOpts.maxAgeDays).trim());
+          if (Number.isFinite(n) && n >= 0) maxAgeDays = Math.floor(n);
+        }
         const result = pruneSessions({
           // 0 is valid (keep none); Number(x)||50 wrongly treated 0 as missing
           keep: parseKeepCount(globalOpts.keep, 50),
-          maxAgeDays:
-            globalOpts.maxAgeDays != null
-              ? Number(globalOpts.maxAgeDays)
-              : undefined,
+          maxAgeDays,
         });
         if (globalOpts.json) {
           console.log(JSON.stringify(result, null, 2));
@@ -1359,7 +1365,8 @@ Project instructions for Forge (and other coding agents).
       const result = pruneToolOutputsSync({
         // 0 is valid (delete all eligible dumps)
         keep: parseKeepCount(opts.keep, 80),
-        maxAgeDays: Number(opts.maxAgeDays) || 14,
+        // 0 = no age filter; default 14 when unset/invalid
+        maxAgeDays: parseKeepCount(opts.maxAgeDays, 14),
       });
       if (opts.json) {
         console.log(

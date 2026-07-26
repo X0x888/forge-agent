@@ -1763,6 +1763,37 @@ describe("session prune", () => {
     assert.equal(listSessions(10).length, 0);
   });
 
+  it("/sessions prune --keep=0 honors zero (protects active only)", async () => {
+    const fs = await import("node:fs");
+    const os = await import("node:os");
+    const path = await import("node:path");
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-slash-prune0-"));
+    process.env.FORGE_HOME = tmp;
+    const { createSession, listSessions, saveSession } = await import(
+      "../src/session/session.js"
+    );
+    const { handleSlash } = await import("../src/commands/slash.js");
+    const { DEFAULT_CONFIG } = await import("../src/config/types.js");
+    const { HookRunner } = await import("../src/harness/hooks.js");
+    const active = createSession({ cwd: tmp, provider: "xai", model: "m" });
+    const old = createSession({ cwd: tmp, provider: "xai", model: "m" });
+    old.meta.updatedAt = new Date(Date.now() - 10 * 86_400_000).toISOString();
+    saveSession(old);
+    assert.equal(listSessions(10).length, 2);
+    const hooks = new HookRunner(DEFAULT_CONFIG, tmp);
+    const r = await handleSlash("/sessions prune --keep=0", {
+      session: active,
+      config: { ...DEFAULT_CONFIG, workspace: tmp },
+      hooks,
+    });
+    assert.equal(r.handled, true);
+    assert.match(String(r.output || ""), /Pruned/);
+    assert.match(String(r.output || ""), /--keep 0/);
+    const left = listSessions(10);
+    assert.equal(left.length, 1);
+    assert.equal(left[0]!.id, active.meta.id);
+  });
+
   it("/new [title] labels the fresh session", async () => {
     const fs = await import("node:fs");
     const os = await import("node:os");

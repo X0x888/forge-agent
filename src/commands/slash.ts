@@ -65,6 +65,7 @@ import {
   defaultBashBackgroundTimeoutMs,
   defaultBashTimeoutMs,
   envPositiveInt,
+  parseKeepCount,
 } from "../util/env.js";
 import { isBellEnabled } from "../util/attention.js";
 import { inspectSecureFile } from "../util/fs.js";
@@ -1775,10 +1776,22 @@ export async function handleSlash(
         };
       }
       if (sub === "prune") {
-        const keepArg = parts.find((p) => p.startsWith("--keep="));
-        const keep = keepArg ? Number(keepArg.split("=")[1]) : 50;
+        // Accept --keep=N or --keep N (0 is valid — keep none except active/pinned/locked)
+        let keepRaw: string | undefined;
+        for (let i = 0; i < parts.length; i++) {
+          const p = parts[i]!;
+          if (p.startsWith("--keep=")) {
+            keepRaw = p.slice("--keep=".length);
+            break;
+          }
+          if (p === "--keep" && parts[i + 1] != null) {
+            keepRaw = parts[i + 1];
+            break;
+          }
+        }
+        const keep = parseKeepCount(keepRaw, 50);
         const result = pruneSessions({
-          keep: Number.isFinite(keep) && keep > 0 ? keep : 50,
+          keep,
           protectIds: [opts.session.meta.id],
         });
         const lockNote = result.skippedLocked
@@ -1789,7 +1802,7 @@ export async function handleSlash(
           : "";
         return {
           handled: true,
-          output: `Pruned ${result.deleted.length} session(s); kept ${result.kept} (active protected${lockNote}${pinNote}). CLI: forge sessions prune --keep 50`,
+          output: `Pruned ${result.deleted.length} session(s); kept ${result.kept} (active protected${lockNote}${pinNote}). CLI: forge sessions prune --keep ${keep}`,
         };
       }
       // Default: same-cwd sessions (multi-project experts). /sessions all|global for everything.
