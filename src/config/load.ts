@@ -6,13 +6,44 @@ import {
   DEFAULT_CONFIG,
   type ForgeConfig,
   type PermissionConfig,
+  type PermissionMode,
   type ProviderId,
   type SandboxMissingBackend,
   type SandboxNetwork,
+  type SandboxProfile,
   type ReadOutsideWorkspace,
 } from "./types.js";
 import { applyPreferences, loadPreferences } from "./preferences.js";
 import { parseReasoningEffort } from "./reasoning.js";
+
+const ENV_PERMISSION_MODES = new Set<PermissionMode>([
+  "default",
+  "acceptEdits",
+  "plan",
+  "bypassPermissions",
+  "dontAsk",
+]);
+const ENV_SANDBOX_PROFILES = new Set<SandboxProfile>([
+  "off",
+  "workspace",
+  "read-only",
+  "strict",
+]);
+const ENV_SANDBOX_NETWORKS = new Set<SandboxNetwork>(["unrestricted", "blocked"]);
+const ENV_SANDBOX_MISSING = new Set<SandboxMissingBackend>([
+  "fail-closed",
+  "fallback",
+]);
+const ENV_READ_OUTSIDE = new Set<ReadOutsideWorkspace>(["ask", "allow", "deny"]);
+const ENV_PROVIDERS = new Set<string>([
+  "xai",
+  "grok",
+  "anthropic",
+  "openai",
+  "openrouter",
+  "google",
+  "custom",
+]);
 
 function deepMerge<T extends Record<string, unknown>>(base: T, overlay: Partial<T>): T {
   const out: Record<string, unknown> = { ...base };
@@ -309,8 +340,13 @@ export function loadConfig(overrides: Partial<ForgeConfig> = {}, cwd = process.c
   // Interactive preferences (slash /model, /permissions, /effort) — beat static config
   applyPreferences(cfg, loadPreferences());
 
-  // Environment overrides
-  if (process.env.FORGE_PROVIDER) cfg.provider = process.env.FORGE_PROVIDER as ProviderId;
+  // Environment overrides (invalid values ignored — parity with FORGE_EFFORT)
+  if (process.env.FORGE_PROVIDER) {
+    const raw = process.env.FORGE_PROVIDER.trim().toLowerCase();
+    if (ENV_PROVIDERS.has(raw)) {
+      cfg.provider = (raw === "grok" ? "xai" : raw) as ProviderId;
+    }
+  }
   if (process.env.FORGE_MODEL) cfg.model = process.env.FORGE_MODEL;
   if (process.env.FORGE_BASE_URL) cfg.baseUrl = process.env.FORGE_BASE_URL;
   {
@@ -322,20 +358,24 @@ export function loadConfig(overrides: Partial<ForgeConfig> = {}, cwd = process.c
     }
   }
   if (process.env.FORGE_PERMISSION_MODE) {
-    cfg.permissionMode = process.env.FORGE_PERMISSION_MODE as ForgeConfig["permissionMode"];
+    const mode = process.env.FORGE_PERMISSION_MODE.trim() as PermissionMode;
+    if (ENV_PERMISSION_MODES.has(mode)) cfg.permissionMode = mode;
   }
   if (process.env.FORGE_SANDBOX) {
-    cfg.sandbox = process.env.FORGE_SANDBOX as ForgeConfig["sandbox"];
+    const profile = process.env.FORGE_SANDBOX.trim() as SandboxProfile;
+    if (ENV_SANDBOX_PROFILES.has(profile)) cfg.sandbox = profile;
   }
   if (process.env.FORGE_SANDBOX_NETWORK) {
-    cfg.sandboxNetwork = process.env.FORGE_SANDBOX_NETWORK as SandboxNetwork;
+    const net = process.env.FORGE_SANDBOX_NETWORK.trim() as SandboxNetwork;
+    if (ENV_SANDBOX_NETWORKS.has(net)) cfg.sandboxNetwork = net;
   }
   if (process.env.FORGE_SANDBOX_MISSING_BACKEND) {
-    cfg.sandboxMissingBackend = process.env
-      .FORGE_SANDBOX_MISSING_BACKEND as SandboxMissingBackend;
+    const miss = process.env.FORGE_SANDBOX_MISSING_BACKEND.trim() as SandboxMissingBackend;
+    if (ENV_SANDBOX_MISSING.has(miss)) cfg.sandboxMissingBackend = miss;
   }
   if (process.env.FORGE_READ_OUTSIDE) {
-    cfg.readOutsideWorkspace = process.env.FORGE_READ_OUTSIDE as ReadOutsideWorkspace;
+    const ro = process.env.FORGE_READ_OUTSIDE.trim() as ReadOutsideWorkspace;
+    if (ENV_READ_OUTSIDE.has(ro)) cfg.readOutsideWorkspace = ro;
   }
   if (process.env.FORGE_BLOCKING_STOP === "0") cfg.blockingStopHooks = false;
   if (process.env.FORGE_BLOCKING_STOP === "1") cfg.blockingStopHooks = true;

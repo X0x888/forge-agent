@@ -36,6 +36,43 @@ describe("auth + config", () => {
     delete process.env.FORGE_PROVIDER;
   });
 
+  it("ignores invalid FORGE_* enum env values (keeps defaults)", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-cfg-badenv-"));
+    process.env.FORGE_HOME = tmp;
+    process.env.FORGE_PROVIDER = "bogus-cloud";
+    process.env.FORGE_PERMISSION_MODE = "yolo";
+    process.env.FORGE_SANDBOX = "paranoid";
+    process.env.FORGE_SANDBOX_NETWORK = "maybe";
+    process.env.FORGE_SANDBOX_MISSING_BACKEND = "explode";
+    process.env.FORGE_READ_OUTSIDE = "whatever";
+    const cfg = loadConfig({}, tmp);
+    assert.equal(cfg.provider, "xai"); // default — invalid env ignored
+    assert.equal(cfg.permissionMode, "default");
+    assert.equal(cfg.sandbox, "workspace");
+    // sandboxNetwork is optional; invalid env must not set a poison value
+    assert.ok(
+      cfg.sandboxNetwork === undefined || cfg.sandboxNetwork === "unrestricted",
+    );
+    assert.equal(cfg.sandboxMissingBackend, "fail-closed");
+    assert.equal(cfg.readOutsideWorkspace, "ask");
+    // Valid alias still works
+    process.env.FORGE_PROVIDER = "grok";
+    process.env.FORGE_PERMISSION_MODE = "plan";
+    process.env.FORGE_SANDBOX = "strict";
+    process.env.FORGE_SANDBOX_NETWORK = "blocked";
+    const cfg2 = loadConfig({}, tmp);
+    assert.equal(cfg2.provider, "xai");
+    assert.equal(cfg2.permissionMode, "plan");
+    assert.equal(cfg2.sandbox, "strict");
+    assert.equal(cfg2.sandboxNetwork, "blocked");
+    delete process.env.FORGE_PROVIDER;
+    delete process.env.FORGE_PERMISSION_MODE;
+    delete process.env.FORGE_SANDBOX;
+    delete process.env.FORGE_SANDBOX_NETWORK;
+    delete process.env.FORGE_SANDBOX_MISSING_BACKEND;
+    delete process.env.FORGE_READ_OUTSIDE;
+  });
+
   it("persists /model and /permissions via preferences across folders", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-prefs-"));
     process.env.FORGE_HOME = tmp;

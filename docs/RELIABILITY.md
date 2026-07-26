@@ -92,7 +92,7 @@ What experts should expect from Forge in long, unattended, or CI runs.
 | `FORGE_NO_AUTO_RESUME` | off | `1` disables interactive same-cwd session auto-resume |
 | `FORGE_HOME` | `~/.forge` | Config/session root (tests/CI isolation) |
 
-Invalid numeric values fall back to defaults (never crash the agent).
+Invalid numeric values fall back to defaults (never crash the agent). Invalid enum env values (`FORGE_PROVIDER`, `FORGE_PERMISSION_MODE`, `FORGE_SANDBOX*`, `FORGE_READ_OUTSIDE`) are ignored the same way (keep prior/default config).
 
 ## Operator checks
 
