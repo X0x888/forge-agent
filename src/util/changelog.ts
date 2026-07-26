@@ -159,16 +159,66 @@ export function formatWhatsNew(opts?: {
       }
       return out;
     };
-    // Clean full body, slice, then drop heads orphaned by the slice.
-    const cleaned = dropEmptyHeads(dropEmptyHeads(rawLines).slice(0, maxBullets));
-    // Second dropEmptyHeads is intentional after slice (e.g. ### Docs with no room for bullets).
+    // Prefer *newest* bullets from the first ### section (active development
+    // appends there). A long 0.9.x body used to head-slice and hide recent work
+    // behind "+N more"; tail-slicing the whole body wrongly preferred static
+    // Recovery/Docs sections that sit later in the file.
+    const allClean = dropEmptyHeads(rawLines);
+    const pickNewestFromActiveSection = (rows: string[], budget: number): string[] => {
+      if (rows.length <= budget) return rows;
+      // Find first ### that has bullets (active section).
+      let headIdx = -1;
+      for (let i = 0; i < rows.length; i++) {
+        if (rows[i].trim().startsWith("###")) {
+          // Does it have a bullet before the next head?
+          let has = false;
+          for (let j = i + 1; j < rows.length; j++) {
+            const n = rows[j].trim();
+            if (n.startsWith("###")) break;
+            if (n.startsWith("-") || n.startsWith("*")) {
+              has = true;
+              break;
+            }
+          }
+          if (has) {
+            headIdx = i;
+            break;
+          }
+        }
+      }
+      if (headIdx < 0) {
+        // No section heads — take newest bullets overall.
+        return rows.slice(-budget);
+      }
+      let nextHead = rows.length;
+      for (let i = headIdx + 1; i < rows.length; i++) {
+        if (rows[i].trim().startsWith("###")) {
+          nextHead = i;
+          break;
+        }
+      }
+      const head = rows[headIdx];
+      const sectionBullets = rows
+        .slice(headIdx + 1, nextHead)
+        .filter((l) => {
+          const t = l.trim();
+          return t.startsWith("-") || t.startsWith("*");
+        });
+      // Leave room for the ### head line in the display budget.
+      const bulletBudget = Math.max(1, budget - 1);
+      const newest = sectionBullets.slice(-bulletBudget);
+      return [head, ...newest];
+    };
+    const cleaned = dropEmptyHeads(
+      pickNewestFromActiveSection(allClean, maxBullets),
+    );
     if (cleaned.length === 0) {
-      // Fallback: first non-empty lines
+      // Fallback: last non-empty lines
       const plain = r.body
         .split("\n")
         .map((l) => l.trim())
         .filter(Boolean)
-        .slice(0, maxBullets);
+        .slice(-maxBullets);
       lines.push(...plain.map((l) => (l.startsWith("-") ? l : `  ${l}`)));
     } else {
       for (const b of cleaned) {

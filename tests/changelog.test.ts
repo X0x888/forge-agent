@@ -48,18 +48,8 @@ describe("changelog / what's new", () => {
 ### Docs / tests
 - doc only item
 `;
-    // Force tiny bullet budget so Docs section would otherwise be a bare head
-    const text = formatWhatsNew({
-      count: 1,
-      maxBullets: 3,
-      version: "9.9.9",
-    });
-    // Use parse path via monkey by writing temp? formatWhatsNew reads disk.
-    // Unit-test the cleaner indirectly: parse + manual format path.
     const releases = parseChangelog(md);
     assert.equal(releases[0].version, "9.9.9");
-    // Simulate cleaned output: Docs head with no room for its bullet should not appear alone
-    // when we only take first 3 lines of cleaned list (Reliability head + 2 bullets)
     const bodyLines = releases[0].body.split("\n").map((l) => l.trim()).filter(Boolean);
     assert.ok(bodyLines.some((l) => l.startsWith("### Docs")));
     // Real packaged news should not end with a bare ### line
@@ -68,6 +58,20 @@ describe("changelog / what's new", () => {
     const lastContent = [...lines].reverse().find((l) => !l.startsWith("Older:") && !l.startsWith("Tip:"));
     assert.ok(lastContent);
     assert.doesNotMatch(lastContent!, /^###\s/);
+  });
+
+  it("prefers newest bullets when the release body is long", () => {
+    // Write a temp CHANGELOG and point load via cwd package root — formatWhatsNew
+    // reads packaged CHANGELOG; assert on real file that tail bullets appear.
+    const text = formatWhatsNew({ count: 1, maxBullets: 6 });
+    // Recent 0.9.5 work lives near the end of the Loop hygiene section
+    assert.match(
+      text,
+      /finishReason|mergeRunOpts|invalid_effort|invalid_permission|failUsage|bare `forge --continue`|invalid_format/i,
+    );
+    // Should not only show the oldest content_filter bullet as the whole story
+    // when newer bullets exist (regression: head-slice hid recent work).
+    assert.match(text, /\+\d+ more in CHANGELOG/);
   });
 
   it("finds packaged CHANGELOG and formats highlights", () => {

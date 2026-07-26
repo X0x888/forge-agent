@@ -28,6 +28,7 @@ Production recovery, review, and onboarding learned from OpenCode (snapshot/reve
 - **`finishReason` on headless JSON / `LoopResult`**: last provider `finish_reason` (or null); mid-run catch path adds `reason=error|timeout|aborted`
 - **`invalid_effort` JSON**: `forge run --json --effort nope` emits `{ ok:false, reason:invalid_effort, … }` instead of stderr-only
 - **CLI flag validation**: `--permission-mode` / `--sandbox` / `--sandbox-network` / `--sandbox-missing` reject unknown values (JSON reasons `invalid_permission_mode` · `invalid_sandbox` · …) instead of silently accepting typos; `mergeRunOpts` prefers CLI-sourced parent flags over run subcommand defaults (fixes parent `--permission-mode` being clobbered by run’s `acceptEdits` default) and unions parent/local `--deny`/`--allow`/`--ask` (empty run defaults no longer wipe parent rules)
+- **`forge news` / `/news`**: prefer **newest** bullets when a release section exceeds the display budget (long 0.9.x bodies no longer hide recent work behind “+N more”)
 
 ### Recovery (disk + chat)
 - **File mutation journal**: successful `write_file` / `search_replace` / `apply_patch` ops append pre-images to `~/.forge/sessions/<id>/mutations.jsonl` (mode `0600`, ~1.5 MiB cap per body)
