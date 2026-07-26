@@ -276,7 +276,7 @@ Docs: docs/PRODUCTION.md · docs/RELIABILITY.md · docs/ULW.md · forge news
     .description(
       "Headless one-shot agent run (CI / scripts). Exit: 0 ok · 1 error/empty · 124 FORGE_MAX_RUN_MS · 130 abort",
     )
-    .argument("<prompt...>", "Prompt to run")
+    .argument("[prompt...]", "Prompt to run (required; empty → exit 1)")
     .option("-m, --model <model>", "Model id")
     .option("-p, --provider <provider>", "Provider")
     .option("--base-url <url>", "Override API base URL")
@@ -351,9 +351,15 @@ Docs: docs/PRODUCTION.md
     )
     .action(async (promptParts: string[], opts, command) => {
       await ensureHome();
+      // Parent program also defines --session/--new/--title/--cwd; merge so
+      // `forge run --session x …` works whether flags bind to parent or subcommand.
+      const runOpts = {
+        ...(command?.optsWithGlobals?.() || {}),
+        ...opts,
+      } as Record<string, unknown>;
       // Validate prompt before auth/session side effects (no orphan empty sessions).
       const prompt = (promptParts || []).join(" ").trim();
-      const wantJson = Boolean(opts.json);
+      const wantJson = Boolean(runOpts.json);
       if (!prompt) {
         const msg =
           'Empty prompt. Usage: forge run "your task" [--title label] [--json]';
@@ -367,7 +373,10 @@ Docs: docs/PRODUCTION.md
         process.exitCode = 1;
         process.exit(1);
       }
-      const config = buildConfig({ ...opts, permissionMode: opts.permissionMode });
+      const config = buildConfig({
+        ...runOpts,
+        permissionMode: runOpts.permissionMode,
+      });
       const auth = await resolveAuthFresh(config);
       if (!auth) {
         const msg = "Not authenticated. Run forge login or set an API key.";
@@ -386,23 +395,25 @@ Docs: docs/PRODUCTION.md
         process.exit(1);
       }
       const provider = createProvider(config, auth);
-      const cwd = path.resolve(opts.cwd || process.cwd());
+      const cwd = path.resolve(String(runOpts.cwd || process.cwd()));
       // Commander always applies option defaults — only treat --cwd as explicit
       // when the user actually passed it on the CLI (so --session keeps its cwd).
-      const cwdExplicit = command?.getOptionValueSource?.("cwd") === "cli";
+      const cwdExplicit =
+        command?.getOptionValueSource?.("cwd") === "cli" ||
+        command?.parent?.getOptionValueSource?.("cwd") === "cli";
       let session;
       let resumed = false;
-      if (opts.session && !opts.new) {
-        session = loadSession(String(opts.session));
+      if (runOpts.session && !runOpts.new) {
+        session = loadSession(String(runOpts.session));
         if (!session) {
-          const miss = formatSessionLookupMiss(String(opts.session));
+          const miss = formatSessionLookupMiss(String(runOpts.session));
           if (wantJson) {
             console.log(
               JSON.stringify({
                 ok: false,
                 error: miss,
                 reason: "session_not_found",
-                session: String(opts.session),
+                session: String(runOpts.session),
               }),
             );
           } else {
@@ -411,7 +422,7 @@ Docs: docs/PRODUCTION.md
           process.exit(1);
         }
         resumed = true;
-      } else if (opts.continue && !opts.new) {
+      } else if (runOpts.continue && !runOpts.new) {
         // OpenCode-style headless continue: newest same-cwd session without copying ids.
         try {
           const hit = findRecentSessionForCwd(cwd);
@@ -440,9 +451,10 @@ Docs: docs/PRODUCTION.md
       }
       if (resumed && session) {
         // Align live config model with resumed session unless CLI overrode it
-        if (!opts.model) config.model = session.meta.model || config.model;
-        if (!opts.provider) {
-          config.provider = (session.meta.provider || config.provider) as typeof config.provider;
+        if (!runOpts.model) config.model = session.meta.model || config.model;
+        if (!runOpts.provider) {
+          config.provider = (session.meta.provider ||
+            config.provider) as typeof config.provider;
         }
         session.meta.provider = String(config.provider);
         session.meta.model = config.model;
@@ -454,8 +466,10 @@ Docs: docs/PRODUCTION.md
           config.workspace = session.meta.cwd;
         }
         saveSession(session);
-        if (opts.session) {
-          log.dim(`Resuming session ${session.meta.id.slice(0, 8)} (${session.messages.length} msgs)`);
+        if (runOpts.session) {
+          log.dim(
+            `Resuming session ${session.meta.id.slice(0, 8)} (${session.messages.length} msgs)`,
+          );
         }
         try {
           const peek = formatResumeOrientation(session);
@@ -468,24 +482,24 @@ Docs: docs/PRODUCTION.md
           cwd,
           provider: config.provider,
           model: config.model,
-          ultrawork: Boolean(opts.ulw || opts.goal),
-          title: typeof opts.title === "string" ? opts.title : undefined,
+          ultrawork: Boolean(runOpts.ulw || runOpts.goal),
+          title: typeof runOpts.title === "string" ? runOpts.title : undefined,
         });
       }
       // Allow --title on resume to relabel (experts tagging CI pipelines)
       if (
-        opts.title &&
-        typeof opts.title === "string" &&
-        (opts.session || opts.continue)
+        runOpts.title &&
+        typeof runOpts.title === "string" &&
+        (runOpts.session || runOpts.continue)
       ) {
-        setSessionTitle(session, opts.title);
+        setSessionTitle(session, runOpts.title);
       }
-      if (opts.ulw || opts.goal) {
+      if (runOpts.ulw || runOpts.goal) {
         session.meta.ultrawork = true;
         armUlwCycle(session.meta.id, prompt, { cycle: 1 });
         saveSession(session);
       }
-      if (opts.goal) armGoal(session.meta.id, String(opts.goal), "manual");
+      if (runOpts.goal) armGoal(session.meta.id, String(runOpts.goal), "manual");
       const hooks = new HookRunner(config, session.meta.cwd);
       const result = await runHeadless({
         config,
@@ -493,9 +507,9 @@ Docs: docs/PRODUCTION.md
         session,
         hooks,
         prompt,
-        json: Boolean(opts.json),
+        json: wantJson,
       });
-      if (opts.json) {
+      if (wantJson) {
         console.log(JSON.stringify(result, null, 2));
       }
       // CI-friendly exit codes: wall-clock timeout=124, abort=130, empty=1

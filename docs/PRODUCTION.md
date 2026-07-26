@@ -165,7 +165,18 @@ forge run "fix tests and open a PR description" \
 
 Each headless/REPL turn also appends a counter-only line to `~/.forge/metrics.jsonl` (no prompts or secrets).
 
-On thrown errors with `--json`, stdout is `{ "ok": false, "error": "…", "timedOut": false, "sessionId": "…", "title": null, "editCount": N }` and the process exits `1` (or `124` if `timedOut`). Label new runs with `forge run … --title <label>` (searchable via `forge sessions list -q`).
+On thrown errors with `--json`, stdout is `{ "ok": false, "error": "…", "timedOut": false, "sessionId": "…", "title": null, "editCount": N }` and the process exits `1` (or `124` if `timedOut`).
+
+Early failures (before the agent loop) also emit structured JSON when `--json` is set:
+
+| `reason` | When |
+|---|---|
+| `empty_prompt` | Whitespace-only / missing prompt |
+| `unauthenticated` | No API key / OAuth |
+| `session_not_found` | `--session` id/title miss |
+| `locked` | Foreign live `session.lock` (unless `FORGE_FORCE_SESSION_LOCK=1`) |
+
+Label new runs with `forge run … --title <label>` (searchable via `forge sessions list -q`).
 
 ## Long ULW / goal runs
 
