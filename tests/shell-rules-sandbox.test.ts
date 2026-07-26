@@ -46,11 +46,24 @@ describe("shell segment parsing", () => {
     assert.equal(peelWrappers(`bash -c "rm -rf /"`), "rm -rf /");
     assert.equal(peelWrappers(`sh -lc 'rm -rf /'`), "rm -rf /");
     assert.equal(peelWrappers(`/bin/bash -c "rm -rf /"`), "rm -rf /");
+    // env must re-quote multi-word -c bodies (join without quotes → bash -c rm)
+    assert.equal(
+      peelWrappers(`/usr/bin/env bash -c "rm -rf /"`),
+      "rm -rf /",
+    );
+    assert.equal(
+      peelWrappers(`env -i PATH=/bin bash -c 'rm -rf /'`),
+      "rm -rf /",
+    );
     const v = checkBashHardDeny(`bash -c "rm -rf /"`);
     assert.equal(v.ok, false);
     assert.match(v.ok === false ? v.rule : "", /rm-rf/);
     const v2 = checkBashHardDeny(`sh -c 'rm -rf ~'`);
     assert.equal(v2.ok, false);
+    const v3 = checkBashHardDeny(`/usr/bin/env bash -c "rm -rf /"`);
+    assert.equal(v3.ok, false, JSON.stringify(v3));
+    const v4 = checkBashHardDeny(`timeout 5 bash -c "rm -rf /"`);
+    assert.equal(v4.ok, false, JSON.stringify(v4));
   });
 
   it("hard deny sees command substitution bodies", () => {

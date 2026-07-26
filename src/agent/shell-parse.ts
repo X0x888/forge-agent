@@ -161,6 +161,24 @@ function pathBase(bin: string): string {
 }
 
 /**
+ * Re-join tokens so a later tokenizeSimple/peelShellDashC round-trip keeps
+ * multi-word `-c` script bodies intact (`bash -c "rm -rf /"` must not become
+ * `bash -c rm -rf /` after peeling `env`).
+ */
+export function shellJoin(parts: string[]): string {
+  return parts.map(shellQuoteToken).join(" ");
+}
+
+function shellQuoteToken(t: string): string {
+  if (!t) return '""';
+  // Safe bare token
+  if (!/[\s'"\\$`|&;<>(){}*?[~]/.test(t)) return t;
+  if (!t.includes("'")) return `'${t}'`;
+  // Fallback: double-quote with escapes
+  return `"${t.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\$/g, "\\$").replace(/`/g, "\\`")}"`;
+}
+
+/**
  * Extract `$(…)` and `` `…` `` bodies for safety scanning.
  * Quote-aware enough for common agent commands (not a full shell parser).
  */
@@ -311,7 +329,7 @@ export function peelWrappers(segment: string): string {
       let i = 1;
       while (i < parts.length && parts[i].startsWith("-")) i++;
       if (i < parts.length && /^\d/.test(parts[i])) i++; // duration
-      s = parts.slice(i).join(" ");
+      s = shellJoin(parts.slice(i));
       continue;
     }
     if (head === "env" || headBase === "env") {
@@ -319,7 +337,7 @@ export function peelWrappers(segment: string): string {
       while (i < parts.length && (parts[i].startsWith("-") || /^[A-Za-z_][A-Za-z0-9_]*=/.test(parts[i]))) {
         i++;
       }
-      s = parts.slice(i).join(" ");
+      s = shellJoin(parts.slice(i));
       continue;
     }
     if (head === "stdbuf" || headBase === "stdbuf") {
@@ -329,13 +347,13 @@ export function peelWrappers(segment: string): string {
         // -oL style may be one token
         i++;
       }
-      s = parts.slice(i).join(" ");
+      s = shellJoin(parts.slice(i));
       continue;
     }
     // nice / ionice / time / command / builtin: skip flags then rest
     let i = 1;
     while (i < parts.length && parts[i].startsWith("-")) i++;
-    s = parts.slice(i).join(" ");
+    s = shellJoin(parts.slice(i));
   }
   return s.trim();
 }

@@ -21,6 +21,8 @@ describe("hard safety (even under YOLO)", () => {
     "rm -rf ..",
     'bash -c "rm -rf /"',
     "sh -c 'rm -rf /'",
+    '/usr/bin/env bash -c "rm -rf /"',
+    'timeout 5 bash -c "rm -rf /"',
     "echo $(rm -rf /)",
     "mkfs.ext4 /dev/sda1",
     "dd if=/dev/zero of=/dev/sda",
