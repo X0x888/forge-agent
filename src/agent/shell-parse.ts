@@ -20,6 +20,16 @@ const WRAPPERS = new Set([
   "builtin",
 ]);
 
+/** Shells that take `-c` / `-lc` script payloads we must peel for safety. */
+const SHELL_BINARIES = new Set([
+  "bash",
+  "sh",
+  "zsh",
+  "dash",
+  "ksh",
+  "fish",
+]);
+
 /**
  * Split a shell command into top-level segments.
  * Does not fully parse shell quoting, but tracks ", ', and \ enough for
@@ -111,15 +121,192 @@ export function stripEnvPrefixes(segment: string): string {
  * Peel wrappers like `timeout 10`, `env -i`, `nice -n 5`.
  * Returns the inner command for matching purposes.
  */
+/**
+ * Peel `bash -c '…'` / `sh -lc "…"` so hard-deny sees the inner script.
+ * Returns null when the segment is not a shell -c form.
+ */
+export function peelShellDashC(segment: string): string | null {
+  const parts = tokenizeSimple(stripEnvPrefixes(segment));
+  if (parts.length < 3) return null;
+  const head = pathBase(parts[0]);
+  if (!SHELL_BINARIES.has(head)) return null;
+  let i = 1;
+  // Skip login/interactive/etc flags until we hit -c / -lc / combined -c…
+  while (i < parts.length) {
+    const t = parts[i];
+    if (t === "-c" || t === "-lc" || t === "-cl") {
+      i++;
+      break;
+    }
+    // Combined short flags containing c: -ec, -xc, -ic, …
+    if (/^-[a-zA-Z]*c[a-zA-Z]*$/.test(t) && t.includes("c")) {
+      i++;
+      break;
+    }
+    if (t.startsWith("-") && t !== "--") {
+      i++;
+      continue;
+    }
+    return null;
+  }
+  if (i >= parts.length) return null;
+  // Next token is the script body (tokenizeSimple already unquoted it).
+  return parts[i].trim() || null;
+}
+
+function pathBase(bin: string): string {
+  const s = bin.replace(/\\/g, "/");
+  const slash = s.lastIndexOf("/");
+  return (slash >= 0 ? s.slice(slash + 1) : s).toLowerCase();
+}
+
+/**
+ * Extract `$(…)` and `` `…` `` bodies for safety scanning.
+ * Quote-aware enough for common agent commands (not a full shell parser).
+ */
+export function extractCommandSubstitutions(command: string): string[] {
+  const out: string[] = [];
+  const s = command;
+  let quote: '"' | "'" | null = null;
+  let escaped = false;
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i];
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (quote === "'") {
+      if (ch === "'") quote = null;
+      continue;
+    }
+    if (quote === '"') {
+      if (ch === "\\") {
+        escaped = true;
+        continue;
+      }
+      if (ch === '"') {
+        quote = null;
+        continue;
+      }
+      // $(…) still expands inside double quotes
+      if (ch === "$" && s[i + 1] === "(") {
+        const body = readBalanced(s, i + 2, "(", ")");
+        if (body != null) {
+          out.push(body.text.trim());
+          i = body.end;
+        }
+      }
+      continue;
+    }
+    if (ch === "\\") {
+      escaped = true;
+      continue;
+    }
+    if (ch === '"' || ch === "'") {
+      quote = ch;
+      continue;
+    }
+    if (ch === "$" && s[i + 1] === "(") {
+      const body = readBalanced(s, i + 2, "(", ")");
+      if (body != null) {
+        out.push(body.text.trim());
+        i = body.end;
+      }
+      continue;
+    }
+    if (ch === "`") {
+      let j = i + 1;
+      let body = "";
+      let esc = false;
+      while (j < s.length) {
+        const c = s[j];
+        if (esc) {
+          body += c;
+          esc = false;
+          j++;
+          continue;
+        }
+        if (c === "\\") {
+          esc = true;
+          j++;
+          continue;
+        }
+        if (c === "`") break;
+        body += c;
+        j++;
+      }
+      if (j < s.length) {
+        out.push(body.trim());
+        i = j;
+      }
+    }
+  }
+  return out.filter(Boolean);
+}
+
+function readBalanced(
+  s: string,
+  start: number,
+  open: string,
+  close: string,
+): { text: string; end: number } | null {
+  let depth = 1;
+  let i = start;
+  let quote: '"' | "'" | null = null;
+  let escaped = false;
+  while (i < s.length && depth > 0) {
+    const ch = s[i];
+    if (escaped) {
+      escaped = false;
+      i++;
+      continue;
+    }
+    if (quote) {
+      if (ch === "\\" && quote === '"') {
+        escaped = true;
+        i++;
+        continue;
+      }
+      if (ch === quote) quote = null;
+      i++;
+      continue;
+    }
+    if (ch === "\\") {
+      escaped = true;
+      i++;
+      continue;
+    }
+    if (ch === '"' || ch === "'") {
+      quote = ch;
+      i++;
+      continue;
+    }
+    if (ch === open) depth++;
+    else if (ch === close) depth--;
+    i++;
+  }
+  if (depth !== 0) return null;
+  return { text: s.slice(start, i - 1), end: i - 1 };
+}
+
 export function peelWrappers(segment: string): string {
   let s = stripEnvPrefixes(segment);
   for (let n = 0; n < 6; n++) {
     const parts = tokenizeSimple(s);
     if (parts.length === 0) return s;
     const head = parts[0];
-    if (!WRAPPERS.has(head)) return s;
+    const headBase = pathBase(head);
 
-    if (head === "timeout") {
+    // bash -c 'rm -rf /' → peel to inner script before WRAPPERS check
+    const dashC = peelShellDashC(s);
+    if (dashC != null) {
+      s = dashC;
+      continue;
+    }
+
+    if (!WRAPPERS.has(head) && !WRAPPERS.has(headBase)) return s;
+
+    if (head === "timeout" || headBase === "timeout") {
       // timeout [options] DURATION command
       let i = 1;
       while (i < parts.length && parts[i].startsWith("-")) i++;
@@ -127,7 +314,7 @@ export function peelWrappers(segment: string): string {
       s = parts.slice(i).join(" ");
       continue;
     }
-    if (head === "env") {
+    if (head === "env" || headBase === "env") {
       let i = 1;
       while (i < parts.length && (parts[i].startsWith("-") || /^[A-Za-z_][A-Za-z0-9_]*=/.test(parts[i]))) {
         i++;
@@ -135,7 +322,7 @@ export function peelWrappers(segment: string): string {
       s = parts.slice(i).join(" ");
       continue;
     }
-    if (head === "stdbuf") {
+    if (head === "stdbuf" || headBase === "stdbuf") {
       // stdbuf -oL -eL cmd
       let i = 1;
       while (i < parts.length && parts[i].startsWith("-")) {
@@ -199,11 +386,24 @@ export function commandCheckTargets(command: string): string[] {
   // unique preserve order
   const out: string[] = [];
   const seen = new Set<string>();
-  for (const s of [...segs, full]) {
-    if (!seen.has(s)) {
-      seen.add(s);
-      out.push(s);
+  const push = (s: string) => {
+    const t = s.trim();
+    if (!t || seen.has(t)) return;
+    seen.add(t);
+    out.push(t);
+  };
+  for (const s of segs) {
+    push(s);
+    // Nested bash -c / $(…) bodies after peel
+    for (const sub of extractCommandSubstitutions(s)) {
+      push(normalizeSegment(sub));
+      push(sub);
     }
+  }
+  push(full);
+  for (const sub of extractCommandSubstitutions(full)) {
+    push(normalizeSegment(sub));
+    push(sub);
   }
   return out;
 }

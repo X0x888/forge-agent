@@ -42,6 +42,27 @@ describe("shell segment parsing", () => {
     assert.equal(peelWrappers("env -i PATH=/bin rm -rf dist"), "rm -rf dist");
   });
 
+  it("peels bash/sh -c and sees inner catastrophe", () => {
+    assert.equal(peelWrappers(`bash -c "rm -rf /"`), "rm -rf /");
+    assert.equal(peelWrappers(`sh -lc 'rm -rf /'`), "rm -rf /");
+    assert.equal(peelWrappers(`/bin/bash -c "rm -rf /"`), "rm -rf /");
+    const v = checkBashHardDeny(`bash -c "rm -rf /"`);
+    assert.equal(v.ok, false);
+    assert.match(v.ok === false ? v.rule : "", /rm-rf/);
+    const v2 = checkBashHardDeny(`sh -c 'rm -rf ~'`);
+    assert.equal(v2.ok, false);
+  });
+
+  it("hard deny sees command substitution bodies", () => {
+    const v = checkBashHardDeny("echo $(rm -rf /)");
+    assert.equal(v.ok, false);
+    const v2 = checkBashHardDeny("echo `rm -rf /`");
+    assert.equal(v2.ok, false);
+    // Safe substitution still allowed
+    const ok = checkBashHardDeny('echo $(date +%Y)');
+    assert.equal(ok.ok, true);
+  });
+
   it("hard deny sees bad segment in chain", () => {
     const v = checkBashHardDeny("ls && rm -rf /");
     assert.equal(v.ok, false);
