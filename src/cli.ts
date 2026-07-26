@@ -796,6 +796,15 @@ Docs: docs/PRODUCTION.md
           log.error(formatSessionLookupMiss(target));
           process.exit(1);
         }
+        const foreignLock = sessionHasForeignLiveLock(s.meta.id);
+        if (foreignLock && !globalOpts.json) {
+          const lock = readSessionLock(s.meta.id);
+          log.warn(
+            `Session has a foreign live lock` +
+              (lock ? ` (${formatLockHolder(lock)})` : "") +
+              ` — pin change may race the holder`,
+          );
+        }
         const pinned = setSessionPinned(s, act === "pin");
         if (globalOpts.json) {
           console.log(
@@ -804,6 +813,7 @@ Docs: docs/PRODUCTION.md
               id: s.meta.id,
               pinned,
               title: s.meta.title || null,
+              foreignLock,
             }),
           );
         } else {
@@ -834,6 +844,15 @@ Docs: docs/PRODUCTION.md
           log.error(formatSessionLookupMiss(target));
           process.exit(1);
         }
+        const foreignLock = sessionHasForeignLiveLock(s.meta.id);
+        if (foreignLock && !globalOpts.json) {
+          const lock = readSessionLock(s.meta.id);
+          log.warn(
+            `Session has a foreign live lock` +
+              (lock ? ` (${formatLockHolder(lock)})` : "") +
+              ` — title change may race the holder`,
+          );
+        }
         const clear =
           ["clear", "none", "-", "off", "unset"].includes(labelRaw.toLowerCase());
         const next = setSessionTitle(s, clear ? "" : labelRaw);
@@ -843,6 +862,7 @@ Docs: docs/PRODUCTION.md
               ok: true,
               id: s.meta.id,
               title: next || null,
+              foreignLock,
             }),
           );
         } else {
