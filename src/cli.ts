@@ -654,7 +654,11 @@ Docs: docs/PRODUCTION.md
       "List: case-insensitive id/title/last-prompt substring filter",
     )
     .option("--pinned", "List: only pin-protected sessions")
-    .option("-n, --limit <n>", "List limit", "30")
+    .option(
+      "-n, --limit <n>",
+      "List limit (0 = unlimited)",
+      "30",
+    )
     .option("--force", "Delete even if another live process holds the session lock")
     .action(
       (
@@ -1136,7 +1140,8 @@ Docs: docs/PRODUCTION.md
         "remove",
         "prune",
       ]);
-      const limit = Number(globalOpts.limit) || 30;
+      // 0 = unlimited (not coerced to 30 via Number(x)||default)
+      const limit = parseKeepCount(globalOpts.limit, 30);
       // Only filter when --cwd was explicitly passed (parent default cwd is ignored).
       // listSessions applies cwd/query before limit so multi-project lists stay complete.
       const cwdFilter =

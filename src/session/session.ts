@@ -745,7 +745,10 @@ export function formatSessionLookupMiss(
 }
 
 export interface ListSessionsOpts {
-  /** Max sessions to return (default 20). */
+  /**
+   * Max sessions to return (default 20).
+   * `0` means unlimited (return all matches after filters).
+   */
   limit?: number;
   /** Only sessions whose cwd resolves equal to this path. */
   cwd?: string;
@@ -768,10 +771,12 @@ export function listSessions(
 ): SessionMeta[] {
   const opts: ListSessionsOpts =
     typeof limitOrOpts === "number" ? { limit: limitOrOpts } : limitOrOpts || {};
-  const limit =
-    typeof opts.limit === "number" && Number.isFinite(opts.limit) && opts.limit > 0
-      ? Math.floor(opts.limit)
-      : 20;
+  // 0 = unlimited; positive = cap; missing/NaN/negative → default 20
+  let limit = 20;
+  if (typeof opts.limit === "number" && Number.isFinite(opts.limit)) {
+    if (opts.limit === 0) limit = Number.MAX_SAFE_INTEGER;
+    else if (opts.limit > 0) limit = Math.floor(opts.limit);
+  }
   let cwdFilter: string | null = null;
   if (opts.cwd) {
     try {

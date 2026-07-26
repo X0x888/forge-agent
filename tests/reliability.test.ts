@@ -1723,6 +1723,24 @@ describe("session meta sidecar", () => {
     assert.equal(loadSessionMeta(badId), null);
     void sessionDir;
   });
+
+  it("listSessions limit 0 means unlimited (not default 20)", async () => {
+    const fs = await import("node:fs");
+    const os = await import("node:os");
+    const path = await import("node:path");
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-list-limit0-"));
+    process.env.FORGE_HOME = tmp;
+    const { createSession, listSessions } = await import(
+      "../src/session/session.js"
+    );
+    for (let i = 0; i < 5; i++) {
+      createSession({ cwd: tmp, provider: "xai", model: "m" });
+    }
+    assert.equal(listSessions({ limit: 2 }).length, 2);
+    assert.equal(listSessions({ limit: 0 }).length, 5);
+    // bare 0 same as opts
+    assert.equal(listSessions(0).length, 5);
+  });
 });
 
 describe("session prune", () => {
