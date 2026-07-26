@@ -667,6 +667,7 @@ Docs: docs/PRODUCTION.md
           process.exit(1);
         }
         const lock = readSessionLock(s.meta.id);
+        const foreignLock = sessionHasForeignLiveLock(s.meta.id);
         if (globalOpts.json) {
           const dir = resolveSessionDir(s.meta.id);
           console.log(
@@ -677,6 +678,7 @@ Docs: docs/PRODUCTION.md
                 messageCount: s.messages.length,
                 path: dir,
                 sessionJson: dir ? path.join(dir, "session.json") : null,
+                foreignLock,
                 lock: lock
                   ? {
                       pid: lock.pid,
@@ -693,7 +695,10 @@ Docs: docs/PRODUCTION.md
         } else {
           console.log(formatSessionSummary(s));
           if (lock) {
-            console.log(`  lock:     ${formatLockHolder(lock)}`);
+            console.log(
+              `  lock:     ${formatLockHolder(lock)}` +
+                (foreignLock ? "  (foreign live)" : ""),
+            );
           } else {
             console.log(`  lock:     (none)`);
           }
@@ -717,6 +722,15 @@ Docs: docs/PRODUCTION.md
           log.error(formatSessionLookupMiss(target));
           process.exit(1);
         }
+        const foreignLock = sessionHasForeignLiveLock(s.meta.id);
+        if (foreignLock && !globalOpts.json) {
+          const lock = readSessionLock(s.meta.id);
+          log.warn(
+            `Session has a foreign live lock` +
+              (lock ? ` (${formatLockHolder(lock)})` : "") +
+              ` — export may capture a mid-write snapshot`,
+          );
+        }
         const body =
           fmt === "json" ? exportSessionJson(s) : exportSessionMarkdown(s);
         if (globalOpts.out) {
@@ -728,8 +742,20 @@ Docs: docs/PRODUCTION.md
           } catch {
             /* windows / some FS ignore mode */
           }
-          if (globalOpts.json) console.log(JSON.stringify({ ok: true, path: p, format: fmt }));
-          else log.success(`Exported ${fmt} → ${p}`);
+          if (globalOpts.json) {
+            console.log(
+              JSON.stringify({
+                ok: true,
+                path: p,
+                format: fmt,
+                foreignLock,
+              }),
+            );
+          } else log.success(`Exported ${fmt} → ${p}`);
+        } else if (globalOpts.json) {
+          // Rare: --json without --out still emits the artifact on stdout as text;
+          // experts wanting structured status should pass --out.
+          process.stdout.write(body.endsWith("\n") ? body : body + "\n");
         } else {
           process.stdout.write(body.endsWith("\n") ? body : body + "\n");
         }
