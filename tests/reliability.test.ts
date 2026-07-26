@@ -2218,6 +2218,24 @@ describe("forge run --json early failures (CLI)", () => {
     assert.equal(provJson.ok, false);
     assert.equal(provJson.reason, "invalid_provider");
     assert.equal(provJson.provider, "bogus");
+
+    const customNoBase = spawnSync(
+      process.execPath,
+      [cli, "run", "--json", "-p", "custom", "hi"],
+      {
+        env: {
+          ...env,
+          XAI_API_KEY: process.env.XAI_API_KEY || "sk-test-forge-cli",
+          // Ensure FORGE_BASE_URL does not satisfy the check
+          FORGE_BASE_URL: "",
+        },
+        encoding: "utf8",
+      },
+    );
+    assert.notEqual(customNoBase.status, 0);
+    const customJson = JSON.parse((customNoBase.stdout || "").trim());
+    assert.equal(customJson.ok, false);
+    assert.equal(customJson.reason, "missing_base_url");
   });
 });
 

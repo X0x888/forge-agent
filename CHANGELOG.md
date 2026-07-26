@@ -31,6 +31,7 @@ Production recovery, review, and onboarding learned from OpenCode (snapshot/reve
 - **`forge news` / `/news`**: prefer **newest** bullets when a release section exceeds the display budget (long 0.9.x bodies no longer hide recent work behind “+N more”)
 - **`invalid_provider` JSON**: `--provider bogus` fails fast with structured reason (alias `grok` → `xai`) instead of a confusing unauthenticated/API error
 - **Env enum hygiene**: invalid `FORGE_PROVIDER` / `FORGE_PERMISSION_MODE` / `FORGE_SANDBOX*` / `FORGE_READ_OUTSIDE` are ignored (keep defaults) instead of poisoning runtime config — parity with `FORGE_EFFORT`
+- **`custom` provider requires base URL**: `--provider custom` without `--base-url` / `FORGE_BASE_URL` fails with `reason:missing_base_url` (no silent OpenAI fallback)
 
 ### Recovery (disk + chat)
 - **File mutation journal**: successful `write_file` / `search_replace` / `apply_patch` ops append pre-images to `~/.forge/sessions/<id>/mutations.jsonl` (mode `0600`, ~1.5 MiB cap per body)

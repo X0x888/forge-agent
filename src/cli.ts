@@ -363,6 +363,7 @@ Exit codes:
   reason=empty_prompt | unauthenticated | session_not_found | locked
   | invalid_effort | invalid_permission_mode | invalid_sandbox
   | invalid_sandbox_network | invalid_sandbox_missing | invalid_provider
+  | missing_base_url  (custom without --base-url / FORGE_BASE_URL)
   | error | timeout | aborted  (mid-run catch path)
 
 Empty prompts exit 1 before auth/session create (no orphan sessions, no API spend).
@@ -1810,6 +1811,22 @@ function buildConfig(opts: Record<string, unknown>): ForgeConfig {
     overrides.provider = (raw === "grok" ? "xai" : raw) as ProviderId;
   }
   if (opts.baseUrl) overrides.baseUrl = String(opts.baseUrl);
+  // custom without an explicit base URL silently hits api.openai.com — fail fast.
+  {
+    const prov = String(overrides.provider || "").toLowerCase();
+    const base =
+      (opts.baseUrl != null && String(opts.baseUrl).trim()) ||
+      process.env.FORGE_BASE_URL?.trim() ||
+      "";
+    if (prov === "custom" && !base) {
+      failInvalidFlag(
+        "missing_base_url",
+        `Provider "custom" requires --base-url (or FORGE_BASE_URL).`,
+        { provider: "custom" },
+        { json: wantJson },
+      );
+    }
+  }
   {
     const effortRaw = opts.effort ?? opts.reasoningEffort;
     if (effortRaw != null && String(effortRaw).trim()) {
