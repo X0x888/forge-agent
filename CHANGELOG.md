@@ -18,7 +18,7 @@ Production recovery, review, and onboarding learned from OpenCode (snapshot/reve
 - **`forge doctor --json`**: includes `maxTurns` + `maxTurnsUnlimited` (parity with `/config`)
 - **`forge sessions show|export` lock hygiene**: show JSON includes `foreignLock`; export warns when source is foreign-locked
 - **`/share` card**: includes `forge sessions title` headless relabel command
-- **Anthropic `refusal` → `content_filter`**: maps stop_reason so loop content-filter steerage/cap applies (parity with OpenAI-compat)
+- **Anthropic `refusal` → `content_filter`**: maps stop_reason so loop content-filter steerage/cap applies (parity with OpenAI-compat); exported as `mapAnthropicStopReason`
 - **`forge sessions path --json`**: includes `foreignLock`
 
 ### Recovery (disk + chat)

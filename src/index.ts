@@ -45,6 +45,7 @@ export {
   isAuthFailureMessage,
 } from "./auth/refresh.js";
 export { createProvider } from "./providers/factory.js";
+export { mapAnthropicStopReason } from "./providers/anthropic.js";
 export { runAgentLoop, resolveMaxTurns } from "./agent/loop.js";
 export type {
   LoopResult,
