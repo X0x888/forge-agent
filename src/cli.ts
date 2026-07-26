@@ -74,6 +74,7 @@ import { runAgentLoop } from "./agent/loop.js";
 import { runRepl } from "./tui/repl.js";
 import { forgeHome, ensureDir, inspectSecureFile } from "./util/fs.js";
 import { log, setLogLevel } from "./util/log.js";
+import { mergeRunOpts } from "./util/merge-run-opts.js";
 import { armGoal, formatGoalStatus, loadGoal } from "./harness/goal.js";
 import { armUlwCycle, loadUlwCycle, formatUlwCounts } from "./harness/ulw-cycle.js";
 import { formatEffectiveConfig, runDoctorCheck } from "./commands/slash.js";
@@ -1717,49 +1718,6 @@ function failSessionLookup(
     log.error(error);
   }
   process.exit(1);
-}
-
-/**
- * Merge parent + subcommand opts for `forge run`.
- * Commander defaults on the subcommand must not clobber parent CLI flags
- * (e.g. run's `--permission-mode` default `acceptEdits` vs parent `--permission-mode yolo`).
- */
-function mergeRunOpts(
-  command: { optsWithGlobals?: () => Record<string, unknown>; getOptionValueSource?: (name: string) => string | undefined; parent?: { getOptionValueSource?: (name: string) => string | undefined } } | undefined,
-  opts: Record<string, unknown>,
-): Record<string, unknown> {
-  const globals = (command?.optsWithGlobals?.() || {}) as Record<string, unknown>;
-  const merged: Record<string, unknown> = { ...globals, ...opts };
-  // Keys that may exist on both parent and run with a default on run.
-  for (const key of [
-    "permissionMode",
-    "sandbox",
-    "sandboxNetwork",
-    "sandboxMissing",
-    "model",
-    "provider",
-    "baseUrl",
-    "effort",
-    "reasoningEffort",
-    "session",
-    "title",
-    "cwd",
-    "json",
-    "continue",
-    "new",
-    "ulw",
-    "goal",
-  ] as const) {
-    const localSrc = command?.getOptionValueSource?.(key);
-    const parentSrc = command?.parent?.getOptionValueSource?.(key);
-    // Prefer explicit CLI on either side over defaults.
-    if (parentSrc === "cli" && localSrc !== "cli") {
-      if (key in globals) merged[key] = globals[key];
-    } else if (localSrc === "cli") {
-      if (key in opts) merged[key] = opts[key];
-    }
-  }
-  return merged;
 }
 
 /**

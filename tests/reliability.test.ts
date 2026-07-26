@@ -2203,3 +2203,52 @@ describe("forge run --json early failures (CLI)", () => {
     assert.equal(sandJson.sandbox, "paranoid");
   });
 });
+
+describe("mergeRunOpts (parent vs run defaults)", () => {
+  it("prefers parent CLI permissionMode and unions deny rules", async () => {
+    const { mergeRunOpts } = await import("../src/util/merge-run-opts.js");
+    const sources: Record<string, string> = {
+      permissionMode: "default",
+      deny: "default",
+      json: "cli",
+    };
+    const parentSources: Record<string, string> = {
+      permissionMode: "cli",
+      deny: "cli",
+      json: "cli",
+    };
+    const command = {
+      optsWithGlobals: () => ({
+        permissionMode: "yolo",
+        deny: ["Bash(rm *)"],
+        json: true,
+      }),
+      getOptionValueSource: (k: string) => sources[k],
+      parent: {
+        getOptionValueSource: (k: string) => parentSources[k],
+      },
+    };
+    // Local run defaults clobber if naively spread
+    const opts = {
+      permissionMode: "acceptEdits",
+      deny: [] as string[],
+      json: true,
+    };
+    const merged = mergeRunOpts(command, opts);
+    assert.equal(merged.permissionMode, "yolo");
+    assert.deepEqual(merged.deny, ["Bash(rm *)"]);
+    assert.equal(merged.json, true);
+
+    // Local CLI deny unions with parent
+    sources.deny = "cli";
+    opts.deny = ["Bash(curl *)"];
+    const merged2 = mergeRunOpts(command, opts);
+    assert.deepEqual(merged2.deny, ["Bash(rm *)", "Bash(curl *)"]);
+
+    // Local CLI permissionMode wins over parent
+    sources.permissionMode = "cli";
+    opts.permissionMode = "plan";
+    const merged3 = mergeRunOpts(command, opts);
+    assert.equal(merged3.permissionMode, "plan");
+  });
+});
