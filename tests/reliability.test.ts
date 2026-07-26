@@ -571,6 +571,17 @@ describe("auth failure detection", () => {
       "new-ant",
     );
   });
+
+  it("maps Anthropic stop_reason refusal → content_filter", async () => {
+    const { mapAnthropicStopReason } = await import(
+      "../src/providers/anthropic.js"
+    );
+    assert.equal(mapAnthropicStopReason("tool_use"), "tool_calls");
+    assert.equal(mapAnthropicStopReason("end_turn"), "stop");
+    assert.equal(mapAnthropicStopReason("refusal"), "content_filter");
+    assert.equal(mapAnthropicStopReason("max_tokens"), "max_tokens");
+    assert.equal(mapAnthropicStopReason(null), null);
+  });
 });
 
 describe("env parsers", () => {

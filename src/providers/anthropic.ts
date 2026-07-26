@@ -12,6 +12,20 @@ import { parseToolArguments } from "../util/json-repair.js";
 import { mergeAbortSignals, providerTimeoutMs } from "../util/abort.js";
 
 /**
+ * Map Anthropic stop_reason → OpenAI-compat finish_reason used by the agent loop.
+ * `refusal` becomes `content_filter` so steerage/cap paths apply.
+ */
+export function mapAnthropicStopReason(
+  stopReason: string | null | undefined,
+): string | null {
+  if (stopReason == null || stopReason === "") return stopReason ?? null;
+  if (stopReason === "tool_use") return "tool_calls";
+  if (stopReason === "end_turn") return "stop";
+  if (stopReason === "refusal") return "content_filter";
+  return stopReason;
+}
+
+/**
  * Native Anthropic Messages API adapter.
  * Converts OpenAI-style tool messages to Anthropic content blocks.
  */
@@ -132,12 +146,7 @@ export class AnthropicProvider implements LLMProvider {
         });
       }
     }
-    const finish =
-      json.stop_reason === "tool_use"
-        ? "tool_calls"
-        : json.stop_reason === "end_turn"
-          ? "stop"
-          : json.stop_reason;
+    const finish = mapAnthropicStopReason(json.stop_reason);
     return {
       id: json.id,
       model: json.model,
@@ -367,12 +376,7 @@ export class AnthropicProvider implements LLMProvider {
             }
             if (event.type === "message_delta") {
               if (event.delta?.stop_reason) {
-                finishReason =
-                  event.delta.stop_reason === "tool_use"
-                    ? "tool_calls"
-                    : event.delta.stop_reason === "end_turn"
-                      ? "stop"
-                      : event.delta.stop_reason;
+                finishReason = mapAnthropicStopReason(event.delta.stop_reason);
                 onDelta({ finish_reason: finishReason });
               }
               if (event.usage) {

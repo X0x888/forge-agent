@@ -641,10 +641,18 @@ Docs: docs/PRODUCTION.md
         }
         const jsonPath =
           resolveSessionJsonPath(target) || path.join(dir, "session.json");
+        const sid = path.basename(dir);
+        const foreignLock = sessionHasForeignLiveLock(sid);
         if (globalOpts.json) {
           console.log(
             JSON.stringify(
-              { ok: true, id: path.basename(dir), dir, sessionJson: jsonPath },
+              {
+                ok: true,
+                id: sid,
+                dir,
+                sessionJson: jsonPath,
+                foreignLock,
+              },
               null,
               2,
             ),
@@ -652,6 +660,13 @@ Docs: docs/PRODUCTION.md
         } else {
           console.log(dir);
           console.log(chalk.dim(jsonPath));
+          if (foreignLock) {
+            const lock = readSessionLock(sid);
+            log.dim(
+              `foreign live lock` +
+                (lock ? `: ${formatLockHolder(lock)}` : ""),
+            );
+          }
         }
         return;
       }
