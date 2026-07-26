@@ -70,6 +70,7 @@ import { isBellEnabled } from "../util/attention.js";
 import { inspectSecureFile } from "../util/fs.js";
 import { getForgeVersion } from "../util/version.js";
 import { formatWhatsNew } from "../util/changelog.js";
+import { formatExpertTips } from "../util/tips.js";
 import { toolOutputStats } from "../agent/tools/truncate.js";
 import { listTasks } from "../agent/tools/background-tasks.js";
 import { loadSavedAllows } from "../agent/permission-saved.js";
@@ -1613,18 +1614,7 @@ export async function handleSlash(
     case "/tips": {
       return {
         handled: true,
-        output: [
-          `Forge expert tips`,
-          `  Live mid-run:  /cycle 0|1  ·  /ulw-off  ·  /pause  ·  /unpause  ·  /done  ·  /status`,
-          `  Sessions:      /sessions  ·  pinned  ·  search <q>  ·  /new [title]  ·  /pin  ·  /path  ·  /share`,
-          `  Resume:        bare forge (same-cwd)  ·  /resume <title|id>  ·  forge --session <title|id>`,
-          `  CI:            forge run "…" --title job --json  ·  forge run "…" --continue  ·  forge doctor --json`,
-          `  Safety:        /permissions plan|acceptEdits  ·  --sandbox workspace  ·  /diff (argv-safe)`,
-          `  Attention:     /bell on  ·  /copy  ·  /last  ·  /files  ·  /path  ·  /logs  ·  /config  ·  /stats 7  ·  /retry`,
-          `  Recovery:      /undo  ·  /retry  ·  /compact-and  ·  /fork-and-compact  ·  /init  ·  /review  ·  /fork`,
-          `  CLI:           forge config --json  ·  forge logs  ·  forge doctor --json  ·  forge run --continue`,
-          `  Docs:          docs/PRODUCTION.md  ·  docs/RELIABILITY.md  ·  /news  ·  /help`,
-        ].join("\n"),
+        output: formatExpertTips(),
       };
     }
 

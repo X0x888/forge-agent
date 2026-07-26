@@ -13,7 +13,7 @@ Lessons applied from local open-source trees under `Documents/open source/` (Gro
 | `write_file` / `search_replace` | **realpath** containment; **atomic write** (tmp+rename, auto parent dirs); write notes when parents were created; refuse directory targets clearly; **BOM/CRLF**; exact → line-trimmed → **block-anchor** fuzzy; short diff. Successful ops append pre-images to session **`mutations.jsonl`** (mode `0600`, ~1.5 MiB/body) for file-aware `/undo`. |
 | `apply_patch` | Multi-file add/update/delete/move (OpenAI/OpenCode `*** Begin Patch` grammar). Validates all hunks before write; atomic per file; missing update/delete targets get path typo hints; delete/update pre-images journaled for undo. |
 | `grep` | Prefers system **ripgrep**; JS fallback if `rg` missing. Missing path → error + hints; single-file path works in both backends. Honors turn abort. Absolute paths outside workspace use the same **external_directory** gate as `read_file`. |
-| `glob` / `list_dir` | Standard discovery; missing search root → error + path hints (not a false empty match). External absolute roots gated like `read_file`. |
+| `glob` / `list_dir` | Standard discovery; missing search root → error + path hints (not a false empty match). File path to `list_dir`/`glob` → **not a directory** (not "not found"). External absolute roots gated like `read_file`. |
 | `todo_write` | Session todos. |
 | `web_search` | DuckDuckGo Instant Answer (best-effort). Honors turn abort + 15s timeout; HTML scrape capped 2 MiB. |
 | `web_fetch` | Public http(s) fetch with **SSRF** guards, redirect re-check, HTML→text (invalid numeric entities never throw), stream body cap **5 MiB**. Merged turn abort signal stays live through body read. |

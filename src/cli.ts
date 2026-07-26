@@ -84,6 +84,7 @@ import {
   formatWhatsNew,
   loadChangelogReleases,
 } from "./util/changelog.js";
+import { formatExpertTips } from "./util/tips.js";
 import { shellCompletionScript } from "./util/completion-script.js";
 import { providerTimeoutMs } from "./util/abort.js";
 import {
@@ -1217,19 +1218,7 @@ Project instructions for Forge (and other coding agents).
     .command("tips")
     .description("Expert cheat sheet (live controls, sessions, CI)")
     .action(() => {
-      console.log(
-        [
-          `Forge expert tips`,
-          `  Live mid-run:  /cycle 0|1  ·  /ulw-off  ·  /pause  ·  /unpause  ·  /done  ·  /status`,
-          `  Sessions:      /sessions  ·  /sessions search <q>  ·  /new [title]  ·  /share`,
-          `  Resume:        bare forge (same-cwd)  ·  /resume <id|title>  ·  forge --session <id|title>`,
-          `  CI:            forge run "…" --title job --json  ·  forge run "…" --continue  ·  forge doctor --json`,
-          `  Safety:        /permissions plan|acceptEdits  ·  --sandbox workspace  ·  /diff (argv-safe)`,
-          `  Attention:     /bell on  ·  /copy  ·  /last  ·  /files  ·  /path  ·  /logs  ·  /config  ·  /pin  ·  /stats 7  ·  /share  ·  /retry`,
-          `  Recovery:      /undo  ·  /retry  ·  /init  ·  /review  ·  /compact-and  ·  /fork-and-compact  ·  forge logs  ·  forge config`,
-          `  Docs:          docs/PRODUCTION.md  ·  docs/RELIABILITY.md  ·  forge tips  ·  forge news  ·  /help`,
-        ].join("\n"),
-      );
+      console.log(formatExpertTips());
     });
 
   program

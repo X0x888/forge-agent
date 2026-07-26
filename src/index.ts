@@ -164,6 +164,7 @@ export {
   findChangelogPath,
 } from "./util/changelog.js";
 export type { ChangelogRelease } from "./util/changelog.js";
+export { formatExpertTips } from "./util/tips.js";
 export { log, setLogLevel, getLogLevel } from "./util/log.js";
 export { shellCompletionScript } from "./util/completion-script.js";
 export {

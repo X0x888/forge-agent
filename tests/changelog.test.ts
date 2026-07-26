@@ -6,6 +6,7 @@ import {
   loadChangelogReleases,
   findChangelogPath,
 } from "../src/util/changelog.js";
+import { formatExpertTips } from "../src/util/tips.js";
 import { handleSlash } from "../src/commands/slash.js";
 import { createSession } from "../src/session/session.js";
 import { DEFAULT_CONFIG } from "../src/config/types.js";
@@ -93,5 +94,24 @@ describe("changelog / what's new", () => {
     });
     assert.equal(r.handled, true);
     assert.match(String(r.output || ""), /what's new|CHANGELOG|Forge/i);
+  });
+
+  it("formatExpertTips is shared by /tips (no CLI/REPL drift)", async () => {
+    const text = formatExpertTips();
+    assert.match(text, /Forge expert tips/);
+    assert.match(text, /\/clear hard/);
+    assert.match(text, /forge run/);
+    assert.match(text, /\/cycle 0\|1/);
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-tips-"));
+    process.env.FORGE_HOME = tmp;
+    const s = createSession({ cwd: tmp, provider: "xai", model: "m" });
+    const hooks = new HookRunner(DEFAULT_CONFIG, tmp);
+    const r = await handleSlash("/tips", {
+      session: s,
+      config: DEFAULT_CONFIG,
+      hooks,
+    });
+    assert.equal(r.handled, true);
+    assert.equal(r.output, text);
   });
 });

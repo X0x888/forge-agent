@@ -59,7 +59,7 @@ What experts should expect from Forge in long, unattended, or CI runs.
 |---|---|
 | **Threshold auto-compact** | When estimated request tokens exceed `context_window * auto_compact_threshold` (or 92% headroom) |
 | **`finish_reason=length`** | Continues generation instead of treating truncation as a final answer (shared stop-continue cap); **at cap** appends a clear release note to `finalText` so headless JSON is not a silent partial |
-| **`content_filter`** | Surfaces provider safety blocks and steers the model to narrow scope; **cap checked before** injecting steerage (no orphan user msgs on release) |
+| **`content_filter`** | Surfaces provider safety blocks and steers the model to narrow scope; **cap checked before** injecting steerage (no orphan user msgs on release); **at cap** appends a release note to `finalText` |
 | **Empty assistant** | Nudges the model to continue rather than stopping on a blank turn; **cap checked before** nudge inject; **at cap** sets non-empty `finalText` |
 | **Stop-continue cap** | When harness keeps blocking Stop until the shared cap, empty `finalText` gets an explicit release message (tools-only last turn) |
 | **Headless SIGINT/SIGTERM** | `forge run` aborts the in-flight loop cleanly (exit 130 when aborted) |

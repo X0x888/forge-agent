@@ -732,6 +732,11 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
         // Cap check before injecting steerage — avoid orphan user msgs when releasing.
         if (stopContinues > maxStopContinues) {
           log.warn("content-filter continue cap reached — releasing");
+          const capNote =
+            "[Forge] Content-filter continues hit the cap; releasing. Rephrase or narrow scope in a follow-up.";
+          if (!finalText.includes("[Forge] Content-filter continues hit the cap")) {
+            finalText = `${finalText.replace(/\s+$/, "")}\n\n${capNote}`;
+          }
           break;
         }
         // Inject steerage and continue the loop (skip Stop) so ULW/goal keep driving
