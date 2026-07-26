@@ -381,8 +381,10 @@ export function loadConfig(overrides: Partial<ForgeConfig> = {}, cwd = process.c
   if (process.env.FORGE_BLOCKING_STOP === "1") cfg.blockingStopHooks = true;
   if (process.env.FORGE_GOAL_GATE === "0") cfg.goal.enabled = false;
   if (process.env.FORGE_GOAL_STUCK_THRESHOLD) {
-    const n = Number(process.env.FORGE_GOAL_STUCK_THRESHOLD);
-    if (Number.isFinite(n) && n >= 0) cfg.goal.stuckThreshold = n;
+    // Positive only — 0 would disable stuck-wall release forever (footgun).
+    // Invalid/0 ignored (keep config default), parity with FORGE_ULW_STUCK_THRESHOLD.
+    const n = Number(process.env.FORGE_GOAL_STUCK_THRESHOLD.trim());
+    if (Number.isFinite(n) && n >= 1) cfg.goal.stuckThreshold = Math.floor(n);
   }
 
   cfg = deepMerge(cfg as unknown as Record<string, unknown>, overrides as never) as unknown as ForgeConfig;

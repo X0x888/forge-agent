@@ -1464,7 +1464,7 @@ Project instructions for Forge (and other coding agents).
         Number.isFinite(daysRaw) && daysRaw > 0 ? Math.floor(daysRaw) : 0;
       const stats = collectUsageStats({ days });
       if (opts.json) {
-        console.log(JSON.stringify(stats, null, 2));
+        console.log(JSON.stringify({ ok: true, ...stats }, null, 2));
         return;
       }
       console.log(formatUsageStats(stats));

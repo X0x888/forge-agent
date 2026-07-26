@@ -35,8 +35,14 @@ export async function toolGetTaskOutput(
   if (!getTask(id)) {
     return { output: `Unknown task_id: ${id}`, isError: true };
   }
+  // tail: 0 = full output (not coerced to 200 via Number(x)||default)
+  let tail = 200;
+  if (args.tail != null && String(args.tail).trim() !== "") {
+    const n = Number(args.tail);
+    if (Number.isFinite(n) && n >= 0) tail = Math.floor(n);
+  }
   const text = await readTaskOutput(id, {
-    tail: Number(args.tail) || 200,
+    tail,
     stream: (args.stream as "stdout" | "stderr" | "both") || "both",
   });
   const managed = await boundToolOutput(text, { maxChars: 80_000 });

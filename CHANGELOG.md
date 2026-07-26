@@ -36,6 +36,9 @@ Production recovery, review, and onboarding learned from OpenCode (snapshot/reve
 - **`sessions list --limit 0`**: unlimited list (was coerced to default 30/20); `listSessions({ limit: 0 })` library parity
 - **`sessions list|show --json`**: success payloads include `ok:true` (+ list `count`/`limit`) for CI parity with other session commands
 - **`FORGE_ULW_STUCK_THRESHOLD`**: parsed via `envPositiveInt` (invalid/0 no longer poison stuck-wall)
+- **`FORGE_GOAL_STUCK_THRESHOLD`**: ignore invalid/0 (0 would disable stuck-wall release forever)
+- **`get_task_output` `tail: 0`**: full captured output (was coerced to 200 via `Number(x)||200`)
+- **`forge stats --json`**: includes `ok:true` for CI parity
 
 ### Recovery (disk + chat)
 - **File mutation journal**: successful `write_file` / `search_replace` / `apply_patch` ops append pre-images to `~/.forge/sessions/<id>/mutations.jsonl` (mode `0600`, ~1.5 MiB cap per body)

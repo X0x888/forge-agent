@@ -386,7 +386,12 @@ export async function readTaskOutput(
   if (!task) return `Unknown task_id: ${id}`;
 
   const stream = opts.stream || "both";
-  const tail = opts.tail ?? 200;
+  // tail: undefined → 200; 0 → full captured output; positive → last N lines
+  const tailRaw = opts.tail;
+  const tail =
+    typeof tailRaw === "number" && Number.isFinite(tailRaw) && tailRaw >= 0
+      ? Math.floor(tailRaw)
+      : 200;
   const parts: string[] = [
     `task_id: ${task.id}`,
     `status: ${task.status}`,
@@ -417,11 +422,13 @@ export async function readTaskOutput(
         text = await fsp.readFile(file, "utf8");
       }
       const lines = text.split("\n");
-      const slice = lines.length > tail ? lines.slice(-tail) : lines;
-      parts.push(
-        `\n--- ${label} (last ${slice.length}/${lines.length} lines) ---`,
-        slice.join("\n") || "(empty)",
-      );
+      const slice =
+        tail === 0 || lines.length <= tail ? lines : lines.slice(-tail);
+      const head =
+        tail === 0
+          ? `\n--- ${label} (${lines.length} lines) ---`
+          : `\n--- ${label} (last ${slice.length}/${lines.length} lines) ---`;
+      parts.push(head, slice.join("\n") || "(empty)");
     } catch (err) {
       parts.push(`\n--- ${label} ---\n(error reading: ${(err as Error).message})`);
     }

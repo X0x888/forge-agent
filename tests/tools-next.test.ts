@@ -264,6 +264,16 @@ describe("background bash tasks", () => {
       await new Promise((r) => setTimeout(r, 50));
     }
     assert.equal(status, "completed");
+
+    // tail: 0 means full output (not coerced to default 200)
+    const full = await executeTool(
+      "get_task_output",
+      JSON.stringify({ task_id: taskId, tail: 0 }),
+      ctx,
+    );
+    assert.equal(full.isError, undefined, full.output);
+    assert.match(full.output, /done-bg|bg-hello/);
+    assert.match(full.output, /\(\d+ lines\)/);
   });
 
   it("kills a long-running task", async () => {

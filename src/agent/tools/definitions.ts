@@ -45,7 +45,11 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
             type: "string",
             description: "Background task id from bash background=true (omit to list)",
           },
-          tail: { type: "number", description: "Max lines of each stream (default 200)" },
+          tail: {
+            type: "number",
+            description:
+              "Max lines of each stream (default 200; 0 = full captured output)",
+          },
           stream: {
             type: "string",
             description: "stdout | stderr | both (default both)",

@@ -45,6 +45,7 @@ describe("auth + config", () => {
     process.env.FORGE_SANDBOX_NETWORK = "maybe";
     process.env.FORGE_SANDBOX_MISSING_BACKEND = "explode";
     process.env.FORGE_READ_OUTSIDE = "whatever";
+    process.env.FORGE_GOAL_STUCK_THRESHOLD = "0"; // would disable stuck-wall — ignore
     const cfg = loadConfig({}, tmp);
     assert.equal(cfg.provider, "xai"); // default — invalid env ignored
     assert.equal(cfg.permissionMode, "default");
@@ -55,22 +56,26 @@ describe("auth + config", () => {
     );
     assert.equal(cfg.sandboxMissingBackend, "fail-closed");
     assert.equal(cfg.readOutsideWorkspace, "ask");
+    assert.equal(cfg.goal.stuckThreshold, 3); // default — 0 ignored
     // Valid alias still works
     process.env.FORGE_PROVIDER = "grok";
     process.env.FORGE_PERMISSION_MODE = "plan";
     process.env.FORGE_SANDBOX = "strict";
     process.env.FORGE_SANDBOX_NETWORK = "blocked";
+    process.env.FORGE_GOAL_STUCK_THRESHOLD = "7";
     const cfg2 = loadConfig({}, tmp);
     assert.equal(cfg2.provider, "xai");
     assert.equal(cfg2.permissionMode, "plan");
     assert.equal(cfg2.sandbox, "strict");
     assert.equal(cfg2.sandboxNetwork, "blocked");
+    assert.equal(cfg2.goal.stuckThreshold, 7);
     delete process.env.FORGE_PROVIDER;
     delete process.env.FORGE_PERMISSION_MODE;
     delete process.env.FORGE_SANDBOX;
     delete process.env.FORGE_SANDBOX_NETWORK;
     delete process.env.FORGE_SANDBOX_MISSING_BACKEND;
     delete process.env.FORGE_READ_OUTSIDE;
+    delete process.env.FORGE_GOAL_STUCK_THRESHOLD;
   });
 
   it("persists /model and /permissions via preferences across folders", () => {

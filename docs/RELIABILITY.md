@@ -87,6 +87,7 @@ What experts should expect from Forge in long, unattended, or CI runs.
 | `FORGE_ERROR_STREAK_THRESHOLD` | `5` | Consecutive tool errors before circuit-breaker nudge |
 | `FORGE_ULW_MAX_CONTINUES` | `200` | Stop-continue cap while ULW is armed |
 | `FORGE_ULW_STUCK_THRESHOLD` | goal config / `5` | ULW stuck-wall blocks before release (`envPositiveInt`; invalid/0 ignored) |
+| `FORGE_GOAL_STUCK_THRESHOLD` | config `3` | Goal stuck-wall blocks before release (invalid/0 ignored — 0 would never release) |
 | `FORGE_FORCE_SESSION_LOCK` | off | Headless: force-steal / continue despite a foreign live `session.lock` |
 | `FORGE_LOG_JSON` | off | Structured JSON logs on stderr |
 | `FORGE_BELL` | off | `1`/`0` force turn-end terminal BEL (overrides `/bell` preference) |
