@@ -23,6 +23,7 @@ const WRAPPERS = new Set([
   "setuidgid",
   "chpst",
   "softlimit",
+  "watch", // watch CMD — peel to CMD for hard-deny
 ]);
 
 /** Shells that take `-c` / `-lc` script payloads we must peel for safety. */
@@ -225,6 +226,28 @@ export function peelShellDashC(segment: string): string | null {
       }
       // username
       i++;
+    }
+    if (i >= parts.length) return null;
+    return parts[i].trim() || null;
+  }
+  // script -c '…' [typescript]  (util-linux / BSD script)
+  if (head === "script") {
+    while (i < parts.length) {
+      const t = parts[i];
+      if (t === "-c" || t === "--command") {
+        i++;
+        break;
+      }
+      // -qc / -c combined short flags
+      if (/^-[a-zA-Z]*c[a-zA-Z]*$/.test(t) && t.includes("c") && t !== "--") {
+        i++;
+        break;
+      }
+      if (t.startsWith("-") && t !== "--") {
+        i++;
+        continue;
+      }
+      return null;
     }
     if (i >= parts.length) return null;
     return parts[i].trim() || null;
@@ -681,6 +704,24 @@ export function peelWrappers(segment: string): string {
       let i = 1;
       while (i < parts.length && parts[i].startsWith("-")) i++;
       if (i < parts.length && /^\d/.test(parts[i])) i++; // duration
+      s = shellJoin(parts.slice(i));
+      continue;
+    }
+    if (head === "watch" || headBase === "watch") {
+      // watch [options] command — interval may be -n 1 or -n1
+      let i = 1;
+      while (i < parts.length && parts[i].startsWith("-")) {
+        const t = parts[i];
+        if (
+          (t === "-n" || t === "--interval" || t === "-d" || t === "--differences") &&
+          i + 1 < parts.length &&
+          !parts[i + 1].startsWith("-")
+        ) {
+          i += 2;
+          continue;
+        }
+        i++;
+      }
       s = shellJoin(parts.slice(i));
       continue;
     }

@@ -70,6 +70,10 @@ describe("shell segment parsing", () => {
     assert.equal(v6.ok, false, JSON.stringify(v6));
     const v7 = checkBashHardDeny(`su -c "rm -rf /"`);
     assert.equal(v7.ok, false, JSON.stringify(v7));
+    const v8 = checkBashHardDeny(`script -c "rm -rf /" /dev/null`);
+    assert.equal(v8.ok, false, JSON.stringify(v8));
+    const v9 = checkBashHardDeny(`watch -n1 rm -rf /`);
+    assert.equal(v9.ok, false, JSON.stringify(v9));
   });
 
   it("hard deny sees command substitution bodies", () => {

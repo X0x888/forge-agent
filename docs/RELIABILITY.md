@@ -32,7 +32,8 @@ What experts should expect from Forge in long, unattended, or CI runs.
 | **Error-streak** | N consecutive tool errors (any args) injects a circuit-breaker nudge (Grok-inspired; default N=5, override `FORGE_ERROR_STREAK_THRESHOLD`); permission/hard denies do not count |
 | **Atomic file writes** | `write_file` / `search_replace` / `apply_patch` write via tmp+rename |
 | **File mutation journal** | Successful edits append pre-images to `sessions/<id>/mutations.jsonl` (mode `0600`, ~1.5 MiB/body cap) so `/undo` / `/retry` restore **disk + chat** (OpenCode-inspired; large bodies skipped with an explicit note) |
-| **apply_patch** | Multi-file patch tool; all hunks validated before disk mutation; protected-path hard deny; missing update/delete targets suggest nearby path typos; delete/update pre-images journaled for undo |
+| **apply_patch** | Multi-file patch tool; all hunks validated before disk mutation; protected-path hard deny; missing update/delete targets suggest nearby path typos; delete/update pre-images journaled for undo; **Move to** refuses existing dest (disk or earlier hunk in the same patch) |
+| **Bash hard-deny peels** | Catastrophic deny sees through `env`/`timeout`/`nohup`/`setsid`/`watch`, `bash|sh|busybox sh|su|script -c`, `eval`, `xargs … bash -c`, and `$(…)` / `` `…` ``; language-runtime `system`/`execSync` rm-root/home denied; **heredoc data** (`git commit`/`cat <<EOF` payloads) is not a false positive — `bash <<EOF` bodies still scanned |
 | **Permission ask timeout** | Optional `FORGE_PERMISSION_TIMEOUT_MS` auto-denies stalled interactive prompts (min 5s) |
 | **metrics.jsonl** | Append-only run counters (tokens, edits, duration) under `~/.forge/metrics.jsonl` — no prompts/secrets; auto-prunes past ~2000 events / 2 MiB; `forge prune-metrics --keep 500` |
 
