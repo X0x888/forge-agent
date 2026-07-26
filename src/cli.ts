@@ -1434,6 +1434,10 @@ Project instructions for Forge (and other coding agents).
               blockingStop: check.blockingStop,
               permissionMode: config.permissionMode,
               sandbox: config.sandbox,
+              maxTurns: config.maxTurns,
+              maxTurnsUnlimited: !(
+                typeof config.maxTurns === "number" && config.maxTurns > 0
+              ),
               sessionCount,
               sessionsLocked,
               sessionsPinned,

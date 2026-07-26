@@ -59,6 +59,8 @@ CI (GitHub Actions) runs `npm run check` + `npm run smoke` on Node 20 and 22.
   "blockingStop": true,
   "permissionMode": "default",
   "sandbox": "workspace",
+  "maxTurns": 0,
+  "maxTurnsUnlimited": true,
   "sessionCount": 3,
   "sessionsLocked": 0,
   "sessionsPinned": 1,

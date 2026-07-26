@@ -361,6 +361,8 @@ describe("doctor surfaces reliability", () => {
     const payload = {
       ok: check.ok && secureFilesOk && check.blockingStop,
       version: getForgeVersion(),
+      maxTurns: cfg.maxTurns,
+      maxTurnsUnlimited: !(typeof cfg.maxTurns === "number" && cfg.maxTurns > 0),
       sessionCount: sessions.length,
       sessionsLocked,
       sessionsPinned,
@@ -399,6 +401,8 @@ describe("doctor surfaces reliability", () => {
     assert.equal(typeof payload.metrics.bytes, "number");
     assert.equal(typeof payload.blockingStop, "boolean");
     assert.equal(payload.blockingStop, true);
+    assert.equal(typeof payload.maxTurns, "number");
+    assert.equal(payload.maxTurnsUnlimited, true);
     // Operator knobs (bash timeouts) — defaults when env unset; mirror doctor --json fields
     {
       const { defaultBashTimeoutMs, defaultBashBackgroundTimeoutMs } =
