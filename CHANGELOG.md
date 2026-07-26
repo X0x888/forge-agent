@@ -10,6 +10,7 @@ Production recovery, review, and onboarding learned from OpenCode (snapshot/reve
 - **`/retry` / `/again`**: same disk restore before re-running the prompt
 - **Fork copies journal + ULW/goal harness sidecars** (`ulw.json` / `goal.json`) so `/fork` mid-ULW keeps the relentless driver; `/fork` output reports `Harness copied: …` when applicable
 - **`/clear` resets timeline cleanly**: drops mutation journal, `editCount` / token counters, **and** ULW/goal `lastBlockEditCount` / `stuckBlocks` (stuck-wall must not treat pre-clear edits as progress)
+- **`/new` does not inherit `ultrawork`**: fresh session id starts clean; re-arm with `/ulw` or `/goal` (avoids Stop backstop without `ulw.json`)
 - Large / unreadable pre-images are skipped with an explicit note (never silent data loss claims)
 
 ### Expert UX

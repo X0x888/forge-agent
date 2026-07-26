@@ -1645,24 +1645,39 @@ export async function handleSlash(
         clearConversation(opts.session);
         return {
           handled: true,
-          output: "Conversation cleared (same session id). Use /new for a fresh session.",
+          output:
+            "Conversation cleared (same session id; counters + undo journal reset).\n" +
+            chalk.dim("  ULW/goal sidecars kept but stuck baselines zeroed. /new for a fresh session id."),
           session: opts.session,
         };
       }
-      // /new [title] — optional label (parity with forge --title / createSession title)
+      // /new [title] or /clear hard — brand-new session id.
+      // Do NOT inherit ultrawork flag without ulw.json (inconsistent Stop backstop).
+      // Re-arm with /ulw or /goal if the driver is still wanted.
       const titleArg =
-        cmd === "/new" && arg.trim() ? arg.trim() : undefined;
+        cmd === "/new" && arg.trim() && arg.trim().toLowerCase() !== "hard"
+          ? arg.trim()
+          : undefined;
       const s = createSession({
         cwd: opts.session.meta.cwd,
         provider: opts.config.provider,
         model: opts.config.model,
-        ultrawork: opts.session.meta.ultrawork,
+        ultrawork: false,
         title: titleArg,
       });
       const titleNote = s.meta.title ? ` — ${s.meta.title}` : "";
+      const wasUlw =
+        opts.session.meta.ultrawork ||
+        Boolean(loadUlwCycle(opts.session.meta.id)?.enabled);
       return {
         handled: true,
-        output: `New session ${s.meta.id.slice(0, 8)}${titleNote}`,
+        output:
+          `New session ${s.meta.id.slice(0, 8)}${titleNote}` +
+          (wasUlw
+            ? chalk.dim(
+                "\n  ULW/goal not carried over — re-arm with /ulw or /goal if needed.",
+              )
+            : ""),
         replaceSession: s,
       };
     }

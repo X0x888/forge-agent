@@ -1717,7 +1717,10 @@ describe("session prune", () => {
     const { handleSlash } = await import("../src/commands/slash.js");
     const { DEFAULT_CONFIG } = await import("../src/config/types.js");
     const { HookRunner } = await import("../src/harness/hooks.js");
+    const { armUlwCycle } = await import("../src/harness/ulw-cycle.js");
     const current = createSession({ cwd: tmp, provider: "xai", model: "m" });
+    current.meta.ultrawork = true;
+    armUlwCycle(current.meta.id, "old mandate", { cycle: 1 });
     const hooks = new HookRunner(DEFAULT_CONFIG, tmp);
     const r = await handleSlash("/new incident-hotfix", {
       session: current,
@@ -1727,7 +1730,10 @@ describe("session prune", () => {
     assert.equal(r.handled, true);
     assert.ok(r.replaceSession);
     assert.equal(r.replaceSession!.meta.title, "incident-hotfix");
+    // Fresh session must not inherit ultrawork without ulw.json
+    assert.equal(r.replaceSession!.meta.ultrawork, false);
     assert.match(String(r.output || ""), /incident-hotfix/);
+    assert.match(String(r.output || ""), /ULW\/goal not carried over|re-arm/i);
     const found = listSessions({ limit: 10, query: "incident-hotfix" });
     assert.equal(found.length, 1);
     assert.equal(found[0]!.id, r.replaceSession!.meta.id);
