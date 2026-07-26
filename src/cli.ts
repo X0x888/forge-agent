@@ -336,6 +336,11 @@ Exit codes:
   124  wall-clock timeout (FORGE_MAX_RUN_MS)
   130  aborted (SIGINT)
 
+--json fields (success): ok, sessionId, title, finalText, turns, stopContinues,
+  releasedOnContinueCap, editCount, aborted, timedOut, promptTokens, completionTokens,
+  durationMs, model, provider
+  (releasedOnContinueCap=true → stop-continue safety valve; still ok unless aborted/timedOut)
+
 Empty prompts exit 1 before auth/session create (no orphan sessions, no API spend).
 Label runs: --title <label> (searchable via forge sessions list -q / /sessions search).
 Multi-step CI without copying ids: forge run "…" --continue --json

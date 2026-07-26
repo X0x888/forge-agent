@@ -9,7 +9,7 @@ Production recovery, review, and onboarding learned from OpenCode (snapshot/reve
 - **length / stop-continue / content_filter cap release notes**: truncated-at-cap and content-filter-at-cap append Forge notes to `finalText`; stop-cap with blank assistant text no longer returns empty headless JSON
 - **`list_dir` file-path error**: reports "not a directory" instead of "Directory not found" (parity with `glob`)
 - **`forge tips` / `/tips` single source**: shared `formatExpertTips()` so CLI and REPL cheat sheets cannot drift (`/clear hard` included)
-- **`releasedOnContinueCap`**: headless `forge run --json` + metrics flag when the stop-continue safety valve releases (length / content_filter / empty / Stop-block) — CI can alert without hard-failing; `forge stats` / `/stats` aggregates `continueCapReleases`
+- **`releasedOnContinueCap`**: headless `forge run --json` + metrics flag when the stop-continue safety valve releases (length / content_filter / empty / Stop-block) — CI can alert without hard-failing; `forge stats` / `/stats` aggregates `continueCapReleases`; `forge run --help` documents JSON fields; library exports `LoopResult`
 
 ### Recovery (disk + chat)
 - **File mutation journal**: successful `write_file` / `search_replace` / `apply_patch` ops append pre-images to `~/.forge/sessions/<id>/mutations.jsonl` (mode `0600`, ~1.5 MiB cap per body)

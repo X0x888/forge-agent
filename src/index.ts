@@ -46,6 +46,12 @@ export {
 } from "./auth/refresh.js";
 export { createProvider } from "./providers/factory.js";
 export { runAgentLoop } from "./agent/loop.js";
+export type {
+  LoopResult,
+  LoopOptions,
+  LoopEvents,
+  LoopPhase,
+} from "./agent/loop.js";
 export { HookRunner } from "./harness/hooks.js";
 export {
   armGoal,
