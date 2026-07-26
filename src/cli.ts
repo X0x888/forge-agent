@@ -353,17 +353,36 @@ Docs: docs/PRODUCTION.md
       await ensureHome();
       // Validate prompt before auth/session side effects (no orphan empty sessions).
       const prompt = (promptParts || []).join(" ").trim();
+      const wantJson = Boolean(opts.json);
       if (!prompt) {
-        log.error(
-          "Empty prompt. Usage: forge run \"your task\" [--title label] [--json]",
-        );
+        const msg =
+          'Empty prompt. Usage: forge run "your task" [--title label] [--json]';
+        if (wantJson) {
+          console.log(
+            JSON.stringify({ ok: false, error: msg, reason: "empty_prompt" }),
+          );
+        } else {
+          log.error(msg);
+        }
         process.exitCode = 1;
         process.exit(1);
       }
       const config = buildConfig({ ...opts, permissionMode: opts.permissionMode });
       const auth = await resolveAuthFresh(config);
       if (!auth) {
-        log.error("Not authenticated. Run forge login or set an API key.");
+        const msg = "Not authenticated. Run forge login or set an API key.";
+        if (wantJson) {
+          console.log(
+            JSON.stringify({
+              ok: false,
+              error: msg,
+              reason: "unauthenticated",
+              provider: config.provider,
+            }),
+          );
+        } else {
+          log.error(msg);
+        }
         process.exit(1);
       }
       const provider = createProvider(config, auth);
@@ -376,7 +395,19 @@ Docs: docs/PRODUCTION.md
       if (opts.session && !opts.new) {
         session = loadSession(String(opts.session));
         if (!session) {
-          log.error(formatSessionLookupMiss(String(opts.session)));
+          const miss = formatSessionLookupMiss(String(opts.session));
+          if (wantJson) {
+            console.log(
+              JSON.stringify({
+                ok: false,
+                error: miss,
+                reason: "session_not_found",
+                session: String(opts.session),
+              }),
+            );
+          } else {
+            log.error(miss);
+          }
           process.exit(1);
         }
         resumed = true;
@@ -1811,11 +1842,28 @@ async function runHeadless(opts: {
   });
   if (!lock.ok && lock.holder) {
     if (!forceSessionLock) {
-      log.error(
+      const msg =
         `Session ${opts.session.meta.id.slice(0, 8)} is locked by ${formatLockHolder(lock.holder)}. ` +
-          `Refusing concurrent headless write. Wait for the other process, use a different --session, ` +
-          `or set FORGE_FORCE_SESSION_LOCK=1 to override.`,
-      );
+        `Refusing concurrent headless write. Wait for the other process, use a different --session, ` +
+        `or set FORGE_FORCE_SESSION_LOCK=1 to override.`;
+      if (opts.json) {
+        console.log(
+          JSON.stringify({
+            ok: false,
+            error: msg,
+            reason: "locked",
+            sessionId: opts.session.meta.id,
+            lock: {
+              pid: lock.holder.pid,
+              hostname: lock.holder.hostname,
+              acquiredAt: lock.holder.acquiredAt,
+              holder: formatLockHolder(lock.holder),
+            },
+          }),
+        );
+      } else {
+        log.error(msg);
+      }
       process.exit(1);
     }
     log.warn(
