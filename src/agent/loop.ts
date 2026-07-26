@@ -137,6 +137,12 @@ export interface LoopResult {
    * Headless JSON/metrics surface this for CI; still `ok` unless aborted/timed out.
    */
   hitMaxTurns: boolean;
+  /**
+   * Last provider `finish_reason` observed on an assistant turn (e.g. stop, length,
+   * content_filter, tool_calls). Null when no model turn completed (auth/abort early).
+   * Headless JSON surfaces this for CI triage without scraping finalText notes.
+   */
+  finishReason: string | null;
   promptTokens: number;
   completionTokens: number;
 }
@@ -334,11 +340,12 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
   saveSession(session);
 
   let turns = 0;
-  let stopContinues = 0;
   let finalText = "";
+  let stopContinues = 0;
   let aborted = false;
   let releasedOnContinueCap = false;
   let hitMaxTurns = false;
+  let lastFinishReason: string | null = null;
   let overflowCompactAttempted = false;
   // max_turns <= 0 means unlimited (config default is 0). A silent 200-cap when
   // the file says 0 was a production footgun for long ULW/CI runs.
@@ -712,6 +719,7 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
 
       const toolCalls = assistantMsg.tool_calls;
       const finishReason = response.finish_reason || "";
+      if (finishReason) lastFinishReason = finishReason;
 
       // Output truncated by max_tokens — continue generation instead of Stop
       if (
@@ -956,6 +964,7 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
     aborted,
     releasedOnContinueCap,
     hitMaxTurns,
+    finishReason: lastFinishReason,
     promptTokens,
     completionTokens,
   };

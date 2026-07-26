@@ -346,12 +346,14 @@ Exit codes:
   130  aborted (SIGINT)
 
 --json fields (success): ok, sessionId, title, finalText, turns, stopContinues,
-  releasedOnContinueCap, hitMaxTurns, editCount, aborted, timedOut, promptTokens,
-  completionTokens, durationMs, model, provider
+  releasedOnContinueCap, hitMaxTurns, finishReason, editCount, aborted, timedOut,
+  promptTokens, completionTokens, durationMs, model, provider
   (releasedOnContinueCap/hitMaxTurns → safety valves; still ok unless aborted/timedOut)
+  (finishReason → last provider finish_reason, or null if no model turn)
 
 --json early failures (stdout, still exit ≠0): { ok:false, reason, error, … }
   reason=empty_prompt | unauthenticated | session_not_found | locked
+  | error | timeout | aborted  (mid-run catch path)
 
 Empty prompts exit 1 before auth/session create (no orphan sessions, no API spend).
 --session/--new/--title work on parent or subcommand (optsWithGlobals merge).
@@ -2081,8 +2083,14 @@ async function runHeadless(opts: {
         JSON.stringify(
           {
             ok: false,
+            reason: timedOut
+              ? "timeout"
+              : ac.signal.aborted
+                ? "aborted"
+                : "error",
             error: message,
             timedOut,
+            aborted: ac.signal.aborted,
             sessionId: opts.session.meta.id,
             title: opts.session.meta.title || null,
             editCount: opts.session.meta.editCount,
@@ -2123,6 +2131,7 @@ async function runHeadless(opts: {
       stopContinues: result.stopContinues,
       releasedOnContinueCap: result.releasedOnContinueCap,
       hitMaxTurns: result.hitMaxTurns,
+      finishReason: result.finishReason,
       editCount: opts.session.meta.editCount,
       aborted: result.aborted,
       timedOut,

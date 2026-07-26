@@ -151,6 +151,7 @@ forge run "fix tests and open a PR description" \
   "stopContinues": 2,
   "releasedOnContinueCap": false,
   "hitMaxTurns": false,
+  "finishReason": "stop",
   "editCount": 4,
   "aborted": false,
   "timedOut": false,
@@ -162,11 +163,11 @@ forge run "fix tests and open a PR description" \
 }
 ```
 
-`releasedOnContinueCap: true` means the shared stop-continue safety valve fired (length / content_filter / empty / Stop-block cap). `hitMaxTurns: true` means the loop exited on `max_turns` (not a clean Stop). Both stay `ok: true` unless aborted/timed out, so CI can alert without hard-failing.
+`releasedOnContinueCap: true` means the shared stop-continue safety valve fired (length / content_filter / empty / Stop-block cap). `hitMaxTurns: true` means the loop exited on `max_turns` (not a clean Stop). Both stay `ok: true` unless aborted/timed out, so CI can alert without hard-failing. `finishReason` is the last provider `finish_reason` (e.g. `stop`, `length`, `content_filter`, `tool_calls`) or `null` if no model turn completed. Mid-run catch failures include `reason=error|timeout|aborted`.
 
 Each headless/REPL turn also appends a counter-only line to `~/.forge/metrics.jsonl` (no prompts or secrets).
 
-On thrown errors with `--json`, stdout is `{ "ok": false, "error": "…", "timedOut": false, "sessionId": "…", "title": null, "editCount": N }` and the process exits `1` (or `124` if `timedOut`).
+On thrown errors with `--json`, stdout is `{ "ok": false, "reason": "error"|"timeout"|"aborted", "error": "…", "timedOut", "aborted", "sessionId", "title", "editCount", "durationMs" }` and the process exits `1` (or `124` if `timedOut`).
 
 Early failures (before the agent loop) also emit structured JSON when `--json` is set:
 
@@ -176,6 +177,7 @@ Early failures (before the agent loop) also emit structured JSON when `--json` i
 | `unauthenticated` | No API key / OAuth |
 | `session_not_found` | `--session` id/title miss |
 | `locked` | Foreign live `session.lock` (unless `FORGE_FORCE_SESSION_LOCK=1`) |
+| `error` / `timeout` / `aborted` | Mid-run catch (provider throw / `FORGE_MAX_RUN_MS` / signal) |
 
 Label new runs with `forge run … --title <label>` (searchable via `forge sessions list -q`).
 
