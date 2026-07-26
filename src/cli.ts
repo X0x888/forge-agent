@@ -26,6 +26,7 @@ import type {
 import { parseReasoningEffort } from "./config/reasoning.js";
 import { resolveAuth, resolveAuthFresh, describeAuth } from "./auth/resolve.js";
 import { loginInteractive, logout, printAuthStatus, supportsOAuth } from "./auth/login.js";
+import { listCredentials, clearCredential } from "./auth/store.js";
 import { importGrokCredentials } from "./auth/import-grok.js";
 import { createProvider } from "./providers/factory.js";
 import {
@@ -615,8 +616,52 @@ Docs: docs/PRODUCTION.md
     .command("logout")
     .description("Clear stored credentials")
     .option("-p, --provider <provider>", "Provider (omit for all)")
-    .action((opts) => {
-      logout(opts.provider);
+    .option("--json", "Machine-readable JSON")
+    .action((opts, command) => {
+      // Parent also defines -p/--provider; prefer CLI-sourced value from either side.
+      const merged = {
+        ...(command?.optsWithGlobals?.() || {}),
+        ...opts,
+      } as Record<string, unknown>;
+      const localSrc = command?.getOptionValueSource?.("provider");
+      const parentSrc = command?.parent?.getOptionValueSource?.("provider");
+      let provider: string | undefined;
+      if (localSrc === "cli" && typeof opts.provider === "string") {
+        provider = opts.provider.trim() || undefined;
+      } else if (parentSrc === "cli" && typeof merged.provider === "string") {
+        provider = String(merged.provider).trim() || undefined;
+      } else if (typeof opts.provider === "string" && opts.provider.trim()) {
+        provider = opts.provider.trim();
+      }
+      const wantJson = Boolean(merged.json || opts.json);
+      if (wantJson) {
+        const before = listCredentials()
+          .filter((c) => !provider || c.provider === provider)
+          .map((c) => ({
+            provider: c.provider,
+            method: c.method,
+            accountLabel: c.accountLabel || null,
+          }));
+        // Clear without log.success noise on stdout/stderr for CI JSON.
+        if (provider) clearCredential(provider);
+        else {
+          for (const c of [...listCredentials()]) clearCredential(c.provider);
+        }
+        console.log(
+          JSON.stringify(
+            {
+              ok: true,
+              cleared: provider || "all",
+              removed: before,
+              count: before.length,
+            },
+            null,
+            2,
+          ),
+        );
+        return;
+      }
+      logout(provider);
     });
 
   program
@@ -627,7 +672,6 @@ Docs: docs/PRODUCTION.md
       const config = loadConfig();
       const auth = await resolveAuthFresh(config);
       if (opts.json) {
-        const { listCredentials } = await import("./auth/store.js");
         const { nowEpoch } = await import("./util/fs.js");
         const now = nowEpoch();
         const creds = listCredentials().map((c) => {
@@ -1773,6 +1817,36 @@ Project instructions for Forge (and other coding agents).
         config: loadConfig({}, cwdArg || process.cwd()),
       };
 
+      // Fail fast on --session miss before watch loop (don't spin empty frames).
+      if (sessionArg) {
+        const probe = await collectSnapshots({
+          ...collectOpts,
+          fetchPlan: false,
+        });
+        if (probe.length === 0) {
+          if (stOpts.json) {
+            console.log(
+              JSON.stringify(
+                {
+                  ok: false,
+                  reason: "session_not_found",
+                  session: sessionArg,
+                  error: formatSessionLookupMiss(sessionArg),
+                  count: 0,
+                  sessions: [],
+                  generatedAt: new Date().toISOString(),
+                },
+                null,
+                2,
+              ),
+            );
+          } else {
+            log.error(formatSessionLookupMiss(sessionArg));
+          }
+          process.exit(1);
+        }
+      }
+
       if (stOpts.watch) {
         const ac = new AbortController();
         process.on("SIGINT", () => ac.abort());
@@ -1789,32 +1863,8 @@ Project instructions for Forge (and other coding agents).
 
       const snaps = await collectSnapshots(collectOpts);
       if (stOpts.json) {
-        // When --session was requested but unresolved, surface a structured miss
-        // instead of a bare empty sessions array (CI footgun).
-        if (sessionArg && snaps.length === 0) {
-          console.log(
-            JSON.stringify(
-              {
-                ok: false,
-                reason: "session_not_found",
-                session: sessionArg,
-                error: formatSessionLookupMiss(sessionArg),
-                count: 0,
-                sessions: [],
-                generatedAt: new Date().toISOString(),
-              },
-              null,
-              2,
-            ),
-          );
-          process.exit(1);
-        }
         console.log(snapshotsToJson(snaps));
         return;
-      }
-      if (sessionArg && snaps.length === 0) {
-        log.error(formatSessionLookupMiss(sessionArg));
-        process.exit(1);
       }
       if (stOpts.tmux) {
         console.log(renderTmux(snaps[0]));
