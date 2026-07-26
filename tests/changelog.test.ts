@@ -100,6 +100,7 @@ describe("changelog / what's new", () => {
     const text = formatExpertTips();
     assert.match(text, /Forge expert tips/);
     assert.match(text, /\/clear hard/);
+    assert.match(text, /forge sessions title/);
     assert.match(text, /forge run/);
     assert.match(text, /\/cycle 0\|1/);
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-tips-"));

@@ -1475,7 +1475,10 @@ describe("shell completion", () => {
     assert.match(out, /_forge_completions/);
     assert.match(out, /complete -F/);
     assert.match(out, /sessions/);
-    assert.match(out, /show path export import fork pin unpin delete prune/);
+    assert.match(
+      out,
+      /show path export import fork pin unpin title rename delete prune/,
+    );
     assert.match(out, /prune-metrics/);
     assert.match(out, /--session/);
     assert.match(out, /top_flags/);

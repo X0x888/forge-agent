@@ -561,13 +561,14 @@ Docs: docs/PRODUCTION.md
   program
     .command("sessions")
     .description(
-      "List, show, path, export, import, fork, pin/unpin, delete (--force if locked), or prune sessions",
+      "List, show, path, export, import, fork, pin/unpin, title, delete (--force if locked), or prune sessions",
     )
     .argument(
       "[action]",
-      "list (default) | show <id> | path <id> | export <id> | import <file> | fork <id> | pin <id> | unpin <id> | delete <id> [--force] | prune",
+      "list (default) | show <id> | path <id> | export <id> | import <file> | fork <id> | pin <id> | unpin <id> | title <id> <name> | delete <id> [--force] | prune",
     )
     .argument("[id]", "Session id/prefix/title or import file path")
+    .argument("[extra]", "title: new label (or clear|none|- to unset)")
     .option("--keep <n>", "Prune: keep newest N sessions", "50")
     .option("--max-age-days <n>", "Prune: also drop sessions older than N days")
     .option("--json", "Machine-readable JSON")
@@ -588,6 +589,7 @@ Docs: docs/PRODUCTION.md
       (
         action: string | undefined,
         id: string | undefined,
+        extra: string | undefined,
         opts: Record<string, unknown>,
         command: { optsWithGlobals: () => Record<string, unknown>; getOptionValueSource?: (n: string) => string | undefined; parent?: { getOptionValueSource?: (n: string) => string | undefined } },
       ) => {
@@ -813,6 +815,41 @@ Docs: docs/PRODUCTION.md
         }
         return;
       }
+      if (act === "title" || act === "rename") {
+        // forge sessions title <id|title> <new-label|clear|none|->
+        const target = id || "";
+        const labelRaw = (extra || "").trim();
+        if (!target || !labelRaw) {
+          log.error(
+            "Usage: forge sessions title <id|title> <name|clear|none|->",
+          );
+          process.exit(1);
+        }
+        const s = loadSession(target);
+        if (!s) {
+          log.error(formatSessionLookupMiss(target));
+          process.exit(1);
+        }
+        const clear =
+          ["clear", "none", "-", "off", "unset"].includes(labelRaw.toLowerCase());
+        const next = setSessionTitle(s, clear ? "" : labelRaw);
+        if (globalOpts.json) {
+          console.log(
+            JSON.stringify({
+              ok: true,
+              id: s.meta.id,
+              title: next || null,
+            }),
+          );
+        } else {
+          log.success(
+            next
+              ? `Titled ${s.meta.id.slice(0, 8)} — ${next}`
+              : `Cleared title on ${s.meta.id.slice(0, 8)} (auto-title may refill)`,
+          );
+        }
+        return;
+      }
       if (act === "fork" || act === "clone") {
         const target = id || "";
         if (!target) {
@@ -894,6 +931,8 @@ Docs: docs/PRODUCTION.md
         "clone",
         "pin",
         "unpin",
+        "title",
+        "rename",
         "delete",
         "rm",
         "remove",
@@ -990,7 +1029,7 @@ Docs: docs/PRODUCTION.md
       if (pinnedOnly) filterNotes.push("pinned");
       console.log(
         chalk.dim(
-          `\n  forge sessions show|export|import|fork|delete <id> [--force]  ·  prune --keep 50` +
+          `\n  forge sessions show|export|import|fork|title|delete <id> [--force]  ·  prune --keep 50` +
             (filterNotes.length
               ? `  ·  filtered ${filterNotes.join(" ")}`
               : "  ·  list --cwd <path> · list -q <text>"),

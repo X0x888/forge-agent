@@ -8,7 +8,7 @@ export function shellCompletionScript(shell: string): string {
   const topFlags =
     "--new --session --title --model --provider --permission-mode --ulw --goal --cwd --sandbox --help --version";
   const sessionsActions =
-    "list show path export import fork pin unpin delete prune";
+    "list show path export import fork pin unpin title rename delete prune";
   const sessionsFlags =
     "--json --out --format --keep --max-age-days --cwd --query -q --pinned --limit -n --force";
   // --cwd: list filter + import override; --query/-q: list id/title filter; --pinned
