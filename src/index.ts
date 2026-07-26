@@ -129,6 +129,7 @@ export {
 export {
   envPositiveInt,
   envNonNegInt,
+  parseKeepCount,
   defaultBashTimeoutMs,
   defaultBashBackgroundTimeoutMs,
 } from "./util/env.js";

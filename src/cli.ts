@@ -99,6 +99,7 @@ import {
   defaultBashBackgroundTimeoutMs,
   defaultBashTimeoutMs,
   envPositiveInt,
+  parseKeepCount,
 } from "./util/env.js";
 import { isBellEnabled } from "./util/attention.js";
 import { permissionAskTimeoutMs } from "./agent/permissions.js";
@@ -1078,7 +1079,8 @@ Docs: docs/PRODUCTION.md
       }
       if (act === "prune") {
         const result = pruneSessions({
-          keep: Number(globalOpts.keep) || 50,
+          // 0 is valid (keep none); Number(x)||50 wrongly treated 0 as missing
+          keep: parseKeepCount(globalOpts.keep, 50),
           maxAgeDays:
             globalOpts.maxAgeDays != null
               ? Number(globalOpts.maxAgeDays)
@@ -1355,7 +1357,8 @@ Project instructions for Forge (and other coding agents).
     .action((opts) => {
       const before = toolOutputStats();
       const result = pruneToolOutputsSync({
-        keep: Number(opts.keep) || 80,
+        // 0 is valid (delete all eligible dumps)
+        keep: parseKeepCount(opts.keep, 80),
         maxAgeDays: Number(opts.maxAgeDays) || 14,
       });
       if (opts.json) {
@@ -1380,7 +1383,8 @@ Project instructions for Forge (and other coding agents).
     .option("--json", "Machine-readable JSON")
     .action((opts) => {
       const before = metricsStats();
-      const result = pruneMetrics({ keep: Number(opts.keep) || 500 });
+      // 0 is valid at CLI; pruneMetrics floors to ≥1 internally
+      const result = pruneMetrics({ keep: parseKeepCount(opts.keep, 500) });
       if (opts.json) {
         console.log(JSON.stringify({ before, ...result }, null, 2));
         return;

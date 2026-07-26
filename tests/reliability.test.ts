@@ -585,6 +585,19 @@ describe("auth failure detection", () => {
 });
 
 describe("env parsers", () => {
+  it("parseKeepCount treats 0 as valid (unlike Number(x)||fallback)", async () => {
+    const { parseKeepCount } = await import("../src/util/env.js");
+    assert.equal(parseKeepCount(0, 50), 0);
+    assert.equal(parseKeepCount("0", 50), 0);
+    assert.equal(parseKeepCount(3, 50), 3);
+    assert.equal(parseKeepCount("12", 50), 12);
+    assert.equal(parseKeepCount(-1, 50), 50);
+    assert.equal(parseKeepCount("nope", 50), 50);
+    assert.equal(parseKeepCount(undefined, 50), 50);
+    assert.equal(parseKeepCount("", 50), 50);
+    assert.equal(parseKeepCount(2.9, 50), 2);
+  });
+
   it("envPositiveInt falls back on missing/invalid", async () => {
     const { envPositiveInt, envNonNegInt } = await import("../src/util/env.js");
     const key = "FORGE_TEST_ENV_POS_" + process.pid;
@@ -1741,6 +1754,13 @@ describe("session prune", () => {
     assert.ok(pruned.deleted.length >= 1);
     assert.equal(listSessions(10).length, 1);
     assert.equal(typeof pruned.skippedLocked, "number");
+
+    // keep=0 must delete remaining unpinned sessions (not fall back to 50)
+    const leftover = listSessions(10);
+    assert.equal(leftover.length, 1);
+    const wipe = pruneSessions({ keep: 0 });
+    assert.ok(wipe.deleted.length >= 1);
+    assert.equal(listSessions(10).length, 0);
   });
 
   it("/new [title] labels the fresh session", async () => {

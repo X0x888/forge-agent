@@ -21,6 +21,21 @@ export function envNonNegInt(name: string, fallback: number): number {
   return Math.floor(n);
 }
 
+/**
+ * Parse a CLI `--keep` style count.
+ * Unlike `Number(x) || fallback`, **0 is valid** (keep nothing / clear).
+ * NaN, negative, empty → fallback.
+ */
+export function parseKeepCount(
+  raw: unknown,
+  fallback: number,
+): number {
+  if (raw == null || raw === "") return fallback;
+  const n = typeof raw === "number" ? raw : Number(String(raw).trim());
+  if (!Number.isFinite(n) || n < 0) return fallback;
+  return Math.floor(n);
+}
+
 /** Default foreground bash timeout (ms). Min 5s, max 30m. */
 export function defaultBashTimeoutMs(): number {
   const n = envPositiveInt("FORGE_BASH_TIMEOUT_MS", 120_000);

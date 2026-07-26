@@ -92,7 +92,12 @@ export function pruneToolOutputsSync(opts?: {
   keep?: number;
   maxAgeDays?: number;
 }): PruneToolOutputsResult {
-  const keep = opts?.keep ?? DEFAULT_TOOL_OUTPUT_KEEP;
+  // 0 is valid (delete all eligible dumps). NaN/negative → default.
+  const keepRaw = opts?.keep;
+  const keep =
+    typeof keepRaw === "number" && Number.isFinite(keepRaw) && keepRaw >= 0
+      ? Math.floor(keepRaw)
+      : DEFAULT_TOOL_OUTPUT_KEEP;
   const maxAgeDays = opts?.maxAgeDays ?? DEFAULT_TOOL_OUTPUT_MAX_AGE_DAYS;
   const dir = toolOutputDir();
   if (!fs.existsSync(dir)) {

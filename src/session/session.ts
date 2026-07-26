@@ -971,7 +971,12 @@ export function pruneSessions(opts?: {
   /** Skip foreign live locks (default true). */
   skipLocked?: boolean;
 }): PruneSessionsResult {
-  const keep = opts?.keep ?? 50;
+  // 0 is valid (keep none). NaN/negative fall back to 50.
+  const keepRaw = opts?.keep;
+  const keep =
+    typeof keepRaw === "number" && Number.isFinite(keepRaw) && keepRaw >= 0
+      ? Math.floor(keepRaw)
+      : 50;
   const maxAgeDays = opts?.maxAgeDays;
   const protect = new Set(opts?.protectIds || []);
   const skipLocked = opts?.skipLocked !== false;
