@@ -790,7 +790,18 @@ Docs: docs/PRODUCTION.md
         // Validate format before session lookup so bad flags fail fast.
         const fmt = String(globalOpts.format || "md").toLowerCase();
         if (fmt !== "md" && fmt !== "markdown" && fmt !== "json") {
-          log.error(`Unknown export format "${fmt}". Use md or json.`);
+          if (globalOpts.json) {
+            console.log(
+              JSON.stringify({
+                ok: false,
+                reason: "invalid_format",
+                format: fmt,
+                error: `Unknown export format "${fmt}". Use md or json.`,
+              }),
+            );
+          } else {
+            log.error(`Unknown export format "${fmt}". Use md or json.`);
+          }
           process.exit(1);
         }
         const s = loadSession(target);
