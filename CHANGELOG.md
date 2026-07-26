@@ -59,6 +59,8 @@ Production recovery, review, and onboarding learned from OpenCode (snapshot/reve
 - **`apply_patch` same-batch path tracking**: move/add refuse destinations created earlier in the same patch (was silent clobber across hunks)
 - **`sessions export --out ''`**: structured `reason:usage` instead of treating empty as “no --out” and dumping the body on stdout
 - **Shell peels**: `nohup`/`setsid`/`watch`, `busybox sh -c`, `su -c`, and `script -c` unwrap for hard-deny; RELIABILITY docs the peel matrix
+- **Empty enum CLI flags**: `--permission-mode ''` / `--sandbox ''` / `--effort ''` (and sandbox-network/missing) fail with structured `invalid_*` instead of skipping validation and hitting the API
+- **`forge auth --json` when unauthenticated**: `ok:false` + `reason:unauthenticated` (still exit 1; was `ok:true` with only `authenticated:false`)
 
 ### Recovery (disk + chat)
 - **File mutation journal**: successful `write_file` / `search_replace` / `apply_patch` ops append pre-images to `~/.forge/sessions/<id>/mutations.jsonl` (mode `0600`, ~1.5 MiB cap per body)

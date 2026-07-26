@@ -2287,6 +2287,28 @@ describe("forge run --json early failures (CLI)", () => {
       JSON.stringify(pj),
       /sk-test-auth-json-never-leak/,
     );
+
+    // Unauthenticated → ok:false + exit 1 (CI parity with doctor)
+    const noAuthHome = path.join(home, "noauth");
+    fs.mkdirSync(noAuthHome, { recursive: true });
+    const unauth = spawnSync(process.execPath, [cli, "auth", "--json"], {
+      env: {
+        ...env,
+        FORGE_HOME: noAuthHome,
+        GROK_HOME: path.join(noAuthHome, "nogrok"),
+        XAI_API_KEY: "",
+        OPENAI_API_KEY: "",
+        ANTHROPIC_API_KEY: "",
+        OPENROUTER_API_KEY: "",
+        GOOGLE_API_KEY: "",
+      },
+      encoding: "utf8",
+    });
+    assert.notEqual(unauth.status, 0);
+    const uj = JSON.parse((unauth.stdout || "").trim());
+    assert.equal(uj.ok, false);
+    assert.equal(uj.authenticated, false);
+    assert.equal(uj.reason, "unauthenticated");
   });
 
   it("parent --continue/--json documented; bare forge --json early failures; export invalid_format", async () => {
@@ -2474,6 +2496,55 @@ describe("forge run --json early failures (CLI)", () => {
       },
     );
     assert.notEqual(badPerm.status, 0);
+
+    // Empty enum flags must fail closed (not skip validation and hit the API)
+    const emptyPerm = spawnSync(
+      process.execPath,
+      [cli, "run", "--json", "--permission-mode", "", "hi"],
+      {
+        env: {
+          ...env,
+          XAI_API_KEY: process.env.XAI_API_KEY || "sk-test-forge-cli",
+        },
+        encoding: "utf8",
+      },
+    );
+    assert.notEqual(emptyPerm.status, 0);
+    const emptyPermJ = JSON.parse((emptyPerm.stdout || "").trim());
+    assert.equal(emptyPermJ.ok, false);
+    assert.equal(emptyPermJ.reason, "invalid_permission_mode");
+
+    const emptySandbox = spawnSync(
+      process.execPath,
+      [cli, "run", "--json", "--sandbox", "", "hi"],
+      {
+        env: {
+          ...env,
+          XAI_API_KEY: process.env.XAI_API_KEY || "sk-test-forge-cli",
+        },
+        encoding: "utf8",
+      },
+    );
+    assert.notEqual(emptySandbox.status, 0);
+    const emptySandboxJ = JSON.parse((emptySandbox.stdout || "").trim());
+    assert.equal(emptySandboxJ.ok, false);
+    assert.equal(emptySandboxJ.reason, "invalid_sandbox");
+
+    const emptyEffort = spawnSync(
+      process.execPath,
+      [cli, "run", "--json", "--effort", "", "hi"],
+      {
+        env: {
+          ...env,
+          XAI_API_KEY: process.env.XAI_API_KEY || "sk-test-forge-cli",
+        },
+        encoding: "utf8",
+      },
+    );
+    assert.notEqual(emptyEffort.status, 0);
+    const emptyEffortJ = JSON.parse((emptyEffort.stdout || "").trim());
+    assert.equal(emptyEffortJ.ok, false);
+    assert.equal(emptyEffortJ.reason, "invalid_effort");
     const permJson = JSON.parse((badPerm.stdout || "").trim());
     assert.equal(permJson.ok, false);
     assert.equal(permJson.reason, "invalid_permission_mode");

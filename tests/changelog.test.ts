@@ -67,7 +67,7 @@ describe("changelog / what's new", () => {
     // Recent 0.9.5 work lives near the end of the Loop hygiene section
     assert.match(
       text,
-      /finishReason|mergeRunOpts|invalid_effort|invalid_permission|failUsage|bare `forge --continue`|Bare `forge "…" --json`|api_key_required|is_directory|Heredoc-aware|eval` \/ `xargs|bash -c|apply_patch` Move|invalid_format|invalid_provider|missing_base_url|parseKeepCount|--keep 0|FORGE_PERMISSION_MODE|env enum|get_task_output|tail: 0|FORGE_GOAL_STUCK|stats --json|list --limit 0|stuck threshold|head_limit|read_file|models --json|logs\|prune|web_fetch|web_search/i,
+      /finishReason|mergeRunOpts|invalid_effort|invalid_permission|failUsage|bare `forge --continue`|Bare `forge "…" --json`|api_key_required|is_directory|Heredoc-aware|Empty enum CLI|auth --json` when unauthenticated|eval` \/ `xargs|bash -c|apply_patch` Move|invalid_format|invalid_provider|missing_base_url|parseKeepCount|--keep 0|FORGE_PERMISSION_MODE|env enum|get_task_output|tail: 0|FORGE_GOAL_STUCK|stats --json|list --limit 0|stuck threshold|head_limit|read_file|models --json|logs\|prune|web_fetch|web_search/i,
     );
     // Should not only show the oldest content_filter bullet as the whole story
     // when newer bullets exist (regression: head-slice hid recent work).

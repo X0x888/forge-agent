@@ -829,11 +829,13 @@ Docs: docs/PRODUCTION.md
             // Never dump accessToken / refreshToken / clientId
           };
         });
+        const authenticated = Boolean(auth);
         console.log(
           JSON.stringify(
             {
-              ok: true,
-              authenticated: Boolean(auth),
+              // ok tracks auth for CI (parity with doctor --json); still exit 1 when false
+              ok: authenticated,
+              authenticated,
               active: auth
                 ? {
                     provider: auth.provider,
@@ -845,12 +847,18 @@ Docs: docs/PRODUCTION.md
                 : null,
               description: describeAuth(auth),
               stored: creds,
+              ...(!authenticated
+                ? {
+                    reason: "unauthenticated",
+                    error: "Not authenticated. Run forge login or set an API key.",
+                  }
+                : {}),
             },
             null,
             2,
           ),
         );
-        if (!auth) process.exitCode = 1;
+        if (!authenticated) process.exitCode = 1;
         return;
       }
       printAuthStatus();
@@ -2294,9 +2302,11 @@ function buildConfig(opts: Record<string, unknown>): ForgeConfig {
     }
   }
   {
+    // Flag present (including "") must validate — empty used to skip and hit the API.
     const effortRaw = opts.effort ?? opts.reasoningEffort;
-    if (effortRaw != null && String(effortRaw).trim()) {
-      const e = parseReasoningEffort(String(effortRaw));
+    if (effortRaw != null) {
+      const raw = String(effortRaw).trim();
+      const e = raw ? parseReasoningEffort(raw) : null;
       if (!e) {
         failInvalidFlag(
           "invalid_effort",
@@ -2308,49 +2318,50 @@ function buildConfig(opts: Record<string, unknown>): ForgeConfig {
       overrides.reasoningEffort = e;
     }
   }
-  if (opts.permissionMode) {
-    const mode = String(opts.permissionMode);
+  // != null so empty string "" fails closed (Commander sets "" for --flag '')
+  if (opts.permissionMode != null) {
+    const mode = String(opts.permissionMode).trim();
     if (!PERMISSION_MODES.has(mode as PermissionMode)) {
       failInvalidFlag(
         "invalid_permission_mode",
-        `Invalid --permission-mode "${mode}". Use default|acceptEdits|plan|bypassPermissions|dontAsk.`,
-        { permissionMode: mode },
+        `Invalid --permission-mode "${opts.permissionMode}". Use default|acceptEdits|plan|bypassPermissions|dontAsk.`,
+        { permissionMode: String(opts.permissionMode) },
         { json: wantJson },
       );
     }
     overrides.permissionMode = mode as PermissionMode;
   }
-  if (opts.sandbox) {
-    const profile = String(opts.sandbox);
+  if (opts.sandbox != null) {
+    const profile = String(opts.sandbox).trim();
     if (!SANDBOX_PROFILES.has(profile as SandboxProfile)) {
       failInvalidFlag(
         "invalid_sandbox",
-        `Invalid --sandbox "${profile}". Use off|workspace|read-only|strict.`,
-        { sandbox: profile },
+        `Invalid --sandbox "${opts.sandbox}". Use off|workspace|read-only|strict.`,
+        { sandbox: String(opts.sandbox) },
         { json: wantJson },
       );
     }
     overrides.sandbox = profile as SandboxProfile;
   }
-  if (opts.sandboxNetwork) {
-    const net = String(opts.sandboxNetwork);
+  if (opts.sandboxNetwork != null) {
+    const net = String(opts.sandboxNetwork).trim();
     if (!SANDBOX_NETWORKS.has(net as SandboxNetwork)) {
       failInvalidFlag(
         "invalid_sandbox_network",
-        `Invalid --sandbox-network "${net}". Use unrestricted|blocked.`,
-        { sandboxNetwork: net },
+        `Invalid --sandbox-network "${opts.sandboxNetwork}". Use unrestricted|blocked.`,
+        { sandboxNetwork: String(opts.sandboxNetwork) },
         { json: wantJson },
       );
     }
     overrides.sandboxNetwork = net as SandboxNetwork;
   }
-  if (opts.sandboxMissing) {
-    const miss = String(opts.sandboxMissing);
+  if (opts.sandboxMissing != null) {
+    const miss = String(opts.sandboxMissing).trim();
     if (!SANDBOX_MISSING.has(miss as SandboxMissingBackend)) {
       failInvalidFlag(
         "invalid_sandbox_missing",
-        `Invalid --sandbox-missing "${miss}". Use fail-closed|fallback.`,
-        { sandboxMissing: miss },
+        `Invalid --sandbox-missing "${opts.sandboxMissing}". Use fail-closed|fallback.`,
+        { sandboxMissing: String(opts.sandboxMissing) },
         { json: wantJson },
       );
     }
