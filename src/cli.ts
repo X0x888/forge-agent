@@ -254,6 +254,8 @@ Docs: docs/PRODUCTION.md · docs/RELIABILITY.md · docs/ULW.md · forge news
           session,
           hooks,
           prompt,
+          // Bare `forge "…"` has no --json; stream tokens (runHeadless default).
+          json: false,
         });
         if (result.timedOut) process.exitCode = 124;
         else if (result.aborted) process.exitCode = 130;
@@ -341,7 +343,11 @@ Exit codes:
   completionTokens, durationMs, model, provider
   (releasedOnContinueCap/hitMaxTurns → safety valves; still ok unless aborted/timedOut)
 
+--json early failures (stdout, still exit ≠0): { ok:false, reason, error, … }
+  reason=empty_prompt | unauthenticated | session_not_found | locked
+
 Empty prompts exit 1 before auth/session create (no orphan sessions, no API spend).
+--session/--new/--title work on parent or subcommand (optsWithGlobals merge).
 Label runs: --title <label> (searchable via forge sessions list -q / /sessions search).
 Multi-step CI without copying ids: forge run "…" --continue --json
 
