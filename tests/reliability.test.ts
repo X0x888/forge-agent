@@ -2376,6 +2376,42 @@ describe("forge run --json early failures (CLI)", () => {
     assert.equal(badJson.reason, "invalid_format");
     assert.equal(badJson.format, "yaml");
 
+    // Export --out directory → structured is_directory (not uncaught EISDIR)
+    const { createSession, saveSession } = await import(
+      "../src/session/session.js"
+    );
+    const expHome = path.join(home, "export-dir");
+    fs.mkdirSync(expHome, { recursive: true });
+    process.env.FORGE_HOME = expHome;
+    const expS = createSession({
+      cwd: path.join(expHome, "ws"),
+      provider: "xai",
+      model: "m",
+      title: "export-me",
+    });
+    expS.messages.push({ role: "user", content: "hi" });
+    saveSession(expS);
+    const outDir = path.join(expHome, "outdir");
+    fs.mkdirSync(outDir, { recursive: true });
+    const dirOut = spawnSync(
+      process.execPath,
+      [
+        cli,
+        "sessions",
+        "export",
+        expS.meta.id,
+        "--out",
+        outDir,
+        "--json",
+      ],
+      { env: { ...env, FORGE_HOME: expHome }, encoding: "utf8" },
+    );
+    assert.notEqual(dirOut.status, 0);
+    const dirJ = JSON.parse((dirOut.stdout || "").trim());
+    assert.equal(dirJ.ok, false);
+    assert.equal(dirJ.reason, "is_directory");
+    assert.match(String(dirJ.hint || ""), /session-/);
+
     const usage = spawnSync(
       process.execPath,
       [cli, "sessions", "title", "--json"],

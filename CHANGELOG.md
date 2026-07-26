@@ -49,6 +49,7 @@ Production recovery, review, and onboarding learned from OpenCode (snapshot/reve
 - **`forge login --api-key '' --json`**: empty key → `api_key_required` (no silent Grok import fallthrough)
 - **Bare `forge "…" --json`**: parent `--json` forces headless and emits the same success/failure payload as `forge run --json` (empty prompt / unauthenticated / session-not-found structured); completion top-flags include `--json`/`--continue`; share card CI line + tips
 - **Parent `--json` + subcommands**: `auth`/`doctor`/`models`/`stats`/`news`/`logs`/`config`/`prune-*` honor parent-attached `--json` via shared `flagJson` (Commander was binding the flag to the parent only, so `forge auth --json` printed human text); smoke covers bare `forge --json`; help example + AGENTS
+- **`sessions export --out <dir>`**: structured `{ ok:false, reason:is_directory, hint }` (and plain error) instead of uncaught `EISDIR`; creates parent dirs for file targets; write failures → `reason:write_failed`
 
 ### Recovery (disk + chat)
 - **File mutation journal**: successful `write_file` / `search_replace` / `apply_patch` ops append pre-images to `~/.forge/sessions/<id>/mutations.jsonl` (mode `0600`, ~1.5 MiB cap per body)

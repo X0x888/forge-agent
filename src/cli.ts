@@ -1080,12 +1080,72 @@ Docs: docs/PRODUCTION.md
           fmt === "json" ? exportSessionJson(s) : exportSessionMarkdown(s);
         if (globalOpts.out) {
           const p = path.resolve(String(globalOpts.out));
-          // Exports may contain secrets from agent transcripts — mode 0600.
-          fs.writeFileSync(p, body, { encoding: "utf8", mode: 0o600 });
+          // Refuse directory targets early — writeFileSync EISDIR is opaque.
           try {
-            fs.chmodSync(p, 0o600);
-          } catch {
-            /* windows / some FS ignore mode */
+            if (fs.existsSync(p) && fs.statSync(p).isDirectory()) {
+              const hint = path.join(
+                p,
+                `session-${s.meta.id.slice(0, 8)}.${fmt === "json" ? "json" : "md"}`,
+              );
+              if (globalOpts.json) {
+                console.log(
+                  JSON.stringify({
+                    ok: false,
+                    reason: "is_directory",
+                    path: p,
+                    error: `Export --out is a directory. Pass a file path (e.g. ${hint}).`,
+                    hint,
+                  }),
+                );
+              } else {
+                log.error(
+                  `Export --out is a directory: ${p}\n  Pass a file path, e.g. ${hint}`,
+                );
+              }
+              process.exit(1);
+            }
+          } catch (err) {
+            if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
+              const message = (err as Error).message || String(err);
+              if (globalOpts.json) {
+                console.log(
+                  JSON.stringify({
+                    ok: false,
+                    reason: "write_failed",
+                    path: p,
+                    error: message,
+                  }),
+                );
+              } else {
+                log.error(message);
+              }
+              process.exit(1);
+            }
+          }
+          try {
+            // Exports may contain secrets from agent transcripts — mode 0600.
+            fs.mkdirSync(path.dirname(p), { recursive: true });
+            fs.writeFileSync(p, body, { encoding: "utf8", mode: 0o600 });
+            try {
+              fs.chmodSync(p, 0o600);
+            } catch {
+              /* windows / some FS ignore mode */
+            }
+          } catch (err) {
+            const message = (err as Error).message || String(err);
+            if (globalOpts.json) {
+              console.log(
+                JSON.stringify({
+                  ok: false,
+                  reason: "write_failed",
+                  path: p,
+                  error: message,
+                }),
+              );
+            } else {
+              log.error(`Export write failed: ${message}`);
+            }
+            process.exit(1);
           }
           if (globalOpts.json) {
             console.log(
