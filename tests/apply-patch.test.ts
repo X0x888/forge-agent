@@ -96,6 +96,25 @@ describe("toolApplyPatch", () => {
     assert.ok(edits >= 3);
   });
 
+  it("fails closed when move destination already exists", async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-patch-"));
+    fs.writeFileSync(path.join(tmp, "src.txt"), "from\n");
+    fs.writeFileSync(path.join(tmp, "dst.txt"), "keep-me\n");
+    const patch = `*** Begin Patch
+*** Update File: src.txt
+*** Move to: dst.txt
+@@
+-from
++from
+*** End Patch`;
+    const result = await toolApplyPatch({ patchText: patch }, { workspace: tmp });
+    assert.equal(result.isError, true);
+    assert.match(result.output, /move destination already exists/i);
+    // Neither file clobbered
+    assert.equal(fs.readFileSync(path.join(tmp, "src.txt"), "utf8"), "from\n");
+    assert.equal(fs.readFileSync(path.join(tmp, "dst.txt"), "utf8"), "keep-me\n");
+  });
+
   it("fails closed when update target missing", async () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-patch-"));
     const result = await toolApplyPatch(

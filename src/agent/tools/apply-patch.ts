@@ -184,6 +184,23 @@ export async function toolApplyPatch(
         return { output: (err as Error).message, isError: true };
       }
       moveRel = path.relative(ctx.workspace, moveAbs) || moveAbs;
+      // Fail closed on clobber — silent overwrite loses the destination file
+      // and journals a create (undo cannot restore the prior dest body).
+      if (moveAbs !== abs && fs.existsSync(moveAbs)) {
+        let kind = "path";
+        try {
+          kind = fs.statSync(moveAbs).isDirectory() ? "directory" : "file";
+        } catch {
+          /* keep generic */
+        }
+        return {
+          output:
+            kind === "directory"
+              ? `apply_patch failed: move destination is a directory: ${hunk.movePath} (use a file path)`
+              : `apply_patch failed: move destination already exists: ${hunk.movePath} (delete/rename it first, or update in place)`,
+          isError: true,
+        };
+      }
     }
     planned.push({
       kind: "update",
