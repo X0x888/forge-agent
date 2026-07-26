@@ -46,6 +46,7 @@ Production recovery, review, and onboarding learned from OpenCode (snapshot/reve
 - **`forge logout --json`**: `{ ok, cleared, removed[], count }` (no tokens); `status --watch --session` miss fails fast (no empty watch loop)
 - **`forge login --json`**: structured success/failure for `--from-grok` and `--api-key <key>` (never echoes keys; interactive OAuth/device rejected with `interactive_required`); tips CI line includes `forge auth --json`
 - **`forge login -p/--provider`**: parent CLI provider no longer clobbered by login’s default `xai`; unknown providers → `invalid_provider` (JSON or stderr)
+- **`forge login --api-key '' --json`**: empty key → `api_key_required` (no silent Grok import fallthrough)
 
 ### Recovery (disk + chat)
 - **File mutation journal**: successful `write_file` / `search_replace` / `apply_patch` ops append pre-images to `~/.forge/sessions/<id>/mutations.jsonl` (mode `0600`, ~1.5 MiB cap per body)

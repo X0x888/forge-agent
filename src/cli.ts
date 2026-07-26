@@ -602,10 +602,18 @@ Docs: docs/PRODUCTION.md
         );
       }
       const provider = providerNorm === "grok" ? "xai" : providerNorm;
+      // Commander optional --api-key [key]: true = flag only, "" = empty string, string = value.
+      // Empty string must NOT fall through to Grok import (user asked for api_key).
+      const apiKeyFlag = opts.apiKey !== undefined;
+      const apiKeyValue =
+        typeof opts.apiKey === "string" ? opts.apiKey.trim() : "";
 
-      if (opts.fromGrok || (provider === "xai" && !opts.apiKey && !opts.oauth && !opts.device)) {
+      if (
+        opts.fromGrok ||
+        (provider === "xai" && !apiKeyFlag && !opts.oauth && !opts.device)
+      ) {
         // Default xAI login path: reuse Grok Build subscription session when present
-        if (opts.fromGrok || !opts.apiKey) {
+        if (opts.fromGrok || !apiKeyFlag) {
           const result = importGrokCredentials();
           if (result.imported) {
             if (wantJson) {
@@ -656,7 +664,7 @@ Docs: docs/PRODUCTION.md
       let method: "api_key" | "oauth" | "device" = "api_key";
       if (opts.device) method = "device";
       else if (opts.oauth) method = "oauth";
-      else if (opts.apiKey !== undefined) method = "api_key";
+      else if (apiKeyFlag) method = "api_key";
       else if (supportsOAuth(provider) && provider !== "xai") {
         method = "oauth";
       } else {
@@ -670,7 +678,7 @@ Docs: docs/PRODUCTION.md
           { method },
         );
       }
-      if (wantJson && (opts.apiKey === undefined || opts.apiKey === true)) {
+      if (wantJson && method === "api_key" && !apiKeyValue) {
         failLogin(
           "api_key_required",
           'login --json requires an explicit key: forge login --api-key <key> --json',
@@ -679,14 +687,7 @@ Docs: docs/PRODUCTION.md
       try {
         if (wantJson && method === "api_key") {
           // Quiet path — no log.success noise mixed into CI stdout/stderr.
-          const key = String(opts.apiKey).trim();
-          if (!key) {
-            failLogin(
-              "api_key_required",
-              'login --json requires an explicit key: forge login --api-key <key> --json',
-            );
-          }
-          upsertApiKey(provider, key);
+          upsertApiKey(provider, apiKeyValue);
           console.log(
             JSON.stringify({
               ok: true,
@@ -700,7 +701,7 @@ Docs: docs/PRODUCTION.md
         await loginInteractive({
           provider,
           method,
-          apiKey: typeof opts.apiKey === "string" ? opts.apiKey : undefined,
+          apiKey: apiKeyValue || undefined,
         });
       } catch (err) {
         failLogin("login_failed", (err as Error).message || String(err), {

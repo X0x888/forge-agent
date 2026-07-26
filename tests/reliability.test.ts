@@ -1537,6 +1537,8 @@ describe("shell completion", () => {
     assert.match(out, /--title/);
     assert.match(out, /\bstats\b/);
     assert.match(out, /stats\) COMPREPLY=.*--days/);
+    assert.match(out, /login\) COMPREPLY=.*--json/);
+    assert.match(out, /logout\) COMPREPLY=.*--json/);
     const zsh = shellCompletionScript("zsh");
     assert.match(zsh, /compdef/);
     assert.match(zsh, /--sandbox/);
@@ -1545,6 +1547,8 @@ describe("shell completion", () => {
     assert.match(zsh, /\bstats\b/);
     assert.match(zsh, /delete\).*--force|values 'delete' --json --force/);
     assert.match(zsh, /values 'list' --json --limit -n --cwd --query -q --pinned/);
+    assert.match(zsh, /values 'login'.*--json|login\).*--json/);
+    assert.match(zsh, /values 'logout'.*--json|logout\).*--json/);
     const fish = shellCompletionScript("fish");
     assert.match(fish, /complete -c forge/);
     assert.match(fish, /l new/);
@@ -1556,6 +1560,8 @@ describe("shell completion", () => {
     assert.match(fish, /l query/);
     assert.match(fish, /l title/);
     assert.match(fish, /stats/);
+    assert.match(fish, /__fish_seen_subcommand_from login.*l json|login.*-l json/);
+    assert.match(fish, /__fish_seen_subcommand_from logout.*l json|logout.*-l json/);
   });
 });
 
@@ -2215,6 +2221,18 @@ describe("forge run --json early failures (CLI)", () => {
     const bj = JSON.parse((badP.stdout || "").trim());
     assert.equal(bj.ok, false);
     assert.equal(bj.reason, "invalid_provider");
+
+    // Empty --api-key must not fall through to Grok import
+    const emptyKey = spawnSync(
+      process.execPath,
+      [cli, "login", "--api-key", "", "--json"],
+      { env, encoding: "utf8" },
+    );
+    assert.notEqual(emptyKey.status, 0);
+    const ej = JSON.parse((emptyKey.stdout || "").trim());
+    assert.equal(ej.ok, false);
+    assert.equal(ej.reason, "api_key_required");
+    assert.notEqual(ej.method, "from_grok");
   });
 
   it("forge auth --json never dumps tokens", async () => {
