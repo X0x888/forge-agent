@@ -664,8 +664,9 @@ Docs: docs/PRODUCTION.md
       if (act === "delete" || act === "rm" || act === "remove") {
         const target = id || "";
         if (!target) {
-          log.error("Usage: forge sessions delete <id> [--force]");
-          process.exit(1);
+          failUsage("Usage: forge sessions delete <id> [--force]", {
+            json: Boolean(globalOpts.json),
+          });
         }
         const result = deleteSessionDetailed(target, {
           force: Boolean(globalOpts.force),
@@ -701,8 +702,9 @@ Docs: docs/PRODUCTION.md
       if (act === "path" || act === "dir" || act === "location") {
         const target = id || "";
         if (!target) {
-          log.error("Usage: forge sessions path <id|title>");
-          process.exit(1);
+          failUsage("Usage: forge sessions path <id|title>", {
+            json: Boolean(globalOpts.json),
+          });
         }
         const dir = resolveSessionDir(target);
         if (!dir) {
@@ -742,8 +744,9 @@ Docs: docs/PRODUCTION.md
       if (act === "show" || act === "info" || act === "get") {
         const target = id || "";
         if (!target) {
-          log.error("Usage: forge sessions show <id>");
-          process.exit(1);
+          failUsage("Usage: forge sessions show <id>", {
+            json: Boolean(globalOpts.json),
+          });
         }
         const s = loadSession(target);
         if (!s) {
@@ -791,8 +794,10 @@ Docs: docs/PRODUCTION.md
       if (act === "export") {
         const target = id || "";
         if (!target) {
-          log.error("Usage: forge sessions export <id> [--format md|json] [--out path]");
-          process.exit(1);
+          failUsage(
+            "Usage: forge sessions export <id> [--format md|json] [--out path]",
+            { json: Boolean(globalOpts.json) },
+          );
         }
         // Validate format before session lookup so bad flags fail fast.
         const fmt = String(globalOpts.format || "md").toLowerCase();
@@ -855,8 +860,9 @@ Docs: docs/PRODUCTION.md
       if (act === "import") {
         const file = id || "";
         if (!file) {
-          log.error("Usage: forge sessions import <export.json>");
-          process.exit(1);
+          failUsage("Usage: forge sessions import <export.json>", {
+            json: Boolean(globalOpts.json),
+          });
         }
         const p = path.resolve(file);
         if (!fs.existsSync(p)) {
@@ -927,8 +933,9 @@ Docs: docs/PRODUCTION.md
       if (act === "pin" || act === "unpin") {
         const target = id || "";
         if (!target) {
-          log.error(`Usage: forge sessions ${act} <id|title>`);
-          process.exit(1);
+          failUsage(`Usage: forge sessions ${act} <id|title>`, {
+            json: Boolean(globalOpts.json),
+          });
         }
         const s = loadSession(target);
         if (!s) {
@@ -972,10 +979,10 @@ Docs: docs/PRODUCTION.md
           .join(" ")
           .trim();
         if (!target || !labelRaw) {
-          log.error(
+          failUsage(
             "Usage: forge sessions title <id|title> <name|clear|none|->",
+            { json: Boolean(globalOpts.json) },
           );
-          process.exit(1);
         }
         const s = loadSession(target);
         if (!s) {
@@ -1014,8 +1021,9 @@ Docs: docs/PRODUCTION.md
       if (act === "fork" || act === "clone") {
         const target = id || "";
         if (!target) {
-          log.error("Usage: forge sessions fork <id>");
-          process.exit(1);
+          failUsage("Usage: forge sessions fork <id>", {
+            json: Boolean(globalOpts.json),
+          });
         }
         const s = loadSession(target);
         if (!s) {
@@ -1698,6 +1706,25 @@ function failSessionLookup(
     );
   } else {
     log.error(error);
+  }
+  process.exit(1);
+}
+
+/**
+ * Usage / missing-arg failures for sessions subcommands.
+ * With --json: `{ ok:false, reason:usage, error }` on stdout.
+ */
+function failUsage(message: string, opts?: { json?: boolean }): never {
+  if (opts?.json) {
+    console.log(
+      JSON.stringify({
+        ok: false,
+        reason: "usage",
+        error: message,
+      }),
+    );
+  } else {
+    log.error(message);
   }
   process.exit(1);
 }

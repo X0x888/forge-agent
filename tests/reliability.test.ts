@@ -2139,5 +2139,16 @@ describe("forge run --json early failures (CLI)", () => {
     assert.equal(badJson.ok, false);
     assert.equal(badJson.reason, "invalid_format");
     assert.equal(badJson.format, "yaml");
+
+    const usage = spawnSync(
+      process.execPath,
+      [cli, "sessions", "title", "--json"],
+      { env, encoding: "utf8" },
+    );
+    assert.notEqual(usage.status, 0);
+    const usageJson = JSON.parse((usage.stdout || "").trim());
+    assert.equal(usageJson.ok, false);
+    assert.equal(usageJson.reason, "usage");
+    assert.match(String(usageJson.error || ""), /title/);
   });
 });
