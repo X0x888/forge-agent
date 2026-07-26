@@ -699,8 +699,7 @@ Docs: docs/PRODUCTION.md
         }
         const dir = resolveSessionDir(target);
         if (!dir) {
-          log.error(formatSessionLookupMiss(target));
-          process.exit(1);
+          failSessionLookup(target, { json: Boolean(globalOpts.json) });
         }
         const jsonPath =
           resolveSessionJsonPath(target) || path.join(dir, "session.json");
@@ -741,8 +740,7 @@ Docs: docs/PRODUCTION.md
         }
         const s = loadSession(target);
         if (!s) {
-          log.error(formatSessionLookupMiss(target));
-          process.exit(1);
+          failSessionLookup(target, { json: Boolean(globalOpts.json) });
         }
         const lock = readSessionLock(s.meta.id);
         const foreignLock = sessionHasForeignLiveLock(s.meta.id);
@@ -797,8 +795,7 @@ Docs: docs/PRODUCTION.md
         }
         const s = loadSession(target);
         if (!s) {
-          log.error(formatSessionLookupMiss(target));
-          process.exit(1);
+          failSessionLookup(target, { json: Boolean(globalOpts.json) });
         }
         const foreignLock = sessionHasForeignLiveLock(s.meta.id);
         if (foreignLock && !globalOpts.json) {
@@ -917,8 +914,7 @@ Docs: docs/PRODUCTION.md
         }
         const s = loadSession(target);
         if (!s) {
-          log.error(formatSessionLookupMiss(target));
-          process.exit(1);
+          failSessionLookup(target, { json: Boolean(globalOpts.json) });
         }
         const foreignLock = sessionHasForeignLiveLock(s.meta.id);
         if (foreignLock && !globalOpts.json) {
@@ -965,8 +961,7 @@ Docs: docs/PRODUCTION.md
         }
         const s = loadSession(target);
         if (!s) {
-          log.error(formatSessionLookupMiss(target));
-          process.exit(1);
+          failSessionLookup(target, { json: Boolean(globalOpts.json) });
         }
         const foreignLock = sessionHasForeignLiveLock(s.meta.id);
         if (foreignLock && !globalOpts.json) {
@@ -1006,8 +1001,7 @@ Docs: docs/PRODUCTION.md
         }
         const s = loadSession(target);
         if (!s) {
-          log.error(formatSessionLookupMiss(target));
-          process.exit(1);
+          failSessionLookup(target, { json: Boolean(globalOpts.json) });
         }
         const sourceForeignLock = sessionHasForeignLiveLock(s.meta.id);
         if (sourceForeignLock && !globalOpts.json) {
@@ -1664,6 +1658,30 @@ Project instructions for Forge (and other coding agents).
     });
 
   await program.parseAsync(process.argv);
+}
+
+/**
+ * Session id/title miss for CLI commands. With --json, emit structured stdout
+ * so CI need not scrape stderr (parity with forge run --json early failures).
+ */
+function failSessionLookup(
+  target: string,
+  opts?: { json?: boolean },
+): never {
+  const error = formatSessionLookupMiss(target);
+  if (opts?.json) {
+    console.log(
+      JSON.stringify({
+        ok: false,
+        reason: "session_not_found",
+        session: target,
+        error,
+      }),
+    );
+  } else {
+    log.error(error);
+  }
+  process.exit(1);
 }
 
 function buildConfig(opts: Record<string, unknown>): ForgeConfig {

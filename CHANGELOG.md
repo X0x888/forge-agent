@@ -22,6 +22,7 @@ Production recovery, review, and onboarding learned from OpenCode (snapshot/reve
 - **`forge sessions path|list --json`**: includes `foreignLock` (list per-session); plain list + `/sessions`/`/resume` LOCK badge only for **foreign** live holders (own-pid locks are noise)
 - **`forge sessions delete|import --json`**: structured failure payloads (`ok:false`, `reason`, …) for CI (still exit 1)
 - **`forge run --json` early failures**: empty prompt / unauthenticated / session-not-found / foreign lock emit structured `{ ok:false, reason, … }` on stdout (still non-zero exit); `forge run` merges parent `optsWithGlobals` so `--session`/`--new`/`--title` bind correctly (was silently starting fresh)
+- **`forge sessions * --json` lookup misses**: show/path/export/pin/title/fork emit `{ ok:false, reason:session_not_found, … }` (shared `failSessionLookup`)
 
 ### Recovery (disk + chat)
 - **File mutation journal**: successful `write_file` / `search_replace` / `apply_patch` ops append pre-images to `~/.forge/sessions/<id>/mutations.jsonl` (mode `0600`, ~1.5 MiB cap per body)
