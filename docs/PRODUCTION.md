@@ -12,7 +12,7 @@ npm run ci                   # check + smoke (GitHub Actions)
 forge doctor                 # human report (exit 1 if issues)
 forge doctor --json          # CI: structured JSON + exit 1 if unhealthy
 forge auth                   # refresh OAuth if needed
-forge auth --json            # CI: {ok,authenticated,active,stored[]} — never tokens
+forge auth --json            # CI: {ok,authenticated,active,stored[]} — never tokens; ok:false + exit 1 when unauthenticated
 forge login --api-key "$KEY" --json   # CI login (no interactive prompt)
 forge logout --json          # CI clear stored creds
 eval "$(forge completion bash)"   # optional shell completions

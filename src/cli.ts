@@ -1939,7 +1939,20 @@ Project instructions for Forge (and other coding agents).
     .option("--json", "Machine-readable summary on stdout")
     .action((opts, command) => {
       const wantJson = flagJson(opts, command);
-      const config = buildConfig({ ...opts, json: wantJson });
+      // Parent also defines -p/--provider/--cwd; merge so flags bind either place.
+      // Prefer CLI-sourced values over doctor defaults / parent defaults.
+      const globals = (command?.optsWithGlobals?.() || {}) as Record<string, unknown>;
+      const merged: Record<string, unknown> = { ...globals, ...opts, json: wantJson };
+      for (const key of ["provider", "cwd"] as const) {
+        const localSrc = command?.getOptionValueSource?.(key);
+        const parentSrc = command?.parent?.getOptionValueSource?.(key);
+        if (parentSrc === "cli" && localSrc !== "cli" && key in globals) {
+          merged[key] = globals[key];
+        } else if (localSrc === "cli" && key in opts) {
+          merged[key] = opts[key];
+        }
+      }
+      const config = buildConfig(merged);
       if (wantJson) {
         const check = runDoctorCheck(config);
         const auth = resolveAuth(config);
@@ -2105,8 +2118,10 @@ Project instructions for Forge (and other coding agents).
         ...(command?.optsWithGlobals?.() || {}),
         ...opts,
       } as Record<string, unknown>;
+      // --session present (including "") must not silently list all sessions
+      const sessionPassed = stOpts.session != null;
       const sessionArg =
-        typeof stOpts.session === "string" && stOpts.session.trim()
+        sessionPassed && String(stOpts.session).trim()
           ? String(stOpts.session).trim()
           : undefined;
       const cwdArg =
@@ -2121,14 +2136,38 @@ Project instructions for Forge (and other coding agents).
         config: loadConfig({}, cwdArg || process.cwd()),
       };
 
-      // Fail fast on --session miss before watch loop (don't spin empty frames).
+      // Fail fast on empty --session or miss before watch loop.
+      if (sessionPassed && !sessionArg) {
+        const msg =
+          'Empty --session. Pass an id/prefix/title, or omit --session.';
+        if (stOpts.json || flagJson(opts, command)) {
+          console.log(
+            JSON.stringify(
+              {
+                ok: false,
+                reason: "session_not_found",
+                session: String(stOpts.session),
+                error: msg,
+                count: 0,
+                sessions: [],
+                generatedAt: new Date().toISOString(),
+              },
+              null,
+              2,
+            ),
+          );
+        } else {
+          log.error(msg);
+        }
+        process.exit(1);
+      }
       if (sessionArg) {
         const probe = await collectSnapshots({
           ...collectOpts,
           fetchPlan: false,
         });
         if (probe.length === 0) {
-          if (stOpts.json) {
+          if (stOpts.json || flagJson(opts, command)) {
             console.log(
               JSON.stringify(
                 {

@@ -2309,6 +2309,38 @@ describe("forge run --json early failures (CLI)", () => {
     assert.equal(uj.ok, false);
     assert.equal(uj.authenticated, false);
     assert.equal(uj.reason, "unauthenticated");
+
+    // status --session '' must not silently list all sessions
+    const stEmpty = spawnSync(
+      process.execPath,
+      [cli, "status", "--session", "", "--json"],
+      { env: { ...env, FORGE_HOME: noAuthHome }, encoding: "utf8" },
+    );
+    assert.notEqual(stEmpty.status, 0);
+    const stJ = JSON.parse((stEmpty.stdout || "").trim());
+    assert.equal(stJ.ok, false);
+    assert.equal(stJ.reason, "session_not_found");
+
+    // doctor -p bogus / empty must fail closed (parent or local -p)
+    const docBogus = spawnSync(
+      process.execPath,
+      [cli, "doctor", "-p", "bogus", "--json"],
+      { env: { ...env, FORGE_HOME: noAuthHome }, encoding: "utf8" },
+    );
+    assert.notEqual(docBogus.status, 0);
+    const docBJ = JSON.parse((docBogus.stdout || "").trim());
+    assert.equal(docBJ.ok, false);
+    assert.equal(docBJ.reason, "invalid_provider");
+
+    const docEmpty = spawnSync(
+      process.execPath,
+      [cli, "-p", "", "doctor", "--json"],
+      { env: { ...env, FORGE_HOME: noAuthHome }, encoding: "utf8" },
+    );
+    assert.notEqual(docEmpty.status, 0);
+    const docEJ = JSON.parse((docEmpty.stdout || "").trim());
+    assert.equal(docEJ.ok, false);
+    assert.equal(docEJ.reason, "invalid_provider");
   });
 
   it("parent --continue/--json documented; bare forge --json early failures; export invalid_format", async () => {
