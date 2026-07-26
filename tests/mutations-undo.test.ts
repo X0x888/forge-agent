@@ -426,6 +426,21 @@ describe("/init and /compact-and slash commands", () => {
     }
   });
 
+  it("/export to a directory refuses with a file-path hint", async () => {
+    const s = createSession({ cwd: home, provider: "xai", model: "grok-4" });
+    const dir = path.join(home, "export-dir");
+    fs.mkdirSync(dir, { recursive: true });
+    const hooks = new HookRunner(DEFAULT_CONFIG, home);
+    const r = await handleSlash(`/export ${dir}`, {
+      session: s,
+      config: DEFAULT_CONFIG,
+      hooks,
+    });
+    assert.match(r.output || "", /directory/i);
+    assert.match(r.output || "", /session-/);
+    assert.ok(!fs.existsSync(path.join(dir, "session.json")));
+  });
+
   it("buildReviewPrompt scopes uncommitted / branch / commit / pr", () => {
     const u = buildReviewPrompt("uncommitted", "/ws");
     assert.match(u, /uncommitted working tree/i);

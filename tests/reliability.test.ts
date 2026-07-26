@@ -2412,6 +2412,17 @@ describe("forge run --json early failures (CLI)", () => {
     assert.equal(dirJ.reason, "is_directory");
     assert.match(String(dirJ.hint || ""), /session-/);
 
+    // Import directory → structured is_directory (not EISDIR invalid)
+    const impDir = spawnSync(
+      process.execPath,
+      [cli, "sessions", "import", outDir, "--json"],
+      { env: { ...env, FORGE_HOME: expHome }, encoding: "utf8" },
+    );
+    assert.notEqual(impDir.status, 0);
+    const impJ = JSON.parse((impDir.stdout || "").trim());
+    assert.equal(impJ.ok, false);
+    assert.equal(impJ.reason, "is_directory");
+
     const usage = spawnSync(
       process.execPath,
       [cli, "sessions", "title", "--json"],

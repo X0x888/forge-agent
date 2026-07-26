@@ -1187,6 +1187,41 @@ Docs: docs/PRODUCTION.md
           process.exit(1);
         }
         try {
+          if (fs.statSync(p).isDirectory()) {
+            if (globalOpts.json) {
+              console.log(
+                JSON.stringify({
+                  ok: false,
+                  reason: "is_directory",
+                  path: p,
+                  error:
+                    "Import path is a directory. Pass a session export .json file.",
+                }),
+              );
+            } else {
+              log.error(
+                `Import path is a directory: ${p}\n  Pass a session export .json file.`,
+              );
+            }
+            process.exit(1);
+          }
+        } catch (err) {
+          const message = (err as Error).message || String(err);
+          if (globalOpts.json) {
+            console.log(
+              JSON.stringify({
+                ok: false,
+                reason: "invalid",
+                path: p,
+                error: message,
+              }),
+            );
+          } else {
+            log.error(message);
+          }
+          process.exit(1);
+        }
+        try {
           const raw = fs.readFileSync(p, "utf8");
           // Only honor --cwd for import when explicitly passed (not parent default)
           const importCwd =

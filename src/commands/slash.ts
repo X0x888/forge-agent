@@ -1085,16 +1085,36 @@ export async function handleSlash(
         : exportSessionMarkdown(opts.session);
       if (pathArg) {
         const p = path.resolve(pathArg);
-        fs.writeFileSync(p, body, { encoding: "utf8", mode: 0o600 });
         try {
-          fs.chmodSync(p, 0o600);
-        } catch {
-          /* windows */
+          if (fs.existsSync(p) && fs.statSync(p).isDirectory()) {
+            const hint = path.join(
+              p,
+              `session-${opts.session.meta.id.slice(0, 8)}.${asJson ? "json" : "md"}`,
+            );
+            return {
+              handled: true,
+              output:
+                `Export path is a directory: ${p}\n` +
+                `  Pass a file path, e.g. ${hint}`,
+            };
+          }
+          fs.mkdirSync(path.dirname(p), { recursive: true });
+          fs.writeFileSync(p, body, { encoding: "utf8", mode: 0o600 });
+          try {
+            fs.chmodSync(p, 0o600);
+          } catch {
+            /* windows */
+          }
+          return {
+            handled: true,
+            output: `Exported ${asJson ? "JSON" : "markdown"} to ${p} (mode 0600)`,
+          };
+        } catch (err) {
+          return {
+            handled: true,
+            output: `Export write failed: ${(err as Error).message || String(err)}`,
+          };
         }
-        return {
-          handled: true,
-          output: `Exported ${asJson ? "JSON" : "markdown"} to ${p} (mode 0600)`,
-        };
       }
       return { handled: true, output: body };
     }
