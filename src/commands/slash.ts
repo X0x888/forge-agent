@@ -2441,6 +2441,8 @@ export interface EffectiveConfigSnap {
   contextWindow: number;
   autoCompactThreshold: number;
   maxTurns: number;
+  /** True when maxTurns <= 0 (unlimited agent turns). */
+  maxTurnsUnlimited: boolean;
   workspace: string;
   baseUrl: string | null;
   goalEnabled: boolean;
@@ -2486,6 +2488,7 @@ export function buildEffectiveConfigSnap(
     contextWindow: c.contextWindow,
     autoCompactThreshold: c.autoCompactThreshold,
     maxTurns: c.maxTurns,
+    maxTurnsUnlimited: !(typeof c.maxTurns === "number" && c.maxTurns > 0),
     workspace: c.workspace || session?.meta.cwd || process.cwd(),
     baseUrl: c.baseUrl || c.providers[c.provider]?.baseUrl || null,
     goalEnabled: c.goal?.enabled !== false,

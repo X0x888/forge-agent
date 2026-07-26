@@ -310,6 +310,7 @@ Tab completes slash commands. While the agent is working you can still run **liv
 provider = "xai"
 model = "grok-4.5"
 reasoning_effort = "high"   # low | medium | high (grok-4.5+)
+max_turns = 0               # 0 = unlimited; set e.g. 200 to cap agent turns
 permission_mode = "default"
 blocking_stop_hooks = true
 
@@ -337,7 +338,7 @@ Environment:
 
 ## Tools
 
-Built-in agent tools: `bash`, `read_file`, `write_file`, `search_replace`, `grep`, `glob`, `todo_write`.
+Built-in agent tools: `bash`, `read_file`, `write_file`, `search_replace`, `apply_patch`, `grep`, `glob`, `list_dir`, `todo_write`, `web_search`, `web_fetch`, plus background task helpers. See [docs/TOOLS.md](docs/TOOLS.md).
 
 Project instructions are loaded from `AGENTS.md`, `FORGE.md`, `CLAUDE.md`, or `.forge/rules.md`.
 

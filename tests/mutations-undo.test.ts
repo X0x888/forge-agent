@@ -402,6 +402,9 @@ describe("/init and /compact-and slash commands", () => {
     assert.equal(typeof h.env.FORGE_BASH_TIMEOUT_MS, "number");
     const snap = buildEffectiveConfigSnap(DEFAULT_CONFIG);
     assert.equal(snap.session, null);
+    assert.equal(snap.maxTurnsUnlimited, true);
+    assert.equal(h.maxTurnsUnlimited, true);
+    assert.match(formatEffectiveConfig(DEFAULT_CONFIG), /maxTurns=unlimited/);
     assert.match(formatEffectiveConfig(DEFAULT_CONFIG), /Effective config/);
   });
 
