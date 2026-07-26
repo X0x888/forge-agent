@@ -1245,6 +1245,7 @@ describe("session metrics + permission timeout", () => {
       cwd: a,
       turns: 3,
       stopContinues: 0,
+      releasedOnContinueCap: true,
       editCount: 2,
       promptTokens: 1000,
       completionTokens: 200,
@@ -1276,6 +1277,7 @@ describe("session metrics + permission timeout", () => {
     assert.equal(stats.runs, 2);
     assert.equal(stats.okRuns, 1);
     assert.equal(stats.abortedRuns, 1);
+    assert.equal(stats.continueCapReleases, 1);
     assert.equal(stats.headlessRuns, 1);
     assert.equal(stats.ulwRuns, 1);
     assert.equal(stats.promptTokens, 1100);
@@ -1289,6 +1291,7 @@ describe("session metrics + permission timeout", () => {
     const textOut = formatUsageStats(stats);
     assert.match(textOut, /Forge usage/);
     assert.match(textOut, /runs:/);
+    assert.match(textOut, /continueCap=1/);
     assert.match(textOut, /By provider/);
     assert.match(textOut, /pinned=/);
   });

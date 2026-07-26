@@ -51,16 +51,23 @@ stream-capped `web_fetch`/`web_search`, JSON arg repair, orphan tool_call heal (
 (path typo hints; directory-target errors), atomic file writes, OAuth refresh (start + mid-run 401),
 session locks (headless fail-closed; `FORGE_FORCE_SESSION_LOCK=1` override; live+bad timestamp held),
 atomic session tmp recovery, session fork/export/import (export `0600`), headless `forge run
---session`, metrics.jsonl, permission ask timeout, empty-SSE retry, `finish_reason=length` continue,
-stream usage, `meta.json` session sidecar, tunable loop guards (`FORGE_DOOM_LOOP_THRESHOLD`,
-`FORGE_ERROR_STREAK_THRESHOLD`), interactive same-cwd auto-resume, `/title`, `--title` on
-`forge`/`forge run`, `/bell` turn-end attention, background-task teardown on exit, JSON store
-isolation (`readJsonFile` clones fallbacks; auth/permissions/preferences mode `0600`),
-`listSessions({ cwd, query, limit })` + `forge sessions list --cwd`/`-q`, `/sessions` same-cwd
-default + search, `forge sessions prune` (skips foreign locks) / `delete --force`, shell-safe `/diff`
-(argv + filter allowlist), external_directory on grep/glob, `forge completion`, `forge doctor` /
-`doctor --json` (structured `runDoctorCheck` + `issues[]` / `secureFiles`; exit 1 on issues),
-path-not-found typo hints, session import/load message-role sanitization, `forge stats` /
-`/stats`, `/share` handoff card, `forge tips`, first-run welcome tip, `/retry`/`/again`,
-`/last [n]`, resume auto-peek, `forge news`/`/news`, `forge run --continue`,
-`/done`/`/pause`/`/unpause`, session `lastUserPreview` list snippets, resume-by-title, relative session ages, `/files`, `/path` (+ copy), `/pin` + `sessions pin` (fork clears pin; status PIN badge), resume orientation + `--pinned` list, doctor `sessionsPinned`, session path helpers, sessions show file snippet, file-aware `/undo` (`mutations.jsonl` pre-images), `/init`, `/review`, `/compact-and`, `/fork-and-compact`, fork copies ULW/goal sidecars, `/logs` · `forge logs`, `/config` · `forge config`, `/export` mode `0600`, `FORGE_BASH_TIMEOUT_MS` / `FORGE_BASH_BG_TIMEOUT_MS`, doctor `undoJournal`, `npm run smoke`.
+--session`, metrics.jsonl, permission ask timeout, empty-SSE retry, `finish_reason=length` continue (+ content_filter/empty cap hygiene),
+`releasedOnContinueCap` JSON/metrics + stats `continueCapReleases`, stream usage, `meta.json`
+session sidecar, tunable loop guards (`FORGE_DOOM_LOOP_THRESHOLD`, `FORGE_ERROR_STREAK_THRESHOLD`),
+interactive same-cwd auto-resume, `/title`, `--title` on `forge`/`forge run`, `/bell` turn-end
+attention, background-task teardown on exit, JSON store isolation (`readJsonFile` clones
+fallbacks; auth/permissions/preferences mode `0600`), `listSessions({ cwd, query, limit })` +
+`forge sessions list --cwd`/`-q`, `/sessions` same-cwd default + search, `forge sessions prune`
+(skips foreign locks) / `delete --force`, shell-safe `/diff` (argv + filter allowlist),
+external_directory on grep/glob/list_dir, `forge completion`, `forge doctor` / `doctor --json`
+(structured `runDoctorCheck` + `issues[]` / `secureFiles`; exit 1 on issues), path-not-found typo
+hints, session import/load message-role sanitization, `forge stats` / `/stats`, `/share` handoff
+card, shared `formatExpertTips` (`forge tips`/`/tips`), first-run welcome tip, `/retry`/`/again`,
+`/last [n]`, resume auto-peek, `forge news`/`/news`, `forge run --continue`, `/done`/`/pause`/
+`/unpause`, session `lastUserPreview` list snippets, resume-by-title, relative session ages,
+`/files`, `/path` (+ copy), `/pin` + `sessions pin` (fork clears pin; status PIN badge), resume
+orientation + `--pinned` list, doctor `sessionsPinned`, session path helpers, sessions show file
+snippet, file-aware `/undo` (`mutations.jsonl` pre-images), `/init`, `/review`, `/compact-and`,
+`/fork-and-compact`, fork copies ULW/goal sidecars, `/clear`/`/clear hard`/`/new` hygiene, `/logs`
+· `forge logs`, `/config` · `forge config`, `/export` mode `0600`, `FORGE_BASH_TIMEOUT_MS` /
+`FORGE_BASH_BG_TIMEOUT_MS`, doctor `undoJournal`, `npm run smoke`.

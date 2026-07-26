@@ -239,6 +239,8 @@ export interface UsageStats {
   okRuns: number;
   abortedRuns: number;
   timedOutRuns: number;
+  /** Runs that hit the stop-continue safety valve (length/filter/empty/Stop-block). */
+  continueCapReleases: number;
   headlessRuns: number;
   ulwRuns: number;
   promptTokens: number;
@@ -292,6 +294,7 @@ export function collectUsageStats(opts?: {
   let okRuns = 0;
   let abortedRuns = 0;
   let timedOutRuns = 0;
+  let continueCapReleases = 0;
   let headlessRuns = 0;
   let ulwRuns = 0;
   let promptTokens = 0;
@@ -307,6 +310,7 @@ export function collectUsageStats(opts?: {
     if (e.ok) okRuns += 1;
     if (e.aborted) abortedRuns += 1;
     if (e.timedOut) timedOutRuns += 1;
+    if (e.releasedOnContinueCap) continueCapReleases += 1;
     if (e.headless) headlessRuns += 1;
     if (e.ultrawork) ulwRuns += 1;
     promptTokens += Number(e.promptTokens) || 0;
@@ -392,6 +396,7 @@ export function collectUsageStats(opts?: {
     okRuns,
     abortedRuns,
     timedOutRuns,
+    continueCapReleases,
     headlessRuns,
     ulwRuns,
     promptTokens,
@@ -427,7 +432,7 @@ export function formatUsageStats(stats: UsageStats): string {
   const durMin = stats.durationMs / 60_000;
   return [
     `Forge usage (${window})`,
-    `  runs:       ${stats.runs}  ok=${stats.okRuns} (${okPct}%)  aborted=${stats.abortedRuns}  timedOut=${stats.timedOutRuns}`,
+    `  runs:       ${stats.runs}  ok=${stats.okRuns} (${okPct}%)  aborted=${stats.abortedRuns}  timedOut=${stats.timedOutRuns}  continueCap=${stats.continueCapReleases}`,
     `  mode:       headless=${stats.headlessRuns}  ULW=${stats.ulwRuns}`,
     `  tokens:     in=${formatTokens(stats.promptTokens)} out=${formatTokens(stats.completionTokens)}  est ${formatCost(stats.estCostUsd)}`,
     `  work:       turns=${stats.turns}  edits=${stats.edits}  wall≈${durMin.toFixed(1)}m`,
