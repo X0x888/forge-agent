@@ -2057,3 +2057,50 @@ describe("clipboard helper", () => {
     }
   });
 });
+
+describe("forge run --json early failures (CLI)", () => {
+  it("emits structured empty_prompt and session_not_found (parent --session)", async () => {
+    const { spawnSync } = await import("node:child_process");
+    const path = await import("node:path");
+    const fs = await import("node:fs");
+    const cli = path.join(process.cwd(), "dist", "cli.js");
+    // Build may be stale in pure test runs — require dist
+    if (!fs.existsSync(cli)) {
+      // Skip when dist missing (typecheck-only envs)
+      return;
+    }
+    // Prefer workspace .tmp (sandbox may block os.tmpdir)
+    const home = path.join(process.cwd(), ".tmp", `forge-run-json-${process.pid}`);
+    fs.mkdirSync(home, { recursive: true });
+    const env = {
+      ...process.env,
+      FORGE_HOME: home,
+      // Dummy key so we pass auth and reach session lookup / empty-prompt paths
+      XAI_API_KEY: process.env.XAI_API_KEY || "sk-test-forge-cli",
+    };
+
+    const empty = spawnSync(
+      process.execPath,
+      [cli, "run", "--json", "   "],
+      { env, encoding: "utf8" },
+    );
+    assert.notEqual(empty.status, 0);
+    const emptyJson = JSON.parse((empty.stdout || "").trim());
+    assert.equal(emptyJson.ok, false);
+    assert.equal(emptyJson.reason, "empty_prompt");
+
+    // Parent-level --session must not silently start a fresh session
+    const miss = spawnSync(
+      process.execPath,
+      [cli, "run", "--session", "zzz-no-such-id-ever-47", "--json", "hi"],
+      { env, encoding: "utf8" },
+    );
+    assert.notEqual(miss.status, 0);
+    const missOut = (miss.stdout || "").trim();
+    assert.ok(missOut.length > 0, `expected JSON stdout, got stderr=${miss.stderr}`);
+    const missJson = JSON.parse(missOut);
+    assert.equal(missJson.ok, false);
+    assert.equal(missJson.reason, "session_not_found");
+    assert.match(String(missJson.session || ""), /zzz-no-such-id-ever-47/);
+  });
+});
