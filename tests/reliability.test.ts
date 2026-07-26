@@ -1249,6 +1249,10 @@ describe("session metrics + permission timeout", () => {
     assert.match(card, /sessions title/);
     assert.match(card, /--continue/);
     assert.match(card, /sessions export/);
+    assert.match(card, /forge ".*" --json/);
+    assert.match(card, /auth --json/);
+    assert.match(card, /doctor --json/);
+    assert.match(card, /status --session/);
     assert.match(card, /\/last 3/);
     assert.match(card, /\/files/);
     assert.match(card, /path:/i);
@@ -1524,6 +1528,10 @@ describe("shell completion", () => {
     assert.match(out, /--session/);
     assert.match(out, /top_flags/);
     assert.match(out, /--new/);
+    assert.match(out, /--json/);
+    assert.match(out, /--continue/);
+    assert.match(out, /local top_flags="[^"]*--json[^"]*"/);
+    assert.match(out, /local top_flags="[^"]*--continue[^"]*"/);
     assert.match(out, /--sandbox/);
     assert.match(out, /--sandbox-network/);
     assert.match(out, /--deny/);
@@ -1559,6 +1567,7 @@ describe("shell completion", () => {
     assert.match(fish, /l force/);
     assert.match(fish, /l query/);
     assert.match(fish, /l title/);
+    assert.match(fish, /l continue/);
     assert.match(fish, /stats/);
     assert.match(fish, /__fish_seen_subcommand_from login.*l json|login.*-l json/);
     assert.match(fish, /__fish_seen_subcommand_from logout.*l json|logout.*-l json/);
@@ -2265,7 +2274,7 @@ describe("forge run --json early failures (CLI)", () => {
     assert.doesNotMatch(raw, /"accessToken"|"refreshToken"|"token"\s*:/);
   });
 
-  it("parent --continue is documented; export --json invalid_format is structured", async () => {
+  it("parent --continue/--json documented; bare forge --json early failures; export invalid_format", async () => {
     const { spawnSync } = await import("node:child_process");
     const path = await import("node:path");
     const fs = await import("node:fs");
@@ -2282,6 +2291,8 @@ describe("forge run --json early failures (CLI)", () => {
     assert.equal(help.status, 0);
     assert.match(help.stdout || "", /--continue/);
     assert.match(help.stdout || "", /bare headless same-cwd resume/);
+    assert.match(help.stdout || "", /--json/);
+    assert.match(help.stdout || "", /forge run --json|Headless JSON/);
 
     const tips = spawnSync(process.execPath, [cli, "tips"], {
       env,
@@ -2289,6 +2300,55 @@ describe("forge run --json early failures (CLI)", () => {
     });
     assert.equal(tips.status, 0);
     assert.match(tips.stdout || "", /forge auth --json|--continue|forge doctor --json/);
+    assert.match(tips.stdout || "", /forge "…" --json|forge "\u2026" --json/);
+
+    // Bare forge --json with empty prompt (no auth needed)
+    const emptyBare = spawnSync(process.execPath, [cli, "--json"], {
+      env,
+      encoding: "utf8",
+    });
+    assert.notEqual(emptyBare.status, 0);
+    const emptyJ = JSON.parse((emptyBare.stdout || "").trim());
+    assert.equal(emptyJ.ok, false);
+    assert.equal(emptyJ.reason, "empty_prompt");
+
+    // Bare forge --json session miss (before auth when session resolves first...
+    // actually auth runs before resolveSession — use unauthenticated home)
+    const noAuthHome = path.join(home, "noauth");
+    fs.mkdirSync(noAuthHome, { recursive: true });
+    const noAuthEnv = {
+      ...env,
+      FORGE_HOME: noAuthHome,
+      XAI_API_KEY: "",
+      OPENAI_API_KEY: "",
+      ANTHROPIC_API_KEY: "",
+      OPENROUTER_API_KEY: "",
+      GOOGLE_API_KEY: "",
+      GROK_HOME: path.join(noAuthHome, "nogrok"),
+    };
+    const unauthBare = spawnSync(
+      process.execPath,
+      [cli, "hi", "--json"],
+      { env: noAuthEnv, encoding: "utf8" },
+    );
+    assert.notEqual(unauthBare.status, 0);
+    const unauthJ = JSON.parse((unauthBare.stdout || "").trim());
+    assert.equal(unauthJ.ok, false);
+    assert.equal(unauthJ.reason, "unauthenticated");
+
+    const missBare = spawnSync(
+      process.execPath,
+      [cli, "hi", "--session", "zzz-no-such-bare-json-99", "--json"],
+      { env, encoding: "utf8" },
+    );
+    // May be unauthenticated first if no creds in home — either structured reason is fine
+    assert.notEqual(missBare.status, 0);
+    const missJ = JSON.parse((missBare.stdout || "").trim());
+    assert.equal(missJ.ok, false);
+    assert.ok(
+      missJ.reason === "session_not_found" || missJ.reason === "unauthenticated",
+      `expected session_not_found|unauthenticated, got ${missJ.reason}`,
+    );
 
     const badFmt = spawnSync(
       process.execPath,

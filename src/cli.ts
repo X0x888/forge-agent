@@ -209,6 +209,10 @@ Docs: docs/PRODUCTION.md · docs/RELIABILITY.md · docs/ULW.md · forge news
       "Resume newest same-cwd session (headless bare forge parity with forge run --continue)",
     )
     .option("--title <text>", "Label for a new session (searchable via list -q / /sessions search)")
+    .option(
+      "--json",
+      "Headless JSON result on stdout (parity with forge run --json; implies non-interactive)",
+    )
     .option("--cwd <path>", "Workspace directory", process.cwd())
     .option("--print-logs", "Verbose debug logs")
     .option(
@@ -219,18 +223,47 @@ Docs: docs/PRODUCTION.md · docs/RELIABILITY.md · docs/ULW.md · forge news
     .action(async (promptParts: string[], opts) => {
       if (opts.printLogs) setLogLevel("debug");
       await ensureHome();
+      const wantJson = Boolean(opts.json);
+      const prompt = promptParts?.length
+        ? promptParts.join(" ").trim() || undefined
+        : undefined;
+      // --json is headless-only (same payload as forge run --json).
+      if (wantJson && !prompt) {
+        console.log(
+          JSON.stringify({
+            ok: false,
+            reason: "empty_prompt",
+            error:
+              'Empty prompt. Usage: forge "your task" --json   (or: forge run "your task" --json)',
+          }),
+        );
+        process.exit(1);
+      }
       const config = buildConfig(opts);
       const auth = await resolveAuthFresh(config);
       if (!auth) {
-        log.error(
+        const msg =
           "Not authenticated. Run: forge login\n" +
-            "  or set XAI_API_KEY / ANTHROPIC_API_KEY / OPENAI_API_KEY / …",
-        );
+          "  or set XAI_API_KEY / ANTHROPIC_API_KEY / OPENAI_API_KEY / …";
+        if (wantJson) {
+          console.log(
+            JSON.stringify({
+              ok: false,
+              reason: "unauthenticated",
+              error: "Not authenticated. Run forge login or set an API key.",
+              provider: config.provider,
+            }),
+          );
+        } else {
+          log.error(msg);
+        }
         process.exit(1);
       }
       // Align provider if auth auto-detected a different one
       if (auth.provider !== config.provider) {
-        log.info(`Using provider ${auth.provider} from available credentials`);
+        if (!wantJson) {
+          log.info(`Using provider ${auth.provider} from available credentials`);
+        }
         config.provider = auth.provider;
         if (!opts.model) {
           config.model =
@@ -239,9 +272,12 @@ Docs: docs/PRODUCTION.md · docs/RELIABILITY.md · docs/ULW.md · forge news
       }
 
       const provider = createProvider(config, auth);
-      const prompt = promptParts?.length ? promptParts.join(" ") : undefined;
+      // --json forces headless even on a TTY (parity with forge run --json).
       const willHeadless = Boolean(
-        prompt && (!process.stdin.isTTY || process.env.FORGE_HEADLESS === "1"),
+        prompt &&
+          (wantJson ||
+            !process.stdin.isTTY ||
+            process.env.FORGE_HEADLESS === "1"),
       );
       // Interactive REPL: resume newest same-cwd session (OpenCode --continue style)
       // unless --new / --session / FORGE_NO_AUTO_RESUME. Headless starts fresh unless
@@ -250,34 +286,39 @@ Docs: docs/PRODUCTION.md · docs/RELIABILITY.md · docs/ULW.md · forge news
         ...opts,
         autoResume: !willHeadless,
         continue: Boolean(opts.continue),
+        json: wantJson,
       });
       if (opts.ulw) {
         session.meta.ultrawork = true;
         const mandate = prompt || "improve the codebase";
         armUlwCycle(session.meta.id, mandate, { cycle: 1 });
         saveSession(session);
-        log.info(`ULW cycle=1 armed for: ${mandate.slice(0, 80)}`);
+        if (!wantJson) log.info(`ULW cycle=1 armed for: ${mandate.slice(0, 80)}`);
       }
       if (opts.goal) {
         armGoal(session.meta.id, String(opts.goal), "manual");
         session.meta.ultrawork = true;
         saveSession(session);
-        log.info("Goal armed:\n" + formatGoalStatus(loadGoal(session.meta.id)));
+        if (!wantJson) {
+          log.info("Goal armed:\n" + formatGoalStatus(loadGoal(session.meta.id)));
+        }
       }
 
       const hooks = new HookRunner(config, session.meta.cwd);
 
-      // Non-TTY or explicit prompt without interactive intent → single-shot
-      if (prompt && (!process.stdin.isTTY || process.env.FORGE_HEADLESS === "1")) {
+      // Non-TTY, FORGE_HEADLESS, or --json → single-shot
+      if (willHeadless && prompt) {
         const result = await runHeadless({
           config,
           provider,
           session,
           hooks,
           prompt,
-          // Bare `forge "…"` has no --json; stream tokens (runHeadless default).
-          json: false,
+          json: wantJson,
         });
+        if (wantJson) {
+          console.log(JSON.stringify(result, null, 2));
+        }
         if (result.timedOut) process.exitCode = 124;
         else if (result.aborted) process.exitCode = 130;
         else if (!result.finalText && result.turns === 0) process.exitCode = 1;
@@ -766,10 +807,10 @@ Docs: docs/PRODUCTION.md
     .command("auth")
     .description("Show authentication status")
     .option("--json", "Machine-readable JSON (never includes tokens)")
-    .action(async (opts) => {
+    .action(async (opts, command) => {
       const config = loadConfig();
       const auth = await resolveAuthFresh(config);
-      if (opts.json) {
+      if (flagJson(opts, command)) {
         const { nowEpoch } = await import("./util/fs.js");
         const now = nowEpoch();
         const creds = listCredentials().map((c) => {
@@ -1534,9 +1575,9 @@ Project instructions for Forge (and other coding agents).
     .command("models")
     .description("List known models for configured providers")
     .option("--json", "Machine-readable JSON")
-    .action((opts) => {
+    .action((opts, command) => {
       const config = loadConfig();
-      if (opts.json) {
+      if (flagJson(opts, command)) {
         const rows = Object.entries(config.providers).map(([id, p]) => ({
           provider: id,
           defaultModel: p.defaultModel || null,
@@ -1569,7 +1610,7 @@ Project instructions for Forge (and other coding agents).
     .option("--keep <n>", "Keep newest N files", "80")
     .option("--max-age-days <n>", "Also drop files older than N days", "14")
     .option("--json", "Machine-readable JSON")
-    .action((opts) => {
+    .action((opts, command) => {
       const before = toolOutputStats();
       const result = pruneToolOutputsSync({
         // 0 is valid (delete all eligible dumps)
@@ -1577,7 +1618,7 @@ Project instructions for Forge (and other coding agents).
         // 0 = no age filter; default 14 when unset/invalid
         maxAgeDays: parseKeepCount(opts.maxAgeDays, 14),
       });
-      if (opts.json) {
+      if (flagJson(opts, command)) {
         console.log(
           JSON.stringify(
             { ok: true, before, ...result, after: toolOutputStats() },
@@ -1601,11 +1642,11 @@ Project instructions for Forge (and other coding agents).
     .description("Prune ~/.forge/metrics.jsonl (keep newest N events)")
     .option("--keep <n>", "Keep newest N events", "500")
     .option("--json", "Machine-readable JSON")
-    .action((opts) => {
+    .action((opts, command) => {
       const before = metricsStats();
       // 0 is valid at CLI; pruneMetrics floors to ≥1 internally
       const result = pruneMetrics({ keep: parseKeepCount(opts.keep, 500) });
-      if (opts.json) {
+      if (flagJson(opts, command)) {
         console.log(JSON.stringify({ ok: true, before, ...result }, null, 2));
         return;
       }
@@ -1623,13 +1664,13 @@ Project instructions for Forge (and other coding agents).
     .option("-n, --lines <n>", "Number of recent events", "30")
     .option("--path", "Print log file path only")
     .option("--json", "Machine-readable JSON { ok, path, count, limit, events }")
-    .action(async (opts) => {
+    .action(async (opts, command) => {
       if (opts.path) {
         console.log(sandboxLogPath());
         return;
       }
       const n = Math.min(200, Math.max(1, Number(opts.lines) || 30));
-      if (opts.json) {
+      if (flagJson(opts, command)) {
         const { readSandboxLogTail } = await import("./agent/sandbox-log.js");
         const events = readSandboxLogTail(n);
         console.log(
@@ -1659,11 +1700,12 @@ Project instructions for Forge (and other coding agents).
     .option("-p, --provider <provider>", "Provider override")
     .option("-m, --model <model>", "Model override")
     .option("--cwd <path>", "Workspace", process.cwd())
-    .action((opts) => {
-      const config = buildConfig(opts);
+    .action((opts, command) => {
+      const wantJson = flagJson(opts, command);
+      const config = buildConfig({ ...opts, json: wantJson });
       console.log(
         formatEffectiveConfig(config, {
-          json: Boolean(opts.json),
+          json: wantJson,
         }),
       );
     });
@@ -1675,12 +1717,12 @@ Project instructions for Forge (and other coding agents).
     )
     .option("--days <n>", "Only metrics from the last N days (default: all)")
     .option("--json", "Machine-readable JSON")
-    .action((opts) => {
+    .action((opts, command) => {
       const daysRaw = opts.days != null ? Number(opts.days) : 0;
       const days =
         Number.isFinite(daysRaw) && daysRaw > 0 ? Math.floor(daysRaw) : 0;
       const stats = collectUsageStats({ days });
-      if (opts.json) {
+      if (flagJson(opts, command)) {
         console.log(JSON.stringify({ ok: true, ...stats }, null, 2));
         return;
       }
@@ -1705,26 +1747,35 @@ Project instructions for Forge (and other coding agents).
     .description("What's new — highlights from packaged CHANGELOG.md")
     .argument("[count]", "How many recent releases to show (default 1)", "1")
     .option("--json", "Machine-readable JSON releases")
-    .action((countArg: string, opts: { json?: boolean }) => {
-      const n = Math.max(1, Math.min(10, parseInt(String(countArg || "1"), 10) || 1));
-      if (opts.json) {
-        const releases = loadChangelogReleases().slice(0, n);
-        console.log(
-          JSON.stringify(
-            {
-              ok: true,
-              version: getForgeVersion(),
-              count: releases.length,
-              releases,
-            },
-            null,
-            2,
-          ),
+    .action(
+      (
+        countArg: string,
+        opts: { json?: boolean },
+        command?: { optsWithGlobals?: () => Record<string, unknown> },
+      ) => {
+        const n = Math.max(
+          1,
+          Math.min(10, parseInt(String(countArg || "1"), 10) || 1),
         );
-        return;
-      }
-      console.log(formatWhatsNew({ count: n }));
-    });
+        if (flagJson(opts as Record<string, unknown>, command)) {
+          const releases = loadChangelogReleases().slice(0, n);
+          console.log(
+            JSON.stringify(
+              {
+                ok: true,
+                version: getForgeVersion(),
+                count: releases.length,
+                releases,
+              },
+              null,
+              2,
+            ),
+          );
+          return;
+        }
+        console.log(formatWhatsNew({ count: n }));
+      },
+    );
 
   program
     .command("doctor")
@@ -1732,9 +1783,10 @@ Project instructions for Forge (and other coding agents).
     .option("-p, --provider <provider>", "Provider override")
     .option("--cwd <path>", "Workspace", process.cwd())
     .option("--json", "Machine-readable summary on stdout")
-    .action((opts) => {
-      const config = buildConfig(opts);
-      if (opts.json) {
+    .action((opts, command) => {
+      const wantJson = flagJson(opts, command);
+      const config = buildConfig({ ...opts, json: wantJson });
+      if (wantJson) {
         const check = runDoctorCheck(config);
         const auth = resolveAuth(config);
         let sessionCount = 0;
@@ -2073,6 +2125,22 @@ function failInvalidFlag(
   process.exit(1);
 }
 
+/**
+ * Parent and subcommands both define `--json`. Commander may attach the flag
+ * to the parent only (`forge auth --json` → parent.json=true, local.json=false).
+ * Prefer local, then optsWithGlobals.
+ */
+function flagJson(
+  opts: Record<string, unknown> | undefined,
+  command?: {
+    optsWithGlobals?: () => Record<string, unknown>;
+  },
+): boolean {
+  if (opts && Boolean(opts.json)) return true;
+  const g = command?.optsWithGlobals?.() || {};
+  return Boolean(g.json);
+}
+
 function buildConfig(opts: Record<string, unknown>): ForgeConfig {
   const cwd = path.resolve(String(opts.cwd || process.cwd()));
   const overrides: Partial<ForgeConfig> = { workspace: cwd };
@@ -2205,19 +2273,34 @@ function resolveSession(
      * Still respects --new and --session.
      */
     continue?: boolean;
+    /** Structured stdout on session miss (bare forge --json). */
+    json?: boolean;
   },
 ) {
   if (opts.session) {
     const s = loadSession(opts.session);
     if (!s) {
-      log.error(formatSessionLookupMiss(opts.session));
+      const miss = formatSessionLookupMiss(opts.session);
+      if (opts.json) {
+        console.log(
+          JSON.stringify({
+            ok: false,
+            reason: "session_not_found",
+            session: String(opts.session),
+            error: miss,
+          }),
+        );
+      } else {
+        log.error(miss);
+      }
       process.exit(1);
     }
     if (typeof opts.title === "string" && opts.title.trim()) {
       setSessionTitle(s, opts.title);
     }
     // Explicit --session (interactive): same orientation peek as auto-resume.
-    if (opts.autoResume || opts.continue) {
+    // Quiet under --json so CI stdout stays a single JSON object.
+    if ((opts.autoResume || opts.continue) && !opts.json) {
       try {
         const title = s.meta.title || "untitled";
         log.info(
@@ -2277,17 +2360,19 @@ function resolveSession(
             flags.push("ULW");
           }
           const flagNote = flags.length ? ` · ${flags.join(" · ")}` : "";
-          log.info(
-            `Resumed ${s.meta.id.slice(0, 8)} — ${title} (${s.messages.length} msgs)${flagNote}${skipNote}. Use --new for a fresh session.`,
-          );
-          // Orient experts immediately after same-cwd auto-resume.
-          try {
-            const peek = formatResumeOrientation(s);
-            if (peek) {
-              log.dim(`${peek}\n(/last 3 for more · /retry to re-run)`);
+          if (!opts.json) {
+            log.info(
+              `Resumed ${s.meta.id.slice(0, 8)} — ${title} (${s.messages.length} msgs)${flagNote}${skipNote}. Use --new for a fresh session.`,
+            );
+            // Orient experts immediately after same-cwd auto-resume.
+            try {
+              const peek = formatResumeOrientation(s);
+              if (peek) {
+                log.dim(`${peek}\n(/last 3 for more · /retry to re-run)`);
+              }
+            } catch {
+              /* never block resume on peek */
             }
-          } catch {
-            /* never block resume on peek */
           }
           // Keep provider/model from live config when CLI/prefs differ, but preserve session history
           if (config.model && s.meta.model !== config.model) {
@@ -2299,10 +2384,12 @@ function resolveSession(
           return s;
         }
       } else if (hit && hit.skippedLocked > 0) {
-        log.info(
-          `Starting fresh session — ${hit.skippedLocked} same-cwd session${hit.skippedLocked === 1 ? "" : "s"} locked by other process(es). Use --session <id> to attach anyway.`,
-        );
-      } else if (opts.continue) {
+        if (!opts.json) {
+          log.info(
+            `Starting fresh session — ${hit.skippedLocked} same-cwd session${hit.skippedLocked === 1 ? "" : "s"} locked by other process(es). Use --session <id> to attach anyway.`,
+          );
+        }
+      } else if (opts.continue && !opts.json) {
         log.dim("No prior same-cwd session to continue — starting fresh.");
       }
     } catch {

@@ -6,7 +6,7 @@ export function shellCompletionScript(shell: string): string {
   const runFlags =
     "--json --ulw --permission-mode --model --provider --base-url --goal --session --continue --new --title --sandbox --sandbox-network --sandbox-missing --deny --allow --ask --cwd --effort";
   const topFlags =
-    "--new --session --title --model --provider --permission-mode --ulw --goal --cwd --sandbox --help --version";
+    "--new --session --continue --title --json --model --provider --permission-mode --ulw --goal --cwd --sandbox --help --version";
   const sessionsActions =
     "list show path export import fork pin unpin title rename delete prune";
   const sessionsFlags =
@@ -114,9 +114,10 @@ export function shellCompletionScript(shell: string): string {
       'complete -c forge -l sandbox -d "OS sandbox profile"',
       'complete -c forge -l ulw -d "Ultrawork"',
       'complete -c forge -l goal -d "Arm /goal"',
-      'complete -c forge -l json -d "JSON output"',
+      'complete -c forge -l json -d "JSON output (headless bare forge parity with run --json)"',
       'complete -c forge -l new -d "Force a new session (skip same-cwd auto-resume)"',
       'complete -c forge -l session -d "Resume session id/prefix"',
+      'complete -c forge -l continue -d "Resume newest same-cwd session (headless bare forge)"',
       'complete -c forge -l title -d "Label for a new session"',
       'complete -c forge -l cwd -d "Workspace directory"',
       // run subcommand
@@ -226,7 +227,7 @@ export function shellCompletionScript(shell: string): string {
     '    logout) COMPREPLY=( $(compgen -W "--provider --json" -- "$cur") ) ;;',
     '    completion) COMPREPLY=( $(compgen -W "bash zsh fish" -- "$cur") ) ;;',
     '    prune-tool-output|prune-metrics) COMPREPLY=( $(compgen -W "--json --keep" -- "$cur") ) ;;',
-    '    --new|--session|--model|--provider|--permission-mode|--ulw|--goal|--cwd|--sandbox|--help|--version)',
+    '    --new|--session|--continue|--title|--json|--model|--provider|--permission-mode|--ulw|--goal|--cwd|--sandbox|--help|--version)',
     '      COMPREPLY=( $(compgen -W "$top_flags" -- "$cur") ) ;;',
     "  esac",
     "}",

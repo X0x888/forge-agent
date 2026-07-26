@@ -42,6 +42,7 @@ forge logs -n 50 --json      # machine-readable safety log
 forge config --json          # effective config snapshot (no secrets)
 forge run "next" --continue --json   # headless same-cwd resume (no session id)
 forge "next" --continue              # bare headless same-cwd resume (parity)
+forge "next" --json                  # bare headless JSON (same payload as forge run --json)
 # REPL: /share · /files · /pin · /stats · /tips · /news · /retry [prompt] · /last [n]
 # REPL: /undo [n] · /init · /review · /compact-and · /fork-and-compact · /logs [n|path] · /config [json]
 # Resume (bare forge / /resume) peeks last turn + mutated files
@@ -142,7 +143,9 @@ forge run "fix tests and open a PR description" \
 # Optional ULW: FORGE_ULW_MAX_CONTINUES=300
 ```
 
-### `forge run --json` success shape
+### `forge run --json` / bare `forge "…" --json` success shape
+
+Same payload for `forge run "…" --json` and bare `forge "…" --json` (parent `--json` forces headless even on a TTY). Early failures share `reason=empty_prompt|unauthenticated|session_not_found|locked|…`.
 
 ```json
 {
