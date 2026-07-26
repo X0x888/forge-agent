@@ -173,6 +173,12 @@ export const COMMAND_PARAMS: Record<string, ParamChoice[]> = {
       description: "Optional title for the new session (searchable)",
     },
   ],
+  clear: [
+    {
+      value: "hard",
+      description: "Brand-new session id (drop history + ULW; same as /new)",
+    },
+  ],
   resume: [
     { value: "all", description: "List sessions from every workspace", aliases: ["global", "-a"] },
     {

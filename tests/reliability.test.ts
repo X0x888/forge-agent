@@ -1739,6 +1739,39 @@ describe("session prune", () => {
     assert.equal(found[0]!.id, r.replaceSession!.meta.id);
   });
 
+  it("/clear hard creates a fresh session id without ultrawork", async () => {
+    const fs = await import("node:fs");
+    const os = await import("node:os");
+    const path = await import("node:path");
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-clear-hard-"));
+    process.env.FORGE_HOME = tmp;
+    const { createSession } = await import("../src/session/session.js");
+    const { handleSlash } = await import("../src/commands/slash.js");
+    const { DEFAULT_CONFIG } = await import("../src/config/types.js");
+    const { HookRunner } = await import("../src/harness/hooks.js");
+    const { armUlwCycle, loadUlwCycle } = await import(
+      "../src/harness/ulw-cycle.js"
+    );
+    const current = createSession({ cwd: tmp, provider: "xai", model: "m" });
+    current.meta.ultrawork = true;
+    armUlwCycle(current.meta.id, "keep going", { cycle: 1 });
+    current.messages.push({ role: "user", content: "old work" });
+    const hooks = new HookRunner(DEFAULT_CONFIG, tmp);
+    const r = await handleSlash("/clear hard", {
+      session: current,
+      config: { ...DEFAULT_CONFIG, workspace: tmp },
+      hooks,
+    });
+    assert.equal(r.handled, true);
+    assert.ok(r.replaceSession);
+    assert.notEqual(r.replaceSession!.meta.id, current.meta.id);
+    assert.equal(r.replaceSession!.meta.ultrawork, false);
+    assert.equal(r.replaceSession!.messages.length, 0);
+    // Old session ULW sidecar untouched
+    assert.equal(loadUlwCycle(current.meta.id)?.enabled, true);
+    assert.equal(loadUlwCycle(r.replaceSession!.meta.id), null);
+  });
+
   it("/resume warns on foreign live lock", async () => {
     const fs = await import("node:fs");
     const os = await import("node:os");

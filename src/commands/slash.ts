@@ -2745,8 +2745,9 @@ Forge slash commands
   /pin [on|off|toggle]  Protect session from prune (/unpin)  [live]
   /tips                 Expert keyboard / CI cheat sheet  [live]
   /news [n]             What's new from CHANGELOG (/changelog)  [live]
-  /new [title]          Fresh session (optional searchable label)
-  /clear                Clear messages (same session)
+  /new [title]          Fresh session (optional searchable label; ULW not inherited)
+  /clear                Clear messages same id (counters+journal reset)
+  /clear hard           Brand-new session id (same as /new; ULW not inherited)
   /resume [id|title|all] Resume by id prefix or unique /title (same-cwd picker)
   /sessions [all|search|delete|prune]  List (cwd default) / search / delete [--force] / prune
   /auth                 Show stored credentials  [live]
