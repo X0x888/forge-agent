@@ -6,6 +6,8 @@ Production recovery, review, and onboarding learned from OpenCode (snapshot/reve
 
 ### Loop hygiene
 - **content_filter / empty-response continues**: check stop-continue cap **before** injecting steerage user messages (avoids orphan prompts when releasing at cap; parity with `finish_reason=length`); empty-at-cap sets a clear `finalText` for headless JSON
+- **length / stop-continue cap release notes**: truncated-at-cap appends a Forge note to `finalText`; stop-cap with blank assistant text no longer returns empty headless JSON
+- **`list_dir` file-path error**: reports "not a directory" instead of "Directory not found" (parity with `glob`)
 
 ### Recovery (disk + chat)
 - **File mutation journal**: successful `write_file` / `search_replace` / `apply_patch` ops append pre-images to `~/.forge/sessions/<id>/mutations.jsonl` (mode `0600`, ~1.5 MiB cap per body)

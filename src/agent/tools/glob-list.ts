@@ -61,12 +61,28 @@ export async function toolListDir(
 ): Promise<ToolResult> {
   const rel = String(args.path || ".");
   const dir = resolvePath(ctx.workspace, rel);
-  let entries;
+  // Distinguish missing path vs file-not-dir (parity with glob) so the model
+  // does not thrash on "not found" when it passed a file path by mistake.
   try {
-    entries = await fsp.readdir(dir, { withFileTypes: true });
+    const st = await fsp.stat(dir);
+    if (!st.isDirectory()) {
+      return {
+        output: `list_dir path is not a directory: ${rel}`,
+        isError: true,
+      };
+    }
   } catch {
     const hint = await pathNotFoundHint(dir, ctx.workspace);
     return { output: `Directory not found: ${rel}\n${hint}`, isError: true };
+  }
+  let entries;
+  try {
+    entries = await fsp.readdir(dir, { withFileTypes: true });
+  } catch (err) {
+    return {
+      output: `list_dir failed: ${(err as Error).message}`,
+      isError: true,
+    };
   }
   entries.sort((a, b) => {
     if (a.isDirectory() !== b.isDirectory()) return a.isDirectory() ? -1 : 1;

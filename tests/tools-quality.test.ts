@@ -371,6 +371,17 @@ describe("glob / list_dir missing paths", () => {
     assert.equal(listed.isError, true);
     assert.match(listed.output, /Directory not found/i);
 
+    // File path must not look like "not found" (models thrash on wrong recovery)
+    await fsp.writeFile(path.join(ws, "src", "only-file.ts"), "export {};\n");
+    const fileAsDir = await executeTool(
+      "list_dir",
+      JSON.stringify({ path: "src/only-file.ts" }),
+      ctx,
+    );
+    assert.equal(fileAsDir.isError, true);
+    assert.match(fileAsDir.output, /not a directory/i);
+    assert.doesNotMatch(fileAsDir.output, /Directory not found/i);
+
     const grepped = await executeTool(
       "grep",
       JSON.stringify({ pattern: "foo", path: "srcx" }),

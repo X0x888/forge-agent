@@ -685,6 +685,17 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
         stopContinues += 1;
         if (stopContinues > maxStopContinues) {
           log.warn("max_tokens continuation cap reached — releasing");
+          // Headless JSON / CI: surface that we released on a truncated answer,
+          // not a clean completion (parity with empty-response / content_filter).
+          const capNote =
+            "[Forge] Output stayed truncated until the continue cap; releasing. Raise max_tokens or continue in a follow-up.";
+          if ((finalText || "").trim()) {
+            if (!finalText.includes("[Forge] Output stayed truncated")) {
+              finalText = `${finalText.replace(/\s+$/, "")}\n\n${capNote}`;
+            }
+          } else {
+            finalText = capNote;
+          }
           break;
         }
         log.info(
@@ -789,6 +800,13 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
           log.warn(
             `Stop-continue cap (${maxStopContinues}) reached — releasing to prevent infinite loop`,
           );
+          // Avoid blank headless finalText when the last assistant turn was
+          // tools-only or empty and the harness kept blocking until the cap.
+          if (!(finalText || "").trim()) {
+            finalText =
+              `[Forge] Stop-continue cap (${maxStopContinues}) reached — releasing to prevent infinite loop. ` +
+              `Use /cycle 0, /done, or /ulw-off if the harness is still blocking progress.`;
+          }
           break;
         }
 
