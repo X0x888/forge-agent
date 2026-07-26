@@ -1691,7 +1691,10 @@ export async function handleSlash(
               : `Usage: /resume <id-prefix|title>  ·  ${scope}\n\nRecent:\n${list
                   .map((s) => {
                     const lock = readSessionLock(s.id);
-                    const lockNote = lock ? `  LOCK pid ${lock.pid}` : "";
+                    const lockNote =
+                lock && sessionHasForeignLiveLock(s.id)
+                  ? `  LOCK pid ${lock.pid}`
+                  : "";
                     const cwdNote =
                       showAll && s.cwd ? `  ${path.basename(s.cwd)}` : "";
                     const age = formatRelativeTime(s.updatedAt).padStart(8);
@@ -1855,7 +1858,10 @@ export async function handleSlash(
           list
             .map((s) => {
               const lock = readSessionLock(s.id);
-              const lockNote = lock ? `  LOCK pid ${lock.pid}` : "";
+              const lockNote =
+                lock && sessionHasForeignLiveLock(s.id)
+                  ? `  LOCK pid ${lock.pid}`
+                  : "";
               const active =
                 s.id === opts.session.meta.id ||
                 opts.session.meta.id.startsWith(s.id.slice(0, 8))
