@@ -63,6 +63,7 @@ What experts should expect from Forge in long, unattended, or CI runs.
 | **Empty assistant** | Nudges the model to continue rather than stopping on a blank turn; **cap checked before** nudge inject; **at cap** sets non-empty `finalText` |
 | **Stop-continue cap** | When harness keeps blocking Stop until the shared cap, empty `finalText` gets an explicit release message (tools-only last turn); loop sets `releasedOnContinueCap` (headless JSON + metrics) for CI visibility |
 | **maxTurns** | `max_turns = 0` (default) is **unlimited**; positive values cap agent turns. Hitting the cap sets `hitMaxTurns` + annotates `finalText` (clean Stop on the final allowed turn is **not** flagged) |
+| **finishReason** | Last provider `finish_reason` on `LoopResult` / headless JSON (`stop`, `length`, `content_filter`, `tool_calls`, …) or `null` if no model turn; mid-run catch adds `reason=error\|timeout\|aborted` |
 | **Headless SIGINT/SIGTERM** | `forge run` aborts the in-flight loop cleanly (exit 130 when aborted) |
 | **Headless session resume** | `forge run … --session <id>` continues a prior headless/REPL session (multi-step CI) |
 | **Headless wall-clock** | Optional `FORGE_MAX_RUN_MS` aborts the run (exit 124; JSON `timedOut: true`) |

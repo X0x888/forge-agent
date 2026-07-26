@@ -353,7 +353,7 @@ Exit codes:
 
 --json early failures (stdout, still exit ≠0): { ok:false, reason, error, … }
   reason=empty_prompt | unauthenticated | session_not_found | locked
-  | error | timeout | aborted  (mid-run catch path)
+  | invalid_effort | error | timeout | aborted  (mid-run catch path)
 
 Empty prompts exit 1 before auth/session create (no orphan sessions, no API spend).
 --session/--new/--title work on parent or subcommand (optsWithGlobals merge).
@@ -1742,9 +1742,19 @@ function buildConfig(opts: Record<string, unknown>): ForgeConfig {
     if (effortRaw != null && String(effortRaw).trim()) {
       const e = parseReasoningEffort(String(effortRaw));
       if (!e) {
-        log.error(
-          `Invalid --effort "${effortRaw}". Use low, medium, or high.`,
-        );
+        const msg = `Invalid --effort "${effortRaw}". Use low, medium, or high.`;
+        if (opts.json) {
+          console.log(
+            JSON.stringify({
+              ok: false,
+              reason: "invalid_effort",
+              effort: String(effortRaw),
+              error: msg,
+            }),
+          );
+        } else {
+          log.error(msg);
+        }
         process.exit(1);
       }
       overrides.reasoningEffort = e;

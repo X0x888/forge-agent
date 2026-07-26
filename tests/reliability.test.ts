@@ -2150,5 +2150,22 @@ describe("forge run --json early failures (CLI)", () => {
     assert.equal(usageJson.ok, false);
     assert.equal(usageJson.reason, "usage");
     assert.match(String(usageJson.error || ""), /title/);
+
+    const badEffort = spawnSync(
+      process.execPath,
+      [cli, "run", "--json", "--effort", "nope", "hi"],
+      {
+        env: {
+          ...env,
+          XAI_API_KEY: process.env.XAI_API_KEY || "sk-test-forge-cli",
+        },
+        encoding: "utf8",
+      },
+    );
+    assert.notEqual(badEffort.status, 0);
+    const effortJson = JSON.parse((badEffort.stdout || "").trim());
+    assert.equal(effortJson.ok, false);
+    assert.equal(effortJson.reason, "invalid_effort");
+    assert.equal(effortJson.effort, "nope");
   });
 });

@@ -26,6 +26,7 @@ Production recovery, review, and onboarding learned from OpenCode (snapshot/reve
 - **Bare `forge --continue`**: parent flag resumes newest same-cwd session for headless bare `forge "…"` (parity with `forge run --continue`; overrides `FORGE_NO_AUTO_RESUME`; `--title` relabels)
 - **`forge sessions * --json` usage misses**: missing args emit `{ ok:false, reason:usage, error }` (shared `failUsage`) instead of stderr-only text
 - **`finishReason` on headless JSON / `LoopResult`**: last provider `finish_reason` (or null); mid-run catch path adds `reason=error|timeout|aborted`
+- **`invalid_effort` JSON**: `forge run --json --effort nope` emits `{ ok:false, reason:invalid_effort, … }` instead of stderr-only
 
 ### Recovery (disk + chat)
 - **File mutation journal**: successful `write_file` / `search_replace` / `apply_patch` ops append pre-images to `~/.forge/sessions/<id>/mutations.jsonl` (mode `0600`, ~1.5 MiB cap per body)
