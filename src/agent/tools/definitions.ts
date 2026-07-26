@@ -182,7 +182,8 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       name: "glob",
       description:
         "Find files matching a glob pattern. Prefer over bash find. " +
-        "Missing search root is an error with path hints (not “No files matched”).",
+        "Missing search root is an error with path hints (not “No files matched”). " +
+        "If path points at a file, reports not a directory (not a false empty match).",
       parameters: {
         type: "object",
         properties: {
@@ -202,7 +203,8 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       name: "list_dir",
       description:
         "List entries in a directory (names + type). Prefer over bash ls. " +
-        "Missing directories error with path-not-found hints.",
+        "Missing directories error with path-not-found hints. " +
+        "File paths return “not a directory” (do not thrash on not-found recovery).",
       parameters: {
         type: "object",
         properties: {
