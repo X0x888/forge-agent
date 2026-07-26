@@ -17,6 +17,7 @@ import {
 } from "./goal.js";
 import { evaluateUlwAtStop, loadUlwCycle, type UlwStopDecision } from "./ulw-cycle.js";
 import { evaluateTodoGateAtStop } from "./todo-gate.js";
+import { envPositiveInt } from "../util/env.js";
 
 export interface StopGuardInput {
   config: ForgeConfig;
@@ -101,11 +102,12 @@ export async function runStopGuard(input: StopGuardInput): Promise<StopGuardResu
     };
   }
 
-  // ULW relentless cycle (even for soft prompts)
-  const stuckThreshold =
-    Number(process.env.FORGE_ULW_STUCK_THRESHOLD) ||
-    config.goal.stuckThreshold ||
-    5;
+  // ULW relentless cycle (even for soft prompts).
+  // Invalid/missing FORGE_ULW_STUCK_THRESHOLD falls back (0 is not a valid threshold).
+  const stuckThreshold = envPositiveInt(
+    "FORGE_ULW_STUCK_THRESHOLD",
+    config.goal.stuckThreshold > 0 ? config.goal.stuckThreshold : 5,
+  );
 
   const ulwDecision = evaluateUlwAtStop({
     sessionId: ctx.sessionId,

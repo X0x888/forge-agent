@@ -776,6 +776,7 @@ Docs: docs/PRODUCTION.md
           console.log(
             JSON.stringify(
               {
+                ok: true,
                 meta: s.meta,
                 todos: s.todos,
                 messageCount: s.messages.length,
@@ -1171,8 +1172,11 @@ Docs: docs/PRODUCTION.md
         console.log(
           JSON.stringify(
             {
+              ok: true,
               cwd: cwdFilter,
               query: queryFilter,
+              limit,
+              count: list.length,
               sessions: list.map((s) => {
                 const lock = readSessionLock(s.id);
                 const foreignLock = sessionHasForeignLiveLock(s.id);
