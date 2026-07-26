@@ -58,9 +58,9 @@ What experts should expect from Forge in long, unattended, or CI runs.
 | Behavior | Detail |
 |---|---|
 | **Threshold auto-compact** | When estimated request tokens exceed `context_window * auto_compact_threshold` (or 92% headroom) |
-| **`finish_reason=length`** | Continues generation instead of treating truncation as a final answer |
-| **`content_filter`** | Surfaces provider safety blocks and steers the model to narrow scope (no infinite retry of the same phrasing) |
-| **Empty assistant** | Nudges the model to continue rather than stopping on a blank turn |
+| **`finish_reason=length`** | Continues generation instead of treating truncation as a final answer (shared stop-continue cap) |
+| **`content_filter`** | Surfaces provider safety blocks and steers the model to narrow scope; **cap checked before** injecting steerage (no orphan user msgs on release) |
+| **Empty assistant** | Nudges the model to continue rather than stopping on a blank turn; **cap checked before** nudge inject |
 | **Headless SIGINT/SIGTERM** | `forge run` aborts the in-flight loop cleanly (exit 130 when aborted) |
 | **Headless session resume** | `forge run … --session <id>` continues a prior headless/REPL session (multi-step CI) |
 | **Headless wall-clock** | Optional `FORGE_MAX_RUN_MS` aborts the run (exit 124; JSON `timedOut: true`) |

@@ -4,6 +4,9 @@
 
 Production recovery, review, and onboarding learned from OpenCode (snapshot/revert, guided AGENTS.md, `/review`) and Warp (`/compact-and`).
 
+### Loop hygiene
+- **content_filter / empty-response continues**: check stop-continue cap **before** injecting steerage user messages (avoids orphan prompts when releasing at cap; parity with `finish_reason=length`)
+
 ### Recovery (disk + chat)
 - **File mutation journal**: successful `write_file` / `search_replace` / `apply_patch` ops append pre-images to `~/.forge/sessions/<id>/mutations.jsonl` (mode `0600`, ~1.5 MiB cap per body)
 - **`/undo` / `/rewind [n]`**: rewinds chat **and** restores journaled files for those turns (create→unlink, update/delete→pre-image)

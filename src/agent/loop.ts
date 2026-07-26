@@ -717,6 +717,12 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
         finalText =
           finalText ||
           `[Forge] The provider blocked this response (finish_reason=${finishReason}). Rephrase the request or continue with a narrower scope.`;
+        stopContinues += 1;
+        // Cap check before injecting steerage — avoid orphan user msgs when releasing.
+        if (stopContinues > maxStopContinues) {
+          log.warn("content-filter continue cap reached — releasing");
+          break;
+        }
         // Inject steerage and continue the loop (skip Stop) so ULW/goal keep driving
         // with a narrower approach rather than spinning on the same blocked phrasing.
         session.messages.push({
@@ -726,8 +732,6 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
             `Do not retry the same phrasing. Narrow scope, avoid disallowed content, and continue the legitimate engineering task with tools.`,
         });
         saveSession(session);
-        stopContinues += 1;
-        if (stopContinues > maxStopContinues) break;
         events.onPhase?.("thinking");
         continue;
       }
@@ -738,7 +742,10 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
         !(finalText || "").trim()
       ) {
         stopContinues += 1;
-        if (stopContinues > maxStopContinues) break;
+        if (stopContinues > maxStopContinues) {
+          log.warn("empty-response continue cap reached — releasing");
+          break;
+        }
         log.warn(
           `Empty model response (finish_reason=${finishReason || "unknown"}) — nudging continue #${stopContinues}`,
         );
