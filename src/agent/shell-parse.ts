@@ -43,6 +43,8 @@ export function splitShellSegments(command: string): string[] {
   let cur = "";
   let quote: '"' | "'" | null = null;
   let escaped = false;
+  /** Active heredoc delimiter (unquoted form); newlines inside are not segment breaks. */
+  let heredocDelim: string | null = null;
 
   const push = () => {
     const t = cur.trim();
@@ -52,6 +54,29 @@ export function splitShellSegments(command: string): string[] {
 
   for (let i = 0; i < s.length; i++) {
     const ch = s[i];
+
+    // Inside a heredoc body: only the closing delimiter line ends it.
+    if (heredocDelim) {
+      if (ch === "\n") {
+        cur += ch;
+        // Peek whether the next line is exactly the delimiter
+        let j = i + 1;
+        while (j < s.length && (s[j] === " " || s[j] === "\t")) j++;
+        const end = j + heredocDelim.length;
+        if (
+          s.slice(j, end) === heredocDelim &&
+          (end >= s.length || s[end] === "\n" || s[end] === "\r")
+        ) {
+          cur += s.slice(i + 1, end);
+          i = end - 1;
+          heredocDelim = null;
+        }
+        continue;
+      }
+      cur += ch;
+      continue;
+    }
+
     if (escaped) {
       cur += ch;
       escaped = false;
@@ -77,6 +102,43 @@ export function splitShellSegments(command: string): string[] {
       cur += ch;
       continue;
     }
+    // Heredoc start: <<[-]WORD or <<[-]'WORD' / <<"WORD"
+    if (ch === "<" && s[i + 1] === "<") {
+      cur += "<<";
+      i += 2;
+      if (s[i] === "-") {
+        cur += "-";
+        i++;
+      }
+      while (i < s.length && (s[i] === " " || s[i] === "\t")) {
+        cur += s[i];
+        i++;
+      }
+      let delim = "";
+      if (s[i] === "'" || s[i] === '"') {
+        const q = s[i];
+        cur += q;
+        i++;
+        while (i < s.length && s[i] !== q) {
+          delim += s[i];
+          cur += s[i];
+          i++;
+        }
+        if (i < s.length && s[i] === q) {
+          cur += q;
+          // i points at closing quote; loop will i++ via for
+        }
+      } else {
+        while (i < s.length && !/[\s|&;<>()]/.test(s[i])) {
+          delim += s[i];
+          cur += s[i];
+          i++;
+        }
+        i--; // compensate for for-loop increment
+      }
+      if (delim) heredocDelim = delim;
+      continue;
+    }
     // operators
     if (ch === "&" && s[i + 1] === "&") {
       push();
@@ -93,7 +155,7 @@ export function splitShellSegments(command: string): string[] {
       push();
       continue;
     }
-    // newlines as separators
+    // newlines as separators (outside heredoc)
     if (ch === "\n") {
       push();
       continue;
@@ -176,6 +238,183 @@ function shellQuoteToken(t: string): string {
   if (!t.includes("'")) return `'${t}'`;
   // Fallback: double-quote with escapes
   return `"${t.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\$/g, "\\$").replace(/`/g, "\\`")}"`;
+}
+
+/**
+ * Remove heredoc *bodies* (keep `<<DELIM` markers) so regex hard-deny does not
+ * treat commit messages / `cat <<EOF` payloads as executable shell.
+ * Shell-driven heredocs (`bash <<EOF`) should scan the body separately.
+ */
+export function stripHeredocBodies(command: string): string {
+  const s = command;
+  let out = "";
+  let quote: '"' | "'" | null = null;
+  let escaped = false;
+
+  const consumeHeredocFrom = (start: number): { text: string; end: number } | null => {
+    // start points at first `<` of `<<`
+    let i = start;
+    let text = "<<";
+    i += 2;
+    if (s[i] === "-") {
+      text += "-";
+      i++;
+    }
+    while (i < s.length && (s[i] === " " || s[i] === "\t")) {
+      text += s[i];
+      i++;
+    }
+    let delim = "";
+    if (s[i] === "'" || s[i] === '"') {
+      const q = s[i];
+      text += q;
+      i++;
+      while (i < s.length && s[i] !== q) {
+        delim += s[i];
+        text += s[i];
+        i++;
+      }
+      if (i < s.length && s[i] === q) {
+        text += q;
+        i++;
+      }
+    } else {
+      while (i < s.length && !/[\s|&;<>()]/.test(s[i])) {
+        delim += s[i];
+        text += s[i];
+        i++;
+      }
+    }
+    if (!delim) return null;
+    // rest of opener line
+    while (i < s.length && s[i] !== "\n") {
+      text += s[i];
+      i++;
+    }
+    if (i < s.length && s[i] === "\n") {
+      text += "\n";
+      i++;
+    }
+    // skip body lines; keep only closing delimiter line
+    while (i < s.length) {
+      let j = i;
+      while (j < s.length && (s[j] === " " || s[j] === "\t")) j++;
+      const end = j + delim.length;
+      if (
+        s.slice(j, end) === delim &&
+        (end >= s.length || s[end] === "\n" || s[end] === "\r")
+      ) {
+        text += s.slice(i, end);
+        i = end;
+        return { text, end: i - 1 };
+      }
+      while (i < s.length && s[i] !== "\n") i++;
+      if (i < s.length && s[i] === "\n") i++;
+    }
+    return { text, end: Math.max(start, i - 1) };
+  };
+
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i];
+    if (escaped) {
+      out += ch;
+      escaped = false;
+      continue;
+    }
+    if (quote === "'") {
+      if (ch === "'") quote = null;
+      out += ch;
+      continue;
+    }
+    if (quote === '"') {
+      if (ch === "\\") {
+        escaped = true;
+        out += ch;
+        continue;
+      }
+      if (ch === '"') {
+        quote = null;
+        out += ch;
+        continue;
+      }
+      // $(…) inside double quotes — strip heredocs inside the substitution
+      if (ch === "$" && s[i + 1] === "(") {
+        const body = readBalanced(s, i + 2, "(", ")");
+        if (body != null) {
+          out += "$(" + stripHeredocBodies(body.text) + ")";
+          i = body.end;
+          continue;
+        }
+      }
+      // Heredoc can appear inside "$( cat <<EOF … )" after we enter the sub;
+      // also handle rare unquoted << inside dq (not valid shell, skip).
+      out += ch;
+      continue;
+    }
+    if (ch === "\\") {
+      escaped = true;
+      out += ch;
+      continue;
+    }
+    if (ch === '"' || ch === "'") {
+      quote = ch;
+      out += ch;
+      continue;
+    }
+    // $(…) outside quotes
+    if (ch === "$" && s[i + 1] === "(") {
+      const body = readBalanced(s, i + 2, "(", ")");
+      if (body != null) {
+        out += "$(" + stripHeredocBodies(body.text) + ")";
+        i = body.end;
+        continue;
+      }
+    }
+    if (ch === "<" && s[i + 1] === "<") {
+      const h = consumeHeredocFrom(i);
+      if (h) {
+        out += h.text;
+        i = h.end;
+        continue;
+      }
+    }
+    out += ch;
+  }
+  return out;
+}
+
+/**
+ * If segment is `bash <<DELIM …`, return the heredoc body for safety scanning.
+ */
+export function peelShellHeredocBody(segment: string): string | null {
+  const parts = tokenizeSimple(stripEnvPrefixes(segment));
+  if (parts.length === 0) return null;
+  if (!SHELL_BINARIES.has(pathBase(parts[0]))) return null;
+  // Find <<DELIM in the raw segment
+  const m = segment.match(/<<(-?)\s*(?:'([^']+)'|"([^"]+)"|(\S+))/);
+  if (!m) return null;
+  const delim = m[2] || m[3] || m[4];
+  if (!delim) return null;
+  const startIdx = segment.indexOf(m[0]);
+  if (startIdx < 0) return null;
+  let i = startIdx + m[0].length;
+  while (i < segment.length && segment[i] !== "\n") i++;
+  if (i < segment.length && segment[i] === "\n") i++;
+  const bodyStart = i;
+  while (i < segment.length) {
+    let j = i;
+    while (j < segment.length && (segment[j] === " " || segment[j] === "\t")) j++;
+    const end = j + delim.length;
+    if (
+      segment.slice(j, end) === delim &&
+      (end >= segment.length || segment[end] === "\n" || segment[end] === "\r")
+    ) {
+      return segment.slice(bodyStart, i).trim() || null;
+    }
+    while (i < segment.length && segment[i] !== "\n") i++;
+    if (i < segment.length && segment[i] === "\n") i++;
+  }
+  return segment.slice(bodyStart).trim() || null;
 }
 
 /**
@@ -486,19 +725,25 @@ export function commandCheckTargets(command: string): string[] {
     seen.add(t);
     out.push(t);
   };
-  for (const s of segs) {
-    push(s);
-    // Nested bash -c / $(…) bodies after peel
-    for (const sub of extractCommandSubstitutions(s)) {
-      push(normalizeSegment(sub));
-      push(sub);
+  const pushScan = (raw: string) => {
+    // Strip heredoc *data* so `git commit` / `cat <<EOF` payloads are not
+    // mistaken for executable shell. Shell heredoc bodies are added below.
+    const stripped = stripHeredocBodies(raw);
+    push(normalizeSegment(stripped));
+    push(stripped);
+    const shBody = peelShellHeredocBody(raw);
+    if (shBody) {
+      push(normalizeSegment(shBody));
+      push(shBody);
     }
+    for (const sub of extractCommandSubstitutions(raw)) {
+      pushScan(sub);
+    }
+  };
+  for (const s of segs) {
+    pushScan(s);
   }
-  push(full);
-  for (const sub of extractCommandSubstitutions(full)) {
-    push(normalizeSegment(sub));
-    push(sub);
-  }
+  pushScan(full);
   return out;
 }
 

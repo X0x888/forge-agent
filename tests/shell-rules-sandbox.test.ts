@@ -89,6 +89,20 @@ describe("shell segment parsing", () => {
     assert.equal(v2.ok, false, JSON.stringify(v2));
   });
 
+  it("heredoc data is not a false hard-deny; shell heredoc still is", () => {
+    const danger = "rm" + " -rf /";
+    // Document / commit message payloads must not trip catastrophic deny
+    const cat = checkBashHardDeny(`cat <<'EOF'\n${danger}\nEOF`);
+    assert.equal(cat.ok, true, JSON.stringify(cat));
+    const commit = checkBashHardDeny(
+      `git commit -m "$(cat <<'EOF'\nfix ${danger}\nEOF\n)"`,
+    );
+    assert.equal(commit.ok, true, JSON.stringify(commit));
+    // bash <<EOF actually executes the body — still deny
+    const sh = checkBashHardDeny(`bash <<'EOF'\n${danger}\nEOF`);
+    assert.equal(sh.ok, false, JSON.stringify(sh));
+  });
+
   it("hard deny sees bad segment in chain", () => {
     const v = checkBashHardDeny("ls && rm -rf /");
     assert.equal(v.ok, false);
