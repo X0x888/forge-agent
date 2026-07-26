@@ -13,7 +13,7 @@ Production recovery, review, and onboarding learned from OpenCode (snapshot/reve
 - **`max_turns = 0` is unlimited**: no longer silently capped at 200 (matches default config.toml comment); `/config` + doctor show `unlimited`; `forge config --json` includes `maxTurnsUnlimited`
 - **`forge sessions title <id> <name|clear>`**: headless relabel (parity with `/title`; multi-word labels joined; searchable via list `-q`)
 - **Doom-loop fingerprint**: ignore `background` / `stream` / `tail` / `allow_local` (plus existing timeout fields) so transport-only retries still trip; RELIABILITY docs updated
-- **`forge sessions pin|title` foreign-lock warn**: headless pin/title mutations warn (and JSON includes `foreignLock`) when another live process holds `session.lock`
+- **`forge sessions pin|title|fork` foreign-lock warn**: headless pin/title/fork warn (JSON: `foreignLock` / `sourceForeignLock`) when another live process holds `session.lock`
 
 ### Recovery (disk + chat)
 - **File mutation journal**: successful `write_file` / `search_replace` / `apply_patch` ops append pre-images to `~/.forge/sessions/<id>/mutations.jsonl` (mode `0600`, ~1.5 MiB cap per body)

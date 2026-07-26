@@ -885,6 +885,15 @@ Docs: docs/PRODUCTION.md
           log.error(formatSessionLookupMiss(target));
           process.exit(1);
         }
+        const sourceForeignLock = sessionHasForeignLiveLock(s.meta.id);
+        if (sourceForeignLock && !globalOpts.json) {
+          const lock = readSessionLock(s.meta.id);
+          log.warn(
+            `Source session has a foreign live lock` +
+              (lock ? ` (${formatLockHolder(lock)})` : "") +
+              ` — fork snapshot may be mid-write`,
+          );
+        }
         const forked = forkSession(s);
         if (globalOpts.json) {
           console.log(
@@ -894,6 +903,7 @@ Docs: docs/PRODUCTION.md
               id: forked.meta.id,
               title: forked.meta.title,
               messageCount: forked.messages.length,
+              sourceForeignLock,
             }),
           );
         } else {
