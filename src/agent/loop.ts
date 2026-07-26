@@ -744,6 +744,8 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
         stopContinues += 1;
         if (stopContinues > maxStopContinues) {
           log.warn("empty-response continue cap reached — releasing");
+          finalText =
+            "[Forge] Model returned empty responses until the continue cap; releasing. Retry or narrow the request.";
           break;
         }
         log.warn(

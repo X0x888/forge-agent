@@ -272,9 +272,9 @@ Full contract: [docs/RELIABILITY.md](docs/RELIABILITY.md) · expert checklist: [
 | `/logs [n\|path]` | Tail sandbox/safety events (`forge logs`; live-safe; no secrets) |
 | `/config [json]` | Effective config snapshot (live-safe; no secrets) · CLI: `forge config` |
 | `/copy` | Clipboard last reply (pbcopy/wl-copy/xclip/…; live-safe) |
-| `/new` / `/clear` | Fresh or wipe conversation |
+| `/new [title]` | Fresh session (optional label; **does not** inherit ULW — re-arm with `/ulw`) |
+| `/clear` · `/clear hard` | Soft: wipe msgs/counters/journal same id · Hard: new session id |
 | `/resume [id\|title]` | Resume by id prefix or unique `/title` (lists show relative ages + last prompt) |
-| `/new [title]` | Fresh session with optional searchable label (`forge --title` / `forge run --title`) |
 | `/sessions` | List (same-cwd) · `all` · `pinned` · `search <q>` · `delete [--force]` · `prune` (CLI: `list --cwd`/`-q`/`--pinned`, `show`/`export`/`import`/`fork`/`pin`) |
 | `/doctor` | Env health check |
 | `/quit` | Exit |
