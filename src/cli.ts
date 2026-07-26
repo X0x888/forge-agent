@@ -622,11 +622,56 @@ Docs: docs/PRODUCTION.md
   program
     .command("auth")
     .description("Show authentication status")
-    .action(async () => {
-      printAuthStatus();
+    .option("--json", "Machine-readable JSON (never includes tokens)")
+    .action(async (opts) => {
       const config = loadConfig();
       const auth = await resolveAuthFresh(config);
+      if (opts.json) {
+        const { listCredentials } = await import("./auth/store.js");
+        const { nowEpoch } = await import("./util/fs.js");
+        const now = nowEpoch();
+        const creds = listCredentials().map((c) => {
+          const expired =
+            typeof c.expiresAt === "number" ? c.expiresAt < now : false;
+          return {
+            provider: c.provider,
+            method: c.method,
+            accountLabel: c.accountLabel || null,
+            subscription: c.subscription || null,
+            expiresAt: c.expiresAt
+              ? new Date(c.expiresAt * 1000).toISOString()
+              : null,
+            expired,
+            // Never dump accessToken / refreshToken / clientId
+          };
+        });
+        console.log(
+          JSON.stringify(
+            {
+              ok: true,
+              authenticated: Boolean(auth),
+              active: auth
+                ? {
+                    provider: auth.provider,
+                    method: auth.method,
+                    accountLabel: auth.accountLabel || null,
+                    baseUrl: auth.baseUrl || null,
+                    // token intentionally omitted
+                  }
+                : null,
+              description: describeAuth(auth),
+              stored: creds,
+            },
+            null,
+            2,
+          ),
+        );
+        if (!auth) process.exitCode = 1;
+        return;
+      }
+      printAuthStatus();
       console.log(`\nActive resolution: ${describeAuth(auth)}`);
+      if (!auth) process.exitCode = 1;
     });
 
   program

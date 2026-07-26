@@ -2173,6 +2173,36 @@ describe("forge run --json early failures (CLI)", () => {
     assert.match(String(missJson.session || ""), /zzz-no-such-id-ever-47/);
   });
 
+  it("forge auth --json never dumps tokens", async () => {
+    const { spawnSync } = await import("node:child_process");
+    const path = await import("node:path");
+    const fs = await import("node:fs");
+    const cli = path.join(process.cwd(), "dist", "cli.js");
+    if (!fs.existsSync(cli)) return;
+    const home = path.join(process.cwd(), ".tmp", `forge-auth-json-${process.pid}`);
+    fs.mkdirSync(home, { recursive: true });
+    const env = {
+      ...process.env,
+      FORGE_HOME: home,
+      // Ensure we can resolve something without real OAuth
+      XAI_API_KEY: "sk-test-auth-json-never-leak",
+    };
+    const r = spawnSync(process.execPath, [cli, "auth", "--json"], {
+      env,
+      encoding: "utf8",
+    });
+    assert.equal(r.status, 0);
+    const j = JSON.parse((r.stdout || "").trim());
+    assert.equal(j.ok, true);
+    assert.equal(j.authenticated, true);
+    assert.equal(j.active?.provider, "xai");
+    assert.equal(j.active?.method, "api_key");
+    // Hard guarantee: no secret material in the payload
+    const raw = JSON.stringify(j);
+    assert.doesNotMatch(raw, /sk-test-auth-json-never-leak/);
+    assert.doesNotMatch(raw, /"accessToken"|"refreshToken"|"token"\s*:/);
+  });
+
   it("parent --continue is documented; export --json invalid_format is structured", async () => {
     const { spawnSync } = await import("node:child_process");
     const path = await import("node:path");

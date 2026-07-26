@@ -42,6 +42,7 @@ Production recovery, review, and onboarding learned from OpenCode (snapshot/reve
 - **`read_file` `limit: 0` / `grep` `head_limit: 0`**: unlimited (was coerced to defaults via `Number(x)||n`); `forge news|models --json` and `/config json` include `ok:true`
 - **`forge logs|prune-*|sessions prune --json`**: structured `{ ok:true, … }` envelopes; `web_fetch`/`web_search` ignore 0/invalid timeout/num_results (keep defaults)
 - **`forge status --json`**: includes `ok`/`count`; `--session` miss → `{ ok:false, reason:session_not_found }` (exit 1) instead of empty HUD/array
+- **`forge auth --json`**: structured auth status (`ok`, `authenticated`, `active`, `stored[]`) — **never** dumps tokens; exit 1 when unauthenticated
 
 ### Recovery (disk + chat)
 - **File mutation journal**: successful `write_file` / `search_replace` / `apply_patch` ops append pre-images to `~/.forge/sessions/<id>/mutations.jsonl` (mode `0600`, ~1.5 MiB cap per body)
