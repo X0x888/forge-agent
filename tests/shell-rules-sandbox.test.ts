@@ -76,6 +76,19 @@ describe("shell segment parsing", () => {
     assert.equal(ok.ok, true);
   });
 
+  it("hard deny peels eval and xargs bash -c", () => {
+    assert.equal(peelWrappers(`eval "rm -rf /"`), "rm -rf /");
+    assert.equal(peelWrappers(`xargs bash -c "rm -rf /"`), "rm -rf /");
+    assert.equal(
+      peelWrappers(`xargs -I{} bash -c "rm -rf /"`),
+      "rm -rf /",
+    );
+    const v = checkBashHardDeny(`eval "rm -rf /"`);
+    assert.equal(v.ok, false, JSON.stringify(v));
+    const v2 = checkBashHardDeny(`xargs -I{} bash -c "rm -rf /"`);
+    assert.equal(v2.ok, false, JSON.stringify(v2));
+  });
+
   it("hard deny sees bad segment in chain", () => {
     const v = checkBashHardDeny("ls && rm -rf /");
     assert.equal(v.ok, false);

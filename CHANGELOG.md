@@ -54,6 +54,7 @@ Production recovery, review, and onboarding learned from OpenCode (snapshot/reve
 - **`apply_patch` Move to existing path**: refuse when destination file/dir already exists (was silent clobber; undo journaled create could not restore prior dest body)
 - **Shell hard-deny peels `bash -c` / `sh -c` and `$(…)` / `` `…` ``**: `bash -c "rm -rf /"` and `echo $(rm -rf /)` no longer bypass catastrophic deny (peelWrappers + commandCheckTargets)
 - **`env`/`timeout` + `bash -c`**: re-join peeled tokens with shell quoting so multi-word `-c` bodies stay intact (`/usr/bin/env bash -c "rm -rf /"` no longer peels to bare `rm`)
+- **`eval` / `xargs … bash -c` peels + runtime `system`/`execSync` rm-root**: hard-deny catches `eval "rm -rf /"`, `xargs bash -c "rm -rf /"`, and language-runtime shell deletes of `/` or `$HOME`
 
 ### Recovery (disk + chat)
 - **File mutation journal**: successful `write_file` / `search_replace` / `apply_patch` ops append pre-images to `~/.forge/sessions/<id>/mutations.jsonl` (mode `0600`, ~1.5 MiB cap per body)

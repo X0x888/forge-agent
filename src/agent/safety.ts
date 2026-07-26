@@ -132,6 +132,17 @@ const HARD_DENY: Array<{ rule: string; re: RegExp; reason: string }> = [
     re: /\b(rmSync|rmdirSync|rmtree)\b[\s\S]{0,80}(?:\\?["'`])\/(?:\\?["'`])[\s\S]{0,80}recursive\s*:\s*true/,
     reason: "Refusing language-runtime recursive delete of filesystem root",
   },
+  {
+    // node/python/perl/ruby/php/lua spawning shell rm -rf /
+    rule: "runtime-system-rm-root",
+    re: /\b(system|execSync|exec\s*\(|spawnSync|os\.system|os\.execute|popen)\b[\s\S]{0,120}\brm\b[\s\S]{0,40}(-[a-zA-Z]*r[a-zA-Z]*f[a-zA-Z]*|-[a-zA-Z]*f[a-zA-Z]*r[a-zA-Z]*|--recursive)[\s\S]{0,40}(?:\\?["'`])?\/(?:\\?["'`])?/,
+    reason: "Refusing language-runtime shell recursive delete of filesystem root",
+  },
+  {
+    rule: "runtime-system-rm-home",
+    re: /\b(system|execSync|exec\s*\(|spawnSync|os\.system|os\.execute|popen)\b[\s\S]{0,120}\brm\b[\s\S]{0,40}(-[a-zA-Z]*r[a-zA-Z]*f[a-zA-Z]*|-[a-zA-Z]*f[a-zA-Z]*r[a-zA-Z]*)[\s\S]{0,40}(~|\$\{?HOME\}?)/,
+    reason: "Refusing language-runtime shell recursive delete of home",
+  },
 ];
 
 export const SOFT_DANGEROUS: RegExp[] = [

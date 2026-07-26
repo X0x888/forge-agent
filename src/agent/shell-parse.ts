@@ -307,9 +307,71 @@ function readBalanced(
   return { text: s.slice(start, i - 1), end: i - 1 };
 }
 
+/**
+ * Peel `eval '…'` / `eval "…"` so hard-deny sees the evaluated script.
+ */
+export function peelEval(segment: string): string | null {
+  const parts = tokenizeSimple(stripEnvPrefixes(segment));
+  if (parts.length < 2) return null;
+  if (pathBase(parts[0]) !== "eval") return null;
+  // Tokens are already unquoted. Do NOT shellJoin — that would re-quote
+  // `rm -rf /` as a single `'rm -rf /'` token and hide the rm hard-deny.
+  return parts.slice(1).join(" ").trim() || null;
+}
+
+/**
+ * Peel `xargs [flags] bash -c '…'` so the shell -c body is visible.
+ * Conservative: only when a shell binary appears after xargs options.
+ */
+export function peelXargsShell(segment: string): string | null {
+  const parts = tokenizeSimple(stripEnvPrefixes(segment));
+  if (parts.length < 3) return null;
+  if (pathBase(parts[0]) !== "xargs") return null;
+  let i = 1;
+  while (i < parts.length) {
+    const t = parts[i];
+    if (t === "--") {
+      i++;
+      break;
+    }
+    if (t.startsWith("-") && t !== "-") {
+      // Options that take a separate argument: -I, -i, -L, -n, -P, -s, -E, -a, -d
+      if (
+        t === "-I" ||
+        t === "-i" ||
+        t === "-L" ||
+        t === "-n" ||
+        t === "-P" ||
+        t === "-s" ||
+        t === "-E" ||
+        t === "-a" ||
+        t === "-d" ||
+        t === "--max-args" ||
+        t === "--max-procs" ||
+        t === "--replace" ||
+        t === "--delimiter"
+      ) {
+        i += 2;
+        continue;
+      }
+      // -I{} style combined
+      if (/^-[InLPsEad]/.test(t) && t.length > 2) {
+        i++;
+        continue;
+      }
+      i++;
+      continue;
+    }
+    break;
+  }
+  if (i >= parts.length) return null;
+  if (!SHELL_BINARIES.has(pathBase(parts[i]))) return null;
+  return shellJoin(parts.slice(i)).trim() || null;
+}
+
 export function peelWrappers(segment: string): string {
   let s = stripEnvPrefixes(segment);
-  for (let n = 0; n < 6; n++) {
+  for (let n = 0; n < 8; n++) {
     const parts = tokenizeSimple(s);
     if (parts.length === 0) return s;
     const head = parts[0];
@@ -319,6 +381,20 @@ export function peelWrappers(segment: string): string {
     const dashC = peelShellDashC(s);
     if (dashC != null) {
       s = dashC;
+      continue;
+    }
+
+    // eval 'rm -rf /' → peel evaluated body
+    const ev = peelEval(s);
+    if (ev != null) {
+      s = ev;
+      continue;
+    }
+
+    // xargs … bash -c '…' → peel to shell -c form then loop
+    const xa = peelXargsShell(s);
+    if (xa != null) {
+      s = xa;
       continue;
     }
 
