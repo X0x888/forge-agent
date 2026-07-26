@@ -15,7 +15,13 @@ import fs from "node:fs";
 import path from "node:path";
 import { formatRelativeTime } from "./util/format.js";
 import { loadConfig, defaultConfigToml } from "./config/load.js";
-import type { ForgeConfig } from "./config/types.js";
+import type {
+  ForgeConfig,
+  PermissionMode,
+  SandboxMissingBackend,
+  SandboxNetwork,
+  SandboxProfile,
+} from "./config/types.js";
 import { parseReasoningEffort } from "./config/reasoning.js";
 import { resolveAuth, resolveAuthFresh, describeAuth } from "./auth/resolve.js";
 import { loginInteractive, logout, printAuthStatus, supportsOAuth } from "./auth/login.js";
@@ -353,7 +359,9 @@ Exit codes:
 
 --json early failures (stdout, still exit ≠0): { ok:false, reason, error, … }
   reason=empty_prompt | unauthenticated | session_not_found | locked
-  | invalid_effort | error | timeout | aborted  (mid-run catch path)
+  | invalid_effort | invalid_permission_mode | invalid_sandbox
+  | invalid_sandbox_network | invalid_sandbox_missing
+  | error | timeout | aborted  (mid-run catch path)
 
 Empty prompts exit 1 before auth/session create (no orphan sessions, no API spend).
 --session/--new/--title work on parent or subcommand (optsWithGlobals merge).
@@ -366,12 +374,11 @@ Docs: docs/PRODUCTION.md
     )
     .action(async (promptParts: string[], opts, command) => {
       await ensureHome();
-      // Parent program also defines --session/--new/--title/--cwd; merge so
-      // `forge run --session x …` works whether flags bind to parent or subcommand.
-      const runOpts = {
-        ...(command?.optsWithGlobals?.() || {}),
-        ...opts,
-      } as Record<string, unknown>;
+      // Parent program also defines --session/--new/--title/--cwd/--permission-mode;
+      // merge so flags work whether bound to parent or subcommand. Prefer CLI-sourced
+      // values over Commander defaults (run's permissionMode default must not clobber
+      // parent --permission-mode yolo / explicit invalid values we validate).
+      const runOpts = mergeRunOpts(command, opts);
       // Validate prompt before auth/session side effects (no orphan empty sessions).
       const prompt = (promptParts || []).join(" ").trim();
       const wantJson = Boolean(runOpts.json);
@@ -1713,6 +1720,49 @@ function failSessionLookup(
 }
 
 /**
+ * Merge parent + subcommand opts for `forge run`.
+ * Commander defaults on the subcommand must not clobber parent CLI flags
+ * (e.g. run's `--permission-mode` default `acceptEdits` vs parent `--permission-mode yolo`).
+ */
+function mergeRunOpts(
+  command: { optsWithGlobals?: () => Record<string, unknown>; getOptionValueSource?: (name: string) => string | undefined; parent?: { getOptionValueSource?: (name: string) => string | undefined } } | undefined,
+  opts: Record<string, unknown>,
+): Record<string, unknown> {
+  const globals = (command?.optsWithGlobals?.() || {}) as Record<string, unknown>;
+  const merged: Record<string, unknown> = { ...globals, ...opts };
+  // Keys that may exist on both parent and run with a default on run.
+  for (const key of [
+    "permissionMode",
+    "sandbox",
+    "sandboxNetwork",
+    "sandboxMissing",
+    "model",
+    "provider",
+    "baseUrl",
+    "effort",
+    "reasoningEffort",
+    "session",
+    "title",
+    "cwd",
+    "json",
+    "continue",
+    "new",
+    "ulw",
+    "goal",
+  ] as const) {
+    const localSrc = command?.getOptionValueSource?.(key);
+    const parentSrc = command?.parent?.getOptionValueSource?.(key);
+    // Prefer explicit CLI on either side over defaults.
+    if (parentSrc === "cli" && localSrc !== "cli") {
+      if (key in globals) merged[key] = globals[key];
+    } else if (localSrc === "cli") {
+      if (key in opts) merged[key] = opts[key];
+    }
+  }
+  return merged;
+}
+
+/**
  * Usage / missing-arg failures for sessions subcommands.
  * With --json: `{ ok:false, reason:usage, error }` on stdout.
  */
@@ -1731,9 +1781,51 @@ function failUsage(message: string, opts?: { json?: boolean }): never {
   process.exit(1);
 }
 
+const PERMISSION_MODES = new Set<PermissionMode>([
+  "default",
+  "acceptEdits",
+  "plan",
+  "bypassPermissions",
+  "dontAsk",
+]);
+const SANDBOX_PROFILES = new Set<SandboxProfile>([
+  "off",
+  "workspace",
+  "read-only",
+  "strict",
+]);
+const SANDBOX_NETWORKS = new Set<SandboxNetwork>(["unrestricted", "blocked"]);
+const SANDBOX_MISSING = new Set<SandboxMissingBackend>([
+  "fail-closed",
+  "fallback",
+]);
+
+/** Structured CLI flag validation failure (parity with invalid_effort). */
+function failInvalidFlag(
+  reason: string,
+  message: string,
+  extra: Record<string, unknown>,
+  opts?: { json?: boolean },
+): never {
+  if (opts?.json) {
+    console.log(
+      JSON.stringify({
+        ok: false,
+        reason,
+        error: message,
+        ...extra,
+      }),
+    );
+  } else {
+    log.error(message);
+  }
+  process.exit(1);
+}
+
 function buildConfig(opts: Record<string, unknown>): ForgeConfig {
   const cwd = path.resolve(String(opts.cwd || process.cwd()));
   const overrides: Partial<ForgeConfig> = { workspace: cwd };
+  const wantJson = Boolean(opts.json);
   if (opts.model) overrides.model = String(opts.model);
   if (opts.provider) overrides.provider = String(opts.provider) as ForgeConfig["provider"];
   if (opts.baseUrl) overrides.baseUrl = String(opts.baseUrl);
@@ -1742,37 +1834,63 @@ function buildConfig(opts: Record<string, unknown>): ForgeConfig {
     if (effortRaw != null && String(effortRaw).trim()) {
       const e = parseReasoningEffort(String(effortRaw));
       if (!e) {
-        const msg = `Invalid --effort "${effortRaw}". Use low, medium, or high.`;
-        if (opts.json) {
-          console.log(
-            JSON.stringify({
-              ok: false,
-              reason: "invalid_effort",
-              effort: String(effortRaw),
-              error: msg,
-            }),
-          );
-        } else {
-          log.error(msg);
-        }
-        process.exit(1);
+        failInvalidFlag(
+          "invalid_effort",
+          `Invalid --effort "${effortRaw}". Use low, medium, or high.`,
+          { effort: String(effortRaw) },
+          { json: wantJson },
+        );
       }
       overrides.reasoningEffort = e;
     }
   }
   if (opts.permissionMode) {
-    overrides.permissionMode = String(opts.permissionMode) as ForgeConfig["permissionMode"];
+    const mode = String(opts.permissionMode);
+    if (!PERMISSION_MODES.has(mode as PermissionMode)) {
+      failInvalidFlag(
+        "invalid_permission_mode",
+        `Invalid --permission-mode "${mode}". Use default|acceptEdits|plan|bypassPermissions|dontAsk.`,
+        { permissionMode: mode },
+        { json: wantJson },
+      );
+    }
+    overrides.permissionMode = mode as PermissionMode;
   }
   if (opts.sandbox) {
-    overrides.sandbox = String(opts.sandbox) as ForgeConfig["sandbox"];
+    const profile = String(opts.sandbox);
+    if (!SANDBOX_PROFILES.has(profile as SandboxProfile)) {
+      failInvalidFlag(
+        "invalid_sandbox",
+        `Invalid --sandbox "${profile}". Use off|workspace|read-only|strict.`,
+        { sandbox: profile },
+        { json: wantJson },
+      );
+    }
+    overrides.sandbox = profile as SandboxProfile;
   }
   if (opts.sandboxNetwork) {
-    overrides.sandboxNetwork = String(opts.sandboxNetwork) as ForgeConfig["sandboxNetwork"];
+    const net = String(opts.sandboxNetwork);
+    if (!SANDBOX_NETWORKS.has(net as SandboxNetwork)) {
+      failInvalidFlag(
+        "invalid_sandbox_network",
+        `Invalid --sandbox-network "${net}". Use unrestricted|blocked.`,
+        { sandboxNetwork: net },
+        { json: wantJson },
+      );
+    }
+    overrides.sandboxNetwork = net as SandboxNetwork;
   }
   if (opts.sandboxMissing) {
-    overrides.sandboxMissingBackend = String(
-      opts.sandboxMissing,
-    ) as ForgeConfig["sandboxMissingBackend"];
+    const miss = String(opts.sandboxMissing);
+    if (!SANDBOX_MISSING.has(miss as SandboxMissingBackend)) {
+      failInvalidFlag(
+        "invalid_sandbox_missing",
+        `Invalid --sandbox-missing "${miss}". Use fail-closed|fallback.`,
+        { sandboxMissing: miss },
+        { json: wantJson },
+      );
+    }
+    overrides.sandboxMissingBackend = miss as SandboxMissingBackend;
   }
   if (opts.blockingStop === false || opts.noBlockingStop) {
     overrides.blockingStopHooks = false;

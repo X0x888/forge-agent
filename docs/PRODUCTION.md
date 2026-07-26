@@ -178,6 +178,8 @@ Early failures (before the agent loop) also emit structured JSON when `--json` i
 | `session_not_found` | `--session` id/title miss |
 | `locked` | Foreign live `session.lock` (unless `FORGE_FORCE_SESSION_LOCK=1`) |
 | `invalid_effort` | `--effort` / `--reasoning-effort` not `low|medium|high` |
+| `invalid_permission_mode` | `--permission-mode` not in allowlist |
+| `invalid_sandbox` / `invalid_sandbox_network` / `invalid_sandbox_missing` | sandbox CLI flags not in allowlist |
 | `error` / `timeout` / `aborted` | Mid-run catch (provider throw / `FORGE_MAX_RUN_MS` / signal) |
 
 Label new runs with `forge run … --title <label>` (searchable via `forge sessions list -q`).

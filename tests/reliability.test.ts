@@ -2167,5 +2167,39 @@ describe("forge run --json early failures (CLI)", () => {
     assert.equal(effortJson.ok, false);
     assert.equal(effortJson.reason, "invalid_effort");
     assert.equal(effortJson.effort, "nope");
+
+    const badPerm = spawnSync(
+      process.execPath,
+      [cli, "run", "--json", "--permission-mode", "yolo", "hi"],
+      {
+        env: {
+          ...env,
+          XAI_API_KEY: process.env.XAI_API_KEY || "sk-test-forge-cli",
+        },
+        encoding: "utf8",
+      },
+    );
+    assert.notEqual(badPerm.status, 0);
+    const permJson = JSON.parse((badPerm.stdout || "").trim());
+    assert.equal(permJson.ok, false);
+    assert.equal(permJson.reason, "invalid_permission_mode");
+    assert.equal(permJson.permissionMode, "yolo");
+
+    const badSandbox = spawnSync(
+      process.execPath,
+      [cli, "run", "--json", "--sandbox", "paranoid", "hi"],
+      {
+        env: {
+          ...env,
+          XAI_API_KEY: process.env.XAI_API_KEY || "sk-test-forge-cli",
+        },
+        encoding: "utf8",
+      },
+    );
+    assert.notEqual(badSandbox.status, 0);
+    const sandJson = JSON.parse((badSandbox.stdout || "").trim());
+    assert.equal(sandJson.ok, false);
+    assert.equal(sandJson.reason, "invalid_sandbox");
+    assert.equal(sandJson.sandbox, "paranoid");
   });
 });
