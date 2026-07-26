@@ -2248,7 +2248,7 @@ export function runDoctorCheck(config: ForgeConfig): DoctorResult {
   lines.push(`Goal gate: ${config.goal.enabled ? "on" : "off"} (stuck=${config.goal.stuckThreshold})`);
   lines.push(`Workspace: ${config.workspace || process.cwd()}`);
   lines.push(
-    `Context: window=${config.contextWindow} autoCompact@${Math.round((config.autoCompactThreshold || 0.8) * 100)}% maxTurns=${config.maxTurns}`,
+    `Context: window=${config.contextWindow} autoCompact@${Math.round((config.autoCompactThreshold || 0.8) * 100)}% maxTurns=${config.maxTurns > 0 ? config.maxTurns : "unlimited"}`,
   );
   {
     const maxRun = process.env.FORGE_MAX_RUN_MS?.trim();
@@ -2542,7 +2542,7 @@ export function formatEffectiveConfig(
     `  read outside:    ${snap.readOutsideWorkspace}`,
     `  blocking Stop:   ${snap.blockingStopHooks ? "on" : "OFF"}`,
     `  profile:         ${snap.promptProfile}`,
-    `  context:         window=${snap.contextWindow} autoCompact@${Math.round((snap.autoCompactThreshold || 0.8) * 100)}% maxTurns=${snap.maxTurns}`,
+    `  context:         window=${snap.contextWindow} autoCompact@${Math.round((snap.autoCompactThreshold || 0.8) * 100)}% maxTurns=${snap.maxTurns > 0 ? snap.maxTurns : "unlimited"}`,
     `  goal gate:       ${snap.goalEnabled ? "on" : "off"}` +
       (snap.goalStuckThreshold != null
         ? `  stuck=${snap.goalStuckThreshold}`

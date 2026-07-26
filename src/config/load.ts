@@ -379,7 +379,7 @@ model = "grok-4.5"
 reasoning_effort = "high"
 temperature = 0.2
 max_tokens = 8192
-max_turns = 0
+max_turns = 0                 # 0 = unlimited; set e.g. 200 to cap agent turns
 permission_mode = "default"  # default | acceptEdits | plan | bypassPermissions | dontAsk
 
 # OS sandbox for bash (macOS: sandbox-exec, Linux: bwrap)

@@ -45,7 +45,7 @@ export {
   isAuthFailureMessage,
 } from "./auth/refresh.js";
 export { createProvider } from "./providers/factory.js";
-export { runAgentLoop } from "./agent/loop.js";
+export { runAgentLoop, resolveMaxTurns } from "./agent/loop.js";
 export type {
   LoopResult,
   LoopOptions,

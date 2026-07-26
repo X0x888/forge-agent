@@ -10,7 +10,7 @@ import {
   effortLevelsForModel,
   defaultEffortForModel,
 } from "../src/config/reasoning.js";
-import { buildChatRequest } from "../src/agent/loop.js";
+import { buildChatRequest, resolveMaxTurns } from "../src/agent/loop.js";
 import { DEFAULT_CONFIG } from "../src/config/types.js";
 import { loadConfig } from "../src/config/load.js";
 import { savePreferences, loadPreferences } from "../src/config/preferences.js";
@@ -48,6 +48,20 @@ describe("reasoning effort helpers", () => {
     assert.equal(resolveReasoningEffort("grok-4.5", "low"), "low");
     assert.equal(resolveReasoningEffort("grok-4.5", undefined), "high");
     assert.equal(resolveReasoningEffort("grok-4", "high"), undefined);
+  });
+});
+
+describe("resolveMaxTurns", () => {
+  it("treats 0 / negative / invalid as unlimited", () => {
+    assert.equal(resolveMaxTurns(0), Number.POSITIVE_INFINITY);
+    assert.equal(resolveMaxTurns(-1), Number.POSITIVE_INFINITY);
+    assert.equal(resolveMaxTurns(undefined), Number.POSITIVE_INFINITY);
+    assert.equal(resolveMaxTurns(NaN), Number.POSITIVE_INFINITY);
+  });
+
+  it("floors positive budgets", () => {
+    assert.equal(resolveMaxTurns(200), 200);
+    assert.equal(resolveMaxTurns(3.9), 3);
   });
 });
 

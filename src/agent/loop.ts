@@ -174,6 +174,21 @@ export function buildChatRequest(
   };
 }
 
+/**
+ * Resolve agent-loop turn budget.
+ * `max_turns <= 0` (config default) means unlimited — not a silent 200-cap.
+ */
+export function resolveMaxTurns(maxTurns: number | undefined | null): number {
+  if (
+    typeof maxTurns === "number" &&
+    Number.isFinite(maxTurns) &&
+    maxTurns > 0
+  ) {
+    return Math.floor(maxTurns);
+  }
+  return Number.POSITIVE_INFINITY;
+}
+
 function baseHookCtx(session: SessionData, config: ForgeConfig): HookContext {
   return {
     sessionId: session.meta.id,
@@ -325,7 +340,9 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
   let releasedOnContinueCap = false;
   let hitMaxTurns = false;
   let overflowCompactAttempted = false;
-  const maxTurns = config.maxTurns > 0 ? config.maxTurns : 200;
+  // max_turns <= 0 means unlimited (config default is 0). A silent 200-cap when
+  // the file says 0 was a production footgun for long ULW/CI runs.
+  const maxTurns = resolveMaxTurns(config.maxTurns);
   /** Tool schemas are sent every turn but not stored in session history. */
   const toolsJsonChars = JSON.stringify(TOOL_DEFINITIONS).length;
 
