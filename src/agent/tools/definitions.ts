@@ -92,7 +92,11 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
         properties: {
           path: { type: "string", description: "File path (relative or absolute)" },
           offset: { type: "number", description: "1-based start line (default 1)" },
-          limit: { type: "number", description: "Max lines to return (default 2000)" },
+          limit: {
+            type: "number",
+            description:
+              "Max lines to return (default 2000; 0 = all remaining from offset)",
+          },
         },
         required: ["path"],
       },
@@ -174,7 +178,10 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
           path: { type: "string", description: "File or directory (default: workspace)" },
           glob: { type: "string", description: "Glob filter e.g. *.ts" },
           case_insensitive: { type: "boolean" },
-          head_limit: { type: "number" },
+          head_limit: {
+            type: "number",
+            description: "Max matches (default 50; 0 = unlimited)",
+          },
         },
         required: ["pattern"],
       },

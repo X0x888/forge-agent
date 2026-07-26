@@ -24,6 +24,14 @@ function findRg(): string | null {
   return null;
 }
 
+/** head_limit: default 50; 0 = unlimited; invalid → 50. */
+function parseGrepHeadLimit(raw: unknown): number {
+  if (raw == null || String(raw).trim() === "") return 50;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n < 0) return 50;
+  return Math.floor(n);
+}
+
 
 async function assertSearchRoot(
   searchPath: string,
@@ -119,7 +127,8 @@ async function toolGrepJs(
   const badRoot = await assertSearchRoot(searchPath, pathLabel, ctx.workspace);
   if (badRoot) return badRoot;
   const globPat = args.glob ? String(args.glob) : "**/*";
-  const headLimit = Number(args.head_limit) || 50;
+  // head_limit: 0 = unlimited (not coerced to 50 via Number(x)||default)
+  const headLimit = parseGrepHeadLimit(args.head_limit);
   const flags = args.case_insensitive ? "i" : "";
   let re: RegExp;
   try {
@@ -146,7 +155,7 @@ async function toolGrepJs(
   const matches: string[] = [];
   for (const file of files) {
     if (ctx.signal?.aborted) return { output: "Aborted", isError: true };
-    if (matches.length >= headLimit) break;
+    if (headLimit > 0 && matches.length >= headLimit) break;
     let text: string;
     try {
       text = await fsp.readFile(file, "utf8");
@@ -155,10 +164,10 @@ async function toolGrepJs(
     }
     const lines = text.split("\n");
     for (let i = 0; i < lines.length; i++) {
-      if (re.test(lines[i])) {
+      if (re.test(lines[i]!)) {
         const rel = path.relative(ctx.workspace, file);
         matches.push(`${rel}:${i + 1}:${lines[i]}`);
-        if (matches.length >= headLimit) break;
+        if (headLimit > 0 && matches.length >= headLimit) break;
       }
     }
   }
@@ -188,15 +197,12 @@ export async function toolGrep(
   const pathLabel = args.path ? String(args.path) : ".";
   const badRoot = await assertSearchRoot(searchPath, pathLabel, ctx.workspace);
   if (badRoot) return badRoot;
-  const headLimit = Number(args.head_limit) || 50;
-  const rgArgs = [
-    "--line-number",
-    "--no-heading",
-    "--color",
-    "never",
-    "--max-count",
-    String(headLimit),
-  ];
+  // head_limit: 0 = unlimited (omit --max-count; rg treats 0 as no matches)
+  const headLimit = parseGrepHeadLimit(args.head_limit);
+  const rgArgs = ["--line-number", "--no-heading", "--color", "never"];
+  if (headLimit > 0) {
+    rgArgs.push("--max-count", String(headLimit));
+  }
   if (args.case_insensitive) rgArgs.push("-i");
   if (args.glob) {
     rgArgs.push("--glob", String(args.glob));
@@ -224,10 +230,9 @@ export async function toolGrep(
   }
 
   // Rewrite absolute paths to workspace-relative when possible
-  const lines = result.stdout
-    .split("\n")
-    .filter(Boolean)
-    .slice(0, headLimit)
+  let outLines = result.stdout.split("\n").filter(Boolean);
+  if (headLimit > 0) outLines = outLines.slice(0, headLimit);
+  const lines = outLines
     .map((line) => {
       if (line.startsWith(ctx.workspace + path.sep)) {
         return path.relative(ctx.workspace, line.split(":")[0]) + line.slice(line.indexOf(":"));

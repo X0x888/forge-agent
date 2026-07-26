@@ -65,7 +65,14 @@ export async function toolRead(
   const content = buf.toString("utf8");
   const lines = content.split("\n");
   const offset = Math.max(1, Number(args.offset) || 1);
-  const limit = Number(args.limit) || DEFAULT_READ_LIMIT;
+  // limit: 0 = all remaining lines from offset (not coerced to DEFAULT via ||)
+  let limit = DEFAULT_READ_LIMIT;
+  if (args.limit != null && String(args.limit).trim() !== "") {
+    const n = Number(args.limit);
+    if (Number.isFinite(n) && n >= 0) {
+      limit = n === 0 ? Math.max(0, lines.length - (offset - 1)) : Math.floor(n);
+    }
+  }
   const slice = lines.slice(offset - 1, offset - 1 + limit);
   const numbered = slice
     .map((l, i) => {

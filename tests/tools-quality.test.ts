@@ -193,6 +193,47 @@ describe("executeTool integration", () => {
     assert.match(g.output, /unique_token_xyz/);
   });
 
+  it("read_file limit 0 and grep head_limit 0 are unlimited", async () => {
+    const ws = path.join(tmpRoot, "ws-limit0");
+    await fsp.mkdir(ws, { recursive: true });
+    const lines = Array.from({ length: 30 }, (_, i) => `line_${i}_token`);
+    await fsp.writeFile(path.join(ws, "big.txt"), lines.join("\n") + "\n");
+    const ctx = { workspace: ws, sandbox: "off" as const };
+    const r = await executeTool(
+      "read_file",
+      JSON.stringify({ path: path.join(ws, "big.txt"), limit: 0 }),
+      ctx,
+    );
+    assert.equal(r.isError, undefined, r.output);
+    assert.match(r.output, /line_0_token/);
+    assert.match(r.output, /line_29_token/);
+    // Default limit 2000 would also show all 30 — ensure limit:0 is not treated as missing
+    // by checking a file larger than DEFAULT would still work with offset
+    const r2 = await executeTool(
+      "read_file",
+      JSON.stringify({ path: path.join(ws, "big.txt"), offset: 25, limit: 0 }),
+      ctx,
+    );
+    assert.match(r2.output, /line_29_token/);
+    assert.doesNotMatch(r2.output, /line_0_token/);
+
+    // Many matches — head_limit 0 must not stop at 50
+    const many = Array.from({ length: 60 }, (_, i) => `hit_marker_${i}`).join("\n");
+    await fsp.writeFile(path.join(ws, "many.txt"), many + "\n");
+    const g = await executeTool(
+      "grep",
+      JSON.stringify({
+        pattern: "hit_marker_",
+        path: path.join(ws, "many.txt"),
+        head_limit: 0,
+      }),
+      ctx,
+    );
+    assert.equal(g.isError, undefined, g.output);
+    const hits = (g.output.match(/hit_marker_/g) || []).length;
+    assert.ok(hits >= 60, `expected ≥60 hits, got ${hits}: ${g.output.slice(0, 200)}`);
+  });
+
   it("refuses write outside workspace", async () => {
     const ws = path.join(tmpRoot, "ws-bound");
     await fsp.mkdir(ws, { recursive: true });

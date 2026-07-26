@@ -1344,7 +1344,7 @@ Project instructions for Forge (and other coding agents).
           models: p.models?.length ? p.models : p.defaultModel ? [p.defaultModel] : [],
           baseUrl: p.baseUrl || null,
         }));
-        console.log(JSON.stringify({ providers: rows }, null, 2));
+        console.log(JSON.stringify({ ok: true, providers: rows }, null, 2));
         return;
       }
       for (const [id, p] of Object.entries(config.providers)) {
@@ -1495,6 +1495,7 @@ Project instructions for Forge (and other coding agents).
         console.log(
           JSON.stringify(
             {
+              ok: true,
               version: getForgeVersion(),
               count: releases.length,
               releases,

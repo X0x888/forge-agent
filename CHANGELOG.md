@@ -39,6 +39,7 @@ Production recovery, review, and onboarding learned from OpenCode (snapshot/reve
 - **`FORGE_GOAL_STUCK_THRESHOLD`**: ignore invalid/0 (0 would disable stuck-wall release forever)
 - **`get_task_output` `tail: 0`**: full captured output (was coerced to 200 via `Number(x)||200`)
 - **`forge stats --json`**: includes `ok:true` for CI parity
+- **`read_file` `limit: 0` / `grep` `head_limit: 0`**: unlimited (was coerced to defaults via `Number(x)||n`); `forge news|models --json` and `/config json` include `ok:true`
 
 ### Recovery (disk + chat)
 - **File mutation journal**: successful `write_file` / `search_replace` / `apply_patch` ops append pre-images to `~/.forge/sessions/<id>/mutations.jsonl` (mode `0600`, ~1.5 MiB cap per body)

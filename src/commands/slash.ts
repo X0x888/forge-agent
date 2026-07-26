@@ -2552,7 +2552,7 @@ export function formatEffectiveConfig(
 ): string {
   const snap = buildEffectiveConfigSnap(config, { session: opts?.session });
   if (opts?.json) {
-    return JSON.stringify(snap, null, 2);
+    return JSON.stringify({ ok: true, ...snap }, null, 2);
   }
   const sess = snap.session;
   const lines = [
