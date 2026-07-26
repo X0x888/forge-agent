@@ -2201,6 +2201,23 @@ describe("forge run --json early failures (CLI)", () => {
     assert.equal(sandJson.ok, false);
     assert.equal(sandJson.reason, "invalid_sandbox");
     assert.equal(sandJson.sandbox, "paranoid");
+
+    const badProv = spawnSync(
+      process.execPath,
+      [cli, "run", "--json", "-p", "bogus", "hi"],
+      {
+        env: {
+          ...env,
+          XAI_API_KEY: process.env.XAI_API_KEY || "sk-test-forge-cli",
+        },
+        encoding: "utf8",
+      },
+    );
+    assert.notEqual(badProv.status, 0);
+    const provJson = JSON.parse((badProv.stdout || "").trim());
+    assert.equal(provJson.ok, false);
+    assert.equal(provJson.reason, "invalid_provider");
+    assert.equal(provJson.provider, "bogus");
   });
 });
 

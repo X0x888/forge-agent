@@ -18,6 +18,7 @@ import { loadConfig, defaultConfigToml } from "./config/load.js";
 import type {
   ForgeConfig,
   PermissionMode,
+  ProviderId,
   SandboxMissingBackend,
   SandboxNetwork,
   SandboxProfile,
@@ -361,7 +362,7 @@ Exit codes:
 --json early failures (stdout, still exit ≠0): { ok:false, reason, error, … }
   reason=empty_prompt | unauthenticated | session_not_found | locked
   | invalid_effort | invalid_permission_mode | invalid_sandbox
-  | invalid_sandbox_network | invalid_sandbox_missing
+  | invalid_sandbox_network | invalid_sandbox_missing | invalid_provider
   | error | timeout | aborted  (mid-run catch path)
 
 Empty prompts exit 1 before auth/session create (no orphan sessions, no API spend).
@@ -1757,6 +1758,16 @@ const SANDBOX_MISSING = new Set<SandboxMissingBackend>([
   "fail-closed",
   "fallback",
 ]);
+/** Known provider ids + common aliases (grok → xai). */
+const PROVIDER_IDS = new Set<string>([
+  "xai",
+  "grok",
+  "anthropic",
+  "openai",
+  "openrouter",
+  "google",
+  "custom",
+]);
 
 /** Structured CLI flag validation failure (parity with invalid_effort). */
 function failInvalidFlag(
@@ -1785,7 +1796,19 @@ function buildConfig(opts: Record<string, unknown>): ForgeConfig {
   const overrides: Partial<ForgeConfig> = { workspace: cwd };
   const wantJson = Boolean(opts.json);
   if (opts.model) overrides.model = String(opts.model);
-  if (opts.provider) overrides.provider = String(opts.provider) as ForgeConfig["provider"];
+  if (opts.provider) {
+    const raw = String(opts.provider).trim().toLowerCase();
+    if (!PROVIDER_IDS.has(raw)) {
+      failInvalidFlag(
+        "invalid_provider",
+        `Invalid --provider "${opts.provider}". Use xai|anthropic|openai|openrouter|google|custom.`,
+        { provider: String(opts.provider) },
+        { json: wantJson },
+      );
+    }
+    // grok is a friendly alias for xai (auth resolve already treats them alike)
+    overrides.provider = (raw === "grok" ? "xai" : raw) as ProviderId;
+  }
   if (opts.baseUrl) overrides.baseUrl = String(opts.baseUrl);
   {
     const effortRaw = opts.effort ?? opts.reasoningEffort;
