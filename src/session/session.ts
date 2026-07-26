@@ -1641,7 +1641,8 @@ export function formatSessionShareCard(
     `Export:`,
     `  forge sessions export ${id8} --format md`,
     `  forge sessions export ${id8} --format json --out ./session-${id8}.json`,
-    `Label:  /title "…"   ·   Keep: /pin   ·   Path: /path   ·   Search: forge sessions list -q ${JSON.stringify(title).slice(0, 40)}`,
+    `Label:  /title "…"  ·  forge sessions title ${id8} "…"  ·  Keep: /pin  ·  Path: /path`,
+    `Search: forge sessions list -q ${JSON.stringify(title).slice(0, 40)}`,
     `Peek:   /last 3  ·  /files  ·  /retry  ·  forge news`,
   ].filter((x): x is string => x != null);
 

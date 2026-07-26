@@ -1222,6 +1222,7 @@ describe("session metrics + permission timeout", () => {
     assert.match(card, /handoff-42/); // title resume line
     assert.match(card, /PIN/);
     assert.match(card, /\/pin/);
+    assert.match(card, /sessions title/);
     assert.match(card, /--continue/);
     assert.match(card, /sessions export/);
     assert.match(card, /\/last 3/);
