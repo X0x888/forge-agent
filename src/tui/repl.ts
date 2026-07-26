@@ -493,6 +493,11 @@ export async function runRepl(opts: {
             : `Harness continued ${result.stopContinues} time(s) via Stop block`,
         );
       }
+      if (result.hitMaxTurns) {
+        log.dim(
+          `Hit maxTurns — raise max_turns or continue with a follow-up prompt`,
+        );
+      }
 
       // Post-turn footer — always-on session health without /status
       console.log(
@@ -518,6 +523,7 @@ export async function runRepl(opts: {
             turns: result.turns,
             stopContinues: result.stopContinues,
             releasedOnContinueCap: result.releasedOnContinueCap,
+            hitMaxTurns: result.hitMaxTurns,
             editCount: session.meta.editCount,
             promptTokens: result.promptTokens,
             completionTokens: result.completionTokens,

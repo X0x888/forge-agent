@@ -337,9 +337,9 @@ Exit codes:
   130  aborted (SIGINT)
 
 --json fields (success): ok, sessionId, title, finalText, turns, stopContinues,
-  releasedOnContinueCap, editCount, aborted, timedOut, promptTokens, completionTokens,
-  durationMs, model, provider
-  (releasedOnContinueCap=true → stop-continue safety valve; still ok unless aborted/timedOut)
+  releasedOnContinueCap, hitMaxTurns, editCount, aborted, timedOut, promptTokens,
+  completionTokens, durationMs, model, provider
+  (releasedOnContinueCap/hitMaxTurns → safety valves; still ok unless aborted/timedOut)
 
 Empty prompts exit 1 before auth/session create (no orphan sessions, no API spend).
 Label runs: --title <label> (searchable via forge sessions list -q / /sessions search).
@@ -1820,6 +1820,7 @@ async function runHeadless(opts: {
       turns: result.turns,
       stopContinues: result.stopContinues,
       releasedOnContinueCap: result.releasedOnContinueCap,
+      hitMaxTurns: result.hitMaxTurns,
       editCount: opts.session.meta.editCount,
       aborted: result.aborted,
       timedOut,
@@ -1838,6 +1839,7 @@ async function runHeadless(opts: {
         turns: payload.turns,
         stopContinues: payload.stopContinues,
         releasedOnContinueCap: payload.releasedOnContinueCap,
+        hitMaxTurns: payload.hitMaxTurns,
         editCount: payload.editCount,
         promptTokens: payload.promptTokens,
         completionTokens: payload.completionTokens,

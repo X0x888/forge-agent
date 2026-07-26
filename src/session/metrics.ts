@@ -18,6 +18,8 @@ export interface SessionMetricsEvent {
   stopContinues?: number;
   /** True when the agent loop released because the stop-continue cap was hit. */
   releasedOnContinueCap?: boolean;
+  /** True when the agent loop exited because maxTurns was reached. */
+  hitMaxTurns?: boolean;
   editCount?: number;
   promptTokens?: number;
   completionTokens?: number;
@@ -79,6 +81,7 @@ export function buildRunEndMetrics(opts: {
   turns: number;
   stopContinues: number;
   releasedOnContinueCap?: boolean;
+  hitMaxTurns?: boolean;
   editCount: number;
   promptTokens: number;
   completionTokens: number;
@@ -101,6 +104,7 @@ export function buildRunEndMetrics(opts: {
     ...(opts.releasedOnContinueCap
       ? { releasedOnContinueCap: true }
       : {}),
+    ...(opts.hitMaxTurns ? { hitMaxTurns: true } : {}),
     editCount: opts.editCount,
     promptTokens: opts.promptTokens,
     completionTokens: opts.completionTokens,
@@ -241,6 +245,8 @@ export interface UsageStats {
   timedOutRuns: number;
   /** Runs that hit the stop-continue safety valve (length/filter/empty/Stop-block). */
   continueCapReleases: number;
+  /** Runs that exited because maxTurns was reached. */
+  maxTurnsHits: number;
   headlessRuns: number;
   ulwRuns: number;
   promptTokens: number;
@@ -295,6 +301,7 @@ export function collectUsageStats(opts?: {
   let abortedRuns = 0;
   let timedOutRuns = 0;
   let continueCapReleases = 0;
+  let maxTurnsHits = 0;
   let headlessRuns = 0;
   let ulwRuns = 0;
   let promptTokens = 0;
@@ -311,6 +318,7 @@ export function collectUsageStats(opts?: {
     if (e.aborted) abortedRuns += 1;
     if (e.timedOut) timedOutRuns += 1;
     if (e.releasedOnContinueCap) continueCapReleases += 1;
+    if (e.hitMaxTurns) maxTurnsHits += 1;
     if (e.headless) headlessRuns += 1;
     if (e.ultrawork) ulwRuns += 1;
     promptTokens += Number(e.promptTokens) || 0;
@@ -397,6 +405,7 @@ export function collectUsageStats(opts?: {
     abortedRuns,
     timedOutRuns,
     continueCapReleases,
+    maxTurnsHits,
     headlessRuns,
     ulwRuns,
     promptTokens,
@@ -432,7 +441,7 @@ export function formatUsageStats(stats: UsageStats): string {
   const durMin = stats.durationMs / 60_000;
   return [
     `Forge usage (${window})`,
-    `  runs:       ${stats.runs}  ok=${stats.okRuns} (${okPct}%)  aborted=${stats.abortedRuns}  timedOut=${stats.timedOutRuns}  continueCap=${stats.continueCapReleases}`,
+    `  runs:       ${stats.runs}  ok=${stats.okRuns} (${okPct}%)  aborted=${stats.abortedRuns}  timedOut=${stats.timedOutRuns}  continueCap=${stats.continueCapReleases}  maxTurns=${stats.maxTurnsHits}`,
     `  mode:       headless=${stats.headlessRuns}  ULW=${stats.ulwRuns}`,
     `  tokens:     in=${formatTokens(stats.promptTokens)} out=${formatTokens(stats.completionTokens)}  est ${formatCost(stats.estCostUsd)}`,
     `  work:       turns=${stats.turns}  edits=${stats.edits}  wall≈${durMin.toFixed(1)}m`,

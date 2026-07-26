@@ -146,6 +146,7 @@ forge run "fix tests and open a PR description" \
   "turns": 12,
   "stopContinues": 2,
   "releasedOnContinueCap": false,
+  "hitMaxTurns": false,
   "editCount": 4,
   "aborted": false,
   "timedOut": false,
@@ -157,7 +158,7 @@ forge run "fix tests and open a PR description" \
 }
 ```
 
-`releasedOnContinueCap: true` means the shared stop-continue safety valve fired (length / content_filter / empty / Stop-block cap) — still `ok: true` unless aborted/timed out, so CI can alert without treating it as a hard failure.
+`releasedOnContinueCap: true` means the shared stop-continue safety valve fired (length / content_filter / empty / Stop-block cap). `hitMaxTurns: true` means the loop exited on `max_turns` (not a clean Stop). Both stay `ok: true` unless aborted/timed out, so CI can alert without hard-failing.
 
 Each headless/REPL turn also appends a counter-only line to `~/.forge/metrics.jsonl` (no prompts or secrets).
 

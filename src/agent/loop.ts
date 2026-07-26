@@ -132,6 +132,11 @@ export interface LoopResult {
    * completion from a harness safety valve — without treating it as a hard failure.
    */
   releasedOnContinueCap: boolean;
+  /**
+   * True when the loop exited because `maxTurns` was reached (not a clean Stop).
+   * Headless JSON/metrics surface this for CI; still `ok` unless aborted/timed out.
+   */
+  hitMaxTurns: boolean;
   promptTokens: number;
   completionTokens: number;
 }
@@ -318,6 +323,7 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
   let finalText = "";
   let aborted = false;
   let releasedOnContinueCap = false;
+  let hitMaxTurns = false;
   let overflowCompactAttempted = false;
   const maxTurns = config.maxTurns > 0 ? config.maxTurns : 200;
   /** Tool schemas are sent every turn but not stored in session history. */
@@ -455,7 +461,13 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
   let skipThresholdCompactUntilCount = 0;
 
   try {
-    while (turns < maxTurns) {
+    // Check maxTurns at the top so a clean Stop on the final allowed turn is
+    // not mis-reported as hitMaxTurns (turns === maxTurns after that turn).
+    for (;;) {
+      if (turns >= maxTurns) {
+        hitMaxTurns = true;
+        break;
+      }
       assertNotAborted(signal);
       turns += 1;
 
@@ -892,6 +904,21 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
     }
   }
 
+  // Silent maxTurns exit is a production footgun for headless CI — surface it.
+  if (!aborted && hitMaxTurns) {
+    log.warn(`maxTurns (${maxTurns}) reached — releasing`);
+    const note =
+      `[Forge] maxTurns (${maxTurns}) reached — releasing. ` +
+      `Raise max_turns in config, narrow the task, or continue with forge run --continue.`;
+    if ((finalText || "").trim()) {
+      if (!finalText.includes("[Forge] maxTurns")) {
+        finalText = `${finalText.replace(/\s+$/, "")}\n\n${note}`;
+      }
+    } else {
+      finalText = note;
+    }
+  }
+
   const promptTokens = session.meta.totalPromptTokens - startPrompt;
   const completionTokens = session.meta.totalCompletionTokens - startComp;
   if (promptTokens + completionTokens > 0) {
@@ -911,6 +938,7 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
     stopContinues,
     aborted,
     releasedOnContinueCap,
+    hitMaxTurns,
     promptTokens,
     completionTokens,
   };
