@@ -138,6 +138,7 @@ Examples:
   forge run "continue" --session <id> --json
   forge run "next step" --continue --json
   forge "next step" --continue                 # bare headless same-cwd resume
+  forge "next step" --json                     # bare headless JSON (parity with run --json)
   forge sessions prune --keep 50
   forge sessions export <id> --format json --out ./session.json
   forge stats --days 7

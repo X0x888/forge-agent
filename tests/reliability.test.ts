@@ -2272,6 +2272,21 @@ describe("forge run --json early failures (CLI)", () => {
     const raw = JSON.stringify(j);
     assert.doesNotMatch(raw, /sk-test-auth-json-never-leak/);
     assert.doesNotMatch(raw, /"accessToken"|"refreshToken"|"token"\s*:/);
+
+    // Parent-attached --json (Commander binds flag to parent) must still JSON.
+    const parentFirst = spawnSync(
+      process.execPath,
+      [cli, "--json", "auth"],
+      { env, encoding: "utf8" },
+    );
+    assert.equal(parentFirst.status, 0);
+    const pj = JSON.parse((parentFirst.stdout || "").trim());
+    assert.equal(pj.ok, true);
+    assert.equal(pj.authenticated, true);
+    assert.doesNotMatch(
+      JSON.stringify(pj),
+      /sk-test-auth-json-never-leak/,
+    );
   });
 
   it("parent --continue/--json documented; bare forge --json early failures; export invalid_format", async () => {
