@@ -417,5 +417,14 @@ export function renderCompactStrip(
 }
 
 export function snapshotsToJson(snaps: StatusSnapshot[]): string {
-  return JSON.stringify({ sessions: snaps, generatedAt: new Date().toISOString() }, null, 2);
+  return JSON.stringify(
+    {
+      ok: true,
+      count: snaps.length,
+      sessions: snaps,
+      generatedAt: new Date().toISOString(),
+    },
+    null,
+    2,
+  );
 }

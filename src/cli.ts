@@ -1706,41 +1706,78 @@ Project instructions for Forge (and other coding agents).
     .option("--tmux", "Single-line plain output for tmux status-right")
     .option("--plain", "No color")
     .option("--no-plan", "Skip network plan/billing probe")
-    .action(async (opts) => {
+    .action(async (opts, command) => {
+      // Parent also defines --session/--cwd; merge so flags bind either place.
+      const stOpts = {
+        ...(command?.optsWithGlobals?.() || {}),
+        ...opts,
+      } as Record<string, unknown>;
+      const sessionArg =
+        typeof stOpts.session === "string" && stOpts.session.trim()
+          ? String(stOpts.session).trim()
+          : undefined;
+      const cwdArg =
+        typeof stOpts.cwd === "string" && stOpts.cwd.trim()
+          ? String(stOpts.cwd).trim()
+          : undefined;
       const collectOpts = {
-        sessionId: opts.session as string | undefined,
-        cwd: opts.cwd as string | undefined,
-        all: Boolean(opts.all),
-        fetchPlan: opts.plan !== false,
-        config: loadConfig({}, opts.cwd || process.cwd()),
+        sessionId: sessionArg,
+        cwd: cwdArg,
+        all: Boolean(stOpts.all),
+        fetchPlan: stOpts.plan !== false,
+        config: loadConfig({}, cwdArg || process.cwd()),
       };
 
-      if (opts.watch) {
+      if (stOpts.watch) {
         const ac = new AbortController();
         process.on("SIGINT", () => ac.abort());
         await runStatusWatch({
           ...collectOpts,
-          intervalMs: Number(opts.interval) || 1000,
-          json: Boolean(opts.json),
-          plain: Boolean(opts.plain),
-          tmux: Boolean(opts.tmux),
+          intervalMs: Number(stOpts.interval) || 1000,
+          json: Boolean(stOpts.json),
+          plain: Boolean(stOpts.plain),
+          tmux: Boolean(stOpts.tmux),
           signal: ac.signal,
         });
         return;
       }
 
       const snaps = await collectSnapshots(collectOpts);
-      if (opts.json) {
+      if (stOpts.json) {
+        // When --session was requested but unresolved, surface a structured miss
+        // instead of a bare empty sessions array (CI footgun).
+        if (sessionArg && snaps.length === 0) {
+          console.log(
+            JSON.stringify(
+              {
+                ok: false,
+                reason: "session_not_found",
+                session: sessionArg,
+                error: formatSessionLookupMiss(sessionArg),
+                count: 0,
+                sessions: [],
+                generatedAt: new Date().toISOString(),
+              },
+              null,
+              2,
+            ),
+          );
+          process.exit(1);
+        }
         console.log(snapshotsToJson(snaps));
         return;
       }
-      if (opts.tmux) {
+      if (sessionArg && snaps.length === 0) {
+        log.error(formatSessionLookupMiss(sessionArg));
+        process.exit(1);
+      }
+      if (stOpts.tmux) {
         console.log(renderTmux(snaps[0]));
         return;
       }
       console.log(
         renderHud(snaps, {
-          plain: Boolean(opts.plain),
+          plain: Boolean(stOpts.plain),
           width: process.stdout.columns,
         }),
       );

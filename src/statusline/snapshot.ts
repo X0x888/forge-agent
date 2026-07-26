@@ -257,7 +257,11 @@ export async function collectSnapshots(
 
   if (opts.sessionId) {
     const s = loadSession(opts.sessionId);
-    if (s) sessions = [s];
+    if (s) {
+      sessions = [s];
+    }
+    // Miss: leave sessions empty — CLI/JSON consumers see count:0 (not a silent
+    // fallback to newest cwd session, which would mislead CI/scripts).
   } else {
     // Native cwd filter before limit so multi-project experts don't miss
     // same-cwd sessions buried under other workspaces' recent activity.

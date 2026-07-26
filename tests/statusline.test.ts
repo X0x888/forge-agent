@@ -12,6 +12,7 @@ import {
   renderHud,
   renderTmux,
   renderCompactStrip,
+  snapshotsToJson,
 } from "../src/statusline/render.js";
 import {
   heartbeatSession,
@@ -79,6 +80,11 @@ describe("statusline", () => {
 
     const strip = renderCompactStrip(snap, { plain: true, width: 100 });
     assert.match(strip, /%/);
+
+    const j = JSON.parse(snapshotsToJson([snap]));
+    assert.equal(j.ok, true);
+    assert.equal(j.count, 1);
+    assert.equal(j.sessions.length, 1);
   });
 
   it("surfaces foreign live session locks in snapshot + HUD", async () => {
