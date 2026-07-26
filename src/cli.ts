@@ -615,15 +615,20 @@ Docs: docs/PRODUCTION.md
 
   program
     .command("login")
-    .description("Authenticate (API key, Grok subscription import, or OAuth)")
+    .description(
+      "Authenticate: SuperGrok OIDC (default for xai), API key, Grok import, or device code",
+    )
     .option("-p, --provider <provider>", "Provider", "xai")
     .option("--api-key [key]", "Use API key (prompt if omitted)")
     .option(
       "--from-grok",
-      "Import SuperGrok / xAI session from ~/.grok/auth.json (recommended if you use Grok Build)",
+      "Import SuperGrok session from ~/.grok/auth.json (Grok Build already logged in)",
     )
-    .option("--oauth", "Browser OAuth flow (needs a registered client id)")
-    .option("--device", "Device-code flow (headless)")
+    .option(
+      "--oauth",
+      "Browser SuperGrok / OIDC (default for xai; same public client as Grok CLI)",
+    )
+    .option("--device", "Device-code flow (headless SSH / remote)")
     .option("--json", "Machine-readable JSON (never includes tokens)")
     .action(async (opts, command) => {
       await ensureHome();
@@ -672,68 +677,54 @@ Docs: docs/PRODUCTION.md
       const apiKeyValue =
         typeof opts.apiKey === "string" ? opts.apiKey.trim() : "";
 
-      if (
-        opts.fromGrok ||
-        (provider === "xai" && !apiKeyFlag && !opts.oauth && !opts.device)
-      ) {
-        // Default xAI login path: reuse Grok Build subscription session when present
-        if (opts.fromGrok || !apiKeyFlag) {
-          const result = importGrokCredentials();
-          if (result.imported) {
-            if (wantJson) {
-              console.log(
-                JSON.stringify({
-                  ok: true,
-                  method: "from_grok",
-                  provider: "xai",
-                  accountLabel: result.email ? `grok:${result.email}` : null,
-                  expiresAt: result.expiresAt
-                    ? new Date(result.expiresAt * 1000).toISOString()
-                    : null,
-                }),
-              );
-              return;
-            }
-            log.success(
-              `Imported Grok subscription session${result.email ? ` (${result.email})` : ""}`,
+      // Explicit Grok Build file import only (--from-grok). Default is SuperGrok OIDC.
+      if (opts.fromGrok) {
+        const result = importGrokCredentials();
+        if (result.imported) {
+          if (wantJson) {
+            console.log(
+              JSON.stringify({
+                ok: true,
+                method: "from_grok",
+                provider: "xai",
+                accountLabel: result.email ? `grok:${result.email}` : null,
+                expiresAt: result.expiresAt
+                  ? new Date(result.expiresAt * 1000).toISOString()
+                  : null,
+              }),
             );
-            if (result.expiresAt) {
-              const hours = Math.max(
-                0,
-                (result.expiresAt - Math.floor(Date.now() / 1000)) / 3600,
-              );
-              log.dim(
-                `Access token expires ${new Date(result.expiresAt * 1000).toISOString()} (~${hours.toFixed(1)}h). ` +
-                  `SuperGrok sessions are ~6h; Forge re-imports ~/.grok/auth.json on start when stale. ` +
-                  `For multi-day runs use: forge login --api-key`,
-              );
-            }
-            log.info("Try: forge");
             return;
           }
-          if (opts.fromGrok) {
-            failLogin(
-              "grok_import_failed",
-              result.reason || "Import failed",
-              { email: result.email || null },
+          log.success(
+            `Imported Grok subscription session${result.email ? ` (${result.email})` : ""}`,
+          );
+          if (result.expiresAt) {
+            const hours = Math.max(
+              0,
+              (result.expiresAt - Math.floor(Date.now() / 1000)) / 3600,
+            );
+            log.dim(
+              `Access token expires ${new Date(result.expiresAt * 1000).toISOString()} (~${hours.toFixed(1)}h). ` +
+                `Prefer: forge login  (native SuperGrok OIDC) for independent refresh. ` +
+                `Multi-day unattended: forge login --api-key`,
             );
           }
-          // Fall through to other methods if auto-import missed
-          if (!wantJson) {
-            log.warn(result.reason || "No Grok session to import — trying other methods");
-          }
+          log.info("Try: forge");
+          return;
         }
+        failLogin("grok_import_failed", result.reason || "Import failed", {
+          email: result.email || null,
+        });
       }
 
+      // Default xAI path: native SuperGrok OIDC (browser), not import-from-grok.
       let method: "api_key" | "oauth" | "device" = "api_key";
       if (opts.device) method = "device";
       else if (opts.oauth) method = "oauth";
       else if (apiKeyFlag) method = "api_key";
-      else if (supportsOAuth(provider) && provider !== "xai") {
-        method = "oauth";
-      } else {
-        method = "api_key";
-      }
+      else if (supportsOAuth(provider)) method = "oauth";
+      else method = "api_key";
+
       // --json requires a non-interactive path (explicit API key).
       if (wantJson && method !== "api_key") {
         failLogin(
@@ -745,7 +736,7 @@ Docs: docs/PRODUCTION.md
       if (wantJson && method === "api_key" && !apiKeyValue) {
         failLogin(
           "api_key_required",
-          'login --json requires an explicit key: forge login --api-key <key> --json',
+          "login --json requires an explicit key: forge login --api-key <key> --json",
         );
       }
       try {
@@ -768,6 +759,11 @@ Docs: docs/PRODUCTION.md
           apiKey: apiKeyValue || undefined,
         });
       } catch (err) {
+        if (provider === "xai" && method === "oauth" && !wantJson) {
+          log.dim(
+            "Also: forge login --device · forge login --from-grok · forge login --api-key",
+          );
+        }
         failLogin("login_failed", (err as Error).message || String(err), {
           method,
         });

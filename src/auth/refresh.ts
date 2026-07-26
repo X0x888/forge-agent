@@ -14,11 +14,14 @@ import type { StoredCredential } from "./types.js";
 import { nowEpoch } from "../util/fs.js";
 import { log } from "../util/log.js";
 
+import { XAI_PUBLIC_CLIENT_ID, XAI_TOKEN_URL } from "./xai-oauth.js";
+
 /** Same profiles as login — kept local to avoid circular imports. */
 const TOKEN_URLS: Record<string, { tokenUrl: string; clientId: string }> = {
   xai: {
-    tokenUrl: "https://auth.x.ai/oauth/token",
-    clientId: process.env.FORGE_XAI_CLIENT_ID || "forge-cli",
+    // SuperGrok / Grok CLI OIDC discovery token endpoint
+    tokenUrl: XAI_TOKEN_URL,
+    clientId: XAI_PUBLIC_CLIENT_ID,
   },
   openai: {
     tokenUrl: "https://auth.openai.com/oauth/token",
@@ -65,8 +68,7 @@ export async function refreshCredentialIfNeeded(
   }
 
   const profile = TOKEN_URLS[provider];
-  // Prefer the client_id that originally issued the session (Grok Build OIDC).
-  // Default "forge-cli" is rejected by auth.x.ai for SuperGrok refresh tokens.
+  // Prefer the client_id that issued the session (Grok CLI / SuperGrok OIDC).
   const clientId =
     cred.clientId?.trim() ||
     process.env.FORGE_XAI_CLIENT_ID?.trim() ||

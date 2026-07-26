@@ -1,8 +1,17 @@
 # Changelog
 
-## 0.9.5 — File-aware undo, /init, /review, /compact-and
+## 0.9.5 — File-aware undo, /init, /review, /compact-and + SuperGrok OIDC
 
-Production recovery, review, and onboarding learned from OpenCode (snapshot/revert, guided AGENTS.md, `/review`) and Warp (`/compact-and`).
+Production recovery, review, and onboarding learned from OpenCode (snapshot/revert, guided AGENTS.md, `/review`) and Warp (`/compact-and`). Native SuperGrok OIDC login for subscription auth without Grok Build import.
+
+### SuperGrok OIDC
+- **`forge login` (xai default)**: browser SuperGrok / xAI OIDC with the public Grok CLI client (`b1a00492-…`), PKCE, callback `http://127.0.0.1:56121/callback`
+- Correct OIDC endpoints: `oauth2/authorize`, `oauth2/token`, `oauth2/device/code` (replaces broken `/oauth/token` + fake `forge-cli` client)
+- Scopes: `openid profile email offline_access grok-cli:access api:access` → subscription-backed API + refresh tokens
+- **`forge login --device`**: SuperGrok device-code for SSH / headless
+- **`forge login --from-grok`**: still imports `~/.grok/auth.json` when Grok Build is already logged in
+- Refresh uses the same public client + token URL; stores `clientId` on login for long sessions
+- CI: `login --json` still requires `--api-key` (interactive OAuth/device → `interactive_required`)
 
 ### Loop hygiene
 - **content_filter / empty-response continues**: check stop-continue cap **before** injecting steerage user messages (avoids orphan prompts when releasing at cap; parity with `finish_reason=length`); empty-at-cap sets a clear `finalText` for headless JSON
@@ -98,6 +107,7 @@ Production recovery, review, and onboarding learned from OpenCode (snapshot/reve
 - RELIABILITY + PRODUCTION + README note file-aware undo and new slash commands
 - Tests: `mutations-undo.test.ts`, `logs.test.ts` (journal, restore, `/logs`, bash timeout env)
 - `.gitignore` covers `.tmp-*/` compile caches
+- Tests: SuperGrok OIDC profile + id_token email decode (`tests/xai-oauth.test.ts`)
 
 ## 0.9.4 — Expert UX (retry, pin, stats, resume-by-title)
 

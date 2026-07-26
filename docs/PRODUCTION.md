@@ -11,7 +11,8 @@ npm run smoke                # build + CLI binary smoke
 npm run ci                   # check + smoke (GitHub Actions)
 forge doctor                 # human report (exit 1 if issues)
 forge doctor --json          # CI: structured JSON + exit 1 if unhealthy
-forge auth                   # refresh OAuth if needed
+forge login                  # SuperGrok OIDC (browser) · --device · --from-grok · --api-key
+forge auth                   # status + refresh OAuth if needed
 forge auth --json            # CI: {ok,authenticated,active,stored[]} — never tokens; ok:false + exit 1 when unauthenticated
 forge login --api-key "$KEY" --json   # CI login (no interactive prompt)
 forge logout --json          # CI clear stored creds
@@ -110,8 +111,10 @@ Exit code `1` when `ok` is false (still prints JSON first). Thresholds reflect e
 | Prefer | When |
 |---|---|
 | Env API key (`XAI_API_KEY`, …) | CI / ephemeral runners |
-| `forge login --from-grok` | SuperGrok subscription reuse |
-| `forge login --oauth` / `--device` | Interactive / headless OAuth |
+| `forge login` | **Native SuperGrok OIDC** (browser; default for xai) |
+| `forge login --device` | SuperGrok device-code (SSH / headless) |
+| `forge login --from-grok` | Import live Grok Build `~/.grok` session |
+| `forge login --api-key` | API key (CI / multi-day unattended) |
 
 - `auth.json`, `permissions.json`, and `preferences.json` must be mode `0600` (doctor flags otherwise)
 - Long sessions: OAuth refresh runs at start and once on mid-run `401`

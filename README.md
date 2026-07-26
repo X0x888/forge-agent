@@ -50,14 +50,13 @@ Requirements: **Node.js 20+**
 ## Quick start
 
 ```bash
-# 1. Auth — API key (always works)
-export XAI_API_KEY=xai-...          # or ANTHROPIC_API_KEY / OPENAI_API_KEY / …
-# or:
-forge login --provider xai --api-key
-
-# OAuth / subscription when the provider exposes it:
-forge login --provider xai --oauth
-forge login --provider openai --device   # headless device code
+# 1. Auth — SuperGrok subscription (browser OIDC, default for xai)
+forge login                         # opens browser → SuperGrok / X Premium
+forge login --device                # headless / SSH device code
+forge login --from-grok             # reuse existing Grok Build ~/.grok session
+# or API key (CI / multi-day unattended):
+export XAI_API_KEY=xai-...          # or: forge login --api-key
+forge login --provider openai --device
 
 # 2. Init project scaffolding (config, example Stop hook, AGENTS.md)
 forge init
@@ -88,10 +87,11 @@ Forge supports **both API keys and subscription/OAuth** where providers allow pu
 
 | Method | How | Notes |
 |---|---|---|
-| **API key** | `XAI_API_KEY` / `forge login --api-key` | CI-friendly; always available |
-| **OAuth (browser)** | `forge login --oauth` | xAI, OpenAI when client id is accepted |
-| **Device code** | `forge login --device` | Headless SSH / remote |
-| **Stored session** | `~/.forge/auth.json` (mode `0600`) | Auto-used when env key absent |
+| **SuperGrok OIDC (browser)** | `forge login` / `--oauth` | Native xAI OIDC (public Grok CLI client); SuperGrok / X Premium subscription |
+| **SuperGrok device code** | `forge login --device` | Headless SSH / remote |
+| **Import Grok Build** | `forge login --from-grok` | Copy live `~/.grok/auth.json` session |
+| **API key** | `XAI_API_KEY` / `forge login --api-key` | CI / multi-day unattended |
+| **Stored session** | `~/.forge/auth.json` (mode `0600`) | Auto-used when env key absent; OAuth refresh when possible |
 
 Precedence when resolving credentials:
 

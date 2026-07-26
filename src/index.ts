@@ -38,7 +38,12 @@ export {
   execCommandSandboxed,
 } from "./agent/sandbox.js";
 export { resolveAuth, resolveAuthFresh, describeAuth } from "./auth/resolve.js";
-export { loginInteractive, logout, supportsOAuth } from "./auth/login.js";
+export {
+  loginInteractive,
+  logout,
+  supportsOAuth,
+  getOAuthProfile,
+} from "./auth/login.js";
 export { importGrokCredentials, readGrokXaiSession } from "./auth/import-grok.js";
 export {
   refreshCredentialIfNeeded,
@@ -165,6 +170,13 @@ export {
   DEFAULT_PROVIDER_TIMEOUT_MS,
 } from "./util/abort.js";
 export { getForgeVersion } from "./util/version.js";
+export {
+  XAI_PUBLIC_CLIENT_ID,
+  XAI_TOKEN_URL,
+  XAI_AUTHORIZE_URL,
+  XAI_SCOPES,
+  emailFromIdToken,
+} from "./auth/xai-oauth.js";
 export {
   formatWhatsNew,
   loadChangelogReleases,
