@@ -4,15 +4,6 @@
 
 Production recovery, review, and onboarding learned from OpenCode (snapshot/revert, guided AGENTS.md, `/review`) and Warp (`/compact-and`). Native SuperGrok OIDC login for subscription auth without Grok Build import.
 
-### SuperGrok OIDC
-- **`forge login` (xai default)**: browser SuperGrok / xAI OIDC with the public Grok CLI client (`b1a00492-…`), PKCE, callback `http://127.0.0.1:56121/callback`
-- Correct OIDC endpoints: `oauth2/authorize`, `oauth2/token`, `oauth2/device/code` (replaces broken `/oauth/token` + fake `forge-cli` client)
-- Scopes: `openid profile email offline_access grok-cli:access api:access` → subscription-backed API + refresh tokens
-- **`forge login --device`**: SuperGrok device-code for SSH / headless
-- **`forge login --from-grok`**: still imports `~/.grok/auth.json` when Grok Build is already logged in
-- Refresh uses the same public client + token URL; stores `clientId` on login for long sessions
-- CI: `login --json` still requires `--api-key` (interactive OAuth/device → `interactive_required`)
-
 ### Loop hygiene
 - **content_filter / empty-response continues**: check stop-continue cap **before** injecting steerage user messages (avoids orphan prompts when releasing at cap; parity with `finish_reason=length`); empty-at-cap sets a clear `finalText` for headless JSON
 - **length / stop-continue / content_filter cap release notes**: truncated-at-cap and content-filter-at-cap append Forge notes to `finalText`; stop-cap with blank assistant text no longer returns empty headless JSON
@@ -102,6 +93,15 @@ Production recovery, review, and onboarding learned from OpenCode (snapshot/reve
 - **`/logs [n|path]`** (live-safe) + **`forge logs`**: tail sandbox/safety events from `~/.forge/logs/sandbox.jsonl` (no secrets; Warp-inspired)
 - Shell completion + smoke cover `logs`
 - **Doctor** surfaces `undo-journal:` aggregate (`mutations.jsonl` session/entry/byte counts) when present; **`forge doctor --json`** includes `undoJournal: { sessions, bytes, entries }`
+
+### SuperGrok OIDC
+- **`forge login` (xai default)**: browser SuperGrok / xAI OIDC with the public Grok CLI client (`b1a00492-…`), PKCE, callback `http://127.0.0.1:56121/callback`
+- Correct OIDC endpoints: `oauth2/authorize`, `oauth2/token`, `oauth2/device/code` (replaces broken `/oauth/token` + fake `forge-cli` client)
+- Scopes: `openid profile email offline_access grok-cli:access api:access` → subscription-backed API + refresh tokens
+- **`forge login --device`**: SuperGrok device-code for SSH / headless
+- **`forge login --from-grok`**: still imports `~/.grok/auth.json` when Grok Build is already logged in
+- Refresh uses the same public client + token URL; stores `clientId` on login for long sessions
+- CI: `login --json` still requires `--api-key` (interactive OAuth/device → `interactive_required`)
 
 ### Docs / tests
 - RELIABILITY + PRODUCTION + README note file-aware undo and new slash commands
