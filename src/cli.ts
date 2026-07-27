@@ -1933,7 +1933,7 @@ Project instructions for Forge (and other coding agents).
     .option("-p, --provider <provider>", "Provider override")
     .option("--cwd <path>", "Workspace", process.cwd())
     .option("--json", "Machine-readable summary on stdout")
-    .action((opts, command) => {
+    .action(async (opts, command) => {
       const wantJson = flagJson(opts, command);
       // Parent also defines -p/--provider/--cwd; merge so flags bind either place.
       // Prefer CLI-sourced values over doctor defaults / parent defaults.
@@ -1950,8 +1950,11 @@ Project instructions for Forge (and other coding agents).
       }
       const config = buildConfig(merged);
       if (wantJson) {
-        const check = runDoctorCheck(config);
-        const auth = resolveAuth(config);
+        const check = await runDoctorCheck(config);
+        // Prefer fresh auth (matches doctor report) for describeAuth field
+        const auth =
+          (await resolveAuthFresh(config).catch(() => null)) ||
+          resolveAuth(config);
         let sessionCount = 0;
         let sessionsLocked = 0;
         let sessionsPinned = 0;
@@ -2089,7 +2092,7 @@ Project instructions for Forge (and other coding agents).
       }
       // Plain doctor: same health signal as --json (exit 1 on issues) so
       // scripts that forget --json still fail closed in CI.
-      const check = runDoctorCheck(config);
+      const check = await runDoctorCheck(config);
       console.log(check.report);
       if (!check.ok) process.exitCode = 1;
     });

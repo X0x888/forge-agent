@@ -1122,6 +1122,18 @@ export function markUserTurn(session: SessionData): void {
   session.meta.userTurnMarks.push(session.messages.length);
 }
 
+/**
+ * Rebuild userTurnMarks from current messages after compact/load so
+ * /undo and /retry never restore disk against a no-op chat rewind.
+ */
+export function rebuildUserTurnMarks(session: SessionData): void {
+  const marks: number[] = [];
+  for (let i = 0; i < session.messages.length; i++) {
+    if (session.messages[i]?.role === "user") marks.push(i);
+  }
+  session.meta.userTurnMarks = marks;
+}
+
 export interface RewindSessionResult {
   /** Messages removed from history. */
   removed: number;
@@ -1147,7 +1159,15 @@ export function rewindSessionDetailed(
   session: SessionData,
   turns = 1,
 ): RewindSessionResult {
-  const marks = session.meta.userTurnMarks || [];
+  // Compact can leave marks past messages.length — resync first.
+  let marks = session.meta.userTurnMarks || [];
+  if (
+    marks.length > 0 &&
+    marks.some((m) => m < 0 || m >= session.messages.length)
+  ) {
+    rebuildUserTurnMarks(session);
+    marks = session.meta.userTurnMarks || [];
+  }
   if (marks.length === 0) {
     // Fallback: drop trailing messages until last user
     let cut = -1;
@@ -1159,9 +1179,11 @@ export function rewindSessionDetailed(
     }
     if (cut < 0) return { removed: 0, turns: 0 };
     const removed = session.messages.length - cut;
+    if (removed <= 0) return { removed: 0, turns: 0 };
     const prevTurn = session.meta.turnCount;
     session.messages = session.messages.slice(0, cut);
     session.meta.turnCount = Math.max(0, session.meta.turnCount - 1);
+    rebuildUserTurnMarks(session);
     const disk = restoreMutationsAfterTurn(
       session.meta.id,
       session.meta.turnCount,
@@ -1175,10 +1197,21 @@ export function rewindSessionDetailed(
   }
   const n = Math.max(1, Math.min(turns, marks.length));
   const cut = marks[marks.length - n];
+  if (typeof cut !== "number" || cut < 0 || cut >= session.messages.length) {
+    rebuildUserTurnMarks(session);
+    return { removed: 0, turns: 0 };
+  }
   const removed = session.messages.length - cut;
+  // Never restore disk if chat rewind is a no-op (stale marks after compact).
+  if (removed <= 0) {
+    rebuildUserTurnMarks(session);
+    saveSession(session);
+    return { removed: 0, turns: 0 };
+  }
   session.messages = session.messages.slice(0, cut);
   session.meta.userTurnMarks = marks.slice(0, marks.length - n);
   session.meta.turnCount = Math.max(0, session.meta.turnCount - n);
+  rebuildUserTurnMarks(session);
   const disk = restoreMutationsAfterTurn(
     session.meta.id,
     session.meta.turnCount,

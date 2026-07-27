@@ -85,7 +85,7 @@ forge status --tmux --plain
 
 | Auth path | Plan / quota segment |
 |-----------|----------------------|
-| **Grok / xAI subscription** (`forge login --from-grok`) | Best-effort SuperGrok credits via Grok billing proxy |
+| **Grok / xAI subscription** (`forge login` SuperGrok OIDC or `--from-grok`) | Best-effort SuperGrok credits via Grok billing proxy |
 | **xAI / OpenAI / Anthropic API key** | Session tokens + est. cost only |
 | **OpenAI / Codex subscription** | Local rate-limit files under `~/.codex/` if present |
 | **GitHub Copilot** | Explicit note: quota not exposed to third-party CLIs |

@@ -94,6 +94,13 @@ Production recovery, review, and onboarding learned from OpenCode (snapshot/reve
 - Shell completion + smoke cover `logs`
 - **Doctor** surfaces `undo-journal:` aggregate (`mutations.jsonl` session/entry/byte counts) when present; **`forge doctor --json`** includes `undoJournal: { sessions, bytes, entries }`
 
+### Production polish (post-merge review)
+- **Hard-deny**: `git push origin +main` / `+master` refspec force; `rm -rf ~/`, `~/*`, `$HOME/`, `$HOME/*`
+- **File-aware undo**: restore-before-truncate journal (failed undos keep pre-images); never restore disk when chat rewind is a no-op; rebuild `userTurnMarks` after compact
+- **Auth**: mid-run 401 tries `resolveAuthFresh` (Grok re-import) after refresh failure; doctor uses `resolveAuthFresh` so SuperGrok TTL does not false-fail CI
+- **OIDC callback**: honor `FORGE_XAI_REDIRECT_URI` path; HTML-escape error_description on local callback page
+- **CI**: `npm run check` builds before tests (dist-dependent CLI tests run); smoke asserts `empty_prompt` + `invalid_provider`
+
 ### SuperGrok OIDC
 - **`forge login` (xai default)**: browser SuperGrok / xAI OIDC with the public Grok CLI client (`b1a00492-…`), PKCE, callback `http://127.0.0.1:56121/callback`
 - Correct OIDC endpoints: `oauth2/authorize`, `oauth2/token`, `oauth2/device/code` (replaces broken `/oauth/token` + fake `forge-cli` client)

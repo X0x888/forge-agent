@@ -13,6 +13,7 @@ import {
   estimateTokens,
   estimateRequestTokens,
   compactMessages,
+  rebuildUserTurnMarks,
   maybeSetTitle,
   markUserTurn,
   pruneOversizedMessageBodies,
@@ -382,6 +383,9 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
     });
     const healed = repairToolCallPairing(session.messages);
     if (healed.changed) session.messages = healed.messages;
+    // Compact rewrites history — resync undo marks so /undo never restores disk
+    // against a no-op chat rewind.
+    rebuildUserTurnMarks(session);
     await hooks.run("PostCompact", baseHookCtx(session, config));
     saveSession(session);
     const afterTok = estimateTokens(session.messages);
@@ -675,10 +679,19 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
               String(config.provider),
               { force: true },
             );
-            if (!refreshed.ok || !refreshed.credential) {
-              throw err;
+            // SuperGrok refresh often fails (revoked/CF) — try full resolveAuthFresh
+            // (re-import live ~/.grok session) before giving up.
+            let auth = refreshed.ok && refreshed.credential
+              ? resolveAuth(config)
+              : null;
+            if (!auth?.token) {
+              try {
+                const { resolveAuthFresh } = await import("../auth/resolve.js");
+                auth = await resolveAuthFresh(config);
+              } catch {
+                /* fall through */
+              }
             }
-            const auth = resolveAuth(config);
             if (!auth?.token || !provider.updateCredentials) {
               throw err;
             }

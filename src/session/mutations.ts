@@ -263,18 +263,29 @@ export function copyFileMutations(fromId: string, toId: string): void {
 
 /**
  * Restore disk for mutations belonging to turns after `keepThroughTurn`.
- * Applies in reverse chronological order. Truncates the journal afterward.
+ * Applies in reverse chronological order.
+ *
+ * Journal is rewritten only after restore attempts: successfully restored
+ * (and skipped) entries are dropped; failed entries are kept so `/undo` can
+ * retry without losing pre-images.
  */
 export function restoreMutationsAfterTurn(
   sessionId: string,
   keepThroughTurn: number,
 ): RestoreMutationsResult {
-  const doomed = truncateMutationsAfterTurn(sessionId, keepThroughTurn);
+  const all = readFileMutations(sessionId);
+  const kept = all.filter(
+    (m) => typeof m.turn === "number" && m.turn <= keepThroughTurn,
+  );
+  const doomed = all.filter(
+    (m) => typeof m.turn === "number" && m.turn > keepThroughTurn,
+  );
   // Reverse: last mutation first
   const ordered = doomed.slice().reverse();
   const restored: string[] = [];
   const failed: Array<{ path: string; error: string }> = [];
   const skipped: Array<{ path: string; reason: string }> = [];
+  const failedEntries: FileMutation[] = [];
 
   for (const m of ordered) {
     if (m.skipped) {
@@ -309,8 +320,14 @@ export function restoreMutationsAfterTurn(
           dir,
           `.${path.basename(m.path)}.${process.pid}.undo.tmp`,
         );
-        fs.writeFileSync(tmp, body, "utf8");
+        // Prefer restrictive mode for restored bodies (pre-images may be secrets).
+        fs.writeFileSync(tmp, body, { encoding: "utf8", mode: 0o600 });
         fs.renameSync(tmp, m.path);
+        try {
+          fs.chmodSync(m.path, 0o600);
+        } catch {
+          /* */
+        }
         restored.push(
           m.kind === "delete" ? `+ ${m.path}` : `~ ${m.path}`,
         );
@@ -320,8 +337,15 @@ export function restoreMutationsAfterTurn(
         path: m.path,
         error: (err as Error).message,
       });
+      failedEntries.push(m);
     }
   }
+
+  // Keep surviving entries + failed undos (so retry can recover pre-images).
+  // Preserve original chronological order for failed re-appends.
+  const failedSet = new Set(failedEntries);
+  const failedInOrder = doomed.filter((m) => failedSet.has(m));
+  writeMutationsJournal(sessionId, [...kept, ...failedInOrder]);
 
   return { restored, failed, skipped };
 }

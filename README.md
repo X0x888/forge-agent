@@ -2,7 +2,7 @@
 
 **Forge** is an open-source AI coding agent CLI with a **first-class harness** — the control plane that other tools partially implement.
 
-> **v0.9.5** — **File-aware `/undo`**, **`/init`**, **`/review`**, **`/compact-and`**, **`/logs`** · **`forge logs`**, **`FORGE_BASH_TIMEOUT_MS`**, export mode `0600`. Builds on **v0.9.4** expert UX: **`/retry`**, **`/last`**, **`/files`**, **`/pin`**, resume-by-title, **`forge run --continue`**, **`forge stats`**, **`/share`**, **`forge news`** / **`tips`**. Still includes Retry-After, stream-capped tools, doom-loop + error-streak, **apply_patch**, session lock + auto-resume, structured **`doctor --json`**, `npm run smoke`. Harness: blocking Stop, `/goal`, ULW.
+> **v0.9.5** — **Native SuperGrok OIDC** (`forge login`), **file-aware `/undo`**, **`/init`**, **`/review`**, **`/compact-and`**, **`/logs`** · **`forge logs`**, **`FORGE_BASH_TIMEOUT_MS`**, export mode `0600`. Builds on **v0.9.4** expert UX: **`/retry`**, **`/last`**, **`/files`**, **`/pin`**, resume-by-title, **`forge run --continue`**, **`forge stats`**, **`/share`**, **`forge news`** / **`tips`**. Still includes Retry-After, stream-capped tools, doom-loop + error-streak, **apply_patch**, session lock + auto-resume, structured **`doctor --json`**, `npm run smoke`. Harness: blocking Stop, `/goal`, ULW.
 
 Key capability comparison:
 

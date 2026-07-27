@@ -298,7 +298,7 @@ describe("doctor surfaces reliability", () => {
     process.env.FORGE_HOME = tmp;
     const { loadConfig } = await import("../src/config/load.js");
     const { runDoctor } = await import("../src/commands/slash.js");
-    const out = runDoctor(loadConfig({}, tmp));
+    const out = await runDoctor(loadConfig({}, tmp));
     assert.match(out, /Forge doctor/);
     assert.match(out, /Version:/);
     assert.match(out, /Reliability:/);
@@ -335,9 +335,9 @@ describe("doctor surfaces reliability", () => {
       "../src/util/fs.js"
     );
     const cfg = loadConfig({}, tmp);
-    const check = runDoctorCheck(cfg);
+    const check = await runDoctorCheck(cfg);
     const report = check.report;
-    assert.equal(runDoctor(cfg), report);
+    assert.equal(await runDoctor(cfg), report);
     const home = forgeHome();
     const secureFiles = {
       auth: inspectSecureFile(path.join(home, "auth.json")),
@@ -448,7 +448,7 @@ describe("doctor surfaces reliability", () => {
       const bad = inspectSecureFile(authPath);
       assert.equal(bad.exists, true);
       assert.equal(bad.modeOk, false);
-      const checkBad = runDoctorCheck(cfg);
+      const checkBad = await runDoctorCheck(cfg);
       assert.equal(checkBad.ok, false);
       assert.ok(
         checkBad.issues.some((i) => /auth|0600|world-readable/i.test(i)),
@@ -486,7 +486,7 @@ describe("doctor surfaces reliability", () => {
     }
     const { loadConfig } = await import("../src/config/load.js");
     const { runDoctor } = await import("../src/commands/slash.js");
-    const out = runDoctor(loadConfig({ provider: "xai" }, tmp));
+    const out = await runDoctor(loadConfig({ provider: "xai" }, tmp));
     assert.match(out, /Not authenticated|not authenticated/i);
     assert.match(out, /issue/i);
   });
@@ -503,17 +503,17 @@ describe("doctor surfaces reliability", () => {
     );
     const cfg = loadConfig({}, tmp);
     cfg.blockingStopHooks = false;
-    const check = runDoctorCheck(cfg);
+    const check = await runDoctorCheck(cfg);
     assert.equal(check.ok, false);
     assert.equal(check.blockingStop, false);
     assert.ok(check.issues.some((i) => /Blocking Stop is OFF/i.test(i)));
     assert.match(check.report, /Blocking Stop: off/i);
     assert.doesNotMatch(check.report, /No blocking issues detected/);
     // Default remains on
-    const on = runDoctorCheck(loadConfig({}, tmp));
+    const on = await runDoctorCheck(loadConfig({}, tmp));
     assert.equal(on.blockingStop, true);
     assert.match(on.report, /Blocking Stop: on/i);
-    assert.equal(runDoctor(cfg), check.report);
+    assert.equal(await runDoctor(cfg), check.report);
   });
 });
 

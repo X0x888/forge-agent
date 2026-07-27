@@ -127,6 +127,7 @@ export {
   formatResumeOrientation,
   recoverSessionFromTmp,
   compactMessages,
+  rebuildUserTurnMarks,
   estimateTokens,
   estimateRequestTokens,
   pruneOversizedMessageBodies,

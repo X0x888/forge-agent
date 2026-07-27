@@ -33,7 +33,8 @@ const HARD_DENY: Array<{ rule: string; re: RegExp; reason: string }> = [
   },
   {
     rule: "rm-rf-home",
-    re: /\brm\b[^\n;|&]*(-[a-zA-Z]*r[a-zA-Z]*f[a-zA-Z]*|-[a-zA-Z]*f[a-zA-Z]*r[a-zA-Z]*)[^\n;|&]*(~|\$\{?HOME\}?|\/Users\/[^/\s]+\/?|\/home\/[^/\s]+\/?)(\s|$|;|&|\|)/,
+    // ~, ~/, ~/*, $HOME, $HOME/, $HOME/*, ${HOME}, absolute home paths
+    re: /\brm\b[^\n;|&]*(-[a-zA-Z]*r[a-zA-Z]*f[a-zA-Z]*|-[a-zA-Z]*f[a-zA-Z]*r[a-zA-Z]*)[^\n;|&]*(~(\/\*?)?|\$\{?HOME\}?(\/\*?)?|\/Users\/[^/\s]+(\/\*?)?|\/home\/[^/\s]+(\/\*?)?)(\s|$|;|&|\|)/,
     reason: "Refusing recursive delete of home directory",
   },
   {
@@ -95,6 +96,12 @@ const HARD_DENY: Array<{ rule: string; re: RegExp; reason: string }> = [
     rule: "force-push-main-short-order",
     re: /\bgit\b[\s\S]*\bpush\b[^\n;|&]*\b(main|master)\b[^\n;|&]*\s-f(\s|$)/,
     reason: "Refusing force-push (-f) to main/master",
+  },
+  {
+    // Refspec force: git push origin +main  (no --force flag required)
+    rule: "force-push-main-refspec",
+    re: /\bgit\b[\s\S]*\bpush\b[^\n;|&]*\+[^\s]*\b(main|master)\b/,
+    reason: "Refusing force-push (+refspec) to main/master",
   },
   {
     rule: "git-clean-fdx",
@@ -205,7 +212,7 @@ function structuredRmDeny(segment: string): SafetyVerdict | null {
         rule: "rm-rf-structured",
       };
     }
-    if (HOME_TARGETS.has(t) || t === home || t === home + "/") {
+    if (isHomeCatastropheTarget(t, home)) {
       return {
         ok: false,
         reason: "Refusing recursive delete of home directory",
@@ -216,7 +223,31 @@ function structuredRmDeny(segment: string): SafetyVerdict | null {
   return null;
 }
 
-/** Structured force-push to main/master (handles git -C, -f, flag order). */
+/** Home root / home-wildcard wipes (~, ~/, ~/*, $HOME, $HOME/*, absolute home). */
+function isHomeCatastropheTarget(t: string, home: string): boolean {
+  const n = t.replace(/\\/g, "/");
+  if (HOME_TARGETS.has(n) || n === home || n === home + "/") return true;
+  if (n === "~/" || n === "~/*" || n === "~/**") return true;
+  if (/^\$\{?HOME\}?(\/\*?|\/\*\*)?$/.test(n)) return true;
+  if (n === home + "/*" || n === home + "/**") return true;
+  return false;
+}
+
+function normalizeGitPushRef(r: string): string {
+  const raw = r.startsWith("+") ? r.slice(1) : r;
+  return raw.includes(":") ? raw.split(":").pop()! : raw;
+}
+
+function isMainMasterRef(base: string): boolean {
+  return (
+    base === "main" ||
+    base === "master" ||
+    base.endsWith("/main") ||
+    base.endsWith("/master")
+  );
+}
+
+/** Structured force-push to main/master (handles git -C, -f, +refspec, flag order). */
 function structuredGitForceMain(segment: string): SafetyVerdict | null {
   const toks = tokenizeSimple(normalizeSegment(segment));
   if (toks[0] !== "git") return null;
@@ -242,18 +273,18 @@ function structuredGitForceMain(segment: string): SafetyVerdict | null {
   }
   if (toks[i] !== "push") return null;
   const rest = toks.slice(i + 1);
+  const refs = rest.filter((t) => !t.startsWith("-") || t.startsWith("+"));
   const force =
     rest.includes("--force") ||
-    rest.includes("--force-with-lease") ||
-    rest.some((t) => t === "-f" || /^-[a-zA-Z]*f[a-zA-Z]*$/.test(t));
+    rest.some(
+      (t) => t === "--force-with-lease" || t.startsWith("--force-with-lease="),
+    ) ||
+    rest.some((t) => t === "-f" || /^-[a-zA-Z]*f[a-zA-Z]*$/.test(t)) ||
+    refs.some((r) => r.startsWith("+"));
   if (!force) return null;
-  const refs = rest.filter((t) => !t.startsWith("-"));
-  // refs like origin main, or HEAD:main, or main
-  const hitsMain = refs.some((r) => {
-    const base = r.includes(":") ? r.split(":").pop()! : r;
-    return base === "main" || base === "master" || base.endsWith("/main") || base.endsWith("/master");
-  });
-  if (hitsMain || (refs.length >= 2 && (refs[1] === "main" || refs[1] === "master"))) {
+  // refs like origin main, +main, HEAD:main, HEAD:+main
+  const hitsMain = refs.some((r) => isMainMasterRef(normalizeGitPushRef(r)));
+  if (hitsMain || (refs.length >= 2 && isMainMasterRef(normalizeGitPushRef(refs[1])))) {
     return {
       ok: false,
       reason: "Refusing force-push to main/master",

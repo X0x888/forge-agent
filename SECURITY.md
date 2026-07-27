@@ -28,7 +28,7 @@ Email or private channel preferred when available; otherwise open a minimal publ
 - Atomic file writes (tmp+rename) for `write_file` / `search_replace` / `apply_patch`
 - Session file lock (`session.lock`) on REPL + `forge run`; auto-resume skips foreign live locks
 - Session export files mode `0600` (`forge sessions export --out`, `/export path`)
-- File mutation journal (`mutations.jsonl` mode `0600`) enables `/undo` disk restore without logging secrets
+- File mutation journal (`mutations.jsonl` mode `0600`) enables `/undo` disk restore; pre-images may include workspace secrets — keep `~/.forge` private
 - SSRF guards on `web_fetch` (stream body caps)
 - Shell env scrubbing for secret-looking variables
 - Project config cannot force `bypassPermissions`, turn sandbox off, or redirect credential paths

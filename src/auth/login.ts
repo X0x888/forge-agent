@@ -191,6 +191,18 @@ async function browserOAuthLogin(provider: string): Promise<void> {
   const redirectUri =
     profile.redirectUri || `http://127.0.0.1:${8765 + Math.floor(Math.random() * 1000)}/callback`;
   const port = xaiRedirectPortFromUri(redirectUri);
+  let redirectPath = "/callback";
+  try {
+    redirectPath = new URL(redirectUri).pathname || "/callback";
+  } catch {
+    redirectPath = "/callback";
+  }
+  const escapeHtml = (s: string) =>
+    s
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
 
   const url = new URL(profile.authorizeUrl);
   url.searchParams.set("response_type", "code");
@@ -208,17 +220,19 @@ async function browserOAuthLogin(provider: string): Promise<void> {
       const srv = http.createServer((req, res) => {
         try {
           const u = new URL(req.url || "/", `http://127.0.0.1:${port}`);
-          if (u.pathname !== "/callback" && u.pathname !== "/") {
+          // Accept registered redirect path (and bare / for some providers)
+          if (u.pathname !== redirectPath && u.pathname !== "/") {
             res.writeHead(404);
             res.end("Not found");
             return;
           }
-          // Accept /callback and bare /?code= (some providers)
           const err = u.searchParams.get("error");
           if (err) {
             const desc = u.searchParams.get("error_description") || err;
             res.writeHead(400, { "Content-Type": "text/html; charset=utf-8" });
-            res.end(`<h1>Login failed</h1><p>${desc}</p>`);
+            res.end(
+              `<h1>Login failed</h1><p>${escapeHtml(desc)}</p>`,
+            );
             srv.close();
             reject(new Error(desc));
             return;

@@ -15,6 +15,7 @@ import {
   pruneSessions,
   sessionHasForeignLiveLock,
   compactMessages,
+  rebuildUserTurnMarks,
   rewindSessionDetailed,
   exportSessionMarkdown,
   exportSessionJson,
@@ -56,7 +57,11 @@ import {
 } from "../config/reasoning.js";
 import { loadPreferences, savePreferences } from "../config/preferences.js";
 import { describeSandbox, detectSandboxBackend } from "../agent/sandbox.js";
-import { describeAuth, resolveAuth } from "../auth/resolve.js";
+import {
+  describeAuth,
+  resolveAuth,
+  resolveAuthFresh,
+} from "../auth/resolve.js";
 import { printAuthStatus } from "../auth/login.js";
 import { getCredential, isExpired } from "../auth/store.js";
 import { providerTimeoutMs } from "../util/abort.js";
@@ -942,6 +947,7 @@ export async function handleSlash(
         todos: opts.session.todos,
         sessionId: opts.session.meta.id,
       });
+      rebuildUserTurnMarks(opts.session);
       saveSession(opts.session);
       return {
         handled: true,
@@ -971,6 +977,7 @@ export async function handleSlash(
         todos: opts.session.todos,
         sessionId: opts.session.meta.id,
       });
+      rebuildUserTurnMarks(opts.session);
       saveSession(opts.session);
       const preview =
         follow.length > 120 ? `${follow.slice(0, 117).trimEnd()}…` : follow;
@@ -1180,6 +1187,7 @@ export async function handleSlash(
         todos: forked.todos,
         sessionId: forked.meta.id,
       });
+      rebuildUserTurnMarks(forked);
       saveSession(forked);
       const harnessBits: string[] = [];
       if (ulw?.enabled) harnessBits.push(`ULW ${formatUlwCounts(ulw)}`);
@@ -2028,7 +2036,7 @@ export async function handleSlash(
     }
 
     case "/doctor": {
-      return { handled: true, output: runDoctor(opts.config) };
+      return { handled: true, output: await runDoctor(opts.config) };
     }
 
     default:
@@ -2184,11 +2192,16 @@ export interface DoctorResult {
  * Full doctor check with structured fields for `forge doctor --json`.
  * Text report remains human-oriented (chalk); `ok`/`issues` are the CI contract.
  */
-export function runDoctorCheck(config: ForgeConfig): DoctorResult {
+export async function runDoctorCheck(
+  config: ForgeConfig,
+): Promise<DoctorResult> {
   const lines: string[] = [chalk.bold("Forge doctor"), ""];
   const issues: string[] = [];
   lines.push(`Version: ${getForgeVersion()}`);
-  const auth = resolveAuth(config);
+  // Prefer resolveAuthFresh so SuperGrok OIDC refresh / Grok re-import is tried
+  // before CI flags "not authenticated" on a short-lived access token.
+  let auth = await resolveAuthFresh(config);
+  if (!auth) auth = resolveAuth(config);
   lines.push(`Auth: ${describeAuth(auth)}`);
   if (!auth) {
     issues.push("Not authenticated — run forge login or set an API key env var");
@@ -2202,7 +2215,7 @@ export function runDoctorCheck(config: ForgeConfig): DoctorResult {
         if (cred.refreshToken) {
           lines.push(
             chalk.yellow(
-              "  refresh_token present — will try auto-refresh on next start",
+              "  refresh_token present — will try auto-refresh on next API call",
             ),
           );
         } else {
@@ -2462,8 +2475,8 @@ export function runDoctorCheck(config: ForgeConfig): DoctorResult {
 }
 
 /** Human-readable doctor report (slash `/doctor` and plain `forge doctor`). */
-export function runDoctor(config: ForgeConfig): string {
-  return runDoctorCheck(config).report;
+export async function runDoctor(config: ForgeConfig): Promise<string> {
+  return (await runDoctorCheck(config)).report;
 }
 
 export interface EffectiveConfigSnap {

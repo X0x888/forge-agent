@@ -21,9 +21,9 @@
     "test": "mkdir -p .tmp && TMPDIR=\"$PWD/.tmp\" tsx --test tests/*.test.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "prepack": "npm run build",
-    "check": "npm run typecheck && npm test",
+    "check": "npm run typecheck && npm run build && npm test",
     "ci": "npm run check && npm run smoke",
-    "smoke": "npm run build && node dist/cli.js --version && (node dist/cli.js doctor --json >/dev/null || true) && (node dist/cli.js auth --json >/dev/null || true) && node dist/cli.js completion bash >/dev/null && node dist/cli.js models --json >/dev/null && node dist/cli.js stats --json >/dev/null && node dist/cli.js news >/dev/null && node dist/cli.js logs >/dev/null && node dist/cli.js config --json >/dev/null && node dist/cli.js tips >/dev/null && node dist/cli.js prune-tool-output --json >/dev/null && node dist/cli.js prune-metrics --json >/dev/null && (node dist/cli.js --json >/dev/null || true)"
+    "smoke": "npm run build && node dist/cli.js --version && (node dist/cli.js doctor --json >/dev/null || true) && (node dist/cli.js auth --json >/dev/null || true) && node dist/cli.js completion bash >/dev/null && node dist/cli.js models --json >/dev/null && node dist/cli.js stats --json >/dev/null && node dist/cli.js news >/dev/null && node dist/cli.js logs >/dev/null && node dist/cli.js config --json >/dev/null && node dist/cli.js tips >/dev/null && node dist/cli.js prune-tool-output --json >/dev/null && node dist/cli.js prune-metrics --json >/dev/null && (node dist/cli.js --json >/dev/null || true) && node dist/cli.js run --json 2>/dev/null | grep -q empty_prompt && node dist/cli.js run x --json --provider '' 2>/dev/null | grep -q invalid_provider"
   },
   "engines": {
     "node": ">=20"

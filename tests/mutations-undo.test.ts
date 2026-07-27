@@ -537,3 +537,41 @@ describe("/init and /compact-and slash commands", () => {
     assert.equal(fs.existsSync(f), false);
   });
 });
+
+describe("production packaging + undo safety", () => {
+  it("install.sh is executable in the tree", () => {
+    const p = path.join(process.cwd(), "install.sh");
+    assert.ok(fs.existsSync(p), "install.sh present");
+    const mode = fs.statSync(p).mode & 0o111;
+    assert.ok(mode !== 0, "install.sh should be executable (mode 0o111 bits set)");
+  });
+
+  it("stale userTurnMarks after compact does not restore disk on no-op", async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "forge-stale-marks-"));
+    process.env.FORGE_HOME = home;
+    const ws = path.join(home, "ws");
+    fs.mkdirSync(ws);
+    const target = path.join(ws, "keep.txt");
+    fs.writeFileSync(target, "original\n");
+    const s = createSession({ cwd: ws, provider: "xai", model: "m" });
+    s.messages.push({ role: "user", content: "edit" });
+    markUserTurn(s);
+    s.meta.turnCount = 1;
+    appendFileMutation(s.meta.id, {
+      path: target,
+      kind: "update",
+      before: "original\n",
+      turn: 1,
+    });
+    fs.writeFileSync(target, "changed\n");
+    // Compact left only system/assistant (no user) but stale marks past length
+    s.messages = [{ role: "assistant", content: "summary only" }];
+    s.meta.userTurnMarks = [99, 100];
+    s.meta.turnCount = 2;
+    const r = rewindSessionDetailed(s, 1);
+    assert.equal(r.removed, 0, "must not claim chat rewind");
+    assert.equal(fs.readFileSync(target, "utf8"), "changed\n", "disk untouched");
+    // Marks resynced empty (no user messages)
+    assert.deepEqual(s.meta.userTurnMarks || [], []);
+  });
+});
