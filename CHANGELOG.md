@@ -411,6 +411,7 @@ Production recovery, review, and onboarding learned from OpenCode (snapshot/reve
 - **Doctor** surfaces `undo-journal:` aggregate (`mutations.jsonl` session/entry/byte counts) when present; **`forge doctor --json`** includes `undoJournal: { sessions, bytes, entries }`
 
 ### Production polish (post-merge review)
+- **Smoke**: replace fragile shell-empty-arg chain with `scripts/smoke.mjs` (isolated FORGE_HOME/GROK_HOME, explicit argv, timeouts)
 - **Hard-deny**: `git push origin +main` / `+master` refspec force; `rm -rf ~/`, `~/*`, `$HOME/`, `$HOME/*`
 - **File-aware undo**: restore-before-truncate journal (failed undos keep pre-images); never restore disk when chat rewind is a no-op; rebuild `userTurnMarks` after compact
 - **Auth**: mid-run 401 tries `resolveAuthFresh` (Grok re-import) after refresh failure; doctor uses `resolveAuthFresh` so SuperGrok TTL does not false-fail CI
