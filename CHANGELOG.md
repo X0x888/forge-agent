@@ -100,6 +100,7 @@ Production recovery, review, and onboarding learned from OpenCode (snapshot/reve
 - **Auth**: mid-run 401 tries `resolveAuthFresh` (Grok re-import) after refresh failure; doctor uses `resolveAuthFresh` so SuperGrok TTL does not false-fail CI
 - **OIDC callback**: honor `FORGE_XAI_REDIRECT_URI` path; HTML-escape error_description on local callback page
 - **CI**: `npm run check` builds before tests (dist-dependent CLI tests run); smoke asserts `empty_prompt` + `invalid_provider`
+- **Multi-day unattended**: proactive OAuth refresh each model turn (~10m skew); multi-recovery mid-run (`FORGE_AUTH_RECOVERY_MAX`); 401-only recovery (quota 403 no longer burns slot); clear dead refresh_token on `invalid_grant`; session locks never TTL-steal **live** pids + touch on save; REPL fail-closed on foreign live lock (`FORGE_FORCE_SESSION_LOCK=1` override); doctor flags missing refresh_token
 
 ### SuperGrok OIDC
 - **`forge login` (xai default)**: browser SuperGrok / xAI OIDC with the public Grok CLI client (`b1a00492-…`), PKCE, callback `http://127.0.0.1:56121/callback`

@@ -72,13 +72,24 @@ export async function runRepl(opts: {
   const permissions = new PermissionGate({ interactive: true });
   installBackgroundTaskExitHook();
 
-  // Exclusive session lock — warn (don't hard-fail) if another live process holds it
+  // Exclusive session lock — fail-closed on live foreign holders (parity with
+  // headless). Multi-day unattended + REPL must not race session.json.
   {
-    const lock = acquireSessionLock(session.meta.id);
+    const force =
+      process.env.FORGE_FORCE_SESSION_LOCK === "1" ||
+      process.env.FORGE_FORCE_SESSION_LOCK === "true";
+    const lock = acquireSessionLock(session.meta.id, { force });
     if (!lock.ok && lock.holder) {
+      if (!force) {
+        log.error(
+          `Session ${session.meta.id.slice(0, 8)} is locked by ${formatLockHolder(lock.holder)}. ` +
+            `Refusing concurrent write (multi-day safety). Use forge --new, wait for the other process, ` +
+            `or FORGE_FORCE_SESSION_LOCK=1 to override.`,
+        );
+        process.exit(1);
+      }
       log.warn(
-        `Session ${session.meta.id.slice(0, 8)} is locked by ${formatLockHolder(lock.holder)}. ` +
-          `Continuing may race writes — prefer one REPL per session, or /new.`,
+        `FORGE_FORCE_SESSION_LOCK — continuing despite lock held by ${formatLockHolder(lock.holder)}`,
       );
     } else if (lock.stolen && lock.holder) {
       log.dim(
@@ -326,10 +337,20 @@ export async function runRepl(opts: {
     if (slash.replaceSession) {
       releaseSessionLock(session.meta.id);
       session = slash.replaceSession;
-      const lock = acquireSessionLock(session.meta.id);
+      const force =
+        process.env.FORGE_FORCE_SESSION_LOCK === "1" ||
+        process.env.FORGE_FORCE_SESSION_LOCK === "true";
+      const lock = acquireSessionLock(session.meta.id, { force });
       if (!lock.ok && lock.holder) {
+        if (!force) {
+          log.error(
+            `Resumed session locked by ${formatLockHolder(lock.holder)}. ` +
+              `Refusing concurrent write. Use /new or FORGE_FORCE_SESSION_LOCK=1.`,
+          );
+          process.exit(1);
+        }
         log.warn(
-          `Resumed session locked by ${formatLockHolder(lock.holder)} — writes may race`,
+          `FORGE_FORCE_SESSION_LOCK — resumed despite lock by ${formatLockHolder(lock.holder)}`,
         );
       }
       hooks = new HookRunner(config, session.meta.cwd);

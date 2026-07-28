@@ -225,3 +225,30 @@ See [RELIABILITY.md](./RELIABILITY.md) for Retry-After, abort, JSON repair, doom
 1. Blocking Stop defaults **on**
 2. Goal stuck-wall can always release
 3. Sensitive JSON under `~/.forge` mode **0600** (`auth.json`, `permissions.json`, `preferences.json`)
+
+## Multi-day unattended (production)
+
+Forge is built for long expert sessions. For **true multi-day unattended** runs:
+
+| Auth | Use when |
+|------|----------|
+| **`XAI_API_KEY` / `forge login --api-key`** | **Recommended** — no expiry, no OIDC refresh dependency |
+| SuperGrok OIDC (`forge login`) | Interactive or single jobs shorter than ~one access-token TTL; refresh is best-effort |
+
+Operational checklist:
+
+```bash
+export XAI_API_KEY=…                    # preferred for multi-day
+# do NOT set FORGE_MAX_RUN_MS unless you want a hard wall-clock kill (exit 124)
+forge doctor --json                     # must show authenticated + refresh_token for OIDC
+forge run "…" --continue --json \
+  --permission-mode acceptEdits \
+  --sandbox workspace
+```
+
+Reliability for multi-day single process:
+
+- Session locks: live holders are **never** TTL-stolen; lock timestamp refreshed on every save
+- REPL refuses concurrent write on live foreign lock (`FORGE_FORCE_SESSION_LOCK=1` override)
+- OAuth: proactive refresh ~10m before expiry each model turn; up to `FORGE_AUTH_RECOVERY_MAX` (default 20) mid-run recoveries
+- Prefer many `forge run --continue` steps over one multi-day process if using SuperGrok OIDC

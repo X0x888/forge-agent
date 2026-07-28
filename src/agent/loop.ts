@@ -249,7 +249,9 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
   } = opts;
   // Mutable so mid-run OAuth refresh can hot-swap the bearer token
   let provider = opts.provider;
-  let authRefreshAttempted = false;
+  /** Generations of successful mid-run auth recovery (not a one-shot for multi-day). */
+  let authRecoveryCount = 0;
+  const maxAuthRecoveries = envPositiveInt("FORGE_AUTH_RECOVERY_MAX", 20);
   const events: LoopEvents = {
     onToken: opts.events?.onToken || opts.onToken,
     onToolStart: opts.events?.onToolStart,
@@ -559,6 +561,22 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
       }
 
       events.onPhase?.("thinking");
+      // Proactive OAuth refresh before provider call (multi-hour SuperGrok TTL).
+      // Avoids waiting for 401 mid-stream on long unattended runs.
+      try {
+        const refreshed = await refreshCredentialIfNeeded(
+          String(config.provider),
+          { skewSec: 600 },
+        );
+        if (refreshed.refreshed && refreshed.credential?.accessToken) {
+          if (provider.updateCredentials) {
+            provider.updateCredentials(refreshed.credential.accessToken);
+          }
+          events.onStatus?.("OAuth token refreshed (proactive)");
+        }
+      } catch {
+        /* never block the turn on proactive refresh */
+      }
       let response: Awaited<ReturnType<typeof provider.chat>> | undefined;
       try {
         const doChat = () =>
@@ -666,15 +684,23 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
               }
             }
           } else {
-            // One-shot OAuth recovery: 401/expired bearer mid-session
+            // OAuth recovery: prefer true token failures (401 / grant errors).
+            // Generic 403 (quota/policy) must NOT burn a recovery slot so a later
+            // real token expiry can still recover on multi-day runs.
             const msg = err instanceof Error ? err.message : String(err);
-            const authFail =
-              isAuthFailureMessage(msg) ||
-              (isProviderApiError(err) &&
-                (err.status === 401 || err.status === 403));
-            if (!authFail || authRefreshAttempted) throw err;
-            authRefreshAttempted = true;
-            events.onStatus?.("Auth failure — attempting token refresh…");
+            const status = isProviderApiError(err) ? err.status : 0;
+            const tokenAuthFail =
+              status === 401 ||
+              /invalid[_\s-]?api[_\s-]?key|invalid[_\s-]?token|expired[_\s-]?token|unauthorized|not authenticated|invalid_grant/i.test(
+                msg,
+              );
+            if (!tokenAuthFail || authRecoveryCount >= maxAuthRecoveries) {
+              throw err;
+            }
+            authRecoveryCount += 1;
+            events.onStatus?.(
+              `Auth failure — attempting token refresh (${authRecoveryCount}/${maxAuthRecoveries})…`,
+            );
             const refreshed = await refreshCredentialIfNeeded(
               String(config.provider),
               { force: true },

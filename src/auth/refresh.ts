@@ -61,8 +61,11 @@ export async function refreshCredentialIfNeeded(
     return { ok: true, credential: cred, refreshed: false };
   }
 
+  // Default skew 10 minutes — multi-hour SuperGrok tokens should refresh
+  // before the provider rejects mid-turn (not only after 401).
+  const skew = opts?.skewSec ?? 600;
   const needs =
-    opts?.force || isExpired(cred, opts?.skewSec ?? 120) || !cred.expiresAt;
+    opts?.force || isExpired(cred, skew) || !cred.expiresAt;
   if (!needs) {
     return { ok: true, credential: cred, refreshed: false };
   }
@@ -98,6 +101,25 @@ export async function refreshCredentialIfNeeded(
     });
     if (!resp.ok) {
       const text = await resp.text().catch(() => "");
+      // Permanent grant death — drop refresh_token so doctor/auth can surface
+      // "re-login required" instead of looking healthy with a dead RT.
+      if (
+        resp.status === 400 ||
+        resp.status === 401 ||
+        /invalid_grant|revoked|expired/i.test(text)
+      ) {
+        try {
+          const { setCredential } = await import("./store.js");
+          const cleared = { ...cred };
+          delete cleared.refreshToken;
+          setCredential(cleared);
+          log.warn(
+            `OAuth refresh_token for ${provider} rejected — re-login required (forge login)`,
+          );
+        } catch {
+          /* best-effort */
+        }
+      }
       return {
         ok: false,
         error: `refresh failed ${resp.status}: ${text.slice(0, 200)}`,

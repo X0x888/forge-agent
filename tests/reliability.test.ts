@@ -2761,3 +2761,44 @@ describe("mergeRunOpts (parent vs run defaults)", () => {
     assert.equal(merged3.permissionMode, "plan");
   });
 });
+
+describe("session lock multi-day", () => {
+  it("never TTL-steals a live foreign pid even when acquiredAt is ancient", async () => {
+    const fs = await import("node:fs");
+    const os = await import("node:os");
+    const path = await import("node:path");
+    const { spawn } = await import("node:child_process");
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-lock-live-"));
+    process.env.FORGE_HOME = tmp;
+    const { createSession, sessionDir } = await import("../src/session/session.js");
+    const { acquireSessionLock, releaseSessionLock } = await import(
+      "../src/session/lock.js"
+    );
+    const s = createSession({ cwd: tmp, provider: "xai", model: "m" });
+    const holder = spawn(process.execPath, ["-e", "setInterval(()=>{}, 1e9)"], {
+      stdio: "ignore",
+    });
+    try {
+      const lockFile = path.join(sessionDir(s.meta.id), "session.lock");
+      fs.writeFileSync(
+        lockFile,
+        JSON.stringify({
+          pid: holder.pid,
+          hostname: "other",
+          acquiredAt: new Date(Date.now() - 48 * 3600_000).toISOString(),
+          sessionId: s.meta.id,
+        }),
+        "utf8",
+      );
+      const blocked = acquireSessionLock(s.meta.id, { ttlMs: 1000 });
+      assert.equal(blocked.ok, false, "live pid must not be TTL-stolen");
+      assert.ok(blocked.holder);
+      const forced = acquireSessionLock(s.meta.id, { force: true });
+      assert.equal(forced.ok, true);
+      assert.equal(forced.stolen, true);
+      releaseSessionLock(s.meta.id);
+    } finally {
+      holder.kill("SIGKILL");
+    }
+  });
+});

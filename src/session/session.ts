@@ -11,6 +11,7 @@ import {
 import { formatRelativeTime } from "../util/format.js";
 import type { ChatMessage } from "../providers/types.js";
 import { heartbeatSession } from "../statusline/active.js";
+import { touchSessionLock } from "./lock.js";
 import {
   compactMessagesStructured,
   type CompactContext,
@@ -155,6 +156,13 @@ export function saveSession(data: SessionData): void {
     });
   } catch {
     /* never fail save on statusline */
+  }
+  // Keep exclusive lock timestamp fresh so multi-day runs stay visibly held
+  // (lock acquisition no longer TTL-steals live pids; touch is for ops hygiene).
+  try {
+    touchSessionLock(data.meta.id);
+  } catch {
+    /* never fail save on lock touch */
   }
 }
 

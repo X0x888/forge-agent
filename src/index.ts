@@ -288,6 +288,7 @@ export {
 } from "./session/compaction.js";
 export {
   acquireSessionLock,
+  touchSessionLock,
   releaseSessionLock,
   readSessionLock,
   formatLockHolder,

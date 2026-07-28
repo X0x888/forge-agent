@@ -2208,8 +2208,19 @@ export async function runDoctorCheck(
   } else if (auth.method !== "api_key") {
     // Surface expiry for OAuth/subscription without printing tokens
     const cred = getCredential(String(auth.provider));
+    if (cred && !cred.refreshToken) {
+      lines.push(
+        chalk.yellow(
+          "  No refresh_token — SuperGrok session cannot renew; multi-day unattended needs forge login --api-key",
+        ),
+      );
+      issues.push(
+        `OAuth/subscription for ${auth.provider} has no refresh_token — re-login (forge login) or use API key for multi-day`,
+      );
+    }
     if (cred?.expiresAt) {
       const exp = new Date(cred.expiresAt * 1000).toISOString();
+      const expiresIn = cred.expiresAt - Math.floor(Date.now() / 1000);
       if (isExpired(cred, 0)) {
         lines.push(chalk.red(`  Token EXPIRED at ${exp}`));
         if (cred.refreshToken) {
@@ -2226,7 +2237,8 @@ export async function runDoctorCheck(
       } else {
         lines.push(
           chalk.dim(
-            `  Token expires ${exp}${cred.refreshToken ? " · refresh_token=yes" : ""}`,
+            `  Token expires ${exp} (~${Math.max(0, Math.round(expiresIn / 60))}m)` +
+              `${cred.refreshToken ? " · refresh_token=yes" : " · refresh_token=NO"}`,
           ),
         );
       }

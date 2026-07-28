@@ -18,7 +18,12 @@ export interface SessionLockInfo {
   sessionId: string;
 }
 
-const DEFAULT_TTL_MS = 2 * 60 * 60 * 1000; // 2h
+/**
+ * TTL only applies when the holder pid is **dead** (or force-steal).
+ * Live pids are never TTL-stolen — multi-day ULW holds the lock for the
+ * whole process lifetime and refreshes acquiredAt via touchSessionLock.
+ */
+const DEFAULT_TTL_MS = 2 * 60 * 60 * 1000; // 2h (dead-pid / unparseable-age recovery)
 
 function lockPath(sessionId: string): string {
   return path.join(sessionDir(sessionId), "session.lock");
@@ -87,32 +92,30 @@ export function acquireSessionLock(
     const alive = pidAlive(existing.pid);
     const mine = existing.pid === process.pid;
     if (mine) {
-      // Refresh timestamp
+      // Refresh timestamp (multi-day runs must keep acquiredAt fresh)
       writeLock(sessionId);
       return { ok: true, owned: true };
     }
-    // Stale only when: dead pid, OR (parseable age AND past TTL).
-    // Live foreign pid with missing/invalid acquiredAt is still held — never
-    // treat unparseable age as Infinity and steal a live lock.
-    const stale = !alive || (ageKnown && age > ttl);
-    if (!stale && !opts?.force) {
+    // Live foreign pid: NEVER TTL-steal (multi-day ULW would lose exclusivity
+    // after 2h and race session.json). Only dead pid (or force) is stealable.
+    if (alive && !opts?.force) {
       return {
         ok: false,
         owned: false,
         holder: existing,
-        reason: `session locked by pid ${existing.pid} on ${existing.hostname} since ${existing.acquiredAt || "unknown"}`,
+        reason: `session locked by live pid ${existing.pid} on ${existing.hostname} since ${existing.acquiredAt || "unknown"}`,
       };
     }
-    // steal
+    // Dead pid (or force): steal.
     writeLock(sessionId);
     return {
       ok: true,
       owned: true,
       stolen: true,
       holder: existing,
-      reason: stale
-        ? `stole stale lock from pid ${existing.pid}`
-        : `force-stole lock from pid ${existing.pid}`,
+      reason: alive
+        ? `force-stole lock from live pid ${existing.pid}`
+        : `stole stale lock from dead pid ${existing.pid}`,
     };
   }
 
@@ -154,4 +157,20 @@ export function releaseSessionLock(sessionId: string): boolean {
 export function formatLockHolder(info: SessionLockInfo): string {
   const alive = pidAlive(info.pid) ? "alive" : "dead";
   return `pid ${info.pid} @ ${info.hostname} (${alive}, since ${info.acquiredAt})`;
+}
+
+/**
+ * Refresh acquiredAt when this process already owns the lock.
+ * Call from saveSession during multi-day runs (statusline + ops visibility).
+ * Does not steal; no-op if we do not own the lock.
+ */
+export function touchSessionLock(sessionId: string): boolean {
+  const existing = readSessionLock(sessionId);
+  if (!existing || existing.pid !== process.pid) return false;
+  try {
+    writeLock(sessionId);
+    return true;
+  } catch {
+    return false;
+  }
 }
