@@ -10,6 +10,7 @@ export const PROVIDER_IDS = [
   "openai",
   "openrouter",
   "google",
+  "copilot",
   "custom",
 ] as const;
 
@@ -30,6 +31,11 @@ export const PROVIDER_ALIASES: Record<string, ProviderIdToken> = {
   bard: "google",
   or: "openrouter",
   router: "openrouter",
+  "github-copilot": "copilot",
+  github_copilot: "copilot",
+  "gh-copilot": "copilot",
+  github: "copilot",
+  gh: "copilot",
 };
 
 export type NormalizeProviderResult =
@@ -53,5 +59,5 @@ export function normalizeProviderId(raw: unknown): NormalizeProviderResult {
 }
 
 export function providerIdHelp(): string {
-  return "xai|anthropic|openai|openrouter|google|custom (aliases: claude|gpt|oai|gemini|…)";
+  return "xai|anthropic|openai|openrouter|google|copilot|custom (aliases: claude|gpt|oai|gemini|github-copilot|…)";
 }

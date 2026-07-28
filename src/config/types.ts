@@ -61,6 +61,7 @@ export type ProviderId =
   | "openai"
   | "openrouter"
   | "google"
+  | "copilot"
   | "custom";
 
 export interface ProviderConfig {
@@ -257,6 +258,22 @@ export const DEFAULT_CONFIG: ForgeConfig = {
         "gemini-2.5-flash",
         "gemini-2.5-flash-lite",
         "gemini-2.0-flash",
+      ],
+    },
+    copilot: {
+      id: "copilot",
+      apiKeyEnv: "COPILOT_GITHUB_TOKEN",
+      baseUrl: "https://api.githubcopilot.com",
+      supportsOAuth: true,
+      defaultModel: "gpt-4.1",
+      models: [
+        "gpt-4.1",
+        "gpt-4o",
+        "gpt-4o-mini",
+        "claude-sonnet-4",
+        "claude-haiku-4.5",
+        "gemini-2.5-pro",
+        "o3-mini",
       ],
     },
   },

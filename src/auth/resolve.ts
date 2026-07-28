@@ -12,6 +12,12 @@ const ENV_KEYS: Record<string, string[]> = {
   openai: ["OPENAI_API_KEY"],
   openrouter: ["OPENROUTER_API_KEY"],
   google: ["GOOGLE_API_KEY", "GEMINI_API_KEY"],
+  // GitHub OAuth tokens for Copilot exchange (not raw Copilot session tokens)
+  copilot: [
+    "COPILOT_GITHUB_TOKEN",
+    "GITHUB_COPILOT_TOKEN",
+    "GH_COPILOT_TOKEN",
+  ],
   custom: ["FORGE_API_KEY"],
 };
 
@@ -34,21 +40,25 @@ export function resolveAuth(
   const baseUrl = config.baseUrl ?? pcfg?.baseUrl;
 
   // 1. Environment
-  const envNames = [
-    ...(ENV_KEYS[provider] ?? []),
-    ...(pcfg?.apiKeyEnv ? [pcfg.apiKeyEnv] : []),
-    "FORGE_API_KEY",
-  ];
-  for (const name of envNames) {
-    const v = process.env[name]?.trim();
-    if (v) {
-      return {
-        provider,
-        method: "api_key",
-        token: v,
-        baseUrl,
-        accountLabel: `env:${name}`,
-      };
+  // Copilot env vars hold a GitHub OAuth token that must be exchanged first —
+  // handled in resolveAuthFresh so we never send a raw ghu_ to the chat API.
+  if (provider !== "copilot" && provider !== "github" && provider !== "github-copilot") {
+    const envNames = [
+      ...(ENV_KEYS[provider] ?? []),
+      ...(pcfg?.apiKeyEnv ? [pcfg.apiKeyEnv] : []),
+      "FORGE_API_KEY",
+    ];
+    for (const name of envNames) {
+      const v = process.env[name]?.trim();
+      if (v) {
+        return {
+          provider,
+          method: "api_key",
+          token: v,
+          baseUrl,
+          accountLabel: `env:${name}`,
+        };
+      }
     }
   }
 
@@ -93,8 +103,10 @@ export function resolveAuth(
     }
   }
 
-  // 4. Fallback: any other env key the user might have (auto-detect)
+  // 4. Fallback: any other env key the user might have (auto-detect).
+  // Skip Copilot env keys — they are GitHub OAuth tokens, not chat API keys.
   for (const [pid, names] of Object.entries(ENV_KEYS)) {
+    if (pid === "copilot") continue;
     for (const name of names) {
       const v = process.env[name]?.trim();
       if (v) {
@@ -177,6 +189,71 @@ export async function resolveAuthFresh(
         }
       } catch {
         /* import is best-effort */
+      }
+    }
+  }
+
+  // Copilot: re-import local CLI/VS Code session, or exchange env GitHub token.
+  if (
+    provider === "copilot" ||
+    provider === "github" ||
+    provider === "github-copilot"
+  ) {
+    const after = resolveAuth(config, "copilot");
+    const cred = getCredential("copilot");
+    const needLocal =
+      !after ||
+      (cred &&
+        cred.method !== "api_key" &&
+        isExpired(cred, 120));
+    if (needLocal || !after) {
+      try {
+        const {
+          importLocalCopilotCredentials,
+          storeCopilotFromGitHubToken,
+        } = await import("./copilot.js");
+        // Prefer env GitHub token for CI determinism
+        let githubEnv: string | undefined;
+        for (const name of [
+          "COPILOT_GITHUB_TOKEN",
+          "GITHUB_COPILOT_TOKEN",
+          "GH_COPILOT_TOKEN",
+        ]) {
+          const v = process.env[name]?.trim();
+          if (v) {
+            githubEnv = v;
+            break;
+          }
+        }
+        if (githubEnv) {
+          const stored = await storeCopilotFromGitHubToken(githubEnv, {
+            label: "env:COPILOT_GITHUB_TOKEN",
+          });
+          if (stored.imported) {
+            log.info(
+              `Exchanged Copilot env token${
+                stored.expiresAt
+                  ? ` — expires ${new Date(stored.expiresAt * 1000).toISOString()}`
+                  : ""
+              }`,
+            );
+          }
+        } else {
+          const imp = await importLocalCopilotCredentials();
+          if (imp.imported) {
+            log.info(
+              `Re-imported local Copilot session${
+                imp.login ? ` (${imp.login})` : ""
+              }${
+                imp.expiresAt
+                  ? ` — expires ${new Date(imp.expiresAt * 1000).toISOString()}`
+                  : ""
+              }`,
+            );
+          }
+        }
+      } catch {
+        /* best-effort */
       }
     }
   }

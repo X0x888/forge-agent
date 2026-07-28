@@ -70,6 +70,35 @@ export async function refreshCredentialIfNeeded(
     return { ok: true, credential: cred, refreshed: false };
   }
 
+  // GitHub Copilot: refreshToken is a long-lived GitHub OAuth token; "refresh"
+  // re-exchanges it at /copilot_internal/v2/token for a new session token.
+  if (provider === "copilot") {
+    try {
+      const { refreshCopilotSession, COPILOT_GITHUB_CLIENT_ID } = await import(
+        "./copilot.js"
+      );
+      const session = await refreshCopilotSession(cred.refreshToken);
+      upsertOAuth(provider, {
+        accessToken: session.accessToken,
+        refreshToken: cred.refreshToken,
+        expiresAt: session.expiresAt,
+        clientId: cred.clientId || COPILOT_GITHUB_CLIENT_ID,
+        method: cred.method,
+        subscription: cred.subscription || "GitHub Copilot",
+        accountLabel: cred.accountLabel,
+      });
+      const updated = getCredential(provider);
+      log.dim(`Refreshed Copilot session token`);
+      return { ok: true, credential: updated, refreshed: true };
+    } catch (err) {
+      return {
+        ok: false,
+        error: (err as Error).message,
+        refreshed: false,
+      };
+    }
+  }
+
   const profile = TOKEN_URLS[provider];
   // Prefer the client_id that issued the session (Grok CLI / SuperGrok OIDC).
   const clientId =

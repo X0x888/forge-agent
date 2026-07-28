@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **GitHub Copilot provider**: `forge login --from-copilot` / `forge login -p copilot` reuses a local Copilot CLI keychain or VS Code `~/.config/github-copilot` session; falls back to GitHub device-code OAuth; auto re-exchanges short-lived Copilot session tokens; OpenAI-compat chat via `https://api.githubcopilot.com`
+- **Provider aliases**: `github` / `github-copilot` / `gh-copilot` → `copilot`
+- **Env**: `COPILOT_GITHUB_TOKEN` / `GITHUB_COPILOT_TOKEN` / `GH_COPILOT_TOKEN` for CI-style GitHub OAuth tokens (exchanged on resolve)
+
 ## 0.9.5 — File-aware undo, /init, /review, /compact-and + SuperGrok OIDC
 
 ### Added

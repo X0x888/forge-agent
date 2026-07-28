@@ -35,6 +35,7 @@ import {
   upsertApiKey,
 } from "./auth/store.js";
 import { importGrokCredentials } from "./auth/import-grok.js";
+import { importLocalCopilotCredentials } from "./auth/copilot.js";
 import { createProvider } from "./providers/factory.js";
 import {
   createSession,
@@ -206,7 +207,7 @@ Docs: docs/PRODUCTION.md · docs/RELIABILITY.md · docs/ULW.md · forge news
 `,
     )
     .option("-m, --model <model>", "Model id")
-    .option("-p, --provider <provider>", "Provider: xai|anthropic|openai|openrouter|google|custom")
+    .option("-p, --provider <provider>", "Provider: xai|anthropic|openai|openrouter|google|copilot|custom")
     .option("--base-url <url>", "Override API base URL")
     .option(
       "--effort <level>",
@@ -862,13 +863,17 @@ Docs: docs/PRODUCTION.md
   program
     .command("login")
     .description(
-      "Authenticate: SuperGrok OIDC (default for xai), API key, Grok import, or device code",
+      "Authenticate: SuperGrok OIDC (default for xai), local Copilot, API key, Grok import, or device code",
     )
     .option("-p, --provider <provider>", "Provider (default: sticky preference or xai)", "xai")
     .option("--api-key [key]", "Use API key (prompt if omitted)")
     .option(
       "--from-grok",
       "Import SuperGrok session from ~/.grok/auth.json (Grok Build already logged in)",
+    )
+    .option(
+      "--from-copilot",
+      "Import GitHub Copilot from local CLI keychain / VS Code apps.json",
     )
     .option(
       "--oauth",
@@ -992,19 +997,84 @@ Docs: docs/PRODUCTION.md
         });
       }
 
+      // Import local GitHub Copilot CLI / VS Code credentials.
+      const wantFromCopilot =
+        Boolean(opts.fromCopilot) ||
+        // Default for -p copilot when no other method flag is set
+        (provider === "copilot" &&
+          !opts.device &&
+          !opts.oauth &&
+          !apiKeyFlag);
+      if (wantFromCopilot) {
+        const result = await importLocalCopilotCredentials();
+        if (result.imported) {
+          try {
+            savePreferences({ provider: "copilot" });
+          } catch {
+            /* preferences are best-effort */
+          }
+          if (wantJson) {
+            emitOkJson({
+              forgeHome: forgeHome(),
+              method: "from_copilot",
+              provider: "copilot",
+              accountLabel: result.login ? `copilot:${result.login}` : null,
+              source: result.source || null,
+              expiresAt: result.expiresAt
+                ? new Date(result.expiresAt * 1000).toISOString()
+                : null,
+            });
+            return;
+          }
+          log.success(
+            `Imported local GitHub Copilot session${
+              result.login ? ` (${result.login})` : ""
+            }${result.source ? ` from ${result.source}` : ""}`,
+          );
+          if (result.expiresAt) {
+            const hours = Math.max(
+              0,
+              (result.expiresAt - Math.floor(Date.now() / 1000)) / 3600,
+            );
+            log.dim(
+              `Copilot session expires ${new Date(result.expiresAt * 1000).toISOString()} (~${hours.toFixed(1)}h). ` +
+                `GitHub token stored for auto re-exchange. ` +
+                `Alt: forge login -p copilot --device`,
+            );
+          }
+          log.info("Try: forge -p copilot");
+          return;
+        }
+        // Explicit --from-copilot fails closed; bare -p copilot falls through to device.
+        if (opts.fromCopilot) {
+          failLogin(
+            "copilot_import_failed",
+            result.reason || "Local Copilot import failed",
+            { login: result.login || null, source: result.source || null },
+          );
+        }
+        if (!wantJson) {
+          log.warn(result.reason || "Local Copilot import failed");
+          log.info("Falling back to GitHub device-code login…");
+        }
+      }
+
       // Default xAI path: native SuperGrok OIDC (browser), not import-from-grok.
+      // Copilot: device code (no browser redirect registered).
       let method: "api_key" | "oauth" | "device" = "api_key";
       if (opts.device) method = "device";
       else if (opts.oauth) method = "oauth";
       else if (apiKeyFlag) method = "api_key";
+      else if (provider === "copilot") method = "device";
       else if (supportsOAuth(provider)) method = "oauth";
       else method = "api_key";
 
-      // --json requires a non-interactive path (explicit API key).
+      // --json requires a non-interactive path (explicit API key or --from-copilot handled above).
       if (wantJson && method !== "api_key") {
         failLogin(
           "interactive_required",
-          `login --json only supports --api-key (got method=${method}). Use forge login --api-key <key> --json.`,
+          `login --json only supports --api-key or --from-copilot (got method=${method}). ` +
+            `Use forge login --api-key <key> --json or forge login --from-copilot --json.`,
           { method },
         );
       }
@@ -1017,7 +1087,16 @@ Docs: docs/PRODUCTION.md
       try {
         if (wantJson && method === "api_key") {
           // Quiet path — no log.success noise mixed into CI stdout/stderr.
-          upsertApiKey(provider, apiKeyValue);
+          if (provider === "copilot") {
+            const { storeCopilotFromGitHubToken } = await import(
+              "./auth/copilot.js"
+            );
+            await storeCopilotFromGitHubToken(apiKeyValue, {
+              label: "api-key-json",
+            });
+          } else {
+            upsertApiKey(provider, apiKeyValue);
+          }
           try {
             savePreferences({ provider });
           } catch {
@@ -1045,6 +1124,11 @@ Docs: docs/PRODUCTION.md
         if (provider === "xai" && method === "oauth" && !wantJson) {
           log.dim(
             "Also: forge login --device · forge login --from-grok · forge login --api-key",
+          );
+        }
+        if (provider === "copilot" && !wantJson) {
+          log.dim(
+            "Also: forge login --from-copilot · forge login -p copilot --device · forge login -p copilot --api-key",
           );
         }
         failLogin("login_failed", (err as Error).message || String(err), {
@@ -2464,7 +2548,7 @@ Project instructions for Forge (and other coding agents).
   program
     .command("models")
     .description("List known models for configured providers")
-    .option("-p, --provider <provider>", "Filter to one provider (xai|anthropic|openai|openrouter|google|custom)")
+    .option("-p, --provider <provider>", "Filter to one provider (xai|anthropic|openai|openrouter|google|copilot|custom)")
     .option("--json", "Machine-readable JSON")
     .action((opts, command) => {
       const wantJson = flagJson(opts, command);

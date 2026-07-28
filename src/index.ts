@@ -46,6 +46,16 @@ export {
 } from "./auth/login.js";
 export { importGrokCredentials, readGrokXaiSession } from "./auth/import-grok.js";
 export {
+  importLocalCopilotCredentials,
+  readLocalCopilotGitHubToken,
+  exchangeCopilotToken,
+  copilotApiHeaders,
+  COPILOT_API_BASE,
+  COPILOT_PROVIDER_ID,
+  COPILOT_GITHUB_CLIENT_ID,
+  isCopilotProvider,
+} from "./auth/copilot.js";
+export {
   refreshCredentialIfNeeded,
   isAuthFailureMessage,
 } from "./auth/refresh.js";

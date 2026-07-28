@@ -4642,6 +4642,14 @@ describe("env provider/permission/sandbox aliases", () => {
       ok: true,
       provider: "xai",
     });
+    assert.deepEqual(normalizeProviderId("github-copilot"), {
+      ok: true,
+      provider: "copilot",
+    });
+    assert.deepEqual(normalizeProviderId("github"), {
+      ok: true,
+      provider: "copilot",
+    });
     assert.equal(normalizeProviderId("nope").ok, false);
     assert.equal(normalizePermissionMode("yolo"), "bypassPermissions");
     assert.equal(normalizePermissionMode("ask"), "dontAsk");

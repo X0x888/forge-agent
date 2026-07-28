@@ -48,6 +48,11 @@ const ENV_PROVIDERS = new Set<string>([
   "openai",
   "openrouter",
   "google",
+  "copilot",
+  "github-copilot",
+  "github_copilot",
+  "gh-copilot",
+  "github",
   "custom",
 ]);
 

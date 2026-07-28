@@ -22,6 +22,14 @@ import {
   emailFromIdToken,
   xaiRedirectPortFromUri,
 } from "./xai-oauth.js";
+import {
+  COPILOT_ACCESS_TOKEN_URL,
+  COPILOT_DEVICE_CODE_URL,
+  COPILOT_GITHUB_CLIENT_ID,
+  COPILOT_GITHUB_SCOPES,
+  COPILOT_PROVIDER_ID,
+  storeCopilotFromGitHubToken,
+} from "./copilot.js";
 
 function base64url(buf: Buffer): string {
   return buf
@@ -72,6 +80,15 @@ const OAUTH_PROFILES: Record<
     scopes: ["openid", "profile", "email", "offline_access"],
     label: "OpenAI / ChatGPT (subscription if allowed)",
   },
+  /** Device-code only (no browser redirect). See deviceCodeLogin. */
+  copilot: {
+    authorizeUrl: COPILOT_DEVICE_CODE_URL,
+    tokenUrl: COPILOT_ACCESS_TOKEN_URL,
+    deviceCodeUrl: COPILOT_DEVICE_CODE_URL,
+    clientId: COPILOT_GITHUB_CLIENT_ID,
+    scopes: [COPILOT_GITHUB_SCOPES],
+    label: "GitHub Copilot (device code / local CLI)",
+  },
 };
 
 export type LoginMethod = "api_key" | "oauth" | "device";
@@ -81,28 +98,58 @@ export async function loginInteractive(opts: {
   method?: LoginMethod;
   apiKey?: string;
 }): Promise<void> {
+  const provider = String(opts.provider);
+  // Copilot has no browser redirect OAuth — default to device code.
   const method =
-    opts.method ?? (OAUTH_PROFILES[opts.provider] ? "oauth" : "api_key");
+    opts.method ??
+    (provider === COPILOT_PROVIDER_ID || provider === "copilot"
+      ? "device"
+      : OAUTH_PROFILES[provider]
+        ? "oauth"
+        : "api_key");
 
   if (method === "api_key") {
     let key = opts.apiKey?.trim();
     if (!key) {
       const rl = readline.createInterface({ input, output });
-      key = (await rl.question(`Enter API key for ${opts.provider}: `)).trim();
+      const prompt =
+        provider === "copilot"
+          ? "Enter GitHub OAuth token for Copilot (ghu_/gho_ from VS Code or `copilot` CLI): "
+          : `Enter API key for ${provider}: `;
+      key = (await rl.question(prompt)).trim();
       rl.close();
     }
     if (!key) throw new Error("API key is required");
-    upsertApiKey(opts.provider, key);
-    log.success(`Stored API key for ${opts.provider} in ~/.forge/auth.json`);
+    if (provider === "copilot") {
+      // GitHub OAuth tokens must be exchanged for a Copilot session token.
+      const result = await storeCopilotFromGitHubToken(key, {
+        label: "api-key-paste",
+      });
+      log.success(
+        `Stored GitHub Copilot session` +
+          (result.expiresAt
+            ? ` (expires ${new Date(result.expiresAt * 1000).toISOString()})`
+            : ""),
+      );
+      return;
+    }
+    upsertApiKey(provider, key);
+    log.success(`Stored API key for ${provider} in ~/.forge/auth.json`);
     return;
   }
 
   if (method === "device") {
-    await deviceCodeLogin(opts.provider);
+    await deviceCodeLogin(provider);
     return;
   }
 
-  await browserOAuthLogin(opts.provider);
+  // Copilot: browser OAuth not registered — force device.
+  if (provider === "copilot") {
+    await deviceCodeLogin(provider);
+    return;
+  }
+
+  await browserOAuthLogin(provider);
 }
 
 async function exchangeAuthorizationCode(opts: {
@@ -322,6 +369,7 @@ async function browserOAuthLogin(provider: string): Promise<void> {
 /**
  * Device-code flow for headless / SSH (RFC 8628).
  * SuperGrok: https://auth.x.ai/oauth2/device/code
+ * Copilot:   https://github.com/login/device/code (JSON body)
  */
 async function deviceCodeLogin(provider: string): Promise<void> {
   const profile = OAUTH_PROFILES[provider];
@@ -329,23 +377,39 @@ async function deviceCodeLogin(provider: string): Promise<void> {
     throw new Error(`No device-code profile for ${provider}. Use --api-key.`);
   }
 
+  const isCopilot = provider === "copilot";
   const deviceUrl =
     process.env.FORGE_DEVICE_AUTH_URL?.trim() ||
+    process.env.GITHUB_COPILOT_DEVICE_CODE_URL?.trim() ||
     profile.deviceCodeUrl ||
     profile.authorizeUrl.replace("/authorize", "/device/code");
-  const tokenUrl = profile.tokenUrl;
+  const tokenUrl =
+    (isCopilot && process.env.GITHUB_COPILOT_ACCESS_TOKEN_URL?.trim()) ||
+    profile.tokenUrl;
 
+  // GitHub device endpoint expects JSON; SuperGrok/OIDC use form-urlencoded.
   const start = await fetch(deviceUrl, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/x-www-form-urlencoded",
-      Accept: "application/json",
-      "User-Agent": "forge-cli",
-    },
-    body: new URLSearchParams({
-      client_id: profile.clientId,
-      scope: profile.scopes.join(" "),
-    }),
+    headers: isCopilot
+      ? {
+          "Content-Type": "application/json",
+          Accept: "application/json",
+          "User-Agent": "forge-cli",
+        }
+      : {
+          "Content-Type": "application/x-www-form-urlencoded",
+          Accept: "application/json",
+          "User-Agent": "forge-cli",
+        },
+    body: isCopilot
+      ? JSON.stringify({
+          client_id: profile.clientId,
+          scope: profile.scopes.join(" "),
+        })
+      : new URLSearchParams({
+          client_id: profile.clientId,
+          scope: profile.scopes.join(" "),
+        }),
     signal: AbortSignal.timeout(20_000),
   });
 
@@ -357,6 +421,11 @@ async function deviceCodeLogin(provider: string): Promise<void> {
     if (provider === "xai") {
       throw new Error(
         "SuperGrok device login unavailable. Use forge login (browser) or --api-key / --from-grok.",
+      );
+    }
+    if (isCopilot) {
+      throw new Error(
+        "GitHub Copilot device login unavailable. Try: forge login --from-copilot · forge login -p copilot --api-key",
       );
     }
     log.warn("Falling back to API key.");
@@ -375,8 +444,10 @@ async function deviceCodeLogin(provider: string): Promise<void> {
 
   log.info(`Open ${dc.verification_uri_complete || dc.verification_uri}`);
   log.info(`Enter code: ${dc.user_code}`);
-  if (dc.verification_uri_complete) {
-    await open(dc.verification_uri_complete).catch(() => undefined);
+  if (dc.verification_uri_complete || dc.verification_uri) {
+    await open(dc.verification_uri_complete || dc.verification_uri).catch(
+      () => undefined,
+    );
   }
 
   const interval = Math.max(3, dc.interval ?? 5) * 1000;
@@ -386,16 +457,28 @@ async function deviceCodeLogin(provider: string): Promise<void> {
     await new Promise((r) => setTimeout(r, interval));
     const poll = await fetch(tokenUrl, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/x-www-form-urlencoded",
-        Accept: "application/json",
-        "User-Agent": "forge-cli",
-      },
-      body: new URLSearchParams({
-        grant_type: "urn:ietf:params:oauth:grant-type:device_code",
-        device_code: dc.device_code,
-        client_id: profile.clientId,
-      }),
+      headers: isCopilot
+        ? {
+            "Content-Type": "application/json",
+            Accept: "application/json",
+            "User-Agent": "forge-cli",
+          }
+        : {
+            "Content-Type": "application/x-www-form-urlencoded",
+            Accept: "application/json",
+            "User-Agent": "forge-cli",
+          },
+      body: isCopilot
+        ? JSON.stringify({
+            client_id: profile.clientId,
+            device_code: dc.device_code,
+            grant_type: "urn:ietf:params:oauth:grant-type:device_code",
+          })
+        : new URLSearchParams({
+            grant_type: "urn:ietf:params:oauth:grant-type:device_code",
+            device_code: dc.device_code,
+            client_id: profile.clientId,
+          }),
       signal: AbortSignal.timeout(20_000),
     });
     const json = (await poll.json().catch(() => ({}))) as {
@@ -407,6 +490,18 @@ async function deviceCodeLogin(provider: string): Promise<void> {
       error_description?: string;
     };
     if (json.access_token) {
+      if (isCopilot) {
+        const result = await storeCopilotFromGitHubToken(json.access_token, {
+          label: "device-oauth",
+        });
+        log.success(
+          `Device login complete for GitHub Copilot` +
+            (result.expiresAt
+              ? ` (session expires ${new Date(result.expiresAt * 1000).toISOString()})`
+              : ""),
+        );
+        return;
+      }
       const email = emailFromIdToken(json.id_token);
       upsertOAuth(provider, {
         accessToken: json.access_token,
