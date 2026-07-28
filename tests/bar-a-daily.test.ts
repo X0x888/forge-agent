@@ -197,6 +197,115 @@ describe("Bar A: fail-closed noninteractive permissions", () => {
     assert.equal(r.decision, "allow");
     assert.equal(r.reason, "allow_rule");
   });
+
+  it("headless web_fetch allow_local is denied without allow rule", async () => {
+    const g = new PermissionGate({ interactive: false });
+    for (const mode of ["default", "acceptEdits", "dontAsk", "plan"] as const) {
+      const r = await g.request({
+        toolName: "web_fetch",
+        input: { url: "http://127.0.0.1:9/", allow_local: true },
+        mode,
+        workspace: "/tmp/proj",
+        config: DEFAULT_CONFIG,
+      });
+      assert.equal(r.decision, "deny", `mode=${mode}`);
+      assert.match(r.reason, /allow_local|plan_mode/i);
+    }
+  });
+
+  it("headless public web_fetch still auto-allows as read-only", async () => {
+    const g = new PermissionGate({ interactive: false });
+    const r = await g.request({
+      toolName: "web_fetch",
+      input: { url: "https://example.com/" },
+      mode: "acceptEdits",
+      workspace: "/tmp/proj",
+      config: DEFAULT_CONFIG,
+    });
+    assert.equal(r.decision, "allow");
+    assert.equal(r.reason, "read_only_tool");
+  });
+
+  it("headless web_fetch allow_local passes with allow rule or YOLO", async () => {
+    const g = new PermissionGate({ interactive: false });
+    const cfg = {
+      ...DEFAULT_CONFIG,
+      permission: {
+        ...DEFAULT_CONFIG.permission,
+        allow: ["web_fetch", "WebFetch"],
+      },
+    };
+    const allowed = await g.request({
+      toolName: "web_fetch",
+      input: { url: "http://127.0.0.1:9/", allow_local: true },
+      mode: "default",
+      workspace: "/tmp/proj",
+      config: cfg,
+    });
+    assert.equal(allowed.decision, "allow");
+    assert.equal(allowed.reason, "allow_rule");
+
+    const planAllowed = await g.request({
+      toolName: "web_fetch",
+      input: { url: "http://127.0.0.1:9/", allow_local: true },
+      mode: "plan",
+      workspace: "/tmp/proj",
+      config: cfg,
+    });
+    assert.equal(planAllowed.decision, "allow");
+    assert.equal(planAllowed.reason, "allow_rule");
+
+    const yolo = await g.request({
+      toolName: "web_fetch",
+      input: { url: "http://127.0.0.1:9/", allow_local: true },
+      mode: "bypassPermissions",
+      workspace: "/tmp/proj",
+      config: DEFAULT_CONFIG,
+    });
+    assert.equal(yolo.decision, "allow");
+    assert.equal(yolo.reason, "bypassPermissions");
+  });
+
+  it("session-tool for web_fetch does not free-pass allow_local", async () => {
+    const g = new PermissionGate({ interactive: false });
+    // Simulate operator pressing [s]ession on a prior public web_fetch.
+    (g as unknown as { sessionTools: Set<string> }).sessionTools.add("web_fetch");
+
+    const publicOk = await g.request({
+      toolName: "web_fetch",
+      input: { url: "https://example.com/" },
+      mode: "acceptEdits",
+      workspace: "/tmp/proj",
+      config: DEFAULT_CONFIG,
+    });
+    assert.equal(publicOk.decision, "allow");
+    assert.equal(publicOk.reason, "session_tool");
+
+    const local = await g.request({
+      toolName: "web_fetch",
+      input: { url: "http://127.0.0.1:9/", allow_local: true },
+      mode: "acceptEdits",
+      workspace: "/tmp/proj",
+      config: DEFAULT_CONFIG,
+    });
+    assert.equal(local.decision, "deny");
+    assert.match(local.reason, /allow_local|session-tool/i);
+  });
+
+  it("allow_local falsey strings do not trip the local gate", async () => {
+    const g = new PermissionGate({ interactive: false });
+    for (const allow_local of [false, 0, "false", "no", "0", "", null, undefined]) {
+      const r = await g.request({
+        toolName: "web_fetch",
+        input: { url: "https://example.com/", allow_local: allow_local as unknown as boolean },
+        mode: "acceptEdits",
+        workspace: "/tmp/proj",
+        config: DEFAULT_CONFIG,
+      });
+      assert.equal(r.decision, "allow", `allow_local=${String(allow_local)}`);
+      assert.equal(r.reason, "read_only_tool");
+    }
+  });
 });
 
 describe("Bar A: project config cannot weaken safety", () => {

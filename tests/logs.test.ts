@@ -80,5 +80,13 @@ describe("sandbox log tail + /logs", () => {
       hooks,
     });
     assert.equal(p.output, sandboxLogPath());
+
+    const over = await handleSlash("/logs 201", {
+      session: s,
+      config: DEFAULT_CONFIG,
+      hooks,
+    });
+    assert.equal(over.handled, true);
+    assert.match(over.output || "", /Invalid \/logs limit|1–200/);
   });
 });

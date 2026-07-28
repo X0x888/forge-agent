@@ -72,7 +72,7 @@ ask = [
 |-----|---------|
 | `y` | Allow once |
 | `a` | Always allow this command **prefix** (arity-aware, e.g. `git status *`); persisted under `~/.forge/permissions.json` (mode `0600`) |
-| `s` | Session-always for this **tool name** |
+| `s` | Session-always for this **tool name** (does **not** cover `web_fetch allow_local` — that still needs `y`/`a`/allow-rule/YOLO) |
 | `n` | Reject |
 
 ```text
@@ -96,7 +96,9 @@ YOLO (`bypassPermissions`) does not block external paths unless a deny rule matc
 ### Redirection / read-only (Warp-inspired)
 
 - Shell redirections (`>`, `>>`, …) mark the command as write-capable / dangerous for auto-allow.  
-- In `acceptEdits`, conservative **read-only** prefixes (`git status`, `ls`, `rg`, …) may auto-allow when there is no pipe/redirect.
+- In `acceptEdits`, conservative **read-only** prefixes (`git status`, `ls`, `rg`, version probes, …) may auto-allow when there is no pipe/redirect. Mutations disguised as RO prefixes are denied: `find -delete|-exec`, `git branch -D`, `git remote set-url`, `git log --output=…`.
+- **Subcommand-aware RO checks** (not bare prefix): `find` without `-delete`/`-exec`/`-ok`/`-fprint*`; `git branch` listing only (not `-d`/`-m`/create); `git remote` list/show/get-url only (not `add`/`remove`/`set-url`/`prune`).
+- **`web_fetch allow_local`**: not a free read-only tool — headless/dontAsk/plan deny unless allow-rule / pattern-always (`a`) / YOLO; interactive prompts. Session-tool (`s`) on a public fetch does **not** free-pass later loopback `allow_local`. Public URLs still auto-allow.
 
 ## Segment-aware checks
 
@@ -176,3 +178,11 @@ forge run "…" --permission-mode bypassPermissions
 | External dir prompt | sandbox | yes | allowlists | **yes** |
 | Redirection awareness | sandbox writes | path scan | yes | **yes** |
 | Project cannot weaken global deny | yes | — | org denylist | **yes** |
+
+### Shell environment
+
+Child shells inherit a scrubbed env: secret-looking names and process-injection vectors (`LD_PRELOAD`, `NODE_OPTIONS`, `DYLD_INSERT_LIBRARIES`, `PYTHONSTARTUP`, `BASH_ENV`, `GIT_SSH_COMMAND`, `GIT_CONFIG_*`, …) are dropped unless a shell env policy explicitly `set`s them.
+
+### Blocking Stop hooks
+
+When `blockingStopHooks` is enabled (default), a Stop/SubagentStop hook that **times out or crashes fails closed** — the agent is told to keep working. This closes the Grok gap where a hung Stop hook silently allowed exit. Non-Stop events still fail open on timeout so a flaky PreToolUse cannot freeze the session. Disable only with `--no-blocking-stop` / `blocking_stop_hooks = false`.

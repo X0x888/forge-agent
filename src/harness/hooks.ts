@@ -310,7 +310,12 @@ export class HookRunner {
     hook: HookCommand,
     ctx: HookContext,
   ): Promise<HookResult> {
-    const timeoutMs = (hook.timeout ?? 30) * 1000;
+    const rawTimeoutSec =
+        typeof hook.timeout === "number" && Number.isFinite(hook.timeout)
+          ? hook.timeout
+          : 30;
+      // Floor 1s — timeout:0 would fire immediately and fail-closed Stop forever.
+      const timeoutMs = Math.max(1, rawTimeoutSec) * 1000;
     const payload = JSON.stringify(this.payload(event, ctx));
 
     return new Promise((resolve) => {
@@ -337,11 +342,31 @@ export class HookRunner {
         resolve(r);
       };
 
+      const isStopEvent = event === "Stop" || event === "SubagentStop";
+      // Blocking Stop is the product differentiator — timeout/error must not
+      // silently release the agent (Grok-style fail-open). Other events stay
+      // fail-open so a flaky PreToolUse hook cannot freeze the session.
+      const stopFailClosed =
+        isStopEvent && this.config.blockingStopHooks !== false;
+
       const timer = setTimeout(() => {
         child.kill("SIGTERM");
         log.warn(`Hook timed out (${event}): ${hook.command}`);
-        // fail-open on timeout (except we don't block)
-        finish({ decision: "allow", blocked: false });
+        if (stopFailClosed) {
+          const reason =
+            `Stop hook timed out after ${Math.round(timeoutMs / 1000)}s — ` +
+            `keeping agent working (blocking Stop fail-closed). ` +
+            `Raise hook timeout or fix: ${hook.command}`;
+          finish({
+            decision: "block",
+            blocked: true,
+            reason,
+            additionalContext: reason,
+            systemMessage: reason,
+          });
+        } else {
+          finish({ decision: "allow", blocked: false });
+        }
       }, timeoutMs);
 
       child.stdout.on("data", (d) => {
@@ -353,7 +378,20 @@ export class HookRunner {
       child.on("error", (err) => {
         clearTimeout(timer);
         log.warn(`Hook error (${event}): ${err.message}`);
-        finish({ decision: "allow", blocked: false });
+        if (stopFailClosed) {
+          const reason =
+            `Stop hook error: ${err.message} — keeping agent working ` +
+            `(blocking Stop fail-closed).`;
+          finish({
+            decision: "block",
+            blocked: true,
+            reason,
+            additionalContext: reason,
+            systemMessage: reason,
+          });
+        } else {
+          finish({ decision: "allow", blocked: false });
+        }
       });
       child.on("close", (code) => {
         clearTimeout(timer);
@@ -459,7 +497,7 @@ export class HookRunner {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(this.payload(event, ctx)),
-        signal: AbortSignal.timeout((hook.timeout ?? 10) * 1000),
+        signal: AbortSignal.timeout(Math.max(1, (typeof hook.timeout === "number" && Number.isFinite(hook.timeout) ? hook.timeout : 10)) * 1000),
       });
       if (!resp.ok) return { decision: "allow", blocked: false };
       const obj = (await resp.json()) as {

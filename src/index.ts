@@ -25,7 +25,7 @@ export {
   REASONING_EFFORTS,
 } from "./config/reasoning.js";
 export { buildChatRequest } from "./agent/loop.js";
-export { compileRules, evaluateRules } from "./agent/rules.js";
+export { compileRules, evaluateRules, parseRuleString } from "./agent/rules.js";
 export {
   splitShellSegments,
   commandCheckTargets,
@@ -96,6 +96,7 @@ export {
   resolveSessionId,
   suggestSessions,
   formatSessionLookupMiss,
+  listSessionLookupSuggestions,
   deleteSession,
   deleteSessionDetailed,
   sessionHasForeignLiveLock,
@@ -110,6 +111,7 @@ export {
   importSessionJson,
   forkSession,
   setSessionTitle,
+  MAX_SESSION_TITLE_CHARS,
   setSessionPinned,
   isSessionPinned,
   findRecentSessionForCwd,
@@ -136,10 +138,12 @@ export {
   envPositiveInt,
   envNonNegInt,
   parseKeepCount,
+  parseCliNonNegInt,
   defaultBashTimeoutMs,
   defaultBashBackgroundTimeoutMs,
 } from "./util/env.js";
 export { editDistance, stringSimilarity } from "./util/string-distance.js";
+export { suggestName, suggestSessionAction, SESSION_ACTIONS } from "./util/suggest.js";
 export { copyToClipboard } from "./util/clipboard.js";
 export type { ClipboardResult } from "./util/clipboard.js";
 export { isBellEnabled, maybeRingBell } from "./util/attention.js";
@@ -184,6 +188,20 @@ export {
   parseChangelog,
   findChangelogPath,
 } from "./util/changelog.js";
+export { parseDaysWindow, daysWindowHelp } from "./util/days-window.js";
+export { parseNewsCount, newsCountHelp } from "./util/news-count.js";
+export { parseLogsLines, logsLinesHelp } from "./util/logs-lines.js";
+export {
+  normalizeProviderId,
+  PROVIDER_IDS,
+  PROVIDER_ALIASES,
+  providerIdHelp,
+} from "./util/provider-id.js";
+export {
+  normalizePermissionMode,
+  normalizeSandboxProfile,
+  normalizeSandboxNetwork,
+} from "./util/mode-aliases.js";
 export type { ChangelogRelease } from "./util/changelog.js";
 export { formatExpertTips } from "./util/tips.js";
 export { log, setLogLevel, getLogLevel } from "./util/log.js";
@@ -246,6 +264,8 @@ export {
 } from "./providers/errors.js";
 export {
   completeSlash,
+  suggestSlashCommands,
+  formatUnknownSlash,
   handleSlash,
   runDoctor,
   runDoctorCheck,
@@ -255,6 +275,7 @@ export {
   isLiveSafeSlash,
   isSafeDiffFilterArg,
   LIVE_CONTROLS_HINT,
+  SLASH_COMMANDS,
 } from "./commands/slash.js";
 export type { DoctorResult, EffectiveConfigSnap } from "./commands/slash.js";
 export {
@@ -306,7 +327,41 @@ export {
   type UsageStats,
   type SessionMetricsEvent,
 } from "./session/metrics.js";
-export { permissionAskTimeoutMs } from "./agent/permissions.js";
+export { permissionAskTimeoutMs, PermissionGate } from "./agent/permissions.js";
+export type { PermissionRequest, PermissionResult } from "./agent/permissions.js";
+export {
+  checkBashHardDeny,
+  hardSafetyCheck,
+  checkWritePathHardDeny,
+  isSoftDangerousBash,
+} from "./agent/safety.js";
+export type { SafetyVerdict } from "./agent/safety.js";
+export {
+  isReadOnlyCommand,
+  commandPrefix,
+  alwaysPatternFromTokens,
+  alwaysPatternFromCommand,
+} from "./agent/shell-arity.js";
+export {
+  assertUrlSafe,
+  isNonPublicIp,
+  isBlockedForHost,
+  isExplicitLocalHost,
+  normalizeIpHost,
+  expandWeirdIpv4Literal,
+  embeddedIpv4FromIpv6,
+} from "./agent/tools/ssrf.js";
+export {
+  nonStringKind,
+  stringFieldError,
+  numberFieldError,
+} from "./agent/tools/arg-types.js";
+export {
+  createShellEnv,
+  SHELL_INJECTION_ENV,
+  type ShellEnvPolicy,
+  type InheritMode,
+} from "./agent/tools/env-policy.js";
 export {
   DoomLoopTracker,
   toolFingerprint,
@@ -340,3 +395,7 @@ export type {
   ActivityInfo,
   Liveness,
 } from "./statusline/types.js";
+
+export { editMissHint, formatMultiMatchLocations, locateEdit } from "./agent/tools/edit-match.js";
+export { executeTool, normalizeToolName, TOOL_DEFINITIONS } from "./agent/tools/index.js";
+export { applyTodos, openTodos } from "./agent/todos.js";

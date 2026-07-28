@@ -25,14 +25,23 @@ What experts should expect from Forge in long, unattended, or CI runs.
 | Behavior | Detail |
 |---|---|
 | **JSON arg repair** | Truncated / fenced / trailing-comma / unescaped-quote tool args are repaired when possible |
+| **CLI JSON `version`** | `emitOkJson` / `emitFailJson` stamp every common `--json` success/failure payload with package version for CI matrices |
 | **Orphan tool_calls** | Abort mid-batch or compact cut injects synthetic tool results so the next API call does not 400 |
 | **Compact boundary** | Compaction never starts a keep-window on a bare `tool` message |
 | **Empty name** | Tool calls with blank names after stream glitches return a clear error instead of crashing |
-| **Doom-loop** | Same tool + same args ×N injects a hard strategy-change nudge (OpenCode-inspired; default N=3, override `FORGE_DOOM_LOOP_THRESHOLD`); fingerprints ignore transport-only fields (`timeout_ms`, `background`, `stream`, `tail`, `allow_local`) |
+| **Doom-loop** | Same tool + same args ×N injects a hard strategy-change nudge (OpenCode-inspired; default N=3, override `FORGE_DOOM_LOOP_THRESHOLD`); fingerprints ignore transport-only fields (`timeout_ms`, `background`, `run_in_background`, `stream`, `tail`, `allow_local`) |
 | **Error-streak** | N consecutive tool errors (any args) injects a circuit-breaker nudge (Grok-inspired; default N=5, override `FORGE_ERROR_STREAK_THRESHOLD`); permission/hard denies do not count |
 | **Atomic file writes** | `write_file` / `search_replace` / `apply_patch` write via tmp+rename |
+| **Edit miss guidance** | `search_replace` failures on existing files suggest closest lines + block-drift notes (not path typos); multi-match lists line numbers |
+| **todo_write validation** | Requires id/content/valid status; merge:true + [] warns; failures are tool errors |
+| **bash exit code** | Non-zero exits always append `[exit code N]` even when stdout/stderr is non-empty |
+| **grep/glob empty** | Empty results include pattern/path + recovery tips |
+| **read_file past-EOF** | Offset beyond last line returns a clear past-end message (not a false empty-file) |
+| **Unknown task_id** | `get_task_output` / `kill_task` list actives and suggest prefix/typo matches |
+| **CLI/slash typos** | Bare `forge sesions`, `sessions prun`, `--model grok-45`, `--effort medum`, `/exprot` → structured Did you mean? (fail-closed where CI-safe); tool numeric/format args fail closed; doctor flags invalid config permission rules |
 | **File mutation journal** | Successful edits append pre-images to `sessions/<id>/mutations.jsonl` (mode `0600`, ~1.5 MiB/body cap) so `/undo` / `/retry` restore **disk + chat** (OpenCode-inspired; large bodies skipped with an explicit note) |
 | **apply_patch** | Multi-file patch tool; all hunks validated before disk mutation; protected-path hard deny; missing update/delete targets suggest nearby path typos; delete/update pre-images journaled for undo; **Move to** refuses existing dest (disk or earlier hunk in the same patch) |
+| **Bash timeout** | Foreground/background wall-clock timeout reports `Command timed out after Nms` with exit code **124** |
 | **Bash hard-deny peels** | Catastrophic deny sees through `env`/`timeout`/`nohup`/`setsid`/`watch`, `bash|sh|busybox sh|su|script -c`, `eval`, `xargs … bash -c`, and `$(…)` / `` `…` ``; language-runtime `system`/`execSync` rm-root/home denied; **heredoc data** (`git commit`/`cat <<EOF` payloads) is not a false positive — `bash <<EOF` bodies still scanned |
 | **Permission ask timeout** | Optional `FORGE_PERMISSION_TIMEOUT_MS` auto-denies stalled interactive prompts (min 5s) |
 | **metrics.jsonl** | Append-only run counters (tokens, edits, duration) under `~/.forge/metrics.jsonl` — no prompts/secrets; auto-prunes past ~2000 events / 2 MiB; `forge prune-metrics --keep 500` |
@@ -67,8 +76,33 @@ What experts should expect from Forge in long, unattended, or CI runs.
 | **finishReason** | Last provider `finish_reason` on `LoopResult` / headless JSON (`stop`, `length`, `content_filter`, `tool_calls`, …) or `null` if no model turn; mid-run catch adds `reason=error\|timeout\|aborted` |
 | **Headless SIGINT/SIGTERM** | `forge run` aborts the in-flight loop cleanly (exit 130 when aborted) |
 | **Headless session resume** | `forge run … --session <id>` continues a prior headless/REPL session (multi-step CI) |
-| **Headless wall-clock** | Optional `FORGE_MAX_RUN_MS` aborts the run (exit 124; JSON `timedOut: true`) |
+| **`--continue` fail-closed** | Explicit `--continue` with no same-cwd session (or all foreign-locked) exits 1 with `continue_miss` / `continue_locked` — never silently starts fresh under CI |
+| **`session_not_found` suggestions** | `--json` miss payloads include structured `suggestions[]` `{id,title,path,relativeAge}` (title typo + id prefix recovery) |
+| **`continue_miss` suggestions** | `--continue` JSON failures include recent same-cwd `suggestions[]` so CI can pick `--session` without a second list call |
+| **`forgeHome` / `sessionPath` JSON** | Support-bundle fields on `run`/`doctor`/`status`/`config`/`auth`/`sessions *` JSON for ops without scraping paths |
+| **`run --json` ok vs exit** | `ok:false` on empty/no-turn runs (aligned with exit 1; whitespace-only finalText counts as empty; includes `error` + `reason=empty_run`) |
+| **Session preflight hygiene** | Bare `--session`/`--continue` resolve before auth for structured reasons, but never apply `--title` until authenticated |
+| **`forge news` newest-first** | Long release sections show bullets from the top of the active `###` (prepend convention) |
+| **Empty CLI flags** | Empty `--cwd`/`--title`/`--goal`/`--query`/`--deny`/`--allow`/`--ask`, `logout -p ''`, and `status --cwd ''` fail closed with structured `invalid_*` (never silent no-ops that clear all creds or list everything) |
+| **Blocking Stop timeout** | Stop/SubagentStop hook timeout/error fails closed when `blockingStopHooks` is on |
+| **Sandbox/provider aliases** | `readonly`/`ro`→`read-only`; `claude`→`anthropic`, `gpt`→`openai`, `gemini`→`google` |
+| **Provider switch → default model** | `-p` / `FORGE_PROVIDER` without `-m` / `FORGE_MODEL` selects that provider's `defaultModel` |
+| **Doctor `modelInCatalog`** | `doctor --json` includes whether model is in the provider catalog (soft signal; free-form still ok) |
+
+| **CLI unknown option + `--json`** | Commander parse errors emit `{ ok:false, reason:unknown_option }` on stdout |
+| **`/permissions dontAsk`** | Interactive menu + tab-complete include CI-safe deny-without-allow mode |
+| **`--permission-mode` aliases** | `deny`/`dont-ask`→`dontAsk`, `yolo`→`bypassPermissions`, `accept`→`acceptEdits` |
+| **`forge models -p`** | Filter model catalog by provider; empty/invalid provider → `invalid_provider` (parent `-p` merges) |
+| **`status --watch --json`** | Single-shot snapshot (no infinite NDJSON hang); human `--watch` still loops until SIGINT |
+| **`forge news` / `logs -n` bounds** | News count must be 1–10; logs lines 0 or 1–200 — over-range fails closed (`invalid_count` / `invalid_lines`) |
+| **Session title length** | `MAX_SESSION_TITLE_CHARS=200` for `--title` / `sessions title` / `/title` (no silent 72-char truncate) |
+| **SSRF bracketed IPv6** | `normalizeIpHost` peels `[::ffff:…]` before `net.isIP` so hex-mapped private literals block correctly |
+| **Whitespace tool paths/patterns** | `list_dir`/`grep`/`glob` reject whitespace-only path; grep/glob reject whitespace-only pattern |
+
+| **Headless wall-clock** | Optional `FORGE_MAX_RUN_MS` aborts the run (exit 124; JSON `timedOut: true`). `--max-turns` / `FORGE_MAX_TURNS` is a soft cap (`hitMaxTurns: true`, still `ok` unless empty/abort/timeout) |
 | **Bash abort** | Sandbox/`runRaw` children receive SIGTERM on turn abort |
+| **Bash file:// deny** | `curl`/`wget` `file://` local fetches hard-denied (use `read_file`) |
+| **Bash IMDS deny** | `curl`/`wget`/python/node one-liners to link-local cloud metadata (`169.254.169.254`, `fd00:ec2::254`, `metadata.google.internal`) hard-denied |
 | **Web tool abort** | `web_fetch` / `web_search` merge turn signal + timeout so Ctrl+C / `FORGE_MAX_RUN_MS` cancel in-flight HTTP; bodies stream-capped (`web_fetch` 5 MiB, search HTML 2 MiB) so missing Content-Length cannot OOM |
 | **grep abort** | `grep` honors turn `AbortSignal` (kills `rg` / stops JS fallback) |
 | **Abort hygiene** | Cooperative `Aborted` tool results do not count toward error-streak; loop asserts abort immediately after tool batches |
@@ -79,10 +113,10 @@ What experts should expect from Forge in long, unattended, or CI runs.
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `FORGE_PROVIDER_TIMEOUT_MS` | `300000` | Provider fetch/stream wall clock |
-| `FORGE_BASH_TIMEOUT_MS` | `120000` | Default foreground `bash` timeout (min 5s, max 30m) |
+| `FORGE_PROVIDER_TIMEOUT_MS` | `5m` / `300000` | Provider fetch/stream wall clock (ms or `5m`) |
+| `FORGE_BASH_TIMEOUT_MS (ms or 90s/2m)` | `120000` | Default foreground `bash` timeout (min 5s, max 30m) |
 | `FORGE_BASH_BG_TIMEOUT_MS` | `1800000` | Default background task timeout (min 30s, max 6h) |
-| `FORGE_MAX_RUN_MS` | off | Headless `forge run` wall-clock cap (exit 124) |
+| `FORGE_MAX_RUN_MS` | off | Headless `forge run` wall-clock cap (ms or `30m`; exit 124) |
 | `FORGE_PERMISSION_TIMEOUT_MS` | off | Auto-deny stalled interactive Allow? prompts (min 5s) |
 | `FORGE_DOOM_LOOP_THRESHOLD` | `3` | Identical tool+args streak before strategy nudge |
 | `FORGE_ERROR_STREAK_THRESHOLD` | `5` | Consecutive tool errors before circuit-breaker nudge |
@@ -90,6 +124,7 @@ What experts should expect from Forge in long, unattended, or CI runs.
 | `FORGE_ULW_STUCK_THRESHOLD` | goal config / `5` | ULW stuck-wall blocks before release (`envPositiveInt`; invalid/0 ignored) |
 | `FORGE_GOAL_STUCK_THRESHOLD` | config `3` | Goal stuck-wall blocks before release (invalid/0 ignored — 0 would never release) |
 | `FORGE_FORCE_SESSION_LOCK` | off | Headless: force-steal / continue despite a foreign live `session.lock` |
+| `FORGE_JSON_COMPACT` | off | Single-line `--json` success payloads (CI log aggregation) |
 | `FORGE_LOG_JSON` | off | Structured JSON logs on stderr |
 | `FORGE_BELL` | off | `1`/`0` force turn-end terminal BEL (overrides `/bell` preference) |
 | `FORGE_NO_AUTO_RESUME` | off | `1` disables interactive same-cwd session auto-resume |

@@ -23,11 +23,13 @@ export function mergeRunOpts(
     "sandbox",
     "sandboxNetwork",
     "sandboxMissing",
+    "readOutside",
     "model",
     "provider",
     "baseUrl",
     "effort",
     "reasoningEffort",
+    "maxTurns",
     "session",
     "title",
     "cwd",
@@ -36,6 +38,8 @@ export function mergeRunOpts(
     "new",
     "ulw",
     "goal",
+    // Commander maps --no-blocking-stop → blockingStop:false (not noBlockingStop).
+    "blockingStop",
   ] as const) {
     const localSrc = command?.getOptionValueSource?.(key);
     const parentSrc = command?.parent?.getOptionValueSource?.(key);

@@ -1,3 +1,5 @@
+import { parseDurationMs } from "./duration-ms.js";
+
 /**
  * Small env parsers for operator knobs.
  * Invalid / missing values fall back so mis-set CI vars never crash the agent.
@@ -36,14 +38,51 @@ export function parseKeepCount(
   return Math.floor(n);
 }
 
+/**
+ * Parse an explicit CLI non-negative integer flag.
+ * - `undefined` / omitted → `undefined` (caller uses default)
+ * - present but empty/NaN/negative → `null` (caller should fail closed)
+ * - valid including 0 → number
+ */
+export function parseCliNonNegInt(raw: unknown): number | null | undefined {
+  if (raw == null) return undefined;
+  const s = String(raw).trim();
+  if (s === "") return null;
+  const n = Number(s);
+  if (!Number.isFinite(n) || n < 0) return null;
+  return Math.floor(n);
+}
+
+/** Positive duration from env (ms int or 30s/1m/2h), else fallback. */
+export function envDurationMs(name: string, fallback: number): number {
+  const raw = process.env[name]?.trim();
+  if (!raw) return fallback;
+  const parsed = parseDurationMs(raw);
+  if (!parsed.ok) return fallback;
+  return parsed.ms;
+}
+
 /** Default foreground bash timeout (ms). Min 5s, max 30m. */
 export function defaultBashTimeoutMs(): number {
-  const n = envPositiveInt("FORGE_BASH_TIMEOUT_MS", 120_000);
+  const n = envDurationMs("FORGE_BASH_TIMEOUT_MS", 120_000);
   return Math.min(30 * 60_000, Math.max(5_000, n));
 }
 
 /** Default background bash task timeout (ms). Min 30s, max 6h. */
 export function defaultBashBackgroundTimeoutMs(): number {
-  const n = envPositiveInt("FORGE_BASH_BG_TIMEOUT_MS", 30 * 60_000);
+  const n = envDurationMs("FORGE_BASH_BG_TIMEOUT_MS", 30 * 60_000);
   return Math.min(6 * 60 * 60_000, Math.max(30_000, n));
+}
+
+/**
+ * FORGE_MAX_RUN_MS wall-clock budget (ms int or 10m/30s).
+ * Returns null when unset/invalid (no deadline). Min 5s, max 24h.
+ */
+export function maxRunMsFromEnv(): number | null {
+  const raw = process.env.FORGE_MAX_RUN_MS?.trim();
+  if (!raw) return null;
+  const parsed = parseDurationMs(raw);
+  if (!parsed.ok) return null;
+  if (parsed.ms < 5_000) return null;
+  return Math.min(parsed.ms, 24 * 60 * 60 * 1000);
 }

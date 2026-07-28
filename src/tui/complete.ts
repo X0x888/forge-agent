@@ -39,6 +39,11 @@ export const COMMAND_PARAMS: Record<string, ParamChoice[]> = {
       aliases: ["bypass", "yolo", "always", "auto"],
     },
     {
+      value: "dontAsk",
+      description: "Never prompt — deny anything without an allow rule (CI-safe)",
+      aliases: ["dont-ask", "no-ask", "never-ask", "deny", "ask"],
+    },
+    {
       value: "list",
       description: "Show saved always-allow rules for this workspace",
     },
@@ -146,6 +151,7 @@ export const COMMAND_PARAMS: Record<string, ParamChoice[]> = {
   logs: [
     { value: "20", description: "Last 20 sandbox/safety events" },
     { value: "50", description: "Last 50 events" },
+    { value: "0", description: "All events in the read window", aliases: ["all", "--all"] },
     { value: "path", description: "Print sandbox.jsonl path only", aliases: ["--path", "-p"] },
   ],
   config: [

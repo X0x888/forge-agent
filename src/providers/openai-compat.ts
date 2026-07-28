@@ -105,7 +105,7 @@ export class OpenAICompatProvider implements LLMProvider {
       };
       const choice = json.choices[0];
       if (!choice) {
-        throw new Error(`${this.id} API error: empty choices array`);
+        throw new Error(`${this.id} API error: empty choices array (provider returned no completion — retry or switch model)`);
       }
       return {
         id: json.id,
@@ -309,7 +309,7 @@ export class OpenAICompatProvider implements LLMProvider {
       !usage
     ) {
       throw new Error(
-        `${this.id} stream ended with empty response (no content, tools, or finish_reason) — likely a dropped connection`,
+        `${this.id} stream ended with empty response (no content, tools, or finish_reason) — likely a dropped connection; retry or switch model`,
       );
     }
 

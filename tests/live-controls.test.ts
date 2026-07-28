@@ -34,6 +34,10 @@ describe("live mid-run slash policy", () => {
     assert.equal(classifyLiveSlash("/cycle status"), "readonly");
     assert.equal(classifyLiveSlash("/cycle"), "readonly");
     assert.equal(classifyLiveSlash("/ulw-off"), "control");
+    assert.equal(classifyLiveSlash("/tasks"), "readonly");
+    assert.equal(classifyLiveSlash("/tasks log abc"), "readonly");
+    assert.equal(classifyLiveSlash("/tasks kill abc"), "control");
+    assert.equal(classifyLiveSlash("/bg stop abc"), "control");
     assert.equal(classifyLiveSlash("/goal pause"), "control");
     assert.equal(classifyLiveSlash("/goal resume"), "control");
     assert.equal(classifyLiveSlash("/goal clear"), "control");
@@ -420,4 +424,38 @@ describe("mid-run /cycle affects stop-guard without abort", () => {
     assert.match(String(r.output || ""), /Rejected \/diff filter/i);
     assert.equal(fs.existsSync(sink), false);
   });
+
+  it("goal verb typos suggest instead of arming nonsense goals", async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-goal-typo-"));
+    process.env.FORGE_HOME = tmp;
+    const session = createSession({
+      cwd: tmp,
+      provider: "xai",
+      model: "test",
+    });
+    const hooks = new HookRunner(DEFAULT_CONFIG, tmp);
+    const miss = await handleSlash("/goal stauts", {
+      session,
+      config: { ...DEFAULT_CONFIG, workspace: tmp },
+      hooks,
+    });
+    assert.equal(miss.handled, true);
+    assert.match(String(miss.output || ""), /Did you mean: status/i);
+    assert.doesNotMatch(String(miss.output || ""), /Goal ARMED/i);
+
+    const cycleMiss = await handleSlash("/cycle of", {
+      session,
+      config: { ...DEFAULT_CONFIG, workspace: tmp },
+      hooks,
+    });
+    assert.match(String(cycleMiss.output || ""), /Did you mean: off/i);
+
+    const arm = await handleSlash("/goal ship production forge", {
+      session,
+      config: { ...DEFAULT_CONFIG, workspace: tmp },
+      hooks,
+    });
+    assert.match(String(arm.output || ""), /Goal ARMED/i);
+  });
+
 });

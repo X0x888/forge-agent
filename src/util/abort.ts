@@ -1,3 +1,5 @@
+import { parseDurationMs } from "./duration-ms.js";
+
 /**
  * AbortSignal helpers for production timeouts + cooperative cancel.
  */
@@ -6,10 +8,12 @@
 export const DEFAULT_PROVIDER_TIMEOUT_MS = 300_000; // 5 minutes
 
 export function providerTimeoutMs(): number {
-  const raw = process.env.FORGE_PROVIDER_TIMEOUT_MS;
-  if (raw && /^\d+$/.test(raw)) {
-    const n = Number(raw);
-    if (n >= 5_000 && n <= 3_600_000) return n;
+  const raw = process.env.FORGE_PROVIDER_TIMEOUT_MS?.trim();
+  if (raw) {
+    const parsed = parseDurationMs(raw);
+    if (parsed.ok && parsed.ms >= 5_000 && parsed.ms <= 3_600_000) {
+      return parsed.ms;
+    }
   }
   return DEFAULT_PROVIDER_TIMEOUT_MS;
 }

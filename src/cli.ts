@@ -15,15 +15,18 @@ import fs from "node:fs";
 import path from "node:path";
 import { formatRelativeTime } from "./util/format.js";
 import { loadConfig, defaultConfigToml } from "./config/load.js";
-import type {
-  ForgeConfig,
-  PermissionMode,
-  ProviderId,
-  SandboxMissingBackend,
-  SandboxNetwork,
-  SandboxProfile,
+import {
+  resolveSandboxNetwork,
+  type ForgeConfig,
+  type PermissionMode,
+  type ProviderId,
+  type SandboxMissingBackend,
+  type ReadOutsideWorkspace,
+  type SandboxNetwork,
+  type SandboxProfile,
 } from "./config/types.js";
-import { parseReasoningEffort } from "./config/reasoning.js";
+import { parseReasoningEffort, resolveReasoningEffort } from "./config/reasoning.js";
+import { loadPreferences, savePreferences } from "./config/preferences.js";
 import { resolveAuth, resolveAuthFresh, describeAuth } from "./auth/resolve.js";
 import { loginInteractive, logout, printAuthStatus, supportsOAuth } from "./auth/login.js";
 import {
@@ -47,8 +50,10 @@ import {
   importSessionJson,
   formatSessionSummary,
   formatSessionLookupMiss,
+  listSessionLookupSuggestions,
   findRecentSessionForCwd,
   setSessionTitle,
+  MAX_SESSION_TITLE_CHARS,
   setSessionPinned,
   formatResumeOrientation,
   resolveSessionDir,
@@ -70,6 +75,7 @@ import {
 } from "./session/lock.js";
 import { HookRunner } from "./harness/hooks.js";
 import { PermissionGate } from "./agent/permissions.js";
+import { parseRuleString } from "./agent/rules.js";
 import {
   killAllRunningTasks,
   listTasks,
@@ -83,6 +89,7 @@ import { log, setLogLevel } from "./util/log.js";
 import { mergeRunOpts } from "./util/merge-run-opts.js";
 import { armGoal, formatGoalStatus, loadGoal } from "./harness/goal.js";
 import { armUlwCycle, loadUlwCycle, formatUlwCounts } from "./harness/ulw-cycle.js";
+import { openTodos } from "./agent/todos.js";
 import { formatEffectiveConfig, runDoctorCheck } from "./commands/slash.js";
 import {
   collectSnapshots,
@@ -97,14 +104,33 @@ import {
   formatWhatsNew,
   loadChangelogReleases,
 } from "./util/changelog.js";
-import { formatExpertTips } from "./util/tips.js";
-import { shellCompletionScript } from "./util/completion-script.js";
+import { formatExpertTips, expertTipsLines } from "./util/tips.js";
+import { editDistance } from "./util/string-distance.js";
+import { suggestName, suggestSessionAction } from "./util/suggest.js";
+import { parseDaysWindow, daysWindowHelp } from "./util/days-window.js";
+import { parseNewsCount, newsCountHelp } from "./util/news-count.js";
+import { parseLogsLines, logsLinesHelp } from "./util/logs-lines.js";
+import {
+  normalizeProviderId,
+  PROVIDER_IDS as PROVIDER_ID_LIST,
+  providerIdHelp,
+} from "./util/provider-id.js";
+import {
+  normalizePermissionMode,
+  normalizeSandboxProfile,
+  normalizeSandboxNetwork,
+} from "./util/mode-aliases.js";
+import {
+  normalizeCompletionShell,
+  shellCompletionScript,
+} from "./util/completion-script.js";
 import { providerTimeoutMs } from "./util/abort.js";
+import { detectProjectHints, getGitSnapshot } from "./util/git-context.js";
 import {
   defaultBashBackgroundTimeoutMs,
   defaultBashTimeoutMs,
-  envPositiveInt,
-  parseKeepCount,
+  envPositiveInt, maxRunMsFromEnv,
+  parseCliNonNegInt,
 } from "./util/env.js";
 import { isBellEnabled } from "./util/attention.js";
 import { permissionAskTimeoutMs } from "./agent/permissions.js";
@@ -121,7 +147,32 @@ import { mutationsJournalStats } from "./session/mutations.js";
 const VERSION = getForgeVersion();
 
 async function main(): Promise<void> {
+  // `forge --version --json` / `-V --json` for CI (Commander prints plain version only).
+  if (
+    process.argv.includes("--json") &&
+    (process.argv.includes("--version") || process.argv.includes("-V"))
+  ) {
+    console.log(
+      JSON.stringify({
+        ok: true,
+        version: VERSION,
+        name: "forge",
+        node: process.version,
+      }),
+    );
+    return;
+  }
   const program = new Command();
+  // When --json is on argv, Commander parse errors become structured stdout
+  // (CI must not scrape stderr for "unknown option").
+  const wantJsonCli = process.argv.includes("--json");
+  program.exitOverride();
+  program.configureOutput({
+    writeErr: (str) => {
+      if (wantJsonCli) return; // structured path below
+      process.stderr.write(str);
+    },
+  });
   program
     .name("forge")
     .description(
@@ -137,8 +188,9 @@ Examples:
   forge run "fix CI" --permission-mode acceptEdits --json
   forge run "continue" --session <id> --json
   forge run "next step" --continue --json
-  forge "next step" --continue                 # bare headless same-cwd resume
+  forge "next step" --continue                 # bare headless same-cwd resume (fail-closed if none)
   forge "next step" --json                     # bare headless JSON (parity with run --json)
+  forge init --json · forge tips --json · forge completion bash --json
   forge sessions prune --keep 50
   forge sessions export <id> --format json --out ./session.json
   forge stats --days 7
@@ -165,8 +217,12 @@ Docs: docs/PRODUCTION.md · docs/RELIABILITY.md · docs/ULW.md · forge news
       "Alias for --effort",
     )
     .option(
+      "--max-turns <n>",
+      "Cap agent turns (0 = unlimited; default from config / FORGE_MAX_TURNS)",
+    )
+    .option(
       "--permission-mode <mode>",
-      "default|acceptEdits|plan|bypassPermissions|dontAsk",
+      "default|acceptEdits|plan|bypassPermissions|dontAsk (aliases: accept, deny/dont-ask/ask, yolo)",
     )
     .option(
       "--sandbox <profile>",
@@ -179,6 +235,10 @@ Docs: docs/PRODUCTION.md · docs/RELIABILITY.md · docs/ULW.md · forge news
     .option(
       "--sandbox-missing <mode>",
       "When sandbox backend missing: fail-closed|fallback (default fail-closed)",
+    )
+    .option(
+      "--read-outside <mode>",
+      "Read files outside workspace: ask|allow|deny (default ask; env FORGE_READ_OUTSIDE)",
     )
     .option(
       "--deny <rule>",
@@ -207,7 +267,7 @@ Docs: docs/PRODUCTION.md · docs/RELIABILITY.md · docs/ULW.md · forge news
     .option("--session <id>", "Resume session id/prefix or unique title")
     .option(
       "--continue",
-      "Resume newest same-cwd session (headless bare forge parity with forge run --continue)",
+      "Resume newest same-cwd session (fail-closed if none; parity with forge run --continue)",
     )
     .option("--title <text>", "Label for a new session (searchable via list -q / /sessions search)")
     .option(
@@ -228,51 +288,49 @@ Docs: docs/PRODUCTION.md · docs/RELIABILITY.md · docs/ULW.md · forge news
       const prompt = promptParts?.length
         ? promptParts.join(" ").trim() || undefined
         : undefined;
+      // Bare `forge sesions` looks like a subcommand typo — fail closed.
+      // Real one-word tasks that collide: quote them (`forge "sessions"` is still a prompt
+      // only if it is not an exact subcommand; exact names are routed by Commander).
+      if (prompt) {
+        const cmdTip = suggestTopLevelCommand(prompt);
+        if (cmdTip) {
+          const tip =
+            `Did you mean: forge ${cmdTip}? ` +
+            `(got bare prompt "${prompt}" — not a subcommand). ` +
+            `Run: forge ${cmdTip}   ·  force as prompt: forge run "${prompt}"`;
+          if (wantJson) {
+            emitFailJson({
+              reason: "command_typo",
+              error: tip,
+              prompt,
+              suggestion: cmdTip,
+              hint: `forge ${cmdTip} --help`,
+            });
+          } else {
+            log.error(tip);
+          }
+          process.exit(1);
+        }
+      }
       // --json is headless-only (same payload as forge run --json).
       if (wantJson && !prompt) {
-        console.log(
-          JSON.stringify({
-            ok: false,
-            reason: "empty_prompt",
-            error:
-              'Empty prompt. Usage: forge "your task" --json   (or: forge run "your task" --json)',
-          }),
-        );
+        emitFailJson({
+          reason: "empty_prompt",
+          error:
+            'Empty prompt. Usage: forge "your task" --json   (or: forge run "your task" --json)',
+          hint: 'forge run "your task" --json',
+        });
         process.exit(1);
+      }
+      // Empty --title '' fails closed before auth/session.
+      if (opts.title != null) {
+        opts.title = assertTitleOpt(opts.title, { json: wantJson });
+      }
+      // Empty --goal '' is invalid (flag present but blank objective).
+      if (opts.goal != null) {
+        opts.goal = assertGoalOpt(opts.goal, { json: wantJson });
       }
       const config = buildConfig(opts);
-      const auth = await resolveAuthFresh(config);
-      if (!auth) {
-        const msg =
-          "Not authenticated. Run: forge login\n" +
-          "  or set XAI_API_KEY / ANTHROPIC_API_KEY / OPENAI_API_KEY / …";
-        if (wantJson) {
-          console.log(
-            JSON.stringify({
-              ok: false,
-              reason: "unauthenticated",
-              error: "Not authenticated. Run forge login or set an API key.",
-              provider: config.provider,
-            }),
-          );
-        } else {
-          log.error(msg);
-        }
-        process.exit(1);
-      }
-      // Align provider if auth auto-detected a different one
-      if (auth.provider !== config.provider) {
-        if (!wantJson) {
-          log.info(`Using provider ${auth.provider} from available credentials`);
-        }
-        config.provider = auth.provider;
-        if (!opts.model) {
-          config.model =
-            config.providers[auth.provider]?.defaultModel || config.model;
-        }
-      }
-
-      const provider = createProvider(config, auth);
       // --json forces headless even on a TTY (parity with forge run --json).
       const willHeadless = Boolean(
         prompt &&
@@ -280,6 +338,48 @@ Docs: docs/PRODUCTION.md · docs/RELIABILITY.md · docs/ULW.md · forge news
             !process.stdin.isTTY ||
             process.env.FORGE_HEADLESS === "1"),
       );
+      // Fail-closed session flags before auth (CI reasons without credentials).
+      // Do NOT create a fresh session yet — resolveSession creates on miss, which
+      // would orphan dirs when auth fails. Only preflight when --session/--continue
+      // can exit without creating; otherwise auth first, then resolve.
+      const needsSessionPreflight =
+        opts.session != null || Boolean(opts.continue);
+      if (needsSessionPreflight) {
+        // resolveSession exits on --session miss / --continue miss|locked.
+        // json:true silences resume chatter — real resolve happens after auth.
+        // Omit title so a failed auth cannot leave a half-applied /title rename.
+        resolveSession(config, {
+          ...opts,
+          title: undefined,
+          autoResume: false,
+          continue: Boolean(opts.continue),
+          json: true,
+        });
+      }
+      const auth = await resolveAuthFresh(config);
+      if (!auth) {
+        const msg =
+          "Not authenticated. Run: forge login\n" +
+          "  or set XAI_API_KEY / ANTHROPIC_API_KEY / OPENAI_API_KEY / …";
+        if (wantJson) {
+          emitFailJson({
+            reason: "unauthenticated",
+            forgeHome: forgeHome(),
+            error:
+              "Not authenticated. Run forge login --api-key $KEY --json (CI) or forge login (interactive), or set an API key env var.",
+            provider: config.provider,
+            authMethod: null,
+            hint: "forge login --api-key $KEY --json  ·  forge login  ·  set XAI_API_KEY / ANTHROPIC_API_KEY / …",
+          });
+        } else {
+          log.error(msg);
+        }
+        process.exit(1);
+      }
+      // Provider/model alignment with resumed sessions happens after resolveSession
+      // (sticky login must not hijack an older chat's provider). Fresh sessions keep
+      // config/sticky provider; auth is re-checked against the effective provider below.
+
       // Interactive REPL: resume newest same-cwd session (OpenCode --continue style)
       // unless --new / --session / FORGE_NO_AUTO_RESUME. Headless starts fresh unless
       // --session or explicit --continue (parity with forge run --continue).
@@ -289,6 +389,38 @@ Docs: docs/PRODUCTION.md · docs/RELIABILITY.md · docs/ULW.md · forge news
         continue: Boolean(opts.continue),
         json: wantJson,
       });
+      // Prefer resumed session provider/model unless CLI -p/-m set.
+      {
+        const argv = process.argv;
+        const providerExplicit = argv.some(
+          (a, i) =>
+            a === "-p" ||
+            a === "--provider" ||
+            a.startsWith("--provider="),
+        );
+        const modelExplicit = argv.some(
+          (a) => a === "-m" || a === "--model" || a.startsWith("--model="),
+        );
+        if (!modelExplicit && session.meta.model) {
+          config.model = session.meta.model;
+        }
+        if (!providerExplicit && session.meta.provider) {
+          config.provider = session.meta.provider as typeof config.provider;
+        }
+      }
+      // Re-resolve auth for the effective provider (session may differ from sticky default).
+      let effectiveAuth = auth;
+      if (auth.provider !== config.provider) {
+        const again = await resolveAuthFresh(config, String(config.provider));
+        if (again) effectiveAuth = again;
+        else if (!wantJson) {
+          log.warn(
+            `No credentials for session provider ${config.provider}; using ${auth.provider}`,
+          );
+          config.provider = auth.provider as typeof config.provider;
+        }
+      }
+      const provider = createProvider(config, effectiveAuth);
       if (opts.ulw) {
         session.meta.ultrawork = true;
         const mandate = prompt || "improve the codebase";
@@ -318,11 +450,11 @@ Docs: docs/PRODUCTION.md · docs/RELIABILITY.md · docs/ULW.md · forge news
           json: wantJson,
         });
         if (wantJson) {
-          console.log(JSON.stringify(result, null, 2));
+          console.log(stringifyJsonResult(result));
         }
         if (result.timedOut) process.exitCode = 124;
         else if (result.aborted) process.exitCode = 130;
-        else if (!result.finalText && result.turns === 0) process.exitCode = 1;
+        else if (isEmptyRunResult(result)) process.exitCode = 1;
         return;
       }
 
@@ -347,6 +479,10 @@ Docs: docs/PRODUCTION.md · docs/RELIABILITY.md · docs/ULW.md · forge news
     .option("--base-url <url>", "Override API base URL")
     .option("--effort <level>", "Reasoning effort: low|medium|high")
     .option("--reasoning-effort <level>", "Alias for --effort")
+    .option(
+      "--max-turns <n>",
+      "Cap agent turns (0 = unlimited; default from config / FORGE_MAX_TURNS)",
+    )
     .option("--permission-mode <mode>", "Permission mode", "acceptEdits")
     .option(
       "--sandbox <profile>",
@@ -359,6 +495,10 @@ Docs: docs/PRODUCTION.md · docs/RELIABILITY.md · docs/ULW.md · forge news
     .option(
       "--sandbox-missing <mode>",
       "When sandbox backend missing: fail-closed|fallback (default fail-closed)",
+    )
+    .option(
+      "--read-outside <mode>",
+      "Read files outside workspace: ask|allow|deny (default ask; env FORGE_READ_OUTSIDE)",
     )
     .option(
       "--deny <rule>",
@@ -387,11 +527,15 @@ Docs: docs/PRODUCTION.md · docs/RELIABILITY.md · docs/ULW.md · forge news
     )
     .option(
       "--continue",
-      "Resume newest same-cwd session (≤14d; skips foreign locks). Ignored with --session/--new",
+      "Resume newest same-cwd session (≤14d; skips foreign locks; fail-closed if none). Conflicts with --new",
     )
     .option("--new", "Force a new session (default when --session/--continue omitted)")
     .option("--title <text>", "Label for a new session (CI-friendly; searchable via list -q)")
     .option("--json", "Emit JSON result on stdout")
+    .option(
+      "--no-blocking-stop",
+      "Disable blocking Stop hooks (not recommended for production)",
+    )
     .addHelpText(
       "after",
       `
@@ -401,17 +545,22 @@ Exit codes:
   124  wall-clock timeout (FORGE_MAX_RUN_MS)
   130  aborted (SIGINT)
 
---json fields (success): ok, sessionId, title, finalText, turns, stopContinues,
+--json fields (success): ok, version, node, forgeHome, sessionId, sessionPath, title, pinned, foreignLock, provider, stickyProvider, authMethod, model, reasoningEffort, cwd, git, projectLabel, projectHints, packageName, packageVersion, packageEnginesNode, permissionMode, sandbox, sandboxNetwork, sandboxMissingBackend, readOutsideWorkspace, ultrawork, ulwCycle, ulwWave, ulwBlocks, ulwMandate, ulwSoftPrompt, ulwExpandedMandate, goalActive, goal, goalStuckThreshold, goalBlocks, goalStuckBlocks, goalCriteria, denyRules, allowRules, askRules, maxTurns, maxTurnsUnlimited, productionWarnings, blockingStop, maxRunMs, providerTimeoutMs, bashTimeoutMs, bashBackgroundTimeoutMs, permissionAskTimeoutMs, doomLoopThreshold, errorStreakThreshold, ulwMaxContinues, editCount, openTodos, messageCount, finalText, turns, stopContinues,
   releasedOnContinueCap, hitMaxTurns, finishReason, editCount, aborted, timedOut,
-  promptTokens, completionTokens, durationMs, model, provider
-  (releasedOnContinueCap/hitMaxTurns → safety valves; still ok unless aborted/timedOut)
+  promptTokens, completionTokens, durationMs
+  (FORGE_JSON_COMPACT=1 → single-line success JSON for CI log aggregation)
+  (releasedOnContinueCap/hitMaxTurns → safety valves; still ok unless aborted/timedOut/empty run)
   (finishReason → last provider finish_reason, or null if no model turn)
 
---json early failures (stdout, still exit ≠0): { ok:false, reason, error, … }
-  reason=empty_prompt | unauthenticated | session_not_found | locked
+--json early failures (stdout, still exit ≠0): { ok:false, version, reason, error, … } (typos may include suggestion)
+  reason=empty_prompt | command_typo | conflicting_flags | unauthenticated | session_not_found | locked | empty_run | timeout | aborted
+  | continue_miss | continue_locked  (explicit --continue with nothing resumable)
   | invalid_effort | invalid_permission_mode | invalid_sandbox
   | invalid_sandbox_network | invalid_sandbox_missing | invalid_provider
-  | invalid_model | invalid_base_url
+  | invalid_model | invalid_base_url | invalid_cwd | invalid_title
+  | invalid_deny | invalid_allow | invalid_ask | invalid_goal
+  | invalid_keep | invalid_limit | invalid_max_age_days | invalid_days | invalid_lines
+  | invalid_interval | invalid_count | invalid_query | invalid_shell
   | missing_base_url  (custom without --base-url / FORGE_BASE_URL)
   | error | timeout | aborted  (mid-run catch path)
 
@@ -419,8 +568,9 @@ Empty prompts exit 1 before auth/session create (no orphan sessions, no API spen
 --session/--new/--title work on parent or subcommand (optsWithGlobals merge).
 Label runs: --title <label> (searchable via forge sessions list -q / /sessions search).
 Multi-step CI without copying ids: forge run "…" --continue --json
+  (--continue fails closed if no same-cwd session / all locked — omit for fresh)
 
-CI tips: forge doctor --json · --permission-mode acceptEdits · --sandbox workspace · --title ci-job
+CI tips: forge doctor --json · --permission-mode acceptEdits · --sandbox workspace · --sandbox-missing fail-closed · --read-outside deny · --title ci-job
 Docs: docs/PRODUCTION.md
 `,
     )
@@ -434,13 +584,47 @@ Docs: docs/PRODUCTION.md
       // Validate prompt before auth/session side effects (no orphan empty sessions).
       const prompt = (promptParts || []).join(" ").trim();
       const wantJson = Boolean(runOpts.json);
+      // --continue/--session vs --new are mutually exclusive (was silent prefer --new).
+      if (runOpts.continue && runOpts.new) {
+        failInvalidFlag(
+          "conflicting_flags",
+          "Cannot combine --continue with --new. Use one: resume same-cwd, or force a fresh session.",
+          { continue: true, new: true },
+          { json: wantJson },
+        );
+      }
+      if (runOpts.session != null && runOpts.new) {
+        failInvalidFlag(
+          "conflicting_flags",
+          "Cannot combine --session with --new. Pass --session to resume, or --new for a fresh session.",
+          { session: String(runOpts.session), new: true },
+          { json: wantJson },
+        );
+      }
+      if (runOpts.session != null && runOpts.continue) {
+        failInvalidFlag(
+          "conflicting_flags",
+          "Cannot combine --session with --continue. Pass --session <id|title>, or --continue for newest same-cwd.",
+          { session: String(runOpts.session), continue: true },
+          { json: wantJson },
+        );
+      }
+      // Empty --title '' fails closed (no silent drop → auto title from prompt).
+      if (runOpts.title != null) {
+        runOpts.title = assertTitleOpt(runOpts.title, { json: wantJson });
+      }
+      if (runOpts.goal != null) {
+        runOpts.goal = assertGoalOpt(runOpts.goal, { json: wantJson });
+      }
       if (!prompt) {
         const msg =
           'Empty prompt. Usage: forge run "your task" [--title label] [--json]';
         if (wantJson) {
-          console.log(
-            JSON.stringify({ ok: false, error: msg, reason: "empty_prompt" }),
-          );
+          emitFailJson({
+            error: msg,
+            reason: "empty_prompt",
+            hint: 'forge run "your task" --json',
+          });
         } else {
           log.error(msg);
         }
@@ -451,24 +635,7 @@ Docs: docs/PRODUCTION.md
         ...runOpts,
         permissionMode: runOpts.permissionMode,
       });
-      const auth = await resolveAuthFresh(config);
-      if (!auth) {
-        const msg = "Not authenticated. Run forge login or set an API key.";
-        if (wantJson) {
-          console.log(
-            JSON.stringify({
-              ok: false,
-              error: msg,
-              reason: "unauthenticated",
-              provider: config.provider,
-            }),
-          );
-        } else {
-          log.error(msg);
-        }
-        process.exit(1);
-      }
-      const provider = createProvider(config, auth);
+      // Empty --cwd already rejected in buildConfig; keep resolve defensive.
       const cwd = path.resolve(String(runOpts.cwd || process.cwd()));
       // Commander always applies option defaults — only treat --cwd as explicit
       // when the user actually passed it on the CLI (so --session keeps its cwd).
@@ -477,6 +644,8 @@ Docs: docs/PRODUCTION.md
         command?.parent?.getOptionValueSource?.("cwd") === "cli";
       let session;
       let resumed = false;
+      // Session lookup / --continue fail-closed before auth so CI gets the right
+      // reason without requiring credentials (parity with empty_prompt).
       // --session present (including "") must not silently start fresh
       const sessionFlag =
         runOpts.session != null ? String(runOpts.session).trim() : "";
@@ -486,14 +655,11 @@ Docs: docs/PRODUCTION.md
           const msg =
             'Empty --session. Pass an id/prefix/title, or omit --session for a new run.';
           if (wantJson) {
-            console.log(
-              JSON.stringify({
-                ok: false,
-                reason: "session_not_found",
-                session: String(runOpts.session),
-                error: msg,
-              }),
-            );
+            emitFailJson({
+              reason: "session_not_found",
+              session: String(runOpts.session),
+              error: msg,
+            });
           } else {
             log.error(msg);
           }
@@ -503,14 +669,12 @@ Docs: docs/PRODUCTION.md
         if (!session) {
           const miss = formatSessionLookupMiss(sessionFlag);
           if (wantJson) {
-            console.log(
-              JSON.stringify({
-                ok: false,
-                error: miss,
-                reason: "session_not_found",
-                session: sessionFlag,
-              }),
-            );
+            emitFailJson({
+              error: miss,
+              reason: "session_not_found",
+              session: sessionFlag,
+              suggestions: listSessionLookupSuggestions(sessionFlag),
+            });
           } else {
             log.error(miss);
           }
@@ -519,6 +683,8 @@ Docs: docs/PRODUCTION.md
         resumed = true;
       } else if (runOpts.continue && !runOpts.new) {
         // OpenCode-style headless continue: newest same-cwd session without copying ids.
+        // Explicit --continue fails closed when nothing is resumable (CI safety —
+        // never silently start a fresh session and report ok:true).
         try {
           const hit = findRecentSessionForCwd(cwd);
           if (hit?.meta) {
@@ -532,27 +698,106 @@ Docs: docs/PRODUCTION.md
               log.dim(
                 `Continuing ${session.meta.id.slice(0, 8)} — ${session.meta.title || "untitled"} (${session.messages.length} msgs)${skipNote}`,
               );
+            } else {
+              failContinueMiss({
+                json: wantJson,
+                cwd,
+                reason: "continue_miss",
+                error: `Failed to load same-cwd session ${hit.meta.id.slice(0, 8)} for --continue.`,
+                skippedLocked: hit.skippedLocked,
+                candidates: hit.candidates,
+              });
             }
           } else if (hit && hit.skippedLocked > 0) {
-            log.warn(
-              `No unlocked same-cwd session to continue (${hit.skippedLocked} locked). Starting fresh. Use --session <id> to attach anyway.`,
-            );
+            failContinueMiss({
+              json: wantJson,
+              cwd,
+              reason: "continue_locked",
+              error:
+                `No unlocked same-cwd session to continue (${hit.skippedLocked} locked). ` +
+                `Use --session <id> to attach, or omit --continue for a fresh run.`,
+              skippedLocked: hit.skippedLocked,
+              candidates: hit.candidates,
+            });
           } else {
-            log.dim("No prior same-cwd session to continue — starting fresh.");
+            failContinueMiss({
+              json: wantJson,
+              cwd,
+              reason: "continue_miss",
+              error:
+                "No prior same-cwd session to continue. " +
+                "Omit --continue to start fresh, or pass --session <id|title>.",
+              skippedLocked: 0,
+              candidates: hit?.candidates ?? 0,
+            });
           }
         } catch {
-          /* fall through to new session */
+          failContinueMiss({
+            json: wantJson,
+            cwd,
+            reason: "continue_miss",
+            error:
+              "Failed to resolve same-cwd session for --continue. " +
+              "Omit --continue to start fresh, or pass --session <id|title>.",
+          });
+        }
+      }
+      const providerExplicit =
+        command?.getOptionValueSource?.("provider") === "cli" ||
+        command?.parent?.getOptionValueSource?.("provider") === "cli";
+      // When resuming without explicit -p, prefer the session's provider for auth
+      // so sticky login preferences cannot silently switch a resumed conversation.
+      const authProviderHint =
+        !providerExplicit && resumed && session?.meta?.provider
+          ? String(session.meta.provider)
+          : undefined;
+      const auth = await resolveAuthFresh(config, authProviderHint);
+      if (!auth) {
+        const msg = "Not authenticated. Run forge login or set an API key.";
+        if (wantJson) {
+          emitFailJson({
+            error:
+              "Not authenticated. Run forge login --api-key $KEY --json (CI) or forge login (interactive), or set an API key env var.",
+            reason: "unauthenticated",
+            forgeHome: forgeHome(),
+            provider: authProviderHint || config.provider,
+            authMethod: null,
+            hint: "forge login --api-key $KEY --json  ·  forge login  ·  set provider API key env",
+          });
+        } else {
+          log.error(msg);
+        }
+        process.exit(1);
+      }
+      // Align config to resolved auth when not resuming / not explicit -p.
+      if (!providerExplicit && !resumed && auth.provider !== config.provider) {
+        if (!wantJson) {
+          log.info(
+            `Using provider ${auth.provider} from available credentials`,
+          );
+        }
+        config.provider = auth.provider as typeof config.provider;
+        if (!runOpts.model) {
+          config.model =
+            config.providers[auth.provider]?.defaultModel || config.model;
         }
       }
       if (resumed && session) {
         // Align live config model with resumed session unless CLI overrode it
         if (!runOpts.model) config.model = session.meta.model || config.model;
-        if (!runOpts.provider) {
+        if (!providerExplicit) {
           config.provider = (session.meta.provider ||
+            auth.provider ||
             config.provider) as typeof config.provider;
         }
-        session.meta.provider = String(config.provider);
-        session.meta.model = config.model;
+        // Keep session identity stable on resume (do not rewrite to sticky default)
+        if (providerExplicit) {
+          session.meta.provider = String(config.provider);
+        }
+        if (runOpts.model) {
+          session.meta.model = config.model;
+        }
+
         if (cwdExplicit) {
           session.meta.cwd = cwd;
         }
@@ -595,6 +840,7 @@ Docs: docs/PRODUCTION.md
         saveSession(session);
       }
       if (runOpts.goal) armGoal(session.meta.id, String(runOpts.goal), "manual");
+      const provider = createProvider(config, auth);
       const hooks = new HookRunner(config, session.meta.cwd);
       const result = await runHeadless({
         config,
@@ -605,12 +851,12 @@ Docs: docs/PRODUCTION.md
         json: wantJson,
       });
       if (wantJson) {
-        console.log(JSON.stringify(result, null, 2));
+        console.log(stringifyJsonResult(result));
       }
       // CI-friendly exit codes: wall-clock timeout=124, abort=130, empty=1
       if (result.timedOut) process.exitCode = 124;
       else if (result.aborted) process.exitCode = 130;
-      else if (!result.finalText && result.turns === 0) process.exitCode = 1;
+      else if (isEmptyRunResult(result)) process.exitCode = 1;
     });
 
   program
@@ -618,7 +864,7 @@ Docs: docs/PRODUCTION.md
     .description(
       "Authenticate: SuperGrok OIDC (default for xai), API key, Grok import, or device code",
     )
-    .option("-p, --provider <provider>", "Provider", "xai")
+    .option("-p, --provider <provider>", "Provider (default: sticky preference or xai)", "xai")
     .option("--api-key [key]", "Use API key (prompt if omitted)")
     .option(
       "--from-grok",
@@ -636,41 +882,67 @@ Docs: docs/PRODUCTION.md
       const merged = { ...globals, ...opts } as Record<string, unknown>;
       const wantJson = Boolean(merged.json || opts.json);
       // Parent -p/--provider must not be clobbered by login's default "xai".
+      // When -p is omitted, prefer sticky preferences.provider (last login -p).
       const localSrc = command?.getOptionValueSource?.("provider");
       const parentSrc = command?.parent?.getOptionValueSource?.("provider");
-      let providerRaw = "xai";
+      let stickyProvider: string | undefined;
+      try {
+        stickyProvider = loadPreferences().provider;
+      } catch {
+        /* */
+      }
+      let providerRaw = stickyProvider || "xai";
       if (localSrc === "cli" && opts.provider != null) {
         providerRaw = String(opts.provider);
       } else if (parentSrc === "cli" && globals.provider != null) {
         providerRaw = String(globals.provider);
-      } else if (opts.provider != null) {
-        providerRaw = String(opts.provider);
+      } else if (localSrc === "cli" || parentSrc === "cli") {
+        // explicit empty handled by normalize below
+        if (opts.provider != null) providerRaw = String(opts.provider);
       }
-      const providerNorm = providerRaw.trim().toLowerCase();
-      const failLogin = (reason: string, error: string, extra?: Record<string, unknown>) => {
+      const providerParsed = normalizeProviderId(providerRaw);
+      const providerNorm = providerParsed.ok
+        ? providerParsed.provider
+        : providerRaw.trim().toLowerCase();
+      const failLogin = (
+        reason: string,
+        error: string,
+        extra?: Record<string, unknown>,
+      ): never => {
         if (wantJson) {
-          console.log(
-            JSON.stringify({
-              ok: false,
-              reason,
-              error,
-              provider: providerNorm,
-              ...extra,
-            }),
-          );
+          emitFailJson({
+            reason,
+            error,
+            provider: providerNorm,
+            ...extra,
+          });
         } else {
           log.error(error);
         }
         process.exit(1);
       };
-      if (!PROVIDER_IDS.has(providerNorm)) {
+      if (!providerParsed.ok) {
+        const tip = providerParsed.raw
+          ? suggestName(providerParsed.raw, [...PROVIDER_IDS], {
+              minLength: 2,
+              minScore: 36,
+              requirePrefix3: false,
+            })
+          : null;
         failLogin(
           "invalid_provider",
-          `Invalid --provider "${providerRaw}". Use xai|anthropic|openai|openrouter|google|custom.`,
-          { provider: providerRaw },
+          tip
+            ? `Invalid --provider "${providerRaw}". Did you mean: ${tip}? Use ${providerIdHelp()}.`
+            : `Invalid --provider "${providerRaw}". Use ${providerIdHelp()}.`,
+          {
+            provider: providerRaw,
+            ...(tip ? { suggestion: tip } : {}),
+          },
         );
       }
-      const provider = providerNorm === "grok" ? "xai" : providerNorm;
+      const provider = providerParsed.ok
+        ? providerParsed.provider
+        : (providerNorm as import("./config/types.js").ProviderId);
       // Commander optional --api-key [key]: true = flag only, "" = empty string, string = value.
       // Empty string must NOT fall through to Grok import (user asked for api_key).
       const apiKeyFlag = opts.apiKey !== undefined;
@@ -681,18 +953,21 @@ Docs: docs/PRODUCTION.md
       if (opts.fromGrok) {
         const result = importGrokCredentials();
         if (result.imported) {
+          try {
+            savePreferences({ provider: "xai" });
+          } catch {
+            /* preferences are best-effort */
+          }
           if (wantJson) {
-            console.log(
-              JSON.stringify({
-                ok: true,
-                method: "from_grok",
-                provider: "xai",
-                accountLabel: result.email ? `grok:${result.email}` : null,
-                expiresAt: result.expiresAt
-                  ? new Date(result.expiresAt * 1000).toISOString()
-                  : null,
-              }),
-            );
+            emitOkJson({
+              forgeHome: forgeHome(),
+              method: "from_grok",
+              provider: "xai",
+              accountLabel: result.email ? `grok:${result.email}` : null,
+              expiresAt: result.expiresAt
+              ? new Date(result.expiresAt * 1000).toISOString()
+              : null,
+            });
             return;
           }
           log.success(
@@ -743,14 +1018,17 @@ Docs: docs/PRODUCTION.md
         if (wantJson && method === "api_key") {
           // Quiet path — no log.success noise mixed into CI stdout/stderr.
           upsertApiKey(provider, apiKeyValue);
-          console.log(
-            JSON.stringify({
-              ok: true,
-              method: "api_key",
-              provider,
-              // never echo the key
-            }),
-          );
+          try {
+            savePreferences({ provider });
+          } catch {
+            /* preferences are best-effort */
+          }
+          emitOkJson({
+            forgeHome: forgeHome(),
+            method: "api_key",
+            provider,
+            // never echo the key
+          });
           return;
         }
         await loginInteractive({
@@ -758,6 +1036,11 @@ Docs: docs/PRODUCTION.md
           method,
           apiKey: apiKeyValue || undefined,
         });
+        try {
+          savePreferences({ provider });
+        } catch {
+          /* preferences are best-effort */
+        }
       } catch (err) {
         if (provider === "xai" && method === "oauth" && !wantJson) {
           log.dim(
@@ -783,15 +1066,51 @@ Docs: docs/PRODUCTION.md
       } as Record<string, unknown>;
       const localSrc = command?.getOptionValueSource?.("provider");
       const parentSrc = command?.parent?.getOptionValueSource?.("provider");
+      const wantJson = Boolean(merged.json || opts.json);
       let provider: string | undefined;
-      if (localSrc === "cli" && typeof opts.provider === "string") {
-        provider = opts.provider.trim() || undefined;
-      } else if (parentSrc === "cli" && typeof merged.provider === "string") {
-        provider = String(merged.provider).trim() || undefined;
+      const providerExplicit = localSrc === "cli" || parentSrc === "cli";
+      const providerRaw =
+        localSrc === "cli" && "provider" in opts
+          ? opts.provider
+          : parentSrc === "cli" && "provider" in merged
+            ? merged.provider
+            : undefined;
+      if (providerExplicit) {
+        // Empty -p '' must not silently clear ALL credentials.
+        const raw = providerRaw != null ? String(providerRaw).trim() : "";
+        if (!raw) {
+          failInvalidFlag(
+            "invalid_provider",
+            `Invalid --provider "${providerRaw ?? ""}". Use ${providerIdHelp()}, or omit -p to clear all.`,
+            { provider: String(providerRaw ?? "") },
+            { json: wantJson },
+          );
+        }
+        const norm = normalizeProviderId(raw);
+        if (!norm.ok) {
+          const tip = norm.raw
+            ? suggestName(norm.raw, [...PROVIDER_IDS], {
+                minLength: 2,
+                minScore: 36,
+                requirePrefix3: false,
+              })
+            : null;
+          failInvalidFlag(
+            "invalid_provider",
+            tip
+              ? `Invalid --provider "${raw}". Did you mean: ${tip}? Use ${providerIdHelp()}, or omit -p to clear all.`
+              : `Invalid --provider "${raw}". Use ${providerIdHelp()}, or omit -p to clear all.`,
+            {
+              provider: raw,
+              ...(tip ? { suggestion: tip } : {}),
+            },
+            { json: wantJson },
+          );
+        }
+        provider = norm.provider;
       } else if (typeof opts.provider === "string" && opts.provider.trim()) {
         provider = opts.provider.trim();
       }
-      const wantJson = Boolean(merged.json || opts.json);
       if (wantJson) {
         const before = listCredentials()
           .filter((c) => !provider || c.provider === provider)
@@ -805,21 +1124,42 @@ Docs: docs/PRODUCTION.md
         else {
           for (const c of [...listCredentials()]) clearCredential(c.provider);
         }
-        console.log(
-          JSON.stringify(
-            {
-              ok: true,
-              cleared: provider || "all",
-              removed: before,
-              count: before.length,
-            },
-            null,
-            2,
-          ),
+
+        // Drop sticky provider preference when it no longer has credentials.
+        try {
+          const pref = loadPreferences();
+          if (!provider) {
+            if (pref.provider) savePreferences({ provider: null });
+          } else if (pref.provider === provider) {
+            savePreferences({ provider: null });
+          }
+        } catch {
+          /* preferences best-effort */
+        }
+        emitOkJson(
+          {
+            forgeHome: forgeHome(),
+            cleared: provider || "all",
+            removed: before,
+            count: before.length,
+          },
+          true,
         );
         return;
       }
       logout(provider);
+
+        // Drop sticky provider preference when it no longer has credentials.
+        try {
+          const pref = loadPreferences();
+          if (!provider) {
+            if (pref.provider) savePreferences({ provider: null });
+          } else if (pref.provider === provider) {
+            savePreferences({ provider: null });
+          }
+        } catch {
+          /* preferences best-effort */
+        }
     });
 
   program
@@ -848,34 +1188,33 @@ Docs: docs/PRODUCTION.md
           };
         });
         const authenticated = Boolean(auth);
-        console.log(
-          JSON.stringify(
-            {
-              // ok tracks auth for CI (parity with doctor --json); still exit 1 when false
-              ok: authenticated,
-              authenticated,
-              active: auth
-                ? {
-                    provider: auth.provider,
-                    method: auth.method,
-                    accountLabel: auth.accountLabel || null,
-                    baseUrl: auth.baseUrl || null,
-                    // token intentionally omitted
-                  }
-                : null,
-              description: describeAuth(auth),
-              stored: creds,
-              ...(!authenticated
-                ? {
-                    reason: "unauthenticated",
-                    error: "Not authenticated. Run forge login or set an API key.",
-                  }
-                : {}),
-            },
-            null,
-            2,
-          ),
-        );
+        const payload = {
+          authenticated,
+          forgeHome: forgeHome(),
+          configProvider: config.provider,
+          active: auth
+            ? {
+                provider: auth.provider,
+                method: auth.method,
+                accountLabel: auth.accountLabel || null,
+                baseUrl: auth.baseUrl || null,
+                // token intentionally omitted
+              }
+            : null,
+          description: describeAuth(auth),
+          stored: creds,
+          ...(!authenticated
+            ? {
+                reason: "unauthenticated",
+                error:
+                  "Not authenticated. Run forge login --api-key $KEY --json (CI) or forge login (interactive), or set an API key env var.",
+                hint: "forge login --api-key $KEY --json  ·  forge login  ·  set XAI_API_KEY / ANTHROPIC_API_KEY / …",
+              }
+            : {}),
+        };
+        // ok tracks auth for CI (parity with doctor --json); still exit 1 when false
+        if (authenticated) emitOkJson(payload, true);
+        else emitFailJson(payload);
         if (!authenticated) process.exitCode = 1;
         return;
       }
@@ -887,18 +1226,18 @@ Docs: docs/PRODUCTION.md
   program
     .command("sessions")
     .description(
-      "List, show, path, export, import, fork, pin/unpin, title, delete (--force if locked), or prune sessions",
+      "List, show, path, export, import, fork, pin/unpin, title, delete (--force if locked), prune, or search sessions",
     )
     .argument(
       "[action]",
-      "list (default) | show <id> | path <id> | export <id> | import <file> | fork <id> | pin <id> | unpin <id> | title <id> <name> | delete <id> [--force] | prune",
+      "list (default) | show <id> | path <id> | export <id> | import <file> | fork <id> | pin <id> | unpin <id> | title <id> <name> | delete <id> [--force] | prune | search <q>",
     )
     .argument("[id]", "Session id/prefix/title or import file path")
     .argument("[extra...]", "title: new label words (or clear|none|- to unset)")
-    .option("--keep <n>", "Prune: keep newest N sessions", "50")
-    .option("--max-age-days <n>", "Prune: also drop sessions older than N days")
-    .option("--json", "Machine-readable JSON")
-    .option("--out <path>", "Export: write to file (default stdout)")
+    .option("--keep <n>", "Prune: keep newest N sessions (all|max = keep everything)", "50")
+    .option("--max-age-days <n>", "Prune: also drop sessions older than N days (0/all/none = no age filter)")
+    .option("--json", "Machine-readable JSON (list includes relativeAge)")
+    .option("--out <path>", "Export: write artifact to file (mode 0600); omit → stdout (human) or envelope.body (--json)")
     .option("--format <fmt>", "Export format: md|json (default md)", "md")
     .option(
       "--cwd <path>",
@@ -911,7 +1250,7 @@ Docs: docs/PRODUCTION.md
     .option("--pinned", "List: only pin-protected sessions")
     .option(
       "-n, --limit <n>",
-      "List limit (0 = unlimited)",
+      "List limit (0/all/max = unlimited)",
       "30",
     )
     .option("--force", "Delete even if another live process holds the session lock")
@@ -932,6 +1271,15 @@ Docs: docs/PRODUCTION.md
       const cwdExplicit =
         command.getOptionValueSource?.("cwd") === "cli" ||
         command.parent?.getOptionValueSource?.("cwd") === "cli";
+      // Empty --cwd '' is never a valid workspace filter/import override.
+      if (cwdExplicit && globalOpts.cwd != null && !String(globalOpts.cwd).trim()) {
+        failInvalidFlag(
+          "invalid_cwd",
+          `Invalid --cwd "${globalOpts.cwd}". Pass a non-empty workspace path.`,
+          { cwd: String(globalOpts.cwd) },
+          { json: Boolean(globalOpts.json) },
+        );
+      }
       const act = (action || "list").toLowerCase();
       if (act === "delete" || act === "rm" || act === "remove") {
         const target = id || "";
@@ -945,15 +1293,13 @@ Docs: docs/PRODUCTION.md
         });
         if (!result.ok) {
           if (globalOpts.json) {
-            console.log(
-              JSON.stringify({
-                ok: false,
-                deleted: false,
-                reason: result.reason,
-                id: result.id || null,
-                detail: result.detail || null,
-              }),
-            );
+            emitFailJson({
+              deleted: false,
+              reason: result.reason,
+              id: result.id || null,
+              sessionPath: result.id ? resolveSessionDir(result.id) : null,
+              detail: result.detail || null,
+            });
           } else if (result.reason === "locked") {
             log.error(
               `Session locked: ${result.id?.slice(0, 8) || target}` +
@@ -964,10 +1310,15 @@ Docs: docs/PRODUCTION.md
           }
           process.exit(1);
         }
-        if (globalOpts.json)
-          console.log(
-            JSON.stringify({ ok: true, deleted: true, id: result.id }),
-          );
+        if (globalOpts.json) emitOkJson({
+              forgeHome: forgeHome(),
+              deleted: true,
+              id: result.id,
+              // Path may already be gone; still report canonical location for audit.
+              sessionPath: result.id
+                ? path.join(forgeHome(), "sessions", result.id)
+                : null,
+            });
         else log.success(`Deleted session ${result.id}`);
         return;
       }
@@ -987,18 +1338,17 @@ Docs: docs/PRODUCTION.md
         const sid = path.basename(dir);
         const foreignLock = sessionHasForeignLiveLock(sid);
         if (globalOpts.json) {
-          console.log(
-            JSON.stringify(
-              {
-                ok: true,
-                id: sid,
-                dir,
-                sessionJson: jsonPath,
-                foreignLock,
-              },
-              null,
-              2,
-            ),
+          emitOkJson(
+            {
+              forgeHome: forgeHome(),
+              id: sid,
+              dir,
+              path: dir,
+              sessionPath: dir,
+              sessionJson: jsonPath,
+              foreignLock,
+            },
+            true,
           );
         } else {
           console.log(dir);
@@ -1028,14 +1378,14 @@ Docs: docs/PRODUCTION.md
         const foreignLock = sessionHasForeignLiveLock(s.meta.id);
         if (globalOpts.json) {
           const dir = resolveSessionDir(s.meta.id);
-          console.log(
-            JSON.stringify(
-              {
-                ok: true,
+          emitOkJson({
+                forgeHome: forgeHome(),
                 meta: s.meta,
+                relativeAge: formatRelativeTime(s.meta.updatedAt || s.meta.createdAt),
                 todos: s.todos,
                 messageCount: s.messages.length,
                 path: dir,
+                sessionPath: dir,
                 sessionJson: dir ? path.join(dir, "session.json") : null,
                 foreignLock,
                 lock: lock
@@ -1046,11 +1396,67 @@ Docs: docs/PRODUCTION.md
                       holder: formatLockHolder(lock),
                     }
                   : null,
-              },
-              null,
-              2,
-            ),
-          );
+                ulw: (() => {
+                  try {
+                    const u = loadUlwCycle(s.meta.id);
+                    if (!u?.enabled) return null;
+                    const mandate = String(u.mandate || "").trim();
+                    return {
+                      cycle: u.cycle,
+                      wave: u.wave,
+                      blocks: u.blocks,
+                      softPrompt: Boolean(u.softPrompt),
+                      mandate: mandate
+                        ? mandate.length > 200
+                          ? `${mandate.slice(0, 200)}…`
+                          : mandate
+                        : null,
+                    };
+                  } catch {
+                    return null;
+                  }
+                })(),
+                goal: (() => {
+                  try {
+                    const g = loadGoal(s.meta.id);
+                    if (!g || !g.objective) return null;
+                    return {
+                      status: g.status,
+                      paused: Boolean(g.paused),
+                      blocks: g.blocks,
+                      stuckBlocks: g.stuckBlocks,
+                      criteria: Array.isArray(g.criteria)
+                        ? g.criteria.slice(0, 7).map((c) => {
+                            const s = String(c || "").trim();
+                            return s.length > 120 ? `${s.slice(0, 120)}…` : s;
+                          })
+                        : [],
+                      objective:
+                        g.objective.length > 200
+                          ? `${g.objective.slice(0, 200)}…`
+                          : g.objective,
+                    };
+                  } catch {
+                    return null;
+                  }
+                })(),
+                git: gitSnapshotForRun(s.meta.cwd || process.cwd()),
+                projectHints: (() => {
+                  try {
+                    return detectProjectHints(s.meta.cwd || process.cwd());
+                  } catch {
+                    return [];
+                  }
+                })(),
+                ...(() => {
+                  const m = packageManifestForRun(s.meta.cwd || process.cwd());
+                  return {
+                    packageName: m.name,
+                    packageVersion: m.version,
+                    packageEnginesNode: m.enginesNode,
+                  };
+                })(),
+              }, true);
         } else {
           console.log(formatSessionSummary(s));
           if (lock) {
@@ -1080,19 +1486,26 @@ Docs: docs/PRODUCTION.md
             : "md";
         const fmt = fmtRaw || "";
         if (fmt !== "md" && fmt !== "markdown" && fmt !== "json") {
+          const tip = fmt
+            ? suggestName(fmt, ["md", "markdown", "json"], {
+                minLength: 2,
+                minScore: 36,
+                requirePrefix3: false,
+              })
+            : null;
+          const shown = globalOpts.format != null ? String(globalOpts.format) : fmt;
+          const msg = tip
+            ? `Unknown export format "${shown}". Did you mean: ${tip}? Use md or json.`
+            : `Unknown export format "${shown}". Use md or json.`;
           if (globalOpts.json) {
-            console.log(
-              JSON.stringify({
-                ok: false,
-                reason: "invalid_format",
-                format: globalOpts.format != null ? String(globalOpts.format) : fmt,
-                error: `Unknown export format "${globalOpts.format ?? ""}". Use md or json.`,
-              }),
-            );
+            emitFailJson({
+              reason: "invalid_format",
+              format: shown,
+              error: msg,
+              ...(tip ? { suggestion: tip } : {}),
+            });
           } else {
-            log.error(
-              `Unknown export format "${globalOpts.format ?? ""}". Use md or json.`,
-            );
+            log.error(msg);
           }
           process.exit(1);
         }
@@ -1117,14 +1530,11 @@ Docs: docs/PRODUCTION.md
         const outRaw = outPassed ? String(globalOpts.out).trim() : "";
         if (outPassed && !outRaw) {
           if (globalOpts.json) {
-            console.log(
-              JSON.stringify({
-                ok: false,
-                reason: "usage",
-                error:
-                  "Export --out requires a file path (got empty). Example: --out ./session.md",
-              }),
-            );
+            emitFailJson({
+              reason: "usage",
+              error:
+              "Export --out requires a file path (got empty). Example: --out ./session.md",
+            });
           } else {
             log.error(
               "Export --out requires a file path (got empty). Example: --out ./session.md",
@@ -1142,15 +1552,12 @@ Docs: docs/PRODUCTION.md
                 `session-${s.meta.id.slice(0, 8)}.${fmt === "json" ? "json" : "md"}`,
               );
               if (globalOpts.json) {
-                console.log(
-                  JSON.stringify({
-                    ok: false,
-                    reason: "is_directory",
-                    path: p,
-                    error: `Export --out is a directory. Pass a file path (e.g. ${hint}).`,
-                    hint,
-                  }),
-                );
+                emitFailJson({
+                  reason: "is_directory",
+                  path: p,
+                  error: `Export --out is a directory. Pass a file path (e.g. ${hint}).`,
+                  hint,
+                });
               } else {
                 log.error(
                   `Export --out is a directory: ${p}\n  Pass a file path, e.g. ${hint}`,
@@ -1162,14 +1569,11 @@ Docs: docs/PRODUCTION.md
             if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
               const message = (err as Error).message || String(err);
               if (globalOpts.json) {
-                console.log(
-                  JSON.stringify({
-                    ok: false,
-                    reason: "write_failed",
-                    path: p,
-                    error: message,
-                  }),
-                );
+                emitFailJson({
+                  reason: "write_failed",
+                  path: p,
+                  error: message,
+                });
               } else {
                 log.error(message);
               }
@@ -1188,32 +1592,47 @@ Docs: docs/PRODUCTION.md
           } catch (err) {
             const message = (err as Error).message || String(err);
             if (globalOpts.json) {
-              console.log(
-                JSON.stringify({
-                  ok: false,
-                  reason: "write_failed",
-                  path: p,
-                  error: message,
-                }),
-              );
+              emitFailJson({
+                reason: "write_failed",
+                path: p,
+                error: message,
+              });
             } else {
               log.error(`Export write failed: ${message}`);
             }
             process.exit(1);
           }
           if (globalOpts.json) {
-            console.log(
-              JSON.stringify({
-                ok: true,
+            emitOkJson({forgeHome: forgeHome(),
                 path: p,
+                out: p,
+                sessionPath: resolveSessionDir(s.meta.id),
                 format: fmt,
                 foreignLock,
-              }),
-            );
+              });
           } else log.success(`Exported ${fmt} → ${p}`);
+        } else if (globalOpts.json) {
+          // --json without --out: always structured envelope (never raw md on stdout).
+          let parsedBody: unknown = body;
+          if (fmt === "json") {
+            try {
+              parsedBody = JSON.parse(body);
+            } catch {
+              parsedBody = body;
+            }
+          }
+          emitOkJson({
+            forgeHome: forgeHome(),
+            id: s.meta.id,
+            path: resolveSessionDir(s.meta.id),
+            sessionPath: resolveSessionDir(s.meta.id),
+            title: s.meta.title || null,
+            format: fmt === "markdown" ? "md" : fmt,
+            foreignLock,
+            body: parsedBody,
+          });
         } else {
-          // Without --out, emit the artifact on stdout (md/json body).
-          // Structured status requires --out (see --json + --out above).
+          // Human path without --out: emit the artifact on stdout (md/json body).
           process.stdout.write(body.endsWith("\n") ? body : body + "\n");
         }
         return;
@@ -1228,13 +1647,10 @@ Docs: docs/PRODUCTION.md
         const p = path.resolve(file);
         if (!fs.existsSync(p)) {
           if (globalOpts.json) {
-            console.log(
-              JSON.stringify({
-                ok: false,
-                reason: "not_found",
-                path: p,
-              }),
-            );
+            emitFailJson({
+              reason: "not_found",
+              path: p,
+            });
           } else {
             log.error(`File not found: ${p}`);
           }
@@ -1243,15 +1659,12 @@ Docs: docs/PRODUCTION.md
         try {
           if (fs.statSync(p).isDirectory()) {
             if (globalOpts.json) {
-              console.log(
-                JSON.stringify({
-                  ok: false,
-                  reason: "is_directory",
-                  path: p,
-                  error:
-                    "Import path is a directory. Pass a session export .json file.",
-                }),
-              );
+              emitFailJson({
+                reason: "is_directory",
+                path: p,
+                error:
+                "Import path is a directory. Pass a session export .json file.",
+              });
             } else {
               log.error(
                 `Import path is a directory: ${p}\n  Pass a session export .json file.`,
@@ -1262,21 +1675,63 @@ Docs: docs/PRODUCTION.md
         } catch (err) {
           const message = (err as Error).message || String(err);
           if (globalOpts.json) {
-            console.log(
-              JSON.stringify({
-                ok: false,
-                reason: "invalid",
-                path: p,
-                error: message,
-              }),
-            );
+            emitFailJson({
+              reason: "invalid",
+              path: p,
+              error: message,
+            });
           } else {
             log.error(message);
           }
           process.exit(1);
         }
         try {
-          const raw = fs.readFileSync(p, "utf8");
+          let raw = fs.readFileSync(p, "utf8");
+          // Accept forge sessions export --json envelope: { ok, body, format, id, ... }
+          // Unwrap body when present so CI round-trips work without manual jq.
+          try {
+            const envelope = JSON.parse(raw) as {
+              ok?: unknown;
+              body?: unknown;
+              format?: unknown;
+              meta?: unknown;
+              messages?: unknown;
+            };
+            if (
+              envelope &&
+              typeof envelope === "object" &&
+              envelope.body != null &&
+              !Array.isArray(envelope.messages) &&
+              !envelope.meta
+            ) {
+              const fmt = String(envelope.format || "").toLowerCase();
+              // Only auto-unwrap JSON session bodies. Markdown export envelopes
+              // should fail with the markdown-import hint, not a confusing JSON parse.
+              if (
+                fmt === "json" ||
+                (typeof envelope.body === "object" && envelope.body !== null)
+              ) {
+                raw =
+                  typeof envelope.body === "string"
+                    ? envelope.body
+                    : JSON.stringify(envelope.body);
+              } else if (fmt === "md" || fmt === "markdown") {
+                throw new Error(
+                  "Invalid session JSON: markdown export envelope is not importable. " +
+                    "Re-export with --format json (or import a forge-session-v1 JSON file).",
+                );
+              }
+            }
+          } catch (err) {
+            // Re-throw our markdown envelope error; ignore plain parse failures.
+            if (
+              err instanceof Error &&
+              /markdown export envelope is not importable/i.test(err.message)
+            ) {
+              throw err;
+            }
+            /* not JSON envelope — importSessionJson will parse/validate */
+          }
           // Only honor --cwd for import when explicitly passed (not parent default)
           const importCwd =
             cwdExplicit && globalOpts.cwd
@@ -1286,14 +1741,14 @@ Docs: docs/PRODUCTION.md
             cwd: importCwd,
           });
           if (globalOpts.json) {
-            console.log(
-              JSON.stringify({
-                ok: true,
+            emitOkJson({
+                forgeHome: forgeHome(),
                 id: s.meta.id,
+                path: resolveSessionDir(s.meta.id),
+                sessionPath: resolveSessionDir(s.meta.id),
                 title: s.meta.title,
                 messageCount: s.messages.length,
-              }),
-            );
+              });
           } else {
             log.success(
               `Imported → ${s.meta.id} (${s.messages.length} msgs, ${s.todos.length} todos)`,
@@ -1309,16 +1764,33 @@ Docs: docs/PRODUCTION.md
             }
           }
         } catch (err) {
-          const message = (err as Error).message || String(err);
+          let message = (err as Error).message || String(err);
+          // Markdown exports are not importable — steer experts to --format json.
+          // Skip when the error already names markdown recovery (envelope path).
+          if (
+            !/markdown/i.test(message) &&
+            (/Unexpected token/i.test(message) ||
+              /Invalid session JSON/i.test(message))
+          ) {
+            try {
+              const head = fs.readFileSync(p, "utf8").slice(0, 80);
+              if (head.startsWith("#") || head.startsWith("<!--") || /^\s*#\s*Forge session/i.test(head)) {
+                message +=
+                  "\nHint: markdown exports are not importable. Re-export with --format json (or import the export --json envelope body).";
+              } else if (head.trimStart().startsWith("{")) {
+                message +=
+                  "\nHint: expected forge-session-v1 JSON with messages[]. If this is an export --json envelope, body must be the session object (auto-unwrapped when ok+body present).";
+              }
+            } catch {
+              /* */
+            }
+          }
           if (globalOpts.json) {
-            console.log(
-              JSON.stringify({
-                ok: false,
-                reason: "invalid",
-                path: p,
-                error: message,
-              }),
-            );
+            emitFailJson({
+              reason: "invalid",
+              path: p,
+              error: message,
+            });
           } else {
             log.error(message);
           }
@@ -1348,15 +1820,14 @@ Docs: docs/PRODUCTION.md
         }
         const pinned = setSessionPinned(s, act === "pin");
         if (globalOpts.json) {
-          console.log(
-            JSON.stringify({
-              ok: true,
+          emitOkJson({forgeHome: forgeHome(),
               id: s.meta.id,
+              path: resolveSessionDir(s.meta.id),
+              sessionPath: resolveSessionDir(s.meta.id),
               pinned,
               title: s.meta.title || null,
               foreignLock,
-            }),
-          );
+            });
         } else {
           log.success(
             pinned
@@ -1395,16 +1866,23 @@ Docs: docs/PRODUCTION.md
         }
         const clear =
           ["clear", "none", "-", "off", "unset"].includes(labelRaw.toLowerCase());
+        if (!clear && labelRaw.length > MAX_SESSION_TITLE_CHARS) {
+          failInvalidFlag(
+            "invalid_title",
+            `Invalid title (length ${labelRaw.length}). Pass at most ${MAX_SESSION_TITLE_CHARS} characters.`,
+            { title: labelRaw.slice(0, 40) + "…", length: labelRaw.length },
+            { json: Boolean(globalOpts.json) },
+          );
+        }
         const next = setSessionTitle(s, clear ? "" : labelRaw);
         if (globalOpts.json) {
-          console.log(
-            JSON.stringify({
-              ok: true,
+          emitOkJson({forgeHome: forgeHome(),
               id: s.meta.id,
+              path: resolveSessionDir(s.meta.id),
+              sessionPath: resolveSessionDir(s.meta.id),
               title: next || null,
               foreignLock,
-            }),
-          );
+            });
         } else {
           log.success(
             next
@@ -1436,19 +1914,71 @@ Docs: docs/PRODUCTION.md
         }
         const forked = forkSession(s);
         if (globalOpts.json) {
-          console.log(
-            JSON.stringify({
-              ok: true,
+          emitOkJson({
+              forgeHome: forgeHome(),
               sourceId: s.meta.id,
               id: forked.meta.id,
+              path: resolveSessionDir(forked.meta.id),
+              sessionPath: resolveSessionDir(forked.meta.id),
               title: forked.meta.title,
               messageCount: forked.messages.length,
               sourceForeignLock,
-            }),
-          );
+              ulw: (() => {
+                try {
+                  const u = loadUlwCycle(forked.meta.id);
+                  if (!u?.enabled) return null;
+                  return {
+                    cycle: u.cycle,
+                    wave: u.wave,
+                    softPrompt: Boolean(u.softPrompt),
+                  };
+                } catch {
+                  return null;
+                }
+              })(),
+              goal: (() => {
+                try {
+                  const g = loadGoal(forked.meta.id);
+                  if (!g?.objective) return null;
+                  return {
+                    status: g.status,
+                    paused: Boolean(g.paused),
+                    blocks: g.blocks,
+                    stuckBlocks: g.stuckBlocks,
+                    criteria: Array.isArray(g.criteria)
+                      ? g.criteria.slice(0, 7).map((c) => {
+                          const s = String(c || "").trim();
+                          return s.length > 120 ? `${s.slice(0, 120)}…` : s;
+                        })
+                      : [],
+                    objective:
+                      g.objective.length > 200
+                        ? `${g.objective.slice(0, 200)}…`
+                        : g.objective,
+                  };
+                } catch {
+                  return null;
+                }
+              })(),
+            });
         } else {
+          let badge = "";
+          try {
+            const u = loadUlwCycle(forked.meta.id);
+            if (u?.enabled) badge += ` ULW c=${u.cycle}`;
+          } catch {
+            /* */
+          }
+          try {
+            const g = loadGoal(forked.meta.id);
+            if (g?.objective && g.status === "active") {
+              badge += g.paused ? " GOAL⏸" : " GOAL";
+            }
+          } catch {
+            /* */
+          }
           log.success(
-            `Forked ${s.meta.id.slice(0, 8)} → ${forked.meta.id} (${forked.messages.length} msgs)`,
+            `Forked ${s.meta.id.slice(0, 8)} → ${forked.meta.id} (${forked.messages.length} msgs)${badge}`,
           );
           log.dim(`Resume with: forge --session ${forked.meta.id.slice(0, 8)}`);
           try {
@@ -1461,34 +1991,72 @@ Docs: docs/PRODUCTION.md
         return;
       }
       if (act === "prune") {
-        // maxAgeDays: 0 = no age filter; unset/invalid → undefined (keep-only prune)
+        // maxAgeDays: 0 = no age filter; omit → undefined (keep-only prune).
+        // Explicit invalid/empty fails closed (parity with --keep).
+        // all|none|off → 0 (no age filter) for expert muscle-memory.
         let maxAgeDays: number | undefined;
-        if (
-          globalOpts.maxAgeDays != null &&
-          String(globalOpts.maxAgeDays).trim() !== ""
-        ) {
-          const n = Number(String(globalOpts.maxAgeDays).trim());
-          if (Number.isFinite(n) && n >= 0) maxAgeDays = Math.floor(n);
+        if (globalOpts.maxAgeDays != null) {
+          const rawAge = String(globalOpts.maxAgeDays).trim().toLowerCase();
+          if (
+            rawAge === "all" ||
+            rawAge === "none" ||
+            rawAge === "off" ||
+            rawAge === "never"
+          ) {
+            maxAgeDays = 0;
+          } else {
+            const parsed = parseCliNonNegInt(globalOpts.maxAgeDays);
+            if (parsed === null) {
+              const tip = suggestToken(String(globalOpts.maxAgeDays ?? ""), [
+                "0",
+                "7",
+                "14",
+                "30",
+                "all",
+                "none",
+                "off",
+                "never",
+              ]);
+              failInvalidFlag(
+                "invalid_max_age_days",
+                tip
+                  ? `Invalid --max-age-days "${globalOpts.maxAgeDays}". Did you mean: ${tip}? Pass a non-negative integer (0/all/none = no age filter).`
+                  : `Invalid --max-age-days "${globalOpts.maxAgeDays}". Pass a non-negative integer (0/all/none = no age filter).`,
+                {
+                  maxAgeDays: String(globalOpts.maxAgeDays),
+                  ...(tip ? { suggestion: tip } : {}),
+                },
+                { json: Boolean(globalOpts.json) },
+              );
+            }
+            if (parsed !== undefined) maxAgeDays = parsed;
+          }
         }
+        const keep = requireCliKeepCount(
+          globalOpts.keep,
+          50,
+          "--keep",
+          "invalid_keep",
+          { json: Boolean(globalOpts.json) },
+        );
         const result = pruneSessions({
           // 0 is valid (keep none); Number(x)||50 wrongly treated 0 as missing
-          keep: parseKeepCount(globalOpts.keep, 50),
+          keep,
           maxAgeDays,
         });
         if (globalOpts.json) {
-          console.log(
-            JSON.stringify(
-              {
-                ok: true,
-                deleted: result.deleted,
-                kept: result.kept,
-                scanned: result.scanned,
-                skippedLocked: result.skippedLocked,
-                skippedPinned: result.skippedPinned,
-              },
-              null,
-              2,
-            ),
+          emitOkJson(
+            {
+              forgeHome: forgeHome(),
+              deleted: result.deleted,
+              kept: result.kept,
+              scanned: result.scanned,
+              skippedLocked: result.skippedLocked,
+              skippedPinned: result.skippedPinned,
+              keep,
+              ...(maxAgeDays !== undefined ? { maxAgeDays } : {}),
+            },
+            true,
           );
         } else {
           log.success(
@@ -1531,19 +2099,121 @@ Docs: docs/PRODUCTION.md
         "rm",
         "remove",
         "prune",
+        // search aliases (parity with /sessions search) — not bare title queries
+        "search",
+        "find",
+        "q",
       ]);
-      // 0 = unlimited (not coerced to 30 via Number(x)||default)
-      const limit = parseKeepCount(globalOpts.limit, 30);
+      // 0 = unlimited (not coerced to 30 via Number(x)||default).
+      // Positive values above 10_000 fail closed (typos like 100000); use 0/all for unlimited.
+      let limit: number;
+      {
+        const rawLim =
+          globalOpts.limit != null
+            ? String(globalOpts.limit).trim().toLowerCase()
+            : "";
+        if (
+          rawLim === "all" ||
+          rawLim === "max" ||
+          rawLim === "full" ||
+          rawLim === "unlimited"
+        ) {
+          limit = 0;
+        } else {
+          limit = requireCliCount(
+            globalOpts.limit,
+            30,
+            "--limit",
+            "invalid_limit",
+            {
+              json: Boolean(globalOpts.json),
+              aliasCandidates: ["all", "max", "0", "10", "30", "50", "100"],
+            },
+          );
+        }
+      }
+      if (limit > 10_000) {
+        failInvalidFlag(
+          "invalid_limit",
+          `Invalid --limit "${globalOpts.limit}". Pass 0/all (unlimited) or 1–10000.`,
+          { value: String(globalOpts.limit ?? limit), limit },
+          { json: Boolean(globalOpts.json) },
+        );
+      }
       // Only filter when --cwd was explicitly passed (parent default cwd is ignored).
       // listSessions applies cwd/query before limit so multi-project lists stay complete.
       const cwdFilter =
         cwdExplicit && globalOpts.cwd
           ? path.resolve(String(globalOpts.cwd))
           : null;
+      // Empty -q/--query '' is invalid when the flag is present (not "no filter").
+      const queryExplicit =
+        command.getOptionValueSource?.("query") === "cli" ||
+        command.parent?.getOptionValueSource?.("query") === "cli";
+      if (
+        queryExplicit &&
+        globalOpts.query != null &&
+        !String(globalOpts.query).trim()
+      ) {
+        failInvalidFlag(
+          "invalid_query",
+          `Invalid --query "${globalOpts.query}". Pass a non-empty search string, or omit -q.`,
+          { query: String(globalOpts.query) },
+          { json: Boolean(globalOpts.json) },
+        );
+      }
       let queryFilter =
         typeof globalOpts.query === "string" && globalOpts.query.trim()
           ? globalOpts.query.trim()
           : null;
+      // forge sessions search|find|q <text> — first-class (parity with /sessions search).
+      // Without this, `search` was an unknown action typo→search then never applied the query.
+      if (act === "search" || act === "find" || act === "q") {
+        const parts = [id, ...(extra || [])].filter(
+          (p): p is string => typeof p === "string" && p.trim().length > 0,
+        );
+        const q = parts.join(" ").trim();
+        if (!q) {
+          failUsage("Usage: forge sessions search <id-or-title-substring>", {
+            json: Boolean(globalOpts.json),
+          });
+        }
+        if (queryFilter && queryFilter !== q) {
+          // Prefer explicit positional search text over -q when both present.
+        }
+        queryFilter = q;
+      }
+      // Close typos of known actions fail closed (prun→prune, serach→search)
+      // even when a second arg is present — never treat "serach x" as a title query.
+      // Also: `forge sessions login` must not silently search for "login".
+      // Prefer exact top-level command names over weak session-action edit distance
+      // (e.g. "auth" must not become "path").
+      if (action && !knownSessionActions.has(act)) {
+        const topHit = (TOP_LEVEL_COMMANDS as readonly string[]).find(
+          (c) => c.toLowerCase() === act,
+        );
+        if (topHit) {
+          failInvalidFlag(
+            "unknown_session_action",
+            `Unknown sessions action "${action}". Did you mean: forge ${topHit}?`,
+            {
+              action: String(action),
+              suggestion: topHit,
+              hint: `forge ${topHit} --help`,
+            },
+            { json: Boolean(globalOpts.json) },
+          );
+        }
+        const tip = suggestSessionAction(act);
+        if (tip) {
+          failInvalidFlag(
+            "unknown_session_action",
+            `Unknown sessions action "${action}". Did you mean: ${tip}?`,
+            { action: String(action), suggestion: tip },
+            { json: Boolean(globalOpts.json) },
+          );
+        }
+      }
       if (
         !queryFilter &&
         action &&
@@ -1560,10 +2230,7 @@ Docs: docs/PRODUCTION.md
         ...(pinnedOnly ? { pinned: true } : {}),
       });
       if (globalOpts.json) {
-        console.log(
-          JSON.stringify(
-            {
-              ok: true,
+        emitOkJson({forgeHome: forgeHome(),
               cwd: cwdFilter,
               query: queryFilter,
               limit,
@@ -1571,8 +2238,31 @@ Docs: docs/PRODUCTION.md
               sessions: list.map((s) => {
                 const lock = readSessionLock(s.id);
                 const foreignLock = sessionHasForeignLiveLock(s.id);
+                let ulwCycle: number | null = null;
+                let ulwWave: number | null = null;
+                let goalActive = false;
+                try {
+                  const u = loadUlwCycle(s.id);
+                  if (u?.enabled) {
+                    ulwCycle = u.cycle;
+                    ulwWave = u.wave;
+                  }
+                } catch {
+                  /* */
+                }
+                try {
+                  const g = loadGoal(s.id);
+                  goalActive = Boolean(
+                    g && g.status === "active" && !g.paused && g.objective,
+                  );
+                } catch {
+                  /* */
+                }
                 return {
                   ...s,
+                  path: resolveSessionDir(s.id),
+                  sessionPath: resolveSessionDir(s.id),
+                  relativeAge: formatRelativeTime(s.updatedAt || s.createdAt),
                   foreignLock,
                   lock: lock
                     ? {
@@ -1582,13 +2272,12 @@ Docs: docs/PRODUCTION.md
                         holder: formatLockHolder(lock),
                       }
                     : null,
+                  ulwCycle,
+                  ulwWave,
+                  goalActive,
                 };
               }),
-            },
-            null,
-            2,
-          ),
-        );
+            }, true);
         return;
       }
       if (!list.length) {
@@ -1624,8 +2313,31 @@ Docs: docs/PRODUCTION.md
           ? `  “${prev}${(s.lastUserPreview || "").length > 40 ? "…" : ""}”`
           : "";
         const age = formatRelativeTime(s.updatedAt).padStart(8);
+        let ulwNote = "";
+        if (s.ultrawork) {
+          try {
+            const u = loadUlwCycle(s.id);
+            ulwNote =
+              u?.enabled && typeof u.cycle === "number"
+                ? `  ULW c=${u.cycle}`
+                : "  ULW";
+          } catch {
+            ulwNote = "  ULW";
+          }
+        }
+        let goalNote = "";
+        try {
+          const g = loadGoal(s.id);
+          if (g?.objective && g.status === "active" && !g.paused) {
+            goalNote = "  GOAL";
+          } else if (g?.paused) {
+            goalNote = "  GOAL⏸";
+          }
+        } catch {
+          /* */
+        }
         console.log(
-          `${s.id}  ${age}  ${s.provider}/${s.model}  turns=${s.turnCount}  edits=${s.editCount}${s.ultrawork ? "  ULW" : ""}${s.pinned ? "  PIN" : ""}${s.title ? `  ${s.title.slice(0, 40)}` : ""}${prevNote}${cwdNote}${lockNote}`,
+          `${s.id}  ${age}  ${s.provider}/${s.model}  turns=${s.turnCount}  edits=${s.editCount}${ulwNote}${goalNote}${s.pinned ? "  PIN" : ""}${s.title ? `  ${s.title.slice(0, 40)}` : ""}${prevNote}${cwdNote}${lockNote}`,
         );
       }
       const filterNotes: string[] = [];
@@ -1646,53 +2358,66 @@ Docs: docs/PRODUCTION.md
   program
     .command("init")
     .description("Write default config and example hooks into ~/.forge and .forge/")
-    .action(() => {
-      ensureHome();
-      const homeCfg = path.join(forgeHome(), "config.toml");
-      if (!fs.existsSync(homeCfg)) {
-        fs.writeFileSync(homeCfg, defaultConfigToml(), "utf8");
-        log.success(`Wrote ${homeCfg}`);
-      } else {
-        log.info(`Exists: ${homeCfg}`);
-      }
-      const projectDir = path.join(process.cwd(), ".forge");
-      ensureDir(projectDir);
-      ensureDir(path.join(projectDir, "hooks"));
-      const stopHook = path.join(projectDir, "hooks", "stop-goal-example.json");
-      if (!fs.existsSync(stopHook)) {
-        fs.writeFileSync(
-          stopHook,
-          JSON.stringify(
-            {
-              hooks: {
-                Stop: [
-                  {
-                    hooks: [
-                      {
-                        type: "command",
-                        command: "node -e " +
-                          JSON.stringify(
-                            `let d='';process.stdin.on('data',c=>d+=c);process.stdin.on('end',()=>{const j=JSON.parse(d);if(j.goalObjective&&!(j.lastAssistantMessage||'').includes('Goal achieved')){console.log(JSON.stringify({decision:'block',reason:'Goal still active — keep working: '+j.goalObjective.slice(0,200)}));}else{console.log(JSON.stringify({decision:'allow'}));}});`,
-                          ),
-                        timeout: 10,
-                      },
-                    ],
-                  },
-                ],
+    .option("--json", "Machine-readable JSON ({ ok, wrote[], existed[] })")
+    .action(
+      (
+        opts: { json?: boolean },
+        command?: { optsWithGlobals?: () => Record<string, unknown> },
+      ) => {
+        const wantJson = flagJson(opts as Record<string, unknown>, command);
+        ensureHome();
+        const wrote: string[] = [];
+        const existed: string[] = [];
+        const homeCfg = path.join(forgeHome(), "config.toml");
+        if (!fs.existsSync(homeCfg)) {
+          fs.writeFileSync(homeCfg, defaultConfigToml(), "utf8");
+          wrote.push(homeCfg);
+          if (!wantJson) log.success(`Wrote ${homeCfg}`);
+        } else {
+          existed.push(homeCfg);
+          if (!wantJson) log.info(`Exists: ${homeCfg}`);
+        }
+        const projectDir = path.join(process.cwd(), ".forge");
+        ensureDir(projectDir);
+        ensureDir(path.join(projectDir, "hooks"));
+        const stopHook = path.join(projectDir, "hooks", "stop-goal-example.json");
+        if (!fs.existsSync(stopHook)) {
+          fs.writeFileSync(
+            stopHook,
+            JSON.stringify(
+              {
+                hooks: {
+                  Stop: [
+                    {
+                      hooks: [
+                        {
+                          type: "command",
+                          command: "node -e " +
+                            JSON.stringify(
+                              `let d='';process.stdin.on('data',c=>d+=c);process.stdin.on('end',()=>{const j=JSON.parse(d);if(j.goalObjective&&!(j.lastAssistantMessage||'').includes('Goal achieved')){console.log(JSON.stringify({decision:'block',reason:'Goal still active — keep working: '+j.goalObjective.slice(0,200)}));}else{console.log(JSON.stringify({decision:'allow'}));}});`,
+                            ),
+                          timeout: 10,
+                        },
+                      ],
+                    },
+                  ],
+                },
               },
-            },
-            null,
-            2,
-          ) + "\n",
-          "utf8",
-        );
-        log.success(`Wrote example Stop hook: ${stopHook}`);
-      }
-      const agents = path.join(process.cwd(), "AGENTS.md");
-      if (!fs.existsSync(agents)) {
-        fs.writeFileSync(
-          agents,
-          `# AGENTS.md
+              null,
+              2,
+            ) + "\n",
+            "utf8",
+          );
+          wrote.push(stopHook);
+          if (!wantJson) log.success(`Wrote example Stop hook: ${stopHook}`);
+        } else {
+          existed.push(stopHook);
+        }
+        const agents = path.join(process.cwd(), "AGENTS.md");
+        if (!fs.existsSync(agents)) {
+          fs.writeFileSync(
+            agents,
+            `# AGENTS.md
 
 Project instructions for Forge (and other coding agents).
 
@@ -1713,35 +2438,89 @@ Project instructions for Forge (and other coding agents).
 - Do not weaken fail-closed sandbox or commit secrets
 - Long autonomous work: use ULW/\`/goal\` only when the user wants relentless execution
 `,
-          "utf8",
+            "utf8",
+          );
+          wrote.push(agents);
+          if (!wantJson) log.success(`Wrote ${agents}`);
+        } else {
+          existed.push(agents);
+        }
+        if (wantJson) {
+          emitOkJson({home: forgeHome(),
+                cwd: process.cwd(),
+                wrote,
+                existed,
+                next: ["forge login", "forge doctor", "forge"],
+              }, true);
+          return;
+        }
+        log.info("Done. Next: forge login && forge doctor && forge");
+        log.dim(
+          'Docs: docs/PRODUCTION.md · docs/RELIABILITY.md · eval "$(forge completion bash)"',
         );
-        log.success(`Wrote ${agents}`);
-      }
-      log.info("Done. Next: forge login && forge doctor && forge");
-      log.dim("Docs: docs/PRODUCTION.md · docs/RELIABILITY.md · eval \"$(forge completion bash)\"");
-    });
+      },
+    );
 
   program
     .command("models")
     .description("List known models for configured providers")
+    .option("-p, --provider <provider>", "Filter to one provider (xai|anthropic|openai|openrouter|google|custom)")
     .option("--json", "Machine-readable JSON")
     .action((opts, command) => {
-      const config = loadConfig();
-      if (flagJson(opts, command)) {
-        const rows = Object.entries(config.providers).map(([id, p]) => ({
-          provider: id,
-          defaultModel: p.defaultModel || null,
-          supportsOAuth: Boolean(p.supportsOAuth),
-          models: p.models?.length ? p.models : p.defaultModel ? [p.defaultModel] : [],
-          baseUrl: p.baseUrl || null,
-        }));
-        console.log(JSON.stringify({ ok: true, providers: rows }, null, 2));
+      const wantJson = flagJson(opts, command);
+      // Parent also defines -p/--provider; merge so `forge -p xai models` works.
+      const globals = (command?.optsWithGlobals?.() || {}) as Record<string, unknown>;
+      const merged: Record<string, unknown> = { ...globals, ...opts, json: wantJson };
+      {
+        const localSrc = command?.getOptionValueSource?.("provider");
+        const parentSrc = command?.parent?.getOptionValueSource?.("provider");
+        if (parentSrc === "cli" && localSrc !== "cli" && "provider" in globals) {
+          merged.provider = globals.provider;
+        } else if (localSrc === "cli" && "provider" in opts) {
+          merged.provider = opts.provider;
+        }
+      }
+      // Fail closed on empty/invalid -p (including parent) before listing.
+      // buildConfig validates provider when present; loadConfig alone ignores -p.
+      const config =
+        merged.provider != null ? buildConfig(merged) : loadConfig();
+      let rows = Object.entries(config.providers).map(([id, p]) => ({
+        provider: id,
+        defaultModel: p.defaultModel || null,
+        supportsOAuth: Boolean(p.supportsOAuth),
+        models: p.models?.length ? p.models : p.defaultModel ? [p.defaultModel] : [],
+        baseUrl: p.baseUrl || null,
+      }));
+      if (merged.provider != null) {
+        const want = String(config.provider || "").toLowerCase();
+        rows = rows.filter((r) => r.provider.toLowerCase() === want);
+        if (!rows.length) {
+          // Known provider id but not in config.providers (shouldn't happen for stock ids)
+          failInvalidFlag(
+            "invalid_provider",
+            `No models entry for provider "${config.provider}".`,
+            { provider: String(config.provider) },
+            { json: wantJson },
+          );
+        }
+      }
+      if (wantJson) {
+        emitOkJson(
+          {
+            forgeHome: forgeHome(),
+            ...(merged.provider != null
+              ? { provider: config.provider }
+              : {}),
+            providers: rows,
+          },
+          true,
+        );
         return;
       }
-      for (const [id, p] of Object.entries(config.providers)) {
-        const models = p.models?.length ? p.models.join(", ") : p.defaultModel || "(any)";
+      for (const r of rows) {
+        const models = r.models.length ? r.models.join(", ") : r.defaultModel || "(any)";
         console.log(
-          `${id.padEnd(12)} default=${(p.defaultModel || "").padEnd(28)} oauth=${p.supportsOAuth ? "yes" : "no "}  models: ${models}`,
+          `${r.provider.padEnd(12)} default=${String(r.defaultModel || "").padEnd(28)} oauth=${r.supportsOAuth ? "yes" : "no "}  models: ${models}`,
         );
       }
     });
@@ -1750,32 +2529,97 @@ Project instructions for Forge (and other coding agents).
     .command("completion")
     .description("Print shell completion script (bash|zsh|fish)")
     .argument("[shell]", "bash | zsh | fish", "bash")
-    .action((shell: string) => {
-      console.log(shellCompletionScript(String(shell || "bash").toLowerCase()));
-    });
+    .option("--json", "Machine-readable JSON (shell name + script, or error)")
+    .action(
+      (
+        shell: string,
+        opts: { json?: boolean },
+        command?: { optsWithGlobals?: () => Record<string, unknown> },
+      ) => {
+        const wantJson = flagJson(opts as Record<string, unknown>, command);
+        const normalized = normalizeCompletionShell(shell);
+        if (!normalized) {
+          const rawShell = String(shell ?? "");
+          const tip = rawShell.trim()
+            ? suggestName(rawShell.trim(), ["bash", "zsh", "fish"], {
+                minLength: 2,
+                minScore: 30,
+                requirePrefix3: false,
+              })
+            : null;
+          const msg = tip
+            ? `Unknown completion shell "${shell}". Did you mean: ${tip}? Use bash, zsh, or fish.`
+            : `Unknown completion shell "${shell}". Use bash, zsh, or fish.`;
+          if (wantJson) {
+            emitFailJson({
+              reason: "invalid_shell",
+              shell: rawShell,
+              error: msg,
+              supported: ["bash", "zsh", "fish"],
+              ...(tip ? { suggestion: tip } : {}),
+            });
+          } else {
+            log.error(msg);
+          }
+          process.exit(1);
+        }
+        const script = shellCompletionScript(normalized);
+        if (wantJson) {
+          emitOkJson({ forgeHome: forgeHome(), shell: normalized, script }, true);
+        } else {
+          console.log(script);
+        }
+      },
+    );
 
   program
     .command("prune-tool-output")
     .description("Prune ~/.forge/tool-output full dumps (disk hygiene)")
     .option("--keep <n>", "Keep newest N files", "80")
-    .option("--max-age-days <n>", "Also drop files older than N days", "14")
+    .option("--max-age-days <n>", "Also drop files older than N days (0/all/none = no age filter)", "14")
     .option("--json", "Machine-readable JSON")
     .action((opts, command) => {
       const before = toolOutputStats();
+      let toolMaxAge = 14;
+      const maxAgeFromCli = command?.getOptionValueSource?.("maxAgeDays") === "cli";
+      if (maxAgeFromCli) {
+        const rawAge = String(opts.maxAgeDays ?? "").trim().toLowerCase();
+        if (!rawAge) {
+          failInvalidFlag(
+            "invalid_max_age_days",
+            'Invalid --max-age-days "". Pass a non-negative integer, or all|none|off|never (0 = no age filter).',
+            { value: String(opts.maxAgeDays ?? "") },
+            { json: flagJson(opts, command) },
+          );
+        }
+        if (
+          rawAge === "all" ||
+          rawAge === "none" ||
+          rawAge === "off" ||
+          rawAge === "never"
+        ) {
+          toolMaxAge = 0;
+        } else {
+          toolMaxAge = requireCliCount(
+            opts.maxAgeDays,
+            14,
+            "--max-age-days",
+            "invalid_max_age_days",
+            {
+              json: flagJson(opts, command),
+              aliasCandidates: ["0", "7", "14", "30", "all", "none", "off", "never"],
+            },
+          );
+        }
+      }
       const result = pruneToolOutputsSync({
         // 0 is valid (delete all eligible dumps)
-        keep: parseKeepCount(opts.keep, 80),
-        // 0 = no age filter; default 14 when unset/invalid
-        maxAgeDays: parseKeepCount(opts.maxAgeDays, 14),
+        keep: requireCliKeepCount(opts.keep, 80, "--keep", "invalid_keep", { json: flagJson(opts, command) }),
+        // 0 = no age filter; default 14 when unset
+        maxAgeDays: toolMaxAge,
       });
       if (flagJson(opts, command)) {
-        console.log(
-          JSON.stringify(
-            { ok: true, before, ...result, after: toolOutputStats() },
-            null,
-            2,
-          ),
-        );
+        emitOkJson({ forgeHome: forgeHome(), before, ...result, after: toolOutputStats() }, true);
         return;
       }
       log.success(
@@ -1795,9 +2639,9 @@ Project instructions for Forge (and other coding agents).
     .action((opts, command) => {
       const before = metricsStats();
       // 0 is valid at CLI; pruneMetrics floors to ≥1 internally
-      const result = pruneMetrics({ keep: parseKeepCount(opts.keep, 500) });
+      const result = pruneMetrics({ keep: requireCliKeepCount(opts.keep, 500, "--keep", "invalid_keep", { json: flagJson(opts, command) }) });
       if (flagJson(opts, command)) {
-        console.log(JSON.stringify({ ok: true, before, ...result }, null, 2));
+        emitOkJson({ forgeHome: forgeHome(), before, ...result }, true);
         return;
       }
       log.success(
@@ -1811,7 +2655,11 @@ Project instructions for Forge (and other coding agents).
     .description(
       "Tail sandbox/safety events (~/.forge/logs/sandbox.jsonl) — no secrets",
     )
-    .option("-n, --lines <n>", "Number of recent events", "30")
+    .option(
+      "-n, --lines <n>",
+      "Number of recent events (0/all/max = all in window)",
+      "30",
+    )
     .option("--path", "Print log file path only")
     .option("--json", "Machine-readable JSON { ok, path, count, limit, events }")
     .action(async (opts, command) => {
@@ -1819,22 +2667,47 @@ Project instructions for Forge (and other coding agents).
         console.log(sandboxLogPath());
         return;
       }
-      const n = Math.min(200, Math.max(1, Number(opts.lines) || 30));
+      // 0 = all events in the 512 KiB window. Explicit invalid/empty fails closed.
+      // all|max|full → 0 shared with /logs (parseLogsLines).
+      // Default 30 only when --lines is omitted (Commander default).
+      let n = 30;
+      const linesFromCli = command?.getOptionValueSource?.("lines") === "cli";
+      if (linesFromCli) {
+        const raw = String(opts.lines ?? "");
+        if (!raw.trim()) {
+          failInvalidFlag(
+            "invalid_lines",
+            `Invalid --lines "${opts.lines}". Pass ${logsLinesHelp()}.`,
+            { value: raw },
+            { json: flagJson(opts, command) },
+          );
+        }
+        const parsed = parseLogsLines(opts.lines);
+        if (!parsed.ok) {
+          const tip = suggestToken(raw, ["0", "all", "max", "full", "30", "50", "100", "200"]);
+          failInvalidFlag(
+            "invalid_lines",
+            tip
+              ? `Invalid --lines "${opts.lines}". Did you mean: ${tip}? Pass ${logsLinesHelp()}.`
+              : `Invalid --lines "${opts.lines}". Pass ${logsLinesHelp()}.`,
+            { value: raw, ...(tip ? { suggestion: tip } : {}) },
+            { json: flagJson(opts, command) },
+          );
+        }
+        n = parsed.lines;
+      }
       if (flagJson(opts, command)) {
         const { readSandboxLogTail } = await import("./agent/sandbox-log.js");
         const events = readSandboxLogTail(n);
-        console.log(
-          JSON.stringify(
-            {
-              ok: true,
-              path: sandboxLogPath(),
-              count: events.length,
-              limit: n,
-              events,
-            },
-            null,
-            2,
-          ),
+        emitOkJson(
+          {
+            forgeHome: forgeHome(),
+            path: sandboxLogPath(),
+            count: events.length,
+            limit: n,
+            events,
+          },
+          true,
         );
         return;
       }
@@ -1849,10 +2722,39 @@ Project instructions for Forge (and other coding agents).
     .option("--json", "Machine-readable JSON")
     .option("-p, --provider <provider>", "Provider override")
     .option("-m, --model <model>", "Model override")
+    .option("--max-turns <n>", "Cap agent turns override (0 = unlimited)")
     .option("--cwd <path>", "Workspace", process.cwd())
     .action((opts, command) => {
       const wantJson = flagJson(opts, command);
-      const config = buildConfig({ ...opts, json: wantJson });
+      // Parent also defines -p/--provider/-m/--model/--cwd; merge CLI-sourced
+      // values so empty strings fail closed (parity with doctor).
+      const globals = (command?.optsWithGlobals?.() || {}) as Record<string, unknown>;
+      const merged: Record<string, unknown> = { ...globals, ...opts, json: wantJson };
+      for (const key of [
+        "provider",
+        "model",
+        "cwd",
+        "maxTurns",
+        "sandbox",
+        "sandboxMissing",
+        "sandboxNetwork",
+        "readOutside",
+        "permissionMode",
+        "blockingStop",
+        "noBlockingStop",
+      ] as const) {
+        const localSrc = command?.getOptionValueSource?.(key);
+        const parentSrc = command?.parent?.getOptionValueSource?.(key);
+        if (parentSrc === "cli" && localSrc !== "cli" && key in globals) {
+          merged[key] = globals[key];
+        } else if (localSrc === "cli" && key in opts) {
+          merged[key] = opts[key];
+        } else if (localSrc !== "cli" && parentSrc !== "cli") {
+          // Drop default cwd so buildConfig does not treat default as explicit.
+          if (key === "cwd") delete merged.cwd;
+        }
+      }
+      const config = buildConfig(merged);
       console.log(
         formatEffectiveConfig(config, {
           json: wantJson,
@@ -1865,15 +2767,40 @@ Project instructions for Forge (and other coding agents).
     .description(
       "Usage dashboard from metrics.jsonl + session inventory (counter-only, no prompts)",
     )
-    .option("--days <n>", "Only metrics from the last N days (default: all)")
+    .option("--days <n>", "Only metrics from the last N days (0/all=all time; week|month|today|7d)")
     .option("--json", "Machine-readable JSON")
     .action((opts, command) => {
-      const daysRaw = opts.days != null ? Number(opts.days) : 0;
-      const days =
-        Number.isFinite(daysRaw) && daysRaw > 0 ? Math.floor(daysRaw) : 0;
+      // Omit --days → all time (0). Explicit empty/invalid → invalid_days.
+      // all|week|month|today|Nd aliases shared with /stats (parseDaysWindow).
+      let days = 0;
+      if (opts.days != null) {
+        const parsed = parseDaysWindow(opts.days);
+        if (!parsed.ok) {
+          const tip = suggestToken(String(opts.days ?? ""), [
+            "0",
+            "7",
+            "14",
+            "30",
+            "all",
+            "week",
+            "month",
+            "today",
+            "7d",
+          ]);
+          failInvalidFlag(
+            "invalid_days",
+            tip
+              ? `Invalid --days "${opts.days}". Did you mean: ${tip}? Pass a ${daysWindowHelp()} (0 = all time).`
+              : `Invalid --days "${opts.days}". Pass a ${daysWindowHelp()} (0 = all time).`,
+            { days: String(opts.days), ...(tip ? { suggestion: tip } : {}) },
+            { json: flagJson(opts, command) },
+          );
+        }
+        days = parsed.days;
+      }
       const stats = collectUsageStats({ days });
       if (flagJson(opts, command)) {
-        console.log(JSON.stringify({ ok: true, ...stats }, null, 2));
+        emitOkJson({ forgeHome: forgeHome(), ...stats }, true);
         return;
       }
       console.log(formatUsageStats(stats));
@@ -1887,40 +2814,77 @@ Project instructions for Forge (and other coding agents).
   program
     .command("tips")
     .description("Expert cheat sheet (live controls, sessions, CI)")
-    .action(() => {
-      console.log(formatExpertTips());
-    });
+    .option("--json", "Machine-readable JSON ({ ok, tips })")
+    .action(
+      (
+        opts: { json?: boolean },
+        command?: { optsWithGlobals?: () => Record<string, unknown> },
+      ) => {
+        const tips = formatExpertTips();
+        if (flagJson(opts as Record<string, unknown>, command)) {
+          const lines = expertTipsLines();
+          emitOkJson(
+            {
+              forgeHome: forgeHome(),
+              tips,
+              lines,
+              sections: lines
+                .filter((l) => l.startsWith("  "))
+                .map((l) => {
+                  const m = l.match(/^\s+([^:]+):/);
+                  return m ? m[1].trim() : l.trim();
+                }),
+            },
+            true,
+          );
+          return;
+        }
+        console.log(tips);
+      },
+    );
 
   program
     .command("news")
     .alias("changelog")
     .description("What's new — highlights from packaged CHANGELOG.md")
-    .argument("[count]", "How many recent releases to show (default 1)", "1")
+    .argument("[count]", "How many recent releases to show (1–10, or all|full|max; default 1)")
     .option("--json", "Machine-readable JSON releases")
     .action(
       (
-        countArg: string,
+        countArg: string | undefined,
         opts: { json?: boolean },
         command?: { optsWithGlobals?: () => Record<string, unknown> },
       ) => {
-        const n = Math.max(
-          1,
-          Math.min(10, parseInt(String(countArg || "1"), 10) || 1),
-        );
+        // Explicit invalid/empty count fails closed; omit → 1.
+        // all|full|max|latest shared with /news (parseNewsCount).
+        let n = 1;
+        if (countArg !== undefined) {
+          const rawCount = String(countArg);
+          if (!rawCount.trim()) {
+            failInvalidFlag(
+              "invalid_count",
+              `Invalid news count "${countArg}". Pass a ${newsCountHelp()}.`,
+              { count: rawCount },
+              { json: flagJson(opts as Record<string, unknown>, command) },
+            );
+          }
+          const parsed = parseNewsCount(countArg);
+          if (!parsed.ok) {
+            const tip = suggestToken(rawCount, ["1", "3", "5", "10", "all", "full", "max", "latest"]);
+            failInvalidFlag(
+              "invalid_count",
+              tip
+                ? `Invalid news count "${countArg}". Did you mean: ${tip}? Pass a ${newsCountHelp()}.`
+                : `Invalid news count "${countArg}". Pass a ${newsCountHelp()}.`,
+              { count: rawCount, ...(tip ? { suggestion: tip } : {}) },
+              { json: flagJson(opts as Record<string, unknown>, command) },
+            );
+          }
+          n = parsed.count;
+        }
         if (flagJson(opts as Record<string, unknown>, command)) {
           const releases = loadChangelogReleases().slice(0, n);
-          console.log(
-            JSON.stringify(
-              {
-                ok: true,
-                version: getForgeVersion(),
-                count: releases.length,
-                releases,
-              },
-              null,
-              2,
-            ),
-          );
+          emitOkJson({ forgeHome: forgeHome(), count: releases.length, releases }, true);
           return;
         }
         console.log(formatWhatsNew({ count: n }));
@@ -1932,6 +2896,31 @@ Project instructions for Forge (and other coding agents).
     .description("Check auth, Node version, config, and harness settings")
     .option("-p, --provider <provider>", "Provider override")
     .option("--cwd <path>", "Workspace", process.cwd())
+    .option("--max-turns <n>", "Cap agent turns override (0 = unlimited)")
+    .option(
+      "--sandbox <profile>",
+      "What-if OS sandbox: off|workspace|read-only|strict",
+    )
+    .option(
+      "--sandbox-missing <mode>",
+      "What-if missing backend: fail-closed|fallback",
+    )
+    .option(
+      "--sandbox-network <mode>",
+      "What-if bash network: unrestricted|blocked",
+    )
+    .option(
+      "--read-outside <mode>",
+      "What-if outside reads: ask|allow|deny",
+    )
+    .option(
+      "--permission-mode <mode>",
+      "What-if permission mode (yolo/plan/…)",
+    )
+    .option(
+      "--no-blocking-stop",
+      "What-if: disable blocking Stop hooks",
+    )
     .option("--json", "Machine-readable summary on stdout")
     .action(async (opts, command) => {
       const wantJson = flagJson(opts, command);
@@ -1939,7 +2928,18 @@ Project instructions for Forge (and other coding agents).
       // Prefer CLI-sourced values over doctor defaults / parent defaults.
       const globals = (command?.optsWithGlobals?.() || {}) as Record<string, unknown>;
       const merged: Record<string, unknown> = { ...globals, ...opts, json: wantJson };
-      for (const key of ["provider", "cwd"] as const) {
+      for (const key of [
+        "provider",
+        "cwd",
+        "maxTurns",
+        "sandbox",
+        "sandboxMissing",
+        "sandboxNetwork",
+        "readOutside",
+        "permissionMode",
+        "blockingStop",
+        "noBlockingStop",
+      ] as const) {
         const localSrc = command?.getOptionValueSource?.(key);
         const parentSrc = command?.parent?.getOptionValueSource?.(key);
         if (parentSrc === "cli" && localSrc !== "cli" && key in globals) {
@@ -2029,11 +3029,7 @@ Project instructions for Forge (and other coding agents).
           secureFilesOk &&
           check.blockingStop &&
           check.authenticated;
-        const maxRunMsRaw = process.env.FORGE_MAX_RUN_MS?.trim();
-        const maxRunMs =
-          maxRunMsRaw && /^\d+$/.test(maxRunMsRaw) && Number(maxRunMsRaw) >= 5_000
-            ? Number(maxRunMsRaw)
-            : null;
+        const maxRunMs = maxRunMsFromEnv();
         const doomLoopThreshold = envPositiveInt("FORGE_DOOM_LOOP_THRESHOLD", 3);
         const errorStreakThreshold = envPositiveInt(
           "FORGE_ERROR_STREAK_THRESHOLD",
@@ -2042,17 +3038,36 @@ Project instructions for Forge (and other coding agents).
         const ulwMaxContinues = envPositiveInt("FORGE_ULW_MAX_CONTINUES", 200);
         const permAskTimeoutMs = permissionAskTimeoutMs();
         console.log(
-          JSON.stringify(
-            {
+          stringifyJsonResult({
               ok,
               version: VERSION,
-              provider: config.provider,
-              model: config.model,
+              forgeHome: home,
+              provider: (auth?.provider || config.provider) as string,
+              model:
+                auth && auth.provider !== config.provider
+                  ? config.providers[auth.provider]?.defaultModel ||
+                    config.model
+                  : config.model,
+              configProvider: config.provider,
               auth: describeAuth(auth),
               authenticated: check.authenticated,
               blockingStop: check.blockingStop,
+              modelInCatalog: check.modelInCatalog,
               permissionMode: config.permissionMode,
               sandbox: config.sandbox,
+              sandboxNetwork: resolveSandboxNetwork(config),
+              sandboxMissingBackend: config.sandboxMissingBackend ?? "fail-closed",
+              readOutsideWorkspace: config.readOutsideWorkspace ?? "ask",
+              stickyProvider: (() => {
+                try {
+                  return loadPreferences().provider ?? null;
+                } catch {
+                  return null;
+                }
+              })(),
+              denyRules: config.permission?.deny?.length ?? 0,
+              allowRules: config.permission?.allow?.length ?? 0,
+              askRules: config.permission?.ask?.length ?? 0,
               maxTurns: config.maxTurns,
               maxTurnsUnlimited: !(
                 typeof config.maxTurns === "number" && config.maxTurns > 0
@@ -2081,11 +3096,17 @@ Project instructions for Forge (and other coding agents).
                 process.env.FORGE_NO_AUTO_RESUME !== "1" &&
                 process.env.FORGE_NO_AUTO_RESUME !== "true",
               node: process.version,
+              packageEnginesNode: (() => {
+                try {
+                  return packageManifestForRun(
+                    config.workspace || process.cwd(),
+                  ).enginesNode;
+                } catch {
+                  return null;
+                }
+              })(),
               report: check.report,
-            },
-            null,
-            2,
-          ),
+            }),
         );
         if (!ok) process.exitCode = 1;
         return;
@@ -2102,7 +3123,7 @@ Project instructions for Forge (and other coding agents).
     .description(
       "Native statusline HUD (provider-agnostic: tokens always; plan/credits when available)",
     )
-    .option("--watch", "Live refresh (default 1s)")
+    .option("--watch", "Live refresh (default 1s; with --json emits one snapshot and exits)")
     .option("--interval <ms>", "Watch interval ms", "1000")
     .option("--session <id>", "Focus session id / prefix")
     .option("--cwd <path>", "Filter sessions by workspace")
@@ -2123,6 +3144,23 @@ Project instructions for Forge (and other coding agents).
         sessionPassed && String(stOpts.session).trim()
           ? String(stOpts.session).trim()
           : undefined;
+      const wantJson = flagJson(stOpts, command);
+      // Empty --cwd '' must not silently list all workspaces.
+      const cwdExplicit =
+        command?.getOptionValueSource?.("cwd") === "cli" ||
+        command?.parent?.getOptionValueSource?.("cwd") === "cli";
+      if (
+        cwdExplicit &&
+        stOpts.cwd != null &&
+        !String(stOpts.cwd).trim()
+      ) {
+        failInvalidFlag(
+          "invalid_cwd",
+          `Invalid --cwd "${stOpts.cwd}". Pass a non-empty workspace path.`,
+          { cwd: String(stOpts.cwd) },
+          { json: wantJson },
+        );
+      }
       const cwdArg =
         typeof stOpts.cwd === "string" && stOpts.cwd.trim()
           ? String(stOpts.cwd).trim()
@@ -2140,21 +3178,14 @@ Project instructions for Forge (and other coding agents).
         const msg =
           'Empty --session. Pass an id/prefix/title, or omit --session.';
         if (stOpts.json || flagJson(opts, command)) {
-          console.log(
-            JSON.stringify(
-              {
-                ok: false,
-                reason: "session_not_found",
-                session: String(stOpts.session),
-                error: msg,
-                count: 0,
-                sessions: [],
-                generatedAt: new Date().toISOString(),
-              },
-              null,
-              2,
-            ),
-          );
+          emitFailJson({
+            reason: "session_not_found",
+            session: String(stOpts.session),
+            error: msg,
+            count: 0,
+            sessions: [],
+            generatedAt: new Date().toISOString(),
+          });
         } else {
           log.error(msg);
         }
@@ -2167,21 +3198,15 @@ Project instructions for Forge (and other coding agents).
         });
         if (probe.length === 0) {
           if (stOpts.json || flagJson(opts, command)) {
-            console.log(
-              JSON.stringify(
-                {
-                  ok: false,
-                  reason: "session_not_found",
-                  session: sessionArg,
-                  error: formatSessionLookupMiss(sessionArg),
-                  count: 0,
-                  sessions: [],
-                  generatedAt: new Date().toISOString(),
-                },
-                null,
-                2,
-              ),
-            );
+            emitFailJson({
+              reason: "session_not_found",
+              session: sessionArg,
+              error: formatSessionLookupMiss(sessionArg),
+              suggestions: listSessionLookupSuggestions(sessionArg),
+              count: 0,
+              sessions: [],
+              generatedAt: new Date().toISOString(),
+            });
           } else {
             log.error(formatSessionLookupMiss(sessionArg));
           }
@@ -2189,13 +3214,58 @@ Project instructions for Forge (and other coding agents).
         }
       }
 
+      // Explicit invalid --interval fails closed even without --watch
+      // (experts may set the flag in shared scripts; empty/default still OK).
+      // Explicit --interval '' / non-numeric fails closed; omit → default 1000.
+      const intervalFromCli =
+        command?.getOptionValueSource?.("interval") === "cli" ||
+        command?.parent?.getOptionValueSource?.("interval") === "cli";
+      if (intervalFromCli) {
+        const rawInterval = String(stOpts.interval ?? "");
+        if (!rawInterval.trim()) {
+          failInvalidFlag(
+            "invalid_interval",
+            `Invalid --interval "${stOpts.interval}". Pass a positive integer milliseconds.`,
+            { interval: rawInterval },
+            { json: wantJson },
+          );
+        }
+        const n = Number(rawInterval.trim());
+        if (!Number.isFinite(n) || n < 0) {
+          failInvalidFlag(
+            "invalid_interval",
+            `Invalid --interval "${stOpts.interval}". Pass a positive integer milliseconds.`,
+            { interval: rawInterval },
+            { json: wantJson },
+          );
+        }
+      } else if (
+        stOpts.interval != null &&
+        String(stOpts.interval).trim() !== "" &&
+        !Number.isFinite(Number(String(stOpts.interval).trim()))
+      ) {
+        failInvalidFlag(
+          "invalid_interval",
+          `Invalid --interval "${stOpts.interval}". Pass a positive integer milliseconds.`,
+          { interval: String(stOpts.interval) },
+          { json: wantJson },
+        );
+      }
+
       if (stOpts.watch) {
+        // --watch --json is a CI footgun (infinite NDJSON). Single-shot JSON instead;
+        // human TTY watch still loops until SIGINT.
+        if (wantJson || Boolean(stOpts.json)) {
+          const snaps = await collectSnapshots(collectOpts);
+          console.log(snapshotsToJson(snaps));
+          return;
+        }
         const ac = new AbortController();
         process.on("SIGINT", () => ac.abort());
         await runStatusWatch({
           ...collectOpts,
-          intervalMs: Number(stOpts.interval) || 1000,
-          json: Boolean(stOpts.json),
+          intervalMs: parseStatusIntervalMs(stOpts.interval),
+          json: false,
           plain: Boolean(stOpts.plain),
           tmux: Boolean(stOpts.tmux),
           signal: ac.signal,
@@ -2220,7 +3290,69 @@ Project instructions for Forge (and other coding agents).
       );
     });
 
-  await program.parseAsync(process.argv);
+  try {
+    await program.parseAsync(process.argv);
+  } catch (err) {
+    // Commander exitOverride: help/version exits + unknown options/args.
+    const e = err as {
+      code?: string;
+      message?: string;
+      exitCode?: number;
+    };
+    const code = String(e?.code || "");
+    const msg = String(e?.message || err || "CLI error");
+    // help/version are successful exits under exitOverride
+    if (code === "commander.helpDisplayed" || code === "commander.version") {
+      process.exit(0);
+    }
+    if (wantJsonCli) {
+      const reason =
+        code === "commander.unknownOption"
+          ? "unknown_option"
+          : code === "commander.unknownCommand"
+            ? "unknown_command"
+            : code === "commander.missingArgument"
+              ? "missing_argument"
+              : code === "commander.excessArguments"
+                ? "excess_arguments"
+                : "cli_error";
+      const clean = msg.replace(/^error:\s*/i, "").trim();
+      const foot =
+        reason === "excess_arguments"
+          ? excessArgCommandHint()
+          : reason === "unknown_option"
+            ? unknownOptionHint(clean)
+            : reason === "unknown_command"
+              ? (() => {
+                  const m = clean.match(/unknown command ['"]?([\w-]+)/i);
+                  if (!m) return {} as { suggestion?: string; hint?: string };
+                  const tip = suggestTopLevelCommand(m[1] || "");
+                  return tip
+                    ? {
+                        suggestion: tip,
+                        hint: `forge ${tip} --help`,
+                      }
+                    : { hint: "forge --help" };
+                })()
+              : {};
+      emitFailJson({
+        reason,
+        error: clean,
+        code: code || null,
+        ...(foot.suggestion ? { suggestion: foot.suggestion } : {}),
+        ...(foot.hint ? { hint: foot.hint } : {}),
+      });
+      process.exit(typeof e?.exitCode === "number" ? e.exitCode : 1);
+    }
+    // writeErr already printed commander errors to stderr; only log non-commander.
+    if (!code.startsWith("commander.")) {
+      log.error(msg);
+    } else if (code === "commander.excessArguments") {
+      const foot = excessArgCommandHint();
+      if (foot.hint) log.error(foot.hint);
+    }
+    process.exit(typeof e?.exitCode === "number" ? e.exitCode : 1);
+  }
 }
 
 /**
@@ -2229,18 +3361,20 @@ Project instructions for Forge (and other coding agents).
  */
 function failSessionLookup(
   target: string,
-  opts?: { json?: boolean },
+  opts?: { json?: boolean; cwd?: string },
 ): never {
-  const error = formatSessionLookupMiss(target);
+  const error = formatSessionLookupMiss(target, {
+    ...(opts?.cwd ? { cwd: opts.cwd } : {}),
+  });
   if (opts?.json) {
-    console.log(
-      JSON.stringify({
-        ok: false,
-        reason: "session_not_found",
-        session: target,
-        error,
+    emitFailJson({
+      reason: "session_not_found",
+      session: target,
+      error,
+      suggestions: listSessionLookupSuggestions(target, {
+        ...(opts?.cwd ? { cwd: opts.cwd } : {}),
       }),
-    );
+    });
   } else {
     log.error(error);
   }
@@ -2251,17 +3385,247 @@ function failSessionLookup(
  * Usage / missing-arg failures for sessions subcommands.
  * With --json: `{ ok:false, reason:usage, error }` on stdout.
  */
+
+/** Top-level CLI subcommands (for bare `forge <typo>` recovery). */
+const TOP_LEVEL_COMMANDS = [
+  "run",
+  "login",
+  "logout",
+  "auth",
+  "sessions",
+  "init",
+  "models",
+  "completion",
+  "prune-tool-output",
+  "prune-metrics",
+  "logs",
+  "config",
+  "stats",
+  "tips",
+  "news",
+  "doctor",
+  "status",
+] as const;
+
+/**
+ * When a bare prompt is a single token that looks like a mistyped subcommand,
+ * return the closest command name (else null). Avoids false positives on short
+ * real prompts ("hi", "ok", "fix").
+ */
+/** Common abbreviations / near-misses experts type as bare `forge <token>`. */
+const TOP_LEVEL_ALIASES: Record<string, (typeof TOP_LEVEL_COMMANDS)[number]> = {
+  cfg: "config",
+  conf: "config",
+  log: "logs",
+  model: "models",
+  session: "sessions",
+  sess: "sessions",
+  complete: "completion",
+  whatsnew: "news",
+  hud: "status",
+  whoami: "auth",
+  diagnose: "doctor",
+  tip: "tips",
+  cheatsheet: "tips",
+};
+
+function suggestTopLevelCommand(prompt: string): string | null {
+  const t = prompt.trim();
+  if (!t || /\s/.test(t)) return null;
+  // flags / paths / urls are not command typos
+  if (t.startsWith("-") || t.includes("/") || t.includes(":") || t.includes(".")) return null;
+  const q = t.toLowerCase();
+  // exact command — commander would have routed it; still skip
+  if ((TOP_LEVEL_COMMANDS as readonly string[]).includes(q)) return null;
+  // Explicit aliases (allow short tokens like cfg/log that fail the length floor)
+  const aliased = TOP_LEVEL_ALIASES[q];
+  if (aliased) return aliased;
+  if (q.length < 4) return null;
+
+  let best: { name: string; score: number } | null = null;
+  for (const name of TOP_LEVEL_COMMANDS) {
+    let score = 0;
+    if (name.startsWith(q) || q.startsWith(name)) score = 80;
+    else if (name.includes(q) || q.includes(name)) score = 55;
+    else {
+      const d = editDistance(q, name);
+      const maxD = q.length <= 5 ? 2 : q.length <= 9 ? 3 : 4;
+      if (d > maxD) continue;
+      // Require shared 3-char prefix so "next" does not match "news".
+      if (q.length >= 3 && name.length >= 3 && q.slice(0, 3) !== name.slice(0, 3)) {
+        continue;
+      }
+      score = 40 - d;
+      if (name.length === q.length) score += 3;
+      if (name[0] === q[0]) score += 2;
+    }
+    if (!best || score > best.score) best = { name, score };
+  }
+  // Require a meaningful score so "hello" does not suggest noise
+  if (!best || best.score < 38) return null;
+  return best.name;
+}
+
+
+/** Common `forge <cmd> <other-cmd>` footguns (logout under auth, login under doctor, …). */
+function excessArgCommandHint(argv: string[] = process.argv): {
+  suggestion?: string;
+  hint?: string;
+} {
+  const args = argv.map((a) => a.toLowerCase()).filter((a) => a && !a.startsWith("-"));
+  // drop node + script
+  const start = args.findIndex((a) => a === "forge" || a.endsWith("/forge") || a.endsWith("cli.js"));
+  const tokens = start >= 0 ? args.slice(start + 1) : args;
+  if (tokens.length < 2) return {};
+  const [cmd, excess] = tokens;
+  if (!cmd || !excess) return {};
+  const top = new Set(
+    (TOP_LEVEL_COMMANDS as readonly string[]).map((c) => c.toLowerCase()),
+  );
+  // excess token is itself a real top-level command → likely wrong nesting
+  if (!top.has(excess)) return {};
+  if (cmd === excess) return {};
+  // auth logout / auth login are the classic cases; also doctor login, status login, …
+  if (cmd === "auth" && (excess === "logout" || excess === "login")) {
+    return {
+      suggestion: excess,
+      hint: `Did you mean: forge ${excess}${excess === "logout" ? " [--provider …]" : " […]"} [--json]?`,
+    };
+  }
+  if (
+    excess === "login" ||
+    excess === "logout" ||
+    excess === "doctor" ||
+    excess === "auth" ||
+    excess === "status" ||
+    excess === "config" ||
+    excess === "sessions"
+  ) {
+    return {
+      suggestion: excess,
+      hint: `Did you mean: forge ${excess} …? (got nested under \`${cmd}\`)`,
+    };
+  }
+  return {};
+}
+
+/** Recover unknown --flag typos from a stable expert allowlist. */
+function unknownOptionHint(message: string): {
+  suggestion?: string;
+  hint?: string;
+} {
+  const m = message.match(/unknown option ['"]?(-{1,2}[\w-]+)/i);
+  if (!m) return {};
+  const raw = m[1] || "";
+  const candidates = [
+    "--json",
+    "--session",
+    "--continue",
+    "--new",
+    "--title",
+    "--cwd",
+    "--provider",
+    "--model",
+    "--effort",
+    "--permission-mode",
+    "--sandbox",
+    "--sandbox-network",
+    "--sandbox-missing",
+    "--read-outside",
+    "--max-turns",
+    "--base-url",
+    "--api-key",
+    "--ulw",
+    "--goal",
+    "--force",
+    "--help",
+    "--version",
+  ];
+  const tip = suggestName(raw.replace(/^--?/, ""), candidates.map((c) => c.replace(/^--?/, "")), {
+    minLength: 2,
+    minScore: 36,
+    requirePrefix3: false,
+  });
+  if (!tip) {
+    return { hint: "forge run --help  ·  forge --help" };
+  }
+  const flag = tip.startsWith("-") ? tip : `--${tip}`;
+  return {
+    suggestion: flag,
+    hint: `Did you mean ${flag}?  ·  forge run --help`,
+  };
+}
+
+
+function suggestToken(
+  raw: string,
+  candidates: string[],
+): string | null {
+  const s = raw.trim();
+  if (!s) return null;
+  return suggestName(s, candidates, {
+    minLength: 2,
+    minScore: 30,
+    requirePrefix3: false,
+  });
+}
+
 function failUsage(message: string, opts?: { json?: boolean }): never {
   if (opts?.json) {
-    console.log(
-      JSON.stringify({
-        ok: false,
-        reason: "usage",
-        error: message,
-      }),
-    );
+    emitFailJson({ reason: "usage", error: message });
   } else {
     log.error(message);
+  }
+  process.exit(1);
+}
+
+/**
+ * Explicit --continue with nothing resumable.
+ * Headless/CI must not silently start a fresh session (ok:true false-positive).
+ * Interactive auto-resume (no --continue) still soft-starts fresh.
+ */
+function failContinueMiss(opts: {
+  json?: boolean;
+  cwd: string;
+  reason: "continue_miss" | "continue_locked";
+  error: string;
+  skippedLocked?: number;
+  candidates?: number;
+}): never {
+  if (opts.json) {
+    // Surface recent same-cwd sessions so CI can pick --session without a second list call.
+    let recent: Array<{
+      id: string;
+      title: string | null;
+      path: string;
+      relativeAge: string;
+      pinned: boolean;
+    }> = [];
+    try {
+      recent = listSessions({ cwd: opts.cwd, limit: 5 }).map((s) => ({
+        id: s.id,
+        title: s.title || null,
+        path: resolveSessionDir(s.id) || "",
+        relativeAge: formatRelativeTime(s.updatedAt || s.createdAt),
+        pinned: Boolean(s.pinned),
+      }));
+    } catch {
+      recent = [];
+    }
+    emitFailJson({
+      reason: opts.reason,
+      error: opts.error,
+      cwd: opts.cwd,
+      skippedLocked: opts.skippedLocked ?? 0,
+      candidates: opts.candidates ?? 0,
+      suggestions: recent,
+      hint:
+        opts.reason === "continue_locked"
+          ? 'forge run "…" --session <id> --json   or omit --continue'
+          : 'forge run "…" --json   (fresh) · forge run "…" --session <id> --json',
+    });
+  } else {
+    log.error(opts.error);
   }
   process.exit(1);
 }
@@ -2285,15 +3649,152 @@ const SANDBOX_MISSING = new Set<SandboxMissingBackend>([
   "fallback",
 ]);
 /** Known provider ids + common aliases (grok → xai). */
-const PROVIDER_IDS = new Set<string>([
-  "xai",
-  "grok",
-  "anthropic",
-  "openai",
-  "openrouter",
-  "google",
-  "custom",
-]);
+const PROVIDER_IDS = new Set<string>([...PROVIDER_ID_LIST]);
+
+/** Structured JSON success on stdout (always includes version for CI matrices). */
+
+/** Headless success JSON: pretty by default; FORGE_JSON_COMPACT=1 for single-line CI logs. */
+/** Empty/no-turn headless result — keep exit code + JSON ok in lockstep. */
+function isEmptyRunResult(result: {
+  finalText?: string | null;
+  turns?: number;
+}): boolean {
+  const turns =
+    typeof result.turns === "number" && Number.isFinite(result.turns)
+      ? result.turns
+      : 0;
+  const text = String(result.finalText ?? "").trim();
+  return !text && turns === 0;
+}
+
+function stringifyJsonResult(payload: unknown): string {
+  const compact =
+    process.env.FORGE_JSON_COMPACT === "1" ||
+    process.env.FORGE_JSON_COMPACT === "true";
+  // Support-bundle defaults for doctor/run/status-style objects (payload wins).
+  const body =
+    payload &&
+    typeof payload === "object" &&
+    !Array.isArray(payload)
+      ? {
+          version: getForgeVersion(),
+          node: process.version,
+          forgeHome: forgeHome(),
+          ...(payload as Record<string, unknown>),
+        }
+      : payload;
+  return compact
+    ? JSON.stringify(body)
+    : JSON.stringify(body, null, 2);
+}
+
+function emitOkJson(
+  payload: Record<string, unknown>,
+  pretty = false,
+): void {
+  const body = {
+    ok: true,
+    version: getForgeVersion(),
+    node: process.version,
+    // Support-bundle default; payload may override (e.g. tests).
+    forgeHome: forgeHome(),
+    ...payload,
+  };
+  const usePretty =
+    pretty &&
+    process.env.FORGE_JSON_COMPACT !== "1" &&
+    process.env.FORGE_JSON_COMPACT !== "true";
+  console.log(usePretty ? JSON.stringify(body, null, 2) : JSON.stringify(body));
+}
+
+/** Structured JSON failure on stdout (always includes version for CI matrices). */
+/** CI self-audit warnings for risky headless settings (non-blocking; doctor still authoritative). */
+function packageManifestForRun(cwd: string): {
+  name: string | null;
+  version: string | null;
+  enginesNode: string | null;
+} {
+  try {
+    const pkgPath = path.join(cwd, "package.json");
+    if (!fs.existsSync(pkgPath)) {
+      return { name: null, version: null, enginesNode: null };
+    }
+    const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf8")) as {
+      name?: unknown;
+      version?: unknown;
+      engines?: { node?: unknown };
+    };
+    const name = typeof pkg.name === "string" ? pkg.name.trim() : "";
+    const version = typeof pkg.version === "string" ? pkg.version.trim() : "";
+    const enginesNode =
+      pkg.engines && typeof pkg.engines.node === "string"
+        ? pkg.engines.node.trim()
+        : "";
+    return {
+      name: name || null,
+      version: version || null,
+      enginesNode: enginesNode || null,
+    };
+  } catch {
+    return { name: null, version: null, enginesNode: null };
+  }
+}
+
+function gitSnapshotForRun(cwd: string): {
+  branch: string | null;
+  dirty: boolean | null;
+  changedFiles: number | null;
+  ahead: number | null;
+  behind: number | null;
+} | null {
+  try {
+    const g = getGitSnapshot(cwd);
+    if (!g.branch && !g.root) return null;
+    return {
+      branch: g.branch ?? null,
+      dirty: g.dirty ?? null,
+      changedFiles: g.changedFiles ?? null,
+      ahead: g.ahead ?? null,
+      behind: g.behind ?? null,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function productionWarningsForRun(config: ForgeConfig): string[] {
+  const warnings: string[] = [];
+  if (config.sandbox === "off") {
+    warnings.push("sandbox=off — bash runs unsandboxed");
+  }
+  if (config.permissionMode === "bypassPermissions") {
+    warnings.push("permissionMode=bypassPermissions (yolo) — tools auto-approved");
+  }
+  if ((config.sandboxMissingBackend || "fail-closed") === "fallback") {
+    warnings.push("sandbox-missing=fallback — bash may run unsandboxed when backend is absent");
+  }
+  if ((config.readOutsideWorkspace || "ask") === "allow") {
+    warnings.push("read-outside=allow — absolute paths outside workspace readable without prompt");
+  }
+  if (config.blockingStopHooks === false) {
+    warnings.push("blockingStopHooks=false — Stop hooks will not re-anchor the agent");
+  }
+  return warnings;
+}
+
+function emitFailJson(
+  payload: Record<string, unknown>,
+): void {
+  console.log(
+    JSON.stringify({
+      ok: false,
+      version: getForgeVersion(),
+      node: process.version,
+      forgeHome: forgeHome(),
+      ...payload,
+    }),
+  );
+}
 
 /** Structured CLI flag validation failure (parity with invalid_effort). */
 function failInvalidFlag(
@@ -2303,14 +3804,7 @@ function failInvalidFlag(
   opts?: { json?: boolean },
 ): never {
   if (opts?.json) {
-    console.log(
-      JSON.stringify({
-        ok: false,
-        reason,
-        error: message,
-        ...extra,
-      }),
-    );
+    emitFailJson({ reason, error: message, ...extra });
   } else {
     log.error(message);
   }
@@ -2333,10 +3827,160 @@ function flagJson(
   return Boolean(g.json);
 }
 
+/** status --interval: empty/omitted → 1000; 0 or below → 250 min floor. Non-numeric rejected earlier. */
+function parseStatusIntervalMs(raw: unknown): number {
+  if (raw == null || raw === "") return 1000;
+  const n = typeof raw === "number" ? raw : Number(String(raw).trim());
+  if (!Number.isFinite(n)) return 1000;
+  // 0 or negative: use minimum watch interval (not "disabled" — watch needs a tick)
+  if (n <= 0) return 250;
+  return Math.min(60_000, Math.max(250, Math.floor(n)));
+}
+
+/** logs -n: 0 = all in window; empty/invalid → fallback; else 1..200 */
+
+/** Fail closed on explicit invalid CLI counts (--keep/--limit/…). Omitted → fallback. */
+
+/** --keep with all|max|unlimited → keep everything (large sentinel). */
+function requireCliKeepCount(
+  raw: unknown,
+  fallback: number,
+  flag: string,
+  reason: string,
+  opts?: { json?: boolean },
+): number {
+  if (raw != null && String(raw).trim() !== "") {
+    const key = String(raw).trim().toLowerCase();
+    if (key === "all" || key === "max" || key === "unlimited" || key === "everything") {
+      return 1_000_000;
+    }
+  }
+  return requireCliCount(raw, fallback, flag, reason, {
+    ...opts,
+    aliasCandidates: ["all", "max", "unlimited", "everything", "0", "10", "50", "80", "100"],
+  });
+}
+
+function requireCliCount(
+  raw: unknown,
+  fallback: number,
+  flag: string,
+  reason: string,
+  opts?: { json?: boolean; aliasCandidates?: string[] },
+): number {
+  const parsed = parseCliNonNegInt(raw);
+  if (parsed === undefined) return fallback;
+  if (parsed === null) {
+    const tip = suggestToken(
+      String(raw ?? ""),
+      opts?.aliasCandidates ?? ["0", "1", "7", "14", "30", "all", "none", "off", "never"],
+    );
+    failInvalidFlag(
+      reason,
+      tip
+        ? `Invalid ${flag} "${raw}". Did you mean: ${tip}? Pass a non-negative integer (0 is allowed).`
+        : `Invalid ${flag} "${raw}". Pass a non-negative integer (0 is allowed).`,
+      { value: String(raw ?? ""), ...(tip ? { suggestion: tip } : {}) },
+      { json: Boolean(opts?.json) },
+    );
+  }
+  return parsed;
+}
+
+
+/**
+ * Empty --title '' is invalid when the flag is present (Commander sets "").
+ * Omitted title stays undefined.
+ */
+function assertTitleOpt(
+  title: unknown,
+  opts?: { json?: boolean },
+): string | undefined {
+  if (title == null) return undefined;
+  const t = String(title).trim();
+  if (!t) {
+    failInvalidFlag(
+      "invalid_title",
+      `Invalid --title "${title}". Pass a non-empty label, or omit --title.`,
+      { title: String(title) },
+      { json: Boolean(opts?.json) },
+    );
+  }
+  // Keep titles searchable/listable; extreme lengths are almost always accidents.
+  if (t.length > MAX_SESSION_TITLE_CHARS) {
+    failInvalidFlag(
+      "invalid_title",
+      `Invalid --title (length ${t.length}). Pass at most ${MAX_SESSION_TITLE_CHARS} characters.`,
+      { title: t.slice(0, 40) + "…", length: t.length },
+      { json: Boolean(opts?.json) },
+    );
+  }
+  return t;
+}
+
+/** Empty --goal '' is invalid when the flag is present. */
+function assertGoalOpt(
+  goal: unknown,
+  opts?: { json?: boolean },
+): string | undefined {
+  if (goal == null) return undefined;
+  const g = String(goal).trim();
+  if (!g) {
+    failInvalidFlag(
+      "invalid_goal",
+      `Invalid --goal "${goal}". Pass a non-empty objective, or omit --goal.`,
+      { goal: String(goal) },
+      { json: Boolean(opts?.json) },
+    );
+  }
+  // Extreme lengths blow context and are almost always accidents/CI mis-quotes.
+  if (g.length > 4000) {
+    failInvalidFlag(
+      "invalid_goal",
+      `Invalid --goal (length ${g.length}). Pass at most 4000 characters.`,
+      { goal: g.slice(0, 40) + "…", length: g.length },
+      { json: Boolean(opts?.json) },
+    );
+  }
+  return g;
+}
+
 function buildConfig(opts: Record<string, unknown>): ForgeConfig {
-  const cwd = path.resolve(String(opts.cwd || process.cwd()));
-  const overrides: Partial<ForgeConfig> = { workspace: cwd };
   const wantJson = Boolean(opts.json);
+  // Empty --cwd '' must not silently resolve to process.cwd() (path.resolve('')).
+  // Explicit --cwd that does not exist / is not a directory fails closed (CI safety).
+  let cwd = path.resolve(String(opts.cwd || process.cwd()));
+  if (opts.cwd != null) {
+    const rawCwd = String(opts.cwd).trim();
+    if (!rawCwd) {
+      failInvalidFlag(
+        "invalid_cwd",
+        `Invalid --cwd "${opts.cwd}". Pass a non-empty workspace path.`,
+        { cwd: String(opts.cwd) },
+        { json: wantJson },
+      );
+    }
+    cwd = path.resolve(rawCwd);
+    try {
+      const st = fs.statSync(cwd);
+      if (!st.isDirectory()) {
+        failInvalidFlag(
+          "invalid_cwd",
+          `Invalid --cwd "${opts.cwd}". Path exists but is not a directory.`,
+          { cwd: String(opts.cwd), resolved: cwd },
+          { json: wantJson },
+        );
+      }
+    } catch {
+      failInvalidFlag(
+        "invalid_cwd",
+        `Invalid --cwd "${opts.cwd}". Directory does not exist (resolved: ${cwd}).`,
+        { cwd: String(opts.cwd), resolved: cwd },
+        { json: wantJson },
+      );
+    }
+  }
+  const overrides: Partial<ForgeConfig> = { workspace: cwd };
   // != null so empty string "" fails closed (Commander sets "" for --flag '')
   if (opts.model != null) {
     const model = String(opts.model).trim();
@@ -2351,17 +3995,28 @@ function buildConfig(opts: Record<string, unknown>): ForgeConfig {
     overrides.model = model;
   }
   if (opts.provider != null) {
-    const raw = String(opts.provider).trim().toLowerCase();
-    if (!raw || !PROVIDER_IDS.has(raw)) {
+    const norm = normalizeProviderId(opts.provider);
+    if (!norm.ok) {
+      const tip = norm.raw
+        ? suggestName(norm.raw, [...PROVIDER_IDS], {
+            minLength: 2,
+            minScore: 36,
+            requirePrefix3: false,
+          })
+        : null;
       failInvalidFlag(
         "invalid_provider",
-        `Invalid --provider "${opts.provider}". Use xai|anthropic|openai|openrouter|google|custom.`,
-        { provider: String(opts.provider) },
+        tip
+          ? `Invalid --provider "${opts.provider}". Did you mean: ${tip}? Use ${providerIdHelp()}.`
+          : `Invalid --provider "${opts.provider}". Use ${providerIdHelp()}.`,
+        {
+          provider: String(opts.provider),
+          ...(tip ? { suggestion: tip } : {}),
+        },
         { json: wantJson },
       );
     }
-    // grok is a friendly alias for xai (auth resolve already treats them alike)
-    overrides.provider = (raw === "grok" ? "xai" : raw) as ProviderId;
+    overrides.provider = norm.provider;
   }
   if (opts.baseUrl != null) {
     const base = String(opts.baseUrl).trim();
@@ -2369,6 +4024,47 @@ function buildConfig(opts: Record<string, unknown>): ForgeConfig {
       failInvalidFlag(
         "invalid_base_url",
         `Invalid --base-url "${opts.baseUrl}". Pass a non-empty http(s) URL.`,
+        { baseUrl: String(opts.baseUrl) },
+        { json: wantJson },
+      );
+    }
+    // Reject non-http(s) / empty host early — opaque fetch errors waste retries/CI time.
+    try {
+      const u = new URL(base);
+      if (u.protocol !== "http:" && u.protocol !== "https:") {
+        const scheme = u.protocol.replace(/:$/, "") || u.protocol;
+        const tip =
+          scheme === "ftp" ||
+          scheme === "ftps" ||
+          scheme === "ws" ||
+          scheme === "wss" ||
+          scheme === "file"
+            ? "https"
+            : null;
+        failInvalidFlag(
+          "invalid_base_url",
+          tip
+            ? `Invalid --base-url "${opts.baseUrl}". Did you mean: https://…? Use http:// or https:// (got ${u.protocol}).`
+            : `Invalid --base-url "${opts.baseUrl}". Use http:// or https:// (got ${u.protocol}).`,
+          {
+            baseUrl: String(opts.baseUrl),
+            ...(tip ? { suggestion: tip } : {}),
+          },
+          { json: wantJson },
+        );
+      }
+      if (!u.hostname) {
+        failInvalidFlag(
+          "invalid_base_url",
+          `Invalid --base-url "${opts.baseUrl}". Pass a host (e.g. https://api.x.ai/v1).`,
+          { baseUrl: String(opts.baseUrl) },
+          { json: wantJson },
+        );
+      }
+    } catch {
+      failInvalidFlag(
+        "invalid_base_url",
+        `Invalid --base-url "${opts.baseUrl}". Pass an absolute http(s) URL (e.g. https://api.x.ai/v1).`,
         { baseUrl: String(opts.baseUrl) },
         { json: wantJson },
       );
@@ -2398,73 +4094,232 @@ function buildConfig(opts: Record<string, unknown>): ForgeConfig {
       const raw = String(effortRaw).trim();
       const e = raw ? parseReasoningEffort(raw) : null;
       if (!e) {
+        const tip = raw
+          ? suggestName(raw, ["low", "medium", "high"], {
+              minLength: 2,
+              minScore: 36,
+              requirePrefix3: false,
+            })
+          : null;
         failInvalidFlag(
           "invalid_effort",
-          `Invalid --effort "${effortRaw}". Use low, medium, or high.`,
-          { effort: String(effortRaw) },
+          tip
+            ? `Invalid --effort "${effortRaw}". Did you mean: ${tip}? Use low, medium, or high.`
+            : `Invalid --effort "${effortRaw}". Use low, medium, or high.`,
+          {
+            effort: String(effortRaw),
+            ...(tip ? { suggestion: tip } : {}),
+          },
           { json: wantJson },
         );
       }
       overrides.reasoningEffort = e;
     }
   }
+  if (opts.maxTurns != null) {
+    const raw = String(opts.maxTurns).trim();
+    const n = raw === "" ? NaN : Number(raw);
+    // Cap at 100_000 — larger values are almost always typos; 0 remains unlimited.
+    if (
+      !Number.isFinite(n) ||
+      n < 0 ||
+      Math.floor(n) !== n ||
+      n > 100_000
+    ) {
+      failInvalidFlag(
+        "invalid_max_turns",
+        `Invalid --max-turns "${opts.maxTurns}". Pass an integer 0–100000 (0 = unlimited).`,
+        { maxTurns: String(opts.maxTurns) },
+        { json: wantJson },
+      );
+    }
+    overrides.maxTurns = n;
+  }
   // != null so empty string "" fails closed (Commander sets "" for --flag '')
   if (opts.permissionMode != null) {
-    const mode = String(opts.permissionMode).trim();
-    if (!PERMISSION_MODES.has(mode as PermissionMode)) {
+    const mode = normalizePermissionMode(opts.permissionMode);
+    if (!mode) {
+      const tip = String(opts.permissionMode).trim()
+        ? suggestName(String(opts.permissionMode).trim(), [...PERMISSION_MODES], {
+            minLength: 3,
+            minScore: 36,
+            requirePrefix3: false,
+          })
+        : null;
       failInvalidFlag(
         "invalid_permission_mode",
-        `Invalid --permission-mode "${opts.permissionMode}". Use default|acceptEdits|plan|bypassPermissions|dontAsk.`,
-        { permissionMode: String(opts.permissionMode) },
+        tip
+          ? `Invalid --permission-mode "${opts.permissionMode}". Did you mean: ${tip}? Use default|acceptEdits|plan|bypassPermissions|dontAsk.`
+          : `Invalid --permission-mode "${opts.permissionMode}". Use default|acceptEdits|plan|bypassPermissions|dontAsk.`,
+        {
+          permissionMode: String(opts.permissionMode),
+          ...(tip ? { suggestion: tip } : {}),
+        },
         { json: wantJson },
       );
     }
-    overrides.permissionMode = mode as PermissionMode;
+    overrides.permissionMode = mode;
   }
   if (opts.sandbox != null) {
-    const profile = String(opts.sandbox).trim();
-    if (!SANDBOX_PROFILES.has(profile as SandboxProfile)) {
+    const profile = normalizeSandboxProfile(opts.sandbox);
+    if (!profile) {
+      const tip = String(opts.sandbox).trim()
+        ? suggestName(String(opts.sandbox).trim(), [...SANDBOX_PROFILES], {
+            minLength: 3,
+            minScore: 36,
+            requirePrefix3: false,
+          })
+        : null;
       failInvalidFlag(
         "invalid_sandbox",
-        `Invalid --sandbox "${opts.sandbox}". Use off|workspace|read-only|strict.`,
-        { sandbox: String(opts.sandbox) },
+        tip
+          ? `Invalid --sandbox "${opts.sandbox}". Did you mean: ${tip}? Use off|workspace|read-only|strict.`
+          : `Invalid --sandbox "${opts.sandbox}". Use off|workspace|read-only|strict.`,
+        {
+          sandbox: String(opts.sandbox),
+          ...(tip ? { suggestion: tip } : {}),
+        },
         { json: wantJson },
       );
     }
-    overrides.sandbox = profile as SandboxProfile;
+    overrides.sandbox = profile;
   }
   if (opts.sandboxNetwork != null) {
-    const net = String(opts.sandboxNetwork).trim();
-    if (!SANDBOX_NETWORKS.has(net as SandboxNetwork)) {
+    const net = normalizeSandboxNetwork(opts.sandboxNetwork);
+    if (!net) {
+      const tip = String(opts.sandboxNetwork).trim()
+        ? suggestName(String(opts.sandboxNetwork).trim(), [...SANDBOX_NETWORKS], {
+            minLength: 3,
+            minScore: 36,
+            requirePrefix3: false,
+          })
+        : null;
       failInvalidFlag(
         "invalid_sandbox_network",
-        `Invalid --sandbox-network "${opts.sandboxNetwork}". Use unrestricted|blocked.`,
-        { sandboxNetwork: String(opts.sandboxNetwork) },
+        tip
+          ? `Invalid --sandbox-network "${opts.sandboxNetwork}". Did you mean: ${tip}? Use unrestricted|blocked.`
+          : `Invalid --sandbox-network "${opts.sandboxNetwork}". Use unrestricted|blocked.`,
+        {
+          sandboxNetwork: String(opts.sandboxNetwork),
+          ...(tip ? { suggestion: tip } : {}),
+        },
         { json: wantJson },
       );
     }
-    overrides.sandboxNetwork = net as SandboxNetwork;
+    overrides.sandboxNetwork = net;
   }
   if (opts.sandboxMissing != null) {
-    const miss = String(opts.sandboxMissing).trim();
+    const rawMiss = String(opts.sandboxMissing).trim();
+    const missAlias: Record<string, string> = {
+      fail_closed: "fail-closed",
+      failclosed: "fail-closed",
+      "fail-close": "fail-closed",
+      closed: "fail-closed",
+      fall_back: "fallback",
+      "fall-back": "fallback",
+    };
+    const miss = missAlias[rawMiss.toLowerCase()] || rawMiss;
     if (!SANDBOX_MISSING.has(miss as SandboxMissingBackend)) {
+      const tip = miss
+        ? suggestName(miss, [...SANDBOX_MISSING], {
+            minLength: 3,
+            minScore: 36,
+            requirePrefix3: false,
+          })
+        : null;
       failInvalidFlag(
         "invalid_sandbox_missing",
-        `Invalid --sandbox-missing "${opts.sandboxMissing}". Use fail-closed|fallback.`,
-        { sandboxMissing: String(opts.sandboxMissing) },
+        tip
+          ? `Invalid --sandbox-missing "${opts.sandboxMissing}". Did you mean: ${tip}? Use fail-closed|fallback.`
+          : `Invalid --sandbox-missing "${opts.sandboxMissing}". Use fail-closed|fallback.`,
+        {
+          sandboxMissing: String(opts.sandboxMissing),
+          ...(tip ? { suggestion: tip } : {}),
+        },
         { json: wantJson },
       );
     }
     overrides.sandboxMissingBackend = miss as SandboxMissingBackend;
   }
+  if (opts.readOutside != null) {
+    const rawRo = String(opts.readOutside).trim();
+    if (!rawRo) {
+      failInvalidFlag(
+        "invalid_read_outside",
+        'Invalid --read-outside "" (empty). Use ask|allow|deny.',
+        { readOutside: String(opts.readOutside) },
+        { json: wantJson },
+      );
+    }
+    const roAlias: Record<string, ReadOutsideWorkspace> = {
+      ask: "ask",
+      allow: "allow",
+      deny: "deny",
+      yes: "allow",
+      no: "deny",
+      block: "deny",
+      prompt: "ask",
+    };
+    const ro = roAlias[rawRo.toLowerCase()] || rawRo;
+    if (ro !== "ask" && ro !== "allow" && ro !== "deny") {
+      const tip = suggestName(rawRo, ["ask", "allow", "deny"], {
+        minLength: 2,
+        minScore: 36,
+        requirePrefix3: false,
+      });
+      failInvalidFlag(
+        "invalid_read_outside",
+        tip
+          ? `Invalid --read-outside "${opts.readOutside}". Did you mean: ${tip}? Use ask|allow|deny.`
+          : `Invalid --read-outside "${opts.readOutside}". Use ask|allow|deny.`,
+        {
+          readOutside: String(opts.readOutside),
+          ...(tip ? { suggestion: tip } : {}),
+        },
+        { json: wantJson },
+      );
+    }
+    overrides.readOutsideWorkspace = ro as ReadOutsideWorkspace;
+  }
   if (opts.blockingStop === false || opts.noBlockingStop) {
     overrides.blockingStopHooks = false;
   }
   const cfg = loadConfig(overrides, cwd);
-  // CLI --deny/--allow/--ask append to config rules
-  const extraDeny = Array.isArray(opts.deny) ? (opts.deny as string[]) : [];
-  const extraAllow = Array.isArray(opts.allow) ? (opts.allow as string[]) : [];
-  const extraAsk = Array.isArray(opts.ask) ? (opts.ask as string[]) : [];
+  // CLI --deny/--allow/--ask append to config rules.
+  // Empty strings (e.g. --deny '') fail closed — they are never meaningful rules.
+  const cleanRules = (
+    raw: unknown,
+    flag: string,
+    reason: string,
+  ): string[] => {
+    if (!Array.isArray(raw)) return [];
+    const out: string[] = [];
+    for (const item of raw) {
+      const s = String(item ?? "").trim();
+      if (!s) {
+        failInvalidFlag(
+          reason,
+          `Invalid ${flag} "${item}". Pass a non-empty rule like 'Bash(rm *)'.`,
+          { [flag.replace(/^--/, "")]: String(item ?? "") },
+          { json: wantJson },
+        );
+      }
+      // Empty tool() patterns (Bash()) are not meaningful — require a pattern or bare tool.
+      if (!parseRuleString(s)) {
+        failInvalidFlag(
+          reason,
+          `Invalid ${flag} "${s}". Use Tool or Tool(pattern), e.g. 'Bash' or 'Bash(rm *)' (empty Tool() is invalid).`,
+          { [flag.replace(/^--/, "")]: s },
+          { json: wantJson },
+        );
+      }
+      out.push(s);
+    }
+    return out;
+  };
+  const extraDeny = cleanRules(opts.deny, "--deny", "invalid_deny");
+  const extraAllow = cleanRules(opts.allow, "--allow", "invalid_allow");
+  const extraAsk = cleanRules(opts.ask, "--ask", "invalid_ask");
   if (extraDeny.length || extraAllow.length || extraAsk.length) {
     cfg.permission = {
       deny: [...(cfg.permission?.deny || []), ...extraDeny],
@@ -2472,6 +4327,45 @@ function buildConfig(opts: Record<string, unknown>): ForgeConfig {
       ask: [...(cfg.permission?.ask || []), ...extraAsk],
       rules: cfg.permission?.rules || [],
     };
+  }
+  // Explicit --model: if it is a close typo of a known catalog id, fail closed
+  // with a suggestion. Unknown free-form ids (OpenRouter, custom) still pass.
+  if (opts.model != null) {
+    const model = String(cfg.model || "").trim();
+    const prov = cfg.providers[cfg.provider];
+    // Prefer current provider catalog so grok-45 → grok-4.5 not a shorter sibling.
+    const primary = [
+      ...(prov?.models || []),
+      ...(prov?.defaultModel ? [prov.defaultModel] : []),
+    ];
+    const secondary = Object.values(cfg.providers).flatMap((p) => [
+      ...(p.models || []),
+      ...(p.defaultModel ? [p.defaultModel] : []),
+    ]);
+    const knownPrimary = [...new Set(primary.filter(Boolean))];
+    const knownAll = [...new Set([...primary, ...secondary].filter(Boolean))];
+    const exact = knownAll.some((m) => m.toLowerCase() === model.toLowerCase());
+    if (model && !exact) {
+      const tip =
+        suggestName(model, knownPrimary, {
+          minLength: 3,
+          minScore: 38,
+          requirePrefix3: false,
+        }) ||
+        suggestName(model, knownAll, {
+          minLength: 3,
+          minScore: 42,
+          requirePrefix3: false,
+        });
+      if (tip && tip.toLowerCase() !== model.toLowerCase()) {
+        failInvalidFlag(
+          "invalid_model",
+          `Invalid --model "${opts.model}". Did you mean: ${tip}?`,
+          { model: String(opts.model), suggestion: tip, provider: cfg.provider },
+          { json: wantJson },
+        );
+      }
+    }
   }
   return cfg;
 }
@@ -2488,27 +4382,49 @@ function resolveSession(
     /**
      * Explicit --continue (bare forge / parent flag): resume newest same-cwd
      * even when headless or FORGE_NO_AUTO_RESUME — parity with forge run --continue.
-     * Still respects --new and --session.
+     * Conflicts with --new (fail closed). Still respects --session.
      */
     continue?: boolean;
     /** Structured stdout on session miss (bare forge --json). */
     json?: boolean;
   },
 ) {
+  // --continue/--session and --new are mutually exclusive (was silent prefer --new).
+  if (opts.continue && opts.new) {
+    failInvalidFlag(
+      "conflicting_flags",
+      "Cannot combine --continue with --new. Use one: resume same-cwd, or force a fresh session.",
+      { continue: true, new: true },
+      { json: Boolean(opts.json) },
+    );
+  }
+  if (opts.session != null && opts.new) {
+    failInvalidFlag(
+      "conflicting_flags",
+      "Cannot combine --session with --new. Pass --session to resume, or --new for a fresh session.",
+      { session: String(opts.session), new: true },
+      { json: Boolean(opts.json) },
+    );
+  }
+  if (opts.session != null && opts.continue) {
+    failInvalidFlag(
+      "conflicting_flags",
+      "Cannot combine --session with --continue. Pass --session <id|title>, or --continue for newest same-cwd.",
+      { session: String(opts.session), continue: true },
+      { json: Boolean(opts.json) },
+    );
+  }
   if (opts.session != null) {
     const sessionFlag = String(opts.session).trim();
     if (!sessionFlag) {
       const msg =
         'Empty --session. Pass an id/prefix/title, or omit --session.';
       if (opts.json) {
-        console.log(
-          JSON.stringify({
-            ok: false,
-            reason: "session_not_found",
-            session: String(opts.session),
-            error: msg,
-          }),
-        );
+        emitFailJson({
+          reason: "session_not_found",
+          session: String(opts.session),
+          error: msg,
+        });
       } else {
         log.error(msg);
       }
@@ -2518,14 +4434,12 @@ function resolveSession(
     if (!s) {
       const miss = formatSessionLookupMiss(sessionFlag);
       if (opts.json) {
-        console.log(
-          JSON.stringify({
-            ok: false,
-            reason: "session_not_found",
-            session: sessionFlag,
-            error: miss,
-          }),
-        );
+        emitFailJson({
+          reason: "session_not_found",
+          session: sessionFlag,
+          error: miss,
+          suggestions: listSessionLookupSuggestions(sessionFlag),
+        });
       } else {
         log.error(miss);
       }
@@ -2620,16 +4534,49 @@ function resolveSession(
           return s;
         }
       } else if (hit && hit.skippedLocked > 0) {
+        // Interactive auto-resume: soft-start fresh when all candidates locked.
+        // Explicit --continue (headless or bare): fail closed.
+        if (opts.continue) {
+          failContinueMiss({
+            json: Boolean(opts.json),
+            cwd,
+            reason: "continue_locked",
+            error:
+              `No unlocked same-cwd session to continue (${hit.skippedLocked} locked). ` +
+              `Use --session <id> to attach, or omit --continue for a fresh run.`,
+            skippedLocked: hit.skippedLocked,
+            candidates: hit.candidates,
+          });
+        }
         if (!opts.json) {
           log.info(
             `Starting fresh session — ${hit.skippedLocked} same-cwd session${hit.skippedLocked === 1 ? "" : "s"} locked by other process(es). Use --session <id> to attach anyway.`,
           );
         }
-      } else if (opts.continue && !opts.json) {
-        log.dim("No prior same-cwd session to continue — starting fresh.");
+      } else if (opts.continue) {
+        failContinueMiss({
+          json: Boolean(opts.json),
+          cwd,
+          reason: "continue_miss",
+          error:
+            "No prior same-cwd session to continue. " +
+            "Omit --continue to start fresh, or pass --session <id|title>.",
+          skippedLocked: hit?.skippedLocked ?? 0,
+          candidates: hit?.candidates ?? 0,
+        });
       }
     } catch {
-      /* fall through to new session */
+      if (opts.continue) {
+        failContinueMiss({
+          json: Boolean(opts.json),
+          cwd,
+          reason: "continue_miss",
+          error:
+            "Failed to resolve same-cwd session for --continue. " +
+            "Omit --continue to start fresh, or pass --session <id|title>.",
+        });
+      }
+      /* interactive auto-resume: fall through to new session */
     }
   }
   return createSession({
@@ -2676,20 +4623,21 @@ async function runHeadless(opts: {
         `Refusing concurrent headless write. Wait for the other process, use a different --session, ` +
         `or set FORGE_FORCE_SESSION_LOCK=1 to override.`;
       if (opts.json) {
-        console.log(
-          JSON.stringify({
-            ok: false,
-            error: msg,
-            reason: "locked",
-            sessionId: opts.session.meta.id,
-            lock: {
-              pid: lock.holder.pid,
-              hostname: lock.holder.hostname,
-              acquiredAt: lock.holder.acquiredAt,
-              holder: formatLockHolder(lock.holder),
-            },
-          }),
-        );
+        emitFailJson({
+          error: msg,
+          reason: "locked",
+          forgeHome: forgeHome(),
+          sessionId: opts.session.meta.id,
+          sessionPath: resolveSessionDir(opts.session.meta.id),
+          lock: {
+            pid: lock.holder.pid,
+            hostname: lock.holder.hostname,
+            acquiredAt: lock.holder.acquiredAt,
+            holder: formatLockHolder(lock.holder),
+          },
+          hint:
+            'Wait for the holder, forge run "…" --session <other-id> --json, or FORGE_FORCE_SESSION_LOCK=1',
+        });
       } else {
         log.error(msg);
       }
@@ -2721,19 +4669,16 @@ async function runHeadless(opts: {
 
   // Optional wall-clock deadline for CI (FORGE_MAX_RUN_MS, min 5s)
   let maxRunTimer: ReturnType<typeof setTimeout> | undefined;
-  const maxRunRaw = process.env.FORGE_MAX_RUN_MS?.trim();
-  if (maxRunRaw && /^\d+$/.test(maxRunRaw)) {
-    const ms = Number(maxRunRaw);
-    if (ms >= 5_000) {
-      maxRunTimer = setTimeout(() => {
-        if (!ac.signal.aborted) {
-          timedOut = true;
-          log.warn(`FORGE_MAX_RUN_MS=${ms} exceeded — aborting headless run`);
-          ac.abort();
-        }
-      }, ms);
-      maxRunTimer.unref?.();
-    }
+  const maxRunMs = maxRunMsFromEnv();
+  if (maxRunMs != null) {
+    maxRunTimer = setTimeout(() => {
+      if (!ac.signal.aborted) {
+        timedOut = true;
+        log.warn(`FORGE_MAX_RUN_MS=${maxRunMs} exceeded — aborting headless run`);
+        ac.abort();
+      }
+    }, maxRunMs);
+    maxRunTimer.unref?.();
   }
 
   const releaseLock = (): void => {
@@ -2809,27 +4754,215 @@ async function runHeadless(opts: {
       }),
     );
     if (opts.json) {
-      console.log(
-        JSON.stringify(
-          {
-            ok: false,
-            reason: timedOut
-              ? "timeout"
-              : ac.signal.aborted
-                ? "aborted"
-                : "error",
-            error: message,
-            timedOut,
-            aborted: ac.signal.aborted,
-            sessionId: opts.session.meta.id,
-            title: opts.session.meta.title || null,
-            editCount: opts.session.meta.editCount,
-            durationMs: Date.now() - t0,
-          },
-          null,
-          2,
+      emitFailJson({
+        reason: timedOut
+          ? "timeout"
+          : ac.signal.aborted
+            ? "aborted"
+            : "error",
+        error: message,
+        timedOut,
+        aborted: ac.signal.aborted,
+        node: process.version,
+        forgeHome: forgeHome(),
+        sessionId: opts.session.meta.id,
+        sessionPath: resolveSessionDir(opts.session.meta.id),
+        title: opts.session.meta.title || null,
+        pinned: Boolean(opts.session.meta.pinned),
+        foreignLock: sessionHasForeignLiveLock(opts.session.meta.id),
+        provider: opts.config.provider,
+        stickyProvider: (() => {
+          try {
+            return loadPreferences().provider ?? null;
+          } catch {
+            return null;
+          }
+        })(),
+        authMethod: (() => {
+          try {
+            const a = resolveAuth(opts.config);
+            return a?.method ?? null;
+          } catch {
+            return null;
+          }
+        })(),
+        model: opts.config.model,
+        reasoningEffort:
+          resolveReasoningEffort(
+            opts.config.model,
+            opts.config.reasoningEffort,
+          ) ?? null,
+        ...(opts.config.baseUrl ? { baseUrl: opts.config.baseUrl } : {}),
+        cwd: opts.session.meta.cwd || opts.config.workspace || null,
+        git: gitSnapshotForRun(
+          opts.session.meta.cwd || opts.config.workspace || process.cwd(),
         ),
-      );
+        projectLabel: (() => {
+          const cwd =
+            opts.session.meta.cwd || opts.config.workspace || process.cwd();
+          try {
+            const parts = String(cwd)
+              .replace(/[\/]+$/, "")
+              .split(/[\/]/)
+              .filter(Boolean);
+            return parts.slice(-2).join("/") || String(cwd);
+          } catch {
+            return null;
+          }
+        })(),
+        projectHints: (() => {
+          try {
+            return detectProjectHints(
+              opts.session.meta.cwd || opts.config.workspace || process.cwd(),
+            );
+          } catch {
+            return [];
+          }
+        })(),
+        ...(() => {
+          const m = packageManifestForRun(
+            opts.session.meta.cwd || opts.config.workspace || process.cwd(),
+          );
+          return {
+          packageName: m.name,
+          packageVersion: m.version,
+          packageEnginesNode: m.enginesNode,
+        };
+        })(),
+        permissionMode: opts.config.permissionMode,
+        sandbox: opts.config.sandbox,
+        sandboxNetwork: resolveSandboxNetwork(opts.config),
+        sandboxMissingBackend: opts.config.sandboxMissingBackend ?? "fail-closed",
+        readOutsideWorkspace: opts.config.readOutsideWorkspace ?? "ask",
+        ultrawork: Boolean(opts.session.meta.ultrawork),
+        ulwCycle: (() => {
+          try {
+            const u = loadUlwCycle(opts.session.meta.id);
+            return u?.enabled ? u.cycle : null;
+          } catch {
+            return null;
+          }
+        })(),
+        ulwWave: (() => {
+          try {
+            const u = loadUlwCycle(opts.session.meta.id);
+            return u?.enabled ? u.wave : null;
+          } catch {
+            return null;
+          }
+        })(),
+        ulwBlocks: (() => {
+          try {
+            const u = loadUlwCycle(opts.session.meta.id);
+            return u?.enabled ? u.blocks : null;
+          } catch {
+            return null;
+          }
+        })(),
+        ulwMandate: (() => {
+          try {
+            const u = loadUlwCycle(opts.session.meta.id);
+            if (!u?.enabled) return null;
+            const text = String(u.mandate || "").trim();
+            if (!text) return null;
+            return text.length > 200 ? `${text.slice(0, 200)}…` : text;
+          } catch {
+            return null;
+          }
+        })(),
+        ulwSoftPrompt: (() => {
+          try {
+            const u = loadUlwCycle(opts.session.meta.id);
+            return u?.enabled ? Boolean(u.softPrompt) : null;
+          } catch {
+            return null;
+          }
+        })(),
+        ulwExpandedMandate: (() => {
+          try {
+            const u = loadUlwCycle(opts.session.meta.id);
+            if (!u?.enabled || !u.softPrompt) return null;
+            const text = String(u.expandedMandate || "").trim();
+            if (!text) return null;
+            return text.length > 240 ? `${text.slice(0, 240)}…` : text;
+          } catch {
+            return null;
+          }
+        })(),
+        goalActive: Boolean(
+          (() => {
+            try {
+              const g = loadGoal(opts.session.meta.id);
+              return g && g.status === "active" && !g.paused;
+            } catch {
+              return false;
+            }
+          })(),
+        ),
+        goal: (() => {
+          try {
+            const g = loadGoal(opts.session.meta.id);
+            if (!g || g.status !== "active" || g.paused) return null;
+            const text = String(g.objective || "").trim();
+            if (!text) return null;
+            return text.length > 200 ? `${text.slice(0, 200)}…` : text;
+          } catch {
+            return null;
+          }
+        })(),
+        goalStuckThreshold: opts.config.goal?.stuckThreshold ?? null,
+        goalBlocks: (() => {
+          try {
+            const g = loadGoal(opts.session.meta.id);
+            return g?.objective ? g.blocks : null;
+          } catch {
+            return null;
+          }
+        })(),
+        goalStuckBlocks: (() => {
+          try {
+            const g = loadGoal(opts.session.meta.id);
+            return g?.objective ? g.stuckBlocks : null;
+          } catch {
+            return null;
+          }
+        })(),
+        goalCriteria: (() => {
+          try {
+            const g = loadGoal(opts.session.meta.id);
+            if (!g?.objective || !Array.isArray(g.criteria) || !g.criteria.length) {
+                return null;
+            }
+            return g.criteria.slice(0, 7).map((c) => {
+                const s = String(c || "").trim();
+                return s.length > 120 ? `${s.slice(0, 120)}…` : s;
+            });
+          } catch {
+            return null;
+          }
+        })(),
+        denyRules: opts.config.permission?.deny?.length ?? 0,
+        allowRules: opts.config.permission?.allow?.length ?? 0,
+        askRules: opts.config.permission?.ask?.length ?? 0,
+        maxTurns: opts.config.maxTurns ?? 0,
+        maxTurnsUnlimited: !(
+          typeof opts.config.maxTurns === "number" && opts.config.maxTurns > 0
+        ),
+        productionWarnings: productionWarningsForRun(opts.config),
+        blockingStop: opts.config.blockingStopHooks !== false,
+        maxRunMs: maxRunMsFromEnv(),
+        providerTimeoutMs: providerTimeoutMs(),
+        bashTimeoutMs: defaultBashTimeoutMs(),
+        bashBackgroundTimeoutMs: defaultBashBackgroundTimeoutMs(),
+        permissionAskTimeoutMs: permissionAskTimeoutMs() || null,
+        doomLoopThreshold: envPositiveInt("FORGE_DOOM_LOOP_THRESHOLD", 3),
+        errorStreakThreshold: envPositiveInt("FORGE_ERROR_STREAK_THRESHOLD", 5),
+        ulwMaxContinues: envPositiveInt("FORGE_ULW_MAX_CONTINUES", 200),
+        editCount: opts.session.meta.editCount,
+        openTodos: openTodos(opts.session.todos || []),
+        messageCount: opts.session.messages?.length ?? 0,
+        durationMs: Date.now() - t0,
+      });
       process.exit(timedOut ? 124 : 1);
     }
     throw err;
@@ -2852,10 +4985,214 @@ async function runHeadless(opts: {
     }
 
     const durationMs = Date.now() - t0;
+    const goal = loadGoal(opts.session.meta.id);
+    const emptyRun = isEmptyRunResult(result);
     const payload = {
-      ok: !result.aborted && !timedOut,
+      // Align ok with CI exit codes: empty/no-turn runs are not success.
+      ok: !result.aborted && !timedOut && !emptyRun,
+      ...(result.aborted
+        ? {
+            reason: "aborted" as const,
+            error: "Run aborted (SIGINT/SIGTERM or FORGE_MAX_RUN_MS cancel).",
+          }
+        : timedOut
+          ? {
+              reason: "timeout" as const,
+              error:
+                "Run hit FORGE_MAX_RUN_MS wall-clock limit (exit 124).",
+            }
+          : emptyRun
+            ? {
+                reason: "empty_run" as const,
+                error:
+                  "Empty run: no model turns and no finalText. " +
+                  "Check auth/model, provider errors in logs, or raise --max-turns / inspect sessionPath.",
+              }
+            : {}),
+      version: getForgeVersion(),
+      node: process.version,
+      forgeHome: forgeHome(),
       sessionId: opts.session.meta.id,
+      sessionPath: resolveSessionDir(opts.session.meta.id),
       title: opts.session.meta.title || null,
+      pinned: Boolean(opts.session.meta.pinned),
+      foreignLock: sessionHasForeignLiveLock(opts.session.meta.id),
+      provider: opts.config.provider,
+      stickyProvider: (() => {
+        try {
+          return loadPreferences().provider ?? null;
+        } catch {
+          return null;
+        }
+      })(),
+      authMethod: (() => {
+        try {
+          const a = resolveAuth(opts.config);
+          return a?.method ?? null;
+        } catch {
+          return null;
+        }
+      })(),
+      model: opts.config.model,
+      reasoningEffort:
+        resolveReasoningEffort(
+          opts.config.model,
+          opts.config.reasoningEffort,
+        ) ?? null,
+      ...(opts.config.baseUrl
+        ? { baseUrl: opts.config.baseUrl }
+        : {}),
+      cwd: opts.session.meta.cwd || opts.config.workspace || null,
+      git: gitSnapshotForRun(
+        opts.session.meta.cwd || opts.config.workspace || process.cwd(),
+      ),
+      projectLabel: (() => {
+        const cwd =
+          opts.session.meta.cwd || opts.config.workspace || process.cwd();
+        try {
+          const parts = String(cwd)
+            .replace(/[\\/]+$/, "")
+            .split(/[\\/]/)
+            .filter(Boolean);
+          return parts.slice(-2).join("/") || String(cwd);
+        } catch {
+          return null;
+        }
+      })(),
+      projectHints: (() => {
+        try {
+          return detectProjectHints(
+            opts.session.meta.cwd || opts.config.workspace || process.cwd(),
+          );
+        } catch {
+          return [];
+        }
+      })(),
+      ...(() => {
+        const m = packageManifestForRun(
+          opts.session.meta.cwd || opts.config.workspace || process.cwd(),
+        );
+        return {
+          packageName: m.name,
+          packageVersion: m.version,
+          packageEnginesNode: m.enginesNode,
+        };
+      })(),
+      permissionMode: opts.config.permissionMode,
+      sandbox: opts.config.sandbox,
+      sandboxNetwork: resolveSandboxNetwork(opts.config),
+      sandboxMissingBackend: opts.config.sandboxMissingBackend ?? "fail-closed",
+      readOutsideWorkspace: opts.config.readOutsideWorkspace ?? "ask",
+      ultrawork: Boolean(opts.session.meta.ultrawork),
+      ulwCycle: (() => {
+        try {
+          const u = loadUlwCycle(opts.session.meta.id);
+          return u?.enabled ? u.cycle : null;
+        } catch {
+          return null;
+        }
+      })(),
+      ulwWave: (() => {
+        try {
+          const u = loadUlwCycle(opts.session.meta.id);
+          return u?.enabled ? u.wave : null;
+        } catch {
+          return null;
+        }
+      })(),
+      ulwBlocks: (() => {
+        try {
+          const u = loadUlwCycle(opts.session.meta.id);
+          return u?.enabled ? u.blocks : null;
+        } catch {
+          return null;
+        }
+      })(),
+      ulwMandate: (() => {
+        try {
+          const u = loadUlwCycle(opts.session.meta.id);
+          if (!u?.enabled) return null;
+          const text = String(u.mandate || "").trim();
+          if (!text) return null;
+          return text.length > 200 ? `${text.slice(0, 200)}…` : text;
+        } catch {
+          return null;
+        }
+      })(),
+      ulwSoftPrompt: (() => {
+        try {
+          const u = loadUlwCycle(opts.session.meta.id);
+          return u?.enabled ? Boolean(u.softPrompt) : null;
+        } catch {
+          return null;
+        }
+      })(),
+      ulwExpandedMandate: (() => {
+        try {
+          const u = loadUlwCycle(opts.session.meta.id);
+          if (!u?.enabled || !u.softPrompt) return null;
+          const text = String(u.expandedMandate || "").trim();
+          if (!text) return null;
+          return text.length > 240 ? `${text.slice(0, 240)}…` : text;
+        } catch {
+          return null;
+        }
+      })(),
+      goalActive: Boolean(goal && goal.status === "active" && !goal.paused),
+      goal: (() => {
+        if (!goal || goal.status !== "active" || goal.paused) return null;
+        const text = String(goal.objective || "").trim();
+        if (!text) return null;
+        return text.length > 200 ? `${text.slice(0, 200)}…` : text;
+      })(),
+      goalStuckThreshold: opts.config.goal?.stuckThreshold ?? null,
+      goalBlocks: (() => {
+        try {
+          const g = loadGoal(opts.session.meta.id);
+          return g?.objective ? g.blocks : null;
+        } catch {
+          return null;
+        }
+      })(),
+      goalStuckBlocks: (() => {
+        try {
+          const g = loadGoal(opts.session.meta.id);
+          return g?.objective ? g.stuckBlocks : null;
+        } catch {
+          return null;
+        }
+      })(),
+      goalCriteria: (() => {
+        try {
+          const g = loadGoal(opts.session.meta.id);
+          if (!g?.objective || !Array.isArray(g.criteria) || !g.criteria.length) {
+            return null;
+          }
+          return g.criteria.slice(0, 7).map((c) => {
+            const s = String(c || "").trim();
+            return s.length > 120 ? `${s.slice(0, 120)}…` : s;
+          });
+        } catch {
+          return null;
+        }
+      })(),
+      denyRules: opts.config.permission?.deny?.length ?? 0,
+      allowRules: opts.config.permission?.allow?.length ?? 0,
+      askRules: opts.config.permission?.ask?.length ?? 0,
+      maxTurns: opts.config.maxTurns ?? 0,
+      maxTurnsUnlimited: !(
+        typeof opts.config.maxTurns === "number" && opts.config.maxTurns > 0
+      ),
+      productionWarnings: productionWarningsForRun(opts.config),
+      blockingStop: opts.config.blockingStopHooks !== false,
+      maxRunMs: maxRunMsFromEnv(),
+      providerTimeoutMs: providerTimeoutMs(),
+      bashTimeoutMs: defaultBashTimeoutMs(),
+      bashBackgroundTimeoutMs: defaultBashBackgroundTimeoutMs(),
+      permissionAskTimeoutMs: permissionAskTimeoutMs() || null,
+      doomLoopThreshold: envPositiveInt("FORGE_DOOM_LOOP_THRESHOLD", 3),
+      errorStreakThreshold: envPositiveInt("FORGE_ERROR_STREAK_THRESHOLD", 5),
+      ulwMaxContinues: envPositiveInt("FORGE_ULW_MAX_CONTINUES", 200),
       finalText: result.finalText,
       turns: result.turns,
       stopContinues: result.stopContinues,
@@ -2863,13 +5200,13 @@ async function runHeadless(opts: {
       hitMaxTurns: result.hitMaxTurns,
       finishReason: result.finishReason,
       editCount: opts.session.meta.editCount,
+      openTodos: openTodos(opts.session.todos || []),
+      messageCount: opts.session.messages?.length ?? 0,
       aborted: result.aborted,
       timedOut,
       promptTokens: result.promptTokens,
       completionTokens: result.completionTokens,
       durationMs,
-      model: opts.config.model,
-      provider: opts.config.provider,
     };
     appendSessionMetrics(
       buildRunEndMetrics({

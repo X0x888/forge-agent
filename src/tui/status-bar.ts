@@ -28,7 +28,7 @@ import {
 } from "../statusline/activity.js";
 import { listTasks } from "../agent/tools/background-tasks.js";
 import { formatTokens, formatCost, estimateCostUsd } from "../util/format.js";
-import { estimateTokens } from "../session/session.js";
+import { estimateTokens, sessionDir } from "../session/session.js";
 import { readSessionLock, formatLockHolder } from "../session/lock.js";
 import type { AuthMethod } from "../statusline/types.js";
 
@@ -711,6 +711,7 @@ export function formatSessionDetails(ctx: StatusBarContext): string {
     chalk.dim(`session  ${session.meta.id.slice(0, 8)}`) +
       (session.meta.title ? chalk.dim(` · ${session.meta.title.slice(0, 40)}`) : "") +
       (session.meta.pinned ? chalk.cyan(" · PIN") : ""),
+    chalk.dim(`path     ${sessionDir(session.meta.id)}`),
     chalk.dim(`auth     ${describeAuth(auth)}`),
     chalk.dim(
       `model    ${config.provider}/${config.model}` +

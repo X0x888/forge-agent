@@ -11,6 +11,7 @@ import { toolWebSearch } from "./web-search.js";
 import { toolWebFetch } from "./web-fetch.js";
 import { toolGetTaskOutput, toolKillTask } from "./task-tools.js";
 import { parseToolArguments } from "../../util/json-repair.js";
+import { suggestName } from "../../util/suggest.js";
 
 export type { ToolContext, ToolResult } from "./types.js";
 export { TOOL_DEFINITIONS };
@@ -35,6 +36,13 @@ const CANONICAL_TOOLS = [
   "web_search",
   "web_fetch",
   "run_terminal_command",
+  "Shell",
+  "Bash",
+  "shell",
+  "read",
+  "write",
+  "edit",
+  "StrReplace",
   "Read",
   "Write",
   "Edit",
@@ -43,6 +51,7 @@ const CANONICAL_TOOLS = [
   "ListDir",
   "WebSearch",
   "WebFetch",
+  "ApplyPatch",
 ] as const;
 
 /**
@@ -80,10 +89,20 @@ export async function executeTool(
     };
   }
   const args = parsed.value;
+  const repairNote =
+    parsed.repaired && parsed.note
+      ? `[json_arg_repair] ${parsed.note}\n\n`
+      : parsed.repaired
+        ? `[json_arg_repair] Tool arguments were auto-repaired before execution.\n\n`
+        : "";
 
   try {
+    const result = await (async (): Promise<ToolResult> => {
     switch (name) {
       case "bash":
+      case "Bash":
+      case "Shell":
+      case "shell":
       case "run_terminal_command":
         return await toolBash(args, ctx);
       case "get_task_output":
@@ -93,12 +112,16 @@ export async function executeTool(
         return await toolKillTask(args);
       case "read_file":
       case "Read":
+      case "read":
         return await toolRead(args, ctx);
       case "write_file":
       case "Write":
+      case "write":
         return await toolWrite(args, ctx);
       case "search_replace":
       case "Edit":
+      case "edit":
+      case "StrReplace":
         return await toolEdit(args, ctx);
       case "apply_patch":
       case "ApplyPatch":
@@ -112,23 +135,64 @@ export async function executeTool(
       case "list_dir":
       case "ListDir":
         return await toolListDir(args, ctx);
-      case "todo_write":
-        if (!todoHandler) return { output: "todo_write not available", isError: true };
-        return {
-          output: todoHandler(args.todos, args.merge !== false),
-        };
+      case "todo_write": {
+        if (!todoHandler) {
+          return {
+            output:
+              "todo_write error: not available in this context (no session board). " +
+              "Use the interactive agent / headless run loop — unit tests should pass a todoHandler.",
+            isError: true,
+          };
+        }
+        const out = todoHandler(args.todos, args.merge !== false);
+        const isErr = /^todo_write error:/i.test(out);
+        return { output: out, ...(isErr ? { isError: true as const } : {}) };
+      }
       case "web_search":
       case "WebSearch":
         return await toolWebSearch(args, ctx);
       case "web_fetch":
       case "WebFetch":
         return await toolWebFetch(args, ctx);
-      default:
+      default: {
+        const tip = suggestName(name, AVAILABLE.split(", ").concat([
+          "Bash",
+          "Shell",
+          "Read",
+          "Write",
+          "Edit",
+        ]), {
+          minLength: 2,
+          minScore: 36,
+          requirePrefix3: false,
+        });
         return {
-          output: `Unknown tool: ${name}. Available: ${AVAILABLE}.`,
+          output:
+            (tip
+              ? `Unknown tool: ${name}. Did you mean: ${tip}?\n`
+              : `Unknown tool: ${name}.\n`) +
+            `Available: ${AVAILABLE}.`,
           isError: true,
         };
+      }
     }
+    })();
+    let out = result;
+    if (
+      out.isError &&
+      typeof out.output === "string" &&
+      /^Aborted\.?$/i.test(out.output.trim())
+    ) {
+      out = {
+        ...out,
+        // Keep leading "Aborted" so error-streak / cancel classifiers still match.
+        output: `Aborted: ${name} (turn cancel / timeout / Ctrl+C).`,
+      };
+    }
+    if (repairNote && typeof out.output === "string") {
+      out = { ...out, output: repairNote + out.output };
+    }
+    return out;
   } catch (err) {
     return { output: `Tool error: ${(err as Error).message}`, isError: true };
   }

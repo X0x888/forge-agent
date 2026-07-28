@@ -426,7 +426,7 @@ export class AnthropicProvider implements LLMProvider {
     // surface as retryable rather than a silent blank assistant turn.
     if (!content && toolCalls.length === 0 && !finishReason && !usage) {
       throw new Error(
-        `${this.id} stream ended with empty response (no content, tools, or finish_reason) — likely a dropped connection`,
+        `${this.id} stream ended with empty response (no content, tools, or finish_reason) — likely a dropped connection; retry or switch model`,
       );
     }
 

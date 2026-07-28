@@ -10,10 +10,50 @@ export async function toolGlob(
   args: Record<string, unknown>,
   ctx: ToolContext,
 ): Promise<ToolResult> {
-  const pattern = String(args.pattern || "");
-  if (!pattern) return { output: "pattern is required", isError: true };
+  if (args.pattern != null && typeof args.pattern !== "string") {
+    const kind =
+      args.pattern === null
+        ? "null"
+        : Array.isArray(args.pattern)
+          ? "array"
+          : typeof args.pattern;
+    return {
+      output: `glob error: pattern must be a string (got ${kind}).`,
+      isError: true,
+    };
+  }
+  if (args.path != null && typeof args.path !== "string") {
+    const kind =
+      args.path === null
+        ? "null"
+        : Array.isArray(args.path)
+          ? "array"
+          : typeof args.path;
+    return {
+      output: `glob error: path must be a string (got ${kind}).`,
+      isError: true,
+    };
+  }
+  const pattern = String(args.pattern || "").trim();
+  if (!pattern) {
+    return {
+      output:
+        "glob error: pattern is required (non-empty string).\n" +
+        'Example: { "pattern": "**/*.{ts,tsx}", "path": "src" }',
+      isError: true,
+    };
+  }
+  // Optional path: omitted → workspace; explicit whitespace fails closed.
+  if (args.path != null && !String(args.path).trim()) {
+    return {
+      output:
+        "glob error: path is required (non-empty string). Omit path for workspace root.\n" +
+        'Example: { "pattern": "**/*.ts", "path": "src" }',
+      isError: true,
+    };
+  }
   const cwd = args.path
-    ? resolvePath(ctx.workspace, String(args.path))
+    ? resolvePath(ctx.workspace, String(args.path).trim())
     : ctx.workspace;
 
   // Distinguish missing search root from a real empty match (agent UX).
@@ -42,9 +82,13 @@ export async function toolGlob(
       ignore: ["**/node_modules/**", "**/.git/**", "**/dist/**"],
     });
     files.sort();
+    const rootLabel = args.path ? String(args.path) : ".";
     const body = files.length
       ? files.slice(0, 200).join("\n")
-      : "No files matched";
+      : (
+          `No files matched (pattern=${JSON.stringify(pattern)}, path=${rootLabel}).\n` +
+          `Tips: broaden the glob, check the search root, or try list_dir / grep.`
+        );
     const managed = await boundToolOutput(body, { maxLines: 250 });
     return { output: managed.text };
   } catch (err) {
@@ -59,7 +103,28 @@ export async function toolListDir(
   args: Record<string, unknown>,
   ctx: ToolContext,
 ): Promise<ToolResult> {
-  const rel = String(args.path || ".");
+  if (args.path != null && typeof args.path !== "string") {
+    const kind =
+      args.path === null
+        ? "null"
+        : Array.isArray(args.path)
+          ? "array"
+          : typeof args.path;
+    return {
+      output: `list_dir error: path must be a string (got ${kind}).`,
+      isError: true,
+    };
+  }
+  // Omitted path → "."; explicit whitespace-only is invalid (parity with read/write).
+  if (args.path != null && !String(args.path).trim()) {
+    return {
+      output:
+        "list_dir error: path is required (non-empty string). Omit path for workspace root.\n" +
+        'Example: { "path": "src" }',
+      isError: true,
+    };
+  }
+  const rel = args.path != null ? String(args.path).trim() : ".";
   const dir = resolvePath(ctx.workspace, rel);
   // Distinguish missing path vs file-not-dir (parity with glob) so the model
   // does not thrash on "not found" when it passed a file path by mistake.
@@ -67,7 +132,10 @@ export async function toolListDir(
     const st = await fsp.stat(dir);
     if (!st.isDirectory()) {
       return {
-        output: `list_dir path is not a directory: ${rel}`,
+        output:
+          `list_dir path is not a directory: ${rel}
+` +
+          `Tips: pass a directory path, or use read_file/grep on this file path.`,
         isError: true,
       };
     }
@@ -99,8 +167,9 @@ export async function toolListDir(
           : "file";
       return `${kind}  ${e.name}${e.isDirectory() ? "/" : ""}`;
     });
+  const label = path.relative(ctx.workspace, dir) || ".";
   const body = lines.length
-    ? `${path.relative(ctx.workspace, dir) || "."}\n${lines.join("\n")}`
-    : "(empty directory)";
+    ? `${label}\n${lines.join("\n")}`
+    : `Directory is empty: ${label}\nTips: check the path, or use glob/grep from a parent directory.`;
   return { output: body };
 }

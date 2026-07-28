@@ -161,6 +161,151 @@ describe("shell arity", () => {
     assert.equal(isReadOnlyCommand("rm -rf dist"), false);
     assert.equal(isReadOnlyCommand("npm test"), false);
   });
+
+  it("version probes are read-only (flags must not be stripped away)", () => {
+    for (const cmd of [
+      "node --version",
+      "node -v",
+      "npm --version",
+      "npm -v",
+      "python --version",
+      "python -V",
+      "cargo --version",
+      "tsc --version",
+      "git --version",
+    ]) {
+      assert.equal(isReadOnlyCommand(cmd), true, cmd);
+    }
+    // Subcommands that change state must stay non-RO
+    assert.equal(isReadOnlyCommand("npm version patch"), false);
+    assert.equal(isReadOnlyCommand("node -e \"console.log(1)\""), false);
+    assert.equal(isReadOnlyCommand("node script.js"), false);
+  });
+
+  it("git branch mutations are not read-only; listing is", () => {
+    for (const cmd of [
+      "git branch",
+      "git branch -a",
+      "git branch -vv",
+      "git branch -i",
+      "git branch -av",
+      "git branch --list",
+      "git branch --list feature/*",
+      "git branch --contains main",
+      "git branch --merged main",
+    ]) {
+      assert.equal(isReadOnlyCommand(cmd), true, cmd);
+    }
+    for (const cmd of [
+      "git branch -d old",
+      "git branch -D old",
+      "git branch --delete old",
+      "git branch -m old new",
+      "git branch -c old new",
+      "git branch --set-upstream-to=origin/main",
+      "git branch new-feature",
+      "git branch -f main origin/main",
+    ]) {
+      assert.equal(isReadOnlyCommand(cmd), false, cmd);
+    }
+  });
+
+  it("git remote mutations are not read-only; list/show/get-url are", () => {
+    for (const cmd of [
+      "git remote",
+      "git remote -v",
+      "git remote show origin",
+      "git remote get-url origin",
+    ]) {
+      assert.equal(isReadOnlyCommand(cmd), true, cmd);
+    }
+    for (const cmd of [
+      "git remote add origin https://example.test/r.git",
+      "git remote remove origin",
+      "git remote rename origin upstream",
+      "git remote set-url origin https://evil.test/r.git",
+      "git remote prune origin",
+    ]) {
+      assert.equal(isReadOnlyCommand(cmd), false, cmd);
+    }
+  });
+
+  it("find mutating actions are not read-only", () => {
+    assert.equal(isReadOnlyCommand("find . -name '*.ts'"), true);
+    assert.equal(isReadOnlyCommand("find . -type f"), true);
+    assert.equal(isReadOnlyCommand("find . -type f -print"), true);
+    for (const cmd of [
+      "find . -delete",
+      "find . -name '*.log' -delete",
+      "find . -exec rm {} ;",
+      "find . -execdir rm {} +",
+      "find . -execdir sh -c 'echo' ;",
+      "find . -ok rm {} ;",
+      "find . -fprint /tmp/out",
+    ]) {
+      assert.equal(isReadOnlyCommand(cmd), false, cmd);
+    }
+  });
+
+  it("git --output is not read-only (writes a file)", () => {
+    assert.equal(isReadOnlyCommand("git log --oneline -5"), true);
+    assert.equal(isReadOnlyCommand("git log --output=/tmp/out"), false);
+    assert.equal(isReadOnlyCommand("git log --output /tmp/out"), false);
+    assert.equal(isReadOnlyCommand("git show HEAD --output=/tmp/out"), false);
+    assert.equal(isReadOnlyCommand("git diff --output=/tmp/out"), false);
+    assert.equal(isReadOnlyCommand("git branch --output=/tmp/out"), false);
+  });
+});
+
+describe("acceptEdits read-only shell gate", () => {
+  it("denies find -delete and git branch -d under headless acceptEdits", async () => {
+    const g = new PermissionGate({ interactive: false });
+    for (const command of [
+      "find . -name '*.log' -delete",
+      "find . -exec rm {} ;",
+      "git branch -d stale",
+      "git branch -D stale",
+      "git branch new-feature",
+      "git remote add origin https://evil.test",
+      "git remote set-url origin https://evil.test",
+      "git remote remove origin",
+    ]) {
+      const r = await g.request({
+        toolName: "bash",
+        input: { command },
+        mode: "acceptEdits",
+        workspace: "/tmp/proj",
+        config: DEFAULT_CONFIG,
+      });
+      assert.equal(r.decision, "deny", `expected deny for: ${command}`);
+      assert.match(
+        r.reason,
+        /shell_noninteractive|read_only|Refusing find|hard.?deny|destructive|branch/i,
+      );
+    }
+  });
+
+  it("still allows safe find/git listing and version probes under headless acceptEdits", async () => {
+    const g = new PermissionGate({ interactive: false });
+    for (const command of [
+      "find . -name '*.ts'",
+      "git branch -a",
+      "git remote -v",
+      "git status",
+      "node --version",
+      "npm -v",
+    ]) {
+      const r = await g.request({
+        toolName: "bash",
+        input: { command },
+        mode: "acceptEdits",
+        workspace: "/tmp/proj",
+        config: DEFAULT_CONFIG,
+      });
+      assert.equal(r.decision, "allow", `expected allow for: ${command}`);
+      assert.equal(r.reason, "read_only_command");
+    }
+  });
 });
 
 describe("permission rules", () => {
@@ -252,6 +397,39 @@ describe("permission rules", () => {
     assert.equal(r.decision, "allow");
     assert.equal(r.reason, "read_only_command");
   });
+
+  it("acceptEdits auto-allows version probes; denies git branch -D / find -exec", async () => {
+    const g = new PermissionGate({ interactive: false });
+    const allowVer = await g.request({
+      toolName: "bash",
+      input: { command: "node --version" },
+      mode: "acceptEdits",
+      workspace: "/tmp/proj",
+      config: DEFAULT_CONFIG,
+    });
+    assert.equal(allowVer.decision, "allow");
+    assert.equal(allowVer.reason, "read_only_command");
+
+    for (const command of [
+      "git branch -D main",
+      "git remote remove origin",
+      "find . -exec rm {} ;",
+    ]) {
+      const r = await g.request({
+        toolName: "bash",
+        input: { command },
+        mode: "acceptEdits",
+        workspace: "/tmp/proj",
+        config: DEFAULT_CONFIG,
+      });
+      assert.equal(r.decision, "deny", command);
+      assert.match(
+        r.reason,
+        /shell_noninteractive_deny|noninteractive/,
+        command,
+      );
+    }
+  });
 });
 
 describe("sandbox descriptors and network", () => {
@@ -305,5 +483,52 @@ describe("config permission trust", () => {
     assert.ok(merged.deny.includes("Bash(evil *)"));
     assert.ok(merged.deny.includes("Bash(npm publish *)"));
     assert.ok(merged.allow.includes("Bash(ls *)"));
+  });
+});
+
+describe("parseRuleString empty pattern", () => {
+  it("rejects Tool() with empty pattern", () => {
+    assert.equal(parseRuleString("Bash()"), null);
+    assert.equal(parseRuleString("Read()"), null);
+    assert.ok(parseRuleString("Bash"));
+    assert.ok(parseRuleString("Bash(*)"));
+    assert.ok(parseRuleString("Bash(rm *)"));
+    assert.equal(parseRuleString("()"), null);
+  });
+});
+
+describe("cloud metadata IMDS hard deny", () => {
+  it("blocks curl/wget to 169.254.169.254 and GCE metadata host", async () => {
+    const { checkBashHardDeny } = await import("../src/agent/safety.js");
+    const a = checkBashHardDeny("curl -s http://169.254.169.254/latest/meta-data/");
+    assert.equal(a.ok, false);
+    assert.equal(a.ok === false && a.rule, "cloud-metadata-imds");
+    const b = checkBashHardDeny("wget -qO- http://metadata.google.internal/computeMetadata/v1/");
+    assert.equal(b.ok, false);
+    const c = checkBashHardDeny("echo 169.254.169.254"); // no fetch tool
+    assert.equal(c.ok, true);
+    const d = checkBashHardDeny("curl -s http://[fd00:ec2::254]/latest/meta-data/");
+    assert.equal(d.ok, false);
+    const e = checkBashHardDeny(
+      'python3 -c "import urllib.request;urllib.request.urlopen(\"http://169.254.169.254/\")"',
+    );
+    assert.equal(e.ok, false);
+    const f = checkBashHardDeny('node -e "fetch(\"http://169.254.169.254\")"');
+    assert.equal(f.ok, false);
+  });
+});
+
+describe("file:// fetch hard deny", () => {
+  it("blocks curl/wget file:// local file exfil", async () => {
+    const { checkBashHardDeny } = await import("../src/agent/safety.js");
+    const a = checkBashHardDeny("curl file:///etc/passwd");
+    assert.equal(a.ok, false);
+    assert.equal(a.ok === false && a.rule, "file-url-fetch");
+    const b = checkBashHardDeny("wget -qO- file:///etc/shadow");
+    assert.equal(b.ok, false);
+    const c = checkBashHardDeny("echo file:///etc/passwd");
+    assert.equal(c.ok, true);
+    const d = checkBashHardDeny("curl https://example.com");
+    assert.equal(d.ok, true);
   });
 });

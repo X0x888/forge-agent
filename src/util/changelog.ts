@@ -159,10 +159,11 @@ export function formatWhatsNew(opts?: {
       }
       return out;
     };
-    // Prefer *newest* bullets from the first ### section (active development
-    // appends there). A long 0.9.x body used to head-slice and hide recent work
-    // behind "+N more"; tail-slicing the whole body wrongly preferred static
-    // Recovery/Docs sections that sit later in the file.
+    // Prefer *newest* bullets from the first ### section (active development).
+    // Convention: prepend new bullets at the top of the active ### section so
+    // head-slice shows recent work. (Tail-slice hid prepended work and could
+    // surface duplicate/stale bullets at the bottom of a long section.)
+    // Still scope to the first ### only — never jump to Recovery/Docs later.
     const allClean = dropEmptyHeads(rawLines);
     const pickNewestFromActiveSection = (rows: string[], budget: number): string[] => {
       if (rows.length <= budget) return rows;
@@ -187,8 +188,8 @@ export function formatWhatsNew(opts?: {
         }
       }
       if (headIdx < 0) {
-        // No section heads — take newest bullets overall.
-        return rows.slice(-budget);
+        // No section heads — take leading bullets (newest-first body).
+        return rows.slice(0, budget);
       }
       let nextHead = rows.length;
       for (let i = headIdx + 1; i < rows.length; i++) {
@@ -206,19 +207,19 @@ export function formatWhatsNew(opts?: {
         });
       // Leave room for the ### head line in the display budget.
       const bulletBudget = Math.max(1, budget - 1);
-      const newest = sectionBullets.slice(-bulletBudget);
+      const newest = sectionBullets.slice(0, bulletBudget);
       return [head, ...newest];
     };
     const cleaned = dropEmptyHeads(
       pickNewestFromActiveSection(allClean, maxBullets),
     );
     if (cleaned.length === 0) {
-      // Fallback: last non-empty lines
+      // Fallback: leading non-empty lines (newest-first convention)
       const plain = r.body
         .split("\n")
         .map((l) => l.trim())
         .filter(Boolean)
-        .slice(-maxBullets);
+        .slice(0, maxBullets);
       lines.push(...plain.map((l) => (l.startsWith("-") ? l : `  ${l}`)));
     } else {
       for (const b of cleaned) {

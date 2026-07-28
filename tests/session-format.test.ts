@@ -13,10 +13,19 @@ import {
   exportSessionMarkdown,
   maybeSetTitle,
   clearConversation,
+  setSessionTitle,
+  saveSession,
+  formatSessionLookupMiss,
+  listSessionLookupSuggestions,
 } from "../src/session/session.js";
 import { truncateMiddle, estimateCostUsd, formatTokens } from "../src/util/format.js";
 import { isRetryableError } from "../src/util/retry.js";
-import { completeSlash, handleSlash } from "../src/commands/slash.js";
+import {
+  completeSlash,
+  formatUnknownSlash,
+  handleSlash,
+  suggestSlashCommands,
+} from "../src/commands/slash.js";
 import { DEFAULT_CONFIG } from "../src/config/types.js";
 import { HookRunner } from "../src/harness/hooks.js";
 
@@ -412,6 +421,169 @@ describe("format + slash complete", () => {
     assert.deepEqual(completeSlash("hello"), []);
   });
 
+it("unknown slash suggests close command names", async () => {
+    // transposition / single-letter typos common at the REPL
+    const exportHits = suggestSlashCommands("/exprot");
+    assert.ok(exportHits.includes("/export"), String(exportHits));
+    const helpHits = suggestSlashCommands("/hepl");
+    assert.ok(helpHits.includes("/help"), String(helpHits));
+    assert.equal(helpHits[0], "/help", String(helpHits));
+    const msg = formatUnknownSlash("/exprot");
+    assert.match(msg, /Did you mean/);
+    assert.match(msg, /\/export/);
+    assert.match(msg, /Type \/help/);
+
+    const s = createSession({
+      cwd: process.cwd(),
+      provider: "xai",
+      model: "m",
+    });
+    const r = await handleSlash("/exprot", {
+      session: s,
+      config: DEFAULT_CONFIG,
+      hooks: new HookRunner(DEFAULT_CONFIG, process.cwd()),
+    });
+    assert.equal(r.handled, true);
+    assert.match(r.output || "", /Did you mean/);
+    assert.match(r.output || "", /\/export/);
+
+    // gibberish: no false-positive suggestions
+    const none = suggestSlashCommands("/zzzznotacommand");
+    assert.deepEqual(none, []);
+    assert.match(formatUnknownSlash("/zzzznotacommand"), /Type \/help for commands/);
+  });
+
+it("/permissions mode typos suggest canonical names", async () => {
+    const s = createSession({
+      cwd: process.cwd(),
+      provider: "xai",
+      model: "m",
+    });
+    const hooks = new HookRunner(DEFAULT_CONFIG, process.cwd());
+    const r = await handleSlash("/permissions aceptEdits", {
+      session: s,
+      config: DEFAULT_CONFIG,
+      hooks,
+    });
+    assert.match(r.output || "", /Did you mean: acceptEdits/);
+  });
+
+it("/model catalog typos suggest instead of saving broken id", async () => {
+    const s = createSession({
+      cwd: process.cwd(),
+      provider: "xai",
+      model: "grok-4.5",
+    });
+    const hooks = new HookRunner(DEFAULT_CONFIG, process.cwd());
+    const r = await handleSlash("/model grok-45", {
+      session: s,
+      config: { ...DEFAULT_CONFIG, provider: "xai", model: "grok-4.5" },
+      hooks,
+    });
+    assert.match(r.output || "", /Did you mean: grok-4\.5/);
+    // free-form non-typo still accepted
+    const r2 = await handleSlash("/model my-custom-finetune-v3", {
+      session: s,
+      config: { ...DEFAULT_CONFIG, provider: "xai", model: "grok-4.5" },
+      hooks,
+    });
+    assert.match(r2.output || "", /Model set to my-custom-finetune-v3/);
+  });
+
+it("session lookup miss suggests title typos", async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-title-typo-"));
+    process.env.FORGE_HOME = tmp;
+    const a = createSession({ cwd: tmp, provider: "xai", model: "m" });
+    setSessionTitle(a, "alpha-project");
+    saveSession(a);
+    const msg = formatSessionLookupMiss("alpa-project", { cwd: tmp });
+    assert.match(msg, /Did you mean/);
+    assert.match(msg, /alpha-project/);
+    const none = formatSessionLookupMiss("zzzznope-unique", { cwd: tmp });
+    assert.doesNotMatch(none, /Did you mean/);
+  });
+
+it("/sessions action typos suggest canonical names", async () => {
+    const s = createSession({
+      cwd: process.cwd(),
+      provider: "xai",
+      model: "m",
+    });
+    const hooks = new HookRunner(DEFAULT_CONFIG, process.cwd());
+    const r = await handleSlash("/sessions prun", {
+      session: s,
+      config: DEFAULT_CONFIG,
+      hooks,
+    });
+    assert.match(r.output || "", /Did you mean: prune/);
+    const r2 = await handleSlash("/sessions serach x", {
+      session: s,
+      config: DEFAULT_CONFIG,
+      hooks,
+    });
+    assert.match(r2.output || "", /Did you mean: search/);
+    // real title query still searches
+    const r3 = await handleSlash("/sessions incident-42", {
+      session: s,
+      config: DEFAULT_CONFIG,
+      hooks,
+    });
+    assert.match(r3.output || "", /No sessions matching|incident-42/i);
+  });
+
+it("slash count args fail closed on garbage", async () => {
+    const s = createSession({
+      cwd: process.cwd(),
+      provider: "xai",
+      model: "m",
+    });
+    s.messages.push({ role: "user", content: "hi" });
+    s.messages.push({ role: "assistant", content: "hello" });
+    const hooks = new HookRunner(DEFAULT_CONFIG, process.cwd());
+    const ctx = { session: s, config: DEFAULT_CONFIG, hooks };
+
+    const last = await handleSlash("/last abc", ctx);
+    assert.match(last.output || "", /Invalid \/last count/);
+
+    const news = await handleSlash("/news abc", ctx);
+    assert.match(news.output || "", /Invalid \/news count/);
+    const news0 = await handleSlash("/news 0", ctx);
+    assert.match(news0.output || "", /Invalid \/news count/);
+    const news11 = await handleSlash("/news 11", ctx);
+    assert.match(news11.output || "", /Invalid \/news count|1–10/);
+
+    const stats = await handleSlash("/stats abc", ctx);
+    assert.match(stats.output || "", /Invalid \/stats window/);
+
+    const logs = await handleSlash("/logs abc", ctx);
+    assert.match(logs.output || "", /Invalid \/logs arg/);
+
+    const files = await handleSlash("/files abc", ctx);
+    assert.match(files.output || "", /Invalid \/files arg/);
+    const files0 = await handleSlash("/files 0", ctx);
+    assert.match(files0.output || "", /Invalid \/files limit/);
+    const files201 = await handleSlash("/files 201", ctx);
+    assert.match(files201.output || "", /Invalid \/files limit/);
+
+    const rewind = await handleSlash("/rewind abc", ctx);
+    assert.match(rewind.output || "", /Invalid \/rewind count/);
+    const undo0 = await handleSlash("/undo 0", ctx);
+    assert.match(undo0.output || "", /Invalid \/undo count/);
+    const undo101 = await handleSlash("/undo 101", ctx);
+    assert.match(undo101.output || "", /Invalid \/undo count|1–100/);
+
+    const last21 = await handleSlash("/last 21", ctx);
+    assert.match(last21.output || "", /Invalid \/last count|1–20/);
+    const lastMc = await handleSlash("/last 1 10", ctx);
+    assert.match(lastMc.output || "", /Invalid \/last max-chars|40–2000/);
+
+    // valid paths still work
+    const lastOk = await handleSlash("/last 1", ctx);
+    assert.match(lastOk.output || "", /turn/i);
+    const newsOk = await handleSlash("/news", ctx);
+    assert.match(newsOk.output || "", /Forge|what's new|0\.9/i);
+  });
+
 it("/fork includes last-turn peek", async () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-fork-peek-"));
     process.env.FORGE_HOME = tmp;
@@ -751,5 +923,32 @@ it("/fork includes last-turn peek", async () => {
       hooks,
     });
     assert.match(String(miss.output || ""), /not found|Try:/i);
+  });
+
+  it("listSessionLookupSuggestions returns structured id/title/path", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-sug-"));
+    process.env.FORGE_HOME = tmp;
+    const a = createSession({
+      cwd: tmp,
+      provider: "xai",
+      model: "m",
+      title: "alpha-project",
+    });
+    const b = createSession({
+      cwd: tmp,
+      provider: "xai",
+      model: "m",
+      title: "beta-work",
+    });
+    saveSession(a);
+    saveSession(b);
+    const hits = listSessionLookupSuggestions("alpa-project", { cwd: tmp });
+    assert.ok(hits.length >= 1);
+    assert.equal(hits[0].title, "alpha-project");
+    assert.equal(hits[0].id, a.meta.id);
+    assert.ok(hits[0].path.includes(a.meta.id));
+    assert.ok(hits[0].relativeAge);
+    const none = listSessionLookupSuggestions("zzzznope-unique", { cwd: tmp });
+    assert.deepEqual(none, []);
   });
 });

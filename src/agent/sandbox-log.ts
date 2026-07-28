@@ -107,10 +107,14 @@ export function sandboxLogStats(): SandboxLogStats {
  * Best-effort JSONL parse; corrupt lines skipped.
  */
 export function readSandboxLogTail(limit = 30): SandboxLogEvent[] {
-  const n =
-    typeof limit === "number" && Number.isFinite(limit)
-      ? Math.min(200, Math.max(1, Math.floor(limit)))
-      : 30;
+  // limit 0 = all events in the read window (not coerced to 1/30).
+  // Negative / NaN → default 30. Positive capped at 200.
+  let n = 30;
+  if (typeof limit === "number" && Number.isFinite(limit)) {
+    const f = Math.floor(limit);
+    if (f === 0) n = 0;
+    else if (f > 0) n = Math.min(200, f);
+  }
   const file = sandboxLogPath();
   let raw = "";
   try {
@@ -148,6 +152,7 @@ export function readSandboxLogTail(limit = 30): SandboxLogEvent[] {
       /* skip */
     }
   }
+  if (n === 0) return out;
   return out.slice(-n);
 }
 

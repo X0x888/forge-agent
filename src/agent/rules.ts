@@ -40,17 +40,23 @@ export function parseRuleString(raw: string): PermissionRule | null {
   // Tool(pattern)
   const m = s.match(/^([A-Za-z_*][A-Za-z0-9_*]*)\(([\s\S]*)\)$/);
   if (m) {
+    const pattern = m[2].trim();
+    // Empty Bash() is almost always a typo for Bash(*) — fail closed at CLI;
+    // callers that need "match nothing" can use an impossible pattern.
+    if (!pattern) return null;
     return {
       action: "deny", // action set by caller list
       tool: normalizeToolName(m[1]),
-      pattern: m[2],
+      pattern,
       raw: s,
     };
   }
-  // bare tool name
+  // bare tool name — reject punctuation-only tokens like "()"
+  const tool = normalizeToolName(s);
+  if (!tool || !/^[A-Za-z_*]/.test(tool)) return null;
   return {
     action: "deny",
-    tool: normalizeToolName(s),
+    tool,
     pattern: "*",
     raw: s,
   };
@@ -77,6 +83,8 @@ function normalizeToolName(t: string): string {
     listdir: "list_dir",
     web_search: "web_search",
     websearch: "web_search",
+    web_fetch: "web_fetch",
+    webfetch: "web_fetch",
     "*": "*",
   };
   return map[lower] || lower;

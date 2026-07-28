@@ -338,6 +338,14 @@ describe("doctor surfaces reliability", () => {
     const check = await runDoctorCheck(cfg);
     const report = check.report;
     assert.equal(await runDoctor(cfg), report);
+    assert.equal(typeof check.modelInCatalog, "boolean");
+    // default xai/grok-4.5 is in catalog
+    assert.equal(check.modelInCatalog, true);
+    const custom = await runDoctorCheck(
+      loadConfig({ model: "totally-not-in-catalog-xyz" }),
+    );
+    assert.equal(custom.modelInCatalog, false);
+    assert.match(custom.report, /not in xai catalog/i);
     const home = forgeHome();
     const secureFiles = {
       auth: inspectSecureFile(path.join(home, "auth.json")),
@@ -380,6 +388,7 @@ describe("doctor surfaces reliability", () => {
       })(),
       secureFiles,
       blockingStop: check.blockingStop,
+      modelInCatalog: check.modelInCatalog,
       issues: check.issues,
       report,
     };
@@ -401,6 +410,8 @@ describe("doctor surfaces reliability", () => {
     assert.equal(typeof payload.metrics.bytes, "number");
     assert.equal(typeof payload.blockingStop, "boolean");
     assert.equal(payload.blockingStop, true);
+    assert.equal(typeof payload.modelInCatalog, "boolean");
+    assert.equal(payload.modelInCatalog, true);
     assert.equal(typeof payload.maxTurns, "number");
     assert.equal(payload.maxTurnsUnlimited, true);
     // Operator knobs (bash timeouts) — defaults when env unset; mirror doctor --json fields
@@ -714,6 +725,10 @@ describe("doom-loop", () => {
       toolFingerprint("bash", { command: "npm test", background: false }),
     );
     assert.equal(
+      toolFingerprint("bash", { command: "npm test", run_in_background: true }),
+      toolFingerprint("bash", { command: "npm test", background: false }),
+    );
+    assert.equal(
       toolFingerprint("get_task_output", { task_id: "t1", tail: 50 }),
       toolFingerprint("get_task_output", { task_id: "t1", tail: 200, stream: "stdout" }),
     );
@@ -739,6 +754,13 @@ describe("error-streak", () => {
     );
     assert.equal(isCountableToolError("Aborted", true), false);
     assert.equal(isCountableToolError("Aborted by user", true), false);
+    assert.equal(
+      isCountableToolError(
+        "Task bg_x is already completed (exit 0) · sleep 1\nUse get_task_output…",
+        true,
+      ),
+      false,
+    );
     assert.equal(isCountableToolError("File not found: a.ts", true), true);
     assert.equal(t.observeError("read_file", "missing a"), null);
     assert.equal(t.observeError("edit", "no match"), null);
@@ -955,7 +977,7 @@ describe("session fork / export / tmp recover", () => {
     assert.equal(setSessionTitle(s, ""), undefined);
     assert.equal(loadSession(s.meta.id)!.meta.title, undefined);
     maybeSetTitle(s, "auto from first message that is quite long ".repeat(5));
-    assert.ok((s.meta.title || "").length <= 72);
+    assert.ok((s.meta.title || "").length <= 200);
     // maybeSetTitle does not overwrite explicit titles
     setSessionTitle(s, "keep-me");
     maybeSetTitle(s, "should-not-apply");
@@ -1259,6 +1281,8 @@ describe("session metrics + permission timeout", () => {
     assert.match(card, /\/path/);
     assert.match(card, /Last assistant:/);
     assert.doesNotMatch(card, /api[_-]?key|sk-|password/i);
+    assert.match(card, /fail-closed if none/);
+    assert.match(card, /forge tips --json/);
   });
 
   it("collectUsageStats aggregates runs and session inventory", async () => {
@@ -1525,6 +1549,9 @@ describe("shell completion", () => {
       /show path export import fork pin unpin title rename delete prune/,
     );
     assert.match(out, /prune-metrics/);
+    assert.match(out, /doctor\).*--provider|doctor\).*--sandbox/);
+    assert.match(out, /models\).*--provider/);
+    assert.match(out, /doctor\).*\s-p|models\).*\s-p/);
     assert.match(out, /--session/);
     assert.match(out, /top_flags/);
     assert.match(out, /--new/);
@@ -1533,6 +1560,16 @@ describe("shell completion", () => {
     assert.match(out, /local top_flags="[^"]*--json[^"]*"/);
     assert.match(out, /local top_flags="[^"]*--continue[^"]*"/);
     assert.match(out, /--sandbox/);
+    assert.match(out, /acceptEdits plan bypassPermissions dontAsk/);
+    assert.match(out, /\byolo\b/);
+    assert.match(out, /\boai\b/);
+    assert.match(out, /\bhaiku\b/);
+    assert.match(out, /\blo med hi\b|compgen -W "low medium high lo med hi max"/);
+    assert.match(out, /readonly ro ws none full/);
+    assert.match(out, /0 all max unlimited/);
+    assert.match(out, /0 all none off 7 14 30/);
+    assert.match(out, /all max unlimited 10 50/);
+    assert.match(out, /fail-closed fallback/);
     assert.match(out, /--sandbox-network/);
     assert.match(out, /--deny/);
     assert.match(out, /--format/);
@@ -1555,8 +1592,10 @@ describe("shell completion", () => {
     assert.match(zsh, /\bstats\b/);
     assert.match(zsh, /delete\).*--force|values 'delete' --json --force/);
     assert.match(zsh, /values 'list' --json --limit -n --cwd --query -q --pinned/);
-    assert.match(zsh, /values 'login'.*--json|login\).*--json/);
+        assert.match(zsh, /permission-mode.*dontAsk|values 'permission-mode'.*dontAsk/);
+assert.match(zsh, /values 'login'.*--json|login\).*--json/);
     assert.match(zsh, /values 'logout'.*--json|logout\).*--json/);
+    assert.match(zsh, /doctor\).*--provider|models\).*--provider|values 'flags' --json --provider/);
     const fish = shellCompletionScript("fish");
     assert.match(fish, /complete -c forge/);
     assert.match(fish, /l new/);
@@ -1566,11 +1605,22 @@ describe("shell completion", () => {
     assert.match(fish, /md json markdown/);
     assert.match(fish, /l force/);
     assert.match(fish, /l query/);
-    assert.match(fish, /l title/);
-    assert.match(fish, /l continue/);
+        assert.match(fish, /l title/);
+    assert.match(fish, /seen_subcommand_from models.*l provider|models" -l provider/);
+    assert.match(fish, /seen_subcommand_from doctor.*l provider|doctor" -l provider/);
+assert.match(fish, /l continue/);
     assert.match(fish, /stats/);
     assert.match(fish, /__fish_seen_subcommand_from login.*l json|login.*-l json/);
     assert.match(fish, /__fish_seen_subcommand_from logout.*l json|logout.*-l json/);
+
+    const {
+      normalizeCompletionShell,
+    } = await import("../src/util/completion-script.js");
+    assert.equal(normalizeCompletionShell("bash"), "bash");
+    assert.equal(normalizeCompletionShell(""), "bash");
+    assert.equal(normalizeCompletionShell("ZSH"), "zsh");
+    assert.equal(normalizeCompletionShell("bogus"), null);
+    assert.throws(() => shellCompletionScript("powershell"), /Unknown completion shell/);
   });
 });
 
@@ -2142,6 +2192,41 @@ describe("clipboard helper", () => {
   });
 });
 
+describe("/sessions prune keep validation", () => {
+  it("rejects invalid --keep", async () => {
+    const fs = await import("node:fs");
+    const path = await import("node:path");
+    const home = fs.mkdtempSync(path.join(process.cwd(), ".tmp", "forge-slash-prune-"));
+    process.env.FORGE_HOME = home;
+    const { createSession } = await import("../src/session/session.js");
+    const { handleSlash } = await import("../src/commands/slash.js");
+    const { DEFAULT_CONFIG } = await import("../src/config/types.js");
+    const { HookRunner } = await import("../src/harness/hooks.js");
+    const s = createSession({ cwd: home, provider: "xai", model: "m" });
+    const hooks = new HookRunner(DEFAULT_CONFIG, home);
+    const r = await handleSlash("/sessions prune --keep abc", {
+      session: s,
+      config: DEFAULT_CONFIG,
+      hooks,
+    });
+    assert.equal(r.handled, true);
+    assert.match(String(r.output || ""), /Invalid --keep/i);
+  });
+});
+
+describe("parseCliNonNegInt", () => {
+  it("distinguishes omit / invalid / zero", async () => {
+    const { parseCliNonNegInt } = await import("../src/util/env.js");
+    assert.equal(parseCliNonNegInt(undefined), undefined);
+    assert.equal(parseCliNonNegInt(null), undefined);
+    assert.equal(parseCliNonNegInt(""), null);
+    assert.equal(parseCliNonNegInt("abc"), null);
+    assert.equal(parseCliNonNegInt("-1"), null);
+    assert.equal(parseCliNonNegInt("0"), 0);
+    assert.equal(parseCliNonNegInt("12"), 12);
+  });
+});
+
 describe("forge run --json early failures (CLI)", () => {
   it("emits structured empty_prompt and session_not_found (parent --session)", async () => {
     const { spawnSync } = await import("node:child_process");
@@ -2186,6 +2271,30 @@ describe("forge run --json early failures (CLI)", () => {
     assert.equal(missJson.ok, false);
     assert.equal(missJson.reason, "session_not_found");
     assert.match(String(missJson.session || ""), /zzz-no-such-id-ever-47/);
+    assert.ok(Array.isArray(missJson.suggestions), "suggestions[] for CI recovery");
+  });
+
+
+  it("unknown_option --json includes suggestion/hint for flag typos", async () => {
+    const { spawnSync } = await import("node:child_process");
+    const path = await import("node:path");
+    const fs = await import("node:fs");
+    const cli = path.join(process.cwd(), "dist", "cli.js");
+    if (!fs.existsSync(cli)) return;
+    const home = path.join(process.cwd(), ".tmp", `forge-unk-opt-${process.pid}`);
+    fs.mkdirSync(home, { recursive: true });
+    const env = { ...process.env, FORGE_HOME: home, XAI_API_KEY: "sk-test" };
+    const r = spawnSync(
+      process.execPath,
+      [cli, "run", "x", "--josn", "--json"],
+      { env, encoding: "utf8" },
+    );
+    assert.notEqual(r.status, 0);
+    const j = JSON.parse((r.stdout || "").trim());
+    assert.equal(j.ok, false);
+    assert.equal(j.reason, "unknown_option");
+    assert.equal(j.suggestion, "--json");
+    assert.match(String(j.hint || ""), /json/i);
   });
 
   it("forge login --json is quiet and never echoes the key", async () => {
@@ -2341,6 +2450,1343 @@ describe("forge run --json early failures (CLI)", () => {
     const docEJ = JSON.parse((docEmpty.stdout || "").trim());
     assert.equal(docEJ.ok, false);
     assert.equal(docEJ.reason, "invalid_provider");
+  });
+
+  it("explicit --continue fails closed when no same-cwd session", async () => {
+    const { spawnSync } = await import("node:child_process");
+    const path = await import("node:path");
+    const fs = await import("node:fs");
+    const cli = path.join(process.cwd(), "dist", "cli.js");
+    if (!fs.existsSync(cli)) return;
+    const home = path.join(process.cwd(), ".tmp", `forge-continue-miss-${process.pid}`);
+    fs.mkdirSync(home, { recursive: true });
+    const env = {
+      ...process.env,
+      FORGE_HOME: home,
+      XAI_API_KEY: process.env.XAI_API_KEY || "sk-test-forge-cli",
+    };
+
+    const miss = spawnSync(
+      process.execPath,
+      [cli, "run", "next", "--continue", "--json"],
+      { env, encoding: "utf8", cwd: home },
+    );
+    assert.notEqual(miss.status, 0);
+    const missJ = JSON.parse((miss.stdout || "").trim());
+    assert.equal(missJ.ok, false);
+    assert.equal(missJ.reason, "continue_miss");
+    assert.ok(String(missJ.error || "").length > 0);
+
+    // bare forge --continue --json same contract
+    const bare = spawnSync(
+      process.execPath,
+      [cli, "next", "--continue", "--json"],
+      { env, encoding: "utf8", cwd: home },
+    );
+    assert.notEqual(bare.status, 0);
+    const bareJ = JSON.parse((bare.stdout || "").trim());
+    assert.equal(bareJ.ok, false);
+    assert.equal(bareJ.reason, "continue_miss");
+
+    // tips / completion / init --json hygiene
+    const tips = spawnSync(process.execPath, [cli, "tips", "--json"], {
+      env,
+      encoding: "utf8",
+    });
+    assert.equal(tips.status, 0);
+    const tipsJ = JSON.parse((tips.stdout || "").trim());
+    assert.equal(tipsJ.ok, true);
+    assert.match(String(tipsJ.tips || ""), /forge doctor --json|--continue/);
+
+    const badShell = spawnSync(
+      process.execPath,
+      [cli, "completion", "powershell", "--json"],
+      { env, encoding: "utf8" },
+    );
+    assert.notEqual(badShell.status, 0);
+    const badShellJ = JSON.parse((badShell.stdout || "").trim());
+    assert.equal(badShellJ.ok, false);
+    assert.equal(badShellJ.reason, "invalid_shell");
+
+    const okShell = spawnSync(
+      process.execPath,
+      [cli, "completion", "bash", "--json"],
+      { env, encoding: "utf8" },
+    );
+    assert.equal(okShell.status, 0);
+    const okShellJ = JSON.parse((okShell.stdout || "").trim());
+    assert.equal(okShellJ.ok, true);
+    assert.equal(okShellJ.shell, "bash");
+    assert.match(String(okShellJ.script || ""), /_forge_completions/);
+
+    // init --json in an isolated cwd (do not clobber repo AGENTS.md)
+    const initCwd = path.join(home, "init-ws");
+    fs.mkdirSync(initCwd, { recursive: true });
+    const init = spawnSync(process.execPath, [cli, "init", "--json"], {
+      env,
+      encoding: "utf8",
+      cwd: initCwd,
+    });
+    assert.equal(init.status, 0);
+    const initJ = JSON.parse((init.stdout || "").trim());
+    assert.equal(initJ.ok, true);
+    assert.ok(Array.isArray(initJ.wrote));
+    assert.ok(initJ.wrote.some((p: string) => p.endsWith("config.toml")));
+  });
+
+  it("invalid news count and status --interval fail closed", async () => {
+    const { spawnSync } = await import("node:child_process");
+    const path = await import("node:path");
+    const fs = await import("node:fs");
+    const cli = path.join(process.cwd(), "dist", "cli.js");
+    if (!fs.existsSync(cli)) return;
+    const home = path.join(process.cwd(), ".tmp", `forge-news-interval-${process.pid}`);
+    fs.mkdirSync(home, { recursive: true });
+    const env = { ...process.env, FORGE_HOME: home };
+
+    const news = spawnSync(
+      process.execPath,
+      [cli, "news", "abc", "--json"],
+      { env, encoding: "utf8" },
+    );
+    assert.notEqual(news.status, 0);
+    const nj = JSON.parse((news.stdout || "").trim());
+    assert.equal(nj.ok, false);
+    assert.equal(nj.reason, "invalid_count");
+
+    for (const bad of ["0", "11", "100"]) {
+      const nBad = spawnSync(
+        process.execPath,
+        [cli, "news", bad, "--json"],
+        { env, encoding: "utf8" },
+      );
+      assert.notEqual(nBad.status, 0, bad);
+      const body = (nBad.stdout || "").trim();
+      assert.ok(body, `expected JSON stdout for news ${bad}`);
+      assert.equal(JSON.parse(body).reason, "invalid_count", bad);
+    }
+
+    // all|full|max → cap (10); latest → 1
+    for (const good of ["all", "full", "max", "latest"] as const) {
+      const nOk = spawnSync(
+        process.execPath,
+        [cli, "news", good, "--json"],
+        { env, encoding: "utf8" },
+      );
+      assert.equal(nOk.status, 0, good + " " + (nOk.stderr || nOk.stdout));
+      const body = JSON.parse((nOk.stdout || "").trim());
+      assert.equal(body.ok, true, good);
+      assert.ok(typeof body.version === "string" && body.version.length > 0, good);
+      assert.ok(Array.isArray(body.releases), good);
+      if (good === "latest") assert.ok(body.count <= 1, good);
+      else assert.ok(body.count <= 10, good);
+    }
+
+    const interval = spawnSync(
+      process.execPath,
+      [cli, "status", "--watch", "--interval", "nope", "--json"],
+      { env, encoding: "utf8", timeout: 3000 },
+    );
+    assert.notEqual(interval.status, 0);
+    const ij = JSON.parse((interval.stdout || "").trim());
+    assert.equal(ij.ok, false);
+    assert.equal(ij.reason, "invalid_interval");
+
+    // Invalid --interval fails closed even without --watch (shared scripts).
+    const intervalNoWatch = spawnSync(
+      process.execPath,
+      [cli, "status", "--interval", "nope", "--json"],
+      { env, encoding: "utf8", timeout: 3000 },
+    );
+    assert.notEqual(intervalNoWatch.status, 0);
+    const ij2 = JSON.parse((intervalNoWatch.stdout || "").trim());
+    assert.equal(ij2.ok, false);
+    assert.equal(ij2.reason, "invalid_interval");
+  });
+
+  it("status --watch --json is single-shot (no hang)", async () => {
+    const { spawnSync } = await import("node:child_process");
+    const path = await import("node:path");
+    const fs = await import("node:fs");
+    const cli = path.join(process.cwd(), "dist", "cli.js");
+    if (!fs.existsSync(cli)) return;
+    const home = path.join(process.cwd(), ".tmp", `forge-status-watch-json-${process.pid}`);
+    fs.mkdirSync(home, { recursive: true });
+    const env = { ...process.env, FORGE_HOME: home };
+    const r = spawnSync(
+      process.execPath,
+      [cli, "status", "--watch", "--json"],
+      { env, encoding: "utf8", timeout: 8_000 },
+    );
+    assert.equal(r.error, undefined, String(r.error || ""));
+    assert.equal(r.status, 0, r.stderr || r.stdout);
+    const j = JSON.parse((r.stdout || "").trim());
+    assert.equal(j.ok, true);
+    assert.ok(Array.isArray(j.sessions));
+  });
+
+
+  it("unknown CLI option with --json is structured", async () => {
+    const { spawnSync } = await import("node:child_process");
+    const path = await import("node:path");
+    const fs = await import("node:fs");
+    const cli = path.join(process.cwd(), "dist", "cli.js");
+    if (!fs.existsSync(cli)) return;
+    const home = path.join(process.cwd(), ".tmp", `forge-unknown-opt-${process.pid}`);
+    fs.mkdirSync(home, { recursive: true });
+    const env = { ...process.env, FORGE_HOME: home };
+    const r = spawnSync(
+      process.execPath,
+      [cli, "run", "x", "--not-a-real-flag", "--json"],
+      { env, encoding: "utf8" },
+    );
+    assert.notEqual(r.status, 0);
+    const j = JSON.parse((r.stdout || "").trim());
+    assert.equal(j.ok, false);
+    assert.equal(j.reason, "unknown_option");
+    assert.match(String(j.error || ""), /not-a-real-flag/);
+  });
+
+
+  it("permission-mode aliases deny/dont-ask → dontAsk", async () => {
+    const { spawnSync } = await import("node:child_process");
+    const path = await import("node:path");
+    const fs = await import("node:fs");
+    const cli = path.join(process.cwd(), "dist", "cli.js");
+    if (!fs.existsSync(cli)) return;
+    const home = path.join(process.cwd(), ".tmp", `forge-perm-alias-${process.pid}`);
+    fs.mkdirSync(home, { recursive: true });
+    const env = { ...process.env, FORGE_HOME: home };
+    for (const alias of ["deny", "dont-ask", "yolo"]) {
+      const r = spawnSync(
+        process.execPath,
+        [cli, "run", "x", "--permission-mode", alias, "--json"],
+        { env, encoding: "utf8" },
+      );
+      // Should not be invalid_permission_mode (unauthenticated is fine)
+      const j = JSON.parse((r.stdout || "").trim());
+      assert.notEqual(j.reason, "invalid_permission_mode", alias);
+      assert.ok(
+        j.reason === "unauthenticated" || j.ok === true,
+        `${alias} → ${j.reason}`,
+      );
+    }
+  });
+
+
+  it("sandbox-missing aliases fail_closed/failclosed → fail-closed", async () => {
+    const { spawnSync } = await import("node:child_process");
+    const path = await import("node:path");
+    const fs = await import("node:fs");
+    const cli = path.join(process.cwd(), "dist", "cli.js");
+    if (!fs.existsSync(cli)) return;
+    const home = path.join(process.cwd(), ".tmp", `forge-sb-miss-${process.pid}`);
+    fs.mkdirSync(home, { recursive: true });
+    const env = { ...process.env, FORGE_HOME: home };
+    for (const a of ["fail_closed", "failclosed"]) {
+      const r = spawnSync(
+        process.execPath,
+        [cli, "run", "x", "--sandbox-missing", a, "--json"],
+        { env, encoding: "utf8" },
+      );
+      const j = JSON.parse((r.stdout || "").trim());
+      assert.notEqual(j.reason, "invalid_sandbox_missing", a);
+      assert.ok(j.reason === "unauthenticated" || j.ok === true, a + " " + j.reason);
+    }
+  });
+
+
+  it("sandbox/provider aliases resolve (readonly, claude, gpt)", async () => {
+    const { spawnSync } = await import("node:child_process");
+    const path = await import("node:path");
+    const fs = await import("node:fs");
+    const cli = path.join(process.cwd(), "dist", "cli.js");
+    if (!fs.existsSync(cli)) return;
+    const home = path.join(process.cwd(), ".tmp", `forge-alias-sp-${process.pid}`);
+    fs.mkdirSync(home, { recursive: true });
+    const env = { ...process.env, FORGE_HOME: home };
+    for (const [flag, val] of [
+      ["--sandbox", "readonly"],
+      ["--sandbox", "ro"],
+      ["--sandbox-network", "none"],
+      ["--sandbox-network", "open"],
+      ["-p", "claude"],
+      ["-p", "gpt"],
+      ["-p", "gemini"],
+    ] as const) {
+      const r = spawnSync(
+        process.execPath,
+        [cli, "run", "x", flag, val, "--json"],
+        { env, encoding: "utf8" },
+      );
+      const j = JSON.parse((r.stdout || "").trim());
+      const badReason =
+        flag === "-p"
+          ? "invalid_provider"
+          : flag === "--sandbox-network"
+            ? "invalid_sandbox_network"
+            : "invalid_sandbox";
+      assert.notEqual(j.reason, badReason, `${flag} ${val} → ${j.reason}`);
+      assert.ok(
+        j.reason === "unauthenticated" || j.ok === true,
+        `${flag} ${val} → ${j.reason}`,
+      );
+    }
+  });
+
+
+  it("max-turns empty/invalid fail closed; 0 unlimited", async () => {
+    const { spawnSync } = await import("node:child_process");
+    const path = await import("node:path");
+    const fs = await import("node:fs");
+    const cli = path.join(process.cwd(), "dist", "cli.js");
+    if (!fs.existsSync(cli)) return;
+    const home = path.join(process.cwd(), ".tmp", `forge-max-turns-${process.pid}`);
+    fs.mkdirSync(home, { recursive: true });
+    const env = { ...process.env, FORGE_HOME: home };
+    for (const bad of ["", "abc", "-1", "1.5", "100001"]) {
+      const r = spawnSync(
+        process.execPath,
+        [cli, "run", "x", "--max-turns", bad, "--json"],
+        { env, encoding: "utf8" },
+      );
+      assert.notEqual(r.status, 0, bad);
+      const j = JSON.parse((r.stdout || "").trim());
+      assert.equal(j.reason, "invalid_max_turns", bad);
+    }
+    const ok = spawnSync(
+      process.execPath,
+      [cli, "run", "x", "--max-turns", "0", "--json"],
+      { env, encoding: "utf8" },
+    );
+    // unauthenticated is fine — not invalid_max_turns
+    const oj = JSON.parse((ok.stdout || "").trim());
+    assert.notEqual(oj.reason, "invalid_max_turns");
+  });
+
+
+  it("invalid --base-url fails closed before API", async () => {
+    const { spawnSync } = await import("node:child_process");
+    const path = await import("node:path");
+    const fs = await import("node:fs");
+    const cli = path.join(process.cwd(), "dist", "cli.js");
+    if (!fs.existsSync(cli)) return;
+    const home = path.join(process.cwd(), ".tmp", `forge-baseurl-${process.pid}`);
+    fs.mkdirSync(home, { recursive: true });
+    const env = { ...process.env, FORGE_HOME: home };
+
+    for (const url of ["not-a-url", "ftp://example.com", "http://"]) {
+      // http:// alone may parse — still require hostname-ish; we only check protocol+URL parse
+    }
+    const bad = spawnSync(
+      process.execPath,
+      [cli, "run", "x", "--base-url", "not-a-url", "--json"],
+      { env, encoding: "utf8" },
+    );
+    assert.notEqual(bad.status, 0);
+    const bj = JSON.parse((bad.stdout || "").trim());
+    assert.equal(bj.reason, "invalid_base_url");
+
+    const ftp = spawnSync(
+      process.execPath,
+      [cli, "run", "x", "--base-url", "ftp://x.example", "--json"],
+      { env, encoding: "utf8" },
+    );
+    assert.notEqual(ftp.status, 0);
+    const fj = JSON.parse((ftp.stdout || "").trim());
+    assert.equal(fj.reason, "invalid_base_url");
+
+    const emptyHost = spawnSync(
+      process.execPath,
+      [cli, "run", "x", "--base-url", "https://", "--json"],
+      { env, encoding: "utf8" },
+    );
+    assert.notEqual(emptyHost.status, 0);
+    const eh = JSON.parse((emptyHost.stdout || "").trim());
+    assert.equal(eh.reason, "invalid_base_url");
+  });
+
+  it("continue+new and session+new fail closed", async () => {
+    const { spawnSync } = await import("node:child_process");
+    const path = await import("node:path");
+    const fs = await import("node:fs");
+    const cli = path.join(process.cwd(), "dist", "cli.js");
+    if (!fs.existsSync(cli)) return;
+    const home = path.join(process.cwd(), ".tmp", `forge-conflict-${process.pid}`);
+    fs.mkdirSync(home, { recursive: true });
+    const env = { ...process.env, FORGE_HOME: home };
+
+    const cn = spawnSync(
+      process.execPath,
+      [cli, "run", "x", "--continue", "--new", "--json"],
+      { env, encoding: "utf8" },
+    );
+    assert.notEqual(cn.status, 0);
+    const cj = JSON.parse((cn.stdout || "").trim());
+    assert.equal(cj.reason, "conflicting_flags");
+
+    const sn = spawnSync(
+      process.execPath,
+      [cli, "run", "x", "--session", "abc", "--new", "--json"],
+      { env, encoding: "utf8" },
+    );
+    assert.notEqual(sn.status, 0);
+    const sj = JSON.parse((sn.stdout || "").trim());
+    assert.equal(sj.reason, "conflicting_flags");
+  });
+
+  it("forge --version --json is structured", async () => {
+    const { spawnSync } = await import("node:child_process");
+    const path = await import("node:path");
+    const fs = await import("node:fs");
+    const cli = path.join(process.cwd(), "dist", "cli.js");
+    if (!fs.existsSync(cli)) return;
+    const r = spawnSync(
+      process.execPath,
+      [cli, "--version", "--json"],
+      { encoding: "utf8" },
+    );
+    assert.equal(r.status, 0);
+    const j = JSON.parse((r.stdout || "").trim());
+    assert.equal(j.ok, true);
+    assert.match(String(j.version || ""), /^\d+\.\d+/);
+    assert.equal(j.name, "forge");
+    assert.match(String(j.node || ""), /^v\d+/);
+  });
+
+  it("effort/sandbox-network/missing typos suggest enum values", async () => {
+    const { spawnSync } = await import("node:child_process");
+    const path = await import("node:path");
+    const fs = await import("node:fs");
+    const cli = path.join(process.cwd(), "dist", "cli.js");
+    if (!fs.existsSync(cli)) return;
+    const home = path.join(process.cwd(), ".tmp", `forge-effort-typo-${process.pid}`);
+    fs.mkdirSync(home, { recursive: true });
+    const env = { ...process.env, FORGE_HOME: home };
+
+    const effort = spawnSync(
+      process.execPath,
+      [cli, "run", "x", "--effort", "medum", "--json"],
+      { env, encoding: "utf8" },
+    );
+    assert.notEqual(effort.status, 0);
+    const ej = JSON.parse((effort.stdout || "").trim());
+    assert.equal(ej.reason, "invalid_effort");
+    assert.equal(ej.suggestion, "medium");
+
+    const net = spawnSync(
+      process.execPath,
+      [cli, "run", "x", "--sandbox-network", "blokced", "--json"],
+      { env, encoding: "utf8" },
+    );
+    assert.notEqual(net.status, 0);
+    const nj = JSON.parse((net.stdout || "").trim());
+    assert.equal(nj.reason, "invalid_sandbox_network");
+    assert.equal(nj.suggestion, "blocked");
+
+    const miss = spawnSync(
+      process.execPath,
+      [cli, "run", "x", "--sandbox-missing", "fallbak", "--json"],
+      { env, encoding: "utf8" },
+    );
+    assert.notEqual(miss.status, 0);
+    const mj = JSON.parse((miss.stdout || "").trim());
+    assert.equal(mj.reason, "invalid_sandbox_missing");
+    assert.equal(mj.suggestion, "fallback");
+  });
+
+  it("sandbox/permission-mode typos suggest enum values", async () => {
+    const { spawnSync } = await import("node:child_process");
+    const path = await import("node:path");
+    const fs = await import("node:fs");
+    const cli = path.join(process.cwd(), "dist", "cli.js");
+    if (!fs.existsSync(cli)) return;
+    const home = path.join(process.cwd(), ".tmp", `forge-enum-typo-${process.pid}`);
+    fs.mkdirSync(home, { recursive: true });
+    const env = { ...process.env, FORGE_HOME: home };
+
+    const sb = spawnSync(
+      process.execPath,
+      [cli, "run", "x", "--sandbox", "workspac", "--json"],
+      { env, encoding: "utf8" },
+    );
+    assert.notEqual(sb.status, 0);
+    const sj = JSON.parse((sb.stdout || "").trim());
+    assert.equal(sj.reason, "invalid_sandbox");
+    assert.equal(sj.suggestion, "workspace");
+
+    const pm = spawnSync(
+      process.execPath,
+      [cli, "run", "x", "--permission-mode", "aceptEdits", "--json"],
+      { env, encoding: "utf8" },
+    );
+    assert.notEqual(pm.status, 0);
+    const pj = JSON.parse((pm.stdout || "").trim());
+    assert.equal(pj.reason, "invalid_permission_mode");
+    assert.equal(pj.suggestion, "acceptEdits");
+  });
+
+  it("provider/model typos suggest catalog names", async () => {
+    const { spawnSync } = await import("node:child_process");
+    const path = await import("node:path");
+    const fs = await import("node:fs");
+    const cli = path.join(process.cwd(), "dist", "cli.js");
+    if (!fs.existsSync(cli)) return;
+    const home = path.join(process.cwd(), ".tmp", `forge-model-typo-${process.pid}`);
+    fs.mkdirSync(home, { recursive: true });
+    const env = { ...process.env, FORGE_HOME: home };
+
+    const prov = spawnSync(
+      process.execPath,
+      [cli, "run", "x", "--provider", "xaai", "--json"],
+      { env, encoding: "utf8" },
+    );
+    assert.notEqual(prov.status, 0);
+    const pj = JSON.parse((prov.stdout || "").trim());
+    assert.equal(pj.reason, "invalid_provider");
+    assert.equal(pj.suggestion, "xai");
+
+    const model = spawnSync(
+      process.execPath,
+      [cli, "run", "x", "--model", "grok-45", "--json"],
+      { env, encoding: "utf8" },
+    );
+    assert.notEqual(model.status, 0);
+    const mj = JSON.parse((model.stdout || "").trim());
+    assert.equal(mj.reason, "invalid_model");
+    assert.equal(mj.suggestion, "grok-4.5");
+
+    // Free-form unknown model is not rejected at preflight (API may still 400)
+    const free = spawnSync(
+      process.execPath,
+      [cli, "run", "x", "--model", "my-custom-finetune-v3", "--json"],
+      { env, encoding: "utf8", timeout: 30_000 },
+    );
+    const fj = JSON.parse((free.stdout || "").trim() || "{}");
+    assert.notEqual(fj.reason, "invalid_model");
+  });
+
+  it("forge sessions search applies query (parity with -q)", async () => {
+    const { spawnSync } = await import("node:child_process");
+    const path = await import("node:path");
+    const fs = await import("node:fs");
+    const { createSession, saveSession, setSessionTitle } = await import(
+      "../src/session/session.js"
+    );
+    const cli = path.join(process.cwd(), "dist", "cli.js");
+    if (!fs.existsSync(cli)) return;
+    const home = path.join(process.cwd(), ".tmp", `forge-sess-search-${process.pid}`);
+    fs.mkdirSync(home, { recursive: true });
+    const env = { ...process.env, FORGE_HOME: home };
+    process.env.FORGE_HOME = home; // createSession/saveSession read process env
+    const s = createSession({ cwd: home, provider: "xai", model: "m" });
+    setSessionTitle(s, "incident-42");
+    saveSession(s);
+
+    const search = spawnSync(
+      process.execPath,
+      [cli, "sessions", "search", "incident", "--json"],
+      { env, encoding: "utf8" },
+    );
+    assert.equal(search.status, 0);
+    const sj = JSON.parse((search.stdout || "").trim());
+    assert.equal(sj.ok, true);
+    assert.equal(sj.query, "incident");
+    assert.ok(sj.count >= 1);
+
+    const empty = spawnSync(
+      process.execPath,
+      [cli, "sessions", "search", "--json"],
+      { env, encoding: "utf8" },
+    );
+    assert.notEqual(empty.status, 0);
+    const ej = JSON.parse((empty.stdout || "").trim());
+    assert.equal(ej.reason, "usage");
+  });
+
+  it("sessions action typos fail closed with suggestion", async () => {
+    const { spawnSync } = await import("node:child_process");
+    const path = await import("node:path");
+    const fs = await import("node:fs");
+    const cli = path.join(process.cwd(), "dist", "cli.js");
+    if (!fs.existsSync(cli)) return;
+    const home = path.join(process.cwd(), ".tmp", `forge-sess-action-${process.pid}`);
+    fs.mkdirSync(home, { recursive: true });
+    const env = { ...process.env, FORGE_HOME: home };
+
+    const prun = spawnSync(
+      process.execPath,
+      [cli, "sessions", "prun", "--json"],
+      { env, encoding: "utf8" },
+    );
+    assert.notEqual(prun.status, 0);
+    const pj = JSON.parse((prun.stdout || "").trim());
+    assert.equal(pj.ok, false);
+    assert.equal(pj.reason, "unknown_session_action");
+    assert.equal(pj.suggestion, "prune");
+
+    const serach = spawnSync(
+      process.execPath,
+      [cli, "sessions", "serach", "x", "--json"],
+      { env, encoding: "utf8" },
+    );
+    assert.notEqual(serach.status, 0);
+    const sj = JSON.parse((serach.stdout || "").trim());
+    assert.equal(sj.reason, "unknown_session_action");
+    assert.equal(sj.suggestion, "search");
+
+    // Real title query still works (ok:true empty list)
+    const title = spawnSync(
+      process.execPath,
+      [cli, "sessions", "incident-42", "--json"],
+      { env, encoding: "utf8" },
+    );
+    assert.equal(title.status, 0);
+    const tj = JSON.parse((title.stdout || "").trim());
+    assert.equal(tj.ok, true);
+    assert.equal(tj.query, "incident-42");
+  });
+
+  it("bare forge subcommand typo fails closed with suggestion", async () => {
+    const { spawnSync } = await import("node:child_process");
+    const path = await import("node:path");
+    const fs = await import("node:fs");
+    const cli = path.join(process.cwd(), "dist", "cli.js");
+    if (!fs.existsSync(cli)) return;
+    const home = path.join(process.cwd(), ".tmp", `forge-cmd-typo-${process.pid}`);
+    fs.mkdirSync(home, { recursive: true });
+    const env = { ...process.env, FORGE_HOME: home };
+
+    const typo = spawnSync(
+      process.execPath,
+      [cli, "sesions", "--json"],
+      { env, encoding: "utf8", timeout: 5000 },
+    );
+    assert.notEqual(typo.status, 0);
+    const j = JSON.parse((typo.stdout || "").trim());
+    assert.equal(j.ok, false);
+    assert.equal(j.reason, "command_typo");
+    assert.equal(j.suggestion, "sessions");
+
+    // Real short prompts must not false-positive
+    const hi = spawnSync(
+      process.execPath,
+      [cli, "hi", "--json"],
+      { env, encoding: "utf8", timeout: 5000 },
+    );
+    // may fail auth but must NOT be command_typo
+    const hout = (hi.stdout || "").trim();
+    if (hout.startsWith("{")) {
+      const hj = JSON.parse(hout);
+      assert.notEqual(hj.reason, "command_typo");
+    }
+  });
+
+  it("invalid --days/--lines fail closed", async () => {
+    const { spawnSync } = await import("node:child_process");
+    const path = await import("node:path");
+    const fs = await import("node:fs");
+    const cli = path.join(process.cwd(), "dist", "cli.js");
+    if (!fs.existsSync(cli)) return;
+    const home = path.join(process.cwd(), ".tmp", `forge-days-lines-${process.pid}`);
+    fs.mkdirSync(home, { recursive: true });
+    const env = { ...process.env, FORGE_HOME: home };
+
+    const days = spawnSync(
+      process.execPath,
+      [cli, "stats", "--days", "abc", "--json"],
+      { env, encoding: "utf8" },
+    );
+    assert.notEqual(days.status, 0);
+    const dj = JSON.parse((days.stdout || "").trim());
+    assert.equal(dj.ok, false);
+    assert.equal(dj.reason, "invalid_days");
+
+    const lines = spawnSync(
+      process.execPath,
+      [cli, "logs", "-n", "nope", "--json"],
+      { env, encoding: "utf8" },
+    );
+    assert.notEqual(lines.status, 0);
+    const lj = JSON.parse((lines.stdout || "").trim());
+    assert.equal(lj.ok, false);
+    assert.equal(lj.reason, "invalid_lines");
+  });
+
+  it("invalid --keep/--limit fail closed", async () => {
+    const { spawnSync } = await import("node:child_process");
+    const path = await import("node:path");
+    const fs = await import("node:fs");
+    const cli = path.join(process.cwd(), "dist", "cli.js");
+    if (!fs.existsSync(cli)) return;
+    const home = path.join(process.cwd(), ".tmp", `forge-keep-invalid-${process.pid}`);
+    fs.mkdirSync(home, { recursive: true });
+    const env = { ...process.env, FORGE_HOME: home };
+
+    const keep = spawnSync(
+      process.execPath,
+      [cli, "sessions", "prune", "--keep", "abc", "--json"],
+      { env, encoding: "utf8" },
+    );
+    assert.notEqual(keep.status, 0);
+    const kj = JSON.parse((keep.stdout || "").trim());
+    assert.equal(kj.ok, false);
+    assert.equal(kj.reason, "invalid_keep");
+
+    const limit = spawnSync(
+      process.execPath,
+      [cli, "sessions", "list", "--limit", "-3", "--json"],
+      { env, encoding: "utf8" },
+    );
+    assert.notEqual(limit.status, 0);
+    const lj = JSON.parse((limit.stdout || "").trim());
+    assert.equal(lj.ok, false);
+    assert.equal(lj.reason, "invalid_limit");
+
+    const age = spawnSync(
+      process.execPath,
+      [cli, "sessions", "prune", "--max-age-days", "nope", "--json"],
+      { env, encoding: "utf8" },
+    );
+    assert.notEqual(age.status, 0);
+    const aj = JSON.parse((age.stdout || "").trim());
+    assert.equal(aj.ok, false);
+    assert.equal(aj.reason, "invalid_max_age_days");
+  });
+
+  it("sessions list --limit above 10000 fails closed; 0 unlimited", async () => {
+    const { spawnSync } = await import("node:child_process");
+    const path = await import("node:path");
+    const fs = await import("node:fs");
+    const cli = path.join(process.cwd(), "dist", "cli.js");
+    if (!fs.existsSync(cli)) return;
+    const home = path.join(process.cwd(), ".tmp", `forge-limit-cap-${process.pid}`);
+    fs.mkdirSync(home, { recursive: true });
+    const env = { ...process.env, FORGE_HOME: home };
+    const over = spawnSync(
+      process.execPath,
+      [cli, "sessions", "list", "--limit", "10001", "--json"],
+      { env, encoding: "utf8" },
+    );
+    assert.notEqual(over.status, 0);
+    assert.equal(JSON.parse((over.stdout || "").trim()).reason, "invalid_limit");
+    const ok = spawnSync(
+      process.execPath,
+      [cli, "sessions", "list", "--limit", "0", "--json"],
+      { env, encoding: "utf8" },
+    );
+    assert.equal(ok.status, 0, ok.stderr || ok.stdout);
+    assert.equal(JSON.parse((ok.stdout || "").trim()).limit, 0);
+  });
+
+
+  it("status --cwd empty fails closed", async () => {
+    const { spawnSync } = await import("node:child_process");
+    const path = await import("node:path");
+    const fs = await import("node:fs");
+    const cli = path.join(process.cwd(), "dist", "cli.js");
+    if (!fs.existsSync(cli)) return;
+    const home = path.join(process.cwd(), ".tmp", `forge-status-cwd-${process.pid}`);
+    fs.mkdirSync(home, { recursive: true });
+    const env = { ...process.env, FORGE_HOME: home };
+    const r = spawnSync(
+      process.execPath,
+      [cli, "status", "--cwd", "", "--json"],
+      { env, encoding: "utf8" },
+    );
+    assert.notEqual(r.status, 0);
+    const j = JSON.parse((r.stdout || "").trim());
+    assert.equal(j.ok, false);
+    assert.equal(j.reason, "invalid_cwd");
+  });
+
+  it("logout -p empty fails closed (does not clear all)", async () => {
+    const { spawnSync } = await import("node:child_process");
+    const path = await import("node:path");
+    const fs = await import("node:fs");
+    const cli = path.join(process.cwd(), "dist", "cli.js");
+    if (!fs.existsSync(cli)) return;
+    const home = path.join(process.cwd(), ".tmp", `forge-logout-empty-${process.pid}`);
+    fs.mkdirSync(home, { recursive: true });
+    const env = { ...process.env, FORGE_HOME: home };
+    // Seed a credential
+    const login = spawnSync(
+      process.execPath,
+      [cli, "login", "--api-key", "sk-logout-guard", "--json"],
+      { env, encoding: "utf8" },
+    );
+    assert.equal(login.status, 0);
+    const empty = spawnSync(
+      process.execPath,
+      [cli, "logout", "-p", "", "--json"],
+      { env, encoding: "utf8" },
+    );
+    assert.notEqual(empty.status, 0);
+    const ej = JSON.parse((empty.stdout || "").trim());
+    assert.equal(ej.ok, false);
+    assert.equal(ej.reason, "invalid_provider");
+    // Credential must still exist
+    const auth = spawnSync(process.execPath, [cli, "auth", "--json"], {
+      env: { ...env, XAI_API_KEY: "" },
+      encoding: "utf8",
+    });
+    // may still be authenticated via stored key
+    const aj = JSON.parse((auth.stdout || "").trim());
+    assert.equal(aj.ok, true);
+    assert.equal(aj.authenticated, true);
+  });
+
+  it("sessions list -q empty fails closed", async () => {
+    const { spawnSync } = await import("node:child_process");
+    const path = await import("node:path");
+    const fs = await import("node:fs");
+    const cli = path.join(process.cwd(), "dist", "cli.js");
+    if (!fs.existsSync(cli)) return;
+    const home = path.join(process.cwd(), ".tmp", `forge-query-empty-${process.pid}`);
+    fs.mkdirSync(home, { recursive: true });
+    const env = { ...process.env, FORGE_HOME: home };
+    const r = spawnSync(
+      process.execPath,
+      [cli, "sessions", "list", "-q", "", "--json"],
+      { env, encoding: "utf8" },
+    );
+    assert.notEqual(r.status, 0);
+    const j = JSON.parse((r.stdout || "").trim());
+    assert.equal(j.ok, false);
+    assert.equal(j.reason, "invalid_query");
+  });
+
+  it("empty --goal fails closed", async () => {
+    const { spawnSync } = await import("node:child_process");
+    const path = await import("node:path");
+    const fs = await import("node:fs");
+    const cli = path.join(process.cwd(), "dist", "cli.js");
+    if (!fs.existsSync(cli)) return;
+    const home = path.join(process.cwd(), ".tmp", `forge-goal-empty-${process.pid}`);
+    fs.mkdirSync(home, { recursive: true });
+    const env = {
+      ...process.env,
+      FORGE_HOME: home,
+      XAI_API_KEY: process.env.XAI_API_KEY || "sk-test-forge-cli",
+    };
+    const r = spawnSync(
+      process.execPath,
+      [cli, "run", "x", "--goal", "", "--json"],
+      { env, encoding: "utf8" },
+    );
+    assert.notEqual(r.status, 0);
+    const j = JSON.parse((r.stdout || "").trim());
+    assert.equal(j.ok, false);
+    assert.equal(j.reason, "invalid_goal");
+  });
+
+  it("empty --deny/--allow/--ask fail closed", async () => {
+    const { spawnSync } = await import("node:child_process");
+    const path = await import("node:path");
+    const fs = await import("node:fs");
+    const cli = path.join(process.cwd(), "dist", "cli.js");
+    if (!fs.existsSync(cli)) return;
+    const home = path.join(process.cwd(), ".tmp", `forge-deny-empty-${process.pid}`);
+    fs.mkdirSync(home, { recursive: true });
+    const env = {
+      ...process.env,
+      FORGE_HOME: home,
+      XAI_API_KEY: process.env.XAI_API_KEY || "sk-test-forge-cli",
+    };
+    for (const [flag, reason] of [
+      ["--deny", "invalid_deny"],
+      ["--allow", "invalid_allow"],
+      ["--ask", "invalid_ask"],
+    ] as const) {
+      const r = spawnSync(
+        process.execPath,
+        [cli, "run", "x", flag, "", "--json"],
+        { env, encoding: "utf8" },
+      );
+      assert.notEqual(r.status, 0, flag);
+      const j = JSON.parse((r.stdout || "").trim());
+      assert.equal(j.ok, false, flag);
+      assert.equal(j.reason, reason, flag);
+    }
+  });
+
+  it("doctor flags invalid permission rules in config", async () => {
+    const fs = await import("node:fs");
+    const os = await import("node:os");
+    const path = await import("node:path");
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-doc-rules-"));
+    process.env.FORGE_HOME = tmp;
+    const { runDoctorCheck } = await import("../src/commands/slash.js");
+    const { DEFAULT_CONFIG } = await import("../src/config/types.js");
+    const cfg = {
+      ...DEFAULT_CONFIG,
+      permission: {
+        deny: ["Bash()", "Bash(rm *)"],
+        allow: ["Read()"],
+        ask: [],
+        rules: [],
+      },
+    };
+    const check = await runDoctorCheck(cfg as any);
+    assert.equal(check.ok, false);
+    assert.ok(
+      check.issues.some((i) => /Invalid permission rule/i.test(i)),
+      check.issues.join(" | "),
+    );
+    assert.ok(
+      check.issues.some((i) => /Bash\(\)/.test(i)),
+      check.issues.join(" | "),
+    );
+
+    // Non-array deny must not be character-iterated
+    const checkStr = await runDoctorCheck({
+      ...DEFAULT_CONFIG,
+      permission: {
+        deny: "Bash()" as unknown as string[],
+        allow: [],
+        ask: [],
+        rules: [],
+      },
+    } as any);
+    assert.ok(
+      checkStr.issues.some((i) => /non-array|Invalid permission rule/i.test(i)),
+      checkStr.issues.join(" | "),
+    );
+    assert.ok(
+      !checkStr.issues.some((i) => /deny: \(/.test(i)),
+      "must not iterate string chars: " + checkStr.issues.join(" | "),
+    );
+  });
+
+  it("empty Tool() permission rules fail closed", async () => {
+    const { spawnSync } = await import("node:child_process");
+    const path = await import("node:path");
+    const fs = await import("node:fs");
+    const cli = path.join(process.cwd(), "dist", "cli.js");
+    if (!fs.existsSync(cli)) return;
+    const home = path.join(process.cwd(), ".tmp", `forge-empty-rule-${process.pid}`);
+    fs.mkdirSync(home, { recursive: true });
+    const env = { ...process.env, FORGE_HOME: home };
+
+    const deny = spawnSync(
+      process.execPath,
+      [cli, "run", "x", "--deny", "Bash()", "--json"],
+      { env, encoding: "utf8" },
+    );
+    assert.notEqual(deny.status, 0);
+    const dj = JSON.parse((deny.stdout || "").trim());
+    assert.equal(dj.reason, "invalid_deny");
+    assert.match(String(dj.error || ""), /Bash\(\)|empty Tool/i);
+
+    // bare tool and Tool(*) still valid (may proceed to auth/run)
+    const bare = spawnSync(
+      process.execPath,
+      [cli, "run", "x", "--deny", "Bash", "--json"],
+      { env, encoding: "utf8", timeout: 30_000 },
+    );
+    const bj = JSON.parse((bare.stdout || "").trim() || "{}");
+    assert.notEqual(bj.reason, "invalid_deny");
+  });
+
+
+  it("sessions list --cwd empty fails closed", async () => {
+    const { spawnSync } = await import("node:child_process");
+    const path = await import("node:path");
+    const fs = await import("node:fs");
+    const cli = path.join(process.cwd(), "dist", "cli.js");
+    if (!fs.existsSync(cli)) return;
+    const home = path.join(process.cwd(), ".tmp", `forge-sess-cwd-${process.pid}`);
+    fs.mkdirSync(home, { recursive: true });
+    const env = { ...process.env, FORGE_HOME: home };
+    const r = spawnSync(
+      process.execPath,
+      [cli, "sessions", "list", "--cwd", "", "--json"],
+      { env, encoding: "utf8" },
+    );
+    assert.notEqual(r.status, 0);
+    const j = JSON.parse((r.stdout || "").trim());
+    assert.equal(j.ok, false);
+    assert.equal(j.reason, "invalid_cwd");
+  });
+
+  it("bare --continue/--session preflight does not apply --title before auth", async () => {
+    const { spawnSync } = await import("node:child_process");
+    const path = await import("node:path");
+    const fs = await import("node:fs");
+    const cli = path.join(process.cwd(), "dist", "cli.js");
+    if (!fs.existsSync(cli)) return;
+    const home = path.join(process.cwd(), ".tmp", `forge-title-preflight-${process.pid}`);
+    fs.mkdirSync(home, { recursive: true });
+    process.env.FORGE_HOME = home;
+    const {
+      createSession,
+      saveSession,
+      loadSession,
+    } = await import("../src/session/session.js");
+    const ws = path.join(home, "ws");
+    fs.mkdirSync(ws, { recursive: true });
+    const s = createSession({
+      cwd: ws,
+      provider: "xai",
+      model: "m",
+      title: "original-title",
+    });
+    s.messages.push({ role: "user", content: "hi" });
+    saveSession(s);
+    const env = {
+      ...process.env,
+      FORGE_HOME: home,
+      // Force unauthenticated after session preflight
+      XAI_API_KEY: "",
+      OPENAI_API_KEY: "",
+      ANTHROPIC_API_KEY: "",
+      OPENROUTER_API_KEY: "",
+      GOOGLE_API_KEY: "",
+      GROK_HOME: path.join(home, "nogrok"),
+    };
+    const r = spawnSync(
+      process.execPath,
+      [
+        cli,
+        "next",
+        "--continue",
+        "--title",
+        "should-not-stick",
+        "--json",
+        "--cwd",
+        ws,
+      ],
+      { env, encoding: "utf8" },
+    );
+    assert.notEqual(r.status, 0);
+    const j = JSON.parse((r.stdout || "").trim());
+    // continue may succeed preflight then fail auth
+    assert.equal(j.ok, false);
+    assert.ok(
+      j.reason === "unauthenticated" || j.reason === "continue_miss",
+      `unexpected reason ${j.reason}`,
+    );
+    if (j.reason === "unauthenticated") {
+      const again = loadSession(s.meta.id);
+      assert.equal(again?.meta.title, "original-title");
+    }
+  });
+
+  it("forge config empty --provider/--cwd fail closed; completion lists tips --json", async () => {
+    const { spawnSync } = await import("node:child_process");
+    const path = await import("node:path");
+    const fs = await import("node:fs");
+    const cli = path.join(process.cwd(), "dist", "cli.js");
+    if (!fs.existsSync(cli)) return;
+    const home = path.join(process.cwd(), ".tmp", `forge-config-empty-${process.pid}`);
+    fs.mkdirSync(home, { recursive: true });
+    const env = { ...process.env, FORGE_HOME: home };
+
+    const emptyP = spawnSync(
+      process.execPath,
+      [cli, "config", "-p", "", "--json"],
+      { env, encoding: "utf8" },
+    );
+    assert.notEqual(emptyP.status, 0);
+    const pj = JSON.parse((emptyP.stdout || "").trim());
+    assert.equal(pj.ok, false);
+    assert.equal(pj.reason, "invalid_provider");
+
+    const emptyCwd = spawnSync(
+      process.execPath,
+      [cli, "config", "--cwd", "", "--json"],
+      { env, encoding: "utf8" },
+    );
+    assert.notEqual(emptyCwd.status, 0);
+    const cj = JSON.parse((emptyCwd.stdout || "").trim());
+    assert.equal(cj.ok, false);
+    assert.equal(cj.reason, "invalid_cwd");
+
+    const { shellCompletionScript } = await import(
+      "../src/util/completion-script.js"
+    );
+    const bash = shellCompletionScript("bash");
+    assert.match(bash, /tips\|init\|completion\).*--json|doctor\|models\|status\|auth\|tips/);
+  });
+
+  it("models -p filters; empty/invalid provider fail closed", async () => {
+    const { spawnSync } = await import("node:child_process");
+    const path = await import("node:path");
+    const fs = await import("node:fs");
+    const cli = path.join(process.cwd(), "dist", "cli.js");
+    if (!fs.existsSync(cli)) return;
+    const home = path.join(process.cwd(), ".tmp", `forge-models-p-${process.pid}`);
+    fs.mkdirSync(home, { recursive: true });
+    const env = { ...process.env, FORGE_HOME: home };
+
+    const empty = spawnSync(
+      process.execPath,
+      [cli, "models", "-p", "", "--json"],
+      { env, encoding: "utf8" },
+    );
+    assert.notEqual(empty.status, 0);
+    const ej = JSON.parse((empty.stdout || "").trim());
+    assert.equal(ej.ok, false);
+    assert.equal(ej.reason, "invalid_provider");
+
+    const spaces = spawnSync(
+      process.execPath,
+      [cli, "models", "-p", "   ", "--json"],
+      { env, encoding: "utf8" },
+    );
+    assert.notEqual(spaces.status, 0);
+    assert.equal(JSON.parse((spaces.stdout || "").trim()).reason, "invalid_provider");
+
+    const bad = spawnSync(
+      process.execPath,
+      [cli, "models", "-p", "notaprovider", "--json"],
+      { env, encoding: "utf8" },
+    );
+    assert.notEqual(bad.status, 0);
+    const bj = JSON.parse((bad.stdout || "").trim());
+    assert.equal(bj.reason, "invalid_provider");
+
+    const parentEmpty = spawnSync(
+      process.execPath,
+      [cli, "-p", "", "models", "--json"],
+      { env, encoding: "utf8" },
+    );
+    assert.notEqual(parentEmpty.status, 0);
+    assert.equal(
+      JSON.parse((parentEmpty.stdout || "").trim()).reason,
+      "invalid_provider",
+    );
+
+    const ok = spawnSync(
+      process.execPath,
+      [cli, "models", "-p", "xai", "--json"],
+      { env, encoding: "utf8" },
+    );
+    assert.equal(ok.status, 0, ok.stderr || ok.stdout);
+    const oj = JSON.parse((ok.stdout || "").trim());
+    assert.equal(oj.ok, true);
+    assert.equal(oj.provider, "xai");
+    assert.ok(Array.isArray(oj.providers));
+    assert.equal(oj.providers.length, 1);
+    assert.equal(oj.providers[0].provider, "xai");
+    assert.ok(
+      (oj.providers[0].models || []).some((m: string) => /grok/i.test(m)),
+    );
+
+    const parentOk = spawnSync(
+      process.execPath,
+      [cli, "-p", "anthropic", "models", "--json"],
+      { env, encoding: "utf8" },
+    );
+    assert.equal(parentOk.status, 0, parentOk.stderr || parentOk.stdout);
+    const pj = JSON.parse((parentOk.stdout || "").trim());
+    assert.equal(pj.provider, "anthropic");
+    assert.equal(pj.providers.length, 1);
+    assert.equal(pj.providers[0].provider, "anthropic");
+
+    // Friendly aliases experts type at -p
+    for (const [alias, provider] of [
+      ["oai", "openai"],
+      ["haiku", "anthropic"],
+      ["bard", "google"],
+      ["router", "openrouter"],
+    ] as const) {
+      const ar = spawnSync(
+        process.execPath,
+        [cli, "models", "-p", alias, "--json"],
+        { env, encoding: "utf8" },
+      );
+      assert.equal(ar.status, 0, alias + " " + (ar.stderr || ar.stdout));
+      const aj = JSON.parse((ar.stdout || "").trim());
+      assert.equal(aj.ok, true, alias);
+      assert.equal(aj.provider, provider, alias);
+      assert.equal(aj.providers.length, 1, alias);
+      assert.equal(aj.providers[0].provider, provider, alias);
+    }
+  });
+
+  it("overlong --goal fails closed", async () => {
+    const { spawnSync } = await import("node:child_process");
+    const path = await import("node:path");
+    const fs = await import("node:fs");
+    const cli = path.join(process.cwd(), "dist", "cli.js");
+    if (!fs.existsSync(cli)) return;
+    const home = path.join(process.cwd(), ".tmp", `forge-goal-len-${process.pid}`);
+    fs.mkdirSync(home, { recursive: true });
+    const env = { ...process.env, FORGE_HOME: home };
+    const r = spawnSync(
+      process.execPath,
+      [cli, "run", "x", "--goal", "g".repeat(4001), "--json"],
+      { env, encoding: "utf8" },
+    );
+    assert.notEqual(r.status, 0);
+    const j = JSON.parse((r.stdout || "").trim());
+    assert.equal(j.reason, "invalid_goal");
+  });
+
+  it("missing --cwd directory and overlong --title fail closed", async () => {
+    const { spawnSync } = await import("node:child_process");
+    const path = await import("node:path");
+    const fs = await import("node:fs");
+    const cli = path.join(process.cwd(), "dist", "cli.js");
+    if (!fs.existsSync(cli)) return;
+    const home = path.join(process.cwd(), ".tmp", `forge-cwd-miss-${process.pid}`);
+    fs.mkdirSync(home, { recursive: true });
+    const env = { ...process.env, FORGE_HOME: home };
+    const missing = path.join(home, "no-such-workspace");
+
+    const cwd = spawnSync(
+      process.execPath,
+      [cli, "run", "x", "--cwd", missing, "--json"],
+      { env, encoding: "utf8" },
+    );
+    assert.notEqual(cwd.status, 0);
+    const cj = JSON.parse((cwd.stdout || "").trim());
+    assert.equal(cj.reason, "invalid_cwd");
+
+    const title = spawnSync(
+      process.execPath,
+      [cli, "run", "x", "--title", "a".repeat(201), "--json"],
+      { env, encoding: "utf8" },
+    );
+    assert.notEqual(title.status, 0);
+    const tj = JSON.parse((title.stdout || "").trim());
+    assert.equal(tj.reason, "invalid_title");
+  });
+
+  it("setSessionTitle stores up to 200 chars; sessions title overlong fails closed", async () => {
+    const { spawnSync } = await import("node:child_process");
+    const path = await import("node:path");
+    const fs = await import("node:fs");
+    const {
+      createSession,
+      setSessionTitle,
+      MAX_SESSION_TITLE_CHARS,
+      loadSession,
+    } = await import("../src/session/session.js");
+    assert.equal(MAX_SESSION_TITLE_CHARS, 200);
+    const home = path.join(process.cwd(), ".tmp", `forge-title-cap-${process.pid}`);
+    fs.mkdirSync(home, { recursive: true });
+    const prev = process.env.FORGE_HOME;
+    process.env.FORGE_HOME = home;
+    try {
+      const s = createSession({ cwd: process.cwd() });
+      const long = "b".repeat(200);
+      const stored = setSessionTitle(s, long);
+      assert.equal(stored, long);
+      assert.equal(loadSession(s.meta.id)?.meta.title, long);
+
+      const cli = path.join(process.cwd(), "dist", "cli.js");
+      if (fs.existsSync(cli)) {
+        const env = { ...process.env, FORGE_HOME: home };
+        const over = spawnSync(
+          process.execPath,
+          [
+            cli,
+            "sessions",
+            "title",
+            s.meta.id,
+            "c".repeat(201),
+            "--json",
+          ],
+          { env, encoding: "utf8" },
+        );
+        assert.notEqual(over.status, 0);
+        const oj = JSON.parse((over.stdout || "").trim());
+        assert.equal(oj.reason, "invalid_title");
+        // title unchanged
+        assert.equal(loadSession(s.meta.id)?.meta.title, long);
+      }
+    } finally {
+      if (prev === undefined) delete process.env.FORGE_HOME;
+      else process.env.FORGE_HOME = prev;
+    }
+  });
+
+  it("empty --cwd/--title and logs -n 0 fail-closed / semantics", async () => {
+    const { spawnSync } = await import("node:child_process");
+    const path = await import("node:path");
+    const fs = await import("node:fs");
+    const cli = path.join(process.cwd(), "dist", "cli.js");
+    if (!fs.existsSync(cli)) return;
+    const home = path.join(process.cwd(), ".tmp", `forge-empty-flags-${process.pid}`);
+    fs.mkdirSync(home, { recursive: true });
+    const env = {
+      ...process.env,
+      FORGE_HOME: home,
+      XAI_API_KEY: process.env.XAI_API_KEY || "sk-test-forge-cli",
+    };
+
+    const emptyCwd = spawnSync(
+      process.execPath,
+      [cli, "run", "x", "--cwd", "", "--json"],
+      { env, encoding: "utf8" },
+    );
+    assert.notEqual(emptyCwd.status, 0);
+    const cwdJ = JSON.parse((emptyCwd.stdout || "").trim());
+    assert.equal(cwdJ.ok, false);
+    assert.equal(cwdJ.reason, "invalid_cwd");
+
+    const emptyTitle = spawnSync(
+      process.execPath,
+      [cli, "run", "x", "--title", "", "--json"],
+      { env, encoding: "utf8" },
+    );
+    assert.notEqual(emptyTitle.status, 0);
+    const titleJ = JSON.parse((emptyTitle.stdout || "").trim());
+    assert.equal(titleJ.ok, false);
+    assert.equal(titleJ.reason, "invalid_title");
+
+    // bare forge same
+    const bareTitle = spawnSync(
+      process.execPath,
+      [cli, "x", "--title", "", "--json"],
+      { env, encoding: "utf8" },
+    );
+    assert.notEqual(bareTitle.status, 0);
+    const bareTJ = JSON.parse((bareTitle.stdout || "").trim());
+    assert.equal(bareTJ.ok, false);
+    assert.equal(bareTJ.reason, "invalid_title");
+
+    const logs0 = spawnSync(
+      process.execPath,
+      [cli, "logs", "-n", "0", "--json"],
+      { env, encoding: "utf8" },
+    );
+    assert.equal(logs0.status, 0);
+    const logsJ = JSON.parse((logs0.stdout || "").trim());
+    assert.equal(logsJ.ok, true);
+    assert.equal(logsJ.limit, 0);
+    assert.ok(Array.isArray(logsJ.events));
+
+    const logs201 = spawnSync(
+      process.execPath,
+      [cli, "logs", "-n", "201", "--json"],
+      { env, encoding: "utf8" },
+    );
+    assert.notEqual(logs201.status, 0);
+    const logs201J = JSON.parse((logs201.stdout || "").trim());
+    assert.equal(logs201J.reason, "invalid_lines");
+
+    // unit: readSandboxLogTail(0) returns full window
+    const { readSandboxLogTail, sandboxLogPath } = await import(
+      "../src/agent/sandbox-log.js"
+    );
+    const logPath = sandboxLogPath();
+    fs.mkdirSync(path.dirname(logPath), { recursive: true });
+    fs.writeFileSync(
+      logPath,
+      [
+        JSON.stringify({ type: "deny", ts: "1", detail: "a" }),
+        JSON.stringify({ type: "deny", ts: "2", detail: "b" }),
+        JSON.stringify({ type: "deny", ts: "3", detail: "c" }),
+      ].join("\n") + "\n",
+      "utf8",
+    );
+    const all = readSandboxLogTail(0);
+    assert.ok(all.length >= 3, `expected >=3 events, got ${all.length}`);
+    const one = readSandboxLogTail(1);
+    assert.equal(one.length, 1);
   });
 
   it("parent --continue/--json documented; bare forge --json early failures; export invalid_format", async () => {
@@ -2529,7 +3975,7 @@ describe("forge run --json early failures (CLI)", () => {
 
     const badPerm = spawnSync(
       process.execPath,
-      [cli, "run", "--json", "--permission-mode", "yolo", "hi"],
+      [cli, "run", "--json", "--permission-mode", "bypassPermisions", "hi"],
       {
         env: {
           ...env,
@@ -2657,7 +4103,8 @@ describe("forge run --json early failures (CLI)", () => {
     const permJson = JSON.parse((badPerm.stdout || "").trim());
     assert.equal(permJson.ok, false);
     assert.equal(permJson.reason, "invalid_permission_mode");
-    assert.equal(permJson.permissionMode, "yolo");
+    assert.equal(permJson.permissionMode, "bypassPermisions");
+    assert.equal(permJson.suggestion, "bypassPermissions");
 
     const badSandbox = spawnSync(
       process.execPath,
@@ -2800,5 +4247,1534 @@ describe("session lock multi-day", () => {
     } finally {
       holder.kill("SIGKILL");
     }
+  });
+});
+
+describe("early JSON failures always include version", () => {
+  it("emitFailJson paths surface version for CI matrices", async () => {
+    const { spawnSync } = await import("node:child_process");
+    const path = await import("node:path");
+    const fs = await import("node:fs");
+    const { getForgeVersion } = await import("../src/util/version.js");
+    const cli = path.join(process.cwd(), "dist", "cli.js");
+    if (!fs.existsSync(cli)) return;
+    const home = path.join(
+      process.cwd(),
+      ".tmp",
+      `forge-json-version-${process.pid}`,
+    );
+    fs.mkdirSync(home, { recursive: true });
+    const env = { ...process.env, FORGE_HOME: home };
+    const version = getForgeVersion();
+    const cases: Array<{ args: string[]; reason: string }> = [
+      { args: ["run", "--json"], reason: "empty_prompt" },
+      { args: ["run", "x", "--max-turns", "abc", "--json"], reason: "invalid_max_turns" },
+      { args: ["run", "x", "--continue", "--new", "--json"], reason: "conflicting_flags" },
+      { args: ["sesions", "--json"], reason: "command_typo" },
+      { args: ["run", "x", "--session", "nope", "--json"], reason: "session_not_found" },
+      {
+        args: ["sessions", "export", "dead", "--format", "xyz", "--json"],
+        reason: "invalid_format",
+      },
+      {
+        args: ["completion", "csh", "--json"],
+        reason: "invalid_shell",
+      },
+      {
+        args: ["sessions", "import", home, "--json"],
+        reason: "is_directory",
+      },
+    ];
+    for (const c of cases) {
+      const r = spawnSync(process.execPath, [cli, ...c.args], {
+        env,
+        encoding: "utf8",
+      });
+      assert.notEqual(r.status, 0, c.args.join(" "));
+      const j = JSON.parse((r.stdout || "").trim());
+      assert.equal(j.ok, false, c.args.join(" "));
+      assert.equal(j.version, version, c.args.join(" "));
+      assert.equal(j.reason, c.reason, c.args.join(" "));
+    }
+  });
+});
+
+describe("JSON success paths always include version", () => {
+  it("emitOkJson paths surface version for CI matrices", async () => {
+    const { spawnSync } = await import("node:child_process");
+    const path = await import("node:path");
+    const fs = await import("node:fs");
+    const { getForgeVersion } = await import("../src/util/version.js");
+    const cli = path.join(process.cwd(), "dist", "cli.js");
+    if (!fs.existsSync(cli)) return;
+    const home = path.join(
+      process.cwd(),
+      ".tmp",
+      `forge-json-ok-version-${process.pid}`,
+    );
+    fs.mkdirSync(home, { recursive: true });
+    const env = {
+      ...process.env,
+      FORGE_HOME: home,
+      XAI_API_KEY: "sk-test-ok-json-version",
+    };
+    const version = getForgeVersion();
+    const cases: string[][] = [
+      ["tips", "--json"],
+      ["news", "--json"],
+      ["config", "--json"],
+      ["completion", "bash", "--json"],
+      ["sessions", "list", "--json"],
+      ["init", "--json"],
+      ["stats", "--json"],
+      ["status", "--json"],
+    ];
+    for (const args of cases) {
+      const r = spawnSync(process.execPath, [cli, ...args], {
+        env,
+        encoding: "utf8",
+      });
+      assert.equal(r.status, 0, args.join(" ") + " status");
+      const j = JSON.parse((r.stdout || "").trim());
+      assert.equal(j.ok, true, args.join(" "));
+      assert.equal(j.version, version, args.join(" "));
+    }
+  });
+});
+
+describe("bare command alias recovery", () => {
+  it("maps cfg/log/session/whoami to real subcommands before auth", async () => {
+    const { spawnSync } = await import("node:child_process");
+    const path = await import("node:path");
+    const fs = await import("node:fs");
+    const cli = path.join(process.cwd(), "dist", "cli.js");
+    if (!fs.existsSync(cli)) return;
+    const home = path.join(
+      process.cwd(),
+      ".tmp",
+      `forge-cmd-alias-${process.pid}`,
+    );
+    fs.mkdirSync(home, { recursive: true });
+    const env = { ...process.env, FORGE_HOME: home };
+    const cases: Array<{ token: string; suggestion: string }> = [
+      { token: "cfg", suggestion: "config" },
+      { token: "log", suggestion: "logs" },
+      { token: "session", suggestion: "sessions" },
+      { token: "whoami", suggestion: "auth" },
+      { token: "hud", suggestion: "status" },
+      { token: "whatsnew", suggestion: "news" },
+      { token: "tip", suggestion: "tips" },
+    ];
+    for (const c of cases) {
+      const r = spawnSync(process.execPath, [cli, c.token, "--json"], {
+        env,
+        encoding: "utf8",
+      });
+      assert.notEqual(r.status, 0, c.token);
+      const j = JSON.parse((r.stdout || "").trim());
+      assert.equal(j.ok, false, c.token);
+      assert.equal(j.reason, "command_typo", c.token);
+      assert.equal(j.suggestion, c.suggestion, c.token);
+    }
+  });
+});
+
+describe("sessions action aliases in suggestions", () => {
+  it("suggests rename/clone for near-miss actions", async () => {
+    const { spawnSync } = await import("node:child_process");
+    const path = await import("node:path");
+    const fs = await import("node:fs");
+    const cli = path.join(process.cwd(), "dist", "cli.js");
+    if (!fs.existsSync(cli)) return;
+    const home = path.join(
+      process.cwd(),
+      ".tmp",
+      `forge-sess-action-alias-${process.pid}`,
+    );
+    fs.mkdirSync(home, { recursive: true });
+    const env = { ...process.env, FORGE_HOME: home };
+    for (const [token, suggestion] of [
+      ["renam", "rename"],
+      ["clonee", "clone"],
+      ["locaton", "location"],
+    ] as const) {
+      const r = spawnSync(
+        process.execPath,
+        [cli, "sessions", token, "x", "--json"],
+        { env, encoding: "utf8" },
+      );
+      assert.notEqual(r.status, 0, token);
+      const j = JSON.parse((r.stdout || "").trim());
+      assert.equal(j.reason, "unknown_session_action", token);
+      assert.equal(j.suggestion, suggestion, token);
+    }
+  });
+});
+
+describe("permission mode alias ask", () => {
+  it("maps ask/deny to dontAsk before auth", async () => {
+    const { spawnSync } = await import("node:child_process");
+    const path = await import("node:path");
+    const fs = await import("node:fs");
+    const cli = path.join(process.cwd(), "dist", "cli.js");
+    if (!fs.existsSync(cli)) return;
+    const home = path.join(
+      process.cwd(),
+      ".tmp",
+      `forge-perm-ask-${process.pid}`,
+    );
+    fs.mkdirSync(home, { recursive: true });
+    const env = { ...process.env, FORGE_HOME: home };
+    // invalid still fails closed
+    const bad = spawnSync(
+      process.execPath,
+      [cli, "run", "x", "--permission-mode", "notamode", "--json"],
+      { env, encoding: "utf8" },
+    );
+    assert.notEqual(bad.status, 0);
+    assert.equal(JSON.parse((bad.stdout || "").trim()).reason, "invalid_permission_mode");
+
+    // ask is a valid alias — should pass flag validation (may fail later on auth/model)
+    for (const mode of ["ask", "deny", "dont-ask"] as const) {
+      const r = spawnSync(
+        process.execPath,
+        [cli, "run", "x", "--permission-mode", mode, "--json"],
+        { env, encoding: "utf8" },
+      );
+      const j = JSON.parse((r.stdout || "").trim());
+      assert.notEqual(
+        j.reason,
+        "invalid_permission_mode",
+        mode + " should alias to dontAsk",
+      );
+    }
+  });
+});
+
+describe("effort aliases hi/lo", () => {
+  it("accepts hi and lo as high/low", async () => {
+    const { parseReasoningEffort } = await import("../src/config/reasoning.js");
+    assert.equal(parseReasoningEffort("hi"), "high");
+    assert.equal(parseReasoningEffort("lo"), "low");
+    assert.equal(parseReasoningEffort("med"), "medium");
+    const { spawnSync } = await import("node:child_process");
+    const path = await import("node:path");
+    const fs = await import("node:fs");
+    const cli = path.join(process.cwd(), "dist", "cli.js");
+    if (!fs.existsSync(cli)) return;
+    const home = path.join(
+      process.cwd(),
+      ".tmp",
+      `forge-effort-hi-${process.pid}`,
+    );
+    fs.mkdirSync(home, { recursive: true });
+    const env = { ...process.env, FORGE_HOME: home };
+    for (const e of ["hi", "lo"] as const) {
+      const r = spawnSync(
+        process.execPath,
+        [cli, "run", "x", "--effort", e, "--json"],
+        { env, encoding: "utf8" },
+      );
+      const j = JSON.parse((r.stdout || "").trim());
+      assert.notEqual(j.reason, "invalid_effort", e);
+    }
+  });
+});
+
+describe("stats days and logs lines aliases", () => {
+  it("accepts week/month/today/7d and logs all/max", async () => {
+    const { spawnSync } = await import("node:child_process");
+    const path = await import("node:path");
+    const fs = await import("node:fs");
+    const cli = path.join(process.cwd(), "dist", "cli.js");
+    if (!fs.existsSync(cli)) return;
+    const home = path.join(
+      process.cwd(),
+      ".tmp",
+      `forge-stats-logs-alias-${process.pid}`,
+    );
+    fs.mkdirSync(home, { recursive: true });
+    const env = { ...process.env, FORGE_HOME: home };
+
+    for (const [alias, expectDays] of [
+      ["week", 7],
+      ["month", 30],
+      ["today", 1],
+      ["7d", 7],
+      ["all", 0],
+    ] as const) {
+      const r = spawnSync(
+        process.execPath,
+        [cli, "stats", "--days", alias, "--json"],
+        { env, encoding: "utf8" },
+      );
+      assert.equal(r.status, 0, alias + " " + (r.stderr || r.stdout));
+      const j = JSON.parse((r.stdout || "").trim());
+      assert.equal(j.ok, true, alias);
+      assert.equal(j.days, expectDays, alias);
+    }
+
+    for (const alias of ["all", "max", "full"] as const) {
+      const r = spawnSync(
+        process.execPath,
+        [cli, "logs", "-n", alias, "--json"],
+        { env, encoding: "utf8" },
+      );
+      assert.equal(r.status, 0, alias + " " + (r.stderr || r.stdout));
+      const j = JSON.parse((r.stdout || "").trim());
+      assert.equal(j.ok, true, alias);
+      assert.equal(j.limit, 0, alias);
+    }
+  });
+});
+
+describe("slash stats/news aliases", () => {
+  it("accepts /stats week and /news all", async () => {
+    const fs = await import("node:fs");
+    const os = await import("node:os");
+    const path = await import("node:path");
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-slash-alias-"));
+    process.env.FORGE_HOME = tmp;
+    const { createSession } = await import("../src/session/session.js");
+    const { handleSlash } = await import("../src/commands/slash.js");
+    const { DEFAULT_CONFIG } = await import("../src/config/types.js");
+    const { HookRunner } = await import("../src/harness/hooks.js");
+    const session = createSession({ cwd: tmp, provider: "xai", model: "m" });
+    const hooks = new HookRunner(DEFAULT_CONFIG, tmp);
+    const cfg = { ...DEFAULT_CONFIG, workspace: tmp };
+
+    const week = await handleSlash("/stats week", {
+      session,
+      config: cfg,
+      hooks,
+    });
+    assert.equal(week.handled, true);
+    assert.doesNotMatch(String(week.output || ""), /Invalid \/stats/i);
+
+    const bad = await handleSlash("/stats nope", {
+      session,
+      config: cfg,
+      hooks,
+    });
+    assert.equal(bad.handled, true);
+    assert.match(String(bad.output || ""), /Invalid \/stats/i);
+
+    const newsAll = await handleSlash("/news all", {
+      session,
+      config: cfg,
+      hooks,
+    });
+    assert.equal(newsAll.handled, true);
+    assert.match(String(newsAll.output || ""), /what's new|CHANGELOG|0\.9/i);
+
+    const newsBad = await handleSlash("/news abc", {
+      session,
+      config: cfg,
+      hooks,
+    });
+    assert.equal(newsBad.handled, true);
+    assert.match(String(newsBad.output || ""), /Invalid \/news/i);
+  });
+});
+
+describe("parseDaysWindow shared helper", () => {
+  it("parses aliases and rejects garbage", async () => {
+    const { parseDaysWindow, daysWindowHelp } = await import(
+      "../src/util/days-window.js"
+    );
+    assert.deepEqual(parseDaysWindow("week"), { ok: true, days: 7 });
+    assert.deepEqual(parseDaysWindow("30"), { ok: true, days: 30 });
+    assert.deepEqual(parseDaysWindow("14d"), { ok: true, days: 14 });
+    assert.deepEqual(parseDaysWindow("--days=3"), { ok: true, days: 3 });
+    assert.deepEqual(parseDaysWindow("all"), { ok: true, days: 0 });
+    assert.equal(parseDaysWindow("nope").ok, false);
+    assert.equal(parseDaysWindow("").ok, false);
+    assert.match(daysWindowHelp(), /week/);
+  });
+});
+describe("parseNewsCount shared helper", () => {
+  it("parses aliases and rejects garbage", async () => {
+    const { parseNewsCount, newsCountHelp } = await import(
+      "../src/util/news-count.js"
+    );
+    assert.deepEqual(parseNewsCount("all"), { ok: true, count: 10 });
+    assert.deepEqual(parseNewsCount("latest"), { ok: true, count: 1 });
+    assert.deepEqual(parseNewsCount("3"), { ok: true, count: 3 });
+    assert.equal(parseNewsCount("0").ok, false);
+    assert.equal(parseNewsCount("11").ok, false);
+    assert.equal(parseNewsCount("abc").ok, false);
+    assert.match(newsCountHelp(), /all/);
+  });
+});
+describe("parseLogsLines shared helper", () => {
+  it("parses aliases and rejects garbage", async () => {
+    const { parseLogsLines, logsLinesHelp } = await import(
+      "../src/util/logs-lines.js"
+    );
+    assert.deepEqual(parseLogsLines("all"), { ok: true, lines: 0 });
+    assert.deepEqual(parseLogsLines("max"), { ok: true, lines: 0 });
+    assert.deepEqual(parseLogsLines("0"), { ok: true, lines: 0 });
+    assert.deepEqual(parseLogsLines("30"), { ok: true, lines: 30 });
+    assert.equal(parseLogsLines("201").ok, false);
+    assert.equal(parseLogsLines("abc").ok, false);
+    assert.match(logsLinesHelp(), /all/);
+  });
+});
+describe("env provider/permission/sandbox aliases", () => {
+  it("normalizes FORGE_PROVIDER/PERMISSION/SANDBOX aliases", async () => {
+    // Pure normalizers only — do not mutate process.env here.
+    // node:test runs files in parallel; env leaks race auth-config tests.
+    const { normalizeProviderId } = await import("../src/util/provider-id.js");
+    const {
+      normalizePermissionMode,
+      normalizeSandboxProfile,
+      normalizeSandboxNetwork,
+    } = await import("../src/util/mode-aliases.js");
+    assert.deepEqual(normalizeProviderId("claude"), {
+      ok: true,
+      provider: "anthropic",
+    });
+    assert.deepEqual(normalizeProviderId("oai"), {
+      ok: true,
+      provider: "openai",
+    });
+    assert.deepEqual(normalizeProviderId("grok"), {
+      ok: true,
+      provider: "xai",
+    });
+    assert.equal(normalizeProviderId("nope").ok, false);
+    assert.equal(normalizePermissionMode("yolo"), "bypassPermissions");
+    assert.equal(normalizePermissionMode("ask"), "dontAsk");
+    assert.equal(normalizePermissionMode("accept"), "acceptEdits");
+    assert.equal(normalizePermissionMode("nope"), null);
+    assert.equal(normalizeSandboxProfile("readonly"), "read-only");
+    assert.equal(normalizeSandboxProfile("ws"), "workspace");
+    assert.equal(normalizeSandboxProfile("full"), "strict");
+    assert.equal(normalizeSandboxNetwork("none"), "blocked");
+    assert.equal(normalizeSandboxNetwork("open"), "unrestricted");
+  });
+});
+
+describe("slash permissions ask alias", () => {
+  it("maps /permissions ask to dontAsk", async () => {
+    const fs = await import("node:fs");
+    const os = await import("node:os");
+    const path = await import("node:path");
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-perm-ask-slash-"));
+    process.env.FORGE_HOME = tmp;
+    const { createSession } = await import("../src/session/session.js");
+    const { handleSlash } = await import("../src/commands/slash.js");
+    const { DEFAULT_CONFIG } = await import("../src/config/types.js");
+    const { HookRunner } = await import("../src/harness/hooks.js");
+    const session = createSession({ cwd: tmp, provider: "xai", model: "m" });
+    const hooks = new HookRunner(DEFAULT_CONFIG, tmp);
+    const cfg = { ...DEFAULT_CONFIG, workspace: tmp, permissionMode: "default" as const };
+    const r = await handleSlash("/permissions ask", {
+      session,
+      config: cfg,
+      hooks,
+    });
+    assert.equal(r.handled, true);
+    assert.equal(cfg.permissionMode, "dontAsk");
+  });
+});
+describe("preferences permission alias", () => {
+  it("loads yolo/ask from preferences.json as canonical modes", async () => {
+    const fs = await import("node:fs");
+    const os = await import("node:os");
+    const path = await import("node:path");
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-prefs-alias-"));
+    process.env.FORGE_HOME = tmp;
+    const {
+      preferencesPath,
+      loadPreferences,
+      savePreferences,
+    } = await import("../src/config/preferences.js");
+    fs.writeFileSync(
+      preferencesPath(),
+      JSON.stringify({ version: 1, permissionMode: "yolo" }),
+      "utf8",
+    );
+    assert.equal(loadPreferences().permissionMode, "bypassPermissions");
+    fs.writeFileSync(
+      preferencesPath(),
+      JSON.stringify({ version: 1, permissionMode: "ask" }),
+      "utf8",
+    );
+    assert.equal(loadPreferences().permissionMode, "dontAsk");
+    const saved = savePreferences({ permissionMode: "accept" as any });
+    assert.equal(saved.permissionMode, "acceptEdits");
+  });
+});
+describe("auth logout footgun", () => {
+  it("suggests forge logout when user types forge auth logout", async () => {
+    const { spawnSync } = await import("node:child_process");
+    const path = await import("node:path");
+    const fs = await import("node:fs");
+    const cli = path.join(process.cwd(), "dist", "cli.js");
+    if (!fs.existsSync(cli)) return;
+    const home = path.join(
+      process.cwd(),
+      ".tmp",
+      `forge-auth-logout-footgun-${process.pid}`,
+    );
+    fs.mkdirSync(home, { recursive: true });
+    const env = { ...process.env, FORGE_HOME: home };
+    const r = spawnSync(
+      process.execPath,
+      [cli, "auth", "logout", "--json"],
+      { env, encoding: "utf8" },
+    );
+    assert.notEqual(r.status, 0);
+    const j = JSON.parse((r.stdout || "").trim());
+    assert.equal(j.ok, false);
+    assert.equal(j.reason, "excess_arguments");
+    assert.match(String(j.hint || j.error || ""), /forge logout/i);
+
+    const d = spawnSync(
+      process.execPath,
+      [cli, "doctor", "login", "--json"],
+      { env, encoding: "utf8" },
+    );
+    assert.notEqual(d.status, 0);
+    const dj = JSON.parse((d.stdout || "").trim());
+    assert.equal(dj.reason, "excess_arguments");
+    assert.equal(dj.suggestion, "login");
+    assert.match(String(dj.hint || ""), /forge login/i);
+  });
+});
+describe("sessions nested command footgun", () => {
+  it("does not search when action is a top-level command name", async () => {
+    const { spawnSync } = await import("node:child_process");
+    const path = await import("node:path");
+    const fs = await import("node:fs");
+    const cli = path.join(process.cwd(), "dist", "cli.js");
+    if (!fs.existsSync(cli)) return;
+    const home = path.join(
+      process.cwd(),
+      ".tmp",
+      `forge-sess-login-footgun-${process.pid}`,
+    );
+    fs.mkdirSync(home, { recursive: true });
+    const env = { ...process.env, FORGE_HOME: home };
+    const r = spawnSync(
+      process.execPath,
+      [cli, "sessions", "login", "--json"],
+      { env, encoding: "utf8" },
+    );
+    assert.notEqual(r.status, 0);
+    const j = JSON.parse((r.stdout || "").trim());
+    assert.equal(j.ok, false);
+    assert.equal(j.reason, "unknown_session_action");
+    assert.equal(j.suggestion, "login");
+    assert.match(String(j.error || ""), /forge login/i);
+  });
+});
+describe("doctor flags bypassPermissions", () => {
+  it("reports yolo as a blocking issue for CI", async () => {
+    const fs = await import("node:fs");
+    const os = await import("node:os");
+    const path = await import("node:path");
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-doctor-yolo-"));
+    process.env.FORGE_HOME = tmp;
+    const { DEFAULT_CONFIG } = await import("../src/config/types.js");
+    const { runDoctorCheck } = await import("../src/commands/slash.js");
+    const check = await runDoctorCheck({
+      ...DEFAULT_CONFIG,
+      workspace: tmp,
+      permissionMode: "bypassPermissions",
+    });
+    assert.equal(check.ok, false);
+    assert.ok(
+      check.issues.some((i) => /bypassPermissions|yolo/i.test(i)),
+      check.issues.join("; "),
+    );
+  });
+});
+describe("doctor flags sandbox off", () => {
+  it("reports sandbox=off as a blocking issue for production hosts", async () => {
+    const fs = await import("node:fs");
+    const os = await import("node:os");
+    const path = await import("node:path");
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-doctor-sandbox-"));
+    process.env.FORGE_HOME = tmp;
+    const { DEFAULT_CONFIG } = await import("../src/config/types.js");
+    const { runDoctorCheck } = await import("../src/commands/slash.js");
+    const check = await runDoctorCheck({
+      ...DEFAULT_CONFIG,
+      workspace: tmp,
+      sandbox: "off",
+      permissionMode: "default",
+    });
+    assert.equal(check.ok, false);
+    assert.ok(
+      check.issues.some((i) => /sandbox is off/i.test(i)),
+      check.issues.join("; "),
+    );
+  });
+});
+describe("sessions list limit aliases", () => {
+  it("accepts all|max|unlimited as unlimited (0)", async () => {
+    const { spawnSync } = await import("node:child_process");
+    const path = await import("node:path");
+    const fs = await import("node:fs");
+    const cli = path.join(process.cwd(), "dist", "cli.js");
+    if (!fs.existsSync(cli)) return;
+    const home = path.join(
+      process.cwd(),
+      ".tmp",
+      `forge-sess-limit-alias-${process.pid}`,
+    );
+    fs.mkdirSync(home, { recursive: true });
+    const env = { ...process.env, FORGE_HOME: home };
+    for (const alias of ["all", "max", "unlimited"] as const) {
+      const r = spawnSync(
+        process.execPath,
+        [cli, "sessions", "list", "--limit", alias, "--json"],
+        { env, encoding: "utf8" },
+      );
+      assert.equal(r.status, 0, alias + " " + (r.stderr || r.stdout));
+      const j = JSON.parse((r.stdout || "").trim());
+      assert.equal(j.ok, true, alias);
+      assert.equal(j.limit, 0, alias);
+    }
+  });
+});
+describe("doctor reports active auth provider", () => {
+  it("surfaces stored anthropic when config default is xai", async () => {
+    const fs = await import("node:fs");
+    const os = await import("node:os");
+    const path = await import("node:path");
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-doctor-auth-p-"));
+    const prev = {
+      FORGE_HOME: process.env.FORGE_HOME,
+      XAI_API_KEY: process.env.XAI_API_KEY,
+      ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY,
+    };
+    try {
+      process.env.FORGE_HOME = tmp;
+      delete process.env.XAI_API_KEY;
+      delete process.env.ANTHROPIC_API_KEY;
+      const { upsertApiKey } = await import("../src/auth/store.js");
+      const { loadConfig } = await import("../src/config/load.js");
+      const { runDoctorCheck } = await import("../src/commands/slash.js");
+      upsertApiKey("anthropic", "sk-doctor-active-provider");
+      const { savePreferences } = await import("../src/config/preferences.js");
+      savePreferences({ provider: "anthropic" });
+      const cfg = loadConfig({}, tmp);
+      assert.equal(cfg.provider, "anthropic");
+      const check = await runDoctorCheck(cfg);
+      assert.match(check.report, /Provider\/model:\s*anthropic/i);
+      assert.match(check.report, /anthropic via api_key/i);
+    } finally {
+      for (const [k, v] of Object.entries(prev)) {
+        if (v === undefined) delete process.env[k];
+        else process.env[k] = v;
+      }
+    }
+  });
+});
+describe("auth --json includes configProvider", () => {
+  it("reports config default provider alongside active auth", async () => {
+    const { spawnSync } = await import("node:child_process");
+    const path = await import("node:path");
+    const fs = await import("node:fs");
+    const cli = path.join(process.cwd(), "dist", "cli.js");
+    if (!fs.existsSync(cli)) return;
+    const home = path.join(
+      process.cwd(),
+      ".tmp",
+      `forge-auth-cfg-provider-${process.pid}`,
+    );
+    fs.mkdirSync(home, { recursive: true });
+    const env = { ...process.env, FORGE_HOME: home, XAI_API_KEY: "sk-auth-cfg" };
+    const r = spawnSync(process.execPath, [cli, "auth", "--json"], {
+      env,
+      encoding: "utf8",
+    });
+    assert.equal(r.status, 0);
+    const j = JSON.parse((r.stdout || "").trim());
+    assert.equal(j.ok, true);
+    assert.equal(j.configProvider, "xai");
+    assert.equal(j.active?.provider, "xai");
+  });
+});
+
+describe("FORGE_JSON_COMPACT", () => {
+  it("emits single-line auth --json when compact env is set", async () => {
+    const { spawnSync } = await import("node:child_process");
+    const path = await import("node:path");
+    const fs = await import("node:fs");
+    const cli = path.join(process.cwd(), "dist", "cli.js");
+    if (!fs.existsSync(cli)) return;
+    const home = path.join(
+      process.cwd(),
+      ".tmp",
+      `forge-json-compact-${process.pid}`,
+    );
+    fs.mkdirSync(home, { recursive: true });
+    const env = {
+      ...process.env,
+      FORGE_HOME: home,
+      XAI_API_KEY: "sk-compact-test",
+      FORGE_JSON_COMPACT: "1",
+    };
+    const r = spawnSync(process.execPath, [cli, "auth", "--json"], {
+      env,
+      encoding: "utf8",
+    });
+    assert.equal(r.status, 0);
+    const out = (r.stdout || "").trim();
+    assert.equal(out.includes("\n"), false, "expected single-line JSON");
+    const j = JSON.parse(out);
+    assert.equal(j.ok, true);
+    assert.equal(j.version != null, true);
+  });
+});
+
+describe("resume session provider auth", () => {
+  it("forge run --session uses session provider credentials not sticky default", async () => {
+    const { spawnSync } = await import("node:child_process");
+    const path = await import("node:path");
+    const fs = await import("node:fs");
+    const os = await import("node:os");
+    const cli = path.join(process.cwd(), "dist", "cli.js");
+    if (!fs.existsSync(cli)) return;
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "forge-resume-prov-"));
+    const env = { ...process.env, FORGE_HOME: home };
+    for (const k of Object.keys(env)) {
+      if (/API_KEY|FORGE_PROVIDER|FORGE_MODEL/.test(k)) delete env[k];
+    }
+    process.env.FORGE_HOME = home;
+    delete process.env.XAI_API_KEY;
+    delete process.env.ANTHROPIC_API_KEY;
+    delete process.env.FORGE_PROVIDER;
+    const { createSession, saveSession } = await import("../src/session/session.js");
+    const { upsertApiKey } = await import("../src/auth/store.js");
+    const { savePreferences } = await import("../src/config/preferences.js");
+    upsertApiKey("anthropic", "sk-ant-resume-test");
+    // no xai key
+    savePreferences({ provider: "anthropic" });
+    const s = createSession({
+      cwd: process.cwd(),
+      provider: "xai",
+      model: "grok-4.5",
+    });
+    saveSession(s);
+    const r = spawnSync(
+      process.execPath,
+      [cli, "run", "ping", "--session", s.meta.id, "--json", "--max-turns", "1"],
+      { env, encoding: "utf8" },
+    );
+    assert.notEqual(r.status, 0);
+    const j = JSON.parse((r.stdout || "").trim());
+    assert.equal(j.ok, false);
+    // Must fail closed for xai (session provider), not call anthropic with wrong key
+    assert.equal(j.reason, "unauthenticated");
+    assert.equal(j.provider, "xai");
+  });
+});
+
+describe("login without -p uses sticky provider", () => {
+  it("re-login api-key targets sticky provider when -p omitted", async () => {
+    const { spawnSync } = await import("node:child_process");
+    const path = await import("node:path");
+    const fs = await import("node:fs");
+    const os = await import("node:os");
+    const cli = path.join(process.cwd(), "dist", "cli.js");
+    if (!fs.existsSync(cli)) return;
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "forge-login-sticky-"));
+    const env = { ...process.env, FORGE_HOME: home };
+    for (const k of Object.keys(env)) {
+      if (/API_KEY|FORGE_PROVIDER/.test(k)) delete env[k];
+    }
+    spawnSync(
+      process.execPath,
+      [cli, "login", "-p", "claude", "--api-key", "sk-1", "--json"],
+      { env, encoding: "utf8" },
+    );
+    const r = spawnSync(
+      process.execPath,
+      [cli, "login", "--api-key", "sk-2", "--json"],
+      { env, encoding: "utf8" },
+    );
+    assert.equal(r.status, 0, r.stderr || r.stdout);
+    const j = JSON.parse((r.stdout || "").trim());
+    assert.equal(j.ok, true);
+    assert.equal(j.provider, "anthropic");
+    const cfg = JSON.parse(
+      spawnSync(process.execPath, [cli, "config", "--json"], {
+        env,
+        encoding: "utf8",
+      }).stdout.trim(),
+    );
+    assert.equal(cfg.provider, "anthropic");
+  });
+});
+
+describe("sessions prune max-age-days aliases", () => {
+  it("accepts all|none|off as no age filter", async () => {
+    const { spawnSync } = await import("node:child_process");
+    const path = await import("node:path");
+    const fs = await import("node:fs");
+    const cli = path.join(process.cwd(), "dist", "cli.js");
+    if (!fs.existsSync(cli)) return;
+    const home = path.join(
+      process.cwd(),
+      ".tmp",
+      `forge-prune-age-alias-${process.pid}`,
+    );
+    fs.mkdirSync(home, { recursive: true });
+    const env = { ...process.env, FORGE_HOME: home };
+    for (const alias of ["all", "none", "off"] as const) {
+      const r = spawnSync(
+        process.execPath,
+        [cli, "sessions", "prune", "--keep", "50", "--max-age-days", alias, "--json"],
+        { env, encoding: "utf8" },
+      );
+      assert.equal(r.status, 0, alias + " " + (r.stderr || r.stdout));
+      const j = JSON.parse((r.stdout || "").trim());
+      assert.equal(j.ok, true, alias);
+    }
+  });
+});
+
+describe("prune-tool-output max-age-days aliases", () => {
+  it("accepts all|none as no age filter", async () => {
+    const { spawnSync } = await import("node:child_process");
+    const path = await import("node:path");
+    const fs = await import("node:fs");
+    const cli = path.join(process.cwd(), "dist", "cli.js");
+    if (!fs.existsSync(cli)) return;
+    const home = path.join(
+      process.cwd(),
+      ".tmp",
+      `forge-tool-age-alias-${process.pid}`,
+    );
+    fs.mkdirSync(home, { recursive: true });
+    const env = { ...process.env, FORGE_HOME: home };
+    for (const alias of ["all", "none"] as const) {
+      const r = spawnSync(
+        process.execPath,
+        [cli, "prune-tool-output", "--max-age-days", alias, "--json"],
+        { env, encoding: "utf8" },
+      );
+      assert.equal(r.status, 0, alias + " " + (r.stderr || r.stdout));
+      const j = JSON.parse((r.stdout || "").trim());
+      assert.equal(j.ok, true, alias);
+    }
+  });
+});
+
+describe("prune --keep all aliases", () => {
+  it("accepts all|max for sessions/metrics/tool-output prune", async () => {
+    const { spawnSync } = await import("node:child_process");
+    const path = await import("node:path");
+    const fs = await import("node:fs");
+    const cli = path.join(process.cwd(), "dist", "cli.js");
+    if (!fs.existsSync(cli)) return;
+    const home = path.join(
+      process.cwd(),
+      ".tmp",
+      `forge-keep-all-${process.pid}`,
+    );
+    fs.mkdirSync(home, { recursive: true });
+    const env = { ...process.env, FORGE_HOME: home };
+    for (const args of [
+      ["sessions", "prune", "--keep", "all", "--json"],
+      ["prune-metrics", "--keep", "max", "--json"],
+      ["prune-tool-output", "--keep", "all", "--json"],
+    ] as const) {
+      const r = spawnSync(process.execPath, [cli, ...args], {
+        env,
+        encoding: "utf8",
+      });
+      assert.equal(r.status, 0, args.join(" ") + " " + (r.stderr || r.stdout));
+      const j = JSON.parse((r.stdout || "").trim());
+      assert.equal(j.ok, true, args.join(" "));
+    }
+  });
+});
+
+describe("doctor flags sandbox-missing fallback", () => {
+  it("reports fallback missing-backend policy as a blocking issue", async () => {
+    const fs = await import("node:fs");
+    const os = await import("node:os");
+    const path = await import("node:path");
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-doctor-fallback-"));
+    process.env.FORGE_HOME = tmp;
+    const { DEFAULT_CONFIG } = await import("../src/config/types.js");
+    const { runDoctorCheck } = await import("../src/commands/slash.js");
+    const check = await runDoctorCheck({
+      ...DEFAULT_CONFIG,
+      workspace: tmp,
+      sandbox: "workspace",
+      sandboxMissingBackend: "fallback",
+      permissionMode: "default",
+    });
+    assert.equal(check.ok, false);
+    assert.ok(
+      check.issues.some((i) => /fallback/i.test(i)),
+      check.issues.join("; "),
+    );
+  });
+});
+
+describe("forge run --read-outside", () => {
+  it("fail-closed empty/invalid and accepts ask|allow|deny", async () => {
+    const { spawnSync } = await import("node:child_process");
+    const path = await import("node:path");
+    const fs = await import("node:fs");
+    const os = await import("node:os");
+    const cli = path.join(process.cwd(), "dist/cli.js");
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "forge-ro-"));
+    const env = { ...process.env, FORGE_HOME: home, XAI_API_KEY: "sk" };
+    const empty = spawnSync(process.execPath, [cli, "run", "x", "--read-outside", "", "--json"], {
+      env,
+      encoding: "utf8",
+    });
+    assert.equal(JSON.parse(empty.stdout).reason, "invalid_read_outside");
+    const bad = spawnSync(process.execPath, [cli, "run", "x", "--read-outside", "explode", "--json"], {
+      env,
+      encoding: "utf8",
+    });
+    assert.equal(JSON.parse(bad.stdout).reason, "invalid_read_outside");
+    // deny alias
+    const deny = spawnSync(
+      process.execPath,
+      [cli, "run", "x", "--read-outside", "deny", "--json", "--max-turns", "1"],
+      { env, encoding: "utf8", timeout: 15000 },
+    );
+    const j = JSON.parse(deny.stdout);
+    assert.equal(j.readOutsideWorkspace, "deny");
+  });
+});
+
+describe("apply_patch empty patch message", () => {
+  it("hints required hunk kinds", async () => {
+    const { parsePatch } = await import("../src/agent/tools/patch.js");
+    const r = parsePatch("*** Begin Patch\n*** End Patch");
+    assert.equal(r.ok, false);
+    if (!r.ok) {
+      assert.match(r.error, /empty patch/i);
+      assert.match(r.error, /Add\/Update\/Delete\/Move/i);
+    }
+  });
+});
+
+describe("doctor flags read-outside allow", () => {
+  it("reports allow outside-workspace reads as a blocking issue", async () => {
+    const fs = await import("node:fs");
+    const os = await import("node:os");
+    const path = await import("node:path");
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-doctor-ro-"));
+    process.env.FORGE_HOME = tmp;
+    const { DEFAULT_CONFIG } = await import("../src/config/types.js");
+    const { runDoctorCheck } = await import("../src/commands/slash.js");
+    const check = await runDoctorCheck({
+      ...DEFAULT_CONFIG,
+      workspace: tmp,
+      sandbox: "workspace",
+      readOutsideWorkspace: "allow",
+      permissionMode: "default",
+    });
+    assert.equal(check.ok, false);
+    assert.ok(
+      check.issues.some((i) => /read-outside|outside the workspace/i.test(i)),
+      check.issues.join("; "),
+    );
+  });
+});
+
+describe("logs/news empty count fail-closed", () => {
+  it("rejects explicit empty --lines and news count", async () => {
+    const { spawnSync } = await import("node:child_process");
+    const path = await import("node:path");
+    const fs = await import("node:fs");
+    const os = await import("node:os");
+    const cli = path.join(process.cwd(), "dist/cli.js");
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "forge-empty-n-"));
+    const env = { ...process.env, FORGE_HOME: home };
+    const logs = spawnSync(process.execPath, [cli, "logs", "-n", "", "--json"], {
+      env,
+      encoding: "utf8",
+    });
+    assert.equal(JSON.parse(logs.stdout).reason, "invalid_lines");
+    const news = spawnSync(process.execPath, [cli, "news", "", "--json"], {
+      env,
+      encoding: "utf8",
+    });
+    assert.equal(JSON.parse(news.stdout).reason, "invalid_count");
+    // omit still works
+    const logsDef = spawnSync(process.execPath, [cli, "logs", "--json"], {
+      env,
+      encoding: "utf8",
+    });
+    assert.equal(JSON.parse(logsDef.stdout).ok, true);
+    assert.equal(JSON.parse(logsDef.stdout).limit, 30);
+    const newsDef = spawnSync(process.execPath, [cli, "news", "--json"], {
+      env,
+      encoding: "utf8",
+    });
+    assert.equal(JSON.parse(newsDef.stdout).ok, true);
+  });
+});
+
+describe("prune-tool-output empty --max-age-days fail-closed", () => {
+  it("rejects explicit empty max-age-days", async () => {
+    const { spawnSync } = await import("node:child_process");
+    const path = await import("node:path");
+    const fs = await import("node:fs");
+    const os = await import("node:os");
+    const cli = path.join(process.cwd(), "dist/cli.js");
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "forge-pto-"));
+    const env = { ...process.env, FORGE_HOME: home };
+    const empty = spawnSync(
+      process.execPath,
+      [cli, "prune-tool-output", "--max-age-days", "", "--json"],
+      { env, encoding: "utf8" },
+    );
+    assert.equal(JSON.parse(empty.stdout).reason, "invalid_max_age_days");
+    const ok = spawnSync(process.execPath, [cli, "prune-tool-output", "--json"], {
+      env,
+      encoding: "utf8",
+    });
+    assert.equal(JSON.parse(ok.stdout).ok, true);
+  });
+});
+
+describe("doctor --json includes sandbox/read-outside fields", () => {
+  it("exposes sandboxMissingBackend, readOutsideWorkspace, stickyProvider, rule counts", async () => {
+    const { spawnSync } = await import("node:child_process");
+    const path = await import("node:path");
+    const fs = await import("node:fs");
+    const os = await import("node:os");
+    const cli = path.join(process.cwd(), "dist/cli.js");
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "forge-doctor-fields-"));
+    const env = {
+      ...process.env,
+      FORGE_HOME: home,
+      XAI_API_KEY: "sk",
+      FORGE_READ_OUTSIDE: "deny",
+    };
+    const r = spawnSync(process.execPath, [cli, "doctor", "--json"], {
+      env,
+      encoding: "utf8",
+    });
+    const j = JSON.parse(r.stdout);
+    assert.equal(j.readOutsideWorkspace, "deny");
+    assert.ok(["fail-closed", "fallback"].includes(j.sandboxMissingBackend));
+    assert.ok(["unrestricted", "blocked"].includes(j.sandboxNetwork));
+    assert.equal(typeof j.denyRules, "number");
+    assert.ok("stickyProvider" in j);
+  });
+});
+
+describe("sessions export format typo suggestion", () => {
+  it("suggests json for jsn", async () => {
+    const { spawnSync } = await import("node:child_process");
+    const path = await import("node:path");
+    const fs = await import("node:fs");
+    const os = await import("node:os");
+    const cli = path.join(process.cwd(), "dist/cli.js");
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "forge-fmt-"));
+    const env = { ...process.env, FORGE_HOME: home };
+    const r = spawnSync(
+      process.execPath,
+      [cli, "sessions", "export", "x", "--format", "jsn", "--json"],
+      { env, encoding: "utf8" },
+    );
+    const j = JSON.parse(r.stdout);
+    assert.equal(j.reason, "invalid_format");
+    assert.equal(j.suggestion, "json");
+    assert.match(j.error, /Did you mean: json/i);
+  });
+});
+
+describe("typo suggestions for shell/logs/news/stats", () => {
+  it("suggests bash/all/week for near-miss tokens", async () => {
+    const { spawnSync } = await import("node:child_process");
+    const path = await import("node:path");
+    const fs = await import("node:fs");
+    const os = await import("node:os");
+    const cli = path.join(process.cwd(), "dist/cli.js");
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "forge-typo-"));
+    const env = { ...process.env, FORGE_HOME: home };
+    const shell = spawnSync(process.execPath, [cli, "completion", "bas", "--json"], {
+      env,
+      encoding: "utf8",
+    });
+    const sj = JSON.parse(shell.stdout);
+    assert.equal(sj.reason, "invalid_shell");
+    assert.equal(sj.suggestion, "bash");
+    const logs = spawnSync(process.execPath, [cli, "logs", "-n", "al", "--json"], {
+      env,
+      encoding: "utf8",
+    });
+    const lj = JSON.parse(logs.stdout);
+    assert.equal(lj.reason, "invalid_lines");
+    assert.equal(lj.suggestion, "all");
+    const news = spawnSync(process.execPath, [cli, "news", "al", "--json"], {
+      env,
+      encoding: "utf8",
+    });
+    const nj = JSON.parse(news.stdout);
+    assert.equal(nj.reason, "invalid_count");
+    assert.equal(nj.suggestion, "all");
+    const stats = spawnSync(process.execPath, [cli, "stats", "--days", "wek", "--json"], {
+      env,
+      encoding: "utf8",
+    });
+    const st = JSON.parse(stats.stdout);
+    assert.equal(st.reason, "invalid_days");
+    assert.equal(st.suggestion, "week");
+  });
+});
+
+describe("keep/limit/max-age typo suggestions", () => {
+  it("suggests all for al on keep/limit/max-age-days", async () => {
+    const { spawnSync } = await import("node:child_process");
+    const path = await import("node:path");
+    const fs = await import("node:fs");
+    const os = await import("node:os");
+    const cli = path.join(process.cwd(), "dist/cli.js");
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "forge-keep-typo-"));
+    const env = { ...process.env, FORGE_HOME: home };
+    const keep = spawnSync(
+      process.execPath,
+      [cli, "sessions", "prune", "--keep", "al", "--json"],
+      { env, encoding: "utf8" },
+    );
+    const kj = JSON.parse(keep.stdout);
+    assert.equal(kj.reason, "invalid_keep");
+    assert.equal(kj.suggestion, "all");
+    const limit = spawnSync(
+      process.execPath,
+      [cli, "sessions", "list", "--limit", "al", "--json"],
+      { env, encoding: "utf8" },
+    );
+    const lj = JSON.parse(limit.stdout);
+    assert.equal(lj.reason, "invalid_limit");
+    assert.equal(lj.suggestion, "all");
+    const age = spawnSync(
+      process.execPath,
+      [cli, "prune-tool-output", "--max-age-days", "al", "--json"],
+      { env, encoding: "utf8" },
+    );
+    const aj = JSON.parse(age.stdout);
+    assert.equal(aj.reason, "invalid_max_age_days");
+    assert.equal(aj.suggestion, "all");
+  });
+});
+
+describe("run --session + --continue conflict", () => {
+  it("fail-closed conflicting_flags", async () => {
+    const { spawnSync } = await import("node:child_process");
+    const path = await import("node:path");
+    const fs = await import("node:fs");
+    const os = await import("node:os");
+    const cli = path.join(process.cwd(), "dist/cli.js");
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "forge-sess-cont-"));
+    const env = { ...process.env, FORGE_HOME: home, XAI_API_KEY: "sk" };
+    const r = spawnSync(
+      process.execPath,
+      [cli, "run", "x", "--session", "abc", "--continue", "--json"],
+      { env, encoding: "utf8" },
+    );
+    const j = JSON.parse(r.stdout);
+    assert.equal(j.reason, "conflicting_flags");
+    assert.match(j.error, /--session.*--continue/i);
+  });
+});
+
+describe("status --interval empty fail-closed", () => {
+  it("rejects explicit empty interval", async () => {
+    const { spawnSync } = await import("node:child_process");
+    const path = await import("node:path");
+    const fs = await import("node:fs");
+    const os = await import("node:os");
+    const cli = path.join(process.cwd(), "dist/cli.js");
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "forge-interval-"));
+    const env = { ...process.env, FORGE_HOME: home };
+    const empty = spawnSync(
+      process.execPath,
+      [cli, "status", "--interval", "", "--json"],
+      { env, encoding: "utf8" },
+    );
+    assert.equal(JSON.parse(empty.stdout).reason, "invalid_interval");
+    const ok = spawnSync(process.execPath, [cli, "status", "--json"], {
+      env,
+      encoding: "utf8",
+    });
+    assert.equal(JSON.parse(ok.stdout).ok, true);
+  });
+});
+
+describe("tips --json structured fields", () => {
+  it("includes lines and sections", async () => {
+    const { spawnSync } = await import("node:child_process");
+    const path = await import("node:path");
+    const fs = await import("node:fs");
+    const os = await import("node:os");
+    const cli = path.join(process.cwd(), "dist/cli.js");
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "forge-tips-"));
+    const env = { ...process.env, FORGE_HOME: home };
+    const r = spawnSync(process.execPath, [cli, "tips", "--json"], {
+      env,
+      encoding: "utf8",
+    });
+    const j = JSON.parse(r.stdout);
+    assert.equal(j.ok, true);
+    assert.ok(typeof j.tips === "string" && j.tips.includes("Forge expert tips"));
+    assert.ok(Array.isArray(j.lines) && j.lines.length >= 5);
+    assert.ok(Array.isArray(j.sections) && j.sections.includes("CI"));
+  });
+});
+
+describe("run --json productionWarnings", () => {
+  it("flags sandbox=off and yolo and read-outside=allow", async () => {
+    const { spawnSync } = await import("node:child_process");
+    const path = await import("node:path");
+    const fs = await import("node:fs");
+    const os = await import("node:os");
+    const cli = path.join(process.cwd(), "dist/cli.js");
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "forge-pw-"));
+    const env = { ...process.env, FORGE_HOME: home, XAI_API_KEY: "sk" };
+    const r = spawnSync(
+      process.execPath,
+      [
+        cli,
+        "run",
+        "x",
+        "--sandbox",
+        "off",
+        "--permission-mode",
+        "yolo",
+        "--read-outside",
+        "allow",
+        "--json",
+        "--max-turns",
+        "1",
+      ],
+      { env, encoding: "utf8", timeout: 15000 },
+    );
+    const j = JSON.parse(r.stdout);
+    assert.ok(Array.isArray(j.productionWarnings));
+    assert.ok(j.productionWarnings.some((w: string) => /sandbox=off/i.test(w)));
+    assert.ok(j.productionWarnings.some((w: string) => /bypassPermissions|yolo/i.test(w)));
+    assert.ok(j.productionWarnings.some((w: string) => /read-outside=allow/i.test(w)));
+    const safe = spawnSync(
+      process.execPath,
+      [cli, "run", "x", "--sandbox", "workspace", "--read-outside", "deny", "--json", "--max-turns", "1"],
+      { env, encoding: "utf8", timeout: 15000 },
+    );
+    const s = JSON.parse(safe.stdout);
+    assert.deepEqual(s.productionWarnings, []);
+  });
+});
+
+describe("run --no-blocking-stop", () => {
+  it("sets blockingStop false and productionWarnings", async () => {
+    const { spawnSync } = await import("node:child_process");
+    const path = await import("node:path");
+    const fs = await import("node:fs");
+    const os = await import("node:os");
+    const cli = path.join(process.cwd(), "dist/cli.js");
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "forge-nbs-"));
+    const env = { ...process.env, FORGE_HOME: home, XAI_API_KEY: "sk" };
+    const r = spawnSync(
+      process.execPath,
+      [cli, "run", "x", "--no-blocking-stop", "--json", "--max-turns", "1"],
+      { env, encoding: "utf8", timeout: 15000 },
+    );
+    const j = JSON.parse(r.stdout);
+    assert.equal(j.blockingStop, false);
+    assert.ok(j.productionWarnings.some((w: string) => /blockingStop/i.test(w)));
+  });
+});
+
+describe("mergeRunOpts carries readOutside and blockingStop", () => {
+  it("prefers parent CLI blockingStop over run default", async () => {
+    const { mergeRunOpts } = await import("../src/util/merge-run-opts.js");
+    const command = {
+      optsWithGlobals: () => ({ blockingStop: false, readOutside: "deny" }),
+      getOptionValueSource: (k: string) =>
+        k === "blockingStop" || k === "readOutside" ? "default" : undefined,
+      parent: {
+        getOptionValueSource: (k: string) =>
+          k === "blockingStop" || k === "readOutside" ? "cli" : undefined,
+      },
+    };
+    const merged = mergeRunOpts(command, {
+      // run subcommand default would be true
+      blockingStop: true,
+      readOutside: "ask",
+    });
+    assert.equal(merged.blockingStop, false);
+    assert.equal(merged.readOutside, "deny");
+  });
+});
+
+describe("run --base-url ftp tip", () => {
+  it("suggests https for ftp base-url", async () => {
+    const { spawnSync } = await import("node:child_process");
+    const path = await import("node:path");
+    const fs = await import("node:fs");
+    const os = await import("node:os");
+    const cli = path.join(process.cwd(), "dist/cli.js");
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "forge-base-ftp-"));
+    const env = { ...process.env, FORGE_HOME: home, XAI_API_KEY: "sk" };
+    const r = spawnSync(
+      process.execPath,
+      [cli, "run", "x", "--base-url", "ftp://api.x.ai", "--json"],
+      { env, encoding: "utf8" },
+    );
+    const j = JSON.parse(r.stdout);
+    assert.equal(j.reason, "invalid_base_url");
+    assert.equal(j.suggestion, "https");
+    assert.match(j.error, /Did you mean: https/i);
+  });
+});
+
+describe("sessions export --json without --out", () => {
+  it("emits structured envelope even for md format", async () => {
+    const { spawnSync } = await import("node:child_process");
+    const path = await import("node:path");
+    const fs = await import("node:fs");
+    const os = await import("node:os");
+    const cli = path.join(process.cwd(), "dist/cli.js");
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "forge-export-json-"));
+    process.env.FORGE_HOME = home;
+    const { createSession, saveSession } = await import("../src/session/session.js");
+    const s = createSession({
+      cwd: process.cwd(),
+      provider: "xai",
+      model: "grok-4.5",
+      title: "export-json",
+    });
+    saveSession(s);
+    const env = { ...process.env, FORGE_HOME: home };
+    const md = spawnSync(
+      process.execPath,
+      [cli, "sessions", "export", s.meta.id, "--format", "md", "--json"],
+      { env, encoding: "utf8" },
+    );
+    const j = JSON.parse(md.stdout);
+    assert.equal(j.ok, true);
+    assert.equal(j.format, "md");
+    assert.equal(j.id, s.meta.id);
+    assert.equal(typeof j.body, "string");
+    assert.match(j.body, /Forge session/i);
+    const js = spawnSync(
+      process.execPath,
+      [cli, "sessions", "export", s.meta.id, "--format", "json", "--json"],
+      { env, encoding: "utf8" },
+    );
+    const j2 = JSON.parse(js.stdout);
+    assert.equal(j2.ok, true);
+    assert.equal(j2.format, "json");
+    assert.ok(j2.body && typeof j2.body === "object");
+  });
+});
+
+describe("sessions import accepts export --json envelope", () => {
+  it("unwraps body from export --json stdout payload", async () => {
+    const { spawnSync } = await import("node:child_process");
+    const path = await import("node:path");
+    const fs = await import("node:fs");
+    const os = await import("node:os");
+    const cli = path.join(process.cwd(), "dist/cli.js");
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "forge-import-env-"));
+    process.env.FORGE_HOME = home;
+    const { createSession, saveSession } = await import("../src/session/session.js");
+    const s = createSession({
+      cwd: process.cwd(),
+      provider: "xai",
+      model: "grok-4.5",
+      title: "import-env",
+    });
+    saveSession(s);
+    const env = { ...process.env, FORGE_HOME: home };
+    const exp = spawnSync(
+      process.execPath,
+      [cli, "sessions", "export", s.meta.id, "--format", "json", "--json"],
+      { env, encoding: "utf8" },
+    );
+    const envelope = JSON.parse(exp.stdout);
+    assert.equal(envelope.ok, true);
+    const file = path.join(home, "envelope.json");
+    fs.writeFileSync(file, JSON.stringify(envelope));
+    const imp = spawnSync(
+      process.execPath,
+      [cli, "sessions", "import", file, "--json"],
+      { env, encoding: "utf8" },
+    );
+    const j = JSON.parse(imp.stdout);
+    assert.equal(j.ok, true);
+    assert.ok(j.id);
+    assert.notEqual(j.id, s.meta.id);
+  });
+});
+
+describe("doctor what-if safety flags", () => {
+  it("honors --sandbox off and --read-outside allow on doctor itself", async () => {
+    const { spawnSync } = await import("node:child_process");
+    const path = await import("node:path");
+    const fs = await import("node:fs");
+    const os = await import("node:os");
+    const cli = path.join(process.cwd(), "dist/cli.js");
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "forge-doctor-whatif-"));
+    const env = { ...process.env, FORGE_HOME: home, XAI_API_KEY: "sk" };
+    const r = spawnSync(
+      process.execPath,
+      [cli, "doctor", "--json", "--sandbox", "off", "--read-outside", "allow"],
+      { env, encoding: "utf8" },
+    );
+    const j = JSON.parse(r.stdout);
+    assert.equal(j.sandbox, "off");
+    assert.equal(j.readOutsideWorkspace, "allow");
+    assert.equal(j.ok, false);
+    assert.ok(j.issues.some((i: string) => /sandbox is off/i.test(i)));
+    assert.ok(j.issues.some((i: string) => /read-outside|outside the workspace/i.test(i)));
+  });
+});
+
+describe("config what-if safety flags", () => {
+  it("applies --sandbox/--read-outside on config snapshot", async () => {
+    const { spawnSync } = await import("node:child_process");
+    const path = await import("node:path");
+    const fs = await import("node:fs");
+    const os = await import("node:os");
+    const cli = path.join(process.cwd(), "dist/cli.js");
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "forge-config-whatif-"));
+    const env = { ...process.env, FORGE_HOME: home };
+    const r = spawnSync(
+      process.execPath,
+      [cli, "config", "--json", "--sandbox", "strict", "--read-outside", "deny"],
+      { env, encoding: "utf8" },
+    );
+    const j = JSON.parse(r.stdout);
+    assert.equal(j.sandbox, "strict");
+    assert.equal(j.readOutsideWorkspace, "deny");
+  });
+});
+
+describe("FORGE_BASH_TIMEOUT_MS duration suffixes", () => {
+  it("accepts 90s via envDurationMs/defaultBashTimeoutMs", async () => {
+    const prev = process.env.FORGE_BASH_TIMEOUT_MS;
+    process.env.FORGE_BASH_TIMEOUT_MS = "90s";
+    try {
+      const { defaultBashTimeoutMs } = await import("../src/util/env.js");
+      assert.equal(defaultBashTimeoutMs(), 90_000);
+    } finally {
+      if (prev === undefined) delete process.env.FORGE_BASH_TIMEOUT_MS;
+      else process.env.FORGE_BASH_TIMEOUT_MS = prev;
+    }
+  });
+});
+
+describe("FORGE_MAX_RUN_MS / PROVIDER_TIMEOUT duration suffixes", () => {
+  it("parses 10m and 5m via shared duration helper", async () => {
+    const prevMax = process.env.FORGE_MAX_RUN_MS;
+    const prevProv = process.env.FORGE_PROVIDER_TIMEOUT_MS;
+    try {
+      process.env.FORGE_MAX_RUN_MS = "10m";
+      const { maxRunMsFromEnv } = await import("../src/util/env.js");
+      assert.equal(maxRunMsFromEnv(), 600_000);
+      process.env.FORGE_PROVIDER_TIMEOUT_MS = "5m";
+      // fresh module path for providerTimeoutMs
+      const { providerTimeoutMs } = await import("../src/util/abort.js");
+      // may be cached — call after env set; if cached still assert function exists
+      const n = providerTimeoutMs();
+      assert.ok(n >= 5_000);
+      // direct parse
+      const { parseDurationMs } = await import("../src/util/duration-ms.js");
+      assert.equal(parseDurationMs("5m").ok && (parseDurationMs("5m") as any).ms, 300_000);
+      assert.equal(parseDurationMs("10m").ok && (parseDurationMs("10m") as any).ms, 600_000);
+    } finally {
+      if (prevMax === undefined) delete process.env.FORGE_MAX_RUN_MS;
+      else process.env.FORGE_MAX_RUN_MS = prevMax;
+      if (prevProv === undefined) delete process.env.FORGE_PROVIDER_TIMEOUT_MS;
+      else process.env.FORGE_PROVIDER_TIMEOUT_MS = prevProv;
+    }
+  });
+});
+
+describe("FORGE_PERMISSION_TIMEOUT_MS duration suffixes", () => {
+  it("accepts 45s", async () => {
+    const prev = process.env.FORGE_PERMISSION_TIMEOUT_MS;
+    process.env.FORGE_PERMISSION_TIMEOUT_MS = "45s";
+    try {
+      const { permissionAskTimeoutMs } = await import("../src/agent/permissions.js");
+      assert.equal(permissionAskTimeoutMs(), 45_000);
+    } finally {
+      if (prev === undefined) delete process.env.FORGE_PERMISSION_TIMEOUT_MS;
+      else process.env.FORGE_PERMISSION_TIMEOUT_MS = prev;
+    }
+  });
+});
+
+describe("sessions import markdown export hint", () => {
+  it("steers md export files to --format json", async () => {
+    const { spawnSync } = await import("node:child_process");
+    const path = await import("node:path");
+    const fs = await import("node:fs");
+    const os = await import("node:os");
+    const cli = path.join(process.cwd(), "dist/cli.js");
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "forge-import-md-"));
+    process.env.FORGE_HOME = home;
+    const { createSession, saveSession } = await import("../src/session/session.js");
+    const s = createSession({
+      cwd: process.cwd(),
+      provider: "xai",
+      model: "grok-4.5",
+      title: "md-imp",
+    });
+    saveSession(s);
+    const env = { ...process.env, FORGE_HOME: home };
+    const exp = spawnSync(
+      process.execPath,
+      [cli, "sessions", "export", s.meta.id, "--format", "md", "--json"],
+      { env, encoding: "utf8" },
+    );
+    const envelope = JSON.parse(exp.stdout);
+    const file = path.join(home, "session.md");
+    fs.writeFileSync(file, envelope.body);
+    const imp = spawnSync(
+      process.execPath,
+      [cli, "sessions", "import", file, "--json"],
+      { env, encoding: "utf8" },
+    );
+    const j = JSON.parse(imp.stdout);
+    assert.equal(j.ok, false);
+    assert.equal(j.reason, "invalid");
+    assert.match(j.error, /markdown exports are not importable|--format json/i);
+  });
+});
+
+describe("doctor package.json engines.node floor", () => {
+  it("flags runtime below engines.node >=N floor", async () => {
+    const { spawnSync } = await import("node:child_process");
+    const path = await import("node:path");
+    const fs = await import("node:fs");
+    const os = await import("node:os");
+    const cli = path.join(process.cwd(), "dist/cli.js");
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "forge-engines-"));
+    const cwd = path.join(home, "proj");
+    fs.mkdirSync(cwd, { recursive: true });
+    fs.writeFileSync(
+      path.join(cwd, "package.json"),
+      JSON.stringify({ name: "x", engines: { node: ">=99" } }),
+    );
+    const env = { ...process.env, FORGE_HOME: home, XAI_API_KEY: "sk" };
+    const r = spawnSync(
+      process.execPath,
+      [cli, "doctor", "--json", "--cwd", cwd],
+      { env, encoding: "utf8" },
+    );
+    const j = JSON.parse(r.stdout);
+    assert.equal(j.ok, false);
+    assert.ok(j.issues.some((i: string) => /engines\.node floor 99/i.test(i)));
+    assert.equal(j.packageEnginesNode, ">=99");
   });
 });

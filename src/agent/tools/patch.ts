@@ -50,9 +50,19 @@ export function parsePatch(patchText: string): ParsePatchResult | ParsePatchErro
     const begin = lines.findIndex((l) => l.trim() === "*** Begin Patch");
     const end = lines.findIndex((l) => l.trim() === "*** End Patch");
     if (begin === -1 || end === -1 || begin >= end) {
+      let detail = "missing *** Begin Patch / *** End Patch markers";
+      if (begin !== -1 && end === -1) {
+        detail =
+          "found *** Begin Patch but missing *** End Patch (close the patch with *** End Patch on its own line)";
+      } else if (begin === -1 && end !== -1) {
+        detail =
+          "found *** End Patch but missing *** Begin Patch (open with *** Begin Patch on its own line)";
+      } else if (begin !== -1 && end !== -1 && begin >= end) {
+        detail = "*** End Patch must come after *** Begin Patch";
+      }
       return {
         ok: false,
-        error: "Invalid patch format: missing *** Begin Patch / *** End Patch markers",
+        error: `Invalid patch format: ${detail}`,
       };
     }
     const hunks: PatchHunk[] = [];
@@ -65,7 +75,7 @@ export function parsePatch(patchText: string): ParsePatchResult | ParsePatchErro
       }
       if (line.startsWith("*** Add File:")) {
         const p = line.slice("*** Add File:".length).trim();
-        if (!p) return { ok: false, error: "Invalid add file path" };
+        if (!p) return { ok: false, error: "Invalid add file path (empty). Use *** Add File: relative/path.ext" };
         const parsed = parseAdd(lines, index + 1, end);
         hunks.push({ type: "add", path: p, contents: parsed.content });
         index = parsed.next;
@@ -73,19 +83,27 @@ export function parsePatch(patchText: string): ParsePatchResult | ParsePatchErro
       }
       if (line.startsWith("*** Delete File:")) {
         const p = line.slice("*** Delete File:".length).trim();
-        if (!p) return { ok: false, error: "Invalid delete file path" };
+        if (!p) return { ok: false, error: "Invalid delete file path (empty). Use *** Delete File: relative/path.ext" };
         hunks.push({ type: "delete", path: p });
         index++;
         continue;
       }
       if (line.startsWith("*** Update File:")) {
         const p = line.slice("*** Update File:".length).trim();
-        if (!p) return { ok: false, error: "Invalid update file path" };
+        if (!p) return { ok: false, error: "Invalid update file path (empty). Use *** Update File: relative/path.ext" };
         let next = index + 1;
         let movePath: string | undefined;
         if (lines[next]?.startsWith("*** Move to:")) {
           movePath = lines[next]!.slice("*** Move to:".length).trim();
-          if (!movePath) return { ok: false, error: "Invalid move file path" };
+          if (!movePath) {
+            return {
+              ok: false,
+              error:
+                "Invalid move file path (empty). Use:\n" +
+                "  *** Update File: old/path.ts\n" +
+                "  *** Move to: new/path.ts",
+            };
+          }
           next++;
         }
         const parsed = parseUpdate(lines, next, end);
@@ -95,14 +113,61 @@ export function parsePatch(patchText: string): ParsePatchResult | ParsePatchErro
             error: `Invalid update hunk for ${p}: expected at least one @@ chunk`,
           };
         }
+        const noop =
+          !movePath &&
+          parsed.chunks.every((c) => {
+            // Empty chunk, or context-only (old === new) with no edits.
+            if (c.oldLines.length === 0 && c.newLines.length === 0) return true;
+            if (c.oldLines.length !== c.newLines.length) return false;
+            return c.oldLines.every((line, i) => line === c.newLines[i]);
+          });
+        if (noop) {
+          return {
+            ok: false,
+            error:
+              `Invalid update hunk for ${p}: empty/context-only @@ chunk is a no-op. ` +
+              `Add -/+ lines, or use *** Move to: for renames.`,
+          };
+        }
         hunks.push({ type: "update", path: p, movePath, chunks: parsed.chunks });
         index = parsed.next;
         continue;
       }
+      const trimmed = line.trim();
+      if (/^\*\*\*\s*Move\s+File:/i.test(trimmed) || /^\*\*\*\s*Rename\s+File:/i.test(trimmed)) {
+        return {
+          ok: false,
+          error:
+            `Invalid patch line: ${line}
+` +
+            `Hint: renames use Update File + Move to, e.g.
+` +
+            `  *** Update File: old/path.ts
+` +
+            `  *** Move to: new/path.ts
+` +
+            `  @@
+` +
+            `  (optional -/+ lines)`,
+        };
+      }
+      if (/^\*\*\*\s*Move\s+to:/i.test(trimmed)) {
+        return {
+          ok: false,
+          error:
+            `Invalid patch line: ${line}
+` +
+            `Hint: *** Move to: must follow *** Update File: path (not stand alone).`,
+        };
+      }
       return { ok: false, error: `Invalid patch line: ${line}` };
     }
     if (hunks.length === 0) {
-      return { ok: false, error: "patch rejected: empty patch" };
+      return {
+        ok: false,
+        error:
+          "patch rejected: empty patch (no file ops). Include at least one *** Add/Update/Delete/Move File: path hunk between *** Begin Patch and *** End Patch",
+      };
     }
     return { ok: true, hunks };
   } catch (err) {
@@ -214,7 +279,8 @@ function computeReplacements(
       const context = seek(lines, [chunk.changeContext], lineIndex);
       if (context === -1) {
         throw new Error(
-          `Failed to find context '${chunk.changeContext}' in ${pathLabel}`,
+          `Failed to find context '${chunk.changeContext}' in ${pathLabel}\n` +
+            `Tip: re-read the file and copy an exact nearby line for @@ context.`,
         );
       }
       lineIndex = context + 1;
@@ -234,7 +300,8 @@ function computeReplacements(
     }
     if (found === -1) {
       throw new Error(
-        `Failed to find expected lines in ${pathLabel}:\n${chunk.oldLines.join("\n")}`,
+        `Failed to find expected lines in ${pathLabel}:\n${chunk.oldLines.join("\n")}\n` +
+          `Tip: re-read ${pathLabel} and refresh the @@ hunk from current contents (or use search_replace for a small edit).`,
       );
     }
     replacements.push([found, oldLines.length, [...newLines]]);

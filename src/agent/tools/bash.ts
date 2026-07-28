@@ -8,46 +8,122 @@ import {
   defaultBashBackgroundTimeoutMs,
   defaultBashTimeoutMs,
 } from "../../util/env.js";
+import { isTruthy } from "../../util/bool.js";
+import { numberFieldError } from "./arg-types.js";
+import { editDistance } from "../../util/string-distance.js";
+import { parseDurationMs } from "../../util/duration-ms.js";
 
 const execAsync = promisify(exec);
 
-function truthy(v: unknown): boolean {
-  if (v === true || v === 1) return true;
-  if (typeof v === "string") {
-    const s = v.toLowerCase();
-    return s === "true" || s === "1" || s === "yes";
+/** Parse timeout_ms: omitted → fallback; explicit invalid → null (fail closed). */
+function resolveTimeoutMs(
+  raw: unknown,
+  fallback: number,
+): { ok: true; ms: number } | { ok: false; tip?: string } {
+  if (raw == null || String(raw).trim() === "") return { ok: true, ms: fallback };
+  const key = String(raw).trim().toLowerCase();
+  if (key === "default" || key === "def" || key === "auto" || key === "omit") {
+    return { ok: true, ms: fallback };
   }
-  return false;
-}
-
-function resolveTimeoutMs(raw: unknown, fallback: number): number {
-  const n = Number(raw);
-  if (!Number.isFinite(n) || n < 1) return fallback;
-  return Math.floor(n);
+  // max/all/unlimited → 30 minutes (safety ceiling for long jobs)
+  if (key === "max" || key === "unlimited" || key === "full" || key === "all") {
+    return { ok: true, ms: Math.max(fallback, 30 * 60 * 1000) };
+  }
+  // Duration suffixes: 30s, 1m, 2h, 500ms (expert muscle memory).
+  const parsedDur = parseDurationMs(key);
+  if (parsedDur.ok && !/^\d+$/.test(key)) {
+    // Cap absurd values at 24h
+    return { ok: true, ms: Math.min(parsedDur.ms, 24 * 60 * 60 * 1000) };
+  }
+  if (!/^\d+$/.test(key)) {
+    let tip: string | undefined;
+    let best = Infinity;
+    for (const c of ["default", "max", "all", "30s", "1m", "30000", "60000", "120000"]) {
+      const d = editDistance(key, c);
+      if (d < best && d <= Math.max(2, Math.floor(c.length / 2))) {
+        best = d;
+        tip = c;
+      }
+    }
+    return tip ? { ok: false, tip } : { ok: false };
+  }
+  const n = Number(key);
+  if (!Number.isFinite(n) || n < 1) return { ok: false };
+  return { ok: true, ms: Math.floor(n) };
 }
 
 export async function toolBash(
   args: Record<string, unknown>,
   ctx: ToolContext,
 ): Promise<ToolResult> {
-  const command = String(args.command || "");
-  if (!command) return { output: "command is required", isError: true };
-  const timeout = resolveTimeoutMs(args.timeout_ms, defaultBashTimeoutMs());
+  // Trim so whitespace-only is rejected (was a silent no-op success).
+  if (args.command != null && typeof args.command !== "string") {
+    const kind =
+      args.command === null
+        ? "null"
+        : Array.isArray(args.command)
+          ? "array"
+          : typeof args.command;
+    return {
+      output: `bash error: command must be a string (got ${kind}).`,
+      isError: true,
+    };
+  }
+  const command = String(args.command || "").trim();
+  if (!command) {
+    return {
+      output:
+        "bash error: command is required (non-empty string).\n" +
+        'Example: { "command": "npm test", "timeout_ms": "120s" }\n' +
+        "For long jobs: { \"command\": \"npm run build\", \"background\": true } then get_task_output.",
+      isError: true,
+    };
+  }
+  const timeoutRes = resolveTimeoutMs(args.timeout_ms, defaultBashTimeoutMs());
+  if (!timeoutRes.ok) {
+    return {
+      output:
+        numberFieldError(
+          "bash",
+          "timeout_ms",
+          args.timeout_ms,
+          (timeoutRes.tip ? `Did you mean: ${timeoutRes.tip}? ` : "") +
+            "Pass a positive integer ms (or 30s/1m/2h), or default|max|all (omit for default).",
+        ),
+      isError: true,
+    };
+  }
+  const timeout = timeoutRes.ms;
   const profile = ctx.sandbox ?? "workspace";
   const missingBackend = ctx.sandboxMissingBackend ?? "fail-closed";
   const env = createShellEnv(process.env);
 
-  if (truthy(args.background) || truthy(args.run_in_background)) {
-    const started = await startBackgroundTask({
+  if (isTruthy(args.background) || isTruthy(args.run_in_background)) {
+    const bgTimeoutRes = resolveTimeoutMs(
+      args.timeout_ms,
+      defaultBashBackgroundTimeoutMs(),
+    );
+    if (!bgTimeoutRes.ok) {
+      return {
+        output:
+          numberFieldError(
+            "bash",
+            "timeout_ms",
+            args.timeout_ms,
+            (bgTimeoutRes.tip ? `Did you mean: ${bgTimeoutRes.tip}? ` : "") +
+              "Pass a positive integer ms (or 30s/1m/2h), or default|max|all (omit for default).",
+          ),
+        isError: true,
+      };
+    }
+    const bgTimeoutMs = bgTimeoutRes.ms;
+  const started = await startBackgroundTask({
       command,
       cwd: ctx.workspace,
       profile,
       network: ctx.sandboxNetwork,
       missingBackend,
-      timeoutMs: resolveTimeoutMs(
-        args.timeout_ms,
-        defaultBashBackgroundTimeoutMs(),
-      ),
+      timeoutMs: bgTimeoutMs,
     });
     if (!started.ok) {
       return {
@@ -55,12 +131,14 @@ export async function toolBash(
         isError: true,
       };
     }
-    const t = started.task;
+  const t = started.task;
+    const bgTimeout = bgTimeoutMs;
     return {
       output:
         `Background task started.\n` +
         `task_id: ${t.id}\n` +
         `pid: ${t.pid ?? "n/a"}\n` +
+        `timeout_ms: ${bgTimeout}\n` +
         `sandbox: ${t.backend}${t.sandboxed ? "" : " (unsandboxed)"}\n` +
         `stdout: ${t.stdoutPath}\n` +
         `stderr: ${t.stderrPath}\n` +
@@ -73,7 +151,7 @@ export async function toolBash(
     if (ctx.signal?.aborted) {
       return { output: "Aborted", isError: true };
     }
-    const result = await execCommandSandboxed({
+  const result = await execCommandSandboxed({
       command,
       cwd: ctx.workspace,
       timeoutMs: timeout,
@@ -98,7 +176,7 @@ export async function toolBash(
       );
       return { output: managed.text, isError: true };
     }
-    const out = [result.stdout, result.stderr].filter(Boolean).join("\n");
+  const out = [result.stdout, result.stderr].filter(Boolean).join("\n");
     const net = result.network ? ` net=${result.network}` : "";
     const meta = result.sandboxed
       ? `[sandbox:${result.backend}${net}] `
@@ -106,13 +184,23 @@ export async function toolBash(
         ? `[sandbox:off — ${result.warning}] `
         : "";
     if (result.code && result.code !== 0) {
-      const managed = await boundToolOutput(
-        meta + (out || `Command failed (code ${result.code})`),
-        { maxChars: BASH_MAX_CHARS },
-      );
+      // Always surface exit code — models often miss it when stderr is noisy.
+      // 124 = wall-clock timeout (sandbox runner convention).
+      const timeoutNote =
+        result.code === 124 && !/timed out/i.test(out)
+          ? `\nCommand timed out after ${timeout}ms`
+          : "";
+      const body = out
+        ? `${out}${timeoutNote}\n\n[exit code ${result.code}]`
+        : result.code === 124
+          ? `Command timed out after ${timeout}ms (exit code 124)`
+          : `Command failed (exit code ${result.code})`;
+      const managed = await boundToolOutput(meta + body, {
+        maxChars: BASH_MAX_CHARS,
+      });
       return { output: managed.text, isError: true };
     }
-    const managed = await boundToolOutput(meta + (out || "(no output)"), {
+  const managed = await boundToolOutput(meta + (out || "(no output)"), {
       maxChars: BASH_MAX_CHARS,
     });
     return { output: managed.text };

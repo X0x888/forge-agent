@@ -2,6 +2,7 @@ import path from "node:path";
 import {
   listSessions,
   loadSession,
+  sessionDir,
   estimateTokens,
   type SessionData,
 } from "../session/session.js";
@@ -169,6 +170,7 @@ export function sessionToSnapshot(
   if (meta.ultrawork) tags.push("ULW");
   const ulw = loadUlwCycle(meta.id);
   if (ulw?.enabled) tags.push(ulw.cycle === 1 ? "c=1" : "c=0");
+  if (meta.pinned) tags.push("PIN");
   if (opts.permissionMode === "plan") tags.push("PLAN");
   if (opts.permissionMode === "bypassPermissions") tags.push("YOLO");
   else if (opts.permissionMode === "acceptEdits") tags.push("auto");
@@ -210,6 +212,7 @@ export function sessionToSnapshot(
 
   return {
     sessionId: meta.id,
+    sessionPath: sessionDir(meta.id),
     title: meta.title,
     cwd: meta.cwd,
     projectLabel: projectLabel(meta.cwd),
@@ -226,6 +229,16 @@ export function sessionToSnapshot(
     editCount: meta.editCount,
     openTodos,
     ultrawork: meta.ultrawork,
+    ...(() => {
+      try {
+        const u = loadUlwCycle(meta.id);
+        if (!u?.enabled) return { ulwCycle: null, ulwWave: null };
+        return { ulwCycle: u.cycle, ulwWave: u.wave };
+      } catch {
+        return { ulwCycle: null, ulwWave: null };
+      }
+    })(),
+    pinned: Boolean(meta.pinned),
     permissionMode: opts.permissionMode,
     git: gitSnap.branch
       ? {

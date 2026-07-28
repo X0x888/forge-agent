@@ -15,6 +15,12 @@ import {
 } from "./types.js";
 import { applyPreferences, loadPreferences } from "./preferences.js";
 import { parseReasoningEffort } from "./reasoning.js";
+import { normalizeProviderId } from "../util/provider-id.js";
+import {
+  normalizePermissionMode,
+  normalizeSandboxProfile,
+  normalizeSandboxNetwork,
+} from "../util/mode-aliases.js";
 
 const ENV_PERMISSION_MODES = new Set<PermissionMode>([
   "default",
@@ -341,11 +347,10 @@ export function loadConfig(overrides: Partial<ForgeConfig> = {}, cwd = process.c
   applyPreferences(cfg, loadPreferences());
 
   // Environment overrides (invalid values ignored — parity with FORGE_EFFORT)
+  const providerBeforeEnv = cfg.provider;
   if (process.env.FORGE_PROVIDER) {
-    const raw = process.env.FORGE_PROVIDER.trim().toLowerCase();
-    if (ENV_PROVIDERS.has(raw)) {
-      cfg.provider = (raw === "grok" ? "xai" : raw) as ProviderId;
-    }
+    const norm = normalizeProviderId(process.env.FORGE_PROVIDER);
+    if (norm.ok) cfg.provider = norm.provider;
   }
   if (process.env.FORGE_MODEL) cfg.model = process.env.FORGE_MODEL;
   if (process.env.FORGE_BASE_URL) cfg.baseUrl = process.env.FORGE_BASE_URL;
@@ -358,16 +363,16 @@ export function loadConfig(overrides: Partial<ForgeConfig> = {}, cwd = process.c
     }
   }
   if (process.env.FORGE_PERMISSION_MODE) {
-    const mode = process.env.FORGE_PERMISSION_MODE.trim() as PermissionMode;
-    if (ENV_PERMISSION_MODES.has(mode)) cfg.permissionMode = mode;
+    const mode = normalizePermissionMode(process.env.FORGE_PERMISSION_MODE);
+    if (mode) cfg.permissionMode = mode;
   }
   if (process.env.FORGE_SANDBOX) {
-    const profile = process.env.FORGE_SANDBOX.trim() as SandboxProfile;
-    if (ENV_SANDBOX_PROFILES.has(profile)) cfg.sandbox = profile;
+    const profile = normalizeSandboxProfile(process.env.FORGE_SANDBOX);
+    if (profile) cfg.sandbox = profile;
   }
   if (process.env.FORGE_SANDBOX_NETWORK) {
-    const net = process.env.FORGE_SANDBOX_NETWORK.trim() as SandboxNetwork;
-    if (ENV_SANDBOX_NETWORKS.has(net)) cfg.sandboxNetwork = net;
+    const net = normalizeSandboxNetwork(process.env.FORGE_SANDBOX_NETWORK);
+    if (net) cfg.sandboxNetwork = net;
   }
   if (process.env.FORGE_SANDBOX_MISSING_BACKEND) {
     const miss = process.env.FORGE_SANDBOX_MISSING_BACKEND.trim() as SandboxMissingBackend;
@@ -376,6 +381,17 @@ export function loadConfig(overrides: Partial<ForgeConfig> = {}, cwd = process.c
   if (process.env.FORGE_READ_OUTSIDE) {
     const ro = process.env.FORGE_READ_OUTSIDE.trim() as ReadOutsideWorkspace;
     if (ENV_READ_OUTSIDE.has(ro)) cfg.readOutsideWorkspace = ro;
+  }
+  if (process.env.FORGE_MAX_TURNS != null && process.env.FORGE_MAX_TURNS.trim() !== "") {
+    const n = Number(process.env.FORGE_MAX_TURNS.trim());
+    if (
+      Number.isFinite(n) &&
+      n >= 0 &&
+      Math.floor(n) === n &&
+      n <= 100_000
+    ) {
+      cfg.maxTurns = n;
+    }
   }
   if (process.env.FORGE_BLOCKING_STOP === "0") cfg.blockingStopHooks = false;
   if (process.env.FORGE_BLOCKING_STOP === "1") cfg.blockingStopHooks = true;
@@ -387,8 +403,24 @@ export function loadConfig(overrides: Partial<ForgeConfig> = {}, cwd = process.c
     if (Number.isFinite(n) && n >= 1) cfg.goal.stuckThreshold = Math.floor(n);
   }
 
+  const modelExplicit =
+    overrides.model != null || Boolean(process.env.FORGE_MODEL?.trim());
+  // providerBeforeEnv captured before FORGE_PROVIDER; after env, cfg.provider may already differ.
+  const providerBaseline = providerBeforeEnv;
   cfg = deepMerge(cfg as unknown as Record<string, unknown>, overrides as never) as unknown as ForgeConfig;
   cfg.workspace = cfg.workspace ? path.resolve(cfg.workspace) : cwd;
+
+  // Provider switched (CLI/env) without an explicit model → that provider's defaultModel
+  // (avoid anthropic + stuck grok-4.5 from DEFAULT_CONFIG.model).
+  if (!modelExplicit && cfg.provider && cfg.provider !== providerBaseline) {
+    const def = cfg.providers?.[cfg.provider]?.defaultModel;
+    if (def) cfg.model = def;
+    else if (!cfg.providers?.[cfg.provider]?.models?.length) {
+      // Unknown/custom catalog — keep explicit-looking models only if user set FORGE_MODEL
+      // otherwise use a neutral placeholder rather than another provider's id.
+      cfg.model = "default";
+    }
+  }
 
   cfg.permission = {
     deny: cfg.permission?.deny ?? DEFAULT_CONFIG.permission.deny,

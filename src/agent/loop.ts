@@ -8,6 +8,7 @@ import type {
   ToolCall,
 } from "../providers/types.js";
 import type { SessionData, TodoItem } from "../session/session.js";
+import { applyTodos, openTodos } from "./todos.js";
 import {
   saveSession,
   estimateTokens,
@@ -205,32 +206,6 @@ function baseHookCtx(session: SessionData, config: ForgeConfig): HookContext {
     editCount: session.meta.editCount,
     ultrawork: session.meta.ultrawork,
   };
-}
-
-function openTodos(todos: TodoItem[]): number {
-  return todos.filter((t) => t.status === "pending" || t.status === "in_progress").length;
-}
-
-function applyTodos(
-  session: SessionData,
-  todos: unknown,
-  merge: boolean,
-): string {
-  const incoming = (Array.isArray(todos) ? todos : []) as TodoItem[];
-  if (!merge) {
-    session.todos = incoming;
-  } else {
-    const map = new Map(session.todos.map((t) => [t.id, t]));
-    for (const t of incoming) {
-      const prev = map.get(t.id);
-      map.set(t.id, { ...prev, ...t });
-    }
-    session.todos = [...map.values()];
-  }
-  saveSession(session);
-  return `Todos updated (${session.todos.length} items, ${openTodos(session.todos)} open):\n${session.todos
-    .map((t) => `- [${t.status}] ${t.id}: ${t.content}`)
-    .join("\n")}`;
 }
 
 function assertNotAborted(signal?: AbortSignal): void {

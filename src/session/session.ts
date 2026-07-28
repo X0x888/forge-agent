@@ -8,7 +8,10 @@ import {
   writeJsonFile,
   nowIso,
 } from "../util/fs.js";
+import { editDistance } from "../util/string-distance.js";
+import { suggestName } from "../util/suggest.js";
 import { formatRelativeTime } from "../util/format.js";
+import { detectProjectHints, getGitSnapshot } from "../util/git-context.js";
 import type { ChatMessage } from "../providers/types.js";
 import { heartbeatSession } from "../statusline/active.js";
 import { touchSessionLock } from "./lock.js";
@@ -29,6 +32,10 @@ import {
   saveUlwCycle,
 } from "../harness/ulw-cycle.js";
 import { copyGoal, loadGoal, saveGoal } from "../harness/goal.js";
+
+/** Max stored session title length (CLI --title / sessions title / /title). */
+export const MAX_SESSION_TITLE_CHARS = 200;
+
 export {
   compactMessagesStructured,
   buildStructuredSummary,
@@ -104,7 +111,7 @@ export function createSession(opts: {
 }): SessionData {
   const id = randomUUID();
   const now = nowIso();
-  const title = (opts.title ?? "").replace(/\s+/g, " ").trim().slice(0, 72);
+  const title = (opts.title ?? "").replace(/\s+/g, " ").trim().slice(0, MAX_SESSION_TITLE_CHARS);
   const data: SessionData = {
     meta: {
       id,
@@ -326,7 +333,7 @@ export function forkSession(
       title:
         opts?.title ||
         (source.meta.title
-          ? `fork of ${source.meta.title}`.slice(0, 72)
+          ? `fork of ${source.meta.title}`.slice(0, MAX_SESSION_TITLE_CHARS)
           : `fork of ${source.meta.id.slice(0, 8)}`),
       // Fresh turn marks relative to copied messages
       userTurnMarks: [...(source.meta.userTurnMarks || [])],
@@ -423,7 +430,7 @@ export function importSessionJson(
       model: String(src.model || "unknown"),
       title:
         opts?.title ||
-        (src.title ? `import of ${src.title}`.slice(0, 72) : `import ${id.slice(0, 8)}`),
+        (src.title ? `import of ${src.title}`.slice(0, MAX_SESSION_TITLE_CHARS) : `import ${id.slice(0, 8)}`),
       // Imports are new ids — never inherit pin (re-pin explicitly if needed).
       ultrawork: Boolean(src.ultrawork),
       turnCount: Number(src.turnCount) || 0,
@@ -570,19 +577,82 @@ export function formatSessionSummary(session: SessionData): string {
     (t) => t.status === "pending" || t.status === "in_progress",
   ).length;
   const age = formatRelativeTime(m.updatedAt);
+  let gitLine: string | null = null;
+  let projectLine: string | null = null;
+  try {
+    const git = getGitSnapshot(m.cwd || process.cwd());
+    if (git.branch) {
+      const dirty = git.dirty ? " dirty" : "";
+      const ch =
+        typeof git.changedFiles === "number" ? ` Δ${git.changedFiles}` : "";
+      gitLine = `  git:      ${git.branch}${dirty}${ch}`;
+    }
+  } catch {
+    /* */
+  }
+  try {
+    const hints = detectProjectHints(m.cwd || process.cwd());
+    let pkg = "";
+    try {
+      const pkgPath = path.join(m.cwd || process.cwd(), "package.json");
+      if (fs.existsSync(pkgPath)) {
+        const raw = JSON.parse(fs.readFileSync(pkgPath, "utf8")) as {
+          name?: string;
+          version?: string;
+        };
+        if (raw.name) {
+          pkg = raw.version ? `${raw.name}@${raw.version}` : raw.name;
+        }
+      }
+    } catch {
+      /* */
+    }
+    const bits = [pkg || null, hints.length ? hints.join(",") : null].filter(
+      Boolean,
+    );
+    if (bits.length) projectLine = `  project:  ${bits.join(" · ")}`;
+  } catch {
+    /* */
+  }
   const lines = [
     `Session ${m.id}`,
     `  title:    ${m.title || "(untitled)"}`,
     `  updated:  ${m.updatedAt}${age && age !== "—" ? `  (${age})` : ""}`,
     `  created:  ${m.createdAt}`,
     `  cwd:      ${m.cwd}`,
+    `  path:     ${sessionDir(m.id)}`,
+    gitLine,
+    projectLine,
     `  model:    ${m.provider}/${m.model}`,
     `  turns:    ${m.turnCount}  edits=${m.editCount}  msgs=${session.messages.length}`,
     `  tokens:   in=${m.totalPromptTokens} out=${m.totalCompletionTokens}`,
     `  todos:    ${session.todos?.length || 0} (${openTodos} open)`,
-    `  ultrawork:${m.ultrawork ? " yes" : " no"}`,
+    (() => {
+      if (!m.ultrawork) return `  ultrawork: no`;
+      try {
+        const u = loadUlwCycle(m.id);
+        if (u?.enabled && typeof u.cycle === "number") {
+          return `  ultrawork: yes  ULW c=${u.cycle} w=${u.wave}`;
+        }
+      } catch {
+        /* */
+      }
+      return `  ultrawork: yes`;
+    })(),
+    (() => {
+      try {
+        const g = loadGoal(m.id);
+        if (g?.objective && g.status === "active") {
+          const obj =
+            g.objective.length > 72 ? `${g.objective.slice(0, 72)}…` : g.objective;
+          return `  goal:     ${obj}${g.paused ? " (paused)" : ""}`;
+        }
+      } catch {
+        /* */
+      }
+      return null;
+    })(),
     `  pinned:   ${m.pinned ? "yes (/unpin to allow prune)" : "no (/pin to keep)"}`,
-    `  path:     ${sessionDir(m.id)}`,
     m.lastUserPreview
       ? `  last you: ${m.lastUserPreview}`
       : null,
@@ -720,19 +790,84 @@ export function suggestSessions(
 }
 
 /** Human error when id/title lookup fails — includes close matches when any. */
+/** Shared close-match ranking for human + JSON session_not_found recovery. */
+function collectSessionLookupHits(
+  query: string,
+  opts: { cwd?: string; limit?: number } = {},
+): SessionMeta[] {
+  const q = (query || "").trim();
+  if (!q) return [];
+  const limit =
+    typeof opts.limit === "number" && opts.limit > 0 ? Math.floor(opts.limit) : 5;
+  let hits = suggestSessions(q, {
+    limit,
+    ...(opts.cwd ? { cwd: opts.cwd } : {}),
+  });
+  // Title typo recovery (alpa-project → alpha-project), ranked by edit distance.
+  if (!hits.length && q.length >= 4) {
+    const recent = listSessions({
+      limit: 40,
+      ...(opts.cwd ? { cwd: opts.cwd } : {}),
+    });
+    hits = recent
+      .map((s) => {
+        const title = (s.title || "").trim();
+        if (!title) return null;
+        const tip = suggestName(q, [title], {
+          minLength: 4,
+          minScore: 36,
+          requirePrefix3: false,
+        });
+        if (!tip) return null;
+        const d = editDistance(q.toLowerCase(), title.toLowerCase());
+        return { s, d };
+      })
+      .filter((x): x is { s: SessionMeta; d: number } => x != null)
+      .sort((a, b) => a.d - b.d || b.s.updatedAt.localeCompare(a.s.updatedAt))
+      .slice(0, limit)
+      .map((x) => x.s);
+  }
+  // Id prefix / short-id typo recovery.
+  if (!hits.length && q.length >= 4) {
+    const recent = listSessions({
+      limit: 40,
+      ...(opts.cwd ? { cwd: opts.cwd } : {}),
+    });
+    const qCompact = q.replace(/-/g, "");
+    const idHits = recent.filter(
+      (s) =>
+        s.id.startsWith(q) || s.id.replace(/-/g, "").startsWith(qCompact),
+    );
+    if (idHits.length) {
+      hits = idHits.slice(0, limit);
+    } else {
+      hits = recent
+        .map((s) => {
+          const short = s.id.slice(0, 8);
+          const tip = suggestName(q.slice(0, 8), [short, s.id], {
+            minLength: 4,
+            minScore: 40,
+            requirePrefix3: false,
+          });
+          return tip ? s : null;
+        })
+        .filter((s): s is SessionMeta => Boolean(s))
+        .slice(0, limit);
+    }
+  }
+  return hits;
+}
+
 export function formatSessionLookupMiss(
   query: string,
   opts: { cwd?: string; limit?: number } = {},
 ): string {
   const q = (query || "").trim() || "(empty)";
-  const hits = suggestSessions(q, {
-    limit: opts.limit ?? 5,
-    ...(opts.cwd ? { cwd: opts.cwd } : {}),
-  });
+  const hits = q === "(empty)" ? [] : collectSessionLookupHits(q, opts);
   if (!hits.length) {
     return (
       `Session not found: ${q}\n` +
-      `Try: id prefix (≥4 chars) · exact /title · unique title substring · /sessions search ${q}`
+      `Try: id prefix (≥4 chars) · exact /title · unique title substring · /sessions search ${q} · forge sessions search ${q}`
     );
   }
   const lines = hits.map((s) => {
@@ -774,6 +909,19 @@ export interface ListSessionsOpts {
  * Accepts a bare limit number (legacy) or {@link ListSessionsOpts}.
  * Filters (cwd/query) apply before the limit so multi-project lists stay complete.
  */
+/** Structured close-matches for session_not_found --json (id/title/path). */
+export function listSessionLookupSuggestions(
+  query: string,
+  opts: { cwd?: string; limit?: number } = {},
+): Array<{ id: string; title: string | null; path: string; relativeAge: string }> {
+  return collectSessionLookupHits(query, opts).map((s) => ({
+    id: s.id,
+    title: s.title || null,
+    path: sessionDir(s.id),
+    relativeAge: formatRelativeTime(s.updatedAt || s.createdAt),
+  }));
+}
+
 export function listSessions(
   limitOrOpts: number | ListSessionsOpts = 20,
 ): SessionMeta[] {
@@ -1088,7 +1236,7 @@ export function compactMessages(
 /** Set title from first user message if unset. */
 export function maybeSetTitle(session: SessionData, userMessage: string): void {
   if (session.meta.title) return;
-  const t = userMessage.replace(/\s+/g, " ").trim().slice(0, 72);
+  const t = userMessage.replace(/\s+/g, " ").trim().slice(0, MAX_SESSION_TITLE_CHARS);
   if (t) session.meta.title = t;
 }
 
@@ -1100,7 +1248,11 @@ export function setSessionTitle(
   session: SessionData,
   title: string | undefined | null,
 ): string | undefined {
-  const t = (title ?? "").replace(/\s+/g, " ").trim().slice(0, 72);
+  // Safety net — callers should fail closed above this; never silent-truncate to 72.
+  const t = (title ?? "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, MAX_SESSION_TITLE_CHARS);
   if (!t) {
     session.meta.title = undefined;
     saveSession(session);
@@ -1665,22 +1817,82 @@ export function formatSessionShareCard(
 ): string {
   const m = session.meta;
   const id8 = m.id.slice(0, 8);
-  const title = (m.title || "untitled").slice(0, 72);
+  const title = (m.title || "untitled").slice(0, MAX_SESSION_TITLE_CHARS);
   const cwd = m.cwd || "(unknown cwd)";
-  const flags = [
-    m.ultrawork ? "ULW" : null,
-    m.pinned ? "PIN" : null,
-  ].filter(Boolean);
+  let ulwFlag: string | null = null;
+  if (m.ultrawork) {
+    try {
+      const u = loadUlwCycle(m.id);
+      ulwFlag =
+        u?.enabled && typeof u.cycle === "number"
+          ? `ULW c=${u.cycle} w=${u.wave}`
+          : "ULW";
+    } catch {
+      ulwFlag = "ULW";
+    }
+  }
+  let goalLine: string | null = null;
+  try {
+    const g = loadGoal(m.id);
+    if (g?.objective && g.status === "active") {
+      const obj =
+        g.objective.length > 80 ? `${g.objective.slice(0, 80)}…` : g.objective;
+      goalLine = `  goal:     ${obj}${g.paused ? " (paused)" : ""}`;
+    }
+  } catch {
+    /* */
+  }
+  const flags = [ulwFlag, m.pinned ? "PIN" : null].filter(Boolean);
   const titleResume =
     m.title && m.title !== "untitled"
       ? `  forge --session ${JSON.stringify(m.title)}   # by /title`
       : null;
   const dir = sessionDir(m.id);
+  let gitLine: string | null = null;
+  let projectLine: string | null = null;
+  try {
+    const git = getGitSnapshot(m.cwd || process.cwd());
+    if (git.branch) {
+      const dirty = git.dirty ? " dirty" : "";
+      const ch =
+        typeof git.changedFiles === "number" ? ` Δ${git.changedFiles}` : "";
+      gitLine = `  git:      ${git.branch}${dirty}${ch}`;
+    }
+  } catch {
+    /* */
+  }
+  try {
+    const hints = detectProjectHints(m.cwd || process.cwd());
+    let pkg = "";
+    try {
+      const pkgPath = path.join(m.cwd || process.cwd(), "package.json");
+      if (fs.existsSync(pkgPath)) {
+        const raw = JSON.parse(fs.readFileSync(pkgPath, "utf8")) as {
+          name?: string;
+          version?: string;
+        };
+        if (raw.name) {
+          pkg = raw.version ? `${raw.name}@${raw.version}` : raw.name;
+        }
+      }
+    } catch {
+      /* */
+    }
+    const bits = [pkg || null, hints.length ? hints.join(",") : null].filter(
+      Boolean,
+    );
+    if (bits.length) projectLine = `  project:  ${bits.join(" · ")}`;
+  } catch {
+    /* */
+  }
   const lines = [
     `Forge session ${id8} — ${title}`,
     `  provider: ${m.provider}/${m.model}`,
     `  cwd:      ${cwd}`,
     `  path:     ${dir}`,
+    gitLine,
+    projectLine,
+    goalLine,
     `  turns:    ${m.turnCount}  edits=${m.editCount}  msgs=${session.messages.length}`,
     flags.length ? `  flags:    ${flags.join(" ")}` : null,
     ``,
@@ -1688,13 +1900,14 @@ export function formatSessionShareCard(
     `  forge --session ${id8}`,
     titleResume,
     `  forge run "continue" --session ${id8} --json`,
-    `  forge run "next step" --continue --json   # newest same-cwd (no id)`,
+    `  forge run "next step" --continue --json   # newest same-cwd (fail-closed if none)`,
     `Export:`,
     `  forge sessions export ${id8} --format md`,
     `  forge sessions export ${id8} --format json --out ./session-${id8}.json`,
+    `  forge sessions export ${id8} --format json --json   # envelope {ok,body}`,
     `Label:  /title "…"  ·  forge sessions title ${id8} "…"  ·  Keep: /pin  ·  Path: /path`,
-    `Search: forge sessions list -q ${JSON.stringify(title).slice(0, 40)}`,
-    `CI:     forge "…" --json  ·  forge auth --json  ·  forge doctor --json  ·  forge status --session ${id8} --json`,
+    `Search: forge sessions search / list -q ${JSON.stringify(title).slice(0, 40)}`,
+    `CI:     forge "…" --json  ·  forge auth --json  ·  forge doctor --json  ·  forge tips --json  ·  forge status --session ${id8} --json`,
     `Peek:   /last 3  ·  /files  ·  /retry  ·  forge news`,
   ].filter((x): x is string => x != null);
 

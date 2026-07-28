@@ -7,6 +7,8 @@ import type { ToolContext, ToolResult } from "./types.js";
 import { resolvePath } from "./path-util.js";
 import { pathNotFoundHint } from "./path-hints.js";
 import { boundToolOutput } from "./truncate.js";
+import { isTruthy } from "../../util/bool.js";
+import { numberFieldError } from "./arg-types.js";
 
 function findRg(): string | null {
   const paths = (process.env.PATH || "").split(path.delimiter);
@@ -24,11 +26,20 @@ function findRg(): string | null {
   return null;
 }
 
-/** head_limit: default 50; 0 = unlimited; invalid → 50. */
-function parseGrepHeadLimit(raw: unknown): number {
+/**
+ * head_limit: default 50; 0 = unlimited.
+ * Explicit invalid/negative fails closed (null) so models see the mistake.
+ */
+function parseGrepHeadLimit(raw: unknown): number | null {
   if (raw == null || String(raw).trim() === "") return 50;
-  const n = Number(raw);
-  if (!Number.isFinite(n) || n < 0) return 50;
+  const key = String(raw).trim().toLowerCase();
+  // Parity with forge logs -n all|max|full → unlimited (0).
+  if (key === "all" || key === "max" || key === "full" || key === "unlimited") {
+    return 0;
+  }
+  if (!/^\d+$/.test(key)) return null;
+  const n = Number(key);
+  if (!Number.isFinite(n) || n < 0) return null;
   return Math.floor(n);
 }
 
@@ -114,27 +125,115 @@ function runRg(
   });
 }
 
+function formatNoGrepMatches(opts: {
+  pattern: string;
+  pathLabel: string;
+  glob?: string;
+}): string {
+  const bits = [`pattern=${JSON.stringify(opts.pattern)}`, `path=${opts.pathLabel}`];
+  if (opts.glob) bits.push(`glob=${JSON.stringify(opts.glob)}`);
+  return (
+    `No matches found (${bits.join(", ")}).\n` +
+    `Tips: broaden the pattern, drop path/glob filters, try case_insensitive, or search from workspace root.`
+  );
+}
+
+
 async function toolGrepJs(
   args: Record<string, unknown>,
   ctx: ToolContext,
 ): Promise<ToolResult> {
+  if (args.pattern != null && typeof args.pattern !== "string") {
+    const kind =
+      args.pattern === null
+        ? "null"
+        : Array.isArray(args.pattern)
+          ? "array"
+          : typeof args.pattern;
+    return {
+      output: `grep error: pattern must be a string (got ${kind}).`,
+      isError: true,
+    };
+  }
+  if (args.path != null && typeof args.path !== "string") {
+    const kind =
+      args.path === null
+        ? "null"
+        : Array.isArray(args.path)
+          ? "array"
+          : typeof args.path;
+    return {
+      output: `grep error: path must be a string (got ${kind}).`,
+      isError: true,
+    };
+  }
   if (ctx.signal?.aborted) return { output: "Aborted", isError: true };
+  if (args.glob != null && typeof args.glob !== "string") {
+    const kind =
+      args.glob === null
+        ? "null"
+        : Array.isArray(args.glob)
+          ? "array"
+          : typeof args.glob;
+    return {
+      output: `grep error: glob must be a string (got ${kind}).`,
+      isError: true,
+    };
+  }
   const pattern = String(args.pattern || "");
-  const searchPath = args.path
-    ? resolvePath(ctx.workspace, String(args.path))
+  if (!pattern.trim()) {
+    return {
+      output:
+        "grep error: pattern is required (non-empty string).\n" +
+        'Example: { "pattern": "TODO|FIXME", "path": "src", "head_limit": 50 }',
+      isError: true,
+    };
+  }
+  if (args.path != null && !String(args.path).trim()) {
+    return {
+      output:
+        "grep error: path is required (non-empty string). Omit path to search the workspace.\n" +
+        'Example: { "pattern": "TODO", "path": "src" }',
+      isError: true,
+    };
+  }
+  const pathArg = args.path != null ? String(args.path).trim() : "";
+  const searchPath = pathArg
+    ? resolvePath(ctx.workspace, pathArg)
     : ctx.workspace;
-  const pathLabel = args.path ? String(args.path) : ".";
+  const pathLabel = pathArg || ".";
   const badRoot = await assertSearchRoot(searchPath, pathLabel, ctx.workspace);
   if (badRoot) return badRoot;
   const globPat = args.glob ? String(args.glob) : "**/*";
   // head_limit: 0 = unlimited (not coerced to 50 via Number(x)||default)
   const headLimit = parseGrepHeadLimit(args.head_limit);
-  const flags = args.case_insensitive ? "i" : "";
+  if (headLimit === null) {
+    return {
+      output:
+        numberFieldError(
+          "grep",
+          "head_limit",
+          args.head_limit,
+          "Pass a non-negative integer or all|max|full (0/all = unlimited, default 50).",
+        ),
+      isError: true,
+    };
+  }
+  const flags = isTruthy(args.case_insensitive) ? "i" : "";
   let re: RegExp;
   try {
     re = new RegExp(pattern, flags);
-  } catch {
-    return { output: `Invalid regex: ${pattern}`, isError: true };
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err);
+    return {
+      output:
+        `Invalid regex: ${pattern}
+` +
+        `  ${detail}
+` +
+        `Hint: escape special chars (., *, +, ?, (, ), [, ], {, }, |, ^, $) or pass a plain substring.`,
+      isError: true,
+    };
   }
 
   // Single-file path: search that file only (glob cwd=file is invalid).
@@ -173,7 +272,11 @@ async function toolGrepJs(
   }
   const body = matches.length
     ? `[grep:js-fallback] ${matches.join("\n")}`
-    : "No matches found";
+    : formatNoGrepMatches({
+        pattern: String(args.pattern || ""),
+        pathLabel,
+        glob: args.glob != null ? String(args.glob) : undefined,
+      });
   const managed = await boundToolOutput(body);
   return { output: managed.text };
 }
@@ -182,23 +285,89 @@ export async function toolGrep(
   args: Record<string, unknown>,
   ctx: ToolContext,
 ): Promise<ToolResult> {
+  if (args.pattern != null && typeof args.pattern !== "string") {
+    const kind =
+      args.pattern === null
+        ? "null"
+        : Array.isArray(args.pattern)
+          ? "array"
+          : typeof args.pattern;
+    return {
+      output: `grep error: pattern must be a string (got ${kind}).`,
+      isError: true,
+    };
+  }
+  if (args.path != null && typeof args.path !== "string") {
+    const kind =
+      args.path === null
+        ? "null"
+        : Array.isArray(args.path)
+          ? "array"
+          : typeof args.path;
+    return {
+      output: `grep error: path must be a string (got ${kind}).`,
+      isError: true,
+    };
+  }
+  if (args.glob != null && typeof args.glob !== "string") {
+    const kind =
+      args.glob === null
+        ? "null"
+        : Array.isArray(args.glob)
+          ? "array"
+          : typeof args.glob;
+    return {
+      output: `grep error: glob must be a string (got ${kind}).`,
+      isError: true,
+    };
+  }
   const pattern = String(args.pattern || "");
-  if (!pattern) return { output: "pattern is required", isError: true };
+  // Whitespace-only patterns are almost always model mistakes (not a useful search).
+  if (!pattern.trim()) {
+    return {
+      output:
+        "grep error: pattern is required (non-empty string).\n" +
+        'Example: { "pattern": "TODO|FIXME", "path": "src", "head_limit": 50 }',
+      isError: true,
+    };
+  }
   if (ctx.signal?.aborted) return { output: "Aborted", isError: true };
+  // Optional path: omitted → workspace; explicit whitespace fails closed.
+  if (args.path != null && !String(args.path).trim()) {
+    return {
+      output:
+        "grep error: path is required (non-empty string). Omit path to search the workspace.\n" +
+        'Example: { "pattern": "TODO", "path": "src" }',
+      isError: true,
+    };
+  }
 
   const rg = findRg();
   if (!rg) {
     return toolGrepJs(args, ctx);
   }
 
-  const searchPath = args.path
-    ? resolvePath(ctx.workspace, String(args.path))
+  const pathArg = args.path != null ? String(args.path).trim() : "";
+  const searchPath = pathArg
+    ? resolvePath(ctx.workspace, pathArg)
     : ctx.workspace;
-  const pathLabel = args.path ? String(args.path) : ".";
+  const pathLabel = pathArg || ".";
   const badRoot = await assertSearchRoot(searchPath, pathLabel, ctx.workspace);
   if (badRoot) return badRoot;
   // head_limit: 0 = unlimited (omit --max-count; rg treats 0 as no matches)
   const headLimit = parseGrepHeadLimit(args.head_limit);
+  if (headLimit === null) {
+    return {
+      output:
+        numberFieldError(
+          "grep",
+          "head_limit",
+          args.head_limit,
+          "Pass a non-negative integer or all|max|full (0/all = unlimited, default 50).",
+        ),
+      isError: true,
+    };
+  }
   const rgArgs = ["--line-number", "--no-heading", "--color", "never"];
   if (headLimit > 0) {
     rgArgs.push("--max-count", String(headLimit));
@@ -216,7 +385,13 @@ export async function toolGrep(
   }
   // rg exit 1 = no matches
   if (result.code === 1 || (!result.stdout.trim() && !result.stderr.trim())) {
-    return { output: "No matches found" };
+    return {
+      output: formatNoGrepMatches({
+        pattern,
+        pathLabel,
+        glob: args.glob != null ? String(args.glob) : undefined,
+      }),
+    };
   }
   if (result.code !== 0 && result.code !== 1) {
     // fall back if rg failed for other reasons
@@ -252,6 +427,13 @@ export async function toolGrep(
       return line;
     });
 
-  const managed = await boundToolOutput(lines.join("\n") || "No matches found");
+  const managed = await boundToolOutput(
+    lines.join("\n") ||
+      formatNoGrepMatches({
+        pattern,
+        pathLabel,
+        glob: args.glob != null ? String(args.glob) : undefined,
+      }),
+  );
   return { output: managed.text };
 }

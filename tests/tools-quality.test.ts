@@ -5,7 +5,11 @@ import fsp from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { executeTool } from "../src/agent/tools/index.js";
-import { locateEdit, applyMatch } from "../src/agent/tools/edit-match.js";
+import {
+  locateEdit,
+  applyMatch,
+  editMissHint,
+} from "../src/agent/tools/edit-match.js";
 import { createShellEnv } from "../src/agent/tools/env-policy.js";
 import {
   editDistance,
@@ -40,6 +44,22 @@ describe("edit-match", () => {
   it("rejects ambiguous exact without replace_all", () => {
     const r = locateEdit("foo x foo", "foo", false);
     assert.equal(r.ok, false);
+    if (!r.ok) {
+      assert.match(r.reason, /multiple times/i);
+      assert.match(r.reason, /L1:|Found 2 exact matches/i);
+      assert.match(r.reason, /replace_all/i);
+    }
+  });
+
+  it("multi-match lists line numbers across lines", () => {
+    const content = "alpha\nfoo here\nbeta\nfoo there\ngamma\n";
+    const r = locateEdit(content, "foo", false);
+    assert.equal(r.ok, false);
+    if (!r.ok) {
+      assert.match(r.reason, /Found 2 exact matches/);
+      assert.match(r.reason, /L2:/);
+      assert.match(r.reason, /L4:/);
+    }
   });
 
   it("falls back to line-trimmed match", () => {
@@ -52,6 +72,37 @@ describe("edit-match", () => {
       const next = applyMatch(content, r.result, "function foo() {\n  return 2;\n}", false);
       assert.match(next, /return 2/);
     }
+  });
+
+  it("editMissHint for empty file is explicit", () => {
+    const hint = editMissHint("", "anything");
+    assert.match(hint, /empty/i);
+    assert.match(hint, /write_file/i);
+  });
+
+  it("editMissHint suggests closest lines (not path typos)", () => {
+    const content = [
+      "export function greet(name: string) {",
+      "  return `hello ${name}`;",
+      "}",
+      "",
+      "export function bye(name: string) {",
+      "  return `bye ${name}`;",
+      "}",
+    ].join("\n");
+    const miss = "export function greett(name: string) {"; // typo in symbol
+    const hint = editMissHint(content, miss);
+    assert.match(hint, /Closest lines|re-read/i);
+    assert.match(hint, /greet/);
+    assert.doesNotMatch(hint, /Did you mean one of these\?\n\s+\//); // path-style
+    assert.doesNotMatch(hint, /workspace root is/);
+  });
+
+  it("editMissHint notes drifted multi-line blocks", () => {
+    const content = "alpha\nbeta\ngamma\n";
+    const old = "alpha\nBETA\ngamma\n";
+    const hint = editMissHint(content, old);
+    assert.match(hint, /first and last lines both appear|middle block/i);
   });
 });
 
@@ -83,6 +134,66 @@ describe("env policy", () => {
     assert.equal(env.MY_TOKEN, undefined);
   });
 
+  it("scrubs connection-string env names (not just *KEY*/*TOKEN*)", () => {
+    const env = createShellEnv({
+      PATH: "/usr/bin",
+      DATABASE_URL: "postgres://user:pass@localhost/db",
+      DB_URL: "mysql://u:p@h/db",
+      MONGODB_URI: "mongodb://u:p@h/db",
+      REDIS_URL: "redis://:pass@h:6379",
+      CONNECTION_STRING: "Server=.;Password=x",
+      MYSQL_PWD: "secret",
+      PGPASSFILE: "/home/u/.pgpass",
+      SSLKEYLOGFILE: "/tmp/keys.log",
+      PUBLIC_API_URL: "https://api.example.com", // not a secret name
+      NORMAL_VAR: "ok",
+    });
+    assert.equal(env.PATH, "/usr/bin");
+    assert.equal(env.NORMAL_VAR, "ok");
+    assert.equal(env.PUBLIC_API_URL, "https://api.example.com");
+    assert.equal(env.DATABASE_URL, undefined);
+    assert.equal(env.DB_URL, undefined);
+    assert.equal(env.MONGODB_URI, undefined);
+    assert.equal(env.REDIS_URL, undefined);
+    assert.equal(env.CONNECTION_STRING, undefined);
+    assert.equal(env.MYSQL_PWD, undefined);
+    assert.equal(env.PGPASSFILE, undefined);
+    assert.equal(env.SSLKEYLOGFILE, undefined);
+  });
+
+  it("strips process-injection env (LD_PRELOAD, NODE_OPTIONS, …)", () => {
+    const env = createShellEnv({
+      PATH: "/usr/bin",
+      LD_PRELOAD: "/tmp/evil.so",
+      NODE_OPTIONS: "--require /tmp/evil.js",
+      DYLD_INSERT_LIBRARIES: "/tmp/evil.dylib",
+      PYTHONSTARTUP: "/tmp/evil.py",
+      BASH_ENV: "/tmp/evil.sh",
+      GIT_SSH_COMMAND: "evil",
+      GIT_CONFIG_COUNT: "1",
+      GIT_CONFIG_KEY_0: "core.sshCommand",
+      GIT_CONFIG_VALUE_0: "touch /tmp/pwned",
+      NORMAL_VAR: "ok",
+    });
+    assert.equal(env.PATH, "/usr/bin");
+    assert.equal(env.NORMAL_VAR, "ok");
+    assert.equal(env.LD_PRELOAD, undefined);
+    assert.equal(env.NODE_OPTIONS, undefined);
+    assert.equal(env.DYLD_INSERT_LIBRARIES, undefined);
+    assert.equal(env.PYTHONSTARTUP, undefined);
+    assert.equal(env.BASH_ENV, undefined);
+    assert.equal(env.GIT_SSH_COMMAND, undefined);
+    assert.equal(env.GIT_CONFIG_COUNT, undefined);
+    assert.equal(env.GIT_CONFIG_KEY_0, undefined);
+    assert.equal(env.GIT_CONFIG_VALUE_0, undefined);
+    const forced = createShellEnv(
+      { PATH: "/usr/bin" },
+      { set: { NODE_OPTIONS: "--trace-warnings" } },
+    );
+    assert.equal(forced.NODE_OPTIONS, "--trace-warnings");
+  });
+
+
   it("core inherit keeps only core names", () => {
     const env = createShellEnv(
       { PATH: "/bin", CUSTOM: "x", HOME: "/h" },
@@ -91,6 +202,40 @@ describe("env policy", () => {
     assert.equal(env.PATH, "/bin");
     assert.equal(env.HOME, "/h");
     assert.equal(env.CUSTOM, undefined);
+  });
+});
+
+describe("read_file past EOF", () => {
+  it("reports past-EOF clearly instead of empty-file", async () => {
+    const ws = path.join(tmpRoot, "read-eof");
+    await fsp.mkdir(ws, { recursive: true });
+    await fsp.writeFile(path.join(ws, "a.txt"), "line1\nline2\nline3\n", "utf8");
+    const ctx = { workspace: ws, sandbox: "off" as const };
+    const r = await executeTool(
+      "read_file",
+      JSON.stringify({ path: "a.txt", offset: 100 }),
+      ctx,
+    );
+    assert.equal(r.isError, undefined);
+    assert.match(r.output, /past end of file/i);
+    assert.match(r.output, /\d+ lines/);
+    assert.match(r.output, /last line \d+/i);
+    assert.doesNotMatch(r.output, /empty file/i);
+    assert.doesNotMatch(r.output, /showing 100-99/);
+  });
+
+  it("empty file is reported as 0 lines", async () => {
+    const ws = path.join(tmpRoot, "read-empty");
+    await fsp.mkdir(ws, { recursive: true });
+    await fsp.writeFile(path.join(ws, "e.txt"), "", "utf8");
+    const ctx = { workspace: ws, sandbox: "off" as const };
+    const r = await executeTool(
+      "read_file",
+      JSON.stringify({ path: "e.txt" }),
+      ctx,
+    );
+    assert.match(r.output, /empty file/i);
+    assert.match(r.output, /0 lines/);
   });
 });
 
@@ -132,6 +277,344 @@ describe("realpath containment", () => {
     const r = await realpathWithinRoot(ws, link);
     assert.equal(r.ok, false);
   });
+});
+
+describe("todo_write validation", () => {
+  it("validates todos and marks errors", async () => {
+    const fs = await import("node:fs");
+    const os = await import("node:os");
+    const pathMod = await import("node:path");
+    const home = await fsp.mkdtemp(pathMod.join(tmpRoot, "todo-home-"));
+    process.env.FORGE_HOME = home;
+    const { createSession, saveSession } = await import("../src/session/session.js");
+    const { applyTodos } = await import("../src/agent/todos.js");
+    const ws = path.join(tmpRoot, "ws-todo-val");
+    await fsp.mkdir(ws, { recursive: true });
+    const session = createSession({ cwd: ws, provider: "xai", model: "m" });
+    saveSession(session);
+
+    const missing = applyTodos(session, null, true);
+    assert.match(missing, /todo_write error/i);
+    assert.match(missing, /required/i);
+
+    const bad = applyTodos(session, [{ id: "1", content: "", status: "pending" }], true);
+    assert.match(bad, /content is required/i);
+
+    const badStatus = applyTodos(
+      session,
+      [{ id: "1", content: "x", status: "nope" }],
+      true,
+    );
+    assert.match(badStatus, /status/i);
+
+    const objContent = applyTodos(
+      session,
+      [{ id: "1", content: { x: 1 }, status: "pending" }],
+      true,
+    );
+    assert.match(objContent, /content must be a string/i);
+
+    const mergeEmpty = applyTodos(session, [], true);
+    assert.match(mergeEmpty, /unchanged|does nothing/i);
+
+    const ok = applyTodos(
+      session,
+      [{ id: "1", content: "ship it", status: "in_progress" }],
+      true,
+    );
+    assert.match(ok, /Todos updated/);
+    assert.match(ok, /ship it/);
+    assert.equal(session.todos.length, 1);
+
+    const errTool = await executeTool(
+      "todo_write",
+      JSON.stringify({ todos: "nope" }),
+      { workspace: ws, sandbox: "off" as const },
+      (todos, merge) => applyTodos(session, todos, merge),
+    );
+    assert.equal(errTool.isError, true);
+    assert.match(errTool.output, /todo_write error/i);
+  });
+});
+
+describe("list_dir empty", () => {
+  it("empty directory names the path", async () => {
+    const ws = path.join(tmpRoot, "ws-list-empty");
+    await fsp.mkdir(path.join(ws, "empty"), { recursive: true });
+    const ctx = { workspace: ws, sandbox: "off" as const };
+    const r = await executeTool(
+      "list_dir",
+      JSON.stringify({ path: "empty" }),
+      ctx,
+    );
+    assert.match(r.output, /empty/i);
+    assert.match(r.output, /Directory is empty|Tips:/i);
+  });
+});
+
+describe("grep/glob empty results", () => {
+  it("grep no-match includes pattern and path", async () => {
+    const ws = path.join(tmpRoot, "ws-grep-empty");
+    await fsp.mkdir(ws, { recursive: true });
+    await fsp.writeFile(path.join(ws, "a.ts"), "const x = 1;\n", "utf8");
+    const ctx = { workspace: ws, sandbox: "off" as const };
+    const r = await executeTool(
+      "grep",
+      JSON.stringify({ pattern: "zzz_no_match_token", path: ws }),
+      ctx,
+    );
+    assert.equal(r.isError, undefined);
+    assert.match(r.output, /No matches found/i);
+    assert.match(r.output, /zzz_no_match_token/);
+    assert.match(r.output, /Tips:/i);
+  });
+
+  it("glob no-match includes pattern", async () => {
+    const ws = path.join(tmpRoot, "ws-glob-empty");
+    await fsp.mkdir(ws, { recursive: true });
+    const ctx = { workspace: ws, sandbox: "off" as const };
+    const r = await executeTool(
+      "glob",
+      JSON.stringify({ pattern: "**/*.nomatch-ext", path: ws }),
+      ctx,
+    );
+    assert.equal(r.isError, undefined);
+    assert.match(r.output, /No files matched/i);
+    assert.match(r.output, /nomatch-ext/);
+    assert.match(r.output, /Tips:/i);
+  });
+});
+
+describe("bash timeout", () => {
+  it("reports timeout with duration and exit code 124", async () => {
+    const ws = path.join(tmpRoot, "ws-bash-timeout");
+    await fsp.mkdir(ws, { recursive: true });
+    const ctx = { workspace: ws, sandbox: "off" as const };
+    const r = await executeTool(
+      "bash",
+      JSON.stringify({ command: "sleep 5", timeout_ms: 200 }),
+      ctx,
+    );
+    assert.equal(r.isError, true);
+    assert.match(r.output, /timed out after 200ms/i);
+    assert.match(r.output, /exit code 124/i);
+  });
+});
+
+describe("bash exit code footer", () => {
+  it("includes exit code when command fails with output", async () => {
+    const ws = path.join(tmpRoot, "ws-bash-exit");
+    await fsp.mkdir(ws, { recursive: true });
+    const ctx = { workspace: ws, sandbox: "off" as const };
+    const r = await executeTool(
+      "bash",
+      JSON.stringify({ command: "echo fail-msg; exit 7" }),
+      ctx,
+    );
+    assert.equal(r.isError, true);
+    assert.match(r.output, /fail-msg/);
+    assert.match(r.output, /exit code 7/i);
+  });
+
+  it("rejects whitespace-only command", async () => {
+    const ws = path.join(tmpRoot, "ws-bash-ws");
+    await fsp.mkdir(ws, { recursive: true });
+    const ctx = { workspace: ws, sandbox: "off" as const };
+    for (const command of ["", "   ", "\t\n"]) {
+      const r = await executeTool(
+        "bash",
+        JSON.stringify({ command }),
+        ctx,
+      );
+      assert.equal(r.isError, true, `command=${JSON.stringify(command)}`);
+      assert.match(r.output, /command is required/i);
+    }
+  });
+});
+
+describe("tool name aliases and unknown-tool tips", () => {
+  it("accepts Shell/read aliases and suggests on unknown names", async () => {
+    const ws = path.join(tmpRoot, "ws-tool-alias");
+    await fsp.mkdir(ws, { recursive: true });
+    await fsp.writeFile(path.join(ws, "a.txt"), "hi\n");
+    const ctx = { workspace: ws, sandbox: "off" as const };
+
+    const shell = await executeTool(
+      "Shell",
+      JSON.stringify({ command: "echo alias-ok" }),
+      ctx,
+    );
+    assert.equal(shell.isError, undefined, shell.output);
+    assert.match(shell.output, /alias-ok/);
+
+    const read = await executeTool(
+      "read",
+      JSON.stringify({ path: "a.txt" }),
+      ctx,
+    );
+    assert.equal(read.isError, undefined, read.output);
+    assert.match(read.output, /hi/);
+
+    const unk = await executeTool("read_fil", "{}", ctx);
+    assert.equal(unk.isError, true);
+    assert.match(unk.output, /Did you mean: read_file/);
+    assert.match(unk.output, /Available:/);
+
+    // doubled stream-bug names recover for aliases too
+    const { normalizeToolName } = await import("../src/agent/tools/index.js");
+    assert.equal(normalizeToolName("ShellShell"), "Shell");
+    assert.equal(normalizeToolName("bashbash"), "bash");
+    assert.equal(normalizeToolName("readread"), "read");
+  });
+});
+
+describe("tool numeric/format arg validation", () => {
+  it("rejects invalid bash/web_fetch/get_task_output args", async () => {
+    const ws = path.join(tmpRoot, "ws-tool-args");
+    await fsp.mkdir(ws, { recursive: true });
+    const ctx = { workspace: ws, sandbox: "off" as const };
+
+    const bashBad = await executeTool(
+      "bash",
+      JSON.stringify({ command: "echo hi", timeout_ms: "abc" }),
+      ctx,
+    );
+    assert.equal(bashBad.isError, true);
+    assert.match(bashBad.output, /invalid timeout_ms/i);
+
+    const fetchFmt = await executeTool(
+      "web_fetch",
+      JSON.stringify({ url: "https://example.com", format: "xml" }),
+      ctx,
+    );
+    assert.equal(fetchFmt.isError, true);
+    assert.match(fetchFmt.output, /invalid format/i);
+
+    const fetchTo = await executeTool(
+      "web_fetch",
+      JSON.stringify({ url: "https://example.com", timeout_ms: -1 }),
+      ctx,
+    );
+    assert.equal(fetchTo.isError, true);
+    assert.match(fetchTo.output, /invalid timeout_ms/i);
+
+    // Start a bg task so tail validation is reached (unknown id short-circuits earlier)
+    const start = await executeTool(
+      "bash",
+      JSON.stringify({ command: "sleep 30", background: true }),
+      ctx,
+    );
+    assert.equal(start.isError, undefined, start.output);
+    const m = start.output.match(/task_id:\s*(bg_\w+)/);
+    assert.ok(m);
+    const tailBad = await executeTool(
+      "get_task_output",
+      JSON.stringify({ task_id: m![1], tail: "abc" }),
+      ctx,
+    );
+    assert.equal(tailBad.isError, true);
+    assert.match(tailBad.output, /invalid tail/i);
+
+    const streamBad = await executeTool(
+      "get_task_output",
+      JSON.stringify({ task_id: m![1], stream: "nope" }),
+      ctx,
+    );
+    assert.equal(streamBad.isError, true);
+    assert.match(streamBad.output, /invalid stream/i);
+  });
+});
+
+describe("grep head_limit validation", () => {
+  it("rejects invalid head_limit", async () => {
+    const ws = path.join(tmpRoot, "ws-grep-hl");
+    await fsp.mkdir(ws, { recursive: true });
+    await fsp.writeFile(path.join(ws, "a.ts"), "const foo = 1;\n");
+    const ctx = { workspace: ws, sandbox: "off" as const };
+    for (const head_limit of ["abc", -1] as const) {
+      const r = await executeTool(
+        "grep",
+        JSON.stringify({ pattern: "foo", head_limit }),
+        ctx,
+      );
+      assert.equal(r.isError, true, String(head_limit));
+      assert.match(r.output, /invalid head_limit/i);
+    }
+    const ok = await executeTool(
+      "grep",
+      JSON.stringify({ pattern: "foo", head_limit: 0 }),
+      ctx,
+    );
+    assert.equal(ok.isError, undefined, ok.output);
+    assert.match(ok.output, /foo/);
+  });
+});
+
+describe("read_file offset/limit validation", () => {
+  it("rejects non-numeric offset/limit", async () => {
+    const ws = path.join(tmpRoot, "ws-read-ol");
+    await fsp.mkdir(ws, { recursive: true });
+    await fsp.writeFile(path.join(ws, "a.txt"), "one\ntwo\n");
+    const ctx = { workspace: ws, sandbox: "off" as const };
+    const badOff = await executeTool(
+      "read_file",
+      JSON.stringify({ path: "a.txt", offset: "abc" }),
+      ctx,
+    );
+    assert.equal(badOff.isError, true);
+    assert.match(badOff.output, /invalid offset/i);
+    const badLim = await executeTool(
+      "read_file",
+      JSON.stringify({ path: "a.txt", limit: "nope" }),
+      ctx,
+    );
+    assert.equal(badLim.isError, true);
+    assert.match(badLim.output, /invalid limit/i);
+    const neg = await executeTool(
+      "read_file",
+      JSON.stringify({ path: "a.txt", offset: -1 }),
+      ctx,
+    );
+    assert.equal(neg.isError, true);
+  });
+});
+
+describe("path trim fail-closed", () => {
+  it("rejects whitespace-only paths on read/write/edit/list/grep/glob", async () => {
+    const ws = path.join(tmpRoot, "ws-path-trim");
+    await fsp.mkdir(ws, { recursive: true });
+    const ctx = { workspace: ws, sandbox: "off" as const };
+    const cases: Array<{ tool: string; args: Record<string, unknown> }> = [
+      { tool: "read_file", args: { path: "   " } },
+      { tool: "write_file", args: { path: "   ", content: "x" } },
+      { tool: "search_replace", args: { path: "   ", old_string: "a", new_string: "b" } },
+      { tool: "list_dir", args: { path: "   " } },
+      { tool: "grep", args: { pattern: "foo", path: "   " } },
+      { tool: "glob", args: { pattern: "*.ts", path: "   " } },
+    ];
+    for (const { tool, args } of cases) {
+      const r = await executeTool(tool, JSON.stringify(args), ctx);
+      assert.equal(r.isError, true, tool);
+      assert.match(r.output, /path is required/i, tool);
+    }
+  });
+
+  it("rejects whitespace-only grep/glob patterns", async () => {
+    const ws = path.join(tmpRoot, "ws-pattern-trim");
+    await fsp.mkdir(ws, { recursive: true });
+    const ctx = { workspace: ws, sandbox: "off" as const };
+    for (const { tool, args } of [
+      { tool: "grep", args: { pattern: "   " } },
+      { tool: "glob", args: { pattern: "   " } },
+      { tool: "grep", args: { pattern: "" } },
+      { tool: "glob", args: { pattern: "" } },
+    ] as const) {
+      const r = await executeTool(tool, JSON.stringify(args), ctx);
+      assert.equal(r.isError, true, tool);
+      assert.match(r.output, /pattern is required/i, tool);
+    }
+  });
+
 });
 
 describe("executeTool integration", () => {
@@ -308,6 +791,75 @@ describe("executeTool integration", () => {
     assert.match(e.output, /is a directory/i);
   });
 
+  it("write_file rejects non-string content", async () => {
+    const ws = path.join(tmpRoot, "ws-write-content");
+    await fsp.mkdir(ws, { recursive: true });
+    const ctx = { workspace: ws, sandbox: "off" as const };
+    const missing = await executeTool(
+      "write_file",
+      JSON.stringify({ path: "a.txt" }),
+      ctx,
+    );
+    assert.equal(missing.isError, true);
+    assert.match(missing.output, /content is required/i);
+    const obj = await executeTool(
+      "write_file",
+      JSON.stringify({ path: "a.txt", content: { a: 1 } }),
+      ctx,
+    );
+    assert.equal(obj.isError, true);
+    assert.match(obj.output, /content must be a string/i);
+    const empty = await executeTool(
+      "write_file",
+      JSON.stringify({ path: "empty.txt", content: "" }),
+      ctx,
+    );
+    assert.equal(empty.isError, undefined);
+    assert.match(empty.output, /Wrote empty\.txt|Wrote/);
+  });
+
+  it("search_replace rejects non-string old_string/new_string", async () => {
+    const ws = path.join(tmpRoot, "ws-edit-content");
+    await fsp.mkdir(ws, { recursive: true });
+    await fsp.writeFile(path.join(ws, "t.txt"), "hello\n");
+    const ctx = { workspace: ws, sandbox: "off" as const };
+    const badNew = await executeTool(
+      "search_replace",
+      JSON.stringify({ path: "t.txt", old_string: "hello", new_string: { x: 1 } }),
+      ctx,
+    );
+    assert.equal(badNew.isError, true);
+    assert.match(badNew.output, /new_string must be a string/i);
+    const body = await fsp.readFile(path.join(ws, "t.txt"), "utf8");
+    assert.equal(body, "hello\n");
+  });
+
+  it("rejects non-string command/query/url/patchText", async () => {
+    const ctx = { workspace: tmpRoot, sandbox: "off" as const };
+    const cases: Array<{ tool: string; args: Record<string, unknown>; re: RegExp }> = [
+      { tool: "bash", args: { command: { cmd: "echo" } }, re: /command must be a string/i },
+      { tool: "web_search", args: { query: { q: "x" } }, re: /query must be a string/i },
+      { tool: "web_fetch", args: { url: { href: "http://x" } }, re: /url must be a string/i },
+      {
+        tool: "apply_patch",
+        args: { patchText: { not: "string" } },
+        re: /patchText must be a string/i,
+      },
+      { tool: "grep", args: { pattern: { re: "x" } }, re: /pattern must be a string/i },
+      { tool: "glob", args: { pattern: { p: "*" } }, re: /pattern must be a string/i },
+      { tool: "read_file", args: { path: { p: "a" } }, re: /path must be a string/i },
+      { tool: "list_dir", args: { path: { p: "." } }, re: /path must be a string/i },
+    ];
+    for (const { tool, args, re } of cases) {
+      const r = await executeTool(tool, JSON.stringify(args), ctx);
+      assert.equal(r.isError, true, tool);
+      assert.match(r.output, re, tool);
+    }
+  });
+
+
+
+
   it("path hints on missing read (typo distance)", async () => {
     const ws = path.join(tmpRoot, "ws-hint");
     await fsp.mkdir(ws, { recursive: true });
@@ -445,3 +997,283 @@ describe("glob / list_dir missing paths", () => {
 
 // keep fs import used for exists checks if needed
 void fs;
+
+describe("get_task_output arg validation order", () => {
+  it("reports invalid tail/stream even without task_id", async () => {
+    const ctx = { workspace: tmpRoot, sandbox: "off" as const };
+    const tail = await executeTool(
+      "get_task_output",
+      JSON.stringify({ tail: -1 }),
+      ctx,
+    );
+    assert.equal(tail.isError, true);
+    assert.match(tail.output, /invalid tail/i);
+    const stream = await executeTool(
+      "get_task_output",
+      JSON.stringify({ stream: "nope" }),
+      ctx,
+    );
+    assert.equal(stream.isError, true);
+    assert.match(stream.output, /invalid stream/i);
+    const badId = await executeTool(
+      "get_task_output",
+      JSON.stringify({ task_id: { id: "x" } }),
+      ctx,
+    );
+    assert.equal(badId.isError, true);
+    assert.match(badId.output, /task_id must be a string/i);
+  });
+});
+
+describe("get_task_output stream typo suggestion", () => {
+  it("suggests stdout/stderr/both for near-miss tokens", async () => {
+    const { toolGetTaskOutput } = await import("../src/agent/tools/task-tools.js");
+    const ctx = { workspace: process.cwd() };
+    const a = await toolGetTaskOutput({ stream: "stdot" }, ctx as any);
+    assert.equal(a.isError, true);
+    assert.match(a.output, /Did you mean: stdout/i);
+    const b = await toolGetTaskOutput({ stream: "err" }, ctx as any);
+    assert.match(b.output, /Did you mean: stderr/i);
+    const c = await toolGetTaskOutput({ stream: "all" }, ctx as any);
+    assert.match(c.output, /Did you mean: both/i);
+  });
+});
+
+describe("web_fetch format typo suggestion", () => {
+  it("suggests text/markdown for txt/md", async () => {
+    const { toolWebFetch } = await import("../src/agent/tools/web-fetch.js");
+    const ctx = { workspace: process.cwd(), signal: AbortSignal.timeout(1000) };
+    const a = await toolWebFetch({ url: "https://example.com", format: "txt" }, ctx as any);
+    assert.equal(a.isError, true);
+    assert.match(a.output, /Did you mean: text/i);
+    const b = await toolWebFetch({ url: "https://example.com", format: "md" }, ctx as any);
+    assert.match(b.output, /Did you mean: markdown/i);
+  });
+});
+
+describe("todo_write status typo suggestion", () => {
+  it("suggests in_progress/completed for doing/done", async () => {
+    const { applyTodos } = await import("../src/agent/todos.js");
+    const { createSession } = await import("../src/session/session.js");
+    const s = createSession({ cwd: process.cwd(), provider: "xai", model: "grok-4.5" });
+    const a = applyTodos(s, [{ id: "1", content: "x", status: "doing" }], false);
+    assert.match(a, /todo_write error/);
+    assert.match(a, /Did you mean: in_progress/i);
+    const b = applyTodos(s, [{ id: "1", content: "x", status: "done" }], false);
+    assert.match(b, /Did you mean: completed/i);
+  });
+});
+
+describe("list_dir file path guidance", () => {
+  it("hints read_file/grep when path is a file", async () => {
+    const fs = await import("node:fs");
+    const os = await import("node:os");
+    const path = await import("node:path");
+    const { toolListDir } = await import("../src/agent/tools/glob-list.js");
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "forge-listdir-"));
+    fs.writeFileSync(path.join(dir, "file.txt"), "hi");
+    const r = await toolListDir(
+      { path: "file.txt" },
+      { workspace: dir } as any,
+    );
+    assert.equal(r.isError, true);
+    assert.match(r.output, /not a directory/i);
+    assert.match(r.output, /read_file|grep/i);
+  });
+});
+
+describe("web_fetch non-http scheme tip", () => {
+  it("suggests https for ftp/file", async () => {
+    const { toolWebFetch } = await import("../src/agent/tools/web-fetch.js");
+    const ctx = { workspace: process.cwd(), signal: AbortSignal.timeout(1000) };
+    const a = await toolWebFetch({ url: "ftp://example.com/a" }, ctx as any);
+    assert.equal(a.isError, true);
+    assert.match(a.output, /http\(s\)/i);
+    assert.match(a.output, /Did you mean https/i);
+  });
+});
+
+describe("apply_patch Move File grammar hint", () => {
+  it("hints Update File + Move to for Move File lines", async () => {
+    const { parsePatch } = await import("../src/agent/tools/patch.js");
+    const r = parsePatch("*** Begin Patch\n*** Move File: a.ts\n*** End Patch");
+    assert.equal(r.ok, false);
+    if (!r.ok) {
+      assert.match(r.error, /Move to/i);
+      assert.match(r.error, /Update File/i);
+    }
+  });
+});
+
+describe("apply_patch empty file paths", () => {
+  it("hints path form for empty Add/Delete File", async () => {
+    const { parsePatch } = await import("../src/agent/tools/patch.js");
+    const a = parsePatch("*** Begin Patch\n*** Add File:\n*** End Patch");
+    assert.equal(a.ok, false);
+    if (!a.ok) assert.match(a.error, /Add File: relative/i);
+    const d = parsePatch("*** Begin Patch\n*** Delete File:\n*** End Patch");
+    assert.equal(d.ok, false);
+    if (!d.ok) assert.match(d.error, /Delete File: relative/i);
+  });
+});
+
+describe("grep head_limit all alias", () => {
+  it("accepts all|max|full as unlimited", async () => {
+    const { toolGrep } = await import("../src/agent/tools/grep.js");
+    const fs = await import("node:fs");
+    const path = await import("node:path");
+    const dir = fs.mkdtempSync(path.join(process.cwd(), ".tmp", "forge-grep-hl-"));
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, "a.ts"), "const forge = 1\n");
+    const r = await toolGrep(
+      { pattern: "forge", path: ".", head_limit: "all" },
+      { workspace: dir } as any,
+    );
+    assert.notEqual(r.isError, true);
+    assert.match(r.output, /forge/);
+    const bad = await toolGrep(
+      { pattern: "forge", head_limit: "nope" },
+      { workspace: dir } as any,
+    );
+    assert.equal(bad.isError, true);
+    assert.match(bad.output, /all\|max\|full/i);
+  });
+});
+
+describe("web_search num_results all alias", () => {
+  it("accepts all|max|full as 10 and rejects garbage", async () => {
+    // Unit-test parser path via tool with aborted signal to avoid network.
+    const { toolWebSearch } = await import("../src/agent/tools/web-search.js");
+    const bad = await toolWebSearch(
+      { query: "x", num_results: "nope" },
+      { workspace: process.cwd(), signal: AbortSignal.abort() } as any,
+    );
+    assert.equal(bad.isError, true);
+    assert.match(bad.output, /all\|max\|full|1–10|1-10/i);
+    // all should not fail validation (may abort or return results)
+    const ok = await toolWebSearch(
+      { query: "x", num_results: "all" },
+      { workspace: process.cwd(), signal: AbortSignal.abort() } as any,
+    );
+    // Either aborted after validation or results — must not be invalid num_results
+    assert.ok(!/invalid num_results/i.test(ok.output));
+  });
+});
+
+describe("get_task_output tail all alias", () => {
+  it("accepts all and suggests for al", async () => {
+    const { toolGetTaskOutput } = await import("../src/agent/tools/task-tools.js");
+    const ctx = { workspace: process.cwd() } as any;
+    // no tasks — still validates tail before task_id required path when stream/tail set
+    const all = await toolGetTaskOutput({ tail: "all" }, ctx);
+    // should not be invalid tail
+    assert.ok(!/invalid tail/i.test(all.output));
+    const al = await toolGetTaskOutput({ tail: "al" }, ctx);
+    assert.equal(al.isError, true);
+    assert.match(al.output, /invalid tail/i);
+    assert.match(al.output, /Did you mean: all/i);
+  });
+});
+
+describe("bash timeout_ms aliases", () => {
+  it("accepts default/max/all and tips typos", async () => {
+    const { toolBash } = await import("../src/agent/tools/bash.js");
+    const ctx = {
+      workspace: process.cwd(),
+      signal: AbortSignal.timeout(5000),
+      config: { sandbox: "off" },
+      sandbox: "off",
+    } as any;
+    const def = await toolBash({ command: "echo ok", timeout_ms: "default" }, ctx);
+    assert.notEqual(def.isError, true);
+    assert.match(def.output, /ok/);
+    const bad = await toolBash({ command: "echo ok", timeout_ms: "al" }, ctx);
+    assert.equal(bad.isError, true);
+    assert.match(bad.output, /Did you mean: all|timeout_ms/i);
+  });
+});
+
+describe("apply_patch missing End Patch message", () => {
+  it("distinguishes missing end vs begin markers", async () => {
+    const { parsePatch } = await import("../src/agent/tools/patch.js");
+    const r = parsePatch("*** Begin Patch\n*** Add File: a.ts\n+hi\n");
+    assert.equal(r.ok, false);
+    if (!r.ok) assert.match(r.error, /missing \*\*\* End Patch/i);
+  });
+});
+
+describe("apply_patch empty update no-op", () => {
+  it("rejects empty @@ without Move to", async () => {
+    const { parsePatch } = await import("../src/agent/tools/patch.js");
+    const r = parsePatch(
+      "*** Begin Patch\n*** Update File: a.ts\n@@\n*** End Patch",
+    );
+    assert.equal(r.ok, false);
+    if (!r.ok) assert.match(r.error, /no-op|Move to/i);
+  });
+});
+
+describe("bash timeout_ms duration suffixes", () => {
+  it("accepts 30s/1m and rejects garbage", async () => {
+    const { toolBash } = await import("../src/agent/tools/bash.js");
+    const ctx = {
+      workspace: process.cwd(),
+      signal: AbortSignal.timeout(5000),
+      sandbox: "off",
+      config: { sandbox: "off" },
+    } as any;
+    const s = await toolBash({ command: "echo ok", timeout_ms: "30s" }, ctx);
+    assert.notEqual(s.isError, true);
+    assert.match(s.output, /ok/);
+    const m = await toolBash({ command: "echo ok", timeout_ms: "1m" }, ctx);
+    assert.notEqual(m.isError, true);
+    const bad = await toolBash({ command: "echo ok", timeout_ms: "30x" }, ctx);
+    assert.equal(bad.isError, true);
+  });
+});
+
+describe("web_fetch timeout_ms duration suffixes", () => {
+  it("accepts 30s and rejects garbage before network", async () => {
+    const { toolWebFetch } = await import("../src/agent/tools/web-fetch.js");
+    const bad = await toolWebFetch(
+      { url: "https://example.com", timeout_ms: "nope" },
+      { workspace: process.cwd(), signal: AbortSignal.abort() } as any,
+    );
+    assert.equal(bad.isError, true);
+    assert.match(bad.output, /timeout_ms/i);
+    // valid duration should pass validation (may abort on fetch)
+    const ok = await toolWebFetch(
+      { url: "https://example.com", timeout_ms: "30s" },
+      { workspace: process.cwd(), signal: AbortSignal.abort() } as any,
+    );
+    assert.ok(!/invalid timeout_ms/i.test(ok.output));
+  });
+});
+
+describe("search_replace whitespace-only old_string", () => {
+  it("fails closed instead of matching blank lines", async () => {
+    const fs = await import("node:fs");
+    const path = await import("node:path");
+    const { toolEdit } = await import("../src/agent/tools/edit.js");
+    const dir = path.join(process.cwd(), ".tmp", "forge-ws-edit");
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, "a.ts"), "x\n\ny\n");
+    const r = await toolEdit(
+      { path: "a.ts", old_string: "   ", new_string: "z" },
+      { workspace: dir } as any,
+    );
+    assert.equal(r.isError, true);
+    assert.match(r.output, /whitespace-only/i);
+  });
+});
+
+describe("apply_patch context-only update no-op", () => {
+  it("rejects context-only @@ without -/+ edits", async () => {
+    const { parsePatch } = await import("../src/agent/tools/patch.js");
+    const r = parsePatch(
+      "*** Begin Patch\n*** Update File: a.ts\n@@\n context line\n*** End Patch",
+    );
+    assert.equal(r.ok, false);
+    if (!r.ok) assert.match(r.error, /no-op|context-only/i);
+  });
+});

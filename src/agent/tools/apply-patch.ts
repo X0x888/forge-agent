@@ -15,17 +15,38 @@ export async function toolApplyPatch(
   args: Record<string, unknown>,
   ctx: ToolContext,
 ): Promise<ToolResult> {
-  const patchText = String(
-    args.patchText ?? args.patch_text ?? args.patch ?? "",
-  );
+  const rawPatch = args.patchText ?? args.patch_text ?? args.patch;
+  if (rawPatch != null && typeof rawPatch !== "string") {
+    const kind =
+      rawPatch === null
+        ? "null"
+        : Array.isArray(rawPatch)
+          ? "array"
+          : typeof rawPatch;
+    return {
+      output: `apply_patch error: patchText must be a string (got ${kind}).`,
+      isError: true,
+    };
+  }
+  const patchText = String(rawPatch ?? "");
   if (!patchText.trim()) {
-    return { output: "patchText is required", isError: true };
+    return {
+      output:
+        "apply_patch error: patchText is required (non-empty string).\n" +
+        "Example: *** Begin Patch\n*** Update File: path.ts\n@@\n-old\n+new\n*** End Patch",
+      isError: true,
+    };
   }
 
   const parsed = parsePatch(patchText);
   if (!parsed.ok) {
+    const detail = parsed.error || "invalid patch";
+    const tip =
+      /Begin Patch|Update File|Add File|grammar|hunk/i.test(detail)
+        ? ""
+        : "\nHint: wrap ops in *** Begin Patch / *** End Patch with *** Add/Update/Delete File: path hunks.";
     return {
-      output: `apply_patch verification failed: ${parsed.error}`,
+      output: `apply_patch verification failed: ${detail}${tip}`,
       isError: true,
     };
   }

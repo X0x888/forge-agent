@@ -402,6 +402,11 @@ export async function readTaskOutput(
     `elapsed_ms: ${(task.endedAt || Date.now()) - task.startedAt}`,
   ];
   if (task.error) parts.push(`error: ${task.error}`);
+  if (task.status !== "running") {
+    parts.push(
+      `note: task is ${task.status} — output below is final; start a new background bash if you need another run.`,
+    );
+  }
 
   const readTail = async (file: string, label: string) => {
     try {
@@ -447,7 +452,12 @@ export function killTask(id: string): string {
   const task = tasks.get(id);
   if (!task) return `Unknown task_id: ${id}`;
   if (task.status !== "running") {
-    return `Task ${id} is already ${task.status} (exit ${task.exitCode ?? "n/a"})`;
+    const cmd = task.command.replace(/\s+/g, " ").slice(0, 80);
+    const cmdNote = cmd ? ` · ${cmd}${task.command.length > 80 ? "…" : ""}` : "";
+    return (
+      `Task ${id} is already ${task.status} (exit ${task.exitCode ?? "n/a"})${cmdNote}\n` +
+      `Use get_task_output to read logs, or start a new bash { background: true } task.`
+    );
   }
   try {
     task.child?.kill("SIGTERM");

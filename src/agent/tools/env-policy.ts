@@ -56,7 +56,92 @@ const CORE_ENV = new Set(
   ].map((s) => s.toLowerCase()),
 );
 
-const DEFAULT_SECRET_GLOBS = ["*KEY*", "*SECRET*", "*TOKEN*", "*PASSWORD*", "*CREDENTIAL*"];
+const DEFAULT_SECRET_GLOBS = [
+  "*KEY*",
+  "*SECRET*",
+  "*TOKEN*",
+  "*PASSWORD*",
+  "*CREDENTIAL*",
+  // Connection strings often embed user:pass@host — not matched by *KEY*/*TOKEN*
+  "*DATABASE_URL*",
+  "*DB_URL*",
+  "*MONGO_URL*",
+  "*MONGODB_URL*",
+  "*REDIS_URL*",
+  "*AMQP_URL*",
+  "*POSTGRES_URL*",
+  "*MYSQL_URL*",
+  "*CONNECTION_STRING*",
+  "*CONN_STRING*",
+  "*DATABASE_URI*",
+  "*DB_URI*",
+  "*MONGO_URI*",
+  "*MONGODB_URI*",
+  "*REDIS_URI*",
+  "*AMQP_URI*",
+  "*POSTGRES_URI*",
+  "*MYSQL_URI*",
+  // DB client password files / env not matching *PASSWORD*
+  "MYSQL_PWD",
+  "PGPASSFILE",
+  // TLS session key log (exfil risk if set in host env)
+  "SSLKEYLOGFILE",
+];
+
+/**
+ * Host env vars that can inject code into child processes.
+ * Always stripped unless the policy explicitly `set`s them.
+ */
+export const SHELL_INJECTION_ENV = new Set(
+  [
+    "LD_PRELOAD",
+    "LD_LIBRARY_PATH",
+    "DYLD_INSERT_LIBRARIES",
+    "DYLD_LIBRARY_PATH",
+    "DYLD_FORCE_FLAT_NAMESPACE",
+    "NODE_OPTIONS",
+    "NODE_PATH",
+    "PYTHONSTARTUP",
+    "PYTHONPATH",
+    "PERL5OPT",
+    "RUBYOPT",
+    "BASH_ENV",
+    "ENV",
+    "SHELLOPTS",
+    "BASHOPTS",
+    "PROMPT_COMMAND",
+    "IFS",
+    // Git config/env injection (core.sshCommand, external diff, etc.)
+    "GIT_SSH_COMMAND",
+    "GIT_EXTERNAL_DIFF",
+    "GIT_DIFF_OPTS",
+    "GIT_CONFIG_COUNT",
+    "GIT_CONFIG_PARAMETERS",
+    "GIT_CONFIG_GLOBAL",
+    "GIT_CONFIG_SYSTEM",
+    "GIT_CONFIG_NOSYSTEM",
+    "GIT_EXEC_PATH",
+    "GIT_DIR",
+    "GIT_WORK_TREE",
+    "GIT_COMMON_DIR",
+    "GIT_NAMESPACE",
+    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+    "GIT_OBJECT_DIRECTORY",
+    "GIT_INDEX_FILE",
+    "GIT_ASKPASS",
+    "SSH_ASKPASS",
+  ].map((s) => s.toLowerCase()),
+);
+
+/** Prefix match for numbered GIT_CONFIG_KEY_N / GIT_CONFIG_VALUE_N */
+function isGitConfigInjectionEnv(name: string): boolean {
+  const n = name.toLowerCase();
+  return (
+    n.startsWith("git_config_key_") ||
+    n.startsWith("git_config_value_") ||
+    n.startsWith("git_config_count")
+  );
+}
 
 function globMatch(pattern: string, name: string): boolean {
   // Case-insensitive * and ? globs
@@ -107,13 +192,16 @@ export function createShellEnv(
     for (const [k, v] of Object.entries(base)) {
       if (v === undefined) continue;
       if (inherit === "core" && !CORE_ENV.has(k.toLowerCase())) continue;
+      const lowerName = k.toLowerCase();
+      // Always drop process-injection vectors (preload / interpreter opts).
+      // Policy `set` can still reintroduce them deliberately below.
+      if (SHELL_INJECTION_ENV.has(lowerName) || isGitConfigInjectionEnv(k)) continue;
       if (!ignoreDefault && matchesAny(DEFAULT_SECRET_GLOBS, k)) {
         // Keep a few operational exceptions that are not credentials
-        const lower = k.toLowerCase();
         if (
-          lower === "keytimeout" ||
-          lower.endsWith("keyboard") ||
-          lower.includes("keybinding")
+          lowerName === "keytimeout" ||
+          lowerName.endsWith("keyboard") ||
+          lowerName.includes("keybinding")
         ) {
           /* keep */
         } else {

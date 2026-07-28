@@ -1,6 +1,8 @@
 import chalk from "chalk";
 import type { StatusSnapshot, StatuslineRenderOptions, PlanUsageInfo } from "./types.js";
 import { formatTokens, formatCost } from "../util/format.js";
+import { getForgeVersion } from "../util/version.js";
+import { forgeHome } from "../util/fs.js";
 
 function colorEnabled(opts: StatuslineRenderOptions): boolean {
   if (opts.plain || opts.color === false) return false;
@@ -364,11 +366,17 @@ export function renderTmux(snap: StatusSnapshot | undefined): string {
   if ((snap.activity?.bgRunning ?? 0) > 0) {
     parts.push(`bg:${snap.activity!.bgRunning}`);
   }
+  if (snap.tags.includes("ULW") || snap.ultrawork) {
+    const c =
+      typeof snap.ulwCycle === "number" ? `ULW c=${snap.ulwCycle}` : "ULW";
+    parts.push(c);
+  }
+  if (snap.tags.includes("PIN") || snap.pinned) parts.push("PIN");
+  if (snap.goal?.active) parts.push("GOAL");
   if (snap.plan?.percent != null) parts.push(`use:${snap.plan.percent}%`);
   else if (snap.plan?.remaining != null) {
     parts.push(`${formatCompact(snap.plan.remaining)}left`);
   }
-  if (snap.goal?.active) parts.push("GOAL");
   return parts.join(" ");
 }
 
@@ -406,7 +414,12 @@ export function renderCompactStrip(
     if (act) parts.push(act);
   }
   if (snap.goal?.active) parts.push(paint(c, "GOAL", "yellow"));
-  if (snap.tags.includes("ULW")) parts.push(paint(c, "ULW", "magenta"));
+  if (snap.tags.includes("ULW") || snap.ultrawork) {
+    const label =
+      typeof snap.ulwCycle === "number" ? `ULW c=${snap.ulwCycle}` : "ULW";
+    parts.push(paint(c, label, "magenta"));
+  }
+  if (snap.tags.includes("PIN") || snap.pinned) parts.push(paint(c, "PIN", "cyan"));
   if (snap.lock && !snap.lock.mine && snap.lock.alive) {
     parts.push(paint(c, `LOCK:${snap.lock.pid}`, "yellow"));
   }
@@ -417,14 +430,17 @@ export function renderCompactStrip(
 }
 
 export function snapshotsToJson(snaps: StatusSnapshot[]): string {
-  return JSON.stringify(
-    {
-      ok: true,
-      count: snaps.length,
-      sessions: snaps,
-      generatedAt: new Date().toISOString(),
-    },
-    null,
-    2,
-  );
+  const body = {
+    ok: true,
+    version: getForgeVersion(),
+    node: process.version,
+    forgeHome: forgeHome(),
+    count: snaps.length,
+    sessions: snaps,
+    generatedAt: new Date().toISOString(),
+  };
+  const compact =
+    process.env.FORGE_JSON_COMPACT === "1" ||
+    process.env.FORGE_JSON_COMPACT === "true";
+  return compact ? JSON.stringify(body) : JSON.stringify(body, null, 2);
 }

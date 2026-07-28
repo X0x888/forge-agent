@@ -84,6 +84,8 @@ export interface BackgroundTaskSummary {
 
 export interface StatusSnapshot {
   sessionId: string;
+  /** Absolute session directory under FORGE_HOME */
+  sessionPath?: string;
   title?: string;
   cwd: string;
   projectLabel: string;
@@ -102,6 +104,12 @@ export interface StatusSnapshot {
   editCount: number;
   openTodos: number;
   ultrawork: boolean;
+  /** ULW cycle flag when armed (0|1); omit/null when not */
+  ulwCycle?: number | null;
+  /** ULW wave counter when armed */
+  ulwWave?: number | null;
+  /** Prune-protected session */
+  pinned?: boolean;
   permissionMode?: string;
   git?: GitInfo;
   context: ContextInfo;

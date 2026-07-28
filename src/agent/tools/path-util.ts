@@ -50,7 +50,9 @@ export async function assertWritablePath(
       return fh.path;
     }
     throw new Error(
-      `Refusing write under ~/.forge outside sessions/logs/tmp: ${fh.path}`,
+      `Refusing write under ~/.forge outside sessions/logs/tmp: ${fh.path}. ` +
+        "Agent-writable: ~/.forge/sessions/, logs/, tmp/ only. " +
+        "Use forge login/config/doctor for credentials and config.",
     );
   }
 
@@ -64,7 +66,8 @@ export async function assertWritablePath(
   }
 
   throw new Error(
-    `Path escapes workspace: ${target} (workspace: ${workspace}). Use a path under the project root.`,
+    `Path escapes workspace: ${target} (workspace: ${workspace}). ` +
+      "Use a path under the project root, or enable --read-outside only for reads (writes stay sandboxed).",
   );
 }
 

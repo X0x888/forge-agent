@@ -70,7 +70,7 @@ const HARD_DENY: Array<{ rule: string; re: RegExp; reason: string }> = [
   {
     rule: "curl-pipe-shell",
     re: /\b(curl|wget)\b[^\n;|&]*\|\s*(ba)?sh\b/,
-    reason: "Refusing curl|sh / wget|sh remote code execution",
+    reason: "Refusing curl|sh / wget|sh remote code execution. Download, inspect, then run deliberately (or use a package manager).",
   },
   {
     rule: "sudo-rm",
@@ -80,38 +80,38 @@ const HARD_DENY: Array<{ rule: string; re: RegExp; reason: string }> = [
   {
     rule: "force-push-main",
     re: /\bgit\b[\s\S]*\bpush\b[^\n;|&]*--force(-with-lease)?[^\n;|&]*\b(main|master)\b/,
-    reason: "Refusing force-push to main/master",
+    reason: "Refusing force-push to main/master. Push a feature branch and open a PR instead.",
   },
   {
     rule: "force-push-main-order",
     re: /\bgit\b[\s\S]*\bpush\b[^\n;|&]*\b(main|master)\b[^\n;|&]*--force(-with-lease)?/,
-    reason: "Refusing force-push to main/master",
+    reason: "Refusing force-push to main/master. Push a feature branch and open a PR instead.",
   },
   {
     rule: "force-push-main-short",
     re: /\bgit\b[\s\S]*\bpush\b[^\n;|&]*\s-f(\s|$)[^\n;|&]*\b(main|master)\b/,
-    reason: "Refusing force-push (-f) to main/master",
+    reason: "Refusing force-push (-f) to main/master. Push a feature branch and open a PR instead.",
   },
   {
     rule: "force-push-main-short-order",
     re: /\bgit\b[\s\S]*\bpush\b[^\n;|&]*\b(main|master)\b[^\n;|&]*\s-f(\s|$)/,
-    reason: "Refusing force-push (-f) to main/master",
+    reason: "Refusing force-push (-f) to main/master. Push a feature branch and open a PR instead.",
   },
   {
     // Refspec force: git push origin +main  (no --force flag required)
     rule: "force-push-main-refspec",
     re: /\bgit\b[\s\S]*\bpush\b[^\n;|&]*\+[^\s]*\b(main|master)\b/,
-    reason: "Refusing force-push (+refspec) to main/master",
+    reason: "Refusing force-push (+refspec) to main/master. Push a feature branch and open a PR instead.",
   },
   {
     rule: "git-clean-fdx",
     re: /\bgit\b[\s\S]*\bclean\b[^\n;|&]*-[a-zA-Z]*f[a-zA-Z]*d[a-zA-Z]*x/,
-    reason: "Refusing git clean -fdx (destroys untracked + ignored)",
+    reason: "Refusing git clean -fdx (destroys untracked + ignored). Use git status/clean -nd to preview, or remove specific paths.",
   },
   {
     rule: "drop-database",
     re: /\bdrop\s+database\b/i,
-    reason: "Refusing DROP DATABASE",
+    reason: "Refusing DROP DATABASE. Use migrations/explicit admin tooling outside the agent if truly required.",
   },
   {
     rule: "fork-bomb",
@@ -287,7 +287,7 @@ function structuredGitForceMain(segment: string): SafetyVerdict | null {
   if (hitsMain || (refs.length >= 2 && isMainMasterRef(normalizeGitPushRef(refs[1])))) {
     return {
       ok: false,
-      reason: "Refusing force-push to main/master",
+      reason: "Refusing force-push to main/master. Push a feature branch and open a PR instead.",
       rule: "git-force-push-main-structured",
     };
   }
@@ -314,6 +314,45 @@ function structuredFindDelete(segment: string): SafetyVerdict | null {
 }
 
 /** curl/wget segment piped to shell */
+
+/** Cloud instance metadata (IMDS) — classic SSRF/exfil via curl/wget in bash. */
+
+/** file:// fetches via curl/wget — local file exfil footgun (web_fetch already blocks file:). */
+function structuredFileUrlFetchDeny(command: string): SafetyVerdict | null {
+  if (!/\b(curl|wget|httpie|aria2c)\b/i.test(command)) return null;
+  // Match file: URLs with optional quotes/escapes
+  if (!/(?:^|[\s"'`\\])file:\/\//i.test(command)) return null;
+  return {
+    ok: false,
+    reason:
+      "Refusing file:// fetch via shell (local file exfil). Use read_file for workspace files.",
+    rule: "file-url-fetch",
+  };
+}
+
+function structuredCloudMetadataDeny(command: string): SafetyVerdict | null {
+  // IPv4 link-local IMDS + common DNS names. Hex/decimal forms still hit web_fetch SSRF;
+  // this catches the common shell footgun experts still type under pressure.
+  // Allow whitespace, quotes, backticks, brackets, and backslash-escapes (node -e "fetch(\"http://…\")").
+  const re =
+    /(?:^|[\s"'`\[\\])(?:https?:\/\/)?(?:169\.254\.169\.254|\[?fd00:ec2::254\]?|metadata\.google\.internal|metadata\.goog)(?:[\/:\s"'\]\\]|$)/i;
+  if (!re.test(command)) return null;
+  // Flag common fetch tools + language one-liners (avoid bare "echo 169.254…")
+  if (
+    !/\b(curl|wget|httpie|fetch|aria2c|python3?|node|nodejs|ruby|perl|php|lua)\b/i.test(
+      command,
+    )
+  ) {
+    return null;
+  }
+  return {
+    ok: false,
+    reason:
+      "Refusing cloud instance-metadata fetch via shell (IMDS/link-local). Use approved cloud SDKs/roles, not curl to 169.254.169.254",
+    rule: "cloud-metadata-imds",
+  };
+}
+
 function structuredCurlPipeSh(command: string): SafetyVerdict | null {
   const segs = safetySegments(command);
   for (let i = 0; i < segs.length - 1; i++) {
@@ -322,7 +361,7 @@ function structuredCurlPipeSh(command: string): SafetyVerdict | null {
     if ((a === "curl" || a === "wget") && (b === "sh" || b === "bash" || b === "zsh")) {
       return {
         ok: false,
-        reason: "Refusing curl|sh / wget|sh remote code execution",
+        reason: "Refusing curl|sh / wget|sh remote code execution. Download, inspect, then run deliberately (or use a package manager).",
         rule: "curl-pipe-shell-structured",
       };
     }
@@ -330,7 +369,7 @@ function structuredCurlPipeSh(command: string): SafetyVerdict | null {
   if (/\b(curl|wget)\b/.test(command) && /\|\s*(ba)?sh\b/.test(command)) {
     return {
       ok: false,
-      reason: "Refusing curl|sh / wget|sh remote code execution",
+      reason: "Refusing curl|sh / wget|sh remote code execution. Download, inspect, then run deliberately (or use a package manager).",
       rule: "curl-pipe-shell-structured",
     };
   }
@@ -347,6 +386,10 @@ export function checkBashHardDeny(command: string): SafetyVerdict {
 
   const pipe = structuredCurlPipeSh(cmd);
   if (pipe) return pipe;
+  const imds = structuredCloudMetadataDeny(cmd);
+  if (imds) return imds;
+  const fileUrl = structuredFileUrlFetchDeny(cmd);
+  if (fileUrl) return fileUrl;
 
   const targets = commandCheckTargets(cmd);
   for (const segment of targets) {
@@ -424,21 +467,21 @@ export function checkWritePathHardDeny(
     if (/\/\.forge\/(auth\.json|permissions\.json)$/.test(p) || /\/\.forge\/hooks\//.test(p)) {
       return {
         ok: false,
-        reason: "Refusing write to Forge credentials/hooks",
+        reason: "Refusing write to Forge credentials/hooks. Use forge login/config/doctor — not write_file.",
         rule: "write-forge-protected",
       };
     }
     if (!p.startsWith(workspace.replace(/\\/g, "/") + "/") && !p.startsWith(forge + "/sessions")) {
       return {
         ok: false,
-        reason: "Refusing write to sensitive home config outside workspace",
+        reason: "Refusing write to sensitive home config. Stay in the project root. outside workspace. Stay in the project root.",
         rule: "write-sensitive-home",
       };
     }
     if (/\/(\.ssh|\.gnupg)\//.test(p) || /\/\.(bashrc|zshrc|profile|zprofile|bash_profile)$/.test(p)) {
       return {
         ok: false,
-        reason: "Refusing write to sensitive home config",
+        reason: "Refusing write to sensitive home config. Stay in the project root.",
         rule: "write-sensitive-home",
       };
     }

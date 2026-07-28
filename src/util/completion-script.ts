@@ -1,19 +1,39 @@
 /** Shell completion scripts for expert terminals. */
+export const COMPLETION_SHELLS = ["bash", "zsh", "fish"] as const;
+export type CompletionShell = (typeof COMPLETION_SHELLS)[number];
+
+/** Normalize / validate shell name. Empty → bash. Unknown → null. */
+export function normalizeCompletionShell(
+  shell: string | undefined | null,
+): CompletionShell | null {
+  const s = String(shell ?? "bash").trim().toLowerCase() || "bash";
+  if ((COMPLETION_SHELLS as readonly string[]).includes(s)) {
+    return s as CompletionShell;
+  }
+  return null;
+}
+
 export function shellCompletionScript(shell: string): string {
   const cmds =
     "run login logout auth sessions init models doctor stats tips news logs config status completion prune-tool-output prune-metrics";
   const zshCmds = cmds.split(" ").join(" ");
   const runFlags =
-    "--json --ulw --permission-mode --model --provider --base-url --goal --session --continue --new --title --sandbox --sandbox-network --sandbox-missing --deny --allow --ask --cwd --effort";
+    "--json --ulw --permission-mode --model --provider --base-url --goal --session --continue --new --title --sandbox --sandbox-network --sandbox-missing --read-outside --deny --allow --ask --cwd --effort --max-turns --no-blocking-stop";
   const topFlags =
-    "--new --session --continue --title --json --model --provider --permission-mode --ulw --goal --cwd --sandbox --help --version";
+    "--new --session --continue --title --json --model --provider --base-url --permission-mode --ulw --goal --cwd --sandbox --sandbox-network --sandbox-missing --read-outside --deny --allow --ask --effort --max-turns --no-blocking-stop --help --version";
   const sessionsActions =
-    "list show path export import fork pin unpin title rename delete prune";
+    "list show path export import fork pin unpin title rename delete prune search find";
   const sessionsFlags =
     "--json --out --format --keep --max-age-days --cwd --query -q --pinned --limit -n --force";
   // --cwd: list filter + import override; --query/-q: list id/title filter; --pinned
 
-  if (shell === "zsh") {
+  const normalized = normalizeCompletionShell(shell);
+  if (!normalized) {
+    throw new Error(
+      `Unknown completion shell "${shell}". Use bash, zsh, or fish.`,
+    );
+  }
+  if (normalized === "zsh") {
     return [
       "#compdef forge",
       '# Install: forge completion zsh > "${fpath[1]}/_forge" && compinit',
@@ -31,6 +51,36 @@ export function shellCompletionScript(shell: string): string {
       "      _values 'flags' ${topFlags}",
       "      ;;",
       "    args)",
+      "      case $words[CURRENT-1] in",
+      "        --permission-mode)",
+      "          _values 'permission-mode' default acceptEdits plan bypassPermissions dontAsk accept deny ask yolo",
+      "          return",
+      "          ;;",
+      "        --effort|--reasoning-effort)",
+      "          _values 'effort' low medium high lo med hi max",
+      "          return",
+      "          ;;",
+      "        --sandbox)",
+      "          _values 'sandbox' off workspace read-only strict readonly ro ws none full",
+      "          return",
+      "          ;;",
+      "        --sandbox-network)",
+      "          _values 'sandbox-network' unrestricted blocked",
+      "          return",
+      "          ;;",
+      "        --sandbox-missing)",
+      "          _values 'sandbox-missing' fail-closed fallback",
+      "          return",
+      "          ;;",
+      "        --read-outside)",
+      "          _values 'read-outside' ask allow deny",
+      "          return",
+      "          ;;",
+      "        -p|--provider)",
+      "          _values 'provider' xai anthropic openai openrouter google custom grok claude sonnet opus haiku gpt oai chatgpt gemini bard or router",
+      "          return",
+      "          ;;",
+      "      esac",
       "      case $line[1] in",
       "        run)",
       `          _values 'run flags' ${runFlags}`,
@@ -65,7 +115,10 @@ export function shellCompletionScript(shell: string): string {
       "            esac",
       "          fi",
       "          ;;",
-      "        doctor|models|status|auth)",
+      "        doctor|models)",
+      "          _values 'flags' --json --provider -p",
+      "          ;;",
+      "        status|auth|tips|init|completion)",
       "          _values 'flags' --json",
       "          ;;",
       "        stats)",
@@ -78,7 +131,7 @@ export function shellCompletionScript(shell: string): string {
       "          _values 'logs' --json --path --lines -n",
       "          ;;",
       "        config)",
-      "          _values 'config' --json --provider --model --cwd",
+      "          _values 'config' --json --provider --model --cwd --max-turns --sandbox --sandbox-missing --sandbox-network --read-outside --permission-mode --no-blocking-stop",
       "          ;;",
       "        login)",
       "          _values 'login' --api-key --oauth --device --from-grok --provider --json",
@@ -101,7 +154,7 @@ export function shellCompletionScript(shell: string): string {
     ].join("\n");
   }
 
-  if (shell === "fish") {
+  if (normalized === "fish") {
     return [
       "# Install: forge completion fish > ~/.config/fish/completions/forge.fish",
       "complete -c forge -f",
@@ -109,9 +162,18 @@ export function shellCompletionScript(shell: string): string {
       'complete -c forge -l help -d "Help"',
       'complete -c forge -l version -d "Version"',
       'complete -c forge -l model -d "Model id"',
-      'complete -c forge -l provider -d "Provider"',
-      'complete -c forge -l permission-mode -d "Permission mode"',
-      'complete -c forge -l sandbox -d "OS sandbox profile"',
+      'complete -c forge -l provider -d "Provider" -x -a "xai anthropic openai openrouter google custom grok claude sonnet opus haiku gpt oai chatgpt gemini bard or router"',
+      'complete -c forge -l permission-mode -d "Permission mode" -x -a "default acceptEdits plan bypassPermissions dontAsk accept deny ask yolo"',
+      'complete -c forge -l sandbox -d "OS sandbox profile" -x -a "off workspace read-only strict readonly ro ws none full"',
+      'complete -c forge -l sandbox-network -d "Bash network"',
+      'complete -c forge -l sandbox-missing -d "Missing backend policy"',
+      'complete -c forge -l read-outside -d "Read outside workspace policy"',
+      'complete -c forge -l effort -d "Reasoning effort"',
+      'complete -c forge -l base-url -d "API base URL"',
+      'complete -c forge -l deny -d "Deny rule"',
+      'complete -c forge -l allow -d "Allow rule"',
+      'complete -c forge -l ask -d "Ask rule"',
+      'complete -c forge -l max-turns -d "Cap agent turns"',
       'complete -c forge -l ulw -d "Ultrawork"',
       'complete -c forge -l goal -d "Arm /goal"',
       'complete -c forge -l json -d "JSON output (headless bare forge parity with run --json)"',
@@ -123,12 +185,13 @@ export function shellCompletionScript(shell: string): string {
       // run subcommand
       'complete -c forge -n "__fish_seen_subcommand_from run" -l json -d "JSON result"',
       'complete -c forge -n "__fish_seen_subcommand_from run" -l ulw -d "Ultrawork"',
-      'complete -c forge -n "__fish_seen_subcommand_from run" -l permission-mode -d "Permission mode"',
-      'complete -c forge -n "__fish_seen_subcommand_from run" -l sandbox -d "OS sandbox"',
+      'complete -c forge -n "__fish_seen_subcommand_from run" -l permission-mode -d "Permission mode" -x -a "default acceptEdits plan bypassPermissions dontAsk accept deny ask yolo"',
+      'complete -c forge -n "__fish_seen_subcommand_from run" -l sandbox -d "OS sandbox" -x -a "off workspace read-only strict readonly ro ws none full"',
       'complete -c forge -n "__fish_seen_subcommand_from run" -l sandbox-network -d "Bash network"',
       'complete -c forge -n "__fish_seen_subcommand_from run" -l sandbox-missing -d "Missing backend policy"',
+      'complete -c forge -n "__fish_seen_subcommand_from run" -l read-outside -d "Read outside workspace policy"',
       'complete -c forge -n "__fish_seen_subcommand_from run" -l model -d "Model id"',
-      'complete -c forge -n "__fish_seen_subcommand_from run" -l provider -d "Provider"',
+      'complete -c forge -n "__fish_seen_subcommand_from run" -l provider -d "Provider" -x -a "xai anthropic openai openrouter google custom grok claude sonnet opus haiku gpt oai chatgpt gemini bard or router"',
       'complete -c forge -n "__fish_seen_subcommand_from run" -l base-url -d "API base URL"',
       'complete -c forge -n "__fish_seen_subcommand_from run" -l goal -d "Arm /goal"',
       'complete -c forge -n "__fish_seen_subcommand_from run" -l session -d "Resume session"',
@@ -140,9 +203,16 @@ export function shellCompletionScript(shell: string): string {
       'complete -c forge -n "__fish_seen_subcommand_from run" -l ask -d "Ask rule"',
       'complete -c forge -n "__fish_seen_subcommand_from run" -l cwd -d "Workspace"',
       'complete -c forge -n "__fish_seen_subcommand_from doctor" -l json -d "JSON"',
+      'complete -c forge -n "__fish_seen_subcommand_from doctor" -l provider -d "Provider"',
+      'complete -c forge -n "__fish_seen_subcommand_from doctor" -s p -d "Provider"',
       'complete -c forge -n "__fish_seen_subcommand_from models" -l json -d "JSON"',
+      'complete -c forge -n "__fish_seen_subcommand_from models" -l provider -d "Provider"',
+      'complete -c forge -n "__fish_seen_subcommand_from models" -s p -d "Provider"',
       'complete -c forge -n "__fish_seen_subcommand_from status" -l json -d "JSON"',
       'complete -c forge -n "__fish_seen_subcommand_from auth" -l json -d "JSON"',
+      'complete -c forge -n "__fish_seen_subcommand_from tips" -l json -d "JSON"',
+      'complete -c forge -n "__fish_seen_subcommand_from init" -l json -d "JSON"',
+      'complete -c forge -n "__fish_seen_subcommand_from completion" -l json -d "JSON"',
       'complete -c forge -n "__fish_seen_subcommand_from stats" -l json -d "JSON"',
       'complete -c forge -n "__fish_seen_subcommand_from stats" -l days -d "Last N days"',
       'complete -c forge -n "__fish_seen_subcommand_from news" -l json -d "JSON"',
@@ -158,12 +228,12 @@ export function shellCompletionScript(shell: string): string {
       'complete -c forge -n "__fish_seen_subcommand_from sessions" -l json -d "JSON"',
       'complete -c forge -n "__fish_seen_subcommand_from sessions" -l out -d "Export output path"',
       'complete -c forge -n "__fish_seen_subcommand_from sessions" -l format -d "Export format md|json" -a "md json markdown"',
-      'complete -c forge -n "__fish_seen_subcommand_from sessions" -l keep -d "Prune keep newest N"',
-      'complete -c forge -n "__fish_seen_subcommand_from sessions" -l max-age-days -d "Prune max age days"',
+      'complete -c forge -n "__fish_seen_subcommand_from sessions" -l keep -d "Prune keep newest N" -x -a "0 all max unlimited 10 50 100"',
+      'complete -c forge -n "__fish_seen_subcommand_from sessions" -l max-age-days -d "Prune max age days" -x -a "0 all none off 7 14 30 90"',
       'complete -c forge -n "__fish_seen_subcommand_from sessions" -l cwd -d "List filter or import cwd override"',
       'complete -c forge -n "__fish_seen_subcommand_from sessions" -l query -s q -d "List id/title substring filter"',
       'complete -c forge -n "__fish_seen_subcommand_from sessions" -l pinned -d "List only pin-protected sessions"',
-      'complete -c forge -n "__fish_seen_subcommand_from sessions" -l limit -d "List limit"',
+      'complete -c forge -n "__fish_seen_subcommand_from sessions" -l limit -d "List limit (0/all/max)" -x -a "0 all max unlimited 30 50 100"',
       'complete -c forge -n "__fish_seen_subcommand_from sessions" -l force -d "Delete even if session is locked"',
       'complete -c forge -n "__fish_seen_subcommand_from login" -l api-key -d "API key"',
       'complete -c forge -n "__fish_seen_subcommand_from login" -l oauth -d "Browser OAuth"',
@@ -175,14 +245,14 @@ export function shellCompletionScript(shell: string): string {
       'complete -c forge -n "__fish_seen_subcommand_from logout" -l json -d "JSON"',
       'complete -c forge -n "__fish_seen_subcommand_from completion" -a "bash zsh fish"',
       'complete -c forge -n "__fish_seen_subcommand_from prune-tool-output" -l json -d "JSON"',
-      'complete -c forge -n "__fish_seen_subcommand_from prune-tool-output" -l keep -d "Keep newest N"',
+      'complete -c forge -n "__fish_seen_subcommand_from prune-tool-output" -l keep -d "Keep newest N" -x -a "0 all max unlimited 10 50 80 100"',
       'complete -c forge -n "__fish_seen_subcommand_from prune-metrics" -l json -d "JSON"',
-      'complete -c forge -n "__fish_seen_subcommand_from prune-metrics" -l keep -d "Keep newest N"',
+      'complete -c forge -n "__fish_seen_subcommand_from prune-metrics" -l keep -d "Keep newest N" -x -a "0 all max unlimited 50 100 500"',
       "",
     ].join("\n");
   }
 
-  // bash — context-aware sessions subcommands + flags
+  // bash (default) — context-aware sessions subcommands + flags
   return [
     '# Install: eval "$(forge completion bash)"',
     "# or: forge completion bash > /usr/local/etc/bash_completion.d/forge",
@@ -195,6 +265,45 @@ export function shellCompletionScript(shell: string): string {
     '    COMPREPLY=( $(compgen -W "$cmds $top_flags" -- "$cur") )',
     "    return",
     "  fi",
+    '  # Enum flag values (parent or run)',
+    '  case "$prev_word" in',
+    '    --permission-mode)',
+    '      COMPREPLY=( $(compgen -W "default acceptEdits plan bypassPermissions dontAsk accept deny ask yolo" -- "$cur") )',
+    "      return",
+    "      ;;",
+    '    --effort|--reasoning-effort)',
+    '      COMPREPLY=( $(compgen -W "low medium high lo med hi max" -- "$cur") )',
+    "      return",
+    "      ;;",
+    '    --sandbox)',
+    '      COMPREPLY=( $(compgen -W "off workspace read-only strict readonly ro ws none full" -- "$cur") )',
+    "      return",
+    "      ;;",
+    '    --sandbox-network)',
+    '      COMPREPLY=( $(compgen -W "unrestricted blocked" -- "$cur") )',
+    "      return",
+    "      ;;",
+    '    --sandbox-missing)',
+    '      COMPREPLY=( $(compgen -W "fail-closed fallback" -- "$cur") )',
+    "      return",
+    "      ;;",
+    "    --read-outside)",
+    '      COMPREPLY=( $(compgen -W "ask allow deny" -- "$cur") )',
+    "      return",
+    "      ;;",
+    "    -p|--provider)",
+    '      COMPREPLY=( $(compgen -W "xai anthropic openai openrouter google custom grok claude sonnet opus haiku gpt oai chatgpt gemini bard or router" -- "$cur") )',
+    "      return",
+    "      ;;",
+    '    --keep)',
+    '      COMPREPLY=( $(compgen -W "0 all max unlimited 10 50 80 100 500" -- "$cur") )',
+    "      return",
+    "      ;;",
+    '    --max-age-days)',
+    '      COMPREPLY=( $(compgen -W "0 all none off 7 14 30 90" -- "$cur") )',
+    "      return",
+    "      ;;",
+    "  esac",
     '  local cmd="${COMP_WORDS[1]}"',
     '  case "$cmd" in',
     "    sessions)",
@@ -207,6 +316,18 @@ export function shellCompletionScript(shell: string): string {
     '        COMPREPLY=( $(compgen -W "md json markdown" -- "$cur") )',
     "        return",
     "      fi",
+    '      if [[ "$prev_word" == "--limit" || "$prev_word" == "-n" ]]; then',
+    '        COMPREPLY=( $(compgen -W "0 all max unlimited 30 50 100" -- "$cur") )',
+    "        return",
+    "      fi",
+    '      if [[ "$prev_word" == "--max-age-days" ]]; then',
+    '        COMPREPLY=( $(compgen -W "0 all none off 7 14 30 90" -- "$cur") )',
+    "        return",
+    "      fi",
+    '      if [[ "$prev_word" == "--keep" ]]; then',
+    '        COMPREPLY=( $(compgen -W "0 all max unlimited 10 50 80 100 500" -- "$cur") )',
+    "        return",
+    "      fi",
     '      case "$act" in',
     `        export) COMPREPLY=( $(compgen -W "--format --out --json" -- "$cur") ) ;;`,
     `        import) COMPREPLY=( $(compgen -W "--cwd --json" -- "$cur") ) ;;`,
@@ -217,11 +338,13 @@ export function shellCompletionScript(shell: string): string {
     `        *) COMPREPLY=( $(compgen -W "${sessionsFlags}" -- "$cur") ) ;;`,
     "      esac",
     "      ;;",
-    '    doctor|models|status|auth) COMPREPLY=( $(compgen -W "--json" -- "$cur") ) ;;',
+    '    doctor) COMPREPLY=( $(compgen -W "--json --provider -p --cwd --max-turns --sandbox --sandbox-missing --sandbox-network --read-outside --permission-mode --no-blocking-stop" -- "$cur") ) ;;',
+    '    models) COMPREPLY=( $(compgen -W "--json --provider -p" -- "$cur") ) ;;',
+    '    status|auth|tips|init|completion) COMPREPLY=( $(compgen -W "--json" -- "$cur") ) ;;',
     '    stats) COMPREPLY=( $(compgen -W "--json --days" -- "$cur") ) ;;',
     '    news|changelog) COMPREPLY=( $(compgen -W "--json 1 2 3" -- "$cur") ) ;;',
     '    logs) COMPREPLY=( $(compgen -W "--json --path --lines -n" -- "$cur") ) ;;',
-    '    config) COMPREPLY=( $(compgen -W "--json --provider --model --cwd" -- "$cur") ) ;;',
+    '    config) COMPREPLY=( $(compgen -W "--json --provider --model --cwd --max-turns --sandbox --sandbox-missing --sandbox-network --read-outside --permission-mode --no-blocking-stop" -- "$cur") ) ;;',
     `    run) COMPREPLY=( $(compgen -W "${runFlags}" -- "$cur") ) ;;`,
     '    login) COMPREPLY=( $(compgen -W "--api-key --oauth --device --from-grok --provider --json" -- "$cur") ) ;;',
     '    logout) COMPREPLY=( $(compgen -W "--provider --json" -- "$cur") ) ;;',

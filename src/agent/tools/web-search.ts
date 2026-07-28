@@ -7,6 +7,7 @@ import type { ToolContext, ToolResult } from "./types.js";
 import { boundToolOutput } from "./truncate.js";
 import { mergeAbortSignals } from "../../util/abort.js";
 import { readBodyCapped } from "./web-fetch.js";
+import { numberFieldError } from "./arg-types.js";
 
 const UA = "ForgeAgent/0.9 (+https://github.com/X0x888/forge-agent; web_search)";
 const SEARCH_TIMEOUT_MS = 15_000;
@@ -29,15 +30,53 @@ export async function toolWebSearch(
   args: Record<string, unknown>,
   ctx: ToolContext = { workspace: process.cwd() },
 ): Promise<ToolResult> {
+  if (args.query != null && typeof args.query !== "string") {
+    const kind =
+      args.query === null
+        ? "null"
+        : Array.isArray(args.query)
+          ? "array"
+          : typeof args.query;
+    return {
+      output: `web_search error: query must be a string (got ${kind}).`,
+      isError: true,
+    };
+  }
   const query = String(args.query || "").trim();
-  if (!query) return { output: "query is required", isError: true };
-  if (ctx.signal?.aborted) return { output: "Aborted", isError: true };
-  // num_results: default 5, clamp 1–10 (0/invalid → 5, not silent empty)
+  if (!query) {
+    return {
+      output:
+        "web_search error: query is required (non-empty string).\n" +
+        'Example: { "query": "forge cli session export json", "num_results": 5 }',
+      isError: true,
+    };
+  }
+  // Validate num_results before abort short-circuit so bad args are never masked.
+  // num_results: default 5, clamp 1–10. Explicit invalid fails closed.
+  // all|max|full → 10 (cap), parity with news count aliases.
   let n = 5;
   if (args.num_results != null && String(args.num_results).trim() !== "") {
-    const raw = Number(args.num_results);
-    if (Number.isFinite(raw) && raw >= 1) n = Math.min(10, Math.floor(raw));
+    const key = String(args.num_results).trim().toLowerCase();
+    if (key === "all" || key === "max" || key === "full") {
+      n = 10;
+    } else {
+      const raw = Number(key);
+      if (!Number.isFinite(raw) || raw < 1 || !/^\d+$/.test(key)) {
+        return {
+          output:
+            numberFieldError(
+              "web_search",
+              "num_results",
+              args.num_results,
+              "Pass an integer 1–10 or all|max|full (default 5).",
+            ),
+          isError: true,
+        };
+      }
+      n = Math.min(10, Math.floor(raw));
+    }
   }
+  if (ctx.signal?.aborted) return { output: "Aborted", isError: true };
 
   try {
     const ia = await duckDuckGoInstantAnswer(query, n, ctx.signal);
@@ -71,7 +110,9 @@ export async function toolWebSearch(
       return { output: "Aborted", isError: true };
     }
     return {
-      output: `web_search failed: ${(err as Error).message}`,
+      output:
+        `web_search failed: ${(err as Error).message}\n` +
+        "Retry with a simpler query, check network, or open a known docs URL with web_fetch.",
       isError: true,
     };
   }
@@ -107,7 +148,7 @@ async function duckDuckGoInstantAnswer(
         `## ${data.Heading || query}\n${data.AbstractText || ""}\n${data.AbstractURL || ""}`.trim(),
       );
     }
-    const push = (text?: string, href?: string) => {
+  const push = (text?: string, href?: string) => {
       if (lines.length >= n + 1) return;
       if (text && href) lines.push(`- ${text}\n  ${href}`);
     };

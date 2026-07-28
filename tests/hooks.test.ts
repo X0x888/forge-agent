@@ -93,4 +93,60 @@ describe("hooks", () => {
     });
     assert.equal(preAllow.blocked, false);
   });
+
+  it("Stop hook timeout fails closed when blockingStopHooks is on", async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-hooks-to-"));
+    process.env.FORGE_HOME = path.join(tmp, "home");
+    fs.mkdirSync(path.join(tmp, ".forge", "hooks"), { recursive: true });
+    fs.mkdirSync(path.join(tmp, "home", "hooks"), { recursive: true });
+
+    // Sleep longer than hook timeout — must block, not release
+    fs.writeFileSync(
+      path.join(tmp, ".forge", "hooks", "stop.json"),
+      JSON.stringify({
+        hooks: {
+          Stop: [
+            {
+              hooks: [
+                {
+                  type: "command",
+                  command: "sleep 5",
+                  timeout: 1,
+                },
+              ],
+            },
+          ],
+        },
+      }),
+    );
+
+    const cfg = {
+      ...DEFAULT_CONFIG,
+      blockingStopHooks: true,
+      workspace: tmp,
+    };
+    const runner = new HookRunner(cfg, tmp);
+    const r = await runner.run("Stop", {
+      sessionId: "s1",
+      cwd: tmp,
+      workspaceRoot: tmp,
+    });
+    assert.equal(r.blocked, true);
+    assert.equal(r.decision, "block");
+    assert.match(String(r.reason || ""), /timed out|fail-closed/i);
+
+    // With blocking Stop off, timeout fails open
+    const open = new HookRunner(
+      { ...cfg, blockingStopHooks: false },
+      tmp,
+    );
+    const r2 = await open.run("Stop", {
+      sessionId: "s1",
+      cwd: tmp,
+      workspaceRoot: tmp,
+    });
+    assert.equal(r2.blocked, false);
+    assert.equal(r2.decision, "allow");
+  });
+
 });

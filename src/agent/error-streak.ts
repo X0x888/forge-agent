@@ -117,6 +117,10 @@ export function isCountableToolError(content: string, isError?: boolean): boolea
   // User/turn cancel is not model thrash — don't fire the circuit breaker.
   if (/^Aborted\b/i.test(s) || /^Aborted$/i.test(s)) return false;
   if (/\b(aborted by user|turn aborted|request aborted)\b/i.test(s)) return false;
+  // kill_task on an already-finished task is informational cleanup, not thrash.
+  if (/^Task \S+ is already \w+/i.test(s)) return false;
+  // todo_write merge:true + [] is a soft no-op warning (not isError today, belt-and-suspenders).
+  if (/^Todos unchanged\b/i.test(s)) return false;
   return true;
 }
 

@@ -18,6 +18,8 @@ import { addSavedAllow, savedAsAllowRules } from "./permission-saved.js";
 import { logSandboxEvent } from "./sandbox-log.js";
 import { isWithinRoot } from "../util/fs.js";
 import { formatPermissionPreview } from "../util/format.js";
+import { isTruthy } from "../util/bool.js";
+import { parseDurationMs } from "../util/duration-ms.js";
 
 const WRITE_TOOLS = new Set([
   "write_file",
@@ -92,6 +94,20 @@ export class PermissionGate {
     const segments = commandCheckTargets(cmd);
     const check = segments.length ? segments : [cmd];
     return check.every((s) => isReadOnlyCommand(normalizeSegment(s)));
+  }
+
+  /**
+   * web_fetch with allow_local can reach loopback — not a free read-only tool.
+   * Requires allow rule, interactive approval, pattern-always, or YOLO.
+   * Session-tool alone is intentionally insufficient.
+   */
+  private isLocalWebFetch(
+    toolName: string,
+    toolInput: Record<string, unknown>,
+  ): boolean {
+    if (toolName !== "web_fetch" && toolName !== "WebFetch") return false;
+    // Shared isTruthy — Boolean("false") must not open loopback.
+    return isTruthy(toolInput.allow_local);
   }
 
   async request(req: PermissionRequest): Promise<PermissionResult> {
@@ -186,6 +202,13 @@ export class PermissionGate {
       if (rulesEval?.decision === "allow") {
         return { decision: "allow", reason: "allow_rule" };
       }
+      if (this.isLocalWebFetch(toolName, toolInput)) {
+        return {
+          decision: "deny",
+          reason:
+            "web_fetch_allow_local_dontAsk: allow_local requires an allow rule or interactive approval",
+        };
+      }
       if (READ_ONLY_TOOLS.has(toolName)) {
         if (toolName === "read_file" || toolName === "Read") {
           const p = String(toolInput.path || "");
@@ -217,7 +240,19 @@ export class PermissionGate {
           rule: "plan_mode",
         };
       }
-      // todo_write, reads, grep, web_* allowed for research + plan structure
+      if (this.isLocalWebFetch(toolName, toolInput)) {
+        // Explicit allow still wins (operators who need loopback in plan).
+        if (rulesEval?.decision === "allow") {
+          return { decision: "allow", reason: "allow_rule" };
+        }
+        return {
+          decision: "deny",
+          reason:
+            "plan_mode: web_fetch allow_local denied — exit plan mode or add an allow rule",
+          rule: "plan_mode",
+        };
+      }
+      // todo_write, reads, grep, public web_* allowed for research + plan structure
       return { decision: "allow", reason: "plan_read" };
     }
 
@@ -239,10 +274,51 @@ export class PermissionGate {
     }
 
     if (this.sessionTools.has(toolName)) {
+      // Session-tool for web_fetch must NOT free-pass allow_local: operators often
+      // approve "s" on a public URL, then a later loopback fetch would slip through.
+      if (this.isLocalWebFetch(toolName, toolInput)) {
+        if (this.isNonInteractive()) {
+          logSandboxEvent({
+            type: "rule_deny",
+            reason: "web_fetch_allow_local_noninteractive",
+            path: String(toolInput.url || ""),
+          });
+          return {
+            decision: "deny",
+            reason:
+              "web_fetch_allow_local_noninteractive: headless allow_local requires an allow rule, pattern always, or bypassPermissions (session-tool alone is not enough)",
+          };
+        }
+        return this.promptUser(toolName, toolInput, true, {
+          workspace,
+          reasonHint:
+            "web_fetch allow_local can reach loopback services — approve only if intentional (session-tool does not cover allow_local)",
+        });
+      }
       return { decision: "allow", reason: "session_tool" };
     }
 
     if (READ_ONLY_TOOLS.has(toolName)) {
+      // allow_local reaches loopback — not free under headless/auto-allow.
+      if (this.isLocalWebFetch(toolName, toolInput)) {
+        if (this.isNonInteractive()) {
+          logSandboxEvent({
+            type: "rule_deny",
+            reason: "web_fetch_allow_local_noninteractive",
+            path: String(toolInput.url || ""),
+          });
+          return {
+            decision: "deny",
+            reason:
+              "web_fetch_allow_local_noninteractive: headless allow_local requires an allow rule, pattern always, or bypassPermissions",
+          };
+        }
+        return this.promptUser(toolName, toolInput, true, {
+          workspace,
+          reasonHint:
+            "web_fetch allow_local can reach loopback services — approve only if intentional",
+        });
+      }
       return { decision: "allow", reason: "read_only_tool" };
     }
 
@@ -372,7 +448,9 @@ export class PermissionGate {
     if (policy === "deny" || mode === "dontAsk" || mode === "plan") {
       return {
         decision: "deny",
-        reason: `Path outside workspace: ${outside[0]}`,
+        reason:
+          `Path outside workspace: ${outside[0]}. ` +
+          "Prefer workspace-relative paths, or set --read-outside ask|allow (writes stay sandboxed).",
         rule: "external_directory",
       };
     }
@@ -383,7 +461,9 @@ export class PermissionGate {
 
     return {
       decision: "ask",
-      reason: `Path outside workspace: ${outside[0]}`,
+      reason:
+        `Path outside workspace: ${outside[0]}. ` +
+        "Allow once for this read, or use a workspace-relative path.",
       rule: `${path.dirname(outside[0])}/*`,
     };
   }
@@ -488,10 +568,10 @@ export class PermissionGate {
  */
 export function permissionAskTimeoutMs(): number {
   const raw = process.env.FORGE_PERMISSION_TIMEOUT_MS?.trim();
-  if (!raw || !/^\d+$/.test(raw)) return 0;
-  const n = Number(raw);
-  if (n <= 0) return 0;
-  return Math.max(5_000, n);
+  if (!raw) return 0;
+  const parsed = parseDurationMs(raw);
+  if (!parsed.ok || parsed.ms <= 0) return 0;
+  return Math.max(5_000, parsed.ms);
 }
 
 function alwaysPatternFromCommandTokens(command: string): string {

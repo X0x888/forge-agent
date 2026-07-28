@@ -21,7 +21,8 @@ describe("tab completion", () => {
 
   it("lists all modes after space", () => {
     const [hits] = forgeCompleter("/permissions ");
-    assert.ok(hits.length >= 4);
+    assert.ok(hits.length >= 5);
+    assert.ok(hits.some((h) => h.includes("dontAsk")));
     assert.ok(hits.every((h) => h.startsWith("/permissions ")));
     assert.ok(hits.some((h) => h.includes("list")));
     assert.ok(hits.some((h) => h.includes("clear")));
@@ -58,6 +59,7 @@ describe("tab completion", () => {
     assert.ok(revParams.some((h) => h.includes("uncommitted") || h.includes("staged")));
     const [logParams] = forgeCompleter("/logs ");
     assert.ok(logParams.some((h) => h.includes("path") || h.includes("20")));
+    assert.ok(logParams.some((h) => h.includes(" 0") || h.endsWith("0")));
     const [cfgHits] = forgeCompleter("/con");
     assert.ok(cfgHits.some((h) => h.startsWith("/config")));
     const [cfgParams] = forgeCompleter("/config ");
@@ -70,8 +72,11 @@ describe("param resolve + menu", () => {
     const c = COMMAND_PARAMS.permissions;
     assert.equal(resolveParamChoice("1", c), "default");
     assert.equal(resolveParamChoice("4", c), "bypassPermissions");
-    assert.equal(resolveParamChoice("5", c), "list");
+    assert.equal(resolveParamChoice("5", c), "dontAsk");
+    assert.equal(resolveParamChoice("6", c), "list");
     assert.equal(resolveParamChoice("yolo", c), "bypassPermissions");
+    assert.equal(resolveParamChoice("dont-ask", c), "dontAsk");
+    assert.equal(resolveParamChoice("deny", c), "dontAsk");
     assert.equal(resolveParamChoice("always", c), "bypassPermissions");
     assert.equal(resolveParamChoice("accept", c), "acceptEdits");
     assert.equal(resolveParamChoice("bypass", c), "bypassPermissions");

@@ -188,6 +188,7 @@ function runRaw(
     let stdout = "";
     let stderr = "";
     let settled = false;
+    let timedOut = false;
     const finish = (result: {
       stdout: string;
       stderr: string;
@@ -214,6 +215,7 @@ function runRaw(
       }, 2000);
     };
     const timer = setTimeout(() => {
+      timedOut = true;
       killChild();
     }, opts.timeoutMs);
     const onAbort = () => {
@@ -231,14 +233,28 @@ function runRaw(
       finish({
         stdout,
         stderr: stderr + "\n" + err.message,
-        code: opts.signal?.aborted ? 130 : 1,
+        code: opts.signal?.aborted ? 130 : timedOut ? 124 : 1,
       });
     });
     child.on("close", (code) => {
+      if (opts.signal?.aborted) {
+        finish({ stdout, stderr, code: 130 });
+        return;
+      }
+      if (timedOut) {
+        const note = `Command timed out after ${opts.timeoutMs}ms`;
+        finish({
+          stdout,
+          stderr: stderr ? `${stderr}\n${note}` : note,
+          // 124 matches common timeout(1) / FORGE_MAX_RUN_MS convention
+          code: 124,
+        });
+        return;
+      }
       finish({
         stdout,
         stderr,
-        code: opts.signal?.aborted ? 130 : code,
+        code,
       });
     });
   });
@@ -421,7 +437,8 @@ export async function execCommandSandboxed(
   if (missingBackend === "fail-closed") {
     const msg =
       result.warning ||
-      "Sandbox backend unavailable; refusing to run unsandboxed (fail-closed).";
+      "Sandbox backend unavailable; refusing to run unsandboxed (fail-closed). " +
+      "Install/enable sandbox-exec (macOS) or bubblewrap, or set FORGE_SANDBOX_MISSING_BACKEND=fallback only if you accept unsandboxed bash.";
     logSandboxEvent({
       type: "fail_closed",
       profile: opts.profile,

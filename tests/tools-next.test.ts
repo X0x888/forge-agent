@@ -7,8 +7,11 @@ import path from "node:path";
 import { executeTool } from "../src/agent/tools/index.js";
 import {
   assertUrlSafe,
+  embeddedIpv4FromIpv6,
+  expandWeirdIpv4Literal,
   isBlockedForHost,
   isNonPublicIp,
+  normalizeIpHost,
 } from "../src/agent/tools/ssrf.js";
 import { htmlToText, readBodyCapped } from "../src/agent/tools/web-fetch.js";
 import { locateEdit, applyMatch } from "../src/agent/tools/edit-match.js";
@@ -45,11 +48,38 @@ describe("SSRF policy", () => {
     assert.equal(isNonPublicIp("::1"), true);
   });
 
+  it("peels IPv4-mapped / compatible embeddings (dotted + hex)", () => {
+    assert.equal(embeddedIpv4FromIpv6("::ffff:127.0.0.1"), "127.0.0.1");
+    assert.equal(embeddedIpv4FromIpv6("::ffff:10.0.0.1"), "10.0.0.1");
+    // Hex form previously bypassed dotted-quad-only regexes
+    assert.equal(embeddedIpv4FromIpv6("::ffff:7f00:1"), "127.0.0.1");
+    assert.equal(embeddedIpv4FromIpv6("::ffff:a0a:a0a"), "10.10.10.10");
+    assert.equal(embeddedIpv4FromIpv6("::ffff:c0a8:1"), "192.168.0.1");
+    assert.equal(embeddedIpv4FromIpv6("0:0:0:0:0:ffff:7f00:1"), "127.0.0.1");
+    // Public mapped stays public
+    assert.equal(embeddedIpv4FromIpv6("::ffff:808:808"), "8.8.8.8");
+    assert.equal(isNonPublicIp("::ffff:808:808"), false);
+  });
+
+  it("flags hex-form IPv4-mapped private/loopback as non-public", () => {
+    assert.equal(isNonPublicIp("::ffff:127.0.0.1"), true);
+    assert.equal(isNonPublicIp("::ffff:7f00:1"), true);
+    assert.equal(isNonPublicIp("[::ffff:7f00:1]"), true); // Node URL hostname form
+    assert.equal(isNonPublicIp("::ffff:a0a:a0a"), true);
+    assert.equal(isNonPublicIp("::ffff:c0a8:1"), true);
+    assert.equal(isNonPublicIp("::ffff:0a00:1"), true); // 10.0.0.1
+    assert.equal(isNonPublicIp("::ffff:ac10:1"), true); // 172.16.0.1
+  });
+
   it("blocks loopback unless allowLocal + explicit host", () => {
     assert.equal(isBlockedForHost("127.0.0.1", "127.0.0.1", false), true);
     assert.equal(isBlockedForHost("127.0.0.1", "127.0.0.1", true), false);
     assert.equal(isBlockedForHost("127.0.0.1", "evil.example", true), true);
     assert.equal(isBlockedForHost("10.0.0.5", "10.0.0.5", true), true);
+    // Hex-mapped loopback still needs explicit host + allowLocal
+    assert.equal(isBlockedForHost("::ffff:7f00:1", "::ffff:7f00:1", false), true);
+    assert.equal(isBlockedForHost("::ffff:7f00:1", "::ffff:7f00:1", true), false);
+    assert.equal(isBlockedForHost("::ffff:a0a:a0a", "::ffff:a0a:a0a", true), true);
   });
 
   it("rejects file: and credentialed URLs", async () => {
@@ -68,9 +98,57 @@ describe("SSRF policy", () => {
     await assert.rejects(() => assertUrlSafe("http://10.1.2.3/"), /Blocked/);
   });
 
+  it("rejects hex-form IPv4-mapped private literals", async () => {
+    await assert.rejects(
+      () => assertUrlSafe("http://[::ffff:7f00:1]/"),
+      /Blocked/,
+    );
+    await assert.rejects(
+      () => assertUrlSafe("http://[::ffff:a0a:a0a]/"),
+      /Blocked/,
+    );
+    await assert.rejects(
+      () => assertUrlSafe("http://[::ffff:10.0.0.1]/"),
+      /Blocked/,
+    );
+  });
+
+  it("expands weird IPv4 spellings (decimal/hex/octal/short)", () => {
+    assert.equal(expandWeirdIpv4Literal("2130706433"), "127.0.0.1");
+    assert.equal(expandWeirdIpv4Literal("0x7f000001"), "127.0.0.1");
+    assert.equal(expandWeirdIpv4Literal("127.1"), "127.0.0.1");
+    assert.equal(expandWeirdIpv4Literal("127.0.1"), "127.0.0.1");
+    assert.equal(expandWeirdIpv4Literal("0177.0.0.1"), "127.0.0.1");
+    assert.equal(expandWeirdIpv4Literal("0x7f.0.0.1"), "127.0.0.1");
+    assert.equal(expandWeirdIpv4Literal("0x0a000001"), "10.0.0.1");
+    assert.equal(expandWeirdIpv4Literal("8.8.8.8"), "8.8.8.8");
+    assert.equal(isNonPublicIp("2130706433"), true);
+    assert.equal(isNonPublicIp("0x7f000001"), true);
+    assert.equal(isNonPublicIp("127.1"), true);
+    assert.equal(isNonPublicIp("0x08080808"), false); // 8.8.8.8
+    assert.equal(normalizeIpHost("[::1]"), "::1");
+  });
+
+  it("rejects weird IPv4 private literals in URLs", async () => {
+    for (const u of [
+      "http://2130706433/",
+      "http://0x7f000001/",
+      "http://127.1/",
+      "http://127.0.1/",
+      "http://0177.0.0.1/",
+      "http://0x0a000001/",
+    ]) {
+      await assert.rejects(() => assertUrlSafe(u), /Blocked/, u);
+    }
+  });
+
   it("allows explicit loopback when allow_local", async () => {
     const u = await assertUrlSafe("http://127.0.0.1:9/", true);
     assert.equal(u.hostname, "127.0.0.1");
+    const mapped = await assertUrlSafe("http://[::ffff:7f00:1]:9/", true);
+    assert.ok(mapped.hostname.includes("7f00") || mapped.hostname.includes("127"));
+    const decimal = await assertUrlSafe("http://2130706433:9/", true);
+    assert.ok(decimal.hostname);
   });
 });
 
@@ -291,6 +369,7 @@ describe("background bash tasks", () => {
       ctx,
     );
     assert.equal(start.isError, undefined, start.output);
+    assert.match(start.output, /timeout_ms:\s*\d+/);
     const m = start.output.match(/task_id:\s*(bg_\w+)/);
     assert.ok(m);
     const taskId = m![1];
@@ -357,6 +436,7 @@ describe("task-tools error paths", () => {
     );
     assert.equal(unknown.isError, true);
     assert.match(unknown.output, /Unknown task_id/i);
+    assert.match(unknown.output, /No background tasks/i);
 
     const start = await executeTool(
       "bash",
@@ -366,6 +446,19 @@ describe("task-tools error paths", () => {
     assert.equal(start.isError, undefined, start.output);
     const m = start.output.match(/task_id[:\s]+([a-zA-Z0-9_-]+)/i);
     assert.ok(m, start.output);
+
+    // Prefix / typo on a live id should suggest the real task
+    const id = m![1]!;
+    const prefix = id.slice(0, Math.max(4, id.length - 2));
+    const typo = await executeTool(
+      "get_task_output",
+      JSON.stringify({ task_id: prefix }),
+      ctx,
+    );
+    assert.equal(typo.isError, true);
+    assert.match(typo.output, /Unknown task_id/i);
+    assert.match(typo.output, /Did you mean|Active tasks/i);
+    assert.match(typo.output, new RegExp(id.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
 
     const listOut = await executeTool("get_task_output", "{}", ctx);
     assert.equal(listOut.isError, true);
@@ -394,17 +487,23 @@ describe("TOOL_DEFINITIONS agent guidance", () => {
     );
     assert.match(byName.read_file || "", /did you mean|typo/i);
     assert.match(byName.read_file || "", /2 MiB|large/i);
+    assert.match(byName.read_file || "", /past-EOF|past end/i);
     assert.match(byName.write_file || "", /parent director/i);
     assert.match(byName.write_file || "", /directory target|Refuses directory/i);
     assert.match(byName.search_replace || "", /not a directory/i);
-    assert.match(byName.glob || "", /path hints|No files matched/i);
+    assert.match(byName.search_replace || "", /multi-match|line numbers|closest lines/i);
+    assert.match(byName.glob || "", /path hints|No files matched|Empty results|recovery tips/i);
     assert.match(byName.grep || "", /Missing paths|hints/i);
+    assert.match(byName.grep || "", /Empty results|recovery tips|pattern/i);
     assert.match(byName.list_dir || "", /path-not-found|hints/i);
     assert.match(byName.web_fetch || "", /entities never throw|SSRF/i);
     assert.match(byName.web_fetch || "", /abort|Ctrl\+C|FORGE_MAX_RUN_MS/i);
     assert.match(byName.web_search || "", /abort|Ctrl\+C|FORGE_MAX_RUN_MS/i);
     assert.match(byName.kill_task || "", /Omit task_id|list active|get_task_output/i);
+    assert.match(byName.kill_task || "", /Unknown ids|prefix|typo/i);
     assert.match(byName.get_task_output || "", /Omit task_id|list active/i);
+    assert.match(byName.get_task_output || "", /Unknown ids|prefix|typo/i);
+    assert.match(byName.todo_write || "", /merge|status|id/i);
     assert.match(byName.apply_patch || "", /typo|path hint/i);
     // Schema must match runtime: omit task_id lists actives (not required)
     const killReq = byFull.kill_task?.parameters?.required || [];

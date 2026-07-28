@@ -50,9 +50,9 @@ export function defaultEffortForModel(model: string): ReasoningEffort | undefine
 export function parseReasoningEffort(raw: string): ReasoningEffort | null {
   const t = raw.trim().toLowerCase();
   if (!t) return null;
-  if (t === "low" || t === "l" || t === "min" || t === "minimal") return "low";
+  if (t === "low" || t === "l" || t === "lo" || t === "min" || t === "minimal") return "low";
   if (t === "medium" || t === "med" || t === "m" || t === "mid") return "medium";
-  if (t === "high" || t === "h" || t === "max" || t === "deep") return "high";
+  if (t === "high" || t === "h" || t === "hi" || t === "max" || t === "deep") return "high";
   return null;
 }
 

@@ -46,6 +46,7 @@ export function toolFingerprint(
       k === "timeout" ||
       k === "raw" ||
       k === "background" ||
+      k === "run_in_background" ||
       k === "stream" ||
       k === "tail" ||
       k === "allow_local"

@@ -83,6 +83,7 @@ describe("statusline", () => {
 
     const j = JSON.parse(snapshotsToJson([snap]));
     assert.equal(j.ok, true);
+    assert.ok(typeof j.version === "string" && j.version.length > 0);
     assert.equal(j.count, 1);
     assert.equal(j.sessions.length, 1);
   });
@@ -393,5 +394,57 @@ describe("statusline", () => {
       snaps.some((s) => s.sessionId === target.meta.id),
       "same-cwd session must not be starved by other workspaces",
     );
+  });
+});
+
+describe("statusline PIN badge", () => {
+  it("tags pinned sessions with PIN", async () => {
+    const fs = await import("node:fs");
+    const os = await import("node:os");
+    const path = await import("node:path");
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-sl-pin-"));
+    process.env.FORGE_HOME = tmp;
+    const { createSession, saveSession, setSessionPinned } = await import(
+      "../src/session/session.js"
+    );
+    const { collectSnapshots } = await import("../src/statusline/snapshot.js");
+    const s = createSession({ cwd: tmp, provider: "xai", model: "grok-4" });
+    setSessionPinned(s, true);
+    saveSession(s);
+    const { DEFAULT_CONFIG } = await import("../src/config/types.js");
+    const snaps = await collectSnapshots({
+      sessionId: s.meta.id,
+      fetchPlan: false,
+      config: { ...DEFAULT_CONFIG, workspace: tmp },
+    });
+    assert.equal(snaps.length, 1);
+    assert.ok(snaps[0]!.tags.includes("PIN"), String(snaps[0]!.tags));
+    assert.equal(snaps[0]!.pinned, true);
+  });
+});
+
+describe("statusline tmux badges", () => {
+  it("includes PIN for pinned sessions", async () => {
+    const fs = await import("node:fs");
+    const os = await import("node:os");
+    const path = await import("node:path");
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-sl-tmux-pin-"));
+    process.env.FORGE_HOME = tmp;
+    const { createSession, saveSession, setSessionPinned } = await import(
+      "../src/session/session.js"
+    );
+    const { DEFAULT_CONFIG } = await import("../src/config/types.js");
+    const { collectSnapshots } = await import("../src/statusline/snapshot.js");
+    const { renderTmux } = await import("../src/statusline/render.js");
+    const s = createSession({ cwd: tmp, provider: "xai", model: "grok-4" });
+    setSessionPinned(s, true);
+    saveSession(s);
+    const snaps = await collectSnapshots({
+      sessionId: s.meta.id,
+      fetchPlan: false,
+      config: { ...DEFAULT_CONFIG, workspace: tmp },
+    });
+    const line = renderTmux(snaps[0]);
+    assert.match(line, /PIN/);
   });
 });

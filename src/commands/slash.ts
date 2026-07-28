@@ -21,6 +21,7 @@ import {
   exportSessionJson,
   forkSession,
   setSessionTitle,
+  MAX_SESSION_TITLE_CHARS,
   lastAssistantText,
   lastUserText,
   formatRecentTurns,
@@ -69,14 +70,19 @@ import { copyToClipboard } from "../util/clipboard.js";
 import {
   defaultBashBackgroundTimeoutMs,
   defaultBashTimeoutMs,
-  envPositiveInt,
-  parseKeepCount,
+  envPositiveInt, maxRunMsFromEnv,
+  parseCliNonNegInt,
 } from "../util/env.js";
 import { isBellEnabled } from "../util/attention.js";
-import { inspectSecureFile } from "../util/fs.js";
+import { forgeHome, inspectSecureFile } from "../util/fs.js";
 import { getForgeVersion } from "../util/version.js";
 import { formatWhatsNew } from "../util/changelog.js";
 import { formatExpertTips } from "../util/tips.js";
+import { parseDaysWindow, daysWindowHelp } from "../util/days-window.js";
+import { parseNewsCount, newsCountHelp } from "../util/news-count.js";
+import { parseLogsLines, logsLinesHelp } from "../util/logs-lines.js";
+import { editDistance } from "../util/string-distance.js";
+import { suggestName, suggestSessionAction } from "../util/suggest.js";
 import { toolOutputStats } from "../agent/tools/truncate.js";
 import { listTasks } from "../agent/tools/background-tasks.js";
 import { loadSavedAllows } from "../agent/permission-saved.js";
@@ -92,6 +98,7 @@ import {
 } from "../session/metrics.js";
 import { readSessionLock, formatLockHolder } from "../session/lock.js";
 import { permissionAskTimeoutMs } from "../agent/permissions.js";
+import { parseRuleString } from "../agent/rules.js";
 import {
   estimateCostUsd,
   formatCost,
@@ -241,6 +248,23 @@ export function classifyLiveSlash(line: string): LiveSlashKind {
     const verb = (arg.split(/\s+/)[0] || "").toLowerCase();
     if (!verb || verb === "list" || verb === "status") return "readonly";
     return "idle-only";
+  }
+  // /tasks list|log is readonly; kill/stop mutates process tasks (control).
+  if (cmd === "/tasks" || cmd === "/bg") {
+    const verb = (arg.split(/\s+/)[0] || "").toLowerCase();
+    if (
+      !verb ||
+      verb === "log" ||
+      verb === "out" ||
+      verb === "output" ||
+      verb === "peek" ||
+      verb === "show"
+    ) {
+      return "readonly";
+    }
+    if (verb === "kill" || verb === "stop" || verb === "rm") return "control";
+    // unknown verb → readonly (suggestion only, no mutation)
+    return "readonly";
   }
   if (LIVE_READONLY.has(cmd)) return "readonly";
   if (LIVE_CONTROL.has(cmd)) {
@@ -406,6 +430,67 @@ export function completeSlash(line: string): string[] {
   return SLASH_COMMANDS.filter((c) => c.startsWith(t.toLowerCase()));
 }
 
+
+/**
+ * Rank slash commands for typo recovery (unknown /cmd).
+ * Prefer prefix/substring, then small Levenshtein distance on the bare name.
+ */
+export function suggestSlashCommands(
+  rawCmd: string,
+  limit = 5,
+): string[] {
+  const q = rawCmd.trim().toLowerCase();
+  if (!q.startsWith("/")) return [];
+  const bare = q.slice(1);
+  if (!bare) return [];
+
+  const scored = SLASH_COMMANDS.map((c) => {
+    const name = c.slice(1); // without leading /
+    let score = 0;
+    if (c === q || name === bare) score = 100;
+    else if (c.startsWith(q) || name.startsWith(bare))
+      score = 80 - Math.min(20, Math.abs(name.length - bare.length));
+    else if (name.includes(bare) || bare.includes(name)) score = 55;
+    else {
+      const d = editDistance(bare, name);
+      // Allow slightly more drift for longer command names
+      const maxD = bare.length <= 4 ? 2 : bare.length <= 8 ? 3 : 4;
+      if (d <= maxD) {
+        score = 40 - d;
+        // Prefer same length + same first letter (transpositions like hepl→help)
+        if (name.length === bare.length) score += 3;
+        if (name[0] === bare[0]) score += 2;
+      }
+    }
+    return { c, score };
+  })
+    .filter((x) => x.score > 0)
+    .sort((a, b) => b.score - a.score || a.c.localeCompare(b.c));
+
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const { c } of scored) {
+    if (seen.has(c)) continue;
+    seen.add(c);
+    out.push(c);
+    if (out.length >= limit) break;
+  }
+  return out;
+}
+
+/** Format unknown-slash message with optional Did you mean? tips. */
+export function formatUnknownSlash(cmd: string): string {
+  const suggestions = suggestSlashCommands(cmd);
+  if (!suggestions.length) {
+    return `Unknown command: ${cmd}. Type /help for commands.`;
+  }
+  return (
+    `Unknown command: ${cmd}. Did you mean: ${suggestions.join(", ")}?\n` +
+    `Type /help for commands.`
+  );
+}
+
+
 /** @deprecated use forgeCompleter — kept for tests */
 export { forgeCompleter } from "../tui/complete.js";
 
@@ -531,11 +616,23 @@ export async function handleSlash(
         };
       }
       if (flag === null) {
+        const tip = suggestName(arg.trim().toLowerCase(), [
+          "0",
+          "1",
+          "status",
+          "off",
+          "on",
+          "last",
+          "continue",
+        ], { minLength: 1, minScore: 36, requirePrefix3: false });
         return {
           handled: true,
           output:
-            chalk.yellow(`Unknown: ${arg}\n`) +
-            formatParamMenu("/cycle", COMMAND_PARAMS.cycle),
+            chalk.yellow(
+              tip
+                ? `Unknown /cycle "${arg}". Did you mean: ${tip}?\n`
+                : `Unknown /cycle "${arg}".\n`,
+            ) + formatParamMenu("/cycle", COMMAND_PARAMS.cycle),
         };
       }
       const sid = opts.session.meta.id;
@@ -637,7 +734,104 @@ export async function handleSlash(
     case "/tasks":
     case "/bg": {
       const { formatBackgroundTasksList } = await import("../tui/status-bar.js");
-      const { listTasks } = await import("../agent/tools/background-tasks.js");
+      const {
+        listTasks,
+        killTask,
+        getTask,
+        readTaskOutput,
+      } = await import("../agent/tools/background-tasks.js");
+      const raw = (arg || "").trim();
+      const parts = raw.split(/\s+/).filter(Boolean);
+      const verb = (parts[0] || "").toLowerCase();
+      // /tasks kill <id> · /tasks stop <id>
+      if (verb === "kill" || verb === "stop" || verb === "rm") {
+        const id = parts[1] || "";
+        if (!id) {
+          return {
+            handled: true,
+            output:
+              `Usage: /tasks ${verb} <task_id>\n` +
+              formatBackgroundTasksList(),
+          };
+        }
+        const msg = killTask(id);
+        if (/^Unknown task_id:/.test(msg)) {
+          const { unknownTaskMessage } = await import(
+            "../agent/tools/task-tools.js"
+          );
+          return { handled: true, output: unknownTaskMessage(id) };
+        }
+        return { handled: true, output: msg };
+      }
+      // /tasks log|out|peek <id> [tail]
+      if (
+        verb === "log" ||
+        verb === "out" ||
+        verb === "output" ||
+        verb === "peek" ||
+        verb === "show"
+      ) {
+        const id = parts[1] || "";
+        if (!id) {
+          return {
+            handled: true,
+            output:
+              `Usage: /tasks ${verb} <task_id> [tail]\n` +
+              formatBackgroundTasksList(),
+          };
+        }
+        let tail: number | undefined = 40;
+        if (parts[2]) {
+          const rawTail = parts[2].toLowerCase();
+          if (rawTail === "all" || rawTail === "max" || rawTail === "full") {
+            tail = 0; // full captured output
+          } else if (/^\d+$/.test(parts[2])) {
+            tail = Math.min(500, Math.max(1, parseInt(parts[2], 10)));
+          } else {
+            const tip = suggestName(rawTail, ["20", "40", "80", "all", "max", "full"], {
+              minLength: 1,
+              minScore: 36,
+              requirePrefix3: false,
+            });
+            return {
+              handled: true,
+              output:
+                (tip
+                  ? `Invalid /tasks tail "${parts[2]}". Did you mean: ${tip}?\n`
+                  : `Invalid /tasks tail "${parts[2]}".\n`) +
+                `Usage: /tasks ${verb} <task_id> [tail|all|max|full]`,
+            };
+          }
+        }
+        const out = await readTaskOutput(id, { tail, stream: "both" });
+        if (/^Unknown task_id:/.test(out)) {
+          const { unknownTaskMessage } = await import(
+            "../agent/tools/task-tools.js"
+          );
+          return { handled: true, output: unknownTaskMessage(id) };
+        }
+        const task = getTask(id);
+        const head = task
+          ? `task ${id.slice(0, 8)}  ${task.status}  ${task.command.slice(0, 60)}`
+          : `task ${id}`;
+        return { handled: true, output: `${head}\n${out}` };
+      }
+      // Unknown verb (not a bare list): suggest
+      if (verb && !/^\d+$/.test(verb)) {
+        const tip = suggestName(verb, ["kill", "stop", "log", "out", "peek", "show"], {
+          minLength: 2,
+          minScore: 36,
+          requirePrefix3: false,
+        });
+        if (tip) {
+          return {
+            handled: true,
+            output:
+              `Unknown /tasks verb "${verb}". Did you mean: ${tip}?\n` +
+              `Usage: /tasks · /tasks kill <id> · /tasks log <id> [tail]`,
+          };
+        }
+      }
       const tasks = listTasks();
       const running = tasks.filter((t) => t.status === "running").length;
       const header =
@@ -647,9 +841,10 @@ export async function handleSlash(
         );
       return {
         handled: true,
-        output: `${header}\n${formatBackgroundTasksList()}\n` +
+        output:
+          `${header}\n${formatBackgroundTasksList()}\n` +
           chalk.dim(
-            "Agent starts these via bash { background: true }. Poll: get_task_output · kill: kill_task · exit force-kills leftovers",
+            "Agent: bash { background: true } · /tasks kill <id> · /tasks log <id> [tail] · exit force-kills leftovers",
           ),
       };
     }
@@ -713,16 +908,40 @@ export async function handleSlash(
       };
     }
 
-    case "/stats": {
-      // /stats · /stats 7 · /stats --days=30
+        case "/stats": {
+      // /stats · /stats 7 · /stats --days=30 · /stats week|month|today|all
+      // Explicit invalid window fails closed (parity with forge stats --days).
       const raw = arg.trim();
       let days = 0;
       if (raw) {
-        const m = raw.match(/^(?:--days=)?(\d+)$/i);
-        if (m) days = Number(m[1]);
-        else if (/^\d+d$/i.test(raw)) days = Number(raw.slice(0, -1));
+        const parsed = parseDaysWindow(raw);
+        if (!parsed.ok) {
+          {
+          const tip = suggestName(raw.toLowerCase().replace(/^--days=/, ""), [
+            "0",
+            "7",
+            "14",
+            "30",
+            "all",
+            "week",
+            "month",
+            "today",
+            "7d",
+          ], { minLength: 2, minScore: 36, requirePrefix3: false });
+          return {
+            handled: true,
+            output:
+              (tip
+                ? `Invalid /stats window "${raw}". Did you mean: ${tip}?\n`
+                : `Invalid /stats window "${raw}".\n`) +
+              `Pass a ${daysWindowHelp()} (e.g. /stats 7, /stats week) or omit for all time.\n` +
+              chalk.dim("CLI: forge stats [--days N|week|month|today|all] [--json]"),
+          };
+        }
+        }
+        days = parsed.days;
       }
-      const stats = collectUsageStats({
+const stats = collectUsageStats({
         days: Number.isFinite(days) && days > 0 ? days : 0,
       });
       const cost = estimateCostUsd(
@@ -809,10 +1028,27 @@ export async function handleSlash(
           modelArg = tokens.slice(0, -1).join(" ");
         }
       }
-      const resolved =
-        resolveParamChoice(modelArg, choices) ||
-        // allow free-form model ids not in the list
-        modelArg;
+      let resolved = resolveParamChoice(modelArg, choices);
+      if (!resolved) {
+        // Close catalog typos fail closed (grok-45 → grok-4.5) instead of
+        // silently saving a broken free-form id. True free-form still allowed.
+        const tip = choices.length
+          ? suggestName(
+              modelArg,
+              choices.map((c) => c.value),
+              { minLength: 3, minScore: 38, requirePrefix3: false },
+            )
+          : null;
+        if (tip) {
+          return {
+            handled: true,
+            output:
+              `Unknown model "${modelArg}". Did you mean: ${tip}?\n` +
+              chalk.dim("Tab completes catalog names · free-form ids still accepted when not a close typo."),
+          };
+        }
+        resolved = modelArg;
+      }
       opts.config.model = resolved;
       opts.session.meta.model = resolved;
 
@@ -908,11 +1144,19 @@ export async function handleSlash(
       const resolved =
         resolveParamChoice(arg, choices) || parseReasoningEffort(arg);
       if (!resolved || !levels.includes(resolved as ReasoningEffort)) {
+        const tip = suggestName(arg, levels, {
+          minLength: 2,
+          minScore: 36,
+          requirePrefix3: false,
+        });
         return {
           handled: true,
           output:
-            chalk.yellow(`Unknown effort: ${arg}\n`) +
-            formatParamMenu("/effort", choices, current),
+            chalk.yellow(
+              tip
+                ? `Unknown effort: ${arg}. Did you mean: ${tip}?\n`
+                : `Unknown effort: ${arg}\n`,
+            ) + formatParamMenu("/effort", choices, current),
         };
       }
       const level = resolved as ReasoningEffort;
@@ -1020,6 +1264,22 @@ export async function handleSlash(
             "Invalid /review target. Use: (empty)|uncommitted|staged|<commit>|main|origin/main|<pr#|url>",
         };
       }
+      // Near-misses of common scopes (uncommited/stageed) — not free-form branches/SHAs.
+      if (target && !/\s/.test(target) && target.length <= 20) {
+        const tip = suggestName(target.toLowerCase(), ["uncommitted", "staged"], {
+          minLength: 4,
+          minScore: 40,
+          requirePrefix3: false,
+        });
+        if (tip && tip !== target.toLowerCase()) {
+          return {
+            handled: true,
+            output:
+              `Unknown /review target "${target}". Did you mean: ${tip}?\n` +
+              `Use: (empty)|uncommitted|staged|<commit>|main|origin/main|<pr#|url>`,
+          };
+        }
+      }
       const prompt = buildReviewPrompt(target, cwd);
       return {
         handled: true,
@@ -1031,8 +1291,44 @@ export async function handleSlash(
 
     case "/rewind":
     case "/undo": {
-      const n = arg ? Math.max(1, parseInt(arg, 10) || 1) : 1;
-      const result = rewindSessionDetailed(opts.session, n);
+      // Explicit invalid count fails closed (was `parseInt || 1` → silent default).
+      let n = 1;
+      const raw = (arg || "").trim();
+      if (raw) {
+        // Allow "/undo 2" or "/rewind 2 turns" style first token
+        const tok = (raw.split(/\s+/)[0] || "").toLowerCase();
+        if (tok === "last" || tok === "one" || tok === "once") {
+          n = 1;
+        } else if (tok === "all" || tok === "max" || tok === "full") {
+          n = 100;
+        } else if (!/^\d+$/.test(tok)) {
+          const tip = suggestName(tok, ["1", "2", "3", "last", "all"], {
+            minLength: 1,
+            minScore: 36,
+            requirePrefix3: false,
+          });
+          return {
+            handled: true,
+            output:
+              (tip
+                ? `Invalid ${cmd} count "${tok}". Did you mean: ${tip}?\n`
+                : `Invalid ${cmd} count "${tok}".\n`) +
+              `Pass a positive integer turns (e.g. ${cmd} 1, ${cmd} 3) or last|all.`,
+          };
+        } else {
+          const parsed = parseInt(tok, 10);
+          if (!Number.isFinite(parsed) || parsed < 1 || parsed > 100) {
+            return {
+              handled: true,
+              output:
+                `Invalid ${cmd} count "${tok}". Pass a positive integer 1–100 ` +
+                `(e.g. ${cmd} 1, ${cmd} 3).`,
+            };
+          }
+          n = parsed;
+        }
+      }
+const result = rewindSessionDetailed(opts.session, n);
       if (result.removed <= 0) {
         return {
           handled: true,
@@ -1175,7 +1471,7 @@ export async function handleSlash(
       // Keeps the original history intact for later /resume.
       const follow = (arg || "").trim();
       const titleHint = follow
-        ? `fork+compact: ${follow}`.slice(0, 72)
+        ? `fork+compact: ${follow}`.slice(0, MAX_SESSION_TITLE_CHARS)
         : "fork+compact";
       const forked = forkSession(opts.session, { title: titleHint });
       const before = forked.messages.length;
@@ -1244,6 +1540,13 @@ export async function handleSlash(
           session: opts.session,
         };
       }
+      if (raw.length > MAX_SESSION_TITLE_CHARS) {
+        return {
+          handled: true,
+          output:
+            `Invalid /title (length ${raw.length}). Pass at most ${MAX_SESSION_TITLE_CHARS} characters.`,
+        };
+      }
       const t = setSessionTitle(opts.session, raw);
       return {
         handled: true,
@@ -1283,6 +1586,26 @@ export async function handleSlash(
           output: next
             ? "Pinned — protected from prune."
             : "Unpinned — prune may delete when old.",
+          session: opts.session,
+        };
+      }
+      // Unknown single-token args: suggest instead of silently pinning.
+      if (raw && !["on", "1", "true", "yes", "pin"].includes(raw)) {
+        const tip = suggestName(raw, [
+          "on",
+          "off",
+          "status",
+          "toggle",
+          "clear",
+          "unpin",
+        ], { minLength: 2, minScore: 36, requirePrefix3: false });
+        return {
+          handled: true,
+          output:
+            (tip
+              ? `Unknown /pin arg "${raw}". Did you mean: ${tip}?\n`
+              : `Unknown /pin arg "${raw}".\n`) +
+            `Usage: /pin [on|off|status|toggle]`,
           session: opts.session,
         };
       }
@@ -1347,14 +1670,30 @@ export async function handleSlash(
           output: "Turn-end bell OFF (persisted).",
         };
       }
-      return {
-        handled: true,
-        output: "Usage: /bell [on|off|test|status]",
-      };
+      {
+        const tip = suggestName(raw, [
+          "on",
+          "off",
+          "test",
+          "status",
+          "ring",
+          "enable",
+          "disable",
+        ], { minLength: 2, minScore: 36, requirePrefix3: false });
+        return {
+          handled: true,
+          output:
+            (tip
+              ? `Unknown /bell arg "${raw}". Did you mean: ${tip}?\n`
+              : `Unknown /bell arg "${raw}".\n`) +
+            `Usage: /bell [on|off|test|status]`,
+        };
+      }
     }
 
     case "/logs": {
       // Warp-inspired safety log tail — live-safe, no secrets by design.
+      // Unknown tokens fail closed (parity with forge logs -n invalid).
       const parts = (arg || "").trim().split(/\s+/).filter(Boolean);
       let limit = 30;
       let wantPath = false;
@@ -1363,12 +1702,33 @@ export async function handleSlash(
           wantPath = true;
           continue;
         }
-        if (/^\d+$/.test(p)) {
-          limit = Math.min(200, Math.max(1, parseInt(p, 10)));
-          continue;
+        {
+          const parsed = parseLogsLines(p);
+          if (parsed.ok) {
+            limit = parsed.lines;
+            continue;
+          }
         }
-        if (p === "all" || p === "--all") {
-          limit = 100;
+        {
+          const tip = suggestName(p.toLowerCase(), [
+            "path",
+            "0",
+            "all",
+            "max",
+            "full",
+            "30",
+            "50",
+            "100",
+          ], { minLength: 2, minScore: 36, requirePrefix3: false });
+          return {
+            handled: true,
+            output:
+              (tip
+                ? `Invalid /logs arg "${p}". Did you mean: ${tip}?\n`
+                : `Invalid /logs arg "${p}".\n`) +
+              `Use: /logs [N|0|all|max|full] [path] (${logsLinesHelp()}).\n` +
+              chalk.dim("CLI: forge logs [-n N|all|max] [--path] [--json]"),
+          };
         }
       }
       if (wantPath) {
@@ -1505,14 +1865,66 @@ export async function handleSlash(
 
     case "/last": {
       // /last · /last 3 · /last 5 400  (turns, optional max chars per bubble)
+      // Non-numeric args fail closed (was silently defaulting to 1 turn).
       const parts = arg.trim().split(/\s+/).filter(Boolean);
       let turns = 1;
       let maxChars = 320;
-      if (parts[0] && /^\d+$/.test(parts[0])) {
-        turns = Math.max(1, Math.min(20, parseInt(parts[0], 10)));
+      if (parts[0]) {
+        const tok = parts[0].toLowerCase();
+        if (tok === "last" || tok === "one" || tok === "once") {
+          turns = 1;
+        } else if (tok === "all" || tok === "max" || tok === "full") {
+          turns = 20;
+        } else if (!/^\d+$/.test(parts[0])) {
+          const tip = suggestName(tok, ["1", "2", "3", "last", "all"], {
+            minLength: 1,
+            minScore: 36,
+            requirePrefix3: false,
+          });
+          return {
+            handled: true,
+            output:
+              (tip
+                ? `Invalid /last count "${parts[0]}". Did you mean: ${tip}?\n`
+                : `Invalid /last count "${parts[0]}".\n`) +
+              `Pass a positive integer turns (e.g. /last 3) and optional max chars (/last 3 400).`,
+          };
+        } else {
+          const n = parseInt(parts[0], 10);
+          if (n < 1 || n > 20) {
+            return {
+              handled: true,
+              output: `Invalid /last count "${parts[0]}". Pass a positive integer (1–20).`,
+            };
+          }
+          turns = n;
+        }
       }
-      if (parts[1] && /^\d+$/.test(parts[1])) {
-        maxChars = Math.max(40, Math.min(2000, parseInt(parts[1], 10)));
+if (parts[1]) {
+        if (!/^\d+$/.test(parts[1])) {
+          return {
+            handled: true,
+            output:
+              `Invalid /last max-chars "${parts[1]}". Pass a positive integer ` +
+              `(e.g. /last 3 400).`,
+          };
+        }
+        const mc = parseInt(parts[1], 10);
+        if (!Number.isFinite(mc) || mc < 40 || mc > 2000) {
+          return {
+            handled: true,
+            output:
+              `Invalid /last max-chars "${parts[1]}". Pass an integer 40–2000 ` +
+              `(e.g. /last 3 400).`,
+          };
+        }
+        maxChars = mc;
+      }
+      if (parts.length > 2) {
+        return {
+          handled: true,
+          output: `Invalid /last args. Usage: /last [turns] [maxChars]`,
+        };
       }
       return {
         handled: true,
@@ -1522,6 +1934,7 @@ export async function handleSlash(
 
     case "/files": {
       // /files · /files writes · /files 20 · /files mutations 30
+      // Unknown tokens / non-positive counts fail closed (were silently ignored).
       const parts = arg.trim().toLowerCase().split(/\s+/).filter(Boolean);
       let mutatedOnly = false;
       let limit = 40;
@@ -1542,7 +1955,37 @@ export async function handleSlash(
           continue;
         }
         if (/^\d+$/.test(p)) {
-          limit = Math.max(1, Math.min(200, parseInt(p, 10)));
+          const n = parseInt(p, 10);
+          if (n < 1 || n > 200) {
+            return {
+              handled: true,
+              output:
+                `Invalid /files limit "${p}". Pass a positive integer (1–200), ` +
+                `or use writes|mutations|all.`,
+            };
+          }
+          limit = n;
+          continue;
+        }
+        {
+          const tip = suggestName(p, [
+            "writes",
+            "mutations",
+            "mutated",
+            "edits",
+            "all",
+            "reads",
+            "20",
+            "40",
+          ], { minLength: 2, minScore: 36, requirePrefix3: false });
+          return {
+            handled: true,
+            output:
+              (tip
+                ? `Invalid /files arg "${p}". Did you mean: ${tip}?\n`
+                : `Invalid /files arg "${p}".\n`) +
+              `Use: /files [writes|mutations|all] [N] (N=1..200).`,
+          };
         }
       }
       return {
@@ -1647,18 +2090,43 @@ export async function handleSlash(
       };
     }
 
-    case "/news":
+            case "/news":
     case "/changelog": {
-      // /news · /news 2 · /news 3
+      // /news · /news 2 · /news all|full|max|latest — parity with forge news.
       const nRaw = (arg.trim().split(/\s+/)[0] || "").replace(/^--count=/, "");
-      const n = nRaw && /^\d+$/.test(nRaw) ? parseInt(nRaw, 10) : 1;
+      let n = 1;
+      if (nRaw) {
+        const parsed = parseNewsCount(nRaw);
+        if (!parsed.ok) {
+          {
+          const tip = suggestName(nRaw.toLowerCase(), [
+            "1",
+            "2",
+            "all",
+            "full",
+            "max",
+            "latest",
+          ], { minLength: 2, minScore: 36, requirePrefix3: false });
+          return {
+            handled: true,
+            output:
+              (tip
+                ? `Invalid /news count "${nRaw}". Did you mean: ${tip}?\n`
+                : `Invalid /news count "${nRaw}".\n`) +
+              `Pass a ${newsCountHelp()} (e.g. /news 2, /news all) or omit for the latest release.\n` +
+              chalk.dim("CLI: forge news [count|all|full|max|latest] [--json]"),
+          };
+        }
+        }
+        n = parsed.count;
+      }
       return {
         handled: true,
         output: formatWhatsNew({ count: n }),
       };
     }
 
-    case "/new":
+case "/new":
     case "/clear": {
       if (cmd === "/clear" && arg !== "hard") {
         clearConversation(opts.session);
@@ -1817,7 +2285,18 @@ export async function handleSlash(
             break;
           }
         }
-        const keep = parseKeepCount(keepRaw, 50);
+        let keep = 50;
+        if (keepRaw != null) {
+          const parsed = parseCliNonNegInt(keepRaw);
+          if (parsed === null) {
+            return {
+              handled: true,
+              output:
+                `Invalid --keep "${keepRaw}". Pass a non-negative integer (0 is allowed).`,
+            };
+          }
+          keep = parsed ?? 50;
+        }
         const result = pruneSessions({
           keep,
           protectIds: [opts.session.meta.id],
@@ -1855,6 +2334,19 @@ export async function handleSlash(
         }
         listMode = "all";
       } else if (sub && !["list", "ls"].includes(sub)) {
+        // Close typos of known actions fail closed (prun→prune, serach→search)
+        // even with extra tokens — never treat "serach x" as a title query.
+        const tip = suggestSessionAction(sub);
+        if (tip) {
+          return {
+            handled: true,
+            output:
+              `Unknown /sessions action "${sub}". Did you mean: ${tip}?\n` +
+              chalk.dim(
+                "Actions: list · search · prune · delete · pinned · all  ·  CLI: forge sessions <action>",
+              ),
+          };
+        }
         // bare query token: /sessions incident
         query = parts.join(" ").trim() || undefined;
         listMode = "all";
@@ -1929,7 +2421,7 @@ export async function handleSlash(
     case "/permissions": {
       const choices = COMMAND_PARAMS.permissions;
       const modeChoices = choices.filter((c) =>
-        ["default", "acceptEdits", "plan", "bypassPermissions"].includes(c.value),
+        ["default", "acceptEdits", "plan", "bypassPermissions", "dontAsk"].includes(c.value),
       );
       const sub = arg.trim();
       const verb = (sub.split(/\s+/)[0] || "").toLowerCase();
@@ -1986,10 +2478,19 @@ export async function handleSlash(
       // but never assign management verbs as permissionMode.
       const resolved = resolveParamChoice(arg, choices);
       if (!resolved) {
+        const tip = suggestName(
+          arg,
+          modeChoices.map((c) => c.value),
+          { minLength: 3, minScore: 36, requirePrefix3: false },
+        );
         return {
           handled: true,
           output:
-            chalk.yellow(`Unknown mode: ${arg}\n`) +
+            chalk.yellow(
+              tip
+                ? `Unknown mode: ${arg}. Did you mean: ${tip}?\n`
+                : `Unknown mode: ${arg}\n`,
+            ) +
             formatParamMenu("/permissions", modeChoices, opts.config.permissionMode),
         };
       }
@@ -2042,10 +2543,12 @@ export async function handleSlash(
     default:
       return {
         handled: true,
-        output: `Unknown command: ${cmd}. Type /help for commands.`,
+        output: formatUnknownSlash(cmd),
       };
   }
 }
+
+const MAX_GOAL_CHARS = 4000;
 
 function handleGoal(arg: string, session: SessionData): SlashResult {
   const sid = session.meta.id;
@@ -2123,6 +2626,12 @@ function handleGoal(arg: string, session: SessionData): SlashResult {
     }
     case "set": {
       if (!restText) return { handled: true, output: "Usage: /goal set <objective>" };
+      if (restText.length > MAX_GOAL_CHARS) {
+        return {
+          handled: true,
+          output: `Invalid /goal objective (length ${restText.length}). Pass at most ${MAX_GOAL_CHARS} characters.`,
+        };
+      }
       const g = armGoal(sid, restText, "manual");
       session.meta.ultrawork = true;
       saveSession(session);
@@ -2133,6 +2642,37 @@ function handleGoal(arg: string, session: SessionData): SlashResult {
       };
     }
     default: {
+      // Single-token typos of verbs should not silently arm a nonsense goal.
+      const token = arg.trim();
+      if (token && !/\s/.test(token) && token.length <= 16) {
+        const tip = suggestName(
+          token.toLowerCase(),
+          [
+            "status",
+            "set",
+            "pause",
+            "resume",
+            "unpause",
+            "clear",
+            "done",
+          ],
+          { minLength: 3, minScore: 40, requirePrefix3: false },
+        );
+        if (tip) {
+          return {
+            handled: true,
+            output:
+              `Unknown /goal verb "${token}". Did you mean: ${tip}?` +
+              `\nUsage: /goal [status|set <obj>|pause|resume|clear|done]  ·  or /goal <objective>`,
+          };
+        }
+      }
+      if (arg.length > MAX_GOAL_CHARS) {
+        return {
+          handled: true,
+          output: `Invalid /goal objective (length ${arg.length}). Pass at most ${MAX_GOAL_CHARS} characters.`,
+        };
+      }
       const g = armGoal(sid, arg, "manual");
       session.meta.ultrawork = true;
       saveSession(session);
@@ -2186,6 +2726,8 @@ export interface DoctorResult {
   ok: boolean;
   authenticated: boolean;
   blockingStop: boolean;
+  /** False when model is set and not in the provider catalog (free-form still ok). */
+  modelInCatalog: boolean | null;
 }
 
 /**
@@ -2197,12 +2739,20 @@ export async function runDoctorCheck(
 ): Promise<DoctorResult> {
   const lines: string[] = [chalk.bold("Forge doctor"), ""];
   const issues: string[] = [];
+  let modelInCatalog: boolean | null = null;
   lines.push(`Version: ${getForgeVersion()}`);
   // Prefer resolveAuthFresh so SuperGrok OIDC refresh / Grok re-import is tried
   // before CI flags "not authenticated" on a short-lived access token.
   let auth = await resolveAuthFresh(config);
   if (!auth) auth = resolveAuth(config);
   lines.push(`Auth: ${describeAuth(auth)}`);
+  if (auth && auth.provider !== config.provider) {
+    lines.push(
+      chalk.dim(
+        `  Active credentials are ${auth.provider} (config default was ${config.provider}) — doctor/report use active auth provider`,
+      ),
+    );
+  }
   if (!auth) {
     issues.push("Not authenticated — run forge login or set an API key env var");
   } else if (auth.method !== "api_key") {
@@ -2245,11 +2795,45 @@ export async function runDoctorCheck(
     }
   }
   {
-    const effort = resolveReasoningEffort(config.model, config.reasoningEffort);
+    const reportProvider = (auth?.provider || config.provider) as typeof config.provider;
+    const reportModel =
+      auth && auth.provider !== config.provider
+        ? config.providers[auth.provider]?.defaultModel || config.model
+        : config.model;
+    const effort = resolveReasoningEffort(reportModel, config.reasoningEffort);
     const effortSuffix = effort ? ` · effort=${effort}` : "";
-    lines.push(`Provider/model: ${config.provider} / ${config.model}${effortSuffix}`);
+    lines.push(`Provider/model: ${reportProvider} / ${reportModel}${effortSuffix}`);
+    // Soft warning when model is not in the provider catalog (free-form still allowed).
+    const pcfg = config.providers?.[reportProvider];
+    const catalog = [
+      ...(pcfg?.models || []),
+      ...(pcfg?.defaultModel ? [pcfg.defaultModel] : []),
+    ];
+    if (catalog.length && reportModel) {
+      modelInCatalog = catalog.some(
+        (m) => m.toLowerCase() === String(reportModel).toLowerCase(),
+      );
+      if (!modelInCatalog) {
+        lines.push(
+          chalk.yellow(
+            `  Model "${reportModel}" not in ${reportProvider} catalog ` +
+              `(default ${pcfg?.defaultModel || "—"}; free-form ids still work)`,
+          ),
+        );
+      }
+    }
   }
   lines.push(`Permission mode: ${config.permissionMode}`);
+  if (config.permissionMode === "bypassPermissions") {
+    lines.push(
+      chalk.yellow(
+        "  ⚠ bypassPermissions (yolo) — all tools auto-approved; prefer acceptEdits/plan/dontAsk in CI",
+      ),
+    );
+    issues.push(
+      "Permission mode is bypassPermissions (yolo) — all tools auto-approved; set acceptEdits/plan/dontAsk for production CI",
+    );
+  }
   {
     try {
       const ws = config.workspace || process.cwd();
@@ -2266,6 +2850,7 @@ export async function runDoctorCheck(
   {
     const prefs = loadPreferences();
     const bits = [
+      prefs.provider ? `provider=${prefs.provider}` : null,
       prefs.model ? `model=${prefs.model}` : null,
       prefs.reasoningEffort ? `effort=${prefs.reasoningEffort}` : null,
       prefs.permissionMode ? `permission_mode=${prefs.permissionMode}` : null,
@@ -2279,6 +2864,16 @@ export async function runDoctorCheck(
     const net = resolveSandboxNetwork(config);
     const backend = detectSandboxBackend();
     lines.push(`Sandbox: ${describeSandbox(config.sandbox || "off", net)}`);
+    if ((config.sandbox || "off") === "off") {
+      lines.push(
+        chalk.yellow(
+          "  ⚠ Sandbox is off — bash runs unsandboxed; prefer workspace/read-only/strict for production",
+        ),
+      );
+      issues.push(
+        "Sandbox is off — bash runs unsandboxed; set workspace/read-only/strict for production hosts",
+      );
+    }
     lines.push(
       `Sandbox backend: ${backend.available ? backend.backend : "NONE"}` +
         (config.sandbox !== "off" && !backend.available
@@ -2295,14 +2890,69 @@ export async function runDoctorCheck(
       }
     }
     lines.push(`Missing backend policy: ${config.sandboxMissingBackend || "fail-closed"}`);
+    if ((config.sandboxMissingBackend || "fail-closed") === "fallback") {
+      lines.push(
+        chalk.yellow(
+          "  ⚠ sandbox-missing=fallback — bash may run unsandboxed when backend is absent",
+        ),
+      );
+      issues.push(
+        "Sandbox missing-backend policy is fallback — bash may run unsandboxed when bwrap/sandbox-exec is absent; prefer fail-closed for production",
+      );
+    }
     lines.push(`Read outside workspace: ${config.readOutsideWorkspace || "ask"}`);
+    if ((config.readOutsideWorkspace || "ask") === "allow") {
+      lines.push(
+        chalk.yellow(
+          "  ⚠ read-outside=allow — tools may read absolute paths outside the workspace without prompting",
+        ),
+      );
+      issues.push(
+        "Read-outside policy is allow — tools may read absolute paths outside the workspace without prompting; prefer ask or deny for production/CI",
+      );
+    }
   }
   const denyN = config.permission?.deny?.length || 0;
   const allowN = config.permission?.allow?.length || 0;
   const askN = config.permission?.ask?.length || 0;
   lines.push(`Rules: deny=${denyN} allow=${allowN} ask=${askN} (deny wins under YOLO)`);
+  // Surface config rules that parse to null (e.g. Bash()) — they are silently dropped at runtime.
+  {
+    const bad: string[] = [];
+    for (const [kind, list] of [
+      ["deny", config.permission?.deny],
+      ["allow", config.permission?.allow],
+      ["ask", config.permission?.ask],
+    ] as const) {
+      // Must be a string[]; a bare string would iterate characters (Bash() → "(", ")").
+      if (!Array.isArray(list)) {
+        if (list != null) {
+          bad.push(`${kind}: <non-array ${typeof list}>`);
+        }
+        continue;
+      }
+      for (const raw of list) {
+        if (!parseRuleString(String(raw))) {
+          bad.push(`${kind}: ${raw}`);
+        }
+      }
+    }
+    if (bad.length) {
+      const preview = bad.slice(0, 5).join("; ");
+      const more = bad.length > 5 ? ` (+${bad.length - 5} more)` : "";
+      issues.push(
+        `Invalid permission rule(s) ignored at runtime: ${preview}${more}. Use Tool or Tool(pattern) (empty Tool() is invalid).`,
+      );
+    }
+  }
   lines.push(`Blocking Stop: ${config.blockingStopHooks ? "on" : "off"}`);
-  if (!config.blockingStopHooks) {
+  if (config.blockingStopHooks) {
+    lines.push(
+      chalk.dim(
+        "  Stop/SubagentStop hook timeout/error fails closed (agent keeps working)",
+      ),
+    );
+  } else {
     lines.push(chalk.yellow("  ⚠ Blocking Stop is OFF — harness Stop hooks cannot force continue"));
     // Non-negotiable for production harness reliability (see AGENTS.md).
     issues.push(
@@ -2315,10 +2965,10 @@ export async function runDoctorCheck(
     `Context: window=${config.contextWindow} autoCompact@${Math.round((config.autoCompactThreshold || 0.8) * 100)}% maxTurns=${config.maxTurns > 0 ? config.maxTurns : "unlimited"}`,
   );
   {
-    const maxRun = process.env.FORGE_MAX_RUN_MS?.trim();
+    const maxRun = maxRunMsFromEnv();
     const maxRunNote =
-      maxRun && /^\d+$/.test(maxRun) && Number(maxRun) >= 5_000
-        ? ` · max-run=${Math.round(Number(maxRun) / 1000)}s`
+      maxRun != null
+        ? ` · max-run=${Math.round(maxRun / 1000)}s`
         : "";
     const permTo = permissionAskTimeoutMs();
     const permNote =
@@ -2346,6 +2996,36 @@ export async function runDoctorCheck(
   if (major < 20) {
     lines.push(chalk.red("  ⚠ Node 20+ required"));
     issues.push(`Node ${node} is below 20`);
+  }
+  // Best-effort package.json engines.node floor (e.g. ">=20", ">=20.0.0").
+  try {
+    const pkgPath = path.join(config.workspace || process.cwd(), "package.json");
+    if (fs.existsSync(pkgPath)) {
+      const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf8")) as {
+        engines?: { node?: string };
+      };
+      const range = pkg.engines?.node?.trim() || "";
+      const m = range.match(/>=\s*(\d+)/);
+      if (m) {
+        const floor = parseInt(m[1]!, 10);
+        if (Number.isFinite(floor) && major < floor) {
+          lines.push(
+            chalk.red(
+              `  ⚠ package.json engines.node is "${range}" but runtime is ${node}`,
+            ),
+          );
+          issues.push(
+            `Node ${node} is below package.json engines.node floor ${floor} (${range})`,
+          );
+        } else if (range) {
+          lines.push(`  package engines.node: ${range}`);
+        }
+      } else if (range) {
+        lines.push(`  package engines.node: ${range}`);
+      }
+    }
+  } catch {
+    /* */
   }
 
   // Quick network check to base URL host (HEAD not always allowed)
@@ -2452,6 +3132,15 @@ export async function runDoctorCheck(
         `  undo-journal: ${mj.sessions} session(s) · ~${mj.entries} entries · ${kb} KB` +
           chalk.dim("  (mutations.jsonl · /undo restores disk)"),
       );
+      // Advisory only — large journals slow /undo scans and fill disk.
+      // Thresholds: ~20 MiB or 2k entries across sessions.
+      const LARGE_BYTES = 20 * 1024 * 1024;
+      const LARGE_ENTRIES = 2_000;
+      if (mj.bytes >= LARGE_BYTES || mj.entries >= LARGE_ENTRIES) {
+        issues.push(
+          `Undo journal is large (~${kb} KB, ${mj.entries} entries across ${mj.sessions} session(s)) — prune old sessions (forge sessions prune) or delete stale mutations.jsonl under ~/.forge/sessions/*/`,
+        );
+      }
     }
   } catch {
     /* optional */
@@ -2483,6 +3172,7 @@ export async function runDoctorCheck(
     ok: issues.length === 0,
     authenticated: Boolean(auth),
     blockingStop: config.blockingStopHooks !== false,
+    modelInCatalog,
   };
 }
 
@@ -2492,6 +3182,9 @@ export async function runDoctor(config: ForgeConfig): Promise<string> {
 }
 
 export interface EffectiveConfigSnap {
+  version: string;
+  /** Absolute FORGE_HOME (sessions/auth root). */
+  forgeHome: string;
   provider: string;
   model: string;
   reasoningEffort: string | null;
@@ -2500,6 +3193,7 @@ export interface EffectiveConfigSnap {
   sandboxNetwork: string;
   sandboxMissingBackend: string;
   readOutsideWorkspace: string;
+  stickyProvider: string | null;
   blockingStopHooks: boolean;
   promptProfile: string;
   contextWindow: number;
@@ -2539,6 +3233,8 @@ export function buildEffectiveConfigSnap(
   const net = resolveSandboxNetwork(c);
   const session = opts?.session;
   return {
+    version: getForgeVersion(),
+    forgeHome: forgeHome(),
     provider: c.provider,
     model: c.model,
     reasoningEffort: c.reasoningEffort ?? null,
@@ -2547,6 +3243,13 @@ export function buildEffectiveConfigSnap(
     sandboxNetwork: net,
     sandboxMissingBackend: c.sandboxMissingBackend ?? "fail-closed",
     readOutsideWorkspace: c.readOutsideWorkspace ?? "ask",
+    stickyProvider: (() => {
+      try {
+        return loadPreferences().provider ?? null;
+      } catch {
+        return null;
+      }
+    })(),
     blockingStopHooks: c.blockingStopHooks !== false,
     promptProfile: c.promptProfile ?? "default",
     contextWindow: c.contextWindow,
@@ -2597,16 +3300,23 @@ export function formatEffectiveConfig(
 ): string {
   const snap = buildEffectiveConfigSnap(config, { session: opts?.session });
   if (opts?.json) {
-    return JSON.stringify({ ok: true, ...snap }, null, 2);
+    const body = { ok: true, ...snap };
+    const compact =
+      process.env.FORGE_JSON_COMPACT === "1" ||
+      process.env.FORGE_JSON_COMPACT === "true";
+    return compact ? JSON.stringify(body) : JSON.stringify(body, null, 2);
   }
   const sess = snap.session;
   const lines = [
     `Effective config (live-safe · no secrets)`,
+    `  version:         ${snap.version}`,
+    `  forgeHome:       ${snap.forgeHome}`,
     `  provider/model:  ${snap.provider}/${snap.model}` +
       (snap.reasoningEffort ? `  effort=${snap.reasoningEffort}` : ""),
     `  permission:      ${snap.permissionMode}`,
     `  sandbox:         ${snap.sandbox}  network=${snap.sandboxNetwork}  missing=${snap.sandboxMissingBackend}`,
     `  read outside:    ${snap.readOutsideWorkspace}`,
+    `  sticky provider: ${snap.stickyProvider ?? "(none)"}`,
     `  blocking Stop:   ${snap.blockingStopHooks ? "on" : "OFF"}`,
     `  profile:         ${snap.promptProfile}`,
     `  context:         window=${snap.contextWindow} autoCompact@${Math.round((snap.autoCompactThreshold || 0.8) * 100)}% maxTurns=${snap.maxTurns > 0 ? snap.maxTurns : "unlimited"}`,
@@ -2770,11 +3480,11 @@ Forge slash commands
   /ulw-off              Disarm ULW + cycle driver  [live]
   /hooks                List loaded hooks  [live]
   /status · /hud        Full inline HUD + session details (no second panel)  [live]
-  /tasks                Background shell tasks (running / recent)  [live]
+  /tasks [kill|log id]  Background shell tasks · kill/log subcommands  [live]
   /context              Context window usage bar  [live]
   /cost                 Token usage + rough cost  [live]
   /metrics              Local metrics.jsonl + this session counters  [live]
-  /stats [days]         Usage dashboard (runs/tokens/cost/projects)  [live]
+  /stats [days|week]    Usage dashboard (runs/tokens/cost/projects)  [live]
   /todos                Show agent todos  [live]
   /model <name> [effort] Switch model; optional low|medium|high (persists)
   /effort [level]       Reasoning effort for current model (low|medium|high)  [live]
@@ -2792,7 +3502,7 @@ Forge slash commands
   /title [name|clear]   Show / set / clear session title (/rename)  [live]
   /bell [on|off|test]   Terminal BEL when a turn ends (long-run attention)  [live]
   /diff [path]          Git status + diff (argv-safe; pathspecs/refs only)  [live]
-  /logs [n|path]        Tail sandbox/safety events (~/.forge/logs/sandbox.jsonl)  [live]
+  /logs [n|0|all|path]  Tail sandbox/safety events (0/all = full window)  [live]
   /config [json]        Effective config snapshot (no secrets)  [live]
   /copy                 Copy last assistant reply (pbcopy/wl-copy/xclip/…)  [live]
   /share [nocopy]       Pasteable session card + resume/export cmds (clipboard)  [live]
@@ -2801,7 +3511,7 @@ Forge slash commands
   /path [id|json]       On-disk session directory / session.json path  [live]
   /pin [on|off|toggle]  Protect session from prune (/unpin)  [live]
   /tips                 Expert keyboard / CI cheat sheet  [live]
-  /news [n]             What's new from CHANGELOG (/changelog)  [live]
+  /news [n|all]         What's new from CHANGELOG (/changelog)  [live]
   /new [title]          Fresh session (optional searchable label; ULW not inherited)
   /clear                Clear messages same id (counters+journal reset)
   /clear hard           Brand-new session id (same as /new; ULW not inherited)
@@ -2810,6 +3520,11 @@ Forge slash commands
   /auth                 Show stored credentials  [live]
   /doctor               Environment health check  [live]
   /quit                 Exit  [live — aborts run then exits]
+
+Tips
+────
+  Unknown /cmd typos suggest closest commands (e.g. /exprot → /export).
+  Catalog typos: /model grok-45 · /effort medum · /permissions aceptEdits · /sessions prun.
 
 Status (always on — no second panel)
 ────────────────────────────────────

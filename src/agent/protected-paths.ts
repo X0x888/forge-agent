@@ -81,10 +81,27 @@ export function isProtectedWritePath(absolutePath: string): boolean {
 
 export function protectedWriteReason(absolutePath: string): string {
   const p = normalizeFsPath(absolutePath);
-  if (p.includes("/.forge/")) return "Refusing write to Forge credentials/config/hooks";
-  if (p.includes("/.git/")) return "Refusing write to .git metadata (hooks/config/HEAD)";
-  if (p.includes("/.ssh/") || p.includes("/.gnupg/")) {
-    return "Refusing write to SSH/GPG material";
+  if (p.includes("/.forge/")) {
+    return (
+      "Refusing write to Forge credentials/config/hooks under ~/.forge. " +
+      "Use forge login/config/doctor CLI — not write_file/search_replace. " +
+      "Agent-writable under ~/.forge: sessions/, logs/, tmp/ only."
+    );
   }
-  return `Refusing write to protected path: ${p}`;
+  if (p.includes("/.git/")) {
+    return (
+      "Refusing write to .git metadata (hooks/config/HEAD). " +
+      "Use git commands via bash for intentional repo surgery."
+    );
+  }
+  if (p.includes("/.ssh/") || p.includes("/.gnupg/")) {
+    return (
+      "Refusing write to SSH/GPG material. " +
+      "Manage keys outside the agent (ssh-keygen/gpg) — never via write_file."
+    );
+  }
+  return (
+    `Refusing write to protected path: ${p}. ` +
+    "Stay inside the workspace (or ~/.forge/sessions|logs|tmp)."
+  );
 }
