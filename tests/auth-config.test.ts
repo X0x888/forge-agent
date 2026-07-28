@@ -273,11 +273,14 @@ describe("stored credential without sticky provider", () => {
   it("does not silently use other providers when config provider differs", async () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-auth-stored-"));
     const prevHome = process.env.FORGE_HOME;
+    const prevGrok = process.env.GROK_HOME;
     const prevXai = process.env.XAI_API_KEY;
     const prevAnt = process.env.ANTHROPIC_API_KEY;
     const prevProv = process.env.FORGE_PROVIDER;
     try {
       process.env.FORGE_HOME = tmp;
+      // Isolate from developer ~/.grok SuperGrok session (live xAI import)
+      process.env.GROK_HOME = path.join(tmp, "no-grok");
       delete process.env.XAI_API_KEY;
       delete process.env.ANTHROPIC_API_KEY;
       delete process.env.FORGE_PROVIDER;
@@ -296,6 +299,8 @@ describe("stored credential without sticky provider", () => {
     } finally {
       if (prevHome === undefined) delete process.env.FORGE_HOME;
       else process.env.FORGE_HOME = prevHome;
+      if (prevGrok === undefined) delete process.env.GROK_HOME;
+      else process.env.GROK_HOME = prevGrok;
       if (prevXai === undefined) delete process.env.XAI_API_KEY;
       else process.env.XAI_API_KEY = prevXai;
       if (prevAnt === undefined) delete process.env.ANTHROPIC_API_KEY;
