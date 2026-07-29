@@ -30,7 +30,6 @@ import {
 import type {
   AccountCredential,
   AccountPlanSnapshot,
-  AccountSummary,
   ResolvedAuth,
 } from "./types.js";
 
@@ -688,17 +687,6 @@ export function formatMultiAccountReadiness(provider?: string): string {
     );
   }
   return lines.join("\n");
-}
-
-/** Public summaries for doctor --json (never tokens). */
-export function multiAccountDoctorFields(provider?: string): {
-  multiAccount: MultiAccountReadiness;
-  accounts: AccountSummary[];
-} {
-  return {
-    multiAccount: assessMultiAccountReadiness(provider),
-    accounts: listAccountSummaries(provider),
-  };
 }
 
 /** Build ResolvedAuth from an account (caller fills baseUrl). */

@@ -759,11 +759,13 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
               if (await applySwitchedAccount(switched, "quota/rate-limit")) {
                 response = await doChat();
               } else {
+                // Always surface switch reason or a recovery tip (do not drop the
+                // fallback when reason is empty — startsWith(" (") would hide it).
                 const hint = switched.reason
                   ? ` (${switched.reason})`
                   : " — add another account: forge login --add";
                 throw new Error(
-                  `${msg}${hint.startsWith(" (") ? hint : ""}. Multi-account failover exhausted${
+                  `${msg}${hint}. Multi-account failover exhausted${
                     accountSwitchCount >= maxAccountSwitches
                       ? ` (FORGE_ACCOUNT_SWITCH_MAX=${maxAccountSwitches})`
                       : ""
