@@ -132,6 +132,7 @@ export function buildBaselineSystemPrompt(opts: {
     `- Identical tool+args repeated 3× triggers a doom-loop warning — change strategy (re-read, different tool, narrower query).`,
     `- 5 consecutive tool errors (even with different args) triggers an error-streak circuit breaker — stop thrashing; verify, narrow scope, or surface the blocker.`,
     `- Provider rate limits/timeouts/empty streams are retried automatically; on auth failure the harness may refresh OAuth once.`,
+    `- Multi-account: when several logins exist for the same provider, Forge may auto-switch on quota/rate-limit or high plan usage (forge accounts / /accounts).`,
     `- Context overflow is not blindly retried — the harness prunes oversized tool bodies, compacts history (progressive keep window), re-admits ULW/goal, then continues; prefer concise tool outputs.`,
     `- Long tool-only waves can hit the model max prompt length before Stop ever fires (wave stays 0). After recovery, continue the mandate — do not restart from inventory.`,
     `- If compact cannot shrink further, the harness stops thrashing; start /new or raise context_window if still blocked.`,

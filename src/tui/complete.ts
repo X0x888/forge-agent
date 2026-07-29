@@ -61,6 +61,24 @@ export const COMMAND_PARAMS: Record<string, ParamChoice[]> = {
     { value: "0", description: "LAST — finish current wave then stop" },
     { value: "status", description: "Show cycle flag, wave, mandate" },
   ],
+  accounts: [
+    { value: "list", description: "List all stored accounts" },
+    { value: "switch", description: "Switch active: /accounts switch <id|label>" },
+    { value: "remove", description: "Remove one account" },
+    { value: "rename", description: "Rename: /accounts rename <id> <label>" },
+    { value: "priority", description: "Set auto-switch priority" },
+    { value: "disable", description: "Disable an account" },
+    { value: "enable", description: "Re-enable an account" },
+    {
+      value: "auto-switch",
+      description: "on|off|status — smart switch on low usage",
+    },
+  ],
+  account: [
+    { value: "list", description: "List all stored accounts" },
+    { value: "switch", description: "Switch active account" },
+    { value: "auto-switch", description: "on|off|status" },
+  ],
   goal: [
     { value: "status", description: "Show current goal" },
     { value: "pause", description: "Pause goal driver" },

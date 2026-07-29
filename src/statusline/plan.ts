@@ -12,7 +12,8 @@ import os from "node:os";
 import path from "node:path";
 import type { PlanUsageInfo, AuthMethod } from "./types.js";
 import { readGrokXaiSession } from "../auth/import-grok.js";
-import { getCredential } from "../auth/store.js";
+import { getActiveAccount, getCredential } from "../auth/store.js";
+import { recordAccountPlan } from "../auth/accounts.js";
 import { nowEpoch } from "../util/fs.js";
 
 const CACHE_DIR = () => path.join(os.homedir(), ".forge", "statusline");
@@ -53,8 +54,13 @@ function writeCache(key: string, plan: PlanUsageInfo): void {
   }
 }
 
-async function fetchXaiCredits(token: string): Promise<PlanUsageInfo | null> {
-  const cacheKey = "xai:credits";
+async function fetchXaiCredits(
+  token: string,
+  cacheKeySuffix?: string,
+): Promise<PlanUsageInfo | null> {
+  const cacheKey = cacheKeySuffix
+    ? `xai:credits:${cacheKeySuffix}`
+    : "xai:credits";
   const cached = readCache(cacheKey, 60);
   if (cached) return cached;
 
@@ -167,21 +173,41 @@ function readCodexLocalHints(): PlanUsageInfo | null {
 /**
  * Collect plan usage for the active provider/auth combination.
  * Safe to call often (cached + short timeouts).
+ * When multi-account is active, also records lastPlan on the account for
+ * proactive auto-switch ranking.
  */
 export async function collectPlanUsage(opts: {
   provider: string;
   authMethod: AuthMethod;
+  /** Optional active account id for per-account cache + plan recording */
+  accountId?: string;
 }): Promise<PlanUsageInfo | undefined> {
   const p = opts.provider.toLowerCase();
 
   // xAI / Grok subscription path
   if (p === "xai" || p === "grok") {
     if (opts.authMethod === "subscription" || opts.authMethod === "oauth") {
+      const active = getActiveAccount("xai");
       const grok = readGrokXaiSession();
       const stored = getCredential("xai");
-      const token = grok?.accessToken || stored?.accessToken;
+      const token = active?.accessToken || grok?.accessToken || stored?.accessToken;
+      const accountId = opts.accountId || active?.id;
       if (token) {
-        const plan = await fetchXaiCredits(token);
+        const plan = await fetchXaiCredits(token, accountId);
+        if (plan && accountId && (plan.percent != null || plan.remaining != null)) {
+          try {
+            recordAccountPlan(accountId, {
+              percent: plan.percent,
+              used: plan.used,
+              remaining: plan.remaining,
+              limit: plan.limit,
+              unit: plan.unit,
+              source: plan.source,
+            });
+          } catch {
+            /* best-effort */
+          }
+        }
         return plan || undefined;
       }
       return {

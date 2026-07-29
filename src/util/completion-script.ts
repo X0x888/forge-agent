@@ -15,7 +15,7 @@ export function normalizeCompletionShell(
 
 export function shellCompletionScript(shell: string): string {
   const cmds =
-    "run login logout auth sessions init models doctor stats tips news logs config status completion prune-tool-output prune-metrics";
+    "run login logout auth accounts sessions init models doctor stats tips news logs config status completion prune-tool-output prune-metrics";
   const zshCmds = cmds.split(" ").join(" ");
   const runFlags =
     "--json --ulw --permission-mode --model --provider --base-url --goal --session --continue --new --title --sandbox --sandbox-network --sandbox-missing --read-outside --deny --allow --ask --cwd --effort --max-turns --no-blocking-stop";
@@ -121,6 +121,9 @@ export function shellCompletionScript(shell: string): string {
       "        status|auth|tips|init|completion)",
       "          _values 'flags' --json",
       "          ;;",
+      "        accounts)",
+      "          _values 'accounts' list switch remove rename priority disable enable auto-switch --json --provider",
+      "          ;;",
       "        stats)",
       "          _values 'stats' --json --days",
       "          ;;",
@@ -134,7 +137,7 @@ export function shellCompletionScript(shell: string): string {
       "          _values 'config' --json --provider --model --cwd --max-turns --sandbox --sandbox-missing --sandbox-network --read-outside --permission-mode --no-blocking-stop",
       "          ;;",
       "        login)",
-      "          _values 'login' --api-key --oauth --device --from-grok --from-copilot --provider --json",
+      "          _values 'login' --api-key --oauth --device --from-grok --from-copilot --add --label --provider --json",
       "          ;;",
       "        logout)",
       "          _values 'logout' --provider --json",
@@ -210,6 +213,9 @@ export function shellCompletionScript(shell: string): string {
       'complete -c forge -n "__fish_seen_subcommand_from models" -s p -d "Provider"',
       'complete -c forge -n "__fish_seen_subcommand_from status" -l json -d "JSON"',
       'complete -c forge -n "__fish_seen_subcommand_from auth" -l json -d "JSON"',
+      'complete -c forge -n "__fish_seen_subcommand_from accounts" -a "list switch remove rename priority disable enable auto-switch" -d "Accounts subcommand"',
+      'complete -c forge -n "__fish_seen_subcommand_from accounts" -l json -d "JSON"',
+      'complete -c forge -n "__fish_seen_subcommand_from accounts" -l provider -d "Provider filter"',
       'complete -c forge -n "__fish_seen_subcommand_from tips" -l json -d "JSON"',
       'complete -c forge -n "__fish_seen_subcommand_from init" -l json -d "JSON"',
       'complete -c forge -n "__fish_seen_subcommand_from completion" -l json -d "JSON"',
@@ -240,6 +246,8 @@ export function shellCompletionScript(shell: string): string {
       'complete -c forge -n "__fish_seen_subcommand_from login" -l device -d "Device code"',
       'complete -c forge -n "__fish_seen_subcommand_from login" -l from-grok -d "Import Grok creds"',
       'complete -c forge -n "__fish_seen_subcommand_from login" -l from-copilot -d "Import local Copilot"',
+      'complete -c forge -n "__fish_seen_subcommand_from login" -l add -d "Add another account"',
+      'complete -c forge -n "__fish_seen_subcommand_from login" -l label -d "Account label"',
       'complete -c forge -n "__fish_seen_subcommand_from login" -l provider -d "Provider"',
       'complete -c forge -n "__fish_seen_subcommand_from login" -l json -d "JSON"',
       'complete -c forge -n "__fish_seen_subcommand_from logout" -l provider -d "Provider"',
@@ -341,13 +349,13 @@ export function shellCompletionScript(shell: string): string {
     "      ;;",
     '    doctor) COMPREPLY=( $(compgen -W "--json --provider -p --cwd --max-turns --sandbox --sandbox-missing --sandbox-network --read-outside --permission-mode --no-blocking-stop" -- "$cur") ) ;;',
     '    models) COMPREPLY=( $(compgen -W "--json --provider -p" -- "$cur") ) ;;',
-    '    status|auth|tips|init|completion) COMPREPLY=( $(compgen -W "--json" -- "$cur") ) ;;',
+    '    status|auth|tips|init|completion|accounts) COMPREPLY=( $(compgen -W "list switch remove rename priority disable enable auto-switch --json" -- "$cur") ) ;;',
     '    stats) COMPREPLY=( $(compgen -W "--json --days" -- "$cur") ) ;;',
     '    news|changelog) COMPREPLY=( $(compgen -W "--json 1 2 3" -- "$cur") ) ;;',
     '    logs) COMPREPLY=( $(compgen -W "--json --path --lines -n" -- "$cur") ) ;;',
     '    config) COMPREPLY=( $(compgen -W "--json --provider --model --cwd --max-turns --sandbox --sandbox-missing --sandbox-network --read-outside --permission-mode --no-blocking-stop" -- "$cur") ) ;;',
     `    run) COMPREPLY=( $(compgen -W "${runFlags}" -- "$cur") ) ;;`,
-    '    login) COMPREPLY=( $(compgen -W "--api-key --oauth --device --from-grok --from-copilot --provider --json" -- "$cur") ) ;;',
+    '    login) COMPREPLY=( $(compgen -W "--api-key --oauth --device --from-grok --from-copilot --add --label --provider --json" -- "$cur") ) ;;',
     '    logout) COMPREPLY=( $(compgen -W "--provider --json" -- "$cur") ) ;;',
     '    completion) COMPREPLY=( $(compgen -W "bash zsh fish" -- "$cur") ) ;;',
     '    prune-tool-output|prune-metrics) COMPREPLY=( $(compgen -W "--json --keep" -- "$cur") ) ;;',

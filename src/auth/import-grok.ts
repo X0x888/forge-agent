@@ -17,6 +17,8 @@ export interface GrokImportResult {
   expiresAt?: number;
   reason?: string;
   accessToken?: string;
+  accountId?: string;
+  created?: boolean;
 }
 
 function grokAuthPath(): string {
@@ -122,7 +124,7 @@ export function importGrokCredentials(): GrokImportResult {
     };
   }
 
-  upsertOAuth("xai", {
+  const r = upsertOAuth("xai", {
     accessToken: session.accessToken,
     refreshToken: session.refreshToken,
     expiresAt: session.expiresAt,
@@ -139,5 +141,7 @@ export function importGrokCredentials(): GrokImportResult {
     email: session.email,
     expiresAt: session.expiresAt,
     accessToken: session.accessToken,
+    accountId: r.accountId,
+    created: r.created,
   };
 }

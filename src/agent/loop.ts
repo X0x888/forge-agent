@@ -71,6 +71,10 @@ import {
 } from "./error-streak.js";
 import { refreshCredentialIfNeeded, isAuthFailureMessage } from "../auth/refresh.js";
 import { resolveAuth } from "../auth/resolve.js";
+import {
+  isQuotaOrRateLimitError,
+  switchOnQuotaFailure,
+} from "../auth/accounts.js";
 import { isProviderApiError } from "../providers/errors.js";
 import {
   formatToolStart,
@@ -227,6 +231,8 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
   /** Generations of successful mid-run auth recovery (not a one-shot for multi-day). */
   let authRecoveryCount = 0;
   const maxAuthRecoveries = envPositiveInt("FORGE_AUTH_RECOVERY_MAX", 20);
+  let accountSwitchCount = 0;
+  const maxAccountSwitches = envPositiveInt("FORGE_ACCOUNT_SWITCH_MAX", 3);
   const events: LoopEvents = {
     onToken: opts.events?.onToken || opts.onToken,
     onToolStart: opts.events?.onToolStart,
@@ -662,6 +668,7 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
             // OAuth recovery: prefer true token failures (401 / grant errors).
             // Generic 403 (quota/policy) must NOT burn a recovery slot so a later
             // real token expiry can still recover on multi-day runs.
+            // Multi-account: 429/quota can switch to another same-provider account.
             const msg = err instanceof Error ? err.message : String(err);
             const status = isProviderApiError(err) ? err.status : 0;
             const tokenAuthFail =
@@ -669,39 +676,95 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
               /invalid[_\s-]?api[_\s-]?key|invalid[_\s-]?token|expired[_\s-]?token|unauthorized|not authenticated|invalid_grant/i.test(
                 msg,
               );
-            if (!tokenAuthFail || authRecoveryCount >= maxAuthRecoveries) {
+            const quotaFail = !tokenAuthFail && isQuotaOrRateLimitError(err);
+
+            const updateCreds = provider.updateCredentials?.bind(provider);
+
+            if (
+              quotaFail &&
+              accountSwitchCount < maxAccountSwitches &&
+              updateCreds
+            ) {
+              accountSwitchCount += 1;
+              events.onStatus?.(
+                `Quota/rate-limit — trying another account (${accountSwitchCount}/${maxAccountSwitches})…`,
+              );
+              const switched = switchOnQuotaFailure(String(config.provider));
+              if (switched.switched && switched.account?.accessToken) {
+                updateCreds(switched.account.accessToken);
+                log.info(
+                  `Switched to account ${switched.toLabel || switched.toId} after quota/rate-limit — retrying`,
+                );
+                events.onStatus?.(
+                  `Switched account → ${switched.toLabel || switched.toId} — retrying`,
+                );
+                response = await doChat();
+              } else {
+                throw err;
+              }
+            } else if (!tokenAuthFail || authRecoveryCount >= maxAuthRecoveries) {
               throw err;
-            }
-            authRecoveryCount += 1;
-            events.onStatus?.(
-              `Auth failure — attempting token refresh (${authRecoveryCount}/${maxAuthRecoveries})…`,
-            );
-            const refreshed = await refreshCredentialIfNeeded(
-              String(config.provider),
-              { force: true },
-            );
-            // SuperGrok refresh often fails (revoked/CF) — try full resolveAuthFresh
-            // (re-import live ~/.grok session) before giving up.
-            let auth = refreshed.ok && refreshed.credential
-              ? resolveAuth(config)
-              : null;
-            if (!auth?.token) {
-              try {
-                const { resolveAuthFresh } = await import("../auth/resolve.js");
-                auth = await resolveAuthFresh(config);
-              } catch {
-                /* fall through */
+            } else {
+              authRecoveryCount += 1;
+              events.onStatus?.(
+                `Auth failure — attempting token refresh (${authRecoveryCount}/${maxAuthRecoveries})…`,
+              );
+              const refreshed = await refreshCredentialIfNeeded(
+                String(config.provider),
+                { force: true },
+              );
+              // SuperGrok refresh often fails (revoked/CF) — try full resolveAuthFresh
+              // (re-import live ~/.grok session) before giving up.
+              let auth = refreshed.ok && refreshed.credential
+                ? resolveAuth(config)
+                : null;
+              if (!auth?.token) {
+                try {
+                  const { resolveAuthFresh } = await import("../auth/resolve.js");
+                  auth = await resolveAuthFresh(config);
+                } catch {
+                  /* fall through */
+                }
+              }
+              // Token still bad — try another multi-account slot once.
+              if (
+                (!auth?.token || !updateCreds) &&
+                accountSwitchCount < maxAccountSwitches &&
+                updateCreds
+              ) {
+                accountSwitchCount += 1;
+                const switched = switchOnQuotaFailure(String(config.provider));
+                if (switched.switched && switched.account?.accessToken) {
+                  updateCreds(switched.account.accessToken);
+                  log.info(
+                    `Switched to account ${switched.toLabel || switched.toId} after auth failure — retrying`,
+                  );
+                  events.onStatus?.(
+                    `Switched account → ${switched.toLabel || switched.toId} — retrying`,
+                  );
+                  response = await doChat();
+                } else if (!auth?.token || !updateCreds) {
+                  throw err;
+                } else {
+                  updateCreds(auth.token);
+                  log.info(
+                    "Refreshed credentials after auth failure — retrying chat",
+                  );
+                  events.onStatus?.("Credentials refreshed — retrying");
+                  response = await doChat();
+                }
+              } else {
+                if (!auth?.token || !updateCreds) {
+                  throw err;
+                }
+                updateCreds(auth.token);
+                log.info(
+                  "Refreshed credentials after auth failure — retrying chat",
+                );
+                events.onStatus?.("Credentials refreshed — retrying");
+                response = await doChat();
               }
             }
-            if (!auth?.token || !provider.updateCredentials) {
-              throw err;
-            }
-            provider.updateCredentials(auth.token);
-            log.info(
-              "Refreshed credentials after auth failure — retrying chat",
-            );
-            events.onStatus?.("Credentials refreshed — retrying");
-            response = await doChat();
           }
         }
       } catch (err) {

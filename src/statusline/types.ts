@@ -93,6 +93,10 @@ export interface StatusSnapshot {
   model: string;
   authMethod: AuthMethod;
   authLabel?: string;
+  /** Active multi-account id when known */
+  accountId?: string;
+  /** How many stored accounts exist for this provider */
+  accountCount?: number;
   createdAt: string;
   updatedAt: string;
   /** Session age in seconds */

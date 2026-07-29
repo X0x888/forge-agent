@@ -4,6 +4,12 @@
 
 ### Added
 
+- **Multi-account auth**: store many logins per provider (e.g. two SuperGrok emails + API keys) in `~/.forge/auth.json` v2
+- **`forge accounts`**: `list` · `switch` · `remove` · `rename` · `priority` · `disable`/`enable` · `auto-switch on|off [--threshold N]`
+- **`forge login --add`**: add another account without replacing existing ones; `--label` for API-key display names
+- **Smart auto-switch**: on 429/quota (and proactive when plan usage ≥ threshold) Forge switches to another same-provider account (cooldown on exhausted); `FORGE_ACCOUNT_SWITCH_MAX` caps mid-run switches
+- **REPL**: `/accounts` list/switch/remove/auto-switch; `/auth` shows multi-account table; statusline shows account label + `×N` when multi
+- **`forge auth --json`**: includes `accounts[]`, `autoSwitch`, `switchThresholdPercent`, `active.accountId` (never tokens)
 - **GitHub Copilot provider**: `forge login --from-copilot` / `forge login -p copilot` reuses a local Copilot CLI keychain or VS Code `~/.config/github-copilot` session; falls back to GitHub device-code OAuth; auto re-exchanges short-lived Copilot session tokens; OpenAI-compat chat via `https://api.githubcopilot.com`
 - **Provider aliases**: `github` / `github-copilot` / `gh-copilot` → `copilot`
 - **Env**: `COPILOT_GITHUB_TOKEN` / `GITHUB_COPILOT_TOKEN` / `GH_COPILOT_TOKEN` for CI-style GitHub OAuth tokens (exchanged on resolve)

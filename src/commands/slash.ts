@@ -164,6 +164,7 @@ const LIVE_READONLY = new Set([
   "/stats",
   "/todos",
   "/auth",
+  "/accounts",
   "/doctor",
   "/diff",
   "/copy", // clipboard last assistant reply — no session mutation
@@ -419,6 +420,8 @@ export const SLASH_COMMANDS = [
   "/resume",
   "/sessions",
   "/auth",
+  "/accounts",
+  "/account",
   "/doctor",
   "/quit",
 ] as const;
@@ -699,16 +702,26 @@ export async function handleSlash(
       const { renderHud } = await import("../statusline/render.js");
 
       // Full HUD with optional plan probe (same data as forge status)
+      let accountCount: number | undefined;
+      try {
+        const { listAccounts } = await import("../auth/store.js");
+        accountCount = listAccounts(String(auth.provider)).length;
+      } catch {
+        /* */
+      }
       const snap = sessionToSnapshot(opts.session, {
         windowTokens: opts.config.contextWindow,
         authMethod: auth.method as import("../statusline/types.js").AuthMethod,
         authLabel: auth.accountLabel,
+        accountId: auth.accountId,
+        accountCount,
         permissionMode: opts.config.permissionMode,
       });
       try {
         snap.plan = await collectPlanUsage({
           provider: opts.session.meta.provider,
           authMethod: snap.authMethod,
+          accountId: auth.accountId,
         });
       } catch {
         /* plan optional */
@@ -978,6 +991,156 @@ const stats = collectUsageStats({
     case "/login-status": {
       printAuthStatus();
       return { handled: true, output: "" };
+    }
+
+    case "/accounts":
+    case "/account": {
+      const { formatAccountsTable, switchAccount, resolveAccountSelector } =
+        await import("../auth/accounts.js");
+      const {
+        removeAccount,
+        setAccountLabel,
+        setAccountPriority,
+        setAccountDisabled,
+        getAutoSwitchSettings,
+        setAutoSwitchSettings,
+      } = await import("../auth/store.js");
+      const raw = (arg || "").trim();
+      if (!raw || raw === "list" || raw === "ls") {
+        return { handled: true, output: formatAccountsTable() };
+      }
+      const [verb, ...rest] = raw.split(/\s+/);
+      const v = verb.toLowerCase();
+      if (v === "switch" || v === "use") {
+        const sel = rest.join(" ").trim();
+        if (!sel) {
+          return {
+            handled: true,
+            output: "Usage: /accounts switch <id|label|provider:N>",
+          };
+        }
+        const hit = resolveAccountSelector(sel);
+        if (!hit.ok) {
+          return { handled: true, output: hit.error };
+        }
+        const r = switchAccount(String(hit.account.provider), {
+          toId: hit.account.id,
+          reason: "slash",
+        });
+        if (!r.switched) {
+          return { handled: true, output: r.reason || "switch failed" };
+        }
+        // Hot-swap live REPL credentials when possible
+        if (opts.auth && r.account?.accessToken) {
+          opts.auth.token = r.account.accessToken;
+          opts.auth.accountLabel = r.account.accountLabel ?? r.account.subscription;
+          opts.auth.accountId = r.account.id;
+          opts.auth.method = r.account.method;
+        }
+        return {
+          handled: true,
+          output: `Active ${hit.account.provider} → ${r.toLabel || r.toId}`,
+        };
+      }
+      if (v === "remove" || v === "rm" || v === "delete") {
+        const sel = rest.join(" ").trim();
+        if (!sel) {
+          return { handled: true, output: "Usage: /accounts remove <id|label>" };
+        }
+        const hit = resolveAccountSelector(sel);
+        if (!hit.ok) return { handled: true, output: hit.error };
+        removeAccount(hit.account.id);
+        return { handled: true, output: `Removed ${hit.account.id}` };
+      }
+      if (v === "rename") {
+        const sel = rest[0];
+        const label = rest.slice(1).join(" ").trim();
+        if (!sel || !label) {
+          return {
+            handled: true,
+            output: "Usage: /accounts rename <id|label> <new-label>",
+          };
+        }
+        const hit = resolveAccountSelector(sel);
+        if (!hit.ok) return { handled: true, output: hit.error };
+        setAccountLabel(hit.account.id, label);
+        return { handled: true, output: `Renamed ${hit.account.id} → ${label}` };
+      }
+      if (v === "priority" || v === "prio") {
+        const sel = rest[0];
+        const n = Number.parseInt(rest[1] || "", 10);
+        if (!sel || !Number.isFinite(n)) {
+          return {
+            handled: true,
+            output: "Usage: /accounts priority <id|label> <n>",
+          };
+        }
+        const hit = resolveAccountSelector(sel);
+        if (!hit.ok) return { handled: true, output: hit.error };
+        setAccountPriority(hit.account.id, n);
+        return {
+          handled: true,
+          output: `Priority ${hit.account.id} → ${n}`,
+        };
+      }
+      if (v === "disable" || v === "enable") {
+        const sel = rest.join(" ").trim();
+        if (!sel) {
+          return { handled: true, output: `Usage: /accounts ${v} <id|label>` };
+        }
+        const hit = resolveAccountSelector(sel);
+        if (!hit.ok) return { handled: true, output: hit.error };
+        setAccountDisabled(hit.account.id, v === "disable");
+        return {
+          handled: true,
+          output: `${v === "disable" ? "Disabled" : "Enabled"} ${hit.account.id}`,
+        };
+      }
+      if (v === "auto-switch" || v === "autoswitch") {
+        const mode = (rest[0] || "status").toLowerCase();
+        if (mode === "on" || mode === "off") {
+          setAutoSwitchSettings({ autoSwitch: mode === "on" });
+        }
+        const thrIdx = rest.findIndex((x) => x === "--threshold" || x === "threshold");
+        if (thrIdx >= 0 && rest[thrIdx + 1]) {
+          const t = Number(rest[thrIdx + 1]);
+          if (Number.isFinite(t)) {
+            setAutoSwitchSettings({ switchThresholdPercent: t });
+          }
+        }
+        const s = getAutoSwitchSettings();
+        return {
+          handled: true,
+          output: `Auto-switch: ${s.autoSwitch ? "on" : "off"}  threshold: ${s.switchThresholdPercent}%`,
+        };
+      }
+      // Bare selector → try switch
+      const hit = resolveAccountSelector(raw);
+      if (hit.ok) {
+        const r = switchAccount(String(hit.account.provider), {
+          toId: hit.account.id,
+          reason: "slash",
+        });
+        if (r.switched && opts.auth && r.account?.accessToken) {
+          opts.auth.token = r.account.accessToken;
+          opts.auth.accountLabel =
+            r.account.accountLabel ?? r.account.subscription;
+          opts.auth.accountId = r.account.id;
+          opts.auth.method = r.account.method;
+        }
+        return {
+          handled: true,
+          output: r.switched
+            ? `Active ${hit.account.provider} → ${r.toLabel || r.toId}`
+            : r.reason || "switch failed",
+        };
+      }
+      return {
+        handled: true,
+        output:
+          formatAccountsTable() +
+          "\n\nUsage: /accounts [list|switch|remove|rename|priority|disable|enable|auto-switch]",
+      };
     }
 
     case "/model": {
@@ -3517,7 +3680,8 @@ Forge slash commands
   /clear hard           Brand-new session id (same as /new; ULW not inherited)
   /resume [id|title|all] Resume by id prefix or unique /title (same-cwd picker)
   /sessions [all|search|delete|prune]  List (cwd default) / search / delete [--force] / prune
-  /auth                 Show stored credentials  [live]
+  /auth                 Show stored credentials (+ multi-account)  [live]
+  /accounts [switch|…]  Multi-account list/switch/remove/auto-switch  [live]
   /doctor               Environment health check  [live]
   /quit                 Exit  [live — aborts run then exits]
 

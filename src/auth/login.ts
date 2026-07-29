@@ -8,6 +8,8 @@ import {
   upsertOAuth,
   clearCredential,
   listCredentials,
+  listAccountSummaries,
+  getAutoSwitchSettings,
 } from "./store.js";
 import type { ProviderId } from "../config/types.js";
 import { log } from "../util/log.js";
@@ -97,8 +99,17 @@ export async function loginInteractive(opts: {
   provider: ProviderId | string;
   method?: LoginMethod;
   apiKey?: string;
-}): Promise<void> {
+  /**
+   * When true, always create a new account slot even if the same provider
+   * already has credentials (multi-account). Identity match still updates
+   * the same email when known.
+   */
+  addAccount?: boolean;
+  /** Optional display label for API-key accounts. */
+  accountLabel?: string;
+}): Promise<{ accountId?: string; created?: boolean }> {
   const provider = String(opts.provider);
+  const forceNew = Boolean(opts.addAccount);
   // Copilot has no browser redirect OAuth — default to device code.
   const method =
     opts.method ??
@@ -123,7 +134,8 @@ export async function loginInteractive(opts: {
     if (provider === "copilot") {
       // GitHub OAuth tokens must be exchanged for a Copilot session token.
       const result = await storeCopilotFromGitHubToken(key, {
-        label: "api-key-paste",
+        label: opts.accountLabel || "api-key-paste",
+        forceNew,
       });
       log.success(
         `Stored GitHub Copilot session` +
@@ -131,25 +143,30 @@ export async function loginInteractive(opts: {
             ? ` (expires ${new Date(result.expiresAt * 1000).toISOString()})`
             : ""),
       );
-      return;
+      return { accountId: result.accountId, created: result.created };
     }
-    upsertApiKey(provider, key);
-    log.success(`Stored API key for ${provider} in ~/.forge/auth.json`);
-    return;
+    const label =
+      opts.accountLabel?.trim() ||
+      (forceNew ? `api-key-${Date.now().toString(36)}` : "api-key");
+    const r = upsertApiKey(provider, key, label, { forceNew });
+    log.success(
+      r.created
+        ? `Added API key account for ${provider} (${r.accountId})`
+        : `Updated API key for ${provider} (${r.accountId})`,
+    );
+    return r;
   }
 
   if (method === "device") {
-    await deviceCodeLogin(provider);
-    return;
+    return deviceCodeLogin(provider, { forceNew });
   }
 
   // Copilot: browser OAuth not registered — force device.
   if (provider === "copilot") {
-    await deviceCodeLogin(provider);
-    return;
+    return deviceCodeLogin(provider, { forceNew });
   }
 
-  await browserOAuthLogin(provider);
+  return browserOAuthLogin(provider, { forceNew });
 }
 
 async function exchangeAuthorizationCode(opts: {
@@ -158,7 +175,8 @@ async function exchangeAuthorizationCode(opts: {
   code: string;
   redirectUri: string;
   verifier: string;
-}): Promise<void> {
+  forceNew?: boolean;
+}): Promise<{ accountId: string; created: boolean }> {
   const { provider, profile, code, redirectUri, verifier } = opts;
   const body = new URLSearchParams({
     grant_type: "authorization_code",
@@ -199,33 +217,43 @@ async function exchangeAuthorizationCode(opts: {
   }
 
   const email = emailFromIdToken(json.id_token);
-  upsertOAuth(provider, {
+  const accountLabel = email
+    ? `grok:${email}`
+    : provider === "xai"
+      ? "grok:supergrok-oidc"
+      : profile.label;
+  // forceNew with a known email still updates that identity (same subscription);
+  // forceNew only matters when identity is unknown or differs.
+  const r = upsertOAuth(provider, {
     accessToken: json.access_token,
     refreshToken: json.refresh_token,
     expiresAt: json.expires_in ? nowEpoch() + json.expires_in : undefined,
     clientId: profile.clientId,
     method: "subscription",
     subscription: profile.label,
-    accountLabel: email
-      ? `grok:${email}`
-      : provider === "xai"
-        ? "grok:supergrok-oidc"
-        : profile.label,
+    accountLabel,
+    forceNew: opts.forceNew && !email,
   });
   log.success(
-    `Logged in to ${provider} via SuperGrok/OIDC` +
-      (email ? ` (${email})` : ""),
+    (r.created ? `Added account on ${provider}` : `Logged in to ${provider}`) +
+      ` via SuperGrok/OIDC` +
+      (email ? ` (${email})` : "") +
+      ` [${r.accountId}]`,
   );
   if (json.expires_in) {
     const hours = json.expires_in / 3600;
     log.dim(
       `Access token ~${hours.toFixed(1)}h; refresh_token stored for long sessions. ` +
-        `Multi-day unattended: forge login --api-key`,
+        `Multi-day unattended: forge login --api-key · multi-account: forge login --add`,
     );
   }
+  return r;
 }
 
-async function browserOAuthLogin(provider: string): Promise<void> {
+async function browserOAuthLogin(
+  provider: string,
+  opts?: { forceNew?: boolean },
+): Promise<{ accountId?: string; created?: boolean }> {
   const profile = OAUTH_PROFILES[provider];
   if (!profile) {
     throw new Error(
@@ -346,12 +374,13 @@ async function browserOAuthLogin(provider: string): Promise<void> {
   }
 
   try {
-    await exchangeAuthorizationCode({
+    return await exchangeAuthorizationCode({
       provider,
       profile,
       code,
       redirectUri,
       verifier,
+      forceNew: opts?.forceNew,
     });
   } catch (err) {
     log.warn((err as Error).message);
@@ -362,7 +391,11 @@ async function browserOAuthLogin(provider: string): Promise<void> {
       throw err;
     }
     log.info(`Falling back to API key paste for ${provider}.`);
-    await loginInteractive({ provider, method: "api_key" });
+    return loginInteractive({
+      provider,
+      method: "api_key",
+      addAccount: opts?.forceNew,
+    });
   }
 }
 
@@ -371,7 +404,10 @@ async function browserOAuthLogin(provider: string): Promise<void> {
  * SuperGrok: https://auth.x.ai/oauth2/device/code
  * Copilot:   https://github.com/login/device/code (JSON body)
  */
-async function deviceCodeLogin(provider: string): Promise<void> {
+async function deviceCodeLogin(
+  provider: string,
+  opts?: { forceNew?: boolean },
+): Promise<{ accountId?: string; created?: boolean }> {
   const profile = OAUTH_PROFILES[provider];
   if (!profile) {
     throw new Error(`No device-code profile for ${provider}. Use --api-key.`);
@@ -429,8 +465,11 @@ async function deviceCodeLogin(provider: string): Promise<void> {
       );
     }
     log.warn("Falling back to API key.");
-    await loginInteractive({ provider, method: "api_key" });
-    return;
+    return loginInteractive({
+      provider,
+      method: "api_key",
+      addAccount: opts?.forceNew,
+    });
   }
 
   const dc = (await start.json()) as {
@@ -493,6 +532,7 @@ async function deviceCodeLogin(provider: string): Promise<void> {
       if (isCopilot) {
         const result = await storeCopilotFromGitHubToken(json.access_token, {
           label: "device-oauth",
+          forceNew: opts?.forceNew,
         });
         log.success(
           `Device login complete for GitHub Copilot` +
@@ -500,27 +540,30 @@ async function deviceCodeLogin(provider: string): Promise<void> {
               ? ` (session expires ${new Date(result.expiresAt * 1000).toISOString()})`
               : ""),
         );
-        return;
+        return { accountId: result.accountId, created: result.created };
       }
       const email = emailFromIdToken(json.id_token);
-      upsertOAuth(provider, {
+      const accountLabel = email
+        ? `grok:${email}`
+        : provider === "xai"
+          ? "grok:supergrok-device"
+          : profile.label;
+      const r = upsertOAuth(provider, {
         accessToken: json.access_token,
         refreshToken: json.refresh_token,
         expiresAt: json.expires_in ? nowEpoch() + json.expires_in : undefined,
         clientId: profile.clientId,
         method: "subscription",
         subscription: profile.label,
-        accountLabel: email
-          ? `grok:${email}`
-          : provider === "xai"
-            ? "grok:supergrok-device"
-            : profile.label,
+        accountLabel,
+        forceNew: opts?.forceNew && !email,
       });
       log.success(
         `Device login complete for ${provider}` +
-          (email ? ` (${email})` : ""),
+          (email ? ` (${email})` : "") +
+          ` [${r.accountId}]`,
       );
-      return;
+      return r;
     }
     if (json.error === "authorization_pending" || json.error === "slow_down") {
       continue;
@@ -545,19 +588,39 @@ export function logout(provider?: string): void {
 }
 
 export function printAuthStatus(): void {
-  const creds = listCredentials();
-  if (creds.length === 0) {
+  const accounts = listAccountSummaries();
+  if (accounts.length === 0) {
     log.info("No stored credentials. Run: forge login");
     return;
   }
-  for (const c of creds) {
-    const exp = c.expiresAt
-      ? c.expiresAt < nowEpoch()
-        ? " (EXPIRED)"
-        : ` (expires ${new Date(c.expiresAt * 1000).toISOString()})`
-      : "";
+  const settings = getAutoSwitchSettings();
+  console.log(
+    `  Auto-switch: ${settings.autoSwitch ? "on" : "off"}  (threshold ${settings.switchThresholdPercent}% used)`,
+  );
+  for (const c of accounts) {
+    const mark = c.active ? "*" : " ";
+    const exp = c.expired
+      ? " (EXPIRED)"
+      : c.expiresAt
+        ? ` (expires ${c.expiresAt})`
+        : "";
+    const flags: string[] = [];
+    if (c.disabled) flags.push("disabled");
+    if (c.cooldownUntil && Date.parse(c.cooldownUntil) > Date.now()) {
+      flags.push("cooldown");
+    }
+    if (typeof c.lastPlanPercent === "number") {
+      flags.push(`${c.lastPlanPercent}% used`);
+    }
+    if (c.priority) flags.push(`prio=${c.priority}`);
+    const flagStr = flags.length ? ` [${flags.join(", ")}]` : "";
     console.log(
-      `  ${c.provider.padEnd(12)} ${c.method.padEnd(12)} ${c.accountLabel || c.subscription || ""}${exp}`,
+      `${mark} ${c.provider.padEnd(12)} ${c.method.padEnd(12)} ${(c.accountLabel || c.subscription || "").padEnd(28)} ${c.id}${exp}${flagStr}`,
+    );
+  }
+  if (accounts.length > 1) {
+    console.log(
+      "  * = active  ·  forge accounts list|switch|remove  ·  forge login --add",
     );
   }
 }

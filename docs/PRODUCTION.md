@@ -22,10 +22,14 @@ forge models -p xai --json   # filter catalog; empty/invalid -p → invalid_prov
 # aliases: -p claude|gpt|gemini · --sandbox readonly|ro · --permission-mode deny|yolo
 forge status --watch --json # single-shot (no hang); omit --json for live TTY loop
 forge login                  # SuperGrok OIDC (browser) · --device · --from-grok · --from-copilot · --api-key
+forge login --add            # add another account for the same provider (multi-account)
 forge login --from-copilot   # reuse local GitHub Copilot CLI / VS Code session
 forge login -p copilot       # local import, then GitHub device code
-forge auth                   # status + refresh OAuth if needed
-forge auth --json            # CI: {ok,authenticated,active,stored[]} — never tokens; ok:false + exit 1 when unauthenticated
+forge auth                   # status + multi-account table + refresh OAuth if needed
+forge auth --json            # CI: {ok,authenticated,active,accounts[],stored[]} — never tokens; ok:false + exit 1 when unauthenticated
+forge accounts list --json   # multi-account inventory (autoSwitch + threshold)
+forge accounts switch <id|label>  # set active account; /accounts in REPL
+forge accounts auto-switch on --threshold 90  # smart switch on low plan usage / 429
 forge login --api-key "$KEY" --json   # CI login (no interactive prompt)
 forge logout --json          # CI clear stored creds
 eval "$(forge completion bash)"   # optional shell completions

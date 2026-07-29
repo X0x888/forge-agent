@@ -43,6 +43,7 @@ export {
   logout,
   supportsOAuth,
   getOAuthProfile,
+  printAuthStatus,
 } from "./auth/login.js";
 export { importGrokCredentials, readGrokXaiSession } from "./auth/import-grok.js";
 export {
@@ -59,6 +60,43 @@ export {
   refreshCredentialIfNeeded,
   isAuthFailureMessage,
 } from "./auth/refresh.js";
+export {
+  listAccounts,
+  listAccountSummaries,
+  getActiveAccount,
+  setActiveAccount,
+  removeAccount,
+  upsertAccount,
+  upsertApiKey,
+  upsertOAuth,
+  getAutoSwitchSettings,
+  setAutoSwitchSettings,
+  resolveAccountSelector,
+  loadAuthStore,
+  saveAuthStore,
+  normalizeAuthStore,
+} from "./auth/store.js";
+export {
+  switchAccount,
+  switchOnQuotaFailure,
+  maybeProactiveSwitch,
+  isQuotaOrRateLimitError,
+  formatAccountsTable,
+  pickAlternateAccount,
+  rankAccount,
+  recordAccountPlan,
+  DEFAULT_COOLDOWN_SEC,
+} from "./auth/accounts.js";
+export type {
+  AccountCredential,
+  AccountSummary,
+  AccountPlanSnapshot,
+  AuthStore,
+  AuthStoreV2,
+  ResolvedAuth,
+  StoredCredential,
+  AuthMethod,
+} from "./auth/types.js";
 export { createProvider } from "./providers/factory.js";
 export { mapAnthropicStopReason } from "./providers/anthropic.js";
 export { runAgentLoop, resolveMaxTurns } from "./agent/loop.js";

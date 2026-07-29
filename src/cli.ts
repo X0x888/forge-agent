@@ -31,9 +31,22 @@ import { resolveAuth, resolveAuthFresh, describeAuth } from "./auth/resolve.js";
 import { loginInteractive, logout, printAuthStatus, supportsOAuth } from "./auth/login.js";
 import {
   listCredentials,
+  listAccountSummaries,
   clearCredential,
   upsertApiKey,
+  removeAccount,
+  setAccountDisabled,
+  setAccountPriority,
+  setAccountLabel,
+  getAutoSwitchSettings,
+  setAutoSwitchSettings,
+  resolveAccountSelector,
+  getActiveAccount,
 } from "./auth/store.js";
+import {
+  formatAccountsTable,
+  switchAccount,
+} from "./auth/accounts.js";
 import { importGrokCredentials } from "./auth/import-grok.js";
 import { importLocalCopilotCredentials } from "./auth/copilot.js";
 import { createProvider } from "./providers/factory.js";
@@ -880,6 +893,14 @@ Docs: docs/PRODUCTION.md
       "Browser SuperGrok / OIDC (default for xai; same public client as Grok CLI)",
     )
     .option("--device", "Device-code flow (headless SSH / remote)")
+    .option(
+      "--add",
+      "Add another account for this provider (keep existing; multi-account)",
+    )
+    .option(
+      "--label <label>",
+      "Display label for API-key accounts (or rename identity hint)",
+    )
     .option("--json", "Machine-readable JSON (never includes tokens)")
     .action(async (opts, command) => {
       await ensureHome();
@@ -969,6 +990,8 @@ Docs: docs/PRODUCTION.md
               method: "from_grok",
               provider: "xai",
               accountLabel: result.email ? `grok:${result.email}` : null,
+              accountId: result.accountId || null,
+              created: result.created ?? null,
               expiresAt: result.expiresAt
               ? new Date(result.expiresAt * 1000).toISOString()
               : null,
@@ -1019,6 +1042,8 @@ Docs: docs/PRODUCTION.md
               method: "from_copilot",
               provider: "copilot",
               accountLabel: result.login ? `copilot:${result.login}` : null,
+              accountId: result.accountId || null,
+              created: result.created ?? null,
               source: result.source || null,
               expiresAt: result.expiresAt
                 ? new Date(result.expiresAt * 1000).toISOString()
@@ -1095,30 +1120,52 @@ Docs: docs/PRODUCTION.md
               label: "api-key-json",
             });
           } else {
-            upsertApiKey(provider, apiKeyValue);
+            upsertApiKey(
+              provider,
+              apiKeyValue,
+              typeof opts.label === "string" && opts.label.trim()
+                ? opts.label.trim()
+                : opts.add
+                  ? `api-key-${Date.now().toString(36)}`
+                  : "api-key",
+              { forceNew: Boolean(opts.add) },
+            );
           }
           try {
             savePreferences({ provider });
           } catch {
             /* preferences are best-effort */
           }
+          const active = getActiveAccount(provider);
           emitOkJson({
             forgeHome: forgeHome(),
             method: "api_key",
             provider,
+            accountId: active?.id || null,
+            accountLabel: active?.accountLabel || null,
             // never echo the key
           });
           return;
         }
-        await loginInteractive({
+        const loginResult = await loginInteractive({
           provider,
           method,
           apiKey: apiKeyValue || undefined,
+          addAccount: Boolean(opts.add),
+          accountLabel:
+            typeof opts.label === "string" && opts.label.trim()
+              ? opts.label.trim()
+              : undefined,
         });
         try {
           savePreferences({ provider });
         } catch {
           /* preferences are best-effort */
+        }
+        if (loginResult?.created && !wantJson) {
+          log.dim(
+            `Multi-account: forge accounts list · forge accounts switch <id> · forge auth`,
+          );
         }
       } catch (err) {
         if (provider === "xai" && method === "oauth" && !wantJson) {
@@ -1254,45 +1301,48 @@ Docs: docs/PRODUCTION.md
       const config = loadConfig();
       const auth = await resolveAuthFresh(config);
       if (flagJson(opts, command)) {
-        const { nowEpoch } = await import("./util/fs.js");
-        const now = nowEpoch();
-        const creds = listCredentials().map((c) => {
-          const expired =
-            typeof c.expiresAt === "number" ? c.expiresAt < now : false;
-          return {
-            provider: c.provider,
-            method: c.method,
-            accountLabel: c.accountLabel || null,
-            subscription: c.subscription || null,
-            expiresAt: c.expiresAt
-              ? new Date(c.expiresAt * 1000).toISOString()
-              : null,
-            expired,
-            // Never dump accessToken / refreshToken / clientId
-          };
-        });
+        const accounts = listAccountSummaries();
+        const settings = getAutoSwitchSettings();
         const authenticated = Boolean(auth);
+        // Legacy `stored` = one row per active provider (backward compatible)
+        const stored = listCredentials().map((c) => ({
+          provider: c.provider,
+          method: c.method,
+          accountLabel: c.accountLabel || null,
+          subscription: c.subscription || null,
+          expiresAt: c.expiresAt
+            ? new Date(c.expiresAt * 1000).toISOString()
+            : null,
+          expired:
+            typeof c.expiresAt === "number"
+              ? c.expiresAt < Math.floor(Date.now() / 1000)
+              : false,
+        }));
         const payload = {
           authenticated,
           forgeHome: forgeHome(),
           configProvider: config.provider,
+          autoSwitch: settings.autoSwitch,
+          switchThresholdPercent: settings.switchThresholdPercent,
           active: auth
             ? {
                 provider: auth.provider,
                 method: auth.method,
                 accountLabel: auth.accountLabel || null,
+                accountId: auth.accountId || null,
                 baseUrl: auth.baseUrl || null,
                 // token intentionally omitted
               }
             : null,
           description: describeAuth(auth),
-          stored: creds,
+          accounts,
+          stored,
           ...(!authenticated
             ? {
                 reason: "unauthenticated",
                 error:
                   "Not authenticated. Run forge login --api-key $KEY --json (CI) or forge login (interactive), or set an API key env var.",
-                hint: "forge login --api-key $KEY --json  ·  forge login  ·  set XAI_API_KEY / ANTHROPIC_API_KEY / …",
+                hint: "forge login --api-key $KEY --json  ·  forge login  ·  forge accounts list  ·  set XAI_API_KEY / ANTHROPIC_API_KEY / …",
               }
             : {}),
         };
@@ -1306,6 +1356,357 @@ Docs: docs/PRODUCTION.md
       console.log(`\nActive resolution: ${describeAuth(auth)}`);
       if (!auth) process.exitCode = 1;
     });
+
+  // ── Multi-account management ─────────────────────────────────────────────
+  const accountsCmd = program
+    .command("accounts")
+    .alias("account")
+    .description(
+      "Manage multi-account logins (list, switch, remove, auto-switch)",
+    )
+    .option("--json", "Machine-readable JSON (never includes tokens)");
+
+  accountsCmd
+    .command("list")
+    .description("List all stored accounts (default)")
+    .option("-p, --provider <provider>", "Filter by provider")
+    .option("--json", "Machine-readable JSON")
+    .action((opts, command) => {
+      const wantJson = flagJson(opts, command) || flagJson(accountsCmd.opts(), accountsCmd);
+      const providerRaw =
+        typeof opts.provider === "string" ? opts.provider.trim() : "";
+      let provider: string | undefined;
+      if (providerRaw) {
+        const norm = normalizeProviderId(providerRaw);
+        if (!norm.ok) {
+          failInvalidFlag(
+            "invalid_provider",
+            `Invalid --provider "${providerRaw}". Use ${providerIdHelp()}.`,
+            { provider: providerRaw },
+            { json: wantJson },
+          );
+        }
+        provider = norm.provider;
+      }
+      const accounts = listAccountSummaries(provider);
+      const settings = getAutoSwitchSettings();
+      if (wantJson) {
+        emitOkJson({
+          forgeHome: forgeHome(),
+          autoSwitch: settings.autoSwitch,
+          switchThresholdPercent: settings.switchThresholdPercent,
+          accounts,
+          count: accounts.length,
+        });
+        return;
+      }
+      console.log(formatAccountsTable(provider));
+    });
+
+  accountsCmd
+    .command("switch")
+    .description("Set the active account for its provider")
+    .argument("<selector>", "Account id, label, email, or provider:N")
+    .option("-p, --provider <provider>", "Disambiguate by provider")
+    .option("--json", "Machine-readable JSON")
+    .action((selector: string, opts, command) => {
+      const wantJson = flagJson(opts, command);
+      const providerRaw =
+        typeof opts.provider === "string" ? opts.provider.trim() : "";
+      let provider: string | undefined;
+      if (providerRaw) {
+        const norm = normalizeProviderId(providerRaw);
+        if (!norm.ok) {
+          failInvalidFlag(
+            "invalid_provider",
+            `Invalid --provider "${providerRaw}".`,
+            { provider: providerRaw },
+            { json: wantJson },
+          );
+        }
+        provider = norm.provider;
+      }
+      const hit = resolveAccountSelector(selector, provider);
+      if (!hit.ok) {
+        if (wantJson) {
+          emitFailJson({
+            reason: "account_not_found",
+            error: hit.error,
+            matches: hit.matches || null,
+          });
+        } else {
+          log.error(hit.error);
+          if (hit.matches?.length) {
+            for (const m of hit.matches) {
+              console.log(`  ${m.id}  ${m.accountLabel || ""}`);
+            }
+          }
+        }
+        process.exitCode = 1;
+        return;
+      }
+      const r = switchAccount(String(hit.account.provider), {
+        toId: hit.account.id,
+        reason: "manual",
+      });
+      if (!r.switched) {
+        if (wantJson) {
+          emitFailJson({ reason: "switch_failed", error: r.reason });
+        } else {
+          log.error(r.reason || "switch failed");
+        }
+        process.exitCode = 1;
+        return;
+      }
+      try {
+        savePreferences({ provider: hit.account.provider as ProviderId });
+      } catch {
+        /* */
+      }
+      if (wantJson) {
+        emitOkJson({
+          forgeHome: forgeHome(),
+          switched: true,
+          fromId: r.fromId || null,
+          toId: r.toId || null,
+          toLabel: r.toLabel || null,
+          provider: hit.account.provider,
+        });
+        return;
+      }
+      log.success(
+        `Active ${hit.account.provider} account → ${r.toLabel || r.toId}`,
+      );
+    });
+
+  accountsCmd
+    .command("remove")
+    .alias("rm")
+    .description("Remove one stored account")
+    .argument("<selector>", "Account id, label, email, or provider:N")
+    .option("-p, --provider <provider>", "Disambiguate by provider")
+    .option("--json", "Machine-readable JSON")
+    .action((selector: string, opts, command) => {
+      const wantJson = flagJson(opts, command);
+      const providerRaw =
+        typeof opts.provider === "string" ? opts.provider.trim() : "";
+      let provider: string | undefined;
+      if (providerRaw) {
+        const norm = normalizeProviderId(providerRaw);
+        provider = norm.ok ? norm.provider : providerRaw;
+      }
+      const hit = resolveAccountSelector(selector, provider);
+      if (!hit.ok) {
+        if (wantJson) {
+          emitFailJson({ reason: "account_not_found", error: hit.error });
+        } else {
+          log.error(hit.error);
+        }
+        process.exitCode = 1;
+        return;
+      }
+      const summary = {
+        id: hit.account.id,
+        provider: hit.account.provider,
+        accountLabel: hit.account.accountLabel || null,
+      };
+      removeAccount(hit.account.id);
+      if (wantJson) {
+        emitOkJson({ forgeHome: forgeHome(), removed: summary });
+        return;
+      }
+      log.success(`Removed account ${summary.id}`);
+    });
+
+  accountsCmd
+    .command("rename")
+    .description("Set display label for an account")
+    .argument("<selector>", "Account id or label")
+    .argument("<label>", "New display label")
+    .option("--json", "Machine-readable JSON")
+    .action((selector: string, label: string, opts, command) => {
+      const wantJson = flagJson(opts, command);
+      const hit = resolveAccountSelector(selector);
+      if (!hit.ok) {
+        if (wantJson) {
+          emitFailJson({ reason: "account_not_found", error: hit.error });
+        } else {
+          log.error(hit.error);
+        }
+        process.exitCode = 1;
+        return;
+      }
+      setAccountLabel(hit.account.id, label);
+      if (wantJson) {
+        emitOkJson({
+          forgeHome: forgeHome(),
+          id: hit.account.id,
+          accountLabel: label.trim(),
+        });
+        return;
+      }
+      log.success(`Renamed ${hit.account.id} → ${label.trim()}`);
+    });
+
+  accountsCmd
+    .command("priority")
+    .description("Set auto-switch priority (higher = preferred)")
+    .argument("<selector>", "Account id or label")
+    .argument("<n>", "Priority integer (e.g. 10)")
+    .option("--json", "Machine-readable JSON")
+    .action((selector: string, nRaw: string, opts, command) => {
+      const wantJson = flagJson(opts, command);
+      const n = Number.parseInt(String(nRaw), 10);
+      if (!Number.isFinite(n)) {
+        failInvalidFlag(
+          "invalid_priority",
+          `Priority must be an integer (got "${nRaw}")`,
+          { priority: nRaw },
+          { json: wantJson },
+        );
+      }
+      const hit = resolveAccountSelector(selector);
+      if (!hit.ok) {
+        if (wantJson) {
+          emitFailJson({ reason: "account_not_found", error: hit.error });
+        } else {
+          log.error(hit.error);
+        }
+        process.exitCode = 1;
+        return;
+      }
+      setAccountPriority(hit.account.id, n);
+      if (wantJson) {
+        emitOkJson({
+          forgeHome: forgeHome(),
+          id: hit.account.id,
+          priority: n,
+        });
+        return;
+      }
+      log.success(`Priority for ${hit.account.id} → ${n}`);
+    });
+
+  accountsCmd
+    .command("disable")
+    .description("Disable an account (excluded from resolve/auto-switch)")
+    .argument("<selector>", "Account id or label")
+    .option("--json", "Machine-readable JSON")
+    .action((selector: string, opts, command) => {
+      const wantJson = flagJson(opts, command);
+      const hit = resolveAccountSelector(selector);
+      if (!hit.ok) {
+        if (wantJson) {
+          emitFailJson({ reason: "account_not_found", error: hit.error });
+        } else {
+          log.error(hit.error);
+        }
+        process.exitCode = 1;
+        return;
+      }
+      setAccountDisabled(hit.account.id, true);
+      if (wantJson) {
+        emitOkJson({ forgeHome: forgeHome(), id: hit.account.id, disabled: true });
+        return;
+      }
+      log.success(`Disabled ${hit.account.id}`);
+    });
+
+  accountsCmd
+    .command("enable")
+    .description("Re-enable a disabled account")
+    .argument("<selector>", "Account id or label")
+    .option("--json", "Machine-readable JSON")
+    .action((selector: string, opts, command) => {
+      const wantJson = flagJson(opts, command);
+      const hit = resolveAccountSelector(selector);
+      if (!hit.ok) {
+        if (wantJson) {
+          emitFailJson({ reason: "account_not_found", error: hit.error });
+        } else {
+          log.error(hit.error);
+        }
+        process.exitCode = 1;
+        return;
+      }
+      setAccountDisabled(hit.account.id, false);
+      if (wantJson) {
+        emitOkJson({ forgeHome: forgeHome(), id: hit.account.id, disabled: false });
+        return;
+      }
+      log.success(`Enabled ${hit.account.id}`);
+    });
+
+  accountsCmd
+    .command("auto-switch")
+    .description("Configure smart account switching on low usage / rate-limit")
+    .argument("[mode]", "on | off | status (default: status)")
+    .option(
+      "--threshold <percent>",
+      "Proactive switch when plan used% ≥ this (0–100)",
+    )
+    .option("--json", "Machine-readable JSON")
+    .action((modeRaw: string | undefined, opts, command) => {
+      const wantJson = flagJson(opts, command);
+      const mode = (modeRaw || "status").trim().toLowerCase();
+      if (mode === "on" || mode === "off" || mode === "enable" || mode === "disable") {
+        setAutoSwitchSettings({
+          autoSwitch: mode === "on" || mode === "enable",
+        });
+      } else if (mode !== "status" && mode !== "show" && mode !== "") {
+        failInvalidFlag(
+          "invalid_mode",
+          `Unknown auto-switch mode "${modeRaw}". Use on|off|status.`,
+          { mode: modeRaw },
+          { json: wantJson },
+        );
+      }
+      if (opts.threshold != null && opts.threshold !== "") {
+        const t = Number(opts.threshold);
+        if (!Number.isFinite(t) || t < 0 || t > 100) {
+          failInvalidFlag(
+            "invalid_threshold",
+            `Threshold must be 0–100 (got "${opts.threshold}")`,
+            { threshold: opts.threshold },
+            { json: wantJson },
+          );
+        }
+        setAutoSwitchSettings({ switchThresholdPercent: t });
+      }
+      const settings = getAutoSwitchSettings();
+      if (wantJson) {
+        emitOkJson({
+          forgeHome: forgeHome(),
+          autoSwitch: settings.autoSwitch,
+          switchThresholdPercent: settings.switchThresholdPercent,
+        });
+        return;
+      }
+      log.info(
+        `Auto-switch: ${settings.autoSwitch ? "on" : "off"}  threshold: ${settings.switchThresholdPercent}% used`,
+      );
+      log.dim(
+        "When on: switches to another same-provider account on rate-limit/quota or when plan usage ≥ threshold.",
+      );
+    });
+
+  // Default action for bare `forge accounts`
+  accountsCmd.action((opts) => {
+    const wantJson = Boolean(opts?.json);
+    const accounts = listAccountSummaries();
+    const settings = getAutoSwitchSettings();
+    if (wantJson) {
+      emitOkJson({
+        forgeHome: forgeHome(),
+        autoSwitch: settings.autoSwitch,
+        switchThresholdPercent: settings.switchThresholdPercent,
+        accounts,
+        count: accounts.length,
+      });
+      return;
+    }
+    console.log(formatAccountsTable());
+  });
 
   program
     .command("sessions")
@@ -3476,6 +3877,7 @@ const TOP_LEVEL_COMMANDS = [
   "login",
   "logout",
   "auth",
+  "accounts",
   "sessions",
   "init",
   "models",
@@ -3508,6 +3910,7 @@ const TOP_LEVEL_ALIASES: Record<string, (typeof TOP_LEVEL_COMMANDS)[number]> = {
   whatsnew: "news",
   hud: "status",
   whoami: "auth",
+  account: "accounts",
   diagnose: "doctor",
   tip: "tips",
   cheatsheet: "tips",

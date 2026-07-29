@@ -21,7 +21,7 @@ Binary entry: `src/cli.ts` → `dist/cli.js` (`bin: forge`).
 - `src/harness/` — hooks, goal, stop-guard (do not weaken blocking Stop defaults)
 - `src/agent/` — loop, tools, permissions
 - `src/providers/` — LLM clients
-- `src/auth/` — credentials (never log tokens)
+- `src/auth/` — multi-account credentials (never log tokens); `accounts.ts` smart switch; auth.json v2
 - `src/statusline/` — provider-agnostic HUD (`forge status`); never invent plan metrics
 - `src/harness/ulw-cycle.ts` — ULW cycle flag 1/0; soft prompts expand to god-scope; Stop blocks while cycle=1
 - `src/harness/context-admit.ts` — mid-conversation harness admissions (stable system + live counters)

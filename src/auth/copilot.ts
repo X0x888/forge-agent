@@ -84,6 +84,8 @@ export interface CopilotImportResult {
   expiresAt?: number;
   reason?: string;
   source?: string;
+  accountId?: string;
+  created?: boolean;
 }
 
 /**
@@ -438,7 +440,10 @@ export async function importLocalCopilotCredentials(): Promise<CopilotImportResu
     };
   }
 
-  upsertOAuth(COPILOT_PROVIDER_ID, {
+  const accountLabel = local.login
+    ? `copilot:${local.login}`
+    : `copilot:${local.source}`;
+  const r = upsertOAuth(COPILOT_PROVIDER_ID, {
     accessToken: session.token,
     // Keep the original GitHub OAuth token for re-resolve / re-exchange.
     refreshToken: local.token,
@@ -449,9 +454,7 @@ export async function importLocalCopilotCredentials(): Promise<CopilotImportResu
       session.mode === "direct_github"
         ? "GitHub Copilot (CLI token)"
         : "GitHub Copilot",
-    accountLabel: local.login
-      ? `copilot:${local.login}`
-      : `copilot:${local.source}`,
+    accountLabel,
   });
 
   return {
@@ -459,6 +462,8 @@ export async function importLocalCopilotCredentials(): Promise<CopilotImportResu
     login: local.login,
     expiresAt: session.expiresAt,
     source: local.source,
+    accountId: r.accountId,
+    created: r.created,
   };
 }
 
@@ -467,10 +472,13 @@ export async function importLocalCopilotCredentials(): Promise<CopilotImportResu
  */
 export async function storeCopilotFromGitHubToken(
   githubToken: string,
-  opts?: { login?: string; label?: string },
+  opts?: { login?: string; label?: string; forceNew?: boolean },
 ): Promise<CopilotImportResult> {
   const session = await resolveCopilotSessionToken(githubToken);
-  upsertOAuth(COPILOT_PROVIDER_ID, {
+  const accountLabel = opts?.login
+    ? `copilot:${opts.login}`
+    : opts?.label || "copilot:subscription";
+  const r = upsertOAuth(COPILOT_PROVIDER_ID, {
     accessToken: session.token,
     refreshToken: githubToken,
     expiresAt: session.expiresAt,
@@ -480,15 +488,16 @@ export async function storeCopilotFromGitHubToken(
       session.mode === "direct_github"
         ? "GitHub Copilot (CLI token)"
         : "GitHub Copilot",
-    accountLabel: opts?.login
-      ? `copilot:${opts.login}`
-      : opts?.label || "copilot:subscription",
+    accountLabel,
+    forceNew: opts?.forceNew && !opts?.login,
   });
   return {
     imported: true,
     login: opts?.login,
     expiresAt: session.expiresAt,
     source: opts?.label || "oauth",
+    accountId: r.accountId,
+    created: r.created,
   };
 }
 

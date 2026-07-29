@@ -157,6 +157,8 @@ export function sessionToSnapshot(
     windowTokens?: number;
     authMethod?: AuthMethod;
     authLabel?: string;
+    accountId?: string;
+    accountCount?: number;
     permissionMode?: string;
   } = {},
 ): StatusSnapshot {
@@ -220,6 +222,8 @@ export function sessionToSnapshot(
     model: meta.model,
     authMethod: opts.authMethod || "unknown",
     authLabel: opts.authLabel,
+    accountId: opts.accountId,
+    accountCount: opts.accountCount,
     createdAt: meta.createdAt,
     updatedAt: meta.updatedAt,
     durationSec: durationSec(meta.createdAt),
@@ -265,6 +269,7 @@ export async function collectSnapshots(
   const auth = resolveAuth(config);
   const authMethod = (auth?.method as AuthMethod) || "unknown";
   const authLabel = auth?.accountLabel;
+  const accountId = auth?.accountId;
 
   let sessions: SessionData[] = [];
 
@@ -301,14 +306,25 @@ export async function collectSnapshots(
     }
   }
 
+  let accountCount: number | undefined;
+  try {
+    const { listAccounts } = await import("../auth/store.js");
+    if (auth?.provider) {
+      accountCount = listAccounts(String(auth.provider)).length;
+    }
+  } catch {
+    /* optional */
+  }
+
   const snaps: StatusSnapshot[] = [];
   for (const s of sessions) {
+    const sameProvider = Boolean(auth && auth.provider === s.meta.provider);
     const snap = sessionToSnapshot(s, {
       windowTokens: config.contextWindow,
-      authMethod:
-        auth && auth.provider === s.meta.provider ? authMethod : "unknown",
-      authLabel:
-        auth && auth.provider === s.meta.provider ? authLabel : undefined,
+      authMethod: sameProvider ? authMethod : "unknown",
+      authLabel: sameProvider ? authLabel : undefined,
+      accountId: sameProvider ? accountId : undefined,
+      accountCount: sameProvider ? accountCount : undefined,
       permissionMode: config.permissionMode,
     });
 
@@ -317,6 +333,8 @@ export async function collectSnapshots(
         snap.plan = await collectPlanUsage({
           provider: s.meta.provider,
           authMethod: snap.authMethod,
+          accountId:
+            auth && auth.provider === s.meta.provider ? accountId : undefined,
         });
       } catch {
         /* plan optional */

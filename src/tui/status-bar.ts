@@ -11,6 +11,7 @@ import { resolveReasoningEffort } from "../config/reasoning.js";
 import type { SessionData } from "../session/session.js";
 import type { ResolvedAuth } from "../auth/types.js";
 import { describeAuth } from "../auth/resolve.js";
+import { listAccounts } from "../auth/store.js";
 import { loadGoal } from "../harness/goal.js";
 import {
   loadUlwCycle,
@@ -45,10 +46,18 @@ function authMethodOf(auth: ResolvedAuth): AuthMethod {
 }
 
 export function buildLiveSnapshot(ctx: StatusBarContext) {
+  let accountCount: number | undefined;
+  try {
+    accountCount = listAccounts(String(ctx.auth.provider)).length;
+  } catch {
+    /* optional */
+  }
   return sessionToSnapshot(ctx.session, {
     windowTokens: ctx.config.contextWindow,
     authMethod: authMethodOf(ctx.auth),
     authLabel: ctx.auth.accountLabel,
+    accountId: ctx.auth.accountId,
+    accountCount,
     permissionMode: ctx.config.permissionMode,
   });
 }

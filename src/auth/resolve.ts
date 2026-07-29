@@ -1,10 +1,16 @@
 import type { ForgeConfig, ProviderId } from "../config/types.js";
-import { getCredential, isExpired } from "./store.js";
+import {
+  getActiveAccount,
+  getCredential,
+  isExpired,
+  listAccounts,
+} from "./store.js";
 import type { ResolvedAuth } from "./types.js";
 import { readGrokXaiSession } from "./import-grok.js";
 import { nowEpoch } from "../util/fs.js";
 import { refreshCredentialIfNeeded } from "./refresh.js";
 import { log } from "../util/log.js";
+import { maybeProactiveSwitch, resolvedFromAccount } from "./accounts.js";
 
 const ENV_KEYS: Record<string, string[]> = {
   xai: ["XAI_API_KEY", "GROK_API_KEY"],
@@ -24,12 +30,13 @@ const ENV_KEYS: Record<string, string[]> = {
 /**
  * Resolve credentials with precedence:
  * 1. Environment API keys for the active provider
- * 2. Stored OAuth/subscription tokens (if not expired)
- * 3. Stored API keys
+ * 2. Stored OAuth/subscription tokens (active account, if not expired)
+ * 3. Stored API keys (active account)
  * 4. Live Grok Build session (~/.grok/auth.json) when provider is xai
  * 5. Any other provider env key (auto-detect)
  *
  * CI env keys always win so automation stays deterministic.
+ * Env auth never participates in multi-account auto-switch.
  */
 export function resolveAuth(
   config: ForgeConfig,
@@ -57,15 +64,27 @@ export function resolveAuth(
           token: v,
           baseUrl,
           accountLabel: `env:${name}`,
+          // no accountId — env is ephemeral, not in the multi-account store
         };
       }
     }
   }
 
-  // 2. Stored credentials
-  const cred = getCredential(provider);
-  if (cred) {
-    if (cred.method === "api_key") {
+  // 2. Stored credentials (active multi-account entry)
+  const acc = getActiveAccount(provider);
+  if (acc) {
+    if (acc.method === "api_key") {
+      return resolvedFromAccount(acc, baseUrl);
+    }
+    // OAuth / subscription
+    if (!isExpired(acc)) {
+      return resolvedFromAccount(acc, baseUrl);
+    }
+    // Expired — try live Grok session below for xai
+  } else {
+    // Legacy path via getCredential (same active account)
+    const cred = getCredential(provider);
+    if (cred?.method === "api_key") {
       return {
         provider,
         method: "api_key",
@@ -74,17 +93,6 @@ export function resolveAuth(
         accountLabel: cred.accountLabel,
       };
     }
-    // OAuth / subscription
-    if (!isExpired(cred)) {
-      return {
-        provider,
-        method: cred.method,
-        token: cred.accessToken,
-        baseUrl,
-        accountLabel: cred.accountLabel ?? cred.subscription,
-      };
-    }
-    // Expired — try live Grok session below for xai
   }
 
   // 3. Reuse Grok Build subscription session for xAI
@@ -127,7 +135,11 @@ export function resolveAuth(
 export function describeAuth(auth: ResolvedAuth | null): string {
   if (!auth) return "not authenticated";
   const label = auth.accountLabel ? ` (${auth.accountLabel})` : "";
-  return `${auth.provider} via ${auth.method}${label}`;
+  const multi =
+    auth.accountId && listAccounts(String(auth.provider)).length > 1
+      ? ` [${listAccounts(String(auth.provider)).length} accounts]`
+      : "";
+  return `${auth.provider} via ${auth.method}${label}${multi}`;
 }
 
 /**
@@ -136,9 +148,10 @@ export function describeAuth(auth: ResolvedAuth | null): string {
  *
  * Order when the stored session is stale:
  * 1. Env API keys (never expire in-process)
- * 2. OAuth refresh_token exchange (if network + client_id allow)
- * 3. Re-import a live Grok Build session from ~/.grok/auth.json (xAI)
- * 4. Fall through to resolveAuth (may still use non-expired Grok live read)
+ * 2. Proactive multi-account switch when active plan looks exhausted
+ * 3. OAuth refresh_token exchange (if network + client_id allow)
+ * 4. Re-import a live Grok Build session from ~/.grok/auth.json (xAI)
+ * 5. Fall through to resolveAuth (may still use non-expired Grok live read)
  */
 export async function resolveAuthFresh(
   config: ForgeConfig,
@@ -150,6 +163,18 @@ export async function resolveAuthFresh(
   const envFirst = resolveAuth(config, providerOverride);
   if (envFirst?.method === "api_key" && envFirst.accountLabel?.startsWith("env:")) {
     return envFirst;
+  }
+
+  // Proactive multi-account switch before refresh (skip when env wins)
+  try {
+    const switched = maybeProactiveSwitch(provider);
+    if (switched.switched) {
+      log.info(
+        `Auto-switched to account ${switched.toLabel || switched.toId} (${switched.reason})`,
+      );
+    }
+  } catch {
+    /* best-effort */
   }
 
   // Try refresh for the active provider's stored credential

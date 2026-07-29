@@ -244,7 +244,20 @@ function renderSession(
         : snap.authMethod === "api_key"
           ? "key"
           : snap.authMethod;
-    l1.push(paint(c, auth, "dim"));
+    const multi =
+      snap.accountCount && snap.accountCount > 1
+        ? `×${snap.accountCount}`
+        : "";
+    const label = snap.authLabel
+      ? shortLabel(snap.authLabel.replace(/^(grok:|copilot:|env:)/, ""), 18)
+      : "";
+    l1.push(
+      paint(
+        c,
+        label ? `${auth}:${label}${multi}` : `${auth}${multi}`,
+        "dim",
+      ),
+    );
   }
   if (snap.tags.length) {
     const tagStr = snap.tags.join(" ");
