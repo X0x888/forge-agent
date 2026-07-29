@@ -9,8 +9,8 @@ import {
   clearCredential,
   listCredentials,
   listAccountSummaries,
-  getAutoSwitchSettings,
 } from "./store.js";
+import { formatAccountsTable } from "./accounts.js";
 import type { ProviderId } from "../config/types.js";
 import { log } from "../util/log.js";
 import { nowEpoch } from "../util/fs.js";
@@ -588,41 +588,13 @@ export function logout(provider?: string): void {
 }
 
 export function printAuthStatus(): void {
+  // One consistent multi-account table with readiness (same as forge accounts).
   const accounts = listAccountSummaries();
   if (accounts.length === 0) {
     log.info("No stored credentials. Run: forge login");
     return;
   }
-  const settings = getAutoSwitchSettings();
-  console.log(
-    `  Auto-switch: ${settings.autoSwitch ? "on" : "off"}  (threshold ${settings.switchThresholdPercent}% used)`,
-  );
-  for (const c of accounts) {
-    const mark = c.active ? "*" : " ";
-    const exp = c.expired
-      ? " (EXPIRED)"
-      : c.expiresAt
-        ? ` (expires ${c.expiresAt})`
-        : "";
-    const flags: string[] = [];
-    if (c.disabled) flags.push("disabled");
-    if (c.cooldownUntil && Date.parse(c.cooldownUntil) > Date.now()) {
-      flags.push("cooldown");
-    }
-    if (typeof c.lastPlanPercent === "number") {
-      flags.push(`${c.lastPlanPercent}% used`);
-    }
-    if (c.priority) flags.push(`prio=${c.priority}`);
-    const flagStr = flags.length ? ` [${flags.join(", ")}]` : "";
-    console.log(
-      `${mark} ${c.provider.padEnd(12)} ${c.method.padEnd(12)} ${(c.accountLabel || c.subscription || "").padEnd(28)} ${c.id}${exp}${flagStr}`,
-    );
-  }
-  if (accounts.length > 1) {
-    console.log(
-      "  * = active  ·  forge accounts list|switch|remove  ·  forge login --add",
-    );
-  }
+  console.log(formatAccountsTable());
 }
 
 export function supportsOAuth(provider: string): boolean {

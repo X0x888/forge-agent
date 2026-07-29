@@ -28,10 +28,17 @@ import {
   pickAlternateAccount,
   switchAccount,
   switchOnQuotaFailure,
+  switchOnAuthFailure,
   maybeProactiveSwitch,
   isQuotaOrRateLimitError,
   recordAccountPlan,
   formatAccountsTable,
+  formatMultiAccountReadiness,
+  assessMultiAccountReadiness,
+  clearAccountCooldown,
+  isPlanFresh,
+  PLAN_STALE_SEC,
+  AUTH_FAILURE_COOLDOWN_SEC,
 } from "../src/auth/accounts.js";
 import { resolveAuth } from "../src/auth/resolve.js";
 import { loadConfig } from "../src/config/load.js";
@@ -316,5 +323,94 @@ describe("smart account switching", () => {
     const alt = pickAlternateAccount("xai", b.accountId);
     // a is in cooldown — no alternate
     assert.equal(alt, null);
+  });
+
+  it("ignores stale plan data for proactive switch", () => {
+    const a = upsertApiKey("xai", "sk-a", "a");
+    const b = upsertApiKey("xai", "sk-b", "b", { forceNew: true });
+    setAutoSwitchSettings({ autoSwitch: true, switchThresholdPercent: 90 });
+    // Stale high usage on active (b) must not trigger switch
+    recordAccountPlan(b.accountId, { percent: 99 });
+    // Backdate lastPlan.fetchedAt beyond PLAN_STALE_SEC
+    const store = loadAuthStore();
+    const acc = store.accounts[b.accountId];
+    assert.ok(acc?.lastPlan);
+    acc.lastPlan!.fetchedAt = nowEpoch() - PLAN_STALE_SEC - 60;
+    saveAuthStore(store);
+    assert.equal(isPlanFresh(acc.lastPlan), false);
+
+    const r = maybeProactiveSwitch("xai");
+    assert.equal(r.switched, false);
+    assert.equal(getActiveAccount("xai")?.id, b.accountId);
+    // Fresh high usage still switches
+    recordAccountPlan(b.accountId, { percent: 99 });
+    recordAccountPlan(a.accountId, { percent: 5 });
+    const r2 = maybeProactiveSwitch("xai");
+    assert.equal(r2.switched, true);
+    assert.equal(getActiveAccount("xai")?.id, a.accountId);
+  });
+
+  it("switchOnAuthFailure uses shorter cooldown", () => {
+    const a = upsertApiKey("xai", "sk-a", "a");
+    const b = upsertApiKey("xai", "sk-b", "b", { forceNew: true });
+    const before = nowEpoch();
+    const r = switchOnAuthFailure("xai");
+    assert.equal(r.switched, true);
+    assert.equal(r.toId, a.accountId);
+    const cooled = listAccounts("xai").find((x) => x.id === b.accountId);
+    assert.ok(cooled?.cooldownUntil);
+    // Auth failure cooldown ≈ 5 min (not 15 min quota)
+    const delta = (cooled!.cooldownUntil as number) - before;
+    assert.ok(delta <= AUTH_FAILURE_COOLDOWN_SEC + 2);
+    assert.ok(delta >= AUTH_FAILURE_COOLDOWN_SEC - 2);
+  });
+
+  it("clearAccountCooldown restores eligibility", () => {
+    const a = upsertApiKey("xai", "sk-a", "a");
+    const b = upsertApiKey("xai", "sk-b", "b", { forceNew: true });
+    setAccountCooldown(a.accountId, nowEpoch() + 3600);
+    assert.equal(pickAlternateAccount("xai", b.accountId), null);
+    const r = clearAccountCooldown("xai");
+    assert.equal(r.cleared, 1);
+    assert.equal(pickAlternateAccount("xai", b.accountId)?.id, a.accountId);
+  });
+
+  it("assessMultiAccountReadiness reports multi-ready", () => {
+    upsertApiKey("xai", "sk-a", "a");
+    upsertApiKey("xai", "sk-b", "b", { forceNew: true });
+    const r = assessMultiAccountReadiness("xai");
+    assert.equal(r.total, 2);
+    assert.equal(r.eligible, 2);
+    assert.equal(r.multiAccountReady, true);
+    assert.equal(r.autoSwitch, true);
+    const text = formatMultiAccountReadiness("xai");
+    assert.match(text, /multi-account ready|eligible/i);
+  });
+
+  it("formatAccountsTable shows readiness + relative cooldown", () => {
+    const a = upsertApiKey("xai", "sk-a", "alice");
+    upsertApiKey("xai", "sk-b", "bob", { forceNew: true });
+    setAccountCooldown(a.accountId, nowEpoch() + 900);
+    const t = formatAccountsTable("xai");
+    assert.match(t, /Auto-switch/);
+    assert.match(t, /cooldown/);
+    assert.match(t, /accounts status|login --add/i);
+  });
+
+  it("env API key blocks auto-switch (CI determinism)", () => {
+    upsertApiKey("xai", "sk-a", "a");
+    const b = upsertApiKey("xai", "sk-b", "b", { forceNew: true });
+    process.env.XAI_API_KEY = "sk-env-must-win";
+    try {
+      recordAccountPlan(b.accountId, { percent: 99 });
+      const r = maybeProactiveSwitch("xai");
+      assert.equal(r.switched, false);
+      assert.match(r.reason || "", /env/i);
+      const q = switchOnQuotaFailure("xai");
+      assert.equal(q.switched, false);
+      assert.equal(getActiveAccount("xai")?.id, b.accountId);
+    } finally {
+      delete process.env.XAI_API_KEY;
+    }
   });
 });

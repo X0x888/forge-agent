@@ -51,7 +51,9 @@ What experts should expect from Forge in long, unattended, or CI runs.
 | Behavior | Detail |
 |---|---|
 | **OAuth refresh** | `resolveAuthFresh` exchanges `refresh_token` before start when near expiry |
-| **Mid-run 401** | One forced refresh + `provider.updateCredentials` then retry chat |
+| **Mid-run 401** | Forced refresh (+ Grok re-import) + `provider.updateCredentials` then retry chat; multi-account auth-failure switch with shorter cooldown when refresh fails |
+| **Multi-account failover** | Same-provider accounts: proactive switch on high plan usage / cooldown / dead token; reactive switch on 429/quota; post-switch OAuth refresh; cap via `FORGE_ACCOUNT_SWITCH_MAX` (default 3); stale plan probes (>6h) ignored |
+| **Multi-account UX** | `forge accounts status` / `/accounts status` readiness; `clear-cooldown`; doctor surfaces eligible/cooldown; REPL `/accounts switch` hot-swaps live provider token |
 | **Sensitive JSON mode** | `auth.json`, `permissions.json`, `preferences.json` written `0600`; `/doctor` flags group/world-readable files; `forge doctor --json` exposes structured `secureFiles` (`exists` / `mode` / `modeOk`) and sets `ok: false` when any `modeOk` is false |
 | **Session lock** | REPL and `forge run` acquire `session.lock`; headless **fails closed** on a foreign live lock (exit 1) unless `FORGE_FORCE_SESSION_LOCK=1`; REPL still warns and continues; steal only dead pids or parseable age past TTL; corrupt lock JSON / invalid pid treated as absent; live pid + invalid `acquiredAt` is still held |
 | **Atomic session write** | `session.json` written via tmp+rename; load recovers newest leftover tmp after crash |
@@ -124,6 +126,8 @@ What experts should expect from Forge in long, unattended, or CI runs.
 | `FORGE_ULW_STUCK_THRESHOLD` | goal config / `5` | ULW stuck-wall blocks before release (`envPositiveInt`; invalid/0 ignored) |
 | `FORGE_GOAL_STUCK_THRESHOLD` | config `3` | Goal stuck-wall blocks before release (invalid/0 ignored — 0 would never release) |
 | `FORGE_FORCE_SESSION_LOCK` | off | Headless: force-steal / continue despite a foreign live `session.lock` |
+| `FORGE_ACCOUNT_SWITCH_MAX` | `3` | Max mid-run multi-account switches per agent loop (proactive + quota + auth) |
+| `FORGE_AUTH_RECOVERY_MAX` | `20` | Max mid-run OAuth refresh recoveries per agent loop |
 | `FORGE_JSON_COMPACT` | off | Single-line `--json` success payloads (CI log aggregation) |
 | `FORGE_LOG_JSON` | off | Structured JSON logs on stderr |
 | `FORGE_BELL` | off | `1`/`0` force turn-end terminal BEL (overrides `/bell` preference) |

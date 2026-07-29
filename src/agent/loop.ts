@@ -73,6 +73,8 @@ import { refreshCredentialIfNeeded, isAuthFailureMessage } from "../auth/refresh
 import { resolveAuth } from "../auth/resolve.js";
 import {
   isQuotaOrRateLimitError,
+  maybeProactiveSwitch,
+  switchOnAuthFailure,
   switchOnQuotaFailure,
 } from "../auth/accounts.js";
 import { isProviderApiError } from "../providers/errors.js";
@@ -542,8 +544,28 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
       }
 
       events.onPhase?.("thinking");
-      // Proactive OAuth refresh before provider call (multi-hour SuperGrok TTL).
-      // Avoids waiting for 401 mid-stream on long unattended runs.
+      // Proactive multi-account + OAuth refresh before provider call.
+      // Unattended multi-hour runs: switch exhausted accounts before chat,
+      // then renew near-expiry tokens so we never wait for a mid-stream 401.
+      try {
+        if (accountSwitchCount < maxAccountSwitches) {
+          const proactive = maybeProactiveSwitch(String(config.provider));
+          if (proactive.switched && proactive.account?.accessToken) {
+            accountSwitchCount += 1;
+            if (provider.updateCredentials) {
+              provider.updateCredentials(proactive.account.accessToken);
+            }
+            log.info(
+              `Proactive account switch → ${proactive.toLabel || proactive.toId} (${proactive.reason})`,
+            );
+            events.onStatus?.(
+              `Proactive account → ${proactive.toLabel || proactive.toId}`,
+            );
+          }
+        }
+      } catch {
+        /* never block the turn on proactive switch */
+      }
       try {
         const refreshed = await refreshCredentialIfNeeded(
           String(config.provider),
@@ -680,6 +702,50 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
 
             const updateCreds = provider.updateCredentials?.bind(provider);
 
+            /**
+             * Apply a switched account: refresh OAuth on the new slot if needed,
+             * then hot-swap the provider bearer. Returns false when unusable.
+             */
+            const applySwitchedAccount = async (
+              switched: {
+                switched: boolean;
+                account?: { accessToken?: string; id?: string };
+                toLabel?: string;
+                toId?: string;
+                reason?: string;
+              },
+              why: string,
+            ): Promise<boolean> => {
+              if (!switched.switched || !updateCreds) return false;
+              // Prefer a freshly refreshed token for the new active account
+              try {
+                const r = await refreshCredentialIfNeeded(
+                  String(config.provider),
+                  { skewSec: 600 },
+                );
+                if (r.ok && r.credential?.accessToken) {
+                  updateCreds(r.credential.accessToken);
+                } else if (switched.account?.accessToken) {
+                  updateCreds(switched.account.accessToken);
+                } else {
+                  return false;
+                }
+              } catch {
+                if (switched.account?.accessToken) {
+                  updateCreds(switched.account.accessToken);
+                } else {
+                  return false;
+                }
+              }
+              log.info(
+                `Switched to account ${switched.toLabel || switched.toId} after ${why} — retrying`,
+              );
+              events.onStatus?.(
+                `Switched account → ${switched.toLabel || switched.toId} — retrying`,
+              );
+              return true;
+            };
+
             if (
               quotaFail &&
               accountSwitchCount < maxAccountSwitches &&
@@ -690,17 +756,19 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
                 `Quota/rate-limit — trying another account (${accountSwitchCount}/${maxAccountSwitches})…`,
               );
               const switched = switchOnQuotaFailure(String(config.provider));
-              if (switched.switched && switched.account?.accessToken) {
-                updateCreds(switched.account.accessToken);
-                log.info(
-                  `Switched to account ${switched.toLabel || switched.toId} after quota/rate-limit — retrying`,
-                );
-                events.onStatus?.(
-                  `Switched account → ${switched.toLabel || switched.toId} — retrying`,
-                );
+              if (await applySwitchedAccount(switched, "quota/rate-limit")) {
                 response = await doChat();
               } else {
-                throw err;
+                const hint = switched.reason
+                  ? ` (${switched.reason})`
+                  : " — add another account: forge login --add";
+                throw new Error(
+                  `${msg}${hint.startsWith(" (") ? hint : ""}. Multi-account failover exhausted${
+                    accountSwitchCount >= maxAccountSwitches
+                      ? ` (FORGE_ACCOUNT_SWITCH_MAX=${maxAccountSwitches})`
+                      : ""
+                  }.`,
+                );
               }
             } else if (!tokenAuthFail || authRecoveryCount >= maxAuthRecoveries) {
               throw err;
@@ -726,25 +794,22 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
                   /* fall through */
                 }
               }
-              // Token still bad — try another multi-account slot once.
+              // Token still bad — try another multi-account slot (auth-failure cooldown).
               if (
                 (!auth?.token || !updateCreds) &&
                 accountSwitchCount < maxAccountSwitches &&
                 updateCreds
               ) {
                 accountSwitchCount += 1;
-                const switched = switchOnQuotaFailure(String(config.provider));
-                if (switched.switched && switched.account?.accessToken) {
-                  updateCreds(switched.account.accessToken);
-                  log.info(
-                    `Switched to account ${switched.toLabel || switched.toId} after auth failure — retrying`,
-                  );
-                  events.onStatus?.(
-                    `Switched account → ${switched.toLabel || switched.toId} — retrying`,
-                  );
+                const switched = switchOnAuthFailure(String(config.provider));
+                if (await applySwitchedAccount(switched, "auth failure")) {
                   response = await doChat();
                 } else if (!auth?.token || !updateCreds) {
-                  throw err;
+                  throw new Error(
+                    `${msg}. Auth recovery failed` +
+                      (switched.reason ? ` (${switched.reason})` : "") +
+                      ". Re-login: forge login  ·  or forge login --add",
+                  );
                 } else {
                   updateCreds(auth.token);
                   log.info(

@@ -136,6 +136,11 @@ export interface SlashResult {
   session?: SessionData;
   /** REPL should replace its session pointer */
   replaceSession?: SessionData;
+  /**
+   * REPL must hot-swap provider credentials from the mutated `opts.auth`
+   * (e.g. `/accounts switch`). Without this, live provider keeps the old token.
+   */
+  authUpdated?: boolean;
 }
 
 /**
@@ -995,8 +1000,13 @@ const stats = collectUsageStats({
 
     case "/accounts":
     case "/account": {
-      const { formatAccountsTable, switchAccount, resolveAccountSelector } =
-        await import("../auth/accounts.js");
+      const {
+        formatAccountsTable,
+        formatMultiAccountReadiness,
+        switchAccount,
+        resolveAccountSelector,
+        clearAccountCooldown,
+      } = await import("../auth/accounts.js");
       const {
         removeAccount,
         setAccountLabel,
@@ -1005,12 +1015,38 @@ const stats = collectUsageStats({
         getAutoSwitchSettings,
         setAutoSwitchSettings,
       } = await import("../auth/store.js");
+      const applyAuthHotSwap = (account: {
+        accessToken?: string;
+        accountLabel?: string;
+        subscription?: string;
+        id: string;
+        method: import("../auth/types.js").AuthMethod;
+        provider: string;
+      }): boolean => {
+        if (!opts.auth || !account.accessToken) return false;
+        opts.auth.token = account.accessToken;
+        opts.auth.accountLabel =
+          account.accountLabel ?? account.subscription;
+        opts.auth.accountId = account.id;
+        opts.auth.method = account.method;
+        opts.auth.provider = account.provider;
+        return true;
+      };
       const raw = (arg || "").trim();
       if (!raw || raw === "list" || raw === "ls") {
         return { handled: true, output: formatAccountsTable() };
       }
       const [verb, ...rest] = raw.split(/\s+/);
       const v = verb.toLowerCase();
+      if (v === "status" || v === "ready" || v === "readiness") {
+        return {
+          handled: true,
+          output:
+            formatMultiAccountReadiness() +
+            "\n\n" +
+            formatAccountsTable(),
+        };
+      }
       if (v === "switch" || v === "use") {
         const sel = rest.join(" ").trim();
         if (!sel) {
@@ -1030,15 +1066,12 @@ const stats = collectUsageStats({
         if (!r.switched) {
           return { handled: true, output: r.reason || "switch failed" };
         }
-        // Hot-swap live REPL credentials when possible
-        if (opts.auth && r.account?.accessToken) {
-          opts.auth.token = r.account.accessToken;
-          opts.auth.accountLabel = r.account.accountLabel ?? r.account.subscription;
-          opts.auth.accountId = r.account.id;
-          opts.auth.method = r.account.method;
-        }
+        const authUpdated = r.account
+          ? applyAuthHotSwap(r.account)
+          : false;
         return {
           handled: true,
+          authUpdated,
           output: `Active ${hit.account.provider} → ${r.toLabel || r.toId}`,
         };
       }
@@ -1096,6 +1129,23 @@ const stats = collectUsageStats({
           output: `${v === "disable" ? "Disabled" : "Enabled"} ${hit.account.id}`,
         };
       }
+      if (
+        v === "clear-cooldown" ||
+        v === "clearcooldown" ||
+        v === "cooldown-clear"
+      ) {
+        const sel = rest.join(" ").trim() || undefined;
+        const r = clearAccountCooldown(sel);
+        return {
+          handled: true,
+          output:
+            r.cleared === 0
+              ? sel
+                ? `No cooldown on "${sel}"`
+                : "No accounts in cooldown"
+              : `Cleared cooldown on ${r.cleared} account(s)`,
+        };
+      }
       if (v === "auto-switch" || v === "autoswitch") {
         const mode = (rest[0] || "status").toLowerCase();
         if (mode === "on" || mode === "off") {
@@ -1121,15 +1171,11 @@ const stats = collectUsageStats({
           toId: hit.account.id,
           reason: "slash",
         });
-        if (r.switched && opts.auth && r.account?.accessToken) {
-          opts.auth.token = r.account.accessToken;
-          opts.auth.accountLabel =
-            r.account.accountLabel ?? r.account.subscription;
-          opts.auth.accountId = r.account.id;
-          opts.auth.method = r.account.method;
-        }
+        const authUpdated =
+          r.switched && r.account ? applyAuthHotSwap(r.account) : false;
         return {
           handled: true,
+          authUpdated,
           output: r.switched
             ? `Active ${hit.account.provider} → ${r.toLabel || r.toId}`
             : r.reason || "switch failed",
@@ -1139,7 +1185,7 @@ const stats = collectUsageStats({
         handled: true,
         output:
           formatAccountsTable() +
-          "\n\nUsage: /accounts [list|switch|remove|rename|priority|disable|enable|auto-switch]",
+          "\n\nUsage: /accounts [list|status|switch|remove|rename|priority|disable|enable|clear-cooldown|auto-switch]",
       };
     }
 
@@ -2891,6 +2937,21 @@ export interface DoctorResult {
   blockingStop: boolean;
   /** False when model is set and not in the provider catalog (free-form still ok). */
   modelInCatalog: boolean | null;
+  /** Multi-account readiness (never tokens); null when assess failed. */
+  multiAccount?: {
+    total: number;
+    eligible: number;
+    cooldown: number;
+    disabled: number;
+    expiredNoRefresh: number;
+    withRefreshToken: number;
+    apiKey: number;
+    autoSwitch: boolean;
+    switchThresholdPercent: number;
+    multiAccountReady: boolean;
+    summary: string;
+    warnings: string[];
+  } | null;
 }
 
 /**
@@ -2956,6 +3017,36 @@ export async function runDoctorCheck(
         );
       }
     }
+  }
+  // Multi-account unattended readiness (advisory; only blocks when zero eligible)
+  try {
+    const { assessMultiAccountReadiness, formatMultiAccountReadiness } =
+      await import("../auth/accounts.js");
+    const ma = assessMultiAccountReadiness(
+      auth ? String(auth.provider) : undefined,
+    );
+    lines.push(formatMultiAccountReadiness(auth ? String(auth.provider) : undefined));
+    // Hard issue only when authenticated but zero eligible same-provider accounts
+    // (all cooling / disabled / expired) — unattended run will die on first failure.
+    if (auth && ma.total > 0 && ma.eligible === 0) {
+      issues.push(
+        `No eligible ${auth.provider} accounts (disabled/cooldown/expired) — forge login --add or forge accounts clear-cooldown`,
+      );
+    } else if (auth && ma.total >= 2 && !ma.multiAccountReady) {
+      lines.push(
+        chalk.yellow(
+          "  ⚠ Multiple accounts stored but only one eligible — failover limited",
+        ),
+      );
+    } else if (auth && ma.total === 1) {
+      lines.push(
+        chalk.dim(
+          "  Tip: forge login --add for quota failover on long unattended runs",
+        ),
+      );
+    }
+  } catch {
+    /* multi-account doctor is best-effort */
   }
   {
     const reportProvider = (auth?.provider || config.provider) as typeof config.provider;
@@ -3329,6 +3420,30 @@ export async function runDoctorCheck(
     for (const i of issues) lines.push(chalk.yellow(`  • ${i}`));
   }
 
+  let multiAccount: DoctorResult["multiAccount"] = null;
+  try {
+    const { assessMultiAccountReadiness } = await import("../auth/accounts.js");
+    const ma = assessMultiAccountReadiness(
+      auth ? String(auth.provider) : undefined,
+    );
+    multiAccount = {
+      total: ma.total,
+      eligible: ma.eligible,
+      cooldown: ma.cooldown,
+      disabled: ma.disabled,
+      expiredNoRefresh: ma.expiredNoRefresh,
+      withRefreshToken: ma.withRefreshToken,
+      apiKey: ma.apiKey,
+      autoSwitch: ma.autoSwitch,
+      switchThresholdPercent: ma.switchThresholdPercent,
+      multiAccountReady: ma.multiAccountReady,
+      summary: ma.summary,
+      warnings: ma.warnings,
+    };
+  } catch {
+    multiAccount = null;
+  }
+
   return {
     report: lines.join("\n"),
     issues: [...issues],
@@ -3336,6 +3451,7 @@ export async function runDoctorCheck(
     authenticated: Boolean(auth),
     blockingStop: config.blockingStopHooks !== false,
     modelInCatalog,
+    multiAccount,
   };
 }
 
@@ -3681,7 +3797,7 @@ Forge slash commands
   /resume [id|title|all] Resume by id prefix or unique /title (same-cwd picker)
   /sessions [all|search|delete|prune]  List (cwd default) / search / delete [--force] / prune
   /auth                 Show stored credentials (+ multi-account)  [live]
-  /accounts [switch|…]  Multi-account list/switch/remove/auto-switch  [live]
+  /accounts [status|switch|…]  Multi-account list/status/switch/clear-cooldown  [live]
   /doctor               Environment health check  [live]
   /quit                 Exit  [live — aborts run then exits]
 

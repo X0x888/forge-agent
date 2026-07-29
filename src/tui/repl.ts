@@ -310,6 +310,14 @@ export async function runRepl(opts: {
           livePrompt();
           return;
         }
+        // Mid-run /accounts switch: update bearer for subsequent loop recoveries
+        if (slash.authUpdated && auth) {
+          if (provider.updateCredentials) {
+            provider.updateCredentials(auth.token);
+          } else {
+            provider = createProvider(config, auth);
+          }
+        }
         if (slash.output) {
           console.log(
             formatLiveControlFeedback(text, slash.output, "ok"),
@@ -362,6 +370,17 @@ export async function runRepl(opts: {
       if (slash.output) console.log(slash.output);
       prompt();
       return;
+    }
+
+    // /accounts switch mutates auth in-place; hot-swap live provider token
+    // so the next turn does not keep using the previous account's bearer.
+    if (slash.authUpdated && auth) {
+      if (provider.updateCredentials) {
+        provider.updateCredentials(auth.token);
+      } else {
+        provider = createProvider(config, auth);
+      }
+      log.dim(`Provider credentials updated (${describeAuth(auth)})`);
     }
 
     if (slash.handled && !slash.forwardPrompt) {

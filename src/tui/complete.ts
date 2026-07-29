@@ -63,6 +63,10 @@ export const COMMAND_PARAMS: Record<string, ParamChoice[]> = {
   ],
   accounts: [
     { value: "list", description: "List all stored accounts" },
+    {
+      value: "status",
+      description: "Unattended readiness (eligible/cooldown/auto-switch)",
+    },
     { value: "switch", description: "Switch active: /accounts switch <id|label>" },
     { value: "remove", description: "Remove one account" },
     { value: "rename", description: "Rename: /accounts rename <id> <label>" },
@@ -70,13 +74,19 @@ export const COMMAND_PARAMS: Record<string, ParamChoice[]> = {
     { value: "disable", description: "Disable an account" },
     { value: "enable", description: "Re-enable an account" },
     {
+      value: "clear-cooldown",
+      description: "Clear rate-limit cooldown (id|provider|all)",
+    },
+    {
       value: "auto-switch",
       description: "on|off|status — smart switch on low usage",
     },
   ],
   account: [
     { value: "list", description: "List all stored accounts" },
+    { value: "status", description: "Unattended readiness summary" },
     { value: "switch", description: "Switch active account" },
+    { value: "clear-cooldown", description: "Clear rate-limit cooldown" },
     { value: "auto-switch", description: "on|off|status" },
   ],
   goal: [

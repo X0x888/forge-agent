@@ -79,13 +79,21 @@ export {
 export {
   switchAccount,
   switchOnQuotaFailure,
+  switchOnAuthFailure,
   maybeProactiveSwitch,
   isQuotaOrRateLimitError,
   formatAccountsTable,
+  formatMultiAccountReadiness,
+  assessMultiAccountReadiness,
+  clearAccountCooldown,
   pickAlternateAccount,
   rankAccount,
   recordAccountPlan,
+  isPlanFresh,
+  isEnvAuthActive,
   DEFAULT_COOLDOWN_SEC,
+  AUTH_FAILURE_COOLDOWN_SEC,
+  PLAN_STALE_SEC,
 } from "./auth/accounts.js";
 export type {
   AccountCredential,

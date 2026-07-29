@@ -44,7 +44,10 @@ import {
   getActiveAccount,
 } from "./auth/store.js";
 import {
+  assessMultiAccountReadiness,
+  clearAccountCooldown,
   formatAccountsTable,
+  formatMultiAccountReadiness,
   switchAccount,
 } from "./auth/accounts.js";
 import { importGrokCredentials } from "./auth/import-grok.js";
@@ -1390,17 +1393,92 @@ Docs: docs/PRODUCTION.md
       }
       const accounts = listAccountSummaries(provider);
       const settings = getAutoSwitchSettings();
+      const readiness = assessMultiAccountReadiness(provider);
       if (wantJson) {
         emitOkJson({
           forgeHome: forgeHome(),
           autoSwitch: settings.autoSwitch,
           switchThresholdPercent: settings.switchThresholdPercent,
+          multiAccount: readiness,
           accounts,
           count: accounts.length,
         });
         return;
       }
       console.log(formatAccountsTable(provider));
+    });
+
+  accountsCmd
+    .command("status")
+    .alias("ready")
+    .description(
+      "Unattended multi-account readiness (eligible/cooldown/auto-switch)",
+    )
+    .option("-p, --provider <provider>", "Filter by provider")
+    .option("--json", "Machine-readable JSON")
+    .action((opts, command) => {
+      const wantJson = flagJson(opts, command);
+      const providerRaw =
+        typeof opts.provider === "string" ? opts.provider.trim() : "";
+      let provider: string | undefined;
+      if (providerRaw) {
+        const norm = normalizeProviderId(providerRaw);
+        if (!norm.ok) {
+          failInvalidFlag(
+            "invalid_provider",
+            `Invalid --provider "${providerRaw}".`,
+            { provider: providerRaw },
+            { json: wantJson },
+          );
+        }
+        provider = norm.provider;
+      }
+      const readiness = assessMultiAccountReadiness(provider);
+      if (wantJson) {
+        emitOkJson({
+          forgeHome: forgeHome(),
+          multiAccount: readiness,
+          accounts: listAccountSummaries(provider),
+        });
+        return;
+      }
+      console.log(formatMultiAccountReadiness(provider));
+      console.log("");
+      console.log(formatAccountsTable(provider));
+    });
+
+  accountsCmd
+    .command("clear-cooldown")
+    .alias("clearcooldown")
+    .description(
+      "Clear rate-limit cooldown on accounts (selector, provider, or all)",
+    )
+    .argument(
+      "[selector]",
+      "Account id/label, provider name, or omit for all",
+    )
+    .option("--json", "Machine-readable JSON")
+    .action((selector: string | undefined, opts, command) => {
+      const wantJson = flagJson(opts, command);
+      const r = clearAccountCooldown(selector?.trim() || undefined);
+      if (wantJson) {
+        emitOkJson({
+          forgeHome: forgeHome(),
+          cleared: r.cleared,
+          ids: r.ids,
+          selector: selector?.trim() || null,
+        });
+        return;
+      }
+      if (r.cleared === 0) {
+        log.info(
+          selector?.trim()
+            ? `No cooldown on "${selector.trim()}"`
+            : "No accounts in cooldown",
+        );
+      } else {
+        log.success(`Cleared cooldown on ${r.cleared} account(s)`);
+      }
     });
 
   accountsCmd
@@ -1695,11 +1773,13 @@ Docs: docs/PRODUCTION.md
     const wantJson = Boolean(opts?.json);
     const accounts = listAccountSummaries();
     const settings = getAutoSwitchSettings();
+    const readiness = assessMultiAccountReadiness();
     if (wantJson) {
       emitOkJson({
         forgeHome: forgeHome(),
         autoSwitch: settings.autoSwitch,
         switchThresholdPercent: settings.switchThresholdPercent,
+        multiAccount: readiness,
         accounts,
         count: accounts.length,
       });
@@ -3580,6 +3660,7 @@ Project instructions for Forge (and other coding agents).
               autoResume:
                 process.env.FORGE_NO_AUTO_RESUME !== "1" &&
                 process.env.FORGE_NO_AUTO_RESUME !== "true",
+              multiAccount: check.multiAccount ?? null,
               node: process.version,
               packageEnginesNode: (() => {
                 try {
