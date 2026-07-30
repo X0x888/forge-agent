@@ -13,6 +13,8 @@ export interface GitInfo {
   branch: string;
   dirty: boolean;
   root?: string;
+  /** Linked git worktree (not the main checkout). */
+  isWorktree?: boolean;
 }
 
 export interface ContextInfo {

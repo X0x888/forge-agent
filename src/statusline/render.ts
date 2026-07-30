@@ -232,7 +232,8 @@ function renderSession(
   l1.push(paint(c, snap.projectLabel, "bold"));
   if (snap.git) {
     const dirty = snap.git.dirty ? "*" : "";
-    l1.push(paint(c, `git:${snap.git.branch}${dirty}`, "cyan"));
+    const wt = snap.git.isWorktree ? "+wt" : "";
+    l1.push(paint(c, `git:${snap.git.branch}${dirty}${wt}`, "cyan"));
   }
   l1.push(
     paint(c, `${snap.provider}/${shortModel(snap.model)}`, "blue"),
@@ -378,7 +379,9 @@ export function renderTmux(snap: StatusSnapshot | undefined): string {
     `forge`,
     shortModel(snap.model),
     snap.projectLabel,
-    snap.git ? `${snap.git.branch}${snap.git.dirty ? "*" : ""}` : "",
+    snap.git
+      ? `${snap.git.branch}${snap.git.dirty ? "*" : ""}${snap.git.isWorktree ? "+wt" : ""}`
+      : "",
     `ctx:${pct}%`,
     live,
   ].filter(Boolean);

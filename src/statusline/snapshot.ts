@@ -182,6 +182,7 @@ export function sessionToSnapshot(
   if (opts.permissionMode === "bypassPermissions") tags.push("YOLO");
   else if (opts.permissionMode === "acceptEdits") tags.push("auto");
   if (meta.lastError?.message) tags.push(`ERR:${meta.lastError.code}`);
+  if (gitSnap.isWorktree) tags.push("WORKTREE");
 
   const bg = collectBackgroundSummaries();
   const activity = buildActivity(meta.id, bg);
@@ -255,6 +256,7 @@ export function sessionToSnapshot(
           branch: gitSnap.branch,
           dirty: Boolean(gitSnap.dirty),
           root: gitSnap.root,
+          isWorktree: gitSnap.isWorktree || undefined,
         }
       : undefined,
     context: buildContext(session, opts.windowTokens || 128_000),

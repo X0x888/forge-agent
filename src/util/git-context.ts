@@ -15,6 +15,13 @@ export interface GitSnapshot {
   changedFiles?: number;
   /** Upstream short name e.g. origin/main */
   upstream?: string;
+  /**
+   * True when this checkout is a linked git worktree (not the main worktree).
+   * Experts running parallel agent sessions per worktree need this signal.
+   */
+  isWorktree?: boolean;
+  /** Common git dir (absolute) when in a linked worktree. */
+  commonDir?: string;
 }
 
 /** Argv-based git (no shell) — args are fixed literals from this module. */
@@ -76,6 +83,23 @@ export function getGitSnapshot(cwd: string): GitSnapshot {
         root,
       ) || undefined;
 
+    // Linked worktree detection (OpenCode-style multi-worktree hygiene)
+    let isWorktree: boolean | undefined;
+    let commonDir: string | undefined;
+    try {
+      const gitDir = git(["rev-parse", "--git-dir"], root);
+      const common = git(["rev-parse", "--git-common-dir"], root);
+      if (gitDir && common) {
+        const absGit = path.resolve(root, gitDir);
+        const absCommon = path.resolve(root, common);
+        commonDir = absCommon;
+        // Main worktree: git-dir === common-dir. Linked: separate git dir + shared common.
+        isWorktree = absGit !== absCommon;
+      }
+    } catch {
+      /* */
+    }
+
     return {
       root,
       branch,
@@ -85,6 +109,8 @@ export function getGitSnapshot(cwd: string): GitSnapshot {
       behind,
       changedFiles,
       upstream,
+      isWorktree,
+      commonDir,
     };
   } catch {
     return {};
@@ -105,11 +131,13 @@ export function formatGitForPrompt(snap: GitSnapshot): string {
     if (snap.behind) track.push(`behind ${snap.behind}`);
   }
   const lines = [
-    `Git root: ${snap.root}`,
+    `Git root: ${snap.root}${snap.isWorktree ? " (linked worktree)" : ""}`,
     snap.branch
       ? `Branch: ${snap.branch}${dirtyDetail}${
           track.length ? ` · ${track.join(", ")}` : ""
-        }${snap.upstream ? ` → ${snap.upstream}` : ""}`
+        }${snap.upstream ? ` → ${snap.upstream}` : ""}${
+          snap.isWorktree ? " · worktree" : ""
+        }`
       : "",
     snap.remote ? `Remote: ${snap.remote}` : "",
   ].filter(Boolean);
@@ -144,9 +172,10 @@ export function formatGitBranchLine(snap: GitSnapshot): string {
     if (snap.ahead) track.push(`ahead ${snap.ahead}`);
     if (snap.behind) track.push(`behind ${snap.behind}`);
   }
+  const wt = snap.isWorktree ? " · worktree" : "";
   return `Branch: ${snap.branch}${track.length ? ` · ${track.join(", ")}` : ""}${
     snap.upstream ? ` → ${snap.upstream}` : ""
-  }`;
+  }${wt}`;
 }
 
 /** Quick project fingerprint for the banner / doctor. */
