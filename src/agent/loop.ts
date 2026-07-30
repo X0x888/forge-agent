@@ -522,6 +522,8 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
 
   /** After a no-op threshold compact, don't re-attempt until messages grow. */
   let skipThresholdCompactUntilCount = 0;
+  /** One-shot expert warning when context first crosses pressure bands. */
+  let warnedContextPressure: "threshold" | "hard" | null = null;
 
   try {
     // Check maxTurns at the top so a clean Stop on the final allowed turn is
@@ -560,6 +562,23 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
       // Hard headroom: even if under auto_compact_threshold, don't ride the
       // provider's absolute max (xAI rejects at model max prompt length).
       const nearHardLimit = est > config.contextWindow * 0.92;
+      // Expert-visible one-shot pressure warning (OpenCode-style overflow hygiene)
+      if (nearHardLimit && warnedContextPressure !== "hard") {
+        warnedContextPressure = "hard";
+        const pct = Math.min(99, Math.round((est / config.contextWindow) * 100));
+        log.warn(
+          `Context pressure ~${pct}% of window (${formatTokens(est)} / ${formatTokens(config.contextWindow)}) — compacting for headroom. Tip: /compact · /new · raise context_window`,
+        );
+      } else if (
+        overThreshold &&
+        warnedContextPressure == null
+      ) {
+        warnedContextPressure = "threshold";
+        const pct = Math.min(99, Math.round((est / config.contextWindow) * 100));
+        log.dim(
+          `Context ~${pct}% — auto-compact threshold. Tip: /context · /compact · /compact-and <next>`,
+        );
+      }
       if (
         (overThreshold || nearHardLimit) &&
         session.messages.length > skipThresholdCompactUntilCount
