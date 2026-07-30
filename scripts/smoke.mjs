@@ -134,6 +134,7 @@ mustInclude("doctor gitIsWorktree", ["doctor", "--json"], "gitIsWorktree");
 mustInclude("doctor gitChangedFiles", ["doctor", "--json"], "gitChangedFiles");
 mustInclude("doctor formatOnWrite", ["doctor", "--json"], "formatOnWrite");
 mustInclude("doctor sessionsPinned", ["doctor", "--json"], "sessionsPinned");
+mustInclude("sessions pinned json", ["sessions", "pinned", "--json"], "pinnedOnly");
 mustInclude("status formatOnWrite", ["status", "--json"], "formatOnWrite");
 mustInclude("config formatOnWrite", ["config", "--json"], "formatOnWrite");
 

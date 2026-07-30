@@ -4737,10 +4737,17 @@ function productionWarningsForRun(config: ForgeConfig): string[] {
   }
   // Large session inventory (best-effort; never block run on list failure)
   try {
-    const total = listSessions({ limit: 10_000 }).length;
+    const all = listSessions({ limit: 10_000 });
+    const total = all.length;
     if (total >= 100) {
       warnings.push(
         `${total} sessions on disk — consider forge sessions prune --keep 50 (lastError sessions kept unless --force-last-error)`,
+      );
+    }
+    const pinned = all.filter((s) => Boolean(s.pinned)).length;
+    if (pinned >= 10) {
+      warnings.push(
+        `${pinned} pinned sessions (prune-protected) — forge sessions pinned · /sessions unpin <id> stale keepers`,
       );
     }
   } catch {

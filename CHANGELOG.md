@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Added
+
+- **`run --json productionWarnings` many pinned**: warn when ≥10 pin-protected sessions accumulate
+- **Smoke `sessions pinned --json`**: CI asserts `pinnedOnly` on the list filter action
+
+
 ## 0.9.42 — /sessions pin|unpin <id> mutation
 
 ### Fixed
