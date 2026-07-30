@@ -5,7 +5,7 @@
 ### Added
 
 - **Doctor `sessionsWithLastError`**: count of sessions with `meta.lastError` (report tip + `doctor --json`) for CI recovery backlog hygiene
-- **/sessions errors**: filter recovery backlog (lastError only; aliases failed|err)
+- **/sessions errors** · **`forge sessions list --errors`**: filter recovery backlog (lastError only; aliases failed|err)
 - **`/goal` auto-titles untitled sessions**: arming a goal (slash, `--goal`, auto-detect) derives a scannable title via `maybeSetTitle` without overwriting an existing title
 
 ## 0.9.7 — Session lastError recovery surface

@@ -2012,6 +2012,10 @@ Docs: docs/PRODUCTION.md
     )
     .option("--pinned", "List: only pin-protected sessions")
     .option(
+      "--errors",
+      "List: only sessions with lastError (recovery backlog; aliases: errors|failed|err action)",
+    )
+    .option(
       "-n, --limit <n>",
       "List limit (0/all/max = unlimited)",
       "30",
@@ -2854,6 +2858,11 @@ Docs: docs/PRODUCTION.md
         "import",
         "fork",
         "clone",
+        "errors",
+        "error",
+        "failed",
+        "fail",
+        "err",
         "pin",
         "unpin",
         "title",
@@ -2986,16 +2995,27 @@ Docs: docs/PRODUCTION.md
         queryFilter = String(action).trim();
       }
       const pinnedOnly = Boolean(globalOpts.pinned);
-      const list = listSessions({
-        limit,
+      const errorsOnly =
+        Boolean(globalOpts.errors) ||
+        act === "errors" ||
+        act === "error" ||
+        act === "failed" ||
+        act === "fail" ||
+        act === "err";
+      let list = listSessions({
+        limit: errorsOnly && limit === 30 ? 50 : limit,
         ...(cwdFilter ? { cwd: cwdFilter } : {}),
         ...(queryFilter ? { query: queryFilter } : {}),
         ...(pinnedOnly ? { pinned: true } : {}),
       });
+      if (errorsOnly) {
+        list = list.filter((s) => Boolean(s.lastError?.message));
+      }
       if (globalOpts.json) {
         emitOkJson({forgeHome: forgeHome(),
               cwd: cwdFilter,
               query: queryFilter,
+              errorsOnly,
               limit,
               count: list.length,
               sessions: list.map((s) => {
@@ -3047,9 +3067,16 @@ Docs: docs/PRODUCTION.md
         return;
       }
       if (!list.length) {
+        if (errorsOnly) {
+          console.log(
+            "No sessions with lastError. Provider failures stamp ERR on list and forge status.",
+          );
+          return;
+        }
         const bits: string[] = [];
         if (cwdFilter) bits.push(`cwd ${cwdFilter}`);
         if (queryFilter) bits.push(`query ${JSON.stringify(queryFilter)}`);
+        if (pinnedOnly) bits.push("pinned");
         console.log(
           bits.length ? `No sessions for ${bits.join(" · ")}.` : "No sessions.",
         );
@@ -3102,14 +3129,20 @@ Docs: docs/PRODUCTION.md
         } catch {
           /* */
         }
+        const errBadge = s.lastError ? "  ERR" : "";
+        const errDetail =
+          errorsOnly && s.lastError
+            ? `  [${s.lastError.code}] ${s.lastError.message.slice(0, 48)}`
+            : "";
         console.log(
-          `${s.id}  ${age}  ${s.provider}/${s.model}  turns=${s.turnCount}  edits=${s.editCount}${ulwNote}${goalNote}${s.pinned ? "  PIN" : ""}${s.title ? `  ${s.title.slice(0, 40)}` : ""}${prevNote}${cwdNote}${lockNote}`,
+          `${s.id}  ${age}  ${s.provider}/${s.model}  turns=${s.turnCount}  edits=${s.editCount}${ulwNote}${goalNote}${s.pinned ? "  PIN" : ""}${errBadge}${s.title ? `  ${s.title.slice(0, 40)}` : ""}${prevNote}${cwdNote}${lockNote}${errDetail}`,
         );
       }
       const filterNotes: string[] = [];
       if (cwdFilter) filterNotes.push(`cwd=${cwdFilter}`);
       if (queryFilter) filterNotes.push(`q=${JSON.stringify(queryFilter)}`);
       if (pinnedOnly) filterNotes.push("pinned");
+      if (errorsOnly) filterNotes.push("errors");
       console.log(
         chalk.dim(
           `\n  forge sessions show|export|import|fork|title|delete <id> [--force]  ·  prune --keep 50` +
