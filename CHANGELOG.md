@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.9.48 — doctor skills context pressure
+
 ### Added
 
 - **Doctor skills context pressure**: warn when project skill packs consume ≥12% of the configured context window
