@@ -263,6 +263,11 @@ export const COMMAND_PARAMS: Record<string, ParamChoice[]> = {
   sessions: [
     { value: "all", description: "List every workspace (default is same-cwd)", aliases: ["global", "-a"] },
     { value: "pinned", description: "Only pin-protected sessions", aliases: ["pins", "pin"] },
+    {
+      value: "errors",
+      description: "Only sessions with lastError (recovery backlog)",
+      aliases: ["failed", "err", "error", "fail"],
+    },
     { value: "search", description: "Filter by id/title/last-prompt: /sessions search <q>", aliases: ["q", "find"] },
     { value: "delete", description: "Delete session: /sessions delete <id|title> [--force]", aliases: ["rm", "remove"] },
     { value: "prune", description: "Prune old sessions (active protected)" },

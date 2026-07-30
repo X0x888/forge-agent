@@ -24,8 +24,8 @@ export function shellCompletionScript(shell: string): string {
   const sessionsActions =
     "list show path export import fork pin unpin title rename delete prune search find";
   const sessionsFlags =
-    "--json --out --format --keep --max-age-days --cwd --query -q --pinned --limit -n --force";
-  // --cwd: list filter + import override; --query/-q: list id/title filter; --pinned
+    "--json --out --format --keep --max-age-days --cwd --query -q --pinned --errors --limit -n --force";
+  // --cwd: list filter + import override; --query/-q: list id/title filter; --pinned/--errors
 
   const normalized = normalizeCompletionShell(shell);
   if (!normalized) {
@@ -104,7 +104,7 @@ export function shellCompletionScript(shell: string): string {
       "                _values 'delete' --json --force",
       "                ;;",
       "              list)",
-      "                _values 'list' --json --limit -n --cwd --query -q --pinned",
+      "                _values 'list' --json --limit -n --cwd --query -q --pinned --errors",
       "                ;;",
       "              show|path|fork|pin|unpin|title|rename)",
       "                _values 'flags' --json",
@@ -239,6 +239,7 @@ export function shellCompletionScript(shell: string): string {
       'complete -c forge -n "__fish_seen_subcommand_from sessions" -l cwd -d "List filter or import cwd override"',
       'complete -c forge -n "__fish_seen_subcommand_from sessions" -l query -s q -d "List id/title substring filter"',
       'complete -c forge -n "__fish_seen_subcommand_from sessions" -l pinned -d "List only pin-protected sessions"',
+      'complete -c forge -n "__fish_seen_subcommand_from sessions" -l errors -d "List only sessions with lastError"',
       'complete -c forge -n "__fish_seen_subcommand_from sessions" -l limit -d "List limit (0/all/max)" -x -a "0 all max unlimited 30 50 100"',
       'complete -c forge -n "__fish_seen_subcommand_from sessions" -l force -d "Delete even if session is locked"',
       'complete -c forge -n "__fish_seen_subcommand_from login" -l api-key -d "API key"',
@@ -343,7 +344,7 @@ export function shellCompletionScript(shell: string): string {
     `        prune) COMPREPLY=( $(compgen -W "--keep --max-age-days --json" -- "$cur") ) ;;`,
     `        delete) COMPREPLY=( $(compgen -W "--json --force" -- "$cur") ) ;;`,
     `        show|path|fork|pin|unpin|title|rename) COMPREPLY=( $(compgen -W "--json" -- "$cur") ) ;;`,
-    `        list) COMPREPLY=( $(compgen -W "--json --limit -n --cwd --query -q --pinned" -- "$cur") ) ;;`,
+    `        list) COMPREPLY=( $(compgen -W "--json --limit -n --cwd --query -q --pinned --errors" -- "$cur") ) ;;`,
     `        *) COMPREPLY=( $(compgen -W "${sessionsFlags}" -- "$cur") ) ;;`,
     "      esac",
     "      ;;",

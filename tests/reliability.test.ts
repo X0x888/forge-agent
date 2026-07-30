@@ -1579,6 +1579,7 @@ describe("shell completion", () => {
     assert.match(out, /list\) COMPREPLY=.*--cwd/);
     assert.match(out, /list\) COMPREPLY=.*--query/);
     assert.match(out, /list\) COMPREPLY=.*--pinned/);
+    assert.match(out, /list\) COMPREPLY=.*--errors/);
     assert.match(out, /--title/);
     assert.match(out, /\bstats\b/);
     assert.match(out, /stats\) COMPREPLY=.*--days/);
@@ -1591,7 +1592,7 @@ describe("shell completion", () => {
     assert.match(zsh, /--title/);
     assert.match(zsh, /\bstats\b/);
     assert.match(zsh, /delete\).*--force|values 'delete' --json --force/);
-    assert.match(zsh, /values 'list' --json --limit -n --cwd --query -q --pinned/);
+    assert.match(zsh, /values 'list' --json --limit -n --cwd --query -q --pinned --errors/);
         assert.match(zsh, /permission-mode.*dontAsk|values 'permission-mode'.*dontAsk/);
 assert.match(zsh, /values 'login'.*--json|login\).*--json/);
     assert.match(zsh, /values 'logout'.*--json|logout\).*--json/);
@@ -1605,6 +1606,7 @@ assert.match(zsh, /values 'login'.*--json|login\).*--json/);
     assert.match(fish, /md json markdown/);
     assert.match(fish, /l force/);
     assert.match(fish, /l query/);
+    assert.match(fish, /l errors/);
         assert.match(fish, /l title/);
     assert.match(fish, /seen_subcommand_from models.*l provider|models" -l provider/);
     assert.match(fish, /seen_subcommand_from doctor.*l provider|doctor" -l provider/);
