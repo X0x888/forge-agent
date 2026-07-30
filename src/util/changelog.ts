@@ -139,7 +139,17 @@ export function formatWhatsNew(opts?: {
     ].join("\n");
   }
 
-  const slice = releases.slice(0, count);
+  // When Unreleased is present, default count=1 still shows the latest tagged
+  // release too so experts see both in-flight work and the last ship.
+  let sliceCount = count;
+  if (
+    count === 1 &&
+    releases[0]?.version === "Unreleased" &&
+    releases.some((r) => r.version !== "Unreleased")
+  ) {
+    sliceCount = 2;
+  }
+  const slice = releases.slice(0, sliceCount);
   const lines: string[] = [
     `Forge ${version} — what's new`,
   ];
@@ -257,14 +267,14 @@ export function formatWhatsNew(opts?: {
     }
   }
 
-  if (releases.length > count) {
+  if (releases.length > sliceCount) {
     lines.push(``);
     lines.push(
-      `Older: forge news ${Math.min(releases.length, count + 2)}  ·  full: CHANGELOG.md`,
+      `Older: forge news ${Math.min(releases.length, sliceCount + 2)}  ·  full: CHANGELOG.md`,
     );
   } else {
     lines.push(``);
-    lines.push(`Tip: /retry · /last · /share · forge tips`);
+    lines.push(`Tip: /plan · /build · /retry · /last · /share · forge tips`);
   }
   return lines.join("\n");
 }

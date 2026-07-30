@@ -94,6 +94,11 @@ describe("changelog / what's new", () => {
       text,
       new RegExp(releases[0].version.replace(/\./g, "\\.")),
     );
+    // Default count=1 still surfaces latest tagged when Unreleased exists
+    if (releases[0].version === "Unreleased" && releases.length > 1) {
+      assert.match(text, /Unreleased/i);
+      assert.match(text, new RegExp(releases[1].version.replace(/\./g, "\\.")));
+    }
   });
 
   it("/news is handled and live-safe", async () => {
