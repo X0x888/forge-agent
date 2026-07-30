@@ -116,7 +116,7 @@ export function formatProviderError(
   err: unknown,
   opts?: { provider?: string; model?: string },
 ): { message: string; tips: string[]; code: string } {
-  const provider =
+  const providerLabel =
     (isProviderApiError(err) ? err.provider : opts?.provider) || "provider";
   const model = opts?.model ? ` · model ${opts.model}` : "";
   const tips: string[] = [];
@@ -126,7 +126,7 @@ export function formatProviderError(
   if (isProviderApiError(err)) {
     code = `http_${err.status}`;
     const bodyHint = summarizeProviderBody(err.body);
-    headline = `${err.provider} HTTP ${err.status}${model}${
+    headline = `${providerLabel} HTTP ${err.status}${model}${
       bodyHint ? `: ${bodyHint}` : ""
     }`;
     if (err.retryAfterMs != null) {

@@ -329,6 +329,15 @@ Label new runs with `forge run … --title <label>` (searchable via `forge sessi
 - Provider timeout: `FORGE_PROVIDER_TIMEOUT_MS` (default 5m; ms or `5m`/`300s`)
 - Context overflow: harness force-compacts once and re-issues; if still too large, start `/new` or raise `context_window`
 
+## Expert UX (production)
+
+- **`/plan` → design, `/build` → implement** — session-scoped plan mode (no sticky-prefs footgun). Live mid-run; resume restores plan unless `--permission-mode` is set. Prefer over sticky `/permissions plan`.
+- **`/model <name> [effort]`** — live mid-run model switch (next provider call picks it up).
+- **Project instructions** — walk-up `AGENTS.md` / `CLAUDE.md` / `.cursor/rules` / copilot-instructions within the git root; `/context` lists sources; `forge doctor` tips when none.
+- **Custom slash templates** — `.forge/commands/<name>.md` with `$ARGUMENTS` / `$1..$9`; `/commands` lists; Tab + Did-you-mean include them.
+- **Provider failures** — REPL prints recovery tips; `forge run --json` fail payloads include `recovery: { code, tips }` (auth/rate-limit/overflow/network).
+- **Session titles** — auto-derived from mandate/goal lines (strips ULW harness noise); still override with `--title` / `/title`.
+
 ## Reliability contract
 
 See [RELIABILITY.md](./RELIABILITY.md) for Retry-After, abort, JSON repair, doom-loop, orphan tool heal, etc.

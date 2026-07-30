@@ -19,6 +19,7 @@ import {
   completeSlash,
   classifyLiveSlash,
   suggestSlashCommands,
+  SLASH_COMMANDS,
 } from "../src/commands/slash.js";
 import { createSession } from "../src/session/session.js";
 import { DEFAULT_CONFIG } from "../src/config/types.js";
@@ -143,6 +144,16 @@ describe("project custom commands", () => {
     });
     assert.match(String(r.output || ""), /\/audit/);
     assert.match(formatProjectCommandsHelp(ws), /audit/);
+  });
+
+  it("RESERVED covers every built-in SLASH_COMMANDS bare name", () => {
+    for (const c of SLASH_COMMANDS) {
+      const bare = c.replace(/^\//, "");
+      assert.ok(
+        isReservedSlashName(bare),
+        `built-in ${c} must be reserved so project commands cannot shadow it`,
+      );
+    }
   });
 
   it("tab-completes and suggests custom commands", () => {

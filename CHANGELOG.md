@@ -28,6 +28,7 @@
 ### Fixed
 
 - **`/build` clears session plan override**: leaving plan restores prior live mode and drops `meta.permissionMode` so resume falls back to sticky prefs/CLI (plan is temporary, not sticky-by-accident). Sticky `/permissions <mode>` no longer writes non-plan session overrides
+- **Custom-command reserved-name drift guard**: test asserts every built-in `SLASH_COMMANDS` entry is reserved so project templates cannot shadow `/plan`, `/build`, etc.
 
 ## 0.9.5 — File-aware undo, /init, /review, /compact-and + SuperGrok OIDC
 
