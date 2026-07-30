@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+### Added
+
+- **`/context` project skills**: show loaded skill packs + token estimate (parity with project rules); headless `/skills` smoke
+
+
 ## 0.9.45 — /init skills guidance
 
 ### Changed

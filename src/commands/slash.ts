@@ -1126,6 +1126,34 @@ export async function handleSlash(
       } catch {
         /* */
       }
+      // Project skill packs (OpenCode-style playbooks in system prompt)
+      let skillsNote = "";
+      try {
+        const { loadProjectSkills } = await import("../agent/project-skills.js");
+        const ws = opts.config.workspace || process.cwd();
+        const skills = loadProjectSkills(ws);
+        if (skills.length) {
+          const labels = skills.slice(0, 8).map((s) => {
+            const rel = path.relative(ws, s.filePath);
+            const loc =
+              rel && !rel.startsWith("..") && !path.isAbsolute(rel)
+                ? rel
+                : s.filePath.replace(process.env.HOME || "", "~");
+            return `${s.name}${s.description ? ` — ${s.description.slice(0, 40)}` : ""} (${loc})`;
+          });
+          const more =
+            skills.length > 8 ? ` (+${skills.length - 8} more)` : "";
+          const bodyEst = skills.map((s) => s.body).join("\n");
+          skillsNote =
+            `\nProject skills (~${formatTokens(estimateTokens([{ role: "system", content: bodyEst }]))}; /skills):\n` +
+            labels.map((l) => `  · ${l}`).join("\n") +
+            more;
+        } else {
+          skillsNote = `\nProject skills: none  (tip: .forge/skills/<name>/SKILL.md · /skills)`;
+        }
+      } catch {
+        /* */
+      }
       const thresholdPct = Math.round(
         (opts.config.autoCompactThreshold || 0.8) * 100,
       );
@@ -1147,7 +1175,7 @@ export async function handleSlash(
       }
       return {
         handled: true,
-        output: `Context  [${bar}] ${pct}%\n  ~${formatTokens(est)} / ${formatTokens(opts.config.contextWindow)}  autoCompact@${thresholdPct}%\nBy role:\n${roleLines}${rulesNote}${pressureNote}`,
+        output: `Context  [${bar}] ${pct}%\n  ~${formatTokens(est)} / ${formatTokens(opts.config.contextWindow)}  autoCompact@${thresholdPct}%\nBy role:\n${roleLines}${rulesNote}${skillsNote}${pressureNote}`,
       };
     }
 

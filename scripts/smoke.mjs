@@ -146,6 +146,11 @@ mustInclude(
   '"reason":"slash"',
 );
 mustInclude(
+  "headless slash /skills",
+  ["run", "/skills", "--json", "--permission-mode", "plan"],
+  '"reason":"slash"',
+);
+mustInclude(
   "headless slash /help",
   ["run", "/help", "--json"],
   '"reason":"slash"',

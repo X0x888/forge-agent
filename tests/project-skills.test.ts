@@ -83,6 +83,35 @@ Always run smoke after deploy.
     assert.match(prompt, /full suite/);
   });
 
+  it("/context lists skills", async () => {
+    const ws = fs.mkdtempSync(path.join(os.tmpdir(), "forge-skills-ctx-"));
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "forge-skills-home3-"));
+    const prev = process.env.FORGE_HOME;
+    process.env.FORGE_HOME = home;
+    try {
+      const dir = path.join(ws, ".forge", "skills", "ship");
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(
+        path.join(dir, "SKILL.md"),
+        "---\nname: ship\ndescription: Ship bar\n---\nShip carefully.\n",
+      );
+      const session = createSession({ cwd: ws, provider: "xai", model: "m" });
+      const cfg = { ...DEFAULT_CONFIG, workspace: ws };
+      const hooks = new HookRunner(cfg, ws);
+      const r = await handleSlash("/context", {
+        session,
+        config: cfg,
+        hooks,
+      });
+      assert.equal(r.handled, true);
+      assert.match(String(r.output || ""), /Project skills/i);
+      assert.match(String(r.output || ""), /ship/);
+    } finally {
+      if (prev === undefined) delete process.env.FORGE_HOME;
+      else process.env.FORGE_HOME = prev;
+    }
+  });
+
   it("/skills lists packs", async () => {
     const ws = fs.mkdtempSync(path.join(os.tmpdir(), "forge-skills-slash-"));
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "forge-skills-home2-"));
