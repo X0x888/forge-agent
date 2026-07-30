@@ -2822,7 +2822,7 @@ case "/new":
                 ? `  “${prev}${(s.lastUserPreview || "").length > 32 ? "…" : ""}”`
                 : "";
               const age = formatRelativeTime(s.updatedAt).padStart(8);
-              return `${s.id.slice(0, 8)}  ${age}  ${(s.title || "").slice(0, 28).padEnd(28)}  ${s.model}  t=${s.turnCount}${s.ultrawork ? " ULW" : ""}${s.pinned ? " PIN" : ""}${s.permissionMode === "plan" ? " PLAN" : ""}${active}${lockNote}${cwdNote}${prevNote}`;
+              return `${s.id.slice(0, 8)}  ${age}  ${(s.title || "").slice(0, 28).padEnd(28)}  ${s.model}  t=${s.turnCount}${s.ultrawork ? " ULW" : ""}${s.pinned ? " PIN" : ""}${s.permissionMode === "plan" ? " PLAN" : ""}${s.lastError ? " ERR" : ""}${active}${lockNote}${cwdNote}${prevNote}`;
             })
             .join("\n") +
           chalk.dim(

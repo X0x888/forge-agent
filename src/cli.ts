@@ -5643,6 +5643,14 @@ async function runHeadless(opts: {
         recovery: recovery
           ? { code: recovery.code, tips: recovery.tips }
           : undefined,
+        lastError: opts.session.meta.lastError
+          ? {
+              at: opts.session.meta.lastError.at,
+              code: opts.session.meta.lastError.code,
+              message: opts.session.meta.lastError.message,
+              tips: opts.session.meta.lastError.tips,
+            }
+          : null,
         timedOut,
         aborted: ac.signal.aborted,
         node: process.version,
