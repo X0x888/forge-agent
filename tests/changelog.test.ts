@@ -73,11 +73,11 @@ describe("changelog / what's new", () => {
     const text = formatWhatsNew({ count: 1, maxBullets: 8 });
     assert.match(
       text,
-      /lastErrorCode|failedRuns|byLastErrorCode|Content-filter|\/plan|projectRulesCount|Headless slash|Metrics|stats/i,
+      /Continue-cap lastError|lastErrorCode|failedRuns|byLastErrorCode|Content-filter|\/plan|projectRulesCount|Headless slash|Metrics|stats|0\.9\.\d+/i,
     );
     // Long body still notes remaining bullets when truncated, or shows what's new.
     assert.match(text, /\+\d+ more in CHANGELOG|what's new|Older: forge news/i);
-    assert.match(text, /###|lastError|Metrics|stats/i);
+    assert.match(text, /###|lastError|Metrics|stats|Continue-cap/i);
   });
 
   it("finds packaged CHANGELOG and formats highlights", () => {
@@ -164,10 +164,9 @@ describe("changelog / what's new", () => {
     assert.doesNotMatch(text, /## Unreleased[\s\S]*## Unreleased/);
     // Should lead with a version that has bullets
     assert.match(text, /## 0\.\d+\.\d+|## Unreleased —/);
-    // If Unreleased is empty in package CHANGELOG, first section is 0.9.10
+    // If Unreleased is empty in package CHANGELOG, first section is latest tag
     if (!/^## Unreleased/m.test(text.split("what's new")[1] || "")) {
-      assert.match(text, /0\.9\.10|Metrics|lastErrorCode/);
+      assert.match(text, /0\.9\.\d+|Continue-cap|Metrics|lastErrorCode/);
     }
   });
-
 });
