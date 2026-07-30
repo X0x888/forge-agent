@@ -2,10 +2,12 @@
 
 ## Unreleased
 
+## 0.9.26 — empty_run lastError + dirty-tree expert tip
+
 ### Added
 
 - **empty_run lastError**: headless empty runs stamp `meta.lastError` code `empty_run` with doctor/auth/logs tips
-
+- **Dirty-tree expert tip**: forge tips cover ≥40 changed files hygiene before long ULW
 
 ## 0.9.25 — FORGE_MAX_RUN_MS lastError + stronger lastError backlog tip
 
