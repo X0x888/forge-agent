@@ -335,7 +335,7 @@ Label new runs with `forge run … --title <label>` (searchable via `forge sessi
 - **`/model <name> [effort]`** — live mid-run model switch (next provider call picks it up).
 - **Project instructions** — walk-up `AGENTS.md` / `CLAUDE.md` / `.cursor/rules` / copilot-instructions within the git root; `/context` lists sources; `forge doctor` tips when none.
 - **Custom slash templates** — `.forge/commands/<name>.md` with `$ARGUMENTS` / `$1..$9`; `/commands` lists; Tab + Did-you-mean include them. Starter templates: `examples/forge-commands/` (`review`, `shipcheck`).
-- **Provider failures** — REPL prints recovery tips; `forge run --json` fail payloads include `recovery: { code, tips }` (auth/rate-limit/overflow/network).
+- **Provider failures** — REPL prints recovery tips; `forge run --json` fail payloads include `recovery: { code, tips }` (auth/rate-limit/overflow/network). Session `meta.lastError` surfaces on `/status`, resume, `/share`, and `forge status --json`.
 - **Session titles** — auto-derived from mandate/goal lines (strips ULW harness noise); still override with `--title` / `/title`.
 - **Headless slash** — `forge run "/plan"` / `"/commands"` / custom templates work in CI; pure control exits with `reason: "slash"` (no model call); templates expand then run.
 

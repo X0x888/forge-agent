@@ -423,6 +423,29 @@ describe("statusline PIN badge", () => {
   });
 });
 
+describe("statusline lastError snapshot", () => {
+  it("sessionToSnapshot includes lastError and ERR tag", async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-sl-lasterr-"));
+    process.env.FORGE_HOME = tmp;
+    const { sessionToSnapshot } = await import("../src/statusline/snapshot.js");
+    const { setSessionLastError, saveSession } = await import(
+      "../src/session/session.js"
+    );
+    const s = createSession({ cwd: tmp, provider: "xai", model: "m" });
+    setSessionLastError(s, {
+      code: "rate_limited",
+      message: "xai HTTP 429",
+      tips: ["forge accounts switch"],
+    });
+    saveSession(s);
+    const snap = sessionToSnapshot(s, { authMethod: "api_key" });
+    assert.ok(snap.lastError);
+    assert.equal(snap.lastError!.code, "rate_limited");
+    assert.match(snap.lastError!.message, /429/);
+    assert.ok(snap.tags.some((t) => t.startsWith("ERR:")));
+  });
+});
+
 describe("statusline plan mode details", () => {
   it("formatSessionDetails tips /build under plan", async () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-sl-plan-"));

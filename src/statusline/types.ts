@@ -136,6 +136,16 @@ export interface StatusSnapshot {
     mine: boolean;
     alive: boolean;
   };
+  /**
+   * Last provider/run failure for this session (expert recovery).
+   * Never invent — only when session.meta.lastError is set.
+   */
+  lastError?: {
+    at: string;
+    code: string;
+    message: string;
+    tips?: string[];
+  };
   /** Extra free-form tags e.g. ["plan-mode"] */
   tags: string[];
   collectedAt: string;

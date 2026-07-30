@@ -181,6 +181,7 @@ export function sessionToSnapshot(
   if (opts.permissionMode === "plan") tags.push("PLAN");
   if (opts.permissionMode === "bypassPermissions") tags.push("YOLO");
   else if (opts.permissionMode === "acceptEdits") tags.push("auto");
+  if (meta.lastError?.message) tags.push(`ERR:${meta.lastError.code}`);
 
   const bg = collectBackgroundSummaries();
   const activity = buildActivity(meta.id, bg);
@@ -262,6 +263,14 @@ export function sessionToSnapshot(
     activity,
     backgroundTasks: bg.length ? bg : undefined,
     lock,
+    lastError: meta.lastError?.message
+      ? {
+          at: meta.lastError.at,
+          code: meta.lastError.code,
+          message: meta.lastError.message,
+          tips: meta.lastError.tips,
+        }
+      : undefined,
     tags,
     collectedAt: new Date().toISOString(),
   };
