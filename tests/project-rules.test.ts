@@ -132,5 +132,31 @@ describe("project rules discovery", () => {
     assert.equal(r.handled, true);
     assert.match(String(r.output || ""), /Project rules/);
     assert.match(String(r.output || ""), /AGENTS\.md/);
+    assert.match(String(r.output || ""), /autoCompact@/);
+  });
+
+  it("/context shows HARD pressure tip near window", async () => {
+    const ws = path.join(tmp, "ctx-hard");
+    fs.mkdirSync(ws, { recursive: true });
+    const session = createSession({ cwd: ws, provider: "xai", model: "m" });
+    // Tiny window so empty-ish session still looks full
+    const hooks = new HookRunner(DEFAULT_CONFIG, ws);
+    session.messages.push({
+      role: "user",
+      content: "x".repeat(20_000),
+    });
+    const r = await handleSlash("/context", {
+      session,
+      config: {
+        ...DEFAULT_CONFIG,
+        workspace: ws,
+        contextWindow: 1000,
+        autoCompactThreshold: 0.8,
+      },
+      hooks,
+    });
+    assert.equal(r.handled, true);
+    assert.match(String(r.output || ""), /Pressure: HARD|Pressure: above/i);
+    assert.match(String(r.output || ""), /\/compact/);
   });
 });

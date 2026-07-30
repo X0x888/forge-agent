@@ -1063,9 +1063,28 @@ export async function handleSlash(
       } catch {
         /* */
       }
+      const thresholdPct = Math.round(
+        (opts.config.autoCompactThreshold || 0.8) * 100,
+      );
+      let pressureNote = "";
+      if (pct >= 92) {
+        pressureNote =
+          chalk.yellow(
+            `\nPressure: HARD (~${pct}%) — auto headroom compact may fire. Tip: /compact · /compact-and <next> · /new · raise context_window`,
+          );
+      } else if (pct >= thresholdPct) {
+        pressureNote =
+          chalk.yellow(
+            `\nPressure: above auto-compact threshold (${thresholdPct}%). Tip: /compact · /compact-and <next> · /context after compact`,
+          );
+      } else if (pct >= Math.max(50, thresholdPct - 15)) {
+        pressureNote = chalk.dim(
+          `\nPressure: elevated (~${pct}%; auto-compact @${thresholdPct}%). Tip: /compact before a long ULW wave`,
+        );
+      }
       return {
         handled: true,
-        output: `Context  [${bar}] ${pct}%\n  ~${formatTokens(est)} / ${formatTokens(opts.config.contextWindow)}\nBy role:\n${roleLines}${rulesNote}`,
+        output: `Context  [${bar}] ${pct}%\n  ~${formatTokens(est)} / ${formatTokens(opts.config.contextWindow)}  autoCompact@${thresholdPct}%\nBy role:\n${roleLines}${rulesNote}${pressureNote}`,
       };
     }
 
