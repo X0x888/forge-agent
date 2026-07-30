@@ -319,7 +319,7 @@ Label new runs with `forge run … --title <label>` (searchable via `forge sessi
 - `/title "incident-42"` or `forge sessions title <id> incident-42` to label long-running sessions; resume with `/resume incident-42` or `forge --session incident-42`
 - `/pin` (or `forge sessions pin <id>`) to protect important sessions from prune; `/sessions pinned` to list them
 - `/files` after resume to see paths the agent touched; `/last 3` for recent turns; `/path` (or `forge sessions path`) for the on-disk session dir
-- `/bell on` (or `FORGE_BELL / FORGE_FORMAT_ON_WRITE · FORGE_ASK_USER_TIMEOUT_MS (ask_user) (/config+doctor formatOnWrite)=1`) for a terminal BEL when long ULW/goal turns finish
+- `/bell on` (or `FORGE_BELL / FORGE_FORMAT_ON_WRITE · FORGE_ASK_USER_TIMEOUT_MS (ask_user) · FORGE_DONT_ASK / permissionMode=dontAsk disables asks (/config+doctor formatOnWrite)=1`) for a terminal BEL when long ULW/goal turns finish
 - Bare `forge` resumes the newest same-cwd session (≤14d); skips sessions with a foreign live lock; use `--new` or `FORGE_NO_AUTO_RESUME=1` for a clean slate
 - `/resume <id|title>` warns if the target has a foreign live lock (concurrent writers may race); shows last turn + files
 - `forge sessions export <id> --format json` for incident artifacts (`--format` must be `md` or `json`; `--out` files mode `0600`)
