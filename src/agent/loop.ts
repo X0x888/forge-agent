@@ -1380,6 +1380,19 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
     } else {
       finalText = note;
     }
+    try {
+      setSessionLastError(session, {
+        code: "max_turns",
+        message: note.replace(/^\[Forge\]\s*/, ""),
+        tips: [
+          "Raise max_turns / FORGE_MAX_TURNS or max_turns=0 unlimited",
+          "forge run --continue  ·  /retry  ·  narrow the task",
+        ],
+      });
+      saveSession(session);
+    } catch {
+      /* */
+    }
   }
 
   const promptTokens = session.meta.totalPromptTokens - startPrompt;
@@ -1396,9 +1409,9 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
     );
   }
 
-  // Successful completion clears prior failure — but continue-cap / content-filter
-  // releases stamp lastError for expert recovery and must keep it.
-  if (!aborted && !releasedOnContinueCap) {
+  // Successful completion clears prior failure — but continue-cap / content-filter /
+  // maxTurns releases stamp lastError for expert recovery and must keep it.
+  if (!aborted && !releasedOnContinueCap && !hitMaxTurns) {
     try {
       clearSessionLastError(session);
       saveSession(session);

@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+### Added
+
+- **maxTurns lastError**: when the turn budget is exhausted, stamp `meta.lastError` code `max_turns` with raise-budget / `--continue` tips (kept on release)
+
+
 ## 0.9.20 — Doctor contextWindow JSON + stronger lastError backlog tip
 
 ### Added
