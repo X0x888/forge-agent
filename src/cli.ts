@@ -3902,6 +3902,9 @@ Project instructions for Forge (and other coding agents).
               modelDefaultContextWindow:
                 check.modelDefaultContextWindow ?? null,
               contextWindowRatio: check.contextWindowRatio ?? null,
+              contextWindow: config.contextWindow,
+              autoCompactThreshold: config.autoCompactThreshold,
+              contextWindowExplicit: Boolean(config.contextWindowExplicit),
               toolOutput,
               sandboxLog,
               metrics,

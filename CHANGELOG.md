@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Added
+
+- **Doctor JSON `contextWindow` / `autoCompactThreshold` / `contextWindowExplicit`**: CI can assert effective window config alongside model defaults
+- **Doctor lastError tip**: yellow recovery backlog line points at `/sessions errors` and prune protect
+
+
 ## 0.9.19 — Error-streak lastError + richer circuit-breaker tips
 
 ### Changed

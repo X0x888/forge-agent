@@ -3965,8 +3965,8 @@ export async function runDoctorCheck(
     sessionsWithLastError = all.filter((s) => Boolean(s.lastError?.message)).length;
     if (sessionsWithLastError > 0) {
       lines.push(
-        chalk.dim(
-          `  sessions with lastError: ${sessionsWithLastError}  (/sessions · forge status --json)`,
+        chalk.yellow(
+          `  sessions with lastError: ${sessionsWithLastError}  → /sessions errors · forge sessions list --errors · prune keeps them until --force-last-error`,
         ),
       );
     }

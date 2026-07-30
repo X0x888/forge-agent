@@ -126,6 +126,8 @@ mustInclude("doctor projectRulesCount", ["doctor", "--json"], "projectRulesCount
 mustInclude("doctor projectCommandsCount", ["doctor", "--json"], "projectCommandsCount");
 mustInclude("doctor sessionsWithLastError", ["doctor", "--json"], "sessionsWithLastError");
 mustInclude("doctor modelDefaultContextWindow", ["doctor", "--json"], "modelDefaultContextWindow");
+mustInclude("doctor contextWindow", ["doctor", "--json"], "contextWindow");
+mustInclude("doctor autoCompactThreshold", ["doctor", "--json"], "autoCompactThreshold");
 
 // Headless slash: pure control exits without auth/model (reason: slash)
 mustInclude(
