@@ -327,6 +327,7 @@ Label new runs with `forge run … --title <label>` (searchable via `forge sessi
 - `forge sessions import` rejects invalid message roles; on-disk load soft-drops corrupt roles/todos so a bad `session.json` cannot poison the agent loop
 - `forge prune-tool-output` if `~/.forge/tool-output` grows large (also auto-pruned)
 - Provider timeout: `FORGE_PROVIDER_TIMEOUT_MS` (default 5m; ms or `5m`/`300s`)
+- Wall-clock run limit: `FORGE_MAX_RUN_MS` (headless exit 124); stamps `lastError` code `max_run_ms` — raise limit or `forge run --continue`
 - Context overflow: harness force-compacts once and re-issues; if still too large, start `/new` or raise `context_window`
 - Context pressure: one-shot log at auto-compact threshold and ~92% hard headroom (`/context` · `/compact` · `/compact-and`)
 

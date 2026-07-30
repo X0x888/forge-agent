@@ -2,11 +2,12 @@
 
 ## Unreleased
 
+## 0.9.25 — FORGE_MAX_RUN_MS lastError + stronger lastError backlog tip
+
 ### Added
 
 - **FORGE_MAX_RUN_MS lastError**: wall-clock timeout stamps `meta.lastError` code `max_run_ms` with raise-limit / `--continue` tips
 - **Doctor lastError backlog severity**: ≥5 failed sessions get a stronger yellow warning
-
 
 ## 0.9.24 — Doctor dirty-tree tip + gitChangedFiles
 
