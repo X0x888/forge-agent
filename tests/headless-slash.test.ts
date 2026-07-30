@@ -96,4 +96,26 @@ describe("resolveHeadlessSlashPrompt", () => {
   it("stripAnsi removes color codes", () => {
     assert.equal(stripAnsi("\x1b[34mPLAN\x1b[0m"), "PLAN");
   });
+
+  it("ephemeral pure-control deletes the session dir", async () => {
+    const session = createSession({ cwd: tmp, provider: "xai", model: "m" });
+    const hooks = new HookRunner(DEFAULT_CONFIG, tmp);
+    const { saveSession, loadSession } = await import(
+      "../src/session/session.js"
+    );
+    saveSession(session);
+    assert.ok(loadSession(session.meta.id));
+    const r = await resolveHeadlessSlashPrompt({
+      prompt: "/commands",
+      session,
+      config: { ...DEFAULT_CONFIG, workspace: tmp },
+      hooks,
+      ephemeral: true,
+    });
+    assert.equal(r.kind, "done");
+    if (r.kind === "done") {
+      assert.equal(r.ephemeral, true);
+    }
+    assert.equal(loadSession(session.meta.id), null);
+  });
 });

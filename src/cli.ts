@@ -401,6 +401,8 @@ Docs: docs/PRODUCTION.md · docs/RELIABILITY.md · docs/ULW.md · forge news
             session: earlySession,
             config,
             hooks: hooksEarly,
+            // No --session: pure-control must not pollute sessions list
+            ephemeral: !opts.session,
           });
           if (resolved.kind === "done") {
             const out = stripAnsi(resolved.output);
@@ -410,8 +412,11 @@ Docs: docs/PRODUCTION.md · docs/RELIABILITY.md · docs/ULW.md · forge news
                 reason: "slash",
                 command: resolved.command,
                 output: out,
-                sessionId: resolved.session.meta.id,
-                sessionPath: resolveSessionDir(resolved.session.meta.id),
+                sessionId: resolved.ephemeral ? null : resolved.session.meta.id,
+                sessionPath: resolved.ephemeral
+                  ? null
+                  : resolveSessionDir(resolved.session.meta.id),
+                ephemeral: Boolean(resolved.ephemeral),
                 forgeHome: forgeHome(),
                 provider: config.provider,
                 model: config.model,
@@ -889,6 +894,7 @@ Docs: docs/PRODUCTION.md
             session,
             config,
             hooks: hooksEarly,
+            ephemeral: !runOpts.session,
           });
           session = resolved.session;
           if (resolved.kind === "done") {
@@ -899,8 +905,11 @@ Docs: docs/PRODUCTION.md
                 reason: "slash",
                 command: resolved.command,
                 output: out,
-                sessionId: session.meta.id,
-                sessionPath: resolveSessionDir(session.meta.id),
+                sessionId: resolved.ephemeral ? null : session.meta.id,
+                sessionPath: resolved.ephemeral
+                  ? null
+                  : resolveSessionDir(session.meta.id),
+                ephemeral: Boolean(resolved.ephemeral),
                 forgeHome: forgeHome(),
                 provider: config.provider,
                 model: config.model,
@@ -5511,6 +5520,10 @@ async function runHeadless(opts: {
       session: opts.session,
       config: opts.config,
       hooks: opts.hooks,
+      // Fresh empty session + pure control → discard (avoid list pollution)
+      ephemeral:
+        (opts.session.messages?.filter((m) => m.role !== "system").length ??
+          0) === 0,
     });
     opts.session = resolved.session;
     if (resolved.kind === "prompt") {
@@ -5520,14 +5533,18 @@ async function runHeadless(opts: {
       }
     } else if (resolved.kind === "done") {
       const out = stripAnsi(resolved.output);
+      const ephemeral = Boolean(resolved.ephemeral);
       if (opts.json) {
         emitOkJson({
           ok: true,
           reason: "slash",
           command: resolved.command,
           output: out,
-          sessionId: opts.session.meta.id,
-          sessionPath: resolveSessionDir(opts.session.meta.id),
+          sessionId: ephemeral ? null : opts.session.meta.id,
+          sessionPath: ephemeral
+            ? null
+            : resolveSessionDir(opts.session.meta.id),
+          ephemeral,
           forgeHome: forgeHome(),
           provider: opts.config.provider,
           model: opts.config.model,
@@ -5537,12 +5554,14 @@ async function runHeadless(opts: {
       } else if (out) {
         process.stdout.write(out.endsWith("\n") ? out : out + "\n");
       }
-      await opts.hooks.run("SessionEnd", {
-        sessionId: opts.session.meta.id,
-        cwd: opts.session.meta.cwd,
-        workspaceRoot: opts.config.workspace || opts.session.meta.cwd,
-      });
-      saveSession(opts.session);
+      if (!ephemeral) {
+        await opts.hooks.run("SessionEnd", {
+          sessionId: opts.session.meta.id,
+          cwd: opts.session.meta.cwd,
+          workspaceRoot: opts.config.workspace || opts.session.meta.cwd,
+        });
+        saveSession(opts.session);
+      }
       process.off("SIGINT", onSigInt);
       process.off("SIGTERM", onSigTerm);
       if (maxRunTimer) clearTimeout(maxRunTimer);

@@ -6,11 +6,21 @@ import type { ForgeConfig } from "../config/types.js";
 import type { SessionData } from "../session/session.js";
 import type { HookRunner } from "../harness/hooks.js";
 import { handleSlash } from "./slash.js";
-import { saveSession } from "../session/session.js";
+import {
+  saveSession,
+  deleteSessionDetailed,
+} from "../session/session.js";
 
 export type HeadlessSlashResolution =
   | { kind: "prompt"; prompt: string; notice?: string; session: SessionData }
-  | { kind: "done"; output: string; command: string; session: SessionData }
+  | {
+      kind: "done";
+      output: string;
+      command: string;
+      session: SessionData;
+      /** True when the session was discarded (ephemeral pure-control). */
+      ephemeral?: boolean;
+    }
   | { kind: "passthrough"; prompt: string; session: SessionData };
 
 /**
@@ -18,12 +28,18 @@ export type HeadlessSlashResolution =
  * - forwardPrompt → continue agent loop with expanded text
  * - handled without forward → finish headless without a model call
  * - not a slash / error → passthrough original prompt
+ *
+ * When `ephemeral` is true (default for pure-control without `--session`),
+ * the temporary session is deleted after a pure-control slash so CI probes
+ * do not pollute `forge sessions list` / break `--continue` fail-closed.
  */
 export async function resolveHeadlessSlashPrompt(opts: {
   prompt: string;
   session: SessionData;
   config: ForgeConfig;
   hooks: HookRunner;
+  /** Discard session after pure-control slash (default false). */
+  ephemeral?: boolean;
 }): Promise<HeadlessSlashResolution> {
   const raw = String(opts.prompt ?? "");
   if (!/^\s*\//.test(raw)) {
@@ -36,12 +52,13 @@ export async function resolveHeadlessSlashPrompt(opts: {
       hooks: opts.hooks,
     });
     const session = slash.session || opts.session;
-    try {
-      saveSession(session);
-    } catch {
-      /* never block headless on save */
-    }
     if (slash.forwardPrompt) {
+      // Forwarded templates need a real session for the agent turn.
+      try {
+        saveSession(session);
+      } catch {
+        /* never block headless on save */
+      }
       return {
         kind: "prompt",
         prompt: slash.forwardPrompt,
@@ -50,11 +67,26 @@ export async function resolveHeadlessSlashPrompt(opts: {
       };
     }
     if (slash.handled) {
+      const ephemeral = Boolean(opts.ephemeral);
+      if (ephemeral) {
+        try {
+          deleteSessionDetailed(session.meta.id, { force: true });
+        } catch {
+          /* best-effort cleanup */
+        }
+      } else {
+        try {
+          saveSession(session);
+        } catch {
+          /* */
+        }
+      }
       return {
         kind: "done",
         output: String(slash.output || ""),
         command: raw.trim().split(/\s+/)[0] || "/",
         session,
+        ephemeral,
       };
     }
   } catch {
