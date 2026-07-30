@@ -710,7 +710,7 @@ function printBanner(
     if (!prefs.seenWelcomeTip) {
       console.log(
         chalk.cyan(
-          `  Tip: /undo · /retry · /share · /pin · forge tips · forge doctor --json · unknown /cmd → Did you mean?\n`,
+          `  Tip: /plan → design · /build → ship · /model live · /commands · /undo · forge tips · forge doctor --json\n`,
         ),
       );
       savePreferences({ seenWelcomeTip: true });
