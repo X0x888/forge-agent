@@ -1363,10 +1363,27 @@ describe("session metrics + permission timeout", () => {
       ok: false,
       aborted: true,
       headless: false,
+      lastErrorCode: "rate_limited",
     });
+    const { setSessionLastError, saveSession } = await import(
+      "../src/session/session.js"
+    );
+    const failedSess = createSession({
+      cwd: a,
+      provider: "xai",
+      model: "m",
+      title: "failed-sess",
+    });
+    setSessionLastError(failedSess, {
+      code: "rate_limited",
+      message: "429",
+      tips: ["switch"],
+    });
+    saveSession(failedSess);
     const stats = collectUsageStats();
     assert.equal(stats.runs, 2);
     assert.equal(stats.okRuns, 1);
+    assert.equal(stats.failedRuns, 1);
     assert.equal(stats.abortedRuns, 1);
     assert.equal(stats.continueCapReleases, 1);
     assert.equal(stats.maxTurnsHits, 0);
@@ -1376,17 +1393,23 @@ describe("session metrics + permission timeout", () => {
     assert.equal(stats.completionTokens, 250);
     assert.ok(stats.byProvider.xai >= 1);
     assert.ok(stats.byProvider.anthropic >= 1);
+    assert.equal(stats.byLastErrorCode.rate_limited, 1);
     assert.ok(stats.sessions.total >= 1);
     assert.ok(stats.sessions.titled >= 1);
     assert.equal(typeof stats.sessions.pinned, "number");
     assert.ok(stats.sessions.pinned >= 0);
+    assert.ok(stats.sessions.withLastError >= 1);
     const textOut = formatUsageStats(stats);
     assert.match(textOut, /Forge usage/);
     assert.match(textOut, /runs:/);
+    assert.match(textOut, /failed=1/);
     assert.match(textOut, /continueCap=1/);
     assert.match(textOut, /maxTurns=0/);
     assert.match(textOut, /By provider/);
     assert.match(textOut, /pinned=/);
+    assert.match(textOut, /lastError=/);
+    assert.match(textOut, /By lastError code/);
+    assert.match(textOut, /rate_limited/);
   });
 });
 

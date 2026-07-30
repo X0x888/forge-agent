@@ -248,6 +248,8 @@ export interface UsageStats {
   days: number;
   runs: number;
   okRuns: number;
+  /** Runs with ok=false (provider/run failures). */
+  failedRuns: number;
   abortedRuns: number;
   timedOutRuns: number;
   /** Runs that hit the stop-continue safety valve (length/filter/empty/Stop-block). */
@@ -266,6 +268,8 @@ export interface UsageStats {
   byModel: Record<string, number>;
   /** Top workspaces by run count (basename → count). */
   byProject: Record<string, number>;
+  /** Failure codes from run_end.lastErrorCode (never bodies). */
+  byLastErrorCode: Record<string, number>;
   /** On-disk session inventory (not limited to metrics window). */
   sessions: {
     total: number;
@@ -274,6 +278,8 @@ export interface UsageStats {
     ultrawork: number;
     /** Pin-protected sessions (survive prune). */
     pinned: number;
+    /** Sessions with meta.lastError set (recovery backlog). */
+    withLastError: number;
   };
 }
 
@@ -305,6 +311,7 @@ export function collectUsageStats(opts?: {
   const byProject: Record<string, number> = {};
   let runs = 0;
   let okRuns = 0;
+  let failedRuns = 0;
   let abortedRuns = 0;
   let timedOutRuns = 0;
   let continueCapReleases = 0;
@@ -317,11 +324,13 @@ export function collectUsageStats(opts?: {
   let durationMs = 0;
   let turns = 0;
   let edits = 0;
+  const byLastErrorCode: Record<string, number> = {};
 
   for (const e of filtered) {
     if (e.type !== "run_end" && e.type !== "session_end") continue;
     runs += 1;
     if (e.ok) okRuns += 1;
+    else if (e.ok === false) failedRuns += 1;
     if (e.aborted) abortedRuns += 1;
     if (e.timedOut) timedOutRuns += 1;
     if (e.releasedOnContinueCap) continueCapReleases += 1;
@@ -338,6 +347,10 @@ export function collectUsageStats(opts?: {
     byProvider[prov] = (byProvider[prov] || 0) + 1;
     const model = (e.model || "unknown").slice(0, 64);
     byModel[model] = (byModel[model] || 0) + 1;
+    if (e.lastErrorCode) {
+      const code = String(e.lastErrorCode).slice(0, 64);
+      byLastErrorCode[code] = (byLastErrorCode[code] || 0) + 1;
+    }
     if (e.cwd) {
       try {
         const base = path.basename(path.resolve(e.cwd)).slice(0, 48) || e.cwd;
@@ -354,6 +367,7 @@ export function collectUsageStats(opts?: {
   let sessionTitled = 0;
   let sessionUlw = 0;
   let sessionPinned = 0;
+  let sessionWithLastError = 0;
   try {
     // Dynamic import avoided — listSessions is same package tree but metrics
     // must not create a hard cycle. Inline a light scan of meta.json only.
@@ -369,11 +383,13 @@ export function collectUsageStats(opts?: {
             title?: string;
             ultrawork?: boolean;
             pinned?: boolean;
+            lastError?: { message?: string };
           };
           sessionTotal += 1;
           if (meta.title) sessionTitled += 1;
           if (meta.ultrawork) sessionUlw += 1;
           if (meta.pinned) sessionPinned += 1;
+          if (meta.lastError?.message) sessionWithLastError += 1;
           const lockPath = path.join(dir, "session.lock");
           if (fs.existsSync(lockPath)) {
             try {
@@ -409,6 +425,7 @@ export function collectUsageStats(opts?: {
     days,
     runs,
     okRuns,
+    failedRuns,
     abortedRuns,
     timedOutRuns,
     continueCapReleases,
@@ -424,12 +441,14 @@ export function collectUsageStats(opts?: {
     byProvider,
     byModel,
     byProject,
+    byLastErrorCode,
     sessions: {
       total: sessionTotal,
       locked: sessionLocked,
       titled: sessionTitled,
       ultrawork: sessionUlw,
       pinned: sessionPinned,
+      withLastError: sessionWithLastError,
     },
   };
 }
@@ -448,17 +467,22 @@ export function formatUsageStats(stats: UsageStats): string {
   const durMin = stats.durationMs / 60_000;
   return [
     `Forge usage (${window})`,
-    `  runs:       ${stats.runs}  ok=${stats.okRuns} (${okPct}%)  aborted=${stats.abortedRuns}  timedOut=${stats.timedOutRuns}  continueCap=${stats.continueCapReleases}  maxTurns=${stats.maxTurnsHits}`,
+    `  runs:       ${stats.runs}  ok=${stats.okRuns} (${okPct}%)  failed=${stats.failedRuns}  aborted=${stats.abortedRuns}  timedOut=${stats.timedOutRuns}  continueCap=${stats.continueCapReleases}  maxTurns=${stats.maxTurnsHits}`,
     `  mode:       headless=${stats.headlessRuns}  ULW=${stats.ulwRuns}`,
     `  tokens:     in=${formatTokens(stats.promptTokens)} out=${formatTokens(stats.completionTokens)}  est ${formatCost(stats.estCostUsd)}`,
     `  work:       turns=${stats.turns}  edits=${stats.edits}  wall≈${durMin.toFixed(1)}m`,
-    `  sessions:   ${stats.sessions.total} on disk  titled=${stats.sessions.titled}  ULW=${stats.sessions.ultrawork}  pinned=${stats.sessions.pinned}  locked=${stats.sessions.locked}`,
+    `  sessions:   ${stats.sessions.total} on disk  titled=${stats.sessions.titled}  ULW=${stats.sessions.ultrawork}  pinned=${stats.sessions.pinned}  lastError=${stats.sessions.withLastError}  locked=${stats.sessions.locked}`,
     `By provider:`,
     top(stats.byProvider),
     `By model:`,
     top(stats.byModel),
     `By project:`,
     top(stats.byProject),
+    Object.keys(stats.byLastErrorCode).length
+      ? `By lastError code:\n${top(stats.byLastErrorCode)}`
+      : null,
     `  metrics: ${stats.events} events · ${stats.metricsPath}`,
-  ].join("\n");
+  ]
+    .filter((x): x is string => x != null)
+    .join("\n");
 }

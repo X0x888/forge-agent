@@ -6,6 +6,7 @@
 
 - **Metrics `lastErrorCode`**: failed run_end events stamp the recovery code (never bodies) for CI post-mortems
 - **Markdown export lastError**: `exportSessionMarkdown` includes last error + tip for incident handoff
+- **`/stats` · `forge stats` failure breakdown**: `failedRuns`, `byLastErrorCode`, and `sessions.withLastError` for expert recovery dashboards
 
 
 ## 0.9.9 — Prune protects lastError recovery backlog
