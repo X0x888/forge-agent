@@ -2,7 +2,7 @@
 
 **Forge** is an open-source AI coding agent CLI with a **first-class harness** — the control plane that other tools partially implement.
 
-> **v0.9.36** — **`/plan` ↔ `/build`** (session-scoped design mode), **project custom slash** (`.forge/commands`), **headless slash** (`forge run "/plan"`), **provider recovery tips**, multi-source **AGENTS/CLAUDE/cursor** rules, live **`/model`**, smarter session titles, **`/news` Unreleased**. Builds on **v0.9.5** SuperGrok OIDC, file-aware `/undo`, `/init`, `/review`, `/compact-and`, `/logs`, export `0600`. Still includes Retry-After, doom-loop + error-streak, **apply_patch**, session lock + auto-resume, structured **`doctor --json`**, `npm run smoke`. Harness: blocking Stop, `/goal`, ULW.
+> **v0.9.37** — **`/plan` ↔ `/build`** (session-scoped design mode), **project custom slash** (`.forge/commands`), **headless slash** (`forge run "/plan"`), **provider recovery tips**, multi-source **AGENTS/CLAUDE/cursor** rules, live **`/model`**, smarter session titles, **`/news` Unreleased**. Builds on **v0.9.5** SuperGrok OIDC, file-aware `/undo`, `/init`, `/review`, `/compact-and`, `/logs`, export `0600`. Still includes Retry-After, doom-loop + error-streak, **apply_patch**, session lock + auto-resume, structured **`doctor --json`**, `npm run smoke`. Harness: blocking Stop, `/goal`, ULW.
 
 Key capability comparison:
 

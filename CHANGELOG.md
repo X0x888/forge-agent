@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.9.37 — richer slash arg completion for expert control
+
 ### Added
 
 - **Richer slash arg completion**: `/cycle` `/goal` `/effort` `/permissions` `/sessions` `/max-waves` `/ulw` first-arg completion for expert mid-run control
