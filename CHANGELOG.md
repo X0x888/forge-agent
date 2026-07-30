@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## 0.9.6 — Expert production UX (/plan·/build, project commands, recovery tips)
+
+Learned from OpenCode (plan/build, custom commands, instruction walk-up) and production expert workflows. Session-scoped design mode, headless CI slash probes, multi-source project rules, provider recovery tips, smarter titles, and doctor hygiene counts.
+
+
 ### Added
 
 - **`/plan` · `/build` · `/execute`** (OpenCode-style): session-scoped PLAN mode without sticky-prefs footgun. `/plan [focus]` hard-denies mutations (writes/bash/apply_patch); `/build` restores the prior mode and notifies the agent mid-run. Live controls; resume restores session plan unless `--permission-mode` is explicit. System prompt PLAN block lists goal/steps/risks/verification; deny reasons point at `/build`. `/permissions plan|build` aliases; sessions list/share/status show PLAN badge
