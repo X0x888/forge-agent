@@ -2,10 +2,11 @@
 
 ## Unreleased
 
+## 0.9.14 — /context pressure tips
+
 ### Added
 
 - **`/context` pressure tips**: shows autoCompact threshold and HARD/elevated pressure guidance when usage is high
-
 
 ## 0.9.13 — Context-pressure warnings for experts
 
