@@ -1337,10 +1337,83 @@ export function compactMessages(
   return compactMessagesStructured(messages, { keepLast, context }).messages;
 }
 
-/** Set title from first user message if unset. */
+/**
+ * Derive a scannable session title from a user prompt (OpenCode-style hygiene).
+ * Prefer mandate/goal lines over harness boilerplate; word-boundary truncate.
+ * Returns undefined for empty / pure slash-control input (no noisy titles).
+ */
+export function deriveSessionTitle(
+  userMessage: string,
+  maxChars: number = MAX_SESSION_TITLE_CHARS,
+): string | undefined {
+  const cap = Math.max(8, Math.min(Math.floor(maxChars) || MAX_SESSION_TITLE_CHARS, 500));
+  let raw = String(userMessage ?? "").replace(/\r\n/g, "\n").trim();
+  if (!raw) return undefined;
+
+  // Pure live slash controls should not become session titles
+  if (/^\/[a-z][\w-]*(?:\s|$)/i.test(raw) && !raw.includes("\n")) {
+    return undefined;
+  }
+
+  // Prefer explicit mandate / goal lines when present (ULW /goal wrappers)
+  const mandate =
+    raw.match(/^\s*User mandate:\s*(.+)$/im)?.[1] ||
+    raw.match(/^\s*Mandate:\s*(.+)$/im)?.[1] ||
+    raw.match(/^\s*Goal:\s*(.+)$/im)?.[1] ||
+    raw.match(/^\s*Objective:\s*(.+)$/im)?.[1];
+  if (mandate) raw = mandate.trim();
+
+  // Drop common harness / protocol boilerplate blocks
+  const dropLine =
+    /^(#{1,6}\s|[-*•]\s*(?:Counters?|ULW|cycle=|max_waves|Permission mode|Todos?\b|Attest\b|Execute relentlessly|CONTINUE relentless|The user can flip|While cycle=|When cycle=|max_waves:|Live mid-run|Start Wave|##\s*ULW|##\s*Goal|##\s*Git|##\s*Todos)|User mandate:\s*$|Execute relentlessly\b|under the ULW cycle protocol\b)/i;
+
+  const lines = raw
+    .split("\n")
+    .map((l) => l.trim())
+    .filter((l) => l.length > 0 && !dropLine.test(l));
+
+  let pick =
+    lines.find((l) => l.length >= 8 && !/^\/[a-z]/i.test(l)) ||
+    lines[0] ||
+    "";
+  if (!pick) return undefined;
+
+  // If still a giant single line, prefer first sentence-ish chunk
+  if (pick.length > cap && /[.!?]/.test(pick)) {
+    const m = pick.match(/^(.+?[.!?])(\s|$)/);
+    if (m && m[1].length >= 12 && m[1].length <= cap) pick = m[1];
+  }
+
+  let out = pick
+    .replace(/\s+/g, " ")
+    .replace(/^["'`“”‘’]+|["'`“”‘’]+$/g, "")
+    .trim();
+  if (!out) return undefined;
+
+  // Strip leading conversational filler that wastes the 28-char list column
+  out = out.replace(
+    /^(please\s+|can you\s+|could you\s+|would you\s+|i need you to\s+|help me\s+)/i,
+    "",
+  );
+  // Capitalize first letter for scannability (keep rest as-is for paths/code)
+  if (/^[a-z]/.test(out)) {
+    out = out.charAt(0).toUpperCase() + out.slice(1);
+  }
+
+  if (out.length > cap) {
+    let cut = out.slice(0, cap);
+    const sp = cut.lastIndexOf(" ");
+    if (sp > Math.floor(cap * 0.55)) cut = cut.slice(0, sp);
+    out = cut.replace(/[.,;:]+$/g, "").trimEnd() + "…";
+  }
+
+  return out || undefined;
+}
+
+/** Set title from first user message if unset (smart derive; never overwrites). */
 export function maybeSetTitle(session: SessionData, userMessage: string): void {
   if (session.meta.title) return;
-  const t = userMessage.replace(/\s+/g, " ").trim().slice(0, MAX_SESSION_TITLE_CHARS);
+  const t = deriveSessionTitle(userMessage);
   if (t) session.meta.title = t;
 }
 

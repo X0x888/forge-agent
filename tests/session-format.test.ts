@@ -12,6 +12,7 @@ import {
   formatResumePeek,
   exportSessionMarkdown,
   maybeSetTitle,
+  deriveSessionTitle,
   clearConversation,
   setSessionTitle,
   saveSession,
@@ -950,5 +951,43 @@ it("/fork includes last-turn peek", async () => {
     assert.ok(hits[0].relativeAge);
     const none = listSessionLookupSuggestions("zzzznope-unique", { cwd: tmp });
     assert.deepEqual(none, []);
+  });
+
+  it("deriveSessionTitle prefers mandate and strips harness noise", () => {
+    const t = deriveSessionTitle(
+      [
+        "User mandate: harden the auth refresh path",
+        "Execute relentlessly under the ULW cycle protocol until cycle flag is 0.",
+        "",
+        "## ULW",
+        "cycle=1 wave=0",
+      ].join("\n"),
+    );
+    assert.equal(t, "Harden the auth refresh path");
+
+    const polite = deriveSessionTitle("please fix the flaky CI job on main");
+    assert.equal(polite, "Fix the flaky CI job on main");
+
+    assert.equal(deriveSessionTitle("/status"), undefined);
+    assert.equal(deriveSessionTitle("  "), undefined);
+
+    const long = "word ".repeat(80).trim();
+    const cut = deriveSessionTitle(long, 40)!;
+    assert.ok(cut.endsWith("…"));
+    assert.ok(cut.length <= 41);
+    assert.ok(!cut.includes("  "));
+  });
+
+  it("maybeSetTitle uses smart derive and never overwrites", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-title-"));
+    process.env.FORGE_HOME = tmp;
+    const s = createSession({ cwd: tmp, provider: "xai", model: "m" });
+    maybeSetTitle(
+      s,
+      "User mandate: ship production-ready undo journal\nExecute relentlessly under the ULW cycle protocol",
+    );
+    assert.equal(s.meta.title, "Ship production-ready undo journal");
+    maybeSetTitle(s, "should not replace");
+    assert.equal(s.meta.title, "Ship production-ready undo journal");
   });
 });

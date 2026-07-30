@@ -171,6 +171,7 @@ export {
   importSessionJson,
   forkSession,
   setSessionTitle,
+  deriveSessionTitle,
   MAX_SESSION_TITLE_CHARS,
   setSessionPinned,
   isSessionPinned,
