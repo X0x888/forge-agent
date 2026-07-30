@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.9.47 — share card skills + README examples
+
 ### Added
 
 - **Share card skills count**: `/share` project line includes `skills=N` when skill packs are loaded
