@@ -14,6 +14,7 @@ What experts should expect from Forge in long, unattended, or CI runs.
 | **ULW after overflow** | Re-admits mandate/cycle after recovery so long tool-only waves do not die with `cycle=1 wave=0` and no resume guidance |
 | **Compact thrash guard** | Threshold compact that does not shrink history is not repeated until the message list grows |
 | **Structured errors** | `ProviderApiError` carries status + headers; retry classifier uses them |
+| **Expert recovery tips** | `formatProviderError` maps auth/rate-limit/quota/overflow/network/5xx to next steps; REPL + headless print tips; `forge run --json` fail payloads include `recovery: { code, tips }` and structured `reason` |
 | **Abortable streams** | `AbortSignal` cancels `fetch` and releases the SSE reader (Ctrl+C works mid-token) |
 | **Provider timeout** | Default 10 min wall clock (`FORGE_PROVIDER_TIMEOUT_MS`) — grok-4.5 high-effort thinking + near-max outputs exceed 5 min; timeout is retryable, user abort is not |
 | **Prompt-cache stability** | System prompt (message[0]) carries only stable git state (root/remote); the volatile branch line is admitted append-only via context-admit, so everyday edits no longer invalidate the server-side prompt cache (xAI cached input ≈ 4× cheaper) |
@@ -31,6 +32,7 @@ What experts should expect from Forge in long, unattended, or CI runs.
 | **Orphan tool_calls** | Abort mid-batch or compact cut injects synthetic tool results so the next API call does not 400 |
 | **Compact boundary** | Compaction never starts a keep-window on a bare `tool` message |
 | **Empty name** | Tool calls with blank names after stream glitches return a clear error instead of crashing |
+| **Unknown tool tips** | Up to 3 Did-you-mean candidates (`suggestNames`) so the model can self-correct typos without a human |
 | **Doom-loop** | Same tool + same args ×N injects a hard strategy-change nudge (OpenCode-inspired; default N=3, override `FORGE_DOOM_LOOP_THRESHOLD`); fingerprints ignore transport-only fields (`timeout_ms`, `background`, `run_in_background`, `stream`, `tail`, `allow_local`) |
 | **Error-streak** | N consecutive tool errors (any args) injects a circuit-breaker nudge (Grok-inspired; default N=5, override `FORGE_ERROR_STREAK_THRESHOLD`); permission/hard denies do not count |
 | **Stale tool-result clearing** | Proactive microcompaction (Anthropic `clear_tool_uses` pattern): tool outputs older than the hot tail (default 16 non-system msgs) and bulkier than 1200 chars are replaced by restorable stubs (tool name + size + saved-output path when present); runs at most every `FORGE_TOOL_CLEAR_EVERY_TURNS` (6) and only when it frees ≥ `FORGE_TOOL_CLEAR_MIN_STALE_BYTES` (24k); `FORGE_TOOL_CLEAR=0` disables |
@@ -45,6 +47,9 @@ What experts should expect from Forge in long, unattended, or CI runs.
 | **read_file past-EOF** | Offset beyond last line returns a clear past-end message (not a false empty-file) |
 | **Unknown task_id** | `get_task_output` / `kill_task` list actives and suggest prefix/typo matches |
 | **CLI/slash typos** | Bare `forge sesions`, `sessions prun`, `--model grok-45`, `--effort medum`, `/exprot` → structured Did you mean? (fail-closed where CI-safe); tool numeric/format args fail closed; doctor flags invalid config permission rules |
+| **Headless slash** | `forge run "/plan"` / `"/commands"` / custom `.forge/commands` templates resolve without a model call when pure control (`reason: "slash"`); templates expand then run the agent |
+| **Session plan mode** | `/plan` is session-scoped (no sticky prefs); resume restores plan unless `--permission-mode` is set; `/build` clears the override |
+| **Project instructions** | Walk-up within git root for AGENTS/CLAUDE/cursor/copilot rules; doctor JSON `projectRulesCount` / `projectCommandsCount` for CI hygiene |
 | **File mutation journal** | Successful edits append pre-images to `sessions/<id>/mutations.jsonl` (mode `0600`, ~1.5 MiB/body cap) so `/undo` / `/retry` restore **disk + chat** (OpenCode-inspired; large bodies skipped with an explicit note) |
 | **apply_patch** | Multi-file patch tool; all hunks validated before disk mutation; protected-path hard deny; missing update/delete targets suggest nearby path typos; delete/update pre-images journaled for undo; **Move to** refuses existing dest (disk or earlier hunk in the same patch) |
 | **Bash timeout** | Foreground/background wall-clock timeout reports `Command timed out after Nms` with exit code **124** |
