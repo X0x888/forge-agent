@@ -3908,6 +3908,7 @@ Project instructions for Forge (and other coding agents).
               gitIsWorktree: check.gitIsWorktree ?? null,
               gitBranch: check.gitBranch ?? null,
               gitRoot: check.gitRoot ?? null,
+              gitChangedFiles: check.gitChangedFiles ?? null,
               toolOutput,
               sandboxLog,
               metrics,

@@ -129,6 +129,7 @@ mustInclude("doctor modelDefaultContextWindow", ["doctor", "--json"], "modelDefa
 mustInclude("doctor contextWindow", ["doctor", "--json"], "contextWindow");
 mustInclude("doctor autoCompactThreshold", ["doctor", "--json"], "autoCompactThreshold");
 mustInclude("doctor gitIsWorktree", ["doctor", "--json"], "gitIsWorktree");
+mustInclude("doctor gitChangedFiles", ["doctor", "--json"], "gitChangedFiles");
 
 // Headless slash: pure control exits without auth/model (reason: slash)
 mustInclude(

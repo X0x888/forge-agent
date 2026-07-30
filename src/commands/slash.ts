@@ -3390,6 +3390,7 @@ export interface DoctorResult {
   gitIsWorktree?: boolean | null;
   gitBranch?: string | null;
   gitRoot?: string | null;
+  gitChangedFiles?: number | null;
 }
 
 /**
@@ -3664,6 +3665,7 @@ export async function runDoctorCheck(
   let gitIsWorktree: boolean | null = null;
   let gitBranch: string | null = null;
   let gitRoot: string | null = null;
+  let gitChangedFiles: number | null = null;
   try {
     const { getGitSnapshot } = await import("../util/git-context.js");
     const g = getGitSnapshot(config.workspace || process.cwd());
@@ -3671,13 +3673,27 @@ export async function runDoctorCheck(
       gitRoot = g.root;
       gitBranch = g.branch || null;
       gitIsWorktree = Boolean(g.isWorktree);
+      gitChangedFiles =
+        typeof g.changedFiles === "number" ? g.changedFiles : null;
       const dirty = g.dirty ? "*" : "";
       const wt = g.isWorktree ? " · linked worktree" : "";
+      const ch =
+        typeof g.changedFiles === "number" && g.changedFiles > 0
+          ? ` · Δ${g.changedFiles}`
+          : "";
       lines.push(
         chalk.dim(
-          `  git: ${g.branch || "?"}${dirty}${wt}  ·  ${g.root}`,
+          `  git: ${g.branch || "?"}${dirty}${wt}${ch}  ·  ${g.root}`,
         ),
       );
+      // Expert tip: huge dirty trees make ULW diffs noisy and raise blast radius
+      if (typeof g.changedFiles === "number" && g.changedFiles >= 40) {
+        lines.push(
+          chalk.yellow(
+            `  ⚠ dirty tree has ${g.changedFiles} changed files — commit/stash before a long ULW wave, or /plan first`,
+          ),
+        );
+      }
     }
   } catch {
     /* */
@@ -4016,6 +4032,7 @@ export async function runDoctorCheck(
     gitIsWorktree,
     gitBranch,
     gitRoot,
+    gitChangedFiles,
   };
 }
 

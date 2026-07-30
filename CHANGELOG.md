@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+### Added
+
+- **Doctor dirty-tree tip + `gitChangedFiles`**: warn when ≥40 changed files before long ULW; JSON exposes the count
+
+
 ## 0.9.23 — Worktree on share/summary + run JSON isWorktree/root
 
 ### Added
