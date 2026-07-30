@@ -118,4 +118,33 @@ describe("resolveHeadlessSlashPrompt", () => {
     }
     assert.equal(loadSession(session.meta.id), null);
   });
+
+  it("ephemeral does not discard mutating /plan session", async () => {
+    const session = createSession({ cwd: tmp, provider: "xai", model: "m" });
+    const hooks = new HookRunner(DEFAULT_CONFIG, tmp);
+    const { saveSession, loadSession } = await import(
+      "../src/session/session.js"
+    );
+    saveSession(session);
+    const cfg = {
+      ...DEFAULT_CONFIG,
+      workspace: tmp,
+      permissionMode: "acceptEdits" as const,
+    };
+    const r = await resolveHeadlessSlashPrompt({
+      prompt: "/plan design auth",
+      session,
+      config: cfg,
+      hooks,
+      ephemeral: true,
+    });
+    assert.equal(r.kind, "done");
+    if (r.kind === "done") {
+      assert.equal(r.ephemeral, false);
+    }
+    assert.equal(cfg.permissionMode, "plan");
+    const loaded = loadSession(session.meta.id);
+    assert.ok(loaded);
+    assert.equal(loaded!.meta.permissionMode, "plan");
+  });
 });

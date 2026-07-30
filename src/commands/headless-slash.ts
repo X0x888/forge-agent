@@ -5,7 +5,7 @@
 import type { ForgeConfig } from "../config/types.js";
 import type { SessionData } from "../session/session.js";
 import type { HookRunner } from "../harness/hooks.js";
-import { handleSlash } from "./slash.js";
+import { handleSlash, classifyLiveSlash } from "./slash.js";
 import {
   saveSession,
   deleteSessionDetailed,
@@ -67,7 +67,13 @@ export async function resolveHeadlessSlashPrompt(opts: {
       };
     }
     if (slash.handled) {
-      const ephemeral = Boolean(opts.ephemeral);
+      // Only discard for true read-only probes (/help, /commands, /doctor…).
+      // Mutating controls (/plan, /build, /model, /cycle…) must persist session.
+      const cmd = raw.trim().split(/\s+/)[0] || "/";
+      const readonlyProbe =
+        classifyLiveSlash(raw.trim()) === "readonly" ||
+        classifyLiveSlash(cmd) === "readonly";
+      const ephemeral = Boolean(opts.ephemeral) && readonlyProbe;
       if (ephemeral) {
         try {
           deleteSessionDetailed(session.meta.id, { force: true });
@@ -84,7 +90,7 @@ export async function resolveHeadlessSlashPrompt(opts: {
       return {
         kind: "done",
         output: String(slash.output || ""),
-        command: raw.trim().split(/\s+/)[0] || "/",
+        command: cmd,
         session,
         ephemeral,
       };
