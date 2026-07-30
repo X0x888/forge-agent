@@ -2,10 +2,12 @@
 
 ## Unreleased
 
+## 0.9.22 — /status + doctor git worktree line
+
 ### Added
 
 - **`/status` + doctor git worktree line**: show branch/dirty/WORKTREE and root for multi-worktree expert sessions
-
+- **Doctor JSON `gitIsWorktree` / `gitBranch` / `gitRoot`**: CI can detect linked worktree checkouts
 
 ## 0.9.21 — maxTurns lastError stamp
 

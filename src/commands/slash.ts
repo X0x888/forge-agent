@@ -3386,6 +3386,10 @@ export interface DoctorResult {
   modelDefaultContextWindow?: number | null;
   /** config.contextWindow / modelDefault when known. */
   contextWindowRatio?: number | null;
+  /** Linked git worktree (not main checkout). */
+  gitIsWorktree?: boolean | null;
+  gitBranch?: string | null;
+  gitRoot?: string | null;
 }
 
 /**
@@ -3657,10 +3661,16 @@ export async function runDoctorCheck(
   lines.push(`Goal gate: ${config.goal.enabled ? "on" : "off"} (stuck=${config.goal.stuckThreshold})`);
   lines.push(`Workspace: ${config.workspace || process.cwd()}`);
   // Git worktree signal for multi-worktree expert workflows
+  let gitIsWorktree: boolean | null = null;
+  let gitBranch: string | null = null;
+  let gitRoot: string | null = null;
   try {
     const { getGitSnapshot } = await import("../util/git-context.js");
     const g = getGitSnapshot(config.workspace || process.cwd());
     if (g.root) {
+      gitRoot = g.root;
+      gitBranch = g.branch || null;
+      gitIsWorktree = Boolean(g.isWorktree);
       const dirty = g.dirty ? "*" : "";
       const wt = g.isWorktree ? " · linked worktree" : "";
       lines.push(
@@ -4003,6 +4013,9 @@ export async function runDoctorCheck(
     sessionsWithLastError,
     modelDefaultContextWindow,
     contextWindowRatio,
+    gitIsWorktree,
+    gitBranch,
+    gitRoot,
   };
 }
 
