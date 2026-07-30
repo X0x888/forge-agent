@@ -76,6 +76,16 @@ export interface SessionMeta {
    * `permissionMode === "plan"`.
    */
   permissionModeBeforePlan?: PermissionMode;
+  /**
+   * Last provider/run failure (expert recovery). Cleared on a successful turn.
+   * Never stores tokens or full request bodies.
+   */
+  lastError?: {
+    at: string;
+    code: string;
+    message: string;
+    tips?: string[];
+  };
   ultrawork: boolean;
   turnCount: number;
   editCount: number;
@@ -210,7 +220,58 @@ function normalizeSessionMeta(fromSide: SessionMeta): SessionMeta {
   const before = normalizeMetaPermissionMode(fromSide.permissionModeBeforePlan);
   if (before) out.permissionModeBeforePlan = before;
   else delete out.permissionModeBeforePlan;
+  const le = fromSide.lastError;
+  if (
+    le &&
+    typeof le === "object" &&
+    typeof (le as { message?: unknown }).message === "string" &&
+    String((le as { message: string }).message).trim()
+  ) {
+    const o = le as {
+      at?: unknown;
+      code?: unknown;
+      message: string;
+      tips?: unknown;
+    };
+    out.lastError = {
+      at: typeof o.at === "string" ? o.at : new Date().toISOString(),
+      code: typeof o.code === "string" ? o.code : "error",
+      message: String(o.message).trim().slice(0, 500),
+      tips: Array.isArray(o.tips)
+        ? o.tips
+            .filter((t): t is string => typeof t === "string" && Boolean(t.trim()))
+            .map((t) => t.trim().slice(0, 200))
+            .slice(0, 6)
+        : undefined,
+    };
+  } else {
+    delete out.lastError;
+  }
   return out;
+}
+
+/** Record a provider/run failure on the session for /status recovery. */
+export function setSessionLastError(
+  session: SessionData,
+  err: { code: string; message: string; tips?: string[] },
+): void {
+  session.meta.lastError = {
+    at: new Date().toISOString(),
+    code: String(err.code || "error").slice(0, 64),
+    message: String(err.message || "error").trim().slice(0, 500),
+    tips: (err.tips || [])
+      .filter((t) => typeof t === "string" && t.trim())
+      .map((t) => t.trim().slice(0, 200))
+      .slice(0, 6),
+  };
+  if (!session.meta.lastError.tips?.length) {
+    delete session.meta.lastError.tips;
+  }
+}
+
+/** Clear lastError after a successful agent turn. */
+export function clearSessionLastError(session: SessionData): void {
+  delete session.meta.lastError;
 }
 
 const META_PERMISSION_MODES = new Set<PermissionMode>([

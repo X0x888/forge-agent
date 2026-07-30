@@ -4007,7 +4007,10 @@ export function formatEffectiveConfig(
     `  forgeHome:       ${snap.forgeHome}`,
     `  provider/model:  ${snap.provider}/${snap.model}` +
       (snap.reasoningEffort ? `  effort=${snap.reasoningEffort}` : ""),
-    `  permission:      ${snap.permissionMode}`,
+    `  permission:      ${snap.permissionMode}` +
+      (snap.permissionMode === "plan"
+        ? "  (read-only · /build to implement)"
+        : ""),
     `  sandbox:         ${snap.sandbox}  network=${snap.sandboxNetwork}  missing=${snap.sandboxMissingBackend}`,
     `  read outside:    ${snap.readOutsideWorkspace}`,
     `  sticky provider: ${snap.stickyProvider ?? "(none)"}`,

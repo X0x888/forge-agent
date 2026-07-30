@@ -443,6 +443,33 @@ describe("statusline plan mode details", () => {
     assert.match(text, /plan/i);
     assert.match(text, /\/build/);
   });
+
+  it("formatSessionDetails surfaces lastError recovery tip", async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-sl-err-"));
+    process.env.FORGE_HOME = tmp;
+    const { formatSessionDetails } = await import("../src/tui/status-bar.js");
+    const { DEFAULT_CONFIG } = await import("../src/config/types.js");
+    const { setSessionLastError } = await import("../src/session/session.js");
+    const s = createSession({ cwd: tmp, provider: "xai", model: "m" });
+    setSessionLastError(s, {
+      code: "rate_limited",
+      message: "xai HTTP 429: rate limit",
+      tips: ["forge accounts switch"],
+    });
+    const auth = {
+      provider: "xai",
+      method: "api_key",
+      token: "t",
+    } as ResolvedAuth;
+    const text = formatSessionDetails({
+      config: { ...DEFAULT_CONFIG, workspace: tmp },
+      session: s,
+      auth,
+    });
+    assert.match(text, /lastErr/);
+    assert.match(text, /rate_limited/);
+    assert.match(text, /accounts switch/);
+  });
 });
 
 describe("statusline tmux badges", () => {

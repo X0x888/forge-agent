@@ -22,6 +22,8 @@ import {
   maybeSetTitle,
   markUserTurn,
   pruneOversizedMessageBodies,
+  setSessionLastError,
+  clearSessionLastError,
 } from "../session/session.js";
 import { appendFileMutation } from "../session/mutations.js";
 import { HookRunner, type HookContext } from "../harness/hooks.js";
@@ -1224,6 +1226,29 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
         saveSession(session);
       }
     } else {
+      try {
+        const { formatProviderError } = await import("../providers/errors.js");
+        const fmt = formatProviderError(err, {
+          provider: String(config.provider),
+          model: config.model,
+        });
+        setSessionLastError(session, {
+          code: fmt.code,
+          message: fmt.message,
+          tips: fmt.tips,
+        });
+        saveSession(session);
+      } catch {
+        try {
+          setSessionLastError(session, {
+            code: "error",
+            message: (err as Error).message || String(err),
+          });
+          saveSession(session);
+        } catch {
+          /* */
+        }
+      }
       throw err;
     }
   }
@@ -1255,6 +1280,16 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
     events.onStatus?.(
       `tokens in=${formatTokens(promptTokens)} out=${formatTokens(completionTokens)} · est ${formatCost(cost)}`,
     );
+  }
+
+  // Successful completion (including aborted/maxTurns release) clears prior failure.
+  if (!aborted) {
+    try {
+      clearSessionLastError(session);
+      saveSession(session);
+    } catch {
+      /* */
+    }
   }
 
   return {

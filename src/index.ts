@@ -178,6 +178,8 @@ export {
   applySessionPermissionMode,
   enterSessionPlanMode,
   exitSessionPlanMode,
+  setSessionLastError,
+  clearSessionLastError,
   findRecentSessionForCwd,
   type RecentSessionHit,
   formatSessionSummary,

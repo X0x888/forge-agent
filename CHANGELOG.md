@@ -6,6 +6,10 @@
 
 - **First-run tip** mentions `/plan` · `/build` · live `/model` · `/commands` (v0.9.6 expert surface)
 
+### Added
+
+- **Session `lastError`**: provider/run failures stamp `meta.lastError` with code/message/tips; `/status` shows recovery; cleared on the next successful turn. `/config` tips plan → `/build`
+
 ## 0.9.6 — Expert production UX (/plan·/build, project commands, recovery tips)
 
 Learned from OpenCode (plan/build, custom commands, instruction walk-up) and production expert workflows. Session-scoped design mode, headless CI slash probes, multi-source project rules, provider recovery tips, smarter titles, and doctor hygiene counts.

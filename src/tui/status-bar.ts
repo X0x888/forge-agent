@@ -734,6 +734,14 @@ export function formatSessionDetails(ctx: StatusBarContext): string {
           : "") +
         `  ·  Stop ${config.blockingStopHooks ? "blocking" : "passive"}`,
     ),
+    session.meta.lastError
+      ? chalk.yellow(
+          `lastErr  [${session.meta.lastError.code}] ${session.meta.lastError.message.slice(0, 120)}` +
+            (session.meta.lastError.tips?.[0]
+              ? `\n         → ${session.meta.lastError.tips[0]}`
+              : ""),
+        )
+      : null,
     chalk.dim(
       `msgs     ${session.messages.length}  ·  ~${formatTokens(est)} ctx  ·  turns ${session.meta.turnCount}  edits ${session.meta.editCount}`,
     ),
@@ -769,5 +777,5 @@ export function formatSessionDetails(ctx: StatusBarContext): string {
     lines.push(chalk.dim("bg tasks"));
     lines.push(formatBackgroundTasksList());
   }
-  return lines.join("\n");
+  return lines.filter((l): l is string => typeof l === "string" && l.length > 0).join("\n");
 }
