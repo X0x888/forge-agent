@@ -2,10 +2,11 @@
 
 ## Unreleased
 
+## 0.9.13 — Context-pressure warnings for experts
+
 ### Added
 
 - **Context-pressure warnings**: one-shot expert log when auto-compact threshold or 92% hard headroom is crossed (`/context` · `/compact` tips)
-
 
 ## 0.9.12 — Continue-cap metrics/JSON lastError on success paths
 

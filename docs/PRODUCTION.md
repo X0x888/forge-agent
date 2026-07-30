@@ -328,6 +328,7 @@ Label new runs with `forge run … --title <label>` (searchable via `forge sessi
 - `forge prune-tool-output` if `~/.forge/tool-output` grows large (also auto-pruned)
 - Provider timeout: `FORGE_PROVIDER_TIMEOUT_MS` (default 5m; ms or `5m`/`300s`)
 - Context overflow: harness force-compacts once and re-issues; if still too large, start `/new` or raise `context_window`
+- Context pressure: one-shot log at auto-compact threshold and ~92% hard headroom (`/context` · `/compact` · `/compact-and`)
 
 ## Expert UX (production)
 
