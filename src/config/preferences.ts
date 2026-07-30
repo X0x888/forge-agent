@@ -29,6 +29,8 @@ export interface UserPreferences {
    * Missing/false → show once on next interactive REPL start.
    */
   seenWelcomeTip?: boolean;
+  /** Opt-in format-on-write after file tools (OpenCode-inspired). */
+  formatOnWrite?: boolean;
   updatedAt?: string;
 }
 
@@ -62,6 +64,9 @@ export function loadPreferences(): UserPreferences {
   if (typeof raw.seenWelcomeTip === "boolean") {
     out.seenWelcomeTip = raw.seenWelcomeTip;
   }
+  if (typeof raw.formatOnWrite === "boolean") {
+    out.formatOnWrite = raw.formatOnWrite;
+  }
   if (typeof raw.updatedAt === "string") out.updatedAt = raw.updatedAt;
   return out;
 }
@@ -77,6 +82,7 @@ export function savePreferences(patch: {
   reasoningEffort?: ReasoningEffort;
   bellOnTurnEnd?: boolean;
   seenWelcomeTip?: boolean;
+  formatOnWrite?: boolean;
 }): UserPreferences {
   const cur = loadPreferences();
   if (patch.provider !== undefined) {
@@ -119,6 +125,9 @@ export function savePreferences(patch: {
   }
   if (patch.bellOnTurnEnd !== undefined) {
     cur.bellOnTurnEnd = Boolean(patch.bellOnTurnEnd);
+  }
+  if (patch.formatOnWrite !== undefined) {
+    cur.formatOnWrite = Boolean(patch.formatOnWrite);
   }
   cur.version = 1;
   cur.updatedAt = nowIso();

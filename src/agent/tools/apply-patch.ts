@@ -10,6 +10,10 @@ import { resolvePath, assertWritablePath } from "./path-util.js";
 import { pathNotFoundHint } from "./path-hints.js";
 import { applyUpdateChunks, parsePatch } from "./patch.js";
 import { atomicWriteFile } from "./atomic-write.js";
+import {
+  formatNoteSuffix,
+  maybeFormatAfterWrite,
+} from "./format-on-write.js";
 
 export async function toolApplyPatch(
   args: Record<string, unknown>,
@@ -369,7 +373,22 @@ export async function toolApplyPatch(
     };
   }
 
+  const fmtNotes: string[] = [];
+  for (const op of planned) {
+    if (op.kind === "delete") continue;
+    const target =
+      op.kind === "update" && op.moveAbs ? op.moveAbs : op.abs;
+    if (!target) continue;
+    const fr = maybeFormatAfterWrite(target, ctx.workspace);
+    const note = formatNoteSuffix(fr);
+    if (note) {
+      const rel = path.relative(ctx.workspace, target) || target;
+      fmtNotes.push(`${rel}${note}`);
+    }
+  }
   return {
-    output: `Applied patch (${applied.length} op(s)):\n${applied.join("\n")}`,
+    output:
+      `Applied patch (${applied.length} op(s)):\n${applied.join("\n")}` +
+      (fmtNotes.length ? `\n${fmtNotes.join("\n")}` : ""),
   };
 }

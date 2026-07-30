@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+### Added
+
+- **Format-on-write (opt-in, OpenCode-inspired)**: after `write_file` / `search_replace` / `apply_patch`, optionally run project prettier/biome/ruff/gofmt/rustfmt. Enable with `/format on` or `FORGE_FORMAT_ON_WRITE=1` (env wins). Best-effort — never fails the tool.
+
+
 ## 0.9.31 — sessions list --json inventory summary
 
 ### Added

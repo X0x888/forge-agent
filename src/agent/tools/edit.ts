@@ -13,6 +13,10 @@ import {
   toLineEnding,
 } from "./text.js";
 import { atomicWriteFile } from "./atomic-write.js";
+import {
+  formatNoteSuffix,
+  maybeFormatAfterWrite,
+} from "./format-on-write.js";
 import { isTruthy } from "../../util/bool.js";
 
 export async function toolEdit(
@@ -175,6 +179,7 @@ export async function toolEdit(
         await atomicWriteFile(filePath, final, { encoding: "utf8" });
         journalUpdate();
         ctx.onEdit?.();
+        const fmt = maybeFormatAfterWrite(filePath, ctx.workspace);
         const rel = path.relative(ctx.workspace, filePath) || filePath;
         const note =
           alt.result.kind !== "exact"
@@ -182,7 +187,7 @@ export async function toolEdit(
             : "";
         const diff = shortDiff(rel, content, toLineEnding(normalizeNewlines(nextLf), ending));
         return {
-          output: `Edited ${rel}${note}\n\n${diff}`,
+          output: `Edited ${rel}${note}${formatNoteSuffix(fmt)}\n\n${diff}`,
         };
       }
     }
@@ -204,6 +209,7 @@ export async function toolEdit(
   await atomicWriteFile(filePath, final, { encoding: "utf8" });
   journalUpdate();
   ctx.onEdit?.();
+  const fmt = maybeFormatAfterWrite(filePath, ctx.workspace);
 
   const rel = path.relative(ctx.workspace, filePath) || filePath;
   const note =
@@ -213,5 +219,5 @@ export async function toolEdit(
         ? ` (${located.count} occurrence${located.count === 1 ? "" : "s"})`
         : "";
   const diff = shortDiff(rel, content, next);
-  return { output: `Edited ${rel}${note}\n\n${diff}` };
+  return { output: `Edited ${rel}${note}${formatNoteSuffix(fmt)}\n\n${diff}` };
 }

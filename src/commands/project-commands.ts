@@ -79,6 +79,7 @@ const RESERVED = new Set([
   "title",
   "rename",
   "bell",
+  "format",
   "pin",
   "unpin",
   "diff",

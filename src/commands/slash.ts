@@ -212,6 +212,7 @@ const LIVE_CONTROL = new Set([
   "/title",
   "/rename",
   "/bell",
+  "/format",
   "/pin",
   "/unpin",
 ]);
@@ -319,6 +320,7 @@ export function classifyLiveSlash(line: string): LiveSlashKind {
     if ((cmd === "/title" || cmd === "/rename") && !arg) return "readonly";
     // bare /bell shows status
     if (cmd === "/bell" && !arg) return "readonly";
+    if (cmd === "/format" && !arg) return "readonly";
     // /pin status is readonly; bare /pin pins (control). /unpin always mutates.
     if (cmd === "/pin") {
       const a = arg.toLowerCase();
@@ -445,6 +447,7 @@ export const SLASH_COMMANDS = [
   "/title",
   "/rename",
   "/bell",
+  "/format",
   "/pin",
   "/unpin",
   "/diff",
@@ -2124,6 +2127,59 @@ const result = rewindSessionDetailed(opts.session, n);
       }
     }
 
+    case "/format": {
+      // /format              → status
+      // /format on|off|1|0   → persist preference (OpenCode-inspired format-on-write)
+      const { isFormatOnWriteEnabled } = await import(
+        "../agent/tools/format-on-write.js"
+      );
+      const raw = (arg || "").trim().toLowerCase();
+      if (!raw || raw === "status") {
+        const on = isFormatOnWriteEnabled();
+        const env = process.env.FORGE_FORMAT_ON_WRITE?.trim();
+        return {
+          handled: true,
+          output:
+            `Format-on-write: ${on ? "on" : "off"}` +
+            (env
+              ? ` (FORGE_FORMAT_ON_WRITE=${env})`
+              : " (preference / default off)") +
+            `\n  /format on|off   persist · env FORGE_FORMAT_ON_WRITE=0|1 overrides` +
+            `\n  Runs project prettier/biome/ruff/gofmt/rustfmt after write_file · search_replace · apply_patch (best-effort)`,
+        };
+      }
+      if (["on", "1", "true", "yes", "enable"].includes(raw)) {
+        savePreferences({ formatOnWrite: true });
+        return {
+          handled: true,
+          output:
+            "Format-on-write ON (persisted). Override with FORGE_FORMAT_ON_WRITE=0 if needed.",
+        };
+      }
+      if (["off", "0", "false", "no", "disable"].includes(raw)) {
+        savePreferences({ formatOnWrite: false });
+        return {
+          handled: true,
+          output: "Format-on-write OFF (persisted).",
+        };
+      }
+      {
+        const tip = suggestName(
+          raw,
+          ["on", "off", "status", "enable", "disable"],
+          { minLength: 2, minScore: 36, requirePrefix3: false },
+        );
+        return {
+          handled: true,
+          output:
+            (tip
+              ? `Unknown /format arg "${raw}". Did you mean: ${tip}?\n`
+              : `Unknown /format arg "${raw}".\n`) +
+            `Usage: /format [on|off|status]`,
+        };
+      }
+    }
+
     case "/logs": {
       // Warp-inspired safety log tail — live-safe, no secrets by design.
       // Unknown tokens fail closed (parity with forge logs -n invalid).
@@ -3580,6 +3636,7 @@ export async function runDoctorCheck(
       prefs.reasoningEffort ? `effort=${prefs.reasoningEffort}` : null,
       prefs.permissionMode ? `permission_mode=${prefs.permissionMode}` : null,
       prefs.bellOnTurnEnd ? "bell=on" : null,
+      prefs.formatOnWrite ? "format=on" : null,
     ].filter(Boolean);
     lines.push(
       `Preferences: ${bits.length ? bits.join(" ") : "(none)"}  (~/.forge/preferences.json)`,
@@ -4417,6 +4474,7 @@ Forge slash commands
   /fork [title]         Branch session into a new id (keep original)
   /title [name|clear]   Show / set / clear session title (/rename)  [live]
   /bell [on|off|test]   Terminal BEL when a turn ends (long-run attention)  [live]
+  /format [on|off]      Format-on-write after file tools (prettier/biome/ruff/…)  [live]
   /diff [path]          Git status + diff (argv-safe; pathspecs/refs only)  [live]
   /logs [n|0|all|path]  Tail sandbox/safety events (0/all = full window)  [live]
   /config [json]        Effective config snapshot (no secrets)  [live]

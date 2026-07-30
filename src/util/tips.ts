@@ -18,6 +18,7 @@ export function expertTipsLines(): string[] {
     `  Worktrees:      doctor/status show linked worktree · forge status --json tags WORKTREE · one session per worktree`,
     `  Session titles: /sessions untitled · list --untitled · /title · --title · /goal auto-titles`,
     `  Session inventory: sessions list --json · doctor warns at ≥100 sessions · run --json productionWarnings · forge sessions prune --keep 50`,
+    `  Format-on-write: /format on · FORGE_FORMAT_ON_WRITE=1 · prettier/biome/ruff after file tools`,
     `  Dirty trees:    doctor warns at ≥40 changed files · run --json productionWarnings · commit/stash before long ULW`,
     `  Docs:          docs/PRODUCTION.md  ·  docs/RELIABILITY.md  ·  forge tips  ·  forge news  ·  /help`,
   ];

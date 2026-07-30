@@ -5,6 +5,10 @@ import type { ToolContext, ToolResult } from "./types.js";
 import { resolvePath, assertWritablePath } from "./path-util.js";
 import { atomicWriteFile } from "./atomic-write.js";
 import { snapshotForWrite } from "../../session/mutations.js";
+import {
+  formatNoteSuffix,
+  maybeFormatAfterWrite,
+} from "./format-on-write.js";
 
 export async function toolWrite(
   args: Record<string, unknown>,
@@ -89,11 +93,13 @@ export async function toolWrite(
       /* journal best-effort */
     }
     ctx.onEdit?.();
+    const fmt = maybeFormatAfterWrite(filePath, ctx.workspace);
     const rel = path.relative(ctx.workspace, filePath) || filePath;
     return {
       output:
         `Wrote ${rel}` +
-        (createdParents ? " (created parent directories)" : ""),
+        (createdParents ? " (created parent directories)" : "") +
+        formatNoteSuffix(fmt),
     };
   } catch (err) {
     return {
