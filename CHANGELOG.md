@@ -2,11 +2,12 @@
 
 ## Unreleased
 
+## 0.9.23 — Worktree on share/summary + run JSON isWorktree/root
+
 ### Added
 
 - **`forge run --json` git.isWorktree / git.root**: extend existing git snapshot for multi-worktree CI
 - **Share/summary git worktree marker**: session show/share cards append `worktree` when linked
-
 
 ## 0.9.22 — /status + doctor git worktree line
 
