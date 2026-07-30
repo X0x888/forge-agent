@@ -5751,6 +5751,15 @@ async function runHeadless(opts: {
           return null;
         }
       })(),
+      ulwMaxWaves: (() => {
+        try {
+          const u = loadUlwCycle(opts.session.meta.id);
+          if (!u?.enabled) return null;
+          return u.maxWaves ?? null;
+        } catch {
+          return null;
+        }
+      })(),
       ulwBlocks: (() => {
         try {
           const u = loadUlwCycle(opts.session.meta.id);
