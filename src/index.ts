@@ -108,7 +108,7 @@ export type {
 } from "./auth/types.js";
 export { createProvider } from "./providers/factory.js";
 export { mapAnthropicStopReason } from "./providers/anthropic.js";
-export { runAgentLoop, resolveMaxTurns } from "./agent/loop.js";
+export { runAgentLoop, resolveMaxTurns, isReadOnlyToolName } from "./agent/loop.js";
 export type {
   LoopResult,
   LoopOptions,

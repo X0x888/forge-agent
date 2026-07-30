@@ -34,6 +34,7 @@ What experts should expect from Forge in long, unattended, or CI runs.
 | **Orphan tool_calls** | Abort mid-batch or compact cut injects synthetic tool results so the next API call does not 400 |
 | **Compact boundary** | Compaction never starts a keep-window on a bare `tool` message |
 | **Empty name** | Tool calls with blank names after stream glitches return a clear error instead of crashing |
+| **Parallel read-only tools** | Consecutive read-only tools (read/grep/glob/list/web_*) batch via `Promise.all` after name normalize (`isReadOnlyToolName`) — aliases and doubled stream-bug names included |
 | **Unknown tool tips** | Up to 3 Did-you-mean candidates (`suggestNames`) so the model can self-correct typos without a human |
 | **Doom-loop** | Same tool + same args ×N injects a hard strategy-change nudge (OpenCode-inspired; default N=3, override `FORGE_DOOM_LOOP_THRESHOLD`); fingerprints ignore transport-only fields (`timeout_ms`, `background`, `run_in_background`, `stream`, `tail`, `allow_local`) |
 | **Error-streak** | N consecutive tool errors (any args) injects a circuit-breaker nudge (Grok-inspired; default N=5, override `FORGE_ERROR_STREAK_THRESHOLD`); permission/hard denies do not count |

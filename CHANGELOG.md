@@ -2,10 +2,11 @@
 
 ## Unreleased
 
+## 0.9.17 — Parallel read-only tool batch name normalize
+
 ### Fixed
 
 - **Parallel read-only tool batching**: normalize tool names (aliases + doubled stream-bug names) before the read-only check so `Read`/`read_file` batches actually run in parallel; export `isReadOnlyToolName`
-
 
 ## 0.9.16 — Doctor window JSON + /status context pressure line
 
