@@ -17,7 +17,7 @@ export function expertTipsLines(): string[] {
     `  Custom cmds:    .forge/commands/<name>.md  ($ARGUMENTS $1..$9)  ·  ~/.forge/commands/  ·  /commands`,
     `  Worktrees:      doctor/status show linked worktree · forge status --json tags WORKTREE · one session per worktree`,
     `  Session titles: /sessions untitled · list --untitled · /title · --title · /goal auto-titles`,
-    `  Session inventory: doctor warns at ≥100 sessions · run --json productionWarnings · forge sessions prune --keep 50`,
+    `  Session inventory: sessions list --json · doctor warns at ≥100 sessions · run --json productionWarnings · forge sessions prune --keep 50`,
     `  Dirty trees:    doctor warns at ≥40 changed files · run --json productionWarnings · commit/stash before long ULW`,
     `  Docs:          docs/PRODUCTION.md  ·  docs/RELIABILITY.md  ·  forge tips  ·  forge news  ·  /help`,
   ];

@@ -1716,6 +1716,54 @@ describe("sessions list cwd filter", () => {
   });
 });
 
+describe("sessions list --json inventory summary", () => {
+  it("includes sessionsTotal/Untitled/WithLastError/Pinned", async () => {
+    const { spawnSync } = await import("node:child_process");
+    const path = await import("node:path");
+    const fs = await import("node:fs");
+    const os = await import("node:os");
+    const cli = path.join(process.cwd(), "dist/cli.js");
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "forge-list-inv-"));
+    const env = { ...process.env, FORGE_HOME: home };
+    const prev = process.env.FORGE_HOME;
+    process.env.FORGE_HOME = home;
+    try {
+      const {
+        createSession,
+        setSessionTitle,
+        saveSession,
+        setSessionLastError,
+      } = await import("../src/session/session.js");
+      const a = createSession({ cwd: home, provider: "xai", model: "m" });
+      setSessionTitle(a, "titled-one");
+      saveSession(a);
+      const b = createSession({ cwd: home, provider: "xai", model: "m" });
+      setSessionLastError(b, {
+        code: "empty_run",
+        message: "empty",
+      });
+      saveSession(b);
+      createSession({ cwd: home, provider: "xai", model: "m" }); // untitled
+    } finally {
+      if (prev === undefined) delete process.env.FORGE_HOME;
+      else process.env.FORGE_HOME = prev;
+    }
+    const r = spawnSync(
+      process.execPath,
+      [cli, "sessions", "list", "--json", "--limit", "50"],
+      { env, encoding: "utf8", timeout: 15000 },
+    );
+    assert.equal(r.status, 0, r.stderr || r.stdout);
+    const j = JSON.parse(r.stdout);
+    assert.equal(j.ok, true);
+    assert.equal(j.sessionsTotal, 3);
+    assert.equal(j.sessionsUntitled, 2);
+    assert.equal(j.sessionsWithLastError, 1);
+    assert.equal(typeof j.sessionsPinned, "number");
+    assert.equal(j.count, 3);
+  });
+});
+
 describe("headless session resume helpers", () => {
   it("loadSession restores messages for forge run --session", async () => {
     const fs = await import("node:fs");

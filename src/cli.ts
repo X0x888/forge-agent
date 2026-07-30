@@ -3041,6 +3041,24 @@ Docs: docs/PRODUCTION.md
         list = list.filter((s) => !String(s.title || "").trim());
       }
       if (globalOpts.json) {
+        // Global inventory (unfiltered) so CI/experts can prune without doctor.
+        let sessionsTotal = 0;
+        let sessionsUntitled = 0;
+        let sessionsWithLastError = 0;
+        let sessionsPinned = 0;
+        try {
+          const all = listSessions({ limit: 10_000 });
+          sessionsTotal = all.length;
+          sessionsUntitled = all.filter(
+            (s) => !String(s.title || "").trim(),
+          ).length;
+          sessionsWithLastError = all.filter((s) =>
+            Boolean(s.lastError?.message),
+          ).length;
+          sessionsPinned = all.filter((s) => Boolean(s.pinned)).length;
+        } catch {
+          /* */
+        }
         emitOkJson({forgeHome: forgeHome(),
               cwd: cwdFilter,
               query: queryFilter,
@@ -3048,6 +3066,10 @@ Docs: docs/PRODUCTION.md
               untitledOnly,
               limit,
               count: list.length,
+              sessionsTotal,
+              sessionsUntitled,
+              sessionsWithLastError,
+              sessionsPinned,
               sessions: list.map((s) => {
                 const lock = readSessionLock(s.id);
                 const foreignLock = sessionHasForeignLiveLock(s.id);
@@ -3188,12 +3210,26 @@ Docs: docs/PRODUCTION.md
       if (pinnedOnly) filterNotes.push("pinned");
       if (errorsOnly) filterNotes.push("errors");
       if (untitledOnly) filterNotes.push("untitled");
+      let invNote = "";
+      try {
+        // Cheap inventory hint on human list (best-effort; never fail list).
+        const all = listSessions({ limit: 10_000 });
+        const total = all.length;
+        const untitled = all.filter((s) => !String(s.title || "").trim()).length;
+        const errs = all.filter((s) => Boolean(s.lastError?.message)).length;
+        if (total >= 100 || untitled >= 5 || errs >= 3) {
+          invNote = `  ·  inventory ${total} total · ${untitled} untitled · ${errs} lastError`;
+        }
+      } catch {
+        /* */
+      }
       console.log(
         chalk.dim(
           `\n  forge sessions show|export|import|fork|title|delete <id> [--force]  ·  prune --keep 50` +
             (filterNotes.length
               ? `  ·  filtered ${filterNotes.join(" ")}`
-              : "  ·  list --cwd <path> · list -q <text>"),
+              : "  ·  list --cwd <path> · list -q <text>") +
+            invNote,
         ),
       );
     },
