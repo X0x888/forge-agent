@@ -4098,6 +4098,8 @@ export function buildInitAgentsPrompt(focus: string, workspace: string): string 
   return `Create or update \`AGENTS.md\` for this repository at the workspace root (${workspace}).
 
 The goal is a compact instruction file that helps future Forge sessions avoid mistakes and ramp up quickly. Every line should answer: "Would an agent likely miss this without help?" If not, leave it out.
+
+Forge also loads (nearest wins within the git root): \`FORGE.md\`, \`CLAUDE.md\`, \`.forge/rules.md\`, \`.github/copilot-instructions.md\`, \`.cursorrules\`, \`.cursor/rules/*.{md,mdc}\`, and optional \`~/.forge/AGENTS.md\`. Prefer a single high-signal \`AGENTS.md\` at the package or monorepo root rather than duplicating the same rules everywhere.
 ${focusBlock}
 ## How to investigate
 
@@ -4106,7 +4108,7 @@ Read the highest-value sources first:
 - build, test, lint, formatter, typecheck, and codegen config
 - CI workflows and pre-commit / task runner config
 - existing instruction files (\`AGENTS.md\`, \`CLAUDE.md\`, \`.cursor/rules/\`, \`.cursorrules\`, \`.github/copilot-instructions.md\`)
-- repo-local Forge config (\`.forge/config.toml\`) if present
+- repo-local Forge config (\`.forge/config.toml\`) and custom slash templates (\`.forge/commands/*.md\`) if present
 
 If architecture is still unclear after reading config and docs, inspect a small number of representative code files to find the real entrypoints, package boundaries, and execution flow. Prefer reading the files that explain how the system is wired together over random leaf files.
 
@@ -4122,6 +4124,8 @@ Look for the highest-signal facts for an agent working in this repo:
 - repo-specific style or workflow conventions that differ from defaults
 - testing quirks: fixtures, integration prerequisites, flaky or expensive suites
 - important constraints from existing instruction files worth preserving
+- safety / blast-radius notes (migrations, prod credentials, force-push, data loss)
+- optional: 1–2 high-value custom slash ideas for \`.forge/commands/<name>.md\` (\`$ARGUMENTS\` / \`$1..$9\`) if the repo has repeated expert workflows — mention them in AGENTS.md; only create the files if the user asked
 
 ## Writing rules
 
@@ -4130,6 +4134,7 @@ Look for the highest-signal facts for an agent working in this repo:
 - If \`AGENTS.md\` already exists, improve it in place rather than rewriting blindly
 - Preserve verified useful guidance; delete fluff or stale claims
 - After writing, briefly summarize what changed and why
+- Tip for humans using Forge: \`/plan\` for read-only design, \`/build\` to implement; \`/commands\` lists project slash templates; \`forge doctor\` / \`/context\` show loaded instruction sources
 
 Do the research with tools, then write or update \`AGENTS.md\` now.`;
 }

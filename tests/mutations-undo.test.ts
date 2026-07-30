@@ -296,6 +296,9 @@ describe("/init and /compact-and slash commands", () => {
     assert.match(p, /AGENTS\.md/);
     assert.match(p, /\/proj/);
     assert.match(p, /test commands/);
+    assert.match(p, /CLAUDE\.md|\.cursor\/rules/);
+    assert.match(p, /\.forge\/commands/);
+    assert.match(p, /\/plan/);
   });
 
   it("/init forwards guided prompt", async () => {

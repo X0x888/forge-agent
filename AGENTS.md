@@ -20,9 +20,10 @@ Binary entry: `src/cli.ts` → `dist/cli.js` (`bin: forge`).
 
 - `src/harness/` — hooks, goal, stop-guard (do not weaken blocking Stop defaults)
 - `src/agent/` — loop, tools, permissions
-- `src/providers/` — LLM clients
+- `src/providers/` — LLM clients; `errors.ts` expert recovery tips (`formatProviderError`)
 - `src/auth/` — multi-account credentials (never log tokens); `accounts.ts` smart switch; auth.json v2
 - `src/statusline/` — provider-agnostic HUD (`forge status`); never invent plan metrics
+- `src/commands/` — slash handlers; `project-commands.ts` (`.forge/commands/*.md`); `headless-slash.ts` for `forge run "/…"`
 - `src/harness/ulw-cycle.ts` — ULW cycle flag 1/0; optional `maxWaves` cap (auto LAST); soft prompts expand to god-scope; Stop blocks while cycle=1; wave ledger + quality bar (proof demands, thin-wave escalation, evidence attestation)
 - `src/harness/context-admit.ts` — mid-conversation harness admissions (stable system + live counters; counter-only churn suppressed; volatile git branch line admitted append-only — message[0] keeps cache-stable git root/remote only)
 - `src/config/model-info.ts` — per-model context windows (grok-4.5=500k, grok-4=256k, claude=200k, gpt-4.1=1M); used when `context_window` is not explicit
@@ -31,6 +32,14 @@ Binary entry: `src/cli.ts` → `dist/cli.js` (`bin: forge`).
 - `src/session/compaction.ts` — structured compact preserving mandate/goal/todos
 - `src/session/tool-clearing.ts` — proactive stale tool-result clearing (microcompaction; `FORGE_TOOL_CLEAR*`)
 - `src/agent/sandbox.ts` + `rules.ts` + `shell-parse.ts` — OS sandbox, deny/allow/ask rules, segment-aware shell checks
+
+## Expert session UX
+
+- `/plan` → session-scoped read-only design (no sticky prefs); `/build` restores prior mode and implements
+- `/model <name> [effort]` live mid-run; `/commands` lists `.forge/commands` templates
+- Project instructions: walk-up within git root for AGENTS/CLAUDE/cursor/copilot rules; `/context` lists sources
+- Headless: `forge run "/plan"` / custom templates work in CI (`reason: "slash"` when no model call)
+- Provider failures print recovery tips; JSON fail payloads include `recovery: { code, tips }`
 
 ## Conventions
 
