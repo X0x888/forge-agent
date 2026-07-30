@@ -2,11 +2,13 @@
 
 ## Unreleased
 
+## 0.9.16 — Doctor window JSON + /status context pressure line
+
 ### Added
 
 - **Doctor JSON `modelDefaultContextWindow` / `contextWindowRatio`**: CI can assert window hygiene vs model-info defaults
 - **Clear `context_pressure` lastError after successful compact**: headroom recovery drops the stale banner
-
+- **`/status` context pressure line**: shows % of window, autoCompact threshold, and HARD/elevated tips
 
 ## 0.9.15 — Context-pressure lastError when compact cannot free headroom
 

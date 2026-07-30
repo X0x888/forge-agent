@@ -745,6 +745,27 @@ export function formatSessionDetails(ctx: StatusBarContext): string {
     chalk.dim(
       `msgs     ${session.messages.length}  ·  ~${formatTokens(est)} ctx  ·  turns ${session.meta.turnCount}  edits ${session.meta.editCount}`,
     ),
+    (() => {
+      const win = config.contextWindow || 1;
+      const pct = Math.min(100, Math.round((est / win) * 100));
+      const thr = Math.round((config.autoCompactThreshold || 0.8) * 100);
+      if (pct >= 92) {
+        return chalk.yellow(
+          `ctx      ${pct}% HARD · autoCompact@${thr}%  ·  /compact · /new`,
+        );
+      }
+      if (pct >= thr) {
+        return chalk.yellow(
+          `ctx      ${pct}% above threshold (${thr}%)  ·  /compact · /context`,
+        );
+      }
+      if (pct >= Math.max(50, thr - 15)) {
+        return chalk.dim(
+          `ctx      ${pct}% elevated (autoCompact@${thr}%)  ·  /context`,
+        );
+      }
+      return chalk.dim(`ctx      ${pct}% of ${formatTokens(win)}  ·  autoCompact@${thr}%`);
+    })(),
     chalk.dim(
       `keep     ${session.meta.pinned ? "pinned (prune-safe) · /unpin" : "not pinned · /pin to protect from prune"}`,
     ),

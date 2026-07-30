@@ -471,6 +471,7 @@ describe("statusline plan mode details", () => {
     });
     assert.match(text, /plan/i);
     assert.match(text, /\/build/);
+    assert.match(text, /ctx\s+|autoCompact@/);
   });
 
   it("formatSessionDetails surfaces lastError recovery tip", async () => {
