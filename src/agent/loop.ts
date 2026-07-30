@@ -185,6 +185,7 @@ interface HarnessRunStats {
 const READ_ONLY = new Set([
   "read_file",
   "Read",
+  "read",
   "grep",
   "Grep",
   "glob",
@@ -198,6 +199,12 @@ const READ_ONLY = new Set([
   "get_task_output",
   "task_output",
 ]);
+
+/** True when the tool (after name normalize) is safe to run in parallel batches. */
+export function isReadOnlyToolName(name: string): boolean {
+  const n = normalizeToolName(name || "");
+  return READ_ONLY.has(n) || READ_ONLY.has(name || "");
+}
 
 /** Build provider chat request including reasoning_effort when supported. */
 export function buildChatRequest(
@@ -1505,14 +1512,16 @@ async function runToolCalls(opts: {
 
   // Sequential by default; batch consecutive read-only tools in parallel
   // but append results in original order (providers are picky about this).
+  // Normalize names before the read-only check so aliases (Read/read_file)
+  // and doubled stream-bug names still batch.
   let i = 0;
   while (i < toolCalls.length) {
     assertNotAborted(signal);
-    if (READ_ONLY.has(toolCalls[i].function.name)) {
+    if (isReadOnlyToolName(toolCalls[i].function.name)) {
       const batch: ToolCall[] = [];
       while (
         i < toolCalls.length &&
-        READ_ONLY.has(toolCalls[i].function.name) &&
+        isReadOnlyToolName(toolCalls[i].function.name) &&
         batch.length < 8
       ) {
         batch.push(toolCalls[i]);
