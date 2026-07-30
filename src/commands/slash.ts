@@ -4636,7 +4636,7 @@ Read the highest-value sources first:
 - build, test, lint, formatter, typecheck, and codegen config
 - CI workflows and pre-commit / task runner config
 - existing instruction files (\`AGENTS.md\`, \`CLAUDE.md\`, \`.cursor/rules/\`, \`.cursorrules\`, \`.github/copilot-instructions.md\`)
-- repo-local Forge config (\`.forge/config.toml\`) and custom slash templates (\`.forge/commands/*.md\`) if present
+- repo-local Forge config (\`.forge/config.toml\`), custom slash templates (\`.forge/commands/*.md\`), and skill packs (\`.forge/skills/**/SKILL.md\`) if present
 
 If architecture is still unclear after reading config and docs, inspect a small number of representative code files to find the real entrypoints, package boundaries, and execution flow. Prefer reading the files that explain how the system is wired together over random leaf files.
 
@@ -4654,6 +4654,7 @@ Look for the highest-signal facts for an agent working in this repo:
 - important constraints from existing instruction files worth preserving
 - safety / blast-radius notes (migrations, prod credentials, force-push, data loss)
 - optional: 1–2 high-value custom slash ideas for \`.forge/commands/<name>.md\` (\`$ARGUMENTS\` / \`$1..$9\`) if the repo has repeated expert workflows — mention them in AGENTS.md; only create the files if the user asked
+- optional: 1 high-value skill pack idea for \`.forge/skills/<name>/SKILL.md\` (OpenCode-style playbook with optional frontmatter \`name\`/\`description\`) when the repo has a multi-step expert workflow that should always be followed the same way — mention it in AGENTS.md; only create the skill file if the user asked or the workflow is clearly non-obvious
 
 ## Writing rules
 
@@ -4662,7 +4663,7 @@ Look for the highest-signal facts for an agent working in this repo:
 - If \`AGENTS.md\` already exists, improve it in place rather than rewriting blindly
 - Preserve verified useful guidance; delete fluff or stale claims
 - After writing, briefly summarize what changed and why
-- Tip for humans using Forge: \`/plan\` for read-only design, \`/build\` to implement; \`/commands\` lists project slash templates; \`forge doctor\` / \`/context\` show loaded instruction sources
+- Tip for humans using Forge: \`/plan\` for read-only design, \`/build\` to implement; \`/commands\` lists project slash templates; \`/skills\` lists skill packs; \`forge doctor\` / \`/context\` show loaded instruction sources and skill counts
 
 Do the research with tools, then write or update \`AGENTS.md\` now.`;
 }

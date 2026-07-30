@@ -298,6 +298,8 @@ describe("/init and /compact-and slash commands", () => {
     assert.match(p, /test commands/);
     assert.match(p, /CLAUDE\.md|\.cursor\/rules/);
     assert.match(p, /\.forge\/commands/);
+    assert.match(p, /\.forge\/skills|SKILL\.md/);
+    assert.match(p, /\/skills/);
     assert.match(p, /\/plan/);
   });
 
