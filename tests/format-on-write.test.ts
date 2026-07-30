@@ -6,6 +6,7 @@ import path from "node:path";
 import { DEFAULT_CONFIG } from "../src/config/types.js";
 import { createSession } from "../src/session/session.js";
 import { HookRunner } from "../src/harness/hooks.js";
+import { completeSlash } from "../src/commands/slash.js";
 
 describe("format-on-write", () => {
   let home: string;
@@ -121,6 +122,17 @@ describe("format-on-write", () => {
     });
     assert.match(String(st2.output || ""), /off/i);
   });
+  it("completeSlash offers /format args", () => {
+    assert.ok(completeSlash("/form").some((c) => c === "/format"));
+    const hits = completeSlash("/format o");
+    assert.ok(hits.includes("/format on"));
+    assert.ok(hits.includes("/format off"));
+    assert.ok(!hits.includes("/format status"));
+    const all = completeSlash("/format ");
+    assert.ok(all.includes("/format on"));
+    assert.ok(all.includes("/format status"));
+  });
+
   it("detectProjectFormatters finds prettier dep", async () => {
     const { detectProjectFormatters } = await import(
       "../src/agent/tools/format-on-write.js"

@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### Fixed
+
+- **Completion hygiene**: dedupe `--untitled` in shell completion; add `errors`/`untitled` session action aliases
+
+### Added
+
+- **Slash arg completion**: `completeSlash` offers `/format on|off|status` (and `/bell`/`/plan`/`/build` args)
+
+
 ## 0.9.35 — run --json formatOnWrite + formatter-available doctor tip
 
 ### Added

@@ -481,9 +481,29 @@ export function completeSlash(
   line: string,
   opts?: { workspace?: string },
 ): string[] {
-  const t = line.trim();
+  const t = line.trimStart();
   if (!t.startsWith("/")) return [];
-  if (t.includes(" ")) return [];
+  // Argument completion: "/format o" → on|off
+  const sp = t.indexOf(" ");
+  if (sp !== -1) {
+    const cmd = t.slice(0, sp).toLowerCase();
+    const argPartial = t.slice(sp + 1).trimStart().toLowerCase();
+    // Only complete first arg (no multi-word yet)
+    if (argPartial.includes(" ")) return [];
+    const ARG_TABLE: Record<string, string[]> = {
+      "/format": ["on", "off", "status", "enable", "disable"],
+      "/bell": ["on", "off", "test", "status"],
+      "/plan": ["on", "off", "status", "show"],
+      "/build": ["on", "off", "status"],
+      "/pin": [],
+      "/unpin": [],
+    };
+    const args = ARG_TABLE[cmd];
+    if (!args) return [];
+    return args
+      .filter((a) => !argPartial || a.startsWith(argPartial))
+      .map((a) => `${cmd} ${a}`);
+  }
   const q = t.toLowerCase();
   const out: string[] = SLASH_COMMANDS.filter((c) => c.startsWith(q));
   let custom: string[] = [];

@@ -5955,3 +5955,15 @@ describe("doctor package.json engines.node floor", () => {
     assert.equal(j.packageEnginesNode, ">=99");
   });
 });
+
+describe("completion script sessions hygiene", () => {
+  it("dedupes --untitled and includes errors/untitled actions", async () => {
+    const { shellCompletionScript } = await import("../src/util/completion-script.js");
+    const bash = shellCompletionScript("bash");
+    assert.ok(!/--untitled --untitled/.test(bash), "duplicate --untitled");
+    assert.match(bash, /--untitled/);
+    assert.match(bash, /\berrors\b/);
+    // actions list should include untitled as action
+    assert.match(bash, /untitled/);
+  });
+});
