@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.9.42 — /sessions pin|unpin <id> mutation
+
 ### Fixed
 
 - **`/sessions pin|unpin <id>`**: pin/unpin a specific session (CLI parity); bare `/sessions pin`/`pinned` still lists pin-protected keepers

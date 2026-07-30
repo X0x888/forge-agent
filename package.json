@@ -1,6 +1,6 @@
 {
   "name": "forge-agent",
-  "version": "0.9.41",
+  "version": "0.9.42",
   "description": "Forge \u2014 AI coding agent CLI with harness (blocking Stop, /goal, ULW), production reliability (Retry-After, abortable streams, JSON repair, doom-loop, error-streak, apply_patch, overflow recovery, session lock/auto-resume, forge run --continue fail-closed, lock-safe prune/delete, shell-safe /diff, metrics.jsonl, SuperGrok OIDC + OAuth refresh, structured doctor --json + undoJournal), and expert UX (file-aware /undo, /init, /review, /config, /logs, /compact-and, /fork-and-compact, /retry, /last, /files, /pin, resume-by-title, /share, /stats, forge news, forge tips, edit-miss/multi-match guidance, logs -n 0, init/tips/completion --json, typo recovery Did you mean? for CLI/slash/model/provider, /plan\u00b7/build, project commands, provider recovery tips)",
   "type": "module",
   "bin": {
