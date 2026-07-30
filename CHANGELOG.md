@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+### Added
+
+- **Project skills (OpenCode-inspired)**: load `.forge/skills/**/SKILL.md` (also `.agents/skills`, `~/.forge/skills`) into the system prompt as playbooks. `/skills` lists them; doctor exposes `projectSkillsCount`.
+
+
 ## 0.9.43 — many pinned productionWarnings + smoke
 
 ### Added

@@ -102,6 +102,7 @@ const RESERVED = new Set([
   "account",
   "doctor",
   "commands",
+  "skills",
 ]);
 
 function parseFrontmatter(raw: string): {

@@ -9,6 +9,7 @@ import {
   type GitSnapshot,
 } from "../util/git-context.js";
 import { forgeHome } from "../util/fs.js";
+import { formatSkillsForPrompt } from "./project-skills.js";
 
 /** Per-file cap so one huge AGENTS.md cannot dominate the system prompt. */
 const RULES_PER_FILE_CHARS = 12_000;
@@ -380,6 +381,10 @@ export function buildBaselineSystemPrompt(opts: {
 
   if (rules) {
     parts.push(``, `## Project rules`, rules);
+  }
+  const skills = formatSkillsForPrompt(workspace);
+  if (skills.trim()) {
+    parts.push(``, skills);
   }
 
   if (config.systemPromptExtra) {

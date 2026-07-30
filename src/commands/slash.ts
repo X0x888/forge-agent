@@ -188,6 +188,7 @@ const LIVE_READONLY = new Set([
   "/accounts",
   "/doctor",
   "/commands", // list project/user custom slash templates
+  "/skills", // list project/user skill packs
   "/diff",
   "/copy", // clipboard last assistant reply — no session mutation
   "/share", // pasteable session card — optional clipboard
@@ -3315,6 +3316,33 @@ case "/new":
       return { handled: true, output: await runDoctor(opts.config) };
     }
 
+    case "/skills": {
+      const ws = opts.config.workspace || process.cwd();
+      const { loadProjectSkills } = await import("../agent/project-skills.js");
+      const skills = loadProjectSkills(ws);
+      if (!skills.length) {
+        return {
+          handled: true,
+          output:
+            "No project skills.\n" +
+            "  Add .forge/skills/<name>/SKILL.md (OpenCode-style)\n" +
+            "  Optional frontmatter: name, description\n" +
+            "  Also: .agents/skills/**/SKILL.md · ~/.forge/skills/**/SKILL.md\n" +
+            "  Skills inject into the system prompt as playbooks.",
+        };
+      }
+      const lines = [
+        `Project skills (${skills.length}):`,
+        ...skills.map(
+          (s) =>
+            `  ${s.name.padEnd(20)} ${(s.description || "(no description)").slice(0, 60)}  [${s.source}]`,
+        ),
+        "",
+        "  Paths: .forge/skills/**/SKILL.md · injected into system prompt",
+      ];
+      return { handled: true, output: lines.join("\n") };
+    }
+
     case "/commands": {
       const ws = opts.config.workspace || process.cwd();
       return {
@@ -3563,6 +3591,8 @@ export interface DoctorResult {
   projectRulesCount?: number;
   /** Count of project/user custom slash templates (.forge/commands). */
   projectCommandsCount?: number;
+  /** OpenCode-style project skills (.forge/skills/.../SKILL.md). */
+  projectSkillsCount?: number;
   /** Sessions with meta.lastError set (expert recovery backlog). */
   sessionsWithLastError?: number;
   /** Sessions without a title (harder to resume by name). */
@@ -4196,6 +4226,7 @@ export async function runDoctorCheck(
 
   let projectRulesCount = 0;
   let projectCommandsCount = 0;
+  let projectSkillsCount = 0;
   let sessionsWithLastError = 0;
   let sessionsUntitled = 0;
   let sessionsTotal = 0;
@@ -4215,6 +4246,27 @@ export async function runDoctorCheck(
     ).length;
   } catch {
     /* */
+  }
+  try {
+    const { countProjectSkills } = await import("../agent/project-skills.js");
+    projectSkillsCount = countProjectSkills(
+      config.workspace || process.cwd(),
+    );
+  } catch {
+    /* */
+  }
+  if (projectSkillsCount > 0) {
+    lines.push(
+      chalk.dim(
+        `  project skills: ${projectSkillsCount}  → /skills · .forge/skills/**/SKILL.md (OpenCode-style)`,
+      ),
+    );
+  } else {
+    lines.push(
+      chalk.dim(
+        `  project skills: none · add .forge/skills/<name>/SKILL.md for playbooks`,
+      ),
+    );
   }
   try {
     const { listSessions } = await import("../session/session.js");
@@ -4299,6 +4351,7 @@ export async function runDoctorCheck(
     multiAccount,
     projectRulesCount,
     projectCommandsCount,
+    projectSkillsCount,
     sessionsWithLastError,
     sessionsUntitled,
     sessionsTotal,
@@ -4674,6 +4727,7 @@ Forge slash commands
   /auth                 Show stored credentials (+ multi-account)  [live]
   /accounts [status|switch|…]  Multi-account list/status/switch/clear-cooldown  [live]
   /doctor               Environment health check  [live]
+  /skills               List project skill packs (.forge/skills/**/SKILL.md)
   /commands             List project/user custom slash templates (.forge/commands)  [live]
   /quit                 Exit  [live — aborts run then exits]
 
