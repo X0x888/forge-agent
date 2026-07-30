@@ -2,13 +2,17 @@
 
 ## Unreleased
 
-### Changed
+## 0.9.7 — Session lastError recovery surface
 
-- **First-run tip** mentions `/plan` · `/build` · live `/model` · `/commands` (v0.9.6 expert surface)
+Expert recovery after provider failures: stamp, surface, and clear `meta.lastError` across status/resume/share/list/HUD/JSON.
 
 ### Added
 
 - **Session `lastError`**: provider/run failures stamp `meta.lastError` with code/message/tips; `/status`, resume orientation, `/share`, `sessions show`/`list` (ERR badge), and `forge status` HUD/tmux/compact + `--json` surface recovery (`lastError` + `ERR:<code>` badge); `forge run --json` fail payloads include `lastError`; cleared on the next successful turn, `/clear`, and `/fork`. `/config` tips plan → `/build`
+
+### Changed
+
+- **First-run tip** mentions `/plan` · `/build` · live `/model` · `/commands` (v0.9.6 expert surface)
 
 ## 0.9.6 — Expert production UX (/plan·/build, project commands, recovery tips)
 
