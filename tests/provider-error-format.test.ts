@@ -81,4 +81,10 @@ describe("formatProviderError", () => {
     assert.equal(f.code, "not_found");
     assert.ok(f.tips.some((t) => /forge models/i.test(t)));
   });
+
+  it("formats content_filter plain errors", () => {
+    const f = formatProviderError(new Error("Response blocked by content filter"));
+    assert.equal(f.code, "content_filter");
+    assert.ok(f.tips.some((t) => /rephrase|model/i.test(t)));
+  });
 });

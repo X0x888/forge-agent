@@ -2,12 +2,14 @@
 
 ## Unreleased
 
+## 0.9.10 — Metrics/stats failure breakdown for expert post-mortems
+
 ### Added
 
 - **Metrics `lastErrorCode`**: failed run_end events stamp the recovery code (never bodies) for CI post-mortems
 - **Markdown export lastError**: `exportSessionMarkdown` includes last error + tip for incident handoff
 - **`/stats` · `forge stats` failure breakdown**: `failedRuns`, `byLastErrorCode`, and `sessions.withLastError` for expert recovery dashboards
-
+- **Content-filter recovery tips**: empty/blocked turns and `formatProviderError` point at rephrase · `/model` · `/compact`
 
 ## 0.9.9 — Prune protects lastError recovery backlog
 

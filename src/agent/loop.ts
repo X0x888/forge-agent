@@ -1027,14 +1027,15 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
         );
         finalText =
           finalText ||
-          `[Forge] The provider blocked this response (finish_reason=${finishReason}). Rephrase the request or continue with a narrower scope.`;
+          `[Forge] The provider blocked this response (finish_reason=${finishReason}). ` +
+            `Rephrase, drop sensitive payloads, or try /model <other> · /compact · narrower scope.`;
         stopContinues += 1;
         // Cap check before injecting steerage — avoid orphan user msgs when releasing.
         if (stopContinues > maxStopContinues) {
           log.warn("content-filter continue cap reached — releasing");
           releasedOnContinueCap = true;
           const capNote =
-            "[Forge] Content-filter continues hit the cap; releasing. Rephrase or narrow scope in a follow-up.";
+            "[Forge] Content-filter continues hit the cap; releasing. Rephrase, /model <other>, or narrow scope.";
           if (!finalText.includes("[Forge] Content-filter continues hit the cap")) {
             finalText = `${finalText.replace(/\s+$/, "")}\n\n${capNote}`;
           }

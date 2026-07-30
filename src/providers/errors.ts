@@ -191,6 +191,10 @@ export function formatProviderError(
     } else if (/rate.?limit|429/i.test(msg)) {
       code = "rate_limited";
       tips.push("forge accounts switch  ·  wait and /retry");
+    } else if (/content.?filter|content.?filtered|safety.?refus|blocked by/i.test(msg)) {
+      code = "content_filter";
+      tips.push("Rephrase · drop secrets/PII · /model <other> · narrower scope");
+      tips.push("/compact  ·  /retry");
     } else if (/401|unauthorized|invalid.?api.?key|auth/i.test(msg)) {
       code = "auth_expired";
       tips.push("forge login  ·  /accounts status");
