@@ -14,6 +14,7 @@ What experts should expect from Forge in long, unattended, or CI runs.
 | **ULW after overflow** | Re-admits mandate/cycle after recovery so long tool-only waves do not die with `cycle=1 wave=0` and no resume guidance |
 | **Compact thrash guard** | Threshold compact that does not shrink history is not repeated until the message list grows |
 | **Structured errors** | `ProviderApiError` carries status + headers; retry classifier uses them |
+| **Prune lastError protect** | `pruneSessions` skips sessions with `meta.lastError` by default (`skippedLastError`); `forceLastError` / `--force-last-error` required to delete failure backlog |
 | **Session lastError** | Provider/run failures stamp `meta.lastError` (code/message/tips); `/status`, resume, `/share`, sessions list ERR badge, HUD/tmux, `forge status --json`, and `forge run --json` fail payloads surface it; cleared on success/`/clear`/`/fork` |
 | **Expert recovery tips** | `formatProviderError` maps auth/rate-limit/quota/overflow/network/5xx to next steps; REPL + headless print tips; `forge run --json` fail payloads include `recovery: { code, tips }` and structured `reason` |
 | **Abortable streams** | `AbortSignal` cancels `fetch` and releases the SSE reader (Ctrl+C works mid-token) |

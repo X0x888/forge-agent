@@ -3075,6 +3075,14 @@ Docs: docs/PRODUCTION.md
                   ulwWave,
                   ulwMaxWaves,
                   goalActive,
+                  lastError: s.lastError
+                    ? {
+                        at: s.lastError.at,
+                        code: s.lastError.code,
+                        message: s.lastError.message,
+                        tips: s.lastError.tips,
+                      }
+                    : null,
                 };
               }),
             }, true);
