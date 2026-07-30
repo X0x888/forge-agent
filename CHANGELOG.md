@@ -2,11 +2,13 @@
 
 ## Unreleased
 
+## 0.9.20 — Doctor contextWindow JSON + stronger lastError backlog tip
+
 ### Added
 
 - **Doctor JSON `contextWindow` / `autoCompactThreshold` / `contextWindowExplicit`**: CI can assert effective window config alongside model defaults
 - **Doctor lastError tip**: yellow recovery backlog line points at `/sessions errors` and prune protect
-
+- **`forge run --json` context window fields**: success and fail payloads include `contextWindow`, `autoCompactThreshold`, `contextWindowExplicit`
 
 ## 0.9.19 — Error-streak lastError + richer circuit-breaker tips
 
