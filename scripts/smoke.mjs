@@ -133,6 +133,7 @@ mustInclude("doctor autoCompactThreshold", ["doctor", "--json"], "autoCompactThr
 mustInclude("doctor gitIsWorktree", ["doctor", "--json"], "gitIsWorktree");
 mustInclude("doctor gitChangedFiles", ["doctor", "--json"], "gitChangedFiles");
 mustInclude("doctor formatOnWrite", ["doctor", "--json"], "formatOnWrite");
+mustInclude("doctor sessionsPinned", ["doctor", "--json"], "sessionsPinned");
 mustInclude("status formatOnWrite", ["status", "--json"], "formatOnWrite");
 mustInclude("config formatOnWrite", ["config", "--json"], "formatOnWrite");
 

@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+### Added
+
+- **Doctor sessionsPinned inventory**: report/JSON count pin-protected sessions; tip at ≥10 to review `/sessions pinned`
+
+
 ## 0.9.39 — dontAsk / FORGE_DONT_ASK visibility
 
 ### Added

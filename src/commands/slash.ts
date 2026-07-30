@@ -3519,6 +3519,8 @@ export interface DoctorResult {
   sessionsUntitled?: number;
   /** Total sessions scanned for inventory tips. */
   sessionsTotal?: number;
+  /** Pin-protected sessions (prune-safe). */
+  sessionsPinned?: number;
   /** Effective format-on-write (env FORGE_FORMAT_ON_WRITE wins over preference). */
   formatOnWrite?: boolean;
   /** Known default context window for config.model (from model-info). */
@@ -4147,6 +4149,7 @@ export async function runDoctorCheck(
   let sessionsWithLastError = 0;
   let sessionsUntitled = 0;
   let sessionsTotal = 0;
+  let sessionsPinned = 0;
   try {
     const { listProjectRulePaths } = await import("../agent/system-prompt.js");
     projectRulesCount = listProjectRulePaths(
@@ -4169,6 +4172,7 @@ export async function runDoctorCheck(
     sessionsTotal = all.length;
     sessionsWithLastError = all.filter((s) => Boolean(s.lastError?.message)).length;
     sessionsUntitled = all.filter((s) => !String(s.title || "").trim()).length;
+    sessionsPinned = all.filter((s) => Boolean(s.pinned)).length;
     if (sessionsWithLastError > 0) {
       const backlog =
         sessionsWithLastError >= 5
@@ -4180,6 +4184,19 @@ export async function runDoctorCheck(
       lines.push(
         chalk.dim(
           `  untitled sessions: ${sessionsUntitled}/${sessionsTotal}  → /title · --title · /goal set auto-titles · /sessions untitled`,
+        ),
+      );
+    }
+    if (sessionsPinned >= 10) {
+      lines.push(
+        chalk.yellow(
+          `  ⚠ ${sessionsPinned} pinned sessions (prune-protected) — /sessions pinned · /unpin stale keepers`,
+        ),
+      );
+    } else if (sessionsPinned > 0) {
+      lines.push(
+        chalk.dim(
+          `  pinned sessions: ${sessionsPinned}  → /sessions pinned · /pin protects from prune`,
         ),
       );
     }
@@ -4235,6 +4252,7 @@ export async function runDoctorCheck(
     sessionsWithLastError,
     sessionsUntitled,
     sessionsTotal,
+    sessionsPinned,
     formatOnWrite: isFormatOnWriteEnabled(),
     modelDefaultContextWindow,
     contextWindowRatio,
@@ -4586,6 +4604,7 @@ Forge slash commands
   /title [name|clear]   Show / set / clear session title (/rename)  [live]
   /bell [on|off|test]   Terminal BEL when a turn ends (long-run attention)  [live]
   /format [on|off]      Format-on-write after file tools (prettier/biome/ruff/…)  [live]
+  ask_user tool         Clarifying questions (interactive; headless fails closed)
   /diff [path]          Git status + diff (argv-safe; pathspecs/refs only)  [live]
   /logs [n|0|all|path]  Tail sandbox/safety events (0/all = full window)  [live]
   /config [json]        Effective config snapshot (no secrets)  [live]
