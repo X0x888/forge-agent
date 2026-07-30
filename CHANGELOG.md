@@ -2,10 +2,12 @@
 
 ## Unreleased
 
+## 0.9.15 — Context-pressure lastError when compact cannot free headroom
+
 ### Added
 
 - **Context-pressure lastError**: when compact/prune cannot free enough headroom near the hard limit, stamp `meta.lastError` code `context_pressure` with `/compact` · `/new` tips
-
+- **Doctor model window tip**: warns when `context_window` is &lt;50% of the model's known default (early compact risk)
 
 ## 0.9.14 — /context pressure tips
 

@@ -87,4 +87,18 @@ describe("doctor projectRulesCount / projectCommandsCount", () => {
     assert.ok((check.sessionsWithLastError ?? 0) >= 1);
     assert.match(check.report, /lastError/i);
   });
+
+  it("doctor notes model default context window", async () => {
+    const ws = path.join(tmp, "ws-win");
+    fs.mkdirSync(ws, { recursive: true });
+    const check = await runDoctorCheck({
+      ...DEFAULT_CONFIG,
+      workspace: ws,
+      model: "grok-4.5",
+      contextWindow: 50_000,
+      contextWindowExplicit: true,
+    });
+    assert.match(check.report, /context_window=50000|model default window|50%/i);
+  });
+
 });

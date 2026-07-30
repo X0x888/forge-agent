@@ -3676,6 +3676,32 @@ export async function runDoctorCheck(
   lines.push(
     `Context: window=${config.contextWindow} autoCompact@${Math.round((config.autoCompactThreshold || 0.8) * 100)}% maxTurns=${config.maxTurns > 0 ? config.maxTurns : "unlimited"}`,
   );
+  // Expert tip: context_window far below the model's known default wastes headroom
+  try {
+    const { modelContextWindow } = await import("../config/model-info.js");
+    const known = modelContextWindow(config.model);
+    if (
+      known &&
+      config.contextWindow > 0 &&
+      config.contextWindow < known * 0.5
+    ) {
+      lines.push(
+        chalk.yellow(
+          `  ⚠ context_window=${config.contextWindow} is <50% of ${config.model}'s known ${known} — long runs may compact early; raise context_window or use /model`,
+        ),
+      );
+    } else if (known && config.contextWindowExplicit && config.contextWindow !== known) {
+      lines.push(
+        chalk.dim(
+          `  model default window≈${known} (explicit context_window=${config.contextWindow})`,
+        ),
+      );
+    } else if (known) {
+      lines.push(chalk.dim(`  model default window≈${known}`));
+    }
+  } catch {
+    /* */
+  }
   {
     const maxRun = maxRunMsFromEnv();
     const maxRunNote =
