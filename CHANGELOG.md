@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.9.41 — forge sessions pinned action fix
+
 ### Fixed
 
 - **`forge sessions pinned` action**: list pin-protected sessions (parity with `/sessions pinned` and `--pinned`); was treated as a title query
