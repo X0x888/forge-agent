@@ -423,6 +423,28 @@ describe("statusline PIN badge", () => {
   });
 });
 
+describe("statusline plan mode details", () => {
+  it("formatSessionDetails tips /build under plan", async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-sl-plan-"));
+    process.env.FORGE_HOME = tmp;
+    const { formatSessionDetails } = await import("../src/tui/status-bar.js");
+    const { DEFAULT_CONFIG } = await import("../src/config/types.js");
+    const s = createSession({ cwd: tmp, provider: "xai", model: "m" });
+    const auth = {
+      provider: "xai",
+      method: "api_key",
+      token: "t",
+    } as ResolvedAuth;
+    const text = formatSessionDetails({
+      config: { ...DEFAULT_CONFIG, permissionMode: "plan", workspace: tmp },
+      session: s,
+      auth,
+    });
+    assert.match(text, /plan/i);
+    assert.match(text, /\/build/);
+  });
+});
+
 describe("statusline tmux badges", () => {
   it("includes PIN for pinned sessions", async () => {
     const fs = await import("node:fs");

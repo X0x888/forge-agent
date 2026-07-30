@@ -1050,7 +1050,7 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
         continue;
       }
 
-      // Empty assistant turn (provider glitch) — nudge once
+      // Empty assistant turn (provider glitch) — nudge with expert recovery
       if (
         (!toolCalls || toolCalls.length === 0) &&
         !(finalText || "").trim()
@@ -1060,16 +1060,27 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
           log.warn("empty-response continue cap reached — releasing");
           releasedOnContinueCap = true;
           finalText =
-            "[Forge] Model returned empty responses until the continue cap; releasing. Retry or narrow the request.";
+            "[Forge] Model returned empty responses until the continue cap; releasing. Try /retry, /compact, /model <other>, or narrow the request.";
           break;
         }
         log.warn(
           `Empty model response (finish_reason=${finishReason || "unknown"}) — nudging continue #${stopContinues}`,
         );
+        const planHint =
+          config.permissionMode === "plan"
+            ? " You are in PLAN mode — research with read/search tools and deliver a concrete plan (no writes)."
+            : " Prefer a tool call (read/search/bash) over another empty reply.";
+        const open = openTodos(session.todos);
+        const todoHint =
+          open > 0
+            ? ` ${open} open todo(s) remain — advance one with tools or update via todo_write.`
+            : "";
         session.messages.push({
           role: "user",
           content:
-            "[Forge] Previous model response was empty. Continue the task: think briefly, then act with tools or a concrete reply. Do not stop.",
+            `[Forge] Previous model response was empty (finish_reason=${finishReason || "unknown"}).` +
+            ` Continue the task immediately.${planHint}${todoHint}` +
+            ` Do not stop. Do not apologize. Act.`,
         });
         saveSession(session);
         events.onPhase?.("thinking");

@@ -728,7 +728,11 @@ export function formatSessionDetails(ctx: StatusBarContext): string {
         (effort ? ` · effort ${effort}` : ""),
     ),
     chalk.dim(
-      `perms    ${config.permissionMode}  ·  Stop ${config.blockingStopHooks ? "blocking" : "passive"}`,
+      `perms    ${config.permissionMode}` +
+        (config.permissionMode === "plan"
+          ? " (read-only · /build to implement)"
+          : "") +
+        `  ·  Stop ${config.blockingStopHooks ? "blocking" : "passive"}`,
     ),
     chalk.dim(
       `msgs     ${session.messages.length}  ·  ~${formatTokens(est)} ctx  ·  turns ${session.meta.turnCount}  edits ${session.meta.editCount}`,
