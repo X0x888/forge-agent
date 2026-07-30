@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Added
+
+- **Continue-cap lastError stamps**: length / content_filter / empty-response / stop-continue caps set `meta.lastError` with recovery tips (not cleared on release)
+
 ### Fixed
 
 - **`/news` skips empty Unreleased shells**: blank Unreleased headers no longer open the what's-new block ahead of the latest tagged release

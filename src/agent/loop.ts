@@ -996,6 +996,19 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
           } else {
             finalText = capNote;
           }
+          try {
+            setSessionLastError(session, {
+              code: "continue_cap_length",
+              message: capNote.replace(/^\[Forge\]\s*/, ""),
+              tips: [
+                "Raise max_tokens or continue in a follow-up",
+                "/retry  ·  /compact  ·  /model <other>",
+              ],
+            });
+            saveSession(session);
+          } catch {
+            /* */
+          }
           break;
         }
         log.info(
@@ -1039,6 +1052,19 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
           if (!finalText.includes("[Forge] Content-filter continues hit the cap")) {
             finalText = `${finalText.replace(/\s+$/, "")}\n\n${capNote}`;
           }
+          try {
+            setSessionLastError(session, {
+              code: "content_filter",
+              message: capNote.replace(/^\[Forge\]\s*/, ""),
+              tips: [
+                "Rephrase · drop secrets/PII · narrower scope",
+                "/model <other>  ·  /compact  ·  /retry",
+              ],
+            });
+            saveSession(session);
+          } catch {
+            /* */
+          }
           break;
         }
         // Inject steerage and continue the loop (skip Stop) so ULW/goal keep driving
@@ -1065,6 +1091,19 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
           releasedOnContinueCap = true;
           finalText =
             "[Forge] Model returned empty responses until the continue cap; releasing. Try /retry, /compact, /model <other>, or narrow the request.";
+          try {
+            setSessionLastError(session, {
+              code: "empty_response",
+              message: finalText.replace(/^\[Forge\]\s*/, ""),
+              tips: [
+                "/retry  ·  /compact  ·  /model <other>",
+                "Narrow the request or check provider status",
+              ],
+            });
+            saveSession(session);
+          } catch {
+            /* */
+          }
           break;
         }
         log.warn(
@@ -1147,6 +1186,24 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
             finalText =
               `[Forge] Stop-continue cap (${maxStopContinues}) reached — releasing to prevent infinite loop. ` +
               `Use /cycle 0, /max-waves N, /done, or /ulw-off if the harness is still blocking progress.`;
+          }
+          try {
+            setSessionLastError(session, {
+              code: "continue_cap_stop",
+              message: (
+                finalText ||
+                `Stop-continue cap (${maxStopContinues}) reached`
+              )
+                .replace(/^\[Forge\]\s*/, "")
+                .slice(0, 500),
+              tips: [
+                "/cycle 0  ·  /max-waves N  ·  /done  ·  /ulw-off",
+                "/retry  ·  narrow the mandate",
+              ],
+            });
+            saveSession(session);
+          } catch {
+            /* */
           }
           break;
         }
@@ -1284,8 +1341,9 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
     );
   }
 
-  // Successful completion (including aborted/maxTurns release) clears prior failure.
-  if (!aborted) {
+  // Successful completion clears prior failure — but continue-cap / content-filter
+  // releases stamp lastError for expert recovery and must keep it.
+  if (!aborted && !releasedOnContinueCap) {
     try {
       clearSessionLastError(session);
       saveSession(session);
