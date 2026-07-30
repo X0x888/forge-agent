@@ -29,6 +29,7 @@ export interface HarnessSnapshot {
 }
 
 const lastAdmitted = new Map<string, string>();
+const lastAdmittedSnap = new Map<string, HarnessSnapshot>();
 
 export function snapshotHarness(opts: {
   ulw: UlwCycleState | null | undefined;
@@ -94,17 +95,46 @@ export function setLastAdmittedFingerprint(
 
 /** Test helper */
 export function clearAdmittedFingerprints(sessionId?: string): void {
-  if (sessionId) lastAdmitted.delete(sessionId);
-  else lastAdmitted.clear();
+  if (sessionId) {
+    lastAdmitted.delete(sessionId);
+    lastAdmittedSnap.delete(sessionId);
+  } else {
+    lastAdmitted.clear();
+    lastAdmittedSnap.clear();
+  }
+}
+
+/**
+ * True when only soft counters changed between two snapshots (ULW wave/blocks,
+ * open todo count). Those deltas are already carried by Stop re-anchors and
+ * the model's own todo_write calls, so re-admitting them as a full harness
+ * message is redundant tokens. Real changes (cycle flag, mandate, goal,
+ * permission mode) always admit.
+ */
+function countersOnlyChange(a: HarnessSnapshot, b: HarnessSnapshot): boolean {
+  return (
+    a.ulwEnabled === b.ulwEnabled &&
+    a.cycle === b.cycle &&
+    a.maxWaves === b.maxWaves &&
+    a.mandate === b.mandate &&
+    a.softPrompt === b.softPrompt &&
+    a.goalActive === b.goalActive &&
+    a.goalObjective === b.goalObjective &&
+    a.goalPaused === b.goalPaused &&
+    a.permissionMode === b.permissionMode
+  );
 }
 
 /**
  * If harness state changed since last admission, return a message body to
  * inject. Returns null when unchanged (or when idle harness with nothing to say).
+ * With `suppressCounterOnlyChanges`, a delta limited to wave/blocks/openTodos
+ * updates the stored fingerprint without emitting a message.
  */
 export function admitHarnessIfChanged(
   sessionId: string,
   snap: HarnessSnapshot,
+  opts?: { suppressCounterOnlyChanges?: boolean },
 ): string | null {
   const fp = fingerprintSnapshot(snap);
   const prev = lastAdmitted.get(sessionId);
@@ -118,10 +148,23 @@ export function admitHarnessIfChanged(
     prev === undefined
   ) {
     lastAdmitted.set(sessionId, fp);
+    lastAdmittedSnap.set(sessionId, snap);
+    return null;
+  }
+
+  const prevSnap = lastAdmittedSnap.get(sessionId);
+  if (
+    opts?.suppressCounterOnlyChanges &&
+    prevSnap &&
+    countersOnlyChange(prevSnap, snap)
+  ) {
+    lastAdmitted.set(sessionId, fp);
+    lastAdmittedSnap.set(sessionId, snap);
     return null;
   }
 
   lastAdmitted.set(sessionId, fp);
+  lastAdmittedSnap.set(sessionId, snap);
   return renderHarnessAdmission(snap);
 }
 

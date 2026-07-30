@@ -27,6 +27,12 @@ export interface StopGuardInput {
   openTodoCount: number;
   editCount: number;
   lastAssistantMessage: string;
+  /**
+   * Structural proof signal: a verification command (test/typecheck/lint/build)
+   * actually executed since the previous Stop evaluation. Gate = execution,
+   * not judgment — the wave ledger trusts this over prose claims.
+   */
+  verificationRan?: boolean;
 }
 
 export interface StopGuardResult {
@@ -115,6 +121,7 @@ export async function runStopGuard(input: StopGuardInput): Promise<StopGuardResu
     editCount: input.editCount,
     openTodoCount: input.openTodoCount,
     stuckThreshold,
+    verificationRan: input.verificationRan,
   });
 
   if (ulwDecision.stuckReleased || ulwDecision.lastCycleReleased) {

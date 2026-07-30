@@ -322,11 +322,11 @@ describe("mid-run /cycle affects stop-guard without abort", () => {
     assert.equal(blocked.block, true);
     assert.match(blocked.reanchor || "", /LAST|Cycle complete/i);
 
-    // Attestation releases
+    // Attestation with machine-checkable evidence releases
     setCycleFlag(session.meta.id, 0);
     const released = evaluateUlwAtStop({
       sessionId: session.meta.id,
-      lastAssistantMessage: "**Cycle complete.** Shipped X with tests.",
+      lastAssistantMessage: "**Cycle complete.** Shipped X — npm test: 18 passed.",
       editCount: 3,
       openTodoCount: 0,
       stuckThreshold: 10,

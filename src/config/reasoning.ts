@@ -83,3 +83,22 @@ export function isEffortAllowedForModel(
   if (!levels.length) return false;
   return (levels as readonly string[]).includes(effort);
 }
+
+/**
+ * One notch up within the model's allowed levels (low→medium→high).
+ * Used by adaptive effort escalation: hard rounds (doom-loop / error-streak /
+ * missing wave proof) get a temporary boost instead of paying high effort on
+ * every turn. Returns undefined for models without effort support, and the
+ * same level back when already at the top (callers compare to skip no-ops).
+ */
+export function bumpReasoningEffort(
+  model: string,
+  current?: ReasoningEffort,
+): ReasoningEffort | undefined {
+  const levels = effortLevelsForModel(model);
+  if (!levels.length) return undefined;
+  const cur = current ?? defaultEffortForModel(model);
+  const idx = cur ? levels.indexOf(cur) : -1;
+  if (idx < 0) return levels[levels.length - 1];
+  return levels[Math.min(idx + 1, levels.length - 1)];
+}

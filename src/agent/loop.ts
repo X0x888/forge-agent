@@ -1,6 +1,10 @@
 import chalk from "chalk";
 import type { ForgeConfig } from "../config/types.js";
-import { resolveReasoningEffort } from "../config/reasoning.js";
+import {
+  resolveReasoningEffort,
+  bumpReasoningEffort,
+  type ReasoningEffort,
+} from "../config/reasoning.js";
 import type {
   ChatMessage,
   ChatRequest,
@@ -31,7 +35,12 @@ import {
   formatUlwCounts,
   formatUlwBadge,
   ULW_LIVE_CONTROLS_HINT,
+  VERIFICATION_CMD_RE,
 } from "../harness/ulw-cycle.js";
+import {
+  clearStaleToolResults,
+  toolClearEnvConfig,
+} from "../session/tool-clearing.js";
 import {
   drainLiveNotices,
   formatLiveNoticesMessage,
@@ -155,6 +164,21 @@ export interface LoopResult {
   completionTokens: number;
 }
 
+/**
+ * Per-run harness signals shared between the loop and tool execution.
+ * - verificationRuns: bash commands matching VERIFICATION_CMD_RE executed
+ *   since the last Stop evaluation — the structural "proof" signal for the
+ *   ULW wave ledger (execution, not prose claims).
+ * - effortBoostTurns: adaptive effort budget — hard-round signals (doom-loop,
+ *   error-streak, missing wave proof) buy a temporary reasoning-effort bump
+ *   instead of paying high effort on every turn (escalate on failure, not
+ *   by default).
+ */
+interface HarnessRunStats {
+  verificationRuns: number;
+  effortBoostTurns: number;
+}
+
 const READ_ONLY = new Set([
   "read_file",
   "Read",
@@ -176,8 +200,10 @@ const READ_ONLY = new Set([
 export function buildChatRequest(
   config: ForgeConfig,
   messages: ChatMessage[],
+  effortOverride?: ReasoningEffort,
 ): ChatRequest {
-  const effort = resolveReasoningEffort(config.model, config.reasoningEffort);
+  const effort =
+    effortOverride ?? resolveReasoningEffort(config.model, config.reasoningEffort);
   return {
     model: config.model,
     messages,
@@ -257,6 +283,20 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
   const errorStreak = new ErrorStreakTracker({
     threshold: envPositiveInt("FORGE_ERROR_STREAK_THRESHOLD", 5),
   });
+  const harnessStats: HarnessRunStats = {
+    verificationRuns: 0,
+    effortBoostTurns: 0,
+  };
+  // Proactive stale tool-result clearing (microcompaction). Cadence + size
+  // thresholds bound prompt-cache disruption; clearing itself is age-based.
+  const toolClearCfg = toolClearEnvConfig();
+  const toolClearEveryTurns = envPositiveInt("FORGE_TOOL_CLEAR_EVERY_TURNS", 6);
+  let lastToolClearTurn = 0;
+  // Adaptive effort escalation (hard rounds think harder; easy rounds stay cheap)
+  const adaptiveEffortOn = !(
+    process.env.FORGE_ADAPTIVE_EFFORT === "0" ||
+    process.env.FORGE_ADAPTIVE_EFFORT === "false"
+  );
 
   // Auto-arm goal from prose
   if (config.goal.autoArm && config.goal.enabled) {
@@ -513,6 +553,29 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
         }
       }
 
+      // Proactive stale tool-result clearing (microcompaction): old bulky tool
+      // bodies are replaced by restorable stubs before they pile up into
+      // overflow territory. Anthropic calls tool-result clearing "one of the
+      // safest lightest touch forms of compaction".
+      if (
+        toolClearCfg.enabled &&
+        turns - lastToolClearTurn >= toolClearEveryTurns &&
+        session.messages.length > toolClearCfg.keepRecent + 4
+      ) {
+        const cleared = clearStaleToolResults(session.messages, {
+          keepRecent: toolClearCfg.keepRecent,
+          minChars: toolClearCfg.minChars,
+        });
+        if (cleared.cleared > 0 && cleared.freedChars >= toolClearCfg.minStaleBytes) {
+          session.messages = cleared.messages;
+          lastToolClearTurn = turns;
+          saveSession(session);
+          log.dim(
+            `Cleared ${cleared.cleared} stale tool result(s), freed ~${Math.round(cleared.freedChars / 1000)}k chars — stubs point back to re-run`,
+          );
+        }
+      }
+
       // Heal illegal tool_call / tool_result sequences before every provider call
       // (abort mid-batch, crash recovery, compact edge cases → API 400 otherwise).
       {
@@ -581,6 +644,25 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
         /* never block the turn on proactive refresh */
       }
       let response: Awaited<ReturnType<typeof provider.chat>> | undefined;
+      // Adaptive effort: hard-round signals (doom-loop / error-streak / missing
+      // wave proof) buy a one-notch reasoning boost for this turn only —
+      // escalate on failure, not by default, so easy rounds stay cheap.
+      let effortOverride: ReasoningEffort | undefined;
+      if (adaptiveEffortOn && harnessStats.effortBoostTurns > 0) {
+        harnessStats.effortBoostTurns -= 1;
+        const baseEffort = resolveReasoningEffort(
+          config.model,
+          config.reasoningEffort,
+        );
+        const bumped = bumpReasoningEffort(config.model, baseEffort);
+        if (bumped && bumped !== baseEffort) {
+          effortOverride = bumped;
+          log.dim(
+            `Adaptive effort: reasoning escalated to ${bumped} for this turn (hard-round signal)`,
+          );
+          events.onStatus?.(`Adaptive effort → ${bumped}`);
+        }
+      }
       try {
         const doChat = () =>
           withRetry(
@@ -588,7 +670,7 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
               assertNotAborted(signal);
               if (stream && events.onToken) {
                 return provider.chatStream(
-                  buildChatRequest(config, session.messages),
+                  buildChatRequest(config, session.messages, effortOverride),
                   (delta) => {
                     if (signal?.aborted) return;
                     if (delta.content) events.onToken?.(delta.content);
@@ -597,7 +679,7 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
                 );
               }
               const r = await provider.chat(
-                buildChatRequest(config, session.messages),
+                buildChatRequest(config, session.messages, effortOverride),
                 signal,
               );
               if (r.message.content && events.onToken) {
@@ -984,7 +1066,28 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
           openTodoCount: openTodos(session.todos),
           editCount: session.meta.editCount,
           lastAssistantMessage: finalText,
+          verificationRan: harnessStats.verificationRuns > 0,
         });
+        // Reset only when the ULW driver actually evaluated this Stop — hook /
+        // goal blocks return early without consuming the signal, and the runs
+        // still belong to the wave in progress.
+        if (stopResult.ulw) harnessStats.verificationRuns = 0;
+        // Missing wave proof / weak attestation = hard-round signal → think harder.
+        if (stopResult.ulw?.proofDemanded || stopResult.ulw?.evidenceDemanded) {
+          harnessStats.effortBoostTurns = Math.max(
+            harnessStats.effortBoostTurns,
+            1,
+          );
+        }
+        // Diminishing returns is user-visible: never let waves quietly thin out.
+        if (stopResult.ulw?.thinStreakAdvisory) {
+          log.info(
+            chalk.yellow(
+              "ULW diminishing returns — waves are thinning. /cycle 0 to wind down, /max-waves N to cap, or let a consolidation wave harden what's shipped.",
+            ),
+          );
+          events.onStatus?.("ULW waves thinning — consider /cycle 0");
+        }
 
         if (stopResult.allowStop) {
           if (stopResult.systemMessage) log.dim(stopResult.systemMessage);
@@ -1044,8 +1147,9 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
         }
         log.dim(inject.slice(0, 300));
         session.messages.push({ role: "user", content: inject });
-        // Re-admit harness after stop re-anchor (wave/blocks may have changed)
-        admitHarnessState(session, config);
+        // The re-anchor already carries wave/blocks/todo counts — mark them
+        // admitted without emitting a second redundant harness message.
+        admitHarnessState(session, config, { suppressCounterOnly: true });
         saveSession(session);
         events.onPhase?.("thinking");
         continue;
@@ -1063,6 +1167,7 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
         turn: turns,
         doomLoop,
         errorStreak,
+        harnessStats,
       });
       // Tools that cooperatively return "Aborted" still leave signal.aborted set —
       // exit the loop immediately rather than starting another provider turn.
@@ -1128,6 +1233,7 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
 function admitHarnessState(
   session: SessionData,
   config: ForgeConfig,
+  opts?: { suppressCounterOnly?: boolean },
 ): void {
   const snap = snapshotHarness({
     ulw: loadUlwCycle(session.meta.id),
@@ -1135,7 +1241,9 @@ function admitHarnessState(
     todos: session.todos,
     permissionMode: config.permissionMode,
   });
-  const msg = admitHarnessIfChanged(session.meta.id, snap);
+  const msg = admitHarnessIfChanged(session.meta.id, snap, {
+    suppressCounterOnlyChanges: opts?.suppressCounterOnly,
+  });
   if (msg) {
     session.messages.push({ role: "user", content: msg });
   }
@@ -1172,8 +1280,11 @@ function drainSafeBoundaryMessages(
     );
   }
 
-  // Harness may have changed via live /cycle etc.
-  admitHarnessState(session, config);
+  // Harness may have changed via live /cycle etc. Counter-only churn (wave,
+  // blocks, todo counts) is already visible to the model via re-anchors and
+  // its own todo_write calls — only real changes (cycle/mandate/goal/mode)
+  // earn a fresh admission message.
+  admitHarnessState(session, config, { suppressCounterOnly: true });
   saveSession(session);
 }
 
@@ -1189,6 +1300,7 @@ async function runToolCalls(opts: {
   turn?: number;
   doomLoop?: DoomLoopTracker;
   errorStreak?: ErrorStreakTracker;
+  harnessStats?: HarnessRunStats;
 }): Promise<void> {
   const {
     toolCalls,
@@ -1202,6 +1314,7 @@ async function runToolCalls(opts: {
     turn = 0,
     doomLoop,
     errorStreak,
+    harnessStats,
   } = opts;
 
   // Sequential by default; batch consecutive read-only tools in parallel
@@ -1233,6 +1346,7 @@ async function runToolCalls(opts: {
             turn,
             doomLoop,
             errorStreak,
+            harnessStats,
           }),
         ),
       );
@@ -1257,6 +1371,7 @@ async function runToolCalls(opts: {
         turn,
         doomLoop,
         errorStreak,
+        harnessStats,
       });
       session.messages.push({
         role: "tool",
@@ -1281,6 +1396,7 @@ async function prepareToolResult(opts: {
   turn?: number;
   doomLoop?: DoomLoopTracker;
   errorStreak?: ErrorStreakTracker;
+  harnessStats?: HarnessRunStats;
 }): Promise<{ toolCallId: string; content: string }> {
   const {
     tc,
@@ -1294,6 +1410,7 @@ async function prepareToolResult(opts: {
     turn = 0,
     doomLoop,
     errorStreak,
+    harnessStats,
   } = opts;
   assertNotAborted(signal);
 
@@ -1334,6 +1451,10 @@ async function prepareToolResult(opts: {
   if (doomHit) {
     log.warn(doomHit.message.slice(0, 200));
     events?.onStatus?.(`doom-loop: ${name} ×${doomHit.count}`);
+    // Hard-round signal: next turn thinks one notch harder
+    if (harnessStats) {
+      harnessStats.effortBoostTurns = Math.max(harnessStats.effortBoostTurns, 2);
+    }
   }
 
   // Announce tool phase BEFORE permission prompts so the REPL can pause
@@ -1420,6 +1541,12 @@ async function prepareToolResult(opts: {
       if (hit) {
         log.warn(hit.message.split("\n")[0] || "error-streak");
         events?.onStatus?.(`error-streak: ${hit.count} consecutive tool errors`);
+        if (harnessStats) {
+          harnessStats.effortBoostTurns = Math.max(
+            harnessStats.effortBoostTurns,
+            2,
+          );
+        }
         content = `${content}\n\n${hit.message}`;
       }
     }
@@ -1477,6 +1604,15 @@ async function prepareToolResult(opts: {
     settle();
     throw err;
   }
+  // Structural verification signal for the ULW wave ledger: a check command
+  // actually executed this wave (pass or fail — running it is the behavior
+  // the quality bar rewards; prose claims are not trusted on their own).
+  if (harnessStats && name === "bash") {
+    const cmd = typeof toolInput.command === "string" ? toolInput.command : "";
+    if (cmd && VERIFICATION_CMD_RE.test(cmd)) {
+      harnessStats.verificationRuns += 1;
+    }
+  }
   const ms = Date.now() - t0;
   const output = truncateMiddle(result.output);
   const bytes = Buffer.byteLength(output, "utf8");
@@ -1521,6 +1657,12 @@ async function prepareToolResult(opts: {
       if (hit) {
         log.warn(hit.message.split("\n")[0] || "error-streak");
         events?.onStatus?.(`error-streak: ${hit.count} consecutive tool errors`);
+        if (harnessStats) {
+          harnessStats.effortBoostTurns = Math.max(
+            harnessStats.effortBoostTurns,
+            2,
+          );
+        }
         content = `${content}\n\n${hit.message}`;
       }
     } else if (!result.isError) {

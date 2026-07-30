@@ -31,6 +31,10 @@ What experts should expect from Forge in long, unattended, or CI runs.
 | **Empty name** | Tool calls with blank names after stream glitches return a clear error instead of crashing |
 | **Doom-loop** | Same tool + same args ×N injects a hard strategy-change nudge (OpenCode-inspired; default N=3, override `FORGE_DOOM_LOOP_THRESHOLD`); fingerprints ignore transport-only fields (`timeout_ms`, `background`, `run_in_background`, `stream`, `tail`, `allow_local`) |
 | **Error-streak** | N consecutive tool errors (any args) injects a circuit-breaker nudge (Grok-inspired; default N=5, override `FORGE_ERROR_STREAK_THRESHOLD`); permission/hard denies do not count |
+| **Stale tool-result clearing** | Proactive microcompaction (Anthropic `clear_tool_uses` pattern): tool outputs older than the hot tail (default 16 non-system msgs) and bulkier than 1200 chars are replaced by restorable stubs (tool name + size + saved-output path when present); runs at most every `FORGE_TOOL_CLEAR_EVERY_TURNS` (6) and only when it frees ≥ `FORGE_TOOL_CLEAR_MIN_STALE_BYTES` (24k); `FORGE_TOOL_CLEAR=0` disables |
+| **Adaptive effort** | Hard-round signals (doom-loop, error-streak, missing ULW wave proof / weak attestation) raise `reasoning_effort` one notch for the next turn only — escalate on failure, not by default; `FORGE_ADAPTIVE_EFFORT=0` disables; no-op for models without effort support |
+| **Anthropic prompt caching** | `cache_control` breakpoints on the system prompt and the last tool definition (stable prefix); usage reports `cache_read_input_tokens` / `cache_creation_input_tokens`; `FORGE_ANTHROPIC_CACHE=0` restores legacy body shape |
+| **ULW wave ledger** | Per-wave facts (`editDelta`, `proof`, summary) in `ulw.json` drive the quality bar: best-wave anchoring, proof demands (cap 2), thin-wave escalation, 4th-wave consolidation cadence, diminishing-returns advisory, and one-time evidence bounce on weak `**Cycle complete.**` attestations (never an infinite trap) |
 | **Atomic file writes** | `write_file` / `search_replace` / `apply_patch` write via tmp+rename |
 | **Edit miss guidance** | `search_replace` failures on existing files suggest closest lines + block-drift notes (not path typos); multi-match lists line numbers |
 | **todo_write validation** | Requires id/content/valid status; merge:true + [] warns; failures are tool errors |
@@ -124,6 +128,13 @@ What experts should expect from Forge in long, unattended, or CI runs.
 | `FORGE_ERROR_STREAK_THRESHOLD` | `5` | Consecutive tool errors before circuit-breaker nudge |
 | `FORGE_ULW_MAX_CONTINUES` | `200` | Stop-continue cap while ULW is armed |
 | `FORGE_ULW_STUCK_THRESHOLD` | goal config / `5` | ULW stuck-wall blocks before release (`envPositiveInt`; invalid/0 ignored) |
+| `FORGE_ADAPTIVE_EFFORT` | on | `0`/`false` disables one-notch reasoning escalation on hard rounds |
+| `FORGE_TOOL_CLEAR` | on | `0`/`false` disables proactive stale tool-result clearing |
+| `FORGE_TOOL_CLEAR_KEEP_RECENT` | `16` | Hot tail: most recent non-system messages never cleared |
+| `FORGE_TOOL_CLEAR_MIN_CHARS` | `1200` | Only tool bodies larger than this are cleared |
+| `FORGE_TOOL_CLEAR_MIN_STALE_BYTES` | `24000` | Minimum net chars a clearing pass must free to apply |
+| `FORGE_TOOL_CLEAR_EVERY_TURNS` | `6` | Minimum turns between clearing passes |
+| `FORGE_ANTHROPIC_CACHE` | on | `0`/`false` disables Anthropic `cache_control` breakpoints |
 | `FORGE_GOAL_STUCK_THRESHOLD` | config `3` | Goal stuck-wall blocks before release (invalid/0 ignored — 0 would never release) |
 | `FORGE_FORCE_SESSION_LOCK` | off | Headless: force-steal / continue despite a foreign live `session.lock` |
 | `FORGE_ACCOUNT_SWITCH_MAX` | `3` | Max mid-run multi-account switches per agent loop (proactive + quota + auth) |

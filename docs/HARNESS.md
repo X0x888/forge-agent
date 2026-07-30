@@ -147,6 +147,10 @@ Beyond Stop/goal/ULW, the agent loop includes expert-grade recovery so long runs
 |---|---|
 | **Doom-loop** | Identical tool+args ×N → strategy-change nudge (`FORGE_DOOM_LOOP_THRESHOLD`, default 3) |
 | **Error-streak** | N consecutive tool errors → circuit-breaker nudge (`FORGE_ERROR_STREAK_THRESHOLD`, default 5) |
+| **Stale tool-result clearing** | Proactive microcompaction: old bulky tool outputs → restorable stubs (`FORGE_TOOL_CLEAR*`) |
+| **Adaptive effort** | Hard rounds (doom-loop / error-streak / missing wave proof) bump reasoning effort one notch for a turn (`FORGE_ADAPTIVE_EFFORT`) |
+| **ULW quality bar** | Wave ledger (facts: edits, proof) → best-wave anchoring, proof demands, consolidation cadence, evidence attestation |
+| **Admission suppression** | Counter-only harness churn (wave/blocks/todos) skips redundant mid-conversation admissions |
 | **JSON arg repair** | Truncated / fenced tool args repaired when possible |
 | **Orphan tool heal** | Abort/compact never leaves unpaired `tool_calls` |
 | **Overflow → compact** | Progressive prune + keep 8→4→2; ULW mandate re-admitted |

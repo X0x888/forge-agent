@@ -23,11 +23,12 @@ Binary entry: `src/cli.ts` → `dist/cli.js` (`bin: forge`).
 - `src/providers/` — LLM clients
 - `src/auth/` — multi-account credentials (never log tokens); `accounts.ts` smart switch; auth.json v2
 - `src/statusline/` — provider-agnostic HUD (`forge status`); never invent plan metrics
-- `src/harness/ulw-cycle.ts` — ULW cycle flag 1/0; optional `maxWaves` cap (auto LAST); soft prompts expand to god-scope; Stop blocks while cycle=1
-- `src/harness/context-admit.ts` — mid-conversation harness admissions (stable system + live counters)
+- `src/harness/ulw-cycle.ts` — ULW cycle flag 1/0; optional `maxWaves` cap (auto LAST); soft prompts expand to god-scope; Stop blocks while cycle=1; wave ledger + quality bar (proof demands, thin-wave escalation, evidence attestation)
+- `src/harness/context-admit.ts` — mid-conversation harness admissions (stable system + live counters; counter-only churn suppressed)
 - `src/harness/interjection.ts` — free-text mid-run messages (Grok-style `<user_query>`)
 - `src/harness/todo-gate.ts` — TodoNudge + TodoGate under ULW
 - `src/session/compaction.ts` — structured compact preserving mandate/goal/todos
+- `src/session/tool-clearing.ts` — proactive stale tool-result clearing (microcompaction; `FORGE_TOOL_CLEAR*`)
 - `src/agent/sandbox.ts` + `rules.ts` + `shell-parse.ts` — OS sandbox, deny/allow/ask rules, segment-aware shell checks
 
 ## Conventions
@@ -72,4 +73,9 @@ orientation + `--pinned` list, doctor `sessionsPinned`, session path helpers, se
 snippet, file-aware `/undo` (`mutations.jsonl` pre-images), `/init`, `/review`, `/compact-and`,
 `/fork-and-compact`, fork copies ULW/goal sidecars, `/clear`/`/clear hard`/`/new` hygiene, `/logs`
 · `forge logs`, `/config` · `forge config`, `/export` mode `0600`, `--read-outside ask|allow|deny`, doctor flags `read-outside=allow` / `sandbox-missing=fallback`, `FORGE_BASH_TIMEOUT_MS` /
-`FORGE_BASH_BG_TIMEOUT_MS`, doctor `undoJournal`, `npm run smoke`.
+`FORGE_BASH_BG_TIMEOUT_MS`, doctor `undoJournal`, `npm run smoke`, ULW wave ledger + quality bar
+(facts-only per-wave edits/proof; best-wave anchoring, proof demands, thin-wave escalation, 4th-wave
+consolidation, diminishing-returns advisory, one-time evidence bounce on weak attestations),
+structural `verificationRan` stop signal, adaptive effort (`FORGE_ADAPTIVE_EFFORT`; hard rounds bump
+reasoning one notch), stale tool-result clearing (`FORGE_TOOL_CLEAR*` microcompaction), counter-only
+admission suppression, Anthropic prompt caching (`FORGE_ANTHROPIC_CACHE`; cache usage in `ChatUsage`).

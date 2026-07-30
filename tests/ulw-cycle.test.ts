@@ -19,6 +19,11 @@ import {
   formatUlwCounts,
   formatUlwBadge,
   formatUlwStatus,
+  detectWaveProof,
+  hasAttestationEvidence,
+  bestWave,
+  formatWaveLedger,
+  VERIFICATION_CMD_RE,
   ULW_LIVE_CONTROLS_HINT,
 } from "../src/harness/ulw-cycle.js";
 import { armGoal, copyGoal, loadGoal } from "../src/harness/goal.js";
@@ -115,7 +120,8 @@ describe("ulw cycle", () => {
 
     const done = evaluateUlwAtStop({
       sessionId: sid,
-      lastAssistantMessage: "**Cycle complete.**\nShipped two waves.",
+      lastAssistantMessage:
+        "**Cycle complete.**\n✅ wave one shipped — npm test: 42 passed\n✅ wave two shipped — typecheck clean",
       editCount: 3,
       openTodoCount: 0,
       stuckThreshold: 20,
@@ -357,5 +363,318 @@ describe("ulw cycle", () => {
     });
     assert.equal(d.block, true);
     assert.equal(loadUlwCycle(s.meta.id)?.stuckBlocks, 0); // progressed
+  });
+});
+
+describe("ulw wave ledger + quality bar", () => {
+  it("records factual wave entries at each boundary", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-ulw-ledger-"));
+    process.env.FORGE_HOME = tmp;
+    const sid = "ulw-ledger";
+    armUlwCycle(sid, "harden the cli", { cycle: 1 });
+
+    const d1 = evaluateUlwAtStop({
+      sessionId: sid,
+      lastAssistantMessage: "shipped input validation",
+      editCount: 5,
+      openTodoCount: 0,
+      stuckThreshold: 20,
+      verificationRan: true,
+    });
+    assert.equal(d1.block, true);
+    let st = loadUlwCycle(sid)!;
+    assert.equal(st.waves!.length, 1);
+    assert.equal(st.waves![0].wave, 1);
+    assert.equal(st.waves![0].editDelta, 5);
+    assert.equal(st.waves![0].proof, true);
+    assert.match(st.waves![0].summary, /input validation/);
+
+    const d2 = evaluateUlwAtStop({
+      sessionId: sid,
+      lastAssistantMessage: "tweaked a comment",
+      editCount: 6,
+      openTodoCount: 0,
+      stuckThreshold: 20,
+    });
+    st = loadUlwCycle(sid)!;
+    assert.equal(st.waves!.length, 2);
+    assert.equal(st.waves![1].editDelta, 1);
+    assert.equal(st.waves![1].proof, false);
+    assert.equal(st.thinStreak, 1);
+    // Re-anchor anchors the bar to the best proven wave and demands proof
+    assert.match(d2.reanchor || "", /best wave so far w1/);
+    assert.match(d2.reanchor || "", /ran no verification/);
+  });
+
+  it("detectWaveProof trusts execution over prose", () => {
+    assert.equal(detectWaveProof("all good", true), true);
+    assert.equal(detectWaveProof("ran npm test — 42 passed", false), true);
+    assert.equal(detectWaveProof("tsc clean", false), true);
+    assert.equal(detectWaveProof("improved naming", false), false);
+    assert.equal(hasAttestationEvidence("**Cycle complete.** done", false), false);
+    assert.equal(
+      hasAttestationEvidence("**Cycle complete.**\n✅ npm test — 42 passed", false),
+      true,
+    );
+    assert.equal(
+      hasAttestationEvidence("**Cycle complete.**\nShipped X, tests pass.", false),
+      true,
+    );
+    assert.equal(hasAttestationEvidence("weak claim", true), true);
+  });
+
+  it("VERIFICATION_CMD_RE matches check commands, not prose commands", () => {
+    assert.ok(VERIFICATION_CMD_RE.test("npm test"));
+    assert.ok(VERIFICATION_CMD_RE.test("npm run typecheck"));
+    assert.ok(VERIFICATION_CMD_RE.test("cargo test"));
+    assert.ok(VERIFICATION_CMD_RE.test("pytest -q"));
+    assert.ok(VERIFICATION_CMD_RE.test("npx tsc --noEmit"));
+    assert.ok(!VERIFICATION_CMD_RE.test("ls -la"));
+    assert.ok(!VERIFICATION_CMD_RE.test("git status"));
+    assert.ok(!VERIFICATION_CMD_RE.test("npm install"));
+  });
+
+  it("demands proof after proof-less waves, then caps the demands", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-ulw-proof-"));
+    process.env.FORGE_HOME = tmp;
+    const sid = "ulw-proof-cap";
+    armUlwCycle(sid, "improve", { cycle: 1 });
+
+    const stop = (editCount: number) =>
+      evaluateUlwAtStop({
+        sessionId: sid,
+        lastAssistantMessage: "did some edits",
+        editCount,
+        openTodoCount: 0,
+        stuckThreshold: 50,
+      });
+
+    const d1 = stop(2);
+    assert.equal(d1.proofDemanded, true);
+    assert.match(d1.reanchor || "", /ran no verification/);
+    const d2 = stop(4);
+    assert.equal(d2.proofDemanded, true);
+    // Cap reached (MAX_PROOF_DEMANDS = 2): a stated rationale is accepted
+    const d3 = stop(6);
+    assert.equal(d3.proofDemanded, false);
+    assert.doesNotMatch(d3.reanchor || "", /ran no verification/);
+    assert.equal(loadUlwCycle(sid)!.proofDemands, 2);
+
+    // A wave with real proof resets the demand counter
+    const d4 = evaluateUlwAtStop({
+      sessionId: sid,
+      lastAssistantMessage: "added tests",
+      editCount: 9,
+      openTodoCount: 0,
+      stuckThreshold: 50,
+      verificationRan: true,
+    });
+    assert.equal(d4.proofDemanded, false);
+    assert.equal(loadUlwCycle(sid)!.proofDemands, 0);
+    assert.equal(loadUlwCycle(sid)!.thinStreak, 0); // proven wave is never thin
+  });
+
+  it("thin waves escalate wording, then surface a diminishing-returns advisory", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-ulw-thin-"));
+    process.env.FORGE_HOME = tmp;
+    const sid = "ulw-thin";
+    armUlwCycle(sid, "improve", { cycle: 1 });
+
+    const stop = (editCount: number) =>
+      evaluateUlwAtStop({
+        sessionId: sid,
+        lastAssistantMessage: "minor tweak",
+        editCount,
+        openTodoCount: 0,
+        stuckThreshold: 50,
+      });
+
+    const d1 = stop(1); // streak 1
+    assert.equal(d1.thinStreakAdvisory, false);
+    assert.doesNotMatch(d1.reanchor || "", /thinning/);
+    const d2 = stop(2); // streak 2 → escalation wording
+    assert.equal(d2.thinStreakAdvisory, false);
+    assert.match(d2.reanchor || "", /thinning/);
+    const d3 = stop(3); // streak 3 → user-visible advisory
+    assert.equal(d3.thinStreakAdvisory, true);
+    assert.match(formatUlwStatus(loadUlwCycle(sid)), /Diminishing returns/);
+  });
+
+  it("every 4th wave is a consolidation wave", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-ulw-consol-"));
+    process.env.FORGE_HOME = tmp;
+    const sid = "ulw-consol";
+    armUlwCycle(sid, "improve", { cycle: 1 });
+
+    const decisions = [10, 12, 14, 16].map((editCount) =>
+      evaluateUlwAtStop({
+        sessionId: sid,
+        lastAssistantMessage: "shipped a bounded fix",
+        editCount,
+        openTodoCount: 0,
+        stuckThreshold: 50,
+        verificationRan: true,
+      }),
+    );
+    assert.doesNotMatch(decisions[0].reanchor || "", /CONSOLIDATION WAVE/);
+    assert.doesNotMatch(decisions[1].reanchor || "", /CONSOLIDATION WAVE/);
+    assert.doesNotMatch(decisions[2].reanchor || "", /CONSOLIDATION WAVE/);
+    assert.match(decisions[3].reanchor || "", /CONSOLIDATION WAVE/);
+    // Consolidation waves forbid new scope
+    assert.match(decisions[3].reanchor || "", /no new scope/i);
+  });
+
+  it("bounces a weak cycle=0 attestation once, then releases (never a trap)", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-ulw-evid-"));
+    process.env.FORGE_HOME = tmp;
+    const sid = "ulw-evidence";
+    armUlwCycle(sid, "improve the code", { cycle: 1 });
+    setCycleFlag(sid, 0);
+
+    const weak = "**Cycle complete.** all wrapped up";
+    const d1 = evaluateUlwAtStop({
+      sessionId: sid,
+      lastAssistantMessage: weak,
+      editCount: 1,
+      openTodoCount: 0,
+      stuckThreshold: 20,
+    });
+    assert.equal(d1.block, true);
+    assert.equal(d1.evidenceDemanded, true);
+    assert.match(d1.reanchor || "", /attestation needs evidence/);
+
+    // Second weak attestation still releases — evidence demands are capped,
+    // never an infinite trap.
+    const d2 = evaluateUlwAtStop({
+      sessionId: sid,
+      lastAssistantMessage: weak,
+      editCount: 1,
+      openTodoCount: 0,
+      stuckThreshold: 20,
+    });
+    assert.equal(d2.block, false);
+    assert.equal(d2.lastCycleReleased, true);
+  });
+
+  it("attestation with machine-checkable evidence releases immediately", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-ulw-evok-"));
+    process.env.FORGE_HOME = tmp;
+    const sid = "ulw-evidence-ok";
+    armUlwCycle(sid, "improve the code", { cycle: 1 });
+    setCycleFlag(sid, 0);
+
+    const done = evaluateUlwAtStop({
+      sessionId: sid,
+      lastAssistantMessage: "**Cycle complete.**\n✅ npm test — 12 passed",
+      editCount: 2,
+      openTodoCount: 0,
+      stuckThreshold: 20,
+    });
+    assert.equal(done.block, false);
+    assert.equal(done.lastCycleReleased, true);
+    assert.equal(done.evidenceDemanded, undefined);
+  });
+
+  it("status renders the ledger, the bar, and counters", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-ulw-stat-"));
+    process.env.FORGE_HOME = tmp;
+    const sid = "ulw-status-ledger";
+    armUlwCycle(sid, "improve", { cycle: 1 });
+    evaluateUlwAtStop({
+      sessionId: sid,
+      lastAssistantMessage: "big wave",
+      editCount: 5,
+      openTodoCount: 0,
+      stuckThreshold: 50,
+      verificationRan: true,
+    });
+    evaluateUlwAtStop({
+      sessionId: sid,
+      lastAssistantMessage: "tiny wave",
+      editCount: 6,
+      openTodoCount: 0,
+      stuckThreshold: 50,
+    });
+
+    const st = loadUlwCycle(sid)!;
+    assert.equal(formatWaveLedger(st.waves), "w1 +5e ✓ · w2 +1e ✗");
+    const status = formatUlwStatus(st);
+    assert.match(status, /Recent waves: w1 \+5e ✓ · w2 \+1e ✗/);
+    assert.match(status, /Best wave \(the bar to match\/beat\): w1/);
+  });
+
+  it("bestWave prefers proven waves, then largest edit delta", () => {
+    assert.equal(bestWave(undefined), null);
+    assert.equal(bestWave([]), null);
+    const best = bestWave([
+      { wave: 1, editDelta: 2, proof: true, summary: "", ts: "" },
+      { wave: 2, editDelta: 9, proof: false, summary: "", ts: "" },
+      { wave: 3, editDelta: 4, proof: true, summary: "", ts: "" },
+    ]);
+    assert.equal(best!.wave, 3); // proven pool beats bigger unproven wave
+    const unproven = bestWave([
+      { wave: 1, editDelta: 2, proof: false, summary: "", ts: "" },
+      { wave: 2, editDelta: 9, proof: false, summary: "", ts: "" },
+    ]);
+    assert.equal(unproven!.wave, 2);
+  });
+
+  it("fork clones the wave ledger without sharing the array", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-ulw-forkled-"));
+    process.env.FORGE_HOME = tmp;
+    const sid = "ulw-fork-ledger";
+    armUlwCycle(sid, "improve", { cycle: 1 });
+    evaluateUlwAtStop({
+      sessionId: sid,
+      lastAssistantMessage: "wave one",
+      editCount: 3,
+      openTodoCount: 0,
+      stuckThreshold: 50,
+      verificationRan: true,
+    });
+
+    copyUlwCycle(sid, "ulw-fork-ledger-2")!;
+    assert.equal(loadUlwCycle("ulw-fork-ledger-2")!.waves!.length, 1);
+    assert.equal(loadUlwCycle("ulw-fork-ledger-2")!.thinStreak, 0);
+
+    // Source advances — fork ledger must not change (no shared reference)
+    evaluateUlwAtStop({
+      sessionId: sid,
+      lastAssistantMessage: "wave two",
+      editCount: 6,
+      openTodoCount: 0,
+      stuckThreshold: 50,
+      verificationRan: true,
+    });
+    assert.equal(loadUlwCycle(sid)!.waves!.length, 2);
+    assert.equal(loadUlwCycle("ulw-fork-ledger-2")!.waves!.length, 1);
+  });
+
+  it("stop-guard passes verificationRan into the wave ledger", async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-ulw-sgp-"));
+    process.env.FORGE_HOME = tmp;
+    const sid = "ulw-sg-proof";
+    armUlwCycle(sid, "improve the code", { cycle: 1 });
+    const config = {
+      ...DEFAULT_CONFIG,
+      blockingStopHooks: true,
+      compatClaudeHooks: false,
+      compatCursorHooks: false,
+      goal: { ...DEFAULT_CONFIG.goal, enabled: false },
+    };
+    const hooks = new HookRunner(config, tmp);
+    const r = await runStopGuard({
+      config,
+      hooks,
+      ctx: { sessionId: sid, cwd: tmp, workspaceRoot: tmp },
+      ultrawork: true,
+      openTodoCount: 0,
+      editCount: 4,
+      lastAssistantMessage: "added tests",
+      verificationRan: true,
+    });
+    assert.equal(r.allowStop, false);
+    assert.equal(loadUlwCycle(sid)!.waves![0].proof, true);
+    disarmUlwCycle(sid);
   });
 });

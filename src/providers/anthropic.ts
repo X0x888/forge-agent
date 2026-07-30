@@ -25,6 +25,35 @@ export function mapAnthropicStopReason(
   return stopReason;
 }
 
+/** Prompt caching is on by default; FORGE_ANTHROPIC_CACHE=0|false disables. */
+function promptCacheEnabled(): boolean {
+  return (
+    process.env.FORGE_ANTHROPIC_CACHE !== "0" &&
+    process.env.FORGE_ANTHROPIC_CACHE !== "false"
+  );
+}
+
+/** Pick the optional prompt-cache counters off an Anthropic usage object. */
+function cacheUsageFields(u?: {
+  cache_read_input_tokens?: number;
+  cache_creation_input_tokens?: number;
+}): {
+  cache_read_input_tokens?: number;
+  cache_creation_input_tokens?: number;
+} {
+  const out: {
+    cache_read_input_tokens?: number;
+    cache_creation_input_tokens?: number;
+  } = {};
+  if (u?.cache_read_input_tokens != null) {
+    out.cache_read_input_tokens = u.cache_read_input_tokens;
+  }
+  if (u?.cache_creation_input_tokens != null) {
+    out.cache_creation_input_tokens = u.cache_creation_input_tokens;
+  }
+  return out;
+}
+
 /**
  * Native Anthropic Messages API adapter.
  * Converts OpenAI-style tool messages to Anthropic content blocks.
@@ -118,6 +147,34 @@ export class AnthropicProvider implements LLMProvider {
     }));
   }
 
+  /**
+   * Anthropic prompt caching (default on; FORGE_ANTHROPIC_CACHE=0|false off).
+   * Marks the stable request prefix — system prompt and tool list — with an
+   * ephemeral cache breakpoint: system becomes an array of text blocks whose
+   * last block carries cache_control, and the LAST tool gets cache_control.
+   * Cache reads are 0.1× input price; 5-min TTL refreshed per hit.
+   */
+  private applyPromptCache(
+    system: string | undefined,
+    tools: unknown[] | undefined,
+  ): { system?: unknown; tools?: unknown[] } {
+    if (!promptCacheEnabled()) return { system, tools };
+    const cachedSystem: unknown = system
+      ? [{ type: "text", text: system, cache_control: { type: "ephemeral" } }]
+      : system;
+    const cachedTools = tools?.length
+      ? tools.map((t, i) =>
+          i === tools.length - 1
+            ? {
+                ...(t as Record<string, unknown>),
+                cache_control: { type: "ephemeral" },
+              }
+            : t,
+        )
+      : tools;
+    return { system: cachedSystem, tools: cachedTools };
+  }
+
   private parseResponse(json: {
     id: string;
     model: string;
@@ -129,7 +186,12 @@ export class AnthropicProvider implements LLMProvider {
       input?: unknown;
     }>;
     stop_reason: string | null;
-    usage?: { input_tokens: number; output_tokens: number };
+    usage?: {
+      input_tokens: number;
+      output_tokens: number;
+      cache_read_input_tokens?: number;
+      cache_creation_input_tokens?: number;
+    };
   }): ChatResponse {
     let content = "";
     const toolCalls: ToolCall[] = [];
@@ -161,6 +223,7 @@ export class AnthropicProvider implements LLMProvider {
             prompt_tokens: json.usage.input_tokens,
             completion_tokens: json.usage.output_tokens,
             total_tokens: json.usage.input_tokens + json.usage.output_tokens,
+            ...cacheUsageFields(json.usage),
           }
         : undefined,
     };
@@ -168,13 +231,14 @@ export class AnthropicProvider implements LLMProvider {
 
   async chat(req: ChatRequest, signal?: AbortSignal): Promise<ChatResponse> {
     const { system, messages } = this.convertMessages(req.messages);
+    const cached = this.applyPromptCache(system, this.convertTools(req.tools));
     const body = {
       model: req.model,
       max_tokens: req.max_tokens ?? 8192,
       temperature: req.temperature,
-      system,
+      system: cached.system,
       messages,
-      tools: this.convertTools(req.tools),
+      tools: cached.tools,
       stream: false,
     };
     const { signal: merged, dispose } = mergeAbortSignals(
@@ -207,13 +271,14 @@ export class AnthropicProvider implements LLMProvider {
     signal?: AbortSignal,
   ): Promise<ChatResponse> {
     const { system, messages } = this.convertMessages(req.messages);
+    const cached = this.applyPromptCache(system, this.convertTools(req.tools));
     const body = {
       model: req.model,
       max_tokens: req.max_tokens ?? 8192,
       temperature: req.temperature,
-      system,
+      system: cached.system,
       messages,
-      tools: this.convertTools(req.tools),
+      tools: cached.tools,
       stream: true,
     };
     const { signal: merged, dispose } = mergeAbortSignals(
@@ -294,7 +359,12 @@ export class AnthropicProvider implements LLMProvider {
               message?: {
                 id: string;
                 model: string;
-                usage?: { input_tokens?: number; output_tokens?: number };
+                usage?: {
+                  input_tokens?: number;
+                  output_tokens?: number;
+                  cache_read_input_tokens?: number;
+                  cache_creation_input_tokens?: number;
+                };
               };
               index?: number;
               content_block?: {
@@ -309,7 +379,12 @@ export class AnthropicProvider implements LLMProvider {
                 partial_json?: string;
                 stop_reason?: string;
               };
-              usage?: { input_tokens?: number; output_tokens?: number };
+              usage?: {
+                input_tokens?: number;
+                output_tokens?: number;
+                cache_read_input_tokens?: number;
+                cache_creation_input_tokens?: number;
+              };
               error?: { type?: string; message?: string };
             };
             // Anthropic error events mid-stream (overloaded, rate limit, etc.)
@@ -330,6 +405,7 @@ export class AnthropicProvider implements LLMProvider {
                   total_tokens:
                     (event.message.usage.input_tokens ?? 0) +
                     (event.message.usage.output_tokens ?? 0),
+                  ...cacheUsageFields(event.message.usage),
                 };
               }
             }
@@ -388,6 +464,10 @@ export class AnthropicProvider implements LLMProvider {
                   total_tokens:
                     (event.usage.input_tokens ?? usage?.prompt_tokens ?? 0) +
                     (event.usage.output_tokens ?? usage?.completion_tokens ?? 0),
+                  // message_delta usually omits cache counters — keep the
+                  // message_start values unless the event overrides them.
+                  ...cacheUsageFields(usage),
+                  ...cacheUsageFields(event.usage),
                 };
               }
             }

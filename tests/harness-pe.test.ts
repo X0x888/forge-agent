@@ -136,6 +136,45 @@ describe("context admit (OpenCode-inspired)", () => {
     assert.notEqual(fingerprintSnapshot(a), fingerprintSnapshot(b));
     assert.match(renderHarnessAdmission(a), /1 open/);
   });
+
+  it("suppresses counter-only changes when requested, admits real changes", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-admit-sup-"));
+    process.env.FORGE_HOME = tmp;
+    const sid = "admit-suppress";
+    const ulw = armUlwCycle(sid, "improve the code", { cycle: 1 });
+    const snap1 = snapshotHarness({
+      ulw,
+      goal: null,
+      todos: [],
+      permissionMode: "default",
+    });
+    // Baseline admit goes through
+    assert.ok(admitHarnessIfChanged(sid, snap1));
+
+    // Counter-only churn (wave/blocks/todos) → suppressed with the flag…
+    const snap2 = { ...snap1, wave: 2, blocks: 3, openTodos: 4 };
+    assert.equal(
+      admitHarnessIfChanged(sid, snap2, { suppressCounterOnlyChanges: true }),
+      null,
+    );
+    // …but admitted without it (legacy behavior preserved)
+    const snap2b = { ...snap1, wave: 7, blocks: 8 };
+    assert.ok(admitHarnessIfChanged(sid, snap2b));
+
+    // Real change (cycle flip) always admits, even with the flag
+    const snap3 = { ...snap2b, cycle: 0 as const };
+    const msg3 = admitHarnessIfChanged(sid, snap3, {
+      suppressCounterOnlyChanges: true,
+    });
+    assert.ok(msg3);
+    assert.match(msg3!, /LAST/);
+
+    // Suppression updates the stored fingerprint: re-sending snap3 is a no-op
+    assert.equal(
+      admitHarnessIfChanged(sid, snap3, { suppressCounterOnlyChanges: true }),
+      null,
+    );
+  });
 });
 
 describe("todo nudge + gate", () => {

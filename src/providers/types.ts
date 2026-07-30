@@ -44,6 +44,10 @@ export interface ChatUsage {
   prompt_tokens: number;
   completion_tokens: number;
   total_tokens: number;
+  /** Anthropic prompt caching: tokens read from cache (0.1× input price). */
+  cache_read_input_tokens?: number;
+  /** Anthropic prompt caching: tokens written to cache (1.25× input price). */
+  cache_creation_input_tokens?: number;
 }
 
 export interface ChatResponse {

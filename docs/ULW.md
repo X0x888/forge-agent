@@ -58,12 +58,43 @@ attempt Stop
     ├─ cycle=1 and wave will hit max_waves → auto LAST re-anchor
     ├─ cycle=1 → re-anchor next wave (unless stuck-wall)
     ├─ cycle=0 without **Cycle complete.** → re-anchor finish last wave
-    └─ cycle=0 + **Cycle complete.** → release
+    ├─ cycle=0 + **Cycle complete.** without evidence → bounce once, demand proof
+    └─ cycle=0 + **Cycle complete.** + evidence → release
 ```
 
 Stuck-wall: N consecutive Stop attempts with **no file edits** (default same as goal stuck threshold / `FORGE_ULW_STUCK_THRESHOLD`).
 
 `max_waves` is independent of the cycle flag: you can still `/cycle 0` early, or raise `/max-waves` / clear it mid-run.
+
+## Quality bar (wave ledger)
+
+Every wave boundary records **facts** in `ulw.json` — never invented scores:
+
+- `editDelta` — file edits made during the wave
+- `proof` — whether verification **actually ran** (a bash command matching tests/typecheck/lint/build executed during the wave) or was cited with a result
+- `summary` — one-line clip of the wave's closing message
+
+Mechanisms built on the ledger:
+
+| Mechanism | Behavior |
+|-----------|----------|
+| **Bar anchoring** | Each CONTINUE re-anchor names the best wave so far (proven waves first, then largest edit delta) and requires matching or beating it — no filler waves (renames, comment churn, edit/revert loops) |
+| **Proof demand** | A wave with no verification triggers `⚠ … ran no verification — run its proof NOW`. Capped at 2 consecutive demands (a stated rationale is then accepted — some repos have no tests) |
+| **Wave rules** | Every wave: smoke-check first (prior waves may have broken something), ONE objective, search-before-build (no re-implementing), 2-line plan (objective + the exact command that proves it) |
+| **Consolidation cadence** | Every 4th wave is a CONSOLIDATION wave: no new scope — full check suite + hostile review of the cumulative `git diff` |
+| **Thin-wave escalation** | 2+ consecutive waves with ≤1 edit and no proof → re-anchor demands a substantially higher-impact wave |
+| **Diminishing-returns advisory** | 3+ thin waves → user-visible warning + `/cycle status` shows `⚠ Diminishing returns` — the user decides `/cycle 0`; the harness never quietly lowers the bar |
+| **Evidence attestation** | `**Cycle complete.**` without ✅/❌ checklist or command results is bounced once with a proof demand, then released (never an infinite trap) |
+| **Adaptive effort** | Hard rounds (doom-loop / error-streak / missing proof) raise reasoning effort one notch for a turn — escalate on failure, not by default (`FORGE_ADAPTIVE_EFFORT=0` disables) |
+
+Anti-gaming is **structural, not prompt-based**: the only way to satisfy a proof demand is to actually run a check — which is the desired behavior. The ledger is visible in `/cycle status` (`Recent waves: w1 +5e ✓ · w2 +1e ✗`, plus the best-wave bar).
+
+## Token discipline (ULW rounds)
+
+- Slim re-anchors: the cycle protocol lives once in the stable system prompt; per-wave messages carry only counts, the bar, and wave-specific demands
+- Counter-only harness changes (wave/blocks/todo counts) no longer emit a full mid-conversation admission — the re-anchor already carries them
+- Stale bulky tool outputs are proactively cleared to restorable stubs (microcompaction; `FORGE_TOOL_CLEAR*`)
+- Cheapest-proof guidance: affected tests per wave, full suite on consolidation waves
 
 ## State
 
@@ -81,6 +112,8 @@ Forge ports several runtime PE patterns from Grok Build / OpenCode:
 | **Free-text interjection** | Mid-run non-slash text: `The user sent a message while you were working:` + `<user_query>` |
 | **Structured compact** | `/compact` and auto-compact preserve mandate, goal, todos, user messages |
 | **TodoNudge / TodoGate** | Soft reminder + Stop block while open todos remain under ULW |
+| **Wave ledger + quality bar** | Factual per-wave edits/proof in `ulw.json`; bar anchoring, proof demands, consolidation cadence, evidence attestation (see above) |
+| **Counter-only admission suppression** | Wave/blocks/todo churn updates the admitted fingerprint without a redundant harness message |
 | **Prompt profile** | ULW defaults to `autonomous` (keep-going); config `prompt_profile` overrides |
 | **Fork mid-ULW** | `/fork` / `/fork-and-compact` copy `ulw.json` + `goal.json` so the branch keeps the driver |
 | **File-aware undo** | `/undo` / `/retry` restore journaled disk mutations from the undone turns |

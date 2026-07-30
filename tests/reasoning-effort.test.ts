@@ -9,6 +9,7 @@ import {
   modelSupportsReasoningEffort,
   effortLevelsForModel,
   defaultEffortForModel,
+  bumpReasoningEffort,
 } from "../src/config/reasoning.js";
 import { buildChatRequest, resolveMaxTurns } from "../src/agent/loop.js";
 import { DEFAULT_CONFIG } from "../src/config/types.js";
@@ -89,6 +90,32 @@ describe("buildChatRequest reasoning_effort", () => {
       [],
     );
     assert.equal(req.reasoning_effort, "high");
+  });
+
+  it("effort override wins over config (adaptive escalation)", () => {
+    const req = buildChatRequest(
+      { ...DEFAULT_CONFIG, model: "grok-4.5", reasoningEffort: "low" },
+      [],
+      "high",
+    );
+    assert.equal(req.reasoning_effort, "high");
+  });
+});
+
+describe("bumpReasoningEffort (adaptive escalation)", () => {
+  it("bumps one notch within model levels", () => {
+    assert.equal(bumpReasoningEffort("grok-4.5", "low"), "medium");
+    assert.equal(bumpReasoningEffort("grok-4.5", "medium"), "high");
+    assert.equal(bumpReasoningEffort("grok-4.5", "high"), "high");
+  });
+
+  it("uses the model default when current is undefined", () => {
+    // grok-4.5 default is already high → bump is a no-op at the top
+    assert.equal(bumpReasoningEffort("grok-4.5", undefined), "high");
+  });
+
+  it("returns undefined for models without effort support", () => {
+    assert.equal(bumpReasoningEffort("grok-4", "low"), undefined);
   });
 });
 

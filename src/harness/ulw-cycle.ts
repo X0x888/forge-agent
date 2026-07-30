@@ -15,6 +15,22 @@ import { forgeHome, readJsonFile, writeJsonFile, nowIso, nowEpoch } from "../uti
 
 export type CycleFlag = 0 | 1;
 
+/**
+ * Factual record of one completed wave. Facts only — no invented quality
+ * scores: edit delta + whether verification actually ran + a clipped summary.
+ * The "quality bar" is anchored to the best factual wave, not a metric.
+ */
+export interface UlwWaveRecord {
+  wave: number;
+  /** File edits made during this wave (editCount delta across the Stop boundary) */
+  editDelta: number;
+  /** True when verification evidence was detected (test/typecheck/lint/build run or cited) */
+  proof: boolean;
+  /** One-line clip of the wave's closing assistant message */
+  summary: string;
+  ts: string;
+}
+
 export interface UlwCycleState {
   /** Ultrawork cycle driver armed */
   enabled: boolean;
@@ -40,6 +56,18 @@ export interface UlwCycleState {
   /** Expanded operational mandate shown to the model */
   expandedMandate: string;
   softPrompt: boolean;
+  /**
+   * Wave ledger (newest last, capped). Facts per wave for the quality bar,
+   * thin-wave detection, and /cycle status transparency. Optional for
+   * back-compat with older sidecars.
+   */
+  waves?: UlwWaveRecord[];
+  /** Consecutive waves with negligible edits AND no verification */
+  thinStreak?: number;
+  /** Proof demands already issued for the current proof-less streak (capped) */
+  proofDemands?: number;
+  /** Evidence demands issued against weak cycle=0 attestations (capped at 1) */
+  evidenceNudges?: number;
   startedAt: string;
   updatedAt: string;
   sessionId: string;
@@ -53,10 +81,96 @@ export interface UlwStopDecision {
   lastCycleReleased?: boolean;
   /** True when LAST mode was forced because maxWaves was reached */
   maxWavesHit?: boolean;
+  /** True when the re-anchor demands missing verification evidence */
+  proofDemanded?: boolean;
+  /** True when waves are thinning — surface a diminishing-returns advisory */
+  thinStreakAdvisory?: boolean;
+  /** True when a weak attestation was bounced for missing evidence */
+  evidenceDemanded?: boolean;
 }
 
 const LAST_CYCLE_ATTEST_RE =
   /\*\*Cycle complete\.\*\*|\*\*Wave complete\.\*\*|\*\*Last cycle complete\.\*\*|CYCLE COMPLETE|LAST CYCLE COMPLETE/i;
+
+/**
+ * Evidence that a verification command ran or its result is cited.
+ * Gate = execution, not judgment: a wave "proved" only when a check actually
+ * ran (loop passes verificationRan) or the message cites command + outcome.
+ */
+const WAVE_PROOF_RE =
+  /\b(?:npm|pnpm|yarn|bun|deno|pytest|jest|vitest|mocha|ava|cargo|go|mvn|gradle|make|tsc|mypy|pyright|ruff|eslint|golangci|ctest|phpunit|rspec|dotnet)\b[^\n]{0,60}?\b(?:test|tests|spec|check|typecheck|type-check|lint|clippy|vet|build|compile|ci|verify)\b|\b(?:tsc|mypy|pyright|ruff|eslint|golangci(?:-lint)?|clippy)\b[^\n]{0,40}?\b(?:pass(?:ed|ing)?|clean|ok|no errors?|✓|✅)\b|\b(?:test|tests|spec|typecheck|lint|build)\b[^\n]{0,60}?\b(?:pass(?:ed|ing)?|green|succeed(?:ed)?|ok|clean|✓|✅)\b|\b\d+\s+(?:tests?|specs?|checks?)\s+(?:pass(?:ed)?|ok|green)\b|\bpass(?:ed|ing)?\b[^\n]{0,40}?\b(?:tests?|specs?|typecheck|lint|build)\b|✅|✓\s*(?:tests?|checks?|build)/i;
+
+/** Evidence required on a cycle=0 attestation: checklist marks or command results. */
+const ATTEST_EVIDENCE_RE =
+  /✅|❌|✓|\b\d+\s+(?:tests?|specs?|checks?)\s+(?:pass(?:ed)?|ok|green)\b|\btests?\s+(?:pass(?:es|ed|ing)?|green)\b|\b(?:npm|pnpm|yarn|bun|pytest|jest|vitest|cargo|go test|tsc|typecheck|lint|build|make)\b[^\n]{0,60}?\b(?:pass(?:ed|ing)?|green|succeed(?:ed)?|ok|clean|exit\s*0)\b|\b(?:pass(?:ed|ing)?|green|ok|clean)\b[^\n]{0,40}?\b(?:tests?|specs?|typecheck|lint|build)\b|\bexit(?:\s*code)?\s*0\b/i;
+
+/** Wave ledger cap — enough for bar anchoring + status, bounded sidecar size. */
+const WAVE_LEDGER_KEEP = 20;
+/** Proof demands per proof-less streak before accepting a stated rationale. */
+const MAX_PROOF_DEMANDS = 2;
+/** Evidence bounces allowed on cycle=0 attestation before releasing anyway. */
+const MAX_EVIDENCE_NUDGES = 1;
+/** Thin waves in a row before surfacing a diminishing-returns advisory. */
+const THIN_ADVISORY_STREAK = 3;
+
+/**
+ * Bash command shape that counts as running verification. The agent loop
+ * matches executed commands against this to produce the structural
+ * `verificationRan` signal — execution, not prose.
+ */
+export const VERIFICATION_CMD_RE =
+  /\b(?:npm|pnpm|yarn|bun|deno)\s+(?:run\s+)?(?:test|tests|spec|typecheck|type-check|lint|check|build|ci|verify)\b|\b(?:pytest|py\.test|jest|vitest|mocha|ava|phpunit|rspec|ctest|mypy|pyright|ruff|golangci-lint|staticcheck)\b|\bcargo\s+(?:test|check|build|clippy)\b|\bgo\s+(?:test|vet|build)\b|\bmvn\s+(?:test|verify|package|compile)\b|\bgradle(?:w)?\s+(?:test|check|build)\b|\bmake\s+(?:test|check|build|all|ci)\b|\btsc\b|\beslint\b|\bdotnet\s+(?:test|build)\b/i;
+
+/**
+ * Detect verification evidence for a wave. `verificationRan` is the structural
+ * signal (a bash command matching a check pattern executed during the wave);
+ * the regex is the secondary signal (cited command + outcome in the message).
+ */
+export function detectWaveProof(
+  lastAssistantMessage: string,
+  verificationRan?: boolean,
+): boolean {
+  if (verificationRan) return true;
+  return WAVE_PROOF_RE.test(lastAssistantMessage || "");
+}
+
+/** Attestation carries machine-checkable evidence, not just a claim. */
+export function hasAttestationEvidence(
+  lastAssistantMessage: string,
+  verificationRan?: boolean,
+): boolean {
+  if (verificationRan) return true;
+  return ATTEST_EVIDENCE_RE.test(lastAssistantMessage || "");
+}
+
+function summarizeWave(message: string): string {
+  const t = (message || "").replace(/\s+/g, " ").trim();
+  if (!t) return "(no closing summary)";
+  return t.length <= 140 ? t : `${t.slice(0, 139)}…`;
+}
+
+/**
+ * Best factual wave so far: prefer waves with proof, then largest edit delta.
+ * Used to anchor the bar ("match or beat your best wave") — not a score.
+ */
+export function bestWave(waves: UlwWaveRecord[] | undefined): UlwWaveRecord | null {
+  if (!waves?.length) return null;
+  const proven = waves.filter((w) => w.proof);
+  const pool = proven.length ? proven : waves;
+  return pool.reduce((best, w) => (w.editDelta > best.editDelta ? w : best), pool[0]);
+}
+
+/** One-line factual ledger for re-anchors/status: `w1 +12e ✓ · w2 +1e ✗`. */
+export function formatWaveLedger(
+  waves: UlwWaveRecord[] | undefined,
+  max = 8,
+): string {
+  if (!waves?.length) return "";
+  return waves
+    .slice(-max)
+    .map((w) => `w${w.wave} +${w.editDelta}e ${w.proof ? "✓" : "✗"}`)
+    .join(" · ");
+}
 
 const SOFT_PROMPT_RE =
   /^(please\s+)?(improve|fix|polish|clean|harden|refactor|optimize|enhance|update|upgrade|review|audit|tidy|beautify|simplify|modernize)(\s+(the|this|our|my))?(\s+\w+){0,6}\.?$/i;
@@ -84,6 +198,20 @@ export function loadUlwCycle(sessionId: string): UlwCycleState | null {
     raw.maxWaves = null;
   } else {
     raw.maxWaves = normalizeMaxWaves(raw.maxWaves);
+  }
+  // Back-compat: older sidecars omit the wave ledger / quality counters
+  if (!Array.isArray(raw.waves)) raw.waves = [];
+  if (typeof raw.thinStreak !== "number" || !Number.isFinite(raw.thinStreak)) {
+    raw.thinStreak = 0;
+  }
+  if (typeof raw.proofDemands !== "number" || !Number.isFinite(raw.proofDemands)) {
+    raw.proofDemands = 0;
+  }
+  if (
+    typeof raw.evidenceNudges !== "number" ||
+    !Number.isFinite(raw.evidenceNudges)
+  ) {
+    raw.evidenceNudges = 0;
   }
   return raw;
 }
@@ -174,6 +302,12 @@ export function armUlwCycle(
     mandate: mandate.replace(/\s+/g, " ").trim() || "improve the codebase",
     expandedMandate: expanded,
     softPrompt: soft,
+    // Wave ledger persists across re-arms (same session story); streak
+    // counters reset — a fresh mandate earns a fresh quality context.
+    waves: prev?.waves ?? [],
+    thinStreak: 0,
+    proofDemands: 0,
+    evidenceNudges: 0,
     startedAt: prev?.enabled ? prev.startedAt : nowIso(),
     updatedAt: nowIso(),
     sessionId,
@@ -223,9 +357,14 @@ export function copyUlwCycle(fromId: string, toId: string): UlwCycleState | null
   const next: UlwCycleState = {
     ...src,
     sessionId: toId,
-    // Fresh stuck counters on the branch — progress is independent
+    // Fresh stuck/quality counters on the branch — progress is independent.
+    // Clone the ledger so the two sessions never share a mutable array.
+    waves: [...(src.waves ?? [])],
     stuckBlocks: 0,
     lastBlockEditCount: 0,
+    thinStreak: 0,
+    proofDemands: 0,
+    evidenceNudges: 0,
     updatedAt: nowIso(),
   };
   saveUlwCycle(next);
@@ -282,11 +421,24 @@ export function formatUlwStatus(s: UlwCycleState | null): string {
     ].join("\n");
   }
   const cap = normalizeMaxWaves(s.maxWaves);
+  const ledger = formatWaveLedger(s.waves);
+  const best = bestWave(s.waves);
   return [
     `ULW cycle: ON  |  ${formatUlwCounts(s)}  ${s.cycle === 1 ? "(CONTINUE — relentless)" : "(LAST — finish current wave)"}`,
     `  Mandate: ${s.mandate}`,
     `  Soft prompt expanded: ${s.softPrompt ? "yes" : "no"}`,
     `  max_waves: ${cap != null ? cap : "off (unlimited)"}`,
+    ...(ledger ? [`  Recent waves: ${ledger}`] : []),
+    ...(best
+      ? [
+          `  Best wave (the bar to match/beat): w${best.wave} (+${best.editDelta} edits, proof ${best.proof ? "✓" : "✗"})`,
+        ]
+      : []),
+    ...((s.thinStreak ?? 0) >= THIN_ADVISORY_STREAK
+      ? [
+          `  ⚠ Diminishing returns: ${s.thinStreak} thin waves in a row — consider /cycle 0`,
+        ]
+      : []),
     `  ${ULW_LIVE_CONTROLS_HINT}`,
     `  User controls:`,
     `    /cycle 1       — keep looping waves (until max_waves / stuck-wall / you stop)`,
@@ -299,6 +451,17 @@ export function formatUlwStatus(s: UlwCycleState | null): string {
 
 /**
  * Stop evaluation for ULW cycle driver.
+ *
+ * Quality mechanisms (research-backed, facts only — no invented scores):
+ * - Wave ledger: each wave boundary records edit delta + whether verification
+ *   actually ran (structural signal from the loop) or was cited.
+ * - Quality bar: the re-anchor anchors to the best factual wave and forbids
+ *   filler waves — the bar is maintained or raised, never quietly lowered.
+ * - Proof demand: a wave with no verification triggers a demand to run the
+ *   check NOW (capped; a stated rationale is accepted afterwards).
+ * - Thin-wave escalation + diminishing-returns advisory (user-visible).
+ * - Attestation evidence: cycle=0 "**Cycle complete.**" without machine-
+ *   checkable evidence is bounced once, then released (never an infinite trap).
  */
 export function evaluateUlwAtStop(opts: {
   sessionId: string;
@@ -306,12 +469,25 @@ export function evaluateUlwAtStop(opts: {
   editCount: number;
   openTodoCount: number;
   stuckThreshold: number;
+  /** True when a verification command (test/typecheck/lint/build) ran this wave */
+  verificationRan?: boolean;
 }): UlwStopDecision {
   const s = loadUlwCycle(opts.sessionId);
   if (!s || !s.enabled) return { block: false };
 
-  // cycle=0 + attestation → release
-  if (s.cycle === 0 && LAST_CYCLE_ATTEST_RE.test(opts.lastAssistantMessage || "")) {
+  const msg = opts.lastAssistantMessage || "";
+  const attested = s.cycle === 0 && LAST_CYCLE_ATTEST_RE.test(msg);
+  const attestationHasEvidence =
+    !attested || hasAttestationEvidence(msg, opts.verificationRan);
+  // Edit delta since the previous Stop evaluation (wave boundary). Captured
+  // before lastBlockEditCount is updated below.
+  const editDelta = Math.max(0, opts.editCount - s.lastBlockEditCount);
+
+  // cycle=0 + attestation with evidence (or evidence already demanded once) → release
+  if (
+    attested &&
+    (attestationHasEvidence || (s.evidenceNudges ?? 0) >= MAX_EVIDENCE_NUDGES)
+  ) {
     s.enabled = false;
     saveUlwCycle(s);
     return {
@@ -342,6 +518,23 @@ export function evaluateUlwAtStop(opts: {
     };
   }
 
+  // cycle=0 weak attestation → bounce once, demanding machine-checkable evidence.
+  // Anti-gaming: structural (the only way out is running a real check or a
+  // second attestation), capped so it can never become an infinite trap.
+  if (attested && !attestationHasEvidence) {
+    s.evidenceNudges = (s.evidenceNudges ?? 0) + 1;
+    saveUlwCycle(s);
+    const reanchor = [
+      `[Forge ULW cycle driver] Stop blocked — attestation needs evidence.`,
+      `Your **Cycle complete.** claim cites no machine-checkable evidence: no ✅/❌ checklist, no command result, and no verification command ran this wave.`,
+      `Run the cheapest relevant check NOW (tests / typecheck / build), then re-attest **Cycle complete.** with:`,
+      `- ✅/❌ per shipped item`,
+      `- the command + its result for each ✓`,
+      `Claims without evidence do not close the cycle.`,
+    ].join("\n");
+    return { block: true, reason: reanchor, reanchor, evidenceDemanded: true };
+  }
+
   if (s.cycle === 1) {
     const cap = normalizeMaxWaves(s.maxWaves);
     // Already at/over cap (e.g. user lowered max_waves mid-run) → force LAST now.
@@ -361,6 +554,31 @@ export function evaluateUlwAtStop(opts: {
       };
     }
     s.wave += 1;
+    // Record the wave that closed at this boundary — facts for the quality bar.
+    const proof = detectWaveProof(msg, opts.verificationRan);
+    s.waves = [
+      ...(s.waves ?? []),
+      {
+        wave: s.wave, // boundary index (counter value after increment)
+        editDelta,
+        proof,
+        summary: summarizeWave(msg),
+        ts: nowIso(),
+      },
+    ].slice(-WAVE_LEDGER_KEEP);
+    const thin = editDelta <= 1 && !proof;
+    s.thinStreak = thin ? (s.thinStreak ?? 0) + 1 : 0;
+    if (proof) {
+      s.proofDemands = 0;
+    }
+    const proofMissing = !proof && (s.proofDemands ?? 0) < MAX_PROOF_DEMANDS;
+    if (proofMissing) s.proofDemands = (s.proofDemands ?? 0) + 1;
+    const thinStreak = s.thinStreak ?? 0;
+    const qualityFlags = {
+      proofDemanded: proofMissing,
+      thinStreakAdvisory: thinStreak >= THIN_ADVISORY_STREAK,
+    };
+
     // Cap hit on this increment: this wave is the last — force LAST re-anchor.
     if (cap != null && s.wave >= cap) {
       s.cycle = 0;
@@ -375,14 +593,18 @@ export function evaluateUlwAtStop(opts: {
         reason: reanchor,
         reanchor,
         maxWavesHit: true,
+        ...qualityFlags,
       };
     }
     saveUlwCycle(s);
     const reanchor = buildCycleReanchor(s, {
       openTodos: opts.openTodoCount,
       mode: "continue",
+      proofMissing,
+      consolidation: s.wave % CONSOLIDATION_EVERY === 0,
+      thinStreak,
     });
-    return { block: true, reason: reanchor, reanchor };
+    return { block: true, reason: reanchor, reanchor, ...qualityFlags };
   }
 
   // cycle === 0: force finish current wave (no "I'll stop mid-wave")
@@ -394,39 +616,63 @@ export function evaluateUlwAtStop(opts: {
   return { block: true, reason: reanchor, reanchor };
 }
 
+/** Every Nth wave is a consolidation wave: review + harden, no new scope. */
+const CONSOLIDATION_EVERY = 4;
+
 function buildCycleReanchor(
   s: UlwCycleState,
-  opts: { openTodos: number; mode: "continue" | "last"; maxWavesHit?: boolean },
+  opts: {
+    openTodos: number;
+    mode: "continue" | "last";
+    maxWavesHit?: boolean;
+    proofMissing?: boolean;
+    consolidation?: boolean;
+    thinStreak?: number;
+  },
 ): string {
+  const cap = normalizeMaxWaves(s.maxWaves);
   if (opts.mode === "continue") {
-    const cap = normalizeMaxWaves(s.maxWaves);
+    const best = bestWave(s.waves);
+    const lastEntry = s.waves?.length
+      ? s.waves[s.waves.length - 1]
+      : null;
     return [
       `[Forge ULW cycle driver] Stop blocked — ${formatUlwCounts(s)} (CONTINUE).`,
       `Mandate: ${s.mandate}`,
-      `Wave about to start: ${s.wave}${cap != null ? ` / max ${cap}` : ""}  (Stop blocks so far: ${s.blocks}; stuck-streak tracked)`,
+      `Wave ${s.wave} begins${cap != null ? ` (max ${cap})` : ""}. Protocol: research → plan → implement → verify → review (full cycle in system prompt).`,
+      lastEntry
+        ? `Last wave closed: +${lastEntry.editDelta} edits, proof ${lastEntry.proof ? "✓" : "✗"}.`
+        : null,
       ``,
-      `Execute the ULW CYCLE (do not skip steps):`,
-      `1. RESEARCH — re-scan gaps vs mandate; update todo_write with concrete items.`,
-      `2. THINK — pick the highest-impact bounded wave; think out of the box if the obvious path is blocked.`,
-      `3. IMPLEMENT — ship the wave with real code/tests; verify with cheapest proof.`,
-      `4. SERENDIPITY — fix verified adjacent defects on already-loaded paths when the fix is bounded; note under Serendipity.`,
-      `5. REVIEW — independent pass: re-read your diff, check for regressions, no open todos left for THIS wave.`,
-      `6. REPEAT — do NOT stop. Begin the next research scan. The user sets cycle=0 or max_waves when they want this to end.`,
-      ``,
+      `Wave rules:`,
+      `1. SMOKE-CHECK first — run the cheapest existing check (tests/typecheck/build) to catch breakage from prior waves before adding scope.`,
+      `2. ONE objective — the highest-impact bounded item; search before building so you don't re-implement what exists.`,
+      `3. Plan in 2 lines — objective + the exact command that proves it — then ship it and run that proof.`,
+      best
+        ? `Bar: best wave so far w${best.wave} (+${best.editDelta} edits${best.proof ? ", proof ✓" : ""}). Match or beat it — compound on shipped work; no filler waves (renames, comment-only churn, edit/revert loops).`
+        : `Bar: these first waves set the standard — substantive change + real proof, every wave.`,
+      opts.proofMissing
+        ? `⚠ Last wave ran no verification — run its proof NOW before any new scope.`
+        : null,
+      opts.consolidation
+        ? `CONSOLIDATION WAVE (every ${CONSOLIDATION_EVERY}th): no new scope — run the full check suite, then review the cumulative \`git diff\` as a hostile reviewer (regressions, weakened tests, leftover stubs). Fix real defects only.`
+        : null,
+      (opts.thinStreak ?? 0) >= 2
+        ? `Waves are thinning (${opts.thinStreak} in a row with little substance). Commit to a substantially higher-impact wave — or, if the mandate is genuinely exhausted, say so with evidence; the user can /cycle 0.`
+        : null,
       s.softPrompt
         ? `Soft original prompt — keep discovering real gaps; do not ask the user to clarify "improve".`
-        : `Stay aligned with the mandate above.`,
+        : null,
       opts.openTodos > 0
         ? `Open todos: ${opts.openTodos} — clear or complete them before claiming a wave done.`
-        : `No open todos recorded — create a short wave plan via todo_write then execute.`,
-      ``,
-      `User control: /cycle 0 = last wave · /cycle 1 = keep going · /max-waves N|off · /ulw-off = disarm.`,
+        : `No open todos — create a short wave plan via todo_write, then execute.`,
       `${ULW_LIVE_CONTROLS_HINT}`,
       `Do not stop. Do not ask permission to continue. Next tool calls now.`,
-    ].join("\n");
+    ]
+      .filter((line) => line != null)
+      .join("\n");
   }
 
-  const cap = normalizeMaxWaves(s.maxWaves);
   const maxHitLine = opts.maxWavesHit
     ? `max_waves=${cap} reached at wave=${s.wave} — auto LAST (finish and attest; do not start a new ambitious wave).`
     : null;
@@ -434,14 +680,14 @@ function buildCycleReanchor(
   return [
     `[Forge ULW cycle driver] Stop blocked — ${formatUlwCounts(s)} (LAST CYCLE).`,
     `Mandate: ${s.mandate}`,
-    `Wave: ${s.wave}${cap != null ? ` / max ${cap}` : ""}  — finish THIS wave completely, then attest and stop.`,
+    `Wave: ${s.wave}${cap != null ? ` / max ${cap}` : ""} — finish THIS wave only, then attest and stop.`,
     maxHitLine,
     ``,
-    `Required:`,
-    `1. Complete all open work for the current wave (todos, verification).`,
-    `2. Independent review of the diff.`,
-    `3. Attest exactly: **Cycle complete.** with a short checklist of what shipped + evidence (commands/results).`,
-    `4. Do NOT start a new ambitious wave. Polish/finish only.`,
+    `Required before attestation:`,
+    `1. Complete all open work for this wave (todos, verification) and run the final check.`,
+    `2. Review the cumulative diff (\`git diff\`) as a hostile reviewer: regressions, weakened tests, leftover stubs.`,
+    `3. Attest exactly **Cycle complete.** with a ✅/❌ checklist — what shipped + evidence per item (command → result).`,
+    `Attestations without machine-checkable evidence are bounced.`,
     ``,
     `Until you attest **Cycle complete.**, Stop remains blocked.`,
     opts.openTodos > 0
