@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.9.43 — many pinned productionWarnings + smoke
+
 ### Added
 
 - **`run --json productionWarnings` many pinned**: warn when ≥10 pin-protected sessions accumulate
