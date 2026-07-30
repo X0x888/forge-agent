@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Added
+
+- **Share card skills count**: `/share` project line includes `skills=N` when skill packs are loaded
+- **README skills examples**: documents `examples/forge-skills/` and headless `/skills`
+
+
 ## 0.9.46 — /context project skills + headless /skills smoke
 
 ### Added

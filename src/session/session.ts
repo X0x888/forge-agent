@@ -12,6 +12,7 @@ import { editDistance } from "../util/string-distance.js";
 import { suggestName } from "../util/suggest.js";
 import { formatRelativeTime } from "../util/format.js";
 import { detectProjectHints, getGitSnapshot } from "../util/git-context.js";
+import { countProjectSkills } from "../agent/project-skills.js";
 import type { ChatMessage } from "../providers/types.js";
 import type { PermissionMode } from "../config/types.js";
 import { heartbeatSession } from "../statusline/active.js";
@@ -2184,9 +2185,18 @@ export function formatSessionShareCard(
     } catch {
       /* */
     }
-    const bits = [pkg || null, hints.length ? hints.join(",") : null].filter(
-      Boolean,
-    );
+    let skillsBit: string | null = null;
+    try {
+      const n = countProjectSkills(m.cwd || process.cwd());
+      if (n > 0) skillsBit = `skills=${n}`;
+    } catch {
+      /* */
+    }
+    const bits = [
+      pkg || null,
+      hints.length ? hints.join(",") : null,
+      skillsBit,
+    ].filter(Boolean);
     if (bits.length) projectLine = `  project:  ${bits.join(" · ")}`;
   } catch {
     /* */

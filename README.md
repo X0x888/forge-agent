@@ -311,9 +311,9 @@ forge status --tmux       # for tmux status-right
 
 Works for **any** auth method: always shows session context/tokens/git/liveness/activity; plan credits only when the provider exposes them (e.g. SuperGrok via imported Grok session). See [docs/STATUSLINE.md](docs/STATUSLINE.md).
 
-Tab completes slash commands (including project `.forge/commands`). While the agent is working you can still run **live controls** (`/cycle 0`, `/cycle 1`, `/max-waves N|off`, `/ulw-off`, `/plan`, `/build`, `/model`, `/pause`, `/unpause`, `/done`, `/status`, …) without aborting — harness state updates apply at the next model step. **Free-text** mid-run is queued as an interjection (Grok-style) for the next LLM call. **Ctrl+C** aborts the current agent turn (again at idle prompt to exit).
+Tab completes slash commands (including project `.forge/commands` and skill packs via `/skills`). While the agent is working you can still run **live controls** (`/cycle 0`, `/cycle 1`, `/max-waves N|off`, `/ulw-off`, `/plan`, `/build`, `/model`, `/pause`, `/unpause`, `/done`, `/status`, …) without aborting — harness state updates apply at the next model step. **Free-text** mid-run is queued as an interjection (Grok-style) for the next LLM call. **Ctrl+C** aborts the current agent turn (again at idle prompt to exit).
 
-Headless CI can run slash prompts too: `forge run "/plan"` · `forge run "/commands"` · custom templates expand then run (`reason: "slash"` when no model call). Starter templates: `examples/forge-commands/`.
+Headless CI can run slash prompts too: `forge run "/plan"` · `forge run "/commands"` · `forge run "/skills"` · custom templates expand then run (`reason: "slash"` when no model call). Starter templates: `examples/forge-commands/` · skill packs: `examples/forge-skills/` (copy into `.forge/skills/<name>/SKILL.md`).
 
 ---
 
