@@ -13,7 +13,7 @@ forge doctor                 # human report (exit 1 if issues)
 forge doctor --json          # CI: structured JSON + exit 1 if unhealthy
 forge doctor --json --sandbox off --read-outside allow  # what-if production risk scan
 forge config --json --sandbox strict --read-outside deny  # effective snapshot what-if
-# forge run --json also includes productionWarnings[] for sandbox=off / yolo / read-outside=allow / dirty tree (≥40) / large session inventory (≥100)
+# forge run --json also includes productionWarnings[] for sandbox=off / yolo / read-outside=allow / dirty tree (≥40) / large session inventory (≥100); sessions list --json inventory counts
 # sessions export --json → { ok, id, format, body }; import accepts that envelope file (unwraps body)
 # FORGE_JSON_COMPACT=1       # single-line --json success payloads (log aggregation)
 FORGE_READ_OUTSIDE=deny    # CI: hard-deny absolute reads outside workspace
