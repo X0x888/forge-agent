@@ -3318,6 +3318,8 @@ export interface DoctorResult {
   projectRulesCount?: number;
   /** Count of project/user custom slash templates (.forge/commands). */
   projectCommandsCount?: number;
+  /** Sessions with meta.lastError set (expert recovery backlog). */
+  sessionsWithLastError?: number;
 }
 
 /**
@@ -3840,6 +3842,7 @@ export async function runDoctorCheck(
 
   let projectRulesCount = 0;
   let projectCommandsCount = 0;
+  let sessionsWithLastError = 0;
   try {
     const { listProjectRulePaths } = await import("../agent/system-prompt.js");
     projectRulesCount = listProjectRulePaths(
@@ -3856,6 +3859,20 @@ export async function runDoctorCheck(
   } catch {
     /* */
   }
+  try {
+    const { listSessions } = await import("../session/session.js");
+    const all = listSessions({ limit: 10_000 });
+    sessionsWithLastError = all.filter((s) => Boolean(s.lastError?.message)).length;
+    if (sessionsWithLastError > 0) {
+      lines.push(
+        chalk.dim(
+          `  sessions with lastError: ${sessionsWithLastError}  (/sessions · forge status --json)`,
+        ),
+      );
+    }
+  } catch {
+    /* */
+  }
 
   return {
     report: lines.join("\n"),
@@ -3867,6 +3884,7 @@ export async function runDoctorCheck(
     multiAccount,
     projectRulesCount,
     projectCommandsCount,
+    sessionsWithLastError,
   };
 }
 

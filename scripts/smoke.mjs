@@ -124,6 +124,7 @@ mustInclude("invalid_days typo", ["stats", "--days", "wek", "--json"], "invalid_
 mustInclude("doctor readOutsideWorkspace", ["doctor", "--json"], "readOutsideWorkspace");
 mustInclude("doctor projectRulesCount", ["doctor", "--json"], "projectRulesCount");
 mustInclude("doctor projectCommandsCount", ["doctor", "--json"], "projectCommandsCount");
+mustInclude("doctor sessionsWithLastError", ["doctor", "--json"], "sessionsWithLastError");
 
 // Headless slash: pure control exits without auth/model (reason: slash)
 mustInclude(

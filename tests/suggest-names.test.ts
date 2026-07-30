@@ -64,5 +64,27 @@ describe("doctor projectRulesCount / projectCommandsCount", () => {
     });
     assert.ok((check.projectRulesCount ?? 0) >= 1);
     assert.ok((check.projectCommandsCount ?? 0) >= 1);
+    assert.equal(typeof check.sessionsWithLastError, "number");
+  });
+
+  it("counts sessions with lastError", async () => {
+    const ws = path.join(tmp, "ws-err");
+    fs.mkdirSync(ws, { recursive: true });
+    const { createSession, saveSession, setSessionLastError } = await import(
+      "../src/session/session.js"
+    );
+    const s = createSession({ cwd: ws, provider: "xai", model: "m" });
+    setSessionLastError(s, {
+      code: "rate_limited",
+      message: "429",
+      tips: ["switch"],
+    });
+    saveSession(s);
+    const check = await runDoctorCheck({
+      ...DEFAULT_CONFIG,
+      workspace: ws,
+    });
+    assert.ok((check.sessionsWithLastError ?? 0) >= 1);
+    assert.match(check.report, /lastError/i);
   });
 });

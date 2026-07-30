@@ -3837,6 +3837,7 @@ Project instructions for Forge (and other coding agents).
               sessionsPinned,
               projectRulesCount: check.projectRulesCount ?? 0,
               projectCommandsCount: check.projectCommandsCount ?? 0,
+              sessionsWithLastError: check.sessionsWithLastError ?? 0,
               toolOutput,
               sandboxLog,
               metrics,

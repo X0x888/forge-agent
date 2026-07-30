@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Added
+
+- **Doctor `sessionsWithLastError`**: count of sessions with `meta.lastError` (report tip + `doctor --json`) for CI recovery backlog hygiene
+
 ## 0.9.7 — Session lastError recovery surface
 
 Expert recovery after provider failures: stamp, surface, and clear `meta.lastError` across status/resume/share/list/HUD/JSON.
