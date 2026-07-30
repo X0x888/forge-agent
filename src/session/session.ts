@@ -742,7 +742,8 @@ export function formatSessionSummary(session: SessionData): string {
       const dirty = git.dirty ? " dirty" : "";
       const ch =
         typeof git.changedFiles === "number" ? ` Δ${git.changedFiles}` : "";
-      gitLine = `  git:      ${git.branch}${dirty}${ch}`;
+      const wt = git.isWorktree ? " worktree" : "";
+      gitLine = `  git:      ${git.branch}${dirty}${ch}${wt}`;
     }
   } catch {
     /* */
@@ -2160,7 +2161,8 @@ export function formatSessionShareCard(
       const dirty = git.dirty ? " dirty" : "";
       const ch =
         typeof git.changedFiles === "number" ? ` Δ${git.changedFiles}` : "";
-      gitLine = `  git:      ${git.branch}${dirty}${ch}`;
+      const wt = git.isWorktree ? " worktree" : "";
+      gitLine = `  git:      ${git.branch}${dirty}${ch}${wt}`;
     }
   } catch {
     /* */

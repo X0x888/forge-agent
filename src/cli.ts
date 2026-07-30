@@ -4583,6 +4583,8 @@ function gitSnapshotForRun(cwd: string): {
   changedFiles: number | null;
   ahead: number | null;
   behind: number | null;
+  root: string | null;
+  isWorktree: boolean | null;
 } | null {
   try {
     const g = getGitSnapshot(cwd);
@@ -4593,6 +4595,8 @@ function gitSnapshotForRun(cwd: string): {
       changedFiles: g.changedFiles ?? null,
       ahead: g.ahead ?? null,
       behind: g.behind ?? null,
+      root: g.root ?? null,
+      isWorktree: g.isWorktree ?? null,
     };
   } catch {
     return null;

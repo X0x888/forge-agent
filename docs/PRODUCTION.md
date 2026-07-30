@@ -332,6 +332,8 @@ Label new runs with `forge run … --title <label>` (searchable via `forge sessi
 
 ## Expert UX (production)
 
+- **Git worktrees** — linked checkouts show `WORKTREE` on `/status`, doctor, HUD (`+wt`), and `doctor --json` `gitIsWorktree`. Prefer one Forge session per worktree to avoid lock races.
+
 - **`/plan` → design, `/build` → implement** — session-scoped plan mode (no sticky-prefs footgun). Live mid-run; resume restores plan unless `--permission-mode` is set. Prefer over sticky `/permissions plan`.
 - **`/model <name> [effort]`** — live mid-run model switch (next provider call picks it up).
 - **Project instructions** — walk-up `AGENTS.md` / `CLAUDE.md` / `.cursor/rules` / copilot-instructions within the git root; `/context` lists sources; `forge doctor` tips when none.
