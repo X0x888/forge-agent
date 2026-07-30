@@ -8,27 +8,168 @@ import {
   getGitSnapshot,
   type GitSnapshot,
 } from "../util/git-context.js";
+import { forgeHome } from "../util/fs.js";
 
-function loadProjectRules(workspace: string): string {
-  const candidates = [
-    "AGENTS.md",
-    "FORGE.md",
-    "CLAUDE.md",
-    ".forge/rules.md",
-  ];
-  const chunks: string[] = [];
-  for (const c of candidates) {
-    const p = path.join(workspace, c);
+/** Per-file cap so one huge AGENTS.md cannot dominate the system prompt. */
+const RULES_PER_FILE_CHARS = 12_000;
+/** Total project-rules budget (OpenCode-style multi-source instructions). */
+const RULES_TOTAL_CHARS = 28_000;
+
+const ROOT_RULE_FILES = [
+  "AGENTS.md",
+  "FORGE.md",
+  "CLAUDE.md",
+  ".forge/rules.md",
+  ".github/copilot-instructions.md",
+  ".cursorrules",
+] as const;
+
+/** Nearest git worktree root (directory containing .git), or null. */
+function findGitRoot(start: string): string | null {
+  let dir = path.resolve(start);
+  for (let i = 0; i < 48; i++) {
     try {
-      if (fs.existsSync(p)) {
-        const text = fs.readFileSync(p, "utf8");
-        if (text.trim()) chunks.push(`# From ${c}\n${text.trim().slice(0, 12_000)}`);
+      const git = path.join(dir, ".git");
+      if (fs.existsSync(git)) return dir;
+    } catch {
+      /* */
+    }
+    const parent = path.dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  return null;
+}
+
+/**
+ * Walk workspace → parents collecting instruction paths.
+ * Stops at the git worktree root (OpenCode-style) so unrelated parent
+ * AGENTS.md files never leak in. When not in a git repo, only the workspace
+ * directory is scanned (plus optional ~/.forge/AGENTS.md).
+ * Prefer nearer files first; later duplicates of the same basename are skipped
+ * so nested AGENTS.md wins over monorepo root when both exist.
+ */
+function collectInstructionPaths(workspace: string): string[] {
+  const out: string[] = [];
+  const seenAbs = new Set<string>();
+  const seenBase = new Set<string>();
+
+  const pushFile = (abs: string, baseKey?: string) => {
+    const resolved = path.resolve(abs);
+    if (seenAbs.has(resolved)) return;
+    if (baseKey && seenBase.has(baseKey)) return;
+    try {
+      if (!fs.existsSync(resolved) || !fs.statSync(resolved).isFile()) return;
+    } catch {
+      return;
+    }
+    seenAbs.add(resolved);
+    if (baseKey) seenBase.add(baseKey);
+    out.push(resolved);
+  };
+
+  const start = path.resolve(workspace || process.cwd());
+  const gitRoot = findGitRoot(start);
+  // Only walk up when workspace is inside that git worktree (never leak
+  // unrelated parent AGENTS.md if TMPDIR sits under another repo).
+  const underGit =
+    !!gitRoot &&
+    (start === path.resolve(gitRoot) ||
+      start.startsWith(path.resolve(gitRoot) + path.sep));
+  // Without git: workspace only. With git: workspace → git root (inclusive).
+  const ceiling = underGit && gitRoot ? path.resolve(gitRoot) : start;
+
+  let dir = start;
+  for (let depth = 0; depth < 48; depth++) {
+    for (const name of ROOT_RULE_FILES) {
+      // Basename key so nested AGENTS.md shadows parent; path-unique for others
+      const baseKey =
+        name === "AGENTS.md" ||
+        name === "FORGE.md" ||
+        name === "CLAUDE.md" ||
+        name === ".cursorrules"
+          ? name
+          : `${dir}::${name}`;
+      pushFile(path.join(dir, name), baseKey);
+    }
+    // Cursor project rules (directory of .md / .mdc)
+    const cursorRules = path.join(dir, ".cursor", "rules");
+    try {
+      if (fs.existsSync(cursorRules) && fs.statSync(cursorRules).isDirectory()) {
+        const entries = fs
+          .readdirSync(cursorRules)
+          .filter((f) => /\.(md|mdc|markdown)$/i.test(f))
+          .sort()
+          .slice(0, 12);
+        for (const f of entries) {
+          pushFile(path.join(cursorRules, f));
+        }
       }
+    } catch {
+      /* */
+    }
+    if (path.resolve(dir) === path.resolve(ceiling)) break;
+    const parent = path.dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+
+  // Global user instructions (lowest priority — only when no project AGENTS.md)
+  if (!seenBase.has("AGENTS.md")) {
+    try {
+      pushFile(path.join(forgeHome(), "AGENTS.md"), "AGENTS.md");
+    } catch {
+      /* */
+    }
+  }
+
+  return out;
+}
+
+function labelForRulePath(abs: string, workspace: string): string {
+  const ws = path.resolve(workspace || process.cwd());
+  const rel = path.relative(ws, abs);
+  if (rel && !rel.startsWith("..") && !path.isAbsolute(rel)) return rel;
+  // Parent / global — show stable short label
+  const home = forgeHome();
+  if (abs.startsWith(home + path.sep) || abs === path.join(home, "AGENTS.md")) {
+    return `~/.forge/${path.basename(abs)}`;
+  }
+  return abs;
+}
+
+/**
+ * Load project / user instruction files for the system prompt.
+ * Sources (nearest wins per basename): AGENTS.md, FORGE.md, CLAUDE.md,
+ * .forge/rules.md, .github/copilot-instructions.md, .cursorrules,
+ * .cursor/rules/*.{md,mdc}, and ~/.forge/AGENTS.md.
+ */
+export function loadProjectRules(workspace: string): string {
+  const paths = collectInstructionPaths(workspace);
+  const chunks: string[] = [];
+  let used = 0;
+  for (const abs of paths) {
+    if (used >= RULES_TOTAL_CHARS) break;
+    try {
+      const text = fs.readFileSync(abs, "utf8").trim();
+      if (!text) continue;
+      const room = RULES_TOTAL_CHARS - used;
+      const slice = text.slice(0, Math.min(RULES_PER_FILE_CHARS, room));
+      if (!slice.trim()) continue;
+      const label = labelForRulePath(abs, workspace);
+      const block = `# From ${label}\n${slice}`;
+      chunks.push(block);
+      used += block.length;
     } catch {
       /* */
     }
   }
   return chunks.join("\n\n");
+}
+
+/** Paths that would be loaded (tests / /context diagnostics). */
+export function listProjectRulePaths(workspace: string): string[] {
+  return collectInstructionPaths(workspace);
 }
 
 /**

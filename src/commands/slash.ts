@@ -989,9 +989,36 @@ export async function handleSlash(
       const roleLines = Object.entries(byRole)
         .map(([r, n]) => `  ${r.padEnd(10)} ${formatTokens(n)}`)
         .join("\n");
+      // Project instruction sources (OpenCode-style multi-file rules)
+      let rulesNote = "";
+      try {
+        const { listProjectRulePaths, loadProjectRules } = await import(
+          "../agent/system-prompt.js"
+        );
+        const ws = opts.config.workspace || process.cwd();
+        const paths = listProjectRulePaths(ws);
+        const body = loadProjectRules(ws);
+        if (paths.length) {
+          const labels = paths.slice(0, 8).map((p) => {
+            const rel = path.relative(ws, p);
+            return rel && !rel.startsWith("..") && !path.isAbsolute(rel)
+              ? rel
+              : p.replace(process.env.HOME || "", "~");
+          });
+          const more = paths.length > 8 ? ` (+${paths.length - 8} more)` : "";
+          rulesNote =
+            `\nProject rules (~${formatTokens(estimateTokens([{ role: "system", content: body }]))}):\n` +
+            labels.map((l) => `  · ${l}`).join("\n") +
+            more;
+        } else {
+          rulesNote = `\nProject rules: none  (tip: AGENTS.md · /init)`;
+        }
+      } catch {
+        /* */
+      }
       return {
         handled: true,
-        output: `Context  [${bar}] ${pct}%\n  ~${formatTokens(est)} / ${formatTokens(opts.config.contextWindow)}\nBy role:\n${roleLines}`,
+        output: `Context  [${bar}] ${pct}%\n  ~${formatTokens(est)} / ${formatTokens(opts.config.contextWindow)}\nBy role:\n${roleLines}${rulesNote}`,
       };
     }
 

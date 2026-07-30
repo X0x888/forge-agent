@@ -437,6 +437,8 @@ export {
 } from "./agent/error-streak.js";
 export {
   buildBaselineSystemPrompt,
+  loadProjectRules,
+  listProjectRulePaths,
   buildSystemPrompt,
   resolvePromptProfile,
 } from "./agent/system-prompt.js";
