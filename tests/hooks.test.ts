@@ -120,9 +120,13 @@ describe("hooks", () => {
       }),
     );
 
+    // Isolate from host ~/.claude / ~/.cursor Stop hooks (compat defaults on).
+    // Without this, a real Claude Stop hook can overwrite the timeout reason.
     const cfg = {
       ...DEFAULT_CONFIG,
       blockingStopHooks: true,
+      compatClaudeHooks: false,
+      compatCursorHooks: false,
       workspace: tmp,
     };
     const runner = new HookRunner(cfg, tmp);
