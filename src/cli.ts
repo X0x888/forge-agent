@@ -2016,6 +2016,10 @@ Docs: docs/PRODUCTION.md
       "List: only sessions with lastError (recovery backlog; aliases: errors|failed|err action)",
     )
     .option(
+      "--untitled",
+      "List: only sessions without a title (aliases: untitled|notitle|nameless action)",
+    )
+    .option(
       "--force-last-error",
       "Prune: also delete sessions that still carry lastError (default: keep for /sessions errors)",
     )
@@ -2877,6 +2881,9 @@ Docs: docs/PRODUCTION.md
         "failed",
         "fail",
         "err",
+        "untitled",
+        "notitle",
+        "nameless",
         "pin",
         "unpin",
         "title",
@@ -3016,8 +3023,13 @@ Docs: docs/PRODUCTION.md
         act === "failed" ||
         act === "fail" ||
         act === "err";
+      const untitledOnly =
+        Boolean(globalOpts.untitled) ||
+        act === "untitled" ||
+        act === "notitle" ||
+        act === "nameless";
       let list = listSessions({
-        limit: errorsOnly && limit === 30 ? 50 : limit,
+        limit: (errorsOnly || untitledOnly) && limit === 30 ? 50 : limit,
         ...(cwdFilter ? { cwd: cwdFilter } : {}),
         ...(queryFilter ? { query: queryFilter } : {}),
         ...(pinnedOnly ? { pinned: true } : {}),
@@ -3025,11 +3037,15 @@ Docs: docs/PRODUCTION.md
       if (errorsOnly) {
         list = list.filter((s) => Boolean(s.lastError?.message));
       }
+      if (untitledOnly) {
+        list = list.filter((s) => !String(s.title || "").trim());
+      }
       if (globalOpts.json) {
         emitOkJson({forgeHome: forgeHome(),
               cwd: cwdFilter,
               query: queryFilter,
               errorsOnly,
+              untitledOnly,
               limit,
               count: list.length,
               sessions: list.map((s) => {
@@ -3092,6 +3108,12 @@ Docs: docs/PRODUCTION.md
         if (errorsOnly) {
           console.log(
             "No sessions with lastError. Provider failures stamp ERR on list and forge status.",
+          );
+          return;
+        }
+        if (untitledOnly) {
+          console.log(
+            "No untitled sessions. /title · --title · /goal set auto-titles new ones.",
           );
           return;
         }
@@ -3165,6 +3187,7 @@ Docs: docs/PRODUCTION.md
       if (queryFilter) filterNotes.push(`q=${JSON.stringify(queryFilter)}`);
       if (pinnedOnly) filterNotes.push("pinned");
       if (errorsOnly) filterNotes.push("errors");
+      if (untitledOnly) filterNotes.push("untitled");
       console.log(
         chalk.dim(
           `\n  forge sessions show|export|import|fork|title|delete <id> [--force]  ·  prune --keep 50` +

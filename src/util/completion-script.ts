@@ -24,7 +24,7 @@ export function shellCompletionScript(shell: string): string {
   const sessionsActions =
     "list show path export import fork pin unpin title rename delete prune search find";
   const sessionsFlags =
-    "--json --out --format --keep --max-age-days --cwd --query -q --pinned --errors --force-last-error --limit -n --force";
+    "--json --out --format --keep --max-age-days --cwd --query -q --pinned --errors --untitled --untitled --force-last-error --limit -n --force";
   // --cwd: list filter + import override; --query/-q: list id/title filter; --pinned/--errors
 
   const normalized = normalizeCompletionShell(shell);
@@ -104,7 +104,7 @@ export function shellCompletionScript(shell: string): string {
       "                _values 'delete' --json --force",
       "                ;;",
       "              list)",
-      "                _values 'list' --json --limit -n --cwd --query -q --pinned --errors",
+      "                _values 'list' --json --limit -n --cwd --query -q --pinned --errors --untitled",
       "                ;;",
       "              show|path|fork|pin|unpin|title|rename)",
       "                _values 'flags' --json",
@@ -345,7 +345,7 @@ export function shellCompletionScript(shell: string): string {
     `        prune) COMPREPLY=( $(compgen -W "--keep --max-age-days --json --force-last-error" -- "$cur") ) ;;`,
     `        delete) COMPREPLY=( $(compgen -W "--json --force" -- "$cur") ) ;;`,
     `        show|path|fork|pin|unpin|title|rename) COMPREPLY=( $(compgen -W "--json" -- "$cur") ) ;;`,
-    `        list) COMPREPLY=( $(compgen -W "--json --limit -n --cwd --query -q --pinned --errors" -- "$cur") ) ;;`,
+    `        list) COMPREPLY=( $(compgen -W "--json --limit -n --cwd --query -q --pinned --errors --untitled" -- "$cur") ) ;;`,
     `        *) COMPREPLY=( $(compgen -W "${sessionsFlags}" -- "$cur") ) ;;`,
     "      esac",
     "      ;;",
