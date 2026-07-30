@@ -1717,6 +1717,56 @@ describe("sessions list cwd filter", () => {
 });
 
 
+
+describe("sessions pin id mutation via slash", () => {
+  it("/sessions pin <id> pins a non-active session", async () => {
+    const path = await import("node:path");
+    const fs = await import("node:fs");
+    const os = await import("node:os");
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "forge-pin-slash-"));
+    const prev = process.env.FORGE_HOME;
+    process.env.FORGE_HOME = home;
+    try {
+      const {
+        createSession,
+        setSessionTitle,
+        saveSession,
+        loadSession,
+      } = await import("../src/session/session.js");
+      const { handleSlash } = await import("../src/commands/slash.js");
+      const { DEFAULT_CONFIG } = await import("../src/config/types.js");
+      const { HookRunner } = await import("../src/harness/hooks.js");
+      const active = createSession({ cwd: home, provider: "xai", model: "m" });
+      setSessionTitle(active, "active");
+      saveSession(active);
+      const other = createSession({ cwd: home, provider: "xai", model: "m" });
+      setSessionTitle(other, "keeper-other");
+      saveSession(other);
+      const cfg = { ...DEFAULT_CONFIG, workspace: home };
+      const hooks = new HookRunner(cfg, home);
+      const r = await handleSlash(`/sessions pin ${other.meta.id.slice(0, 8)}`, {
+        session: active,
+        config: cfg,
+        hooks,
+      });
+      assert.equal(r.handled, true);
+      assert.match(String(r.output || ""), /Pinned/i);
+      const reloaded = loadSession(other.meta.id);
+      assert.ok(reloaded);
+      assert.equal(reloaded!.meta.pinned, true);
+      const list = await handleSlash("/sessions pinned", {
+        session: active,
+        config: cfg,
+        hooks,
+      });
+      assert.match(String(list.output || ""), /keeper-other/);
+    } finally {
+      if (prev === undefined) delete process.env.FORGE_HOME;
+      else process.env.FORGE_HOME = prev;
+    }
+  });
+});
+
 describe("sessions pinned action filter", () => {
   it("forge sessions pinned lists only pin-protected sessions", async () => {
     const { spawnSync } = await import("node:child_process");

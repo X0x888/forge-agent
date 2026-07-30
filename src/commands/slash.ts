@@ -2870,6 +2870,7 @@ case "/new":
       // Default: same-cwd sessions (multi-project experts). /sessions all|global for everything.
       // /sessions q <text> or /sessions search <text> filters by id/title substring.
       // /sessions pinned — only pin-protected sessions.
+      // /sessions pin|unpin <id|title> — pin mutation (CLI parity); bare pin/pinned lists.
       // /sessions errors|failed|err — only sessions with meta.lastError (recovery backlog).
       const ws = opts.session.meta.cwd || opts.config.workspace || process.cwd();
       let listMode: "cwd" | "all" = "cwd";
@@ -2879,6 +2880,55 @@ case "/new":
       let untitledOnly = false;
       if (sub === "all" || sub === "global" || sub === "-a") {
         listMode = "all";
+      } else if (sub === "unpin") {
+        const target = parts.slice(1).join(" ").trim();
+        if (!target) {
+          return {
+            handled: true,
+            output:
+              "Usage: /sessions unpin <id|title>  ·  bare /unpin unpins the active session",
+          };
+        }
+        const loaded = loadSession(target);
+        if (!loaded) {
+          return {
+            handled: true,
+            output: formatSessionLookupMiss(target, { cwd: ws }),
+          };
+        }
+        setSessionPinned(loaded, false);
+        saveSession(loaded);
+        // Keep REPL session meta in sync when unpinning the active session.
+        if (loaded.meta.id === opts.session.meta.id) {
+          opts.session.meta.pinned = false;
+        }
+        return {
+          handled: true,
+          output: `Unpinned ${loaded.meta.id.slice(0, 8)}${
+            loaded.meta.title ? ` — ${loaded.meta.title}` : ""
+          }. CLI: forge sessions unpin ${loaded.meta.id.slice(0, 8)}`,
+        };
+      } else if (sub === "pin" && parts[1]) {
+        // /sessions pin <id|title> — pin a specific session (not list filter).
+        const target = parts.slice(1).join(" ").trim();
+        const loaded = loadSession(target);
+        if (!loaded) {
+          return {
+            handled: true,
+            output: formatSessionLookupMiss(target, { cwd: ws }),
+          };
+        }
+        setSessionPinned(loaded, true);
+        saveSession(loaded);
+        if (loaded.meta.id === opts.session.meta.id) {
+          opts.session.meta.pinned = true;
+        }
+        return {
+          handled: true,
+          output: `Pinned ${loaded.meta.id.slice(0, 8)}${
+            loaded.meta.title ? ` — ${loaded.meta.title}` : ""
+          } (protected from prune). CLI: forge sessions pin ${loaded.meta.id.slice(0, 8)}`,
+        };
       } else if (sub === "pinned" || sub === "pins" || sub === "pin") {
         pinnedOnly = true;
         listMode = "all";
@@ -2918,7 +2968,7 @@ case "/new":
             output:
               `Unknown /sessions action "${sub}". Did you mean: ${tip}?\n` +
               chalk.dim(
-                "Actions: list · search · prune · delete · pinned · errors · untitled · all  ·  CLI: forge sessions <action>",
+                "Actions: list · search · prune · delete · pin|unpin <id> · pinned · errors · untitled · all  ·  CLI: forge sessions <action>",
               ),
           };
         }
@@ -3018,7 +3068,7 @@ case "/new":
             })
             .join("\n") +
           chalk.dim(
-            `\n\n* = active  ·  ${scopeNote}  ·  /sessions [all|pinned|errors|untitled|search <q>]  ·  delete <id|title> [--force]  ·  prune [--keep=50]  ·  /resume <id|title>  ·  /pin\nCLI: forge sessions list --cwd . [--pinned]  ·  show|export|import|fork|pin|delete <id|title>`,
+            `\n\n* = active  ·  ${scopeNote}  ·  /sessions [all|pinned|pin <id>|unpin <id>|errors|untitled|search <q>]  ·  delete <id|title> [--force]  ·  prune [--keep=50]  ·  /resume <id|title>  ·  /pin\nCLI: forge sessions list --cwd . [--pinned]  ·  show|export|import|fork|pin|delete <id|title>`,
           ),
       };
     }
