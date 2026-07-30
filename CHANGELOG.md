@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+### Added
+
+- **Doctor skills context pressure**: warn when project skill packs consume ≥12% of the configured context window
+
+
 ## 0.9.47 — share card skills + README examples
 
 ### Added

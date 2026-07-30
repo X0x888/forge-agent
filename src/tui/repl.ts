@@ -739,7 +739,7 @@ function printBanner(
     if (!prefs.seenWelcomeTip) {
       console.log(
         chalk.cyan(
-          `  Tip: /plan → design · /build → ship · /model live · /commands · /undo · forge tips · forge doctor --json\n`,
+          `  Tip: /plan → design · /build → ship · /model live · /commands · /skills · /undo · forge tips · forge doctor --json\n`,
         ),
       );
       savePreferences({ seenWelcomeTip: true });

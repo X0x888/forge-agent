@@ -4284,11 +4284,35 @@ export async function runDoctorCheck(
     /* */
   }
   if (projectSkillsCount > 0) {
-    lines.push(
-      chalk.dim(
-        `  project skills: ${projectSkillsCount}  → /skills · .forge/skills/**/SKILL.md (OpenCode-style)`,
-      ),
-    );
+    let skillsTokNote = "";
+    try {
+      const { loadProjectSkills } = await import("../agent/project-skills.js");
+      const skills = loadProjectSkills(config.workspace || process.cwd());
+      const body = skills.map((s) => s.body).join("\n");
+      const tok = estimateTokens([{ role: "system", content: body }]);
+      const win = config.contextWindow || 0;
+      const pct = win > 0 ? tok / win : 0;
+      skillsTokNote = ` ~${formatTokens(tok)}`;
+      if (pct >= 0.12) {
+        lines.push(
+          chalk.yellow(
+            `  ⚠ project skills: ${projectSkillsCount}${skillsTokNote} (~${Math.round(pct * 100)}% of context window) — trim SKILL.md bodies or raise context_window · /skills · /context`,
+          ),
+        );
+      } else {
+        lines.push(
+          chalk.dim(
+            `  project skills: ${projectSkillsCount}${skillsTokNote}  → /skills · .forge/skills/**/SKILL.md (OpenCode-style)`,
+          ),
+        );
+      }
+    } catch {
+      lines.push(
+        chalk.dim(
+          `  project skills: ${projectSkillsCount}  → /skills · .forge/skills/**/SKILL.md (OpenCode-style)`,
+        ),
+      );
+    }
   } else {
     lines.push(
       chalk.dim(

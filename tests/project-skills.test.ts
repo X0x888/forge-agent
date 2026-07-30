@@ -140,4 +140,31 @@ Always run smoke after deploy.
       else process.env.FORGE_HOME = prev;
     }
   });
+  it("doctor warns when skills dominate context window", async () => {
+    const ws = fs.mkdtempSync(path.join(os.tmpdir(), "forge-skills-press-"));
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "forge-skills-home4-"));
+    const prev = process.env.FORGE_HOME;
+    process.env.FORGE_HOME = home;
+    try {
+      const dir = path.join(ws, ".forge", "skills", "huge");
+      fs.mkdirSync(dir, { recursive: true });
+      // ~4k chars → roughly 1k tokens; with tiny context window triggers ≥12%
+      const body = ("Always follow this rule. " + "x".repeat(80) + "\n").repeat(80);
+      fs.writeFileSync(
+        path.join(dir, "SKILL.md"),
+        `---\nname: huge\ndescription: Big playbook\n---\n${body}\n`,
+      );
+      const { runDoctorCheck } = await import("../src/commands/slash.js");
+      const doc = await runDoctorCheck({
+        ...DEFAULT_CONFIG,
+        workspace: ws,
+        contextWindow: 2000,
+      });
+      assert.match(doc.report, /project skills/i);
+      assert.match(doc.report, /% of context window|trim SKILL/i);
+    } finally {
+      if (prev === undefined) delete process.env.FORGE_HOME;
+      else process.env.FORGE_HOME = prev;
+    }
+  });
 });
