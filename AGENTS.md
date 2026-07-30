@@ -31,6 +31,7 @@ Binary entry: `src/cli.ts` → `dist/cli.js` (`bin: forge`).
 - `src/harness/todo-gate.ts` — TodoNudge + TodoGate under ULW
 - `src/session/compaction.ts` — structured compact preserving mandate/goal/todos
 - `src/session/tool-clearing.ts` — proactive stale tool-result clearing (microcompaction; `FORGE_TOOL_CLEAR*`)
+- `src/agent/tools/ask-user.ts — interactive clarifying questions (OpenCode-inspired)
 - `src/agent/tools/format-on-write.ts — opt-in format after file tools (`/format`, `FORGE_FORMAT_ON_WRITE`)
 - `src/agent/sandbox.ts` + `rules.ts` + `shell-parse.ts` — OS sandbox, deny/allow/ask rules, segment-aware shell checks
 

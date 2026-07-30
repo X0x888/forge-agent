@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+### Added
+
+- **`ask_user` tool (OpenCode-inspired)**: interactive clarifying questions with optional multiple-choice; headless fails closed so agents state assumptions instead of blocking CI. Timeout via `FORGE_ASK_USER_TIMEOUT_MS` (default 5m).
+
+
 ## 0.9.37 — richer slash arg completion for expert control
 
 ### Added

@@ -10,6 +10,7 @@ import { toolGlob, toolListDir } from "./glob-list.js";
 import { toolWebSearch } from "./web-search.js";
 import { toolWebFetch } from "./web-fetch.js";
 import { toolGetTaskOutput, toolKillTask } from "./task-tools.js";
+import { toolAskUser } from "./ask-user.js";
 import { parseToolArguments } from "../../util/json-repair.js";
 import { suggestNames } from "../../util/suggest.js";
 
@@ -17,7 +18,7 @@ export type { ToolContext, ToolResult } from "./types.js";
 export { TOOL_DEFINITIONS };
 
 const AVAILABLE =
-  "bash, get_task_output, kill_task, read_file, write_file, search_replace, apply_patch, grep, glob, list_dir, todo_write, web_search, web_fetch";
+  "bash, get_task_output, kill_task, read_file, write_file, search_replace, apply_patch, grep, glob, list_dir, todo_write, ask_user, web_search, web_fetch";
 
 /** Canonical tool ids (used for doubled-name recovery). */
 const CANONICAL_TOOLS = [
@@ -33,6 +34,9 @@ const CANONICAL_TOOLS = [
   "glob",
   "list_dir",
   "todo_write",
+  "ask_user",
+  "AskUser",
+  "question",
   "web_search",
   "web_fetch",
   "run_terminal_command",
@@ -148,6 +152,17 @@ export async function executeTool(
         const isErr = /^todo_write error:/i.test(out);
         return { output: out, ...(isErr ? { isError: true as const } : {}) };
       }
+      case "ask_user":
+      case "AskUser":
+      case "question":
+        return await toolAskUser({
+          question: String(args.question || ""),
+          choices: Array.isArray(args.choices)
+            ? args.choices.map((c: unknown) => String(c))
+            : undefined,
+          context:
+            args.context != null ? String(args.context) : undefined,
+        });
       case "web_search":
       case "WebSearch":
         return await toolWebSearch(args, ctx);

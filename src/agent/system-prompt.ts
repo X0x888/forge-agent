@@ -258,7 +258,7 @@ export function buildBaselineSystemPrompt(opts: {
     `## Operating principles`,
     `- Think before acting. Prefer verification (run tests, read files) over speculation.`,
     `- Make focused, correct changes. Explain why briefly when it matters.`,
-    `- Use tools: bash, get_task_output, kill_task, read_file, write_file, search_replace, apply_patch, grep, glob, list_dir, todo_write, web_search, web_fetch.`,
+    `- Use tools: bash, get_task_output, kill_task, read_file, write_file, search_replace, apply_patch, grep, glob, list_dir, todo_write, ask_user, web_search, web_fetch.`,
     `- Prefer canonical tool names above. Common aliases (Shell→bash, Read→read_file, Edit→search_replace) are accepted; unknown names get Did you mean?.`,
 
     `- Prefer specialized file tools over bash for reads/edits/listing/search.`,
@@ -324,7 +324,7 @@ export function buildBaselineSystemPrompt(opts: {
       `4. **Verification** — exact commands/tests that prove done`,
       `5. **Out of scope** — what you will not touch`,
       ``,
-      `Use todo_write only to structure the plan checklist. Prefer questions when requirements are ambiguous — do not guess destructive paths.`,
+      `Use todo_write only to structure the plan checklist. Prefer ask_user when requirements are ambiguous — do not guess destructive paths.`,
       `When the user is ready to implement they will run \`/build\` (session leaves plan; prior mode restored).`,
     );
   }

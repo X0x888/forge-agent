@@ -280,6 +280,37 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   {
     type: "function",
     function: {
+      name: "ask_user",
+      description:
+        "Ask the human a clarifying question when requirements are ambiguous. " +
+        "Prefer this over guessing destructive or irreversible choices. " +
+        "Interactive TTY only — headless/CI fails closed (state assumptions instead). " +
+        "Optional choices[] for multiple-choice. User may skip.",
+      parameters: {
+        type: "object",
+        properties: {
+          question: {
+            type: "string",
+            description: "Clear, specific question for the human (required).",
+          },
+          choices: {
+            type: "array",
+            items: { type: "string" },
+            description:
+              "Optional multiple-choice options (max 12). User may still type free text.",
+          },
+          context: {
+            type: "string",
+            description: "Optional short context (why you are asking).",
+          },
+        },
+        required: ["question"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
       name: "web_search",
       description:
         "Search the web for up-to-date information. Returns titles, URLs, and snippets. " +
