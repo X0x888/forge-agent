@@ -186,3 +186,7 @@ Child shells inherit a scrubbed env: secret-looking names and process-injection 
 ### Blocking Stop hooks
 
 When `blockingStopHooks` is enabled (default), a Stop/SubagentStop hook that **times out or crashes fails closed** — the agent is told to keep working. This closes the Grok gap where a hung Stop hook silently allowed exit. Non-Stop events still fail open on timeout so a flaky PreToolUse cannot freeze the session. Disable only with `--no-blocking-stop` / `blocking_stop_hooks = false`.
+
+### Permission ask timeout
+
+Interactive permission prompts auto-deny after `FORGE_PERMISSION_ASK_TIMEOUT_MS` (when set). For unattended CI use `--permission-mode dontAsk` or `acceptEdits` rather than relying on the timeout.

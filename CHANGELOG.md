@@ -2,11 +2,12 @@
 
 ## Unreleased
 
+## 0.9.18 — Permission-timeout + doom-loop recovery tips
+
 ### Changed
 
 - **Permission-ask timeout recovery**: timeout deny reason + console tip point at `FORGE_PERMISSION_ASK_TIMEOUT_MS`, `/permissions acceptEdits`, and `--permission-mode dontAsk` for CI
 - **Doom-loop message**: steers away from retrying the same denied mutation / missing path
-
 
 ## 0.9.17 — Parallel read-only tool batch name normalize
 
