@@ -5416,6 +5416,17 @@ async function runHeadless(opts: {
     cleanupBg();
     releaseLock();
     const message = (err as Error).message || String(err);
+    let recovery: { code: string; tips: string[]; message: string } | undefined;
+    try {
+      const { formatProviderError } = await import("./providers/errors.js");
+      const fmt = formatProviderError(err, {
+        provider: String(opts.config.provider),
+        model: opts.config.model,
+      });
+      recovery = fmt;
+    } catch {
+      /* */
+    }
     appendSessionMetrics(
       buildRunEndMetrics({
         sessionId: opts.session.meta.id,
@@ -5441,8 +5452,11 @@ async function runHeadless(opts: {
           ? "timeout"
           : ac.signal.aborted
             ? "aborted"
-            : "error",
-        error: message,
+            : recovery?.code || "error",
+        error: recovery?.message || message,
+        recovery: recovery
+          ? { code: recovery.code, tips: recovery.tips }
+          : undefined,
         timedOut,
         aborted: ac.signal.aborted,
         node: process.version,
@@ -5654,6 +5668,23 @@ async function runHeadless(opts: {
         messageCount: opts.session.messages?.length ?? 0,
         durationMs: Date.now() - t0,
       });
+      process.exit(timedOut ? 124 : 1);
+    }
+    // Human path: print recovery tips then rethrow for outer handler / exit
+    if (recovery) {
+      try {
+        const { formatProviderErrorText } = await import(
+          "./providers/errors.js"
+        );
+        log.error(
+          formatProviderErrorText(err, {
+            provider: String(opts.config.provider),
+            model: opts.config.model,
+          }),
+        );
+      } catch {
+        log.error(message);
+      }
       process.exit(timedOut ? 124 : 1);
     }
     throw err;

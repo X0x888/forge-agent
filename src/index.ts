@@ -324,6 +324,8 @@ export {
 export {
   ProviderApiError,
   isProviderApiError,
+  formatProviderError,
+  formatProviderErrorText,
   parseRetryAfterMs,
 } from "./providers/errors.js";
 export {

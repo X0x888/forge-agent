@@ -107,3 +107,136 @@ export async function throwIfNotOk(
     headers,
   });
 }
+
+/**
+ * Expert-facing multi-line error with recovery tips (OpenCode-style).
+ * Safe for REPL stderr and headless JSON `error` / `recovery` fields.
+ */
+export function formatProviderError(
+  err: unknown,
+  opts?: { provider?: string; model?: string },
+): { message: string; tips: string[]; code: string } {
+  const provider =
+    (isProviderApiError(err) ? err.provider : opts?.provider) || "provider";
+  const model = opts?.model ? ` · model ${opts.model}` : "";
+  const tips: string[] = [];
+  let code = "provider_error";
+  let headline = err instanceof Error ? err.message : String(err);
+
+  if (isProviderApiError(err)) {
+    code = `http_${err.status}`;
+    const bodyHint = summarizeProviderBody(err.body);
+    headline = `${err.provider} HTTP ${err.status}${model}${
+      bodyHint ? `: ${bodyHint}` : ""
+    }`;
+    if (err.retryAfterMs != null) {
+      headline += ` (Retry-After ${Math.ceil(err.retryAfterMs / 1000)}s)`;
+    }
+
+    if (err.status === 401 || err.status === 403) {
+      code = err.status === 401 ? "auth_expired" : "auth_forbidden";
+      tips.push("forge login  (or forge login --add for another account)");
+      tips.push("forge accounts status  ·  /accounts switch");
+      tips.push("Check sticky provider: forge auth  ·  preferences.json");
+    } else if (err.status === 429) {
+      code = "rate_limited";
+      tips.push("Wait for Retry-After, or forge accounts switch");
+      tips.push("Auto-switch: forge accounts auto-switch on");
+      tips.push("Lower concurrency / narrow the task");
+    } else if (err.status === 402 || /quota|billing|payment|insufficient/i.test(err.body)) {
+      code = "quota_exhausted";
+      tips.push("forge accounts switch  ·  forge login --add");
+      tips.push("Check plan usage: forge status  ·  /status");
+    } else if (err.status === 404) {
+      code = "not_found";
+      tips.push("forge models -p " + err.provider + "  ·  /model <name>");
+      tips.push("Verify base URL / model id spelling");
+    } else if (err.status === 408 || err.status === 504) {
+      code = "timeout";
+      tips.push("Raise FORGE_PROVIDER_TIMEOUT_MS or narrow context (/compact)");
+      tips.push("Retry: /retry  ·  forge run --continue");
+    } else if (err.status === 413 || isContextOverflowish(err.body)) {
+      code = "context_overflow";
+      tips.push("/compact  ·  /compact-and <next>  ·  raise context_window");
+      tips.push("Drop stale tool results (auto microcompaction) or start /new");
+    } else if (err.status >= 500) {
+      code = "provider_5xx";
+      tips.push("Transient — Forge retries automatically; wait or /retry");
+      tips.push("If persistent: switch model/provider or check status page");
+    } else if (err.status === 400 || err.status === 422) {
+      code = "bad_request";
+      if (isContextOverflowish(err.body)) {
+        code = "context_overflow";
+        tips.push("/compact  ·  /new  ·  reduce max_tokens");
+      } else {
+        tips.push("Check model supports tools/vision for this request");
+        tips.push("/model <other>  ·  forge doctor");
+      }
+    }
+  } else {
+    const msg = headline;
+    if (/^Aborted$/i.test(msg.trim()) || /aborted by user/i.test(msg)) {
+      code = "aborted";
+      tips.push("Turn cancelled — type a new prompt or /retry");
+    } else if (/timed out after \d+ms/i.test(msg) || /timeout/i.test(msg)) {
+      code = "timeout";
+      tips.push("FORGE_PROVIDER_TIMEOUT_MS  ·  /compact  ·  /retry");
+    } else if (/ECONNRESET|ETIMEDOUT|EAI_AGAIN|fetch failed|socket hang up|network/i.test(msg)) {
+      code = "network";
+      tips.push("Check network / VPN / proxy; retry shortly");
+      tips.push("/retry  ·  forge run --continue");
+    } else if (isContextOverflowish(msg)) {
+      code = "context_overflow";
+      tips.push("/compact  ·  /new  ·  raise context_window");
+    } else if (/rate.?limit|429/i.test(msg)) {
+      code = "rate_limited";
+      tips.push("forge accounts switch  ·  wait and /retry");
+    } else if (/401|unauthorized|invalid.?api.?key|auth/i.test(msg)) {
+      code = "auth_expired";
+      tips.push("forge login  ·  /accounts status");
+    } else {
+      tips.push("forge doctor  ·  /retry  ·  forge logs");
+    }
+  }
+
+  if (!tips.length) {
+    tips.push("forge doctor  ·  /retry  ·  forge logs");
+  }
+
+  return { message: headline, tips, code };
+}
+
+function isContextOverflowish(text: string): boolean {
+  return /context.?length|context.?window|maximum.?prompt|prompt.?too.?long|too.?many.?tokens|token.?limit|request.?too.?large|context_length_exceeded/i.test(
+    text || "",
+  );
+}
+
+/** Pull a short human snippet from JSON or plain error bodies. */
+function summarizeProviderBody(body: string): string {
+  const raw = (body || "").trim();
+  if (!raw) return "";
+  try {
+    const j = JSON.parse(raw) as Record<string, unknown>;
+    const err = j.error as Record<string, unknown> | string | undefined;
+    if (typeof err === "string") return err.slice(0, 200);
+    if (err && typeof err === "object") {
+      const msg = err.message || err.code || err.type;
+      if (typeof msg === "string") return msg.slice(0, 200);
+    }
+    if (typeof j.message === "string") return j.message.slice(0, 200);
+  } catch {
+    /* plain text */
+  }
+  return raw.replace(/\s+/g, " ").slice(0, 200);
+}
+
+/** Single string for log.error / console — message + indented tips. */
+export function formatProviderErrorText(
+  err: unknown,
+  opts?: { provider?: string; model?: string },
+): string {
+  const { message, tips, code } = formatProviderError(err, opts);
+  const tipLines = tips.map((t) => `  → ${t}`).join("\n");
+  return `${message}\n  [${code}]\n${tipLines}`;
+}

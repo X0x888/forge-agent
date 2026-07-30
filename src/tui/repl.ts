@@ -597,7 +597,19 @@ export async function runRepl(opts: {
       }
     } catch (err) {
       working.stop();
-      log.error((err as Error).message);
+      try {
+        const { formatProviderErrorText } = await import(
+          "../providers/errors.js"
+        );
+        log.error(
+          formatProviderErrorText(err, {
+            provider: String(config.provider),
+            model: config.model,
+          }),
+        );
+      } catch {
+        log.error((err as Error).message);
+      }
     } finally {
       endTurn();
       busy = false;
