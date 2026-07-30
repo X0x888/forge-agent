@@ -311,7 +311,7 @@ Docs: docs/PRODUCTION.md · docs/RELIABILITY.md · docs/ULW.md · forge news
       if (opts.printLogs) setLogLevel("debug");
       await ensureHome();
       const wantJson = Boolean(opts.json);
-      const prompt = promptParts?.length
+      let prompt = promptParts?.length
         ? promptParts.join(" ").trim() || undefined
         : undefined;
       // Bare `forge sesions` looks like a subcommand typo — fail closed.
@@ -381,6 +381,57 @@ Docs: docs/PRODUCTION.md · docs/RELIABILITY.md · docs/ULW.md · forge news
           continue: Boolean(opts.continue),
           json: true,
         });
+      }
+      // Pure-control headless slash before auth (parity with forge run)
+      if (willHeadless && prompt && /^\s*\//.test(prompt)) {
+        const earlySession = createSession({
+          cwd: config.workspace || process.cwd(),
+          provider: config.provider,
+          model: config.model,
+          ultrawork: Boolean(opts.ulw || opts.goal),
+          title: typeof opts.title === "string" ? opts.title : undefined,
+        });
+        try {
+          const { resolveHeadlessSlashPrompt, stripAnsi } = await import(
+            "./commands/headless-slash.js"
+          );
+          const hooksEarly = new HookRunner(config, earlySession.meta.cwd);
+          const resolved = await resolveHeadlessSlashPrompt({
+            prompt,
+            session: earlySession,
+            config,
+            hooks: hooksEarly,
+          });
+          if (resolved.kind === "done") {
+            const out = stripAnsi(resolved.output);
+            if (wantJson) {
+              emitOkJson({
+                ok: true,
+                reason: "slash",
+                command: resolved.command,
+                output: out,
+                sessionId: resolved.session.meta.id,
+                sessionPath: resolveSessionDir(resolved.session.meta.id),
+                forgeHome: forgeHome(),
+                provider: config.provider,
+                model: config.model,
+                permissionMode: config.permissionMode,
+                node: process.version,
+              });
+            } else if (out) {
+              process.stdout.write(out.endsWith("\n") ? out : out + "\n");
+            }
+            process.exit(0);
+          }
+          if (resolved.kind === "prompt") {
+            prompt = resolved.prompt;
+            if (!wantJson && resolved.notice) {
+              log.dim(stripAnsi(resolved.notice));
+            }
+          }
+        } catch {
+          /* fall through to auth */
+        }
       }
       const auth = await resolveAuthFresh(config);
       if (!auth) {
@@ -646,7 +697,7 @@ Docs: docs/PRODUCTION.md
       // parent --permission-mode yolo / explicit invalid values we validate).
       const runOpts = mergeRunOpts(command, opts);
       // Validate prompt before auth/session side effects (no orphan empty sessions).
-      const prompt = (promptParts || []).join(" ").trim();
+      let prompt = (promptParts || []).join(" ").trim();
       const wantJson = Boolean(runOpts.json);
       // --continue/--session vs --new are mutually exclusive (was silent prefer --new).
       if (runOpts.continue && runOpts.new) {
@@ -815,6 +866,62 @@ Docs: docs/PRODUCTION.md
         !providerExplicit && resumed && session?.meta?.provider
           ? String(session.meta.provider)
           : undefined;
+      // Pure-control headless slash (/commands, /plan, /help, …) must work
+      // without auth so CI can probe hygiene. Template forwards still need auth.
+      if (/^\s*\//.test(prompt)) {
+        if (!session) {
+          session = createSession({
+            cwd,
+            provider: config.provider,
+            model: config.model,
+            ultrawork: Boolean(runOpts.ulw || runOpts.goal),
+            title:
+              typeof runOpts.title === "string" ? runOpts.title : undefined,
+          });
+        }
+        try {
+          const { resolveHeadlessSlashPrompt, stripAnsi } = await import(
+            "./commands/headless-slash.js"
+          );
+          const hooksEarly = new HookRunner(config, session.meta.cwd);
+          const resolved = await resolveHeadlessSlashPrompt({
+            prompt,
+            session,
+            config,
+            hooks: hooksEarly,
+          });
+          session = resolved.session;
+          if (resolved.kind === "done") {
+            const out = stripAnsi(resolved.output);
+            if (wantJson) {
+              emitOkJson({
+                ok: true,
+                reason: "slash",
+                command: resolved.command,
+                output: out,
+                sessionId: session.meta.id,
+                sessionPath: resolveSessionDir(session.meta.id),
+                forgeHome: forgeHome(),
+                provider: config.provider,
+                model: config.model,
+                permissionMode: config.permissionMode,
+                node: process.version,
+              });
+            } else if (out) {
+              process.stdout.write(out.endsWith("\n") ? out : out + "\n");
+            }
+            process.exit(0);
+          }
+          if (resolved.kind === "prompt") {
+            prompt = resolved.prompt;
+            if (!wantJson && resolved.notice) {
+              log.dim(stripAnsi(resolved.notice));
+            }
+          }
+        } catch {
+          /* fall through to auth + normal run */
+        }
+      }
       const auth = await resolveAuthFresh(config, authProviderHint);
       if (!auth) {
         const msg = "Not authenticated. Run forge login or set an API key.";
@@ -902,7 +1009,7 @@ Docs: docs/PRODUCTION.md
         } catch {
           /* */
         }
-      } else {
+      } else if (!session) {
         session = createSession({
           cwd,
           provider: config.provider,

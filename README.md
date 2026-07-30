@@ -2,7 +2,7 @@
 
 **Forge** is an open-source AI coding agent CLI with a **first-class harness** — the control plane that other tools partially implement.
 
-> **v0.9.5** — **Native SuperGrok OIDC** (`forge login`), **file-aware `/undo`**, **`/init`**, **`/review`**, **`/compact-and`**, **`/logs`** · **`forge logs`**, **`FORGE_BASH_TIMEOUT_MS`**, export mode `0600`. Builds on **v0.9.4** expert UX: **`/retry`**, **`/last`**, **`/files`**, **`/pin`**, resume-by-title, **`forge run --continue`**, **`forge stats`**, **`/share`**, **`forge news`** / **`tips`**. Still includes Retry-After, stream-capped tools, doom-loop + error-streak, **apply_patch**, session lock + auto-resume, structured **`doctor --json`**, `npm run smoke`. Harness: blocking Stop, `/goal`, ULW.
+> **v0.9.5+** — **`/plan` ↔ `/build`** (session-scoped design mode), **project custom slash** (`.forge/commands`), **headless slash** (`forge run "/plan"`), **provider recovery tips**, multi-source **AGENTS/CLAUDE/cursor** rules, live **`/model`**, smarter session titles, **`/news` Unreleased**. Builds on **v0.9.5** SuperGrok OIDC, file-aware `/undo`, `/init`, `/review`, `/compact-and`, `/logs`, export `0600`. Still includes Retry-After, doom-loop + error-streak, **apply_patch**, session lock + auto-resume, structured **`doctor --json`**, `npm run smoke`. Harness: blocking Stop, `/goal`, ULW.
 
 Key capability comparison:
 
@@ -256,9 +256,12 @@ Full contract: [docs/RELIABILITY.md](docs/RELIABILITY.md) · expert checklist: [
 | `/share` | Pasteable session card + resume/export commands (clipboard) |
 | `/tips` | Expert cheat sheet · CLI: `forge tips` |
 | `/todos` | Agent todos |
-| `/model <id> [effort]` | Switch model; optional `low`\|`medium`\|`high` (persists) |
-| `/effort [level]` | Reasoning effort for models that support it (e.g. grok-4.5) |
-| `/permissions <mode>` | `default` \| `acceptEdits` \| `plan` \| `bypassPermissions` (persists); `list`/`clear`/`revoke` for saved always-allows |
+| `/model <id> [effort]` | Switch model mid-run; optional `low`\|`medium`\|`high` (persists) **[live]** |
+| `/effort [level]` | Reasoning effort for models that support it (e.g. grok-4.5) **[live]** |
+| `/plan [focus]` | Session-scoped PLAN mode (read-only design; no sticky prefs) **[live]** |
+| `/build [note]` | Leave plan → restore prior mode and implement (`/execute`) **[live]** |
+| `/commands` | List project/user custom slash templates (`.forge/commands/*.md`) |
+| `/permissions <mode>` | Sticky prefs: `default` \| `acceptEdits` \| `plan` \| `bypassPermissions`; `plan`/`build` aliases; `list`/`clear`/`revoke` always-allows |
 | `/compact` | Compact history |
 | `/compact-and <prompt>` | Compact then continue with follow-up (Warp-style) |
 | `/fork-and-compact [prompt]` | Fork, compact the fork, optional continue (original kept) |
@@ -308,7 +311,9 @@ forge status --tmux       # for tmux status-right
 
 Works for **any** auth method: always shows session context/tokens/git/liveness/activity; plan credits only when the provider exposes them (e.g. SuperGrok via imported Grok session). See [docs/STATUSLINE.md](docs/STATUSLINE.md).
 
-Tab completes slash commands. While the agent is working you can still run **live controls** (`/cycle 0`, `/cycle 1`, `/max-waves N|off`, `/ulw-off`, `/pause`, `/unpause`, `/done`, `/status`, …) without aborting — harness state updates apply at the next model step. **Free-text** mid-run is queued as an interjection (Grok-style) for the next LLM call. **Ctrl+C** aborts the current agent turn (again at idle prompt to exit).
+Tab completes slash commands (including project `.forge/commands`). While the agent is working you can still run **live controls** (`/cycle 0`, `/cycle 1`, `/max-waves N|off`, `/ulw-off`, `/plan`, `/build`, `/model`, `/pause`, `/unpause`, `/done`, `/status`, …) without aborting — harness state updates apply at the next model step. **Free-text** mid-run is queued as an interjection (Grok-style) for the next LLM call. **Ctrl+C** aborts the current agent turn (again at idle prompt to exit).
+
+Headless CI can run slash prompts too: `forge run "/plan"` · `forge run "/commands"` · custom templates expand then run (`reason: "slash"` when no model call). Starter templates: `examples/forge-commands/`.
 
 ---
 
@@ -379,9 +384,10 @@ src/
 
 - **Claude Code** — hook event model, exit code 2, PreToolUse deny, blocking Stop  
 - **Codex** — `/goal` lifecycle, plan→act→verify loop, stuck-wall escape  
-- **OpenCode** — multi-provider, `/connect`-style login, project `AGENTS.md`  
+- **OpenCode** — multi-provider, `/connect`-style login, project `AGENTS.md`, `/plan`↔`/build`, custom commands, instruction walk-up  
 - **Grok Build** — auth shapes, slash surface, compat hooks (plus the Stop gap we close)  
 - **oh-my-claude** — ultrawork, goal auto-arm, stop-guard composition  
+- **Warp** — `/compact-and`, agent workflow polish  
 
 ---
 

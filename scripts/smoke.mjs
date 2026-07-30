@@ -12,6 +12,9 @@ import { fileURLToPath } from "node:url";
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const cli = path.join(root, "dist", "cli.js");
 const home = path.join(root, ".tmp", "smoke-home");
+// Fresh home every run — headless slash / doctor must not leave sessions that
+// flip later fail-closed checks (continue_miss, empty_prompt, …).
+fs.rmSync(home, { recursive: true, force: true });
 fs.mkdirSync(home, { recursive: true });
 
 const env = {
@@ -119,6 +122,20 @@ mustInclude("invalid_format typo", ["sessions", "export", "x", "--format", "jsn"
 mustInclude("invalid_read_outside typo", ["run", "x", "--read-outside", "den", "--json"], "invalid_read_outside");
 mustInclude("invalid_days typo", ["stats", "--days", "wek", "--json"], "invalid_days");
 mustInclude("doctor readOutsideWorkspace", ["doctor", "--json"], "readOutsideWorkspace");
+mustInclude("doctor projectRulesCount", ["doctor", "--json"], "projectRulesCount");
+mustInclude("doctor projectCommandsCount", ["doctor", "--json"], "projectCommandsCount");
+
+// Headless slash: pure control exits without auth/model (reason: slash)
+mustInclude(
+  "headless slash /commands",
+  ["run", "/commands", "--json", "--permission-mode", "plan"],
+  '"reason":"slash"',
+);
+mustInclude(
+  "headless slash /help",
+  ["run", "/help", "--json"],
+  '"reason":"slash"',
+);
 
 // status --watch should one-shot in non-TTY smoke (must not hang)
 mustInclude("status --watch json", ["status", "--watch", "--json"], '"ok":true', {
