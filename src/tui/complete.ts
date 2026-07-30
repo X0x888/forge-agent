@@ -10,6 +10,7 @@ import {
   resolveReasoningEffort,
 } from "../config/reasoning.js";
 import { SLASH_COMMANDS } from "../commands/slash.js";
+import { listProjectCommandSlashes } from "../commands/project-commands.js";
 
 export interface ParamChoice {
   value: string;
@@ -380,14 +381,21 @@ export function forgeCompleter(
 
   // Command name only (no space yet, or incomplete command)
   if (parts.length === 1 && !raw.endsWith(" ") && !raw.match(/^\/\S+\s/)) {
-    const hits = SLASH_COMMANDS.filter((c) => c.startsWith(cmdToken));
+    const ws = config?.workspace || process.cwd();
+    let custom: string[] = [];
+    try {
+      custom = listProjectCommandSlashes(ws);
+    } catch {
+      /* */
+    }
+    const catalog = [...new Set([...SLASH_COMMANDS, ...custom])];
+    const hits = catalog.filter((c) => c.startsWith(cmdToken));
     // Prefer returning full command paths for autofill
     if (hits.length === 0) {
-      // fuzzy contains
-      const fuzzy = SLASH_COMMANDS.filter((c) =>
-        c.slice(1).includes(cmdToken.replace(/^\//, "")),
-      );
-      return [fuzzy.length ? fuzzy : [...SLASH_COMMANDS], raw];
+      // fuzzy contains (built-in + project custom)
+      const bare = cmdToken.replace(/^\//, "");
+      const fuzzy = catalog.filter((c) => c.slice(1).includes(bare));
+      return [fuzzy.length ? fuzzy : catalog, raw];
     }
     return [hits, raw];
   }

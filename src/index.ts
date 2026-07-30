@@ -343,6 +343,15 @@ export {
 } from "./commands/slash.js";
 export type { DoctorResult, EffectiveConfigSnap } from "./commands/slash.js";
 export {
+  loadProjectCommands,
+  findProjectCommand,
+  expandProjectCommandTemplate,
+  listProjectCommandSlashes,
+  formatProjectCommandsHelp,
+  isReservedSlashName,
+} from "./commands/project-commands.js";
+export type { ProjectCommand } from "./commands/project-commands.js";
+export {
   pushLiveNotice,
   drainLiveNotices,
   formatLiveNoticesMessage,

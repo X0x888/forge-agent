@@ -14,6 +14,7 @@ export function expertTipsLines(): string[] {
     `  Accounts:      forge accounts list|switch|auto-switch  ·  forge login --add  ·  /accounts  ·  /auth  ·  auto-switch on 429/quota + plan threshold`,
     `  Attention:     /bell on  ·  /copy  ·  /last  ·  /files  ·  /path  ·  /logs  ·  /config  ·  /pin  ·  /stats 7|week  ·  /news all  ·  /share  ·  /retry  ·  unknown /cmd → Did you mean?`,
     `  Recovery:      /undo  ·  /retry  ·  /init  ·  /review  ·  /compact-and  ·  /fork-and-compact  ·  forge logs  ·  forge config  ·  sessions prune --keep all`,
+    `  Custom cmds:    .forge/commands/<name>.md  ($ARGUMENTS $1..$9)  ·  ~/.forge/commands/  ·  /commands`,
     `  Docs:          docs/PRODUCTION.md  ·  docs/RELIABILITY.md  ·  forge tips  ·  forge news  ·  /help`,
   ];
 }

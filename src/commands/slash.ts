@@ -132,6 +132,12 @@ import {
   formatParamMenu,
   resolveParamChoice,
 } from "../tui/complete.js";
+import {
+  findProjectCommand,
+  expandProjectCommandTemplate,
+  listProjectCommandSlashes,
+  formatProjectCommandsHelp,
+} from "./project-commands.js";
 
 export interface SlashResult {
   handled: boolean;
@@ -176,6 +182,7 @@ const LIVE_READONLY = new Set([
   "/auth",
   "/accounts",
   "/doctor",
+  "/commands", // list project/user custom slash templates
   "/diff",
   "/copy", // clipboard last assistant reply — no session mutation
   "/share", // pasteable session card — optional clipboard
@@ -458,14 +465,35 @@ export const SLASH_COMMANDS = [
   "/accounts",
   "/account",
   "/doctor",
+  "/commands",
   "/quit",
 ] as const;
 
-export function completeSlash(line: string): string[] {
+export function completeSlash(
+  line: string,
+  opts?: { workspace?: string },
+): string[] {
   const t = line.trim();
   if (!t.startsWith("/")) return [];
   if (t.includes(" ")) return [];
-  return SLASH_COMMANDS.filter((c) => c.startsWith(t.toLowerCase()));
+  const q = t.toLowerCase();
+  const out: string[] = SLASH_COMMANDS.filter((c) => c.startsWith(q));
+  let custom: string[] = [];
+  try {
+    custom = listProjectCommandSlashes(
+      opts?.workspace || process.cwd(),
+    ).filter((c) => c.startsWith(q));
+  } catch {
+    /* */
+  }
+  const seen = new Set<string>(out);
+  for (const c of custom) {
+    if (!seen.has(c)) {
+      out.push(c);
+      seen.add(c);
+    }
+  }
+  return out;
 }
 
 
@@ -476,13 +504,25 @@ export function completeSlash(line: string): string[] {
 export function suggestSlashCommands(
   rawCmd: string,
   limit = 5,
+  opts?: { workspace?: string },
 ): string[] {
   const q = rawCmd.trim().toLowerCase();
   if (!q.startsWith("/")) return [];
   const bare = q.slice(1);
   if (!bare) return [];
 
-  const scored = SLASH_COMMANDS.map((c) => {
+  const catalog = new Set<string>(SLASH_COMMANDS);
+  try {
+    for (const c of listProjectCommandSlashes(
+      opts?.workspace || process.cwd(),
+    )) {
+      catalog.add(c);
+    }
+  } catch {
+    /* */
+  }
+
+  const scored = [...catalog].map((c) => {
     const name = c.slice(1); // without leading /
     let score = 0;
     if (c === q || name === bare) score = 100;
@@ -517,8 +557,11 @@ export function suggestSlashCommands(
 }
 
 /** Format unknown-slash message with optional Did you mean? tips. */
-export function formatUnknownSlash(cmd: string): string {
-  const suggestions = suggestSlashCommands(cmd);
+export function formatUnknownSlash(
+  cmd: string,
+  opts?: { workspace?: string },
+): string {
+  const suggestions = suggestSlashCommands(cmd, 5, opts);
   if (!suggestions.length) {
     return `Unknown command: ${cmd}. Type /help for commands.`;
   }
@@ -3030,11 +3073,49 @@ case "/new":
       return { handled: true, output: await runDoctor(opts.config) };
     }
 
-    default:
+    case "/commands": {
+      const ws = opts.config.workspace || process.cwd();
       return {
         handled: true,
-        output: formatUnknownSlash(cmd),
+        output: formatProjectCommandsHelp(ws),
       };
+    }
+
+    default: {
+      // OpenCode-style project / user custom commands (.forge/commands/*.md)
+      const bare = cmd.replace(/^\//, "");
+      try {
+        const ws = opts.config.workspace || process.cwd();
+        const custom = findProjectCommand(ws, bare);
+        if (custom) {
+          const expanded = expandProjectCommandTemplate(
+            custom.template,
+            arg,
+          );
+          if (!expanded) {
+            return {
+              handled: true,
+              output: `Custom command /${custom.name} expanded to empty prompt.`,
+            };
+          }
+          return {
+            handled: true,
+            forwardPrompt: expanded,
+            output: chalk.dim(
+              `→ /${custom.name}${arg ? ` ${arg}` : ""}  (${custom.source})`,
+            ),
+          };
+        }
+      } catch {
+        /* fall through to unknown */
+      }
+      return {
+        handled: true,
+        output: formatUnknownSlash(cmd, {
+          workspace: opts.config.workspace || process.cwd(),
+        }),
+      };
+    }
   }
 }
 
@@ -4111,6 +4192,7 @@ Forge slash commands
   /auth                 Show stored credentials (+ multi-account)  [live]
   /accounts [status|switch|…]  Multi-account list/status/switch/clear-cooldown  [live]
   /doctor               Environment health check  [live]
+  /commands             List project/user custom slash templates (.forge/commands)  [live]
   /quit                 Exit  [live — aborts run then exits]
 
 Tips
