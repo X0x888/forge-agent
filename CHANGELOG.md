@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 0.9.28 — CLI sessions list --untitled
+
+### Added
+
+- **`forge sessions list --untitled`**: CLI parity with `/sessions untitled` for title hygiene (aliases notitle|nameless)
+
 ## 0.9.27 — Doctor sessionsUntitled/sessionsTotal inventory hygiene
 
 ### Added
