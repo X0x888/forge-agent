@@ -479,6 +479,8 @@ export function forkSession(
   const meta = structuredClone(source.meta);
   // Forks are experiments — never inherit pin (source stays protected).
   delete meta.pinned;
+  // Fresh experiment — don't inherit prior provider failure banner.
+  delete meta.lastError;
   const data: SessionData = {
     meta: {
       ...meta,
@@ -2209,6 +2211,7 @@ export function clearConversation(session: SessionData): void {
   session.meta.totalCompletionTokens = 0;
   session.meta.title = undefined;
   session.meta.lastUserPreview = undefined;
+  delete session.meta.lastError;
   // History gone — journal would restore against the wrong timeline.
   try {
     clearFileMutations(session.meta.id);

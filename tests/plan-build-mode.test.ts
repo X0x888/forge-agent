@@ -195,10 +195,17 @@ describe("plan/build live controls", () => {
       permissionMode: "acceptEdits" as const,
     };
     enterSessionPlanMode(cfg, session);
+    setSessionLastError(session, {
+      code: "rate_limited",
+      message: "429",
+      tips: ["switch"],
+    });
     saveSession(session);
     const forked = forkSession(session);
     assert.equal(forked.meta.permissionMode, "plan");
     assert.equal(forked.meta.permissionModeBeforePlan, "acceptEdits");
+    // Fresh experiment — do not inherit failure banner
+    assert.equal(forked.meta.lastError, undefined);
   });
 
   it("resume orientation and share card surface PLAN", () => {
