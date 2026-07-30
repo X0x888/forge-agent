@@ -266,7 +266,8 @@ export function enterSessionPlanMode(
 
 /**
  * Leave plan mode: restore `permissionModeBeforePlan` (or default).
- * Clears session override when restored mode matches sticky default path.
+ * Clears session plan override so resume falls back to sticky prefs / CLI
+ * (OpenCode build-switch — plan is temporary, not a sticky session mode).
  */
 export function exitSessionPlanMode(
   config: { permissionMode: PermissionMode },
@@ -282,14 +283,8 @@ export function exitSessionPlanMode(
   const mode = META_PERMISSION_MODES.has(restore) ? restore : "default";
   config.permissionMode = mode;
   delete session.meta.permissionModeBeforePlan;
-  // Keep session override only when non-default sticky would otherwise drift;
-  // experts expect /build to return to normal build permissions for this session.
-  if (mode === "plan") {
-    session.meta.permissionMode = "plan";
-  } else {
-    // Persist the restored mode so resume stays out of plan.
-    session.meta.permissionMode = mode;
-  }
+  // Drop session override entirely after leaving plan — sticky prefs + CLI win.
+  delete session.meta.permissionMode;
   return { mode, wasPlan };
 }
 

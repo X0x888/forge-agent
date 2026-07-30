@@ -2986,14 +2986,14 @@ case "/new":
         return await handleSlash("/build", opts);
       }
       // Sticky preference path (explicit /permissions <mode>).
-      // When leaving plan via sticky set, clear session plan restore bookkeeping.
+      // Session plan bookkeeping is cleared unless entering sticky plan.
       if (resolved === "plan") {
         enterSessionPlanMode(opts.config, opts.session);
-        // Also persist sticky plan if user used full /permissions plan intentionally
-        // via the sticky path — experts who want sticky plan use this; /plan alone does not.
+        // Sticky plan: prefs + session (experts who want plan on every resume).
       } else {
         opts.config.permissionMode = resolved as ForgeConfig["permissionMode"];
-        opts.session.meta.permissionMode = resolved as ForgeConfig["permissionMode"];
+        // Leave any session-scoped plan; sticky prefs own non-plan modes.
+        delete opts.session.meta.permissionMode;
         delete opts.session.meta.permissionModeBeforePlan;
       }
       saveSession(opts.session);

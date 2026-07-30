@@ -19,6 +19,10 @@
 - **Provider aliases**: `github` / `github-copilot` / `gh-copilot` → `copilot`
 - **Env**: `COPILOT_GITHUB_TOKEN` / `GITHUB_COPILOT_TOKEN` / `GH_COPILOT_TOKEN` for CI-style GitHub OAuth tokens (exchanged on resolve)
 
+### Fixed
+
+- **`/build` clears session plan override**: leaving plan restores prior live mode and drops `meta.permissionMode` so resume falls back to sticky prefs/CLI (plan is temporary, not sticky-by-accident). Sticky `/permissions <mode>` no longer writes non-plan session overrides
+
 ## 0.9.5 — File-aware undo, /init, /review, /compact-and + SuperGrok OIDC
 
 ### Added

@@ -117,7 +117,8 @@ describe("plan/build live controls", () => {
     assert.equal(r.handled, true);
     assert.match(r.output || "", /BUILD MODE/);
     assert.equal(cfg.permissionMode, "acceptEdits");
-    assert.equal(session.meta.permissionMode, "acceptEdits");
+    // Session override cleared — sticky prefs / CLI own post-plan mode
+    assert.equal(session.meta.permissionMode, undefined);
     assert.equal(session.meta.permissionModeBeforePlan, undefined);
 
     const notices = drainLiveNotices(session.meta.id);
@@ -181,6 +182,8 @@ describe("plan/build live controls", () => {
     assert.equal(out.mode, "acceptEdits");
     assert.equal(out.wasPlan, true);
     assert.equal(cfg2.permissionMode, "acceptEdits");
+    assert.equal(loaded!.meta.permissionMode, undefined);
+    assert.equal(loaded!.meta.permissionModeBeforePlan, undefined);
   });
 
   it("fork copies session plan override", () => {
