@@ -5557,6 +5557,51 @@ describe("run --json productionWarnings", () => {
   });
 });
 
+describe("run --json productionWarnings large inventory", () => {
+  it("flags ≥100 sessions on disk", async () => {
+    const { spawnSync } = await import("node:child_process");
+    const path = await import("node:path");
+    const fs = await import("node:fs");
+    const os = await import("node:os");
+    const cli = path.join(process.cwd(), "dist/cli.js");
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "forge-pw-inv-"));
+    const env = { ...process.env, FORGE_HOME: home, XAI_API_KEY: "sk" };
+    const { createSession } = await import("../src/session/session.js");
+    const prev = process.env.FORGE_HOME;
+    process.env.FORGE_HOME = home;
+    try {
+      for (let i = 0; i < 100; i++) {
+        createSession({ cwd: home, provider: "xai", model: "m" });
+      }
+    } finally {
+      if (prev === undefined) delete process.env.FORGE_HOME;
+      else process.env.FORGE_HOME = prev;
+    }
+    const r = spawnSync(
+      process.execPath,
+      [
+        cli,
+        "run",
+        "x",
+        "--sandbox",
+        "workspace",
+        "--read-outside",
+        "deny",
+        "--json",
+        "--max-turns",
+        "1",
+      ],
+      { env, encoding: "utf8", timeout: 30000 },
+    );
+    const j = JSON.parse(r.stdout);
+    assert.ok(Array.isArray(j.productionWarnings));
+    assert.ok(
+      j.productionWarnings.some((w: string) => /sessions on disk/i.test(w)),
+      `expected inventory warning, got ${JSON.stringify(j.productionWarnings)}`,
+    );
+  });
+});
+
 describe("run --no-blocking-stop", () => {
   it("sets blockingStop false and productionWarnings", async () => {
     const { spawnSync } = await import("node:child_process");

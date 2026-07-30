@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Added
+
+- **`run --json productionWarnings` large inventory**: warn when ≥100 sessions on disk (parity with doctor; prune guidance)
+
 ## 0.9.29 — Doctor large inventory tip + empty_run expert tip
 
 ### Added
