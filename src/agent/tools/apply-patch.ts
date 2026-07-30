@@ -303,6 +303,8 @@ export async function toolApplyPatch(
   };
 
   const applied: string[] = [];
+  /** Absolute paths successfully written (for opt-in format-on-write). */
+  const writtenAbs: string[] = [];
   try {
     for (const op of planned) {
       if (op.kind === "add") {
@@ -310,6 +312,7 @@ export async function toolApplyPatch(
         await atomicWriteFile(op.abs, op.content);
         journal({ path: op.abs, kind: "create" });
         applied.push(`A ${op.rel}`);
+        writtenAbs.push(op.abs);
         ctx.onEdit?.();
       } else if (op.kind === "delete") {
         await fsp.unlink(op.abs);
@@ -345,6 +348,7 @@ export async function toolApplyPatch(
             journal({ path: op.abs, kind: "delete", before: op.before });
           }
           applied.push(`M ${op.rel} → ${op.moveRel}`);
+          writtenAbs.push(op.moveAbs);
         } else {
           await atomicWriteFile(op.abs, op.content);
           const bytes = Buffer.byteLength(op.before, "utf8");
@@ -359,6 +363,7 @@ export async function toolApplyPatch(
             journal({ path: op.abs, kind: "update", before: op.before });
           }
           applied.push(`M ${op.rel}`);
+          writtenAbs.push(op.abs);
         }
         ctx.onEdit?.();
       }
@@ -374,11 +379,7 @@ export async function toolApplyPatch(
   }
 
   const fmtNotes: string[] = [];
-  for (const op of planned) {
-    if (op.kind === "delete") continue;
-    const target =
-      op.kind === "update" && op.moveAbs ? op.moveAbs : op.abs;
-    if (!target) continue;
+  for (const target of writtenAbs) {
     const fr = maybeFormatAfterWrite(target, ctx.workspace);
     const note = formatNoteSuffix(fr);
     if (note) {
