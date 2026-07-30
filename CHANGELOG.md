@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.9.35 — run --json formatOnWrite + formatter-available doctor tip
+
 ### Added
 
 - **`run --json formatOnWrite`**: headless success/error payloads include effective format-on-write
