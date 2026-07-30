@@ -54,3 +54,18 @@ describe("ask_user", () => {
     }
   });
 });
+
+describe("dontAsk visibility", () => {
+  it("productionWarnings flags dontAsk mode", async () => {
+    // Import via doctor path which is public
+    const { runDoctorCheck } = await import("../src/commands/slash.js");
+    const { DEFAULT_CONFIG } = await import("../src/config/types.js");
+    const doc = await runDoctorCheck({
+      ...DEFAULT_CONFIG,
+      permissionMode: "dontAsk",
+      workspace: process.cwd(),
+    });
+    assert.match(doc.report, /dontAsk/i);
+    assert.match(doc.report, /ask_user/i);
+  });
+});

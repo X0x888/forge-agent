@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+### Added
+
+- **dontAsk / FORGE_DONT_ASK visibility**: doctor + `run --json productionWarnings` surface when interactive asks (permissions + `ask_user`) are disabled
+
+
 ## 0.9.38 — ask_user clarifying questions
 
 ### Added

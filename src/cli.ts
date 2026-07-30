@@ -4675,6 +4675,22 @@ function productionWarningsForRun(config: ForgeConfig): string[] {
   if (config.permissionMode === "bypassPermissions") {
     warnings.push("permissionMode=bypassPermissions (yolo) — tools auto-approved");
   }
+  if (config.permissionMode === "dontAsk") {
+    warnings.push(
+      "permissionMode=dontAsk — permission prompts auto-deny; ask_user unavailable (state assumptions)",
+    );
+  }
+  {
+    const dontAskEnv = process.env.FORGE_DONT_ASK?.trim();
+    if (
+      dontAskEnv &&
+      ["1", "true", "on", "yes"].includes(dontAskEnv.toLowerCase())
+    ) {
+      warnings.push(
+        `FORGE_DONT_ASK=${dontAskEnv} — interactive asks disabled (permissions + ask_user)`,
+      );
+    }
+  }
   if (config.permissionMode === "plan") {
     warnings.push(
       "permissionMode=plan — mutations denied; use /build (or --permission-mode acceptEdits) to implement",

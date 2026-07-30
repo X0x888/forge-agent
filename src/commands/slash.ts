@@ -3673,6 +3673,26 @@ export async function runDoctorCheck(
       "Permission mode is bypassPermissions (yolo) — all tools auto-approved; set acceptEdits/plan/dontAsk for production CI",
     );
   }
+  if (config.permissionMode === "dontAsk") {
+    lines.push(
+      chalk.yellow(
+        "  ⚠ dontAsk — permission prompts auto-deny; ask_user also unavailable (state assumptions or use interactive default)",
+      ),
+    );
+  }
+  {
+    const dontAskEnv = process.env.FORGE_DONT_ASK?.trim();
+    if (
+      dontAskEnv &&
+      ["1", "true", "on", "yes"].includes(dontAskEnv.toLowerCase())
+    ) {
+      lines.push(
+        chalk.yellow(
+          `  ⚠ FORGE_DONT_ASK=${dontAskEnv} — interactive asks disabled (permissions + ask_user)`,
+        ),
+      );
+    }
+  }
   {
     try {
       const ws = config.workspace || process.cwd();
