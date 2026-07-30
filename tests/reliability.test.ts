@@ -1592,7 +1592,7 @@ describe("shell completion", () => {
     assert.match(out, /sessions/);
     assert.match(
       out,
-      /show path export import fork pin unpin title rename delete prune/,
+      /show path export import fork pin unpin pinned title rename delete prune/,
     );
     assert.match(out, /prune-metrics/);
     assert.match(out, /doctor\).*--provider|doctor\).*--sandbox/);
@@ -1713,6 +1713,51 @@ describe("sessions list cwd filter", () => {
     const byCreateTitle = listSessions({ limit: 50, query: "ci-pipeline-99" });
     assert.equal(byCreateTitle.length, 1);
     assert.equal(byCreateTitle[0]!.id, titled.meta.id);
+  });
+});
+
+
+describe("sessions pinned action filter", () => {
+  it("forge sessions pinned lists only pin-protected sessions", async () => {
+    const { spawnSync } = await import("node:child_process");
+    const path = await import("node:path");
+    const fs = await import("node:fs");
+    const os = await import("node:os");
+    const cli = path.join(process.cwd(), "dist/cli.js");
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "forge-pin-act-"));
+    const env = { ...process.env, FORGE_HOME: home };
+    const prev = process.env.FORGE_HOME;
+    process.env.FORGE_HOME = home;
+    let pinnedId = "";
+    try {
+      const {
+        createSession,
+        setSessionTitle,
+        setSessionPinned,
+        saveSession,
+      } = await import("../src/session/session.js");
+      const a = createSession({ cwd: home, provider: "xai", model: "m" });
+      setSessionTitle(a, "keeper");
+      setSessionPinned(a, true);
+      saveSession(a);
+      pinnedId = a.meta.id;
+      createSession({ cwd: home, provider: "xai", model: "m" }); // unpinned
+    } finally {
+      if (prev === undefined) delete process.env.FORGE_HOME;
+      else process.env.FORGE_HOME = prev;
+    }
+    const r = spawnSync(
+      process.execPath,
+      [cli, "sessions", "pinned", "--json"],
+      { env, encoding: "utf8", timeout: 15000 },
+    );
+    assert.equal(r.status, 0, r.stderr || r.stdout);
+    const j = JSON.parse(r.stdout);
+    assert.equal(j.ok, true);
+    assert.equal(j.pinnedOnly, true);
+    assert.equal(j.count, 1);
+    assert.equal(j.sessions[0].id, pinnedId);
+    assert.equal(j.sessions[0].pinned, true);
   });
 });
 

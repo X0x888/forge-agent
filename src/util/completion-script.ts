@@ -22,7 +22,7 @@ export function shellCompletionScript(shell: string): string {
   const topFlags =
     "--new --session --continue --title --json --model --provider --base-url --permission-mode --ulw --max-waves --goal --cwd --sandbox --sandbox-network --sandbox-missing --read-outside --deny --allow --ask --effort --max-turns --no-blocking-stop --help --version";
   const sessionsActions =
-    "list show path export import fork pin unpin title rename delete prune search find errors untitled";
+    "list show path export import fork pin unpin pinned title rename delete prune search find errors untitled";
   const sessionsFlags =
     "--json --out --format --keep --max-age-days --cwd --query -q --pinned --errors --untitled --force-last-error --limit -n --force";
   // --cwd: list filter + import override; --query/-q: list id/title filter; --pinned/--errors

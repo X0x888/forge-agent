@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+### Fixed
+
+- **`forge sessions pinned` action**: list pin-protected sessions (parity with `/sessions pinned` and `--pinned`); was treated as a title query
+
+
 ## 0.9.40 — doctor sessionsPinned inventory
 
 ### Added

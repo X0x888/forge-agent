@@ -2885,6 +2885,9 @@ Docs: docs/PRODUCTION.md
         "untitled",
         "notitle",
         "nameless",
+        // list filters (parity with /sessions pinned · --pinned)
+        "pinned",
+        "pins",
         "pin",
         "unpin",
         "title",
@@ -3016,7 +3019,11 @@ Docs: docs/PRODUCTION.md
       ) {
         queryFilter = String(action).trim();
       }
-      const pinnedOnly = Boolean(globalOpts.pinned);
+      const pinnedOnly =
+        Boolean(globalOpts.pinned) ||
+        act === "pinned" ||
+        act === "pins";
+      // Note: act === "pin" is the pin/unpin mutation path above, not list filter.
       const errorsOnly =
         Boolean(globalOpts.errors) ||
         act === "errors" ||
@@ -3030,7 +3037,10 @@ Docs: docs/PRODUCTION.md
         act === "notitle" ||
         act === "nameless";
       let list = listSessions({
-        limit: (errorsOnly || untitledOnly) && limit === 30 ? 50 : limit,
+        limit:
+          (errorsOnly || untitledOnly || pinnedOnly) && limit === 30
+            ? 50
+            : limit,
         ...(cwdFilter ? { cwd: cwdFilter } : {}),
         ...(queryFilter ? { query: queryFilter } : {}),
         ...(pinnedOnly ? { pinned: true } : {}),
@@ -3065,6 +3075,7 @@ Docs: docs/PRODUCTION.md
               query: queryFilter,
               errorsOnly,
               untitledOnly,
+              pinnedOnly,
               limit,
               count: list.length,
               sessionsTotal,
@@ -3140,10 +3151,15 @@ Docs: docs/PRODUCTION.md
           );
           return;
         }
+        if (pinnedOnly) {
+          console.log(
+            "No pinned sessions. forge sessions pin <id> · /pin protects from prune.",
+          );
+          return;
+        }
         const bits: string[] = [];
         if (cwdFilter) bits.push(`cwd ${cwdFilter}`);
         if (queryFilter) bits.push(`query ${JSON.stringify(queryFilter)}`);
-        if (pinnedOnly) bits.push("pinned");
         console.log(
           bits.length ? `No sessions for ${bits.join(" · ")}.` : "No sessions.",
         );
@@ -3218,8 +3234,11 @@ Docs: docs/PRODUCTION.md
         const total = all.length;
         const untitled = all.filter((s) => !String(s.title || "").trim()).length;
         const errs = all.filter((s) => Boolean(s.lastError?.message)).length;
-        if (total >= 100 || untitled >= 5 || errs >= 3) {
-          invNote = `  ·  inventory ${total} total · ${untitled} untitled · ${errs} lastError`;
+        const pinned = all.filter((s) => Boolean(s.pinned)).length;
+        if (total >= 100 || untitled >= 5 || errs >= 3 || pinned >= 10) {
+          invNote =
+            `  ·  inventory ${total} total · ${untitled} untitled · ${errs} lastError` +
+            (pinned ? ` · ${pinned} pinned` : "");
         }
       } catch {
         /* */
