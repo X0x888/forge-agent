@@ -2,10 +2,12 @@
 
 ## Unreleased
 
+## 0.9.24 — Doctor dirty-tree tip + gitChangedFiles
+
 ### Added
 
 - **Doctor dirty-tree tip + `gitChangedFiles`**: warn when ≥40 changed files before long ULW; JSON exposes the count
-
+- **`productionWarnings` dirty tree**: `forge run --json` flags ≥40 changed files for CI blast-radius hygiene
 
 ## 0.9.23 — Worktree on share/summary + run JSON isWorktree/root
 

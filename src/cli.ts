@@ -4626,6 +4626,17 @@ function productionWarningsForRun(config: ForgeConfig): string[] {
   if (config.blockingStopHooks === false) {
     warnings.push("blockingStopHooks=false — Stop hooks will not re-anchor the agent");
   }
+  // Dirty tree blast radius (best-effort; never block run on git failure)
+  try {
+    const g = getGitSnapshot(config.workspace || process.cwd());
+    if (typeof g.changedFiles === "number" && g.changedFiles >= 40) {
+      warnings.push(
+        `git dirty tree has ${g.changedFiles} changed files — commit/stash before long ULW or use /plan first`,
+      );
+    }
+  } catch {
+    /* */
+  }
   return warnings;
 }
 
