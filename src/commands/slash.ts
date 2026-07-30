@@ -2729,14 +2729,25 @@ case "/new":
       // Default: same-cwd sessions (multi-project experts). /sessions all|global for everything.
       // /sessions q <text> or /sessions search <text> filters by id/title substring.
       // /sessions pinned — only pin-protected sessions.
+      // /sessions errors|failed|err — only sessions with meta.lastError (recovery backlog).
       const ws = opts.session.meta.cwd || opts.config.workspace || process.cwd();
       let listMode: "cwd" | "all" = "cwd";
       let query: string | undefined;
       let pinnedOnly = false;
+      let errorsOnly = false;
       if (sub === "all" || sub === "global" || sub === "-a") {
         listMode = "all";
       } else if (sub === "pinned" || sub === "pins" || sub === "pin") {
         pinnedOnly = true;
+        listMode = "all";
+      } else if (
+        sub === "errors" ||
+        sub === "error" ||
+        sub === "failed" ||
+        sub === "fail" ||
+        sub === "err"
+      ) {
+        errorsOnly = true;
         listMode = "all";
       } else if (sub === "q" || sub === "search" || sub === "find") {
         query = parts.slice(1).join(" ").trim() || undefined;
@@ -2757,7 +2768,7 @@ case "/new":
             output:
               `Unknown /sessions action "${sub}". Did you mean: ${tip}?\n` +
               chalk.dim(
-                "Actions: list · search · prune · delete · pinned · all  ·  CLI: forge sessions <action>",
+                "Actions: list · search · prune · delete · pinned · errors · all  ·  CLI: forge sessions <action>",
               ),
           };
         }
@@ -2765,13 +2776,25 @@ case "/new":
         query = parts.join(" ").trim() || undefined;
         listMode = "all";
       }
-      const list = listSessions({
-        limit: 15,
-        ...(listMode === "cwd" && !query && !pinnedOnly ? { cwd: ws } : {}),
+      let list = listSessions({
+        limit: errorsOnly ? 50 : 15,
+        ...(listMode === "cwd" && !query && !pinnedOnly && !errorsOnly
+          ? { cwd: ws }
+          : {}),
         ...(query ? { query } : {}),
         ...(pinnedOnly ? { pinned: true } : {}),
       });
+      if (errorsOnly) {
+        list = list.filter((s) => Boolean(s.lastError?.message));
+      }
       if (!list.length) {
+        if (errorsOnly) {
+          return {
+            handled: true,
+            output:
+              "No sessions with lastError. Provider failures stamp ERR on /sessions and forge status.",
+          };
+        }
         if (pinnedOnly) {
           return {
             handled: true,
@@ -2792,13 +2815,15 @@ case "/new":
         }
         return { handled: true, output: "No sessions yet." };
       }
-      const scopeNote = pinnedOnly
-        ? "pinned only"
-        : query
-          ? `search=${JSON.stringify(query)}`
-          : listMode === "cwd"
-            ? `cwd=${ws}`
-            : "all workspaces";
+      const scopeNote = errorsOnly
+        ? "lastError only"
+        : pinnedOnly
+          ? "pinned only"
+          : query
+            ? `search=${JSON.stringify(query)}`
+            : listMode === "cwd"
+              ? `cwd=${ws}`
+              : "all workspaces";
       return {
         handled: true,
         output:
@@ -2822,12 +2847,16 @@ case "/new":
               const prevNote = prev
                 ? `  “${prev}${(s.lastUserPreview || "").length > 32 ? "…" : ""}”`
                 : "";
+              const errNote =
+                errorsOnly && s.lastError
+                  ? `  [${s.lastError.code}] ${s.lastError.message.slice(0, 40)}`
+                  : "";
               const age = formatRelativeTime(s.updatedAt).padStart(8);
-              return `${s.id.slice(0, 8)}  ${age}  ${(s.title || "").slice(0, 28).padEnd(28)}  ${s.model}  t=${s.turnCount}${s.ultrawork ? " ULW" : ""}${s.pinned ? " PIN" : ""}${s.permissionMode === "plan" ? " PLAN" : ""}${s.lastError ? " ERR" : ""}${active}${lockNote}${cwdNote}${prevNote}`;
+              return `${s.id.slice(0, 8)}  ${age}  ${(s.title || "").slice(0, 28).padEnd(28)}  ${s.model}  t=${s.turnCount}${s.ultrawork ? " ULW" : ""}${s.pinned ? " PIN" : ""}${s.permissionMode === "plan" ? " PLAN" : ""}${s.lastError ? " ERR" : ""}${active}${lockNote}${cwdNote}${prevNote}${errNote}`;
             })
             .join("\n") +
           chalk.dim(
-            `\n\n* = active  ·  ${scopeNote}  ·  /sessions [all|pinned|search <q>]  ·  delete <id|title> [--force]  ·  prune [--keep=50]  ·  /resume <id|title>  ·  /pin\nCLI: forge sessions list --cwd . [--pinned]  ·  show|export|import|fork|pin|delete <id|title>`,
+            `\n\n* = active  ·  ${scopeNote}  ·  /sessions [all|pinned|errors|search <q>]  ·  delete <id|title> [--force]  ·  prune [--keep=50]  ·  /resume <id|title>  ·  /pin\nCLI: forge sessions list --cwd . [--pinned]  ·  show|export|import|fork|pin|delete <id|title>`,
           ),
       };
     }

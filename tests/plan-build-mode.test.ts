@@ -275,4 +275,37 @@ describe("plan/build live controls", () => {
     const [permHits] = forgeCompleter("/permissions ");
     assert.ok(permHits.some((h) => h.includes("build")));
   });
+
+  it("/sessions errors lists only lastError sessions", async () => {
+    const hooks = new HookRunner(DEFAULT_CONFIG, tmp);
+    const good = createSession({
+      cwd: tmp,
+      provider: "xai",
+      model: "m",
+      title: "good-session",
+    });
+    saveSession(good);
+    const bad = createSession({
+      cwd: tmp,
+      provider: "xai",
+      model: "m",
+      title: "bad-fail",
+    });
+    setSessionLastError(bad, {
+      code: "rate_limited",
+      message: "xai HTTP 429",
+      tips: ["switch"],
+    });
+    saveSession(bad);
+    const r = await handleSlash("/sessions errors", {
+      session: good,
+      config: { ...DEFAULT_CONFIG, workspace: tmp },
+      hooks,
+    });
+    assert.equal(r.handled, true);
+    const out = String(r.output || "");
+    assert.match(out, /bad-fail/);
+    assert.match(out, /ERR|rate_limited/);
+    assert.doesNotMatch(out, /good-session/);
+  });
 });

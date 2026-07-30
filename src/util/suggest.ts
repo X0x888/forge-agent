@@ -190,6 +190,9 @@ export const SESSION_ACTIONS = [
   "delete",
   "prune",
   "search",
+  "errors",
+  "failed",
+  "err",
 ] as const;
 
 export function suggestSessionAction(raw: string): string | null {
