@@ -2,10 +2,11 @@
 
 ## Unreleased
 
+## 0.9.9 — Prune protects lastError recovery backlog
+
 ### Changed
 
-- **Prune protects lastError sessions**: `pruneSessions` skips failed sessions by default so experts can inspect `/sessions errors` first; override with `--force-last-error` / `/sessions prune --force-last-error`. Reports `skippedLastError` / `deletedWithLastError`
-
+- **Prune protects lastError sessions**: `pruneSessions` skips failed sessions by default so experts can inspect `/sessions errors` first; override with `--force-last-error` / `/sessions prune --force-last-error`. Reports `skippedLastError` / `deletedWithLastError`. Documented in PRODUCTION/RELIABILITY; `forge sessions list --json` includes explicit `lastError` objects.
 
 ## 0.9.8 — Recovery backlog filters + goal auto-title
 
