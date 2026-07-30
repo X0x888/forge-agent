@@ -596,6 +596,26 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
         if (!reduced) {
           // Avoid compacting every turn when already minimal but still "over"
           skipThresholdCompactUntilCount = session.messages.length;
+          // Expert recovery: still near hard limit after compact/prune failed
+          if (nearHardLimit) {
+            try {
+              const pct = Math.min(
+                99,
+                Math.round((est / config.contextWindow) * 100),
+              );
+              setSessionLastError(session, {
+                code: "context_pressure",
+                message: `Context still ~${pct}% after compact/prune — provider may reject the next turn`,
+                tips: [
+                  "/compact  ·  /compact-and <next>  ·  /new",
+                  "Raise context_window or drop large tool outputs",
+                ],
+              });
+              saveSession(session);
+            } catch {
+              /* */
+            }
+          }
         } else {
           skipThresholdCompactUntilCount = 0;
         }

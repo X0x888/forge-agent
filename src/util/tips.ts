@@ -13,7 +13,7 @@ export function expertTipsLines(): string[] {
     `  Safety:        /plan → design (session-only)  ·  /build → implement  ·  /permissions acceptEdits|dontAsk (sticky)  ·  --sandbox workspace  ·  --sandbox-missing fail-closed  ·  --read-outside deny  ·  /diff (argv-safe)  ·  deny Bash not Bash()  ·  no curl IMDS 169.254.169.254  ·  no curl file://`,
     `  Accounts:      forge accounts list|switch|auto-switch  ·  forge login --add  ·  /accounts  ·  /auth  ·  auto-switch on 429/quota + plan threshold`,
     `  Attention:     /bell on  ·  /copy  ·  /last  ·  /files  ·  /path  ·  /logs  ·  /config  ·  /pin  ·  /stats 7|week  ·  /news all  ·  /share  ·  /retry  ·  unknown /cmd → Did you mean?`,
-    `  Recovery:      /undo  ·  /retry  ·  /sessions errors  ·  sessions prune --force-last-error  ·  /init  ·  /review  ·  forge logs  ·  forge config`,
+    `  Recovery:      /undo  ·  /retry  ·  /sessions errors  ·  /context  ·  /compact  ·  sessions prune --force-last-error  ·  /init  ·  forge logs`,
     `  Custom cmds:    .forge/commands/<name>.md  ($ARGUMENTS $1..$9)  ·  ~/.forge/commands/  ·  /commands`,
     `  Docs:          docs/PRODUCTION.md  ·  docs/RELIABILITY.md  ·  forge tips  ·  forge news  ·  /help`,
   ];

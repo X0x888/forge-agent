@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+### Added
+
+- **Context-pressure lastError**: when compact/prune cannot free enough headroom near the hard limit, stamp `meta.lastError` code `context_pressure` with `/compact` · `/new` tips
+
+
 ## 0.9.14 — /context pressure tips
 
 ### Added
