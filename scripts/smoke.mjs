@@ -132,6 +132,9 @@ mustInclude("doctor contextWindow", ["doctor", "--json"], "contextWindow");
 mustInclude("doctor autoCompactThreshold", ["doctor", "--json"], "autoCompactThreshold");
 mustInclude("doctor gitIsWorktree", ["doctor", "--json"], "gitIsWorktree");
 mustInclude("doctor gitChangedFiles", ["doctor", "--json"], "gitChangedFiles");
+mustInclude("doctor formatOnWrite", ["doctor", "--json"], "formatOnWrite");
+mustInclude("status formatOnWrite", ["status", "--json"], "formatOnWrite");
+mustInclude("config formatOnWrite", ["config", "--json"], "formatOnWrite");
 
 // Headless slash: pure control exits without auth/model (reason: slash)
 mustInclude(

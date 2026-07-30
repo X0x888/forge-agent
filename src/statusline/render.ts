@@ -3,6 +3,7 @@ import type { StatusSnapshot, StatuslineRenderOptions, PlanUsageInfo } from "./t
 import { formatTokens, formatCost } from "../util/format.js";
 import { getForgeVersion } from "../util/version.js";
 import { forgeHome } from "../util/fs.js";
+import { isFormatOnWriteEnabled } from "../agent/tools/format-on-write.js";
 
 function colorEnabled(opts: StatuslineRenderOptions): boolean {
   if (opts.plain || opts.color === false) return false;
@@ -469,6 +470,8 @@ export function snapshotsToJson(snaps: StatusSnapshot[]): string {
     node: process.version,
     forgeHome: forgeHome(),
     count: snaps.length,
+    /** Effective format-on-write (env FORGE_FORMAT_ON_WRITE wins over preference). */
+    formatOnWrite: isFormatOnWriteEnabled(),
     sessions: snaps,
     generatedAt: new Date().toISOString(),
   };
