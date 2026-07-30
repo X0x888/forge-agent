@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+### Added
+
+- **`/status` + doctor git worktree line**: show branch/dirty/WORKTREE and root for multi-worktree expert sessions
+
+
 ## 0.9.21 — maxTurns lastError stamp
 
 ### Added

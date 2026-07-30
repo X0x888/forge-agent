@@ -3656,6 +3656,22 @@ export async function runDoctorCheck(
   }
   lines.push(`Goal gate: ${config.goal.enabled ? "on" : "off"} (stuck=${config.goal.stuckThreshold})`);
   lines.push(`Workspace: ${config.workspace || process.cwd()}`);
+  // Git worktree signal for multi-worktree expert workflows
+  try {
+    const { getGitSnapshot } = await import("../util/git-context.js");
+    const g = getGitSnapshot(config.workspace || process.cwd());
+    if (g.root) {
+      const dirty = g.dirty ? "*" : "";
+      const wt = g.isWorktree ? " · linked worktree" : "";
+      lines.push(
+        chalk.dim(
+          `  git: ${g.branch || "?"}${dirty}${wt}  ·  ${g.root}`,
+        ),
+      );
+    }
+  } catch {
+    /* */
+  }
   // Project instruction hygiene (OpenCode-style) — tip only, not a blocking issue
   try {
     const { listProjectRulePaths } = await import("../agent/system-prompt.js");

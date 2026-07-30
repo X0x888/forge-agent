@@ -472,6 +472,8 @@ describe("statusline plan mode details", () => {
     assert.match(text, /plan/i);
     assert.match(text, /\/build/);
     assert.match(text, /ctx\s+|autoCompact@/);
+    // git line when in a repo (this workspace is)
+    assert.match(text, /git\s+/);
   });
 
   it("formatSessionDetails surfaces lastError recovery tip", async () => {
