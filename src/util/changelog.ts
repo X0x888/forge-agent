@@ -139,17 +139,29 @@ export function formatWhatsNew(opts?: {
     ].join("\n");
   }
 
-  // When Unreleased is present, default count=1 still shows the latest tagged
-  // release too so experts see both in-flight work and the last ship.
+  // Drop empty Unreleased shells (header only) so /news doesn't show a blank section.
+  const hasBody = (r: ChangelogRelease): boolean =>
+    r.body
+      .split("\n")
+      .some((l) => {
+        const t = l.trim();
+        return t.startsWith("-") || t.startsWith("*");
+      });
+  const visible = releases.filter(
+    (r) => r.version !== "Unreleased" || hasBody(r),
+  );
+
+  // When Unreleased is present with content, default count=1 still shows the
+  // latest tagged release too so experts see both in-flight work and the last ship.
   let sliceCount = count;
   if (
     count === 1 &&
-    releases[0]?.version === "Unreleased" &&
-    releases.some((r) => r.version !== "Unreleased")
+    visible[0]?.version === "Unreleased" &&
+    visible.some((r) => r.version !== "Unreleased")
   ) {
     sliceCount = 2;
   }
-  const slice = releases.slice(0, sliceCount);
+  const slice = visible.slice(0, sliceCount);
   const lines: string[] = [
     `Forge ${version} — what's new`,
   ];
@@ -267,10 +279,10 @@ export function formatWhatsNew(opts?: {
     }
   }
 
-  if (releases.length > sliceCount) {
+  if (visible.length > sliceCount) {
     lines.push(``);
     lines.push(
-      `Older: forge news ${Math.min(releases.length, sliceCount + 2)}  ·  full: CHANGELOG.md`,
+      `Older: forge news ${Math.min(visible.length, sliceCount + 2)}  ·  full: CHANGELOG.md`,
     );
   } else {
     lines.push(``);

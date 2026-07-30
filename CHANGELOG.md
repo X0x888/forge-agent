@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+### Fixed
+
+- **`/news` skips empty Unreleased shells**: blank Unreleased headers no longer open the what's-new block ahead of the latest tagged release
+
+
 ## 0.9.10 — Metrics/stats failure breakdown for expert post-mortems
 
 ### Added
