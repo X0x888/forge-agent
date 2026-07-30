@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 0.9.45 — /init skills guidance
+
+### Changed
+
+- **`/init` skills guidance**: bootstrap prompt covers `.forge/skills/**/SKILL.md` playbooks and `/skills` listing
+
 ## 0.9.44 — project skills (OpenCode-inspired)
 
 ### Added
