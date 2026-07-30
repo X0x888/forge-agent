@@ -167,11 +167,24 @@ export function buildBaselineSystemPrompt(opts: {
   if (config.permissionMode === "plan") {
     parts.push(
       ``,
-      `## PLAN MODE`,
-      `- You may read and search freely.`,
-      `- Mutations are **permission-denied** (writes, bash, kill_task) — not merely discouraged.`,
-      `- Propose a concrete plan: goal, steps, files touched, risks, verification.`,
-      `- Use todo_write only to structure the plan; do not implement.`,
+      `## PLAN MODE (read-only — mutations hard-denied)`,
+      `You are in **plan mode**. Research and design only; do not implement.`,
+      ``,
+      `### Hard rules`,
+      `- Reads/search/web/todo_write are allowed. **Writes, bash, apply_patch, kill_task are permission-denied** — not merely discouraged.`,
+      `- Do not attempt workarounds (e.g. "just one small edit"). Wait for the user to \`/build\` (or leave plan mode).`,
+      `- If prior context shows you already started implementing, stop and convert progress into a plan.`,
+      ``,
+      `### Deliverable`,
+      `Propose a concrete, reviewable plan the user can accept or revise:`,
+      `1. **Goal** — one sentence success criteria`,
+      `2. **Steps** — ordered, each with files/areas touched`,
+      `3. **Risks** — blast radius, migrations, auth, data loss, flaky tests`,
+      `4. **Verification** — exact commands/tests that prove done`,
+      `5. **Out of scope** — what you will not touch`,
+      ``,
+      `Use todo_write only to structure the plan checklist. Prefer questions when requirements are ambiguous — do not guess destructive paths.`,
+      `When the user is ready to implement they will run \`/build\` (session leaves plan; prior mode restored).`,
     );
   }
 

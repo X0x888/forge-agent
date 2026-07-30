@@ -81,6 +81,8 @@ describe("param resolve + menu", () => {
     assert.equal(resolveParamChoice("accept", c), "acceptEdits");
     assert.equal(resolveParamChoice("bypass", c), "bypassPermissions");
     assert.equal(resolveParamChoice("list", c), "list");
+    assert.equal(resolveParamChoice("build", c), "build");
+    assert.equal(resolveParamChoice("execute", c), "build");
   });
 
   it("formats a menu with current marker", () => {

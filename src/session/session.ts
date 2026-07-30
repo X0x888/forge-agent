@@ -13,6 +13,7 @@ import { suggestName } from "../util/suggest.js";
 import { formatRelativeTime } from "../util/format.js";
 import { detectProjectHints, getGitSnapshot } from "../util/git-context.js";
 import type { ChatMessage } from "../providers/types.js";
+import type { PermissionMode } from "../config/types.js";
 import { heartbeatSession } from "../statusline/active.js";
 import { touchSessionLock } from "./lock.js";
 import {
@@ -63,6 +64,18 @@ export interface SessionMeta {
    * long-running incident / design threads across hygiene passes).
    */
   pinned?: boolean;
+  /**
+   * Session-scoped permission mode override (OpenCode-style /plan).
+   * When set, resume restores this mode unless CLI `--permission-mode` is explicit.
+   * `/plan` sets this without touching sticky preferences; `/build` restores
+   * `permissionModeBeforePlan` (or default).
+   */
+  permissionMode?: PermissionMode;
+  /**
+   * Mode to restore when leaving plan via `/build`. Only meaningful while
+   * `permissionMode === "plan"`.
+   */
+  permissionModeBeforePlan?: PermissionMode;
   ultrawork: boolean;
   turnCount: number;
   editCount: number;
@@ -191,7 +204,93 @@ function normalizeSessionMeta(fromSide: SessionMeta): SessionMeta {
   };
   if (fromSide.pinned) out.pinned = true;
   else delete out.pinned;
+  const pm = normalizeMetaPermissionMode(fromSide.permissionMode);
+  if (pm) out.permissionMode = pm;
+  else delete out.permissionMode;
+  const before = normalizeMetaPermissionMode(fromSide.permissionModeBeforePlan);
+  if (before) out.permissionModeBeforePlan = before;
+  else delete out.permissionModeBeforePlan;
   return out;
+}
+
+const META_PERMISSION_MODES = new Set<PermissionMode>([
+  "default",
+  "acceptEdits",
+  "plan",
+  "bypassPermissions",
+  "dontAsk",
+]);
+
+function normalizeMetaPermissionMode(raw: unknown): PermissionMode | undefined {
+  if (typeof raw !== "string") return undefined;
+  const mode = raw.trim() as PermissionMode;
+  return META_PERMISSION_MODES.has(mode) ? mode : undefined;
+}
+
+/**
+ * Apply session-scoped permission override onto live config (resume /plan).
+ * Returns true when config.permissionMode changed.
+ */
+export function applySessionPermissionMode(
+  config: { permissionMode: PermissionMode },
+  session: SessionData,
+): boolean {
+  const mode = session.meta.permissionMode;
+  if (!mode || !META_PERMISSION_MODES.has(mode)) return false;
+  if (config.permissionMode === mode) return false;
+  config.permissionMode = mode;
+  return true;
+}
+
+/**
+ * Enter plan mode for this session only (does not touch sticky preferences).
+ * Remembers the prior mode for `/build` restore.
+ */
+export function enterSessionPlanMode(
+  config: { permissionMode: PermissionMode },
+  session: SessionData,
+): { changed: boolean; previous: PermissionMode } {
+  const previous = config.permissionMode;
+  if (previous === "plan" && session.meta.permissionMode === "plan") {
+    return { changed: false, previous };
+  }
+  if (previous !== "plan") {
+    session.meta.permissionModeBeforePlan = previous;
+  } else if (!session.meta.permissionModeBeforePlan) {
+    session.meta.permissionModeBeforePlan = "default";
+  }
+  session.meta.permissionMode = "plan";
+  config.permissionMode = "plan";
+  return { changed: previous !== "plan", previous };
+}
+
+/**
+ * Leave plan mode: restore `permissionModeBeforePlan` (or default).
+ * Clears session override when restored mode matches sticky default path.
+ */
+export function exitSessionPlanMode(
+  config: { permissionMode: PermissionMode },
+  session: SessionData,
+  opts?: { restoreTo?: PermissionMode },
+): { mode: PermissionMode; wasPlan: boolean } {
+  const wasPlan =
+    config.permissionMode === "plan" || session.meta.permissionMode === "plan";
+  const restore =
+    opts?.restoreTo ||
+    session.meta.permissionModeBeforePlan ||
+    (config.permissionMode !== "plan" ? config.permissionMode : "default");
+  const mode = META_PERMISSION_MODES.has(restore) ? restore : "default";
+  config.permissionMode = mode;
+  delete session.meta.permissionModeBeforePlan;
+  // Keep session override only when non-default sticky would otherwise drift;
+  // experts expect /build to return to normal build permissions for this session.
+  if (mode === "plan") {
+    session.meta.permissionMode = "plan";
+  } else {
+    // Persist the restored mode so resume stays out of plan.
+    session.meta.permissionMode = mode;
+  }
+  return { mode, wasPlan };
 }
 
 /**
@@ -653,6 +752,11 @@ export function formatSessionSummary(session: SessionData): string {
       return null;
     })(),
     `  pinned:   ${m.pinned ? "yes (/unpin to allow prune)" : "no (/pin to keep)"}`,
+    m.permissionMode === "plan"
+      ? `  mode:     PLAN (session-scoped — /build to implement)`
+      : m.permissionMode
+        ? `  mode:     ${m.permissionMode} (session override)`
+        : null,
     m.lastUserPreview
       ? `  last you: ${m.lastUserPreview}`
       : null,
@@ -1793,6 +1897,19 @@ export function formatResumeOrientation(
     /* */
   }
   try {
+    if (session.meta.permissionMode === "plan") {
+      parts.push("Mode: PLAN (session-scoped) — /build to implement");
+    } else if (
+      session.meta.permissionMode &&
+      session.meta.permissionMode !== "default" &&
+      session.meta.permissionMode !== "acceptEdits"
+    ) {
+      parts.push(`Mode: ${session.meta.permissionMode} (session override)`);
+    }
+  } catch {
+    /* */
+  }
+  try {
     const touched = listSessionTouchedFiles(session, {
       limit: opts?.fileLimit ?? 6,
       mutatedOnly: true,
@@ -1842,7 +1959,15 @@ export function formatSessionShareCard(
   } catch {
     /* */
   }
-  const flags = [ulwFlag, m.pinned ? "PIN" : null].filter(Boolean);
+  const flags = [
+    ulwFlag,
+    m.pinned ? "PIN" : null,
+    m.permissionMode === "plan"
+      ? "PLAN"
+      : m.permissionMode && m.permissionMode !== "default"
+        ? `perms=${m.permissionMode}`
+        : null,
+  ].filter(Boolean);
   const titleResume =
     m.title && m.title !== "untitled"
       ? `  forge --session ${JSON.stringify(m.title)}   # by /title`

@@ -119,7 +119,7 @@ Wrappers peeled: `env`, `timeout`, `nice`, `stdbuf`, `time`, `command`, plus lea
 | `acceptEdits` | Auto file edits; shell gated (read-only may pass; soft-dangerous like `git commit --no-verify` still asks) |
 | `bypassPermissions` | YOLO — **deny rules + hard safety + sandbox still apply** |
 | `dontAsk` | Deny unless allow rule / read-only tools |
-| `plan` | No writes/shell |
+| `plan` | No writes/shell (hard-denied). Prefer **`/plan`** (session-scoped, no sticky prefs) then **`/build`** to restore prior mode. `/permissions plan` still sticky for experts who want it. Live mid-run; resume restores session plan unless `--permission-mode` is set. |
 
 ## Observability
 

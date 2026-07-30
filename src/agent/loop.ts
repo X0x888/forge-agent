@@ -531,6 +531,25 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
       assertNotAborted(signal);
       turns += 1;
 
+      // Live /plan|/build|/permissions can flip config.permissionMode mid-run.
+      // Refresh message[0] so the next model call sees PLAN MODE rules without
+      // waiting for a new user prompt (OpenCode-style plan↔build switch).
+      {
+        const liveSystem = buildBaselineSystemPrompt({
+          config,
+          workspace,
+          ultrawork: session.meta.ultrawork || Boolean(loadUlwCycle(session.meta.id)?.enabled),
+          ulwCycle: loadUlwCycle(session.meta.id),
+          git: gitSnap,
+        });
+        if (
+          session.messages[0]?.role === "system" &&
+          session.messages[0].content !== liveSystem
+        ) {
+          session.messages[0] = { role: "system", content: liveSystem };
+        }
+      }
+
       // Include tool-schema overhead; chars/3.2 estimate (see estimateTokens).
       const est = requestTokenEstimate();
       const overThreshold =

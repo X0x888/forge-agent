@@ -173,6 +173,18 @@ describe("live mid-run slash policy", () => {
     assert.match(LIVE_CONTROLS_HINT, /\/done/);
     assert.match(LIVE_CONTROLS_HINT, /\/pause/);
     assert.match(LIVE_CONTROLS_HINT, /\/unpause/);
+    assert.match(LIVE_CONTROLS_HINT, /\/plan/);
+    assert.match(LIVE_CONTROLS_HINT, /\/build/);
+  });
+
+  it("classifies /plan and /build as live control", () => {
+    assert.equal(classifyLiveSlash("/plan"), "control");
+    assert.equal(classifyLiveSlash("/build"), "control");
+    assert.equal(classifyLiveSlash("/execute"), "control");
+    assert.equal(classifyLiveSlash("/permissions plan"), "control");
+    assert.equal(classifyLiveSlash("/permissions build"), "control");
+    assert.ok(isLiveSafeSlash("/plan focus"));
+    assert.ok(isLiveSafeSlash("/build"));
   });
 });
 

@@ -4,6 +4,7 @@
 
 ### Added
 
+- **`/plan` · `/build` · `/execute`** (OpenCode-style): session-scoped PLAN mode without sticky-prefs footgun. `/plan [focus]` hard-denies mutations (writes/bash/apply_patch); `/build` restores the prior mode and notifies the agent mid-run. Live controls; resume restores session plan unless `--permission-mode` is explicit. System prompt PLAN block lists goal/steps/risks/verification; deny reasons point at `/build`. `/permissions plan|build` aliases; sessions list/share/status show PLAN badge
 - **ULW `max_waves`**: optional wave cap (default unlimited). `/max-waves N|off|status` live mid-run; CLI `--max-waves N` (0 = unlimited; N&gt;0 implies ULW). When the wave counter hits N, harness auto-flips to LAST (`**Cycle complete.**`). Counts show as `wave=2/5`; JSON `ulwMaxWaves`; compact/admission/status/HUD aware
 - **Multi-account auth**: store many logins per provider (e.g. two SuperGrok emails + API keys) in `~/.forge/auth.json` v2
 - **`forge accounts`**: `list` · `status` · `switch` · `remove` · `rename` · `priority` · `disable`/`enable` · `clear-cooldown` · `auto-switch on|off [--threshold N]`

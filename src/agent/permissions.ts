@@ -236,7 +236,7 @@ export class PermissionGate {
         return {
           decision: "deny",
           reason:
-            "plan_mode: mutations denied — read/search/todo_write only; exit plan mode to implement",
+            "plan_mode: mutations denied — read/search/todo_write only; run /build (or leave plan) to implement",
           rule: "plan_mode",
         };
       }

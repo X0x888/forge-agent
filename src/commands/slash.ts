@@ -38,6 +38,8 @@ import {
   createSession,
   loadSession,
   estimateTokens,
+  enterSessionPlanMode,
+  exitSessionPlanMode,
 } from "../session/session.js";
 import {
   formatRestoreResult,
@@ -195,6 +197,9 @@ const LIVE_CONTROL = new Set([
   "/max_waves",
   "/ulw-off",
   "/effort",
+  "/plan",
+  "/build",
+  "/execute",
   "/title",
   "/rename",
   "/bell",
@@ -258,7 +263,15 @@ export function classifyLiveSlash(line: string): LiveSlashKind {
     // bare menu / list are safe mid-run; mode changes + clear/revoke mutate prefs/disk
     const verb = (arg.split(/\s+/)[0] || "").toLowerCase();
     if (!verb || verb === "list" || verb === "status") return "readonly";
+    // plan/build aliases are live control (session-scoped; no sticky prefs)
+    if (verb === "plan" || verb === "build" || verb === "execute" || verb === "implement") {
+      return "control";
+    }
     return "idle-only";
+  }
+  // OpenCode-style /plan /build — session-scoped; live mid-run
+  if (cmd === "/plan" || cmd === "/build" || cmd === "/execute") {
+    return "control";
   }
   // /tasks list|log is readonly; kill/stop mutates process tasks (control).
   if (cmd === "/tasks" || cmd === "/bg") {
@@ -379,7 +392,7 @@ export function isSafeDiffFilterArg(token: string): boolean {
 }
 
 export const LIVE_CONTROLS_HINT =
-  `${ULW_LIVE_CONTROLS_HINT} · free-text queues mid-run · /pause · /unpause · /done · /status  ·  Ctrl+C aborts the turn`;
+  `${ULW_LIVE_CONTROLS_HINT} · /plan · /build · free-text queues mid-run · /pause · /unpause · /done · /status  ·  Ctrl+C aborts the turn`;
 
 export const SLASH_COMMANDS = [
   "/help",
@@ -403,6 +416,9 @@ export const SLASH_COMMANDS = [
   "/todos",
   "/model",
   "/effort",
+  "/plan",
+  "/build",
+  "/execute",
   "/permissions",
   "/compact",
   "/compact-and",
@@ -2725,12 +2741,89 @@ case "/new":
                 ? `  “${prev}${(s.lastUserPreview || "").length > 32 ? "…" : ""}”`
                 : "";
               const age = formatRelativeTime(s.updatedAt).padStart(8);
-              return `${s.id.slice(0, 8)}  ${age}  ${(s.title || "").slice(0, 28).padEnd(28)}  ${s.model}  t=${s.turnCount}${s.ultrawork ? " ULW" : ""}${s.pinned ? " PIN" : ""}${active}${lockNote}${cwdNote}${prevNote}`;
+              return `${s.id.slice(0, 8)}  ${age}  ${(s.title || "").slice(0, 28).padEnd(28)}  ${s.model}  t=${s.turnCount}${s.ultrawork ? " ULW" : ""}${s.pinned ? " PIN" : ""}${s.permissionMode === "plan" ? " PLAN" : ""}${active}${lockNote}${cwdNote}${prevNote}`;
             })
             .join("\n") +
           chalk.dim(
             `\n\n* = active  ·  ${scopeNote}  ·  /sessions [all|pinned|search <q>]  ·  delete <id|title> [--force]  ·  prune [--keep=50]  ·  /resume <id|title>  ·  /pin\nCLI: forge sessions list --cwd . [--pinned]  ·  show|export|import|fork|pin|delete <id|title>`,
           ),
+      };
+    }
+
+    case "/plan": {
+      // OpenCode-style: session-scoped plan mode (no sticky prefs footgun).
+      const note = arg.trim();
+      const { changed, previous } = enterSessionPlanMode(opts.config, opts.session);
+      saveSession(opts.session);
+      const sid = opts.session.meta.id;
+      pushLiveNotice(
+        sid,
+        [
+          "User entered PLAN MODE (session-scoped).",
+          "Mutations (writes/bash/apply_patch/kill_task) are hard-denied.",
+          "Research and produce a concrete plan: goal, steps, files, risks, verification.",
+          "Do not implement until the user runs /build.",
+          note ? `Plan focus: ${note}` : "",
+        ]
+          .filter(Boolean)
+          .join(" "),
+      );
+      const lines = [
+        chalk.blue("PLAN MODE") +
+          chalk.dim(
+            changed
+              ? ` (was ${previous}; session-only — sticky prefs untouched)`
+              : " (already in plan)",
+          ),
+        chalk.dim("  Reads/search/todo_write allowed · writes/bash denied"),
+        chalk.dim("  Exit with /build (restores prior mode) · or /permissions <mode>"),
+      ];
+      if (note) lines.push(chalk.dim(`  Focus: ${note}`));
+      return {
+        handled: true,
+        output: lines.join("\n"),
+        session: opts.session,
+      };
+    }
+
+    case "/build":
+    case "/execute": {
+      // Leave plan → restore prior session mode (OpenCode build-switch).
+      const note = arg.trim();
+      const { mode, wasPlan } = exitSessionPlanMode(opts.config, opts.session);
+      saveSession(opts.session);
+      const sid = opts.session.meta.id;
+      if (wasPlan) {
+        pushLiveNotice(
+          sid,
+          [
+            `User left PLAN MODE → ${mode} (BUILD).`,
+            "Implement the agreed plan now. Mutations are allowed under the restored permission mode.",
+            "Do not re-plan from scratch unless the user asks — execute, verify, report.",
+            note ? `Build note: ${note}` : "",
+          ]
+            .filter(Boolean)
+            .join(" "),
+        );
+      }
+      const lines = [
+        chalk.green("BUILD MODE") +
+          chalk.dim(
+            wasPlan
+              ? ` (left plan → ${mode}; session-scoped)`
+              : ` (already building · permissionMode=${mode})`,
+          ),
+        chalk.dim(
+          wasPlan
+            ? "  Prior plan mode exited · implement the agreed plan"
+            : "  Tip: /plan for read-only design first",
+        ),
+      ];
+      if (note) lines.push(chalk.dim(`  Note: ${note}`));
+      return {
+        handled: true,
+        output: lines.join("\n"),
+        session: opts.session,
       };
     }
 
@@ -2741,6 +2834,13 @@ case "/new":
       );
       const sub = arg.trim();
       const verb = (sub.split(/\s+/)[0] || "").toLowerCase();
+      // OpenCode aliases: /permissions plan|build
+      if (verb === "plan") {
+        return await handleSlash("/plan " + sub.slice(verb.length).trim(), opts);
+      }
+      if (verb === "build" || verb === "execute" || verb === "implement") {
+        return await handleSlash("/build " + sub.slice(verb.length).trim(), opts);
+      }
       // Management verbs (also via menu numbers after modes)
       if (verb === "list" || sub.startsWith("list ")) {
         const { loadSavedAllows } = await import("../agent/permission-saved.js");
@@ -2777,6 +2877,12 @@ case "/new":
         };
       }
       if (!arg) {
+        const sessionNote =
+          opts.session.meta.permissionMode === "plan"
+            ? chalk.blue("\nSession: PLAN (use /build to leave — sticky prefs untouched)")
+            : opts.session.meta.permissionMode
+              ? chalk.dim(`\nSession override: ${opts.session.meta.permissionMode}`)
+              : "";
         return {
           handled: true,
           output:
@@ -2786,8 +2892,9 @@ case "/new":
               opts.config.permissionMode,
             ) +
             chalk.dim(
-              "\nAlso: /permissions list | clear | revoke <id>",
-            ),
+              "\nAlso: /plan · /build  ·  /permissions list | clear | revoke <id>",
+            ) +
+            sessionNote,
         };
       }
       // Resolve against full choices so Tab numbers for list/clear still work,
@@ -2796,7 +2903,13 @@ case "/new":
       if (!resolved) {
         const tip = suggestName(
           arg,
-          modeChoices.map((c) => c.value),
+          [
+            ...modeChoices.map((c) => c.value),
+            "build",
+            "list",
+            "clear",
+            "revoke",
+          ],
           { minLength: 3, minScore: 36, requirePrefix3: false },
         );
         return {
@@ -2838,7 +2951,25 @@ case "/new":
           output: "Usage: /permissions revoke <id>  (see /permissions list)",
         };
       }
-      opts.config.permissionMode = resolved as ForgeConfig["permissionMode"];
+      if (
+        resolved === "build" ||
+        resolved === "execute" ||
+        resolved === "implement"
+      ) {
+        return await handleSlash("/build", opts);
+      }
+      // Sticky preference path (explicit /permissions <mode>).
+      // When leaving plan via sticky set, clear session plan restore bookkeeping.
+      if (resolved === "plan") {
+        enterSessionPlanMode(opts.config, opts.session);
+        // Also persist sticky plan if user used full /permissions plan intentionally
+        // via the sticky path — experts who want sticky plan use this; /plan alone does not.
+      } else {
+        opts.config.permissionMode = resolved as ForgeConfig["permissionMode"];
+        opts.session.meta.permissionMode = resolved as ForgeConfig["permissionMode"];
+        delete opts.session.meta.permissionModeBeforePlan;
+      }
+      saveSession(opts.session);
       try {
         savePreferences({
           permissionMode: resolved as ForgeConfig["permissionMode"],
@@ -2846,9 +2977,14 @@ case "/new":
       } catch {
         /* never fail slash on prefs I/O */
       }
+      const stickyNote =
+        resolved === "plan"
+          ? " (sticky prefs + session — prefer /plan for session-only)"
+          : " (saved for future sessions)";
       return {
         handled: true,
-        output: `Permission mode: ${resolved}${resolved === "bypassPermissions" ? " (always approve)" : ""} (saved for future sessions)`,
+        output: `Permission mode: ${resolved}${resolved === "bypassPermissions" ? " (always approve)" : ""}${stickyNote}`,
+        session: opts.session,
       };
     }
 
@@ -3185,6 +3321,13 @@ export async function runDoctorCheck(
     }
   }
   lines.push(`Permission mode: ${config.permissionMode}`);
+  if (config.permissionMode === "plan") {
+    lines.push(
+      chalk.blue(
+        "  PLAN — mutations denied; /build to implement (session /plan preferred over sticky plan)",
+      ),
+    );
+  }
   if (config.permissionMode === "bypassPermissions") {
     lines.push(
       chalk.yellow(
@@ -3875,8 +4018,10 @@ Forge slash commands
   /todos                Show agent todos  [live]
   /model <name> [effort] Switch model; optional low|medium|high (persists)
   /effort [level]       Reasoning effort for current model (low|medium|high)  [live]
+  /plan [focus]         Session-scoped PLAN mode (read-only design; no sticky prefs)  [live]
+  /build [note]         Leave plan → restore prior mode and implement (/execute)  [live]
   /permissions [mode]   Menu if empty; Tab / numbers / aliases (yolo, always…)
-                        Mode persists · list|clear|revoke for saved always-allows
+                        Sticky prefs · plan|build aliases · list|clear|revoke always-allows
   /compact              Compact conversation
   /compact-and <prompt> Compact then continue with follow-up (Warp-style)
   /fork-and-compact [prompt]  Fork, compact the fork, optional continue (Warp-style)

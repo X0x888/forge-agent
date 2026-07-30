@@ -415,7 +415,7 @@ Docs: docs/PRODUCTION.md · docs/RELIABILITY.md · docs/ULW.md · forge news
         continue: Boolean(opts.continue),
         json: wantJson,
       });
-      // Prefer resumed session provider/model unless CLI -p/-m set.
+      // Prefer resumed session provider/model/plan unless CLI -p/-m/--permission-mode set.
       {
         const argv = process.argv;
         const providerExplicit = argv.some(
@@ -427,11 +427,30 @@ Docs: docs/PRODUCTION.md · docs/RELIABILITY.md · docs/ULW.md · forge news
         const modelExplicit = argv.some(
           (a) => a === "-m" || a === "--model" || a.startsWith("--model="),
         );
+        const permissionExplicit = argv.some(
+          (a) =>
+            a === "--permission-mode" || a.startsWith("--permission-mode="),
+        );
         if (!modelExplicit && session.meta.model) {
           config.model = session.meta.model;
         }
         if (!providerExplicit && session.meta.provider) {
           config.provider = session.meta.provider as typeof config.provider;
+        }
+        // Session-scoped /plan survives resume (OpenCode-style) unless CLI overrides.
+        if (!permissionExplicit) {
+          try {
+            const { applySessionPermissionMode } = await import(
+              "./session/session.js"
+            );
+            if (applySessionPermissionMode(config, session) && !wantJson) {
+              log.dim(
+                `Restored session permission mode: ${config.permissionMode}`,
+              );
+            }
+          } catch {
+            /* never block startup on meta restore */
+          }
         }
       }
       // Re-resolve auth for the effective provider (session may differ from sticky default).
@@ -849,6 +868,27 @@ Docs: docs/PRODUCTION.md
         // Prefer session workspace for tools when not explicitly overridden
         if (!cwdExplicit && session.meta.cwd) {
           config.workspace = session.meta.cwd;
+        }
+        // Session-scoped /plan survives headless resume unless --permission-mode set.
+        {
+          const permissionExplicit =
+            command?.getOptionValueSource?.("permissionMode") === "cli" ||
+            command?.parent?.getOptionValueSource?.("permissionMode") === "cli" ||
+            process.argv.some(
+              (a) =>
+                a === "--permission-mode" ||
+                a.startsWith("--permission-mode="),
+            );
+          if (!permissionExplicit) {
+            try {
+              const { applySessionPermissionMode } = await import(
+                "./session/session.js"
+              );
+              applySessionPermissionMode(config, session);
+            } catch {
+              /* */
+            }
+          }
         }
         saveSession(session);
         if (runOpts.session) {

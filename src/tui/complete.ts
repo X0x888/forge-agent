@@ -31,7 +31,7 @@ export const COMMAND_PARAMS: Record<string, ParamChoice[]> = {
     },
     {
       value: "plan",
-      description: "Read-only — no edits or shell mutations",
+      description: "Read-only design (sticky via /permissions; prefer /plan session-only)",
     },
     {
       value: "bypassPermissions",
@@ -54,6 +54,34 @@ export const COMMAND_PARAMS: Record<string, ParamChoice[]> = {
     {
       value: "revoke",
       description: "Revoke one saved rule: /permissions revoke <id>",
+    },
+    // After modes so Tab numbers 1–5 stay stable for experts
+    {
+      value: "build",
+      description: "Leave plan → restore prior mode (alias of /build)",
+      aliases: ["execute", "implement"],
+    },
+  ],
+  plan: [
+    {
+      value: "focus on auth + tests",
+      description: "Optional plan focus (session-scoped; no sticky prefs)",
+    },
+    {
+      value: "design the migration",
+      description: "Optional design focus before /build",
+    },
+  ],
+  build: [
+    {
+      value: "implement the agreed plan",
+      description: "Optional note when leaving plan mode",
+    },
+  ],
+  execute: [
+    {
+      value: "implement the agreed plan",
+      description: "Alias of /build",
     },
   ],
   cycle: [
