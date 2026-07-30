@@ -125,6 +125,8 @@ mustInclude("doctor readOutsideWorkspace", ["doctor", "--json"], "readOutsideWor
 mustInclude("doctor projectRulesCount", ["doctor", "--json"], "projectRulesCount");
 mustInclude("doctor projectCommandsCount", ["doctor", "--json"], "projectCommandsCount");
 mustInclude("doctor sessionsWithLastError", ["doctor", "--json"], "sessionsWithLastError");
+mustInclude("doctor sessionsUntitled", ["doctor", "--json"], "sessionsUntitled");
+mustInclude("doctor sessionsTotal", ["doctor", "--json"], "sessionsTotal");
 mustInclude("doctor modelDefaultContextWindow", ["doctor", "--json"], "modelDefaultContextWindow");
 mustInclude("doctor contextWindow", ["doctor", "--json"], "contextWindow");
 mustInclude("doctor autoCompactThreshold", ["doctor", "--json"], "autoCompactThreshold");

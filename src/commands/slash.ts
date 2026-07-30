@@ -3382,6 +3382,10 @@ export interface DoctorResult {
   projectCommandsCount?: number;
   /** Sessions with meta.lastError set (expert recovery backlog). */
   sessionsWithLastError?: number;
+  /** Sessions without a title (harder to resume by name). */
+  sessionsUntitled?: number;
+  /** Total sessions scanned for inventory tips. */
+  sessionsTotal?: number;
   /** Known default context window for config.model (from model-info). */
   modelDefaultContextWindow?: number | null;
   /** config.contextWindow / modelDefault when known. */
@@ -3985,6 +3989,8 @@ export async function runDoctorCheck(
   let projectRulesCount = 0;
   let projectCommandsCount = 0;
   let sessionsWithLastError = 0;
+  let sessionsUntitled = 0;
+  let sessionsTotal = 0;
   try {
     const { listProjectRulePaths } = await import("../agent/system-prompt.js");
     projectRulesCount = listProjectRulePaths(
@@ -4004,13 +4010,22 @@ export async function runDoctorCheck(
   try {
     const { listSessions } = await import("../session/session.js");
     const all = listSessions({ limit: 10_000 });
+    sessionsTotal = all.length;
     sessionsWithLastError = all.filter((s) => Boolean(s.lastError?.message)).length;
+    sessionsUntitled = all.filter((s) => !String(s.title || "").trim()).length;
     if (sessionsWithLastError > 0) {
       const backlog =
         sessionsWithLastError >= 5
           ? `  ⚠ ${sessionsWithLastError} sessions with lastError — review /sessions errors before prune; backlog may hide real incidents`
           : `  sessions with lastError: ${sessionsWithLastError}  → /sessions errors · forge sessions list --errors · prune keeps them until --force-last-error`;
       lines.push(chalk.yellow(backlog));
+    }
+    if (sessionsUntitled >= 5) {
+      lines.push(
+        chalk.dim(
+          `  untitled sessions: ${sessionsUntitled}/${sessionsTotal}  → /title · --title · /goal set auto-titles`,
+        ),
+      );
     }
   } catch {
     /* */
@@ -4027,6 +4042,8 @@ export async function runDoctorCheck(
     projectRulesCount,
     projectCommandsCount,
     sessionsWithLastError,
+    sessionsUntitled,
+    sessionsTotal,
     modelDefaultContextWindow,
     contextWindowRatio,
     gitIsWorktree,

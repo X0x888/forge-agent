@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+### Added
+
+- **Doctor `sessionsUntitled` / `sessionsTotal`**: inventory hygiene for resume-by-title; tip when ≥5 untitled sessions
+
+
 ## 0.9.26 — empty_run lastError + dirty-tree expert tip
 
 ### Added
