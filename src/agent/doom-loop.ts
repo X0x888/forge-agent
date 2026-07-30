@@ -117,7 +117,8 @@ function buildDoomMessage(
     (preview ? ` (${preview})` : "") +
     `. STOP repeating. Change approach: re-read the file, try a different tool, ` +
     `narrow/broaden the query, fix the underlying error, or ask a clarifying question. ` +
-    `Identical retries waste turns and will keep failing.`
+    `Identical retries waste turns and will keep failing. ` +
+    `If the tool error names a missing path/arg, fix that first; if permission denied, do not retry the same mutation.`
   );
 }
 

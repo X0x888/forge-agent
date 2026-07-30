@@ -507,9 +507,13 @@ export class PermissionGate {
         .toLowerCase();
 
       if (ans === "__timeout__") {
+        const secs = Math.round(timeoutMs / 1000);
         console.error(
           chalk.red(
-            `\n✖ Permission timed out after ${Math.round(timeoutMs / 1000)}s — denying ${toolName}\n`,
+            `\n✖ Permission timed out after ${secs}s — denying ${toolName}\n` +
+              chalk.dim(
+                `  Tip: answer sooner, raise FORGE_PERMISSION_ASK_TIMEOUT_MS, use /permissions acceptEdits, or --permission-mode dontAsk in CI\n`,
+              ),
           ),
         );
         logSandboxEvent({
@@ -517,7 +521,12 @@ export class PermissionGate {
           reason: `permission_ask_timeout:${toolName}`,
           command: toolName,
         });
-        return { decision: "deny", reason: "permission_ask_timeout" };
+        return {
+          decision: "deny",
+          reason:
+            `permission_ask_timeout after ${secs}s — user did not answer. ` +
+            `Raise FORGE_PERMISSION_ASK_TIMEOUT_MS, use /permissions acceptEdits, or --permission-mode dontAsk for unattended runs.`,
+        };
       }
       if (ans === "n" || ans === "no") {
         return { decision: "deny", reason: "user_reject" };
