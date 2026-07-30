@@ -207,7 +207,12 @@ export {
   defaultBashBackgroundTimeoutMs,
 } from "./util/env.js";
 export { editDistance, stringSimilarity } from "./util/string-distance.js";
-export { suggestName, suggestSessionAction, SESSION_ACTIONS } from "./util/suggest.js";
+export {
+  suggestName,
+  suggestNames,
+  suggestSessionAction,
+  SESSION_ACTIONS,
+} from "./util/suggest.js";
 export { copyToClipboard } from "./util/clipboard.js";
 export type { ClipboardResult } from "./util/clipboard.js";
 export { isBellEnabled, maybeRingBell } from "./util/attention.js";

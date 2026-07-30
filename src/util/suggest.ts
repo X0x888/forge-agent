@@ -86,6 +86,92 @@ export function suggestName(
   return best.name;
 }
 
+/**
+ * Ranked multi-suggestion (tool names, etc.). Same scoring as suggestName.
+ * Returns up to `limit` unique candidates above minScore.
+ */
+export function suggestNames(
+  raw: string,
+  candidates: readonly string[],
+  opts?: {
+    minLength?: number;
+    minScore?: number;
+    requirePrefix3?: boolean;
+    limit?: number;
+  },
+): string[] {
+  const q = raw.trim().toLowerCase();
+  const minLength = opts?.minLength ?? 3;
+  const minScore = opts?.minScore ?? 38;
+  const requirePrefix3 = opts?.requirePrefix3 !== false;
+  const limit = Math.max(1, Math.min(opts?.limit ?? 3, 8));
+  if (!q || q.length < minLength) return [];
+  if (candidates.some((c) => c.toLowerCase() === q)) return [];
+
+  const alnum = (s: string) => s.replace(/[^a-z0-9]+/g, "");
+  const qNorm = alnum(q);
+  const scored: { name: string; score: number; d: number }[] = [];
+
+  for (const cand of candidates) {
+    const name = cand.toLowerCase();
+    const nNorm = alnum(name);
+    let score = 0;
+    let d = 0;
+    if (qNorm && nNorm && qNorm === nNorm) {
+      score = 95;
+    } else if (name.startsWith(q) || q.startsWith(name)) {
+      score = 80 - Math.min(40, Math.abs(name.length - q.length) * 12);
+    } else if (name.includes(q) || q.includes(name)) {
+      score = 55;
+    } else {
+      d = editDistance(q, name);
+      const maxD = requirePrefix3
+        ? q.length <= 5
+          ? 2
+          : q.length <= 9
+            ? 3
+            : 4
+        : q.length <= 3
+          ? 1
+          : q.length <= 6
+            ? 2
+            : 3;
+      if (d > maxD) continue;
+      if (
+        requirePrefix3 &&
+        q.length >= 3 &&
+        name.length >= 3 &&
+        q.slice(0, 3) !== name.slice(0, 3)
+      ) {
+        continue;
+      }
+      score = 40 - d;
+      if (name.length === q.length) score += 3;
+      if (name[0] === q[0]) score += 2;
+    }
+    if (score >= minScore) scored.push({ name: cand, score, d });
+  }
+
+  scored.sort(
+    (a, b) =>
+      b.score - a.score ||
+      a.d - b.d ||
+      Math.abs(a.name.length - q.length) - Math.abs(b.name.length - q.length) ||
+      a.name.localeCompare(b.name),
+  );
+
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const s of scored) {
+    const key = s.name.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(s.name);
+    if (out.length >= limit) break;
+  }
+  return out;
+}
+
 /** Known forge sessions subcommands (canonical names for suggestions). */
 export const SESSION_ACTIONS = [
   "list",

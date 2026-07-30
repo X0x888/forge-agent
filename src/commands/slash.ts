@@ -3314,6 +3314,10 @@ export interface DoctorResult {
     summary: string;
     warnings: string[];
   } | null;
+  /** Count of project instruction sources (AGENTS.md, .cursor/rules, …). */
+  projectRulesCount?: number;
+  /** Count of project/user custom slash templates (.forge/commands). */
+  projectCommandsCount?: number;
 }
 
 /**
@@ -3834,6 +3838,25 @@ export async function runDoctorCheck(
     multiAccount = null;
   }
 
+  let projectRulesCount = 0;
+  let projectCommandsCount = 0;
+  try {
+    const { listProjectRulePaths } = await import("../agent/system-prompt.js");
+    projectRulesCount = listProjectRulePaths(
+      config.workspace || process.cwd(),
+    ).length;
+  } catch {
+    /* */
+  }
+  try {
+    const { loadProjectCommands } = await import("./project-commands.js");
+    projectCommandsCount = loadProjectCommands(
+      config.workspace || process.cwd(),
+    ).length;
+  } catch {
+    /* */
+  }
+
   return {
     report: lines.join("\n"),
     issues: [...issues],
@@ -3842,6 +3865,8 @@ export async function runDoctorCheck(
     blockingStop: config.blockingStopHooks !== false,
     modelInCatalog,
     multiAccount,
+    projectRulesCount,
+    projectCommandsCount,
   };
 }
 

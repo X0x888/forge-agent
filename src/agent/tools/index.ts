@@ -11,7 +11,7 @@ import { toolWebSearch } from "./web-search.js";
 import { toolWebFetch } from "./web-fetch.js";
 import { toolGetTaskOutput, toolKillTask } from "./task-tools.js";
 import { parseToolArguments } from "../../util/json-repair.js";
-import { suggestName } from "../../util/suggest.js";
+import { suggestNames } from "../../util/suggest.js";
 
 export type { ToolContext, ToolResult } from "./types.js";
 export { TOOL_DEFINITIONS };
@@ -155,21 +155,30 @@ export async function executeTool(
       case "WebFetch":
         return await toolWebFetch(args, ctx);
       default: {
-        const tip = suggestName(name, AVAILABLE.split(", ").concat([
-          "Bash",
-          "Shell",
-          "Read",
-          "Write",
-          "Edit",
-        ]), {
-          minLength: 2,
-          minScore: 36,
-          requirePrefix3: false,
-        });
+        const tips = suggestNames(
+          name,
+          AVAILABLE.split(", ").concat([
+            "Bash",
+            "Shell",
+            "Read",
+            "Write",
+            "Edit",
+            "StrReplace",
+            "ApplyPatch",
+            "WebSearch",
+            "WebFetch",
+          ]),
+          {
+            minLength: 2,
+            minScore: 36,
+            requirePrefix3: false,
+            limit: 3,
+          },
+        );
         return {
           output:
-            (tip
-              ? `Unknown tool: ${name}. Did you mean: ${tip}?\n`
+            (tips.length
+              ? `Unknown tool: ${name}. Did you mean: ${tips.join(", ")}?\n`
               : `Unknown tool: ${name}.\n`) +
             `Available: ${AVAILABLE}.`,
           isError: true,
