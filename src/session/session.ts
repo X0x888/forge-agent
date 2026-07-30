@@ -813,6 +813,10 @@ export function formatSessionSummary(session: SessionData): string {
       : m.permissionMode
         ? `  mode:     ${m.permissionMode} (session override)`
         : null,
+    m.lastError?.message
+      ? `  lastErr:  [${m.lastError.code}] ${m.lastError.message.slice(0, 120)}` +
+        (m.lastError.tips?.[0] ? ` → ${m.lastError.tips[0]}` : "")
+      : null,
     m.lastUserPreview
       ? `  last you: ${m.lastUserPreview}`
       : null,
@@ -2039,6 +2043,17 @@ export function formatResumeOrientation(
     /* */
   }
   try {
+    const le = session.meta.lastError;
+    if (le?.message) {
+      parts.push(
+        `Last error: [${le.code}] ${le.message.slice(0, 140)}` +
+          (le.tips?.[0] ? ` → ${le.tips[0]}` : ""),
+      );
+    }
+  } catch {
+    /* */
+  }
+  try {
     const touched = listSessionTouchedFiles(session, {
       limit: opts?.fileLimit ?? 6,
       mutatedOnly: true,
@@ -2147,6 +2162,10 @@ export function formatSessionShareCard(
     gitLine,
     projectLine,
     goalLine,
+    m.lastError?.message
+      ? `  lastErr:  [${m.lastError.code}] ${m.lastError.message.slice(0, 120)}` +
+        (m.lastError.tips?.[0] ? ` → ${m.lastError.tips[0]}` : "")
+      : null,
     `  turns:    ${m.turnCount}  edits=${m.editCount}  msgs=${session.messages.length}`,
     flags.length ? `  flags:    ${flags.join(" ")}` : null,
     ``,

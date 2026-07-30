@@ -22,6 +22,7 @@ import {
   formatSessionShareCard,
   formatSessionSummary,
   forkSession,
+  setSessionLastError,
 } from "../src/session/session.js";
 import { DEFAULT_CONFIG } from "../src/config/types.js";
 import { HookRunner } from "../src/harness/hooks.js";
@@ -210,6 +211,24 @@ describe("plan/build live controls", () => {
     assert.match(card, /PLAN/);
     const summary = formatSessionSummary(session);
     assert.match(summary, /PLAN/);
+  });
+
+  it("resume orientation and share card surface lastError", () => {
+    const session = createSession({ cwd: tmp, provider: "xai", model: "m" });
+    setSessionLastError(session, {
+      code: "auth_expired",
+      message: "xai HTTP 401: Invalid API key",
+      tips: ["forge login"],
+    });
+    const orient = formatResumeOrientation(session);
+    assert.match(orient, /Last error/);
+    assert.match(orient, /auth_expired/);
+    assert.match(orient, /forge login/);
+    const card = formatSessionShareCard(session);
+    assert.match(card, /lastErr/);
+    assert.match(card, /auth_expired/);
+    const summary = formatSessionSummary(session);
+    assert.match(summary, /lastErr/);
   });
 
   it("system prompt PLAN MODE block is richer under plan", () => {
