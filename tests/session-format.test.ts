@@ -758,6 +758,36 @@ it("/fork includes last-turn peek", async () => {
     assert.match(forked.meta.title || "", /experiment/);
   });
 
+  it("lastError sessions survive prune unless forceLastError", async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-prune-err-"));
+    process.env.FORGE_HOME = tmp;
+    const {
+      createSession: mk,
+      saveSession,
+      setSessionLastError,
+      pruneSessions,
+      listSessions,
+    } = await import("../src/session/session.js");
+    const failed = mk({ cwd: tmp, provider: "xai", model: "m", title: "failed-run" });
+    setSessionLastError(failed, {
+      code: "rate_limited",
+      message: "429",
+      tips: ["switch"],
+    });
+    failed.meta.updatedAt = new Date(Date.now() - 90 * 86400_000).toISOString();
+    saveSession(failed);
+    const drop = mk({ cwd: tmp, provider: "xai", model: "m", title: "old-ok" });
+    drop.meta.updatedAt = new Date(Date.now() - 80 * 86400_000).toISOString();
+    saveSession(drop);
+    const r = pruneSessions({ keep: 0, maxAgeDays: 1 });
+    assert.ok(r.skippedLastError >= 1);
+    assert.ok(listSessions(100).some((m) => m.id === failed.meta.id));
+    assert.ok(!listSessions(100).some((m) => m.id === drop.meta.id));
+    const forced = pruneSessions({ keep: 0, maxAgeDays: 1, forceLastError: true });
+    assert.ok(forced.deletedWithLastError >= 1);
+    assert.ok(!listSessions(100).some((m) => m.id === failed.meta.id));
+  });
+
   it("pinned sessions survive prune", async () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-pin-"));
     process.env.FORGE_HOME = tmp;

@@ -1283,6 +1283,13 @@ export interface PruneSessionsResult {
   skippedLocked: number;
   /** Sessions skipped because meta.pinned (expert keep forever) */
   skippedPinned: number;
+  /**
+   * Sessions with lastError skipped so experts can inspect failures
+   * (`/sessions errors`) before disk hygiene removes them.
+   */
+  skippedLastError: number;
+  /** How many deleted sessions carried lastError (only when forceLastError). */
+  deletedWithLastError: number;
 }
 
 /**
@@ -1290,6 +1297,8 @@ export interface PruneSessionsResult {
  * Keeps the newest `keep` sessions; optionally also drops anything older than `maxAgeDays`.
  * Never deletes `protectIds` (e.g. the active REPL session).
  * Never deletes sessions held by another live process (foreign session.lock).
+ * By default also skips sessions with `meta.lastError` (recovery backlog) unless
+ * `forceLastError` is set — experts inspect failures via `/sessions errors` first.
  */
 export function pruneSessions(opts?: {
   keep?: number;
@@ -1297,6 +1306,11 @@ export function pruneSessions(opts?: {
   protectIds?: string[];
   /** Skip foreign live locks (default true). */
   skipLocked?: boolean;
+  /**
+   * When true, allow pruning sessions that still carry lastError.
+   * Default false so failed runs survive hygiene until reviewed.
+   */
+  forceLastError?: boolean;
 }): PruneSessionsResult {
   // 0 is valid (keep none). NaN/negative fall back to 50.
   const keepRaw = opts?.keep;
@@ -1307,6 +1321,7 @@ export function pruneSessions(opts?: {
   const maxAgeDays = opts?.maxAgeDays;
   const protect = new Set(opts?.protectIds || []);
   const skipLocked = opts?.skipLocked !== false;
+  const forceLastError = Boolean(opts?.forceLastError);
   const all = listSessions(10_000);
   const cutoff =
     maxAgeDays != null && maxAgeDays > 0
@@ -1317,6 +1332,8 @@ export function pruneSessions(opts?: {
   let skippedLocked = 0;
   // Newest first from listSessions
   let skippedPinned = 0;
+  let skippedLastError = 0;
+  let deletedWithLastError = 0;
   all.forEach((meta, index) => {
     if (protect.has(meta.id)) return;
     if (meta.pinned) {
@@ -1332,7 +1349,15 @@ export function pruneSessions(opts?: {
         skippedLocked += 1;
         return;
       }
-      if (deleteSession(meta.id)) deleted.push(meta.id);
+      const hasErr = Boolean(meta.lastError?.message);
+      if (hasErr && !forceLastError) {
+        skippedLastError += 1;
+        return;
+      }
+      if (deleteSession(meta.id)) {
+        deleted.push(meta.id);
+        if (hasErr) deletedWithLastError += 1;
+      }
     }
   });
 
@@ -1342,6 +1367,8 @@ export function pruneSessions(opts?: {
     scanned: all.length,
     skippedLocked,
     skippedPinned,
+    skippedLastError,
+    deletedWithLastError,
   };
 }
 

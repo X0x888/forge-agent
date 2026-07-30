@@ -2016,6 +2016,10 @@ Docs: docs/PRODUCTION.md
       "List: only sessions with lastError (recovery backlog; aliases: errors|failed|err action)",
     )
     .option(
+      "--force-last-error",
+      "Prune: also delete sessions that still carry lastError (default: keep for /sessions errors)",
+    )
+    .option(
       "-n, --limit <n>",
       "List limit (0/all/max = unlimited)",
       "30",
@@ -2810,6 +2814,7 @@ Docs: docs/PRODUCTION.md
           // 0 is valid (keep none); Number(x)||50 wrongly treated 0 as missing
           keep,
           maxAgeDays,
+          forceLastError: Boolean(globalOpts.forceLastError),
         });
         if (globalOpts.json) {
           emitOkJson(
@@ -2820,6 +2825,9 @@ Docs: docs/PRODUCTION.md
               scanned: result.scanned,
               skippedLocked: result.skippedLocked,
               skippedPinned: result.skippedPinned,
+              skippedLastError: result.skippedLastError,
+              deletedWithLastError: result.deletedWithLastError,
+              forceLastError: Boolean(globalOpts.forceLastError),
               keep,
               ...(maxAgeDays !== undefined ? { maxAgeDays } : {}),
             },
@@ -2833,6 +2841,12 @@ Docs: docs/PRODUCTION.md
                 : "") +
               (result.skippedPinned
                 ? `; skipped ${result.skippedPinned} pinned`
+                : "") +
+              (result.skippedLastError
+                ? `; skipped ${result.skippedLastError} lastError`
+                : "") +
+              (result.deletedWithLastError
+                ? `; deleted ${result.deletedWithLastError} with lastError`
                 : "") +
               `)`,
           );

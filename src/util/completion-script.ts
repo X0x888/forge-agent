@@ -24,7 +24,7 @@ export function shellCompletionScript(shell: string): string {
   const sessionsActions =
     "list show path export import fork pin unpin title rename delete prune search find";
   const sessionsFlags =
-    "--json --out --format --keep --max-age-days --cwd --query -q --pinned --errors --limit -n --force";
+    "--json --out --format --keep --max-age-days --cwd --query -q --pinned --errors --force-last-error --limit -n --force";
   // --cwd: list filter + import override; --query/-q: list id/title filter; --pinned/--errors
 
   const normalized = normalizeCompletionShell(shell);
@@ -98,7 +98,7 @@ export function shellCompletionScript(shell: string): string {
       "                _values 'import' --cwd --json",
       "                ;;",
       "              prune)",
-      "                _values 'prune' --keep --max-age-days --json",
+      "                _values 'prune' --keep --max-age-days --json --force-last-error",
       "                ;;",
       "              delete)",
       "                _values 'delete' --json --force",
@@ -240,6 +240,7 @@ export function shellCompletionScript(shell: string): string {
       'complete -c forge -n "__fish_seen_subcommand_from sessions" -l query -s q -d "List id/title substring filter"',
       'complete -c forge -n "__fish_seen_subcommand_from sessions" -l pinned -d "List only pin-protected sessions"',
       'complete -c forge -n "__fish_seen_subcommand_from sessions" -l errors -d "List only sessions with lastError"',
+      'complete -c forge -n "__fish_seen_subcommand_from sessions" -l force-last-error -d "Prune sessions that still carry lastError"',
       'complete -c forge -n "__fish_seen_subcommand_from sessions" -l limit -d "List limit (0/all/max)" -x -a "0 all max unlimited 30 50 100"',
       'complete -c forge -n "__fish_seen_subcommand_from sessions" -l force -d "Delete even if session is locked"',
       'complete -c forge -n "__fish_seen_subcommand_from login" -l api-key -d "API key"',
@@ -341,7 +342,7 @@ export function shellCompletionScript(shell: string): string {
     '      case "$act" in',
     `        export) COMPREPLY=( $(compgen -W "--format --out --json" -- "$cur") ) ;;`,
     `        import) COMPREPLY=( $(compgen -W "--cwd --json" -- "$cur") ) ;;`,
-    `        prune) COMPREPLY=( $(compgen -W "--keep --max-age-days --json" -- "$cur") ) ;;`,
+    `        prune) COMPREPLY=( $(compgen -W "--keep --max-age-days --json --force-last-error" -- "$cur") ) ;;`,
     `        delete) COMPREPLY=( $(compgen -W "--json --force" -- "$cur") ) ;;`,
     `        show|path|fork|pin|unpin|title|rename) COMPREPLY=( $(compgen -W "--json" -- "$cur") ) ;;`,
     `        list) COMPREPLY=( $(compgen -W "--json --limit -n --cwd --query -q --pinned --errors" -- "$cur") ) ;;`,

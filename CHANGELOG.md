@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+### Changed
+
+- **Prune protects lastError sessions**: `pruneSessions` skips failed sessions by default so experts can inspect `/sessions errors` first; override with `--force-last-error` / `/sessions prune --force-last-error`. Reports `skippedLastError` / `deletedWithLastError`
+
+
 ## 0.9.8 — Recovery backlog filters + goal auto-title
 
 ### Added

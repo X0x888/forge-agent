@@ -2711,9 +2711,14 @@ case "/new":
           }
           keep = parsed ?? 50;
         }
+        const forceLastError =
+          parts.includes("--force-last-error") ||
+          parts.includes("--force-errors") ||
+          parts.includes("--include-errors");
         const result = pruneSessions({
           keep,
           protectIds: [opts.session.meta.id],
+          forceLastError,
         });
         const lockNote = result.skippedLocked
           ? `; skipped ${result.skippedLocked} foreign-locked`
@@ -2721,9 +2726,14 @@ case "/new":
         const pinNote = result.skippedPinned
           ? `; skipped ${result.skippedPinned} pinned`
           : "";
+        const errNote = result.skippedLastError
+          ? `; skipped ${result.skippedLastError} lastError (/sessions errors · prune --force-last-error)`
+          : result.deletedWithLastError
+            ? `; deleted ${result.deletedWithLastError} with lastError`
+            : "";
         return {
           handled: true,
-          output: `Pruned ${result.deleted.length} session(s); kept ${result.kept} (active protected${lockNote}${pinNote}). CLI: forge sessions prune --keep ${keep}`,
+          output: `Pruned ${result.deleted.length} session(s); kept ${result.kept} (active protected${lockNote}${pinNote}${errNote}). CLI: forge sessions prune --keep ${keep}`,
         };
       }
       // Default: same-cwd sessions (multi-project experts). /sessions all|global for everything.
