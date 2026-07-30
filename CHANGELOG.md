@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.9.38 — ask_user clarifying questions
+
 ### Added
 
 - **`ask_user` tool (OpenCode-inspired)**: interactive clarifying questions with optional multiple-choice; headless fails closed so agents state assumptions instead of blocking CI. Timeout via `FORGE_ASK_USER_TIMEOUT_MS` (default 5m).
