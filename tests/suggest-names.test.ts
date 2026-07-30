@@ -99,6 +99,8 @@ describe("doctor projectRulesCount / projectCommandsCount", () => {
       contextWindowExplicit: true,
     });
     assert.match(check.report, /context_window=50000|model default window|50%/i);
+    assert.equal(check.modelDefaultContextWindow, 500_000);
+    assert.ok((check.contextWindowRatio ?? 1) < 0.5);
   });
 
 });

@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Added
+
+- **Doctor JSON `modelDefaultContextWindow` / `contextWindowRatio`**: CI can assert window hygiene vs model-info defaults
+- **Clear `context_pressure` lastError after successful compact**: headroom recovery drops the stale banner
+
+
 ## 0.9.15 — Context-pressure lastError when compact cannot free headroom
 
 ### Added

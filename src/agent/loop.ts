@@ -618,6 +618,15 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
           }
         } else {
           skipThresholdCompactUntilCount = 0;
+          // Compact freed headroom — drop stale context_pressure banner
+          if (session.meta.lastError?.code === "context_pressure") {
+            try {
+              clearSessionLastError(session);
+              saveSession(session);
+            } catch {
+              /* */
+            }
+          }
         }
       }
 

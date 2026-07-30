@@ -3899,6 +3899,9 @@ Project instructions for Forge (and other coding agents).
               projectRulesCount: check.projectRulesCount ?? 0,
               projectCommandsCount: check.projectCommandsCount ?? 0,
               sessionsWithLastError: check.sessionsWithLastError ?? 0,
+              modelDefaultContextWindow:
+                check.modelDefaultContextWindow ?? null,
+              contextWindowRatio: check.contextWindowRatio ?? null,
               toolOutput,
               sandboxLog,
               metrics,

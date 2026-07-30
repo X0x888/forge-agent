@@ -3382,6 +3382,10 @@ export interface DoctorResult {
   projectCommandsCount?: number;
   /** Sessions with meta.lastError set (expert recovery backlog). */
   sessionsWithLastError?: number;
+  /** Known default context window for config.model (from model-info). */
+  modelDefaultContextWindow?: number | null;
+  /** config.contextWindow / modelDefault when known. */
+  contextWindowRatio?: number | null;
 }
 
 /**
@@ -3677,9 +3681,17 @@ export async function runDoctorCheck(
     `Context: window=${config.contextWindow} autoCompact@${Math.round((config.autoCompactThreshold || 0.8) * 100)}% maxTurns=${config.maxTurns > 0 ? config.maxTurns : "unlimited"}`,
   );
   // Expert tip: context_window far below the model's known default wastes headroom
+  let modelDefaultContextWindow: number | null = null;
+  let contextWindowRatio: number | null = null;
   try {
     const { modelContextWindow } = await import("../config/model-info.js");
     const known = modelContextWindow(config.model);
+    if (known) {
+      modelDefaultContextWindow = known;
+      if (config.contextWindow > 0) {
+        contextWindowRatio = Math.round((config.contextWindow / known) * 1000) / 1000;
+      }
+    }
     if (
       known &&
       config.contextWindow > 0 &&
@@ -3973,6 +3985,8 @@ export async function runDoctorCheck(
     projectRulesCount,
     projectCommandsCount,
     sessionsWithLastError,
+    modelDefaultContextWindow,
+    contextWindowRatio,
   };
 }
 
