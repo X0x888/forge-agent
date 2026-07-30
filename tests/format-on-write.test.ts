@@ -121,4 +121,19 @@ describe("format-on-write", () => {
     });
     assert.match(String(st2.output || ""), /off/i);
   });
+  it("effective config + doctor expose formatOnWrite", async () => {
+    process.env.FORGE_FORMAT_ON_WRITE = "1";
+    const { buildEffectiveConfigSnap, runDoctorCheck } = await import(
+      "../src/commands/slash.js"
+    );
+    const cfg = { ...DEFAULT_CONFIG, workspace: home };
+    const snap = buildEffectiveConfigSnap(cfg);
+    assert.equal(snap.formatOnWrite, true);
+    process.env.FORGE_FORMAT_ON_WRITE = "0";
+    const snap2 = buildEffectiveConfigSnap(cfg);
+    assert.equal(snap2.formatOnWrite, false);
+    const doc = await runDoctorCheck(cfg);
+    assert.equal(doc.formatOnWrite, false);
+    assert.match(doc.report, /format-on-write/i);
+  });
 });

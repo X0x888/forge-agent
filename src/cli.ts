@@ -3987,6 +3987,7 @@ Project instructions for Forge (and other coding agents).
               errorStreakThreshold,
               ulwMaxContinues,
               bellOnTurnEnd: isBellEnabled(),
+              formatOnWrite: check.formatOnWrite ?? false,
               autoResume:
                 process.env.FORGE_NO_AUTO_RESUME !== "1" &&
                 process.env.FORGE_NO_AUTO_RESUME !== "true",

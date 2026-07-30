@@ -77,6 +77,7 @@ import {
   parseCliNonNegInt,
 } from "../util/env.js";
 import { isBellEnabled } from "../util/attention.js";
+import { isFormatOnWriteEnabled } from "../agent/tools/format-on-write.js";
 import { forgeHome, inspectSecureFile } from "../util/fs.js";
 import { getForgeVersion } from "../util/version.js";
 import { formatWhatsNew } from "../util/changelog.js";
@@ -2130,9 +2131,6 @@ const result = rewindSessionDetailed(opts.session, n);
     case "/format": {
       // /format              → status
       // /format on|off|1|0   → persist preference (OpenCode-inspired format-on-write)
-      const { isFormatOnWriteEnabled } = await import(
-        "../agent/tools/format-on-write.js"
-      );
       const raw = (arg || "").trim().toLowerCase();
       if (!raw || raw === "status") {
         const on = isFormatOnWriteEnabled();
@@ -3463,6 +3461,8 @@ export interface DoctorResult {
   sessionsUntitled?: number;
   /** Total sessions scanned for inventory tips. */
   sessionsTotal?: number;
+  /** Effective format-on-write (env FORGE_FORMAT_ON_WRITE wins over preference). */
+  formatOnWrite?: boolean;
   /** Known default context window for config.model (from model-info). */
   modelDefaultContextWindow?: number | null;
   /** config.contextWindow / modelDefault when known. */
@@ -4116,6 +4116,25 @@ export async function runDoctorCheck(
     /* */
   }
 
+  // Format-on-write status (opt-in quality bar)
+  try {
+    if (isFormatOnWriteEnabled()) {
+      lines.push(
+        chalk.dim(
+          `  format-on-write: on  → prettier/biome/ruff after file tools · /format off to disable`,
+        ),
+      );
+    } else {
+      lines.push(
+        chalk.dim(
+          `  format-on-write: off · /format on · FORGE_FORMAT_ON_WRITE=1 (OpenCode-style)`,
+        ),
+      );
+    }
+  } catch {
+    /* */
+  }
+
   return {
     report: lines.join("\n"),
     issues: [...issues],
@@ -4129,6 +4148,7 @@ export async function runDoctorCheck(
     sessionsWithLastError,
     sessionsUntitled,
     sessionsTotal,
+    formatOnWrite: isFormatOnWriteEnabled(),
     modelDefaultContextWindow,
     contextWindowRatio,
     gitIsWorktree,
@@ -4176,6 +4196,8 @@ export interface EffectiveConfigSnap {
     turns: number;
     edits: number;
   } | null;
+  /** Effective format-on-write (env FORGE_FORMAT_ON_WRITE wins over preference). */
+  formatOnWrite: boolean;
   env: {
     FORGE_HOME: string;
     FORGE_BASH_TIMEOUT_MS: number;
@@ -4237,6 +4259,7 @@ export function buildEffectiveConfigSnap(
           edits: session.meta.editCount,
         }
       : null,
+    formatOnWrite: isFormatOnWriteEnabled(),
     env: {
       FORGE_HOME:
         process.env.FORGE_HOME || path.join(process.env.HOME || "", ".forge"),
@@ -4282,6 +4305,7 @@ export function formatEffectiveConfig(
     `  sandbox:         ${snap.sandbox}  network=${snap.sandboxNetwork}  missing=${snap.sandboxMissingBackend}`,
     `  read outside:    ${snap.readOutsideWorkspace}`,
     `  sticky provider: ${snap.stickyProvider ?? "(none)"}`,
+    `  format-on-write: ${snap.formatOnWrite ? "on" : "off"}  (/format · FORGE_FORMAT_ON_WRITE)`,
     `  blocking Stop:   ${snap.blockingStopHooks ? "on" : "OFF"}`,
     `  profile:         ${snap.promptProfile}`,
     `  context:         window=${snap.contextWindow} autoCompact@${Math.round((snap.autoCompactThreshold || 0.8) * 100)}% maxTurns=${snap.maxTurns > 0 ? snap.maxTurns : "unlimited"}`,

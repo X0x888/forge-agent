@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+### Added
+
+- **format-on-write on `/config` + doctor**: effective config snap + doctor report/JSON expose `formatOnWrite` (env wins)
+
+
 ## 0.9.32 — Format-on-write (opt-in)
 
 ### Added
