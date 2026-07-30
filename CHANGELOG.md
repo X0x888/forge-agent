@@ -8,7 +8,7 @@
 
 ### Added
 
-- **Session `lastError`**: provider/run failures stamp `meta.lastError` with code/message/tips; `/status`, resume orientation, `/share`, `sessions show`/`list` (ERR badge), and `forge status --json` surface recovery (`lastError` + `ERR:<code>` tag); `forge run --json` fail payloads include `lastError`; cleared on the next successful turn, `/clear`, and `/fork`. `/config` tips plan → `/build`
+- **Session `lastError`**: provider/run failures stamp `meta.lastError` with code/message/tips; `/status`, resume orientation, `/share`, `sessions show`/`list` (ERR badge), and `forge status` HUD/tmux/compact + `--json` surface recovery (`lastError` + `ERR:<code>` badge); `forge run --json` fail payloads include `lastError`; cleared on the next successful turn, `/clear`, and `/fork`. `/config` tips plan → `/build`
 
 ## 0.9.6 — Expert production UX (/plan·/build, project commands, recovery tips)
 

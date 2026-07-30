@@ -272,6 +272,15 @@ function renderSession(
   if (goal?.active) {
     l1.push(paint(c, "GOAL", "yellow"));
   }
+  if (snap.lastError?.message) {
+    l1.push(
+      paint(
+        c,
+        `ERR:${snap.lastError.code} ${snap.lastError.message.slice(0, 40)}`,
+        "yellow",
+      ),
+    );
+  }
   l1.push(liveGlyph(snap.liveness, c));
 
   // Line 2: context bar · duration · tokens · plan · todos
@@ -385,6 +394,9 @@ export function renderTmux(snap: StatusSnapshot | undefined): string {
     parts.push(c);
   }
   if (snap.tags.includes("PIN") || snap.pinned) parts.push("PIN");
+  if (snap.lastError?.code || snap.tags.some((t) => t.startsWith("ERR:"))) {
+    parts.push(`ERR:${snap.lastError?.code || "error"}`);
+  }
   if (snap.goal?.active) parts.push("GOAL");
   if (snap.plan?.percent != null) parts.push(`use:${snap.plan.percent}%`);
   else if (snap.plan?.remaining != null) {
@@ -433,6 +445,11 @@ export function renderCompactStrip(
     parts.push(paint(c, label, "magenta"));
   }
   if (snap.tags.includes("PIN") || snap.pinned) parts.push(paint(c, "PIN", "cyan"));
+  if (snap.lastError?.code || snap.tags.some((t) => t.startsWith("ERR:"))) {
+    parts.push(
+      paint(c, `ERR:${snap.lastError?.code || "error"}`, "yellow"),
+    );
+  }
   if (snap.lock && !snap.lock.mine && snap.lock.alive) {
     parts.push(paint(c, `LOCK:${snap.lock.pid}`, "yellow"));
   }

@@ -431,6 +431,9 @@ describe("statusline lastError snapshot", () => {
     const { setSessionLastError, saveSession } = await import(
       "../src/session/session.js"
     );
+    const { renderTmux, renderCompactStrip, renderHud } = await import(
+      "../src/statusline/render.js"
+    );
     const s = createSession({ cwd: tmp, provider: "xai", model: "m" });
     setSessionLastError(s, {
       code: "rate_limited",
@@ -443,6 +446,9 @@ describe("statusline lastError snapshot", () => {
     assert.equal(snap.lastError!.code, "rate_limited");
     assert.match(snap.lastError!.message, /429/);
     assert.ok(snap.tags.some((t) => t.startsWith("ERR:")));
+    assert.match(renderTmux(snap), /ERR:rate_limited/);
+    assert.match(renderCompactStrip(snap, { plain: true }), /ERR:rate_limited/);
+    assert.match(renderHud([snap], { plain: true, width: 120 }), /ERR:rate_limited/);
   });
 });
 
