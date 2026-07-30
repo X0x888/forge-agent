@@ -4044,7 +4044,14 @@ export async function runDoctorCheck(
     if (sessionsUntitled >= 5) {
       lines.push(
         chalk.dim(
-          `  untitled sessions: ${sessionsUntitled}/${sessionsTotal}  → /title · --title · /goal set auto-titles`,
+          `  untitled sessions: ${sessionsUntitled}/${sessionsTotal}  → /title · --title · /goal set auto-titles · /sessions untitled`,
+        ),
+      );
+    }
+    if (sessionsTotal >= 100) {
+      lines.push(
+        chalk.yellow(
+          `  ⚠ ${sessionsTotal} sessions on disk — consider forge sessions prune --keep 50 (lastError sessions kept unless --force-last-error)`,
         ),
       );
     }

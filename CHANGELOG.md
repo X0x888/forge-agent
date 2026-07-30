@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Added
+
+- **Doctor large inventory tip**: warn when ≥100 sessions on disk with prune guidance (lastError protect noted)
+- **Expert tip for empty_run**: forge tips cover empty headless run recovery
+
+
 ## 0.9.28 — CLI sessions list --untitled
 
 ### Added
