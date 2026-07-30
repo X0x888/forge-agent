@@ -1743,6 +1743,19 @@ async function prepareToolResult(opts: {
           );
         }
         content = `${content}\n\n${hit.message}`;
+        try {
+          setSessionLastError(session, {
+            code: "error_streak",
+            message: hit.message.split("\n")[0] || "error-streak",
+            tips: [
+              "Fix JSON args · re-read the tool schema",
+              "/retry  ·  change approach",
+            ],
+          });
+          saveSession(session);
+        } catch {
+          /* */
+        }
       }
     }
     return {
@@ -1859,6 +1872,19 @@ async function prepareToolResult(opts: {
           );
         }
         content = `${content}\n\n${hit.message}`;
+        try {
+          setSessionLastError(session, {
+            code: "error_streak",
+            message: hit.message.split("\n")[0] || "error-streak",
+            tips: [
+              "Re-read the real error · change tool/scope",
+              "/compact  ·  /retry  ·  /sessions errors",
+            ],
+          });
+          saveSession(session);
+        } catch {
+          /* */
+        }
       }
     } else if (!result.isError) {
       errorStreak.observeSuccess();

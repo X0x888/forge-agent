@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+### Changed
+
+- **Error-streak recovery tips**: circuit-breaker message covers plan-mode denials and path/context fixes; stamps `meta.lastError` code `error_streak` for /status and sessions errors
+
+
 ## 0.9.18 — Permission-timeout + doom-loop recovery tips
 
 ### Changed

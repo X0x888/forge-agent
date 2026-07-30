@@ -99,7 +99,9 @@ function buildErrorStreakMessage(count: number, recent: string[]): string {
     `1. Re-read the actual file/error output (do not guess paths).\n` +
     `2. Run the cheapest verification (typecheck/test) to learn the real failure.\n` +
     `3. Try a different tool or narrower scope — identical retries will keep failing.\n` +
-    `4. If blocked on missing credentials/external state, say so clearly instead of looping.`
+    `4. If blocked on missing credentials/external state, say so clearly instead of looping.\n` +
+    `5. If permission denied / plan mode, do not retry the same mutation — /build or change mode.\n` +
+    `6. If context/path errors dominate, /compact or fix the path typo (Did you mean?).`
   );
 }
 

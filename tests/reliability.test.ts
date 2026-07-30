@@ -768,6 +768,7 @@ describe("error-streak", () => {
     assert.ok(hit);
     assert.equal(hit!.count, 3);
     assert.match(hit!.message, /error-streak/i);
+    assert.match(hit!.message, /plan mode|\/build|\/compact|Did you mean/i);
     // Same streak does not re-fire until cool successes
     assert.equal(t.observeError("grep", "no hits"), null);
     t.observeSuccess();
