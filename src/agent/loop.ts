@@ -308,6 +308,7 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
       const detected = detectAutoGoal(userMessage);
       if (detected) {
         armGoal(session.meta.id, detected, "auto");
+        maybeSetTitle(session, detected);
         log.info(`Auto-armed /goal: ${detected.slice(0, 100)}`);
       }
     }

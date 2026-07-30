@@ -113,3 +113,33 @@ describe("goal harness", () => {
     assert.equal(loadGoal(sid3)?.status, "achieved");
   });
 });
+
+describe("goal arms session title when untitled", () => {
+  it("/goal set titles an untitled session", async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-goal-title-"));
+    process.env.FORGE_HOME = tmp;
+    const { createSession } = await import("../src/session/session.js");
+    const { handleSlash } = await import("../src/commands/slash.js");
+    const { DEFAULT_CONFIG } = await import("../src/config/types.js");
+    const { HookRunner } = await import("../src/harness/hooks.js");
+    const session = createSession({ cwd: tmp, provider: "xai", model: "m" });
+    assert.equal(session.meta.title, undefined);
+    const hooks = new HookRunner(DEFAULT_CONFIG, tmp);
+    const r = await handleSlash("/goal set harden the auth refresh path", {
+      session,
+      config: { ...DEFAULT_CONFIG, workspace: tmp },
+      hooks,
+    });
+    assert.equal(r.handled, true);
+    assert.ok(session.meta.title);
+    assert.match(session.meta.title!, /auth refresh|Harden/i);
+    // Does not overwrite existing title
+    session.meta.title = "keep-me";
+    await handleSlash("/goal set something else entirely", {
+      session,
+      config: { ...DEFAULT_CONFIG, workspace: tmp },
+      hooks,
+    });
+    assert.equal(session.meta.title, "keep-me");
+  });
+});

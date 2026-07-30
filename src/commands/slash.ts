@@ -40,6 +40,7 @@ import {
   estimateTokens,
   enterSessionPlanMode,
   exitSessionPlanMode,
+  maybeSetTitle,
 } from "../session/session.js";
 import {
   formatRestoreResult,
@@ -3205,6 +3206,8 @@ function handleGoal(arg: string, session: SessionData): SlashResult {
       }
       const g = armGoal(sid, restText, "manual");
       session.meta.ultrawork = true;
+      // Untitled sessions get a scannable title from the goal (experts scanning /sessions)
+      maybeSetTitle(session, restText);
       saveSession(session);
       return {
         handled: true,
@@ -3246,6 +3249,7 @@ function handleGoal(arg: string, session: SessionData): SlashResult {
       }
       const g = armGoal(sid, arg, "manual");
       session.meta.ultrawork = true;
+      maybeSetTitle(session, arg);
       saveSession(session);
       return {
         handled: true,

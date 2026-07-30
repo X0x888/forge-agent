@@ -70,6 +70,7 @@ import {
   listSessionLookupSuggestions,
   findRecentSessionForCwd,
   setSessionTitle,
+  maybeSetTitle,
   MAX_SESSION_TITLE_CHARS,
   setSessionPinned,
   formatResumeOrientation,
@@ -547,6 +548,7 @@ Docs: docs/PRODUCTION.md · docs/RELIABILITY.md · docs/ULW.md · forge news
       if (opts.goal) {
         armGoal(session.meta.id, String(opts.goal), "manual");
         session.meta.ultrawork = true;
+        maybeSetTitle(session, String(opts.goal));
         saveSession(session);
         if (!wantJson) {
           log.info("Goal armed:\n" + formatGoalStatus(loadGoal(session.meta.id)));
@@ -1048,7 +1050,11 @@ Docs: docs/PRODUCTION.md
           saveSession(session);
         }
       }
-      if (runOpts.goal) armGoal(session.meta.id, String(runOpts.goal), "manual");
+      if (runOpts.goal) {
+        armGoal(session.meta.id, String(runOpts.goal), "manual");
+        maybeSetTitle(session, String(runOpts.goal));
+        saveSession(session);
+      }
       const provider = createProvider(config, auth);
       const hooks = new HookRunner(config, session.meta.cwd);
       const result = await runHeadless({
