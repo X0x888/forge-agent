@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.9.30 — run --json productionWarnings large inventory
+
 ### Added
 
 - **`run --json productionWarnings` large inventory**: warn when ≥100 sessions on disk (parity with doctor; prune guidance)
