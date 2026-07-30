@@ -6035,6 +6035,23 @@ async function runHeadless(opts: {
     const durationMs = Date.now() - t0;
     const goal = loadGoal(opts.session.meta.id);
     const emptyRun = isEmptyRunResult(result);
+    if (emptyRun && !timedOut && !result.aborted) {
+      try {
+        const { setSessionLastError } = await import("./session/session.js");
+        setSessionLastError(opts.session, {
+          code: "empty_run",
+          message:
+            "Empty run: no model turns and no finalText — check auth/model or provider logs",
+          tips: [
+            "forge doctor  ·  forge auth  ·  check model id",
+            "forge logs  ·  raise --max-turns  ·  inspect sessionPath",
+          ],
+        });
+        saveSession(opts.session);
+      } catch {
+        /* */
+      }
+    }
     const payload = {
       // Align ok with CI exit codes: empty/no-turn runs are not success.
       ok: !result.aborted && !timedOut && !emptyRun,
