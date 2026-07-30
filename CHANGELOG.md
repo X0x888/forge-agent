@@ -2,10 +2,11 @@
 
 ## Unreleased
 
+## 0.9.31 — sessions list --json inventory summary
+
 ### Added
 
 - **`forge sessions list --json` inventory summary**: `sessionsTotal` / `sessionsUntitled` / `sessionsWithLastError` / `sessionsPinned` (global, unfiltered) for CI prune hygiene; human list footer when inventory is large
-
 
 ## 0.9.30 — run --json productionWarnings large inventory
 
