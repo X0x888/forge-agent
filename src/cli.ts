@@ -5790,6 +5790,9 @@ async function runHeadless(opts: {
         };
         })(),
         permissionMode: opts.config.permissionMode,
+        contextWindow: opts.config.contextWindow,
+        autoCompactThreshold: opts.config.autoCompactThreshold,
+        contextWindowExplicit: Boolean(opts.config.contextWindowExplicit),
         sandbox: opts.config.sandbox,
         sandboxNetwork: resolveSandboxNetwork(opts.config),
         sandboxMissingBackend: opts.config.sandboxMissingBackend ?? "fail-closed",
