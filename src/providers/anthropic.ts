@@ -175,6 +175,37 @@ export class AnthropicProvider implements LLMProvider {
     return { system: cachedSystem, tools: cachedTools };
   }
 
+  /**
+   * Rolling history breakpoint: mark the LAST message so the conversation
+   * prefix (not just system+tools) is served from cache on the next turn —
+   * the breakpoint walks forward one delta-write per turn (Claude Code
+   * style). Without this the growing history is re-billed at full input
+   * price every turn. 3 of Anthropic's 4 breakpoints used: system, tools,
+   * history.
+   */
+  private applyHistoryCacheBreakpoint(messages: unknown[]): unknown[] {
+    if (!promptCacheEnabled() || messages.length === 0) return messages;
+    const idx = messages.length - 1;
+    const last = messages[idx] as { role?: string; content?: unknown };
+    if (!last || typeof last !== "object") return messages;
+    const cc = { cache_control: { type: "ephemeral" } };
+    let content: unknown;
+    if (typeof last.content === "string") {
+      content = [{ type: "text", text: last.content, ...cc }];
+    } else if (Array.isArray(last.content) && last.content.length > 0) {
+      const blocks = [...last.content];
+      const tail = blocks[blocks.length - 1];
+      blocks[blocks.length - 1] =
+        tail && typeof tail === "object" ? { ...tail, ...cc } : tail;
+      content = blocks;
+    } else {
+      return messages;
+    }
+    const out = [...messages];
+    out[idx] = { ...last, content };
+    return out;
+  }
+
   private parseResponse(json: {
     id: string;
     model: string;
@@ -237,7 +268,7 @@ export class AnthropicProvider implements LLMProvider {
       max_tokens: req.max_tokens ?? 8192,
       temperature: req.temperature,
       system: cached.system,
-      messages,
+      messages: this.applyHistoryCacheBreakpoint(messages),
       tools: cached.tools,
       stream: false,
     };
@@ -277,7 +308,7 @@ export class AnthropicProvider implements LLMProvider {
       max_tokens: req.max_tokens ?? 8192,
       temperature: req.temperature,
       system: cached.system,
-      messages,
+      messages: this.applyHistoryCacheBreakpoint(messages),
       tools: cached.tools,
       stream: true,
     };
@@ -318,7 +349,12 @@ export class AnthropicProvider implements LLMProvider {
     if (merged.aborted) {
       onAbort();
       dispose();
-      throw new Error(signal?.aborted ? "Aborted" : "Aborted");
+      // Provider wall-clock timeout must NOT masquerade as a user abort —
+      // "Aborted" is non-retryable, a timeout is (parity with openai-compat).
+      if (signal?.aborted) throw new Error("Aborted");
+      throw new Error(
+        merged.reason instanceof Error ? merged.reason.message : "Aborted",
+      );
     }
     merged.addEventListener("abort", onAbort, { once: true });
 

@@ -389,6 +389,7 @@ export function renderTurnFooter(
     String(ctx.config.provider),
     turn.promptTokens,
     turn.completionTokens,
+    ctx.config.model,
   );
   const parts: string[] = [];
   parts.push(chalk.dim("──"));

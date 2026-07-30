@@ -15,6 +15,7 @@ import {
 } from "./types.js";
 import { applyPreferences, loadPreferences } from "./preferences.js";
 import { parseReasoningEffort } from "./reasoning.js";
+import { modelContextWindow } from "./model-info.js";
 import { normalizeProviderId } from "../util/provider-id.js";
 import {
   normalizePermissionMode,
@@ -415,6 +416,14 @@ export function loadConfig(overrides: Partial<ForgeConfig> = {}, cwd = process.c
   cfg = deepMerge(cfg as unknown as Record<string, unknown>, overrides as never) as unknown as ForgeConfig;
   cfg.workspace = cfg.workspace ? path.resolve(cfg.workspace) : cwd;
 
+  // Track whether context_window was explicitly chosen (file / project / CLI).
+  // When not explicit, the window follows the active model (see below).
+  cfg.contextWindowExplicit =
+    globalToml.contextWindow != null ||
+    globalJson.contextWindow != null ||
+    projectRaw.contextWindow != null ||
+    overrides.contextWindow != null;
+
   // Provider switched (CLI/env) without an explicit model → that provider's defaultModel
   // (avoid anthropic + stuck grok-4.5 from DEFAULT_CONFIG.model).
   if (!modelExplicit && cfg.provider && cfg.provider !== providerBaseline) {
@@ -445,6 +454,13 @@ export function loadConfig(overrides: Partial<ForgeConfig> = {}, cwd = process.c
     const e = parseReasoningEffort(String(cfg.reasoningEffort));
     cfg.reasoningEffort = e ?? undefined;
   }
+  // Per-model context window unless the user pinned context_window: a stale
+  // 500k budget on a 131k/256k model means the provider rejects overflow long
+  // before auto-compact would fire.
+  if (!cfg.contextWindowExplicit) {
+    const win = modelContextWindow(cfg.model);
+    if (win) cfg.contextWindow = win;
+  }
   return cfg;
 }
 
@@ -457,7 +473,7 @@ model = "grok-4.5"
 # low | medium | high  (only sent for models that support it, e.g. grok-4.5)
 reasoning_effort = "high"
 temperature = 0.2
-max_tokens = 8192
+max_tokens = 16384
 max_turns = 0                 # 0 = unlimited; set e.g. 200 to cap agent turns
 permission_mode = "default"  # default | acceptEdits | plan | bypassPermissions | dontAsk
 
@@ -478,6 +494,8 @@ compat_cursor_hooks = true
 
 # Context: auto-compact when estimated tokens exceed this fraction of context_window
 # auto_compact_threshold = 0.85
+# context_window defaults to the active model's real window (grok-4.5=500k,
+# grok-4=256k, claude-*=200k, gpt-4.1=1M …) — set explicitly to pin one value:
 # context_window = 500000
 
 [goal]

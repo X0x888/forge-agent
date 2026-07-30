@@ -189,6 +189,10 @@ function runRaw(
     let stderr = "";
     let settled = false;
     let timedOut = false;
+    // Mirror the execAsync fallback's maxBuffer (4MB): a runaway `yes` or a
+    // log-spewing build must not OOM the CLI before the wall-clock timeout.
+    const OUTPUT_CAP = 4 * 1024 * 1024;
+    let outputCapped = false;
     const finish = (result: {
       stdout: string;
       stderr: string;
@@ -224,10 +228,22 @@ function runRaw(
     };
     opts.signal?.addEventListener("abort", onAbort, { once: true });
     child.stdout?.on("data", (d) => {
+      if (outputCapped) return;
       stdout += d.toString();
+      if (stdout.length > OUTPUT_CAP) {
+        stdout = stdout.slice(0, OUTPUT_CAP);
+        outputCapped = true;
+        killChild();
+      }
     });
     child.stderr?.on("data", (d) => {
+      if (outputCapped) return;
       stderr += d.toString();
+      if (stderr.length > OUTPUT_CAP) {
+        stderr = stderr.slice(0, OUTPUT_CAP);
+        outputCapped = true;
+        killChild();
+      }
     });
     child.on("error", (err) => {
       finish({
@@ -239,6 +255,15 @@ function runRaw(
     child.on("close", (code) => {
       if (opts.signal?.aborted) {
         finish({ stdout, stderr, code: 130 });
+        return;
+      }
+      if (outputCapped) {
+        const note = `Output exceeded ${OUTPUT_CAP} bytes — killed (re-run with a narrower command or redirect to a file)`;
+        finish({
+          stdout,
+          stderr: stderr ? `${stderr}\n${note}` : note,
+          code: code ?? 1,
+        });
         return;
       }
       if (timedOut) {

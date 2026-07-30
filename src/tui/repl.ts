@@ -1,6 +1,7 @@
 import readline from "node:readline";
 import chalk from "chalk";
 import type { ForgeConfig } from "../config/types.js";
+import { modelContextWindow } from "../config/model-info.js";
 import type { LLMProvider } from "../providers/types.js";
 import type { SessionData } from "../session/session.js";
 import { HookRunner } from "../harness/hooks.js";
@@ -364,6 +365,24 @@ export async function runRepl(opts: {
       hooks = new HookRunner(config, session.meta.cwd);
       const a = resolveAuth(config);
       if (a) {
+        // Auth may fall back to another provider (expired xAI, only OpenAI
+        // key left) — realign provider + model or the next call 404s on a
+        // grok-4.5 id against a non-xAI endpoint. Mirrors cli.ts startup.
+        if (a.provider !== config.provider) {
+          config.provider = a.provider;
+          const catalog = config.providers[a.provider]?.models ?? [];
+          if (!catalog.includes(config.model)) {
+            config.model =
+              config.providers[a.provider]?.defaultModel || config.model;
+          }
+          if (!config.contextWindowExplicit) {
+            const win = modelContextWindow(config.model);
+            if (win) config.contextWindow = win;
+          }
+          log.dim(
+            `Provider realigned to ${a.provider} (model ${config.model}) after auth fallback`,
+          );
+        }
         auth = a;
         provider = createProvider(config, auth);
       }

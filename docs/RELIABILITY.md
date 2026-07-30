@@ -6,16 +6,18 @@ What experts should expect from Forge in long, unattended, or CI runs.
 
 | Behavior | Detail |
 |---|---|
-| **Retry-After** | `429` / `5xx` honor `Retry-After` and `retry-after-ms` (capped at 2 min) |
+| **Retry-After** | `429` / `5xx` honor `Retry-After` and `retry-after-ms` (capped at 2 min; the server hint wins over the client backoff cap so sustained limiting does not burn the retry budget) |
 | **Context overflow** | Detected across vendors (incl. xAI `maximum prompt length`); not retried with the same payload; progressive prune + compact (keep 8→4→2) then re-issue |
+| **Per-model context window** | Unless `context_window` is set explicitly, the window follows the active model (`config/model-info.ts`: grok-4.5=500k, grok-4=256k, grok-3=131k, claude-*=200k, gpt-4.1=1M …) on load, `/model`, and provider fallback — a stale 500k budget no longer overflows smaller models |
 | **Token estimate** | Conservative (~3.2 chars/token + per-message framing + tool-schema overhead) so auto-compact fires before the hard API max |
 | **Headroom compact** | Also compacts when estimate exceeds 92% of `context_window`, not only `auto_compact_threshold` |
 | **ULW after overflow** | Re-admits mandate/cycle after recovery so long tool-only waves do not die with `cycle=1 wave=0` and no resume guidance |
 | **Compact thrash guard** | Threshold compact that does not shrink history is not repeated until the message list grows |
 | **Structured errors** | `ProviderApiError` carries status + headers; retry classifier uses them |
 | **Abortable streams** | `AbortSignal` cancels `fetch` and releases the SSE reader (Ctrl+C works mid-token) |
-| **Provider timeout** | Default 5 min wall clock (`FORGE_PROVIDER_TIMEOUT_MS`); timeout is retryable, user abort is not |
-| **Stream usage** | OpenAI-compat requests set `stream_options.include_usage` so `/cost` is accurate |
+| **Provider timeout** | Default 10 min wall clock (`FORGE_PROVIDER_TIMEOUT_MS`) — grok-4.5 high-effort thinking + near-max outputs exceed 5 min; timeout is retryable, user abort is not |
+| **Prompt-cache stability** | System prompt (message[0]) carries only stable git state (root/remote); the volatile branch line is admitted append-only via context-admit, so everyday edits no longer invalidate the server-side prompt cache (xAI cached input ≈ 4× cheaper) |
+| **Stream usage** | OpenAI-compat requests set `stream_options.include_usage` so `/cost` is accurate; `prompt_tokens_details.cached_tokens` is surfaced as `cache_read_input_tokens` |
 | **Tool name merge** | Streamed names that re-send full chunks do not become `bashbash` |
 | **Empty choices** | Non-stream responses with no choices throw a clear error |
 | **Empty / error SSE** | Mid-stream `error` events throw; fully empty streams (no content/tools/finish) throw as retryable dropped-connection |
@@ -33,7 +35,7 @@ What experts should expect from Forge in long, unattended, or CI runs.
 | **Error-streak** | N consecutive tool errors (any args) injects a circuit-breaker nudge (Grok-inspired; default N=5, override `FORGE_ERROR_STREAK_THRESHOLD`); permission/hard denies do not count |
 | **Stale tool-result clearing** | Proactive microcompaction (Anthropic `clear_tool_uses` pattern): tool outputs older than the hot tail (default 16 non-system msgs) and bulkier than 1200 chars are replaced by restorable stubs (tool name + size + saved-output path when present); runs at most every `FORGE_TOOL_CLEAR_EVERY_TURNS` (6) and only when it frees ≥ `FORGE_TOOL_CLEAR_MIN_STALE_BYTES` (24k); `FORGE_TOOL_CLEAR=0` disables |
 | **Adaptive effort** | Hard-round signals (doom-loop, error-streak, missing ULW wave proof / weak attestation) raise `reasoning_effort` one notch for the next turn only — escalate on failure, not by default; `FORGE_ADAPTIVE_EFFORT=0` disables; no-op for models without effort support |
-| **Anthropic prompt caching** | `cache_control` breakpoints on the system prompt and the last tool definition (stable prefix); usage reports `cache_read_input_tokens` / `cache_creation_input_tokens`; `FORGE_ANTHROPIC_CACHE=0` restores legacy body shape |
+| **Anthropic prompt caching** | `cache_control` breakpoints on the system prompt, the last tool definition, and a rolling breakpoint on the newest message so conversation history is cache-read (not re-billed) every turn; usage reports `cache_read_input_tokens` / `cache_creation_input_tokens`; `FORGE_ANTHROPIC_CACHE=0` restores legacy body shape |
 | **ULW wave ledger** | Per-wave facts (`editDelta`, `proof`, summary) in `ulw.json` drive the quality bar: best-wave anchoring, proof demands (cap 2), thin-wave escalation, 4th-wave consolidation cadence, diminishing-returns advisory, and one-time evidence bounce on weak `**Cycle complete.**` attestations (never an infinite trap) |
 | **Atomic file writes** | `write_file` / `search_replace` / `apply_patch` write via tmp+rename |
 | **Edit miss guidance** | `search_replace` failures on existing files suggest closest lines + block-drift notes (not path typos); multi-match lists line numbers |
@@ -59,7 +61,7 @@ What experts should expect from Forge in long, unattended, or CI runs.
 | **Multi-account failover** | Same-provider accounts: proactive switch on high plan usage / cooldown / dead token; reactive switch on 429/quota; post-switch OAuth refresh; cap via `FORGE_ACCOUNT_SWITCH_MAX` (default 3); stale plan probes (>6h) ignored |
 | **Multi-account UX** | `forge accounts status` / `/accounts status` readiness; `clear-cooldown`; doctor surfaces eligible/cooldown; REPL `/accounts switch` hot-swaps live provider token |
 | **Sensitive JSON mode** | `auth.json`, `permissions.json`, `preferences.json` written `0600`; `/doctor` flags group/world-readable files; `forge doctor --json` exposes structured `secureFiles` (`exists` / `mode` / `modeOk`) and sets `ok: false` when any `modeOk` is false |
-| **Session lock** | REPL and `forge run` acquire `session.lock`; headless **fails closed** on a foreign live lock (exit 1) unless `FORGE_FORCE_SESSION_LOCK=1`; REPL still warns and continues; steal only dead pids or parseable age past TTL; corrupt lock JSON / invalid pid treated as absent; live pid + invalid `acquiredAt` is still held |
+| **Session lock** | REPL and `forge run` acquire `session.lock` via atomic create (`wx` — no two-process read-then-write race); headless **fails closed** on a foreign live lock (exit 1) unless `FORGE_FORCE_SESSION_LOCK=1`; REPL still warns and continues; steal only dead pids (`EPERM` counts as alive) or parseable age past TTL; corrupt lock JSON / invalid pid treated as absent; live pid + invalid `acquiredAt` is still held |
 | **Atomic session write** | `session.json` written via tmp+rename; load recovers newest leftover tmp after crash |
 | **JSON store isolation** | `readJsonFile` clones object fallbacks; auth + always-allow stores never share mutable empty constants |
 | **Session fork/export/import** | `forge sessions fork\|export\|import\|show` and `/fork` / `/export [--json]` for expert branching & artifacts; export files written mode `0600`; import rejects bad roles; load soft-sanitizes corrupt on-disk messages, heals orphan tool_call pairs, and **re-saves** when healed only if no foreign live lock; **fork copies** mutation journal + **ULW/goal** sidecars so mid-ULW branches keep the driver; `listSessions({cwd,query,limit})` filters before limit (CLI `--cwd`/`-q` or bare `forge sessions <query>`, `/sessions` same-cwd default); corrupt dirs skipped (doctor/`/sessions` never throw) |
@@ -90,7 +92,7 @@ What experts should expect from Forge in long, unattended, or CI runs.
 | **Session preflight hygiene** | Bare `--session`/`--continue` resolve before auth for structured reasons, but never apply `--title` until authenticated |
 | **`forge news` newest-first** | Long release sections show bullets from the top of the active `###` (prepend convention) |
 | **Empty CLI flags** | Empty `--cwd`/`--title`/`--goal`/`--query`/`--deny`/`--allow`/`--ask`, `logout -p ''`, and `status --cwd ''` fail closed with structured `invalid_*` (never silent no-ops that clear all creds or list everything) |
-| **Blocking Stop timeout** | Stop/SubagentStop hook timeout/error fails closed when `blockingStopHooks` is on |
+| **Blocking Stop fail-closed** | Stop/SubagentStop hook timeout, spawn error, non-zero/signal exit, and HTTP hook failure all fail closed (agent keeps working) when `blockingStopHooks` is on; hook stdin EPIPE cannot crash the CLI; hook payload `toolOutput`/`lastAssistantMessage` capped at 20k chars |
 | **Sandbox/provider aliases** | `readonly`/`ro`→`read-only`; `claude`→`anthropic`, `gpt`→`openai`, `gemini`→`google` |
 | **Provider switch → default model** | `-p` / `FORGE_PROVIDER` without `-m` / `FORGE_MODEL` selects that provider's `defaultModel` |
 | **Doctor `modelInCatalog`** | `doctor --json` includes whether model is in the provider catalog (soft signal; free-form still ok) |
@@ -110,7 +112,9 @@ What experts should expect from Forge in long, unattended, or CI runs.
 | **Bash file:// deny** | `curl`/`wget` `file://` local fetches hard-denied (use `read_file`) |
 | **Bash IMDS deny** | `curl`/`wget`/python/node one-liners to link-local cloud metadata (`169.254.169.254`, `fd00:ec2::254`, `metadata.google.internal`) hard-denied |
 | **Web tool abort** | `web_fetch` / `web_search` merge turn signal + timeout so Ctrl+C / `FORGE_MAX_RUN_MS` cancel in-flight HTTP; bodies stream-capped (`web_fetch` 5 MiB, search HTML 2 MiB) so missing Content-Length cannot OOM |
-| **grep abort** | `grep` honors turn `AbortSignal` (kills `rg` / stops JS fallback) |
+| **Child output caps** | Sandboxed and `profile=off` bash cap accumulated stdout/stderr at 4 MB then kill (mirrors the exec fallback `maxBuffer`); `grep` (rg) caps at 4 MB — a runaway `yes` / log-spewing build cannot OOM the CLI |
+| **read_file streaming** | Files > 2 MB are read via a chunked window (offset/limit) with long-line guards and a 1M-char collect cap — multi-GB logs no longer load whole into memory |
+| **grep abort** | `grep` honors turn `AbortSignal` (kills `rg` / stops JS fallback); rg path resolved once per process |
 | **Abort hygiene** | Cooperative `Aborted` tool results do not count toward error-streak; loop asserts abort immediately after tool batches |
 | **Background task teardown** | REPL exit and headless `forge run` end force-kill in-process `background=true` shells; `beforeExit`/`exit` safety net; SessionEnd runs before kill so hooks can observe tasks |
 | **Parallel reads** | Up to 8 consecutive read-only tools run in parallel; results stay ordered |
@@ -119,7 +123,7 @@ What experts should expect from Forge in long, unattended, or CI runs.
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `FORGE_PROVIDER_TIMEOUT_MS` | `5m` / `300000` | Provider fetch/stream wall clock (ms or `5m`) |
+| `FORGE_PROVIDER_TIMEOUT_MS` | `10m` / `600000` | Provider fetch/stream wall clock (ms or `5m`); raise for very long high-effort generations |
 | `FORGE_BASH_TIMEOUT_MS (ms or 90s/2m)` | `120000` | Default foreground `bash` timeout (min 5s, max 30m) |
 | `FORGE_BASH_BG_TIMEOUT_MS` | `1800000` | Default background task timeout (min 30s, max 6h) |
 | `FORGE_MAX_RUN_MS` | off | Headless `forge run` wall-clock cap (ms or `30m`; exit 124) |

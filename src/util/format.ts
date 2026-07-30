@@ -146,16 +146,34 @@ export function estimateCostUsd(
   provider: string,
   promptTokens: number,
   completionTokens: number,
+  model?: string,
 ): number {
-  // Very rough mid-tier averages ($/1M tokens) — HUD/cost estimates only
+  // Provider mid-tier averages ($/1M tokens) — HUD/cost estimates only.
   const rates: Record<string, { in: number; out: number }> = {
-    xai: { in: 3, out: 15 },
+    xai: { in: 2, out: 6 }, // grok-4.5 (daily default)
     anthropic: { in: 3, out: 15 },
     openai: { in: 2.5, out: 10 },
     openrouter: { in: 3, out: 15 },
     google: { in: 1.25, out: 10 },
   };
-  const r = rates[provider] || { in: 3, out: 12 };
+  // Per-model overrides where they differ from the provider average.
+  // xAI cached input (~$0.50/M) is not modeled — estimates skew high on
+  // cache-heavy sessions, which is the safe direction for a HUD.
+  const modelRates: Record<string, { in: number; out: number }> = {
+    "grok-4.5": { in: 2, out: 6 },
+    "grok-4": { in: 3, out: 15 },
+    "grok-3": { in: 3, out: 15 },
+    "grok-3-mini": { in: 0.3, out: 0.5 },
+  };
+  const mk = model
+    ? (model.includes("/") ? model.split("/").pop()! : model)
+        .trim()
+        .toLowerCase()
+        .replace(/-latest$/, "")
+    : "";
+  const r =
+    (mk ? modelRates[mk] : undefined) ||
+    rates[provider] || { in: 3, out: 12 };
   return (promptTokens * r.in + completionTokens * r.out) / 1_000_000;
 }
 

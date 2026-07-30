@@ -73,15 +73,19 @@ async function fetchXaiCredits(
           "User-Agent": "forge-statusline/0.3",
           Accept: "application/json",
         },
-        signal: AbortSignal.timeout(8_000),
+        signal: AbortSignal.timeout(4_000),
       },
     );
     if (!resp.ok) {
-      return {
+      // Negative-cache: a down/blocked billing endpoint must not cost the
+      // full timeout on every probe (forge status with N sessions).
+      const note: PlanUsageInfo = {
         source: "xai:billing",
         note: `billing HTTP ${resp.status}`,
         product: "SuperGrok",
       };
+      writeCache(cacheKey, note);
+      return note;
     }
     const data = (await resp.json()) as Record<string, unknown>;
     // Flexible parsing — Grok billing shapes evolve
@@ -113,11 +117,13 @@ async function fetchXaiCredits(
     writeCache(cacheKey, plan);
     return plan;
   } catch (err) {
-    return {
+    const note: PlanUsageInfo = {
       source: "xai:billing",
       note: `billing unavailable (${(err as Error).message?.slice(0, 60) || "error"})`,
       product: "SuperGrok",
     };
+    writeCache(cacheKey, note);
+    return note;
   }
 }
 

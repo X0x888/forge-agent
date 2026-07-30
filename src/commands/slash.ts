@@ -105,6 +105,7 @@ import {
   formatTokens,
   formatRelativeTime,
 } from "../util/format.js";
+import { modelContextWindow } from "../config/model-info.js";
 import chalk from "chalk";
 import fs from "node:fs";
 import path from "node:path";
@@ -983,6 +984,7 @@ export async function handleSlash(
         String(opts.config.provider),
         opts.session.meta.totalPromptTokens,
         opts.session.meta.totalCompletionTokens,
+        opts.config.model,
       );
       return {
         handled: true,
@@ -1001,6 +1003,7 @@ export async function handleSlash(
         String(opts.config.provider),
         opts.session.meta.totalPromptTokens,
         opts.session.meta.totalCompletionTokens,
+        opts.config.model,
       );
       return {
         handled: true,
@@ -1057,6 +1060,7 @@ const stats = collectUsageStats({
         String(opts.config.provider),
         opts.session.meta.totalPromptTokens,
         opts.session.meta.totalCompletionTokens,
+        opts.config.model,
       );
       return {
         handled: true,
@@ -1352,6 +1356,18 @@ const stats = collectUsageStats({
       opts.config.model = resolved;
       opts.session.meta.model = resolved;
 
+      // Keep the context window in step with the model unless the user pinned
+      // context_window — a stale 500k budget on a 131k/256k model overflows at
+      // the provider long before auto-compact would fire.
+      let windowNote = "";
+      if (!opts.config.contextWindowExplicit) {
+        const win = modelContextWindow(resolved);
+        if (win && win !== opts.config.contextWindow) {
+          opts.config.contextWindow = win;
+          windowNote = ` · ctx ${formatTokens(win)}`;
+        }
+      }
+
       let effortNote = "";
       if (effortArg) {
         const e = parseReasoningEffort(effortArg);
@@ -1404,7 +1420,7 @@ const stats = collectUsageStats({
       saveSession(opts.session);
       return {
         handled: true,
-        output: `Model set to ${resolved}${effortNote} (saved for future sessions)`,
+        output: `Model set to ${resolved}${effortNote}${windowNote} (saved for future sessions)`,
         session: opts.session,
       };
     }

@@ -130,7 +130,9 @@ function buildTokens(session: SessionData, provider: string): TokenUsageInfo {
   const completion = session.meta.totalCompletionTokens || 0;
   const total = prompt + completion;
   const estimatedUsd =
-    total > 0 ? estimateCostUsd(provider, prompt, completion) : undefined;
+    total > 0
+      ? estimateCostUsd(provider, prompt, completion, session.meta.model)
+      : undefined;
   return {
     promptTokens: prompt,
     completionTokens: completion,
@@ -330,20 +332,28 @@ export async function collectSnapshots(
       accountCount: sameProvider ? accountCount : undefined,
       permissionMode: config.permissionMode,
     });
-
-    if (opts.fetchPlan !== false) {
-      try {
-        snap.plan = await collectPlanUsage({
-          provider: s.meta.provider,
-          authMethod: snap.authMethod,
-          accountId:
-            auth && auth.provider === s.meta.provider ? accountId : undefined,
-        });
-      } catch {
-        /* plan optional */
-      }
-    }
     snaps.push(snap);
+  }
+
+  // Plan probes are network calls (cached, short timeout) — run them in
+  // parallel: serial awaits made `forge status` cost N × timeout when the
+  // billing endpoint was down.
+  if (opts.fetchPlan !== false) {
+    await Promise.all(
+      snaps.map(async (snap, i) => {
+        const s = sessions[i]!;
+        const sameProvider = Boolean(auth && auth.provider === s.meta.provider);
+        try {
+          snap.plan = await collectPlanUsage({
+            provider: s.meta.provider,
+            authMethod: snap.authMethod,
+            accountId: sameProvider ? accountId : undefined,
+          });
+        } catch {
+          /* plan optional */
+        }
+      }),
+    );
   }
 
   return snaps;

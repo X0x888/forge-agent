@@ -34,8 +34,15 @@ function pidAlive(pid: number): boolean {
   try {
     process.kill(pid, 0);
     return true;
-  } catch {
-    return false;
+  } catch (err) {
+    // EPERM = process exists but owned by another user — still ALIVE for
+    // lock-stealing purposes (treating it as dead made foreign-user locks
+    // stealable).
+    return (
+      typeof err === "object" &&
+      err !== null &&
+      (err as NodeJS.ErrnoException).code === "EPERM"
+    );
   }
 }
 
@@ -82,54 +89,83 @@ export function acquireSessionLock(
 ): AcquireLockResult {
   ensureDir(sessionDir(sessionId));
   const file = lockPath(sessionId);
-  const ttl = opts?.ttlMs ?? DEFAULT_TTL_MS;
-  const existing = readSessionLock(sessionId);
 
-  if (existing) {
-    const acquiredMs = Date.parse(existing.acquiredAt || "");
-    const ageKnown = Number.isFinite(acquiredMs);
-    const age = ageKnown ? Date.now() - acquiredMs : NaN;
-    const alive = pidAlive(existing.pid);
-    const mine = existing.pid === process.pid;
-    if (mine) {
-      // Refresh timestamp (multi-day runs must keep acquiredAt fresh)
+  // Bounded: normally one pass; a lost create-race re-reads once. A corrupt
+  // file reads as "no lock" yet still exists (EEXIST), so never loop on it.
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const existing = readSessionLock(sessionId);
+
+    if (existing) {
+      const alive = pidAlive(existing.pid);
+      const mine = existing.pid === process.pid;
+      if (mine) {
+        // Refresh timestamp (multi-day runs must keep acquiredAt fresh)
+        writeLock(sessionId);
+        return { ok: true, owned: true };
+      }
+      // Live foreign pid: NEVER TTL-steal (multi-day ULW would lose exclusivity
+      // after 2h and race session.json). Only dead pid (or force) is stealable.
+      if (alive && !opts?.force) {
+        return {
+          ok: false,
+          owned: false,
+          holder: existing,
+          reason: `session locked by live pid ${existing.pid} on ${existing.hostname} since ${existing.acquiredAt || "unknown"}`,
+        };
+      }
+      // Dead pid (or force): steal.
       writeLock(sessionId);
-      return { ok: true, owned: true };
-    }
-    // Live foreign pid: NEVER TTL-steal (multi-day ULW would lose exclusivity
-    // after 2h and race session.json). Only dead pid (or force) is stealable.
-    if (alive && !opts?.force) {
       return {
-        ok: false,
-        owned: false,
+        ok: true,
+        owned: true,
+        stolen: true,
         holder: existing,
-        reason: `session locked by live pid ${existing.pid} on ${existing.hostname} since ${existing.acquiredAt || "unknown"}`,
+        reason: alive
+          ? `force-stole lock from live pid ${existing.pid}`
+          : `stole stale lock from dead pid ${existing.pid}`,
       };
     }
-    // Dead pid (or force): steal.
-    writeLock(sessionId);
-    return {
-      ok: true,
-      owned: true,
-      stolen: true,
-      holder: existing,
-      reason: alive
-        ? `force-stole lock from live pid ${existing.pid}`
-        : `stole stale lock from dead pid ${existing.pid}`,
-    };
+
+    // No lock on disk: create ATOMICALLY (wx). The previous read→write
+    // sequence was TOCTOU — two Forge processes started together both read
+    // "no lock" and both acquired, thrashing the same session.json.
+    try {
+      const fd = fs.openSync(file, "wx", 0o600);
+      try {
+        fs.writeFileSync(fd, JSON.stringify(lockInfo(sessionId), null, 2) + "\n");
+      } finally {
+        fs.closeSync(fd);
+      }
+      return { ok: true, owned: true };
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
+      // Lost the create race (or a corrupt file blocks creation) — loop once
+      // to re-read; fall through to corrupt-steal if it still fails.
+    }
   }
 
+  // Corrupt / unreadable lock that reads as absent but blocks creation:
+  // recover by overwriting (same as the pre-atomic behavior).
   writeLock(sessionId);
-  return { ok: true, owned: true };
+  return {
+    ok: true,
+    owned: true,
+    stolen: true,
+    reason: "stole corrupt/unreadable lock file",
+  };
 }
 
-function writeLock(sessionId: string): void {
-  const info: SessionLockInfo = {
+function lockInfo(sessionId: string): SessionLockInfo {
+  return {
     pid: process.pid,
     hostname: os.hostname(),
     acquiredAt: nowIso(),
     sessionId,
   };
+}
+
+function writeLock(sessionId: string): void {
+  const info = lockInfo(sessionId);
   const file = lockPath(sessionId);
   const tmp = `${file}.${process.pid}.tmp`;
   fs.writeFileSync(tmp, JSON.stringify(info, null, 2) + "\n", { mode: 0o600 });

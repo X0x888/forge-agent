@@ -10,19 +10,25 @@ import { boundToolOutput } from "./truncate.js";
 import { isTruthy } from "../../util/bool.js";
 import { numberFieldError } from "./arg-types.js";
 
+// Resolved once per process — PATH scanning is a dozen+ sync FS calls.
+let rgPathCache: string | null | undefined;
+
 function findRg(): string | null {
+  if (rgPathCache !== undefined) return rgPathCache;
   const paths = (process.env.PATH || "").split(path.delimiter);
   for (const p of paths) {
     for (const name of process.platform === "win32" ? ["rg.exe", "rg"] : ["rg"]) {
       const full = path.join(p, name);
       try {
         fs.accessSync(full, fs.constants.X_OK);
+        rgPathCache = full;
         return full;
       } catch {
         /* */
       }
     }
   }
+  rgPathCache = null;
   return null;
 }
 
@@ -83,6 +89,10 @@ function runRg(
     let stdout = "";
     let stderr = "";
     let settled = false;
+    // head_limit:0 (unlimited) with a broad pattern must not stream the whole
+    // match set into one JS string — cap and kill instead.
+    const OUTPUT_CAP = 4 * 1024 * 1024;
+    let outputCapped = false;
     const finish = (result: {
       stdout: string;
       stderr: string;
@@ -94,7 +104,7 @@ function runRg(
       signal?.removeEventListener("abort", onAbort);
       resolve(result);
     };
-    const onAbort = () => {
+    const killChild = () => {
       try {
         child.kill("SIGTERM");
         setTimeout(() => {
@@ -107,19 +117,38 @@ function runRg(
       } catch {
         /* */
       }
+    };
+    const onAbort = () => {
+      killChild();
       finish({ stdout, stderr: "Aborted", code: 1, aborted: true });
     };
     signal?.addEventListener("abort", onAbort, { once: true });
     child.stdout?.on("data", (d) => {
+      if (outputCapped) return;
       stdout += d.toString();
+      if (stdout.length > OUTPUT_CAP) {
+        stdout = stdout.slice(0, OUTPUT_CAP);
+        outputCapped = true;
+        killChild();
+      }
     });
     child.stderr?.on("data", (d) => {
-      stderr += d.toString();
+      if (stderr.length < OUTPUT_CAP) stderr += d.toString();
     });
     child.on("error", (err) => {
       finish({ stdout, stderr: err.message, code: 1 });
     });
     child.on("close", (code) => {
+      if (outputCapped) {
+        finish({
+          stdout,
+          stderr:
+            (stderr ? stderr + "\n" : "") +
+            `grep output exceeded ${OUTPUT_CAP} bytes — truncated; narrow the pattern/path or set a head_limit`,
+          code: code ?? 1,
+        });
+        return;
+      }
       finish({ stdout, stderr, code });
     });
   });

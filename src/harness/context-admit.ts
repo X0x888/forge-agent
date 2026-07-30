@@ -11,6 +11,10 @@ import type { GoalState } from "./goal.js";
 import type { UlwCycleState } from "./ulw-cycle.js";
 import type { TodoItem } from "../session/session.js";
 import { formatUlwCounts } from "./ulw-cycle.js";
+import {
+  formatGitBranchLine,
+  type GitSnapshot,
+} from "../util/git-context.js";
 
 export interface HarnessSnapshot {
   ulwEnabled: boolean;
@@ -26,6 +30,12 @@ export interface HarnessSnapshot {
   goalPaused: boolean;
   openTodos: number;
   permissionMode: string;
+  /**
+   * Volatile git branch line (e.g. "Branch: main → origin/main"). Lives here
+   * instead of the system prompt so branch switches don't rewrite message[0]
+   * and invalidate the provider prompt cache. "" when not a git repo.
+   */
+  gitBranch?: string;
 }
 
 const lastAdmitted = new Map<string, string>();
@@ -36,6 +46,7 @@ export function snapshotHarness(opts: {
   goal: GoalState | null | undefined;
   todos: TodoItem[];
   permissionMode: string;
+  git?: GitSnapshot | null;
 }): HarnessSnapshot {
   const ulw = opts.ulw?.enabled ? opts.ulw : null;
   const goal =
@@ -62,6 +73,7 @@ export function snapshotHarness(opts: {
     goalPaused: Boolean(opts.goal?.paused),
     openTodos,
     permissionMode: opts.permissionMode,
+    gitBranch: opts.git ? formatGitBranchLine(opts.git) : "",
   };
 }
 
@@ -79,6 +91,7 @@ export function fingerprintSnapshot(s: HarnessSnapshot): string {
     s.goalPaused ? "1" : "0",
     String(s.openTodos),
     s.permissionMode,
+    s.gitBranch ?? "",
   ].join("\x1f");
 }
 
@@ -121,7 +134,8 @@ function countersOnlyChange(a: HarnessSnapshot, b: HarnessSnapshot): boolean {
     a.goalActive === b.goalActive &&
     a.goalObjective === b.goalObjective &&
     a.goalPaused === b.goalPaused &&
-    a.permissionMode === b.permissionMode
+    a.permissionMode === b.permissionMode &&
+    (a.gitBranch ?? "") === (b.gitBranch ?? "")
   );
 }
 
@@ -140,7 +154,9 @@ export function admitHarnessIfChanged(
   const prev = lastAdmitted.get(sessionId);
   if (prev === fp) return null;
 
-  // First admit of an idle session with no goal/ULW: skip empty noise
+  // First admit of an idle session with no goal/ULW: skip empty noise — but
+  // still surface the git branch line once (it no longer lives in the system
+  // prompt, so this is the model's only branch context on plain sessions).
   if (
     !snap.ulwEnabled &&
     !snap.goalActive &&
@@ -149,7 +165,9 @@ export function admitHarnessIfChanged(
   ) {
     lastAdmitted.set(sessionId, fp);
     lastAdmittedSnap.set(sessionId, snap);
-    return null;
+    return snap.gitBranch
+      ? `[Forge harness — mid-conversation update]\n${snap.gitBranch}`
+      : null;
   }
 
   const prevSnap = lastAdmittedSnap.get(sessionId);
@@ -173,6 +191,10 @@ export function renderHarnessAdmission(s: HarnessSnapshot): string {
     `[Forge harness — mid-conversation update]`,
     `Obey this state over earlier harness messages. Baseline system protocol is unchanged.`,
   ];
+
+  if (s.gitBranch) {
+    lines.push(``, `## Git`, s.gitBranch);
+  }
 
   if (s.ulwEnabled) {
     lines.push(

@@ -118,7 +118,7 @@ CI (GitHub Actions) runs `npm run check` + `npm run smoke` on Node 20 and 22.
     "preferences": { "exists": true, "mode": "600", "modeOk": true }
   },
   "issues": [],
-  "providerTimeoutMs": 300000,
+  "providerTimeoutMs": 600000,
   "bashTimeoutMs": 120000,
   "bashBackgroundTimeoutMs": 1800000,
   "maxRunMs": null,
@@ -247,7 +247,7 @@ Success `ok` is `true` only when the run completed without abort/timeout **and**
   "productionWarnings": [],
   "blockingStop": true,
   "maxRunMs": null,
-  "providerTimeoutMs": 300000,
+  "providerTimeoutMs": 600000,
   "bashTimeoutMs": 120000,
   "bashBackgroundTimeoutMs": 1800000,
   "permissionAskTimeoutMs": null,

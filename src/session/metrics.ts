@@ -112,6 +112,7 @@ export function buildRunEndMetrics(opts: {
       opts.provider,
       opts.promptTokens,
       opts.completionTokens,
+      opts.model,
     ),
     durationMs: opts.durationMs,
     aborted: opts.aborted,

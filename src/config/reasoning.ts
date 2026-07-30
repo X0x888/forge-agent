@@ -2,6 +2,8 @@
  * Reasoning effort for models that support it (e.g. grok-4.5).
  * Values match xAI chat API `reasoning_effort`.
  */
+import { normalizeModelKey } from "./model-info.js";
+
 export type ReasoningEffort = "low" | "medium" | "high";
 
 export const REASONING_EFFORTS: readonly ReasoningEffort[] = [
@@ -30,8 +32,9 @@ const MODEL_EFFORT_SPECS: Record<string, ModelEffortSpec> = {
 };
 
 function normalizeModelId(model: string): string {
-  const base = model.includes("/") ? model.split("/").pop()! : model;
-  return base.trim().toLowerCase();
+  // Shared key: strips provider prefixes and -latest/dated suffixes so
+  // grok-4.5-latest (a published xAI alias) keeps its effort support.
+  return normalizeModelKey(model);
 }
 
 export function modelSupportsReasoningEffort(model: string): boolean {

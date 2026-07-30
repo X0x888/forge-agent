@@ -3,7 +3,11 @@ import type { GoalState } from "../harness/goal.js";
 import type { UlwCycleState } from "../harness/ulw-cycle.js";
 import fs from "node:fs";
 import path from "node:path";
-import { formatGitForPrompt, getGitSnapshot } from "../util/git-context.js";
+import {
+  formatGitStableForPrompt,
+  getGitSnapshot,
+  type GitSnapshot,
+} from "../util/git-context.js";
 
 function loadProjectRules(workspace: string): string {
   const candidates = [
@@ -79,10 +83,14 @@ export function buildBaselineSystemPrompt(opts: {
   ultrawork?: boolean;
   ulwCycle?: UlwCycleState | null;
   profile?: PromptProfile;
+  /** Caller-computed snapshot (loop computes once per prompt); null = no git. */
+  git?: GitSnapshot | null;
 }): string {
   const { config, workspace } = opts;
   const rules = loadProjectRules(workspace);
-  const git = formatGitForPrompt(getGitSnapshot(workspace));
+  const git = formatGitStableForPrompt(
+    opts.git === undefined ? getGitSnapshot(workspace) : (opts.git ?? {}),
+  );
   const ulwOn = Boolean(opts.ulwCycle?.enabled || opts.ultrawork);
   const profile =
     opts.profile ??

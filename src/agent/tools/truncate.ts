@@ -140,6 +140,18 @@ export function pruneToolOutputsSync(opts?: {
   };
 }
 
+/** Hard byte cap that survives multibyte text (middle-out, UTF-8 tolerant). */
+function capToBytes(s: string, maxBytes: number): string {
+  const byteLen = Buffer.byteLength(s, "utf8");
+  if (byteLen <= maxBytes) return s;
+  const buf = Buffer.from(s, "utf8");
+  const headBytes = Math.floor(maxBytes * 0.6);
+  const tailBytes = Math.max(0, maxBytes - headBytes - 64);
+  const head = buf.subarray(0, headBytes).toString("utf8");
+  const tail = tailBytes > 0 ? buf.subarray(buf.length - tailBytes).toString("utf8") : "";
+  return `${head}\n… [middle omitted to fit ${maxBytes}-byte cap] …\n${tail}`;
+}
+
 /**
  * Bound model-facing output. If over limits, persist full text and return a
  * preview with a pointer. Always UTF-8 safe via string ops on JS strings.
@@ -168,6 +180,12 @@ export async function boundToolOutput(
   let preview: string;
   if (overChars && maxChars) {
     preview = truncateMiddle(body, maxChars);
+    // maxChars is a *char* cap — multibyte output can still blow past
+    // maxBytes (100k CJK chars ≈ 240KB > 50KB cap). Re-check bytes like the
+    // line branch does.
+    if (Buffer.byteLength(preview, "utf8") > maxBytes) {
+      preview = truncateMiddle(preview, Math.floor(maxBytes * 0.9));
+    }
   } else {
     const headLines = Math.min(Math.floor(maxLines * 0.7), lines.length);
     const tailLines = Math.min(Math.floor(maxLines * 0.25), lines.length - headLines);
@@ -182,6 +200,8 @@ export async function boundToolOutput(
       preview = truncateMiddle(preview, Math.floor(maxBytes * 0.9));
     }
   }
+  // Final byte-level guarantee (truncateMiddle counts chars, not bytes).
+  preview = capToBytes(preview, maxBytes);
 
   const footer =
     `\n\n[Output truncated — full ${byteLen} bytes / ${lines.length} lines saved to ${outputPath}. ` +

@@ -24,6 +24,7 @@ export {
   defaultEffortForModel,
   REASONING_EFFORTS,
 } from "./config/reasoning.js";
+export { modelContextWindow, normalizeModelKey } from "./config/model-info.js";
 export { buildChatRequest } from "./agent/loop.js";
 export { compileRules, evaluateRules, parseRuleString } from "./agent/rules.js";
 export {

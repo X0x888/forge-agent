@@ -4,8 +4,13 @@ import { parseDurationMs } from "./duration-ms.js";
  * AbortSignal helpers for production timeouts + cooperative cancel.
  */
 
-/** Default wall-clock budget for a single provider chat/stream call. */
-export const DEFAULT_PROVIDER_TIMEOUT_MS = 300_000; // 5 minutes
+/**
+ * Default wall-clock budget for a single provider chat/stream call.
+ * 10 min: grok-4.5 with reasoning_effort=high can think for minutes before
+ * the first token, and a near-max output at ~80 tok/s needs ~7 min on its
+ * own. Tune with FORGE_PROVIDER_TIMEOUT_MS (5s–60min accepted).
+ */
+export const DEFAULT_PROVIDER_TIMEOUT_MS = 600_000; // 10 minutes
 
 export function providerTimeoutMs(): number {
   const raw = process.env.FORGE_PROVIDER_TIMEOUT_MS?.trim();

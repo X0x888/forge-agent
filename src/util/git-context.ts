@@ -116,6 +116,39 @@ export function formatGitForPrompt(snap: GitSnapshot): string {
   return lines.join("\n");
 }
 
+/**
+ * Stable subset for the system prompt (message[0]). Branch/dirty/ahead counts
+ * change between prompts — embedding them rewrites message[0] and invalidates
+ * the provider's server-side prompt cache for the ENTIRE conversation (xAI
+ * cached-input is ~4x cheaper; this was the biggest per-prompt token leak).
+ * Volatile state is admitted mid-conversation instead (see context-admit.ts).
+ */
+export function formatGitStableForPrompt(snap: GitSnapshot): string {
+  if (!snap.root) return "";
+  return [
+    `Git root: ${snap.root}`,
+    snap.remote ? `Remote: ${snap.remote}` : "",
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+/**
+ * Volatile branch line for mid-conversation admission. Deliberately excludes
+ * dirty/changedFiles counts — those churn on every edit and are noise.
+ */
+export function formatGitBranchLine(snap: GitSnapshot): string {
+  if (!snap.root || !snap.branch) return "";
+  const track: string[] = [];
+  if (snap.upstream) {
+    if (snap.ahead) track.push(`ahead ${snap.ahead}`);
+    if (snap.behind) track.push(`behind ${snap.behind}`);
+  }
+  return `Branch: ${snap.branch}${track.length ? ` · ${track.join(", ")}` : ""}${
+    snap.upstream ? ` → ${snap.upstream}` : ""
+  }`;
+}
+
 /** Quick project fingerprint for the banner / doctor. */
 export function detectProjectHints(cwd: string): string[] {
   const hints: string[] = [];

@@ -24,7 +24,8 @@ Binary entry: `src/cli.ts` → `dist/cli.js` (`bin: forge`).
 - `src/auth/` — multi-account credentials (never log tokens); `accounts.ts` smart switch; auth.json v2
 - `src/statusline/` — provider-agnostic HUD (`forge status`); never invent plan metrics
 - `src/harness/ulw-cycle.ts` — ULW cycle flag 1/0; optional `maxWaves` cap (auto LAST); soft prompts expand to god-scope; Stop blocks while cycle=1; wave ledger + quality bar (proof demands, thin-wave escalation, evidence attestation)
-- `src/harness/context-admit.ts` — mid-conversation harness admissions (stable system + live counters; counter-only churn suppressed)
+- `src/harness/context-admit.ts` — mid-conversation harness admissions (stable system + live counters; counter-only churn suppressed; volatile git branch line admitted append-only — message[0] keeps cache-stable git root/remote only)
+- `src/config/model-info.ts` — per-model context windows (grok-4.5=500k, grok-4=256k, claude=200k, gpt-4.1=1M); used when `context_window` is not explicit
 - `src/harness/interjection.ts` — free-text mid-run messages (Grok-style `<user_query>`)
 - `src/harness/todo-gate.ts` — TodoNudge + TodoGate under ULW
 - `src/session/compaction.ts` — structured compact preserving mandate/goal/todos
@@ -78,4 +79,10 @@ snippet, file-aware `/undo` (`mutations.jsonl` pre-images), `/init`, `/review`, 
 consolidation, diminishing-returns advisory, one-time evidence bounce on weak attestations),
 structural `verificationRan` stop signal, adaptive effort (`FORGE_ADAPTIVE_EFFORT`; hard rounds bump
 reasoning one notch), stale tool-result clearing (`FORGE_TOOL_CLEAR*` microcompaction), counter-only
-admission suppression, Anthropic prompt caching (`FORGE_ANTHROPIC_CACHE`; cache usage in `ChatUsage`).
+admission suppression, Anthropic prompt caching (`FORGE_ANTHROPIC_CACHE`; cache usage in `ChatUsage`),
+per-model context windows (`context_window` explicit wins; `src/config/model-info.ts` otherwise),
+prompt-cache-stable system prompt (volatile git branch via context-admit, not message[0]), Stop hook
+crash/HTTP fail-closed + stdin-EPIPE safe + 20k payload caps, Retry-After honored above client backoff
+(≤120s), 10-min default provider timeout (`FORGE_PROVIDER_TIMEOUT_MS`), 4MB child-output caps
+(bash/rg), streaming read_file for >2MB files, byte-guaranteed tool-output truncation, atomic
+session-lock create (`wx`), model-aware cost estimates (grok-4.5 $2/$6), 16k default max_tokens.

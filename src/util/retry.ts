@@ -23,11 +23,16 @@ function sleep(ms: number, signal?: AbortSignal): Promise<void> {
       reject(new Error("Aborted"));
       return;
     }
-    const t = setTimeout(resolve, ms);
     const onAbort = () => {
       clearTimeout(t);
       reject(new Error("Aborted"));
     };
+    const t = setTimeout(() => {
+      // Detach on the happy path — the run-long signal would otherwise
+      // accumulate one listener per retry (MaxListenersExceededWarning).
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
     signal?.addEventListener("abort", onAbort, { once: true });
   });
 }
@@ -108,12 +113,17 @@ export function computeRetryDelayMs(
   const maxDelay = opts.maxDelayMs ?? 12_000;
 
   if (isProviderApiError(err) && err.retryAfterMs != null && err.retryAfterMs > 0) {
-    // Honor server hint, but keep a small floor and respect max
-    return Math.min(maxDelay, Math.max(200, err.retryAfterMs));
+    // The server hint wins over the client maxDelay (already capped at 120s
+    // by parseRetryAfterMs) — clamping a `Retry-After: 60` to 12s just eats
+    // another 429 and burns the retry budget during sustained limiting.
+    return Math.min(MAX_SERVER_RETRY_DELAY_MS, Math.max(200, err.retryAfterMs));
   }
 
   return Math.min(maxDelay, base * 2 ** attempt + Math.random() * 200);
 }
+
+/** Ceiling for server-supplied Retry-After hints (matches errors.ts cap). */
+const MAX_SERVER_RETRY_DELAY_MS = 120_000;
 
 export async function withRetry<T>(
   fn: (attempt: number) => Promise<T>,

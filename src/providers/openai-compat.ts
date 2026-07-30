@@ -26,6 +26,26 @@ export function mergeStreamedToolName(current: string, delta: string): string {
   return current + delta;
 }
 
+type RawUsage =
+  | (ChatResponse["usage"] & {
+      prompt_tokens_details?: { cached_tokens?: number };
+    })
+  | undefined;
+
+/**
+ * Map vendor cached-token detail onto the shared ChatUsage cache field
+ * (xAI/OpenAI return prompt_tokens_details.cached_tokens; Anthropic maps to
+ * the same field in its own adapter).
+ */
+function normalizeUsage(u: RawUsage): ChatResponse["usage"] | undefined {
+  if (!u) return undefined;
+  const cached = u.prompt_tokens_details?.cached_tokens;
+  if (cached != null && u.cache_read_input_tokens == null) {
+    return { ...u, cache_read_input_tokens: cached };
+  }
+  return u;
+}
+
 /**
  * OpenAI-compatible chat completions client.
  * Works with xAI, OpenAI, OpenRouter, Google OpenAI-compat endpoint, and custom proxies.
@@ -101,7 +121,7 @@ export class OpenAICompatProvider implements LLMProvider {
           message: ChatMessage;
           finish_reason: string | null;
         }>;
-        usage?: ChatResponse["usage"];
+        usage?: RawUsage;
       };
       const choice = json.choices[0];
       if (!choice) {
@@ -112,7 +132,7 @@ export class OpenAICompatProvider implements LLMProvider {
         model: json.model,
         message: choice.message,
         finish_reason: choice.finish_reason,
-        usage: json.usage,
+        usage: normalizeUsage(json.usage),
       };
     } catch (err) {
       rethrowAbort(err, signal);
@@ -185,7 +205,7 @@ export class OpenAICompatProvider implements LLMProvider {
       let chunk: {
         id?: string;
         model?: string;
-        usage?: ChatResponse["usage"];
+        usage?: RawUsage;
         error?: { message?: string; type?: string; code?: string | number };
         choices?: Array<{
           delta?: {
@@ -215,7 +235,7 @@ export class OpenAICompatProvider implements LLMProvider {
       }
       if (chunk.id) id = chunk.id;
       if (chunk.model) model = chunk.model;
-      if (chunk.usage) usage = chunk.usage;
+      if (chunk.usage) usage = normalizeUsage(chunk.usage);
       const choice = chunk.choices?.[0];
       if (!choice) return;
       const delta = choice.delta ?? {};

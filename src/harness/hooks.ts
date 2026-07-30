@@ -121,6 +121,16 @@ function normalizeEventName(name: string): HookEvent | string {
   return name;
 }
 
+/** Cap hook-payload string fields so per-tool hooks stay cheap to feed. */
+const HOOK_PAYLOAD_STRING_CAP = 20_000;
+function capHookString(s: string | undefined): string | undefined {
+  if (s == null || s.length <= HOOK_PAYLOAD_STRING_CAP) return s;
+  return (
+    s.slice(0, HOOK_PAYLOAD_STRING_CAP) +
+    `\n… [truncated to ${HOOK_PAYLOAD_STRING_CAP} chars for hook payload]`
+  );
+}
+
 function matcherHits(matcher: string | undefined, toolName: string | undefined): boolean {
   if (!matcher || matcher === "" || matcher === "*") return true;
   if (!toolName) return true;
@@ -223,18 +233,6 @@ export class HookRunner {
         this.matchers.set(event, existing);
       }
     }
-    // Claude settings wrap hooks differently: { hooks: { Stop: [...] } }
-    // Also support full settings files where hooks is nested.
-    for (const file of collectHookFiles(this.config, this.cwd)) {
-      try {
-        const raw = readJsonFile<Record<string, unknown>>(file, {});
-        if (raw.hooks && typeof raw.hooks === "object" && !Array.isArray(raw.hooks)) {
-          // already handled
-        }
-      } catch {
-        /* */
-      }
-    }
   }
 
   list(): Record<string, number> {
@@ -292,7 +290,9 @@ export class HookRunner {
       transcriptPath: ctx.transcriptPath,
       toolName: ctx.toolName,
       toolInput: ctx.toolInput,
-      toolOutput: ctx.toolOutput,
+      // Cap bulky fields: PostToolUse fires per tool call and hook stdin is a
+      // pipe — multi-hundred-KB outputs add spawn latency and EPIPE risk.
+      toolOutput: capHookString(ctx.toolOutput),
       toolUseId: ctx.toolUseId,
       prompt: ctx.prompt,
       stopReason: ctx.stopReason,
@@ -300,7 +300,7 @@ export class HookRunner {
       ultrawork: ctx.ultrawork,
       turnCount: ctx.turnCount,
       editCount: ctx.editCount,
-      lastAssistantMessage: ctx.lastAssistantMessage,
+      lastAssistantMessage: capHookString(ctx.lastAssistantMessage),
       timestamp: new Date().toISOString(),
     };
   }
@@ -474,6 +474,26 @@ export class HookRunner {
         if (code !== 0 && code !== null) {
           log.debug(`Hook exited ${code} (${event}): ${stderr.slice(0, 200)}`);
         }
+        // Crashed / non-zero / signal-killed Stop hooks must fail CLOSED
+        // (blocking Stop is the differentiator — a broken quality gate must
+        // never silently release the agent). Exit 2 and structured JSON
+        // decisions are handled above; plain exit 0 stays fail-open.
+        if (code !== 0 && stopFailClosed) {
+          const detail =
+            code === null ? "killed by signal" : `exit code ${code}`;
+          const reason =
+            `Stop hook failed (${detail}) — keeping agent working ` +
+            `(blocking Stop fail-closed). Fix: ${hook.command}` +
+            (stderr.trim() ? ` — ${stderr.trim().slice(0, 200)}` : "");
+          finish({
+            decision: "block",
+            blocked: true,
+            reason,
+            additionalContext: reason,
+            systemMessage: reason,
+          });
+          return;
+        }
         finish({
           decision: "allow",
           blocked: false,
@@ -482,6 +502,11 @@ export class HookRunner {
         });
       });
 
+      // A hook that exits before reading stdin would otherwise EPIPE-crash
+      // the whole CLI on large payloads (unhandled stream error).
+      child.stdin.on("error", () => {
+        /* EPIPE / write-after-close: hook verdict comes from close/exit */
+      });
       child.stdin.write(payload);
       child.stdin.end();
     });
@@ -492,6 +517,21 @@ export class HookRunner {
     hook: HookCommand,
     ctx: HookContext,
   ): Promise<HookResult> {
+    const isStopEvent = event === "Stop" || event === "SubagentStop";
+    const stopFailClosed =
+      isStopEvent && this.config.blockingStopHooks !== false;
+    const failClosed = (why: string): HookResult => {
+      const reason =
+        `Stop hook failed (${why}) — keeping agent working ` +
+        `(blocking Stop fail-closed). Fix: ${hook.url}`;
+      return {
+        decision: "block",
+        blocked: true,
+        reason,
+        additionalContext: reason,
+        systemMessage: reason,
+      };
+    };
     try {
       const resp = await fetch(hook.url!, {
         method: "POST",
@@ -499,7 +539,11 @@ export class HookRunner {
         body: JSON.stringify(this.payload(event, ctx)),
         signal: AbortSignal.timeout(Math.max(1, (typeof hook.timeout === "number" && Number.isFinite(hook.timeout) ? hook.timeout : 10)) * 1000),
       });
-      if (!resp.ok) return { decision: "allow", blocked: false };
+      if (!resp.ok) {
+        return stopFailClosed
+          ? failClosed(`HTTP ${resp.status}`)
+          : { decision: "allow", blocked: false };
+      }
       const obj = (await resp.json()) as {
         decision?: string;
         reason?: string;
@@ -514,7 +558,9 @@ export class HookRunner {
       };
     } catch (err) {
       log.debug(`HTTP hook failed: ${(err as Error).message}`);
-      return { decision: "allow", blocked: false };
+      return stopFailClosed
+        ? failClosed((err as Error).message?.slice(0, 120) || "request error")
+        : { decision: "allow", blocked: false };
     }
   }
 }

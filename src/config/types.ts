@@ -139,6 +139,14 @@ export interface ForgeConfig {
   /** Auto-compact when estimated context exceeds this fraction (0-1) */
   autoCompactThreshold: number;
   contextWindow: number;
+  /**
+   * Runtime marker (never persisted): true when contextWindow came from an
+   * explicit source (config file / project / CLI override). When false, the
+   * window is re-derived from the active model on /model + provider switch
+   * (see config/model-info.ts) so switching to a smaller-context model does
+   * not keep a stale 500k budget.
+   */
+  contextWindowExplicit?: boolean;
   providers: Record<string, ProviderConfig>;
 }
 
@@ -161,7 +169,9 @@ export const DEFAULT_CONFIG: ForgeConfig = {
   model: "grok-4.5",
   reasoningEffort: "high",
   temperature: 0.2,
-  maxTokens: 8192,
+  // 16k: reasoning tokens share the max_tokens budget on xAI — 8k under
+  // high effort truncated mid-thought and paid extra length-continue turns.
+  maxTokens: 16384,
   maxTurns: 0,
   permissionMode: "default",
   sandbox: "workspace",
@@ -201,7 +211,7 @@ export const DEFAULT_CONFIG: ForgeConfig = {
       baseUrl: "https://api.x.ai/v1",
       supportsOAuth: true,
       defaultModel: "grok-4.5",
-      models: ["grok-4.5", "grok-4", "grok-3", "grok-3-mini", "grok-2"],
+      models: ["grok-4.5", "grok-4", "grok-3", "grok-3-mini", "grok-2-latest"],
     },
     anthropic: {
       id: "anthropic",
@@ -244,6 +254,7 @@ export const DEFAULT_CONFIG: ForgeConfig = {
         "openai/gpt-4.1",
         "openai/o3",
         "google/gemini-2.5-pro",
+        "x-ai/grok-4.5",
         "x-ai/grok-4",
       ],
     },
