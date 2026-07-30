@@ -19,6 +19,11 @@ describe("changelog / what's new", () => {
   it("parses version sections and bullets", () => {
     const md = `# Changelog
 
+## Unreleased
+
+### Added
+- **new thing**: in flight
+
 ## 1.2.3 — Cool release
 
 ### Reliability
@@ -30,11 +35,13 @@ describe("changelog / what's new", () => {
 - older bullet
 `;
     const releases = parseChangelog(md);
-    assert.equal(releases.length, 2);
-    assert.equal(releases[0].version, "1.2.3");
-    assert.equal(releases[0].title, "Cool release");
-    assert.match(releases[0].body, /alpha/);
-    assert.equal(releases[1].version, "1.2.2");
+    assert.equal(releases.length, 3);
+    assert.equal(releases[0].version, "Unreleased");
+    assert.match(releases[0].body, /new thing/);
+    assert.equal(releases[1].version, "1.2.3");
+    assert.equal(releases[1].title, "Cool release");
+    assert.match(releases[1].body, /alpha/);
+    assert.equal(releases[2].version, "1.2.2");
   });
 
   it("omits empty ### heads when bullets are truncated", () => {
@@ -61,18 +68,16 @@ describe("changelog / what's new", () => {
   });
 
   it("prefers newest bullets when the release body is long", () => {
-    // formatWhatsNew reads packaged CHANGELOG; newest bullets are prepended at
-    // the top of the first ### section (Loop hygiene).
-    const text = formatWhatsNew({ count: 1, maxBullets: 6 });
+    // formatWhatsNew reads packaged CHANGELOG; Unreleased (if present) or newest
+    // tagged release bullets surface first.
+    const text = formatWhatsNew({ count: 1, maxBullets: 8 });
     assert.match(
       text,
-      /Doctor invalid permission|Bash\(\)|Shell|sessions search|timeout_ms|invalid_base_url|conflicting_flags|command_typo|Did you mean|Loop hygiene/i,
+      /\/plan|projectRulesCount|Headless slash|Doctor invalid permission|Bash\(\)|Shell|sessions search|timeout_ms|invalid_base_url|conflicting_flags|command_typo|Did you mean|Loop hygiene|Unreleased/i,
     );
-    // Long 0.9.x body still notes remaining bullets.
-    assert.match(text, /\+\d+ more in CHANGELOG/);
-    // Must not surface only stale duplicate tail bullets (e.g. bare auth unauthenticated
-    // without the newer continue_miss / search_replace work when budget is small).
-    assert.match(text, /Loop hygiene|###/);
+    // Long body still notes remaining bullets when truncated.
+    assert.match(text, /\+\d+ more in CHANGELOG|what's new/i);
+    assert.match(text, /Loop hygiene|###|Unreleased|\/plan/);
   });
 
   it("finds packaged CHANGELOG and formats highlights", () => {
@@ -81,10 +86,14 @@ describe("changelog / what's new", () => {
     assert.ok(fs.existsSync(p!));
     const releases = loadChangelogReleases();
     assert.ok(releases.length >= 1);
-    assert.match(releases[0].version, /^\d+\.\d+\.\d+$/);
+    // Prefer Unreleased when present; otherwise a semver tag
+    assert.match(releases[0].version, /^(Unreleased|\d+\.\d+\.\d+)$/);
     const text = formatWhatsNew({ count: 1, maxBullets: 8 });
     assert.match(text, /what's new/i);
-    assert.match(text, new RegExp(releases[0].version.replace(/\./g, "\\.")));
+    assert.match(
+      text,
+      new RegExp(releases[0].version.replace(/\./g, "\\.")),
+    );
   });
 
   it("/news is handled and live-safe", async () => {

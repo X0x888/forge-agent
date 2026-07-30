@@ -54,6 +54,17 @@ export function parseChangelog(markdown: string): ChangelogRelease[] {
   };
 
   for (const line of lines) {
+    // Unreleased first (experts need in-flight notes before the next tag)
+    const unrel = line.match(/^##\s+Unreleased\s*(?:[—–-]\s*(.*))?$/i);
+    if (unrel) {
+      flush();
+      cur = {
+        version: "Unreleased",
+        title: (unrel[1] || "in development").trim(),
+        body: [],
+      };
+      continue;
+    }
     const m = line.match(/^##\s+(\d+\.\d+\.\d+)\s*(?:[—–-]\s*(.*))?$/);
     if (m) {
       flush();
@@ -66,8 +77,17 @@ export function parseChangelog(markdown: string): ChangelogRelease[] {
     }
     if (cur) {
       // Nested ## under a release is rare; treat as body unless it looks like a version header
-      if (/^##\s+\d+\.\d+\.\d+/.test(line)) {
+      if (/^##\s+(\d+\.\d+\.\d+|Unreleased)\b/i.test(line)) {
         flush();
+        const u2 = line.match(/^##\s+Unreleased\s*(?:[—–-]\s*(.*))?$/i);
+        if (u2) {
+          cur = {
+            version: "Unreleased",
+            title: (u2[1] || "in development").trim(),
+            body: [],
+          };
+          continue;
+        }
         const m2 = line.match(/^##\s+(\d+\.\d+\.\d+)\s*(?:[—–-]\s*(.*))?$/);
         if (m2) {
           cur = {

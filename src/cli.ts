@@ -4420,6 +4420,11 @@ function productionWarningsForRun(config: ForgeConfig): string[] {
   if (config.permissionMode === "bypassPermissions") {
     warnings.push("permissionMode=bypassPermissions (yolo) — tools auto-approved");
   }
+  if (config.permissionMode === "plan") {
+    warnings.push(
+      "permissionMode=plan — mutations denied; use /build (or --permission-mode acceptEdits) to implement",
+    );
+  }
   if ((config.sandboxMissingBackend || "fail-closed") === "fallback") {
     warnings.push("sandbox-missing=fallback — bash may run unsandboxed when backend is absent");
   }

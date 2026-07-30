@@ -14,6 +14,8 @@
 - **Doctor JSON `projectRulesCount` / `projectCommandsCount`**: CI can assert instruction + custom-command hygiene without parsing report text
 - **`suggestNames` multi-tip**: unknown tools return up to 3 Did-you-mean candidates (agent self-recovery)
 - **Smarter empty-response nudge**: empty model turns mention plan mode / open todos and finish_reason; continue-cap release points at `/retry` · `/compact` · `/model`
+- **`/news` includes Unreleased**: in-flight CHANGELOG notes surface before the next tag so experts see `/plan`, headless slash, recovery tips without waiting for a release
+- **`productionWarnings` for plan mode**: `forge run --json` flags `permissionMode=plan` so CI does not silently stay read-only
 - **ULW `max_waves`**: optional wave cap (default unlimited). `/max-waves N|off|status` live mid-run; CLI `--max-waves N` (0 = unlimited; N&gt;0 implies ULW). When the wave counter hits N, harness auto-flips to LAST (`**Cycle complete.**`). Counts show as `wave=2/5`; JSON `ulwMaxWaves`; compact/admission/status/HUD aware
 - **Multi-account auth**: store many logins per provider (e.g. two SuperGrok emails + API keys) in `~/.forge/auth.json` v2
 - **`forge accounts`**: `list` · `status` · `switch` · `remove` · `rename` · `priority` · `disable`/`enable` · `clear-cooldown` · `auto-switch on|off [--threshold N]`

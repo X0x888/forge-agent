@@ -5483,6 +5483,29 @@ describe("run --json productionWarnings", () => {
     );
     const s = JSON.parse(safe.stdout);
     assert.deepEqual(s.productionWarnings, []);
+
+    const plan = spawnSync(
+      process.execPath,
+      [
+        cli,
+        "run",
+        "x",
+        "--permission-mode",
+        "plan",
+        "--sandbox",
+        "workspace",
+        "--read-outside",
+        "deny",
+        "--json",
+        "--max-turns",
+        "1",
+      ],
+      { env, encoding: "utf8", timeout: 15000 },
+    );
+    const pj = JSON.parse(plan.stdout);
+    assert.ok(
+      pj.productionWarnings.some((w: string) => /permissionMode=plan/i.test(w)),
+    );
   });
 });
 
