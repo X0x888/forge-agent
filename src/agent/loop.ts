@@ -1856,6 +1856,19 @@ async function prepareToolResult(opts: {
   }
   if (doomHit) {
     content = `${content}\n\n${doomHit.message}`;
+    try {
+      setSessionLastError(session, {
+        code: "doom_loop",
+        message: doomHit.message.split("\n")[0] || "doom-loop",
+        tips: [
+          "Change tool/args · re-read the file",
+          "Do not retry the same denied mutation",
+        ],
+      });
+      saveSession(session);
+    } catch {
+      /* */
+    }
   }
 
   // Error-streak circuit breaker (different tools failing in a row)

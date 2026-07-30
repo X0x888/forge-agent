@@ -2,10 +2,12 @@
 
 ## Unreleased
 
+## 0.9.19 — Error-streak lastError + richer circuit-breaker tips
+
 ### Changed
 
 - **Error-streak recovery tips**: circuit-breaker message covers plan-mode denials and path/context fixes; stamps `meta.lastError` code `error_streak` for /status and sessions errors
-
+- **Doom-loop lastError**: identical tool thrash stamps `meta.lastError` code `doom_loop` with change-approach tips
 
 ## 0.9.18 — Permission-timeout + doom-loop recovery tips
 
