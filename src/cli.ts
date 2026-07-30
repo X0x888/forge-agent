@@ -5692,6 +5692,8 @@ async function runHeadless(opts: {
         ok: false,
         headless: true,
         ultrawork: opts.session.meta.ultrawork,
+        lastErrorCode:
+          recovery?.code || opts.session.meta.lastError?.code || undefined,
       }),
     );
     if (opts.json) {

@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Added
+
+- **Metrics `lastErrorCode`**: failed run_end events stamp the recovery code (never bodies) for CI post-mortems
+- **Markdown export lastError**: `exportSessionMarkdown` includes last error + tip for incident handoff
+
+
 ## 0.9.9 — Prune protects lastError recovery backlog
 
 ### Changed

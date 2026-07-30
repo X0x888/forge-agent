@@ -16,6 +16,7 @@ import {
   clearConversation,
   setSessionTitle,
   saveSession,
+  setSessionLastError,
   formatSessionLookupMiss,
   listSessionLookupSuggestions,
 } from "../src/session/session.js";
@@ -1020,4 +1021,20 @@ it("/fork includes last-turn peek", async () => {
     maybeSetTitle(s, "should not replace");
     assert.equal(s.meta.title, "Ship production-ready undo journal");
   });
+
+  it("exportSessionMarkdown includes lastError", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-md-err-"));
+    process.env.FORGE_HOME = tmp;
+    const s = createSession({ cwd: tmp, provider: "xai", model: "m" });
+    setSessionLastError(s, {
+      code: "auth_expired",
+      message: "xai HTTP 401",
+      tips: ["forge login"],
+    });
+    const md = exportSessionMarkdown(s);
+    assert.match(md, /Last error/);
+    assert.match(md, /auth_expired/);
+    assert.match(md, /forge login/);
+  });
+
 });

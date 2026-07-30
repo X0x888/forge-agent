@@ -1655,10 +1655,16 @@ export function exportSessionMarkdown(session: SessionData): string {
     `- Model: ${session.meta.provider}/${session.meta.model}`,
     `- Title: ${session.meta.title || "(untitled)"}`,
     `- Tokens: in=${session.meta.totalPromptTokens} out=${session.meta.totalCompletionTokens}`,
+    session.meta.lastError?.message
+      ? `- Last error: [${session.meta.lastError.code}] ${session.meta.lastError.message}` +
+        (session.meta.lastError.tips?.[0]
+          ? ` → ${session.meta.lastError.tips[0]}`
+          : "")
+      : null,
     ``,
     `---`,
     ``,
-  ];
+  ].filter((x): x is string => x != null);
   for (const m of session.messages) {
     if (m.role === "system") continue;
     if (m.role === "tool") {

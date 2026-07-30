@@ -30,6 +30,8 @@ export interface SessionMetricsEvent {
   ok?: boolean;
   headless?: boolean;
   ultrawork?: boolean;
+  /** Provider/run failure code when ok=false (never full bodies). */
+  lastErrorCode?: string;
 }
 
 export function metricsPath(): string {
@@ -91,6 +93,7 @@ export function buildRunEndMetrics(opts: {
   ok?: boolean;
   headless?: boolean;
   ultrawork?: boolean;
+  lastErrorCode?: string;
 }): SessionMetricsEvent {
   return {
     ts: nowIso(),
@@ -120,6 +123,9 @@ export function buildRunEndMetrics(opts: {
     ok: opts.ok,
     headless: opts.headless,
     ultrawork: opts.ultrawork,
+    ...(opts.lastErrorCode
+      ? { lastErrorCode: String(opts.lastErrorCode).slice(0, 64) }
+      : {}),
   };
 }
 

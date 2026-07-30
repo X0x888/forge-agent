@@ -1212,6 +1212,28 @@ describe("session metrics + permission timeout", () => {
     assert.match(line, /"estCostUsd":/);
     assert.match(line, /"releasedOnContinueCap":true/);
 
+    appendSessionMetrics(
+      buildRunEndMetrics({
+        sessionId: "fail-1",
+        provider: "xai",
+        model: "m",
+        turns: 0,
+        stopContinues: 0,
+        editCount: 0,
+        promptTokens: 0,
+        completionTokens: 0,
+        ok: false,
+        lastErrorCode: "rate_limited",
+      }),
+    );
+    const failLine = fs
+      .readFileSync(metricsPath(), "utf8")
+      .trim()
+      .split("\n")
+      .pop()!;
+    assert.match(failLine, /"lastErrorCode":"rate_limited"/);
+    assert.doesNotMatch(failLine, /api[_-]?key|sk-|password|secret/i);
+
     const { pruneMetrics } = await import("../src/session/metrics.js");
     for (let i = 0; i < 5; i++) {
       appendSessionMetrics(

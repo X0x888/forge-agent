@@ -598,15 +598,43 @@ export async function runRepl(opts: {
     } catch (err) {
       working.stop();
       try {
-        const { formatProviderErrorText } = await import(
+        const { formatProviderError, formatProviderErrorText } = await import(
           "../providers/errors.js"
         );
-        log.error(
-          formatProviderErrorText(err, {
-            provider: String(config.provider),
-            model: config.model,
-          }),
-        );
+        const fmt = formatProviderError(err, {
+          provider: String(config.provider),
+          model: config.model,
+        });
+        log.error(formatProviderErrorText(err, {
+          provider: String(config.provider),
+          model: config.model,
+        }));
+        try {
+          const { appendSessionMetrics, buildRunEndMetrics } = await import(
+            "../session/metrics.js"
+          );
+          appendSessionMetrics(
+            buildRunEndMetrics({
+              sessionId: session.meta.id,
+              provider: String(config.provider),
+              model: config.model,
+              cwd: session.meta.cwd,
+              turns: 0,
+              stopContinues: 0,
+              editCount: session.meta.editCount,
+              promptTokens: 0,
+              completionTokens: 0,
+              aborted: false,
+              ok: false,
+              headless: false,
+              ultrawork: session.meta.ultrawork,
+              lastErrorCode:
+                fmt.code || session.meta.lastError?.code || undefined,
+            }),
+          );
+        } catch {
+          /* metrics never block REPL */
+        }
       } catch {
         log.error((err as Error).message);
       }
