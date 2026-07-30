@@ -3977,6 +3977,7 @@ Project instructions for Forge (and other coding agents).
               sessionsPinned,
               projectRulesCount: check.projectRulesCount ?? 0,
               projectCommandsCount: check.projectCommandsCount ?? 0,
+              projectSkillsCount: check.projectSkillsCount ?? 0,
               sessionsWithLastError: check.sessionsWithLastError ?? 0,
               sessionsUntitled: check.sessionsUntitled ?? 0,
               sessionsTotal: check.sessionsTotal ?? 0,
