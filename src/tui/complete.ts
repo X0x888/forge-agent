@@ -268,6 +268,11 @@ export const COMMAND_PARAMS: Record<string, ParamChoice[]> = {
       description: "Only sessions with lastError (recovery backlog)",
       aliases: ["failed", "err", "error", "fail"],
     },
+    {
+      value: "untitled",
+      description: "Only sessions without a title",
+      aliases: ["notitle", "no-title", "nameless"],
+    },
     { value: "search", description: "Filter by id/title/last-prompt: /sessions search <q>", aliases: ["q", "find"] },
     { value: "delete", description: "Delete session: /sessions delete <id|title> [--force]", aliases: ["rm", "remove"] },
     { value: "prune", description: "Prune old sessions (active protected)" },

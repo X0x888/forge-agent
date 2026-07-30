@@ -193,6 +193,9 @@ export const SESSION_ACTIONS = [
   "errors",
   "failed",
   "err",
+  "untitled",
+  "notitle",
+  "nameless",
 ] as const;
 
 export function suggestSessionAction(raw: string): string | null {

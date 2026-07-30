@@ -2764,6 +2764,7 @@ case "/new":
       let query: string | undefined;
       let pinnedOnly = false;
       let errorsOnly = false;
+      let untitledOnly = false;
       if (sub === "all" || sub === "global" || sub === "-a") {
         listMode = "all";
       } else if (sub === "pinned" || sub === "pins" || sub === "pin") {
@@ -2777,6 +2778,14 @@ case "/new":
         sub === "err"
       ) {
         errorsOnly = true;
+        listMode = "all";
+      } else if (
+        sub === "untitled" ||
+        sub === "notitle" ||
+        sub === "no-title" ||
+        sub === "nameless"
+      ) {
+        untitledOnly = true;
         listMode = "all";
       } else if (sub === "q" || sub === "search" || sub === "find") {
         query = parts.slice(1).join(" ").trim() || undefined;
@@ -2797,7 +2806,7 @@ case "/new":
             output:
               `Unknown /sessions action "${sub}". Did you mean: ${tip}?\n` +
               chalk.dim(
-                "Actions: list · search · prune · delete · pinned · errors · all  ·  CLI: forge sessions <action>",
+                "Actions: list · search · prune · delete · pinned · errors · untitled · all  ·  CLI: forge sessions <action>",
               ),
           };
         }
@@ -2806,8 +2815,8 @@ case "/new":
         listMode = "all";
       }
       let list = listSessions({
-        limit: errorsOnly ? 50 : 15,
-        ...(listMode === "cwd" && !query && !pinnedOnly && !errorsOnly
+        limit: errorsOnly || untitledOnly ? 50 : 15,
+        ...(listMode === "cwd" && !query && !pinnedOnly && !errorsOnly && !untitledOnly
           ? { cwd: ws }
           : {}),
         ...(query ? { query } : {}),
@@ -2816,12 +2825,22 @@ case "/new":
       if (errorsOnly) {
         list = list.filter((s) => Boolean(s.lastError?.message));
       }
+      if (untitledOnly) {
+        list = list.filter((s) => !String(s.title || "").trim());
+      }
       if (!list.length) {
         if (errorsOnly) {
           return {
             handled: true,
             output:
               "No sessions with lastError. Provider failures stamp ERR on /sessions and forge status.",
+          };
+        }
+        if (untitledOnly) {
+          return {
+            handled: true,
+            output:
+              "No untitled sessions. /title · --title · /goal set auto-titles new ones.",
           };
         }
         if (pinnedOnly) {
@@ -2846,13 +2865,15 @@ case "/new":
       }
       const scopeNote = errorsOnly
         ? "lastError only"
-        : pinnedOnly
-          ? "pinned only"
-          : query
-            ? `search=${JSON.stringify(query)}`
-            : listMode === "cwd"
-              ? `cwd=${ws}`
-              : "all workspaces";
+        : untitledOnly
+          ? "untitled only"
+          : pinnedOnly
+            ? "pinned only"
+            : query
+              ? `search=${JSON.stringify(query)}`
+              : listMode === "cwd"
+                ? `cwd=${ws}`
+                : "all workspaces";
       return {
         handled: true,
         output:
@@ -2885,7 +2906,7 @@ case "/new":
             })
             .join("\n") +
           chalk.dim(
-            `\n\n* = active  ·  ${scopeNote}  ·  /sessions [all|pinned|errors|search <q>]  ·  delete <id|title> [--force]  ·  prune [--keep=50]  ·  /resume <id|title>  ·  /pin\nCLI: forge sessions list --cwd . [--pinned]  ·  show|export|import|fork|pin|delete <id|title>`,
+            `\n\n* = active  ·  ${scopeNote}  ·  /sessions [all|pinned|errors|untitled|search <q>]  ·  delete <id|title> [--force]  ·  prune [--keep=50]  ·  /resume <id|title>  ·  /pin\nCLI: forge sessions list --cwd . [--pinned]  ·  show|export|import|fork|pin|delete <id|title>`,
           ),
       };
     }
