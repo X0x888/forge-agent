@@ -354,6 +354,11 @@ export {
 } from "./commands/project-commands.js";
 export type { ProjectCommand } from "./commands/project-commands.js";
 export {
+  resolveHeadlessSlashPrompt,
+  stripAnsi,
+} from "./commands/headless-slash.js";
+export type { HeadlessSlashResolution } from "./commands/headless-slash.js";
+export {
   pushLiveNotice,
   drainLiveNotices,
   formatLiveNoticesMessage,

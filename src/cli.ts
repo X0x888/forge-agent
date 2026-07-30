@@ -5385,6 +5385,59 @@ async function runHeadless(opts: {
     workspaceRoot: opts.config.workspace || opts.session.meta.cwd,
   });
 
+  // Headless slash: forge run "/plan" · "/commands" · custom .forge/commands
+  // Expand forwardPrompt templates; pure control slashes exit without a model call.
+  let headlessPrompt = opts.prompt;
+  {
+    const { resolveHeadlessSlashPrompt, stripAnsi } = await import(
+      "./commands/headless-slash.js"
+    );
+    const resolved = await resolveHeadlessSlashPrompt({
+      prompt: opts.prompt,
+      session: opts.session,
+      config: opts.config,
+      hooks: opts.hooks,
+    });
+    opts.session = resolved.session;
+    if (resolved.kind === "prompt") {
+      headlessPrompt = resolved.prompt;
+      if (!opts.json && resolved.notice) {
+        log.dim(stripAnsi(resolved.notice));
+      }
+    } else if (resolved.kind === "done") {
+      const out = stripAnsi(resolved.output);
+      if (opts.json) {
+        emitOkJson({
+          ok: true,
+          reason: "slash",
+          command: resolved.command,
+          output: out,
+          sessionId: opts.session.meta.id,
+          sessionPath: resolveSessionDir(opts.session.meta.id),
+          forgeHome: forgeHome(),
+          provider: opts.config.provider,
+          model: opts.config.model,
+          permissionMode: opts.config.permissionMode,
+          node: process.version,
+        });
+      } else if (out) {
+        process.stdout.write(out.endsWith("\n") ? out : out + "\n");
+      }
+      await opts.hooks.run("SessionEnd", {
+        sessionId: opts.session.meta.id,
+        cwd: opts.session.meta.cwd,
+        workspaceRoot: opts.config.workspace || opts.session.meta.cwd,
+      });
+      saveSession(opts.session);
+      process.off("SIGINT", onSigInt);
+      process.off("SIGTERM", onSigTerm);
+      if (maxRunTimer) clearTimeout(maxRunTimer);
+      cleanupBg();
+      releaseLock();
+      process.exit(0);
+    }
+  }
+
   const t0 = Date.now();
   let result;
   try {
@@ -5394,7 +5447,7 @@ async function runHeadless(opts: {
       session: opts.session,
       hooks: opts.hooks,
       permissions,
-      userMessage: opts.prompt,
+      userMessage: headlessPrompt,
       stream: !opts.json,
       signal: ac.signal,
       onToken: opts.json
