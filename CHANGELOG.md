@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.9.40 — doctor sessionsPinned inventory
+
 ### Added
 
 - **Doctor sessionsPinned inventory**: report/JSON count pin-protected sessions; tip at ≥10 to review `/sessions pinned`
