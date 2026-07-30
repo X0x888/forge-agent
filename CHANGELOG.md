@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.9.34 — status --json formatOnWrite + smoke
+
 ### Added
 
 - **status/config/doctor smoke for formatOnWrite**: `forge status --json` envelope includes `formatOnWrite`; smoke covers doctor/status/config
