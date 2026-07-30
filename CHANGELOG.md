@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Added
+
+- **`run --json formatOnWrite`**: headless success/error payloads include effective format-on-write
+- **Doctor formatter-available tip**: when prettier/biome/ruff/… is present but format-on-write is off, doctor highlights the gap
+
+
 ## 0.9.34 — status --json formatOnWrite + smoke
 
 ### Added

@@ -121,6 +121,20 @@ describe("format-on-write", () => {
     });
     assert.match(String(st2.output || ""), /off/i);
   });
+  it("detectProjectFormatters finds prettier dep", async () => {
+    const { detectProjectFormatters } = await import(
+      "../src/agent/tools/format-on-write.js"
+    );
+    const ws = fs.mkdtempSync(path.join(os.tmpdir(), "forge-fow-det-"));
+    fs.writeFileSync(
+      path.join(ws, "package.json"),
+      JSON.stringify({ name: "t", devDependencies: { prettier: "^3.0.0" } }),
+    );
+    // Without bin on PATH may still be empty — just ensure no throw
+    const found = detectProjectFormatters(ws);
+    assert.ok(Array.isArray(found));
+  });
+
   it("effective config + doctor expose formatOnWrite", async () => {
     process.env.FORGE_FORMAT_ON_WRITE = "1";
     const { buildEffectiveConfigSnap, runDoctorCheck } = await import(

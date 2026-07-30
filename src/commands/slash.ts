@@ -77,7 +77,10 @@ import {
   parseCliNonNegInt,
 } from "../util/env.js";
 import { isBellEnabled } from "../util/attention.js";
-import { isFormatOnWriteEnabled } from "../agent/tools/format-on-write.js";
+import {
+  detectProjectFormatters,
+  isFormatOnWriteEnabled,
+} from "../agent/tools/format-on-write.js";
 import { forgeHome, inspectSecureFile } from "../util/fs.js";
 import { getForgeVersion } from "../util/version.js";
 import { formatWhatsNew } from "../util/changelog.js";
@@ -4118,10 +4121,19 @@ export async function runDoctorCheck(
 
   // Format-on-write status (opt-in quality bar)
   try {
+    const fmts = detectProjectFormatters(config.workspace || process.cwd());
     if (isFormatOnWriteEnabled()) {
       lines.push(
         chalk.dim(
-          `  format-on-write: on  → prettier/biome/ruff after file tools · /format off to disable`,
+          `  format-on-write: on` +
+            (fmts.length ? ` (${fmts.join(", ")})` : "") +
+            `  → after file tools · /format off to disable`,
+        ),
+      );
+    } else if (fmts.length) {
+      lines.push(
+        chalk.yellow(
+          `  format-on-write: off but ${fmts.join("/")} available — /format on · FORGE_FORMAT_ON_WRITE=1`,
         ),
       );
     } else {

@@ -302,3 +302,37 @@ export function formatNoteSuffix(result: FormatResult | null): string {
   if (result.ok) return ` (formatted with ${result.formatter})`;
   return ` (format ${result.formatter} skipped: ${result.detail || "failed"})`;
 }
+
+/**
+ * Best-effort: which formatters look available for this workspace
+ * (for doctor tips). Never throws.
+ */
+export function detectProjectFormatters(workspace: string): string[] {
+  const found: string[] = [];
+  try {
+    const ws = path.resolve(workspace || process.cwd());
+    const pkgPath = findUp(ws, ["package.json"], ws);
+    if (pkgPath) {
+      const pkg = readJsonSafe(pkgPath);
+      if (hasDep(pkg, "prettier") && (npmBin("prettier", ws) || which("prettier"))) {
+        found.push("prettier");
+      }
+      if (hasDep(pkg, "@biomejs/biome") || hasDep(pkg, "biome")) {
+        if (npmBin("biome", ws) || which("biome")) found.push("biome");
+      }
+    }
+    if (findUp(ws, ["biome.json", "biome.jsonc"], ws)) {
+      if (!found.includes("biome") && (npmBin("biome", ws) || which("biome"))) {
+        found.push("biome");
+      }
+    }
+    if (which("ruff") && findUp(ws, ["ruff.toml", ".ruff.toml"], ws)) {
+      found.push("ruff");
+    }
+    if (which("gofmt")) found.push("gofmt");
+    if (which("rustfmt")) found.push("rustfmt");
+  } catch {
+    /* */
+  }
+  return found;
+}

@@ -156,6 +156,7 @@ import {
   parseCliNonNegInt,
 } from "./util/env.js";
 import { isBellEnabled } from "./util/attention.js";
+import { isFormatOnWriteEnabled } from "./agent/tools/format-on-write.js";
 import { permissionAskTimeoutMs } from "./agent/permissions.js";
 import {
   pruneToolOutputsSync,
@@ -667,7 +668,7 @@ Exit codes:
   124  wall-clock timeout (FORGE_MAX_RUN_MS)
   130  aborted (SIGINT)
 
---json fields (success): ok, version, node, forgeHome, sessionId, sessionPath, title, pinned, foreignLock, provider, stickyProvider, authMethod, model, reasoningEffort, cwd, git, projectLabel, projectHints, packageName, packageVersion, packageEnginesNode, permissionMode, sandbox, sandboxNetwork, sandboxMissingBackend, readOutsideWorkspace, ultrawork, ulwCycle, ulwWave, ulwMaxWaves, ulwBlocks, ulwMandate, ulwSoftPrompt, ulwExpandedMandate, goalActive, goal, goalStuckThreshold, goalBlocks, goalStuckBlocks, goalCriteria, denyRules, allowRules, askRules, maxTurns, maxTurnsUnlimited, productionWarnings, blockingStop, maxRunMs, providerTimeoutMs, bashTimeoutMs, bashBackgroundTimeoutMs, permissionAskTimeoutMs, doomLoopThreshold, errorStreakThreshold, ulwMaxContinues, editCount, openTodos, messageCount, finalText, turns, stopContinues,
+--json fields (success): ok, version, node, forgeHome, sessionId, sessionPath, title, pinned, foreignLock, provider, stickyProvider, authMethod, model, reasoningEffort, cwd, git, projectLabel, projectHints, packageName, packageVersion, packageEnginesNode, permissionMode, sandbox, sandboxNetwork, sandboxMissingBackend, readOutsideWorkspace, ultrawork, ulwCycle, ulwWave, ulwMaxWaves, ulwBlocks, ulwMandate, ulwSoftPrompt, ulwExpandedMandate, goalActive, goal, goalStuckThreshold, goalBlocks, goalStuckBlocks, goalCriteria, denyRules, allowRules, askRules, maxTurns, maxTurnsUnlimited, productionWarnings, formatOnWrite, blockingStop, maxRunMs, providerTimeoutMs, bashTimeoutMs, bashBackgroundTimeoutMs, permissionAskTimeoutMs, doomLoopThreshold, errorStreakThreshold, ulwMaxContinues, editCount, openTodos, messageCount, finalText, turns, stopContinues,
   releasedOnContinueCap, hitMaxTurns, finishReason, editCount, aborted, timedOut,
   promptTokens, completionTokens, durationMs
   (FORGE_JSON_COMPACT=1 → single-line success JSON for CI log aggregation)
@@ -6037,6 +6038,7 @@ async function runHeadless(opts: {
           typeof opts.config.maxTurns === "number" && opts.config.maxTurns > 0
         ),
         productionWarnings: productionWarningsForRun(opts.config),
+        formatOnWrite: isFormatOnWriteEnabled(),
         blockingStop: opts.config.blockingStopHooks !== false,
         maxRunMs: maxRunMsFromEnv(),
         providerTimeoutMs: providerTimeoutMs(),
@@ -6334,6 +6336,7 @@ async function runHeadless(opts: {
         typeof opts.config.maxTurns === "number" && opts.config.maxTurns > 0
       ),
       productionWarnings: productionWarningsForRun(opts.config),
+        formatOnWrite: isFormatOnWriteEnabled(),
       blockingStop: opts.config.blockingStopHooks !== false,
       maxRunMs: maxRunMsFromEnv(),
       providerTimeoutMs: providerTimeoutMs(),
