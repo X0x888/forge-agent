@@ -18,9 +18,9 @@ export function shellCompletionScript(shell: string): string {
     "run login logout auth accounts sessions init models doctor stats tips news logs config status completion prune-tool-output prune-metrics";
   const zshCmds = cmds.split(" ").join(" ");
   const runFlags =
-    "--json --ulw --permission-mode --model --provider --base-url --goal --session --continue --new --title --sandbox --sandbox-network --sandbox-missing --read-outside --deny --allow --ask --cwd --effort --max-turns --no-blocking-stop";
+    "--json --ulw --max-waves --permission-mode --model --provider --base-url --goal --session --continue --new --title --sandbox --sandbox-network --sandbox-missing --read-outside --deny --allow --ask --cwd --effort --max-turns --no-blocking-stop";
   const topFlags =
-    "--new --session --continue --title --json --model --provider --base-url --permission-mode --ulw --goal --cwd --sandbox --sandbox-network --sandbox-missing --read-outside --deny --allow --ask --effort --max-turns --no-blocking-stop --help --version";
+    "--new --session --continue --title --json --model --provider --base-url --permission-mode --ulw --max-waves --goal --cwd --sandbox --sandbox-network --sandbox-missing --read-outside --deny --allow --ask --effort --max-turns --no-blocking-stop --help --version";
   const sessionsActions =
     "list show path export import fork pin unpin title rename delete prune search find";
   const sessionsFlags =

@@ -6,12 +6,15 @@ import path from "node:path";
 import {
   armUlwCycle,
   setCycleFlag,
+  setMaxWaves,
   evaluateUlwAtStop,
   isSoftPrompt,
   expandUlwMandate,
   loadUlwCycle,
   copyUlwCycle,
   parseCycleArg,
+  parseMaxWavesArg,
+  normalizeMaxWaves,
   disarmUlwCycle,
   formatUlwCounts,
   formatUlwBadge,
@@ -47,6 +50,126 @@ describe("ulw cycle", () => {
     assert.equal(parseCycleArg("0"), 0);
     assert.equal(parseCycleArg("last"), 0);
     assert.equal(parseCycleArg("nope"), null);
+  });
+
+  it("parseMaxWavesArg / normalizeMaxWaves", () => {
+    assert.equal(parseMaxWavesArg("3"), 3);
+    assert.equal(parseMaxWavesArg("off"), null);
+    assert.equal(parseMaxWavesArg("unlimited"), null);
+    assert.equal(parseMaxWavesArg("0"), null);
+    assert.equal(parseMaxWavesArg("nope"), undefined);
+    assert.equal(parseMaxWavesArg("1.5"), undefined);
+    assert.equal(normalizeMaxWaves(5), 5);
+    assert.equal(normalizeMaxWaves(0), null);
+    assert.equal(normalizeMaxWaves(null), null);
+  });
+
+  it("default maxWaves is unlimited; arm can set cap", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-ulw-mw-"));
+    process.env.FORGE_HOME = tmp;
+    const sid = "ulw-mw-default";
+    const s = armUlwCycle(sid, "improve", { cycle: 1 });
+    assert.equal(s.maxWaves, null);
+    assert.equal(formatUlwCounts(s), "cycle=1 wave=0 blocks=0");
+
+    const capped = armUlwCycle(sid, "improve more", { cycle: 1, maxWaves: 3 });
+    assert.equal(capped.maxWaves, 3);
+    assert.equal(formatUlwCounts(capped), "cycle=1 wave=0/3 blocks=0");
+    assert.equal(formatUlwBadge(capped), "c=1 w=0/3");
+    assert.match(formatUlwStatus(capped), /max_waves: 3/);
+  });
+
+  it("max_waves forces LAST when wave hits cap", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-ulw-cap-"));
+    process.env.FORGE_HOME = tmp;
+    const sid = "ulw-cap";
+    armUlwCycle(sid, "ship three waves", { cycle: 1, maxWaves: 2 });
+
+    const d1 = evaluateUlwAtStop({
+      sessionId: sid,
+      lastAssistantMessage: "wave done",
+      editCount: 1,
+      openTodoCount: 0,
+      stuckThreshold: 20,
+    });
+    // wave becomes 1 < 2 → CONTINUE
+    assert.equal(d1.block, true);
+    assert.equal(d1.maxWavesHit, undefined);
+    assert.match(d1.reanchor || "", /CONTINUE/i);
+    assert.equal(loadUlwCycle(sid)?.wave, 1);
+    assert.equal(loadUlwCycle(sid)?.cycle, 1);
+
+    const d2 = evaluateUlwAtStop({
+      sessionId: sid,
+      lastAssistantMessage: "wave two",
+      editCount: 2,
+      openTodoCount: 0,
+      stuckThreshold: 20,
+    });
+    // wave becomes 2 >= 2 → auto LAST
+    assert.equal(d2.block, true);
+    assert.equal(d2.maxWavesHit, true);
+    assert.match(d2.reanchor || "", /LAST|max_waves/i);
+    assert.equal(loadUlwCycle(sid)?.wave, 2);
+    assert.equal(loadUlwCycle(sid)?.cycle, 0);
+
+    const done = evaluateUlwAtStop({
+      sessionId: sid,
+      lastAssistantMessage: "**Cycle complete.**\nShipped two waves.",
+      editCount: 3,
+      openTodoCount: 0,
+      stuckThreshold: 20,
+    });
+    assert.equal(done.block, false);
+    assert.equal(done.lastCycleReleased, true);
+  });
+
+  it("setMaxWaves live + clear; re-arm preserves cap unless overridden", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-ulw-setmw-"));
+    process.env.FORGE_HOME = tmp;
+    const sid = "ulw-setmw";
+    armUlwCycle(sid, "task", { cycle: 1 });
+    assert.equal(setMaxWaves(sid, 4)?.maxWaves, 4);
+    // Re-arm without maxWaves opts keeps prior cap
+    const again = armUlwCycle(sid, "task continued", { cycle: 1 });
+    assert.equal(again.maxWaves, 4);
+    assert.equal(setMaxWaves(sid, null)?.maxWaves, null);
+    // Explicit override
+    const forced = armUlwCycle(sid, "task", { cycle: 1, maxWaves: 2 });
+    assert.equal(forced.maxWaves, 2);
+  });
+
+  it("lowering max_waves below current wave forces LAST on next Stop", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-ulw-lower-"));
+    process.env.FORGE_HOME = tmp;
+    const sid = "ulw-lower";
+    armUlwCycle(sid, "task", { cycle: 1, maxWaves: 10 });
+    evaluateUlwAtStop({
+      sessionId: sid,
+      lastAssistantMessage: "w1",
+      editCount: 1,
+      openTodoCount: 0,
+      stuckThreshold: 20,
+    });
+    evaluateUlwAtStop({
+      sessionId: sid,
+      lastAssistantMessage: "w2",
+      editCount: 2,
+      openTodoCount: 0,
+      stuckThreshold: 20,
+    });
+    assert.equal(loadUlwCycle(sid)?.wave, 2);
+    setMaxWaves(sid, 1);
+    const d = evaluateUlwAtStop({
+      sessionId: sid,
+      lastAssistantMessage: "try continue",
+      editCount: 3,
+      openTodoCount: 0,
+      stuckThreshold: 20,
+    });
+    assert.equal(d.maxWavesHit, true);
+    assert.equal(loadUlwCycle(sid)?.cycle, 0);
+    assert.equal(loadUlwCycle(sid)?.wave, 2); // no overshoot
   });
 
   it("cycle=1 blocks Stop and increments wave", () => {

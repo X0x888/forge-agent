@@ -3506,7 +3506,12 @@ describe("forge run --json early failures (CLI)", () => {
       "../src/util/completion-script.js"
     );
     const bash = shellCompletionScript("bash");
-    assert.match(bash, /tips\|init\|completion\).*--json|doctor\|models\|status\|auth\|tips/);
+    // Case arm may list extra cmds (e.g. accounts) between tips/init/completion and `)`.
+    assert.match(
+      bash,
+      /tips\|init\|completion[\w|]*\).*--json|doctor\|models\|status\|auth\|tips/,
+    );
+    assert.match(bash, /--max-waves/);
   });
 
   it("models -p filters; empty/invalid provider fail closed", async () => {

@@ -83,6 +83,7 @@ export function buildStructuredSummary(
   if (ulw) {
     sections.push(
       `- ULW ON | ${formatUlwCounts(ulw)} ${ulw.cycle === 1 ? "(CONTINUE)" : "(LAST)"}`,
+      `- max_waves: ${ulw.maxWaves != null ? ulw.maxWaves : "off (unlimited)"}`,
       `- Mandate: ${ulw.mandate || "(none)"}`,
       ulw.softPrompt ? `- Soft prompt expanded to god-scope` : "",
       `- Expanded mandate (abbrev): ${(ulw.expandedMandate || "").slice(0, 600)}`,

@@ -129,6 +129,7 @@ export { runStopGuard } from "./harness/stop-guard.js";
 export {
   armUlwCycle,
   setCycleFlag,
+  setMaxWaves,
   loadUlwCycle,
   copyUlwCycle,
   disarmUlwCycle,
@@ -138,6 +139,8 @@ export {
   formatUlwStatus,
   formatUlwCounts,
   formatUlwBadge,
+  parseMaxWavesArg,
+  normalizeMaxWaves,
   ULW_LIVE_CONTROLS_HINT,
 } from "./harness/ulw-cycle.js";
 export {

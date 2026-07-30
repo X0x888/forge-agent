@@ -16,6 +16,8 @@ export interface HarnessSnapshot {
   ulwEnabled: boolean;
   cycle: 0 | 1 | null;
   wave: number;
+  /** null = unlimited */
+  maxWaves: number | null;
   blocks: number;
   mandate: string;
   softPrompt: boolean;
@@ -50,6 +52,7 @@ export function snapshotHarness(opts: {
     ulwEnabled: Boolean(ulw),
     cycle: ulw ? ulw.cycle : null,
     wave: ulw?.wave ?? 0,
+    maxWaves: ulw?.maxWaves ?? null,
     blocks: ulw?.blocks ?? 0,
     mandate: ulw?.mandate ?? "",
     softPrompt: Boolean(ulw?.softPrompt),
@@ -66,6 +69,7 @@ export function fingerprintSnapshot(s: HarnessSnapshot): string {
     s.ulwEnabled ? "1" : "0",
     s.cycle === null ? "-" : String(s.cycle),
     String(s.wave),
+    s.maxWaves == null ? "-" : String(s.maxWaves),
     String(s.blocks),
     s.mandate,
     s.softPrompt ? "1" : "0",
@@ -131,9 +135,17 @@ export function renderHarnessAdmission(s: HarnessSnapshot): string {
     lines.push(
       ``,
       `## ULW`,
-      `ON | **${formatUlwCounts({ cycle: s.cycle ?? 1, wave: s.wave, blocks: s.blocks })}** ${
+      `ON | **${formatUlwCounts({
+        cycle: s.cycle ?? 1,
+        wave: s.wave,
+        blocks: s.blocks,
+        maxWaves: s.maxWaves,
+      })}** ${
         s.cycle === 0 ? "(LAST cycle — finish wave then **Cycle complete.**)" : "(CONTINUE)"
       }`,
+      s.maxWaves != null
+        ? `max_waves=${s.maxWaves} — when wave hits the cap, harness auto-flips to LAST.`
+        : `max_waves=off (unlimited).`,
       s.mandate ? `Mandate: ${s.mandate}` : "",
       s.softPrompt
         ? `Soft original prompt — keep discovering real gaps; do not ask what to improve.`

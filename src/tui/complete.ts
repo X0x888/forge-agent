@@ -61,6 +61,17 @@ export const COMMAND_PARAMS: Record<string, ParamChoice[]> = {
     { value: "0", description: "LAST — finish current wave then stop" },
     { value: "status", description: "Show cycle flag, wave, mandate" },
   ],
+  "max-waves": [
+    { value: "3", description: "Cap at 3 waves (auto LAST when wave hits 3)" },
+    { value: "5", description: "Cap at 5 waves" },
+    { value: "10", description: "Cap at 10 waves" },
+    {
+      value: "off",
+      description: "Unlimited waves (clear cap)",
+      aliases: ["none", "clear", "unlimited", "0"],
+    },
+    { value: "status", description: "Show max_waves + ULW status" },
+  ],
   accounts: [
     { value: "list", description: "List all stored accounts" },
     {

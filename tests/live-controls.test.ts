@@ -33,6 +33,10 @@ describe("live mid-run slash policy", () => {
     assert.equal(classifyLiveSlash("/cycle 1"), "control");
     assert.equal(classifyLiveSlash("/cycle status"), "readonly");
     assert.equal(classifyLiveSlash("/cycle"), "readonly");
+    assert.equal(classifyLiveSlash("/max-waves 3"), "control");
+    assert.equal(classifyLiveSlash("/max-waves off"), "control");
+    assert.equal(classifyLiveSlash("/max-waves status"), "readonly");
+    assert.equal(classifyLiveSlash("/max-waves"), "readonly");
     assert.equal(classifyLiveSlash("/ulw-off"), "control");
     assert.equal(classifyLiveSlash("/tasks"), "readonly");
     assert.equal(classifyLiveSlash("/tasks log abc"), "readonly");
@@ -329,6 +333,49 @@ describe("mid-run /cycle affects stop-guard without abort", () => {
     });
     assert.equal(released.block, false);
     assert.equal(released.lastCycleReleased, true);
+  });
+
+  it("/max-waves mid-run is honored on next Stop", async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-live-mw-"));
+    process.env.FORGE_HOME = tmp;
+    clearLiveNotices();
+
+    const session = createSession({
+      cwd: tmp,
+      provider: "xai",
+      model: "test",
+    });
+    armUlwCycle(session.meta.id, "improve the code", { cycle: 1 });
+
+    const hooks = new HookRunner(DEFAULT_CONFIG, tmp);
+    const result = await handleSlash("/max-waves 1", {
+      session,
+      config: DEFAULT_CONFIG,
+      hooks,
+    });
+    assert.equal(result.handled, true);
+    assert.match(result.output || "", /max_waves=1/i);
+    assert.equal(loadUlwCycle(session.meta.id)?.maxWaves, 1);
+
+    const notices = drainLiveNotices(session.meta.id);
+    assert.ok(notices.some((n) => /max_waves=1/i.test(n)));
+
+    const hit = evaluateUlwAtStop({
+      sessionId: session.meta.id,
+      lastAssistantMessage: "done-ish",
+      editCount: 1,
+      openTodoCount: 0,
+      stuckThreshold: 10,
+    });
+    assert.equal(hit.maxWavesHit, true);
+    assert.equal(loadUlwCycle(session.meta.id)?.cycle, 0);
+
+    await handleSlash("/max-waves off", {
+      session,
+      config: DEFAULT_CONFIG,
+      hooks,
+    });
+    assert.equal(loadUlwCycle(session.meta.id)?.maxWaves, null);
   });
 
   it("/ulw-off mid-run disables cycle driver", async () => {

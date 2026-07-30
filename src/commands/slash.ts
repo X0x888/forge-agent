@@ -114,7 +114,9 @@ import {
   armUlwCycle,
   disarmUlwCycle,
   setCycleFlag,
+  setMaxWaves,
   parseCycleArg,
+  parseMaxWavesArg,
   formatUlwStatus,
   loadUlwCycle,
   ulwKickoffMessage,
@@ -188,6 +190,8 @@ const LIVE_READONLY = new Set([
 /** Harness control commands safe mid-turn (no forwardPrompt). */
 const LIVE_CONTROL = new Set([
   "/cycle",
+  "/max-waves",
+  "/max_waves",
   "/ulw-off",
   "/effort",
   "/title",
@@ -278,6 +282,11 @@ export function classifyLiveSlash(line: string): LiveSlashKind {
     if (cmd === "/cycle") {
       const a = arg.toLowerCase();
       if (!a || a === "status" || a === "3" /* menu status */) return "readonly";
+    }
+    // /max-waves status (or bare) is read-only; set/clear is control
+    if (cmd === "/max-waves" || cmd === "/max_waves") {
+      const a = arg.toLowerCase();
+      if (!a || a === "status" || a === "show") return "readonly";
     }
     // bare /effort shows the menu; setting a level is control
     if (cmd === "/effort" && !arg) return "readonly";
@@ -380,6 +389,7 @@ export const SLASH_COMMANDS = [
   "/ulw",
   "/ulw-off",
   "/cycle",
+  "/max-waves",
   "/hooks",
   "/status",
   "/statusline",
@@ -656,7 +666,7 @@ export async function handleSlash(
       if (flag === 1) {
         pushLiveNotice(
           sid,
-          "User set cycle=1 (CONTINUE) mid-run. Keep the research → implement → serendipity → review loop. Do not stop until the user sets cycle=0 or /ulw-off.",
+          "User set cycle=1 (CONTINUE) mid-run. Keep the research → implement → serendipity → review loop. Do not stop until the user sets cycle=0, max_waves is hit, or /ulw-off.",
         );
       } else {
         pushLiveNotice(
@@ -676,6 +686,87 @@ export async function handleSlash(
           `${msg}\n${formatUlwStatus(state)}` +
           chalk.dim(
             "\n  (flag written now — stop-guard honors it on next Stop; agent notified on next model call)",
+          ),
+        session: opts.session,
+      };
+    }
+
+    case "/max-waves":
+    case "/max_waves": {
+      const sid = opts.session.meta.id;
+      if (!arg || arg.toLowerCase() === "status" || arg.toLowerCase() === "show") {
+        return {
+          handled: true,
+          output:
+            (!arg
+              ? formatParamMenu("/max-waves", COMMAND_PARAMS["max-waves"]) + "\n\n"
+              : "") + formatUlwStatus(loadUlwCycle(sid)),
+        };
+      }
+      // Literal N first — do NOT use menu index (menu "1" would map to first choice "3").
+      let parsed: number | null | undefined = parseMaxWavesArg(arg);
+      if (parsed === undefined) {
+        const fromMenu = resolveParamChoice(arg, COMMAND_PARAMS["max-waves"]);
+        if (fromMenu === "status") {
+          return {
+            handled: true,
+            output: formatUlwStatus(loadUlwCycle(sid)),
+          };
+        }
+        if (fromMenu === "off") parsed = null;
+        else if (fromMenu != null && /^\d+$/.test(fromMenu)) parsed = Number(fromMenu);
+      }
+      if (parsed === undefined) {
+        const tip = suggestName(arg.trim().toLowerCase(), [
+          "off",
+          "status",
+          "3",
+          "5",
+          "10",
+          "clear",
+          "unlimited",
+        ], { minLength: 1, minScore: 36, requirePrefix3: false });
+        return {
+          handled: true,
+          output:
+            chalk.yellow(
+              tip
+                ? `Unknown /max-waves "${arg}". Did you mean: ${tip}?\n`
+                : `Unknown /max-waves "${arg}". Pass a positive integer, or off.\n`,
+            ) + formatParamMenu("/max-waves", COMMAND_PARAMS["max-waves"]),
+        };
+      }
+      let state = setMaxWaves(sid, parsed);
+      if (!state) {
+        // Auto-arm ULW so the cap is stored for the coming work
+        opts.session.meta.ultrawork = true;
+        state = armUlwCycle(sid, "continue prior mandate", {
+          cycle: 1,
+          maxWaves: parsed,
+        });
+        saveSession(opts.session);
+      }
+      const capLabel =
+        state.maxWaves != null ? String(state.maxWaves) : "off (unlimited)";
+      if (state.maxWaves != null) {
+        pushLiveNotice(
+          sid,
+          `User set max_waves=${state.maxWaves} mid-run. When the wave counter reaches ${state.maxWaves}, auto-flip to LAST: finish that wave, review, attest **Cycle complete.** Do not start a new ambitious wave after the cap.`,
+        );
+      } else {
+        pushLiveNotice(
+          sid,
+          "User cleared max_waves mid-run (unlimited). Cycle flag still controls CONTINUE vs LAST.",
+        );
+      }
+      return {
+        handled: true,
+        output:
+          chalk.magenta(`max_waves=${capLabel}`) +
+          "\n" +
+          formatUlwStatus(state) +
+          chalk.dim(
+            "\n  (cap written now — stop-guard honors it on next Stop; agent notified on next model call)",
           ),
         session: opts.session,
       };
@@ -3756,6 +3847,7 @@ Forge slash commands
   /unpause              Shorthand for /goal resume  [live]
   /ulw [task]           Arm ULW + cycle=1 (soft prompts OK: "improve the code")
   /cycle 1|0|status     Continue waves (1) or last wave then stop (0)  [live]
+  /max-waves N|off      Cap ULW waves (auto LAST at N); default unlimited  [live]
   /ulw-off              Disarm ULW + cycle driver  [live]
   /hooks                List loaded hooks  [live]
   /status · /hud        Full inline HUD + session details (no second panel)  [live]
@@ -3820,7 +3912,7 @@ Tips
   Tab             Autocomplete commands and parameters
   /permissions    Modes 1–4 · list|clear|revoke for saved always-allows
   Live controls   While the agent is working you can still type:
-                  /cycle 0  ·  /cycle 1  ·  /ulw-off  ·  /goal pause  ·  /status
+                  /cycle 0  ·  /cycle 1  ·  /max-waves N|off  ·  /ulw-off  ·  /goal pause  ·  /status
                   (no need to Ctrl+C first — harness updates apply at next Stop)
   Ctrl+C          Abort the current turn; twice at idle prompt to exit
 `.trim();

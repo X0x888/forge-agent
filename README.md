@@ -201,13 +201,17 @@ Max-autonomy **relentless loop**. Soft prompts like `improve the code` are expan
 |------|---------|
 | **`cycle=1`** (default on `/ulw`) | Keep going — Stop is blocked between waves |
 | **`cycle=0`** | Last wave — finish current work, attest `**Cycle complete.**`, then Stop |
+| **`max_waves=N`** (optional) | Cap waves; auto LAST when wave hits N (default unlimited) |
 
 ```text
 /ulw improve the code          # cycle=1 even for weak prompts
+/max-waves 3                   # optional cap (live mid-run too)
 /cycle 0                       # you're satisfied — finish this wave
 /cycle 1                       # resume relentless loops
 /ulw-off
 ```
+
+CLI: `forge --ulw --max-waves 5 "harden the CLI"` · `forge run "…" --ulw --max-waves 3`
 
 See [docs/ULW.md](docs/ULW.md).
 
@@ -240,6 +244,7 @@ Full contract: [docs/RELIABILITY.md](docs/RELIABILITY.md) · expert checklist: [
 | `/goal …` | Goal lifecycle |
 | `/ulw [task]` | ULW + cycle=1 (soft prompts OK) |
 | `/cycle 1` / `0` | Continue waves / last wave then stop |
+| `/max-waves N\|off` | Cap ULW waves (auto LAST at N); default unlimited |
 | `/ulw-off` | Disarm ULW + cycle |
 | `/hooks` | List hooks |
 | `/status` · `/hud` | Full inline HUD + session detail (no second panel) |
@@ -303,7 +308,7 @@ forge status --tmux       # for tmux status-right
 
 Works for **any** auth method: always shows session context/tokens/git/liveness/activity; plan credits only when the provider exposes them (e.g. SuperGrok via imported Grok session). See [docs/STATUSLINE.md](docs/STATUSLINE.md).
 
-Tab completes slash commands. While the agent is working you can still run **live controls** (`/cycle 0`, `/cycle 1`, `/ulw-off`, `/pause`, `/unpause`, `/done`, `/status`, …) without aborting — harness state updates apply at the next model step. **Free-text** mid-run is queued as an interjection (Grok-style) for the next LLM call. **Ctrl+C** aborts the current agent turn (again at idle prompt to exit).
+Tab completes slash commands. While the agent is working you can still run **live controls** (`/cycle 0`, `/cycle 1`, `/max-waves N|off`, `/ulw-off`, `/pause`, `/unpause`, `/done`, `/status`, …) without aborting — harness state updates apply at the next model step. **Free-text** mid-run is queued as an interjection (Grok-style) for the next LLM call. **Ctrl+C** aborts the current agent turn (again at idle prompt to exit).
 
 ---
 

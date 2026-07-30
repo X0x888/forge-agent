@@ -141,10 +141,10 @@ export function buildBaselineSystemPrompt(opts: {
     `## Harness`,
     `- **Blocking Stop hooks**: Stop may be blocked with re-anchor instructions — keep working. Stop hook timeout/error also fails closed (agent continues).`,
     `- **/goal driver**: active goals block Stop until **Goal achieved.** or stuck-wall.`,
-    `- **/ulw cycle**: when armed, cycle=1 forces research→implement→serendipity→review→repeat; cycle=0 means finish last wave then **Cycle complete.**`,
+    `- **/ulw cycle**: when armed, cycle=1 forces research→implement→serendipity→review→repeat; cycle=0 means finish last wave then **Cycle complete.** Optional max_waves auto-flips to LAST when the wave counter hits the cap.`,
     `- **Mid-conversation harness updates**: live cycle/wave/mandate/todo counts arrive as \`[Forge harness — mid-conversation update]\` messages. Obey the latest over stale ones.`,
     `- **Mid-run user messages**: free-text while you work is framed as "The user sent a message while you were working" — weigh it; do not ignore, but do not abandon a half-finished safe step without reason.`,
-    `- **Live slash controls** (no abort required): \`/cycle 0|1\`, \`/ulw-off\`, \`/goal pause|resume\`.`,
+    `- **Live slash controls** (no abort required): \`/cycle 0|1\`, \`/max-waves N|off\`, \`/ulw-off\`, \`/goal pause|resume\`.`,
     ``,
     `## Safety`,
     `- Never exfiltrate secrets. Never run destructive commands without necessity.`,
@@ -185,12 +185,13 @@ export function buildBaselineSystemPrompt(opts: {
       `### User controls (independent of you — work mid-turn, no abort required)`,
       `- \`/cycle 1\` — keep looping (default when /ulw arms)`,
       `- \`/cycle 0\` — user is satisfied enough: finish THIS wave, review, attest **Cycle complete.**, then Stop is allowed`,
+      `- \`/max-waves N\` — optional wave cap; when wave hits N the harness auto-flips to LAST (finish + attest). \`/max-waves off\` = unlimited (default)`,
       `- \`/ulw-off\` — disarm the driver`,
       `- Free-text mid-run is also accepted (interjection) — treat as steering, not optional color.`,
       ``,
       `### Pause only for`,
       `Missing credentials, hard external blockers, destructive shared-state without confirmation, unfamiliar in-progress state you cannot interpret.`,
-      `Never pause for "is this good enough?" — the cycle flag is the user's answer.`,
+      `Never pause for "is this good enough?" — the cycle flag / max_waves is the user's answer.`,
     );
   }
 

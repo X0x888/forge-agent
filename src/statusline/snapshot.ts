@@ -171,7 +171,10 @@ export function sessionToSnapshot(
   const tags: string[] = [];
   if (meta.ultrawork) tags.push("ULW");
   const ulw = loadUlwCycle(meta.id);
-  if (ulw?.enabled) tags.push(ulw.cycle === 1 ? "c=1" : "c=0");
+  if (ulw?.enabled) {
+    tags.push(ulw.cycle === 1 ? "c=1" : "c=0");
+    if (ulw.maxWaves != null) tags.push(`mw=${ulw.maxWaves}`);
+  }
   if (meta.pinned) tags.push("PIN");
   if (opts.permissionMode === "plan") tags.push("PLAN");
   if (opts.permissionMode === "bypassPermissions") tags.push("YOLO");

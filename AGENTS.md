@@ -23,7 +23,7 @@ Binary entry: `src/cli.ts` → `dist/cli.js` (`bin: forge`).
 - `src/providers/` — LLM clients
 - `src/auth/` — multi-account credentials (never log tokens); `accounts.ts` smart switch; auth.json v2
 - `src/statusline/` — provider-agnostic HUD (`forge status`); never invent plan metrics
-- `src/harness/ulw-cycle.ts` — ULW cycle flag 1/0; soft prompts expand to god-scope; Stop blocks while cycle=1
+- `src/harness/ulw-cycle.ts` — ULW cycle flag 1/0; optional `maxWaves` cap (auto LAST); soft prompts expand to god-scope; Stop blocks while cycle=1
 - `src/harness/context-admit.ts` — mid-conversation harness admissions (stable system + live counters)
 - `src/harness/interjection.ts` — free-text mid-run messages (Grok-style `<user_query>`)
 - `src/harness/todo-gate.ts` — TodoNudge + TodoGate under ULW

@@ -1002,7 +1002,7 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
           if (!(finalText || "").trim()) {
             finalText =
               `[Forge] Stop-continue cap (${maxStopContinues}) reached — releasing to prevent infinite loop. ` +
-              `Use /cycle 0, /done, or /ulw-off if the harness is still blocking progress.`;
+              `Use /cycle 0, /max-waves N, /done, or /ulw-off if the harness is still blocking progress.`;
           }
           break;
         }
@@ -1012,10 +1012,20 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
           stopResult.reason ||
           "Stop was blocked. Continue working.";
         const ulwAfter = loadUlwCycle(session.meta.id);
-        if (ulwAfter?.enabled) {
+        if (ulwAfter?.enabled || stopResult.ulw?.maxWavesHit) {
+          const counts = ulwAfter
+            ? formatUlwCounts(ulwAfter)
+            : stopResult.ulw?.maxWavesHit
+              ? "max_waves hit"
+              : "ULW";
+          const why = stopResult.ulw?.maxWavesHit
+            ? "max_waves LAST"
+            : ulwAfter?.cycle === 0
+              ? "LAST"
+              : "CONTINUE";
           log.info(
             chalk.magenta(
-              `↻ ULW ${formatUlwCounts(ulwAfter)} — Stop blocked (continue #${stopContinues})`,
+              `↻ ULW ${counts} (${why}) — Stop blocked (continue #${stopContinues})`,
             ),
           );
           log.dim(ULW_LIVE_CONTROLS_HINT);

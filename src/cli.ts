@@ -105,7 +105,12 @@ import { forgeHome, ensureDir, inspectSecureFile } from "./util/fs.js";
 import { log, setLogLevel } from "./util/log.js";
 import { mergeRunOpts } from "./util/merge-run-opts.js";
 import { armGoal, formatGoalStatus, loadGoal } from "./harness/goal.js";
-import { armUlwCycle, loadUlwCycle, formatUlwCounts } from "./harness/ulw-cycle.js";
+import {
+  armUlwCycle,
+  loadUlwCycle,
+  formatUlwCounts,
+  normalizeMaxWaves,
+} from "./harness/ulw-cycle.js";
 import { openTodos } from "./agent/todos.js";
 import { formatEffectiveConfig, runDoctorCheck } from "./commands/slash.js";
 import {
@@ -276,6 +281,10 @@ Docs: docs/PRODUCTION.md · docs/RELIABILITY.md · docs/ULW.md · forge news
       [] as string[],
     )
     .option("--ulw", "Start in ultrawork (max autonomy) mode")
+    .option(
+      "--max-waves <n>",
+      "ULW wave cap (positive int; auto LAST when wave hits N). 0/omit = unlimited. Implies --ulw when set >0",
+    )
     .option("--goal <objective>", "Arm a relentless /goal on start")
     .option(
       "--new",
@@ -438,12 +447,27 @@ Docs: docs/PRODUCTION.md · docs/RELIABILITY.md · docs/ULW.md · forge news
         }
       }
       const provider = createProvider(config, effectiveAuth);
-      if (opts.ulw) {
-        session.meta.ultrawork = true;
-        const mandate = prompt || "improve the codebase";
-        armUlwCycle(session.meta.id, mandate, { cycle: 1 });
-        saveSession(session);
-        if (!wantJson) log.info(`ULW cycle=1 armed for: ${mandate.slice(0, 80)}`);
+      {
+        const maxWavesOpt = parseCliMaxWaves(opts.maxWaves, wantJson);
+        const wantUlw = Boolean(opts.ulw) || maxWavesOpt !== undefined;
+        if (wantUlw) {
+          session.meta.ultrawork = true;
+          const mandate = prompt || "improve the codebase";
+          const maxWaves =
+            maxWavesOpt === undefined ? undefined : maxWavesOpt;
+          const state = armUlwCycle(session.meta.id, mandate, {
+            cycle: 1,
+            ...(maxWaves !== undefined ? { maxWaves } : {}),
+          });
+          saveSession(session);
+          if (!wantJson) {
+            const cap =
+              state.maxWaves != null ? ` max_waves=${state.maxWaves}` : "";
+            log.info(
+              `ULW cycle=1${cap} armed for: ${mandate.slice(0, 80)}`,
+            );
+          }
+        }
       }
       if (opts.goal) {
         armGoal(session.meta.id, String(opts.goal), "manual");
@@ -536,6 +560,10 @@ Docs: docs/PRODUCTION.md · docs/RELIABILITY.md · docs/ULW.md · forge news
       [] as string[],
     )
     .option("--ulw", "Ultrawork mode")
+    .option(
+      "--max-waves <n>",
+      "ULW wave cap (positive int; auto LAST at N). 0/omit = unlimited. Implies --ulw when set >0",
+    )
     .option("--goal <objective>", "Arm /goal")
     .option("--cwd <path>", "Workspace", process.cwd())
     .option(
@@ -562,7 +590,7 @@ Exit codes:
   124  wall-clock timeout (FORGE_MAX_RUN_MS)
   130  aborted (SIGINT)
 
---json fields (success): ok, version, node, forgeHome, sessionId, sessionPath, title, pinned, foreignLock, provider, stickyProvider, authMethod, model, reasoningEffort, cwd, git, projectLabel, projectHints, packageName, packageVersion, packageEnginesNode, permissionMode, sandbox, sandboxNetwork, sandboxMissingBackend, readOutsideWorkspace, ultrawork, ulwCycle, ulwWave, ulwBlocks, ulwMandate, ulwSoftPrompt, ulwExpandedMandate, goalActive, goal, goalStuckThreshold, goalBlocks, goalStuckBlocks, goalCriteria, denyRules, allowRules, askRules, maxTurns, maxTurnsUnlimited, productionWarnings, blockingStop, maxRunMs, providerTimeoutMs, bashTimeoutMs, bashBackgroundTimeoutMs, permissionAskTimeoutMs, doomLoopThreshold, errorStreakThreshold, ulwMaxContinues, editCount, openTodos, messageCount, finalText, turns, stopContinues,
+--json fields (success): ok, version, node, forgeHome, sessionId, sessionPath, title, pinned, foreignLock, provider, stickyProvider, authMethod, model, reasoningEffort, cwd, git, projectLabel, projectHints, packageName, packageVersion, packageEnginesNode, permissionMode, sandbox, sandboxNetwork, sandboxMissingBackend, readOutsideWorkspace, ultrawork, ulwCycle, ulwWave, ulwMaxWaves, ulwBlocks, ulwMandate, ulwSoftPrompt, ulwExpandedMandate, goalActive, goal, goalStuckThreshold, goalBlocks, goalStuckBlocks, goalCriteria, denyRules, allowRules, askRules, maxTurns, maxTurnsUnlimited, productionWarnings, blockingStop, maxRunMs, providerTimeoutMs, bashTimeoutMs, bashBackgroundTimeoutMs, permissionAskTimeoutMs, doomLoopThreshold, errorStreakThreshold, ulwMaxContinues, editCount, openTodos, messageCount, finalText, turns, stopContinues,
   releasedOnContinueCap, hitMaxTurns, finishReason, editCount, aborted, timedOut,
   promptTokens, completionTokens, durationMs
   (FORGE_JSON_COMPACT=1 → single-line success JSON for CI log aggregation)
@@ -851,10 +879,18 @@ Docs: docs/PRODUCTION.md
       ) {
         setSessionTitle(session, runOpts.title);
       }
-      if (runOpts.ulw || runOpts.goal) {
-        session.meta.ultrawork = true;
-        armUlwCycle(session.meta.id, prompt, { cycle: 1 });
-        saveSession(session);
+      {
+        const maxWavesOpt = parseCliMaxWaves(runOpts.maxWaves, wantJson);
+        const wantUlw =
+          Boolean(runOpts.ulw || runOpts.goal) || maxWavesOpt !== undefined;
+        if (wantUlw) {
+          session.meta.ultrawork = true;
+          armUlwCycle(session.meta.id, prompt, {
+            cycle: 1,
+            ...(maxWavesOpt !== undefined ? { maxWaves: maxWavesOpt } : {}),
+          });
+          saveSession(session);
+        }
       }
       if (runOpts.goal) armGoal(session.meta.id, String(runOpts.goal), "manual");
       const provider = createProvider(config, auth);
@@ -2805,12 +2841,14 @@ Docs: docs/PRODUCTION.md
                 const foreignLock = sessionHasForeignLiveLock(s.id);
                 let ulwCycle: number | null = null;
                 let ulwWave: number | null = null;
+                let ulwMaxWaves: number | null = null;
                 let goalActive = false;
                 try {
                   const u = loadUlwCycle(s.id);
                   if (u?.enabled) {
                     ulwCycle = u.cycle;
                     ulwWave = u.wave;
+                    ulwMaxWaves = u.maxWaves ?? null;
                   }
                 } catch {
                   /* */
@@ -2839,6 +2877,7 @@ Docs: docs/PRODUCTION.md
                     : null,
                   ulwCycle,
                   ulwWave,
+                  ulwMaxWaves,
                   goalActive,
                 };
               }),
@@ -4101,6 +4140,7 @@ function unknownOptionHint(message: string): {
     "--sandbox-missing",
     "--read-outside",
     "--max-turns",
+    "--max-waves",
     "--base-url",
     "--api-key",
     "--ulw",
@@ -4377,6 +4417,40 @@ function failInvalidFlag(
     log.error(message);
   }
   process.exit(1);
+}
+
+/**
+ * Parse `--max-waves` CLI flag.
+ * - omitted / undefined → undefined (leave existing / default unlimited)
+ * - 0 → null (unlimited / clear)
+ * - positive integer → cap
+ * - invalid → fail closed
+ */
+function parseCliMaxWaves(
+  raw: unknown,
+  wantJson: boolean,
+): number | null | undefined {
+  if (raw == null) return undefined;
+  const s = String(raw).trim();
+  if (s === "") {
+    failInvalidFlag(
+      "invalid_max_waves",
+      `Invalid --max-waves "". Pass a positive integer, or 0 for unlimited.`,
+      { maxWaves: String(raw) },
+      { json: wantJson },
+    );
+  }
+  const n = Number(s);
+  if (!Number.isFinite(n) || n < 0 || Math.floor(n) !== n || n > 10_000) {
+    failInvalidFlag(
+      "invalid_max_waves",
+      `Invalid --max-waves "${raw}". Pass an integer 0–10000 (0 = unlimited).`,
+      { maxWaves: String(raw) },
+      { json: wantJson },
+    );
+  }
+  if (n === 0) return null;
+  return normalizeMaxWaves(n);
 }
 
 /**
@@ -5415,6 +5489,15 @@ async function runHeadless(opts: {
           try {
             const u = loadUlwCycle(opts.session.meta.id);
             return u?.enabled ? u.wave : null;
+          } catch {
+            return null;
+          }
+        })(),
+        ulwMaxWaves: (() => {
+          try {
+            const u = loadUlwCycle(opts.session.meta.id);
+            if (!u?.enabled) return null;
+            return u.maxWaves ?? null;
           } catch {
             return null;
           }

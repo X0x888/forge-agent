@@ -4,6 +4,7 @@
 
 ### Added
 
+- **ULW `max_waves`**: optional wave cap (default unlimited). `/max-waves N|off|status` live mid-run; CLI `--max-waves N` (0 = unlimited; N&gt;0 implies ULW). When the wave counter hits N, harness auto-flips to LAST (`**Cycle complete.**`). Counts show as `wave=2/5`; JSON `ulwMaxWaves`; compact/admission/status/HUD aware
 - **Multi-account auth**: store many logins per provider (e.g. two SuperGrok emails + API keys) in `~/.forge/auth.json` v2
 - **`forge accounts`**: `list` · `status` · `switch` · `remove` · `rename` · `priority` · `disable`/`enable` · `clear-cooldown` · `auto-switch on|off [--threshold N]`
 - **`forge login --add`**: add another account without replacing existing ones; `--label` for API-key display names

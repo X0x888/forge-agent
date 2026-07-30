@@ -4,6 +4,8 @@
  * User-facing control:
  *   cycle = 1  → keep looping research → waves → serendipity → review → repeat
  *   cycle = 0  → finish the current wave as the LAST cycle, then release Stop
+ *   maxWaves   → optional cap; when the wave counter hits the cap, auto LAST
+ *                (default null = unlimited)
  *
  * Armed by /ulw (and forge --ulw). Soft prompts ("improve the code") are
  * expanded into a god-scope mandate so the harness still drives correctly.
@@ -21,8 +23,13 @@ export interface UlwCycleState {
    * 0 = last cycle — finish current wave then allow stop after attestation
    */
   cycle: CycleFlag;
-  /** Wave counter (increments each Stop re-anchor while cycle=1) */
+  /** Wave counter (increments each Stop re-anchor while cycle=1 / max-waves LAST) */
   wave: number;
+  /**
+   * Optional max wave number. When the counter reaches this value on Stop,
+   * the driver auto-flips to LAST (finish + attest). `null` = unlimited (default).
+   */
+  maxWaves: number | null;
   /** Total Stop blocks by this driver */
   blocks: number;
   /** Consecutive no-progress blocks */
@@ -44,6 +51,8 @@ export interface UlwStopDecision {
   reanchor?: string;
   stuckReleased?: boolean;
   lastCycleReleased?: boolean;
+  /** True when LAST mode was forced because maxWaves was reached */
+  maxWavesHit?: boolean;
 }
 
 const LAST_CYCLE_ATTEST_RE =
@@ -59,12 +68,29 @@ export function ulwStatePath(sessionId: string): string {
   return path.join(forgeHome(), "sessions", sessionId, "ulw.json");
 }
 
+/** Normalize legacy/partial ulw.json into a valid maxWaves (null = unlimited). */
+export function normalizeMaxWaves(raw: unknown): number | null {
+  if (raw == null || raw === "") return null;
+  const n = typeof raw === "number" ? raw : Number(String(raw).trim());
+  if (!Number.isFinite(n) || n < 1) return null;
+  return Math.floor(n);
+}
+
 export function loadUlwCycle(sessionId: string): UlwCycleState | null {
-  return readJsonFile<UlwCycleState | null>(ulwStatePath(sessionId), null);
+  const raw = readJsonFile<UlwCycleState | null>(ulwStatePath(sessionId), null);
+  if (!raw) return null;
+  // Back-compat: older sidecars omit maxWaves
+  if (!("maxWaves" in raw) || raw.maxWaves === undefined) {
+    raw.maxWaves = null;
+  } else {
+    raw.maxWaves = normalizeMaxWaves(raw.maxWaves);
+  }
+  return raw;
 }
 
 export function saveUlwCycle(state: UlwCycleState): void {
   state.updatedAt = nowIso();
+  state.maxWaves = normalizeMaxWaves(state.maxWaves);
   writeJsonFile(ulwStatePath(state.sessionId), state);
 }
 
@@ -127,14 +153,21 @@ export function expandUlwMandate(mandate: string): { expanded: string; soft: boo
 export function armUlwCycle(
   sessionId: string,
   mandate: string,
-  opts?: { cycle?: CycleFlag },
+  opts?: { cycle?: CycleFlag; maxWaves?: number | null },
 ): UlwCycleState {
   const { expanded, soft } = expandUlwMandate(mandate);
   const prev = loadUlwCycle(sessionId);
+  const maxWaves =
+    opts?.maxWaves !== undefined
+      ? normalizeMaxWaves(opts.maxWaves)
+      : prev?.enabled
+        ? normalizeMaxWaves(prev.maxWaves)
+        : null;
   const state: UlwCycleState = {
     enabled: true,
     cycle: opts?.cycle ?? 1,
     wave: prev?.enabled ? prev.wave : 0,
+    maxWaves,
     blocks: prev?.blocks ?? 0,
     stuckBlocks: 0,
     lastBlockEditCount: 0,
@@ -159,6 +192,22 @@ export function setCycleFlag(sessionId: string, cycle: CycleFlag): UlwCycleState
   if (cycle === 1) {
     s.stuckBlocks = 0;
   }
+  saveUlwCycle(s);
+  return s;
+}
+
+/**
+ * Set or clear the optional max_waves cap for an armed ULW session.
+ * Pass `null` to remove the cap (unlimited). Values &lt; 1 clear the cap.
+ * Returns null when ULW is not armed.
+ */
+export function setMaxWaves(
+  sessionId: string,
+  maxWaves: number | null,
+): UlwCycleState | null {
+  const s = loadUlwCycle(sessionId);
+  if (!s || !s.enabled) return null;
+  s.maxWaves = normalizeMaxWaves(maxWaves);
   saveUlwCycle(s);
   return s;
 }
@@ -192,16 +241,25 @@ export function disarmUlwCycle(sessionId: string): void {
 }
 
 /**
- * Compact counters for HUD / logs: `cycle=1 wave=3 blocks=5`.
- * Wave increments each time the driver re-anchors Stop while cycle=1.
+ * Compact counters for HUD / logs: `cycle=1 wave=3 blocks=5` or `wave=3/5` when capped.
+ * Wave increments each time the driver re-anchors Stop while cycle=1 (or max-waves LAST).
  */
-export function formatUlwCounts(s: Pick<UlwCycleState, "cycle" | "wave" | "blocks">): string {
-  return `cycle=${s.cycle} wave=${s.wave} blocks=${s.blocks}`;
+export function formatUlwCounts(
+  s: Pick<UlwCycleState, "cycle" | "wave" | "blocks"> &
+    Partial<Pick<UlwCycleState, "maxWaves">>,
+): string {
+  const cap = normalizeMaxWaves(s.maxWaves);
+  const wavePart = cap != null ? `wave=${s.wave}/${cap}` : `wave=${s.wave}`;
+  return `cycle=${s.cycle} ${wavePart} blocks=${s.blocks}`;
 }
 
-/** One-line badge for prompt flags / footers: `c=1 w=3 b=5`. */
-export function formatUlwBadge(s: Pick<UlwCycleState, "cycle" | "wave" | "blocks">): string {
-  const parts = [`c=${s.cycle}`, `w=${s.wave}`];
+/** One-line badge for prompt flags / footers: `c=1 w=3 b=5` or `w=3/5`. */
+export function formatUlwBadge(
+  s: Pick<UlwCycleState, "cycle" | "wave" | "blocks"> &
+    Partial<Pick<UlwCycleState, "maxWaves">>,
+): string {
+  const cap = normalizeMaxWaves(s.maxWaves);
+  const parts = [`c=${s.cycle}`, cap != null ? `w=${s.wave}/${cap}` : `w=${s.wave}`];
   if (s.blocks > 0) parts.push(`b=${s.blocks}`);
   return parts.join(" ");
 }
@@ -211,7 +269,7 @@ export function formatUlwBadge(s: Pick<UlwCycleState, "cycle" | "wave" | "blocks
  * Mirrors live mid-run slash policy in the REPL.
  */
 export const ULW_LIVE_CONTROLS_HINT =
-  "Live mid-run (type while working — no Ctrl+C): /cycle 0 last wave · /cycle 1 continue · /ulw-off disarm";
+  "Live mid-run (type while working — no Ctrl+C): /cycle 0 last · /cycle 1 continue · /max-waves N|off · /ulw-off disarm";
 
 export function formatUlwStatus(s: UlwCycleState | null): string {
   if (!s || !s.enabled) {
@@ -219,18 +277,22 @@ export function formatUlwStatus(s: UlwCycleState | null): string {
       "ULW cycle: OFF",
       "  Arm with: /ulw <task>   or   /ulw improve the code",
       "  Cycle flag: set with /cycle 1 (continue) or /cycle 0 (last wave then stop)",
+      "  Wave cap:   /max-waves N  (optional; default unlimited) · /max-waves off",
       `  ${ULW_LIVE_CONTROLS_HINT}`,
     ].join("\n");
   }
+  const cap = normalizeMaxWaves(s.maxWaves);
   return [
     `ULW cycle: ON  |  ${formatUlwCounts(s)}  ${s.cycle === 1 ? "(CONTINUE — relentless)" : "(LAST — finish current wave)"}`,
     `  Mandate: ${s.mandate}`,
     `  Soft prompt expanded: ${s.softPrompt ? "yes" : "no"}`,
+    `  max_waves: ${cap != null ? cap : "off (unlimited)"}`,
     `  ${ULW_LIVE_CONTROLS_HINT}`,
     `  User controls:`,
-    `    /cycle 1   — keep looping waves forever (until stuck-wall)`,
-    `    /cycle 0   — treat current work as the LAST cycle; agent finishes wave then stops`,
-    `    /ulw-off   — disarm immediately`,
+    `    /cycle 1       — keep looping waves (until max_waves / stuck-wall / you stop)`,
+    `    /cycle 0       — treat current work as the LAST cycle; agent finishes wave then stops`,
+    `    /max-waves N   — cap waves (auto LAST when wave hits N); /max-waves off clears`,
+    `    /ulw-off       — disarm immediately`,
     `  Agent attestation when cycle=0 and wave done: **Cycle complete.**`,
   ].join("\n");
 }
@@ -281,7 +343,40 @@ export function evaluateUlwAtStop(opts: {
   }
 
   if (s.cycle === 1) {
+    const cap = normalizeMaxWaves(s.maxWaves);
+    // Already at/over cap (e.g. user lowered max_waves mid-run) → force LAST now.
+    if (cap != null && s.wave >= cap) {
+      s.cycle = 0;
+      saveUlwCycle(s);
+      const reanchor = buildCycleReanchor(s, {
+        openTodos: opts.openTodoCount,
+        mode: "last",
+        maxWavesHit: true,
+      });
+      return {
+        block: true,
+        reason: reanchor,
+        reanchor,
+        maxWavesHit: true,
+      };
+    }
     s.wave += 1;
+    // Cap hit on this increment: this wave is the last — force LAST re-anchor.
+    if (cap != null && s.wave >= cap) {
+      s.cycle = 0;
+      saveUlwCycle(s);
+      const reanchor = buildCycleReanchor(s, {
+        openTodos: opts.openTodoCount,
+        mode: "last",
+        maxWavesHit: true,
+      });
+      return {
+        block: true,
+        reason: reanchor,
+        reanchor,
+        maxWavesHit: true,
+      };
+    }
     saveUlwCycle(s);
     const reanchor = buildCycleReanchor(s, {
       openTodos: opts.openTodoCount,
@@ -301,13 +396,14 @@ export function evaluateUlwAtStop(opts: {
 
 function buildCycleReanchor(
   s: UlwCycleState,
-  opts: { openTodos: number; mode: "continue" | "last" },
+  opts: { openTodos: number; mode: "continue" | "last"; maxWavesHit?: boolean },
 ): string {
   if (opts.mode === "continue") {
+    const cap = normalizeMaxWaves(s.maxWaves);
     return [
       `[Forge ULW cycle driver] Stop blocked — ${formatUlwCounts(s)} (CONTINUE).`,
       `Mandate: ${s.mandate}`,
-      `Wave about to start: ${s.wave}  (Stop blocks so far: ${s.blocks}; stuck-streak tracked)`,
+      `Wave about to start: ${s.wave}${cap != null ? ` / max ${cap}` : ""}  (Stop blocks so far: ${s.blocks}; stuck-streak tracked)`,
       ``,
       `Execute the ULW CYCLE (do not skip steps):`,
       `1. RESEARCH — re-scan gaps vs mandate; update todo_write with concrete items.`,
@@ -315,7 +411,7 @@ function buildCycleReanchor(
       `3. IMPLEMENT — ship the wave with real code/tests; verify with cheapest proof.`,
       `4. SERENDIPITY — fix verified adjacent defects on already-loaded paths when the fix is bounded; note under Serendipity.`,
       `5. REVIEW — independent pass: re-read your diff, check for regressions, no open todos left for THIS wave.`,
-      `6. REPEAT — do NOT stop. Begin the next research scan. The user sets cycle=0 when they want this to be the last loop.`,
+      `6. REPEAT — do NOT stop. Begin the next research scan. The user sets cycle=0 or max_waves when they want this to end.`,
       ``,
       s.softPrompt
         ? `Soft original prompt — keep discovering real gaps; do not ask the user to clarify "improve".`
@@ -324,16 +420,22 @@ function buildCycleReanchor(
         ? `Open todos: ${opts.openTodos} — clear or complete them before claiming a wave done.`
         : `No open todos recorded — create a short wave plan via todo_write then execute.`,
       ``,
-      `User control (independent flag): /cycle 0 = finish current wave as last · /cycle 1 = keep going · /ulw-off = disarm.`,
+      `User control: /cycle 0 = last wave · /cycle 1 = keep going · /max-waves N|off · /ulw-off = disarm.`,
       `${ULW_LIVE_CONTROLS_HINT}`,
       `Do not stop. Do not ask permission to continue. Next tool calls now.`,
     ].join("\n");
   }
 
+  const cap = normalizeMaxWaves(s.maxWaves);
+  const maxHitLine = opts.maxWavesHit
+    ? `max_waves=${cap} reached at wave=${s.wave} — auto LAST (finish and attest; do not start a new ambitious wave).`
+    : null;
+
   return [
     `[Forge ULW cycle driver] Stop blocked — ${formatUlwCounts(s)} (LAST CYCLE).`,
     `Mandate: ${s.mandate}`,
-    `Wave: ${s.wave}  — finish THIS wave completely, then attest and stop.`,
+    `Wave: ${s.wave}${cap != null ? ` / max ${cap}` : ""}  — finish THIS wave completely, then attest and stop.`,
+    maxHitLine,
     ``,
     `Required:`,
     `1. Complete all open work for the current wave (todos, verification).`,
@@ -347,12 +449,15 @@ function buildCycleReanchor(
       : `No open todos — review + attest if the wave is truly done.`,
     ``,
     `${ULW_LIVE_CONTROLS_HINT}`,
-    `User may flip back to /cycle 1 if they want more waves after all.`,
-  ].join("\n");
+    `User may raise /max-waves or flip /cycle 1 if they want more waves after all.`,
+  ]
+    .filter((line) => line != null)
+    .join("\n");
 }
 
 /** Injected into the user message path when /ulw arms on a soft prompt. */
 export function ulwKickoffMessage(state: UlwCycleState): string {
+  const cap = normalizeMaxWaves(state.maxWaves);
   return [
     state.expandedMandate,
     ``,
@@ -361,6 +466,9 @@ export function ulwKickoffMessage(state: UlwCycleState): string {
     `- The user can flip cycle any time with /cycle 0 or /cycle 1 — including while you are mid-turn (live controls). Independent of your opinion of "done".`,
     `- While cycle=1, the harness will block Stop and force the research→implement→serendipity→review→repeat loop.`,
     `- When cycle=0, finish the current wave and attest **Cycle complete.**`,
+    cap != null
+      ? `- max_waves=${cap}: when the wave counter reaches ${cap}, the harness auto-flips to LAST (finish + **Cycle complete.**).`
+      : `- max_waves: off (unlimited). User may set /max-waves N mid-run.`,
     `- ${ULW_LIVE_CONTROLS_HINT}`,
     ``,
     `Start Wave 1 now: research first, then ship.`,
@@ -372,6 +480,31 @@ export function parseCycleArg(arg: string): CycleFlag | null {
   if (t === "1" || t === "on" || t === "continue" || t === "go") return 1;
   if (t === "0" || t === "off" || t === "last" || t === "stop" || t === "done") return 0;
   return null;
+}
+
+/**
+ * Parse /max-waves argument.
+ * - off|none|clear|unlimited|0 → null (unlimited)
+ * - positive integer → cap
+ * - invalid → undefined (caller should error)
+ */
+export function parseMaxWavesArg(arg: string): number | null | undefined {
+  const t = arg.trim().toLowerCase();
+  if (!t) return undefined;
+  if (
+    t === "off" ||
+    t === "none" ||
+    t === "clear" ||
+    t === "unlimited" ||
+    t === "inf" ||
+    t === "infinite" ||
+    t === "0"
+  ) {
+    return null;
+  }
+  const n = Number(t);
+  if (!Number.isFinite(n) || n < 1 || !Number.isInteger(n)) return undefined;
+  return n;
 }
 
 // silence unused import if tree-shaken
