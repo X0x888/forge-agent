@@ -133,6 +133,15 @@ describe("format-on-write", () => {
     assert.ok(all.includes("/format status"));
   });
 
+  it("completeSlash offers expert control args", () => {
+    assert.ok(completeSlash("/cycle ").includes("/cycle 1"));
+    assert.ok(completeSlash("/goal p").includes("/goal pause"));
+    assert.ok(completeSlash("/effort h").includes("/effort high"));
+    assert.ok(completeSlash("/sessions e").includes("/sessions errors"));
+    assert.ok(completeSlash("/sessions u").includes("/sessions untitled"));
+    assert.ok(completeSlash("/permissions p").includes("/permissions plan"));
+  });
+
   it("detectProjectFormatters finds prettier dep", async () => {
     const { detectProjectFormatters } = await import(
       "../src/agent/tools/format-on-write.js"
