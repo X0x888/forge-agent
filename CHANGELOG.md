@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.9.36 — slash arg completion + sessions completion hygiene
+
 ### Fixed
 
 - **Completion hygiene**: dedupe `--untitled` in shell completion; add `errors`/`untitled` session action aliases
