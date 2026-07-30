@@ -4006,11 +4006,11 @@ export async function runDoctorCheck(
     const all = listSessions({ limit: 10_000 });
     sessionsWithLastError = all.filter((s) => Boolean(s.lastError?.message)).length;
     if (sessionsWithLastError > 0) {
-      lines.push(
-        chalk.yellow(
-          `  sessions with lastError: ${sessionsWithLastError}  → /sessions errors · forge sessions list --errors · prune keeps them until --force-last-error`,
-        ),
-      );
+      const backlog =
+        sessionsWithLastError >= 5
+          ? `  ⚠ ${sessionsWithLastError} sessions with lastError — review /sessions errors before prune; backlog may hide real incidents`
+          : `  sessions with lastError: ${sessionsWithLastError}  → /sessions errors · forge sessions list --errors · prune keeps them until --force-last-error`;
+      lines.push(chalk.yellow(backlog));
     }
   } catch {
     /* */

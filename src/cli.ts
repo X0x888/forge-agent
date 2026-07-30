@@ -5700,6 +5700,30 @@ async function runHeadless(opts: {
     } catch {
       /* */
     }
+    if (timedOut) {
+      try {
+        const { setSessionLastError } = await import("./session/session.js");
+        setSessionLastError(opts.session, {
+          code: "max_run_ms",
+          message: "Run hit FORGE_MAX_RUN_MS wall-clock limit (exit 124)",
+          tips: [
+            "Raise FORGE_MAX_RUN_MS or narrow the task",
+            "forge run --continue  ·  /retry",
+          ],
+        });
+        saveSession(opts.session);
+        recovery = {
+          code: "max_run_ms",
+          message: "Run hit FORGE_MAX_RUN_MS wall-clock limit (exit 124)",
+          tips: [
+            "Raise FORGE_MAX_RUN_MS or narrow the task",
+            "forge run --continue  ·  /retry",
+          ],
+        };
+      } catch {
+        /* */
+      }
+    }
     appendSessionMetrics(
       buildRunEndMetrics({
         sessionId: opts.session.meta.id,
@@ -5981,6 +6005,22 @@ async function runHeadless(opts: {
   }
 
   try {
+    // Wall-clock timeout: stamp lastError for expert recovery surfaces
+    if (timedOut) {
+      try {
+        const { setSessionLastError } = await import("./session/session.js");
+        setSessionLastError(opts.session, {
+          code: "max_run_ms",
+          message: "Run hit FORGE_MAX_RUN_MS wall-clock limit (exit 124)",
+          tips: [
+            "Raise FORGE_MAX_RUN_MS or narrow the task",
+            "forge run --continue  ·  /retry  ·  /sessions errors",
+          ],
+        });
+      } catch {
+        /* */
+      }
+    }
     await opts.hooks.run("SessionEnd", {
       sessionId: opts.session.meta.id,
       cwd: opts.session.meta.cwd,
