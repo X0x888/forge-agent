@@ -590,6 +590,7 @@ export async function runRepl(opts: {
             ok: !result.aborted,
             headless: false,
             ultrawork: session.meta.ultrawork,
+            lastErrorCode: session.meta.lastError?.code || undefined,
           }),
         );
       } catch {

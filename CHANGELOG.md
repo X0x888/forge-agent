@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+### Added
+
+- **Continue-cap metrics/JSON**: headless + REPL run_end metrics include `lastErrorCode` when continue-cap stamps lastError; `forge run --json` success payloads include `lastError` when present
+
+
 ## 0.9.11 — Continue-cap lastError + /news empty Unreleased fix
 
 ### Added

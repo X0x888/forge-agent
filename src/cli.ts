@@ -6188,6 +6188,14 @@ async function runHeadless(opts: {
       releasedOnContinueCap: result.releasedOnContinueCap,
       hitMaxTurns: result.hitMaxTurns,
       finishReason: result.finishReason,
+      lastError: opts.session.meta.lastError
+        ? {
+            at: opts.session.meta.lastError.at,
+            code: opts.session.meta.lastError.code,
+            message: opts.session.meta.lastError.message,
+            tips: opts.session.meta.lastError.tips,
+          }
+        : null,
       editCount: opts.session.meta.editCount,
       openTodos: openTodos(opts.session.todos || []),
       messageCount: opts.session.messages?.length ?? 0,
@@ -6216,6 +6224,8 @@ async function runHeadless(opts: {
         ok: payload.ok,
         headless: true,
         ultrawork: opts.session.meta.ultrawork,
+        // Continue-cap / content-filter releases stamp lastError — surface in metrics
+        lastErrorCode: opts.session.meta.lastError?.code || undefined,
       }),
     );
     return payload;
