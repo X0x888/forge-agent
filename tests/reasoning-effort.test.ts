@@ -167,7 +167,8 @@ describe("/effort slash", () => {
     assert.equal(classifyLiveSlash("/effort"), "readonly");
     assert.equal(classifyLiveSlash("/effort low"), "control");
     assert.equal(classifyLiveSlash("/effort high"), "control");
-    assert.equal(classifyLiveSlash("/model grok-4.5"), "idle-only");
+    assert.equal(classifyLiveSlash("/model grok-4.5"), "control");
+    assert.equal(classifyLiveSlash("/model"), "readonly");
   });
 
   it("sets effort on supporting model", async () => {

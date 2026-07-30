@@ -19,6 +19,10 @@
 - **Provider aliases**: `github` / `github-copilot` / `gh-copilot` → `copilot`
 - **Env**: `COPILOT_GITHUB_TOKEN` / `GITHUB_COPILOT_TOKEN` / `GH_COPILOT_TOKEN` for CI-style GitHub OAuth tokens (exchanged on resolve)
 
+### Changed
+
+- **`/model` is live mid-run**: switch model (and optional effort) while a turn is running; bare `/model` stays readonly catalog. Live notice + session meta update; next provider call picks up the new model. Doctor tips when no project instruction files are present (`/init`)
+
 ### Fixed
 
 - **`/build` clears session plan override**: leaving plan restores prior live mode and drops `meta.permissionMode` so resume falls back to sticky prefs/CLI (plan is temporary, not sticky-by-accident). Sticky `/permissions <mode>` no longer writes non-plan session overrides

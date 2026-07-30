@@ -154,7 +154,8 @@ describe("live mid-run slash policy", () => {
     assert.equal(classifyLiveSlash("/undo"), "idle-only");
     assert.equal(classifyLiveSlash("/retry"), "idle-only");
     assert.equal(classifyLiveSlash("/again try harder"), "idle-only");
-    assert.equal(classifyLiveSlash("/model grok-4"), "idle-only");
+    // /model is live control (switch mid-run); bare catalog is readonly
+    assert.equal(classifyLiveSlash("/model grok-4"), "control");
     assert.equal(isLiveSafeSlash("/retry"), false);
     assert.equal(isLiveSafeSlash("/fork-and-compact x"), false);
     assert.equal(classifyLiveSlash("/sessions delete abc"), "idle-only");
@@ -175,6 +176,7 @@ describe("live mid-run slash policy", () => {
     assert.match(LIVE_CONTROLS_HINT, /\/unpause/);
     assert.match(LIVE_CONTROLS_HINT, /\/plan/);
     assert.match(LIVE_CONTROLS_HINT, /\/build/);
+    assert.match(LIVE_CONTROLS_HINT, /\/model/);
   });
 
   it("classifies /plan and /build as live control", () => {
@@ -185,6 +187,14 @@ describe("live mid-run slash policy", () => {
     assert.equal(classifyLiveSlash("/permissions build"), "control");
     assert.ok(isLiveSafeSlash("/plan focus"));
     assert.ok(isLiveSafeSlash("/build"));
+  });
+
+  it("classifies /model as live control (bare menu readonly)", () => {
+    assert.equal(classifyLiveSlash("/model"), "readonly");
+    assert.equal(classifyLiveSlash("/model grok-4.5"), "control");
+    assert.equal(classifyLiveSlash("/model grok-4.5 high"), "control");
+    assert.ok(isLiveSafeSlash("/model"));
+    assert.ok(isLiveSafeSlash("/model grok-4"));
   });
 });
 

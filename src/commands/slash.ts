@@ -197,6 +197,7 @@ const LIVE_CONTROL = new Set([
   "/max_waves",
   "/ulw-off",
   "/effort",
+  "/model",
   "/plan",
   "/build",
   "/execute",
@@ -304,6 +305,8 @@ export function classifyLiveSlash(line: string): LiveSlashKind {
     }
     // bare /effort shows the menu; setting a level is control
     if (cmd === "/effort" && !arg) return "readonly";
+    // bare /model shows catalog; setting a model is control (live mid-run)
+    if (cmd === "/model" && !arg) return "readonly";
     // bare /title|/rename shows current title
     if ((cmd === "/title" || cmd === "/rename") && !arg) return "readonly";
     // bare /bell shows status
@@ -392,7 +395,7 @@ export function isSafeDiffFilterArg(token: string): boolean {
 }
 
 export const LIVE_CONTROLS_HINT =
-  `${ULW_LIVE_CONTROLS_HINT} · /plan · /build · free-text queues mid-run · /pause · /unpause · /done · /status  ·  Ctrl+C aborts the turn`;
+  `${ULW_LIVE_CONTROLS_HINT} · /plan · /build · /model · free-text queues mid-run · /pause · /unpause · /done · /status  ·  Ctrl+C aborts the turn`;
 
 export const SLASH_COMMANDS = [
   "/help",
@@ -1461,9 +1464,17 @@ const stats = collectUsageStats({
       }
 
       saveSession(opts.session);
+      try {
+        pushLiveNotice(
+          opts.session.meta.id,
+          `User switched model mid-run → ${resolved}${effortNote.replace(/^ · /, " · ") || ""}${windowNote.replace(/^ · /, " · ") || ""}. Continue with the new model; do not restart from scratch.`,
+        );
+      } catch {
+        /* */
+      }
       return {
         handled: true,
-        output: `Model set to ${resolved}${effortNote}${windowNote} (saved for future sessions)`,
+        output: `Model set to ${resolved}${effortNote}${windowNote} (saved for future sessions · live mid-run)`,
         session: opts.session,
       };
     }
@@ -3492,6 +3503,27 @@ export async function runDoctorCheck(
   }
   lines.push(`Goal gate: ${config.goal.enabled ? "on" : "off"} (stuck=${config.goal.stuckThreshold})`);
   lines.push(`Workspace: ${config.workspace || process.cwd()}`);
+  // Project instruction hygiene (OpenCode-style) — tip only, not a blocking issue
+  try {
+    const { listProjectRulePaths } = await import("../agent/system-prompt.js");
+    const ws = config.workspace || process.cwd();
+    const rules = listProjectRulePaths(ws);
+    if (rules.length === 0) {
+      lines.push(
+        chalk.dim(
+          "  tip: no AGENTS.md / CLAUDE.md / .cursor/rules — run /init for project instructions",
+        ),
+      );
+    } else {
+      lines.push(
+        chalk.dim(
+          `  project rules: ${rules.length} source(s)  (/context for paths)`,
+        ),
+      );
+    }
+  } catch {
+    /* */
+  }
   lines.push(
     `Context: window=${config.contextWindow} autoCompact@${Math.round((config.autoCompactThreshold || 0.8) * 100)}% maxTurns=${config.maxTurns > 0 ? config.maxTurns : "unlimited"}`,
   );
@@ -4043,7 +4075,7 @@ Forge slash commands
   /metrics              Local metrics.jsonl + this session counters  [live]
   /stats [days|week]    Usage dashboard (runs/tokens/cost/projects)  [live]
   /todos                Show agent todos  [live]
-  /model <name> [effort] Switch model; optional low|medium|high (persists)
+  /model <name> [effort] Switch model mid-run; optional low|medium|high (persists)  [live]
   /effort [level]       Reasoning effort for current model (low|medium|high)  [live]
   /plan [focus]         Session-scoped PLAN mode (read-only design; no sticky prefs)  [live]
   /build [note]         Leave plan → restore prior mode and implement (/execute)  [live]
