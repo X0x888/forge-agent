@@ -1,11 +1,15 @@
 /**
- * Premium REPL prompt editor with true multi-line paste.
+ * REPL prompt editor with multi-line paste that does not auto-submit.
  *
- * - Enables terminal bracketed paste (`CSI ?2004 h`) so Ghostty treats pastes as safe
- * - Newlines inside a paste never submit — only an explicit Enter does
- * - Ctrl+J / Alt+Enter / Shift+Enter (Kitty CSI u) insert a newline
- * - Burst fallback when the terminal omits paste brackets
- * - Multi-line history (escaped), Tab completion, mid-run preserve redraw
+ * Rendering model (critical for correct arrows):
+ * - We always know which screen row of the editor block the cursor sits on
+ *   (`cursorViewRow`, 0 = top of block).
+ * - Redraw = move to block top → clear downward → paint → place cursor →
+ *   update `cursorViewRow`. Never assume the cursor is at the block bottom.
+ * - Soft-wrap aware: long lines count as multiple terminal rows.
+ *
+ * Paste: bracketed paste (`CSI ?2004 h`) + burst fallback. Newlines in paste
+ * never submit; only explicit Enter does.
  */
 import { EventEmitter } from "node:events";
 import readline from "node:readline";
@@ -17,7 +21,6 @@ const BRACKETED_PASTE_DISABLE = "\x1b[?2004l";
 const PASTE_START = "\x1b[200~";
 const PASTE_END = "\x1b[201~";
 
-/** Burst paste fallback window (ms). */
 const BURST_MS = 48;
 const BURST_MIN_CHARS = 6;
 
@@ -29,7 +32,6 @@ export interface PromptEditorOptions {
   history?: string[];
   historySize?: number;
   completer?: CompleterFn;
-  /** Force classic readline (tests / non-interactive). */
   forceReadline?: boolean;
 }
 
@@ -49,12 +51,12 @@ export interface PromptEditor {
   off(event: string, listener: (...args: unknown[]) => void): this;
 }
 
-/** Escape newlines for one-line history storage. */
+// ── Pure helpers (tested) ──────────────────────────────────────────────
+
 export function encodeHistoryEntry(s: string): string {
   return s.replace(/\r\n/g, "\n").replace(/\\/g, "\\\\").replace(/\n/g, "\\n");
 }
 
-/** Inverse of encodeHistoryEntry; plain historic lines stay unchanged. */
 export function decodeHistoryEntry(s: string): string {
   let out = "";
   for (let i = 0; i < s.length; i++) {
@@ -124,10 +126,6 @@ export function deleteWordBackward(
   };
 }
 
-/**
- * Normalize pasted text: unify newlines; drop a single trailing newline so
- * clipboard copies from editors land ready to review (still no auto-submit).
- */
 export function normalizePaste(text: string): string {
   let t = text.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
   if (t.endsWith("\n") && !t.endsWith("\n\n")) {
@@ -155,13 +153,107 @@ export function stripAnsi(s: string): string {
   return s.replace(/\x1b\[[0-9;]*m/g, "");
 }
 
+/** Terminal display width (ASCII + common wide emoji approximation). */
 export function displayWidth(s: string): number {
-  return [...s].length;
+  let w = 0;
+  for (const ch of s) {
+    const cp = ch.codePointAt(0) ?? 0;
+    // CJK / emoji rough wide
+    if (
+      cp >= 0x1100 &&
+      ((cp <= 0x115f) ||
+        cp === 0x2329 ||
+        cp === 0x232a ||
+        (cp >= 0x2e80 && cp <= 0xa4cf) ||
+        (cp >= 0xac00 && cp <= 0xd7a3) ||
+        (cp >= 0xf900 && cp <= 0xfaff) ||
+        (cp >= 0xfe10 && cp <= 0xfe19) ||
+        (cp >= 0xfe30 && cp <= 0xfe6f) ||
+        (cp >= 0xff00 && cp <= 0xff60) ||
+        (cp >= 0xffe0 && cp <= 0xffe6) ||
+        (cp >= 0x1f300 && cp <= 0x1faff))
+    ) {
+      w += 2;
+    } else if (cp >= 0x20 || ch === "\t") {
+      w += ch === "\t" ? 1 : 1;
+    }
+  }
+  return w;
+}
+
+/** Screen rows used by a logical line of known prefix + content widths. */
+export function softWrapRows(contentWidth: number, cols: number): number {
+  const c = Math.max(1, cols);
+  if (contentWidth <= 0) return 1;
+  return Math.max(1, Math.ceil(contentWidth / c));
 }
 
 /**
- * Create the interactive editor. Falls back to Node readline when not a TTY.
+ * Layout the editor block for paint + cursor placement.
+ * Pure — unit tested.
  */
+export function layoutEditor(opts: {
+  buffer: string;
+  cursor: number;
+  promptPlain: string;
+  cols: number;
+  showFooter: boolean;
+}): {
+  /** Screen rows from top of block to the cursor row (0-based). */
+  cursorViewRow: number;
+  /** Column (0-based) of cursor within its screen row. */
+  cursorViewCol: number;
+  /** Total screen rows in the block (content + optional footer). */
+  totalViewRows: number;
+  /** Logical lines with prefix widths for painting. */
+  logical: Array<{ prefixPlain: string; text: string; prefixWidth: number }>;
+} {
+  const cols = Math.max(8, opts.cols);
+  const lines = opts.buffer.length ? opts.buffer.split("\n") : [""];
+  const promptW = displayWidth(opts.promptPlain);
+  const contLabel = "… ";
+  const contPad = Math.max(0, promptW - displayWidth(contLabel));
+  const contPlain = " ".repeat(contPad) + contLabel;
+  const contW = displayWidth(contPlain);
+
+  const logical = lines.map((text, i) => ({
+    prefixPlain: i === 0 ? opts.promptPlain : contPlain,
+    text,
+    prefixWidth: i === 0 ? promptW : contW,
+  }));
+
+  const { row: logRow, col: logCol } = cursorRowCol(opts.buffer, opts.cursor);
+
+  // Screen rows before the logical line that holds the cursor
+  let rowsBefore = 0;
+  for (let i = 0; i < logRow; i++) {
+    const L = logical[i]!;
+    rowsBefore += softWrapRows(L.prefixWidth + displayWidth(L.text), cols);
+  }
+
+  const curLine = logical[logRow] ?? logical[0]!;
+  const absCol = curLine.prefixWidth + logCol;
+  // Within this logical line, which soft-wrap row / col?
+  const wrapRowInLine = Math.floor(absCol / cols);
+  const cursorViewCol = absCol % cols;
+  const cursorViewRow = rowsBefore + wrapRowInLine;
+
+  let totalViewRows = 0;
+  for (const L of logical) {
+    totalViewRows += softWrapRows(L.prefixWidth + displayWidth(L.text), cols);
+  }
+  if (opts.showFooter) totalViewRows += 1;
+
+  return {
+    cursorViewRow,
+    cursorViewCol,
+    totalViewRows: Math.max(1, totalViewRows),
+    logical,
+  };
+}
+
+// ── Factory ────────────────────────────────────────────────────────────
+
 export function createPromptEditor(opts: PromptEditorOptions = {}): PromptEditor {
   const input = opts.input ?? process.stdin;
   const output = opts.output ?? process.stdout;
@@ -236,6 +328,8 @@ function createReadlineFallback(
   return wrap;
 }
 
+// ── TTY editor ─────────────────────────────────────────────────────────
+
 class TtyPromptEditor extends EventEmitter implements PromptEditor {
   private readonly input: NodeJS.ReadStream;
   private readonly output: NodeJS.WriteStream;
@@ -250,9 +344,11 @@ class TtyPromptEditor extends EventEmitter implements PromptEditor {
   private cursor = 0;
   private closed = false;
   private pasting = false;
-  private pending = ""; // unparsed carry across chunks
-  private lastRenderRows = 1;
-  private shownPasteHint = false;
+  private pending = "";
+  /** Screen row of cursor within the editor block (0 = top). */
+  private cursorViewRow = 0;
+  private painted = false;
+  private multiLineHint = false;
 
   private burstActive = false;
   private burstTimer: ReturnType<typeof setTimeout> | null = null;
@@ -275,9 +371,7 @@ class TtyPromptEditor extends EventEmitter implements PromptEditor {
       const raw = typeof chunk === "string" ? chunk : chunk.toString("utf8");
       this.feed(raw);
     };
-    if (this.input.isTTY) {
-      this.input.setRawMode(true);
-    }
+    if (this.input.isTTY) this.input.setRawMode(true);
     this.input.resume();
     this.input.on("data", this.onData);
     this.output.write(BRACKETED_PASTE_ENABLE);
@@ -297,7 +391,7 @@ class TtyPromptEditor extends EventEmitter implements PromptEditor {
     this.redraw();
   }
 
-  prompt(_preserveCursor = false): void {
+  prompt(_preserve = false): void {
     if (this.closed) return;
     this.redraw();
   }
@@ -322,12 +416,7 @@ class TtyPromptEditor extends EventEmitter implements PromptEditor {
     this.emit("close");
   }
 
-  // ── Feed / parse ─────────────────────────────────────────────────────
-
-  /** Exposed for unit tests via feed path. */
-  feedForTest(raw: string): void {
-    this.feed(raw);
-  }
+  // ── Parse ────────────────────────────────────────────────────────────
 
   private feed(raw: string): void {
     if (this.closed) return;
@@ -337,13 +426,14 @@ class TtyPromptEditor extends EventEmitter implements PromptEditor {
       if (this.pasting) {
         const end = this.pending.indexOf(PASTE_END);
         if (end === -1) {
-          // Hold a short tail that might be a partial PASTE_END
           if (this.pending.length > 8) {
             const keep = 6;
             const body = this.pending.slice(0, this.pending.length - keep);
             this.pending = this.pending.slice(this.pending.length - keep);
-            this.insert(body);
-            this.redraw();
+            if (body) {
+              this.insert(body);
+              this.redraw();
+            }
           }
           return;
         }
@@ -354,27 +444,39 @@ class TtyPromptEditor extends EventEmitter implements PromptEditor {
         continue;
       }
 
-      // Bracketed paste start
       const ps = this.pending.indexOf(PASTE_START);
       if (ps === 0) {
         this.pending = this.pending.slice(PASTE_START.length);
         this.pasting = true;
-        this.shownPasteHint = false;
         continue;
       }
       if (ps > 0) {
-        // process prefix then paste
-        const prefix = this.pending.slice(0, ps);
+        this.consumeNormal(this.pending.slice(0, ps));
         this.pending = this.pending.slice(ps);
-        this.consumeNormal(prefix);
         continue;
       }
-      // Partial paste start at end?
-      if (isPrefixOf(this.pending, PASTE_START) || isPrefixOf(PASTE_START, this.pending)) {
-        if (this.pending.length < PASTE_START.length) return;
+      if (
+        PASTE_START.startsWith(this.pending) ||
+        this.pending.startsWith("\x1b")
+      ) {
+        // May be incomplete ESC / paste start
+        if (this.pending.startsWith("\x1b[")) {
+          if (!this.escapeComplete(this.pending)) return;
+          const used = this.consumeEscape(this.pending);
+          this.pending = this.pending.slice(used);
+          continue;
+        }
+        if (this.pending === "\x1b") return;
+        if (this.pending.startsWith("\x1b") && this.pending.length < 2) return;
+        if (
+          this.pending.length < PASTE_START.length &&
+          PASTE_START.startsWith(this.pending)
+        ) {
+          return;
+        }
       }
 
-      // Unbracketed multi-line burst: whole remaining chunk has newlines and is sizable
+      // Unbracketed multi-line burst (whole remaining chunk)
       if (
         !this.burstActive &&
         this.pending.length >= BURST_MIN_CHARS &&
@@ -383,28 +485,21 @@ class TtyPromptEditor extends EventEmitter implements PromptEditor {
       ) {
         const text = normalizePaste(this.pending);
         this.pending = "";
-        this.beginBurst();
+        this.burstActive = true;
         this.insert(text);
+        this.multiLineHint = countLines(this.buffer) > 1;
         this.redraw();
         this.scheduleBurstEnd();
         return;
       }
 
-      // Incomplete ESC sequence at end — wait
-      const esc = this.pending.indexOf("\x1b");
-      if (esc === 0) {
+      if (this.pending.startsWith("\x1b")) {
         if (!this.escapeComplete(this.pending)) return;
         const used = this.consumeEscape(this.pending);
         this.pending = this.pending.slice(used);
         continue;
       }
-      if (esc > 0) {
-        this.consumeNormal(this.pending.slice(0, esc));
-        this.pending = this.pending.slice(esc);
-        continue;
-      }
 
-      // Pure normal text
       this.consumeNormal(this.pending);
       this.pending = "";
     }
@@ -414,35 +509,27 @@ class TtyPromptEditor extends EventEmitter implements PromptEditor {
     if (s === "\x1b") return false;
     if (s.startsWith("\x1b[")) {
       if (s.length < 3) return false;
-      return /[A-Za-z~u]$/.test(s) || s.length > 30;
+      return /[A-Za-z~u]$/.test(s) || s.length > 32;
     }
-    // Alt+key: ESC + one byte
     return s.length >= 2;
   }
 
-  /** @returns bytes consumed */
   private consumeEscape(s: string): number {
     if (s.startsWith(PASTE_START)) {
       this.pasting = true;
-      this.shownPasteHint = false;
       return PASTE_START.length;
     }
     if (s.startsWith("\x1b[")) {
       const m = s.match(/^\x1b\[([0-9;]*)([A-Za-z~u])/);
-      if (!m) {
-        // discard one esc
-        return 1;
-      }
-      const full = m[0]!;
-      const params = m[1]!;
-      const final = m[2]!;
-      this.handleCsi(params, final);
-      return full.length;
+      if (!m) return 1;
+      this.handleCsi(m[1]!, m[2]!);
+      return m[0]!.length;
     }
     if (s.length >= 2 && s[0] === "\x1b") {
       const k = s[1]!;
       if (k === "\r" || k === "\n") {
         this.insert("\n");
+        this.multiLineHint = true;
         this.redraw();
       } else if (k >= " ") {
         this.insert(k);
@@ -454,7 +541,6 @@ class TtyPromptEditor extends EventEmitter implements PromptEditor {
   }
 
   private handleCsi(params: string, final: string): void {
-    const body = params + final;
     if (final === "A") {
       this.historyUp();
       return;
@@ -473,35 +559,35 @@ class TtyPromptEditor extends EventEmitter implements PromptEditor {
       this.redraw();
       return;
     }
-    if (final === "H" || body === "1~") {
+    if (final === "H" || params + final === "1~") {
       this.cursor = 0;
       this.redraw();
       return;
     }
-    if (final === "F" || body === "4~" || body === "8~") {
+    if (final === "F" || params + final === "4~" || params + final === "8~") {
       this.cursor = this.buffer.length;
       this.redraw();
       return;
     }
-    if (body === "3~") {
+    if (params + final === "3~") {
       const r = deleteForward(this.buffer, this.cursor);
       this.buffer = r.buffer;
       this.cursor = r.cursor;
       this.redraw();
       return;
     }
-    // Kitty: 13;2u Shift+Enter, 13;3u Alt+Enter
     if (final === "u") {
       const parts = params.split(";").map(Number);
       if (parts[0] === 13 && (parts[1] ?? 0) >= 2) {
         this.insert("\n");
+        this.multiLineHint = true;
         this.redraw();
       }
       return;
     }
-    // CSI 27;2;13~ style Shift+Enter
     if (final === "~" && /^27;\d+;13$/.test(params)) {
       this.insert("\n");
+      this.multiLineHint = true;
       this.redraw();
     }
   }
@@ -509,21 +595,19 @@ class TtyPromptEditor extends EventEmitter implements PromptEditor {
   private consumeNormal(text: string): void {
     for (let i = 0; i < text.length; i++) {
       const ch = text[i]!;
-      // Ctrl+C
       if (ch === "\x03") {
+        // Ctrl+C
         if (this.buffer.length > 0) {
           this.buffer = "";
           this.cursor = 0;
           this.historyIndex = -1;
-          this.shownPasteHint = false;
-          this.output.write("\n");
-          this.redraw();
+          this.multiLineHint = false;
+          this.finishClearLine();
         } else {
           this.emit("SIGINT");
         }
         continue;
       }
-      // Ctrl+D
       if (ch === "\x04") {
         if (this.buffer.length === 0) {
           this.close();
@@ -535,15 +619,13 @@ class TtyPromptEditor extends EventEmitter implements PromptEditor {
         this.redraw();
         continue;
       }
-      // Ctrl+U
       if (ch === "\x15") {
         this.buffer = "";
         this.cursor = 0;
-        this.shownPasteHint = false;
-        this.redraw();
+        this.multiLineHint = false;
+        this.finishClearLine();
         continue;
       }
-      // Ctrl+W
       if (ch === "\x17") {
         const r = deleteWordBackward(this.buffer, this.cursor);
         this.buffer = r.buffer;
@@ -551,7 +633,6 @@ class TtyPromptEditor extends EventEmitter implements PromptEditor {
         this.redraw();
         continue;
       }
-      // Ctrl+A / E
       if (ch === "\x01") {
         this.cursor = 0;
         this.redraw();
@@ -562,25 +643,23 @@ class TtyPromptEditor extends EventEmitter implements PromptEditor {
         this.redraw();
         continue;
       }
-      // Tab
       if (ch === "\t") {
         this.doComplete();
         continue;
       }
-      // Backspace
       if (ch === "\x7f" || ch === "\b") {
         const r = deleteBackward(this.buffer, this.cursor);
         this.buffer = r.buffer;
         this.cursor = r.cursor;
+        if (!this.buffer.includes("\n")) this.multiLineHint = false;
         this.redraw();
         continue;
       }
-      // Enter
       if (ch === "\r") {
-        // \r\n → single submit
         if (text[i + 1] === "\n") i++;
         if (this.burstActive) {
           this.insert("\n");
+          this.multiLineHint = true;
           this.scheduleBurstEnd();
           this.redraw();
           continue;
@@ -588,9 +667,9 @@ class TtyPromptEditor extends EventEmitter implements PromptEditor {
         this.submit();
         continue;
       }
-      // Ctrl+J / \n → newline in draft (never submit outside burst end)
       if (ch === "\n") {
         this.insert("\n");
+        this.multiLineHint = true;
         this.scheduleBurstEnd();
         this.redraw();
         continue;
@@ -602,9 +681,17 @@ class TtyPromptEditor extends EventEmitter implements PromptEditor {
     }
   }
 
+  /** Clear draft and repaint a clean single prompt line. */
+  private finishClearLine(): void {
+    this.goToBlockTop();
+    this.output.write("\r\x1b[J");
+    this.painted = false;
+    this.cursorViewRow = 0;
+    this.redraw();
+  }
+
   private endBracketedPaste(): void {
     this.pasting = false;
-    // Strip a single trailing newline from insertion end
     if (
       this.cursor === this.buffer.length &&
       this.buffer.endsWith("\n") &&
@@ -613,26 +700,10 @@ class TtyPromptEditor extends EventEmitter implements PromptEditor {
       this.buffer = this.buffer.slice(0, -1);
       this.cursor = this.buffer.length;
     }
+    if (countLines(this.buffer) > 1 || this.buffer.length > 80) {
+      this.multiLineHint = true;
+    }
     this.redraw();
-    this.maybePasteHint();
-  }
-
-  private maybePasteHint(): void {
-    if (this.shownPasteHint) return;
-    const lines = countLines(this.buffer);
-    const chars = this.buffer.length;
-    if (lines <= 1 && chars < 80) return;
-    this.shownPasteHint = true;
-    this.output.write(
-      chalk.dim(
-        `\n  📋 pasted ${lines} line${lines === 1 ? "" : "s"} · ${chars} chars · review, then ↵ send · ^J newline · ^U clear\n`,
-      ),
-    );
-    this.redraw();
-  }
-
-  private beginBurst(): void {
-    this.burstActive = true;
   }
 
   private scheduleBurstEnd(): void {
@@ -641,7 +712,10 @@ class TtyPromptEditor extends EventEmitter implements PromptEditor {
     this.burstTimer = setTimeout(() => {
       this.burstActive = false;
       this.burstTimer = null;
-      this.maybePasteHint();
+      if (countLines(this.buffer) > 1) {
+        this.multiLineHint = true;
+        this.redraw();
+      }
     }, BURST_MS);
     this.burstTimer.unref?.();
   }
@@ -665,13 +739,16 @@ class TtyPromptEditor extends EventEmitter implements PromptEditor {
   private submit(): void {
     this.clearBurst();
     const line = this.buffer;
+    // Move to end of block, then newline into scrollback as submitted input
+    this.goToBlockEnd();
     this.output.write("\n");
     if (line.trim()) this.pushHistory(line);
     this.buffer = "";
     this.cursor = 0;
     this.historyIndex = -1;
-    this.shownPasteHint = false;
-    this.lastRenderRows = 1;
+    this.multiLineHint = false;
+    this.painted = false;
+    this.cursorViewRow = 0;
     this.emit("line", line);
   }
 
@@ -702,6 +779,7 @@ class TtyPromptEditor extends EventEmitter implements PromptEditor {
     }
     this.buffer = this.history[this.historyIndex]!;
     this.cursor = this.buffer.length;
+    this.multiLineHint = this.buffer.includes("\n");
     this.redraw();
   }
 
@@ -719,6 +797,7 @@ class TtyPromptEditor extends EventEmitter implements PromptEditor {
       this.buffer = this.historySnapshot;
       this.cursor = this.buffer.length;
     }
+    this.multiLineHint = this.buffer.includes("\n");
     this.redraw();
   }
 
@@ -771,66 +850,109 @@ class TtyPromptEditor extends EventEmitter implements PromptEditor {
         this.buffer = shared;
         this.cursor = this.buffer.length;
       }
+      // Completions dump below the block — reset paint tracking
+      this.goToBlockEnd();
       this.output.write(
         "\n" + hits.map((h) => chalk.dim("  " + h)).join("\n") + "\n",
       );
+      this.painted = false;
+      this.cursorViewRow = 0;
       this.redraw();
     } catch {
       /* ignore */
     }
   }
 
+  // ── Rendering ────────────────────────────────────────────────────────
+
+  private cols(): number {
+    return Math.max(8, this.output.columns || 80);
+  }
+
+  private goToBlockTop(): void {
+    if (!this.painted) return;
+    if (this.cursorViewRow > 0) {
+      this.output.write(`\x1b[${this.cursorViewRow}A`);
+    }
+    this.output.write("\r");
+  }
+
+  private goToBlockEnd(): void {
+    if (!this.painted) return;
+    const layout = this.computeLayout();
+    const down = layout.totalViewRows - 1 - this.cursorViewRow;
+    if (down > 0) this.output.write(`\x1b[${down}B`);
+    this.output.write("\r");
+  }
+
+  private computeLayout() {
+    const showFooter =
+      this.multiLineHint || countLines(this.buffer) > 1;
+    return layoutEditor({
+      buffer: this.buffer,
+      cursor: this.cursor,
+      promptPlain: stripAnsi(this.promptStr),
+      cols: this.cols(),
+      showFooter,
+    });
+  }
+
   private redraw(): void {
     if (this.closed) return;
 
-    const lines = this.buffer.length ? this.buffer.split("\n") : [""];
-    const promptVisible = stripAnsi(this.promptStr);
-    const promptW = displayWidth(promptVisible);
-    const contLabel = "… ";
-    const contPad = Math.max(0, promptW - displayWidth(contLabel));
-    const contPrefix = chalk.dim(" ".repeat(contPad) + contLabel);
+    const cols = this.cols();
+    const layout = this.computeLayout();
+    const showFooter =
+      this.multiLineHint || countLines(this.buffer) > 1;
 
-    const rendered: string[] = [];
-    for (let i = 0; i < lines.length; i++) {
-      rendered.push((i === 0 ? this.promptStr : contPrefix) + lines[i]);
+    // 1. Cursor → top of previous block, clear everything below
+    this.goToBlockTop();
+    this.output.write("\x1b[J");
+
+    // 2. Paint logical lines (terminal handles soft-wrap)
+    const contStyled = chalk.dim(
+      layout.logical[0]
+        ? // rebuild cont prefix with same plain width
+          (() => {
+            const promptW = displayWidth(stripAnsi(this.promptStr));
+            const contLabel = "… ";
+            const contPad = Math.max(0, promptW - displayWidth(contLabel));
+            return " ".repeat(contPad) + contLabel;
+          })()
+        : "… ",
+    );
+
+    for (let i = 0; i < layout.logical.length; i++) {
+      if (i > 0) this.output.write("\n");
+      const L = layout.logical[i]!;
+      const prefix = i === 0 ? this.promptStr : contStyled;
+      // Clear line then write — avoids leftover glyphs when shortening
+      this.output.write("\r\x1b[2K" + prefix + L.text);
     }
-    if (lines.length > 1) {
-      rendered.push(
-        chalk.dim(
-          " ".repeat(Math.min(promptW, 40)) +
-            `  ${lines.length} lines · ↵ send · ^J newline · ^U clear`,
-        ),
+
+    if (showFooter) {
+      const lines = countLines(this.buffer);
+      const chars = this.buffer.length;
+      this.output.write(
+        "\n\r\x1b[2K" +
+          chalk.dim(
+            `  ${lines} line${lines === 1 ? "" : "s"} · ${chars} chars · ↵ send · ^J newline · ^U clear · ←→ edit`,
+          ),
       );
     }
 
-    // Move to top of previous render block and clear downward
-    if (this.lastRenderRows > 1) {
-      this.output.write(`\x1b[${this.lastRenderRows - 1}A`);
+    // 3. After paint, physical cursor is at end of last painted row.
+    //    Move to (cursorViewRow, cursorViewCol).
+    const lastRow = layout.totalViewRows - 1;
+    const up = lastRow - layout.cursorViewRow;
+    if (up > 0) {
+      this.output.write(`\x1b[${up}A`);
     }
-    this.output.write("\r\x1b[J");
+    // CHA: absolute column (1-based)
+    const col1 = Math.min(cols, Math.max(1, layout.cursorViewCol + 1));
+    this.output.write(`\r\x1b[${col1}G`);
 
-    for (let i = 0; i < rendered.length; i++) {
-      if (i > 0) this.output.write("\n");
-      this.output.write("\r\x1b[2K" + rendered[i]);
-    }
-    this.lastRenderRows = rendered.length;
-
-    // Cursor position within content lines (ignore footer)
-    const { row, col } = cursorRowCol(this.buffer, this.cursor);
-    const contentRows = lines.length;
-    const footer = lines.length > 1 ? 1 : 0;
-    const rowsFromBottom = contentRows + footer - 1 - row;
-    if (rowsFromBottom > 0) {
-      this.output.write(`\x1b[${rowsFromBottom}A`);
-    }
-    const prefixW =
-      row === 0 ? promptW : displayWidth(stripAnsi(contPrefix));
-    // Move to column (1-based); use CHA then CUD is already handled
-    const absCol = prefixW + col + 1;
-    this.output.write(`\r\x1b[${Math.max(1, absCol)}G`);
+    this.cursorViewRow = layout.cursorViewRow;
+    this.painted = true;
   }
-}
-
-function isPrefixOf(a: string, b: string): boolean {
-  return b.startsWith(a) || a.startsWith(b);
 }

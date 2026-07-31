@@ -11,6 +11,9 @@ import {
   countLines,
   cursorRowCol,
   stripAnsi,
+  layoutEditor,
+  softWrapRows,
+  displayWidth,
 } from "../src/tui/prompt-editor.js";
 
 describe("prompt-editor pure ops", () => {
@@ -78,5 +81,74 @@ describe("prompt-editor paste contract", () => {
     assert.ok(n.includes("\n"));
     assert.equal(countLines(n), 4);
     assert.ok(n.includes("Ship it"));
+  });
+});
+
+describe("prompt-editor layout (cursor math)", () => {
+  it("softWrapRows divides by terminal width", () => {
+    assert.equal(softWrapRows(0, 80), 1);
+    assert.equal(softWrapRows(80, 80), 1);
+    assert.equal(softWrapRows(81, 80), 2);
+    assert.equal(softWrapRows(160, 80), 2);
+    assert.equal(softWrapRows(161, 80), 3);
+  });
+
+  it("single-line cursor stays on view row 0 when short", () => {
+    const prompt = "forge › ";
+    const buf = "hello";
+    // cursor at end
+    const end = layoutEditor({
+      buffer: buf,
+      cursor: buf.length,
+      promptPlain: prompt,
+      cols: 80,
+      showFooter: false,
+    });
+    assert.equal(end.cursorViewRow, 0);
+    assert.equal(end.cursorViewCol, displayWidth(prompt) + buf.length);
+    assert.equal(end.totalViewRows, 1);
+
+    // cursor moved left
+    const mid = layoutEditor({
+      buffer: buf,
+      cursor: 2,
+      promptPlain: prompt,
+      cols: 80,
+      showFooter: false,
+    });
+    assert.equal(mid.cursorViewRow, 0);
+    assert.equal(mid.cursorViewCol, displayWidth(prompt) + 2);
+  });
+
+  it("multi-line cursor row tracks logical lines", () => {
+    const prompt = "forge › ";
+    const buf = "one\ntwo\nthree";
+    // cursor on 'w' of two (index: one\n = 4, +1 = 5 for 'w'? "one\ntwo" cursor at 5 is 'w')
+    // o n e \n t w o  → indices 0 1 2 3 4 5 6
+    const lay = layoutEditor({
+      buffer: buf,
+      cursor: 5,
+      promptPlain: prompt,
+      cols: 80,
+      showFooter: true,
+    });
+    assert.equal(lay.cursorViewRow, 1);
+    assert.equal(lay.totalViewRows, 4); // 3 content + footer
+  });
+
+  it("long single line soft-wraps cursor view row", () => {
+    const prompt = ">>"; // width 2
+    const buf = "x".repeat(20);
+    const lay = layoutEditor({
+      buffer: buf,
+      cursor: 15, // abs col = 2+15 = 17
+      promptPlain: prompt,
+      cols: 10,
+      showFooter: false,
+    });
+    // abs 17 → wrap row floor(17/10)=1, col 7
+    assert.equal(lay.cursorViewRow, 1);
+    assert.equal(lay.cursorViewCol, 7);
+    assert.equal(lay.totalViewRows, 3); // 22 width / 10 = 3 rows
   });
 });

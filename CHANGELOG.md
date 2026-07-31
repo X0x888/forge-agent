@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 0.9.99 — prompt editor cursor redraw fix
+
+### Fixed
+
+- **Arrow/edit redraw corruption**: the multi-line prompt editor now tracks the cursor’s **view row inside the editor block** and always redraws from the block top (never assumed “cursor is at the bottom”). Soft-wrap–aware layout math; no extra toast lines that desync paint. Left/right arrows, backspace, and mid-line edits stay visually stable.
+
 ## 0.9.98 — multi-line paste editor (no auto-run)
 
 ### Added
