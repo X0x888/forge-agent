@@ -15,6 +15,48 @@ export interface MatchResult {
   index: number;
 }
 
+/**
+ * Strip read_file line-number prefixes (`   12|code`) when the model pastes
+ * tool output into old_string/new_string. Conservative: only when every
+ * non-empty line matches the numbered format (or is blank).
+ */
+export function stripReadFileLinePrefixes(text: string): {
+  text: string;
+  stripped: boolean;
+} {
+  if (!text || !text.includes("|")) {
+    return { text, stripped: false };
+  }
+  const lines = text.split("\n");
+  // Need at least one numbered content line.
+  let numbered = 0;
+  let padded = 0; // leading spaces before digits (read_file padStart(6))
+  const out: string[] = [];
+  for (const line of lines) {
+    if (line === "") {
+      out.push("");
+      continue;
+    }
+    // read_file format: padStart(6) + "|" + content  → "    12|foo"
+    // Also accept unpadded multi-line "12|foo" pastes (models sometimes trim).
+    const m = line.match(/^(\s*)(\d+)\|(.*)$/);
+    if (!m) {
+      // Not a pure numbered paste — leave original alone.
+      return { text, stripped: false };
+    }
+    numbered += 1;
+    if ((m[1] || "").length > 0) padded += 1;
+    out.push(m[3]!);
+  }
+  if (numbered < 1) return { text, stripped: false };
+  // Avoid false positives on single-line "1|pipe" data / simple tables:
+  // require either multi-line numbered paste or padStart-style leading spaces.
+  if (numbered === 1 && padded === 0) {
+    return { text, stripped: false };
+  }
+  return { text: out.join("\n"), stripped: true };
+}
+
 const BLOCK_SIMILARITY = 0.65;
 
 function lineSim(a: string, b: string): number {
@@ -260,6 +302,17 @@ export function editMissHint(content: string, oldString: string): string {
     "Tips: re-read the file (read_file), copy an exact snippet including indentation,",
     "add surrounding context lines to disambiguate, or use replace_all when every match should change.",
   ];
+  // Mixed/partial read_file paste (not fully stripped) is a common miss cause.
+  if (
+    oldString.includes("|") &&
+    /^\s*\d+\|/m.test(oldString) &&
+    !stripReadFileLinePrefixes(oldString).stripped
+  ) {
+    parts.push(
+      "Note: old_string looks like it may include read_file line-number prefixes (`12|…`). " +
+        "Copy file text without the `N|` column (or paste a pure numbered block so Forge can strip it).",
+    );
+  }
   const fileLines = content.split("\n");
   const searchLines = oldString.split("\n").filter((l, i, a) => !(i === a.length - 1 && l === ""));
   if (!searchLines.length || !fileLines.length) {

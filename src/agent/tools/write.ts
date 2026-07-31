@@ -9,6 +9,9 @@ import {
   formatNoteSuffix,
   maybeFormatAfterWrite,
 } from "./format-on-write.js";
+import { fileReadGuardEnabled } from "./file-read-state.js";
+import { stripReadFileLinePrefixes } from "./edit-match.js";
+import { verifyHintSuffix } from "../../util/project-intel.js";
 
 export async function toolWrite(
   args: Record<string, unknown>,
@@ -31,7 +34,8 @@ export async function toolWrite(
     return {
       output:
         "write_file error: path is required (non-empty string).\n" +
-        'Example: { "path": "notes.md", "content": "# hello\n" }',
+        'Example: { "path": "src/notes.md", "content": "# hello\n" }\n' +
+        "Use a workspace-relative path (not empty). Prefer list_dir/glob first if unsure.",
       isError: true,
     };
   }
@@ -70,6 +74,24 @@ export async function toolWrite(
     } catch {
       /* race / permission — fall through to atomic write */
     }
+    // Overwriting an existing file requires a prior read (agent loop only).
+    // Creates (path missing) are always allowed.
+    if (ctx.fileReads && fileReadGuardEnabled()) {
+      try {
+        if (fs.existsSync(filePath) && fs.statSync(filePath).isFile()) {
+          const rel = path.relative(ctx.workspace, filePath) || filePath;
+          const blocked = await ctx.fileReads.checkBeforeMutate(filePath, {
+            tool: "write_file",
+            rel,
+          });
+          if (blocked) {
+            return { output: blocked, isError: true };
+          }
+        }
+      } catch {
+        /* fall through */
+      }
+    }
     const snap = await snapshotForWrite(filePath);
     const dir = path.dirname(filePath);
     let createdParents = false;
@@ -78,7 +100,10 @@ export async function toolWrite(
     } catch {
       createdParents = true;
     }
-    await atomicWriteFile(filePath, args.content, {
+    // Models sometimes paste read_file output into content — strip N| prefixes.
+    const stripped = stripReadFileLinePrefixes(args.content);
+    const body = stripped.text;
+    await atomicWriteFile(filePath, body, {
       encoding: "utf8",
     });
     try {
@@ -94,12 +119,18 @@ export async function toolWrite(
     }
     ctx.onEdit?.();
     const fmt = maybeFormatAfterWrite(filePath, ctx.workspace);
+    // Note AFTER format-on-write so chained edits see the final mtime/size.
+    if (ctx.fileReads && fileReadGuardEnabled()) {
+      await ctx.fileReads.noteFromDisk(filePath);
+    }
     const rel = path.relative(ctx.workspace, filePath) || filePath;
     return {
       output:
         `Wrote ${rel}` +
         (createdParents ? " (created parent directories)" : "") +
-        formatNoteSuffix(fmt),
+        (stripped.stripped ? " (stripped read_file line-number prefixes)" : "") +
+        formatNoteSuffix(fmt) +
+        verifyHintSuffix(ctx.workspace, filePath),
     };
   } catch (err) {
     return {

@@ -119,11 +119,18 @@ export interface TurnEndOutcomeInput {
   releasedOnContinueCap?: boolean;
   aborted?: boolean;
   lastErrorCode?: string | null;
+  /** Session had file edits this run. */
+  editCount?: number;
+  /** Last successful structural verification command, if any. */
+  lastVerificationCommand?: string | null;
+  /** True when last-verify is older than the latest file edit. */
+  lastVerificationStale?: boolean;
 }
 
 /**
  * Short outcome label for turn-end desktop notify / BEL body.
  * Prefer safety valves over generic "turn complete".
+ * Append verify trail hints so background ULW experts see unfinished proof.
  */
 export function turnEndOutcomeLabel(input: TurnEndOutcomeInput): string {
   if (input.hitCostCap) return "cost cap";
@@ -137,6 +144,15 @@ export function turnEndOutcomeLabel(input: TurnEndOutcomeInput): string {
   if (code === "max_turns") return "max turns";
   if (code.startsWith("continue_cap")) return "continue cap";
   if (code) return `err:${code.slice(0, 32)}`;
+
+  const edits =
+    typeof input.editCount === "number" && Number.isFinite(input.editCount)
+      ? input.editCount
+      : 0;
+  const last = String(input.lastVerificationCommand || "").trim();
+  if (edits > 0 && !last) return "turn complete · no last-verify";
+  if (last && input.lastVerificationStale) return "turn complete · last-verify stale";
+  if (last) return "turn complete · verified";
   return "turn complete";
 }
 

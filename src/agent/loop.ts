@@ -24,6 +24,7 @@ import {
   pruneOversizedMessageBodies,
   setSessionLastError,
   clearSessionLastError,
+  isLastVerificationStale,
 } from "../session/session.js";
 import { appendFileMutation } from "../session/mutations.js";
 import { HookRunner, type HookContext } from "../harness/hooks.js";
@@ -38,7 +39,9 @@ import {
   formatUlwCounts,
   formatUlwBadge,
   ULW_LIVE_CONTROLS_HINT,
-  VERIFICATION_CMD_RE,
+  isVerificationCommand,
+  shouldStampLastVerification,
+  shouldClearLastVerification,
 } from "../harness/ulw-cycle.js";
 import {
   clearStaleToolResults,
@@ -57,6 +60,7 @@ import {
   admitHarnessIfChanged,
 } from "../harness/context-admit.js";
 import { getGitSnapshot, type GitSnapshot } from "../util/git-context.js";
+import { FileReadState } from "./tools/file-read-state.js";
 import {
   resetTodoNudgeForPrompt,
   noteTodoWrite,
@@ -183,7 +187,7 @@ export interface LoopResult {
 
 /**
  * Per-run harness signals shared between the loop and tool execution.
- * - verificationRuns: bash commands matching VERIFICATION_CMD_RE executed
+ * - verificationRuns: bash commands matching isVerificationCommand() executed
  *   since the last Stop evaluation — the structural "proof" signal for the
  *   ULW wave ledger (execution, not prose claims).
  * - effortBoostTurns: adaptive effort budget — hard-round signals (doom-loop,
@@ -192,7 +196,10 @@ export interface LoopResult {
  *   by default).
  */
 interface HarnessRunStats {
+  /** Structural check bash executed (pass or fail) — ULW wave ledger. */
   verificationRuns: number;
+  /** Successful structural checks only — proof-claim / expert green trail. */
+  verificationPassedRuns: number;
   effortBoostTurns: number;
 }
 
@@ -299,6 +306,8 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
     opts.maxStopContinues ??
     (ulwArmed ? envPositiveInt("FORGE_ULW_MAX_CONTINUES", 200) : 50);
   const workspace = config.workspace || session.meta.cwd;
+  /** Session-turn file read tracker — stale-edit protection (OpenCode-inspired). */
+  const fileReads = new FileReadState();
   const startPrompt = session.meta.totalPromptTokens;
   const startComp = session.meta.totalCompletionTokens;
   const doomLoop = new DoomLoopTracker({
@@ -309,6 +318,7 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
   });
   const harnessStats: HarnessRunStats = {
     verificationRuns: 0,
+    verificationPassedRuns: 0,
     effortBoostTurns: 0,
   };
   /** Consecutive Stop blocks from handoff-guard (polite yield). Resets on allow. */
@@ -441,6 +451,10 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
       goal: goalNow,
       todos: session.todos,
       sessionId: session.meta.id,
+      cwd: workspace,
+      lastVerificationCommand: session.meta.lastVerificationCommand,
+      lastVerificationAt: session.meta.lastVerificationAt,
+      lastEditAt: session.meta.lastEditAt,
     });
     const healed = repairToolCallPairing(session.messages);
     if (healed.changed) session.messages = healed.messages;
@@ -705,10 +719,17 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
       drainSafeBoundaryMessages(session, config, events, gitSnap);
 
       // Soft todo nudge under ULW/goal (does not block)
+      const lastUserForNudge = [...session.messages]
+        .reverse()
+        .find((m) => m.role === "user");
       const nudge = maybeTodoNudge({
         sessionId: session.meta.id,
         harnessActive,
         openTodoCount: openTodos(session.todos),
+        lastUserMessage:
+          typeof lastUserForNudge?.content === "string"
+            ? lastUserForNudge.content
+            : undefined,
       });
       if (nudge) {
         session.messages.push({ role: "user", content: nudge });
@@ -1266,6 +1287,15 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
             ? formatUlwBadge(ulwBeforeStop)
             : undefined,
         );
+        let preferredCheckCommands: string[] | undefined;
+        try {
+          const { detectProjectIntel } = await import(
+            "../util/project-intel.js"
+          );
+          preferredCheckCommands = detectProjectIntel(workspace).checkCommands;
+        } catch {
+          preferredCheckCommands = undefined;
+        }
         const stopResult = await runStopGuard({
           config,
           hooks,
@@ -1273,15 +1303,26 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
           ultrawork: session.meta.ultrawork,
           openTodoCount: openTodos(session.todos),
           editCount: session.meta.editCount,
+          lastUserMessage: (() => {
+            const u = [...session.messages].reverse().find((m) => m.role === "user");
+            return typeof u?.content === "string" ? u.content : undefined;
+          })(),
           lastAssistantMessage: finalText,
           verificationRan: harnessStats.verificationRuns > 0,
+          verificationPassed: harnessStats.verificationPassedRuns > 0,
           handoffBlocks,
           proofClaimBlocks,
+          preferredCheckCommands,
+          lastVerificationCommand: session.meta.lastVerificationCommand,
+          lastVerificationStale: isLastVerificationStale(session.meta),
         });
         // Reset only when the ULW driver actually evaluated this Stop — hook /
         // goal blocks return early without consuming the signal, and the runs
         // still belong to the wave in progress.
-        if (stopResult.ulw) harnessStats.verificationRuns = 0;
+        if (stopResult.ulw) {
+          harnessStats.verificationRuns = 0;
+          harnessStats.verificationPassedRuns = 0;
+        }
         // Missing wave proof / weak attestation = hard-round signal → think harder.
         if (stopResult.ulw?.proofDemanded || stopResult.ulw?.evidenceDemanded) {
           harnessStats.effortBoostTurns = Math.max(
@@ -1478,6 +1519,7 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
         doomLoop,
         errorStreak,
         harnessStats,
+        fileReads,
       });
       // Tools that cooperatively return "Aborted" still leave signal.aborted set —
       // exit the loop immediately rather than starting another provider turn.
@@ -1821,6 +1863,7 @@ async function runToolCalls(opts: {
   doomLoop?: DoomLoopTracker;
   errorStreak?: ErrorStreakTracker;
   harnessStats?: HarnessRunStats;
+  fileReads?: FileReadState;
 }): Promise<void> {
   const {
     toolCalls,
@@ -1835,6 +1878,7 @@ async function runToolCalls(opts: {
     doomLoop,
     errorStreak,
     harnessStats,
+    fileReads,
   } = opts;
 
   // Sequential by default; batch consecutive read-only tools in parallel
@@ -1869,6 +1913,7 @@ async function runToolCalls(opts: {
             doomLoop,
             errorStreak,
             harnessStats,
+            fileReads,
           }),
         ),
       );
@@ -1894,6 +1939,7 @@ async function runToolCalls(opts: {
         doomLoop,
         errorStreak,
         harnessStats,
+        fileReads,
       });
       session.messages.push({
         role: "tool",
@@ -1919,6 +1965,7 @@ async function prepareToolResult(opts: {
   doomLoop?: DoomLoopTracker;
   errorStreak?: ErrorStreakTracker;
   harnessStats?: HarnessRunStats;
+  fileReads?: FileReadState;
 }): Promise<{ toolCallId: string; content: string }> {
   const {
     tc,
@@ -1933,6 +1980,7 @@ async function prepareToolResult(opts: {
     doomLoop,
     errorStreak,
     harnessStats,
+    fileReads,
   } = opts;
   assertNotAborted(signal);
 
@@ -2107,8 +2155,10 @@ async function prepareToolResult(opts: {
         sandboxNetwork: config.sandboxNetwork,
         sandboxMissingBackend: config.sandboxMissingBackend,
         signal,
+        fileReads,
         onEdit: () => {
           session.meta.editCount += 1;
+          session.meta.lastEditAt = new Date().toISOString();
         },
         recordMutation: (input) => {
           appendFileMutation(session.meta.id, {
@@ -2142,10 +2192,46 @@ async function prepareToolResult(opts: {
   // Structural verification signal for the ULW wave ledger: a check command
   // actually executed this wave (pass or fail — running it is the behavior
   // the quality bar rewards; prose claims are not trusted on their own).
+  // Session last-verify trail is success-only so experts don't trust a red run.
   if (harnessStats && name === "bash") {
     const cmd = typeof toolInput.command === "string" ? toolInput.command : "";
-    if (cmd && VERIFICATION_CMD_RE.test(cmd)) {
+    let preferred: string[] | undefined;
+    try {
+      const { detectProjectIntel } = await import("../util/project-intel.js");
+      preferred = detectProjectIntel(workspace).checkCommands;
+    } catch {
+      preferred = undefined;
+    }
+    if (cmd && isVerificationCommand(cmd, preferred)) {
       harnessStats.verificationRuns += 1;
+      if (!result.isError) {
+        harnessStats.verificationPassedRuns += 1;
+      }
+      try {
+        if (
+          shouldStampLastVerification({
+            command: cmd,
+            isError: result.isError,
+            preferredCheckCommands: preferred,
+          })
+        ) {
+          session.meta.lastVerificationCommand = cmd.trim().slice(0, 240);
+          session.meta.lastVerificationAt = new Date().toISOString();
+        } else if (
+          shouldClearLastVerification({
+            command: cmd,
+            isError: result.isError,
+            preferredCheckCommands: preferred,
+          })
+        ) {
+          // Red check invalidates any prior green trail so experts never
+          // trust a stale last✓ after a failed re-run.
+          delete session.meta.lastVerificationCommand;
+          delete session.meta.lastVerificationAt;
+        }
+      } catch {
+        /* best-effort */
+      }
     }
   }
   const ms = Date.now() - t0;

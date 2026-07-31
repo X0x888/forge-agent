@@ -108,6 +108,16 @@ export interface StatusSnapshot {
   title?: string;
   cwd: string;
   projectLabel: string;
+  /** Detected package manager when known (npm/pnpm/yarn/bun). */
+  packageManager?: string | null;
+  /** Preferred verification commands (cheapest first). */
+  checkCommands?: string[];
+  /** Compact project-stack summary. */
+  projectStackSummary?: string | null;
+  /** Monorepo root when cwd is nested or is a workspace root. */
+  monorepoRoot?: string | null;
+  /** Monorepo workspace package labels. */
+  workspaces?: string[];
   provider: string;
   model: string;
   authMethod: AuthMethod;
@@ -125,6 +135,11 @@ export interface StatusSnapshot {
   liveness: Liveness;
   turnCount: number;
   editCount: number;
+  /** Last structural verification bash command, if any. */
+  lastVerificationCommand?: string | null;
+  lastVerificationAt?: string | null;
+  lastEditAt?: string | null;
+  lastVerificationStale?: boolean | null;
   openTodos: number;
   ultrawork: boolean;
   /** ULW cycle flag when armed (0|1); omit/null when not */

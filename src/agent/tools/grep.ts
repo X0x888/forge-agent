@@ -214,7 +214,8 @@ async function toolGrepJs(
     return {
       output:
         "grep error: pattern is required (non-empty string).\n" +
-        'Example: { "pattern": "TODO|FIXME", "path": "src", "head_limit": 50 }',
+        'Example: { "pattern": "TODO|FIXME", "path": "src", "head_limit": 50 }\n' +
+        "Whitespace-only patterns fail closed. Prefer a concrete symbol/string; omit path to search the whole workspace.",
       isError: true,
     };
   }
@@ -222,7 +223,8 @@ async function toolGrepJs(
     return {
       output:
         "grep error: path is required (non-empty string). Omit path to search the workspace.\n" +
-        'Example: { "pattern": "TODO", "path": "src" }',
+        'Example: { "pattern": "TODO", "path": "src" }\n' +
+        "Use a workspace-relative path, or omit path entirely to search the whole workspace.",
       isError: true,
     };
   }
@@ -356,7 +358,8 @@ export async function toolGrep(
     return {
       output:
         "grep error: pattern is required (non-empty string).\n" +
-        'Example: { "pattern": "TODO|FIXME", "path": "src", "head_limit": 50 }',
+        'Example: { "pattern": "TODO|FIXME", "path": "src", "head_limit": 50 }\n' +
+        "Whitespace-only patterns fail closed. Prefer a concrete symbol/string; omit path to search the whole workspace.",
       isError: true,
     };
   }

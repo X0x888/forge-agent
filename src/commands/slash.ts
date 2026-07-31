@@ -8,6 +8,7 @@ import {
   formatGoalStatus,
 } from "../harness/goal.js";
 import type { SessionData } from "../session/session.js";
+import { isLastVerificationStale } from "../session/session.js";
 import {
   saveSession,
   listSessions,
@@ -103,6 +104,10 @@ import { forgeHome, inspectSecureFile } from "../util/fs.js";
 import { getForgeVersion } from "../util/version.js";
 import { formatWhatsNew } from "../util/changelog.js";
 import { formatExpertTips } from "../util/tips.js";
+import {
+  detectProjectIntel,
+  packageManagerLockfileMismatch,
+} from "../util/project-intel.js";
 import { parseDaysWindow, daysWindowHelp } from "../util/days-window.js";
 import { parseNewsCount, newsCountHelp } from "../util/news-count.js";
 import { parseLogsLines, logsLinesHelp } from "../util/logs-lines.js";
@@ -529,6 +534,7 @@ export const SLASH_COMMANDS = [
   "/fork-and-compact",
   "/init",
   "/review",
+  "/commit",
   "/rewind",
   "/undo",
   "/retry",
@@ -1109,6 +1115,26 @@ export async function handleModelSlash(
         )
       : chalk.dim("\nTip: Tab completes catalog names.");
     const note = catalog.note ? chalk.dim(`\n${catalog.note}`) : "";
+    // Orient mid-run model switches with session verify trail + project checks.
+    let orient = formatSlashVerifyOrient({
+      workspace: opts.config.workspace,
+      cwd: opts.session.meta.cwd,
+      editCount: opts.session.meta.editCount,
+      lastVerificationCommand: opts.session.meta.lastVerificationCommand,
+      lastVerificationAt: opts.session.meta.lastVerificationAt,
+      lastEditAt: opts.session.meta.lastEditAt,
+    });
+    if (orient) {
+      orient = orient
+        .split("\n")
+        .map((line) => {
+          if (!line) return line;
+          return /No last-verify after/.test(line)
+            ? chalk.yellow(line)
+            : chalk.dim(line);
+        })
+        .join("\n");
+    }
     return {
       handled: true,
       output:
@@ -1120,6 +1146,7 @@ export async function handleModelSlash(
         effortLine +
         freeLine +
         note +
+        orient +
         chalk.dim(
           `\nAlso: /provider · /context-window · /temperature · /max-tokens · /config`,
         ),
@@ -1543,6 +1570,63 @@ export async function handleSlash(
           ),
         );
       }
+      // Orient wind-down with last verification + preferred checks.
+      try {
+        const last = opts.session.meta.lastVerificationCommand?.trim();
+        if (last) {
+          const when = opts.session.meta.lastVerificationAt
+            ? ` @ ${opts.session.meta.lastVerificationAt.slice(0, 19).replace("T", " ")}`
+            : "";
+          if (isLastVerificationStale(opts.session.meta)) {
+            parts.push(
+              chalk.yellow(
+                `Last verify: \`${last.slice(0, 100)}${last.length > 100 ? "…" : ""}\`${when}  ⚠ stale (edits after verify) — re-run before calling it done.`,
+              ),
+            );
+          } else {
+            parts.push(
+              chalk.dim(
+                `Last verify: \`${last.slice(0, 100)}${last.length > 100 ? "…" : ""}\`${when}`,
+              ),
+            );
+          }
+        } else if ((opts.session.meta.editCount || 0) > 0) {
+          const cwd =
+            opts.config.workspace || opts.session.meta.cwd || process.cwd();
+          try {
+            const intel = detectProjectIntel(cwd);
+            const tip = intel.checkCommands[0] || "npm test / typecheck";
+            parts.push(
+              chalk.yellow(
+                `Edits this session with no recorded verification — prefer \`${tip}\` before calling it done.`,
+              ),
+            );
+          } catch {
+            parts.push(
+              chalk.yellow(
+                "Edits this session with no recorded verification — run a cheap check before calling it done.",
+              ),
+            );
+          }
+        } else {
+          const cwd =
+            opts.config.workspace || opts.session.meta.cwd || process.cwd();
+          try {
+            const intel = detectProjectIntel(cwd);
+            if (intel.checkCommands[0]) {
+              parts.push(
+                chalk.dim(
+                  `Preferred check: \`${intel.checkCommands[0]}\`  ·  /export · /share`,
+                ),
+              );
+            }
+          } catch {
+            /* */
+          }
+        }
+      } catch {
+        /* never break /done */
+      }
       return {
         handled: true,
         output: parts.filter(Boolean).join("\n"),
@@ -1577,6 +1661,21 @@ export async function handleSlash(
       // pickers stay navigable during long unattended ULW runs.
       maybeSetTitle(opts.session, mandate);
       saveSession(opts.session);
+      let ulwCheckTip = "";
+      try {
+        const cwd =
+          opts.config.workspace ||
+          opts.session.meta.cwd ||
+          process.cwd();
+        const intel = detectProjectIntel(cwd);
+        if (intel.checkCommands[0]) {
+          ulwCheckTip = chalk.dim(
+            `Preferred checks: ${intel.checkCommands.slice(0, 3).join(" · ")}  ·  proof-demand requires green`,
+          );
+        }
+      } catch {
+        /* */
+      }
       const banner = [
         chalk.magenta("⚡ ULW ON") +
           chalk.dim(
@@ -1586,8 +1685,11 @@ export async function handleSlash(
           "Soft prompts still drive the harness: research → waves → serendipity → review → repeat.",
         ),
         chalk.cyan(ULW_LIVE_CONTROLS_HINT),
+        ulwCheckTip,
         formatUlwStatus(state),
-      ].join("\n");
+      ]
+        .filter(Boolean)
+        .join("\n");
       // Always forward an expanded kickoff so even bare `/ulw` or soft text runs the cycle
       return {
         handled: true,
@@ -1706,13 +1808,35 @@ export async function handleSlash(
             " — harness will keep blocking Stop and forcing the next wave."
           : chalk.yellow("cycle=0 LAST") +
             " — finish the current wave, review, attest **Cycle complete.** then Stop is allowed.";
+      let cycleTip = "";
+      if (flag === 0) {
+        try {
+          const cwd =
+            opts.config.workspace ||
+            opts.session.meta.cwd ||
+            process.cwd();
+          const intel = detectProjectIntel(cwd);
+          if (intel.checkCommands[0]) {
+            cycleTip =
+              "\n" +
+              chalk.dim(
+                `Preferred checks before **Cycle complete.**: ${intel.checkCommands.slice(0, 3).join(" · ")}  ·  proof needs green`,
+              );
+          }
+          const trail = formatSlashSessionTrail(opts.session.meta);
+          if (trail) cycleTip += "\n" + chalk.dim(`  ${trail}`);
+        } catch {
+          /* */
+        }
+      }
       return {
         handled: true,
         output:
           `${msg}\n${formatUlwStatus(state)}` +
           chalk.dim(
             "\n  (flag written now — stop-guard honors it on next Stop; agent notified on next model call)",
-          ),
+          ) +
+          cycleTip,
         session: opts.session,
       };
     }
@@ -1800,6 +1924,27 @@ export async function handleSlash(
           "User cleared max_waves mid-run (unlimited). Cycle flag still controls CONTINUE vs LAST.",
         );
       }
+      let maxWavesTip = "";
+      if (flippedToLast) {
+        try {
+          const cwd =
+            opts.config.workspace ||
+            opts.session.meta.cwd ||
+            process.cwd();
+          const intel = detectProjectIntel(cwd);
+          if (intel.checkCommands[0]) {
+            maxWavesTip =
+              "\n" +
+              chalk.dim(
+                `Preferred checks before **Cycle complete.**: ${intel.checkCommands.slice(0, 3).join(" · ")}  ·  proof needs green`,
+              );
+          }
+          const trail = formatSlashSessionTrail(opts.session.meta);
+          if (trail) maxWavesTip += "\n" + chalk.dim(`  ${trail}`);
+        } catch {
+          /* */
+        }
+      }
       return {
         handled: true,
         output:
@@ -1815,7 +1960,8 @@ export async function handleSlash(
             flippedToLast
               ? "\n  (cap written + LAST applied immediately; finish wave + **Cycle complete.**)"
               : "\n  (cap written now — stop-guard honors it on next Stop; agent notified on next model call)",
-          ),
+          ) +
+          maxWavesTip,
         session: opts.session,
       };
     }
@@ -1877,12 +2023,60 @@ export async function handleSlash(
         session: opts.session,
         auth,
       });
+      let stackBits: string[] = [];
+      try {
+        const cwd =
+          opts.config.workspace ||
+          opts.session.meta.cwd ||
+          process.cwd();
+        const intel = detectProjectIntel(cwd);
+        if (intel.checkCommands[0] || intel.packageManager) {
+          stackBits.push(
+            `stack: ${[
+              intel.packageManager || null,
+              intel.checkCommands.slice(0, 3).join(" · ") || null,
+            ]
+              .filter(Boolean)
+              .join(" · ")}`,
+          );
+        }
+        const last = opts.session.meta.lastVerificationCommand?.trim();
+        if (last) {
+          const stale = isLastVerificationStale(opts.session.meta)
+            ? "  ⚠ stale (edits after verify)"
+            : "";
+          stackBits.push(
+            `last-verify: ${last.slice(0, 80)}${last.length > 80 ? "…" : ""}${stale}`,
+          );
+        } else if ((opts.session.meta.editCount || 0) > 0) {
+          const tip =
+            intel.checkCommands[0] || "npm test / typecheck";
+          stackBits.push(
+            chalk.yellow(
+              `no last-verify after ${opts.session.meta.editCount} edit(s) — prefer \`${tip}\``,
+            ),
+          );
+        }
+      } catch {
+        /* */
+      }
       return {
         handled: true,
         output:
           hud +
           "\n" +
           detail +
+          (stackBits.length
+            ? "\n" +
+              stackBits
+                .map((b) =>
+                  // yellow no-verify line already chalked; dim the rest
+                  b.includes("no last-verify")
+                    ? `  ${b}`
+                    : chalk.dim(`  ${b}`),
+                )
+                .join("\n")
+            : "") +
           chalk.dim(
             "\n\nTip: status is always on the prompt line. Live external pane still available: forge status --watch",
           ),
@@ -2076,6 +2270,50 @@ export async function handleSlash(
       } catch {
         /* */
       }
+      // Project intelligence (package manager + preferred check commands)
+      let projectNote = "";
+      try {
+        const { detectProjectIntel } = await import("../util/project-intel.js");
+        const ws = opts.config.workspace || process.cwd();
+        const intel = detectProjectIntel(ws);
+        if (
+          intel.packageManager ||
+          intel.kinds.length ||
+          intel.checkCommands.length ||
+          intel.packageName ||
+          intel.workspaces?.length
+        ) {
+          const head: string[] = [];
+          if (intel.packageName) {
+            head.push(
+              intel.packageVersion
+                ? `${intel.packageName}@${intel.packageVersion}`
+                : intel.packageName,
+            );
+          }
+          if (intel.packageManager) head.push(`pm=${intel.packageManager}`);
+          if (intel.kinds.length) head.push(intel.kinds.join("+"));
+          const cmds = intel.checkCommands.length
+            ? `\n  checks: ${intel.checkCommands.slice(0, 6).join("  ·  ")}`
+            : "";
+          const ws = intel.workspaces?.length
+            ? `\n  workspaces: ${intel.workspaces.slice(0, 6).join("  ·  ")}` +
+              (intel.workspaces.length > 6
+                ? ` (+${intel.workspaces.length - 6} more)`
+                : "")
+            : "";
+          const mono = intel.monorepoRoot
+            ? `\n  monorepo-root: ${intel.monorepoRoot}`
+            : "";
+          projectNote =
+            `\nProject stack: ${head.join(" · ") || "(detected)"}${cmds}${ws}${mono}` +
+            `\n  (injected into system prompt · agent prefers these for verification)`;
+        } else {
+          projectNote = `\nProject stack: none detected`;
+        }
+      } catch {
+        /* */
+      }
       const thresholdPct = Math.round(
         (opts.config.autoCompactThreshold || 0.8) * 100,
       );
@@ -2097,7 +2335,7 @@ export async function handleSlash(
       }
       return {
         handled: true,
-        output: `Context  [${bar}] ${pct}%\n  ~${formatTokens(est)} / ${formatTokens(opts.config.contextWindow)}  autoCompact@${thresholdPct}%\nBy role:\n${roleLines}${rulesNote}${skillsNote}${pressureNote}`,
+        output: `Context  [${bar}] ${pct}%\n  ~${formatTokens(est)} / ${formatTokens(opts.config.contextWindow)}  autoCompact@${thresholdPct}%\nBy role:\n${roleLines}${projectNote}${rulesNote}${skillsNote}${pressureNote}`,
       };
     }
 
@@ -2134,16 +2372,22 @@ export async function handleSlash(
           typeof opts.config.maxCostUsd === "number" && opts.config.maxCostUsd > 0
             ? `config max_cost_usd=$${opts.config.maxCostUsd}`
             : "config max_cost_usd=unlimited";
+        // Orient spend decisions with session work + verify trail.
+        const trail = formatSlashSessionTrail(opts.session.meta);
+        const workLine = trail ? `  ${trail.replace("Session trail: ", "Session: ")}` : "";
         return {
           handled: true,
           output: [
             formatCostBudgetLine(st),
             `  ${sessionOverride}`,
             `  ${cfg}`,
+            workLine,
             `  Usage: /budget <usd>  ·  /budget off  ·  /budget status`,
             `  Also:  --max-cost N  ·  FORGE_MAX_COST_USD  ·  max_cost_usd in config.toml`,
             `  Note:  estimateCostUsd only — not a bill. Cap releases the agent cleanly (hitCostCap).`,
-          ].join("\n"),
+          ]
+            .filter(Boolean)
+            .join("\n"),
         };
       }
       const parsed = parseCostUsd(raw);
@@ -2257,6 +2501,36 @@ const stats = collectUsageStats({
         opts.session.meta.totalCompletionTokens,
         opts.config.model,
       );
+      let sessionExtra: string[] = [];
+      try {
+        const cwd =
+          opts.config.workspace ||
+          opts.session.meta.cwd ||
+          process.cwd();
+        const intel = detectProjectIntel(cwd);
+        if (intel.checkCommands[0]) {
+          sessionExtra.push(
+            `  checks: ${intel.checkCommands.slice(0, 3).join(" · ")}` +
+              (intel.packageManager ? `  (pm=${intel.packageManager})` : ""),
+          );
+        }
+        const last = opts.session.meta.lastVerificationCommand?.trim();
+        if (last) {
+          const stale = isLastVerificationStale(opts.session.meta)
+            ? "  ⚠ stale (edits after verify)"
+            : "";
+          sessionExtra.push(
+            `  last-verify: ${last.slice(0, 80)}${last.length > 80 ? "…" : ""}${stale}`,
+          );
+        } else if ((opts.session.meta.editCount || 0) > 0) {
+          const tip = intel.checkCommands[0] || "npm test / typecheck";
+          sessionExtra.push(
+            `  last-verify: (none after ${opts.session.meta.editCount} edit(s) — prefer \`${tip}\`)`,
+          );
+        }
+      } catch {
+        /* */
+      }
       return {
         handled: true,
         output: [
@@ -2265,6 +2539,7 @@ const stats = collectUsageStats({
           `This session:`,
           `  tokens: in=${formatTokens(opts.session.meta.totalPromptTokens)} out=${formatTokens(opts.session.meta.totalCompletionTokens)} · est ${formatCost(cost)}`,
           `  turns:  ${opts.session.meta.turnCount}  edits=${opts.session.meta.editCount}  id=${opts.session.meta.id.slice(0, 8)}`,
+          ...sessionExtra,
           chalk.dim(`CLI: forge stats [--days N] [--json]`),
         ].join("\n"),
       };
@@ -2272,7 +2547,28 @@ const stats = collectUsageStats({
 
     case "/todos": {
       if (opts.session.todos.length === 0) {
-        return { handled: true, output: "No todos." };
+        let tip = "";
+        try {
+          const cwd =
+            opts.config.workspace ||
+            opts.session.meta.cwd ||
+            process.cwd();
+          const intel = detectProjectIntel(cwd);
+          if (intel.checkCommands[0]) {
+            tip =
+              `\nTip: agent uses todo_write for multi-step work. Preferred check: \`${intel.checkCommands[0]}\``;
+          } else {
+            tip =
+              "\nTip: agent uses todo_write for multi-step work (id/content/status).";
+          }
+        } catch {
+          tip =
+            "\nTip: agent uses todo_write for multi-step work (id/content/status).";
+        }
+        return {
+          handled: true,
+          output: "No todos." + tip,
+        };
       }
       return {
         handled: true,
@@ -2532,10 +2828,30 @@ const stats = collectUsageStats({
         resolveReasoningEffort(model, opts.config.reasoningEffort) ??
         defaultEffortForModel(model);
       if (!arg) {
+        let orient = formatSlashVerifyOrient({
+          workspace: opts.config.workspace,
+          cwd: opts.session.meta.cwd,
+          editCount: opts.session.meta.editCount,
+          lastVerificationCommand: opts.session.meta.lastVerificationCommand,
+          lastVerificationAt: opts.session.meta.lastVerificationAt,
+          lastEditAt: opts.session.meta.lastEditAt,
+        });
+        if (orient) {
+          orient = orient
+            .split("\n")
+            .map((line) => {
+              if (!line) return line;
+              return /No last-verify after/.test(line)
+                ? chalk.yellow(line)
+                : chalk.dim(line);
+            })
+            .join("\n");
+        }
         return {
           handled: true,
           output:
             formatParamMenu("/effort", choices, current) +
+            orient +
             chalk.dim(
               `\nDefault: ${maxLvl} (max for this model)  ·  aliases: l/low m/med h/high max xhigh  ·  live`,
             ),
@@ -2590,12 +2906,37 @@ const stats = collectUsageStats({
         goal,
         todos: opts.session.todos,
         sessionId: opts.session.meta.id,
+        cwd: opts.config.workspace || opts.session.meta.cwd,
+        lastVerificationCommand: opts.session.meta.lastVerificationCommand,
+        lastVerificationAt: opts.session.meta.lastVerificationAt,
+        lastEditAt: opts.session.meta.lastEditAt,
       });
       rebuildUserTurnMarks(opts.session);
       saveSession(opts.session);
+      let compactNote = "";
+      try {
+        const last = opts.session.meta.lastVerificationCommand?.trim();
+        if (last) {
+          compactNote = isLastVerificationStale(opts.session.meta)
+            ? `\n  Last verify stale: \`${last.slice(0, 60)}\` — re-run after compact if you keep editing.`
+            : `\n  Last verify: \`${last.slice(0, 60)}\` (preserved in summary)`;
+        } else if ((opts.session.meta.editCount || 0) > 0) {
+          const cwd =
+            opts.config.workspace ||
+            opts.session.meta.cwd ||
+            process.cwd();
+          const intel = detectProjectIntel(cwd);
+          const tip = intel.checkCommands[0] || "npm test / typecheck";
+          compactNote = `\n  No last-verify after ${opts.session.meta.editCount} edit(s) — prefer \`${tip}\``;
+        }
+      } catch {
+        /* */
+      }
       return {
         handled: true,
-        output: `Compacted ${before} → ${opts.session.messages.length} messages (structured harness summary)`,
+        output:
+          `Compacted ${before} → ${opts.session.messages.length} messages (structured harness summary; project checks preserved)` +
+          compactNote,
         session: opts.session,
       };
     }
@@ -2620,15 +2961,31 @@ const stats = collectUsageStats({
         goal,
         todos: opts.session.todos,
         sessionId: opts.session.meta.id,
+        cwd: opts.config.workspace || opts.session.meta.cwd,
+        lastVerificationCommand: opts.session.meta.lastVerificationCommand,
+        lastVerificationAt: opts.session.meta.lastVerificationAt,
+        lastEditAt: opts.session.meta.lastEditAt,
       });
       rebuildUserTurnMarks(opts.session);
       saveSession(opts.session);
       const preview =
         follow.length > 120 ? `${follow.slice(0, 117).trimEnd()}…` : follow;
+      let compactNote = "";
+      try {
+        const last = opts.session.meta.lastVerificationCommand?.trim();
+        if (last) {
+          compactNote = isLastVerificationStale(opts.session.meta)
+            ? `\n  Last verify stale: \`${last.slice(0, 60)}\``
+            : `\n  Last verify: \`${last.slice(0, 60)}\``;
+        }
+      } catch {
+        /* */
+      }
       return {
         handled: true,
         output:
-          `Compacted ${before} → ${opts.session.messages.length} messages, continuing…\n→ ${preview}`,
+          `Compacted ${before} → ${opts.session.messages.length} messages, continuing…\n→ ${preview}` +
+          compactNote,
         forwardPrompt: follow,
         session: opts.session,
       };
@@ -2680,10 +3037,130 @@ const stats = collectUsageStats({
           };
         }
       }
-      const prompt = buildReviewPrompt(target, cwd);
+      const prompt = buildReviewPrompt(target, cwd, {
+        lastVerificationCommand: opts.session.meta.lastVerificationCommand,
+      });
       return {
         handled: true,
         output: `Reviewing ${target === "uncommitted" ? "uncommitted changes" : target}…`,
+        forwardPrompt: prompt,
+        session: opts.session,
+      };
+    }
+
+    case "/commit": {
+      // Draft a commit message from the working tree / index. Never force-push.
+      // Default is draft-only; "do" / "run" / "create" opts into creating the commit.
+      // Prefer explicit workspace config (tests / multi-root) over session cwd.
+      const cwd =
+        opts.config.workspace || opts.session.meta.cwd || process.cwd();
+      const raw = (arg || "").trim().toLowerCase();
+      const tokens = raw ? raw.split(/\s+/).filter(Boolean) : [];
+      const doCommit = tokens.some((t) =>
+        ["do", "run", "create", "make", "yes", "commit"].includes(t),
+      );
+      const stagedOnly = tokens.some((t) =>
+        ["staged", "index", "cached"].includes(t),
+      );
+      if (tokens.some((t) => t.startsWith("-"))) {
+        return {
+          handled: true,
+          output:
+            "Usage: /commit [staged] [do]\n" +
+            "  (empty)  draft message from unstaged+staged diff (no git commit)\n" +
+            "  staged   draft from index only\n" +
+            "  do       after drafting, create the commit (no push)\n",
+        };
+      }
+      // Plan mode hard-denies bash/git — refuse do, allow draft-only.
+      if (doCommit && opts.config.permissionMode === "plan") {
+        return {
+          handled: true,
+          output:
+            "Plan mode cannot create commits (bash/git denied). " +
+            "Run `/commit` to draft a message, then `/build` (or leave plan) and `/commit do`.",
+        };
+      }
+      // Fail closed outside a git work tree / clean tree (avoid a useless model turn).
+      try {
+        const { execFileSync } = await import("node:child_process");
+        execFileSync("git", ["rev-parse", "--is-inside-work-tree"], {
+          cwd,
+          stdio: ["ignore", "pipe", "ignore"],
+          timeout: 5_000,
+        });
+        const porcelain = execFileSync(
+          "git",
+          stagedOnly
+            ? ["diff", "--cached", "--name-only"]
+            : ["status", "--porcelain"],
+          {
+            cwd,
+            encoding: "utf8",
+            stdio: ["ignore", "pipe", "ignore"],
+            timeout: 8_000,
+          },
+        ).trim();
+        if (!porcelain) {
+          return {
+            handled: true,
+            output: stagedOnly
+              ? "Nothing staged. Stage files (`git add …`) or run `/commit` without `staged`."
+              : "Working tree clean — nothing to commit. Make changes (or stage them) first.",
+          };
+        }
+      } catch (err) {
+        const msg = String((err as Error)?.message || err);
+        if (/not a git repository/i.test(msg) || /Not a git repository/i.test(msg)) {
+          return {
+            handled: true,
+            output:
+              `Not a git repository: ${cwd}\n` +
+              `Initialize with \`git init\` (or cd into a work tree) before /commit.`,
+          };
+        }
+        // rev-parse failed without clear message — still treat as not-a-repo
+        if (!/diff|status|porcelain/i.test(msg)) {
+          return {
+            handled: true,
+            output:
+              `Not a git repository: ${cwd}\n` +
+              `Initialize with \`git init\` (or cd into a work tree) before /commit.`,
+          };
+        }
+        // status/diff failed for other reasons — fall through to model with prompt
+      }
+      const prompt = buildCommitPrompt({
+        workspace: cwd,
+        stagedOnly,
+        doCommit,
+        lastVerificationCommand: opts.session.meta.lastVerificationCommand,
+      });
+      let banner = doCommit
+        ? `Drafting commit message${stagedOnly ? " (staged)" : ""} and creating commit (no push)…`
+        : `Drafting commit message${stagedOnly ? " (staged)" : ""} (no commit until you confirm /commit do)…`;
+      // Nudge when committing after edits without a recorded structural check,
+      // or when last-verify is stale (edits landed after the check).
+      if (doCommit && (opts.session.meta.editCount || 0) > 0) {
+        const last = opts.session.meta.lastVerificationCommand?.trim();
+        if (!last) {
+          try {
+            const intel = detectProjectIntel(cwd);
+            const tip = intel.checkCommands[0] || "npm test / typecheck";
+            banner +=
+              `\nNote: session has edits but no recorded verification — prefer \`${tip}\` before commit.`;
+          } catch {
+            banner +=
+              `\nNote: session has edits but no recorded verification — run a cheap check before commit.`;
+          }
+        } else if (isLastVerificationStale(opts.session.meta)) {
+          banner +=
+            `\nNote: last verification (\`${last.slice(0, 80)}\`) is stale — edits landed after it; re-run before commit.`;
+        }
+      }
+      return {
+        handled: true,
+        output: banner,
         forwardPrompt: prompt,
         session: opts.session,
       };
@@ -2737,11 +3214,45 @@ const result = rewindSessionDetailed(opts.session, n);
         };
       }
       const diskNote = result.disk ? formatRestoreResult(result.disk) : "";
+      let verifyTip = "";
+      try {
+        if (result.disk && result.disk.restored.length > 0) {
+          const cwd =
+            opts.config.workspace ||
+            opts.session.meta.cwd ||
+            process.cwd();
+          const intel = detectProjectIntel(cwd);
+          if (intel.checkCommands[0]) {
+            verifyTip =
+              `\nverify: ${intel.checkCommands.slice(0, 3).join(" · ")}`;
+          }
+        }
+      } catch {
+        /* */
+      }
+      // Orient experts: edit trail was recomputed from surviving mutations.
+      let trailNote = "";
+      try {
+        const edits = opts.session.meta.editCount || 0;
+        const last = opts.session.meta.lastVerificationCommand?.trim();
+        if (result.disk && result.disk.restored.length > 0) {
+          trailNote = `\nedits now: ${edits}`;
+          if (last) {
+            trailNote += isLastVerificationStale(opts.session.meta)
+              ? ` · last-verify still stale (\`${last.slice(0, 40)}\`)`
+              : ` · last-verify \`${last.slice(0, 40)}\``;
+          }
+        }
+      } catch {
+        /* */
+      }
       return {
         handled: true,
         output:
           `Rewound ${result.turns || n} user turn(s); removed ${result.removed} message(s).` +
-          (diskNote ? `\n${diskNote}` : ""),
+          (diskNote ? `\n${diskNote}` : "") +
+          trailNote +
+          verifyTip,
         session: opts.session,
       };
     }
@@ -2766,13 +3277,22 @@ const result = rewindSessionDetailed(opts.session, n);
         prompt.length > 120 ? `${prompt.slice(0, 117).trimEnd()}…` : prompt;
       const mode = rewritten ? "with rewritten prompt" : "same prompt";
       const diskNote = result.disk ? formatRestoreResult(result.disk) : "";
+      let trailNote = "";
+      try {
+        if (result.disk && result.disk.restored.length > 0) {
+          trailNote = `\nedits now: ${opts.session.meta.editCount || 0}`;
+        }
+      } catch {
+        /* */
+      }
       return {
         handled: true,
         output:
           (result.removed > 0
             ? `Retrying last turn (${mode}; removed ${result.removed} msg(s))…\n→ ${preview}`
             : `Retrying last turn (${mode})…\n→ ${preview}`) +
-          (diskNote ? `\n${diskNote}` : ""),
+          (diskNote ? `\n${diskNote}` : "") +
+          trailNote,
         forwardPrompt: prompt,
         session: opts.session,
       };
@@ -2808,9 +3328,28 @@ const result = rewindSessionDetailed(opts.session, n);
           } catch {
             /* windows */
           }
+
+      const exportTrailNote = (() => {
+        try {
+          const last = opts.session.meta.lastVerificationCommand?.trim();
+          if (last) {
+            return isLastVerificationStale(opts.session.meta)
+              ? `\n  last-verify stale: ${last.slice(0, 60)}`
+              : `\n  last-verify: ${last.slice(0, 60)}`;
+          }
+          if ((opts.session.meta.editCount || 0) > 0) {
+            return `\n  no last-verify after ${opts.session.meta.editCount} edit(s)`;
+          }
+        } catch {
+          /* */
+        }
+        return "";
+      })();
           return {
             handled: true,
-            output: `Exported ${asJson ? "JSON" : "markdown"} to ${p} (mode 0600)`,
+            output:
+              `Exported ${asJson ? "JSON" : "markdown"} to ${p} (mode 0600)` +
+              exportTrailNote,
           };
         } catch (err) {
           return {
@@ -2853,6 +3392,29 @@ const result = rewindSessionDetailed(opts.session, n);
       const harnessNote = harnessBits.length
         ? `\n  Harness copied: ${harnessBits.join(" · ")}`
         : "";
+      // Orient fork with verify trail + preferred checks (fork preserves meta).
+      let forkOrient = "";
+      try {
+        const last = forked.meta.lastVerificationCommand?.trim();
+        if (last) {
+          const stale = isLastVerificationStale(forked.meta)
+            ? "  ⚠ stale"
+            : "";
+          forkOrient += `\n  Last verify: ${last.slice(0, 80)}${last.length > 80 ? "…" : ""}${stale}`;
+        } else if ((forked.meta.editCount || 0) > 0) {
+          forkOrient += `\n  No last-verify after ${forked.meta.editCount} edit(s)`;
+        }
+        const cwd =
+          opts.config.workspace || forked.meta.cwd || process.cwd();
+        const intel = detectProjectIntel(cwd);
+        if (intel.checkCommands[0]) {
+          forkOrient += chalk.dim(
+            `\n  Preferred check: \`${intel.checkCommands[0]}\``,
+          );
+        }
+      } catch {
+        /* */
+      }
       return {
         handled: true,
         output:
@@ -2861,6 +3423,7 @@ const result = rewindSessionDetailed(opts.session, n);
           `  Continuing in the fork. Original ${srcId.slice(0, 8)} unchanged.\n` +
           `  Resume original later: /resume ${srcId.slice(0, 8)}` +
           harnessNote +
+          forkOrient +
           peekBlock,
         replaceSession: forked,
       };
@@ -2882,6 +3445,10 @@ const result = rewindSessionDetailed(opts.session, n);
         goal,
         todos: forked.todos,
         sessionId: forked.meta.id,
+        cwd: opts.config.workspace || forked.meta.cwd,
+        lastVerificationCommand: forked.meta.lastVerificationCommand,
+        lastVerificationAt: forked.meta.lastVerificationAt,
+        lastEditAt: forked.meta.lastEditAt,
       });
       rebuildUserTurnMarks(forked);
       saveSession(forked);
@@ -2893,11 +3460,34 @@ const result = rewindSessionDetailed(opts.session, n);
       const harnessNote = harnessBits.length
         ? `\n  Harness copied: ${harnessBits.join(" · ")}`
         : "";
+      let forkOrient = "";
+      try {
+        const last = forked.meta.lastVerificationCommand?.trim();
+        if (last) {
+          const stale = isLastVerificationStale(forked.meta)
+            ? "  ⚠ stale"
+            : "";
+          forkOrient += `\n  Last verify: ${last.slice(0, 80)}${last.length > 80 ? "…" : ""}${stale}`;
+        } else if ((forked.meta.editCount || 0) > 0) {
+          forkOrient += `\n  No last-verify after ${forked.meta.editCount} edit(s)`;
+        }
+        const cwd =
+          opts.config.workspace || forked.meta.cwd || process.cwd();
+        const intel = detectProjectIntel(cwd);
+        if (intel.checkCommands[0]) {
+          forkOrient += chalk.dim(
+            `\n  Preferred check: \`${intel.checkCommands[0]}\``,
+          );
+        }
+      } catch {
+        /* */
+      }
       const base =
         `Forked → ${forked.meta.id.slice(0, 8)} then compacted ${before} → ${forked.messages.length} msgs.\n` +
         `  Original ${opts.session.meta.id.slice(0, 8)} unchanged (full history).\n` +
         `  Resume original: /resume ${opts.session.meta.id.slice(0, 8)}` +
-        harnessNote;
+        harnessNote +
+        forkOrient;
       if (!follow) {
         return {
           handled: true,
@@ -3038,12 +3628,20 @@ const result = rewindSessionDetailed(opts.session, n);
       if (!raw || raw === "status") {
         const on = isBellEnabled();
         const env = process.env.FORGE_BELL?.trim();
+        const trailCore = formatSlashSessionTrail(opts.session.meta);
+        const trail = trailCore
+          ? `\n  ${trailCore}` +
+            chalk.dim(
+              "\n  Turn-end body appends no last-verify / last-verify stale / verified",
+            )
+          : "";
         return {
           handled: true,
           output:
             `Turn-end bell: ${on ? "on" : "off"}` +
             (env ? ` (FORGE_BELL=${env})` : " (preference / default off)") +
-            `\n  /bell on|off   persist · /bell test   ring once · env FORGE_BELL=0|1 overrides`,
+            `\n  /bell on|off   persist · /bell test   ring once · env FORGE_BELL=0|1 overrides` +
+            trail,
         };
       }
       if (raw === "test" || raw === "ring") {
@@ -3119,6 +3717,13 @@ const result = rewindSessionDetailed(opts.session, n);
       if (!raw || raw === "status") {
         const on = isNotifyEnabled();
         const env = process.env.FORGE_NOTIFY?.trim();
+        const trailCore = formatSlashSessionTrail(opts.session.meta);
+        const trail = trailCore
+          ? `\n  ${trailCore}` +
+            chalk.dim(
+              "\n  Turn-end notify body appends no last-verify / last-verify stale / verified",
+            )
+          : "";
         return {
           handled: true,
           output:
@@ -3127,7 +3732,8 @@ const result = rewindSessionDetailed(opts.session, n);
               ? ` (FORGE_NOTIFY=${env})`
               : " (preference / default off)") +
             `\n  /notify on|off   persist · /notify test   fire once · env FORGE_NOTIFY=0|1 overrides` +
-            `\n  macOS: osascript · Linux: notify-send · Windows: PowerShell balloon (best-effort)`,
+            `\n  macOS: osascript · Linux: notify-send · Windows: PowerShell balloon (best-effort)` +
+            trail,
         };
       }
       if (raw === "test" || raw === "ping" || raw === "fire") {
@@ -3199,6 +3805,18 @@ const result = rewindSessionDetailed(opts.session, n);
       if (!raw || raw === "status") {
         const on = isFormatOnWriteEnabled();
         const env = process.env.FORGE_FORMAT_ON_WRITE?.trim();
+        const cwd =
+          opts.config.workspace || opts.session.meta.cwd || process.cwd();
+        let detected = "";
+        try {
+          const fmts = detectProjectFormatters(cwd);
+          detected = fmts.length
+            ? `\n  Detected: ${fmts.join(", ")}` +
+              (on ? "" : " — enable with /format on")
+            : `\n  Detected: (none in this workspace)`;
+        } catch {
+          detected = "";
+        }
         return {
           handled: true,
           output:
@@ -3206,6 +3824,7 @@ const result = rewindSessionDetailed(opts.session, n);
             (env
               ? ` (FORGE_FORMAT_ON_WRITE=${env})`
               : " (preference / default off)") +
+            detected +
             `\n  /format on|off   persist · env FORGE_FORMAT_ON_WRITE=0|1 overrides` +
             `\n  Runs project prettier/biome/ruff/gofmt/rustfmt after write_file · search_replace · apply_patch (best-effort)`,
         };
@@ -3379,12 +3998,25 @@ const result = rewindSessionDetailed(opts.session, n);
             ? patch.slice(0, max) +
               `\n\n… [${patch.length - max} chars truncated — use git diff in a terminal for full output]`
             : patch;
+        let verifyTip = "";
+        try {
+          // Only nudge when there is something to verify.
+          if (stat || body.trim()) {
+            const intel = detectProjectIntel(cwd);
+            if (intel.checkCommands[0]) {
+              verifyTip = `\nverify: ${intel.checkCommands.slice(0, 3).join(" · ")}`;
+            }
+          }
+        } catch {
+          /* */
+        }
         const out = [
           `cwd: ${cwd}`,
           stat ? `status:\n${stat}` : "status: clean",
           statDiff ? `\nstat:\n${statDiff}` : "",
           body.trim() ? `\ndiff:\n${body}` : "\n(no unstaged/HEAD diff)",
           filterArgs.length ? `\n(filter: ${filterArgs.join(" ")})` : "",
+          verifyTip,
         ]
           .filter(Boolean)
           .join("\n");
@@ -3539,9 +4171,26 @@ if (parts[1]) {
           };
         }
       }
+      let out = formatSessionTouchedFiles(opts.session, { limit, mutatedOnly });
+      // When listing mutations, nudge preferred verification (less steering).
+      if (mutatedOnly || /wrote|edited|mutation/i.test(out)) {
+        try {
+          const cwd =
+            opts.config.workspace ||
+            opts.session.meta.cwd ||
+            process.cwd();
+          const intel = detectProjectIntel(cwd);
+          if (intel.checkCommands[0] && !/no (files|mutations)/i.test(out)) {
+            out +=
+              `\nverify: ${intel.checkCommands.slice(0, 3).join(" · ")}`;
+          }
+        } catch {
+          /* */
+        }
+      }
       return {
         handled: true,
-        output: formatSessionTouchedFiles(opts.session, { limit, mutatedOnly }),
+        output: out,
       };
     }
 
@@ -3688,11 +4337,29 @@ case "/new":
         } catch {
           /* */
         }
+        let clearTip = chalk.dim(
+          "  ULW/goal sidecars kept but stuck baselines zeroed. /new for a fresh session id.",
+        );
+        try {
+          const cwd =
+            opts.config.workspace ||
+            opts.session.meta.cwd ||
+            process.cwd();
+          const intel = detectProjectIntel(cwd);
+          const check = intel.checkCommands[0]
+            ? ` Prefer \`${intel.checkCommands[0]}\` after new edits.`
+            : "";
+          clearTip += chalk.dim(
+            `\n  last-verify trail reset.${check}`,
+          );
+        } catch {
+          clearTip += chalk.dim("\n  last-verify trail reset.");
+        }
         return {
           handled: true,
           output:
             "Conversation cleared (same session id; counters + undo journal reset).\n" +
-            chalk.dim("  ULW/goal sidecars kept but stuck baselines zeroed. /new for a fresh session id."),
+            clearTip,
           session: opts.session,
         };
       }
@@ -3720,15 +4387,26 @@ case "/new":
       const wasUlw =
         opts.session.meta.ultrawork ||
         Boolean(loadUlwCycle(opts.session.meta.id)?.enabled);
+      let newTip = wasUlw
+        ? chalk.dim(
+            "\n  ULW/goal not carried over — re-arm with /ulw or /goal if needed.",
+          )
+        : "";
+      try {
+        const cwd =
+          opts.config.workspace || opts.session.meta.cwd || process.cwd();
+        const intel = detectProjectIntel(cwd);
+        if (intel.checkCommands[0]) {
+          newTip += chalk.dim(
+            `\n  Preferred check: \`${intel.checkCommands[0]}\`  ·  /context for full stack`,
+          );
+        }
+      } catch {
+        /* */
+      }
       return {
         handled: true,
-        output:
-          `New session ${s.meta.id.slice(0, 8)}${titleNote}` +
-          (wasUlw
-            ? chalk.dim(
-                "\n  ULW/goal not carried over — re-arm with /ulw or /goal if needed.",
-              )
-            : ""),
+        output: `New session ${s.meta.id.slice(0, 8)}${titleNote}` + newTip,
         replaceSession: s,
       };
     }
@@ -3763,7 +4441,12 @@ case "/new":
                     const prevNote = prev
                       ? `  “${prev}${(s.lastUserPreview || "").length > 28 ? "…" : ""}”`
                       : "";
-                    return `  ${s.id.slice(0, 8)}  ${age}  ${(s.title || "").slice(0, 28).padEnd(28)}  ${s.model}${prevNote}${lockNote}${cwdNote}`;
+                    const verifyNote = s.lastVerificationCommand?.trim()
+                      ? isLastVerificationStale(s)
+                        ? "  ✓~"
+                        : "  ✓"
+                      : "";
+                    return `  ${s.id.slice(0, 8)}  ${age}  ${(s.title || "").slice(0, 28).padEnd(28)}  ${s.model}${verifyNote}${prevNote}${lockNote}${cwdNote}`;
                   })
                   .join("\n")}${showAll ? "" : chalk.dim("\n\n/resume all — every workspace · /resume <title>")}`,
         };
@@ -4099,7 +4782,7 @@ case "/new":
               } catch {
                 /* */
               }
-              return `${s.id.slice(0, 8)}  ${age}  ${(s.title || "").slice(0, 28).padEnd(28)}  ${s.model}  t=${s.turnCount}${costNote}${s.ultrawork ? " ULW" : ""}${s.pinned ? " PIN" : ""}${s.permissionMode === "plan" ? " PLAN" : ""}${s.lastError ? " ERR" : ""}${active}${lockNote}${cwdNote}${prevNote}${errNote}`;
+              return `${s.id.slice(0, 8)}  ${age}  ${(s.title || "").slice(0, 28).padEnd(28)}  ${s.model}  t=${s.turnCount}${costNote}${s.lastVerificationCommand?.trim() ? (isLastVerificationStale(s) ? " ✓~" : " ✓") : ""}${s.ultrawork ? " ULW" : ""}${s.pinned ? " PIN" : ""}${s.permissionMode === "plan" ? " PLAN" : ""}${s.lastError ? " ERR" : ""}${active}${lockNote}${cwdNote}${prevNote}${errNote}`;
             })
             .join("\n") +
           chalk.dim(
@@ -4241,6 +4924,25 @@ case "/new":
             : opts.session.meta.permissionMode
               ? chalk.dim(`\nSession override: ${opts.session.meta.permissionMode}`)
               : "";
+        let orient = formatSlashVerifyOrient({
+          workspace: opts.config.workspace,
+          cwd: opts.session.meta.cwd,
+          editCount: opts.session.meta.editCount,
+          lastVerificationCommand: opts.session.meta.lastVerificationCommand,
+          lastVerificationAt: opts.session.meta.lastVerificationAt,
+          lastEditAt: opts.session.meta.lastEditAt,
+        });
+        if (orient) {
+          orient = orient
+            .split("\n")
+            .map((line) => {
+              if (!line) return line;
+              return /No last-verify after/.test(line)
+                ? chalk.yellow(line)
+                : chalk.dim(line);
+            })
+            .join("\n");
+        }
         return {
           handled: true,
           output:
@@ -4252,7 +4954,8 @@ case "/new":
             chalk.dim(
               "\nAlso: /plan · /build  ·  /permissions list | clear | revoke <id>",
             ) +
-            sessionNote,
+            sessionNote +
+            orient,
         };
       }
       // Resolve against full choices so Tab numbers for list/clear still work,
@@ -4461,11 +5164,28 @@ function handleGoal(arg: string, session: SessionData): SlashResult {
           `User resumed /goal mid-run. Objective remains active: ${g.objective.slice(0, 200)}. Continue until **Goal achieved.** or the user pauses/clears.`,
         );
       }
+      let resumeTip = "";
+      if (g) {
+        try {
+          const cwd = session.meta.cwd || process.cwd();
+          const intel = detectProjectIntel(cwd);
+          if (intel.checkCommands[0]) {
+            resumeTip =
+              "\n" +
+              chalk.dim(
+                `Preferred checks: ${intel.checkCommands.slice(0, 3).join(" · ")}  ·  attestation needs green after edits`,
+              );
+          }
+        } catch {
+          /* */
+        }
+      }
       return {
         handled: true,
         output: g
           ? `Goal resumed.\n${formatGoalStatus(g)}` +
-            chalk.dim("\n  (applies immediately to harness; agent notified on next model call)")
+            chalk.dim("\n  (applies immediately to harness; agent notified on next model call)") +
+            resumeTip
           : "No goal to resume.",
         session,
       };
@@ -4532,9 +5252,25 @@ function handleGoal(arg: string, session: SessionData): SlashResult {
       // Untitled sessions get a scannable title from the goal (experts scanning /sessions)
       maybeSetTitle(session, restText);
       saveSession(session);
+      let goalCheckTip = "";
+      try {
+        const cwd = session.meta.cwd || process.cwd();
+        const intel = detectProjectIntel(cwd);
+        if (intel.checkCommands[0]) {
+          goalCheckTip =
+            `\n` +
+            chalk.dim(
+              `Preferred checks: ${intel.checkCommands.slice(0, 3).join(" · ")}  ·  attestation needs green after edits`,
+            );
+        }
+      } catch {
+        /* */
+      }
       return {
         handled: true,
-        output: `Goal ARMED (relentless driver engaged).\n${formatGoalStatus(g)}`,
+        output:
+          `Goal ARMED (relentless driver engaged).\n${formatGoalStatus(g)}` +
+          goalCheckTip,
         session,
       };
     }
@@ -4657,6 +5393,32 @@ export interface DoctorResult {
   sessionsPinned?: number;
   /** Effective format-on-write (env FORGE_FORMAT_ON_WRITE wins over preference). */
   formatOnWrite?: boolean;
+  /** Detected package manager (npm/pnpm/yarn/bun). */
+  packageManager?: string | null;
+  /** Ecosystem labels (node, typescript, rust, …). */
+  projectKinds?: string[];
+  /** Preferred verification commands (cheapest first). */
+  checkCommands?: string[];
+  /** Monorepo workspace package labels (when detected). */
+  workspaces?: string[];
+  /** Monorepo root path (walk-up when cwd is a nested package). */
+  monorepoRoot?: string | null;
+  /** Compact project-stack summary. */
+  projectStackSummary?: string | null;
+  /** Stale/unread edit guard effective (FORGE_FILE_READ_GUARD). */
+  fileReadGuard?: boolean;
+  /** Post-edit verify tip effective (FORGE_VERIFY_HINT). */
+  verifyHint?: boolean;
+  /** Whether workspace node_modules exists (null when no package.json). */
+  nodeModulesPresent?: boolean | null;
+  /** package.json packageManager field vs lockfile disagreement, if any. */
+  packageManagerMismatch?: {
+    field: string;
+    lockfile: string;
+    detail: string;
+  } | null;
+  /** Multiple lockfile basenames when ≥2 PM families are present. */
+  multipleLockfiles?: string[];
   /** Known default context window for config.model (from model-info). */
   modelDefaultContextWindow?: number | null;
   /** config.contextWindow / modelDefault when known. */
@@ -5129,6 +5891,13 @@ export async function runDoctorCheck(
     issues.push(`Node ${node} is below 20`);
   }
   // Best-effort package.json engines.node floor (e.g. ">=20", ">=20.0.0").
+  let nodeModulesPresent: boolean | null = null;
+  let packageManagerMismatch: {
+    field: string;
+    lockfile: string;
+    detail: string;
+  } | null = null;
+  let multipleLockfilesList: string[] = [];
   try {
     const pkgPath = path.join(config.workspace || process.cwd(), "package.json");
     if (fs.existsSync(pkgPath)) {
@@ -5148,11 +5917,38 @@ export async function runDoctorCheck(
           issues.push(
             `Node ${node} is below package.json engines.node floor ${floor} (${range})`,
           );
-        } else if (range) {
-          lines.push(`  package engines.node: ${range}`);
         }
       } else if (range) {
         lines.push(`  package engines.node: ${range}`);
+      }
+      // Missing node_modules — experts hit this after clone; steer install with detected PM.
+      // Monorepos often hoist node_modules to the workspace root only.
+      try {
+        const ws = config.workspace || process.cwd();
+        const { detectPackageManager, hasNodeModules } = await import(
+          "../util/project-intel.js"
+        );
+        const present = hasNodeModules(ws);
+        nodeModulesPresent = present;
+        if (present === false) {
+          let install = "npm install";
+          try {
+            const pm = detectPackageManager(ws);
+            if (pm === "pnpm") install = "pnpm install";
+            else if (pm === "yarn") install = "yarn install";
+            else if (pm === "bun") install = "bun install";
+          } catch {
+            /* */
+          }
+          lines.push(
+            chalk.yellow(
+              `  ⚠ node_modules missing — run \`${install}\` before typecheck/test`,
+            ),
+          );
+          issues.push(`node_modules missing — run ${install}`);
+        }
+      } catch {
+        /* */
       }
     }
   } catch {
@@ -5462,6 +6258,104 @@ export async function runDoctorCheck(
     /* */
   }
 
+  // Project intelligence + edit-guard knobs (less user steering)
+  let packageManager: string | null = null;
+  let projectKinds: string[] = [];
+  let checkCommands: string[] = [];
+  let workspaces: string[] = [];
+  let monorepoRoot: string | null = null;
+  let projectStackSummary: string | null = null;
+  let fileReadGuard = true;
+  let verifyHint = true;
+  try {
+    const { detectProjectIntel } = await import("../util/project-intel.js");
+    const { fileReadGuardEnabled } = await import(
+      "../agent/tools/file-read-state.js"
+    );
+    const ws = config.workspace || process.cwd();
+    const intel = detectProjectIntel(ws);
+    packageManager = intel.packageManager ?? null;
+    projectKinds = [...intel.kinds];
+    checkCommands = [...intel.checkCommands];
+    workspaces = [...(intel.workspaces || [])];
+    monorepoRoot = intel.monorepoRoot ?? null;
+    projectStackSummary = intel.summary || null;
+    if (intel.summary) {
+      lines.push(chalk.dim(`  project-stack: ${intel.summary}`));
+    } else {
+      lines.push(chalk.dim("  project-stack: none detected"));
+    }
+    if (monorepoRoot) {
+      lines.push(chalk.dim(`  monorepo-root: ${monorepoRoot}`));
+    }
+    if (workspaces.length) {
+      lines.push(
+        chalk.dim(
+          `  workspaces: ${workspaces.slice(0, 6).join(" · ")}` +
+            (workspaces.length > 6 ? ` (+${workspaces.length - 6})` : ""),
+        ),
+      );
+    }
+    try {
+      const {
+        packageManagerLockfileMismatch,
+        multipleLockfiles,
+      } = await import("../util/project-intel.js");
+      const mismatch = packageManagerLockfileMismatch(ws);
+      if (mismatch) {
+        packageManagerMismatch = {
+          field: mismatch.field,
+          lockfile: mismatch.lockfile,
+          detail: mismatch.detail,
+        };
+        lines.push(chalk.yellow(`  ⚠ ${mismatch.detail}`));
+        issues.push(mismatch.detail);
+      } else {
+        const multi = multipleLockfiles(ws);
+        if (multi.length >= 2) {
+          multipleLockfilesList = multi;
+          const detail =
+            `Multiple lockfiles present (${multi.join(", ")}). ` +
+            `Pick one package manager and remove the others to avoid install drift.`;
+          lines.push(chalk.yellow(`  ⚠ ${detail}`));
+          issues.push(detail);
+        }
+      }
+    } catch {
+      /* */
+    }
+    fileReadGuard = fileReadGuardEnabled();
+    verifyHint = (() => {
+      const v = (process.env.FORGE_VERIFY_HINT || "1").trim().toLowerCase();
+      return !(v === "0" || v === "false" || v === "off" || v === "no");
+    })();
+    if (!fileReadGuard) {
+      lines.push(
+        chalk.yellow(
+          "  ⚠ file-read edit guard OFF (FORGE_FILE_READ_GUARD=0) — blind overwrites allowed",
+        ),
+      );
+      issues.push("file-read-guard-off");
+    }
+    if (!verifyHint) {
+      lines.push(
+        chalk.yellow(
+          "  ⚠ post-edit verify tip OFF (FORGE_VERIFY_HINT=0) — agents won't be nudged to run project checks after edits",
+        ),
+      );
+      issues.push("verify-hint-off");
+    }
+    lines.push(
+      chalk.dim(
+        `  edit-guard: file-read=${fileReadGuard ? "on" : "off"}` +
+          ` · verify-hint=${verifyHint ? "on" : "off"}` +
+          `  (FORGE_FILE_READ_GUARD · FORGE_VERIFY_HINT)`,
+      ),
+    );
+  } catch {
+    /* */
+  }
+
   return {
     report: lines.join("\n"),
     issues: [...issues],
@@ -5478,6 +6372,17 @@ export async function runDoctorCheck(
     sessionsTotal,
     sessionsPinned,
     formatOnWrite: isFormatOnWriteEnabled(),
+    packageManager,
+    projectKinds,
+    checkCommands,
+    workspaces,
+    monorepoRoot,
+    projectStackSummary,
+    fileReadGuard,
+    verifyHint,
+    nodeModulesPresent,
+    packageManagerMismatch,
+    multipleLockfiles: multipleLockfilesList,
     modelDefaultContextWindow,
     contextWindowRatio,
     gitIsWorktree,
@@ -5540,6 +6445,22 @@ export interface EffectiveConfigSnap {
   } | null;
   /** Effective format-on-write (env FORGE_FORMAT_ON_WRITE wins over preference). */
   formatOnWrite: boolean;
+  /** Detected package manager when known. */
+  packageManager: string | null;
+  /** Preferred verification commands. */
+  checkCommands: string[];
+  /** Compact project-stack summary. */
+  projectStackSummary: string | null;
+  /** Monorepo root when detected. */
+  monorepoRoot: string | null;
+  /** Monorepo workspace package labels. */
+  workspaces: string[];
+  /** package.json packageManager vs lockfile disagreement, if any. */
+  packageManagerMismatch: {
+    field: string;
+    lockfile: string;
+    detail: string;
+  } | null;
   env: {
     FORGE_HOME: string;
     FORGE_BASH_TIMEOUT_MS: number;
@@ -5547,7 +6468,77 @@ export interface EffectiveConfigSnap {
     FORGE_PROVIDER_TIMEOUT_MS: number;
     FORGE_DOOM_LOOP_THRESHOLD: number;
     FORGE_ERROR_STREAK_THRESHOLD: number;
+    FORGE_FILE_READ_GUARD: boolean;
+    FORGE_VERIFY_HINT: boolean;
   };
+}
+
+
+/** Compact preferred-check + last-verify orientation for mid-run slash status. */
+export function formatSlashVerifyOrient(opts: {
+  workspace?: string;
+  cwd?: string;
+  editCount?: number;
+  lastVerificationCommand?: string;
+  lastVerificationAt?: string;
+  lastEditAt?: string;
+  /** Prefix each line (default "\n"). */
+  linePrefix?: string;
+}): string {
+  const prefix = opts.linePrefix ?? "\n";
+  const bits: string[] = [];
+  try {
+    const cwd = opts.workspace || opts.cwd || process.cwd();
+    const intel = detectProjectIntel(cwd);
+    if (intel.checkCommands[0]) {
+      bits.push(
+        `Preferred checks: ${intel.checkCommands.slice(0, 3).join(" · ")}`,
+      );
+    }
+  } catch {
+    /* */
+  }
+  try {
+    const last = opts.lastVerificationCommand?.trim();
+    if (last) {
+      const stale = isLastVerificationStale({
+        lastVerificationAt: opts.lastVerificationAt,
+        lastEditAt: opts.lastEditAt,
+      })
+        ? "  ⚠ stale"
+        : "";
+      bits.push(
+        `Last verify: ${last.slice(0, 80)}${last.length > 80 ? "…" : ""}${stale}`,
+      );
+    } else if ((opts.editCount || 0) > 0) {
+      bits.push(`No last-verify after ${opts.editCount} edit(s)`);
+    }
+  } catch {
+    /* */
+  }
+  return bits.map((b) => `${prefix}${b}`).join("");
+}
+
+/** Session trail line for /notify · /bell · /budget style status. */
+export function formatSlashSessionTrail(meta: {
+  editCount?: number;
+  lastVerificationCommand?: string;
+  lastVerificationAt?: string;
+  lastEditAt?: string;
+}): string {
+  try {
+    const edits = meta.editCount || 0;
+    const last = meta.lastVerificationCommand?.trim();
+    if (!(edits > 0 || last)) return "";
+    if (last) {
+      return isLastVerificationStale(meta)
+        ? `Session trail: edits=${edits} · last-verify stale (${last.slice(0, 40)})`
+        : `Session trail: edits=${edits} · last-verify ${last.slice(0, 40)}`;
+    }
+    return `Session trail: edits=${edits} · no last-verify`;
+  } catch {
+    return "";
+  }
 }
 
 /** Build effective config snapshot (never includes secrets). */
@@ -5608,6 +6599,50 @@ export function buildEffectiveConfigSnap(
         }
       : null,
     formatOnWrite: isFormatOnWriteEnabled(),
+    ...(() => {
+      try {
+        const cwd = c.workspace || session?.meta.cwd || process.cwd();
+        const intel = detectProjectIntel(cwd);
+        let packageManagerMismatch: {
+          field: string;
+          lockfile: string;
+          detail: string;
+        } | null = null;
+        try {
+          const mm = packageManagerLockfileMismatch(cwd);
+          if (mm) {
+            packageManagerMismatch = {
+              field: mm.field,
+              lockfile: mm.lockfile,
+              detail: mm.detail,
+            };
+          }
+        } catch {
+          /* */
+        }
+        return {
+          packageManager: intel.packageManager ?? null,
+          checkCommands: [...intel.checkCommands],
+          projectStackSummary: intel.summary || null,
+          monorepoRoot: intel.monorepoRoot ?? null,
+          workspaces: [...(intel.workspaces || [])],
+          packageManagerMismatch,
+        };
+      } catch {
+        return {
+          packageManager: null as string | null,
+          checkCommands: [] as string[],
+          projectStackSummary: null as string | null,
+          monorepoRoot: null as string | null,
+          workspaces: [] as string[],
+          packageManagerMismatch: null as {
+            field: string;
+            lockfile: string;
+            detail: string;
+          } | null,
+        };
+      }
+    })(),
     env: {
       FORGE_HOME:
         process.env.FORGE_HOME || path.join(process.env.HOME || "", ".forge"),
@@ -5619,6 +6654,21 @@ export function buildEffectiveConfigSnap(
         "FORGE_ERROR_STREAK_THRESHOLD",
         5,
       ),
+      FORGE_FILE_READ_GUARD: (() => {
+        try {
+          // Lazy require-style import would be async; inline same logic as file-read-state.
+          const v = (process.env.FORGE_FILE_READ_GUARD || "1")
+            .trim()
+            .toLowerCase();
+          return v !== "0" && v !== "false" && v !== "off" && v !== "no";
+        } catch {
+          return true;
+        }
+      })(),
+      FORGE_VERIFY_HINT: (() => {
+        const v = (process.env.FORGE_VERIFY_HINT || "1").trim().toLowerCase();
+        return !(v === "0" || v === "false" || v === "off" || v === "no");
+      })(),
     },
   };
 }
@@ -5656,6 +6706,9 @@ export function formatEffectiveConfig(
     `  read outside:    ${snap.readOutsideWorkspace}`,
     `  sticky provider: ${snap.stickyProvider ?? "(none)"}`,
     `  format-on-write: ${snap.formatOnWrite ? "on" : "off"}  (/format · FORGE_FORMAT_ON_WRITE)`,
+    `  edit-guard:      file-read=${snap.env.FORGE_FILE_READ_GUARD ? "on" : "off"}` +
+      `  verify-hint=${snap.env.FORGE_VERIFY_HINT ? "on" : "off"}` +
+      `  (FORGE_FILE_READ_GUARD · FORGE_VERIFY_HINT)`,
     `  blocking Stop:   ${snap.blockingStopHooks ? "on" : "OFF"}`,
     `  profile:         ${snap.promptProfile}`,
     `  context:         window=${snap.contextWindow}` +
@@ -5673,6 +6726,18 @@ export function formatEffectiveConfig(
         : ""),
     `  rules:           deny=${snap.rules.deny} allow=${snap.rules.allow} ask=${snap.rules.ask}`,
     `  workspace:       ${snap.workspace}`,
+    snap.projectStackSummary
+      ? `  project-stack:   ${snap.projectStackSummary}`
+      : snap.packageManager
+        ? `  project-stack:   pm=${snap.packageManager}` +
+          (snap.checkCommands[0] ? ` · ${snap.checkCommands[0]}` : "")
+        : null,
+    snap.monorepoRoot
+      ? `  monorepo-root:   ${snap.monorepoRoot}`
+      : null,
+    snap.packageManagerMismatch
+      ? `  pm-mismatch:     ${snap.packageManagerMismatch.detail}`
+      : null,
     `  FORGE_HOME:      ${snap.env.FORGE_HOME}`,
     snap.baseUrl ? `  api base:        ${snap.baseUrl}` : null,
     sess
@@ -5696,7 +6761,88 @@ export function formatEffectiveConfig(
 }
 
 /** OpenCode-inspired code review prompt (scoped target). */
-export function buildReviewPrompt(target: string, workspace: string): string {
+/**
+ * Prompt for /commit — draft a high-quality commit message from the diff.
+ * Default is draft-only; doCommit opts into `git commit` (never push).
+ */
+export function buildCommitPrompt(opts: {
+  workspace: string;
+  stagedOnly?: boolean;
+  doCommit?: boolean;
+  lastVerificationCommand?: string;
+}): string {
+  const workspace = opts.workspace;
+  const stagedOnly = Boolean(opts.stagedOnly);
+  const doCommit = Boolean(opts.doCommit);
+
+  let checksBlock = "";
+  try {
+    const intel = detectProjectIntel(workspace);
+    if (intel.checkCommands.length) {
+      checksBlock =
+        `\nPreferred project checks (run before committing if you touch code):\n` +
+        intel.checkCommands.slice(0, 4).map((c) => `- \`${c}\``).join("\n") +
+        "\n";
+    }
+  } catch {
+    checksBlock = "";
+  }
+  const last = opts.lastVerificationCommand?.trim();
+  if (last) {
+    checksBlock +=
+      `Last verification this session: \`${last.slice(0, 120)}\` ` +
+      `(re-run if the diff changed code since).\n`;
+  }
+
+  const scope = stagedOnly
+    ? "staged changes only (`git diff --cached`)"
+    : "all uncommitted changes (`git status` + `git diff HEAD`)";
+
+  if (doCommit) {
+    return `Create a git commit for the ${scope} in \`${workspace}\`.
+
+## Hard rules
+- **Never** \`git push\`, \`--force\`, amend others' commits, or change git config
+- Do **not** use \`git commit --no-verify\` unless the user explicitly asked
+- If there is nothing to commit, say so and stop
+- Prefer staging intentional paths (\`git add <paths>\`) over \`git add -A\` unless the whole tree is clearly the unit of work
+- Run a cheap project check first when code changed${checksBlock ? " (see Preferred project checks)" : ""}
+
+## Steps
+1. Inspect \`git status\` and the relevant diff (${scope})
+2. If checks are warranted and cheap, run the top preferred check
+3. Stage the right files if needed
+4. Commit with a concise message:
+   - subject ≤72 chars, imperative mood ("Add…", "Fix…", "Refactor…")
+   - optional body explaining *why*, not a file list
+5. Show \`git log -1 --stat\` and stop (no push)
+
+${checksBlock}
+Start now.`;
+  }
+
+  return `Draft a git commit message for the ${scope} in \`${workspace}\`.
+
+## Hard rules
+- **Do not** run \`git commit\`, \`git add\`, or \`git push\` — draft only
+- Read the real diff with tools; do not invent changes
+
+## Deliverable
+1. One recommended subject line (≤72 chars, imperative)
+2. Optional 2–5 line body (why / risk / follow-ups)
+3. Bullet list of paths that should be staged for this commit
+4. One-line note if the tree looks like it should be split into multiple commits
+${checksBlock}
+When the user wants the commit created they can run \`/commit do\` (or \`/commit staged do\`).
+
+Start by inspecting git status and the diff.`;
+}
+
+export function buildReviewPrompt(
+  target: string,
+  workspace: string,
+  opts?: { lastVerificationCommand?: string },
+): string {
   const t = (target || "uncommitted").trim() || "uncommitted";
   const lower = t.toLowerCase();
   let scopeBlock: string;
@@ -5736,20 +6882,40 @@ export function buildReviewPrompt(target: string, workspace: string): string {
 4. Read full files for non-obvious hunks`;
   }
 
+  let checksBlock = "";
+  try {
+    const intel = detectProjectIntel(workspace);
+    if (intel.checkCommands.length) {
+      checksBlock =
+        `\n## Preferred verification (detected)\n` +
+        intel.checkCommands.map((c) => `- \`${c}\``).join("\n") +
+        `\nUse these at the end of the review when applicable; do not invent a different package manager.\n`;
+    }
+  } catch {
+    checksBlock = "";
+  }
+  const last = opts?.lastVerificationCommand?.trim();
+  if (last) {
+    checksBlock +=
+      `\nLast verification this session: \`${last.slice(0, 120)}\` ` +
+      `(note whether the diff still matches that proof).\n`;
+  }
+
   return `You are a code reviewer. Review the changes in workspace \`${workspace}\` and provide actionable feedback.
 
 Target argument: \`${t}\`
 
 ${scopeBlock}
-
+${checksBlock}
 ## Gathering context
 Diffs alone are not enough. After the diff, read the entire file(s) being modified to understand surrounding logic. Check AGENTS.md / CONTRIBUTING / style configs when relevant. Prefer executable sources of truth over prose.
 
 ## What to look for (priority order)
 1. **Bugs** — logic errors, missing guards, race conditions, broken error handling, security (injection, path escape, secret leak)
-2. **Behavior changes** — unintentional API/CLI/contract shifts
-3. **Structure** — fights existing patterns; missing shared helpers
-4. **Performance** — only if obviously bad (unbounded O(n²), sync I/O on hot paths)
+2. **Siblings & dependents** — same defect class elsewhere; callers/tests/docs/config left inconsistent with the change
+3. **Behavior changes** — unintentional API/CLI/contract shifts
+4. **Structure** — fights existing patterns; missing shared helpers
+5. **Performance** — only if obviously bad (unbounded O(n²), sync I/O on hot paths)
 
 ## Discipline
 - Only review the changes — do not nitpick pre-existing code that was not modified
@@ -5763,7 +6929,7 @@ Diffs alone are not enough. After the diff, read the entire file(s) being modifi
 2. Findings ordered by severity (\`critical\` / \`high\` / \`medium\` / \`low\` / \`note\`)
 3. Each finding: file/symbol, why it matters, concrete fix suggestion
 4. If clean: say so briefly and note residual risks (tests not run, etc.)
-5. End with suggested verification commands (test/typecheck) when applicable
+5. End with suggested verification commands from Preferred verification above (or test/typecheck) when applicable
 
 Start by gathering the diff with tools, then read the important files, then write the review.`;
 }
@@ -5773,12 +6939,40 @@ export function buildInitAgentsPrompt(focus: string, workspace: string): string 
   const focusBlock = focus
     ? `\nUser-provided focus or constraints (honor these):\n${focus}\n`
     : "";
+  // Pre-detected stack so /init does not rediscover package manager / checks.
+  let detectedBlock = "";
+  try {
+    const intel = detectProjectIntel(workspace);
+    const lines: string[] = [];
+    if (intel.summary) lines.push(`- Summary: ${intel.summary}`);
+    if (intel.packageManager) lines.push(`- Package manager: ${intel.packageManager}`);
+    if (intel.checkCommands.length) {
+      lines.push(`- Preferred checks (cheapest first): ${intel.checkCommands.join(" · ")}`);
+    }
+    if (intel.monorepoRoot) lines.push(`- Monorepo root: ${intel.monorepoRoot}`);
+    if (intel.workspaces?.length) {
+      lines.push(
+        `- Workspaces: ${intel.workspaces.slice(0, 8).join(" · ")}` +
+          (intel.workspaces.length > 8
+            ? ` (+${intel.workspaces.length - 8} more)`
+            : ""),
+      );
+    }
+    if (lines.length) {
+      detectedBlock =
+        `\n## Already detected by Forge (verify, then put the real commands in AGENTS.md)\n\n` +
+        lines.join("\n") +
+        `\n\nDo not invent a different package manager when one is detected. Prefer these check commands unless investigation proves better ones.\n`;
+    }
+  } catch {
+    detectedBlock = "";
+  }
   return `Create or update \`AGENTS.md\` for this repository at the workspace root (${workspace}).
 
 The goal is a compact instruction file that helps future Forge sessions avoid mistakes and ramp up quickly. Every line should answer: "Would an agent likely miss this without help?" If not, leave it out.
 
 Forge also loads (nearest wins within the git root): \`FORGE.md\`, \`CLAUDE.md\`, \`.forge/rules.md\`, \`.github/copilot-instructions.md\`, \`.cursorrules\`, \`.cursor/rules/*.{md,mdc}\`, and optional \`~/.forge/AGENTS.md\`. Prefer a single high-signal \`AGENTS.md\` at the package or monorepo root rather than duplicating the same rules everywhere.
-${focusBlock}
+${focusBlock}${detectedBlock}
 ## How to investigate
 
 Read the highest-value sources first:
@@ -5795,7 +6989,7 @@ Prefer executable sources of truth over prose. If docs conflict with config or s
 ## What to extract
 
 Look for the highest-signal facts for an agent working in this repo:
-- exact developer commands, especially non-obvious ones (\`npm test\`, single-test invocation, typecheck)
+- exact developer commands, especially non-obvious ones (\`npm test\`, single-test invocation, typecheck) — start from the detected checks above
 - required command order when it matters
 - monorepo or multi-package boundaries and real entrypoints
 - framework or toolchain quirks: generated code, migrations, special env loading
@@ -5813,7 +7007,7 @@ Look for the highest-signal facts for an agent working in this repo:
 - If \`AGENTS.md\` already exists, improve it in place rather than rewriting blindly
 - Preserve verified useful guidance; delete fluff or stale claims
 - After writing, briefly summarize what changed and why
-- Tip for humans using Forge: \`/plan\` for read-only design, \`/build\` to implement; \`/commands\` lists project slash templates; \`/skills\` lists skill packs; \`forge doctor\` / \`/context\` show loaded instruction sources and skill counts
+- Tip for humans using Forge: \`/plan\` for read-only design, \`/build\` to implement; \`/commands\` lists project slash templates; \`/skills\` lists skill packs; \`forge doctor\` / \`/context\` show loaded instruction sources, skill counts, and project stack
 
 Do the research with tools, then write or update \`AGENTS.md\` now.`;
 }
@@ -5856,6 +7050,7 @@ Forge slash commands
   /fork-and-compact [prompt]  Fork, compact the fork, optional continue (Warp-style)
   /init [focus]         Guided AGENTS.md setup / improve (OpenCode-style)
   /review [target]      Code review: uncommitted|staged|<commit>|<branch>|<pr#>
+  /commit [staged] [do] Draft commit message from git diff (do = create commit, no push)
   /rewind [n]           Undo last n user turns + restore journaled files (/undo)
   /retry [prompt]       Rewind last turn (+ disk) + re-run (/again; optional rewrite)
   /export [path] [--json]  Export session as markdown or JSON (files mode 0600)

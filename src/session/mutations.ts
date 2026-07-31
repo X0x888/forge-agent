@@ -269,6 +269,33 @@ export function copyFileMutations(fromId: string, toId: string): void {
  * (and skipped) entries are dropped; failed entries are kept so `/undo` can
  * retry without losing pre-images.
  */
+
+/**
+ * Recompute session edit trail from the surviving mutations journal.
+ * Used after /undo · /retry so last-verify stale detection stays honest
+ * when disk edits are restored away.
+ */
+export function editTrailFromMutations(sessionId: string): {
+  editCount: number;
+  lastEditAt?: string;
+} {
+  const all = readFileMutations(sessionId);
+  if (!all.length) return { editCount: 0 };
+  let lastEditAt: string | undefined;
+  let maxTs = -1;
+  for (const m of all) {
+    const ts = Date.parse(m.ts || "");
+    if (Number.isFinite(ts) && ts >= maxTs) {
+      maxTs = ts;
+      lastEditAt = m.ts;
+    }
+  }
+  return {
+    editCount: all.length,
+    ...(lastEditAt ? { lastEditAt } : {}),
+  };
+}
+
 export function restoreMutationsAfterTurn(
   sessionId: string,
   keepThroughTurn: number,

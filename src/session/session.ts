@@ -15,7 +15,8 @@ import {
   costCapStatus,
   formatCostBudgetLine,
 } from "../util/cost-budget.js";
-import { detectProjectHints, getGitSnapshot } from "../util/git-context.js";
+import { getGitSnapshot } from "../util/git-context.js";
+import { detectProjectIntel } from "../util/project-intel.js";
 import { countProjectSkills } from "../agent/project-skills.js";
 import type { ChatMessage } from "../providers/types.js";
 import type { PermissionMode } from "../config/types.js";
@@ -28,6 +29,7 @@ import {
 import { repairToolCallPairing } from "./message-repair.js";
 import {
   restoreMutationsAfterTurn,
+  editTrailFromMutations,
   copyFileMutations,
   clearFileMutations,
   type RestoreMutationsResult,
@@ -94,6 +96,15 @@ export interface SessionMeta {
   ultrawork: boolean;
   turnCount: number;
   editCount: number;
+  /**
+   * Last bash command that counted as structural verification (test/typecheck/…).
+   * Helps resume orientation and proof-claim without rediscovering what was run.
+   */
+  lastVerificationCommand?: string;
+  /** ISO timestamp when lastVerificationCommand was recorded. */
+  lastVerificationAt?: string;
+  /** ISO timestamp of the most recent file edit (write/search_replace/apply_patch). */
+  lastEditAt?: string;
   totalPromptTokens: number;
   totalCompletionTokens: number;
   /**
@@ -221,6 +232,22 @@ function normalizeSessionMeta(fromSide: SessionMeta): SessionMeta {
     editCount: Number(fromSide.editCount) || 0,
     totalPromptTokens: Number(fromSide.totalPromptTokens) || 0,
     totalCompletionTokens: Number(fromSide.totalCompletionTokens) || 0,
+    ...(typeof fromSide.lastVerificationCommand === "string" &&
+    fromSide.lastVerificationCommand.trim()
+      ? {
+          lastVerificationCommand: fromSide.lastVerificationCommand
+            .trim()
+            .slice(0, 240),
+        }
+      : {}),
+    ...(typeof fromSide.lastVerificationAt === "string" &&
+    fromSide.lastVerificationAt.trim()
+      ? { lastVerificationAt: fromSide.lastVerificationAt.trim() }
+      : {}),
+    ...(typeof fromSide.lastEditAt === "string" &&
+    fromSide.lastEditAt.trim()
+      ? { lastEditAt: fromSide.lastEditAt.trim() }
+      : {}),
   };
   // Per-session spend cap (USD estimate). Preserve explicit 0 (= unlimited override).
   if (
@@ -617,6 +644,22 @@ export function importSessionJson(
       editCount: Number(src.editCount) || 0,
       totalPromptTokens: Number(src.totalPromptTokens) || 0,
       totalCompletionTokens: Number(src.totalCompletionTokens) || 0,
+      ...(typeof src.lastVerificationCommand === "string" &&
+      src.lastVerificationCommand.trim()
+        ? {
+            lastVerificationCommand: src.lastVerificationCommand
+              .trim()
+              .slice(0, 240),
+          }
+        : {}),
+      ...(typeof src.lastVerificationAt === "string" &&
+      src.lastVerificationAt.trim()
+        ? { lastVerificationAt: src.lastVerificationAt.trim() }
+        : {}),
+      ...(typeof src.lastEditAt === "string" &&
+      src.lastEditAt.trim()
+        ? { lastEditAt: src.lastEditAt.trim() }
+        : {}),
       ...(src.maxCostUsd !== undefined &&
       src.maxCostUsd !== null &&
       Number.isFinite(Number(src.maxCostUsd)) &&
@@ -782,25 +825,22 @@ export function formatSessionSummary(session: SessionData): string {
     /* */
   }
   try {
-    const hints = detectProjectHints(m.cwd || process.cwd());
-    let pkg = "";
-    try {
-      const pkgPath = path.join(m.cwd || process.cwd(), "package.json");
-      if (fs.existsSync(pkgPath)) {
-        const raw = JSON.parse(fs.readFileSync(pkgPath, "utf8")) as {
-          name?: string;
-          version?: string;
-        };
-        if (raw.name) {
-          pkg = raw.version ? `${raw.name}@${raw.version}` : raw.name;
-        }
-      }
-    } catch {
-      /* */
-    }
-    const bits = [pkg || null, hints.length ? hints.join(",") : null].filter(
-      Boolean,
-    );
+    const intel = detectProjectIntel(m.cwd || process.cwd());
+    const bits = [
+      intel.packageName
+        ? intel.packageVersion
+          ? `${intel.packageName}@${intel.packageVersion}`
+          : intel.packageName
+        : null,
+      intel.packageManager || null,
+      intel.kinds.length ? intel.kinds.join(",") : null,
+      intel.checkCommands.length
+        ? `checks=${intel.checkCommands.slice(0, 3).join(" | ")}`
+        : null,
+      intel.monorepoRoot
+        ? `mono=${path.basename(intel.monorepoRoot)}`
+        : null,
+    ].filter(Boolean);
     if (bits.length) projectLine = `  project:  ${bits.join(" · ")}`;
   } catch {
     /* */
@@ -853,6 +893,17 @@ export function formatSessionSummary(session: SessionData): string {
       ? `  lastErr:  [${m.lastError.code}] ${m.lastError.message.slice(0, 120)}` +
         (m.lastError.tips?.[0] ? ` → ${m.lastError.tips[0]}` : "")
       : null,
+    (() => {
+      const last = m.lastVerificationCommand?.trim();
+      if (!last) return null;
+      const when = m.lastVerificationAt
+        ? ` @ ${m.lastVerificationAt.slice(0, 19).replace("T", " ")}`
+        : "";
+      const stale = isLastVerificationStale(m)
+        ? "  ⚠ stale (edits after verify)"
+        : "";
+      return `  last-verify: ${last.slice(0, 100)}${last.length > 100 ? "…" : ""}${when}${stale}`;
+    })(),
     m.lastUserPreview
       ? `  last you: ${m.lastUserPreview}`
       : null,
@@ -1648,6 +1699,14 @@ export function rewindSessionDetailed(
       session.meta.id,
       session.meta.turnCount,
     );
+    try {
+      const trail = editTrailFromMutations(session.meta.id);
+      session.meta.editCount = trail.editCount;
+      if (trail.lastEditAt) session.meta.lastEditAt = trail.lastEditAt;
+      else delete session.meta.lastEditAt;
+    } catch {
+      /* best-effort */
+    }
     saveSession(session);
     return {
       removed,
@@ -1676,11 +1735,53 @@ export function rewindSessionDetailed(
     session.meta.id,
     session.meta.turnCount,
   );
+  try {
+    const trail = editTrailFromMutations(session.meta.id);
+    session.meta.editCount = trail.editCount;
+    if (trail.lastEditAt) session.meta.lastEditAt = trail.lastEditAt;
+    else delete session.meta.lastEditAt;
+  } catch {
+    /* best-effort */
+  }
   saveSession(session);
   return { removed, turns: n, disk };
 }
 
 export function exportSessionMarkdown(session: SessionData): string {
+  const cwd = session.meta.cwd || process.cwd();
+  let projectLine: string | null = null;
+  try {
+    const intel = detectProjectIntel(cwd);
+    const bits = [
+      intel.packageName
+        ? intel.packageVersion
+          ? `${intel.packageName}@${intel.packageVersion}`
+          : intel.packageName
+        : null,
+      intel.packageManager || null,
+      intel.checkCommands.length
+        ? `checks=${intel.checkCommands.slice(0, 4).join(" | ")}`
+        : null,
+      intel.monorepoRoot
+        ? `mono=${path.basename(intel.monorepoRoot)}`
+        : null,
+    ].filter(Boolean);
+    if (bits.length) projectLine = `- Project: ${bits.join(" · ")}`;
+  } catch {
+    projectLine = null;
+  }
+  let lastVerifyLine: string | null = null;
+  const last = session.meta.lastVerificationCommand?.trim();
+  if (last) {
+    const when = session.meta.lastVerificationAt
+      ? ` @ ${session.meta.lastVerificationAt.slice(0, 19).replace("T", " ")}`
+      : "";
+    const stale = isLastVerificationStale(session.meta)
+      ? "  ⚠ stale (edits after verify)"
+      : "";
+    lastVerifyLine =
+      `- Last verify: \`${last.slice(0, 120)}\`${last.length > 120 ? "…" : ""}${when}${stale}`;
+  }
   const lines: string[] = [
     `# Forge session ${session.meta.id}`,
     ``,
@@ -1688,6 +1789,10 @@ export function exportSessionMarkdown(session: SessionData): string {
     `- Updated: ${session.meta.updatedAt}`,
     `- Model: ${session.meta.provider}/${session.meta.model}`,
     `- Title: ${session.meta.title || "(untitled)"}`,
+    `- Cwd: ${cwd}`,
+    `- Turns: ${session.meta.turnCount || 0}  edits=${session.meta.editCount || 0}  msgs=${session.messages.length}`,
+    projectLine,
+    lastVerifyLine,
     `- Tokens: in=${session.meta.totalPromptTokens} out=${session.meta.totalCompletionTokens}`,
     (() => {
       try {
@@ -2115,6 +2220,25 @@ export function formatResumePeek(
  * Resume orientation: last-turn peek + compact mutated-files line.
  * Empty when neither is available.
  */
+
+/**
+ * True when a recorded last-verify is older than the latest file edit.
+ * Experts must not trust a green trail after subsequent mutations.
+ */
+export function isLastVerificationStale(meta: {
+  lastVerificationAt?: string;
+  lastEditAt?: string;
+  editCount?: number;
+}): boolean {
+  const v = meta.lastVerificationAt?.trim();
+  const e = meta.lastEditAt?.trim();
+  if (!v || !e) return false;
+  const vt = Date.parse(v);
+  const et = Date.parse(e);
+  if (!Number.isFinite(vt) || !Number.isFinite(et)) return false;
+  return et > vt;
+}
+
 export function formatResumeOrientation(
   session: SessionData,
   opts?: { maxChars?: number; fileLimit?: number },
@@ -2178,6 +2302,45 @@ export function formatResumeOrientation(
     if (touched.length) {
       const bits = touched.map((t) => t.path).join(", ");
       parts.push(`Files: ${bits}${touched.length >= (opts?.fileLimit ?? 6) ? "…" : ""}  (/files writes)`);
+    }
+  } catch {
+    /* */
+  }
+  try {
+    // Preferred checks so resume doesn't require rediscovering the stack.
+    const intel = detectProjectIntel(session.meta.cwd || process.cwd());
+    if (intel.checkCommands[0]) {
+      parts.push(
+        `Checks: ${intel.checkCommands.slice(0, 3).join(" · ")}` +
+          (intel.packageManager ? `  (pm=${intel.packageManager})` : ""),
+      );
+    }
+  } catch {
+    /* */
+  }
+  try {
+    const last = session.meta.lastVerificationCommand?.trim();
+    if (last) {
+      const when = session.meta.lastVerificationAt
+        ? ` @ ${session.meta.lastVerificationAt.slice(0, 19).replace("T", " ")}`
+        : "";
+      const stale = isLastVerificationStale(session.meta)
+        ? "  ⚠ stale (edits after verify)"
+        : "";
+      parts.push(
+        `Last verify: ${last.slice(0, 80)}${last.length > 80 ? "…" : ""}${when}${stale}`,
+      );
+    } else if ((session.meta.editCount || 0) > 0) {
+      let tip = "npm test / typecheck";
+      try {
+        const intel = detectProjectIntel(session.meta.cwd || process.cwd());
+        if (intel.checkCommands[0]) tip = intel.checkCommands[0];
+      } catch {
+        /* */
+      }
+      parts.push(
+        `Last verify: (none after ${session.meta.editCount} edit(s) — prefer \`${tip}\`)`,
+      );
     }
   } catch {
     /* */
@@ -2249,22 +2412,7 @@ export function formatSessionShareCard(
     /* */
   }
   try {
-    const hints = detectProjectHints(m.cwd || process.cwd());
-    let pkg = "";
-    try {
-      const pkgPath = path.join(m.cwd || process.cwd(), "package.json");
-      if (fs.existsSync(pkgPath)) {
-        const raw = JSON.parse(fs.readFileSync(pkgPath, "utf8")) as {
-          name?: string;
-          version?: string;
-        };
-        if (raw.name) {
-          pkg = raw.version ? `${raw.name}@${raw.version}` : raw.name;
-        }
-      }
-    } catch {
-      /* */
-    }
+    const intel = detectProjectIntel(m.cwd || process.cwd());
     let skillsBit: string | null = null;
     try {
       const n = countProjectSkills(m.cwd || process.cwd());
@@ -2273,11 +2421,48 @@ export function formatSessionShareCard(
       /* */
     }
     const bits = [
-      pkg || null,
-      hints.length ? hints.join(",") : null,
+      intel.packageName
+        ? intel.packageVersion
+          ? `${intel.packageName}@${intel.packageVersion}`
+          : intel.packageName
+        : null,
+      intel.packageManager || null,
+      intel.kinds.length ? intel.kinds.join(",") : null,
+      intel.checkCommands.length
+        ? `checks=${intel.checkCommands.slice(0, 3).join(" | ")}`
+        : null,
+      intel.monorepoRoot
+        ? `mono=${path.basename(intel.monorepoRoot)}`
+        : null,
       skillsBit,
     ].filter(Boolean);
     if (bits.length) projectLine = `  project:  ${bits.join(" · ")}`;
+  } catch {
+    /* */
+  }
+  let lastVerifyLine: string | null = null;
+  try {
+    const last = m.lastVerificationCommand?.trim();
+    if (last) {
+      const when = m.lastVerificationAt
+        ? ` @ ${m.lastVerificationAt.slice(0, 19).replace("T", " ")}`
+        : "";
+      const stale = isLastVerificationStale(m)
+        ? "  ⚠ stale (edits after verify)"
+        : "";
+      lastVerifyLine =
+        `  last-verify: ${last.slice(0, 100)}${last.length > 100 ? "…" : ""}${when}${stale}`;
+    } else if ((m.editCount || 0) > 0) {
+      let tip = "npm test / typecheck";
+      try {
+        const intel = detectProjectIntel(m.cwd || process.cwd());
+        if (intel.checkCommands[0]) tip = intel.checkCommands[0];
+      } catch {
+        /* */
+      }
+      lastVerifyLine =
+        `  last-verify: (none after ${m.editCount} edit(s) — prefer \`${tip}\`)`;
+    }
   } catch {
     /* */
   }
@@ -2288,6 +2473,7 @@ export function formatSessionShareCard(
     `  path:     ${dir}`,
     gitLine,
     projectLine,
+    lastVerifyLine,
     goalLine,
     m.lastError?.message
       ? `  lastErr:  [${m.lastError.code}] ${m.lastError.message.slice(0, 120)}` +
@@ -2371,6 +2557,9 @@ export function clearConversation(session: SessionData): void {
   session.meta.title = undefined;
   session.meta.lastUserPreview = undefined;
   delete session.meta.lastError;
+  delete session.meta.lastVerificationCommand;
+  delete session.meta.lastVerificationAt;
+  delete session.meta.lastEditAt;
   // History gone — journal would restore against the wrong timeline.
   try {
     clearFileMutations(session.meta.id);

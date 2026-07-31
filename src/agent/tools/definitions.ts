@@ -116,6 +116,9 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
         "Create or overwrite a file with the given content. Prefer search_replace for existing files. " +
         "Atomic write (tmp+rename); creates parent directories automatically. " +
         "Refuses directory targets (pass a file path). Writes must stay inside the workspace. " +
+        "Overwriting an existing file requires a prior read_file in this session " +
+        "(refuses unread/stale mtime — re-read then retry). Creates are always allowed. " +
+        "If content looks like pasted read_file output (`   12|code`), line-number prefixes are stripped automatically. " +
         "Empty path fails closed with a recovery example.",
       parameters: {
         type: "object",
@@ -133,6 +136,8 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       name: "search_replace",
       description:
         "Replace an exact string in a file (not a directory). Read the file first — line-number prefixes from read_file are NOT part of the file. " +
+        "Requires a prior read_file this session; refuses if the file changed on disk since last read/write (re-read, then retry with fresh old_string). " +
+        "Pasted read_file line prefixes (`   12|code`) in old_string/new_string are stripped automatically. " +
         "old_string must match exactly once unless replace_all is true. " +
         "Falls back to line-trimmed then block-anchor fuzzy matching. Preserves BOM and CRLF. " +
         "Empty path fails closed with a recovery example. " +
@@ -157,6 +162,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
         "Apply one multi-file patch (add/update/delete/move). Prefer for coordinated edits across several files. " +
         "Use OpenAI/OpenCode patch grammar with *** Begin Patch / *** End Patch markers. " +
         "All hunks are validated before any write; file writes are atomic. " +
+        "Update/delete of existing files require a prior read_file this session (stale mtime refused). " +
         "Missing update/delete targets include path typo hints. " +
         "Empty patchText fails closed with a recovery example. " +
         "For a single small edit, search_replace is fine.",

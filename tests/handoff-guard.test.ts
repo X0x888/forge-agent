@@ -145,4 +145,77 @@ describe("evaluateHandoffAtStop", () => {
     });
     assert.equal(r.block, false);
   });
+
+  it("names preferred project checks in reanchor", () => {
+    const r = evaluateHandoffAtStop({
+      lastAssistantMessage: "Shall I continue?",
+      ultrawork: true,
+      goalActive: false,
+      openTodoCount: 0,
+      editCount: 1,
+      preferredCheckCommands: ["npm run typecheck", "npm test"],
+    });
+    assert.equal(r.block, true);
+    assert.match(r.reanchor || "", /verify with: npm run typecheck/);
+    assert.match(r.reanchor || "", /npm test/);
+  });
+
+  it("blocks mid-investigation starters under ULW/edits", () => {
+    for (const msg of [
+      "I'll start by reading the files.",
+      "Let me investigate the failing test.",
+      "Looking into this now.",
+    ]) {
+      const r = evaluateHandoffAtStop({
+        lastAssistantMessage: msg,
+        ultrawork: true,
+        goalActive: false,
+        openTodoCount: 0,
+        editCount: 0,
+      });
+      assert.equal(r.block, true, msg);
+      assert.equal(r.detection?.incomplete, true, msg);
+    }
+  });
+
+  it("allows pure explanation starters under ULW (not work yields)", () => {
+    for (const msg of [
+      "I'll start by explaining how OAuth works.",
+      "Let me summarize the architecture.",
+    ]) {
+      const r = evaluateHandoffAtStop({
+        lastAssistantMessage: msg,
+        ultrawork: true,
+        goalActive: false,
+        openTodoCount: 0,
+        editCount: 0,
+      });
+      assert.equal(r.block, false, msg);
+    }
+  });
+
+  it("allows soft continue-asks when last user message is advisory Q&A", () => {
+    const r = evaluateHandoffAtStop({
+      lastAssistantMessage:
+        "Here is my take. Let me know if you want me to implement it.",
+      lastUserMessage: "what do you think about the landing page?",
+      ultrawork: true,
+      goalActive: false,
+      openTodoCount: 0,
+      editCount: 0,
+    });
+    assert.equal(r.block, false);
+  });
+
+  it("still blocks incomplete mid-implementation under advisory when edits happened", () => {
+    const r = evaluateHandoffAtStop({
+      lastAssistantMessage: "I'll start by reading the files.",
+      lastUserMessage: "what do you think about the approach?",
+      ultrawork: true,
+      goalActive: false,
+      openTodoCount: 0,
+      editCount: 2,
+    });
+    assert.equal(r.block, true);
+  });
 });

@@ -11,6 +11,8 @@
  * "I said X mid-run and it forgot the goal").
  */
 
+import { looksLikeAdvisoryUserMessage } from "../util/advisory-intent.js";
+
 /** Match Grok shell large-prompt truncation. */
 export const LARGE_INTERJECTION_THRESHOLD = 25_000;
 
@@ -68,6 +70,16 @@ export function formatInterjection(
     formatUserQuery(truncated),
   ];
   if (harness) parts.push(harness);
+  // Under ULW/goal, pure Q&A mid-run must not be read as a new work order
+  // (oh-my-claude compact-intent lesson applied to live interjections).
+  if (
+    (ctx?.ulwLine || ctx?.goalLine) &&
+    looksLikeAdvisoryUserMessage(truncated)
+  ) {
+    parts.push(
+      "[Forge intent: ADVISORY/Q&A] Answer the question first. Do not start new implementation, commits, or scope expansion unless the user explicitly asks. Finish or safely park the half-finished step, then answer.",
+    );
+  }
   return parts.join("\n");
 }
 

@@ -4,6 +4,7 @@ import { formatTokens, formatCost } from "../util/format.js";
 import { getForgeVersion } from "../util/version.js";
 import { forgeHome } from "../util/fs.js";
 import { isFormatOnWriteEnabled } from "../agent/tools/format-on-write.js";
+import { detectProjectIntel, hasNodeModules, multipleLockfiles } from "../util/project-intel.js";
 
 function colorEnabled(opts: StatuslineRenderOptions): boolean {
   if (opts.plain || opts.color === false) return false;
@@ -485,6 +486,29 @@ export function renderCompactStrip(
 }
 
 export function snapshotsToJson(snaps: StatusSnapshot[]): string {
+  // Workspace project stack at the envelope level so empty session lists still
+  // expose packageManager/checkCommands for CI dashboards (smoke/doctor parity).
+  let packageManager: string | null = null;
+  let checkCommands: string[] = [];
+  let projectStackSummary: string | null = null;
+  let monorepoRoot: string | null = null;
+  let workspaces: string[] = [];
+  let nodeModulesPresent: boolean | null = null;
+  let multipleLockfilesList: string[] = [];
+  try {
+    // Prefer first session cwd, else process cwd.
+    const cwd = snaps[0]?.cwd || process.cwd();
+    const intel = detectProjectIntel(cwd);
+    packageManager = intel.packageManager ?? null;
+    checkCommands = [...intel.checkCommands];
+    projectStackSummary = intel.summary || null;
+    monorepoRoot = intel.monorepoRoot ?? null;
+    workspaces = [...(intel.workspaces || [])];
+    nodeModulesPresent = hasNodeModules(cwd);
+    multipleLockfilesList = multipleLockfiles(cwd);
+  } catch {
+    /* optional */
+  }
   const body = {
     ok: true,
     version: getForgeVersion(),
@@ -493,6 +517,18 @@ export function snapshotsToJson(snaps: StatusSnapshot[]): string {
     count: snaps.length,
     /** Effective format-on-write (env FORGE_FORMAT_ON_WRITE wins over preference). */
     formatOnWrite: isFormatOnWriteEnabled(),
+    packageManager,
+    checkCommands,
+    projectStackSummary,
+    monorepoRoot,
+    workspaces,
+    nodeModulesPresent,
+    multipleLockfiles: multipleLockfilesList,
+    // Prefer first session's last verification; null when none / empty list.
+    lastVerificationCommand: snaps[0]?.lastVerificationCommand ?? null,
+    lastVerificationAt: snaps[0]?.lastVerificationAt ?? null,
+    lastEditAt: snaps[0]?.lastEditAt ?? null,
+    lastVerificationStale: snaps[0]?.lastVerificationStale ?? null,
     sessions: snaps,
     generatedAt: new Date().toISOString(),
   };

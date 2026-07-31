@@ -1,3 +1,4 @@
+import { isLastVerificationStale } from "../session/session.js";
 import path from "node:path";
 import {
   listSessions,
@@ -11,6 +12,7 @@ import { loadUlwCycle } from "../harness/ulw-cycle.js";
 import { loadConfig } from "../config/load.js";
 import { resolveAuth } from "../auth/resolve.js";
 import { getGitSnapshot } from "../util/git-context.js";
+import { detectProjectIntel } from "../util/project-intel.js";
 import { estimateCostUsd } from "../util/format.js";
 import { costCapStatus } from "../util/cost-budget.js";
 import { computeLiveness, getActiveEntry } from "./active.js";
@@ -106,8 +108,29 @@ function buildActivity(
 
 function projectLabel(cwd: string, levels = 2): string {
   const parts = path.resolve(cwd).split(path.sep).filter(Boolean);
-  if (parts.length <= levels) return parts.join("/") || cwd;
-  return parts.slice(-levels).join("/");
+  const base =
+    parts.length <= levels ? parts.join("/") || cwd : parts.slice(-levels).join("/");
+  // Append pm + cheapest check so HUD/status show how to verify without /context.
+  try {
+    const intel = detectProjectIntel(cwd);
+    const bits: string[] = [];
+    // Nested package: show monorepo root basename so experts know the workspace root.
+    if (
+      intel.monorepoRoot &&
+      path.resolve(intel.monorepoRoot) !== path.resolve(cwd)
+    ) {
+      bits.push(`mono:${path.basename(intel.monorepoRoot)}`);
+    }
+    if (intel.packageManager) bits.push(intel.packageManager);
+    if (intel.checkCommands[0]) {
+      const c = intel.checkCommands[0];
+      bits.push(c.length > 28 ? `${c.slice(0, 27)}…` : c);
+    }
+    if (bits.length) return `${base} · ${bits.join(" · ")}`;
+  } catch {
+    /* */
+  }
+  return base;
 }
 
 function durationSec(createdAt: string): number {
@@ -275,12 +298,25 @@ export function sessionToSnapshot(
     /* lock optional */
   }
 
+  const intel = (() => {
+    try {
+      return detectProjectIntel(meta.cwd);
+    } catch {
+      return null;
+    }
+  })();
+
   return {
     sessionId: meta.id,
     sessionPath: sessionDir(meta.id),
     title: meta.title,
     cwd: meta.cwd,
     projectLabel: projectLabel(meta.cwd),
+    packageManager: intel?.packageManager ?? null,
+    checkCommands: intel ? [...intel.checkCommands] : [],
+    projectStackSummary: intel?.summary || null,
+    monorepoRoot: intel?.monorepoRoot ?? null,
+    workspaces: intel ? [...(intel.workspaces || [])] : [],
     provider: meta.provider,
     model: meta.model,
     authMethod: opts.authMethod || "unknown",
@@ -294,6 +330,10 @@ export function sessionToSnapshot(
     liveness: live,
     turnCount: meta.turnCount,
     editCount: meta.editCount,
+    lastVerificationCommand: meta.lastVerificationCommand ?? null,
+    lastVerificationAt: meta.lastVerificationAt ?? null,
+    lastEditAt: meta.lastEditAt ?? null,
+    lastVerificationStale: isLastVerificationStale(meta),
     openTodos,
     ultrawork: meta.ultrawork,
     ...(() => {

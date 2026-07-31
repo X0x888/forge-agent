@@ -47,7 +47,8 @@ export async function toolWebSearch(
     return {
       output:
         "web_search error: query is required (non-empty string).\n" +
-        'Example: { "query": "forge cli session export json", "num_results": 5 }',
+        'Example: { "query": "forge cli session export json", "num_results": 5 }\n' +
+        "Whitespace-only queries fail closed. Prefer a concrete search phrase (docs/API/error text).",
       isError: true,
     };
   }

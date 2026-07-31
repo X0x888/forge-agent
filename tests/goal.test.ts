@@ -192,4 +192,32 @@ describe("goal arms session title when untitled", () => {
     });
     assert.equal(session.meta.title, "keep-me");
   });
+
+  it("blocks Goal achieved without evidence after edits", () => {
+    const sid = "test-session-attest-evidence";
+    armGoal(sid, "ship the feature");
+    const blocked = evaluateGoalAtStop({
+      sessionId: sid,
+      lastAssistantMessage: "**Goal achieved.**",
+      editCount: 3,
+      stuckThreshold: 5,
+      enabled: true,
+      verificationPassed: false,
+      preferredCheckCommands: ["npm test", "npm run typecheck"],
+    });
+    assert.equal(blocked.block, true);
+    assert.match(String(blocked.reason || ""), /evidence/i);
+    assert.match(String(blocked.reanchor || ""), /npm test/);
+    assert.match(String(blocked.reanchor || ""), /Goal attestation needs evidence/);
+    const ok = evaluateGoalAtStop({
+      sessionId: sid,
+      lastAssistantMessage: "**Goal achieved.**\n✅ all criteria met",
+      editCount: 3,
+      stuckThreshold: 5,
+      enabled: true,
+      verificationPassed: false,
+    });
+    assert.equal(ok.block, false);
+    assert.equal(loadGoal(sid)?.status, "achieved");
+  });
 });

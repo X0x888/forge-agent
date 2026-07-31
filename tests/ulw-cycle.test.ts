@@ -482,7 +482,7 @@ describe("ulw wave ledger + quality bar", () => {
     assert.equal(st.thinStreak, 1);
     // Re-anchor anchors the bar to the best proven wave and demands proof
     assert.match(d2.reanchor || "", /best wave so far w1/);
-    assert.match(d2.reanchor || "", /ran no verification/);
+    assert.match(d2.reanchor || "", /no successful verification|ran no verification/);
   });
 
   it("detectWaveProof trusts execution over prose", () => {
@@ -505,12 +505,88 @@ describe("ulw wave ledger + quality bar", () => {
   it("VERIFICATION_CMD_RE matches check commands, not prose commands", () => {
     assert.ok(VERIFICATION_CMD_RE.test("npm test"));
     assert.ok(VERIFICATION_CMD_RE.test("npm run typecheck"));
+    assert.ok(VERIFICATION_CMD_RE.test("npm run smoke"));
     assert.ok(VERIFICATION_CMD_RE.test("cargo test"));
     assert.ok(VERIFICATION_CMD_RE.test("pytest -q"));
     assert.ok(VERIFICATION_CMD_RE.test("npx tsc --noEmit"));
+    assert.ok(VERIFICATION_CMD_RE.test("mix test"));
+    assert.ok(VERIFICATION_CMD_RE.test("turbo run test"));
+    assert.ok(VERIFICATION_CMD_RE.test("turbo run typecheck"));
+    assert.ok(VERIFICATION_CMD_RE.test("nx run-many -t test"));
     assert.ok(!VERIFICATION_CMD_RE.test("ls -la"));
     assert.ok(!VERIFICATION_CMD_RE.test("git status"));
     assert.ok(!VERIFICATION_CMD_RE.test("npm install"));
+  });
+
+  it("isVerificationCommand honors preferred project checks", async () => {
+    const { isVerificationCommand } = await import(
+      "../src/harness/ulw-cycle.js"
+    );
+    assert.ok(isVerificationCommand("npm test"));
+    assert.ok(
+      isVerificationCommand("npm run unit", ["npm run unit", "npm test"]),
+    );
+    assert.ok(
+      isVerificationCommand("cd packages/core && npm run unit", [
+        "npm run unit",
+      ]),
+    );
+    assert.ok(!isVerificationCommand("npm run unit"));
+    assert.ok(!isVerificationCommand("ls -la", ["npm test"]));
+  });
+
+
+  it("shouldStampLastVerification is success-only", async () => {
+    const {
+      shouldStampLastVerification,
+      shouldClearLastVerification,
+    } = await import("../src/harness/ulw-cycle.js");
+    assert.equal(
+      shouldStampLastVerification({ command: "npm test", isError: false }),
+      true,
+    );
+    assert.equal(
+      shouldStampLastVerification({ command: "npm test", isError: true }),
+      false,
+    );
+    assert.equal(
+      shouldStampLastVerification({ command: "ls -la", isError: false }),
+      false,
+    );
+    assert.equal(
+      shouldStampLastVerification({
+        command: "npm run unit",
+        isError: false,
+        preferredCheckCommands: ["npm run unit"],
+      }),
+      true,
+    );
+    assert.equal(
+      shouldStampLastVerification({
+        command: "npm run unit",
+        isError: true,
+        preferredCheckCommands: ["npm run unit"],
+      }),
+      false,
+    );
+  });
+
+  it("shouldClearLastVerification wipes trail on failed checks only", async () => {
+    const { shouldClearLastVerification } = await import(
+      "../src/harness/ulw-cycle.js"
+    );
+    assert.equal(
+      shouldClearLastVerification({ command: "npm test", isError: true }),
+      true,
+    );
+    assert.equal(
+      shouldClearLastVerification({ command: "npm test", isError: false }),
+      false,
+    );
+    assert.equal(
+      shouldClearLastVerification({ command: "ls", isError: true }),
+      false,
+    );
   });
 
   it("demands proof after proof-less waves, then caps the demands", () => {
@@ -530,13 +606,13 @@ describe("ulw wave ledger + quality bar", () => {
 
     const d1 = stop(2);
     assert.equal(d1.proofDemanded, true);
-    assert.match(d1.reanchor || "", /ran no verification/);
+    assert.match(d1.reanchor || "", /no successful verification|ran no verification/);
     const d2 = stop(4);
     assert.equal(d2.proofDemanded, true);
     // Cap reached (MAX_PROOF_DEMANDS = 2): a stated rationale is accepted
     const d3 = stop(6);
     assert.equal(d3.proofDemanded, false);
-    assert.doesNotMatch(d3.reanchor || "", /ran no verification/);
+    assert.doesNotMatch(d3.reanchor || "", /no successful verification|ran no verification/);
     assert.equal(loadUlwCycle(sid)!.proofDemands, 2);
 
     // A wave with real proof resets the demand counter
@@ -800,5 +876,101 @@ describe("ulw wave ledger + quality bar", () => {
     assert.ok(maybeFlipUlwToLastOnSafetyValve(sid));
     assert.equal(getTodoGateFires(sid), 0);
     disarmUlwCycle(sid);
+  });
+
+  it("attestation evidence prefers verificationPassed over failed runs", async () => {
+    const { hasAttestationEvidence } = await import("../src/harness/ulw-cycle.js");
+    // hasAttestationEvidence itself still takes a boolean — callers pass passed.
+    assert.equal(
+      hasAttestationEvidence("**Cycle complete.**", false),
+      false,
+    );
+    assert.equal(
+      hasAttestationEvidence("**Cycle complete.**\n✅ tests 10 pass", false),
+      true,
+    );
+    assert.equal(
+      hasAttestationEvidence("**Cycle complete.**", true),
+      true,
+    );
+  });
+
+  it("proof-demand reanchor names preferred project checks", async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-ulw-proof-pref-"));
+    process.env.FORGE_HOME = tmp;
+    const {
+      armUlwCycle,
+      evaluateUlwAtStop,
+      saveUlwCycle,
+      loadUlwCycle,
+    } = await import("../src/harness/ulw-cycle.js");
+    const sid = "ulw-proof-pref";
+    armUlwCycle(sid, "ship it");
+    // Force a continue wave with edits but no verification
+    const s = loadUlwCycle(sid)!;
+    s.cycle = 1;
+    s.wave = 1;
+    s.editCountAtArm = 0;
+    saveUlwCycle(s);
+    const r = evaluateUlwAtStop({
+      sessionId: sid,
+      lastAssistantMessage: "I made some changes.",
+      editCount: 3,
+      openTodoCount: 0,
+      stuckThreshold: 5,
+      verificationRan: false,
+      verificationPassed: false,
+      preferredCheckCommands: ["npm test", "npm run typecheck"],
+    });
+    assert.equal(r.block, true);
+    assert.match(String(r.reanchor || r.reason || ""), /npm test/);
+    assert.match(String(r.reanchor || r.reason || ""), /no successful verification|proof NOW/i);
+  });
+
+  it("proof-demand distinguishes failed check vs never ran", async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-ulw-proof-fail-"));
+    process.env.FORGE_HOME = tmp;
+    const {
+      armUlwCycle,
+      evaluateUlwAtStop,
+      saveUlwCycle,
+      loadUlwCycle,
+    } = await import("../src/harness/ulw-cycle.js");
+    const sid = "ulw-proof-fail";
+    armUlwCycle(sid, "ship it");
+    const s = loadUlwCycle(sid)!;
+    s.cycle = 1;
+    s.wave = 1;
+    s.editCountAtArm = 0;
+    saveUlwCycle(s);
+    const failed = evaluateUlwAtStop({
+      sessionId: sid,
+      lastAssistantMessage: "I made some changes.",
+      editCount: 3,
+      openTodoCount: 0,
+      stuckThreshold: 5,
+      verificationRan: true,
+      verificationPassed: false,
+      preferredCheckCommands: ["npm test"],
+    });
+    assert.equal(failed.block, true);
+    assert.match(String(failed.reanchor || failed.reason || ""), /failed \(red\)|check failed/i);
+    assert.match(String(failed.reanchor || failed.reason || ""), /npm test/);
+
+    const never = evaluateUlwAtStop({
+      sessionId: sid,
+      lastAssistantMessage: "Still working.",
+      editCount: 4,
+      openTodoCount: 0,
+      stuckThreshold: 5,
+      verificationRan: false,
+      verificationPassed: false,
+      preferredCheckCommands: ["npm test"],
+    });
+    assert.equal(never.block, true);
+    assert.match(
+      String(never.reanchor || never.reason || ""),
+      /no successful verification|ran no/i,
+    );
   });
 });

@@ -152,7 +152,8 @@ export async function toolWebFetch(
     return {
       output:
         "web_fetch error: url is required (non-empty http(s) URL).\n" +
-        'Example: { "url": "https://example.com/docs", "format": "markdown" }',
+        'Example: { "url": "https://example.com/docs", "format": "markdown" }\n' +
+        "Whitespace-only URLs fail closed. Use http(s) only (no file://). Prefer format=markdown.",
       isError: true,
     };
   }

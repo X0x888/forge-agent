@@ -10,6 +10,7 @@
 import path from "node:path";
 import { forgeHome, readJsonFile, writeJsonFile, nowEpoch, nowIso } from "../util/fs.js";
 import { clearSoftTodoGateOnWindDown } from "./todo-gate.js";
+import { hasAttestationEvidence } from "./ulw-cycle.js";
 
 export type GoalStatus = "active" | "paused" | "achieved" | "cleared" | "stuck";
 
@@ -203,6 +204,13 @@ export function evaluateGoalAtStop(opts: {
   editCount: number;
   stuckThreshold: number;
   enabled: boolean;
+  /**
+   * Successful structural verification (preferred). When edits happened,
+   * **Goal achieved.** without evidence is bounced once (same bar as ULW).
+   */
+  verificationPassed?: boolean;
+  verificationRan?: boolean;
+  preferredCheckCommands?: string[];
 }): GoalDecision {
   if (!opts.enabled) return { block: false };
   const g = loadGoal(opts.sessionId);
@@ -210,8 +218,35 @@ export function evaluateGoalAtStop(opts: {
     return { block: false };
   }
 
-  // Release on attestation
+  // Release on attestation — require evidence when the session had edits.
   if (GOAL_ATTEST_RE.test(opts.lastAssistantMessage || "")) {
+    const msg = opts.lastAssistantMessage || "";
+    const needEvidence = (opts.editCount || 0) > 0;
+    const ok = !needEvidence
+      ? true
+      : hasAttestationEvidence(
+          msg,
+          opts.verificationPassed ?? opts.verificationRan,
+        );
+    if (!ok) {
+      const preferred = (opts.preferredCheckCommands || [])
+        .map((c) => String(c || "").trim())
+        .filter(Boolean)
+        .slice(0, 4);
+      const checkLine = preferred.length
+        ? preferred.map((c) => `\`${c}\``).join(" · ")
+        : "`npm test` / typecheck / project check";
+      return {
+        block: true,
+        reason:
+          "Goal attestation needs evidence after edits — run a successful project check, then re-attest **Goal achieved.** with ✅/❌ per criterion.",
+        reanchor:
+          `[Forge system-reminder — Goal attestation needs evidence]\n` +
+          `You claimed **Goal achieved.** after edits without a successful structural check.\n` +
+          `Run now: ${checkLine}\n` +
+          `Then re-attest with ✅/❌ per criterion + the command that passed.`,
+      };
+    }
     g.status = "achieved";
     g.paused = true;
     g.achievedAt = nowIso();

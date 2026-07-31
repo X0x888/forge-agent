@@ -2,6 +2,108 @@
 
 ## Unreleased
 
+### Added
+- **Public exports** — `looksLikeAdvisoryUserMessage`, `FileReadState`, `fileReadGuardEnabled`, and `FileReadStamp` are exported from the package root (`src/index.ts`) alongside project-intel helpers.
+- **Silent edits-without-verify Stop block (free triage)** — outside ULW/goal, stopping after file edits with no successful structural check now blocks once (same cap as proof-claim), even without "tests pass" prose. Reanchor names preferred project checks + the six-question self-audit. Skips advisory Q&A turns; ULW/goal keep their own proof/attestation paths (oh-my-kimi free-triage lesson).
+- **Proof-claim self-audit checklist** — when Stop is blocked for a success claim without a successful structural check, the reanchor now includes a free six-question self-audit (completeness / evidence / framing / tests / fit / consequence), inspired by oh-my-kimi. Forces evidence-based closing instead of memory-based "all green" prose.
+
+- **Session last-verification trail**: structural bash checks record `lastVerificationCommand` / `lastVerificationAt` on session meta (fork/export/import preserve). Surfaces on resume orientation, `/status`, `/stats`, `/share`, `/done`, compact summary, `forge sessions show`, `/export` markdown, status/run JSON + metrics, and a compact `✓` badge on `forge sessions list` / `/sessions`.
+- **`/commit` verification awareness**: draft prompt includes last verification when present; `/commit do` warns when the session has edits but no recorded verification (names preferred project check).
+- **`/done` wind-down verify tip**: shows last verify timestamp/command, or warns when edits lack recorded verification with preferred project check.
+- **`/export` markdown project stack**: header includes cwd, turns/edits, detected project stack (pm + checks + monorepo), and last verify.
+- **Finish-the-class doctrine**: system prompt (default + autonomous) requires grepping siblings/dependents before done; `/review` checklist includes the same class.
+- **Q&A framing**: pure questions are not work orders — answer first, optional one-line follow-ups; explicit implement/fix/ship (and ULW soft-prompt expansion) overrides.
+- **`/format` detected formatters**: status lists project prettier/biome/ruff/… and nudges `/format on` when available but disabled.
+- **`editsWithoutVerification` production warning**: `forge run --json` warns when the session has edits but no recorded structural check (names preferred project command).
+- **Last-verify trail is success-only**: failed structural checks still count as `verificationRan` for harness quality, but do not stamp `lastVerificationCommand`; a failed re-run also clears any prior green trail (no stale last✓).
+- **Proof-claim done/fixed closers**: after edits, bare “Done.” / “Fixed.” / “Ready to merge.” without `verificationRan` blocks Stop once (same cap as “tests pass” claims).
+- **`/status` no-verify tip**: when the session has edits but no `lastVerificationCommand`, status shows a yellow tip naming the preferred project check.
+- **Share + session details no-verify**: `/share` and `/status` detail show `last-verify: (none after N edits — prefer \`check\`)` when edits lack a recorded structural check.
+- **Resume orientation no-verify**: resume peek shows `Last verify: (none after N edits — prefer \`check\`)` so experts see the gap before continuing.
+- **Stale last-verify**: `lastEditAt` stamps on each file edit; when edits land after a successful check, resume/`/status`/`/share`/export/footer show `⚠ stale (edits after verify)` (prompt flag `✓~`) so experts never trust a green trail after later mutations. Status/run JSON + metrics include `lastEditAt` + `lastVerificationStale`. `/commit do` warns when last-verify is stale. `forge run --json` adds `staleLastVerification` productionWarning. System prompt prefers `ask_user` for ambiguous/destructive choices. `/done` yellow-warns when last-verify is stale. Compact summary marks stale last-verify when `lastEditAt` > `lastVerificationAt`. Prompt strip shows `WT` for linked git worktrees (parallel agent sessions). System git context adds a linked-worktree scope tip (prefer this tree; no sibling checkout mutations). Proof-claim requires a *successful* structural check (`verificationPassed`); failed runs still count for ULW wave ledger execution only. ULW `**Cycle complete.**` attestation evidence also prefers `verificationPassed`. Compact summary re-asserts Q&A framing under ULW (advisory survives compact). Handoff-guard treats mid-investigation starters (“I'll start by…”, “Let me investigate…”) as incomplete yields under ULW/edits. `/undo`·`/retry` recompute `editCount`/`lastEditAt` from the surviving mutations journal so last-verify stale state stays honest after disk restore; `/undo` prints `edits now: N`.
+- **Turn footer / prompt `✓`**: prompt strip shows `✓` when last-verify is recorded; turn footer prefers `last✓ <cmd>` over preferred-check tip.
+- **`/review` last-verify**: review prompt includes last verification when present so reviewers can judge stale proof.
+- **`/model` status orientation**: bare `/model` shows preferred project checks + last-verify (with stale marker) for mid-run model switches.
+- **`/effort` status orientation**: bare `/effort` shows the same preferred checks + last-verify orientation.
+- **Empty bash recovery uses project checks**: whitespace-only `bash` errors show preferred project check examples from project-intel (not a generic `npm test`).
+- **`/permissions` status orientation**: bare `/permissions` shows preferred checks + last-verify (parity with `/model` · `/effort`).
+- **Empty path recovery**: whitespace-only `read_file`/`write_file`/`search_replace` errors remind agents to use workspace-relative paths and list_dir/glob first.
+- **Empty pattern recovery**: whitespace-only `grep`/`glob` patterns fail closed with concrete examples and “omit path” guidance.
+- **`/budget` status orientation**: bare `/budget` shows session edits + last-verify (stale marker) so spend decisions account for unfinished proof.
+- **Empty web/patch recovery**: whitespace-only `web_search`/`web_fetch`/`apply_patch` fail closed with concrete examples and fail-closed tips.
+- **Empty ask_user recovery**: whitespace-only `ask_user` questions fail closed with a concrete example (prefer clarifying over guessing).
+- **Empty todo_write recovery**: missing/null `todos` fails closed with merge tip + status enum (empty id/content already fail closed).
+- **`/todos` empty tip**: empty board points at `todo_write` + preferred project check.
+- **`/clear` last-verify reset tip**: soft clear notes last-verify trail reset and preferred project check for the next edits.
+- **`/new` preferred check tip**: fresh session banner includes preferred project check + `/context` pointer.
+- **`/fork` orientation**: fork banner shows last-verify (stale marker) + preferred project check.
+- **`/fork-and-compact` orientation**: same last-verify + preferred check after compacting the fork.
+- **Compact stale trail**: `/compact` · `/compact-and` · `/fork-and-compact` pass `lastEditAt`/`lastVerificationAt` so compact summaries mark stale last-verify correctly.
+- **`/compact` last-verify note**: compact banner surfaces last-verify (stale marker) or no-verify tip after edits.
+- **`/compact-and` last-verify note**: continuing after compact also surfaces last-verify trail.
+- **Hostile self-review doctrine**: system prompt (default + autonomous) requires re-reading the diff after substantive edits before claiming done.
+- **`/export` trail note**: writing an export file notes last-verify (stale marker) or no-verify after edits.
+- **Session import trail**: `importSessionJson` preserves `lastEditAt`/`lastVerification*`; `forge sessions import --json` includes `lastVerificationStale`.
+- **Turn-end notify verify trail**: desktop notify/BEL outcome labels append `no last-verify` / `last-verify stale` / `verified` after edits so background ULW experts see unfinished proof.
+- **`/notify` trail orientation**: bare `/notify` shows session edits + last-verify trail and explains turn-end body suffixes.
+- **Headless turn-end attention**: `forge run` fires the same opt-in BEL/notify with verify-trail outcome labels as the interactive REPL.
+- **`/bell` trail orientation**: bare `/bell` shows session edits + last-verify trail (parity with `/notify`).
+- **Slash verify orientation helpers**: shared `formatSlashVerifyOrient` / `formatSlashSessionTrail` keep `/model`·`/effort`·`/permissions`·`/notify`·`/bell` trail copy consistent.
+- **ULW proof-demand preferred checks**: wave proof prefers `verificationPassed`; proof-demand reanchor names preferred project checks.
+- **ULW proof-demand failed vs missing**: reanchor distinguishes a red check from never running one.
+- **Doctor `verify-hint-off`**: `FORGE_VERIFY_HINT=0` is a yellow doctor issue + productionWarning (parity with file-read-guard-off).
+- **`/ulw` preferred checks tip**: arm banner lists preferred project checks and notes proof-demand requires green.
+- **`/goal set` preferred checks tip**: arm banner lists preferred project checks and notes attestation needs green after edits.
+- **`/goal resume` preferred checks tip**: resume banner lists preferred project checks (parity with `/goal set`).
+- **Slash orient chalk fix**: only the no-verify line is yellow; preferred-checks stay dim.
+- **`/cycle 0` LAST tip**: wind-down lists preferred checks + session last-verify trail before **Cycle complete.**
+- **`/max-waves` LAST tip**: auto-flip to LAST lists preferred checks + session trail (parity with `/cycle 0`).
+- **Compact advisory intent**: when the last dropped user message looks like Q&A/opinion, compact handoff marks `ADVISORY/Q&A` and forbids implement/edit/commit unless explicitly asked (oh-my-claude compact-intent lesson).
+- **Mid-run advisory interjections**: under ULW/goal, free-text that looks like Q&A is framed `ADVISORY/Q&A` so momentum does not override a question.
+- **Shared advisory-intent util**: `looksLikeAdvisoryUserMessage` lives in `src/util/advisory-intent.ts` (compact + interjection).
+- **Advisory ULW discoverability**: AGENTS.md · PRODUCTION.md · `forge tips` document ADVISORY/Q&A framing under ULW.
+- **Compact last meta-request**: advisory compact handoff inlines the last user Q&A snippet so post-compact turns keep the original question.
+- **Compact intent-first**: ADVISORY/Q&A intent is placed at the top of the harness section (before ULW soft-prompt expansion) so momentum language cannot bury the question.
+- **Compact soft-prompt suspend**: when Intent is ADVISORY/Q&A, the ULW “soft prompt expanded to god-scope” line is annotated suspended so it cannot contradict the question.
+- **Compact expanded-mandate suspend**: under ADVISORY/Q&A, the expanded mandate line is labeled suspended so god-scope text cannot override the question.
+- **Compact goal suspend under ADVISORY**: active `/goal` is labeled paused for ADVISORY/Q&A so relentless-driver language cannot override a question.
+- **Compact todos suspend under ADVISORY**: open todos are labeled context-only so TodoGate momentum cannot override a question.
+- **TodoGate advisory release**: under ULW, open todos do not block Stop when the last user (or assistant) message is pure Q&A/advisory.
+- **TodoNudge advisory skip**: mid-turn todo nudges are suppressed when the latest user message is pure Q&A.
+- **TodoGate advisory clears soft fires**: advisory Q&A release resets soft TodoGate fire count so the next work stop can soft-block once again.
+- **Handoff advisory release**: under ULW, soft continue-asks after pure Q&A (“let me know if you want me to implement”) are allowed; incomplete mid-implementation with edits still blocks.
+- **Proof-claim advisory Done.**: bare “Done.”/“Fixed.” after a pure Q&A user turn is not treated as an unverified work claim (even if the session has prior edits).
+- **Success-only proof + attestation**: proof-claim and goal/ULW attestations require `verificationPassed` (failed checks still count as ULW `verificationRan` execution only). Goal attestation bounce names preferred checks. Proof-claim reanchor cites stale last-verify.
+- **`/undo`·`/retry` edit trail**: recompute `editCount`/`lastEditAt` from surviving mutations journal; print `edits now: N`.
+- **Worktree + mid-investigation**: prompt strip `WT` + git scope tip; handoff-guard blocks “I'll start by reading…” under ULW (not pure explanation Q&A). Compact re-asserts Q&A framing.
+
+- **Project intelligence in system prompt**: detect package manager (npm/pnpm/yarn/bun via lockfile + `packageManager` field) and preferred check commands from `package.json` scripts / Cargo / go.mod / pytest / etc. Injected into the baseline Workspace block so the agent verifies with the right commands without rediscovering the stack. Session `/status` and REPL banner show `pm` + top checks. (`src/util/project-intel.ts`)
+- **Stale/unread edit guard** (OpenCode-inspired): agent-loop `search_replace` / `write_file` (overwrite) / `apply_patch` (update/delete) require a prior `read_file` and refuse when mtime/size changed since last read/write. Prevents blind clobbers and concurrent-edit races. Kill-switch: `FORGE_FILE_READ_GUARD=0`. (`src/agent/tools/file-read-state.ts`)
+- **`/context` project stack** + **bash wrong-PM tip**: `/context` shows detected package manager and preferred check commands; failed bash that used the wrong Node package manager appends a concrete rewrite tip (also parses Corepack “configured to use yarn/pnpm” stderr).
+- **Post-edit verify hint**: successful `search_replace` / `write_file` / `apply_patch` append `Tip: verify with \`<cheapest project check>\`` (kill-switch `FORGE_VERIFY_HINT=0`). Skipped for pure docs (`.md`/`.txt`/…).
+- **Doctor / config discoverability**: `forge doctor` and `/config` surface project-stack summary plus `FORGE_FILE_READ_GUARD` / `FORGE_VERIFY_HINT` effective state. `/config` and `forge config --json` include `packageManager`, `checkCommands`, `projectStackSummary`, `monorepoRoot`, `workspaces`. Project intel is TTL-cached (~5s, marker-mtime invalidated) so post-edit tips stay cheap.
+- **Proof-claim + handoff reanchors use project checks**: when Stop is blocked for “tests pass” without a run, or for premature “shall I continue?”, the bounce names this workspace’s preferred commands (from project-intel).
+- **Doom-loop / error-streak verify hints**: circuit-breaker messages name the cheapest project check (`npm run typecheck`, …) so thrash recovery steers toward real verification.
+- **Structural verification matches project checks**: `isVerificationCommand()` counts preferred project-intel commands (e.g. custom `npm run unit`) and expands the regex for `smoke` / `mix test` / `composer test`.
+- **`forge doctor --json` / run·status JSON project stack**: structured `packageManager`, `projectKinds`, `checkCommands`, `projectStackSummary`, `fileReadGuard`, `verifyHint` on doctor; run/status JSON also emit `packageManager` + `checkCommands` + `projectStackSummary`. Doctor flags `file-read-guard-off` (exit 1) when `FORGE_FILE_READ_GUARD=0`.
+- **`productionWarnings`**: `forge run --json` warns when `FORGE_FILE_READ_GUARD=0` (blind overwrites).
+- **Statusline project label**: HUD/`forge status` project path appends `pm` + cheapest check (e.g. `CLI · npm · npm run typecheck`). Structured `packageManager` / `checkCommands` / `projectStackSummary` on each status snapshot (JSON).
+- **Bash missing-script tip**: when npm/pnpm/yarn reports a missing script, append available project scripts (priority: typecheck/test/lint/…) and **Did you mean** for near-typos (edit distance ≤ 2).
+- **Bash missing-binary tip**: when `tsc`/`eslint`/`turbo`/… is not on PATH, suggest the project check command or pm-native runner (`npx` / `pnpm dlx` / `yarn dlx` / `bunx`).
+- **Bash next-check tip**: when a verification command fails, suggest the next preferred project check (`Next try: npm test`).
+- **Bash monorepo layout tip**: workspace/importer errors (`ERR_PNPM_NO_IMPORTER_MANIFEST_FOUND`, turbo/nx workspace miss) point at monorepo root + preferred root check.
+- **Doctor / productionWarnings / bash / status missing `node_modules`**: when `package.json` exists but `node_modules` does not, doctor + `forge run --json` warn with a pm-native install tip; bash `Cannot find module` errors also tip install. Doctor + status JSON include `nodeModulesPresent`. Monorepo **hoisted** root `node_modules` counts as present for nested package cwds.
+- **Doctor packageManager vs lockfile mismatch**: when `package.json#packageManager` disagrees with a present lockfile (e.g. `pnpm@9` + `package-lock.json`), doctor flags a yellow issue with cleanup guidance. Structured as `packageManagerMismatch` on `forge doctor --json`. Multiple lockfiles without a field also warn (install drift) — doctor/status/run JSON `multipleLockfiles[]`; bash install failures tip when ≥2 lockfiles.
+- **`/init` + `/review` + plan-mode + `/diff` + `/files` + `/undo` + resume + turn-footer project intel**: preferred checks surface in init/review/plan prompts, `/diff`/`/files`/`/undo` verify tips, resume orientation (`Checks: …`), and post-turn footer (`✓ npm run typecheck`) after edits.
+- **`/commit [staged] [do]`**: draft a commit message from the git diff (default draft-only). `/commit do` creates the commit with hard rules (no push, no force, prefer project checks).
+- **First-run welcome tip**: includes `/commit`, `/context`, and detected project stack (`pm` + cheapest check) when available.
+- **Bash permission-denied tip**: EACCES / “Permission denied” failures get a recovery tip (ownership/mode, workspace bounds, `/build` if plan mode); sandbox/IMDS policy denies are left alone.
+- **Last verification command**: when bash runs a structural check, session meta records `lastVerificationCommand` + timestamp; resume orientation shows `Last verify: …` (cleared on `/clear hard`). Compact summaries include preferred project checks + last verify so post-compact turns stay oriented.
+- **Tool schemas**: `search_replace` / `write_file` / `apply_patch` descriptions document the session read-before-edit + stale-mtime guard so models avoid blind overwrites without rediscovering the rule.
+- **search_replace / write_file line-prefix strip**: when old_string/new_string/content look like pasted `read_file` output (`   12|code`), strip the line-number prefixes automatically and note it in the result. Partial/mixed numbered pastes get an edit-miss tip.
+- **Monorepo workspaces**: project-intel detects `package.json` workspaces / `pnpm-workspace.yaml`, tags `monorepo`, and injects a Workspaces line into the system prompt (package-scoped check guidance).
+- **Turbo / Nx**: when `turbo.json` / `nx.json` is present, preferred checks include `turbo run typecheck|test|…` / `nx run-many -t …` and kinds gain `turbo`/`nx`.
+- **Nested package walk-up**: when cwd is inside a monorepo package, project-intel walks up to the workspace root (bounded by **git root** so unrelated parent monorepos never leak), merges root checks/workspaces, and surfaces `Monorepo root:` in the system prompt. Doctor/status/`/context`/`/config` expose `monorepoRoot`. Nested packages without a local lockfile inherit the root package manager (pnpm/yarn/bun).
 ## 0.9.99 — prompt editor cursor redraw fix
 
 ### Fixed

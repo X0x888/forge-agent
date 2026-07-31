@@ -5,6 +5,7 @@
  * (failed edit retry, stuck grep, etc.). Detect and inject a hard nudge so the
  * agent changes strategy instead of burning tokens.
  */
+import { detectProjectIntel } from "../util/project-intel.js";
 
 export interface DoomLoopConfig {
   /** Consecutive identical tool fingerprints required to trip (default 3) */
@@ -106,19 +107,31 @@ export class DoomLoopTracker {
   }
 }
 
+function preferredVerifyHint(): string {
+  try {
+    const cmd = detectProjectIntel(process.cwd()).checkCommands[0];
+    if (cmd) return cmd;
+  } catch {
+    /* optional */
+  }
+  return "typecheck/test";
+}
+
 function buildDoomMessage(
   name: string,
   input: Record<string, unknown>,
   count: number,
 ): string {
   const preview = summarizeInput(input);
+  const verify = preferredVerifyHint();
   return (
     `[Forge doom-loop] You called \`${name}\` with the same arguments ${count} times in a row` +
     (preview ? ` (${preview})` : "") +
     `. STOP repeating. Change approach: re-read the file, try a different tool, ` +
     `narrow/broaden the query, fix the underlying error, or ask a clarifying question. ` +
     `Identical retries waste turns and will keep failing. ` +
-    `If the tool error names a missing path/arg, fix that first; if permission denied, do not retry the same mutation.`
+    `If the tool error names a missing path/arg, fix that first; if permission denied, do not retry the same mutation. ` +
+    `When stuck after edits, run \`${verify}\` once to learn the real failure.`
   );
 }
 

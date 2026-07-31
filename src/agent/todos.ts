@@ -23,11 +23,15 @@ export function applyTodos(
   if (todos == null) {
     return (
       "todo_write error: todos array is required.\n" +
-      'Example: { "todos": [{ "id": "1", "content": "…", "status": "in_progress" }] }'
+      'Example: { "todos": [{ "id": "1", "content": "run typecheck", "status": "in_progress" }], "merge": true }\n' +
+      "merge:true with [] is a no-op. Empty id/content fail closed. Status: pending|in_progress|completed|cancelled."
     );
   }
   if (!Array.isArray(todos)) {
-    return "todo_write error: todos must be an array of { id, content, status } objects.";
+    return (
+      "todo_write error: todos must be an array of { id, content, status } objects.\n" +
+      'Example: { "todos": [{ "id": "w1", "content": "…", "status": "pending" }], "merge": true }'
+    );
   }
   const allowed = new Set([
     "pending",

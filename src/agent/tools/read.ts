@@ -6,6 +6,17 @@ import { resolvePath, resolveReadablePath } from "./path-util.js";
 import { pathNotFoundHint } from "./path-hints.js";
 import { boundToolOutput, DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES } from "./truncate.js";
 import { numberFieldError } from "./arg-types.js";
+import { fileReadGuardEnabled } from "./file-read-state.js";
+
+function noteRead(ctx: ToolContext, filePath: string, st: fs.Stats): void {
+  if (!ctx.fileReads || !fileReadGuardEnabled()) return;
+  if (!st.isFile()) return;
+  try {
+    ctx.fileReads.note(filePath, { mtimeMs: st.mtimeMs, size: st.size });
+  } catch {
+    /* best-effort */
+  }
+}
 
 const DEFAULT_READ_LIMIT = 2000;
 const MAX_LINE_LENGTH = 2000;
@@ -182,7 +193,8 @@ export async function toolRead(
     return {
       output:
         "read_file error: path is required (non-empty string).\n" +
-        'Example: { "path": "src/cli.ts", "offset": 1, "limit": 80 }',
+        'Example: { "path": "src/cli.ts", "offset": 1, "limit": 80 }\n' +
+        "Use a workspace-relative path (not empty). Prefer list_dir/glob first if unsure.",
       isError: true,
     };
   }
@@ -260,6 +272,7 @@ export async function toolRead(
       maxLines: DEFAULT_MAX_LINES + 5,
       maxBytes: DEFAULT_MAX_BYTES,
     });
+    noteRead(ctx, filePath, stat);
     return { output: managed.text };
   }
 
@@ -302,7 +315,9 @@ export async function toolRead(
       : "";
 
   // Past-EOF / empty-slice: do not claim "showing 100-99" or "(empty file)" for non-empty files.
+  // Still note the read — the agent observed the file exists (and its size/mtime).
   if (slice.length === 0) {
+    noteRead(ctx, filePath, stat);
     if (lines.length === 0) {
       return {
         output: `File: ${rel} (empty file — 0 lines${largeHint})`,
@@ -328,5 +343,6 @@ export async function toolRead(
     maxLines: DEFAULT_MAX_LINES + 5,
     maxBytes: DEFAULT_MAX_BYTES,
   });
+  noteRead(ctx, filePath, stat);
   return { output: managed.text };
 }

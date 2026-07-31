@@ -3,9 +3,19 @@
  * Pure-ish: may read git snapshot + session inventory (best-effort).
  */
 
+import fs from "node:fs";
+import path from "node:path";
 import type { ForgeConfig } from "../config/types.js";
 import { getGitSnapshot } from "./git-context.js";
 import { listSessions } from "../session/session.js";
+import {
+  detectPackageManager,
+  detectProjectIntel,
+  hasNodeModules,
+  packageManagerLockfileMismatch,
+  multipleLockfiles,
+} from "./project-intel.js";
+import { isLastVerificationStale } from "../session/session.js";
 
 export interface ProductionWarningOpts {
   ultrawork?: boolean;
@@ -16,6 +26,14 @@ export interface ProductionWarningOpts {
   hitMaxTurns?: boolean;
   /** Post-run: stop-continue safety valve. */
   releasedOnContinueCap?: boolean;
+  /** Post-run: session file-edit count (mutations). */
+  editCount?: number;
+  /** Post-run: last structural verification command, if any. */
+  lastVerificationCommand?: string | null;
+  /** Post-run: ISO timestamp of last successful verification. */
+  lastVerificationAt?: string | null;
+  /** Post-run: ISO timestamp of last file edit. */
+  lastEditAt?: string | null;
   /**
    * Test hooks — inject dirty-file count / session inventory so unit tests
    * do not depend on the real git tree or ~/.forge sessions.
@@ -23,6 +41,8 @@ export interface ProductionWarningOpts {
   _testDirtyFiles?: number;
   _testSessionCount?: number;
   _testPinnedCount?: number;
+  /** Test hook — force missing node_modules warning path. */
+  _testMissingNodeModules?: boolean;
 }
 
 /**
@@ -34,6 +54,15 @@ export function productionWarningsForRun(
   opts?: ProductionWarningOpts,
 ): string[] {
   const warnings: string[] = [];
+    // Post-edit verify tip disabled — experts lose cheap steering after edits.
+    {
+      const v = (process.env.FORGE_VERIFY_HINT || "1").trim().toLowerCase();
+      if (v === "0" || v === "false" || v === "off" || v === "no") {
+        warnings.push(
+          "FORGE_VERIFY_HINT=0 — post-edit project-check tips suppressed. Unset or set to 1 for expert daily use.",
+        );
+      }
+    }
   try {
     if (config.sandbox === "off") {
       warnings.push("sandbox=off — bash runs unsandboxed");
@@ -78,6 +107,56 @@ export function productionWarningsForRun(
       warnings.push(
         "blockingStopHooks=false — Stop hooks will not re-anchor the agent",
       );
+    }
+    {
+      const frg = (process.env.FORGE_FILE_READ_GUARD || "1").trim().toLowerCase();
+      if (frg === "0" || frg === "false" || frg === "off" || frg === "no") {
+        warnings.push(
+          "FORGE_FILE_READ_GUARD=0 — stale/unread edit protection disabled (blind overwrites allowed)",
+        );
+      }
+    }
+    // Fresh clone / CI without install — typecheck/test will thrash.
+    // Monorepos often hoist node_modules to the workspace root only.
+    try {
+      const cwd = config.workspace || process.cwd();
+      const forceMissing = opts?._testMissingNodeModules === true;
+      const hasPkg = forceMissing
+        ? true
+        : fs.existsSync(path.join(cwd, "package.json"));
+      const hasNm = forceMissing ? false : hasNodeModules(cwd) === true;
+      if (hasPkg && !hasNm && (forceMissing || hasNodeModules(cwd) === false)) {
+        let install = "npm install";
+        try {
+          const pm = detectPackageManager(cwd);
+          if (pm === "pnpm") install = "pnpm install";
+          else if (pm === "yarn") install = "yarn install";
+          else if (pm === "bun") install = "bun install";
+        } catch {
+          /* */
+        }
+        warnings.push(
+          `node_modules missing — run \`${install}\` before typecheck/test`,
+        );
+      }
+      if (!forceMissing) {
+        try {
+          const mismatch = packageManagerLockfileMismatch(cwd);
+          if (mismatch) warnings.push(mismatch.detail);
+          else {
+            const multi = multipleLockfiles(cwd);
+            if (multi.length >= 2) {
+              warnings.push(
+                `Multiple lockfiles present (${multi.join(", ")}). Pick one package manager and remove the others.`,
+              );
+            }
+          }
+        } catch {
+          /* */
+        }
+      }
+    } catch {
+      /* */
     }
     if (typeof config.maxCostUsd === "number" && config.maxCostUsd > 0) {
       warnings.push(
@@ -181,6 +260,35 @@ export function productionWarningsForRun(
       warnings.push(
         "releasedOnContinueCap — stop-continue safety valve fired (length / content_filter / empty / Stop-block cap). Narrow the task or raise FORGE_ULW_MAX_CONTINUES / maxStopContinues.",
       );
+    }
+    // Post-run: edits without a recorded structural check — CI greppable.
+    {
+      const edits =
+        typeof opts?.editCount === "number" && Number.isFinite(opts.editCount)
+          ? opts.editCount
+          : 0;
+      const last = opts?.lastVerificationCommand?.trim() || "";
+      if (edits > 0 && !last) {
+        let tip = "npm test / typecheck";
+        try {
+          const intel = detectProjectIntel(config.workspace || process.cwd());
+          if (intel.checkCommands[0]) tip = intel.checkCommands[0];
+        } catch {
+          /* */
+        }
+        warnings.push(
+          `editsWithoutVerification — session has ${edits} edit(s) but no recorded structural check. Prefer \`${tip}\` before merge/ship (lastVerificationCommand stays empty until a preferred project check succeeds).`,
+        );
+      } else if (
+        isLastVerificationStale({
+          lastVerificationAt: opts?.lastVerificationAt ?? undefined,
+          lastEditAt: opts?.lastEditAt ?? undefined,
+        })
+      ) {
+        warnings.push(
+          `staleLastVerification — last check (\`${last.slice(0, 80)}\`) is older than the latest file edit. Re-run before merge/ship.`,
+        );
+      }
     }
   } catch {
     /* never throw from warnings */

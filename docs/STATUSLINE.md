@@ -33,6 +33,13 @@ After each turn:
 ──  ctx 32% (12.4k/128k)  turn in=1.2k out=400 ~$0.01  budget 12% $0.04/$5  todos:2
 ```
 
+## Project stack (v0.9.97+)
+
+HUD/`forge status` project labels append detected **package manager** + cheapest check
+(e.g. `CLI · npm · npm run typecheck`). Nested monorepo packages also show
+`mono:<root-basename>`. Status JSON includes top-level and per-session
+`packageManager`, `checkCommands`, `projectStackSummary`, `monorepoRoot`.
+
 ## Design
 
 | Principle | Behavior |

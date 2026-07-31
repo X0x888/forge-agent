@@ -97,6 +97,99 @@ describe("file mutation journal + undo", () => {
     assert.equal(readFileMutations(s.meta.id).length, 0);
   });
 
+  it("recomputes editCount/lastEditAt after rewind", async () => {
+    const s = createSession({
+      cwd: workspace,
+      provider: "xai",
+      model: "grok-4",
+    });
+    const target = path.join(workspace, "trail.ts");
+    fs.writeFileSync(target, "export const a = 1;\n", "utf8");
+    s.meta.turnCount = 1;
+    markUserTurn(s);
+    s.messages.push({ role: "user", content: "edit" });
+    s.meta.lastVerificationCommand = "npm test";
+    s.meta.lastVerificationAt = "2020-01-01T00:00:00.000Z";
+    await executeTool(
+      "search_replace",
+      JSON.stringify({
+        path: "trail.ts",
+        old_string: "export const a = 1;",
+        new_string: "export const a = 2;",
+      }),
+      {
+        workspace,
+        recordMutation: (input) => {
+          appendFileMutation(s.meta.id, {
+            ...input,
+            turn: s.meta.turnCount,
+          });
+        },
+        onEdit: () => {
+          s.meta.editCount += 1;
+          s.meta.lastEditAt = new Date().toISOString();
+        },
+      },
+    );
+    assert.ok((s.meta.editCount || 0) >= 1);
+    assert.ok(s.meta.lastEditAt);
+    s.messages.push({ role: "assistant", content: "edited" });
+    const rw = rewindSessionDetailed(s, 1);
+    assert.ok(rw.removed >= 1);
+    assert.equal(s.meta.editCount, 0);
+    assert.equal(s.meta.lastEditAt, undefined);
+    // last-verify trail is intentionally kept (chat rewind ≠ clear); stale
+    // becomes false once lastEditAt is cleared.
+    const { isLastVerificationStale } = await import("../src/session/session.js");
+    assert.equal(isLastVerificationStale(s.meta), false);
+  });
+
+
+  it("/undo reports recomputed edit trail", async () => {
+    const s = createSession({
+      cwd: workspace,
+      provider: "xai",
+      model: "grok-4",
+    });
+    const target = path.join(workspace, "undo-trail.ts");
+    fs.writeFileSync(target, "export const b = 1;\n", "utf8");
+    s.meta.turnCount = 1;
+    markUserTurn(s);
+    s.messages.push({ role: "user", content: "edit" });
+    await executeTool(
+      "search_replace",
+      JSON.stringify({
+        path: "undo-trail.ts",
+        old_string: "export const b = 1;",
+        new_string: "export const b = 2;",
+      }),
+      {
+        workspace,
+        recordMutation: (input) => {
+          appendFileMutation(s.meta.id, {
+            ...input,
+            turn: s.meta.turnCount,
+          });
+        },
+        onEdit: () => {
+          s.meta.editCount += 1;
+          s.meta.lastEditAt = new Date().toISOString();
+        },
+      },
+    );
+    s.messages.push({ role: "assistant", content: "edited" });
+    const { handleSlash } = await import("../src/commands/slash.js");
+    const { HookRunner } = await import("../src/harness/hooks.js");
+    const { DEFAULT_CONFIG } = await import("../src/config/types.js");
+    const hooks = new HookRunner(DEFAULT_CONFIG, workspace);
+    const r = await handleSlash("/undo", {
+      session: s,
+      config: { ...DEFAULT_CONFIG, workspace },
+      hooks,
+    });
+    assert.equal(r.handled, true);
+    assert.match(String(r.output || ""), /edits now: 0/);
+  });
   it("search_replace journals update and /undo restores pre-image", async () => {
     const s = createSession({
       cwd: workspace,

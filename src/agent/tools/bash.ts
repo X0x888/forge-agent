@@ -12,8 +12,105 @@ import { isTruthy } from "../../util/bool.js";
 import { numberFieldError } from "./arg-types.js";
 import { editDistance } from "../../util/string-distance.js";
 import { parseDurationMs } from "../../util/duration-ms.js";
+import {
+  detectPackageManager,
+  detectProjectIntel,
+  missingBinaryTip,
+  missingNodeModulesTip,
+  multipleLockfilesTip,
+  missingScriptTip,
+  monorepoLayoutTip,
+  nextCheckTip,
+  permissionDeniedTip,
+  wrongPackageManagerTip,
+} from "../../util/project-intel.js";
 
 const execAsync = promisify(exec);
+
+/** Append package-manager / missing-script / missing-binary / next-check tips. */
+function withPmTip(body: string, command: string, workspace: string): string {
+  const tips: string[] = [];
+  let hadMissingScript = false;
+  let hadMissingBinary = false;
+  let hadMonoLayout = false;
+  let hadMissingNm = false;
+  try {
+    const pmTip = wrongPackageManagerTip(
+      command,
+      detectPackageManager(workspace),
+      body,
+    );
+    if (pmTip) tips.push(pmTip);
+  } catch {
+    /* best-effort */
+  }
+  try {
+    const miss = missingScriptTip(command, body, workspace);
+    if (miss) {
+      tips.push(miss);
+      hadMissingScript = true;
+    }
+  } catch {
+    /* best-effort */
+  }
+  try {
+    const bin = missingBinaryTip(command, body, workspace);
+    if (bin) {
+      tips.push(bin);
+      hadMissingBinary = true;
+    }
+  } catch {
+    /* best-effort */
+  }
+  try {
+    const nm = missingNodeModulesTip(body, workspace);
+    if (nm) {
+      tips.push(nm);
+      hadMissingNm = true;
+    }
+  } catch {
+    /* best-effort */
+  }
+  try {
+    const multi = multipleLockfilesTip(command, workspace);
+    if (multi) tips.push(multi);
+  } catch {
+    /* best-effort */
+  }
+  try {
+    const perm = permissionDeniedTip(command, body);
+    if (perm) tips.push(perm);
+  } catch {
+    /* best-effort */
+  }
+  try {
+    const mono = monorepoLayoutTip(body, workspace);
+    if (mono) {
+      tips.push(mono);
+      hadMonoLayout = true;
+    }
+  } catch {
+    /* best-effort */
+  }
+  // Skip next-check when a more specific recovery tip already explains the failure.
+  if (
+    !hadMissingScript &&
+    !hadMissingBinary &&
+    !hadMonoLayout &&
+    !hadMissingNm
+  ) {
+    try {
+      const next = nextCheckTip(command, workspace);
+      if (next) tips.push(next);
+    } catch {
+      /* best-effort */
+    }
+  }
+  if (!tips.length) return body;
+  // Cap tip noise — most specific tips are pushed first.
+  const capped = tips.slice(0, 3);
+  return `${body}\n\nTip: ${capped.join("\nTip: ")}`;
+}
 
 /** Parse timeout_ms: omitted → fallback; explicit invalid → null (fail closed). */
 function resolveTimeoutMs(
@@ -71,11 +168,25 @@ export async function toolBash(
   }
   const command = String(args.command || "").trim();
   if (!command) {
+    let example = "npm test";
+    let longEx = "npm run build";
+    try {
+      const intel = detectProjectIntel(ctx.workspace || process.cwd());
+      if (intel.checkCommands[0]) example = intel.checkCommands[0];
+      if (intel.checkCommands[1]) longEx = intel.checkCommands[1];
+      else if (intel.checkCommands[0]) longEx = intel.checkCommands[0];
+    } catch {
+      /* */
+    }
+    // Escape for JSON example embedding
+    const exJson = JSON.stringify(example);
+    const longJson = JSON.stringify(longEx);
     return {
       output:
         "bash error: command is required (non-empty string).\n" +
-        'Example: { "command": "npm test", "timeout_ms": "120s" }\n' +
-        "For long jobs: { \"command\": \"npm run build\", \"background\": true } then get_task_output.",
+        `Example: { "command": ${exJson}, "timeout_ms": "120s" }\n` +
+        `For long jobs: { "command": ${longJson}, "background": true } then get_task_output.\n` +
+        "Prefer project checks from /context when verifying edits.",
       isError: true,
     };
   }
@@ -195,9 +306,12 @@ export async function toolBash(
         : result.code === 124
           ? `Command timed out after ${timeout}ms (exit code 124)`
           : `Command failed (exit code ${result.code})`;
-      const managed = await boundToolOutput(meta + body, {
-        maxChars: BASH_MAX_CHARS,
-      });
+      const managed = await boundToolOutput(
+        withPmTip(meta + body, command, ctx.workspace),
+        {
+          maxChars: BASH_MAX_CHARS,
+        },
+      );
       return { output: managed.text, isError: true };
     }
   const managed = await boundToolOutput(meta + (out || "(no output)"), {
@@ -243,7 +357,7 @@ export async function toolBash(
         .filter(Boolean)
         .join("\n");
       const managed = await boundToolOutput(
-        out || `Command failed (code ${e.code})`,
+        withPmTip(out || `Command failed (code ${e.code})`, command, ctx.workspace),
         { maxChars: BASH_MAX_CHARS },
       );
       return { output: managed.text, isError: true };

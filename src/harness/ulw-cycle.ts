@@ -120,7 +120,69 @@ const THIN_ADVISORY_STREAK = 3;
  * `verificationRan` signal — execution, not prose.
  */
 export const VERIFICATION_CMD_RE =
-  /\b(?:npm|pnpm|yarn|bun|deno)\s+(?:run\s+)?(?:test|tests|spec|typecheck|type-check|lint|check|build|ci|verify)\b|\b(?:pytest|py\.test|jest|vitest|mocha|ava|phpunit|rspec|ctest|mypy|pyright|ruff|golangci-lint|staticcheck)\b|\bcargo\s+(?:test|check|build|clippy)\b|\bgo\s+(?:test|vet|build)\b|\bmvn\s+(?:test|verify|package|compile)\b|\bgradle(?:w)?\s+(?:test|check|build)\b|\bmake\s+(?:test|check|build|all|ci)\b|\btsc\b|\beslint\b|\bdotnet\s+(?:test|build)\b/i;
+  /\b(?:npm|pnpm|yarn|bun|deno)\s+(?:run\s+)?(?:test|tests|spec|typecheck|type-check|lint|check|build|ci|verify|smoke)\b|\b(?:pytest|py\.test|jest|vitest|mocha|ava|phpunit|rspec|ctest|mypy|pyright|ruff|golangci-lint|staticcheck)\b|\bcargo\s+(?:test|check|build|clippy)\b|\bgo\s+(?:test|vet|build)\b|\bmvn\s+(?:test|verify|package|compile)\b|\bgradle(?:w)?\s+(?:test|check|build)\b|\bmake\s+(?:test|check|build|all|ci)\b|\bmix\s+test\b|\bcomposer\s+test\b|\bturbo\s+run\s+(?:test|tests|typecheck|type-check|lint|check|build|ci|verify|smoke)\b|\bnx\s+(?:run-many|run)\b|\btsc\b|\beslint\b|\bdotnet\s+(?:test|build)\b/i;
+
+/**
+ * True when a bash command counts as structural verification.
+ * Matches VERIFICATION_CMD_RE, or an exact preferred project check command
+ * (from project-intel) so custom scripts like `npm run unit` still count.
+ */
+export function isVerificationCommand(
+  command: string,
+  preferredCheckCommands?: string[],
+): boolean {
+  const cmd = String(command || "").trim();
+  if (!cmd) return false;
+  if (VERIFICATION_CMD_RE.test(cmd)) return true;
+  const preferred = preferredCheckCommands || [];
+  if (!preferred.length) return false;
+  // Normalize whitespace; allow preferred as a full command or a trailing segment
+  // after cd/&& (common agent pattern: `cd pkg && npm test`).
+  const compact = cmd.replace(/\s+/g, " ").trim();
+  for (const p of preferred) {
+    const want = String(p || "").replace(/\s+/g, " ").trim();
+    if (!want) continue;
+    if (compact === want) return true;
+    if (compact.endsWith(` && ${want}`) || compact.endsWith(`; ${want}`)) {
+      return true;
+    }
+    // Leading env assignments: `FOO=1 npm test`
+    if (new RegExp(`(?:^|[;&|]\\s*)${escapeRegExp(want)}(?:\\s|$)`).test(compact)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Session last-verify trail is success-only. Structural `verificationRan`
+ * still counts failed check runs for the ULW wave ledger (execution); proof-claim
+ * uses successful runs only. The trail experts read on /status /share /export
+ * must not look green after red.
+ * Callers should also clear any prior trail when a verification command fails.
+ */
+export function shouldStampLastVerification(opts: {
+  command: string;
+  isError?: boolean;
+  preferredCheckCommands?: string[];
+}): boolean {
+  if (opts.isError) return false;
+  return isVerificationCommand(opts.command, opts.preferredCheckCommands);
+}
+
+/** True when a failed verification bash should wipe a prior green trail. */
+export function shouldClearLastVerification(opts: {
+  command: string;
+  isError?: boolean;
+  preferredCheckCommands?: string[];
+}): boolean {
+  if (!opts.isError) return false;
+  return isVerificationCommand(opts.command, opts.preferredCheckCommands);
+}
+
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
 
 /**
  * Detect verification evidence for a wave. `verificationRan` is the structural
@@ -509,6 +571,13 @@ export function evaluateUlwAtStop(opts: {
   stuckThreshold: number;
   /** True when a verification command (test/typecheck/lint/build) ran this wave */
   verificationRan?: boolean;
+  /**
+   * Successful structural check only. Attestation evidence requires this so a
+   * red `npm test` cannot unlock **Cycle complete.** / **Goal achieved.**
+   * Wave ledger proof still uses verificationRan (execution).
+   */
+  verificationPassed?: boolean;
+  preferredCheckCommands?: string[];
 }): UlwStopDecision {
   const s = loadUlwCycle(opts.sessionId);
   if (!s || !s.enabled) return { block: false };
@@ -516,7 +585,11 @@ export function evaluateUlwAtStop(opts: {
   const msg = opts.lastAssistantMessage || "";
   const attested = s.cycle === 0 && LAST_CYCLE_ATTEST_RE.test(msg);
   const attestationHasEvidence =
-    !attested || hasAttestationEvidence(msg, opts.verificationRan);
+    !attested ||
+    hasAttestationEvidence(
+      msg,
+      opts.verificationPassed ?? opts.verificationRan,
+    );
   // Edit delta since the previous Stop evaluation (wave boundary). Captured
   // before lastBlockEditCount is updated below.
   const editDelta = Math.max(0, opts.editCount - s.lastBlockEditCount);
@@ -595,6 +668,7 @@ export function evaluateUlwAtStop(opts: {
         openTodos: opts.openTodoCount,
         mode: "last",
         maxWavesHit: true,
+        preferredCheckCommands: opts.preferredCheckCommands,
       });
       return {
         block: true,
@@ -605,7 +679,12 @@ export function evaluateUlwAtStop(opts: {
     }
     s.wave += 1;
     // Record the wave that closed at this boundary — facts for the quality bar.
-    const proof = detectWaveProof(msg, opts.verificationRan);
+    // Prefer successful verification for wave proof so a red check cannot
+  // satisfy the quality bar / clear proofDemands.
+  const proof = detectWaveProof(
+    msg,
+    opts.verificationPassed ?? opts.verificationRan,
+  );
     s.waves = [
       ...(s.waves ?? []),
       {
@@ -643,6 +722,7 @@ export function evaluateUlwAtStop(opts: {
         openTodos: opts.openTodoCount,
         mode: "last",
         maxWavesHit: true,
+        preferredCheckCommands: opts.preferredCheckCommands,
       });
       return {
         block: true,
@@ -657,8 +737,14 @@ export function evaluateUlwAtStop(opts: {
       openTodos: opts.openTodoCount,
       mode: "continue",
       proofMissing,
+      verificationFailed: Boolean(
+        proofMissing &&
+          opts.verificationRan &&
+          !opts.verificationPassed,
+      ),
       consolidation: s.wave % CONSOLIDATION_EVERY === 0,
       thinStreak,
+      preferredCheckCommands: opts.preferredCheckCommands,
     });
     return { block: true, reason: reanchor, reanchor, ...qualityFlags };
   }
@@ -668,6 +754,7 @@ export function evaluateUlwAtStop(opts: {
   const reanchor = buildCycleReanchor(s, {
     openTodos: opts.openTodoCount,
     mode: "last",
+    preferredCheckCommands: opts.preferredCheckCommands,
   });
   return { block: true, reason: reanchor, reanchor };
 }
@@ -682,8 +769,11 @@ function buildCycleReanchor(
     mode: "continue" | "last";
     maxWavesHit?: boolean;
     proofMissing?: boolean;
+    /** True when a check ran but failed (vs never ran). */
+    verificationFailed?: boolean;
     consolidation?: boolean;
     thinStreak?: number;
+    preferredCheckCommands?: string[];
   },
 ): string {
   const cap = normalizeMaxWaves(s.maxWaves);
@@ -708,7 +798,19 @@ function buildCycleReanchor(
         ? `Bar: best wave so far w${best.wave} (+${best.editDelta} edits${best.proof ? ", proof ✓" : ""}). Match or beat it — compound on shipped work; no filler waves (renames, comment-only churn, edit/revert loops).`
         : `Bar: these first waves set the standard — substantive change + real proof, every wave.`,
       opts.proofMissing
-        ? `⚠ Last wave ran no verification — run its proof NOW before any new scope.`
+        ? (() => {
+            const preferred = (opts.preferredCheckCommands || [])
+              .map((c) => String(c || "").trim())
+              .filter(Boolean)
+              .slice(0, 3);
+            const tip = preferred.length
+              ? preferred.map((c) => `\`${c}\``).join(" · ")
+              : "`npm test` / typecheck / project check";
+            const why = opts.verificationFailed
+              ? "Last wave's check failed (red) — fix and re-run until green"
+              : "Last wave ran no successful verification — run proof NOW";
+            return `⚠ ${why} before any new scope: ${tip}`;
+          })()
         : null,
       opts.consolidation
         ? `CONSOLIDATION WAVE (every ${CONSOLIDATION_EVERY}th): no new scope — run the full check suite, then review the cumulative \`git diff\` as a hostile reviewer (regressions, weakened tests, leftover stubs). Fix real defects only.`

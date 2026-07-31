@@ -161,7 +161,9 @@ export async function toolGetTaskOutput(
     if (!all.length) {
       return {
         output:
-          "task_id is required. No background tasks in this process yet. Start one with bash { background: true }.",
+          "task_id is required. No background tasks in this process yet.\n" +
+          'Start one with bash { "command": "npm test", "background": true } then get_task_output({ "task_id": "…" }).\n' +
+          "Omit task_id to list actives when any exist.",
         isError: true,
       };
     }
@@ -208,7 +210,9 @@ export async function toolKillTask(
     if (!all.length) {
       return {
         output:
-          "task_id is required. No background tasks in this process yet. Start one with bash { background: true }.",
+          "task_id is required. No background tasks in this process yet.\n" +
+          'Start one with bash { "command": "npm test", "background": true } then get_task_output({ "task_id": "…" }).\n' +
+          "Omit task_id to list actives when any exist.",
         isError: true,
       };
     }

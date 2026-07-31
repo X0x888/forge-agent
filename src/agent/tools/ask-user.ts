@@ -42,7 +42,10 @@ export async function toolAskUser(input: AskUserInput): Promise<ToolResult> {
   const question = String(input.question || "").trim();
   if (!question) {
     return {
-      output: "ask_user requires a non-empty question string.",
+      output:
+        "ask_user error: question is required (non-empty string).\n" +
+        'Example: { "question": "Ship the migration now, or wait for review?", "choices": ["ship now", "wait"] }\n' +
+        "Whitespace-only questions fail closed. Prefer ask_user for ambiguous/destructive choices — do not guess.",
       isError: true,
     };
   }

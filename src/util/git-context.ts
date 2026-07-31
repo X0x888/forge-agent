@@ -140,6 +140,9 @@ export function formatGitForPrompt(snap: GitSnapshot): string {
         }`
       : "",
     snap.remote ? `Remote: ${snap.remote}` : "",
+    snap.isWorktree
+      ? "Linked worktree: prefer edits here only; do not mutate sibling worktrees/checkouts. Parallel agent sessions are expected — keep commits/pushes scoped to this tree."
+      : "",
   ].filter(Boolean);
   return lines.join("\n");
 }
@@ -184,9 +187,12 @@ export function detectProjectHints(cwd: string): string[] {
   const checks: Array<[string, string]> = [
     ["package.json", "node"],
     ["pnpm-lock.yaml", "pnpm"],
+    ["pnpm-workspace.yaml", "monorepo"],
     ["yarn.lock", "yarn"],
     ["bun.lockb", "bun"],
     ["bun.lock", "bun"],
+    ["turbo.json", "turbo"],
+    ["nx.json", "nx"],
     ["Cargo.toml", "rust"],
     ["go.mod", "go"],
     ["pyproject.toml", "python"],
@@ -213,6 +219,30 @@ export function detectProjectHints(cwd: string): string[] {
     if (fs.existsSync(path.join(cwd, file))) {
       hints.push(label);
       seen.add(label);
+    }
+  }
+  // package.json workspaces field (npm/yarn/bun monorepos without pnpm-workspace.yaml)
+  if (!seen.has("monorepo")) {
+    try {
+      const pkgPath = path.join(cwd, "package.json");
+      if (fs.existsSync(pkgPath)) {
+        const raw = fs.readFileSync(pkgPath, "utf8");
+        const pkg = JSON.parse(raw) as { workspaces?: unknown };
+        const ws = pkg?.workspaces;
+        const has =
+          (Array.isArray(ws) && ws.length > 0) ||
+          (ws &&
+            typeof ws === "object" &&
+            !Array.isArray(ws) &&
+            Array.isArray((ws as { packages?: unknown }).packages) &&
+            ((ws as { packages: unknown[] }).packages?.length || 0) > 0);
+        if (has) {
+          hints.push("monorepo");
+          seen.add("monorepo");
+        }
+      }
+    } catch {
+      /* */
     }
   }
   return hints;
