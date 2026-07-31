@@ -3,6 +3,7 @@
 ## Unreleased
 
 ### Added
+- **Public exports** — `looksLikeAdvisoryUserMessage`, `FileReadState`, `fileReadGuardEnabled`, and `FileReadStamp` are exported from the package root (`src/index.ts`) alongside project-intel helpers.
 - **Silent edits-without-verify Stop block (free triage)** — outside ULW/goal, stopping after file edits with no successful structural check now blocks once (same cap as proof-claim), even without "tests pass" prose. Reanchor names preferred project checks + the six-question self-audit. Skips advisory Q&A turns; ULW/goal keep their own proof/attestation paths (oh-my-kimi free-triage lesson).
 - **Proof-claim self-audit checklist** — when Stop is blocked for a success claim without a successful structural check, the reanchor now includes a free six-question self-audit (completeness / evidence / framing / tests / fit / consequence), inspired by oh-my-kimi. Forces evidence-based closing instead of memory-based "all green" prose.
 

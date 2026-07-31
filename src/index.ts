@@ -535,6 +535,12 @@ export {
   permissionDeniedTip,
 } from "./util/project-intel.js";
 export type { PackageManager, ProjectIntel } from "./util/project-intel.js";
+export { looksLikeAdvisoryUserMessage } from "./util/advisory-intent.js";
+export {
+  FileReadState,
+  fileReadGuardEnabled,
+} from "./agent/tools/file-read-state.js";
+export type { FileReadStamp } from "./agent/tools/file-read-state.js";
 export {
   collectSnapshots,
   renderHud,
