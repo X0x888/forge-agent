@@ -10,3 +10,13 @@ coverage/
 .tmp/
 .tmp-*/
 *.tsbuildinfo
+
+# Credential / key footguns if dropped at repo root (local ~/.forge is already ignored)
+auth.json
+secrets.json
+credentials.json
+*.pem
+id_rsa
+id_rsa.pub
+*.p12
+*.pfx
