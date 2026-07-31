@@ -59,15 +59,32 @@ import {
   resolveReasoningEffort,
   type ReasoningEffort,
 } from "../config/reasoning.js";
-import { loadPreferences, savePreferences } from "../config/preferences.js";
+import {
+  lastModelForProvider,
+  loadPreferences,
+  savePreferences,
+} from "../config/preferences.js";
+import {
+  buildModelCatalog,
+  buildModelCatalogSync,
+  providerAllowsFreeFormModels,
+  trackRecentModel,
+} from "../config/model-catalog.js";
 import { describeSandbox, detectSandboxBackend } from "../agent/sandbox.js";
 import {
   describeAuth,
   resolveAuth,
   resolveAuthFresh,
 } from "../auth/resolve.js";
+import type { ResolvedAuth } from "../auth/types.js";
 import { printAuthStatus } from "../auth/login.js";
-import { getCredential, isExpired } from "../auth/store.js";
+import {
+  getActiveAccount,
+  getCredential,
+  isExpired,
+  listAccounts,
+} from "../auth/store.js";
+import { normalizeProviderId, providerIdHelp } from "../util/provider-id.js";
 import { providerTimeoutMs } from "../util/abort.js";
 import { copyToClipboard } from "../util/clipboard.js";
 import {
@@ -118,7 +135,11 @@ import {
   formatTokens,
   formatRelativeTime,
 } from "../util/format.js";
-import { modelContextWindow } from "../config/model-info.js";
+import {
+  applyModelContextWindow,
+  modelContextWindow,
+  parseContextWindowArg,
+} from "../config/model-info.js";
 import chalk from "chalk";
 import fs from "node:fs";
 import path from "node:path";
@@ -164,6 +185,11 @@ export interface SlashResult {
    * (e.g. `/accounts switch`). Without this, live provider keeps the old token.
    */
   authUpdated?: boolean;
+  /**
+   * Provider and/or model client must be fully recreated (not just token).
+   * Set by `/provider` when switching backends (e.g. xai → openrouter).
+   */
+  providerUpdated?: boolean;
 }
 
 /**
@@ -218,6 +244,15 @@ const LIVE_CONTROL = new Set([
   "/ulw-off",
   "/effort",
   "/model",
+  "/provider",
+  "/temperature",
+  "/temp",
+  "/max-tokens",
+  "/maxtokens",
+  "/max_tokens",
+  "/context-window",
+  "/ctx-window",
+  "/context_window",
   "/plan",
   "/build",
   "/execute",
@@ -336,6 +371,29 @@ export function classifyLiveSlash(line: string): LiveSlashKind {
     if (cmd === "/effort" && !arg) return "readonly";
     // bare /model shows catalog; setting a model is control (live mid-run)
     if (cmd === "/model" && !arg) return "readonly";
+    // bare /provider lists providers; switch is control
+    if (cmd === "/provider" && !arg) return "readonly";
+    // bare /temperature · /max-tokens show current
+    if (
+      (cmd === "/temperature" || cmd === "/temp") &&
+      !arg
+    ) {
+      return "readonly";
+    }
+    if (
+      (cmd === "/max-tokens" || cmd === "/maxtokens" || cmd === "/max_tokens") &&
+      !arg
+    ) {
+      return "readonly";
+    }
+    if (
+      (cmd === "/context-window" ||
+        cmd === "/ctx-window" ||
+        cmd === "/context_window") &&
+      !arg
+    ) {
+      return "readonly";
+    }
     // bare /title|/rename shows current title
     if ((cmd === "/title" || cmd === "/rename") && !arg) return "readonly";
     // bare /bell shows status
@@ -430,7 +488,7 @@ export function isSafeDiffFilterArg(token: string): boolean {
 }
 
 export const LIVE_CONTROLS_HINT =
-  `${ULW_LIVE_CONTROLS_HINT} · /plan · /build · /model · free-text queues mid-run · /pause · /unpause · /done · /status  ·  Ctrl+C aborts the turn`;
+  `${ULW_LIVE_CONTROLS_HINT} · /plan · /build · /provider · /model · free-text queues mid-run · /pause · /unpause · /done · /status  ·  Ctrl+C aborts the turn`;
 
 export const SLASH_COMMANDS = [
   "/help",
@@ -453,8 +511,14 @@ export const SLASH_COMMANDS = [
   "/metrics",
   "/stats",
   "/todos",
+  "/provider",
   "/model",
   "/effort",
+  "/temperature",
+  "/temp",
+  "/max-tokens",
+  "/context-window",
+  "/ctx-window",
   "/plan",
   "/build",
   "/execute",
@@ -518,6 +582,22 @@ export function completeSlash(
       "/bell": ["on", "off", "test", "status"],
       "/notify": ["on", "off", "test", "status"],
       "/budget": ["status", "off", "1", "5", "10", "25"],
+      "/provider": [
+        "openrouter",
+        "xai",
+        "anthropic",
+        "openai",
+        "google",
+        "copilot",
+        "custom",
+        "list",
+        "status",
+      ],
+      "/temperature": ["0", "0.2", "0.7", "1"],
+      "/temp": ["0", "0.2", "0.7", "1"],
+      "/max-tokens": ["4096", "8192", "16384", "32768"],
+      "/context-window": ["auto", "128k", "200k", "256k", "500k", "1m"],
+      "/ctx-window": ["auto", "128k", "200k", "256k", "500k", "1m"],
       "/plan": ["on", "off", "status", "show"],
       "/build": ["on", "off", "status", "execute"],
       "/execute": ["on", "off", "status"],
@@ -662,6 +742,728 @@ export function formatUnknownSlash(
 
 /** @deprecated use forgeCompleter — kept for tests */
 export { forgeCompleter } from "../tui/complete.js";
+
+type SlashOpts = {
+  session: SessionData;
+  config: ForgeConfig;
+  hooks: HookRunner;
+  auth?: ResolvedAuth;
+};
+
+const STOCK_PROVIDER_ORDER = [
+  "xai",
+  "openrouter",
+  "anthropic",
+  "openai",
+  "google",
+  "copilot",
+  "custom",
+] as const;
+
+function providerAuthSummary(provider: string): string {
+  try {
+    const envNames: string[] = [];
+    if (provider === "xai") envNames.push("XAI_API_KEY", "GROK_API_KEY");
+    else if (provider === "openrouter") envNames.push("OPENROUTER_API_KEY");
+    else if (provider === "anthropic") envNames.push("ANTHROPIC_API_KEY");
+    else if (provider === "openai") envNames.push("OPENAI_API_KEY");
+    else if (provider === "google") envNames.push("GOOGLE_API_KEY", "GEMINI_API_KEY");
+    else if (provider === "copilot") envNames.push("COPILOT_GITHUB_TOKEN");
+    else if (provider === "custom") envNames.push("FORGE_API_KEY");
+    for (const n of envNames) {
+      if (process.env[n]?.trim()) return `env:${n}`;
+    }
+    const active = getActiveAccount(provider);
+    if (active) {
+      const label = active.accountLabel || active.subscription || active.method;
+      return `${active.method}${label ? ` (${label})` : ""}`;
+    }
+    const accounts = listAccounts(provider);
+    const pick = accounts[0];
+    if (pick) {
+      const label = pick.accountLabel || pick.subscription || pick.method;
+      return `${pick.method}${label ? ` (${label})` : ""}`;
+    }
+  } catch {
+    /* */
+  }
+  return "not authenticated";
+}
+
+/** List providers + switch (e.g. `/provider openrouter`). */
+export async function handleProviderSlash(
+  arg: string,
+  opts: SlashOpts,
+): Promise<SlashResult> {
+  const raw = (arg || "").trim();
+  const providerIds = [
+    ...STOCK_PROVIDER_ORDER.filter((id) => opts.config.providers[id]),
+    ...Object.keys(opts.config.providers).filter(
+      (id) => !(STOCK_PROVIDER_ORDER as readonly string[]).includes(id),
+    ),
+  ];
+
+  if (!raw || raw === "list" || raw === "ls" || raw === "status") {
+    const lines: string[] = [
+      `Provider  (active: ${opts.config.provider})`,
+      `  model: ${opts.config.model}` +
+        (opts.config.reasoningEffort
+          ? `  effort=${opts.config.reasoningEffort}`
+          : ""),
+      `  temp=${opts.config.temperature}  max_tokens=${opts.config.maxTokens}`,
+      "",
+    ];
+    for (const id of providerIds) {
+      const pcfg = opts.config.providers[id];
+      const mark = id === opts.config.provider ? "*" : " ";
+      const def = pcfg?.defaultModel || "—";
+      const last = lastModelForProvider(id);
+      const auth = providerAuthSummary(id);
+      const free = providerAllowsFreeFormModels(id) ? " free-form" : "";
+      lines.push(
+        `${mark} ${id.padEnd(12)} default=${String(def).padEnd(28)} auth=${auth}${free}` +
+          (last && last !== def ? `\n              last=${last}` : ""),
+      );
+    }
+    lines.push("");
+    lines.push(
+      chalk.dim(
+        "Usage: /provider <name>   ·  aliases: or→openrouter, claude→anthropic, gpt→openai",
+      ),
+    );
+    lines.push(
+      chalk.dim(
+        "Then:  /model <id>  ·  /effort  ·  /temperature  ·  /max-tokens  ·  /config",
+      ),
+    );
+    lines.push(
+      chalk.dim(
+        "Login: forge login -p openrouter --api-key $OPENROUTER_API_KEY",
+      ),
+    );
+    return { handled: true, output: lines.join("\n") };
+  }
+
+  const norm = normalizeProviderId(raw);
+  if (!norm.ok) {
+    const tip = suggestName(raw, providerIds, {
+      minLength: 2,
+      minScore: 36,
+      requirePrefix3: false,
+    });
+    return {
+      handled: true,
+      output:
+        chalk.yellow(
+          tip
+            ? `Unknown provider "${raw}". Did you mean: ${tip}?\n`
+            : `Unknown provider "${raw}".\n`,
+        ) +
+        `Use: ${providerIdHelp()}\n` +
+        chalk.dim("Bare /provider lists options."),
+    };
+  }
+
+  const nextProvider = norm.provider;
+  const prevProvider = String(opts.config.provider);
+  if (nextProvider === prevProvider) {
+    return {
+      handled: true,
+      output:
+        `Already on provider ${nextProvider} · model ${opts.config.model}\n` +
+        chalk.dim(
+          `/model · /effort · /temperature · /max-tokens · /config · forge login -p ${nextProvider}`,
+        ),
+    };
+  }
+
+  // Remember last model on the provider we're leaving
+  try {
+    if (opts.config.model) {
+      trackRecentModel(prevProvider, opts.config.model);
+      savePreferences({
+        model: opts.config.model,
+        modelProvider: prevProvider,
+      });
+    }
+  } catch {
+    /* */
+  }
+
+  const pcfg = opts.config.providers[nextProvider];
+  if (!pcfg && nextProvider !== "custom") {
+    return {
+      handled: true,
+      output: `Provider "${nextProvider}" is not configured in this build.`,
+    };
+  }
+  if (nextProvider === "custom") {
+    const base =
+      opts.config.baseUrl ||
+      process.env.FORGE_BASE_URL?.trim() ||
+      pcfg?.baseUrl;
+    if (!base) {
+      return {
+        handled: true,
+        output:
+          `Provider "custom" requires a base URL.\n` +
+          chalk.dim(
+            "Set FORGE_BASE_URL or --base-url, then: /provider custom",
+          ),
+      };
+    }
+  }
+
+  // Pick model: last used on target provider → default → keep only if free-form
+  const last = lastModelForProvider(nextProvider);
+  const def = pcfg?.defaultModel;
+  let nextModel = last || def || opts.config.model;
+  const catalog = pcfg?.models || [];
+  if (
+    !last &&
+    def &&
+    prevProvider !== nextProvider &&
+    catalog.length &&
+    !catalog.includes(opts.config.model) &&
+    !providerAllowsFreeFormModels(nextProvider)
+  ) {
+    nextModel = def;
+  } else if (last) {
+    nextModel = last;
+  } else if (def) {
+    nextModel = def;
+  }
+
+  opts.config.provider = nextProvider;
+  opts.config.model = nextModel;
+  opts.session.meta.provider = nextProvider;
+  opts.session.meta.model = nextModel;
+
+  const ctxApply = applyModelContextWindow(opts.config, nextModel);
+
+  // Resolve auth for the new provider
+  let authNote = "";
+  let authUpdated = false;
+  try {
+    const fresh = await resolveAuthFresh(opts.config, nextProvider);
+    if (fresh) {
+      if (opts.auth) {
+        opts.auth.provider = fresh.provider;
+        opts.auth.method = fresh.method;
+        opts.auth.token = fresh.token;
+        opts.auth.accountLabel = fresh.accountLabel;
+        opts.auth.accountId = fresh.accountId;
+        opts.auth.baseUrl = fresh.baseUrl;
+      } else {
+        opts.auth = fresh;
+      }
+      authUpdated = true;
+      authNote = ` · ${describeAuth(fresh)}`;
+    } else {
+      authNote =
+        chalk.yellow(
+          `\nNo credentials for ${nextProvider}. ` +
+            (nextProvider === "openrouter"
+              ? "Run: forge login -p openrouter --api-key $OPENROUTER_API_KEY"
+              : nextProvider === "xai"
+                ? "Run: forge login   or  export XAI_API_KEY=…"
+                : `Run: forge login -p ${nextProvider}`),
+        );
+    }
+  } catch (err) {
+    authNote = chalk.yellow(
+      `\nAuth resolve failed: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+
+  try {
+    savePreferences({
+      provider: nextProvider,
+      model: nextModel,
+      modelProvider: nextProvider,
+    });
+    trackRecentModel(nextProvider, nextModel);
+  } catch {
+    /* */
+  }
+
+  saveSession(opts.session);
+  try {
+    pushLiveNotice(
+      opts.session.meta.id,
+      `User switched provider ${prevProvider} → ${nextProvider} (model ${nextModel}). Continue with the new backend; do not restart from scratch.`,
+    );
+  } catch {
+    /* */
+  }
+
+  const freeNote = providerAllowsFreeFormModels(nextProvider)
+    ? chalk.dim(
+        `\nFree-form models OK · /model deepseek/deepseek-v4-flash · forge models -p ${nextProvider}`,
+      )
+    : chalk.dim(`\n/model lists catalog · Tab completes`);
+  const ctxNote = ctxApply.known
+    ? ` · ctx ${formatTokens(ctxApply.window)}${ctxApply.source === "explicit" ? " (pinned)" : " (model max)"}`
+    : chalk.dim(
+        ` · ctx ${formatTokens(opts.config.contextWindow)} (unknown model max · /context-window auto after forge models -p openrouter --refresh)`,
+      );
+
+  return {
+    handled: true,
+    authUpdated,
+    providerUpdated: true,
+    session: opts.session,
+    output:
+      `Provider ${prevProvider} → ${nextProvider} · model ${nextModel}${ctxNote}${authNote}` +
+      freeNote +
+      chalk.dim(
+        `\nNext: /model · /context-window · /temperature · /max-tokens · /config`,
+      ),
+  };
+}
+
+/** /model catalog + free-form set (OpenRouter-aware). */
+export async function handleModelSlash(
+  arg: string,
+  opts: SlashOpts,
+): Promise<SlashResult> {
+  const provider = String(opts.config.provider);
+  const freeForm = providerAllowsFreeFormModels(provider);
+
+  // Best-effort remote catalog for OpenRouter when listing
+  let apiKey: string | undefined;
+  if (provider === "openrouter") {
+    apiKey =
+      process.env.OPENROUTER_API_KEY?.trim() ||
+      opts.auth?.token ||
+      getCredential("openrouter")?.accessToken;
+  }
+
+  const catalog = arg
+    ? buildModelCatalogSync(opts.config, provider)
+    : await buildModelCatalog(opts.config, provider, {
+        refreshRemote: provider === "openrouter",
+        apiKey,
+        useCache: true,
+      });
+
+  // Interactive menu: prefer recent + static (+ a few remote popular), not hundreds
+  const menuIds = catalog.models.map((m) => m.id);
+  const choices = menuIds.map((m) => {
+    const entry = catalog.models.find((e) => e.id === m);
+    const effortHint = modelSupportsReasoningEffort(m)
+      ? ` · effort ${defaultEffortForModel(m) ?? "—"}`
+      : "";
+    const src =
+      entry?.source === "recent"
+        ? "recent"
+        : entry?.source === "remote"
+          ? "remote"
+          : m === opts.config.model
+            ? "current"
+            : "catalog";
+    return {
+      value: m,
+      description: src + effortHint,
+    };
+  });
+
+  if (!arg) {
+    const curEffort = resolveReasoningEffort(
+      opts.config.model,
+      opts.config.reasoningEffort,
+    );
+    const knownWin = modelContextWindow(opts.config.model);
+    const header = [
+      `Provider: ${provider}  ·  model: ${opts.config.model}`,
+      `  temp=${opts.config.temperature}  max_tokens=${opts.config.maxTokens}` +
+        (curEffort ? `  effort=${curEffort}` : "") +
+        `  ctx=${formatTokens(opts.config.contextWindow)}` +
+        (opts.config.contextWindowExplicit
+          ? " (pinned)"
+          : knownWin
+            ? knownWin === opts.config.contextWindow
+              ? " (model max)"
+              : ` (model max ${formatTokens(knownWin)})`
+            : " (default)"),
+    ].join("\n");
+    const effortLine = modelSupportsReasoningEffort(opts.config.model)
+      ? chalk.dim(
+          `\nEffort: ${curEffort ?? "—"}  ·  /effort low|medium|high  or  /model <name> <effort>`,
+        )
+      : chalk.dim(
+          "\nReasoning effort: not wired for this model (prefs kept for grok-4.5).",
+        );
+    const freeLine = freeForm
+      ? chalk.dim(
+          `\nFree-form: /model org/model-id  (e.g. deepseek/deepseek-v4-flash)` +
+            (catalog.remoteCount
+              ? `  ·  ${catalog.remoteCount} OpenRouter ids cached`
+              : "  ·  forge models -p openrouter refreshes remote catalog"),
+        )
+      : chalk.dim("\nTip: Tab completes catalog names.");
+    const note = catalog.note ? chalk.dim(`\n${catalog.note}`) : "";
+    return {
+      handled: true,
+      output:
+        header +
+        "\n" +
+        (choices.length
+          ? formatParamMenu("/model", choices, opts.config.model)
+          : `Usage: /model <name> [effort]`) +
+        effortLine +
+        freeLine +
+        note +
+        chalk.dim(
+          `\nAlso: /provider · /context-window · /temperature · /max-tokens · /config`,
+        ),
+    };
+  }
+
+  // /model <name> [effort] — last token may be an effort level
+  const tokens = arg.split(/\s+/).filter(Boolean);
+  let modelArg = arg;
+  let effortArg: string | undefined;
+  if (tokens.length >= 2) {
+    const maybeEffort = parseReasoningEffort(tokens[tokens.length - 1]!);
+    if (maybeEffort) {
+      effortArg = tokens[tokens.length - 1];
+      modelArg = tokens.slice(0, -1).join(" ");
+    }
+  }
+
+  // Full id list for resolve + typo check (includes remote cache)
+  const allChoices = catalog.ids.map((m) => ({
+    value: m,
+    description: m === opts.config.model ? "current" : "available",
+  }));
+  let resolved = resolveParamChoice(modelArg, allChoices);
+  if (!resolved) {
+    // Close catalog typos fail closed for non-free-form; free-form still allowed
+    // unless the typo is a near-miss of a known id.
+    const tip = allChoices.length
+      ? suggestName(
+          modelArg,
+          allChoices.map((c) => c.value),
+          { minLength: 3, minScore: 38, requirePrefix3: false },
+        )
+      : null;
+    if (tip && !freeForm) {
+      return {
+        handled: true,
+        output:
+          `Unknown model "${modelArg}". Did you mean: ${tip}?\n` +
+          chalk.dim("Tab completes catalog names."),
+      };
+    }
+    if (tip && freeForm) {
+      // Free-form: only block if the input is a clear typo of a short catalog
+      // name without a provider slash (e.g. grok-45). OpenRouter ids with /
+      // always pass through.
+      if (!modelArg.includes("/") && tip) {
+        return {
+          handled: true,
+          output:
+            `Unknown model "${modelArg}". Did you mean: ${tip}?\n` +
+            chalk.dim(
+              "Tab completes · free-form ids with org/name still accepted (e.g. deepseek/deepseek-v4-flash).",
+            ),
+        };
+      }
+    }
+    resolved = modelArg;
+  }
+
+  opts.config.model = resolved;
+  opts.session.meta.model = resolved;
+  opts.session.meta.provider = provider;
+
+  // Prefer OpenRouter remote context_length when static table misses
+  if (
+    provider === "openrouter" &&
+    !opts.config.contextWindowExplicit &&
+    modelContextWindow(resolved) == null
+  ) {
+    try {
+      await buildModelCatalog(opts.config, "openrouter", {
+        refreshRemote: true,
+        apiKey,
+        useCache: true,
+      });
+    } catch {
+      /* offline ok */
+    }
+  }
+
+  const ctxApply = applyModelContextWindow(opts.config, resolved);
+  let windowNote = "";
+  if (ctxApply.known) {
+    windowNote =
+      ` · ctx ${formatTokens(ctxApply.window)}` +
+      (ctxApply.source === "explicit" ? " (pinned)" : " (model max)");
+  } else if (!opts.config.contextWindowExplicit) {
+    windowNote = chalk.dim(
+      ` · ctx ${formatTokens(opts.config.contextWindow)} (unknown — /context-window 1m or refresh catalog)`,
+    );
+  }
+
+  let effortNote = "";
+  if (effortArg) {
+    const e = parseReasoningEffort(effortArg);
+    if (!e) {
+      effortNote = chalk.yellow(
+        `\nIgnored effort "${effortArg}" (use low|medium|high)`,
+      );
+    } else if (!modelSupportsReasoningEffort(resolved)) {
+      effortNote = chalk.yellow(
+        `\n${resolved} does not support reasoning effort (value kept in prefs for other models)`,
+      );
+      opts.config.reasoningEffort = e;
+      try {
+        savePreferences({
+          model: resolved,
+          reasoningEffort: e,
+          modelProvider: provider,
+        });
+      } catch {
+        /* ignore */
+      }
+    } else if (!effortLevelsForModel(resolved).includes(e)) {
+      effortNote = chalk.yellow(
+        `\n${e} not valid for ${resolved}; using ${defaultEffortForModel(resolved)}`,
+      );
+      const d = defaultEffortForModel(resolved)!;
+      opts.config.reasoningEffort = d;
+      try {
+        savePreferences({
+          model: resolved,
+          reasoningEffort: d,
+          modelProvider: provider,
+        });
+      } catch {
+        /* ignore */
+      }
+    } else {
+      opts.config.reasoningEffort = e;
+      try {
+        savePreferences({
+          model: resolved,
+          reasoningEffort: e,
+          modelProvider: provider,
+        });
+      } catch {
+        /* ignore */
+      }
+      effortNote = ` · effort ${e}`;
+    }
+  } else {
+    try {
+      savePreferences({ model: resolved, modelProvider: provider });
+    } catch {
+      /* never fail slash on prefs I/O */
+    }
+    if (modelSupportsReasoningEffort(resolved)) {
+      const e = resolveReasoningEffort(
+        resolved,
+        opts.config.reasoningEffort,
+      );
+      effortNote = ` · effort ${e}`;
+    }
+  }
+
+  trackRecentModel(provider, resolved);
+  saveSession(opts.session);
+  try {
+    pushLiveNotice(
+      opts.session.meta.id,
+      `User switched model mid-run → ${provider}/${resolved}${effortNote.replace(/^ · /, " · ") || ""}${windowNote.replace(/^ · /, " · ") || ""}. Continue with the new model; do not restart from scratch.`,
+    );
+  } catch {
+    /* */
+  }
+  return {
+    handled: true,
+    output:
+      `Model set to ${provider}/${resolved}${effortNote}${windowNote}` +
+      ` (saved · live mid-run)` +
+      chalk.dim(
+        `  ·  /context-window · /temperature · /max-tokens · /provider · /config`,
+      ),
+    session: opts.session,
+  };
+}
+
+/** `/context-window [n|auto]` — pin or auto-follow model max. */
+export function handleContextWindowSlash(
+  arg: string,
+  opts: SlashOpts,
+): SlashResult {
+  const raw = (arg || "").trim();
+  const known = modelContextWindow(opts.config.model);
+  if (!raw || raw === "status" || raw === "show") {
+    const mode = opts.config.contextWindowExplicit
+      ? "pinned"
+      : known && known === opts.config.contextWindow
+        ? "model max (auto)"
+        : known
+          ? `default (model max ${formatTokens(known)} available)`
+          : "default (model max unknown)";
+    return {
+      handled: true,
+      output:
+        `context_window: ${opts.config.contextWindow} (${formatTokens(opts.config.contextWindow)})  ·  ${mode}\n` +
+        `  model: ${opts.config.provider}/${opts.config.model}` +
+        (known ? `  ·  known max ${formatTokens(known)}` : "") +
+        "\n" +
+        chalk.dim(
+          "Usage: /context-window <n|200k|1m|auto>  ·  auto = follow model max  ·  pin persists for this session only (config.toml for permanent)",
+        ),
+    };
+  }
+
+  const parsed = parseContextWindowArg(raw);
+  if (parsed === null) {
+    return {
+      handled: true,
+      output:
+        chalk.yellow(
+          `Invalid context window "${raw}". Use e.g. 200000, 200k, 1m, or auto.\n`,
+        ) +
+        chalk.dim(
+          `Current: ${formatTokens(opts.config.contextWindow)}` +
+            (known ? ` · model max ${formatTokens(known)}` : ""),
+        ),
+    };
+  }
+
+  if (parsed === "auto") {
+    opts.config.contextWindowExplicit = false;
+    const applied = applyModelContextWindow(opts.config, opts.config.model);
+    try {
+      pushLiveNotice(
+        opts.session.meta.id,
+        `User set context_window to auto (model max${applied.known ? ` ${applied.window}` : " unknown"}).`,
+      );
+    } catch {
+      /* */
+    }
+    return {
+      handled: true,
+      output: applied.known
+        ? `context_window: auto → ${formatTokens(applied.window)} (model max for ${opts.config.model})`
+        : `context_window: auto · model max unknown for ${opts.config.model} — keeping ${formatTokens(opts.config.contextWindow)}` +
+          chalk.dim(
+            "\nTip: forge models -p openrouter --refresh  then /context-window auto",
+          ),
+    };
+  }
+
+  opts.config.contextWindow = parsed;
+  opts.config.contextWindowExplicit = true;
+  try {
+    pushLiveNotice(
+      opts.session.meta.id,
+      `User pinned context_window to ${parsed} tokens.`,
+    );
+  } catch {
+    /* */
+  }
+  const warn =
+    known && parsed > known
+      ? chalk.yellow(
+          `\n⚠ ${formatTokens(parsed)} exceeds known model max ${formatTokens(known)} — provider may reject long prompts`,
+        )
+      : known && parsed < known * 0.5
+        ? chalk.dim(
+            `\nNote: pinned below 50% of model max ${formatTokens(known)} — long runs compact early`,
+          )
+        : "";
+  return {
+    handled: true,
+    output: `context_window: ${formatTokens(parsed)} (pinned for session)${warn}`,
+  };
+}
+
+export function handleTemperatureSlash(
+  arg: string,
+  opts: SlashOpts,
+): SlashResult {
+  const raw = (arg || "").trim();
+  if (!raw || raw === "status" || raw === "show") {
+    return {
+      handled: true,
+      output:
+        `Temperature: ${opts.config.temperature}  (${opts.config.provider}/${opts.config.model})\n` +
+        chalk.dim(
+          "Usage: /temperature <0–2>   ·  session-only (set temperature in ~/.forge/config.toml to persist)",
+        ),
+    };
+  }
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n < 0 || n > 2) {
+    return {
+      handled: true,
+      output:
+        chalk.yellow(`Invalid temperature "${raw}". Use a number from 0 to 2.\n`) +
+        chalk.dim(`Current: ${opts.config.temperature}`),
+    };
+  }
+  const rounded = Math.round(n * 1000) / 1000;
+  opts.config.temperature = rounded;
+  try {
+    pushLiveNotice(
+      opts.session.meta.id,
+      `User set temperature to ${rounded} (applies to subsequent model calls).`,
+    );
+  } catch {
+    /* */
+  }
+  return {
+    handled: true,
+    output: `Temperature: ${rounded} (session · next model call)`,
+  };
+}
+
+export function handleMaxTokensSlash(
+  arg: string,
+  opts: SlashOpts,
+): SlashResult {
+  const raw = (arg || "").trim();
+  if (!raw || raw === "status" || raw === "show") {
+    return {
+      handled: true,
+      output:
+        `max_tokens: ${opts.config.maxTokens}  (${opts.config.provider}/${opts.config.model})\n` +
+        chalk.dim(
+          "Usage: /max-tokens <n>   ·  session-only (set max_tokens in ~/.forge/config.toml to persist)",
+        ),
+    };
+  }
+  const n = Number(raw.replace(/[_ ,]/g, ""));
+  if (!Number.isFinite(n) || n < 1 || n > 1_000_000) {
+    return {
+      handled: true,
+      output:
+        chalk.yellow(
+          `Invalid max_tokens "${raw}". Use an integer 1–1000000.\n`,
+        ) + chalk.dim(`Current: ${opts.config.maxTokens}`),
+    };
+  }
+  const v = Math.floor(n);
+  opts.config.maxTokens = v;
+  try {
+    pushLiveNotice(
+      opts.session.meta.id,
+      `User set max_tokens to ${v} (applies to subsequent model calls).`,
+    );
+  } catch {
+    /* */
+  }
+  return {
+    handled: true,
+    output: `max_tokens: ${v} (session · next model call)`,
+  };
+}
 
 export async function handleSlash(
   line: string,
@@ -1683,153 +2485,29 @@ const stats = collectUsageStats({
       };
     }
 
+    case "/provider": {
+      return handleProviderSlash(arg, opts);
+    }
+
     case "/model": {
-      const pcfg = opts.config.providers[opts.config.provider];
-      const models = pcfg?.models?.length
-        ? pcfg.models
-        : pcfg?.defaultModel
-          ? [pcfg.defaultModel]
-          : [];
-      const choices = models.map((m) => {
-        const effortHint = modelSupportsReasoningEffort(m)
-          ? ` · effort ${defaultEffortForModel(m) ?? "—"}`
-          : "";
-        return {
-          value: m,
-          description:
-            (m === opts.config.model ? "current" : "available") + effortHint,
-        };
-      });
-      if (!arg) {
-        const curEffort = resolveReasoningEffort(
-          opts.config.model,
-          opts.config.reasoningEffort,
-        );
-        const effortLine = modelSupportsReasoningEffort(opts.config.model)
-          ? chalk.dim(
-              `\nCurrent effort: ${curEffort ?? "—"}  (change with /effort or /model <name> <low|medium|high>)`,
-            )
-          : chalk.dim("\nCurrent model does not support reasoning effort.");
-        return {
-          handled: true,
-          output:
-            (choices.length
-              ? formatParamMenu("/model", choices, opts.config.model)
-              : `Current model: ${opts.config.model}\nUsage: /model <name> [effort]`) +
-            effortLine +
-            chalk.dim("\nTip: Tab completes model names."),
-        };
-      }
-      // /model <name> [effort] — last token may be an effort level
-      const tokens = arg.split(/\s+/).filter(Boolean);
-      let modelArg = arg;
-      let effortArg: string | undefined;
-      if (tokens.length >= 2) {
-        const maybeEffort = parseReasoningEffort(tokens[tokens.length - 1]!);
-        if (maybeEffort) {
-          effortArg = tokens[tokens.length - 1];
-          modelArg = tokens.slice(0, -1).join(" ");
-        }
-      }
-      let resolved = resolveParamChoice(modelArg, choices);
-      if (!resolved) {
-        // Close catalog typos fail closed (grok-45 → grok-4.5) instead of
-        // silently saving a broken free-form id. True free-form still allowed.
-        const tip = choices.length
-          ? suggestName(
-              modelArg,
-              choices.map((c) => c.value),
-              { minLength: 3, minScore: 38, requirePrefix3: false },
-            )
-          : null;
-        if (tip) {
-          return {
-            handled: true,
-            output:
-              `Unknown model "${modelArg}". Did you mean: ${tip}?\n` +
-              chalk.dim("Tab completes catalog names · free-form ids still accepted when not a close typo."),
-          };
-        }
-        resolved = modelArg;
-      }
-      opts.config.model = resolved;
-      opts.session.meta.model = resolved;
+      return handleModelSlash(arg, opts);
+    }
 
-      // Keep the context window in step with the model unless the user pinned
-      // context_window — a stale 500k budget on a 131k/256k model overflows at
-      // the provider long before auto-compact would fire.
-      let windowNote = "";
-      if (!opts.config.contextWindowExplicit) {
-        const win = modelContextWindow(resolved);
-        if (win && win !== opts.config.contextWindow) {
-          opts.config.contextWindow = win;
-          windowNote = ` · ctx ${formatTokens(win)}`;
-        }
-      }
+    case "/temperature":
+    case "/temp": {
+      return handleTemperatureSlash(arg, opts);
+    }
 
-      let effortNote = "";
-      if (effortArg) {
-        const e = parseReasoningEffort(effortArg);
-        if (!e) {
-          effortNote = chalk.yellow(
-            `\nIgnored effort "${effortArg}" (use low|medium|high)`,
-          );
-        } else if (!modelSupportsReasoningEffort(resolved)) {
-          effortNote = chalk.yellow(
-            `\n${resolved} does not support reasoning effort (value kept in prefs for other models)`,
-          );
-          opts.config.reasoningEffort = e;
-          try {
-            savePreferences({ model: resolved, reasoningEffort: e });
-          } catch {
-            /* ignore */
-          }
-        } else if (!effortLevelsForModel(resolved).includes(e)) {
-          effortNote = chalk.yellow(
-            `\n${e} not valid for ${resolved}; using ${defaultEffortForModel(resolved)}`,
-          );
-          const d = defaultEffortForModel(resolved)!;
-          opts.config.reasoningEffort = d;
-          try {
-            savePreferences({ model: resolved, reasoningEffort: d });
-          } catch {
-            /* ignore */
-          }
-        } else {
-          opts.config.reasoningEffort = e;
-          try {
-            savePreferences({ model: resolved, reasoningEffort: e });
-          } catch {
-            /* ignore */
-          }
-          effortNote = ` · effort ${e}`;
-        }
-      } else {
-        try {
-          savePreferences({ model: resolved });
-        } catch {
-          /* never fail slash on prefs I/O */
-        }
-        if (modelSupportsReasoningEffort(resolved)) {
-          const e = resolveReasoningEffort(resolved, opts.config.reasoningEffort);
-          effortNote = ` · effort ${e}`;
-        }
-      }
+    case "/max-tokens":
+    case "/maxtokens":
+    case "/max_tokens": {
+      return handleMaxTokensSlash(arg, opts);
+    }
 
-      saveSession(opts.session);
-      try {
-        pushLiveNotice(
-          opts.session.meta.id,
-          `User switched model mid-run → ${resolved}${effortNote.replace(/^ · /, " · ") || ""}${windowNote.replace(/^ · /, " · ") || ""}. Continue with the new model; do not restart from scratch.`,
-        );
-      } catch {
-        /* */
-      }
-      return {
-        handled: true,
-        output: `Model set to ${resolved}${effortNote}${windowNote} (saved for future sessions · live mid-run)`,
-        session: opts.session,
-      };
+    case "/context-window":
+    case "/ctx-window":
+    case "/context_window": {
+      return handleContextWindowSlash(arg, opts);
     }
 
     case "/effort": {
@@ -4822,6 +5500,8 @@ export interface EffectiveConfigSnap {
   provider: string;
   model: string;
   reasoningEffort: string | null;
+  temperature: number;
+  maxTokens: number;
   permissionMode: string;
   sandbox: string;
   sandboxNetwork: string;
@@ -4831,6 +5511,8 @@ export interface EffectiveConfigSnap {
   blockingStopHooks: boolean;
   promptProfile: string;
   contextWindow: number;
+  /** True when user pinned context_window (toml/CLI or /context-window). */
+  contextWindowExplicit: boolean;
   autoCompactThreshold: number;
   maxTurns: number;
   /** True when maxTurns <= 0 (unlimited agent turns). */
@@ -4883,6 +5565,8 @@ export function buildEffectiveConfigSnap(
     provider: c.provider,
     model: c.model,
     reasoningEffort: c.reasoningEffort ?? null,
+    temperature: c.temperature,
+    maxTokens: c.maxTokens,
     permissionMode: c.permissionMode,
     sandbox: c.sandbox,
     sandboxNetwork: net,
@@ -4898,6 +5582,7 @@ export function buildEffectiveConfigSnap(
     blockingStopHooks: c.blockingStopHooks !== false,
     promptProfile: c.promptProfile ?? "default",
     contextWindow: c.contextWindow,
+    contextWindowExplicit: Boolean(c.contextWindowExplicit),
     autoCompactThreshold: c.autoCompactThreshold,
     maxTurns: c.maxTurns,
     maxTurnsUnlimited: !(typeof c.maxTurns === "number" && c.maxTurns > 0),
@@ -4962,6 +5647,8 @@ export function formatEffectiveConfig(
     `  forgeHome:       ${snap.forgeHome}`,
     `  provider/model:  ${snap.provider}/${snap.model}` +
       (snap.reasoningEffort ? `  effort=${snap.reasoningEffort}` : ""),
+    `  sampling:        temp=${snap.temperature}  max_tokens=${snap.maxTokens}` +
+      chalk.dim("  (/temperature · /max-tokens)"),
     `  permission:      ${snap.permissionMode}` +
       (snap.permissionMode === "plan"
         ? "  (read-only · /build to implement)"
@@ -4972,7 +5659,10 @@ export function formatEffectiveConfig(
     `  format-on-write: ${snap.formatOnWrite ? "on" : "off"}  (/format · FORGE_FORMAT_ON_WRITE)`,
     `  blocking Stop:   ${snap.blockingStopHooks ? "on" : "OFF"}`,
     `  profile:         ${snap.promptProfile}`,
-    `  context:         window=${snap.contextWindow} autoCompact@${Math.round((snap.autoCompactThreshold || 0.8) * 100)}% maxTurns=${snap.maxTurns > 0 ? snap.maxTurns : "unlimited"}`,
+    `  context:         window=${snap.contextWindow}` +
+      (snap.contextWindowExplicit ? " (pinned)" : " (auto)") +
+      ` autoCompact@${Math.round((snap.autoCompactThreshold || 0.8) * 100)}% maxTurns=${snap.maxTurns > 0 ? snap.maxTurns : "unlimited"}` +
+      chalk.dim("  (/context-window)"),
     `  cost budget:     ${
       snap.effectiveMaxCostUsd != null
         ? `$${snap.effectiveMaxCostUsd}`
@@ -4999,7 +5689,7 @@ export function formatEffectiveConfig(
     `  loop guards:     doom@${snap.env.FORGE_DOOM_LOOP_THRESHOLD}  error-streak@${snap.env.FORGE_ERROR_STREAK_THRESHOLD}`,
     chalk.dim(
       sess
-        ? `  /config json · /doctor · /permissions · /model · /effort`
+        ? `  /config json · /provider · /model · /context-window · /temperature · /max-tokens · /doctor`
         : `  forge config --json · forge doctor · forge tips`,
     ),
   ].filter(Boolean) as string[];
@@ -5152,8 +5842,12 @@ Forge slash commands
   /metrics              Local metrics.jsonl + this session counters  [live]
   /stats [days|week]    Usage dashboard (runs/tokens/cost/projects)  [live]
   /todos                Show agent todos  [live]
-  /model <name> [effort] Switch model mid-run; optional low|medium|high (persists)  [live]
-  /effort [level]       Reasoning effort for current model (low|medium|high)  [live]
+  /provider [name]      List / switch provider (openrouter, xai, …) — sticky  [live]
+  /model <name> [effort] Switch model mid-run; free-form on OpenRouter  [live]
+  /effort [level]       Reasoning effort when model supports it (low|medium|high)  [live]
+  /temperature [0–2]    Session sampling temperature (/temp)  [live]
+  /max-tokens [n]       Session max output tokens  [live]
+  /context-window [n|auto]  Pin or auto-follow model max context (/ctx-window)  [live]
   /plan [focus]         Session-scoped PLAN mode (read-only design; no sticky prefs)  [live]
   /build [note]         Leave plan → restore prior mode and implement (/execute)  [live]
   /permissions [mode]   Menu if empty; Tab / numbers / aliases (yolo, always…)

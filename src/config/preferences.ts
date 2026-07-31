@@ -22,6 +22,16 @@ export interface UserPreferences {
   model?: string | null;
   permissionMode?: PermissionMode;
   reasoningEffort?: ReasoningEffort;
+  /**
+   * Recently selected model ids per provider (for /model tab-complete and
+   * bare /model menus — especially free-form OpenRouter ids).
+   */
+  recentModels?: Record<string, string[]>;
+  /**
+   * Last model used per provider so /provider openrouter restores the
+   * previous OpenRouter model instead of a stale grok-* id.
+   */
+  lastModelByProvider?: Record<string, string>;
   /** Ring terminal BEL when a REPL turn finishes (long-run attention). */
   bellOnTurnEnd?: boolean;
   /**
@@ -75,6 +85,24 @@ export function loadPreferences(): UserPreferences {
   if (typeof raw.formatOnWrite === "boolean") {
     out.formatOnWrite = raw.formatOnWrite;
   }
+  if (raw.recentModels && typeof raw.recentModels === "object") {
+    const rm: Record<string, string[]> = {};
+    for (const [k, v] of Object.entries(raw.recentModels as Record<string, unknown>)) {
+      if (!Array.isArray(v)) continue;
+      const list = v.map((x) => String(x || "").trim()).filter(Boolean).slice(0, 20);
+      if (list.length) rm[String(k)] = list;
+    }
+    if (Object.keys(rm).length) out.recentModels = rm;
+  }
+  if (raw.lastModelByProvider && typeof raw.lastModelByProvider === "object") {
+    const lm: Record<string, string> = {};
+    for (const [k, v] of Object.entries(
+      raw.lastModelByProvider as Record<string, unknown>,
+    )) {
+      if (typeof v === "string" && v.trim()) lm[String(k)] = v.trim();
+    }
+    if (Object.keys(lm).length) out.lastModelByProvider = lm;
+  }
   if (typeof raw.updatedAt === "string") out.updatedAt = raw.updatedAt;
   return out;
 }
@@ -92,6 +120,8 @@ export function savePreferences(patch: {
   notifyOnTurnEnd?: boolean;
   seenWelcomeTip?: boolean;
   formatOnWrite?: boolean;
+  /** When setting model, also record lastModelByProvider[provider]. */
+  modelProvider?: string;
 }): UserPreferences {
   const cur = loadPreferences();
   if (patch.provider !== undefined) {
@@ -104,10 +134,12 @@ export function savePreferences(patch: {
       }
       const providerChanged = cur.provider !== p.provider;
       cur.provider = p.provider;
-      // Provider switch without an explicit model in this patch: drop stale
-      // model pref (e.g. grok-* left over after login -p claude).
+      // Provider switch without an explicit model in this patch: prefer the
+      // last model used on that provider, else drop stale cross-provider id.
       if (providerChanged && patch.model === undefined) {
-        delete cur.model;
+        const last = cur.lastModelByProvider?.[p.provider];
+        if (last) cur.model = last;
+        else delete cur.model;
       }
     }
   }
@@ -116,7 +148,17 @@ export function savePreferences(patch: {
       delete cur.model;
     } else {
       const m = String(patch.model).trim();
-      if (m) cur.model = m;
+      if (m) {
+        cur.model = m;
+        const prov =
+          patch.modelProvider ||
+          cur.provider ||
+          (typeof patch.provider === "string" ? patch.provider : undefined);
+        if (prov) {
+          if (!cur.lastModelByProvider) cur.lastModelByProvider = {};
+          cur.lastModelByProvider[String(prov)] = m;
+        }
+      }
     }
   }
   if (patch.seenWelcomeTip !== undefined) {
@@ -145,6 +187,43 @@ export function savePreferences(patch: {
   cur.updatedAt = nowIso();
   writeJsonFile(preferencesPath(), cur, 0o600);
   return cur;
+}
+
+/**
+ * Push a model id to the front of recentModels[provider] (deduped, capped).
+ */
+export function rememberRecentModel(
+  provider: string,
+  model: string,
+  max = 12,
+): UserPreferences {
+  const p = String(provider || "").trim();
+  const m = String(model || "").trim();
+  const cur = loadPreferences();
+  if (!p || !m) return cur;
+  if (!cur.recentModels) cur.recentModels = {};
+  const prev = cur.recentModels[p] || [];
+  const next = [m, ...prev.filter((x) => x !== m)].slice(0, Math.max(1, max));
+  cur.recentModels[p] = next;
+  if (!cur.lastModelByProvider) cur.lastModelByProvider = {};
+  cur.lastModelByProvider[p] = m;
+  cur.version = 1;
+  cur.updatedAt = nowIso();
+  writeJsonFile(preferencesPath(), cur, 0o600);
+  return cur;
+}
+
+/** Last model used for a provider (sticky restore on /provider switch). */
+export function lastModelForProvider(provider: string): string | undefined {
+  try {
+    const p = String(provider || "").trim();
+    if (!p) return undefined;
+    const prefs = loadPreferences();
+    const m = prefs.lastModelByProvider?.[p];
+    return m?.trim() || undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 /** Apply loaded preferences onto a config object (mutates and returns it). */

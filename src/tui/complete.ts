@@ -9,8 +9,10 @@ import {
   modelSupportsReasoningEffort,
   resolveReasoningEffort,
 } from "../config/reasoning.js";
+import { buildModelCatalogSync } from "../config/model-catalog.js";
 import { SLASH_COMMANDS } from "../commands/slash.js";
 import { listProjectCommandSlashes } from "../commands/project-commands.js";
+import { PROVIDER_IDS } from "../util/provider-id.js";
 
 export interface ParamChoice {
   value: string;
@@ -121,6 +123,53 @@ export const COMMAND_PARAMS: Record<string, ParamChoice[]> = {
       value: "auto-switch",
       description: "on|off|status — smart switch on low usage",
     },
+  ],
+  provider: [
+    { value: "openrouter", description: "OpenRouter (free-form model ids)", aliases: ["or", "router"] },
+    { value: "xai", description: "xAI / Grok", aliases: ["grok"] },
+    { value: "anthropic", description: "Anthropic Claude", aliases: ["claude"] },
+    { value: "openai", description: "OpenAI", aliases: ["gpt", "oai"] },
+    { value: "google", description: "Google Gemini", aliases: ["gemini"] },
+    { value: "copilot", description: "GitHub Copilot", aliases: ["github"] },
+    { value: "custom", description: "Custom OpenAI-compat base URL" },
+    { value: "list", description: "List providers + auth" },
+    { value: "status", description: "Same as list" },
+  ],
+  temperature: [
+    { value: "0", description: "Deterministic" },
+    { value: "0.2", description: "Default coding" },
+    { value: "0.7", description: "More creative" },
+    { value: "1", description: "High variance" },
+  ],
+  temp: [
+    { value: "0", description: "Deterministic" },
+    { value: "0.2", description: "Default coding" },
+    { value: "0.7", description: "More creative" },
+  ],
+  "max-tokens": [
+    { value: "4096", description: "Short replies" },
+    { value: "8192", description: "Medium" },
+    { value: "16384", description: "Default" },
+    { value: "32768", description: "Long agent turns" },
+    { value: "65536", description: "Very long" },
+  ],
+  maxtokens: [
+    { value: "8192", description: "Medium" },
+    { value: "16384", description: "Default" },
+    { value: "32768", description: "Long" },
+  ],
+  "context-window": [
+    { value: "auto", description: "Follow model max (default)" },
+    { value: "128k", description: "128,000 tokens" },
+    { value: "200k", description: "200,000 tokens" },
+    { value: "256k", description: "256,000 tokens" },
+    { value: "500k", description: "500,000 tokens" },
+    { value: "1m", description: "1,000,000 tokens" },
+  ],
+  "ctx-window": [
+    { value: "auto", description: "Follow model max" },
+    { value: "1m", description: "1,000,000 tokens" },
+    { value: "200k", description: "200,000 tokens" },
   ],
   account: [
     { value: "list", description: "List all stored accounts" },
@@ -414,17 +463,32 @@ export function forgeCompleter(
   const cmd = cmdToken.replace(/^\//, "");
   let choices = COMMAND_PARAMS[cmd] ? [...COMMAND_PARAMS[cmd]] : [];
 
-  // Dynamic model list
+  // Dynamic model list (static + recent + cached OpenRouter remote)
   if (cmd === "model" && config) {
-    const pcfg = config.providers[config.provider];
-    const models = pcfg?.models?.length
-      ? pcfg.models
-      : pcfg?.defaultModel
-        ? [pcfg.defaultModel]
-        : [];
-    choices = models.map((m) => ({
+    const catalog = buildModelCatalogSync(config, config.provider);
+    choices = catalog.ids.slice(0, 120).map((m) => ({
       value: m,
       description: m === config.model ? "current" : "available",
+    }));
+  }
+
+  // /provider completions
+  if (cmd === "provider") {
+    const ids = [
+      ...PROVIDER_IDS.filter((id) => id !== "grok"),
+      "list",
+      "status",
+    ];
+    choices = ids.map((id) => ({
+      value: id,
+      description:
+        config && id === config.provider
+          ? "current"
+          : id === "openrouter"
+            ? "OpenRouter (free-form models)"
+            : id === "list" || id === "status"
+              ? "show providers"
+              : "provider",
     }));
   }
 

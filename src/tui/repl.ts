@@ -1,6 +1,6 @@
 import chalk from "chalk";
 import type { ForgeConfig } from "../config/types.js";
-import { modelContextWindow } from "../config/model-info.js";
+import { applyModelContextWindow } from "../config/model-info.js";
 import type { LLMProvider } from "../providers/types.js";
 import type { SessionData } from "../session/session.js";
 import { HookRunner } from "../harness/hooks.js";
@@ -19,7 +19,7 @@ import {
   maybeTurnEndAttention,
   turnEndOutcomeLabel,
 } from "../util/attention.js";
-import { describeAuth } from "../auth/resolve.js";
+import { describeAuth, resolveAuthFresh } from "../auth/resolve.js";
 import type { ResolvedAuth } from "../auth/types.js";
 import {
   formatToolStart,
@@ -313,8 +313,14 @@ export async function runRepl(opts: {
           livePrompt();
           return;
         }
-        // Mid-run /accounts switch: update bearer for subsequent loop recoveries
-        if (slash.authUpdated && auth) {
+        // Mid-run /accounts switch or /provider: hot-swap client credentials
+        if (slash.providerUpdated) {
+          const fresh = await resolveAuthFresh(config, String(config.provider));
+          if (fresh) {
+            auth = fresh;
+            provider = createProvider(config, auth);
+          }
+        } else if (slash.authUpdated && auth) {
           if (provider.updateCredentials) {
             provider.updateCredentials(auth.token);
           } else {
@@ -377,10 +383,7 @@ export async function runRepl(opts: {
             config.model =
               config.providers[a.provider]?.defaultModel || config.model;
           }
-          if (!config.contextWindowExplicit) {
-            const win = modelContextWindow(config.model);
-            if (win) config.contextWindow = win;
-          }
+          applyModelContextWindow(config, config.model);
           log.dim(
             `Provider realigned to ${a.provider} (model ${config.model}) after auth fallback`,
           );
@@ -393,9 +396,22 @@ export async function runRepl(opts: {
       return;
     }
 
-    // /accounts switch mutates auth in-place; hot-swap live provider token
-    // so the next turn does not keep using the previous account's bearer.
-    if (slash.authUpdated && auth) {
+    // /accounts switch or /provider mutates auth/config; hot-swap live client
+    // so the next turn does not keep the previous bearer or base URL.
+    if (slash.providerUpdated) {
+      const fresh = await resolveAuthFresh(config, String(config.provider));
+      if (fresh) {
+        auth = fresh;
+        provider = createProvider(config, auth);
+        log.dim(
+          `Provider switched → ${config.provider}/${config.model} (${describeAuth(auth)})`,
+        );
+      } else {
+        log.warn(
+          `Provider set to ${config.provider} but no credentials resolved — forge login -p ${config.provider}`,
+        );
+      }
+    } else if (slash.authUpdated && auth) {
       if (provider.updateCredentials) {
         provider.updateCredentials(auth.token);
       } else {

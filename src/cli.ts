@@ -3419,10 +3419,11 @@ Project instructions for Forge (and other coding agents).
 
   program
     .command("models")
-    .description("List known models for configured providers")
+    .description("List known models for configured providers (OpenRouter merges remote catalog when available)")
     .option("-p, --provider <provider>", "Filter to one provider (xai|anthropic|openai|openrouter|google|copilot|custom)")
+    .option("--refresh", "Refresh OpenRouter remote model catalog")
     .option("--json", "Machine-readable JSON")
-    .action((opts, command) => {
+    .action(async (opts, command) => {
       const wantJson = flagJson(opts, command);
       // Parent also defines -p/--provider; merge so `forge -p xai models` works.
       const globals = (command?.optsWithGlobals?.() || {}) as Record<string, unknown>;
@@ -3440,13 +3441,51 @@ Project instructions for Forge (and other coding agents).
       // buildConfig validates provider when present; loadConfig alone ignores -p.
       const config =
         merged.provider != null ? buildConfig(merged) : loadConfig();
-      let rows = Object.entries(config.providers).map(([id, p]) => ({
-        provider: id,
-        defaultModel: p.defaultModel || null,
-        supportsOAuth: Boolean(p.supportsOAuth),
-        models: p.models?.length ? p.models : p.defaultModel ? [p.defaultModel] : [],
-        baseUrl: p.baseUrl || null,
-      }));
+      const { buildModelCatalog } = await import("./config/model-catalog.js");
+      const refresh = Boolean(opts.refresh);
+      let rows = await Promise.all(
+        Object.entries(config.providers).map(async ([id, p]) => {
+          let models =
+            p.models?.length ? [...p.models] : p.defaultModel ? [p.defaultModel] : [];
+          let remoteCount = 0;
+          let freeForm = false;
+          if (id === "openrouter" || refresh) {
+            try {
+              const apiKey =
+                process.env.OPENROUTER_API_KEY?.trim() ||
+                (await import("./auth/store.js")).getCredential("openrouter")
+                  ?.accessToken;
+              const cat = await buildModelCatalog(config, id, {
+                refreshRemote: id === "openrouter" && (refresh || true),
+                apiKey,
+                useCache: true,
+              });
+              models = cat.ids;
+              remoteCount = cat.remoteCount;
+              freeForm = cat.freeForm;
+            } catch {
+              /* keep static */
+            }
+          } else {
+            const { providerAllowsFreeFormModels, recentModelsForProvider } =
+              await import("./config/model-catalog.js");
+            freeForm = providerAllowsFreeFormModels(id);
+            const recent = recentModelsForProvider(id);
+            if (recent.length) {
+              models = [...new Set([...recent, ...models])];
+            }
+          }
+          return {
+            provider: id,
+            defaultModel: p.defaultModel || null,
+            supportsOAuth: Boolean(p.supportsOAuth),
+            models,
+            freeForm,
+            remoteCount,
+            baseUrl: p.baseUrl || null,
+          };
+        }),
+      );
       if (merged.provider != null) {
         const want = String(config.provider || "").toLowerCase();
         rows = rows.filter((r) => r.provider.toLowerCase() === want);
@@ -3474,9 +3513,23 @@ Project instructions for Forge (and other coding agents).
         return;
       }
       for (const r of rows) {
-        const models = r.models.length ? r.models.join(", ") : r.defaultModel || "(any)";
+        const models = r.models.length
+          ? r.models.length > 24
+            ? `${r.models.slice(0, 24).join(", ")} …(+${r.models.length - 24})`
+            : r.models.join(", ")
+          : r.defaultModel || "(any)";
+        const flags =
+          (r.freeForm ? " free-form" : "") +
+          (r.remoteCount ? ` remote=${r.remoteCount}` : "");
         console.log(
-          `${r.provider.padEnd(12)} default=${String(r.defaultModel || "").padEnd(28)} oauth=${r.supportsOAuth ? "yes" : "no "}  models: ${models}`,
+          `${r.provider.padEnd(12)} default=${String(r.defaultModel || "").padEnd(28)} oauth=${r.supportsOAuth ? "yes" : "no "}${flags}  models: ${models}`,
+        );
+      }
+      if (rows.some((r) => r.provider === "openrouter")) {
+        console.log(
+          chalk.dim(
+            "OpenRouter: free-form ids work · forge models -p openrouter --refresh · REPL: /provider openrouter · /model <id>",
+          ),
         );
       }
     });

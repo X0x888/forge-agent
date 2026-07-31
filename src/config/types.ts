@@ -255,15 +255,26 @@ export const DEFAULT_CONFIG: ForgeConfig = {
       baseUrl: "https://openrouter.ai/api/v1",
       supportsOAuth: false,
       defaultModel: "anthropic/claude-sonnet-4",
-      // Common aliases; OpenRouter accepts many more via free-form model ids
+      // Starter catalog; OpenRouter accepts any free-form id. /model and
+      // `forge models -p openrouter` also merge recent + remote /models cache.
       models: [
         "anthropic/claude-sonnet-4",
         "anthropic/claude-opus-4",
         "openai/gpt-4.1",
         "openai/o3",
+        "openai/gpt-4o",
         "google/gemini-2.5-pro",
+        "google/gemini-2.5-flash",
         "x-ai/grok-4.5",
         "x-ai/grok-4",
+        "deepseek/deepseek-v4-flash",
+        "deepseek/deepseek-v4-flash-0731",
+        "deepseek/deepseek-v4-pro",
+        "deepseek/deepseek-chat",
+        "meta-llama/llama-4-maverick",
+        "qwen/qwen3-coder",
+        "mistralai/mistral-large",
+        "moonshotai/kimi-k2",
       ],
     },
     google: {
