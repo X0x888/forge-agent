@@ -48,6 +48,34 @@ function pkce(): { verifier: string; challenge: string } {
 }
 
 /**
+ * Soft-validate OpenRouter API keys. Real keys look like sk-or-v1-… and are
+ * typically 60+ chars. Short sk-… pastes (DeepSeek console, truncated keys)
+ * will still store, but chat returns a confusing 401 "Missing Authentication header".
+ */
+export function openRouterKeyFormatWarning(key: string): string | null {
+  const k = key.trim();
+  if (!k) return "OpenRouter API key is empty.";
+  if (k.startsWith("sk-or-")) return null;
+  if (/^sk-[a-f0-9]{20,}$/i.test(k) && k.length < 50) {
+    return (
+      "This looks like a DeepSeek platform key (sk-…), not OpenRouter (sk-or-v1-…). " +
+      "Use native DeepSeek instead:\n" +
+      "  forge login -p deepseek --api-key 'sk-…'\n" +
+      "  forge -p deepseek -m deepseek-v4-flash\n" +
+      "Or create an OpenRouter key at https://openrouter.ai/keys"
+    );
+  }
+  if (!k.startsWith("sk-or-")) {
+    return (
+      "OpenRouter keys usually start with sk-or-v1-. " +
+      "If chat fails with 401, regenerate at https://openrouter.ai/keys and: " +
+      "forge login -p openrouter --api-key 'sk-or-v1-…'"
+    );
+  }
+  return null;
+}
+
+/**
  * Provider OAuth / subscription profiles.
  * - xAI SuperGrok: public Grok CLI OIDC client (PKCE + optional device code)
  * - OpenAI: device-code / ChatGPT where available
@@ -126,7 +154,11 @@ export async function loginInteractive(opts: {
       const prompt =
         provider === "copilot"
           ? "Enter GitHub OAuth token for Copilot (ghu_/gho_ from VS Code or `copilot` CLI): "
-          : `Enter API key for ${provider}: `;
+          : provider === "deepseek" || provider === "ds"
+            ? "Enter DeepSeek API key (sk-… from platform.deepseek.com): "
+            : provider === "openrouter" || provider === "or"
+              ? "Enter OpenRouter API key (sk-or-v1-… from openrouter.ai/keys): "
+              : `Enter API key for ${provider}: `;
       key = (await rl.question(prompt)).trim();
       rl.close();
     }
@@ -144,6 +176,19 @@ export async function loginInteractive(opts: {
             : ""),
       );
       return { accountId: result.accountId, created: result.created };
+    }
+    // OpenRouter keys are sk-or-v1-… (long). Short sk-… keys are DeepSeek
+    // platform keys — they belong on -p deepseek, not openrouter.
+    if (provider === "openrouter" || provider === "or" || provider === "router") {
+      const warn = openRouterKeyFormatWarning(key);
+      if (warn) log.warn(warn);
+    }
+    if (provider === "deepseek" || provider === "ds") {
+      if (key.startsWith("sk-or-")) {
+        log.warn(
+          "This looks like an OpenRouter key (sk-or-v1-…). Use: forge login -p openrouter --api-key …",
+        );
+      }
     }
     const label =
       opts.accountLabel?.trim() ||

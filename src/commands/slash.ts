@@ -584,6 +584,7 @@ export function completeSlash(
       "/notify": ["on", "off", "test", "status"],
       "/budget": ["status", "off", "1", "5", "10", "25"],
       "/provider": [
+        "deepseek",
         "openrouter",
         "xai",
         "anthropic",
@@ -753,6 +754,7 @@ type SlashOpts = {
 
 const STOCK_PROVIDER_ORDER = [
   "xai",
+  "deepseek",
   "openrouter",
   "anthropic",
   "openai",
@@ -766,6 +768,7 @@ function providerAuthSummary(provider: string): string {
     const envNames: string[] = [];
     if (provider === "xai") envNames.push("XAI_API_KEY", "GROK_API_KEY");
     else if (provider === "openrouter") envNames.push("OPENROUTER_API_KEY");
+    else if (provider === "deepseek") envNames.push("DEEPSEEK_API_KEY");
     else if (provider === "anthropic") envNames.push("ANTHROPIC_API_KEY");
     else if (provider === "openai") envNames.push("OPENAI_API_KEY");
     else if (provider === "google") envNames.push("GOOGLE_API_KEY", "GEMINI_API_KEY");
@@ -829,7 +832,7 @@ export async function handleProviderSlash(
     lines.push("");
     lines.push(
       chalk.dim(
-        "Usage: /provider <name>   ·  aliases: or→openrouter, claude→anthropic, gpt→openai",
+        "Usage: /provider <name>   ·  aliases: ds→deepseek, or→openrouter, claude→anthropic, gpt→openai",
       ),
     );
     lines.push(
@@ -839,7 +842,7 @@ export async function handleProviderSlash(
     );
     lines.push(
       chalk.dim(
-        "Login: forge login -p openrouter --api-key $OPENROUTER_API_KEY",
+        "Login: forge login -p deepseek --api-key $DEEPSEEK_API_KEY  ·  openrouter: OPENROUTER_API_KEY",
       ),
     );
     return { handled: true, output: lines.join("\n") };
@@ -964,11 +967,13 @@ export async function handleProviderSlash(
       authNote =
         chalk.yellow(
           `\nNo credentials for ${nextProvider}. ` +
-            (nextProvider === "openrouter"
-              ? "Run: forge login -p openrouter --api-key $OPENROUTER_API_KEY"
-              : nextProvider === "xai"
-                ? "Run: forge login   or  export XAI_API_KEY=…"
-                : `Run: forge login -p ${nextProvider}`),
+            (nextProvider === "deepseek"
+              ? "Run: forge login -p deepseek --api-key $DEEPSEEK_API_KEY"
+              : nextProvider === "openrouter"
+                ? "Run: forge login -p openrouter --api-key $OPENROUTER_API_KEY"
+                : nextProvider === "xai"
+                  ? "Run: forge login   or  export XAI_API_KEY=…"
+                  : `Run: forge login -p ${nextProvider}`),
         );
     }
   } catch (err) {

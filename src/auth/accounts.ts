@@ -76,6 +76,7 @@ export function isEnvAuthActive(provider: string): boolean {
   else if (p === "anthropic") names.push("ANTHROPIC_API_KEY");
   else if (p === "openai" || p === "codex") names.push("OPENAI_API_KEY");
   else if (p === "openrouter") names.push("OPENROUTER_API_KEY");
+  else if (p === "deepseek" || p === "ds") names.push("DEEPSEEK_API_KEY");
   else if (p === "google") names.push("GOOGLE_API_KEY", "GEMINI_API_KEY");
   else if (p === "custom") names.push("FORGE_API_KEY");
   for (const name of names) {

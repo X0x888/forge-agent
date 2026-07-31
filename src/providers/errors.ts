@@ -135,9 +135,31 @@ export function formatProviderError(
 
     if (err.status === 401 || err.status === 403) {
       code = err.status === 401 ? "auth_expired" : "auth_forbidden";
-      tips.push("forge login  (or forge login --add for another account)");
-      tips.push("forge accounts status  ·  /accounts switch");
-      tips.push("Check sticky provider: forge auth  ·  preferences.json");
+      const body = err.body || headline;
+      const isOpenRouter =
+        /openrouter/i.test(providerLabel) || /openrouter/i.test(body);
+      const missingAuthHdr = /missing authentication header/i.test(body);
+      if (isOpenRouter || missingAuthHdr) {
+        tips.push(
+          "OpenRouter needs sk-or-v1-… from https://openrouter.ai/keys",
+        );
+        tips.push(
+          "DeepSeek platform sk-… keys → forge login -p deepseek --api-key …  ·  forge -p deepseek -m deepseek-v4-flash",
+        );
+        tips.push(
+          "forge login -p openrouter --api-key 'sk-or-v1-…'  ·  or OPENROUTER_API_KEY / DEEPSEEK_API_KEY",
+        );
+        tips.push("forge auth  ·  forge accounts status");
+      } else if (/deepseek/i.test(providerLabel)) {
+        tips.push(
+          "forge login -p deepseek --api-key $DEEPSEEK_API_KEY  (platform.deepseek.com)",
+        );
+        tips.push("export DEEPSEEK_API_KEY=sk-…  ·  forge accounts status");
+      } else {
+        tips.push("forge login  (or forge login --add for another account)");
+        tips.push("forge accounts status  ·  /accounts switch");
+        tips.push("Check sticky provider: forge auth  ·  preferences.json");
+      }
     } else if (err.status === 429) {
       code = "rate_limited";
       tips.push("Wait for Retry-After, or forge accounts switch");

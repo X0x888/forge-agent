@@ -51,6 +51,8 @@ const ENV_PROVIDERS = new Set<string>([
   "anthropic",
   "openai",
   "openrouter",
+  "deepseek",
+  "ds",
   "google",
   "copilot",
   "github-copilot",

@@ -154,6 +154,7 @@ export function estimateCostUsd(
     anthropic: { in: 3, out: 15 },
     openai: { in: 2.5, out: 10 },
     openrouter: { in: 3, out: 15 },
+    deepseek: { in: 0.14, out: 0.28 }, // V4 Flash ballpark (HUD only)
     google: { in: 1.25, out: 10 },
   };
   // Per-model overrides where they differ from the provider average.
@@ -164,6 +165,8 @@ export function estimateCostUsd(
     "grok-4": { in: 3, out: 15 },
     "grok-3": { in: 3, out: 15 },
     "grok-3-mini": { in: 0.3, out: 0.5 },
+    "deepseek-v4-flash": { in: 0.14, out: 0.28 },
+    "deepseek-v4-pro": { in: 1.0, out: 4.0 },
   };
   const mk = model
     ? (model.includes("/") ? model.split("/").pop()! : model)

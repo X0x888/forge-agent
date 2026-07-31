@@ -236,7 +236,7 @@ Docs: docs/PRODUCTION.md · docs/RELIABILITY.md · docs/ULW.md · forge news
 `,
     )
     .option("-m, --model <model>", "Model id")
-    .option("-p, --provider <provider>", "Provider: xai|anthropic|openai|openrouter|google|copilot|custom")
+    .option("-p, --provider <provider>", "Provider: xai|anthropic|openai|openrouter|deepseek|google|copilot|custom")
     .option("--base-url <url>", "Override API base URL")
     .option(
       "--effort <level>",
@@ -3420,7 +3420,7 @@ Project instructions for Forge (and other coding agents).
   program
     .command("models")
     .description("List known models for configured providers (OpenRouter merges remote catalog when available)")
-    .option("-p, --provider <provider>", "Filter to one provider (xai|anthropic|openai|openrouter|google|copilot|custom)")
+    .option("-p, --provider <provider>", "Filter to one provider (xai|anthropic|openai|openrouter|deepseek|google|copilot|custom)")
     .option("--refresh", "Refresh OpenRouter remote model catalog")
     .option("--json", "Machine-readable JSON")
     .action(async (opts, command) => {

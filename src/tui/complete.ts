@@ -125,7 +125,12 @@ export const COMMAND_PARAMS: Record<string, ParamChoice[]> = {
     },
   ],
   provider: [
-    { value: "openrouter", description: "OpenRouter (free-form model ids)", aliases: ["or", "router"] },
+    {
+      value: "deepseek",
+      description: "DeepSeek platform API (sk-… keys)",
+      aliases: ["ds"],
+    },
+    { value: "openrouter", description: "OpenRouter (sk-or-v1-… keys)", aliases: ["or", "router"] },
     { value: "xai", description: "xAI / Grok", aliases: ["grok"] },
     { value: "anthropic", description: "Anthropic Claude", aliases: ["claude"] },
     { value: "openai", description: "OpenAI", aliases: ["gpt", "oai"] },
@@ -499,11 +504,13 @@ export function forgeCompleter(
       description:
         config && id === config.provider
           ? "current"
-          : id === "openrouter"
-            ? "OpenRouter (free-form models)"
-            : id === "list" || id === "status"
-              ? "show providers"
-              : "provider",
+          : id === "deepseek"
+            ? "DeepSeek platform API"
+            : id === "openrouter"
+              ? "OpenRouter (free-form models)"
+              : id === "list" || id === "status"
+                ? "show providers"
+                : "provider",
     }));
   }
 

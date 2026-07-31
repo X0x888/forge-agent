@@ -60,6 +60,7 @@ export type ProviderId =
   | "anthropic"
   | "openai"
   | "openrouter"
+  | "deepseek"
   | "google"
   | "copilot"
   | "custom";
@@ -278,6 +279,21 @@ export const DEFAULT_CONFIG: ForgeConfig = {
         "qwen/qwen3-coder",
         "mistralai/mistral-large",
         "moonshotai/kimi-k2",
+      ],
+    },
+    deepseek: {
+      id: "deepseek",
+      apiKeyEnv: "DEEPSEEK_API_KEY",
+      // OpenAI-compat; docs also accept https://api.deepseek.com/v1
+      baseUrl: "https://api.deepseek.com",
+      supportsOAuth: false,
+      defaultModel: "deepseek-v4-flash",
+      models: [
+        "deepseek-v4-flash",
+        "deepseek-v4-pro",
+        // legacy aliases may still resolve during migration windows
+        "deepseek-chat",
+        "deepseek-reasoner",
       ],
     },
     google: {
