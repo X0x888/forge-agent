@@ -1,4 +1,3 @@
-import readline from "node:readline";
 import chalk from "chalk";
 import type { ForgeConfig } from "../config/types.js";
 import { modelContextWindow } from "../config/model-info.js";
@@ -44,6 +43,7 @@ import {
 } from "../agent/tools/background-tasks.js";
 import { loadHistory, appendHistory } from "./history.js";
 import { makeCompleter } from "./complete.js";
+import { createPromptEditor } from "./prompt-editor.js";
 import {
   buildPromptFlags,
   buildLivePrompt,
@@ -166,12 +166,11 @@ export async function runRepl(opts: {
   let pendingTools = 0;
 
   const savedHistory = loadHistory(300);
-  const rl = readline.createInterface({
-    input: process.stdin,
-    output: process.stdout,
-    terminal: true,
-    historySize: 300,
+  // Premium multi-line paste editor (bracketed paste + explicit Enter to send).
+  // Falls back to classic readline when stdin is not a TTY.
+  const rl = createPromptEditor({
     history: savedHistory,
+    historySize: 300,
     completer: makeCompleter(() => config),
   });
 
@@ -421,7 +420,7 @@ export async function runRepl(opts: {
     busy = true;
     pendingTools = 0;
     abortController = new AbortController();
-    // Intentionally do NOT rl.pause() — live controls need stdin while working.
+    // Live controls need stdin while working (editor stays open).
     beginTurn();
     pulseHeartbeat();
 
@@ -746,7 +745,7 @@ function printBanner(
         (git.branch ? ` · ${git.branch}${git.dirty ? "*" : ""}` : "") +
         (hints.length ? ` · ${hints.join("+")}` : "") +
         `\n  Native live status while working · type at live › mid-run (/cycle 0)\n` +
-        `  ↑↓ history · Tab complete · /tasks · /status · /undo · /logs · /share · /news · /tips · /quit\n` +
+        `  Paste multi-line safely (↵ sends · ^J newline) · ↑↓ history · Tab · /tips · /quit\n` +
         `  Fresh session: forge --new  ·  resume is automatic for this cwd\n`,
     ),
   );

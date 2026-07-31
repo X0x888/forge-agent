@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+## 0.9.98 — multi-line paste editor (no auto-run)
+
+### Added
+
+- **Premium REPL multi-line paste**: bracketed paste mode (`CSI ?2004 h`) so Ghostty/iTerm treat pastes as safe; pasted newlines **never** submit. Explicit **Enter** sends the full draft; **Ctrl+J** / **Alt+Enter** / **Shift+Enter** (Kitty CSI u) insert a newline. Burst fallback when a terminal omits paste brackets. Multi-line draft chrome (`N lines · ↵ send`), paste toast, multi-line history encoding, Tab completion preserved. Non-TTY falls back to classic readline.
+
+### Changed
+
+- Banner tip documents paste-safe multi-line input.
+
 ## 0.9.97 — mid-run SuperGrok 403 token recovery (unattended ULW)
 
 ### Fixed
