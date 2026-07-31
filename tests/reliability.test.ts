@@ -558,6 +558,48 @@ describe("auth failure detection", () => {
     assert.equal(isAuthFailureMessage("API error 401: unauthorized"), true);
     assert.equal(isAuthFailureMessage("invalid_api_key"), true);
     assert.equal(isAuthFailureMessage("rate limit 429"), false);
+    assert.equal(
+      isAuthFailureMessage(
+        "The OAuth2 access token could not be validated",
+      ),
+      true,
+    );
+  });
+
+  it("isTokenAuthFailure: SuperGrok 403 token death vs quota 403", async () => {
+    const { isTokenAuthFailure } = await import("../src/auth/refresh.js");
+    const { ProviderApiError } = await import("../src/providers/errors.js");
+
+    // Observed mid-ULW death: 403 + validated — must recover (refresh/switch)
+    const superGrokDead = new ProviderApiError({
+      provider: "xai",
+      status: 403,
+      body: "The OAuth2 access token could not be validated.",
+    });
+    assert.equal(isTokenAuthFailure(superGrokDead), true);
+
+    const unauth401 = new ProviderApiError({
+      provider: "xai",
+      status: 401,
+      body: "Unauthorized",
+    });
+    assert.equal(isTokenAuthFailure(unauth401), true);
+
+    // Quota/policy 403 must NOT take the auth-recovery path
+    const quota403 = new ProviderApiError({
+      provider: "xai",
+      status: 403,
+      body: "You have exceeded your plan quota / usage limit",
+    });
+    assert.equal(isTokenAuthFailure(quota403), false);
+
+    assert.equal(isTokenAuthFailure(new Error("rate limit 429")), false);
+    assert.equal(
+      isTokenAuthFailure(
+        new Error("xai API error 403: The OAuth2 access token could not be validated"),
+      ),
+      true,
+    );
   });
 
   it("providers hot-swap credentials", async () => {

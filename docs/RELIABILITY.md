@@ -65,7 +65,7 @@ What experts should expect from Forge in long, unattended, or CI runs.
 | Behavior | Detail |
 |---|---|
 | **OAuth refresh** | `resolveAuthFresh` exchanges `refresh_token` before start when near expiry |
-| **Mid-run 401** | Forced refresh (+ Grok re-import) + `provider.updateCredentials` then retry chat; multi-account auth-failure switch with shorter cooldown when refresh fails |
+| **Mid-run 401/403 token death** | Forced refresh (+ Grok re-import) + `provider.updateCredentials` then retry chat; multi-account auth-failure switch with shorter cooldown when refresh fails. SuperGrok often returns **HTTP 403** `"OAuth2 access token could not be validated"` (not 401) — classified via `isTokenAuthFailure` so ULW does not die mid-wave. Non-quota 403 token rejections recover; quota/billing 403s stay on the account-switch quota path. Proactive refresh failure also fails over to another same-provider account before the next chat call |
 | **Multi-account failover** | Same-provider accounts: proactive switch on high plan usage / cooldown / dead token; reactive switch on 429/quota; post-switch OAuth refresh; cap via `FORGE_ACCOUNT_SWITCH_MAX` (default 3); stale plan probes (>6h) ignored |
 | **Multi-account UX** | `forge accounts status` / `/accounts status` readiness; `clear-cooldown`; doctor surfaces eligible/cooldown; REPL `/accounts switch` hot-swaps live provider token |
 | **Sensitive JSON mode** | `auth.json`, `permissions.json`, `preferences.json` written `0600`; `/doctor` flags group/world-readable files; `forge doctor --json` exposes structured `secureFiles` (`exists` / `mode` / `modeOk`) and sets `ok: false` when any `modeOk` is false |

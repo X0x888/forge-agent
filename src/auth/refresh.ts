@@ -186,10 +186,65 @@ export async function refreshCredentialIfNeeded(
   }
 }
 
-/** True when error looks like an expired / invalid bearer token. */
+/**
+ * True when a message looks like an expired / invalid bearer token.
+ * Includes SuperGrok's 403 phrasing: "OAuth2 access token could not be validated".
+ */
 export function isAuthFailureMessage(msg: string): boolean {
-  return /\b(401|403)\b/.test(msg) ||
-    /invalid[_\s-]?api[_\s-]?key|invalid[_\s-]?token|expired[_\s-]?token|unauthorized|authentication|not authenticated|invalid_grant/i.test(
+  return (
+    /\b(401|403)\b/.test(msg) ||
+    /invalid[_\s-]?api[_\s-]?key|invalid[_\s-]?token|expired[_\s-]?token|unauthorized|authentication|not authenticated|invalid_grant|could not be validated|oauth2 access token|auth_forbidden|token.*(invalid|expired|revoked|denied)/i.test(
+      msg,
+    )
+  );
+}
+
+/**
+ * True when a provider error should trigger mid-run OAuth refresh / multi-account
+ * auth failover — not quota/rate-limit (those use switchOnQuotaFailure).
+ *
+ * Critical: xAI SuperGrok often returns **HTTP 403** (not 401) when the access
+ * token is dead, with body "The OAuth2 access token could not be validated".
+ * Treating only 401 as auth-fail made long ULW runs die mid-wave even when a
+ * refresh_token (or second SuperGrok account) could have continued unattended.
+ */
+export function isTokenAuthFailure(err: unknown): boolean {
+  const status =
+    err && typeof err === "object" && "status" in err
+      ? Number((err as { status: unknown }).status)
+      : 0;
+  const body =
+    err && typeof err === "object" && "body" in err
+      ? String((err as { body: unknown }).body ?? "")
+      : "";
+  const msg =
+    (err instanceof Error ? err.message : String(err ?? "")) +
+    (body ? ` ${body}` : "");
+
+  // Quota / billing 403s must stay on the multi-account quota path, not burn
+  // auth recovery slots or force-refresh a healthy token.
+  const quotaLike =
+    /quota|rate.?limit|usage.?limit|credit|billing|payment|exceeded|capacity|resource.?exhausted|too many requests|plan.?limit|over.?limit|insufficient[_\s-]?quota/i.test(
+      msg,
+    ) &&
+    !/token|oauth|invalid_grant|validated|unauthorized|not authenticated|auth_forbidden/i.test(
       msg,
     );
+  if (status === 403 && quotaLike) return false;
+  if (status === 402 && quotaLike) return false;
+
+  if (status === 401) return true;
+
+  // 403 + token/oauth rejection (SuperGrok mid-run token death)
+  if (status === 403) {
+    if (
+      /oauth|access.?token|token.*(validat|expir|invalid|revok|denied)|could not be validated|auth_forbidden|unauthorized|not authenticated|invalid_grant|invalid[_\s-]?token|bearer|forbidden/i.test(
+        msg,
+      )
+    ) {
+      return true;
+    }
+  }
+
+  return isAuthFailureMessage(msg) && !quotaLike;
 }

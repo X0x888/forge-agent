@@ -60,6 +60,7 @@ export {
 export {
   refreshCredentialIfNeeded,
   isAuthFailureMessage,
+  isTokenAuthFailure,
 } from "./auth/refresh.js";
 export {
   listAccounts,

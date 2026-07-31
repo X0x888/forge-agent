@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 0.9.97 — mid-run SuperGrok 403 token recovery (unattended ULW)
+
+### Fixed
+
+- **Mid-run auth death on SuperGrok 403**: xAI often rejects a dead access token with HTTP **403** `"The OAuth2 access token could not be validated"` (not 401). Recovery previously only treated 401 / narrow message patterns as token failures, so long ULW runs aborted mid-wave even when `refresh_token` or a second SuperGrok account could continue. `isTokenAuthFailure` now classifies that 403, forces refresh, then multi-account auth failover; proactive refresh failure also switches accounts before the next chat call. Quota/billing 403s still take the quota switch path.
+
 ## 0.9.96 — goal achieve clears soft TodoGate
 
 ### Changed

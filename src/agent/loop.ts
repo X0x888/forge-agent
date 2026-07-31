@@ -82,7 +82,10 @@ import {
   isCountableToolError,
   summarizeToolError,
 } from "./error-streak.js";
-import { refreshCredentialIfNeeded, isAuthFailureMessage } from "../auth/refresh.js";
+import {
+  refreshCredentialIfNeeded,
+  isTokenAuthFailure,
+} from "../auth/refresh.js";
 import { resolveAuth } from "../auth/resolve.js";
 import {
   isQuotaOrRateLimitError,
@@ -746,6 +749,39 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
             provider.updateCredentials(refreshed.credential.accessToken);
           }
           events.onStatus?.("OAuth token refreshed (proactive)");
+        } else if (
+          !refreshed.ok &&
+          accountSwitchCount < maxAccountSwitches &&
+          provider.updateCredentials
+        ) {
+          // Near-expiry / force refresh failed (dead RT, network) — fail over
+          // before the chat call burns a hard 403 and kills a multi-hour ULW.
+          accountSwitchCount += 1;
+          events.onStatus?.(
+            `OAuth refresh failed — trying another account (${accountSwitchCount}/${maxAccountSwitches})…`,
+          );
+          const switched = switchOnAuthFailure(String(config.provider));
+          if (switched.switched && switched.account?.accessToken) {
+            try {
+              const r = await refreshCredentialIfNeeded(
+                String(config.provider),
+                { force: true, skewSec: 600 },
+              );
+              if (r.ok && r.credential?.accessToken) {
+                provider.updateCredentials(r.credential.accessToken);
+              } else {
+                provider.updateCredentials(switched.account.accessToken);
+              }
+            } catch {
+              provider.updateCredentials(switched.account.accessToken);
+            }
+            log.info(
+              `Proactive auth failover → ${switched.toLabel || switched.toId} (${switched.reason})`,
+            );
+            events.onStatus?.(
+              `Switched account → ${switched.toLabel || switched.toId}`,
+            );
+          }
         }
       } catch {
         /* never block the turn on proactive refresh */
@@ -876,17 +912,13 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
               }
             }
           } else {
-            // OAuth recovery: prefer true token failures (401 / grant errors).
-            // Generic 403 (quota/policy) must NOT burn a recovery slot so a later
-            // real token expiry can still recover on multi-day runs.
-            // Multi-account: 429/quota can switch to another same-provider account.
+            // OAuth recovery: true token failures (401 + SuperGrok 403
+            // "access token could not be validated"). Generic quota 403 must
+            // NOT burn a recovery slot — see isTokenAuthFailure.
+            // Multi-account: 429/quota → switchOnQuotaFailure; dead token →
+            // force refresh then switchOnAuthFailure.
             const msg = err instanceof Error ? err.message : String(err);
-            const status = isProviderApiError(err) ? err.status : 0;
-            const tokenAuthFail =
-              status === 401 ||
-              /invalid[_\s-]?api[_\s-]?key|invalid[_\s-]?token|expired[_\s-]?token|unauthorized|not authenticated|invalid_grant/i.test(
-                msg,
-              );
+            const tokenAuthFail = isTokenAuthFailure(err);
             const quotaFail = !tokenAuthFail && isQuotaOrRateLimitError(err);
 
             const updateCreds = provider.updateCredentials?.bind(provider);
@@ -907,10 +939,11 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
             ): Promise<boolean> => {
               if (!switched.switched || !updateCreds) return false;
               // Prefer a freshly refreshed token for the new active account
+              // (force: the previous slot's bearer was already rejected).
               try {
                 const r = await refreshCredentialIfNeeded(
                   String(config.provider),
-                  { skewSec: 600 },
+                  { force: true, skewSec: 600 },
                 );
                 if (r.ok && r.credential?.accessToken) {
                   updateCreds(r.credential.accessToken);
