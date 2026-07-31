@@ -25,6 +25,11 @@ export interface UserPreferences {
   /** Ring terminal BEL when a REPL turn finishes (long-run attention). */
   bellOnTurnEnd?: boolean;
   /**
+   * Fire a desktop notification when a REPL turn finishes (osascript /
+   * notify-send). Opt-in; FORGE_NOTIFY=0|1 overrides.
+   */
+  notifyOnTurnEnd?: boolean;
+  /**
    * When true, first-run expert tip was already shown (or suppressed).
    * Missing/false → show once on next interactive REPL start.
    */
@@ -61,6 +66,9 @@ export function loadPreferences(): UserPreferences {
   if (typeof raw.bellOnTurnEnd === "boolean") {
     out.bellOnTurnEnd = raw.bellOnTurnEnd;
   }
+  if (typeof raw.notifyOnTurnEnd === "boolean") {
+    out.notifyOnTurnEnd = raw.notifyOnTurnEnd;
+  }
   if (typeof raw.seenWelcomeTip === "boolean") {
     out.seenWelcomeTip = raw.seenWelcomeTip;
   }
@@ -81,6 +89,7 @@ export function savePreferences(patch: {
   permissionMode?: PermissionMode;
   reasoningEffort?: ReasoningEffort;
   bellOnTurnEnd?: boolean;
+  notifyOnTurnEnd?: boolean;
   seenWelcomeTip?: boolean;
   formatOnWrite?: boolean;
 }): UserPreferences {
@@ -125,6 +134,9 @@ export function savePreferences(patch: {
   }
   if (patch.bellOnTurnEnd !== undefined) {
     cur.bellOnTurnEnd = Boolean(patch.bellOnTurnEnd);
+  }
+  if (patch.notifyOnTurnEnd !== undefined) {
+    cur.notifyOnTurnEnd = Boolean(patch.notifyOnTurnEnd);
   }
   if (patch.formatOnWrite !== undefined) {
     cur.formatOnWrite = Boolean(patch.formatOnWrite);

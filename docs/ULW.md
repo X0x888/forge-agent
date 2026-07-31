@@ -111,7 +111,12 @@ Forge ports several runtime PE patterns from Grok Build / OpenCode:
 | **Harness admission** | `[Forge harness — mid-conversation update]` when cycle/wave/goal/todos change |
 | **Free-text interjection** | Mid-run non-slash text: `The user sent a message while you were working:` + `<user_query>` |
 | **Structured compact** | `/compact` and auto-compact preserve mandate, goal, todos, user messages |
-| **TodoNudge / TodoGate** | Soft reminder + Stop block while open todos remain under ULW |
+| **TodoNudge / TodoGate** | Soft reminder + Stop block while open todos remain under ULW; outside ULW soft-blocks once per prompt |
+| **Handoff guard** | Blocks premature “let me know if…” / “shall I continue?” yields (finish doctrine) |
+| **Proof-claim guard** | Blocks “tests pass” / “all green” without structural `verificationRan` (don't claim, prove) |
+| **Spend cap** | `--max-cost` / `/budget` / `FORGE_MAX_COST_USD` releases cleanly (`hitCostCap`) so unattended ULW cannot runaway-spend |
+| **Safety-valve → LAST** | `hitCostCap` / `hitMaxTurns` / `releasedOnContinueCap` under `cycle=1` auto-flip to `cycle=0` (LAST) via `maybeFlipUlwToLastOnSafetyValve` so resume is not stuck re-blocking |
+| **setMaxWaves immediate LAST** | `/max-waves N` when `wave >= N` under CONTINUE flips to LAST immediately (no wait for next Stop) and clears soft TodoGate |
 | **Wave ledger + quality bar** | Factual per-wave edits/proof in `ulw.json`; bar anchoring, proof demands, consolidation cadence, evidence attestation (see above) |
 | **Counter-only admission suppression** | Wave/blocks/todo churn updates the admitted fingerprint without a redundant harness message |
 | **Prompt profile** | ULW defaults to `autonomous` (keep-going); config `prompt_profile` overrides |

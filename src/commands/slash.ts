@@ -76,7 +76,7 @@ import {
   envPositiveInt, maxRunMsFromEnv,
   parseCliNonNegInt,
 } from "../util/env.js";
-import { isBellEnabled } from "../util/attention.js";
+import { isBellEnabled, isNotifyEnabled } from "../util/attention.js";
 import {
   detectProjectFormatters,
   isFormatOnWriteEnabled,
@@ -107,6 +107,12 @@ import { readSessionLock, formatLockHolder } from "../session/lock.js";
 import { permissionAskTimeoutMs } from "../agent/permissions.js";
 import { parseRuleString } from "../agent/rules.js";
 import {
+  costCapStatus,
+  formatCostBudgetLine,
+  parseCostUsd,
+  resolveMaxCostUsd,
+} from "../util/cost-budget.js";
+import {
   estimateCostUsd,
   formatCost,
   formatTokens,
@@ -132,6 +138,7 @@ import {
   ULW_LIVE_CONTROLS_HINT,
 } from "../harness/ulw-cycle.js";
 import { pushLiveNotice } from "../harness/live-notices.js";
+import { clearSoftTodoGateOnWindDown } from "../harness/todo-gate.js";
 import {
   COMMAND_PARAMS,
   formatParamMenu,
@@ -217,7 +224,9 @@ const LIVE_CONTROL = new Set([
   "/title",
   "/rename",
   "/bell",
+  "/notify",
   "/format",
+  "/budget",
   "/pin",
   "/unpin",
 ]);
@@ -288,6 +297,12 @@ export function classifyLiveSlash(line: string): LiveSlashKind {
   if (cmd === "/plan" || cmd === "/build" || cmd === "/execute") {
     return "control";
   }
+  // /budget status is readonly; set/clear is live control (session meta).
+  if (cmd === "/budget") {
+    const a = arg.trim().toLowerCase();
+    if (!a || a === "status" || a === "show" || a === "?") return "readonly";
+    return "control";
+  }
   // /tasks list|log is readonly; kill/stop mutates process tasks (control).
   if (cmd === "/tasks" || cmd === "/bg") {
     const verb = (arg.split(/\s+/)[0] || "").toLowerCase();
@@ -325,6 +340,11 @@ export function classifyLiveSlash(line: string): LiveSlashKind {
     if ((cmd === "/title" || cmd === "/rename") && !arg) return "readonly";
     // bare /bell shows status
     if (cmd === "/bell" && !arg) return "readonly";
+    // bare /notify shows status
+    if (cmd === "/notify") {
+      const a = arg.toLowerCase();
+      if (!a || a === "status" || a === "show") return "readonly";
+    }
     if (cmd === "/format" && !arg) return "readonly";
     // /pin status is readonly; bare /pin pins (control). /unpin always mutates.
     if (cmd === "/pin") {
@@ -429,6 +449,7 @@ export const SLASH_COMMANDS = [
   "/tasks",
   "/context",
   "/cost",
+  "/budget",
   "/metrics",
   "/stats",
   "/todos",
@@ -452,6 +473,7 @@ export const SLASH_COMMANDS = [
   "/title",
   "/rename",
   "/bell",
+  "/notify",
   "/format",
   "/pin",
   "/unpin",
@@ -494,6 +516,8 @@ export function completeSlash(
     const ARG_TABLE: Record<string, string[]> = {
       "/format": ["on", "off", "status", "enable", "disable"],
       "/bell": ["on", "off", "test", "status"],
+      "/notify": ["on", "off", "test", "status"],
+      "/budget": ["status", "off", "1", "5", "10", "25"],
       "/plan": ["on", "off", "status", "show"],
       "/build": ["on", "off", "status", "execute"],
       "/execute": ["on", "off", "status"],
@@ -669,9 +693,65 @@ export async function handleSlash(
       return handleGoal(arg, opts.session);
 
     case "/done": {
-      // Shorthand for /goal done [note] — live-safe mid-run control.
+      // Expert wind-down: mark goal done AND flip ULW to last-wave (cycle=0)
+      // so one command releases both drivers. Agents still need **Cycle complete.**
+      // / **Goal achieved.** attestation on the next stop when required.
       const note = arg.trim();
-      return handleGoal(note ? `done ${note}` : "done", opts.session);
+      const sid = opts.session.meta.id;
+      const parts: string[] = [];
+      // Goal done (if any)
+      const goalResult = handleGoal(
+        note ? `done ${note}` : "done",
+        opts.session,
+      );
+      if (goalResult.output) parts.push(goalResult.output);
+      // ULW: cycle 0 last-wave so Stop can release after attestation
+      try {
+        const ulw = loadUlwCycle(sid);
+        if (ulw?.enabled && ulw.cycle === 1) {
+          const next = setCycleFlag(sid, 0);
+          if (next) {
+            pushLiveNotice(
+              sid,
+              "User sent /done mid-run — ULW flipped to cycle=0 (LAST wave). Finish this wave, attest **Cycle complete.**, then stop. Do not start a new research wave.",
+            );
+            parts.push(
+              chalk.magenta("ULW → cycle=0 (LAST)") +
+                chalk.dim(
+                  `  ${formatUlwCounts(next)}  finish wave + **Cycle complete.**`,
+                ),
+            );
+          }
+        } else if (ulw?.enabled && ulw.cycle === 0) {
+          parts.push(
+            chalk.dim(
+              "ULW already on cycle=0 (LAST) — finish wave + **Cycle complete.**",
+            ),
+          );
+        }
+      } catch {
+        /* */
+      }
+      // Reset soft TodoGate fire count so the next Stop after /done is not
+      // blocked once for leftover open todos the user is intentionally winding down.
+      try {
+        clearSoftTodoGateOnWindDown(sid);
+      } catch {
+        /* */
+      }
+      // Soft tip when neither driver was armed
+      if (parts.length === 0 || (parts.length === 1 && /No active goal/i.test(parts[0] || ""))) {
+        parts.push(
+          chalk.dim(
+            "No ULW cycle=1 to wind down. Tip: /ulw-off · /cycle 0 · /goal clear",
+          ),
+        );
+      }
+      return {
+        handled: true,
+        output: parts.filter(Boolean).join("\n"),
+        session: opts.session,
+      };
     }
 
     case "/pause": {
@@ -691,6 +771,15 @@ export async function handleSlash(
       opts.session.meta.ultrawork = true;
       const mandate = arg || "improve the codebase";
       const state = armUlwCycle(opts.session.meta.id, mandate, { cycle: 1 });
+      // Fresh driver: drop leftover soft TodoGate once-blocks from prior work.
+      try {
+        clearSoftTodoGateOnWindDown(opts.session.meta.id);
+      } catch {
+        /* */
+      }
+      // Auto-title untitled sessions from the mandate so /sessions and resume
+      // pickers stay navigable during long unattended ULW runs.
+      maybeSetTitle(opts.session, mandate);
       saveSession(opts.session);
       const banner = [
         chalk.magenta("⚡ ULW ON") +
@@ -716,6 +805,13 @@ export async function handleSlash(
       const sid = opts.session.meta.id;
       opts.session.meta.ultrawork = false;
       disarmUlwCycle(sid);
+      // Parity with /done: reset soft TodoGate so disarm is not followed by a
+      // leftover once-block for open todos the user is intentionally ending.
+      try {
+        clearSoftTodoGateOnWindDown(sid);
+      } catch {
+        /* */
+      }
       saveSession(opts.session);
       pushLiveNotice(
         sid,
@@ -796,6 +892,13 @@ export async function handleSlash(
           "User set cycle=1 (CONTINUE) mid-run. Keep the research → implement → serendipity → review loop. Do not stop until the user sets cycle=0, max_waves is hit, or /ulw-off.",
         );
       } else {
+        // LAST wind-down: reset soft TodoGate so leftover open-todo once-blocks
+        // do not fight the intentional cycle=0 finish path (parity with /done).
+        try {
+          clearSoftTodoGateOnWindDown(sid);
+        } catch {
+          /* */
+        }
         pushLiveNotice(
           sid,
           "User set cycle=0 (LAST) mid-run. Finish the *current* wave only: complete open work, review the diff, attest **Cycle complete.** Do NOT start a new ambitious wave.",
@@ -873,14 +976,29 @@ export async function handleSlash(
         });
         saveSession(opts.session);
       }
+      const flippedToLast =
+        state.cycle === 0 &&
+        parsed != null &&
+        state.wave >= (state.maxWaves ?? Infinity);
+      // Live notice when setMaxWaves immediately flipped CONTINUE → LAST
+      if (flippedToLast) {
+        try {
+          pushLiveNotice(
+            sid,
+            `User set /max-waves ${parsed} at/under current wave ${state.wave} — ULW flipped to cycle=0 (LAST). Finish this wave and attest **Cycle complete.**`,
+          );
+        } catch {
+          /* */
+        }
+      }
       const capLabel =
         state.maxWaves != null ? String(state.maxWaves) : "off (unlimited)";
-      if (state.maxWaves != null) {
+      if (state.maxWaves != null && !flippedToLast) {
         pushLiveNotice(
           sid,
           `User set max_waves=${state.maxWaves} mid-run. When the wave counter reaches ${state.maxWaves}, auto-flip to LAST: finish that wave, review, attest **Cycle complete.** Do not start a new ambitious wave after the cap.`,
         );
-      } else {
+      } else if (state.maxWaves == null) {
         pushLiveNotice(
           sid,
           "User cleared max_waves mid-run (unlimited). Cycle flag still controls CONTINUE vs LAST.",
@@ -890,10 +1008,17 @@ export async function handleSlash(
         handled: true,
         output:
           chalk.magenta(`max_waves=${capLabel}`) +
+          (flippedToLast
+            ? chalk.yellow(
+                `  → cycle=0 (LAST) now (wave ${state.wave} ≥ cap ${state.maxWaves})`,
+              )
+            : "") +
           "\n" +
           formatUlwStatus(state) +
           chalk.dim(
-            "\n  (cap written now — stop-guard honors it on next Stop; agent notified on next model call)",
+            flippedToLast
+              ? "\n  (cap written + LAST applied immediately; finish wave + **Cycle complete.**)"
+              : "\n  (cap written now — stop-guard honors it on next Stop; agent notified on next model call)",
           ),
         session: opts.session,
       };
@@ -939,6 +1064,7 @@ export async function handleSlash(
         accountId: auth.accountId,
         accountCount,
         permissionMode: opts.config.permissionMode,
+        maxCostUsd: opts.config.maxCostUsd,
       });
       try {
         snap.plan = await collectPlanUsage({
@@ -1186,6 +1312,7 @@ export async function handleSlash(
         opts.session.meta.totalCompletionTokens,
         opts.config.model,
       );
+      const budget = costCapStatus(opts.config, opts.session.meta);
       return {
         handled: true,
         output: [
@@ -1193,6 +1320,78 @@ export async function handleSlash(
           `  prompt:      ${formatTokens(opts.session.meta.totalPromptTokens)}`,
           `  completion:  ${formatTokens(opts.session.meta.totalCompletionTokens)}`,
           `  est. cost:   ${formatCost(cost)}  (rough; not a bill)`,
+          `  ${formatCostBudgetLine(budget)}`,
+          `  set cap:     /budget <usd>  ·  /budget off  ·  --max-cost N  ·  FORGE_MAX_COST_USD`,
+        ].join("\n"),
+      };
+    }
+
+    case "/budget": {
+      const raw = (arg || "").trim();
+      if (!raw || /^(status|show|\?)$/i.test(raw)) {
+        const st = costCapStatus(opts.config, opts.session.meta);
+        const sessionOverride =
+          opts.session.meta.maxCostUsd !== undefined
+            ? `session override=$${opts.session.meta.maxCostUsd}`
+            : "session override=(none — using config/env)";
+        const cfg =
+          typeof opts.config.maxCostUsd === "number" && opts.config.maxCostUsd > 0
+            ? `config max_cost_usd=$${opts.config.maxCostUsd}`
+            : "config max_cost_usd=unlimited";
+        return {
+          handled: true,
+          output: [
+            formatCostBudgetLine(st),
+            `  ${sessionOverride}`,
+            `  ${cfg}`,
+            `  Usage: /budget <usd>  ·  /budget off  ·  /budget status`,
+            `  Also:  --max-cost N  ·  FORGE_MAX_COST_USD  ·  max_cost_usd in config.toml`,
+            `  Note:  estimateCostUsd only — not a bill. Cap releases the agent cleanly (hitCostCap).`,
+          ].join("\n"),
+        };
+      }
+      const parsed = parseCostUsd(raw);
+      if (parsed === null || parsed === undefined) {
+        return {
+          handled: true,
+          output:
+            `Invalid budget "${raw}". Pass a USD amount (e.g. 5, $2.50) or off/0 for unlimited.`,
+        };
+      }
+      if (parsed === 0) {
+        // Explicit unlimited override for this session (shadows config cap).
+        opts.session.meta.maxCostUsd = 0;
+      } else {
+        opts.session.meta.maxCostUsd = parsed;
+      }
+      try {
+        saveSession(opts.session);
+      } catch {
+        /* best-effort */
+      }
+      // Live mid-run: tell the agent the spend valve changed so it can prioritize
+      // verification / wind-down before the cap releases the loop.
+      try {
+        pushLiveNotice(
+          opts.session.meta.id,
+          parsed === 0
+            ? "User cleared the session spend cap (/budget off). Continue normally — no hitCostCap release."
+            : `User set session spend cap to $${parsed} (/budget). Prefer finishing the current wave and verifying before the estimate hits the cap (hitCostCap releases cleanly). Estimate only — not a bill.`,
+        );
+      } catch {
+        /* */
+      }
+      const st = costCapStatus(opts.config, opts.session.meta);
+      return {
+        handled: true,
+        output: [
+          parsed === 0
+            ? `Budget cleared for this session (unlimited).`
+            : `Budget set to $${parsed} for this session.`,
+          formatCostBudgetLine(st),
+          st.hit
+            ? `Already at/over cap — next turn will release with hitCostCap.`
+            : `Agent releases cleanly when session est. reaches the cap.`,
         ].join("\n"),
       };
     }
@@ -2181,6 +2380,14 @@ const result = rewindSessionDetailed(opts.session, n);
       }
       if (["on", "1", "true", "yes", "enable"].includes(raw)) {
         savePreferences({ bellOnTurnEnd: true });
+        try {
+          pushLiveNotice(
+            opts.session.meta.id,
+            "User enabled turn-end terminal BEL (/bell on). Continue working — the user will hear a bell when this turn finishes.",
+          );
+        } catch {
+          /* */
+        }
         return {
           handled: true,
           output:
@@ -2189,6 +2396,14 @@ const result = rewindSessionDetailed(opts.session, n);
       }
       if (["off", "0", "false", "no", "disable"].includes(raw)) {
         savePreferences({ bellOnTurnEnd: false });
+        try {
+          pushLiveNotice(
+            opts.session.meta.id,
+            "User disabled turn-end terminal BEL (/bell off).",
+          );
+        } catch {
+          /* */
+        }
         return {
           handled: true,
           output: "Turn-end bell OFF (persisted).",
@@ -2211,6 +2426,91 @@ const result = rewindSessionDetailed(opts.session, n);
               ? `Unknown /bell arg "${raw}". Did you mean: ${tip}?\n`
               : `Unknown /bell arg "${raw}".\n`) +
             `Usage: /bell [on|off|test|status]`,
+        };
+      }
+    }
+
+    case "/notify": {
+      // /notify              → status
+      // /notify on|off|1|0   → persist preference
+      // /notify test         → fire once (best-effort desktop)
+      const {
+        isNotifyEnabled,
+        maybeDesktopNotify,
+      } = await import("../util/attention.js");
+      const raw = (arg || "").trim().toLowerCase();
+      if (!raw || raw === "status") {
+        const on = isNotifyEnabled();
+        const env = process.env.FORGE_NOTIFY?.trim();
+        return {
+          handled: true,
+          output:
+            `Turn-end desktop notify: ${on ? "on" : "off"}` +
+            (env
+              ? ` (FORGE_NOTIFY=${env})`
+              : " (preference / default off)") +
+            `\n  /notify on|off   persist · /notify test   fire once · env FORGE_NOTIFY=0|1 overrides` +
+            `\n  macOS: osascript · Linux: notify-send · Windows: PowerShell balloon (best-effort)`,
+        };
+      }
+      if (raw === "test" || raw === "ping" || raw === "fire") {
+        const fired = maybeDesktopNotify({
+          force: true,
+          title: "Forge",
+          body: "Desktop notify test",
+          subtitle: opts.session.meta.id.slice(0, 8),
+        });
+        return {
+          handled: true,
+          output: fired
+            ? "Desktop notification fired (if your OS allows notifications for this terminal)."
+            : "Desktop notify skipped (unsupported platform or spawn failed).",
+        };
+      }
+      if (["on", "1", "true", "yes", "enable"].includes(raw)) {
+        savePreferences({ notifyOnTurnEnd: true });
+        try {
+          pushLiveNotice(
+            opts.session.meta.id,
+            "User enabled turn-end desktop notify (/notify on). Continue working — the user will be alerted when this turn finishes.",
+          );
+        } catch {
+          /* */
+        }
+        return {
+          handled: true,
+          output:
+            "Turn-end desktop notify ON (persisted). Override with FORGE_NOTIFY=0 if needed.",
+        };
+      }
+      if (["off", "0", "false", "no", "disable"].includes(raw)) {
+        savePreferences({ notifyOnTurnEnd: false });
+        try {
+          pushLiveNotice(
+            opts.session.meta.id,
+            "User disabled turn-end desktop notify (/notify off).",
+          );
+        } catch {
+          /* */
+        }
+        return {
+          handled: true,
+          output: "Turn-end desktop notify OFF (persisted).",
+        };
+      }
+      {
+        const tip = suggestName(
+          raw,
+          ["on", "off", "test", "status", "ping", "enable", "disable"],
+          { minLength: 2, minScore: 36, requirePrefix3: false },
+        );
+        return {
+          handled: true,
+          output:
+            (tip
+              ? `Unknown /notify arg "${raw}". Did you mean: ${tip}?\n`
+              : `Unknown /notify arg "${raw}".\n`) +
+            `Usage: /notify [on|off|test|status]`,
         };
       }
     }
@@ -2704,6 +3004,13 @@ case "/new":
     case "/clear": {
       if (cmd === "/clear" && arg !== "hard") {
         clearConversation(opts.session);
+        // Soft TodoGate is process-local — reset so a cleared conversation is
+        // not blocked once for pre-clear open-todo Stop attempts.
+        try {
+          clearSoftTodoGateOnWindDown(opts.session.meta.id);
+        } catch {
+          /* */
+        }
         return {
           handled: true,
           output:
@@ -2719,6 +3026,12 @@ case "/new":
         cmd === "/new" && arg.trim() && arg.trim().toLowerCase() !== "hard"
           ? arg.trim()
           : undefined;
+      // Drop soft TodoGate state for the old session id (process-local map).
+      try {
+        clearSoftTodoGateOnWindDown(opts.session.meta.id);
+      } catch {
+        /* */
+      }
       const s = createSession({
         cwd: opts.session.meta.cwd,
         provider: opts.config.provider,
@@ -3093,7 +3406,23 @@ case "/new":
                   ? `  [${s.lastError.code}] ${s.lastError.message.slice(0, 40)}`
                   : "";
               const age = formatRelativeTime(s.updatedAt).padStart(8);
-              return `${s.id.slice(0, 8)}  ${age}  ${(s.title || "").slice(0, 28).padEnd(28)}  ${s.model}  t=${s.turnCount}${s.ultrawork ? " ULW" : ""}${s.pinned ? " PIN" : ""}${s.permissionMode === "plan" ? " PLAN" : ""}${s.lastError ? " ERR" : ""}${active}${lockNote}${cwdNote}${prevNote}${errNote}`;
+              let costNote = "";
+              try {
+                const tok =
+                  (s.totalPromptTokens || 0) + (s.totalCompletionTokens || 0);
+                if (tok > 0) {
+                  const c = estimateCostUsd(
+                    s.provider || "xai",
+                    s.totalPromptTokens || 0,
+                    s.totalCompletionTokens || 0,
+                    s.model,
+                  );
+                  costNote = ` ~${formatCost(c)}`;
+                }
+              } catch {
+                /* */
+              }
+              return `${s.id.slice(0, 8)}  ${age}  ${(s.title || "").slice(0, 28).padEnd(28)}  ${s.model}  t=${s.turnCount}${costNote}${s.ultrawork ? " ULW" : ""}${s.pinned ? " PIN" : ""}${s.permissionMode === "plan" ? " PLAN" : ""}${s.lastError ? " ERR" : ""}${active}${lockNote}${cwdNote}${prevNote}${errNote}`;
             })
             .join("\n") +
           chalk.dim(
@@ -3466,6 +3795,13 @@ function handleGoal(arg: string, session: SessionData): SlashResult {
     }
     case "clear": {
       clearGoal(sid);
+      // Parity with /goal done / /done: reset soft TodoGate so clear is not
+      // followed by a leftover once-block for open todos.
+      try {
+        clearSoftTodoGateOnWindDown(sid);
+      } catch {
+        /* */
+      }
       pushLiveNotice(
         sid,
         "User cleared /goal mid-run. The goal driver will no longer block Stop.",
@@ -3480,6 +3816,13 @@ function handleGoal(arg: string, session: SessionData): SlashResult {
     case "done": {
       const g = markGoalDone(sid, restText || undefined);
       if (g) {
+        // Parity with /done slash: reset soft TodoGate so goal release is not
+        // followed by a leftover once-block for open todos.
+        try {
+          clearSoftTodoGateOnWindDown(sid);
+        } catch {
+          /* */
+        }
         pushLiveNotice(
           sid,
           "User marked /goal done mid-run. Treat the objective as released; wrap up without further goal-driven waves.",
@@ -3503,6 +3846,12 @@ function handleGoal(arg: string, session: SessionData): SlashResult {
       }
       const g = armGoal(sid, restText, "manual");
       session.meta.ultrawork = true;
+      // Fresh driver: drop leftover soft TodoGate once-blocks from prior work.
+      try {
+        clearSoftTodoGateOnWindDown(sid);
+      } catch {
+        /* */
+      }
       // Untitled sessions get a scannable title from the goal (experts scanning /sessions)
       maybeSetTitle(session, restText);
       saveSession(session);
@@ -3824,10 +4173,35 @@ export async function runDoctorCheck(
       prefs.reasoningEffort ? `effort=${prefs.reasoningEffort}` : null,
       prefs.permissionMode ? `permission_mode=${prefs.permissionMode}` : null,
       prefs.bellOnTurnEnd ? "bell=on" : null,
+      prefs.notifyOnTurnEnd ? "notify=on" : null,
       prefs.formatOnWrite ? "format=on" : null,
     ].filter(Boolean);
     lines.push(
       `Preferences: ${bits.length ? bits.join(" ") : "(none)"}  (~/.forge/preferences.json)`,
+    );
+    if (!prefs.notifyOnTurnEnd && !isNotifyEnabled()) {
+      lines.push(
+        chalk.dim(
+          "  tip: /notify on · FORGE_NOTIFY=1 — desktop alert when long ULW/goal turns finish",
+        ),
+      );
+    }
+    if (
+      !prefs.bellOnTurnEnd &&
+      !isBellEnabled() &&
+      !prefs.notifyOnTurnEnd &&
+      !isNotifyEnabled()
+    ) {
+      lines.push(
+        chalk.dim(
+          "  tip: /bell on or /notify on — long ULW/goal runs are easy to miss without turn-end attention",
+        ),
+      );
+    }
+    lines.push(
+      chalk.dim(
+        "  harness: handoff-guard · proof-claim · soft TodoGate · /budget · safety valves flip ULW to LAST · /done winds ULW+goal",
+      ),
     );
   }
   {
@@ -3989,9 +4363,27 @@ export async function runDoctorCheck(
   } catch {
     /* */
   }
-  lines.push(
-    `Context: window=${config.contextWindow} autoCompact@${Math.round((config.autoCompactThreshold || 0.8) * 100)}% maxTurns=${config.maxTurns > 0 ? config.maxTurns : "unlimited"}`,
-  );
+  {
+    const budget =
+      typeof config.maxCostUsd === "number" && config.maxCostUsd > 0
+        ? `$${config.maxCostUsd}`
+        : "unlimited";
+    lines.push(
+      `Context: window=${config.contextWindow} autoCompact@${Math.round((config.autoCompactThreshold || 0.8) * 100)}% maxTurns=${config.maxTurns > 0 ? config.maxTurns : "unlimited"} maxCost=${budget}`,
+    );
+    lines.push(
+      chalk.dim(
+        "  tip: /budget N · --max-cost N · FORGE_MAX_COST_USD  ·  /notify on for desktop turn-end  ·  /bell on",
+      ),
+    );
+    if (!(typeof config.maxCostUsd === "number" && config.maxCostUsd > 0)) {
+      lines.push(
+        chalk.dim(
+          "  tip: maxCost is unlimited — set a spend cap before long unattended ULW so hitCostCap can release cleanly",
+        ),
+      );
+    }
+  }
   // Expert tip: context_window far below the model's known default wastes headroom
   let modelDefaultContextWindow: number | null = null;
   let contextWindowRatio: number | null = null;
@@ -4443,6 +4835,15 @@ export interface EffectiveConfigSnap {
   maxTurns: number;
   /** True when maxTurns <= 0 (unlimited agent turns). */
   maxTurnsUnlimited: boolean;
+  /** Session spend cap USD (0 = unlimited). */
+  maxCostUsd: number;
+  /** True when maxCostUsd <= 0 (unlimited spend estimate). */
+  maxCostUnlimited: boolean;
+  /**
+   * Effective cap after session override (null = unlimited).
+   * Prefer this for HUD/status over raw maxCostUsd.
+   */
+  effectiveMaxCostUsd: number | null;
   workspace: string;
   baseUrl: string | null;
   goalEnabled: boolean;
@@ -4500,6 +4901,9 @@ export function buildEffectiveConfigSnap(
     autoCompactThreshold: c.autoCompactThreshold,
     maxTurns: c.maxTurns,
     maxTurnsUnlimited: !(typeof c.maxTurns === "number" && c.maxTurns > 0),
+    maxCostUsd: typeof c.maxCostUsd === "number" ? c.maxCostUsd : 0,
+    maxCostUnlimited: !(typeof c.maxCostUsd === "number" && c.maxCostUsd > 0),
+    effectiveMaxCostUsd: resolveMaxCostUsd(c, session?.meta),
     workspace: c.workspace || session?.meta.cwd || process.cwd(),
     baseUrl: c.baseUrl || c.providers[c.provider]?.baseUrl || null,
     goalEnabled: c.goal?.enabled !== false,
@@ -4569,6 +4973,11 @@ export function formatEffectiveConfig(
     `  blocking Stop:   ${snap.blockingStopHooks ? "on" : "OFF"}`,
     `  profile:         ${snap.promptProfile}`,
     `  context:         window=${snap.contextWindow} autoCompact@${Math.round((snap.autoCompactThreshold || 0.8) * 100)}% maxTurns=${snap.maxTurns > 0 ? snap.maxTurns : "unlimited"}`,
+    `  cost budget:     ${
+      snap.effectiveMaxCostUsd != null
+        ? `$${snap.effectiveMaxCostUsd}`
+        : "unlimited"
+    }  (/budget · --max-cost · FORGE_MAX_COST_USD)`,
     `  goal gate:       ${snap.goalEnabled ? "on" : "off"}` +
       (snap.goalStuckThreshold != null
         ? `  stuck=${snap.goalStuckThreshold}`
@@ -4727,7 +5136,7 @@ Forge slash commands
   /goal <objective>     Arm relentless goal driver (Codex-style)
   /goal                 Show goal status  [live]
   /goal pause|resume|clear|done   [live]
-  /done [note]          Shorthand for /goal done  [live]
+  /done [note]          Wind down: /goal done + ULW cycle=0 (LAST)  [live]
   /pause                Shorthand for /goal pause  [live]
   /unpause              Shorthand for /goal resume  [live]
   /ulw [task]           Arm ULW + cycle=1 (soft prompts OK: "improve the code")
@@ -4738,7 +5147,8 @@ Forge slash commands
   /status · /hud        Full inline HUD + session details (no second panel)  [live]
   /tasks [kill|log id]  Background shell tasks · kill/log subcommands  [live]
   /context              Context window usage bar  [live]
-  /cost                 Token usage + rough cost  [live]
+  /cost                 Token usage + rough cost + budget  [live]
+  /budget [usd|off]     Session spend cap (estimate USD; 0/off = unlimited)  [live]
   /metrics              Local metrics.jsonl + this session counters  [live]
   /stats [days|week]    Usage dashboard (runs/tokens/cost/projects)  [live]
   /todos                Show agent todos  [live]
@@ -4759,6 +5169,7 @@ Forge slash commands
   /fork [title]         Branch session into a new id (keep original)
   /title [name|clear]   Show / set / clear session title (/rename)  [live]
   /bell [on|off|test]   Terminal BEL when a turn ends (long-run attention)  [live]
+  /notify [on|off|test] Desktop notify when a turn ends (osascript/notify-send)  [live]
   /format [on|off]      Format-on-write after file tools (prettier/biome/ruff/…)  [live]
   ask_user tool         Clarifying questions (interactive; headless fails closed)
   /diff [path]          Git status + diff (argv-safe; pathspecs/refs only)  [live]

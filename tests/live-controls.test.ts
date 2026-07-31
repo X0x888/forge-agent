@@ -37,6 +37,14 @@ describe("live mid-run slash policy", () => {
     assert.equal(classifyLiveSlash("/max-waves off"), "control");
     assert.equal(classifyLiveSlash("/max-waves status"), "readonly");
     assert.equal(classifyLiveSlash("/max-waves"), "readonly");
+    assert.equal(classifyLiveSlash("/budget"), "readonly");
+    assert.equal(classifyLiveSlash("/budget status"), "readonly");
+    assert.equal(classifyLiveSlash("/budget 5"), "control");
+    assert.equal(classifyLiveSlash("/budget off"), "control");
+    assert.equal(classifyLiveSlash("/notify"), "readonly");
+    assert.equal(classifyLiveSlash("/notify status"), "readonly");
+    assert.equal(classifyLiveSlash("/notify on"), "control");
+    assert.equal(classifyLiveSlash("/notify off"), "control");
     assert.equal(classifyLiveSlash("/ulw-off"), "control");
     assert.equal(classifyLiveSlash("/tasks"), "readonly");
     assert.equal(classifyLiveSlash("/tasks log abc"), "readonly");
@@ -172,6 +180,8 @@ describe("live mid-run slash policy", () => {
     assert.match(LIVE_CONTROLS_HINT, /cycle 0/);
     assert.match(LIVE_CONTROLS_HINT, /ulw-off/);
     assert.match(LIVE_CONTROLS_HINT, /\/done/);
+    assert.match(LIVE_CONTROLS_HINT, /\/budget/);
+    assert.match(LIVE_CONTROLS_HINT, /\/notify/);
     assert.match(LIVE_CONTROLS_HINT, /\/pause/);
     assert.match(LIVE_CONTROLS_HINT, /\/unpause/);
     assert.match(LIVE_CONTROLS_HINT, /\/plan/);
@@ -252,6 +262,113 @@ describe("/done and /pause goal shortcuts", () => {
     assert.ok(notices.some((n) => /goal done|released/i.test(n)));
   });
 
+  it("/done flips ULW cycle=1 → 0 (LAST) alongside goal", async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-done-ulw-"));
+    process.env.FORGE_HOME = tmp;
+    clearLiveNotices();
+    const session = createSession({
+      cwd: tmp,
+      provider: "xai",
+      model: "test",
+    });
+    armUlwCycle(session.meta.id, "improve reliability", { cycle: 1 });
+    session.meta.ultrawork = true;
+    const hooks = new HookRunner(DEFAULT_CONFIG, tmp);
+    const r = await handleSlash("/done", {
+      session,
+      config: DEFAULT_CONFIG,
+      hooks,
+    });
+    assert.equal(r.handled, true);
+    assert.match(String(r.output || ""), /cycle=0|LAST/i);
+    const ulw = loadUlwCycle(session.meta.id);
+    assert.ok(ulw);
+    assert.equal(ulw!.enabled, true);
+    assert.equal(ulw!.cycle, 0);
+    const notices = drainLiveNotices(session.meta.id);
+    assert.ok(notices.some((n) => /cycle=0|LAST/i.test(n)));
+  });
+
+  it("/done clears soft TodoGate fire count", async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-done-todo-"));
+    process.env.FORGE_HOME = tmp;
+    const {
+      evaluateTodoGateAtStop,
+      clearTodoGateState,
+      getTodoGateFires,
+    } = await import("../src/harness/todo-gate.js");
+    const session = createSession({
+      cwd: tmp,
+      provider: "xai",
+      model: "test",
+    });
+    clearTodoGateState(session.meta.id);
+    // Fire soft gate once
+    const r1 = evaluateTodoGateAtStop({
+      sessionId: session.meta.id,
+      ulwEnabled: false,
+      ultraworkFlag: false,
+      openTodoCount: 2,
+      lastAssistantMessage: "Stopping.",
+    });
+    assert.equal(r1.block, true);
+    assert.ok(getTodoGateFires(session.meta.id) >= 1);
+    const hooks = new HookRunner(DEFAULT_CONFIG, tmp);
+    await handleSlash("/done", {
+      session,
+      config: DEFAULT_CONFIG,
+      hooks,
+    });
+    assert.equal(getTodoGateFires(session.meta.id), 0);
+    // Soft gate can fire again after /done
+    const r2 = evaluateTodoGateAtStop({
+      sessionId: session.meta.id,
+      ulwEnabled: false,
+      ultraworkFlag: false,
+      openTodoCount: 2,
+      lastAssistantMessage: "Stopping again.",
+    });
+    assert.equal(r2.block, true);
+  });
+
+  it("/goal clear clears soft TodoGate fire count", async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-goal-clear-todo-"));
+    process.env.FORGE_HOME = tmp;
+    const {
+      evaluateTodoGateAtStop,
+      clearTodoGateState,
+      getTodoGateFires,
+    } = await import("../src/harness/todo-gate.js");
+    const { armGoal, loadGoal } = await import("../src/harness/goal.js");
+    const session = createSession({
+      cwd: tmp,
+      provider: "xai",
+      model: "test",
+    });
+    armGoal(session.meta.id, "ship it", "manual");
+    clearTodoGateState(session.meta.id);
+    evaluateTodoGateAtStop({
+      sessionId: session.meta.id,
+      ulwEnabled: false,
+      ultraworkFlag: false,
+      openTodoCount: 1,
+      lastAssistantMessage: "stop",
+    });
+    assert.ok(getTodoGateFires(session.meta.id) >= 1);
+    const hooks = new HookRunner(DEFAULT_CONFIG, tmp);
+    const r = await handleSlash("/goal clear", {
+      session,
+      config: DEFAULT_CONFIG,
+      hooks,
+    });
+    assert.equal(r.handled, true);
+    assert.match(String(r.output || ""), /cleared/i);
+    const g = loadGoal(session.meta.id);
+    // clearGoal leaves a cleared sidecar (or null) — either way not active
+    assert.ok(!g || g.status === "cleared" || !g.objective);
+    assert.equal(getTodoGateFires(session.meta.id), 0);
+  });
+
   it("pauses goal like /goal pause", async () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-pause-"));
     process.env.FORGE_HOME = tmp;
@@ -318,6 +435,22 @@ describe("mid-run /cycle affects stop-guard without abort", () => {
     });
     armUlwCycle(session.meta.id, "improve the code", { cycle: 1 });
 
+    // Soft TodoGate fire before wind-down
+    const {
+      evaluateTodoGateAtStop,
+      clearTodoGateState,
+      getTodoGateFires,
+    } = await import("../src/harness/todo-gate.js");
+    clearTodoGateState(session.meta.id);
+    evaluateTodoGateAtStop({
+      sessionId: session.meta.id,
+      ulwEnabled: false,
+      ultraworkFlag: false,
+      openTodoCount: 1,
+      lastAssistantMessage: "stop",
+    });
+    assert.ok(getTodoGateFires(session.meta.id) >= 1);
+
     // Simulate mid-run user typing /cycle 0
     const hooks = new HookRunner(DEFAULT_CONFIG, tmp);
     const result = await handleSlash("/cycle 0", {
@@ -328,6 +461,7 @@ describe("mid-run /cycle affects stop-guard without abort", () => {
     assert.equal(result.handled, true);
     assert.match(result.output || "", /cycle=0|LAST/i);
     assert.equal(loadUlwCycle(session.meta.id)?.cycle, 0);
+    assert.equal(getTodoGateFires(session.meta.id), 0);
 
     // Notice queued for next LLM call
     const notices = drainLiveNotices(session.meta.id);
@@ -400,6 +534,101 @@ describe("mid-run /cycle affects stop-guard without abort", () => {
     assert.equal(loadUlwCycle(session.meta.id)?.maxWaves, null);
   });
 
+  it("/ulw auto-titles untitled sessions from mandate", async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-ulw-title-"));
+    process.env.FORGE_HOME = tmp;
+    const session = createSession({
+      cwd: tmp,
+      provider: "xai",
+      model: "test",
+    });
+    assert.equal(session.meta.title, undefined);
+    const hooks = new HookRunner(DEFAULT_CONFIG, tmp);
+    await handleSlash("/ulw ship production-ready undo journal", {
+      session,
+      config: DEFAULT_CONFIG,
+      hooks,
+    });
+    assert.equal(session.meta.ultrawork, true);
+    assert.ok(session.meta.title);
+    assert.match(session.meta.title || "", /undo journal/i);
+    // Does not overwrite an explicit title
+    session.meta.title = "Keep Me";
+    await handleSlash("/ulw another mandate that should not replace", {
+      session,
+      config: DEFAULT_CONFIG,
+      hooks,
+    });
+    assert.equal(session.meta.title, "Keep Me");
+  });
+
+  it("/ulw clears soft TodoGate for a fresh driver", async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-ulw-todo-fresh-"));
+    process.env.FORGE_HOME = tmp;
+    const {
+      evaluateTodoGateAtStop,
+      clearTodoGateState,
+      getTodoGateFires,
+    } = await import("../src/harness/todo-gate.js");
+    const session = createSession({
+      cwd: tmp,
+      provider: "xai",
+      model: "test",
+    });
+    clearTodoGateState(session.meta.id);
+    evaluateTodoGateAtStop({
+      sessionId: session.meta.id,
+      ulwEnabled: false,
+      ultraworkFlag: false,
+      openTodoCount: 1,
+      lastAssistantMessage: "stop",
+    });
+    assert.ok(getTodoGateFires(session.meta.id) >= 1);
+    const hooks = new HookRunner(DEFAULT_CONFIG, tmp);
+    await handleSlash("/ulw improve reliability", {
+      session,
+      config: DEFAULT_CONFIG,
+      hooks,
+    });
+    assert.equal(session.meta.ultrawork, true);
+    assert.equal(getTodoGateFires(session.meta.id), 0);
+  });
+
+  it("/goal set clears soft TodoGate for a fresh driver", async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-goal-set-todo-"));
+    process.env.FORGE_HOME = tmp;
+    const {
+      evaluateTodoGateAtStop,
+      clearTodoGateState,
+      getTodoGateFires,
+    } = await import("../src/harness/todo-gate.js");
+    const { loadGoal } = await import("../src/harness/goal.js");
+    const session = createSession({
+      cwd: tmp,
+      provider: "xai",
+      model: "test",
+    });
+    clearTodoGateState(session.meta.id);
+    evaluateTodoGateAtStop({
+      sessionId: session.meta.id,
+      ulwEnabled: false,
+      ultraworkFlag: false,
+      openTodoCount: 1,
+      lastAssistantMessage: "stop",
+    });
+    assert.ok(getTodoGateFires(session.meta.id) >= 1);
+    const hooks = new HookRunner(DEFAULT_CONFIG, tmp);
+    const r = await handleSlash("/goal set ship the reliability suite", {
+      session,
+      config: DEFAULT_CONFIG,
+      hooks,
+    });
+    assert.equal(r.handled, true);
+    assert.match(String(r.output || ""), /Goal ARMED/i);
+    assert.ok(loadGoal(session.meta.id)?.objective);
+    assert.equal(getTodoGateFires(session.meta.id), 0);
+  });
+
   it("/ulw-off mid-run disables cycle driver", async () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-live2-"));
     process.env.FORGE_HOME = tmp;
@@ -412,6 +641,20 @@ describe("mid-run /cycle affects stop-guard without abort", () => {
     });
     armUlwCycle(session.meta.id, "improve", { cycle: 1 });
     session.meta.ultrawork = true;
+    const {
+      evaluateTodoGateAtStop,
+      clearTodoGateState,
+      getTodoGateFires,
+    } = await import("../src/harness/todo-gate.js");
+    clearTodoGateState(session.meta.id);
+    evaluateTodoGateAtStop({
+      sessionId: session.meta.id,
+      ulwEnabled: false,
+      ultraworkFlag: false,
+      openTodoCount: 1,
+      lastAssistantMessage: "stop",
+    });
+    assert.ok(getTodoGateFires(session.meta.id) >= 1);
 
     const hooks = new HookRunner(DEFAULT_CONFIG, tmp);
     await handleSlash("/ulw-off", {
@@ -422,6 +665,7 @@ describe("mid-run /cycle affects stop-guard without abort", () => {
 
     assert.equal(session.meta.ultrawork, false);
     assert.equal(loadUlwCycle(session.meta.id)?.enabled, false);
+    assert.equal(getTodoGateFires(session.meta.id), 0);
 
     const d = evaluateUlwAtStop({
       sessionId: session.meta.id,

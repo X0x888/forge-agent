@@ -12,6 +12,7 @@
  */
 import path from "node:path";
 import { forgeHome, readJsonFile, writeJsonFile, nowIso, nowEpoch } from "../util/fs.js";
+import { clearSoftTodoGateOnWindDown } from "./todo-gate.js";
 
 export type CycleFlag = 0 | 1;
 
@@ -331,6 +332,31 @@ export function setCycleFlag(sessionId: string, cycle: CycleFlag): UlwCycleState
 }
 
 /**
+ * When a safety valve releases the agent under ULW cycle=1 (CONTINUE), flip to
+ * cycle=0 (LAST) so the next continue/resume is not stuck re-blocking forever.
+ * Used for spend cap (hitCostCap) and turn cap (hitMaxTurns).
+ * No-op when ULW is off or already LAST. Returns the new state when flipped.
+ */
+export function maybeFlipUlwToLastOnSafetyValve(
+  sessionId: string,
+): UlwCycleState | null {
+  const s = loadUlwCycle(sessionId);
+  if (!s?.enabled || s.cycle !== 1) return null;
+  const next = setCycleFlag(sessionId, 0);
+  // Wind-down parity with /cycle 0 / /done: drop soft TodoGate once-blocks so
+  // leftover open todos do not fight the safety-valve release path.
+  try {
+    clearSoftTodoGateOnWindDown(sessionId);
+  } catch {
+    /* */
+  }
+  return next;
+}
+
+/** @deprecated Use maybeFlipUlwToLastOnSafetyValve — alias kept for callers/tests. */
+export const maybeFlipUlwToLastOnCostCap = maybeFlipUlwToLastOnSafetyValve;
+
+/**
  * Set or clear the optional max_waves cap for an armed ULW session.
  * Pass `null` to remove the cap (unlimited). Values &lt; 1 clear the cap.
  * Returns null when ULW is not armed.
@@ -342,6 +368,18 @@ export function setMaxWaves(
   const s = loadUlwCycle(sessionId);
   if (!s || !s.enabled) return null;
   s.maxWaves = normalizeMaxWaves(maxWaves);
+  // If the cap is already at/under the current wave counter while CONTINUE,
+  // flip to LAST immediately so the user does not wait for the next Stop
+  // evaluation (and clear soft TodoGate for wind-down parity).
+  const cap = normalizeMaxWaves(s.maxWaves);
+  if (cap != null && s.cycle === 1 && s.wave >= cap) {
+    s.cycle = 0;
+    try {
+      clearSoftTodoGateOnWindDown(sessionId);
+    } catch {
+      /* */
+    }
+  }
   saveUlwCycle(s);
   return s;
 }
@@ -408,7 +446,7 @@ export function formatUlwBadge(
  * Mirrors live mid-run slash policy in the REPL.
  */
 export const ULW_LIVE_CONTROLS_HINT =
-  "Live mid-run (type while working — no Ctrl+C): /cycle 0 last · /cycle 1 continue · /max-waves N|off · /ulw-off disarm";
+  "Live mid-run (type while working — no Ctrl+C): /cycle 0 last · /cycle 1 continue · /max-waves N|off · /ulw-off disarm · /budget N|off · /notify on · /done";
 
 export function formatUlwStatus(s: UlwCycleState | null): string {
   if (!s || !s.enabled) {
@@ -511,6 +549,12 @@ export function evaluateUlwAtStop(opts: {
     s.enabled = false;
     s.cycle = 0;
     saveUlwCycle(s);
+    // Wind-down: drop soft TodoGate once-blocks so stuck release is clean.
+    try {
+      clearSoftTodoGateOnWindDown(opts.sessionId);
+    } catch {
+      /* */
+    }
     return {
       block: false,
       stuckReleased: true,
@@ -541,6 +585,12 @@ export function evaluateUlwAtStop(opts: {
     if (cap != null && s.wave >= cap) {
       s.cycle = 0;
       saveUlwCycle(s);
+      // Auto LAST: parity with /cycle 0 wind-down for soft TodoGate.
+      try {
+        clearSoftTodoGateOnWindDown(opts.sessionId);
+      } catch {
+        /* */
+      }
       const reanchor = buildCycleReanchor(s, {
         openTodos: opts.openTodoCount,
         mode: "last",
@@ -583,6 +633,12 @@ export function evaluateUlwAtStop(opts: {
     if (cap != null && s.wave >= cap) {
       s.cycle = 0;
       saveUlwCycle(s);
+      // Auto LAST: parity with /cycle 0 wind-down for soft TodoGate.
+      try {
+        clearSoftTodoGateOnWindDown(opts.sessionId);
+      } catch {
+        /* */
+      }
       const reanchor = buildCycleReanchor(s, {
         openTodos: opts.openTodoCount,
         mode: "last",

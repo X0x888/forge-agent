@@ -117,6 +117,19 @@ mustInclude("unknown_option", ["run", "x", "--not-a-real-flag", "--json"], "unkn
 mustInclude("excess_arguments", ["init", "extra", "--json"], "excess_arguments");
 mustInclude("unauth api-key hint", ["run", "x", "--json"], "api-key");
 mustInclude("invalid_max_turns", ["run", "x", "--max-turns", "abc", "--json"], "invalid_max_turns");
+mustInclude("invalid_max_cost", ["run", "x", "--max-cost", "abc", "--json"], "invalid_max_cost");
+mustInclude("invalid_max_cost empty", ["run", "x", "--max-cost", "", "--json"], "invalid_max_cost");
+mustInclude("doctor maxCostUsd", ["doctor", "--json"], "maxCostUsd");
+mustInclude("doctor maxCostUnlimited", ["doctor", "--json"], "maxCostUnlimited");
+mustInclude("doctor notifyOnTurnEnd", ["doctor", "--json"], "notifyOnTurnEnd");
+mustInclude("doctor bellOnTurnEnd", ["doctor", "--json"], "bellOnTurnEnd");
+mustInclude("doctor harness tip", ["doctor"], "handoff-guard");
+mustInclude("doctor unlimited budget tip", ["doctor"], "maxCost is unlimited");
+mustInclude("run help lastError", ["run", "--help"], "lastError");
+mustInclude("run help hitCostCap", ["run", "--help"], "hitCostCap");
+mustInclude("run help effectiveMaxCostUsd", ["run", "--help"], "effectiveMaxCostUsd");
+mustInclude("config maxCostUsd", ["config", "--json"], "maxCostUsd");
+mustInclude("config maxCostUnlimited", ["config", "--json"], "maxCostUnlimited");
 mustInclude("invalid_sandbox_missing", ["run", "x", "--sandbox-missing", "fallbak", "--json"], "invalid_sandbox_missing");
 mustInclude("invalid_format typo", ["sessions", "export", "x", "--format", "jsn", "--json"], "invalid_format");
 mustInclude("invalid_read_outside typo", ["run", "x", "--read-outside", "den", "--json"], "invalid_read_outside");
@@ -154,6 +167,30 @@ mustInclude(
   "headless slash /help",
   ["run", "/help", "--json"],
   '"reason":"slash"',
+);
+mustInclude(
+  "headless slash /budget",
+  ["run", "/budget", "--json", "--permission-mode", "plan"],
+  '"reason":"slash"',
+);
+mustInclude(
+  "headless slash /budget status",
+  ["run", "/budget status", "--json", "--permission-mode", "plan"],
+  "budget",
+);
+mustInclude(
+  "headless slash /cost",
+  ["run", "/cost", "--json", "--permission-mode", "plan"],
+  "budget",
+);
+mustInclude("tips Less steering", ["tips"], "Less steering");
+mustInclude("tips handoff-guard", ["tips"], "handoff-guard");
+mustInclude("tips safety valves", ["tips"], "safety valves flip ULW");
+mustInclude("tips --json Less steering", ["tips", "--json"], "Less steering");
+mustInclude(
+  "headless slash /tips",
+  ["run", "/tips", "--json", "--permission-mode", "plan"],
+  "Less steering",
 );
 
 // status --watch should one-shot in non-TTY smoke (must not hang)

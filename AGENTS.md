@@ -18,7 +18,7 @@ Binary entry: `src/cli.ts` → `dist/cli.js` (`bin: forge`).
 
 ## Layout
 
-- `src/harness/` — hooks, goal, stop-guard (do not weaken blocking Stop defaults)
+- `src/harness/` — hooks, goal, stop-guard, handoff-guard, proof-claim-guard (do not weaken blocking Stop defaults)
 - `src/agent/` — loop, tools, permissions
 - `src/providers/` — LLM clients; `errors.ts` expert recovery tips (`formatProviderError`)
 - `src/auth/` — multi-account credentials (never log tokens); `accounts.ts` smart switch; auth.json v2
@@ -28,7 +28,11 @@ Binary entry: `src/cli.ts` → `dist/cli.js` (`bin: forge`).
 - `src/harness/context-admit.ts` — mid-conversation harness admissions (stable system + live counters; counter-only churn suppressed; volatile git branch line admitted append-only — message[0] keeps cache-stable git root/remote only)
 - `src/config/model-info.ts` — per-model context windows (grok-4.5=500k, grok-4=256k, claude=200k, gpt-4.1=1M); used when `context_window` is not explicit
 - `src/harness/interjection.ts` — free-text mid-run messages (Grok-style `<user_query>`)
-- `src/harness/todo-gate.ts` — TodoNudge + TodoGate under ULW
+- `src/harness/todo-gate.ts` — TodoNudge + TodoGate under ULW; soft once outside ULW; `clearSoftTodoGateOnWindDown` on `/done`/`/goal done|clear`/`/cycle 0`/`/ulw-off`/`/clear`/`/new`/safety-valve LAST **and** fresh driver arm (`/ulw`, `/goal set`); also max_waves auto LAST, stuck-wall, goal attestation/`markGoalDone`, and `setMaxWaves` when already at/over cap
+- `src/harness/handoff-guard.ts` — premature “let me know if…” / “shall I continue?” Stop block (finish doctrine)
+- `src/harness/proof-claim-guard.ts` — “tests pass” without verificationRan Stop block (don't claim, prove)
+- `src/util/cost-budget.ts` — session spend cap parse/resolve (`/budget`, `--max-cost`, `FORGE_MAX_COST_USD`)
+- `src/util/production-warnings.ts` — `productionWarningsForRun` for `forge run --json` / CI (safety valves, ULW-without-budget, dirty tree)
 - `src/session/compaction.ts` — structured compact preserving mandate/goal/todos
 - `src/session/tool-clearing.ts` — proactive stale tool-result clearing (microcompaction; `FORGE_TOOL_CLEAR*`)
 - `src/agent/project-skills.ts — OpenCode-style skill packs (`.forge/skills/**/SKILL.md`)
@@ -67,11 +71,11 @@ stream-capped `web_fetch`/`web_search`, JSON arg repair, CLI `--json` always sta
 session locks (headless fail-closed; `FORGE_FORCE_SESSION_LOCK=1` override; live+bad timestamp held),
 atomic session tmp recovery, session fork/export/import (export `0600`), headless `forge run
 --session`, metrics.jsonl, permission ask timeout, empty-SSE retry, `finish_reason=length` continue (+ content_filter/empty cap hygiene),
-`releasedOnContinueCap` / `hitMaxTurns` / `finishReason` / `pinned` / `foreignLock` JSON/metrics + stats `continueCapReleases`/`maxTurnsHits`,
-`--max-turns` / `FORGE_MAX_TURNS` / `max_turns=0` unlimited, `forge sessions title`, `forge models -p`, stream usage, `meta.json`
+`releasedOnContinueCap` / `hitMaxTurns` / `hitCostCap` / `finishReason` / `pinned` / `foreignLock` JSON/metrics + stats `continueCapReleases`/`maxTurnsHits`/`costCapHits`,
+`--max-turns` / `FORGE_MAX_TURNS` / `max_turns=0` unlimited, `--max-cost` / `FORGE_MAX_COST_USD` / `max_cost_usd` / `/budget` session spend cap (estimateCostUsd; run JSON `effectiveMaxCostUsd`/`sessionCostUsd`), handoff-guard + proof-claim-guard Stop blocks, soft TodoGate outside ULW, interjection harness context, `/done` winds ULW+goal, safety valves under ULW CONTINUE auto-flip to LAST (`maybeFlipUlwToLastOnSafetyValve`), `forge sessions title`, `forge models -p`, stream usage, `meta.json`
 session sidecar, tunable loop guards (`FORGE_DOOM_LOOP_THRESHOLD`, `FORGE_ERROR_STREAK_THRESHOLD`),
 interactive same-cwd auto-resume, `/title`, `--title` on `forge`/`forge run`, `/bell` turn-end
-attention, background-task teardown on exit, JSON store isolation (`readJsonFile` clones
+attention, `/notify` desktop notify (osascript/notify-send; `FORGE_NOTIFY`), `turnEndOutcomeLabel` safety-valve notify bodies, background-task teardown on exit, JSON store isolation (`readJsonFile` clones
 fallbacks; auth/permissions/preferences mode `0600`), `listSessions({ cwd, query, limit })` +
 `forge sessions list --cwd`/`-q`, `/sessions` same-cwd default + search, `forge sessions prune`
 (skips foreign locks) / `delete --force`, shell-safe `/diff` (argv + filter allowlist),

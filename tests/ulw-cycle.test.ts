@@ -6,6 +6,8 @@ import path from "node:path";
 import {
   armUlwCycle,
   setCycleFlag,
+  maybeFlipUlwToLastOnSafetyValve,
+  maybeFlipUlwToLastOnCostCap,
   setMaxWaves,
   evaluateUlwAtStop,
   isSoftPrompt,
@@ -84,11 +86,25 @@ describe("ulw cycle", () => {
     assert.match(formatUlwStatus(capped), /max_waves: 3/);
   });
 
-  it("max_waves forces LAST when wave hits cap", () => {
+  it("max_waves forces LAST when wave hits cap", async () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-ulw-cap-"));
     process.env.FORGE_HOME = tmp;
     const sid = "ulw-cap";
     armUlwCycle(sid, "ship three waves", { cycle: 1, maxWaves: 2 });
+    const {
+      evaluateTodoGateAtStop,
+      clearTodoGateState,
+      getTodoGateFires,
+    } = await import("../src/harness/todo-gate.js");
+    clearTodoGateState(sid);
+    evaluateTodoGateAtStop({
+      sessionId: sid,
+      ulwEnabled: false,
+      ultraworkFlag: false,
+      openTodoCount: 1,
+      lastAssistantMessage: "stop",
+    });
+    assert.ok(getTodoGateFires(sid) >= 1);
 
     const d1 = evaluateUlwAtStop({
       sessionId: sid,
@@ -103,6 +119,8 @@ describe("ulw cycle", () => {
     assert.match(d1.reanchor || "", /CONTINUE/i);
     assert.equal(loadUlwCycle(sid)?.wave, 1);
     assert.equal(loadUlwCycle(sid)?.cycle, 1);
+    // Soft TodoGate not cleared on CONTINUE
+    assert.ok(getTodoGateFires(sid) >= 1);
 
     const d2 = evaluateUlwAtStop({
       sessionId: sid,
@@ -117,6 +135,8 @@ describe("ulw cycle", () => {
     assert.match(d2.reanchor || "", /LAST|max_waves/i);
     assert.equal(loadUlwCycle(sid)?.wave, 2);
     assert.equal(loadUlwCycle(sid)?.cycle, 0);
+    // Soft TodoGate cleared on auto LAST
+    assert.equal(getTodoGateFires(sid), 0);
 
     const done = evaluateUlwAtStop({
       sessionId: sid,
@@ -145,7 +165,59 @@ describe("ulw cycle", () => {
     assert.equal(forced.maxWaves, 2);
   });
 
-  it("lowering max_waves below current wave forces LAST on next Stop", () => {
+  it("setMaxWaves immediately flips to LAST when wave already at/over cap", async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-ulw-setmw-now-"));
+    process.env.FORGE_HOME = tmp;
+    const sid = "ulw-setmw-now";
+    armUlwCycle(sid, "task", { cycle: 1, maxWaves: 10 });
+    // Advance wave to 3
+    evaluateUlwAtStop({
+      sessionId: sid,
+      lastAssistantMessage: "w1",
+      editCount: 1,
+      openTodoCount: 0,
+      stuckThreshold: 20,
+    });
+    evaluateUlwAtStop({
+      sessionId: sid,
+      lastAssistantMessage: "w2",
+      editCount: 2,
+      openTodoCount: 0,
+      stuckThreshold: 20,
+    });
+    evaluateUlwAtStop({
+      sessionId: sid,
+      lastAssistantMessage: "w3",
+      editCount: 3,
+      openTodoCount: 0,
+      stuckThreshold: 20,
+    });
+    assert.equal(loadUlwCycle(sid)?.wave, 3);
+    assert.equal(loadUlwCycle(sid)?.cycle, 1);
+    const {
+      evaluateTodoGateAtStop,
+      clearTodoGateState,
+      getTodoGateFires,
+    } = await import("../src/harness/todo-gate.js");
+    clearTodoGateState(sid);
+    evaluateTodoGateAtStop({
+      sessionId: sid,
+      ulwEnabled: false,
+      ultraworkFlag: false,
+      openTodoCount: 1,
+      lastAssistantMessage: "stop",
+    });
+    assert.ok(getTodoGateFires(sid) >= 1);
+    // Cap at 2 while wave is 3 → immediate LAST
+    const next = setMaxWaves(sid, 2);
+    assert.ok(next);
+    assert.equal(next!.maxWaves, 2);
+    assert.equal(next!.cycle, 0);
+    assert.equal(loadUlwCycle(sid)?.cycle, 0);
+    assert.equal(getTodoGateFires(sid), 0);
+  });
+
+  it("lowering max_waves below current wave forces LAST immediately", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-ulw-lower-"));
     process.env.FORGE_HOME = tmp;
     const sid = "ulw-lower";
@@ -165,7 +237,10 @@ describe("ulw cycle", () => {
       stuckThreshold: 20,
     });
     assert.equal(loadUlwCycle(sid)?.wave, 2);
+    // Immediate LAST when cap is under current wave (no wait for next Stop)
     setMaxWaves(sid, 1);
+    assert.equal(loadUlwCycle(sid)?.cycle, 0);
+    assert.equal(loadUlwCycle(sid)?.wave, 2); // no overshoot
     const d = evaluateUlwAtStop({
       sessionId: sid,
       lastAssistantMessage: "try continue",
@@ -173,7 +248,8 @@ describe("ulw cycle", () => {
       openTodoCount: 0,
       stuckThreshold: 20,
     });
-    assert.equal(d.maxWavesHit, true);
+    // Already LAST — stop-guard still re-anchors until attestation
+    assert.equal(d.block, true);
     assert.equal(loadUlwCycle(sid)?.cycle, 0);
     assert.equal(loadUlwCycle(sid)?.wave, 2); // no overshoot
   });
@@ -213,6 +289,9 @@ describe("ulw cycle", () => {
     assert.match(status, /Live mid-run/);
     assert.match(ULW_LIVE_CONTROLS_HINT, /\/cycle 0/);
     assert.match(ULW_LIVE_CONTROLS_HINT, /\/ulw-off/);
+    assert.match(ULW_LIVE_CONTROLS_HINT, /\/budget/);
+    assert.match(ULW_LIVE_CONTROLS_HINT, /\/notify/);
+    assert.match(ULW_LIVE_CONTROLS_HINT, /\/done/);
   });
 
   it("cycle=0 releases only on Cycle complete attestation", () => {
@@ -675,6 +754,51 @@ describe("ulw wave ledger + quality bar", () => {
     });
     assert.equal(r.allowStop, false);
     assert.equal(loadUlwCycle(sid)!.waves![0].proof, true);
+    disarmUlwCycle(sid);
+  });
+
+  it("maybeFlipUlwToLastOnSafetyValve flips CONTINUE → LAST", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-ulw-cost-"));
+    process.env.FORGE_HOME = tmp;
+    const sid = "ulw-cost-cap";
+    armUlwCycle(sid, "improve the code", { cycle: 1 });
+    assert.equal(loadUlwCycle(sid)!.cycle, 1);
+    const flipped = maybeFlipUlwToLastOnSafetyValve(sid);
+    assert.ok(flipped);
+    assert.equal(flipped!.cycle, 0);
+    assert.equal(loadUlwCycle(sid)!.cycle, 0);
+    // Already LAST — no-op
+    assert.equal(maybeFlipUlwToLastOnSafetyValve(sid), null);
+    // Alias still works
+    armUlwCycle(sid, "again", { cycle: 1 });
+    assert.ok(maybeFlipUlwToLastOnCostCap(sid));
+    assert.equal(loadUlwCycle(sid)!.cycle, 0);
+    disarmUlwCycle(sid);
+    // Disarmed — no-op
+    assert.equal(maybeFlipUlwToLastOnSafetyValve(sid), null);
+  });
+
+  it("maybeFlipUlwToLastOnSafetyValve clears soft TodoGate fires", async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-ulw-todo-"));
+    process.env.FORGE_HOME = tmp;
+    const sid = "ulw-todo-clear";
+    const {
+      evaluateTodoGateAtStop,
+      clearTodoGateState,
+      getTodoGateFires,
+    } = await import("../src/harness/todo-gate.js");
+    armUlwCycle(sid, "improve", { cycle: 1 });
+    clearTodoGateState(sid);
+    evaluateTodoGateAtStop({
+      sessionId: sid,
+      ulwEnabled: false,
+      ultraworkFlag: false,
+      openTodoCount: 1,
+      lastAssistantMessage: "stop",
+    });
+    assert.ok(getTodoGateFires(sid) >= 1);
+    assert.ok(maybeFlipUlwToLastOnSafetyValve(sid));
+    assert.equal(getTodoGateFires(sid), 0);
     disarmUlwCycle(sid);
   });
 });

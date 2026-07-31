@@ -128,8 +128,39 @@ export {
 } from "./harness/goal.js";
 export { runStopGuard } from "./harness/stop-guard.js";
 export {
+  detectPrematureHandoff,
+  evaluateHandoffAtStop,
+} from "./harness/handoff-guard.js";
+export type {
+  HandoffDetection,
+  HandoffStopDecision,
+  HandoffStopInput,
+} from "./harness/handoff-guard.js";
+export {
+  detectProofClaim,
+  evaluateProofClaimAtStop,
+} from "./harness/proof-claim-guard.js";
+export type {
+  ProofClaimDetection,
+  ProofClaimStopDecision,
+  ProofClaimStopInput,
+} from "./harness/proof-claim-guard.js";
+export {
+  parseCostUsd,
+  resolveMaxCostUsd,
+  sessionCostUsd,
+  costCapStatus,
+  formatCostBudgetLine,
+  MAX_COST_USD_CEILING,
+} from "./util/cost-budget.js";
+export type { CostCapStatus } from "./util/cost-budget.js";
+export { productionWarningsForRun } from "./util/production-warnings.js";
+export type { ProductionWarningOpts } from "./util/production-warnings.js";
+export {
   armUlwCycle,
   setCycleFlag,
+  maybeFlipUlwToLastOnSafetyValve,
+  maybeFlipUlwToLastOnCostCap,
   setMaxWaves,
   loadUlwCycle,
   copyUlwCycle,
@@ -217,7 +248,17 @@ export {
 } from "./util/suggest.js";
 export { copyToClipboard } from "./util/clipboard.js";
 export type { ClipboardResult } from "./util/clipboard.js";
-export { isBellEnabled, maybeRingBell } from "./util/attention.js";
+export {
+  isBellEnabled,
+  maybeRingBell,
+  isNotifyEnabled,
+  maybeDesktopNotify,
+  maybeTurnEndAttention,
+  turnEndOutcomeLabel,
+  setBellEnabled,
+  setNotifyEnabled,
+} from "./util/attention.js";
+export type { TurnEndOutcomeInput } from "./util/attention.js";
 export {
   forgeHome,
   readJsonFile,
@@ -375,6 +416,7 @@ export {
   drainInterjections,
   formatInterjection,
   formatInterjectionsMessage,
+  formatInterjectionContext,
   formatUserQuery,
 } from "./harness/interjection.js";
 export {
@@ -388,6 +430,8 @@ export {
   maybeTodoNudge,
   noteTodoWrite,
   resetTodoNudgeForPrompt,
+  clearTodoGateState,
+  clearSoftTodoGateOnWindDown,
 } from "./harness/todo-gate.js";
 export {
   compactMessagesStructured,

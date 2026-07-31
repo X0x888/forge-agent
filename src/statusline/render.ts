@@ -304,6 +304,17 @@ function renderSession(
     }
     l2.push(paint(c, tok, "dim"));
   }
+  if (snap.budget) {
+    const b = snap.budget;
+    const label = `budget ${b.percent}% $${b.spentUsd.toFixed(b.spentUsd < 0.01 ? 4 : 3)}/$${b.capUsd.toFixed(b.capUsd < 0.01 ? 4 : 3)}`;
+    l2.push(
+      paint(
+        c,
+        b.hit ? `budget HIT` : label,
+        b.hit ? "red" : b.percent >= 80 ? "yellow" : "dim",
+      ),
+    );
+  }
   const planStr = formatPlan(snap.plan, c);
   if (planStr) l2.push(planStr);
   if (snap.openTodos > 0) {
@@ -431,6 +442,16 @@ export function renderCompactStrip(
       tok += ` ~${formatCost(snap.tokens.estimatedUsd)}`;
     }
     parts.push(paint(c, tok, "dim"));
+  }
+  if (snap.budget) {
+    const b = snap.budget;
+    parts.push(
+      paint(
+        c,
+        b.hit ? "budget:HIT" : `budget:${b.percent}%`,
+        b.hit ? "red" : b.percent >= 80 ? "yellow" : "dim",
+      ),
+    );
   }
   if (snap.openTodos > 0) {
     parts.push(paint(c, `todos:${snap.openTodos}`, "yellow"));

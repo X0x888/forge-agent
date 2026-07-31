@@ -5,8 +5,10 @@
  *  1. User-defined Stop hooks (blocking)
  *  2. /goal relentless driver
  *  3. ULW cycle driver (cycle=1 loop / cycle=0 last-wave)
- *  4. TodoGate (open todos under ULW)
+ *  4. TodoGate (open todos under ULW; soft once outside ULW)
  *  5. Ultrawork open-todos backstop
+ *  6. Handoff guard — premature "let me know if…" / "shall I continue?" yields
+ *  7. Proof-claim guard — "tests pass" / "all green" without verificationRan
  */
 import type { ForgeConfig } from "../config/types.js";
 import type { HookRunner, HookContext, HookResult } from "./hooks.js";
@@ -17,6 +19,14 @@ import {
 } from "./goal.js";
 import { evaluateUlwAtStop, loadUlwCycle, type UlwStopDecision } from "./ulw-cycle.js";
 import { evaluateTodoGateAtStop } from "./todo-gate.js";
+import {
+  evaluateHandoffAtStop,
+  type HandoffStopDecision,
+} from "./handoff-guard.js";
+import {
+  evaluateProofClaimAtStop,
+  type ProofClaimStopDecision,
+} from "./proof-claim-guard.js";
 import { envPositiveInt } from "../util/env.js";
 
 export interface StopGuardInput {
@@ -33,6 +43,16 @@ export interface StopGuardInput {
    * not judgment — the wave ledger trusts this over prose claims.
    */
   verificationRan?: boolean;
+  /**
+   * How many times handoff-guard already blocked this process turn streak.
+   * After FORGE_HANDOFF_BLOCK_CAP (default 3) the guard releases.
+   */
+  handoffBlocks?: number;
+  /**
+   * How many times proof-claim guard already blocked this process turn streak.
+   * After FORGE_PROOF_CLAIM_BLOCK_CAP (default 1) the guard releases.
+   */
+  proofClaimBlocks?: number;
 }
 
 export interface StopGuardResult {
@@ -45,6 +65,10 @@ export interface StopGuardResult {
   hook?: HookResult;
   /** True when Stop was blocked by TodoGate */
   todoGate?: boolean;
+  /** Handoff-guard decision when it evaluated (block or release). */
+  handoff?: HandoffStopDecision;
+  /** Proof-claim guard decision when it evaluated (block or release). */
+  proofClaim?: ProofClaimStopDecision;
 }
 
 export async function runStopGuard(input: StopGuardInput): Promise<StopGuardResult> {
@@ -190,12 +214,81 @@ export async function runStopGuard(input: StopGuardInput): Promise<StopGuardResu
     }
   }
 
+  // Handoff guard: block premature "let me know if…" / "shall I continue?" yields
+  // so experts are not forced to re-steer mid-mandate (oh-my-kimi finish doctrine).
+  const goalActive = Boolean(
+    goal &&
+      goal.objective &&
+      !goal.paused &&
+      goal.status !== "achieved" &&
+      goal.status !== "cleared",
+  );
+  const handoffDecision = evaluateHandoffAtStop({
+    lastAssistantMessage: input.lastAssistantMessage,
+    ultrawork: Boolean(input.ultrawork || ulw?.enabled),
+    goalActive,
+    openTodoCount: input.openTodoCount,
+    editCount: input.editCount,
+    handoffBlocks: input.handoffBlocks,
+  });
+  if (handoffDecision.block) {
+    return {
+      allowStop: false,
+      reason: handoffDecision.reason,
+      additionalContext: handoffDecision.reanchor || handoffDecision.reason,
+      systemMessage: handoffDecision.reason,
+      hook: hookResult,
+      goal: goalDecision,
+      ulw: ulwDecision,
+      handoff: handoffDecision,
+    };
+  }
+
+  // Proof-claim guard: "tests pass" / "all green" without verificationRan.
+  // Complements ULW proof-demand for goal-only and plain implementation turns.
+  const proofClaimDecision = evaluateProofClaimAtStop({
+    lastAssistantMessage: input.lastAssistantMessage,
+    verificationRan: Boolean(input.verificationRan),
+    ultrawork: Boolean(input.ultrawork || ulw?.enabled),
+    goalActive,
+    openTodoCount: input.openTodoCount,
+    editCount: input.editCount,
+    proofClaimBlocks: input.proofClaimBlocks,
+  });
+  if (proofClaimDecision.block) {
+    return {
+      allowStop: false,
+      reason: proofClaimDecision.reason,
+      additionalContext:
+        proofClaimDecision.reanchor || proofClaimDecision.reason,
+      systemMessage: proofClaimDecision.reason,
+      hook: hookResult,
+      goal: goalDecision,
+      ulw: ulwDecision,
+      handoff:
+        handoffDecision.detection?.handoff || handoffDecision.released
+          ? handoffDecision
+          : undefined,
+      proofClaim: proofClaimDecision,
+    };
+  }
+
   return {
     allowStop: true,
     additionalContext: hookResult.additionalContext,
-    systemMessage: hookResult.systemMessage,
+    systemMessage:
+      (handoffDecision.released && handoffDecision.reason) ||
+      (proofClaimDecision.released && proofClaimDecision.reason) ||
+      hookResult.systemMessage,
     hook: hookResult,
     goal: goalDecision,
     ulw: ulwDecision,
+    handoff: handoffDecision.detection?.handoff || handoffDecision.released
+      ? handoffDecision
+      : undefined,
+    proofClaim:
+      proofClaimDecision.detection?.claim || proofClaimDecision.released
+        ? proofClaimDecision
+        : undefined,
   };
 }

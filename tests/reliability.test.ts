@@ -1388,6 +1388,7 @@ describe("session metrics + permission timeout", () => {
     assert.equal(stats.abortedRuns, 1);
     assert.equal(stats.continueCapReleases, 1);
     assert.equal(stats.maxTurnsHits, 0);
+    assert.equal(stats.costCapHits, 0);
     assert.equal(stats.headlessRuns, 1);
     assert.equal(stats.ulwRuns, 1);
     assert.equal(stats.promptTokens, 1100);
@@ -2115,10 +2116,24 @@ describe("session prune", () => {
     const { armUlwCycle, loadUlwCycle } = await import(
       "../src/harness/ulw-cycle.js"
     );
+    const {
+      evaluateTodoGateAtStop,
+      clearTodoGateState,
+      getTodoGateFires,
+    } = await import("../src/harness/todo-gate.js");
     const current = createSession({ cwd: tmp, provider: "xai", model: "m" });
     current.meta.ultrawork = true;
     armUlwCycle(current.meta.id, "keep going", { cycle: 1 });
     current.messages.push({ role: "user", content: "old work" });
+    clearTodoGateState(current.meta.id);
+    evaluateTodoGateAtStop({
+      sessionId: current.meta.id,
+      ulwEnabled: false,
+      ultraworkFlag: false,
+      openTodoCount: 1,
+      lastAssistantMessage: "stop",
+    });
+    assert.ok(getTodoGateFires(current.meta.id) >= 1);
     const hooks = new HookRunner(DEFAULT_CONFIG, tmp);
     const r = await handleSlash("/clear hard", {
       session: current,
@@ -2133,6 +2148,43 @@ describe("session prune", () => {
     // Old session ULW sidecar untouched
     assert.equal(loadUlwCycle(current.meta.id)?.enabled, true);
     assert.equal(loadUlwCycle(r.replaceSession!.meta.id), null);
+    // Soft TodoGate fire count cleared for the old session id
+    assert.equal(getTodoGateFires(current.meta.id), 0);
+  });
+
+  it("/clear (soft) clears soft TodoGate fire count", async () => {
+    const fs = await import("node:fs");
+    const os = await import("node:os");
+    const path = await import("node:path");
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-clear-soft-todo-"));
+    process.env.FORGE_HOME = tmp;
+    const { createSession } = await import("../src/session/session.js");
+    const { handleSlash } = await import("../src/commands/slash.js");
+    const { DEFAULT_CONFIG } = await import("../src/config/types.js");
+    const { HookRunner } = await import("../src/harness/hooks.js");
+    const {
+      evaluateTodoGateAtStop,
+      clearTodoGateState,
+      getTodoGateFires,
+    } = await import("../src/harness/todo-gate.js");
+    const session = createSession({ cwd: tmp, provider: "xai", model: "m" });
+    clearTodoGateState(session.meta.id);
+    evaluateTodoGateAtStop({
+      sessionId: session.meta.id,
+      ulwEnabled: false,
+      ultraworkFlag: false,
+      openTodoCount: 2,
+      lastAssistantMessage: "stop",
+    });
+    assert.ok(getTodoGateFires(session.meta.id) >= 1);
+    const hooks = new HookRunner(DEFAULT_CONFIG, tmp);
+    const r = await handleSlash("/clear", {
+      session,
+      config: { ...DEFAULT_CONFIG, workspace: tmp },
+      hooks,
+    });
+    assert.equal(r.handled, true);
+    assert.equal(getTodoGateFires(session.meta.id), 0);
   });
 
   it("/resume warns on foreign live lock", async () => {

@@ -1037,4 +1037,25 @@ it("/fork includes last-turn peek", async () => {
     assert.match(md, /forge login/);
   });
 
+  it("resume orientation + share card surface session budget", async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-budget-orient-"));
+    process.env.FORGE_HOME = tmp;
+    const {
+      formatResumeOrientation,
+      formatSessionShareCard,
+    } = await import("../src/session/session.js");
+    const s = createSession({ cwd: tmp, provider: "xai", model: "m" });
+    s.meta.maxCostUsd = 5;
+    s.meta.totalPromptTokens = 10_000;
+    s.meta.totalCompletionTokens = 2_000;
+    const orient = formatResumeOrientation(s);
+    assert.match(orient, /budget:/i);
+    const card = formatSessionShareCard(s);
+    assert.match(card, /budget:/i);
+    assert.match(card, /tokens:/i);
+    const md = exportSessionMarkdown(s);
+    assert.match(md, /Est\. cost/i);
+    assert.match(md, /budget:/i);
+  });
+
 });

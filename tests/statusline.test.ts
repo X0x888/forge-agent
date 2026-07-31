@@ -34,6 +34,7 @@ import {
 import {
   buildPromptFlags,
   renderTurnFooter,
+  renderLiveRunHeader,
   formatBackgroundTasksList,
   createWorkingIndicator,
   clipAnsi,
@@ -501,6 +502,34 @@ describe("statusline plan mode details", () => {
     assert.match(text, /lastErr/);
     assert.match(text, /rate_limited/);
     assert.match(text, /accounts switch/);
+  });
+});
+
+describe("live run header controls", () => {
+  it("lists budget/done/notify alongside cycle controls", async () => {
+    const fs = await import("node:fs");
+    const os = await import("node:os");
+    const path = await import("node:path");
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-live-hdr-"));
+    process.env.FORGE_HOME = tmp;
+    const { createSession } = await import("../src/session/session.js");
+    const { DEFAULT_CONFIG } = await import("../src/config/types.js");
+    const s = createSession({ cwd: tmp, provider: "xai", model: "grok-4" });
+    const text = renderLiveRunHeader({
+      config: { ...DEFAULT_CONFIG, workspace: tmp },
+      session: s,
+      auth: {
+        provider: "xai",
+        method: "api_key",
+        token: "t",
+      } as ResolvedAuth,
+    });
+    assert.match(text, /live run/);
+    assert.match(text, /\/cycle 0/);
+    assert.match(text, /\/budget/);
+    assert.match(text, /\/done/);
+    assert.match(text, /\/notify/);
+    assert.match(text, /\/status/);
   });
 });
 

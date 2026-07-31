@@ -13,7 +13,13 @@ import { Command } from "commander";
 import chalk from "chalk";
 import fs from "node:fs";
 import path from "node:path";
-import { formatRelativeTime } from "./util/format.js";
+import {
+  formatRelativeTime,
+  estimateCostUsd,
+  formatCost,
+} from "./util/format.js";
+import { parseCostUsd, resolveMaxCostUsd } from "./util/cost-budget.js";
+import { productionWarningsForRun } from "./util/production-warnings.js";
 import { loadConfig, defaultConfigToml } from "./config/load.js";
 import {
   resolveSandboxNetwork,
@@ -155,7 +161,7 @@ import {
   envPositiveInt, maxRunMsFromEnv,
   parseCliNonNegInt,
 } from "./util/env.js";
-import { isBellEnabled } from "./util/attention.js";
+import { isBellEnabled, isNotifyEnabled } from "./util/attention.js";
 import { isFormatOnWriteEnabled } from "./agent/tools/format-on-write.js";
 import { permissionAskTimeoutMs } from "./agent/permissions.js";
 import {
@@ -243,6 +249,10 @@ Docs: docs/PRODUCTION.md · docs/RELIABILITY.md · docs/ULW.md · forge news
     .option(
       "--max-turns <n>",
       "Cap agent turns (0 = unlimited; default from config / FORGE_MAX_TURNS)",
+    )
+    .option(
+      "--max-cost <usd>",
+      "Cap session spend estimate in USD (0 = unlimited; FORGE_MAX_COST_USD / max_cost_usd)",
     )
     .option(
       "--permission-mode <mode>",
@@ -602,6 +612,10 @@ Docs: docs/PRODUCTION.md · docs/RELIABILITY.md · docs/ULW.md · forge news
       "--max-turns <n>",
       "Cap agent turns (0 = unlimited; default from config / FORGE_MAX_TURNS)",
     )
+    .option(
+      "--max-cost <usd>",
+      "Cap session spend estimate in USD (0 = unlimited; FORGE_MAX_COST_USD / max_cost_usd)",
+    )
     .option("--permission-mode <mode>", "Permission mode", "acceptEdits")
     .option(
       "--sandbox <profile>",
@@ -668,11 +682,12 @@ Exit codes:
   124  wall-clock timeout (FORGE_MAX_RUN_MS)
   130  aborted (SIGINT)
 
---json fields (success): ok, version, node, forgeHome, sessionId, sessionPath, title, pinned, foreignLock, provider, stickyProvider, authMethod, model, reasoningEffort, cwd, git, projectLabel, projectHints, packageName, packageVersion, packageEnginesNode, permissionMode, sandbox, sandboxNetwork, sandboxMissingBackend, readOutsideWorkspace, ultrawork, ulwCycle, ulwWave, ulwMaxWaves, ulwBlocks, ulwMandate, ulwSoftPrompt, ulwExpandedMandate, goalActive, goal, goalStuckThreshold, goalBlocks, goalStuckBlocks, goalCriteria, denyRules, allowRules, askRules, maxTurns, maxTurnsUnlimited, productionWarnings, formatOnWrite, blockingStop, maxRunMs, providerTimeoutMs, bashTimeoutMs, bashBackgroundTimeoutMs, permissionAskTimeoutMs, doomLoopThreshold, errorStreakThreshold, ulwMaxContinues, editCount, openTodos, messageCount, finalText, turns, stopContinues,
-  releasedOnContinueCap, hitMaxTurns, finishReason, editCount, aborted, timedOut,
+--json fields (success): ok, version, node, forgeHome, sessionId, sessionPath, title, pinned, foreignLock, provider, stickyProvider, authMethod, model, reasoningEffort, cwd, git, projectLabel, projectHints, packageName, packageVersion, packageEnginesNode, permissionMode, sandbox, sandboxNetwork, sandboxMissingBackend, readOutsideWorkspace, ultrawork, ulwCycle, ulwWave, ulwMaxWaves, ulwBlocks, ulwMandate, ulwSoftPrompt, ulwExpandedMandate, goalActive, goal, goalStuckThreshold, goalBlocks, goalStuckBlocks, goalCriteria, denyRules, allowRules, askRules, maxTurns, maxTurnsUnlimited, maxCostUsd, maxCostUnlimited, effectiveMaxCostUsd, sessionCostUsd, productionWarnings, formatOnWrite, blockingStop, maxRunMs, providerTimeoutMs, bashTimeoutMs, bashBackgroundTimeoutMs, permissionAskTimeoutMs, doomLoopThreshold, errorStreakThreshold, ulwMaxContinues, editCount, openTodos, messageCount, finalText, turns, stopContinues,
+  releasedOnContinueCap, hitMaxTurns, hitCostCap, finishReason, lastError, editCount, aborted, timedOut,
   promptTokens, completionTokens, durationMs
   (FORGE_JSON_COMPACT=1 → single-line success JSON for CI log aggregation)
-  (releasedOnContinueCap/hitMaxTurns → safety valves; still ok unless aborted/timedOut/empty run)
+  (releasedOnContinueCap/hitMaxTurns/hitCostCap → safety valves; still ok unless aborted/timedOut/empty run)
+  (lastError → {at,code,message,tips} when stamped — max_cost/max_turns/continue_cap_*/handoff_released/proof_claim_released/…)
   (finishReason → last provider finish_reason, or null if no model turn)
 
 --json early failures (stdout, still exit ≠0): { ok:false, version, reason, error, … } (typos may include suggestion)
@@ -3125,6 +3140,18 @@ Docs: docs/PRODUCTION.md
                   ulwWave,
                   ulwMaxWaves,
                   goalActive,
+                  totalPromptTokens: s.totalPromptTokens || 0,
+                  totalCompletionTokens: s.totalCompletionTokens || 0,
+                  estCostUsd: estimateCostUsd(
+                    s.provider || "xai",
+                    s.totalPromptTokens || 0,
+                    s.totalCompletionTokens || 0,
+                    s.model,
+                  ),
+                  maxCostUsd:
+                    s.maxCostUsd !== undefined && s.maxCostUsd !== null
+                      ? s.maxCostUsd
+                      : null,
                   lastError: s.lastError
                     ? {
                         at: s.lastError.at,
@@ -3217,8 +3244,37 @@ Docs: docs/PRODUCTION.md
           errorsOnly && s.lastError
             ? `  [${s.lastError.code}] ${s.lastError.message.slice(0, 48)}`
             : "";
+        let costNote = "";
+        try {
+          const tok =
+            (s.totalPromptTokens || 0) + (s.totalCompletionTokens || 0);
+          if (tok > 0) {
+            const c = estimateCostUsd(
+              s.provider || "xai",
+              s.totalPromptTokens || 0,
+              s.totalCompletionTokens || 0,
+              s.model,
+            );
+            costNote = `  ~${formatCost(c)}`;
+            if (
+              s.maxCostUsd !== undefined &&
+              s.maxCostUsd !== null &&
+              Number(s.maxCostUsd) > 0
+            ) {
+              costNote += `/${formatCost(Number(s.maxCostUsd))}`;
+            }
+          } else if (
+            s.maxCostUsd !== undefined &&
+            s.maxCostUsd !== null &&
+            Number(s.maxCostUsd) > 0
+          ) {
+            costNote = `  bud=${formatCost(Number(s.maxCostUsd))}`;
+          }
+        } catch {
+          /* */
+        }
         console.log(
-          `${s.id}  ${age}  ${s.provider}/${s.model}  turns=${s.turnCount}  edits=${s.editCount}${ulwNote}${goalNote}${s.pinned ? "  PIN" : ""}${errBadge}${s.title ? `  ${s.title.slice(0, 40)}` : ""}${prevNote}${cwdNote}${lockNote}${errDetail}`,
+          `${s.id}  ${age}  ${s.provider}/${s.model}  turns=${s.turnCount}  edits=${s.editCount}${costNote}${ulwNote}${goalNote}${s.pinned ? "  PIN" : ""}${errBadge}${s.title ? `  ${s.title.slice(0, 40)}` : ""}${prevNote}${cwdNote}${lockNote}${errDetail}`,
         );
       }
       const filterNotes: string[] = [];
@@ -3623,6 +3679,7 @@ Project instructions for Forge (and other coding agents).
     .option("-p, --provider <provider>", "Provider override")
     .option("-m, --model <model>", "Model override")
     .option("--max-turns <n>", "Cap agent turns override (0 = unlimited)")
+    .option("--max-cost <usd>", "Cap session spend estimate USD (0 = unlimited)")
     .option("--cwd <path>", "Workspace", process.cwd())
     .action((opts, command) => {
       const wantJson = flagJson(opts, command);
@@ -3635,6 +3692,7 @@ Project instructions for Forge (and other coding agents).
         "model",
         "cwd",
         "maxTurns",
+        "maxCost",
         "sandbox",
         "sandboxMissing",
         "sandboxNetwork",
@@ -3797,6 +3855,7 @@ Project instructions for Forge (and other coding agents).
     .option("-p, --provider <provider>", "Provider override")
     .option("--cwd <path>", "Workspace", process.cwd())
     .option("--max-turns <n>", "Cap agent turns override (0 = unlimited)")
+    .option("--max-cost <usd>", "Cap session spend estimate USD (0 = unlimited)")
     .option(
       "--sandbox <profile>",
       "What-if OS sandbox: off|workspace|read-only|strict",
@@ -3832,6 +3891,7 @@ Project instructions for Forge (and other coding agents).
         "provider",
         "cwd",
         "maxTurns",
+        "maxCost",
         "sandbox",
         "sandboxMissing",
         "sandboxNetwork",
@@ -3972,6 +4032,10 @@ Project instructions for Forge (and other coding agents).
               maxTurnsUnlimited: !(
                 typeof config.maxTurns === "number" && config.maxTurns > 0
               ),
+              maxCostUsd: config.maxCostUsd ?? 0,
+              maxCostUnlimited: !(
+                typeof config.maxCostUsd === "number" && config.maxCostUsd > 0
+              ),
               sessionCount,
               sessionsLocked,
               sessionsPinned,
@@ -4008,6 +4072,7 @@ Project instructions for Forge (and other coding agents).
               errorStreakThreshold,
               ulwMaxContinues,
               bellOnTurnEnd: isBellEnabled(),
+              notifyOnTurnEnd: isNotifyEnabled(),
               formatOnWrite: check.formatOnWrite ?? false,
               autoResume:
                 process.env.FORGE_NO_AUTO_RESUME !== "1" &&
@@ -4687,75 +4752,7 @@ function gitSnapshotForRun(cwd: string): {
   }
 }
 
-function productionWarningsForRun(config: ForgeConfig): string[] {
-  const warnings: string[] = [];
-  if (config.sandbox === "off") {
-    warnings.push("sandbox=off — bash runs unsandboxed");
-  }
-  if (config.permissionMode === "bypassPermissions") {
-    warnings.push("permissionMode=bypassPermissions (yolo) — tools auto-approved");
-  }
-  if (config.permissionMode === "dontAsk") {
-    warnings.push(
-      "permissionMode=dontAsk — permission prompts auto-deny; ask_user unavailable (state assumptions)",
-    );
-  }
-  {
-    const dontAskEnv = process.env.FORGE_DONT_ASK?.trim();
-    if (
-      dontAskEnv &&
-      ["1", "true", "on", "yes"].includes(dontAskEnv.toLowerCase())
-    ) {
-      warnings.push(
-        `FORGE_DONT_ASK=${dontAskEnv} — interactive asks disabled (permissions + ask_user)`,
-      );
-    }
-  }
-  if (config.permissionMode === "plan") {
-    warnings.push(
-      "permissionMode=plan — mutations denied; use /build (or --permission-mode acceptEdits) to implement",
-    );
-  }
-  if ((config.sandboxMissingBackend || "fail-closed") === "fallback") {
-    warnings.push("sandbox-missing=fallback — bash may run unsandboxed when backend is absent");
-  }
-  if ((config.readOutsideWorkspace || "ask") === "allow") {
-    warnings.push("read-outside=allow — absolute paths outside workspace readable without prompt");
-  }
-  if (config.blockingStopHooks === false) {
-    warnings.push("blockingStopHooks=false — Stop hooks will not re-anchor the agent");
-  }
-  // Dirty tree blast radius (best-effort; never block run on git failure)
-  try {
-    const g = getGitSnapshot(config.workspace || process.cwd());
-    if (typeof g.changedFiles === "number" && g.changedFiles >= 40) {
-      warnings.push(
-        `git dirty tree has ${g.changedFiles} changed files — commit/stash before long ULW or use /plan first`,
-      );
-    }
-  } catch {
-    /* */
-  }
-  // Large session inventory (best-effort; never block run on list failure)
-  try {
-    const all = listSessions({ limit: 10_000 });
-    const total = all.length;
-    if (total >= 100) {
-      warnings.push(
-        `${total} sessions on disk — consider forge sessions prune --keep 50 (lastError sessions kept unless --force-last-error)`,
-      );
-    }
-    const pinned = all.filter((s) => Boolean(s.pinned)).length;
-    if (pinned >= 10) {
-      warnings.push(
-        `${pinned} pinned sessions (prune-protected) — forge sessions pinned · /sessions unpin <id> stale keepers`,
-      );
-    }
-  } catch {
-    /* */
-  }
-  return warnings;
-}
+// productionWarningsForRun lives in util/production-warnings.ts (unit-tested).
 
 function emitFailJson(
   payload: Record<string, unknown>,
@@ -5143,6 +5140,18 @@ function buildConfig(opts: Record<string, unknown>): ForgeConfig {
       );
     }
     overrides.maxTurns = n;
+  }
+  if (opts.maxCost != null) {
+    const parsed = parseCostUsd(opts.maxCost);
+    if (parsed === null || parsed === undefined) {
+      failInvalidFlag(
+        "invalid_max_cost",
+        `Invalid --max-cost "${opts.maxCost}". Pass a USD amount (e.g. 5, $2.50) or 0/off for unlimited.`,
+        { maxCost: String(opts.maxCost) },
+        { json: wantJson },
+      );
+    }
+    overrides.maxCostUsd = parsed;
   }
   // != null so empty string "" fails closed (Commander sets "" for --flag '')
   if (opts.permissionMode != null) {
@@ -6080,7 +6089,21 @@ async function runHeadless(opts: {
         maxTurnsUnlimited: !(
           typeof opts.config.maxTurns === "number" && opts.config.maxTurns > 0
         ),
-        productionWarnings: productionWarningsForRun(opts.config),
+        maxCostUsd: opts.config.maxCostUsd ?? 0,
+        maxCostUnlimited: !(
+          typeof opts.config.maxCostUsd === "number" && opts.config.maxCostUsd > 0
+        ),
+        effectiveMaxCostUsd: resolveMaxCostUsd(opts.config, opts.session.meta),
+        sessionCostUsd: estimateCostUsd(
+          String(opts.config.provider),
+          opts.session.meta.totalPromptTokens || 0,
+          opts.session.meta.totalCompletionTokens || 0,
+          opts.config.model,
+        ),
+        productionWarnings: productionWarningsForRun(opts.config, {
+          ultrawork: Boolean(opts.session.meta.ultrawork),
+          sessionMaxCostUsd: opts.session.meta.maxCostUsd,
+        }),
         formatOnWrite: isFormatOnWriteEnabled(),
         blockingStop: opts.config.blockingStopHooks !== false,
         maxRunMs: maxRunMsFromEnv(),
@@ -6374,12 +6397,30 @@ async function runHeadless(opts: {
       denyRules: opts.config.permission?.deny?.length ?? 0,
       allowRules: opts.config.permission?.allow?.length ?? 0,
       askRules: opts.config.permission?.ask?.length ?? 0,
-      maxTurns: opts.config.maxTurns ?? 0,
+maxTurns: opts.config.maxTurns ?? 0,
       maxTurnsUnlimited: !(
         typeof opts.config.maxTurns === "number" && opts.config.maxTurns > 0
       ),
-      productionWarnings: productionWarningsForRun(opts.config),
-        formatOnWrite: isFormatOnWriteEnabled(),
+      maxCostUsd: opts.config.maxCostUsd ?? 0,
+      maxCostUnlimited: !(
+        typeof opts.config.maxCostUsd === "number" && opts.config.maxCostUsd > 0
+      ),
+      // Effective cap after session /budget override (null = unlimited).
+      effectiveMaxCostUsd: resolveMaxCostUsd(opts.config, opts.session.meta),
+      sessionCostUsd: estimateCostUsd(
+        String(opts.config.provider),
+        opts.session.meta.totalPromptTokens || 0,
+        opts.session.meta.totalCompletionTokens || 0,
+        opts.config.model,
+      ),
+      productionWarnings: productionWarningsForRun(opts.config, {
+        ultrawork: Boolean(opts.session.meta.ultrawork),
+        sessionMaxCostUsd: opts.session.meta.maxCostUsd,
+        hitCostCap: result.hitCostCap,
+        hitMaxTurns: result.hitMaxTurns,
+        releasedOnContinueCap: result.releasedOnContinueCap,
+      }),
+      formatOnWrite: isFormatOnWriteEnabled(),
       blockingStop: opts.config.blockingStopHooks !== false,
       maxRunMs: maxRunMsFromEnv(),
       providerTimeoutMs: providerTimeoutMs(),
@@ -6394,6 +6435,7 @@ async function runHeadless(opts: {
       stopContinues: result.stopContinues,
       releasedOnContinueCap: result.releasedOnContinueCap,
       hitMaxTurns: result.hitMaxTurns,
+      hitCostCap: result.hitCostCap,
       finishReason: result.finishReason,
       lastError: opts.session.meta.lastError
         ? {
@@ -6422,6 +6464,7 @@ async function runHeadless(opts: {
         stopContinues: payload.stopContinues,
         releasedOnContinueCap: payload.releasedOnContinueCap,
         hitMaxTurns: payload.hitMaxTurns,
+        hitCostCap: payload.hitCostCap,
         editCount: payload.editCount,
         promptTokens: payload.promptTokens,
         completionTokens: payload.completionTokens,

@@ -60,6 +60,7 @@ export function buildLiveSnapshot(ctx: StatusBarContext) {
     accountId: ctx.auth.accountId,
     accountCount,
     permissionMode: ctx.config.permissionMode,
+    maxCostUsd: ctx.config.maxCostUsd,
   });
 }
 
@@ -206,6 +207,12 @@ export function renderLiveRunHeader(ctx: StatusBarContext): string {
       chalk.white("/cycle 1") +
       chalk.dim(" continue · ") +
       chalk.white("/ulw-off") +
+      chalk.dim(" · ") +
+      chalk.white("/budget") +
+      chalk.dim(" · ") +
+      chalk.white("/done") +
+      chalk.dim(" · ") +
+      chalk.white("/notify") +
       chalk.dim(" · ") +
       chalk.white("/status") +
       chalk.dim(" · free-text queues"),
@@ -404,6 +411,17 @@ export function renderTurnFooter(
       chalk.dim(
         `turn in=${formatTokens(turn.promptTokens)} out=${formatTokens(turn.completionTokens)} ~${formatCost(cost)}`,
       ),
+    );
+  }
+  if (snap.budget) {
+    const b = snap.budget;
+    const label = `$${b.spentUsd.toFixed(b.spentUsd < 0.01 ? 4 : 3)}/$${b.capUsd.toFixed(b.capUsd < 0.01 ? 4 : 3)}`;
+    parts.push(
+      b.hit
+        ? chalk.red(`budget HIT ${label}`)
+        : b.percent >= 80
+          ? chalk.yellow(`budget ${b.percent}% ${label}`)
+          : chalk.dim(`budget ${b.percent}% ${label}`),
     );
   }
   if (snap.openTodos > 0) {

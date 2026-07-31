@@ -12,6 +12,7 @@ import { loadConfig } from "../config/load.js";
 import { resolveAuth } from "../auth/resolve.js";
 import { getGitSnapshot } from "../util/git-context.js";
 import { estimateCostUsd } from "../util/format.js";
+import { costCapStatus } from "../util/cost-budget.js";
 import { computeLiveness, getActiveEntry } from "./active.js";
 import { collectPlanUsage } from "./plan.js";
 import {
@@ -27,6 +28,7 @@ import type {
   AuthMethod,
   ContextInfo,
   TokenUsageInfo,
+  BudgetInfo,
   GoalInfo,
   ActivityInfo,
   BackgroundTaskSummary,
@@ -142,6 +144,39 @@ function buildTokens(session: SessionData, provider: string): TokenUsageInfo {
   };
 }
 
+function buildBudget(
+  session: SessionData,
+  opts: {
+    maxCostUsd?: number;
+    provider?: string;
+    model?: string;
+  },
+): BudgetInfo | undefined {
+  try {
+    const st = costCapStatus(
+      {
+        maxCostUsd:
+          typeof opts.maxCostUsd === "number" && Number.isFinite(opts.maxCostUsd)
+            ? opts.maxCostUsd
+            : 0,
+        provider: opts.provider || session.meta.provider || "xai",
+        model: opts.model || session.meta.model,
+      },
+      session.meta,
+    );
+    if (st.cap == null) return undefined;
+    return {
+      capUsd: st.cap,
+      spentUsd: st.spent,
+      percent: Math.max(0, Math.round((st.ratio ?? 0) * 100)),
+      remainingUsd: st.remaining ?? 0,
+      hit: st.hit,
+    };
+  } catch {
+    return undefined;
+  }
+}
+
 function buildGoal(sessionId: string): GoalInfo | undefined {
   const g = loadGoal(sessionId);
   if (!g?.objective) return undefined;
@@ -162,6 +197,8 @@ export function sessionToSnapshot(
     accountId?: string;
     accountCount?: number;
     permissionMode?: string;
+    /** Config maxCostUsd (session.meta.maxCostUsd still wins when set). */
+    maxCostUsd?: number;
   } = {},
 ): StatusSnapshot {
   const meta = session.meta;
@@ -183,6 +220,25 @@ export function sessionToSnapshot(
   else if (opts.permissionMode === "acceptEdits") tags.push("auto");
   if (meta.lastError?.message) tags.push(`ERR:${meta.lastError.code}`);
   if (gitSnap.isWorktree) tags.push("WORKTREE");
+  // BUDGET tag when a spend cap is armed (session override or config).
+  try {
+    const st = costCapStatus(
+      {
+        maxCostUsd:
+          typeof opts.maxCostUsd === "number" && Number.isFinite(opts.maxCostUsd)
+            ? opts.maxCostUsd
+            : 0,
+        provider: meta.provider || "xai",
+        model: meta.model,
+      },
+      meta,
+    );
+    if (st.cap != null) {
+      tags.push(st.hit ? "BUDGET:HIT" : `BUDGET:${Math.round((st.ratio ?? 0) * 100)}%`);
+    }
+  } catch {
+    /* */
+  }
 
   const bg = collectBackgroundSummaries();
   const activity = buildActivity(meta.id, bg);
@@ -261,6 +317,11 @@ export function sessionToSnapshot(
       : undefined,
     context: buildContext(session, opts.windowTokens || 128_000),
     tokens: buildTokens(session, meta.provider),
+    budget: buildBudget(session, {
+      maxCostUsd: opts.maxCostUsd,
+      provider: meta.provider,
+      model: meta.model,
+    }),
     goal: buildGoal(meta.id),
     activity,
     backgroundTasks: bg.length ? bg : undefined,
@@ -342,6 +403,7 @@ export async function collectSnapshots(
       accountId: sameProvider ? accountId : undefined,
       accountCount: sameProvider ? accountCount : undefined,
       permissionMode: config.permissionMode,
+      maxCostUsd: config.maxCostUsd,
     });
     snaps.push(snap);
   }

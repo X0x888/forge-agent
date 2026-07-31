@@ -14,7 +14,7 @@ While the agent works (native live chrome — not idle-only):
 │ live run  (input stays open — no Ctrl+C needed)
 │ xai/grok-4.5 · effort high
 │ ULW c=1 w=0 CONTINUE
-│ controls: /cycle 0 last · /cycle 1 continue · /ulw-off · /status
+│ controls: /cycle 0 last · /cycle 1 continue · /ulw-off · /budget · /done · /notify · /status
 │ type at the live › line below while the agent works
 └──────────────────────────────────────────────────────────
 ⠋ ⚒ thinking… 12s xai/grok-4.5 high c=1 /cycle 0
@@ -30,7 +30,7 @@ live › still open — type another control or wait for the run
 After each turn:
 
 ```
-──  ctx 32% (12.4k/128k)  turn in=1.2k out=400 ~$0.01  todos:2
+──  ctx 32% (12.4k/128k)  turn in=1.2k out=400 ~$0.01  budget 12% $0.04/$5  todos:2
 ```
 
 ## Design
@@ -54,7 +54,7 @@ After each turn:
 | **Stream ticks** | While tokens stream | Newline status every ~10s (no `\r` garble) |
 | **`live ›` prompt** | Entire busy turn | Always-open control line; re-shown after tools / harness / slash |
 | **Live control ACK** | After mid-run `/cycle` etc. | Clear `live ✓ applied` box + re-prompt |
-| **Turn footer** | After every agent turn | Context %, turn tokens/cost, todos, bg, harness continues |
+| **Turn footer** | After every agent turn | Context %, turn tokens/cost, **budget %** (when `/budget` or `--max-cost` armed), todos, bg, harness continues |
 | **`/status`** | On demand (also mid-run) | Full 2-line HUD + session detail + bg task list |
 
 ### Optional external pane
@@ -73,10 +73,11 @@ forge status --tmux --plain
 - Git branch / dirty (when in a repo)
 - Provider + model
 - Auth method shorthand: `sub` | `key` | `oauth`
-- Flags: `ULW`, `GOAL`, `PLAN`, `YOLO`, `auto`, foreign `LOCK:<pid>` when another process holds the session
+- Flags: `ULW`, `GOAL`, `PLAN`, `YOLO`, `auto`, `PIN`, `BUDGET:N%` / `BUDGET:HIT` (when spend cap armed), foreign `LOCK:<pid>` when another process holds the session
 - Liveness: `◉ working` / `● live` / `○ idle` / `◌ stale`
 - Context bar + % + estimated tokens / window
 - Session duration, token totals (+ rough $ when rates known)
+- **Budget** segment when `/budget` / `--max-cost` / `max_cost_usd` is armed (`budget N% $spent/$cap`)
 - Open todos, turn count, edit count
 - **Activity** when mid-turn: `thinking…` / `tool:…` / `compacting…`
 - **Background tasks**: `bg:N` + command hints; full list under `/tasks`

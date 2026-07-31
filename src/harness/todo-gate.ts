@@ -128,7 +128,7 @@ export function incrementTodoGateFires(sessionId: string): number {
   return n;
 }
 
-/** Test helpers */
+/** Test helpers / full reset (nudge + gate fires). */
 export function clearTodoGateState(sessionId?: string): void {
   if (sessionId) {
     nudgeBySession.delete(sessionId);
@@ -139,11 +139,27 @@ export function clearTodoGateState(sessionId?: string): void {
   }
 }
 
+/**
+ * Wind-down paths (`/done`, `/goal done|clear`, `/cycle 0`, `/ulw-off`,
+ * `/clear`, `/new`, safety-valve CONTINUE→LAST) call this so a leftover
+ * soft once-block does not fight intentional harness release.
+ * Same implementation as clearTodoGateState — named for call-site clarity.
+ */
+export function clearSoftTodoGateOnWindDown(sessionId: string): void {
+  if (!sessionId) return;
+  clearTodoGateState(sessionId);
+}
+
 const ATTEST_RE =
   /\*\*Goal achieved\.\*\*|\*\*Cycle complete\.\*\*|\*\*Wave complete\.\*\*|all tasks complete/i;
 
 /**
  * Evaluate todo gate at Stop. Returns block message or null to allow.
+ *
+ * Under ULW: hard gate (up to maxFiresPerPrompt).
+ * Outside ULW: soft gate once when open todos remain — experts often leave a
+ * half-finished checklist and the agent yields; one re-anchor finishes or
+ * cancels the board without requiring ULW.
  */
 export function evaluateTodoGateAtStop(opts: {
   sessionId: string;
@@ -152,12 +168,37 @@ export function evaluateTodoGateAtStop(opts: {
   openTodoCount: number;
   lastAssistantMessage: string;
   config?: Partial<TodoGateConfig>;
-}): { block: boolean; reason?: string; reanchor?: string } {
+  /**
+   * Soft open-todos block outside ULW (default true). Cap = 1 fire.
+   * Set false to restore pre-0.9.54 behavior (only ULW gates todos).
+   */
+  softOutsideUlw?: boolean;
+}): { block: boolean; reason?: string; reanchor?: string; soft?: boolean } {
   const cfg = { ...DEFAULT_TODO_GATE, ...opts.config };
   if (!cfg.enabled) return { block: false };
-  if (!opts.ulwEnabled && !opts.ultraworkFlag) return { block: false };
   if (opts.openTodoCount <= 0) return { block: false };
   if (ATTEST_RE.test(opts.lastAssistantMessage || "")) return { block: false };
+
+  const underUlw = Boolean(opts.ulwEnabled || opts.ultraworkFlag);
+  const softOutside =
+    opts.softOutsideUlw !== undefined
+      ? opts.softOutsideUlw
+      : process.env.FORGE_TODO_SOFT_OUTSIDE_ULW !== "0" &&
+        process.env.FORGE_TODO_SOFT_OUTSIDE_ULW !== "false";
+
+  if (!underUlw) {
+    if (!softOutside) return { block: false };
+    const fires = getTodoGateFires(opts.sessionId);
+    // Soft: exactly one re-anchor per prompt, then release.
+    if (fires >= 1) return { block: false };
+    incrementTodoGateFires(opts.sessionId);
+    const msg = [
+      `[Forge TodoGate] Stop blocked once — ${opts.openTodoCount} open todo(s) remain.`,
+      `Finish or cancel them with todo_write, then stop. (Soft gate outside ULW — will not re-block this prompt.)`,
+      `Under ULW the gate is stricter until **Cycle complete.** / **Goal achieved.**`,
+    ].join("\n");
+    return { block: true, reason: msg, reanchor: msg, soft: true };
+  }
 
   const fires = getTodoGateFires(opts.sessionId);
   if (fires >= cfg.maxFiresPerPrompt) {

@@ -2,9 +2,13 @@
  * Mid-turn free-text interjections (Grok Build–inspired).
  *
  * While the agent is working, the user can type free text (not only slash
- * controls). Text message is queued and drained at the next safe provider-turn
+ * controls). Text is queued and drained at the next safe provider-turn
  * boundary, framed so the model can weigh it against in-flight work without a
  * forced deferral instruction.
+ *
+ * When ULW/goal/todos are active, a short harness context line is appended so
+ * free-text steering does not silently drop the mandate (expert friction:
+ * "I said X mid-run and it forgot the goal").
  */
 
 /** Match Grok shell large-prompt truncation. */
@@ -12,18 +16,59 @@ export const LARGE_INTERJECTION_THRESHOLD = 25_000;
 
 const queueBySession = new Map<string, string[]>();
 
+/** Optional harness context attached when draining mid-run free-text. */
+export interface InterjectionContext {
+  /** e.g. "ULW cycle=1 wave=3 (CONTINUE)" */
+  ulwLine?: string;
+  /** Active goal objective (truncated). */
+  goalLine?: string;
+  openTodos?: number;
+  /** Permission mode when not default (e.g. plan). */
+  permissionMode?: string;
+}
+
 /** Wrap a user message in the canonical `<user_query>` envelope. */
 export function formatUserQuery(userMessage: string): string {
   return `<user_query>\n${userMessage}\n</user_query>`;
 }
 
 /**
+ * Build a one-line harness reminder for mid-run free-text.
+ * Empty when nothing is armed.
+ */
+export function formatInterjectionContext(
+  ctx?: InterjectionContext | null,
+): string {
+  if (!ctx) return "";
+  const bits: string[] = [];
+  if (ctx.ulwLine) bits.push(ctx.ulwLine);
+  if (ctx.goalLine) bits.push(`goal: ${ctx.goalLine}`);
+  if (typeof ctx.openTodos === "number" && ctx.openTodos > 0) {
+    bits.push(`todos:${ctx.openTodos}`);
+  }
+  if (ctx.permissionMode && ctx.permissionMode !== "default") {
+    bits.push(`mode:${ctx.permissionMode}`);
+  }
+  if (bits.length === 0) return "";
+  return `[Forge harness still active: ${bits.join(" · ")}] Weigh the user message against this — do not abandon a half-finished safe step without reason, but do not ignore the interjection.`;
+}
+
+/**
  * Wrap interjection text as a synthetic user message with a mid-turn note.
  * No "drop everything" instruction — the model decides how to weigh it.
  */
-export function formatInterjection(text: string): string {
+export function formatInterjection(
+  text: string,
+  ctx?: InterjectionContext | null,
+): string {
   const truncated = truncateUtf8(text, LARGE_INTERJECTION_THRESHOLD);
-  return `The user sent a message while you were working:\n${formatUserQuery(truncated)}`;
+  const harness = formatInterjectionContext(ctx);
+  const parts = [
+    "The user sent a message while you were working:",
+    formatUserQuery(truncated),
+  ];
+  if (harness) parts.push(harness);
+  return parts.join("\n");
 }
 
 /** Truncate at a UTF-8 character boundary. */
@@ -70,9 +115,12 @@ export function clearInterjections(sessionId?: string): void {
  * Format one or more drained interjections for injection into the transcript.
  * Multiple free-text messages in one drain are combined under one framing.
  */
-export function formatInterjectionsMessage(texts: string[]): string {
+export function formatInterjectionsMessage(
+  texts: string[],
+  ctx?: InterjectionContext | null,
+): string {
   if (texts.length === 0) return "";
-  if (texts.length === 1) return formatInterjection(texts[0]);
+  if (texts.length === 1) return formatInterjection(texts[0]!, ctx);
   const body = texts.map((t, i) => `(${i + 1}) ${t}`).join("\n");
-  return formatInterjection(body);
+  return formatInterjection(body, ctx);
 }

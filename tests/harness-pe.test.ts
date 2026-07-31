@@ -7,6 +7,7 @@ import {
   formatInterjection,
   formatUserQuery,
   formatInterjectionsMessage,
+  formatInterjectionContext,
   pushInterjection,
   drainInterjections,
   clearInterjections,
@@ -77,6 +78,28 @@ describe("interjection (Grok-style)", () => {
     assert.ok(Buffer.byteLength(body, "utf8") > 0);
     const framed = formatInterjection("x".repeat(30_000));
     assert.match(framed, /\[truncated\]/);
+  });
+
+  it("attaches harness context so free-text does not drop the mandate", () => {
+    const ctxLine = formatInterjectionContext({
+      ulwLine: "ULW cycle=1 wave=2 (CONTINUE)",
+      goalLine: "ship reliability",
+      openTodos: 3,
+    });
+    assert.match(ctxLine, /Forge harness still active/);
+    assert.match(ctxLine, /ULW cycle=1/);
+    assert.match(ctxLine, /goal: ship reliability/);
+    assert.match(ctxLine, /todos:3/);
+    const framed = formatInterjection("focus on the tests first", {
+      ulwLine: "ULW cycle=1 wave=2 (CONTINUE)",
+      openTodos: 2,
+    });
+    assert.match(framed, /focus on the tests first/);
+    assert.match(framed, /harness still active/i);
+    assert.match(framed, /do not abandon/i);
+    // No context → no harness line
+    const plain = formatInterjection("hi");
+    assert.ok(!/harness still active/i.test(plain));
   });
 });
 
@@ -234,6 +257,42 @@ describe("todo nudge + gate", () => {
     });
     assert.equal(r.block, false);
   });
+
+  it("TodoGate soft-blocks once outside ULW with open todos", () => {
+    clearTodoGateState("tg-soft");
+    const r1 = evaluateTodoGateAtStop({
+      sessionId: "tg-soft",
+      ulwEnabled: false,
+      ultraworkFlag: false,
+      openTodoCount: 2,
+      lastAssistantMessage: "Done for now.",
+    });
+    assert.equal(r1.block, true);
+    assert.equal(r1.soft, true);
+    assert.match(r1.reanchor || "", /once/i);
+    // Second stop same prompt releases
+    const r2 = evaluateTodoGateAtStop({
+      sessionId: "tg-soft",
+      ulwEnabled: false,
+      ultraworkFlag: false,
+      openTodoCount: 2,
+      lastAssistantMessage: "Still open todos but releasing.",
+    });
+    assert.equal(r2.block, false);
+  });
+
+  it("TodoGate soft outside ULW can be disabled", () => {
+    clearTodoGateState("tg-off");
+    const r = evaluateTodoGateAtStop({
+      sessionId: "tg-off",
+      ulwEnabled: false,
+      ultraworkFlag: false,
+      openTodoCount: 3,
+      lastAssistantMessage: "Stopping.",
+      softOutsideUlw: false,
+    });
+    assert.equal(r.block, false);
+  });
 });
 
 describe("structured compaction", () => {
@@ -341,6 +400,12 @@ describe("prompt profile + baseline system", () => {
     });
     assert.match(text, /mid-conversation update/);
     assert.match(text, /autonomous|Keep working/i);
+    assert.match(text, /State your reading first/i);
+    assert.match(text, /Finish, don't hand off/i);
+    assert.match(text, /Tests must be able to fail/i);
+    assert.match(text, /Handoff guard/i);
+    assert.match(text, /Proof-claim guard/i);
+    assert.match(text, /TodoGate/i);
     assert.match(text, /SERENDIPITY/i);
     // Live counters should NOT be baked as the only source — protocol is static
     assert.match(text, /Live counters\/mandate are injected mid-conversation/i);

@@ -13,7 +13,7 @@ forge doctor                 # human report (exit 1 if issues)
 forge doctor --json          # CI: structured JSON + exit 1 if unhealthy
 forge doctor --json --sandbox off --read-outside allow  # what-if production risk scan
 forge config --json --sandbox strict --read-outside deny  # effective snapshot what-if
-# forge run --json also includes productionWarnings[] for sandbox=off / yolo / read-outside=allow / dirty tree (≥40) / large session inventory (≥100); sessions list --json inventory counts
+# forge run --json also includes productionWarnings[] for sandbox=off / yolo / read-outside=allow / ULW-without-budget / dirty tree (≥20 under ULW or ≥100 always) / large session inventory (≥100) / post-run hitCostCap·hitMaxTurns·releasedOnContinueCap; sessions list --json inventory counts
 # sessions export --json → { ok, id, format, body }; import accepts that envelope file (unwraps body)
 # FORGE_JSON_COMPACT=1       # single-line --json success payloads (log aggregation)
 FORGE_READ_OUTSIDE=deny    # CI: hard-deny absolute reads outside workspace
@@ -271,7 +271,7 @@ Success `ok` is `true` only when the run completed without abort/timeout **and**
 }
 ```
 
-`releasedOnContinueCap: true` means the shared stop-continue safety valve fired (length / content_filter / empty / Stop-block cap). `hitMaxTurns: true` means the loop exited on `max_turns` (not a clean Stop). Both stay `ok: true` unless aborted/timed out/empty-run, so CI can alert on caps without hard-failing. `finishReason` is the last provider `finish_reason` (e.g. `stop`, `length`, `content_filter`, `tool_calls`) or `null` if no model turn completed. Mid-run catch failures include `reason=error|timeout|aborted`.
+`releasedOnContinueCap: true` means the shared stop-continue safety valve fired (length / content_filter / empty / Stop-block cap). `hitMaxTurns: true` means the loop exited on `max_turns` (not a clean Stop). `hitCostCap: true` means the session spend estimate hit `max_cost_usd` / `FORGE_MAX_COST_USD` / `--max-cost` / `/budget` (estimateCostUsd only — not a bill). All three stay `ok: true` unless aborted/timed out/empty-run, so CI can alert on caps without hard-failing. The same three also appear as strings inside `productionWarnings[]` post-run (grep-friendly). `lastError` (when present) is `{ at, code, message, tips? }` stamped for recovery — codes include `max_cost`, `max_turns`, `continue_cap_*`, `handoff_released`, `proof_claim_released`, auth/rate-limit failures. `finishReason` is the last provider `finish_reason` (e.g. `stop`, `length`, `content_filter`, `tool_calls`) or `null` if no model turn completed. Mid-run catch failures include `reason=error|timeout|aborted`.
 
 Each headless/REPL turn also appends a counter-only line to `~/.forge/metrics.jsonl` (no prompts or secrets).
 

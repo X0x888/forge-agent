@@ -37,6 +37,23 @@ export interface TokenUsageInfo {
 }
 
 /**
+ * Session spend budget (estimateCostUsd — not a bill).
+ * Present when a cap is armed (config / env / --max-cost / /budget).
+ */
+export interface BudgetInfo {
+  /** Effective cap USD (always > 0 when present). */
+  capUsd: number;
+  /** Running session estimate USD. */
+  spentUsd: number;
+  /** 0–100+ (can exceed 100 when over cap). */
+  percent: number;
+  /** Remaining USD before release (0 when hit). */
+  remainingUsd: number;
+  /** True when spent >= cap. */
+  hit: boolean;
+}
+
+/**
  * Quota / plan usage when a provider exposes it (subscription credits,
  * weekly rate limits, etc.). Always optional — never invent numbers.
  */
@@ -120,6 +137,8 @@ export interface StatusSnapshot {
   git?: GitInfo;
   context: ContextInfo;
   tokens: TokenUsageInfo;
+  /** Session spend cap when armed (estimateCostUsd). */
+  budget?: BudgetInfo;
   /** Subscription / plan quota when available for this auth path */
   plan?: PlanUsageInfo;
   goal?: GoalInfo;

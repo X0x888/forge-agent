@@ -84,6 +84,8 @@ function normalizeConfigShape(raw: Record<string, unknown>): Partial<ForgeConfig
   const map: Record<string, string> = {
     max_tokens: "maxTokens",
     max_turns: "maxTurns",
+    max_cost_usd: "maxCostUsd",
+    max_cost: "maxCostUsd",
     permission_mode: "permissionMode",
     blocking_stop_hooks: "blockingStopHooks",
     compat_claude_hooks: "compatClaudeHooks",
@@ -399,6 +401,24 @@ export function loadConfig(overrides: Partial<ForgeConfig> = {}, cwd = process.c
       cfg.maxTurns = n;
     }
   }
+  if (
+    process.env.FORGE_MAX_COST_USD != null &&
+    process.env.FORGE_MAX_COST_USD.trim() !== ""
+  ) {
+    // Lazy import avoided — parse inline to keep load.ts free of util cycles.
+    const raw = process.env.FORGE_MAX_COST_USD.trim()
+      .replace(/^\$/, "")
+      .replace(/\s*usd\s*$/i, "")
+      .trim();
+    if (/^(off|none|unlimited|inf(inity)?)$/i.test(raw)) {
+      cfg.maxCostUsd = 0;
+    } else {
+      const n = Number(raw);
+      if (Number.isFinite(n) && n >= 0 && n <= 1_000_000) {
+        cfg.maxCostUsd = Math.round(n * 10_000) / 10_000;
+      }
+    }
+  }
   if (process.env.FORGE_BLOCKING_STOP === "0") cfg.blockingStopHooks = false;
   if (process.env.FORGE_BLOCKING_STOP === "1") cfg.blockingStopHooks = true;
   if (process.env.FORGE_GOAL_GATE === "0") cfg.goal.enabled = false;
@@ -475,6 +495,7 @@ reasoning_effort = "high"
 temperature = 0.2
 max_tokens = 16384
 max_turns = 0                 # 0 = unlimited; set e.g. 200 to cap agent turns
+max_cost_usd = 0              # 0 = unlimited; set e.g. 5 to release when session est. hits $5
 permission_mode = "default"  # default | acceptEdits | plan | bypassPermissions | dontAsk
 
 # OS sandbox for bash (macOS: sandbox-exec, Linux: bwrap)

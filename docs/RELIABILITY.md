@@ -89,6 +89,14 @@ What experts should expect from Forge in long, unattended, or CI runs.
 | **Empty assistant** | Nudges the model to continue rather than stopping on a blank turn; **cap checked before** nudge inject; **at cap** sets non-empty `finalText` |
 | **Stop-continue cap** | When harness keeps blocking Stop until the shared cap, empty `finalText` gets an explicit release message (tools-only last turn); loop sets `releasedOnContinueCap` (headless JSON + metrics) for CI visibility |
 | **maxTurns** | `max_turns = 0` (default) is **unlimited**; positive values cap agent turns. Hitting the cap sets `hitMaxTurns` + annotates `finalText` (clean Stop on the final allowed turn is **not** flagged) |
+| **maxCostUsd** | `max_cost_usd = 0` (default) is **unlimited**; positive values cap session spend *estimate* (`estimateCostUsd`, not a bill). Sources: config / `FORGE_MAX_COST_USD` / `--max-cost` / `/budget`. Hitting the cap sets `hitCostCap` + annotates `finalText` and stamps `lastError.code=max_cost`. Session override via `/budget` (including `0`/`off` = unlimited for this session). Under ULW `cycle=1`, auto-flips to `cycle=0` (LAST) so resume is not stuck |
+| **maxTurns + ULW** | Hitting `max_turns` under ULW CONTINUE also flips to LAST (`maybeFlipUlwToLastOnSafetyValve`) |
+| **Continue-cap + ULW** | `releasedOnContinueCap` under ULW CONTINUE also flips to LAST (same helper) so length/Stop-block caps do not leave the session stuck |
+| **Handoff guard** | Premature “let me know if…” / “shall I continue?” yields blocked under ULW/goal/open todos (and hard continue-asks always). Cap `FORGE_HANDOFF_BLOCK_CAP` (default 3) releases + stamps `lastError.code=handoff_released` |
+| **Proof-claim guard** | “tests pass” / “all green” without structural `verificationRan` blocked once when work is in flight. Cap `FORGE_PROOF_CLAIM_BLOCK_CAP` (default 1) releases + stamps `lastError.code=proof_claim_released` |
+| **Soft TodoGate** | Outside ULW, open todos block Stop once per prompt (`FORGE_TODO_SOFT_OUTSIDE_ULW=0` disables) |
+| **Desktop notify** | `/notify on` / `FORGE_NOTIFY=1` — opt-in OS notification on turn end (with BEL via `maybeTurnEndAttention`) |
+| **Interjection context** | Mid-run free-text includes active ULW/goal/todos/plan so steering does not drop the mandate |
 | **finishReason** | Last provider `finish_reason` on `LoopResult` / headless JSON (`stop`, `length`, `content_filter`, `tool_calls`, …) or `null` if no model turn; mid-run catch adds `reason=error\|timeout\|aborted` |
 | **Headless SIGINT/SIGTERM** | `forge run` aborts the in-flight loop cleanly (exit 130 when aborted) |
 | **Headless session resume** | `forge run … --session <id>` continues a prior headless/REPL session (multi-step CI) |

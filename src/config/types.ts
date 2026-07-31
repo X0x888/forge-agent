@@ -100,6 +100,13 @@ export interface ForgeConfig {
   maxTokens: number;
   /** Max agent turns per user message (0 = unlimited) */
   maxTurns: number;
+  /**
+   * Soft session spend cap in USD (estimateCostUsd, not a bill).
+   * 0 = unlimited (default). When the running session estimate reaches the
+   * cap the agent loop releases cleanly (hitCostCap) so unattended ULW cannot
+   * runaway-spend. Override per-session with `/budget`.
+   */
+  maxCostUsd: number;
   permissionMode: PermissionMode;
   /**
    * OS sandbox for bash: off | workspace | read-only | strict
@@ -173,6 +180,7 @@ export const DEFAULT_CONFIG: ForgeConfig = {
   // high effort truncated mid-thought and paid extra length-continue turns.
   maxTokens: 16384,
   maxTurns: 0,
+  maxCostUsd: 0,
   permissionMode: "default",
   sandbox: "workspace",
   sandboxMissingBackend: "fail-closed",

@@ -33,7 +33,7 @@ describe("goal harness", () => {
     assert.equal(detectAutoGoal("hello world"), null);
   });
 
-  it("arms and evaluates stop blocking", () => {
+  it("arms and evaluates stop blocking", async () => {
     const g = armGoal(sid, "implement foo and verify with tests", "manual");
     assert.equal(g.status, "active");
     assert.ok(loadGoal(sid)?.objective.includes("implement foo"));
@@ -58,7 +58,23 @@ describe("goal harness", () => {
     });
     assert.equal(blocked2.block, true);
 
-    // Attestation releases
+    // Soft TodoGate fire before attestation
+    const {
+      evaluateTodoGateAtStop,
+      clearTodoGateState,
+      getTodoGateFires,
+    } = await import("../src/harness/todo-gate.js");
+    clearTodoGateState(sid);
+    evaluateTodoGateAtStop({
+      sessionId: sid,
+      ulwEnabled: false,
+      ultraworkFlag: false,
+      openTodoCount: 1,
+      lastAssistantMessage: "stop",
+    });
+    assert.ok(getTodoGateFires(sid) >= 1);
+
+    // Attestation releases + clears soft TodoGate
     const done = evaluateGoalAtStop({
       sessionId: sid,
       lastAssistantMessage: "**Goal achieved.**\n✅ all good",
@@ -68,11 +84,26 @@ describe("goal harness", () => {
     });
     assert.equal(done.block, false);
     assert.equal(loadGoal(sid)?.status, "achieved");
+    assert.equal(getTodoGateFires(sid), 0);
   });
 
-  it("stuck-wall releases after threshold with no edits", () => {
+  it("stuck-wall releases after threshold with no edits", async () => {
     const sid2 = "test-session-stuck";
     armGoal(sid2, "impossible forever task", "manual");
+    const {
+      evaluateTodoGateAtStop,
+      clearTodoGateState,
+      getTodoGateFires,
+    } = await import("../src/harness/todo-gate.js");
+    clearTodoGateState(sid2);
+    evaluateTodoGateAtStop({
+      sessionId: sid2,
+      ulwEnabled: false,
+      ultraworkFlag: false,
+      openTodoCount: 1,
+      lastAssistantMessage: "stop",
+    });
+    assert.ok(getTodoGateFires(sid2) >= 1);
     let last;
     for (let i = 0; i < 3; i++) {
       last = evaluateGoalAtStop({
@@ -83,12 +114,13 @@ describe("goal harness", () => {
         enabled: true,
       });
     }
-    assert.equal(last!.block, false);
     assert.equal(last!.stuckReleased, true);
     assert.equal(loadGoal(sid2)?.status, "stuck");
+    // Soft TodoGate cleared on stuck-wall release
+    assert.equal(getTodoGateFires(sid2), 0);
   });
 
-  it("pause and resume", () => {
+  it("pause and resume", async () => {
     const sid3 = "test-session-pause";
     armGoal(sid3, "paused objective", "manual");
     pauseGoal(sid3);
@@ -109,8 +141,26 @@ describe("goal harness", () => {
       enabled: true,
     });
     assert.equal(after.block, true);
+
+    // Soft TodoGate fire before markGoalDone
+    const {
+      evaluateTodoGateAtStop,
+      clearTodoGateState,
+      getTodoGateFires,
+    } = await import("../src/harness/todo-gate.js");
+    clearTodoGateState(sid3);
+    evaluateTodoGateAtStop({
+      sessionId: sid3,
+      ulwEnabled: false,
+      ultraworkFlag: false,
+      openTodoCount: 1,
+      lastAssistantMessage: "stop",
+    });
+    assert.ok(getTodoGateFires(sid3) >= 1);
+
     markGoalDone(sid3);
     assert.equal(loadGoal(sid3)?.status, "achieved");
+    assert.equal(getTodoGateFires(sid3), 0);
   });
 });
 

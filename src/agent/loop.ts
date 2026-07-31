@@ -32,6 +32,7 @@ import { loadGoal, detectAutoGoal, armGoal } from "../harness/goal.js";
 import {
   loadUlwCycle,
   armUlwCycle,
+  maybeFlipUlwToLastOnSafetyValve,
   ulwKickoffMessage,
   isSoftPrompt,
   formatUlwCounts,
@@ -90,6 +91,11 @@ import {
   switchOnQuotaFailure,
 } from "../auth/accounts.js";
 import { isProviderApiError } from "../providers/errors.js";
+import {
+  costCapStatus,
+  formatCostBudgetLine,
+  resolveMaxCostUsd,
+} from "../util/cost-budget.js";
 import {
   formatToolStart,
   formatToolEnd,
@@ -157,6 +163,11 @@ export interface LoopResult {
    * Headless JSON/metrics surface this for CI; still `ok` unless aborted/timed out.
    */
   hitMaxTurns: boolean;
+  /**
+   * True when the loop released because the session spend estimate hit
+   * maxCostUsd / FORGE_MAX_COST_USD / --max-cost / /budget (not a clean Stop).
+   */
+  hitCostCap: boolean;
   /**
    * Last provider `finish_reason` observed on an assistant turn (e.g. stop, length,
    * content_filter, tool_calls). Null when no model turn completed (auth/abort early).
@@ -297,6 +308,10 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
     verificationRuns: 0,
     effortBoostTurns: 0,
   };
+  /** Consecutive Stop blocks from handoff-guard (polite yield). Resets on allow. */
+  let handoffBlocks = 0;
+  /** Consecutive Stop blocks from proof-claim guard. Resets on allow. */
+  let proofClaimBlocks = 0;
   // Proactive stale tool-result clearing (microcompaction). Cadence + size
   // thresholds bound prompt-cache disruption; clearing itself is age-based.
   const toolClearCfg = toolClearEnvConfig();
@@ -388,6 +403,7 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
   let aborted = false;
   let releasedOnContinueCap = false;
   let hitMaxTurns = false;
+  let hitCostCap = false;
   let lastFinishReason: string | null = null;
   let overflowCompactAttempted = false;
   // max_turns <= 0 means unlimited (config default is 0). A silent 200-cap when
@@ -533,12 +549,19 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
   let warnedContextPressure: "threshold" | "hard" | null = null;
 
   try {
-    // Check maxTurns at the top so a clean Stop on the final allowed turn is
-    // not mis-reported as hitMaxTurns (turns === maxTurns after that turn).
+    // Check maxTurns / cost cap at the top so a clean Stop on the final allowed
+    // turn is not mis-reported as hitMaxTurns/hitCostCap.
     for (;;) {
       if (turns >= maxTurns) {
         hitMaxTurns = true;
         break;
+      }
+      {
+        const cap = costCapStatus(config, session.meta);
+        if (cap.hit) {
+          hitCostCap = true;
+          break;
+        }
       }
       assertNotAborted(signal);
       turns += 1;
@@ -1027,6 +1050,23 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
       noteAssistantTurn(session.meta.id);
       saveSession(session);
 
+      // Cost cap after usage lands — release before more tool work / continues.
+      {
+        const cap = costCapStatus(config, session.meta);
+        if (cap.hit) {
+          hitCostCap = true;
+          log.warn(
+            `maxCostUsd hit (${formatCostBudgetLine(cap)}) — releasing`,
+          );
+          events.onStatus?.(
+            `Cost cap hit (~$${cap.spent.toFixed(3)} / $${(cap.cap ?? 0).toFixed(3)})`,
+          );
+          // Fall through: if there are tool_calls we still skip them by
+          // breaking after the no-tool path would; break the outer loop now.
+          break;
+        }
+      }
+
       const toolCalls = assistantMsg.tool_calls;
       const finishReason = response.finish_reason || "";
       if (finishReason) lastFinishReason = finishReason;
@@ -1202,6 +1242,8 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
           editCount: session.meta.editCount,
           lastAssistantMessage: finalText,
           verificationRan: harnessStats.verificationRuns > 0,
+          handoffBlocks,
+          proofClaimBlocks,
         });
         // Reset only when the ULW driver actually evaluated this Stop — hook /
         // goal blocks return early without consuming the signal, and the runs
@@ -1223,9 +1265,72 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
           );
           events.onStatus?.("ULW waves thinning — consider /cycle 0");
         }
+        // Track polite-yield streak for handoff-guard release cap.
+        // Polite yields are a hard-round signal — bump adaptive effort so the
+        // next continue thinks harder instead of re-asking the user.
+        if (stopResult.handoff?.block) {
+          handoffBlocks += 1;
+          harnessStats.effortBoostTurns = Math.max(
+            harnessStats.effortBoostTurns,
+            1,
+          );
+        } else if (stopResult.allowStop || stopResult.handoff?.released) {
+          handoffBlocks = 0;
+        }
+        // Proof-claim streak: "tests pass" without running them.
+        if (stopResult.proofClaim?.block) {
+          proofClaimBlocks += 1;
+          harnessStats.effortBoostTurns = Math.max(
+            harnessStats.effortBoostTurns,
+            1,
+          );
+        } else if (stopResult.allowStop || stopResult.proofClaim?.released) {
+          proofClaimBlocks = 0;
+        }
+        // Open todos left unfinished — think harder on the continue (finish or cancel).
+        if (stopResult.todoGate) {
+          harnessStats.effortBoostTurns = Math.max(
+            harnessStats.effortBoostTurns,
+            1,
+          );
+        }
 
         if (stopResult.allowStop) {
           if (stopResult.systemMessage) log.dim(stopResult.systemMessage);
+          // Stamp lastError when a polite-yield / proof-claim guard released
+          // after its cap so resume orientation surfaces why the agent stopped
+          // short (expert friction: "why did it yield?").
+          try {
+            if (stopResult.handoff?.released) {
+              setSessionLastError(session, {
+                code: "handoff_released",
+                message: (
+                  stopResult.handoff.reason ||
+                  "Handoff-guard released after repeated polite-yield Stop attempts"
+                ).slice(0, 500),
+                tips: [
+                  "Continue the mandate manually if work remains",
+                  "/retry  ·  /goal status  ·  /cycle status",
+                ],
+              });
+              saveSession(session);
+            } else if (stopResult.proofClaim?.released) {
+              setSessionLastError(session, {
+                code: "proof_claim_released",
+                message: (
+                  stopResult.proofClaim.reason ||
+                  "Proof-claim guard released after claim-without-run Stop attempts"
+                ).slice(0, 500),
+                tips: [
+                  "Run the verification command, then continue",
+                  "npm test  ·  npm run typecheck  ·  /retry",
+                ],
+              });
+              saveSession(session);
+            }
+          } catch {
+            /* */
+          }
           break;
         }
 
@@ -1289,6 +1394,22 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
           log.info(
             chalk.magenta(
               `↻ TodoGate blocked Stop (continue #${stopContinues})`,
+            ),
+          );
+        } else if (stopResult.handoff?.block) {
+          log.info(
+            chalk.magenta(
+              `↻ Handoff-guard blocked premature yield (continue #${stopContinues}` +
+                (handoffBlocks > 0 ? `, handoff #${handoffBlocks}` : "") +
+                `)`,
+            ),
+          );
+        } else if (stopResult.proofClaim?.block) {
+          log.info(
+            chalk.magenta(
+              `↻ Proof-claim blocked unverified success claim (continue #${stopContinues}` +
+                (proofClaimBlocks > 0 ? `, claim #${proofClaimBlocks}` : "") +
+                `)`,
             ),
           );
         } else {
@@ -1370,9 +1491,22 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
   // Silent maxTurns exit is a production footgun for headless CI — surface it.
   if (!aborted && hitMaxTurns) {
     log.warn(`maxTurns (${maxTurns}) reached — releasing`);
+    let ulwNote = "";
+    try {
+      const flipped = maybeFlipUlwToLastOnSafetyValve(session.meta.id);
+      if (flipped) {
+        ulwNote =
+          ` ULW flipped cycle=1 → 0 (LAST) so the session is not stuck under CONTINUE after the turn cap. ` +
+          `Raise max_turns and /cycle 1 to resume waves, or /done · /ulw-off to wind down.`;
+        log.info(chalk.magenta("ULW → cycle=0 (LAST) after maxTurns"));
+      }
+    } catch {
+      /* */
+    }
     const note =
       `[Forge] maxTurns (${maxTurns}) reached — releasing. ` +
-      `Raise max_turns in config, narrow the task, or continue with forge run --continue.`;
+      `Raise max_turns in config, narrow the task, or continue with forge run --continue.` +
+      ulwNote;
     if ((finalText || "").trim()) {
       if (!finalText.includes("[Forge] maxTurns")) {
         finalText = `${finalText.replace(/\s+$/, "")}\n\n${note}`;
@@ -1383,13 +1517,110 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
     try {
       setSessionLastError(session, {
         code: "max_turns",
-        message: note.replace(/^\[Forge\]\s*/, ""),
+        message: note.replace(/^\[Forge\]\s*/, "").slice(0, 500),
         tips: [
           "Raise max_turns / FORGE_MAX_TURNS or max_turns=0 unlimited",
           "forge run --continue  ·  /retry  ·  narrow the task",
+          "ULW was flipped to cycle=0 (LAST) if it was CONTINUE — /cycle 1 to resume waves",
         ],
       });
       saveSession(session);
+    } catch {
+      /* */
+    }
+  }
+
+  // Cost-cap release — unattended ULW spend valve (estimate, not a bill).
+  if (!aborted && hitCostCap) {
+    const st = costCapStatus(config, session.meta);
+    const capStr =
+      st.cap != null ? `$${st.cap.toFixed(st.cap < 0.01 ? 4 : 3)}` : "?";
+    const spentStr = `$${st.spent.toFixed(st.spent < 0.01 ? 4 : 3)}`;
+    log.warn(`maxCostUsd (${capStr}) reached — releasing (spent ~${spentStr})`);
+    // Under ULW cycle=1 the next continue would re-block forever after a spend
+    // release — flip to LAST so resume/continue can finish or stop cleanly.
+    let ulwNote = "";
+    try {
+      const flipped = maybeFlipUlwToLastOnSafetyValve(session.meta.id);
+      if (flipped) {
+        ulwNote =
+          ` ULW flipped cycle=1 → 0 (LAST) so the session is not stuck under CONTINUE after the spend release. ` +
+          `Raise the budget and /cycle 1 to resume waves, or /done · /ulw-off to wind down.`;
+        log.info(chalk.magenta("ULW → cycle=0 (LAST) after cost cap"));
+      }
+    } catch {
+      /* */
+    }
+    const note =
+      `[Forge] maxCostUsd (${capStr}) reached — releasing (session est. ~${spentStr}). ` +
+      `Raise max_cost_usd / FORGE_MAX_COST_USD / --max-cost, or /budget off · /budget <usd>. ` +
+      `Estimate only — not a bill.` +
+      ulwNote;
+    if ((finalText || "").trim()) {
+      if (!finalText.includes("[Forge] maxCostUsd")) {
+        finalText = `${finalText.replace(/\s+$/, "")}\n\n${note}`;
+      }
+    } else {
+      finalText = note;
+    }
+    try {
+      setSessionLastError(session, {
+        code: "max_cost",
+        message: note.replace(/^\[Forge\]\s*/, "").slice(0, 500),
+        tips: [
+          "Raise max_cost_usd / FORGE_MAX_COST_USD / --max-cost N",
+          "/budget off  ·  /budget 10  ·  forge run --max-cost 5",
+          "ULW was flipped to cycle=0 (LAST) if it was CONTINUE — /cycle 1 to resume waves",
+          "Estimate only (estimateCostUsd) — not provider billing",
+        ],
+      });
+      saveSession(session);
+    } catch {
+      /* */
+    }
+  }
+
+  // Continue-cap release (length / content_filter / empty / Stop-block) under ULW
+  // CONTINUE — same stuck risk as maxTurns/costCap. Skip when those already flipped.
+  if (
+    !aborted &&
+    releasedOnContinueCap &&
+    !hitMaxTurns &&
+    !hitCostCap
+  ) {
+    try {
+      const flipped = maybeFlipUlwToLastOnSafetyValve(session.meta.id);
+      if (flipped) {
+        const note =
+          `[Forge] ULW flipped cycle=1 → 0 (LAST) after stop-continue safety valve. ` +
+          `Raise FORGE_ULW_MAX_CONTINUES / maxStopContinues or /cycle 1 to resume waves · /done · /ulw-off.`;
+        log.info(chalk.magenta("ULW → cycle=0 (LAST) after continue-cap"));
+        if ((finalText || "").trim()) {
+          if (!finalText.includes("ULW flipped cycle=1")) {
+            finalText = `${finalText.replace(/\s+$/, "")}\n\n${note}`;
+          }
+        } else {
+          finalText = note;
+        }
+        // Preserve existing continue_cap_* lastError code; append tip if present.
+        try {
+          const prev = session.meta.lastError;
+          if (prev?.code?.startsWith("continue_cap")) {
+            const tips = [
+              ...(prev.tips || []),
+              "ULW was flipped to cycle=0 (LAST) if it was CONTINUE — /cycle 1 to resume waves",
+            ];
+            setSessionLastError(session, {
+              code: prev.code,
+              message: prev.message,
+              tips: [...new Set(tips)].slice(0, 6),
+            });
+          }
+          saveSession(session);
+        } catch {
+          /* */
+        }
+      }
     } catch {
       /* */
     }
@@ -1410,8 +1641,19 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
   }
 
   // Successful completion clears prior failure — but continue-cap / content-filter /
-  // maxTurns releases stamp lastError for expert recovery and must keep it.
-  if (!aborted && !releasedOnContinueCap && !hitMaxTurns) {
+  // maxTurns / cost-cap / handoff-release / proof-claim-release stamp lastError
+  // for expert recovery and must keep it.
+  const lastErrCode = session.meta.lastError?.code || "";
+  const keepLastError =
+    releasedOnContinueCap ||
+    hitMaxTurns ||
+    hitCostCap ||
+    lastErrCode === "handoff_released" ||
+    lastErrCode === "proof_claim_released" ||
+    lastErrCode === "max_cost" ||
+    lastErrCode === "max_turns" ||
+    lastErrCode.startsWith("continue_cap");
+  if (!aborted && !keepLastError) {
     try {
       clearSessionLastError(session);
       saveSession(session);
@@ -1427,11 +1669,15 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
     aborted,
     releasedOnContinueCap,
     hitMaxTurns,
+    hitCostCap,
     finishReason: lastFinishReason,
     promptTokens,
     completionTokens,
   };
 }
+
+/** Re-export for callers/tests that already import loop helpers. */
+export { resolveMaxCostUsd, costCapStatus, formatCostBudgetLine };
 
 /** Admit harness snapshot if changed; push as user message. */
 function admitHarnessState(
@@ -1477,9 +1723,44 @@ function drainSafeBoundaryMessages(
 
   const interjections = drainInterjections(session.meta.id);
   if (interjections.length) {
+    // Attach active harness context so free-text steering does not drop the
+    // mandate/goal/todos mid-wave (expert friction: "I said X and it forgot ULW").
+    let ijCtx: import("../harness/interjection.js").InterjectionContext | undefined;
+    try {
+      const ulwNow = loadUlwCycle(session.meta.id);
+      const goalNow = loadGoal(session.meta.id);
+      const open = openTodos(session.todos);
+      ijCtx = {};
+      if (ulwNow?.enabled) {
+        ijCtx.ulwLine = `${formatUlwCounts(ulwNow)} ${
+          ulwNow.cycle === 1 ? "(CONTINUE)" : "(LAST)"
+        }`;
+      }
+      if (
+        goalNow?.objective &&
+        goalNow.status === "active" &&
+        !goalNow.paused
+      ) {
+        ijCtx.goalLine = goalNow.objective.slice(0, 120);
+      }
+      if (open > 0) ijCtx.openTodos = open;
+      if (config.permissionMode && config.permissionMode !== "default") {
+        ijCtx.permissionMode = config.permissionMode;
+      }
+      if (
+        !ijCtx.ulwLine &&
+        !ijCtx.goalLine &&
+        !ijCtx.openTodos &&
+        !ijCtx.permissionMode
+      ) {
+        ijCtx = undefined;
+      }
+    } catch {
+      ijCtx = undefined;
+    }
     session.messages.push({
       role: "user",
-      content: formatInterjectionsMessage(interjections),
+      content: formatInterjectionsMessage(interjections, ijCtx),
     });
     events?.onStatus?.(
       `Queued mid-run message${interjections.length > 1 ? "s" : ""} from user`,

@@ -2,6 +2,340 @@
 
 ## Unreleased
 
+## 0.9.96 — goal achieve clears soft TodoGate
+
+### Changed
+
+- **`markGoalDone`** and **goal attestation** (`**Goal achieved.**`) reset soft TodoGate fire count so Stop is not once-blocked for leftover open todos after the goal is released.
+
+## 0.9.95 — goal stuck-wall soft TodoGate + /max-waves LAST UX
+
+### Changed
+
+- **Goal stuck-wall release** clears soft TodoGate (parity with ULW stuck-wall).
+- **`/max-waves`** output highlights immediate LAST when the cap is already at/under the current wave.
+
+## 0.9.94 — setMaxWaves immediate LAST
+
+### Changed
+
+- **`setMaxWaves(N)`** when ULW is CONTINUE and `wave >= N` flips to LAST immediately (no wait for next Stop) and clears soft TodoGate; live notice when applied via `/max-waves`.
+
+## 0.9.93 — max_waves LAST + stuck-wall clear soft TodoGate
+
+### Changed
+
+- **max_waves auto LAST** and **ULW stuck-wall release** reset soft TodoGate fire count (parity with `/cycle 0` / safety valves).
+
+## 0.9.92 — /goal set soft TodoGate coverage
+
+### Changed
+
+- Tests cover `/goal set` clearing soft TodoGate; AGENTS.md documents fresh-driver arm paths.
+
+## 0.9.91 — fresh driver clears soft TodoGate
+
+### Changed
+
+- **`/ulw`** and **`/goal set`** reset soft TodoGate fire count so a newly armed driver is not blocked once for leftover open-todo Stop attempts from prior work.
+
+## 0.9.90 — clearSoftTodoGateOnWindDown helper
+
+### Changed
+
+- **`clearSoftTodoGateOnWindDown(sessionId)`** named helper (exported) used by all wind-down paths; AGENTS.md documents the full clear matrix.
+
+## 0.9.89 — /goal clear soft TodoGate + HARNESS docs
+
+### Changed
+
+- **`/goal clear`** resets soft TodoGate fire count (parity with `/goal done` / `/done`).
+- HARNESS.md documents all soft TodoGate wind-down clear paths.
+
+## 0.9.88 — safety valve + /goal done clear soft TodoGate
+
+### Changed
+
+- **`maybeFlipUlwToLastOnSafetyValve`** and **`/goal done`** reset soft TodoGate fire count (parity with `/done` / `/cycle 0` / `/ulw-off`) so wind-down paths are not blocked once for leftover open todos.
+
+## 0.9.87 — /cycle 0 clears soft TodoGate
+
+### Changed
+
+- **`/cycle 0` (LAST)** resets soft TodoGate fire count (parity with `/done` / `/ulw-off`) so wind-down is not blocked once for leftover open todos.
+
+## 0.9.86 — /clear and /new clear soft TodoGate
+
+### Changed
+
+- **`/clear`** and **`/new`** / **`/clear hard`** reset soft TodoGate fire count for the session so a fresh conversation is not blocked once for pre-clear open-todo Stop attempts.
+
+## 0.9.85 — /ulw-off clears soft TodoGate
+
+### Changed
+
+- **`/ulw-off`** resets soft TodoGate fire count (parity with `/done`) so disarm is not followed by a leftover once-block for open todos.
+
+## 0.9.84 — /done clears soft TodoGate
+
+### Changed
+
+- **`/done`** resets soft TodoGate fire count for the session so wind-down is not blocked once for leftover open todos the user is intentionally ending.
+
+## 0.9.83 — run --json lastError docs
+
+### Changed
+
+- **`forge run --json` help** lists `lastError` on success payloads; PRODUCTION.md documents recovery codes (`max_cost`, `max_turns`, `continue_cap_*`, `handoff_released`, `proof_claim_released`, …).
+
+## 0.9.82 — doctor unlimited-budget tip
+
+### Changed
+
+- **Doctor**: when `maxCost` is unlimited, tip to set a spend cap before long unattended ULW; smoke asserts harness + unlimited-budget doctor tips.
+
+## 0.9.81 — doctor less-steering harness tips
+
+### Changed
+
+- **Doctor preferences**: tip when both BEL and desktop notify are off; always lists less-steering harness features (handoff-guard, proof-claim, soft TodoGate, `/budget`, safety-valve ULW flip, `/done`).
+
+## 0.9.80 — proof-claim pattern expansion
+
+### Changed
+
+- **Proof-claim detector** also matches `typechecks cleanly`, `all checks are green`, and `verified with/via npm test` (still ignores bare “the bug is fixed” / “I verified the fix works” without a named check).
+- AGENTS.md documents `turnEndOutcomeLabel`.
+
+## 0.9.79 — turnEndOutcomeLabel
+
+### Changed
+
+- **`turnEndOutcomeLabel`** pure helper (exported) drives turn-end notify/BEL bodies; unit-tested for safety valves, handoff/proof release, and flag precedence.
+- Package keywords: `budget`, `handoff`, `notify`, `proof-claim`, `cost-cap`.
+
+## 0.9.78 — notify outcome labels
+
+### Changed
+
+- **Turn-end desktop notify / BEL body** labels safety-valve outcomes: cost cap, max turns, continue cap, handoff/proof-claim released, and other `lastError` codes — not only cost/maxTurns/aborted.
+
+## 0.9.77 — soft TodoGate stop-guard coverage
+
+### Changed
+
+- Stop-guard + system-prompt tests cover soft TodoGate outside ULW (`todoGate: true`, once-per-prompt) and harness docs for Handoff/Proof-claim/TodoGate.
+
+## 0.9.76 — TodoGate adaptive effort
+
+### Changed
+
+- **TodoGate Stop blocks** bump adaptive effort (parity with handoff/proof-claim) so the continue thinks harder about finishing or cancelling open todos.
+- System prompt harness section documents soft TodoGate outside ULW.
+
+## 0.9.75 — safety-valve tip smoke + ULW docs
+
+### Changed
+
+- Smoke asserts the “safety valves flip ULW” expert tip stays present.
+- ULW.md documents CONTINUE→LAST auto-flip on spend/turn/continue-cap safety valves.
+
+## 0.9.74 — keepLastError hardening + tips
+
+### Fixed
+
+- **`keepLastError`** also preserves `max_turns` and any `continue_cap_*` codes by string (not only boolean flags), so resume orientation never loses the recovery tip after a clean-looking Stop path.
+
+### Changed
+
+- AGENTS.md + expert tips mention safety-valve ULW CONTINUE→LAST flip.
+
+## 0.9.73 — continue-cap flips ULW to LAST
+
+### Fixed
+
+- **`releasedOnContinueCap` under ULW CONTINUE** also auto-flips to `cycle=0` (LAST) — covers length / content_filter / empty / Stop-block caps so the session is not stuck re-blocking after the safety valve.
+
+## 0.9.72 — safety valves flip ULW to LAST
+
+### Fixed
+
+- **maxTurns under ULW CONTINUE** also auto-flips to `cycle=0` (LAST), same as spend cap — shared helper `maybeFlipUlwToLastOnSafetyValve` (alias `maybeFlipUlwToLastOnCostCap`).
+
+## 0.9.71 — cost-cap flips ULW to LAST
+
+### Fixed
+
+- **Spend-cap under ULW CONTINUE**: when `hitCostCap` fires with ULW `cycle=1`, auto-flip to `cycle=0` (LAST) so resume/continue is not stuck re-blocking forever. Note + `lastError` tips explain how to raise the budget and `/cycle 1` to resume waves. Helper: `maybeFlipUlwToLastOnCostCap`.
+
+## 0.9.70 — live-run header controls
+
+### Changed
+
+- **Live-run header** control legend includes `/budget`, `/done`, and `/notify` (parity with ULW live-controls hint) so experts discover spend/wind-down/attention mid-turn without leaving the busy chrome.
+
+## 0.9.69 — status budget JSON + docs
+
+### Added
+
+- Status JSON (`forge status --json` / `snapshotsToJson`) includes `budget` + `BUDGET:*` tags when a spend cap is armed (verified by unit test).
+- AGENTS.md lists `cost-budget` + `production-warnings` modules; STATUSLINE.md documents budget segment and tags.
+
+## 0.9.68 — production-warnings module + unit tests
+
+### Changed
+
+- **`productionWarningsForRun`** extracted to `src/util/production-warnings.ts` (exported) with unit tests for safety valves, ULW-without-budget, and dirty-tree thresholds. PRODUCTION.md documents post-run warning strings.
+
+## 0.9.67 — productionWarnings safety valves
+
+### Added
+
+- **`run --json productionWarnings`**: post-run entries for `hitCostCap`, `hitMaxTurns`, and `releasedOnContinueCap` so CI can alert on safety valves via one array (fields remain first-class too).
+
+## 0.9.66 — /bell live notice + tips smoke
+
+### Changed
+
+- **`/bell on|off`** pushes a live mid-run notice (parity with `/notify` and `/budget`).
+- Smoke covers `forge tips` / `tips --json` / headless `/tips` for the Less steering line.
+
+## 0.9.65 — tests must be able to fail
+
+### Changed
+
+- **System prompt** (oh-my-kimi): “Tests must be able to fail” — never weaken assertions or rewrite tests solely to go green; fix the code or name a real external blocker.
+- Tips coverage asserts Less steering / handoff / proof-claim / budget / notify lines stay present.
+
+## 0.9.64 — /notify live notice + less-steering tips
+
+### Changed
+
+- **`/notify on|off`** pushes a live mid-run notice (parity with `/budget`).
+- Expert tips add a “Less steering” line (handoff-guard, proof-claim, soft TodoGate, `/done`, intent restatement) and list `/notify` in live mid-run controls.
+- RELIABILITY.md documents handoff-guard, proof-claim-guard, soft TodoGate, desktop notify, and interjection harness context.
+
+## 0.9.63 — /status budget + export cost
+
+### Fixed
+
+- **`/status` HUD** now passes `maxCostUsd` into the snapshot so budget % / BUDGET tag appear (parity with the live turn footer).
+
+### Added
+
+- **Session markdown export** includes est. cost and budget line when a session spend cap is set.
+
+## 0.9.62 — preserve guard-release lastError
+
+### Fixed
+
+- Clean Stop no longer clears `lastError` stamped by handoff/proof-claim release (`handoff_released` / `proof_claim_released`) or `max_cost`, so resume orientation keeps the recovery tip.
+
+## 0.9.61 — guard-release lastError + doctor notify
+
+### Added
+
+- **Handoff / proof-claim release stamps `lastError`** (`handoff_released` / `proof_claim_released`) so resume orientation explains why the agent stopped short after the guard cap.
+- Doctor preferences show `notify=on` and tip `/notify on` when desktop notify is off; `doctor --json` includes `notifyOnTurnEnd`.
+
+### Changed
+
+- Stop-guard header documents proof-claim as composition step 7.
+
+## 0.9.60 — live controls + intent restatement
+
+### Changed
+
+- **ULW live-controls hint** includes `/budget`, `/notify`, and `/done` so experts discover spend/attention/wind-down mid-run.
+- **System prompt**: oh-my-kimi-style “state your reading first” on multi-step work (one line, then proceed) — reduces wrong-fork re-steering.
+- Package description lists handoff-guard, proof-claim-guard, `/budget`, `/notify`, and `/done` wind-down.
+
+## 0.9.59 — /budget live notice + ULW docs
+
+### Changed
+
+- **`/budget` set/clear** pushes a live mid-run notice so the agent can prioritize verification/wind-down before `hitCostCap`.
+- ULW + AGENTS docs list handoff-guard, proof-claim-guard, soft TodoGate, and spend cap.
+
+## 0.9.58 — run JSON effective budget
+
+### Added
+
+- **`forge run --json`**: `effectiveMaxCostUsd` (session `/budget` override wins; `null` = unlimited) and `sessionCostUsd` (running estimate) so CI can alert on spend without scraping `/cost`.
+
+## 0.9.57 — interjection harness context
+
+### Changed
+
+- **Mid-run free-text framing**: when ULW/goal/open todos/plan mode are active, drained interjections include a short `[Forge harness still active: …]` line so free-text steering does not silently drop the mandate. Empty when no driver is armed (Q&A unchanged).
+
+## 0.9.56 — /done winds ULW+goal
+
+### Changed
+
+- **`/done`**: marks goal achieved *and* flips ULW `cycle=1 → 0` (LAST wave) in one live control so experts wind down both drivers without juggling `/goal done` + `/cycle 0`. Live notice tells the agent to finish the wave and attest **Cycle complete.**
+- Welcome tip mentions `/budget`, `/notify`, and `/done` wind-down.
+- Statusline tags include `BUDGET:N%` / `BUDGET:HIT` when a spend cap is armed.
+
+## 0.9.55 — smoke + doctor cost budget coverage
+
+### Added
+
+- Smoke fail-closed checks for `--max-cost` (invalid/empty), `doctor`/`config` JSON `maxCostUsd`/`maxCostUnlimited`, and headless `/budget` + `/cost`.
+- Dirty-tree production warning only under ULW (≥20 files) or extreme dirt (≥100) so normal WIP does not spam every `forge run --json`.
+
+## 0.9.54 — soft TodoGate outside ULW + sessions cost
+
+### Added
+
+- **Soft TodoGate outside ULW**: open todos block Stop once per prompt (then release) so half-finished checklists are finished or cancelled without requiring ULW. Disable with `FORGE_TODO_SOFT_OUTSIDE_ULW=0`.
+- **Sessions list cost**: `forge sessions list` and `/sessions` show estimated spend (`~$x`); JSON list includes `estCostUsd`, token totals, and `maxCostUsd` when set.
+
+## 0.9.53 — proof-claim guard (don't claim, prove)
+
+### Added
+
+- **Proof-claim guard** (`src/harness/proof-claim-guard.ts`): Stop blocks once when the assistant claims verification success (“tests pass”, “all green”, “typecheck clean”, …) without a structural `verificationRan` signal, and work is in flight (edits / goal / ULW / open todos). Cap via `FORGE_PROOF_CLAIM_BLOCK_CAP` (default 1). Complements ULW proof-demand for non-ULW implementation turns so experts are not forced to ask “did you actually run the tests?”
+
+## 0.9.52 — ULW auto-title + handoff effort + budget on cards
+
+### Added
+
+- **`/ulw` auto-title**: untitled sessions take a smart title from the mandate so `/sessions` and resume pickers stay navigable during long unattended runs (never overwrites an explicit `/title`).
+- **Handoff → adaptive effort**: polite-yield Stop blocks bump `effortBoostTurns` so the next continue thinks harder instead of re-asking the user.
+- **Budget on resume/share**: `formatResumeOrientation` and `formatSessionShareCard` surface session spend cap + token estimate when armed.
+
+## 0.9.51 — budget HUD + desktop notify
+
+### Added
+
+- **Budget in HUD**: turn footer, compact strip, and `forge status` show `budget N% $spent/$cap` (yellow ≥80%, red HIT) when a spend cap is armed.
+- **Desktop notify** (`/notify on|off|test`, `FORGE_NOTIFY=0|1`, preference `notifyOnTurnEnd`): opt-in OS notification on turn end (macOS osascript, Linux notify-send, Windows balloon). Combined with BEL via `maybeTurnEndAttention`.
+- **ULW without spend cap** production warning on `forge run --json` when ultrawork is armed and no effective budget is set.
+
+## 0.9.50 — session cost budget
+
+### Added
+
+- **Session spend cap** (`max_cost_usd` / `FORGE_MAX_COST_USD` / `--max-cost` / `/budget`): releases the agent cleanly when the running `estimateCostUsd` hits the cap (`hitCostCap` on loop/JSON/metrics; `lastError.code=max_cost`). Default unlimited (`0`). Session override via `/budget <usd>|off` (live mid-run; status readonly). Soft Q&A: estimate only — not a bill.
+- `/cost` shows the budget line; `/config` and doctor/run JSON expose `maxCostUsd` / `maxCostUnlimited`; stats track `costCapHits`.
+
+### Changed
+
+- Agent loop checks the cost cap at turn start and after each usage update (before more tool work).
+- `clearConversation` drops per-session budget override so the next conversation inherits config again.
+
+## 0.9.49 — handoff guard (finish, don't hand off)
+
+### Added
+
+- **Handoff guard** (`src/harness/handoff-guard.ts`): Stop blocks premature polite yields — “let me know if…”, “shall I continue?”, “want me to…?”, “stopping here” — under ULW/goal/open todos, and hard continue-asks even without a driver. Soft Q&A closers (“let me know if you have questions”) still allow Stop outside a driver. Incomplete mid-implementation closers block after edits. Cap via `FORGE_HANDOFF_BLOCK_CAP` (default 3) releases a stuck polite model.
+- System prompt finish doctrine (oh-my-kimi-inspired): autonomous + default profiles and harness section tell the model to finish instead of re-steering the user.
+
+### Changed
+
+- `runStopGuard` composition step 6 evaluates handoff after TodoGate/ultrawork backstop; loop tracks `handoffBlocks` and logs `Handoff-guard blocked premature yield`.
+
 ## 0.9.48 — doctor skills context pressure
 
 ### Added

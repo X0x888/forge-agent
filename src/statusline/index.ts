@@ -3,6 +3,7 @@ export type {
   PlanUsageInfo,
   ContextInfo,
   TokenUsageInfo,
+  BudgetInfo,
   CollectOptions,
   StatuslineRenderOptions,
   ActivityInfo,

@@ -10,7 +10,11 @@ import {
 } from "../util/fs.js";
 import { editDistance } from "../util/string-distance.js";
 import { suggestName } from "../util/suggest.js";
-import { formatRelativeTime } from "../util/format.js";
+import { formatRelativeTime, estimateCostUsd, formatCost } from "../util/format.js";
+import {
+  costCapStatus,
+  formatCostBudgetLine,
+} from "../util/cost-budget.js";
 import { detectProjectHints, getGitSnapshot } from "../util/git-context.js";
 import { countProjectSkills } from "../agent/project-skills.js";
 import type { ChatMessage } from "../providers/types.js";
@@ -92,6 +96,11 @@ export interface SessionMeta {
   editCount: number;
   totalPromptTokens: number;
   totalCompletionTokens: number;
+  /**
+   * Optional per-session spend cap (USD estimate). When set, overrides
+   * config.maxCostUsd for this session only. 0 = unlimited. Cleared on /clear hard.
+   */
+  maxCostUsd?: number;
   /** User message markers for rewind (indices into messages) */
   userTurnMarks?: number[];
 }
@@ -213,6 +222,19 @@ function normalizeSessionMeta(fromSide: SessionMeta): SessionMeta {
     totalPromptTokens: Number(fromSide.totalPromptTokens) || 0,
     totalCompletionTokens: Number(fromSide.totalCompletionTokens) || 0,
   };
+  // Per-session spend cap (USD estimate). Preserve explicit 0 (= unlimited override).
+  if (
+    fromSide.maxCostUsd !== undefined &&
+    fromSide.maxCostUsd !== null &&
+    Number.isFinite(Number(fromSide.maxCostUsd))
+  ) {
+    const n = Number(fromSide.maxCostUsd);
+    if (n >= 0 && n <= 1_000_000) {
+      out.maxCostUsd = Math.round(n * 10_000) / 10_000;
+    }
+  } else {
+    delete out.maxCostUsd;
+  }
   if (fromSide.pinned) out.pinned = true;
   else delete out.pinned;
   const pm = normalizeMetaPermissionMode(fromSide.permissionMode);
@@ -595,6 +617,16 @@ export function importSessionJson(
       editCount: Number(src.editCount) || 0,
       totalPromptTokens: Number(src.totalPromptTokens) || 0,
       totalCompletionTokens: Number(src.totalCompletionTokens) || 0,
+      ...(src.maxCostUsd !== undefined &&
+      src.maxCostUsd !== null &&
+      Number.isFinite(Number(src.maxCostUsd)) &&
+      Number(src.maxCostUsd) >= 0 &&
+      Number(src.maxCostUsd) <= 1_000_000
+        ? {
+            maxCostUsd:
+              Math.round(Number(src.maxCostUsd) * 10_000) / 10_000,
+          }
+        : {}),
       ...(lastPrev ? { lastUserPreview: lastPrev } : {}),
       userTurnMarks: Array.isArray(src.userTurnMarks)
         ? src.userTurnMarks
@@ -1657,6 +1689,34 @@ export function exportSessionMarkdown(session: SessionData): string {
     `- Model: ${session.meta.provider}/${session.meta.model}`,
     `- Title: ${session.meta.title || "(untitled)"}`,
     `- Tokens: in=${session.meta.totalPromptTokens} out=${session.meta.totalCompletionTokens}`,
+    (() => {
+      try {
+        const cost = estimateCostUsd(
+          session.meta.provider || "xai",
+          session.meta.totalPromptTokens || 0,
+          session.meta.totalCompletionTokens || 0,
+          session.meta.model,
+        );
+        const bits = [`- Est. cost: ${formatCost(cost)}`];
+        if (
+          session.meta.maxCostUsd !== undefined &&
+          session.meta.maxCostUsd !== null
+        ) {
+          const st = costCapStatus(
+            {
+              maxCostUsd: 0,
+              provider: session.meta.provider || "xai",
+              model: session.meta.model,
+            },
+            session.meta,
+          );
+          bits.push(`- ${formatCostBudgetLine(st)}`);
+        }
+        return bits.join("\n");
+      } catch {
+        return null;
+      }
+    })(),
     session.meta.lastError?.message
       ? `- Last error: [${session.meta.lastError.code}] ${session.meta.lastError.message}` +
         (session.meta.lastError.tips?.[0]
@@ -2091,6 +2151,26 @@ export function formatResumeOrientation(
     /* */
   }
   try {
+    // Surface spend cap on resume so experts see the valve before continuing.
+    // Session override is what matters on resume (config may differ on host).
+    if (
+      session.meta.maxCostUsd !== undefined &&
+      session.meta.maxCostUsd !== null
+    ) {
+      const st = costCapStatus(
+        {
+          maxCostUsd: 0,
+          provider: session.meta.provider || "xai",
+          model: session.meta.model,
+        },
+        session.meta,
+      );
+      parts.push(formatCostBudgetLine(st));
+    }
+  } catch {
+    /* */
+  }
+  try {
     const touched = listSessionTouchedFiles(session, {
       limit: opts?.fileLimit ?? 6,
       mutatedOnly: true,
@@ -2214,6 +2294,38 @@ export function formatSessionShareCard(
         (m.lastError.tips?.[0] ? ` → ${m.lastError.tips[0]}` : "")
       : null,
     `  turns:    ${m.turnCount}  edits=${m.editCount}  msgs=${session.messages.length}`,
+    (() => {
+      try {
+        const cost = estimateCostUsd(
+          m.provider || "xai",
+          m.totalPromptTokens || 0,
+          m.totalCompletionTokens || 0,
+          m.model,
+        );
+        const tok =
+          (m.totalPromptTokens || 0) + (m.totalCompletionTokens || 0) > 0
+            ? `  tokens:   in=${m.totalPromptTokens || 0} out=${m.totalCompletionTokens || 0} · est ${formatCost(cost)}`
+            : null;
+        if (
+          m.maxCostUsd !== undefined &&
+          m.maxCostUsd !== null
+        ) {
+          const st = costCapStatus(
+            {
+              maxCostUsd: 0,
+              provider: m.provider || "xai",
+              model: m.model,
+            },
+            m,
+          );
+          const budget = `  budget:   ${formatCostBudgetLine(st)}`;
+          return [tok, budget].filter(Boolean).join("\n");
+        }
+        return tok;
+      } catch {
+        return null;
+      }
+    })(),
     flags.length ? `  flags:    ${flags.join(" ")}` : null,
     ``,
     `Resume:`,
@@ -2254,6 +2366,8 @@ export function clearConversation(session: SessionData): void {
   session.meta.editCount = 0;
   session.meta.totalPromptTokens = 0;
   session.meta.totalCompletionTokens = 0;
+  // Drop per-session spend override so the next conversation inherits config again.
+  delete session.meta.maxCostUsd;
   session.meta.title = undefined;
   session.meta.lastUserPreview = undefined;
   delete session.meta.lastError;

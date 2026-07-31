@@ -16,7 +16,10 @@ import {
 import { pushInterjection } from "../harness/interjection.js";
 import { saveSession } from "../session/session.js";
 import { log } from "../util/log.js";
-import { maybeRingBell } from "../util/attention.js";
+import {
+  maybeTurnEndAttention,
+  turnEndOutcomeLabel,
+} from "../util/attention.js";
 import { describeAuth } from "../auth/resolve.js";
 import type { ResolvedAuth } from "../auth/types.js";
 import {
@@ -567,7 +570,20 @@ export async function runRepl(opts: {
         }),
       );
       // Optional attention for long background ULW/goal runs (default off)
-      maybeRingBell();
+      {
+        const outcome = turnEndOutcomeLabel({
+          hitCostCap: result.hitCostCap,
+          hitMaxTurns: result.hitMaxTurns,
+          releasedOnContinueCap: result.releasedOnContinueCap,
+          aborted: result.aborted,
+          lastErrorCode: session.meta.lastError?.code,
+        });
+        maybeTurnEndAttention({
+          title: "Forge",
+          body: `${session.meta.title || "Forge"} · ${outcome}`,
+          subtitle: session.meta.id.slice(0, 8),
+        });
+      }
       lastStatusStrip = ""; // force fresh strip after turn
       try {
         const { appendSessionMetrics, buildRunEndMetrics } = await import(
@@ -583,6 +599,7 @@ export async function runRepl(opts: {
             stopContinues: result.stopContinues,
             releasedOnContinueCap: result.releasedOnContinueCap,
             hitMaxTurns: result.hitMaxTurns,
+            hitCostCap: result.hitCostCap,
             editCount: session.meta.editCount,
             promptTokens: result.promptTokens,
             completionTokens: result.completionTokens,
@@ -739,7 +756,7 @@ function printBanner(
     if (!prefs.seenWelcomeTip) {
       console.log(
         chalk.cyan(
-          `  Tip: /plan → design · /build → ship · /model live · /commands · /skills · /undo · forge tips · forge doctor --json\n`,
+          `  Tip: /plan → design · /build → ship · /budget N · /notify on · /done winds ULW+goal · /model live · /undo · forge tips · forge doctor --json\n`,
         ),
       );
       savePreferences({ seenWelcomeTip: true });

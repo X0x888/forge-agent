@@ -134,6 +134,10 @@ describe("changelog / what's new", () => {
     assert.match(text, /forge run/);
     assert.match(text, /forge auth --json/);
     assert.match(text, /\/cycle 0\|1/);
+    assert.match(text, /Less steering/);
+    assert.match(text, /handoff-guard|proof-claim/);
+    assert.match(text, /\/budget/);
+    assert.match(text, /\/notify/);
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-tips-"));
     process.env.FORGE_HOME = tmp;
     const s = createSession({ cwd: tmp, provider: "xai", model: "m" });
