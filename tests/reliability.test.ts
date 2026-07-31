@@ -6156,3 +6156,29 @@ describe("completion script sessions hygiene", () => {
     assert.match(bash, /untitled/);
   });
 });
+
+describe("loop guard messages project checks", () => {
+  it("error-streak message names a verification command", async () => {
+    const { ErrorStreakTracker } = await import("../src/agent/error-streak.js");
+    const t = new ErrorStreakTracker({ threshold: 3 });
+    t.observeError("bash", "fail a");
+    t.observeError("bash", "fail b");
+    const hit = t.observeError("bash", "fail c");
+    assert.ok(hit);
+    assert.match(hit!.message, /cheapest verification/);
+    // In this repo, should name npm run typecheck (or fallback typecheck/test)
+    assert.match(hit!.message, /npm run typecheck|typecheck\/test/);
+  });
+
+  it("doom-loop message suggests verification when stuck", async () => {
+    const { DoomLoopTracker } = await import("../src/agent/doom-loop.js");
+    const t = new DoomLoopTracker({ threshold: 3 });
+    const input = { command: "ls" };
+    t.observe("bash", input);
+    t.observe("bash", input);
+    const hit = t.observe("bash", input);
+    assert.ok(hit);
+    assert.match(hit!.message, /When stuck after edits, run/);
+    assert.match(hit!.message, /npm run typecheck|typecheck\/test/);
+  });
+});

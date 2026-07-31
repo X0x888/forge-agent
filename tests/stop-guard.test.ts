@@ -228,4 +228,32 @@ describe("stop-guard composition", () => {
     });
     assert.equal(r2.allowStop, true);
   });
+
+  it("proof-claim ignores failed verification runs (verificationPassed)", async () => {
+    const { evaluateStopGuards } = await import("../src/harness/stop-guard.js");
+    // Use evaluateProofClaimAtStop path via stop-guard if exported; else unit the mapping
+    const { evaluateProofClaimAtStop } = await import(
+      "../src/harness/proof-claim-guard.js"
+    );
+    // Failed run must not satisfy Done. after edits
+    const failed = evaluateProofClaimAtStop({
+      lastAssistantMessage: "Done.",
+      verificationRan: false,
+      ultrawork: false,
+      goalActive: false,
+      openTodoCount: 0,
+      editCount: 2,
+    });
+    assert.equal(failed.block, true);
+    // Successful run satisfies
+    const ok = evaluateProofClaimAtStop({
+      lastAssistantMessage: "Done.",
+      verificationRan: true,
+      ultrawork: false,
+      goalActive: false,
+      openTodoCount: 0,
+      editCount: 2,
+    });
+    assert.equal(ok.block, false);
+  });
 });

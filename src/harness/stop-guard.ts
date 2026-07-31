@@ -8,7 +8,7 @@
  *  4. TodoGate (open todos under ULW; soft once outside ULW)
  *  5. Ultrawork open-todos backstop
  *  6. Handoff guard — premature "let me know if…" / "shall I continue?" yields
- *  7. Proof-claim guard — "tests pass" / "all green" without verificationRan
+ *  7. Proof-claim guard — "tests pass" / silent edits-without-verify (free triage)
  */
 import type { ForgeConfig } from "../config/types.js";
 import type { HookRunner, HookContext, HookResult } from "./hooks.js";
@@ -37,12 +37,23 @@ export interface StopGuardInput {
   openTodoCount: number;
   editCount: number;
   lastAssistantMessage: string;
+  /** Latest user message (for advisory TodoGate release). */
+  lastUserMessage?: string;
   /**
    * Structural proof signal: a verification command (test/typecheck/lint/build)
    * actually executed since the previous Stop evaluation. Gate = execution,
    * not judgment — the wave ledger trusts this over prose claims.
    */
   verificationRan?: boolean;
+  /**
+   * Successful structural verification only. Proof-claim + goal/ULW attestation
+   * evidence prefer this so a red check cannot unlock "Done." / **Goal achieved.**
+   */
+  verificationPassed?: boolean;
+  /** Preferred project checks for handoff/proof-claim reanchor tips. */
+  preferredCheckCommands?: string[];
+  lastVerificationCommand?: string;
+  lastVerificationStale?: boolean;
   /**
    * How many times handoff-guard already blocked this process turn streak.
    * After FORGE_HANDOFF_BLOCK_CAP (default 3) the guard releases.
@@ -110,6 +121,9 @@ export async function runStopGuard(input: StopGuardInput): Promise<StopGuardResu
     editCount: input.editCount,
     stuckThreshold: config.goal.stuckThreshold,
     enabled: config.goal.enabled,
+    verificationRan: input.verificationRan,
+    verificationPassed: input.verificationPassed,
+    preferredCheckCommands: input.preferredCheckCommands,
   });
 
   if (goalDecision.stuckReleased) {
@@ -146,6 +160,8 @@ export async function runStopGuard(input: StopGuardInput): Promise<StopGuardResu
     openTodoCount: input.openTodoCount,
     stuckThreshold,
     verificationRan: input.verificationRan,
+    verificationPassed: input.verificationPassed,
+    preferredCheckCommands: input.preferredCheckCommands,
   });
 
   if (ulwDecision.stuckReleased || ulwDecision.lastCycleReleased) {
@@ -177,6 +193,7 @@ export async function runStopGuard(input: StopGuardInput): Promise<StopGuardResu
     ultraworkFlag: input.ultrawork,
     openTodoCount: input.openTodoCount,
     lastAssistantMessage: input.lastAssistantMessage,
+    lastUserMessage: input.lastUserMessage,
   });
   if (todoGate.block) {
     return {
@@ -225,11 +242,13 @@ export async function runStopGuard(input: StopGuardInput): Promise<StopGuardResu
   );
   const handoffDecision = evaluateHandoffAtStop({
     lastAssistantMessage: input.lastAssistantMessage,
+    lastUserMessage: input.lastUserMessage,
     ultrawork: Boolean(input.ultrawork || ulw?.enabled),
     goalActive,
     openTodoCount: input.openTodoCount,
     editCount: input.editCount,
     handoffBlocks: input.handoffBlocks,
+    preferredCheckCommands: input.preferredCheckCommands,
   });
   if (handoffDecision.block) {
     return {
@@ -248,12 +267,18 @@ export async function runStopGuard(input: StopGuardInput): Promise<StopGuardResu
   // Complements ULW proof-demand for goal-only and plain implementation turns.
   const proofClaimDecision = evaluateProofClaimAtStop({
     lastAssistantMessage: input.lastAssistantMessage,
-    verificationRan: Boolean(input.verificationRan),
+    lastUserMessage: input.lastUserMessage,
+    verificationRan: Boolean(
+      input.verificationPassed ?? input.verificationRan,
+    ),
     ultrawork: Boolean(input.ultrawork || ulw?.enabled),
     goalActive,
     openTodoCount: input.openTodoCount,
     editCount: input.editCount,
     proofClaimBlocks: input.proofClaimBlocks,
+    preferredCheckCommands: input.preferredCheckCommands,
+    lastVerificationCommand: input.lastVerificationCommand,
+    lastVerificationStale: input.lastVerificationStale,
   });
   if (proofClaimDecision.block) {
     return {

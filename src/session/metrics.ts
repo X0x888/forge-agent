@@ -23,6 +23,11 @@ export interface SessionMetricsEvent {
   /** True when the agent loop released because maxCostUsd was reached. */
   hitCostCap?: boolean;
   editCount?: number;
+  /** Last structural verification bash command (truncated). */
+  lastVerificationCommand?: string | null;
+  lastVerificationAt?: string | null;
+  lastEditAt?: string | null;
+  lastVerificationStale?: boolean | null;
   promptTokens?: number;
   completionTokens?: number;
   estCostUsd?: number;
@@ -88,6 +93,10 @@ export function buildRunEndMetrics(opts: {
   hitMaxTurns?: boolean;
   hitCostCap?: boolean;
   editCount: number;
+  lastVerificationCommand?: string | null;
+  lastVerificationAt?: string | null;
+  lastEditAt?: string | null;
+  lastVerificationStale?: boolean | null;
   promptTokens: number;
   completionTokens: number;
   durationMs?: number;
@@ -113,6 +122,16 @@ export function buildRunEndMetrics(opts: {
     ...(opts.hitMaxTurns ? { hitMaxTurns: true } : {}),
     ...(opts.hitCostCap ? { hitCostCap: true } : {}),
     editCount: opts.editCount,
+    ...(opts.lastVerificationCommand
+      ? { lastVerificationCommand: opts.lastVerificationCommand }
+      : {}),
+    ...(opts.lastVerificationAt
+      ? { lastVerificationAt: opts.lastVerificationAt }
+      : {}),
+    ...(opts.lastEditAt ? { lastEditAt: opts.lastEditAt } : {}),
+    ...(opts.lastVerificationStale
+      ? { lastVerificationStale: true }
+      : {}),
     promptTokens: opts.promptTokens,
     completionTokens: opts.completionTokens,
     estCostUsd: estimateCostUsd(

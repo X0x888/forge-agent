@@ -68,4 +68,14 @@ describe("dontAsk visibility", () => {
     assert.match(doc.report, /dontAsk/i);
     assert.match(doc.report, /ask_user/i);
   });
+
+  it("rejects empty question with recovery example", async () => {
+    for (const question of ["", "   "]) {
+      const r = await toolAskUser({ question });
+      assert.equal(r.isError, true);
+      assert.match(String(r.output || ""), /question is required/i);
+      assert.match(String(r.output || ""), /Example:/i);
+      assert.match(String(r.output || ""), /Whitespace-only questions fail closed/i);
+    }
+  });
 });

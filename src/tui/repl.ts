@@ -14,7 +14,7 @@ import {
   LIVE_CONTROLS_HINT,
 } from "../commands/slash.js";
 import { pushInterjection } from "../harness/interjection.js";
-import { saveSession } from "../session/session.js";
+import { saveSession, isLastVerificationStale } from "../session/session.js";
 import { log } from "../util/log.js";
 import {
   maybeTurnEndAttention,
@@ -26,7 +26,8 @@ import {
   formatToolStart,
   formatToolEnd,
 } from "../util/format.js";
-import { detectProjectHints, getGitSnapshot } from "../util/git-context.js";
+import { getGitSnapshot } from "../util/git-context.js";
+import { detectProjectIntel } from "../util/project-intel.js";
 import { createProvider } from "../providers/factory.js";
 import { resolveAuth } from "../auth/resolve.js";
 import { heartbeatSession, releaseSession } from "../statusline/active.js";
@@ -577,7 +578,11 @@ export async function runRepl(opts: {
           releasedOnContinueCap: result.releasedOnContinueCap,
           aborted: result.aborted,
           lastErrorCode: session.meta.lastError?.code,
+          editCount: session.meta.editCount,
+          lastVerificationCommand: session.meta.lastVerificationCommand,
+          lastVerificationStale: isLastVerificationStale(session.meta),
         });
+
         maybeTurnEndAttention({
           title: "Forge",
           body: `${session.meta.title || "Forge"} · ${outcome}`,
@@ -734,7 +739,12 @@ function printBanner(
 ): void {
   const cwd = config.workspace || session.meta.cwd;
   const git = getGitSnapshot(cwd);
-  const hints = detectProjectHints(cwd);
+  const intel = detectProjectIntel(cwd);
+  const projectBits = [
+    intel.packageManager || null,
+    intel.kinds.length ? intel.kinds.join("+") : null,
+    intel.checkCommands[0] || null,
+  ].filter(Boolean);
   console.log(chalk.bold.cyan("\n  ⚒  Forge") + chalk.dim(` v${VERSION}`));
   console.log(
     chalk.dim(
@@ -744,7 +754,7 @@ function printBanner(
         ` · Stop: ${config.blockingStopHooks ? "blocking" : "passive"}` +
         ` · perms: ${config.permissionMode}` +
         (git.branch ? ` · ${git.branch}${git.dirty ? "*" : ""}` : "") +
-        (hints.length ? ` · ${hints.join("+")}` : "") +
+        (projectBits.length ? ` · ${projectBits.join(" · ")}` : "") +
         `\n  Native live status while working · type at live › mid-run (/cycle 0)\n` +
         `  ↑↓ history · Tab complete · /tasks · /status · /undo · /logs · /share · /news · /tips · /quit\n` +
         `  Fresh session: forge --new  ·  resume is automatic for this cwd\n`,
@@ -754,9 +764,22 @@ function printBanner(
   try {
     const prefs = loadPreferences();
     if (!prefs.seenWelcomeTip) {
+      let stackBit = "";
+      try {
+        const intel = detectProjectIntel(cwd);
+        if (intel.checkCommands[0] || intel.packageManager) {
+          const bits = [
+            intel.packageManager || null,
+            intel.checkCommands[0] || null,
+          ].filter(Boolean);
+          if (bits.length) stackBit = ` · stack: ${bits.join(" · ")}`;
+        }
+      } catch {
+        /* */
+      }
       console.log(
         chalk.cyan(
-          `  Tip: /plan → design · /build → ship · /budget N · /notify on · /done winds ULW+goal · /model live · /undo · forge tips · forge doctor --json\n`,
+          `  Tip: /plan → design · /build → ship · /commit [do] · /budget N · /notify on · /done winds ULW+goal · /model live · /undo · /context · forge tips · forge doctor --json${stackBit}\n`,
         ),
       );
       savePreferences({ seenWelcomeTip: true });

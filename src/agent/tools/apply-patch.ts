@@ -14,6 +14,8 @@ import {
   formatNoteSuffix,
   maybeFormatAfterWrite,
 } from "./format-on-write.js";
+import { fileReadGuardEnabled } from "./file-read-state.js";
+import { verifyHintSuffix } from "../../util/project-intel.js";
 
 export async function toolApplyPatch(
   args: Record<string, unknown>,
@@ -37,7 +39,8 @@ export async function toolApplyPatch(
     return {
       output:
         "apply_patch error: patchText is required (non-empty string).\n" +
-        "Example: *** Begin Patch\n*** Update File: path.ts\n@@\n-old\n+new\n*** End Patch",
+        "Example: *** Begin Patch\n*** Update File: path.ts\n@@\n-old\n+new\n*** End Patch\n" +
+        "Whitespace-only patchText fails closed. Prefer search_replace for a single small edit.",
       isError: true,
     };
   }
@@ -302,6 +305,20 @@ export async function toolApplyPatch(
     }
   };
 
+  // Session-scoped stale/unread guard for update/delete of existing files.
+  if (ctx.fileReads && fileReadGuardEnabled()) {
+    for (const op of planned) {
+      if (op.kind === "add") continue;
+      const blocked = await ctx.fileReads.checkBeforeMutate(op.abs, {
+        tool: "apply_patch",
+        rel: op.rel,
+      });
+      if (blocked) {
+        return { output: blocked, isError: true };
+      }
+    }
+  }
+
   const applied: string[] = [];
   /** Absolute paths successfully written (for opt-in format-on-write). */
   const writtenAbs: string[] = [];
@@ -316,6 +333,9 @@ export async function toolApplyPatch(
         ctx.onEdit?.();
       } else if (op.kind === "delete") {
         await fsp.unlink(op.abs);
+        if (ctx.fileReads && fileReadGuardEnabled()) {
+          ctx.fileReads.clear(op.abs);
+        }
         const bytes = Buffer.byteLength(op.before, "utf8");
         if (bytes > 1_500_000) {
           journal({
@@ -335,6 +355,9 @@ export async function toolApplyPatch(
           await fsp.mkdir(path.dirname(op.moveAbs), { recursive: true });
           await atomicWriteFile(op.moveAbs, op.content);
           await fsp.unlink(op.abs);
+          if (ctx.fileReads && fileReadGuardEnabled()) {
+            ctx.fileReads.clear(op.abs);
+          }
           journal({ path: op.moveAbs, kind: "create" });
           const bytes = Buffer.byteLength(op.before, "utf8");
           if (bytes > 1_500_000) {
@@ -387,9 +410,22 @@ export async function toolApplyPatch(
       fmtNotes.push(`${rel}${note}`);
     }
   }
+  // Note AFTER format-on-write so chained edits see the final mtime/size.
+  if (ctx.fileReads && fileReadGuardEnabled()) {
+    for (const target of writtenAbs) {
+      await ctx.fileReads.noteFromDisk(target);
+    }
+  }
   return {
     output:
       `Applied patch (${applied.length} op(s)):\n${applied.join("\n")}` +
-      (fmtNotes.length ? `\n${fmtNotes.join("\n")}` : ""),
+      (fmtNotes.length ? `\n${fmtNotes.join("\n")}` : "") +
+      // Only tip when at least one non-doc file was written.
+      (writtenAbs.some((p) => {
+        const e = path.extname(p).toLowerCase();
+        return e !== ".md" && e !== ".mdx" && e !== ".txt" && e !== ".rst";
+      })
+        ? verifyHintSuffix(ctx.workspace, writtenAbs[0])
+        : ""),
   };
 }

@@ -331,6 +331,56 @@ describe("/done and /pause goal shortcuts", () => {
     assert.equal(r2.block, true);
   });
 
+  it("/done surfaces last verify when recorded", async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-done-verify-"));
+    process.env.FORGE_HOME = tmp;
+    const session = createSession({
+      cwd: tmp,
+      provider: "xai",
+      model: "test",
+    });
+    session.meta.lastVerificationCommand = "npm test";
+    session.meta.lastVerificationAt = "2026-04-10T12:34:56.000Z";
+    const hooks = new HookRunner(DEFAULT_CONFIG, tmp);
+    const r = await handleSlash("/done", {
+      session,
+      config: { ...DEFAULT_CONFIG, workspace: tmp },
+      hooks,
+    });
+    assert.equal(r.handled, true);
+    assert.match(String(r.output || ""), /Last verify: `npm test`/);
+    assert.match(String(r.output || ""), /2026-04-10 12:34:56/);
+  });
+
+  it("/done warns when edits lack recorded verification", async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-done-noverify-"));
+    process.env.FORGE_HOME = tmp;
+    fs.writeFileSync(
+      path.join(tmp, "package.json"),
+      JSON.stringify({
+        name: "done-noverify",
+        scripts: { test: "node --test", typecheck: "tsc -p ." },
+      }),
+    );
+    fs.writeFileSync(path.join(tmp, "package-lock.json"), "{}\n");
+    const session = createSession({
+      cwd: tmp,
+      provider: "xai",
+      model: "test",
+    });
+    session.meta.editCount = 3;
+    delete session.meta.lastVerificationCommand;
+    const hooks = new HookRunner(DEFAULT_CONFIG, tmp);
+    const r = await handleSlash("/done", {
+      session,
+      config: { ...DEFAULT_CONFIG, workspace: tmp },
+      hooks,
+    });
+    assert.equal(r.handled, true);
+    assert.match(String(r.output || ""), /no recorded verification/i);
+    assert.match(String(r.output || ""), /npm run typecheck|npm test/);
+  });
+
   it("/goal clear clears soft TodoGate fire count", async () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-goal-clear-todo-"));
     process.env.FORGE_HOME = tmp;
@@ -771,4 +821,28 @@ describe("mid-run /cycle affects stop-guard without abort", () => {
     assert.match(String(arm.output || ""), /Goal ARMED/i);
   });
 
+
+  it("/done warns when last-verify is stale", async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-done-stale-"));
+    process.env.FORGE_HOME = tmp;
+    const session = createSession({
+      cwd: tmp,
+      provider: "xai",
+      model: "test",
+    });
+    session.meta.editCount = 2;
+    session.meta.lastVerificationCommand = "npm test";
+    session.meta.lastVerificationAt = "2026-04-10T12:00:00.000Z";
+    session.meta.lastEditAt = "2026-04-10T12:10:00.000Z";
+    const hooks = new HookRunner(DEFAULT_CONFIG, tmp);
+    const r = await handleSlash("/done", {
+      session,
+      config: { ...DEFAULT_CONFIG, workspace: tmp },
+      hooks,
+    });
+    assert.equal(r.handled, true);
+    const out = String(r.output || "").replace(/\x1b\[[0-9;]*m/g, "");
+    assert.match(out, /Last verify: `npm test`/);
+    assert.match(out, /stale \(edits after verify\)/);
+  });
 });

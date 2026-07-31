@@ -19,6 +19,11 @@ import {
   setSessionLastError,
   formatSessionLookupMiss,
   listSessionLookupSuggestions,
+  formatSessionShareCard,
+  formatResumeOrientation,
+  exportSessionJson,
+  importSessionJson,
+  isLastVerificationStale,
 } from "../src/session/session.js";
 import { truncateMiddle, estimateCostUsd, formatTokens } from "../src/util/format.js";
 import { isRetryableError } from "../src/util/retry.js";
@@ -241,6 +246,23 @@ describe("session helpers", () => {
     assert.match(summary, /ready for show/);
     assert.match(summary, /src\/shown\.ts/);
     assert.match(summary, /\(/); // relative age on updated line
+  });
+
+  it("formatSessionSummary includes last-verify", async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-summary-verify-"));
+    process.env.FORGE_HOME = tmp;
+    const { formatSessionSummary } = await import("../src/session/session.js");
+    const s = createSession({
+      cwd: tmp,
+      provider: "xai",
+      model: "grok-4",
+      title: "verify-show",
+    });
+    s.meta.lastVerificationCommand = "npm test";
+    s.meta.lastVerificationAt = "2026-04-10T12:34:56.000Z";
+    const summary = formatSessionSummary(s);
+    assert.match(summary, /last-verify:\s+npm test/);
+    assert.match(summary, /2026-04-10 12:34:56/);
   });
 
   it("/resume includes last-turn peek", async () => {
@@ -1037,6 +1059,70 @@ it("/fork includes last-turn peek", async () => {
     assert.match(md, /forge login/);
   });
 
+  it("exportSessionMarkdown includes project stack + last verify", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-md-stack-"));
+    process.env.FORGE_HOME = tmp;
+    // Minimal package so project-intel has something to report.
+    fs.writeFileSync(
+      path.join(tmp, "package.json"),
+      JSON.stringify({
+        name: "export-stack-demo",
+        version: "1.2.3",
+        scripts: { test: "node --test", typecheck: "tsc -p ." },
+      }),
+    );
+    fs.writeFileSync(path.join(tmp, "package-lock.json"), "{}\n");
+    const s = createSession({ cwd: tmp, provider: "xai", model: "m" });
+    s.meta.editCount = 4;
+    s.meta.turnCount = 2;
+    s.meta.lastVerificationCommand = "npm test";
+    s.meta.lastVerificationAt = "2026-04-10T12:34:56.000Z";
+    const md = exportSessionMarkdown(s);
+    assert.match(md, /Cwd:/);
+    assert.match(md, /Turns: 2\s+edits=4/);
+    assert.match(md, /Project:.*export-stack-demo@1\.2\.3/);
+    assert.match(md, /checks=/);
+    assert.match(md, /Last verify: `npm test`/);
+    assert.match(md, /2026-04-10 12:34:56/);
+  });
+
+  it("/sessions list shows ✓ when lastVerificationCommand is set", async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-sess-verify-badge-"));
+    process.env.FORGE_HOME = tmp;
+    const { createSession, saveSession } = await import(
+      "../src/session/session.js"
+    );
+    const { handleSlash } = await import("../src/commands/slash.js");
+    const { HookRunner } = await import("../src/harness/hooks.js");
+    const { DEFAULT_CONFIG } = await import("../src/config/types.js");
+    const active = createSession({
+      cwd: tmp,
+      provider: "xai",
+      model: "grok-4",
+      title: "active-no-verify",
+    });
+    const other = createSession({
+      cwd: tmp,
+      provider: "xai",
+      model: "grok-4",
+      title: "verified-session",
+    });
+    other.meta.lastVerificationCommand = "npm test";
+    other.meta.lastVerificationAt = "2026-04-10T12:34:56.000Z";
+    saveSession(other);
+    const hooks = new HookRunner(DEFAULT_CONFIG, tmp);
+    const r = await handleSlash("/sessions", {
+      session: active,
+      config: { ...DEFAULT_CONFIG, workspace: tmp },
+      hooks,
+    });
+    assert.equal(r.handled, true);
+    const out = String(r.output || "");
+    // Verified session row carries the badge; active without verify does not force it.
+    assert.match(out, /verified-session/);
+    assert.match(out, /✓/);
+  });
+
   it("resume orientation + share card surface session budget", async () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-budget-orient-"));
     process.env.FORGE_HOME = tmp;
@@ -1058,4 +1144,132 @@ it("/fork includes last-turn peek", async () => {
     assert.match(md, /budget:/i);
   });
 
+
+  it("formatSessionShareCard warns when edits lack last-verify", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-share-noverify-"));
+    process.env.FORGE_HOME = tmp;
+    fs.writeFileSync(
+      path.join(tmp, "package.json"),
+      JSON.stringify({
+        name: "share-noverify",
+        scripts: { test: "node --test", typecheck: "tsc -p ." },
+      }),
+    );
+    fs.writeFileSync(path.join(tmp, "package-lock.json"), "{}\n");
+    const s = createSession({ cwd: tmp, provider: "xai", model: "m" });
+    s.meta.editCount = 5;
+    delete s.meta.lastVerificationCommand;
+    const card = formatSessionShareCard(s);
+    assert.match(card, /last-verify: \(none after 5 edit/);
+    assert.match(card, /npm run typecheck|npm test/);
+  });
+
+  it("formatResumeOrientation warns when edits lack last-verify", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-resume-noverify-"));
+    process.env.FORGE_HOME = tmp;
+    fs.writeFileSync(
+      path.join(tmp, "package.json"),
+      JSON.stringify({
+        scripts: { typecheck: "tsc -b", test: "node --test" },
+      }),
+    );
+    fs.writeFileSync(path.join(tmp, "package-lock.json"), "{}");
+    const s = createSession({ cwd: tmp, provider: "xai", model: "m" });
+    s.meta.editCount = 3;
+    delete s.meta.lastVerificationCommand;
+    const orient = formatResumeOrientation(s);
+    assert.match(orient, /Last verify: \(none after 3 edit/);
+    assert.match(orient, /npm run typecheck|npm test/);
+  });
+
+  it("isLastVerificationStale detects edits after verify", () => {
+    assert.equal(
+      isLastVerificationStale({
+        lastVerificationAt: "2026-04-10T12:00:00.000Z",
+        lastEditAt: "2026-04-10T12:05:00.000Z",
+      }),
+      true,
+    );
+    assert.equal(
+      isLastVerificationStale({
+        lastVerificationAt: "2026-04-10T12:05:00.000Z",
+        lastEditAt: "2026-04-10T12:00:00.000Z",
+      }),
+      false,
+    );
+    assert.equal(
+      isLastVerificationStale({
+        lastVerificationAt: "2026-04-10T12:00:00.000Z",
+      }),
+      false,
+    );
+  });
+
+  it("formatResumeOrientation marks stale last-verify", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-resume-stale-"));
+    process.env.FORGE_HOME = tmp;
+    const s = createSession({ cwd: tmp, provider: "xai", model: "m" });
+    s.meta.lastVerificationCommand = "npm test";
+    s.meta.lastVerificationAt = "2026-04-10T12:00:00.000Z";
+    s.meta.lastEditAt = "2026-04-10T12:10:00.000Z";
+    s.meta.editCount = 2;
+    const orient = formatResumeOrientation(s);
+    assert.match(orient, /Last verify: npm test/);
+    assert.match(orient, /stale \(edits after verify\)/);
+  });
+
+  it("/sessions list shows ✓~ when last-verify is stale", async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-sess-stale-badge-"));
+    process.env.FORGE_HOME = tmp;
+    const { createSession, saveSession } = await import(
+      "../src/session/session.js"
+    );
+    const { handleSlash } = await import("../src/commands/slash.js");
+    const { HookRunner } = await import("../src/harness/hooks.js");
+    const { DEFAULT_CONFIG } = await import("../src/config/types.js");
+    const active = createSession({
+      cwd: tmp,
+      provider: "xai",
+      model: "grok-4",
+      title: "active-row",
+    });
+    const other = createSession({
+      cwd: tmp,
+      provider: "xai",
+      model: "grok-4",
+      title: "stale-verified",
+    });
+    other.meta.lastVerificationCommand = "npm test";
+    other.meta.lastVerificationAt = "2026-04-10T12:00:00.000Z";
+    other.meta.lastEditAt = "2026-04-10T12:10:00.000Z";
+    other.meta.editCount = 2;
+    saveSession(other);
+    const hooks = new HookRunner(DEFAULT_CONFIG, tmp);
+    const r = await handleSlash("/sessions", {
+      session: active,
+      config: { ...DEFAULT_CONFIG, workspace: tmp },
+      hooks,
+    });
+    assert.equal(r.handled, true);
+    const out = String(r.output || "").replace(/\x1b\[[0-9;]*m/g, "");
+    assert.match(out, /stale-verified/);
+    assert.match(out, /✓~/);
+  });
+
+  it("importSessionJson preserves lastEditAt + last-verify trail", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-import-trail-"));
+    process.env.FORGE_HOME = tmp;
+    const s = createSession({ cwd: tmp, provider: "xai", model: "m" });
+    s.meta.editCount = 3;
+    s.meta.lastVerificationCommand = "npm test";
+    s.meta.lastVerificationAt = "2026-04-10T12:00:00.000Z";
+    s.meta.lastEditAt = "2026-04-10T12:10:00.000Z";
+    s.messages.push({ role: "user", content: "hi" });
+    const json = exportSessionJson(s);
+    const imported = importSessionJson(json, { cwd: tmp });
+    assert.equal(imported.meta.lastVerificationCommand, "npm test");
+    assert.equal(imported.meta.lastVerificationAt, "2026-04-10T12:00:00.000Z");
+    assert.equal(imported.meta.lastEditAt, "2026-04-10T12:10:00.000Z");
+    assert.equal(isLastVerificationStale(imported.meta), true);
+  });
 });

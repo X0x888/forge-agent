@@ -82,6 +82,7 @@ import {
   formatResumeOrientation,
   resolveSessionDir,
   resolveSessionJsonPath,
+  isLastVerificationStale,
 } from "./session/session.js";
 import {
   appendSessionMetrics,
@@ -156,12 +157,22 @@ import {
 import { providerTimeoutMs } from "./util/abort.js";
 import { detectProjectHints, getGitSnapshot } from "./util/git-context.js";
 import {
+  detectProjectIntel,
+  hasNodeModules,
+  multipleLockfiles,
+} from "./util/project-intel.js";
+import {
   defaultBashBackgroundTimeoutMs,
   defaultBashTimeoutMs,
   envPositiveInt, maxRunMsFromEnv,
   parseCliNonNegInt,
 } from "./util/env.js";
-import { isBellEnabled, isNotifyEnabled } from "./util/attention.js";
+import {
+  isBellEnabled,
+  isNotifyEnabled,
+  maybeTurnEndAttention,
+  turnEndOutcomeLabel,
+} from "./util/attention.js";
 import { isFormatOnWriteEnabled } from "./agent/tools/format-on-write.js";
 import { permissionAskTimeoutMs } from "./agent/permissions.js";
 import {
@@ -682,7 +693,7 @@ Exit codes:
   124  wall-clock timeout (FORGE_MAX_RUN_MS)
   130  aborted (SIGINT)
 
---json fields (success): ok, version, node, forgeHome, sessionId, sessionPath, title, pinned, foreignLock, provider, stickyProvider, authMethod, model, reasoningEffort, cwd, git, projectLabel, projectHints, packageName, packageVersion, packageEnginesNode, permissionMode, sandbox, sandboxNetwork, sandboxMissingBackend, readOutsideWorkspace, ultrawork, ulwCycle, ulwWave, ulwMaxWaves, ulwBlocks, ulwMandate, ulwSoftPrompt, ulwExpandedMandate, goalActive, goal, goalStuckThreshold, goalBlocks, goalStuckBlocks, goalCriteria, denyRules, allowRules, askRules, maxTurns, maxTurnsUnlimited, maxCostUsd, maxCostUnlimited, effectiveMaxCostUsd, sessionCostUsd, productionWarnings, formatOnWrite, blockingStop, maxRunMs, providerTimeoutMs, bashTimeoutMs, bashBackgroundTimeoutMs, permissionAskTimeoutMs, doomLoopThreshold, errorStreakThreshold, ulwMaxContinues, editCount, openTodos, messageCount, finalText, turns, stopContinues,
+--json fields (success): ok, version, node, forgeHome, sessionId, sessionPath, title, pinned, foreignLock, provider, stickyProvider, authMethod, model, reasoningEffort, cwd, git, projectLabel, projectHints, packageName, packageVersion, packageEnginesNode, packageManager, checkCommands, projectStackSummary, monorepoRoot, workspaces, nodeModulesPresent, multipleLockfiles, permissionMode, sandbox, sandboxNetwork, sandboxMissingBackend, readOutsideWorkspace, ultrawork, ulwCycle, ulwWave, ulwMaxWaves, ulwBlocks, ulwMandate, ulwSoftPrompt, ulwExpandedMandate, goalActive, goal, goalStuckThreshold, goalBlocks, goalStuckBlocks, goalCriteria, denyRules, allowRules, askRules, maxTurns, maxTurnsUnlimited, maxCostUsd, maxCostUnlimited, effectiveMaxCostUsd, sessionCostUsd, productionWarnings, formatOnWrite, blockingStop, maxRunMs, providerTimeoutMs, bashTimeoutMs, bashBackgroundTimeoutMs, permissionAskTimeoutMs, doomLoopThreshold, errorStreakThreshold, ulwMaxContinues, editCount, lastVerificationCommand, lastVerificationAt, lastEditAt, lastVerificationStale, openTodos, messageCount, finalText, turns, stopContinues,
   releasedOnContinueCap, hitMaxTurns, hitCostCap, finishReason, lastError, editCount, aborted, timedOut,
   promptTokens, completionTokens, durationMs
   (FORGE_JSON_COMPACT=1 → single-line success JSON for CI log aggregation)
@@ -2539,6 +2550,12 @@ Docs: docs/PRODUCTION.md
                 sessionPath: resolveSessionDir(s.meta.id),
                 title: s.meta.title,
                 messageCount: s.messages.length,
+                editCount: s.meta.editCount ?? 0,
+                lastVerificationCommand:
+                  s.meta.lastVerificationCommand ?? null,
+                lastVerificationAt: s.meta.lastVerificationAt ?? null,
+                lastEditAt: s.meta.lastEditAt ?? null,
+                lastVerificationStale: isLastVerificationStale(s.meta),
               });
           } else {
             log.success(
@@ -3215,6 +3232,11 @@ Docs: docs/PRODUCTION.md
         const prevNote = prev
           ? `  “${prev}${(s.lastUserPreview || "").length > 40 ? "…" : ""}”`
           : "";
+        const verifyNote = s.lastVerificationCommand?.trim()
+          ? isLastVerificationStale(s)
+            ? "  ✓~"
+            : "  ✓"
+          : "";
         const age = formatRelativeTime(s.updatedAt).padStart(8);
         let ulwNote = "";
         if (s.ultrawork) {
@@ -3274,7 +3296,7 @@ Docs: docs/PRODUCTION.md
           /* */
         }
         console.log(
-          `${s.id}  ${age}  ${s.provider}/${s.model}  turns=${s.turnCount}  edits=${s.editCount}${costNote}${ulwNote}${goalNote}${s.pinned ? "  PIN" : ""}${errBadge}${s.title ? `  ${s.title.slice(0, 40)}` : ""}${prevNote}${cwdNote}${lockNote}${errDetail}`,
+          `${s.id}  ${age}  ${s.provider}/${s.model}  turns=${s.turnCount}  edits=${s.editCount}${costNote}${ulwNote}${goalNote}${s.pinned ? "  PIN" : ""}${errBadge}${verifyNote}${s.title ? `  ${s.title.slice(0, 40)}` : ""}${prevNote}${cwdNote}${lockNote}${errDetail}`,
         );
       }
       const filterNotes: string[] = [];
@@ -4074,6 +4096,17 @@ Project instructions for Forge (and other coding agents).
               bellOnTurnEnd: isBellEnabled(),
               notifyOnTurnEnd: isNotifyEnabled(),
               formatOnWrite: check.formatOnWrite ?? false,
+              packageManager: check.packageManager ?? null,
+              projectKinds: check.projectKinds ?? [],
+              checkCommands: check.checkCommands ?? [],
+              workspaces: check.workspaces ?? [],
+              monorepoRoot: check.monorepoRoot ?? null,
+              projectStackSummary: check.projectStackSummary ?? null,
+              fileReadGuard: check.fileReadGuard ?? true,
+              verifyHint: check.verifyHint ?? true,
+              nodeModulesPresent: check.nodeModulesPresent ?? null,
+              packageManagerMismatch: check.packageManagerMismatch ?? null,
+              multipleLockfiles: check.multipleLockfiles ?? [],
               autoResume:
                 process.env.FORGE_NO_AUTO_RESUME !== "1" &&
                 process.env.FORGE_NO_AUTO_RESUME !== "true",
@@ -4723,6 +4756,40 @@ function packageManifestForRun(cwd: string): {
     };
   } catch {
     return { name: null, version: null, enginesNode: null };
+  }
+}
+
+/** Project stack for run/status JSON (package manager + preferred checks). */
+function projectIntelForRun(cwd: string): {
+  packageManager: string | null;
+  checkCommands: string[];
+  projectStackSummary: string | null;
+  monorepoRoot: string | null;
+  workspaces: string[];
+  nodeModulesPresent: boolean | null;
+  multipleLockfiles: string[];
+} {
+  try {
+    const intel = detectProjectIntel(cwd);
+    return {
+      packageManager: intel.packageManager ?? null,
+      checkCommands: [...intel.checkCommands],
+      projectStackSummary: intel.summary || null,
+      monorepoRoot: intel.monorepoRoot ?? null,
+      workspaces: [...(intel.workspaces || [])],
+      nodeModulesPresent: hasNodeModules(cwd),
+      multipleLockfiles: multipleLockfiles(cwd),
+    };
+  } catch {
+    return {
+      packageManager: null,
+      checkCommands: [],
+      projectStackSummary: null,
+      monorepoRoot: null,
+      workspaces: [],
+      nodeModulesPresent: null,
+      multipleLockfiles: [],
+    };
   }
 }
 
@@ -5859,6 +5926,11 @@ async function runHeadless(opts: {
         turns: 0,
         stopContinues: 0,
         editCount: opts.session.meta.editCount,
+        lastVerificationCommand:
+          opts.session.meta.lastVerificationCommand ?? null,
+        lastVerificationAt: opts.session.meta.lastVerificationAt ?? null,
+        lastEditAt: opts.session.meta.lastEditAt ?? null,
+        lastVerificationStale: isLastVerificationStale(opts.session.meta),
         promptTokens: 0,
         completionTokens: 0,
         durationMs: Date.now() - t0,
@@ -5949,14 +6021,22 @@ async function runHeadless(opts: {
           }
         })(),
         ...(() => {
-          const m = packageManifestForRun(
-            opts.session.meta.cwd || opts.config.workspace || process.cwd(),
-          );
+          const cwd =
+            opts.session.meta.cwd || opts.config.workspace || process.cwd();
+          const m = packageManifestForRun(cwd);
+          const intel = projectIntelForRun(cwd);
           return {
-          packageName: m.name,
-          packageVersion: m.version,
-          packageEnginesNode: m.enginesNode,
-        };
+            packageName: m.name,
+            packageVersion: m.version,
+            packageEnginesNode: m.enginesNode,
+            packageManager: intel.packageManager,
+            checkCommands: intel.checkCommands,
+            projectStackSummary: intel.projectStackSummary,
+            monorepoRoot: intel.monorepoRoot,
+            workspaces: intel.workspaces,
+            nodeModulesPresent: intel.nodeModulesPresent,
+            multipleLockfiles: intel.multipleLockfiles,
+          };
         })(),
         permissionMode: opts.config.permissionMode,
         contextWindow: opts.config.contextWindow,
@@ -6103,6 +6183,10 @@ async function runHeadless(opts: {
         productionWarnings: productionWarningsForRun(opts.config, {
           ultrawork: Boolean(opts.session.meta.ultrawork),
           sessionMaxCostUsd: opts.session.meta.maxCostUsd,
+          editCount: opts.session.meta.editCount,
+          lastVerificationCommand: opts.session.meta.lastVerificationCommand,
+          lastVerificationAt: opts.session.meta.lastVerificationAt,
+          lastEditAt: opts.session.meta.lastEditAt,
         }),
         formatOnWrite: isFormatOnWriteEnabled(),
         blockingStop: opts.config.blockingStopHooks !== false,
@@ -6115,6 +6199,11 @@ async function runHeadless(opts: {
         errorStreakThreshold: envPositiveInt("FORGE_ERROR_STREAK_THRESHOLD", 5),
         ulwMaxContinues: envPositiveInt("FORGE_ULW_MAX_CONTINUES", 200),
         editCount: opts.session.meta.editCount,
+        lastVerificationCommand:
+          opts.session.meta.lastVerificationCommand ?? null,
+        lastVerificationAt: opts.session.meta.lastVerificationAt ?? null,
+        lastEditAt: opts.session.meta.lastEditAt ?? null,
+        lastVerificationStale: isLastVerificationStale(opts.session.meta),
         openTodos: openTodos(opts.session.todos || []),
         messageCount: opts.session.messages?.length ?? 0,
         durationMs: Date.now() - t0,
@@ -6168,6 +6257,26 @@ async function runHeadless(opts: {
       workspaceRoot: opts.config.workspace || opts.session.meta.cwd,
     });
     saveSession(opts.session);
+
+    // Headless turn-end attention (opt-in BEL/notify) — same verify trail as REPL.
+    try {
+      const outcome = turnEndOutcomeLabel({
+        hitCostCap: result.hitCostCap,
+        hitMaxTurns: result.hitMaxTurns,
+        releasedOnContinueCap: result.releasedOnContinueCap,
+        aborted: result.aborted,
+        lastErrorCode: opts.session.meta.lastError?.code,
+        editCount: opts.session.meta.editCount,
+        lastVerificationCommand: opts.session.meta.lastVerificationCommand,
+        lastVerificationStale: isLastVerificationStale(opts.session.meta),
+      });
+      maybeTurnEndAttention({
+        title: "Forge",
+        body: `${opts.session.meta.title || "forge run"} · ${outcome}`,
+      });
+    } catch {
+      /* never block headless exit on notify */
+    }
 
     if (!opts.json && result.finalText && !result.finalText.endsWith("\n")) {
       process.stdout.write("\n");
@@ -6275,13 +6384,21 @@ async function runHeadless(opts: {
         }
       })(),
       ...(() => {
-        const m = packageManifestForRun(
-          opts.session.meta.cwd || opts.config.workspace || process.cwd(),
-        );
+        const cwd =
+          opts.session.meta.cwd || opts.config.workspace || process.cwd();
+        const m = packageManifestForRun(cwd);
+        const intel = projectIntelForRun(cwd);
         return {
           packageName: m.name,
           packageVersion: m.version,
           packageEnginesNode: m.enginesNode,
+          packageManager: intel.packageManager,
+          checkCommands: intel.checkCommands,
+          projectStackSummary: intel.projectStackSummary,
+          monorepoRoot: intel.monorepoRoot,
+          workspaces: intel.workspaces,
+          nodeModulesPresent: intel.nodeModulesPresent,
+          multipleLockfiles: intel.multipleLockfiles,
         };
       })(),
       permissionMode: opts.config.permissionMode,
@@ -6419,6 +6536,10 @@ maxTurns: opts.config.maxTurns ?? 0,
         hitCostCap: result.hitCostCap,
         hitMaxTurns: result.hitMaxTurns,
         releasedOnContinueCap: result.releasedOnContinueCap,
+        editCount: opts.session.meta.editCount,
+        lastVerificationCommand: opts.session.meta.lastVerificationCommand,
+          lastVerificationAt: opts.session.meta.lastVerificationAt,
+          lastEditAt: opts.session.meta.lastEditAt,
       }),
       formatOnWrite: isFormatOnWriteEnabled(),
       blockingStop: opts.config.blockingStopHooks !== false,
@@ -6446,6 +6567,11 @@ maxTurns: opts.config.maxTurns ?? 0,
           }
         : null,
       editCount: opts.session.meta.editCount,
+        lastVerificationCommand:
+          opts.session.meta.lastVerificationCommand ?? null,
+        lastVerificationAt: opts.session.meta.lastVerificationAt ?? null,
+        lastEditAt: opts.session.meta.lastEditAt ?? null,
+        lastVerificationStale: isLastVerificationStale(opts.session.meta),
       openTodos: openTodos(opts.session.todos || []),
       messageCount: opts.session.messages?.length ?? 0,
       aborted: result.aborted,

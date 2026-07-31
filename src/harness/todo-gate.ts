@@ -1,3 +1,5 @@
+import { looksLikeAdvisoryUserMessage } from "../util/advisory-intent.js";
+
 /**
  * Todo nudge + optional Stop gate (Grok Build–inspired).
  *
@@ -84,10 +86,18 @@ export function maybeTodoNudge(opts: {
   sessionId: string;
   harnessActive: boolean;
   openTodoCount: number;
+  /** When the latest user turn is pure Q&A, do not nudge todo execution. */
+  lastUserMessage?: string;
   config?: Partial<TodoNudgeConfig>;
 }): string | null {
   const cfg = { ...DEFAULT_TODO_NUDGE, ...opts.config };
   if (!cfg.enabled || !opts.harnessActive) return null;
+  if (
+    opts.lastUserMessage &&
+    looksLikeAdvisoryUserMessage(opts.lastUserMessage)
+  ) {
+    return null;
+  }
 
   const s = getTodoNudgeState(opts.sessionId);
   if (s.nudgesThisPrompt >= cfg.maxNudgesPerPrompt) return null;
@@ -167,6 +177,8 @@ export function evaluateTodoGateAtStop(opts: {
   ultraworkFlag: boolean;
   openTodoCount: number;
   lastAssistantMessage: string;
+  /** Latest user message — when advisory, open todos do not block Stop. */
+  lastUserMessage?: string;
   config?: Partial<TodoGateConfig>;
   /**
    * Soft open-todos block outside ULW (default true). Cap = 1 fire.
@@ -178,6 +190,28 @@ export function evaluateTodoGateAtStop(opts: {
   if (!cfg.enabled) return { block: false };
   if (opts.openTodoCount <= 0) return { block: false };
   if (ATTEST_RE.test(opts.lastAssistantMessage || "")) return { block: false };
+  // Pure Q&A answers under ULW must not be trapped by open todos from prior work
+  // (oh-my-claude compact-intent lesson — advisory is not a work order).
+  if (looksLikeAdvisoryUserMessage(opts.lastAssistantMessage || "")) {
+    try {
+      clearSoftTodoGateOnWindDown(opts.sessionId);
+    } catch {
+      /* */
+    }
+    return { block: false };
+  }
+  // Also release when the last *user* turn was advisory (assistant answered it).
+  if (
+    opts.lastUserMessage &&
+    looksLikeAdvisoryUserMessage(opts.lastUserMessage)
+  ) {
+    try {
+      clearSoftTodoGateOnWindDown(opts.sessionId);
+    } catch {
+      /* */
+    }
+    return { block: false };
+  }
 
   const underUlw = Boolean(opts.ulwEnabled || opts.ultraworkFlag);
   const softOutside =

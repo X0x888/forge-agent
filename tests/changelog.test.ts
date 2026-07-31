@@ -135,6 +135,15 @@ describe("changelog / what's new", () => {
     assert.match(text, /forge auth --json/);
     assert.match(text, /\/cycle 0\|1/);
     assert.match(text, /Less steering/);
+    assert.match(text, /Verify trail/);
+    assert.match(text, /ULW proof/);
+    assert.match(text, /Advisory ULW/);
+    assert.match(text, /TodoGate\/TodoNudge/);
+    assert.match(text, /handoff soft-continue|TodoGate\/TodoNudge\/handoff/i);
+    assert.match(text, /proof-claim Done|TodoGate\/TodoNudge\/handoff\/proof-claim/i);
+    assert.match(text, /self-audit/i);
+    assert.match(text, /edits-without-verify|silent edits/i);
+    assert.match(text, /Project stack/);
     assert.match(text, /handoff-guard|proof-claim/);
     assert.match(text, /\/budget/);
     assert.match(text, /\/notify/);

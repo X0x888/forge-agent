@@ -4,6 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { createSession, saveSession } from "../src/session/session.js";
+import { DEFAULT_CONFIG } from "../src/config/types.js";
 import {
   sessionToSnapshot,
   collectSnapshots,
@@ -34,6 +35,7 @@ import {
 import {
   buildPromptFlags,
   renderTurnFooter,
+  formatSessionDetails,
   renderLiveRunHeader,
   formatBackgroundTasksList,
   createWorkingIndicator,
@@ -264,20 +266,71 @@ describe("statusline", () => {
       token: "test",
     } as ResolvedAuth;
 
-    const flags = buildPromptFlags({ config, session: s, auth });
-    assert.match(flags, /ULW/);
-    assert.match(flags, /c=1/);
-    assert.match(flags, /w=0/);
+    const prevCols = process.stdout.columns;
+    // Wide enough that footer clipping does not drop ULW controls / verify tips.
+    Object.defineProperty(process.stdout, "columns", {
+      value: 200,
+      configurable: true,
+    });
+    try {
+      const flags = buildPromptFlags({ config, session: s, auth });
+      assert.match(flags, /ULW/);
+      assert.match(flags, /c=1/);
+      assert.match(flags, /w=0/);
+      // No last-verify yet → no bare ✓ flag
+      assert.doesNotMatch(flags.replace(/\x1b\[[0-9;]*m/g, ""), /✓/);
 
-    const footer = renderTurnFooter(
-      { config, session: s, auth },
-      { promptTokens: 100, completionTokens: 50, stopContinues: 1 },
-    );
-    assert.match(footer, /ctx/);
-    assert.match(footer, /todos:1/);
-    assert.match(footer, /harness/);
-    assert.match(footer, /ULW c=1 w=0/);
-    assert.match(footer, /\/cycle 0/);
+      const footer = renderTurnFooter(
+        { config, session: s, auth },
+        { promptTokens: 100, completionTokens: 50, stopContinues: 1 },
+      );
+      assert.match(footer, /ctx/);
+      assert.match(footer, /todos:1/);
+      assert.match(footer, /harness/);
+      assert.match(footer, /ULW c=1 w=0/);
+      assert.match(footer, /\/cycle 0/);
+
+      // After edits, footer surfaces cheapest project check (when package.json exists).
+      fs.writeFileSync(
+        path.join(tmp, "package.json"),
+        JSON.stringify({ scripts: { typecheck: "tsc -b", test: "node --test" } }),
+      );
+      fs.writeFileSync(path.join(tmp, "package-lock.json"), "{}");
+      s.meta.editCount = 2;
+      s.meta.cwd = tmp;
+      const footer2 = renderTurnFooter(
+        {
+          config: { ...config, workspace: tmp },
+          session: s,
+          auth,
+        },
+        { promptTokens: 100, completionTokens: 50 },
+      );
+      // Strip ANSI for assertion (chalk may wrap the check tip).
+      const plain = footer2.replace(/\x1b\[[0-9;]*m/g, "");
+      assert.match(plain, /✓ npm run typecheck|✓ npm test/);
+
+      // When a structural check was recorded, prefer last✓ over preferred tip.
+      s.meta.lastVerificationCommand = "npm test";
+      s.meta.lastVerificationAt = "2026-04-10T12:34:56.000Z";
+      const flags2 = buildPromptFlags({ config, session: s, auth });
+      assert.match(flags2.replace(/\x1b\[[0-9;]*m/g, ""), /✓/);
+      const footer3 = renderTurnFooter(
+        {
+          config: { ...config, workspace: tmp },
+          session: s,
+          auth,
+        },
+        { promptTokens: 100, completionTokens: 50 },
+      );
+      const plain3 = footer3.replace(/\x1b\[[0-9;]*m/g, "");
+      assert.match(plain3, /last✓ npm test/);
+    } finally {
+      Object.defineProperty(process.stdout, "columns", {
+        value: prevCols,
+        configurable: true,
+      });
+    }
   });
 
   it("plan adapter is honest for api_key and copilot", async () => {
@@ -556,5 +609,91 @@ describe("statusline tmux badges", () => {
     });
     const line = renderTmux(snaps[0]);
     assert.match(line, /PIN/);
+  });
+
+  it("formatSessionDetails shows verify line / no-verify tip", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-details-verify-"));
+    process.env.FORGE_HOME = tmp;
+    fs.writeFileSync(
+      path.join(tmp, "package.json"),
+      JSON.stringify({ scripts: { typecheck: "tsc -b", test: "node --test" } }),
+    );
+    fs.writeFileSync(path.join(tmp, "package-lock.json"), "{}");
+    const s = createSession({
+      cwd: tmp,
+      provider: "xai",
+      model: "grok-4",
+    });
+    s.meta.editCount = 2;
+    delete s.meta.lastVerificationCommand;
+    const auth = { provider: "xai", method: "api_key", apiKey: "t" } as any;
+    const config = { ...DEFAULT_CONFIG, workspace: tmp };
+    const details = formatSessionDetails({ config, session: s, auth });
+    const plain = details.replace(/\x1b\[[0-9;]*m/g, "");
+    assert.match(plain, /verify\s+\(none after 2 edit/);
+    s.meta.lastVerificationCommand = "npm test";
+    const details2 = formatSessionDetails({ config, session: s, auth });
+    const plain2 = details2.replace(/\x1b\[[0-9;]*m/g, "");
+    assert.match(plain2, /verify\s+npm test/);
+  });
+
+  it("status snapshot includes lastEditAt + lastVerificationStale", async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-snap-stale-"));
+    process.env.FORGE_HOME = tmp;
+    const { createSession, saveSession } = await import("../src/session/session.js");
+    const { collectSnapshots } = await import("../src/statusline/snapshot.js");
+    const s = createSession({ cwd: tmp, provider: "xai", model: "grok-4" });
+    s.meta.lastVerificationCommand = "npm test";
+    s.meta.lastVerificationAt = "2026-04-10T12:00:00.000Z";
+    s.meta.lastEditAt = "2026-04-10T12:10:00.000Z";
+    s.meta.editCount = 1;
+    saveSession(s);
+    const snaps = await collectSnapshots({ forgeHome: tmp, cwd: tmp });
+    const mine = snaps.find((x: any) => x.sessionId === s.meta.id) || snaps[0];
+    assert.ok(mine);
+    assert.equal(mine!.lastEditAt, "2026-04-10T12:10:00.000Z");
+    assert.equal(mine!.lastVerificationStale, true);
+  });
+
+  it("prompt flags surface WT for linked worktrees", async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-wt-flag-"));
+    process.env.FORGE_HOME = tmp;
+    // Mock getGitSnapshot via real git worktree is heavy; unit-test the flag
+    // path by stubbing module is awkward — instead call buildPromptFlags after
+    // monkey-patching getGitSnapshot on the imported module is not available.
+    // Use a real nested worktree when git allows; otherwise skip.
+    const { createSession } = await import("../src/session/session.js");
+    const { DEFAULT_CONFIG } = await import("../src/config/types.js");
+    let wtDir = "";
+    try {
+      const { execFileSync } = await import("node:child_process");
+      const main = fs.mkdtempSync(path.join(os.tmpdir(), "forge-wt-main-"));
+      execFileSync("git", ["init"], { cwd: main, stdio: "ignore" });
+      execFileSync("git", ["config", "user.email", "t@t"], { cwd: main, stdio: "ignore" });
+      execFileSync("git", ["config", "user.name", "t"], { cwd: main, stdio: "ignore" });
+      fs.writeFileSync(path.join(main, "a.txt"), "x\n");
+      execFileSync("git", ["add", "a.txt"], { cwd: main, stdio: "ignore" });
+      execFileSync("git", ["-c", "commit.gpgsign=false", "commit", "-m", "i"], {
+        cwd: main,
+        stdio: "ignore",
+      });
+      wtDir = path.join(os.tmpdir(), `forge-wt-link-${Date.now()}`);
+      execFileSync(
+        "git",
+        ["worktree", "add", "--detach", wtDir, "HEAD"],
+        { cwd: main, stdio: "ignore" },
+      );
+    } catch {
+      return; // sandbox cannot create worktrees
+    }
+    const s = createSession({ cwd: wtDir, provider: "xai", model: "grok-4" });
+    const auth = { provider: "xai", method: "api_key", apiKey: "t" } as any;
+    const flags = buildPromptFlags({
+      config: { ...DEFAULT_CONFIG, workspace: wtDir },
+      session: s,
+      auth,
+    });
+    const plain = flags.replace(/\x1b\[[0-9;]*m/g, "");
+    assert.match(plain, /\bWT\b/);
   });
 });

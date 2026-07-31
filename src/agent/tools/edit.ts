@@ -4,7 +4,13 @@ import path from "node:path";
 import type { ToolContext, ToolResult } from "./types.js";
 import { resolvePath, assertWritablePath } from "./path-util.js";
 import { pathNotFoundHint } from "./path-hints.js";
-import { applyMatch, editMissHint, locateEdit, shortDiff } from "./edit-match.js";
+import {
+  applyMatch,
+  editMissHint,
+  locateEdit,
+  shortDiff,
+  stripReadFileLinePrefixes,
+} from "./edit-match.js";
 import {
   detectLineEnding,
   joinBom,
@@ -17,6 +23,8 @@ import {
   formatNoteSuffix,
   maybeFormatAfterWrite,
 } from "./format-on-write.js";
+import { fileReadGuardEnabled } from "./file-read-state.js";
+import { verifyHintSuffix } from "../../util/project-intel.js";
 import { isTruthy } from "../../util/bool.js";
 
 export async function toolEdit(
@@ -40,7 +48,8 @@ export async function toolEdit(
     return {
       output:
         "search_replace error: path is required (non-empty string).\n" +
-        'Example: { "path": "src/x.ts", "old_string": "foo", "new_string": "bar" }',
+        'Example: { "path": "src/x.ts", "old_string": "foo", "new_string": "bar" }\n' +
+        "Use a workspace-relative path (not empty). Prefer list_dir/glob first if unsure.",
       isError: true,
     };
   }
@@ -89,8 +98,15 @@ export async function toolEdit(
       isError: true,
     };
   }
-  const oldStr = args.old_string;
-  const newStr = args.new_string;
+  // Models often paste read_file output ( "    12|code" ) into old/new_string.
+  const strippedOld = stripReadFileLinePrefixes(String(args.old_string));
+  const strippedNew = stripReadFileLinePrefixes(String(args.new_string));
+  const oldStr = strippedOld.text;
+  const newStr = strippedNew.text;
+  const strippedNote =
+    strippedOld.stripped || strippedNew.stripped
+      ? " (stripped read_file line-number prefixes)"
+      : "";
   // Models may emit replace_all:"false" — Boolean("false") is true in JS.
   const replaceAll = isTruthy(args.replace_all);
 
@@ -124,6 +140,18 @@ export async function toolEdit(
     }
   } catch {
     /* fall through */
+  }
+
+  // Session-scoped stale/unread guard (agent loop only).
+  if (ctx.fileReads && fileReadGuardEnabled()) {
+    const rel = path.relative(ctx.workspace, filePath) || filePath;
+    const blocked = await ctx.fileReads.checkBeforeMutate(filePath, {
+      tool: "search_replace",
+      rel,
+    });
+    if (blocked) {
+      return { output: blocked, isError: true };
+    }
   }
 
   let rawContent: string;
@@ -180,6 +208,10 @@ export async function toolEdit(
         journalUpdate();
         ctx.onEdit?.();
         const fmt = maybeFormatAfterWrite(filePath, ctx.workspace);
+        // Note AFTER format-on-write so chained edits see the final mtime/size.
+        if (ctx.fileReads && fileReadGuardEnabled()) {
+          await ctx.fileReads.noteFromDisk(filePath);
+        }
         const rel = path.relative(ctx.workspace, filePath) || filePath;
         const note =
           alt.result.kind !== "exact"
@@ -187,7 +219,9 @@ export async function toolEdit(
             : "";
         const diff = shortDiff(rel, content, toLineEnding(normalizeNewlines(nextLf), ending));
         return {
-          output: `Edited ${rel}${note}${formatNoteSuffix(fmt)}\n\n${diff}`,
+          output:
+            `Edited ${rel}${note}${strippedNote}${formatNoteSuffix(fmt)}\n\n${diff}` +
+            verifyHintSuffix(ctx.workspace, filePath),
         };
       }
     }
@@ -210,6 +244,10 @@ export async function toolEdit(
   journalUpdate();
   ctx.onEdit?.();
   const fmt = maybeFormatAfterWrite(filePath, ctx.workspace);
+  // Note AFTER format-on-write so chained edits see the final mtime/size.
+  if (ctx.fileReads && fileReadGuardEnabled()) {
+    await ctx.fileReads.noteFromDisk(filePath);
+  }
 
   const rel = path.relative(ctx.workspace, filePath) || filePath;
   const note =
@@ -219,5 +257,9 @@ export async function toolEdit(
         ? ` (${located.count} occurrence${located.count === 1 ? "" : "s"})`
         : "";
   const diff = shortDiff(rel, content, next);
-  return { output: `Edited ${rel}${note}${formatNoteSuffix(fmt)}\n\n${diff}` };
+  return {
+    output:
+      `Edited ${rel}${note}${strippedNote}${formatNoteSuffix(fmt)}\n\n${diff}` +
+      verifyHintSuffix(ctx.workspace, filePath),
+  };
 }

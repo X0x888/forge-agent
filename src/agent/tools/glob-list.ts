@@ -39,7 +39,8 @@ export async function toolGlob(
     return {
       output:
         "glob error: pattern is required (non-empty string).\n" +
-        'Example: { "pattern": "**/*.{ts,tsx}", "path": "src" }',
+        'Example: { "pattern": "**/*.{ts,tsx}", "path": "src" }\n' +
+        "Whitespace-only patterns fail closed. Prefer a concrete glob; omit path for workspace root.",
       isError: true,
     };
   }
@@ -48,7 +49,8 @@ export async function toolGlob(
     return {
       output:
         "glob error: path is required (non-empty string). Omit path for workspace root.\n" +
-        'Example: { "pattern": "**/*.ts", "path": "src" }',
+        'Example: { "pattern": "**/*.ts", "path": "src" }\n' +
+        "Use a workspace-relative path, or omit path entirely for the workspace root.",
       isError: true,
     };
   }
@@ -120,7 +122,8 @@ export async function toolListDir(
     return {
       output:
         "list_dir error: path is required (non-empty string). Omit path for workspace root.\n" +
-        'Example: { "path": "src" }',
+        'Example: { "path": "src" }\n' +
+        "Use a workspace-relative path, or omit path entirely for the workspace root.",
       isError: true,
     };
   }

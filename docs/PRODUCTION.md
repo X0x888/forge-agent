@@ -71,7 +71,7 @@ forge run "next" --continue --json   # headless same-cwd resume (fail-closed if 
 forge "next" --continue              # bare headless same-cwd resume (parity; fail-closed)
 forge "next" --json                  # bare headless JSON (same payload as forge run --json)
 # REPL: /share · /files · /pin · /stats · /tips · /news · /retry [prompt] · /last [n]
-# REPL: /undo [n] · /init · /review · /compact-and · /fork-and-compact · /logs [n|path] · /config [json]
+# REPL: /undo [n] · /init · /review · /commit [do] · /compact-and · /fork-and-compact · /logs [n|path] · /config [json]
 # Resume (bare forge / /resume) peeks last turn + mutated files
 # Optional: FORGE_BASH_TIMEOUT_MS=600000 for long test suites
 ```
@@ -191,6 +191,9 @@ forge run "fix tests and open a PR description" \
 # Optional interactive: FORGE_PERMISSION_TIMEOUT_MS=120000  # auto-deny stalled Allow? prompts
 # Optional tuning: FORGE_DOOM_LOOP_THRESHOLD=4 FORGE_ERROR_STREAK_THRESHOLD=8
 # Optional ULW: FORGE_ULW_MAX_CONTINUES=300
+# Project intelligence (less steering): system prompt + /context inject preferred checks;
+#   post-edit verify tip FORGE_VERIFY_HINT=0 off · stale-edit guard FORGE_FILE_READ_GUARD=0 off
+#   doctor --json: packageManager, projectKinds, checkCommands, projectStackSummary, fileReadGuard, verifyHint
 ```
 
 ### `forge run --json` / bare `forge "…" --json` success shape
@@ -332,6 +335,16 @@ Label new runs with `forge run … --title <label>` (searchable via `forge sessi
 - Context pressure: one-shot log at auto-compact threshold and ~92% hard headroom (`/context` · `/compact` · `/compact-and`)
 
 ## Expert UX (production)
+
+- **Session last-verification trail** — structural bash checks (`npm test`, `typecheck`, turbo/nx, …) record `lastVerificationCommand` / `lastVerificationAt` on session meta (fork/export/import preserve; `/clear` resets). Surfaces on resume, `/status`, `/stats`, `/share`, `/done`, compact summary, `forge sessions show`, `/export` markdown, status/run JSON + metrics, and a compact `✓` on `forge sessions list` / `/sessions`. `/commit do` and `/done` warn when edits lack a recorded check (names preferred project command).
+- **Stale last-verify** — `lastEditAt` stamps on each file edit; when edits land after a successful check, resume/`/status`/`/share`/export/footer mark `⚠ stale (edits after verify)` (prompt `✓~`). Failed re-runs clear the trail entirely.
+- **Proof-claim success-only** — Stop blocks “tests pass” / bare “Done.” after edits unless a structural check *succeeded* this wave (`verificationPassed`). Failed runs still satisfy ULW wave-ledger execution.
+- **Advisory intent under ULW** — compact handoff + mid-run free-text that look like Q&A are framed `ADVISORY/Q&A` so ULW momentum does not authorize unsolicited edits/commits (oh-my-claude compact-intent lesson). Classifier: `src/util/advisory-intent.ts`.
+- **TodoGate advisory release** — open todos under ULW do not block Stop when the latest user/assistant turn is pure Q&A (pairs with compact ADVISORY framing).
+- **Handoff advisory release** — under ULW, soft continue-asks after pure Q&A are allowed; incomplete mid-implementation with edits still blocks.
+- **Proof-claim advisory Done.** — bare “Done.”/“Fixed.” after a pure Q&A user turn is not treated as an unverified work claim (even with prior session edits).
+- **`editsWithoutVerification`** — `forge run --json` `productionWarnings[]` when the session has edits but no recorded structural check (names preferred project command). Complements `/commit do` + `/done` interactive nudges for CI greppability.
+- **Project intelligence** — auto-detects package manager, preferred checks, monorepo root (workspaces/turbo/nx, walk-up bounded by git root), lockfile mismatches, missing `node_modules`. Fed into system prompt, `/context`, `/config`, doctor/status/run JSON, bash recovery tips, proof-claim/handoff reanchors, and `/init`/`/review`/`/plan`/`/diff`/`/files`/`/undo` tips. Env: `FORGE_VERIFY_HINT=0`, `FORGE_FILE_READ_GUARD=0`.
 
 - **Git worktrees** — linked checkouts show `WORKTREE` on `/status`, doctor, HUD (`+wt`), and `doctor --json` `gitIsWorktree`. Prefer one Forge session per worktree to avoid lock races.
 

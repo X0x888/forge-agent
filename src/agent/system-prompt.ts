@@ -8,6 +8,11 @@ import {
   getGitSnapshot,
   type GitSnapshot,
 } from "../util/git-context.js";
+import {
+  detectProjectIntel,
+  formatProjectIntelForPrompt,
+  type ProjectIntel,
+} from "../util/project-intel.js";
 import { forgeHome } from "../util/fs.js";
 import { formatSkillsForPrompt } from "./project-skills.js";
 
@@ -206,6 +211,8 @@ function profileBlock(profile: PromptProfile): string[] {
       `- Research → implement → verify. Use todos for multi-step work.`,
       `- State your reading first (one line) on multi-step work, then proceed — do not wait for confirmation.`,
       `- Finish, don't hand off. Never close with "shall I continue?", "want me to…?", or "let me know if…".`,
+      `- Finish the class, not just the example: siblings (same defect elsewhere) + dependents (callers/tests/docs) are in scope — grep before done.`,
+      `- Hostile self-review after edits: regressions, weakened tests, stubs, stale last-verify — fix before done.`,
       `- Tests must be able to fail — fix code, not the test, when a check goes red.`,
       `- Pause only for real external blockers (credentials, destructive shared-state, uninterpretable foreign work).`,
     ];
@@ -232,12 +239,22 @@ export function buildBaselineSystemPrompt(opts: {
   profile?: PromptProfile;
   /** Caller-computed snapshot (loop computes once per prompt); null = no git. */
   git?: GitSnapshot | null;
+  /** Caller-computed project fingerprint; undefined = detect from workspace. */
+  project?: ProjectIntel | null;
 }): string {
   const { config, workspace } = opts;
   const rules = loadProjectRules(workspace);
   const git = formatGitStableForPrompt(
     opts.git === undefined ? getGitSnapshot(workspace) : (opts.git ?? {}),
   );
+  const projectBlock = (() => {
+    if (opts.project === null) return "";
+    const intel =
+      opts.project === undefined
+        ? detectProjectIntel(workspace)
+        : opts.project;
+    return formatProjectIntelForPrompt(intel);
+  })();
   const ulwOn = Boolean(opts.ulwCycle?.enabled || opts.ultrawork);
   const profile =
     opts.profile ??
@@ -258,6 +275,7 @@ export function buildBaselineSystemPrompt(opts: {
         : ""),
     `Permission mode: ${config.permissionMode}`,
     git ? git : "",
+    projectBlock ? projectBlock : "",
     ``,
     ...profileBlock(profile),
     ``,
@@ -265,6 +283,10 @@ export function buildBaselineSystemPrompt(opts: {
     `- Think before acting. Prefer verification (run tests, read files) over speculation.`,
     `- On non-trivial multi-step work, state your reading in one line (what you believe is asked + any rival reading you passed on), then proceed without waiting for confirmation.`,
     `- Finish, don't hand off: never stop with "let me know if…", "shall I continue?", or "want me to…?" — keep going until the asked work is done or a real external blocker exists.`,
+    `- Finish the class, not just the example: a named bug/site implies siblings (same defect elsewhere) and dependents (callers, tests, docs, config). Grep the symbol you touched before calling it done.`,
+    `- After substantive edits, re-read your own diff as a hostile reviewer (regressions, weakened tests, leftover stubs, stale last-verify) and fix what you find before claiming done.`,
+    `- Pure questions are not work orders: answer first. Look up evidence if needed, then stop at the answer. Mention optional follow-ups in one sentence — do not build/refactor unasked. Explicit implement/fix/ship language (and ULW soft-prompt expansion) overrides this.`,
+    `- Prefer ask_user when requirements are ambiguous or a choice is destructive/irreversible — do not guess and thrash. Interactive only; headless/CI fails closed (state assumptions instead).`,
     `- Tests must be able to fail: never weaken assertions, skip failing cases, or rewrite tests solely to go green. Fix the code or name a real external blocker.`,
     `- Make focused, correct changes. Explain why briefly when it matters.`,
     `- Use tools: bash, get_task_output, kill_task, read_file, write_file, search_replace, apply_patch, grep, glob, list_dir, todo_write, ask_user, web_search, web_fetch.`,
@@ -282,8 +304,11 @@ export function buildBaselineSystemPrompt(opts: {
     `- Oversize tool results may be truncated with a path to the full output under ~/.forge/tool-output/.`,
     `- Track multi-step work with todo_write (non-empty id/content/status; merge:true + [] is a no-op).`,
     `- Do not invent file contents — read them.`,
+    `- Before editing an existing file, call read_file first. search_replace/write_file/apply_patch refuse unread or stale (mtime/size changed) files — re-read, then retry.`,
     ``,
-    `- After edits, run the cheapest relevant check (typecheck/test) when practical.`,
+    projectBlock && projectBlock.includes("Commands:")
+      ? `- After edits, run the cheapest project command from Workspace → Commands (typecheck/test) when practical.`
+      : `- After edits, run the cheapest relevant check (typecheck/test) when practical.`,
     ``,
     `## Reliability (runtime self-heal)`,
     `- Truncated tool JSON may be auto-repaired; if a tool notes repair or invalid JSON, fix args and retry once with valid JSON.`,
@@ -301,7 +326,7 @@ export function buildBaselineSystemPrompt(opts: {
     `## Harness`,
     `- **Blocking Stop hooks**: Stop may be blocked with re-anchor instructions — keep working. Stop hook timeout/error also fails closed (agent continues).`,
     `- **Handoff guard**: premature "let me know if…" / "shall I continue?" yields are blocked under ULW/goal/open todos (and mid-implementation incomplete closers) — finish the work instead of re-prompting the user.`,
-    `- **Proof-claim guard**: "tests pass" / "all green" without actually running a verification command is blocked once — run the check, then report the real result.`,
+    `- **Proof-claim guard**: "tests pass" / "all green" without actually running a verification command is blocked once — run the check, then report the real result. Outside ULW/goal, a silent stop after file edits with no successful check is also blocked once (free triage). The reanchor includes a free six-question self-audit (completeness / evidence / framing / tests / fit / consequence).`,
     `- **TodoGate**: open todos block Stop under ULW (strict) and once outside ULW (soft) — finish or cancel them with todo_write before yielding.`,
     `- **/goal driver**: active goals block Stop until **Goal achieved.** or stuck-wall.`,
     `- **/ulw cycle**: when armed, cycle=1 forces research→implement→serendipity→review→repeat; cycle=0 means finish last wave then **Cycle complete.** Optional max_waves auto-flips to LAST when the wave counter hits the cap.`,
@@ -318,6 +343,18 @@ export function buildBaselineSystemPrompt(opts: {
   ];
 
   if (config.permissionMode === "plan") {
+    const planCheckList = (() => {
+      try {
+        if (opts.project === null) return [] as string[];
+        const intel =
+          opts.project === undefined
+            ? detectProjectIntel(workspace)
+            : opts.project;
+        return intel.checkCommands.slice(0, 6);
+      } catch {
+        return [] as string[];
+      }
+    })();
     parts.push(
       ``,
       `## PLAN MODE (read-only — mutations hard-denied)`,
@@ -333,7 +370,9 @@ export function buildBaselineSystemPrompt(opts: {
       `1. **Goal** — one sentence success criteria`,
       `2. **Steps** — ordered, each with files/areas touched`,
       `3. **Risks** — blast radius, migrations, auth, data loss, flaky tests`,
-      `4. **Verification** — exact commands/tests that prove done`,
+      planCheckList.length
+        ? `4. **Verification** — exact commands that prove done (prefer: ${planCheckList.join(" · ")})`
+        : `4. **Verification** — exact commands/tests that prove done`,
       `5. **Out of scope** — what you will not touch`,
       ``,
       `Use todo_write only to structure the plan checklist. Prefer ask_user when requirements are ambiguous — do not guess destructive paths.`,

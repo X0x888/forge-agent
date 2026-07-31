@@ -175,6 +175,8 @@ export {
   parseMaxWavesArg,
   normalizeMaxWaves,
   ULW_LIVE_CONTROLS_HINT,
+  VERIFICATION_CMD_RE,
+  isVerificationCommand,
 } from "./harness/ulw-cycle.js";
 export {
   createSession,
@@ -391,6 +393,9 @@ export {
   isSafeDiffFilterArg,
   LIVE_CONTROLS_HINT,
   SLASH_COMMANDS,
+  buildCommitPrompt,
+  buildReviewPrompt,
+  buildInitAgentsPrompt,
 } from "./commands/slash.js";
 export type { DoctorResult, EffectiveConfigSnap } from "./commands/slash.js";
 export {
@@ -511,6 +516,26 @@ export {
   resolvePromptProfile,
 } from "./agent/system-prompt.js";
 export {
+  detectPackageManager,
+  detectProjectIntel,
+  detectWorkspaces,
+  findMonorepoRoot,
+  formatProjectIntelForPrompt,
+  verifyHintSuffix,
+  wrongPackageManagerTip,
+  missingScriptTip,
+  missingBinaryTip,
+  nextCheckTip,
+  monorepoLayoutTip,
+  missingNodeModulesTip,
+  hasNodeModules,
+  packageManagerLockfileMismatch,
+  multipleLockfiles,
+  multipleLockfilesTip,
+  permissionDeniedTip,
+} from "./util/project-intel.js";
+export type { PackageManager, ProjectIntel } from "./util/project-intel.js";
+export {
   collectSnapshots,
   renderHud,
   renderTmux,
@@ -530,6 +555,6 @@ export type {
   Liveness,
 } from "./statusline/types.js";
 
-export { editMissHint, formatMultiMatchLocations, locateEdit } from "./agent/tools/edit-match.js";
+export { editMissHint, formatMultiMatchLocations, locateEdit, stripReadFileLinePrefixes } from "./agent/tools/edit-match.js";
 export { executeTool, normalizeToolName, TOOL_DEFINITIONS } from "./agent/tools/index.js";
 export { applyTodos, openTodos } from "./agent/todos.js";

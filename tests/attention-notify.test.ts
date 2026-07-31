@@ -131,6 +131,26 @@ describe("turnEndOutcomeLabel", () => {
       "continue cap",
     );
     assert.equal(turnEndOutcomeLabel({}), "turn complete");
+    assert.equal(
+      turnEndOutcomeLabel({ editCount: 2 }),
+      "turn complete · no last-verify",
+    );
+    assert.equal(
+      turnEndOutcomeLabel({
+        editCount: 2,
+        lastVerificationCommand: "npm test",
+        lastVerificationStale: true,
+      }),
+      "turn complete · last-verify stale",
+    );
+    assert.equal(
+      turnEndOutcomeLabel({
+        editCount: 2,
+        lastVerificationCommand: "npm test",
+        lastVerificationStale: false,
+      }),
+      "turn complete · verified",
+    );
     // Flags win over lastError
     assert.equal(
       turnEndOutcomeLabel({

@@ -103,6 +103,19 @@ describe("interjection (Grok-style)", () => {
   });
 });
 
+  it("frames advisory mid-run interjections under ULW", () => {
+    const framed = formatInterjection("what do you think about the approach?", {
+      ulwLine: "ULW cycle=1 wave=2 (CONTINUE)",
+    });
+    assert.match(framed, /ADVISORY\/Q&A/);
+    assert.match(framed, /Answer the question first/i);
+    const work = formatInterjection("please implement the fix now", {
+      ulwLine: "ULW cycle=1 wave=2 (CONTINUE)",
+    });
+    assert.doesNotMatch(work, /ADVISORY\/Q&A/);
+  });
+
+
 describe("context admit (OpenCode-inspired)", () => {
   beforeEach(() => clearAdmittedFingerprints());
 
@@ -402,6 +415,11 @@ describe("prompt profile + baseline system", () => {
     assert.match(text, /autonomous|Keep working/i);
     assert.match(text, /State your reading first/i);
     assert.match(text, /Finish, don't hand off/i);
+    assert.match(text, /Finish the class/i);
+    assert.match(text, /hostile reviewer|Hostile self-review/i);
+    assert.match(text, /siblings/i);
+    assert.match(text, /Pure questions are not work orders/i);
+    assert.match(text, /Prefer ask_user when requirements are ambiguous/i);
     assert.match(text, /Tests must be able to fail/i);
     assert.match(text, /Handoff guard/i);
     assert.match(text, /Proof-claim guard/i);

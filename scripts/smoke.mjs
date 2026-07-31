@@ -148,9 +148,22 @@ mustInclude("doctor gitChangedFiles", ["doctor", "--json"], "gitChangedFiles");
 mustInclude("doctor formatOnWrite", ["doctor", "--json"], "formatOnWrite");
 mustInclude("doctor sessionsPinned", ["doctor", "--json"], "sessionsPinned");
 mustInclude("doctor projectSkillsCount", ["doctor", "--json"], "projectSkillsCount");
+mustInclude("doctor packageManager", ["doctor", "--json"], "packageManager");
+mustInclude("doctor checkCommands", ["doctor", "--json"], "checkCommands");
+mustInclude("doctor workspaces", ["doctor", "--json"], "workspaces");
+mustInclude("doctor monorepoRoot", ["doctor", "--json"], "monorepoRoot");
+mustInclude("doctor projectStackSummary", ["doctor", "--json"], "projectStackSummary");
+mustInclude("doctor fileReadGuard", ["doctor", "--json"], "fileReadGuard");
+mustInclude("doctor verifyHint", ["doctor", "--json"], "verifyHint");
+mustInclude("doctor nodeModulesPresent", ["doctor", "--json"], "nodeModulesPresent");
+mustInclude("doctor packageManagerMismatch", ["doctor", "--json"], "packageManagerMismatch");
+mustInclude("doctor multipleLockfiles", ["doctor", "--json"], "multipleLockfiles");
 mustInclude("sessions pinned json", ["sessions", "pinned", "--json"], "pinnedOnly");
 mustInclude("status formatOnWrite", ["status", "--json"], "formatOnWrite");
 mustInclude("config formatOnWrite", ["config", "--json"], "formatOnWrite");
+mustInclude("config packageManager", ["config", "--json"], "packageManager");
+mustInclude("config checkCommands", ["config", "--json"], "checkCommands");
+mustInclude("config monorepoRoot", ["config", "--json"], "monorepoRoot");
 
 // Headless slash: pure control exits without auth/model (reason: slash)
 mustInclude(
@@ -162,6 +175,11 @@ mustInclude(
   "headless slash /skills",
   ["run", "/skills", "--json", "--permission-mode", "plan"],
   '"reason":"slash"',
+);
+mustInclude(
+  "headless slash /context project stack",
+  ["run", "/context", "--json", "--permission-mode", "plan"],
+  "Project stack",
 );
 mustInclude(
   "headless slash /help",
@@ -197,5 +215,47 @@ mustInclude(
 mustInclude("status --watch json", ["status", "--watch", "--json"], '"ok":true', {
   timeoutMs: 8_000,
 });
+mustInclude("status packageManager", ["status", "--json"], "packageManager");
+mustInclude("status checkCommands", ["status", "--json"], "checkCommands");
+mustInclude("status monorepoRoot", ["status", "--json"], "monorepoRoot");
+mustInclude("status workspaces", ["status", "--json"], "workspaces");
+mustInclude("status nodeModulesPresent", ["status", "--json"], "nodeModulesPresent");
+mustInclude("status multipleLockfiles", ["status", "--json"], "multipleLockfiles");
+mustInclude("status lastVerificationCommand", ["status", "--json"], "lastVerificationCommand");
+mustInclude("status lastEditAt", ["status", "--json"], "lastEditAt");
+mustInclude("status lastVerificationStale", ["status", "--json"], "lastVerificationStale");
+// Doctor flags FORGE_VERIFY_HINT=0 as an issue (expert daily-use default is on).
+{
+  const r = spawnSync(process.execPath, [cli, "doctor", "--json"], {
+    cwd: root,
+    env: { ...env, FORGE_VERIFY_HINT: "0" },
+    encoding: "utf8",
+    timeout: 15_000,
+    maxBuffer: 2 * 1024 * 1024,
+  });
+  if (r.status !== 0 && r.status !== 1) {
+    console.error(`SMOKE FAIL: doctor --json VERIFY_HINT=0 exited ${r.status}`);
+    console.error(r.stdout?.slice(0, 400));
+    console.error(r.stderr?.slice(0, 200));
+    process.exit(1);
+  }
+  let j;
+  try {
+    j = JSON.parse(r.stdout || "{}");
+  } catch (e) {
+    console.error(`SMOKE FAIL: doctor --json VERIFY_HINT=0 not JSON: ${e}`);
+    console.error((r.stdout || "").slice(0, 400));
+    process.exit(1);
+  }
+  const issues = j.issues || [];
+  if (!issues.includes("verify-hint-off")) {
+    console.error(
+      `SMOKE FAIL: doctor --json missing verify-hint-off in issues: ${JSON.stringify(issues)}`,
+    );
+    process.exit(1);
+  }
+  console.log("ok  doctor verify-hint-off");
+}
+
 
 console.log("\nSmoke OK");

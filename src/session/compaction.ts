@@ -15,12 +15,21 @@ import {
   alignKeepBoundary,
   repairToolCallPairing,
 } from "./message-repair.js";
+import { detectProjectIntel } from "../util/project-intel.js";
+import { looksLikeAdvisoryUserMessage } from "../util/advisory-intent.js";
+export { looksLikeAdvisoryUserMessage } from "../util/advisory-intent.js";
 
 export interface CompactContext {
   ulw?: UlwCycleState | null;
   goal?: GoalState | null;
   todos?: TodoItem[];
   sessionId?: string;
+  /** Workspace cwd for project-intel preferred checks. */
+  cwd?: string;
+  /** Last structural verification command from session meta. */
+  lastVerificationCommand?: string;
+  lastVerificationAt?: string;
+  lastEditAt?: string;
 }
 
 export interface CompactResult {
@@ -68,6 +77,7 @@ export function compactMessagesStructured(
   };
 }
 
+
 export function buildStructuredSummary(
   dropped: ChatMessage[],
   ctx?: CompactContext,
@@ -79,23 +89,59 @@ export function buildStructuredSummary(
 
   // 1. Harness / mandate (load-bearing for ULW)
   sections.push(``, `## 1. Harness & mandate`);
+  // Compact-boundary intent: ULW momentum must not override pure Q&A.
+  // (oh-my-claude compact-intent-preservation lesson — advisory survives compact.)
+  const lastUser = [...dropped]
+    .reverse()
+    .find((m) => m.role === "user" && (m.content || "").trim());
+  const advisory = lastUser
+    ? looksLikeAdvisoryUserMessage(String(lastUser.content || ""))
+    : false;
+  if (advisory) {
+    const raw = String(lastUser?.content || "").replace(/\s+/g, " ").trim();
+    const snippet =
+      raw.length > 240 ? `${raw.slice(0, 237).trimEnd()}…` : raw;
+    sections.push(
+      `- Intent: ADVISORY/Q&A (last user message looks like a question/opinion request) — answer first; do **not** implement, edit, commit, or push unless the user explicitly asks. ULW momentum does not override this.`,
+    );
+    if (snippet) {
+      sections.push(`- Last meta-request: ${snippet}`);
+    }
+  } else {
+    sections.push(
+      `- Intent: pure questions are not work orders — answer first; do not build/refactor unasked. Explicit implement/fix/ship language overrides. Soft prompts under ULW still expand to god-scope.`,
+    );
+  }
+
   const ulw = ctx?.ulw?.enabled ? ctx.ulw : null;
   if (ulw) {
+    const softLine = ulw.softPrompt
+      ? advisory
+        ? `- Soft prompt expanded to god-scope (suspended while Intent is ADVISORY/Q&A — answer first)`
+        : `- Soft prompt expanded to god-scope`
+      : "";
+    const expandedRaw = (ulw.expandedMandate || "").slice(0, 600);
+    const expandedLine = expandedRaw
+      ? advisory
+        ? `- Expanded mandate (abbrev, suspended while ADVISORY/Q&A): ${expandedRaw}`
+        : `- Expanded mandate (abbrev): ${expandedRaw}`
+      : "";
     sections.push(
       `- ULW ON | ${formatUlwCounts(ulw)} ${ulw.cycle === 1 ? "(CONTINUE)" : "(LAST)"}`,
       `- max_waves: ${ulw.maxWaves != null ? ulw.maxWaves : "off (unlimited)"}`,
       `- Mandate: ${ulw.mandate || "(none)"}`,
-      ulw.softPrompt ? `- Soft prompt expanded to god-scope` : "",
-      `- Expanded mandate (abbrev): ${(ulw.expandedMandate || "").slice(0, 600)}`,
+      softLine,
+      expandedLine,
     );
   } else {
     sections.push(`- ULW: off`);
   }
-
   const goal = ctx?.goal;
   if (goal?.objective && goal.status === "active" && !goal.paused) {
     sections.push(
-      `- Goal ACTIVE: ${goal.objective}`,
+      advisory
+        ? `- Goal ACTIVE (paused for ADVISORY/Q&A — answer first; do not treat this as a work order): ${goal.objective}`
+        : `- Goal ACTIVE: ${goal.objective}`,
       goal.criteria.length
         ? `- Criteria: ${goal.criteria.map((c, i) => `${i + 1}. ${c}`).join("; ")}`
         : "",
@@ -106,12 +152,47 @@ export function buildStructuredSummary(
     sections.push(`- Goal: none`);
   }
 
+  // Project verification (less steering after compact)
+  try {
+    const cwd = ctx?.cwd || process.cwd();
+    const intel = detectProjectIntel(cwd);
+    if (intel.checkCommands[0] || intel.packageManager) {
+      sections.push(
+        `- Project checks: ${intel.checkCommands.slice(0, 4).join(" · ")}` +
+          (intel.packageManager ? ` (pm=${intel.packageManager})` : ""),
+      );
+    }
+    if (ctx?.lastVerificationCommand?.trim()) {
+      const last = ctx.lastVerificationCommand.trim().slice(0, 120);
+      let stale = "";
+      try {
+        const vt = ctx.lastVerificationAt
+          ? Date.parse(ctx.lastVerificationAt)
+          : NaN;
+        const et = ctx.lastEditAt ? Date.parse(ctx.lastEditAt) : NaN;
+        if (Number.isFinite(vt) && Number.isFinite(et) && et > vt) {
+          stale = "  ⚠ stale (edits after verify)";
+        }
+      } catch {
+        /* */
+      }
+      sections.push(`- Last verify: ${last}${stale}`);
+    }
+  } catch {
+    /* */
+  }
+
   // 2. Todos
   sections.push(``, `## 2. Todos`);
   const todos = ctx?.todos ?? [];
   if (todos.length === 0) {
     sections.push(`- (none recorded)`);
   } else {
+    if (advisory) {
+      sections.push(
+        `- (ADVISORY/Q&A: list is context only — do not execute open todos unless the user explicitly asks)`,
+      );
+    }
     for (const t of todos.slice(0, 40)) {
       sections.push(`- [${t.status}] ${t.id}: ${t.content}`);
     }

@@ -8,6 +8,7 @@
  * When the streak trips we inject a hard strategy-change nudge. Permission
  * denies / hard safety denies do not count — those are intentional gates.
  */
+import { detectProjectIntel } from "../util/project-intel.js";
 
 export interface ErrorStreakConfig {
   /** Consecutive errored tool results required to trip (default 5) */
@@ -90,14 +91,25 @@ export class ErrorStreakTracker {
   }
 }
 
+function preferredVerifyHint(): string {
+  try {
+    const cmd = detectProjectIntel(process.cwd()).checkCommands[0];
+    if (cmd) return cmd;
+  } catch {
+    /* optional */
+  }
+  return "typecheck/test";
+}
+
 function buildErrorStreakMessage(count: number, recent: string[]): string {
   const list = recent.map((r, i) => `  ${i + 1}. ${r}`).join("\n");
+  const verify = preferredVerifyHint();
   return (
     `[Forge error-streak] ${count} consecutive tool errors without a success.\n` +
     `Recent failures:\n${list}\n` +
     `STOP thrashing. Change strategy now:\n` +
     `1. Re-read the actual file/error output (do not guess paths).\n` +
-    `2. Run the cheapest verification (typecheck/test) to learn the real failure.\n` +
+    `2. Run the cheapest verification (\`${verify}\`) to learn the real failure.\n` +
     `3. Try a different tool or narrower scope — identical retries will keep failing.\n` +
     `4. If blocked on missing credentials/external state, say so clearly instead of looping.\n` +
     `5. If permission denied / plan mode, do not retry the same mutation — /build or change mode.\n` +

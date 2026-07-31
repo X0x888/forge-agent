@@ -430,6 +430,24 @@ describe("bash exit code footer", () => {
       assert.match(r.output, /command is required/i);
     }
   });
+
+  it("empty bash example uses preferred project check", async () => {
+    const ws = path.join(tmpRoot, "ws-bash-empty-intel");
+    await fsp.mkdir(ws, { recursive: true });
+    await fsp.writeFile(
+      path.join(ws, "package.json"),
+      JSON.stringify({
+        scripts: { typecheck: "tsc -b", test: "node --test" },
+      }),
+    );
+    await fsp.writeFile(path.join(ws, "package-lock.json"), "{}");
+    const ctx = { workspace: ws, sandbox: "off" as const };
+    const r = await executeTool("bash", JSON.stringify({ command: "" }), ctx);
+    assert.equal(r.isError, true);
+    assert.match(r.output, /command is required/i);
+    assert.match(r.output, /npm run typecheck|npm test/);
+    assert.match(r.output, /Prefer project checks from \/context/i);
+  });
 });
 
 describe("tool name aliases and unknown-tool tips", () => {
@@ -596,6 +614,17 @@ describe("path trim fail-closed", () => {
       const r = await executeTool(tool, JSON.stringify(args), ctx);
       assert.equal(r.isError, true, tool);
       assert.match(r.output, /path is required/i, tool);
+      if (
+        tool === "read_file" ||
+        tool === "write_file" ||
+        tool === "search_replace"
+      ) {
+        assert.match(r.output, /workspace-relative path/i, tool);
+        assert.match(r.output, /list_dir\/glob/i, tool);
+      }
+      if (tool === "list_dir" || tool === "grep" || tool === "glob") {
+        assert.match(r.output, /omit path/i, tool);
+      }
     }
   });
 
@@ -612,6 +641,7 @@ describe("path trim fail-closed", () => {
       const r = await executeTool(tool, JSON.stringify(args), ctx);
       assert.equal(r.isError, true, tool);
       assert.match(r.output, /pattern is required/i, tool);
+      assert.match(r.output, /Whitespace-only patterns fail closed/i, tool);
     }
   });
 
@@ -1277,3 +1307,151 @@ describe("apply_patch context-only update no-op", () => {
     if (!r.ok) assert.match(r.error, /no-op|context-only/i);
   });
 });
+
+
+describe("stripReadFileLinePrefixes", () => {
+  it("strips read_file numbered paste from old_string", async () => {
+    const { stripReadFileLinePrefixes } = await import(
+      "../src/agent/tools/edit-match.js"
+    );
+    const raw = "    12|const x = 1;\n    13|const y = 2;";
+    const r = stripReadFileLinePrefixes(raw);
+    assert.equal(r.stripped, true);
+    assert.equal(r.text, "const x = 1;\nconst y = 2;");
+  });
+
+  it("leaves normal code alone", async () => {
+    const { stripReadFileLinePrefixes } = await import(
+      "../src/agent/tools/edit-match.js"
+    );
+    const raw = "const a = 1;\nconst b = 2;";
+    const r = stripReadFileLinePrefixes(raw);
+    assert.equal(r.stripped, false);
+    assert.equal(r.text, raw);
+  });
+
+  it("does not strip single-line unpadded 1|pipe data", async () => {
+    const { stripReadFileLinePrefixes } = await import(
+      "../src/agent/tools/edit-match.js"
+    );
+    const raw = "1|pipe-data";
+    const r = stripReadFileLinePrefixes(raw);
+    assert.equal(r.stripped, false);
+    assert.equal(r.text, raw);
+  });
+
+  it("search_replace accepts numbered paste as old_string", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "forge-ln-edit-"));
+    const f = path.join(dir, "a.ts");
+    fs.writeFileSync(f, "const x = 1;\nconst y = 2;\n");
+    const r = await executeTool(
+      "search_replace",
+      JSON.stringify({
+        path: "a.ts",
+        old_string: "     1|const x = 1;\n     2|const y = 2;",
+        new_string: "     1|const x = 9;\n     2|const y = 2;",
+      }),
+      { workspace: dir },
+    );
+    assert.equal(r.isError, undefined, r.output);
+    assert.match(r.output, /stripped read_file line-number prefixes/);
+    assert.equal(fs.readFileSync(f, "utf8"), "const x = 9;\nconst y = 2;\n");
+  });
+});
+
+
+describe("editMissHint numbered paste tip", () => {
+  it("mentions line-number prefixes when old_string is mixed numbered", async () => {
+    const { editMissHint } = await import("../src/agent/tools/edit-match.js");
+    const hint = editMissHint(
+      "const x = 1;\nconst y = 2;\n",
+      "const x = 1;\n    13|const y = 2;",
+    );
+    assert.match(hint, /line-number prefixes|N\|/i);
+  });
+});
+
+
+describe("write_file line-prefix strip", () => {
+  it("write_file strips numbered paste content", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "forge-ln-write-"));
+    const r = await executeTool(
+      "write_file",
+      JSON.stringify({
+        path: "b.ts",
+        content: "     1|export const a = 1;\n     2|export const b = 2;\n",
+      }),
+      { workspace: dir },
+    );
+    assert.equal(r.isError, undefined, r.output);
+    assert.match(r.output, /stripped read_file line-number prefixes/);
+    assert.equal(
+      fs.readFileSync(path.join(dir, "b.ts"), "utf8"),
+      "export const a = 1;\nexport const b = 2;\n",
+    );
+  });
+});
+
+describe("web + apply_patch empty recovery", () => {
+  it("web_search empty query fails closed with tip", async () => {
+    const ws = path.join(tmpRoot, "ws-web-empty");
+    await fsp.mkdir(ws, { recursive: true });
+    const ctx = { workspace: ws, sandbox: "off" as const };
+    for (const query of ["", "   "]) {
+      const r = await executeTool(
+        "web_search",
+        JSON.stringify({ query }),
+        ctx,
+      );
+      assert.equal(r.isError, true);
+      assert.match(r.output, /query is required/i);
+      assert.match(r.output, /Whitespace-only queries fail closed/i);
+    }
+  });
+
+  it("web_fetch empty url fails closed with tip", async () => {
+    const ws = path.join(tmpRoot, "ws-fetch-empty");
+    await fsp.mkdir(ws, { recursive: true });
+    const ctx = { workspace: ws, sandbox: "off" as const };
+    for (const url of ["", "   "]) {
+      const r = await executeTool(
+        "web_fetch",
+        JSON.stringify({ url }),
+        ctx,
+      );
+      assert.equal(r.isError, true);
+      assert.match(r.output, /url is required/i);
+      assert.match(r.output, /Whitespace-only URLs fail closed/i);
+    }
+  });
+
+  it("apply_patch empty patchText fails closed with tip", async () => {
+    const ws = path.join(tmpRoot, "ws-patch-empty");
+    await fsp.mkdir(ws, { recursive: true });
+    const ctx = { workspace: ws, sandbox: "off" as const };
+    for (const patchText of ["", "   "]) {
+      const r = await executeTool(
+        "apply_patch",
+        JSON.stringify({ patchText }),
+        ctx,
+      );
+      assert.equal(r.isError, true);
+      assert.match(r.output, /patchText is required/i);
+      assert.match(r.output, /Whitespace-only patchText fail/i);
+    }
+  });
+});
+
+  it("todo_write null todos fails closed with merge tip", async () => {
+    const ws = path.join(tmpRoot, "ws-todo-null");
+    await fsp.mkdir(ws, { recursive: true });
+    const { createSession } = await import("../src/session/session.js");
+    const { applyTodos } = await import("../src/agent/todos.js");
+    const session = createSession({ cwd: ws, provider: "xai", model: "m" });
+    const missing = applyTodos(session, null, true);
+    assert.match(missing, /todos array is required/i);
+    assert.match(missing, /merge:true with \[\] is a no-op/i);
+    const notArr = applyTodos(session, { id: "1" } as any, true);
+    assert.match(notArr, /must be an array/i);
+  });
+

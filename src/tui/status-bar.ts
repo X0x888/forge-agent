@@ -9,6 +9,7 @@ import chalk from "chalk";
 import type { ForgeConfig } from "../config/types.js";
 import { resolveReasoningEffort } from "../config/reasoning.js";
 import type { SessionData } from "../session/session.js";
+import { isLastVerificationStale } from "../session/session.js";
 import type { ResolvedAuth } from "../auth/types.js";
 import { describeAuth } from "../auth/resolve.js";
 import { listAccounts } from "../auth/store.js";
@@ -32,6 +33,7 @@ import { formatTokens, formatCost, estimateCostUsd } from "../util/format.js";
 import { estimateTokens, sessionDir } from "../session/session.js";
 import { readSessionLock, formatLockHolder } from "../session/lock.js";
 import { getGitSnapshot } from "../util/git-context.js";
+import { detectProjectIntel } from "../util/project-intel.js";
 import type { AuthMethod } from "../statusline/types.js";
 
 export interface StatusBarContext {
@@ -84,6 +86,23 @@ export function buildPromptFlags(ctx: StatusBarContext): string {
   }
   if (session.meta.pinned) {
     flags.push(chalk.cyan("PIN"));
+  }
+  // Linked worktree — experts running parallel agent sessions need this signal
+  // on every prompt, not only the turn footer / status details.
+  try {
+    const git = getGitSnapshot(
+      config.workspace || session.meta.cwd || process.cwd(),
+    );
+    if (git.isWorktree) flags.push(chalk.cyan("WT"));
+  } catch {
+    /* */
+  }
+  if (session.meta.lastVerificationCommand?.trim()) {
+    flags.push(
+      isLastVerificationStale(session.meta)
+        ? chalk.yellow("✓~")
+        : chalk.green("✓"),
+    );
   }
   if (config.permissionMode === "plan") flags.push(chalk.blue("PLAN"));
   if (config.permissionMode === "bypassPermissions") {
@@ -426,6 +445,33 @@ export function renderTurnFooter(
   }
   if (snap.openTodos > 0) {
     parts.push(chalk.yellow(`todos:${snap.openTodos}`));
+  }
+  // After edits, surface last-verify (when recorded) or the cheapest preferred
+  // project check early (before ULW badges) so narrow terminals still show it.
+  try {
+    const last = ctx.session.meta.lastVerificationCommand?.trim();
+    if (last) {
+      const short = last.length > 22 ? `${last.slice(0, 21)}…` : last;
+      if (isLastVerificationStale(ctx.session.meta)) {
+        parts.push(chalk.yellow(`last✓ ${short} stale`));
+      } else {
+        parts.push(chalk.green(`last✓ ${short}`));
+      }
+    } else if ((ctx.session.meta.editCount || 0) > 0) {
+      const intel = detectProjectIntel(
+        ctx.config.workspace || ctx.session.meta.cwd || process.cwd(),
+      );
+      if (intel.checkCommands[0]) {
+        const c = intel.checkCommands[0];
+        parts.push(
+          chalk.dim(
+            `✓ ${c.length > 22 ? `${c.slice(0, 21)}…` : c}`,
+          ),
+        );
+      }
+    }
+  } catch {
+    /* */
   }
   const bg = listTasks().filter((t) => t.status === "running");
   if (bg.length) {
@@ -780,6 +826,32 @@ export function formatSessionDetails(ctx: StatusBarContext): string {
       `msgs     ${session.messages.length}  ·  ~${formatTokens(est)} ctx  ·  turns ${session.meta.turnCount}  edits ${session.meta.editCount}`,
     ),
     (() => {
+      const last = session.meta.lastVerificationCommand?.trim();
+      if (last) {
+        const stale = isLastVerificationStale(session.meta)
+          ? "  ⚠ stale"
+          : "";
+        return chalk.dim(
+          `verify   ${last.length > 60 ? `${last.slice(0, 59)}…` : last}${stale}`,
+        );
+      }
+      if ((session.meta.editCount || 0) > 0) {
+        let tip = "npm test / typecheck";
+        try {
+          const intel = detectProjectIntel(
+            config.workspace || session.meta.cwd || process.cwd(),
+          );
+          if (intel.checkCommands[0]) tip = intel.checkCommands[0];
+        } catch {
+          /* */
+        }
+        return chalk.yellow(
+          `verify   (none after ${session.meta.editCount} edit(s) — prefer \`${tip}\`)`,
+        );
+      }
+      return null;
+    })(),
+    (() => {
       const win = config.contextWindow || 1;
       const pct = Math.min(100, Math.round((est / win) * 100));
       const thr = Math.round((config.autoCompactThreshold || 0.8) * 100);
@@ -803,7 +875,7 @@ export function formatSessionDetails(ctx: StatusBarContext): string {
     chalk.dim(
       `keep     ${session.meta.pinned ? "pinned (prune-safe) · /unpin" : "not pinned · /pin to protect from prune"}`,
     ),
-  ];
+  ].filter((x): x is string => x != null);
   {
     const lock = readSessionLock(session.meta.id);
     lines.push(

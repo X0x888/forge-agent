@@ -71,6 +71,7 @@ const RESERVED = new Set([
   "fork-and-compact",
   "init",
   "review",
+  "commit",
   "rewind",
   "undo",
   "retry",

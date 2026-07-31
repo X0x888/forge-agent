@@ -9,6 +9,7 @@
  * Pure Q&A closers ("let me know if you have questions") still allow Stop
  * when there is no active driver and no in-flight work signal.
  */
+import { looksLikeAdvisoryUserMessage } from "../util/advisory-intent.js";
 
 /** Soft Q&A closers — not a request for permission to keep working. */
 const QA_CLOSER_RE =
@@ -51,7 +52,7 @@ const HANDOFF_PATTERNS: RegExp[] = [
 
 /** Signals the agent itself admits work remains. */
 const INCOMPLETE_MARKERS_RE =
-  /\b(?:still need to|still have to|not yet done|not yet finished|haven't (?:yet )?(?:finished|done|implemented)|remaining work|next step(?:s)? (?:would|will|is|are)|partial(?:ly)? (?:done|complete|fixed)|left to do|more to do|work remains|unfinished|I(?:'ll| will) (?:do|implement|fix|add|write) (?:that|this|it) next)\b/i;
+  /\b(?:still need to|still have to|not yet done|not yet finished|haven't (?:yet )?(?:finished|done|implemented)|remaining work|next step(?:s)? (?:would|will|is|are)|partial(?:ly)? (?:done|complete|fixed)|left to do|more to do|work remains|unfinished|I(?:'ll| will) (?:do|implement|fix|add|write) (?:that|this|it) next|I(?:'ll| will) (?:start|begin|continue) by (?:reading|checking|inspecting|looking|investigating|scanning|grepping|searching|opening|editing|fixing|implementing|running|writing)|let me (?:start by |begin by )?(?:investigate|look into|check|read|inspect|scan|grep|search|open|edit|fix|implement|run)|looking into this|investigating now|starting with (?:the |reading |checking |inspecting ))\b/i;
 
 /** Terminal attestations — never block these as handoffs. */
 const ATTESTATION_RE =
@@ -119,6 +120,8 @@ export function detectPrematureHandoff(message: string): HandoffDetection {
 
 export interface HandoffStopInput {
   lastAssistantMessage: string;
+  /** Latest user message — advisory Q&A softens continue-ask blocks. */
+  lastUserMessage?: string;
   /** ULW cycle armed or session ultrawork flag. */
   ultrawork: boolean;
   /** Active (unpaused) goal objective present. */
@@ -133,6 +136,11 @@ export interface HandoffStopInput {
   handoffBlocks?: number;
   /** Override cap (default 3). 0 = never release on handoff alone. */
   handoffBlockCap?: number;
+  /**
+   * Preferred project check commands (project-intel). Named in the reanchor
+   * so the agent verifies instead of asking the user what to run.
+   */
+  preferredCheckCommands?: string[];
 }
 
 export interface HandoffStopDecision {
@@ -167,6 +175,20 @@ export function evaluateHandoffAtStop(
   const detection = detectPrematureHandoff(input.lastAssistantMessage);
   if (!detection.handoff) {
     return { block: false, detection };
+  }
+
+  // Pure Q&A turns: allow soft continue-asks ("let me know if you want me to
+  // implement") — that is a valid advisory closer, not a premature yield.
+  // Still block incomplete mid-implementation markers when edits happened.
+  const userAdvisory =
+    Boolean(input.lastUserMessage) &&
+    looksLikeAdvisoryUserMessage(input.lastUserMessage || "");
+  if (userAdvisory) {
+    const hardIncomplete =
+      Boolean(detection.incomplete) && input.editCount > 0;
+    if (!hardIncomplete) {
+      return { block: false, detection };
+    }
   }
 
   const hasDriver =
@@ -208,6 +230,14 @@ export function evaluateHandoffAtStop(
     ? "An active harness driver (ULW / goal / open todos) requires finishing, not re-prompting the user."
     : "In-flight work or a permission-to-continue ask was detected — finish it or name a real external blocker.";
 
+  const preferred = (input.preferredCheckCommands || [])
+    .map((c) => String(c || "").trim())
+    .filter(Boolean)
+    .slice(0, 4);
+  const verifyLine = preferred.length
+    ? `  • verify with: ${preferred.join("  ·  ")}`
+    : `  • verify with the cheapest project check (test/typecheck)`;
+
   const reanchor = [
     `[Forge handoff-guard] Stop blocked — premature yield / handoff.`,
     matchNote,
@@ -222,6 +252,7 @@ export function evaluateHandoffAtStop(
     `There is no fifth reason to stop short. Do NOT ask “shall I continue?” or “let me know if…”.`,
     `Continue with tools now: implement the next concrete step, verify, and only stop when the mandate is resolved`,
     `(or attest **Goal achieved.** / **Cycle complete.** when a driver is armed).`,
+    verifyLine,
   ].join("\n");
 
   return {

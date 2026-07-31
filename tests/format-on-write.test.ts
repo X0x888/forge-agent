@@ -113,6 +113,7 @@ describe("format-on-write", () => {
     });
     assert.equal(st.handled, true);
     assert.match(String(st.output || ""), /on/i);
+    assert.match(String(st.output || ""), /Detected:/i);
     // env override wins
     process.env.FORGE_FORMAT_ON_WRITE = "0";
     const st2 = await handleSlash("/format status", {

@@ -28,21 +28,24 @@ Binary entry: `src/cli.ts` → `dist/cli.js` (`bin: forge`).
 - `src/harness/context-admit.ts` — mid-conversation harness admissions (stable system + live counters; counter-only churn suppressed; volatile git branch line admitted append-only — message[0] keeps cache-stable git root/remote only)
 - `src/config/model-info.ts` — per-model context windows (grok-4.5=500k, grok-4=256k, claude=200k, gpt-4.1=1M); used when `context_window` is not explicit
 - `src/harness/interjection.ts` — free-text mid-run messages (Grok-style `<user_query>`)
-- `src/harness/todo-gate.ts` — TodoNudge + TodoGate under ULW; soft once outside ULW; `clearSoftTodoGateOnWindDown` on `/done`/`/goal done|clear`/`/cycle 0`/`/ulw-off`/`/clear`/`/new`/safety-valve LAST **and** fresh driver arm (`/ulw`, `/goal set`); also max_waves auto LAST, stuck-wall, goal attestation/`markGoalDone`, and `setMaxWaves` when already at/over cap
-- `src/harness/handoff-guard.ts` — premature “let me know if…” / “shall I continue?” Stop block (finish doctrine)
-- `src/harness/proof-claim-guard.ts` — “tests pass” without verificationRan Stop block (don't claim, prove)
+- `src/util/advisory-intent.ts` — Q&A/advisory vs work-order classifier (compact handoff + mid-run interjections under ULW)
+- `src/harness/todo-gate.ts` — TodoNudge + TodoGate under ULW; soft once outside ULW; `clearSoftTodoGateOnWindDown` on `/done`/`/goal done|clear`/`/cycle 0`/`/ulw-off`/`/clear`/`/new`/safety-valve LAST **and** fresh driver arm (`/ulw`, `/goal set`); also max_waves auto LAST, stuck-wall, goal attestation/`markGoalDone`, and `setMaxWaves` when already at/over cap · advisory Q&A releases TodoGate + skips TodoNudge (pairs with compact ADVISORY framing)
+- `src/harness/handoff-guard.ts` — premature “let me know if…” / “shall I continue?” Stop block (finish doctrine) · advisory Q&A allows soft continue-asks
+- `src/harness/proof-claim-guard.ts` — “tests pass” / bare “Done.” after edits without *successful* verification (`verificationPassed`) Stop block (don't claim, prove) · advisory Q&A softens bare Done./Fixed. closers
 - `src/util/cost-budget.ts` — session spend cap parse/resolve (`/budget`, `--max-cost`, `FORGE_MAX_COST_USD`)
-- `src/util/production-warnings.ts` — `productionWarningsForRun` for `forge run --json` / CI (safety valves, ULW-without-budget, dirty tree)
+- `src/util/production-warnings.ts` — `productionWarningsForRun` for `forge run --json` / CI (safety valves, ULW-without-budget, dirty tree, editsWithoutVerification, lockfile/node_modules)
 - `src/session/compaction.ts` — structured compact preserving mandate/goal/todos
 - `src/session/tool-clearing.ts` — proactive stale tool-result clearing (microcompaction; `FORGE_TOOL_CLEAR*`)
-- `src/agent/project-skills.ts — OpenCode-style skill packs (`.forge/skills/**/SKILL.md`)
-- `src/agent/tools/ask-user.ts — interactive clarifying questions (OpenCode-inspired)
-- `src/agent/tools/format-on-write.ts — opt-in format after file tools (`/format`, `FORGE_FORMAT_ON_WRITE`)
+- `src/agent/project-skills.ts` — OpenCode-style skill packs (`.forge/skills/**/SKILL.md`)
+- `src/util/project-intel.ts` — package manager + preferred check commands (system prompt, `/context`, bash wrong-PM/missing-script/missing-binary tips; monorepo walk-up + turbo/nx; doctor/status/config/run JSON; last-verify trail + `editsWithoutVerification`)
+- `src/agent/tools/file-read-state.ts` — session stale/unread edit guard (`FORGE_FILE_READ_GUARD=0` off)
+- `src/agent/tools/ask-user.ts` — interactive clarifying questions (OpenCode-inspired)
+- `src/agent/tools/format-on-write.ts` — opt-in format after file tools (`/format`, `FORGE_FORMAT_ON_WRITE`)
 - `src/agent/sandbox.ts` + `rules.ts` + `shell-parse.ts` — OS sandbox, deny/allow/ask rules, segment-aware shell checks
 
 ## Expert session UX
 
-- `/plan` → session-scoped read-only design (no sticky prefs); `/build` restores prior mode and implements
+- `/plan` → session-scoped read-only design; `/commit [do]` drafts/creates commits from the diff (never pushes) (no sticky prefs); `/build` restores prior mode and implements
 - `/model <name> [effort]` live mid-run; `/commands` lists `.forge/commands` templates
 - Project instructions: walk-up within git root for AGENTS/CLAUDE/cursor/copilot rules; `/context` lists sources
 - Headless: `forge run "/plan"` / custom templates work in CI (`reason: "slash"` when no model call)
@@ -72,7 +75,7 @@ session locks (headless fail-closed; `FORGE_FORCE_SESSION_LOCK=1` override; live
 atomic session tmp recovery, session fork/export/import (export `0600`), headless `forge run
 --session`, metrics.jsonl, permission ask timeout, empty-SSE retry, `finish_reason=length` continue (+ content_filter/empty cap hygiene),
 `releasedOnContinueCap` / `hitMaxTurns` / `hitCostCap` / `finishReason` / `pinned` / `foreignLock` JSON/metrics + stats `continueCapReleases`/`maxTurnsHits`/`costCapHits`,
-`--max-turns` / `FORGE_MAX_TURNS` / `max_turns=0` unlimited, `--max-cost` / `FORGE_MAX_COST_USD` / `max_cost_usd` / `/budget` session spend cap (estimateCostUsd; run JSON `effectiveMaxCostUsd`/`sessionCostUsd`), handoff-guard + proof-claim-guard Stop blocks, soft TodoGate outside ULW, interjection harness context, `/done` winds ULW+goal, safety valves under ULW CONTINUE auto-flip to LAST (`maybeFlipUlwToLastOnSafetyValve`), `forge sessions title`, `forge models -p`, stream usage, `meta.json`
+`--max-turns` / `FORGE_MAX_TURNS` / `max_turns=0` unlimited, `--max-cost` / `FORGE_MAX_COST_USD` / `max_cost_usd` / `/budget` session spend cap (estimateCostUsd; run JSON `effectiveMaxCostUsd`/`sessionCostUsd`), handoff-guard + proof-claim-guard Stop blocks (incl. silent edits-without-verify free triage), soft TodoGate outside ULW, interjection harness context, `/done` winds ULW+goal, safety valves under ULW CONTINUE auto-flip to LAST (`maybeFlipUlwToLastOnSafetyValve`), `forge sessions title`, `forge models -p`, stream usage, `meta.json`
 session sidecar, tunable loop guards (`FORGE_DOOM_LOOP_THRESHOLD`, `FORGE_ERROR_STREAK_THRESHOLD`),
 interactive same-cwd auto-resume, `/title`, `--title` on `forge`/`forge run`, `/bell` turn-end
 attention, `/notify` desktop notify (osascript/notify-send; `FORGE_NOTIFY`), `turnEndOutcomeLabel` safety-valve notify bodies, background-task teardown on exit, JSON store isolation (`readJsonFile` clones
@@ -93,7 +96,7 @@ snippet, file-aware `/undo` (`mutations.jsonl` pre-images), `/init`, `/review`, 
 `FORGE_BASH_BG_TIMEOUT_MS`, doctor `undoJournal`, `npm run smoke`, ULW wave ledger + quality bar
 (facts-only per-wave edits/proof; best-wave anchoring, proof demands, thin-wave escalation, 4th-wave
 consolidation, diminishing-returns advisory, one-time evidence bounce on weak attestations),
-structural `verificationRan` stop signal, adaptive effort (`FORGE_ADAPTIVE_EFFORT`; hard rounds bump
+structural `verificationRan` (execution) + `verificationPassed` (success-only proof-claim/attestation/ULW wave proof) stop signals, project-intel (pm/checks/monorepo; `FORGE_FILE_READ_GUARD` / `FORGE_VERIFY_HINT`), last-verification trail (`lastVerificationCommand`/`At` + `lastEditAt` stale detection on session + resume/status/share/done/export/list ✓; `editsWithoutVerification` in run JSON), adaptive effort (`FORGE_ADAPTIVE_EFFORT`; hard rounds bump
 reasoning one notch), stale tool-result clearing (`FORGE_TOOL_CLEAR*` microcompaction), counter-only
 admission suppression, Anthropic prompt caching (`FORGE_ANTHROPIC_CACHE`; cache usage in `ChatUsage`),
 per-model context windows (`context_window` explicit wins; `src/config/model-info.ts` otherwise),
