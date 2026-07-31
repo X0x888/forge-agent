@@ -11,6 +11,8 @@ import {
   savedAsAllowRules,
   workspaceKey,
 } from "../src/agent/permission-saved.js";
+import { PermissionGate } from "../src/agent/permissions.js";
+import { DEFAULT_CONFIG } from "../src/config/types.js";
 
 function withForgeHome<T>(fn: (home: string) => T): T {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "forge-perm-"));
@@ -120,6 +122,101 @@ describe("permission-saved", () => {
       assert.equal(loadSavedAllows(wsB).length, 1);
       assert.equal(clearSavedAllows(), 1);
       assert.equal(loadSavedAllows(wsB).length, 0);
+    });
+  });
+});
+
+async function withForgeHomeAsync<T>(fn: (home: string) => Promise<T>): Promise<T> {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "forge-perm-"));
+  const prev = process.env.FORGE_HOME;
+  process.env.FORGE_HOME = home;
+  try {
+    return await fn(home);
+  } finally {
+    if (prev === undefined) delete process.env.FORGE_HOME;
+    else process.env.FORGE_HOME = prev;
+  }
+}
+
+describe("external_directory grants reach the checker", () => {
+  it("honors a persisted external_directory allow under dontAsk", async () => {
+    await withForgeHomeAsync(async (home) => {
+      const ws = path.join(home, "proj");
+      fs.mkdirSync(ws, { recursive: true });
+      addSavedAllow({
+        workspace: ws,
+        tool: "external_directory",
+        pattern: "/etc/*",
+      });
+      const g = new PermissionGate({ interactive: false });
+      const r = await g.request({
+        toolName: "read_file",
+        input: { path: "/etc/hosts" },
+        mode: "dontAsk",
+        workspace: ws,
+        config: DEFAULT_CONFIG, // readOutsideWorkspace: "ask"
+      });
+      assert.equal(r.decision, "allow");
+    });
+  });
+
+  it("honors the session key promptUser stores for [a]lways", async () => {
+    await withForgeHomeAsync(async (home) => {
+      const ws = path.join(home, "proj");
+      fs.mkdirSync(ws, { recursive: true });
+      const g = new PermissionGate({ interactive: false });
+      // The key the checker looks for — promptUser now stores [a]lways under
+      // external_directory:<dir>/* instead of the real tool name.
+      (
+        g as unknown as { sessionPatterns: Set<string> }
+      ).sessionPatterns.add("external_directory:/etc/*");
+      const r = await g.request({
+        toolName: "read_file",
+        input: { path: "/etc/hosts" },
+        mode: "dontAsk",
+        workspace: ws,
+        config: DEFAULT_CONFIG,
+      });
+      assert.equal(r.decision, "allow");
+    });
+  });
+
+  it("still denies external reads with no grant (deny semantics intact)", async () => {
+    await withForgeHomeAsync(async (home) => {
+      const ws = path.join(home, "proj");
+      fs.mkdirSync(ws, { recursive: true });
+      const g = new PermissionGate({ interactive: false });
+      const r = await g.request({
+        toolName: "read_file",
+        input: { path: "/etc/hosts" },
+        mode: "dontAsk",
+        workspace: ws,
+        config: DEFAULT_CONFIG,
+      });
+      assert.equal(r.decision, "deny");
+      assert.match(r.reason, /outside workspace/i);
+    });
+  });
+
+  it("readOutsideWorkspace:deny still wins over a saved grant", async () => {
+    await withForgeHomeAsync(async (home) => {
+      const ws = path.join(home, "proj");
+      fs.mkdirSync(ws, { recursive: true });
+      addSavedAllow({
+        workspace: ws,
+        tool: "external_directory",
+        pattern: "/etc/*",
+      });
+      const g = new PermissionGate({ interactive: false });
+      const r = await g.request({
+        toolName: "read_file",
+        input: { path: "/etc/hosts" },
+        mode: "dontAsk",
+        workspace: ws,
+        config: { ...DEFAULT_CONFIG, readOutsideWorkspace: "deny" },
+      });
+      assert.equal(r.decision, "deny");
+      assert.match(r.reason, /outside workspace/i);
     });
   });
 });

@@ -3,13 +3,17 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { spawn, spawnSync } from "node:child_process";
+import { pathToFileURL } from "node:url";
 import {
   normalizeAuthStore,
   loadAuthStore,
   saveAuthStore,
+  authPath,
   upsertApiKey,
   upsertOAuth,
   getCredential,
+  getAccount,
   getActiveAccount,
   listAccounts,
   listAccountSummaries,
@@ -42,6 +46,13 @@ import {
   AUTH_FAILURE_COOLDOWN_SEC,
 } from "../src/auth/accounts.js";
 import { resolveAuth } from "../src/auth/resolve.js";
+import { refreshCredentialIfNeeded } from "../src/auth/refresh.js";
+import { withFileLock } from "../src/util/file-lock.js";
+import {
+  loadPreferences,
+  savePreferences,
+  preferencesPath,
+} from "../src/config/preferences.js";
 import { loadConfig } from "../src/config/load.js";
 import { ProviderApiError } from "../src/providers/errors.js";
 import { nowEpoch } from "../src/util/fs.js";
@@ -475,5 +486,358 @@ describe("smart account switching", () => {
     } finally {
       delete process.env.XAI_API_KEY;
     }
+  });
+});
+
+describe("/accounts switch slash provider alignment", () => {
+  let tmp: string;
+  let prevHome: string | undefined;
+
+  beforeEach(() => {
+    tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-ma-slash-"));
+    prevHome = process.env.FORGE_HOME;
+    process.env.FORGE_HOME = tmp;
+    delete process.env.XAI_API_KEY;
+    delete process.env.GROK_API_KEY;
+    delete process.env.FORGE_API_KEY;
+    delete process.env.ANTHROPIC_API_KEY;
+    delete process.env.OPENAI_API_KEY;
+    delete process.env.DEEPSEEK_API_KEY;
+  });
+
+  afterEach(() => {
+    if (prevHome === undefined) delete process.env.FORGE_HOME;
+    else process.env.FORGE_HOME = prevHome;
+    try {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    } catch {
+      /* */
+    }
+  });
+
+  it("cross-provider switch realigns config/session/sticky provider (no token-only hot-swap)", async () => {
+    upsertApiKey("xai", "sk-x", "x");
+    const d = upsertApiKey("deepseek", "sk-d", "d");
+    const { createSession } = await import("../src/session/session.js");
+    const { handleSlash } = await import("../src/commands/slash.js");
+    const { DEFAULT_CONFIG } = await import("../src/config/types.js");
+    const { HookRunner } = await import("../src/harness/hooks.js");
+    const { loadPreferences } = await import("../src/config/preferences.js");
+    const session = createSession({
+      cwd: tmp,
+      provider: "xai",
+      model: "grok-4.5",
+    });
+    const cfg = {
+      ...DEFAULT_CONFIG,
+      workspace: tmp,
+      provider: "xai" as const,
+      model: "grok-4.5",
+    };
+    const hooks = new HookRunner(cfg, tmp);
+    const r = await handleSlash(`/accounts switch ${d.accountId}`, {
+      session,
+      config: cfg,
+      hooks,
+    });
+    assert.equal(r.handled, true);
+    // Full provider rebuild signal — a token-only swap would keep the xai
+    // baseUrl and 401 every call with the deepseek bearer.
+    assert.equal(r.providerUpdated, true);
+    assert.equal(cfg.provider, "deepseek");
+    assert.equal(session.meta.provider, "deepseek");
+    // Catalog model for the new provider (no stale cross-provider model id).
+    assert.equal(cfg.model, "deepseek-v4-flash");
+    assert.equal(session.meta.model, "deepseek-v4-flash");
+    // Sticky preference mirrors `forge accounts switch`.
+    assert.equal(loadPreferences().provider, "deepseek");
+    assert.match(r.output || "", /Active deepseek/);
+  });
+
+  it("same-provider switch stays token-only (no provider realign)", async () => {
+    const a = upsertApiKey("xai", "sk-a", "a");
+    upsertApiKey("xai", "sk-b", "b", { forceNew: true });
+    const { createSession } = await import("../src/session/session.js");
+    const { handleSlash } = await import("../src/commands/slash.js");
+    const { DEFAULT_CONFIG } = await import("../src/config/types.js");
+    const { HookRunner } = await import("../src/harness/hooks.js");
+    const session = createSession({
+      cwd: tmp,
+      provider: "xai",
+      model: "grok-4.5",
+    });
+    const cfg = {
+      ...DEFAULT_CONFIG,
+      workspace: tmp,
+      provider: "xai" as const,
+      model: "grok-4.5",
+    };
+    const hooks = new HookRunner(cfg, tmp);
+    const auth = {
+      provider: "xai",
+      method: "api_key" as const,
+      token: "sk-b",
+    };
+    const r = await handleSlash(`/accounts switch ${a.accountId}`, {
+      session,
+      config: cfg,
+      hooks,
+      auth,
+    });
+    assert.equal(r.handled, true);
+    assert.equal(r.authUpdated, true);
+    assert.equal(r.providerUpdated, undefined);
+    assert.equal(cfg.provider, "xai");
+    assert.equal(cfg.model, "grok-4.5");
+    assert.equal(auth.token, "sk-a");
+  });
+});
+
+describe("cross-process auth store lock", () => {
+  let tmp: string;
+  let prevHome: string | undefined;
+
+  beforeEach(() => {
+    tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-lock-"));
+    prevHome = process.env.FORGE_HOME;
+    process.env.FORGE_HOME = tmp;
+  });
+
+  afterEach(() => {
+    if (prevHome === undefined) delete process.env.FORGE_HOME;
+    else process.env.FORGE_HOME = prevHome;
+    try {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    } catch {
+      /* */
+    }
+  });
+
+  it("withFileLock runs fn and removes the lockfile", () => {
+    const target = path.join(tmp, "auth.json");
+    assert.equal(withFileLock(target, () => 42), 42);
+    assert.equal(fs.existsSync(`${target}.lock`), false);
+  });
+
+  it("withFileLock releases the lock when fn throws", () => {
+    const target = path.join(tmp, "auth.json");
+    assert.throws(
+      () =>
+        withFileLock(target, () => {
+          throw new Error("boom");
+        }),
+      /boom/,
+    );
+    assert.equal(fs.existsSync(`${target}.lock`), false);
+  });
+
+  it("steals an age-stale lock (holder died mid-write) instead of bricking", () => {
+    const lock = `${authPath()}.lock`;
+    fs.writeFileSync(lock, JSON.stringify({ pid: process.pid }));
+    const old = new Date(Date.now() - 60_000);
+    fs.utimesSync(lock, old, old);
+    upsertApiKey("xai", "sk-stale-lock", "stale");
+    assert.equal(getCredential("xai")?.accessToken, "sk-stale-lock");
+    assert.equal(fs.existsSync(lock), false);
+  });
+
+  it("steals a fresh lock whose pid is dead without waiting", () => {
+    const { pid } = spawnSync(process.execPath, ["-e", ""]);
+    assert.ok(pid && pid > 0);
+    const lock = `${authPath()}.lock`;
+    fs.writeFileSync(lock, JSON.stringify({ pid }));
+    const t0 = Date.now();
+    upsertApiKey("xai", "sk-dead-pid", "dead");
+    assert.ok(
+      Date.now() - t0 < 1_500,
+      "dead-pid lock must be stolen, not waited out",
+    );
+    assert.equal(getCredential("xai")?.accessToken, "sk-dead-pid");
+  });
+
+  it("fails open within the wait budget on a live foreign lock", () => {
+    const target = path.join(tmp, "auth.json");
+    const lock = `${target}.lock`;
+    // pid 1 (launchd/init) is alive and foreign — never stealable.
+    fs.writeFileSync(lock, JSON.stringify({ pid: 1 }));
+    const t0 = Date.now();
+    const ran = withFileLock(target, () => "ran", { waitMs: 150 });
+    const elapsed = Date.now() - t0;
+    assert.equal(ran, "ran");
+    assert.ok(elapsed < 1_500, `fail-open exceeded budget (${elapsed}ms)`);
+    // A lock we never owned must survive our completion.
+    assert.equal(fs.existsSync(lock), true);
+  });
+
+  it("mutators merge sequentially (rotation + cooldown both persist)", () => {
+    const a = upsertOAuth("xai", {
+      accessToken: "tok-r1",
+      refreshToken: "rt-r1",
+      method: "subscription",
+    });
+    setAccountCooldown(a.accountId, nowEpoch() + 600);
+    const b = upsertOAuth("xai", {
+      accessToken: "tok-r2",
+      refreshToken: "rt-r2",
+      method: "subscription",
+    });
+    assert.equal(b.accountId, a.accountId);
+    const acc = getAccount(a.accountId);
+    assert.equal(acc?.accessToken, "tok-r2");
+    assert.ok(acc?.cooldownUntil && acc.cooldownUntil > nowEpoch());
+  });
+
+  it("serializes concurrent writers across processes (no lost updates)", async () => {
+    // Deterministic with the lock: every child's upsert lands. Without it
+    // the load→mutate→save race silently drops accounts (the rotated-token
+    // loss this regression test guards).
+    const storeUrl = pathToFileURL(path.resolve("src/auth/store.ts")).href;
+    const CHILDREN = 3;
+    const PER_CHILD = 15;
+    const script = [
+      `const { upsertApiKey } = await import(${JSON.stringify(storeUrl)});`,
+      "const tag = process.env.FORGE_TAG;",
+      "const n = Number(process.env.FORGE_N);",
+      "for (let i = 0; i < n; i++) {",
+      '  upsertApiKey("xai", "key-" + tag + "-" + i, "kid-" + tag + "-" + i, { forceNew: true });',
+      "}",
+    ].join("\n");
+    await Promise.all(
+      Array.from(
+        { length: CHILDREN },
+        (_, c) =>
+          new Promise<void>((resolve, reject) => {
+            const kid = spawn(
+              process.execPath,
+              ["--import", "tsx", "--input-type=module", "-e", script],
+              {
+                env: {
+                  ...process.env,
+                  FORGE_HOME: tmp,
+                  FORGE_TAG: String(c),
+                  FORGE_N: String(PER_CHILD),
+                },
+                stdio: ["ignore", "pipe", "pipe"],
+              },
+            );
+            let err = "";
+            kid.stderr.on("data", (d) => {
+              err += d;
+            });
+            kid.on("exit", (code) =>
+              code === 0
+                ? resolve()
+                : reject(
+                    new Error(
+                      `child ${c} exited ${code}: ${err.slice(0, 400)}`,
+                    ),
+                  ),
+            );
+          }),
+      ),
+    );
+    assert.equal(listAccounts("xai").length, CHILDREN * PER_CHILD);
+  });
+
+  it("savePreferences survives a stale preferences lock", () => {
+    const lock = `${preferencesPath()}.lock`;
+    fs.writeFileSync(lock, JSON.stringify({ pid: process.pid }));
+    const old = new Date(Date.now() - 60_000);
+    fs.utimesSync(lock, old, old);
+    savePreferences({ model: "lock-survivor" });
+    assert.equal(loadPreferences().model, "lock-survivor");
+  });
+});
+
+describe("oauth refresh account targeting", () => {
+  let tmp: string;
+  let prevHome: string | undefined;
+  let prevFetch: typeof globalThis.fetch;
+
+  beforeEach(() => {
+    tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-refresh-"));
+    prevHome = process.env.FORGE_HOME;
+    process.env.FORGE_HOME = tmp;
+    prevFetch = globalThis.fetch;
+  });
+
+  afterEach(() => {
+    globalThis.fetch = prevFetch;
+    if (prevHome === undefined) delete process.env.FORGE_HOME;
+    else process.env.FORGE_HOME = prevHome;
+    try {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    } catch {
+      /* */
+    }
+  });
+
+  function seedTwoLabelless() {
+    const a = upsertOAuth("xai", {
+      accessToken: "tok-a",
+      refreshToken: "rt-a",
+      method: "subscription",
+      expiresAt: nowEpoch() - 100,
+    });
+    const b = upsertOAuth("xai", {
+      accessToken: "tok-b",
+      refreshToken: "rt-b",
+      method: "subscription",
+      expiresAt: nowEpoch() - 100,
+      forceNew: true,
+    });
+    assert.equal(listAccounts("xai").length, 2);
+    assert.equal(getActiveAccount("xai")?.id, b.accountId);
+    return { a, b };
+  }
+
+  it("updates the account that was refreshed — never a per-refresh duplicate", async () => {
+    const { a, b } = seedTwoLabelless();
+    let sentRefreshToken = "";
+    globalThis.fetch = (async (_url: unknown, init?: { body?: unknown }) => {
+      sentRefreshToken = String(
+        new URLSearchParams(init?.body as URLSearchParams).get("refresh_token"),
+      );
+      return new Response(
+        JSON.stringify({
+          access_token: "tok-b-rotated",
+          refresh_token: "rt-b-rotated",
+          expires_in: 3600,
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    }) as typeof fetch;
+
+    const r = await refreshCredentialIfNeeded("xai", { force: true });
+    assert.equal(r.ok, true);
+    assert.equal(r.refreshed, true);
+    assert.equal(sentRefreshToken, "rt-b");
+
+    // The regression: with 2+ same-method label-less accounts, upsert's
+    // sameMethod.length===1 targeting missed and refresh spawned a NEW
+    // account every time.
+    assert.equal(listAccounts("xai").length, 2);
+    const accB = getAccount(b.accountId);
+    assert.equal(accB?.accessToken, "tok-b-rotated");
+    assert.equal(accB?.refreshToken, "rt-b-rotated");
+    // The other account is untouched.
+    const accA = getAccount(a.accountId);
+    assert.equal(accA?.accessToken, "tok-a");
+    assert.equal(accA?.refreshToken, "rt-a");
+  });
+
+  it("invalid_grant clears the refresh token on the refreshed account only", async () => {
+    const { a, b } = seedTwoLabelless();
+    globalThis.fetch = (async () =>
+      new Response(JSON.stringify({ error: "invalid_grant" }), {
+        status: 400,
+        headers: { "content-type": "application/json" },
+      })) as typeof fetch;
+
+    const r = await refreshCredentialIfNeeded("xai", { force: true });
+    assert.equal(r.ok, false);
+    assert.equal(listAccounts("xai").length, 2);
+    assert.equal(getAccount(b.accountId)?.refreshToken, undefined);
+    assert.equal(getAccount(a.accountId)?.refreshToken, "rt-a");
   });
 });

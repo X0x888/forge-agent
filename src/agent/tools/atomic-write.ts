@@ -20,7 +20,16 @@ export async function atomicWriteFile(
     `.${base}.${process.pid}.${randomBytes(4).toString("hex")}.tmp`,
   );
   const encoding = opts?.encoding ?? "utf8";
-  const mode = opts?.mode;
+  // Preserve the target's mode: rename swaps the inode, so without this an
+  // edit resets 0600 secrets to the umask default and strips +x bits.
+  let mode = opts?.mode;
+  if (mode == null) {
+    try {
+      mode = fs.statSync(filePath).mode & 0o777;
+    } catch {
+      /* new file — keep default */
+    }
+  }
   try {
     if (typeof content === "string") {
       await fsp.writeFile(tmp, content, { encoding, mode });
@@ -57,19 +66,28 @@ export function atomicWriteFileSync(
     dir,
     `.${base}.${process.pid}.${randomBytes(4).toString("hex")}.tmp`,
   );
+  // Preserve the target's mode (see atomicWriteFile).
+  let mode = opts?.mode;
+  if (mode == null) {
+    try {
+      mode = fs.statSync(filePath).mode & 0o777;
+    } catch {
+      /* new file — keep default */
+    }
+  }
   try {
     if (typeof content === "string") {
       fs.writeFileSync(tmp, content, {
         encoding: opts?.encoding ?? "utf8",
-        mode: opts?.mode,
+        mode,
       });
     } else {
-      fs.writeFileSync(tmp, content, { mode: opts?.mode });
+      fs.writeFileSync(tmp, content, { mode });
     }
     fs.renameSync(tmp, filePath);
-    if (opts?.mode != null) {
+    if (mode != null) {
       try {
-        fs.chmodSync(filePath, opts.mode);
+        fs.chmodSync(filePath, mode);
       } catch {
         /* */
       }

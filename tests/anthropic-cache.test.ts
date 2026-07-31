@@ -188,8 +188,11 @@ describe("anthropic prompt caching", () => {
     const p = new AnthropicProvider({ apiKey: "sk-ant-test" });
     const res = await p.chat(makeReq());
 
-    assert.equal(res.usage?.prompt_tokens, 100);
+    // Anthropic excludes cache buckets from input_tokens — they are folded
+    // into prompt_tokens so session totals / the spend cap don't undercount.
+    assert.equal(res.usage?.prompt_tokens, 200);
     assert.equal(res.usage?.completion_tokens, 5);
+    assert.equal(res.usage?.total_tokens, 205);
     assert.equal(res.usage?.cache_read_input_tokens, 80);
     assert.equal(res.usage?.cache_creation_input_tokens, 20);
   });
@@ -226,8 +229,9 @@ describe("anthropic prompt caching", () => {
     const p = new AnthropicProvider({ apiKey: "sk-ant-test" });
     const res = await p.chatStream(makeReq(), () => {});
 
-    assert.equal(res.usage?.prompt_tokens, 100);
+    assert.equal(res.usage?.prompt_tokens, 200);
     assert.equal(res.usage?.completion_tokens, 5);
+    assert.equal(res.usage?.total_tokens, 205);
     assert.equal(res.usage?.cache_read_input_tokens, 80);
     assert.equal(res.usage?.cache_creation_input_tokens, 20);
   });

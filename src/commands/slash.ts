@@ -300,8 +300,14 @@ export function classifyLiveSlash(line: string): LiveSlashKind {
   const { cmd, arg } = parsed;
   if (cmd === "/quit" || cmd === "/exit" || cmd === "/q") return "quit";
   if (cmd === "/sessions") {
-    // list/search variants are readonly; delete/prune mutate disk — idle-only
-    const verb = (arg.split(/\s+/)[0] || "").toLowerCase();
+    // list/search variants are readonly; delete/prune/pin/unpin mutate disk — idle-only
+    const tokens = arg.split(/\s+/).filter(Boolean);
+    const verb = (tokens[0] || "").toLowerCase();
+    // pin/unpin <id> load+save ANOTHER session with no lock check — never
+    // mid-run. Bare `pin` (no target) is the pinned-list filter: readonly.
+    if ((verb === "pin" || verb === "unpin") && tokens.length > 1) {
+      return "idle-only";
+    }
     if (
       !verb ||
       verb === "list" ||
@@ -2651,6 +2657,22 @@ const stats = collectUsageStats({
         });
         if (!r.switched) {
           return { handled: true, output: r.reason || "switch failed" };
+        }
+        // Cross-provider switch: a token-only hot-swap would pair the new
+        // bearer with the old provider's baseUrl (guaranteed 401s). Run the
+        // /provider switch so config/session/sticky provider realign and the
+        // REPL rebuilds the client (parity with `forge accounts switch`, which
+        // saves the sticky provider at cli.ts).
+        if (String(hit.account.provider) !== String(opts.config.provider)) {
+          const note = `Active ${hit.account.provider} → ${r.toLabel || r.toId}`;
+          const realigned = await handleProviderSlash(
+            String(hit.account.provider),
+            opts,
+          );
+          return {
+            ...realigned,
+            output: note + (realigned.output ? `\n${realigned.output}` : ""),
+          };
         }
         const authUpdated = r.account
           ? applyAuthHotSwap(r.account)

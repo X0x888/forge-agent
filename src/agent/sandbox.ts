@@ -509,6 +509,7 @@ export async function execCommandSandboxed(
     cwd: opts.cwd,
     timeoutMs: opts.timeoutMs,
     env: opts.env,
+    signal: opts.signal,
   });
   return {
     ...r,

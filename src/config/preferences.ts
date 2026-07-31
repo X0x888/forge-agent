@@ -7,6 +7,7 @@
  */
 import path from "node:path";
 import { forgeHome, readJsonFile, writeJsonFile, nowIso } from "../util/fs.js";
+import { withFileLock } from "../util/file-lock.js";
 import type { PermissionMode, ProviderId } from "./types.js";
 import {
   parseReasoningEffort,
@@ -123,70 +124,74 @@ export function savePreferences(patch: {
   /** When setting model, also record lastModelByProvider[provider]. */
   modelProvider?: string;
 }): UserPreferences {
-  const cur = loadPreferences();
-  if (patch.provider !== undefined) {
-    if (patch.provider === null || patch.provider === "") {
-      delete cur.provider;
-    } else {
-      const p = normalizeProviderId(patch.provider);
-      if (!p.ok) {
-        throw new Error(`Invalid provider preference: ${patch.provider}`);
-      }
-      const providerChanged = cur.provider !== p.provider;
-      cur.provider = p.provider;
-      // Provider switch without an explicit model in this patch: prefer the
-      // last model used on that provider, else drop stale cross-provider id.
-      if (providerChanged && patch.model === undefined) {
-        const last = cur.lastModelByProvider?.[p.provider];
-        if (last) cur.model = last;
-        else delete cur.model;
-      }
-    }
-  }
-  if (patch.model !== undefined) {
-    if (patch.model === null || patch.model === "") {
-      delete cur.model;
-    } else {
-      const m = String(patch.model).trim();
-      if (m) {
-        cur.model = m;
-        const prov =
-          patch.modelProvider ||
-          cur.provider ||
-          (typeof patch.provider === "string" ? patch.provider : undefined);
-        if (prov) {
-          if (!cur.lastModelByProvider) cur.lastModelByProvider = {};
-          cur.lastModelByProvider[String(prov)] = m;
+  // Cross-process lock: concurrent forge processes must not interleave
+  // load→mutate→save on preferences.json (fail-open — see util/file-lock).
+  return withFileLock(preferencesPath(), () => {
+    const cur = loadPreferences();
+    if (patch.provider !== undefined) {
+      if (patch.provider === null || patch.provider === "") {
+        delete cur.provider;
+      } else {
+        const p = normalizeProviderId(patch.provider);
+        if (!p.ok) {
+          throw new Error(`Invalid provider preference: ${patch.provider}`);
+        }
+        const providerChanged = cur.provider !== p.provider;
+        cur.provider = p.provider;
+        // Provider switch without an explicit model in this patch: prefer the
+        // last model used on that provider, else drop stale cross-provider id.
+        if (providerChanged && patch.model === undefined) {
+          const last = cur.lastModelByProvider?.[p.provider];
+          if (last) cur.model = last;
+          else delete cur.model;
         }
       }
     }
-  }
-  if (patch.seenWelcomeTip !== undefined) {
-    cur.seenWelcomeTip = patch.seenWelcomeTip;
-  }
-  if (patch.permissionMode !== undefined) {
-    const mode = normalizePermissionMode(patch.permissionMode);
-    if (!mode) {
-      throw new Error(`Invalid permission mode: ${patch.permissionMode}`);
+    if (patch.model !== undefined) {
+      if (patch.model === null || patch.model === "") {
+        delete cur.model;
+      } else {
+        const m = String(patch.model).trim();
+        if (m) {
+          cur.model = m;
+          const prov =
+            patch.modelProvider ||
+            cur.provider ||
+            (typeof patch.provider === "string" ? patch.provider : undefined);
+          if (prov) {
+            if (!cur.lastModelByProvider) cur.lastModelByProvider = {};
+            cur.lastModelByProvider[String(prov)] = m;
+          }
+        }
+      }
     }
-    cur.permissionMode = mode;
-  }
-  if (patch.reasoningEffort !== undefined) {
-    cur.reasoningEffort = patch.reasoningEffort;
-  }
-  if (patch.bellOnTurnEnd !== undefined) {
-    cur.bellOnTurnEnd = Boolean(patch.bellOnTurnEnd);
-  }
-  if (patch.notifyOnTurnEnd !== undefined) {
-    cur.notifyOnTurnEnd = Boolean(patch.notifyOnTurnEnd);
-  }
-  if (patch.formatOnWrite !== undefined) {
-    cur.formatOnWrite = Boolean(patch.formatOnWrite);
-  }
-  cur.version = 1;
-  cur.updatedAt = nowIso();
-  writeJsonFile(preferencesPath(), cur, 0o600);
-  return cur;
+    if (patch.seenWelcomeTip !== undefined) {
+      cur.seenWelcomeTip = patch.seenWelcomeTip;
+    }
+    if (patch.permissionMode !== undefined) {
+      const mode = normalizePermissionMode(patch.permissionMode);
+      if (!mode) {
+        throw new Error(`Invalid permission mode: ${patch.permissionMode}`);
+      }
+      cur.permissionMode = mode;
+    }
+    if (patch.reasoningEffort !== undefined) {
+      cur.reasoningEffort = patch.reasoningEffort;
+    }
+    if (patch.bellOnTurnEnd !== undefined) {
+      cur.bellOnTurnEnd = Boolean(patch.bellOnTurnEnd);
+    }
+    if (patch.notifyOnTurnEnd !== undefined) {
+      cur.notifyOnTurnEnd = Boolean(patch.notifyOnTurnEnd);
+    }
+    if (patch.formatOnWrite !== undefined) {
+      cur.formatOnWrite = Boolean(patch.formatOnWrite);
+    }
+    cur.version = 1;
+    cur.updatedAt = nowIso();
+    writeJsonFile(preferencesPath(), cur, 0o600);
+    return cur;
+  });
 }
 
 /**
@@ -197,20 +202,22 @@ export function rememberRecentModel(
   model: string,
   max = 12,
 ): UserPreferences {
-  const p = String(provider || "").trim();
-  const m = String(model || "").trim();
-  const cur = loadPreferences();
-  if (!p || !m) return cur;
-  if (!cur.recentModels) cur.recentModels = {};
-  const prev = cur.recentModels[p] || [];
-  const next = [m, ...prev.filter((x) => x !== m)].slice(0, Math.max(1, max));
-  cur.recentModels[p] = next;
-  if (!cur.lastModelByProvider) cur.lastModelByProvider = {};
-  cur.lastModelByProvider[p] = m;
-  cur.version = 1;
-  cur.updatedAt = nowIso();
-  writeJsonFile(preferencesPath(), cur, 0o600);
-  return cur;
+  return withFileLock(preferencesPath(), () => {
+    const p = String(provider || "").trim();
+    const m = String(model || "").trim();
+    const cur = loadPreferences();
+    if (!p || !m) return cur;
+    if (!cur.recentModels) cur.recentModels = {};
+    const prev = cur.recentModels[p] || [];
+    const next = [m, ...prev.filter((x) => x !== m)].slice(0, Math.max(1, max));
+    cur.recentModels[p] = next;
+    if (!cur.lastModelByProvider) cur.lastModelByProvider = {};
+    cur.lastModelByProvider[p] = m;
+    cur.version = 1;
+    cur.updatedAt = nowIso();
+    writeJsonFile(preferencesPath(), cur, 0o600);
+    return cur;
+  });
 }
 
 /** Last model used for a provider (sticky restore on /provider switch). */

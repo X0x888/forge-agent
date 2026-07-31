@@ -1106,18 +1106,13 @@ describe("session fork / export / tmp recover", () => {
       }),
     );
     const afterSkip = findRecentSessionForCwd(tmp);
-    // If pid 1 is alive, locked is skipped → unlocked; if not, locked still wins
-    try {
-      process.kill(1, 0);
-      assert.ok(afterSkip);
-      assert.ok(afterSkip!.meta);
-      assert.equal(afterSkip!.meta!.id, unlocked.meta.id);
-      assert.equal(afterSkip!.skippedLocked, 1);
-    } catch {
-      assert.ok(afterSkip!.meta);
-      assert.equal(afterSkip!.meta!.id, locked.meta.id);
-      assert.equal(afterSkip!.skippedLocked, 0);
-    }
+    // pid 1 (launchd/init) always exists: alive for root, EPERM otherwise —
+    // and EPERM is still a LIVE foreign holder (never stealable), so the
+    // locked session is skipped either way.
+    assert.ok(afterSkip);
+    assert.ok(afterSkip!.meta);
+    assert.equal(afterSkip!.meta!.id, unlocked.meta.id);
+    assert.equal(afterSkip!.skippedLocked, 1);
     // skipLocked:false always returns newest regardless
     assert.equal(
       findRecentSessionForCwd(tmp, { skipLocked: false })!.meta!.id,
@@ -3521,6 +3516,93 @@ describe("forge run --json early failures (CLI)", () => {
     assert.equal(aj.authenticated, true);
   });
 
+  it("logout clears sticky model along with sticky provider", async () => {
+    const { spawnSync } = await import("node:child_process");
+    const path = await import("node:path");
+    const fs = await import("node:fs");
+    const cli = path.join(process.cwd(), "dist", "cli.js");
+    if (!fs.existsSync(cli)) return;
+    const home = path.join(
+      process.cwd(),
+      ".tmp",
+      `forge-logout-sticky-model-${process.pid}`,
+    );
+    fs.mkdirSync(home, { recursive: true });
+    const env = { ...process.env, FORGE_HOME: home };
+    const login = spawnSync(
+      process.execPath,
+      [cli, "login", "--api-key", "sk-logout-sticky", "--json"],
+      { env, encoding: "utf8" },
+    );
+    assert.equal(login.status, 0);
+    // Seed a stale cross-provider sticky model (e.g. left over from deepseek).
+    const prefsPath = path.join(home, "preferences.json");
+    fs.writeFileSync(
+      prefsPath,
+      JSON.stringify({
+        version: 1,
+        provider: "xai",
+        model: "deepseek-v4-pro",
+      }),
+      "utf8",
+    );
+    const out = spawnSync(process.execPath, [cli, "logout", "--json"], {
+      env,
+      encoding: "utf8",
+    });
+    assert.equal(out.status, 0);
+    // A kept sticky model would pair default provider xai with deepseek-v4-pro
+    // and fail every chat call until /model.
+    const prefs = JSON.parse(fs.readFileSync(prefsPath, "utf8"));
+    assert.equal(prefs.provider, undefined);
+    assert.equal(prefs.model, undefined);
+  });
+
+  it("bare forge slash with --session runs against the requested session (no empty probe)", async () => {
+    const { spawnSync } = await import("node:child_process");
+    const path = await import("node:path");
+    const fs = await import("node:fs");
+    const cli = path.join(process.cwd(), "dist", "cli.js");
+    if (!fs.existsSync(cli)) return;
+    const home = path.join(
+      process.cwd(),
+      ".tmp",
+      `forge-slash-session-probe-${process.pid}`,
+    );
+    fs.mkdirSync(home, { recursive: true });
+    const env = { ...process.env, FORGE_HOME: home };
+    // Seed a session without auth: /plan is handled pre-auth and persists.
+    const plan = spawnSync(
+      process.execPath,
+      [cli, "/plan seed design", "--json"],
+      { env, encoding: "utf8" },
+    );
+    assert.equal(plan.status, 0);
+    const pj = JSON.parse((plan.stdout || "").trim());
+    assert.equal(pj.ok, true);
+    assert.ok(pj.sessionId);
+    // Mutating slash against --session must rename THAT session, not a probe.
+    const titled = spawnSync(
+      process.execPath,
+      [cli, "/title seeded-title", "--session", pj.sessionId, "--json"],
+      { env, encoding: "utf8" },
+    );
+    assert.equal(titled.status, 0);
+    const tj = JSON.parse((titled.stdout || "").trim());
+    assert.equal(tj.ok, true);
+    assert.equal(tj.sessionId, pj.sessionId);
+    const list = spawnSync(
+      process.execPath,
+      [cli, "sessions", "list", "--json"],
+      { env, encoding: "utf8" },
+    );
+    const lj = JSON.parse((list.stdout || "").trim());
+    assert.equal(lj.ok, true);
+    const ids = (lj.sessions || []).map((s) => s.id).sort();
+    assert.deepEqual(ids, [pj.sessionId]);
+    assert.equal(lj.sessions[0].title, "seeded-title");
+  });
+
   it("sessions list -q empty fails closed", async () => {
     const { spawnSync } = await import("node:child_process");
     const path = await import("node:path");
@@ -4942,7 +5024,11 @@ describe("env provider/permission/sandbox aliases", () => {
     });
     assert.equal(normalizeProviderId("nope").ok, false);
     assert.equal(normalizePermissionMode("yolo"), "bypassPermissions");
-    assert.equal(normalizePermissionMode("ask"), "dontAsk");
+    assert.equal(normalizePermissionMode("ask"), "default");
+    assert.equal(normalizePermissionMode("deny"), "dontAsk");
+    assert.equal(normalizePermissionMode("dont-ask"), "dontAsk");
+    assert.equal(normalizePermissionMode("no-ask"), "dontAsk");
+    assert.equal(normalizePermissionMode("never-ask"), "dontAsk");
     assert.equal(normalizePermissionMode("accept"), "acceptEdits");
     assert.equal(normalizePermissionMode("nope"), null);
     assert.equal(normalizeSandboxProfile("readonly"), "read-only");
@@ -4954,7 +5040,7 @@ describe("env provider/permission/sandbox aliases", () => {
 });
 
 describe("slash permissions ask alias", () => {
-  it("maps /permissions ask to dontAsk", async () => {
+  it("maps /permissions ask to default (ask-for-writes), not dontAsk", async () => {
     const fs = await import("node:fs");
     const os = await import("node:os");
     const path = await import("node:path");
@@ -4966,13 +5052,20 @@ describe("slash permissions ask alias", () => {
     const { HookRunner } = await import("../src/harness/hooks.js");
     const session = createSession({ cwd: tmp, provider: "xai", model: "m" });
     const hooks = new HookRunner(DEFAULT_CONFIG, tmp);
-    const cfg = { ...DEFAULT_CONFIG, workspace: tmp, permissionMode: "default" as const };
+    const cfg = { ...DEFAULT_CONFIG, workspace: tmp, permissionMode: "acceptEdits" as const };
     const r = await handleSlash("/permissions ask", {
       session,
       config: cfg,
       hooks,
     });
     assert.equal(r.handled, true);
+    assert.equal(cfg.permissionMode, "default");
+    const r2 = await handleSlash("/permissions deny", {
+      session,
+      config: cfg,
+      hooks,
+    });
+    assert.equal(r2.handled, true);
     assert.equal(cfg.permissionMode, "dontAsk");
   });
 });
@@ -4999,7 +5092,7 @@ describe("preferences permission alias", () => {
       JSON.stringify({ version: 1, permissionMode: "ask" }),
       "utf8",
     );
-    assert.equal(loadPreferences().permissionMode, "dontAsk");
+    assert.equal(loadPreferences().permissionMode, "default");
     const saved = savePreferences({ permissionMode: "accept" as any });
     assert.equal(saved.permissionMode, "acceptEdits");
   });

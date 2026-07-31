@@ -10,6 +10,7 @@ import os from "node:os";
 import path from "node:path";
 import { upsertOAuth } from "./store.js";
 import { nowEpoch } from "../util/fs.js";
+import { XAI_PUBLIC_CLIENT_ID } from "./xai-oauth.js";
 
 export interface GrokImportResult {
   imported: boolean;
@@ -72,10 +73,16 @@ export function readGrokXaiSession(): {
   const candidates: Array<Entry & { score: number }> = [];
   for (const [k, v] of Object.entries(raw as Record<string, Entry>)) {
     if (!v || typeof v !== "object") continue;
+    // Fallback xAI signal when the map key carries no auth.x.ai URL: the
+    // entry's OIDC client id must BE xAI's public Grok CLI client. (The old
+    // `String(v).length > 0` clause was always true — '[object Object]' —
+    // and admitted ANY entry with an oidc_client_id as an xAI candidate.)
+    const oidcClientId =
+      typeof v.oidc_client_id === "string" ? v.oidc_client_id.trim() : "";
     const isXai =
       k.includes("auth.x.ai") ||
       k.includes("x.ai") ||
-      (v.oidc_client_id && String(v).length > 0);
+      (oidcClientId.length > 0 && oidcClientId === XAI_PUBLIC_CLIENT_ID);
     if (!isXai && !k.startsWith("https://auth.x.ai")) continue;
     const token = (v.key || v.access_token || "").trim();
     if (!token) continue;

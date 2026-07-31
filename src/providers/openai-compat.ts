@@ -225,7 +225,7 @@ export class OpenAICompatProvider implements LLMProvider {
           delta?: {
             content?: string | null;
             tool_calls?: Array<{
-              index: number;
+              index?: number;
               id?: string;
               type?: "function";
               function?: { name?: string; arguments?: string };
@@ -258,7 +258,14 @@ export class OpenAICompatProvider implements LLMProvider {
         onDelta({ content: delta.content });
       }
       if (delta.tool_calls) {
-        for (const tc of delta.tool_calls) {
+        // Some single-call proxies omit `index` — fall back to the chunk
+        // position so the call is not keyed under "undefined" and silently
+        // dropped by the filter(Boolean) compact below.
+        const normalized = delta.tool_calls.map((tc, i) => ({
+          ...tc,
+          index: tc.index ?? i,
+        }));
+        for (const tc of normalized) {
           const idx = tc.index;
           if (!toolCalls[idx]) {
             // Start empty — never seed name then append (xAI/OpenAI often
@@ -280,7 +287,7 @@ export class OpenAICompatProvider implements LLMProvider {
             toolCalls[idx].function.arguments += tc.function.arguments;
           }
         }
-        onDelta({ tool_calls: delta.tool_calls });
+        onDelta({ tool_calls: normalized });
       }
       if (choice.finish_reason) {
         finishReason = choice.finish_reason;

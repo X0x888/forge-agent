@@ -155,3 +155,45 @@ describe("external directory gate", () => {
     assert.equal(r.decision, "allow");
   });
 });
+
+describe("external directory bash containment", () => {
+  const denyConfig = { ...DEFAULT_CONFIG, readOutsideWorkspace: "deny" as const };
+
+  it("flags relative paths escaping the workspace via embedded .. segments", async () => {
+    const g = new PermissionGate({ interactive: false });
+    const r = await g.request({
+      toolName: "bash",
+      input: { command: "cat sub/../../../etc/hosts" },
+      mode: "default",
+      workspace: "/tmp/proj",
+      config: denyConfig,
+    });
+    assert.equal(r.decision, "deny");
+    assert.match(r.reason, /outside workspace/i);
+  });
+
+  it("still flags paths starting with .. (existing behavior)", async () => {
+    const g = new PermissionGate({ interactive: false });
+    const r = await g.request({
+      toolName: "bash",
+      input: { command: "cat ../../etc/hosts" },
+      mode: "default",
+      workspace: "/tmp/proj",
+      config: denyConfig,
+    });
+    assert.equal(r.decision, "deny");
+    assert.match(r.reason, /outside workspace/i);
+  });
+
+  it("does not flag relative paths that resolve back inside the workspace", async () => {
+    const g = new PermissionGate({ interactive: false });
+    const r = await g.request({
+      toolName: "bash",
+      input: { command: "cat sub/../../proj/file.txt" },
+      mode: "default",
+      workspace: "/tmp/proj",
+      config: denyConfig,
+    });
+    assert.doesNotMatch(r.reason, /outside workspace/i);
+  });
+});

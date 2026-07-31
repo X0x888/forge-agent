@@ -6,8 +6,11 @@
  */
 
 import {
+  accountToStored,
+  getActiveAccount,
   getCredential,
   isExpired,
+  patchAccount,
   upsertOAuth,
 } from "./store.js";
 import type { StoredCredential } from "./types.js";
@@ -45,8 +48,13 @@ export async function refreshCredentialIfNeeded(
   provider: string,
   opts?: { force?: boolean; skewSec?: number },
 ): Promise<RefreshResult> {
-  const cred = getCredential(provider);
-  if (!cred) return { ok: false, error: "no credential", refreshed: false };
+  // Resolve the full account so the refresh can target THIS account id —
+  // upsertOAuth without an id falls back to "exactly one same-method
+  // account", which silently creates a duplicate on every refresh when 2+
+  // label-less OAuth accounts exist for the provider.
+  const account = getActiveAccount(provider);
+  if (!account) return { ok: false, error: "no credential", refreshed: false };
+  const cred = accountToStored(account);
   if (cred.method === "api_key") {
     return { ok: true, credential: cred, refreshed: false };
   }
@@ -86,6 +94,7 @@ export async function refreshCredentialIfNeeded(
         method: cred.method,
         subscription: cred.subscription || "GitHub Copilot",
         accountLabel: cred.accountLabel,
+        accountId: account.id,
       });
       const updated = getCredential(provider);
       log.dim(`Refreshed Copilot session token`);
@@ -138,10 +147,9 @@ export async function refreshCredentialIfNeeded(
         /invalid_grant|revoked|expired/i.test(text)
       ) {
         try {
-          const { setCredential } = await import("./store.js");
-          const cleared = { ...cred };
-          delete cleared.refreshToken;
-          setCredential(cleared);
+          // Patch by account id — the clear must hit the account that was
+          // actually refreshed, never an identity/active-account guess.
+          patchAccount(account.id, { clearRefreshToken: true });
           log.warn(
             `OAuth refresh_token for ${provider} rejected — re-login required (forge login)`,
           );
@@ -173,6 +181,7 @@ export async function refreshCredentialIfNeeded(
       method: cred.method,
       subscription: cred.subscription,
       accountLabel: cred.accountLabel,
+      accountId: account.id,
     });
     const updated = getCredential(provider);
     log.dim(`Refreshed OAuth token for ${provider}`);

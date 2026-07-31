@@ -267,7 +267,7 @@ Docs: docs/PRODUCTION.md · docs/RELIABILITY.md · docs/ULW.md · forge news
     )
     .option(
       "--permission-mode <mode>",
-      "default|acceptEdits|plan|bypassPermissions|dontAsk (aliases: accept, deny/dont-ask/ask, yolo)",
+      "default|acceptEdits|plan|bypassPermissions|dontAsk (aliases: ask=default, accept, deny/dont-ask, yolo)",
     )
     .option(
       "--sandbox <profile>",
@@ -393,11 +393,15 @@ Docs: docs/PRODUCTION.md · docs/RELIABILITY.md · docs/ULW.md · forge news
       // can exit without creating; otherwise auth first, then resolve.
       const needsSessionPreflight =
         opts.session != null || Boolean(opts.continue);
+      // Keep the preflight session so an early headless slash runs against the
+      // REQUESTED session — probing a throwaway would save an empty session
+      // (ephemeral is false under --session) and arm sidecars on the wrong id.
+      let preflightSession: ReturnType<typeof resolveSession> | null = null;
       if (needsSessionPreflight) {
         // resolveSession exits on --session miss / --continue miss|locked.
         // json:true silences resume chatter — real resolve happens after auth.
         // Omit title so a failed auth cannot leave a half-applied /title rename.
-        resolveSession(config, {
+        preflightSession = resolveSession(config, {
           ...opts,
           title: undefined,
           autoResume: false,
@@ -406,14 +410,21 @@ Docs: docs/PRODUCTION.md · docs/RELIABILITY.md · docs/ULW.md · forge news
         });
       }
       // Pure-control headless slash before auth (parity with forge run)
+      // A forwarded slash (kind "prompt", e.g. /ulw) arms sidecars + saves the
+      // session it ran against — reuse that session for the run instead of
+      // orphaning it and creating a second, unarmed one (parity with forge run).
+      let earlyForwardedSession: ReturnType<typeof resolveSession> | null =
+        null;
       if (willHeadless && prompt && /^\s*\//.test(prompt)) {
-        const earlySession = createSession({
-          cwd: config.workspace || process.cwd(),
-          provider: config.provider,
-          model: config.model,
-          ultrawork: Boolean(opts.ulw || opts.goal),
-          title: typeof opts.title === "string" ? opts.title : undefined,
-        });
+        const earlySession =
+          preflightSession ??
+          createSession({
+            cwd: config.workspace || process.cwd(),
+            provider: config.provider,
+            model: config.model,
+            ultrawork: Boolean(opts.ulw || opts.goal),
+            title: typeof opts.title === "string" ? opts.title : undefined,
+          });
         try {
           const { resolveHeadlessSlashPrompt, stripAnsi } = await import(
             "./commands/headless-slash.js"
@@ -424,8 +435,8 @@ Docs: docs/PRODUCTION.md · docs/RELIABILITY.md · docs/ULW.md · forge news
             session: earlySession,
             config,
             hooks: hooksEarly,
-            // No --session: pure-control must not pollute sessions list
-            ephemeral: !opts.session,
+            // No --session/--continue: pure-control must not pollute sessions list
+            ephemeral: !preflightSession,
           });
           if (resolved.kind === "done") {
             const out = stripAnsi(resolved.output);
@@ -453,6 +464,12 @@ Docs: docs/PRODUCTION.md · docs/RELIABILITY.md · docs/ULW.md · forge news
           }
           if (resolved.kind === "prompt") {
             prompt = resolved.prompt;
+            // Fresh probe session (no --session/--continue): keep it for the
+            // run — side effects (ULW/goal sidecar, title) are keyed to its id.
+            // With a preflight session, resolveSession below re-resolves the
+            // same id from disk (the slash saved it on forward) and still
+            // applies --title / resume orientation.
+            if (!preflightSession) earlyForwardedSession = resolved.session;
             if (!wantJson && resolved.notice) {
               log.dim(stripAnsi(resolved.notice));
             }
@@ -488,12 +505,15 @@ Docs: docs/PRODUCTION.md · docs/RELIABILITY.md · docs/ULW.md · forge news
       // Interactive REPL: resume newest same-cwd session (OpenCode --continue style)
       // unless --new / --session / FORGE_NO_AUTO_RESUME. Headless starts fresh unless
       // --session or explicit --continue (parity with forge run --continue).
-      const session = resolveSession(config, {
-        ...opts,
-        autoResume: !willHeadless,
-        continue: Boolean(opts.continue),
-        json: wantJson,
-      });
+      // A forwarded early slash already produced+saved its session — reuse it.
+      const session =
+        earlyForwardedSession ??
+        resolveSession(config, {
+          ...opts,
+          autoResume: !willHeadless,
+          continue: Boolean(opts.continue),
+          json: wantJson,
+        });
       // Prefer resumed session provider/model/plan unless CLI -p/-m/--permission-mode set.
       {
         const argv = process.argv;
@@ -1488,13 +1508,17 @@ Docs: docs/PRODUCTION.md
           for (const c of [...listCredentials()]) clearCredential(c.provider);
         }
 
-        // Drop sticky provider preference when it no longer has credentials.
+        // Drop sticky provider+model preference when they no longer have
+        // credentials — a stale foreign model would pair with the fallback
+        // provider and fail every chat call until /model.
         try {
           const pref = loadPreferences();
           if (!provider) {
-            if (pref.provider) savePreferences({ provider: null });
+            if (pref.provider || pref.model) {
+              savePreferences({ provider: null, model: null });
+            }
           } else if (pref.provider === provider) {
-            savePreferences({ provider: null });
+            savePreferences({ provider: null, model: null });
           }
         } catch {
           /* preferences best-effort */
@@ -1512,13 +1536,17 @@ Docs: docs/PRODUCTION.md
       }
       logout(provider);
 
-        // Drop sticky provider preference when it no longer has credentials.
+        // Drop sticky provider+model preference when they no longer have
+        // credentials — a stale foreign model would pair with the fallback
+        // provider and fail every chat call until /model.
         try {
           const pref = loadPreferences();
           if (!provider) {
-            if (pref.provider) savePreferences({ provider: null });
+            if (pref.provider || pref.model) {
+              savePreferences({ provider: null, model: null });
+            }
           } else if (pref.provider === provider) {
-            savePreferences({ provider: null });
+            savePreferences({ provider: null, model: null });
           }
         } catch {
           /* preferences best-effort */
@@ -5666,13 +5694,11 @@ function resolveSession(
               /* never block resume on peek */
             }
           }
-          // Keep provider/model from live config when CLI/prefs differ, but preserve session history
-          if (config.model && s.meta.model !== config.model) {
-            s.meta.model = config.model;
-          }
-          if (config.provider && s.meta.provider !== String(config.provider)) {
-            s.meta.provider = String(config.provider);
-          }
+          // Do NOT rewrite provider/model from live config here: the caller
+          // aligns config FROM the resumed session unless CLI -p/-m overrode
+          // (bare forge action / forge run both do this). Clobbering session
+          // meta first made that prefer-session block a dead no-op and let
+          // sticky prefs silently hijack an older chat's provider.
           return s;
         }
       } else if (hit && hit.skippedLocked > 0) {

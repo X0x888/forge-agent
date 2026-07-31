@@ -111,6 +111,7 @@ export async function toolWrite(
         path: filePath,
         kind: snap.kind,
         before: snap.before,
+        mode: snap.mode,
         skipped: snap.skipped,
         reason: snap.reason,
       });

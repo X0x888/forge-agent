@@ -162,6 +162,14 @@ export async function toolEdit(
     return { output: `File not found: ${raw}\n${hint}`, isError: true };
   }
 
+  // Pre-image permission bits for the undo journal (restore re-applies them).
+  let preMode: number | undefined;
+  try {
+    preMode = fs.statSync(filePath).mode & 0o777;
+  } catch {
+    preMode = undefined;
+  }
+
   const { bom, text: withoutBom } = splitBom(rawContent);
   const ending = detectLineEnding(withoutBom);
   const content = withoutBom;
@@ -177,6 +185,7 @@ export async function toolEdit(
         ctx.recordMutation?.({
           path: filePath,
           kind: "update",
+          mode: preMode,
           skipped: true,
           reason: `pre-image ${bytes} bytes exceeds journal cap`,
         });
@@ -185,6 +194,7 @@ export async function toolEdit(
           path: filePath,
           kind: "update",
           before: rawContent,
+          mode: preMode,
         });
       }
     } catch {

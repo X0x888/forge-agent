@@ -168,6 +168,14 @@ describe("live mid-run slash policy", () => {
     assert.equal(isLiveSafeSlash("/fork-and-compact x"), false);
     assert.equal(classifyLiveSlash("/sessions delete abc"), "idle-only");
     assert.equal(classifyLiveSlash("/sessions prune"), "idle-only");
+    // pin/unpin <id> load+save ANOTHER session with no lock check — idle-only.
+    // Bare `pin` (no target) is the pinned-list filter and stays readonly.
+    assert.equal(classifyLiveSlash("/sessions pin abc123"), "idle-only");
+    assert.equal(classifyLiveSlash("/sessions unpin abc123"), "idle-only");
+    assert.equal(classifyLiveSlash("/sessions unpin my title"), "idle-only");
+    assert.equal(classifyLiveSlash("/sessions pin"), "readonly");
+    assert.equal(isLiveSafeSlash("/sessions pin abc123"), false);
+    assert.equal(isLiveSafeSlash("/sessions unpin abc123"), false);
     assert.equal(classifyLiveSlash("/permissions clear"), "idle-only");
     assert.equal(classifyLiveSlash("/permissions bypassPermissions"), "idle-only");
     assert.equal(classifyLiveSlash("not a slash"), "idle-only");

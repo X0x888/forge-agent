@@ -10,6 +10,7 @@
 import { createHash, randomBytes } from "node:crypto";
 import path from "node:path";
 import { forgeHome, readJsonFile, writeJsonFile, nowIso, nowEpoch } from "../util/fs.js";
+import { withFileLock } from "../util/file-lock.js";
 import type {
   AccountCredential,
   AccountPlanSnapshot,
@@ -304,57 +305,61 @@ export function getCredential(provider: string): StoredCredential | undefined {
  * Prefer upsertAccount / addOrUpdateAccount for multi-account flows.
  */
 export function setCredential(cred: StoredCredential): void {
-  const store = loadAuthStore();
-  const provider = String(cred.provider);
-  const activeId = store.active[provider];
-  const existing = activeId ? store.accounts[activeId] : undefined;
+  // Cross-process lock: see withFileLock — two forge processes must not
+  // interleave load→mutate→save and lose each other's rotated tokens.
+  withFileLock(authPath(), () => {
+    const store = loadAuthStore();
+    const provider = String(cred.provider);
+    const activeId = store.active[provider];
+    const existing = activeId ? store.accounts[activeId] : undefined;
 
-  // Prefer identity match when updating so we don't clobber the wrong account
-  const byIdentity = cred.accountLabel
-    ? findAccountByIdentity(provider, cred.accountLabel, store)
-    : undefined;
-  const target = byIdentity || existing;
+    // Prefer identity match when updating so we don't clobber the wrong account
+    const byIdentity = cred.accountLabel
+      ? findAccountByIdentity(provider, cred.accountLabel, store)
+      : undefined;
+    const target = byIdentity || existing;
 
-  if (target) {
-    const updated: AccountCredential = {
-      ...target,
-      method: cred.method,
-      accessToken: cred.accessToken,
-      expiresAt: cred.expiresAt,
-      clientId: cred.clientId,
-      accountLabel: cred.accountLabel ?? target.accountLabel,
-      subscription: cred.subscription ?? target.subscription,
-      updatedAt: nowIso(),
-    };
-    // Full replace of refreshToken: undefined clears it (refresh revoke path).
-    if (cred.refreshToken !== undefined) {
-      updated.refreshToken = cred.refreshToken;
+    if (target) {
+      const updated: AccountCredential = {
+        ...target,
+        method: cred.method,
+        accessToken: cred.accessToken,
+        expiresAt: cred.expiresAt,
+        clientId: cred.clientId,
+        accountLabel: cred.accountLabel ?? target.accountLabel,
+        subscription: cred.subscription ?? target.subscription,
+        updatedAt: nowIso(),
+      };
+      // Full replace of refreshToken: undefined clears it (refresh revoke path).
+      if (cred.refreshToken !== undefined) {
+        updated.refreshToken = cred.refreshToken;
+      } else {
+        delete updated.refreshToken;
+      }
+      store.accounts[target.id] = updated;
+      store.active[provider] = target.id;
     } else {
-      delete updated.refreshToken;
+      const id = makeAccountId(provider, cred.accountLabel || cred.subscription);
+      const now = nowIso();
+      store.accounts[id] = {
+        id,
+        provider,
+        method: cred.method,
+        accessToken: cred.accessToken,
+        refreshToken: cred.refreshToken,
+        expiresAt: cred.expiresAt,
+        clientId: cred.clientId,
+        accountLabel: cred.accountLabel,
+        subscription: cred.subscription,
+        createdAt: now,
+        updatedAt: cred.updatedAt || now,
+        priority: 0,
+        disabled: false,
+      };
+      store.active[provider] = id;
     }
-    store.accounts[target.id] = updated;
-    store.active[provider] = target.id;
-  } else {
-    const id = makeAccountId(provider, cred.accountLabel || cred.subscription);
-    const now = nowIso();
-    store.accounts[id] = {
-      id,
-      provider,
-      method: cred.method,
-      accessToken: cred.accessToken,
-      refreshToken: cred.refreshToken,
-      expiresAt: cred.expiresAt,
-      clientId: cred.clientId,
-      accountLabel: cred.accountLabel,
-      subscription: cred.subscription,
-      createdAt: now,
-      updatedAt: cred.updatedAt || now,
-      priority: 0,
-      disabled: false,
-    };
-    store.active[provider] = id;
-  }
-  saveAuthStore(store);
+    saveAuthStore(store);
+  });
 }
 
 /**
@@ -383,100 +388,108 @@ export function upsertAccount(
     forceNew?: boolean;
   },
 ): { accountId: string; created: boolean } {
-  const store = loadAuthStore();
-  const provider = String(opts.provider);
-  const makeActive = opts.makeActive !== false;
-  const now = nowIso();
+  return withFileLock(authPath(), () => {
+    const store = loadAuthStore();
+    const provider = String(opts.provider);
+    const makeActive = opts.makeActive !== false;
+    const now = nowIso();
 
-  let target: AccountCredential | undefined;
-  if (opts.accountId && store.accounts[opts.accountId]) {
-    target = store.accounts[opts.accountId];
-  } else if (!opts.forceNew && opts.accountLabel) {
-    target = findAccountByIdentity(provider, opts.accountLabel, store);
-  } else if (!opts.forceNew) {
-    // No label: update active account of same method if exactly one exists
-    const sameMethod = Object.values(store.accounts).filter(
-      (a) => a.provider === provider && a.method === opts.method,
-    );
-    if (sameMethod.length === 1 && !opts.accountLabel) {
-      target = sameMethod[0];
+    let target: AccountCredential | undefined;
+    if (opts.accountId && store.accounts[opts.accountId]) {
+      target = store.accounts[opts.accountId];
+    } else if (!opts.forceNew && opts.accountLabel) {
+      target = findAccountByIdentity(provider, opts.accountLabel, store);
+    } else if (!opts.forceNew) {
+      // No label: update active account of same method if exactly one exists
+      const sameMethod = Object.values(store.accounts).filter(
+        (a) => a.provider === provider && a.method === opts.method,
+      );
+      if (sameMethod.length === 1 && !opts.accountLabel) {
+        target = sameMethod[0];
+      }
     }
-  }
 
-  if (target) {
-    const updated: AccountCredential = {
-      ...target,
+    if (target) {
+      const updated: AccountCredential = {
+        ...target,
+        method: opts.method,
+        accessToken: opts.accessToken,
+        refreshToken:
+          opts.refreshToken !== undefined ? opts.refreshToken : target.refreshToken,
+        expiresAt: opts.expiresAt !== undefined ? opts.expiresAt : target.expiresAt,
+        clientId: opts.clientId !== undefined ? opts.clientId : target.clientId,
+        accountLabel:
+          opts.accountLabel !== undefined ? opts.accountLabel : target.accountLabel,
+        subscription:
+          opts.subscription !== undefined ? opts.subscription : target.subscription,
+        updatedAt: now,
+      };
+      // Explicit undefined refreshToken via force-clear is rare; refresh uses setCredential
+      store.accounts[target.id] = updated;
+      if (makeActive) store.active[provider] = target.id;
+      saveAuthStore(store);
+      return { accountId: target.id, created: false };
+    }
+
+    const id =
+      opts.accountId && !store.accounts[opts.accountId]
+        ? opts.accountId
+        : makeAccountId(provider, opts.accountLabel || opts.subscription);
+    store.accounts[id] = {
+      id,
+      provider,
       method: opts.method,
       accessToken: opts.accessToken,
-      refreshToken:
-        opts.refreshToken !== undefined ? opts.refreshToken : target.refreshToken,
-      expiresAt: opts.expiresAt !== undefined ? opts.expiresAt : target.expiresAt,
-      clientId: opts.clientId !== undefined ? opts.clientId : target.clientId,
-      accountLabel:
-        opts.accountLabel !== undefined ? opts.accountLabel : target.accountLabel,
-      subscription:
-        opts.subscription !== undefined ? opts.subscription : target.subscription,
+      refreshToken: opts.refreshToken,
+      expiresAt: opts.expiresAt,
+      clientId: opts.clientId,
+      accountLabel: opts.accountLabel,
+      subscription: opts.subscription,
+      createdAt: now,
       updatedAt: now,
+      priority: 0,
+      disabled: false,
     };
-    // Explicit undefined refreshToken via force-clear is rare; refresh uses setCredential
-    store.accounts[target.id] = updated;
-    if (makeActive) store.active[provider] = target.id;
+    if (makeActive) store.active[provider] = id;
     saveAuthStore(store);
-    return { accountId: target.id, created: false };
-  }
-
-  const id =
-    opts.accountId && !store.accounts[opts.accountId]
-      ? opts.accountId
-      : makeAccountId(provider, opts.accountLabel || opts.subscription);
-  store.accounts[id] = {
-    id,
-    provider,
-    method: opts.method,
-    accessToken: opts.accessToken,
-    refreshToken: opts.refreshToken,
-    expiresAt: opts.expiresAt,
-    clientId: opts.clientId,
-    accountLabel: opts.accountLabel,
-    subscription: opts.subscription,
-    createdAt: now,
-    updatedAt: now,
-    priority: 0,
-    disabled: false,
-  };
-  if (makeActive) store.active[provider] = id;
-  saveAuthStore(store);
-  return { accountId: id, created: true };
+    return { accountId: id, created: true };
+  });
 }
 
 export function clearCredential(provider: string): void {
-  const store = loadAuthStore();
-  for (const [id, acc] of Object.entries(store.accounts)) {
-    if (acc.provider === provider) delete store.accounts[id];
-  }
-  delete store.active[provider];
-  saveAuthStore(store);
+  withFileLock(authPath(), () => {
+    const store = loadAuthStore();
+    for (const [id, acc] of Object.entries(store.accounts)) {
+      if (acc.provider === provider) delete store.accounts[id];
+    }
+    delete store.active[provider];
+    saveAuthStore(store);
+  });
 }
 
 export function clearAllCredentials(): void {
-  saveAuthStore(emptyAuthStore());
+  withFileLock(authPath(), () => {
+    saveAuthStore(emptyAuthStore());
+  });
 }
 
 /** Remove a single account by id. Returns false if not found. */
 export function removeAccount(accountId: string): boolean {
-  const store = loadAuthStore();
-  const acc = store.accounts[accountId];
-  if (!acc) return false;
-  delete store.accounts[accountId];
-  if (store.active[acc.provider] === accountId) {
-    const next = Object.values(store.accounts).find(
-      (a) => a.provider === acc.provider && !a.disabled,
-    );
-    if (next) store.active[acc.provider] = next.id;
-    else delete store.active[acc.provider];
-  }
-  saveAuthStore(store);
-  return true;
+  return withFileLock(authPath(), () => {
+    const store = loadAuthStore();
+    const acc = store.accounts[accountId];
+    if (!acc) return false;
+    delete store.accounts[accountId];
+    if (store.active[acc.provider] === accountId) {
+      const next = Object.values(store.accounts).find(
+        (a) => a.provider === acc.provider && !a.disabled,
+      );
+      if (next) store.active[acc.provider] = next.id;
+      else delete store.active[acc.provider];
+    }
+    saveAuthStore(store);
+    return true;
+  });
 }
 
 /**
@@ -487,82 +500,94 @@ export function setActiveAccount(accountId: string): {
   error?: string;
   account?: AccountCredential;
 } {
-  const store = loadAuthStore();
-  const acc = store.accounts[accountId];
-  if (!acc) return { ok: false, error: `No account with id ${accountId}` };
-  if (acc.disabled) {
-    return { ok: false, error: `Account ${accountId} is disabled` };
-  }
-  store.active[acc.provider] = accountId;
-  saveAuthStore(store);
-  return { ok: true, account: acc };
+  return withFileLock(authPath(), () => {
+    const store = loadAuthStore();
+    const acc = store.accounts[accountId];
+    if (!acc) return { ok: false, error: `No account with id ${accountId}` };
+    if (acc.disabled) {
+      return { ok: false, error: `Account ${accountId} is disabled` };
+    }
+    store.active[acc.provider] = accountId;
+    saveAuthStore(store);
+    return { ok: true, account: acc };
+  });
 }
 
 export function setAccountDisabled(
   accountId: string,
   disabled: boolean,
 ): boolean {
-  const store = loadAuthStore();
-  const acc = store.accounts[accountId];
-  if (!acc) return false;
-  acc.disabled = disabled;
-  acc.updatedAt = nowIso();
-  if (disabled && store.active[acc.provider] === accountId) {
-    const next = Object.values(store.accounts).find(
-      (a) => a.provider === acc.provider && a.id !== accountId && !a.disabled,
-    );
-    if (next) store.active[acc.provider] = next.id;
-  }
-  saveAuthStore(store);
-  return true;
+  return withFileLock(authPath(), () => {
+    const store = loadAuthStore();
+    const acc = store.accounts[accountId];
+    if (!acc) return false;
+    acc.disabled = disabled;
+    acc.updatedAt = nowIso();
+    if (disabled && store.active[acc.provider] === accountId) {
+      const next = Object.values(store.accounts).find(
+        (a) => a.provider === acc.provider && a.id !== accountId && !a.disabled,
+      );
+      if (next) store.active[acc.provider] = next.id;
+    }
+    saveAuthStore(store);
+    return true;
+  });
 }
 
 export function setAccountPriority(accountId: string, priority: number): boolean {
-  const store = loadAuthStore();
-  const acc = store.accounts[accountId];
-  if (!acc) return false;
-  acc.priority = Math.trunc(priority);
-  acc.updatedAt = nowIso();
-  saveAuthStore(store);
-  return true;
+  return withFileLock(authPath(), () => {
+    const store = loadAuthStore();
+    const acc = store.accounts[accountId];
+    if (!acc) return false;
+    acc.priority = Math.trunc(priority);
+    acc.updatedAt = nowIso();
+    saveAuthStore(store);
+    return true;
+  });
 }
 
 export function setAccountLabel(accountId: string, label: string): boolean {
-  const store = loadAuthStore();
-  const acc = store.accounts[accountId];
-  if (!acc) return false;
-  acc.accountLabel = label.trim() || undefined;
-  acc.updatedAt = nowIso();
-  saveAuthStore(store);
-  return true;
+  return withFileLock(authPath(), () => {
+    const store = loadAuthStore();
+    const acc = store.accounts[accountId];
+    if (!acc) return false;
+    acc.accountLabel = label.trim() || undefined;
+    acc.updatedAt = nowIso();
+    saveAuthStore(store);
+    return true;
+  });
 }
 
 export function setAccountCooldown(
   accountId: string,
   cooldownUntil: number | undefined,
 ): boolean {
-  const store = loadAuthStore();
-  const acc = store.accounts[accountId];
-  if (!acc) return false;
-  if (cooldownUntil == null) delete acc.cooldownUntil;
-  else acc.cooldownUntil = cooldownUntil;
-  acc.updatedAt = nowIso();
-  saveAuthStore(store);
-  return true;
+  return withFileLock(authPath(), () => {
+    const store = loadAuthStore();
+    const acc = store.accounts[accountId];
+    if (!acc) return false;
+    if (cooldownUntil == null) delete acc.cooldownUntil;
+    else acc.cooldownUntil = cooldownUntil;
+    acc.updatedAt = nowIso();
+    saveAuthStore(store);
+    return true;
+  });
 }
 
 export function setAccountPlan(
   accountId: string,
   plan: AccountPlanSnapshot | undefined,
 ): boolean {
-  const store = loadAuthStore();
-  const acc = store.accounts[accountId];
-  if (!acc) return false;
-  if (plan) acc.lastPlan = plan;
-  else delete acc.lastPlan;
-  acc.updatedAt = nowIso();
-  saveAuthStore(store);
-  return true;
+  return withFileLock(authPath(), () => {
+    const store = loadAuthStore();
+    const acc = store.accounts[accountId];
+    if (!acc) return false;
+    if (plan) acc.lastPlan = plan;
+    else delete acc.lastPlan;
+    acc.updatedAt = nowIso();
+    saveAuthStore(store);
+    return true;
+  });
 }
 
 export function getAutoSwitchSettings(): {
@@ -581,15 +606,17 @@ export function setAutoSwitchSettings(opts: {
   autoSwitch?: boolean;
   switchThresholdPercent?: number;
 }): void {
-  const store = loadAuthStore();
-  if (opts.autoSwitch !== undefined) store.autoSwitch = Boolean(opts.autoSwitch);
-  if (opts.switchThresholdPercent !== undefined) {
-    store.switchThresholdPercent = Math.min(
-      100,
-      Math.max(0, Math.round(opts.switchThresholdPercent)),
-    );
-  }
-  saveAuthStore(store);
+  withFileLock(authPath(), () => {
+    const store = loadAuthStore();
+    if (opts.autoSwitch !== undefined) store.autoSwitch = Boolean(opts.autoSwitch);
+    if (opts.switchThresholdPercent !== undefined) {
+      store.switchThresholdPercent = Math.min(
+        100,
+        Math.max(0, Math.round(opts.switchThresholdPercent)),
+      );
+    }
+    saveAuthStore(store);
+  });
 }
 
 /** List accounts as StoredCredential (legacy — one entry per active provider). */
@@ -789,23 +816,25 @@ export function patchAccount(
     >
   > & { clearRefreshToken?: boolean },
 ): AccountCredential | undefined {
-  const store = loadAuthStore();
-  let acc: AccountCredential | undefined = store.accounts[providerOrId];
-  if (!acc) {
-    // treat as provider
-    const id = store.active[providerOrId];
-    acc = (id ? store.accounts[id] : undefined) ?? getActiveAccount(providerOrId);
-  }
-  if (!acc) return undefined;
-  const next: AccountCredential = {
-    ...acc,
-    ...patch,
-    updatedAt: nowIso(),
-  };
-  if (patch.clearRefreshToken) delete next.refreshToken;
-  // Don't copy control flags into credential
-  delete (next as { clearRefreshToken?: boolean }).clearRefreshToken;
-  store.accounts[acc.id] = next;
-  saveAuthStore(store);
-  return next;
+  return withFileLock(authPath(), () => {
+    const store = loadAuthStore();
+    let acc: AccountCredential | undefined = store.accounts[providerOrId];
+    if (!acc) {
+      // treat as provider
+      const id = store.active[providerOrId];
+      acc = (id ? store.accounts[id] : undefined) ?? getActiveAccount(providerOrId);
+    }
+    if (!acc) return undefined;
+    const next: AccountCredential = {
+      ...acc,
+      ...patch,
+      updatedAt: nowIso(),
+    };
+    if (patch.clearRefreshToken) delete next.refreshToken;
+    // Don't copy control flags into credential
+    delete (next as { clearRefreshToken?: boolean }).clearRefreshToken;
+    store.accounts[acc.id] = next;
+    saveAuthStore(store);
+    return next;
+  });
 }

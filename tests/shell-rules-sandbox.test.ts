@@ -616,3 +616,32 @@ describe("file:// fetch hard deny", () => {
     assert.equal(d.ok, true);
   });
 });
+
+describe("sandbox missingBackend=fallback abort", () => {
+  it("fallback run honors the abort signal (Ctrl+C / turn timeout)", async () => {
+    const prevPath = process.env.PATH;
+    process.env.PATH = ""; // force detectSandboxBackend() → none
+    try {
+      const ac = new AbortController();
+      const started = Date.now();
+      const timer = setTimeout(() => ac.abort(), 150);
+      const r = await execCommandSandboxed({
+        command: "/bin/sleep 30",
+        cwd: process.cwd(),
+        timeoutMs: 8000,
+        profile: "workspace",
+        missingBackend: "fallback",
+        signal: ac.signal,
+      });
+      clearTimeout(timer);
+      assert.equal(r.sandboxed, false);
+      assert.equal(r.code, 130);
+      assert.ok(
+        Date.now() - started < 5000,
+        "abort did not cancel the unsandboxed fallback run",
+      );
+    } finally {
+      process.env.PATH = prevPath;
+    }
+  });
+});

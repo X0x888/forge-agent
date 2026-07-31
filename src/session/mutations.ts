@@ -29,6 +29,12 @@ export interface FileMutation {
   ts: string;
   /** Pre-image for update/delete. Omitted for create or when skipped. */
   before?: string;
+  /**
+   * Pre-image permission bits (e.g. 0o644, 0o755), journaled so /undo
+   * restores the original mode instead of always tightening to 0600.
+   * Absent in older journals — restore falls back to 0600 then.
+   */
+  mode?: number;
   /** True when body was too large / unreadable — restore will skip. */
   skipped?: boolean;
   reason?: string;
@@ -39,6 +45,8 @@ export interface RecordMutationInput {
   kind: FileMutationKind;
   before?: string;
   turn: number;
+  /** Pre-image permission bits (stat.mode & 0o777) when known. */
+  mode?: number;
   skipped?: boolean;
   reason?: string;
 }
@@ -127,6 +135,12 @@ export function appendFileMutation(
       turn: input.turn,
       ts: nowIso(),
     };
+    // Journal the pre-image mode so restore can re-apply it (0600 fallback
+    // when unknown — older journals and unreadable stats). Mask to plain
+    // permission bits: never restore setuid/setgid/sticky.
+    if (typeof input.mode === "number" && Number.isFinite(input.mode)) {
+      entry.mode = input.mode & 0o777;
+    }
     if (input.skipped) {
       entry.skipped = true;
       if (input.reason) entry.reason = input.reason;
@@ -158,7 +172,7 @@ export function appendFileMutation(
  */
 export async function snapshotForWrite(
   absPath: string,
-): Promise<{ kind: "create" | "update"; before?: string; skipped?: boolean; reason?: string }> {
+): Promise<{ kind: "create" | "update"; before?: string; mode?: number; skipped?: boolean; reason?: string }> {
   try {
     const st = await fsp.stat(absPath);
     if (st.isDirectory()) {
@@ -172,7 +186,7 @@ export async function snapshotForWrite(
       };
     }
     const before = await fsp.readFile(absPath, "utf8");
-    return { kind: "update", before };
+    return { kind: "update", before, mode: st.mode & 0o777 };
   } catch (err) {
     const code = (err as NodeJS.ErrnoException)?.code;
     if (code === "ENOENT") return { kind: "create" };
@@ -347,11 +361,17 @@ export function restoreMutationsAfterTurn(
           dir,
           `.${path.basename(m.path)}.${process.pid}.undo.tmp`,
         );
-        // Prefer restrictive mode for restored bodies (pre-images may be secrets).
-        fs.writeFileSync(tmp, body, { encoding: "utf8", mode: 0o600 });
+        // Restore the journaled pre-image mode (executable scripts stay +x,
+        // world-readable files stay 0644). Fall back to restrictive 0600 only
+        // when the mode is unknown (older journals) — pre-images may be secrets.
+        const mode =
+          typeof m.mode === "number" && Number.isFinite(m.mode)
+            ? m.mode & 0o777
+            : 0o600;
+        fs.writeFileSync(tmp, body, { encoding: "utf8", mode });
         fs.renameSync(tmp, m.path);
         try {
-          fs.chmodSync(m.path, 0o600);
+          fs.chmodSync(m.path, mode);
         } catch {
           /* */
         }

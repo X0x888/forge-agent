@@ -11,7 +11,8 @@ const PERMISSION_ALIASES: Record<string, PermissionMode> = {
   "dont-ask": "dontAsk",
   "dont_ask": "dontAsk",
   deny: "dontAsk",
-  ask: "dontAsk",
+  // "ask" reads as the interactive ask-for-writes mode, not never-prompt-deny.
+  ask: "default",
   "no-ask": "dontAsk",
   "never-ask": "dontAsk",
   yolo: "bypassPermissions",

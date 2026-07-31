@@ -26,6 +26,7 @@ export const COMMAND_PARAMS: Record<string, ParamChoice[]> = {
     {
       value: "default",
       description: "Ask for writes/shell; auto-allow reads",
+      aliases: ["ask"],
     },
     {
       value: "acceptEdits",
@@ -44,7 +45,7 @@ export const COMMAND_PARAMS: Record<string, ParamChoice[]> = {
     {
       value: "dontAsk",
       description: "Never prompt — deny anything without an allow rule (CI-safe)",
-      aliases: ["dont-ask", "no-ask", "never-ask", "deny", "ask"],
+      aliases: ["dont-ask", "no-ask", "never-ask", "deny"],
     },
     {
       value: "list",

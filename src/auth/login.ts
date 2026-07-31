@@ -564,14 +564,21 @@ async function deviceCodeLogin(
     });
   }
 
-  const dc = (await start.json()) as {
+  // start.json() throws on non-JSON error bodies (proxy/LB html pages) —
+  // turn that into a clean, actionable error instead of a SyntaxError.
+  const dc = (await start.json().catch(() => null)) as {
     device_code: string;
     user_code: string;
     verification_uri: string;
     verification_uri_complete?: string;
     interval?: number;
     expires_in?: number;
-  };
+  } | null;
+  if (!dc || typeof dc.device_code !== "string" || !dc.device_code) {
+    throw new Error(
+      `Device-code start failed: expected a JSON device_code response (HTTP ${start.status}). Try forge login --api-key.`,
+    );
+  }
 
   log.info(`Open ${dc.verification_uri_complete || dc.verification_uri}`);
   log.info(`Enter code: ${dc.user_code}`);
@@ -581,37 +588,53 @@ async function deviceCodeLogin(
     );
   }
 
-  const interval = Math.max(3, dc.interval ?? 5) * 1000;
+  let interval = Math.max(3, dc.interval ?? 5) * 1000;
   const deadline = Date.now() + (dc.expires_in ?? 600) * 1000;
+  // A transient network error must not abort the login — the device code
+  // stays valid until the deadline (RFC 8628 polls through blips). Bounded
+  // so a dead network fails instead of spinning until expiry.
+  const MAX_NETWORK_FAILURES = 5;
+  let networkFailures = 0;
 
   while (Date.now() < deadline) {
     await new Promise((r) => setTimeout(r, interval));
-    const poll = await fetch(tokenUrl, {
-      method: "POST",
-      headers: isCopilot
-        ? {
-            "Content-Type": "application/json",
-            Accept: "application/json",
-            "User-Agent": "forge-cli",
-          }
-        : {
-            "Content-Type": "application/x-www-form-urlencoded",
-            Accept: "application/json",
-            "User-Agent": "forge-cli",
-          },
-      body: isCopilot
-        ? JSON.stringify({
-            client_id: profile.clientId,
-            device_code: dc.device_code,
-            grant_type: "urn:ietf:params:oauth:grant-type:device_code",
-          })
-        : new URLSearchParams({
-            grant_type: "urn:ietf:params:oauth:grant-type:device_code",
-            device_code: dc.device_code,
-            client_id: profile.clientId,
-          }),
-      signal: AbortSignal.timeout(20_000),
-    });
+    let poll: Response;
+    try {
+      poll = await fetch(tokenUrl, {
+        method: "POST",
+        headers: isCopilot
+          ? {
+              "Content-Type": "application/json",
+              Accept: "application/json",
+              "User-Agent": "forge-cli",
+            }
+          : {
+              "Content-Type": "application/x-www-form-urlencoded",
+              Accept: "application/json",
+              "User-Agent": "forge-cli",
+            },
+        body: isCopilot
+          ? JSON.stringify({
+              client_id: profile.clientId,
+              device_code: dc.device_code,
+              grant_type: "urn:ietf:params:oauth:grant-type:device_code",
+            })
+          : new URLSearchParams({
+              grant_type: "urn:ietf:params:oauth:grant-type:device_code",
+              device_code: dc.device_code,
+              client_id: profile.clientId,
+            }),
+        signal: AbortSignal.timeout(20_000),
+      });
+    } catch (err) {
+      networkFailures += 1;
+      if (networkFailures >= MAX_NETWORK_FAILURES) {
+        throw new Error(
+          `Device login failed: token endpoint unreachable (${(err as Error).message || err})`,
+        );
+      }
+      continue;
+    }
     const json = (await poll.json().catch(() => ({}))) as {
       access_token?: string;
       refresh_token?: string;
@@ -657,13 +680,30 @@ async function deviceCodeLogin(
       );
       return r;
     }
-    if (json.error === "authorization_pending" || json.error === "slow_down") {
+    if (json.error === "authorization_pending") {
+      networkFailures = 0;
+      continue;
+    }
+    if (json.error === "slow_down") {
+      // RFC 8628 §3.5: slow_down requires +5s polling interval.
+      networkFailures = 0;
+      interval += 5_000;
       continue;
     }
     if (json.error) {
+      // Terminal per RFC 8628 (access_denied, expired_token, …).
       throw new Error(
         `Device login failed: ${json.error_description || json.error}`,
       );
+    }
+    if (!poll.ok) {
+      // HTTP error without an RFC 8628 error body (proxy/LB html) — transient.
+      networkFailures += 1;
+      if (networkFailures >= MAX_NETWORK_FAILURES) {
+        throw new Error(
+          `Device login failed: token endpoint returned HTTP ${poll.status}`,
+        );
+      }
     }
   }
   throw new Error("Device login timed out");

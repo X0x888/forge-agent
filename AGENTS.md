@@ -21,7 +21,7 @@ Binary entry: `src/cli.ts` → `dist/cli.js` (`bin: forge`).
 - `src/harness/` — hooks, goal, stop-guard, handoff-guard, proof-claim-guard (do not weaken blocking Stop defaults)
 - `src/agent/` — loop, tools, permissions
 - `src/providers/` — LLM clients; `errors.ts` expert recovery tips (`formatProviderError`)
-- `src/auth/` — multi-account credentials (never log tokens); `accounts.ts` smart switch; auth.json v2
+- `src/auth/` — multi-account credentials (never log tokens); `accounts.ts` smart switch; auth.json v2; `src/util/file-lock.ts` `withFileLock` serializes cross-process load→mutate→save on auth.json/preferences.json (fail-open, bounded wait — never brick login)
 - `src/statusline/` — provider-agnostic HUD (`forge status`); never invent plan metrics
 - `src/commands/` — slash handlers; `project-commands.ts` (`.forge/commands/*.md`); `headless-slash.ts` for `forge run "/…"`
 - `src/harness/ulw-cycle.ts` — ULW cycle flag 1/0; optional `maxWaves` cap (auto LAST); soft prompts expand to god-scope; Stop blocks while cycle=1; wave ledger + quality bar (proof demands, thin-wave escalation, evidence attestation)
@@ -76,7 +76,10 @@ atomic session tmp recovery, session fork/export/import (export `0600`), headles
 --session`, metrics.jsonl, permission ask timeout, empty-SSE retry, `finish_reason=length` continue (+ content_filter/empty cap hygiene),
 `releasedOnContinueCap` / `hitMaxTurns` / `hitCostCap` / `finishReason` / `pinned` / `foreignLock` JSON/metrics + stats `continueCapReleases`/`maxTurnsHits`/`costCapHits`,
 `--max-turns` / `FORGE_MAX_TURNS` / `max_turns=0` unlimited, `--max-cost` / `FORGE_MAX_COST_USD` / `max_cost_usd` / `/budget` session spend cap (estimateCostUsd; run JSON `effectiveMaxCostUsd`/`sessionCostUsd`), handoff-guard + proof-claim-guard Stop blocks (incl. silent edits-without-verify free triage), soft TodoGate outside ULW, interjection harness context, `/done` winds ULW+goal, safety valves under ULW CONTINUE auto-flip to LAST (`maybeFlipUlwToLastOnSafetyValve`), `forge sessions title`, `forge models -p`, stream usage, `meta.json`
-session sidecar, tunable loop guards (`FORGE_DOOM_LOOP_THRESHOLD`, `FORGE_ERROR_STREAK_THRESHOLD`),
+session sidecar (authoritative for title/pinned — title/pin writes are meta-only via
+`saveSessionMetaSidecar` so they never roll back racing messages; `saveSession` merges
+externally-set title/pin), strict session-id slugs (`isValidSessionId`; resolve + sidecar-normalize
+reject traversal), foreign-lock EPERM counts as ALIVE (sessionHasForeignLiveLock + stats), tunable loop guards (`FORGE_DOOM_LOOP_THRESHOLD`, `FORGE_ERROR_STREAK_THRESHOLD`),
 interactive same-cwd auto-resume, `/title`, `--title` on `forge`/`forge run`, `/bell` turn-end
 attention, `/notify` desktop notify (osascript/notify-send; `FORGE_NOTIFY`), `turnEndOutcomeLabel` safety-valve notify bodies, background-task teardown on exit, JSON store isolation (`readJsonFile` clones
 fallbacks; auth/permissions/preferences mode `0600`), `listSessions({ cwd, query, limit })` +
@@ -90,7 +93,8 @@ card, shared `formatExpertTips` (`forge tips`/`/tips`), first-run welcome tip, u
 `/unpause`, session `lastUserPreview` list snippets, resume-by-title, relative session ages,
 `/files`, `/path` (+ copy), `/pin` + `sessions pin` (fork clears pin; status PIN badge), resume
 orientation + `--pinned` list, doctor `sessionsPinned`, session path helpers, sessions show file
-snippet, file-aware `/undo` (`mutations.jsonl` pre-images), `/init`, `/review`, `/compact-and`,
+snippet, file-aware `/undo` (`mutations.jsonl` pre-images + journaled file mode; turn marks skip
+synthetic harness user-messages — `isSyntheticUserMessage`), `/init`, `/review`, `/compact-and`,
 `/fork-and-compact`, fork copies ULW/goal sidecars, `/clear`/`/clear hard`/`/new` hygiene, `/logs`
 · `forge logs`, `/config` · `forge config`, `/export` mode `0600`, `--read-outside ask|allow|deny`, doctor flags `read-outside=allow` / `sandbox-missing=fallback`, `FORGE_BASH_TIMEOUT_MS` /
 `FORGE_BASH_BG_TIMEOUT_MS`, doctor `undoJournal`, `npm run smoke`, ULW wave ledger + quality bar
@@ -98,7 +102,8 @@ snippet, file-aware `/undo` (`mutations.jsonl` pre-images), `/init`, `/review`, 
 consolidation, diminishing-returns advisory, one-time evidence bounce on weak attestations),
 structural `verificationRan` (execution) + `verificationPassed` (success-only proof-claim/attestation/ULW wave proof) stop signals, project-intel (pm/checks/monorepo; `FORGE_FILE_READ_GUARD` / `FORGE_VERIFY_HINT`), last-verification trail (`lastVerificationCommand`/`At` + `lastEditAt` stale detection on session + resume/status/share/done/export/list ✓; `editsWithoutVerification` in run JSON), adaptive effort (`FORGE_ADAPTIVE_EFFORT`; hard rounds bump
 reasoning one notch), stale tool-result clearing (`FORGE_TOOL_CLEAR*` microcompaction), counter-only
-admission suppression, Anthropic prompt caching (`FORGE_ANTHROPIC_CACHE`; cache usage in `ChatUsage`),
+admission suppression, Anthropic prompt caching (`FORGE_ANTHROPIC_CACHE`; cache usage in `ChatUsage`,
+cache buckets folded into `prompt_tokens` so totals/spend cap don't undercount),
 per-model context windows (`context_window` explicit wins; `src/config/model-info.ts` otherwise),
 prompt-cache-stable system prompt (volatile git branch via context-admit, not message[0]), Stop hook
 crash/HTTP fail-closed + stdin-EPIPE safe + 20k payload caps, Retry-After honored above client backoff

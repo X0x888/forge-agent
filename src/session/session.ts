@@ -132,6 +132,16 @@ export function sessionDir(id: string): string {
   return path.join(forgeHome(), "sessions", id);
 }
 
+/**
+ * Session ids are generated slugs (randomUUID today). Anything with path
+ * separators, dots, or other characters outside the slug charset is not an
+ * id — rejecting it keeps user input and on-disk meta from traversing out
+ * of ~/.forge/sessions (e.g. "../../x" into deleteSessionDetailed → rm -rf).
+ */
+export function isValidSessionId(id: string): boolean {
+  return /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/.test(id);
+}
+
 /** Absolute path to a session directory (resolves id/prefix/title when possible). */
 export function resolveSessionDir(idOrPrefix: string): string | null {
   const full = resolveSessionId(idOrPrefix);
@@ -191,6 +201,33 @@ export function saveSession(data: SessionData): void {
   }
   const dir = sessionDir(data.meta.id);
   ensureDir(dir);
+  // Cross-process meta merge: `forge sessions title/pin` writes the meta
+  // sidecar only (never session.json) so it cannot roll back a running
+  // session's messages. A long-lived process (open REPL) can hold an older
+  // in-memory meta — do not let this save silently revert an externally-set
+  // title/pin. In-process title/pin changes update the sidecar first
+  // (setSessionTitle / setSessionPinned / clearConversation), so a sidecar
+  // value missing from memory always came from another process.
+  try {
+    const side = readJsonFile<SessionMeta | null>(
+      path.join(dir, "meta.json"),
+      null,
+    );
+    if (side && typeof side === "object" && side.id === data.meta.id) {
+      if (
+        data.meta.title === undefined &&
+        typeof side.title === "string" &&
+        side.title.trim()
+      ) {
+        data.meta.title = side.title;
+      }
+      if (data.meta.pinned === undefined && side.pinned === true) {
+        data.meta.pinned = true;
+      }
+    }
+  } catch {
+    /* never block save */
+  }
   writeJsonFile(path.join(dir, "session.json"), data);
   // Sidecar meta for fast list/prune without parsing multi-MB histories
   try {
@@ -217,11 +254,76 @@ export function saveSession(data: SessionData): void {
   }
 }
 
+/**
+ * Meta-only save for cheap CLI/REPL-settable fields (title/pinned). Writes
+ * ONLY the meta.json sidecar — never session.json — so a possibly-stale
+ * in-memory snapshot cannot roll back newer messages when a second process
+ * races an open session (`forge sessions title/pin` vs a mid-run REPL).
+ * Other fields are merged onto the on-disk sidecar so stale in-memory
+ * counters do not regress list/prune views. loadSession treats the sidecar
+ * as authoritative for title/pinned, and saveSession preserves externally-set
+ * values, so the change survives later loads and saves.
+ */
+export function saveSessionMetaSidecar(session: SessionData): void {
+  try {
+    const dir = sessionDir(session.meta.id);
+    ensureDir(dir);
+    const sidePath = path.join(dir, "meta.json");
+    const disk = readJsonFile<SessionMeta | null>(sidePath, null);
+    const merged: SessionMeta =
+      disk && typeof disk === "object" && disk.id === session.meta.id
+        ? disk
+        : { ...session.meta };
+    merged.updatedAt = nowIso();
+    if (session.meta.title) merged.title = session.meta.title;
+    else delete merged.title;
+    if (session.meta.pinned) merged.pinned = true;
+    else delete merged.pinned;
+    writeJsonFile(sidePath, merged);
+  } catch {
+    /* meta sidecar best-effort — in-memory meta stays this process's source */
+  }
+}
+
+/**
+ * Overlay sidecar title/pinned onto a freshly loaded session. The meta.json
+ * sidecar is authoritative for those fields: `forge sessions title/pin`
+ * writes meta-only so a racing full rewrite never rolls back a running
+ * session's messages.
+ */
+function overlaySidecarMeta(session: SessionData): void {
+  try {
+    const sidePath = path.join(sessionDir(session.meta.id), "meta.json");
+    // No sidecar (legacy/crash-cleaned): session.json stays the only source.
+    if (!fs.existsSync(sidePath)) return;
+    const side = readJsonFile<SessionMeta | null>(sidePath, null);
+    // Unparseable or foreign sidecar: keep session.json values.
+    if (!side || typeof side !== "object" || side.id !== session.meta.id) {
+      return;
+    }
+    if (typeof side.title === "string" && side.title.trim()) {
+      session.meta.title = side.title;
+    } else {
+      delete session.meta.title;
+    }
+    if (side.pinned === true) session.meta.pinned = true;
+    else delete session.meta.pinned;
+  } catch {
+    /* best-effort */
+  }
+}
+
 /** Normalize meta sidecar fields so list/doctor never crash on partial JSON. */
-function normalizeSessionMeta(fromSide: SessionMeta): SessionMeta {
+function normalizeSessionMeta(
+  fromSide: SessionMeta,
+  expectedId?: string,
+): SessionMeta {
+  const rawId = String(fromSide.id || "");
   const out: SessionMeta = {
     ...fromSide,
-    id: fromSide.id,
+    // Never trust a poisoned id from disk — fall back to the containing
+    // directory name so downstream rm/rename targets stay inside the root.
+    id: isValidSessionId(rawId) ? rawId : (expectedId ?? ""),
     cwd: String(fromSide.cwd || ""),
     provider: String(fromSide.provider || "unknown"),
     model: String(fromSide.model || "unknown"),
@@ -408,18 +510,19 @@ function readSessionMetaExact(fullId: string): SessionMeta | null {
     const metaPath = path.join(sessionDir(fullId), "meta.json");
     const fromSide = readJsonFile<SessionMeta | null>(metaPath, null);
     if (fromSide?.id && typeof fromSide.id === "string") {
-      return normalizeSessionMeta(fromSide);
+      return normalizeSessionMeta(fromSide, fullId);
     }
     // Fallback: session.json only (legacy / missing sidecar)
     const primary = path.join(sessionDir(fullId), "session.json");
     const data = readJsonFile<SessionData | null>(primary, null);
     if (data?.meta?.id) {
+      const healed = normalizeSessionMeta(data.meta, fullId);
       try {
-        writeJsonFile(metaPath, data.meta);
+        writeJsonFile(metaPath, healed);
       } catch {
         /* non-fatal */
       }
-      return normalizeSessionMeta(data.meta);
+      return healed;
     }
     return null;
   } catch {
@@ -457,6 +560,7 @@ export function loadSession(id: string): SessionData | null {
   const fromPrimary = readJsonFile<SessionData | null>(primary, null);
   if (fromPrimary?.meta?.id) {
     const norm = normalizeLoadedSession(fromPrimary);
+    if (norm.session) overlaySidecarMeta(norm.session);
     // Persist heals (orphan tool pairs / dropped bad roles) so disk stays clean.
     // Skip re-save when another live process holds the lock — avoid racing writers.
     if (norm.session && norm.dirty && !sessionHasForeignLiveLock(full)) {
@@ -472,6 +576,7 @@ export function loadSession(id: string): SessionData | null {
   const recovered = recoverSessionFromTmp(dir);
   if (recovered) {
     const cleaned = normalizeLoadedSession(recovered);
+    if (cleaned.session) overlaySidecarMeta(cleaned.session);
     // Promote recovered payload so subsequent loads are normal (unless foreign lock)
     try {
       if (cleaned.session && !sessionHasForeignLiveLock(full)) {
@@ -963,7 +1068,7 @@ export function resolveSessionId(prefixOrId: string): string | null {
   ensureDir(root);
   const raw = (prefixOrId || "").trim();
   if (!raw) return null;
-  if (sessionDirLooksValid(path.join(root, raw))) {
+  if (isValidSessionId(raw) && sessionDirLooksValid(path.join(root, raw))) {
     return raw;
   }
   // Unique id prefix (min 4 chars) — UUID fragments stay first-class.
@@ -1312,8 +1417,15 @@ export function sessionHasForeignLiveLock(sessionId: string): boolean {
     try {
       process.kill(Math.trunc(pid), 0);
       return true; // foreign + alive
-    } catch {
-      return false; // dead pid → treat as free
+    } catch (err) {
+      // EPERM = process exists but owned by another user — still ALIVE
+      // (mirrors lock.ts pidAlive; treating it as free let delete/prune/
+      // auto-resume steal foreign live sessions).
+      return (
+        typeof err === "object" &&
+        err !== null &&
+        (err as NodeJS.ErrnoException).code === "EPERM"
+      );
     }
   } catch {
     return false;
@@ -1594,6 +1706,8 @@ export function maybeSetTitle(session: SessionData, userMessage: string): void {
 /**
  * Explicitly set (or clear) a session title. Empty/whitespace clears.
  * Returns the stored title (undefined when cleared).
+ * Meta-only write: a full saveSession from a possibly-stale in-memory
+ * snapshot could roll back newer messages of a racing open session.
  */
 export function setSessionTitle(
   session: SessionData,
@@ -1606,11 +1720,11 @@ export function setSessionTitle(
     .slice(0, MAX_SESSION_TITLE_CHARS);
   if (!t) {
     session.meta.title = undefined;
-    saveSession(session);
+    saveSessionMetaSidecar(session);
     return undefined;
   }
   session.meta.title = t;
-  saveSession(session);
+  saveSessionMetaSidecar(session);
   return t;
 }
 
@@ -1618,7 +1732,7 @@ export function setSessionTitle(
 export function setSessionPinned(session: SessionData, pinned: boolean): boolean {
   if (pinned) session.meta.pinned = true;
   else delete session.meta.pinned;
-  saveSession(session);
+  saveSessionMetaSidecar(session);
   return Boolean(session.meta.pinned);
 }
 
@@ -1634,13 +1748,39 @@ export function markUserTurn(session: SessionData): void {
 }
 
 /**
+ * Synthetic user-role messages the harness injects into the transcript
+ * itself — compact summaries, mid-conversation harness admissions, live
+ * slash notices, interjection frames, stop-guard re-anchors, continue
+ * steers, todo nudges. They are not real user turns: /undo and /retry must
+ * never treat them as rewind boundaries (turnCount and the mutations
+ * journal count real prompts only). Detected via the stable prefixes the
+ * producers emit, so existing sessions on disk need no schema change.
+ */
+const SYNTHETIC_USER_PREFIXES = [
+  "[Forge", // admissions · re-anchors · steers · nudges (all self-emitted)
+  "[User control — mid-run]",
+  "[Conversation compacted — ",
+  "The user sent a message while you were working:",
+];
+
+export function isSyntheticUserMessage(msg: ChatMessage): boolean {
+  if (msg.role !== "user" || typeof msg.content !== "string") return false;
+  const text = msg.content.trimStart();
+  return SYNTHETIC_USER_PREFIXES.some((p) => text.startsWith(p));
+}
+
+/**
  * Rebuild userTurnMarks from current messages after compact/load so
  * /undo and /retry never restore disk against a no-op chat rewind.
+ * Synthetic harness messages (compact summary, admissions, notices) are
+ * excluded — marking them made /undo cut mid-turn and revert the wrong
+ * journaled mutations.
  */
 export function rebuildUserTurnMarks(session: SessionData): void {
   const marks: number[] = [];
   for (let i = 0; i < session.messages.length; i++) {
-    if (session.messages[i]?.role === "user") marks.push(i);
+    const m = session.messages[i];
+    if (m?.role === "user" && !isSyntheticUserMessage(m)) marks.push(i);
   }
   session.meta.userTurnMarks = marks;
 }
@@ -1680,10 +1820,12 @@ export function rewindSessionDetailed(
     marks = session.meta.userTurnMarks || [];
   }
   if (marks.length === 0) {
-    // Fallback: drop trailing messages until last user
+    // Fallback: drop trailing messages until last real user turn
+    // (synthetic harness messages are not rewind boundaries either).
     let cut = -1;
     for (let i = session.messages.length - 1; i >= 0; i--) {
-      if (session.messages[i].role === "user") {
+      const m = session.messages[i];
+      if (m.role === "user" && !isSyntheticUserMessage(m)) {
         cut = i;
         break;
       }
@@ -2560,6 +2702,10 @@ export function clearConversation(session: SessionData): void {
   delete session.meta.lastVerificationCommand;
   delete session.meta.lastVerificationAt;
   delete session.meta.lastEditAt;
+  // Clear the on-disk meta sidecar title NOW so the saveSession below (whose
+  // cross-process merge preserves externally-set titles) does not resurrect
+  // the wiped title from the pre-clear sidecar.
+  saveSessionMetaSidecar(session);
   // History gone — journal would restore against the wrong timeline.
   try {
     clearFileMutations(session.meta.id);

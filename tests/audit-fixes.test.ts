@@ -550,8 +550,8 @@ describe("anthropic: rolling history cache breakpoint", () => {
       content: unknown;
     }>;
     assert.equal(msgs.length, 3);
-    // earlier messages untouched
-    assert.equal(msgs[0]!.content, "one");
+    // earlier messages untouched (block form, no cache_control)
+    assert.deepEqual(msgs[0]!.content, [{ type: "text", text: "one" }]);
     assert.equal(
       JSON.stringify(msgs[1]).includes("cache_control"),
       false,

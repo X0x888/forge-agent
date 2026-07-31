@@ -402,3 +402,53 @@ describe("provider switch clears model pref", () => {
     }
   });
 });
+
+describe("config-file provider normalization", () => {
+  it("normalizes provider aliases from ~/.forge/config.toml", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-cfg-provnorm-"));
+    const prevHome = process.env.FORGE_HOME;
+    const prevProv = process.env.FORGE_PROVIDER;
+    const prevModel = process.env.FORGE_MODEL;
+    try {
+      process.env.FORGE_HOME = tmp;
+      delete process.env.FORGE_PROVIDER;
+      delete process.env.FORGE_MODEL;
+      // "grok" is a documented alias for xai — config files must normalize
+      // the same way FORGE_PROVIDER / CLI -p do, or ENV_KEYS, stored
+      // accounts, and providers.* lookups all miss.
+      fs.writeFileSync(path.join(tmp, "config.toml"), 'provider = "grok"\n');
+      assert.equal(loadConfig({}, tmp).provider, "xai");
+      fs.writeFileSync(path.join(tmp, "config.toml"), 'provider = "claude"\n');
+      assert.equal(loadConfig({}, tmp).provider, "anthropic");
+      fs.writeFileSync(path.join(tmp, "config.toml"), 'provider = "DS"\n');
+      assert.equal(loadConfig({}, tmp).provider, "deepseek");
+      // Canonical ids stay themselves.
+      fs.writeFileSync(path.join(tmp, "config.toml"), 'provider = "xai"\n');
+      assert.equal(loadConfig({}, tmp).provider, "xai");
+    } finally {
+      if (prevHome === undefined) delete process.env.FORGE_HOME;
+      else process.env.FORGE_HOME = prevHome;
+      if (prevProv === undefined) delete process.env.FORGE_PROVIDER;
+      else process.env.FORGE_PROVIDER = prevProv;
+      if (prevModel === undefined) delete process.env.FORGE_MODEL;
+      else process.env.FORGE_MODEL = prevModel;
+    }
+  });
+
+  it("passes unknown custom provider ids through unchanged", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-cfg-provcustom-"));
+    const prevHome = process.env.FORGE_HOME;
+    const prevProv = process.env.FORGE_PROVIDER;
+    try {
+      process.env.FORGE_HOME = tmp;
+      delete process.env.FORGE_PROVIDER;
+      fs.writeFileSync(path.join(tmp, "config.toml"), 'provider = "acme-corp"\n');
+      assert.equal(loadConfig({}, tmp).provider, "acme-corp");
+    } finally {
+      if (prevHome === undefined) delete process.env.FORGE_HOME;
+      else process.env.FORGE_HOME = prevHome;
+      if (prevProv === undefined) delete process.env.FORGE_PROVIDER;
+      else process.env.FORGE_PROVIDER = prevProv;
+    }
+  });
+});

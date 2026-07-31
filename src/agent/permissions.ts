@@ -4,7 +4,7 @@ import { stdin as input, stdout as output } from "node:process";
 import path from "node:path";
 import chalk from "chalk";
 import { isSoftDangerousBash, checkBashHardDeny } from "./safety.js";
-import { compileRules, evaluateRules, type RulesEvaluation } from "./rules.js";
+import { compileRules, evaluateRules, patternToRegExp, type RulesEvaluation } from "./rules.js";
 import {
   commandCheckTargets,
   containsPipe,
@@ -14,7 +14,7 @@ import {
   tokenizeSimple,
 } from "./shell-parse.js";
 import { alwaysPatternFromTokens, isReadOnlyCommand } from "./shell-arity.js";
-import { addSavedAllow, savedAsAllowRules } from "./permission-saved.js";
+import { addSavedAllow, loadSavedAllows, savedAsAllowRules } from "./permission-saved.js";
 import { logSandboxEvent } from "./sandbox-log.js";
 import { isWithinRoot } from "../util/fs.js";
 import { formatPermissionPreview } from "../util/format.js";
@@ -427,10 +427,10 @@ export class PermissionGate {
             ? path.resolve(raw)
             : path.resolve(workspace, raw);
         if (raw.includes("*") && !raw.includes("/")) continue;
-        if (
-          !isWithinRoot(workspace, abs) &&
-          (path.isAbsolute(raw) || raw.startsWith("~") || raw.startsWith(".."))
-        ) {
+        // Containment on the resolved path: `sub/../../etc/hosts` escapes the
+        // workspace without starting with "..". Plain relatives only escape
+        // via embedded ".." segments, so this adds no false positives.
+        if (!isWithinRoot(workspace, abs)) {
           outside.push(abs);
         }
       }
@@ -442,6 +442,18 @@ export class PermissionGate {
       const key = `external_directory:${path.dirname(p)}/*`;
       if (this.sessionPatterns.has(key) || this.sessionPatterns.has("external_directory:*")) {
         return null;
+      }
+    }
+
+    // Persisted [a]lways grants: this gate runs before rule evaluation, so
+    // consult the saved store directly (same bypass as session patterns).
+    // An explicit readOutsideWorkspace:"deny" policy still wins.
+    if (policy !== "deny") {
+      for (const saved of loadSavedAllows(workspace)) {
+        if (saved.tool !== "external_directory") continue;
+        if (outside.some((p) => patternToRegExp(saved.pattern || "*").test(p))) {
+          return null;
+        }
       }
     }
 
@@ -536,7 +548,7 @@ export class PermissionGate {
         return { decision: "allow_session", reason: "session_tool" };
       }
       if (ans === "a" || ans === "always") {
-        const tool =
+        let tool =
           toolName === "run_terminal_command"
             ? "bash"
             : toolName === "Write"
@@ -548,6 +560,10 @@ export class PermissionGate {
                   : toolName === "Read"
                     ? "read_file"
                     : toolName;
+        // External-directory asks must persist under the key the checker
+        // consults (external_directory:<dir>/*), not the real tool name —
+        // only that call site passes alwaysPattern.
+        if (opts.alwaysPattern) tool = "external_directory";
         const pattern =
           opts.alwaysPattern ||
           (tool === "bash"

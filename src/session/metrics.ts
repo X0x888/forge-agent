@@ -428,8 +428,16 @@ export function collectUsageStats(opts?: {
                 try {
                   process.kill(Math.trunc(pid), 0);
                   sessionLocked += 1;
-                } catch {
-                  /* dead */
+                } catch (err) {
+                  // EPERM = alive but owned by another user — still locked
+                  // (matches lock.ts pidAlive / sessionHasForeignLiveLock).
+                  if (
+                    typeof err === "object" &&
+                    err !== null &&
+                    (err as NodeJS.ErrnoException).code === "EPERM"
+                  ) {
+                    sessionLocked += 1;
+                  }
                 }
               }
             } catch {

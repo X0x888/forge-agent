@@ -2,6 +2,7 @@ import type {
   ChatMessage,
   ChatRequest,
   ChatResponse,
+  ChatUsage,
   LLMProvider,
   StreamDelta,
   ToolCall,
@@ -55,6 +56,67 @@ function cacheUsageFields(u?: {
 }
 
 /**
+ * Anthropic EXCLUDES cache_read/cache_creation tokens from input_tokens.
+ * Fold both buckets into prompt_tokens so session token totals and the
+ * /budget spend cap (estimateCostUsd sees only scalar prompt/completion)
+ * do not under-report the cached prefix. Cache reads priced at full input
+ * rate overestimate — the same safe direction as the OpenAI-compat side,
+ * whose prompt_tokens already include cached tokens (see estimateCostUsd).
+ */
+function toChatUsage(u: {
+  input_tokens?: number;
+  output_tokens?: number;
+  cache_read_input_tokens?: number;
+  cache_creation_input_tokens?: number;
+}): ChatUsage {
+  const prompt =
+    (u.input_tokens ?? 0) +
+    (u.cache_read_input_tokens ?? 0) +
+    (u.cache_creation_input_tokens ?? 0);
+  const completion = u.output_tokens ?? 0;
+  return {
+    prompt_tokens: prompt,
+    completion_tokens: completion,
+    total_tokens: prompt + completion,
+    ...cacheUsageFields(u),
+  };
+}
+
+/**
+ * Merge a message_delta usage event into the accumulated stream usage.
+ * message_delta usually omits input/cache counters — keep the message_start
+ * values unless the event overrides them. prev.prompt_tokens is already
+ * cache-folded, so re-fold only when the delta carries fresh input_tokens.
+ */
+function mergeStreamUsage(
+  prev: ChatUsage | undefined,
+  u: {
+    input_tokens?: number;
+    output_tokens?: number;
+    cache_read_input_tokens?: number;
+    cache_creation_input_tokens?: number;
+  },
+): ChatUsage {
+  const cacheRead =
+    u.cache_read_input_tokens ?? prev?.cache_read_input_tokens ?? 0;
+  const cacheWrite =
+    u.cache_creation_input_tokens ?? prev?.cache_creation_input_tokens ?? 0;
+  const prompt =
+    u.input_tokens != null
+      ? u.input_tokens + cacheRead + cacheWrite
+      : (prev?.prompt_tokens ?? 0);
+  const completion = u.output_tokens ?? prev?.completion_tokens ?? 0;
+  const merged: ChatUsage = {
+    prompt_tokens: prompt,
+    completion_tokens: completion,
+    total_tokens: prompt + completion,
+  };
+  if (cacheRead) merged.cache_read_input_tokens = cacheRead;
+  if (cacheWrite) merged.cache_creation_input_tokens = cacheWrite;
+  return merged;
+}
+
+/**
  * Native Anthropic Messages API adapter.
  * Converts OpenAI-style tool messages to Anthropic content blocks.
  */
@@ -85,7 +147,19 @@ export class AnthropicProvider implements LLMProvider {
     messages: unknown[];
   } {
     let system: string | undefined;
-    const out: unknown[] = [];
+    const out: Array<{ role: string; content: unknown[] }> = [];
+
+    // Anthropic 400s on empty text blocks ("text content blocks must be
+    // non-empty") and on non-alternating roles. Persisted history can hold
+    // empty user/assistant messages (empty-response recovery leaves
+    // content:null), so skip empty blocks/messages and merge any same-role
+    // neighbors the skips leave behind.
+    const pushBlocks = (role: "user" | "assistant", blocks: unknown[]) => {
+      if (blocks.length === 0) return;
+      const last = out[out.length - 1];
+      if (last && last.role === role) last.content.push(...blocks);
+      else out.push({ role, content: blocks });
+    };
 
     for (const m of messages) {
       if (m.role === "system") {
@@ -93,7 +167,7 @@ export class AnthropicProvider implements LLMProvider {
         continue;
       }
       if (m.role === "user") {
-        out.push({ role: "user", content: m.content || "" });
+        if (m.content) pushBlocks("user", [{ type: "text", text: m.content }]);
         continue;
       }
       if (m.role === "assistant") {
@@ -111,10 +185,7 @@ export class AnthropicProvider implements LLMProvider {
             });
           }
         }
-        out.push({
-          role: "assistant",
-          content: content.length ? content : [{ type: "text", text: "" }],
-        });
+        pushBlocks("assistant", content);
         continue;
       }
       if (m.role === "tool") {
@@ -125,11 +196,9 @@ export class AnthropicProvider implements LLMProvider {
           tool_use_id: m.tool_call_id,
           content: m.content || "",
         };
-        const last = out[out.length - 1] as
-          | { role: string; content: unknown }
-          | undefined;
-        if (last && last.role === "user" && Array.isArray(last.content)) {
-          (last.content as unknown[]).push(block);
+        const last = out[out.length - 1];
+        if (last && last.role === "user") {
+          last.content.push(block);
         } else {
           out.push({ role: "user", content: [block] });
         }
@@ -249,14 +318,7 @@ export class AnthropicProvider implements LLMProvider {
         tool_calls: toolCalls.length ? toolCalls : undefined,
       },
       finish_reason: finish,
-      usage: json.usage
-        ? {
-            prompt_tokens: json.usage.input_tokens,
-            completion_tokens: json.usage.output_tokens,
-            total_tokens: json.usage.input_tokens + json.usage.output_tokens,
-            ...cacheUsageFields(json.usage),
-          }
-        : undefined,
+      usage: json.usage ? toChatUsage(json.usage) : undefined,
     };
   }
 
@@ -374,6 +436,111 @@ export class AnthropicProvider implements LLMProvider {
     let model = req.model;
     let usage: ChatResponse["usage"] | undefined;
 
+    const processSseLine = (line: string): void => {
+      const trimmed = line.trim();
+      if (!trimmed.startsWith("data:")) return;
+      const data = trimmed.slice(5).trim();
+      if (!data) return;
+      const event = JSON.parse(data) as {
+        type: string;
+        message?: {
+          id: string;
+          model: string;
+          usage?: {
+            input_tokens?: number;
+            output_tokens?: number;
+            cache_read_input_tokens?: number;
+            cache_creation_input_tokens?: number;
+          };
+        };
+        index?: number;
+        content_block?: {
+          type: string;
+          text?: string;
+          id?: string;
+          name?: string;
+        };
+        delta?: {
+          type: string;
+          text?: string;
+          partial_json?: string;
+          stop_reason?: string;
+        };
+        usage?: {
+          input_tokens?: number;
+          output_tokens?: number;
+          cache_read_input_tokens?: number;
+          cache_creation_input_tokens?: number;
+        };
+        error?: { type?: string; message?: string };
+      };
+      // Anthropic error events mid-stream (overloaded, rate limit, etc.)
+      if (event.type === "error" || event.error) {
+        const msg =
+          event.error?.message ||
+          event.error?.type ||
+          "stream error";
+        throw new Error(`${this.id} stream error: ${msg}`);
+      }
+      if (event.type === "message_start" && event.message) {
+        id = event.message.id;
+        model = event.message.model;
+        if (event.message.usage) {
+          usage = toChatUsage(event.message.usage);
+        }
+      }
+      if (event.type === "content_block_start" && event.content_block) {
+        if (event.content_block.type === "tool_use") {
+          currentTool = {
+            id: event.content_block.id || `toolu_${toolCalls.length}`,
+            name: event.content_block.name || "",
+            args: "",
+          };
+        }
+      }
+      if (event.type === "content_block_delta" && event.delta) {
+        if (event.delta.type === "text_delta" && event.delta.text) {
+          content += event.delta.text;
+          onDelta({ content: event.delta.text });
+        }
+        if (event.delta.type === "input_json_delta" && event.delta.partial_json) {
+          if (currentTool) currentTool.args += event.delta.partial_json;
+        }
+      }
+      if (event.type === "content_block_stop" && currentTool) {
+        toolCalls.push({
+          id: currentTool.id,
+          type: "function",
+          function: {
+            name: currentTool.name,
+            arguments: currentTool.args || "{}",
+          },
+        });
+        onDelta({
+          tool_calls: [
+            {
+              index: toolCalls.length - 1,
+              id: currentTool.id,
+              function: {
+                name: currentTool.name,
+                arguments: currentTool.args,
+              },
+            },
+          ],
+        });
+        currentTool = null;
+      }
+      if (event.type === "message_delta") {
+        if (event.delta?.stop_reason) {
+          finishReason = mapAnthropicStopReason(event.delta.stop_reason);
+          onDelta({ finish_reason: finishReason });
+        }
+        if (event.usage) {
+          usage = mergeStreamUsage(usage, event.usage);
+        }
+      }
+    };
+
     try {
       while (true) {
         if (merged.aborted) {
@@ -404,128 +571,8 @@ export class AnthropicProvider implements LLMProvider {
         const lines = buffer.split("\n");
         buffer = lines.pop() ?? "";
         for (const line of lines) {
-          const trimmed = line.trim();
-          if (!trimmed.startsWith("data:")) continue;
-          const data = trimmed.slice(5).trim();
-          if (!data) continue;
           try {
-            const event = JSON.parse(data) as {
-              type: string;
-              message?: {
-                id: string;
-                model: string;
-                usage?: {
-                  input_tokens?: number;
-                  output_tokens?: number;
-                  cache_read_input_tokens?: number;
-                  cache_creation_input_tokens?: number;
-                };
-              };
-              index?: number;
-              content_block?: {
-                type: string;
-                text?: string;
-                id?: string;
-                name?: string;
-              };
-              delta?: {
-                type: string;
-                text?: string;
-                partial_json?: string;
-                stop_reason?: string;
-              };
-              usage?: {
-                input_tokens?: number;
-                output_tokens?: number;
-                cache_read_input_tokens?: number;
-                cache_creation_input_tokens?: number;
-              };
-              error?: { type?: string; message?: string };
-            };
-            // Anthropic error events mid-stream (overloaded, rate limit, etc.)
-            if (event.type === "error" || event.error) {
-              const msg =
-                event.error?.message ||
-                event.error?.type ||
-                "stream error";
-              throw new Error(`${this.id} stream error: ${msg}`);
-            }
-            if (event.type === "message_start" && event.message) {
-              id = event.message.id;
-              model = event.message.model;
-              if (event.message.usage) {
-                usage = {
-                  prompt_tokens: event.message.usage.input_tokens ?? 0,
-                  completion_tokens: event.message.usage.output_tokens ?? 0,
-                  total_tokens:
-                    (event.message.usage.input_tokens ?? 0) +
-                    (event.message.usage.output_tokens ?? 0),
-                  ...cacheUsageFields(event.message.usage),
-                };
-              }
-            }
-            if (event.type === "content_block_start" && event.content_block) {
-              if (event.content_block.type === "tool_use") {
-                currentTool = {
-                  id: event.content_block.id || `toolu_${toolCalls.length}`,
-                  name: event.content_block.name || "",
-                  args: "",
-                };
-              }
-            }
-            if (event.type === "content_block_delta" && event.delta) {
-              if (event.delta.type === "text_delta" && event.delta.text) {
-                content += event.delta.text;
-                onDelta({ content: event.delta.text });
-              }
-              if (event.delta.type === "input_json_delta" && event.delta.partial_json) {
-                if (currentTool) currentTool.args += event.delta.partial_json;
-              }
-            }
-            if (event.type === "content_block_stop" && currentTool) {
-              toolCalls.push({
-                id: currentTool.id,
-                type: "function",
-                function: {
-                  name: currentTool.name,
-                  arguments: currentTool.args || "{}",
-                },
-              });
-              onDelta({
-                tool_calls: [
-                  {
-                    index: toolCalls.length - 1,
-                    id: currentTool.id,
-                    function: {
-                      name: currentTool.name,
-                      arguments: currentTool.args,
-                    },
-                  },
-                ],
-              });
-              currentTool = null;
-            }
-            if (event.type === "message_delta") {
-              if (event.delta?.stop_reason) {
-                finishReason = mapAnthropicStopReason(event.delta.stop_reason);
-                onDelta({ finish_reason: finishReason });
-              }
-              if (event.usage) {
-                usage = {
-                  prompt_tokens:
-                    event.usage.input_tokens ?? usage?.prompt_tokens ?? 0,
-                  completion_tokens:
-                    event.usage.output_tokens ?? usage?.completion_tokens ?? 0,
-                  total_tokens:
-                    (event.usage.input_tokens ?? usage?.prompt_tokens ?? 0) +
-                    (event.usage.output_tokens ?? usage?.completion_tokens ?? 0),
-                  // message_delta usually omits cache counters — keep the
-                  // message_start values unless the event overrides them.
-                  ...cacheUsageFields(usage),
-                  ...cacheUsageFields(event.usage),
-                };
-              }
-            }
+            processSseLine(line);
           } catch (err) {
             if ((err as Error).message === "Aborted") throw err;
             if (/timed out after/i.test((err as Error).message || "")) throw err;
@@ -545,6 +592,16 @@ export class AnthropicProvider implements LLMProvider {
               : "Aborted",
         );
       }
+      // Flush trailing buffer (final event without newline) — parity with
+      // openai-compat; a final unterminated SSE line carries finish_reason
+      // and usage.
+      if (buffer.trim()) {
+        try {
+          processSseLine(buffer);
+        } catch (err) {
+          if (/stream error:/i.test((err as Error).message || "")) throw err;
+        }
+      }
     } finally {
       merged.removeEventListener("abort", onAbort);
       dispose();
@@ -558,14 +615,21 @@ export class AnthropicProvider implements LLMProvider {
       }
     }
 
-    // Flush incomplete tool block if stream ended mid-tool (truncated args)
-    if (currentTool) {
+    // Flush incomplete tool block if stream ended mid-tool (truncated args).
+    // Widen past the stale null narrowing — all currentTool writes happen
+    // inside the processSseLine closure, which CFA cannot see.
+    const pendingTool = currentTool as {
+      id: string;
+      name: string;
+      args: string;
+    } | null;
+    if (pendingTool) {
       toolCalls.push({
-        id: currentTool.id,
+        id: pendingTool.id,
         type: "function",
         function: {
-          name: currentTool.name,
-          arguments: currentTool.args || "{}",
+          name: pendingTool.name,
+          arguments: pendingTool.args || "{}",
         },
       });
       currentTool = null;

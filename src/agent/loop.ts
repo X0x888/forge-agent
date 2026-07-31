@@ -2165,6 +2165,7 @@ async function prepareToolResult(opts: {
             path: input.path,
             kind: input.kind,
             before: input.before,
+            mode: input.mode,
             turn: session.meta.turnCount,
             skipped: input.skipped,
             reason: input.reason,

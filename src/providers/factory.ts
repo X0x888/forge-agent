@@ -11,9 +11,11 @@ import {
 export function createProvider(config: ForgeConfig, auth: ResolvedAuth): LLMProvider {
   const provider = auth.provider;
   const pcfg = config.providers[provider];
-  const baseUrl = auth.baseUrl ?? pcfg?.baseUrl ?? config.baseUrl ?? "https://api.openai.com/v1";
+  const baseUrl = auth.baseUrl ?? pcfg?.baseUrl ?? config.baseUrl;
 
   if (provider === "anthropic") {
+    // No shared OpenAI fallback here — AnthropicProvider defaults to
+    // https://api.anthropic.com/v1 when nothing is configured.
     return new AnthropicProvider({ baseUrl, apiKey: auth.token });
   }
 
@@ -31,7 +33,7 @@ export function createProvider(config: ForgeConfig, auth: ResolvedAuth): LLMProv
     baseUrl:
       provider === "copilot"
         ? auth.baseUrl ?? pcfg?.baseUrl ?? COPILOT_API_BASE
-        : baseUrl,
+        : baseUrl ?? "https://api.openai.com/v1",
     apiKey: auth.token,
     extraHeaders,
   });

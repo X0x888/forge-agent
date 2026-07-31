@@ -70,6 +70,8 @@ export async function toolApplyPatch(
         rel: string;
         abs: string;
         before: string;
+        /** Pre-image permission bits for the undo journal. */
+        mode?: number;
       }
     | {
         kind: "update";
@@ -77,6 +79,8 @@ export async function toolApplyPatch(
         abs: string;
         content: string;
         before: string;
+        /** Pre-image permission bits for the undo journal. */
+        mode?: number;
         moveRel?: string;
         moveAbs?: string;
       };
@@ -165,9 +169,11 @@ export async function toolApplyPatch(
         }
       }
       let before = "";
+      let preMode: number | undefined;
       if (fromDisk) {
         try {
           before = await fsp.readFile(abs, "utf8");
+          preMode = fs.statSync(abs).mode & 0o777;
         } catch (err) {
           return {
             output: `apply_patch failed: cannot read ${hunk.path} for delete: ${(err as Error).message}`,
@@ -184,6 +190,7 @@ export async function toolApplyPatch(
         rel: path.relative(ctx.workspace, abs) || abs,
         abs,
         before,
+        mode: preMode,
       });
       willDelete.add(abs);
       willCreate.delete(abs);
@@ -218,9 +225,15 @@ export async function toolApplyPatch(
       /* fall through to read */
     }
     let original: string;
+    let preMode: number | undefined;
     try {
       if (srcOnDisk) {
         original = await fsp.readFile(abs, "utf8");
+        try {
+          preMode = fs.statSync(abs).mode & 0o777;
+        } catch {
+          preMode = undefined;
+        }
       } else {
         const addOp = planned.find((p) => p.kind === "add" && p.abs === abs);
         original = addOp && addOp.kind === "add" ? addOp.content : "";
@@ -278,6 +291,7 @@ export async function toolApplyPatch(
       abs,
       content: next,
       before: original,
+      mode: preMode,
       moveAbs,
       moveRel,
     });
@@ -294,6 +308,7 @@ export async function toolApplyPatch(
       path: string;
       kind: "create" | "update" | "delete";
       before?: string;
+      mode?: number;
       skipped?: boolean;
       reason?: string;
     },
@@ -341,11 +356,17 @@ export async function toolApplyPatch(
           journal({
             path: op.abs,
             kind: "delete",
+            mode: op.mode,
             skipped: true,
             reason: `pre-image ${bytes} bytes exceeds journal cap`,
           });
         } else {
-          journal({ path: op.abs, kind: "delete", before: op.before });
+          journal({
+            path: op.abs,
+            kind: "delete",
+            before: op.before,
+            mode: op.mode,
+          });
         }
         applied.push(`D ${op.rel}`);
         ctx.onEdit?.();
@@ -364,11 +385,17 @@ export async function toolApplyPatch(
             journal({
               path: op.abs,
               kind: "delete",
+              mode: op.mode,
               skipped: true,
               reason: `pre-image ${bytes} bytes exceeds journal cap`,
             });
           } else {
-            journal({ path: op.abs, kind: "delete", before: op.before });
+            journal({
+              path: op.abs,
+              kind: "delete",
+              before: op.before,
+              mode: op.mode,
+            });
           }
           applied.push(`M ${op.rel} → ${op.moveRel}`);
           writtenAbs.push(op.moveAbs);
@@ -379,11 +406,17 @@ export async function toolApplyPatch(
             journal({
               path: op.abs,
               kind: "update",
+              mode: op.mode,
               skipped: true,
               reason: `pre-image ${bytes} bytes exceeds journal cap`,
             });
           } else {
-            journal({ path: op.abs, kind: "update", before: op.before });
+            journal({
+              path: op.abs,
+              kind: "update",
+              before: op.before,
+              mode: op.mode,
+            });
           }
           applied.push(`M ${op.rel}`);
           writtenAbs.push(op.abs);

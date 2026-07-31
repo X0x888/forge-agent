@@ -317,6 +317,15 @@ export function loadConfig(overrides: Partial<ForgeConfig> = {}, cwd = process.c
     globalJson as never,
   ) as unknown as ForgeConfig;
 
+  // Config-file provider goes through the same alias normalization as
+  // FORGE_PROVIDER / CLI -p: provider = "grok" must resolve to xai, or
+  // ENV_KEYS, stored accounts, and providers.* lookups all miss. Unknown
+  // values pass through untouched (custom provider ids are allowed here).
+  if (typeof globalMerged.provider === "string") {
+    const norm = normalizeProviderId(globalMerged.provider);
+    if (norm.ok) globalMerged.provider = norm.provider;
+  }
+
   const globalPermission = {
     deny: globalMerged.permission?.deny ?? DEFAULT_CONFIG.permission.deny,
     allow: globalMerged.permission?.allow ?? [],

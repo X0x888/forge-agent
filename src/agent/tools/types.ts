@@ -16,6 +16,8 @@ export interface ToolContext {
     path: string;
     kind: "create" | "update" | "delete";
     before?: string;
+    /** Pre-image permission bits (stat.mode & 0o777) when known. */
+    mode?: number;
     skipped?: boolean;
     reason?: string;
   }) => void;
