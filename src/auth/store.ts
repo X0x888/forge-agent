@@ -241,6 +241,10 @@ export function findAccountByIdentity(
   return Object.values(s.accounts).find((a) => {
     if (a.provider !== provider) return false;
     const label = a.accountLabel ? norm(a.accountLabel) : "";
+    // An empty stored label must never satisfy a non-empty query — "" is a
+    // suffix of every string, which would match the first label-less account
+    // and let token rotation / refresh-token clears hit the wrong account.
+    if (!label) return false;
     return label === target || label.endsWith(target) || target.endsWith(label);
   });
 }

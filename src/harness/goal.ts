@@ -26,6 +26,8 @@ export interface GoalState {
   stuckBlocks: number;
   lastBlockEditCount: number;
   lastBlockEpoch: number;
+  /** Evidence bounces issued against weak attestations (capped at 1) */
+  evidenceNudges?: number;
   achievedAt?: string;
   armSource: "manual" | "auto";
   sessionId: string;
@@ -41,6 +43,10 @@ export interface GoalDecision {
 
 const GOAL_ATTEST_RE =
   /\*\*Goal achieved\.\*\*|\*\*Objective coverage\.\*\*|Goal achieved\.|OBJECTIVE COMPLETE/i;
+
+/** Evidence bounces allowed on weak **Goal achieved.** attestations before
+ * falling through to the normal stuck-wall logic (parity with ULW). */
+const MAX_GOAL_EVIDENCE_NUDGES = 1;
 
 export function goalStatePath(sessionId: string): string {
   return path.join(forgeHome(), "sessions", sessionId, "goal.json");
@@ -118,6 +124,7 @@ export function armGoal(
     stuckBlocks: 0,
     lastBlockEditCount: 0,
     lastBlockEpoch: 0,
+    evidenceNudges: 0,
     armSource: source,
     sessionId,
   };
@@ -218,35 +225,16 @@ export function evaluateGoalAtStop(opts: {
     return { block: false };
   }
 
+  const msg = opts.lastAssistantMessage || "";
+  const attested = GOAL_ATTEST_RE.test(msg);
+  const needEvidence = (opts.editCount || 0) > 0;
+  const attestationHasEvidence =
+    !attested ||
+    !needEvidence ||
+    hasAttestationEvidence(msg, opts.verificationPassed ?? opts.verificationRan);
+
   // Release on attestation — require evidence when the session had edits.
-  if (GOAL_ATTEST_RE.test(opts.lastAssistantMessage || "")) {
-    const msg = opts.lastAssistantMessage || "";
-    const needEvidence = (opts.editCount || 0) > 0;
-    const ok = !needEvidence
-      ? true
-      : hasAttestationEvidence(
-          msg,
-          opts.verificationPassed ?? opts.verificationRan,
-        );
-    if (!ok) {
-      const preferred = (opts.preferredCheckCommands || [])
-        .map((c) => String(c || "").trim())
-        .filter(Boolean)
-        .slice(0, 4);
-      const checkLine = preferred.length
-        ? preferred.map((c) => `\`${c}\``).join(" · ")
-        : "`npm test` / typecheck / project check";
-      return {
-        block: true,
-        reason:
-          "Goal attestation needs evidence after edits — run a successful project check, then re-attest **Goal achieved.** with ✅/❌ per criterion.",
-        reanchor:
-          `[Forge system-reminder — Goal attestation needs evidence]\n` +
-          `You claimed **Goal achieved.** after edits without a successful structural check.\n` +
-          `Run now: ${checkLine}\n` +
-          `Then re-attest with ✅/❌ per criterion + the command that passed.`,
-      };
-    }
+  if (attested && attestationHasEvidence) {
     g.status = "achieved";
     g.paused = true;
     g.achievedAt = nowIso();
@@ -261,7 +249,9 @@ export function evaluateGoalAtStop(opts: {
     return { block: false };
   }
 
-  // Progress detection: edits since last block
+  // Progress detection: edits since last block. Runs (and persists) BEFORE the
+  // evidence bounce below so repeated weak attestations still feed the
+  // stuck-wall — the bounce can never become an infinite trap.
   const progressed = opts.editCount > g.lastBlockEditCount;
   if (progressed) {
     g.stuckBlocks = 0;
@@ -287,6 +277,36 @@ export function evaluateGoalAtStop(opts: {
       block: false,
       stuckReleased: true,
       reason: `Stuck-wall: ${g.stuckBlocks} consecutive Stop attempts with no file edits. Goal released. Re-arm with /goal resume or /goal <objective>.`,
+    };
+  }
+
+  // Weak attestation (edits but no machine-checkable evidence) → bounce once,
+  // demanding a real check. Capped so it can never become an infinite trap:
+  // stuck tracking above already ran and persisted, and after the cap the stop
+  // falls through to the normal block path where the stuck-wall can engage.
+  if (
+    attested &&
+    !attestationHasEvidence &&
+    (g.evidenceNudges ?? 0) < MAX_GOAL_EVIDENCE_NUDGES
+  ) {
+    g.evidenceNudges = (g.evidenceNudges ?? 0) + 1;
+    saveGoal(g);
+    const preferred = (opts.preferredCheckCommands || [])
+      .map((c) => String(c || "").trim())
+      .filter(Boolean)
+      .slice(0, 4);
+    const checkLine = preferred.length
+      ? preferred.map((c) => `\`${c}\``).join(" · ")
+      : "`npm test` / typecheck / project check";
+    return {
+      block: true,
+      reason:
+        "Goal attestation needs evidence after edits — run a successful project check, then re-attest **Goal achieved.** with ✅/❌ per criterion.",
+      reanchor:
+        `[Forge system-reminder — Goal attestation needs evidence]\n` +
+        `You claimed **Goal achieved.** after edits without a successful structural check.\n` +
+        `Run now: ${checkLine}\n` +
+        `Then re-attest with ✅/❌ per criterion + the command that passed.`,
     };
   }
 

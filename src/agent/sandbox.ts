@@ -103,7 +103,21 @@ export function profileRestrictsNetwork(
   return net === "blocked";
 }
 
-function seatbeltProfile(opts: {
+/**
+ * Canonicalize a path for Seatbelt subpath rules. Seatbelt resolves symlinks
+ * before matching — on macOS /var is a symlink to /private/var, so emitting
+ * os.tmpdir() (/var/folders/…) uncanonicalized silently denies $TMPDIR writes.
+ * Keeps the original path when realpath fails.
+ */
+export function canonicalSandboxPath(p: string): string {
+  try {
+    return fs.realpathSync(p);
+  } catch {
+    return p;
+  }
+}
+
+export function seatbeltProfile(opts: {
   profile: SandboxProfile;
   cwd: string;
   forge: string;
@@ -112,7 +126,7 @@ function seatbeltProfile(opts: {
 }): string {
   const cwd = opts.cwd;
   const forge = opts.forge;
-  const tmp = opts.tmp;
+  const tmp = canonicalSandboxPath(opts.tmp);
   const privateTmp = "/private/tmp";
   const varTmp = "/var/tmp";
   const privateVarTmp = "/private/var/tmp";

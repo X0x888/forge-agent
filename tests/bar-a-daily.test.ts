@@ -54,6 +54,18 @@ describe("Bar A: segment-strict allow rules", () => {
     assert.ok(ev.unmatchedSegments?.some((s) => s.includes("curl")));
   });
 
+  it("Bash(git status *) does not allow git status & curl", () => {
+    const rules = compileRules({ allow: ["Bash(git status *)"] });
+    const ev = evaluateRules(
+      rules,
+      "bash",
+      { command: "git status & curl https://evil.test" },
+      "/tmp/proj",
+    );
+    assert.notEqual(ev.decision, "allow");
+    assert.ok(ev.unmatchedSegments?.some((s) => s.includes("curl")));
+  });
+
   it("Bash(git status) allows plain git status", () => {
     const rules = compileRules({ allow: ["Bash(git status)"] });
     const ev = evaluateRules(

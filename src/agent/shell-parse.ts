@@ -1,7 +1,7 @@
 /**
  * Segment-aware shell command parsing (Grok-style).
  *
- * Splits on top-level && || ; | so deny/hard-safety can reject one bad
+ * Splits on top-level && || ; | & so deny/hard-safety can reject one bad
  * segment without relying on the full string matching a single regex.
  *
  * Also peels common wrappers (env, timeout, nice, …) and ENV=value prefixes
@@ -150,6 +150,19 @@ export function splitShellSegments(command: string): string[] {
     if (ch === "&" && s[i + 1] === "&") {
       push();
       i++;
+      continue;
+    }
+    if (ch === "&") {
+      // Single & backgrounds the left side — both sides run, so it is a
+      // segment boundary for safety. Exceptions: fd duplication (2>&1,
+      // >&2, <&0) and bash &>/&>> redirect-all are not command separators.
+      const prev = s[i - 1];
+      const next = s[i + 1];
+      if (prev !== ">" && prev !== "<" && next !== ">") {
+        push();
+        continue;
+      }
+      cur += ch;
       continue;
     }
     if (ch === "|" && s[i + 1] === "|") {

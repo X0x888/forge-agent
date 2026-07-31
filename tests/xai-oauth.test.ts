@@ -10,7 +10,13 @@ import {
   emailFromIdToken,
   xaiRedirectPortFromUri,
 } from "../src/auth/xai-oauth.js";
-import { getOAuthProfile, supportsOAuth } from "../src/auth/login.js";
+import {
+  getOAuthProfile,
+  supportsOAuth,
+  waitForOAuthCallback,
+} from "../src/auth/login.js";
+import type { Server } from "node:http";
+import type { AddressInfo } from "node:net";
 
 describe("SuperGrok / xAI OIDC profile", () => {
   it("uses Grok CLI public client and oauth2 endpoints", () => {
@@ -46,5 +52,64 @@ describe("SuperGrok / xAI OIDC profile", () => {
     assert.equal(emailFromIdToken(fake), "user@example.com");
     assert.equal(emailFromIdToken(undefined), undefined);
     assert.equal(emailFromIdToken("not-a-jwt"), undefined);
+  });
+});
+
+describe("browser OAuth callback watchdog", () => {
+  function startCallback(timeoutMs: number) {
+    return waitForOAuthCallback({
+      port: 0, // ephemeral — real port read off the server
+      redirectPath: "/callback",
+      expectedState: "state-abc",
+      provider: "test",
+      redirectUri: "http://127.0.0.1/callback",
+      timeoutMs,
+    });
+  }
+
+  function listeningPort(server: Server): Promise<number> {
+    return new Promise((resolve) => {
+      server.on("listening", () => {
+        resolve((server.address() as AddressInfo).port);
+      });
+    });
+  }
+
+  // Node nulls _onTimeout inside clearTimeout — observable proof the
+  // watchdog was cleared rather than left to linger for 5 minutes.
+  const timerCleared = (timer: NodeJS.Timeout) =>
+    (timer as unknown as { _onTimeout: unknown })._onTimeout === null;
+
+  it("clears the watchdog timer on the success path", async () => {
+    const cb = startCallback(60_000);
+    // unref'd: the watchdog alone can never hold the CLI open.
+    assert.equal(cb.timer.hasRef(), false);
+    const port = await listeningPort(cb.server);
+    const resp = await fetch(
+      `http://127.0.0.1:${port}/callback?code=test-code&state=state-abc`,
+      { headers: { Connection: "close" } },
+    );
+    assert.equal(resp.status, 200);
+    assert.equal(await cb.promise, "test-code");
+    assert.equal(timerCleared(cb.timer), true);
+  });
+
+  it("clears the watchdog on the OAuth error-callback path", async () => {
+    const cb = startCallback(60_000);
+    const port = await listeningPort(cb.server);
+    // Attach the rejection handler BEFORE the callback rejects.
+    const rejection = assert.rejects(cb.promise, /access_denied/);
+    const resp = await fetch(
+      `http://127.0.0.1:${port}/callback?error=access_denied`,
+      { headers: { Connection: "close" } },
+    );
+    assert.equal(resp.status, 400);
+    await rejection;
+    assert.equal(timerCleared(cb.timer), true);
+  });
+
+  it("still rejects when the watchdog fires (unref keeps semantics)", async () => {
+    const cb = startCallback(50);
+    await assert.rejects(cb.promise, /timed out/);
   });
 });

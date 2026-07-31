@@ -11,6 +11,7 @@ import {
   isLiveSafeSlash,
   classifyLiveSlash,
   LIVE_CONTROLS_HINT,
+  type SlashResult,
 } from "../commands/slash.js";
 import { pushInterjection } from "../harness/interjection.js";
 import { saveSession, isLastVerificationStale } from "../session/session.js";
@@ -342,6 +343,16 @@ export async function runRepl(opts: {
           await shutdown();
           return;
         }
+      } catch (err) {
+        // Slash handlers do unguarded disk I/O (session save, prefs) — a
+        // throw must surface on the live dock, not kill the REPL.
+        console.log(
+          formatLiveControlFeedback(
+            text,
+            (err as Error).message || String(err),
+            "warn",
+          ),
+        );
       } finally {
         working.resume();
         working.repaint();
@@ -351,7 +362,15 @@ export async function runRepl(opts: {
       return;
     }
 
-    let slash = await handleSlash(text, { session, config, hooks, auth });
+    // Same guard as the live path — report the throw, keep the loop alive.
+    let slash: SlashResult;
+    try {
+      slash = await handleSlash(text, { session, config, hooks, auth });
+    } catch (err) {
+      log.error((err as Error).message || String(err));
+      prompt();
+      return;
+    }
     if (slash.replaceSession) {
       releaseSessionLock(session.meta.id);
       session = slash.replaceSession;
@@ -685,35 +704,66 @@ export async function runRepl(opts: {
     }
   };
 
+  // rl.close() synchronously re-emits "close" → the close handler below would
+  // otherwise start a second shutdown (SessionEnd hooks firing twice).
+  let shutdownStarted = false;
   const shutdown = async () => {
-    if (busy && abortController) abortController.abort();
-    working.stop();
-    clearInterval(hbTimer);
-    endTurn();
-    releaseSession(session.meta.id);
-    releaseSessionLock(session.meta.id);
-    // SessionEnd first so hooks can still observe in-flight bg tasks
-    await hooks.run("SessionEnd", {
-      sessionId: session.meta.id,
-      cwd: session.meta.cwd,
-      workspaceRoot: config.workspace || session.meta.cwd,
-    });
-    saveSession(session);
-    // Don't leave orphaned background shells after the REPL exits
+    if (shutdownStarted) return;
+    shutdownStarted = true;
     try {
-      const killed = killAllRunningTasks({ force: true });
-      if (killed > 0) {
-        log.dim(`Stopped ${killed} background task${killed === 1 ? "" : "s"} on exit`);
+      if (busy && abortController) abortController.abort();
+      working.stop();
+      clearInterval(hbTimer);
+      endTurn();
+      releaseSession(session.meta.id);
+      releaseSessionLock(session.meta.id);
+      // SessionEnd first so hooks can still observe in-flight bg tasks
+      await hooks.run("SessionEnd", {
+        sessionId: session.meta.id,
+        cwd: session.meta.cwd,
+        workspaceRoot: config.workspace || session.meta.cwd,
+      });
+      saveSession(session);
+      // Don't leave orphaned background shells after the REPL exits
+      try {
+        const killed = killAllRunningTasks({ force: true });
+        if (killed > 0) {
+          log.dim(`Stopped ${killed} background task${killed === 1 ? "" : "s"} on exit`);
+        }
+      } catch {
+        /* never block exit */
       }
-    } catch {
-      /* never block exit */
+      rl.close();
+    } catch (err) {
+      // Failed mid-shutdown (e.g. session save ENOSPC/EACCES) — allow one
+      // retry (/quit or Ctrl+C) instead of trapping the user with no exit.
+      shutdownStarted = false;
+      throw err;
     }
-    rl.close();
     process.exit(0);
   };
 
+  // shutdown() normally ends in process.exit(0). If it throws, still leave
+  // the process — an unhandled rejection would crash the REPL (Node default),
+  // and swallowing it would hang with readline already closed.
+  const reportShutdownError = (err: unknown) => {
+    log.error(`Shutdown failed: ${(err as Error).message || String(err)}`);
+    process.exit(1);
+  };
+
   rl.on("line", (line) => {
-    void handleLine(line);
+    // Last-resort net: an unhandled rejection here crashes the whole REPL
+    // (Node default) mid-session. Report like any other REPL error and
+    // re-dock the prompt so the input loop stays alive.
+    void handleLine(line).catch((err: unknown) => {
+      log.error((err as Error).message || String(err));
+      try {
+        if (busy) livePrompt();
+        else prompt({ forceStatus: true });
+      } catch {
+        /* readline may be closed */
+      }
+    });
   });
 
   let sigintArmed = false;
@@ -725,7 +775,7 @@ export async function runRepl(opts: {
       return;
     }
     if (sigintArmed) {
-      void shutdown();
+      void shutdown().catch(reportShutdownError);
       return;
     }
     sigintArmed = true;
@@ -737,11 +787,14 @@ export async function runRepl(opts: {
   });
 
   rl.on("close", () => {
-    void shutdown();
+    void shutdown().catch(reportShutdownError);
   });
 
   if (opts.initialPrompt) {
-    await handleLine(opts.initialPrompt);
+    await handleLine(opts.initialPrompt).catch((err: unknown) => {
+      log.error((err as Error).message || String(err));
+      prompt({ forceStatus: true });
+    });
   } else {
     prompt();
   }

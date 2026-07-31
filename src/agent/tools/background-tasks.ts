@@ -15,7 +15,7 @@ import type {
   SandboxProfile,
 } from "../../config/types.js";
 import { defaultNetworkForProfile } from "../../config/types.js";
-import { detectSandboxBackend } from "../sandbox.js";
+import { detectSandboxBackend, canonicalSandboxPath } from "../sandbox.js";
 import { syncBackgroundCounts } from "../../statusline/activity.js";
 
 export type TaskStatus = "running" | "completed" | "failed" | "killed" | "timeout";
@@ -199,13 +199,16 @@ function getSeatbeltWriter() {
       restrictNetwork: boolean;
       profPath: string;
     }) {
+      // Seatbelt canonicalizes subpath rules (macOS /var → /private/var), so
+      // the tmp path must be canonical or $TMPDIR writes are denied.
+      const tmp = canonicalSandboxPath(o.tmp);
       const writePaths =
         o.profile === "read-only"
-          ? [o.forge, o.tmp, "/private/tmp", "/var/tmp", "/private/var/tmp"]
+          ? [o.forge, tmp, "/private/tmp", "/var/tmp", "/private/var/tmp"]
           : [
               o.cwd,
               o.forge,
-              o.tmp,
+              tmp,
               "/private/tmp",
               "/var/tmp",
               "/private/var/tmp",

@@ -22,6 +22,7 @@ import {
   setAccountPriority,
   clearAllCredentials,
   makeAccountId,
+  findAccountByIdentity,
 } from "../src/auth/store.js";
 import {
   rankAccount,
@@ -125,6 +126,68 @@ describe("multi-account auth store", () => {
     assert.equal(b.created, false);
     assert.equal(listAccounts("xai").length, 1);
     assert.equal(getActiveAccount("xai")?.accessToken, "tok2");
+  });
+
+  it("identity lookup never matches a label-less account", () => {
+    // Label-less account inserted FIRST: with the old `target.endsWith("")`
+    // bug it matched every identity query and absorbed other users' tokens.
+    const anon = upsertOAuth("xai", {
+      accessToken: "tok-anon",
+      method: "subscription",
+    });
+    const alice = upsertOAuth("xai", {
+      accessToken: "tok-alice",
+      method: "subscription",
+      accountLabel: "grok:alice@x.com",
+    });
+    assert.equal(alice.created, true);
+    assert.notEqual(alice.accountId, anon.accountId);
+
+    // Non-empty identity queries must skip the label-less account entirely.
+    assert.equal(findAccountByIdentity("xai", "grok:nobody@x.com"), undefined);
+    // Exact / prefix-normalized matches still find the labeled account.
+    assert.equal(
+      findAccountByIdentity("xai", "grok:alice@x.com")?.id,
+      alice.accountId,
+    );
+    assert.equal(
+      findAccountByIdentity("xai", "alice@x.com")?.id,
+      alice.accountId,
+    );
+    // Empty hint matches nothing.
+    assert.equal(findAccountByIdentity("xai", ""), undefined);
+    assert.equal(findAccountByIdentity("xai", undefined), undefined);
+  });
+
+  it("OAuth upsert with a new identity does not clobber a label-less account", () => {
+    // refresh.ts / login.ts rotate tokens via upsertOAuth; the wrong-account
+    // match used to overwrite the first label-less account's tokens.
+    const anon = upsertOAuth("xai", {
+      accessToken: "tok-anon-original",
+      method: "subscription",
+      refreshToken: "rt-anon-original",
+    });
+    const bob = upsertOAuth("xai", {
+      accessToken: "tok-bob",
+      method: "subscription",
+      accountLabel: "grok:bob@x.com",
+    });
+    assert.equal(bob.created, true);
+    assert.notEqual(bob.accountId, anon.accountId);
+
+    const anonAfter = listAccounts("xai").find((a) => a.id === anon.accountId);
+    assert.equal(anonAfter?.accessToken, "tok-anon-original");
+    assert.equal(anonAfter?.refreshToken, "rt-anon-original");
+
+    // Same identity still updates in place (no duplicate account).
+    const bob2 = upsertOAuth("xai", {
+      accessToken: "tok-bob-rotated",
+      method: "subscription",
+      accountLabel: "grok:bob@x.com",
+    });
+    assert.equal(bob2.accountId, bob.accountId);
+    assert.equal(bob2.created, false);
+    assert.equal(listAccounts("xai").length, 2);
   });
 
   it("resolveAccountSelector finds by label and provider:N", () => {

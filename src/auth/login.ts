@@ -295,6 +295,112 @@ async function exchangeAuthorizationCode(opts: {
   return r;
 }
 
+const escapeHtml = (s: string) =>
+  s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+
+/**
+ * Wait for the browser OAuth redirect on a loopback server. Extracted from
+ * browserOAuthLogin so the flow is testable without a real browser.
+ *
+ * The watchdog timer is cleared on EVERY resolution path (success, OAuth
+ * error callback, invalid callback, server error) and unref'd — a finished
+ * login must never keep the CLI alive until the timeout fires.
+ */
+export function waitForOAuthCallback(opts: {
+  port: number;
+  redirectPath: string;
+  expectedState: string;
+  /** Provider id — used only for the xai fixed-port EADDRINUSE hint. */
+  provider: string;
+  redirectUri: string;
+  /** Defaults to 5 minutes. */
+  timeoutMs?: number;
+  onListening?: () => void;
+}): { promise: Promise<string>; server: http.Server; timer: NodeJS.Timeout } {
+  const { port, redirectPath, expectedState, provider, redirectUri } = opts;
+  const timeoutMs = opts.timeoutMs ?? 5 * 60 * 1000;
+  let server!: http.Server;
+  let timer!: NodeJS.Timeout;
+  const promise = new Promise<string>((resolve, reject) => {
+    // Clear the watchdog first — no settled path may leave it pending.
+    const settle = (fn: () => void) => {
+      clearTimeout(timer);
+      fn();
+    };
+    const srv = http.createServer((req, res) => {
+      try {
+        const u = new URL(req.url || "/", `http://127.0.0.1:${port}`);
+        // Accept registered redirect path (and bare / for some providers)
+        if (u.pathname !== redirectPath && u.pathname !== "/") {
+          res.writeHead(404);
+          res.end("Not found");
+          return;
+        }
+        const err = u.searchParams.get("error");
+        if (err) {
+          const desc = u.searchParams.get("error_description") || err;
+          res.writeHead(400, { "Content-Type": "text/html; charset=utf-8" });
+          res.end(`<h1>Login failed</h1><p>${escapeHtml(desc)}</p>`);
+          srv.close();
+          settle(() => reject(new Error(desc)));
+          return;
+        }
+        const gotState = u.searchParams.get("state");
+        const gotCode = u.searchParams.get("code");
+        if (gotState !== expectedState || !gotCode) {
+          res.writeHead(400, { "Content-Type": "text/html; charset=utf-8" });
+          res.end("<h1>Invalid callback</h1><p>Missing code or state.</p>");
+          srv.close();
+          settle(() => reject(new Error("Invalid OAuth callback")));
+          return;
+        }
+        res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+        res.end(
+          "<h1>Forge login complete</h1><p>You can close this tab and return to the terminal.</p>",
+        );
+        srv.close();
+        settle(() => resolve(gotCode));
+      } catch (e) {
+        settle(() => reject(e));
+      }
+    });
+    server = srv;
+
+    srv.on("error", (e: NodeJS.ErrnoException) => {
+      if (e.code === "EADDRINUSE" && provider === "xai") {
+        settle(() =>
+          reject(
+            new Error(
+              `Port ${port} is busy (needed for SuperGrok callback ${redirectUri}). ` +
+                `Stop the other process or use: forge login --device`,
+            ),
+          ),
+        );
+        return;
+      }
+      settle(() => reject(e));
+    });
+
+    srv.listen(port, "127.0.0.1", () => {
+      opts.onListening?.();
+    });
+
+    timer = setTimeout(() => {
+      srv.close();
+      reject(new Error("OAuth login timed out (5 minutes)"));
+    }, timeoutMs);
+    // Belt-and-braces: even if a settle path missed clearTimeout, the watchdog
+    // alone must not hold the CLI open (the ref'd server keeps the event loop
+    // alive while we genuinely wait, so unref doesn't break the timeout).
+    timer.unref();
+  });
+  return { promise, server, timer };
+}
+
 async function browserOAuthLogin(
   provider: string,
   opts?: { forceNew?: boolean },
@@ -317,12 +423,6 @@ async function browserOAuthLogin(
   } catch {
     redirectPath = "/callback";
   }
-  const escapeHtml = (s: string) =>
-    s
-      .replace(/&/g, "&amp;")
-      .replace(/</g, "&lt;")
-      .replace(/>/g, "&gt;")
-      .replace(/"/g, "&quot;");
 
   const url = new URL(profile.authorizeUrl);
   url.searchParams.set("response_type", "code");
@@ -333,80 +433,27 @@ async function browserOAuthLogin(
   url.searchParams.set("code_challenge", challenge);
   url.searchParams.set("code_challenge_method", "S256");
 
-  let activeServer: http.Server | undefined;
+  const callback = waitForOAuthCallback({
+    port,
+    redirectPath,
+    expectedState: state,
+    provider,
+    redirectUri,
+    onListening: () => {
+      log.info(`Opening browser for ${profile.label}…`);
+      log.dim(`Callback: ${redirectUri}`);
+      log.dim(`If the browser does not open, visit:\n${url.toString()}`);
+      open(url.toString()).catch(() => {
+        /* ignore */
+      });
+    },
+  });
+
   let code: string;
   try {
-    code = await new Promise<string>((resolve, reject) => {
-      const srv = http.createServer((req, res) => {
-        try {
-          const u = new URL(req.url || "/", `http://127.0.0.1:${port}`);
-          // Accept registered redirect path (and bare / for some providers)
-          if (u.pathname !== redirectPath && u.pathname !== "/") {
-            res.writeHead(404);
-            res.end("Not found");
-            return;
-          }
-          const err = u.searchParams.get("error");
-          if (err) {
-            const desc = u.searchParams.get("error_description") || err;
-            res.writeHead(400, { "Content-Type": "text/html; charset=utf-8" });
-            res.end(
-              `<h1>Login failed</h1><p>${escapeHtml(desc)}</p>`,
-            );
-            srv.close();
-            reject(new Error(desc));
-            return;
-          }
-          const gotState = u.searchParams.get("state");
-          const gotCode = u.searchParams.get("code");
-          if (gotState !== state || !gotCode) {
-            res.writeHead(400, { "Content-Type": "text/html; charset=utf-8" });
-            res.end("<h1>Invalid callback</h1><p>Missing code or state.</p>");
-            srv.close();
-            reject(new Error("Invalid OAuth callback"));
-            return;
-          }
-          res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
-          res.end(
-            "<h1>Forge login complete</h1><p>You can close this tab and return to the terminal.</p>",
-          );
-          srv.close();
-          resolve(gotCode);
-        } catch (e) {
-          reject(e);
-        }
-      });
-      activeServer = srv;
-
-      srv.on("error", (e: NodeJS.ErrnoException) => {
-        if (e.code === "EADDRINUSE" && provider === "xai") {
-          reject(
-            new Error(
-              `Port ${port} is busy (needed for SuperGrok callback ${redirectUri}). ` +
-                `Stop the other process or use: forge login --device`,
-            ),
-          );
-          return;
-        }
-        reject(e);
-      });
-
-      srv.listen(port, "127.0.0.1", () => {
-        log.info(`Opening browser for ${profile.label}…`);
-        log.dim(`Callback: ${redirectUri}`);
-        log.dim(`If the browser does not open, visit:\n${url.toString()}`);
-        open(url.toString()).catch(() => {
-          /* ignore */
-        });
-      });
-
-      setTimeout(() => {
-        srv.close();
-        reject(new Error("OAuth login timed out (5 minutes)"));
-      }, 5 * 60 * 1000);
-    });
+    code = await callback.promise;
   } catch (err) {
-    activeServer?.close();
+    callback.server.close();
     const msg = (err as Error).message || String(err);
     // Graceful degradation for misconfigured / blocked OAuth
     if (provider === "xai") {

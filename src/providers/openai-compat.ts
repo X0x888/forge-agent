@@ -185,8 +185,14 @@ export class OpenAICompatProvider implements LLMProvider {
     }
 
     const reader = resp.body.getReader();
-    const onAbort = () => {
+    let readerCancelled = false;
+    const cancelReader = () => {
+      if (readerCancelled) return;
+      readerCancelled = true;
       reader.cancel().catch(() => {});
+    };
+    const onAbort = () => {
+      cancelReader();
     };
     if (merged.aborted) {
       onAbort();
@@ -289,6 +295,14 @@ export class OpenAICompatProvider implements LLMProvider {
           throw new Error("Aborted");
         }
         const { done, value } = await reader.read();
+        // reader.cancel() (abort/timeout) resolves a pending read() with
+        // { done: true } — re-check abort before treating it as a clean
+        // end-of-stream, or a mid-stream Esc/timeout returns partial content
+        // as a successful completion.
+        if (merged.aborted) {
+          rethrowAbort(merged.reason ?? new Error("Aborted"), signal);
+          throw new Error("Aborted");
+        }
         if (done) break;
         buffer += decoder.decode(value, { stream: true });
         const lines = buffer.split("\n");
@@ -304,6 +318,12 @@ export class OpenAICompatProvider implements LLMProvider {
           }
         }
       }
+      // Same guard after loop exit — an aborted stream must not fall
+      // through to the flush/return path with partial content.
+      if (merged.aborted) {
+        rethrowAbort(merged.reason ?? new Error("Aborted"), signal);
+        throw new Error("Aborted");
+      }
       // Flush trailing buffer (final event without newline)
       if (buffer.trim()) {
         try {
@@ -318,6 +338,9 @@ export class OpenAICompatProvider implements LLMProvider {
     } finally {
       merged.removeEventListener("abort", onAbort);
       dispose();
+      // Cancel before releaseLock: mid-stream throw paths (e.g. `stream
+      // error:`) must not leave the underlying fetch body hanging.
+      cancelReader();
       try {
         reader.releaseLock();
       } catch {

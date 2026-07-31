@@ -42,6 +42,7 @@ UserPromptSubmit hooks
    - exit `2` or `{ "decision": "block" }` → continue
 2. **`/goal` driver** (if armed and not paused)
    - no `**Goal achieved.**` attestation → continue
+   - attestation after edits without machine-checkable evidence → bounce once demanding a real check, then normal blocks (capped — never an infinite trap)
    - stuck-wall (N no-edit Stop attempts) → release + surface to user
 3. **ULW cycle driver** (`cycle=1` re-anchor / `cycle=0` last-wave attestation)
 4. **TodoGate** — open todos under ULW without `**Cycle complete.**` / `**Goal achieved.**`; outside ULW, soft-blocks **once** per prompt so half-finished checklists are finished or cancelled (`FORGE_TODO_SOFT_OUTSIDE_ULW=0` disables). Soft fire count is reset on wind-down (`/done`, `/goal done`, `/goal clear`, `/cycle 0`, `/ulw-off`, `/clear`, `/new`, safety-valve CONTINUE→LAST, **max_waves auto LAST**, **ULW stuck-wall**, **goal stuck-wall**, **goal attestation / `markGoalDone`**, **`setMaxWaves` when already at/over cap**) **and** on fresh driver arm (`/ulw`, `/goal set`) via `clearSoftTodoGateOnWindDown`

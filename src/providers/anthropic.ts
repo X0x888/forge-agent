@@ -343,8 +343,14 @@ export class AnthropicProvider implements LLMProvider {
     }
 
     const reader = resp.body.getReader();
-    const onAbort = () => {
+    let readerCancelled = false;
+    const cancelReader = () => {
+      if (readerCancelled) return;
+      readerCancelled = true;
       reader.cancel().catch(() => {});
+    };
+    const onAbort = () => {
+      cancelReader();
     };
     if (merged.aborted) {
       onAbort();
@@ -380,6 +386,19 @@ export class AnthropicProvider implements LLMProvider {
           );
         }
         const { done, value } = await reader.read();
+        // reader.cancel() (abort/timeout) resolves a pending read() with
+        // { done: true } — re-check abort before treating it as a clean
+        // end-of-stream, or a mid-stream Esc/timeout returns partial content
+        // as a successful completion.
+        if (merged.aborted) {
+          throw new Error(
+            signal?.aborted
+              ? "Aborted"
+              : merged.reason instanceof Error
+                ? merged.reason.message
+                : "Aborted",
+          );
+        }
         if (done) break;
         buffer += decoder.decode(value, { stream: true });
         const lines = buffer.split("\n");
@@ -515,9 +534,23 @@ export class AnthropicProvider implements LLMProvider {
           }
         }
       }
+      // Same guard after loop exit — an aborted stream must not fall
+      // through to the tool-flush/return path with partial content.
+      if (merged.aborted) {
+        throw new Error(
+          signal?.aborted
+            ? "Aborted"
+            : merged.reason instanceof Error
+              ? merged.reason.message
+              : "Aborted",
+        );
+      }
     } finally {
       merged.removeEventListener("abort", onAbort);
       dispose();
+      // Cancel before releaseLock: mid-stream throw paths (e.g. `stream
+      // error:`) must not leave the underlying fetch body hanging.
+      cancelReader();
       try {
         reader.releaseLock();
       } catch {

@@ -903,6 +903,9 @@ Docs: docs/PRODUCTION.md
       // Pure-control headless slash (/commands, /plan, /help, …) must work
       // without auth so CI can probe hygiene. Template forwards still need auth.
       if (/^\s*\//.test(prompt)) {
+        // Only a session created fresh by this invocation is disposable —
+        // a resumed (--continue/--session) session must never be deleted.
+        let createdFresh = false;
         if (!session) {
           session = createSession({
             cwd,
@@ -912,6 +915,7 @@ Docs: docs/PRODUCTION.md
             title:
               typeof runOpts.title === "string" ? runOpts.title : undefined,
           });
+          createdFresh = true;
         }
         try {
           const { resolveHeadlessSlashPrompt, stripAnsi } = await import(
@@ -923,7 +927,7 @@ Docs: docs/PRODUCTION.md
             session,
             config,
             hooks: hooksEarly,
-            ephemeral: !runOpts.session,
+            ephemeral: createdFresh,
           });
           session = resolved.session;
           if (resolved.kind === "done") {

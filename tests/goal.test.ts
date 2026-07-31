@@ -220,4 +220,40 @@ describe("goal arms session title when untitled", () => {
     assert.equal(ok.block, false);
     assert.equal(loadGoal(sid)?.status, "achieved");
   });
+
+  it("caps the evidence bounce — repeated weak attestation hits the stuck-wall (never a trap)", () => {
+    const sid = "test-session-attest-trap";
+    armGoal(sid, "ship the feature");
+    const weak = {
+      sessionId: sid,
+      lastAssistantMessage: "**Goal achieved.**",
+      editCount: 3,
+      stuckThreshold: 3,
+      enabled: true,
+      verificationPassed: false,
+    };
+
+    // First weak attestation: evidence bounce — and stuck tracking persisted.
+    const d1 = evaluateGoalAtStop(weak);
+    assert.equal(d1.block, true);
+    assert.match(String(d1.reason || ""), /evidence/i);
+    assert.equal(loadGoal(sid)?.blocks, 1);
+    assert.equal(loadGoal(sid)?.evidenceNudges, 1);
+
+    // Second weak attestation: bounce is capped → normal goal block, no new nudge.
+    const d2 = evaluateGoalAtStop(weak);
+    assert.equal(d2.block, true);
+    assert.match(String(d2.reason || ""), /goal not yet achieved/i);
+    assert.equal(loadGoal(sid)?.evidenceNudges, 1);
+
+    // Repeated weak attestations feed the stuck-wall — it must always release.
+    let last;
+    for (let i = 0; i < 5; i++) {
+      last = evaluateGoalAtStop(weak);
+      if (!last.block) break;
+    }
+    assert.equal(last!.block, false);
+    assert.equal(last!.stuckReleased, true);
+    assert.equal(loadGoal(sid)?.status, "stuck");
+  });
 });
