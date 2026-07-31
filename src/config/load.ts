@@ -14,7 +14,10 @@ import {
   type ReadOutsideWorkspace,
 } from "./types.js";
 import { applyPreferences, loadPreferences } from "./preferences.js";
-import { parseReasoningEffort } from "./reasoning.js";
+import {
+  clampEffortForModel,
+  parseReasoningEffort,
+} from "./reasoning.js";
 import { modelContextWindow } from "./model-info.js";
 import { normalizeProviderId } from "../util/provider-id.js";
 import {
@@ -474,6 +477,28 @@ export function loadConfig(overrides: Partial<ForgeConfig> = {}, cwd = process.c
     const e = parseReasoningEffort(String(cfg.reasoningEffort));
     cfg.reasoningEffort = e ?? undefined;
   }
+
+  // Effort: default is each model's maximum allowed level (resolved at request
+  // time when reasoningEffort is undefined). Explicit CLI/env/toml keeps a pin;
+  // when the user only switched model/provider via CLI without --effort, drop
+  // sticky prefs effort so we don't keep grok "high" under DeepSeek (which can
+  // go to "max").
+  const effortExplicit =
+    globalToml.reasoningEffort != null ||
+    globalJson.reasoningEffort != null ||
+    projectRaw.reasoningEffort != null ||
+    overrides.reasoningEffort != null ||
+    Boolean(
+      process.env.FORGE_REASONING_EFFORT?.trim() ||
+        process.env.FORGE_EFFORT?.trim(),
+    );
+  if (!effortExplicit && modelExplicit) {
+    cfg.reasoningEffort = undefined;
+  } else if (cfg.reasoningEffort) {
+    const clamped = clampEffortForModel(cfg.model, cfg.reasoningEffort);
+    if (clamped) cfg.reasoningEffort = clamped;
+  }
+
   // Per-model context window unless the user pinned context_window: a stale
   // 500k budget on a 131k/256k model means the provider rejects overflow long
   // before auto-compact would fire. Uses static table + OpenRouter cache.
@@ -491,7 +516,8 @@ export function defaultConfigToml(): string {
 provider = "xai"
 model = "grok-4.5"
 # low | medium | high  (only sent for models that support it, e.g. grok-4.5)
-reasoning_effort = "high"
+# Omit for model max (recommended). Pin with low|medium|high|max when needed:
+# reasoning_effort = "max"
 temperature = 0.2
 max_tokens = 16384
 max_turns = 0                 # 0 = unlimited; set e.g. 200 to cap agent turns

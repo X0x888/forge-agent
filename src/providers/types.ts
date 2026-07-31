@@ -34,10 +34,17 @@ export interface ChatRequest {
   max_tokens?: number;
   stream?: boolean;
   /**
-   * xAI reasoning models (e.g. grok-4.5). Sent as top-level `reasoning_effort`
-   * on chat/completions. Omit when the model does not support it.
+   * Reasoning / thinking effort when the model supports it.
+   * Sent as top-level `reasoning_effort` (and OpenRouter `reasoning.effort`).
+   * Omit when the model does not support it.
    */
-  reasoning_effort?: "low" | "medium" | "high";
+  reasoning_effort?:
+    | "minimal"
+    | "low"
+    | "medium"
+    | "high"
+    | "xhigh"
+    | "max";
 }
 
 export interface ChatUsage {

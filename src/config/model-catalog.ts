@@ -39,6 +39,8 @@ interface OpenRouterCache {
   models: string[];
   /** OpenRouter context_length per model id (for auto context_window). */
   contextById?: Record<string, number>;
+  /** OpenRouter reasoning.supported_efforts per model id. */
+  effortsById?: Record<string, string[]>;
 }
 
 function cachePath(provider: string): string {
@@ -108,6 +110,7 @@ export function readOpenRouterModelsCache(): string[] | null {
 function writeOpenRouterModelsCache(
   models: string[],
   contextById?: Record<string, number>,
+  effortsById?: Record<string, string[]>,
 ): void {
   try {
     ensureDir(path.join(forgeHome(), "cache"));
@@ -118,6 +121,9 @@ function writeOpenRouterModelsCache(
         models,
         ...(contextById && Object.keys(contextById).length
           ? { contextById }
+          : {}),
+        ...(effortsById && Object.keys(effortsById).length
+          ? { effortsById }
           : {}),
       } satisfies OpenRouterCache,
       0o600,
@@ -156,9 +162,15 @@ export async function fetchOpenRouterModels(
         id?: string;
         context_length?: number;
         top_provider?: { context_length?: number };
+        reasoning?: {
+          supported_efforts?: string[];
+          default_effort?: string;
+        };
+        supported_parameters?: string[];
       }>;
     };
     const contextById: Record<string, number> = {};
+    const effortsById: Record<string, string[]> = {};
     const ids: string[] = [];
     for (const m of json.data || []) {
       const id = String(m.id || "").trim();
@@ -175,11 +187,23 @@ export async function fetchOpenRouterModels(
       if (ctx) {
         contextById[id.toLowerCase()] = Math.floor(ctx);
       }
+      const efforts = m.reasoning?.supported_efforts;
+      if (Array.isArray(efforts) && efforts.length) {
+        effortsById[id.toLowerCase()] = efforts.map(String);
+      } else if (
+        Array.isArray(m.supported_parameters) &&
+        m.supported_parameters.includes("reasoning_effort")
+      ) {
+        // Generic OpenAI-compat effort when catalog omits supported_efforts
+        effortsById[id.toLowerCase()] = ["low", "medium", "high", "max"];
+      }
     }
     // Prefer stable sort; cap size for UX
     const unique = [...new Set(ids)].sort((a, b) => a.localeCompare(b));
     const capped = unique.slice(0, MAX_REMOTE_MODELS);
-    if (capped.length) writeOpenRouterModelsCache(capped, contextById);
+    if (capped.length) {
+      writeOpenRouterModelsCache(capped, contextById, effortsById);
+    }
     return capped;
   } finally {
     clearTimeout(timer);

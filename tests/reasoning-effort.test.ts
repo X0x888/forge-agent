@@ -10,6 +10,7 @@ import {
   effortLevelsForModel,
   defaultEffortForModel,
   bumpReasoningEffort,
+  clampEffortForModel,
 } from "../src/config/reasoning.js";
 import { buildChatRequest, resolveMaxTurns } from "../src/agent/loop.js";
 import { DEFAULT_CONFIG } from "../src/config/types.js";
@@ -22,18 +23,21 @@ import {
 import { forgeCompleter } from "../src/tui/complete.js";
 import { createSession } from "../src/session/session.js";
 import { HookRunner } from "../src/harness/hooks.js";
+import { OpenAICompatProvider } from "../src/providers/openai-compat.js";
 
 describe("reasoning effort helpers", () => {
-  it("parses aliases", () => {
+  it("parses aliases including max/xhigh", () => {
     assert.equal(parseReasoningEffort("low"), "low");
     assert.equal(parseReasoningEffort("L"), "low");
     assert.equal(parseReasoningEffort("med"), "medium");
     assert.equal(parseReasoningEffort("HIGH"), "high");
-    assert.equal(parseReasoningEffort("xhigh"), null);
+    assert.equal(parseReasoningEffort("max"), "max");
+    assert.equal(parseReasoningEffort("xhigh"), "xhigh");
+    assert.equal(parseReasoningEffort("minimal"), "minimal");
     assert.equal(parseReasoningEffort(""), null);
   });
 
-  it("knows grok-4.5 supports low/medium/high", () => {
+  it("knows grok-4.5 supports low/medium/high with max=high", () => {
     assert.equal(modelSupportsReasoningEffort("grok-4.5"), true);
     assert.equal(modelSupportsReasoningEffort("xai/grok-4.5"), true);
     assert.equal(modelSupportsReasoningEffort("grok-4"), false);
@@ -45,10 +49,40 @@ describe("reasoning effort helpers", () => {
     assert.equal(defaultEffortForModel("grok-4.5"), "high");
   });
 
+  it("deepseek v4 flash defaults to max", () => {
+    assert.equal(
+      modelSupportsReasoningEffort("deepseek/deepseek-v4-flash-0731"),
+      true,
+    );
+    assert.equal(
+      defaultEffortForModel("deepseek/deepseek-v4-flash-0731"),
+      "max",
+    );
+    assert.equal(
+      resolveReasoningEffort("deepseek/deepseek-v4-flash-0731", undefined),
+      "max",
+    );
+    assert.equal(
+      resolveReasoningEffort("deepseek/deepseek-v4-flash", "high"),
+      "high",
+    );
+    assert.deepEqual(
+      [...effortLevelsForModel("deepseek/deepseek-v4-flash")],
+      ["low", "high", "max"],
+    );
+  });
+
   it("resolves configured vs default vs unsupported", () => {
     assert.equal(resolveReasoningEffort("grok-4.5", "low"), "low");
     assert.equal(resolveReasoningEffort("grok-4.5", undefined), "high");
     assert.equal(resolveReasoningEffort("grok-4", "high"), undefined);
+  });
+
+  it("clamps xhigh to max on deepseek", () => {
+    assert.equal(
+      clampEffortForModel("deepseek/deepseek-v4-flash", "xhigh"),
+      "max",
+    );
   });
 });
 
@@ -74,6 +108,18 @@ describe("buildChatRequest reasoning_effort", () => {
     );
     assert.equal(req.model, "grok-4.5");
     assert.equal(req.reasoning_effort, "medium");
+  });
+
+  it("includes max for deepseek v4 by default", () => {
+    const req = buildChatRequest(
+      {
+        ...DEFAULT_CONFIG,
+        model: "deepseek/deepseek-v4-flash-0731",
+        reasoningEffort: undefined,
+      },
+      [],
+    );
+    assert.equal(req.reasoning_effort, "max");
   });
 
   it("omits reasoning_effort for models without support", () => {
@@ -102,6 +148,38 @@ describe("buildChatRequest reasoning_effort", () => {
   });
 });
 
+describe("OpenRouter body includes reasoning map", () => {
+  it("buildBody sends reasoning_effort + reasoning for openrouter", () => {
+    const p = new OpenAICompatProvider({
+      id: "openrouter",
+      baseUrl: "https://openrouter.ai/api/v1",
+      apiKey: "sk-test",
+    });
+    // access private via cast for unit test
+    const body = (
+      p as unknown as {
+        buildBody: (
+          req: {
+            model: string;
+            messages: [];
+            reasoning_effort: string;
+          },
+          stream: boolean,
+        ) => Record<string, unknown>;
+      }
+    ).buildBody(
+      {
+        model: "deepseek/deepseek-v4-flash",
+        messages: [],
+        reasoning_effort: "max",
+      },
+      false,
+    );
+    assert.equal(body.reasoning_effort, "max");
+    assert.deepEqual(body.reasoning, { effort: "max", enabled: true });
+  });
+});
+
 describe("bumpReasoningEffort (adaptive escalation)", () => {
   it("bumps one notch within model levels", () => {
     assert.equal(bumpReasoningEffort("grok-4.5", "low"), "medium");
@@ -117,6 +195,17 @@ describe("bumpReasoningEffort (adaptive escalation)", () => {
   it("returns undefined for models without effort support", () => {
     assert.equal(bumpReasoningEffort("grok-4", "low"), undefined);
   });
+
+  it("bumps deepseek toward max", () => {
+    assert.equal(
+      bumpReasoningEffort("deepseek/deepseek-v4-flash", "low"),
+      "high",
+    );
+    assert.equal(
+      bumpReasoningEffort("deepseek/deepseek-v4-flash", "high"),
+      "max",
+    );
+  });
 });
 
 describe("config + preferences effort", () => {
@@ -124,15 +213,38 @@ describe("config + preferences effort", () => {
     delete process.env.FORGE_MODEL;
     delete process.env.FORGE_EFFORT;
     delete process.env.FORGE_REASONING_EFFORT;
+    delete process.env.FORGE_PROVIDER;
   });
 
-  it("defaults to grok-4.5 high", () => {
+  it("defaults to grok-4.5 with unset effort (resolve → high/max)", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "forge-effort-def-"));
     process.env.FORGE_HOME = home;
     const cfg = loadConfig({}, home);
     assert.equal(cfg.model, "grok-4.5");
-    assert.equal(cfg.reasoningEffort, "high");
+    // Unset means request-time resolve uses model max (high for grok-4.5)
+    assert.equal(cfg.reasoningEffort, undefined);
+    assert.equal(resolveReasoningEffort(cfg.model, cfg.reasoningEffort), "high");
     assert.ok(cfg.providers.xai.models?.includes("grok-4.5"));
+  });
+
+  it("CLI model without --effort uses model max (not sticky high)", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "forge-effort-cli-"));
+    process.env.FORGE_HOME = home;
+    savePreferences({ reasoningEffort: "high", model: "grok-4.5" });
+    const cfg = loadConfig(
+      {
+        provider: "openrouter",
+        model: "deepseek/deepseek-v4-flash-0731",
+      },
+      home,
+    );
+    assert.equal(cfg.model, "deepseek/deepseek-v4-flash-0731");
+    // Sticky high ignored when model came from CLI without --effort
+    assert.equal(cfg.reasoningEffort, undefined);
+    assert.equal(
+      resolveReasoningEffort(cfg.model, cfg.reasoningEffort),
+      "max",
+    );
   });
 
   it("loads reasoning_effort from toml and env", () => {
@@ -151,7 +263,7 @@ describe("config + preferences effort", () => {
     delete process.env.FORGE_EFFORT;
   });
 
-  it("persists effort via preferences", () => {
+  it("persists effort via preferences when not overridden by CLI model", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "forge-effort-prefs-"));
     process.env.FORGE_HOME = home;
     savePreferences({ reasoningEffort: "low", model: "grok-4.5" });
@@ -167,6 +279,7 @@ describe("/effort slash", () => {
     assert.equal(classifyLiveSlash("/effort"), "readonly");
     assert.equal(classifyLiveSlash("/effort low"), "control");
     assert.equal(classifyLiveSlash("/effort high"), "control");
+    assert.equal(classifyLiveSlash("/effort max"), "control");
     assert.equal(classifyLiveSlash("/model grok-4.5"), "control");
     assert.equal(classifyLiveSlash("/model"), "readonly");
   });
@@ -196,6 +309,28 @@ describe("/effort slash", () => {
     assert.match(r.output || "", /medium/);
     assert.equal(config.reasoningEffort, "medium");
     assert.equal(loadPreferences().reasoningEffort, "medium");
+  });
+
+  it("sets max on deepseek", async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "forge-effort-ds-"));
+    process.env.FORGE_HOME = home;
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-ws-"));
+    const config = {
+      ...DEFAULT_CONFIG,
+      provider: "openrouter" as const,
+      model: "deepseek/deepseek-v4-flash-0731",
+      reasoningEffort: undefined,
+      workspace: tmp,
+    };
+    const session = createSession({
+      cwd: tmp,
+      provider: "openrouter",
+      model: config.model,
+    });
+    const hooks = new HookRunner(config, tmp);
+    const r = await handleSlash("/effort max", { session, config, hooks });
+    assert.equal(config.reasoningEffort, "max");
+    assert.match(r.output || "", /max/);
   });
 
   it("rejects effort on non-supporting model", async () => {
@@ -232,6 +367,32 @@ describe("/effort slash", () => {
     assert.match(r.output || "", /grok-4\.5/);
     assert.match(r.output || "", /low/);
   });
+
+  it("/model deepseek without effort picks max", async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "forge-model-ds-"));
+    process.env.FORGE_HOME = home;
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-ws-"));
+    const config = {
+      ...DEFAULT_CONFIG,
+      provider: "openrouter" as const,
+      model: "anthropic/claude-sonnet-4",
+      reasoningEffort: "high" as const,
+      workspace: tmp,
+    };
+    const session = createSession({
+      cwd: tmp,
+      provider: "openrouter",
+      model: config.model,
+    });
+    const hooks = new HookRunner(config, tmp);
+    await handleSlash("/model deepseek/deepseek-v4-flash-0731", {
+      session,
+      config,
+      hooks,
+    });
+    assert.equal(config.model, "deepseek/deepseek-v4-flash-0731");
+    assert.equal(config.reasoningEffort, "max");
+  });
 });
 
 describe("completion", () => {
@@ -249,5 +410,15 @@ describe("completion", () => {
     assert.ok(efforts.some((h) => h.includes("low")));
     assert.ok(efforts.some((h) => h.includes("medium")));
     assert.ok(efforts.some((h) => h.includes("high")));
+    // grok-4.5 max is "high" (no separate "max" level)
+    assert.ok(!efforts.some((h) => h === "/effort max"));
+
+    const dsCfg = {
+      ...DEFAULT_CONFIG,
+      provider: "openrouter" as const,
+      model: "deepseek/deepseek-v4-flash",
+    };
+    const [dsEfforts] = forgeCompleter("/effort ", dsCfg);
+    assert.ok(dsEfforts.some((h) => h.includes("max")));
   });
 });

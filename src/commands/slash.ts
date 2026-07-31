@@ -52,6 +52,7 @@ import type { ForgeConfig } from "../config/types.js";
 import { resolveSandboxNetwork } from "../config/types.js";
 import {
   REASONING_EFFORT_DESCRIPTIONS,
+  clampEffortForModel,
   defaultEffortForModel,
   effortLevelsForModel,
   modelSupportsReasoningEffort,
@@ -1212,7 +1213,7 @@ export async function handleModelSlash(
     const e = parseReasoningEffort(effortArg);
     if (!e) {
       effortNote = chalk.yellow(
-        `\nIgnored effort "${effortArg}" (use low|medium|high)`,
+        `\nIgnored effort "${effortArg}" (use low|medium|high|max|xhigh)`,
       );
     } else if (!modelSupportsReasoningEffort(resolved)) {
       effortNote = chalk.yellow(
@@ -1228,33 +1229,22 @@ export async function handleModelSlash(
       } catch {
         /* ignore */
       }
-    } else if (!effortLevelsForModel(resolved).includes(e)) {
-      effortNote = chalk.yellow(
-        `\n${e} not valid for ${resolved}; using ${defaultEffortForModel(resolved)}`,
-      );
-      const d = defaultEffortForModel(resolved)!;
-      opts.config.reasoningEffort = d;
-      try {
-        savePreferences({
-          model: resolved,
-          reasoningEffort: d,
-          modelProvider: provider,
-        });
-      } catch {
-        /* ignore */
-      }
     } else {
-      opts.config.reasoningEffort = e;
+      const clamped = clampEffortForModel(resolved, e) ?? defaultEffortForModel(resolved)!;
+      opts.config.reasoningEffort = clamped;
       try {
         savePreferences({
           model: resolved,
-          reasoningEffort: e,
+          reasoningEffort: clamped,
           modelProvider: provider,
         });
       } catch {
         /* ignore */
       }
-      effortNote = ` · effort ${e}`;
+      effortNote =
+        clamped !== e
+          ? chalk.yellow(` · effort ${clamped} (clamped from ${e})`)
+          : ` · effort ${clamped}`;
     }
   } else {
     try {
@@ -1263,11 +1253,10 @@ export async function handleModelSlash(
       /* never fail slash on prefs I/O */
     }
     if (modelSupportsReasoningEffort(resolved)) {
-      const e = resolveReasoningEffort(
-        resolved,
-        opts.config.reasoningEffort,
-      );
-      effortNote = ` · effort ${e}`;
+      // Fresh model pick without explicit effort → use model max (ignore stale prefs)
+      const e = resolveReasoningEffort(resolved, undefined);
+      opts.config.reasoningEffort = e;
+      effortNote = e ? ` · effort ${e} (model max)` : "";
     }
   }
 
@@ -2520,14 +2509,19 @@ const stats = collectUsageStats({
               `${model} does not support reasoning effort.\n`,
             ) +
             chalk.dim(
-              "Supported today: grok-4.5 (low|medium|high). Switch with /model grok-4.5",
+              "Effort is sent for models that expose thinking controls " +
+                "(e.g. grok-4.5, deepseek-v4-*, many OpenRouter reasoning models). " +
+                "Default is each model’s maximum allowed level.",
             ),
         };
       }
       const levels = effortLevelsForModel(model);
+      const maxLvl = defaultEffortForModel(model);
       const choices = levels.map((e) => ({
         value: e,
-        description: REASONING_EFFORT_DESCRIPTIONS[e],
+        description:
+          REASONING_EFFORT_DESCRIPTIONS[e] +
+          (e === maxLvl ? " ← model max (default)" : ""),
       }));
       const current =
         resolveReasoningEffort(model, opts.config.reasoningEffort) ??
@@ -2538,7 +2532,7 @@ const stats = collectUsageStats({
           output:
             formatParamMenu("/effort", choices, current) +
             chalk.dim(
-              "\nAliases: l/low, m/medium/med, h/high  ·  applies on next model call  [live]",
+              `\nDefault: ${maxLvl} (max for this model)  ·  aliases: l/low m/med h/high max xhigh  ·  live`,
             ),
         };
       }
@@ -5844,7 +5838,7 @@ Forge slash commands
   /todos                Show agent todos  [live]
   /provider [name]      List / switch provider (openrouter, xai, …) — sticky  [live]
   /model <name> [effort] Switch model mid-run; free-form on OpenRouter  [live]
-  /effort [level]       Reasoning effort when model supports it (low|medium|high)  [live]
+  /effort [level]       Thinking effort (default = model max; low…high|xhigh|max)  [live]
   /temperature [0–2]    Session sampling temperature (/temp)  [live]
   /max-tokens [n]       Session max output tokens  [live]
   /context-window [n|auto]  Pin or auto-follow model max context (/ctx-window)  [live]

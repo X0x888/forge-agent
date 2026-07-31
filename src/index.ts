@@ -22,7 +22,11 @@ export {
   modelSupportsReasoningEffort,
   effortLevelsForModel,
   defaultEffortForModel,
+  clampEffortForModel,
+  maxEffortOf,
+  bumpReasoningEffort,
   REASONING_EFFORTS,
+  EFFORT_RANK,
 } from "./config/reasoning.js";
 export {
   modelContextWindow,

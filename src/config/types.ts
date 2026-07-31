@@ -91,8 +91,9 @@ export interface ForgeConfig {
   provider: ProviderId | string;
   model: string;
   /**
-   * Reasoning effort for models that support it (e.g. grok-4.5: low|medium|high).
-   * Omitted from API requests when the active model does not support effort.
+   * Reasoning / thinking effort when the model supports it.
+   * When unset, Forge uses the **maximum** level allowed for the active model.
+   * Omitted from API requests when the model does not support effort.
    */
   reasoningEffort?: ReasoningEffort;
   baseUrl?: string;
@@ -174,7 +175,9 @@ export function resolveSandboxNetwork(config: {
 export const DEFAULT_CONFIG: ForgeConfig = {
   provider: "xai",
   model: "grok-4.5",
-  reasoningEffort: "high",
+  // Undefined → resolveReasoningEffort uses each model's maximum allowed level
+  // (grok-4.5 → high, deepseek-v4 → max, …). Set only when user pins /effort.
+  reasoningEffort: undefined,
   temperature: 0.2,
   // 16k: reasoning tokens share the max_tokens budget on xAI — 8k under
   // high effort truncated mid-thought and paid extra length-continue turns.

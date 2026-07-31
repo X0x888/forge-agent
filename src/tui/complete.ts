@@ -349,9 +349,19 @@ export const COMMAND_PARAMS: Record<string, ParamChoice[]> = {
   ],
   effort: [
     {
+      value: "max",
+      description: REASONING_EFFORT_DESCRIPTIONS.max,
+      aliases: ["maximum", "full"],
+    },
+    {
+      value: "xhigh",
+      description: REASONING_EFFORT_DESCRIPTIONS.xhigh,
+      aliases: ["x-high", "ultra", "extra"],
+    },
+    {
       value: "high",
       description: REASONING_EFFORT_DESCRIPTIONS.high,
-      aliases: ["h", "max", "deep"],
+      aliases: ["h", "hi", "deep"],
     },
     {
       value: "medium",
@@ -361,7 +371,12 @@ export const COMMAND_PARAMS: Record<string, ParamChoice[]> = {
     {
       value: "low",
       description: REASONING_EFFORT_DESCRIPTIONS.low,
-      aliases: ["l", "min", "minimal"],
+      aliases: ["l", "lo"],
+    },
+    {
+      value: "minimal",
+      description: REASONING_EFFORT_DESCRIPTIONS.minimal,
+      aliases: ["min"],
     },
   ],
 };

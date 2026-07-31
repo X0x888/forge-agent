@@ -90,7 +90,15 @@ export class OpenAICompatProvider implements LLMProvider {
       stream,
     };
     if (req.reasoning_effort) {
+      // OpenAI-compat / xAI / DeepSeek / many OpenRouter models
       body.reasoning_effort = req.reasoning_effort;
+      // OpenRouter also documents a structured `reasoning` map for effort control
+      if (this.id === "openrouter") {
+        body.reasoning = {
+          effort: req.reasoning_effort,
+          enabled: true,
+        };
+      }
     }
     // OpenAI-compatible: without this, streaming responses often omit usage
     // and /cost + session totals stay wrong for long expert sessions.

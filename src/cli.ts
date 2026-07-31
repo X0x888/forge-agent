@@ -240,7 +240,7 @@ Docs: docs/PRODUCTION.md · docs/RELIABILITY.md · docs/ULW.md · forge news
     .option("--base-url <url>", "Override API base URL")
     .option(
       "--effort <level>",
-      "Reasoning effort for supported models: low|medium|high",
+      "Thinking effort (default = model max): low|medium|high|xhigh|max",
     )
     .option(
       "--reasoning-effort <level>",
@@ -606,7 +606,7 @@ Docs: docs/PRODUCTION.md · docs/RELIABILITY.md · docs/ULW.md · forge news
     .option("-m, --model <model>", "Model id")
     .option("-p, --provider <provider>", "Provider")
     .option("--base-url <url>", "Override API base URL")
-    .option("--effort <level>", "Reasoning effort: low|medium|high")
+    .option("--effort <level>", "Thinking effort (default model max): low|medium|high|xhigh|max")
     .option("--reasoning-effort <level>", "Alias for --effort")
     .option(
       "--max-turns <n>",
@@ -5154,7 +5154,7 @@ function buildConfig(opts: Record<string, unknown>): ForgeConfig {
       const e = raw ? parseReasoningEffort(raw) : null;
       if (!e) {
         const tip = raw
-          ? suggestName(raw, ["low", "medium", "high"], {
+          ? suggestName(raw, ["low", "medium", "high", "xhigh", "max", "minimal"], {
               minLength: 2,
               minScore: 36,
               requirePrefix3: false,
@@ -5163,8 +5163,8 @@ function buildConfig(opts: Record<string, unknown>): ForgeConfig {
         failInvalidFlag(
           "invalid_effort",
           tip
-            ? `Invalid --effort "${effortRaw}". Did you mean: ${tip}? Use low, medium, or high.`
-            : `Invalid --effort "${effortRaw}". Use low, medium, or high.`,
+            ? `Invalid --effort "${effortRaw}". Did you mean: ${tip}? Use low, medium, high, xhigh, or max.`
+            : `Invalid --effort "${effortRaw}". Use low, medium, high, xhigh, or max.`,
           {
             effort: String(effortRaw),
             ...(tip ? { suggestion: tip } : {}),
