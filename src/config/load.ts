@@ -366,7 +366,8 @@ export function loadConfig(overrides: Partial<ForgeConfig> = {}, cwd = process.c
   );
 
   // Interactive preferences (slash /model, /permissions, /effort) — beat static config
-  applyPreferences(cfg, loadPreferences());
+  const prefs = loadPreferences();
+  applyPreferences(cfg, prefs);
 
   // Environment overrides (invalid values ignored — parity with FORGE_EFFORT)
   const providerBeforeEnv = cfg.provider;
@@ -445,6 +446,14 @@ export function loadConfig(overrides: Partial<ForgeConfig> = {}, cwd = process.c
 
   const modelExplicit =
     overrides.model != null || Boolean(process.env.FORGE_MODEL?.trim());
+  // Model pinned by a config file or sticky prefs — a config-file provider
+  // switch (below) must not clobber it. CLI/env provider switches still win
+  // (existing rescue ignores these, by design).
+  const fileModelExplicit =
+    globalToml.model != null ||
+    globalJson.model != null ||
+    projectRaw.model != null ||
+    Boolean(prefs.model);
   // providerBeforeEnv captured before FORGE_PROVIDER; after env, cfg.provider may already differ.
   const providerBaseline = providerBeforeEnv;
   cfg = deepMerge(cfg as unknown as Record<string, unknown>, overrides as never) as unknown as ForgeConfig;
@@ -460,7 +469,12 @@ export function loadConfig(overrides: Partial<ForgeConfig> = {}, cwd = process.c
 
   // Provider switched (CLI/env) without an explicit model → that provider's defaultModel
   // (avoid anthropic + stuck grok-4.5 from DEFAULT_CONFIG.model).
-  if (!modelExplicit && cfg.provider && cfg.provider !== providerBaseline) {
+  // A config-file provider (provider = "claude", no model anywhere) gets the
+  // same rescue — but never clobbers a file/prefs-pinned model.
+  const providerSwitched =
+    cfg.provider !== providerBaseline ||
+    (!fileModelExplicit && cfg.provider !== DEFAULT_CONFIG.provider);
+  if (!modelExplicit && cfg.provider && providerSwitched) {
     const def = cfg.providers?.[cfg.provider]?.defaultModel;
     if (def) cfg.model = def;
     else if (!cfg.providers?.[cfg.provider]?.models?.length) {

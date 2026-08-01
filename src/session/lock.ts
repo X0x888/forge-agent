@@ -2,7 +2,9 @@
  * Best-effort session lock so two Forge processes don't thrash the same
  * session.json (experts often open a second terminal by accident).
  *
- * Stale locks (dead pid or age > TTL) are stolen automatically.
+ * A lock held by a live pid is never stolen (multi-day ULW holds it for the
+ * whole process lifetime and refreshes acquiredAt via touchSessionLock);
+ * only a dead-pid lock is stolen immediately, or any lock with force.
  */
 
 import fs from "node:fs";
@@ -17,13 +19,6 @@ export interface SessionLockInfo {
   acquiredAt: string;
   sessionId: string;
 }
-
-/**
- * TTL only applies when the holder pid is **dead** (or force-steal).
- * Live pids are never TTL-stolen — multi-day ULW holds the lock for the
- * whole process lifetime and refreshes acquiredAt via touchSessionLock.
- */
-const DEFAULT_TTL_MS = 2 * 60 * 60 * 1000; // 2h (dead-pid / unparseable-age recovery)
 
 function lockPath(sessionId: string): string {
   return path.join(sessionDir(sessionId), "session.lock");
@@ -85,7 +80,7 @@ export interface AcquireLockResult {
  */
 export function acquireSessionLock(
   sessionId: string,
-  opts?: { force?: boolean; ttlMs?: number },
+  opts?: { force?: boolean },
 ): AcquireLockResult {
   ensureDir(sessionDir(sessionId));
   const file = lockPath(sessionId);
@@ -103,8 +98,8 @@ export function acquireSessionLock(
         writeLock(sessionId);
         return { ok: true, owned: true };
       }
-      // Live foreign pid: NEVER TTL-steal (multi-day ULW would lose exclusivity
-      // after 2h and race session.json). Only dead pid (or force) is stealable.
+      // Live foreign pid: never steal (multi-day ULW would lose exclusivity
+      // mid-run and race session.json). Only dead pid (or force) is stealable.
       if (alive && !opts?.force) {
         return {
           ok: false,
@@ -183,6 +178,18 @@ export function releaseSessionLock(sessionId: string): boolean {
   if (!existing) return true;
   if (existing.pid !== process.pid) return false;
   try {
+    // Re-verify ownership immediately before unlink to shrink the read→unlink
+    // TOCTOU — a force-steal landing in that gap installs a fresh lock we must
+    // not delete. (A residual race remains: Node has no atomic
+    // compare-and-delete; the window is now microseconds, not a full read.)
+    const still = readSessionLock(sessionId);
+    if (
+      !still ||
+      still.pid !== process.pid ||
+      still.acquiredAt !== existing.acquiredAt
+    ) {
+      return false;
+    }
     fs.unlinkSync(lockPath(sessionId));
     return true;
   } catch {

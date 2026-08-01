@@ -24,7 +24,7 @@ function isAbortLike(err: unknown, signal?: AbortSignal): boolean {
 }
 
 /** Safe code point → string; invalid / out-of-range entities keep original text. */
-function decodeCodePoint(n: number, original: string): string {
+export function decodeCodePoint(n: number, original: string): string {
   if (!Number.isFinite(n) || n < 0 || n > 0x10ffff) return original;
   // Surrogate halves are not valid Unicode scalar values
   if (n >= 0xd800 && n <= 0xdfff) return original;

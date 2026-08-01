@@ -344,7 +344,7 @@ export function expandUlwMandate(mandate: string): { expanded: string; soft: boo
 export function armUlwCycle(
   sessionId: string,
   mandate: string,
-  opts?: { cycle?: CycleFlag; maxWaves?: number | null },
+  opts?: { cycle?: CycleFlag; maxWaves?: number | null; editCount?: number },
 ): UlwCycleState {
   const { expanded, soft } = expandUlwMandate(mandate);
   const prev = loadUlwCycle(sessionId);
@@ -361,7 +361,11 @@ export function armUlwCycle(
     maxWaves,
     blocks: prev?.blocks ?? 0,
     stuckBlocks: 0,
-    lastBlockEditCount: 0,
+    // Baseline = session-lifetime edit counter AT ARM TIME. Without it, arming
+    // /ulw mid-session makes wave 1's editDelta count every pre-arm edit
+    // (evaluateUlwAtStop deltas against lastBlockEditCount), and bestWave()
+    // then anchors the quality bar to a wave that never ran.
+    lastBlockEditCount: Math.max(0, Math.floor(opts?.editCount ?? 0)),
     mandate: mandate.replace(/\s+/g, " ").trim() || "improve the codebase",
     expandedMandate: expanded,
     softPrompt: soft,

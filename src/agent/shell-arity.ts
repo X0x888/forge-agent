@@ -5,6 +5,11 @@
  * `git checkout main` → always-pattern `git checkout *`
  * `npm run dev` → `npm run *` when arity says 3 for "npm run"
  */
+import {
+  commandCheckTargets,
+  normalizeSegment,
+  tokenizeSimple,
+} from "./shell-parse.js";
 
 const ARITY: Record<string, number> = {
   cat: 1,
@@ -95,22 +100,23 @@ export function alwaysPatternFromTokens(tokens: string[]): string {
   return pref.join(" ") + " *";
 }
 
+/**
+ * Always-pattern for a full command string — the single implementation wired
+ * to the interactive permission prompt ([a]lways display + persisted rule).
+ * Segment-aware: the grant covers the FIRST executable segment after wrapper/
+ * env peeling (`FOO=1 npm test` → `npm test *`, `npm test && rm x` → `npm test *`),
+ * quote-aware tokenization, flags after the first word dropped.
+ */
 export function alwaysPatternFromCommand(command: string): string {
-  // import lazily-shaped to avoid circular deps — tokenize inline
-  const toks = command
-    .trim()
-    .split(/\s+/)
-    .filter(Boolean)
-    .filter((t) => !t.startsWith("-"));
-  // Keep flags out of arity tokens for simple cases; retain structure for git/npm
-  // Prefer full simple tokenize without dropping flags after first word for arity map
-  const raw = command.trim().split(/\s+/).filter(Boolean);
-  const cleaned: string[] = [];
-  for (const t of raw) {
-    if (t.startsWith("-") && cleaned.length > 0) continue;
-    cleaned.push(t);
+  const segs = commandCheckTargets(command);
+  const seg = segs[0] || command;
+  const toks = tokenizeSimple(normalizeSegment(seg));
+  const words: string[] = [];
+  for (const t of toks) {
+    if (t.startsWith("-") && words.length > 0) continue;
+    words.push(t);
   }
-  return alwaysPatternFromTokens(cleaned.length ? cleaned : toks);
+  return alwaysPatternFromTokens(words.length ? words : toks);
 }
 
 /**

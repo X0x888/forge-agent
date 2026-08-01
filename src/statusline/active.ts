@@ -5,6 +5,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { forgeHome, ensureDir, readJsonFile, writeJsonFile, nowIso, nowEpoch } from "../util/fs.js";
+import { withFileLock } from "../util/file-lock.js";
 
 export interface ActiveEntry {
   sessionId: string;
@@ -71,37 +72,47 @@ export function heartbeatSession(opts: {
   phaseDetail?: string;
   bgRunning?: number;
 }): void {
-  const reg = loadActiveRegistry();
-  const now = nowEpoch();
-  const prev = reg.sessions[opts.sessionId];
-  reg.sessions[opts.sessionId] = {
-    sessionId: opts.sessionId,
-    pid: process.pid,
-    cwd: opts.cwd,
-    provider: opts.provider,
-    model: opts.model,
-    startedAt: prev?.startedAt || nowIso(),
-    heartbeatAt: nowIso(),
-    heartbeatEpoch: now,
-    busy: opts.busy ?? prev?.busy,
-    phase: opts.phase ?? prev?.phase,
-    phaseDetail:
-      opts.phaseDetail !== undefined ? opts.phaseDetail : prev?.phaseDetail,
-    bgRunning: opts.bgRunning ?? prev?.bgRunning,
-  };
-  // GC dead pids
-  for (const [id, e] of Object.entries(reg.sessions)) {
-    if (!isPidAlive(e.pid) && now - e.heartbeatEpoch > 120) {
-      delete reg.sessions[id];
+  // Cross-process lock: two REPLs heartbeating every 4s would otherwise lose
+  // each other's entries (load → mutate → save race, incl. the GC below).
+  // ensureDir first: on a fresh FORGE_HOME the lock create would ENOENT and
+  // silently fail open exactly when first-run writers race.
+  ensureDir(forgeHome());
+  withFileLock(registryPath(), () => {
+    const reg = loadActiveRegistry();
+    const now = nowEpoch();
+    const prev = reg.sessions[opts.sessionId];
+    reg.sessions[opts.sessionId] = {
+      sessionId: opts.sessionId,
+      pid: process.pid,
+      cwd: opts.cwd,
+      provider: opts.provider,
+      model: opts.model,
+      startedAt: prev?.startedAt || nowIso(),
+      heartbeatAt: nowIso(),
+      heartbeatEpoch: now,
+      busy: opts.busy ?? prev?.busy,
+      phase: opts.phase ?? prev?.phase,
+      phaseDetail:
+        opts.phaseDetail !== undefined ? opts.phaseDetail : prev?.phaseDetail,
+      bgRunning: opts.bgRunning ?? prev?.bgRunning,
+    };
+    // GC dead pids
+    for (const [id, e] of Object.entries(reg.sessions)) {
+      if (!isPidAlive(e.pid) && now - e.heartbeatEpoch > 120) {
+        delete reg.sessions[id];
+      }
     }
-  }
-  saveActiveRegistry(reg);
+    saveActiveRegistry(reg);
+  });
 }
 
 export function releaseSession(sessionId: string): void {
-  const reg = loadActiveRegistry();
-  delete reg.sessions[sessionId];
-  saveActiveRegistry(reg);
+  ensureDir(forgeHome());
+  withFileLock(registryPath(), () => {
+    const reg = loadActiveRegistry();
+    delete reg.sessions[sessionId];
+    saveActiveRegistry(reg);
+  });
 }
 
 export function getActiveEntry(sessionId: string): ActiveEntry | undefined {

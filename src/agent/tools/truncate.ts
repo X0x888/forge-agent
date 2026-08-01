@@ -46,7 +46,8 @@ export async function saveFullOutput(text: string): Promise<string> {
   }
   const name = `tool_${Date.now()}_${Math.random().toString(36).slice(2, 8)}.txt`;
   const file = path.join(dir, name);
-  await fsp.writeFile(file, text, "utf8");
+  // 0600 like sandbox-log/writeJsonFile: bash dumps can contain secrets.
+  await fsp.writeFile(file, text, { encoding: "utf8", mode: 0o600 });
   return file;
 }
 

@@ -123,12 +123,35 @@ function normalizeEventName(name: string): HookEvent | string {
 
 /** Cap hook-payload string fields so per-tool hooks stay cheap to feed. */
 const HOOK_PAYLOAD_STRING_CAP = 20_000;
+/**
+ * Cap hook child stdout/stderr accumulation (head). Agent bash output is
+ * capped at 4MB and hook stdin at 20k — hook output gets a tighter 64KB
+ * budget since only the JSON verdict / first 200 stderr chars are used.
+ */
+const HOOK_OUTPUT_CAP = 64 * 1024;
 function capHookString(s: string | undefined): string | undefined {
   if (s == null || s.length <= HOOK_PAYLOAD_STRING_CAP) return s;
   return (
     s.slice(0, HOOK_PAYLOAD_STRING_CAP) +
     `\n… [truncated to ${HOOK_PAYLOAD_STRING_CAP} chars for hook payload]`
   );
+}
+
+/**
+ * toolInput is structured (a write_file can carry hundreds of KB) — stringify
+ * before capping so it respects the same 20k stdin budget as toolOutput.
+ * Oversized input degrades to a capped JSON string rather than breaking JSON.
+ */
+function capHookToolInput(input: unknown): unknown {
+  if (input == null) return input;
+  if (typeof input === "string") return capHookString(input);
+  try {
+    const raw = JSON.stringify(input);
+    if (raw === undefined || raw.length <= HOOK_PAYLOAD_STRING_CAP) return input;
+    return capHookString(raw);
+  } catch {
+    return input;
+  }
 }
 
 function matcherHits(matcher: string | undefined, toolName: string | undefined): boolean {
@@ -163,6 +186,23 @@ function loadHookFile(file: string): HooksConfig | null {
   }
 }
 
+/**
+ * Hooks are optional config — a hooks dir that is unreadable or not a
+ * directory at all must never crash startup (HookRunner is constructed at
+ * unguarded call sites in cli.ts / repl.ts).
+ */
+function listHookJsonFiles(dir: string): string[] {
+  try {
+    return fs
+      .readdirSync(dir)
+      .filter((f) => f.endsWith(".json"))
+      .map((f) => path.join(dir, f));
+  } catch (err) {
+    log.debug(`Skipping hooks dir ${dir}: ${(err as Error).message}`);
+    return [];
+  }
+}
+
 function collectHookFiles(config: ForgeConfig, cwd: string): string[] {
   const files: string[] = [];
   const home = forgeHome();
@@ -170,17 +210,13 @@ function collectHookFiles(config: ForgeConfig, cwd: string): string[] {
   // Global forge hooks
   const globalDir = path.join(home, "hooks");
   if (pathExists(globalDir)) {
-    for (const f of fs.readdirSync(globalDir)) {
-      if (f.endsWith(".json")) files.push(path.join(globalDir, f));
-    }
+    files.push(...listHookJsonFiles(globalDir));
   }
 
   // Project forge hooks
   const projectDir = path.join(cwd, ".forge", "hooks");
   if (pathExists(projectDir)) {
-    for (const f of fs.readdirSync(projectDir)) {
-      if (f.endsWith(".json")) files.push(path.join(projectDir, f));
-    }
+    files.push(...listHookJsonFiles(projectDir));
   }
 
   // Claude compatibility
@@ -289,12 +325,12 @@ export class HookRunner {
       workspaceRoot: ctx.workspaceRoot,
       transcriptPath: ctx.transcriptPath,
       toolName: ctx.toolName,
-      toolInput: ctx.toolInput,
       // Cap bulky fields: PostToolUse fires per tool call and hook stdin is a
       // pipe — multi-hundred-KB outputs add spawn latency and EPIPE risk.
+      toolInput: capHookToolInput(ctx.toolInput),
       toolOutput: capHookString(ctx.toolOutput),
       toolUseId: ctx.toolUseId,
-      prompt: ctx.prompt,
+      prompt: capHookString(ctx.prompt),
       stopReason: ctx.stopReason,
       goalObjective: ctx.goalObjective,
       ultrawork: ctx.ultrawork,
@@ -321,6 +357,11 @@ export class HookRunner {
     return new Promise((resolve) => {
       const child = spawn(hook.command!, {
         shell: true,
+        // Own process group (POSIX): with shell:true, signalling only the
+        // /bin/sh wrapper orphans grandchildren (e.g. `npm test`), which keep
+        // our stdout/stderr pipe FDs open and hang the CLI at exit. Group kill
+        // below reaches the whole tree. (detached is a no-op target on win32.)
+        detached: process.platform !== "win32",
         cwd: ctx.cwd,
         env: {
           ...process.env,
@@ -349,8 +390,31 @@ export class HookRunner {
       const stopFailClosed =
         isStopEvent && this.config.blockingStopHooks !== false;
 
+      // Kill the whole process group (negative pid, POSIX) so grandchildren
+      // die with the shell; fall back to the direct child (win32 / ESRCH).
+      const killTree = (signal: NodeJS.Signals) => {
+        if (process.platform !== "win32" && child.pid) {
+          try {
+            process.kill(-child.pid, signal);
+            return;
+          } catch {
+            /* group gone or unsupported — direct kill below */
+          }
+        }
+        try {
+          child.kill(signal);
+        } catch {
+          /* already gone */
+        }
+      };
+
       const timer = setTimeout(() => {
-        child.kill("SIGTERM");
+        killTree("SIGTERM");
+        // Escalate TERM→KILL after a short grace (sandbox.ts /
+        // background-tasks.ts idiom) so a TERM-ignoring hook cannot outlive
+        // its verdict and hold the event loop open.
+        const killTimer = setTimeout(() => killTree("SIGKILL"), 2000);
+        killTimer.unref?.();
         log.warn(`Hook timed out (${event}): ${hook.command}`);
         if (stopFailClosed) {
           const reason =
@@ -368,12 +432,30 @@ export class HookRunner {
           finish({ decision: "allow", blocked: false });
         }
       }, timeoutMs);
+      // A pending hook timeout must not hold the CLI open at exit.
+      timer.unref?.();
 
+      // Hook output is untrusted bulk: cap accumulation (head) so a verbose
+      // hook cannot OOM the CLI — only stderr's first 200 chars and stdout's
+      // JSON verdict are ever consumed. Keep draining past the cap so the
+      // child never blocks on a full pipe.
+      let stdoutCapped = false;
+      let stderrCapped = false;
       child.stdout.on("data", (d) => {
+        if (stdoutCapped) return;
         stdout += d.toString();
+        if (stdout.length > HOOK_OUTPUT_CAP) {
+          stdout = stdout.slice(0, HOOK_OUTPUT_CAP);
+          stdoutCapped = true;
+        }
       });
       child.stderr.on("data", (d) => {
+        if (stderrCapped) return;
         stderr += d.toString();
+        if (stderr.length > HOOK_OUTPUT_CAP) {
+          stderr = stderr.slice(0, HOOK_OUTPUT_CAP);
+          stderrCapped = true;
+        }
       });
       child.on("error", (err) => {
         clearTimeout(timer);

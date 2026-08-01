@@ -29,7 +29,7 @@ import {
   type SessionActivity,
 } from "../statusline/activity.js";
 import { listTasks } from "../agent/tools/background-tasks.js";
-import { formatTokens, formatCost, estimateCostUsd } from "../util/format.js";
+import { formatTokens, formatCost, estimateCostUsd, visibleWidth, clipAnsi } from "../util/format.js";
 import { estimateTokens, sessionDir } from "../session/session.js";
 import { readSessionLock, formatLockHolder } from "../session/lock.js";
 import { getGitSnapshot } from "../util/git-context.js";
@@ -700,33 +700,6 @@ export function createWorkingIndicator(
     active: () => running,
     pauseDepth: () => pauseDepth,
   };
-}
-
-/** Visible character length ignoring ANSI CSI sequences. */
-export function visibleWidth(text: string): number {
-  // eslint-disable-next-line no-control-regex
-  return text.replace(/\x1b\[[0-9;]*m/g, "").length;
-}
-
-/** Clip a chalk-colored string to `max` visible columns without mid-SGR cuts. */
-export function clipAnsi(text: string, max: number): string {
-  if (max <= 0) return "";
-  if (visibleWidth(text) <= max) return text;
-  let out = "";
-  let vis = 0;
-  // eslint-disable-next-line no-control-regex
-  const re = /(\x1b\[[0-9;]*m)|./g;
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(text)) !== null) {
-    if (m[1]) {
-      out += m[1];
-      continue;
-    }
-    if (vis >= max) break;
-    out += m[0];
-    vis += 1;
-  }
-  return out + "\x1b[0m";
 }
 
 function shortDetail(s: string, max = 40): string {

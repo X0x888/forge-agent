@@ -14,9 +14,9 @@ import type { PlanUsageInfo, AuthMethod } from "./types.js";
 import { readGrokXaiSession } from "../auth/import-grok.js";
 import { getActiveAccount, getCredential } from "../auth/store.js";
 import { recordAccountPlan } from "../auth/accounts.js";
-import { nowEpoch } from "../util/fs.js";
+import { nowEpoch, forgeHome, readJsonFile, writeJsonFile } from "../util/fs.js";
 
-const CACHE_DIR = () => path.join(os.homedir(), ".forge", "statusline");
+const CACHE_DIR = () => path.join(forgeHome(), "statusline");
 const CACHE_FILE = () => path.join(CACHE_DIR(), "plan-cache.json");
 
 interface CacheFile {
@@ -27,28 +27,19 @@ interface CacheFile {
 }
 
 function readCache(key: string, ttlSec: number): PlanUsageInfo | null {
-  try {
-    const raw = JSON.parse(fs.readFileSync(CACHE_FILE(), "utf8")) as CacheFile;
-    const e = raw.entries?.[key];
-    if (!e) return null;
-    if (nowEpoch() - e.fetchedAt > ttlSec) return null;
-    return e.plan;
-  } catch {
-    return null;
-  }
+  const raw = readJsonFile<CacheFile>(CACHE_FILE(), { entries: {} });
+  const e = raw.entries?.[key];
+  if (!e) return null;
+  if (nowEpoch() - e.fetchedAt > ttlSec) return null;
+  return e.plan;
 }
 
 function writeCache(key: string, plan: PlanUsageInfo): void {
   try {
-    fs.mkdirSync(CACHE_DIR(), { recursive: true });
-    let raw: CacheFile = { entries: {} };
-    try {
-      raw = JSON.parse(fs.readFileSync(CACHE_FILE(), "utf8")) as CacheFile;
-    } catch {
-      /* */
-    }
+    const raw = readJsonFile<CacheFile>(CACHE_FILE(), { entries: {} });
     raw.entries[key] = { fetchedAt: nowEpoch(), plan };
-    fs.writeFileSync(CACHE_FILE(), JSON.stringify(raw, null, 2), { mode: 0o600 });
+    // Atomic tmp+rename (0600) — a torn cache must never crash a probe.
+    writeJsonFile(CACHE_FILE(), raw, 0o600);
   } catch {
     /* best-effort */
   }

@@ -39,9 +39,8 @@ import {
   renderLiveRunHeader,
   formatBackgroundTasksList,
   createWorkingIndicator,
-  clipAnsi,
-  visibleWidth,
 } from "../src/tui/status-bar.js";
+import { clipAnsi, visibleWidth } from "../src/util/format.js";
 import type { ForgeConfig } from "../src/config/types.js";
 import type { ResolvedAuth } from "../src/auth/types.js";
 import { armUlwCycle } from "../src/harness/ulw-cycle.js";

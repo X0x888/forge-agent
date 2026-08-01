@@ -11,9 +11,8 @@ import {
   containsRedirection,
   extractCommandPaths,
   normalizeSegment,
-  tokenizeSimple,
 } from "./shell-parse.js";
-import { alwaysPatternFromTokens, isReadOnlyCommand } from "./shell-arity.js";
+import { alwaysPatternFromCommand, isReadOnlyCommand } from "./shell-arity.js";
 import { addSavedAllow, loadSavedAllows, savedAsAllowRules } from "./permission-saved.js";
 import { logSandboxEvent } from "./sandbox-log.js";
 import { isWithinRoot } from "../util/fs.js";
@@ -54,6 +53,42 @@ export interface PermissionRequest {
   mode: PermissionMode;
   workspace?: string;
   config?: ForgeConfig;
+}
+
+/**
+ * Serialize interactive permission prompts: parallel read-only tool batches
+ * (Promise.all in loop.ts) can fire several asks at once, and concurrent
+ * readline interfaces on the same stdin race and garble answers. One prompt
+ * at a time, queued; non-interactive paths never touch this chain.
+ * Exported for unit tests.
+ */
+let promptChain: Promise<unknown> = Promise.resolve();
+
+export function enqueuePrompt<T>(fn: () => Promise<T>): Promise<T> {
+  const run = promptChain.then(fn);
+  // Keep the chain alive after rejections (stored link swallows; the caller
+  // still receives the real rejection via `run`).
+  promptChain = run.catch(() => {});
+  return run;
+}
+
+/**
+ * Display label for the [a]lways grant line — mirrors savedAsAllowRules
+ * (Bash(...)/Write(...)/…) so the prompt shows exactly what gets persisted.
+ * Exported for unit tests.
+ */
+export function alwaysGrantLabel(tool: string, pattern: string): string {
+  const label =
+    tool === "bash"
+      ? "Bash"
+      : tool === "write_file"
+        ? "Write"
+        : tool === "search_replace"
+          ? "Edit"
+          : tool === "read_file"
+            ? "Read"
+            : tool;
+  return `${label}(${pattern})`;
 }
 
 /** Warp-inspired decision with explainable reason. */
@@ -486,12 +521,50 @@ export class PermissionGate {
     dangerous: boolean,
     opts: { workspace?: string; alwaysPattern?: string; reasonHint?: string } = {},
   ): Promise<PermissionResult> {
+    // One prompt at a time: parallel read-only batches (Promise.all in
+    // loop.ts) otherwise open concurrent readlines on the same stdin.
+    return enqueuePrompt(() =>
+      this.promptUserExclusive(toolName, toolInput, dangerous, opts),
+    );
+  }
+
+  private async promptUserExclusive(
+    toolName: string,
+    toolInput: Record<string, unknown>,
+    dangerous: boolean,
+    opts: { workspace?: string; alwaysPattern?: string; reasonHint?: string } = {},
+  ): Promise<PermissionResult> {
     const preview = formatPermissionPreview(toolName, toolInput, 500);
     const timeoutMs = permissionAskTimeoutMs();
     const timeoutNote =
       timeoutMs > 0
         ? ` (auto-deny in ${Math.round(timeoutMs / 1000)}s)`
         : "";
+
+    // Compute the [a]lways rule up front so the prompt shows the exact
+    // pattern being granted — answering "a" on `rm -rf /tmp/x` persists a
+    // blind `rm *` arity-1 rule, which must never be invisible.
+    let alwaysTool =
+      toolName === "run_terminal_command"
+        ? "bash"
+        : toolName === "Write"
+          ? "write_file"
+          : toolName === "Edit"
+            ? "search_replace"
+            : toolName === "ApplyPatch"
+              ? "apply_patch"
+              : toolName === "Read"
+                ? "read_file"
+                : toolName;
+    // External-directory asks must persist under the key the checker
+    // consults (external_directory:<dir>/*), not the real tool name —
+    // only that call site passes alwaysPattern.
+    if (opts.alwaysPattern) alwaysTool = "external_directory";
+    const alwaysPattern =
+      opts.alwaysPattern ||
+      (alwaysTool === "bash"
+        ? alwaysPatternFromCommand(String(toolInput.command || ""))
+        : "*");
 
     console.error(
       chalk.yellow(
@@ -502,7 +575,7 @@ export class PermissionGate {
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
       const question = rl.question(
-        `Allow? [y]es once / [a]lways this pattern / [s]ession tool / [n]o:${timeoutNote} `,
+        `Allow? [y]es once / [a]lways allow: ${alwaysGrantLabel(alwaysTool, alwaysPattern)} in this workspace / [s]ession tool / [n]o:${timeoutNote} `,
       );
       const ans = (
         await (timeoutMs > 0
@@ -548,36 +621,19 @@ export class PermissionGate {
         return { decision: "allow_session", reason: "session_tool" };
       }
       if (ans === "a" || ans === "always") {
-        let tool =
-          toolName === "run_terminal_command"
-            ? "bash"
-            : toolName === "Write"
-              ? "write_file"
-              : toolName === "Edit"
-                ? "search_replace"
-                : toolName === "ApplyPatch"
-                  ? "apply_patch"
-                  : toolName === "Read"
-                    ? "read_file"
-                    : toolName;
-        // External-directory asks must persist under the key the checker
-        // consults (external_directory:<dir>/*), not the real tool name —
-        // only that call site passes alwaysPattern.
-        if (opts.alwaysPattern) tool = "external_directory";
-        const pattern =
-          opts.alwaysPattern ||
-          (tool === "bash"
-            ? alwaysPatternFromCommandTokens(String(toolInput.command || ""))
-            : "*");
-        this.sessionPatterns.add(`${tool}:${pattern}`);
+        this.sessionPatterns.add(`${alwaysTool}:${alwaysPattern}`);
         if (opts.workspace) {
           try {
-            addSavedAllow({ workspace: opts.workspace, tool, pattern });
+            addSavedAllow({
+              workspace: opts.workspace,
+              tool: alwaysTool,
+              pattern: alwaysPattern,
+            });
           } catch {
             /* */
           }
         }
-        return { decision: "allow", reason: `always:${pattern}` };
+        return { decision: "allow", reason: `always:${alwaysPattern}` };
       }
       return { decision: "allow", reason: "user_once" };
     } finally {
@@ -597,16 +653,4 @@ export function permissionAskTimeoutMs(): number {
   const parsed = parseDurationMs(raw);
   if (!parsed.ok || parsed.ms <= 0) return 0;
   return Math.max(5_000, parsed.ms);
-}
-
-function alwaysPatternFromCommandTokens(command: string): string {
-  const segs = commandCheckTargets(command);
-  const seg = segs[0] || command;
-  const toks = tokenizeSimple(normalizeSegment(seg));
-  const words: string[] = [];
-  for (const t of toks) {
-    if (t.startsWith("-") && words.length > 0) continue;
-    words.push(t);
-  }
-  return alwaysPatternFromTokens(words.length ? words : toks);
 }

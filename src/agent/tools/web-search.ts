@@ -6,7 +6,7 @@
 import type { ToolContext, ToolResult } from "./types.js";
 import { boundToolOutput } from "./truncate.js";
 import { mergeAbortSignals } from "../../util/abort.js";
-import { readBodyCapped } from "./web-fetch.js";
+import { readBodyCapped, decodeCodePoint } from "./web-fetch.js";
 import { numberFieldError } from "./arg-types.js";
 
 const UA = "ForgeAgent/0.9 (+https://github.com/X0x888/forge-agent; web_search)";
@@ -260,15 +260,22 @@ function stripTags(s: string): string {
   return s.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ");
 }
 
-function decodeHtml(s: string): string {
+/**
+ * Decode common entities for DDG scrape text. Uses web-fetch's guarded
+ * decodeCodePoint so hostile entities (&#x110000;) never throw RangeError.
+ * Exported for unit tests.
+ */
+export function decodeHtml(s: string): string {
   return s
     .replace(/&amp;/g, "&")
     .replace(/&lt;/g, "<")
     .replace(/&gt;/g, ">")
     .replace(/&quot;/g, '"')
     .replace(/&#39;/g, "'")
-    .replace(/&#x([0-9a-f]+);/gi, (_, h) =>
-      String.fromCodePoint(parseInt(h, 16)),
+    .replace(/&#x([0-9a-f]+);/gi, (full, h: string) =>
+      decodeCodePoint(parseInt(h, 16), full),
     )
-    .replace(/&#(\d+);/g, (_, d) => String.fromCodePoint(Number(d)));
+    .replace(/&#(\d+);/g, (full, d: string) =>
+      decodeCodePoint(Number(d), full),
+    );
 }

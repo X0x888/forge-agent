@@ -328,13 +328,14 @@ export async function startBackgroundTask(opts: {
     if (task.status === "running") {
       try {
         child.kill("SIGTERM");
+        // unref: SIGKILL grace must not hold the event loop after timeout.
         setTimeout(() => {
           try {
             child.kill("SIGKILL");
           } catch {
             /* */
           }
-        }, 3000);
+        }, 3000).unref?.();
       } catch {
         /* */
       }
@@ -464,13 +465,14 @@ export function killTask(id: string): string {
   }
   try {
     task.child?.kill("SIGTERM");
+    // unref: SIGKILL grace must not hold the event loop (delays CLI exit).
     setTimeout(() => {
       try {
         task.child?.kill("SIGKILL");
       } catch {
         /* */
       }
-    }, 2000);
+    }, 2000).unref?.();
   } catch (err) {
     return `Failed to kill ${id}: ${(err as Error).message}`;
   }
@@ -499,6 +501,7 @@ export function killAllRunningTasks(opts?: {
       } else {
         task.child?.kill("SIGTERM");
         const child = task.child;
+        // unref: teardown-path SIGKILL grace must not delay process exit.
         setTimeout(() => {
           try {
             if (task.status === "running" || task.status === "killed") {
@@ -507,7 +510,7 @@ export function killAllRunningTasks(opts?: {
           } catch {
             /* */
           }
-        }, 1500);
+        }, 1500).unref?.();
       }
     } catch {
       /* */

@@ -1,6 +1,6 @@
 import chalk from "chalk";
 import type { StatusSnapshot, StatuslineRenderOptions, PlanUsageInfo } from "./types.js";
-import { formatTokens, formatCost } from "../util/format.js";
+import { formatTokens, formatCost, clipAnsi } from "../util/format.js";
 import { getForgeVersion } from "../util/version.js";
 import { forgeHome } from "../util/fs.js";
 import { isFormatOnWriteEnabled } from "../agent/tools/format-on-write.js";
@@ -365,7 +365,9 @@ function shed(line: string, width: number): string {
     // eslint-disable-next-line no-control-regex
     if (next.replace(/\x1b\[[0-9;]*m/g, "").length <= width) return next;
   }
-  return parts.join("  ").slice(0, width);
+  // 2 segments left and still too wide: hard-clip without cutting inside an
+  // ANSI escape (a naive slice bleeds SGR state and garbles the terminal).
+  return clipAnsi(parts.join("  "), width);
 }
 
 export function renderHud(

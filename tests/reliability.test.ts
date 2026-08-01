@@ -1519,7 +1519,7 @@ describe("session lock", () => {
       }),
       "utf8",
     );
-    const a2 = acquireSessionLock(s.meta.id, { ttlMs: 60_000 });
+    const a2 = acquireSessionLock(s.meta.id);
     assert.equal(a2.ok, true);
     assert.equal(a2.owned, true);
     assert.equal(a2.stolen, true);
@@ -1539,14 +1539,11 @@ describe("session lock", () => {
         }),
         "utf8",
       );
-      const blocked = acquireSessionLock(s.meta.id, { ttlMs: 60_000 });
+      const blocked = acquireSessionLock(s.meta.id);
       assert.equal(blocked.ok, false);
       assert.equal(blocked.owned, false);
       assert.ok(blocked.holder);
-      const forced = acquireSessionLock(s.meta.id, {
-        ttlMs: 60_000,
-        force: true,
-      });
+      const forced = acquireSessionLock(s.meta.id, { force: true });
       assert.equal(forced.ok, true);
       assert.equal(forced.stolen, true);
       releaseSessionLock(s.meta.id);
@@ -4609,8 +4606,8 @@ describe("session lock multi-day", () => {
         }),
         "utf8",
       );
-      const blocked = acquireSessionLock(s.meta.id, { ttlMs: 1000 });
-      assert.equal(blocked.ok, false, "live pid must not be TTL-stolen");
+      const blocked = acquireSessionLock(s.meta.id);
+      assert.equal(blocked.ok, false, "live pid must never be stolen");
       assert.ok(blocked.holder);
       const forced = acquireSessionLock(s.meta.id, { force: true });
       assert.equal(forced.ok, true);

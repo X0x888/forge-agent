@@ -575,6 +575,7 @@ Docs: docs/PRODUCTION.md · docs/RELIABILITY.md · docs/ULW.md · forge news
             maxWavesOpt === undefined ? undefined : maxWavesOpt;
           const state = armUlwCycle(session.meta.id, mandate, {
             cycle: 1,
+            editCount: session.meta.editCount,
             ...(maxWaves !== undefined ? { maxWaves } : {}),
           });
           saveSession(session);
@@ -1096,6 +1097,7 @@ Docs: docs/PRODUCTION.md
           session.meta.ultrawork = true;
           armUlwCycle(session.meta.id, prompt, {
             cycle: 1,
+            editCount: session.meta.editCount,
             ...(maxWavesOpt !== undefined ? { maxWaves: maxWavesOpt } : {}),
           });
           saveSession(session);

@@ -13,6 +13,10 @@ import { numberFieldError } from "./arg-types.js";
 // Resolved once per process — PATH scanning is a dozen+ sync FS calls.
 let rgPathCache: string | null | undefined;
 
+// Parity with runRg's 4MB OUTPUT_CAP: the JS fallback must not read huge
+// files (logs, dumps) whole into memory on machines without rg.
+const JS_FALLBACK_MAX_FILE_BYTES = 4 * 1024 * 1024;
+
 function findRg(): string | null {
   if (rgPathCache !== undefined) return rgPathCache;
   const paths = (process.env.PATH || "").split(path.delimiter);
@@ -283,11 +287,17 @@ async function toolGrepJs(
   }
 
   const matches: string[] = [];
+  let skippedOversized = 0;
   for (const file of files) {
     if (ctx.signal?.aborted) return { output: "Aborted", isError: true };
     if (headLimit > 0 && matches.length >= headLimit) break;
     let text: string;
     try {
+      const fst = await fsp.stat(file);
+      if (fst.size > JS_FALLBACK_MAX_FILE_BYTES) {
+        skippedOversized += 1;
+        continue;
+      }
       text = await fsp.readFile(file, "utf8");
     } catch {
       continue;
@@ -308,7 +318,11 @@ async function toolGrepJs(
         pathLabel,
         glob: args.glob != null ? String(args.glob) : undefined,
       });
-  const managed = await boundToolOutput(body);
+  const skippedNote =
+    skippedOversized > 0
+      ? `\n[grep:js-fallback] skipped ${skippedOversized} file(s) over 4MB (size guard; install rg to search them)`
+      : "";
+  const managed = await boundToolOutput(body + skippedNote);
   return { output: managed.text };
 }
 

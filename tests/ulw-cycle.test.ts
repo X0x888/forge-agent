@@ -973,4 +973,41 @@ describe("ulw wave ledger + quality bar", () => {
       /no successful verification|ran no/i,
     );
   });
+
+  it("arming mid-session baselines the wave ledger at the current editCount", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-ulw-base-"));
+    process.env.FORGE_HOME = tmp;
+    const sid = "ulw-arm-baseline";
+    // 40 edits happened before /ulw was armed — wave 1 must measure from here.
+    const armed = armUlwCycle(sid, "improve the codebase", {
+      cycle: 1,
+      editCount: 40,
+    });
+    assert.equal(armed.lastBlockEditCount, 40);
+
+    const d = evaluateUlwAtStop({
+      sessionId: sid,
+      lastAssistantMessage: "Shipped wave 1; npm test passed.",
+      editCount: 43,
+      openTodoCount: 0,
+      stuckThreshold: 5,
+      verificationRan: true,
+      verificationPassed: true,
+    });
+    assert.equal(d.block, true);
+    const s = loadUlwCycle(sid)!;
+    const w1 = s.waves![s.waves!.length - 1];
+    assert.equal(w1.wave, 1);
+    // Not 43 — pre-arm edits are not part of wave 1, so bestWave() anchors
+    // the quality bar to work the cycle actually drove.
+    assert.equal(w1.editDelta, 3);
+    assert.equal(bestWave(s.waves)!.editDelta, 3);
+  });
+
+  it("arm without editCount keeps the legacy zero baseline", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-ulw-base0-"));
+    process.env.FORGE_HOME = tmp;
+    const s = armUlwCycle("ulw-arm-zero", "improve the codebase", { cycle: 1 });
+    assert.equal(s.lastBlockEditCount, 0);
+  });
 });

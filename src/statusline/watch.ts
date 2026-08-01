@@ -49,25 +49,32 @@ export async function runStatusWatch(opts: WatchOptions = {}): Promise<void> {
   await tick();
 
   return new Promise((resolve) => {
-    const id = setInterval(() => {
-      if (opts.signal?.aborted) {
-        clearInterval(id);
-        resolve();
-        return;
-      }
-      void tick().catch((err) => {
-        process.stderr.write(`status watch: ${(err as Error).message}\n`);
-      });
-    }, interval);
-
-    const onAbort = () => {
+    let inFlight = false;
+    const cleanup = () => {
       clearInterval(id);
+      process.removeListener("SIGINT", onSigint);
       resolve();
     };
-    opts.signal?.addEventListener("abort", onAbort, { once: true });
-    process.on("SIGINT", () => {
-      clearInterval(id);
-      resolve();
-    });
+    const onSigint = () => cleanup();
+    const id = setInterval(() => {
+      if (opts.signal?.aborted) {
+        cleanup();
+        return;
+      }
+      // A tick can outlive the interval (plan probes wait up to ~4s) — never
+      // overlap frames or clear-screen/body writes interleave on the TTY.
+      if (inFlight) return;
+      inFlight = true;
+      void tick()
+        .catch((err) => {
+          process.stderr.write(`status watch: ${(err as Error).message}\n`);
+        })
+        .finally(() => {
+          inFlight = false;
+        });
+    }, interval);
+
+    opts.signal?.addEventListener("abort", cleanup, { once: true });
+    process.on("SIGINT", onSigint);
   });
 }

@@ -224,13 +224,15 @@ function runRaw(
       } catch {
         /* */
       }
+      // unref like grep.ts: a settled run must not hold the event loop for the
+      // SIGKILL grace window (delays CLI exit up to 2s).
       setTimeout(() => {
         try {
           child.kill("SIGKILL");
         } catch {
           /* */
         }
-      }, 2000);
+      }, 2000).unref?.();
     };
     const timer = setTimeout(() => {
       timedOut = true;

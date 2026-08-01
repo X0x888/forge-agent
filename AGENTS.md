@@ -106,7 +106,9 @@ admission suppression, Anthropic prompt caching (`FORGE_ANTHROPIC_CACHE`; cache 
 cache buckets folded into `prompt_tokens` so totals/spend cap don't undercount),
 per-model context windows (`context_window` explicit wins; `src/config/model-info.ts` otherwise),
 prompt-cache-stable system prompt (volatile git branch via context-admit, not message[0]), Stop hook
-crash/HTTP fail-closed + stdin-EPIPE safe + 20k payload caps, Retry-After honored above client backoff
+crash/HTTP fail-closed + stdin-EPIPE safe + 20k payload caps (all bulky fields) + 64KB hook
+stdout/stderr caps + hook timeout process-group kill (TERM→KILL, unref'd timers), Retry-After
+honored above client backoff
 (≤120s), 10-min default provider timeout (`FORGE_PROVIDER_TIMEOUT_MS`), 4MB child-output caps
 (bash/rg), streaming read_file for >2MB files, byte-guaranteed tool-output truncation, atomic
 session-lock create (`wx`), model-aware cost estimates (grok-4.5 $2/$6), 16k default max_tokens.

@@ -1656,7 +1656,10 @@ export async function handleSlash(
     case "/autowork": {
       opts.session.meta.ultrawork = true;
       const mandate = arg || "improve the codebase";
-      const state = armUlwCycle(opts.session.meta.id, mandate, { cycle: 1 });
+      const state = armUlwCycle(opts.session.meta.id, mandate, {
+        cycle: 1,
+        editCount: opts.session.meta.editCount,
+      });
       // Fresh driver: drop leftover soft TodoGate once-blocks from prior work.
       try {
         clearSoftTodoGateOnWindDown(opts.session.meta.id);
@@ -1787,6 +1790,7 @@ export async function handleSlash(
         opts.session.meta.ultrawork = true;
         state = armUlwCycle(sid, "continue prior mandate", {
           cycle: flag,
+          editCount: opts.session.meta.editCount,
         });
         saveSession(opts.session);
       }
@@ -1899,6 +1903,7 @@ export async function handleSlash(
         state = armUlwCycle(sid, "continue prior mandate", {
           cycle: 1,
           maxWaves: parsed,
+          editCount: opts.session.meta.editCount,
         });
         saveSession(opts.session);
       }

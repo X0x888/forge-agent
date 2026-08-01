@@ -354,7 +354,10 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
   if (session.meta.ultrawork) {
     let ulw = loadUlwCycle(session.meta.id);
     if (!ulw?.enabled) {
-      ulw = armUlwCycle(session.meta.id, userMessage, { cycle: 1 });
+      ulw = armUlwCycle(session.meta.id, userMessage, {
+        cycle: 1,
+        editCount: session.meta.editCount,
+      });
       log.info(
         `ULW cycle armed (cycle=1)${ulw.softPrompt ? " — soft prompt expanded to god-scope" : ""}`,
       );
@@ -363,6 +366,7 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
       // Soft follow-ups under ULW still get cycle framing without resetting wave hard
       const refreshed = armUlwCycle(session.meta.id, userMessage, {
         cycle: ulw.cycle,
+        editCount: session.meta.editCount,
       });
       effectiveUserMessage = ulwKickoffMessage(refreshed);
       log.info("ULW soft follow-up — re-expanded mandate, cycle preserved");
