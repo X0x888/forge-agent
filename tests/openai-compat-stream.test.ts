@@ -146,4 +146,54 @@ describe("openai-compat streamed tool_call index handling", () => {
     assert.equal(res.message.tool_calls?.[0].function.name, "read_file");
     assert.equal(res.message.tool_calls?.[1].function.name, "write_file");
   });
+
+  it("maps DeepSeek native cache counters onto cache_read_input_tokens", async () => {
+    mockStream([
+      {
+        id: "chatcmpl_ds",
+        model: "deepseek-v4-flash",
+        choices: [
+          { delta: { content: "ok" }, finish_reason: "stop" },
+        ],
+        usage: {
+          prompt_tokens: 1000,
+          completion_tokens: 10,
+          total_tokens: 1010,
+          prompt_cache_hit_tokens: 900,
+          prompt_cache_miss_tokens: 100,
+        },
+      },
+    ]);
+    const p = new OpenAICompatProvider({
+      id: "deepseek",
+      baseUrl: "https://api.deepseek.com",
+      apiKey: "sk-test",
+    });
+    const res = await p.chatStream(makeReq(), () => {});
+    assert.equal(res.usage?.cache_read_input_tokens, 900);
+    assert.equal(res.usage?.prompt_tokens, 1000);
+  });
+
+  it("xAI/OpenAI prompt_tokens_details.cached_tokens still maps (regression)", async () => {
+    mockStream([
+      {
+        id: "chatcmpl_xai",
+        model: "grok-4.5",
+        choices: [{ delta: { content: "ok" }, finish_reason: "stop" }],
+        usage: {
+          prompt_tokens: 500,
+          completion_tokens: 5,
+          total_tokens: 505,
+          prompt_tokens_details: { cached_tokens: 400 },
+        },
+      },
+    ]);
+    const p = new OpenAICompatProvider({
+      id: "xai",
+      baseUrl: "https://api.x.ai/v1",
+      apiKey: "sk-test",
+    });
+    const res = await p.chatStream(makeReq(), () => {});
+    assert.equal(res.usage?.cache_read_input_tokens, 400);
+  });
 });

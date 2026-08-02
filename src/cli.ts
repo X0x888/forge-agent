@@ -3198,6 +3198,7 @@ Docs: docs/PRODUCTION.md
                     s.totalPromptTokens || 0,
                     s.totalCompletionTokens || 0,
                     s.model,
+                    s.totalCacheReadTokens || 0,
                   ),
                   maxCostUsd:
                     s.maxCostUsd !== undefined && s.maxCostUsd !== null
@@ -3310,6 +3311,7 @@ Docs: docs/PRODUCTION.md
               s.totalPromptTokens || 0,
               s.totalCompletionTokens || 0,
               s.model,
+              s.totalCacheReadTokens || 0,
             );
             costNote = `  ~${formatCost(c)}`;
             if (
@@ -6264,6 +6266,7 @@ async function runHeadless(opts: {
           opts.session.meta.totalPromptTokens || 0,
           opts.session.meta.totalCompletionTokens || 0,
           opts.config.model,
+          opts.session.meta.totalCacheReadTokens || 0,
         ),
         productionWarnings: productionWarningsForRun(opts.config, {
           ultrawork: Boolean(opts.session.meta.ultrawork),
@@ -6614,6 +6617,7 @@ maxTurns: opts.config.maxTurns ?? 0,
         opts.session.meta.totalPromptTokens || 0,
         opts.session.meta.totalCompletionTokens || 0,
         opts.config.model,
+        opts.session.meta.totalCacheReadTokens || 0,
       ),
       productionWarnings: productionWarningsForRun(opts.config, {
         ultrawork: Boolean(opts.session.meta.ultrawork),
@@ -6663,6 +6667,7 @@ maxTurns: opts.config.maxTurns ?? 0,
       timedOut,
       promptTokens: result.promptTokens,
       completionTokens: result.completionTokens,
+      cacheReadTokens: result.cacheReadTokens,
       durationMs,
     };
     appendSessionMetrics(
@@ -6679,6 +6684,7 @@ maxTurns: opts.config.maxTurns ?? 0,
         editCount: payload.editCount,
         promptTokens: payload.promptTokens,
         completionTokens: payload.completionTokens,
+        cacheReadTokens: payload.cacheReadTokens,
         durationMs,
         aborted: payload.aborted,
         timedOut: payload.timedOut,

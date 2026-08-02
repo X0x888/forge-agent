@@ -108,6 +108,12 @@ export interface SessionMeta {
   totalPromptTokens: number;
   totalCompletionTokens: number;
   /**
+   * Cached-input tokens reported by providers (xAI cached_tokens, DeepSeek
+   * prompt_cache_hit_tokens, Anthropic cache_read). Feeds cache-aware cost
+   * estimates; absent in older sessions (treated as 0).
+   */
+  totalCacheReadTokens?: number;
+  /**
    * Optional per-session spend cap (USD estimate). When set, overrides
    * config.maxCostUsd for this session only. 0 = unlimited. Cleared on /clear hard.
    */
@@ -179,6 +185,7 @@ export function createSession(opts: {
       editCount: 0,
       totalPromptTokens: 0,
       totalCompletionTokens: 0,
+      totalCacheReadTokens: 0,
       userTurnMarks: [],
       ...(title ? { title } : {}),
     },
@@ -334,6 +341,7 @@ function normalizeSessionMeta(
     editCount: Number(fromSide.editCount) || 0,
     totalPromptTokens: Number(fromSide.totalPromptTokens) || 0,
     totalCompletionTokens: Number(fromSide.totalCompletionTokens) || 0,
+    totalCacheReadTokens: Number(fromSide.totalCacheReadTokens) || 0,
     ...(typeof fromSide.lastVerificationCommand === "string" &&
     fromSide.lastVerificationCommand.trim()
       ? {
@@ -749,6 +757,7 @@ export function importSessionJson(
       editCount: Number(src.editCount) || 0,
       totalPromptTokens: Number(src.totalPromptTokens) || 0,
       totalCompletionTokens: Number(src.totalCompletionTokens) || 0,
+      totalCacheReadTokens: Number(src.totalCacheReadTokens) || 0,
       ...(typeof src.lastVerificationCommand === "string" &&
       src.lastVerificationCommand.trim()
         ? {
@@ -1943,6 +1952,7 @@ export function exportSessionMarkdown(session: SessionData): string {
           session.meta.totalPromptTokens || 0,
           session.meta.totalCompletionTokens || 0,
           session.meta.model,
+          session.meta.totalCacheReadTokens || 0,
         );
         const bits = [`- Est. cost: ${formatCost(cost)}`];
         if (
@@ -2629,6 +2639,7 @@ export function formatSessionShareCard(
           m.totalPromptTokens || 0,
           m.totalCompletionTokens || 0,
           m.model,
+          m.totalCacheReadTokens || 0,
         );
         const tok =
           (m.totalPromptTokens || 0) + (m.totalCompletionTokens || 0) > 0

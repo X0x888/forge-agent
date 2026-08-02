@@ -659,6 +659,7 @@ export async function runRepl(opts: {
         renderTurnFooter(statusCtx(), {
           promptTokens: result.promptTokens,
           completionTokens: result.completionTokens,
+          cacheReadTokens: result.cacheReadTokens,
           stopContinues: result.stopContinues,
         }),
       );
@@ -703,6 +704,7 @@ export async function runRepl(opts: {
             editCount: session.meta.editCount,
             promptTokens: result.promptTokens,
             completionTokens: result.completionTokens,
+            cacheReadTokens: result.cacheReadTokens,
             aborted: result.aborted,
             ok: !result.aborted,
             headless: false,

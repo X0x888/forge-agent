@@ -153,10 +153,11 @@ function buildContext(session: SessionData, windowTokens: number): ContextInfo {
 function buildTokens(session: SessionData, provider: string): TokenUsageInfo {
   const prompt = session.meta.totalPromptTokens || 0;
   const completion = session.meta.totalCompletionTokens || 0;
+  const cacheRead = session.meta.totalCacheReadTokens || 0;
   const total = prompt + completion;
   const estimatedUsd =
     total > 0
-      ? estimateCostUsd(provider, prompt, completion, session.meta.model)
+      ? estimateCostUsd(provider, prompt, completion, session.meta.model, cacheRead)
       : undefined;
   return {
     promptTokens: prompt,

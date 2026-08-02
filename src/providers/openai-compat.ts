@@ -29,17 +29,21 @@ export function mergeStreamedToolName(current: string, delta: string): string {
 type RawUsage =
   | (ChatResponse["usage"] & {
       prompt_tokens_details?: { cached_tokens?: number };
+      /** DeepSeek native context-cache counters (top-level, V3/V4 shape). */
+      prompt_cache_hit_tokens?: number;
+      prompt_cache_miss_tokens?: number;
     })
   | undefined;
 
 /**
  * Map vendor cached-token detail onto the shared ChatUsage cache field
- * (xAI/OpenAI return prompt_tokens_details.cached_tokens; Anthropic maps to
- * the same field in its own adapter).
+ * (xAI/OpenAI return prompt_tokens_details.cached_tokens; DeepSeek native
+ * returns prompt_cache_hit_tokens; Anthropic maps in its own adapter).
  */
 function normalizeUsage(u: RawUsage): ChatResponse["usage"] | undefined {
   if (!u) return undefined;
-  const cached = u.prompt_tokens_details?.cached_tokens;
+  const cached =
+    u.prompt_tokens_details?.cached_tokens ?? u.prompt_cache_hit_tokens;
   if (cached != null && u.cache_read_input_tokens == null) {
     return { ...u, cache_read_input_tokens: cached };
   }

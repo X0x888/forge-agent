@@ -2395,6 +2395,7 @@ export async function handleSlash(
         opts.session.meta.totalPromptTokens,
         opts.session.meta.totalCompletionTokens,
         opts.config.model,
+        opts.session.meta.totalCacheReadTokens || 0,
       );
       const budget = costCapStatus(opts.config, opts.session.meta);
       return {
@@ -2493,6 +2494,7 @@ export async function handleSlash(
         opts.session.meta.totalPromptTokens,
         opts.session.meta.totalCompletionTokens,
         opts.config.model,
+        opts.session.meta.totalCacheReadTokens || 0,
       );
       return {
         handled: true,
@@ -2550,6 +2552,7 @@ const stats = collectUsageStats({
         opts.session.meta.totalPromptTokens,
         opts.session.meta.totalCompletionTokens,
         opts.config.model,
+        opts.session.meta.totalCacheReadTokens || 0,
       );
       let sessionExtra: string[] = [];
       try {
@@ -4842,6 +4845,7 @@ case "/new":
                     s.totalPromptTokens || 0,
                     s.totalCompletionTokens || 0,
                     s.model,
+                    s.totalCacheReadTokens || 0,
                   );
                   costNote = ` ~${formatCost(c)}`;
                 }

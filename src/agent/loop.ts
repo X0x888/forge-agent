@@ -191,6 +191,8 @@ export interface LoopResult {
   finishReason: string | null;
   promptTokens: number;
   completionTokens: number;
+  /** Provider-reported cached-input tokens for this run (0 when unreported). */
+  cacheReadTokens: number;
 }
 
 /**
@@ -323,6 +325,7 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
   const fileReads = new FileReadState();
   const startPrompt = session.meta.totalPromptTokens;
   const startComp = session.meta.totalCompletionTokens;
+  const startCache = session.meta.totalCacheReadTokens ?? 0;
   const doomLoop = new DoomLoopTracker({
     threshold: envPositiveInt("FORGE_DOOM_LOOP_THRESHOLD", 3),
   });
@@ -1113,6 +1116,9 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
       if (response.usage) {
         session.meta.totalPromptTokens += response.usage.prompt_tokens;
         session.meta.totalCompletionTokens += response.usage.completion_tokens;
+        session.meta.totalCacheReadTokens =
+          (session.meta.totalCacheReadTokens ?? 0) +
+          (response.usage.cache_read_input_tokens ?? 0);
       }
 
       const assistantMsg = response.message;
@@ -1720,12 +1726,15 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
 
   const promptTokens = session.meta.totalPromptTokens - startPrompt;
   const completionTokens = session.meta.totalCompletionTokens - startComp;
+  const cacheReadTokens =
+    (session.meta.totalCacheReadTokens ?? 0) - startCache;
   if (promptTokens + completionTokens > 0) {
     const cost = estimateCostUsd(
       String(config.provider),
       promptTokens,
       completionTokens,
       config.model,
+      cacheReadTokens,
     );
     events.onStatus?.(
       `tokens in=${formatTokens(promptTokens)} out=${formatTokens(completionTokens)} · est ${formatCost(cost)}`,
@@ -1765,6 +1774,7 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
     finishReason: lastFinishReason,
     promptTokens,
     completionTokens,
+    cacheReadTokens,
   };
 }
 

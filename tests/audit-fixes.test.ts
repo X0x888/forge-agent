@@ -273,6 +273,41 @@ describe("cost estimates: grok-4.5 rates, not grok-4 rates", () => {
   });
 });
 
+describe("cost estimates: cache-aware pricing", () => {
+  it("deepseek flash: 90% cache-hit input is dramatically cheaper", () => {
+    // 1M prompt with 900k cache hits: 100k×0.14 + 900k×0.0028 (+0.28 out)
+    const c = estimateCostUsd(
+      "deepseek",
+      1_000_000,
+      1_000_000,
+      "deepseek-v4-flash",
+      900_000,
+    );
+    assert.ok(Math.abs(c - (0.1 * 0.14 + 0.9 * 0.0028 + 0.28)) < 1e-9);
+  });
+  it("no cache tokens → identical to legacy full-rate estimate", () => {
+    assert.equal(
+      estimateCostUsd("deepseek", 1_000_000, 1_000_000, "deepseek-v4-flash"),
+      estimateCostUsd("deepseek", 1_000_000, 1_000_000, "deepseek-v4-flash", 0),
+    );
+  });
+  it("models without a cache rate price cached input at full rate (safe)", () => {
+    // grok-3 has no cacheIn — cacheReadTokens must not lower the estimate.
+    assert.equal(
+      estimateCostUsd("xai", 1_000_000, 0, "grok-3", 500_000),
+      estimateCostUsd("xai", 1_000_000, 0, "grok-3"),
+    );
+  });
+  it("deepseek-v4-pro uses current official rates ($0.435/$0.87)", () => {
+    const c = estimateCostUsd("deepseek", 1_000_000, 1_000_000, "deepseek-v4-pro");
+    assert.ok(Math.abs(c - (0.435 + 0.87)) < 1e-9);
+  });
+  it("cacheReadTokens is clamped to promptTokens", () => {
+    const c = estimateCostUsd("xai", 100, 0, "grok-4.5", 999_999);
+    assert.ok(Math.abs(c - (100 * 0.5) / 1_000_000) < 1e-12);
+  });
+});
+
 describe("hooks: crashed Stop hooks fail closed", () => {
   function writeStopHook(dir: string, command: string) {
     fs.mkdirSync(path.join(dir, ".forge", "hooks"), { recursive: true });

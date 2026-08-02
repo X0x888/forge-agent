@@ -445,7 +445,7 @@ export function renderSessionHud(
 /** One-line footer printed after each agent turn. */
 export function renderTurnFooter(
   ctx: StatusBarContext,
-  turn: { promptTokens: number; completionTokens: number; stopContinues?: number },
+  turn: { promptTokens: number; completionTokens: number; cacheReadTokens?: number; stopContinues?: number },
 ): string {
   const snap = buildLiveSnapshot(ctx);
   const width = process.stdout.columns ?? 100;
@@ -454,6 +454,7 @@ export function renderTurnFooter(
     turn.promptTokens,
     turn.completionTokens,
     ctx.config.model,
+    turn.cacheReadTokens ?? 0,
   );
   const parts: string[] = [];
   parts.push(chalk.dim("──"));

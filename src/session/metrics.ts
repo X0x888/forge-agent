@@ -99,6 +99,8 @@ export function buildRunEndMetrics(opts: {
   lastVerificationStale?: boolean | null;
   promptTokens: number;
   completionTokens: number;
+  /** Provider-reported cached-input tokens for this run (0 = unreported). */
+  cacheReadTokens?: number;
   durationMs?: number;
   aborted?: boolean;
   timedOut?: boolean;
@@ -139,6 +141,7 @@ export function buildRunEndMetrics(opts: {
       opts.promptTokens,
       opts.completionTokens,
       opts.model,
+      opts.cacheReadTokens ?? 0,
     ),
     durationMs: opts.durationMs,
     aborted: opts.aborted,

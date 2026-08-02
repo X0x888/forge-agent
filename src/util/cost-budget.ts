@@ -63,7 +63,10 @@ export function resolveMaxCostUsd(
 /** Running session estimate (full session totals, not just this prompt). */
 export function sessionCostUsd(
   provider: string,
-  meta: Pick<SessionMeta, "totalPromptTokens" | "totalCompletionTokens">,
+  meta: Pick<
+    SessionMeta,
+    "totalPromptTokens" | "totalCompletionTokens" | "totalCacheReadTokens"
+  >,
   model?: string,
 ): number {
   return estimateCostUsd(
@@ -71,6 +74,7 @@ export function sessionCostUsd(
     meta.totalPromptTokens || 0,
     meta.totalCompletionTokens || 0,
     model,
+    meta.totalCacheReadTokens || 0,
   );
 }
 

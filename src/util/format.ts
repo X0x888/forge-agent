@@ -233,26 +233,33 @@ export function estimateCostUsd(
   promptTokens: number,
   completionTokens: number,
   model?: string,
+  /** Cached-input tokens (provider-reported). Priced at cacheIn when known. */
+  cacheReadTokens?: number,
 ): number {
   // Provider mid-tier averages ($/1M tokens) — HUD/cost estimates only.
-  const rates: Record<string, { in: number; out: number }> = {
-    xai: { in: 2, out: 6 }, // grok-4.5 (daily default)
-    anthropic: { in: 3, out: 15 },
+  const rates: Record<string, { in: number; out: number; cacheIn?: number }> = {
+    xai: { in: 2, out: 6, cacheIn: 0.5 }, // grok-4.5 (daily default); cached input ~$0.50/M
+    anthropic: { in: 3, out: 15, cacheIn: 0.3 }, // cache read = 0.1× input
     openai: { in: 2.5, out: 10 },
     openrouter: { in: 3, out: 15 },
-    deepseek: { in: 0.14, out: 0.28 }, // V4 Flash ballpark (HUD only)
+    deepseek: { in: 0.14, out: 0.28, cacheIn: 0.0028 }, // V4 Flash ballpark (HUD only)
     google: { in: 1.25, out: 10 },
   };
   // Per-model overrides where they differ from the provider average.
-  // xAI cached input (~$0.50/M) is not modeled — estimates skew high on
-  // cache-heavy sessions, which is the safe direction for a HUD.
-  const modelRates: Record<string, { in: number; out: number }> = {
-    "grok-4.5": { in: 2, out: 6 },
+  // Models without cacheIn price cached input at full rate — the safe
+  // (overestimating) direction for a HUD + spend cap.
+  const modelRates: Record<string, { in: number; out: number; cacheIn?: number }> = {
+    "grok-4.5": { in: 2, out: 6, cacheIn: 0.5 },
     "grok-4": { in: 3, out: 15 },
     "grok-3": { in: 3, out: 15 },
     "grok-3-mini": { in: 0.3, out: 0.5 },
-    "deepseek-v4-flash": { in: 0.14, out: 0.28 },
-    "deepseek-v4-pro": { in: 1.0, out: 4.0 },
+    "deepseek-v4-flash": { in: 0.14, out: 0.28, cacheIn: 0.0028 },
+    // Official DeepSeek rate card (api-docs.deepseek.com/quick_start/pricing,
+    // verified 2026-08-02): flash 0.0028/0.14/0.28, pro 0.003625/0.435/0.87
+    // (cache-hit/miss/output per 1M). The in/50 vs in/120 cache ratios are
+    // DeepSeek's own. NOTE: peak/off-peak 2× pricing (Beijing daytime) was
+    // announced on that page — estimates may skew low during peak once live.
+    "deepseek-v4-pro": { in: 0.435, out: 0.87, cacheIn: 0.003625 },
   };
   const mk = model
     ? (model.includes("/") ? model.split("/").pop()! : model)
@@ -263,7 +270,12 @@ export function estimateCostUsd(
   const r =
     (mk ? modelRates[mk] : undefined) ||
     rates[provider] || { in: 3, out: 12 };
-  return (promptTokens * r.in + completionTokens * r.out) / 1_000_000;
+  const cached = Math.min(Math.max(0, cacheReadTokens ?? 0), promptTokens);
+  const uncached = promptTokens - cached;
+  return (
+    (uncached * r.in + cached * (r.cacheIn ?? r.in) + completionTokens * r.out) /
+    1_000_000
+  );
 }
 
 export function formatCost(usd: number): string {
