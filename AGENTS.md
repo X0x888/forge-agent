@@ -115,6 +115,7 @@ prompt-cache-stable system prompt (volatile git branch via context-admit, not me
 crash/HTTP fail-closed + stdin-EPIPE safe + 20k payload caps (all bulky fields) + 64KB hook
 stdout/stderr caps + hook timeout process-group kill (TERM→KILL, unref'd timers), Retry-After
 honored above client backoff
-(≤120s), 10-min default provider timeout (`FORGE_PROVIDER_TIMEOUT_MS`), 4MB child-output caps
+(≤120s), served-model divergence tracking (`servedModelDiverged`: provider-reported served model ≠ requested →
+session `servedModels` + metrics + one onStatus warning per model — provider tier routing made visible), 10-min default provider timeout (`FORGE_PROVIDER_TIMEOUT_MS`), 4MB child-output caps
 (bash/rg), streaming read_file for >2MB files, byte-guaranteed tool-output truncation, atomic
 session-lock create (`wx`), cache-aware cost estimates (per-model `cacheIn`: DeepSeek cache-hit pricing, xAI $0.50/M cached, Anthropic 0.1×; DeepSeek `prompt_cache_hit_tokens` + xAI `cached_tokens` normalized into `ChatUsage.cache_read_input_tokens` → session `totalCacheReadTokens`; unknown-cache models price cached input at full rate), auto max_tokens (16k non-reasoning · 32k deepseek/64k other reasoning-active; `/max-tokens` pin wins), temperature omitted unless pinned (server-tuned defaults), OpenRouter nested `reasoning.effort` maps `max`→`xhigh` (native top-level keeps `max`).

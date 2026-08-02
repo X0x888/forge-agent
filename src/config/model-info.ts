@@ -238,6 +238,25 @@ export function resolveEffectiveMaxTokens(
   return defaultMaxOutputTokens(config.model, reasoningActive);
 }
 
+/**
+ * True when the model a provider says it SERVED diverges from what was
+ * requested (aliases/snapshot suffixes normalized away). Providers may route
+ * to a different tier under load or effort — e.g. DeepSeek flash requests
+ * billed as pro (2026-08 incident); make the divergence observable instead of
+ * silent. Empty/unknown served ids never diverge.
+ */
+export function servedModelDiverged(
+  requested: string,
+  served: string | undefined | null,
+): boolean {
+  const s = String(served || "").trim();
+  if (!s) return false;
+  const reqKey = normalizeModelKey(requested);
+  const srvKey = normalizeModelKey(s);
+  if (!reqKey || !srvKey) return false;
+  return reqKey !== srvKey;
+}
+
 /** Parse user context size: 200000, 200k, 1m, 1.5m, auto. */
 export function parseContextWindowArg(raw: string): number | "auto" | null {
   const t = raw.trim().toLowerCase().replace(/[_,]/g, "");

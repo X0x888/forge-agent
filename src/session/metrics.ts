@@ -30,6 +30,10 @@ export interface SessionMetricsEvent {
   lastVerificationStale?: boolean | null;
   promptTokens?: number;
   completionTokens?: number;
+  /** Provider-reported cached-input tokens for this run (0 = unreported). */
+  cacheReadTokens?: number;
+  /** Distinct served models that diverged from the requested one this run. */
+  servedModels?: string[];
   estCostUsd?: number;
   durationMs?: number;
   aborted?: boolean;
@@ -101,6 +105,8 @@ export function buildRunEndMetrics(opts: {
   completionTokens: number;
   /** Provider-reported cached-input tokens for this run (0 = unreported). */
   cacheReadTokens?: number;
+  /** Distinct served models that diverged from the requested one this run. */
+  servedModels?: string[];
   durationMs?: number;
   aborted?: boolean;
   timedOut?: boolean;
@@ -136,6 +142,12 @@ export function buildRunEndMetrics(opts: {
       : {}),
     promptTokens: opts.promptTokens,
     completionTokens: opts.completionTokens,
+    ...(opts.cacheReadTokens
+      ? { cacheReadTokens: opts.cacheReadTokens }
+      : {}),
+    ...(opts.servedModels?.length
+      ? { servedModels: opts.servedModels }
+      : {}),
     estCostUsd: estimateCostUsd(
       opts.provider,
       opts.promptTokens,

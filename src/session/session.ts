@@ -114,6 +114,12 @@ export interface SessionMeta {
    */
   totalCacheReadTokens?: number;
   /**
+   * Raw model ids the provider reported serving that DIVERGE from the
+   * requested model (capped at 8). Provider-side tier routing made visible —
+   * e.g. requested flash but billed pro. Absent = never diverged.
+   */
+  servedModels?: string[];
+  /**
    * Optional per-session spend cap (USD estimate). When set, overrides
    * config.maxCostUsd for this session only. 0 = unlimited. Cleared on /clear hard.
    */
@@ -758,6 +764,9 @@ export function importSessionJson(
       totalPromptTokens: Number(src.totalPromptTokens) || 0,
       totalCompletionTokens: Number(src.totalCompletionTokens) || 0,
       totalCacheReadTokens: Number(src.totalCacheReadTokens) || 0,
+      ...(Array.isArray(src.servedModels) && src.servedModels.length
+        ? { servedModels: src.servedModels.slice(0, 8).map(String) }
+        : {}),
       ...(typeof src.lastVerificationCommand === "string" &&
       src.lastVerificationCommand.trim()
         ? {

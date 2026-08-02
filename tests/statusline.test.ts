@@ -636,6 +636,27 @@ describe("statusline tmux badges", () => {
     assert.match(plain2, /verify\s+npm test/);
   });
 
+  it("formatSessionDetails surfaces served-model divergence (and stays quiet otherwise)", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-details-served-"));
+    process.env.FORGE_HOME = tmp;
+    const s = createSession({
+      cwd: tmp,
+      provider: "deepseek",
+      model: "deepseek-v4-flash",
+    });
+    const auth = { provider: "deepseek", method: "api_key", apiKey: "t" } as any;
+    const config = { ...DEFAULT_CONFIG, workspace: tmp };
+    const strip = (d: string) => d.replace(/\x1b\[[0-9;]*m/g, "");
+
+    // No divergence recorded → no served line.
+    assert.doesNotMatch(strip(formatSessionDetails({ config, session: s, auth })), /served\s+⚠/);
+
+    // Provider routed to a different tier → loud, checkable line.
+    s.meta.servedModels = ["deepseek-v4-pro"];
+    const plain = strip(formatSessionDetails({ config, session: s, auth }));
+    assert.match(plain, /served\s+⚠ provider served deepseek-v4-pro for requested deepseek-v4-flash/);
+  });
+
   it("status snapshot includes lastEditAt + lastVerificationStale", async () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-snap-stale-"));
     process.env.FORGE_HOME = tmp;

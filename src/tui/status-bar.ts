@@ -886,6 +886,11 @@ export function formatSessionDetails(ctx: StatusBarContext): string {
     chalk.dim(
       `keep     ${session.meta.pinned ? "pinned (prune-safe) · /unpin" : "not pinned · /pin to protect from prune"}`,
     ),
+    session.meta.servedModels?.length
+      ? chalk.yellow(
+          `served   ⚠ provider served ${session.meta.servedModels.join(", ")} for requested ${session.meta.model} — check billing/routing`,
+        )
+      : null,
   ].filter((x): x is string => x != null);
   {
     const lock = readSessionLock(session.meta.id);

@@ -705,6 +705,7 @@ export async function runRepl(opts: {
             promptTokens: result.promptTokens,
             completionTokens: result.completionTokens,
             cacheReadTokens: result.cacheReadTokens,
+            servedModels: result.servedModels,
             aborted: result.aborted,
             ok: !result.aborted,
             headless: false,

@@ -2398,16 +2398,25 @@ export async function handleSlash(
         opts.session.meta.totalCacheReadTokens || 0,
       );
       const budget = costCapStatus(opts.config, opts.session.meta);
+      const cacheRead = opts.session.meta.totalCacheReadTokens || 0;
+      const prompt = opts.session.meta.totalPromptTokens || 0;
+      const cacheLine =
+        cacheRead > 0 && prompt > 0
+          ? `  cached:      ${formatTokens(cacheRead)} (${Math.round((cacheRead / prompt) * 100)}% of prompt, cache rate)`
+          : null;
       return {
         handled: true,
         output: [
           `Session usage (this session)`,
           `  prompt:      ${formatTokens(opts.session.meta.totalPromptTokens)}`,
           `  completion:  ${formatTokens(opts.session.meta.totalCompletionTokens)}`,
+          cacheLine,
           `  est. cost:   ${formatCost(cost)}  (rough; not a bill)`,
           `  ${formatCostBudgetLine(budget)}`,
           `  set cap:     /budget <usd>  ·  /budget off  ·  --max-cost N  ·  FORGE_MAX_COST_USD`,
-        ].join("\n"),
+        ]
+          .filter(Boolean)
+          .join("\n"),
       };
     }
 

@@ -5,7 +5,10 @@ import {
   bumpReasoningEffort,
   type ReasoningEffort,
 } from "../config/reasoning.js";
-import { resolveEffectiveMaxTokens } from "../config/model-info.js";
+import {
+  resolveEffectiveMaxTokens,
+  servedModelDiverged,
+} from "../config/model-info.js";
 import type {
   ChatMessage,
   ChatRequest,
@@ -193,6 +196,8 @@ export interface LoopResult {
   completionTokens: number;
   /** Provider-reported cached-input tokens for this run (0 when unreported). */
   cacheReadTokens: number;
+  /** Distinct served models that diverged from the requested one this run. */
+  servedModels?: string[];
 }
 
 /**
@@ -326,6 +331,8 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
   const startPrompt = session.meta.totalPromptTokens;
   const startComp = session.meta.totalCompletionTokens;
   const startCache = session.meta.totalCacheReadTokens ?? 0;
+  /** Distinct divergent served models seen this run (provider tier routing). */
+  const runServedModels = new Set<string>();
   const doomLoop = new DoomLoopTracker({
     threshold: envPositiveInt("FORGE_DOOM_LOOP_THRESHOLD", 3),
   });
@@ -1113,6 +1120,23 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
         throw new Error("Provider returned no response");
       }
 
+      // Served-model divergence: the API reports which model actually served.
+      // Providers may silently route to a different tier (load, effort caps) —
+      // a requested flash can be billed as pro. Surface it once per model.
+      if (servedModelDiverged(config.model, response.model)) {
+        const served = String(response.model);
+        if (!(session.meta.servedModels ?? []).includes(served)) {
+          session.meta.servedModels = [
+            ...(session.meta.servedModels ?? []),
+            served,
+          ].slice(-8);
+          events.onStatus?.(
+            `⚠ Provider served "${served}" for requested "${config.model}" — check billing/routing`,
+          );
+        }
+        if (!runServedModels.has(served)) runServedModels.add(served);
+      }
+
       if (response.usage) {
         session.meta.totalPromptTokens += response.usage.prompt_tokens;
         session.meta.totalCompletionTokens += response.usage.completion_tokens;
@@ -1775,6 +1799,9 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
     promptTokens,
     completionTokens,
     cacheReadTokens,
+    ...(runServedModels.size
+      ? { servedModels: [...runServedModels] }
+      : {}),
   };
 }
 

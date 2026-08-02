@@ -679,3 +679,38 @@ describe("config: per-model context window derivation", () => {
     assert.match(r.output || "", /ctx 131\.1k/);
   });
 });
+
+describe("servedModelDiverged: provider tier routing made visible", () => {
+  it("same model and alias/snapshot forms never diverge", async () => {
+    const { servedModelDiverged } = await import(
+      "../src/config/model-info.js"
+    );
+    assert.equal(servedModelDiverged("deepseek-v4-flash", "deepseek-v4-flash"), false);
+    assert.equal(
+      servedModelDiverged("deepseek-v4-flash", "deepseek/deepseek-v4-flash"),
+      false,
+    );
+    assert.equal(
+      servedModelDiverged("deepseek-v4-flash", "deepseek-v4-flash-0731"),
+      false,
+    );
+    assert.equal(servedModelDiverged("grok-4.5", "grok-4.5-latest"), false);
+  });
+  it("a different served tier diverges (the flash→pro billing case)", async () => {
+    const { servedModelDiverged } = await import(
+      "../src/config/model-info.js"
+    );
+    assert.equal(
+      servedModelDiverged("deepseek-v4-flash", "deepseek-v4-pro"),
+      true,
+    );
+    assert.equal(servedModelDiverged("grok-4.5", "grok-4"), true);
+  });
+  it("empty/unknown served ids never diverge", async () => {
+    const { servedModelDiverged } = await import(
+      "../src/config/model-info.js"
+    );
+    assert.equal(servedModelDiverged("deepseek-v4-flash", undefined), false);
+    assert.equal(servedModelDiverged("deepseek-v4-flash", ""), false);
+  });
+});
