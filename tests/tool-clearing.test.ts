@@ -61,14 +61,14 @@ describe("tool-clearing (microcompaction)", () => {
 
   it("keeps the most recent keepRecent non-system messages intact even when long", () => {
     // assistant(call) is the 16th-newest non-system message, the tool result
-    // is 15th — both inside the default hot tail of 16.
+    // is 15th — both inside an explicit keepRecent=16 hot tail.
     const msgs: ChatMessage[] = [
       { role: "system", content: "sys" },
       assistantCall("c1", "bash"),
       toolMsg("c1", "y".repeat(9000)),
       ...tail(14),
     ];
-    const r = clearStaleToolResults(msgs);
+    const r = clearStaleToolResults(msgs, { keepRecent: 16 });
     assert.equal(r.cleared, 0);
     assert.equal(r.freedChars, 0);
     assert.strictEqual(r.messages, msgs);
@@ -157,7 +157,7 @@ describe("tool-clearing (microcompaction)", () => {
     const r2 = clearStaleToolResults(msgs, { keepRecent: 2, minChars: 1000 });
     assert.equal(r2.cleared, 0);
     assert.strictEqual(r2.messages, msgs);
-    // default keepRecent (16) protects everything here
+    // default keepRecent (10) protects everything here
     const r3 = clearStaleToolResults(msgs, { minChars: 100 });
     assert.equal(r3.cleared, 0);
     assert.strictEqual(r3.messages, msgs);
@@ -203,9 +203,9 @@ describe("tool-clearing (microcompaction)", () => {
       for (const k of KEYS) delete process.env[k];
       assert.deepEqual(toolClearEnvConfig(), {
         enabled: true,
-        keepRecent: 16,
+        keepRecent: 10,
         minChars: 1200,
-        minStaleBytes: 24000,
+        minStaleBytes: 12000,
       });
 
       process.env.FORGE_TOOL_CLEAR = "0";
@@ -227,7 +227,7 @@ describe("tool-clearing (microcompaction)", () => {
       process.env.FORGE_TOOL_CLEAR_KEEP_RECENT = "abc";
       process.env.FORGE_TOOL_CLEAR_MIN_CHARS = "-5";
       const d = toolClearEnvConfig();
-      assert.equal(d.keepRecent, 16);
+      assert.equal(d.keepRecent, 10);
       assert.equal(d.minChars, 1200);
     } finally {
       for (const k of KEYS) {

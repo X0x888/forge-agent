@@ -431,6 +431,32 @@ describe("prompt profile + baseline system", () => {
     assert.match(text, /doom-loop/i);
     assert.match(text, /Context overflow|overflow/i);
   });
+
+  it("baseline prompt stays lean (grok-build style size ceiling)", async () => {
+    // The baseline system prompt is re-sent on every model call; runaway
+    // growth is a per-turn token tax on every session. 8k chars is generous
+    // headroom over the current ~5.6k — regressions toward the old 12k+
+    // doctrine bloat fail here.
+    const fs = await import("node:fs");
+    const os = await import("node:os");
+    const path = await import("node:path");
+    const bare = fs.mkdtempSync(path.join(os.tmpdir(), "forge-sp-size-"));
+    // npm test runs with TMPDIR inside this repo — give the bare workspace its
+    // own .git so the rules walk stops here instead of slurping the repo's
+    // AGENTS.md (which would make the ceiling meaningless).
+    fs.mkdirSync(path.join(bare, ".git"));
+    const { DEFAULT_CONFIG } = await import("../src/config/types.js");
+    const text = buildBaselineSystemPrompt({
+      config: { ...DEFAULT_CONFIG },
+      workspace: bare,
+      git: null,
+      project: null,
+    });
+    assert.ok(
+      text.length < 8000,
+      `baseline system prompt grew to ${text.length} chars`,
+    );
+  });
 });
 
 describe("plan mode permission enforcement", () => {

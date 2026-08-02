@@ -475,7 +475,7 @@ describe("task-tools error paths", () => {
 });
 
 describe("TOOL_DEFINITIONS agent guidance", () => {
-  it("documents path hints, parent dirs, and large-file guidance", async () => {
+  it("documents call-shaping constraints (lean descriptions)", async () => {
     const { TOOL_DEFINITIONS } = await import(
       "../src/agent/tools/definitions.js"
     );
@@ -485,26 +485,32 @@ describe("TOOL_DEFINITIONS agent guidance", () => {
     const byFull = Object.fromEntries(
       TOOL_DEFINITIONS.map((t) => [t.function.name, t.function]),
     );
-    assert.match(byName.read_file || "", /did you mean|typo/i);
-    assert.match(byName.read_file || "", /2 MiB|large/i);
-    assert.match(byName.read_file || "", /past-EOF|past end/i);
+    // Descriptions keep only what changes how the model calls the tool;
+    // failure-mode recovery lives in runtime error messages (covered by
+    // audit-fixes / tools-next behavior tests above).
+    assert.match(byName.read_file || "", /line numbers|NNNNNN/i);
+    assert.match(byName.read_file || "", /2000 lines|offset\/limit/i);
+    assert.match(byName.read_file || "", /Binary/i);
     assert.match(byName.write_file || "", /parent director/i);
-    assert.match(byName.write_file || "", /directory target|Refuses directory/i);
-    assert.match(byName.search_replace || "", /not a directory/i);
-    assert.match(byName.search_replace || "", /multi-match|line numbers|closest lines/i);
-    assert.match(byName.glob || "", /path hints|No files matched|Empty results|recovery tips/i);
-    assert.match(byName.grep || "", /Missing paths|hints/i);
-    assert.match(byName.grep || "", /Empty results|recovery tips|pattern/i);
-    assert.match(byName.list_dir || "", /path-not-found|hints/i);
-    assert.match(byName.web_fetch || "", /entities never throw|SSRF/i);
-    assert.match(byName.web_fetch || "", /abort|Ctrl\+C|FORGE_MAX_RUN_MS/i);
-    assert.match(byName.web_search || "", /abort|Ctrl\+C|FORGE_MAX_RUN_MS/i);
-    assert.match(byName.kill_task || "", /Omit task_id|list active|get_task_output/i);
-    assert.match(byName.kill_task || "", /Unknown ids|prefix|typo/i);
+    assert.match(byName.write_file || "", /prior read_file/i);
+    assert.match(byName.search_replace || "", /prior read_file/i);
+    assert.match(byName.search_replace || "", /exactly once|replace_all/i);
+    assert.match(byName.glob || "", /glob pattern/i);
+    assert.match(byName.grep || "", /ripgrep|regex/i);
+    assert.match(byName.list_dir || "", /List entries/i);
+    assert.match(byName.web_fetch || "", /loopback|SSRF|blocked/i);
+    assert.match(byName.web_search || "", /titles, URLs/i);
+    assert.match(byName.kill_task || "", /Omit task_id|list active/i);
     assert.match(byName.get_task_output || "", /Omit task_id|list active/i);
-    assert.match(byName.get_task_output || "", /Unknown ids|prefix|typo/i);
     assert.match(byName.todo_write || "", /merge|status|id/i);
-    assert.match(byName.apply_patch || "", /typo|path hint/i);
+    assert.match(byName.apply_patch || "", /Begin Patch|multi-file/i);
+    // Lean-ness guard: schemas stay well under the old 11k-char bloat so a
+    // regression to verbose failure-mode docs fails CI.
+    const total = JSON.stringify(TOOL_DEFINITIONS).length;
+    assert.ok(
+      total < 8500,
+      `tool schema JSON grew to ${total} chars (was 7566 after slim pass)`,
+    );
     // Schema must match runtime: omit task_id lists actives (not required)
     const killReq = byFull.kill_task?.parameters?.required || [];
     const getReq = byFull.get_task_output?.parameters?.required || [];

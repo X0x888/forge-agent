@@ -173,6 +173,41 @@ function shortModel(model: string): string {
 }
 
 /**
+ * Live token/context bits for the mid-run status dock. Reads the SAME session
+ * object the agent loop mutates (usage lands after each response), so no new
+ * event plumbing is needed — the 200ms prompt tick picks changes up.
+ */
+let liveCtxCache: { key: string; value: number } | null = null;
+
+function liveCtxEstimate(session: SessionData): number {
+  const msgs = session.messages;
+  const last = msgs[msgs.length - 1];
+  // Messages are append-whole during a run (assistant/tool results push
+  // complete messages), so id + length + tail size is a safe memo key.
+  const key = `${session.meta.id}:${msgs.length}:${last ? (last.content || "").length : 0}:${session.meta.totalCompletionTokens}`;
+  if (liveCtxCache?.key === key) return liveCtxCache.value;
+  const value = estimateTokens(msgs);
+  liveCtxCache = { key, value };
+  return value;
+}
+
+/** `⇣3.2k` cumulative completion tokens + `ctx 41k/500k` live context use. */
+function liveTokenBits(ctx: StatusBarContext): string[] {
+  const bits: string[] = [];
+  const comp = ctx.session.meta.totalCompletionTokens || 0;
+  if (comp > 0) bits.push(chalk.dim(`⇣${formatTokens(comp)}`));
+  const win = ctx.config.contextWindow || 0;
+  if (win > 0) {
+    bits.push(
+      chalk.dim(
+        `ctx ${formatTokens(liveCtxEstimate(ctx.session))}/${formatTokens(win)}`,
+      ),
+    );
+  }
+  return bits;
+}
+
+/**
  * Multi-line chrome printed once when an agent turn starts.
  * Makes mid-run controls discoverable (Grok-Build-like, native to Forge).
  */
@@ -287,6 +322,7 @@ export function renderBusyStatusLine(
     chalk.dim(`${ctx.config.provider}/${shortModel(ctx.config.model)}`),
   ];
   if (effort) bits.push(chalk.dim(effort));
+  bits.push(...liveTokenBits(ctx));
   if (ulw?.enabled) {
     bits.push(
       ulw.cycle === 1
@@ -340,6 +376,7 @@ export function buildLivePrompt(
     chalk.dim(phaseLabel),
   ];
   if (turnSec > 0) left.push(chalk.dim(formatSec(turnSec)));
+  left.push(...liveTokenBits(ctx));
   if (ulw?.enabled) {
     left.push(
       ulw.cycle === 1

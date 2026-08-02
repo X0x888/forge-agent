@@ -13,9 +13,9 @@
 import type { ChatMessage } from "../providers/types.js";
 import { envPositiveInt } from "../util/env.js";
 
-export const TOOL_CLEAR_DEFAULT_KEEP_RECENT = 16;
+export const TOOL_CLEAR_DEFAULT_KEEP_RECENT = 10;
 export const TOOL_CLEAR_DEFAULT_MIN_CHARS = 1200;
-export const TOOL_CLEAR_DEFAULT_MIN_STALE_BYTES = 24000;
+export const TOOL_CLEAR_DEFAULT_MIN_STALE_BYTES = 12000;
 
 /** Marker inside a replacement stub — used to skip already-cleared bodies. */
 export const TOOL_CLEARED_MARKER = "[Stale tool output cleared";

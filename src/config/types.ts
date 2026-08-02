@@ -98,8 +98,25 @@ export interface ForgeConfig {
    */
   reasoningEffort?: ReasoningEffort;
   baseUrl?: string;
-  temperature: number;
+  /**
+   * Sampling temperature. **Undefined = omit from the request** and let the
+   * provider use its server-tuned default (recommended — reasoning models are
+   * calibrated for it; DeepSeek thinking ignores temperature entirely).
+   * Set via `/temperature` or config only to override deliberately.
+   */
+  temperature?: number;
+  /**
+   * Base max output tokens. When `maxTokensExplicit` is false this is only a
+   * fallback for non-reasoning models — reasoning-active models auto-resolve
+   * to a larger cap (see model-info.resolveEffectiveMaxTokens) so high-effort
+   * thinking is not truncated mid-thought into costly length-continuations.
+   */
   maxTokens: number;
+  /**
+   * Runtime marker (never persisted): true when maxTokens came from an
+   * explicit source (config file / project / `/max-tokens` / CLI override).
+   */
+  maxTokensExplicit?: boolean;
   /** Max agent turns per user message (0 = unlimited) */
   maxTurns: number;
   /**
@@ -179,9 +196,12 @@ export const DEFAULT_CONFIG: ForgeConfig = {
   // Undefined → resolveReasoningEffort uses each model's maximum allowed level
   // (grok-4.5 → high, deepseek-v4 → max, …). Set only when user pins /effort.
   reasoningEffort: undefined,
-  temperature: 0.2,
-  // 16k: reasoning tokens share the max_tokens budget on xAI — 8k under
-  // high effort truncated mid-thought and paid extra length-continue turns.
+  // Undefined → omitted from API requests; provider/server default wins.
+  temperature: undefined,
+  // Base cap for non-reasoning models. Reasoning-active models auto-resolve
+  // higher (reasoning tokens share the output budget on xAI/DeepSeek — a flat
+  // 16k truncated high-effort thinking mid-thought and paid extra
+  // length-continue turns). Pin via /max-tokens to override.
   maxTokens: 16384,
   maxTurns: 0,
   maxCostUsd: 0,
@@ -214,7 +234,7 @@ export const DEFAULT_CONFIG: ForgeConfig = {
   blockingStopHooks: true,
   compatClaudeHooks: true,
   compatCursorHooks: true,
-  autoCompactThreshold: 0.85,
+  autoCompactThreshold: 0.8,
   contextWindow: 500_000,
   providers: {
     xai: {

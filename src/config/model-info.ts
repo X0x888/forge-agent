@@ -208,6 +208,36 @@ export function applyModelContextWindow(
   };
 }
 
+/**
+ * Default max output tokens when the user has not pinned `max_tokens`.
+ * Reasoning models think inside the output budget on xAI/DeepSeek — the old
+ * flat 16k cap truncated high-effort reasoning mid-thought and the loop then
+ * paid full-prompt length-continuations to finish the thought. Non-reasoning
+ * models keep the lean 16k base.
+ */
+export function defaultMaxOutputTokens(
+  model: string,
+  reasoningActive: boolean,
+): number {
+  if (!reasoningActive) return 16_384;
+  const key = normalizeModelKey(model);
+  // DeepSeek endpoints cap output lower than xAI; 32k stays safely accepted.
+  if (key.startsWith("deepseek")) return 32_768;
+  return 65_536;
+}
+
+/**
+ * Effective max_tokens for a request: user pin wins; otherwise the auto
+ * per-model cap above. `reasoningActive` = an effort field will be sent.
+ */
+export function resolveEffectiveMaxTokens(
+  config: { model: string; maxTokens: number; maxTokensExplicit?: boolean },
+  reasoningActive: boolean,
+): number {
+  if (config.maxTokensExplicit) return config.maxTokens;
+  return defaultMaxOutputTokens(config.model, reasoningActive);
+}
+
 /** Parse user context size: 200000, 200k, 1m, 1.5m, auto. */
 export function parseContextWindowArg(raw: string): number | "auto" | null {
   const t = raw.trim().toLowerCase().replace(/[_,]/g, "");

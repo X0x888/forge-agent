@@ -129,6 +129,92 @@ export function formatToolEnd(
   );
 }
 
+/** Tool names whose successful output may embed a shortDiff block. */
+const DIFF_OUTPUT_TOOLS = new Set([
+  "search_replace",
+  "edit",
+  "write_file",
+  "write",
+  "apply_patch",
+  "applypatch",
+]);
+
+/**
+ * Extract the embedded shortDiff block from an edit-tool result string.
+ * Tools emit `Edited <path>…\n\n<diff>` / `Wrote <path>…\n\n<diff>`; a
+ * `Tip: verify with …` line may follow the diff. Pure string slicing —
+ * no diff recomputation. Undefined when the output carries no diff.
+ */
+export function extractDiffFromToolOutput(
+  toolName: string,
+  output: string,
+): string | undefined {
+  if (!DIFF_OUTPUT_TOOLS.has((toolName || "").toLowerCase())) return undefined;
+  const start = output.indexOf("\n\n--- a/");
+  if (start < 0) return undefined;
+  let diff = output.slice(start + 2);
+  const tip = diff.indexOf("\nTip: verify with");
+  if (tip >= 0) diff = diff.slice(0, tip);
+  diff = diff.replace(/\s+$/, "");
+  return diff || undefined;
+}
+
+/**
+ * Colorize a shortDiff block for the transcript: green `+`, red `-`,
+ * dim file headers / hunk markers / context. Indented under the tool line.
+ */
+export function formatDiffBlock(
+  diff: string,
+  opts: { maxLines?: number; indent?: string } = {},
+): string {
+  const maxLines = opts.maxLines ?? 60;
+  const indent = opts.indent ?? "    ";
+  const lines = diff.split("\n");
+  const shown = lines.slice(0, maxLines);
+  const out = shown.map((line) => {
+    if (line.startsWith("--- ") || line.startsWith("+++ ")) {
+      return indent + chalk.dim.bold(line);
+    }
+    if (line.startsWith("@@")) return indent + chalk.dim(line);
+    if (line.startsWith("+")) return indent + chalk.green(line);
+    if (line.startsWith("-")) return indent + chalk.red(line);
+    return indent + chalk.dim(line);
+  });
+  if (lines.length > maxLines) {
+    out.push(indent + chalk.dim(`… (${lines.length - maxLines} more diff lines)`));
+  }
+  return out.join("\n");
+}
+
+/**
+ * Dimmed tool-output preview for the transcript. Head mode: first `maxLines`
+ * lines (overlong lines clipped) + a count of what is hidden. Verbose mode:
+ * the whole (already session-capped) output, one dim indented line per line.
+ */
+export function formatToolOutputHead(
+  output: string,
+  opts: { maxLines?: number; verbose?: boolean; indent?: string } = {},
+): string {
+  const indent = opts.indent ?? "    ";
+  const text = output.replace(/\s+$/, "");
+  if (!text) return "";
+  const lines = text.split("\n");
+  if (opts.verbose) {
+    return lines.map((l) => indent + chalk.dim(l)).join("\n");
+  }
+  const maxLines = opts.maxLines ?? 5;
+  const out = lines
+    .slice(0, maxLines)
+    .map((l) => indent + chalk.dim(clipAnsi(l, 160)));
+  if (lines.length > maxLines) {
+    out.push(
+      indent +
+        chalk.dim(`… (${lines.length - maxLines} more lines · /verbose to show all)`),
+    );
+  }
+  return out.join("\n");
+}
+
 export function formatBytes(n: number): string {
   if (n < 1024) return `${n}B`;
   if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)}KB`;

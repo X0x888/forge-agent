@@ -176,7 +176,25 @@ describe("OpenRouter body includes reasoning map", () => {
       false,
     );
     assert.equal(body.reasoning_effort, "max");
-    assert.deepEqual(body.reasoning, { effort: "max", enabled: true });
+    // OpenRouter's normalized reasoning.effort enum takes "xhigh", NOT the
+    // DeepSeek-native "max" — "max" is ignored upstream and silently falls
+    // back to default effort. Top-level reasoning_effort stays "max".
+    assert.deepEqual(body.reasoning, { effort: "xhigh", enabled: true });
+
+    // Non-max efforts pass through unchanged on both fields.
+    const body2 = (
+      p as unknown as {
+        buildBody: (
+          req: { model: string; messages: []; reasoning_effort: string },
+          stream: boolean,
+        ) => Record<string, unknown>;
+      }
+    ).buildBody(
+      { model: "x-ai/grok-4.5", messages: [], reasoning_effort: "high" },
+      false,
+    );
+    assert.equal(body2.reasoning_effort, "high");
+    assert.deepEqual(body2.reasoning, { effort: "high", enabled: true });
   });
 });
 

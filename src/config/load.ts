@@ -467,6 +467,14 @@ export function loadConfig(overrides: Partial<ForgeConfig> = {}, cwd = process.c
     projectRaw.contextWindow != null ||
     overrides.contextWindow != null;
 
+  // Same tracking for max_tokens: when not explicit, the output budget
+  // auto-resolves per model (larger for reasoning-active models).
+  cfg.maxTokensExplicit =
+    globalToml.maxTokens != null ||
+    globalJson.maxTokens != null ||
+    projectRaw.maxTokens != null ||
+    overrides.maxTokens != null;
+
   // Provider switched (CLI/env) without an explicit model → that provider's defaultModel
   // (avoid anthropic + stuck grok-4.5 from DEFAULT_CONFIG.model).
   // A config-file provider (provider = "claude", no model anywhere) gets the
@@ -543,8 +551,12 @@ model = "grok-4.5"
 # low | medium | high  (only sent for models that support it, e.g. grok-4.5)
 # Omit for model max (recommended). Pin with low|medium|high|max when needed:
 # reasoning_effort = "max"
-temperature = 0.2
-max_tokens = 16384
+# temperature: unset = provider/server default (recommended — reasoning models
+# are tuned for it; DeepSeek thinking ignores temperature). Pin to override:
+# temperature = 0.2
+# max_tokens: unset = auto (16k non-reasoning · 32k–64k reasoning-active, so
+# high-effort thinking is not truncated mid-thought). Pin to override:
+# max_tokens = 16384
 max_turns = 0                 # 0 = unlimited; set e.g. 200 to cap agent turns
 max_cost_usd = 0              # 0 = unlimited; set e.g. 5 to release when session est. hits $5
 permission_mode = "default"  # default | acceptEdits | plan | bypassPermissions | dontAsk
@@ -565,7 +577,7 @@ compat_claude_hooks = true
 compat_cursor_hooks = true
 
 # Context: auto-compact when estimated tokens exceed this fraction of context_window
-# auto_compact_threshold = 0.85
+# auto_compact_threshold = 0.80
 # context_window defaults to the active model's real max (auto). OpenRouter
 # models use static table + cached context_length (forge models -p openrouter).
 # Pin only when you want a smaller/larger budget than the model max:

@@ -85,17 +85,23 @@ export class OpenAICompatProvider implements LLMProvider {
       model: req.model,
       messages: req.messages,
       tools: req.tools,
-      temperature: req.temperature,
-      max_tokens: req.max_tokens,
       stream,
     };
+    // Omit unset sampling params — server-tuned defaults beat client guesses
+    // on reasoning models (and DeepSeek thinking ignores temperature anyway).
+    if (req.temperature != null) body.temperature = req.temperature;
+    if (req.max_tokens != null) body.max_tokens = req.max_tokens;
     if (req.reasoning_effort) {
-      // OpenAI-compat / xAI / DeepSeek / many OpenRouter models
+      // OpenAI-compat / xAI / DeepSeek native accept high|max here.
       body.reasoning_effort = req.reasoning_effort;
-      // OpenRouter also documents a structured `reasoning` map for effort control
+      // OpenRouter also documents a structured `reasoning` map for effort
+      // control — but its normalized enum takes "xhigh", NOT the
+      // DeepSeek-native "max" ("max" is ignored → silent fallback to default
+      // effort). Map max→xhigh on this path only.
       if (this.id === "openrouter") {
         body.reasoning = {
-          effort: req.reasoning_effort,
+          effort:
+            req.reasoning_effort === "max" ? "xhigh" : req.reasoning_effort,
           enabled: true,
         };
       }

@@ -145,6 +145,7 @@ import {
   applyModelContextWindow,
   modelContextWindow,
   parseContextWindowArg,
+  resolveEffectiveMaxTokens,
 } from "../config/model-info.js";
 import chalk from "chalk";
 import fs from "node:fs";
@@ -826,7 +827,7 @@ export async function handleProviderSlash(
         (opts.config.reasoningEffort
           ? `  effort=${opts.config.reasoningEffort}`
           : ""),
-      `  temp=${opts.config.temperature}  max_tokens=${opts.config.maxTokens}`,
+      `  temp=${opts.config.temperature ?? "default"}  max_tokens=${effectiveMaxTokensForDisplay(opts.config)}${opts.config.maxTokensExplicit ? "" : " (auto)"}`,
       "",
     ];
     for (const id of providerIds) {
@@ -1094,7 +1095,7 @@ export async function handleModelSlash(
     const knownWin = modelContextWindow(opts.config.model);
     const header = [
       `Provider: ${provider}  ·  model: ${opts.config.model}`,
-      `  temp=${opts.config.temperature}  max_tokens=${opts.config.maxTokens}` +
+      `  temp=${opts.config.temperature ?? "default"}  max_tokens=${effectiveMaxTokensForDisplay(opts.config)}` +
         (curEffort ? `  effort=${curEffort}` : "") +
         `  ctx=${formatTokens(opts.config.contextWindow)}` +
         (opts.config.contextWindowExplicit
@@ -1420,10 +1421,25 @@ export function handleTemperatureSlash(
     return {
       handled: true,
       output:
-        `Temperature: ${opts.config.temperature}  (${opts.config.provider}/${opts.config.model})\n` +
+        `Temperature: ${opts.config.temperature ?? "default (provider)"}  (${opts.config.provider}/${opts.config.model})\n` +
         chalk.dim(
-          "Usage: /temperature <0–2>   ·  session-only (set temperature in ~/.forge/config.toml to persist)",
+          "Usage: /temperature <0–2>|default   ·  session-only (set temperature in ~/.forge/config.toml to persist)",
         ),
+    };
+  }
+  if (/^(default|auto|unset|server)$/i.test(raw)) {
+    opts.config.temperature = undefined;
+    try {
+      pushLiveNotice(
+        opts.session.meta.id,
+        "User reset temperature to provider default (applies to subsequent model calls).",
+      );
+    } catch {
+      /* */
+    }
+    return {
+      handled: true,
+      output: `Temperature: default (provider · next model call)`,
     };
   }
   const n = Number(raw);
@@ -1431,8 +1447,8 @@ export function handleTemperatureSlash(
     return {
       handled: true,
       output:
-        chalk.yellow(`Invalid temperature "${raw}". Use a number from 0 to 2.\n`) +
-        chalk.dim(`Current: ${opts.config.temperature}`),
+        chalk.yellow(`Invalid temperature "${raw}". Use a number from 0 to 2, or "default".\n`) +
+        chalk.dim(`Current: ${opts.config.temperature ?? "default (provider)"}`),
     };
   }
   const rounded = Math.round(n * 1000) / 1000;
@@ -1451,19 +1467,41 @@ export function handleTemperatureSlash(
   };
 }
 
+/** Effective max_tokens for status displays (auto per-model unless pinned). */
+function effectiveMaxTokensForDisplay(config: ForgeConfig): number {
+  const effort = resolveReasoningEffort(config.model, config.reasoningEffort);
+  return resolveEffectiveMaxTokens(config, Boolean(effort));
+}
+
 export function handleMaxTokensSlash(
   arg: string,
   opts: SlashOpts,
 ): SlashResult {
   const raw = (arg || "").trim();
   if (!raw || raw === "status" || raw === "show") {
+    const eff = effectiveMaxTokensForDisplay(opts.config);
     return {
       handled: true,
       output:
-        `max_tokens: ${opts.config.maxTokens}  (${opts.config.provider}/${opts.config.model})\n` +
+        `max_tokens: ${eff}  (${opts.config.provider}/${opts.config.model}${opts.config.maxTokensExplicit ? "" : " · auto"})\n` +
         chalk.dim(
-          "Usage: /max-tokens <n>   ·  session-only (set max_tokens in ~/.forge/config.toml to persist)",
+          "Usage: /max-tokens <n>|auto   ·  session-only (set max_tokens in ~/.forge/config.toml to persist)",
         ),
+    };
+  }
+  if (/^(auto|default|unset)$/i.test(raw)) {
+    opts.config.maxTokensExplicit = false;
+    try {
+      pushLiveNotice(
+        opts.session.meta.id,
+        "User reset max_tokens to auto (applies to subsequent model calls).",
+      );
+    } catch {
+      /* */
+    }
+    return {
+      handled: true,
+      output: `max_tokens: ${effectiveMaxTokensForDisplay(opts.config)} (auto · next model call)`,
     };
   }
   const n = Number(raw.replace(/[_ ,]/g, ""));
@@ -1473,11 +1511,12 @@ export function handleMaxTokensSlash(
       output:
         chalk.yellow(
           `Invalid max_tokens "${raw}". Use an integer 1–1000000.\n`,
-        ) + chalk.dim(`Current: ${opts.config.maxTokens}`),
+        ) + chalk.dim(`Current: ${effectiveMaxTokensForDisplay(opts.config)}`),
     };
   }
   const v = Math.floor(n);
   opts.config.maxTokens = v;
+  opts.config.maxTokensExplicit = true;
   try {
     pushLiveNotice(
       opts.session.meta.id,
@@ -6431,8 +6470,12 @@ export interface EffectiveConfigSnap {
   provider: string;
   model: string;
   reasoningEffort: string | null;
-  temperature: number;
+  /** Undefined = provider/server default (not sent on the wire). */
+  temperature: number | undefined;
+  /** Effective output cap actually sent (auto per-model unless pinned). */
   maxTokens: number;
+  /** True when maxTokens came from an explicit user/config pin. */
+  maxTokensExplicit: boolean;
   permissionMode: string;
   sandbox: string;
   sandboxNetwork: string;
@@ -6583,7 +6626,8 @@ export function buildEffectiveConfigSnap(
     model: c.model,
     reasoningEffort: c.reasoningEffort ?? null,
     temperature: c.temperature,
-    maxTokens: c.maxTokens,
+    maxTokens: effectiveMaxTokensForDisplay(c),
+    maxTokensExplicit: Boolean(c.maxTokensExplicit),
     permissionMode: c.permissionMode,
     sandbox: c.sandbox,
     sandboxNetwork: net,
@@ -6723,7 +6767,7 @@ export function formatEffectiveConfig(
     `  forgeHome:       ${snap.forgeHome}`,
     `  provider/model:  ${snap.provider}/${snap.model}` +
       (snap.reasoningEffort ? `  effort=${snap.reasoningEffort}` : ""),
-    `  sampling:        temp=${snap.temperature}  max_tokens=${snap.maxTokens}` +
+    `  sampling:        temp=${snap.temperature ?? "default"}  max_tokens=${snap.maxTokens}${snap.maxTokensExplicit ? "" : " (auto)"}` +
       chalk.dim("  (/temperature · /max-tokens)"),
     `  permission:      ${snap.permissionMode}` +
       (snap.permissionMode === "plan"

@@ -5,6 +5,7 @@ import {
   bumpReasoningEffort,
   type ReasoningEffort,
 } from "../config/reasoning.js";
+import { resolveEffectiveMaxTokens } from "../config/model-info.js";
 import type {
   ChatMessage,
   ChatRequest,
@@ -112,6 +113,7 @@ import {
   formatCost,
   formatRetryWait,
   summarizeToolArgs,
+  extractDiffFromToolOutput,
 } from "../util/format.js";
 
 export type LoopPhase =
@@ -126,7 +128,13 @@ export interface LoopEvents {
   onToolStart?: (name: string, args: Record<string, unknown>) => void;
   onToolEnd?: (
     name: string,
-    result: { isError?: boolean; ms: number; bytes: number },
+    result: {
+      isError?: boolean;
+      ms: number;
+      bytes: number;
+      diff?: string;
+      output?: string;
+    },
   ) => void;
   /**
    * Fired once per tool attempt after onPhase("tool"), including hard-deny
@@ -239,8 +247,13 @@ export function buildChatRequest(
     model: config.model,
     messages,
     tools: TOOL_DEFINITIONS,
-    temperature: config.temperature,
-    max_tokens: config.maxTokens,
+    // Undefined temperature → omitted; provider/server default wins (grok-build
+    // parity — server-tuned sampling beats a client-guessed 0.2 on reasoning
+    // models; DeepSeek thinking ignores temperature outright).
+    ...(config.temperature != null ? { temperature: config.temperature } : {}),
+    // User pin wins; otherwise reasoning models get a larger output budget so
+    // high-effort thinking is not truncated into length-continue re-sends.
+    max_tokens: resolveEffectiveMaxTokens(config, Boolean(effort)),
     ...(effort ? { reasoning_effort: effort } : {}),
   };
 }
@@ -328,7 +341,7 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
   // Proactive stale tool-result clearing (microcompaction). Cadence + size
   // thresholds bound prompt-cache disruption; clearing itself is age-based.
   const toolClearCfg = toolClearEnvConfig();
-  const toolClearEveryTurns = envPositiveInt("FORGE_TOOL_CLEAR_EVERY_TURNS", 6);
+  const toolClearEveryTurns = envPositiveInt("FORGE_TOOL_CLEAR_EVERY_TURNS", 4);
   let lastToolClearTurn = 0;
   // Adaptive effort escalation (hard rounds think harder; easy rounds stay cheap)
   const adaptiveEffortOn = !(
@@ -2244,7 +2257,15 @@ async function prepareToolResult(opts: {
   const bytes = Buffer.byteLength(output, "utf8");
 
   if (events?.onToolEnd) {
-    events.onToolEnd(name, { isError: result.isError, ms, bytes });
+    events.onToolEnd(name, {
+      isError: result.isError,
+      ms,
+      bytes,
+      diff: result.isError
+        ? undefined
+        : extractDiffFromToolOutput(name, output),
+      output,
+    });
   } else {
     console.error(formatToolEnd(name, { isError: result.isError, ms, bytes }));
   }

@@ -10,7 +10,7 @@ import {
   maybeFormatAfterWrite,
 } from "./format-on-write.js";
 import { fileReadGuardEnabled } from "./file-read-state.js";
-import { stripReadFileLinePrefixes } from "./edit-match.js";
+import { stripReadFileLinePrefixes, shortDiff } from "./edit-match.js";
 import { verifyHintSuffix } from "../../util/project-intel.js";
 
 export async function toolWrite(
@@ -125,12 +125,16 @@ export async function toolWrite(
       await ctx.fileReads.noteFromDisk(filePath);
     }
     const rel = path.relative(ctx.workspace, filePath) || filePath;
+    // Embed the same shortDiff search_replace produces so the transcript can
+    // render per-edit diffs (skipped only when the pre-image was unreadable).
+    const diff = snap.skipped ? "" : `\n\n${shortDiff(rel, snap.before ?? "", body)}`;
     return {
       output:
         `Wrote ${rel}` +
         (createdParents ? " (created parent directories)" : "") +
         (stripped.stripped ? " (stripped read_file line-number prefixes)" : "") +
         formatNoteSuffix(fmt) +
+        diff +
         verifyHintSuffix(ctx.workspace, filePath),
     };
   } catch (err) {

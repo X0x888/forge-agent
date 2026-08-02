@@ -328,7 +328,10 @@ export class AnthropicProvider implements LLMProvider {
     const body = {
       model: req.model,
       max_tokens: req.max_tokens ?? 8192,
-      temperature: req.temperature,
+      // Unset temperature → omitted (Anthropic server default) — parity with
+      // the OpenAI-compat path; also a precondition for future extended
+      // thinking, which forbids custom temperature.
+      ...(req.temperature != null ? { temperature: req.temperature } : {}),
       system: cached.system,
       messages: this.applyHistoryCacheBreakpoint(messages),
       tools: cached.tools,
@@ -368,7 +371,7 @@ export class AnthropicProvider implements LLMProvider {
     const body = {
       model: req.model,
       max_tokens: req.max_tokens ?? 8192,
-      temperature: req.temperature,
+      ...(req.temperature != null ? { temperature: req.temperature } : {}),
       system: cached.system,
       messages: this.applyHistoryCacheBreakpoint(messages),
       tools: cached.tools,

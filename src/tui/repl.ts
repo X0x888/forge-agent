@@ -25,7 +25,13 @@ import type { ResolvedAuth } from "../auth/types.js";
 import {
   formatToolStart,
   formatToolEnd,
+  formatDiffBlock,
+  formatToolOutputHead,
 } from "../util/format.js";
+import {
+  createMarkdownRenderer,
+  type MarkdownRenderer,
+} from "./markdown.js";
 import { getGitSnapshot } from "../util/git-context.js";
 import { detectProjectIntel } from "../util/project-intel.js";
 import { createProvider } from "../providers/factory.js";
@@ -161,6 +167,8 @@ export async function runRepl(opts: {
 
   let busy = false;
   let abortController: AbortController | null = null;
+  /** Session-local: full tool output under the end line (head-only when off). */
+  let verboseToolOutput = false;
   /**
    * Tools currently between onPhase("tool") and onToolSettled
    * (includes permission prompts — not only running tools).
@@ -257,6 +265,22 @@ export async function runRepl(opts: {
     }
 
     appendHistory(text);
+
+    // REPL-local session toggle — works idle and mid-run, never persisted.
+    if (text === "/verbose") {
+      verboseToolOutput = !verboseToolOutput;
+      const msg = verboseToolOutput
+        ? "Tool output: FULL under each tool line (/verbose to collapse)"
+        : "Tool output: first 5 lines under each tool line (/verbose for full)";
+      if (busy) {
+        console.log(formatLiveControlFeedback(text, msg, "ok"));
+        livePrompt();
+      } else {
+        log.dim(msg);
+        prompt();
+      }
+      return;
+    }
 
     // ── Mid-run input ──────────────────────────────────────────────────
     // Keep stdin open during agent turns so users can steer the harness
@@ -476,6 +500,15 @@ export async function runRepl(opts: {
     let sawToken = false;
     /** Tool phase: pause prompt refresh so tool logs stay clean */
     let toolHold = false;
+    /** Streaming markdown renderer for the current assistant text segment. */
+    let md: MarkdownRenderer | null = null;
+    /** Flush any buffered partial line (styled) before non-token output. */
+    const flushMarkdown = () => {
+      if (!md) return;
+      const rest = md.end();
+      md = null;
+      if (rest) process.stdout.write(rest);
+    };
 
     const setToolHold = (on: boolean) => {
       if (on && !toolHold) {
@@ -489,6 +522,7 @@ export async function runRepl(opts: {
 
     /** After model text or tools, re-dock the live line on a new row */
     const redockLive = () => {
+      flushMarkdown();
       streamActive = false;
       working.setStreaming(false);
       livePrompt({ freshLine: true });
@@ -513,9 +547,11 @@ export async function runRepl(opts: {
               streamActive = true;
               sawToken = true;
             }
-            process.stdout.write(t);
+            if (!md) md = createMarkdownRenderer();
+            process.stdout.write(md.push(t));
           },
           onToolStart: (name, args) => {
+            flushMarkdown();
             if (streamActive || sawToken) {
               process.stdout.write("\n");
             }
@@ -526,6 +562,14 @@ export async function runRepl(opts: {
           },
           onToolEnd: (name, r) => {
             console.error(formatToolEnd(name, r));
+            if (r.diff) {
+              console.error(formatDiffBlock(r.diff));
+            } else if (r.output) {
+              const head = formatToolOutputHead(r.output, {
+                verbose: verboseToolOutput,
+              });
+              if (head) console.error(head);
+            }
           },
           onToolSettled: () => {
             pendingTools = Math.max(0, pendingTools - 1);
@@ -541,6 +585,9 @@ export async function runRepl(opts: {
             pulseHeartbeat();
             if (phase === "tool") {
               pendingTools += 1;
+              // Permission prompts print before onToolStart — keep the
+              // styled token stream ahead of any prompt output.
+              flushMarkdown();
               streamActive = false;
               working.setStreaming(false);
               sawToken = false;
@@ -576,6 +623,7 @@ export async function runRepl(opts: {
 
       working.stop();
       streamActive = false;
+      flushMarkdown();
 
       if (result.finalText && !result.finalText.endsWith("\n")) {
         process.stdout.write("\n");
@@ -654,6 +702,7 @@ export async function runRepl(opts: {
       }
     } catch (err) {
       working.stop();
+      flushMarkdown();
       try {
         const { formatProviderError, formatProviderErrorText } = await import(
           "../providers/errors.js"

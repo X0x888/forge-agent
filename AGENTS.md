@@ -42,11 +42,15 @@ Binary entry: `src/cli.ts` → `dist/cli.js` (`bin: forge`).
 - `src/agent/tools/ask-user.ts` — interactive clarifying questions (OpenCode-inspired)
 - `src/agent/tools/format-on-write.ts` — opt-in format after file tools (`/format`, `FORGE_FORMAT_ON_WRITE`)
 - `src/agent/sandbox.ts` + `rules.ts` + `shell-parse.ts` — OS sandbox, deny/allow/ask rules, segment-aware shell checks
+- `src/agent/permission-preview.ts` — in-memory colored diff previews for edit-tool permission asks (never writes)
+- `src/tui/markdown.ts` — streaming markdown renderer for assistant output (line-buffered; chunk-split invariant; non-TTY passthrough)
 
 ## Expert session UX
 
 - `/plan` → session-scoped read-only design; `/commit [do]` drafts/creates commits from the diff (never pushes) (no sticky prefs); `/build` restores prior mode and implements
 - `/model <name> [effort]` live mid-run; `/commands` lists `.forge/commands` templates
+- Transcript shows per-edit diffs (green `+` / red `-`) under each edit-tool line; `/verbose` toggles full tool output vs 5-line dimmed head (session-local)
+- Live `live ›` dock shows cumulative completion tokens + `ctx used/window`; assistant replies render as styled markdown
 - Project instructions: walk-up within git root for AGENTS/CLAUDE/cursor/copilot rules; `/context` lists sources
 - Headless: `forge run "/plan"` / custom templates work in CI (`reason: "slash"` when no model call)
 - Provider failures print recovery tips; JSON fail payloads include `recovery: { code, tips }`
@@ -111,4 +115,4 @@ stdout/stderr caps + hook timeout process-group kill (TERM→KILL, unref'd timer
 honored above client backoff
 (≤120s), 10-min default provider timeout (`FORGE_PROVIDER_TIMEOUT_MS`), 4MB child-output caps
 (bash/rg), streaming read_file for >2MB files, byte-guaranteed tool-output truncation, atomic
-session-lock create (`wx`), model-aware cost estimates (grok-4.5 $2/$6), 16k default max_tokens.
+session-lock create (`wx`), model-aware cost estimates (grok-4.5 $2/$6), auto max_tokens (16k non-reasoning · 32k deepseek/64k other reasoning-active; `/max-tokens` pin wins), temperature omitted unless pinned (server-tuned defaults), OpenRouter nested `reasoning.effort` maps `max`→`xhigh` (native top-level keeps `max`).

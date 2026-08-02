@@ -17,6 +17,7 @@ import { addSavedAllow, loadSavedAllows, savedAsAllowRules } from "./permission-
 import { logSandboxEvent } from "./sandbox-log.js";
 import { isWithinRoot } from "../util/fs.js";
 import { formatPermissionPreview } from "../util/format.js";
+import { editToolDiffPreview } from "./permission-preview.js";
 import { isTruthy } from "../util/bool.js";
 import { parseDurationMs } from "../util/duration-ms.js";
 
@@ -534,7 +535,11 @@ export class PermissionGate {
     dangerous: boolean,
     opts: { workspace?: string; alwaysPattern?: string; reasonHint?: string } = {},
   ): Promise<PermissionResult> {
-    const preview = formatPermissionPreview(toolName, toolInput, 500);
+    // Edit tools get a colored in-memory diff preview; everything else keeps
+    // the plain text argument summary. Answer UX / timeout unchanged.
+    const diffPreview = editToolDiffPreview(toolName, toolInput, opts.workspace);
+    const preview =
+      diffPreview ?? formatPermissionPreview(toolName, toolInput, 500);
     const timeoutMs = permissionAskTimeoutMs();
     const timeoutNote =
       timeoutMs > 0
@@ -568,8 +573,8 @@ export class PermissionGate {
 
     console.error(
       chalk.yellow(
-        `\n⚠ Permission: ${toolName}${dangerous ? " [DANGEROUS]" : ""}${opts.reasonHint ? `\n  ${opts.reasonHint}` : ""}\n${preview}\n`,
-      ),
+        `\n⚠ Permission: ${toolName}${dangerous ? " [DANGEROUS]" : ""}${opts.reasonHint ? `\n  ${opts.reasonHint}` : ""}\n`,
+      ) + (diffPreview ? `${preview}\n` : chalk.yellow(`${preview}\n`)),
     );
     const rl = readline.createInterface({ input, output });
     let timer: ReturnType<typeof setTimeout> | undefined;

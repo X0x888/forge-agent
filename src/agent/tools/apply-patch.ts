@@ -9,6 +9,7 @@ import type { ToolContext, ToolResult } from "./types.js";
 import { resolvePath, assertWritablePath } from "./path-util.js";
 import { pathNotFoundHint } from "./path-hints.js";
 import { applyUpdateChunks, parsePatch } from "./patch.js";
+import { shortDiff } from "./edit-match.js";
 import { atomicWriteFile } from "./atomic-write.js";
 import {
   formatNoteSuffix,
@@ -449,10 +450,25 @@ export async function toolApplyPatch(
       await ctx.fileReads.noteFromDisk(target);
     }
   }
+  // Per-op shortDiff blocks (same shape search_replace emits) so the
+  // transcript can render colored per-edit diffs under the tool line.
+  const diffBlock = planned.length
+    ? "\n\n" +
+      planned
+        .map((op) =>
+          op.kind === "add"
+            ? shortDiff(op.rel, "", op.content, 30)
+            : op.kind === "delete"
+              ? shortDiff(op.rel, op.before, "", 30)
+              : shortDiff(op.moveRel && op.moveAbs !== op.abs ? `${op.rel} → ${op.moveRel}` : op.rel, op.before, op.content, 30),
+        )
+        .join("\n")
+    : "";
   return {
     output:
       `Applied patch (${applied.length} op(s)):\n${applied.join("\n")}` +
       (fmtNotes.length ? `\n${fmtNotes.join("\n")}` : "") +
+      diffBlock +
       // Only tip when at least one non-doc file was written.
       (writtenAbs.some((p) => {
         const e = path.extname(p).toLowerCase();

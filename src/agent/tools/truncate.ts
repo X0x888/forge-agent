@@ -10,8 +10,13 @@ import { ensureDirAsync, forgeHome } from "../../util/fs.js";
 import { truncateMiddle } from "../../util/format.js";
 
 export const DEFAULT_MAX_LINES = 2000;
-export const DEFAULT_MAX_BYTES = 50 * 1024;
-export const BASH_MAX_CHARS = 80_000;
+export const DEFAULT_MAX_BYTES = 32 * 1024;
+/**
+ * Soft char cap for bash output before the managed byte cap. Full output is
+ * always spooled to ~/.forge/tool-output/ with a pointer, so a lean in-context
+ * preview loses nothing the model cannot re-read (grok-build uses ~20k).
+ */
+export const BASH_MAX_CHARS = 30_000;
 /** Keep newest N full-output dumps (experts generate many during ULW). */
 export const DEFAULT_TOOL_OUTPUT_KEEP = 80;
 /** Also drop dumps older than this many days. */
