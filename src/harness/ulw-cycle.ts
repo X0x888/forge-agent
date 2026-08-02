@@ -12,6 +12,7 @@
  */
 import path from "node:path";
 import { forgeHome, readJsonFile, writeJsonFile, nowIso, nowEpoch } from "../util/fs.js";
+import { isTruthy } from "../util/bool.js";
 import { clearSoftTodoGateOnWindDown } from "./todo-gate.js";
 
 export type CycleFlag = 0 | 1;
@@ -25,6 +26,13 @@ export interface UlwWaveRecord {
   wave: number;
   /** File edits made during this wave (editCount delta across the Stop boundary) */
   editDelta: number;
+  /**
+   * Working-tree diff movement at the wave boundary (git fingerprint):
+   * "new" = unseen diff state (real progress), "revisit" = a previously seen
+   * state (edit→revert churn), "none" = diff unchanged. Undefined when the
+   * workspace is not a git repo or the wave predates fingerprinting.
+   */
+  netDiff?: "new" | "revisit" | "none";
   /** True when verification evidence was detected (test/typecheck/lint/build run or cited) */
   proof: boolean;
   /** One-line clip of the wave's closing assistant message */
@@ -52,6 +60,15 @@ export interface UlwCycleState {
   /** Consecutive no-progress blocks */
   stuckBlocks: number;
   lastBlockEditCount: number;
+  /**
+   * Working-tree diff fingerprint at the previous Stop evaluation
+   * (gitDiffFingerprint; undefined until the first git-backed evaluation).
+   * Progress = editCount delta OR a changed fingerprint, so work done via
+   * bash (heredocs/sed) still counts and churn does not fake it forever.
+   */
+  lastDiffFp?: string;
+  /** Recent fingerprints (capped) — a wave closing on a seen fp is churn. */
+  seenDiffFps?: string[];
   /** Original user mandate (possibly soft) */
   mandate: string;
   /** Expanded operational mandate shown to the model */
@@ -107,6 +124,8 @@ const ATTEST_EVIDENCE_RE =
 
 /** Wave ledger cap — enough for bar anchoring + status, bounded sidecar size. */
 const WAVE_LEDGER_KEEP = 20;
+/** Recent diff fingerprints kept for churn (revisit) detection. */
+const DIFF_FP_KEEP = 12;
 /** Proof demands per proof-less streak before accepting a stated rationale. */
 const MAX_PROOF_DEMANDS = 2;
 /** Evidence bounces allowed on cycle=0 attestation before releasing anyway. */
@@ -152,6 +171,32 @@ export function isVerificationCommand(
     }
   }
   return false;
+}
+
+/**
+ * True when a bash tool call counts toward the structural verification
+ * signals (verificationRan / verificationPassed / last-verify trail).
+ * Excludes background starts: a fire-and-forget spawn observes no exit code,
+ * so it must not satisfy wave proof, attestations, or the last✓ trail.
+ * Background detection mirrors the bash tool exactly — both key spellings
+ * (`background`, `run_in_background`) and all isTruthy variants (`true`, `1`,
+ * `"true"`, `"1"`, `"yes"`) — or the alias becomes a gaming bypass. The model
+ * can always run the check in the foreground for it to count.
+ */
+export function countsTowardVerification(
+  args: {
+    command?: unknown;
+    background?: unknown;
+    run_in_background?: unknown;
+  },
+  preferredCheckCommands?: string[],
+): boolean {
+  const cmd = typeof args.command === "string" ? args.command : "";
+  if (!cmd.trim()) return false;
+  if (isTruthy(args.background) || isTruthy(args.run_in_background)) {
+    return false;
+  }
+  return isVerificationCommand(cmd, preferredCheckCommands);
 }
 
 /**
@@ -214,16 +259,20 @@ function summarizeWave(message: string): string {
 
 /**
  * Best factual wave so far: prefer waves with proof, then largest edit delta.
- * Used to anchor the bar ("match or beat your best wave") — not a score.
+ * Churn waves (diff fingerprint revisit) are excluded from anchoring — an
+ * edit→revert loop must not become the bar. Used to anchor the bar
+ * ("match or beat your best wave") — not a score.
  */
 export function bestWave(waves: UlwWaveRecord[] | undefined): UlwWaveRecord | null {
   if (!waves?.length) return null;
-  const proven = waves.filter((w) => w.proof);
-  const pool = proven.length ? proven : waves;
+  const eligible = waves.filter((w) => w.netDiff !== "revisit");
+  const base = eligible.length ? eligible : waves;
+  const proven = base.filter((w) => w.proof);
+  const pool = proven.length ? proven : base;
   return pool.reduce((best, w) => (w.editDelta > best.editDelta ? w : best), pool[0]);
 }
 
-/** One-line factual ledger for re-anchors/status: `w1 +12e ✓ · w2 +1e ✗`. */
+/** One-line factual ledger for re-anchors/status: `w1 +12e ✓ · w2 +1e↺ ✗` (↺ = churn revisit). */
 export function formatWaveLedger(
   waves: UlwWaveRecord[] | undefined,
   max = 8,
@@ -231,7 +280,10 @@ export function formatWaveLedger(
   if (!waves?.length) return "";
   return waves
     .slice(-max)
-    .map((w) => `w${w.wave} +${w.editDelta}e ${w.proof ? "✓" : "✗"}`)
+    .map(
+      (w) =>
+        `w${w.wave} +${w.editDelta}e${w.netDiff === "revisit" ? "↺" : ""} ${w.proof ? "✓" : "✗"}`,
+    )
     .join(" · ");
 }
 
@@ -276,6 +328,8 @@ export function loadUlwCycle(sessionId: string): UlwCycleState | null {
   ) {
     raw.evidenceNudges = 0;
   }
+  // Back-compat: older sidecars omit diff-fingerprint churn tracking
+  if (!Array.isArray(raw.seenDiffFps)) raw.seenDiffFps = [];
   return raw;
 }
 
@@ -582,6 +636,12 @@ export function evaluateUlwAtStop(opts: {
    */
   verificationPassed?: boolean;
   preferredCheckCommands?: string[];
+  /**
+   * Working-tree diff fingerprint (gitDiffFingerprint) for net-diff progress
+   * tracking: bash-channel edits count as progress, edit→revert churn counts
+   * as thin. Null/undefined outside git — falls back to editCount-only.
+   */
+  diffFingerprint?: string | null;
 }): UlwStopDecision {
   const s = loadUlwCycle(opts.sessionId);
   if (!s || !s.enabled) return { block: false };
@@ -598,6 +658,25 @@ export function evaluateUlwAtStop(opts: {
   // before lastBlockEditCount is updated below.
   const editDelta = Math.max(0, opts.editCount - s.lastBlockEditCount);
 
+  // Net-diff tracking: fingerprint the working tree at each boundary.
+  // diffChanged = the tree's diff state moved (progress from ANY channel,
+  // including bash); diffRevisit = it moved back to a previously seen state
+  // (edit→revert churn). First git-backed evaluation only sets the baseline.
+  const fp = opts.diffFingerprint ?? null;
+  let diffChanged = false;
+  let diffRevisit = false;
+  if (fp) {
+    if (s.lastDiffFp === undefined) {
+      s.lastDiffFp = fp;
+      s.seenDiffFps = [...(s.seenDiffFps ?? []), fp].slice(-DIFF_FP_KEEP);
+    } else if (fp !== s.lastDiffFp) {
+      diffChanged = true;
+      diffRevisit = (s.seenDiffFps ?? []).includes(fp);
+      s.seenDiffFps = [...(s.seenDiffFps ?? []), fp].slice(-DIFF_FP_KEEP);
+      s.lastDiffFp = fp;
+    }
+  }
+
   // cycle=0 + attestation with evidence (or evidence already demanded once) → release
   if (
     attested &&
@@ -612,8 +691,9 @@ export function evaluateUlwAtStop(opts: {
     };
   }
 
-  // Progress / stuck tracking
-  const progressed = opts.editCount > s.lastBlockEditCount;
+  // Progress / stuck tracking: editCount delta OR working-tree diff movement
+  // (bash heredocs/sed move the tree without touching edit-tool counters).
+  const progressed = opts.editCount > s.lastBlockEditCount || diffChanged;
   if (progressed) {
     s.stuckBlocks = 0;
   } else {
@@ -635,7 +715,7 @@ export function evaluateUlwAtStop(opts: {
     return {
       block: false,
       stuckReleased: true,
-      reason: `ULW stuck-wall: ${s.stuckBlocks} consecutive Stop attempts with no file edits. Cycle released. Re-arm with /ulw or /cycle 1.`,
+      reason: `ULW stuck-wall: ${s.stuckBlocks} consecutive Stop attempts with no file edits or working-tree changes. Cycle released. Re-arm with /ulw or /cycle 1.`,
     };
   }
 
@@ -684,22 +764,33 @@ export function evaluateUlwAtStop(opts: {
     s.wave += 1;
     // Record the wave that closed at this boundary — facts for the quality bar.
     // Prefer successful verification for wave proof so a red check cannot
-  // satisfy the quality bar / clear proofDemands.
-  const proof = detectWaveProof(
-    msg,
-    opts.verificationPassed ?? opts.verificationRan,
-  );
+    // satisfy the quality bar / clear proofDemands.
+    const proof = detectWaveProof(
+      msg,
+      opts.verificationPassed ?? opts.verificationRan,
+    );
+    const netDiff: UlwWaveRecord["netDiff"] = fp
+      ? diffChanged
+        ? diffRevisit
+          ? "revisit"
+          : "new"
+        : "none"
+      : undefined;
     s.waves = [
       ...(s.waves ?? []),
       {
         wave: s.wave, // boundary index (counter value after increment)
         editDelta,
+        netDiff,
         proof,
         summary: summarizeWave(msg),
         ts: nowIso(),
       },
     ].slice(-WAVE_LEDGER_KEEP);
-    const thin = editDelta <= 1 && !proof;
+    // Thin waves: negligible edits with no tree movement and no proof — plus
+    // churn waves outright (revisit = edit→revert; the diff came back to a
+    // seen state no matter how many edit calls it took).
+    const thin = (editDelta <= 1 && !diffChanged && !proof) || diffRevisit;
     s.thinStreak = thin ? (s.thinStreak ?? 0) + 1 : 0;
     if (proof) {
       s.proofDemands = 0;

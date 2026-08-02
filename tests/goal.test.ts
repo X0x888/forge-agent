@@ -256,4 +256,33 @@ describe("goal arms session title when untitled", () => {
     assert.equal(last!.stuckReleased, true);
     assert.equal(loadGoal(sid)?.status, "stuck");
   });
+
+  it("working-tree diff movement prevents a false stuck-wall (bash-channel work)", () => {
+    const sidFp = "test-goal-fp-progress";
+    armGoal(sidFp, "keep making tree changes", "manual");
+    const call = (fp: string) =>
+      evaluateGoalAtStop({
+        sessionId: sidFp,
+        lastAssistantMessage: "working via bash heredocs",
+        editCount: 0, // no edit-tool calls — work lands via bash
+        stuckThreshold: 3,
+        enabled: true,
+        diffFingerprint: fp,
+      });
+    // First call sets the baseline; the next three all move the tree to new
+    // states. Without fingerprinting this would release at threshold 3.
+    call("fp-0");
+    let last;
+    for (const fp of ["fp-1", "fp-2", "fp-3"]) last = call(fp);
+    assert.equal(last!.block, true);
+    assert.equal(last!.stuckReleased ?? false, false);
+    assert.equal(loadGoal(sidFp)?.stuckBlocks, 0);
+    assert.equal(loadGoal(sidFp)?.status, "active");
+
+    // Stop moving the tree → the stuck-wall engages on schedule.
+    let released;
+    for (let i = 0; i < 3; i++) released = call("fp-3");
+    assert.equal(released!.stuckReleased, true);
+    assert.equal(loadGoal(sidFp)?.status, "stuck");
+  });
 });

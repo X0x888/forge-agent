@@ -1,4 +1,5 @@
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import path from "node:path";
 import fs from "node:fs";
 
@@ -42,9 +43,51 @@ function git(
   }
 }
 
-/** Best-effort git summary for system prompt / banner (never throws). */
-export function getGitSnapshot(cwd: string): GitSnapshot {
+/**
+ * Fingerprint of the working-tree diff state: sha1 over
+ * `git diff HEAD --numstat` (staged+unstaged tracked changes) plus untracked
+ * paths with sizes. Any content divergence from HEAD changes it; reverting to
+ * HEAD restores an earlier fingerprint — which is exactly the churn signal
+ * the ULW wave ledger needs (edit→revert = revisit, further work = new).
+ * Null outside a git repo / on git failure. Cheap: two git calls, no content.
+ */
+export function gitDiffFingerprint(cwd: string): string | null {
   try {
+    const root = git(["rev-parse", "--show-toplevel"], cwd);
+    if (!root) return null;
+    const numstat = git(["diff", "HEAD", "--numstat"], root, 3000);
+    const untrackedRaw = git(
+      ["ls-files", "--others", "--exclude-standard"],
+      root,
+      3000,
+    );
+    if (numstat === null && untrackedRaw === null) return null;
+    // Untracked files have no diff body — include size so recreating the same
+    // path with different content still moves the fingerprint (cap the stat
+    // fan-out; node_modules etc. are already exclude-standard'd away).
+    const untracked = (untrackedRaw ?? "")
+      .split("\n")
+      .filter((l) => l.trim())
+      .slice(0, 200)
+      .map((p) => {
+        try {
+          return `${p}:${fs.statSync(path.join(root, p)).size}`;
+        } catch {
+          return p;
+        }
+      })
+      .join("\n");
+    return createHash("sha1")
+      .update(`${numstat ?? ""}\n--\n${untracked}`)
+      .digest("hex")
+      .slice(0, 16);
+  } catch {
+    return null;
+  }
+}
+
+/** Best-effort git summary for system prompt / banner (never throws). */
+export function getGitSnapshot(cwd: string): GitSnapshot {  try {
     const root = git(["rev-parse", "--show-toplevel"], cwd);
     if (!root) return {};
     const branch =

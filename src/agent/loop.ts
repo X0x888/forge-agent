@@ -40,7 +40,7 @@ import {
   formatUlwCounts,
   formatUlwBadge,
   ULW_LIVE_CONTROLS_HINT,
-  isVerificationCommand,
+  countsTowardVerification,
   shouldStampLastVerification,
   shouldClearLastVerification,
 } from "../harness/ulw-cycle.js";
@@ -2210,6 +2210,8 @@ async function prepareToolResult(opts: {
   // Structural verification signal for the ULW wave ledger: a check command
   // actually executed this wave (pass or fail — running it is the behavior
   // the quality bar rewards; prose claims are not trusted on their own).
+  // Background starts observe no exit code (fire-and-forget) — excluded by
+  // countsTowardVerification; run the check in the foreground for it to count.
   // Session last-verify trail is success-only so experts don't trust a red run.
   if (harnessStats && name === "bash") {
     const cmd = typeof toolInput.command === "string" ? toolInput.command : "";
@@ -2220,7 +2222,7 @@ async function prepareToolResult(opts: {
     } catch {
       preferred = undefined;
     }
-    if (cmd && isVerificationCommand(cmd, preferred)) {
+    if (countsTowardVerification(toolInput, preferred)) {
       harnessStats.verificationRuns += 1;
       if (!result.isError) {
         harnessStats.verificationPassedRuns += 1;

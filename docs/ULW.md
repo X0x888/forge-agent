@@ -62,7 +62,7 @@ attempt Stop
     └─ cycle=0 + **Cycle complete.** + evidence → release
 ```
 
-Stuck-wall: N consecutive Stop attempts with **no file edits** (default same as goal stuck threshold / `FORGE_ULW_STUCK_THRESHOLD`).
+Stuck-wall: N consecutive Stop attempts with **no file edits and no working-tree diff movement** (default same as goal stuck threshold / `FORGE_ULW_STUCK_THRESHOLD`). Progress is measured two ways: `editCount` delta **or** a changed `gitDiffFingerprint` — so work done via bash heredocs/`sed -i` (which never touches edit-tool counters) cannot false-trigger a stuck release. Outside a git repo the fingerprint is unavailable and the classic editCount-only rule applies.
 
 `max_waves` is independent of the cycle flag: you can still `/cycle 0` early, or raise `/max-waves` / clear it mid-run.
 
@@ -71,7 +71,8 @@ Stuck-wall: N consecutive Stop attempts with **no file edits** (default same as 
 Every wave boundary records **facts** in `ulw.json` — never invented scores:
 
 - `editDelta` — file edits made during the wave
-- `proof` — whether verification **actually ran** (a bash command matching tests/typecheck/lint/build executed during the wave) or was cited with a result
+- `netDiff` — working-tree diff movement at the boundary: `new` (unseen state = real progress), `revisit` (a previously seen fingerprint = edit→revert churn), `none` (unchanged); absent outside git
+- `proof` — whether verification **actually ran** (a foreground bash command matching tests/typecheck/lint/build executed during the wave; background spawns — `background`/`run_in_background` in any truthy form — never count, no exit code is observed) or was cited with a result
 - `summary` — one-line clip of the wave's closing message
 
 Mechanisms built on the ledger:
@@ -82,7 +83,8 @@ Mechanisms built on the ledger:
 | **Proof demand** | A wave with no verification triggers `⚠ … ran no verification — run its proof NOW`. Capped at 2 consecutive demands (a stated rationale is then accepted — some repos have no tests) |
 | **Wave rules** | Every wave: smoke-check first (prior waves may have broken something), ONE objective, search-before-build (no re-implementing), 2-line plan (objective + the exact command that proves it) |
 | **Consolidation cadence** | Every 4th wave is a CONSOLIDATION wave: no new scope — full check suite + hostile review of the cumulative `git diff` |
-| **Thin-wave escalation** | 2+ consecutive waves with ≤1 edit and no proof → re-anchor demands a substantially higher-impact wave |
+| **Thin-wave escalation** | 2+ consecutive waves with ≤1 edit, no tree movement, and no proof → re-anchor demands a substantially higher-impact wave. Churn waves (fingerprint `revisit`) count as thin regardless of edit-call count — edit→revert loops cannot dodge the bar |
+| **Churn exclusion** | `revisit` waves are excluded from bestWave anchoring and marked `↺` in the ledger (`w3 +5e↺ ✗`) |
 | **Diminishing-returns advisory** | 3+ thin waves → user-visible warning + `/cycle status` shows `⚠ Diminishing returns` — the user decides `/cycle 0`; the harness never quietly lowers the bar |
 | **Evidence attestation** | `**Cycle complete.**` without ✅/❌ checklist or command results is bounced once with a proof demand, then released (never an infinite trap) |
 | **Adaptive effort** | Hard rounds (doom-loop / error-streak / missing proof) raise reasoning effort one notch for a turn — escalate on failure, not by default (`FORGE_ADAPTIVE_EFFORT=0` disables) |

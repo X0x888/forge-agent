@@ -26,6 +26,12 @@ export interface GoalState {
   stuckBlocks: number;
   lastBlockEditCount: number;
   lastBlockEpoch: number;
+  /**
+   * Working-tree diff fingerprint at the previous Stop evaluation — progress
+   * = editCount delta OR changed fingerprint, so bash-channel work (heredocs,
+   * sed) cannot false-trigger the stuck-wall. Undefined until first git eval.
+   */
+  lastDiffFp?: string;
   /** Evidence bounces issued against weak attestations (capped at 1) */
   evidenceNudges?: number;
   achievedAt?: string;
@@ -218,6 +224,12 @@ export function evaluateGoalAtStop(opts: {
   verificationPassed?: boolean;
   verificationRan?: boolean;
   preferredCheckCommands?: string[];
+  /**
+   * Working-tree diff fingerprint (gitDiffFingerprint). When it changes
+   * between Stop evaluations the goal is progressing even without edit-tool
+   * calls (bash heredocs/sed) — prevents false stuck-wall releases.
+   */
+  diffFingerprint?: string | null;
 }): GoalDecision {
   if (!opts.enabled) return { block: false };
   const g = loadGoal(opts.sessionId);
@@ -249,10 +261,22 @@ export function evaluateGoalAtStop(opts: {
     return { block: false };
   }
 
-  // Progress detection: edits since last block. Runs (and persists) BEFORE the
-  // evidence bounce below so repeated weak attestations still feed the
-  // stuck-wall — the bounce can never become an infinite trap.
-  const progressed = opts.editCount > g.lastBlockEditCount;
+  // Progress detection: edits since last block, OR working-tree diff movement
+  // (bash-channel work moves the tree without touching edit-tool counters).
+  // Runs (and persists) BEFORE the evidence bounce below so repeated weak
+  // attestations still feed the stuck-wall — the bounce can never become an
+  // infinite trap.
+  const fp = opts.diffFingerprint ?? null;
+  let diffChanged = false;
+  if (fp) {
+    if (g.lastDiffFp === undefined) {
+      g.lastDiffFp = fp;
+    } else if (fp !== g.lastDiffFp) {
+      diffChanged = true;
+      g.lastDiffFp = fp;
+    }
+  }
+  const progressed = opts.editCount > g.lastBlockEditCount || diffChanged;
   if (progressed) {
     g.stuckBlocks = 0;
   } else {
@@ -276,7 +300,7 @@ export function evaluateGoalAtStop(opts: {
     return {
       block: false,
       stuckReleased: true,
-      reason: `Stuck-wall: ${g.stuckBlocks} consecutive Stop attempts with no file edits. Goal released. Re-arm with /goal resume or /goal <objective>.`,
+      reason: `Stuck-wall: ${g.stuckBlocks} consecutive Stop attempts with no file edits or working-tree changes. Goal released. Re-arm with /goal resume or /goal <objective>.`,
     };
   }
 

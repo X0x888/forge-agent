@@ -1011,3 +1011,125 @@ describe("ulw wave ledger + quality bar", () => {
     assert.equal(s.lastBlockEditCount, 0);
   });
 });
+
+describe("net-diff progress tracking (ULW)", () => {
+  const base = (sid: string, over: Record<string, unknown> = {}) => ({
+    sessionId: sid,
+    lastAssistantMessage: "wave summary, no evidence cited",
+    editCount: 0,
+    openTodoCount: 0,
+    stuckThreshold: 3,
+    ...over,
+  });
+
+  it("bash-channel work (new diff, no edit-tool calls) counts as progress and is not thin", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-ulw-nd1-"));
+    process.env.FORGE_HOME = tmp;
+    const sid = "ulw-nd-progress";
+    armUlwCycle(sid, "improve", { cycle: 1 });
+    // wave 1: sets the fingerprint baseline (no edit calls, tree at fp-a)
+    let d = evaluateUlwAtStop(base(sid, { diffFingerprint: "fp-a" }));
+    assert.equal(d.block, true);
+    // waves 2..4: editCount stays flat (bash heredocs/sed), but the working
+    // tree keeps moving to NEW states — the stuck-wall must never engage.
+    for (const fp of ["fp-b", "fp-c", "fp-d"]) {
+      d = evaluateUlwAtStop(base(sid, { diffFingerprint: fp }));
+      assert.equal(d.block, true);
+      assert.equal(d.stuckReleased ?? false, false);
+    }
+    const s = loadUlwCycle(sid)!;
+    assert.equal(s.stuckBlocks, 0);
+    const last = s.waves![s.waves!.length - 1];
+    assert.equal(last.editDelta, 0);
+    assert.equal(last.netDiff, "new");
+    // Real tree movement with no proof is not "thin" — only churn is.
+    assert.equal(s.thinStreak ?? 0, 0);
+  });
+
+  it("edit→revert churn is a revisit: thin, excluded from bestWave", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-ulw-nd2-"));
+    process.env.FORGE_HOME = tmp;
+    const sid = "ulw-nd-churn";
+    armUlwCycle(sid, "improve", { cycle: 1 });
+    // w1: real work, baseline fp-1
+    evaluateUlwAtStop(base(sid, { editCount: 5, diffFingerprint: "fp-1" }));
+    // w2: more real work, new state fp-2
+    evaluateUlwAtStop(base(sid, { editCount: 10, diffFingerprint: "fp-2" }));
+    // w3: 5 edit CALLS but the tree is back at fp-1 (revert) — churn, not progress
+    evaluateUlwAtStop(base(sid, { editCount: 15, diffFingerprint: "fp-1" }));
+    const s = loadUlwCycle(sid)!;
+    const w3 = s.waves![s.waves!.length - 1];
+    assert.equal(w3.editDelta, 5);
+    assert.equal(w3.netDiff, "revisit");
+    assert.ok((s.thinStreak ?? 0) >= 1, "churn wave counts toward thinStreak");
+    const best = bestWave(s.waves)!;
+    assert.notEqual(best.wave, w3.wave, "churn wave must not anchor the bar");
+    // Ledger marks the revisit for /cycle status transparency
+    assert.match(formatWaveLedger(s.waves), /w3 \+5e↺/);
+  });
+
+  it("without fingerprints (non-git), flat editCount still hits the stuck-wall", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-ulw-nd3-"));
+    process.env.FORGE_HOME = tmp;
+    const sid = "ulw-nd-nogit";
+    armUlwCycle(sid, "improve", { cycle: 1 });
+    let released: boolean | undefined = false;
+    for (let i = 0; i < 3; i++) {
+      const d = evaluateUlwAtStop(base(sid, { diffFingerprint: null }));
+      released = d.stuckReleased ?? false;
+    }
+    assert.equal(released, true, "editCount-only fallback preserves stuck-wall");
+    assert.equal(loadUlwCycle(sid)!.enabled, false);
+  });
+
+  it("background bash never counts as verification (fire-and-forget observes no exit code)", async () => {
+    const { countsTowardVerification } = await import(
+      "../src/harness/ulw-cycle.js"
+    );
+    // The B2b hole: this exact call used to satisfy wave proof/attestations.
+    assert.equal(
+      countsTowardVerification({ command: "npm test", background: true }),
+      false,
+    );
+    assert.equal(
+      countsTowardVerification({ command: "npm test", background: "true" }),
+      false,
+    );
+    // The alias + truthy-variant bypass (bash tool honors both keys via
+    // isTruthy): every one of these spawns the same unobserved process.
+    assert.equal(
+      countsTowardVerification({ command: "npm test", run_in_background: true }),
+      false,
+    );
+    assert.equal(
+      countsTowardVerification({ command: "npm test", run_in_background: 1 }),
+      false,
+    );
+    assert.equal(
+      countsTowardVerification({ command: "npm test", background: "yes" }),
+      false,
+    );
+    assert.equal(
+      countsTowardVerification({ command: "npm test", background: 1 }),
+      false,
+    );
+    // Foreground still counts (regex + preferred-command paths).
+    assert.equal(
+      countsTowardVerification({ command: "npm test", background: false }),
+      true,
+    );
+    assert.equal(
+      countsTowardVerification({ command: "npm test", background: "false" }),
+      true,
+    );
+    assert.equal(countsTowardVerification({ command: "npm test" }), true);
+    assert.equal(
+      countsTowardVerification({ command: "npm run unit" }, ["npm run unit"]),
+      true,
+    );
+    // Non-check commands and junk stay excluded.
+    assert.equal(countsTowardVerification({ command: "ls -la" }), false);
+    assert.equal(countsTowardVerification({ background: true }), false);
+    assert.equal(countsTowardVerification({}), false);
+  });
+});

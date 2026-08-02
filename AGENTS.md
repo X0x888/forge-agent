@@ -24,7 +24,7 @@ Binary entry: `src/cli.ts` → `dist/cli.js` (`bin: forge`).
 - `src/auth/` — multi-account credentials (never log tokens); `accounts.ts` smart switch; auth.json v2; `src/util/file-lock.ts` `withFileLock` serializes cross-process load→mutate→save on auth.json/preferences.json (fail-open, bounded wait — never brick login)
 - `src/statusline/` — provider-agnostic HUD (`forge status`); never invent plan metrics
 - `src/commands/` — slash handlers; `project-commands.ts` (`.forge/commands/*.md`); `headless-slash.ts` for `forge run "/…"`
-- `src/harness/ulw-cycle.ts` — ULW cycle flag 1/0; optional `maxWaves` cap (auto LAST); soft prompts expand to god-scope; Stop blocks while cycle=1; wave ledger + quality bar (proof demands, thin-wave escalation, evidence attestation)
+- `src/harness/ulw-cycle.ts` — ULW cycle flag 1/0; optional `maxWaves` cap (auto LAST); soft prompts expand to god-scope; Stop blocks while cycle=1; wave ledger + quality bar (proof demands, thin-wave escalation, evidence attestation); net-diff progress tracking (`gitDiffFingerprint`: bash-channel edits count as progress, edit→revert churn = revisit → thin + excluded from bestWave); background bash excluded from structural verification (`countsTowardVerification` — spawn observes no exit code)
 - `src/harness/context-admit.ts` — mid-conversation harness admissions (stable system + live counters; counter-only churn suppressed; volatile git branch line admitted append-only — message[0] keeps cache-stable git root/remote only)
 - `src/config/model-info.ts` — per-model context windows (grok-4.5=500k, grok-4=256k, claude=200k, gpt-4.1=1M); used when `context_window` is not explicit
 - `src/harness/interjection.ts` — free-text mid-run messages (Grok-style `<user_query>`)

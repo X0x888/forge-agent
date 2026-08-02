@@ -28,6 +28,7 @@ import {
   type ProofClaimStopDecision,
 } from "./proof-claim-guard.js";
 import { envPositiveInt } from "../util/env.js";
+import { gitDiffFingerprint } from "../util/git-context.js";
 
 export interface StopGuardInput {
   config: ForgeConfig;
@@ -87,6 +88,17 @@ export async function runStopGuard(input: StopGuardInput): Promise<StopGuardResu
 
   const goal = loadGoal(ctx.sessionId);
   const ulw = loadUlwCycle(ctx.sessionId);
+  // Net-diff progress tracking (goal + ULW): bash-channel edits must count as
+  // progress and edit→revert churn must not. Two cheap git calls, only when a
+  // driver is actually armed — never on plain sessions' Stop path.
+  const driverArmed =
+    Boolean(ulw?.enabled) ||
+    Boolean(
+      goal && goal.objective && !goal.paused && goal.status === "active",
+    );
+  const diffFingerprint = driverArmed
+    ? gitDiffFingerprint(ctx.workspaceRoot)
+    : undefined;
   const hookCtx: HookContext = {
     ...ctx,
     goalObjective: goal?.objective,
@@ -124,6 +136,7 @@ export async function runStopGuard(input: StopGuardInput): Promise<StopGuardResu
     verificationRan: input.verificationRan,
     verificationPassed: input.verificationPassed,
     preferredCheckCommands: input.preferredCheckCommands,
+    diffFingerprint,
   });
 
   if (goalDecision.stuckReleased) {
@@ -162,6 +175,7 @@ export async function runStopGuard(input: StopGuardInput): Promise<StopGuardResu
     verificationRan: input.verificationRan,
     verificationPassed: input.verificationPassed,
     preferredCheckCommands: input.preferredCheckCommands,
+    diffFingerprint,
   });
 
   if (ulwDecision.stuckReleased || ulwDecision.lastCycleReleased) {
