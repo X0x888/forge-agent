@@ -15,6 +15,7 @@ import {
 } from "../commands/slash.js";
 import { pushInterjection } from "../harness/interjection.js";
 import { saveSession, isLastVerificationStale } from "../session/session.js";
+import { readFileMutations } from "../session/mutations.js";
 import { log } from "../util/log.js";
 import {
   maybeTurnEndAttention,
@@ -28,6 +29,8 @@ import {
   formatDiffBlock,
   formatToolOutputHead,
 } from "../util/format.js";
+import { postureHead, postureWarnings } from "./posture.js";
+import { formatTurnChangeSummary } from "./turn-summary.js";
 import {
   createMarkdownRenderer,
   type MarkdownRenderer,
@@ -167,7 +170,7 @@ export async function runRepl(opts: {
 
   let busy = false;
   let abortController: AbortController | null = null;
-  /** Session-local: full tool output under the end line (head-only when off). */
+  /** Session-local: diffs + tool output under each end line (minimal when off). */
   let verboseToolOutput = false;
   /**
    * Tools currently between onPhase("tool") and onToolSettled
@@ -270,8 +273,8 @@ export async function runRepl(opts: {
     if (text === "/verbose") {
       verboseToolOutput = !verboseToolOutput;
       const msg = verboseToolOutput
-        ? "Tool output: FULL under each tool line (/verbose to collapse)"
-        : "Tool output: first 5 lines under each tool line (/verbose for full)";
+        ? "Tool detail: diffs + full output under each tool line (/verbose to minimize)"
+        : "Tool detail: status lines only (/verbose for diffs + output)";
       if (busy) {
         console.log(formatLiveControlFeedback(text, msg, "ok"));
         livePrompt();
@@ -480,6 +483,8 @@ export async function runRepl(opts: {
     busy = true;
     pendingTools = 0;
     abortController = new AbortController();
+    // For the end-of-turn change summary: edits with turn > this landed now.
+    const turnAtStart = session.meta.turnCount;
     // Live controls need stdin while working (editor stays open).
     beginTurn();
     pulseHeartbeat();
@@ -561,14 +566,19 @@ export async function runRepl(opts: {
             console.error(formatToolStart(name, args));
           },
           onToolEnd: (name, r) => {
+            // Minimal by default: one status line per tool. Diffs and output
+            // heads are display-only (zero model tokens) but cost render time
+            // and scroll noise on unattended runs — opt in with /verbose.
             console.error(formatToolEnd(name, r));
-            if (r.diff) {
-              console.error(formatDiffBlock(r.diff));
-            } else if (r.output) {
-              const head = formatToolOutputHead(r.output, {
-                verbose: verboseToolOutput,
-              });
-              if (head) console.error(head);
+            if (verboseToolOutput) {
+              if (r.diff) {
+                console.error(formatDiffBlock(r.diff));
+              } else if (r.output) {
+                const head = formatToolOutputHead(r.output, {
+                  verbose: true,
+                });
+                if (head) console.error(head);
+              }
             }
           },
           onToolSettled: () => {
@@ -652,6 +662,9 @@ export async function runRepl(opts: {
           stopContinues: result.stopContinues,
         }),
       );
+      // Unattended-run summary: what actually changed on disk + proof status.
+      // One dim line — the useful answer when you come back to a finished run.
+      printTurnChangeSummary(session, turnAtStart);
       // Optional attention for long background ULW/goal runs (default off)
       {
         const outcome = turnEndOutcomeLabel({
@@ -877,6 +890,7 @@ function printBanner(
         `  Fresh session: forge --new  ·  resume is automatic for this cwd\n`,
     ),
   );
+  printPosture(config);
   // One-time expert tip for first interactive launch (persisted in preferences).
   try {
     const prefs = loadPreferences();
@@ -903,5 +917,40 @@ function printBanner(
     }
   } catch {
     /* never block REPL on prefs */
+  }
+}
+
+/**
+ * One-line sampling/context posture at startup + warnings ONLY for settings
+ * that silently degrade results. Logic lives in ./posture.js (pure, tested).
+ */
+function printPosture(config: ForgeConfig): void {
+  try {
+    console.log(chalk.dim(`  ${postureHead(config)}`));
+    const warns = postureWarnings(config);
+    for (const w of warns) console.log(chalk.yellow(`  ⚠ ${w}`));
+    if (warns.length) console.log(chalk.dim(`  ↳ review: /config · forge doctor`));
+  } catch {
+    /* posture is best-effort */
+  }
+}
+
+/**
+ * End-of-turn change summary for unattended runs (files + verify status).
+ * Formatting is pure in ./turn-summary.js (tested); this is the journal
+ * read + print shim. Silent when nothing was edited.
+ */
+function printTurnChangeSummary(
+  session: SessionData,
+  turnAtStart: number,
+): void {
+  try {
+    const edits = readFileMutations(session.meta.id).filter(
+      (m) => m.turn > turnAtStart,
+    );
+    const line = formatTurnChangeSummary(edits, session.meta.cwd, session.meta);
+    if (line) console.log(chalk.dim(line));
+  } catch {
+    /* summary is best-effort */
   }
 }

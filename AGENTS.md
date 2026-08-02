@@ -49,7 +49,9 @@ Binary entry: `src/cli.ts` → `dist/cli.js` (`bin: forge`).
 
 - `/plan` → session-scoped read-only design; `/commit [do]` drafts/creates commits from the diff (never pushes) (no sticky prefs); `/build` restores prior mode and implements
 - `/model <name> [effort]` live mid-run; `/commands` lists `.forge/commands` templates
-- Transcript shows per-edit diffs (green `+` / red `-`) under each edit-tool line; `/verbose` toggles full tool output vs 5-line dimmed head (session-local)
+- Transcript is minimal by default (one status line per tool); `/verbose` opts into per-edit colored diffs + full tool output (session-local)
+- Turn end prints a one-line change summary (files touched from the mutation journal + verification status) for unattended runs
+- Startup `posture:` line shows resolved effort/ctx/temp/max_tokens; warnings only for silently-degrading pins (`src/tui/posture.ts`)
 - Live `live ›` dock shows cumulative completion tokens + `ctx used/window`; assistant replies render as styled markdown
 - Project instructions: walk-up within git root for AGENTS/CLAUDE/cursor/copilot rules; `/context` lists sources
 - Headless: `forge run "/plan"` / custom templates work in CI (`reason: "slash"` when no model call)
