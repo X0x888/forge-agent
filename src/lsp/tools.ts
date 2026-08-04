@@ -14,6 +14,7 @@ const ACTIONS = new Set([
   "status",
   "install",
   "install_help",
+  "ensure",
 ]);
 
 export async function toolLsp(
@@ -45,7 +46,7 @@ export async function toolLsp(
     return {
       output:
         `lsp error: unknown action "${args.action}". ` +
-        `Use: diagnostics | hover | definition | references | symbols | workspace_symbols | status | install`,
+        `Use: diagnostics | hover | definition | references | symbols | workspace_symbols | status | install | ensure`,
       isError: true,
     };
   }
@@ -54,8 +55,28 @@ export async function toolLsp(
     return { output: formatLspStatus(lsp) };
   }
   if (action === "install" || action === "install_help") {
-    const { formatLspInstallGuide } = await import("./install-guide.js");
-    return { output: formatLspInstallGuide() };
+    const { formatFullInstallGuide } = await import("./ensure.js");
+    return { output: formatFullInstallGuide(ctx.workspace) };
+  }
+  if (action === "ensure") {
+    const { ensureLspServers, formatEnsureResult, formatEnsurePlan, buildEnsurePlan } =
+      await import("./ensure.js");
+    const dry =
+      args.dry_run === true ||
+      args.dry_run === "true" ||
+      String(args.mode || "").toLowerCase() === "dry";
+    if (dry) {
+      return { output: formatEnsurePlan(buildEnsurePlan(ctx.workspace)) };
+    }
+    // Agent-driven ensure: install missing recommended servers
+    const result = await ensureLspServers({
+      workspace: ctx.workspace,
+      forceInstall: true,
+    });
+    return {
+      output: formatEnsureResult(result),
+      isError: result.failed.length > 0 && result.installed.length === 0,
+    };
   }
 
   try {

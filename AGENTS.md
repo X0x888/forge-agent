@@ -21,7 +21,7 @@ Binary entry: `src/cli.ts` → `dist/cli.js` (`bin: forge`).
 - `src/harness/` — hooks, goal, stop-guard, handoff-guard, proof-claim-guard (do not weaken blocking Stop defaults)
 - `src/agent/` — loop, tools, permissions, subagents (`spawn_subagent`)
 - `src/mcp/` — Model Context Protocol (search_mcp / call_mcp); built-in defaults **context7** + **playwright** (`src/mcp/defaults.ts`)
-- `src/lsp/` — Language Server Protocol (lsp tool, diagnostics/hover/definition)
+- `src/lsp/` — Language Server Protocol; ensure pack TS+Python (+ Rust/Go when detected); `forge lsp ensure`
 - `src/providers/` — LLM clients; `errors.ts` expert recovery tips (`formatProviderError`)
 - `src/auth/` — multi-account credentials (never log tokens); `accounts.ts` smart switch; auth.json v2; `src/util/file-lock.ts` `withFileLock` serializes cross-process load→mutate→save on auth.json/preferences.json (fail-open, bounded wait — never brick login)
 - `src/statusline/` — provider-agnostic HUD (`forge status`); never invent plan metrics

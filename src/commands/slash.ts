@@ -378,9 +378,17 @@ export function classifyLiveSlash(line: string): LiveSlashKind {
       a === "tools" ||
       a === "install" ||
       a === "setup" ||
-      a === "help"
+      a === "help" ||
+      a === "detect" ||
+      a.startsWith("ensure dry") ||
+      a === "ensure dry" ||
+      a === "plan"
     ) {
       return "readonly";
+    }
+    // /lsp ensure (install) mutates global packages — control
+    if (a === "ensure" || a.startsWith("ensure ") || a === "fix" || a === "auto") {
+      return "control";
     }
     return "control";
   }
@@ -614,7 +622,15 @@ export function completeSlash(
       "/bell": ["on", "off", "test", "status"],
       "/notify": ["on", "off", "test", "status"],
       "/mcp": ["status", "connect", "tools", "reload", "list"],
-      "/lsp": ["status", "install", "restart", "reload", "setup"],
+      "/lsp": [
+        "status",
+        "ensure",
+        "install",
+        "detect",
+        "restart",
+        "reload",
+        "setup",
+      ],
       "/budget": ["status", "off", "1", "5", "10", "25"],
       "/provider": [
         "deepseek",
@@ -2220,29 +2236,59 @@ export async function handleSlash(
         };
       }
       if (verb === "install" || verb === "setup" || verb === "help") {
-        const { formatLspInstallGuide, LSP_INSTALL_RECIPES } = await import(
-          "../lsp/install-guide.js"
-        );
-        const missing = new Set<string>();
-        for (const r of LSP_INSTALL_RECIPES) {
-          // Lightweight PATH probe (same idea as manager status tips)
-          const pathEnv = process.env.PATH || "";
-          const found = pathEnv.split(path.delimiter).some((dir) => {
-            try {
-              return (
-                fs.existsSync(path.join(dir, r.command)) ||
-                (process.platform === "win32" &&
-                  fs.existsSync(path.join(dir, r.command + ".cmd")))
-              );
-            } catch {
-              return false;
-            }
-          });
-          if (!found) missing.add(r.command);
-        }
+        const { formatFullInstallGuide } = await import("../lsp/ensure.js");
         return {
           handled: true,
-          output: formatLspInstallGuide({ missingCommands: missing }),
+          output: formatFullInstallGuide(workspace),
+        };
+      }
+      if (verb === "ensure" || verb === "fix" || verb === "auto") {
+        const {
+          ensureLspServers,
+          formatEnsureResult,
+          formatEnsurePlan,
+          buildEnsurePlan,
+        } = await import("../lsp/ensure.js");
+        const rest = (arg || "").trim().toLowerCase();
+        const dry =
+          /\b(dry|dry-run|--dry-run|-n)\b/.test(rest) ||
+          rest.split(/\s+/).includes("plan");
+        if (dry) {
+          return {
+            handled: true,
+            output: formatEnsurePlan(buildEnsurePlan(workspace)),
+          };
+        }
+        const lines: string[] = [];
+        const result = await ensureLspServers({
+          workspace,
+          forceInstall: true,
+          onLog: (line) => lines.push(line),
+        });
+        return {
+          handled: true,
+          output:
+            (lines.length ? lines.join("\n") + "\n\n" : "") +
+            formatEnsureResult(result),
+        };
+      }
+      if (verb === "detect") {
+        const { detectProjectLanguages } = await import("../lsp/detect.js");
+        const { buildEnsurePlan, formatEnsurePlan } = await import(
+          "../lsp/ensure.js"
+        );
+        const detected = detectProjectLanguages(workspace);
+        const detLines = detected.map(
+          (d) =>
+            `  ${d.languageId}  [${d.tier}]  ${d.reasons.slice(0, 2).join("; ")}`,
+        );
+        return {
+          handled: true,
+          output:
+            "Detected languages:\n" +
+            (detLines.length ? detLines.join("\n") : "  (none)") +
+            "\n\n" +
+            formatEnsurePlan(buildEnsurePlan(workspace)),
         };
       }
       return { handled: true, output: formatLspStatus(manager) };
@@ -6279,24 +6325,37 @@ export async function runDoctorCheck(
   } catch {
     /* optional */
   }
-  // LSP config (advisory)
+  // LSP ensure plan (advisory — missing servers are not hard failures)
   try {
     const { loadLspConfig } = await import("../lsp/config.js");
     const { getActiveLspManager } = await import("../lsp/manager.js");
+    const { buildEnsurePlan } = await import("../lsp/ensure.js");
     const ws = config.workspace || process.cwd();
     const lspCfg = loadLspConfig(ws);
     if (!lspCfg.enabled) {
       lines.push(chalk.dim("LSP: disabled (FORGE_LSP=0)"));
     } else {
+      const plan = buildEnsurePlan(ws);
       const active = getActiveLspManager();
-      const n = lspCfg.servers.length;
+      const readyN = plan.ready.length;
+      const missN = plan.toInstall.length;
       lines.push(
-        `LSP: ${n} language server recipe(s)` +
+        `LSP: ${readyN} recommended on PATH` +
+          (missN ? chalk.yellow(` · ${missN} missing`) : " · ensure pack OK") +
           (active
-            ? ` · ${active.status().filter((s) => s.state === "ready").length} ready`
-            : " · start lazily on lsp tool use") +
-          chalk.dim("  (typescript-language-server · pyright · rust-analyzer · gopls)"),
+            ? ` · ${active.status().filter((s) => s.state === "ready").length} live`
+            : "") +
+          chalk.dim("  (default: TS + Python; project: Rust/Go)"),
       );
+      if (missN) {
+        const names = plan.toInstall.map((i) => i.languageId).join(", ");
+        lines.push(
+          chalk.yellow(
+            `  missing: ${names} — run forge lsp ensure  (or /lsp ensure)`,
+          ),
+        );
+        // Advisory only — missing LS must not fail doctor/CI (auth/sandbox are hard).
+      }
     }
   } catch {
     /* optional */
@@ -7285,7 +7344,7 @@ Forge slash commands
   /status · /hud        Full inline HUD + session details (no second panel)  [live]
   /tasks [kill|log id]  Background shell tasks · kill/log subcommands  [live]
   /mcp [status|connect|tools|reload]  MCP servers (search_mcp · call_mcp)  [live]
-  /lsp [status|install|restart] Language servers + install recipes  [live]
+  /lsp [status|ensure|install|detect|restart]  Language servers (auto-install TS/Python)  [live]
   /context              Context window usage bar  [live]
   /cost                 Token usage + rough cost + budget  [live]
   /budget [usd|off]     Session spend cap (estimate USD; 0/off = unlimited)  [live]

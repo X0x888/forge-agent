@@ -22,6 +22,7 @@ export function expertTipsLines(): string[] {
     `  Recovery:      /undo  ·  /retry  ·  /sessions errors  ·  /context  ·  /compact  ·  sessions prune --force-last-error  ·  /init  ·  forge logs`,
     `  Custom cmds:    .forge/commands/<name>.md  ($ARGUMENTS $1..$9)  ·  ~/.forge/commands/  ·  /commands`,
     `  Worktrees:      doctor/status show linked worktree · forge status --json tags WORKTREE · one session per worktree`,
+    `  LSP:            forge lsp ensure  (TS+Python default; Rust/Go if project)  ·  /lsp ensure  ·  FORGE_LSP_AUTO=0  ·  docs/LSP.md`,
     `  Session titles: /sessions untitled · list --untitled · /title · --title · /goal auto-titles`,
     `  Session inventory: sessions list --json · doctor warns at ≥100 sessions · run --json productionWarnings · forge sessions prune --keep 50`,
     `  Project skills: /skills · .forge/skills/<name>/SKILL.md playbooks in system prompt`,

@@ -3,6 +3,7 @@
 ## Unreleased
 
 ### Added
+- **LSP ensure (smooth install)** — bottom-line default pack **TypeScript + Python**; **Rust/Go** when project markers present; Swift/shell tips only. `forge lsp ensure|status|detect`, `/lsp ensure`, `lsp({ action: "ensure" })`, `forge init` auto-ensure, once/day REPL tip. Env: `FORGE_LSP_AUTO=0`, `FORGE_LSP_AUTO_INSTALL=0`. See `docs/LSP.md`.
 - **LSP install guide** — `docs/LSP.md`, `/lsp install`, `lsp({ action: "install" })`, and status/missing-on-PATH tips for typescript-language-server, pyright, rust-analyzer, gopls, and friends.
 - **Subagent worktree isolation** — `spawn_subagent({ isolation: "worktree" })` creates a detached git worktree under `~/.forge/worktrees/` so nested edits never touch the parent checkout (`FORGE_SUBAGENT_KEEP_WORKTREE=1` to keep).
 - **MCP resources + prompts** — `mcp_resource` (list/read) and `mcp_prompt` (list/get) beyond tools; best-effort discovery at server connect.

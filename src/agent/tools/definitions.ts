@@ -490,15 +490,15 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       description:
         "Language Server Protocol: diagnostics, hover, definition, references, symbols. " +
         "Prefer diagnostics after TS/Python/Rust/Go edits when the server is on PATH. " +
-        "Actions: diagnostics|hover|definition|references|symbols|workspace_symbols|status|install. " +
-        "Install tips: action=install or /lsp install (see docs/LSP.md). line/character 1-based.",
+        "Actions: diagnostics|hover|definition|references|symbols|workspace_symbols|status|install|ensure. " +
+        "ensure auto-installs TS+Python (+ Rust/Go if project markers). line/character 1-based.",
       parameters: {
         type: "object",
         properties: {
           action: {
             type: "string",
             description:
-              "diagnostics | hover | definition | references | symbols | workspace_symbols | status | install",
+              "diagnostics | hover | definition | references | symbols | workspace_symbols | status | install | ensure",
           },
           path: {
             type: "string",

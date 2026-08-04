@@ -21,7 +21,7 @@ Lessons applied from local open-source trees under `Documents/open source/` (Gro
 | `mcp_resource` | MCP **resources** beyond tools: `action=list|read`, `uri`, optional `server`. Empty list is normal for tools-only servers. |
 | `mcp_prompt` | MCP **prompt templates**: `action=list|get`, `name` (`server__prompt`), optional `arguments`. |
 | `spawn_subagent` | Nested agent (`Task`). Types: general-purpose / explore / plan. **`isolation=worktree`**: detached git worktree under `~/.forge/worktrees/` (parent checkout untouched; requires git). Keep with `FORGE_SUBAGENT_KEEP_WORKTREE=1`. Depth `FORGE_SUBAGENT_MAX_DEPTH`. |
-| `lsp` | LSP: diagnostics/hover/definition/references/symbols + **`install`** recipes. Servers on PATH (see **docs/LSP.md**). `/lsp status|install|restart`. `FORGE_LSP=0` off. |
+| `lsp` | LSP: diagnostics/hover/… + **`ensure`** (auto-install TS+Python, project Rust/Go) + **`install`** recipes. `forge lsp ensure` · `/lsp ensure` · **docs/LSP.md**. `FORGE_LSP=0` / `FORGE_LSP_AUTO=0`. |
 
 ## Name aliases
 

@@ -3483,19 +3483,225 @@ Project instructions for Forge (and other coding agents).
         } else {
           existed.push(agents);
         }
+        // Smooth LSP path: install TS+Python (+ project Rust/Go) when missing
+        let lspEnsure: {
+          installed: string[];
+          failed: string[];
+          ready: string[];
+        } | null = null;
+        try {
+          const { ensureLspOnInit, buildEnsurePlan } = await import(
+            "./lsp/ensure.js"
+          );
+          if (!wantJson) {
+            log.info("LSP: ensuring TypeScript + Python servers (and project Rust/Go)…");
+          }
+          const result = await ensureLspOnInit(process.cwd(), {
+            quiet: wantJson,
+          });
+          if (result) {
+            lspEnsure = {
+              installed: result.installed,
+              failed: result.failed.map((f) => f.languageId),
+              ready: result.plan.ready.map((r) => String(r.languageId)),
+            };
+            if (!wantJson) {
+              if (result.installed.length) {
+                log.success(
+                  `LSP installed: ${result.installed.join(", ")}`,
+                );
+              }
+              if (result.failed.length) {
+                log.warn(
+                  `LSP install failed: ${result.failed.map((f) => f.languageId).join(", ")} — forge lsp ensure`,
+                );
+              }
+              if (!result.installed.length && !result.failed.length) {
+                const plan = buildEnsurePlan(process.cwd());
+                if (plan.ready.length) {
+                  log.dim(
+                    `LSP ready: ${plan.ready.map((r) => r.languageId).join(", ")}`,
+                  );
+                }
+              }
+            }
+          }
+        } catch {
+          /* never block init on LSP */
+        }
+
         if (wantJson) {
           emitOkJson({home: forgeHome(),
                 cwd: process.cwd(),
                 wrote,
                 existed,
-                next: ["forge login", "forge doctor", "forge"],
+                lspEnsure,
+                next: ["forge login", "forge doctor", "forge lsp ensure", "forge"],
               }, true);
           return;
         }
         log.info("Done. Next: forge login && forge doctor && forge");
         log.dim(
-          'Docs: docs/PRODUCTION.md · docs/RELIABILITY.md · eval "$(forge completion bash)"',
+          'Docs: docs/PRODUCTION.md · docs/LSP.md · forge lsp ensure · eval "$(forge completion bash)"',
         );
+      },
+    );
+
+  program
+    .command("lsp")
+    .description(
+      "Language servers: status, detect, ensure (auto-install TS/Python + project Rust/Go)",
+    )
+    .argument(
+      "[action]",
+      "status | ensure | detect | install (default: status)",
+      "status",
+    )
+    .option("--dry-run", "With ensure: plan only, do not install")
+    .option("-y, --yes", "With ensure: force install (default for ensure)")
+    .option(
+      "--only <langs>",
+      "Comma-separated language ids (typescript,python,rust,go)",
+    )
+    .option("--json", "Machine-readable JSON")
+    .action(
+      async (
+        action: string,
+        opts: {
+          dryRun?: boolean;
+          yes?: boolean;
+          only?: string;
+          json?: boolean;
+        },
+        command?: { optsWithGlobals?: () => Record<string, unknown> },
+      ) => {
+        const wantJson = flagJson(opts as Record<string, unknown>, command);
+        const act = (action || "status").trim().toLowerCase();
+        const cwd = process.cwd();
+        const {
+          buildEnsurePlan,
+          ensureLspServers,
+          formatEnsurePlan,
+          formatEnsureResult,
+          formatFullInstallGuide,
+        } = await import("./lsp/ensure.js");
+        const { detectProjectLanguages } = await import("./lsp/detect.js");
+        const { LspManager, formatLspStatus } = await import(
+          "./lsp/manager.js"
+        );
+
+        if (act === "detect") {
+          const detected = detectProjectLanguages(cwd);
+          const plan = buildEnsurePlan(cwd);
+          if (wantJson) {
+            emitOkJson(
+              {
+                action: "detect",
+                detected,
+                toInstall: plan.toInstall.map((i) => i.languageId),
+                ready: plan.ready.map((i) => i.languageId),
+              },
+              true,
+            );
+            return;
+          }
+          console.log(
+            "Detected:\n" +
+              detected
+                .map(
+                  (d) =>
+                    `  ${d.languageId}  [${d.tier}]  ${d.reasons.slice(0, 2).join("; ")}`,
+                )
+                .join("\n") +
+              "\n\n" +
+              formatEnsurePlan(plan),
+          );
+          return;
+        }
+
+        if (act === "install" || act === "recipes" || act === "help") {
+          if (wantJson) {
+            emitOkJson(
+              { action: "install", guide: formatFullInstallGuide(cwd) },
+              true,
+            );
+            return;
+          }
+          console.log(formatFullInstallGuide(cwd));
+          return;
+        }
+
+        if (act === "ensure" || act === "fix" || act === "auto") {
+          const only = opts.only
+            ? opts.only.split(/[,\s]+/).filter(Boolean)
+            : undefined;
+          if (opts.dryRun) {
+            const plan = buildEnsurePlan(cwd);
+            if (wantJson) {
+              emitOkJson(
+                {
+                  action: "ensure",
+                  dryRun: true,
+                  toInstall: plan.toInstall,
+                  ready: plan.ready,
+                  tips: plan.tips,
+                },
+                true,
+              );
+              return;
+            }
+            console.log(formatEnsurePlan(plan));
+            return;
+          }
+          const logs: string[] = [];
+          const result = await ensureLspServers({
+            workspace: cwd,
+            forceInstall: true,
+            only,
+            onLog: (line) => {
+              logs.push(line);
+              if (!wantJson) console.error(line);
+            },
+          });
+          if (wantJson) {
+            emitOkJson(
+              {
+                action: "ensure",
+                installed: result.installed,
+                failed: result.failed,
+                ready: result.plan.ready.map((r) => r.languageId),
+                toInstall: result.plan.toInstall.map((r) => r.languageId),
+              },
+              result.failed.length === 0,
+            );
+            return;
+          }
+          console.log(formatEnsureResult(result));
+          if (result.failed.length) process.exitCode = 1;
+          return;
+        }
+
+        // status (default)
+        const manager = new LspManager({ workspace: cwd });
+        const plan = buildEnsurePlan(cwd);
+        if (wantJson) {
+          emitOkJson(
+            {
+              action: "status",
+              servers: manager.status(),
+              ensure: {
+                ready: plan.ready.map((r) => r.languageId),
+                toInstall: plan.toInstall.map((r) => r.languageId),
+                tips: plan.tips.map((t) => t.tip || t.installHint),
+              },
+            },
+            true,
+          );
+          return;
+        }
+        console.log(formatLspStatus(manager));
+        console.log("");
+        console.log(formatEnsurePlan(plan));
       },
     );
 
@@ -4524,6 +4730,7 @@ const TOP_LEVEL_COMMANDS = [
   "accounts",
   "sessions",
   "init",
+  "lsp",
   "models",
   "completion",
   "prune-tool-output",

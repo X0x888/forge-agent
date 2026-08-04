@@ -115,6 +115,15 @@ export async function runRepl(opts: {
 
   printBanner(config, auth, session);
 
+  // Soft LSP ensure tip (once/day when recommended servers missing)
+  try {
+    const { maybeLspEnsureTip } = await import("../lsp/ensure.js");
+    const tip = maybeLspEnsureTip(config.workspace || session.meta.cwd);
+    if (tip) log.dim(tip);
+  } catch {
+    /* never block REPL on LSP tip */
+  }
+
   let lastKnownBgRunning = 0;
 
   const refreshIdlePromptFlags = () => {

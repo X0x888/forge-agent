@@ -190,6 +190,19 @@ export {
   LSP_INSTALL_RECIPES,
   recipeForLanguage,
 } from "./lsp/install-guide.js";
+export {
+  detectProjectLanguages,
+  languagesToEnsure,
+} from "./lsp/detect.js";
+export {
+  buildEnsurePlan,
+  ensureLspServers,
+  ensureLspOnInit,
+  formatEnsurePlan,
+  formatEnsureResult,
+  maybeLspEnsureTip,
+  lspAutoEnsureEnabled,
+} from "./lsp/ensure.js";
 export { HookRunner } from "./harness/hooks.js";
 export {
   armGoal,
