@@ -1,0 +1,388 @@
+/**
+ * Multi-server MCP manager: lazy connect, tool registry, search + call.
+ */
+import { suggestNames } from "../util/suggest.js";
+import { boundToolOutput } from "../agent/tools/truncate.js";
+import { loadMcpConfig, toolAllowedByFilters, type LoadedMcpConfig } from "./config.js";
+import { McpClient } from "./client.js";
+import {
+  isMcpToolReadOnly,
+  parseQualifiedMcpTool,
+  qualifyMcpTool,
+  type McpCallResult,
+  type McpRegisteredTool,
+  type McpServerStatus,
+} from "./types.js";
+
+export interface McpManagerOptions {
+  workspace: string;
+  signal?: AbortSignal;
+  /** Skip auto-load (tests). */
+  config?: LoadedMcpConfig;
+}
+
+export class McpManager {
+  private readonly workspace: string;
+  private readonly signal?: AbortSignal;
+  private readonly clients = new Map<string, McpClient>();
+  private readonly disabled = new Set<string>();
+  private config: LoadedMcpConfig;
+  private registry: McpRegisteredTool[] = [];
+  private started = false;
+
+  constructor(opts: McpManagerOptions) {
+    this.workspace = opts.workspace;
+    this.signal = opts.signal;
+    this.config = opts.config ?? loadMcpConfig(opts.workspace);
+    for (const [name, cfg] of Object.entries(this.config.servers)) {
+      if (cfg.disabled) this.disabled.add(name);
+    }
+  }
+
+  get enabled(): boolean {
+    return this.config.enabled;
+  }
+
+  get sources(): string[] {
+    return this.config.sources.slice();
+  }
+
+  serverNames(): string[] {
+    return Object.keys(this.config.servers).sort();
+  }
+
+  /**
+   * Create clients for configured servers (does not connect yet — lazy).
+   */
+  start(): void {
+    if (this.started) return;
+    this.started = true;
+    if (!this.config.enabled) return;
+    for (const [name, cfg] of Object.entries(this.config.servers)) {
+      if (cfg.disabled || this.disabled.has(name)) continue;
+      this.clients.set(
+        name,
+        new McpClient({
+          name,
+          config: cfg,
+          workspace: this.workspace,
+          signal: this.signal,
+        }),
+      );
+    }
+  }
+
+  async dispose(): Promise<void> {
+    const all = [...this.clients.values()];
+    this.clients.clear();
+    this.registry = [];
+    this.started = false;
+    await Promise.all(all.map((c) => c.dispose().catch(() => {})));
+  }
+
+  /** Connect all servers and refresh tool registry (best-effort). */
+  async connectAll(): Promise<McpServerStatus[]> {
+    this.start();
+    const statuses: McpServerStatus[] = [];
+    await Promise.all(
+      [...this.clients.entries()].map(async ([name, client]) => {
+        try {
+          await client.ensureReady();
+          await client.listTools(true);
+        } catch {
+          /* status captures error */
+        }
+        statuses.push(this.statusFor(name, client));
+      }),
+    );
+    this.rebuildRegistry();
+    // Also report disabled/configured-not-started
+    for (const name of Object.keys(this.config.servers)) {
+      if (!this.clients.has(name)) {
+        const cfg = this.config.servers[name];
+        statuses.push({
+          name,
+          transport: cfg.url ? "http" : "stdio",
+          state: "disabled",
+          toolCount: 0,
+          command: cfg.command,
+          url: cfg.url,
+        });
+      }
+    }
+    return statuses.sort((a, b) => a.name.localeCompare(b.name));
+  }
+
+  async ensureRegistry(): Promise<void> {
+    this.start();
+    if (this.registry.length) return;
+    // Connect only servers that haven't been tried yet — parallel, fail-open
+    await Promise.all(
+      [...this.clients.values()].map(async (c) => {
+        try {
+          await c.listTools();
+        } catch {
+          /* leave error state */
+        }
+      }),
+    );
+    this.rebuildRegistry();
+  }
+
+  listRegisteredTools(): McpRegisteredTool[] {
+    return this.registry.slice();
+  }
+
+  status(): McpServerStatus[] {
+    this.start();
+    const out: McpServerStatus[] = [];
+    for (const [name, client] of this.clients) {
+      out.push(this.statusFor(name, client));
+    }
+    for (const name of Object.keys(this.config.servers)) {
+      if (!this.clients.has(name)) {
+        const cfg = this.config.servers[name];
+        out.push({
+          name,
+          transport: cfg.url ? "http" : "stdio",
+          state: "disabled",
+          toolCount: 0,
+          command: cfg.command,
+          url: cfg.url,
+        });
+      }
+    }
+    return out.sort((a, b) => a.name.localeCompare(b.name));
+  }
+
+  /**
+   * Search registered tools by keyword (name + description).
+   * Connects servers on first search.
+   */
+  async search(
+    query: string,
+    limit = 8,
+  ): Promise<{
+    tools: Array<{
+      name: string;
+      server: string;
+      description: string;
+      readOnly: boolean;
+      inputSchema?: Record<string, unknown>;
+    }>;
+    partial: boolean;
+    serverErrors: string[];
+  }> {
+    await this.ensureRegistry();
+    const q = (query || "").trim().toLowerCase();
+    const serverErrors = this.status()
+      .filter((s) => s.state === "error" && s.error)
+      .map((s) => `${s.name}: ${s.error}`);
+
+    let scored = this.registry.map((t) => {
+      const name = t.tool.name.toLowerCase();
+      const qn = t.qualifiedName.toLowerCase();
+      const desc = (t.tool.description || "").toLowerCase();
+      let score = 0;
+      if (!q) score = 1;
+      else if (qn === q || name === q) score = 100;
+      else if (qn.includes(q) || name.includes(q)) score = 80;
+      else if (desc.includes(q)) score = 50;
+      else {
+        // token overlap
+        const tokens = q.split(/[\s,_-]+/).filter(Boolean);
+        let hits = 0;
+        for (const tok of tokens) {
+          if (qn.includes(tok) || name.includes(tok) || desc.includes(tok)) {
+            hits += 1;
+          }
+        }
+        if (hits) score = 20 + hits * 10;
+      }
+      return { t, score };
+    });
+
+    if (q) {
+      scored = scored.filter((x) => x.score > 0);
+    }
+    scored.sort((a, b) => b.score - a.score || a.t.qualifiedName.localeCompare(b.t.qualifiedName));
+    const lim = Math.min(50, Math.max(1, limit));
+    const tools = scored.slice(0, lim).map(({ t }) => ({
+      name: t.qualifiedName,
+      server: t.serverName,
+      description: (t.tool.description || "").slice(0, 400),
+      readOnly: t.readOnly,
+      inputSchema: t.tool.inputSchema,
+    }));
+
+    const partial = this.status().some(
+      (s) => s.state === "error" || s.state === "connecting",
+    );
+    return { tools, partial, serverErrors };
+  }
+
+  async call(
+    qualifiedOrTool: string,
+    args: Record<string, unknown>,
+  ): Promise<McpCallResult & { qualifiedName?: string; readOnly?: boolean }> {
+    await this.ensureRegistry();
+    const resolved = this.resolveTool(qualifiedOrTool);
+    if (!resolved) {
+      const names = this.registry.map((t) => t.qualifiedName);
+      const tips = suggestNames(qualifiedOrTool, names, {
+        minLength: 2,
+        minScore: 36,
+        requirePrefix3: false,
+        limit: 5,
+      });
+      return {
+        content:
+          `Unknown MCP tool: ${qualifiedOrTool}.` +
+          (tips.length ? ` Did you mean: ${tips.join(", ")}?` : "") +
+          (names.length
+            ? `\nUse search_mcp to discover tools. ${names.length} tool(s) registered.`
+            : "\nNo MCP tools registered. Configure .forge/mcp.json or ~/.forge/mcp.json."),
+        isError: true,
+      };
+    }
+    const client = this.clients.get(resolved.serverName);
+    if (!client) {
+      return {
+        content: `MCP server not available: ${resolved.serverName}`,
+        isError: true,
+      };
+    }
+    const result = await client.callTool(resolved.tool.name, args);
+    const managed = await boundToolOutput(result.content, {
+      maxChars: 80_000,
+    });
+    return {
+      content: managed.text,
+      isError: result.isError,
+      structured: result.structured,
+      qualifiedName: resolved.qualifiedName,
+      readOnly: resolved.readOnly,
+    };
+  }
+
+  isReadOnlyTool(qualifiedOrTool: string): boolean {
+    const r = this.resolveTool(qualifiedOrTool);
+    return r?.readOnly ?? false;
+  }
+
+  private resolveTool(name: string): McpRegisteredTool | null {
+    const raw = (name || "").trim();
+    if (!raw) return null;
+    // Exact qualified
+    let hit = this.registry.find(
+      (t) => t.qualifiedName === raw || t.qualifiedName.toLowerCase() === raw.toLowerCase(),
+    );
+    if (hit) return hit;
+    // Parse server__tool
+    const parsed = parseQualifiedMcpTool(raw);
+    if (parsed) {
+      hit = this.registry.find(
+        (t) =>
+          t.serverName === parsed.server &&
+          t.tool.name === parsed.tool,
+      );
+      if (hit) return hit;
+      // server name case-insensitive + tool
+      hit = this.registry.find(
+        (t) =>
+          t.serverName.toLowerCase() === parsed.server.toLowerCase() &&
+          t.tool.name.toLowerCase() === parsed.tool.toLowerCase(),
+      );
+      if (hit) return hit;
+    }
+    // Unique bare tool name
+    const bare = this.registry.filter(
+      (t) => t.tool.name === raw || t.tool.name.toLowerCase() === raw.toLowerCase(),
+    );
+    if (bare.length === 1) return bare[0];
+    return null;
+  }
+
+  private rebuildRegistry(): void {
+    const reg: McpRegisteredTool[] = [];
+    for (const [serverName, client] of this.clients) {
+      const cfg = this.config.servers[serverName];
+      for (const tool of client.getTools()) {
+        if (!tool?.name) continue;
+        if (cfg && !toolAllowedByFilters(tool.name, cfg)) continue;
+        reg.push({
+          qualifiedName: qualifyMcpTool(serverName, tool.name),
+          serverName,
+          tool,
+          readOnly: isMcpToolReadOnly(tool),
+        });
+      }
+    }
+    this.registry = reg;
+  }
+
+  private statusFor(name: string, client: McpClient): McpServerStatus {
+    const st = client.getStatus();
+    const cfg = this.config.servers[name];
+    return {
+      name,
+      transport: client.transport,
+      state: st.state,
+      toolCount: st.toolCount,
+      error: st.error,
+      command: cfg?.command,
+      url: cfg?.url,
+    };
+  }
+}
+
+/** Process-wide manager for REPL dispose + slash commands (set by loop/repl). */
+let activeManager: McpManager | null = null;
+
+export function setActiveMcpManager(m: McpManager | null): void {
+  activeManager = m;
+}
+
+export function getActiveMcpManager(): McpManager | null {
+  return activeManager;
+}
+
+export function formatMcpStatus(manager: McpManager): string {
+  if (!manager.enabled) {
+    return "MCP disabled (FORGE_MCP=0).";
+  }
+  const lines: string[] = ["MCP servers:"];
+  const statuses = manager.status();
+  if (!statuses.length) {
+    lines.push("  (none configured)");
+    lines.push(
+      "  Add servers in .forge/mcp.json or ~/.forge/mcp.json (Claude/Cursor compatible).",
+    );
+  } else {
+    for (const s of statuses) {
+      const where = s.command
+        ? s.command
+        : s.url
+          ? s.url
+          : "";
+      lines.push(
+        `  ${s.name}  [${s.state}]  tools=${s.toolCount}  ${s.transport}${where ? `  ${where}` : ""}${s.error ? `  err: ${s.error.slice(0, 80)}` : ""}`,
+      );
+    }
+  }
+  if (manager.sources.length) {
+    lines.push("Sources:");
+    for (const src of manager.sources) lines.push(`  ${src}`);
+  }
+  const tools = manager.listRegisteredTools();
+  if (tools.length) {
+    lines.push(`Registered tools (${tools.length}):`);
+    for (const t of tools.slice(0, 40)) {
+      lines.push(
+        `  ${t.qualifiedName}${t.readOnly ? "  (read-only)" : ""}  ${(t.tool.description || "").slice(0, 60)}`,
+      );
+    }
+    if (tools.length > 40) lines.push(`  … +${tools.length - 40} more`);
+  }
+  return lines.join("\n");
+}

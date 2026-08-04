@@ -40,6 +40,10 @@ const READ_ONLY_TOOLS = new Set([
   "web_fetch",
   "todo_write",
   "get_task_output",
+  "search_mcp",
+  "mcp_search",
+  "lsp",
+  "LSP",
   "Read",
   "Grep",
   "Glob",
@@ -47,6 +51,7 @@ const READ_ONLY_TOOLS = new Set([
   "WebSearch",
   "ListDir",
 ]);
+
 
 export interface PermissionRequest {
   toolName: string;
@@ -267,14 +272,43 @@ export class PermissionGate {
         WRITE_TOOLS.has(toolName) ||
         toolName === "bash" ||
         toolName === "run_terminal_command" ||
-        toolName === "kill_task"
+        toolName === "kill_task" ||
+        toolName === "spawn_subagent" ||
+        toolName === "Task" ||
+        toolName === "task"
       ) {
         return {
           decision: "deny",
           reason:
-            "plan_mode: mutations denied — read/search/todo_write only; run /build (or leave plan) to implement",
+            "plan_mode: mutations denied — read/search/todo_write/search_mcp/lsp only; run /build (or leave plan) to implement",
           rule: "plan_mode",
         };
+      }
+      // call_mcp: allow only when the target tool is annotated/heuristic read-only
+      if (
+        toolName === "call_mcp" ||
+        toolName === "mcp_call" ||
+        toolName === "use_mcp"
+      ) {
+        const q = String(
+          toolInput.tool_name || toolInput.name || toolInput.tool || "",
+        );
+        // Without manager context, fail closed on MCP mutations in plan
+        const looksRead =
+          /__(get|list|search|find|read|fetch|query|describe|show|lookup|inspect)_/i.test(
+            q,
+          ) ||
+          /__(get|list|search|find|read|fetch|query|describe|show|lookup|inspect)$/i.test(
+            q,
+          );
+        if (!looksRead && rulesEval?.decision !== "allow") {
+          return {
+            decision: "deny",
+            reason:
+              "plan_mode: call_mcp denied for non-read-only tools — use search_mcp or /build",
+            rule: "plan_mode",
+          };
+        }
       }
       if (this.isLocalWebFetch(toolName, toolInput)) {
         // Explicit allow still wins (operators who need loopback in plan).
@@ -288,7 +322,7 @@ export class PermissionGate {
           rule: "plan_mode",
         };
       }
-      // todo_write, reads, grep, public web_* allowed for research + plan structure
+      // todo_write, reads, grep, public web_*, search_mcp, lsp allowed for research
       return { decision: "allow", reason: "plan_read" };
     }
 
@@ -404,6 +438,66 @@ export class PermissionGate {
       }
       if (toolName === "kill_task") {
         return { decision: "allow", reason: "kill_task_noninteractive" };
+      }
+      // Headless: explore/plan subagents are read-only — allow without YOLO.
+      // Full general-purpose spawn still requires acceptEdits / allow / YOLO.
+      if (
+        toolName === "spawn_subagent" ||
+        toolName === "Task" ||
+        toolName === "task"
+      ) {
+        const t = String(
+          toolInput.subagent_type || toolInput.type || toolInput.agent_type || "",
+        )
+          .toLowerCase()
+          .replace(/_/g, "-");
+        const modeRaw = String(
+          toolInput.capability_mode || toolInput.mode || "",
+        )
+          .toLowerCase()
+          .replace(/_/g, "-");
+        if (
+          t === "explore" ||
+          t === "plan" ||
+          t === "research" ||
+          modeRaw === "read-only" ||
+          modeRaw === "readonly"
+        ) {
+          return { decision: "allow", reason: "subagent_readonly_headless" };
+        }
+        if (mode === "acceptEdits") {
+          return { decision: "allow", reason: "acceptEdits_subagent" };
+        }
+        return {
+          decision: "deny",
+          reason:
+            "subagent_noninteractive_deny: full subagents require acceptEdits, allow rule, or bypassPermissions (explore/plan are free)",
+        };
+      }
+      // call_mcp: allow heuristic read-only; otherwise need allow/YOLO
+      if (
+        toolName === "call_mcp" ||
+        toolName === "mcp_call" ||
+        toolName === "use_mcp"
+      ) {
+        const q = String(
+          toolInput.tool_name || toolInput.name || toolInput.tool || "",
+        );
+        if (
+          /__(get|list|search|find|read|fetch|query|describe|show|lookup|inspect)/i.test(
+            q,
+          )
+        ) {
+          return { decision: "allow", reason: "mcp_readonly_headless" };
+        }
+        if (mode === "acceptEdits") {
+          return { decision: "allow", reason: "acceptEdits_mcp" };
+        }
+        return {
+          decision: "deny",
+          reason:
+            "mcp_noninteractive_deny: non-read-only MCP calls require acceptEdits, allow rule, or bypassPermissions",
+        };
       }
       return {
         decision: "deny",

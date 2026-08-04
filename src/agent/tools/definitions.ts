@@ -325,4 +325,129 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       },
     },
   },
+  {
+    type: "function",
+    function: {
+      name: "search_mcp",
+      description:
+        "Search configured MCP (Model Context Protocol) server tools by keyword. " +
+        "Returns qualified names (server__tool) + schemas. Call matched tools with call_mcp. " +
+        "Configure servers in .forge/mcp.json or ~/.forge/mcp.json (Claude/Cursor compatible).",
+      parameters: {
+        type: "object",
+        properties: {
+          query: {
+            type: "string",
+            description:
+              "Keywords to match tool names/descriptions (omit or * to list). Include server name when known.",
+          },
+          limit: {
+            type: "number",
+            description: "Max results (default 8, max 50)",
+          },
+        },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "call_mcp",
+      description:
+        "Invoke an MCP tool by qualified name from search_mcp (server__tool). " +
+        "Pass arguments as a JSON object matching the tool schema. " +
+        "Destructive MCP tools require approval like shell/writes.",
+      parameters: {
+        type: "object",
+        properties: {
+          tool_name: {
+            type: "string",
+            description: "Qualified MCP tool id, e.g. github__list_issues",
+          },
+          arguments: {
+            type: "object",
+            description: "Arguments object for the MCP tool (default {})",
+          },
+        },
+        required: ["tool_name"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "spawn_subagent",
+      description:
+        "Delegate a bounded subtask to a nested agent and receive its final summary. " +
+        "Use for parallelizable research, large explorations, or isolated implementation slices. " +
+        "Types: general-purpose (full tools), explore (read-only research), plan (read-only design). " +
+        "Do not nest when a single tool call suffices. Children cannot spawn further subagents by default.",
+      parameters: {
+        type: "object",
+        properties: {
+          prompt: {
+            type: "string",
+            description: "Full task instructions for the subagent (required).",
+          },
+          description: {
+            type: "string",
+            description: "Short 3–8 word label shown in status (recommended).",
+          },
+          subagent_type: {
+            type: "string",
+            description:
+              "general-purpose | explore | plan (default general-purpose)",
+          },
+          capability_mode: {
+            type: "string",
+            description:
+              "full | read-only (explore/plan force read-only; default full for general-purpose)",
+          },
+          max_turns: {
+            type: "number",
+            description: "Cap nested agent turns (default 40, max 200)",
+          },
+        },
+        required: ["prompt"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "lsp",
+      description:
+        "Language Server Protocol: diagnostics, hover, go-to-definition, references, symbols. " +
+        "Prefer diagnostics after TypeScript/Python/Rust/Go edits when the server is installed. " +
+        "Actions: diagnostics | hover | definition | references | symbols | workspace_symbols | status. " +
+        "line/character are 1-based. Servers: typescript-language-server, pyright, rust-analyzer, gopls (on PATH).",
+      parameters: {
+        type: "object",
+        properties: {
+          action: {
+            type: "string",
+            description:
+              "diagnostics | hover | definition | references | symbols | workspace_symbols | status",
+          },
+          path: {
+            type: "string",
+            description: "File path (required except status / workspace_symbols)",
+          },
+          line: {
+            type: "number",
+            description: "1-based line (hover/definition/references)",
+          },
+          character: {
+            type: "number",
+            description: "1-based column (default 1)",
+          },
+          query: {
+            type: "string",
+            description: "Symbol query for workspace_symbols",
+          },
+        },
+        required: ["action"],
+      },
+    },
+  },
 ];

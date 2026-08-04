@@ -4,6 +4,12 @@ import type {
   SandboxProfile,
 } from "../../config/types.js";
 import type { FileReadState } from "./file-read-state.js";
+import type { McpManager } from "../../mcp/manager.js";
+import type { LspManager } from "../../lsp/manager.js";
+import type {
+  SubagentRequest,
+  SubagentResult,
+} from "../subagent.js";
 
 export interface ToolContext {
   workspace: string;
@@ -32,6 +38,17 @@ export interface ToolContext {
   sandboxMissingBackend?: SandboxMissingBackend;
   /** Propagated from agent loop so long tools can cooperatively cancel */
   signal?: AbortSignal;
+  /** MCP multi-server manager (search_mcp / call_mcp). */
+  mcp?: McpManager;
+  /** LSP multi-language manager (lsp tool). */
+  lsp?: LspManager;
+  /**
+   * Nested subagent runner. Absent when depth limit reached or unit tests.
+   * Implemented by the agent loop (not by tools themselves).
+   */
+  runSubagent?: (req: SubagentRequest) => Promise<SubagentResult>;
+  /** Current subagent nesting depth (0 = root). */
+  subagentDepth?: number;
 }
 
 export interface ToolResult {

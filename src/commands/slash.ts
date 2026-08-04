@@ -368,6 +368,12 @@ export function classifyLiveSlash(line: string): LiveSlashKind {
     // unknown verb → readonly (suggestion only, no mutation)
     return "readonly";
   }
+  // /mcp · /lsp status is readonly; connect/restart are control
+  if (cmd === "/mcp" || cmd === "/lsp") {
+    const a = (arg || "").trim().toLowerCase();
+    if (!a || a === "status" || a === "list" || a === "tools") return "readonly";
+    return "control";
+  }
   if (LIVE_READONLY.has(cmd)) return "readonly";
   if (LIVE_CONTROL.has(cmd)) {
     // /cycle status (or bare menu) is read-only; flag flips are control
@@ -518,6 +524,8 @@ export const SLASH_COMMANDS = [
   "/statusline",
   "/hud",
   "/tasks",
+  "/mcp",
+  "/lsp",
   "/context",
   "/cost",
   "/budget",
@@ -595,6 +603,8 @@ export function completeSlash(
       "/format": ["on", "off", "status", "enable", "disable"],
       "/bell": ["on", "off", "test", "status"],
       "/notify": ["on", "off", "test", "status"],
+      "/mcp": ["status", "connect", "tools", "reload", "list"],
+      "/lsp": ["status", "restart", "reload"],
       "/budget": ["status", "off", "1", "5", "10", "25"],
       "/provider": [
         "deepseek",
@@ -2131,6 +2141,75 @@ export async function handleSlash(
             "\n\nTip: status is always on the prompt line. Live external pane still available: forge status --watch",
           ),
       };
+    }
+
+    case "/mcp": {
+      const workspace =
+        opts.config.workspace || opts.session.meta.cwd || process.cwd();
+      const {
+        getActiveMcpManager,
+        setActiveMcpManager,
+        formatMcpStatus,
+        McpManager,
+      } = await import("../mcp/manager.js");
+      let manager = getActiveMcpManager();
+      if (!manager) {
+        manager = new McpManager({ workspace });
+        manager.start();
+        setActiveMcpManager(manager);
+      }
+      const verb = (arg || "").trim().toLowerCase().split(/\s+/)[0] || "status";
+      if (verb === "connect" || verb === "start" || verb === "reload") {
+        if (verb === "reload") {
+          await manager.dispose().catch(() => {});
+          manager = new McpManager({ workspace });
+          manager.start();
+          setActiveMcpManager(manager);
+        }
+        const statuses = await manager.connectAll();
+        const ready = statuses.filter((s) => s.state === "ready").length;
+        const errN = statuses.filter((s) => s.state === "error").length;
+        return {
+          handled: true,
+          output:
+            `MCP connect: ${ready} ready, ${errN} error(s), ${statuses.length} configured.\n` +
+            formatMcpStatus(manager),
+        };
+      }
+      if (verb === "tools") {
+        await manager.ensureRegistry().catch(() => {});
+        return { handled: true, output: formatMcpStatus(manager) };
+      }
+      // status / list / default
+      return { handled: true, output: formatMcpStatus(manager) };
+    }
+
+    case "/lsp": {
+      const workspace =
+        opts.config.workspace || opts.session.meta.cwd || process.cwd();
+      const {
+        getActiveLspManager,
+        setActiveLspManager,
+        formatLspStatus,
+        LspManager,
+      } = await import("../lsp/manager.js");
+      let manager = getActiveLspManager();
+      if (!manager) {
+        manager = new LspManager({ workspace });
+        setActiveLspManager(manager);
+      }
+      const verb = (arg || "").trim().toLowerCase().split(/\s+/)[0] || "status";
+      if (verb === "restart" || verb === "reload") {
+        await manager.dispose().catch(() => {});
+        manager = new LspManager({ workspace });
+        setActiveLspManager(manager);
+        return {
+          handled: true,
+          output: "LSP managers restarted (servers start lazily on next use).\n" +
+            formatLspStatus(manager),
+        };
+      }
+      return { handled: true, output: formatLspStatus(manager) };
     }
 
     case "/tasks":
@@ -6130,6 +6209,62 @@ export async function runDoctorCheck(
   } catch {
     /* optional */
   }
+  // MCP config (advisory — empty is fine)
+  try {
+    const { loadMcpConfig } = await import("../mcp/config.js");
+    const { getActiveMcpManager } = await import("../mcp/manager.js");
+    const ws = config.workspace || process.cwd();
+    const mcpCfg = loadMcpConfig(ws);
+    const names = Object.keys(mcpCfg.servers);
+    const active = getActiveMcpManager();
+    if (!mcpCfg.enabled) {
+      lines.push(chalk.dim("MCP: disabled (FORGE_MCP=0)"));
+    } else if (!names.length) {
+      lines.push(
+        chalk.dim(
+          "MCP: no servers configured  (.forge/mcp.json · ~/.forge/mcp.json)",
+        ),
+      );
+    } else {
+      const errN = active
+        ? active.status().filter((s) => s.state === "error").length
+        : 0;
+      lines.push(
+        `MCP: ${names.length} server(s) configured` +
+          (active ? ` · ${active.listRegisteredTools().length} tools loaded` : " · not connected yet (/mcp connect)") +
+          (errN ? chalk.yellow(` · ${errN} error(s)`) : ""),
+      );
+      if (errN) {
+        issues.push(
+          `MCP: ${errN} server(s) in error state — /mcp status · check command on PATH`,
+        );
+      }
+    }
+  } catch {
+    /* optional */
+  }
+  // LSP config (advisory)
+  try {
+    const { loadLspConfig } = await import("../lsp/config.js");
+    const { getActiveLspManager } = await import("../lsp/manager.js");
+    const ws = config.workspace || process.cwd();
+    const lspCfg = loadLspConfig(ws);
+    if (!lspCfg.enabled) {
+      lines.push(chalk.dim("LSP: disabled (FORGE_LSP=0)"));
+    } else {
+      const active = getActiveLspManager();
+      const n = lspCfg.servers.length;
+      lines.push(
+        `LSP: ${n} language server recipe(s)` +
+          (active
+            ? ` · ${active.status().filter((s) => s.state === "ready").length} ready`
+            : " · start lazily on lsp tool use") +
+          chalk.dim("  (typescript-language-server · pyright · rust-analyzer · gopls)"),
+      );
+    }
+  } catch {
+    /* optional */
+  }
   try {
     const mj = mutationsJournalStats();
     if (mj.sessions > 0) {
@@ -7113,6 +7248,8 @@ Forge slash commands
   /hooks                List loaded hooks  [live]
   /status · /hud        Full inline HUD + session details (no second panel)  [live]
   /tasks [kill|log id]  Background shell tasks · kill/log subcommands  [live]
+  /mcp [status|connect|tools|reload]  MCP servers (search_mcp · call_mcp)  [live]
+  /lsp [status|restart] Language servers (lsp diagnostics/hover/…)  [live]
   /context              Context window usage bar  [live]
   /cost                 Token usage + rough cost + budget  [live]
   /budget [usd|off]     Session spend cap (estimate USD; 0/off = unlimited)  [live]

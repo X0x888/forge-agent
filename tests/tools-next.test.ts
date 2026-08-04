@@ -504,12 +504,16 @@ describe("TOOL_DEFINITIONS agent guidance", () => {
     assert.match(byName.get_task_output || "", /Omit task_id|list active/i);
     assert.match(byName.todo_write || "", /merge|status|id/i);
     assert.match(byName.apply_patch || "", /Begin Patch|multi-file/i);
-    // Lean-ness guard: schemas stay well under the old 11k-char bloat so a
-    // regression to verbose failure-mode docs fails CI.
+    assert.match(byName.search_mcp || "", /MCP|server__tool/i);
+    assert.match(byName.call_mcp || "", /server__tool|search_mcp/i);
+    assert.match(byName.spawn_subagent || "", /explore|plan|general-purpose/i);
+    assert.match(byName.lsp || "", /diagnostics|hover|definition/i);
+    // Lean-ness guard: schemas stay under a budget so verbose failure-mode
+    // docs in descriptions fail CI. Raised for MCP/subagent/LSP tools.
     const total = JSON.stringify(TOOL_DEFINITIONS).length;
     assert.ok(
-      total < 8500,
-      `tool schema JSON grew to ${total} chars (was 7566 after slim pass)`,
+      total < 12_000,
+      `tool schema JSON grew to ${total} chars (budget 12k after MCP/LSP/subagent)`,
     );
     // Schema must match runtime: omit task_id lists actives (not required)
     const killReq = byFull.kill_task?.parameters?.required || [];

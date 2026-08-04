@@ -1,0 +1,13 @@
+{
+  "enabled": true,
+  "servers": {
+    "typescript": {
+      "command": "typescript-language-server",
+      "args": ["--stdio"]
+    },
+    "python": {
+      "command": "pyright-langserver",
+      "args": ["--stdio"]
+    }
+  }
+}

@@ -118,6 +118,23 @@ import {
   summarizeToolArgs,
   extractDiffFromToolOutput,
 } from "../util/format.js";
+import type { ToolDefinition } from "../providers/types.js";
+import {
+  McpManager,
+  setActiveMcpManager,
+  getActiveMcpManager,
+} from "../mcp/manager.js";
+import {
+  LspManager,
+  setActiveLspManager,
+  getActiveLspManager,
+} from "../lsp/manager.js";
+import {
+  defaultMaxSubagentDepth,
+  runSubagentTracked,
+  type SubagentRequest,
+} from "./subagent.js";
+import { mcpCallIsReadOnly } from "../mcp/tools.js";
 
 export type LoopPhase =
   | "thinking"
@@ -163,6 +180,20 @@ export interface LoopOptions {
   /** @deprecated use events.onToken */
   onToken?: (token: string) => void;
   maxStopContinues?: number;
+  /**
+   * Nested subagent depth (0 = root agent). Children receive depth+1.
+   * When depth >= maxSubagentDepth, spawn_subagent is denied.
+   */
+  subagentDepth?: number;
+  maxSubagentDepth?: number;
+  /** Override tool schemas sent to the model (subagent capability filter). */
+  toolDefinitions?: ToolDefinition[];
+  /** Shared MCP manager (parent owns lifecycle; children reuse). */
+  mcp?: McpManager;
+  /** Shared LSP manager (parent owns lifecycle; children reuse). */
+  lsp?: LspManager;
+  /** Skip goal/ULW auto-arm (subagents). */
+  disableHarnessAutoArm?: boolean;
 }
 
 export interface LoopResult {
@@ -234,9 +265,17 @@ const READ_ONLY = new Set([
   "WebFetch",
   "get_task_output",
   "task_output",
+  "search_mcp",
+  "mcp_search",
+  "lsp",
+  "LSP",
 ]);
 
-/** True when the tool (after name normalize) is safe to run in parallel batches. */
+/**
+ * True when the tool (after name normalize) is safe to run in parallel batches.
+ * call_mcp is read-only only when the target tool has readOnlyHint (checked at
+ * batch time via isReadOnlyToolCall).
+ */
 export function isReadOnlyToolName(name: string): boolean {
   const n = normalizeToolName(name || "");
   return READ_ONLY.has(n) || READ_ONLY.has(name || "");
@@ -247,13 +286,14 @@ export function buildChatRequest(
   config: ForgeConfig,
   messages: ChatMessage[],
   effortOverride?: ReasoningEffort,
+  tools: ToolDefinition[] = TOOL_DEFINITIONS,
 ): ChatRequest {
   const effort =
     effortOverride ?? resolveReasoningEffort(config.model, config.reasoningEffort);
   return {
     model: config.model,
     messages,
-    tools: TOOL_DEFINITIONS,
+    tools,
     // Undefined temperature → omitted; provider/server default wins (grok-build
     // parity — server-tuned sampling beats a client-guessed 0.2 on reasoning
     // models; DeepSeek thinking ignores temperature outright).
@@ -331,6 +371,29 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
   const startPrompt = session.meta.totalPromptTokens;
   const startComp = session.meta.totalCompletionTokens;
   const startCache = session.meta.totalCacheReadTokens ?? 0;
+
+  // ── MCP / LSP / subagent depth ──
+  // Managers are process-scoped (like background bash tasks): create once,
+  // reuse across REPL turns, dispose on process exit (installMcpLspExitHook).
+  const subagentDepth = opts.subagentDepth ?? 0;
+  const maxSubagentDepth = opts.maxSubagentDepth ?? defaultMaxSubagentDepth();
+  const toolDefs = opts.toolDefinitions ?? TOOL_DEFINITIONS;
+  let mcp =
+    opts.mcp ??
+    (subagentDepth === 0 ? getActiveMcpManager() ?? undefined : undefined);
+  let lsp =
+    opts.lsp ??
+    (subagentDepth === 0 ? getActiveLspManager() ?? undefined : undefined);
+  if (!mcp) {
+    mcp = new McpManager({ workspace, signal });
+    mcp.start();
+    if (subagentDepth === 0) setActiveMcpManager(mcp);
+  }
+  if (!lsp) {
+    lsp = new LspManager({ workspace, signal });
+    if (subagentDepth === 0) setActiveLspManager(lsp);
+  }
+  installMcpLspExitHook();
   /** Distinct divergent served models seen this run (provider tier routing). */
   const runServedModels = new Set<string>();
   const doomLoop = new DoomLoopTracker({
@@ -359,8 +422,12 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
     process.env.FORGE_ADAPTIVE_EFFORT === "false"
   );
 
-  // Auto-arm goal from prose
-  if (config.goal.autoArm && config.goal.enabled) {
+  // Auto-arm goal from prose (disabled for nested subagents)
+  if (
+    !opts.disableHarnessAutoArm &&
+    config.goal.autoArm &&
+    config.goal.enabled
+  ) {
     const existing = loadGoal(session.meta.id);
     if (!existing?.objective || existing.status === "cleared") {
       const detected = detectAutoGoal(userMessage);
@@ -374,7 +441,7 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
 
   // If session is already in ULW but cycle state missing, (re)arm from this message
   let effectiveUserMessage = userMessage;
-  if (session.meta.ultrawork) {
+  if (!opts.disableHarnessAutoArm && session.meta.ultrawork) {
     let ulw = loadUlwCycle(session.meta.id);
     if (!ulw?.enabled) {
       ulw = armUlwCycle(session.meta.id, userMessage, {
@@ -450,7 +517,10 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
   // the file says 0 was a production footgun for long ULW/CI runs.
   const maxTurns = resolveMaxTurns(config.maxTurns);
   /** Tool schemas are sent every turn but not stored in session history. */
-  const toolsJsonChars = JSON.stringify(TOOL_DEFINITIONS).length;
+  const toolsJsonChars = JSON.stringify(toolDefs).length;
+
+  const makeChatRequest = (effortOverride?: ReasoningEffort) =>
+    buildChatRequest(config, session.messages, effortOverride, toolDefs);
 
   const requestTokenEstimate = (): number =>
     estimateRequestTokens(session.messages, { toolsJsonChars });
@@ -861,7 +931,7 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
               assertNotAborted(signal);
               if (stream && events.onToken) {
                 return provider.chatStream(
-                  buildChatRequest(config, session.messages, effortOverride),
+                  makeChatRequest(effortOverride),
                   (delta) => {
                     if (signal?.aborted) return;
                     if (delta.content) events.onToken?.(delta.content);
@@ -870,7 +940,7 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
                 );
               }
               const r = await provider.chat(
-                buildChatRequest(config, session.messages, effortOverride),
+                makeChatRequest(effortOverride),
                 signal,
               );
               if (r.message.content && events.onToken) {
@@ -1567,6 +1637,11 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
         errorStreak,
         harnessStats,
         fileReads,
+        mcp,
+        lsp,
+        subagentDepth,
+        maxSubagentDepth,
+        provider,
       });
       // Tools that cooperatively return "Aborted" still leave signal.aborted set —
       // exit the loop immediately rather than starting another provider turn.
@@ -1805,6 +1880,24 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
   };
 }
 
+/** Dispose process-scoped MCP/LSP on exit (once). */
+let mcpLspExitHookInstalled = false;
+export function installMcpLspExitHook(): void {
+  if (mcpLspExitHookInstalled) return;
+  mcpLspExitHookInstalled = true;
+  const cleanup = () => {
+    const m = getActiveMcpManager();
+    const l = getActiveLspManager();
+    setActiveMcpManager(null);
+    setActiveLspManager(null);
+    // Sync best-effort: process is exiting; fire-and-forget dispose.
+    void m?.dispose().catch(() => {});
+    void l?.dispose().catch(() => {});
+  };
+  process.once("exit", cleanup);
+  process.once("beforeExit", cleanup);
+}
+
 /** Re-export for callers/tests that already import loop helpers. */
 export { resolveMaxCostUsd, costCapStatus, formatCostBudgetLine };
 
@@ -1918,6 +2011,11 @@ async function runToolCalls(opts: {
   errorStreak?: ErrorStreakTracker;
   harnessStats?: HarnessRunStats;
   fileReads?: FileReadState;
+  mcp?: McpManager;
+  lsp?: LspManager;
+  subagentDepth?: number;
+  maxSubagentDepth?: number;
+  provider?: LLMProvider;
 }): Promise<void> {
   const {
     toolCalls,
@@ -1933,7 +2031,28 @@ async function runToolCalls(opts: {
     errorStreak,
     harnessStats,
     fileReads,
+    mcp,
+    lsp,
+    subagentDepth = 0,
+    maxSubagentDepth = defaultMaxSubagentDepth(),
+    provider,
   } = opts;
+
+  const isParallelSafe = (tc: ToolCall): boolean => {
+    const n = normalizeToolName(tc.function.name || "");
+    if (isReadOnlyToolName(n) || isReadOnlyToolName(tc.function.name || "")) {
+      return true;
+    }
+    // call_mcp is parallel-safe only when the target is annotated read-only
+    if (n === "call_mcp" || n === "mcp_call" || n === "use_mcp") {
+      const parsed = parseToolArguments(tc.function.arguments);
+      if (parsed.ok && mcp) {
+        return mcpCallIsReadOnly(mcp, parsed.value);
+      }
+      return false;
+    }
+    return false;
+  };
 
   // Sequential by default; batch consecutive read-only tools in parallel
   // but append results in original order (providers are picky about this).
@@ -1942,11 +2061,11 @@ async function runToolCalls(opts: {
   let i = 0;
   while (i < toolCalls.length) {
     assertNotAborted(signal);
-    if (isReadOnlyToolName(toolCalls[i].function.name)) {
+    if (isParallelSafe(toolCalls[i])) {
       const batch: ToolCall[] = [];
       while (
         i < toolCalls.length &&
-        isReadOnlyToolName(toolCalls[i].function.name) &&
+        isParallelSafe(toolCalls[i]) &&
         batch.length < 8
       ) {
         batch.push(toolCalls[i]);
@@ -1968,6 +2087,11 @@ async function runToolCalls(opts: {
             errorStreak,
             harnessStats,
             fileReads,
+            mcp,
+            lsp,
+            subagentDepth,
+            maxSubagentDepth,
+            provider,
           }),
         ),
       );
@@ -1994,6 +2118,11 @@ async function runToolCalls(opts: {
         errorStreak,
         harnessStats,
         fileReads,
+        mcp,
+        lsp,
+        subagentDepth,
+        maxSubagentDepth,
+        provider,
       });
       session.messages.push({
         role: "tool",
@@ -2020,6 +2149,11 @@ async function prepareToolResult(opts: {
   errorStreak?: ErrorStreakTracker;
   harnessStats?: HarnessRunStats;
   fileReads?: FileReadState;
+  mcp?: McpManager;
+  lsp?: LspManager;
+  subagentDepth?: number;
+  maxSubagentDepth?: number;
+  provider?: LLMProvider;
 }): Promise<{ toolCallId: string; content: string }> {
   const {
     tc,
@@ -2035,6 +2169,11 @@ async function prepareToolResult(opts: {
     errorStreak,
     harnessStats,
     fileReads,
+    mcp,
+    lsp,
+    subagentDepth = 0,
+    maxSubagentDepth = defaultMaxSubagentDepth(),
+    provider,
   } = opts;
   assertNotAborted(signal);
 
@@ -2210,6 +2349,27 @@ async function prepareToolResult(opts: {
         sandboxMissingBackend: config.sandboxMissingBackend,
         signal,
         fileReads,
+        mcp,
+        lsp,
+        subagentDepth,
+        runSubagent:
+          provider && subagentDepth < maxSubagentDepth
+            ? (req: SubagentRequest) =>
+                runSubagentTracked(req, {
+                  config,
+                  provider,
+                  parentSession: session,
+                  hooks,
+                  permissions,
+                  workspace,
+                  signal,
+                  events,
+                  depth: subagentDepth,
+                  maxDepth: maxSubagentDepth,
+                  mcp,
+                  lsp,
+                })
+            : undefined,
         onEdit: () => {
           session.meta.editCount += 1;
           session.meta.lastEditAt = new Date().toISOString();

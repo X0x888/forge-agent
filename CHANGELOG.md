@@ -3,7 +3,10 @@
 ## Unreleased
 
 ### Added
-- **Public exports** — `looksLikeAdvisoryUserMessage`, `FileReadState`, `fileReadGuardEnabled`, and `FileReadStamp` are exported from the package root (`src/index.ts`) alongside project-intel helpers.
+- **MCP (Model Context Protocol)** — `search_mcp` + `call_mcp` tools (search-then-use). Config from `.forge/mcp.json`, `~/.forge/mcp.json`, `.mcp.json`, `.cursor/mcp.json` (Claude/Cursor shape). Lazy stdio/HTTP clients, qualified `server__tool` names, plan-mode read-only gating, `/mcp status|connect|tools|reload`, doctor status, `FORGE_MCP=0` off.
+- **Subagents** — `spawn_subagent` (`Task` alias): nested agent loop with `general-purpose` / `explore` / `plan` types, capability modes, depth cap (`FORGE_SUBAGENT_MAX_DEPTH`), `SubagentStart`/`SubagentStop` hooks, ephemeral child sessions, token fold into parent. Headless: explore/plan free; full needs acceptEdits/allow/YOLO. Plan mode denies spawn.
+- **LSP** — `lsp` tool (`diagnostics`/`hover`/`definition`/`references`/`symbols`/`workspace_symbols`/`status`). Defaults for typescript-language-server, pyright, rust-analyzer, gopls (on PATH). `.forge/lsp.json` overrides, workspace-scoped, lazy start, `/lsp status|restart`, `FORGE_LSP=0` off.
+- **Public exports** — MCP/LSP managers + subagent helpers; also `looksLikeAdvisoryUserMessage`, `FileReadState`, `fileReadGuardEnabled`, and `FileReadStamp` from the package root.
 - **Silent edits-without-verify Stop block (free triage)** — outside ULW/goal, stopping after file edits with no successful structural check now blocks once (same cap as proof-claim), even without "tests pass" prose. Reanchor names preferred project checks + the six-question self-audit. Skips advisory Q&A turns; ULW/goal keep their own proof/attestation paths (oh-my-kimi free-triage lesson).
 - **Proof-claim self-audit checklist** — when Stop is blocked for a success claim without a successful structural check, the reanchor now includes a free six-question self-audit (completeness / evidence / framing / tests / fit / consequence), inspired by oh-my-kimi. Forces evidence-based closing instead of memory-based "all green" prose.
 

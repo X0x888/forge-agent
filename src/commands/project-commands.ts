@@ -54,6 +54,8 @@ const RESERVED = new Set([
   "statusline",
   "hud",
   "tasks",
+  "mcp",
+  "lsp",
   "context",
   "cost",
   "budget",

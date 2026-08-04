@@ -91,8 +91,14 @@ const TOOL_ALIASES: Record<string, string[]> = {
   list_dir: ["Glob", "ListDir"],
   WebSearch: ["web_search"],
   web_search: ["WebSearch"],
-  Task: ["spawn_subagent"],
-  spawn_subagent: ["Task"],
+  Task: ["spawn_subagent", "task"],
+  spawn_subagent: ["Task", "task"],
+  search_mcp: ["mcp_search"],
+  mcp_search: ["search_mcp"],
+  call_mcp: ["mcp_call", "use_mcp"],
+  mcp_call: ["call_mcp", "use_mcp"],
+  lsp: ["LSP"],
+  LSP: ["lsp"],
 };
 
 const CURSOR_EVENT_MAP: Record<string, HookEvent> = {

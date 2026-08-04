@@ -18,6 +18,9 @@ Key capability comparison:
 | Claude / Cursor hook compatibility | n/a | — | ✅ | ✅ |
 | Stream/tool **self-heal** (JSON repair, orphan tools, doom-loop, error-streak, empty-SSE) | partial | partial | partial | ✅ |
 | Multi-file **apply_patch** + atomic writes + **file-aware undo** | partial | ✅ | partial | ✅ |
+| **MCP** search+call (stdio/HTTP, Claude/Cursor config) | ✅ | partial | ✅ | ✅ |
+| **Subagents** (`spawn_subagent` / Task) + SubagentStop hooks | ✅ | partial | ✅ | ✅ |
+| **LSP** diagnostics / hover / definition | partial | — | partial | ✅ |
 | Headless **session resume** + file lock | partial | partial | partial | ✅ |
 | Interactive **same-cwd auto-resume** + `/title` / `/bell` | partial | ✅ continue | — | ✅ |
 

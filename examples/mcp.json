@@ -1,0 +1,17 @@
+{
+  "mcpServers": {
+    "filesystem-example": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "."],
+      "disabled": true
+    },
+    "github-example": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-github"],
+      "env": {
+        "GITHUB_PERSONAL_ACCESS_TOKEN": "${env:GITHUB_TOKEN}"
+      },
+      "disabled": true
+    }
+  }
+}

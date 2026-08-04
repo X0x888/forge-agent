@@ -119,13 +119,55 @@ export type {
 } from "./auth/types.js";
 export { createProvider } from "./providers/factory.js";
 export { mapAnthropicStopReason } from "./providers/anthropic.js";
-export { runAgentLoop, resolveMaxTurns, isReadOnlyToolName } from "./agent/loop.js";
+export {
+  runAgentLoop,
+  resolveMaxTurns,
+  isReadOnlyToolName,
+  installMcpLspExitHook,
+} from "./agent/loop.js";
 export type {
   LoopResult,
   LoopOptions,
   LoopEvents,
   LoopPhase,
 } from "./agent/loop.js";
+export {
+  McpManager,
+  getActiveMcpManager,
+  setActiveMcpManager,
+  formatMcpStatus,
+} from "./mcp/manager.js";
+export { loadMcpConfig, mcpConfigPaths } from "./mcp/config.js";
+export type {
+  McpServerConfig,
+  McpRegisteredTool,
+  McpServerStatus,
+} from "./mcp/types.js";
+export {
+  LspManager,
+  getActiveLspManager,
+  setActiveLspManager,
+  formatLspStatus,
+  formatDiagnosticsReport,
+} from "./lsp/manager.js";
+export { loadLspConfig } from "./lsp/config.js";
+export type { LspAction, LspDiagnostic, LspServerConfig } from "./lsp/types.js";
+export {
+  runSubagent,
+  runSubagentTracked,
+  filterToolsForSubagent,
+  resolveSubagentType,
+  resolveCapabilityMode,
+  defaultMaxSubagentDepth,
+  getActiveSubagentCount,
+} from "./agent/subagent.js";
+export type {
+  SubagentType,
+  SubagentCapability,
+  SubagentRequest,
+  SubagentResult,
+  SubagentRunContext,
+} from "./agent/subagent.js";
 export { HookRunner } from "./harness/hooks.js";
 export {
   armGoal,

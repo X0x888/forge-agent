@@ -17,6 +17,9 @@ Lessons applied from local open-source trees under `Documents/open source/` (Gro
 | `todo_write` | Session todos. Validates id/content/status; `merge:true` + `[]` is a no-op warning; failures are tool errors. |
 | `web_search` | DuckDuckGo Instant Answer (best-effort). Honors turn abort + 15s timeout; HTML scrape capped 2 MiB. Invalid `num_results` fails closed. |
 | `web_fetch` | Public http(s) fetch with **SSRF** guards (hex IPv4-mapped `::ffff:7f00:1`; weird IPv4 `2130706433`/`0x7f000001`/`127.1`; bracketed IPv6 hostnames peeled), redirect re-check, HTML→text (invalid numeric entities never throw), stream body cap **5 MiB**. Invalid `format`/`timeout_ms` fail closed. Merged turn abort signal stays live through body read. **`allow_local`** is not a free read-only tool (headless/dontAsk/plan need allow rule / pattern-always / YOLO / interactive approval; session-tool alone is not enough). |
+| `search_mcp` / `call_mcp` | MCP (Model Context Protocol): search then invoke. Config from `.forge/mcp.json`, `~/.forge/mcp.json`, `.mcp.json`, `.cursor/mcp.json` (Claude/Cursor shape `{ "mcpServers": {…} }`). Tools are `server__tool`. Lazy stdio/HTTP connect; output capped; PreToolUse hooks apply. Plan mode allows search + read-only calls only. `FORGE_MCP=0` disables. `/mcp status|connect|tools|reload`. |
+| `spawn_subagent` | Nested agent (`Task` alias). Types: `general-purpose` (full tools), `explore` (read-only research), `plan` (read-only design). Depth default 1 (`FORGE_SUBAGENT_MAX_DEPTH`); children cannot nest further by default. Fires `SubagentStart`/`SubagentStop` hooks. Ephemeral child session cleaned unless `FORGE_SUBAGENT_KEEP=1`. Token usage folds into parent. |
+| `lsp` | Language Server Protocol: `diagnostics` / `hover` / `definition` / `references` / `symbols` / `workspace_symbols` / `status`. Defaults: typescript-language-server, pyright, rust-analyzer, gopls (on PATH). Config `.forge/lsp.json` / `~/.forge/lsp.json`. Workspace-scoped; lazy start. `FORGE_LSP=0` disables. `/lsp status|restart`. |
 
 ## Name aliases
 
@@ -29,6 +32,9 @@ Models sometimes emit OpenCode/Claude-style names. Forge accepts common aliases 
 | `Write`, `write` | `write_file` |
 | `Edit`, `edit`, `StrReplace` | `search_replace` |
 | `Grep` / `Glob` / `ListDir` / `WebSearch` / `WebFetch` / `ApplyPatch` | same lowercase snake or existing cases |
+| `Task`, `task` | `spawn_subagent` |
+| `mcp_search` / `mcp_call` / `use_mcp` | `search_mcp` / `call_mcp` |
+| `LSP` | `lsp` |
 
 Unknown tool names return **Did you mean?** plus the available list.
 
@@ -39,6 +45,7 @@ src/agent/tools/
   index.ts          # executeTool dispatch
   definitions.ts    # model-facing schemas + usage notes
   bash.ts read.ts write.ts edit.ts apply-patch.ts patch.ts …
+  subagent-tool.ts  # spawn_subagent dispatch
   atomic-write.ts   # tmp+rename file writes
   file-read-state.ts # session stale/unread edit guard
   path-util.ts      # realpath containment
@@ -47,8 +54,12 @@ src/agent/tools/
   env-policy.ts     # shell env scrub
   edit-match.ts     # exact + line-trimmed + multi-match locs + miss hints
   text.ts           # BOM / CRLF
+src/agent/subagent.ts  # nested agent runner
+src/mcp/               # MCP config, client, manager, tools
+src/lsp/               # LSP config, client, manager, tools
 src/util/
   project-intel.ts  # package manager + preferred checks + monorepo walk-up
+  jsonrpc-stdio.ts  # Content-Length JSON-RPC for MCP/LSP
 src/session/
   mutations.ts      # file-aware /undo journal (mutations.jsonl)
 ```
@@ -73,12 +84,13 @@ Not model tools, but production daily-driver surfaces experts use alongside tool
 
 ## Deferred (see plan / open-source comparison)
 
-- MCP search+use, subagents, skills, LSP diagnostics, PTY handoff.
+- PTY handoff.
 
 ## Tests
 
 `tests/tools-quality.test.ts` — edit match, path-hints (typo distance), env scrub, truncation, symlink escape, executeTool I/O.  
 `tests/apply-patch.test.ts` — multi-file patch parse/apply, hard-deny paths, atomic write.  
 `tests/tools-next.test.ts` — SSRF, web_fetch htmlToText, block-anchor, background tasks.  
+`tests/mcp-lsp-subagent.test.ts` — MCP config/search, LSP config, subagent tool filter, tool dispatch.  
 `tests/mutations-undo.test.ts` — mutation journal, `/undo` disk restore, `/init` `/review` `/config` `/compact-and`.  
 `tests/logs.test.ts` — sandbox log tail.

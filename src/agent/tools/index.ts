@@ -11,6 +11,9 @@ import { toolWebSearch } from "./web-search.js";
 import { toolWebFetch } from "./web-fetch.js";
 import { toolGetTaskOutput, toolKillTask } from "./task-tools.js";
 import { toolAskUser } from "./ask-user.js";
+import { toolSearchMcp, toolCallMcp } from "../../mcp/tools.js";
+import { toolLsp } from "../../lsp/tools.js";
+import { toolSpawnSubagent } from "./subagent-tool.js";
 import { parseToolArguments } from "../../util/json-repair.js";
 import { suggestNames } from "../../util/suggest.js";
 
@@ -18,7 +21,7 @@ export type { ToolContext, ToolResult } from "./types.js";
 export { TOOL_DEFINITIONS };
 
 const AVAILABLE =
-  "bash, get_task_output, kill_task, read_file, write_file, search_replace, apply_patch, grep, glob, list_dir, todo_write, ask_user, web_search, web_fetch";
+  "bash, get_task_output, kill_task, read_file, write_file, search_replace, apply_patch, grep, glob, list_dir, todo_write, ask_user, web_search, web_fetch, search_mcp, call_mcp, spawn_subagent, lsp";
 
 /** Canonical tool ids (used for doubled-name recovery). */
 const CANONICAL_TOOLS = [
@@ -39,6 +42,16 @@ const CANONICAL_TOOLS = [
   "question",
   "web_search",
   "web_fetch",
+  "search_mcp",
+  "call_mcp",
+  "mcp_search",
+  "mcp_call",
+  "use_mcp",
+  "spawn_subagent",
+  "Task",
+  "task",
+  "lsp",
+  "LSP",
   "run_terminal_command",
   "Shell",
   "Bash",
@@ -169,6 +182,20 @@ export async function executeTool(
       case "web_fetch":
       case "WebFetch":
         return await toolWebFetch(args, ctx);
+      case "search_mcp":
+      case "mcp_search":
+        return await toolSearchMcp(args, ctx);
+      case "call_mcp":
+      case "mcp_call":
+      case "use_mcp":
+        return await toolCallMcp(args, ctx);
+      case "spawn_subagent":
+      case "Task":
+      case "task":
+        return await toolSpawnSubagent(args, ctx);
+      case "lsp":
+      case "LSP":
+        return await toolLsp(args, ctx);
       default: {
         const tips = suggestNames(
           name,
@@ -182,6 +209,7 @@ export async function executeTool(
             "ApplyPatch",
             "WebSearch",
             "WebFetch",
+            "Task",
           ]),
           {
             minLength: 2,
