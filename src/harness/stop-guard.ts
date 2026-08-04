@@ -12,6 +12,7 @@
  */
 import type { ForgeConfig } from "../config/types.js";
 import type { HookRunner, HookContext, HookResult } from "./hooks.js";
+import { isFalsy } from "../util/bool.js";
 import {
   evaluateGoalAtStop,
   loadGoal,
@@ -109,7 +110,8 @@ export async function runStopGuard(input: StopGuardInput): Promise<StopGuardResu
   };
 
   let hookResult: HookResult = { decision: "allow", blocked: false };
-  if (config.blockingStopHooks) {
+  // isFalsy: stringy "false"/"0" must strip block decisions (match doctor).
+  if (!isFalsy(config.blockingStopHooks)) {
     hookResult = await hooks.run("Stop", hookCtx);
   } else {
     hookResult = await hooks.run("Stop", hookCtx);

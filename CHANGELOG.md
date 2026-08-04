@@ -3,7 +3,8 @@
 ## Unreleased
 
 ### Fixed
-- **Blocking Stop stringy false**: doctor, production-warnings, and project overlay treat `"false"`/`"0"`/`off` as OFF for `blockingStopHooks` (JS truthiness trap); project still cannot disable the non-negotiable default.
+- **Config load alias/bool canonicalization**: global `~/.forge/config` values like `permission_mode = "yolo"`, `sandbox = "none"`, and `blocking_stop_hooks = "false"` now coerce to `bypassPermissions` / `off` / real `false` at load — PermissionGate, sandbox, and Stop fail-closed no longer disagree with doctor/CI warnings.
+- **Blocking Stop stringy false**: doctor, production-warnings, hooks, stop-guard, and project overlay treat `"false"`/`"0"`/`off` as OFF for `blockingStopHooks` (JS truthiness trap); project still cannot disable the non-negotiable default.
 - **Proof-claim release tips**: session `lastError` after proof-claim cap uses project-intel check commands instead of hardcoded `npm test`.
 - **Status/subagent YOLO aliases**: statusline tags, prompt flags, and subagent permission inheritance normalize `yolo`/`always`/`bypass` so the YOLO badge and child permission mode stay accurate.
 - **Project config safety · sandbox aliases**: project `sandbox = "none"`/`false`/`0` normalize to `off` and are ignored (same as explicit `off`); network aliases like `deny` still tighten to `blocked`.

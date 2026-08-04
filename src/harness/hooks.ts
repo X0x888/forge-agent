@@ -11,6 +11,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { forgeHome, readJsonFile, pathExists } from "../util/fs.js";
 import { log } from "../util/log.js";
+import { isFalsy } from "../util/bool.js";
 import type { ForgeConfig } from "../config/types.js";
 
 export type HookEvent =
@@ -393,8 +394,9 @@ export class HookRunner {
       // Blocking Stop is the product differentiator — timeout/error must not
       // silently release the agent (Grok-style fail-open). Other events stay
       // fail-open so a flaky PreToolUse hook cannot freeze the session.
+      // isFalsy: stringy "false"/"0" from partial configs must count as OFF.
       const stopFailClosed =
-        isStopEvent && this.config.blockingStopHooks !== false;
+        isStopEvent && !isFalsy(this.config.blockingStopHooks);
 
       // Kill the whole process group (negative pid, POSIX) so grandchildren
       // die with the shell; fall back to the direct child (win32 / ESRCH).
@@ -550,7 +552,7 @@ export class HookRunner {
             /* treat as plain text context for Stop */
             if (
               (event === "Stop" || event === "SubagentStop") &&
-              this.config.blockingStopHooks &&
+              !isFalsy(this.config.blockingStopHooks) &&
               code === 0 &&
               /block|continue|not done|incomplete/i.test(trimmed)
             ) {
@@ -607,7 +609,7 @@ export class HookRunner {
   ): Promise<HookResult> {
     const isStopEvent = event === "Stop" || event === "SubagentStop";
     const stopFailClosed =
-      isStopEvent && this.config.blockingStopHooks !== false;
+      isStopEvent && !isFalsy(this.config.blockingStopHooks);
     const failClosed = (why: string): HookResult => {
       const reason =
         `Stop hook failed (${why}) — keeping agent working ` +

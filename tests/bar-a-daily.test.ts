@@ -433,6 +433,36 @@ model = "from-project"
     fs.rmSync(tmp, { recursive: true, force: true });
     fs.rmSync(home, { recursive: true, force: true });
   });
+
+  it("loadConfig canonicalizes global file aliases + stringy bools", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-bara-ws-"));
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "forge-bara-home-"));
+    process.env.FORGE_HOME = home;
+    fs.writeFileSync(
+      path.join(home, "config.toml"),
+      `
+provider = "xai"
+model = "grok-4.5"
+permission_mode = "yolo"
+sandbox = "none"
+sandbox_network = "deny"
+blocking_stop_hooks = "false"
+`,
+    );
+    const cfg = loadConfig({}, tmp);
+    assert.equal(
+      cfg.permissionMode,
+      "bypassPermissions",
+      "global yolo must become bypassPermissions for PermissionGate",
+    );
+    assert.equal(cfg.sandbox, "off", "global sandbox=none must become off");
+    assert.equal(cfg.sandboxNetwork, "blocked");
+    assert.equal(cfg.blockingStopHooks, false);
+    assert.equal(typeof cfg.blockingStopHooks, "boolean");
+    delete process.env.FORGE_HOME;
+    fs.rmSync(tmp, { recursive: true, force: true });
+    fs.rmSync(home, { recursive: true, force: true });
+  });
 });
 
 describe("Bar A: protected paths + symlink write", () => {

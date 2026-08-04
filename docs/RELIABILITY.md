@@ -45,6 +45,7 @@ What experts should expect from Forge in long, unattended, or CI runs.
 | **Atomic file writes** | `write_file` / `search_replace` / `apply_patch` write via tmp+rename |
 | **Edit miss guidance** | `search_replace` failures on existing files suggest closest lines + block-drift notes (not path typos); multi-match lists line numbers |
 | **Path-not-found hints** | Missing paths suggest sibling typos; when the parent dir is also missing, walk up one level (`srcx/foo.ts` → `src/`) |
+| **Config alias/bool load** | Global config file aliases (`yolo`→`bypassPermissions`, `none`→sandbox `off`, stringy `"false"`→bool) are coerced at `loadConfig` so runtime gates match doctor/`productionWarnings` |
 | **Tool path display** | `displayRelPath` realpath-normalizes workspace/file pairs (macOS `/var` vs `/private/var`) across write/edit/read/grep/glob/apply_patch, permission-ask diffs, turn-end Δ, `/context` labels, and LSP locations — no `../../../../private/var/...` leaks |
 | **todo_write validation** | Requires id/content/valid status; merge:true + [] warns; failures are tool errors |
 | **bash exit code** | Non-zero exits always append `[exit code N]` even when stdout/stderr is non-empty |

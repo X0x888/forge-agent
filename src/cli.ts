@@ -20,6 +20,7 @@ import {
 } from "./util/format.js";
 import { parseCostUsd, resolveMaxCostUsd } from "./util/cost-budget.js";
 import { productionWarningsForRun } from "./util/production-warnings.js";
+import { isFalsy } from "./util/bool.js";
 import { loadConfig, defaultConfigToml } from "./config/load.js";
 import {
   resolveSandboxNetwork,
@@ -6508,7 +6509,7 @@ async function runHeadless(opts: {
           lastEditAt: opts.session.meta.lastEditAt,
         }),
         formatOnWrite: isFormatOnWriteEnabled(),
-        blockingStop: opts.config.blockingStopHooks !== false,
+        blockingStop: !isFalsy(opts.config.blockingStopHooks),
         maxRunMs: maxRunMsFromEnv(),
         providerTimeoutMs: providerTimeoutMs(),
         bashTimeoutMs: defaultBashTimeoutMs(),
@@ -6862,7 +6863,7 @@ maxTurns: opts.config.maxTurns ?? 0,
           lastEditAt: opts.session.meta.lastEditAt,
       }),
       formatOnWrite: isFormatOnWriteEnabled(),
-      blockingStop: opts.config.blockingStopHooks !== false,
+      blockingStop: !isFalsy(opts.config.blockingStopHooks),
       maxRunMs: maxRunMsFromEnv(),
       providerTimeoutMs: providerTimeoutMs(),
       bashTimeoutMs: defaultBashTimeoutMs(),

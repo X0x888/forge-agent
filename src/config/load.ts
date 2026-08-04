@@ -523,6 +523,27 @@ export function loadConfig(overrides: Partial<ForgeConfig> = {}, cwd = process.c
     ask: cfg.permission?.ask ?? [],
     rules: cfg.permission?.rules ?? [],
   };
+  // Canonicalize file/override aliases so runtime gates match doctor/CI warnings.
+  // Env already normalizes; global TOML/JSON previously left "yolo"/"none"/"false"
+  // as raw strings (PermissionGate only honors bypassPermissions; sandbox only
+  // honors off; hooks used !== false so stringy "false" stayed fail-closed while
+  // doctor reported OFF).
+  {
+    const mode = normalizePermissionMode(cfg.permissionMode);
+    if (mode) cfg.permissionMode = mode;
+  }
+  {
+    const profile = normalizeSandboxProfile(cfg.sandbox);
+    if (profile) cfg.sandbox = profile;
+  }
+  if (cfg.sandboxNetwork != null) {
+    const net = normalizeSandboxNetwork(cfg.sandboxNetwork);
+    if (net) cfg.sandboxNetwork = net;
+  }
+  {
+    const b = coerceBool(cfg.blockingStopHooks as unknown);
+    if (b !== undefined) cfg.blockingStopHooks = b;
+  }
   if (!cfg.sandbox) cfg.sandbox = DEFAULT_CONFIG.sandbox;
   if (!cfg.sandboxMissingBackend) {
     cfg.sandboxMissingBackend = DEFAULT_CONFIG.sandboxMissingBackend;
