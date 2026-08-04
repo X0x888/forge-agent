@@ -45,10 +45,23 @@ describe("ulw cycle", () => {
     );
   });
 
-  it("expands soft mandates to god-scope", () => {
+  it("expands soft mandates to god-mode (domain-agnostic ownership)", () => {
     const { soft, expanded } = expandUlwMandate("improve the code");
     assert.equal(soft, true);
-    assert.match(expanded, /God-scope|gap list|Serendipity/i);
+    assert.match(expanded, /GOD MODE|god-mode/i);
+    assert.match(expanded, /ORIENT|JUDGE|RESEARCH DEEP|Serendipity/i);
+    assert.match(expanded, /subagent/i);
+    assert.match(expanded, /do \*\*not\*\* ask|do not ask/i);
+    assert.match(expanded, /any domain|hard work/i);
+  });
+
+  it("hard mandates still get god-mode execution rails", () => {
+    const { soft, expanded } = expandUlwMandate(
+      "add a /health endpoint and make npm test pass",
+    );
+    assert.equal(soft, false);
+    assert.match(expanded, /User mandate:/);
+    assert.match(expanded, /god-mode|subagent|Research/i);
   });
 
   it("parseCycleArg accepts 0/1 aliases", () => {

@@ -360,17 +360,25 @@ export function isSoftPrompt(prompt: string): boolean {
 /**
  * Expand a (possibly soft) user mandate into operational instructions
  * the model can execute wave-by-wave.
+ *
+ * Soft prompts become **ULW god-mode**: domain-agnostic veteran ownership —
+ * invent the hard work when the user did not specify it, research deeply,
+ * ship real value, prove it, repeat. Not limited to tests/housekeeping/product.
  */
 export function expandUlwMandate(mandate: string): { expanded: string; soft: boolean } {
   const soft = isSoftPrompt(mandate);
-  const base = mandate.replace(/\s+/g, " ").trim() || "improve the codebase";
+  const base = mandate.replace(/\s+/g, " ").trim() || "do the hard work this workspace needs most";
 
   if (!soft) {
     return {
       soft: false,
       expanded: [
         `User mandate: ${base}`,
-        `Execute relentlessly under the ULW cycle protocol until cycle flag is 0 and the last wave is attested complete.`,
+        ``,
+        `Execute under **ULW god-mode** until cycle=0 and the last wave is attested **Cycle complete.**:`,
+        `- Own the outcome end-to-end. Research deeply when uncertain (grep the class, read real code, MCP/docs, spawn explore/plan subagents for large unknowns) — then build; do not thrash or ask permission to continue.`,
+        `- Every wave: highest-leverage next objective vs the mandate · search-before-build · ship · prove with the cheapest real check · hostile review · next wave while cycle=1.`,
+        `- Finish the class (siblings + dependents), not just the example. Prefer substantive progress over busywork.`,
       ].join("\n"),
     };
   }
@@ -378,19 +386,34 @@ export function expandUlwMandate(mandate: string): { expanded: string; soft: boo
   return {
     soft: true,
     expanded: [
-      `User mandate (SOFT — expand to full god-scope, do not ask what they meant): "${base}"`,
+      `## ULW GOD MODE (soft user signal — full operational ownership)`,
+      `User signal (SOFT — do **not** ask what they meant; do **not** wait for a clearer mandate): "${base}"`,
       ``,
-      `Interpret as: identify real quality/correctness/DX gaps in THIS workspace and ship improvements end-to-end.`,
-      `You own technical judgment. Declare your interpretation in one sentence and start working.`,
+      `You are the **veteran who decides what the hard work is** and then does it. The user armed relentless mode; that is authorization for deep thought + hard execution on **whatever this workspace needs most** — code quality, product value, architecture, reliability, UX, tooling, design, ops, research-backed implementation, incomplete features, real bugs — **any domain of hard work**, not a fixed menu.`,
       ``,
-      `God-scope scan (do this, not a vague pep talk):`,
-      `1. Inventory: project type, how to build/test, obvious entrypoints, git status, existing TODOs/FIXMEs.`,
-      `2. Gap list: bugs, missing tests, broken scripts, brittle paths, security footguns, dead code that blocks clarity, UX/CLI gaps — prioritize by impact × confidence.`,
-      `3. Wave plan: 3–7 concrete waves; execute Wave 1 immediately.`,
-      `4. Serendipity: if you verify an adjacent bug on a path already open, fix it when the fix is bounded (log as Serendipity).`,
-      `5. Independent review after each wave: re-read diffs, run cheapest proof, then either next wave or (if cycle=0) attest last cycle complete.`,
+      `Declare your reading in **one sentence** (what you believe the hard work is + what you passed on), then start Wave 1 with tools. No pep talks. No "what should I improve?".`,
       ``,
-      `Forbidden: stopping with "looks fine", asking "what should I improve?", deferring to a future session, inventing scope to gold-plate forever without shipping.`,
+      `### God-mode operating loop (every wave)`,
+      `1. **ORIENT** — inventory what this place is: stack, how to build/test, entrypoints, git state, AGENTS/README, existing debt markers, incomplete paths. Use tools; do not invent the repo.`,
+      `2. **JUDGE** — what is the single highest-leverage piece of **hard work** right now? Score by impact × confidence / blast radius. Prefer work a strong senior would pick on a good day: real gaps, unfinished value, broken promises, structural pain — **not** busywork theater (comment-only, rename-only, coverage theater, drive-by style) when harder valuable work exists.`,
+      `3. **RESEARCH DEEP when uncertain** — before large commits: grep the class, read critical paths, fetch current docs (MCP/context7) when APIs matter, use web when reality is outside the tree. **Spawn explore/plan subagents** for large parallel investigations or design-heavy unknowns; fold their findings into your wave plan. Do not guess and thrash.`,
+      `4. **ONE WAVE OBJECTIVE** — bounded, shippable, high-leverage. Plan in 2 lines: objective + the exact proof command. todo_write for multi-step.`,
+      `5. **SHIP** — implement fully (siblings + dependents). Search-before-build; do not re-implement what already exists.`,
+      `6. **PROVE** — run the cheapest real verification that can fail. The harness tracks structural proof; bare claims are blocked.`,
+      `7. **SERENDIPITY** — if you verify an adjacent defect on a path already open and the fix is bounded, fix it now; label \`Serendipity:\`. Do not explode into a rewrite.`,
+      `8. **HOSTILE REVIEW** — re-read the diff; fix regressions, weakened tests, stubs, lies.`,
+      `9. **REPEAT** while cycle=1 (harness blocks Stop). If cycle=0, finish this wave and attest **Cycle complete.** with evidence.`,
+      ``,
+      `### Wave plan (first actions)`,
+      `- After ORIENT+JUDGE, write a short todo board (3–7 waves worth of hard work, ordered by leverage).`,
+      `- Execute Wave 1 immediately in this turn — tools, not advice.`,
+      ``,
+      `### Forbidden under god-mode`,
+      `- Asking the user to clarify a soft prompt or to pick work for you.`,
+      `- Advice-only replies, "looks fine", deferring to a future session.`,
+      `- Filling waves with low-leverage churn while obvious hard work remains.`,
+      `- Infinite research without shipping; infinite gold-plating without proof.`,
+      `- Yielding with "shall I continue?" — cycle flag / max_waves is the user's answer.`,
     ].join("\n"),
   };
 }
@@ -911,10 +934,10 @@ function buildCycleReanchor(
         ? `CONSOLIDATION WAVE (every ${CONSOLIDATION_EVERY}th): no new scope — run the full check suite, then review the cumulative \`git diff\` as a hostile reviewer (regressions, weakened tests, leftover stubs). Fix real defects only.`
         : null,
       (opts.thinStreak ?? 0) >= 2
-        ? `Waves are thinning (${opts.thinStreak} in a row with little substance). Commit to a substantially higher-impact wave — or, if the mandate is genuinely exhausted, say so with evidence; the user can /cycle 0.`
+        ? `Waves are thinning (${opts.thinStreak} in a row with little substance). God-mode demand: pick a substantially higher-leverage hard objective (not churn) — or, if the hard work is genuinely exhausted, say so with evidence; the user can /cycle 0.`
         : null,
       s.softPrompt
-        ? `Soft original prompt — keep discovering real gaps; do not ask the user to clarify "improve".`
+        ? `Soft signal still active — you own what the hard work is. Keep inventing high-leverage waves; never ask the user to clarify or pick tasks.`
         : null,
       opts.openTodos > 0
         ? `Open todos: ${opts.openTodos} — clear or complete them before claiming a wave done.`
@@ -954,23 +977,25 @@ function buildCycleReanchor(
     .join("\n");
 }
 
-/** Injected into the user message path when /ulw arms on a soft prompt. */
+/** Injected into the user message path when /ulw arms (soft or hard). */
 export function ulwKickoffMessage(state: UlwCycleState): string {
   const cap = normalizeMaxWaves(state.maxWaves);
   return [
     state.expandedMandate,
     ``,
     `## ULW runtime controls (read carefully)`,
-    `- Counters RIGHT NOW: **${formatUlwCounts(state)}**  ${state.cycle === 1 ? "(CONTINUE relentless loops)" : "(LAST cycle)"}`,
+    `- Counters RIGHT NOW: **${formatUlwCounts(state)}**  ${state.cycle === 1 ? "(CONTINUE — god-mode relentless loops)" : "(LAST cycle)"}`,
     `- The user can flip cycle any time with /cycle 0 or /cycle 1 — including while you are mid-turn (live controls). Independent of your opinion of "done".`,
-    `- While cycle=1, the harness will block Stop and force the research→implement→serendipity→review→repeat loop.`,
+    `- While cycle=1, the harness blocks Stop and forces the research→judge→implement→prove→serendipity→review→repeat loop.`,
     `- When cycle=0, finish the current wave and attest **Cycle complete.**`,
     cap != null
       ? `- max_waves=${cap}: when the wave counter reaches ${cap}, the harness auto-flips to LAST (finish + **Cycle complete.**).`
       : `- max_waves: off (unlimited). User may set /max-waves N mid-run.`,
     `- ${ULW_LIVE_CONTROLS_HINT}`,
     ``,
-    `Start Wave 1 now: research first, then ship.`,
+    state.softPrompt
+      ? `Start Wave 1 **now**: ORIENT + JUDGE the highest-leverage hard work, research deep if needed (subagents OK), then ship. Do not ask what to do.`
+      : `Start Wave 1 **now**: research if uncertain, then ship against the mandate. Do not ask permission to continue.`,
   ].join("\n");
 }
 

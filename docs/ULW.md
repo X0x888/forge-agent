@@ -1,6 +1,6 @@
 # Ultrawork (ULW) relentless cycle
 
-When a prompt starts with **`/ulw`**, Forge arms a **cycle driver** that forces continuous quality work even for soft prompts like `improve the code`.
+When a prompt starts with **`/ulw`** (or `forge --ulw` / `forge run --ulw`), Forge arms a **god-mode cycle driver**: deep thought + hard execution on whatever the hard work is — any domain, not just tests or housekeeping. Soft prompts like `improve the code` (or bare `/ulw`) authorize the agent to **invent the work** and ship it.
 
 ## User control: cycle flag
 
@@ -37,18 +37,34 @@ forge run "polish the CLI" --ulw --max-waves 3
 forge run "ship it" --max-waves 2
 ```
 
-## Soft prompts
+## Soft prompts → god-mode ownership
 
-`improve the code`, `fix`, `polish`, bare imperatives, etc. are detected and expanded into a **god-scope** mandate:
+`improve the code`, `fix`, `polish`, bare imperatives, empty mandate, etc. are detected and expanded into **ULW god-mode**:
 
-1. Inventory repo / tests / gaps  
-2. Prioritized wave plan  
-3. Ship waves  
-4. Serendipity (bounded adjacent fixes)  
-5. Independent review  
-6. Repeat while `cycle=1`
+1. **Orient** — what this workspace is (tools, not guesses)  
+2. **Judge** — highest-leverage *hard* work now (any domain: correctness, product, architecture, reliability, UX, tooling, design, ops, unfinished value…)  
+3. **Research deep when uncertain** — grep the class, docs/MCP, **explore/plan subagents** for large unknowns  
+4. **One wave** — ship + prove  
+5. **Serendipity** — bounded adjacent fixes  
+6. **Hostile review**  
+7. **Repeat** while `cycle=1`
 
-The agent must **not** ask “what should I improve?”
+The agent must **not** ask “what should I improve?” Soft signal = full operational ownership.
+
+Hard mandates still run under the same loop (research when unsure → ship → prove → continue) with the user’s objective fixed.
+
+### Force multipliers (native)
+
+| Tool | God-mode use |
+|------|----------------|
+| Subagents | Deep parallel research / design / isolated slices |
+| MCP | Current library truth, browser proof, external context |
+| LSP | Diagnostics after language-aware edits |
+| Skills | Project playbooks under `.forge/skills/**/SKILL.md` (optional; ULW does not depend on third-party packs) |
+
+### Not “tests-only”
+
+Proof still matters (structural verification). Busywork-only waves (rename theater, comment-only, coverage theater without advancing real hard work) fail the quality bar when higher-leverage work remains.
 
 ## Stop behavior
 
