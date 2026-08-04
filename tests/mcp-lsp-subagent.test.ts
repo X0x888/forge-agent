@@ -82,8 +82,36 @@ describe("tool definitions include MCP/LSP/subagent", () => {
 });
 
 describe("MCP config + types", () => {
-  it("loads project .forge/mcp.json", async () => {
+  it("ships context7 + playwright as built-in defaults", () => {
     delete process.env.FORGE_MCP;
+    delete process.env.FORGE_MCP_DEFAULTS;
+    const cfg = loadMcpConfig(path.join(tmpRoot, "empty-ws-defaults"));
+    assert.equal(cfg.enabled, true);
+    assert.equal(cfg.defaultsApplied, true);
+    assert.ok(cfg.servers.context7);
+    assert.ok(cfg.servers.playwright);
+    assert.equal(cfg.servers.context7.command, "npx");
+    assert.ok(
+      cfg.servers.context7.args?.some((a) => a.includes("context7-mcp")),
+    );
+    assert.ok(
+      cfg.servers.playwright.args?.some((a) => a.includes("@playwright/mcp")),
+    );
+  });
+
+  it("FORGE_MCP_DEFAULTS=0 disables only built-ins", () => {
+    process.env.FORGE_MCP_DEFAULTS = "0";
+    delete process.env.FORGE_MCP;
+    const cfg = loadMcpConfig(path.join(tmpRoot, "no-defaults"));
+    assert.equal(cfg.defaultsApplied, false);
+    assert.equal(cfg.servers.context7, undefined);
+    assert.equal(cfg.servers.playwright, undefined);
+    delete process.env.FORGE_MCP_DEFAULTS;
+  });
+
+  it("loads project .forge/mcp.json (overrides defaults)", async () => {
+    delete process.env.FORGE_MCP;
+    delete process.env.FORGE_MCP_DEFAULTS;
     const ws = path.join(tmpRoot, "proj-mcp");
     await fsp.mkdir(path.join(ws, ".forge"), { recursive: true });
     await fsp.writeFile(
@@ -95,6 +123,12 @@ describe("MCP config + types", () => {
             args: ["-e", "process.stdin.resume()"],
             env: { FOO: "${env:HOME}" },
           },
+          // Override built-in playwright command
+          playwright: {
+            command: "node",
+            args: ["-e", "process.stdin.resume()"],
+            disabled: true,
+          },
         },
       }),
       "utf8",
@@ -103,6 +137,8 @@ describe("MCP config + types", () => {
     assert.equal(cfg.enabled, true);
     assert.ok(cfg.servers.echo);
     assert.equal(cfg.servers.echo.command, "node");
+    assert.equal(cfg.servers.playwright?.disabled, true);
+    assert.ok(cfg.servers.context7); // default still present
     assert.ok(cfg.sources.some((s) => s.includes("mcp.json")));
   });
 
@@ -167,6 +203,16 @@ describe("MCP config + types", () => {
     assert.equal(r.isError, false);
     assert.match(r.output, /No MCP tools/i);
     await manager.dispose();
+  });
+
+  it("default mcp manager includes context7 + playwright recipes", () => {
+    delete process.env.FORGE_MCP_DEFAULTS;
+    const ws = path.join(tmpRoot, "default-mgr");
+    const manager = new McpManager({ workspace: ws });
+    manager.start();
+    const names = manager.serverNames();
+    assert.ok(names.includes("context7"));
+    assert.ok(names.includes("playwright"));
   });
 
   it("call_mcp unknown tool suggests", async () => {

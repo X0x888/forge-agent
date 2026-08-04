@@ -137,7 +137,17 @@ export {
   setActiveMcpManager,
   formatMcpStatus,
 } from "./mcp/manager.js";
-export { loadMcpConfig, mcpConfigPaths } from "./mcp/config.js";
+export {
+  loadMcpConfig,
+  mcpConfigPaths,
+  defaultUserMcpJson,
+} from "./mcp/config.js";
+export {
+  defaultMcpServers,
+  defaultMcpServersEnabled,
+  DEFAULT_MCP_SERVER_IDS,
+  formatDefaultMcpBlurb,
+} from "./mcp/defaults.js";
 export type {
   McpServerConfig,
   McpRegisteredTool,

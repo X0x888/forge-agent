@@ -2,6 +2,7 @@
  * Load MCP server configs from project + user paths (Claude/Cursor compatible).
  *
  * Precedence (later keys override earlier on same server name; project wins):
+ * 0. Built-in defaults (context7, playwright) — unless FORGE_MCP_DEFAULTS=0
  * 1. ~/.forge/mcp.json
  * 2. ~/.cursor/mcp.json (compat)
  * 3. <workspace>/.mcp.json
@@ -9,6 +10,7 @@
  * 5. <workspace>/.forge/mcp.json
  *
  * Env: FORGE_MCP=0 disables entirely. FORGE_MCP_CONFIG=path loads extra file last.
+ *      FORGE_MCP_DEFAULTS=0 disables only the built-in context7/playwright pair.
  */
 import fs from "node:fs";
 import path from "node:path";
@@ -16,12 +18,18 @@ import os from "node:os";
 import { forgeHome, readJsonFile } from "../util/fs.js";
 import { isTruthy } from "../util/bool.js";
 import type { McpConfigFile, McpServerConfig } from "./types.js";
+import {
+  defaultMcpServers,
+  defaultMcpServersEnabled,
+} from "./defaults.js";
 
 export interface LoadedMcpConfig {
   servers: Record<string, McpServerConfig>;
   /** Absolute paths that contributed (for /mcp status + doctor). */
   sources: string[];
   enabled: boolean;
+  /** True when built-in context7/playwright defaults were merged. */
+  defaultsApplied?: boolean;
 }
 
 function isDisabledByEnv(): boolean {
@@ -119,13 +127,23 @@ export function mcpConfigPaths(workspace: string): string[] {
 
 /**
  * Merge MCP configs. Later sources override same-named servers (project last).
+ * Built-in defaults (context7, playwright) are the base layer.
  */
 export function loadMcpConfig(workspace: string): LoadedMcpConfig {
   if (isDisabledByEnv()) {
-    return { servers: {}, sources: [], enabled: false };
+    return { servers: {}, sources: [], enabled: false, defaultsApplied: false };
   }
   const sources: string[] = [];
   const servers: Record<string, McpServerConfig> = {};
+  let defaultsApplied = false;
+
+  // 0) Built-in defaults first (lowest priority)
+  if (defaultMcpServersEnabled()) {
+    Object.assign(servers, defaultMcpServers());
+    defaultsApplied = true;
+    sources.push("(built-in defaults: context7, playwright)");
+  }
+
   for (const p of mcpConfigPaths(workspace)) {
     try {
       if (!fs.existsSync(p)) continue;
@@ -157,7 +175,39 @@ export function loadMcpConfig(workspace: string): LoadedMcpConfig {
     servers,
     sources,
     enabled: true,
+    defaultsApplied,
   };
+}
+
+/**
+ * JSON body for seeding ~/.forge/mcp.json (forge init / first-run).
+ * Documents the built-ins so users can disable or override without hunting docs.
+ */
+export function defaultUserMcpJson(): string {
+  return (
+    JSON.stringify(
+      {
+        // Built-in defaults also load without this file. Edit here to override
+        // (or set "disabled": true). FORGE_MCP_DEFAULTS=0 turns defaults off entirely.
+        mcpServers: {
+          context7: {
+            command: "npx",
+            args: ["-y", "@upstash/context7-mcp"],
+            env: {
+              // Optional — free tier works without. https://context7.com/dashboard
+              CONTEXT7_API_KEY: "${env:CONTEXT7_API_KEY}",
+            },
+          },
+          playwright: {
+            command: "npx",
+            args: ["-y", "@playwright/mcp@latest"],
+          },
+        },
+      },
+      null,
+      2,
+    ) + "\n"
+  );
 }
 
 /** Glob-ish match: * only (not full regex). */

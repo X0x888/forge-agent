@@ -356,7 +356,10 @@ export function formatMcpStatus(manager: McpManager): string {
   if (!statuses.length) {
     lines.push("  (none configured)");
     lines.push(
-      "  Add servers in .forge/mcp.json or ~/.forge/mcp.json (Claude/Cursor compatible).",
+      "  Built-ins: context7 + playwright (FORGE_MCP_DEFAULTS=0 to disable).",
+    );
+    lines.push(
+      "  Add more in .forge/mcp.json or ~/.forge/mcp.json (Claude/Cursor compatible).",
     );
   } else {
     for (const s of statuses) {
@@ -365,8 +368,10 @@ export function formatMcpStatus(manager: McpManager): string {
         : s.url
           ? s.url
           : "";
+      const builtin =
+        s.name === "context7" || s.name === "playwright" ? "  (default)" : "";
       lines.push(
-        `  ${s.name}  [${s.state}]  tools=${s.toolCount}  ${s.transport}${where ? `  ${where}` : ""}${s.error ? `  err: ${s.error.slice(0, 80)}` : ""}`,
+        `  ${s.name}  [${s.state}]  tools=${s.toolCount}  ${s.transport}${where ? `  ${where}` : ""}${builtin}${s.error ? `  err: ${s.error.slice(0, 80)}` : ""}`,
       );
     }
   }
@@ -374,6 +379,9 @@ export function formatMcpStatus(manager: McpManager): string {
     lines.push("Sources:");
     for (const src of manager.sources) lines.push(`  ${src}`);
   }
+  lines.push(
+    "Defaults: context7 (docs) · playwright (browser) · FORGE_MCP_DEFAULTS=0 off · CONTEXT7_API_KEY optional",
+  );
   const tools = manager.listRegisteredTools();
   if (tools.length) {
     lines.push(`Registered tools (${tools.length}):`);

@@ -3,6 +3,7 @@
 ## Unreleased
 
 ### Added
+- **Default MCP servers** — Forge ships **context7** (up-to-date library docs via `@upstash/context7-mcp`) and **playwright** (browser automation via `@playwright/mcp`) as built-in defaults (override/disable in mcp.json; `FORGE_MCP_DEFAULTS=0` off). `forge init` seeds `~/.forge/mcp.json`. Optional `CONTEXT7_API_KEY`.
 - **MCP (Model Context Protocol)** — `search_mcp` + `call_mcp` tools (search-then-use). Config from `.forge/mcp.json`, `~/.forge/mcp.json`, `.mcp.json`, `.cursor/mcp.json` (Claude/Cursor shape). Lazy stdio/HTTP clients, qualified `server__tool` names, plan-mode read-only gating, `/mcp status|connect|tools|reload`, doctor status, `FORGE_MCP=0` off.
 - **Subagents** — `spawn_subagent` (`Task` alias): nested agent loop with `general-purpose` / `explore` / `plan` types, capability modes, depth cap (`FORGE_SUBAGENT_MAX_DEPTH`), `SubagentStart`/`SubagentStop` hooks, ephemeral child sessions, token fold into parent. Headless: explore/plan free; full needs acceptEdits/allow/YOLO. Plan mode denies spawn.
 - **LSP** — `lsp` tool (`diagnostics`/`hover`/`definition`/`references`/`symbols`/`workspace_symbols`/`status`). Defaults for typescript-language-server, pyright, rust-analyzer, gopls (on PATH). `.forge/lsp.json` overrides, workspace-scoped, lazy start, `/lsp status|restart`, `FORGE_LSP=0` off.

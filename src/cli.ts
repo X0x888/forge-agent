@@ -3374,7 +3374,7 @@ Docs: docs/PRODUCTION.md
     .description("Write default config and example hooks into ~/.forge and .forge/")
     .option("--json", "Machine-readable JSON ({ ok, wrote[], existed[] })")
     .action(
-      (
+      async (
         opts: { json?: boolean },
         command?: { optsWithGlobals?: () => Record<string, unknown> },
       ) => {
@@ -3390,6 +3390,30 @@ Docs: docs/PRODUCTION.md
         } else {
           existed.push(homeCfg);
           if (!wantJson) log.info(`Exists: ${homeCfg}`);
+        }
+        // Seed user MCP config with built-in context7 + playwright (editable).
+        // Defaults also load without this file; seeding makes them discoverable.
+        const homeMcp = path.join(forgeHome(), "mcp.json");
+        if (!fs.existsSync(homeMcp)) {
+          const { defaultUserMcpJson } = await import("./mcp/config.js");
+          fs.writeFileSync(homeMcp, defaultUserMcpJson(), {
+            encoding: "utf8",
+            mode: 0o600,
+          });
+          try {
+            fs.chmodSync(homeMcp, 0o600);
+          } catch {
+            /* windows */
+          }
+          wrote.push(homeMcp);
+          if (!wantJson) {
+            log.success(
+              `Wrote ${homeMcp} (default MCP: context7 + playwright)`,
+            );
+          }
+        } else {
+          existed.push(homeMcp);
+          if (!wantJson) log.info(`Exists: ${homeMcp}`);
         }
         const projectDir = path.join(process.cwd(), ".forge");
         ensureDir(projectDir);

@@ -291,7 +291,7 @@ export function buildBaselineSystemPrompt(opts: {
     `- Make focused, correct changes. Explain why briefly when it matters.`,
     `- Prefer the specialized file tools over bash for reads/edits/listing/search; grep/glob before read; read line ranges, not whole files; batch independent read-only calls in one block.`,
     `- Docs/pages: prefer web_fetch over bash curl; use web_search for discovery.`,
-    `- **MCP**: search_mcp then call_mcp (server__tool). Configure .forge/mcp.json or ~/.forge/mcp.json (Claude/Cursor compatible).`,
+    `- **MCP**: search_mcp then call_mcp (server__tool). Built-in defaults: **context7** (up-to-date library docs — resolve-library-id / query-docs) and **playwright** (browser automation). More servers via .forge/mcp.json or ~/.forge/mcp.json. Optional CONTEXT7_API_KEY for higher Context7 rate limits.`,
     `- **Subagents**: spawn_subagent for bounded parallel research/implementation (explore=read-only, plan=design, general-purpose=full). Prefer a direct tool when one call suffices.`,
     `- **LSP**: lsp({ action: "diagnostics", path }) after substantive TS/Python/Rust/Go edits when the language server is installed.`,
     `- Oversize tool results may be truncated with a path to the full output under ~/.forge/tool-output/.`,
