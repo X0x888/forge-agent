@@ -39,32 +39,32 @@ forge run "ship it" --max-waves 2
 
 ## Soft prompts → god-mode ownership
 
-`improve the code`, `fix`, `polish`, bare imperatives, empty mandate, etc. are detected and expanded into **ULW god-mode**:
+`improve the code`, `fix`, `polish`, bare imperatives, empty mandate, etc. expand into **ULW god-mode**: soft signal = **you invent and own the hard work**. Never ask “what should I improve?”
 
-1. **Orient** — what this workspace is (tools, not guesses)  
-2. **Judge** — highest-leverage *hard* work now (any domain: correctness, product, architecture, reliability, UX, tooling, design, ops, unfinished value…)  
-3. **Research deep when uncertain** — grep the class, docs/MCP, **explore/plan subagents** for large unknowns  
-4. **One wave** — ship + prove  
-5. **Serendipity** — bounded adjacent fixes  
-6. **Hostile review**  
-7. **Repeat** while `cycle=1`
+Hard mandates keep a fixed objective but the same **smart + hard** execution style.
 
-The agent must **not** ask “what should I improve?” Soft signal = full operational ownership.
+### Smart + hard (not thrash)
 
-Hard mandates still run under the same loop (research when unsure → ship → prove → continue) with the user’s objective fixed.
+ULW is not “burn tokens until something ships.” Doctrine:
 
-### Force multipliers (native)
+- Optimize **impact × confidence / cost**
+- Insight before volume; cheapest proof that can fail
+- **Philosophy, not a cage** — freestyle when freestyle is better; harness rails (Stop / proof / todos) stay
 
-| Tool | God-mode use |
-|------|----------------|
-| Subagents | Deep parallel research / design / isolated slices |
-| MCP | Current library truth, browser proof, external context |
+### Proactive subagents
+
+Spawn `explore` / `plan` / `general-purpose` **whenever** that improves quality or efficiency (parallel map, design space, isolated implement, `isolation=worktree`). Skip when one tool call is enough. Converge and ship in the parent.
+
+| Multiplier | Use |
+|------------|-----|
+| Subagents | Parallel research, design, isolated slices |
+| MCP | Docs / browser / resources when they pay off |
 | LSP | Diagnostics after language-aware edits |
-| Skills | Project playbooks under `.forge/skills/**/SKILL.md` (optional; ULW does not depend on third-party packs) |
+| Skills | Optional project playbooks (`.forge/skills`) — not required |
 
-### Not “tests-only”
+### Not busywork theater
 
-Proof still matters (structural verification). Busywork-only waves (rename theater, comment-only, coverage theater without advancing real hard work) fail the quality bar when higher-leverage work remains.
+Proof still matters. Low-leverage churn while harder work remains fails the quality bar.
 
 ## Stop behavior
 

@@ -45,23 +45,28 @@ describe("ulw cycle", () => {
     );
   });
 
-  it("expands soft mandates to god-mode (domain-agnostic ownership)", () => {
+  it("expands soft mandates to smart god-mode (subagents + anti-thrash)", () => {
     const { soft, expanded } = expandUlwMandate("improve the code");
     assert.equal(soft, true);
     assert.match(expanded, /GOD MODE|god-mode/i);
-    assert.match(expanded, /ORIENT|JUDGE|RESEARCH DEEP|Serendipity/i);
-    assert.match(expanded, /subagent/i);
+    assert.match(expanded, /Smart \+ hard|IQ-class|leverage/i);
+    assert.match(expanded, /Subagents|spawn_subagent/i);
+    assert.match(expanded, /proactive|whenever/i);
+    assert.match(expanded, /Skip when|overhead/i);
+    assert.match(expanded, /Doctrine, not a cage|philosophy/i);
     assert.match(expanded, /do \*\*not\*\* ask|do not ask/i);
-    assert.match(expanded, /any domain|hard work/i);
+    assert.match(expanded, /token|waste|thrash/i);
   });
 
-  it("hard mandates still get god-mode execution rails", () => {
+  it("hard mandates still get smart god-mode rails", () => {
     const { soft, expanded } = expandUlwMandate(
       "add a /health endpoint and make npm test pass",
     );
     assert.equal(soft, false);
     assert.match(expanded, /User mandate:/);
-    assert.match(expanded, /god-mode|subagent|Research/i);
+    assert.match(expanded, /god-mode/i);
+    assert.match(expanded, /Subagents|spawn_subagent|proactive/i);
+    assert.match(expanded, /Smart \+ hard|leverage/i);
   });
 
   it("parseCycleArg accepts 0/1 aliases", () => {

@@ -361,13 +361,34 @@ export function isSoftPrompt(prompt: string): boolean {
  * Expand a (possibly soft) user mandate into operational instructions
  * the model can execute wave-by-wave.
  *
- * Soft prompts become **ULW god-mode**: domain-agnostic veteran ownership —
- * invent the hard work when the user did not specify it, research deeply,
- * ship real value, prove it, repeat. Not limited to tests/housekeeping/product.
+ * Soft prompts become **ULW god-mode**: domain-agnostic ownership —
+ * invent hard work when unspecified, work **smart** (high leverage, low waste)
+ * and **proactively use subagents when that wins**, then ship + prove + repeat.
+ * Philosophy over rigid checklists — freestyle when it yields better quality.
  */
 export function expandUlwMandate(mandate: string): { expanded: string; soft: boolean } {
   const soft = isSoftPrompt(mandate);
   const base = mandate.replace(/\s+/g, " ").trim() || "do the hard work this workspace needs most";
+
+  const smartDoctrine = [
+    `### Smart + hard (IQ-class, not thrash)`,
+    `Work **hard and smart**. Tokens and wall-clock are scarce — every tool call and every wave must buy leverage.`,
+    `- Prefer the move a top senior makes: high impact × confidence / cost. Skip low-leverage churn when harder valuable work exists.`,
+    `- Prefer **insight before volume**: a sharp read + one decisive ship beats ten shallow probes.`,
+    `- **Batch** independent read-only work; greps/globs before wide reads; cheapest proof that can fail.`,
+    `- Do **not** burn turns on ceremony, over-planning, or re-deriving what you already know.`,
+    `- Do **not** gold-plate, infinite-research, or spawn work for its own sake.`,
+    ``,
+    `### Subagents — proactive when they win`,
+    `Use \`spawn_subagent\` **whenever** it improves quality or efficiency — do not wait for the user to ask.`,
+    `**Spawn when:** large surface to map in parallel; design/architecture tradeoffs need a clean think-space; independent workstreams can run without shared mid-flight state; isolation=worktree protects the parent tree; a deep dive would drown this thread.`,
+    `**Types:** explore (read-only research), plan (design), general-purpose (implement slice). Brief the child with a crisp objective; fold the result and act.`,
+    `**Skip when:** the next step is a single obvious tool call; overhead > benefit; you already have enough context to ship.`,
+    `Fan-out intelligently (parallel explores), then **converge** and ship in the parent — subagents are force multipliers, not a substitute for judgment.`,
+    ``,
+    `### Doctrine, not a cage`,
+    `The loop below is **philosophy**, not a rigid ritual. Freestyle sequence, tooling, and depth when that yields better work. Harness rails (Stop/proof/todos) stay; process theater does not.`,
+  ].join("\n");
 
   if (!soft) {
     return {
@@ -375,10 +396,12 @@ export function expandUlwMandate(mandate: string): { expanded: string; soft: boo
       expanded: [
         `User mandate: ${base}`,
         ``,
-        `Execute under **ULW god-mode** until cycle=0 and the last wave is attested **Cycle complete.**:`,
-        `- Own the outcome end-to-end. Research deeply when uncertain (grep the class, read real code, MCP/docs, spawn explore/plan subagents for large unknowns) — then build; do not thrash or ask permission to continue.`,
-        `- Every wave: highest-leverage next objective vs the mandate · search-before-build · ship · prove with the cheapest real check · hostile review · next wave while cycle=1.`,
-        `- Finish the class (siblings + dependents), not just the example. Prefer substantive progress over busywork.`,
+        `Execute under **ULW god-mode** until cycle=0 and the last wave is attested **Cycle complete.**`,
+        smartDoctrine,
+        ``,
+        `- Own the outcome end-to-end. Research when uncertain; spawn subagents when that is smarter; then build — no thrash, no permission-to-continue asks.`,
+        `- Every wave: highest-leverage next objective vs the mandate · search-before-build · ship · cheapest real proof · hostile review · next wave while cycle=1.`,
+        `- Finish the class (siblings + dependents). Prefer substantive progress over busywork.`,
       ].join("\n"),
     };
   }
@@ -389,31 +412,31 @@ export function expandUlwMandate(mandate: string): { expanded: string; soft: boo
       `## ULW GOD MODE (soft user signal — full operational ownership)`,
       `User signal (SOFT — do **not** ask what they meant; do **not** wait for a clearer mandate): "${base}"`,
       ``,
-      `You are the **veteran who decides what the hard work is** and then does it. The user armed relentless mode; that is authorization for deep thought + hard execution on **whatever this workspace needs most** — code quality, product value, architecture, reliability, UX, tooling, design, ops, research-backed implementation, incomplete features, real bugs — **any domain of hard work**, not a fixed menu.`,
+      `You decide **what** the hard work is and **how** to do it like a top-tier veteran: sharp judgment, deep when needed, decisive shipping. Any domain this workspace needs — correctness, product value, architecture, reliability, UX, tooling, design, ops, incomplete work, research-backed builds — **not** a fixed menu, **not** tests/housekeeping theater by default.`,
       ``,
-      `Declare your reading in **one sentence** (what you believe the hard work is + what you passed on), then start Wave 1 with tools. No pep talks. No "what should I improve?".`,
+      `One-sentence reading (what the hard work is + what you passed on), then tools. No pep talks. No "what should I improve?".`,
       ``,
-      `### God-mode operating loop (every wave)`,
-      `1. **ORIENT** — inventory what this place is: stack, how to build/test, entrypoints, git state, AGENTS/README, existing debt markers, incomplete paths. Use tools; do not invent the repo.`,
-      `2. **JUDGE** — what is the single highest-leverage piece of **hard work** right now? Score by impact × confidence / blast radius. Prefer work a strong senior would pick on a good day: real gaps, unfinished value, broken promises, structural pain — **not** busywork theater (comment-only, rename-only, coverage theater, drive-by style) when harder valuable work exists.`,
-      `3. **RESEARCH DEEP when uncertain** — before large commits: grep the class, read critical paths, fetch current docs (MCP/context7) when APIs matter, use web when reality is outside the tree. **Spawn explore/plan subagents** for large parallel investigations or design-heavy unknowns; fold their findings into your wave plan. Do not guess and thrash.`,
-      `4. **ONE WAVE OBJECTIVE** — bounded, shippable, high-leverage. Plan in 2 lines: objective + the exact proof command. todo_write for multi-step.`,
-      `5. **SHIP** — implement fully (siblings + dependents). Search-before-build; do not re-implement what already exists.`,
-      `6. **PROVE** — run the cheapest real verification that can fail. The harness tracks structural proof; bare claims are blocked.`,
-      `7. **SERENDIPITY** — if you verify an adjacent defect on a path already open and the fix is bounded, fix it now; label \`Serendipity:\`. Do not explode into a rewrite.`,
-      `8. **HOSTILE REVIEW** — re-read the diff; fix regressions, weakened tests, stubs, lies.`,
-      `9. **REPEAT** while cycle=1 (harness blocks Stop). If cycle=0, finish this wave and attest **Cycle complete.** with evidence.`,
+      smartDoctrine,
       ``,
-      `### Wave plan (first actions)`,
-      `- After ORIENT+JUDGE, write a short todo board (3–7 waves worth of hard work, ordered by leverage).`,
-      `- Execute Wave 1 immediately in this turn — tools, not advice.`,
+      `### Operating loop (guidance — adapt freely when freestyle is better)`,
+      `1. **ORIENT** — what this place is (stack, checks, entrypoints, git, AGENTS/README, real debt). Tools, not guesses.`,
+      `2. **JUDGE** — single highest-leverage hard objective now (impact × confidence / cost).`,
+      `3. **RESEARCH** — only as deep as uncertainty warrants; proactive subagents/MCP/web when that is the efficient path. Do not thrash blind.`,
+      `4. **SHIP** one bounded high-leverage wave (siblings + dependents). Search-before-build.`,
+      `5. **PROVE** — cheapest real check that can fail.`,
+      `6. **SERENDIPITY** — bounded adjacent fix on an open path if cheap; label \`Serendipity:\`.`,
+      `7. **HOSTILE REVIEW** — fix real defects in your diff; skip cosmetic noise.`,
+      `8. **REPEAT** while cycle=1. If cycle=0, finish this wave and attest **Cycle complete.** with evidence.`,
       ``,
-      `### Forbidden under god-mode`,
-      `- Asking the user to clarify a soft prompt or to pick work for you.`,
-      `- Advice-only replies, "looks fine", deferring to a future session.`,
-      `- Filling waves with low-leverage churn while obvious hard work remains.`,
-      `- Infinite research without shipping; infinite gold-plating without proof.`,
-      `- Yielding with "shall I continue?" — cycle flag / max_waves is the user's answer.`,
+      `Optional: a short todo board for multi-wave work if it helps you; skip the board when the next move is already obvious.`,
+      `Execute Wave 1 in this turn — tools, not advice.`,
+      ``,
+      `### Forbidden`,
+      `- Asking the user to clarify a soft prompt or pick tasks.`,
+      `- Advice-only / "looks fine" / defer to later.`,
+      `- Low-leverage churn or token-burning busywork while harder work remains.`,
+      `- Subagent spam, infinite research without shipping, gold-plating without proof.`,
+      `- "Shall I continue?" — cycle / max_waves answers that.`,
     ].join("\n"),
   };
 }
@@ -994,8 +1017,8 @@ export function ulwKickoffMessage(state: UlwCycleState): string {
     `- ${ULW_LIVE_CONTROLS_HINT}`,
     ``,
     state.softPrompt
-      ? `Start Wave 1 **now**: ORIENT + JUDGE the highest-leverage hard work, research deep if needed (subagents OK), then ship. Do not ask what to do.`
-      : `Start Wave 1 **now**: research if uncertain, then ship against the mandate. Do not ask permission to continue.`,
+      ? `Start Wave 1 **now**: sharp orient + highest-leverage objective; spawn subagents when that is smarter; ship with proof. Work smart — do not thrash or ask what to do.`
+      : `Start Wave 1 **now**: research only as needed (subagents when they win), then ship against the mandate. Smart + hard — no permission-to-continue asks.`,
   ].join("\n");
 }
 

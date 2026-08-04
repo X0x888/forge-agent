@@ -3,7 +3,7 @@
 ## Unreleased
 
 ### Added
-- **ULW god-mode doctrine** — soft/empty `/ulw` expands to domain-agnostic veteran ownership (orient → judge leverage → research deep / subagents → ship → prove → serendipity → review → repeat). Not product-only, not tests-only; hard mandates get the same execution rails. System prompt + kickoff + thin-wave re-anchors updated; see `docs/ULW.md`.
+- **ULW god-mode doctrine** — soft/empty `/ulw` = domain-agnostic ownership: **smart + hard** (leverage over thrash), **proactive subagents when they win**, philosophy-not-cage freestyle, research→ship→prove→repeat. Not product- or tests-only. See `docs/ULW.md`.
 - **LSP ensure (smooth install)** — bottom-line default pack **TypeScript + Python**; **Rust/Go** when project markers present; Swift/shell tips only. `forge lsp ensure|status|detect`, `/lsp ensure`, `lsp({ action: "ensure" })`, `forge init` auto-ensure, once/day REPL tip. Env: `FORGE_LSP_AUTO=0`, `FORGE_LSP_AUTO_INSTALL=0`. See `docs/LSP.md`.
 - **LSP install guide** — `docs/LSP.md`, `/lsp install`, `lsp({ action: "install" })`, and status/missing-on-PATH tips for typescript-language-server, pyright, rust-analyzer, gopls, and friends.
 - **Subagent worktree isolation** — `spawn_subagent({ isolation: "worktree" })` creates a detached git worktree under `~/.forge/worktrees/` so nested edits never touch the parent checkout (`FORGE_SUBAGENT_KEEP_WORKTREE=1` to keep).
