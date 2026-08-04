@@ -2,7 +2,7 @@ import fsp from "node:fs/promises";
 import path from "node:path";
 import { glob } from "glob";
 import type { ToolContext, ToolResult } from "./types.js";
-import { resolvePath } from "./path-util.js";
+import { resolvePath, displayRelPath } from "./path-util.js";
 import { pathNotFoundHint } from "./path-hints.js";
 import { boundToolOutput } from "./truncate.js";
 
@@ -170,7 +170,7 @@ export async function toolListDir(
           : "file";
       return `${kind}  ${e.name}${e.isDirectory() ? "/" : ""}`;
     });
-  const label = path.relative(ctx.workspace, dir) || ".";
+  const label = displayRelPath(ctx.workspace, dir);
   const body = lines.length
     ? `${label}\n${lines.join("\n")}`
     : `Directory is empty: ${label}\nTips: check the path, or use glob/grep from a parent directory.`;

@@ -25,6 +25,7 @@ import {
   normalizeSandboxProfile,
   normalizeSandboxNetwork,
 } from "../util/mode-aliases.js";
+import { coerceBool } from "../util/bool.js";
 
 const ENV_PERMISSION_MODES = new Set<PermissionMode>([
   "default",
@@ -215,34 +216,55 @@ export function applySafeProjectOverlay(
   }
 
   // permissionMode: allow default|acceptEdits|plan|dontAsk — never project YOLO
+  // Normalize aliases first so yolo/always/bypass cannot slip past the block.
   if (projectRaw.permissionMode) {
-    if (projectRaw.permissionMode === "bypassPermissions") {
+    const mode =
+      normalizePermissionMode(projectRaw.permissionMode) ??
+      projectRaw.permissionMode;
+    if (mode === "bypassPermissions") {
       console.error(
         "forge: ignoring project permission_mode=bypassPermissions (set in ~/.forge or CLI)",
       );
-    } else {
-      cfg.permissionMode = projectRaw.permissionMode;
+    } else if (ENV_PERMISSION_MODES.has(mode as PermissionMode)) {
+      cfg.permissionMode = mode as PermissionMode;
     }
   }
 
   // sandbox: allow tighter profiles; never sandbox=off from project
+  // Normalize aliases first so none/false/0 cannot slip past the off block.
   if (projectRaw.sandbox) {
-    if (projectRaw.sandbox === "off") {
+    const profile =
+      normalizeSandboxProfile(projectRaw.sandbox) ?? projectRaw.sandbox;
+    if (profile === "off") {
       console.error(
         "forge: ignoring project sandbox=off (set in ~/.forge or CLI / FORGE_SANDBOX)",
       );
-    } else {
-      cfg.sandbox = projectRaw.sandbox;
+    } else if (
+      profile === "workspace" ||
+      profile === "read-only" ||
+      profile === "strict"
+    ) {
+      cfg.sandbox = profile;
     }
   }
 
-  // network: project may only tighten to blocked
-  if (projectRaw.sandboxNetwork === "blocked") {
-    cfg.sandboxNetwork = "blocked";
-  } else if (projectRaw.sandboxNetwork === "unrestricted") {
-    // only if global already unrestricted — do not open network from project alone
-    if (globalCfg.sandboxNetwork === "unrestricted" || !globalCfg.sandboxNetwork) {
-      /* leave default-from-profile */
+  // network: project may only tighten to blocked (aliases: none/off/deny → blocked)
+  {
+    const net =
+      projectRaw.sandboxNetwork != null
+        ? normalizeSandboxNetwork(projectRaw.sandboxNetwork) ??
+          projectRaw.sandboxNetwork
+        : null;
+    if (net === "blocked") {
+      cfg.sandboxNetwork = "blocked";
+    } else if (net === "unrestricted") {
+      // only if global already unrestricted — do not open network from project alone
+      if (
+        globalCfg.sandboxNetwork === "unrestricted" ||
+        !globalCfg.sandboxNetwork
+      ) {
+        /* leave default-from-profile */
+      }
     }
   }
 
@@ -279,13 +301,16 @@ export function applySafeProjectOverlay(
     );
   }
 
-  // blockingStopHooks: project may only force true
-  if (projectRaw.blockingStopHooks === true) {
-    cfg.blockingStopHooks = true;
-  } else if (projectRaw.blockingStopHooks === false) {
-    console.error(
-      "forge: ignoring project blocking_stop_hooks=false (set FORGE_BLOCKING_STOP=0 globally)",
-    );
+  // blockingStopHooks: project may only force true (string "false"/"0" still blocked)
+  {
+    const b = coerceBool(projectRaw.blockingStopHooks);
+    if (b === true) {
+      cfg.blockingStopHooks = true;
+    } else if (b === false) {
+      console.error(
+        "forge: ignoring project blocking_stop_hooks=false (set FORGE_BLOCKING_STOP=0 globally)",
+      );
+    }
   }
 
   return cfg;

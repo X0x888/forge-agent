@@ -24,6 +24,7 @@ import {
 } from "./activity.js";
 import { listTasks } from "../agent/tools/background-tasks.js";
 import { readSessionLock } from "../session/lock.js";
+import { normalizePermissionMode } from "../util/mode-aliases.js";
 import type {
   StatusSnapshot,
   CollectOptions,
@@ -239,9 +240,13 @@ export function sessionToSnapshot(
     if (ulw.maxWaves != null) tags.push(`mw=${ulw.maxWaves}`);
   }
   if (meta.pinned) tags.push("PIN");
-  if (opts.permissionMode === "plan") tags.push("PLAN");
-  if (opts.permissionMode === "bypassPermissions") tags.push("YOLO");
-  else if (opts.permissionMode === "acceptEdits") tags.push("auto");
+  {
+    const permissionMode =
+      normalizePermissionMode(opts.permissionMode) ?? opts.permissionMode;
+    if (permissionMode === "plan") tags.push("PLAN");
+    if (permissionMode === "bypassPermissions") tags.push("YOLO");
+    else if (permissionMode === "acceptEdits") tags.push("auto");
+  }
   if (meta.lastError?.message) tags.push(`ERR:${meta.lastError.code}`);
   if (gitSnap.isWorktree) tags.push("WORKTREE");
   // BUDGET tag when a spend cap is armed (session override or config).

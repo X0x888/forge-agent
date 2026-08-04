@@ -1,7 +1,7 @@
-import path from "node:path";
 import type { SessionData } from "../session/session.js";
 import { isLastVerificationStale } from "../session/session.js";
 import type { FileMutation } from "../session/mutations.js";
+import { displayRelPath } from "../agent/tools/path-util.js";
 
 /**
  * Pure formatter for the end-of-turn change summary (unattended runs):
@@ -18,9 +18,7 @@ export function formatTurnChangeSummary(
   const byPath = new Map<string, string>();
   for (const m of edits) byPath.set(m.path, m.kind);
   const names = [...byPath.entries()].map(([p, kind]) => {
-    const rel = path.relative(cwd, p);
-    const label =
-      rel && !rel.startsWith("..") && !path.isAbsolute(rel) ? rel : p;
+    const label = displayRelPath(cwd, p);
     return kind === "create" ? `${label} (new)` : label;
   });
   const shown = names.slice(0, 6);

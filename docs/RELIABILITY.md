@@ -16,7 +16,7 @@ What experts should expect from Forge in long, unattended, or CI runs.
 | **Structured errors** | `ProviderApiError` carries status + headers; retry classifier uses them |
 | **Prune lastError protect** | `pruneSessions` skips sessions with `meta.lastError` by default (`skippedLastError`); `forceLastError` / `--force-last-error` required to delete failure backlog |
 | **Session lastError** | Provider/run failures stamp `meta.lastError` (code/message/tips); `/status`, resume, `/share`, sessions list ERR badge, HUD/tmux, `forge status --json`, and `forge run --json` fail payloads surface it; cleared on success/`/clear`/`/fork` |
-| **Expert recovery tips** | `formatProviderError` maps auth/rate-limit/quota/overflow/network/5xx to next steps; REPL + headless print tips; `forge run --json` fail payloads include `recovery: { code, tips }` and structured `reason` |
+| **Expert recovery tips** | `formatProviderError` maps auth/rate-limit/quota (incl. 403 body), overflow (incl. Anthropic “prompt is too long”), network/DNS, 5xx, Anthropic 529/`overloaded`, model-not-found, Azure/OpenAI `content_filter`, empty/no-choice responses, unsupported model features, org verification, and deprecated-model to next steps; REPL + headless print tips; `forge run --json` fail payloads include `recovery: { code, tips }` and structured `reason` |
 | **Abortable streams** | `AbortSignal` cancels `fetch` and releases the SSE reader (Ctrl+C works mid-token) |
 | **Provider timeout** | Default 10 min wall clock (`FORGE_PROVIDER_TIMEOUT_MS`) — grok-4.5 high-effort thinking + near-max outputs exceed 5 min; timeout is retryable, user abort is not |
 | **Prompt-cache stability** | System prompt (message[0]) carries only stable git state (root/remote); the volatile branch line is admitted append-only via context-admit, so everyday edits no longer invalidate the server-side prompt cache (xAI cached input ≈ 4× cheaper) |
@@ -29,7 +29,7 @@ What experts should expect from Forge in long, unattended, or CI runs.
 
 | Behavior | Detail |
 |---|---|
-| **JSON arg repair** | Truncated / fenced / trailing-comma / unescaped-quote tool args are repaired when possible |
+| **JSON arg repair** | Truncated / fenced / trailing-comma / unescaped-quote tool args are repaired when possible; also bare `undefined`/`NaN` → `null`, empty values after colon, unquoted keys, and `//`/`/* */` comments outside strings |
 | **CLI JSON `version`** | `emitOkJson` / `emitFailJson` stamp every common `--json` success/failure payload with package version for CI matrices |
 | **Orphan tool_calls** | Abort mid-batch or compact cut injects synthetic tool results so the next API call does not 400 |
 | **Compact boundary** | Compaction never starts a keep-window on a bare `tool` message |
@@ -44,6 +44,8 @@ What experts should expect from Forge in long, unattended, or CI runs.
 | **ULW wave ledger** | Per-wave facts (`editDelta`, `proof`, summary) in `ulw.json` drive the quality bar: best-wave anchoring, proof demands (cap 2), thin-wave escalation, 4th-wave consolidation cadence, diminishing-returns advisory, and one-time evidence bounce on weak `**Cycle complete.**` attestations (never an infinite trap) |
 | **Atomic file writes** | `write_file` / `search_replace` / `apply_patch` write via tmp+rename |
 | **Edit miss guidance** | `search_replace` failures on existing files suggest closest lines + block-drift notes (not path typos); multi-match lists line numbers |
+| **Path-not-found hints** | Missing paths suggest sibling typos; when the parent dir is also missing, walk up one level (`srcx/foo.ts` → `src/`) |
+| **Tool path display** | `displayRelPath` realpath-normalizes workspace/file pairs (macOS `/var` vs `/private/var`) across write/edit/read/grep/glob/apply_patch, permission-ask diffs, turn-end Δ, `/context` labels, and LSP locations — no `../../../../private/var/...` leaks |
 | **todo_write validation** | Requires id/content/valid status; merge:true + [] warns; failures are tool errors |
 | **bash exit code** | Non-zero exits always append `[exit code N]` even when stdout/stderr is non-empty |
 | **grep/glob empty** | Empty results include pattern/path + recovery tips |

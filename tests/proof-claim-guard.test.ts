@@ -6,6 +6,7 @@ import path from "node:path";
 import {
   detectProofClaim,
   evaluateProofClaimAtStop,
+  proofClaimReleaseTips,
 } from "../src/harness/proof-claim-guard.js";
 import { runStopGuard } from "../src/harness/stop-guard.js";
 import { DEFAULT_CONFIG } from "../src/config/types.js";
@@ -358,5 +359,28 @@ describe("stop-guard proof-claim composition", () => {
     });
     assert.equal(r.block, false);
     assert.equal(r.released, true);
+  });
+});
+
+describe("proofClaimReleaseTips", () => {
+  it("prefers workspace check commands over npm-hardcoded tips", () => {
+    const tips = proofClaimReleaseTips(["pytest -q", "ruff check"]);
+    assert.equal(tips[0], "Run the verification command, then continue");
+    assert.match(tips[1]!, /pytest -q/);
+    assert.match(tips[1]!, /ruff check/);
+    assert.match(tips[1]!, /\/retry/);
+    assert.doesNotMatch(tips[1]!, /npm test/);
+  });
+
+  it("falls back when no preferred checks are known", () => {
+    const tips = proofClaimReleaseTips([]);
+    assert.match(tips[1]!, /project check/i);
+    assert.match(tips[1]!, /\/retry/);
+  });
+
+  it("caps at two preferred checks", () => {
+    const tips = proofClaimReleaseTips(["a", "b", "c"]);
+    assert.match(tips[1]!, /^a {2}· {2}b {2}· {2}\/retry$/);
+    assert.doesNotMatch(tips[1]!, /\bc\b/);
   });
 });

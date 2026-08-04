@@ -3,6 +3,7 @@
  */
 import fs from "node:fs";
 import path from "node:path";
+import { displayRelPath } from "../agent/tools/path-util.js";
 import { JsonRpcStdioClient } from "../util/jsonrpc-stdio.js";
 import { log } from "../util/log.js";
 import {
@@ -443,8 +444,8 @@ function formatLocations(result: unknown, workspace: string): string {
     const col = (range.start?.character ?? 0) + 1;
     let filePath = uriToPath(uri);
     try {
-      const rel = path.relative(workspace, filePath);
-      if (rel && !rel.startsWith("..")) filePath = rel;
+      const rel = displayRelPath(workspace, filePath);
+      if (rel && !path.isAbsolute(rel)) filePath = rel;
     } catch {
       /* */
     }

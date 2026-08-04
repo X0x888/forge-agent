@@ -339,6 +339,72 @@ describe("Bar A: project config cannot weaken safety", () => {
     assert.equal(out.model, "project-model");
   });
 
+  it("applySafeProjectOverlay ignores yolo/always/bypass aliases too", () => {
+    const global = { ...DEFAULT_CONFIG };
+    for (const alias of ["yolo", "always", "bypass"] as const) {
+      const out = applySafeProjectOverlay(global, {
+        permissionMode: alias as any,
+        model: "m",
+      });
+      assert.notEqual(
+        out.permissionMode,
+        "bypassPermissions",
+        `project permission_mode=${alias} must not enable yolo`,
+      );
+      assert.equal(out.permissionMode, global.permissionMode);
+    }
+    // Safe aliases still apply (plan / dontAsk).
+    const plan = applySafeProjectOverlay(global, {
+      permissionMode: "plan",
+    });
+    assert.equal(plan.permissionMode, "plan");
+    const deny = applySafeProjectOverlay(global, {
+      permissionMode: "deny" as any,
+    });
+    assert.equal(deny.permissionMode, "dontAsk");
+  });
+
+  it("applySafeProjectOverlay ignores sandbox off aliases (none/false/0)", () => {
+    const global = { ...DEFAULT_CONFIG, sandbox: "workspace" as const };
+    for (const alias of ["none", "false", "0", "off"] as const) {
+      const out = applySafeProjectOverlay(global, {
+        sandbox: alias as any,
+      });
+      assert.notEqual(
+        out.sandbox,
+        "off",
+        `project sandbox=${alias} must not disable sandbox`,
+      );
+      assert.equal(out.sandbox, "workspace");
+    }
+    // Tighter profiles still apply.
+    const ro = applySafeProjectOverlay(global, { sandbox: "ro" as any });
+    assert.equal(ro.sandbox, "read-only");
+    const blocked = applySafeProjectOverlay(global, {
+      sandboxNetwork: "deny" as any,
+    });
+    assert.equal(blocked.sandboxNetwork, "blocked");
+  });
+
+  it("applySafeProjectOverlay ignores stringy blocking_stop_hooks=false", () => {
+    const global = { ...DEFAULT_CONFIG, blockingStopHooks: true };
+    for (const v of [false, "false", "0", "no", "off"] as const) {
+      const out = applySafeProjectOverlay(global, {
+        blockingStopHooks: v as any,
+      });
+      assert.equal(
+        out.blockingStopHooks,
+        true,
+        `project blockingStopHooks=${JSON.stringify(v)} must stay on`,
+      );
+    }
+    const on = applySafeProjectOverlay(
+      { ...DEFAULT_CONFIG, blockingStopHooks: false },
+      { blockingStopHooks: "true" as any },
+    );
+    assert.equal(on.blockingStopHooks, true);
+  });
+
   it("loadConfig from project dir ignores dangerous knobs", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-bara-"));
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "forge-home-"));

@@ -33,6 +33,7 @@ import {
 import { appendFileMutation } from "../session/mutations.js";
 import { HookRunner, type HookContext } from "../harness/hooks.js";
 import { runStopGuard } from "../harness/stop-guard.js";
+import { proofClaimReleaseTips } from "../harness/proof-claim-guard.js";
 import { loadGoal, detectAutoGoal, armGoal } from "../harness/goal.js";
 import {
   loadUlwCycle,
@@ -1514,10 +1515,7 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
                   stopResult.proofClaim.reason ||
                   "Proof-claim guard released after claim-without-run Stop attempts"
                 ).slice(0, 500),
-                tips: [
-                  "Run the verification command, then continue",
-                  "npm test  ·  npm run typecheck  ·  /retry",
-                ],
+                tips: proofClaimReleaseTips(preferredCheckCommands),
               });
               saveSession(session);
             }

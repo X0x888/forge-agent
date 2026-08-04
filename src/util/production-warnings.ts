@@ -15,6 +15,11 @@ import {
   packageManagerLockfileMismatch,
   multipleLockfiles,
 } from "./project-intel.js";
+import {
+  normalizePermissionMode,
+  normalizeSandboxProfile,
+} from "./mode-aliases.js";
+import { isFalsy } from "./bool.js";
 import { isLastVerificationStale } from "../session/session.js";
 
 export interface ProductionWarningOpts {
@@ -64,15 +69,21 @@ export function productionWarningsForRun(
       }
     }
   try {
-    if (config.sandbox === "off") {
+    // Normalize aliases so late/partial configs still surface CI footguns:
+    // sandbox none/false/0 → off; yolo/always/bypass → bypassPermissions.
+    const sandbox =
+      normalizeSandboxProfile(config.sandbox) ?? config.sandbox;
+    if (sandbox === "off") {
       warnings.push("sandbox=off — bash runs unsandboxed");
     }
-    if (config.permissionMode === "bypassPermissions") {
+    const permissionMode =
+      normalizePermissionMode(config.permissionMode) ?? config.permissionMode;
+    if (permissionMode === "bypassPermissions") {
       warnings.push(
         "permissionMode=bypassPermissions (yolo) — tools auto-approved",
       );
     }
-    if (config.permissionMode === "dontAsk") {
+    if (permissionMode === "dontAsk") {
       warnings.push(
         "permissionMode=dontAsk — permission prompts auto-deny; ask_user unavailable (state assumptions)",
       );
@@ -88,7 +99,7 @@ export function productionWarningsForRun(
         );
       }
     }
-    if (config.permissionMode === "plan") {
+    if (permissionMode === "plan") {
       warnings.push(
         "permissionMode=plan — mutations denied; use /build (or --permission-mode acceptEdits) to implement",
       );
@@ -103,7 +114,7 @@ export function productionWarningsForRun(
         "read-outside=allow — absolute paths outside workspace readable without prompt",
       );
     }
-    if (config.blockingStopHooks === false) {
+    if (isFalsy(config.blockingStopHooks)) {
       warnings.push(
         "blockingStopHooks=false — Stop hooks will not re-anchor the agent",
       );

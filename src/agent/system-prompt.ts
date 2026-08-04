@@ -14,6 +14,7 @@ import {
   type ProjectIntel,
 } from "../util/project-intel.js";
 import { forgeHome } from "../util/fs.js";
+import { displayRelPath } from "./tools/path-util.js";
 import { formatSkillsForPrompt } from "./project-skills.js";
 
 /** Per-file cap so one huge AGENTS.md cannot dominate the system prompt. */
@@ -134,8 +135,8 @@ function collectInstructionPaths(workspace: string): string[] {
 
 function labelForRulePath(abs: string, workspace: string): string {
   const ws = path.resolve(workspace || process.cwd());
-  const rel = path.relative(ws, abs);
-  if (rel && !rel.startsWith("..") && !path.isAbsolute(rel)) return rel;
+  const rel = displayRelPath(ws, abs);
+  if (rel && !path.isAbsolute(rel)) return rel;
   // Parent / global — show stable short label
   const home = forgeHome();
   if (abs.startsWith(home + path.sep) || abs === path.join(home, "AGENTS.md")) {
@@ -209,7 +210,7 @@ function profileBlock(profile: PromptProfile): string[] {
       `- Prefer action + verification over advice-only. When you say you will do X, tool-call in the same turn.`,
       `- Judge leverage → research only as deep as needed → implement → prove. Freestyle when freestyle is better; doctrine is compass, not cage.`,
       `- **Proactive subagents** when they improve quality or efficiency (parallel explore, design plan, isolated implement); skip when one tool call is enough.`,
-      `- One-line reading on multi-step work, then proceed — no confirmation waits.`,
+      `- State your reading first (one line) on multi-step work, then proceed — do not wait for confirmation.`,
       `- Finish, don't hand off. Never "shall I continue?" / "let me know if…".`,
       `- Finish the class (siblings + dependents). Hostile review of your own diff. Fix code when tests go red — don't weaken tests.`,
       `- Pause only for real external blockers (credentials, destructive shared-state, uninterpretable foreign work).`,
@@ -279,7 +280,7 @@ export function buildBaselineSystemPrompt(opts: {
     ``,
     `## Operating principles`,
     `- Think before acting. Prefer verification (run tests, read files) over speculation.`,
-    `- On non-trivial multi-step work, state your reading in one line (what you believe is asked + any rival reading you passed on), then proceed without waiting for confirmation.`,
+    `- On non-trivial multi-step work, state your reading first in one line (what you believe is asked + any rival reading you passed on), then proceed without waiting for confirmation.`,
     `- Finish, don't hand off: never stop with "let me know if…", "shall I continue?", or "want me to…?" — keep going until the asked work is done or a real external blocker exists.`,
     `- Finish the class, not just the example: a named bug/site implies siblings (same defect elsewhere) and dependents (callers, tests, docs, config). Grep the symbol you touched before calling it done.`,
     `- After substantive edits, re-read your own diff as a hostile reviewer (regressions, weakened tests, leftover stubs, stale last-verify) and fix what you find before claiming done.`,

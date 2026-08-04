@@ -235,4 +235,49 @@ describe("productionWarningsForRun", () => {
       else process.env.FORGE_VERIFY_HINT = prev;
     }
   });
+
+  it("normalizes permission aliases (yolo/deny) before warning", () => {
+    const yolo = productionWarningsForRun(
+      { ...DEFAULT_CONFIG, permissionMode: "yolo" as any },
+      {
+        _testDirtyFiles: 0,
+        _testSessionCount: 0,
+        _testPinnedCount: 0,
+      },
+    );
+    assert.ok(
+      yolo.some((x) => /permissionMode=bypassPermissions \(yolo\)/i.test(x)),
+      "yolo alias must warn like bypassPermissions",
+    );
+
+    const deny = productionWarningsForRun(
+      { ...DEFAULT_CONFIG, permissionMode: "deny" as any },
+      {
+        _testDirtyFiles: 0,
+        _testSessionCount: 0,
+        _testPinnedCount: 0,
+      },
+    );
+    assert.ok(
+      deny.some((x) => /permissionMode=dontAsk/i.test(x)),
+      "deny alias must warn like dontAsk",
+    );
+  });
+
+  it("normalizes sandbox off aliases (none/false/0) before warning", () => {
+    for (const alias of ["none", "false", "0"] as const) {
+      const w = productionWarningsForRun(
+        { ...DEFAULT_CONFIG, sandbox: alias as any },
+        {
+          _testDirtyFiles: 0,
+          _testSessionCount: 0,
+          _testPinnedCount: 0,
+        },
+      );
+      assert.ok(
+        w.some((x) => /sandbox=off/i.test(x)),
+        `sandbox=${alias} must warn like sandbox=off`,
+      );
+    }
+  });
 });

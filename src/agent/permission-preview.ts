@@ -6,7 +6,6 @@
  * text argument preview.
  */
 import fs from "node:fs";
-import path from "node:path";
 import {
   applyMatch,
   locateEdit,
@@ -15,7 +14,7 @@ import {
 } from "./tools/edit-match.js";
 import { normalizeNewlines } from "./tools/text.js";
 import { applyUpdateChunks, parsePatch } from "./tools/patch.js";
-import { resolvePath } from "./tools/path-util.js";
+import { displayRelPath, resolvePath } from "./tools/path-util.js";
 import { formatDiffBlock } from "../util/format.js";
 import { isTruthy } from "../util/bool.js";
 
@@ -90,7 +89,7 @@ function searchReplacePreview(
     }
   }
   if (next === undefined) return undefined;
-  const rel = path.relative(ws, abs) || abs;
+  const rel = displayRelPath(ws, abs);
   return formatDiffBlock(shortDiff(rel, base, next, 30), {
     maxLines: 30,
     indent: "  ",
@@ -112,7 +111,7 @@ function writePreview(
   }
   // Mirror toolWrite's pasted read_file line-number strip.
   const body = stripReadFileLinePrefixes(input.content).text;
-  const rel = path.relative(ws, abs) || abs;
+  const rel = displayRelPath(ws, abs);
   return formatDiffBlock(shortDiff(rel, before, body, 30), {
     maxLines: 30,
     indent: "  ",
@@ -132,7 +131,7 @@ function patchPreview(
   const blocks: string[] = [];
   for (const hunk of parsed.hunks) {
     const abs = resolvePath(ws, hunk.path);
-    const rel = path.relative(ws, abs) || abs;
+    const rel = displayRelPath(ws, abs);
     if (hunk.type === "add") {
       let content = hunk.contents;
       if (content.length > 0 && !content.endsWith("\n")) content += "\n";
@@ -159,7 +158,7 @@ function patchPreview(
       return undefined;
     }
     const moveRel = hunk.movePath
-      ? path.relative(ws, resolvePath(ws, hunk.movePath)) || hunk.movePath
+      ? displayRelPath(ws, resolvePath(ws, hunk.movePath))
       : undefined;
     blocks.push(
       shortDiff(moveRel ? `${rel} → ${moveRel}` : rel, before, next, 20),

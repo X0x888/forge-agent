@@ -2,7 +2,7 @@ import fs from "node:fs";
 import fsp from "node:fs/promises";
 import path from "node:path";
 import type { ToolContext, ToolResult } from "./types.js";
-import { resolvePath, resolveReadablePath } from "./path-util.js";
+import { resolvePath, resolveReadablePath, displayRelPath } from "./path-util.js";
 import { pathNotFoundHint } from "./path-hints.js";
 import { boundToolOutput, DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES } from "./truncate.js";
 import { numberFieldError } from "./arg-types.js";
@@ -222,7 +222,7 @@ export async function toolRead(
       .filter((e) => e.name !== ".git" && e.name !== "node_modules")
       .slice(0, 500)
       .map((e) => `${e.name}${e.isDirectory() ? "/" : ""}`);
-    const rel = path.relative(ctx.workspace, filePath) || ".";
+    const rel = displayRelPath(ctx.workspace, filePath);
     return {
       output: `Directory: ${rel}\n${lines.length ? lines.join("\n") : "(empty)"}`,
     };
@@ -233,7 +233,7 @@ export async function toolRead(
   if (stat.size > LARGE_FILE_BYTES) {
     if (await sniffBinary(filePath)) {
       return {
-        output: `Binary file (${stat.size} bytes): ${path.relative(ctx.workspace, filePath) || filePath}. Cannot display as text.`,
+        output: `Binary file (${stat.size} bytes): ${displayRelPath(ctx.workspace, filePath)}. Cannot display as text.`,
         isError: true,
       };
     }
@@ -241,7 +241,7 @@ export async function toolRead(
     if (typeof parsed === "string") {
       return { output: parsed, isError: true };
     }
-    const rel = path.relative(ctx.workspace, filePath) || filePath;
+    const rel = displayRelPath(ctx.workspace, filePath);
     const largeHint = `; ${stat.size} bytes — prefer smaller limit/offset or grep for targeted reads`;
     const { slice, complete, seen, hitCap } = await streamLines(
       filePath,
@@ -279,7 +279,7 @@ export async function toolRead(
   const buf = await fsp.readFile(filePath);
   if (isProbablyBinary(buf)) {
     return {
-      output: `Binary file (${stat.size} bytes): ${path.relative(ctx.workspace, filePath) || filePath}. Cannot display as text.`,
+      output: `Binary file (${stat.size} bytes): ${displayRelPath(ctx.workspace, filePath)}. Cannot display as text.`,
       isError: true,
     };
   }
@@ -308,7 +308,7 @@ export async function toolRead(
     })
     .join("\n");
 
-  const rel = path.relative(ctx.workspace, filePath) || filePath;
+  const rel = displayRelPath(ctx.workspace, filePath);
   const largeHint =
     stat.size >= LARGE_FILE_BYTES
       ? `; ${stat.size} bytes — prefer smaller limit/offset or grep for targeted reads`

@@ -2,7 +2,7 @@ import fs from "node:fs";
 import fsp from "node:fs/promises";
 import path from "node:path";
 import type { ToolContext, ToolResult } from "./types.js";
-import { resolvePath, assertWritablePath } from "./path-util.js";
+import { resolvePath, assertWritablePath, displayRelPath } from "./path-util.js";
 import { pathNotFoundHint } from "./path-hints.js";
 import {
   applyMatch,
@@ -130,7 +130,7 @@ export async function toolEdit(
   // Refuse directory targets — readFile EISDIR is opaque to models.
   try {
     if (fs.existsSync(filePath) && fs.statSync(filePath).isDirectory()) {
-      const rel = path.relative(ctx.workspace, filePath) || filePath;
+      const rel = displayRelPath(ctx.workspace, filePath);
       return {
         output:
           `search_replace failed: ${rel} is a directory. ` +
@@ -144,7 +144,7 @@ export async function toolEdit(
 
   // Session-scoped stale/unread guard (agent loop only).
   if (ctx.fileReads && fileReadGuardEnabled()) {
-    const rel = path.relative(ctx.workspace, filePath) || filePath;
+    const rel = displayRelPath(ctx.workspace, filePath);
     const blocked = await ctx.fileReads.checkBeforeMutate(filePath, {
       tool: "search_replace",
       rel,
@@ -222,7 +222,7 @@ export async function toolEdit(
         if (ctx.fileReads && fileReadGuardEnabled()) {
           await ctx.fileReads.noteFromDisk(filePath);
         }
-        const rel = path.relative(ctx.workspace, filePath) || filePath;
+        const rel = displayRelPath(ctx.workspace, filePath);
         const note =
           alt.result.kind !== "exact"
             ? ` (matched via ${alt.result.kind} fallback)`
@@ -237,7 +237,7 @@ export async function toolEdit(
     }
     // File exists — path typo hints are misleading. Guide on content mismatch.
     // Multi-match already embeds line locations; skip closest-line tips (noise).
-    const rel = path.relative(ctx.workspace, filePath) || filePath;
+    const rel = displayRelPath(ctx.workspace, filePath);
     const multi = /matches multiple times/i.test(located.reason);
     const contentHint = multi ? "" : editMissHint(content, oldNative);
     return {
@@ -259,7 +259,7 @@ export async function toolEdit(
     await ctx.fileReads.noteFromDisk(filePath);
   }
 
-  const rel = path.relative(ctx.workspace, filePath) || filePath;
+  const rel = displayRelPath(ctx.workspace, filePath);
   const note =
     located.result.kind !== "exact"
       ? ` (matched via ${located.result.kind} fallback)`

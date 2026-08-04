@@ -86,6 +86,78 @@ describe("json-repair", () => {
     assert.equal(r.ok, true);
     if (r.ok) assert.deepEqual(r.value, {});
   });
+
+  it("repairs bare undefined / NaN values to null", () => {
+    const r = parseToolArguments('{"a": true, "b": undefined, "c": NaN}');
+    assert.equal(r.ok, true);
+    if (r.ok) {
+      assert.equal(r.repaired, true);
+      assert.equal(r.value.a, true);
+      assert.equal(r.value.b, null);
+      assert.equal(r.value.c, null);
+    }
+  });
+
+  it("repairs unquoted keys", () => {
+    const r = parseToolArguments('{path: "src/a.ts", offset: 1}');
+    assert.equal(r.ok, true);
+    if (r.ok) {
+      assert.equal(r.repaired, true);
+      assert.equal(r.value.path, "src/a.ts");
+      assert.equal(r.value.offset, 1);
+    }
+  });
+
+  it("strips // and /* */ comments outside strings", () => {
+    const line = parseToolArguments('{"a":1 // trailing\n,"b":2}');
+    assert.equal(line.ok, true);
+    if (line.ok) {
+      assert.equal(line.value.a, 1);
+      assert.equal(line.value.b, 2);
+    }
+    const block = parseToolArguments('{"a":1, /* skip */ "b":2}');
+    assert.equal(block.ok, true);
+    if (block.ok) {
+      assert.equal(block.value.a, 1);
+      assert.equal(block.value.b, 2);
+    }
+    // Comments inside string values must stay intact.
+    const kept = parseToolArguments('{"cmd":"echo // not a comment"}');
+    assert.equal(kept.ok, true);
+    if (kept.ok) assert.equal(kept.value.cmd, "echo // not a comment");
+  });
+
+  it("repairs empty values after colon (closed or mid-list)", () => {
+    const closed = parseToolArguments('{"a":1,"b":}');
+    assert.equal(closed.ok, true);
+    if (closed.ok) {
+      assert.equal(closed.repaired, true);
+      assert.equal(closed.value.a, 1);
+      assert.equal(closed.value.b, null);
+    }
+    const mid = parseToolArguments('{"a":1,"b":, "c":2}');
+    assert.equal(mid.ok, true);
+    if (mid.ok) {
+      assert.equal(mid.value.a, 1);
+      assert.equal(mid.value.b, null);
+      assert.equal(mid.value.c, 2);
+    }
+    // Unquoted keys + empty value (combined model glitch).
+    const bare = parseToolArguments("{a:1,b:,c:2}");
+    assert.equal(bare.ok, true);
+    if (bare.ok) {
+      assert.equal(bare.value.a, 1);
+      assert.equal(bare.value.b, null);
+      assert.equal(bare.value.c, 2);
+    }
+    // Truncated colon still recovers (existing closeIncompleteJson path).
+    const trunc = parseToolArguments('{"command":"npm test","background":');
+    assert.equal(trunc.ok, true);
+    if (trunc.ok) {
+      assert.equal(trunc.value.command, "npm test");
+      assert.equal(trunc.value.background, null);
+    }
+  });
 });
 
 describe("message-repair", () => {
@@ -313,6 +385,58 @@ describe("doctor surfaces reliability", () => {
     assert.match(out, /sessions:/);
     // foreign-locked count is optional (0 locks → no suffix)
     assert.match(out, /sessions: \d+/);
+  });
+
+  it("doctor flags yolo/sandbox-off aliases like canonical modes", async () => {
+    const { DEFAULT_CONFIG } = await import("../src/config/types.js");
+    const { runDoctorCheck } = await import("../src/commands/slash.js");
+    const yolo = await runDoctorCheck({
+      ...DEFAULT_CONFIG,
+      permissionMode: "yolo" as any,
+    });
+    assert.ok(
+      yolo.issues.some((i) => /bypassPermissions \(yolo\)/i.test(i)),
+      "yolo alias must raise the yolo doctor issue",
+    );
+    const sandboxNone = await runDoctorCheck({
+      ...DEFAULT_CONFIG,
+      sandbox: "none" as any,
+    });
+    assert.ok(
+      sandboxNone.issues.some((i) => /Sandbox is off/i.test(i)),
+      "sandbox=none alias must raise sandbox-off doctor issue",
+    );
+  });
+
+  it("doctor and production-warnings treat stringy blockingStopHooks=false as OFF", async () => {
+    const { DEFAULT_CONFIG } = await import("../src/config/types.js");
+    const { runDoctorCheck } = await import("../src/commands/slash.js");
+    const { productionWarningsForRun } = await import(
+      "../src/util/production-warnings.js"
+    );
+    const { isFalsy, coerceBool } = await import("../src/util/bool.js");
+    assert.equal(isFalsy("false"), true);
+    assert.equal(isFalsy("0"), true);
+    assert.equal(coerceBool("false"), false);
+    assert.equal(coerceBool("true"), true);
+
+    const doc = await runDoctorCheck({
+      ...DEFAULT_CONFIG,
+      blockingStopHooks: "false" as any,
+    });
+    assert.ok(
+      doc.issues.some((i) => /Blocking Stop is OFF/i.test(i)),
+      "string blockingStopHooks=false must raise Blocking Stop OFF",
+    );
+    const w = productionWarningsForRun(
+      { ...DEFAULT_CONFIG, blockingStopHooks: "false" as any },
+      {
+        _testDirtyFiles: 0,
+        _testSessionCount: 0,
+        _testPinnedCount: 0,
+      },
+    );
+    assert.ok(w.some((x) => /blockingStopHooks=false/i.test(x)));
   });
 
   it("doctor report + hygiene helpers expose CI contract fields", async () => {

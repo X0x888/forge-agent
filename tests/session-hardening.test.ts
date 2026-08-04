@@ -449,11 +449,16 @@ describe("(4) session id containment", () => {
   });
 });
 
+/** Write with open(mode=…) — sandboxes often deny chmod(2) but honor create mode. */
+function writeWithMode(p: string, body: string, mode: number): boolean {
+  fs.writeFileSync(p, body, { mode });
+  return (fs.statSync(p).mode & 0o777) === (mode & 0o777);
+}
+
 describe("(5) undo restores the journaled pre-image mode", () => {
   it("snapshotForWrite captures the pre-image mode", async () => {
     const p = path.join(workspace, "m.txt");
-    fs.writeFileSync(p, "x\n");
-    fs.chmodSync(p, 0o640);
+    if (!writeWithMode(p, "x\n", 0o640)) return;
     const snap = await snapshotForWrite(p);
     assert.equal(snap.kind, "update");
     if (process.platform !== "win32") {
@@ -464,7 +469,7 @@ describe("(5) undo restores the journaled pre-image mode", () => {
   it("restore re-applies the journaled mode (0600 only when unknown)", () => {
     const s = newSession();
     const a = path.join(workspace, "script.sh");
-    fs.writeFileSync(a, "echo v1\n");
+    writeWithMode(a, "echo v1\n", 0o644);
     appendFileMutation(s.meta.id, {
       path: a,
       kind: "update",
@@ -473,17 +478,16 @@ describe("(5) undo restores the journaled pre-image mode", () => {
       turn: 1,
     });
     const b = path.join(workspace, "legacy.txt");
-    fs.writeFileSync(b, "old\n");
+    writeWithMode(b, "old\n", 0o644);
     appendFileMutation(s.meta.id, {
       path: b,
       kind: "update",
       before: "old\n",
       turn: 1, // no mode — legacy journal entry
     });
-    fs.writeFileSync(a, "echo v2\n");
-    fs.chmodSync(a, 0o644);
-    fs.writeFileSync(b, "new\n");
-    fs.chmodSync(b, 0o644);
+    // Overwrite content (and mode when the platform allows) without chmod(2).
+    writeWithMode(a, "echo v2\n", 0o644);
+    writeWithMode(b, "new\n", 0o644);
     const r = restoreMutationsAfterTurn(s.meta.id, 0);
     assert.deepEqual(r.failed, []);
     assert.equal(fs.readFileSync(a, "utf8"), "echo v1\n");
@@ -501,8 +505,7 @@ describe("(5) undo restores the journaled pre-image mode", () => {
   it("search_replace journals pre-image mode; /undo keeps scripts executable", async () => {
     const s = newSession();
     const target = path.join(workspace, "run.sh");
-    fs.writeFileSync(target, "echo v1\n");
-    fs.chmodSync(target, 0o755);
+    if (!writeWithMode(target, "echo v1\n", 0o755)) return;
     s.meta.turnCount = 1;
     markUserTurn(s);
     s.messages.push({ role: "user", content: "edit script" });

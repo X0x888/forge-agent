@@ -1,3 +1,4 @@
+import fs from "node:fs";
 import path from "node:path";
 import { forgeHome, isWithinRoot, realpathWithinRoot } from "../../util/fs.js";
 import {
@@ -8,6 +9,56 @@ import {
 export function resolvePath(workspace: string, p: string): string {
   if (path.isAbsolute(p)) return path.resolve(p);
   return path.resolve(workspace, p);
+}
+
+/**
+ * Realpath an existing path, or the nearest existing ancestor + rejoin
+ * trailing segments. Handles missing files and macOS `/var` → `/private/var`.
+ */
+function realpathExistingPrefix(p: string): string {
+  let cur = path.resolve(p);
+  const tail: string[] = [];
+  while (true) {
+    try {
+      const real = fs.realpathSync(cur);
+      return tail.length ? path.join(real, ...tail.reverse()) : real;
+    } catch {
+      const parent = path.dirname(cur);
+      if (parent === cur) return path.resolve(p);
+      tail.push(path.basename(cur));
+      cur = parent;
+    }
+  }
+}
+
+/**
+ * Workspace-relative path for tool transcripts / diffs.
+ * Realpath-normalizes macOS `/var` vs `/private/var` (and similar) so
+ * `path.relative` does not leak `../../../../private/var/...` into output.
+ */
+export function displayRelPath(workspace: string, filePath: string): string {
+  const ws = path.resolve(workspace);
+  const fp = path.resolve(filePath);
+  const clean = (rel: string): string | null => {
+    if (!rel) return ".";
+    if (path.isAbsolute(rel)) return null;
+    if (rel === "..") return null;
+    if (rel.startsWith(`..${path.sep}`)) return null;
+    return rel;
+  };
+  const first = clean(path.relative(ws, fp));
+  if (first != null) return first;
+  try {
+    const wsReal = realpathExistingPrefix(ws);
+    const fpReal = realpathExistingPrefix(fp);
+    const second = clean(path.relative(wsReal, fpReal));
+    if (second != null) return second;
+  } catch {
+    /* ignore */
+  }
+  // Outside the workspace — keep the logical absolute path the caller gave
+  // (do not realpath `/etc` → `/private/etc` on macOS; that confuses UX/tests).
+  return fp;
 }
 
 /**

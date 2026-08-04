@@ -28,6 +28,7 @@ import {
   saveSession,
 } from "../session/session.js";
 import type { LoopEvents, LoopResult } from "./loop.js";
+import { normalizePermissionMode } from "../util/mode-aliases.js";
 import {
   createSubagentWorktree,
   resolveIsolationMode,
@@ -282,12 +283,18 @@ export async function runSubagent(
       subagentType === "plan"
         ? "plan"
         : capabilityMode === "read-only"
-          ? ctx.config.permissionMode === "bypassPermissions"
-            ? "bypassPermissions"
-            : ctx.config.permissionMode === "dontAsk"
-              ? "dontAsk"
-              : "default"
-          : ctx.config.permissionMode,
+          ? (() => {
+              const pm =
+                normalizePermissionMode(ctx.config.permissionMode) ??
+                ctx.config.permissionMode;
+              return pm === "bypassPermissions"
+                ? "bypassPermissions"
+                : pm === "dontAsk"
+                  ? "dontAsk"
+                  : "default";
+            })()
+          : (normalizePermissionMode(ctx.config.permissionMode) ??
+            ctx.config.permissionMode),
   };
 
   const tools = filterToolsForSubagent(capabilityMode, {

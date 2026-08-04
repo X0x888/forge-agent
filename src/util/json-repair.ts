@@ -114,6 +114,117 @@ function buildRepairCandidates(input: string): Array<{ text: string; note: strin
     }
   }
 
+  // Model/JS-ish glitches that JSON.parse rejects:
+  //  - bare `undefined` values → null
+  //  - // line comments
+  //  - unquoted object keys ({path:"x"})
+  // Apply outside strings only so command bodies stay intact.
+  const jsish = sanitizeJsishJson(noTrailingCommas);
+  if (jsish !== noTrailingCommas) {
+    out.push({
+      text: closeIncompleteJson(jsish),
+      note: "js-ish tokens (undefined/comments/unquoted keys) + close",
+    });
+  }
+  const jsishFromRaw = sanitizeJsishJson(s);
+  if (jsishFromRaw !== s && jsishFromRaw !== jsish) {
+    out.push({
+      text: closeIncompleteJson(jsishFromRaw.replace(/,\s*([}\]])/g, "$1")),
+      note: "js-ish tokens from raw + close",
+    });
+  }
+
+  return out;
+}
+
+/**
+ * Outside of JSON strings, rewrite a few JS-ish tokens models emit in tool
+ * args so JSON.parse can succeed. Never invents keys — only normalizes syntax.
+ */
+function sanitizeJsishJson(input: string): string {
+  let out = "";
+  let inString = false;
+  let escape = false;
+  let i = 0;
+  while (i < input.length) {
+    const ch = input[i]!;
+    if (inString) {
+      out += ch;
+      if (escape) {
+        escape = false;
+      } else if (ch === "\\") {
+        escape = true;
+      } else if (ch === '"') {
+        inString = false;
+      }
+      i += 1;
+      continue;
+    }
+    if (ch === '"') {
+      out += ch;
+      inString = true;
+      i += 1;
+      continue;
+    }
+    // Line comment to EOL
+    if (ch === "/" && input[i + 1] === "/") {
+      i += 2;
+      while (i < input.length && input[i] !== "\n" && input[i] !== "\r") i += 1;
+      continue;
+    }
+    // Block comment /* … */
+    if (ch === "/" && input[i + 1] === "*") {
+      i += 2;
+      while (i < input.length && !(input[i] === "*" && input[i + 1] === "/")) i += 1;
+      if (i < input.length) i += 2;
+      continue;
+    }
+    // bare undefined → null (NaN → null too — JSON has neither)
+    if (/^[A-Za-z_]/.test(ch)) {
+      const m = input.slice(i).match(/^(undefined|NaN)\b/);
+      if (m) {
+        out += "null";
+        i += m[0].length;
+        continue;
+      }
+      // unquoted key: ident followed by optional space and colon
+      const key = input.slice(i).match(/^([A-Za-z_][A-Za-z0-9_]*)(\s*:)/);
+      if (key) {
+        // Emit quoted key + colon, then fall through the empty-value
+        // check from the colon we just consumed (b: , → "b": null).
+        out += `"${key[1]}":`;
+        i += key[0].length;
+        let j = i;
+        while (j < input.length && /[ \t\r\n]/.test(input[j]!)) j += 1;
+        const next = input[j];
+        if (
+          next === undefined ||
+          next === "," ||
+          next === "}" ||
+          next === "]"
+        ) {
+          out += " null";
+          i = j;
+        }
+        continue;
+      }
+    }
+    // Empty value after colon: {"a":1,"b":} or {"a":1,"b":,} → null
+    // Truncation already yields null via closeIncompleteJson; this covers
+    // the closed-but-empty form models sometimes emit.
+    if (ch === ":") {
+      let j = i + 1;
+      while (j < input.length && /[ \t\r\n]/.test(input[j]!)) j += 1;
+      const next = input[j];
+      if (next === undefined || next === "," || next === "}" || next === "]") {
+        out += ": null";
+        i = j;
+        continue;
+      }
+    }
+    out += ch;
+    i += 1;
+  }
   return out;
 }
 

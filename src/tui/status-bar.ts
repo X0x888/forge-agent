@@ -35,6 +35,7 @@ import { readSessionLock, formatLockHolder } from "../session/lock.js";
 import { getGitSnapshot } from "../util/git-context.js";
 import { detectProjectIntel } from "../util/project-intel.js";
 import type { AuthMethod } from "../statusline/types.js";
+import { normalizePermissionMode } from "../util/mode-aliases.js";
 
 export interface StatusBarContext {
   config: ForgeConfig;
@@ -104,11 +105,15 @@ export function buildPromptFlags(ctx: StatusBarContext): string {
         : chalk.green("✓"),
     );
   }
-  if (config.permissionMode === "plan") flags.push(chalk.blue("PLAN"));
-  if (config.permissionMode === "bypassPermissions") {
-    flags.push(chalk.red("YOLO"));
-  } else if (config.permissionMode === "acceptEdits") {
-    flags.push(chalk.green("auto"));
+  {
+    const permissionMode =
+      normalizePermissionMode(config.permissionMode) ?? config.permissionMode;
+    if (permissionMode === "plan") flags.push(chalk.blue("PLAN"));
+    if (permissionMode === "bypassPermissions") {
+      flags.push(chalk.red("YOLO"));
+    } else if (permissionMode === "acceptEdits") {
+      flags.push(chalk.green("auto"));
+    }
   }
 
   const act = getActivity();
@@ -222,11 +227,15 @@ export function renderLiveRunHeader(ctx: StatusBarContext): string {
   const modelBits = [
     `${config.provider}/${shortModel(config.model)}`,
     effort ? `effort ${effort}` : null,
-    config.permissionMode === "bypassPermissions"
-      ? "YOLO"
-      : config.permissionMode === "acceptEdits"
-        ? "auto"
-        : null,
+    (() => {
+      const pm =
+        normalizePermissionMode(config.permissionMode) ?? config.permissionMode;
+      return pm === "bypassPermissions"
+        ? "YOLO"
+        : pm === "acceptEdits"
+          ? "auto"
+          : null;
+    })(),
   ]
     .filter(Boolean)
     .join(" · ");

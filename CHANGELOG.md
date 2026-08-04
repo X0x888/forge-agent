@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+### Fixed
+- **Blocking Stop stringy false**: doctor, production-warnings, and project overlay treat `"false"`/`"0"`/`off` as OFF for `blockingStopHooks` (JS truthiness trap); project still cannot disable the non-negotiable default.
+- **Proof-claim release tips**: session `lastError` after proof-claim cap uses project-intel check commands instead of hardcoded `npm test`.
+- **Status/subagent YOLO aliases**: statusline tags, prompt flags, and subagent permission inheritance normalize `yolo`/`always`/`bypass` so the YOLO badge and child permission mode stay accurate.
+- **Project config safety · sandbox aliases**: project `sandbox = "none"`/`false`/`0` normalize to `off` and are ignored (same as explicit `off`); network aliases like `deny` still tighten to `blocked`.
+- **Project config safety**: `applySafeProjectOverlay` normalizes permission aliases before the YOLO block — project `permission_mode = "yolo"`/`always`/`bypass` can no longer slip past the bypassPermissions deny.
+- **Production warnings + doctor · mode aliases**: `yolo`/`always`/`bypass`, `deny`, and sandbox `none`/`false`/`0` normalize before CI footgun checks (`productionWarningsForRun` and `runDoctorCheck`) so partial configs still warn.
+- **Tool-arg JSON repair**: recover common model glitches — bare `undefined`/`NaN` → `null`, empty values after colon (`{"a":1,"b":}`), unquoted keys (`{path:"x"}`), and `//` / `/* */` comments outside strings — so tool turns do not hard-fail on nearly-valid args.
+- **Provider recovery tips**: classify quota/billing (incl. 403 + plain `insufficient_quota`), model-not-found, Anthropic 529/`overloaded_error`, DNS/`ENOTFOUND`, Anthropic “prompt is too long” context overflow, Azure/OpenAI content-management/`content_filter` (incl. HTTP 400 bodies), empty/no-choice responses, unsupported model features (`tools is not supported`), org verification, and deprecated-model with specific codes + expert tips instead of generic `provider_error` / `auth_forbidden` / `bad_request`. 529 is retryable.
+- **Path-not-found hints**: when the immediate parent directory is missing, walk up one level and suggest similarly-named sibling dirs (`srcx/foo.ts` → `src/`).
+- **Tool path display**: `displayRelPath` realpath-normalizes workspace/file pairs (macOS `/var` vs `/private/var`) so write/edit/read/grep/glob/apply_patch transcripts, permission-ask diffs, turn-end Δ summaries, /context rule labels, and LSP locations never leak `../../../../private/var/...` relatives (out-of-workspace paths stay absolute).
+- **Advisory intent recall**: mid-run Q&A under ULW now recognizes common opinion/explain phrasings without a trailing `?` (`Thoughts on…`, `wdyt`, `walk me through`, `review the PR`, `help me understand…`, `pros and cons…`, `curious about…`, `TL;DR`/`ELI5`, `sanity check`, `remind me…`, `second opinion…`) so TodoGate / handoff-guard / proof-claim-guard do not trap pure questions. Explicit `please change/edit/update/patch` and `go ahead and…` remain work orders.
+- **System prompt PE**: restore the canonical “State your reading first” phrasing (profile + operating principles) so multi-step work keeps the one-line reading doctrine.
+- **Test portability**: mode-sensitive atomic-write / undo tests create files via `open(mode=…)` instead of `chmod(2)`; git fingerprint tests scaffold `.git` without `git init` — both survive sandboxes that deny chmod on locks/config.
+
 ### Added
 - **ULW god-mode doctrine** — soft/empty `/ulw` = domain-agnostic ownership: **smart + hard** (leverage over thrash), **proactive subagents when they win**, philosophy-not-cage freestyle, research→ship→prove→repeat. Not product- or tests-only. See `docs/ULW.md`.
 - **LSP ensure (smooth install)** — bottom-line default pack **TypeScript + Python**; **Rust/Go** when project markers present; Swift/shell tips only. `forge lsp ensure|status|detect`, `/lsp ensure`, `lsp({ action: "ensure" })`, `forge init` auto-ensure, once/day REPL tip. Env: `FORGE_LSP_AUTO=0`, `FORGE_LSP_AUTO_INSTALL=0`. See `docs/LSP.md`.

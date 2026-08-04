@@ -13,11 +13,20 @@ function tmpFile(name: string): string {
   return path.join(dir, name);
 }
 
+/**
+ * Create a file with an exact permission mode without calling chmod.
+ * Sandboxed runners often allow open(mode=…) but deny chmod(2).
+ * Returns false when the platform/umask cannot honor the requested mode.
+ */
+function writeWithMode(p: string, body: string, mode: number): boolean {
+  fs.writeFileSync(p, body, { mode });
+  return (fs.statSync(p).mode & 0o777) === (mode & 0o777);
+}
+
 describe("atomic-write mode preservation", () => {
   it("keeps 0600 when editing a secret file", async () => {
     const p = tmpFile("secret.txt");
-    fs.writeFileSync(p, "before");
-    fs.chmodSync(p, 0o600);
+    if (!writeWithMode(p, "before", 0o600)) return;
     await atomicWriteFile(p, "after");
     assert.equal(fs.readFileSync(p, "utf8"), "after");
     assert.equal(fs.statSync(p).mode & 0o777, 0o600);
@@ -25,16 +34,14 @@ describe("atomic-write mode preservation", () => {
 
   it("keeps 0755 when editing an executable", async () => {
     const p = tmpFile("run.sh");
-    fs.writeFileSync(p, "#!/bin/sh\necho before\n");
-    fs.chmodSync(p, 0o755);
+    if (!writeWithMode(p, "#!/bin/sh\necho before\n", 0o755)) return;
     await atomicWriteFile(p, "#!/bin/sh\necho after\n");
     assert.equal(fs.statSync(p).mode & 0o777, 0o755);
   });
 
   it("explicit mode option still wins over the existing mode", async () => {
     const p = tmpFile("secret.txt");
-    fs.writeFileSync(p, "before");
-    fs.chmodSync(p, 0o600);
+    if (!writeWithMode(p, "before", 0o600)) return;
     await atomicWriteFile(p, "after", { mode: 0o644 });
     assert.equal(fs.statSync(p).mode & 0o777, 0o644);
   });
@@ -48,8 +55,7 @@ describe("atomic-write mode preservation", () => {
 
   it("sync variant preserves the existing mode too", () => {
     const p = tmpFile("secret.txt");
-    fs.writeFileSync(p, "before");
-    fs.chmodSync(p, 0o600);
+    if (!writeWithMode(p, "before", 0o600)) return;
     atomicWriteFileSync(p, "after");
     assert.equal(fs.readFileSync(p, "utf8"), "after");
     assert.equal(fs.statSync(p).mode & 0o777, 0o600);

@@ -100,6 +100,8 @@ import {
   detectProjectFormatters,
   isFormatOnWriteEnabled,
 } from "../agent/tools/format-on-write.js";
+import { normalizePermissionMode, normalizeSandboxProfile } from "../util/mode-aliases.js";
+import { isFalsy } from "../util/bool.js";
 import { forgeHome, inspectSecureFile } from "../util/fs.js";
 import { getForgeVersion } from "../util/version.js";
 import { formatWhatsNew } from "../util/changelog.js";
@@ -150,6 +152,7 @@ import {
 import chalk from "chalk";
 import fs from "node:fs";
 import path from "node:path";
+import { displayRelPath } from "../agent/tools/path-util.js";
 import { execFileSync } from "node:child_process";
 import { tokenizeSimple } from "../agent/shell-parse.js";
 import {
@@ -2059,8 +2062,8 @@ export async function handleSlash(
         handled: true,
         output:
           lines.length > 0
-            ? `Loaded hooks:\n${lines.join("\n")}\nBlocking Stop: ${opts.config.blockingStopHooks ? "ON" : "OFF"}`
-            : `No hooks loaded.\nPlace JSON files in ~/.forge/hooks/ or .forge/hooks/\nBlocking Stop: ${opts.config.blockingStopHooks ? "ON" : "OFF"}`,
+            ? `Loaded hooks:\n${lines.join("\n")}\nBlocking Stop: ${isFalsy(opts.config.blockingStopHooks) ? "OFF" : "ON"}`
+            : `No hooks loaded.\nPlace JSON files in ~/.forge/hooks/ or .forge/hooks/\nBlocking Stop: ${isFalsy(opts.config.blockingStopHooks) ? "OFF" : "ON"}`,
       };
     }
 
@@ -2437,10 +2440,10 @@ export async function handleSlash(
         const body = loadProjectRules(ws);
         if (paths.length) {
           const labels = paths.slice(0, 8).map((p) => {
-            const rel = path.relative(ws, p);
-            return rel && !rel.startsWith("..") && !path.isAbsolute(rel)
-              ? rel
-              : p.replace(process.env.HOME || "", "~");
+            const rel = displayRelPath(ws, p);
+            return path.isAbsolute(rel)
+              ? p.replace(process.env.HOME || "", "~")
+              : rel;
           });
           const more = paths.length > 8 ? ` (+${paths.length - 8} more)` : "";
           rulesNote =
@@ -2461,11 +2464,10 @@ export async function handleSlash(
         const skills = loadProjectSkills(ws);
         if (skills.length) {
           const labels = skills.slice(0, 8).map((s) => {
-            const rel = path.relative(ws, s.filePath);
-            const loc =
-              rel && !rel.startsWith("..") && !path.isAbsolute(rel)
-                ? rel
-                : s.filePath.replace(process.env.HOME || "", "~");
+            const rel = displayRelPath(ws, s.filePath);
+            const loc = path.isAbsolute(rel)
+              ? s.filePath.replace(process.env.HOME || "", "~")
+              : rel;
             return `${s.name}${s.description ? ` — ${s.description.slice(0, 40)}` : ""} (${loc})`;
           });
           const more =
@@ -5793,30 +5795,34 @@ export async function runDoctorCheck(
       }
     }
   }
-  lines.push(`Permission mode: ${config.permissionMode}`);
-  if (config.permissionMode === "plan") {
-    lines.push(
-      chalk.blue(
-        "  PLAN — mutations denied; /build to implement (session /plan preferred over sticky plan)",
-      ),
-    );
-  }
-  if (config.permissionMode === "bypassPermissions") {
-    lines.push(
-      chalk.yellow(
-        "  ⚠ bypassPermissions (yolo) — all tools auto-approved; prefer acceptEdits/plan/dontAsk in CI",
-      ),
-    );
-    issues.push(
-      "Permission mode is bypassPermissions (yolo) — all tools auto-approved; set acceptEdits/plan/dontAsk for production CI",
-    );
-  }
-  if (config.permissionMode === "dontAsk") {
-    lines.push(
-      chalk.yellow(
-        "  ⚠ dontAsk — permission prompts auto-deny; ask_user also unavailable (state assumptions or use interactive default)",
-      ),
-    );
+  {
+    const permissionMode =
+      normalizePermissionMode(config.permissionMode) ?? config.permissionMode;
+    lines.push(`Permission mode: ${config.permissionMode}`);
+    if (permissionMode === "plan") {
+      lines.push(
+        chalk.blue(
+          "  PLAN — mutations denied; /build to implement (session /plan preferred over sticky plan)",
+        ),
+      );
+    }
+    if (permissionMode === "bypassPermissions") {
+      lines.push(
+        chalk.yellow(
+          "  ⚠ bypassPermissions (yolo) — all tools auto-approved; prefer acceptEdits/plan/dontAsk in CI",
+        ),
+      );
+      issues.push(
+        "Permission mode is bypassPermissions (yolo) — all tools auto-approved; set acceptEdits/plan/dontAsk for production CI",
+      );
+    }
+    if (permissionMode === "dontAsk") {
+      lines.push(
+        chalk.yellow(
+          "  ⚠ dontAsk — permission prompts auto-deny; ask_user also unavailable (state assumptions or use interactive default)",
+        ),
+      );
+    }
   }
   {
     const dontAskEnv = process.env.FORGE_DONT_ASK?.trim();
@@ -5886,8 +5892,10 @@ export async function runDoctorCheck(
   {
     const net = resolveSandboxNetwork(config);
     const backend = detectSandboxBackend();
-    lines.push(`Sandbox: ${describeSandbox(config.sandbox || "off", net)}`);
-    if ((config.sandbox || "off") === "off") {
+    const sandbox =
+      normalizeSandboxProfile(config.sandbox) ?? config.sandbox ?? "off";
+    lines.push(`Sandbox: ${describeSandbox(sandbox || "off", net)}`);
+    if ((sandbox || "off") === "off") {
       lines.push(
         chalk.yellow(
           "  ⚠ Sandbox is off — bash runs unsandboxed; prefer workspace/read-only/strict for production",
@@ -5899,13 +5907,13 @@ export async function runDoctorCheck(
     }
     lines.push(
       `Sandbox backend: ${backend.available ? backend.backend : "NONE"}` +
-        (config.sandbox !== "off" && !backend.available
+        (sandbox !== "off" && !backend.available
           ? config.sandboxMissingBackend === "fail-closed"
             ? chalk.red(" — FAIL-CLOSED (bash denied)")
             : chalk.yellow(" — fallback unsandboxed")
           : ""),
     );
-    if (config.sandbox !== "off" && !backend.available) {
+    if (sandbox !== "off" && !backend.available) {
       if (config.sandboxMissingBackend === "fail-closed") {
         issues.push(
           "Sandbox backend missing under fail-closed — bash tools will be denied (install bwrap/Xcode CLT or set sandbox=off)",
@@ -5968,8 +5976,10 @@ export async function runDoctorCheck(
       );
     }
   }
-  lines.push(`Blocking Stop: ${config.blockingStopHooks ? "on" : "off"}`);
-  if (config.blockingStopHooks) {
+  lines.push(
+    `Blocking Stop: ${isFalsy(config.blockingStopHooks) ? "off" : "on"}`,
+  );
+  if (!isFalsy(config.blockingStopHooks)) {
     lines.push(
       chalk.dim(
         "  Stop/SubagentStop hook timeout/error fails closed (agent keeps working)",
@@ -6670,7 +6680,7 @@ export async function runDoctorCheck(
     issues: [...issues],
     ok: issues.length === 0,
     authenticated: Boolean(auth),
-    blockingStop: config.blockingStopHooks !== false,
+    blockingStop: !isFalsy(config.blockingStopHooks),
     modelInCatalog,
     multiAccount,
     projectRulesCount,
@@ -6883,7 +6893,7 @@ export function buildEffectiveConfigSnap(
         return null;
       }
     })(),
-    blockingStopHooks: c.blockingStopHooks !== false,
+    blockingStopHooks: !isFalsy(c.blockingStopHooks),
     promptProfile: c.promptProfile ?? "default",
     contextWindow: c.contextWindow,
     contextWindowExplicit: Boolean(c.contextWindowExplicit),

@@ -503,6 +503,40 @@ describe("statusline lastError snapshot", () => {
     assert.match(renderCompactStrip(snap, { plain: true }), /ERR:rate_limited/);
     assert.match(renderHud([snap], { plain: true, width: 120 }), /ERR:rate_limited/);
   });
+
+  it("tags YOLO for permissionMode aliases (yolo/always/bypass)", async () => {
+    const { sessionToSnapshot } = await import("../src/statusline/snapshot.js");
+    const { buildPromptFlags } = await import("../src/tui/status-bar.js");
+    const { DEFAULT_CONFIG } = await import("../src/config/types.js");
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-sl-yolo-"));
+    process.env.FORGE_HOME = tmp;
+    const s = createSession({ cwd: tmp, provider: "xai", model: "m" });
+    for (const alias of ["yolo", "always", "bypass"] as const) {
+      const snap = sessionToSnapshot(s, {
+        permissionMode: alias as any,
+        workspace: tmp,
+      } as any);
+      assert.ok(
+        snap.tags.includes("YOLO"),
+        `sessionToSnapshot must YOLO-tag permissionMode=${alias}`,
+      );
+      const flags = buildPromptFlags({
+        config: {
+          ...DEFAULT_CONFIG,
+          permissionMode: alias as any,
+          workspace: tmp,
+        },
+        session: s,
+        auth: { provider: "xai", method: "api_key", apiKey: "t" } as any,
+      });
+      const plain = flags.replace(/\x1b\[[0-9;]*m/g, "");
+      assert.match(
+        plain,
+        /YOLO/,
+        `buildPromptFlags must show YOLO for permissionMode=${alias}`,
+      );
+    }
+  });
 });
 
 describe("statusline plan mode details", () => {

@@ -6,7 +6,7 @@ import fs from "node:fs";
 import fsp from "node:fs/promises";
 import path from "node:path";
 import type { ToolContext, ToolResult } from "./types.js";
-import { resolvePath, assertWritablePath } from "./path-util.js";
+import { resolvePath, assertWritablePath, displayRelPath } from "./path-util.js";
 import { pathNotFoundHint } from "./path-hints.js";
 import { applyUpdateChunks, parsePatch } from "./patch.js";
 import { shortDiff } from "./edit-match.js";
@@ -133,7 +133,7 @@ export async function toolApplyPatch(
       if (content.length > 0 && !content.endsWith("\n")) content += "\n";
       planned.push({
         kind: "add",
-        rel: path.relative(ctx.workspace, abs) || abs,
+        rel: displayRelPath(ctx.workspace, abs),
         abs,
         content,
       });
@@ -188,7 +188,7 @@ export async function toolApplyPatch(
       }
       planned.push({
         kind: "delete",
-        rel: path.relative(ctx.workspace, abs) || abs,
+        rel: displayRelPath(ctx.workspace, abs),
         abs,
         before,
         mode: preMode,
@@ -263,7 +263,7 @@ export async function toolApplyPatch(
       } catch (err) {
         return { output: (err as Error).message, isError: true };
       }
-      moveRel = path.relative(ctx.workspace, moveAbs) || moveAbs;
+      moveRel = displayRelPath(ctx.workspace, moveAbs);
       // Fail closed on clobber — disk OR earlier hunk in this same patch.
       if (moveAbs !== abs && pathOccupied(moveAbs)) {
         let kind = "path";
@@ -288,7 +288,7 @@ export async function toolApplyPatch(
     }
     planned.push({
       kind: "update",
-      rel: path.relative(ctx.workspace, abs) || abs,
+      rel: displayRelPath(ctx.workspace, abs),
       abs,
       content: next,
       before: original,
@@ -440,7 +440,7 @@ export async function toolApplyPatch(
     const fr = maybeFormatAfterWrite(target, ctx.workspace);
     const note = formatNoteSuffix(fr);
     if (note) {
-      const rel = path.relative(ctx.workspace, target) || target;
+      const rel = displayRelPath(ctx.workspace, target);
       fmtNotes.push(`${rel}${note}`);
     }
   }

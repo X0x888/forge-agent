@@ -4,7 +4,7 @@ import fsp from "node:fs/promises";
 import path from "node:path";
 import { glob } from "glob";
 import type { ToolContext, ToolResult } from "./types.js";
-import { resolvePath } from "./path-util.js";
+import { resolvePath, displayRelPath } from "./path-util.js";
 import { pathNotFoundHint } from "./path-hints.js";
 import { boundToolOutput } from "./truncate.js";
 import { isTruthy } from "../../util/bool.js";
@@ -305,7 +305,7 @@ async function toolGrepJs(
     const lines = text.split("\n");
     for (let i = 0; i < lines.length; i++) {
       if (re.test(lines[i]!)) {
-        const rel = path.relative(ctx.workspace, file);
+        const rel = displayRelPath(ctx.workspace, file);
         matches.push(`${rel}:${i + 1}:${lines[i]}`);
         if (headLimit > 0 && matches.length >= headLimit) break;
       }
@@ -456,7 +456,7 @@ export async function toolGrep(
   const lines = outLines
     .map((line) => {
       if (line.startsWith(ctx.workspace + path.sep)) {
-        return path.relative(ctx.workspace, line.split(":")[0]) + line.slice(line.indexOf(":"));
+        return displayRelPath(ctx.workspace, line.split(":")[0]) + line.slice(line.indexOf(":"));
       }
       // searchPath may be absolute prefix
       try {
@@ -464,7 +464,7 @@ export async function toolGrep(
         if (colon > 0) {
           const fp = line.slice(0, colon);
           if (path.isAbsolute(fp)) {
-            return path.relative(ctx.workspace, fp) + line.slice(colon);
+            return displayRelPath(ctx.workspace, fp) + line.slice(colon);
           }
         }
       } catch {

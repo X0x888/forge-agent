@@ -15,6 +15,7 @@ import {
   editDistance,
   pathNotFoundHint,
 } from "../src/agent/tools/path-hints.js";
+import { displayRelPath } from "../src/agent/tools/path-util.js";
 import { boundToolOutput } from "../src/agent/tools/truncate.js";
 import { realpathWithinRoot } from "../src/util/fs.js";
 import { detectLineEnding, joinBom, splitBom, toLineEnding } from "../src/agent/tools/text.js";
@@ -956,8 +957,37 @@ describe("path-hints", () => {
       path.join(ws, "no-such-dir", "file.ts"),
       ws,
     );
+    // Unrelated missing parent → no false sibling suggestions.
     assert.doesNotMatch(missingParent, /Did you mean/);
     assert.match(missingParent, /workspace root/);
+
+    // Parent-dir typo: walk up and suggest the real sibling directory.
+    await fsp.mkdir(path.join(ws, "src"), { recursive: true });
+    await fsp.writeFile(path.join(ws, "src", "main.ts"), "x\n");
+    const parentTypo = await pathNotFoundHint(
+      path.join(ws, "srcx", "main.ts"),
+      ws,
+    );
+    assert.match(parentTypo, /Did you mean/);
+    assert.match(parentTypo, /src[/\\]?/);
+    assert.match(parentTypo, /workspace root/);
+  });
+
+  it("displayRelPath realpath-normalizes macOS /var vs /private/var", () => {
+    const ws = path.join(tmpRoot, "rel-ws");
+    fs.mkdirSync(ws, { recursive: true });
+    const nested = path.join(ws, "nested", "file.txt");
+    let wsKey = ws;
+    try {
+      wsKey = fs.realpathSync(ws);
+    } catch {
+      /* keep */
+    }
+    const rel = displayRelPath(wsKey, nested);
+    assert.equal(rel, path.join("nested", "file.txt"));
+    assert.doesNotMatch(rel, /\.\./);
+    const rel2 = displayRelPath(ws, nested);
+    assert.equal(rel2, path.join("nested", "file.txt"));
   });
 });
 

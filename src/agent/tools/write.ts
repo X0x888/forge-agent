@@ -2,7 +2,7 @@ import fs from "node:fs";
 import fsp from "node:fs/promises";
 import path from "node:path";
 import type { ToolContext, ToolResult } from "./types.js";
-import { resolvePath, assertWritablePath } from "./path-util.js";
+import { resolvePath, assertWritablePath, displayRelPath } from "./path-util.js";
 import { atomicWriteFile } from "./atomic-write.js";
 import { snapshotForWrite } from "../../session/mutations.js";
 import {
@@ -63,7 +63,7 @@ export async function toolWrite(
     // Refuse directory targets early — EISDIR from rename is opaque to models.
     try {
       if (fs.existsSync(filePath) && fs.statSync(filePath).isDirectory()) {
-        const rel = path.relative(ctx.workspace, filePath) || filePath;
+        const rel = displayRelPath(ctx.workspace, filePath);
         return {
           output:
             `write_file failed: ${rel} is a directory. ` +
@@ -79,7 +79,7 @@ export async function toolWrite(
     if (ctx.fileReads && fileReadGuardEnabled()) {
       try {
         if (fs.existsSync(filePath) && fs.statSync(filePath).isFile()) {
-          const rel = path.relative(ctx.workspace, filePath) || filePath;
+          const rel = displayRelPath(ctx.workspace, filePath);
           const blocked = await ctx.fileReads.checkBeforeMutate(filePath, {
             tool: "write_file",
             rel,
@@ -124,7 +124,7 @@ export async function toolWrite(
     if (ctx.fileReads && fileReadGuardEnabled()) {
       await ctx.fileReads.noteFromDisk(filePath);
     }
-    const rel = path.relative(ctx.workspace, filePath) || filePath;
+    const rel = displayRelPath(ctx.workspace, filePath);
     // Embed the same shortDiff search_replace produces so the transcript can
     // render per-edit diffs (skipped only when the pre-image was unreadable).
     const diff = snap.skipped ? "" : `\n\n${shortDiff(rel, snap.before ?? "", body)}`;

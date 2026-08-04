@@ -236,3 +236,18 @@ export function evaluateProofClaimAtStop(
     reanchor,
   };
 }
+
+/**
+ * Tips stamped on session `lastError` when the proof-claim guard releases
+ * after its cap. Prefer the workspace's check commands over npm-hardcoded
+ * examples so Python/Rust/Go/monorepo projects get useful resume orientation.
+ */
+export function proofClaimReleaseTips(
+  preferredCheckCommands?: string[] | null,
+): string[] {
+  const cmds = (preferredCheckCommands || []).map((c) => String(c || "").trim()).filter(Boolean);
+  const verifyTip = cmds.length
+    ? `${cmds.slice(0, 2).join("  ·  ")}  ·  /retry`
+    : "run the project check  ·  /retry";
+  return ["Run the verification command, then continue", verifyTip];
+}
