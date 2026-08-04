@@ -7,6 +7,7 @@ import {
   resolveSubagentType,
   runSubagentTracked,
 } from "../subagent.js";
+import { resolveIsolationMode } from "../worktree.js";
 
 export async function toolSpawnSubagent(
   args: Record<string, unknown>,
@@ -54,6 +55,15 @@ export async function toolSpawnSubagent(
     maxTurns = Math.min(200, Math.floor(n));
   }
 
+  const isolation = resolveIsolationMode(
+    args.isolation ?? args.isolate ?? args.worktree,
+  );
+  // isolation=worktree can also be requested via boolean worktree: true
+  const isolationFinal =
+    args.worktree === true || args.worktree === "true"
+      ? "worktree"
+      : isolation;
+
   try {
     const result = await ctx.runSubagent({
       prompt,
@@ -61,6 +71,7 @@ export async function toolSpawnSubagent(
       subagentType,
       capabilityMode,
       maxTurns,
+      isolation: isolationFinal,
     });
     return {
       output: result.error && !result.text

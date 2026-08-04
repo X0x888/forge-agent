@@ -371,7 +371,17 @@ export function classifyLiveSlash(line: string): LiveSlashKind {
   // /mcp · /lsp status is readonly; connect/restart are control
   if (cmd === "/mcp" || cmd === "/lsp") {
     const a = (arg || "").trim().toLowerCase();
-    if (!a || a === "status" || a === "list" || a === "tools") return "readonly";
+    if (
+      !a ||
+      a === "status" ||
+      a === "list" ||
+      a === "tools" ||
+      a === "install" ||
+      a === "setup" ||
+      a === "help"
+    ) {
+      return "readonly";
+    }
     return "control";
   }
   if (LIVE_READONLY.has(cmd)) return "readonly";
@@ -604,7 +614,7 @@ export function completeSlash(
       "/bell": ["on", "off", "test", "status"],
       "/notify": ["on", "off", "test", "status"],
       "/mcp": ["status", "connect", "tools", "reload", "list"],
-      "/lsp": ["status", "restart", "reload"],
+      "/lsp": ["status", "install", "restart", "reload", "setup"],
       "/budget": ["status", "off", "1", "5", "10", "25"],
       "/provider": [
         "deepseek",
@@ -2207,6 +2217,32 @@ export async function handleSlash(
           handled: true,
           output: "LSP managers restarted (servers start lazily on next use).\n" +
             formatLspStatus(manager),
+        };
+      }
+      if (verb === "install" || verb === "setup" || verb === "help") {
+        const { formatLspInstallGuide, LSP_INSTALL_RECIPES } = await import(
+          "../lsp/install-guide.js"
+        );
+        const missing = new Set<string>();
+        for (const r of LSP_INSTALL_RECIPES) {
+          // Lightweight PATH probe (same idea as manager status tips)
+          const pathEnv = process.env.PATH || "";
+          const found = pathEnv.split(path.delimiter).some((dir) => {
+            try {
+              return (
+                fs.existsSync(path.join(dir, r.command)) ||
+                (process.platform === "win32" &&
+                  fs.existsSync(path.join(dir, r.command + ".cmd")))
+              );
+            } catch {
+              return false;
+            }
+          });
+          if (!found) missing.add(r.command);
+        }
+        return {
+          handled: true,
+          output: formatLspInstallGuide({ missingCommands: missing }),
         };
       }
       return { handled: true, output: formatLspStatus(manager) };
@@ -7249,7 +7285,7 @@ Forge slash commands
   /status · /hud        Full inline HUD + session details (no second panel)  [live]
   /tasks [kill|log id]  Background shell tasks · kill/log subcommands  [live]
   /mcp [status|connect|tools|reload]  MCP servers (search_mcp · call_mcp)  [live]
-  /lsp [status|restart] Language servers (lsp diagnostics/hover/…)  [live]
+  /lsp [status|install|restart] Language servers + install recipes  [live]
   /context              Context window usage bar  [live]
   /cost                 Token usage + rough cost + budget  [live]
   /budget [usd|off]     Session spend cap (estimate USD; 0/off = unlimited)  [live]

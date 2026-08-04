@@ -7,6 +7,8 @@ import { log } from "../util/log.js";
 import { expandServerEnv } from "./config.js";
 import type {
   McpCallResult,
+  McpPromptDef,
+  McpResourceDef,
   McpServerConfig,
   McpToolDef,
   McpTransport,
@@ -30,6 +32,13 @@ export class McpClient {
   private readonly signal?: AbortSignal;
   private rpc: JsonRpcStdioClient | null = null;
   private tools: McpToolDef[] = [];
+  private resources: McpResourceDef[] = [];
+  private prompts: McpPromptDef[] = [];
+  private serverCaps: {
+    tools?: boolean;
+    resources?: boolean;
+    prompts?: boolean;
+  } = {};
   private state: "idle" | "connecting" | "ready" | "error" = "idle";
   private lastError?: string;
   private initPromise: Promise<void> | null = null;
@@ -45,17 +54,29 @@ export class McpClient {
   getStatus(): {
     state: "idle" | "connecting" | "ready" | "error";
     toolCount: number;
+    resourceCount: number;
+    promptCount: number;
     error?: string;
   } {
     return {
       state: this.state,
       toolCount: this.tools.length,
+      resourceCount: this.resources.length,
+      promptCount: this.prompts.length,
       error: this.lastError,
     };
   }
 
   getTools(): McpToolDef[] {
     return this.tools.slice();
+  }
+
+  getResources(): McpResourceDef[] {
+    return this.resources.slice();
+  }
+
+  getPrompts(): McpPromptDef[] {
+    return this.prompts.slice();
   }
 
   async ensureReady(): Promise<void> {
@@ -115,6 +136,111 @@ export class McpClient {
     }
   }
 
+  async listResources(force = false): Promise<McpResourceDef[]> {
+    await this.ensureReady();
+    if (!force && this.resources.length) return this.resources;
+    if (!this.serverCaps.resources && this.resources.length === 0) {
+      // Still try once — some servers omit capability flags
+    }
+    try {
+      if (this.transport === "http") {
+        const result = (await this.httpRpc("resources/list", {})) as {
+          resources?: McpResourceDef[];
+        };
+        this.resources = Array.isArray(result?.resources) ? result.resources : [];
+        return this.resources;
+      }
+      const result = (await this.rpc!.request(
+        "resources/list",
+        {},
+        this.timeoutMs(),
+      )) as { resources?: McpResourceDef[] };
+      this.resources = Array.isArray(result?.resources) ? result.resources : [];
+      return this.resources;
+    } catch (err) {
+      // Method not found / unsupported — empty is fine
+      const msg = (err as Error).message || "";
+      if (/Method not found|-32601|not supported/i.test(msg)) {
+        this.resources = [];
+        return [];
+      }
+      throw err;
+    }
+  }
+
+  async readResource(uri: string): Promise<McpCallResult> {
+    await this.ensureReady();
+    try {
+      const result =
+        this.transport === "http"
+          ? await this.httpRpc("resources/read", { uri })
+          : await this.rpc!.request(
+              "resources/read",
+              { uri },
+              this.timeoutMs(),
+            );
+      const text = formatResourceContents(result);
+      return { content: text || "(empty resource)", isError: false };
+    } catch (err) {
+      return {
+        content: `MCP resource read error (${this.name}): ${(err as Error).message}`,
+        isError: true,
+      };
+    }
+  }
+
+  async listPrompts(force = false): Promise<McpPromptDef[]> {
+    await this.ensureReady();
+    if (!force && this.prompts.length) return this.prompts;
+    try {
+      if (this.transport === "http") {
+        const result = (await this.httpRpc("prompts/list", {})) as {
+          prompts?: McpPromptDef[];
+        };
+        this.prompts = Array.isArray(result?.prompts) ? result.prompts : [];
+        return this.prompts;
+      }
+      const result = (await this.rpc!.request(
+        "prompts/list",
+        {},
+        this.timeoutMs(),
+      )) as { prompts?: McpPromptDef[] };
+      this.prompts = Array.isArray(result?.prompts) ? result.prompts : [];
+      return this.prompts;
+    } catch (err) {
+      const msg = (err as Error).message || "";
+      if (/Method not found|-32601|not supported/i.test(msg)) {
+        this.prompts = [];
+        return [];
+      }
+      throw err;
+    }
+  }
+
+  async getPrompt(
+    name: string,
+    args?: Record<string, string>,
+  ): Promise<McpCallResult> {
+    await this.ensureReady();
+    try {
+      const params = {
+        name,
+        ...(args && Object.keys(args).length ? { arguments: args } : {}),
+      };
+      const result =
+        this.transport === "http"
+          ? await this.httpRpc("prompts/get", params)
+          : await this.rpc!.request("prompts/get", params, this.timeoutMs());
+      const text = formatPromptResult(result);
+      return { content: text || "(empty prompt)", isError: false };
+    } catch (err) {
+      return {
+        content: `MCP prompt get error (${this.name}/${name}): ${(err as Error).message}`,
+        isError: true,
+      };
+    }
+  }
+
   async dispose(): Promise<void> {
     this.state = "idle";
     if (this.rpc) {
@@ -166,7 +292,7 @@ export class McpClient {
         },
       });
       this.rpc.start();
-      await this.rpc.request(
+      const initResult = (await this.rpc.request(
         "initialize",
         {
           protocolVersion: PROTOCOL_VERSION,
@@ -176,7 +302,18 @@ export class McpClient {
           clientInfo: CLIENT_INFO,
         },
         30_000,
-      );
+      )) as {
+        capabilities?: {
+          tools?: unknown;
+          resources?: unknown;
+          prompts?: unknown;
+        };
+      };
+      this.serverCaps = {
+        tools: Boolean(initResult?.capabilities?.tools),
+        resources: Boolean(initResult?.capabilities?.resources),
+        prompts: Boolean(initResult?.capabilities?.prompts),
+      };
       this.rpc.notify("notifications/initialized", {});
       const listed = (await this.rpc.request(
         "tools/list",
@@ -184,8 +321,20 @@ export class McpClient {
         this.timeoutMs(),
       )) as { tools?: McpToolDef[] };
       this.tools = Array.isArray(listed?.tools) ? listed.tools : [];
+      // Best-effort discover resources/prompts (ignore unsupported)
+      await this.listResources(true).catch(() => {
+        this.resources = [];
+      });
+      await this.listPrompts(true).catch(() => {
+        this.prompts = [];
+      });
       this.state = "ready";
-      log.dim(`MCP server ready: ${this.name} (${this.tools.length} tools)`);
+      log.dim(
+        `MCP server ready: ${this.name} (${this.tools.length} tools` +
+          (this.resources.length ? `, ${this.resources.length} resources` : "") +
+          (this.prompts.length ? `, ${this.prompts.length} prompts` : "") +
+          `)`,
+      );
     } catch (err) {
       this.state = "error";
       this.lastError = (err as Error).message;
@@ -299,6 +448,80 @@ export class McpClient {
     }
     return json.result;
   }
+}
+
+function formatResourceContents(result: unknown): string {
+  if (!result || typeof result !== "object") {
+    try {
+      return JSON.stringify(result, null, 2);
+    } catch {
+      return String(result);
+    }
+  }
+  const o = result as {
+    contents?: Array<{
+      uri?: string;
+      mimeType?: string;
+      text?: string;
+      blob?: string;
+    }>;
+  };
+  if (!Array.isArray(o.contents) || !o.contents.length) {
+    try {
+      return JSON.stringify(result, null, 2);
+    } catch {
+      return String(result);
+    }
+  }
+  const parts: string[] = [];
+  for (const c of o.contents) {
+    const head = [c.uri, c.mimeType].filter(Boolean).join(" · ");
+    if (head) parts.push(`--- ${head} ---`);
+    if (typeof c.text === "string") parts.push(c.text);
+    else if (typeof c.blob === "string") {
+      parts.push(`[binary blob ${c.blob.length} chars base64 — truncated]`);
+    }
+  }
+  return parts.join("\n");
+}
+
+function formatPromptResult(result: unknown): string {
+  if (!result || typeof result !== "object") {
+    try {
+      return JSON.stringify(result, null, 2);
+    } catch {
+      return String(result);
+    }
+  }
+  const o = result as {
+    description?: string;
+    messages?: Array<{
+      role?: string;
+      content?:
+        | string
+        | { type?: string; text?: string }
+        | Array<{ type?: string; text?: string }>;
+    }>;
+  };
+  const parts: string[] = [];
+  if (o.description) parts.push(o.description, "");
+  for (const m of o.messages || []) {
+    const role = m.role || "message";
+    let body = "";
+    if (typeof m.content === "string") body = m.content;
+    else if (Array.isArray(m.content)) {
+      body = m.content
+        .map((c) => (typeof c?.text === "string" ? c.text : JSON.stringify(c)))
+        .join("\n");
+    } else if (m.content && typeof m.content === "object") {
+      body =
+        typeof (m.content as { text?: string }).text === "string"
+          ? (m.content as { text: string }).text
+          : JSON.stringify(m.content);
+    }
+    parts.push(`### ${role}\n${body}`);
+  }
+  return parts.join("\n\n") || JSON.stringify(result, null, 2);
 }
 
 function formatMcpContent(result: {

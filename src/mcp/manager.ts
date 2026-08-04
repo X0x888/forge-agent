@@ -10,6 +10,8 @@ import {
   parseQualifiedMcpTool,
   qualifyMcpTool,
   type McpCallResult,
+  type McpRegisteredPrompt,
+  type McpRegisteredResource,
   type McpRegisteredTool,
   type McpServerStatus,
 } from "./types.js";
@@ -270,6 +272,201 @@ export class McpManager {
     return r?.readOnly ?? false;
   }
 
+  /** List resources across connected servers (connects on demand). */
+  async listResources(opts?: {
+    server?: string;
+    query?: string;
+    limit?: number;
+  }): Promise<{
+    resources: McpRegisteredResource[];
+    serverErrors: string[];
+  }> {
+    await this.ensureRegistry();
+    const serverErrors: string[] = [];
+    const out: McpRegisteredResource[] = [];
+    const wantServer = opts?.server?.trim().toLowerCase();
+    const q = (opts?.query || "").trim().toLowerCase();
+    const lim = Math.min(100, Math.max(1, opts?.limit ?? 40));
+
+    for (const [name, client] of this.clients) {
+      if (wantServer && name.toLowerCase() !== wantServer) continue;
+      try {
+        const resources = await client.listResources();
+        for (const r of resources) {
+          if (!r?.uri) continue;
+          const blob = `${r.uri} ${r.name || ""} ${r.description || ""}`.toLowerCase();
+          if (q && !blob.includes(q)) continue;
+          out.push({
+            qualifiedName: qualifyMcpTool(name, r.uri),
+            serverName: name,
+            resource: r,
+          });
+        }
+      } catch (err) {
+        serverErrors.push(`${name}: ${(err as Error).message}`);
+      }
+    }
+    return { resources: out.slice(0, lim), serverErrors };
+  }
+
+  async readResource(
+    uriOrQualified: string,
+    serverHint?: string,
+  ): Promise<McpCallResult & { serverName?: string; uri?: string }> {
+    await this.ensureRegistry();
+    const raw = (uriOrQualified || "").trim();
+    if (!raw) {
+      return { content: "read_mcp_resource error: uri is required.", isError: true };
+    }
+    // server__uri form (uri may contain :// so parse carefully)
+    let server = serverHint?.trim();
+    let uri = raw;
+    const parsed = parseQualifiedMcpTool(raw);
+    if (parsed && !server) {
+      // Only treat as qualified when left side matches a known server
+      if (this.clients.has(parsed.server)) {
+        server = parsed.server;
+        uri = parsed.tool;
+      }
+    }
+    // If still no server, find unique uri across servers
+    if (!server) {
+      const listed = await this.listResources({ limit: 100 });
+      const matches = listed.resources.filter(
+        (r) => r.resource.uri === uri || r.qualifiedName === raw,
+      );
+      if (matches.length === 1) {
+        server = matches[0].serverName;
+        uri = matches[0].resource.uri;
+      } else if (matches.length > 1) {
+        return {
+          content:
+            `Ambiguous resource uri "${uri}" on servers: ${matches.map((m) => m.serverName).join(", ")}. Pass server=.`,
+          isError: true,
+        };
+      } else if (this.clients.size === 1) {
+        server = [...this.clients.keys()][0];
+      } else {
+        return {
+          content:
+            `Unknown resource: ${raw}. Use mcp_resource({ action: "list" }) first.` +
+            (listed.resources.length
+              ? `\nExamples: ${listed.resources
+                  .slice(0, 5)
+                  .map((r) => r.resource.uri)
+                  .join(", ")}`
+              : ""),
+          isError: true,
+        };
+      }
+    }
+    const client = this.clients.get(server!);
+    if (!client) {
+      return { content: `MCP server not available: ${server}`, isError: true };
+    }
+    const result = await client.readResource(uri);
+    const managed = await boundToolOutput(result.content, { maxChars: 80_000 });
+    return {
+      content: managed.text,
+      isError: result.isError,
+      serverName: server,
+      uri,
+    };
+  }
+
+  async listPrompts(opts?: {
+    server?: string;
+    query?: string;
+    limit?: number;
+  }): Promise<{
+    prompts: McpRegisteredPrompt[];
+    serverErrors: string[];
+  }> {
+    await this.ensureRegistry();
+    const serverErrors: string[] = [];
+    const out: McpRegisteredPrompt[] = [];
+    const wantServer = opts?.server?.trim().toLowerCase();
+    const q = (opts?.query || "").trim().toLowerCase();
+    const lim = Math.min(100, Math.max(1, opts?.limit ?? 40));
+
+    for (const [name, client] of this.clients) {
+      if (wantServer && name.toLowerCase() !== wantServer) continue;
+      try {
+        const prompts = await client.listPrompts();
+        for (const p of prompts) {
+          if (!p?.name) continue;
+          const blob = `${p.name} ${p.description || ""}`.toLowerCase();
+          if (q && !blob.includes(q)) continue;
+          out.push({
+            qualifiedName: qualifyMcpTool(name, p.name),
+            serverName: name,
+            prompt: p,
+          });
+        }
+      } catch (err) {
+        serverErrors.push(`${name}: ${(err as Error).message}`);
+      }
+    }
+    return { prompts: out.slice(0, lim), serverErrors };
+  }
+
+  async getPrompt(
+    nameOrQualified: string,
+    args?: Record<string, string>,
+    serverHint?: string,
+  ): Promise<McpCallResult & { serverName?: string; promptName?: string }> {
+    await this.ensureRegistry();
+    const raw = (nameOrQualified || "").trim();
+    if (!raw) {
+      return { content: "get_mcp_prompt error: name is required.", isError: true };
+    }
+    let server = serverHint?.trim();
+    let promptName = raw;
+    const parsed = parseQualifiedMcpTool(raw);
+    if (parsed && this.clients.has(parsed.server)) {
+      server = parsed.server;
+      promptName = parsed.tool;
+    }
+    if (!server) {
+      const listed = await this.listPrompts({ limit: 100 });
+      const matches = listed.prompts.filter(
+        (p) =>
+          p.prompt.name === promptName ||
+          p.qualifiedName === raw ||
+          p.prompt.name.toLowerCase() === promptName.toLowerCase(),
+      );
+      if (matches.length === 1) {
+        server = matches[0].serverName;
+        promptName = matches[0].prompt.name;
+      } else if (matches.length > 1) {
+        return {
+          content:
+            `Ambiguous prompt "${promptName}" on: ${matches.map((m) => m.serverName).join(", ")}. Pass server=.`,
+          isError: true,
+        };
+      } else if (this.clients.size === 1) {
+        server = [...this.clients.keys()][0];
+      } else {
+        return {
+          content: `Unknown prompt: ${raw}. Use mcp_prompt({ action: "list" }) first.`,
+          isError: true,
+        };
+      }
+    }
+    const client = this.clients.get(server!);
+    if (!client) {
+      return { content: `MCP server not available: ${server}`, isError: true };
+    }
+    const result = await client.getPrompt(promptName, args);
+    const managed = await boundToolOutput(result.content, { maxChars: 80_000 });
+    return {
+      content: managed.text,
+      isError: result.isError,
+      serverName: server,
+      promptName,
+    };
+  }
+
   private resolveTool(name: string): McpRegisteredTool | null {
     const raw = (name || "").trim();
     if (!raw) return null;
@@ -329,6 +526,8 @@ export class McpManager {
       transport: client.transport,
       state: st.state,
       toolCount: st.toolCount,
+      resourceCount: st.resourceCount,
+      promptCount: st.promptCount,
       error: st.error,
       command: cfg?.command,
       url: cfg?.url,
@@ -370,8 +569,11 @@ export function formatMcpStatus(manager: McpManager): string {
           : "";
       const builtin =
         s.name === "context7" || s.name === "playwright" ? "  (default)" : "";
+      const extra =
+        (s.resourceCount ? ` res=${s.resourceCount}` : "") +
+        (s.promptCount ? ` prompts=${s.promptCount}` : "");
       lines.push(
-        `  ${s.name}  [${s.state}]  tools=${s.toolCount}  ${s.transport}${where ? `  ${where}` : ""}${builtin}${s.error ? `  err: ${s.error.slice(0, 80)}` : ""}`,
+        `  ${s.name}  [${s.state}]  tools=${s.toolCount}${extra}  ${s.transport}${where ? `  ${where}` : ""}${builtin}${s.error ? `  err: ${s.error.slice(0, 80)}` : ""}`,
       );
     }
   }

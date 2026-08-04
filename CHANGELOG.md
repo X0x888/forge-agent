@@ -3,6 +3,9 @@
 ## Unreleased
 
 ### Added
+- **LSP install guide** — `docs/LSP.md`, `/lsp install`, `lsp({ action: "install" })`, and status/missing-on-PATH tips for typescript-language-server, pyright, rust-analyzer, gopls, and friends.
+- **Subagent worktree isolation** — `spawn_subagent({ isolation: "worktree" })` creates a detached git worktree under `~/.forge/worktrees/` so nested edits never touch the parent checkout (`FORGE_SUBAGENT_KEEP_WORKTREE=1` to keep).
+- **MCP resources + prompts** — `mcp_resource` (list/read) and `mcp_prompt` (list/get) beyond tools; best-effort discovery at server connect.
 - **Default MCP servers** — Forge ships **context7** (up-to-date library docs via `@upstash/context7-mcp`) and **playwright** (browser automation via `@playwright/mcp`) as built-in defaults (override/disable in mcp.json; `FORGE_MCP_DEFAULTS=0` off). `forge init` seeds `~/.forge/mcp.json`. Optional `CONTEXT7_API_KEY`.
 - **MCP (Model Context Protocol)** — `search_mcp` + `call_mcp` tools (search-then-use). Config from `.forge/mcp.json`, `~/.forge/mcp.json`, `.mcp.json`, `.cursor/mcp.json` (Claude/Cursor shape). Lazy stdio/HTTP clients, qualified `server__tool` names, plan-mode read-only gating, `/mcp status|connect|tools|reload`, doctor status, `FORGE_MCP=0` off.
 - **Subagents** — `spawn_subagent` (`Task` alias): nested agent loop with `general-purpose` / `explore` / `plan` types, capability modes, depth cap (`FORGE_SUBAGENT_MAX_DEPTH`), `SubagentStart`/`SubagentStop` hooks, ephemeral child sessions, token fold into parent. Headless: explore/plan free; full needs acceptEdits/allow/YOLO. Plan mode denies spawn.

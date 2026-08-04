@@ -28,9 +28,15 @@ import {
   saveSession,
 } from "../session/session.js";
 import type { LoopEvents, LoopResult } from "./loop.js";
+import {
+  createSubagentWorktree,
+  resolveIsolationMode,
+  type SubagentWorktree,
+} from "./worktree.js";
 
 export type SubagentType = "general-purpose" | "explore" | "plan";
 export type SubagentCapability = "full" | "read-only";
+export type SubagentIsolation = "none" | "worktree";
 
 export interface SubagentRequest {
   prompt: string;
@@ -38,6 +44,12 @@ export interface SubagentRequest {
   subagentType?: SubagentType;
   capabilityMode?: SubagentCapability;
   maxTurns?: number;
+  /**
+   * Isolation mode:
+   * - none (default): same workspace as parent
+   * - worktree: detached git worktree under ~/.forge/worktrees/ (requires git repo)
+   */
+  isolation?: SubagentIsolation;
 }
 
 export interface SubagentRunContext {
@@ -69,6 +81,9 @@ export interface SubagentResult {
   completionTokens: number;
   editCount: number;
   error?: string;
+  isolation?: SubagentIsolation;
+  /** Worktree path when isolation=worktree. */
+  worktreePath?: string;
 }
 
 const READ_ONLY_TOOLS = new Set([
@@ -81,6 +96,8 @@ const READ_ONLY_TOOLS = new Set([
   "todo_write",
   "get_task_output",
   "search_mcp",
+  "mcp_resource",
+  "mcp_prompt",
   "lsp",
   "ask_user",
 ]);
@@ -208,9 +225,42 @@ export async function runSubagent(
     };
   }
 
+  const isolation = resolveIsolationMode(req.isolation);
+  let worktree: SubagentWorktree | null = null;
+  let childWorkspace = ctx.workspace;
+  if (isolation === "worktree") {
+    try {
+      worktree = createSubagentWorktree({
+        workspace: ctx.workspace,
+        label: description,
+      });
+      childWorkspace = worktree.path;
+      log.dim(`Subagent worktree: ${worktree.path}`);
+      ctx.events?.onStatus?.(
+        `subagent worktree: ${path.basename(worktree.path)}`,
+      );
+    } catch (err) {
+      return {
+        ok: false,
+        text: "",
+        turns: 0,
+        aborted: false,
+        subagentType,
+        capabilityMode,
+        description,
+        sessionId: "",
+        promptTokens: 0,
+        completionTokens: 0,
+        editCount: 0,
+        isolation,
+        error: (err as Error).message,
+      };
+    }
+  }
+
   // Ephemeral child session
   const child = createSession({
-    cwd: ctx.workspace,
+    cwd: childWorkspace,
     provider: String(ctx.config.provider),
     model: ctx.config.model,
     ultrawork: false,
@@ -220,6 +270,7 @@ export async function runSubagent(
   // Plan-type subagents run under plan permission mode
   const childConfig: ForgeConfig = {
     ...ctx.config,
+    workspace: childWorkspace,
     // Cap turns for nested work
     maxTurns:
       req.maxTurns && req.maxTurns > 0
@@ -246,18 +297,21 @@ export async function runSubagent(
 
   const startHook = await ctx.hooks.run("SubagentStart", {
     sessionId: child.meta.id,
-    cwd: ctx.workspace,
-    workspaceRoot: ctx.workspace,
+    cwd: childWorkspace,
+    workspaceRoot: childWorkspace,
     prompt: prompt.slice(0, 2000),
     toolName: "spawn_subagent",
     toolInput: {
       description,
       subagent_type: subagentType,
       capability_mode: capabilityMode,
+      isolation,
+      worktree: worktree?.path,
     },
   });
   if (startHook.blocked || startHook.decision === "deny") {
     await cleanupChildSession(child.meta.id);
+    if (worktree) await worktree.cleanup().catch(() => {});
     return {
       ok: false,
       text: "",
@@ -270,6 +324,8 @@ export async function runSubagent(
       promptTokens: 0,
       completionTokens: 0,
       editCount: 0,
+      isolation,
+      worktreePath: worktree?.path,
       error: `SubagentStart hook denied: ${startHook.reason || "denied"}`,
     };
   }
@@ -280,16 +336,20 @@ export async function runSubagent(
     subagentType,
     capabilityMode,
     parentSessionId: ctx.parentSession.meta.id,
+    isolation,
+    worktreePath: worktree?.path,
   });
 
   let result: LoopResult | undefined;
   let runError: string | undefined;
   try {
     ctx.events?.onStatus?.(
-      `subagent[${subagentType}]: ${description.slice(0, 48)}`,
+      `subagent[${subagentType}${isolation === "worktree" ? "/wt" : ""}]: ${description.slice(0, 40)}`,
     );
     // Dynamic import avoids circular dependency (loop → tools → subagent → loop).
     const { runAgentLoop } = await import("./loop.js");
+    // Worktree isolation: do not share parent MCP/LSP (different cwd roots).
+    // Child gets its own managers scoped to the worktree workspace.
     result = await runAgentLoop({
       config: childConfig,
       provider: ctx.provider,
@@ -308,8 +368,8 @@ export async function runSubagent(
       subagentDepth: depth + 1,
       maxSubagentDepth: maxDepth,
       toolDefinitions: tools,
-      mcp: ctx.mcp,
-      lsp: ctx.lsp,
+      mcp: isolation === "worktree" ? undefined : ctx.mcp,
+      lsp: isolation === "worktree" ? undefined : ctx.lsp,
       disableHarnessAutoArm: true,
     });
   } catch (err) {
@@ -326,8 +386,9 @@ export async function runSubagent(
         (ctx.parentSession.meta.totalCacheReadTokens || 0) +
         result.cacheReadTokens;
     }
-    // Child edits count toward parent edit trail (file mutations are real)
-    if (child.meta.editCount > 0) {
+    // Same-workspace child edits count toward parent edit trail.
+    // Worktree isolation must NOT bump parent lastEditAt (files aren't in parent tree).
+    if (isolation !== "worktree" && child.meta.editCount > 0) {
       ctx.parentSession.meta.editCount += child.meta.editCount;
       ctx.parentSession.meta.lastEditAt =
         child.meta.lastEditAt || new Date().toISOString();
@@ -341,8 +402,8 @@ export async function runSubagent(
 
   const stopHook = await ctx.hooks.run("SubagentStop", {
     sessionId: child.meta.id,
-    cwd: ctx.workspace,
-    workspaceRoot: ctx.workspace,
+    cwd: childWorkspace,
+    workspaceRoot: childWorkspace,
     prompt: prompt.slice(0, 2000),
     lastAssistantMessage: result?.finalText?.slice(0, 4000),
     stopReason: runError
@@ -368,13 +429,29 @@ export async function runSubagent(
     text += `\n\n[SubagentStop hook requested continue: ${stopHook.reason || "blocked"} — parent should re-spawn or finish remaining work]`;
   }
 
-  const keep =
+  const keepSession =
     process.env.FORGE_SUBAGENT_KEEP === "1" ||
     process.env.FORGE_SUBAGENT_KEEP === "true";
-  if (!keep) {
+  if (!keepSession) {
     await cleanupChildSession(child.meta.id);
   } else {
     log.dim(`Subagent session kept: ${child.meta.id}`);
+  }
+
+  // Worktree cleanup: keep on FORGE_SUBAGENT_KEEP_WORKTREE=1 or when parent
+  // may want to inspect (failed runs keep for diagnosis unless forced clean).
+  const keepWorktree =
+    process.env.FORGE_SUBAGENT_KEEP_WORKTREE === "1" ||
+    process.env.FORGE_SUBAGENT_KEEP_WORKTREE === "true" ||
+    process.env.FORGE_SUBAGENT_KEEP === "1" ||
+    process.env.FORGE_SUBAGENT_KEEP === "true";
+  if (worktree) {
+    if (keepWorktree) {
+      log.dim(`Subagent worktree kept: ${worktree.path}`);
+      text += `\n\n[worktree kept: ${worktree.path} — review/merge, then: git worktree remove --force <path>]`;
+    } else {
+      await worktree.cleanup().catch(() => {});
+    }
   }
 
   const summary = formatSubagentResult({
@@ -387,6 +464,9 @@ export async function runSubagent(
     aborted: Boolean(result?.aborted),
     hitMaxTurns: Boolean(result?.hitMaxTurns),
     error: runError,
+    isolation,
+    worktreePath: worktree?.path,
+    worktreeKept: Boolean(worktree && keepWorktree),
   });
 
   return {
@@ -402,6 +482,8 @@ export async function runSubagent(
     completionTokens: result?.completionTokens ?? 0,
     editCount: child.meta.editCount,
     error: runError,
+    isolation,
+    worktreePath: worktree?.path,
   };
 }
 
@@ -411,9 +493,13 @@ function buildSubagentPrompt(opts: {
   subagentType: SubagentType;
   capabilityMode: SubagentCapability;
   parentSessionId: string;
+  isolation?: SubagentIsolation;
+  worktreePath?: string;
 }): string {
   const lines = [
-    `[Forge subagent — ${opts.subagentType} / ${opts.capabilityMode}]`,
+    `[Forge subagent — ${opts.subagentType} / ${opts.capabilityMode}` +
+      (opts.isolation === "worktree" ? " / worktree" : "") +
+      `]`,
     `Task: ${opts.description}`,
     ``,
     opts.capabilityMode === "read-only"
@@ -424,12 +510,23 @@ function buildSubagentPrompt(opts: {
       : opts.subagentType === "explore"
         ? "Explore the codebase and return structured findings with file:line citations."
         : "Implement or investigate as asked. Return a concise final summary of what you found/did and any remaining risks.",
+  ];
+  if (opts.isolation === "worktree" && opts.worktreePath) {
+    lines.push(
+      ``,
+      `## Isolated worktree`,
+      `Workspace: ${opts.worktreePath}`,
+      `This is a detached git worktree — edits here do not touch the parent checkout.`,
+      `Summarize files changed and any commits; the parent will merge/cherry-pick if needed.`,
+    );
+  }
+  lines.push(
     ``,
     `## User task`,
     opts.prompt,
     ``,
     `When finished, respond with a clear final summary only (the parent agent will read it). Do not ask the user follow-up questions unless ask_user is essential.`,
-  ];
+  );
   return lines.join("\n");
 }
 
@@ -443,10 +540,17 @@ function formatSubagentResult(opts: {
   aborted: boolean;
   hitMaxTurns: boolean;
   error?: string;
+  isolation?: SubagentIsolation;
+  worktreePath?: string;
+  worktreeKept?: boolean;
 }): string {
   const header = [
     `### Subagent result: ${opts.description}`,
-    `- type: ${opts.subagentType} · mode: ${opts.capabilityMode} · turns: ${opts.turns} · edits: ${opts.editCount}`,
+    `- type: ${opts.subagentType} · mode: ${opts.capabilityMode} · turns: ${opts.turns} · edits: ${opts.editCount}` +
+      (opts.isolation === "worktree" ? " · isolation: worktree" : ""),
+    opts.worktreePath
+      ? `- worktree: ${opts.worktreePath}${opts.worktreeKept ? " (kept)" : " (removed)"}`
+      : "",
     opts.aborted ? `- aborted: true` : "",
     opts.hitMaxTurns ? `- hit max turns` : "",
     opts.error ? `- error: ${opts.error}` : "",

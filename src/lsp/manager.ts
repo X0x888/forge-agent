@@ -1,10 +1,12 @@
 /**
  * Multi-language LSP manager — lazy start per language, workspace-scoped.
  */
+import fs from "node:fs";
 import path from "node:path";
 import { isWithinRoot } from "../util/fs.js";
 import { LspClient } from "./client.js";
 import { loadLspConfig, type LoadedLspConfig } from "./config.js";
+import { formatMissingServerTips } from "./install-guide.js";
 import {
   languageIdForPath,
   type LspDiagnostic,
@@ -255,10 +257,47 @@ export function formatLspStatus(manager: LspManager): string {
     lines.push("Sources:");
     for (const src of manager.sources) lines.push(`  ${src}`);
   }
+  // Missing-on-PATH install tips
+  try {
+    const tips = formatMissingServerTips(manager.servers, commandOnPath);
+    if (tips.length) {
+      lines.push("Missing (install on PATH):");
+      lines.push(...tips);
+      lines.push("Full recipes: /lsp install  ·  docs/LSP.md");
+    }
+  } catch {
+    /* */
+  }
   lines.push(
     "Tool: lsp({ action, path, line?, character?, query? }). Actions: diagnostics|hover|definition|references|symbols|workspace_symbols|status",
   );
   return lines.join("\n");
+}
+
+function commandOnPath(cmd: string): boolean {
+  if (cmd.includes("/") || cmd.includes("\\")) {
+    try {
+      return fs.existsSync(cmd);
+    } catch {
+      return false;
+    }
+  }
+  const pathEnv = process.env.PATH || "";
+  const parts = pathEnv.split(path.delimiter);
+  const exts =
+    process.platform === "win32"
+      ? (process.env.PATHEXT || ".EXE;.CMD;.BAT").split(";").filter(Boolean)
+      : [""];
+  for (const dir of parts) {
+    for (const ext of exts) {
+      try {
+        if (fs.existsSync(path.join(dir, cmd + ext))) return true;
+      } catch {
+        /* */
+      }
+    }
+  }
+  return false;
 }
 
 export function formatDiagnosticsReport(

@@ -42,6 +42,8 @@ const READ_ONLY_TOOLS = new Set([
   "get_task_output",
   "search_mcp",
   "mcp_search",
+  "mcp_resource",
+  "mcp_prompt",
   "lsp",
   "LSP",
   "Read",

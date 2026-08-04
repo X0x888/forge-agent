@@ -12,6 +12,8 @@ const ACTIONS = new Set([
   "symbols",
   "workspace_symbols",
   "status",
+  "install",
+  "install_help",
 ]);
 
 export async function toolLsp(
@@ -43,13 +45,17 @@ export async function toolLsp(
     return {
       output:
         `lsp error: unknown action "${args.action}". ` +
-        `Use: diagnostics | hover | definition | references | symbols | workspace_symbols | status`,
+        `Use: diagnostics | hover | definition | references | symbols | workspace_symbols | status | install`,
       isError: true,
     };
   }
 
   if (action === "status") {
     return { output: formatLspStatus(lsp) };
+  }
+  if (action === "install" || action === "install_help") {
+    const { formatLspInstallGuide } = await import("./install-guide.js");
+    return { output: formatLspInstallGuide() };
   }
 
   try {

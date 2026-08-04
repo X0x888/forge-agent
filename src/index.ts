@@ -174,10 +174,22 @@ export {
 export type {
   SubagentType,
   SubagentCapability,
+  SubagentIsolation,
   SubagentRequest,
   SubagentResult,
   SubagentRunContext,
 } from "./agent/subagent.js";
+export {
+  createSubagentWorktree,
+  resolveIsolationMode,
+  findGitRoot,
+  worktreeBaseDir,
+} from "./agent/worktree.js";
+export {
+  formatLspInstallGuide,
+  LSP_INSTALL_RECIPES,
+  recipeForLanguage,
+} from "./lsp/install-guide.js";
 export { HookRunner } from "./harness/hooks.js";
 export {
   armGoal,

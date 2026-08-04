@@ -267,6 +267,8 @@ const READ_ONLY = new Set([
   "task_output",
   "search_mcp",
   "mcp_search",
+  "mcp_resource",
+  "mcp_prompt",
   "lsp",
   "LSP",
 ]);

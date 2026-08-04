@@ -62,6 +62,8 @@ export interface McpServerStatus {
   transport: McpTransport;
   state: "idle" | "connecting" | "ready" | "error" | "disabled";
   toolCount: number;
+  resourceCount?: number;
+  promptCount?: number;
   error?: string;
   command?: string;
   url?: string;
@@ -71,6 +73,37 @@ export interface McpCallResult {
   content: string;
   isError: boolean;
   structured?: unknown;
+}
+
+/** MCP resource descriptor (resources/list). */
+export interface McpResourceDef {
+  uri: string;
+  name?: string;
+  description?: string;
+  mimeType?: string;
+}
+
+/** MCP prompt descriptor (prompts/list). */
+export interface McpPromptDef {
+  name: string;
+  description?: string;
+  arguments?: Array<{
+    name: string;
+    description?: string;
+    required?: boolean;
+  }>;
+}
+
+export interface McpRegisteredResource {
+  qualifiedName: string;
+  serverName: string;
+  resource: McpResourceDef;
+}
+
+export interface McpRegisteredPrompt {
+  qualifiedName: string;
+  serverName: string;
+  prompt: McpPromptDef;
 }
 
 export function qualifyMcpTool(server: string, tool: string): string {

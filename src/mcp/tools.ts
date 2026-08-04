@@ -188,3 +188,190 @@ export function mcpCallIsReadOnly(
   if (!toolName) return false;
   return mcp.isReadOnlyTool(toolName);
 }
+
+/**
+ * MCP resources: list or read (beyond tools).
+ * action: list | read
+ */
+export async function toolMcpResource(
+  args: Record<string, unknown>,
+  ctx: ToolContext,
+): Promise<ToolResult> {
+  const mcp = ctx.mcp;
+  if (!mcp?.enabled) {
+    return {
+      output: "mcp_resource: MCP not available (configure servers or FORGE_MCP=0).",
+      isError: true,
+    };
+  }
+  const action = String(args.action ?? args.method ?? "list")
+    .trim()
+    .toLowerCase();
+  try {
+    if (action === "list") {
+      const result = await mcp.listResources({
+        server:
+          args.server != null ? String(args.server).trim() : undefined,
+        query:
+          args.query != null
+            ? String(args.query)
+            : args.q != null
+              ? String(args.q)
+              : undefined,
+        limit: args.limit != null ? Number(args.limit) : undefined,
+      });
+      if (!result.resources.length) {
+        return {
+          output:
+            "No MCP resources found." +
+            (result.serverErrors.length
+              ? `\nErrors:\n${result.serverErrors.map((e) => `  - ${e}`).join("\n")}`
+              : "\nServers may not expose resources (tools-only is common)."),
+        };
+      }
+      const lines = [`MCP resources (${result.resources.length}):`];
+      for (const r of result.resources) {
+        lines.push(
+          `- **${r.serverName}** \`${r.resource.uri}\`${r.resource.name ? ` — ${r.resource.name}` : ""}${r.resource.description ? `: ${r.resource.description.slice(0, 120)}` : ""}`,
+        );
+      }
+      lines.push(
+        "",
+        'Read with mcp_resource({ action: "read", uri: "…" }) or server__uri.',
+      );
+      if (result.serverErrors.length) {
+        lines.push("", "Server errors:");
+        for (const e of result.serverErrors) lines.push(`  - ${e}`);
+      }
+      return { output: lines.join("\n") };
+    }
+    if (action === "read") {
+      const uri = String(args.uri ?? args.url ?? args.name ?? "").trim();
+      if (!uri) {
+        return {
+          output: 'mcp_resource error: uri is required for action "read".',
+          isError: true,
+        };
+      }
+      const server =
+        args.server != null ? String(args.server).trim() : undefined;
+      const result = await mcp.readResource(uri, server);
+      const header =
+        result.serverName && result.uri
+          ? `[mcp resource ${result.serverName} ${result.uri}]\n`
+          : "";
+      return {
+        output: header + result.content,
+        isError: result.isError,
+      };
+    }
+    return {
+      output:
+        `mcp_resource error: unknown action "${args.action}". Use list | read.`,
+      isError: true,
+    };
+  } catch (err) {
+    return {
+      output: `mcp_resource error: ${(err as Error).message}`,
+      isError: true,
+    };
+  }
+}
+
+/**
+ * MCP prompts: list or get (beyond tools).
+ * action: list | get
+ */
+export async function toolMcpPrompt(
+  args: Record<string, unknown>,
+  ctx: ToolContext,
+): Promise<ToolResult> {
+  const mcp = ctx.mcp;
+  if (!mcp?.enabled) {
+    return {
+      output: "mcp_prompt: MCP not available (configure servers or FORGE_MCP=0).",
+      isError: true,
+    };
+  }
+  const action = String(args.action ?? args.method ?? "list")
+    .trim()
+    .toLowerCase();
+  try {
+    if (action === "list") {
+      const result = await mcp.listPrompts({
+        server:
+          args.server != null ? String(args.server).trim() : undefined,
+        query:
+          args.query != null
+            ? String(args.query)
+            : args.q != null
+              ? String(args.q)
+              : undefined,
+        limit: args.limit != null ? Number(args.limit) : undefined,
+      });
+      if (!result.prompts.length) {
+        return {
+          output:
+            "No MCP prompts found." +
+            (result.serverErrors.length
+              ? `\nErrors:\n${result.serverErrors.map((e) => `  - ${e}`).join("\n")}`
+              : "\nServers may not expose prompts (tools-only is common)."),
+        };
+      }
+      const lines = [`MCP prompts (${result.prompts.length}):`];
+      for (const p of result.prompts) {
+        const argsList = (p.prompt.arguments || [])
+          .map((a) => (a.required ? `${a.name}*` : a.name))
+          .join(", ");
+        lines.push(
+          `- **${p.qualifiedName}**${p.prompt.description ? ` — ${p.prompt.description.slice(0, 160)}` : ""}${argsList ? `\n  args: ${argsList}` : ""}`,
+        );
+      }
+      lines.push(
+        "",
+        'Get with mcp_prompt({ action: "get", name: "server__prompt", arguments: { … } }).',
+      );
+      return { output: lines.join("\n") };
+    }
+    if (action === "get") {
+      const name = String(
+        args.name ?? args.prompt ?? args.prompt_name ?? "",
+      ).trim();
+      if (!name) {
+        return {
+          output: 'mcp_prompt error: name is required for action "get".',
+          isError: true,
+        };
+      }
+      let promptArgs: Record<string, string> | undefined;
+      const raw = args.arguments ?? args.args;
+      if (raw && typeof raw === "object" && !Array.isArray(raw)) {
+        promptArgs = {};
+        for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+          if (v != null) promptArgs[k] = String(v);
+        }
+      }
+      const server =
+        args.server != null ? String(args.server).trim() : undefined;
+      const result = await mcp.getPrompt(name, promptArgs, server);
+      const header =
+        result.serverName && result.promptName
+          ? `[mcp prompt ${result.serverName}__${result.promptName}]\n`
+          : "";
+      return {
+        output: header + result.content,
+        isError: result.isError,
+      };
+    }
+    return {
+      output:
+        `mcp_prompt error: unknown action "${args.action}". Use list | get.`,
+      isError: true,
+    };
+  } catch (err) {
+    return {
+      output: `mcp_prompt error: ${(err as Error).message}`,
+      isError: true,
+    };
+  }
+}

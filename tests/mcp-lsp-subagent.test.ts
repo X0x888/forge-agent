@@ -55,11 +55,13 @@ after(async () => {
 });
 
 describe("tool definitions include MCP/LSP/subagent", () => {
-  it("registers search_mcp, call_mcp, spawn_subagent, lsp", () => {
+  it("registers search_mcp, call_mcp, mcp_resource, mcp_prompt, spawn_subagent, lsp", () => {
     const names = TOOL_DEFINITIONS.map((t) => t.function.name);
     for (const n of [
       "search_mcp",
       "call_mcp",
+      "mcp_resource",
+      "mcp_prompt",
       "spawn_subagent",
       "lsp",
     ]) {
@@ -232,6 +234,42 @@ describe("MCP config + types", () => {
     assert.match(r.output, /Unknown MCP tool/i);
     await manager.dispose();
   });
+
+  it("mcp_resource list on empty manager is graceful", async () => {
+    const ws = path.join(tmpRoot, "mcp-res");
+    await fsp.mkdir(ws, { recursive: true });
+    const manager = new McpManager({
+      workspace: ws,
+      config: { servers: {}, sources: [], enabled: true },
+    });
+    manager.start();
+    const r = await executeTool(
+      "mcp_resource",
+      JSON.stringify({ action: "list" }),
+      { workspace: ws, mcp: manager },
+    );
+    assert.ok(!r.isError);
+    assert.match(r.output, /No MCP resources/i);
+    await manager.dispose();
+  });
+
+  it("mcp_prompt list on empty manager is graceful", async () => {
+    const ws = path.join(tmpRoot, "mcp-prm");
+    await fsp.mkdir(ws, { recursive: true });
+    const manager = new McpManager({
+      workspace: ws,
+      config: { servers: {}, sources: [], enabled: true },
+    });
+    manager.start();
+    const r = await executeTool(
+      "mcp_prompt",
+      JSON.stringify({ action: "list" }),
+      { workspace: ws, mcp: manager },
+    );
+    assert.ok(!r.isError);
+    assert.match(r.output, /No MCP prompts/i);
+    await manager.dispose();
+  });
 });
 
 describe("JSON-RPC stdio framing", () => {
@@ -280,6 +318,17 @@ describe("LSP config", () => {
     const cfg = loadLspConfig(tmpRoot);
     assert.equal(cfg.enabled, true);
     assert.ok(cfg.servers.some((s) => s.languageId === "typescript"));
+  });
+
+  it("install guide covers core languages", async () => {
+    const { formatLspInstallGuide, LSP_INSTALL_RECIPES } = await import(
+      "../src/lsp/install-guide.js"
+    );
+    assert.ok(LSP_INSTALL_RECIPES.some((r) => r.languageId === "typescript"));
+    assert.ok(LSP_INSTALL_RECIPES.some((r) => r.languageId === "python"));
+    const guide = formatLspInstallGuide();
+    assert.match(guide, /typescript-language-server/);
+    assert.match(guide, /pyright|rust-analyzer|gopls/i);
   });
 
   it("languageIdForPath", () => {
@@ -347,12 +396,43 @@ describe("subagent helpers", () => {
     assert.equal(resolveCapabilityMode("general-purpose", "full"), "full");
   });
 
+  it("resolveIsolationMode", async () => {
+    const { resolveIsolationMode } = await import("../src/agent/worktree.js");
+    assert.equal(resolveIsolationMode("worktree"), "worktree");
+    assert.equal(resolveIsolationMode("none"), "none");
+    assert.equal(resolveIsolationMode(undefined), "none");
+  });
+
+  it("worktree isolation creates detached worktree in a git repo", async () => {
+    const { createSubagentWorktree, findGitRoot } = await import(
+      "../src/agent/worktree.js"
+    );
+    // npm test sets TMPDIR inside the repo — git walks up. Prefer real root.
+    const root = findGitRoot(process.cwd());
+    if (!root) {
+      // Outside any git tree: fail closed
+      const bare = path.join(tmpRoot, "not-a-git-repo");
+      await fsp.mkdir(bare, { recursive: true });
+      assert.throws(
+        () => createSubagentWorktree({ workspace: bare, label: "test" }),
+        /git repository/i,
+      );
+      return;
+    }
+    const wt = createSubagentWorktree({ workspace: root, label: "test-iso" });
+    assert.ok(fs.existsSync(wt.path));
+    assert.ok(fs.existsSync(path.join(wt.path, ".git")));
+    await wt.cleanup();
+  });
+
   it("filters tools for read-only subagents", () => {
     const ro = filterToolsForSubagent("read-only");
     const names = ro.map((t) => t.function.name);
     assert.ok(names.includes("read_file"));
     assert.ok(names.includes("grep"));
     assert.ok(names.includes("search_mcp"));
+    assert.ok(names.includes("mcp_resource"));
+    assert.ok(names.includes("mcp_prompt"));
     assert.ok(names.includes("lsp"));
     assert.ok(!names.includes("write_file"));
     assert.ok(!names.includes("bash"));

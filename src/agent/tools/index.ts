@@ -11,7 +11,12 @@ import { toolWebSearch } from "./web-search.js";
 import { toolWebFetch } from "./web-fetch.js";
 import { toolGetTaskOutput, toolKillTask } from "./task-tools.js";
 import { toolAskUser } from "./ask-user.js";
-import { toolSearchMcp, toolCallMcp } from "../../mcp/tools.js";
+import {
+  toolSearchMcp,
+  toolCallMcp,
+  toolMcpResource,
+  toolMcpPrompt,
+} from "../../mcp/tools.js";
 import { toolLsp } from "../../lsp/tools.js";
 import { toolSpawnSubagent } from "./subagent-tool.js";
 import { parseToolArguments } from "../../util/json-repair.js";
@@ -21,7 +26,7 @@ export type { ToolContext, ToolResult } from "./types.js";
 export { TOOL_DEFINITIONS };
 
 const AVAILABLE =
-  "bash, get_task_output, kill_task, read_file, write_file, search_replace, apply_patch, grep, glob, list_dir, todo_write, ask_user, web_search, web_fetch, search_mcp, call_mcp, spawn_subagent, lsp";
+  "bash, get_task_output, kill_task, read_file, write_file, search_replace, apply_patch, grep, glob, list_dir, todo_write, ask_user, web_search, web_fetch, search_mcp, call_mcp, mcp_resource, mcp_prompt, spawn_subagent, lsp";
 
 /** Canonical tool ids (used for doubled-name recovery). */
 const CANONICAL_TOOLS = [
@@ -47,6 +52,8 @@ const CANONICAL_TOOLS = [
   "mcp_search",
   "mcp_call",
   "use_mcp",
+  "mcp_resource",
+  "mcp_prompt",
   "spawn_subagent",
   "Task",
   "task",
@@ -189,6 +196,10 @@ export async function executeTool(
       case "mcp_call":
       case "use_mcp":
         return await toolCallMcp(args, ctx);
+      case "mcp_resource":
+        return await toolMcpResource(args, ctx);
+      case "mcp_prompt":
+        return await toolMcpPrompt(args, ctx);
       case "spawn_subagent":
       case "Task":
       case "task":

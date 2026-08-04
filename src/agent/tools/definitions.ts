@@ -376,12 +376,78 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   {
     type: "function",
     function: {
+      name: "mcp_resource",
+      description:
+        "List or read MCP resources (documents/data beyond tools). " +
+        "action=list to discover uris; action=read with uri (or server__uri). " +
+        "Many servers are tools-only — empty list is normal.",
+      parameters: {
+        type: "object",
+        properties: {
+          action: {
+            type: "string",
+            description: "list | read (default list)",
+          },
+          uri: {
+            type: "string",
+            description: "Resource URI (required for read)",
+          },
+          server: {
+            type: "string",
+            description: "Optional server name when uri is ambiguous",
+          },
+          query: {
+            type: "string",
+            description: "Filter list by keyword",
+          },
+          limit: { type: "number", description: "Max list results (default 40)" },
+        },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "mcp_prompt",
+      description:
+        "List or get MCP prompt templates (reusable prompt packs from servers). " +
+        "action=list to discover; action=get with name (server__prompt) and optional arguments.",
+      parameters: {
+        type: "object",
+        properties: {
+          action: {
+            type: "string",
+            description: "list | get (default list)",
+          },
+          name: {
+            type: "string",
+            description: "Prompt name or server__name (required for get)",
+          },
+          arguments: {
+            type: "object",
+            description: "String arguments for the prompt template",
+          },
+          server: {
+            type: "string",
+            description: "Optional server when name is bare",
+          },
+          query: {
+            type: "string",
+            description: "Filter list by keyword",
+          },
+        },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
       name: "spawn_subagent",
       description:
         "Delegate a bounded subtask to a nested agent and receive its final summary. " +
-        "Use for parallelizable research, large explorations, or isolated implementation slices. " +
-        "Types: general-purpose (full tools), explore (read-only research), plan (read-only design). " +
-        "Do not nest when a single tool call suffices. Children cannot spawn further subagents by default.",
+        "Types: general-purpose | explore (read-only) | plan (read-only design). " +
+        "isolation=worktree creates a detached git worktree under ~/.forge/worktrees/ so edits do not touch the parent checkout (requires git). " +
+        "Do not nest when a single tool call suffices.",
       parameters: {
         type: "object",
         properties: {
@@ -407,6 +473,11 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
             type: "number",
             description: "Cap nested agent turns (default 40, max 200)",
           },
+          isolation: {
+            type: "string",
+            description:
+              "none (default, same workspace) | worktree (detached git worktree isolation)",
+          },
         },
         required: ["prompt"],
       },
@@ -417,17 +488,17 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     function: {
       name: "lsp",
       description:
-        "Language Server Protocol: diagnostics, hover, go-to-definition, references, symbols. " +
-        "Prefer diagnostics after TypeScript/Python/Rust/Go edits when the server is installed. " +
-        "Actions: diagnostics | hover | definition | references | symbols | workspace_symbols | status. " +
-        "line/character are 1-based. Servers: typescript-language-server, pyright, rust-analyzer, gopls (on PATH).",
+        "Language Server Protocol: diagnostics, hover, definition, references, symbols. " +
+        "Prefer diagnostics after TS/Python/Rust/Go edits when the server is on PATH. " +
+        "Actions: diagnostics|hover|definition|references|symbols|workspace_symbols|status|install. " +
+        "Install tips: action=install or /lsp install (see docs/LSP.md). line/character 1-based.",
       parameters: {
         type: "object",
         properties: {
           action: {
             type: "string",
             description:
-              "diagnostics | hover | definition | references | symbols | workspace_symbols | status",
+              "diagnostics | hover | definition | references | symbols | workspace_symbols | status | install",
           },
           path: {
             type: "string",

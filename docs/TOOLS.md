@@ -17,9 +17,11 @@ Lessons applied from local open-source trees under `Documents/open source/` (Gro
 | `todo_write` | Session todos. Validates id/content/status; `merge:true` + `[]` is a no-op warning; failures are tool errors. |
 | `web_search` | DuckDuckGo Instant Answer (best-effort). Honors turn abort + 15s timeout; HTML scrape capped 2 MiB. Invalid `num_results` fails closed. |
 | `web_fetch` | Public http(s) fetch with **SSRF** guards (hex IPv4-mapped `::ffff:7f00:1`; weird IPv4 `2130706433`/`0x7f000001`/`127.1`; bracketed IPv6 hostnames peeled), redirect re-check, HTML→text (invalid numeric entities never throw), stream body cap **5 MiB**. Invalid `format`/`timeout_ms` fail closed. Merged turn abort signal stays live through body read. **`allow_local`** is not a free read-only tool (headless/dontAsk/plan need allow rule / pattern-always / YOLO / interactive approval; session-tool alone is not enough). |
-| `search_mcp` / `call_mcp` | MCP (Model Context Protocol): search then invoke. **Built-in defaults:** `context7` (`npx -y @upstash/context7-mcp` — library docs) and `playwright` (`npx -y @playwright/mcp@latest` — browser). Override/disable in `.forge/mcp.json` / `~/.forge/mcp.json` (also `.mcp.json`, `.cursor/mcp.json`). Tools are `server__tool`. Lazy stdio/HTTP; output capped; PreToolUse hooks apply. Plan mode: search + read-only calls only. `FORGE_MCP=0` off all; `FORGE_MCP_DEFAULTS=0` off only built-ins. Optional `CONTEXT7_API_KEY`. `/mcp status|connect|tools|reload`. |
-| `spawn_subagent` | Nested agent (`Task` alias). Types: `general-purpose` (full tools), `explore` (read-only research), `plan` (read-only design). Depth default 1 (`FORGE_SUBAGENT_MAX_DEPTH`); children cannot nest further by default. Fires `SubagentStart`/`SubagentStop` hooks. Ephemeral child session cleaned unless `FORGE_SUBAGENT_KEEP=1`. Token usage folds into parent. |
-| `lsp` | Language Server Protocol: `diagnostics` / `hover` / `definition` / `references` / `symbols` / `workspace_symbols` / `status`. Defaults: typescript-language-server, pyright, rust-analyzer, gopls (on PATH). Config `.forge/lsp.json` / `~/.forge/lsp.json`. Workspace-scoped; lazy start. `FORGE_LSP=0` disables. `/lsp status|restart`. |
+| `search_mcp` / `call_mcp` | MCP tools: search then invoke. **Defaults:** `context7` + `playwright`. Config `.forge/mcp.json` / `~/.forge/mcp.json`. `server__tool` names. `FORGE_MCP=0` / `FORGE_MCP_DEFAULTS=0`. `/mcp status|connect`. |
+| `mcp_resource` | MCP **resources** beyond tools: `action=list|read`, `uri`, optional `server`. Empty list is normal for tools-only servers. |
+| `mcp_prompt` | MCP **prompt templates**: `action=list|get`, `name` (`server__prompt`), optional `arguments`. |
+| `spawn_subagent` | Nested agent (`Task`). Types: general-purpose / explore / plan. **`isolation=worktree`**: detached git worktree under `~/.forge/worktrees/` (parent checkout untouched; requires git). Keep with `FORGE_SUBAGENT_KEEP_WORKTREE=1`. Depth `FORGE_SUBAGENT_MAX_DEPTH`. |
+| `lsp` | LSP: diagnostics/hover/definition/references/symbols + **`install`** recipes. Servers on PATH (see **docs/LSP.md**). `/lsp status|install|restart`. `FORGE_LSP=0` off. |
 
 ## Name aliases
 
@@ -81,6 +83,11 @@ Not model tools, but production daily-driver surfaces experts use alongside tool
 | `forge run --session` · `--continue` | Headless multi-step CI resume |
 | Session lock | REPL + `forge run` share `session.lock` (HUD `LOCK:<pid>` for foreign holders) |
 | `forge doctor --json` | Includes `undoJournal`, `bashTimeoutMs`, `sessionsPinned`, `secureFiles` |
+
+## Related docs
+
+- **docs/LSP.md** — language server install table (typescript-language-server, pyright, rust-analyzer, gopls, …)
+- MCP resources/prompts via `mcp_resource` / `mcp_prompt` (tools remain search_mcp/call_mcp)
 
 ## Deferred (see plan / open-source comparison)
 
