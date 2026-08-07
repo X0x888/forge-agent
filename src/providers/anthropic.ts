@@ -4,6 +4,7 @@ import type {
   ChatResponse,
   ChatUsage,
   LLMProvider,
+  OutboundChatMessage,
   StreamDelta,
   ToolCall,
   ToolDefinition,
@@ -15,6 +16,10 @@ import {
   providerMaxWallMs,
   providerTimeoutMs,
 } from "../util/abort.js";
+import {
+  contentHasImages,
+  toAnthropicImageContent,
+} from "../util/user-images.js";
 
 /**
  * Map Anthropic stop_reason → OpenAI-compat finish_reason used by the agent loop.
@@ -146,7 +151,7 @@ export class AnthropicProvider implements LLMProvider {
     };
   }
 
-  private convertMessages(messages: ChatMessage[]): {
+  private convertMessages(messages: OutboundChatMessage[]): {
     system?: string;
     messages: unknown[];
   } {
@@ -167,16 +172,31 @@ export class AnthropicProvider implements LLMProvider {
 
     for (const m of messages) {
       if (m.role === "system") {
-        system = (system ? system + "\n\n" : "") + (m.content || "");
+        const sysText =
+          typeof m.content === "string"
+            ? m.content
+            : Array.isArray(m.content)
+              ? m.content
+                  .filter((p) => p && (p as { type?: string }).type === "text")
+                  .map((p) => String((p as { text?: string }).text || ""))
+                  .join("\n")
+              : "";
+        system = (system ? system + "\n\n" : "") + (sysText || "");
         continue;
       }
       if (m.role === "user") {
-        if (m.content) pushBlocks("user", [{ type: "text", text: m.content }]);
+        if (contentHasImages(m.content)) {
+          pushBlocks("user", toAnthropicImageContent(m.content));
+        } else if (typeof m.content === "string" && m.content) {
+          pushBlocks("user", [{ type: "text", text: m.content }]);
+        }
         continue;
       }
       if (m.role === "assistant") {
         const content: unknown[] = [];
-        if (m.content) content.push({ type: "text", text: m.content });
+        if (typeof m.content === "string" && m.content) {
+          content.push({ type: "text", text: m.content });
+        }
         if (m.tool_calls) {
           for (const tc of m.tool_calls) {
             const parsed = parseToolArguments(tc.function.arguments || "{}");
@@ -198,7 +218,7 @@ export class AnthropicProvider implements LLMProvider {
         const block = {
           type: "tool_result",
           tool_use_id: m.tool_call_id,
-          content: m.content || "",
+          content: typeof m.content === "string" ? m.content || "" : "",
         };
         const last = out[out.length - 1];
         if (last && last.role === "user") {

@@ -9,13 +9,27 @@ export interface ToolCall {
   };
 }
 
+/** Multimodal user content (vision) — used on outbound ChatRequest only. */
+export type ChatContentPart =
+  | { type: "text"; text: string }
+  | {
+      type: "image_url";
+      image_url: { url: string; detail?: "auto" | "low" | "high" };
+    };
+
 export interface ChatMessage {
   role: Role;
+  /** Session history stays string; vision parts are expanded only on ChatRequest. */
   content: string | null;
   name?: string;
   tool_call_id?: string;
   tool_calls?: ToolCall[];
 }
+
+/** Outbound message (may include image parts after vision expand). */
+export type OutboundChatMessage = Omit<ChatMessage, "content"> & {
+  content: string | ChatContentPart[] | null;
+};
 
 export interface ToolDefinition {
   type: "function";
@@ -28,7 +42,7 @@ export interface ToolDefinition {
 
 export interface ChatRequest {
   model: string;
-  messages: ChatMessage[];
+  messages: OutboundChatMessage[];
   tools?: ToolDefinition[];
   temperature?: number;
   max_tokens?: number;
