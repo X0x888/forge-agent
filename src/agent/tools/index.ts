@@ -19,6 +19,7 @@ import {
 } from "../../mcp/tools.js";
 import { toolLsp } from "../../lsp/tools.js";
 import { toolSpawnSubagent } from "./subagent-tool.js";
+import { toolMemoryWrite } from "./memory-write.js";
 import { parseToolArguments } from "../../util/json-repair.js";
 import { suggestNames } from "../../util/suggest.js";
 
@@ -26,7 +27,7 @@ export type { ToolContext, ToolResult } from "./types.js";
 export { TOOL_DEFINITIONS };
 
 const AVAILABLE =
-  "bash, get_task_output, kill_task, read_file, write_file, search_replace, apply_patch, grep, glob, list_dir, todo_write, ask_user, web_search, web_fetch, search_mcp, call_mcp, mcp_resource, mcp_prompt, spawn_subagent, lsp";
+  "bash, get_task_output, kill_task, read_file, write_file, search_replace, apply_patch, grep, glob, list_dir, todo_write, memory_write, ask_user, web_search, web_fetch, search_mcp, call_mcp, mcp_resource, mcp_prompt, spawn_subagent, lsp";
 
 /** Canonical tool ids (used for doubled-name recovery). */
 const CANONICAL_TOOLS = [
@@ -42,6 +43,7 @@ const CANONICAL_TOOLS = [
   "glob",
   "list_dir",
   "todo_write",
+  "memory_write",
   "ask_user",
   "AskUser",
   "question",
@@ -172,6 +174,9 @@ export async function executeTool(
         const isErr = /^todo_write error:/i.test(out);
         return { output: out, ...(isErr ? { isError: true as const } : {}) };
       }
+      case "memory_write":
+      case "decision_write":
+        return await toolMemoryWrite(args, ctx);
       case "ask_user":
       case "AskUser":
       case "question":

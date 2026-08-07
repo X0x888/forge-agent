@@ -579,6 +579,29 @@ Docs: docs/PRODUCTION.md · docs/RELIABILITY.md · docs/ULW.md · forge news
             editCount: session.meta.editCount,
             ...(maxWaves !== undefined ? { maxWaves } : {}),
           });
+          // Seed backlog todos for broad/soft mandates (parity with /ulw slash).
+          try {
+            const { todosFromMandate, isBroadMandate } = await import(
+              "./harness/decision-memory.js"
+            );
+            const { applyTodos, openTodos } = await import("./agent/todos.js");
+            if (
+              (state.backlogRequired ||
+                state.softPrompt ||
+                isBroadMandate(mandate)) &&
+              openTodos(session.todos || []) < 2
+            ) {
+              const seeded = todosFromMandate(mandate, { max: 12 });
+              applyTodos(session, seeded, false);
+              if (seeded.length >= 2 && state.backlogRequired) {
+                state.backlogRequired = false;
+                const { saveUlwCycle } = await import("./harness/ulw-cycle.js");
+                saveUlwCycle(state);
+              }
+            }
+          } catch {
+            /* */
+          }
           saveSession(session);
           if (!wantJson) {
             const cap =

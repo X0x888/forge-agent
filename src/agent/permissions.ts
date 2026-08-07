@@ -39,6 +39,7 @@ const READ_ONLY_TOOLS = new Set([
   "web_search",
   "web_fetch",
   "todo_write",
+  "memory_write",
   "get_task_output",
   "search_mcp",
   "mcp_search",

@@ -13,6 +13,7 @@ import type {
   ChatMessage,
   ChatRequest,
   LLMProvider,
+  OutboundChatMessage,
   ToolCall,
 } from "../providers/types.js";
 import type { SessionData, TodoItem } from "../session/session.js";
@@ -52,6 +53,8 @@ import {
   clearStaleToolResults,
   toolClearEnvConfig,
 } from "../session/tool-clearing.js";
+import { expandUserContentWithImages } from "../util/user-images.js";
+import { maybeRecordUserConstraint } from "../harness/decision-memory.js";
 import {
   drainLiveNotices,
   formatLiveNoticesMessage,
@@ -293,9 +296,13 @@ export function buildChatRequest(
 ): ChatRequest {
   const effort =
     effortOverride ?? resolveReasoningEffort(config.model, config.reasoningEffort);
+  // Phase 6: expand [[image:path]] / @shot.png markers into multimodal parts
+  // for vision-capable providers (inline data URLs). Stored session history
+  // keeps the original string markers — only the outbound request expands.
+  const outbound = expandMessagesForVision(messages, config.workspace);
   return {
     model: config.model,
-    messages,
+    messages: outbound,
     tools,
     // Undefined temperature → omitted; provider/server default wins (grok-build
     // parity — server-tuned sampling beats a client-guessed 0.2 on reasoning
@@ -306,6 +313,25 @@ export function buildChatRequest(
     max_tokens: resolveEffectiveMaxTokens(config, Boolean(effort)),
     ...(effort ? { reasoning_effort: effort } : {}),
   };
+}
+
+/** Expand user string messages that reference image paths into multimodal content. */
+export function expandMessagesForVision(
+  messages: ChatMessage[],
+  workspace?: string,
+): OutboundChatMessage[] {
+  return messages.map((m) => {
+    if (m.role !== "user" || typeof m.content !== "string") return m;
+    if (
+      !/\[\[image:/i.test(m.content) &&
+      !/@[^\s]+\.(png|jpe?g|gif|webp|bmp)\b/i.test(m.content)
+    ) {
+      return m;
+    }
+    const expanded = expandUserContentWithImages(m.content, workspace);
+    if (typeof expanded === "string") return m;
+    return { ...m, content: expanded };
+  });
 }
 
 /**
@@ -781,16 +807,30 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
       // bodies are replaced by restorable stubs before they pile up into
       // overflow territory. Anthropic calls tool-result clearing "one of the
       // safest lightest touch forms of compaction".
+      // Phase 3: under ULW, clear more aggressively (higher signal density).
+      const ulwForClear = loadUlwCycle(session.meta.id);
+      const ulwAggressive = Boolean(ulwForClear?.enabled);
+      const clearEvery = ulwAggressive
+        ? Math.min(toolClearEveryTurns, 2)
+        : toolClearEveryTurns;
+      const keepRecent = ulwAggressive
+        ? Math.min(toolClearCfg.keepRecent, 6)
+        : toolClearCfg.keepRecent;
+      const minStale = ulwAggressive
+        ? Math.min(toolClearCfg.minStaleBytes, 8000)
+        : toolClearCfg.minStaleBytes;
       if (
         toolClearCfg.enabled &&
-        turns - lastToolClearTurn >= toolClearEveryTurns &&
-        session.messages.length > toolClearCfg.keepRecent + 4
+        turns - lastToolClearTurn >= clearEvery &&
+        session.messages.length > keepRecent + 4
       ) {
         const cleared = clearStaleToolResults(session.messages, {
-          keepRecent: toolClearCfg.keepRecent,
-          minChars: toolClearCfg.minChars,
+          keepRecent,
+          minChars: ulwAggressive
+            ? Math.min(toolClearCfg.minChars, 800)
+            : toolClearCfg.minChars,
         });
-        if (cleared.cleared > 0 && cleared.freedChars >= toolClearCfg.minStaleBytes) {
+        if (cleared.cleared > 0 && cleared.freedChars >= minStale) {
           session.messages = cleared.messages;
           lastToolClearTurn = turns;
           saveSession(session);
@@ -1948,10 +1988,12 @@ function drainSafeBoundaryMessages(
     // Attach active harness context so free-text steering does not drop the
     // mandate/goal/todos mid-wave (expert friction: "I said X and it forgot ULW").
     let ijCtx: import("../harness/interjection.js").InterjectionContext | undefined;
+    let waveForMem: number | undefined;
     try {
       const ulwNow = loadUlwCycle(session.meta.id);
       const goalNow = loadGoal(session.meta.id);
       const open = openTodos(session.todos);
+      waveForMem = ulwNow?.enabled ? ulwNow.wave : undefined;
       ijCtx = {};
       if (ulwNow?.enabled) {
         ijCtx.ulwLine = `${formatUlwCounts(ulwNow)} ${
@@ -1979,6 +2021,14 @@ function drainSafeBoundaryMessages(
       }
     } catch {
       ijCtx = undefined;
+    }
+    // Phase 1: promote hard constraints from mid-run free-text into durable memory.
+    try {
+      for (const t of interjections) {
+        maybeRecordUserConstraint(session.meta.id, t, waveForMem);
+      }
+    } catch {
+      /* */
     }
     session.messages.push({
       role: "user",
@@ -2344,6 +2394,7 @@ async function prepareToolResult(opts: {
       rawForExec,
       {
         workspace,
+        sessionId: session.meta.id,
         sandbox: config.sandbox,
         sandboxNetwork: config.sandboxNetwork,
         sandboxMissingBackend: config.sandboxMissingBackend,

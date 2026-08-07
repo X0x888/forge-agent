@@ -266,6 +266,33 @@ export {
   isVerificationCommand,
 } from "./harness/ulw-cycle.js";
 export {
+  loadDecisionMemory,
+  saveDecisionMemory,
+  seedMemoryFromMandate,
+  appendMemoryRecord,
+  formatMemoryForPrompt,
+  formatMemoryStatus,
+  copyDecisionMemory,
+  extractMandateBullets,
+  isBroadMandate,
+  todosFromMandate,
+  maybeRecordUserConstraint,
+  recordWaveObservation,
+  activeMemoryRecords,
+  decisionMemoryPath,
+} from "./harness/decision-memory.js";
+export type {
+  MemoryRecord,
+  MemoryKind,
+  DecisionMemoryStore,
+} from "./harness/decision-memory.js";
+export {
+  expandUserContentWithImages,
+  loadImageDataUrl,
+  isImagePath,
+  contentHasImages,
+} from "./util/user-images.js";
+export {
   createSession,
   loadSession,
   loadSessionMeta,

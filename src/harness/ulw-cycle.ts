@@ -14,6 +14,12 @@ import path from "node:path";
 import { forgeHome, readJsonFile, writeJsonFile, nowIso, nowEpoch } from "../util/fs.js";
 import { isTruthy } from "../util/bool.js";
 import { clearSoftTodoGateOnWindDown } from "./todo-gate.js";
+import {
+  formatMemoryForPrompt,
+  isBroadMandate,
+  recordWaveObservation,
+  seedMemoryFromMandate,
+} from "./decision-memory.js";
 
 export type CycleFlag = 0 | 1;
 
@@ -38,6 +44,11 @@ export interface UlwWaveRecord {
   /** One-line clip of the wave's closing assistant message */
   summary: string;
   ts: string;
+  /**
+   * Todos closed (completed|cancelled) during this wave — structural intent
+   * signal for thin-wave detection (Phase 5). Optional for back-compat.
+   */
+  todoProgress?: number;
 }
 
 export interface UlwCycleState {
@@ -86,6 +97,13 @@ export interface UlwCycleState {
   proofDemands?: number;
   /** Evidence demands issued against weak cycle=0 attestations (capped at 1) */
   evidenceNudges?: number;
+  /**
+   * Broad checklist mandate: wave 1 must seed a todo backlog before inventing
+   * free-form scope (Phase 2 contract). Cleared once backlog is present.
+   */
+  backlogRequired?: boolean;
+  /** Open todo count snapshot at previous wave boundary (for todoProgress). */
+  lastOpenTodoCount?: number;
   startedAt: string;
   updatedAt: string;
   sessionId: string;
@@ -282,7 +300,11 @@ export function formatWaveLedger(
     .slice(-max)
     .map(
       (w) =>
-        `w${w.wave} +${w.editDelta}e${w.netDiff === "revisit" ? "↺" : ""} ${w.proof ? "✓" : "✗"}`,
+        `w${w.wave} +${w.editDelta}e${w.netDiff === "revisit" ? "↺" : ""}${
+          w.todoProgress != null && w.todoProgress > 0
+            ? ` tΔ${w.todoProgress}`
+            : ""
+        } ${w.proof ? "✓" : "✗"}`,
     )
     .join(" · ");
 }
@@ -369,6 +391,7 @@ export function isSoftPrompt(prompt: string): boolean {
 export function expandUlwMandate(mandate: string): { expanded: string; soft: boolean } {
   const soft = isSoftPrompt(mandate);
   const base = mandate.replace(/\s+/g, " ").trim() || "do the hard work this workspace needs most";
+  const broad = isBroadMandate(mandate);
 
   const smartDoctrine = [
     `### Smart + hard (IQ-class, not thrash)`,
@@ -390,6 +413,16 @@ export function expandUlwMandate(mandate: string): { expanded: string; soft: boo
     `The loop below is **philosophy**, not a rigid ritual. Freestyle sequence, tooling, and depth when that yields better work. Harness rails (Stop/proof/todos) stay; process theater does not.`,
   ].join("\n");
 
+  const backlogDoctrine = broad
+    ? [
+        ``,
+        `### Backlog contract (broad mandate)`,
+        `This mandate is multi-section. **First** materialize an ordered todo board (≥2 items) covering mandate sections via todo_write.`,
+        `Waves execute the backlog against durable decisions — do **not** free-invent unrelated scope. Prefer P0 reliability/trust before polish when both appear.`,
+        `Record new constraints with memory_write so compaction cannot erase them.`,
+      ].join("\n")
+    : "";
+
   if (!soft) {
     return {
       soft: false,
@@ -398,6 +431,7 @@ export function expandUlwMandate(mandate: string): { expanded: string; soft: boo
         ``,
         `Execute under **ULW god-mode** until cycle=0 and the last wave is attested **Cycle complete.**`,
         smartDoctrine,
+        backlogDoctrine,
         ``,
         `- Own the outcome end-to-end. Research when uncertain; spawn subagents when that is smarter; then build — no thrash, no permission-to-continue asks.`,
         `- Every wave: highest-leverage next objective vs the mandate · search-before-build · ship · cheapest real proof · hostile review · next wave while cycle=1.`,
@@ -417,6 +451,7 @@ export function expandUlwMandate(mandate: string): { expanded: string; soft: boo
       `One-sentence reading (what the hard work is + what you passed on), then tools. No pep talks. No "what should I improve?".`,
       ``,
       smartDoctrine,
+      backlogDoctrine,
       ``,
       `### Operating loop (guidance — adapt freely when freestyle is better)`,
       `1. **ORIENT** — what this place is (stack, checks, entrypoints, git, AGENTS/README, real debt). Tools, not guesses.`,
@@ -454,6 +489,11 @@ export function armUlwCycle(
       : prev?.enabled
         ? normalizeMaxWaves(prev.maxWaves)
         : null;
+  const cleanMandate =
+    mandate.replace(/\s+/g, " ").trim() || "improve the codebase";
+  // Backlog gate only for multi-section / comprehensive mandates — not every
+  // soft "improve the code" (that would stall classic ULW wave tests forever).
+  const broad = isBroadMandate(mandate) || isBroadMandate(cleanMandate);
   const state: UlwCycleState = {
     enabled: true,
     cycle: opts?.cycle ?? 1,
@@ -466,7 +506,7 @@ export function armUlwCycle(
     // (evaluateUlwAtStop deltas against lastBlockEditCount), and bestWave()
     // then anchors the quality bar to a wave that never ran.
     lastBlockEditCount: Math.max(0, Math.floor(opts?.editCount ?? 0)),
-    mandate: mandate.replace(/\s+/g, " ").trim() || "improve the codebase",
+    mandate: cleanMandate,
     expandedMandate: expanded,
     softPrompt: soft,
     // Wave ledger persists across re-arms (same session story); streak
@@ -475,11 +515,19 @@ export function armUlwCycle(
     thinStreak: 0,
     proofDemands: 0,
     evidenceNudges: 0,
+    backlogRequired: broad,
+    lastOpenTodoCount: undefined,
     startedAt: prev?.enabled ? prev.startedAt : nowIso(),
     updatedAt: nowIso(),
     sessionId,
   };
   saveUlwCycle(state);
+  // Phase 1: durable decision memory — survive compact / multi-wave rot.
+  try {
+    seedMemoryFromMandate(sessionId, cleanMandate, { softPrompt: soft });
+  } catch {
+    /* memory best-effort at arm; compact fail-closed surfaces corrupt */
+  }
   return state;
 }
 
@@ -784,6 +832,32 @@ export function evaluateUlwAtStop(opts: {
 
   if (s.cycle === 1) {
     const cap = normalizeMaxWaves(s.maxWaves);
+    // Phase 2: broad/soft mandate must have a todo backlog before inventing.
+    if (
+      s.backlogRequired &&
+      opts.openTodoCount < 2 &&
+      s.wave === 0
+    ) {
+      s.blocks += 1;
+      saveUlwCycle(s);
+      const mem = formatMemoryForPrompt(opts.sessionId, { budget: 2500 });
+      const reanchor = [
+        `[Forge ULW cycle driver] Stop blocked — backlog required before Wave 1 invents scope.`,
+        `Mandate is broad/soft. Decompose it into an ordered todo board (≥2 items) via todo_write covering the mandate sections, then execute the top item.`,
+        `Mandate: ${s.mandate}`,
+        mem.activeCount
+          ? `## Active decisions / constraints\n${mem.text}`
+          : null,
+        `Do not free-invent waves until the backlog exists. ${ULW_LIVE_CONTROLS_HINT}`,
+      ]
+        .filter(Boolean)
+        .join("\n");
+      return { block: true, reason: reanchor, reanchor };
+    }
+    if (s.backlogRequired && opts.openTodoCount >= 2) {
+      s.backlogRequired = false;
+    }
+
     // Already at/over cap (e.g. user lowered max_waves mid-run) → force LAST now.
     if (cap != null && s.wave >= cap) {
       s.cycle = 0;
@@ -822,6 +896,11 @@ export function evaluateUlwAtStop(opts: {
           : "new"
         : "none"
       : undefined;
+    // Phase 5: todo progress = open todos that closed since last boundary.
+    const prevOpen =
+      s.lastOpenTodoCount != null ? s.lastOpenTodoCount : opts.openTodoCount;
+    const todoProgress = Math.max(0, prevOpen - opts.openTodoCount);
+    s.lastOpenTodoCount = opts.openTodoCount;
     s.waves = [
       ...(s.waves ?? []),
       {
@@ -829,14 +908,29 @@ export function evaluateUlwAtStop(opts: {
         editDelta,
         netDiff,
         proof,
+        todoProgress,
         summary: summarizeWave(msg),
         ts: nowIso(),
       },
     ].slice(-WAVE_LEDGER_KEEP);
+    // Phase 3 OM-lite: durable wave fact in decision memory.
+    try {
+      recordWaveObservation(
+        opts.sessionId,
+        s.wave,
+        `+${editDelta}e proof=${proof ? "✓" : "✗"} todosΔ=${todoProgress} net=${netDiff ?? "n/a"} — ${summarizeWave(msg)}`,
+      );
+    } catch {
+      /* */
+    }
     // Thin waves: negligible edits with no tree movement and no proof — plus
     // churn waves outright (revisit = edit→revert; the diff came back to a
     // seen state no matter how many edit calls it took).
-    const thin = (editDelta <= 1 && !diffChanged && !proof) || diffRevisit;
+    // Phase 5: also thin when no todo progress AND no proof (intent idle).
+    const thin =
+      (editDelta <= 1 && !diffChanged && !proof) ||
+      diffRevisit ||
+      (todoProgress === 0 && !proof && editDelta <= 2 && !diffChanged);
     s.thinStreak = thin ? (s.thinStreak ?? 0) + 1 : 0;
     if (proof) {
       s.proofDemands = 0;
@@ -918,6 +1012,11 @@ function buildCycleReanchor(
   },
 ): string {
   const cap = normalizeMaxWaves(s.maxWaves);
+  const mem = formatMemoryForPrompt(s.sessionId, { budget: 3500 });
+  const decisionsBlock =
+    mem.activeCount > 0 || mem.corrupt
+      ? [`## Active decisions / constraints (durable — do not re-derive)`, mem.text]
+      : [];
   if (opts.mode === "continue") {
     const best = bestWave(s.waves);
     const lastEntry = s.waves?.length
@@ -926,14 +1025,15 @@ function buildCycleReanchor(
     return [
       `[Forge ULW cycle driver] Stop blocked — ${formatUlwCounts(s)} (CONTINUE).`,
       `Mandate: ${s.mandate}`,
+      ...decisionsBlock,
       `Wave ${s.wave} begins${cap != null ? ` (max ${cap})` : ""}. Protocol: research → plan → implement → verify → review (full cycle in system prompt).`,
       lastEntry
-        ? `Last wave closed: +${lastEntry.editDelta} edits, proof ${lastEntry.proof ? "✓" : "✗"}.`
+        ? `Last wave closed: +${lastEntry.editDelta} edits, proof ${lastEntry.proof ? "✓" : "✗"}${lastEntry.todoProgress != null ? `, todosΔ=${lastEntry.todoProgress}` : ""}.`
         : null,
       ``,
       `Wave rules:`,
       `1. SMOKE-CHECK first — run the cheapest existing check (tests/typecheck/build) to catch breakage from prior waves before adding scope.`,
-      `2. ONE objective — the highest-impact bounded item; search before building so you don't re-implement what exists.`,
+      `2. ONE objective — prefer the next open todo (backlog) or highest-impact bounded item against the mandate/decisions; search before building.`,
       `3. Plan in 2 lines — objective + the exact command that proves it — then ship it and run that proof.`,
       best
         ? `Bar: best wave so far w${best.wave} (+${best.editDelta} edits${best.proof ? ", proof ✓" : ""}). Match or beat it — compound on shipped work; no filler waves (renames, comment-only churn, edit/revert loops).`
@@ -960,11 +1060,14 @@ function buildCycleReanchor(
         ? `Waves are thinning (${opts.thinStreak} in a row with little substance). God-mode demand: pick a substantially higher-leverage hard objective (not churn) — or, if the hard work is genuinely exhausted, say so with evidence; the user can /cycle 0.`
         : null,
       s.softPrompt
-        ? `Soft signal still active — you own what the hard work is. Keep inventing high-leverage waves; never ask the user to clarify or pick tasks.`
+        ? `Soft signal still active — you own what the hard work is within the durable decisions above. Prefer backlog todos; never ask the user to clarify or pick tasks.`
+        : null,
+      s.backlogRequired
+        ? `⚠ Backlog still required: todo_write ≥2 items covering mandate sections before free invent.`
         : null,
       opts.openTodos > 0
-        ? `Open todos: ${opts.openTodos} — clear or complete them before claiming a wave done.`
-        : `No open todos — create a short wave plan via todo_write, then execute.`,
+        ? `Open todos: ${opts.openTodos} — clear or complete them before claiming a wave done. Prefer ONE primary todo per wave.`
+        : `No open todos — create a short wave plan via todo_write (or memory_write a decision that hard work is exhausted), then execute.`,
       `${ULW_LIVE_CONTROLS_HINT}`,
       `Do not stop. Do not ask permission to continue. Next tool calls now.`,
     ]
@@ -979,18 +1082,19 @@ function buildCycleReanchor(
   return [
     `[Forge ULW cycle driver] Stop blocked — ${formatUlwCounts(s)} (LAST CYCLE).`,
     `Mandate: ${s.mandate}`,
+    ...decisionsBlock,
     `Wave: ${s.wave}${cap != null ? ` / max ${cap}` : ""} — finish THIS wave only, then attest and stop.`,
     maxHitLine,
     ``,
     `Required before attestation:`,
-    `1. Complete all open work for this wave (todos, verification) and run the final check.`,
+    `1. Complete or cancel all open todos (with reason) and run the final check.`,
     `2. Review the cumulative diff (\`git diff\`) as a hostile reviewer: regressions, weakened tests, leftover stubs.`,
     `3. Attest exactly **Cycle complete.** with a ✅/❌ checklist — what shipped + evidence per item (command → result).`,
     `Attestations without machine-checkable evidence are bounced.`,
     ``,
     `Until you attest **Cycle complete.**, Stop remains blocked.`,
     opts.openTodos > 0
-      ? `Still ${opts.openTodos} open todo(s) — close them or cancel with reason.`
+      ? `Still ${opts.openTodos} open todo(s) — close them or cancel with reason before LAST release.`
       : `No open todos — review + attest if the wave is truly done.`,
     ``,
     `${ULW_LIVE_CONTROLS_HINT}`,
@@ -1003,8 +1107,13 @@ function buildCycleReanchor(
 /** Injected into the user message path when /ulw arms (soft or hard). */
 export function ulwKickoffMessage(state: UlwCycleState): string {
   const cap = normalizeMaxWaves(state.maxWaves);
+  const mem = formatMemoryForPrompt(state.sessionId, { budget: 4000 });
   return [
     state.expandedMandate,
+    ``,
+    `## Durable decisions / constraints`,
+    mem.text,
+    `Use memory_write for new decisions; /memory lists the ledger. Compaction must not erase these.`,
     ``,
     `## ULW runtime controls (read carefully)`,
     `- Counters RIGHT NOW: **${formatUlwCounts(state)}**  ${state.cycle === 1 ? "(CONTINUE — god-mode relentless loops)" : "(LAST cycle)"}`,
@@ -1013,13 +1122,20 @@ export function ulwKickoffMessage(state: UlwCycleState): string {
     `- When cycle=0, finish the current wave and attest **Cycle complete.**`,
     cap != null
       ? `- max_waves=${cap}: when the wave counter reaches ${cap}, the harness auto-flips to LAST (finish + **Cycle complete.**).`
-      : `- max_waves: off (unlimited). User may set /max-waves N mid-run.`,
+      : `- max_waves: off (unlimited). User may set /max-waves N mid-run. Prefer a cap on unattended multi-hour runs (spend valve — not a substitute for decision memory).`,
+    state.backlogRequired
+      ? `- **Backlog gate:** todo_write ≥2 items covering mandate sections BEFORE free-inventing Wave 1 scope.`
+      : null,
     `- ${ULW_LIVE_CONTROLS_HINT}`,
     ``,
-    state.softPrompt
-      ? `Start Wave 1 **now**: sharp orient + highest-leverage objective; spawn subagents when that is smarter; ship with proof. Work smart — do not thrash or ask what to do.`
-      : `Start Wave 1 **now**: research only as needed (subagents when they win), then ship against the mandate. Smart + hard — no permission-to-continue asks.`,
-  ].join("\n");
+    state.backlogRequired
+      ? `Start Wave 1 **now**: first todo_write a backlog from the mandate/decisions, then execute the top item with proof.`
+      : state.softPrompt
+        ? `Start Wave 1 **now**: sharp orient + highest-leverage objective against durable decisions; spawn subagents when that is smarter; ship with proof. Work smart — do not thrash or ask what to do.`
+        : `Start Wave 1 **now**: research only as needed (subagents when they win), then ship against the mandate and decisions. Smart + hard — no permission-to-continue asks.`,
+  ]
+    .filter((l) => l != null)
+    .join("\n");
 }
 
 export function parseCycleArg(arg: string): CycleFlag | null {

@@ -164,12 +164,21 @@ import {
   parseMaxWavesArg,
   formatUlwStatus,
   loadUlwCycle,
+  saveUlwCycle,
   ulwKickoffMessage,
   formatUlwCounts,
   ULW_LIVE_CONTROLS_HINT,
 } from "../harness/ulw-cycle.js";
+import {
+  appendMemoryRecord,
+  formatMemoryStatus,
+  isBroadMandate,
+  seedMemoryFromMandate,
+  todosFromMandate,
+} from "../harness/decision-memory.js";
 import { pushLiveNotice } from "../harness/live-notices.js";
 import { clearSoftTodoGateOnWindDown } from "../harness/todo-gate.js";
+import { applyTodos, openTodos } from "../agent/todos.js";
 import {
   COMMAND_PARAMS,
   formatParamMenu,
@@ -251,6 +260,8 @@ const LIVE_CONTROL = new Set([
   "/cycle",
   "/max-waves",
   "/max_waves",
+  "/memory",
+  "/decisions",
   "/ulw-off",
   "/effort",
   "/model",
@@ -1744,6 +1755,29 @@ export async function handleSlash(
       } catch {
         /* */
       }
+      // Phase 4: seed backlog todos from mandate for broad/soft contracts.
+      let todoSeedNote = "";
+      try {
+        if (
+          (state.backlogRequired ||
+            state.softPrompt ||
+            isBroadMandate(mandate)) &&
+          openTodos(opts.session.todos || []) < 2
+        ) {
+          const seeded = todosFromMandate(mandate, { max: 12 });
+          applyTodos(opts.session, seeded, false);
+          todoSeedNote = chalk.dim(
+            `Backlog seeded: ${seeded.length} todo(s) from mandate (edit via todo_write)`,
+          );
+          // Clear backlog gate if we already have ≥2
+          if (seeded.length >= 2 && state.backlogRequired) {
+            state.backlogRequired = false;
+            saveUlwCycle(state);
+          }
+        }
+      } catch {
+        /* */
+      }
       // Auto-title untitled sessions from the mandate so /sessions and resume
       // pickers stay navigable during long unattended ULW runs.
       maybeSetTitle(opts.session, mandate);
@@ -1763,17 +1797,27 @@ export async function handleSlash(
       } catch {
         /* */
       }
+      const capTip =
+        state.maxWaves == null
+          ? chalk.dim(
+              "Tip: /max-waves N and /budget are spend valves — decision memory holds intent across waves.",
+            )
+          : "";
       const banner = [
         chalk.magenta("⚡ ULW ON") +
           chalk.dim(
-            `  ${formatUlwCounts(state)} (CONTINUE)  soft=${state.softPrompt ? "yes" : "no"}`,
+            `  ${formatUlwCounts(state)} (CONTINUE)  soft=${state.softPrompt ? "yes" : "no"}` +
+              (state.backlogRequired ? "  backlog-gate" : ""),
           ),
         chalk.dim(
           "Soft prompts still drive the harness: research → waves → serendipity → review → repeat.",
         ),
         chalk.cyan(ULW_LIVE_CONTROLS_HINT),
         ulwCheckTip,
+        todoSeedNote,
+        capTip,
         formatUlwStatus(state),
+        chalk.dim(formatMemoryStatus(opts.session.meta.id).split("\n")[0]),
       ]
         .filter(Boolean)
         .join("\n");
@@ -1782,6 +1826,87 @@ export async function handleSlash(
         handled: true,
         forwardPrompt: ulwKickoffMessage(state),
         output: banner,
+        session: opts.session,
+      };
+    }
+
+    case "/attach": {
+      const p = arg.trim().replace(/^["']|["']$/g, "");
+      if (!p) {
+        return {
+          handled: true,
+          output:
+            "Usage: /attach path/to.png\n" +
+            "Or put [[image:path]] or @path.png in your message for vision models.",
+          session: opts.session,
+        };
+      }
+      return {
+        handled: true,
+        forwardPrompt: `[[image:${p}]] Please inspect the attached image and use it for the current task.`,
+        output: chalk.dim(`Attached image marker: [[image:${p}]]`),
+        session: opts.session,
+      };
+    }
+
+    case "/memory":
+    case "/decisions": {
+      const sid = opts.session.meta.id;
+      const sub = arg.trim();
+      if (!sub || sub === "list" || sub === "status") {
+        return {
+          handled: true,
+          output: formatMemoryStatus(sid),
+          session: opts.session,
+        };
+      }
+      if (sub === "seed" || sub.startsWith("seed ")) {
+        const ulw = loadUlwCycle(sid);
+        const mandate =
+          sub.slice(4).trim() || ulw?.mandate || "improve the codebase";
+        const r = seedMemoryFromMandate(sid, mandate, {
+          softPrompt: ulw?.softPrompt,
+          force: true,
+        });
+        return {
+          handled: true,
+          output: `Seeded ${r.seeded} record(s)\n${formatMemoryStatus(sid)}`,
+          session: opts.session,
+        };
+      }
+      const addMatch = sub.match(/^(?:add|note|constraint|priority)\s+([\s\S]+)$/i);
+      if (addMatch) {
+        const kindHint = sub.split(/\s+/)[0].toLowerCase();
+        const kind =
+          kindHint === "priority"
+            ? "priority"
+            : kindHint === "constraint"
+              ? "constraint"
+              : "decision";
+        const rec = appendMemoryRecord(sid, {
+          kind: kind as "priority" | "constraint" | "decision",
+          text: addMatch[1].trim(),
+          source: "user",
+        });
+        return {
+          handled: true,
+          output: rec
+            ? `Recorded [${rec.kind}] ${rec.text}\n${formatMemoryStatus(sid)}`
+            : `No-op (duplicate)\n${formatMemoryStatus(sid)}`,
+          session: opts.session,
+        };
+      }
+      // Bare text → add as decision
+      const rec = appendMemoryRecord(sid, {
+        kind: "decision",
+        text: sub,
+        source: "user",
+      });
+      return {
+        handled: true,
+        output: rec
+          ? `Recorded [decision] ${rec.text}\n${formatMemoryStatus(sid)}`
+          : `No-op (duplicate)\n${formatMemoryStatus(sid)}`,
         session: opts.session,
       };
     }
@@ -7351,7 +7476,9 @@ Forge slash commands
   /done [note]          Wind down: /goal done + ULW cycle=0 (LAST)  [live]
   /pause                Shorthand for /goal pause  [live]
   /unpause              Shorthand for /goal resume  [live]
-  /ulw [task]           Arm ULW + cycle=1 (soft prompts OK: "improve the code")
+  /ulw [task]           Arm ULW + cycle=1 (soft/broad seeds backlog + decision memory)
+  /memory [list|add …]  Durable decisions/constraints (survives compact; tool: memory_write)
+  /attach <image>       Attach image path for vision ([[image:path]] in next message)
   /cycle 1|0|status     Continue waves (1) or last wave then stop (0)  [live]
   /max-waves N|off      Cap ULW waves (auto LAST at N); default unlimited  [live]
   /ulw-off              Disarm ULW + cycle driver  [live]

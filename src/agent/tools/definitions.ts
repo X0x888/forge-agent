@@ -257,6 +257,31 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   {
     type: "function",
     function: {
+      name: "memory_write",
+      description:
+        "Append a durable decision/constraint/fact to the session decision ledger (survives compact). " +
+        "Use for priorities, out-of-scope, blockers, and hard constraints the user or plan established. " +
+        "Kinds: constraint|decision|fact|out_of_scope|priority|blocker|observation.",
+      parameters: {
+        type: "object",
+        properties: {
+          text: {
+            type: "string",
+            description: "Exact short wording to preserve (not a long dump)",
+          },
+          kind: {
+            type: "string",
+            description:
+              "constraint | decision | fact | out_of_scope | priority | blocker | observation (default decision)",
+          },
+        },
+        required: ["text"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
       name: "ask_user",
       description:
         "Ask the human a clarifying question when requirements are ambiguous. " +

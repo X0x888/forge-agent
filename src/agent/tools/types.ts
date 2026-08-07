@@ -13,6 +13,8 @@ import type {
 
 export interface ToolContext {
   workspace: string;
+  /** Session id for durable sidecars (decision memory, etc.). */
+  sessionId?: string;
   onEdit?: () => void;
   /**
    * Journal a successful file mutation so /undo can restore disk (OpenCode-inspired).

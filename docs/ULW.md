@@ -43,6 +43,8 @@ forge run "ship it" --max-waves 2
 
 Hard mandates keep a fixed objective but the same **smart + hard** execution style.
 
+**Broad / multi-section mandates** (checklists, “comprehensively audit…”): the harness seeds a **todo backlog** and durable **decision memory** first. Waves execute the backlog against constraints that survive compact — free invent without a board is blocked at wave 0 until ≥2 todos exist.
+
 ### Smart + hard (not thrash)
 
 ULW is not “burn tokens until something ships.” Doctrine:

@@ -17,6 +17,7 @@ import {
 } from "./message-repair.js";
 import { detectProjectIntel } from "../util/project-intel.js";
 import { looksLikeAdvisoryUserMessage } from "../util/advisory-intent.js";
+import { formatMemoryForPrompt } from "../harness/decision-memory.js";
 export { looksLikeAdvisoryUserMessage } from "../util/advisory-intent.js";
 
 export interface CompactContext {
@@ -120,21 +121,47 @@ export function buildStructuredSummary(
         ? `- Soft prompt expanded to god-scope (suspended while Intent is ADVISORY/Q&A — answer first)`
         : `- Soft prompt expanded to god-scope`
       : "";
-    const expandedRaw = (ulw.expandedMandate || "").slice(0, 600);
+    // Prefer full mandate when it fits; otherwise keep head + sidecar pointer
+    // (decision memory holds structured constraints — do not lobotomize).
+    const mandateFull = ulw.mandate || "";
+    const mandateLine =
+      mandateFull.length <= 1200
+        ? `- Mandate: ${mandateFull || "(none)"}`
+        : `- Mandate (head): ${mandateFull.slice(0, 400)}… [full in ulw.json + decisions.json]`;
+    const expandedRaw = ulw.expandedMandate || "";
     const expandedLine = expandedRaw
       ? advisory
-        ? `- Expanded mandate (abbrev, suspended while ADVISORY/Q&A): ${expandedRaw}`
-        : `- Expanded mandate (abbrev): ${expandedRaw}`
+        ? `- Expanded mandate (head, suspended while ADVISORY/Q&A): ${expandedRaw.slice(0, 400)}`
+        : expandedRaw.length <= 900
+          ? `- Expanded mandate: ${expandedRaw}`
+          : `- Expanded mandate (head): ${expandedRaw.slice(0, 500)}… [ulw.expandedMandate]`
       : "";
     sections.push(
       `- ULW ON | ${formatUlwCounts(ulw)} ${ulw.cycle === 1 ? "(CONTINUE)" : "(LAST)"}`,
       `- max_waves: ${ulw.maxWaves != null ? ulw.maxWaves : "off (unlimited)"}`,
-      `- Mandate: ${ulw.mandate || "(none)"}`,
+      mandateLine,
       softLine,
       expandedLine,
     );
   } else {
     sections.push(`- ULW: off`);
+  }
+
+  // 1b. Durable decisions (Mastra-critical — never drop active constraints)
+  sections.push(``, `## 1b. Decisions / constraints (durable)`);
+  if (ctx?.sessionId) {
+    const mem = formatMemoryForPrompt(ctx.sessionId, {
+      budget: 6000,
+      includeWave: false,
+    });
+    if (mem.corrupt) {
+      sections.push(
+        `- ⚠ Decision memory corrupt — re-arm /ulw or inspect decisions.json; do not invent constraints`,
+      );
+    }
+    sections.push(mem.text);
+  } else {
+    sections.push(`- (no sessionId — decision sidecar unavailable)`);
   }
   const goal = ctx?.goal;
   if (goal?.objective && goal.status === "active" && !goal.paused) {

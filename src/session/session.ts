@@ -40,6 +40,7 @@ import {
   saveUlwCycle,
 } from "../harness/ulw-cycle.js";
 import { copyGoal, loadGoal, saveGoal } from "../harness/goal.js";
+import { copyDecisionMemory } from "../harness/decision-memory.js";
 
 /** Max stored session title length (CLI --title / sessions title / /title). */
 export const MAX_SESSION_TITLE_CHARS = 200;
@@ -683,6 +684,11 @@ export function forkSession(
   }
   try {
     copyGoal(source.meta.id, id);
+  } catch {
+    /* best-effort */
+  }
+  try {
+    copyDecisionMemory(source.meta.id, id);
   } catch {
     /* best-effort */
   }

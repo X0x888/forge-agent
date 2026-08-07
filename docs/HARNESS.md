@@ -52,6 +52,18 @@ UserPromptSubmit hooks
 
 Safety: a hard cap (`maxStopContinues`, default 50; ULW default 200) prevents infinite continue loops at the process level.
 
+## Decision memory (Mastra-inspired)
+
+Long ULW runs fail when cliff compaction or context rot drops the user's exact constraints. Forge keeps an append-only **decision ledger** per session:
+
+- Path: `~/.forge/sessions/<id>/decisions.json`
+- Seeded on `/ulw` arm from the mandate (priorities + constraints)
+- Injected on every ULW Stop re-anchor and into structured compact (`## 1b. Decisions`)
+- Agent tool: `memory_write`; slash: `/memory list|add …|seed`
+- Wave-boundary OM-lite facts are recorded as `kind=wave` observations
+- Soft/broad mandates require a **todo backlog (≥2)** before free-invent Wave 1 (contract before god-mode)
+- `/max-waves` and `/budget` remain **spend valves**, not substitutes for durable intent
+
 ## Mid-conversation context (OpenCode-inspired)
 
 The **baseline system prompt** stays stable within a session epoch (workspace, tools, ULW *protocol*, project rules). Live harness fields (cycle/wave/mandate, goal objective, open todo counts) are **admitted** as chronological user messages:
