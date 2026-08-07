@@ -674,6 +674,43 @@ describe("provider abort helpers", () => {
     assert.equal(isTimeoutError(new Error("Aborted")), false);
     d2();
   });
+
+  it("touch() resets stall so active streams outlive the stall window", async () => {
+    const { mergeAbortSignals } = await import("../src/util/abort.js");
+    const { signal, dispose, touch } = mergeAbortSignals(undefined, 80);
+    // Keep the stream "alive" past one stall period
+    for (let i = 0; i < 4; i++) {
+      await new Promise((r) => setTimeout(r, 40));
+      assert.equal(signal.aborted, false, `still alive at tick ${i}`);
+      touch();
+    }
+    assert.equal(signal.aborted, false);
+    // Stop touching — should abort after stall
+    await new Promise((r) => setTimeout(r, 120));
+    assert.equal(signal.aborted, true);
+    assert.match(
+      String((signal as AbortSignal & { reason?: unknown }).reason ?? ""),
+      /timed out after 80ms/i,
+    );
+    dispose();
+  });
+
+  it("maxWallMs aborts even if touch keeps resetting stall", async () => {
+    const { mergeAbortSignals, isTimeoutError } = await import(
+      "../src/util/abort.js"
+    );
+    const { signal, dispose, touch } = mergeAbortSignals(undefined, 500, {
+      maxWallMs: 90,
+    });
+    const iv = setInterval(() => touch(), 20);
+    await new Promise((r) => setTimeout(r, 140));
+    clearInterval(iv);
+    assert.equal(signal.aborted, true);
+    const reason = (signal as AbortSignal & { reason?: unknown }).reason;
+    assert.equal(isTimeoutError(reason), true);
+    assert.match(String(reason ?? ""), /absolute max/i);
+    dispose();
+  });
 });
 
 describe("auth failure detection", () => {

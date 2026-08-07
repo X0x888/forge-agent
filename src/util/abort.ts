@@ -5,12 +5,25 @@ import { parseDurationMs } from "./duration-ms.js";
  */
 
 /**
- * Default wall-clock budget for a single provider chat/stream call.
- * 10 min: grok-4.5 with reasoning_effort=high can think for minutes before
- * the first token, and a near-max output at ~80 tok/s needs ~7 min on its
- * own. Tune with FORGE_PROVIDER_TIMEOUT_MS (5s–60min accepted).
+ * Default **stall** budget for a single provider chat/stream call.
+ *
+ * This is not a total wall-clock cap on healthy streams. It is how long we
+ * tolerate *silence* (no bytes / no activity) before aborting:
+ * - pre-first-token: high-effort reasoning can think for minutes
+ * - mid-stream: dead connection / hung proxy
+ *
+ * Stream readers call `touch()` on each chunk so active long generations
+ * (ULW, max effort, large outputs) are not killed at a fixed 10-minute wall.
+ * Tune with FORGE_PROVIDER_TIMEOUT_MS (5s–60min accepted).
  */
-export const DEFAULT_PROVIDER_TIMEOUT_MS = 600_000; // 10 minutes
+export const DEFAULT_PROVIDER_TIMEOUT_MS = 600_000; // 10 minutes stall
+
+/**
+ * Optional absolute wall-clock ceiling for one provider call (stall resets
+ * do not extend this). 0 / unset = no absolute cap (stall-only). Cap range
+ * 1m–6h when set. Env: FORGE_PROVIDER_MAX_MS.
+ */
+export const DEFAULT_PROVIDER_MAX_MS = 0;
 
 export function providerTimeoutMs(): number {
   const raw = process.env.FORGE_PROVIDER_TIMEOUT_MS?.trim();
@@ -24,16 +37,52 @@ export function providerTimeoutMs(): number {
 }
 
 /**
- * Combine an optional external signal with a timeout.
- * Aborting either aborts the returned signal. Caller should dispose when done.
+ * Absolute wall-clock cap for one provider request. Independent of stall
+ * resets. 0 means disabled (rely on stall + user abort only).
+ */
+export function providerMaxWallMs(): number {
+  const raw = process.env.FORGE_PROVIDER_MAX_MS?.trim();
+  if (!raw || raw === "0" || /^off$/i.test(raw)) return 0;
+  const parsed = parseDurationMs(raw);
+  if (parsed.ok && parsed.ms >= 60_000 && parsed.ms <= 21_600_000) {
+    return parsed.ms;
+  }
+  return DEFAULT_PROVIDER_MAX_MS;
+}
+
+export interface MergeAbortHandle {
+  signal: AbortSignal;
+  dispose: () => void;
+  /**
+   * Reset the stall timer (call on stream activity). No-op after dispose or
+   * when stallMs is 0. Does not reset the absolute wall-clock max.
+   */
+  touch: () => void;
+}
+
+/**
+ * Combine an optional external signal with a **stall** timeout (and optional
+ * absolute wall-clock max).
+ *
+ * - Without `touch()`: behaves like a classic wall-clock timeout (tools,
+ *   non-stream chat).
+ * - With `touch()` on each stream chunk: only silent periods abort — long
+ *   healthy streams survive past the stall window.
  */
 export function mergeAbortSignals(
   external: AbortSignal | undefined,
   timeoutMs: number,
-): { signal: AbortSignal; dispose: () => void } {
+  opts?: { maxWallMs?: number },
+): MergeAbortHandle {
   const ctrl = new AbortController();
-  let timer: ReturnType<typeof setTimeout> | undefined;
+  let stallTimer: ReturnType<typeof setTimeout> | undefined;
+  let maxTimer: ReturnType<typeof setTimeout> | undefined;
   let disposed = false;
+  const stallMs = timeoutMs > 0 ? timeoutMs : 0;
+  // Absolute cap only when callers opt in (providers pass providerMaxWallMs()).
+  // Tools (web_fetch/web_search) must not inherit FORGE_PROVIDER_MAX_MS.
+  const maxWallMs =
+    opts?.maxWallMs !== undefined && opts.maxWallMs > 0 ? opts.maxWallMs : 0;
 
   const abortFromExternal = () => {
     if (!ctrl.signal.aborted) {
@@ -49,25 +98,47 @@ export function mergeAbortSignals(
     }
   }
 
-  if (timeoutMs > 0 && !ctrl.signal.aborted) {
-    timer = setTimeout(() => {
+  const armStall = () => {
+    if (disposed || stallMs <= 0 || ctrl.signal.aborted) return;
+    if (stallTimer) clearTimeout(stallTimer);
+    stallTimer = setTimeout(() => {
       if (!ctrl.signal.aborted) {
         // Generic wording — used by providers and tools (web_fetch/web_search).
-        ctrl.abort(new Error(`Request timed out after ${timeoutMs}ms`));
+        ctrl.abort(new Error(`Request timed out after ${stallMs}ms`));
       }
-    }, timeoutMs);
+    }, stallMs);
     // Don't keep the process alive solely for the provider timer
-    timer.unref?.();
+    stallTimer.unref?.();
+  };
+
+  if (!ctrl.signal.aborted) {
+    armStall();
+    if (maxWallMs > 0) {
+      maxTimer = setTimeout(() => {
+        if (!ctrl.signal.aborted) {
+          ctrl.abort(
+            new Error(`Request timed out after ${maxWallMs}ms (absolute max)`),
+          );
+        }
+      }, maxWallMs);
+      maxTimer.unref?.();
+    }
   }
+
+  const touch = () => {
+    if (disposed || ctrl.signal.aborted) return;
+    armStall();
+  };
 
   const dispose = () => {
     if (disposed) return;
     disposed = true;
-    if (timer) clearTimeout(timer);
+    if (stallTimer) clearTimeout(stallTimer);
+    if (maxTimer) clearTimeout(maxTimer);
     external?.removeEventListener("abort", abortFromExternal);
   };
 
-  return { signal: ctrl.signal, dispose };
+  return { signal: ctrl.signal, dispose, touch };
 }
 
 /** True when an error is a timeout (retryable) vs user abort (not). */

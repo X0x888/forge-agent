@@ -376,9 +376,12 @@ export {
 export {
   mergeAbortSignals,
   providerTimeoutMs,
+  providerMaxWallMs,
   isTimeoutError,
   DEFAULT_PROVIDER_TIMEOUT_MS,
+  DEFAULT_PROVIDER_MAX_MS,
 } from "./util/abort.js";
+export type { MergeAbortHandle } from "./util/abort.js";
 export { getForgeVersion } from "./util/version.js";
 export {
   XAI_PUBLIC_CLIENT_ID,

@@ -7,7 +7,11 @@ import type {
   ToolCall,
 } from "./types.js";
 import { throwIfNotOk } from "./errors.js";
-import { mergeAbortSignals, providerTimeoutMs } from "../util/abort.js";
+import {
+  mergeAbortSignals,
+  providerMaxWallMs,
+  providerTimeoutMs,
+} from "../util/abort.js";
 
 /**
  * Merge a streamed tool-name delta into the accumulator.
@@ -123,6 +127,7 @@ export class OpenAICompatProvider implements LLMProvider {
     const { signal: merged, dispose } = mergeAbortSignals(
       signal,
       providerTimeoutMs(),
+      { maxWallMs: providerMaxWallMs() },
     );
     try {
       const resp = await fetch(`${this.baseUrl}/chat/completions`, {
@@ -166,9 +171,13 @@ export class OpenAICompatProvider implements LLMProvider {
     signal?: AbortSignal,
   ): Promise<ChatResponse> {
     const body = this.buildBody(req, true);
-    const { signal: merged, dispose } = mergeAbortSignals(
+    // Stall timeout (not total wall clock): touch() on each SSE chunk so long
+    // healthy streams (ULW / max-effort reasoning / large outputs) survive past
+    // FORGE_PROVIDER_TIMEOUT_MS while true hangs still abort.
+    const { signal: merged, dispose, touch } = mergeAbortSignals(
       signal,
       providerTimeoutMs(),
+      { maxWallMs: providerMaxWallMs() },
     );
     let resp: Response;
     try {
@@ -183,6 +192,9 @@ export class OpenAICompatProvider implements LLMProvider {
       rethrowAbort(err, signal);
       throw err;
     }
+    // Headers arrived — reset stall so TTFT thinking budget restarts cleanly
+    // after a slow connect (reasoning still counted from last activity).
+    touch();
     try {
       await throwIfNotOk(this.id, resp);
     } catch (err) {
@@ -321,6 +333,8 @@ export class OpenAICompatProvider implements LLMProvider {
           throw new Error("Aborted");
         }
         if (done) break;
+        // Any body bytes count as activity (incl. SSE keepalives / whitespace).
+        touch();
         buffer += decoder.decode(value, { stream: true });
         const lines = buffer.split("\n");
         buffer = lines.pop() ?? "";

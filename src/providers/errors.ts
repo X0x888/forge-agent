@@ -187,7 +187,9 @@ export function formatProviderError(
       tips.push("Lower concurrency / narrow the task");
     } else if (err.status === 408 || err.status === 504) {
       code = "timeout";
-      tips.push("Raise FORGE_PROVIDER_TIMEOUT_MS or narrow context (/compact)");
+      tips.push(
+        "Raise FORGE_PROVIDER_TIMEOUT_MS (stall silence budget) or /compact; active streams no longer die at a fixed wall clock",
+      );
       tips.push("Retry: /retry  ·  forge run --continue");
     } else if (err.status === 413 || isContextOverflowish(err.body)) {
       code = "context_overflow";
@@ -218,7 +220,9 @@ export function formatProviderError(
       tips.push("Turn cancelled — type a new prompt or /retry");
     } else if (/timed out after \d+ms/i.test(msg) || /timeout/i.test(msg)) {
       code = "timeout";
-      tips.push("FORGE_PROVIDER_TIMEOUT_MS  ·  /compact  ·  /retry");
+      tips.push(
+        "FORGE_PROVIDER_TIMEOUT_MS (stall)  ·  FORGE_PROVIDER_MAX_MS (optional absolute)  ·  /compact  ·  /retry",
+      );
     } else if (
       /ECONNRESET|ETIMEDOUT|EAI_AGAIN|ENOTFOUND|ECONNREFUSED|getaddrinfo|fetch failed|socket hang up|network/i.test(
         msg,

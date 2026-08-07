@@ -10,7 +10,11 @@ import type {
 } from "./types.js";
 import { throwIfNotOk } from "./errors.js";
 import { parseToolArguments } from "../util/json-repair.js";
-import { mergeAbortSignals, providerTimeoutMs } from "../util/abort.js";
+import {
+  mergeAbortSignals,
+  providerMaxWallMs,
+  providerTimeoutMs,
+} from "../util/abort.js";
 
 /**
  * Map Anthropic stop_reason → OpenAI-compat finish_reason used by the agent loop.
@@ -340,6 +344,7 @@ export class AnthropicProvider implements LLMProvider {
     const { signal: merged, dispose } = mergeAbortSignals(
       signal,
       providerTimeoutMs(),
+      { maxWallMs: providerMaxWallMs() },
     );
     try {
       const resp = await fetch(`${this.baseUrl}/messages`, {
@@ -377,9 +382,12 @@ export class AnthropicProvider implements LLMProvider {
       tools: cached.tools,
       stream: true,
     };
-    const { signal: merged, dispose } = mergeAbortSignals(
+    // Stall timeout (not total wall clock): touch() on each SSE chunk so long
+    // healthy streams survive past FORGE_PROVIDER_TIMEOUT_MS.
+    const { signal: merged, dispose, touch } = mergeAbortSignals(
       signal,
       providerTimeoutMs(),
+      { maxWallMs: providerMaxWallMs() },
     );
     let resp: Response;
     try {
@@ -396,6 +404,7 @@ export class AnthropicProvider implements LLMProvider {
       if (/timed out after/i.test(msg)) throw new Error(msg);
       throw err;
     }
+    touch();
     try {
       await throwIfNotOk("anthropic", resp);
     } catch (err) {
@@ -570,6 +579,8 @@ export class AnthropicProvider implements LLMProvider {
           );
         }
         if (done) break;
+        // Any body bytes count as activity (incl. SSE keepalives / whitespace).
+        touch();
         buffer += decoder.decode(value, { stream: true });
         const lines = buffer.split("\n");
         buffer = lines.pop() ?? "";

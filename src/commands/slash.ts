@@ -87,7 +87,7 @@ import {
   listAccounts,
 } from "../auth/store.js";
 import { normalizeProviderId, providerIdHelp } from "../util/provider-id.js";
-import { providerTimeoutMs } from "../util/abort.js";
+import { providerMaxWallMs, providerTimeoutMs } from "../util/abort.js";
 import { copyToClipboard } from "../util/clipboard.js";
 import {
   defaultBashBackgroundTimeoutMs,
@@ -6129,7 +6129,7 @@ export async function runDoctorCheck(
     const bashTo = defaultBashTimeoutMs();
     const bashBg = defaultBashBackgroundTimeoutMs();
     lines.push(
-      `Reliability: Retry-After · abortable streams · empty-SSE retry · JSON repair · orphan tool heal · doom-loop@${doomN} · error-streak@${errN} · ulw-continues@${ulwCap} · apply_patch · file-aware undo · overflow→compact · session lock/tmp-recover · metrics.jsonl · OAuth refresh · provider timeout=${Math.round(providerTimeoutMs() / 1000)}s · bash timeout=${Math.round(bashTo / 1000)}s (bg ${Math.round(bashBg / 1000)}s)${maxRunNote}${permNote}${bellNote}${resumeNote}`,
+      `Reliability: Retry-After · abortable streams · empty-SSE retry · JSON repair · orphan tool heal · doom-loop@${doomN} · error-streak@${errN} · ulw-continues@${ulwCap} · apply_patch · file-aware undo · overflow→compact · session lock/tmp-recover · metrics.jsonl · OAuth refresh · provider stall=${Math.round(providerTimeoutMs() / 1000)}s${providerMaxWallMs() > 0 ? ` max=${Math.round(providerMaxWallMs() / 1000)}s` : ""} · bash timeout=${Math.round(bashTo / 1000)}s (bg ${Math.round(bashBg / 1000)}s)${maxRunNote}${permNote}${bellNote}${resumeNote}`,
     );
   }
 
@@ -6789,6 +6789,7 @@ export interface EffectiveConfigSnap {
     FORGE_BASH_TIMEOUT_MS: number;
     FORGE_BASH_BG_TIMEOUT_MS: number;
     FORGE_PROVIDER_TIMEOUT_MS: number;
+    FORGE_PROVIDER_MAX_MS: number;
     FORGE_DOOM_LOOP_THRESHOLD: number;
     FORGE_ERROR_STREAK_THRESHOLD: number;
     FORGE_FILE_READ_GUARD: boolean;
@@ -6973,6 +6974,7 @@ export function buildEffectiveConfigSnap(
       FORGE_BASH_TIMEOUT_MS: defaultBashTimeoutMs(),
       FORGE_BASH_BG_TIMEOUT_MS: defaultBashBackgroundTimeoutMs(),
       FORGE_PROVIDER_TIMEOUT_MS: providerTimeoutMs(),
+      FORGE_PROVIDER_MAX_MS: providerMaxWallMs(),
       FORGE_DOOM_LOOP_THRESHOLD: envPositiveInt("FORGE_DOOM_LOOP_THRESHOLD", 3),
       FORGE_ERROR_STREAK_THRESHOLD: envPositiveInt(
         "FORGE_ERROR_STREAK_THRESHOLD",
@@ -7071,7 +7073,10 @@ export function formatEffectiveConfig(
         (sess.pinned ? "  PIN" : "") +
         `  t=${sess.turns} e=${sess.edits}`
       : null,
-    `  timeouts:        provider=${Math.round(snap.env.FORGE_PROVIDER_TIMEOUT_MS / 1000)}s` +
+    `  timeouts:        provider-stall=${Math.round(snap.env.FORGE_PROVIDER_TIMEOUT_MS / 1000)}s` +
+      (snap.env.FORGE_PROVIDER_MAX_MS > 0
+        ? `  provider-max=${Math.round(snap.env.FORGE_PROVIDER_MAX_MS / 1000)}s`
+        : "") +
       `  bash=${Math.round(snap.env.FORGE_BASH_TIMEOUT_MS / 1000)}s` +
       `  bash-bg=${Math.round(snap.env.FORGE_BASH_BG_TIMEOUT_MS / 1000)}s`,
     `  loop guards:     doom@${snap.env.FORGE_DOOM_LOOP_THRESHOLD}  error-streak@${snap.env.FORGE_ERROR_STREAK_THRESHOLD}`,

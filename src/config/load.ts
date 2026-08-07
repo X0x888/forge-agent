@@ -650,7 +650,7 @@ ask = []
 # Optional per-provider overrides (global ~/.forge only — not project)
 # [providers.xai]
 # base_url = "https://api.x.ai/v1"
-# Env: FORGE_PROVIDER_TIMEOUT_MS, FORGE_MAX_RUN_MS, FORGE_LOG_JSON, FORGE_HEADLESS — see .env.example
+# Env: FORGE_PROVIDER_TIMEOUT_MS (stall), FORGE_PROVIDER_MAX_MS (optional absolute), FORGE_MAX_RUN_MS, FORGE_LOG_JSON, FORGE_HEADLESS — see .env.example
 # MCP: built-in defaults context7 + playwright (see ~/.forge/mcp.json). FORGE_MCP=0 off;
 # FORGE_MCP_DEFAULTS=0 disables only built-ins. Optional CONTEXT7_API_KEY for higher rate limits.
 `;

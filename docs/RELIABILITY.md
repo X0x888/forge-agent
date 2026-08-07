@@ -18,7 +18,7 @@ What experts should expect from Forge in long, unattended, or CI runs.
 | **Session lastError** | Provider/run failures stamp `meta.lastError` (code/message/tips); `/status`, resume, `/share`, sessions list ERR badge, HUD/tmux, `forge status --json`, and `forge run --json` fail payloads surface it; cleared on success/`/clear`/`/fork` |
 | **Expert recovery tips** | `formatProviderError` maps auth/rate-limit/quota (incl. 403 body), overflow (incl. Anthropic “prompt is too long”), network/DNS, 5xx, Anthropic 529/`overloaded`, model-not-found, Azure/OpenAI `content_filter`, empty/no-choice responses, unsupported model features, org verification, and deprecated-model to next steps; REPL + headless print tips; `forge run --json` fail payloads include `recovery: { code, tips }` and structured `reason` |
 | **Abortable streams** | `AbortSignal` cancels `fetch` and releases the SSE reader (Ctrl+C works mid-token) |
-| **Provider timeout** | Default 10 min wall clock (`FORGE_PROVIDER_TIMEOUT_MS`) — grok-4.5 high-effort thinking + near-max outputs exceed 5 min; timeout is retryable, user abort is not |
+| **Provider timeout** | Default 10 min **stall** silence budget (`FORGE_PROVIDER_TIMEOUT_MS`) — aborts only when no stream activity; healthy long streams call `touch()` on each chunk so ULW / max-effort / large outputs are not killed at a fixed wall clock. Optional absolute ceiling via `FORGE_PROVIDER_MAX_MS` (off by default). Timeout is retryable; user abort is not |
 | **Prompt-cache stability** | System prompt (message[0]) carries only stable git state (root/remote); the volatile branch line is admitted append-only via context-admit, so everyday edits no longer invalidate the server-side prompt cache (xAI cached input ≈ 4× cheaper) |
 | **Stream usage** | OpenAI-compat requests set `stream_options.include_usage` so `/cost` is accurate; `prompt_tokens_details.cached_tokens` is surfaced as `cache_read_input_tokens` |
 | **Tool name merge** | Streamed names that re-send full chunks do not become `bashbash` |
@@ -146,7 +146,8 @@ What experts should expect from Forge in long, unattended, or CI runs.
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `FORGE_PROVIDER_TIMEOUT_MS` | `10m` / `600000` | Provider fetch/stream wall clock (ms or `5m`); raise for very long high-effort generations |
+| `FORGE_PROVIDER_TIMEOUT_MS` | `10m` / `600000` | Provider **stall** silence budget (ms or `5m`/`10m`); resets on each stream chunk. Raise if first-token thinking often exceeds this with no bytes yet |
+| `FORGE_PROVIDER_MAX_MS` | off (`0`) | Optional absolute wall-clock ceiling for one provider call (stall resets do not extend it); e.g. `2h` for hard unattended caps |
 | `FORGE_BASH_TIMEOUT_MS (ms or 90s/2m)` | `120000` | Default foreground `bash` timeout (min 5s, max 30m) |
 | `FORGE_BASH_BG_TIMEOUT_MS` | `1800000` | Default background task timeout (min 30s, max 6h) |
 | `FORGE_MAX_RUN_MS` | off | Headless `forge run` wall-clock cap (ms or `30m`; exit 124) |
