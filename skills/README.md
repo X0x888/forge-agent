@@ -19,6 +19,8 @@ Ship-with-install playbooks loaded by `src/agent/project-skills.ts` as
 | `forge-ship` | Land the branch |
 | `forge-armor` | Security review discipline |
 | `forge-absorb` | Absorb review feedback |
+| `forge-surface` | Distinctive, non-AI-slop UI direction |
+| `forge-polish` | Visual craft QA / UI polish pass |
 | `forge-craft` | Write project skills |
 
 **Priority:** project (`.forge/skills`, `.agents/skills`) > user (`~/.forge/skills`) > builtin.

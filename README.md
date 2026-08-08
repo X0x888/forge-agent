@@ -338,6 +338,8 @@ Forge ships methodology playbooks with the package (no extra install). List with
 | `forge-ship` | Finish branch → PR / merge decision |
 | `forge-armor` | Security-sensitive changes |
 | `forge-absorb` | Address review feedback |
+| `forge-surface` | Distinctive, non-AI-slop UI / web design |
+| `forge-polish` | Visual craft QA and UI polish pass |
 | `forge-craft` | Author a new project skill |
 
 ---

@@ -33,6 +33,8 @@ Do not invent a parallel process with the same name.
 | Finish branch → PR / merge decision | `forge-ship` |
 | Human left review comments | `forge-absorb` |
 | Security-sensitive change | `forge-armor` |
+| New UI / web / product surface — distinctive look | `forge-surface` |
+| Existing UI needs craft polish / anti-slop pass | `forge-polish` |
 | Author a new project skill | `forge-craft` |
 
 ## Forge harness (do not fight it)

@@ -111,6 +111,8 @@ Always run smoke after deploy.
         "forge-rootcause",
         "forge-blueprint",
         "forge-redgreen",
+        "forge-surface",
+        "forge-polish",
       ]) {
         assert.ok(names.has(n), `missing builtin ${n}`);
       }
