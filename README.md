@@ -316,7 +316,29 @@ Works for **any** auth method: always shows session context/tokens/git/liveness/
 
 Tab completes slash commands (including project `.forge/commands` and skill packs via `/skills`). While the agent is working you can still run **live controls** (`/cycle 0`, `/cycle 1`, `/max-waves N|off`, `/ulw-off`, `/plan`, `/build`, `/model`, `/pause`, `/unpause`, `/done`, `/status`, …) without aborting — harness state updates apply at the next model step. **Free-text** mid-run is queued as an interjection (Grok-style) for the next LLM call. **Ctrl+C** aborts the current agent turn (again at idle prompt to exit).
 
-Headless CI can run slash prompts too: `forge run "/plan"` · `forge run "/commands"` · `forge run "/skills"` · custom templates expand then run (`reason: "slash"` when no model call). Starter templates: `examples/forge-commands/` · skill packs: `examples/forge-skills/` (copy into `.forge/skills/<name>/SKILL.md`).
+Headless CI can run slash prompts too: `forge run "/plan"` · `forge run "/commands"` · `forge run "/skills"` · custom templates expand then run (`reason: "slash"` when no model call). Starter templates: `examples/forge-commands/` · project skill packs: `examples/forge-skills/` (copy into `.forge/skills/<name>/SKILL.md`).
+
+### Built-in skills (`skills/forge-*`)
+
+Forge ships methodology playbooks with the package (no extra install). List with `/skills`. Catalog is always in the system prompt; full bodies load for project/user skills and `forge-method` (others: agent `read_file` on the catalog path when the task matches). Override any builtin by placing the same name under `.forge/skills/`. Disable with `FORGE_BUILTIN_SKILLS=0`.
+
+| Skill | Use when |
+|-------|----------|
+| `forge-method` | Choosing which playbook to follow |
+| `forge-shape` | Ambiguous work → design before code |
+| `forge-blueprint` | Decision-complete implementation plan |
+| `forge-march` | Execute plan task-by-task |
+| `forge-redgreen` | TDD fail → pass → refactor |
+| `forge-rootcause` | Systematic debugging |
+| `forge-prove` | Evidence before "done" / "fixed" |
+| `forge-inspect` | Findings-first review |
+| `forge-assay` | Self-verify the session |
+| `forge-swarm` | Parallel independent subagents |
+| `forge-anvil` | Worktree / isolated branch work |
+| `forge-ship` | Finish branch → PR / merge decision |
+| `forge-armor` | Security-sensitive changes |
+| `forge-absorb` | Address review feedback |
+| `forge-craft` | Author a new project skill |
 
 ---
 

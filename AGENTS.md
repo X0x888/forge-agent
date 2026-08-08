@@ -38,7 +38,7 @@ Binary entry: `src/cli.ts` → `dist/cli.js` (`bin: forge`).
 - `src/util/production-warnings.ts` — `productionWarningsForRun` for `forge run --json` / CI (safety valves, ULW-without-budget, dirty tree, editsWithoutVerification, lockfile/node_modules)
 - `src/session/compaction.ts` — structured compact preserving mandate/goal/todos
 - `src/session/tool-clearing.ts` — proactive stale tool-result clearing (microcompaction; `FORGE_TOOL_CLEAR*`)
-- `src/agent/project-skills.ts` — OpenCode-style skill packs (`.forge/skills/**/SKILL.md`)
+- `src/agent/project-skills.ts` — skill packs: package `skills/forge-*/` (builtin) + `.forge/skills/**/SKILL.md` + `.agents/skills` + `~/.forge/skills` (project > user > builtin; `FORGE_BUILTIN_SKILLS=0` off)
 - `src/util/project-intel.ts` — package manager + preferred check commands (system prompt, `/context`, bash wrong-PM/missing-script/missing-binary tips; monorepo walk-up + turbo/nx; doctor/status/config/run JSON; last-verify trail + `editsWithoutVerification`)
 - `src/agent/tools/file-read-state.ts` — session stale/unread edit guard (`FORGE_FILE_READ_GUARD=0` off)
 - `src/agent/tools/ask-user.ts` — interactive clarifying questions (OpenCode-inspired)

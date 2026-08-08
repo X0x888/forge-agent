@@ -1,25 +1,34 @@
 /**
- * OpenCode-inspired project skills.
+ * OpenCode-inspired skills for Forge.
  *
- * Load markdown skill packs from:
- *   <workspace>/.forge/skills/**\/SKILL.md
- *   <workspace>/.forge/skill/**\/SKILL.md
- *   <workspace>/.agents/skills/**\/SKILL.md
- *   ~/.forge/skills/**\/SKILL.md   (user global; project wins on name clash)
+ * Load order (later layers fill gaps; earlier wins on name clash):
+ *   1. <workspace>/.forge/skills/**\/SKILL.md
+ *   2. <workspace>/.forge/skill/**\/SKILL.md
+ *   3. <workspace>/.agents/skills/**\/SKILL.md
+ *   4. ~/.forge/skills/**\/SKILL.md  (user global)
+ *   5. Package-shipped skills/ (builtin; FORGE_BUILTIN_SKILLS=0 to disable)
  *
  * Frontmatter (optional):
  *   ---
  *   name: my-skill
  *   description: When to use this skill
+ *   inject: always | body | catalog   # default: body for project/user, catalog for builtin
  *   ---
  *   Body instructions for the agent.
  *
- * Skills are injected into the system prompt as a catalog + bodies (capped)
- * so the model can follow project-specific playbooks without a separate tool.
+ * Prompt injection uses progressive disclosure:
+ *   - Catalog of all skills (name, description, source, path)
+ *   - Full bodies for project/user (+ any inject:always|body)
+ *   - Builtins default to catalog-only; agent read_file(path) when matching
+ * So install-time playbooks stay available without blowing the system prompt.
  */
 import fs from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { forgeHome } from "../util/fs.js";
+
+export type SkillSource = "project" | "user" | "builtin";
+export type SkillInject = "always" | "body" | "catalog";
 
 export interface ProjectSkill {
   /** Stable skill id (lowercase). */
@@ -27,20 +36,26 @@ export interface ProjectSkill {
   description: string;
   /** Skill body (markdown). */
   body: string;
-  /** project | user */
-  source: "project" | "user";
+  source: SkillSource;
   /** Absolute path of SKILL.md. */
   filePath: string;
+  /** How this skill enters the system prompt. */
+  inject: SkillInject;
 }
 
 const NAME_RE = /^[a-z][a-z0-9_-]{0,63}$/;
 const MAX_BODY_CHARS = 12_000;
-const MAX_SKILLS = 24;
+/** Cap for project + user skills combined. */
+const MAX_OVERLAY_SKILLS = 24;
+/** Cap for package-shipped builtins. */
+const MAX_BUILTIN_SKILLS = 32;
+/** Total characters for inlined skill bodies in the system prompt. */
 const MAX_PROMPT_CHARS = 24_000;
 
 function parseFrontmatter(raw: string): {
   name?: string;
   description: string;
+  inject?: SkillInject;
   body: string;
 } {
   const text = raw.replace(/^\uFEFF/, "");
@@ -55,6 +70,7 @@ function parseFrontmatter(raw: string): {
   const body = text.slice(end + 4).replace(/^\r?\n/, "").trim();
   let name: string | undefined;
   let description = "";
+  let inject: SkillInject | undefined;
   for (const line of fm.split(/\r?\n/)) {
     const m = line.match(/^([A-Za-z0-9_-]+)\s*:\s*(.*)$/);
     if (!m) continue;
@@ -62,8 +78,12 @@ function parseFrontmatter(raw: string): {
     const val = m[2].trim().replace(/^["']|["']$/g, "");
     if (key === "name" && val) name = val;
     if (key === "description" && val) description = val;
+    if (key === "inject") {
+      const v = val.toLowerCase();
+      if (v === "always" || v === "body" || v === "catalog") inject = v;
+    }
   }
-  return { name, description, body };
+  return { name, description, inject, body };
 }
 
 function walkSkillFiles(root: string, out: string[], depth = 0): void {
@@ -93,17 +113,41 @@ function skillDirs(base: string): string[] {
   ];
 }
 
+/** Resolve package root (src/* or dist/* → repo/package root). */
+export function forgePackageRoot(): string {
+  const here = path.dirname(fileURLToPath(import.meta.url));
+  // src/agent or dist/agent → ../..
+  return path.resolve(here, "../..");
+}
+
+/** Directory of ship-with-install skills (package `skills/`). */
+export function builtinSkillsDir(): string {
+  return path.join(forgePackageRoot(), "skills");
+}
+
+function builtinSkillsEnabled(): boolean {
+  const raw = (process.env.FORGE_BUILTIN_SKILLS || "1").trim().toLowerCase();
+  return !(raw === "0" || raw === "false" || raw === "off" || raw === "no");
+}
+
+function defaultInject(source: SkillSource, explicit?: SkillInject): SkillInject {
+  if (explicit) return explicit;
+  // Meta skill always inlined so the agent knows how to use the catalog.
+  return source === "builtin" ? "catalog" : "body";
+}
+
 function loadFromDir(
   dir: string,
-  source: "project" | "user",
+  source: SkillSource,
   byName: Map<string, ProjectSkill>,
+  maxTotal: number,
 ): void {
   if (!fs.existsSync(dir)) return;
   const files: string[] = [];
   walkSkillFiles(dir, files);
   files.sort();
   for (const filePath of files) {
-    if (byName.size >= MAX_SKILLS) break;
+    if (byName.size >= maxTotal) break;
     let raw: string;
     try {
       raw = fs.readFileSync(filePath, "utf8");
@@ -114,7 +158,6 @@ function loadFromDir(
       raw = raw.slice(0, MAX_BODY_CHARS * 2);
     }
     const parsed = parseFrontmatter(raw);
-    // Default name: parent directory of SKILL.md
     const parent = path.basename(path.dirname(filePath));
     let name = (parsed.name || parent || "skill")
       .trim()
@@ -122,52 +165,64 @@ function loadFromDir(
       .replace(/[^a-z0-9_-]+/g, "-")
       .replace(/^-+|-+$/g, "");
     if (!NAME_RE.test(name)) continue;
-    // Project wins: skip if already present from project when loading user
-    if (byName.has(name) && source === "user") continue;
-    if (byName.has(name) && source === "project") {
-      // later project file with same name: first wins (sorted paths)
-      continue;
-    }
+    // First wins (project loaded first, then user, then builtin).
+    if (byName.has(name)) continue;
     let body = parsed.body || "";
     if (body.length > MAX_BODY_CHARS) {
       body = body.slice(0, MAX_BODY_CHARS) + "\n…(truncated)";
     }
     if (!body.trim()) continue;
+    // forge-method is the onboarding playbook — always inject body.
+    let inject = defaultInject(source, parsed.inject);
+    if (name === "forge-method" && source === "builtin") inject = "always";
     byName.set(name, {
       name,
-      description: (parsed.description || "").slice(0, 300),
+      description: (parsed.description || "").slice(0, 400),
       body,
       source,
       filePath,
+      inject,
     });
   }
 }
 
 /**
- * Load project + user skills. Project overrides user on name clash.
+ * Load project + user + builtin skills.
+ * Priority on name clash: project > user > builtin.
  */
 export function loadProjectSkills(workspace: string): ProjectSkill[] {
   const byName = new Map<string, ProjectSkill>();
   const ws = path.resolve(workspace || process.cwd());
   for (const dir of skillDirs(ws)) {
-    loadFromDir(dir, "project", byName);
+    loadFromDir(dir, "project", byName, MAX_OVERLAY_SKILLS);
   }
-  // User global (lower priority). forgeHome() is already ~/.forge
   try {
     const home = forgeHome();
     for (const dir of [
       path.join(home, "skills"),
       path.join(home, "skill"),
     ]) {
-      loadFromDir(dir, "user", byName);
+      loadFromDir(dir, "user", byName, MAX_OVERLAY_SKILLS);
     }
   } catch {
     /* */
   }
+  if (builtinSkillsEnabled()) {
+    try {
+      loadFromDir(
+        builtinSkillsDir(),
+        "builtin",
+        byName,
+        MAX_OVERLAY_SKILLS + MAX_BUILTIN_SKILLS,
+      );
+    } catch {
+      /* */
+    }
+  }
   return [...byName.values()].sort((a, b) => a.name.localeCompare(b.name));
 }
 
-/** Count only (doctor). */
+/** Count only (doctor / status). */
 export function countProjectSkills(workspace: string): number {
   try {
     return loadProjectSkills(workspace).length;
@@ -176,34 +231,86 @@ export function countProjectSkills(workspace: string): number {
   }
 }
 
+export function countBuiltinSkills(workspace?: string): number {
+  try {
+    return loadProjectSkills(workspace || process.cwd()).filter(
+      (s) => s.source === "builtin",
+    ).length;
+  } catch {
+    return 0;
+  }
+}
+
 /**
- * Format skills for system prompt injection. Caps total size.
- * Returns empty string when none.
+ * Format skills for system prompt injection.
+ * Catalog always; full bodies for project/user and inject:always|body (budgeted).
  */
 export function formatSkillsForPrompt(workspace: string): string {
   const skills = loadProjectSkills(workspace);
   if (!skills.length) return "";
+
   const lines: string[] = [
-    `## Project skills`,
-    `Use these playbooks when the task matches the description. Prefer the skill body over guessing project conventions.`,
+    `## Skills`,
+    `Playbooks that sharpen how you work. When a task matches a skill description,`,
+    `read that skill's file with \`read_file\` (path in the catalog) and follow it —`,
+    `do not invent a parallel process. Prefer skill body over guessing.`,
+    `Project/user skills override builtins with the same name.`,
     ``,
+    `### Catalog`,
   ];
-  let used = lines.join("\n").length;
+
   for (const s of skills) {
+    const desc = s.description || "(no description)";
+    lines.push(
+      `- **skill:${s.name}** [${s.source}] — ${desc}`,
+      `  path: \`${s.filePath}\``,
+    );
+  }
+
+  // Bodies to inline: always + body inject (project/user default body; forge-method always)
+  const toInline = skills.filter(
+    (s) => s.inject === "always" || s.inject === "body",
+  );
+  // Prefer project, then user, then builtin; within that, forge-method first
+  toInline.sort((a, b) => {
+    const rank = (s: ProjectSkill) =>
+      s.name === "forge-method"
+        ? 0
+        : s.source === "project"
+          ? 1
+          : s.source === "user"
+            ? 2
+            : 3;
+    const d = rank(a) - rank(b);
+    return d !== 0 ? d : a.name.localeCompare(b.name);
+  });
+
+  if (toInline.length) {
+    lines.push(``, `### Inlined playbooks`);
+  }
+
+  let used = lines.join("\n").length;
+  let inlined = 0;
+  for (const s of toInline) {
     const block =
-      `### skill:${s.name}` +
+      `#### skill:${s.name}` +
       (s.description ? ` — ${s.description}` : "") +
       ` (${s.source})\n` +
       s.body.trim() +
       `\n`;
     if (used + block.length > MAX_PROMPT_CHARS) {
-      lines.push(
-        `…(${skills.length - lines.filter((l) => l.startsWith("### skill:")).length} more skills omitted — raise by trimming skill bodies)`,
-      );
+      const left = toInline.length - inlined;
+      if (left > 0) {
+        lines.push(
+          `…(${left} more inlined skill body(ies) omitted — read from catalog path; trim SKILL.md bodies or raise budget)`,
+        );
+      }
       break;
     }
     lines.push(block);
     used += block.length;
+    inlined++;
   }
+
   return lines.join("\n").trim();
 }

@@ -390,7 +390,7 @@ export function buildBaselineSystemPrompt(opts: {
       `- Thin waves → demand higher leverage; user may \`/cycle 0\`.`,
       ``,
       `### Other force multipliers`,
-      `MCP (docs/browser/resources), LSP diagnostics after language-aware edits, project skills if present.`,
+      `MCP (docs/browser/resources), LSP diagnostics after language-aware edits, forge-* skills (catalog + read_file when matching).`,
       ``,
       `### User controls (mid-turn)`,
       `\`/cycle 1|0\` · \`/max-waves N|off\` · \`/ulw-off\` · free-text steering. Never pause for "is this good enough?" — cycle/max_waves is the answer.`,

@@ -240,7 +240,7 @@ const LIVE_READONLY = new Set([
   "/accounts",
   "/doctor",
   "/commands", // list project/user custom slash templates
-  "/skills", // list project/user skill packs
+  "/skills", // list builtin + project/user skill packs
   "/diff",
   "/copy", // clipboard last assistant reply — no session mutation
   "/share", // pasteable session card — optional clipboard
@@ -2581,10 +2581,12 @@ export async function handleSlash(
       } catch {
         /* */
       }
-      // Project skill packs (OpenCode-style playbooks in system prompt)
+      // Skill packs (builtin + project/user) — estimate matches prompt injection
       let skillsNote = "";
       try {
-        const { loadProjectSkills } = await import("../agent/project-skills.js");
+        const { loadProjectSkills, formatSkillsForPrompt } = await import(
+          "../agent/project-skills.js"
+        );
         const ws = opts.config.workspace || process.cwd();
         const skills = loadProjectSkills(ws);
         if (skills.length) {
@@ -2593,17 +2595,17 @@ export async function handleSlash(
             const loc = path.isAbsolute(rel)
               ? s.filePath.replace(process.env.HOME || "", "~")
               : rel;
-            return `${s.name}${s.description ? ` — ${s.description.slice(0, 40)}` : ""} (${loc})`;
+            return `${s.name} [${s.source}]${s.description ? ` — ${s.description.slice(0, 36)}` : ""} (${loc})`;
           });
           const more =
             skills.length > 8 ? ` (+${skills.length - 8} more)` : "";
-          const bodyEst = skills.map((s) => s.body).join("\n");
+          const injected = formatSkillsForPrompt(ws);
           skillsNote =
-            `\nProject skills (~${formatTokens(estimateTokens([{ role: "system", content: bodyEst }]))}; /skills):\n` +
+            `\nSkills (~${formatTokens(estimateTokens([{ role: "system", content: injected }]))} injected; /skills):\n` +
             labels.map((l) => `  · ${l}`).join("\n") +
             more;
         } else {
-          skillsNote = `\nProject skills: none  (tip: .forge/skills/<name>/SKILL.md · /skills)`;
+          skillsNote = `\nSkills: none  (tip: skills/forge-* · .forge/skills/<name>/SKILL.md · /skills)`;
         }
       } catch {
         /* */
@@ -5428,22 +5430,42 @@ case "/new":
         return {
           handled: true,
           output:
-            "No project skills.\n" +
-            "  Add .forge/skills/<name>/SKILL.md (OpenCode-style)\n" +
-            "  Optional frontmatter: name, description\n" +
-            "  Also: .agents/skills/**/SKILL.md · ~/.forge/skills/**/SKILL.md\n" +
-            "  Skills inject into the system prompt as playbooks.",
+            "No skills loaded.\n" +
+            "  Builtins: package skills/forge-*/SKILL.md (FORGE_BUILTIN_SKILLS=0 to disable)\n" +
+            "  Project:  .forge/skills/<name>/SKILL.md · .agents/skills/**/SKILL.md\n" +
+            "  User:     ~/.forge/skills/**/SKILL.md\n" +
+            "  Optional frontmatter: name, description, inject (always|body|catalog)",
         };
       }
+      const by = {
+        builtin: skills.filter((s) => s.source === "builtin"),
+        project: skills.filter((s) => s.source === "project"),
+        user: skills.filter((s) => s.source === "user"),
+      };
+      const fmt = (s: (typeof skills)[0]) =>
+        `  ${s.name.padEnd(18)} ${(s.description || "(no description)").slice(0, 56)}  [${s.inject}]`;
       const lines = [
-        `Project skills (${skills.length}):`,
-        ...skills.map(
-          (s) =>
-            `  ${s.name.padEnd(20)} ${(s.description || "(no description)").slice(0, 60)}  [${s.source}]`,
-        ),
-        "",
-        "  Paths: .forge/skills/**/SKILL.md · injected into system prompt",
+        `Skills (${skills.length}) · project overrides user overrides builtin`,
       ];
+      if (by.builtin.length) {
+        lines.push(``, `Builtin (${by.builtin.length}) — ship-with-install forge-* playbooks:`);
+        lines.push(...by.builtin.map(fmt));
+      }
+      if (by.project.length) {
+        lines.push(``, `Project (${by.project.length}):`);
+        lines.push(...by.project.map(fmt));
+      }
+      if (by.user.length) {
+        lines.push(``, `User (${by.user.length}):`);
+        lines.push(...by.user.map(fmt));
+      }
+      lines.push(
+        "",
+        "  Catalog always in system prompt; bodies for project/user (+ inject:always).",
+        "  Builtins default catalog-only — agent read_file(path) when matching.",
+        "  Paths: skills/forge-*/ · .forge/skills/** · .agents/skills/** · ~/.forge/skills/**",
+        "  FORGE_BUILTIN_SKILLS=0 disables package builtins.",
+      );
       return { handled: true, output: lines.join("\n") };
     }
 
@@ -6595,37 +6617,48 @@ export async function runDoctorCheck(
   if (projectSkillsCount > 0) {
     let skillsTokNote = "";
     try {
-      const { loadProjectSkills } = await import("../agent/project-skills.js");
-      const skills = loadProjectSkills(config.workspace || process.cwd());
-      const body = skills.map((s) => s.body).join("\n");
-      const tok = estimateTokens([{ role: "system", content: body }]);
+      const { formatSkillsForPrompt, loadProjectSkills } = await import(
+        "../agent/project-skills.js"
+      );
+      const ws = config.workspace || process.cwd();
+      const skills = loadProjectSkills(ws);
+      const nBuiltin = skills.filter((s) => s.source === "builtin").length;
+      const nOverlay = skills.length - nBuiltin;
+      const injected = formatSkillsForPrompt(ws);
+      const tok = estimateTokens([{ role: "system", content: injected }]);
       const win = config.contextWindow || 0;
       const pct = win > 0 ? tok / win : 0;
-      skillsTokNote = ` ~${formatTokens(tok)}`;
+      skillsTokNote = ` ~${formatTokens(tok)} injected`;
+      const mix =
+        nBuiltin > 0
+          ? ` (${nBuiltin} builtin` +
+            (nOverlay > 0 ? ` + ${nOverlay} project/user` : "") +
+            `)`
+          : "";
       if (pct >= 0.12) {
         lines.push(
           chalk.yellow(
-            `  ⚠ project skills: ${projectSkillsCount}${skillsTokNote} (~${Math.round(pct * 100)}% of context window) — trim SKILL.md bodies or raise context_window · /skills · /context`,
+            `  ⚠ skills: ${projectSkillsCount}${mix}${skillsTokNote} (~${Math.round(pct * 100)}% of context window) — trim SKILL.md bodies / inject:catalog · /skills · /context`,
           ),
         );
       } else {
         lines.push(
           chalk.dim(
-            `  project skills: ${projectSkillsCount}${skillsTokNote}  → /skills · .forge/skills/**/SKILL.md (OpenCode-style)`,
+            `  skills: ${projectSkillsCount}${mix}${skillsTokNote}  → /skills · skills/forge-* · .forge/skills/**`,
           ),
         );
       }
     } catch {
       lines.push(
         chalk.dim(
-          `  project skills: ${projectSkillsCount}  → /skills · .forge/skills/**/SKILL.md (OpenCode-style)`,
+          `  skills: ${projectSkillsCount}  → /skills · skills/forge-* · .forge/skills/**`,
         ),
       );
     }
   } else {
     lines.push(
       chalk.dim(
-        `  project skills: none · add .forge/skills/<name>/SKILL.md for playbooks`,
+        `  skills: none · builtins missing? check package skills/ · add .forge/skills/<name>/SKILL.md`,
       ),
     );
   }
@@ -7537,7 +7570,7 @@ Forge slash commands
   /auth                 Show stored credentials (+ multi-account)  [live]
   /accounts [status|switch|…]  Multi-account list/status/switch/clear-cooldown  [live]
   /doctor               Environment health check  [live]
-  /skills               List project skill packs (.forge/skills/**/SKILL.md)
+  /skills               List skill packs (builtin forge-* · .forge/skills · ~/.forge/skills)
   /commands             List project/user custom slash templates (.forge/commands)  [live]
   /quit                 Exit  [live — aborts run then exits]
 
