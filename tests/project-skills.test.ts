@@ -118,11 +118,14 @@ Always run smoke after deploy.
       assert.equal(method.inject, "always");
       const prompt = formatSkillsForPrompt(ws);
       assert.match(prompt, /### Catalog/);
-      assert.match(prompt, /skill:forge-method/);
-      assert.match(prompt, /Forge Method|forge-\*/i);
+      assert.match(prompt, /\bforge-method\b/);
+      assert.match(prompt, /Forge Method|forge-\*|How to use Forge/i);
       // Catalog lists others; progressive — full body of forge-prove not required
-      assert.match(prompt, /skill:forge-prove/);
-      assert.match(prompt, /path: `/);
+      assert.match(prompt, /\bforge-prove\b/);
+      assert.match(prompt, /skills\/forge-prove\/SKILL\.md/);
+      // Multi-line frontmatter description: >- must not leak as the description
+      assert.ok(!/skill:forge-method.*—\s*>-/.test(prompt));
+      assert.match(method.description, /built-in skills|playbook/i);
     } finally {
       if (prev === undefined) delete process.env.FORGE_BUILTIN_SKILLS;
       else process.env.FORGE_BUILTIN_SKILLS = prev;

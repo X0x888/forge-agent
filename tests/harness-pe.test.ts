@@ -437,9 +437,9 @@ describe("prompt profile + baseline system", () => {
 
   it("baseline prompt stays lean (grok-build style size ceiling)", async () => {
     // The baseline system prompt is re-sent on every model call; runaway
-    // growth is a per-turn token tax on every session. 8k chars is generous
-    // headroom over the current ~5.6k — regressions toward the old 12k+
-    // doctrine bloat fail here.
+    // growth is a per-turn token tax on every session. Ceiling includes the
+    // compact forge-* skills catalog + forge-method body (~3–4k). Regressions
+    // toward unbounded doctrine bloat (15k+ without cause) fail here.
     const fs = await import("node:fs");
     const os = await import("node:os");
     const path = await import("node:path");
@@ -456,9 +456,27 @@ describe("prompt profile + baseline system", () => {
       project: null,
     });
     assert.ok(
-      text.length < 8000,
+      text.length < 12_000,
       `baseline system prompt grew to ${text.length} chars`,
     );
+    // Without builtins the core doctrine alone must stay small.
+    const prev = process.env.FORGE_BUILTIN_SKILLS;
+    process.env.FORGE_BUILTIN_SKILLS = "0";
+    try {
+      const lean = buildBaselineSystemPrompt({
+        config: { ...DEFAULT_CONFIG },
+        workspace: bare,
+        git: null,
+        project: null,
+      });
+      assert.ok(
+        lean.length < 8000,
+        `core baseline (no builtins) grew to ${lean.length} chars`,
+      );
+    } finally {
+      if (prev === undefined) delete process.env.FORGE_BUILTIN_SKILLS;
+      else process.env.FORGE_BUILTIN_SKILLS = prev;
+    }
   });
 });
 

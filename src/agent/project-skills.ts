@@ -52,6 +52,11 @@ const MAX_BUILTIN_SKILLS = 32;
 /** Total characters for inlined skill bodies in the system prompt. */
 const MAX_PROMPT_CHARS = 24_000;
 
+/**
+ * Parse optional YAML frontmatter. Supports single-line scalars and simple
+ * folded/block scalars (`>`, `>-`, `|`, `|-`) for description — OpenCode /
+ * Claude skill packs commonly use `description: >-` multi-line form.
+ */
 function parseFrontmatter(raw: string): {
   name?: string;
   description: string;
@@ -66,16 +71,43 @@ function parseFrontmatter(raw: string): {
   if (end === -1) {
     return { description: "", body: text.trim() };
   }
-  const fm = text.slice(3, end).trim();
+  const fm = text.slice(3, end).replace(/^\r?\n/, "");
   const body = text.slice(end + 4).replace(/^\r?\n/, "").trim();
   let name: string | undefined;
   let description = "";
   let inject: SkillInject | undefined;
-  for (const line of fm.split(/\r?\n/)) {
+
+  const lines = fm.split(/\r?\n/);
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
     const m = line.match(/^([A-Za-z0-9_-]+)\s*:\s*(.*)$/);
     if (!m) continue;
     const key = m[1].toLowerCase();
-    const val = m[2].trim().replace(/^["']|["']$/g, "");
+    let val = m[2].trim();
+
+    // Multi-line YAML scalar: description: >-  /  |  /  >  /  |-
+    if (
+      (key === "description" || key === "name") &&
+      /^(?:>-?|\|[-+]?)\s*$/.test(val)
+    ) {
+      const parts: string[] = [];
+      while (i + 1 < lines.length) {
+        const next = lines[i + 1];
+        // Indented continuation (or blank line inside the block)
+        if (next === "" || /^\s+/.test(next) || next.startsWith("  ")) {
+          i++;
+          parts.push(next.replace(/^\s+/, ""));
+          continue;
+        }
+        break;
+      }
+      // Folded `>` style: join with spaces; block `|` keeps newlines — we always
+      // collapse description to one line for catalog matching.
+      val = parts.join(" ").replace(/\s+/g, " ").trim();
+    } else {
+      val = val.replace(/^["']|["']$/g, "");
+    }
+
     if (key === "name" && val) name = val;
     if (key === "description" && val) description = val;
     if (key === "inject") {
@@ -84,6 +116,19 @@ function parseFrontmatter(raw: string): {
     }
   }
   return { name, description, inject, body };
+}
+
+/** Short path for catalog (home → ~; package skills → skills/…). */
+function catalogPath(filePath: string): string {
+  const pkgSkills = builtinSkillsDir() + path.sep;
+  if (filePath.startsWith(pkgSkills) || filePath.startsWith(path.resolve(pkgSkills))) {
+    return "skills/" + path.relative(builtinSkillsDir(), filePath).split(path.sep).join("/");
+  }
+  const home = process.env.HOME || process.env.USERPROFILE || "";
+  if (home && filePath.startsWith(home + path.sep)) {
+    return "~" + filePath.slice(home.length);
+  }
+  return filePath;
 }
 
 function walkSkillFiles(root: string, out: string[], depth = 0): void {
@@ -249,22 +294,21 @@ export function formatSkillsForPrompt(workspace: string): string {
   const skills = loadProjectSkills(workspace);
   if (!skills.length) return "";
 
+  const pkgRoot = forgePackageRoot();
   const lines: string[] = [
     `## Skills`,
-    `Playbooks that sharpen how you work. When a task matches a skill description,`,
-    `read that skill's file with \`read_file\` (path in the catalog) and follow it —`,
-    `do not invent a parallel process. Prefer skill body over guessing.`,
-    `Project/user skills override builtins with the same name.`,
+    `When a task matches a skill, read its path with \`read_file\` and follow it.`,
+    `Builtin paths are under the Forge package root (\`${pkgRoot}\`); resolve \`skills/…\` against that root.`,
+    `Project/user override builtin on name clash. Prefer skill body over guessing.`,
     ``,
     `### Catalog`,
   ];
 
   for (const s of skills) {
-    const desc = s.description || "(no description)";
-    lines.push(
-      `- **skill:${s.name}** [${s.source}] — ${desc}`,
-      `  path: \`${s.filePath}\``,
-    );
+    const desc = (s.description || "(no description)").replace(/\s+/g, " ").slice(0, 120);
+    const p = catalogPath(s.filePath);
+    // One line per skill — keeps baseline prompt lean with 15+ builtins.
+    lines.push(`- **${s.name}** [${s.source}] — ${desc} · \`${p}\``);
   }
 
   // Bodies to inline: always + body inject (project/user default body; forge-method always)

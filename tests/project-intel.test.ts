@@ -2051,7 +2051,11 @@ describe("compact advisory intent", () => {
     );
     assert.match(withSoft, /ADVISORY\/Q&A/i);
     assert.match(withSoft, /suspended while Intent is ADVISORY/i);
-    assert.match(withSoft, /Expanded mandate \(abbrev, suspended while ADVISORY/i);
+    // compaction.ts uses "head" (truncated expanded mandate), not "abbrev"
+    assert.match(
+      withSoft,
+      /Expanded mandate \(head, suspended while ADVISORY/i,
+    );
 
     const withGoal = buildStructuredSummary(
       [

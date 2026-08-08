@@ -82,10 +82,17 @@ describe("browser OAuth callback watchdog", () => {
     });
   }
 
-  // Node nulls _onTimeout inside clearTimeout — observable proof the
-  // watchdog was cleared rather than left to linger for 5 minutes.
-  const timerCleared = (timer: NodeJS.Timeout) =>
-    (timer as unknown as { _onTimeout: unknown })._onTimeout === null;
+  // clearTimeout leaves the handle inert — observable proof the watchdog
+  // was cleared rather than left to linger for 5 minutes.
+  // Node historically set _onTimeout = null; recent Node (20+/22+/26) often
+  // leaves _onTimeout undefined and sets _destroyed = true. Accept either.
+  const timerCleared = (timer: NodeJS.Timeout) => {
+    const t = timer as unknown as {
+      _onTimeout?: unknown;
+      _destroyed?: boolean;
+    };
+    return t._onTimeout == null || t._destroyed === true;
+  };
 
   it("clears the watchdog timer on the success path", async () => {
     const cb = startCallback(60_000);
