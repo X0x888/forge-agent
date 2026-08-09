@@ -65,6 +65,7 @@ import {
   createWorkingIndicator,
   type StatusBarContext,
 } from "./status-bar.js";
+import { createBottomStatusDock } from "./bottom-status.js";
 import {
   acquireSessionLock,
   releaseSessionLock,
@@ -196,7 +197,20 @@ export async function runRepl(opts: {
     completer: makeCompleter(() => config),
   });
 
-  const statusCtx = (): StatusBarContext => ({ config, session, auth });
+  /**
+   * Sticky bottom dock — model + active-account quota + weekly reset.
+   * Plan is shared into statusCtx so the idle strip / footer stay in sync.
+   */
+  const bottomDock = createBottomStatusDock({
+    getContext: () => ({ config, session, auth }),
+  });
+
+  const statusCtx = (): StatusBarContext => ({
+    config,
+    session,
+    auth,
+    plan: bottomDock.getPlan(),
+  });
   /** Avoid reprinting an identical strip on every empty Enter */
   let lastStatusStrip = "";
   /** Spinner frame for prompt-docked live status */
@@ -222,6 +236,7 @@ export async function runRepl(opts: {
         }),
       );
       rl.prompt();
+      bottomDock.refresh();
     } catch {
       /* readline may be closed */
     }
@@ -254,6 +269,9 @@ export async function runRepl(opts: {
   const hbTimer = setInterval(pulseHeartbeat, 4_000);
   hbTimer.unref?.();
 
+  // Always-on bottom status region (model · use% · reset · ctx)
+  bottomDock.start();
+
   /** Idle prompt (forge ›) with status strip above. */
   const prompt = (opts?: { forceStatus?: boolean }) => {
     if (process.stdout.isTTY) {
@@ -266,6 +284,7 @@ export async function runRepl(opts: {
     const prefix = buildPromptFlags(statusCtx());
     rl.setPrompt(prefix + chalk.green("forge") + chalk.dim(" › "));
     rl.prompt();
+    bottomDock.refresh();
   };
 
   const handleLine = async (line: string) => {
@@ -663,6 +682,9 @@ export async function runRepl(opts: {
         );
       }
 
+      // Refresh plan occasionally after turns (uses 60s cache — cheap)
+      void bottomDock.refreshPlan();
+
       // Post-turn footer — always-on session health without /status
       console.log(
         renderTurnFooter(statusCtx(), {
@@ -787,6 +809,7 @@ export async function runRepl(opts: {
     try {
       if (busy && abortController) abortController.abort();
       working.stop();
+      bottomDock.stop();
       clearInterval(hbTimer);
       endTurn();
       releaseSession(session.meta.id);

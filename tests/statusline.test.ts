@@ -26,7 +26,14 @@ import {
   setPhase,
   _resetActivityForTests,
 } from "../src/statusline/activity.js";
-import { collectPlanUsage } from "../src/statusline/plan.js";
+import {
+  collectPlanUsage,
+  parseXaiBillingBody,
+} from "../src/statusline/plan.js";
+import {
+  formatPlan,
+  resetCountdown,
+} from "../src/statusline/render.js";
 import {
   startBackgroundTask,
   _resetTasksForTests,
@@ -40,6 +47,7 @@ import {
   formatBackgroundTasksList,
   createWorkingIndicator,
 } from "../src/tui/status-bar.js";
+import { renderBottomStatusLine } from "../src/tui/bottom-status.js";
 import { clipAnsi, visibleWidth } from "../src/util/format.js";
 import type { ForgeConfig } from "../src/config/types.js";
 import type { ResolvedAuth } from "../src/auth/types.js";
@@ -345,6 +353,128 @@ describe("statusline", () => {
     assert.equal(copilot?.percent, undefined);
   });
 
+  it("parses nested SuperGrok format=credits billing body", () => {
+    const end = new Date(Date.now() + 3 * 86400_000).toISOString();
+    const plan = parseXaiBillingBody(
+      {
+        config: {
+          currentPeriod: {
+            type: "USAGE_PERIOD_TYPE_WEEKLY",
+            start: "2026-08-05T18:23:30.013898+00:00",
+            end,
+          },
+          creditUsagePercent: 22.0,
+          productUsage: [
+            { product: "GrokBuild", usagePercent: 22.0 },
+            { product: "GrokChat" },
+          ],
+          billingPeriodStart: "2026-08-05T18:23:30.013898+00:00",
+          billingPeriodEnd: end,
+        },
+      },
+      "test:credits",
+    );
+    assert.equal(plan.percent, 22);
+    assert.equal(plan.periodLabel, "week");
+    assert.equal(plan.resetsAt, end);
+    assert.match(plan.product || "", /SuperGrok|Build/i);
+
+    const rendered = formatPlan(plan, false);
+    assert.ok(rendered, "formatPlan must surface use%");
+    assert.match(rendered!, /use:22%/);
+    assert.match(rendered!, /reset /);
+    // Bare "week" alone was the broken-cache failure mode
+    assert.notEqual(rendered!.trim(), "week");
+  });
+
+  it("parses plain /v1/billing used/limit {val} wrappers", () => {
+    const end = "2026-09-01T00:00:00+00:00";
+    const plan = parseXaiBillingBody(
+      {
+        config: {
+          monthlyLimit: { val: 150000 },
+          used: { val: 27795 },
+          billingPeriodStart: "2026-08-01T00:00:00+00:00",
+          billingPeriodEnd: end,
+        },
+      },
+      "test:plain",
+    );
+    assert.equal(plan.used, 27795);
+    assert.equal(plan.limit, 150000);
+    assert.equal(plan.percent, 19); // round(27795/150000*100)
+    assert.equal(plan.resetsAt, end);
+    const rendered = formatPlan(plan, false)!;
+    assert.match(rendered, /use:19%/);
+    assert.match(rendered, /28k\/150k/);
+  });
+
+  it("still accepts flat legacy billing shapes", () => {
+    const plan = parseXaiBillingBody(
+      { used: 10, limit: 100, period_end: "2099-01-01T00:00:00Z" },
+      "test:flat",
+    );
+    assert.equal(plan.percent, 10);
+    assert.equal(plan.used, 10);
+    assert.equal(plan.limit, 100);
+    assert.equal(plan.resetsAt, "2099-01-01T00:00:00Z");
+  });
+
+  it("formatPlan hides empty week-only plan (broken parse residue)", () => {
+    const empty = formatPlan(
+      {
+        unit: "credits",
+        periodLabel: "week",
+        product: "SuperGrok",
+        source: "xai:cli-chat-proxy/billing",
+      },
+      false,
+    );
+    assert.equal(empty, null);
+  });
+
+  it("resetCountdown formats multi-day windows", () => {
+    const iso = new Date(Date.now() + 3 * 86400_000 + 2 * 3600_000).toISOString();
+    const s = resetCountdown(iso);
+    assert.ok(s);
+    assert.match(s!, /reset 3d2h|reset 3d/);
+  });
+
+  it("bottom status line includes model + plan quota + reset", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-sl-bottom-"));
+    process.env.FORGE_HOME = tmp;
+    const s = createSession({ cwd: tmp, provider: "xai", model: "grok-4.5" });
+    const end = new Date(Date.now() + 2 * 86400_000).toISOString();
+    const config = { ...DEFAULT_CONFIG, provider: "xai", model: "grok-4.5", contextWindow: 500_000 } as ForgeConfig;
+    const auth: ResolvedAuth = {
+      provider: "xai",
+      method: "subscription",
+      token: "t",
+      accountId: "xai:test",
+      accountLabel: "sub:test@example.com",
+    };
+    const line = renderBottomStatusLine(
+      { config, session: s, auth },
+      {
+        percent: 22,
+        used: 27795,
+        limit: 150000,
+        remaining: 122205,
+        unit: "credits",
+        periodLabel: "week",
+        resetsAt: end,
+        product: "SuperGrok",
+        source: "test",
+      },
+      { width: 120, plain: true },
+    );
+    assert.match(line, /forge/);
+    assert.match(line, /xai\/grok-4\.5/);
+    assert.match(line, /use:22%/);
+    assert.match(line, /reset /);
+    assert.match(line, /ctx /);
+  });
+
   it("hides N/A plan noise in render", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-sl3-"));
     process.env.FORGE_HOME = tmp;
@@ -543,6 +673,10 @@ describe("statusline plan mode details", () => {
   it("formatSessionDetails tips /build under plan", async () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-sl-plan-"));
     process.env.FORGE_HOME = tmp;
+    // Ensure a real git root so the details block surfaces `git …`
+    const { execFileSync } = await import("node:child_process");
+    execFileSync("git", ["init", "-q"], { cwd: tmp });
+    execFileSync("git", ["checkout", "-q", "-b", "main"], { cwd: tmp });
     const { formatSessionDetails } = await import("../src/tui/status-bar.js");
     const { DEFAULT_CONFIG } = await import("../src/config/types.js");
     const s = createSession({ cwd: tmp, provider: "xai", model: "m" });
@@ -559,7 +693,6 @@ describe("statusline plan mode details", () => {
     assert.match(text, /plan/i);
     assert.match(text, /\/build/);
     assert.match(text, /ctx\s+|autoCompact@/);
-    // git line when in a repo (this workspace is)
     assert.match(text, /git\s+/);
   });
 

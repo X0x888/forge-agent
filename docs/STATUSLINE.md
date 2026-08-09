@@ -3,9 +3,15 @@
 Native, **provider-agnostic** HUD for Forge — integrated into the REPL so you do **not** need a second panel.
 
 ```
-████░░░░  32%  18.2k ~$0.04  todos:2  ● live
+  xai/grok-4.5  ████░░░░  32%  18.2k ~$0.04  use:22%  27.8k/150.0k  reset 3d  todos:2  ● live
 [ULW c=1 GOAL] forge ›
+…
+⚒ forge  xai/grok-4.5  sub×2  ctx 32% 12.4k/500k  use:22%  27.8k/150.0k  reset 3d  ULW c=1
 ```
+
+The **bottom status region** is always on in a TTY REPL (model · auth · context ·
+active-account quota · weekly reset · harness flags). Disable with
+`FORGE_BOTTOM_STATUS=0`.
 
 While the agent works (native live chrome — not idle-only):
 
@@ -54,7 +60,8 @@ HUD/`forge status` project labels append detected **package manager** + cheapest
 
 | Surface | When | Shows |
 |---------|------|--------|
-| **Prompt strip** | Idle, above `forge ›` | Context bar, tokens, todos, `bg:N`, liveness |
+| **Bottom status region** | Always (TTY REPL) | Model, auth, ctx %, **use:N%**, used/limit, **reset Nd**, ULW/GOAL/YOLO, bg |
+| **Prompt strip** | Idle, above `forge ›` | Model, context bar, tokens, **plan quota**, todos, `bg:N`, liveness |
 | **Prompt flags** | Idle input | `ULW`, `c=1/0`, `GOAL`, `PLAN`/`YOLO`/`auto`, `bg:N` |
 | **Live run header** | Start of every agent turn | Model, effort, ULW/GOAL, control legend, `live ›` affordance |
 | **Busy status line** | Mid-turn (stderr) | Spinner + phase + model + effort + ULW + `/cycle 0` hint |
@@ -93,7 +100,7 @@ forge status --tmux --plain
 
 | Auth path | Plan / quota segment |
 |-----------|----------------------|
-| **Grok / xAI subscription** (`forge login` SuperGrok OIDC or `--from-grok`) | Best-effort SuperGrok credits via Grok billing proxy |
+| **Grok / xAI subscription** (`forge login` SuperGrok OIDC or `--from-grok`) | Weekly SuperGrok Build usage via `cli-chat-proxy` (`creditUsagePercent` + period end; absolute used/limit from `/v1/billing` when present) |
 | **xAI / OpenAI / Anthropic API key** | Session tokens + est. cost only |
 | **OpenAI / Codex subscription** | Local rate-limit files under `~/.codex/` if present |
 | **GitHub Copilot** | Explicit note: quota not exposed to third-party CLIs |

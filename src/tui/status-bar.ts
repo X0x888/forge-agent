@@ -34,13 +34,15 @@ import { estimateTokens, sessionDir } from "../session/session.js";
 import { readSessionLock, formatLockHolder } from "../session/lock.js";
 import { getGitSnapshot } from "../util/git-context.js";
 import { detectProjectIntel } from "../util/project-intel.js";
-import type { AuthMethod } from "../statusline/types.js";
+import type { AuthMethod, PlanUsageInfo } from "../statusline/types.js";
 import { normalizePermissionMode } from "../util/mode-aliases.js";
 
 export interface StatusBarContext {
   config: ForgeConfig;
   session: SessionData;
   auth: ResolvedAuth;
+  /** Optional plan/quota from bottom dock or /status probe */
+  plan?: PlanUsageInfo;
 }
 
 const SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
@@ -56,7 +58,7 @@ export function buildLiveSnapshot(ctx: StatusBarContext) {
   } catch {
     /* optional */
   }
-  return sessionToSnapshot(ctx.session, {
+  const snap = sessionToSnapshot(ctx.session, {
     windowTokens: ctx.config.contextWindow,
     authMethod: authMethodOf(ctx.auth),
     authLabel: ctx.auth.accountLabel,
@@ -65,6 +67,8 @@ export function buildLiveSnapshot(ctx: StatusBarContext) {
     permissionMode: ctx.config.permissionMode,
     maxCostUsd: ctx.config.maxCostUsd,
   });
+  if (ctx.plan) snap.plan = ctx.plan;
+  return snap;
 }
 
 /** Flags shown before `forge ›` — ULW, GOAL, PLAN, YOLO, bg, working. */
@@ -157,19 +161,27 @@ function phaseShort(act: SessionActivity): string {
 export function renderIdleStatusLine(ctx: StatusBarContext): string {
   const snap = buildLiveSnapshot(ctx);
   const width = process.stdout.columns ?? 100;
-  // Skip noise on brand-new empty sessions
+  // Skip noise on brand-new empty sessions — still surface model + plan when known
   if (
     snap.turnCount === 0 &&
     snap.tokens.totalTokens === 0 &&
     !snap.activity?.busy &&
-    !(snap.activity?.bgRunning)
+    !(snap.activity?.bgRunning) &&
+    !snap.plan?.percent &&
+    !snap.plan?.resetsAt
   ) {
     // Still show context window readiness + model briefly
     return chalk.dim(
       `  ${snap.provider}/${shortModel(snap.model)}  ctx 0/${formatTokens(snap.context.windowTokens)}  ${describeAuth(ctx.auth)}`,
     );
   }
-  return "  " + renderCompactStrip(snap, { width: width - 2, showActivity: true });
+  // Compact strip now includes plan when snap.plan is set (use% + reset)
+  const modelBit = chalk.dim(`${snap.provider}/${shortModel(snap.model)}`);
+  const strip = renderCompactStrip(snap, {
+    width: Math.max(20, width - 2 - 24),
+    showActivity: true,
+  });
+  return "  " + modelBit + "  " + strip;
 }
 
 function shortModel(model: string): string {
@@ -827,6 +839,35 @@ export function formatSessionDetails(ctx: StatusBarContext): string {
       `model    ${config.provider}/${config.model}` +
         (effort ? ` · effort ${effort}` : ""),
     ),
+    (() => {
+      if (!ctx.plan) return null;
+      const p = ctx.plan;
+      const bits: string[] = [];
+      if (p.percent != null) bits.push(`use ${p.percent}%`);
+      if (p.used != null && p.limit != null) {
+        bits.push(`${p.used}/${p.limit}${p.unit ? ` ${p.unit}` : ""}`);
+      } else if (p.remaining != null) {
+        bits.push(`${p.remaining}${p.unit ? ` ${p.unit}` : ""} left`);
+      }
+      if (p.resetsAt) {
+        try {
+          const t = Date.parse(p.resetsAt);
+          if (!Number.isNaN(t)) {
+            const sec = Math.floor((t - Date.now()) / 1000);
+            if (sec <= 0) bits.push("reset soon");
+            else if (sec < 3600) bits.push(`reset ${Math.ceil(sec / 60)}m`);
+            else if (sec < 86400) bits.push(`reset ${Math.ceil(sec / 3600)}h`);
+            else bits.push(`reset ${Math.ceil(sec / 86400)}d`);
+          }
+        } catch {
+          /* */
+        }
+      } else if (p.periodLabel) bits.push(p.periodLabel);
+      if (p.product) bits.push(p.product);
+      if (!bits.length && p.note) return chalk.dim(`plan     ${p.note}`);
+      if (!bits.length) return null;
+      return chalk.dim(`plan     ${bits.join(" · ")}`);
+    })(),
     chalk.dim(
       `perms    ${config.permissionMode}` +
         (config.permissionMode === "plan"

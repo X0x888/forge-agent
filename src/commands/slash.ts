@@ -2232,10 +2232,27 @@ export async function handleSlash(
         /* plan optional */
       }
       const hud = renderHud([snap], { width: process.stdout.columns });
+      // Surface plan on its own line so quota/reset is never lost in width-shed
+      let planLine = "";
+      if (snap.plan) {
+        const { formatPlan } = await import("../statusline/render.js");
+        const p = formatPlan(snap.plan, Boolean(process.stdout.isTTY));
+        if (p) {
+          planLine =
+            chalk.dim("plan     ") +
+            p +
+            (snap.plan.product ? chalk.dim(`  · ${snap.plan.product}`) : "") +
+            (snap.plan.source ? chalk.dim(`  (${snap.plan.source})`) : "") +
+            "\n";
+        } else if (snap.plan.note) {
+          planLine = chalk.dim(`plan     ${snap.plan.note}\n`);
+        }
+      }
       const detail = formatSessionDetails({
         config: opts.config,
         session: opts.session,
         auth,
+        plan: snap.plan,
       });
       let stackBits: string[] = [];
       try {
@@ -2279,6 +2296,7 @@ export async function handleSlash(
         output:
           hud +
           "\n" +
+          planLine +
           detail +
           (stackBits.length
             ? "\n" +

@@ -24,7 +24,8 @@ Binary entry: `src/cli.ts` → `dist/cli.js` (`bin: forge`).
 - `src/lsp/` — Language Server Protocol; ensure pack TS+Python (+ Rust/Go when detected); `forge lsp ensure`
 - `src/providers/` — LLM clients; `errors.ts` expert recovery tips (`formatProviderError`)
 - `src/auth/` — multi-account credentials (never log tokens); `accounts.ts` smart switch; auth.json v2; `src/util/file-lock.ts` `withFileLock` serializes cross-process load→mutate→save on auth.json/preferences.json (fail-open, bounded wait — never brick login)
-- `src/statusline/` — provider-agnostic HUD (`forge status`); never invent plan metrics
+- `src/statusline/` — provider-agnostic HUD (`forge status`); never invent plan metrics; SuperGrok weekly `use%`+reset via nested `config.creditUsagePercent` / period end
+- `src/tui/bottom-status.ts` — always-on REPL bottom dock (model · ctx · plan quota · reset); `FORGE_BOTTOM_STATUS=0` off
 - `src/commands/` — slash handlers; `project-commands.ts` (`.forge/commands/*.md`); `headless-slash.ts` for `forge run "/…"`
 - `src/harness/ulw-cycle.ts` — ULW cycle flag 1/0; optional `maxWaves` cap (auto LAST); soft prompts expand to god-scope; Stop blocks while cycle=1; wave ledger + quality bar (proof demands, thin-wave escalation, evidence attestation); net-diff progress tracking (`gitDiffFingerprint`: bash-channel edits count as progress, edit→revert churn = revisit → thin + excluded from bestWave); background bash excluded from structural verification (`countsTowardVerification` — spawn observes no exit code)
 - `src/harness/context-admit.ts` — mid-conversation harness admissions (stable system + live counters; counter-only churn suppressed; volatile git branch line admitted append-only — message[0] keeps cache-stable git root/remote only)

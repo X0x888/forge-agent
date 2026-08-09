@@ -159,14 +159,26 @@ function formatBgTasks(snap: StatusSnapshot, enabled: boolean): string | null {
   return lines.length ? lines.join("\n") : null;
 }
 
-function formatPlan(plan: PlanUsageInfo | undefined, enabled: boolean): string | null {
+/**
+ * Plan / quota segment for HUD + bottom dock.
+ * Prefer percent + reset countdown (SuperGrok weekly); never show bare
+ * "week" with no numbers (that was the broken-parse failure mode).
+ */
+export function formatPlan(
+  plan: PlanUsageInfo | undefined,
+  enabled: boolean,
+): string | null {
   if (!plan) return null;
   // Skip pure "N/A" notes for API keys — keep HUD dense
   if (
     plan.note &&
     plan.percent == null &&
     plan.remaining == null &&
-    /API key|N\/A|not applicable|session tokens only|no plan adapter/i.test(plan.note)
+    plan.used == null &&
+    !plan.resetsAt &&
+    /API key|N\/A|not applicable|session tokens only|no plan adapter|billing HTTP|billing unavailable/i.test(
+      plan.note,
+    )
   ) {
     return null;
   }
@@ -182,22 +194,26 @@ function formatPlan(plan: PlanUsageInfo | undefined, enabled: boolean): string |
           : paint(enabled, p, "cyan"),
     );
   }
-  if (plan.remaining != null) {
-    const unit = plan.unit === "credits" ? "" : plan.unit ? ` ${plan.unit}` : "";
-    parts.push(paint(enabled, `${formatCompact(plan.remaining)}${unit} left`, "dim"));
-  } else if (plan.used != null && plan.limit != null) {
+  if (plan.used != null && plan.limit != null) {
     parts.push(
-      paint(enabled, `${formatCompact(plan.used)}/${formatCompact(plan.limit)}`, "dim"),
+      paint(
+        enabled,
+        `${formatCompact(plan.used)}/${formatCompact(plan.limit)}`,
+        "dim",
+      ),
+    );
+  } else if (plan.remaining != null) {
+    const unit = plan.unit === "credits" ? "" : plan.unit ? ` ${plan.unit}` : "";
+    parts.push(
+      paint(enabled, `${formatCompact(plan.remaining)}${unit} left`, "dim"),
     );
   }
   if (plan.resetsAt) {
     const left = resetCountdown(plan.resetsAt);
     if (left) parts.push(paint(enabled, left, "dim"));
-  } else if (plan.periodLabel) {
+  } else if (plan.periodLabel && parts.length) {
+    // Only attach period label when we already have a usage signal
     parts.push(paint(enabled, plan.periodLabel, "dim"));
-  }
-  if (plan.product && parts.length) {
-    // product only when we have numeric plan data
   }
   if (!parts.length && plan.note) {
     return paint(enabled, plan.note.slice(0, 48), "dim");
@@ -212,14 +228,23 @@ function formatCompact(n: number): string {
   return String(Math.round(n * 10) / 10);
 }
 
-function resetCountdown(iso: string): string | null {
+/** Public for bottom dock + tests. */
+export function resetCountdown(iso: string): string | null {
   const t = Date.parse(iso);
   if (Number.isNaN(t)) return null;
   const sec = Math.floor((t - Date.now()) / 1000);
   if (sec <= 0) return "reset soon";
   if (sec < 3600) return `reset ${Math.ceil(sec / 60)}m`;
-  if (sec < 86400) return `reset ${Math.ceil(sec / 3600)}h`;
-  return `reset ${Math.ceil(sec / 86400)}d`;
+  if (sec < 86400) {
+    const h = Math.floor(sec / 3600);
+    const m = Math.floor((sec % 3600) / 60);
+    return m > 0 && h < 12 ? `reset ${h}h${m}m` : `reset ${Math.max(1, Math.ceil(sec / 3600))}h`;
+  }
+  const d = Math.floor(sec / 86400);
+  const h = Math.floor((sec % 86400) / 3600);
+  // Prefer "3d2h" under 7d so weekly SuperGrok resets read clearly
+  if (h > 0 && d < 7) return `reset ${d}d${h}h`;
+  return `reset ${Math.max(1, d)}d`;
 }
 
 function renderSession(
@@ -420,6 +445,10 @@ export function renderTmux(snap: StatusSnapshot | undefined): string {
   else if (snap.plan?.remaining != null) {
     parts.push(`${formatCompact(snap.plan.remaining)}left`);
   }
+  if (snap.plan?.resetsAt) {
+    const left = resetCountdown(snap.plan.resetsAt);
+    if (left) parts.push(left.replace(/^reset /, "rst:"));
+  }
   return parts.join(" ");
 }
 
@@ -455,6 +484,10 @@ export function renderCompactStrip(
         b.hit ? "red" : b.percent >= 80 ? "yellow" : "dim",
       ),
     );
+  }
+  {
+    const planStr = formatPlan(snap.plan, c);
+    if (planStr) parts.push(planStr);
   }
   if (snap.openTodos > 0) {
     parts.push(paint(c, `todos:${snap.openTodos}`, "yellow"));

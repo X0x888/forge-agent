@@ -16,7 +16,10 @@ export {
   renderTmux,
   renderCompactStrip,
   snapshotsToJson,
+  formatPlan,
+  resetCountdown,
 } from "./render.js";
+export { collectPlanUsage, parseXaiBillingBody } from "./plan.js";
 export {
   heartbeatSession,
   releaseSession,
@@ -33,5 +36,4 @@ export {
   activityElapsedSec,
 } from "./activity.js";
 export type { AgentPhase, SessionActivity } from "./activity.js";
-export { collectPlanUsage } from "./plan.js";
 export { runStatusWatch } from "./watch.js";

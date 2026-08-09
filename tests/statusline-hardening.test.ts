@@ -217,10 +217,35 @@ describe("plan cache hardening", () => {
     upsertOAuth("xai", { accessToken: "tok-plan", method: "subscription" });
     let fetchCalls = 0;
     const origFetch = globalThis.fetch;
-    globalThis.fetch = (async () => {
+    // Nested SuperGrok shape (format=credits) — the live production body.
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
       fetchCalls += 1;
+      const url = String(input);
+      if (url.includes("format=credits")) {
+        return new Response(
+          JSON.stringify({
+            config: {
+              currentPeriod: {
+                type: "USAGE_PERIOD_TYPE_WEEKLY",
+                end: "2099-01-08T00:00:00Z",
+              },
+              creditUsagePercent: 22,
+              productUsage: [{ product: "GrokBuild", usagePercent: 22 }],
+              billingPeriodEnd: "2099-01-08T00:00:00Z",
+            },
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      // plain /billing for used/limit merge
       return new Response(
-        JSON.stringify({ used: 10, limit: 100 }),
+        JSON.stringify({
+          config: {
+            used: { val: 2200 },
+            monthlyLimit: { val: 10000 },
+            billingPeriodEnd: "2099-01-08T00:00:00Z",
+          },
+        }),
         { status: 200, headers: { "content-type": "application/json" } },
       );
     }) as typeof fetch;
@@ -229,7 +254,11 @@ describe("plan cache hardening", () => {
         provider: "xai",
         authMethod: "subscription",
       });
-      assert.equal(plan?.percent, 10);
+      assert.equal(plan?.percent, 22);
+      assert.equal(plan?.used, 2200);
+      assert.equal(plan?.limit, 10000);
+      assert.equal(plan?.resetsAt, "2099-01-08T00:00:00Z");
+      assert.equal(plan?.periodLabel, "week");
     } finally {
       globalThis.fetch = origFetch;
     }
@@ -243,13 +272,47 @@ describe("plan cache hardening", () => {
       fs.readdirSync(path.join(tmp, "statusline")).filter((f) => f.endsWith(".tmp")).length,
       0,
     );
-    // Second probe is served from cache (no second fetch).
+    // Second probe is served from cache (no second fetch pair).
     const again = await collectPlanUsage({
       provider: "xai",
       authMethod: "subscription",
     });
-    assert.equal(again?.percent, 10);
-    assert.equal(fetchCalls, 1);
+    assert.equal(again?.percent, 22);
+    // First call may hit credits + plain (2); second is cache-only
+    assert.equal(fetchCalls, 2);
+  });
+
+  it("caches nested-parse plan so forge status --watch shows use%+reset", async () => {
+    upsertOAuth("xai", { accessToken: "tok-watch", method: "subscription" });
+    const origFetch = globalThis.fetch;
+    globalThis.fetch = (async () =>
+      new Response(
+        JSON.stringify({
+          config: {
+            currentPeriod: {
+              type: "USAGE_PERIOD_TYPE_WEEKLY",
+              end: "2099-06-01T00:00:00Z",
+            },
+            creditUsagePercent: 41.4,
+            billingPeriodEnd: "2099-06-01T00:00:00Z",
+          },
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      )) as typeof fetch;
+    try {
+      const plan = await collectPlanUsage({
+        provider: "xai",
+        authMethod: "subscription",
+      });
+      assert.equal(plan?.percent, 41);
+      assert.equal(plan?.resetsAt, "2099-06-01T00:00:00Z");
+      const { formatPlan } = await import("../src/statusline/render.js");
+      const line = formatPlan(plan, false)!;
+      assert.match(line, /use:41%/);
+      assert.match(line, /reset /);
+    } finally {
+      globalThis.fetch = origFetch;
+    }
   });
 });
 
