@@ -13,7 +13,10 @@ import {
   LIVE_CONTROLS_HINT,
   type SlashResult,
 } from "../commands/slash.js";
-import { pushInterjection } from "../harness/interjection.js";
+import {
+  peekInterjections,
+  pushInterjection,
+} from "../harness/interjection.js";
 import { saveSession, isLastVerificationStale } from "../session/session.js";
 import { readFileMutations } from "../session/mutations.js";
 import { log } from "../util/log.js";
@@ -321,16 +324,18 @@ export async function runRepl(opts: {
     if (busy) {
       if (!text.startsWith("/")) {
         pushInterjection(session.meta.id, text);
+        const depth = peekInterjections(session.meta.id).length;
         console.log(
           formatLiveControlFeedback(
             "(message)",
-            `Queued for next model step.\n${LIVE_CONTROLS_HINT}`,
+            `Queued for next model step (q:${depth}).\n${LIVE_CONTROLS_HINT}`,
             "info",
           ),
         );
         livePrompt();
         return;
       }
+
       const liveKind = classifyLiveSlash(text);
       if (liveKind === "idle-only" || !isLiveSafeSlash(text)) {
         console.log(

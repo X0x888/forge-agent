@@ -461,7 +461,14 @@ describe("doctor surfaces reliability", () => {
     const cfg = loadConfig({}, tmp);
     const check = await runDoctorCheck(cfg);
     const report = check.report;
-    assert.equal(await runDoctor(cfg), report);
+    // runDoctor should match check.report; git dirty Δ can race with parallel
+    // tests touching the tree, so normalize that volatile segment.
+    const stabilizeGit = (s: string) =>
+      s
+        .replace(/Δ\d+/g, "ΔN")
+        .replace(/dirty \d+/g, "dirty N")
+        .replace(/dirty tree has \d+ changed files/g, "dirty tree has N changed files");
+    assert.equal(stabilizeGit(await runDoctor(cfg)), stabilizeGit(report));
     assert.equal(typeof check.modelInCatalog, "boolean");
     // default xai/grok-4.6 is in catalog
     assert.equal(check.modelInCatalog, true);
@@ -648,7 +655,17 @@ describe("doctor surfaces reliability", () => {
     const on = await runDoctorCheck(loadConfig({}, tmp));
     assert.equal(on.blockingStop, true);
     assert.match(on.report, /Blocking Stop: on/i);
-    assert.equal(await runDoctor(cfg), check.report);
+    {
+      const stabilizeGit = (s: string) =>
+        s
+          .replace(/Δ\d+/g, "ΔN")
+          .replace(/dirty \d+/g, "dirty N")
+          .replace(/dirty tree has \d+ changed files/g, "dirty tree has N changed files");
+      assert.equal(
+        stabilizeGit(await runDoctor(cfg)),
+        stabilizeGit(check.report),
+      );
+    }
   });
 });
 

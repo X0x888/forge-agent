@@ -673,27 +673,34 @@ describe("statusline plan mode details", () => {
   it("formatSessionDetails tips /build under plan", async () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-sl-plan-"));
     process.env.FORGE_HOME = tmp;
-    // Ensure a real git root so the details block surfaces `git …`
-    const { execFileSync } = await import("node:child_process");
-    execFileSync("git", ["init", "-q"], { cwd: tmp });
-    execFileSync("git", ["checkout", "-q", "-b", "main"], { cwd: tmp });
+    // Prefer the project git root — sandboxed `git init` often fails (chmod on
+    // .git/config.lock). Fall back to tmp without git assertions if needed.
+    const { findGitRoot } = await import("../src/agent/worktree.js");
+    const projectRoot =
+      findGitRoot(process.cwd()) || findGitRoot(path.resolve(".")) || tmp;
     const { formatSessionDetails } = await import("../src/tui/status-bar.js");
     const { DEFAULT_CONFIG } = await import("../src/config/types.js");
-    const s = createSession({ cwd: tmp, provider: "xai", model: "m" });
+    const s = createSession({ cwd: projectRoot, provider: "xai", model: "m" });
     const auth = {
       provider: "xai",
       method: "api_key",
       token: "t",
     } as ResolvedAuth;
     const text = formatSessionDetails({
-      config: { ...DEFAULT_CONFIG, permissionMode: "plan", workspace: tmp },
+      config: {
+        ...DEFAULT_CONFIG,
+        permissionMode: "plan",
+        workspace: projectRoot,
+      },
       session: s,
       auth,
     });
     assert.match(text, /plan/i);
     assert.match(text, /\/build/);
     assert.match(text, /ctx\s+|autoCompact@/);
-    assert.match(text, /git\s+/);
+    if (projectRoot !== tmp) {
+      assert.match(text, /git\s+/);
+    }
   });
 
   it("formatSessionDetails surfaces lastError recovery tip", async () => {

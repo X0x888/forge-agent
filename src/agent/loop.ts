@@ -483,6 +483,7 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
     } else if (isSoftPrompt(userMessage) && !userMessage.includes("ULW runtime controls")) {
       // Soft follow-ups under ULW still get cycle framing without resetting wave hard
       const refreshed = armUlwCycle(session.meta.id, userMessage, {
+        cwd: workspace,
         cycle: ulw.cycle,
         editCount: session.meta.editCount,
       });
@@ -535,6 +536,8 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
   let turns = 0;
   let finalText = "";
   let stopContinues = 0;
+  /** Cap mid-loop verify nudges per prompt (anti-spam). */
+  let verifyNudges = 0;
   let aborted = false;
   let releasedOnContinueCap = false;
   let hitMaxTurns = false;
@@ -1732,6 +1735,35 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
       // Tools that cooperatively return "Aborted" still leave signal.aborted set —
       // exit the loop immediately rather than starting another provider turn.
       assertNotAborted(signal);
+
+      // Mid-loop auto-verify nudge: after an edit streak without a fresh green
+      // check, inject a synthetic user message so the model runs the project
+      // check without waiting for the user to steer. Max 2 per user prompt.
+      if (verifyNudges < 2 && config.permissionMode !== "plan") {
+        try {
+          const { midLoopVerifyNudge } = await import(
+            "../util/project-intel.js"
+          );
+          const nudge = midLoopVerifyNudge(session.meta, workspace);
+          if (nudge) {
+            // Don't re-nudge if the last user message was already a verify nudge
+            const lastUser = [...session.messages]
+              .reverse()
+              .find((m) => m.role === "user");
+            const lastContent =
+              typeof lastUser?.content === "string" ? lastUser.content : "";
+            if (!lastContent.includes("[Forge harness — verify nudge]")) {
+              session.messages.push({ role: "user", content: nudge });
+              verifyNudges += 1;
+              saveSession(session);
+              log.dim("verify-nudge: edits without fresh green check");
+            }
+          }
+        } catch {
+          /* */
+        }
+      }
+
       events.onPhase?.("thinking");
     }
   } catch (err) {
@@ -2542,6 +2574,48 @@ async function prepareToolResult(opts: {
           // trust a stale last✓ after a failed re-run.
           delete session.meta.lastVerificationCommand;
           delete session.meta.lastVerificationAt;
+          // Fix-until-green: tell the model immediately — don't wait for the
+          // user to say "tests failed, fix them". Cap via session flag per prompt.
+          try {
+            const off = (
+              process.env.FORGE_FIX_UNTIL_GREEN || "1"
+            )
+              .trim()
+              .toLowerCase();
+            if (
+              off !== "0" &&
+              off !== "false" &&
+              off !== "off" &&
+              off !== "no" &&
+              config.permissionMode !== "plan"
+            ) {
+              const already = session.messages
+                .slice(-6)
+                .some(
+                  (m) =>
+                    m.role === "user" &&
+                    typeof m.content === "string" &&
+                    m.content.includes("[Forge harness — fix until green]"),
+                );
+              if (!already) {
+                const tip = (preferred && preferred[0]) || cmd.slice(0, 120);
+                session.messages.push({
+                  role: "user",
+                  content:
+                    "[Forge harness — fix until green]\n" +
+                    "Verification failed: `" +
+                    cmd.slice(0, 160) +
+                    "`. Read the failure, fix the root cause, re-run `" +
+                    tip +
+                    "` until green. " +
+                    "Do not ask the user what to do — continue until the check passes or you hit a real external blocker.",
+                });
+                saveSession(session);
+              }
+            }
+          } catch {
+            /* */
+          }
         }
       } catch {
         /* best-effort */

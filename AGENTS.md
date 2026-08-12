@@ -18,8 +18,8 @@ Binary entry: `src/cli.ts` → `dist/cli.js` (`bin: forge`).
 
 ## Layout
 
-- `src/harness/` — hooks, goal, stop-guard, handoff-guard, proof-claim-guard (do not weaken blocking Stop defaults)
-- `src/agent/` — loop, tools, permissions, subagents (`spawn_subagent`)
+- `src/harness/` — hooks, goal, stop-guard, handoff-guard, proof-claim-guard, project-memory (do not weaken blocking Stop defaults)
+- `src/agent/` — loop, tools, permissions, subagents (`spawn_subagent`; `isolation=worktree` auto-lands into parent)
 - `src/mcp/` — Model Context Protocol (search_mcp / call_mcp); built-in defaults **context7** + **playwright** (`src/mcp/defaults.ts`)
 - `src/lsp/` — Language Server Protocol; ensure pack TS+Python (+ Rust/Go when detected); `forge lsp ensure`
 - `src/providers/` — LLM clients; `errors.ts` expert recovery tips (`formatProviderError`)
@@ -43,14 +43,14 @@ Binary entry: `src/cli.ts` → `dist/cli.js` (`bin: forge`).
 - `src/util/project-intel.ts` — package manager + preferred check commands (system prompt, `/context`, bash wrong-PM/missing-script/missing-binary tips; monorepo walk-up + turbo/nx; doctor/status/config/run JSON; last-verify trail + `editsWithoutVerification`)
 - `src/agent/tools/file-read-state.ts` — session stale/unread edit guard (`FORGE_FILE_READ_GUARD=0` off)
 - `src/agent/tools/ask-user.ts` — interactive clarifying questions (OpenCode-inspired)
-- `src/agent/tools/format-on-write.ts` — opt-in format after file tools (`/format`, `FORGE_FORMAT_ON_WRITE`)
+- `src/agent/tools/format-on-write.ts` — format after file tools (`/format`, `FORGE_FORMAT_ON_WRITE`; auto when prettier/biome/ruff/… detected)
 - `src/agent/sandbox.ts` + `rules.ts` + `shell-parse.ts` — OS sandbox, deny/allow/ask rules, segment-aware shell checks
 - `src/agent/permission-preview.ts` — in-memory colored diff previews for edit-tool permission asks (never writes)
 - `src/tui/markdown.ts` — streaming markdown renderer for assistant output (line-buffered; chunk-split invariant; non-TTY passthrough)
 
 ## Expert session UX
 
-- `/plan` → session-scoped read-only design; `/commit [do]` drafts/creates commits from the diff (never pushes) (no sticky prefs); `/build` restores prior mode and implements
+- `/plan` → session-scoped read-only design (read-only bash allowed); `/commit · `/checkpoint` [do]` drafts/creates commits from the diff (never pushes) (no sticky prefs); `/build` restores prior mode and implements
 - `/model <name> [effort]` live mid-run; `/commands` lists `.forge/commands` templates
 - Transcript is minimal by default (one status line per tool); `/verbose` opts into per-edit colored diffs + full tool output (session-local)
 - Turn end prints a one-line change summary (files touched from the mutation journal + verification status) for unattended runs

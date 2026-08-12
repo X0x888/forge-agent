@@ -39,6 +39,7 @@ import {
   loadUlwCycle,
   saveUlwCycle,
 } from "../harness/ulw-cycle.js";
+import { listActiveProjectMemory } from "../harness/project-memory.js";
 import { copyGoal, loadGoal, saveGoal } from "../harness/goal.js";
 import { copyDecisionMemory } from "../harness/decision-memory.js";
 
@@ -106,6 +107,14 @@ export interface SessionMeta {
   lastVerificationAt?: string;
   /** ISO timestamp of the most recent file edit (write/search_replace/apply_patch). */
   lastEditAt?: string;
+  /** Last /checkpoint sha (git stash create dangling commit). */
+  lastCheckpoint?: string;
+  /** ISO timestamp when lastCheckpoint was taken. */
+  lastCheckpointAt?: string;
+  /** Session id this was forked from (conversation tree parent). */
+  parentSessionId?: string;
+  /** Short label of parent at fork time (title or id prefix). */
+  parentSessionLabel?: string;
   totalPromptTokens: number;
   totalCompletionTokens: number;
   /**
@@ -664,6 +673,12 @@ export function forkSession(
           : `fork of ${source.meta.id.slice(0, 8)}`),
       // Fresh turn marks relative to copied messages
       userTurnMarks: [...(source.meta.userTurnMarks || [])],
+      // Conversation tree lineage (survives list/resume/share)
+      parentSessionId: source.meta.id,
+      parentSessionLabel: (
+        source.meta.title ||
+        source.meta.id.slice(0, 8)
+      ).slice(0, MAX_SESSION_TITLE_CHARS),
     },
     messages: structuredClone(source.messages),
     todos: structuredClone(source.todos || []),
@@ -977,6 +992,21 @@ export function formatSessionSummary(session: SessionData): string {
   const lines = [
     `Session ${m.id}`,
     `  title:    ${m.title || "(untitled)"}`,
+    m.parentSessionId
+      ? `  forked:   ${(m.parentSessionLabel || m.parentSessionId.slice(0, 8)).slice(0, 48)} ← ${m.parentSessionId.slice(0, 8)}…`
+      : null,
+    (() => {
+      try {
+        const kids = listSessionForks(m.id, { limit: 6 });
+        if (!kids.length) return null;
+        const labels = kids
+          .map((k) => (k.title || k.id.slice(0, 8)).slice(0, 24))
+          .join(" · ");
+        return `  forks:    ${kids.length}  ${labels}${kids.length >= 6 ? " …" : ""}`;
+      } catch {
+        return null;
+      }
+    })(),
     `  updated:  ${m.updatedAt}${age && age !== "—" ? `  (${age})` : ""}`,
     `  created:  ${m.createdAt}`,
     `  cwd:      ${m.cwd}`,
@@ -1395,6 +1425,25 @@ export interface RecentSessionHit {
  *
  * @param maxAgeDays drop candidates older than this (default 14); 0 = no age filter
  */
+/** Sessions forked from a given parent (conversation tree children). */
+export function listSessionForks(
+  parentId: string,
+  opts: { limit?: number } = {},
+): SessionMeta[] {
+  const id = String(parentId || "").trim();
+  if (!id) return [];
+  const limit =
+    typeof opts.limit === "number" && opts.limit > 0
+      ? Math.min(50, Math.floor(opts.limit))
+      : 12;
+  const all = listSessions({ limit: 200 });
+  return all
+    .filter((m) => m.parentSessionId === id)
+    .sort((a, b) => (b.updatedAt || "").localeCompare(a.updatedAt || ""))
+    .slice(0, limit);
+}
+
+
 export function findRecentSessionForCwd(
   cwd: string,
   opts?: { maxAgeDays?: number; limitScan?: number; skipLocked?: boolean },
@@ -1785,6 +1834,9 @@ const SYNTHETIC_USER_PREFIXES = [
   "[User control — mid-run]",
   "[Conversation compacted — ",
   "The user sent a message while you were working:",
+  "[Forge harness — verify nudge]",
+  "[Forge harness — fix until green]",
+  "[Forge harness — background task ",
 ];
 
 export function isSyntheticUserMessage(msg: ChatMessage): boolean {
@@ -1955,6 +2007,9 @@ export function exportSessionMarkdown(session: SessionData): string {
     `- Updated: ${session.meta.updatedAt}`,
     `- Model: ${session.meta.provider}/${session.meta.model}`,
     `- Title: ${session.meta.title || "(untitled)"}`,
+    session.meta.parentSessionId
+      ? `- Forked from: ${session.meta.parentSessionLabel || session.meta.parentSessionId.slice(0, 8)} (${session.meta.parentSessionId})`
+      : null,
     `- Cwd: ${cwd}`,
     `- Turns: ${session.meta.turnCount || 0}  edits=${session.meta.editCount || 0}  msgs=${session.messages.length}`,
     projectLine,
@@ -2512,6 +2567,45 @@ export function formatResumeOrientation(
   } catch {
     /* */
   }
+  try {
+    const n = listActiveProjectMemory(
+      session.meta.cwd || process.cwd(),
+    ).length;
+    if (n > 0) {
+      parts.push(
+        `Project memory: ${n} note${n === 1 ? "" : "s"}  (/memory project)`,
+      );
+    }
+  } catch {
+    /* */
+  }
+  try {
+    let cp = session.meta.lastCheckpoint;
+    if (!cp) {
+      try {
+        cp = loadUlwCycle(session.meta.id)?.checkpointSha;
+      } catch {
+        /* */
+      }
+    }
+    if (cp) {
+      parts.push(`Checkpoint: ${cp.slice(0, 12)}…  (/checkpoint restore)`);
+    }
+  } catch {
+    /* */
+  }
+      try {
+    if (session.meta.parentSessionId) {
+      const pl =
+        session.meta.parentSessionLabel ||
+        session.meta.parentSessionId.slice(0, 8);
+      parts.push(
+        `Forked from: ${pl} (${session.meta.parentSessionId.slice(0, 8)}…)`,
+      );
+    }
+  } catch {
+    /* */
+  }
   return parts.join("\n");
 }
 
@@ -2607,6 +2701,30 @@ export function formatSessionShareCard(
   } catch {
     /* */
   }
+  let memoryLine: string | null = null;
+  try {
+    const n = listActiveProjectMemory(m.cwd || process.cwd()).length;
+    if (n > 0) memoryLine = `  memory:   ${n} project note${n === 1 ? "" : "s"} · /memory project`;
+  } catch {
+    /* */
+  }
+  let forkLine: string | null = null;
+  if (m.parentSessionId) {
+    forkLine = `  forked:   ${(m.parentSessionLabel || m.parentSessionId.slice(0, 8)).slice(0, 40)} ← ${m.parentSessionId.slice(0, 8)}…`;
+  }
+  let checkpointLine: string | null = null;
+  if (m.lastCheckpoint) {
+    checkpointLine = `  checkpoint: ${m.lastCheckpoint.slice(0, 12)}… · /checkpoint restore`;
+  } else {
+    try {
+      const u = loadUlwCycle(m.id);
+      if (u?.checkpointSha) {
+        checkpointLine = `  checkpoint: ${u.checkpointSha.slice(0, 12)}… (ulw) · /checkpoint restore`;
+      }
+    } catch {
+      /* */
+    }
+  }
   let lastVerifyLine: string | null = null;
   try {
     const last = m.lastVerificationCommand?.trim();
@@ -2640,6 +2758,9 @@ export function formatSessionShareCard(
     `  path:     ${dir}`,
     gitLine,
     projectLine,
+    memoryLine,
+    forkLine,
+    checkpointLine,
     lastVerifyLine,
     goalLine,
     m.lastError?.message

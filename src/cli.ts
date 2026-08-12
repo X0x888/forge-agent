@@ -20,6 +20,8 @@ import {
 } from "./util/format.js";
 import { parseCostUsd, resolveMaxCostUsd } from "./util/cost-budget.js";
 import { productionWarningsForRun } from "./util/production-warnings.js";
+import { listActiveProjectMemory } from "./harness/project-memory.js";
+import { resolveWorktreeLandMode } from "./agent/worktree.js";
 import { isFalsy } from "./util/bool.js";
 import { loadConfig, defaultConfigToml } from "./config/load.js";
 import {
@@ -579,6 +581,7 @@ Docs: docs/PRODUCTION.md · docs/RELIABILITY.md · docs/ULW.md · forge news
           const maxWaves =
             maxWavesOpt === undefined ? undefined : maxWavesOpt;
           const state = armUlwCycle(session.meta.id, mandate, {
+            cwd: session.meta.cwd || process.cwd(),
             cycle: 1,
             editCount: session.meta.editCount,
             ...(maxWaves !== undefined ? { maxWaves } : {}),
@@ -742,7 +745,7 @@ Exit codes:
   124  wall-clock timeout (FORGE_MAX_RUN_MS)
   130  aborted (SIGINT)
 
---json fields (success): ok, version, node, forgeHome, sessionId, sessionPath, title, pinned, foreignLock, provider, stickyProvider, authMethod, model, reasoningEffort, cwd, git, projectLabel, projectHints, packageName, packageVersion, packageEnginesNode, packageManager, checkCommands, projectStackSummary, monorepoRoot, workspaces, nodeModulesPresent, multipleLockfiles, permissionMode, sandbox, sandboxNetwork, sandboxMissingBackend, readOutsideWorkspace, ultrawork, ulwCycle, ulwWave, ulwMaxWaves, ulwBlocks, ulwMandate, ulwSoftPrompt, ulwExpandedMandate, goalActive, goal, goalStuckThreshold, goalBlocks, goalStuckBlocks, goalCriteria, denyRules, allowRules, askRules, maxTurns, maxTurnsUnlimited, maxCostUsd, maxCostUnlimited, effectiveMaxCostUsd, sessionCostUsd, productionWarnings, formatOnWrite, blockingStop, maxRunMs, providerTimeoutMs, bashTimeoutMs, bashBackgroundTimeoutMs, permissionAskTimeoutMs, doomLoopThreshold, errorStreakThreshold, ulwMaxContinues, editCount, lastVerificationCommand, lastVerificationAt, lastEditAt, lastVerificationStale, openTodos, messageCount, finalText, turns, stopContinues,
+--json fields (success): ok, version, node, forgeHome, sessionId, sessionPath, title, pinned, foreignLock, provider, stickyProvider, authMethod, model, reasoningEffort, cwd, git, projectLabel, projectHints, packageName, packageVersion, packageEnginesNode, packageManager, checkCommands, projectStackSummary, monorepoRoot, workspaces, nodeModulesPresent, multipleLockfiles, permissionMode, sandbox, sandboxNetwork, sandboxMissingBackend, readOutsideWorkspace, ultrawork, ulwCycle, ulwWave, ulwMaxWaves, ulwBlocks, ulwMandate, ulwSoftPrompt, ulwExpandedMandate, goalActive, goal, goalStuckThreshold, goalBlocks, goalStuckBlocks, goalCriteria, denyRules, allowRules, askRules, maxTurns, maxTurnsUnlimited, maxCostUsd, maxCostUnlimited, effectiveMaxCostUsd, sessionCostUsd, productionWarnings, formatOnWrite, subagentLandMode, projectMemoryCount, lastCheckpoint, blockingStop, maxRunMs, providerTimeoutMs, bashTimeoutMs, bashBackgroundTimeoutMs, permissionAskTimeoutMs, doomLoopThreshold, errorStreakThreshold, ulwMaxContinues, editCount, lastVerificationCommand, lastVerificationAt, lastEditAt, lastVerificationStale, openTodos, messageCount, finalText, turns, stopContinues,
   releasedOnContinueCap, hitMaxTurns, hitCostCap, finishReason, lastError, editCount, aborted, timedOut,
   promptTokens, completionTokens, durationMs
   (FORGE_JSON_COMPACT=1 → single-line success JSON for CI log aggregation)
@@ -1124,6 +1127,7 @@ Docs: docs/PRODUCTION.md
         if (wantUlw) {
           session.meta.ultrawork = true;
           armUlwCycle(session.meta.id, prompt, {
+            cwd: session.meta.cwd || process.cwd(),
             cycle: 1,
             editCount: session.meta.editCount,
             ...(maxWavesOpt !== undefined ? { maxWaves: maxWavesOpt } : {}),
@@ -3295,6 +3299,9 @@ Docs: docs/PRODUCTION.md
         const prevNote = prev
           ? `  “${prev}${(s.lastUserPreview || "").length > 40 ? "…" : ""}”`
           : "";
+        const forkNote = s.parentSessionId
+          ? `  ↳${(s.parentSessionLabel || s.parentSessionId.slice(0, 6)).slice(0, 16)}`
+          : "";
         const verifyNote = s.lastVerificationCommand?.trim()
           ? isLastVerificationStale(s)
             ? "  ✓~"
@@ -3360,7 +3367,7 @@ Docs: docs/PRODUCTION.md
           /* */
         }
         console.log(
-          `${s.id}  ${age}  ${s.provider}/${s.model}  turns=${s.turnCount}  edits=${s.editCount}${costNote}${ulwNote}${goalNote}${s.pinned ? "  PIN" : ""}${errBadge}${verifyNote}${s.title ? `  ${s.title.slice(0, 40)}` : ""}${prevNote}${cwdNote}${lockNote}${errDetail}`,
+          `${s.id}  ${age}  ${s.provider}/${s.model}  turns=${s.turnCount}  edits=${s.editCount}${costNote}${ulwNote}${goalNote}${s.pinned ? "  PIN" : ""}${errBadge}${verifyNote}${s.title ? `  ${s.title.slice(0, 40)}` : ""}${prevNote}${forkNote}${cwdNote}${lockNote}${errDetail}`,
         );
       }
       const filterNotes: string[] = [];
@@ -4456,6 +4463,8 @@ Project instructions for Forge (and other coding agents).
               bellOnTurnEnd: isBellEnabled(),
               notifyOnTurnEnd: isNotifyEnabled(),
               formatOnWrite: check.formatOnWrite ?? false,
+              subagentLandMode: check.subagentLandMode ?? "auto",
+              projectMemoryCount: check.projectMemoryCount ?? 0,
               packageManager: check.packageManager ?? null,
               projectKinds: check.projectKinds ?? [],
               checkCommands: check.checkCommands ?? [],
@@ -6553,6 +6562,17 @@ async function runHeadless(opts: {
           lastEditAt: opts.session.meta.lastEditAt,
         }),
         formatOnWrite: isFormatOnWriteEnabled(),
+        subagentLandMode: resolveWorktreeLandMode(),
+        projectMemoryCount: (() => {
+          try {
+            return listActiveProjectMemory(
+              opts.session.meta.cwd || process.cwd(),
+            ).length;
+          } catch {
+            return 0;
+          }
+        })(),
+        lastCheckpoint: opts.session.meta.lastCheckpoint ?? null,
         blockingStop: !isFalsy(opts.config.blockingStopHooks),
         maxRunMs: maxRunMsFromEnv(),
         providerTimeoutMs: providerTimeoutMs(),
@@ -6907,6 +6927,17 @@ maxTurns: opts.config.maxTurns ?? 0,
           lastEditAt: opts.session.meta.lastEditAt,
       }),
       formatOnWrite: isFormatOnWriteEnabled(),
+        subagentLandMode: resolveWorktreeLandMode(),
+        projectMemoryCount: (() => {
+          try {
+            return listActiveProjectMemory(
+              opts.session.meta.cwd || process.cwd(),
+            ).length;
+          } catch {
+            return 0;
+          }
+        })(),
+        lastCheckpoint: opts.session.meta.lastCheckpoint ?? null,
       blockingStop: !isFalsy(opts.config.blockingStopHooks),
       maxRunMs: maxRunMsFromEnv(),
       providerTimeoutMs: providerTimeoutMs(),

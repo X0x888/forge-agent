@@ -233,6 +233,23 @@ function evaluateBashRules(
   };
 }
 
+/** Best-effort path extraction from apply_patch bodies. */
+export function extractPatchPaths(patchText: string): string[] {
+  const out: string[] = [];
+  const re =
+    /(?:\*\*\* (?:Add|Update|Delete|Move|Rename) File:\s*|\+\+\+ [ab]\/|--- [ab]\/)([^\n]+)/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(patchText)) !== null) {
+    let p = m[1].trim();
+    // Move/Rename: "old.ts → new.ts" — take the destination
+    if (p.includes(" → ")) p = p.split(" → ").pop()!.trim();
+    if (p.includes(" -> ")) p = p.split(" -> ").pop()!.trim();
+    p = p.replace(/^["']|["']$/g, "").trim();
+    if (p && p !== "/dev/null") out.push(p);
+  }
+  return [...new Set(out)];
+}
+
 export function evaluateRules(
   rules: PermissionRule[],
   toolName: string,
@@ -263,7 +280,7 @@ export function evaluateRules(
     ) {
       matched = matchPathRule(rule, toolInput, workspace);
     } else if (t === "apply_patch") {
-      // Match against full patch body (paths live inside patchText)
+      // Match against paths inside the patch body (and the body itself).
       const pat = (rule.pattern || "*").trim();
       const blob = String(
         toolInput.patchText ?? toolInput.patch_text ?? toolInput.patch ?? "",
@@ -271,8 +288,13 @@ export function evaluateRules(
       if (pat === "*" || pat === "") {
         matched = blob.slice(0, 80) || "*";
       } else {
-        const re = patternToRegExp(pat);
-        if (re.test(blob)) matched = blob.slice(0, 80);
+        const paths = extractPatchPaths(blob);
+        if (
+          paths.some((p) => pathMatchesGlob(p, pat, workspace)) ||
+          patternToRegExp(pat).test(blob)
+        ) {
+          matched = (paths[0] || blob).slice(0, 80);
+        }
       }
     } else {
       const re = patternToRegExp(rule.pattern || "*");

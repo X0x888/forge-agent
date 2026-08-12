@@ -31,8 +31,11 @@ import type { LoopEvents, LoopResult } from "./loop.js";
 import { normalizePermissionMode } from "../util/mode-aliases.js";
 import {
   createSubagentWorktree,
+  formatWorktreeLandSummary,
+  landSubagentWorktree,
   resolveIsolationMode,
   type SubagentWorktree,
+  type WorktreeLandResult,
 } from "./worktree.js";
 
 export type SubagentType = "general-purpose" | "explore" | "plan";
@@ -48,7 +51,7 @@ export interface SubagentRequest {
   /**
    * Isolation mode:
    * - none (default): same workspace as parent
-   * - worktree: detached git worktree under ~/.forge/worktrees/ (requires git repo)
+   * - worktree: detached git worktree under ~/.forge/worktrees/ (requires git repo); auto-lands into parent on success
    */
   isolation?: SubagentIsolation;
 }
@@ -85,6 +88,8 @@ export interface SubagentResult {
   isolation?: SubagentIsolation;
   /** Worktree path when isolation=worktree. */
   worktreePath?: string;
+  /** Land outcome when isolation=worktree (auto-apply into parent by default). */
+  worktreeLand?: WorktreeLandResult;
 }
 
 const READ_ONLY_TOOLS = new Set([
@@ -394,7 +399,7 @@ export async function runSubagent(
         result.cacheReadTokens;
     }
     // Same-workspace child edits count toward parent edit trail.
-    // Worktree isolation must NOT bump parent lastEditAt (files aren't in parent tree).
+    // Worktree isolation defers the bump until a successful land (below).
     if (isolation !== "worktree" && child.meta.editCount > 0) {
       ctx.parentSession.meta.editCount += child.meta.editCount;
       ctx.parentSession.meta.lastEditAt =
@@ -445,19 +450,49 @@ export async function runSubagent(
     log.dim(`Subagent session kept: ${child.meta.id}`);
   }
 
-  // Worktree cleanup: keep on FORGE_SUBAGENT_KEEP_WORKTREE=1 or when parent
-  // may want to inspect (failed runs keep for diagnosis unless forced clean).
-  const keepWorktree =
+  // Worktree land: capture diff and apply into the parent workspace by default
+  // so isolation=worktree is not a dead-end. Keep on conflict / KEEP_WORKTREE /
+  // aborted runs (skip apply but preserve the worktree for recovery).
+  const forceKeepWorktree =
     process.env.FORGE_SUBAGENT_KEEP_WORKTREE === "1" ||
     process.env.FORGE_SUBAGENT_KEEP_WORKTREE === "true" ||
     process.env.FORGE_SUBAGENT_KEEP === "1" ||
     process.env.FORGE_SUBAGENT_KEEP === "true";
+  let worktreeLand: WorktreeLandResult | undefined;
+  let worktreeKept = false;
   if (worktree) {
-    if (keepWorktree) {
-      log.dim(`Subagent worktree kept: ${worktree.path}`);
-      text += `\n\n[worktree kept: ${worktree.path} — review/merge, then: git worktree remove --force <path>]`;
-    } else {
-      await worktree.cleanup().catch(() => {});
+    const skipApply = Boolean(runError || result?.aborted);
+    worktreeLand = await landSubagentWorktree({
+      worktree,
+      parentWorkspace: ctx.workspace,
+      forceKeep: forceKeepWorktree,
+      skipApply,
+    });
+    worktreeKept = worktreeLand.kept;
+    const landBlock = formatWorktreeLandSummary(worktreeLand);
+    text = text ? `${text}\n\n${landBlock}` : landBlock;
+    if (worktreeLand.status === "applied") {
+      log.dim(
+        `Subagent worktree landed (${worktreeLand.changedFiles.length} file(s)) into ${worktreeLand.parentPath}`,
+      );
+      // Landed files now live in the parent tree — count toward edit trail so
+      // proof-claim / verify-hint rails fire the same as a same-workspace subagent.
+      const landed = Math.max(
+        1,
+        worktreeLand.changedFiles.length || child.meta.editCount || 0,
+      );
+      ctx.parentSession.meta.editCount =
+        (ctx.parentSession.meta.editCount || 0) + landed;
+      ctx.parentSession.meta.lastEditAt = new Date().toISOString();
+      try {
+        saveSession(ctx.parentSession);
+      } catch {
+        /* */
+      }
+    } else if (worktreeKept) {
+      log.dim(
+        `Subagent worktree kept (${worktreeLand.status}): ${worktree.path}`,
+      );
     }
   }
 
@@ -473,7 +508,8 @@ export async function runSubagent(
     error: runError,
     isolation,
     worktreePath: worktree?.path,
-    worktreeKept: Boolean(worktree && keepWorktree),
+    worktreeKept,
+    worktreeLandStatus: worktreeLand?.status,
   });
 
   return {
@@ -491,6 +527,7 @@ export async function runSubagent(
     error: runError,
     isolation,
     worktreePath: worktree?.path,
+    worktreeLand,
   };
 }
 
@@ -523,8 +560,9 @@ function buildSubagentPrompt(opts: {
       ``,
       `## Isolated worktree`,
       `Workspace: ${opts.worktreePath}`,
-      `This is a detached git worktree — edits here do not touch the parent checkout.`,
-      `Summarize files changed and any commits; the parent will merge/cherry-pick if needed.`,
+      `This is a detached git worktree — edit freely here; the parent checkout stays clean until you finish.`,
+      `On success, Forge captures your diff and lands it into the parent workspace automatically.`,
+      `Summarize files changed and residual risks; do not ask the parent to manually merge unless land conflicts.`,
     );
   }
   lines.push(
@@ -550,11 +588,16 @@ function formatSubagentResult(opts: {
   isolation?: SubagentIsolation;
   worktreePath?: string;
   worktreeKept?: boolean;
+  worktreeLandStatus?: string;
 }): string {
+  const landBit = opts.worktreeLandStatus
+    ? ` · land: ${opts.worktreeLandStatus}`
+    : "";
   const header = [
     `### Subagent result: ${opts.description}`,
     `- type: ${opts.subagentType} · mode: ${opts.capabilityMode} · turns: ${opts.turns} · edits: ${opts.editCount}` +
-      (opts.isolation === "worktree" ? " · isolation: worktree" : ""),
+      (opts.isolation === "worktree" ? " · isolation: worktree" : "") +
+      landBit,
     opts.worktreePath
       ? `- worktree: ${opts.worktreePath}${opts.worktreeKept ? " (kept)" : " (removed)"}`
       : "",
@@ -595,14 +638,37 @@ export function getActiveSubagentCount(): number {
   return activeSubagents;
 }
 
+/** Live subagent dashboard entries (in-process). */
+export interface ActiveSubagentInfo {
+  id: string;
+  description: string;
+  type: string;
+  isolation: string;
+  startedAt: number;
+}
+const activeSubagentInfo = new Map<string, ActiveSubagentInfo>();
+
+export function listActiveSubagents(): ActiveSubagentInfo[] {
+  return [...activeSubagentInfo.values()].sort((a, b) => a.startedAt - b.startedAt);
+}
+
 export async function runSubagentTracked(
   req: SubagentRequest,
   ctx: SubagentRunContext,
 ): Promise<SubagentResult> {
   activeSubagents += 1;
+  const trackId = `sub_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`;
+  activeSubagentInfo.set(trackId, {
+    id: trackId,
+    description: String(req.description || "subagent").slice(0, 80),
+    type: String(req.subagentType || "general-purpose"),
+    isolation: String(req.isolation || "none"),
+    startedAt: Date.now(),
+  });
   try {
     return await runSubagent(req, ctx);
   } finally {
+    activeSubagentInfo.delete(trackId);
     activeSubagents = Math.max(0, activeSubagents - 1);
   }
 }

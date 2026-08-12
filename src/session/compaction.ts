@@ -18,6 +18,7 @@ import {
 import { detectProjectIntel } from "../util/project-intel.js";
 import { looksLikeAdvisoryUserMessage } from "../util/advisory-intent.js";
 import { formatMemoryForPrompt } from "../harness/decision-memory.js";
+import { formatProjectMemoryForPrompt } from "../harness/project-memory.js";
 export { looksLikeAdvisoryUserMessage } from "../util/advisory-intent.js";
 
 export interface CompactContext {
@@ -162,6 +163,16 @@ export function buildStructuredSummary(
     sections.push(mem.text);
   } else {
     sections.push(`- (no sessionId — decision sidecar unavailable)`);
+  }
+  // 1c. Cross-session project memory (survives /new — not decisions.json)
+  try {
+    const cwd = ctx?.cwd || process.cwd();
+    const pm = formatProjectMemoryForPrompt(cwd, 2_500);
+    if (pm.trim()) {
+      sections.push(``, pm);
+    }
+  } catch {
+    /* */
   }
   const goal = ctx?.goal;
   if (goal?.objective && goal.status === "active" && !goal.paused) {

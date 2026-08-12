@@ -7,7 +7,11 @@
  * Enable via:
  *   - FORGE_FORMAT_ON_WRITE=1
  *   - preferences.json formatOnWrite: true
- * Disable explicitly with FORGE_FORMAT_ON_WRITE=0 (wins over preference).
+ *   - auto (default): when a project formatter is detectably configured
+ *     (prettier dep / biome.json / ruff config / gofmt|rustfmt on PATH for
+ *     matching files) and the user has not set formatOnWrite=false.
+ * Disable explicitly with FORGE_FORMAT_ON_WRITE=0 or `/format off`
+ * (wins over auto + preference).
  */
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
@@ -98,18 +102,85 @@ function npmBin(name: string, workspace: string): string | null {
   return which(name);
 }
 
-export function isFormatOnWriteEnabled(): boolean {
+/**
+ * True when format-on-write should run after file tools.
+ * Precedence: env FORGE_FORMAT_ON_WRITE > preferences.formatOnWrite >
+ * auto-detect (project formatter configured).
+ */
+export function isFormatOnWriteEnabled(workspace?: string): boolean {
   const env = process.env.FORGE_FORMAT_ON_WRITE;
   if (env != null && String(env).trim() !== "") {
     const v = String(env).trim().toLowerCase();
     if (["0", "false", "off", "no"].includes(v)) return false;
     if (["1", "true", "on", "yes"].includes(v)) return true;
+    // "auto" falls through to detection below
   }
   try {
-    return Boolean(loadPreferences().formatOnWrite);
+    const prefs = loadPreferences();
+    if (typeof prefs.formatOnWrite === "boolean") {
+      return prefs.formatOnWrite;
+    }
   } catch {
-    return false;
+    /* */
   }
+  // Auto: enable when a project formatter is clearly configured.
+  // Avoid surprising users with no formatter tooling installed.
+  return isProjectFormatterConfigured(workspace || process.cwd());
+}
+
+/** Lightweight "is there something to run?" probe for auto format-on-write. */
+export function isProjectFormatterConfigured(workspace: string): boolean {
+  const root = path.resolve(workspace || process.cwd());
+  try {
+    // Walk up from workspace so monorepo packages inherit root tooling.
+    // Biome config
+    const biomeCfg = findUp(root, ["biome.json", "biome.jsonc"]);
+    if (biomeCfg && (npmBin("biome", root) || which("biome"))) return true;
+
+    // package.json with prettier / biome dependency (nearest first)
+    let dir = root;
+    for (let hop = 0; hop < 8; hop++) {
+      const pkgPath = path.join(dir, "package.json");
+      if (fs.existsSync(pkgPath)) {
+        const pkg = readJsonSafe(pkgPath);
+        if (
+          hasDep(pkg, "prettier") &&
+          (npmBin("prettier", dir) || which("prettier"))
+        ) {
+          return true;
+        }
+        if (
+          hasDep(pkg, "@biomejs/biome") &&
+          (npmBin("biome", dir) || which("biome"))
+        ) {
+          return true;
+        }
+      }
+      const parent = path.dirname(dir);
+      if (parent === dir) break;
+      dir = parent;
+    }
+
+    // Ruff
+    const ruffCfg = findUp(root, ["ruff.toml", ".ruff.toml"]);
+    if (ruffCfg && which("ruff")) return true;
+    const pyproject = findUp(root, ["pyproject.toml"]);
+    if (pyproject && which("ruff")) {
+      try {
+        const txt = fs.readFileSync(pyproject, "utf8");
+        if (txt.includes("[tool.ruff")) return true;
+      } catch {
+        /* */
+      }
+    }
+
+    // Language-native formatters when project markers exist
+    if (findUp(root, ["go.mod"]) && which("gofmt")) return true;
+    if (findUp(root, ["Cargo.toml"]) && which("rustfmt")) return true;
+  } catch {
+    /* */
+  }
+  return false;
 }
 
 type Cmd = { formatter: string; argv: string[]; cwd?: string };
@@ -261,7 +332,7 @@ export function maybeFormatAfterWrite(
   workspace: string,
 ): FormatResult | null {
   try {
-    if (!isFormatOnWriteEnabled()) return null;
+    if (!isFormatOnWriteEnabled(workspace)) return null;
     const abs = path.resolve(filePath);
     if (!fs.existsSync(abs) || !fs.statSync(abs).isFile()) return null;
     const cmd = resolveFormatter(abs, path.resolve(workspace));

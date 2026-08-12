@@ -86,6 +86,45 @@ export function enqueuePrompt<T>(fn: () => Promise<T>): Promise<T> {
  * (Bash(...)/Write(...)/…) so the prompt shows exactly what gets persisted.
  * Exported for unit tests.
  */
+/**
+ * Always-grant pattern for write/edit tools.
+ * Prefer a directory prefix (`src/agent/*`) over bare `*` so experts can
+ * approve a working area once without unlocking the whole workspace.
+ * Falls back to `*` when path is missing/odd.
+ */
+export function alwaysPatternFromPath(
+  filePath: string,
+  workspace: string,
+): string {
+  const raw = String(filePath || "").trim();
+  if (!raw || raw === "-") return "*";
+  try {
+    const abs = path.isAbsolute(raw)
+      ? path.resolve(raw)
+      : path.resolve(workspace || process.cwd(), raw);
+    const root = path.resolve(workspace || process.cwd());
+    // Outside the workspace: do not invent a broad always-grant from absolute paths.
+    if (abs !== root && !abs.startsWith(root + path.sep)) {
+      return "*";
+    }
+    if (abs === root) return "*";
+    let rel = abs.slice(root.length + 1);
+    // Normalize to posix-ish for stable saved rules across platforms
+    rel = rel.split(path.sep).join("/");
+    const dir = rel.includes("/")
+      ? rel.slice(0, rel.lastIndexOf("/"))
+      : "";
+    if (!dir || dir === ".") return "*";
+    // Cap depth to 4 segments so deep nested files still grant a useful area.
+    // Use /** so pathMatchesGlob covers nested children (single * is one segment).
+    const parts = dir.split("/").filter(Boolean).slice(0, 4);
+    if (parts.length === 0) return "*";
+    return `${parts.join("/")}/**`;
+  } catch {
+    return "*";
+  }
+}
+
 export function alwaysGrantLabel(tool: string, pattern: string): string {
   const label =
     tool === "bash"
@@ -270,11 +309,25 @@ export class PermissionGate {
     }
 
     // Plan mode: permission-enforced (not prompt-only). Mutating tools denied.
+    // Read-only bash is allowed so research (git log/status, ls, cat, rg) works
+    // without bouncing to /build — mutations still hard-deny.
     if (mode === "plan") {
       if (
-        WRITE_TOOLS.has(toolName) ||
         toolName === "bash" ||
-        toolName === "run_terminal_command" ||
+        toolName === "run_terminal_command"
+      ) {
+        if (this.isReadOnlyShell(String(toolInput.command || ""))) {
+          return { decision: "allow", reason: "plan_readonly_bash" };
+        }
+        return {
+          decision: "deny",
+          reason:
+            "plan_mode: bash mutations denied — read-only shell ok (git log/status, ls, rg); run /build to implement",
+          rule: "plan_mode",
+        };
+      }
+      if (
+        WRITE_TOOLS.has(toolName) ||
         toolName === "kill_task" ||
         toolName === "spawn_subagent" ||
         toolName === "Task" ||
@@ -283,7 +336,7 @@ export class PermissionGate {
         return {
           decision: "deny",
           reason:
-            "plan_mode: mutations denied — read/search/todo_write/search_mcp/lsp only; run /build (or leave plan) to implement",
+            "plan_mode: mutations denied — read/search/todo_write/search_mcp/lsp + read-only bash only; run /build (or leave plan) to implement",
           rule: "plan_mode",
         };
       }
@@ -666,7 +719,19 @@ export class PermissionGate {
       opts.alwaysPattern ||
       (alwaysTool === "bash"
         ? alwaysPatternFromCommand(String(toolInput.command || ""))
-        : "*");
+        : alwaysTool === "write_file" ||
+            alwaysTool === "search_replace" ||
+            alwaysTool === "apply_patch"
+          ? alwaysPatternFromPath(
+              String(
+                toolInput.path ||
+                  toolInput.file_path ||
+                  toolInput.filePath ||
+                  "",
+              ),
+              opts.workspace || process.cwd(),
+            )
+          : "*");
 
     console.error(
       chalk.yellow(
@@ -677,7 +742,11 @@ export class PermissionGate {
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
       const question = rl.question(
-        `Allow? [y]es once / [a]lways allow: ${alwaysGrantLabel(alwaysTool, alwaysPattern)} in this workspace / [s]ession tool / [n]o:${timeoutNote} `,
+        `Allow? [y]es once / [a]lways: ${alwaysGrantLabel(alwaysTool, alwaysPattern)}` +
+          (alwaysPattern !== "*" && alwaysTool !== "bash"
+            ? " (dir · nested ok)"
+            : " in this workspace") +
+          ` / [s]ession tool / [n]o:${timeoutNote} `,
       );
       const ans = (
         await (timeoutMs > 0

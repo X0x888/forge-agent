@@ -200,3 +200,36 @@ npm run ci            # check + smoke (GitHub Actions entrypoint)
 3. Auth / preferences / permissions files mode `0600`
 
 `runDoctorCheck()` returns `{ report, issues, ok, authenticated, blockingStop }` — `forge doctor --json` and library consumers should use that, not scrape the human report.
+
+
+## Subagent worktree land (v0.9+)
+
+`spawn_subagent` with `isolation=worktree` no longer discards edits on cleanup by default.
+Forge captures the worktree diff (tracked + untracked) and `git apply`s it into the parent
+workspace. On conflict the worktree is **kept** with a recovery summary in the tool result.
+
+- `FORGE_SUBAGENT_LAND=auto|keep|discard` (default `auto`; alias `FORGE_WORKTREE_LAND`)
+- `FORGE_SUBAGENT_KEEP_WORKTREE=1` forces keep (no apply)
+- Aborted/failed subagents skip apply and keep the worktree so work is not lost
+
+## Mid-loop auto-verify nudge
+
+After an edit streak without a fresh green check, the agent loop injects a synthetic
+user message (`[Forge harness — verify nudge]`) so the model runs the cheapest project
+check without waiting for the user. Cap: 2 nudges per user prompt.
+
+- `FORGE_AUTO_VERIFY_NUDGE=0` disables
+- `FORGE_AUTO_VERIFY_EDIT_THRESHOLD` (default `3`)
+
+## Fix-until-green after red checks
+
+When a preferred project check fails, Forge injects a synthetic
+`[Forge harness — fix until green]` user message so the model continues
+repairing without waiting for the human. Disable with `FORGE_FIX_UNTIL_GREEN=0`.
+
+## Background task completion notify
+
+When a background bash task exits, Forge queues a mid-run interjection
+(`[Forge harness — background task …]`) so the agent continues without a poll
+loop. Disable with `FORGE_BG_NOTIFY=0`. Prefer `get_task_output wait=` when you
+can block; notify covers fire-and-forget jobs.

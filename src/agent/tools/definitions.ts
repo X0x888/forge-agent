@@ -40,7 +40,8 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       name: "get_task_output",
       description:
         "Read status and recent stdout/stderr of a background bash task by task_id. " +
-        "Omit task_id to list active tasks.",
+        "Omit task_id to list active tasks. " +
+        "Optional wait/timeout_ms blocks until the task finishes (or timeout) so you do not need a poll loop.",
       parameters: {
         type: "object",
         properties: {
@@ -55,6 +56,17 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
           stream: {
             type: "string",
             description: "stdout | stderr | both (default both)",
+          },
+          wait: {
+            type: "number",
+            description:
+              "Block until the task exits or this many ms elapse (max 30m). " +
+              "Aliases: timeout_ms. Duration suffixes accepted by the tool (30s/2m). " +
+              "true/wait defaults to 120s.",
+          },
+          timeout_ms: {
+            type: "number",
+            description: "Alias of wait — ms to block for task completion (max 30m).",
           },
         },
         // No required: task_id optional — empty call lists active tasks
@@ -259,9 +271,10 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     function: {
       name: "memory_write",
       description:
-        "Append a durable decision/constraint/fact to the session decision ledger (survives compact). " +
-        "Use for priorities, out-of-scope, blockers, and hard constraints the user or plan established. " +
-        "Kinds: constraint|decision|fact|out_of_scope|priority|blocker|observation.",
+        "Append a durable decision/constraint/fact. " +
+        "scope=session (default): session ledger (survives compact). " +
+        "scope=project: cross-session project memory (~/.forge/project-memory + .forge/MEMORY.md) — use for repo conventions, gotchas, and constraints that should outlive this session. " +
+        "Kinds: constraint|decision|fact|out_of_scope|priority|blocker|observation|convention|gotcha.",
       parameters: {
         type: "object",
         properties: {
@@ -272,7 +285,13 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
           kind: {
             type: "string",
             description:
-              "constraint | decision | fact | out_of_scope | priority | blocker | observation (default decision)",
+              "constraint | decision | fact | out_of_scope | priority | blocker | observation | convention | gotcha (default decision/fact)",
+          },
+          scope: {
+            type: "string",
+            description:
+              "session (default) | project (cross-session; aliases: repo, workspace)",
+            enum: ["session", "project"],
           },
         },
         required: ["text"],
@@ -471,7 +490,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       description:
         "Delegate a bounded subtask to a nested agent and receive its final summary. " +
         "Types: general-purpose | explore (read-only) | plan (read-only design). " +
-        "isolation=worktree creates a detached git worktree under ~/.forge/worktrees/ so edits do not touch the parent checkout (requires git). " +
+        "isolation=worktree creates a detached git worktree under ~/.forge/worktrees/ (requires git). On success Forge captures the diff and lands it into the parent automatically (FORGE_SUBAGENT_LAND=keep|discard to override; worktree kept on conflict). " +
         "Do not nest when a single tool call suffices.",
       parameters: {
         type: "object",

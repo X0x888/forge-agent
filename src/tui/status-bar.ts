@@ -19,6 +19,9 @@ import {
   formatUlwBadge,
   ULW_LIVE_CONTROLS_HINT,
 } from "../harness/ulw-cycle.js";
+import { listActiveProjectMemory } from "../harness/project-memory.js";
+import { listActiveSubagents } from "../agent/subagent.js";
+import { peekInterjections } from "../harness/interjection.js";
 import { sessionToSnapshot } from "../statusline/snapshot.js";
 import { renderCompactStrip, renderHud } from "../statusline/render.js";
 import {
@@ -407,6 +410,18 @@ export function buildLivePrompt(
   }
   if (effort) left.push(chalk.dim(effort));
   if (act.bgRunning > 0) left.push(chalk.yellow(`bg:${act.bgRunning}`));
+  try {
+    const q = peekInterjections(ctx.session.meta.id).length;
+    if (q > 0) left.push(chalk.cyan(`q:${q}`));
+  } catch {
+    /* */
+  }
+  try {
+    const subs = listActiveSubagents();
+    if (subs.length) left.push(chalk.magenta(`sub:${subs.length}`));
+  } catch {
+    /* */
+  }
 
   // Right side: explicit control affordance so it cannot be missed
   const hint =
@@ -875,6 +890,34 @@ export function formatSessionDetails(ctx: StatusBarContext): string {
           : "") +
         `  ·  Stop ${config.blockingStopHooks ? "blocking" : "passive"}`,
     ),
+    (() => {
+      try {
+        const n = listActiveProjectMemory(
+          config.workspace || session.meta.cwd || process.cwd(),
+        ).length;
+        if (!n) return null;
+        return chalk.dim(
+          `memory   ${n} project note${n === 1 ? "" : "s"}  · /memory project`,
+        );
+      } catch {
+        return null;
+      }
+    })(),
+    (() => {
+      try {
+        const subs = listActiveSubagents();
+        if (!subs.length) return null;
+        const labels = subs
+          .slice(0, 4)
+          .map((s) => `${s.type}:${s.description.slice(0, 28)}`)
+          .join(" · ");
+        return chalk.cyan(
+          `subs     ${subs.length} active  ${labels}${subs.length > 4 ? " …" : ""}`,
+        );
+      } catch {
+        return null;
+      }
+    })(),
     session.meta.lastError
       ? chalk.yellow(
           `lastErr  [${session.meta.lastError.code}] ${session.meta.lastError.message.slice(0, 120)}` +

@@ -443,45 +443,62 @@ describe("prompt profile + baseline system", () => {
     const fs = await import("node:fs");
     const os = await import("node:os");
     const path = await import("node:path");
+    // Isolate FORGE_HOME so cross-session project memory from the developer's
+    // machine cannot inflate the baseline. Also note: an empty .git dir is NOT
+    // a real repo — git rev-parse walks up — so bare TMPDIR under this repo can
+    // still resolve the parent root for project memory.
+    const prevHome = process.env.FORGE_HOME;
+    const fakeHome = fs.mkdtempSync(path.join(os.tmpdir(), "forge-sp-home-"));
+    process.env.FORGE_HOME = fakeHome;
     const bare = fs.mkdtempSync(path.join(os.tmpdir(), "forge-sp-size-"));
     // npm test runs with TMPDIR inside this repo — give the bare workspace its
     // own .git so the rules walk stops here instead of slurping the repo's
     // AGENTS.md (which would make the ceiling meaningless).
     fs.mkdirSync(path.join(bare, ".git"));
-    const { DEFAULT_CONFIG } = await import("../src/config/types.js");
-    const text = buildBaselineSystemPrompt({
-      config: { ...DEFAULT_CONFIG },
-      workspace: bare,
-      git: null,
-      project: null,
-    });
-    assert.ok(
-      text.length < 13_500,
-      `baseline system prompt grew to ${text.length} chars`,
-    );
-    // Without builtins the core doctrine alone must stay small.
-    const prev = process.env.FORGE_BUILTIN_SKILLS;
-    process.env.FORGE_BUILTIN_SKILLS = "0";
     try {
-      const lean = buildBaselineSystemPrompt({
+      const { DEFAULT_CONFIG } = await import("../src/config/types.js");
+      const text = buildBaselineSystemPrompt({
         config: { ...DEFAULT_CONFIG },
         workspace: bare,
         git: null,
         project: null,
       });
       assert.ok(
-        lean.length < 8000,
-        `core baseline (no builtins) grew to ${lean.length} chars`,
+        text.length < 13_500,
+        `baseline system prompt grew to ${text.length} chars`,
       );
+      // Without builtins the core doctrine alone must stay small.
+      const prev = process.env.FORGE_BUILTIN_SKILLS;
+      process.env.FORGE_BUILTIN_SKILLS = "0";
+      try {
+        const lean = buildBaselineSystemPrompt({
+          config: { ...DEFAULT_CONFIG },
+          workspace: bare,
+          git: null,
+          project: null,
+        });
+        assert.ok(
+          lean.length < 8000,
+          `core baseline (no builtins) grew to ${lean.length} chars`,
+        );
+      } finally {
+        if (prev === undefined) delete process.env.FORGE_BUILTIN_SKILLS;
+        else process.env.FORGE_BUILTIN_SKILLS = prev;
+      }
     } finally {
-      if (prev === undefined) delete process.env.FORGE_BUILTIN_SKILLS;
-      else process.env.FORGE_BUILTIN_SKILLS = prev;
+      if (prevHome === undefined) delete process.env.FORGE_HOME;
+      else process.env.FORGE_HOME = prevHome;
+      try {
+        fs.rmSync(fakeHome, { recursive: true, force: true });
+      } catch {
+        /* */
+      }
     }
   });
 });
 
 describe("plan mode permission enforcement", () => {
-  it("denies writes and bash in plan mode", async () => {
+  it("denies writes and mutating bash; allows read-only bash", async () => {
     const gate = new PermissionGate({ interactive: false });
     const write = await gate.request({
       toolName: "write_file",
@@ -492,9 +509,19 @@ describe("plan mode permission enforcement", () => {
     assert.equal(write.decision, "deny");
     assert.match(write.reason, /plan_mode/);
 
+    // Read-only research shell is allowed in plan (git status, ls, …)
+    const ro = await gate.request({
+      toolName: "bash",
+      input: { command: "git status" },
+      mode: "plan",
+      workspace: process.cwd(),
+    });
+    assert.equal(ro.decision, "allow");
+
+    // Mutating bash still hard-denied
     const bash = await gate.request({
       toolName: "bash",
-      input: { command: "echo hi" },
+      input: { command: "npm install left-pad" },
       mode: "plan",
       workspace: process.cwd(),
     });

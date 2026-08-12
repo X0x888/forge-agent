@@ -196,6 +196,54 @@ export function productionWarningsForRun(
         );
       }
     }
+    // isolation=worktree land=discard silently drops nested agent edits
+    {
+      const land = (
+        process.env.FORGE_SUBAGENT_LAND ||
+        process.env.FORGE_WORKTREE_LAND ||
+        "auto"
+      )
+        .trim()
+        .toLowerCase();
+      if (
+        land === "0" ||
+        land === "false" ||
+        land === "off" ||
+        land === "discard" ||
+        land === "none"
+      ) {
+        warnings.push(
+          `FORGE_SUBAGENT_LAND=${land || "discard"} — isolation=worktree edits are discarded on cleanup (set auto to land into parent)`,
+        );
+      }
+    }
+    {
+      const v = (process.env.FORGE_AUTO_VERIFY_NUDGE || "1").trim().toLowerCase();
+      if (v === "0" || v === "false" || v === "off" || v === "no") {
+        warnings.push(
+          "FORGE_AUTO_VERIFY_NUDGE=0 — mid-loop verify nudges after edit streaks are off",
+        );
+      }
+    }
+    {
+      const v = (process.env.FORGE_FIX_UNTIL_GREEN || "1").trim().toLowerCase();
+      if (v === "0" || v === "false" || v === "off" || v === "no") {
+        warnings.push(
+          "FORGE_FIX_UNTIL_GREEN=0 — failed project checks will not auto-continue repair",
+        );
+      }
+    }
+    {
+      const v = (process.env.FORGE_ULW_CHECKPOINT || "1").trim().toLowerCase();
+      if (
+        opts?.ultrawork &&
+        (v === "0" || v === "false" || v === "off" || v === "no")
+      ) {
+        warnings.push(
+          "FORGE_ULW_CHECKPOINT=0 — ULW arm will not create a safety checkpoint",
+        );
+      }
+    }
     // Dirty tree blast radius (best-effort; never block run on git failure).
     // Only surface when ULW is armed (unattended blast radius) or the tree is
     // extremely dirty (≥100) — a normal 40-file WIP should not spam every run.

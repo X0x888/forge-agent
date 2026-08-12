@@ -267,6 +267,35 @@ describe("plan/build live controls", () => {
     assert.match(d.reason || "", /\/build/);
   });
 
+  it("PermissionGate plan allows read-only bash and denies mutating bash", async () => {
+    const gate = new PermissionGate({ interactive: false });
+    const ro = await gate.request({
+      toolName: "bash",
+      input: { command: "git status" },
+      mode: "plan",
+      workspace: tmp,
+    });
+    assert.equal(ro.decision, "allow", ro.reason);
+    assert.match(ro.reason || "", /plan_readonly_bash|plan_read/);
+
+    const mut = await gate.request({
+      toolName: "bash",
+      input: { command: "git commit -m x" },
+      mode: "plan",
+      workspace: tmp,
+    });
+    assert.equal(mut.decision, "deny");
+    assert.match(mut.reason || "", /plan_mode|bash mutations/i);
+
+    const writey = await gate.request({
+      toolName: "bash",
+      input: { command: "rm -rf dist" },
+      mode: "plan",
+      workspace: tmp,
+    });
+    assert.equal(writey.decision, "deny");
+  });
+
   it("tab-completes /plan and /build", () => {
     const [planHits] = forgeCompleter("/pl");
     assert.ok(planHits.some((h) => h.startsWith("/plan")));

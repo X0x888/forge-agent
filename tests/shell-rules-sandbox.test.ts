@@ -645,3 +645,19 @@ describe("sandbox missingBackend=fallback abort", () => {
     }
   });
 });
+
+
+describe("alwaysPatternFromCommand agent runners", () => {
+  it("covers forge/tsx/bunx/eslint families", async () => {
+    const { alwaysPatternFromCommand } = await import(
+      "../src/agent/shell-arity.js"
+    );
+    assert.equal(alwaysPatternFromCommand("forge check"), "forge check *");
+    // Flags after first word are stripped → family grant is `tsx *`
+    assert.equal(alwaysPatternFromCommand("tsx --test tests/a.ts"), "tsx *");
+    assert.equal(alwaysPatternFromCommand("bunx vitest run"), "bunx vitest *");
+    assert.equal(alwaysPatternFromCommand("eslint src"), "eslint *");
+    assert.equal(alwaysPatternFromCommand('forge run "/status"'), "forge run *");
+  });
+});
+

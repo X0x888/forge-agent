@@ -146,6 +146,8 @@ mustInclude("doctor autoCompactThreshold", ["doctor", "--json"], "autoCompactThr
 mustInclude("doctor gitIsWorktree", ["doctor", "--json"], "gitIsWorktree");
 mustInclude("doctor gitChangedFiles", ["doctor", "--json"], "gitChangedFiles");
 mustInclude("doctor formatOnWrite", ["doctor", "--json"], "formatOnWrite");
+mustInclude("doctor subagentLandMode", ["doctor", "--json"], "subagentLandMode");
+mustInclude("doctor projectMemoryCount", ["doctor", "--json"], "projectMemoryCount");
 mustInclude("doctor sessionsPinned", ["doctor", "--json"], "sessionsPinned");
 mustInclude("doctor projectSkillsCount", ["doctor", "--json"], "projectSkillsCount");
 mustInclude("doctor packageManager", ["doctor", "--json"], "packageManager");
@@ -161,9 +163,22 @@ mustInclude("doctor multipleLockfiles", ["doctor", "--json"], "multipleLockfiles
 mustInclude("sessions pinned json", ["sessions", "pinned", "--json"], "pinnedOnly");
 mustInclude("status formatOnWrite", ["status", "--json"], "formatOnWrite");
 mustInclude("config formatOnWrite", ["config", "--json"], "formatOnWrite");
+mustInclude("config subagentLandMode", ["config", "--json"], "subagentLandMode");
+mustInclude("config projectMemoryCount", ["config", "--json"], "projectMemoryCount");
+mustInclude("config lastCheckpoint", ["config", "--json"], "lastCheckpoint");
 mustInclude("config packageManager", ["config", "--json"], "packageManager");
 mustInclude("config checkCommands", ["config", "--json"], "checkCommands");
 mustInclude("config monorepoRoot", ["config", "--json"], "monorepoRoot");
+mustInclude(
+  "headless slash /checkpoint status",
+  ["run", "/checkpoint status", "--json", "--permission-mode", "plan"],
+  "checkpoint",
+);
+mustInclude(
+  "headless slash /memory",
+  ["run", "/memory", "--json", "--permission-mode", "plan"],
+  "memory",
+);
 
 // Headless slash: pure control exits without auth/model (reason: slash)
 mustInclude(

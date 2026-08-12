@@ -20,6 +20,7 @@ import {
   recordWaveObservation,
   seedMemoryFromMandate,
 } from "./decision-memory.js";
+import { createSafetyCheckpoint } from "../util/git-checkpoint.js";
 
 export type CycleFlag = 0 | 1;
 
@@ -107,6 +108,10 @@ export interface UlwCycleState {
   startedAt: string;
   updatedAt: string;
   sessionId: string;
+  /** Auto safety checkpoint sha taken at arm (git stash create). */
+  checkpointSha?: string;
+  checkpointAt?: string;
+
 }
 
 export interface UlwStopDecision {
@@ -157,7 +162,7 @@ const THIN_ADVISORY_STREAK = 3;
  * `verificationRan` signal — execution, not prose.
  */
 export const VERIFICATION_CMD_RE =
-  /\b(?:npm|pnpm|yarn|bun|deno)\s+(?:run\s+)?(?:test|tests|spec|typecheck|type-check|lint|check|build|ci|verify|smoke)\b|\b(?:pytest|py\.test|jest|vitest|mocha|ava|phpunit|rspec|ctest|mypy|pyright|ruff|golangci-lint|staticcheck)\b|\bcargo\s+(?:test|check|build|clippy)\b|\bgo\s+(?:test|vet|build)\b|\bmvn\s+(?:test|verify|package|compile)\b|\bgradle(?:w)?\s+(?:test|check|build)\b|\bmake\s+(?:test|check|build|all|ci)\b|\bmix\s+test\b|\bcomposer\s+test\b|\bturbo\s+run\s+(?:test|tests|typecheck|type-check|lint|check|build|ci|verify|smoke)\b|\bnx\s+(?:run-many|run)\b|\btsc\b|\beslint\b|\bdotnet\s+(?:test|build)\b/i;
+  /\b(?:npm|pnpm|yarn|bun|deno)\s+(?:run\s+)?(?:test|tests|spec|typecheck|type-check|lint|check|build|ci|verify|smoke|tsc|format-check|fmt-check)\b|\b(?:pytest|py\.test|jest|vitest|mocha|ava|phpunit|rspec|ctest|mypy|pyright|ruff|golangci-lint|staticcheck|biome)\b|\bcargo\s+(?:test|check|build|clippy)\b|\bgo\s+(?:test|vet|build)\b|\bmvn\s+(?:test|verify|package|compile)\b|\bgradle(?:w)?\s+(?:test|check|build)\b|\bmake\s+(?:test|check|build|all|ci)\b|\bmix\s+test\b|\bcomposer\s+test\b|\bturbo\s+run\s+(?:test|tests|typecheck|type-check|lint|check|build|ci|verify|smoke)\b|\bnx\s+(?:run-many|run)\b|\btsc\b|\beslint\b|\bdotnet\s+(?:test|build)\b|\bnpx\s+(?:tsc|eslint|vitest|jest|prettier|biome)\b|\b(?:yarn\s+dlx|bunx)\s+(?:tsc|eslint|vitest|jest)\b|\bforge\s+(?:test|check|typecheck|ci|smoke)\b/i;
 
 /**
  * True when a bash command counts as structural verification.
@@ -180,12 +185,27 @@ export function isVerificationCommand(
     const want = String(p || "").replace(/\s+/g, " ").trim();
     if (!want) continue;
     if (compact === want) return true;
-    if (compact.endsWith(` && ${want}`) || compact.endsWith(`; ${want}`)) {
+    if (
+      compact.endsWith(` && ${want}`) ||
+      compact.endsWith(`; ${want}`) ||
+      compact.endsWith(` | ${want}`) ||
+      compact.endsWith(` || ${want}`)
+    ) {
       return true;
     }
-    // Leading env assignments: `FOO=1 npm test`
+    // Leading env assignments / prior segments: `FOO=1 npm test`, `cd x && npm test`
     if (new RegExp(`(?:^|[;&|]\\s*)${escapeRegExp(want)}(?:\\s|$)`).test(compact)) {
       return true;
+    }
+    // Preferred is a package script name ("unit") and cmd is `npm run unit` etc.
+    if (/^[a-zA-Z0-9:_-]+$/.test(want)) {
+      if (
+        new RegExp(
+          `\\b(?:npm|pnpm|yarn|bun|deno)\\s+run\\s+${escapeRegExp(want)}\\b`,
+        ).test(compact)
+      ) {
+        return true;
+      }
     }
   }
   return false;
@@ -479,7 +499,15 @@ export function expandUlwMandate(mandate: string): { expanded: string; soft: boo
 export function armUlwCycle(
   sessionId: string,
   mandate: string,
-  opts?: { cycle?: CycleFlag; maxWaves?: number | null; editCount?: number },
+  opts?: {
+    cycle?: CycleFlag;
+    maxWaves?: number | null;
+    editCount?: number;
+    /** Workspace for auto safety checkpoint (git stash create). */
+    cwd?: string;
+    /** Skip auto-checkpoint (tests / FORGE_ULW_CHECKPOINT=0). */
+    skipCheckpoint?: boolean;
+  },
 ): UlwCycleState {
   const { expanded, soft } = expandUlwMandate(mandate);
   const prev = loadUlwCycle(sessionId);
@@ -521,6 +549,29 @@ export function armUlwCycle(
     updatedAt: nowIso(),
     sessionId,
   };
+  // Auto safety checkpoint before autonomous waves — zero-steering undo point.
+  // Disable with FORGE_ULW_CHECKPOINT=0 or opts.skipCheckpoint.
+  const cpOff = (process.env.FORGE_ULW_CHECKPOINT || "1").trim().toLowerCase();
+  if (
+    !opts?.skipCheckpoint &&
+    cpOff !== "0" &&
+    cpOff !== "false" &&
+    cpOff !== "off" &&
+    cpOff !== "no"
+  ) {
+    try {
+      const cwd = opts?.cwd || process.cwd();
+      const snap = createSafetyCheckpoint(cwd, {
+        label: `ulw-${sessionId.slice(0, 10)}`,
+      });
+      if (snap.ok && snap.sha) {
+        state.checkpointSha = snap.sha;
+        state.checkpointAt = nowIso();
+      }
+    } catch {
+      /* best-effort */
+    }
+  }
   saveUlwCycle(state);
   // Phase 1: durable decision memory — survive compact / multi-wave rot.
   try {
@@ -1114,6 +1165,9 @@ export function ulwKickoffMessage(state: UlwCycleState): string {
     `## Durable decisions / constraints`,
     mem.text,
     `Use memory_write for new decisions; /memory lists the ledger. Compaction must not erase these.`,
+    state.checkpointSha
+      ? `Safety checkpoint at arm: ${state.checkpointSha} (tree untouched). Restore: /checkpoint restore or git stash apply ${state.checkpointSha}`
+      : null,
     ``,
     `## ULW runtime controls (read carefully)`,
     `- Counters RIGHT NOW: **${formatUlwCounts(state)}**  ${state.cycle === 1 ? "(CONTINUE — god-mode relentless loops)" : "(LAST cycle)"}`,

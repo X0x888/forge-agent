@@ -14,6 +14,7 @@ import {
   type ProjectIntel,
 } from "../util/project-intel.js";
 import { forgeHome } from "../util/fs.js";
+import { formatProjectMemoryForPrompt } from "../harness/project-memory.js";
 import { displayRelPath } from "./tools/path-util.js";
 import { formatSkillsForPrompt } from "./project-skills.js";
 
@@ -291,10 +292,10 @@ export function buildBaselineSystemPrompt(opts: {
     `- Prefer the specialized file tools over bash for reads/edits/listing/search; grep/glob before read; read line ranges, not whole files; batch independent read-only calls in one block.`,
     `- Docs/pages: prefer web_fetch over bash curl; use web_search for discovery.`,
     `- **MCP**: search_mcp then call_mcp (server__tool). Resources: mcp_resource list/read. Prompts: mcp_prompt list/get. Built-in defaults: **context7** (library docs) and **playwright** (browser). Optional CONTEXT7_API_KEY.`,
-    `- **Subagents**: spawn_subagent for bounded work (explore=read-only, plan=design, general-purpose=full). isolation=worktree → detached git worktree under ~/.forge/worktrees/ (parent checkout untouched). Prefer a direct tool when one call suffices.`,
+    `- **Subagents**: spawn_subagent for bounded work (explore=read-only, plan=design, general-purpose=full). isolation=worktree auto-lands into parent. Prefer a direct tool when one call suffices.`,
     `- **LSP**: lsp({ action: "diagnostics", path }) after TS/Python/Rust/Go edits when the server is on PATH. Install recipes: lsp action=install or /lsp install (docs/LSP.md).`,
     `- Oversize tool results may be truncated with a path to the full output under ~/.forge/tool-output/.`,
-    `- Track multi-step work with todo_write. Persist hard constraints/priorities with memory_write (survives compact).`,
+    `- Track multi-step work with todo_write. Persist constraints with memory_write (session|project).`,
     `- User images: paths in messages as [[image:path]] or @shot.png are expanded for vision models when the provider supports multimodal.`,
     `- Do not invent file contents — read them.`,
     `- Before editing an existing file, call read_file first. search_replace/write_file/apply_patch refuse unread or stale files — re-read, then retry.`,
@@ -346,7 +347,7 @@ export function buildBaselineSystemPrompt(opts: {
       `You are in **plan mode**. Research and design only; do not implement.`,
       ``,
       `### Hard rules`,
-      `- Reads/search/web/todo_write/search_mcp/lsp are allowed. **Writes, bash, apply_patch, kill_task, spawn_subagent, non-read-only call_mcp are permission-denied** — not merely discouraged.`,
+      `- Reads/search/web/todo_write/search_mcp/lsp + **read-only bash** (git log/status, ls, rg) are allowed. **Writes, mutating bash, apply_patch, kill_task, spawn_subagent, non-read-only call_mcp are permission-denied** — not merely discouraged.`,
       `- Do not attempt workarounds (e.g. "just one small edit"). Wait for the user to \`/build\` (or leave plan mode).`,
       `- If prior context shows you already started implementing, stop and convert progress into a plan.`,
       ``,
@@ -416,6 +417,14 @@ export function buildBaselineSystemPrompt(opts: {
 
   if (config.systemPromptExtra) {
     parts.push(``, `## Extra instructions`, config.systemPromptExtra);
+  }
+
+  // Cross-session project memory (survives /new — not session decisions.json)
+  try {
+    const pm = formatProjectMemoryForPrompt(workspace);
+    if (pm.trim()) parts.push(``, pm);
+  } catch {
+    /* */
   }
 
   return parts.filter((p) => p !== undefined && p !== "").join("\n");

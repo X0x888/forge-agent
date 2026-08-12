@@ -64,6 +64,11 @@ export function formatInterjection(
   ctx?: InterjectionContext | null,
 ): string {
   const truncated = truncateUtf8(text, LARGE_INTERJECTION_THRESHOLD);
+  // System/harness notifications (bg task complete, etc.) — no user_query envelope
+  if (truncated.trimStart().startsWith("[Forge harness —")) {
+    const harness = formatInterjectionContext(ctx);
+    return harness ? `${truncated.trim()}\n${harness}` : truncated.trim();
+  }
   const harness = formatInterjectionContext(ctx);
   const parts = [
     "The user sent a message while you were working:",

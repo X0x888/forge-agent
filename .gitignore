@@ -6,7 +6,8 @@ dist/
 .env.*
 !.env.example
 coverage/
-.forge/
+.forge/*
+!.forge/MEMORY.md
 .tmp/
 .tmp-*/
 *.tsbuildinfo
@@ -20,3 +21,7 @@ id_rsa
 id_rsa.pub
 *.p12
 *.pfx
+
+# Ephemeral test fixtures
+tests/__wt_land__/
+

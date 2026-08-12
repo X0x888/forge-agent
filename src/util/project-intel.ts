@@ -628,6 +628,75 @@ export function verifyHintSuffix(cwd: string, filePath?: string): string {
  * Detect multiple Node lockfiles present (ambiguous package manager).
  * Returns the list of lockfile basenames when ≥2 families are present.
  */
+
+/**
+ * Mid-loop structural nudge when the session has edits without a fresh green
+ * verification. Injected as a synthetic user message so the model runs a check
+ * before more churn — reduces "shall I run tests?" steering.
+ *
+ * Returns empty when disabled, no checks known, or verification is still fresh.
+ * FORGE_AUTO_VERIFY_NUDGE=0 disables. Threshold via FORGE_AUTO_VERIFY_EDIT_THRESHOLD (default 3).
+ */
+export function midLoopVerifyNudge(sessionMeta: {
+  editCount?: number;
+  lastEditAt?: string | null;
+  lastVerificationAt?: string | null;
+  lastVerificationCommand?: string | null;
+  lastVerificationExitCode?: number | null;
+}, cwd: string): string {
+  const off = (process.env.FORGE_AUTO_VERIFY_NUDGE || "1").trim().toLowerCase();
+  if (off === "0" || off === "false" || off === "off" || off === "no") return "";
+  const threshold = Math.max(
+    1,
+    Math.min(
+      20,
+      Number.parseInt(process.env.FORGE_AUTO_VERIFY_EDIT_THRESHOLD || "3", 10) || 3,
+    ),
+  );
+  const edits = Number(sessionMeta.editCount || 0);
+  if (edits < threshold) return "";
+  // Fresh green verification after last edit → silence
+  try {
+    const lastEdit = sessionMeta.lastEditAt
+      ? Date.parse(String(sessionMeta.lastEditAt))
+      : NaN;
+    const lastVer = sessionMeta.lastVerificationAt
+      ? Date.parse(String(sessionMeta.lastVerificationAt))
+      : NaN;
+    const exit = sessionMeta.lastVerificationExitCode;
+    if (
+      Number.isFinite(lastEdit) &&
+      Number.isFinite(lastVer) &&
+      lastVer >= lastEdit &&
+      (exit === 0 || exit === undefined || exit === null)
+    ) {
+      return "";
+    }
+  } catch {
+    /* */
+  }
+  let cmd = "npm test";
+  try {
+    const intel = detectProjectIntel(cwd);
+    cmd = intel.checkCommands[0] || cmd;
+  } catch {
+    /* */
+  }
+  const lastCmd = sessionMeta.lastVerificationCommand
+    ? String(sessionMeta.lastVerificationCommand)
+    : "";
+  return (
+    `[Forge harness — verify nudge]\n` +
+    `Session has ${edits} edit(s) without a fresh green verification` +
+    (lastCmd ? ` (last: ${lastCmd})` : "") +
+    `.\n` +
+    `Run the cheapest project check now before more edits: \`${cmd}\` ` +
+    `(or the tighter sibling if you only touched a narrow surface). ` +
+    `Do not ask the user whether to verify — just run it, then continue.`
+  );
+}
+
+
 export function multipleLockfiles(cwd: string): string[] {
   const root = path.resolve(cwd || process.cwd());
   const found: string[] = [];
@@ -885,10 +954,10 @@ export function nextCheckTip(command: string, cwd: string): string | null {
 function isVerificationish(cmd: string): boolean {
   // Prefer runner-shaped commands — avoid "git commit -m fix test" false positives.
   return (
-    /\b(?:npm|pnpm|yarn|bun|deno)\s+(?:run\s+)?(?:test|tests|typecheck|type-check|lint|check|build|ci|verify|smoke)\b/i.test(
+    /\b(?:npm|pnpm|yarn|bun|deno)\s+(?:run\s+)?(?:test|tests|typecheck|type-check|lint|check|build|ci|verify|smoke|tsc)\b/i.test(
       cmd,
     ) ||
-    /\b(?:pytest|cargo\s+test|go\s+test|mix\s+test|composer\s+test|turbo\s+run|nx\s+(?:run-many|run)|tsc\b|eslint\b|make\s+(?:test|check))\b/i.test(
+    /\b(?:pytest|cargo\s+test|go\s+test|mix\s+test|composer\s+test|turbo\s+run|nx\s+(?:run-many|run)|tsc\b|eslint\b|make\s+(?:test|check)|npx\s+(?:tsc|eslint|vitest|jest))\b/i.test(
       cmd,
     )
   );

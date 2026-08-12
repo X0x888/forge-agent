@@ -80,6 +80,29 @@ const ARITY: Record<string, number> = {
   vitest: 1,
   jest: 1,
   pytest: 1,
+  // Agent / Forge daily-driver runners.
+  // Note: alwaysPatternFromCommand strips leading flags after the first word
+  // (`tsx --test x` → words [tsx, x]), so flag-as-subcommand entries are useless
+  // here — prefer arity that yields a stable family grant (forge check *, tsx *).
+  forge: 2,
+  "forge run": 2,
+  "forge test": 2,
+  "forge check": 2,
+  tsx: 1,
+  deno: 2,
+  "deno test": 2,
+  "deno task": 2,
+  bunx: 2,
+  "yarn dlx": 2,
+  "yarn test": 2,
+  eslint: 1,
+  prettier: 1,
+  biome: 2,
+  "biome check": 2,
+  ruff: 2,
+  "ruff check": 2,
+  mypy: 1,
+  pyright: 1,
 };
 
 /** Longest matching prefix wins; returns token slice of length arity. */

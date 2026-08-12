@@ -7,6 +7,7 @@ import fs from "node:fs";
 import fsp from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { pushInterjection } from "../../harness/interjection.js";
 import { forgeHome, ensureDirAsync } from "../../util/fs.js";
 import { createShellEnv } from "./env-policy.js";
 import type {
@@ -251,6 +252,37 @@ ${networkClause}
   };
 }
 
+
+function maybeNotifyBgComplete(
+  task: BackgroundTask,
+  sessionId?: string,
+): void {
+  const off = (process.env.FORGE_BG_NOTIFY || "1").trim().toLowerCase();
+  if (off === "0" || off === "false" || off === "off" || off === "no") return;
+  if (!sessionId) return;
+  try {
+    const dur =
+      task.endedAt && task.startedAt
+        ? Math.max(0, task.endedAt - task.startedAt)
+        : 0;
+    const cmd = String(task.command || "").slice(0, 120);
+    const status = task.status;
+    const code =
+      task.exitCode === null || task.exitCode === undefined
+        ? "?"
+        : String(task.exitCode);
+    const msg =
+      `[Forge harness — background task ${status}]\n` +
+      `task_id=${task.id}  exit=${code}  ${dur}ms\n` +
+      `command: ${cmd}${String(task.command || "").length > 120 ? "…" : ""}\n` +
+      `Use get_task_output({ task_id: "${task.id}", tail: 80 }) for logs, then continue. ` +
+      `Do not ask the user — act on the result.`;
+    pushInterjection(sessionId, msg);
+  } catch {
+    /* never break bg lifecycle */
+  }
+}
+
 export async function startBackgroundTask(opts: {
   command: string;
   cwd: string;
@@ -258,6 +290,8 @@ export async function startBackgroundTask(opts: {
   network?: SandboxNetwork;
   missingBackend?: SandboxMissingBackend;
   timeoutMs?: number;
+  /** When set, completion pushes a mid-run interjection so the agent continues without polling. */
+  sessionId?: string;
 }): Promise<
   | { ok: true; task: BackgroundTask }
   | { ok: false; message: string; failClosed?: boolean }
@@ -360,6 +394,7 @@ export async function startBackgroundTask(opts: {
     }
     task.child = undefined;
     publishBgActivity();
+    maybeNotifyBgComplete(task, opts.sessionId);
   });
   child.on("error", (err) => {
     clearTimeout(timer);
@@ -369,6 +404,7 @@ export async function startBackgroundTask(opts: {
     task.endedAt = Date.now();
     task.child = undefined;
     publishBgActivity();
+    maybeNotifyBgComplete(task, opts.sessionId);
   });
 
   return { ok: true, task };
@@ -380,6 +416,72 @@ export function getTask(id: string): BackgroundTask | undefined {
 
 export function listTasks(): BackgroundTask[] {
   return [...tasks.values()];
+}
+
+/**
+ * Block until a background task leaves `running`, or until timeoutMs elapses.
+ * Uses the child process `close` event when available; falls back to polling.
+ * Returns the task snapshot (may still be running on timeout).
+ */
+export async function waitForTask(
+  id: string,
+  opts: { timeoutMs?: number; pollMs?: number } = {},
+): Promise<
+  | { ok: true; task: BackgroundTask; timedOut: boolean; waitedMs: number }
+  | { ok: false; error: string }
+> {
+  const task = tasks.get(id);
+  if (!task) return { ok: false, error: `Unknown task_id: ${id}` };
+
+  const timeoutMs = Math.max(
+    0,
+    Math.min(
+      30 * 60_000,
+      Number.isFinite(opts.timeoutMs as number)
+        ? Math.floor(opts.timeoutMs as number)
+        : 120_000,
+    ),
+  );
+  const pollMs = Math.max(25, Math.min(2000, opts.pollMs ?? 100));
+  const started = Date.now();
+
+  if (task.status !== "running") {
+    return { ok: true, task, timedOut: false, waitedMs: 0 };
+  }
+
+  await new Promise<void>((resolve) => {
+    let settled = false;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      try {
+        task.child?.off?.("close", onClose);
+      } catch {
+        /* */
+      }
+      clearInterval(poller);
+      clearTimeout(timer);
+      resolve();
+    };
+    const onClose = () => finish();
+    try {
+      task.child?.once?.("close", onClose);
+    } catch {
+      /* */
+    }
+    const poller = setInterval(() => {
+      const t = tasks.get(id);
+      if (!t || t.status !== "running") finish();
+    }, pollMs);
+    poller.unref?.();
+    const timer = setTimeout(finish, timeoutMs);
+    timer.unref?.();
+  });
+
+  const final = tasks.get(id) || task;
+  const waitedMs = Date.now() - started;
+  const timedOut = final.status === "running";
+  return { ok: true, task: final, timedOut, waitedMs };
 }
 
 export async function readTaskOutput(

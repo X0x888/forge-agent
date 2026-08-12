@@ -3,6 +3,12 @@ import { describe, it, before, after } from "node:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+
+function tmpRoot(): string {
+  const base = process.env.TMPDIR || path.join(process.cwd(), ".tmp");
+  fs.mkdirSync(base, { recursive: true });
+  return base;
+}
 import { DEFAULT_CONFIG } from "../src/config/types.js";
 import { createSession } from "../src/session/session.js";
 import { HookRunner } from "../src/harness/hooks.js";
@@ -14,7 +20,7 @@ describe("format-on-write", () => {
   let prevEnv: string | undefined;
 
   before(() => {
-    home = fs.mkdtempSync(path.join(os.tmpdir(), "forge-fow-"));
+    home = fs.mkdtempSync(path.join(tmpRoot(), "forge-fow-"));
     prevHome = process.env.FORGE_HOME;
     prevEnv = process.env.FORGE_FORMAT_ON_WRITE;
     process.env.FORGE_HOME = home;
@@ -28,15 +34,41 @@ describe("format-on-write", () => {
   });
 
   it("isFormatOnWriteEnabled respects env override", async () => {
-    const { isFormatOnWriteEnabled } = await import(
-      "../src/agent/tools/format-on-write.js"
-    );
+    const { isFormatOnWriteEnabled, isProjectFormatterConfigured } =
+      await import("../src/agent/tools/format-on-write.js");
     process.env.FORGE_FORMAT_ON_WRITE = "1";
     assert.equal(isFormatOnWriteEnabled(), true);
     process.env.FORGE_FORMAT_ON_WRITE = "0";
     assert.equal(isFormatOnWriteEnabled(), false);
     delete process.env.FORGE_FORMAT_ON_WRITE;
-    assert.equal(isFormatOnWriteEnabled(), false);
+    // No preference + empty workspace → auto-detect false
+    const emptyWs = fs.mkdtempSync(path.join(tmpRoot(), "forge-fow-empty-"));
+    assert.equal(isProjectFormatterConfigured(emptyWs), false);
+    assert.equal(isFormatOnWriteEnabled(emptyWs), false);
+  });
+
+  it("isProjectFormatterConfigured detects prettier dep", async () => {
+    const { isProjectFormatterConfigured } = await import(
+      "../src/agent/tools/format-on-write.js"
+    );
+    const ws = fs.mkdtempSync(path.join(tmpRoot(), "forge-fow-pre-"));
+    fs.writeFileSync(
+      path.join(ws, "package.json"),
+      JSON.stringify({
+        name: "t",
+        devDependencies: { prettier: "^3.0.0" },
+      }),
+    );
+    // Without node_modules/.bin/prettier or PATH prettier → still false
+    // (we require the binary, not just the dep declaration)
+    const withoutBin = isProjectFormatterConfigured(ws);
+    // Create a fake prettier bin
+    const bin = path.join(ws, "node_modules", ".bin");
+    fs.mkdirSync(bin, { recursive: true });
+    const prettier = path.join(bin, "prettier");
+    fs.writeFileSync(prettier, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+    assert.equal(isProjectFormatterConfigured(ws), true);
+    void withoutBin;
   });
 
   it("maybeFormatAfterWrite no-ops when disabled", async () => {
@@ -44,7 +76,7 @@ describe("format-on-write", () => {
       "../src/agent/tools/format-on-write.js"
     );
     process.env.FORGE_FORMAT_ON_WRITE = "0";
-    const ws = fs.mkdtempSync(path.join(os.tmpdir(), "forge-fow-ws-"));
+    const ws = fs.mkdtempSync(path.join(tmpRoot(), "forge-fow-ws-"));
     const f = path.join(ws, "a.ts");
     fs.writeFileSync(f, "const x=1");
     assert.equal(maybeFormatAfterWrite(f, ws), null);
@@ -55,7 +87,7 @@ describe("format-on-write", () => {
       "../src/agent/tools/format-on-write.js"
     );
     process.env.FORGE_FORMAT_ON_WRITE = "1";
-    const ws = fs.mkdtempSync(path.join(os.tmpdir(), "forge-fow-ws-"));
+    const ws = fs.mkdtempSync(path.join(tmpRoot(), "forge-fow-ws-"));
     // No package.json / no prettier — should return null (no formatter)
     const f = path.join(ws, "a.ts");
     fs.writeFileSync(f, "const x=1");
@@ -147,7 +179,7 @@ describe("format-on-write", () => {
     const { detectProjectFormatters } = await import(
       "../src/agent/tools/format-on-write.js"
     );
-    const ws = fs.mkdtempSync(path.join(os.tmpdir(), "forge-fow-det-"));
+    const ws = fs.mkdtempSync(path.join(tmpRoot(), "forge-fow-det-"));
     fs.writeFileSync(
       path.join(ws, "package.json"),
       JSON.stringify({ name: "t", devDependencies: { prettier: "^3.0.0" } }),

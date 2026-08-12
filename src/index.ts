@@ -36,7 +36,7 @@ export {
   openRouterCachedContextWindow,
 } from "./config/model-info.js";
 export { buildChatRequest } from "./agent/loop.js";
-export { compileRules, evaluateRules, parseRuleString } from "./agent/rules.js";
+export { compileRules, evaluateRules, extractPatchPaths, parseRuleString } from "./agent/rules.js";
 export {
   splitShellSegments,
   commandCheckTargets,
@@ -170,8 +170,10 @@ export {
   resolveCapabilityMode,
   defaultMaxSubagentDepth,
   getActiveSubagentCount,
+  listActiveSubagents,
 } from "./agent/subagent.js";
 export type {
+  ActiveSubagentInfo,
   SubagentType,
   SubagentCapability,
   SubagentIsolation,
@@ -180,10 +182,20 @@ export type {
   SubagentRunContext,
 } from "./agent/subagent.js";
 export {
+  applyWorktreePatch,
+  captureWorktreePatch,
   createSubagentWorktree,
-  resolveIsolationMode,
   findGitRoot,
+  formatWorktreeLandSummary,
+  landSubagentWorktree,
+  listWorktreeChangedFiles,
+  resolveIsolationMode,
+  resolveWorktreeLandMode,
   worktreeBaseDir,
+  worktreeDiffStat,
+  type SubagentWorktree,
+  type WorktreeLandResult,
+  type WorktreeLandStatus,
 } from "./agent/worktree.js";
 export {
   formatLspInstallGuide,
@@ -281,6 +293,18 @@ export {
   activeMemoryRecords,
   decisionMemoryPath,
 } from "./harness/decision-memory.js";
+export {
+  appendProjectMemory,
+  archiveProjectMemory,
+  clearProjectMemory,
+  formatProjectMemoryForPrompt,
+  formatProjectMemoryStatus,
+  listActiveProjectMemory,
+  loadProjectMemory,
+  normalizeProjectMemoryKind,
+  projectMemoryKey,
+  resolveProjectMemoryRoot,
+} from "./harness/project-memory.js";
 export type {
   MemoryRecord,
   MemoryKind,
@@ -301,6 +325,7 @@ export {
   resolveSessionDir,
   resolveSessionJsonPath,
   listSessions,
+  listSessionForks,
   resolveSessionId,
   suggestSessions,
   formatSessionLookupMiss,
@@ -584,7 +609,11 @@ export {
   type UsageStats,
   type SessionMetricsEvent,
 } from "./session/metrics.js";
-export { permissionAskTimeoutMs, PermissionGate } from "./agent/permissions.js";
+export {
+  alwaysPatternFromPath,
+  permissionAskTimeoutMs,
+  PermissionGate,
+} from "./agent/permissions.js";
 export type { PermissionRequest, PermissionResult } from "./agent/permissions.js";
 export {
   checkBashHardDeny,
@@ -642,6 +671,7 @@ export {
   findMonorepoRoot,
   formatProjectIntelForPrompt,
   verifyHintSuffix,
+  midLoopVerifyNudge,
   wrongPackageManagerTip,
   missingScriptTip,
   missingBinaryTip,
@@ -684,3 +714,13 @@ export type {
 export { editMissHint, formatMultiMatchLocations, locateEdit, stripReadFileLinePrefixes } from "./agent/tools/edit-match.js";
 export { executeTool, normalizeToolName, TOOL_DEFINITIONS } from "./agent/tools/index.js";
 export { applyTodos, openTodos } from "./agent/todos.js";
+
+export {
+  applySafetyCheckpoint,
+  createSafetyCheckpoint,
+  type SafetyCheckpointResult,
+} from "./util/git-checkpoint.js";
+
+export {
+  isDestructiveGitCommand,
+} from "./agent/tools/bash.js";

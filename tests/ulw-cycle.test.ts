@@ -553,6 +553,20 @@ describe("ulw wave ledger + quality bar", () => {
     assert.ok(!isVerificationCommand("ls -la", ["npm test"]));
   });
 
+  it("recognizes npx/bunx/forge and bare preferred scripts", async () => {
+    const { isVerificationCommand } = await import(
+      "../src/harness/ulw-cycle.js"
+    );
+    assert.ok(isVerificationCommand("npx tsc --noEmit"));
+    assert.ok(isVerificationCommand("npx eslint ."));
+    assert.ok(isVerificationCommand("bunx vitest run"));
+    assert.ok(isVerificationCommand("forge check"));
+    assert.ok(isVerificationCommand("npm run format-check"));
+    assert.ok(isVerificationCommand("npm run unit", ["unit"]));
+    assert.ok(isVerificationCommand("pnpm run typecheck", ["typecheck"]));
+    assert.ok(!isVerificationCommand("git commit -m fix test"));
+  });
+
 
   it("shouldStampLastVerification is success-only", async () => {
     const {

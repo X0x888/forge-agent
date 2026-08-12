@@ -12,6 +12,7 @@ import { isTruthy } from "../../util/bool.js";
 import { numberFieldError } from "./arg-types.js";
 import { editDistance } from "../../util/string-distance.js";
 import { parseDurationMs } from "../../util/duration-ms.js";
+import { createSafetyCheckpoint } from "../../util/git-checkpoint.js";
 import {
   detectPackageManager,
   detectProjectIntel,
@@ -149,6 +150,66 @@ function resolveTimeoutMs(
   return { ok: true, ms: Math.floor(n) };
 }
 
+
+/**
+ * Destructive git shapes that should auto-checkpoint the tree first so the
+ * expert can recover without manual stash. Conservative — only clear blast-radius.
+ * FORGE_GIT_AUTO_CHECKPOINT=0 disables.
+ */
+export function isDestructiveGitCommand(command: string): boolean {
+  const c = String(command || "").trim();
+  if (!c) return false;
+  // Match git as a primary command or after && / ; / ||
+  const segs = c.split(/(?:&&|;|\|\|)/);
+  for (const raw of segs) {
+    const s = raw.trim().replace(/^\d*\s*/, ""); // strip leading job numbers
+    if (!/^git(\s|$)/.test(s)) continue;
+    // strip `git -C path` / `git --git-dir=...`
+    let rest = s.replace(/^git\s+/, "");
+    rest = rest.replace(/^(?:-C\s+\S+\s+|--git-dir=\S+\s+|--work-tree=\S+\s+)+/, "");
+    if (
+      /\breset\s+--hard\b/.test(rest) ||
+      /\bclean\s+-[a-zA-Z]*f/.test(rest) || // clean -fd / -fx / -dff
+      /\bcheckout\s+--\s+\.(\s|$)/.test(rest) ||
+      /\brestore\s+--\s*(?:worktree\s+)?(?:--source=\S+\s+)?\.(\s|$)/.test(rest) ||
+      /\bpush\s+.*--force\b/.test(rest) ||
+      /\bpush\s+.*-f\b/.test(rest) ||
+      /\bbranch\s+-[dD]\b/.test(rest) ||
+      /\bstash\s+drop\b/.test(rest) ||
+      /\bstash\s+clear\b/.test(rest)
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function maybeAutoCheckpointBeforeDestructiveGit(
+  command: string,
+  workspace: string,
+): string {
+  const off = (process.env.FORGE_GIT_AUTO_CHECKPOINT || "1").trim().toLowerCase();
+  if (off === "0" || off === "false" || off === "off" || off === "no") return "";
+  if (!isDestructiveGitCommand(command)) return "";
+  try {
+    const snap = createSafetyCheckpoint(workspace, { label: "pre-destructive-git" });
+    if (snap.ok && snap.sha) {
+      return (
+        `[forge auto-checkpoint before destructive git: ${snap.sha}` +
+        (snap.ref ? ` · ${snap.ref}` : "") +
+        ` · restore: git stash apply ${snap.sha}]\n`
+      );
+    }
+    if (snap.clean) return "";
+    if (snap.detail) {
+      return `[forge auto-checkpoint skipped: ${snap.detail.slice(0, 120)}]\n`;
+    }
+  } catch {
+    /* */
+  }
+  return "";
+}
+
 export async function toolBash(
   args: Record<string, unknown>,
   ctx: ToolContext,
@@ -228,9 +289,14 @@ export async function toolBash(
       };
     }
     const bgTimeoutMs = bgTimeoutRes.ms;
+  const autoCpNote = maybeAutoCheckpointBeforeDestructiveGit(
+      command,
+      ctx.workspace || process.cwd(),
+    );
   const started = await startBackgroundTask({
       command,
       cwd: ctx.workspace,
+      sessionId: ctx.sessionId,
       profile,
       network: ctx.sandboxNetwork,
       missingBackend,
@@ -246,6 +312,7 @@ export async function toolBash(
     const bgTimeout = bgTimeoutMs;
     return {
       output:
+        autoCpNote +
         `Background task started.\n` +
         `task_id: ${t.id}\n` +
         `pid: ${t.pid ?? "n/a"}\n` +
@@ -253,10 +320,14 @@ export async function toolBash(
         `sandbox: ${t.backend}${t.sandboxed ? "" : " (unsandboxed)"}\n` +
         `stdout: ${t.stdoutPath}\n` +
         `stderr: ${t.stderrPath}\n` +
-        `Use get_task_output with this task_id to poll; kill_task to stop.`,
+        `Use get_task_output({ task_id, wait: "2m" }) to await; kill_task to stop.`,
     };
   }
 
+  const autoCpNoteFg = maybeAutoCheckpointBeforeDestructiveGit(
+    command,
+    ctx.workspace || process.cwd(),
+  );
   try {
     const { execCommandSandboxed } = await import("./sandbox-exec.js");
     if (ctx.signal?.aborted) {
@@ -312,12 +383,12 @@ export async function toolBash(
           maxChars: BASH_MAX_CHARS,
         },
       );
-      return { output: managed.text, isError: true };
+      return { output: autoCpNoteFg + managed.text, isError: true };
     }
   const managed = await boundToolOutput(meta + (out || "(no output)"), {
       maxChars: BASH_MAX_CHARS,
     });
-    return { output: managed.text };
+    return { output: autoCpNoteFg + managed.text };
   } catch (err) {
     if (ctx.signal?.aborted) {
       return { output: "Aborted", isError: true };

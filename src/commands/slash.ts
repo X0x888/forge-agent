@@ -12,6 +12,7 @@ import { isLastVerificationStale } from "../session/session.js";
 import {
   saveSession,
   listSessions,
+  listSessionForks,
   deleteSessionDetailed,
   pruneSessions,
   sessionHasForeignLiveLock,
@@ -33,6 +34,7 @@ import {
   formatSessionTouchedFiles,
   setSessionPinned,
   resolveSessionDir,
+  resolveSessionId,
   resolveSessionJsonPath,
   sessionDir,
   clearConversation,
@@ -160,6 +162,10 @@ import fs from "node:fs";
 import path from "node:path";
 import { displayRelPath } from "../agent/tools/path-util.js";
 import { execFileSync } from "node:child_process";
+import {
+  applySafetyCheckpoint,
+  createSafetyCheckpoint,
+} from "../util/git-checkpoint.js";
 import { tokenizeSimple } from "../agent/shell-parse.js";
 import {
   armUlwCycle,
@@ -182,6 +188,14 @@ import {
   seedMemoryFromMandate,
   todosFromMandate,
 } from "../harness/decision-memory.js";
+import {
+  appendProjectMemory,
+  archiveProjectMemory,
+  clearProjectMemory,
+  formatProjectMemoryStatus,
+  listActiveProjectMemory,
+  normalizeProjectMemoryKind,
+} from "../harness/project-memory.js";
 import { pushLiveNotice } from "../harness/live-notices.js";
 import { clearSoftTodoGateOnWindDown } from "../harness/todo-gate.js";
 import { applyTodos, openTodos } from "../agent/todos.js";
@@ -232,7 +246,6 @@ export type LiveSlashKind = "control" | "readonly" | "quit" | "idle-only";
 const LIVE_READONLY = new Set([
   "/help",
   "/?",
-  "/hooks",
   "/status",
   "/statusline",
   "/hud",
@@ -269,6 +282,8 @@ const LIVE_CONTROL = new Set([
   "/memory",
   "/decisions",
   "/ulw-off",
+  "/improve",
+  "/ralph",
   "/effort",
   "/model",
   "/provider",
@@ -410,6 +425,21 @@ export function classifyLiveSlash(line: string): LiveSlashKind {
     if (a === "ensure" || a.startsWith("ensure ") || a === "fix" || a === "auto") {
       return "control";
     }
+    return "control";
+  }
+  if (cmd === "/checkpoint" || cmd === "/snap") {
+    const rest = line.trim().slice(cmd.length).trim().toLowerCase();
+    const verb = rest.split(/\s+/)[0] || "";
+    if (verb === "status" || verb === "list" || verb === "ls") return "readonly";
+    return "control";
+  }
+  if (cmd === "/hooks") {
+    const rest = line.trim().slice(cmd.length).trim().toLowerCase();
+    const verb = rest.split(/\s+/)[0] || "";
+    if (!verb || verb === "list" || verb === "status" || verb === "ls") return "readonly";
+    return "control";
+  }
+  if (cmd === "/memory" || cmd === "/decisions") {
     return "control";
   }
   if (LIVE_READONLY.has(cmd)) return "readonly";
@@ -554,6 +584,12 @@ export const SLASH_COMMANDS = [
   "/pause",
   "/unpause",
   "/ulw",
+  "/improve",
+  "/ralph",
+  "/checkpoint",
+  "/snap",
+  "/memory",
+  "/decisions",
   "/ulw-off",
   "/cycle",
   "/max-waves",
@@ -639,6 +675,12 @@ export function completeSlash(
     if (argPartial.includes(" ")) return [];
     const ARG_TABLE: Record<string, string[]> = {
       "/format": ["on", "off", "status", "enable", "disable"],
+      "/checkpoint": ["status", "list", "restore", "apply"],
+      "/snap": ["status", "list", "restore", "apply"],
+      "/memory": ["list", "project", "add", "seed", "clear"],
+      "/hooks": ["init", "reload", "list", "scaffold"],
+      "/improve": [],
+      "/ralph": [],
       "/bell": ["on", "off", "test", "status"],
       "/notify": ["on", "off", "test", "status"],
       "/mcp": ["status", "connect", "tools", "reload", "list"],
@@ -704,8 +746,7 @@ export function completeSlash(
         "search",
         "find",
         "errors",
-        "untitled",
-      ],
+        "untitled", "tree", "forks", "lineage"],
       "/pin": [],
       "/unpin": [],
     };
@@ -1744,6 +1785,55 @@ export async function handleSlash(
       return handleGoal("resume", opts.session);
     }
 
+    case "/improve":
+    case "/ralph": {
+      opts.session.meta.ultrawork = true;
+      const focus = (arg || "").trim();
+      const mandate = focus
+        ? `Continuously improve this project with near-zero user steering. Focus: ${focus}. Prefer reliability and autonomy gaps a serious daily user would notice. Ship, prove, hostile-review, repeat while cycle=1.`
+        : "Continuously improve this project with near-zero user steering. Prefer reliability, autonomy, UX, and expert convenience gaps. Ship highest-leverage work, prove with project checks, hostile-review, repeat while cycle=1. Do not ask what to improve.";
+      const state = armUlwCycle(opts.session.meta.id, mandate, {
+        cycle: 1,
+        editCount: opts.session.meta.editCount,
+        cwd: opts.config.workspace || opts.session.meta.cwd || process.cwd(),
+      });
+      try {
+        clearSoftTodoGateOnWindDown(opts.session.meta.id);
+      } catch {
+        /* */
+      }
+      let todoSeedNote = "";
+      try {
+        if (openTodos(opts.session.todos || []) < 2) {
+          const seeded = todosFromMandate(mandate, { max: 12 });
+          applyTodos(opts.session, seeded, false);
+          todoSeedNote = `Seeded ${seeded.length} backlog todo(s).`;
+        }
+      } catch {
+        /* */
+      }
+      const kick = ulwKickoffMessage(state);
+      const banner = [
+        chalk.bold("Continuous improve armed") +
+          chalk.dim("  (/improve · alias /ralph · ULW cycle=1)"),
+        state.checkpointSha
+          ? chalk.dim(
+              `Safety checkpoint: ${state.checkpointSha.slice(0, 12)}…  · /checkpoint restore`,
+            )
+          : chalk.dim("Safety checkpoint: (clean tree or disabled)"),
+        todoSeedNote ? chalk.dim(todoSeedNote) : null,
+        chalk.dim(ULW_LIVE_CONTROLS_HINT),
+      ]
+        .filter(Boolean)
+        .join("\n");
+      return {
+        handled: true,
+        forwardPrompt: kick,
+        output: banner,
+        session: opts.session,
+      };
+    }
+
     case "/ulw":
     case "/ultrawork":
     case "/autowork": {
@@ -1752,6 +1842,7 @@ export async function handleSlash(
       const state = armUlwCycle(opts.session.meta.id, mandate, {
         cycle: 1,
         editCount: opts.session.meta.editCount,
+        cwd: opts.config.workspace || opts.session.meta.cwd || process.cwd(),
       });
       // Fresh driver: drop leftover soft TodoGate once-blocks from prior work.
       try {
@@ -1856,11 +1947,80 @@ export async function handleSlash(
     case "/memory":
     case "/decisions": {
       const sid = opts.session.meta.id;
+      const workspace =
+        opts.config.workspace || opts.session.meta.cwd || process.cwd();
       const sub = arg.trim();
+      if (
+        sub === "project" ||
+        sub.startsWith("project ") ||
+        sub === "proj" ||
+        sub.startsWith("proj ")
+      ) {
+        const rest = sub.replace(/^proj(ect)?\s*/i, "").trim();
+        if (!rest || rest === "list" || rest === "status") {
+          return {
+            handled: true,
+            output: formatProjectMemoryStatus(workspace),
+            session: opts.session,
+          };
+        }
+        if (rest === "clear" || rest === "reset") {
+          const n = clearProjectMemory(workspace);
+          return {
+            handled: true,
+            output: `Archived ${n} project memory record(s)\n${formatProjectMemoryStatus(workspace)}`,
+            session: opts.session,
+          };
+        }
+        const rm = rest.match(/^(?:rm|remove|archive)\s+([\s\S]+)$/i);
+        if (rm) {
+          const n = archiveProjectMemory(workspace, rm[1].trim());
+          return {
+            handled: true,
+            output: n
+              ? `Archived ${n} project record(s)\n${formatProjectMemoryStatus(workspace)}`
+              : `No match: ${rm[1].trim()}`,
+            session: opts.session,
+          };
+        }
+        const add = rest.match(
+          /^(?:add|note|constraint|priority|gotcha|convention|fact|decision)\s+([\s\S]+)$/i,
+        );
+        if (add) {
+          const kindHint = rest.split(/\s+/)[0].toLowerCase();
+          const kind = normalizeProjectMemoryKind(
+            ["add", "note"].includes(kindHint) ? "fact" : kindHint,
+          );
+          const rec = appendProjectMemory(workspace, {
+            kind,
+            text: add[1].trim(),
+            source: "user",
+          });
+          return {
+            handled: true,
+            output: rec
+              ? `Project recorded [${rec.kind}] ${rec.text}\n${formatProjectMemoryStatus(workspace)}`
+              : `No-op (duplicate)\n${formatProjectMemoryStatus(workspace)}`,
+            session: opts.session,
+          };
+        }
+        const rec = appendProjectMemory(workspace, {
+          kind: "fact",
+          text: rest,
+          source: "user",
+        });
+        return {
+          handled: true,
+          output: rec
+            ? `Project recorded [fact] ${rec.text}\n${formatProjectMemoryStatus(workspace)}`
+            : `No-op (duplicate)\n${formatProjectMemoryStatus(workspace)}`,
+          session: opts.session,
+        };
+      }
       if (!sub || sub === "list" || sub === "status") {
         return {
           handled: true,
-          output: formatMemoryStatus(sid),
+          output: `${formatMemoryStatus(sid)}\n\n${formatProjectMemoryStatus(workspace)}`,
           session: opts.session,
         };
       }
@@ -1878,7 +2038,9 @@ export async function handleSlash(
           session: opts.session,
         };
       }
-      const addMatch = sub.match(/^(?:add|note|constraint|priority)\s+([\s\S]+)$/i);
+      const addMatch = sub.match(
+        /^(?:add|note|constraint|priority)\s+([\s\S]+)$/i,
+      );
       if (addMatch) {
         const kindHint = sub.split(/\s+/)[0].toLowerCase();
         const kind =
@@ -1900,7 +2062,6 @@ export async function handleSlash(
           session: opts.session,
         };
       }
-      // Bare text → add as decision
       const rec = appendMemoryRecord(sid, {
         kind: "decision",
         text: sub,
@@ -1914,6 +2075,7 @@ export async function handleSlash(
         session: opts.session,
       };
     }
+
 
     case "/ulw-off": {
       const sid = opts.session.meta.id;
@@ -2185,14 +2347,82 @@ export async function handleSlash(
     }
 
     case "/hooks": {
+      const sub = (arg || "").trim().toLowerCase();
+      const cwd =
+        opts.config.workspace || opts.session.meta.cwd || process.cwd();
+      if (sub === "init" || sub === "scaffold" || sub === "new") {
+        const dir = path.join(cwd, ".forge", "hooks");
+        const target = path.join(dir, "example-stop.json");
+        try {
+          fs.mkdirSync(dir, { recursive: true });
+          if (fs.existsSync(target)) {
+            return {
+              handled: true,
+              output: `Already exists: ${target}\nThen: /hooks reload`,
+            };
+          }
+          const sample = {
+            hooks: {
+              Stop: [
+                {
+                  matcher: "*",
+                  hooks: [
+                    {
+                      type: "command",
+                      command: 'echo \'{"decision":"allow"}\'',
+                      timeout: 10,
+                    },
+                  ],
+                },
+              ],
+            },
+          };
+          fs.writeFileSync(target, JSON.stringify(sample, null, 2) + "\n", {
+            encoding: "utf8",
+            mode: 0o600,
+          });
+          opts.hooks.reload();
+          return {
+            handled: true,
+            output: [
+              `Wrote ${target}`,
+              `Blocking Stop: ${isFalsy(opts.config.blockingStopHooks) ? "OFF" : "ON"}`,
+            ].join("\n"),
+          };
+        } catch (err) {
+          return {
+            handled: true,
+            output: `hooks init failed: ${String((err as Error)?.message || err).slice(0, 300)}`,
+          };
+        }
+      }
+      if (sub === "reload" || sub === "refresh") {
+        opts.hooks.reload();
+        const list = opts.hooks.list();
+        const n = Object.values(list).reduce((a, b) => a + b, 0);
+        const body = Object.entries(list)
+          .map(([k, v]) => `  ${k}: ${v}`)
+          .join("\n");
+        return {
+          handled: true,
+          output:
+            `Reloaded hooks (${n} matcher(s)).\n` +
+            (body || "(none)"),
+        };
+      }
       const list = opts.hooks.list();
-      const lines = Object.entries(list).map(([k, v]) => `  ${k}: ${v} matcher(s)`);
+      const lines = Object.entries(list).map(
+        ([k, v]) => `  ${k}: ${v} matcher(s)`,
+      );
       return {
         handled: true,
         output:
-          lines.length > 0
-            ? `Loaded hooks:\n${lines.join("\n")}\nBlocking Stop: ${isFalsy(opts.config.blockingStopHooks) ? "OFF" : "ON"}`
-            : `No hooks loaded.\nPlace JSON files in ~/.forge/hooks/ or .forge/hooks/\nBlocking Stop: ${isFalsy(opts.config.blockingStopHooks) ? "OFF" : "ON"}`,
+          (lines.length > 0
+            ? `Loaded hooks:\n${lines.join("\n")}\n`
+            : `No hooks loaded.\n`) +
+          `Paths: .forge/hooks/*.json  ·  ~/.forge/hooks/*.json\n` +
+          `Commands: /hooks init  ·  /hooks reload\n` +
+          `Blocking Stop: ${isFalsy(opts.config.blockingStopHooks) ? "OFF" : "ON"}`,
       };
     }
 
@@ -2552,12 +2782,38 @@ export async function handleSlash(
         chalk.dim(
           `  (${running} running / ${tasks.length} tracked in this process)`,
         );
-      return {
+      
+      let subBlock = "";
+      try {
+        const { listActiveSubagents } = await import("../agent/subagent.js");
+        const subs = listActiveSubagents();
+        if (subs.length) {
+          const lines = [
+            "",
+            chalk.bold("Active subagents") +
+              chalk.dim(`  (${subs.length} in this process)`),
+          ];
+          for (const s of subs) {
+            const age = Math.max(
+              0,
+              Math.round((Date.now() - s.startedAt) / 1000),
+            );
+            lines.push(
+              `  · ${s.type}${s.isolation === "worktree" ? " [worktree]" : ""}  ${s.description}  ${chalk.dim(`${age}s`)}`,
+            );
+          }
+          subBlock = lines.join("\n") + "\n";
+        }
+      } catch {
+        /* */
+      }
+return {
         handled: true,
         output:
           `${header}\n${formatBackgroundTasksList()}\n` +
+          subBlock +
           chalk.dim(
-            "Agent: bash { background: true } · /tasks kill <id> · /tasks log <id> [tail] · exit force-kills leftovers",
+            "Agent: bash { background: true } · get_task_output wait= · /tasks kill <id> · /tasks log <id> [tail] · exit force-kills leftovers",
           ),
       };
     }
@@ -2695,9 +2951,21 @@ export async function handleSlash(
           `\nPressure: elevated (~${pct}%; auto-compact @${thresholdPct}%). Tip: /compact before a long ULW wave`,
         );
       }
+      let memoryNote = "";
+      try {
+        const n = listActiveProjectMemory(
+          opts.config.workspace || process.cwd(),
+        ).length;
+        memoryNote =
+          n > 0
+            ? `\nProject memory: ${n} active note${n === 1 ? "" : "s"}  · /memory project`
+            : `\nProject memory: none  · /memory project add …`;
+      } catch {
+        /* */
+      }
       return {
         handled: true,
-        output: `Context  [${bar}] ${pct}%\n  ~${formatTokens(est)} / ${formatTokens(opts.config.contextWindow)}  autoCompact@${thresholdPct}%\nBy role:\n${roleLines}${projectNote}${rulesNote}${skillsNote}${pressureNote}`,
+        output: `Context  [${bar}] ${pct}%\n  ~${formatTokens(est)} / ${formatTokens(opts.config.contextWindow)}  autoCompact@${thresholdPct}%\nBy role:\n${roleLines}${projectNote}${rulesNote}${skillsNote}${memoryNote}${pressureNote}`,
       };
     }
 
@@ -4317,6 +4585,97 @@ const result = rewindSessionDetailed(opts.session, n);
       };
     }
 
+    case "/checkpoint":
+    case "/snap": {
+      const cwd =
+        opts.config.workspace || opts.session.meta.cwd || process.cwd();
+      const sub = (arg || "").trim();
+      const tokens = sub ? sub.split(/\s+/).filter(Boolean) : [];
+      const head = (tokens[0] || "").toLowerCase();
+      if (head === "status" || head === "list" || head === "ls") {
+        const lines: string[] = [
+          "Safety checkpoints (git stash create — non-mutating):",
+        ];
+        const last = opts.session.meta.lastCheckpoint;
+        if (last) {
+          lines.push(`  last: ${last}`);
+          lines.push(`  restore: git stash apply ${last}`);
+        } else {
+          lines.push("  (no checkpoint this session yet)");
+        }
+        lines.push(
+          "  /checkpoint           create snapshot (working tree untouched)",
+          "  /checkpoint restore   apply last session checkpoint",
+        );
+        return {
+          handled: true,
+          output: lines.join("\n"),
+          session: opts.session,
+        };
+      }
+      if (head === "restore" || head === "apply" || head === "pop") {
+        if (opts.config.permissionMode === "plan") {
+          return {
+            handled: true,
+            output: "Plan mode cannot restore checkpoints. `/build` first.",
+          };
+        }
+        const sha = tokens[1] || opts.session.meta.lastCheckpoint || "";
+        if (!sha) {
+          return {
+            handled: true,
+            output: "No checkpoint sha. Create one with `/checkpoint`.",
+          };
+        }
+        const r = applySafetyCheckpoint(cwd, sha);
+        if (!r.ok) {
+          return {
+            handled: true,
+            output: `Checkpoint restore failed: ${r.detail || "unknown"}`,
+          };
+        }
+        return {
+          handled: true,
+          output: `Applied checkpoint ${sha.slice(0, 12)}…\nReview with /diff.`,
+          session: opts.session,
+        };
+      }
+      const snap = createSafetyCheckpoint(cwd, {
+        label: opts.session.meta.id.slice(0, 12),
+      });
+      if (!snap.ok) {
+        return {
+          handled: true,
+          output: `Checkpoint failed: ${snap.detail || "unknown"}`,
+        };
+      }
+      if (snap.clean || !snap.sha) {
+        return {
+          handled: true,
+          output: snap.detail || "Working tree clean — nothing to checkpoint.",
+        };
+      }
+      opts.session.meta.lastCheckpoint = snap.sha;
+      opts.session.meta.lastCheckpointAt = new Date().toISOString();
+      try {
+        saveSession(opts.session);
+      } catch {
+        /* */
+      }
+      return {
+        handled: true,
+        output: [
+          `Checkpoint created: ${snap.sha}`,
+          `  files: ~${snap.dirtyPaths ?? "?"}  ·  working tree unchanged`,
+          snap.ref ? `  ref:   ${snap.ref}` : "",
+          `  restore: /checkpoint restore`,
+        ]
+          .filter(Boolean)
+          .join("\n"),
+        session: opts.session,
+      };
+    }
+
     case "/diff": {
       const cwd = opts.session.meta.cwd || opts.config.workspace || process.cwd();
       const extra = arg || "";
@@ -5068,6 +5427,70 @@ case "/new":
         query = parts.join(" ").trim() || undefined;
         listMode = "all";
       }
+      if (sub === "tree" || sub === "forks" || sub === "lineage") {
+        const target = parts[1] || opts.session.meta.id;
+        const resolved = resolveSessionId(target);
+        if (!resolved) {
+          return {
+            handled: true,
+            output: formatSessionLookupMiss(target, {
+              cwd: opts.session.meta.cwd || opts.config.workspace,
+            }),
+          };
+        }
+        try {
+          const root = loadSession(resolved);
+          if (!root) {
+            return {
+              handled: true,
+              output: formatSessionLookupMiss(target, {
+                cwd: opts.session.meta.cwd || opts.config.workspace,
+              }),
+            };
+          }
+          const kids = listSessionForks(resolved, { limit: 20 });
+          const lines: string[] = [
+            chalk.bold(`Session tree  ${resolved.slice(0, 8)}…`),
+            `  ${root.meta.title || "(untitled)"}  ${root.meta.pinned ? "PIN " : ""}`,
+          ];
+          if (root.meta.parentSessionId) {
+            const pl = (
+              root.meta.parentSessionLabel ||
+              root.meta.parentSessionId.slice(0, 8)
+            ).slice(0, 40);
+            lines.push(
+              `  ↳ parent: ${pl} (${root.meta.parentSessionId.slice(0, 8)}…)`,
+            );
+          }
+          if (!kids.length) lines.push("  (no forks)");
+          else {
+            lines.push(`  forks (${kids.length}):`);
+            for (const k of kids) {
+              const age = k.updatedAt
+                ? k.updatedAt.slice(0, 19).replace("T", " ")
+                : "";
+              lines.push(
+                `    · ${(k.title || "(untitled)").slice(0, 36)}  ${k.id.slice(0, 8)}…  ${age}`,
+              );
+            }
+          }
+          lines.push(
+            chalk.dim(
+              "  /fork [title] · forge sessions show <id> · /sessions tree <id>",
+            ),
+          );
+          return {
+            handled: true,
+            output: lines.join("\n"),
+            session: opts.session,
+          };
+        } catch (err) {
+          return {
+            handled: true,
+            output: `tree failed: ${String((err as Error)?.message || err).slice(0, 200)}`,
+          };
+        }
+      }
       let list = listSessions({
         limit: errorsOnly || untitledOnly ? 50 : 15,
         ...(listMode === "cwd" && !query && !pinnedOnly && !errorsOnly && !untitledOnly
@@ -5804,6 +6227,8 @@ export interface DoctorResult {
   sessionsPinned?: number;
   /** Effective format-on-write (env FORGE_FORMAT_ON_WRITE wins over preference). */
   formatOnWrite?: boolean;
+  subagentLandMode?: "auto" | "keep" | "discard";
+  projectMemoryCount?: number;
   /** Detected package manager (npm/pnpm/yarn/bun). */
   packageManager?: string | null;
   /** Ecosystem labels (node, typescript, rust, …). */
@@ -6057,6 +6482,43 @@ export async function runDoctorCheck(
           "  tip: /bell on or /notify on — long ULW/goal runs are easy to miss without turn-end attention",
         ),
       );
+    }
+
+    try {
+      const landRaw =
+        process.env.FORGE_SUBAGENT_LAND?.trim() ||
+        process.env.FORGE_WORKTREE_LAND?.trim() ||
+        "";
+      const land = (landRaw || "auto").toLowerCase();
+      const landMode = ["0", "false", "off", "discard", "none"].includes(land)
+        ? "discard"
+        : ["keep", "manual", "review"].includes(land)
+          ? "keep"
+          : "auto";
+      lines.push(
+        `Subagent worktree land: ${landMode}` +
+          (landRaw ? `  (env=${landRaw})` : "  (default auto)") +
+          "  · FORGE_SUBAGENT_LAND=auto|keep|discard",
+      );
+      if (landMode === "discard") {
+        lines.push(
+          chalk.yellow(
+            "  ⚠ land=discard — isolation=worktree edits are dropped on cleanup",
+          ),
+        );
+      }
+    } catch {
+      /* */
+    }
+    try {
+      const n = listActiveProjectMemory(
+        config.workspace || process.cwd(),
+      ).length;
+      lines.push(
+        `Project memory: ${n} active  · /memory project  · memory_write scope=project`,
+      );
+    } catch {
+      /* */
     }
     lines.push(
       chalk.dim(
@@ -6876,7 +7338,35 @@ export async function runDoctorCheck(
     sessionsUntitled,
     sessionsTotal,
     sessionsPinned,
-    formatOnWrite: isFormatOnWriteEnabled(),
+    formatOnWrite: isFormatOnWriteEnabled(
+      config.workspace || process.cwd(),
+    ),
+    subagentLandMode: (() => {
+      const raw =
+        process.env.FORGE_SUBAGENT_LAND ??
+        process.env.FORGE_WORKTREE_LAND ??
+        "auto";
+      const s = String(raw).trim().toLowerCase();
+      if (
+        s === "0" ||
+        s === "false" ||
+        s === "off" ||
+        s === "discard" ||
+        s === "none"
+      )
+        return "discard" as const;
+      if (s === "keep" || s === "manual" || s === "review") return "keep" as const;
+      return "auto" as const;
+    })(),
+    projectMemoryCount: (() => {
+      try {
+        return listActiveProjectMemory(
+          config.workspace || process.cwd(),
+        ).length;
+      } catch {
+        return 0;
+      }
+    })(),
     packageManager,
     projectKinds,
     checkCommands,
@@ -6954,6 +7444,9 @@ export interface EffectiveConfigSnap {
   } | null;
   /** Effective format-on-write (env FORGE_FORMAT_ON_WRITE wins over preference). */
   formatOnWrite: boolean;
+  subagentLandMode: "auto" | "keep" | "discard";
+  projectMemoryCount: number;
+  lastCheckpoint: string | null;
   /** Detected package manager when known. */
   packageManager: string | null;
   /** Preferred verification commands. */
@@ -7109,7 +7602,36 @@ export function buildEffectiveConfigSnap(
           edits: session.meta.editCount,
         }
       : null,
-    formatOnWrite: isFormatOnWriteEnabled(),
+    formatOnWrite: isFormatOnWriteEnabled(
+      c.workspace || session?.meta.cwd || process.cwd(),
+    ),
+    subagentLandMode: (() => {
+      const raw =
+        process.env.FORGE_SUBAGENT_LAND ??
+        process.env.FORGE_WORKTREE_LAND ??
+        "auto";
+      const s = String(raw).trim().toLowerCase();
+      if (
+        s === "0" ||
+        s === "false" ||
+        s === "off" ||
+        s === "discard" ||
+        s === "none"
+      )
+        return "discard" as const;
+      if (s === "keep" || s === "manual" || s === "review") return "keep" as const;
+      return "auto" as const;
+    })(),
+    projectMemoryCount: (() => {
+      try {
+        return listActiveProjectMemory(
+          c.workspace || session?.meta.cwd || process.cwd(),
+        ).length;
+      } catch {
+        return 0;
+      }
+    })(),
+    lastCheckpoint: session?.meta.lastCheckpoint ?? null,
     ...(() => {
       try {
         const cwd = c.workspace || session?.meta.cwd || process.cwd();
@@ -7218,6 +7740,11 @@ export function formatEffectiveConfig(
     `  read outside:    ${snap.readOutsideWorkspace}`,
     `  sticky provider: ${snap.stickyProvider ?? "(none)"}`,
     `  format-on-write: ${snap.formatOnWrite ? "on" : "off"}  (/format · FORGE_FORMAT_ON_WRITE)`,
+    `  subagent land:   ${snap.subagentLandMode}  (FORGE_SUBAGENT_LAND=auto|keep|discard)`,
+    `  project memory:  ${snap.projectMemoryCount} active  · /memory project`,
+    snap.lastCheckpoint
+      ? `  checkpoint:      ${snap.lastCheckpoint.slice(0, 12)}…  · /checkpoint restore`
+      : `  checkpoint:      (none)  · /checkpoint`,
     `  edit-guard:      file-read=${snap.env.FORGE_FILE_READ_GUARD ? "on" : "off"}` +
       `  verify-hint=${snap.env.FORGE_VERIFY_HINT ? "on" : "off"}` +
       `  (FORGE_FILE_READ_GUARD · FORGE_VERIFY_HINT)`,
@@ -7537,13 +8064,14 @@ Forge slash commands
   /done [note]          Wind down: /goal done + ULW cycle=0 (LAST)  [live]
   /pause                Shorthand for /goal pause  [live]
   /unpause              Shorthand for /goal resume  [live]
+  /improve [focus…]       Continuous-improve (ULW; alias /ralph)
   /ulw [task]           Arm ULW + cycle=1 (soft/broad seeds backlog + decision memory)
-  /memory [list|add …]  Durable decisions/constraints (survives compact; tool: memory_write)
+  /memory [list|add …]  Session decisions. /memory project … for cross-session.
   /attach <image>       Attach image path for vision ([[image:path]] in next message)
   /cycle 1|0|status     Continue waves (1) or last wave then stop (0)  [live]
   /max-waves N|off      Cap ULW waves (auto LAST at N); default unlimited  [live]
   /ulw-off              Disarm ULW + cycle driver  [live]
-  /hooks                List loaded hooks  [live]
+  /hooks [init|reload]  List/scaffold/reload hooks  [live]
   /status · /hud        Full inline HUD + session details (no second panel)  [live]
   /tasks [kill|log id]  Background shell tasks · kill/log subcommands  [live]
   /mcp [status|connect|tools|reload]  MCP servers (search_mcp · call_mcp)  [live]
@@ -7569,6 +8097,7 @@ Forge slash commands
   /fork-and-compact [prompt]  Fork, compact the fork, optional continue (Warp-style)
   /init [focus]         Guided AGENTS.md setup / improve (OpenCode-style)
   /review [target]      Code review: uncommitted|staged|<commit>|<branch>|<pr#>
+  /checkpoint [restore] Safety snapshot (/snap)
   /commit [staged] [do] Draft commit message from git diff (do = create commit, no push)
   /rewind [n]           Undo last n user turns + restore journaled files (/undo)
   /retry [prompt]       Rewind last turn (+ disk) + re-run (/again; optional rewrite)

@@ -4,6 +4,7 @@ import {
   killTask,
   listTasks,
   readTaskOutput,
+  waitForTask,
 } from "./background-tasks.js";
 import { boundToolOutput } from "./truncate.js";
 import { editDistance } from "../../util/string-distance.js";
@@ -177,12 +178,63 @@ export async function toolGetTaskOutput(
   if (!getTask(id)) {
     return { output: unknownTaskMessage(id), isError: true };
   }
+
+  // Optional wait-until-done (or timeout) before reading output — kills
+  // poll-loop thrash that serious users hit on long bg test/build jobs.
+  const waitRaw = args.wait ?? args.timeout_ms ?? args.timeoutMs;
+  let waitNote = "";
+  if (waitRaw != null && String(waitRaw).trim() !== "") {
+    const waitMs = parseWaitMs(waitRaw);
+    if (waitMs == null) {
+      return {
+        output:
+          `get_task_output error: invalid wait/timeout_ms "${waitRaw}". ` +
+          `Use a number of ms, or duration suffixes like 30s / 2m / 1h (max 30m).`,
+        isError: true,
+      };
+    }
+    if (waitMs > 0) {
+      const w = await waitForTask(id, { timeoutMs: waitMs });
+      if (!w.ok) {
+        return { output: w.error, isError: true };
+      }
+      waitNote = w.timedOut
+        ? `wait: timed out after ${w.waitedMs}ms (still ${w.task.status})\n`
+        : `wait: reached ${w.task.status} in ${w.waitedMs}ms\n`;
+    }
+  }
+
   const text = await readTaskOutput(id, {
     tail,
     stream,
   });
   const managed = await boundToolOutput(text, { maxChars: 80_000 });
-  return { output: managed.text };
+  return { output: waitNote + managed.text };
+}
+
+/** Parse wait/timeout_ms: number, numeric string, or 30s/2m/1h suffixes. */
+export function parseWaitMs(raw: unknown): number | null {
+  if (typeof raw === "boolean") return null;
+  if (typeof raw === "number" && Number.isFinite(raw)) {
+    return Math.max(0, Math.min(30 * 60_000, Math.floor(raw)));
+  }
+  const s = String(raw ?? "").trim().toLowerCase();
+  if (!s) return null;
+  // bare true-ish → default 2m
+  if (s === "true" || s === "yes" || s === "on" || s === "wait") {
+    return 120_000;
+  }
+  if (s === "false" || s === "no" || s === "off") return 0;
+  const m = s.match(/^(\d+(?:\.\d+)?)\s*(ms|s|m|h)?$/);
+  if (!m) return null;
+  const n = Number(m[1]);
+  if (!Number.isFinite(n) || n < 0) return null;
+  const unit = m[2] || "ms";
+  let ms = n;
+  if (unit === "s") ms = n * 1000;
+  else if (unit === "m") ms = n * 60_000;
+  else if (unit === "h") ms = n * 3_600_000;
+  return Math.max(0, Math.min(30 * 60_000, Math.floor(ms)));
 }
 
 export async function toolKillTask(

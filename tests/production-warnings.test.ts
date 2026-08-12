@@ -280,4 +280,53 @@ describe("productionWarningsForRun", () => {
       );
     }
   });
+
+
+  it("warns when subagent land=discard and auto-verify off", () => {
+    const prevLand = process.env.FORGE_SUBAGENT_LAND;
+    const prevNudge = process.env.FORGE_AUTO_VERIFY_NUDGE;
+    const prevFix = process.env.FORGE_FIX_UNTIL_GREEN;
+    const prevCp = process.env.FORGE_ULW_CHECKPOINT;
+    process.env.FORGE_SUBAGENT_LAND = "discard";
+    process.env.FORGE_AUTO_VERIFY_NUDGE = "0";
+    process.env.FORGE_FIX_UNTIL_GREEN = "0";
+    process.env.FORGE_ULW_CHECKPOINT = "0";
+    try {
+      const w = productionWarningsForRun(
+        { ...DEFAULT_CONFIG },
+        {
+          ultrawork: true,
+          _testDirtyFiles: 0,
+          _testSessionCount: 0,
+          _testPinnedCount: 0,
+        },
+      );
+      assert.ok(
+        w.some((x) => /FORGE_SUBAGENT_LAND=discard/i.test(x)),
+        "land=discard should warn",
+      );
+      assert.ok(
+        w.some((x) => /FORGE_AUTO_VERIFY_NUDGE=0/i.test(x)),
+        "auto-verify off should warn",
+      );
+      assert.ok(
+        w.some((x) => /FORGE_FIX_UNTIL_GREEN=0/i.test(x)),
+        "fix-until-green off should warn",
+      );
+      assert.ok(
+        w.some((x) => /FORGE_ULW_CHECKPOINT=0/i.test(x)),
+        "ulw checkpoint off should warn under ULW",
+      );
+    } finally {
+      if (prevLand === undefined) delete process.env.FORGE_SUBAGENT_LAND;
+      else process.env.FORGE_SUBAGENT_LAND = prevLand;
+      if (prevNudge === undefined) delete process.env.FORGE_AUTO_VERIFY_NUDGE;
+      else process.env.FORGE_AUTO_VERIFY_NUDGE = prevNudge;
+      if (prevFix === undefined) delete process.env.FORGE_FIX_UNTIL_GREEN;
+      else process.env.FORGE_FIX_UNTIL_GREEN = prevFix;
+      if (prevCp === undefined) delete process.env.FORGE_ULW_CHECKPOINT;
+      else process.env.FORGE_ULW_CHECKPOINT = prevCp;
+    }
+  });
+
 });

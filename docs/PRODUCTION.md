@@ -392,3 +392,41 @@ Reliability for multi-day single process:
 - REPL refuses concurrent write on live foreign lock (`FORGE_FORCE_SESSION_LOCK=1` override)
 - OAuth: proactive refresh ~10m before expiry each model turn; up to `FORGE_AUTH_RECOVERY_MAX` (default 20) mid-run recoveries
 - Prefer many `forge run --continue` steps over one multi-day process if using SuperGrok OIDC
+
+
+### Subagent worktree land
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `FORGE_SUBAGENT_LAND` | `auto` | `auto` capture+apply isolation=worktree diffs into parent; `keep` leave worktree; `discard` drop without applying. Alias `FORGE_WORKTREE_LAND`. Conflicts always keep. |
+| `FORGE_SUBAGENT_KEEP_WORKTREE` | unset | When `1`, never apply — leave worktree on disk. |
+| `FORGE_FORMAT_ON_WRITE` | auto | `1`/`0` force on/off. Unset = enable when a project formatter is detected (prettier/biome/ruff/gofmt/rustfmt). |
+
+### Cross-session project memory
+
+| Surface | Path |
+|---|---|
+| Machine store | `~/.forge/project-memory/<key>.json` (mode `0600`) |
+| Human mirror | `<repo>/.forge/MEMORY.md` |
+| Tool | `memory_write` with `scope=project` |
+| Slash | `/memory project [list\|add …\|clear]` |
+
+Injected into the system prompt automatically (budget-capped). Survives `/new` and session switches — unlike session `decisions.json`.
+
+### Safety checkpoint
+
+`/checkpoint` (alias `/snap`) creates a **non-mutating** snapshot via `git stash create`
+(dangling commit + `refs/forge/checkpoint/…`). Working tree stays byte-identical.
+Restore with `/checkpoint restore` or `git stash apply <sha>`. Live-safe mid-run.
+
+### ULW auto-checkpoint
+
+Arming ULW (`/ulw`, soft-prompt expansion, `--ulw`) takes a non-mutating safety
+checkpoint via `git stash create` when the tree is dirty. Sha is stored on the
+ULW sidecar and announced in the kickoff message. Disable with `FORGE_ULW_CHECKPOINT=0`.
+
+### Destructive git auto-checkpoint
+
+Before `git reset --hard`, `git clean -f…`, `git push --force`, `git checkout -- .`,
+branch `-D`, or `stash drop/clear`, bash takes a non-mutating safety checkpoint and
+prefixes the tool result with the sha. Disable with `FORGE_GIT_AUTO_CHECKPOINT=0`.
