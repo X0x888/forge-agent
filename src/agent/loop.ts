@@ -98,7 +98,6 @@ import {
   refreshCredentialIfNeeded,
   isTokenAuthFailure,
 } from "../auth/refresh.js";
-import { resolveAuth } from "../auth/resolve.js";
 import {
   isQuotaOrRateLimitError,
   maybeProactiveSwitch,
@@ -1158,61 +1157,108 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
             } else if (!tokenAuthFail || authRecoveryCount >= maxAuthRecoveries) {
               throw err;
             } else {
-              authRecoveryCount += 1;
-              events.onStatus?.(
-                `Auth failure — attempting token refresh (${authRecoveryCount}/${maxAuthRecoveries})…`,
-              );
-              const refreshed = await refreshCredentialIfNeeded(
-                String(config.provider),
-                { force: true },
-              );
-              // SuperGrok refresh often fails (revoked/CF) — try full resolveAuthFresh
-              // (re-import live ~/.grok session) before giving up.
-              let auth = refreshed.ok && refreshed.credential
-                ? resolveAuth(config)
-                : null;
-              if (!auth?.token) {
-                try {
-                  const { resolveAuthFresh } = await import("../auth/resolve.js");
-                  auth = await resolveAuthFresh(config);
-                } catch {
-                  /* fall through */
+              // Mid-run token death recovery loop (unattended ULW).
+              // Prefer the refreshed access token *directly* — do not re-run
+              // resolveAuth(), which skips accounts still marked expired when
+              // the token endpoint omits expires_in. That bug made recovery
+              // throw; typing "continue" then worked via the proactive path
+              // which already hot-swaps credential.accessToken.
+              let lastAuthErr: unknown = err;
+              let recovered = false;
+              while (authRecoveryCount < maxAuthRecoveries) {
+                authRecoveryCount += 1;
+                events.onStatus?.(
+                  `Auth failure — attempting token refresh (${authRecoveryCount}/${maxAuthRecoveries})…`,
+                );
+
+                let token: string | undefined;
+                const refreshed = await refreshCredentialIfNeeded(
+                  String(config.provider),
+                  { force: true },
+                );
+                if (refreshed.ok && refreshed.credential?.accessToken) {
+                  token = refreshed.credential.accessToken;
                 }
-              }
-              // Token still bad — try another multi-account slot (auth-failure cooldown).
-              if (
-                (!auth?.token || !updateCreds) &&
-                accountSwitchCount < maxAccountSwitches &&
-                updateCreds
-              ) {
-                accountSwitchCount += 1;
-                const switched = switchOnAuthFailure(String(config.provider));
-                if (await applySwitchedAccount(switched, "auth failure")) {
-                  response = await doChat();
-                } else if (!auth?.token || !updateCreds) {
-                  throw new Error(
-                    `${msg}. Auth recovery failed` +
-                      (switched.reason ? ` (${switched.reason})` : "") +
-                      ". Re-login: forge login  ·  or forge login --add",
-                  );
-                } else {
-                  updateCreds(auth.token);
+                // SuperGrok refresh often fails (revoked/CF) — full
+                // resolveAuthFresh re-imports live ~/.grok before giving up.
+                if (!token) {
+                  try {
+                    const { resolveAuthFresh } = await import(
+                      "../auth/resolve.js"
+                    );
+                    const fresh = await resolveAuthFresh(config);
+                    token = fresh?.token;
+                  } catch {
+                    /* fall through */
+                  }
+                }
+
+                if (token && updateCreds) {
+                  updateCreds(token);
                   log.info(
                     "Refreshed credentials after auth failure — retrying chat",
                   );
                   events.onStatus?.("Credentials refreshed — retrying");
-                  response = await doChat();
+                  try {
+                    response = await doChat();
+                    recovered = true;
+                    break;
+                  } catch (err2) {
+                    lastAuthErr = err2;
+                    if (isTokenAuthFailure(err2)) {
+                      // Still dead — try multi-account or another refresh
+                      // attempt below / next while iteration.
+                    } else {
+                      throw err2;
+                    }
+                  }
                 }
-              } else {
-                if (!auth?.token || !updateCreds) {
-                  throw err;
+
+                // Token still bad or no refresh path — multi-account failover.
+                if (
+                  accountSwitchCount < maxAccountSwitches &&
+                  updateCreds
+                ) {
+                  accountSwitchCount += 1;
+                  const switched = switchOnAuthFailure(
+                    String(config.provider),
+                  );
+                  if (await applySwitchedAccount(switched, "auth failure")) {
+                    try {
+                      response = await doChat();
+                      recovered = true;
+                      break;
+                    } catch (err2) {
+                      lastAuthErr = err2;
+                      if (isTokenAuthFailure(err2)) continue;
+                      throw err2;
+                    }
+                  }
+                  // Switch unavailable — keep looping while recoveries remain
+                  // (another force-refresh may race-succeed).
+                  if (!token) {
+                    events.onStatus?.(
+                      switched.reason
+                        ? `Auth recovery: ${switched.reason}`
+                        : "Auth recovery: no alternate account",
+                    );
+                  }
+                  continue;
                 }
-                updateCreds(auth.token);
-                log.info(
-                  "Refreshed credentials after auth failure — retrying chat",
+
+                // No switch budget and no usable token — stop looping.
+                if (!token || !updateCreds) break;
+              }
+
+              if (!recovered) {
+                const detail =
+                  lastAuthErr instanceof Error
+                    ? lastAuthErr.message
+                    : String(lastAuthErr ?? msg);
+                throw new Error(
+                  `${detail}. Auth recovery failed after ${authRecoveryCount} attempt(s). ` +
+                    `Re-login: forge login  ·  or forge login --add`,
                 );
-                events.onStatus?.("Credentials refreshed — retrying");
-                response = await doChat();
               }
             }
           }

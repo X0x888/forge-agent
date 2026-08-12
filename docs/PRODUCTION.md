@@ -157,7 +157,7 @@ Exit code `1` when `ok` is false (still prints JSON first). Thresholds reflect e
 - `auth.json`, `permissions.json`, and `preferences.json` must be mode `0600` (doctor flags otherwise)
 - `preferences.json` may store sticky `provider` from `forge login -p` (env/CLI still override)
 - Resume (`--session`/`--continue`) authenticates as the **session** provider (sticky login cannot hijack an old chat)
-- Long sessions: OAuth refresh runs at start and once on mid-run `401`
+- Long sessions: OAuth refresh runs at start, proactively ~10m before expiry each model turn, and mid-run on `401`/`403` token death (loop up to `FORGE_AUTH_RECOVERY_MAX`, default 20) so unattended ULW resumes without a manual continue
 
 ## Safety defaults (do not weaken lightly)
 

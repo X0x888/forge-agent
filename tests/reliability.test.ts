@@ -763,6 +763,69 @@ describe("auth failure detection", () => {
     );
   });
 
+  it("OAuth refresh without expires_in does not keep a past expiresAt", async () => {
+    // Regression: mid-run recovery used resolveAuth after refresh; a stale
+    // past expiresAt made resolveAuth skip the fresh bearer so ULW died and
+    // only "continue" (proactive path) recovered.
+    const fs = await import("node:fs");
+    const os = await import("node:os");
+    const path = await import("node:path");
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "forge-refresh-ttl-"));
+    const prevHome = process.env.FORGE_HOME;
+    process.env.FORGE_HOME = home;
+    const prevFetch = globalThis.fetch;
+    try {
+      const { upsertOAuth, getCredential, isExpired } = await import(
+        "../src/auth/store.js"
+      );
+      const { refreshCredentialIfNeeded } = await import(
+        "../src/auth/refresh.js"
+      );
+      const { nowEpoch } = await import("../src/util/fs.js");
+      const past = nowEpoch() - 3600;
+      upsertOAuth("xai", {
+        accessToken: "dead-access",
+        refreshToken: "rt-live",
+        expiresAt: past,
+        clientId: "test-client",
+        method: "subscription",
+        accountLabel: "test:refresh-ttl",
+      });
+      assert.equal(isExpired(getCredential("xai")!), true);
+
+      globalThis.fetch = (async () =>
+        new Response(
+          JSON.stringify({
+            access_token: "fresh-access",
+            refresh_token: "rt-live",
+            // deliberately omit expires_in
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        )) as typeof fetch;
+
+      const r = await refreshCredentialIfNeeded("xai", { force: true });
+      assert.equal(r.ok, true);
+      assert.equal(r.refreshed, true);
+      assert.equal(r.credential?.accessToken, "fresh-access");
+      const cred = getCredential("xai")!;
+      assert.equal(cred.accessToken, "fresh-access");
+      assert.equal(isExpired(cred, 0), false, "must not keep past expiresAt");
+      assert.ok(
+        cred.expiresAt && cred.expiresAt > nowEpoch(),
+        "default TTL should be in the future",
+      );
+    } finally {
+      globalThis.fetch = prevFetch;
+      if (prevHome === undefined) delete process.env.FORGE_HOME;
+      else process.env.FORGE_HOME = prevHome;
+      try {
+        fs.rmSync(home, { recursive: true, force: true });
+      } catch {
+        /* */
+      }
+    }
+  });
+
   it("providers hot-swap credentials", async () => {
     const { OpenAICompatProvider } = await import(
       "../src/providers/openai-compat.js"

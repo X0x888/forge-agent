@@ -171,7 +171,7 @@ Beyond Stop/goal/ULW, the agent loop includes expert-grade recovery so long runs
 | **Overflow → compact** | Progressive prune + keep 8→4→2; ULW mandate re-admitted |
 | **`finish_reason=length`** | Continues generation instead of stopping mid-answer |
 | **Empty / content_filter** | Nudge or narrow-scope steer (no blind infinite retry) |
-| **OAuth mid-run 401** | One forced refresh + hot-swap bearer |
+| **OAuth mid-run 401/403** | Forced refresh loop (up to `FORGE_AUTH_RECOVERY_MAX`) + hot-swap refreshed bearer directly; multi-account failover |
 | **File-aware `/undo`** | `mutations.jsonl` pre-images for write/edit/patch; `/retry` restores disk too |
 | **Fork keeps harness** | `/fork` copies ULW + `/goal` sidecars (and mutation journal) onto the branch |
 

@@ -762,6 +762,39 @@ export async function runRepl(opts: {
           provider: String(config.provider),
           model: config.model,
         }));
+        // Auth expiry should usually recover mid-loop; if it still escapes,
+        // warm the live provider bearer so the next prompt/continue does not
+        // reuse a known-dead token (unattended ULW "type continue" friction).
+        if (
+          fmt.code === "auth_expired" ||
+          fmt.code === "auth_forbidden" ||
+          /auth recovery failed|401|403|unauthorized|could not be validated/i.test(
+            (err as Error).message || "",
+          )
+        ) {
+          try {
+            const { isTokenAuthFailure } = await import("../auth/refresh.js");
+            if (isTokenAuthFailure(err) || fmt.code?.startsWith("auth_")) {
+              const fresh = await resolveAuthFresh(
+                config,
+                String(config.provider),
+              );
+              if (fresh?.token) {
+                auth = fresh;
+                if (provider.updateCredentials) {
+                  provider.updateCredentials(fresh.token);
+                } else {
+                  provider = createProvider(config, auth);
+                }
+                log.dim(
+                  "Credentials refreshed after auth error — ready for next prompt",
+                );
+              }
+            }
+          } catch {
+            /* best-effort; user can forge login */
+          }
+        }
         try {
           const { appendSessionMetrics, buildRunEndMetrics } = await import(
             "../session/metrics.js"

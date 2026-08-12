@@ -176,9 +176,11 @@ export function formatProviderError(
         );
         tips.push("export DEEPSEEK_API_KEY=sk-…  ·  forge accounts status");
       } else {
-        tips.push("forge login  (or forge login --add for another account)");
-        tips.push("forge accounts status  ·  /accounts switch");
-        tips.push("Check sticky provider: forge auth  ·  preferences.json");
+        tips.push(
+          "Forge auto-refreshes OAuth mid-run; if this persists: forge login",
+        );
+        tips.push("forge login --add  ·  forge accounts status  ·  /accounts switch");
+        tips.push("Multi-day unattended: forge login --api-key (no refresh_token needed)");
       }
     } else if (err.status === 429) {
       code = "rate_limited";
@@ -283,7 +285,9 @@ export function formatProviderError(
       tips.push("Update pinned model in preferences / CLI flags");
     } else if (/401|unauthorized|invalid.?api.?key|auth/i.test(msg)) {
       code = "auth_expired";
-      tips.push("forge login  ·  /accounts status");
+      tips.push(
+        "Forge auto-refreshes OAuth mid-run; if this persists: forge login  ·  /accounts status",
+      );
     } else {
       tips.push("forge doctor  ·  /retry  ·  forge logs");
     }

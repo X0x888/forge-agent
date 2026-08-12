@@ -171,12 +171,28 @@ export async function refreshCredentialIfNeeded(
     if (!json.access_token) {
       return { ok: false, error: "refresh response missing access_token", refreshed: false };
     }
+    // When the token endpoint omits expires_in, never keep a *past* expiresAt —
+    // that left resolveAuth treating a freshly rotated bearer as expired, so
+    // mid-run 401 recovery threw while the next user "continue" (proactive
+    // path uses credential.accessToken directly) appeared to "just work".
+    const DEFAULT_ACCESS_TTL_SEC = 3600;
+    const now = nowEpoch();
+    let nextExpires: number | undefined;
+    if (
+      typeof json.expires_in === "number" &&
+      Number.isFinite(json.expires_in) &&
+      json.expires_in > 0
+    ) {
+      nextExpires = now + Math.floor(json.expires_in);
+    } else if (cred.expiresAt && cred.expiresAt > now) {
+      nextExpires = cred.expiresAt;
+    } else {
+      nextExpires = now + DEFAULT_ACCESS_TTL_SEC;
+    }
     upsertOAuth(provider, {
       accessToken: json.access_token,
       refreshToken: json.refresh_token || cred.refreshToken,
-      expiresAt: json.expires_in
-        ? nowEpoch() + json.expires_in
-        : cred.expiresAt,
+      expiresAt: nextExpires,
       clientId,
       method: cred.method,
       subscription: cred.subscription,
