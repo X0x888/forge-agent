@@ -259,8 +259,8 @@ Full contract: [docs/RELIABILITY.md](docs/RELIABILITY.md) · expert checklist: [
 | `/share` | Pasteable session card + resume/export commands (clipboard) |
 | `/tips` | Expert cheat sheet · CLI: `forge tips` |
 | `/todos` | Agent todos |
-| `/model <id> [effort]` | Switch model mid-run; optional `low`\|`medium`\|`high` (persists) **[live]** |
-| `/effort [level]` | Reasoning effort for models that support it (e.g. grok-4.5) **[live]** |
+| `/model <id> [effort]` | Switch model mid-run; optional `low`\|`medium`\|`high`\|`xhigh` (persists) **[live]** |
+| `/effort [level]` | Reasoning effort for models that support it (e.g. grok-4.6) **[live]** |
 | `/plan [focus]` | Session-scoped PLAN mode (read-only design; no sticky prefs) **[live]** |
 | `/build [note]` | Leave plan → restore prior mode and implement (`/execute`) **[live]** |
 | `/commands` | List project/user custom slash templates (`.forge/commands/*.md`) |
@@ -350,8 +350,8 @@ Forge ships methodology playbooks with the package (no extra install). List with
 
 ```toml
 provider = "xai"
-model = "grok-4.5"
-reasoning_effort = "high"   # low | medium | high (grok-4.5+)
+model = "grok-4.6"
+reasoning_effort = "xhigh"   # omit for model max (xhigh on 4.6+, high on 4.5)
 max_turns = 0               # 0 = unlimited; set e.g. 200 to cap agent turns
 permission_mode = "default"
 blocking_stop_hooks = true
@@ -371,7 +371,7 @@ Environment:
 | `XAI_API_KEY` / `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / … | Provider keys |
 | `FORGE_HOME` | Config root (default `~/.forge`) |
 | `FORGE_MODEL` / `FORGE_PROVIDER` / `FORGE_BASE_URL` | Overrides |
-| `FORGE_EFFORT` / `FORGE_REASONING_EFFORT` | `low` \| `medium` \| `high` |
+| `FORGE_EFFORT` / `FORGE_REASONING_EFFORT` | `low` \| `medium` \| `high` \| `xhigh` \| `max` |
 | `FORGE_BLOCKING_STOP=0` | Passive Stop blocks |
 | `FORGE_GOAL_STUCK_THRESHOLD` | Stuck-wall N |
 | `FORGE_LOG_LEVEL` | `debug` \| `info` \| `warn` \| `error` |

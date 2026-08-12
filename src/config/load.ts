@@ -501,7 +501,7 @@ export function loadConfig(overrides: Partial<ForgeConfig> = {}, cwd = process.c
     overrides.maxTokens != null;
 
   // Provider switched (CLI/env) without an explicit model → that provider's defaultModel
-  // (avoid anthropic + stuck grok-4.5 from DEFAULT_CONFIG.model).
+  // (avoid anthropic + stuck grok-4.6 from DEFAULT_CONFIG.model).
   // A config-file provider (provider = "claude", no model anywhere) gets the
   // same rescue — but never clobbers a file/prefs-pinned model.
   const providerSwitched =
@@ -593,10 +593,11 @@ export function defaultConfigToml(): string {
 # Docs: docs/SAFETY.md · docs/PRODUCTION.md · docs/RELIABILITY.md
 
 provider = "xai"
-model = "grok-4.5"
-# low | medium | high  (only sent for models that support it, e.g. grok-4.5)
-# Omit for model max (recommended). Pin with low|medium|high|max when needed:
-# reasoning_effort = "max"
+model = "grok-4.6"
+# low | medium | high | xhigh  (only sent for models that support it)
+# Omit for model max (recommended): xhigh on grok-4.6+, high on grok-4.5.
+# Pin with low|medium|high|xhigh|max when needed:
+# reasoning_effort = "xhigh"
 # temperature: unset = provider/server default (recommended — reasoning models
 # are tuned for it; DeepSeek thinking ignores temperature). Pin to override:
 # temperature = 0.2

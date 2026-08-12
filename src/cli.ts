@@ -137,7 +137,11 @@ import {
 } from "./util/changelog.js";
 import { formatExpertTips, expertTipsLines } from "./util/tips.js";
 import { editDistance } from "./util/string-distance.js";
-import { suggestName, suggestSessionAction } from "./util/suggest.js";
+import {
+  isAcceptableUnknownModelId,
+  suggestName,
+  suggestSessionAction,
+} from "./util/suggest.js";
 import { parseDaysWindow, daysWindowHelp } from "./util/days-window.js";
 import { parseNewsCount, newsCountHelp } from "./util/news-count.js";
 import { parseLogsLines, logsLinesHelp } from "./util/logs-lines.js";
@@ -3761,14 +3765,20 @@ Project instructions for Forge (and other coding agents).
             p.models?.length ? [...p.models] : p.defaultModel ? [p.defaultModel] : [];
           let remoteCount = 0;
           let freeForm = false;
-          if (id === "openrouter" || refresh) {
+          if (id === "openrouter" || id === "xai" || refresh) {
             try {
+              const store = await import("./auth/store.js");
               const apiKey =
-                process.env.OPENROUTER_API_KEY?.trim() ||
-                (await import("./auth/store.js")).getCredential("openrouter")
-                  ?.accessToken;
+                id === "openrouter"
+                  ? process.env.OPENROUTER_API_KEY?.trim() ||
+                    store.getCredential("openrouter")?.accessToken
+                  : id === "xai"
+                    ? process.env.XAI_API_KEY?.trim() ||
+                      store.getCredential("xai")?.accessToken
+                    : undefined;
               const cat = await buildModelCatalog(config, id, {
-                refreshRemote: id === "openrouter" && (refresh || true),
+                refreshRemote:
+                  id === "openrouter" || id === "xai" || refresh,
                 apiKey,
                 useCache: true,
               });
@@ -3841,6 +3851,13 @@ Project instructions for Forge (and other coding agents).
         console.log(
           chalk.dim(
             "OpenRouter: free-form ids work · forge models -p openrouter --refresh · REPL: /provider openrouter · /model <id>",
+          ),
+        );
+      }
+      if (rows.some((r) => r.provider === "xai")) {
+        console.log(
+          chalk.dim(
+            "xAI: grok-4.6 default · newer grok-*.* ids inherit latest flagship effort/context · forge models -p xai --refresh",
           ),
         );
       }
@@ -5786,7 +5803,11 @@ function buildConfig(opts: Record<string, unknown>): ForgeConfig {
           minScore: 42,
           requirePrefix3: false,
         });
-      if (tip && tip.toLowerCase() !== model.toLowerCase()) {
+      if (
+        tip &&
+        tip.toLowerCase() !== model.toLowerCase() &&
+        !isAcceptableUnknownModelId(model, tip)
+      ) {
         failInvalidFlag(
           "invalid_model",
           `Invalid --model "${opts.model}". Did you mean: ${tip}?`,

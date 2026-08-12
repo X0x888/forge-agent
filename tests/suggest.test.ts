@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   suggestName,
   suggestSessionAction,
+  isAcceptableUnknownModelId,
 } from "../src/util/suggest.js";
 
 describe("suggestName", () => {
@@ -30,6 +31,11 @@ describe("suggestName", () => {
     assert.equal(suggestSessionAction("serach"), "search");
     assert.equal(suggestSessionAction("foo"), null);
     assert.equal(suggestSessionAction("incident"), null);
+  });
+
+  it("does not treat a Grok version bump as a punctuation typo", () => {
+    assert.equal(isAcceptableUnknownModelId("grok-4.7", "grok-4.6"), true);
+    assert.equal(isAcceptableUnknownModelId("grok-45", "grok-4.5"), false);
   });
 
   it("does not false-positive short unrelated tokens", () => {

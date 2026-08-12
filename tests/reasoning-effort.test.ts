@@ -49,6 +49,17 @@ describe("reasoning effort helpers", () => {
     assert.equal(defaultEffortForModel("grok-4.5"), "high");
   });
 
+  it("knows grok-4.6 supports xhigh as max", () => {
+    assert.equal(modelSupportsReasoningEffort("grok-4.6"), true);
+    assert.deepEqual([...effortLevelsForModel("grok-4.6")], [
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+    ]);
+    assert.equal(defaultEffortForModel("grok-4.6"), "xhigh");
+  });
+
   it("deepseek v4 flash defaults to max", () => {
     assert.equal(
       modelSupportsReasoningEffort("deepseek/deepseek-v4-flash-0731"),
@@ -136,6 +147,14 @@ describe("buildChatRequest reasoning_effort", () => {
       [],
     );
     assert.equal(req.reasoning_effort, "high");
+  });
+
+  it("defaults effort to xhigh for grok-4.6 when unset", () => {
+    const req = buildChatRequest(
+      { ...DEFAULT_CONFIG, model: "grok-4.6", reasoningEffort: undefined },
+      [],
+    );
+    assert.equal(req.reasoning_effort, "xhigh");
   });
 
   it("effort override wins over config (adaptive escalation)", () => {
@@ -234,14 +253,15 @@ describe("config + preferences effort", () => {
     delete process.env.FORGE_PROVIDER;
   });
 
-  it("defaults to grok-4.5 with unset effort (resolve → high/max)", () => {
+  it("defaults to grok-4.6 with unset effort (resolve → xhigh)", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "forge-effort-def-"));
     process.env.FORGE_HOME = home;
     const cfg = loadConfig({}, home);
-    assert.equal(cfg.model, "grok-4.5");
-    // Unset means request-time resolve uses model max (high for grok-4.5)
+    assert.equal(cfg.model, "grok-4.6");
+    // Unset means request-time resolve uses model max (xhigh for grok-4.6)
     assert.equal(cfg.reasoningEffort, undefined);
-    assert.equal(resolveReasoningEffort(cfg.model, cfg.reasoningEffort), "high");
+    assert.equal(resolveReasoningEffort(cfg.model, cfg.reasoningEffort), "xhigh");
+    assert.ok(cfg.providers.xai.models?.includes("grok-4.6"));
     assert.ok(cfg.providers.xai.models?.includes("grok-4.5"));
   });
 
@@ -386,6 +406,63 @@ describe("/effort slash", () => {
     assert.match(r.output || "", /low/);
   });
 
+  it("accepts /model grok-4.6 xhigh and future grok-4.7", async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "forge-model-46-"));
+    process.env.FORGE_HOME = home;
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-ws-"));
+    const config = {
+      ...DEFAULT_CONFIG,
+      model: "grok-4.5",
+      workspace: tmp,
+    };
+    const session = createSession({
+      cwd: tmp,
+      provider: "xai",
+      model: "grok-4.5",
+    });
+    const hooks = new HookRunner(config, tmp);
+    const r = await handleSlash("/model grok-4.6 xhigh", {
+      session,
+      config,
+      hooks,
+    });
+    assert.equal(config.model, "grok-4.6");
+    assert.equal(config.reasoningEffort, "xhigh");
+    assert.match(r.output || "", /grok-4\.6/);
+    assert.match(r.output || "", /xhigh/);
+    assert.equal(config.contextWindow, 500_000);
+
+    const r2 = await handleSlash("/model grok-4.7", {
+      session,
+      config,
+      hooks,
+    });
+    assert.equal(config.model, "grok-4.7");
+    assert.equal(config.reasoningEffort, "xhigh");
+    assert.equal(config.contextWindow, 500_000);
+    assert.match(r2.output || "", /grok-4\.7/);
+  });
+
+  it("rejects /model grok-45 as a typo of grok-4.5", async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "forge-model-typo-"));
+    process.env.FORGE_HOME = home;
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-ws-"));
+    const config = {
+      ...DEFAULT_CONFIG,
+      model: "grok-4.6",
+      workspace: tmp,
+    };
+    const session = createSession({
+      cwd: tmp,
+      provider: "xai",
+      model: "grok-4.6",
+    });
+    const hooks = new HookRunner(config, tmp);
+    const r = await handleSlash("/model grok-45", { session, config, hooks });
+    assert.match(r.output || "", /Did you mean: grok-4\.5/);
+    assert.equal(config.model, "grok-4.6");
+  });
+
   it("/model deepseek without effort picks max", async () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "forge-model-ds-"));
     process.env.FORGE_HOME = home;
@@ -414,7 +491,7 @@ describe("/effort slash", () => {
 });
 
 describe("completion", () => {
-  it("lists grok-4.5 in /model and efforts in /effort", () => {
+  it("lists grok-4.6/4.5 in /model and efforts in /effort", () => {
     const cfg = {
       ...DEFAULT_CONFIG,
       provider: "xai" as const,
@@ -423,6 +500,7 @@ describe("completion", () => {
     };
     const [models] = forgeCompleter("/model gr", cfg);
     assert.ok(models.some((h) => h.includes("grok-4.5")));
+    assert.ok(models.some((h) => h.includes("grok-4.6")));
 
     const [efforts] = forgeCompleter("/effort ", cfg);
     assert.ok(efforts.some((h) => h.includes("low")));
@@ -430,6 +508,14 @@ describe("completion", () => {
     assert.ok(efforts.some((h) => h.includes("high")));
     // grok-4.5 max is "high" (no separate "max" level)
     assert.ok(!efforts.some((h) => h === "/effort max"));
+
+    const cfg46 = {
+      ...DEFAULT_CONFIG,
+      provider: "xai" as const,
+      model: "grok-4.6",
+    };
+    const [efforts46] = forgeCompleter("/effort ", cfg46);
+    assert.ok(efforts46.some((h) => h.includes("xhigh")));
 
     const dsCfg = {
       ...DEFAULT_CONFIG,

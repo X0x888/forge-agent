@@ -87,7 +87,7 @@ CI (GitHub Actions) runs `npm run check` + `npm run smoke` on Node 20 and 22.
   "node": "v22.0.0",
   "forgeHome": "/home/runner/.forge",
   "provider": "xai",
-  "model": "grok-4.5",
+  "model": "grok-4.6",
   "auth": "xai via …",
   "authenticated": true,
   "blockingStop": true,
@@ -215,7 +215,7 @@ Success `ok` is `true` only when the run completed without abort/timeout **and**
   "provider": "xai",
   "stickyProvider": null,
   "authMethod": "api_key",
-  "model": "grok-4.5",
+  "model": "grok-4.6",
   "reasoningEffort": "high",
   "cwd": "/path/to/project",
   "git": { "branch": "main", "dirty": false, "changedFiles": 0, "ahead": 0, "behind": 0 },
@@ -296,7 +296,7 @@ Early failures (before the agent loop) also emit structured JSON when `--json` i
 | `invalid_permission_mode` | `--permission-mode` not in allowlist |
 | `invalid_sandbox` / `invalid_sandbox_network` / `invalid_sandbox_missing` | sandbox CLI flags not in allowlist |
 | `invalid_provider` | unknown provider (typos suggest e.g. `xai`) |
-| `invalid_model` | empty `--model`, or close catalog typo (`grok-45` → `grok-4.5`) |
+| `invalid_model` | empty `--model`, or close catalog typo (`grok-45` → `grok-4.5`); version bumps (`grok-4.7`) pass |
 | `command_typo` | bare `forge sesions` (subcommand typo; suggestion included) |
 | `excess_arguments` | nested command footgun e.g. `forge auth logout` / `doctor login` (suggestion+hint) |
 | `unknown_session_action` | bad `sessions` verb; top-level names like `login` suggest `forge login` |

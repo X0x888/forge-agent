@@ -2,8 +2,11 @@
  * Provider model catalogs for /model, tab-complete, and `forge models`.
  *
  * OpenRouter (and custom) accept free-form ids; the static list is a starter
- * catalog. When authenticated, we best-effort fetch OpenRouter's /models and
- * cache under ~/.forge/cache (never required for offline / CI).
+ * catalog. When authenticated, we best-effort fetch OpenRouter / xAI /models
+ * and cache under ~/.forge/cache (never required for offline / CI).
+ *
+ * xAI also accepts well-formed newer `grok-*.*` ids (version-bump, not typo);
+ * effort/context then follow `grok-model.ts` even before the remote list lands.
  */
 import path from "node:path";
 import type { ForgeConfig } from "./types.js";
@@ -15,6 +18,11 @@ const CACHE_TTL_MS = 6 * 60 * 60 * 1000; // 6h
 const REMOTE_TIMEOUT_MS = 8_000;
 const MAX_REMOTE_MODELS = 400;
 const MAX_RECENT = 12;
+
+function providerSupportsRemoteCatalog(provider: string): boolean {
+  const p = String(provider || "").toLowerCase();
+  return p === "openrouter" || p === "xai";
+}
 
 export interface ModelCatalogEntry {
   id: string;
@@ -90,9 +98,12 @@ export function trackRecentModel(provider: string, model: string): void {
   }
 }
 
-export function readOpenRouterModelsCache(): string[] | null {
+export function readProviderModelsCache(provider: string): string[] | null {
   try {
-    const raw = readJsonFile<OpenRouterCache | null>(cachePath("openrouter"), null);
+    const raw = readJsonFile<OpenRouterCache | null>(
+      cachePath(provider),
+      null,
+    );
     if (!raw || !Array.isArray(raw.models) || !raw.models.length) return null;
     if (
       typeof raw.fetchedAt !== "number" ||
@@ -107,7 +118,12 @@ export function readOpenRouterModelsCache(): string[] | null {
   }
 }
 
-function writeOpenRouterModelsCache(
+export function readOpenRouterModelsCache(): string[] | null {
+  return readProviderModelsCache("openrouter");
+}
+
+function writeProviderModelsCache(
+  provider: string,
   models: string[],
   contextById?: Record<string, number>,
   effortsById?: Record<string, string[]>,
@@ -115,7 +131,7 @@ function writeOpenRouterModelsCache(
   try {
     ensureDir(path.join(forgeHome(), "cache"));
     writeJsonFile(
-      cachePath("openrouter"),
+      cachePath(provider),
       {
         fetchedAt: Date.now(),
         models,
@@ -131,6 +147,14 @@ function writeOpenRouterModelsCache(
   } catch {
     /* cache is best-effort */
   }
+}
+
+function writeOpenRouterModelsCache(
+  models: string[],
+  contextById?: Record<string, number>,
+  effortsById?: Record<string, string[]>,
+): void {
+  writeProviderModelsCache("openrouter", models, contextById, effortsById);
 }
 
 /**
@@ -210,6 +234,75 @@ export async function fetchOpenRouterModels(
   }
 }
 
+function isXaiChatModelId(id: string): boolean {
+  const k = id.toLowerCase();
+  if (!k.startsWith("grok-")) return true;
+  return !/imagine|voice|tts|\bimage\b|\bvideo\b/.test(k);
+}
+
+/**
+ * Fetch xAI /v1/models (best-effort; typically needs a key).
+ * New flagship ids (grok-4.7, …) then show up in /model without a Forge bump.
+ */
+export async function fetchXaiModels(
+  apiKey?: string,
+  baseUrl = "https://api.x.ai/v1",
+): Promise<string[]> {
+  const headers: Record<string, string> = {
+    Accept: "application/json",
+    "User-Agent": "forge-cli/model-catalog",
+  };
+  if (apiKey?.trim()) {
+    headers.Authorization = `Bearer ${apiKey.trim()}`;
+  }
+  const url = `${String(baseUrl || "https://api.x.ai/v1").replace(/\/$/, "")}/models`;
+  const ac = new AbortController();
+  const timer = setTimeout(() => ac.abort(), REMOTE_TIMEOUT_MS);
+  try {
+    const resp = await fetch(url, {
+      headers,
+      signal: ac.signal,
+    });
+    if (!resp.ok) {
+      throw new Error(`xAI models HTTP ${resp.status}`);
+    }
+    const json = (await resp.json()) as {
+      data?: Array<{ id?: string } | string>;
+      models?: Array<{ id?: string } | string>;
+    };
+    const rows = json.data || json.models || [];
+    const ids: string[] = [];
+    for (const row of rows) {
+      const id =
+        typeof row === "string"
+          ? row.trim()
+          : String(row?.id || "").trim();
+      if (!id || !isXaiChatModelId(id)) continue;
+      ids.push(id);
+    }
+    const unique = [...new Set(ids)].sort((a, b) => a.localeCompare(b));
+    const capped = unique.slice(0, MAX_REMOTE_MODELS);
+    if (capped.length) {
+      writeProviderModelsCache("xai", capped);
+    }
+    return capped;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function fetchRemoteModels(
+  provider: string,
+  apiKey?: string,
+  baseUrl?: string,
+): Promise<string[]> {
+  if (provider === "openrouter") return fetchOpenRouterModels(apiKey);
+  if (provider === "xai") {
+    return fetchXaiModels(apiKey, baseUrl || "https://api.x.ai/v1");
+  }
+  return [];
+}
+
 export interface BuildCatalogOptions {
   /** Attempt remote OpenRouter refresh (default true for openrouter). */
   refreshRemote?: boolean;
@@ -237,20 +330,21 @@ export async function buildModelCatalog(
   let remote: string[] = [];
   let remoteFetched = false;
   const wantRemote =
-    opts.refreshRemote !== false && p === "openrouter";
+    opts.refreshRemote !== false && providerSupportsRemoteCatalog(p);
+  const xaiBase = config.providers.xai?.baseUrl;
 
-  if (wantRemote) {
+  if (wantRemote && !(p === "xai" && !opts.apiKey?.trim())) {
     try {
-      remote = await fetchOpenRouterModels(opts.apiKey);
+      remote = await fetchRemoteModels(p, opts.apiKey, xaiBase);
       remoteFetched = remote.length > 0;
     } catch {
       // Fall back to cache
       if (opts.useCache !== false) {
-        remote = readOpenRouterModelsCache() || [];
+        remote = readProviderModelsCache(p) || [];
       }
     }
-  } else if (p === "openrouter" && opts.useCache !== false) {
-    remote = readOpenRouterModelsCache() || [];
+  } else if (providerSupportsRemoteCatalog(p) && opts.useCache !== false) {
+    remote = readProviderModelsCache(p) || [];
   }
 
   const seen = new Set<string>();
@@ -308,10 +402,19 @@ export async function buildModelCatalog(
         ? "OpenRouter accepts any openrouter.ai model id (free-form). Tab completes catalog + recent + cached remote."
         : "Free-form model ids accepted for this provider.";
   }
+  if (p === "xai") {
+    note =
+      "Newer grok-*.* ids are accepted; effort/context follow the latest known flagship " +
+      "(grok-4.6 → xhigh / 500k). forge models -p xai --refresh merges the live xAI catalog.";
+  }
   if (p === "openrouter" && remoteFetched) {
     note = (note ? note + " " : "") + `Remote catalog: ${remote.length} models (cached).`;
   } else if (p === "openrouter" && remote.length) {
     note = (note ? note + " " : "") + `Using cached OpenRouter catalog (${remote.length}).`;
+  } else if (p === "xai" && remoteFetched) {
+    note = (note ? note + " " : "") + `Remote catalog: ${remote.length} models (cached).`;
+  } else if (p === "xai" && remote.length) {
+    note = (note ? note + " " : "") + `Using cached xAI catalog (${remote.length}).`;
   }
 
   return {
@@ -333,8 +436,9 @@ export function buildModelCatalogSync(
   const p = String(provider || config.provider || "xai");
   const staticIds = staticModelsForProvider(config, p);
   const recent = recentModelsForProvider(p);
-  const remote =
-    p === "openrouter" ? readOpenRouterModelsCache() || [] : [];
+  const remote = providerSupportsRemoteCatalog(p)
+    ? readProviderModelsCache(p) || []
+    : [];
   const seen = new Set<string>();
   const models: ModelCatalogEntry[] = [];
   for (const id of recent) {

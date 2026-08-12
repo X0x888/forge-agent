@@ -463,7 +463,7 @@ describe("doctor surfaces reliability", () => {
     const report = check.report;
     assert.equal(await runDoctor(cfg), report);
     assert.equal(typeof check.modelInCatalog, "boolean");
-    // default xai/grok-4.5 is in catalog
+    // default xai/grok-4.6 is in catalog
     assert.equal(check.modelInCatalog, true);
     const custom = await runDoctorCheck(
       loadConfig({ model: "totally-not-in-catalog-xyz" }),

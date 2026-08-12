@@ -1,4 +1,5 @@
 import chalk from "chalk";
+import { grokCostRates } from "../config/grok-model.js";
 
 /** Truncate long tool output keeping head + tail so errors at the end remain visible. */
 export function truncateMiddle(text: string, max = 80_000): string {
@@ -238,7 +239,7 @@ export function estimateCostUsd(
 ): number {
   // Provider mid-tier averages ($/1M tokens) — HUD/cost estimates only.
   const rates: Record<string, { in: number; out: number; cacheIn?: number }> = {
-    xai: { in: 2, out: 6, cacheIn: 0.5 }, // grok-4.5 (daily default); cached input ~$0.50/M
+    xai: { in: 2, out: 6, cacheIn: 0.5 }, // grok-4.6 (daily default); cached input ~$0.50/M
     anthropic: { in: 3, out: 15, cacheIn: 0.3 }, // cache read = 0.1× input
     openai: { in: 2.5, out: 10 },
     openrouter: { in: 3, out: 15 },
@@ -249,7 +250,7 @@ export function estimateCostUsd(
   // Models without cacheIn price cached input at full rate — the safe
   // (overestimating) direction for a HUD + spend cap.
   const modelRates: Record<string, { in: number; out: number; cacheIn?: number }> = {
-    "grok-4.5": { in: 2, out: 6, cacheIn: 0.5 },
+    // Grok flagship rates: grok-model.ts (4.6+ inherit $2/$6 cache $0.50).
     "grok-4": { in: 3, out: 15 },
     "grok-3": { in: 3, out: 15 },
     "grok-3-mini": { in: 0.3, out: 0.5 },
@@ -267,7 +268,9 @@ export function estimateCostUsd(
         .toLowerCase()
         .replace(/-latest$/, "")
     : "";
+  const grok = model ? grokCostRates(model) : undefined;
   const r =
+    grok ||
     (mk ? modelRates[mk] : undefined) ||
     rates[provider] || { in: 3, out: 12 };
   const cached = Math.min(Math.max(0, cacheReadTokens ?? 0), promptTokens);

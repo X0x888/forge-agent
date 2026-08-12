@@ -192,9 +192,9 @@ export function resolveSandboxNetwork(config: {
 
 export const DEFAULT_CONFIG: ForgeConfig = {
   provider: "xai",
-  model: "grok-4.5",
+  model: "grok-4.6",
   // Undefined → resolveReasoningEffort uses each model's maximum allowed level
-  // (grok-4.5 → high, deepseek-v4 → max, …). Set only when user pins /effort.
+  // (grok-4.6 → xhigh, grok-4.5 → high, deepseek-v4 → max, …). Set only when user pins /effort.
   reasoningEffort: undefined,
   // Undefined → omitted from API requests; provider/server default wins.
   temperature: undefined,
@@ -242,8 +242,15 @@ export const DEFAULT_CONFIG: ForgeConfig = {
       apiKeyEnv: "XAI_API_KEY",
       baseUrl: "https://api.x.ai/v1",
       supportsOAuth: true,
-      defaultModel: "grok-4.5",
-      models: ["grok-4.5", "grok-4", "grok-3", "grok-3-mini", "grok-2-latest"],
+      defaultModel: "grok-4.6",
+      models: [
+        "grok-4.6",
+        "grok-4.5",
+        "grok-4",
+        "grok-3",
+        "grok-3-mini",
+        "grok-2-latest",
+      ],
     },
     anthropic: {
       id: "anthropic",
@@ -289,6 +296,7 @@ export const DEFAULT_CONFIG: ForgeConfig = {
         "openai/gpt-4o",
         "google/gemini-2.5-pro",
         "google/gemini-2.5-flash",
+        "x-ai/grok-4.6",
         "x-ai/grok-4.5",
         "x-ai/grok-4",
         "deepseek/deepseek-v4-flash",

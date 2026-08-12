@@ -198,6 +198,43 @@ export const SESSION_ACTIONS = [
   "nameless",
 ] as const;
 
+/**
+ * Split `grok-4.6` / `x-ai/grok-4.7-latest` / `claude-sonnet-4` into family +
+ * dotted version. Used so a version bump is not treated as a typo of the
+ * previous catalog id (grok-4.6 vs grok-4.5).
+ */
+export function splitModelFamilyVersion(
+  id: string,
+): { family: string; version: string } | null {
+  const base = id.includes("/") ? id.split("/").pop()! : id;
+  const s = base.trim().toLowerCase().replace(/:.*$/, "");
+  const m = s.match(/^(.*?)[-](\d+(?:\.\d+)*)(?:-(.+))?$/);
+  if (!m) return null;
+  return { family: m[1]!, version: m[2]! };
+}
+
+/** Same model family at different dotted versions (not a punctuation typo). */
+export function isVersionedModelSibling(a: string, b: string): boolean {
+  const pa = splitModelFamilyVersion(a);
+  const pb = splitModelFamilyVersion(b);
+  if (!pa || !pb) return false;
+  return pa.family === pb.family && pa.version !== pb.version;
+}
+
+/**
+ * True when `raw` should be accepted even though `tip` is a close catalog hit.
+ * `grok-45` → `grok-4.5` is still a typo; `grok-4.7` → `grok-4.6` is a bump.
+ */
+export function isAcceptableUnknownModelId(raw: string, tip: string): boolean {
+  const q = raw.trim();
+  const t = tip.trim();
+  if (!q || !t) return true;
+  if (q.toLowerCase() === t.toLowerCase()) return true;
+  const alnum = (s: string) => s.replace(/[^a-z0-9]+/g, "").toLowerCase();
+  if (alnum(q) === alnum(t)) return false;
+  return isVersionedModelSibling(q, t);
+}
+
 export function suggestSessionAction(raw: string): string | null {
   // Session action names are short; allow transpositions (serach→search)
   // without the 3-char prefix gate used for longer CLI command names.

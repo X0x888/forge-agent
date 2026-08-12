@@ -66,6 +66,7 @@ describe("provider free-form flags", () => {
     const ids = staticModelsForProvider(DEFAULT_CONFIG, "openrouter");
     assert.ok(ids.some((m) => m.includes("deepseek")));
     assert.ok(ids.includes("deepseek/deepseek-v4-flash"));
+    assert.ok(ids.includes("x-ai/grok-4.6"));
   });
 });
 

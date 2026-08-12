@@ -1,7 +1,9 @@
 /**
  * Reasoning / thinking effort for models that support it.
  *
- * - xAI grok-4.5: low | medium | high (API `reasoning_effort`)
+ * - xAI Grok flagship: generation-aware (`src/config/grok-model.ts`).
+ *   grok-4.5 = low|medium|high; grok-4.6+ = …|xhigh. Newer flagship ids inherit
+ *   the latest known max so a bump like grok-4.7 does not need a Forge release.
  * - DeepSeek V4: low | high | max (OpenRouter + native)
  * - Others: family heuristics + OpenRouter catalog cache when present
  *
@@ -9,6 +11,7 @@
  * Unsupported models omit the field entirely (no inventing params).
  */
 import path from "node:path";
+import { grokEffortLevels } from "./grok-model.js";
 import { normalizeModelKey } from "./model-info.js";
 import { forgeHome, readJsonFile } from "../util/fs.js";
 
@@ -73,7 +76,7 @@ export function maxEffortOf(
 
 /** Exact bare keys (after normalizeModelKey). */
 const MODEL_EFFORT_SPECS: Record<string, ModelEffortSpec> = {
-  "grok-4.5": specWithMaxDefault(["low", "medium", "high"]),
+  // Grok flagship effort lives in grok-model.ts (version-aware + inherit).
   // DeepSeek V4 — vendor + OpenRouter
   "deepseek-v4-flash": specWithMaxDefault(["low", "high", "max"]),
   "deepseek-v4-pro": specWithMaxDefault(["low", "high", "max"]),
@@ -95,7 +98,6 @@ const FAMILY_EFFORT_SPECS: Array<[prefix: string, levels: readonly ReasoningEffo
     ["deepseek-v4", ["low", "high", "max"]],
     ["deepseek-r1", ["low", "high", "max"]],
     ["deepseek", ["low", "high", "max"]],
-    ["grok-4.5", ["low", "medium", "high"]],
     ["kimi-k3", ["low", "high", "max"]],
     ["kimi-k2", ["low", "high", "max"]],
     ["kimi", ["low", "high", "max"]],
@@ -188,6 +190,10 @@ function lookupEffortSpec(model: string): ModelEffortSpec | undefined {
 
   // 1. Exact static
   if (MODEL_EFFORT_SPECS[key]) return MODEL_EFFORT_SPECS[key];
+
+  // 1b. Grok generation (4.5 high · 4.6+ xhigh · newer flagships inherit)
+  const grokLevels = grokEffortLevels(model);
+  if (grokLevels?.length) return specWithMaxDefault(grokLevels);
 
   // 2. OpenRouter catalog supported_efforts (when cached)
   const cached = openRouterCachedEfforts(model);

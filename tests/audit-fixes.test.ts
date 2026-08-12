@@ -236,12 +236,15 @@ describe("context-admit: git branch travels with harness admissions", () => {
 describe("model-info + reasoning: windows and effort aliases", () => {
   it("context windows match the real models", () => {
     assert.equal(modelContextWindow("grok-4.5"), 500_000);
+    assert.equal(modelContextWindow("grok-4.6"), 500_000);
+    assert.equal(modelContextWindow("grok-4.7"), 500_000);
     assert.equal(modelContextWindow("grok-4"), 256_000);
     assert.equal(modelContextWindow("grok-3"), 131_072);
     assert.equal(modelContextWindow("claude-sonnet-4-20250514"), 200_000);
     assert.equal(modelContextWindow("gpt-4.1"), 1_000_000);
     assert.equal(modelContextWindow("gpt-4o"), 128_000);
     assert.equal(modelContextWindow("x-ai/grok-4.5"), 500_000);
+    assert.equal(modelContextWindow("x-ai/grok-4.6"), 500_000);
     assert.equal(modelContextWindow("totally-unknown-9"), undefined);
   });
 
@@ -255,10 +258,15 @@ describe("model-info + reasoning: windows and effort aliases", () => {
     assert.equal(resolveReasoningEffort("grok-4.5-latest", undefined), "high");
     assert.equal(resolveReasoningEffort("grok-4.5-latest", "low"), "low");
   });
+
+  it("grok-4.6-latest defaults to xhigh", () => {
+    assert.equal(modelSupportsReasoningEffort("grok-4.6-latest"), true);
+    assert.equal(resolveReasoningEffort("grok-4.6-latest", undefined), "xhigh");
+  });
 });
 
-describe("cost estimates: grok-4.5 rates, not grok-4 rates", () => {
-  it("xai default prices grok-4.5 ($2/$6)", () => {
+describe("cost estimates: grok-4.6 rates, not grok-4 rates", () => {
+  it("xai default prices grok-4.6 ($2/$6)", () => {
     assert.equal(estimateCostUsd("xai", 1_000_000, 100_000), 2 + 0.6);
   });
   it("grok-4 override keeps $3/$15", () => {
@@ -659,7 +667,7 @@ describe("config: per-model context window derivation", () => {
     delete process.env.FORGE_MODEL;
     try {
       const cfg = loadConfig({}, tmpdir());
-      assert.equal(cfg.model, "grok-4.5");
+      assert.equal(cfg.model, "grok-4.6");
       assert.equal(cfg.contextWindow, 500_000);
     } finally {
       if (prev !== undefined) process.env.FORGE_MODEL = prev;

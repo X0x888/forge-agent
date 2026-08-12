@@ -8,7 +8,7 @@ What experts should expect from Forge in long, unattended, or CI runs.
 |---|---|
 | **Retry-After** | `429` / `5xx` honor `Retry-After` and `retry-after-ms` (capped at 2 min; the server hint wins over the client backoff cap so sustained limiting does not burn the retry budget) |
 | **Context overflow** | Detected across vendors (incl. xAI `maximum prompt length`); not retried with the same payload; progressive prune + compact (keep 8→4→2) then re-issue |
-| **Per-model context window** | Unless `context_window` is set explicitly, the window follows the active model (`config/model-info.ts`: grok-4.5=500k, grok-4=256k, grok-3=131k, claude-*=200k, gpt-4.1=1M …) on load, `/model`, and provider fallback — a stale 500k budget no longer overflows smaller models |
+| **Per-model context window** | Unless `context_window` is set explicitly, the window follows the active model (`config/model-info.ts` + `grok-model.ts`: grok-4.6/4.5=500k, newer Grok flagships inherit, grok-4=256k, grok-3=131k, claude-*=200k, gpt-4.1=1M …) on load, `/model`, and provider fallback — a stale 500k budget no longer overflows smaller models |
 | **Token estimate** | Conservative (~3.2 chars/token + per-message framing + tool-schema overhead) so auto-compact fires before the hard API max |
 | **Headroom compact** | Also compacts when estimate exceeds 92% of `context_window`, not only `auto_compact_threshold` |
 | **ULW after overflow** | Re-admits mandate/cycle after recovery so long tool-only waves do not die with `cycle=1 wave=0` and no resume guidance |

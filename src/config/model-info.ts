@@ -7,11 +7,13 @@
  * hard-headroom while auto-compact still thinks there is room.
  *
  * Lookup order:
- *  1. Exact id (normalized bare key)
- *  2. Family prefix heuristics
- *  3. OpenRouter remote/cache catalog (`context_length` from /api/v1/models)
+ *  1. Grok generation heuristic (`grok-model.ts` — 4.5+ is 500k; newer inherit)
+ *  2. Exact id (normalized bare key)
+ *  3. Family prefix heuristics
+ *  4. OpenRouter remote/cache catalog (`context_length` from /api/v1/models)
  */
 import path from "node:path";
+import { grokContextWindow } from "./grok-model.js";
 import { forgeHome, readJsonFile } from "../util/fs.js";
 
 /** Strip provider prefix and xAI alias suffixes: x-ai/grok-4.5-latest → grok-4.5 */
@@ -29,11 +31,7 @@ export function normalizeModelKey(model: string): string {
 
 /** Exact windows first, then family prefixes (tokens). */
 const MODEL_WINDOWS: Record<string, number> = {
-  "grok-4.5": 500_000,
-  "grok-4": 256_000,
-  "grok-3": 131_072,
-  "grok-3-mini": 131_072,
-  "grok-2": 131_072,
+  // Grok windows: see grok-model.ts (keeps grok-4.6+ from matching grok-4 → 256k).
   "gpt-4.1": 1_000_000,
   "gpt-4.1-mini": 1_000_000,
   "gpt-4.1-nano": 1_000_000,
@@ -71,9 +69,6 @@ const FAMILY_WINDOWS: Array<[prefix: string, window: number]> = [
   ["claude-opus-5", 1_000_000],
   ["claude-sonnet-5", 1_000_000],
   ["claude-", 200_000],
-  ["grok-4.5", 500_000],
-  ["grok-4", 256_000], // grok-4.x variants other than 4.5 (exact hit above)
-  ["grok-3", 131_072],
   ["gpt-4.1", 1_000_000],
   ["gpt-4o", 128_000],
   ["gpt-5", 1_050_000],
@@ -151,6 +146,9 @@ export function modelContextWindow(model: string): number | undefined {
   if (!model?.trim()) return undefined;
   const key = normalizeModelKey(model);
   if (!key) return undefined;
+
+  const grok = grokContextWindow(model);
+  if (grok) return grok;
 
   // Exact bare key
   const exact = MODEL_WINDOWS[key];

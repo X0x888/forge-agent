@@ -61,6 +61,7 @@ import {
   resolveReasoningEffort,
   type ReasoningEffort,
 } from "../config/reasoning.js";
+import { isGrokLineageModel } from "../config/grok-model.js";
 import {
   lastModelForProvider,
   loadPreferences,
@@ -70,6 +71,7 @@ import {
   buildModelCatalog,
   buildModelCatalogSync,
   providerAllowsFreeFormModels,
+  readProviderModelsCache,
   trackRecentModel,
 } from "../config/model-catalog.js";
 import { describeSandbox, detectSandboxBackend } from "../agent/sandbox.js";
@@ -114,7 +116,11 @@ import { parseDaysWindow, daysWindowHelp } from "../util/days-window.js";
 import { parseNewsCount, newsCountHelp } from "../util/news-count.js";
 import { parseLogsLines, logsLinesHelp } from "../util/logs-lines.js";
 import { editDistance } from "../util/string-distance.js";
-import { suggestName, suggestSessionAction } from "../util/suggest.js";
+import {
+  isAcceptableUnknownModelId,
+  suggestName,
+  suggestSessionAction,
+} from "../util/suggest.js";
 import { toolOutputStats } from "../agent/tools/truncate.js";
 import { listTasks } from "../agent/tools/background-tasks.js";
 import { loadSavedAllows } from "../agent/permission-saved.js";
@@ -1099,19 +1105,24 @@ export async function handleModelSlash(
   const provider = String(opts.config.provider);
   const freeForm = providerAllowsFreeFormModels(provider);
 
-  // Best-effort remote catalog for OpenRouter when listing
+  // Best-effort remote catalog for OpenRouter / xAI when listing
   let apiKey: string | undefined;
   if (provider === "openrouter") {
     apiKey =
       process.env.OPENROUTER_API_KEY?.trim() ||
       opts.auth?.token ||
       getCredential("openrouter")?.accessToken;
+  } else if (provider === "xai") {
+    apiKey =
+      process.env.XAI_API_KEY?.trim() ||
+      opts.auth?.token ||
+      getCredential("xai")?.accessToken;
   }
 
   const catalog = arg
     ? buildModelCatalogSync(opts.config, provider)
     : await buildModelCatalog(opts.config, provider, {
-        refreshRemote: provider === "openrouter",
+        refreshRemote: provider === "openrouter" || provider === "xai",
         apiKey,
         useCache: true,
       });
@@ -1158,10 +1169,10 @@ export async function handleModelSlash(
     ].join("\n");
     const effortLine = modelSupportsReasoningEffort(opts.config.model)
       ? chalk.dim(
-          `\nEffort: ${curEffort ?? "—"}  ·  /effort low|medium|high  or  /model <name> <effort>`,
+          `\nEffort: ${curEffort ?? "—"}  ·  /effort low|medium|high|xhigh  or  /model <name> <effort>`,
         )
       : chalk.dim(
-          "\nReasoning effort: not wired for this model (prefs kept for grok-4.5).",
+          "\nReasoning effort: not wired for this model (prefs kept for grok-4.6).",
         );
     const freeLine = freeForm
       ? chalk.dim(
@@ -1238,28 +1249,21 @@ export async function handleModelSlash(
           { minLength: 3, minScore: 38, requirePrefix3: false },
         )
       : null;
-    if (tip && !freeForm) {
+    const acceptUnknown =
+      !tip ||
+      isAcceptableUnknownModelId(modelArg, tip) ||
+      (freeForm && modelArg.includes("/"));
+    if (!acceptUnknown) {
       return {
         handled: true,
         output:
           `Unknown model "${modelArg}". Did you mean: ${tip}?\n` +
-          chalk.dim("Tab completes catalog names."),
+          chalk.dim(
+            freeForm
+              ? "Tab completes · free-form ids with org/name still accepted (e.g. deepseek/deepseek-v4-flash)."
+              : "Tab completes catalog names. Newer grok-*.* version bumps are accepted.",
+          ),
       };
-    }
-    if (tip && freeForm) {
-      // Free-form: only block if the input is a clear typo of a short catalog
-      // name without a provider slash (e.g. grok-45). OpenRouter ids with /
-      // always pass through.
-      if (!modelArg.includes("/") && tip) {
-        return {
-          handled: true,
-          output:
-            `Unknown model "${modelArg}". Did you mean: ${tip}?\n` +
-            chalk.dim(
-              "Tab completes · free-form ids with org/name still accepted (e.g. deepseek/deepseek-v4-flash).",
-            ),
-        };
-      }
     }
     resolved = modelArg;
   }
@@ -3197,7 +3201,7 @@ const stats = collectUsageStats({
             ) +
             chalk.dim(
               "Effort is sent for models that expose thinking controls " +
-                "(e.g. grok-4.5, deepseek-v4-*, many OpenRouter reasoning models). " +
+                "(e.g. grok-4.6, grok-4.5, deepseek-v4-*, many OpenRouter reasoning models). " +
                 "Default is each model’s maximum allowed level.",
             ),
         };
@@ -5947,9 +5951,15 @@ export async function runDoctorCheck(
       ...(pcfg?.defaultModel ? [pcfg.defaultModel] : []),
     ];
     if (catalog.length && reportModel) {
-      modelInCatalog = catalog.some(
-        (m) => m.toLowerCase() === String(reportModel).toLowerCase(),
-      );
+      const cachedRemote = readProviderModelsCache(reportProvider) || [];
+      modelInCatalog =
+        catalog.some(
+          (m) => m.toLowerCase() === String(reportModel).toLowerCase(),
+        ) ||
+        cachedRemote.some(
+          (m) => m.toLowerCase() === String(reportModel).toLowerCase(),
+        ) ||
+        isGrokLineageModel(reportModel);
       if (!modelInCatalog) {
         lines.push(
           chalk.yellow(
