@@ -3,6 +3,7 @@
 ## Unreleased
 
 ### Fixed
+- **Project memory mirror no-op writes**: `.forge/MEMORY.md` is not rewritten when only the `updated=` timestamp would change, so a tracked memory file no longer dirties `git status` after load/import.
 - **Unattended ULW no longer dies on `terminated` / generic `provider_error`**: Node/undici `TypeError: terminated` (xAI often RST the socket when a token dies mid-stream instead of HTTP 401/403) was not retryable and skipped OAuth recovery, so the run dropped to `forge ›` even though typing `continue` refreshed the token and resumed. Drops are now retried, credentials force-refreshed in-loop, and ULW auto-continues the same transcript (`FORGE_ULW_AUTO_CONTINUE=0` off).
 - **Config load alias/bool canonicalization**: global `~/.forge/config` values like `permission_mode = "yolo"`, `sandbox = "none"`, and `blocking_stop_hooks = "false"` now coerce to `bypassPermissions` / `off` / real `false` at load — PermissionGate, sandbox, and Stop fail-closed no longer disagree with doctor/CI warnings.
 - **Blocking Stop stringy false**: doctor, production-warnings, hooks, stop-guard, and project overlay treat `"false"`/`"0"`/`off` as OFF for `blockingStopHooks` (JS truthiness trap); project still cannot disable the non-negotiable default.

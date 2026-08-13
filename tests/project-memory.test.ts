@@ -14,8 +14,10 @@ import {
   formatProjectMemoryStatus,
   listActiveProjectMemory,
   loadProjectMemory,
+  projectMemoryJsonPath,
   projectMemoryKey,
   resolveProjectMemoryRoot,
+  stableProjectMemoryMarkdown,
 } from "../src/harness/project-memory.js";
 import { toolMemoryWrite } from "../src/agent/tools/memory-write.js";
 import type { ToolContext } from "../src/agent/tools/types.js";
@@ -110,6 +112,24 @@ describe("project memory", () => {
     const body = fs.readFileSync(md, "utf8");
     assert.match(body, /ESM only/);
     assert.match(body, /convention/i);
+  });
+
+  it("does not rewrite MEMORY.md when only the updated timestamp would change", () => {
+    appendProjectMemory(ws, {
+      kind: "gotcha",
+      text: "do not churn the tracked memory mirror",
+    });
+    const md = path.join(ws, ".forge", "MEMORY.md");
+    const before = fs.readFileSync(md, "utf8");
+    const beforeMtime = fs.statSync(md).mtimeMs;
+    // Import path: delete JSON so the next load re-seeds from the mirror
+    // and saveStore() would previously rewrite updated= and dirty git.
+    fs.rmSync(projectMemoryJsonPath(ws), { force: true });
+    loadProjectMemory(ws);
+    const after = fs.readFileSync(md, "utf8");
+    assert.equal(stableProjectMemoryMarkdown(after), stableProjectMemoryMarkdown(before));
+    assert.equal(after, before, "timestamp-only rewrite must not touch the file");
+    assert.equal(fs.statSync(md).mtimeMs, beforeMtime);
   });
 
   it("archives and clears", () => {

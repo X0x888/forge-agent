@@ -303,6 +303,18 @@ export function formatProjectMemoryStatus(workspace: string): string {
   return lines.join("\n");
 }
 
+/**
+ * Ignore the volatile `key=… · updated=…` line so a no-op save (JSON
+ * re-import, identical append dedupe path that still called saveStore)
+ * does not dirty a tracked `.forge/MEMORY.md`.
+ */
+export function stableProjectMemoryMarkdown(text: string): string {
+  return String(text || "")
+    .replace(/^> key=.*$/gm, "")
+    .replace(/\s+$/g, "")
+    .trim();
+}
+
 function writeMarkdownMirror(store: ProjectMemoryStore): void {
   const mdPath = projectMemoryMarkdownPath(store.root);
   ensureDir(path.dirname(mdPath));
@@ -340,7 +352,19 @@ function writeMarkdownMirror(store: ProjectMemoryStore): void {
     }
     body.push(``);
   }
-  fs.writeFileSync(mdPath, body.join("\n"), { encoding: "utf8", mode: 0o600 });
+  const next = body.join("\n");
+  try {
+    if (fs.existsSync(mdPath)) {
+      const prev = fs.readFileSync(mdPath, "utf8");
+      if (stableProjectMemoryMarkdown(prev) === stableProjectMemoryMarkdown(next)) {
+        return;
+      }
+    }
+  } catch {
+    /* write anyway */
+  }
+  // Repo-tracked human mirror — not a secret store (JSON under ~/.forge is 0600).
+  fs.writeFileSync(mdPath, next, { encoding: "utf8", mode: 0o644 });
 }
 
 /** Import active bullets from .forge/MEMORY.md when JSON is empty/missing. */
