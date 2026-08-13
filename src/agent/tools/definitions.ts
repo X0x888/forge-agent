@@ -533,7 +533,8 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     function: {
       name: "spawn_subagent",
       description:
-        "Delegate a bounded subtask to a nested agent and receive its final summary. " +
+        "Delegate a bounded subtask to a nested agent and receive its summary plus an artifact_path. " +
+        "status=incomplete_max_turns means the child hit its turn cap — read_file the artifact; do not re-spawn the same explore. " +
         "Types: general-purpose | explore (read-only) | plan (read-only design). " +
         "isolation=worktree creates a detached git worktree under ~/.forge/worktrees/ (requires git). On success Forge captures the diff and lands it into the parent automatically (FORGE_SUBAGENT_LAND=keep|discard to override; worktree kept on conflict). Successful land journals parent pre-images so /undo can revert it. " +
         "General-purpose defaults to worktree when the workspace is a git repo; explore/plan stay in-place. Pass isolation=none (or FORGE_SUBAGENT_ISOLATION=none) to write the parent tree directly. " +

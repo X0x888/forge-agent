@@ -127,8 +127,8 @@ function buildDoomMessage(
   return (
     `[Forge doom-loop] You called \`${name}\` with the same arguments ${count} times in a row` +
     (preview ? ` (${preview})` : "") +
-    `. STOP repeating. Change approach: re-read the file, try a different tool, ` +
-    `narrow/broaden the query, fix the underlying error, or ask a clarifying question. ` +
+    `. STOP repeating. Change approach: use a different tool or different arguments, or edit the file. ` +
+    `If a previous result was cleared, read_file the saved output path — do not re-read the same window. ` +
     `Identical retries waste turns and will keep failing. ` +
     `If the tool error names a missing path/arg, fix that first; if permission denied, do not retry the same mutation. ` +
     `When stuck after edits, run \`${verify}\` once to learn the real failure.`

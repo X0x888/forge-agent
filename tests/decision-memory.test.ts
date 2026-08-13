@@ -98,6 +98,34 @@ Please comprehensively audit and improve this app:
     assert.match(result.summary, /Decisions|constraints|Never weaken|auth/i);
   });
 
+  it("context-admit surfaces new decisions without a Stop", async () => {
+    const { snapshotHarness, admitHarnessIfChanged, clearAdmittedFingerprints } =
+      await import("../src/harness/context-admit.js");
+    const sid = "sess-admit-mem";
+    fs.mkdirSync(path.join(home, "sessions", sid), { recursive: true });
+    clearAdmittedFingerprints(sid);
+    const base = {
+      ulw: null,
+      goal: null,
+      todos: [] as { id: string; content: string; status: "pending" }[],
+      permissionMode: "default",
+      sessionId: sid,
+    };
+    const empty = snapshotHarness(base);
+    admitHarnessIfChanged(sid, empty);
+    appendMemoryRecord(sid, {
+      kind: "constraint",
+      text: "Do not weaken Stop fail-closed",
+      source: "agent",
+    });
+    const next = snapshotHarness(base);
+    const msg = admitHarnessIfChanged(sid, next);
+    assert.ok(msg);
+    assert.match(msg!, /Active decisions/);
+    assert.match(msg!, /Do not weaken Stop fail-closed/);
+    clearAdmittedFingerprints(sid);
+  });
+
   it("copyDecisionMemory clones to fork id", () => {
     const a = "sess-a";
     const b = "sess-b";

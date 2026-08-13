@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Fixed
+- **Lossless tool-clear**: microcompaction spools the body to `~/.forge/tool-output/` before stubbing. Stubs say `read_file` the Full output path — never “re-run” `spawn_subagent` / bash. Dumps still referenced by a session are not pruned. ULW keep-recent floors at 10 so a legal 8-tool parallel batch fits the hot tail.
+- **Subagent handoff**: children write an artifact, report `incomplete_max_turns` instead of pretending success, synthesize findings when `finalText` is empty/mid-thought, and get a last-turn “write the report now” reminder. The child session is deleted only after a completed run with an artifact on disk.
+- **Self-heal visibility**: doom-loop / error-streak lastError is kept and re-admitted as a harness reminder (survives tool-clear). Decision memory is admitted mid-loop when `decisions.json` changes — not only at Stop/compact. Prompt and doom copy tell the model to change tool or write, not re-read the same window.
+- **No-op compact**: FileReadState is no longer wiped when compact drops zero messages.
+
 ### Added
 - **`enter_plan_mode`**: the agent can pause into read-only plan mode on ambiguous/architectural work without waiting for `/plan`, then `exit_plan_mode` to implement. Subagents cannot flip the parent session.
 - **Same-provider model fallback**: after 429/5xx/overloaded retries exhaust, Forge switches to the next model in `fallback_models` / `FORGE_FALLBACK_MODELS` / `--fallback-models` / `/fallback` (defaults: grok-4.6 → grok-4.5 → grok-4; `off` disables). Quota/auth errors still take the account-switch path. `/fallback` and mid-run switches persist on the session (resume + `/status`). Last hop (`from → to`) is stamped on `session.meta.lastModelFallback` and shown on `/share`, `/status`, resume, export, and `forge run --json`. ULW with fallback off is a production warning.

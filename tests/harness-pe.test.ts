@@ -464,7 +464,7 @@ describe("prompt profile + baseline system", () => {
         project: null,
       });
       assert.ok(
-        text.length < 13_500,
+        text.length < 14_200,
         `baseline system prompt grew to ${text.length} chars`,
       );
       // Without builtins the core doctrine alone must stay small.
@@ -478,7 +478,7 @@ describe("prompt profile + baseline system", () => {
           project: null,
         });
         assert.ok(
-          lean.length < 8000,
+          lean.length < 8500,
           `core baseline (no builtins) grew to ${lean.length} chars`,
         );
       } finally {

@@ -19,6 +19,10 @@ import { detectProjectIntel } from "../util/project-intel.js";
 import { looksLikeAdvisoryUserMessage } from "../util/advisory-intent.js";
 import { formatMemoryForPrompt } from "../harness/decision-memory.js";
 import { formatProjectMemoryForPrompt } from "../harness/project-memory.js";
+import {
+  extractSavedOutputPath,
+  ensureToolOutputSpool,
+} from "./tool-clearing.js";
 export { looksLikeAdvisoryUserMessage } from "../util/advisory-intent.js";
 
 export interface CompactContext {
@@ -288,6 +292,17 @@ export function buildStructuredSummary(
         `- Paths/commands (sample): ${[...paths].slice(0, 20).join("; ")}`,
       );
     }
+    const artifacts: string[] = [];
+    for (const m of dropped) {
+      if (m.role !== "tool" || !m.content) continue;
+      const p = extractSavedOutputPath(m.content);
+      if (p && !artifacts.includes(p)) artifacts.push(p);
+    }
+    if (artifacts.length) {
+      sections.push(
+        `- Saved tool output (read_file to restore): ${artifacts.slice(0, 8).join("; ")}`,
+      );
+    }
   }
 
   // 5. Assistant conclusions / errors (heuristic)
@@ -315,7 +330,7 @@ export function buildStructuredSummary(
     `## 6. Resume`,
     `- Continue the active mandate/goal without re-scanning from zero unless evidence is stale.`,
     `- Prefer verifying current workspace state over trusting this summary alone.`,
-    `- File-read memory is session-local: re-read a path before editing if the transcript no longer contains that read.`,
+    `- File-read memory is session-local: re-read a path before editing if the transcript no longer contains that hunk. Restore cleared tool bodies with read_file on the Full output path — do not re-run spawn_subagent or bash.`,
   );
 
   return sections.filter((l) => l !== undefined && l !== "").join("\n");
@@ -354,11 +369,22 @@ export function pruneOversizedMessageBodies(
       const c = m.content || "";
       if (c.length > maxTool) {
         pruned += 1;
+        let pointer = extractSavedOutputPath(c);
+        if (!pointer) {
+          try {
+            pointer = ensureToolOutputSpool(c);
+          } catch {
+            pointer = undefined;
+          }
+        }
+        const restore = pointer
+          ? `full output: ${pointer} — use read_file on that path`
+          : "read_file the saved output path if one was recorded";
         return {
           ...m,
           content:
             c.slice(0, Math.floor(maxTool * 0.7)) +
-            `\n\n… [pruned ${c.length - maxTool} chars for context recovery — re-run tool or read full output path if still needed] …\n\n` +
+            `\n\n… [pruned ${c.length - maxTool} chars for context recovery — ${restore}] …\n\n` +
             c.slice(-(Math.floor(maxTool * 0.2))),
         };
       }

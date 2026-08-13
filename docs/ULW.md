@@ -113,7 +113,7 @@ Anti-gaming is **structural, not prompt-based**: the only way to satisfy a proof
 
 - Slim re-anchors: the cycle protocol lives once in the stable system prompt; per-wave messages carry only counts, the bar, and wave-specific demands
 - Counter-only harness changes (wave/blocks/todo counts) no longer emit a full mid-conversation admission — the re-anchor already carries them
-- Stale bulky tool outputs are proactively cleared to restorable stubs (microcompaction; `FORGE_TOOL_CLEAR*`)
+- Stale bulky tool outputs are proactively cleared to restorable stubs (microcompaction; `FORGE_TOOL_CLEAR*`). Restore with `read_file` on the Full output path — do not re-spawn a child to recover a cleared report.
 - Cheapest-proof guidance: affected tests per wave, full suite on consolidation waves
 
 ## State

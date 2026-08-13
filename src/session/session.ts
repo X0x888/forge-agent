@@ -1779,11 +1779,13 @@ export function compactMessages(
   keepLast = 12,
   context?: CompactContext,
 ): ChatMessage[] {
-  const next = compactMessagesStructured(messages, { keepLast, context }).messages;
-  if (context?.sessionId) {
+  const result = compactMessagesStructured(messages, { keepLast, context });
+  // Only drop FileReadState when history was actually rewritten — a no-op
+  // compact must not force a re-read of files the model just opened.
+  if (context?.sessionId && result.droppedCount > 0) {
     clearFileReadsForSession(context.sessionId);
   }
-  return next;
+  return result.messages;
 }
 
 /**

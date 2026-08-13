@@ -189,6 +189,10 @@ export {
   defaultMaxSubagentDepth,
   getActiveSubagentCount,
   listActiveSubagents,
+  synthesizeSubagentFindings,
+  resolveSubagentHandoffStatus,
+  writeSubagentArtifact,
+  formatSubagentResult,
 } from "./agent/subagent.js";
 export type {
   ActiveSubagentInfo,
@@ -198,6 +202,7 @@ export type {
   SubagentRequest,
   SubagentResult,
   SubagentRunContext,
+  SubagentHandoffStatus,
 } from "./agent/subagent.js";
 export {
   applyWorktreePatch,
@@ -685,6 +690,16 @@ export {
   DoomLoopTracker,
   toolFingerprint,
 } from "./agent/doom-loop.js";
+export {
+  extractSavedOutputPath,
+  formatClearedToolStub,
+  ensureToolOutputSpool,
+  isIdempotentRestoreTool,
+} from "./session/tool-clearing.js";
+export {
+  saveFullOutputSync,
+  collectPinnedToolOutputPaths,
+} from "./agent/tools/truncate.js";
 export {
   ErrorStreakTracker,
   isCountableToolError,

@@ -16,6 +16,7 @@ import {
   formatGitTreeLine,
   type GitSnapshot,
 } from "../util/git-context.js";
+import { formatMemoryForPrompt } from "./decision-memory.js";
 
 export interface HarnessSnapshot {
   ulwEnabled: boolean;
@@ -44,6 +45,10 @@ export interface HarnessSnapshot {
   gitTree?: string;
   /** Boolean dirty bit — real change when it flips (first edit / commit). */
   gitDirty?: boolean;
+  /** Fingerprint of active decisions.json (admit on change, not every turn). */
+  decisionsFp?: string;
+  /** Short active-constraint block for the admit message. */
+  decisionsText?: string;
 }
 
 const lastAdmitted = new Map<string, string>();
@@ -55,6 +60,7 @@ export function snapshotHarness(opts: {
   todos: TodoItem[];
   permissionMode: string;
   git?: GitSnapshot | null;
+  sessionId?: string;
 }): HarnessSnapshot {
   const ulw = opts.ulw?.enabled ? opts.ulw : null;
   const goal =
@@ -67,6 +73,23 @@ export function snapshotHarness(opts: {
   const openTodos = opts.todos.filter(
     (t) => t.status === "pending" || t.status === "in_progress",
   ).length;
+
+  let decisionsFp = "";
+  let decisionsText = "";
+  if (opts.sessionId) {
+    try {
+      const mem = formatMemoryForPrompt(opts.sessionId, {
+        budget: 1600,
+        includeWave: false,
+      });
+      if (mem.activeCount > 0) {
+        decisionsText = mem.text;
+        decisionsFp = `${mem.activeCount}:${mem.text.length}:${mem.text.slice(0, 80)}`;
+      }
+    } catch {
+      /* sidecar optional */
+    }
+  }
 
   return {
     ulwEnabled: Boolean(ulw),
@@ -84,6 +107,8 @@ export function snapshotHarness(opts: {
     gitBranch: opts.git ? formatGitBranchLine(opts.git) : "",
     gitTree: opts.git?.root ? formatGitTreeLine(opts.git) : "",
     gitDirty: Boolean(opts.git?.dirty),
+    decisionsFp,
+    decisionsText,
   };
 }
 
@@ -103,6 +128,7 @@ export function fingerprintSnapshot(s: HarnessSnapshot): string {
     s.permissionMode,
     s.gitBranch ?? "",
     s.gitDirty ? "1" : "0",
+    s.decisionsFp ?? "",
   ].join("\x1f");
 }
 
@@ -147,7 +173,8 @@ function countersOnlyChange(a: HarnessSnapshot, b: HarnessSnapshot): boolean {
     a.goalPaused === b.goalPaused &&
     a.permissionMode === b.permissionMode &&
     (a.gitBranch ?? "") === (b.gitBranch ?? "") &&
-    Boolean(a.gitDirty) === Boolean(b.gitDirty)
+    Boolean(a.gitDirty) === Boolean(b.gitDirty) &&
+    (a.decisionsFp ?? "") === (b.decisionsFp ?? "")
   );
 }
 
@@ -257,6 +284,10 @@ export function renderHarnessAdmission(s: HarnessSnapshot): string {
     ``,
     `Permission mode: ${s.permissionMode}`,
   );
+
+  if (s.decisionsText) {
+    lines.push(``, `## Active decisions`, s.decisionsText);
+  }
 
   if (s.gitBranch || s.gitTree) {
     lines.push(

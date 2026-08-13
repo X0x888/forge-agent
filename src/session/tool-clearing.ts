@@ -5,13 +5,13 @@
  * them with a one-line restorable stub. File system as external memory: drop
  * the body, keep the pointer (tool name, original size, saved-output path).
  *
- * Unlike full compaction this is lossless-enough and cheap: the recent "hot
- * tail" is untouched, already-cleared stubs are skipped (idempotent), and any
- * body that was previously spooled to disk by managed truncation keeps its
- * `saved to <path>` pointer so the model can re-read it with read_file.
+ * Bodies without an existing `saved to` footer are spooled first so clearing
+ * is lossless. Restore is `read_file` on that path — never "re-run" a
+ * non-idempotent tool (spawn_subagent, bash, MCP).
  */
 import type { ChatMessage } from "../providers/types.js";
 import { envPositiveInt } from "../util/env.js";
+import { saveFullOutputSync } from "../agent/tools/truncate.js";
 
 export const TOOL_CLEAR_DEFAULT_KEEP_RECENT = 10;
 export const TOOL_CLEAR_DEFAULT_MIN_CHARS = 1200;
@@ -25,7 +25,57 @@ export const TOOL_CLEARED_MARKER = "[Stale tool output cleared";
  * `... saved to /path/tool_123.txt. Use read_file on that path if you need more.]`
  * The trailing `.` belongs to the footer sentence, not the path.
  */
-const SAVED_TO_RE = /saved to (\S+?)\.(?:\s|$)/;
+const SAVED_TO_RE = /saved to ([^\s"'\\]+?)\.(?:\s|$)/;
+const FULL_OUTPUT_RE = /Full output: ([^\s"'\\]+)/;
+
+/** Workspace-refreshable tools — re-read the tree is valid; still keep the spool. */
+const IDEMPOTENT_RESTORE_TOOLS = new Set([
+  "read_file",
+  "Read",
+  "read",
+  "grep",
+  "Grep",
+  "glob",
+  "Glob",
+  "list_dir",
+  "ListDir",
+]);
+
+export function isIdempotentRestoreTool(name: string): boolean {
+  return IDEMPOTENT_RESTORE_TOOLS.has(name);
+}
+
+/** Extract an existing spool path from a tool body or stub. */
+export function extractSavedOutputPath(body: string): string | undefined {
+  const full = FULL_OUTPUT_RE.exec(body);
+  if (full?.[1]) return full[1].replace(/[.,;"']+$/, "");
+  const saved = SAVED_TO_RE.exec(body);
+  if (saved?.[1]) return saved[1];
+  return undefined;
+}
+
+export function formatClearedToolStub(opts: {
+  name: string;
+  chars: number;
+  outputPath: string;
+  idempotent: boolean;
+}): string {
+  const head = `${TOOL_CLEARED_MARKER} (${opts.name}, ${opts.chars} chars). Full output: ${opts.outputPath} — use read_file on that path.`;
+  if (opts.idempotent) {
+    return `${head} Re-read the workspace path if the working tree may have changed.]`;
+  }
+  return `${head} Do not re-run ${opts.name} to restore this result.]`;
+}
+
+/**
+ * Ensure `body` lives on disk and return the path. Reuses an existing
+ * boundToolOutput / prior-clear pointer when present.
+ */
+export function ensureToolOutputSpool(body: string): string {
+  const existing = extractSavedOutputPath(body);
+  if (existing) return existing;
+  return saveFullOutputSync(body);
+}
 
 export interface ToolClearOptions {
   /** The N most recent non-system messages are always left untouched. */
@@ -74,6 +124,9 @@ function toolNameMap(messages: ChatMessage[]): Map<string, string> {
  * callers can skip re-saving the session. System/user/assistant messages are
  * never touched, and cleared tool messages keep role + tool_call_id so
  * provider tool-call pairing stays intact.
+ *
+ * Each cleared body is spooled under ~/.forge/tool-output/ first (or reuses
+ * an existing saved-to pointer) so the stub is always restorable.
  */
 export function clearStaleToolResults(
   messages: ChatMessage[],
@@ -96,11 +149,19 @@ export function clearStaleToolResults(
     if (body.includes(TOOL_CLEARED_MARKER)) continue;
 
     const name = (m.tool_call_id && nameById.get(m.tool_call_id)) || "tool";
-    let stub =
-      `[Stale tool output cleared (${name}, ${body.length} chars) — ` +
-      `re-run the tool if you need it again.]`;
-    const saved = SAVED_TO_RE.exec(body);
-    if (saved) stub += ` Full output: ${saved[1]}`;
+    let outputPath: string;
+    try {
+      outputPath = ensureToolOutputSpool(body);
+    } catch {
+      // Fail open: keep the body rather than delete unique work.
+      continue;
+    }
+    const stub = formatClearedToolStub({
+      name,
+      chars: body.length,
+      outputPath,
+      idempotent: isIdempotentRestoreTool(name),
+    });
 
     if (!out) out = messages.slice();
     out[i] = { ...m, content: stub };

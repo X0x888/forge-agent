@@ -64,6 +64,7 @@ const RESERVED = new Set([
   "todos",
   "provider",
   "model",
+  "fallback",
   "effort",
   "temperature",
   "temp",

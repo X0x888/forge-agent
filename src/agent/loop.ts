@@ -78,7 +78,6 @@ import { getGitSnapshot, type GitSnapshot } from "../util/git-context.js";
 import {
   FileReadState,
   fileReadsForSession,
-  clearFileReadsForSession,
 } from "./tools/file-read-state.js";
 import {
   resetTodoNudgeForPrompt,
@@ -701,7 +700,6 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
     // Compact rewrites history — resync undo marks so /undo never restores disk
     // against a no-op chat rewind.
     rebuildUserTurnMarks(session);
-    clearFileReadsForSession(session.meta.id);
     await hooks.run("PostCompact", baseHookCtx(session, config));
     saveSession(session);
     const afterTok = estimateTokens(session.messages);
@@ -824,6 +822,31 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
       assertNotAborted(signal);
       turns += 1;
 
+      // Nested children never see their turn budget unless we say so. On the
+      // last allowed turn, demand the report instead of another search.
+      if (
+        subagentDepth > 0 &&
+        Number.isFinite(maxTurns) &&
+        turns === maxTurns
+      ) {
+        const already = session.messages.some(
+          (m) =>
+            m.role === "user" &&
+            typeof m.content === "string" &&
+            m.content.startsWith("[Forge system-reminder — last turn]"),
+        );
+        if (!already) {
+          session.messages.push({
+            role: "user",
+            content:
+              `[Forge system-reminder — last turn]\n` +
+              `Turn budget exhausted next iteration (${maxTurns}/${maxTurns}). ` +
+              `Emit the structured findings now (citations, ranked gaps, what you did not cover). ` +
+              `Do not start a new search unless one citation is missing.`,
+          });
+        }
+      }
+
       // Live /plan|/build|/permissions can flip config.permissionMode mid-run.
       // Refresh message[0] so the next model call sees PLAN MODE rules without
       // waiting for a new user prompt (OpenCode-style plan↔build switch).
@@ -929,8 +952,11 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
       const clearEvery = ulwAggressive
         ? Math.min(toolClearEveryTurns, 2)
         : toolClearEveryTurns;
+      // ULW used to cap keepRecent at 6, which is smaller than a legal
+      // parallel read-only batch (8 tools + assistant). Floor at 10 so the
+      // advertised hot tail can actually hold the last batch.
       const keepRecent = ulwAggressive
-        ? Math.min(toolClearCfg.keepRecent, 6)
+        ? Math.max(toolClearCfg.keepRecent, 10)
         : toolClearCfg.keepRecent;
       const minStale = ulwAggressive
         ? Math.min(toolClearCfg.minStaleBytes, 8000)
@@ -951,7 +977,7 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
           lastToolClearTurn = turns;
           saveSession(session);
           log.dim(
-            `Cleared ${cleared.cleared} stale tool result(s), freed ~${Math.round(cleared.freedChars / 1000)}k chars — stubs point back to re-run`,
+            `Cleared ${cleared.cleared} stale tool result(s), freed ~${Math.round(cleared.freedChars / 1000)}k chars — stubs point at saved output`,
           );
         }
       }
@@ -973,6 +999,7 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
 
       // Safe provider-turn boundary: admit harness deltas, live slash, free-text
       drainSafeBoundaryMessages(session, config, events, gitSnap, fileReads);
+      maybeAdmitSelfHealReminder(session);
 
       // Soft todo nudge under ULW/goal (does not block)
       const lastUserForNudge = [...session.messages]
@@ -2209,6 +2236,8 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
     lastErrCode === "proof_claim_released" ||
     lastErrCode === "max_cost" ||
     lastErrCode === "max_turns" ||
+    lastErrCode === "doom_loop" ||
+    lastErrCode === "error_streak" ||
     lastErrCode.startsWith("continue_cap");
   if (!aborted && !keepLastError) {
     try {
@@ -2341,6 +2370,7 @@ function admitHarnessState(
     todos: session.todos,
     permissionMode: config.permissionMode,
     git: opts?.git,
+    sessionId: session.meta.id,
   });
   const msg = admitHarnessIfChanged(session.meta.id, snap, {
     suppressCounterOnlyChanges: opts?.suppressCounterOnly,
@@ -2348,6 +2378,35 @@ function admitHarnessState(
   if (msg) {
     session.messages.push({ role: "user", content: msg });
   }
+}
+
+/** Doom/error-streak warnings live in tool bodies that microcompaction deletes. */
+function maybeAdmitSelfHealReminder(session: SessionData): void {
+  const code = session.meta.lastError?.code;
+  if (code !== "doom_loop" && code !== "error_streak") return;
+  const tag =
+    code === "doom_loop"
+      ? "[Forge system-reminder — doom-loop]"
+      : "[Forge system-reminder — error-streak]";
+  const recent = session.messages.slice(-16);
+  if (
+    recent.some(
+      (m) =>
+        m.role === "user" &&
+        typeof m.content === "string" &&
+        m.content.startsWith(tag),
+    )
+  ) {
+    return;
+  }
+  const detail = (session.meta.lastError?.message || code).slice(0, 400);
+  session.messages.push({
+    role: "user",
+    content:
+      `${tag}\n${detail}\n` +
+      `Do not repeat the same tool+args. Change tool or write. ` +
+      `If a result was cleared, read_file the Full output path — do not re-run the original tool.`,
+  });
 }
 
 /**
@@ -2999,8 +3058,8 @@ async function prepareToolResult(opts: {
         code: "doom_loop",
         message: doomHit.message.split("\n")[0] || "doom-loop",
         tips: [
-          "Change tool/args · re-read the file",
-          "Do not retry the same denied mutation",
+          "Change tool/args · write, or read_file the saved output path",
+          "Do not retry the same denied mutation or the same read window",
         ],
       });
       saveSession(session);
@@ -3028,7 +3087,7 @@ async function prepareToolResult(opts: {
             code: "error_streak",
             message: hit.message.split("\n")[0] || "error-streak",
             tips: [
-              "Re-read the real error · change tool/scope",
+              "Read the real error or saved output path · change tool/scope",
               "/compact  ·  /retry  ·  /sessions errors",
             ],
           });
@@ -3039,6 +3098,14 @@ async function prepareToolResult(opts: {
       }
     } else if (!result.isError) {
       errorStreak.observeSuccess();
+      const errCode = session.meta.lastError?.code;
+      if (errCode === "doom_loop" || errCode === "error_streak") {
+        try {
+          clearSessionLastError(session);
+        } catch {
+          /* */
+        }
+      }
     }
   }
 

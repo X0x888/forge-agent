@@ -108,7 +108,7 @@ function buildErrorStreakMessage(count: number, recent: string[]): string {
     `[Forge error-streak] ${count} consecutive tool errors without a success.\n` +
     `Recent failures:\n${list}\n` +
     `STOP thrashing. Change strategy now:\n` +
-    `1. Re-read the actual file/error output (do not guess paths).\n` +
+    `1. Read the tool error and the saved output path if the body was cleared — do not guess or re-issue the same call.\n` +
     `2. Run the cheapest verification (\`${verify}\`) to learn the real failure.\n` +
     `3. Try a different tool or narrower scope — identical retries will keep failing.\n` +
     `4. If blocked on missing credentials/external state, say so clearly instead of looping.\n` +

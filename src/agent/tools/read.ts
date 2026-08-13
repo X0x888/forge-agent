@@ -267,7 +267,8 @@ export async function toolRead(
     const header =
       `File: ${rel} (${complete ? `${seen} lines, ` : ""}showing ${parsed.offset}-${end}` +
       (more ? `; use offset=${end + 1} for more` : "") +
-      `${hitCap ? "; collect cap hit" : ""}${largeHint})\n`;
+      `${hitCap ? "; collect cap hit" : ""}${largeHint}` +
+      `${more ? ". If you already have the lines you will change, search_replace now — do not page in tiny slices" : ""})\n`;
     const managed = await boundToolOutput(header + numbered, {
       maxLines: DEFAULT_MAX_LINES + 5,
       maxBytes: DEFAULT_MAX_BYTES,
@@ -336,7 +337,8 @@ export async function toolRead(
   const header =
     `File: ${rel} (${lines.length} lines, showing ${offset}-${end}` +
     (more ? `; use offset=${end + 1} for more` : "") +
-    `${largeHint})\n`;
+    `${largeHint}` +
+    `${more ? ". If you already have the lines you will change, search_replace now — do not page in tiny slices" : ""})\n`;
 
   const body = header + numbered;
   const managed = await boundToolOutput(body, {

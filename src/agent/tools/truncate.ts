@@ -6,7 +6,7 @@
 import fs from "node:fs";
 import fsp from "node:fs/promises";
 import path from "node:path";
-import { ensureDirAsync, forgeHome } from "../../util/fs.js";
+import { ensureDir, ensureDirAsync, forgeHome } from "../../util/fs.js";
 import { truncateMiddle } from "../../util/format.js";
 
 export const DEFAULT_MAX_LINES = 2000;
@@ -40,6 +40,26 @@ export function toolOutputDir(): string {
   return path.join(forgeHome(), "tool-output");
 }
 
+function nextToolOutputPath(): string {
+  const dir = toolOutputDir();
+  const name = `tool_${Date.now()}_${Math.random().toString(36).slice(2, 8)}.txt`;
+  return path.join(dir, name);
+}
+
+/** Sync spool for microcompaction (must not drop a body without a pointer). */
+export function saveFullOutputSync(text: string): string {
+  const dir = toolOutputDir();
+  ensureDir(dir);
+  try {
+    pruneToolOutputsSync();
+  } catch {
+    /* never block a tool on prune */
+  }
+  const file = nextToolOutputPath();
+  fs.writeFileSync(file, text, { encoding: "utf8", mode: 0o600 });
+  return file;
+}
+
 export async function saveFullOutput(text: string): Promise<string> {
   const dir = toolOutputDir();
   await ensureDirAsync(dir);
@@ -49,8 +69,7 @@ export async function saveFullOutput(text: string): Promise<string> {
   } catch {
     /* never block a tool on prune */
   }
-  const name = `tool_${Date.now()}_${Math.random().toString(36).slice(2, 8)}.txt`;
-  const file = path.join(dir, name);
+  const file = nextToolOutputPath();
   // 0600 like sandbox-log/writeJsonFile: bash dumps can contain secrets.
   await fsp.writeFile(file, text, { encoding: "utf8", mode: 0o600 });
   return file;
@@ -91,6 +110,50 @@ export interface PruneToolOutputsResult {
   freedBytes: number;
 }
 
+const FULL_OUTPUT_RE = /Full output: ([^\s"'\\]+)/g;
+const SAVED_TO_PIN_RE = /saved to ([^\s"'\\]+?)\.(?:\s|$)/g;
+
+function addPinnedPath(pinned: Set<string>, raw: string): void {
+  const p = raw.replace(/[.,;"']+$/, "");
+  if (!p.startsWith("/") && !/^[A-Za-z]:[\\/]/.test(p)) return;
+  pinned.add(p);
+  try {
+    pinned.add(path.resolve(p));
+  } catch {
+    /* */
+  }
+}
+
+/**
+ * Paths still referenced by session transcripts. Prune must not delete these —
+ * they are the only restore path after microcompaction.
+ */
+export function collectPinnedToolOutputPaths(): Set<string> {
+  const pinned = new Set<string>();
+  const root = path.join(forgeHome(), "sessions");
+  let ids: string[];
+  try {
+    ids = fs.readdirSync(root);
+  } catch {
+    return pinned;
+  }
+  for (const id of ids) {
+    const file = path.join(root, id, "session.json");
+    let raw: string;
+    try {
+      raw = fs.readFileSync(file, "utf8");
+    } catch {
+      continue;
+    }
+    FULL_OUTPUT_RE.lastIndex = 0;
+    SAVED_TO_PIN_RE.lastIndex = 0;
+    let m: RegExpExecArray | null;
+    while ((m = FULL_OUTPUT_RE.exec(raw))) addPinnedPath(pinned, m[1]);
+    while ((m = SAVED_TO_PIN_RE.exec(raw))) addPinnedPath(pinned, m[1]);
+  }
+  return pinned;
+}
+
 /**
  * Prune ~/.forge/tool-output dumps: keep newest `keep`, drop older than maxAgeDays.
  */
@@ -124,9 +187,16 @@ export function pruneToolOutputsSync(opts?: {
     }
   }
   entries.sort((a, b) => b.mtime - a.mtime);
+  let pinned = new Set<string>();
+  try {
+    pinned = collectPinnedToolOutputPaths();
+  } catch {
+    pinned = new Set();
+  }
   let deleted = 0;
   let freedBytes = 0;
   entries.forEach((e, i) => {
+    if (pinned.has(e.path) || pinned.has(path.resolve(e.path))) return;
     const tooOld = cutoff > 0 && e.mtime < cutoff;
     const overKeep = i >= keep;
     if (tooOld || overKeep) {

@@ -192,7 +192,31 @@ describe("tool integration with fileReads", () => {
 });
 
 describe("compact clears FileReadState", () => {
-  it("compactMessages with sessionId forces re-read before edit", async () => {
+  it("no-op compact (nothing dropped) leaves FileReadState intact", async () => {
+    const id = "sess-compact-fileread-noop";
+    forgetFileReadsSession(id);
+    const d = tmpWorkspace();
+    const f = path.join(d, "a.ts");
+    fs.writeFileSync(f, "const x = 1;\n");
+    const state = fileReadsForSession(id);
+    assert.equal(await state.noteFromDisk(f), true);
+    compactMessages(
+      [
+        { role: "user", content: "read a.ts" },
+        { role: "assistant", content: "ok" },
+      ],
+      12,
+      { sessionId: id },
+    );
+    assert.equal(state.size(), 1);
+    assert.equal(
+      await state.checkBeforeMutate(f, { tool: "search_replace", rel: "a.ts" }),
+      null,
+    );
+    forgetFileReadsSession(id);
+  });
+
+  it("compactMessages that drops history forces re-read before edit", async () => {
     const id = "sess-compact-fileread";
     forgetFileReadsSession(id);
     const d = tmpWorkspace();
@@ -204,14 +228,12 @@ describe("compact clears FileReadState", () => {
       await state.checkBeforeMutate(f, { tool: "search_replace", rel: "a.ts" }),
       null,
     );
-    compactMessages(
-      [
-        { role: "user", content: "read a.ts" },
-        { role: "assistant", content: "ok" },
-      ],
-      12,
-      { sessionId: id },
-    );
+    const long: { role: "user" | "assistant"; content: string }[] = [];
+    for (let i = 0; i < 40; i++) {
+      long.push({ role: "user", content: `turn ${i}` });
+      long.push({ role: "assistant", content: `ok ${i}` });
+    }
+    compactMessages(long, 8, { sessionId: id });
     assert.equal(state.size(), 0);
     const msg = await state.checkBeforeMutate(f, {
       tool: "search_replace",

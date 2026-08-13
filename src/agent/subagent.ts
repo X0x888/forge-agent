@@ -16,17 +16,19 @@ import type { ToolDefinition } from "../providers/types.js";
 import type { HookRunner } from "../harness/hooks.js";
 import type { McpManager } from "../mcp/manager.js";
 import type { LspManager } from "../lsp/manager.js";
-import { forgeHome } from "../util/fs.js";
+import { ensureDir, forgeHome } from "../util/fs.js";
 import { envPositiveInt } from "../util/env.js";
 import { log } from "../util/log.js";
 import { TOOL_DEFINITIONS } from "./tools/definitions.js";
 import type { PermissionGate } from "./permissions.js";
 import type { SessionData } from "../session/session.js";
+import type { ChatMessage } from "../providers/types.js";
 import {
   createSession,
   deleteSessionDetailed,
   saveSession,
 } from "../session/session.js";
+import { loadDecisionMemory } from "../harness/decision-memory.js";
 import type { LoopEvents, LoopResult } from "./loop.js";
 import { normalizePermissionMode } from "../util/mode-aliases.js";
 import {
@@ -90,6 +92,29 @@ export interface SubagentResult {
   worktreePath?: string;
   /** Land outcome when isolation=worktree (auto-apply into parent by default). */
   worktreeLand?: WorktreeLandResult;
+  hitMaxTurns?: boolean;
+  status?: SubagentHandoffStatus;
+  artifactPath?: string;
+}
+
+export type SubagentHandoffStatus =
+  | "completed"
+  | "incomplete_max_turns"
+  | "aborted"
+  | "error"
+  | "stop_hook_blocked";
+
+export function resolveSubagentHandoffStatus(opts: {
+  error?: string;
+  aborted?: boolean;
+  hitMaxTurns?: boolean;
+  stopHookBlocked?: boolean;
+}): SubagentHandoffStatus {
+  if (opts.error) return "error";
+  if (opts.aborted) return "aborted";
+  if (opts.stopHookBlocked) return "stop_hook_blocked";
+  if (opts.hitMaxTurns) return "incomplete_max_turns";
+  return "completed";
 }
 
 const READ_ONLY_TOOLS = new Set([
@@ -199,6 +224,83 @@ export function defaultSubagentMaxTurns(): number {
   return envPositiveInt("FORGE_SUBAGENT_MAX_TURNS", 40);
 }
 
+const SYNTH_TOOLS = new Set([
+  "read_file",
+  "Read",
+  "read",
+  "grep",
+  "Grep",
+  "lsp",
+  "LSP",
+  "list_dir",
+  "ListDir",
+  "memory_write",
+]);
+
+/**
+ * Build a parent-facing findings block from the child transcript when
+ * finalText is empty or mid-thought (typical maxTurns last-turn).
+ */
+export function synthesizeSubagentFindings(
+  messages: ChatMessage[],
+  opts?: { maxAssistant?: number; maxTools?: number },
+): string {
+  const maxAsst = opts?.maxAssistant ?? 8;
+  const maxTools = opts?.maxTools ?? 12;
+  const nameById = new Map<string, string>();
+  for (const m of messages) {
+    if (m.role !== "assistant" || !m.tool_calls) continue;
+    for (const tc of m.tool_calls) nameById.set(tc.id, tc.function.name);
+  }
+
+  const assistant: string[] = [];
+  for (const m of messages) {
+    if (m.role !== "assistant") continue;
+    const t = (m.content || "").replace(/\s+/g, " ").trim();
+    if (t) assistant.push(t);
+  }
+  const asstPick = assistant.slice(-maxAsst);
+
+  const tools: string[] = [];
+  for (const m of messages) {
+    if (m.role !== "tool") continue;
+    const name = (m.tool_call_id && nameById.get(m.tool_call_id)) || "tool";
+    if (!SYNTH_TOOLS.has(name)) continue;
+    const body = (m.content || "").trim();
+    if (!body || body.startsWith("[Stale tool output cleared")) continue;
+    const excerpt = body.replace(/\s+/g, " ").slice(0, 220);
+    if (excerpt) tools.push(`- ${name}: ${excerpt}`);
+    if (tools.length >= maxTools) break;
+  }
+
+  const lines: string[] = [`## Synthesized findings`];
+  if (asstPick.length) {
+    lines.push(``, `### Recent assistant notes`);
+    for (const a of asstPick) lines.push(`- ${a.slice(0, 280)}`);
+  }
+  if (tools.length) {
+    lines.push(``, `### Tool excerpts`);
+    lines.push(...tools);
+  }
+  if (asstPick.length === 0 && tools.length === 0) {
+    lines.push(`- (no assistant notes or research excerpts in the child transcript)`);
+  }
+  return lines.join("\n");
+}
+
+export function writeSubagentArtifact(opts: {
+  childId: string;
+  header: string;
+  body: string;
+}): string {
+  const dir = path.join(forgeHome(), "tool-output");
+  ensureDir(dir);
+  const file = path.join(dir, `subagent_${opts.childId}.md`);
+  const text = `${opts.header}\n\n${opts.body}\n`;
+  fs.writeFileSync(file, text, { encoding: "utf8", mode: 0o600 });
+  return file;
+}
+
 /**
  * Run a nested agent loop and return a compact result for the parent tool.
  */
@@ -299,15 +401,17 @@ export async function runSubagent(
     title: `subagent: ${description}`.slice(0, 200),
   });
 
+  const childMaxTurns =
+    req.maxTurns && req.maxTurns > 0
+      ? Math.floor(req.maxTurns)
+      : defaultSubagentMaxTurns();
+
   // Plan-type subagents run under plan permission mode
   const childConfig: ForgeConfig = {
     ...ctx.config,
     workspace: childWorkspace,
     // Cap turns for nested work
-    maxTurns:
-      req.maxTurns && req.maxTurns > 0
-        ? Math.floor(req.maxTurns)
-        : defaultSubagentMaxTurns(),
+    maxTurns: childMaxTurns,
     // Don't inherit ULW/goal auto-arm into child
     goal: { ...ctx.config.goal, autoArm: false },
     permissionMode: resolveChildPermissionMode(
@@ -365,6 +469,7 @@ export async function runSubagent(
     parentSessionId: ctx.parentSession.meta.id,
     isolation,
     worktreePath: worktree?.path,
+    maxTurns: childMaxTurns,
   });
 
   let result: LoopResult | undefined;
@@ -456,14 +561,39 @@ export async function runSubagent(
     text += `\n\n[SubagentStop hook requested continue: ${stopHook.reason || "blocked"} — parent should re-spawn or finish remaining work]`;
   }
 
+  const status = resolveSubagentHandoffStatus({
+    error: runError,
+    aborted: result?.aborted,
+    hitMaxTurns: result?.hitMaxTurns,
+    stopHookBlocked: stopHook.blocked,
+  });
+  const incomplete = status !== "completed";
+
+  if (incomplete) {
+    const synthesized = synthesizeSubagentFindings(child.messages);
+    try {
+      const mem = loadDecisionMemory(child.meta.id);
+      const recs = mem.records.filter((r) => r.status === "active").slice(-12);
+      if (recs.length) {
+        text +=
+          `\n\n## Child decisions\n` +
+          recs.map((r) => `- [${r.kind}] ${r.text}`).join("\n");
+      }
+    } catch {
+      /* */
+    }
+    text = text
+      ? `${text}\n\n${synthesized}`
+      : synthesized;
+    const last = (result?.finalText || "").trim();
+    if (last) {
+      text += `\n\n## last_assistant_excerpt\n${last.slice(0, 2000)}`;
+    }
+  }
+
   const keepSession =
     process.env.FORGE_SUBAGENT_KEEP === "1" ||
     process.env.FORGE_SUBAGENT_KEEP === "true";
-  if (!keepSession) {
-    await cleanupChildSession(child.meta.id);
-  } else {
-    log.dim(`Subagent session kept: ${child.meta.id}`);
-  }
 
   // Worktree land: capture diff and apply into the parent workspace by default
   // so isolation=worktree is not a dead-end. Keep on conflict / KEEP_WORKTREE /
@@ -476,7 +606,9 @@ export async function runSubagent(
   let worktreeLand: WorktreeLandResult | undefined;
   let worktreeKept = false;
   if (worktree) {
-    const skipApply = Boolean(runError || result?.aborted);
+    const skipApply = Boolean(
+      runError || result?.aborted || (result?.hitMaxTurns && child.meta.editCount === 0),
+    );
     worktreeLand = await landSubagentWorktree({
       worktree,
       parentWorkspace: ctx.workspace,
@@ -513,13 +645,15 @@ export async function runSubagent(
     }
   }
 
-  const summary = formatSubagentResult({
-    text,
+  const header = formatSubagentHeader({
     description,
     subagentType,
     capabilityMode,
     turns: result?.turns ?? 0,
+    maxTurns: childMaxTurns,
     editCount: child.meta.editCount,
+    status,
+    sessionId: child.meta.id,
     aborted: Boolean(result?.aborted),
     hitMaxTurns: Boolean(result?.hitMaxTurns),
     error: runError,
@@ -529,8 +663,38 @@ export async function runSubagent(
     worktreeLandStatus: worktreeLand?.status,
   });
 
+  let artifactPath: string | undefined;
+  try {
+    artifactPath = writeSubagentArtifact({
+      childId: child.meta.id,
+      header,
+      body: text || "(no output)",
+    });
+  } catch (err) {
+    log.warn(
+      `Failed to write subagent artifact: ${(err as Error).message}`.slice(0, 200),
+    );
+  }
+
+  const summary = formatSubagentResult({
+    text,
+    header,
+    artifactPath,
+  });
+
+  // Delete only after the artifact exists, and only on a clean Stop.
+  // Incomplete runs keep the child session so the parent can recover.
+  if (!keepSession && status === "completed" && artifactPath) {
+    await cleanupChildSession(child.meta.id);
+  } else if (keepSession || incomplete) {
+    log.dim(
+      `Subagent session kept (${status}): ${child.meta.id}` +
+        (artifactPath ? ` · ${artifactPath}` : ""),
+    );
+  }
+
   return {
-    ok: !runError && !result?.aborted,
+    ok: status === "completed",
     text: summary,
     turns: result?.turns ?? 0,
     aborted: Boolean(result?.aborted),
@@ -545,6 +709,9 @@ export async function runSubagent(
     isolation,
     worktreePath: worktree?.path,
     worktreeLand,
+    hitMaxTurns: Boolean(result?.hitMaxTurns),
+    status,
+    artifactPath,
   };
 }
 
@@ -556,12 +723,16 @@ function buildSubagentPrompt(opts: {
   parentSessionId: string;
   isolation?: SubagentIsolation;
   worktreePath?: string;
+  maxTurns?: number;
 }): string {
   const lines = [
     `[Forge subagent — ${opts.subagentType} / ${opts.capabilityMode}` +
       (opts.isolation === "worktree" ? " / worktree" : "") +
       `]`,
     `Task: ${opts.description}`,
+    opts.maxTurns
+      ? `Turn budget: ${opts.maxTurns} (reserve the last turn for the structured report).`
+      : "",
     ``,
     opts.capabilityMode === "read-only"
       ? "You are read-only: research and report. Do not modify files or run mutating shell commands."
@@ -592,13 +763,15 @@ function buildSubagentPrompt(opts: {
   return lines.join("\n");
 }
 
-function formatSubagentResult(opts: {
-  text: string;
+function formatSubagentHeader(opts: {
   description: string;
   subagentType: SubagentType;
   capabilityMode: SubagentCapability;
   turns: number;
+  maxTurns: number;
   editCount: number;
+  status: SubagentHandoffStatus;
+  sessionId: string;
   aborted: boolean;
   hitMaxTurns: boolean;
   error?: string;
@@ -610,11 +783,13 @@ function formatSubagentResult(opts: {
   const landBit = opts.worktreeLandStatus
     ? ` · land: ${opts.worktreeLandStatus}`
     : "";
-  const header = [
+  return [
     `### Subagent result: ${opts.description}`,
-    `- type: ${opts.subagentType} · mode: ${opts.capabilityMode} · turns: ${opts.turns} · edits: ${opts.editCount}` +
+    `- status: ${opts.status}`,
+    `- type: ${opts.subagentType} · mode: ${opts.capabilityMode} · turns: ${opts.turns}/${opts.maxTurns} · edits: ${opts.editCount}` +
       (opts.isolation === "worktree" ? " · isolation: worktree" : "") +
       landBit,
+    `- session_id: ${opts.sessionId}`,
     opts.worktreePath
       ? `- worktree: ${opts.worktreePath}${opts.worktreeKept ? " (kept)" : " (removed)"}`
       : "",
@@ -624,6 +799,16 @@ function formatSubagentResult(opts: {
   ]
     .filter(Boolean)
     .join("\n");
+}
+
+export function formatSubagentResult(opts: {
+  text: string;
+  header: string;
+  artifactPath?: string;
+}): string {
+  const header = opts.artifactPath
+    ? `${opts.header}\n- artifact_path: ${opts.artifactPath}`
+    : opts.header;
   const body = (opts.text || "(no output)").trim();
   // Cap returned body so parent context stays healthy
   const cap = 24_000;
