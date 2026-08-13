@@ -144,6 +144,10 @@ describe("changelog / what's new", () => {
     assert.match(text, /self-audit/i);
     assert.match(text, /edits-without-verify|silent edits/i);
     assert.match(text, /Project stack/);
+    assert.match(text, /wait_mode=any\|all/);
+    assert.match(text, /\/fallback/);
+    assert.match(text, /enter_plan_mode/);
+    assert.match(text, /workspace_symbols/);
     assert.match(text, /handoff-guard|proof-claim/);
     assert.match(text, /\/budget/);
     assert.match(text, /\/notify/);

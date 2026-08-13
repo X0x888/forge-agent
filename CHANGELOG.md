@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Added
+- **`enter_plan_mode`**: the agent can pause into read-only plan mode on ambiguous/architectural work without waiting for `/plan`, then `exit_plan_mode` to implement. Subagents cannot flip the parent session.
+- **Same-provider model fallback**: after 429/5xx/overloaded retries exhaust, Forge switches to the next model in `fallback_models` / `FORGE_FALLBACK_MODELS` / `--fallback-models` / `/fallback` (defaults: grok-4.6 → grok-4.5 → grok-4; `off` disables). Quota/auth errors still take the account-switch path. `/fallback` and mid-run switches persist on the session (resume + `/status`). Last hop (`from → to`) is stamped on `session.meta.lastModelFallback` and shown on `/share`, `/status`, resume, export, and `forge run --json`. ULW with fallback off is a production warning.
+- **`get_task_output` wait_any / wait_all**: pass `task_ids` + `wait_mode=any|all` to block on several background jobs in one call (omit ids to wait on every task that was running at start). Parallel test/build fans no longer need a poll loop or serial `wait=` calls. `wait: true` means 120s. Model aliases `wait_all` / `wait_any` / `wait_tasks` dispatch here (implied mode). `search_files` aliases `grep`.
+- **LSP over grep**: system prompt + tool descriptions prefer `lsp` `references`/`definition`/`workspace_symbols` for known symbols. Empty grep on an identifier hints the same.
+- **Desktop notify class**: `/notify` also pings on background-task complete, **Goal achieved**, goal stuck-wall, and ULW stuck-wall (not only turn end).
+- **Posture**: startup warns when `fallback_models` is explicitly off (inferior-by-accident). Defaults stay quiet. `/tips` lists `/fallback`, `enter_plan_mode`, `wait_mode`, and LSP-over-grep.
+
 ### Fixed
 - **Project memory mirror no-op writes**: `.forge/MEMORY.md` is not rewritten when only the `updated=` timestamp would change, so a tracked memory file no longer dirties `git status` after load/import.
 - **Unattended ULW no longer dies on `terminated` / generic `provider_error`**: Node/undici `TypeError: terminated` (xAI often RST the socket when a token dies mid-stream instead of HTTP 401/403) was not retryable and skipped OAuth recovery, so the run dropped to `forge ›` even though typing `continue` refreshed the token and resumed. Drops are now retried, credentials force-refreshed in-loop, and ULW auto-continues the same transcript (`FORGE_ULW_AUTO_CONTINUE=0` off).

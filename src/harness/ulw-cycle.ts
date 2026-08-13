@@ -14,6 +14,7 @@ import path from "node:path";
 import { forgeHome, readJsonFile, writeJsonFile, nowIso, nowEpoch } from "../util/fs.js";
 import { isTruthy } from "../util/bool.js";
 import { clearSoftTodoGateOnWindDown } from "./todo-gate.js";
+import { maybeDesktopNotify } from "../util/attention.js";
 import {
   formatMemoryForPrompt,
   isBroadMandate,
@@ -851,6 +852,14 @@ export function evaluateUlwAtStop(opts: {
     s.enabled = false;
     s.cycle = 0;
     saveUlwCycle(s);
+    try {
+      maybeDesktopNotify({
+        title: "Forge · ULW stuck-wall",
+        body: "Cycle released after no file edits or working-tree changes.",
+      });
+    } catch {
+      /* */
+    }
     // Wind-down: drop soft TodoGate once-blocks so stuck release is clean.
     try {
       clearSoftTodoGateOnWindDown(opts.sessionId);

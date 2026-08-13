@@ -11,7 +11,7 @@ import { toolWebSearch } from "./web-search.js";
 import { toolWebFetch } from "./web-fetch.js";
 import { toolGetTaskOutput, toolKillTask } from "./task-tools.js";
 import { toolAskUser } from "./ask-user.js";
-import { toolExitPlanMode } from "./exit-plan-mode.js";
+import { toolEnterPlanMode, toolExitPlanMode } from "./exit-plan-mode.js";
 import {
   toolSearchMcp,
   toolCallMcp,
@@ -28,25 +28,32 @@ export type { ToolContext, ToolResult } from "./types.js";
 export { TOOL_DEFINITIONS };
 
 const AVAILABLE =
-  "bash, get_task_output, kill_task, read_file, write_file, search_replace, apply_patch, grep, glob, list_dir, todo_write, memory_write, ask_user, exit_plan_mode, web_search, web_fetch, search_mcp, call_mcp, mcp_resource, mcp_prompt, spawn_subagent, lsp";
+  "bash, get_task_output, kill_task, read_file, write_file, search_replace, apply_patch, grep, glob, list_dir, todo_write, memory_write, ask_user, enter_plan_mode, exit_plan_mode, web_search, web_fetch, search_mcp, call_mcp, mcp_resource, mcp_prompt, spawn_subagent, lsp";
 
 /** Canonical tool ids (used for doubled-name recovery). */
 const CANONICAL_TOOLS = [
   "bash",
   "get_task_output",
   "task_output",
+  "wait_all",
+  "wait_any",
+  "wait_tasks",
   "kill_task",
   "read_file",
   "write_file",
   "search_replace",
   "apply_patch",
   "grep",
+  "search_files",
   "glob",
   "list_dir",
   "todo_write",
   "memory_write",
   "ask_user",
   "AskUser",
+  "enter_plan_mode",
+  "EnterPlanMode",
+  "enterPlanMode",
   "exit_plan_mode",
   "ExitPlanMode",
   "exitPlanMode",
@@ -137,7 +144,16 @@ export async function executeTool(
         return await toolBash(args, ctx);
       case "get_task_output":
       case "task_output":
-        return await toolGetTaskOutput(args);
+      case "wait_all":
+      case "wait_any":
+      case "wait_tasks":
+        return await toolGetTaskOutput({
+          ...args,
+          wait_mode:
+            args.wait_mode ??
+            args.waitMode ??
+            (name === "wait_any" ? "any" : name === "wait_all" ? "all" : args.mode),
+        });
       case "kill_task":
         return await toolKillTask(args);
       case "read_file":
@@ -158,6 +174,7 @@ export async function executeTool(
         return await toolApplyPatch(args, ctx);
       case "grep":
       case "Grep":
+      case "search_files":
         return await toolGrep(args, ctx);
       case "glob":
       case "Glob":
@@ -192,6 +209,13 @@ export async function executeTool(
           context:
             args.context != null ? String(args.context) : undefined,
         });
+      case "enter_plan_mode":
+      case "EnterPlanMode":
+      case "enterPlanMode":
+        return await toolEnterPlanMode(
+          { reason: args.reason != null ? String(args.reason) : undefined },
+          { session: ctx.session, config: ctx.config },
+        );
       case "exit_plan_mode":
       case "ExitPlanMode":
       case "exitPlanMode":

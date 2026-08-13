@@ -20,6 +20,7 @@ import { detectProjectIntel } from "../util/project-intel.js";
 import { countProjectSkills } from "../agent/project-skills.js";
 import type { ChatMessage } from "../providers/types.js";
 import type { PermissionMode } from "../config/types.js";
+import { formatFallbackChain } from "../config/model-fallback.js";
 import { heartbeatSession } from "../statusline/active.js";
 import { touchSessionLock } from "./lock.js";
 import {
@@ -89,6 +90,13 @@ export interface SessionMeta {
    * Only meaningful while `permissionMode === "plan"`.
    */
   permissionModeBeforePlan?: PermissionMode;
+  /**
+   * Same-provider fallback chain (`undefined` = catalog defaults, `[]` = off).
+   * Survives resume like `/model`.
+   */
+  fallbackModels?: string[];
+  /** Last same-provider model hop this session (from → to). */
+  lastModelFallback?: { from: string; to: string; at: string };
   /**
    * Last provider/run failure (expert recovery). Cleared on a successful turn.
    * Never stores tokens or full request bodies.
@@ -306,6 +314,13 @@ export function saveSessionMetaSidecar(session: SessionData): void {
     else delete merged.title;
     if (session.meta.pinned) merged.pinned = true;
     else delete merged.pinned;
+    if (session.meta.lastModelFallback) {
+      merged.lastModelFallback = session.meta.lastModelFallback;
+    }
+    if (session.meta.fallbackModels !== undefined) {
+      merged.fallbackModels = session.meta.fallbackModels;
+    }
+    if (session.meta.model) merged.model = session.meta.model;
     writeJsonFile(sidePath, merged);
   } catch {
     /* meta sidecar best-effort — in-memory meta stays this process's source */
@@ -335,6 +350,15 @@ function overlaySidecarMeta(session: SessionData): void {
     }
     if (side.pinned === true) session.meta.pinned = true;
     else delete session.meta.pinned;
+    if (side.lastModelFallback && typeof side.lastModelFallback === "object") {
+      session.meta.lastModelFallback = side.lastModelFallback;
+    }
+    if (Array.isArray(side.fallbackModels)) {
+      session.meta.fallbackModels = side.fallbackModels;
+    }
+    if (typeof side.model === "string" && side.model.trim()) {
+      session.meta.model = side.model.trim();
+    }
   } catch {
     /* best-effort */
   }
@@ -400,6 +424,32 @@ function normalizeSessionMeta(
   const before = normalizeMetaPermissionMode(fromSide.permissionModeBeforePlan);
   if (before) out.permissionModeBeforePlan = before;
   else delete out.permissionModeBeforePlan;
+  if (Array.isArray(fromSide.fallbackModels)) {
+    out.fallbackModels = fromSide.fallbackModels
+      .map((x) => String(x ?? "").trim())
+      .filter(Boolean)
+      .slice(0, 8);
+  } else if ("fallbackModels" in fromSide && fromSide.fallbackModels == null) {
+    delete out.fallbackModels;
+  }
+  const hop = fromSide.lastModelFallback;
+  if (
+    hop &&
+    typeof hop === "object" &&
+    typeof (hop as { from?: unknown }).from === "string" &&
+    typeof (hop as { to?: unknown }).to === "string" &&
+    String((hop as { from: string }).from).trim() &&
+    String((hop as { to: string }).to).trim()
+  ) {
+    const h = hop as { from: string; to: string; at?: unknown };
+    out.lastModelFallback = {
+      from: String(h.from).trim().slice(0, 120),
+      to: String(h.to).trim().slice(0, 120),
+      at: typeof h.at === "string" ? h.at : new Date().toISOString(),
+    };
+  } else if ("lastModelFallback" in fromSide && fromSide.lastModelFallback == null) {
+    delete out.lastModelFallback;
+  }
   const le = fromSide.lastError;
   if (
     le &&
@@ -821,6 +871,28 @@ export function importSessionJson(
         ? {
             maxCostUsd:
               Math.round(Number(src.maxCostUsd) * 10_000) / 10_000,
+          }
+        : {}),
+      ...(Array.isArray(src.fallbackModels)
+        ? {
+            fallbackModels: src.fallbackModels
+              .map((x) => String(x ?? "").trim())
+              .filter(Boolean)
+              .slice(0, 8),
+          }
+        : {}),
+      ...(src.lastModelFallback &&
+      typeof src.lastModelFallback.from === "string" &&
+      typeof src.lastModelFallback.to === "string"
+        ? {
+            lastModelFallback: {
+              from: src.lastModelFallback.from.trim().slice(0, 120),
+              to: src.lastModelFallback.to.trim().slice(0, 120),
+              at:
+                typeof src.lastModelFallback.at === "string"
+                  ? src.lastModelFallback.at
+                  : new Date().toISOString(),
+            },
           }
         : {}),
       ...(lastPrev ? { lastUserPreview: lastPrev } : {}),
@@ -2068,6 +2140,9 @@ export function exportSessionMarkdown(session: SessionData): string {
           ? ` → ${session.meta.lastError.tips[0]}`
           : "")
       : null,
+    session.meta.lastModelFallback
+      ? `- Last model hop: ${session.meta.lastModelFallback.from} → ${session.meta.lastModelFallback.to}`
+      : null,
     ``,
     `---`,
     ``,
@@ -2515,6 +2590,14 @@ export function formatResumeOrientation(
     /* */
   }
   try {
+    const hop = session.meta.lastModelFallback;
+    if (hop?.from && hop.to) {
+      parts.push(`Last model hop: ${hop.from} → ${hop.to}`);
+    }
+  } catch {
+    /* */
+  }
+  try {
     // Surface spend cap on resume so experts see the valve before continuing.
     // Session override is what matters on resume (config may differ on host).
     if (
@@ -2772,6 +2855,14 @@ export function formatSessionShareCard(
   const lines = [
     `Forge session ${id8} — ${title}`,
     `  provider: ${m.provider}/${m.model}`,
+    `  fallback: ${formatFallbackChain({
+      provider: m.provider,
+      model: m.model,
+      fallbackModels: m.fallbackModels,
+    })}`,
+    m.lastModelFallback
+      ? `  lastHop:  ${m.lastModelFallback.from} → ${m.lastModelFallback.to}`
+      : null,
     `  cwd:      ${cwd}`,
     `  path:     ${dir}`,
     gitLine,

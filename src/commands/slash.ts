@@ -66,6 +66,11 @@ import {
 } from "../config/reasoning.js";
 import { isGrokLineageModel } from "../config/grok-model.js";
 import {
+  formatFallbackChain,
+  nextFallbackModel,
+  parseFallbackModels,
+} from "../config/model-fallback.js";
+import {
   lastModelForProvider,
   loadPreferences,
   savePreferences,
@@ -615,6 +620,7 @@ export const SLASH_COMMANDS = [
   "/todos",
   "/provider",
   "/model",
+  "/fallback",
   "/effort",
   "/temperature",
   "/temp",
@@ -1148,6 +1154,64 @@ export async function handleProviderSlash(
 }
 
 /** /model catalog + free-form set (OpenRouter-aware). */
+export function persistSessionFallbackModels(
+  config: ForgeConfig,
+  session?: SessionData,
+): void {
+  if (!session) return;
+  if (config.fallbackModels === undefined) {
+    delete session.meta.fallbackModels;
+  } else {
+    session.meta.fallbackModels = [...config.fallbackModels];
+  }
+  saveSession(session);
+}
+
+export function handleFallbackSlash(
+  arg: string,
+  opts: { config: ForgeConfig; session?: SessionData },
+): SlashResult {
+  const raw = arg.trim();
+  if (!raw || raw === "?" || raw === "show" || raw === "status") {
+    const chain = opts.config.fallbackModels;
+    const shown =
+      chain === undefined
+        ? "(defaults)"
+        : chain.length === 0
+          ? "off"
+          : chain.join(", ");
+    const next = nextFallbackModel(opts.config);
+    return {
+      handled: true,
+      output:
+        `fallback: ${shown}` +
+        (next ? `\nnext: ${next}` : "\nnext: (none)") +
+        "\nUsage: /fallback <model[,model…]|off|default>",
+    };
+  }
+  if (/^(off|none|false|0|disable)$/i.test(raw)) {
+    opts.config.fallbackModels = [];
+    persistSessionFallbackModels(opts.config, opts.session);
+    return { handled: true, output: "fallback: off (no automatic model switch)" };
+  }
+  if (/^(default|defaults|auto|on|true)$/i.test(raw)) {
+    delete opts.config.fallbackModels;
+    persistSessionFallbackModels(opts.config, opts.session);
+    const next = nextFallbackModel(opts.config);
+    return {
+      handled: true,
+      output: `fallback: defaults` + (next ? ` (next ${next})` : ""),
+    };
+  }
+  const parsed = parseFallbackModels(raw);
+  if (!parsed || parsed.length === 0) {
+    return { handled: true, output: "Usage: /fallback <model[,model…]|off|default>" };
+  }
+  opts.config.fallbackModels = parsed;
+  persistSessionFallbackModels(opts.config, opts.session);
+  return { handled: true, output: `fallback: ${parsed.join(", ")}` };
+}
+
 export async function handleModelSlash(
   arg: string,
   opts: SlashOpts,
@@ -3470,6 +3534,10 @@ const stats = collectUsageStats({
 
     case "/model": {
       return handleModelSlash(arg, opts);
+    }
+
+    case "/fallback": {
+      return handleFallbackSlash(arg, opts);
     }
 
     case "/temperature":
@@ -6231,6 +6299,9 @@ export interface DoctorResult {
   blockingStop: boolean;
   /** False when model is set and not in the provider catalog (free-form still ok). */
   modelInCatalog: boolean | null;
+  fallbackModels?: string[];
+  fallbackChain: string;
+  lastModelFallback?: { from: string; to: string; at: string };
   /** Multi-account readiness (never tokens); null when assess failed. */
   multiAccount?: {
     total: number;
@@ -6604,6 +6675,17 @@ export async function runDoctorCheck(
       );
     }
     lines.push(`Read outside workspace: ${config.readOutsideWorkspace || "ask"}`);
+    lines.push(`Fallback models: ${formatFallbackChain(config)}`);
+    if (
+      Array.isArray(config.fallbackModels) &&
+      config.fallbackModels.length === 0
+    ) {
+      lines.push(
+        chalk.yellow(
+          "  ⚠ model fallback off — a 429/5xx on the flagship will abort the run; /fallback default",
+        ),
+      );
+    }
     if ((config.readOutsideWorkspace || "ask") === "allow") {
       lines.push(
         chalk.yellow(
@@ -7365,6 +7447,8 @@ export async function runDoctorCheck(
     authenticated: Boolean(auth),
     blockingStop: !isFalsy(config.blockingStopHooks),
     modelInCatalog,
+    fallbackModels: config.fallbackModels,
+    fallbackChain: formatFallbackChain(config),
     multiAccount,
     projectRulesCount,
     projectCommandsCount,
@@ -7433,6 +7517,8 @@ export interface EffectiveConfigSnap {
   forgeHome: string;
   provider: string;
   model: string;
+  fallbackModels?: string[];
+  fallbackChain: string;
   reasoningEffort: string | null;
   /** Undefined = provider/server default (not sent on the wire). */
   temperature: number | undefined;
@@ -7592,6 +7678,8 @@ export function buildEffectiveConfigSnap(
     forgeHome: forgeHome(),
     provider: c.provider,
     model: c.model,
+    fallbackModels: c.fallbackModels,
+    fallbackChain: formatFallbackChain(c),
     reasoningEffort: c.reasoningEffort ?? null,
     temperature: c.temperature,
     maxTokens: effectiveMaxTokensForDisplay(c),
@@ -7765,6 +7853,7 @@ export function formatEffectiveConfig(
     `  forgeHome:       ${snap.forgeHome}`,
     `  provider/model:  ${snap.provider}/${snap.model}` +
       (snap.reasoningEffort ? `  effort=${snap.reasoningEffort}` : ""),
+    `  fallback:        ${snap.fallbackChain}`,
     `  sampling:        temp=${snap.temperature ?? "default"}  max_tokens=${snap.maxTokens}${snap.maxTokensExplicit ? "" : " (auto)"}` +
       chalk.dim("  (/temperature · /max-tokens)"),
     `  permission:      ${snap.permissionMode}` +
@@ -8120,6 +8209,7 @@ Forge slash commands
   /todos                Show agent todos  [live]
   /provider [name]      List / switch provider (openrouter, xai, …) — sticky  [live]
   /model <name> [effort] Switch model mid-run; free-form on OpenRouter  [live]
+  /fallback [models|off] Same-provider fallbacks after 429/5xx (defaults on)  [live]
   /effort [level]       Thinking effort (default = model max; low…high|xhigh|max)  [live]
   /temperature [0–2]    Session sampling temperature (/temp)  [live]
   /max-tokens [n]       Session max output tokens  [live]

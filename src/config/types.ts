@@ -92,6 +92,11 @@ export interface ForgeConfig {
   provider: ProviderId | string;
   model: string;
   /**
+   * Same-provider models to try after the current one exhausts 429/5xx retries.
+   * `undefined` = conservative catalog defaults. `[]` = disabled.
+   */
+  fallbackModels?: string[];
+  /**
    * Reasoning / thinking effort when the model supports it.
    * When unset, Forge uses the **maximum** level allowed for the active model.
    * Omitted from API requests when the model does not support effort.

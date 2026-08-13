@@ -121,6 +121,9 @@ const SUBAGENT_DENY_ALWAYS = new Set([
   "task",
   // Background kill is parent-process scoped; avoid surprise from children
   "kill_task",
+  "enter_plan_mode",
+  "EnterPlanMode",
+  "enterPlanMode",
   "exit_plan_mode",
   "ExitPlanMode",
   "exitPlanMode",

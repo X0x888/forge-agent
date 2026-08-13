@@ -30,6 +30,18 @@ describe("suggestNames", () => {
     assert.match(r.output, /Unknown tool: read_fil/);
     assert.match(r.output, /Did you mean:.*read_file/i);
   });
+
+  it("wait_all / search_files are aliases, not unknown tools", async () => {
+    const wait = await executeTool("wait_all", "{}", { workspace: process.cwd() });
+    assert.ok(!/Unknown tool: wait_all/.test(wait.output));
+    const search = await executeTool(
+      "search_files",
+      JSON.stringify({ pattern: "DefinitelyNotARealForgeSymbolZZZ", path: "src/util", head_limit: 1 }),
+      { workspace: process.cwd() },
+    );
+    assert.ok(!/Unknown tool: search_files/.test(search.output));
+    assert.match(search.output, /No matches found|workspace_symbols/);
+  });
 });
 
 describe("doctor projectRulesCount / projectCommandsCount", () => {

@@ -6,6 +6,7 @@ What experts should expect from Forge in long, unattended, or CI runs.
 
 | Behavior | Detail |
 |---|---|
+| **Model fallback** | After same-model 429/5xx retries exhaust, switch to the next same-provider model (`fallback_models` / `FORGE_FALLBACK_MODELS` / `--fallback-models` / `/fallback`; defaults on, `off` disables). Quota/auth still switch accounts. Last hop is persisted (`lastModelFallback`) and shown on `/share` / `/status` / resume. ULW + fallback off is a production warning. |
 | **Retry-After** | `429` / `5xx` honor `Retry-After` and `retry-after-ms` (capped at 2 min; the server hint wins over the client backoff cap so sustained limiting does not burn the retry budget) |
 | **Context overflow** | Detected across vendors (incl. xAI `maximum prompt length`); not retried with the same payload; progressive prune + compact (keep 8→4→2) then re-issue |
 | **Per-model context window** | Unless `context_window` is set explicitly, the window follows the active model (`config/model-info.ts` + `grok-model.ts`: grok-4.6/4.5=500k, newer Grok flagships inherit, grok-4=256k, grok-3=131k, claude-*=200k, gpt-4.1=1M …) on load, `/model`, and provider fallback — a stale 500k budget no longer overflows smaller models |
@@ -237,4 +238,6 @@ repairing without waiting for the human. Disable with `FORGE_FIX_UNTIL_GREEN=0`.
 When a background bash task exits, Forge queues a mid-run interjection
 (`[Forge harness — background task …]`) so the agent continues without a poll
 loop. Disable with `FORGE_BG_NOTIFY=0`. Prefer `get_task_output wait=` when you
-can block; notify covers fire-and-forget jobs.
+can block; `wait_mode=any|all` (+ optional `task_ids`) waits on several jobs in
+one call. If `/notify` (or `FORGE_NOTIFY`) is on, a desktop ping also fires so
+you notice a fire-and-forget test/build without watching the transcript.

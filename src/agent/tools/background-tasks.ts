@@ -8,6 +8,7 @@ import fsp from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { pushInterjection } from "../../harness/interjection.js";
+import { maybeDesktopNotify } from "../../util/attention.js";
 import { forgeHome, ensureDirAsync } from "../../util/fs.js";
 import { createShellEnv } from "./env-policy.js";
 import type {
@@ -278,6 +279,11 @@ function maybeNotifyBgComplete(
       `Use get_task_output({ task_id: "${task.id}", tail: 80 }) for logs, then continue. ` +
       `Do not ask the user — act on the result.`;
     pushInterjection(sessionId, msg);
+    maybeDesktopNotify({
+      title: `Forge · bg ${status}`,
+      body: `exit=${code}  ${dur}ms  ${cmd}`,
+      subtitle: task.id,
+    });
   } catch {
     /* never break bg lifecycle */
   }
@@ -482,6 +488,140 @@ export async function waitForTask(
   const waitedMs = Date.now() - started;
   const timedOut = final.status === "running";
   return { ok: true, task: final, timedOut, waitedMs };
+}
+
+export type WaitTasksMode = "any" | "all";
+
+export type WaitForTasksResult =
+  | {
+      ok: true;
+      tasks: BackgroundTask[];
+      winner?: BackgroundTask;
+      stillRunning: BackgroundTask[];
+      timedOut: boolean;
+      waitedMs: number;
+      mode: WaitTasksMode;
+    }
+  | { ok: false; error: string };
+
+/**
+ * Block until background tasks leave `running` (grok-build wait_any / wait_all).
+ * Empty `ids` locks the running set at start.
+ */
+export async function waitForTasks(
+  ids: string[],
+  opts: { timeoutMs?: number; pollMs?: number; mode?: WaitTasksMode } = {},
+): Promise<WaitForTasksResult> {
+  const mode: WaitTasksMode = opts.mode === "any" ? "any" : "all";
+  const timeoutMs = Math.max(
+    0,
+    Math.min(
+      30 * 60_000,
+      Number.isFinite(opts.timeoutMs as number)
+        ? Math.floor(opts.timeoutMs as number)
+        : 120_000,
+    ),
+  );
+  const pollMs = Math.max(25, Math.min(2000, opts.pollMs ?? 100));
+  const started = Date.now();
+
+  const raw = [...new Set(ids.map((id) => String(id ?? "").trim()).filter(Boolean))];
+  const lockedIds =
+    raw.length > 0
+      ? raw
+      : [...tasks.values()].filter((t) => t.status === "running").map((t) => t.id);
+  if (lockedIds.length === 0) {
+    return {
+      ok: false,
+      error:
+        "No running background tasks to wait on. Start one with bash { background: true }.",
+    };
+  }
+  const missing = lockedIds.find((id) => !tasks.has(id));
+  if (missing) return { ok: false, error: `Unknown task_id: ${missing}` };
+
+  const snapshot = (): {
+    tasks: BackgroundTask[];
+    done: BackgroundTask[];
+    still: BackgroundTask[];
+  } => {
+    const listed = lockedIds
+      .map((id) => tasks.get(id))
+      .filter((t): t is BackgroundTask => Boolean(t));
+    return {
+      tasks: listed,
+      done: listed.filter((t) => t.status !== "running"),
+      still: listed.filter((t) => t.status === "running"),
+    };
+  };
+
+  const first = snapshot();
+  const already = mode === "any" ? first.done.length > 0 : first.still.length === 0;
+  if (already || timeoutMs === 0) {
+    return {
+      ok: true,
+      tasks: first.tasks,
+      winner: first.done[0],
+      stillRunning: first.still,
+      timedOut: mode === "any" ? first.done.length === 0 : first.still.length > 0,
+      waitedMs: 0,
+      mode,
+    };
+  }
+
+  await new Promise<void>((resolve) => {
+    let settled = false;
+    const watched = first.still
+      .map((t) => t.child)
+      .filter((c): c is NonNullable<typeof c> => Boolean(c));
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      for (const child of watched) {
+        try {
+          child.off?.("close", onClose);
+        } catch {
+          /* */
+        }
+      }
+      clearInterval(poller);
+      clearTimeout(timer);
+      resolve();
+    };
+    const onClose = () => {
+      const snap = snapshot();
+      const hit = mode === "any" ? snap.done.length > 0 : snap.still.length === 0;
+      if (hit) finish();
+    };
+    for (const child of watched) {
+      try {
+        child.once?.("close", onClose);
+      } catch {
+        /* */
+      }
+    }
+    const poller = setInterval(() => {
+      const snap = snapshot();
+      const hit = mode === "any" ? snap.done.length > 0 : snap.still.length === 0;
+      if (hit) finish();
+    }, pollMs);
+    poller.unref?.();
+    const timer = setTimeout(finish, timeoutMs);
+    timer.unref?.();
+  });
+
+  const final = snapshot();
+  const waitedMs = Date.now() - started;
+  const timedOut = mode === "any" ? final.done.length === 0 : final.still.length > 0;
+  return {
+    ok: true,
+    tasks: final.tasks,
+    winner: final.done[0],
+    stillRunning: final.still,
+    timedOut,
+    waitedMs,
+    mode,
+  };
 }
 
 export async function readTaskOutput(

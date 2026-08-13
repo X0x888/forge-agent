@@ -35,6 +35,7 @@ import {
   type SandboxProfile,
 } from "./config/types.js";
 import { parseReasoningEffort, resolveReasoningEffort } from "./config/reasoning.js";
+import { formatFallbackChain, parseFallbackModels } from "./config/model-fallback.js";
 import { loadPreferences, savePreferences } from "./config/preferences.js";
 import { resolveAuth, resolveAuthFresh, describeAuth } from "./auth/resolve.js";
 import { loginInteractive, logout, printAuthStatus, supportsOAuth } from "./auth/login.js";
@@ -254,6 +255,7 @@ Docs: docs/PRODUCTION.md · docs/RELIABILITY.md · docs/ULW.md · forge news
 `,
     )
     .option("-m, --model <model>", "Model id")
+    .option("--fallback-models <models>", "Same-provider fallbacks after 429/5xx (comma list; off disables)")
     .option("-p, --provider <provider>", "Provider: xai|anthropic|openai|openrouter|deepseek|google|copilot|custom")
     .option("--base-url <url>", "Override API base URL")
     .option(
@@ -541,6 +543,13 @@ Docs: docs/PRODUCTION.md · docs/RELIABILITY.md · docs/ULW.md · forge news
         if (!modelExplicit && session.meta.model) {
           config.model = session.meta.model;
         }
+        if (
+          opts.fallbackModels == null &&
+          !process.env.FORGE_FALLBACK_MODELS &&
+          Array.isArray(session.meta.fallbackModels)
+        ) {
+          config.fallbackModels = session.meta.fallbackModels;
+        }
         if (!providerExplicit && session.meta.provider) {
           config.provider = session.meta.provider as typeof config.provider;
         }
@@ -668,6 +677,7 @@ Docs: docs/PRODUCTION.md · docs/RELIABILITY.md · docs/ULW.md · forge news
     )
     .argument("[prompt...]", "Prompt to run (required; empty → exit 1)")
     .option("-m, --model <model>", "Model id")
+    .option("--fallback-models <models>", "Same-provider fallbacks after 429/5xx (comma list; off disables)")
     .option("-p, --provider <provider>", "Provider")
     .option("--base-url <url>", "Override API base URL")
     .option("--effort <level>", "Thinking effort (default model max): low|medium|high|xhigh|max")
@@ -5439,6 +5449,18 @@ function buildConfig(opts: Record<string, unknown>): ForgeConfig {
     }
     overrides.model = model;
   }
+  if (opts.fallbackModels != null) {
+    const parsed = parseFallbackModels(opts.fallbackModels);
+    if (parsed === undefined) {
+      failInvalidFlag(
+        "invalid_fallback_models",
+        `Invalid --fallback-models "${opts.fallbackModels}". Use a comma list, or off.`,
+        { fallbackModels: String(opts.fallbackModels) },
+        { json: wantJson },
+      );
+    }
+    overrides.fallbackModels = parsed;
+  }
   if (opts.provider != null) {
     const norm = normalizeProviderId(opts.provider);
     if (!norm.ok) {
@@ -6979,6 +7001,9 @@ maxTurns: opts.config.maxTurns ?? 0,
       completionTokens: result.completionTokens,
       cacheReadTokens: result.cacheReadTokens,
       servedModels: result.servedModels,
+      fallbackModels: opts.config.fallbackModels ?? null,
+      fallbackChain: formatFallbackChain(opts.config),
+      lastModelFallback: opts.session.meta.lastModelFallback ?? null,
       durationMs,
     };
     appendSessionMetrics(

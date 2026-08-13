@@ -196,6 +196,11 @@ export function productionWarningsForRun(
         );
       }
     }
+    if (opts?.ultrawork && Array.isArray(config.fallbackModels) && config.fallbackModels.length === 0) {
+      warnings.push(
+        "ULW armed with model fallback off — a 429/5xx on the flagship will abort the run. /fallback default (or fallback_models) keeps unattended sessions alive",
+      );
+    }
     // isolation=worktree land=discard silently drops nested agent edits
     {
       const land = (

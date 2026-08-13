@@ -158,6 +158,14 @@ function runRg(
   });
 }
 
+/** Identifier-like (CamelCase / snake / dotted) — LSP is a better next step than another regex. */
+export function looksLikeSymbolPattern(pattern: string): boolean {
+  const p = pattern.trim();
+  if (!p || p.length > 80) return false;
+  if (/[\\[\](){}|?*+]/.test(p)) return false;
+  return /^[A-Za-z_][\w.]{1,78}$/.test(p);
+}
+
 function formatNoGrepMatches(opts: {
   pattern: string;
   pathLabel: string;
@@ -165,9 +173,13 @@ function formatNoGrepMatches(opts: {
 }): string {
   const bits = [`pattern=${JSON.stringify(opts.pattern)}`, `path=${opts.pathLabel}`];
   if (opts.glob) bits.push(`glob=${JSON.stringify(opts.glob)}`);
+  const lspHint = looksLikeSymbolPattern(opts.pattern)
+    ? ` For a known symbol, prefer lsp { action: "workspace_symbols"|"references"|"definition", query: ${JSON.stringify(opts.pattern)} }.`
+    : "";
   return (
     `No matches found (${bits.join(", ")}).\n` +
-    `Tips: broaden the pattern, drop path/glob filters, try case_insensitive, or search from workspace root.`
+    `Tips: broaden the pattern, drop path/glob filters, try case_insensitive, or search from workspace root.` +
+    lspHint
   );
 }
 

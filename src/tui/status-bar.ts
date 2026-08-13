@@ -8,6 +8,7 @@
 import chalk from "chalk";
 import type { ForgeConfig } from "../config/types.js";
 import { resolveReasoningEffort } from "../config/reasoning.js";
+import { formatFallbackChain } from "../config/model-fallback.js";
 import type { SessionData } from "../session/session.js";
 import { isLastVerificationStale } from "../session/session.js";
 import type { ResolvedAuth } from "../auth/types.js";
@@ -856,6 +857,12 @@ export function formatSessionDetails(ctx: StatusBarContext): string {
       `model    ${config.provider}/${config.model}` +
         (effort ? ` · effort ${effort}` : ""),
     ),
+    chalk.dim(`fallback ${formatFallbackChain(config)}`),
+    ctx.session?.meta.lastModelFallback
+      ? chalk.dim(
+          `lastHop  ${ctx.session.meta.lastModelFallback.from} → ${ctx.session.meta.lastModelFallback.to}`,
+        )
+      : null,
     (() => {
       if (!ctx.plan) return null;
       const p = ctx.plan;

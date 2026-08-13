@@ -6,9 +6,14 @@ import {
   type ReasoningEffort,
 } from "../config/reasoning.js";
 import {
+  applyModelContextWindow,
   resolveEffectiveMaxTokens,
   servedModelDiverged,
 } from "../config/model-info.js";
+import {
+  isModelFallbackWorthy,
+  nextFallbackModel,
+} from "../config/model-fallback.js";
 import type {
   ChatMessage,
   ChatRequest,
@@ -20,6 +25,7 @@ import type { SessionData, TodoItem } from "../session/session.js";
 import { applyTodos, openTodos } from "./todos.js";
 import {
   saveSession,
+  saveSessionMetaSidecar,
   estimateTokens,
   estimateRequestTokens,
   compactMessages,
@@ -291,6 +297,9 @@ const READ_ONLY = new Set([
   "mcp_prompt",
   "lsp",
   "LSP",
+  "enter_plan_mode",
+  "EnterPlanMode",
+  "enterPlanMode",
 ]);
 
 /**
@@ -1055,6 +1064,7 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
         /* never block the turn on proactive refresh */
       }
       let response: Awaited<ReturnType<typeof provider.chat>> | undefined;
+      const fallbackTried = new Set<string>([config.model]);
       // Adaptive effort: hard-round signals (doom-loop / error-streak / missing
       // wave proof) buy a one-notch reasoning boost for this turn only —
       // escalate on failure, not by default, so easy rounds stay cheap.
@@ -1476,6 +1486,29 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
         if ((err as Error).message === "Aborted" || signal?.aborted) {
           aborted = true;
           break;
+        }
+        if (isModelFallbackWorthy(err) && !signal?.aborted) {
+          const next = nextFallbackModel(config, { tried: fallbackTried });
+          if (next) {
+            fallbackTried.add(next);
+            const prev = config.model;
+            config.model = next;
+            applyModelContextWindow(config, next);
+            session.meta.model = next;
+            session.meta.lastModelFallback = {
+              from: prev,
+              to: next,
+              at: new Date().toISOString(),
+            };
+            saveSessionMetaSidecar(session);
+            log.warn(
+              `Model fallback: ${prev} unavailable (${
+                err instanceof Error ? err.message.slice(0, 80) : "error"
+              }) → ${next}`,
+            );
+            events.onStatus?.(`Model fallback → ${next}`);
+            continue;
+          }
         }
         await hooks.run("StopFailure", {
           ...baseHookCtx(session, config),

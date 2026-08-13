@@ -28,8 +28,10 @@ describe("parseWaitMs", () => {
     assert.equal(parseWaitMs("2s"), 2000);
     assert.equal(parseWaitMs("1m"), 60_000);
     assert.equal(parseWaitMs("true"), 120_000);
+    assert.equal(parseWaitMs(true), 120_000);
     assert.equal(parseWaitMs("wait"), 120_000);
     assert.equal(parseWaitMs("off"), 0);
+    assert.equal(parseWaitMs(false), 0);
     assert.equal(parseWaitMs("nope"), null);
     assert.equal(parseWaitMs(-5), 0);
     assert.ok((parseWaitMs("2h") as number) <= 30 * 60_000);

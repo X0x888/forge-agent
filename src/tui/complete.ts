@@ -127,6 +127,11 @@ export const COMMAND_PARAMS: Record<string, ParamChoice[]> = {
       description: "on|off|status — smart switch on low usage",
     },
   ],
+  fallback: [
+    { value: "off", description: "Disable automatic model fallback" },
+    { value: "default", description: "Restore catalog defaults (grok-4.6 → 4.5 → 4)" },
+    { value: "status", description: "Show current fallback chain" },
+  ],
   provider: [
     {
       value: "deepseek",

@@ -68,5 +68,10 @@ export function postureWarnings(config: ForgeConfig): string[] {
       );
     }
   }
+  if (Array.isArray(config.fallbackModels) && config.fallbackModels.length === 0) {
+    warns.push(
+      `model fallback off — a 429/5xx on ${config.model} will abort the run (/fallback default)`,
+    );
+  }
   return warns;
 }

@@ -35,6 +35,13 @@ export {
   parseContextWindowArg,
   openRouterCachedContextWindow,
 } from "./config/model-info.js";
+export {
+  parseFallbackModels,
+  nextFallbackModel,
+  isModelFallbackWorthy,
+  defaultFallbackModels,
+  formatFallbackChain,
+} from "./config/model-fallback.js";
 export { buildChatRequest } from "./agent/loop.js";
 export { compileRules, evaluateRules, extractPatchPaths, parseRuleString } from "./agent/rules.js";
 export {

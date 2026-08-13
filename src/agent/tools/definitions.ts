@@ -41,7 +41,9 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       description:
         "Read status and recent stdout/stderr of a background bash task by task_id. " +
         "Omit task_id to list active tasks. " +
-        "Optional wait/timeout_ms blocks until the task finishes (or timeout) so you do not need a poll loop.",
+        "Optional wait/timeout_ms blocks until the task finishes (or timeout) so you do not need a poll loop. " +
+        "Pass task_ids + wait_mode=any|all to wait on several jobs (any = first done, all = every listed; " +
+        "omit ids to wait on every running task).",
       parameters: {
         type: "object",
         properties: {
@@ -180,6 +182,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       name: "grep",
       description:
         "Search file contents with a regex (ripgrep when available). Prefer over bash rg/grep. " +
+        "For a known symbol in TS/Python/Rust/Go prefer lsp { action: references|definition|workspace_symbols } — grep is for strings/comments/unknown text. " +
         "path may be a file or directory (default: workspace). Results are capped.",
       parameters: {
         type: "object",
@@ -324,6 +327,26 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
           },
         },
         required: ["question"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "enter_plan_mode",
+      description:
+        "Enter PLAN MODE (read-only research/design) without waiting for the user to type /plan. " +
+        "Use when the request is ambiguous, multi-option, or architectural — then research and call exit_plan_mode. " +
+        "No-op if already in plan. Subagents cannot call this.",
+      parameters: {
+        type: "object",
+        properties: {
+          reason: {
+            type: "string",
+            description:
+              "Why you are pausing implementation (ambiguity, blast radius, missing design).",
+          },
+        },
       },
     },
   },
@@ -557,6 +580,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       description:
         "Language Server Protocol: diagnostics, hover, definition, references, symbols. " +
         "Prefer diagnostics after TS/Python/Rust/Go edits when the server is on PATH. " +
+        "Prefer references/definition/workspace_symbols over repo-wide grep once you know a symbol name. " +
         "Actions: diagnostics|hover|definition|references|symbols|workspace_symbols|status|install|ensure. " +
         "ensure auto-installs TS+Python (+ Rust/Go if project markers). line/character 1-based.",
       parameters: {

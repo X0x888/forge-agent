@@ -11,6 +11,7 @@ import path from "node:path";
 import { forgeHome, readJsonFile, writeJsonFile, nowEpoch, nowIso } from "../util/fs.js";
 import { clearSoftTodoGateOnWindDown } from "./todo-gate.js";
 import { hasAttestationEvidence } from "./ulw-cycle.js";
+import { maybeDesktopNotify } from "../util/attention.js";
 
 export type GoalStatus = "active" | "paused" | "achieved" | "cleared" | "stuck";
 
@@ -164,6 +165,14 @@ export function markGoalDone(sessionId: string, reason?: string): GoalState | nu
   g.achievedAt = nowIso();
   if (reason) g.objective = g.objective; // keep
   saveGoal(g);
+  try {
+    maybeDesktopNotify({
+      title: "Forge · Goal achieved",
+      body: (g.objective || "goal").slice(0, 180),
+    });
+  } catch {
+    /* */
+  }
   // Achieve is wind-down: drop soft TodoGate once-blocks (parity with stuck-wall /
   // /goal done slash). Safe if slash also clears — clear is idempotent.
   try {
@@ -291,6 +300,14 @@ export function evaluateGoalAtStop(opts: {
     g.status = "stuck";
     g.paused = true;
     saveGoal(g);
+    try {
+      maybeDesktopNotify({
+        title: "Forge · Goal stuck-wall",
+        body: (g.objective || "goal").slice(0, 180),
+      });
+    } catch {
+      /* */
+    }
     // Wind-down: drop soft TodoGate once-blocks so stuck release is clean.
     try {
       clearSoftTodoGateOnWindDown(opts.sessionId);

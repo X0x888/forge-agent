@@ -44,6 +44,14 @@ function shortModel(model: string): string {
   return base.replace(/^claude-/, "").replace(/-\d{8}$/, "");
 }
 
+/** Compact dock hop after a mid-run 429/5xx fallback (`fb: 4.6→4.5`). */
+export function formatDockFallbackHop(
+  hop: { from: string; to: string } | undefined,
+): string | undefined {
+  if (!hop?.from || !hop.to || hop.from === hop.to) return undefined;
+  return `fb:${shortModel(hop.from)}→${shortModel(hop.to)}`;
+}
+
 function authMethodOf(auth: ResolvedAuth): AuthMethod {
   return (auth.method as AuthMethod) || "unknown";
 }
@@ -129,6 +137,9 @@ export function renderBottomStatusLine(
       "blue",
     ),
   );
+
+  const hop = formatDockFallbackHop(session.meta.lastModelFallback);
+  if (hop) bits.push(paint(hop, "yellow"));
 
   // Auth short label
   if (snap.authMethod && snap.authMethod !== "unknown") {

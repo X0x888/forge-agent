@@ -4,7 +4,8 @@ import {
   killTask,
   listTasks,
   readTaskOutput,
-  waitForTask,
+  waitForTasks,
+  type WaitTasksMode,
 } from "./background-tasks.js";
 import { boundToolOutput } from "./truncate.js";
 import { editDistance } from "../../util/string-distance.js";
@@ -156,35 +157,50 @@ export async function toolGetTaskOutput(
     stream = s;
   }
 
-  const id = String(args.task_id || args.id || "").trim();
-  if (!id) {
+  const ids = parseTaskIds(args);
+  const mode = parseWaitMode(args.wait_mode ?? args.waitMode ?? args.mode);
+  if (mode == null) {
+    return {
+      output:
+        `get_task_output error: invalid wait_mode "${args.wait_mode ?? args.waitMode ?? args.mode}". ` +
+        `Use any (first done) or all (every listed task).`,
+      isError: true,
+    };
+  }
+  const multi = ids.length !== 1 || mode === "any" || Boolean(args.wait_mode ?? args.waitMode);
+
+  if (ids.length === 0 && !wantsWait(args) && !args.wait_mode && !args.waitMode) {
     const all = listTasks();
     if (!all.length) {
       return {
         output:
           "task_id is required. No background tasks in this process yet.\n" +
           'Start one with bash { "command": "npm test", "background": true } then get_task_output({ "task_id": "…" }).\n' +
-          "Omit task_id to list actives when any exist.",
+          "Omit task_id to list actives when any exist. Pass wait_mode=any|all to wait on every running task.",
         isError: true,
       };
     }
     return {
       output:
         "task_id is required. Active tasks:\n" +
-        all.map(formatTaskListLine).join("\n"),
+        all.map(formatTaskListLine).join("\n") +
+        "\nPass wait_mode=any|all (optional task_ids) to block until background jobs finish.",
       isError: true,
     };
   }
-  if (!getTask(id)) {
-    return { output: unknownTaskMessage(id), isError: true };
+
+  for (const id of ids) {
+    if (!getTask(id)) return { output: unknownTaskMessage(id), isError: true };
   }
 
   // Optional wait-until-done (or timeout) before reading output — kills
   // poll-loop thrash that serious users hit on long bg test/build jobs.
+  // wait_mode=any|all (grok-build) waits on several tasks in one call.
   const waitRaw = args.wait ?? args.timeout_ms ?? args.timeoutMs;
   let waitNote = "";
-  if (waitRaw != null && String(waitRaw).trim() !== "") {
-    const waitMs = parseWaitMs(waitRaw);
+  const shouldWait = wantsWait(args) || multi;
+  if (shouldWait) {
+    const waitMs = parseWaitMs(waitRaw ?? (multi ? "true" : undefined));
     if (waitMs == null) {
       return {
         output:
@@ -193,17 +209,51 @@ export async function toolGetTaskOutput(
         isError: true,
       };
     }
-    if (waitMs > 0) {
-      const w = await waitForTask(id, { timeoutMs: waitMs });
+    if (waitMs > 0 || multi) {
+      const w =
+        waitMs > 0
+          ? await waitForTasks(ids, { timeoutMs: waitMs, mode })
+          : await waitForTasks(ids, { timeoutMs: 0, mode });
       if (!w.ok) {
         return { output: w.error, isError: true };
       }
-      waitNote = w.timedOut
-        ? `wait: timed out after ${w.waitedMs}ms (still ${w.task.status})\n`
-        : `wait: reached ${w.task.status} in ${w.waitedMs}ms\n`;
+      const still = w.stillRunning.map((t) => t.id).join(", ");
+      const one = w.tasks[0];
+      if (waitMs === 0) {
+        waitNote = `wait: snapshot (${mode}; ${w.tasks.length} task(s), ${w.stillRunning.length} still running)\n`;
+      } else if (!multi && one) {
+        waitNote = w.timedOut
+          ? `wait: timed out after ${w.waitedMs}ms (still ${one.status})\n`
+          : `wait: reached ${one.status} in ${w.waitedMs}ms\n`;
+      } else if (w.timedOut) {
+        waitNote = still
+          ? `wait: timed out after ${w.waitedMs}ms (${mode}; still running: ${still})\n`
+          : `wait: timed out after ${w.waitedMs}ms (${mode})\n`;
+      } else if (mode === "any" && w.winner) {
+        waitNote = `wait: ${w.winner.id} reached ${w.winner.status} in ${w.waitedMs}ms (any)\n`;
+      } else {
+        waitNote = `wait: all ${w.tasks.length} task(s) finished in ${w.waitedMs}ms\n`;
+      }
+      if (multi) {
+        const lines = [
+          waitNote.trimEnd(),
+          ...w.tasks.map(formatTaskListLine),
+        ];
+        const focusId = w.winner?.id ?? w.tasks.find((t) => t.status !== "running")?.id;
+        if (focusId) {
+          const text = await readTaskOutput(focusId, { tail, stream });
+          const managed = await boundToolOutput(text, { maxChars: 80_000 });
+          lines.push("", `--- ${focusId} ---`, managed.text);
+        }
+        return { output: lines.join("\n") };
+      }
     }
   }
 
+  const id = ids[0]!;
+  if (!getTask(id)) {
+    return { output: unknownTaskMessage(id), isError: true };
+  }
   const text = await readTaskOutput(id, {
     tail,
     stream,
@@ -212,9 +262,42 @@ export async function toolGetTaskOutput(
   return { output: waitNote + managed.text };
 }
 
+function wantsWait(args: Record<string, unknown>): boolean {
+  const waitRaw = args.wait ?? args.timeout_ms ?? args.timeoutMs;
+  return waitRaw != null && String(waitRaw).trim() !== "";
+}
+
+/** One id, many ids, or comma/whitespace-separated task_id. */
+export function parseTaskIds(args: Record<string, unknown>): string[] {
+  const raw = args.task_ids ?? args.taskIds ?? args.ids;
+  const out: string[] = [];
+  const push = (v: unknown) => {
+    if (v == null) return;
+    if (Array.isArray(v)) {
+      for (const x of v) push(x);
+      return;
+    }
+    for (const part of String(v).split(/[\s,]+/)) {
+      const s = part.trim();
+      if (s && !out.includes(s)) out.push(s);
+    }
+  };
+  push(raw);
+  if (out.length === 0) push(args.task_id ?? args.id);
+  return out;
+}
+
+export function parseWaitMode(raw: unknown): WaitTasksMode | null {
+  if (raw == null || String(raw).trim() === "") return "all";
+  const s = String(raw).trim().toLowerCase();
+  if (s === "any" || s === "first" || s === "or" || s === "race") return "any";
+  if (s === "all" || s === "every" || s === "and") return "all";
+  return null;
+}
+
 /** Parse wait/timeout_ms: number, numeric string, or 30s/2m/1h suffixes. */
 export function parseWaitMs(raw: unknown): number | null {
-  if (typeof raw === "boolean") return null;
+  if (typeof raw === "boolean") return raw ? 120_000 : 0;
   if (typeof raw === "number" && Number.isFinite(raw)) {
     return Math.max(0, Math.min(30 * 60_000, Math.floor(raw)));
   }

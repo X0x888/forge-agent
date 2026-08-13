@@ -26,6 +26,7 @@ import {
   normalizeSandboxNetwork,
 } from "../util/mode-aliases.js";
 import { coerceBool } from "../util/bool.js";
+import { parseFallbackModels } from "./model-fallback.js";
 
 const ENV_PERMISSION_MODES = new Set<PermissionMode>([
   "default",
@@ -104,6 +105,8 @@ function normalizeConfigShape(raw: Record<string, unknown>): Partial<ForgeConfig
     sandbox_network: "sandboxNetwork",
     sandbox_missing_backend: "sandboxMissingBackend",
     read_outside_workspace: "readOutsideWorkspace",
+    fallback_models: "fallbackModels",
+    fallback_model: "fallbackModels",
     reasoning_effort: "reasoningEffort",
     effort: "reasoningEffort",
   };
@@ -131,6 +134,11 @@ function normalizeConfigShape(raw: Record<string, unknown>): Partial<ForgeConfig
       if (p[k] === undefined) p[k] = k === "rules" ? [] : [];
     }
     out.permission = p;
+  }
+  if ("fallbackModels" in out) {
+    const parsed = parseFallbackModels(out.fallbackModels);
+    if (parsed !== undefined) out.fallbackModels = parsed;
+    else delete out.fallbackModels;
   }
   return out as Partial<ForgeConfig>;
 }
@@ -200,6 +208,9 @@ export function applySafeProjectOverlay(
 
   // Safe / useful project knobs
   if (projectRaw.model) cfg.model = projectRaw.model;
+  if (projectRaw.fallbackModels !== undefined) {
+    cfg.fallbackModels = projectRaw.fallbackModels;
+  }
   if (projectRaw.reasoningEffort) cfg.reasoningEffort = projectRaw.reasoningEffort;
   if (typeof projectRaw.temperature === "number") cfg.temperature = projectRaw.temperature;
   if (typeof projectRaw.maxTokens === "number") cfg.maxTokens = projectRaw.maxTokens;
@@ -401,6 +412,10 @@ export function loadConfig(overrides: Partial<ForgeConfig> = {}, cwd = process.c
     if (norm.ok) cfg.provider = norm.provider;
   }
   if (process.env.FORGE_MODEL) cfg.model = process.env.FORGE_MODEL;
+  if (process.env.FORGE_FALLBACK_MODELS != null) {
+    const parsed = parseFallbackModels(process.env.FORGE_FALLBACK_MODELS);
+    if (parsed !== undefined) cfg.fallbackModels = parsed;
+  }
   if (process.env.FORGE_BASE_URL) cfg.baseUrl = process.env.FORGE_BASE_URL;
   {
     const effortRaw =
@@ -594,6 +609,8 @@ export function defaultConfigToml(): string {
 
 provider = "xai"
 model = "grok-4.6"
+# Same-provider fallbacks after 429/5xx retries (comma list). off = disable defaults.
+# fallback_models = "grok-4.5, grok-4"
 # low | medium | high | xhigh  (only sent for models that support it)
 # Omit for model max (recommended): xhigh on grok-4.6+, high on grok-4.5.
 # Pin with low|medium|high|xhigh|max when needed:

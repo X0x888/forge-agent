@@ -64,6 +64,31 @@ describe("desktop notify preference", () => {
     assert.equal(maybeDesktopNotify({ title: "t", body: "b" }), false);
   });
 
+  it("background-task complete wires maybeDesktopNotify (import stays live)", async () => {
+    const src = await import("node:fs");
+    const text = src.readFileSync(
+      new URL("../src/agent/tools/background-tasks.ts", import.meta.url),
+      "utf8",
+    );
+    assert.match(text, /maybeDesktopNotify/);
+    assert.match(text, /Forge · bg /);
+  });
+
+  it("goal + ULW stuck-wall wire maybeDesktopNotify", async () => {
+    const fs = await import("node:fs");
+    const goal = fs.readFileSync(
+      new URL("../src/harness/goal.ts", import.meta.url),
+      "utf8",
+    );
+    const ulw = fs.readFileSync(
+      new URL("../src/harness/ulw-cycle.ts", import.meta.url),
+      "utf8",
+    );
+    assert.match(goal, /Forge · Goal achieved/);
+    assert.match(goal, /Forge · Goal stuck-wall/);
+    assert.match(ulw, /Forge · ULW stuck-wall/);
+  });
+
   it("maybeRingBell still honors force", () => {
     setBellEnabled(false);
     // force rings only on TTY — just ensure it does not throw

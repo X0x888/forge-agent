@@ -10,6 +10,7 @@
  */
 import type { ForgeConfig } from "../../config/types.js";
 import {
+  enterSessionPlanMode,
   exitSessionPlanMode,
   saveSession,
   type SessionData,
@@ -23,6 +24,53 @@ const PLAN_MAX = 8000;
 export function isExitPlanModeToolName(name: string): boolean {
   const n = (name || "").trim();
   return n === "exit_plan_mode" || n === "ExitPlanMode" || n === "exitPlanMode";
+}
+
+export function isEnterPlanModeToolName(name: string): boolean {
+  const n = (name || "").trim();
+  return (
+    n === "enter_plan_mode" || n === "EnterPlanMode" || n === "enterPlanMode"
+  );
+}
+
+/**
+ * Agent-callable plan-mode entry (grok-build enter_plan_mode).
+ * Ambiguous / architectural work should pause writes without waiting for /plan.
+ * Subagents never get this tool. No-op (not an error) if already in plan.
+ */
+export async function toolEnterPlanMode(
+  input: { reason?: string },
+  ctx: { session?: SessionData; config?: ForgeConfig },
+): Promise<ToolResult> {
+  const session = ctx.session;
+  const config = ctx.config;
+  if (!session || !config) {
+    return {
+      output:
+        "enter_plan_mode error: session/config unavailable. Stay in the current mode.",
+      isError: true,
+    };
+  }
+  if (config.permissionMode === "plan") {
+    return {
+      output:
+        "Already in plan mode. Research and design only; call exit_plan_mode when the plan is ready.",
+    };
+  }
+  const reason = String(input.reason ?? "").trim();
+  const previous = config.permissionMode;
+  enterSessionPlanMode(config, session);
+  saveSession(session);
+  pushLiveNotice(
+    session.meta.id,
+    `Mode ${previous} → plan` + (reason ? ` — ${reason.slice(0, 120)}` : ""),
+  );
+  return {
+    output:
+      `Entered plan mode (was ${previous}). Write tools are now denied. ` +
+      `Research and produce a concrete plan, then call exit_plan_mode — do not wait for /plan or /build.` +
+      (reason ? `\nReason: ${reason}` : ""),
+  };
 }
 
 function userApprovedImplement(answer: string): boolean {
