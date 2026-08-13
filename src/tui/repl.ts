@@ -5,7 +5,7 @@ import type { LLMProvider } from "../providers/types.js";
 import type { SessionData } from "../session/session.js";
 import { HookRunner } from "../harness/hooks.js";
 import { PermissionGate } from "../agent/permissions.js";
-import { runAgentLoop } from "../agent/loop.js";
+import { runAgentLoopThroughDrops } from "../agent/loop.js";
 import { formatBangOutput, runBangShell } from "./bang-shell.js";
 import {
   handleSlash,
@@ -626,7 +626,7 @@ export async function runRepl(opts: {
     };
 
     try {
-      const result = await runAgentLoop({
+      const result = await runAgentLoopThroughDrops({
         config,
         provider,
         session,

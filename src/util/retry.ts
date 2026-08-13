@@ -72,9 +72,97 @@ function isContextOverflowMessage(msg: string): boolean {
   );
 }
 
+/**
+ * Undici/Node fetch + proxy drops that are *not* HTTP status errors.
+ *
+ * SuperGrok / xAI often RST the socket when an access token dies mid-stream
+ * instead of returning HTTP 401/403. Node then throws `TypeError: terminated`
+ * (message is exactly "terminated"). The previous auth-recovery path never
+ * saw a 401, so unattended ULW died at the prompt — and typing "continue"
+ * worked because the next loop proactively refreshed OAuth.
+ */
+export function isDroppedConnectionError(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err ?? "");
+  const name = err instanceof Error ? err.name : "";
+  const t = msg.trim();
+  if (/^terminated$/i.test(t)) return true;
+  if (name === "TypeError" && /terminated/i.test(t)) return true;
+  if (
+    /other side closed|UND_ERR_|ERR_STREAM_PREMATURE_CLOSE|\bEPIPE\b|socket hang up|ECONNRESET|UND_ERR_SOCKET|connection (?:reset|closed|aborted)|premature (?:close|end)|network connection (?:lost|closed)/i.test(
+      t,
+    )
+  ) {
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Errors that must not be papered over by "just continue":
+ * user abort, context overflow, hard 400/404 capability misses.
+ */
+export function isPermanentProviderHalt(err: unknown): boolean {
+  if (isContextOverflowError(err)) return true;
+  const msg = err instanceof Error ? err.message : String(err ?? "");
+  if (/^Aborted$/i.test(msg.trim()) || /aborted by user/i.test(msg)) {
+    return true;
+  }
+  if (isProviderApiError(err)) {
+    if (err.status === 400 || err.status === 404 || err.status === 422) {
+      return true;
+    }
+  }
+  if (
+    /unsupported_feature|is not supported|does not support|org(?:anization)?.{0,40}verif|model is deprecated|model_not_found|unknown.?model/i.test(
+      msg,
+    )
+  ) {
+    return true;
+  }
+  return false;
+}
+
+/**
+ * True when a fresh provider call (after optional OAuth refresh) is what a
+ * human "continue" would do — so unattended ULW must not yield to the prompt.
+ *
+ * Includes the screenshot case: generic `terminated` / `provider_error`
+ * with valid auth still on disk.
+ */
+export function isContinueRecoverableProviderError(err: unknown): boolean {
+  if (isPermanentProviderHalt(err)) return false;
+  const msg = err instanceof Error ? err.message : String(err ?? "");
+  // Quota / 429 have their own account-switch path. Do not infinite-continue
+  // into a spend or rate wall. "terminated" is not quota.
+  if (
+    /rate.?limit|too many requests|insufficient[_\s-]?quota|quota.?exceeded|quota.?exhausted|payment.?required|credits?.?(exhausted|exceeded|depleted)|usage.?limit|plan.?limit|over.?limit/i.test(
+      msg,
+    ) &&
+    !isDroppedConnectionError(err)
+  ) {
+    return false;
+  }
+  if (isProviderApiError(err) && (err.status === 402 || err.status === 429)) {
+    return false;
+  }
+  if (/content.?filter|policy violation|safety system/i.test(msg)) {
+    return false;
+  }
+  if (isDroppedConnectionError(err)) return true;
+  if (isRetryableError(err)) return true;
+  // Unclassified non-HTTP errors (TypeError: terminated, empty throws, …)
+  // are exactly what "type continue" recovers — do not halt ULW.
+  if (!isProviderApiError(err)) return true;
+  if (err.status >= 500 || err.status === 408 || err.status === 529) {
+    return true;
+  }
+  return false;
+}
+
 export function isRetryableError(err: unknown): boolean {
   // Never retry overflow — same payload will fail again
   if (isContextOverflowError(err)) return false;
+  if (isDroppedConnectionError(err)) return true;
   if (isProviderApiError(err)) return err.isRetryable;
   const msg = err instanceof Error ? err.message : String(err);
   // User abort is not retryable; provider wall-clock timeout is.

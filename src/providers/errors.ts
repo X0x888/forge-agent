@@ -226,6 +226,15 @@ export function formatProviderError(
         "FORGE_PROVIDER_TIMEOUT_MS (stall)  ·  FORGE_PROVIDER_MAX_MS (optional absolute)  ·  /compact  ·  /retry",
       );
     } else if (
+      /^terminated$/i.test(msg.trim()) ||
+      /other side closed|UND_ERR_|ERR_STREAM_PREMATURE_CLOSE|\bEPIPE\b|premature (?:close|end)/i.test(
+        msg,
+      )
+    ) {
+      code = "network";
+      tips.push("Dropped connection — Forge retries and refreshes OAuth automatically");
+      tips.push("If it persists: /retry  ·  forge run --continue");
+    } else if (
       /ECONNRESET|ETIMEDOUT|EAI_AGAIN|ENOTFOUND|ECONNREFUSED|getaddrinfo|fetch failed|socket hang up|network/i.test(
         msg,
       )

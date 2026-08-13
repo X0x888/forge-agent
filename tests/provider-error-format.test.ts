@@ -76,6 +76,9 @@ describe("formatProviderError", () => {
   it("formats network / timeout plain errors", () => {
     const net = formatProviderError(new Error("fetch failed"));
     assert.equal(net.code, "network");
+    const term = formatProviderError(new Error("terminated"));
+    assert.equal(term.code, "network");
+    assert.ok(term.tips.some((t) => /retries|OAuth|continue/i.test(t)));
     const to = formatProviderError(new Error("Provider timed out after 600000ms"));
     assert.equal(to.code, "timeout");
     const ab = formatProviderError(new Error("Aborted"));

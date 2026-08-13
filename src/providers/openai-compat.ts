@@ -140,13 +140,21 @@ export class OpenAICompatProvider implements LLMProvider {
       const json = (await resp.json()) as {
         id: string;
         model: string;
-        choices: Array<{
+        error?: { message?: string; type?: string; code?: string | number };
+        choices?: Array<{
           message: ChatMessage;
           finish_reason: string | null;
         }>;
         usage?: RawUsage;
       };
-      const choice = json.choices[0];
+      if (json.error) {
+        const msg =
+          json.error.message ||
+          json.error.type ||
+          String(json.error.code || "error");
+        throw new Error(`${this.id} API error: ${msg}`);
+      }
+      const choice = json.choices?.[0];
       if (!choice) {
         throw new Error(`${this.id} API error: empty choices array (provider returned no completion — retry or switch model)`);
       }

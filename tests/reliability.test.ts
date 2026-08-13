@@ -2626,6 +2626,9 @@ describe("stream empty / error recovery", () => {
       isRetryableError(new Error("xai stream error: rate_limit_exceeded")),
       true,
     );
+    const terminated = new Error("terminated");
+    terminated.name = "TypeError";
+    assert.equal(isRetryableError(terminated), true);
   });
 
   it("flags git commit --no-verify as soft-dangerous", async () => {

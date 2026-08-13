@@ -71,6 +71,7 @@ What experts should expect from Forge in long, unattended, or CI runs.
 |---|---|
 | **OAuth refresh** | `resolveAuthFresh` exchanges `refresh_token` before start when near expiry |
 | **Mid-run 401/403 token death** | Forced refresh (+ Grok re-import) + `provider.updateCredentials` with the **refreshed access token directly** (not re-`resolveAuth`, which skipped bearers still marked expired when `expires_in` was omitted) then retry chat in a loop up to `FORGE_AUTH_RECOVERY_MAX`; multi-account auth-failure switch with shorter cooldown when refresh fails. SuperGrok often returns **HTTP 403** `"OAuth2 access token could not be validated"` (not 401) — classified via `isTokenAuthFailure` so ULW does not die mid-wave. Non-quota 403 token rejections recover; quota/billing 403s stay on the account-switch quota path. Proactive refresh failure also fails over to another same-provider account before the next chat call. Refresh responses without `expires_in` get a default 1h TTL (never keep a past `expiresAt` after rotation). |
+| **Mid-run socket drop (`terminated`)** | Node/undici `TypeError: terminated` (and other dropped-connection errors) is retryable **and** continue-recoverable. xAI often RST the stream instead of returning 401/403; the previous path treated that as a fatal `provider_error` and waited for a typed `continue`. Forge now force-refreshes OAuth and retries in-loop (`FORGE_PROVIDER_DROP_RECOVERY_MAX`, default 5). If the loop still throws while ULW is armed, REPL/`forge run` auto-resumes the same transcript (`FORGE_ULW_AUTO_CONTINUE_MAX`, default 3; `FORGE_ULW_AUTO_CONTINUE=0` off). |
 | **Multi-account failover** | Same-provider accounts: proactive switch on high plan usage / cooldown / dead token; reactive switch on 429/quota; post-switch OAuth refresh; cap via `FORGE_ACCOUNT_SWITCH_MAX` (default 3); stale plan probes (>6h) ignored |
 | **Multi-account UX** | `forge accounts status` / `/accounts status` readiness; `clear-cooldown`; doctor surfaces eligible/cooldown; REPL `/accounts switch` hot-swaps live provider token |
 | **Sensitive JSON mode** | `auth.json`, `permissions.json`, `preferences.json` written `0600`; `/doctor` flags group/world-readable files; `forge doctor --json` exposes structured `secureFiles` (`exists` / `mode` / `modeOk`) and sets `ok: false` when any `modeOk` is false |
@@ -167,6 +168,9 @@ What experts should expect from Forge in long, unattended, or CI runs.
 | `FORGE_FORCE_SESSION_LOCK` | off | Headless: force-steal / continue despite a foreign live `session.lock` |
 | `FORGE_ACCOUNT_SWITCH_MAX` | `3` | Max mid-run multi-account switches per agent loop (proactive + quota + auth) |
 | `FORGE_AUTH_RECOVERY_MAX` | `20` | Max mid-run OAuth refresh recoveries per agent loop |
+| `FORGE_PROVIDER_DROP_RECOVERY_MAX` | `5` | Max in-loop retries after a continue-recoverable drop (`terminated`, empty stream, 5xx) with forced OAuth refresh |
+| `FORGE_ULW_AUTO_CONTINUE` | on | `0`/`false` disables ULW auto-resume when a recoverable provider error still escapes the loop |
+| `FORGE_ULW_AUTO_CONTINUE_MAX` | `3` | Max transcript-resume attempts after a drop escapes the loop (unattended ULW only) |
 | `FORGE_JSON_COMPACT` | off | Single-line `--json` success payloads (CI log aggregation) |
 | `FORGE_LOG_JSON` | off | Structured JSON logs on stderr |
 | `FORGE_BELL` | off | `1`/`0` force turn-end terminal BEL (overrides `/bell` preference) |

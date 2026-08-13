@@ -121,6 +121,7 @@ export { createProvider } from "./providers/factory.js";
 export { mapAnthropicStopReason } from "./providers/anthropic.js";
 export {
   runAgentLoop,
+  runAgentLoopThroughDrops,
   resolveMaxTurns,
   isReadOnlyToolName,
   filterToolsForPermissionMode,
@@ -445,6 +446,9 @@ export {
   withRetry,
   isRetryableError,
   isContextOverflowError,
+  isDroppedConnectionError,
+  isContinueRecoverableProviderError,
+  isPermanentProviderHalt,
   computeRetryDelayMs,
 } from "./util/retry.js";
 export {

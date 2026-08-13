@@ -91,7 +91,12 @@ import { isExitPlanModeToolName } from "./tools/exit-plan-mode.js";
 import { buildBaselineSystemPrompt } from "./system-prompt.js";
 import { log } from "../util/log.js";
 import { envPositiveInt } from "../util/env.js";
-import { withRetry, isContextOverflowError } from "../util/retry.js";
+import {
+  withRetry,
+  isContextOverflowError,
+  isContinueRecoverableProviderError,
+  isDroppedConnectionError,
+} from "../util/retry.js";
 import { parseToolArguments } from "../util/json-repair.js";
 import { repairToolCallPairing } from "../session/message-repair.js";
 import { DoomLoopTracker } from "./doom-loop.js";
@@ -203,6 +208,12 @@ export interface LoopOptions {
   lsp?: LspManager;
   /** Skip goal/ULW auto-arm (subagents). */
   disableHarnessAutoArm?: boolean;
+  /**
+   * Resume the existing transcript after a continue-recoverable provider drop.
+   * Does not push a new user turn — same as the expert typing "continue"
+   * without polluting history.
+   */
+  resumeWithoutUserMessage?: boolean;
 }
 
 export interface LoopResult {
@@ -439,6 +450,12 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
   const maxAuthRecoveries = envPositiveInt("FORGE_AUTH_RECOVERY_MAX", 20);
   let accountSwitchCount = 0;
   const maxAccountSwitches = envPositiveInt("FORGE_ACCOUNT_SWITCH_MAX", 3);
+  /** Socket drops / generic provider_error that a typed "continue" would recover. */
+  let dropRecoveryCount = 0;
+  const maxDropRecoveries = envPositiveInt(
+    "FORGE_PROVIDER_DROP_RECOVERY_MAX",
+    5,
+  );
   const events: LoopEvents = {
     onToken: opts.events?.onToken || opts.onToken,
     onToolStart: opts.events?.onToolStart,
@@ -528,6 +545,7 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
 
   // Auto-arm goal from prose (disabled for nested subagents)
   if (
+    !opts.resumeWithoutUserMessage &&
     !opts.disableHarnessAutoArm &&
     config.goal.autoArm &&
     config.goal.enabled
@@ -545,7 +563,11 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
 
   // If session is already in ULW but cycle state missing, (re)arm from this message
   let effectiveUserMessage = userMessage;
-  if (!opts.disableHarnessAutoArm && session.meta.ultrawork) {
+  if (
+    !opts.resumeWithoutUserMessage &&
+    !opts.disableHarnessAutoArm &&
+    session.meta.ultrawork
+  ) {
     let ulw = loadUlwCycle(session.meta.id);
     if (!ulw?.enabled) {
       ulw = armUlwCycle(session.meta.id, userMessage, {
@@ -568,10 +590,12 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
     }
   }
 
-  await hooks.run("UserPromptSubmit", {
-    ...baseHookCtx(session, config),
-    prompt: effectiveUserMessage,
-  });
+  if (!opts.resumeWithoutUserMessage) {
+    await hooks.run("UserPromptSubmit", {
+      ...baseHookCtx(session, config),
+      prompt: effectiveUserMessage,
+    });
+  }
 
   const goal = loadGoal(session.meta.id);
   const ulwCycle = loadUlwCycle(session.meta.id);
@@ -599,11 +623,13 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
     session.messages[0] = { role: "system", content: system };
   }
 
-  maybeSetTitle(session, userMessage);
-  markUserTurn(session);
-  session.messages.push({ role: "user", content: effectiveUserMessage });
-  session.meta.turnCount += 1;
-  resetTodoNudgeForPrompt(session.meta.id);
+  if (!opts.resumeWithoutUserMessage) {
+    maybeSetTitle(session, userMessage);
+    markUserTurn(session);
+    session.messages.push({ role: "user", content: effectiveUserMessage });
+    session.meta.turnCount += 1;
+    resetTodoNudgeForPrompt(session.meta.id);
+  }
 
   // Admit initial harness snapshot (ULW/goal/todos/git) once at prompt start
   admitHarnessState(session, config, { git: gitSnap });
@@ -1169,6 +1195,39 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
              * Apply a switched account: refresh OAuth on the new slot if needed,
              * then hot-swap the provider bearer. Returns false when unusable.
              */
+            const forceRefreshLiveCreds = async (
+              why: string,
+            ): Promise<boolean> => {
+              if (!updateCreds) return false;
+              try {
+                const r = await refreshCredentialIfNeeded(
+                  String(config.provider),
+                  { force: true, skewSec: 600 },
+                );
+                if (r.ok && r.credential?.accessToken) {
+                  updateCreds(r.credential.accessToken);
+                  log.info(`Refreshed credentials after ${why} — retrying`);
+                  events.onStatus?.("Credentials refreshed — retrying");
+                  return true;
+                }
+              } catch {
+                /* fall through to grok re-import */
+              }
+              try {
+                const { resolveAuthFresh } = await import("../auth/resolve.js");
+                const fresh = await resolveAuthFresh(config);
+                if (fresh?.token) {
+                  updateCreds(fresh.token);
+                  log.info(`Re-resolved credentials after ${why} — retrying`);
+                  events.onStatus?.("Credentials re-resolved — retrying");
+                  return true;
+                }
+              } catch {
+                /* no live creds */
+              }
+              return false;
+            };
+
             const applySwitchedAccount = async (
               switched: {
                 switched: boolean;
@@ -1236,6 +1295,66 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
                   }.`,
                 );
               }
+            } else if (tokenAuthFail && authRecoveryCount >= maxAuthRecoveries) {
+              throw err;
+            } else if (
+              !tokenAuthFail &&
+              isContinueRecoverableProviderError(err) &&
+              dropRecoveryCount < maxDropRecoveries
+            ) {
+              // Screenshot case: Node `TypeError: terminated` (server RST /
+              // dead token mid-stream) is not HTTP 401/403, so the auth path
+              // never ran. Typing "continue" worked because the next loop
+              // proactively refreshed OAuth. Do that in-loop.
+              let lastDropErr: unknown = err;
+              let dropRecovered = false;
+              while (dropRecoveryCount < maxDropRecoveries) {
+                dropRecoveryCount += 1;
+                const why = isDroppedConnectionError(lastDropErr)
+                  ? "dropped connection"
+                  : "provider error";
+                events.onStatus?.(
+                  `Provider ${why} — refreshing and retrying (${dropRecoveryCount}/${maxDropRecoveries})…`,
+                );
+                events.onPhase?.(
+                  "waiting",
+                  `provider drop ${dropRecoveryCount}/${maxDropRecoveries}`,
+                );
+                await forceRefreshLiveCreds(why);
+                try {
+                  response = await doChat();
+                  dropRecovered = true;
+                  break;
+                } catch (err2) {
+                  lastDropErr = err2;
+                  if (isContextOverflowError(err2)) throw err2;
+                  if (
+                    isTokenAuthFailure(err2) &&
+                    authRecoveryCount < maxAuthRecoveries
+                  ) {
+                    // Became a real 401/403 — fall into the auth loop below
+                    // by rethrowing into the outer doChat catch? Simpler to
+                    // keep refreshing here (forceRefresh already ran).
+                    continue;
+                  }
+                  if (!isContinueRecoverableProviderError(err2)) throw err2;
+                  if (
+                    accountSwitchCount < maxAccountSwitches &&
+                    updateCreds
+                  ) {
+                    accountSwitchCount += 1;
+                    const switched = switchOnAuthFailure(
+                      String(config.provider),
+                    );
+                    await applySwitchedAccount(switched, why);
+                  }
+                }
+              }
+              if (!dropRecovered) {
+                throw lastDropErr instanceof Error
+                  ? lastDropErr
+                  : new Error(String(lastDropErr));
+              }
             } else if (!tokenAuthFail || authRecoveryCount >= maxAuthRecoveries) {
               throw err;
             } else {
@@ -1287,9 +1406,12 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
                     break;
                   } catch (err2) {
                     lastAuthErr = err2;
-                    if (isTokenAuthFailure(err2)) {
-                      // Still dead — try multi-account or another refresh
-                      // attempt below / next while iteration.
+                    if (
+                      isTokenAuthFailure(err2) ||
+                      isContinueRecoverableProviderError(err2)
+                    ) {
+                      // Still dead, or the socket dropped after refresh
+                      // (xAI often RST instead of a clean 401). Keep looping.
                     } else {
                       throw err2;
                     }
@@ -1312,7 +1434,12 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
                       break;
                     } catch (err2) {
                       lastAuthErr = err2;
-                      if (isTokenAuthFailure(err2)) continue;
+                      if (
+                        isTokenAuthFailure(err2) ||
+                        isContinueRecoverableProviderError(err2)
+                      ) {
+                        continue;
+                      }
                       throw err2;
                     }
                   }
@@ -2075,6 +2202,77 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
       ? { servedModels: [...runServedModels] }
       : {}),
   };
+}
+
+/**
+ * REPL / headless entry: if ULW is armed and the loop still throws a
+ * continue-recoverable drop (the screenshot: `✖ terminated` / provider_error),
+ * resume the same transcript without waiting for a typed "continue".
+ *
+ * Kill-switch: `FORGE_ULW_AUTO_CONTINUE=0`.
+ */
+export async function runAgentLoopThroughDrops(
+  opts: LoopOptions,
+): Promise<LoopResult> {
+  const off =
+    process.env.FORGE_ULW_AUTO_CONTINUE === "0" ||
+    process.env.FORGE_ULW_AUTO_CONTINUE === "false";
+  const max = envPositiveInt("FORGE_ULW_AUTO_CONTINUE_MAX", 3);
+  let resume = Boolean(opts.resumeWithoutUserMessage);
+  let n = 0;
+  for (;;) {
+    try {
+      return await runAgentLoop({
+        ...opts,
+        resumeWithoutUserMessage: resume,
+      });
+    } catch (err) {
+      if (off || opts.signal?.aborted) throw err;
+      if (!isContinueRecoverableProviderError(err)) throw err;
+      let ulwEnabled = Boolean(opts.session.meta.ultrawork);
+      try {
+        const ulw = loadUlwCycle(opts.session.meta.id);
+        if (ulw?.enabled) ulwEnabled = true;
+      } catch {
+        /* sidecar optional */
+      }
+      if (!ulwEnabled || n >= max) throw err;
+      n += 1;
+      resume = true;
+      log.warn(
+        `Provider drop during unattended ULW — auto-continuing (${n}/${max}) without a typed continue`,
+      );
+      opts.events?.onStatus?.(
+        `Provider drop — auto-continuing ULW (${n}/${max})`,
+      );
+      opts.events?.onPhase?.("waiting", `ulw auto-continue ${n}/${max}`);
+      try {
+        const r = await refreshCredentialIfNeeded(
+          String(opts.config.provider),
+          { force: true, skewSec: 600 },
+        );
+        if (r.ok && r.credential?.accessToken && opts.provider.updateCredentials) {
+          opts.provider.updateCredentials(r.credential.accessToken);
+        }
+      } catch {
+        /* next loop still does proactive refresh */
+      }
+      const delay = Math.min(8_000, 400 * 2 ** (n - 1));
+      await new Promise<void>((resolve, reject) => {
+        if (opts.signal?.aborted) {
+          reject(new Error("Aborted"));
+          return;
+        }
+        const t = setTimeout(resolve, delay);
+        const onAbort = () => {
+          clearTimeout(t);
+          reject(new Error("Aborted"));
+        };
+        opts.signal?.addEventListener("abort", onAbort, { once: true });
+        t.unref?.();
+      });
+    }
+  }
 }
 
 /** Dispose process-scoped MCP/LSP on exit (once). */

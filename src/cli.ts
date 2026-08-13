@@ -110,7 +110,7 @@ import {
   installBackgroundTaskExitHook,
 } from "./agent/tools/background-tasks.js";
 import { loadSavedAllows } from "./agent/permission-saved.js";
-import { runAgentLoop } from "./agent/loop.js";
+import { runAgentLoopThroughDrops } from "./agent/loop.js";
 import { runRepl } from "./tui/repl.js";
 import { forgeHome, ensureDir, inspectSecureFile } from "./util/fs.js";
 import { log, setLogLevel } from "./util/log.js";
@@ -6229,7 +6229,7 @@ async function runHeadless(opts: {
   const t0 = Date.now();
   let result;
   try {
-    result = await runAgentLoop({
+    result = await runAgentLoopThroughDrops({
       config: opts.config,
       provider: opts.provider,
       session: opts.session,
