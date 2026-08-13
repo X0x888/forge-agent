@@ -14,6 +14,7 @@ import { streamLines, toolRead } from "../src/agent/tools/read.js";
 import {
   formatGitStableForPrompt,
   formatGitBranchLine,
+  formatGitTreeLine,
   formatGitForPrompt,
 } from "../src/util/git-context.js";
 import {
@@ -177,6 +178,18 @@ describe("git context: stable system prefix + volatile branch admission", () => 
     assert.ok(!/dirty|7 files/.test(s));
   });
 
+  it("tree line reports coarse dirty/clean (count is display-only)", () => {
+    assert.equal(
+      formatGitTreeLine(snap),
+      "Working tree: dirty (7 files)",
+    );
+    assert.equal(
+      formatGitTreeLine({ ...snap, dirty: false, changedFiles: 0 }),
+      "Working tree: clean",
+    );
+    assert.equal(formatGitTreeLine({ dirty: true, changedFiles: 3 }), "");
+  });
+
   it("legacy full formatter unchanged for banners", () => {
     const s = formatGitForPrompt(snap);
     assert.match(s, /dirty, 7 files/);
@@ -203,8 +216,30 @@ describe("context-admit: git branch travels with harness admissions", () => {
     const msg = admitHarnessIfChanged("s-git", snap);
     assert.ok(msg);
     assert.match(msg!, /Branch: main/);
+    assert.match(msg!, /Working tree: clean/);
     // Unchanged → no second message
     assert.equal(admitHarnessIfChanged("s-git", snap), null);
+  });
+
+  it("dirty flip re-admits; file-count churn does not", () => {
+    const clean = snapshotHarness({
+      ...baseSnap,
+      git: { root: "/r", branch: "main", dirty: false },
+    });
+    admitHarnessIfChanged("s-tree", clean);
+    const dirty1 = snapshotHarness({
+      ...baseSnap,
+      git: { root: "/r", branch: "main", dirty: true, changedFiles: 1 },
+    });
+    const flip = admitHarnessIfChanged("s-tree", dirty1);
+    assert.ok(flip);
+    assert.match(flip!, /Working tree: dirty \(1 file\)/);
+    const dirty7 = snapshotHarness({
+      ...baseSnap,
+      git: { root: "/r", branch: "main", dirty: true, changedFiles: 7 },
+    });
+    assert.equal(admitHarnessIfChanged("s-tree", dirty7), null);
+    assert.equal(fingerprintSnapshot(dirty1), fingerprintSnapshot(dirty7));
   });
 
   it("branch switch earns a fresh admission even with counters suppressed", () => {

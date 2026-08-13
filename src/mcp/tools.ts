@@ -3,6 +3,7 @@
  */
 import type { ToolContext, ToolResult } from "../agent/tools/types.js";
 import type { McpManager } from "./manager.js";
+import { mcpToolNameLooksReadOnly } from "./types.js";
 
 export async function toolSearchMcp(
   args: Record<string, unknown>,
@@ -181,12 +182,13 @@ export function mcpCallIsReadOnly(
   mcp: McpManager | undefined,
   args: Record<string, unknown>,
 ): boolean {
-  if (!mcp) return false;
   const toolName = String(
     args.tool_name ?? args.name ?? args.tool ?? "",
   ).trim();
   if (!toolName) return false;
-  return mcp.isReadOnlyTool(toolName);
+  // Live registry (annotations) wins; otherwise kebab/snake name heuristic.
+  if (mcp) return mcp.isReadOnlyTool(toolName);
+  return mcpToolNameLooksReadOnly(toolName);
 }
 
 /**

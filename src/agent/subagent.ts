@@ -10,7 +10,7 @@
  */
 import fs from "node:fs";
 import path from "node:path";
-import type { ForgeConfig } from "../config/types.js";
+import type { ForgeConfig, PermissionMode } from "../config/types.js";
 import type { LLMProvider } from "../providers/types.js";
 import type { ToolDefinition } from "../providers/types.js";
 import type { HookRunner } from "../harness/hooks.js";
@@ -31,9 +31,9 @@ import type { LoopEvents, LoopResult } from "./loop.js";
 import { normalizePermissionMode } from "../util/mode-aliases.js";
 import {
   createSubagentWorktree,
+  defaultIsolationForSpawn,
   formatWorktreeLandSummary,
   landSubagentWorktree,
-  resolveIsolationMode,
   type SubagentWorktree,
   type WorktreeLandResult,
 } from "./worktree.js";
@@ -50,7 +50,7 @@ export interface SubagentRequest {
   maxTurns?: number;
   /**
    * Isolation mode:
-   * - none (default): same workspace as parent
+   * - none: same workspace as parent (explore/plan default; explicit override)
    * - worktree: detached git worktree under ~/.forge/worktrees/ (requires git repo); auto-lands into parent on success
    */
   isolation?: SubagentIsolation;
@@ -102,10 +102,16 @@ const READ_ONLY_TOOLS = new Set([
   "todo_write",
   "get_task_output",
   "search_mcp",
+  "call_mcp",
+  "mcp_call",
+  "use_mcp",
   "mcp_resource",
   "mcp_prompt",
   "lsp",
   "ask_user",
+  "memory_write",
+  // PermissionGate still hard-denies mutating bash / mutating MCP in plan.
+  "bash",
 ]);
 
 /** Tools never available inside a subagent (nesting + interactive edge cases). */
@@ -115,6 +121,9 @@ const SUBAGENT_DENY_ALWAYS = new Set([
   "task",
   // Background kill is parent-process scoped; avoid surprise from children
   "kill_task",
+  "exit_plan_mode",
+  "ExitPlanMode",
+  "exitPlanMode",
 ]);
 
 export function resolveSubagentType(raw: unknown): SubagentType {
@@ -152,6 +161,16 @@ export function resolveCapabilityMode(
     return "read-only";
   }
   return "full";
+}
+
+/** Read-only children always run in plan mode so bash/MCP mutations stay denied. */
+export function resolveChildPermissionMode(
+  type: SubagentType,
+  capability: SubagentCapability,
+  parentMode: PermissionMode,
+): PermissionMode {
+  if (type === "plan" || capability === "read-only") return "plan";
+  return normalizePermissionMode(parentMode) ?? parentMode;
 }
 
 export function filterToolsForSubagent(
@@ -231,7 +250,11 @@ export async function runSubagent(
     };
   }
 
-  const isolation = resolveIsolationMode(req.isolation);
+  const isolation = defaultIsolationForSpawn({
+    type: req.subagentType,
+    isolation: req.isolation,
+    workspace: ctx.workspace,
+  });
   let worktree: SubagentWorktree | null = null;
   let childWorkspace = ctx.workspace;
   if (isolation === "worktree") {
@@ -284,22 +307,11 @@ export async function runSubagent(
         : defaultSubagentMaxTurns(),
     // Don't inherit ULW/goal auto-arm into child
     goal: { ...ctx.config.goal, autoArm: false },
-    permissionMode:
-      subagentType === "plan"
-        ? "plan"
-        : capabilityMode === "read-only"
-          ? (() => {
-              const pm =
-                normalizePermissionMode(ctx.config.permissionMode) ??
-                ctx.config.permissionMode;
-              return pm === "bypassPermissions"
-                ? "bypassPermissions"
-                : pm === "dontAsk"
-                  ? "dontAsk"
-                  : "default";
-            })()
-          : (normalizePermissionMode(ctx.config.permissionMode) ??
-            ctx.config.permissionMode),
+    permissionMode: resolveChildPermissionMode(
+      subagentType,
+      capabilityMode,
+      ctx.config.permissionMode,
+    ),
   };
 
   const tools = filterToolsForSubagent(capabilityMode, {
@@ -467,6 +479,8 @@ export async function runSubagent(
       parentWorkspace: ctx.workspace,
       forceKeep: forceKeepWorktree,
       skipApply,
+      sessionId: ctx.parentSession.meta.id,
+      turn: ctx.parentSession.meta.turnCount,
     });
     worktreeKept = worktreeLand.kept;
     const landBlock = formatWorktreeLandSummary(worktreeLand);
@@ -662,7 +676,11 @@ export async function runSubagentTracked(
     id: trackId,
     description: String(req.description || "subagent").slice(0, 80),
     type: String(req.subagentType || "general-purpose"),
-    isolation: String(req.isolation || "none"),
+    isolation: defaultIsolationForSpawn({
+      type: req.subagentType,
+      isolation: req.isolation,
+      workspace: ctx.workspace,
+    }),
     startedAt: Date.now(),
   });
   try {

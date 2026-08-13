@@ -75,6 +75,34 @@ describe("evaluateProofClaimAtStop", () => {
     assert.equal(r.block, false);
   });
 
+  it("allows when last-verify is fresh (bang-shell check)", () => {
+    const r = evaluateProofClaimAtStop({
+      lastAssistantMessage: "All tests pass.",
+      verificationRan: false,
+      lastVerificationCommand: "npm test",
+      lastVerificationStale: false,
+      ultrawork: false,
+      goalActive: false,
+      openTodoCount: 0,
+      editCount: 3,
+    });
+    assert.equal(r.block, false);
+  });
+
+  it("still blocks when last-verify is stale after later edits", () => {
+    const r = evaluateProofClaimAtStop({
+      lastAssistantMessage: "All tests pass.",
+      verificationRan: false,
+      lastVerificationCommand: "npm test",
+      lastVerificationStale: true,
+      ultrawork: false,
+      goalActive: false,
+      openTodoCount: 0,
+      editCount: 3,
+    });
+    assert.equal(r.block, true);
+  });
+
   it("allows claim with no work in flight", () => {
     const r = evaluateProofClaimAtStop({
       lastAssistantMessage: "In general tests pass when the suite is green.",

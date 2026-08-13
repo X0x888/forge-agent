@@ -91,6 +91,8 @@ describe("live mid-run slash policy", () => {
     assert.equal(classifyLiveSlash("/permissions"), "readonly");
     assert.equal(classifyLiveSlash("/permissions list"), "readonly");
     assert.equal(classifyLiveSlash("/copy"), "readonly");
+    assert.equal(classifyLiveSlash("/paste"), "readonly");
+    assert.equal(classifyLiveSlash("/attach shot.png"), "idle-only");
     assert.equal(classifyLiveSlash("/last"), "readonly");
     assert.equal(classifyLiveSlash("/last 3"), "readonly");
     assert.equal(classifyLiveSlash("/files"), "readonly");
@@ -194,6 +196,9 @@ describe("live mid-run slash policy", () => {
     assert.match(LIVE_CONTROLS_HINT, /\/unpause/);
     assert.match(LIVE_CONTROLS_HINT, /\/plan/);
     assert.match(LIVE_CONTROLS_HINT, /\/build/);
+    assert.match(LIVE_CONTROLS_HINT, /exit_plan_mode/);
+    assert.match(LIVE_CONTROLS_HINT, /!cmd/);
+    assert.match(LIVE_CONTROLS_HINT, /@path/);
     assert.match(LIVE_CONTROLS_HINT, /\/model/);
   });
 

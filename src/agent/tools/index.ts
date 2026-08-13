@@ -11,6 +11,7 @@ import { toolWebSearch } from "./web-search.js";
 import { toolWebFetch } from "./web-fetch.js";
 import { toolGetTaskOutput, toolKillTask } from "./task-tools.js";
 import { toolAskUser } from "./ask-user.js";
+import { toolExitPlanMode } from "./exit-plan-mode.js";
 import {
   toolSearchMcp,
   toolCallMcp,
@@ -27,7 +28,7 @@ export type { ToolContext, ToolResult } from "./types.js";
 export { TOOL_DEFINITIONS };
 
 const AVAILABLE =
-  "bash, get_task_output, kill_task, read_file, write_file, search_replace, apply_patch, grep, glob, list_dir, todo_write, memory_write, ask_user, web_search, web_fetch, search_mcp, call_mcp, mcp_resource, mcp_prompt, spawn_subagent, lsp";
+  "bash, get_task_output, kill_task, read_file, write_file, search_replace, apply_patch, grep, glob, list_dir, todo_write, memory_write, ask_user, exit_plan_mode, web_search, web_fetch, search_mcp, call_mcp, mcp_resource, mcp_prompt, spawn_subagent, lsp";
 
 /** Canonical tool ids (used for doubled-name recovery). */
 const CANONICAL_TOOLS = [
@@ -46,6 +47,9 @@ const CANONICAL_TOOLS = [
   "memory_write",
   "ask_user",
   "AskUser",
+  "exit_plan_mode",
+  "ExitPlanMode",
+  "exitPlanMode",
   "question",
   "web_search",
   "web_fetch",
@@ -188,6 +192,13 @@ export async function executeTool(
           context:
             args.context != null ? String(args.context) : undefined,
         });
+      case "exit_plan_mode":
+      case "ExitPlanMode":
+      case "exitPlanMode":
+        return await toolExitPlanMode(
+          { plan: args.plan != null ? String(args.plan) : undefined },
+          { session: ctx.session, config: ctx.config },
+        );
       case "web_search":
       case "WebSearch":
         return await toolWebSearch(args, ctx);

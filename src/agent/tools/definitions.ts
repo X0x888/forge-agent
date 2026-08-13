@@ -330,6 +330,28 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   {
     type: "function",
     function: {
+      name: "exit_plan_mode",
+      description:
+        "Propose a concrete implementation plan and leave PLAN MODE after user approval. " +
+        "Use when research is done and you are ready to implement — do not wait for the user to type /build. " +
+        "Interactive sessions confirm; headless stays in plan unless the session entered plan from --yolo. " +
+        "After approval, implement immediately.",
+      parameters: {
+        type: "object",
+        properties: {
+          plan: {
+            type: "string",
+            description:
+              "The implementation plan to approve (steps, files, risks). Required.",
+          },
+        },
+        required: ["plan"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
       name: "web_search",
       description:
         "Search the web for up-to-date information. Returns titles, URLs, and snippets. " +
@@ -490,7 +512,8 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       description:
         "Delegate a bounded subtask to a nested agent and receive its final summary. " +
         "Types: general-purpose | explore (read-only) | plan (read-only design). " +
-        "isolation=worktree creates a detached git worktree under ~/.forge/worktrees/ (requires git). On success Forge captures the diff and lands it into the parent automatically (FORGE_SUBAGENT_LAND=keep|discard to override; worktree kept on conflict). " +
+        "isolation=worktree creates a detached git worktree under ~/.forge/worktrees/ (requires git). On success Forge captures the diff and lands it into the parent automatically (FORGE_SUBAGENT_LAND=keep|discard to override; worktree kept on conflict). Successful land journals parent pre-images so /undo can revert it. " +
+        "General-purpose defaults to worktree when the workspace is a git repo; explore/plan stay in-place. Pass isolation=none (or FORGE_SUBAGENT_ISOLATION=none) to write the parent tree directly. " +
         "Do not nest when a single tool call suffices.",
       parameters: {
         type: "object",
@@ -520,7 +543,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
           isolation: {
             type: "string",
             description:
-              "none (default, same workspace) | worktree (detached git worktree isolation)",
+              "none (same workspace) | worktree (detached git worktree). Default: worktree for general-purpose when git exists; none for explore/plan.",
           },
         },
         required: ["prompt"],

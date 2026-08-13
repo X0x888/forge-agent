@@ -2,6 +2,8 @@
  * Tab-completion for slash commands and their parameters.
  * Returns [matches, sharedPrefix] for readline.completer.
  */
+import fs from "node:fs";
+import path from "node:path";
 import type { ForgeConfig } from "../config/types.js";
 import {
   REASONING_EFFORT_DESCRIPTIONS,
@@ -435,11 +437,58 @@ export function resolveParamChoice(
 }
 
 /**
+ * Tab-complete `@src/cli` → `@src/cli.ts` from workspace files.
+ * Completes the last `@token` only; leaves the rest of the line intact.
+ */
+export function completeAtMention(
+  line: string,
+  workspace: string,
+): [string[], string] | null {
+  const at = line.lastIndexOf("@");
+  if (at < 0) return null;
+  const before = line.slice(0, at);
+  if (before.length && /[A-Za-z0-9_/]$/.test(before)) return null;
+  const rest = line.slice(at + 1);
+  if (/\s/.test(rest) || rest.includes("..")) return null;
+  const prefix = rest;
+  const ws = path.resolve(workspace);
+  const slash = prefix.lastIndexOf("/");
+  const dirRel = slash >= 0 ? prefix.slice(0, slash) : "";
+  const filePrefix = slash >= 0 ? prefix.slice(slash + 1) : prefix;
+  const dirAbs = path.resolve(ws, dirRel);
+  const relCheck = path.relative(ws, dirAbs);
+  if (relCheck.startsWith("..") || path.isAbsolute(relCheck)) return null;
+  let names: string[];
+  try {
+    names = fs.readdirSync(dirAbs);
+  } catch {
+    return [[], line];
+  }
+  const hits: string[] = [];
+  for (const name of names) {
+    if (name.startsWith(".")) continue;
+    if (filePrefix && !name.startsWith(filePrefix)) continue;
+    let suffix = "";
+    try {
+      if (fs.statSync(path.join(dirAbs, name)).isDirectory()) suffix = "/";
+    } catch {
+      /* */
+    }
+    const rel = (dirRel ? `${dirRel}/` : "") + name + suffix;
+    hits.push(rel.includes(" ") ? `@"${rel}"` : `@${rel}`);
+    if (hits.length >= 20) break;
+  }
+  if (!hits.length) return [[], line];
+  return [hits, `@${prefix}`];
+}
+
+/**
  * Full completer for the REPL.
  * - `/pe` → `/permissions`
  * - `/permissions a` → `/permissions acceptEdits`
  * - `/permissions ` → all modes
  * - bare line may complete common commands starting with /
+ * - `@src/cli` → `@src/cli.ts` (workspace file mention)
  */
 export function forgeCompleter(
   line: string,
@@ -452,6 +501,8 @@ export function forgeCompleter(
     if (raw.trim() === "") {
       return [[...SLASH_COMMANDS], raw];
     }
+    const atHits = completeAtMention(raw, config?.workspace || process.cwd());
+    if (atHits) return atHits;
     return [[], raw];
   }
 

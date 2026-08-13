@@ -7,6 +7,7 @@ import { loadMcpConfig, toolAllowedByFilters, type LoadedMcpConfig } from "./con
 import { McpClient } from "./client.js";
 import {
   isMcpToolReadOnly,
+  mcpToolNameLooksReadOnly,
   parseQualifiedMcpTool,
   qualifyMcpTool,
   type McpCallResult,
@@ -269,7 +270,9 @@ export class McpManager {
 
   isReadOnlyTool(qualifiedOrTool: string): boolean {
     const r = this.resolveTool(qualifiedOrTool);
-    return r?.readOnly ?? false;
+    if (r) return r.readOnly;
+    // Unknown / not-yet-connected: name heuristic (kebab + snake), fail-closed.
+    return mcpToolNameLooksReadOnly(qualifiedOrTool);
   }
 
   /** List resources across connected servers (connects on demand). */

@@ -30,10 +30,10 @@ function emptyStore(): Store {
 function loadStore(): Store {
   const raw = readJsonFile<Store>(storePath(), emptyStore());
   // Defensive copy so callers never mutate a shared fallback or stale ref
-  return {
+  return scrubWildcardMcpAllows({
     version: 1,
     allows: Array.isArray(raw.allows) ? [...raw.allows] : [],
-  };
+  });
 }
 
 function storePath(): string {
@@ -52,18 +52,51 @@ export function loadSavedAllows(workspace?: string): SavedAllow[] {
   return store.allows.filter((a) => a.workspaceKey === key || a.workspaceKey === "*");
 }
 
+function isMcpInvocationToolName(tool: string): boolean {
+  const n = String(tool || "").toLowerCase();
+  return n === "call_mcp" || n === "mcp_call" || n === "use_mcp";
+}
+
+function isWildcardMcpAllow(a: SavedAllow): boolean {
+  if (!isMcpInvocationToolName(a.tool)) return false;
+  const p = String(a.pattern || "").trim();
+  return !p || p === "*" || p === "." || p.includes("*");
+}
+
+/** Drop leftover call_mcp(*) grants written before server__tool scoping. */
+function scrubWildcardMcpAllows(store: Store): Store {
+  const next = store.allows.filter((a) => !isWildcardMcpAllow(a));
+  if (next.length === store.allows.length) return store;
+  store.allows = next;
+  try {
+    writeJsonFile(storePath(), store, 0o600);
+  } catch {
+    /* best-effort — still hide the wildcard from this process */
+  }
+  return store;
+}
+
 export function addSavedAllow(opts: {
   workspace: string;
   tool: string;
   pattern: string;
   global?: boolean;
 }): SavedAllow {
+  const pattern = String(opts.pattern || "").trim();
+  if (
+    isMcpInvocationToolName(opts.tool) &&
+    (!pattern || pattern === "*" || pattern === "." || pattern.includes("*"))
+  ) {
+    throw new Error(
+      "call_mcp always-allow requires a server__tool target (refusing *)",
+    );
+  }
   const store = loadStore();
   const entry: SavedAllow = {
     id: `pa_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
     workspaceKey: opts.global ? "*" : workspaceKey(opts.workspace),
     tool: opts.tool,
-    pattern: opts.pattern,
+    pattern,
     createdAt: nowIso(),
   };
   // dedupe

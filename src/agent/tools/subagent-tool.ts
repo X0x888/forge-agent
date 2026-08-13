@@ -7,7 +7,19 @@ import {
   resolveSubagentType,
   runSubagentTracked,
 } from "../subagent.js";
-import { resolveIsolationMode } from "../worktree.js";
+import { defaultIsolationForSpawn } from "../worktree.js";
+
+function isolationArgFromSpawn(args: Record<string, unknown>): unknown {
+  const isolation = args.isolation ?? args.isolate;
+  if (isolation !== undefined && isolation !== null && String(isolation).trim() !== "") {
+    return isolation;
+  }
+  if (args.worktree === true || args.worktree === "true") return "worktree";
+  if (typeof args.worktree === "string" && args.worktree.trim() !== "") {
+    return args.worktree;
+  }
+  return undefined;
+}
 
 export async function toolSpawnSubagent(
   args: Record<string, unknown>,
@@ -37,10 +49,13 @@ export async function toolSpawnSubagent(
   const subagentType = resolveSubagentType(
     args.subagent_type ?? args.type ?? args.agent_type,
   );
-  const capabilityMode = resolveCapabilityMode(
-    subagentType,
-    args.capability_mode ?? args.mode ?? args.capability,
-  );
+  const capabilityMode =
+    ctx.config?.permissionMode === "plan"
+      ? "read-only"
+      : resolveCapabilityMode(
+          subagentType,
+          args.capability_mode ?? args.mode ?? args.capability,
+        );
 
   let maxTurns: number | undefined;
   if (args.max_turns != null && String(args.max_turns).trim() !== "") {
@@ -55,14 +70,18 @@ export async function toolSpawnSubagent(
     maxTurns = Math.min(200, Math.floor(n));
   }
 
-  const isolation = resolveIsolationMode(
-    args.isolation ?? args.isolate ?? args.worktree,
-  );
-  // isolation=worktree can also be requested via boolean worktree: true
-  const isolationFinal =
-    args.worktree === true || args.worktree === "true"
-      ? "worktree"
-      : isolation;
+  const isolationRaw = isolationArgFromSpawn(args);
+  const isolation =
+    isolationRaw === undefined
+      ? defaultIsolationForSpawn({
+          type: subagentType,
+          workspace: ctx.workspace,
+        })
+      : defaultIsolationForSpawn({
+          type: subagentType,
+          isolation: isolationRaw,
+          workspace: ctx.workspace,
+        });
 
   try {
     const result = await ctx.runSubagent({
@@ -71,7 +90,7 @@ export async function toolSpawnSubagent(
       subagentType,
       capabilityMode,
       maxTurns,
-      isolation: isolationFinal,
+      isolation,
     });
     return {
       output: result.error && !result.text

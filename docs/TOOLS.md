@@ -17,11 +17,13 @@ Lessons applied from local open-source trees under `Documents/open source/` (Gro
 | `todo_write` | Session todos. Validates id/content/status; `merge:true` + `[]` is a no-op warning; failures are tool errors. |
 | `web_search` | DuckDuckGo Instant Answer (best-effort). Honors turn abort + 15s timeout; HTML scrape capped 2 MiB. Invalid `num_results` fails closed. |
 | `web_fetch` | Public http(s) fetch with **SSRF** guards (hex IPv4-mapped `::ffff:7f00:1`; weird IPv4 `2130706433`/`0x7f000001`/`127.1`; bracketed IPv6 hostnames peeled), redirect re-check, HTML→text (invalid numeric entities never throw), stream body cap **5 MiB**. Invalid `format`/`timeout_ms` fail closed. Merged turn abort signal stays live through body read. **`allow_local`** is not a free read-only tool (headless/dontAsk/plan need allow rule / pattern-always / YOLO / interactive approval; session-tool alone is not enough). |
-| `search_mcp` / `call_mcp` | MCP tools: search then invoke. **Defaults:** `context7` + `playwright`. Config `.forge/mcp.json` / `~/.forge/mcp.json`. `server__tool` names. `FORGE_MCP=0` / `FORGE_MCP_DEFAULTS=0`. `/mcp status|connect`. |
+| `search_mcp` / `call_mcp` | MCP tools: search then invoke. **Defaults:** `context7` + `playwright`. Config `.forge/mcp.json` / `~/.forge/mcp.json`. `server__tool` names. `FORGE_MCP=0` / `FORGE_MCP_DEFAULTS=0`. `/mcp status|connect`. Plan mode allows annotated/`query-*`/`list_*`/`resolve-*` tools; mutations fail closed. |
 | `mcp_resource` | MCP **resources** beyond tools: `action=list|read`, `uri`, optional `server`. Empty list is normal for tools-only servers. |
 | `mcp_prompt` | MCP **prompt templates**: `action=list|get`, `name` (`server__prompt`), optional `arguments`. |
-| `spawn_subagent` | Nested agent (`Task`). Types: general-purpose / explore / plan. **`isolation=worktree`**: detached git worktree under `~/.forge/worktrees/` (requires git). On success Forge **auto-lands** the diff into the parent (`FORGE_SUBAGENT_LAND=auto|keep|discard`; kept on conflict). Force keep with `FORGE_SUBAGENT_KEEP_WORKTREE=1`. Depth `FORGE_SUBAGENT_MAX_DEPTH`. |
+| `spawn_subagent` | Nested agent (`Task`). Types: general-purpose / explore / plan. **`isolation=worktree`**: detached git worktree under `~/.forge/worktrees/` (requires git). General-purpose **defaults to worktree** when the workspace is a git repo (explore/plan stay in-place; `FORGE_SUBAGENT_ISOLATION=none` or `isolation=none` writes the parent). On success Forge **auto-lands** the diff into the parent (`FORGE_SUBAGENT_LAND=auto|keep|discard`; kept on conflict) and journals parent pre-images so `/undo` can revert a bad land. Force keep with `FORGE_SUBAGENT_KEEP_WORKTREE=1`. Depth `FORGE_SUBAGENT_MAX_DEPTH`. |
 | `memory_write` | Durable notes. `scope=session` (default, compact-safe) or **`scope=project`** (cross-session · `~/.forge/project-memory` + `.forge/MEMORY.md`). |
+| `ask_user` | Interactive clarifying question. Headless fail-closed. |
+| `exit_plan_mode` | Leave `/plan` after proposing a plan. Interactive confirm; headless stays in plan unless the session entered plan from `--yolo`. Subagents cannot flip the parent. `/build` remains the manual override. Plan-mode `spawn_subagent` is allowed but forced read-only. |
 | `lsp` | LSP: diagnostics/hover/… + **`ensure`** (auto-install TS+Python, project Rust/Go) + **`install`** recipes. `forge lsp ensure` · `/lsp ensure` · **docs/LSP.md**. `FORGE_LSP=0` / `FORGE_LSP_AUTO=0`. |
 
 ## Name aliases
@@ -36,6 +38,8 @@ Models sometimes emit OpenCode/Claude-style names. Forge accepts common aliases 
 | `Edit`, `edit`, `StrReplace` | `search_replace` |
 | `Grep` / `Glob` / `ListDir` / `WebSearch` / `WebFetch` / `ApplyPatch` | same lowercase snake or existing cases |
 | `Task`, `task` | `spawn_subagent` |
+| `AskUser`, `question` | `ask_user` |
+| `ExitPlanMode`, `exitPlanMode` | `exit_plan_mode` |
 | `mcp_search` / `mcp_call` / `use_mcp` | `search_mcp` / `call_mcp` |
 | `LSP` | `lsp` |
 
@@ -74,6 +78,9 @@ Not model tools, but production daily-driver surfaces experts use alongside tool
 | Surface | Notes |
 |---------|--------|
 | `/undo` · `/rewind [n]` · `/retry` | Rewind chat **and** restore journaled file pre-images (OpenCode-inspired) |
+| `!cmd` | Bang-shell: run now (same PermissionGate; user-typed = approval). Mid-run queues. `forge run "!cmd"` is headless-instant. Failed bang exits 1. |
+| `@path` | Inline file mention + REPL tab-complete. Already-read for the edit guard. Resume restamps FileReadState. |
+| `/paste` | Clipboard image → `[[image:…]]`. Mid-run queues as an interjection. |
 | `/init` · `/review` | Guided AGENTS.md bootstrap; scoped code review prompts (OpenCode) |
 | `/compact-and` · `/fork-and-compact` | Compact-then-continue; fork then compact (Warp) — fork copies ULW/goal sidecars |
 | `/logs` · `forge logs` | Tail sandbox/safety events (`~/.forge/logs/sandbox.jsonl`) — live-safe, no secrets |
@@ -101,4 +108,6 @@ Not model tools, but production daily-driver surfaces experts use alongside tool
 `tests/tools-next.test.ts` — SSRF, web_fetch htmlToText, block-anchor, background tasks.  
 `tests/mcp-lsp-subagent.test.ts` — MCP config/search, LSP config, subagent tool filter, tool dispatch.  
 `tests/mutations-undo.test.ts` — mutation journal, `/undo` disk restore, `/init` `/review` `/config` `/compact-and`.  
-`tests/logs.test.ts` — sandbox log tail.
+`tests/logs.test.ts` — sandbox log tail.  
+`tests/plan-build-mode.test.ts` — `/plan` persist, `exit_plan_mode`, plan-mode tool filter.  
+`tests/bang-shell.test.ts` · `tests/user-mentions.test.ts` · `tests/clipboard-paste.test.ts` — `!cmd`, `@path`, `/paste`.

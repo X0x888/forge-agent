@@ -12,6 +12,7 @@
 import fs from "node:fs";
 import fsp from "node:fs/promises";
 import path from "node:path";
+import { realpathExistingPrefix } from "./path-util.js";
 
 export type FileReadStamp = {
   mtimeMs: number;
@@ -20,15 +21,47 @@ export type FileReadStamp = {
   notedAt: number;
 };
 
+const sessionFileReads = new Map<string, FileReadState>();
+
+/** Per-session FileReadState so /compact (outside the loop) can clear stamps. */
+export function fileReadsForSession(sessionId: string): FileReadState {
+  const id = String(sessionId || "").trim();
+  if (!id) return new FileReadState();
+  let state = sessionFileReads.get(id);
+  if (!state) {
+    state = new FileReadState();
+    sessionFileReads.set(id, state);
+  }
+  return state;
+}
+
+/** After compact the transcript no longer contains file bodies — force re-read. */
+export function clearFileReadsForSession(sessionId?: string): void {
+  const id = String(sessionId || "").trim();
+  if (!id) return;
+  sessionFileReads.get(id)?.clear();
+}
+
+/** Test helper — drop the registry entry so cases don't leak. */
+export function forgetFileReadsSession(sessionId?: string): void {
+  const id = String(sessionId || "").trim();
+  if (!id) return;
+  sessionFileReads.delete(id);
+}
+
 export class FileReadState {
   private readonly map = new Map<string, FileReadStamp>();
 
-  /** Normalize to absolute realpath when possible. */
+  /** Normalize to absolute realpath (macOS `/var` → `/private/var`). */
   static key(filePath: string): string {
     try {
-      return path.resolve(filePath);
+      return realpathExistingPrefix(filePath);
     } catch {
-      return filePath;
+      try {
+        return path.resolve(filePath);
+      } catch {
+        return filePath;
+      }
     }
   }
 
@@ -42,6 +75,10 @@ export class FileReadState {
       return;
     }
     this.map.delete(FileReadState.key(filePath));
+  }
+
+  size(): number {
+    return this.map.size;
   }
 
   note(filePath: string, st: { mtimeMs: number; size: number }): void {

@@ -54,6 +54,7 @@ import {
   toolClearEnvConfig,
 } from "../session/tool-clearing.js";
 import { expandUserContentWithImages } from "../util/user-images.js";
+import { expandUserMentions } from "../util/user-mentions.js";
 import { maybeRecordUserConstraint } from "../harness/decision-memory.js";
 import {
   drainLiveNotices,
@@ -68,7 +69,11 @@ import {
   admitHarnessIfChanged,
 } from "../harness/context-admit.js";
 import { getGitSnapshot, type GitSnapshot } from "../util/git-context.js";
-import { FileReadState } from "./tools/file-read-state.js";
+import {
+  FileReadState,
+  fileReadsForSession,
+  clearFileReadsForSession,
+} from "./tools/file-read-state.js";
 import {
   resetTodoNudgeForPrompt,
   noteTodoWrite,
@@ -82,6 +87,7 @@ import {
   executeTool,
   normalizeToolName,
 } from "./tools/index.js";
+import { isExitPlanModeToolName } from "./tools/exit-plan-mode.js";
 import { buildBaselineSystemPrompt } from "./system-prompt.js";
 import { log } from "../util/log.js";
 import { envPositiveInt } from "../util/env.js";
@@ -286,6 +292,59 @@ export function isReadOnlyToolName(name: string): boolean {
   return READ_ONLY.has(n) || READ_ONLY.has(name || "");
 }
 
+const PLAN_MODE_TOOL_NAMES = new Set([
+  "read_file",
+  "Read",
+  "read",
+  "grep",
+  "Grep",
+  "glob",
+  "Glob",
+  "list_dir",
+  "ListDir",
+  "web_search",
+  "WebSearch",
+  "web_fetch",
+  "WebFetch",
+  "todo_write",
+  "memory_write",
+  "ask_user",
+  "AskUser",
+  // Read-only bash stays visible; PermissionGate still hard-denies mutations.
+  "bash",
+  "Bash",
+  "shell",
+  "Shell",
+  "run_terminal_command",
+  "get_task_output",
+  "task_output",
+  "search_mcp",
+  "mcp_search",
+  "call_mcp",
+  "mcp_call",
+  "use_mcp",
+  "mcp_resource",
+  "mcp_prompt",
+  "lsp",
+  "LSP",
+  "exit_plan_mode",
+  "ExitPlanMode",
+  "exitPlanMode",
+  // Forced read-only by PermissionGate + toolSpawnSubagent when parent is plan.
+  "spawn_subagent",
+  "Task",
+  "task",
+]);
+
+/** Hide write tools from the model while in /plan (Claude/Grok-style). */
+export function filterToolsForPermissionMode(
+  tools: ToolDefinition[],
+  mode: string,
+): ToolDefinition[] {
+  if (mode !== "plan") return tools;
+  return tools.filter((t) => PLAN_MODE_TOOL_NAMES.has(t.function.name));
+}
+
 /** Build provider chat request including reasoning_effort when supported. */
 export function buildChatRequest(
   config: ForgeConfig,
@@ -395,7 +454,22 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
     (ulwArmed ? envPositiveInt("FORGE_ULW_MAX_CONTINUES", 200) : 50);
   const workspace = config.workspace || session.meta.cwd;
   /** Session-turn file read tracker — stale-edit protection (OpenCode-inspired). */
-  const fileReads = new FileReadState();
+  const fileReads = fileReadsForSession(session.meta.id);
+  // Inline @path mentions on the latest user turn so experts can point at
+  // files without a follow-up "read this first" (also stamps FileReadState).
+  try {
+    // Newest-first: expand the latest @path turn, restamp older already-inlined
+    // mentions so resume/compact still satisfy the edit-read guard.
+    for (let i = session.messages.length - 1; i >= 0; i--) {
+      const m = session.messages[i];
+      if (m?.role !== "user" || typeof m.content !== "string") continue;
+      if (!m.content.includes("@")) continue;
+      const expanded = expandUserMentions(m.content, workspace, fileReads);
+      if (expanded !== m.content) m.content = expanded;
+    }
+  } catch {
+    /* */
+  }
   const startPrompt = session.meta.totalPromptTokens;
   const startComp = session.meta.totalCompletionTokens;
   const startCache = session.meta.totalCacheReadTokens ?? 0;
@@ -405,7 +479,9 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
   // reuse across REPL turns, dispose on process exit (installMcpLspExitHook).
   const subagentDepth = opts.subagentDepth ?? 0;
   const maxSubagentDepth = opts.maxSubagentDepth ?? defaultMaxSubagentDepth();
-  const toolDefs = opts.toolDefinitions ?? TOOL_DEFINITIONS;
+  const baseToolDefs = opts.toolDefinitions ?? TOOL_DEFINITIONS;
+  const toolsForMode = (): typeof baseToolDefs =>
+    filterToolsForPermissionMode(baseToolDefs, config.permissionMode);
   let mcp =
     opts.mcp ??
     (subagentDepth === 0 ? getActiveMcpManager() ?? undefined : undefined);
@@ -514,6 +590,7 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
     ultrawork: session.meta.ultrawork || Boolean(ulwCycle?.enabled),
     ulwCycle,
     git: gitSnap,
+    subagentDepth,
   });
   if (session.messages.length === 0 || session.messages[0]?.role !== "system") {
     session.messages.unshift({ role: "system", content: system });
@@ -548,13 +625,13 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
   // the file says 0 was a production footgun for long ULW/CI runs.
   const maxTurns = resolveMaxTurns(config.maxTurns);
   /** Tool schemas are sent every turn but not stored in session history. */
-  const toolsJsonChars = JSON.stringify(toolDefs).length;
-
   const makeChatRequest = (effortOverride?: ReasoningEffort) =>
-    buildChatRequest(config, session.messages, effortOverride, toolDefs);
+    buildChatRequest(config, session.messages, effortOverride, toolsForMode());
 
   const requestTokenEstimate = (): number =>
-    estimateRequestTokens(session.messages, { toolsJsonChars });
+    estimateRequestTokens(session.messages, {
+      toolsJsonChars: JSON.stringify(toolsForMode()).length,
+    });
 
   /**
    * Compact history. Returns true if message count or estimated tokens dropped.
@@ -589,6 +666,7 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
     // Compact rewrites history — resync undo marks so /undo never restores disk
     // against a no-op chat rewind.
     rebuildUserTurnMarks(session);
+    clearFileReadsForSession(session.meta.id);
     await hooks.run("PostCompact", baseHookCtx(session, config));
     saveSession(session);
     const afterTok = estimateTokens(session.messages);
@@ -721,6 +799,7 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
           ultrawork: session.meta.ultrawork || Boolean(loadUlwCycle(session.meta.id)?.enabled),
           ulwCycle: loadUlwCycle(session.meta.id),
           git: gitSnap,
+          subagentDepth,
         });
         if (
           session.messages[0]?.role === "system" &&
@@ -858,7 +937,7 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
       }
 
       // Safe provider-turn boundary: admit harness deltas, live slash, free-text
-      drainSafeBoundaryMessages(session, config, events, gitSnap);
+      drainSafeBoundaryMessages(session, config, events, gitSnap, fileReads);
 
       // Soft todo nudge under ULW/goal (does not block)
       const lastUserForNudge = [...session.messages]
@@ -2049,6 +2128,7 @@ function drainSafeBoundaryMessages(
   config: ForgeConfig,
   events?: LoopEvents,
   git?: GitSnapshot | null,
+  fileReads?: FileReadState,
 ): void {
   const liveNotices = drainLiveNotices(session.meta.id);
   if (liveNotices.length) {
@@ -2108,9 +2188,14 @@ function drainSafeBoundaryMessages(
     } catch {
       /* */
     }
+    const ijText = formatInterjectionsMessage(interjections, ijCtx);
     session.messages.push({
       role: "user",
-      content: formatInterjectionsMessage(interjections, ijCtx),
+      content: expandUserMentions(
+        ijText,
+        config.workspace || session.meta.cwd,
+        fileReads,
+      ),
     });
     events?.onStatus?.(
       `Queued mid-run message${interjections.length > 1 ? "s" : ""} from user`,
@@ -2168,16 +2253,18 @@ async function runToolCalls(opts: {
 
   const isParallelSafe = (tc: ToolCall): boolean => {
     const n = normalizeToolName(tc.function.name || "");
+    // Mode-flip must run sequentially so later writes see the restored mode.
+    if (isExitPlanModeToolName(n) || isExitPlanModeToolName(tc.function.name || "")) {
+      return false;
+    }
     if (isReadOnlyToolName(n) || isReadOnlyToolName(tc.function.name || "")) {
       return true;
     }
     // call_mcp is parallel-safe only when the target is annotated read-only
     if (n === "call_mcp" || n === "mcp_call" || n === "use_mcp") {
       const parsed = parseToolArguments(tc.function.arguments);
-      if (parsed.ok && mcp) {
-        return mcpCallIsReadOnly(mcp, parsed.value);
-      }
-      return false;
+      if (!parsed.ok) return false;
+      return mcpCallIsReadOnly(mcp, parsed.value);
     }
     return false;
   };
@@ -2186,6 +2273,14 @@ async function runToolCalls(opts: {
   // but append results in original order (providers are picky about this).
   // Normalize names before the read-only check so aliases (Read/read_file)
   // and doubled stream-bug names still batch.
+  // Run exit_plan_mode first so same-turn writes see the restored mode.
+  const exitIdx = toolCalls.findIndex((tc) =>
+    isExitPlanModeToolName(normalizeToolName(tc.function.name || "")),
+  );
+  if (exitIdx > 0) {
+    const [exitCall] = toolCalls.splice(exitIdx, 1);
+    toolCalls.unshift(exitCall);
+  }
   let i = 0;
   while (i < toolCalls.length) {
     assertNotAborted(signal);
@@ -2400,6 +2495,7 @@ async function prepareToolResult(opts: {
     mode: config.permissionMode,
     workspace,
     config,
+    mcp,
   });
   if (perm.decision === "deny") {
     await hooks.run("PermissionDenied", {
@@ -2481,6 +2577,8 @@ async function prepareToolResult(opts: {
         mcp,
         lsp,
         subagentDepth,
+        session,
+        config,
         runSubagent:
           provider && subagentDepth < maxSubagentDepth
             ? (req: SubagentRequest) =>

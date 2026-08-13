@@ -249,7 +249,9 @@ export function renderLiveRunHeader(ctx: StatusBarContext): string {
         ? "YOLO"
         : pm === "acceptEdits"
           ? "auto"
-          : null;
+          : pm === "plan"
+            ? "PLAN"
+            : null;
     })(),
   ]
     .filter(Boolean)
@@ -886,7 +888,7 @@ export function formatSessionDetails(ctx: StatusBarContext): string {
     chalk.dim(
       `perms    ${config.permissionMode}` +
         (config.permissionMode === "plan"
-          ? " (read-only · /build to implement)"
+          ? " (read-only · exit_plan_mode or /build)"
           : "") +
         `  ·  Stop ${config.blockingStopHooks ? "blocking" : "passive"}`,
     ),

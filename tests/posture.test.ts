@@ -16,6 +16,15 @@ test("posture: defaults are quiet (no warnings, effort = model max, auto max_tok
   assert.match(head, /effort high \(model max\)/);
   assert.match(head, /max_tokens 65\.5k \(auto\)/);
   assert.match(head, /temp default/);
+  assert.doesNotMatch(head, /PLAN|YOLO/);
+});
+
+test("posture: plan/yolo modes are visible on the head line", () => {
+  assert.match(postureHead(cfg({ permissionMode: "plan" })), /PLAN/);
+  assert.match(
+    postureHead(cfg({ permissionMode: "bypassPermissions" })),
+    /YOLO/,
+  );
 });
 
 test("posture: pinned temperature on a reasoning model warns", () => {

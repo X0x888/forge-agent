@@ -4,6 +4,8 @@ import {
   looksLikeAdvisoryUserMessage,
   FileReadState,
   fileReadGuardEnabled,
+  fileReadsForSession,
+  clearFileReadsForSession,
   detectProjectIntel,
   evaluateProofClaimAtStop,
   McpManager,
@@ -12,6 +14,15 @@ import {
   loadLspConfig,
   filterToolsForSubagent,
   resolveSubagentType,
+  isMcpToolReadOnly,
+  mcpToolNameLooksReadOnly,
+  isMcpInvocationTool,
+  mcpAlwaysAllowPattern,
+  parsePorcelainPath,
+  snapshotParentPreimages,
+  journalLandedPreimages,
+  restoreParentPreimages,
+  defaultIsolationForSpawn,
 } from "../src/index.js";
 
 describe("public package exports (index)", () => {
@@ -23,6 +34,8 @@ describe("public package exports (index)", () => {
   it("exports FileReadState + guard flag", () => {
     assert.equal(typeof FileReadState, "function");
     assert.equal(typeof fileReadGuardEnabled, "function");
+    assert.equal(typeof fileReadsForSession, "function");
+    assert.equal(typeof clearFileReadsForSession, "function");
     const s = new FileReadState();
     assert.ok(s);
   });
@@ -39,5 +52,30 @@ describe("public package exports (index)", () => {
     assert.equal(typeof loadLspConfig, "function");
     assert.equal(typeof filterToolsForSubagent, "function");
     assert.equal(resolveSubagentType("explore"), "explore");
+    assert.equal(typeof isMcpToolReadOnly, "function");
+    assert.equal(typeof mcpToolNameLooksReadOnly, "function");
+    assert.equal(mcpToolNameLooksReadOnly("context7__query-docs"), true);
+    assert.equal(typeof isMcpInvocationTool, "function");
+    assert.equal(typeof mcpAlwaysAllowPattern, "function");
+    assert.equal(
+      mcpAlwaysAllowPattern({ tool_name: "context7__query-docs" }),
+      "context7__query-docs",
+    );
+  });
+
+  it("exports porcelain path parser (worktree land)", () => {
+    assert.equal(typeof parsePorcelainPath, "function");
+    assert.equal(
+      parsePorcelainPath(" M src/agent/worktree.ts"),
+      "src/agent/worktree.ts",
+    );
+    assert.equal(typeof snapshotParentPreimages, "function");
+    assert.equal(typeof journalLandedPreimages, "function");
+    assert.equal(typeof restoreParentPreimages, "function");
+    assert.equal(typeof defaultIsolationForSpawn, "function");
+    assert.equal(
+      defaultIsolationForSpawn({ type: "explore", workspace: process.cwd() }),
+      "none",
+    );
   });
 });

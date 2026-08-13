@@ -16,17 +16,23 @@ import {
   matchToolFilter,
 } from "../src/mcp/config.js";
 import { McpManager } from "../src/mcp/manager.js";
+import { mcpCallIsReadOnly } from "../src/mcp/tools.js";
 import {
   qualifyMcpTool,
   parseQualifiedMcpTool,
   isMcpToolReadOnly,
+  mcpToolNameLooksReadOnly,
+  isMcpInvocationTool,
+  mcpAlwaysAllowPattern,
 } from "../src/mcp/types.js";
+import { compileRules, evaluateRules } from "../src/agent/rules.js";
 import { loadLspConfig } from "../src/lsp/config.js";
 import { languageIdForPath, DEFAULT_LSP_SERVERS } from "../src/lsp/types.js";
 import {
   filterToolsForSubagent,
   resolveSubagentType,
   resolveCapabilityMode,
+  resolveChildPermissionMode,
   defaultMaxSubagentDepth,
 } from "../src/agent/subagent.js";
 import { PermissionGate } from "../src/agent/permissions.js";
@@ -164,6 +170,29 @@ describe("MCP config + types", () => {
       false,
     );
     assert.equal(isMcpToolReadOnly({ name: "get_file" }), true);
+    // Default Context7 tools are kebab-case and omit annotations.
+    assert.equal(isMcpToolReadOnly({ name: "query-docs" }), true);
+    assert.equal(isMcpToolReadOnly({ name: "resolve-library-id" }), true);
+    assert.equal(mcpToolNameLooksReadOnly("context7__query-docs"), true);
+    assert.equal(mcpToolNameLooksReadOnly("context7__resolve-library-id"), true);
+    assert.equal(mcpToolNameLooksReadOnly("playwright__browser_navigate"), false);
+    assert.equal(mcpToolNameLooksReadOnly("github__create_issue"), false);
+    assert.equal(mcpToolNameLooksReadOnly("github__list_issues"), true);
+    assert.equal(mcpToolNameLooksReadOnly(""), false);
+    // Batch/plan classification must work before MCP connects.
+    assert.equal(
+      mcpCallIsReadOnly(undefined, { tool_name: "context7__query-docs" }),
+      true,
+    );
+    assert.equal(
+      mcpCallIsReadOnly(undefined, { name: "resolve-library-id" }),
+      true,
+    );
+    assert.equal(
+      mcpCallIsReadOnly(undefined, { tool_name: "github__create_issue" }),
+      false,
+    );
+    assert.equal(mcpCallIsReadOnly(undefined, {}), false);
   });
 
   it("tool filters", () => {
@@ -401,6 +430,91 @@ describe("subagent helpers", () => {
     assert.equal(resolveIsolationMode("worktree"), "worktree");
     assert.equal(resolveIsolationMode("none"), "none");
     assert.equal(resolveIsolationMode(undefined), "none");
+    const { defaultIsolationForSpawn, findGitRoot } = await import(
+      "../src/agent/worktree.js"
+    );
+    assert.equal(
+      defaultIsolationForSpawn({ type: "explore", workspace: tmpRoot }),
+      "none",
+    );
+    assert.equal(
+      defaultIsolationForSpawn({ type: "plan", workspace: tmpRoot }),
+      "none",
+    );
+    assert.equal(
+      defaultIsolationForSpawn({
+        type: "general-purpose",
+        isolation: "none",
+        workspace: process.cwd(),
+      }),
+      "none",
+    );
+    const root = findGitRoot(process.cwd());
+    if (root) {
+      assert.equal(
+        defaultIsolationForSpawn({
+          type: "general-purpose",
+          workspace: root,
+        }),
+        "worktree",
+      );
+    }
+    // git rev-parse walks up (even from /tmp on some macOS layouts).
+    // Point GIT_DIR at a missing path so this case is hermetically not a repo.
+    const prevGitDir = process.env.GIT_DIR;
+    process.env.GIT_DIR = path.join(tmpRoot, "definitely-not-a-git-dir");
+    try {
+      assert.equal(findGitRoot(tmpRoot), null);
+      assert.equal(
+        defaultIsolationForSpawn({
+          type: "general-purpose",
+          workspace: tmpRoot,
+        }),
+        "none",
+      );
+    } finally {
+      if (prevGitDir === undefined) delete process.env.GIT_DIR;
+      else process.env.GIT_DIR = prevGitDir;
+    }
+    const prev = process.env.FORGE_SUBAGENT_ISOLATION;
+    process.env.FORGE_SUBAGENT_ISOLATION = "none";
+    try {
+      if (root) {
+        assert.equal(
+          defaultIsolationForSpawn({
+            type: "general-purpose",
+            workspace: root,
+          }),
+          "none",
+        );
+      }
+    } finally {
+      if (prev === undefined) delete process.env.FORGE_SUBAGENT_ISOLATION;
+      else process.env.FORGE_SUBAGENT_ISOLATION = prev;
+    }
+    process.env.FORGE_SUBAGENT_ISOLATION = "worktree";
+    try {
+      assert.equal(
+        defaultIsolationForSpawn({
+          type: "explore",
+          workspace: tmpRoot,
+        }),
+        "none",
+      );
+      if (root) {
+        assert.equal(
+          defaultIsolationForSpawn({
+            type: "general-purpose",
+            isolation: "none",
+            workspace: root,
+          }),
+          "none",
+        );
+      }
+    } finally {
+      if (prev === undefined) delete process.env.FORGE_SUBAGENT_ISOLATION;
+      else process.env.FORGE_SUBAGENT_ISOLATION = prev;
+    }
   });
 
   it("worktree isolation creates detached worktree in a git repo", async () => {
@@ -431,11 +545,21 @@ describe("subagent helpers", () => {
     assert.ok(names.includes("read_file"));
     assert.ok(names.includes("grep"));
     assert.ok(names.includes("search_mcp"));
+    assert.ok(names.includes("call_mcp"));
+    assert.ok(names.includes("memory_write"));
     assert.ok(names.includes("mcp_resource"));
     assert.ok(names.includes("mcp_prompt"));
     assert.ok(names.includes("lsp"));
+    assert.equal(
+      resolveChildPermissionMode("explore", "read-only", "bypassPermissions"),
+      "plan",
+    );
+    assert.equal(
+      resolveChildPermissionMode("general-purpose", "full", "bypassPermissions"),
+      "bypassPermissions",
+    );
     assert.ok(!names.includes("write_file"));
-    assert.ok(!names.includes("bash"));
+    assert.ok(names.includes("bash"));
     assert.ok(!names.includes("spawn_subagent"));
   });
 
@@ -463,7 +587,7 @@ describe("subagent helpers", () => {
 });
 
 describe("permissions for new tools", () => {
-  it("plan mode allows search_mcp and lsp, denies spawn_subagent", async () => {
+  it("plan mode allows search_mcp, lsp, and read-only spawn_subagent", async () => {
     const gate = new PermissionGate({ interactive: false });
     const cfg = {
       ...DEFAULT_CONFIG,
@@ -495,7 +619,163 @@ describe("permissions for new tools", () => {
       workspace: tmpRoot,
       config: cfg,
     });
-    assert.equal(spawn.decision, "deny");
+    assert.equal(spawn.decision, "allow");
+    assert.equal(spawn.reason, "plan_readonly_subagent");
+  });
+
+  it("plan mode allows kebab-case Context7 call_mcp and denies mutations", async () => {
+    const gate = new PermissionGate({ interactive: false });
+    const cfg = {
+      ...DEFAULT_CONFIG,
+      permissionMode: "plan" as const,
+      workspace: tmpRoot,
+    };
+    const query = await gate.request({
+      toolName: "call_mcp",
+      input: { tool_name: "context7__query-docs", arguments: { query: "zod" } },
+      mode: "plan",
+      workspace: tmpRoot,
+      config: cfg,
+    });
+    assert.equal(query.decision, "allow");
+
+    const resolve = await gate.request({
+      toolName: "call_mcp",
+      input: { tool_name: "context7__resolve-library-id" },
+      mode: "plan",
+      workspace: tmpRoot,
+      config: cfg,
+    });
+    assert.equal(resolve.decision, "allow");
+
+    const bare = await gate.request({
+      toolName: "call_mcp",
+      input: { name: "query-docs" },
+      mode: "plan",
+      workspace: tmpRoot,
+      config: cfg,
+    });
+    assert.equal(bare.decision, "allow");
+
+    const mutate = await gate.request({
+      toolName: "call_mcp",
+      input: { tool_name: "github__create_issue" },
+      mode: "plan",
+      workspace: tmpRoot,
+      config: cfg,
+    });
+    assert.equal(mutate.decision, "deny");
+    assert.match(mutate.reason ?? "", /plan_mode: call_mcp denied/);
+  });
+
+  it("call_mcp always-allow is server__tool scoped", () => {
+    assert.equal(isMcpInvocationTool("call_mcp"), true);
+    assert.equal(isMcpInvocationTool("use_mcp"), true);
+    assert.equal(isMcpInvocationTool("bash"), false);
+    assert.equal(
+      mcpAlwaysAllowPattern({ tool_name: "context7__query-docs" }),
+      "context7__query-docs",
+    );
+    assert.equal(mcpAlwaysAllowPattern({ name: "*" }), null);
+    assert.equal(mcpAlwaysAllowPattern({}), null);
+
+    const star = evaluateRules(
+      compileRules({ allow: ["call_mcp(*)"] }),
+      "call_mcp",
+      { tool_name: "playwright__browser_navigate" },
+      tmpRoot,
+    );
+    assert.equal(star.decision, "none");
+
+    const named = evaluateRules(
+      compileRules({ allow: ["call_mcp(context7__query-docs)"] }),
+      "call_mcp",
+      { tool_name: "context7__query-docs" },
+      tmpRoot,
+    );
+    assert.equal(named.decision, "allow");
+
+    const other = evaluateRules(
+      compileRules({ allow: ["call_mcp(context7__query-docs)"] }),
+      "call_mcp",
+      { tool_name: "github__create_issue" },
+      tmpRoot,
+    );
+    assert.equal(other.decision, "none");
+  });
+
+  it("plan mode denies mutating call_mcp even when a saved allow exists", async () => {
+    const gate = new PermissionGate({ interactive: false });
+    const cfg = {
+      ...DEFAULT_CONFIG,
+      permissionMode: "plan" as const,
+      workspace: tmpRoot,
+      permissions: { allow: ["call_mcp(github__create_issue)"] },
+    };
+    const mutate = await gate.request({
+      toolName: "call_mcp",
+      input: { tool_name: "github__create_issue" },
+      mode: "plan",
+      workspace: tmpRoot,
+      config: cfg,
+    });
+    assert.equal(mutate.decision, "deny");
+    assert.match(mutate.reason ?? "", /plan_mode: call_mcp denied/);
+  });
+
+  it("plan mode allows research bash (sed -n / jq / git blame) and denies sed -i", async () => {
+    const gate = new PermissionGate({ interactive: false });
+    const cfg = {
+      ...DEFAULT_CONFIG,
+      permissionMode: "plan" as const,
+      workspace: tmpRoot,
+    };
+    const sedN = await gate.request({
+      toolName: "bash",
+      input: { command: "sed -n '1,20p' src/cli.ts" },
+      mode: "plan",
+      workspace: tmpRoot,
+      config: cfg,
+    });
+    assert.equal(sedN.decision, "allow");
+
+    const jq = await gate.request({
+      toolName: "bash",
+      input: { command: "jq .name package.json" },
+      mode: "plan",
+      workspace: tmpRoot,
+      config: cfg,
+    });
+    assert.equal(jq.decision, "allow");
+
+    const blame = await gate.request({
+      toolName: "bash",
+      input: { command: "git blame -L 1,5 src/cli.ts" },
+      mode: "plan",
+      workspace: tmpRoot,
+      config: cfg,
+    });
+    assert.equal(blame.decision, "allow");
+
+    const sedI = await gate.request({
+      toolName: "bash",
+      input: { command: "sed -i 's/a/b/' src/cli.ts" },
+      mode: "plan",
+      workspace: tmpRoot,
+      config: cfg,
+    });
+    assert.equal(sedI.decision, "deny");
+    assert.match(sedI.reason ?? "", /plan_mode/);
+
+    const redirect = await gate.request({
+      toolName: "bash",
+      input: { command: "sed -n '1,20p' src/cli.ts > out.txt" },
+      mode: "plan",
+      workspace: tmpRoot,
+      config: cfg,
+    });
+    assert.equal(redirect.decision, "deny");
+    assert.match(redirect.reason ?? "", /plan_mode/);
   });
 
   it("headless allows explore subagent, denies full without acceptEdits", async () => {

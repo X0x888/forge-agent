@@ -757,6 +757,24 @@ describe("live run header controls", () => {
     assert.match(text, /\/notify/);
     assert.match(text, /\/status/);
   });
+
+  it("live header shows PLAN when permissionMode is plan", async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-live-plan-"));
+    process.env.FORGE_HOME = tmp;
+    const { createSession } = await import("../src/session/session.js");
+    const { DEFAULT_CONFIG } = await import("../src/config/types.js");
+    const s = createSession({ cwd: tmp, provider: "xai", model: "grok-4" });
+    const text = renderLiveRunHeader({
+      config: { ...DEFAULT_CONFIG, workspace: tmp, permissionMode: "plan" },
+      session: s,
+      auth: {
+        provider: "xai",
+        method: "api_key",
+        token: "t",
+      } as ResolvedAuth,
+    });
+    assert.match(text, /PLAN/);
+  });
 });
 
 describe("statusline tmux badges", () => {

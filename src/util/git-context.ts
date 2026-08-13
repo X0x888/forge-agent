@@ -208,6 +208,21 @@ export function formatGitStableForPrompt(snap: GitSnapshot): string {
 }
 
 /**
+ * Coarse working-tree line for first-admit / dirty↔clean flips.
+ * File *count* is display-only — do not fingerprint it (per-edit churn).
+ */
+export function formatGitTreeLine(snap: GitSnapshot): string {
+  if (!snap.root) return "";
+  if (snap.dirty) {
+    const n = snap.changedFiles;
+    return n
+      ? `Working tree: dirty (${n} file${n === 1 ? "" : "s"})`
+      : "Working tree: dirty";
+  }
+  return "Working tree: clean";
+}
+
+/**
  * Volatile branch line for mid-conversation admission. Deliberately excludes
  * dirty/changedFiles counts — those churn on every edit and are noise.
  */

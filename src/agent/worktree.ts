@@ -15,6 +15,8 @@ import path from "node:path";
 import { randomBytes } from "node:crypto";
 import { forgeHome, ensureDir } from "../util/fs.js";
 import { log } from "../util/log.js";
+import { appendFileMutation } from "../session/mutations.js";
+import { fileReadsForSession } from "./tools/file-read-state.js";
 
 export interface SubagentWorktree {
   /** Absolute path of the worktree checkout. */
@@ -52,6 +54,8 @@ export interface WorktreeLandResult {
   detail?: string;
   /** Bytes of the captured patch (for diagnostics). */
   patchBytes?: number;
+  /** True when parent pre-images were written to the mutation journal. */
+  journaled?: boolean;
 }
 
 function git(
@@ -59,13 +63,44 @@ function git(
   cwd: string,
   opts?: { timeoutMs?: number; maxBuffer?: number },
 ): string {
-  return execFileSync("git", args, {
+  const raw = execFileSync("git", args, {
     cwd,
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"],
     timeout: opts?.timeoutMs ?? 30_000,
     maxBuffer: opts?.maxBuffer ?? 2 * 1024 * 1024,
-  }).trim();
+  });
+  // Do not trimStart: porcelain v1 unstaged-only is `" M path"` and the
+  // leading space is a status column. Trimming it made slice(3) drop `s`.
+  return raw.trimEnd();
+}
+
+export function unquotePorcelainPath(raw: string): string {
+  const t = raw.trim();
+  if (t.length >= 2 && t.startsWith('"') && t.endsWith('"')) {
+    try {
+      return JSON.parse(t) as string;
+    } catch {
+      return t.slice(1, -1);
+    }
+  }
+  return t;
+}
+
+/**
+ * Parse one `git status --porcelain=v1` line into a changed path.
+ * Unstaged-only is `" M path"` — the first column is a space; do not
+ * trim the line before slicing or `src/…` becomes `rc/…`.
+ */
+export function parsePorcelainPath(line: string): string | null {
+  if (!line || line.length < 4) return null;
+  const body = line.slice(3);
+  if (body.includes(" -> ")) {
+    const dest = unquotePorcelainPath(body.split(" -> ").pop() ?? "");
+    return dest || null;
+  }
+  const p = unquotePorcelainPath(body);
+  return p || null;
 }
 
 /** Resolve git top-level for a workspace path, or null if not a repo. */
@@ -97,7 +132,7 @@ export function createSubagentWorktree(opts: {
   if (!gitRoot) {
     throw new Error(
       "isolation=worktree requires a git repository (no .git found from workspace). " +
-        "Use isolation=none (default) or init a git repo first.",
+        "Use isolation=none or init a git repo first.",
     );
   }
 
@@ -184,7 +219,38 @@ function sanitizeLabel(label: string): string {
   );
 }
 
-export function resolveIsolationMode(raw: unknown): "none" | "worktree" {
+export type IsolationMode = "none" | "worktree";
+
+/**
+ * Default isolation for a spawn. General-purpose implement work goes to a
+ * detached worktree when the workspace is a git repo so parent files stay
+ * untouched until auto-land. Explore/plan stay in-place (read-only).
+ * Explicit `isolation=none` / `worktree` still wins.
+ * `FORGE_SUBAGENT_ISOLATION=none|worktree` overrides the implicit default.
+ */
+export function defaultIsolationForSpawn(opts: {
+  type?: string;
+  isolation?: unknown;
+  workspace?: string;
+}): IsolationMode {
+  const explicitRaw = opts.isolation;
+  const hasExplicit =
+    explicitRaw !== undefined &&
+    explicitRaw !== null &&
+    String(explicitRaw).trim() !== "";
+  if (hasExplicit) return resolveIsolationMode(explicitRaw);
+  const kind = String(opts.type || "general-purpose").toLowerCase();
+  if (kind === "explore" || kind === "plan") return "none";
+  const env = process.env.FORGE_SUBAGENT_ISOLATION;
+  if (env != null && String(env).trim() !== "") {
+    return resolveIsolationMode(env);
+  }
+  const ws = opts.workspace;
+  if (ws && findGitRoot(ws)) return "worktree";
+  return "none";
+}
+
+export function resolveIsolationMode(raw: unknown): IsolationMode {
   const s = String(raw ?? "none")
     .trim()
     .toLowerCase()
@@ -242,16 +308,8 @@ export function listWorktreeChangedFiles(worktreePath: string): string[] {
     if (!out) return [];
     const files: string[] = [];
     for (const line of out.split("\n")) {
-      if (!line || line.length < 4) continue;
-      // XY<space>path  or  XY<space>old -> new  (rename)
-      const body = line.slice(3);
-      if (body.includes(" -> ")) {
-        const dest = body.split(" -> ").pop()!.trim();
-        if (dest) files.push(dest);
-      } else {
-        const p = body.trim();
-        if (p) files.push(p);
-      }
+      const p = parsePorcelainPath(line);
+      if (p) files.push(p);
     }
     return [...new Set(files)];
   } catch {
@@ -384,6 +442,89 @@ export function captureWorktreePatch(worktreePath: string): {
  * Apply a captured worktree patch into the parent workspace.
  * Returns ok=false with stderr detail on conflict / reject.
  */
+/** Snapshot parent-tree pre-images so /undo can revert a worktree land. */
+export function snapshotParentPreimages(
+  parentPath: string,
+  relPaths: string[],
+): Map<string, { before?: string; mode?: number; existed: boolean }> {
+  const out = new Map<
+    string,
+    { before?: string; mode?: number; existed: boolean }
+  >();
+  for (const rel of relPaths) {
+    const abs = path.resolve(parentPath, rel);
+    try {
+      const st = fs.statSync(abs);
+      if (!st.isFile()) {
+        out.set(rel, { existed: false });
+        continue;
+      }
+      out.set(rel, {
+        existed: true,
+        before: fs.readFileSync(abs, "utf8"),
+        mode: st.mode & 0o777,
+      });
+    } catch {
+      out.set(rel, { existed: false });
+    }
+  }
+  return out;
+}
+
+/** Restore parent files to a pre-apply snapshot (failed --3way cleanup). */
+export function restoreParentPreimages(
+  parentPath: string,
+  snapshots: Map<string, { before?: string; mode?: number; existed: boolean }>,
+): void {
+  for (const [rel, snap] of snapshots) {
+    const abs = path.resolve(parentPath, rel);
+    try {
+      if (!snap.existed) {
+        if (fs.existsSync(abs)) fs.rmSync(abs, { force: true });
+        continue;
+      }
+      if (snap.before !== undefined) {
+        fs.mkdirSync(path.dirname(abs), { recursive: true });
+        fs.writeFileSync(abs, snap.before, { encoding: "utf8" });
+        if (snap.mode !== undefined) {
+          try {
+            fs.chmodSync(abs, snap.mode);
+          } catch {
+            /* best-effort */
+          }
+        }
+      }
+    } catch {
+      /* best-effort */
+    }
+  }
+}
+
+export function journalLandedPreimages(opts: {
+  sessionId: string;
+  parentPath: string;
+  relPaths: string[];
+  snapshots: Map<string, { before?: string; mode?: number; existed: boolean }>;
+  turn: number;
+}): void {
+  for (const rel of opts.relPaths) {
+    const snap = opts.snapshots.get(rel);
+    const abs = path.resolve(opts.parentPath, rel);
+    appendFileMutation(opts.sessionId, {
+      path: abs,
+      kind: snap?.existed ? "update" : "create",
+      before: snap?.existed ? snap.before : undefined,
+      mode: snap?.mode,
+      turn: opts.turn,
+    });
+    try {
+      fileReadsForSession(opts.sessionId).clear(abs);
+    } catch {
+      /* best-effort */
+    }
+  }
+}
+
 export function applyWorktreePatch(
   parentPath: string,
   patch: string,
@@ -398,11 +539,8 @@ export function applyWorktreePatch(
   // Snapshot index state so --3way cannot leave staged junk in the parent.
   let indexBefore = "";
   try {
-    indexBefore = execFileSync("git", ["status", "--porcelain=v1"], {
-      cwd: parentPath,
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "pipe"],
-      timeout: 15_000,
+    indexBefore = git(["status", "--porcelain=v1"], parentPath, {
+      timeoutMs: 15_000,
       maxBuffer: 8 * 1024 * 1024,
     });
   } catch {
@@ -410,11 +548,8 @@ export function applyWorktreePatch(
   }
   const unstageNewIndexEntries = () => {
     try {
-      const after = execFileSync("git", ["status", "--porcelain=v1"], {
-        cwd: parentPath,
-        encoding: "utf8",
-        stdio: ["ignore", "pipe", "pipe"],
-        timeout: 15_000,
+      const after = git(["status", "--porcelain=v1"], parentPath, {
+        timeoutMs: 15_000,
         maxBuffer: 8 * 1024 * 1024,
       });
       // Lines starting with A/M/D/R/C in first column are index changes.
@@ -425,10 +560,7 @@ export function applyWorktreePatch(
         if (x === " " || x === "?" || x === "!") continue;
         // Only unstage paths that were not already staged before apply
         if (indexBefore.includes(line)) continue;
-        const body = line.slice(3);
-        const rel = body.includes(" -> ")
-          ? body.split(" -> ").pop()!.trim()
-          : body.trim();
+        const rel = parsePorcelainPath(line);
         if (rel) staged.push(rel);
       }
       if (staged.length) {
@@ -511,6 +643,10 @@ export async function landSubagentWorktree(opts: {
   forceKeep?: boolean;
   /** Skip apply (e.g. aborted subagent) but still report diff. */
   skipApply?: boolean;
+  /** Parent session id — journals pre-images so /undo can revert the land. */
+  sessionId?: string;
+  /** Parent turn for the mutation journal. */
+  turn?: number;
 }): Promise<WorktreeLandResult> {
   const { worktree } = opts;
   const parentPath = path.resolve(opts.parentWorkspace);
@@ -611,8 +747,29 @@ export async function landSubagentWorktree(opts: {
     };
   }
 
+  const preimages = changedFiles.length
+    ? snapshotParentPreimages(parentPath, changedFiles)
+    : null;
   const applied = applyWorktreePatch(parentPath, patch);
+  if (!applied.ok && preimages) {
+    restoreParentPreimages(parentPath, preimages);
+  }
   if (applied.ok) {
+    let journaled = false;
+    if (opts.sessionId && preimages) {
+      try {
+        journalLandedPreimages({
+          sessionId: opts.sessionId,
+          parentPath,
+          relPaths: changedFiles,
+          snapshots: preimages,
+          turn: opts.turn ?? 0,
+        });
+        journaled = true;
+      } catch {
+        /* journal is best-effort */
+      }
+    }
     await worktree.cleanup().catch(() => {});
     return {
       ...base,
@@ -621,12 +778,28 @@ export async function landSubagentWorktree(opts: {
       diffStat,
       kept: false,
       patchBytes,
+      ...(journaled ? { journaled: true } : {}),
       detail: `landed ${changedFiles.length} file(s) into parent`,
     };
   }
 
   // Partial land: try each file independently so one conflict doesn't drop everything.
   const partial = tryPartialWorktreeLand(worktree.path, parentPath, changedFiles);
+  let journaledPartial = false;
+  if (partial.applied.length > 0 && opts.sessionId && preimages) {
+    try {
+      journalLandedPreimages({
+        sessionId: opts.sessionId,
+        parentPath,
+        relPaths: partial.applied,
+        snapshots: preimages,
+        turn: opts.turn ?? 0,
+      });
+      journaledPartial = true;
+    } catch {
+      /* journal is best-effort */
+    }
+  }
   if (partial.applied.length > 0 && partial.failed.length === 0) {
     await worktree.cleanup().catch(() => {});
     return {
@@ -636,6 +809,7 @@ export async function landSubagentWorktree(opts: {
       diffStat,
       kept: false,
       patchBytes,
+      ...(journaledPartial ? { journaled: true } : {}),
       detail: `landed ${partial.applied.length} file(s) via per-file fallback`,
     };
   }
@@ -651,6 +825,7 @@ export async function landSubagentWorktree(opts: {
       diffStat,
       kept: true,
       patchBytes,
+      ...(journaledPartial ? { journaled: true } : {}),
       detail:
         `partial land: ok=[${partial.applied.slice(0, 8).join(", ")}]` +
         (partial.applied.length > 8 ? ` +${partial.applied.length - 8}` : "") +
@@ -733,7 +908,9 @@ export function formatWorktreeLandSummary(r: WorktreeLandResult): string {
       break;
     case "applied":
       lines.push(
-        `[worktree] landed into parent (${filesHint}) — worktree removed`,
+        r.journaled
+          ? `[worktree] landed into parent (${filesHint}) — worktree removed · /undo reverts`
+          : `[worktree] landed into parent (${filesHint}) — worktree removed`,
       );
       break;
     case "conflict":
@@ -741,7 +918,9 @@ export function formatWorktreeLandSummary(r: WorktreeLandResult): string {
         `[worktree] LAND CONFLICT — kept ${r.worktreePath}`,
         `  ${filesHint}`,
         `  reason: ${(r.detail || "apply failed").slice(0, 300)}`,
-        `  recover: inspect worktree, copy/merge into parent, then: git worktree remove --force <path>`,
+        r.journaled
+          ? `  recover: landed files can be reverted with /undo; inspect worktree, then: git worktree remove --force <path>`
+          : `  recover: inspect worktree, copy/merge into parent, then: git worktree remove --force <path>`,
       );
       break;
     case "empty_patch":

@@ -123,6 +123,7 @@ export {
   runAgentLoop,
   resolveMaxTurns,
   isReadOnlyToolName,
+  filterToolsForPermissionMode,
   installMcpLspExitHook,
 } from "./agent/loop.js";
 export type {
@@ -154,6 +155,14 @@ export type {
   McpServerStatus,
 } from "./mcp/types.js";
 export {
+  isMcpInvocationTool,
+  isMcpToolReadOnly,
+  mcpAlwaysAllowPattern,
+  mcpToolNameLooksReadOnly,
+  parseQualifiedMcpTool,
+  qualifyMcpTool,
+} from "./mcp/types.js";
+export {
   LspManager,
   getActiveLspManager,
   setActiveLspManager,
@@ -168,6 +177,7 @@ export {
   filterToolsForSubagent,
   resolveSubagentType,
   resolveCapabilityMode,
+  resolveChildPermissionMode,
   defaultMaxSubagentDepth,
   getActiveSubagentCount,
   listActiveSubagents,
@@ -189,6 +199,12 @@ export {
   formatWorktreeLandSummary,
   landSubagentWorktree,
   listWorktreeChangedFiles,
+  parsePorcelainPath,
+  snapshotParentPreimages,
+  journalLandedPreimages,
+  restoreParentPreimages,
+  unquotePorcelainPath,
+  defaultIsolationForSpawn,
   resolveIsolationMode,
   resolveWorktreeLandMode,
   worktreeBaseDir,
@@ -317,6 +333,11 @@ export {
   contentHasImages,
 } from "./util/user-images.js";
 export {
+  expandUserMentions,
+  extractPathMentions,
+  stampMentionReads,
+} from "./util/user-mentions.js";
+export {
   createSession,
   loadSession,
   loadSessionMeta,
@@ -351,6 +372,7 @@ export {
   applySessionPermissionMode,
   enterSessionPlanMode,
   exitSessionPlanMode,
+  persistSessionMode,
   setSessionLastError,
   clearSessionLastError,
   findRecentSessionForCwd,
@@ -391,8 +413,8 @@ export {
   suggestSessionAction,
   SESSION_ACTIONS,
 } from "./util/suggest.js";
-export { copyToClipboard } from "./util/clipboard.js";
-export type { ClipboardResult } from "./util/clipboard.js";
+export { copyToClipboard, saveClipboardImage } from "./util/clipboard.js";
+export type { ClipboardResult, ClipboardImageResult } from "./util/clipboard.js";
 export {
   isBellEnabled,
   maybeRingBell,
@@ -689,6 +711,8 @@ export { looksLikeAdvisoryUserMessage } from "./util/advisory-intent.js";
 export {
   FileReadState,
   fileReadGuardEnabled,
+  fileReadsForSession,
+  clearFileReadsForSession,
 } from "./agent/tools/file-read-state.js";
 export type { FileReadStamp } from "./agent/tools/file-read-state.js";
 export {

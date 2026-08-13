@@ -10,6 +10,8 @@ import {
   saveSession,
   deleteSessionDetailed,
 } from "../session/session.js";
+import { parseBangCommand, runBangShell } from "../tui/bang-shell.js";
+import { PermissionGate } from "../agent/permissions.js";
 
 export type HeadlessSlashResolution =
   | { kind: "prompt"; prompt: string; notice?: string; session: SessionData }
@@ -20,6 +22,8 @@ export type HeadlessSlashResolution =
       session: SessionData;
       /** True when the session was discarded (ephemeral pure-control). */
       ephemeral?: boolean;
+      /** Bang-shell / command failed — CLI should exit 1. */
+      failed?: boolean;
     }
   | { kind: "passthrough"; prompt: string; session: SessionData };
 
@@ -42,6 +46,38 @@ export async function resolveHeadlessSlashPrompt(opts: {
   ephemeral?: boolean;
 }): Promise<HeadlessSlashResolution> {
   const raw = String(opts.prompt ?? "");
+  const bangLine = raw.trim();
+  if (parseBangCommand(bangLine) !== null) {
+    try {
+      const bang = await runBangShell({
+        line: bangLine,
+        config: opts.config,
+        session: opts.session,
+        permissions: new PermissionGate({ interactive: false }),
+        persist: !opts.ephemeral,
+      });
+      if (bang.handled) {
+        const ephemeral = Boolean(opts.ephemeral);
+        if (ephemeral) {
+          try {
+            deleteSessionDetailed(opts.session.meta.id, { force: true });
+          } catch {
+            /* */
+          }
+        }
+        return {
+          kind: "done",
+          output: bang.output,
+          command: bangLine.split(/\s+/)[0] || "!",
+          session: opts.session,
+          ephemeral,
+          failed: Boolean(bang.isError),
+        };
+      }
+    } catch {
+      /* fall through */
+    }
+  }
   if (!/^\s*\//.test(raw)) {
     return { kind: "passthrough", prompt: raw, session: opts.session };
   }

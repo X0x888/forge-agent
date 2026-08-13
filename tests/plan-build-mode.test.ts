@@ -17,6 +17,7 @@ import {
   loadSession,
   enterSessionPlanMode,
   exitSessionPlanMode,
+  persistSessionMode,
   applySessionPermissionMode,
   formatResumeOrientation,
   formatSessionShareCard,
@@ -31,6 +32,13 @@ import { PermissionGate } from "../src/agent/permissions.js";
 import { loadPreferences } from "../src/config/preferences.js";
 import { drainLiveNotices, clearLiveNotices } from "../src/harness/live-notices.js";
 import { forgeCompleter } from "../src/tui/complete.js";
+import { executeTool, TOOL_DEFINITIONS } from "../src/agent/tools/index.js";
+import { isExitPlanModeToolName } from "../src/agent/tools/exit-plan-mode.js";
+import {
+  isReadOnlyToolName,
+  filterToolsForPermissionMode,
+} from "../src/agent/loop.js";
+import { filterToolsForSubagent } from "../src/agent/subagent.js";
 
 describe("plan/build live controls", () => {
   let tmp: string;
@@ -250,12 +258,21 @@ describe("plan/build live controls", () => {
       workspace: tmp,
     });
     assert.match(plan, /PLAN MODE/);
+    assert.match(plan, /exit_plan_mode/);
     assert.match(plan, /\/build/);
     assert.match(plan, /Verification/);
     assert.match(plan, /hard-denied|permission-denied|Mutations/i);
+
+    const child = buildBaselineSystemPrompt({
+      config: { ...DEFAULT_CONFIG, permissionMode: "plan" },
+      workspace: tmp,
+      subagentDepth: 1,
+    });
+    assert.match(child, /research subagent/i);
+    assert.match(child, /Do not call exit_plan_mode/);
   });
 
-  it("PermissionGate plan deny message points at /build", async () => {
+  it("PermissionGate plan deny message points at exit_plan_mode / /build", async () => {
     const gate = new PermissionGate({ interactive: false });
     const d = await gate.request({
       toolName: "write_file",
@@ -264,7 +281,7 @@ describe("plan/build live controls", () => {
       workspace: tmp,
     });
     assert.equal(d.decision, "deny");
-    assert.match(d.reason || "", /\/build/);
+    assert.match(d.reason || "", /exit_plan_mode|\/build/);
   });
 
   it("PermissionGate plan allows read-only bash and denies mutating bash", async () => {
@@ -336,5 +353,136 @@ describe("plan/build live controls", () => {
     assert.match(out, /bad-fail/);
     assert.match(out, /ERR|rate_limited/);
     assert.doesNotMatch(out, /good-session/);
+  });
+});
+
+describe("exit_plan_mode tool", () => {
+  let tmp: string;
+  let prevHome: string | undefined;
+
+  beforeEach(() => {
+    tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-exit-plan-"));
+    prevHome = process.env.FORGE_HOME;
+    process.env.FORGE_HOME = tmp;
+  });
+
+  afterEach(() => {
+    if (prevHome === undefined) delete process.env.FORGE_HOME;
+    else process.env.FORGE_HOME = prevHome;
+    fs.rmSync(tmp, { recursive: true, force: true });
+  });
+
+  it("is defined and aliased", () => {
+    assert.ok(
+      TOOL_DEFINITIONS.some((d) => d.function.name === "exit_plan_mode"),
+    );
+    assert.equal(isExitPlanModeToolName("exit_plan_mode"), true);
+    assert.equal(isExitPlanModeToolName("ExitPlanMode"), true);
+    assert.equal(isExitPlanModeToolName("exitPlanMode"), true);
+    assert.equal(isExitPlanModeToolName("ask_user"), false);
+    assert.equal(isReadOnlyToolName("exit_plan_mode"), false);
+  });
+
+  it("is denied to subagents (cannot flip parent session)", () => {
+    const names = filterToolsForSubagent("full").map((t) => t.function.name);
+    assert.ok(!names.includes("exit_plan_mode"));
+    const ro = filterToolsForSubagent("read-only").map((t) => t.function.name);
+    assert.ok(!ro.includes("exit_plan_mode"));
+  });
+
+  it("fails closed headless when not entered from yolo", async () => {
+    const session = createSession({ cwd: tmp, provider: "xai", model: "m" });
+    const config = { ...DEFAULT_CONFIG, workspace: tmp, permissionMode: "default" as const };
+    enterSessionPlanMode(config, session);
+    const r = await executeTool(
+      "exit_plan_mode",
+      JSON.stringify({ plan: "1. Ship persistSessionMode" }),
+      { workspace: tmp, session, config },
+    );
+    assert.equal(r.isError, true);
+    assert.match(r.output, /Staying in plan mode|not available/i);
+    assert.equal(config.permissionMode, "plan");
+  });
+
+  it("auto-approves when session entered plan from bypassPermissions", async () => {
+    const session = createSession({ cwd: tmp, provider: "xai", model: "m" });
+    const config = {
+      ...DEFAULT_CONFIG,
+      workspace: tmp,
+      permissionMode: "bypassPermissions" as const,
+    };
+    enterSessionPlanMode(config, session);
+    assert.equal(config.permissionMode, "plan");
+    const r = await executeTool(
+      "ExitPlanMode",
+      JSON.stringify({ plan: "1. Implement X\n2. Test Y" }),
+      { workspace: tmp, session, config },
+    );
+    assert.equal(r.isError, undefined);
+    assert.match(r.output, /Plan approved/);
+    assert.match(r.output, /Implement X/);
+    assert.equal(config.permissionMode, "bypassPermissions");
+    assert.equal(session.meta.permissionModeBeforePlan, undefined);
+  });
+
+  it("rejects empty plan and not-in-plan", async () => {
+    const session = createSession({ cwd: tmp, provider: "xai", model: "m" });
+    const config = {
+      ...DEFAULT_CONFIG,
+      workspace: tmp,
+      permissionMode: "bypassPermissions" as const,
+    };
+    const notPlan = await executeTool(
+      "exit_plan_mode",
+      JSON.stringify({ plan: "do it" }),
+      { workspace: tmp, session, config },
+    );
+    assert.equal(notPlan.isError, true);
+    assert.match(notPlan.output, /not in plan mode/);
+
+    enterSessionPlanMode(config, session);
+    const empty = await executeTool(
+      "exit_plan_mode",
+      JSON.stringify({ plan: "   " }),
+      { workspace: tmp, session, config },
+    );
+    assert.equal(empty.isError, true);
+    assert.match(empty.output, /plan is required/);
+    assert.equal(config.permissionMode, "plan");
+  });
+
+  it("persistSessionMode writes session meta", () => {
+    const session = createSession({ cwd: tmp, provider: "xai", model: "m" });
+    const config = { ...DEFAULT_CONFIG, workspace: tmp, permissionMode: "default" as const };
+    enterSessionPlanMode(config, session);
+    persistSessionMode(session);
+    const loaded = loadSession(session.meta.id);
+    assert.ok(loaded);
+    assert.equal(loaded!.meta.permissionMode, "plan");
+    assert.equal(loaded!.meta.permissionModeBeforePlan, "default");
+  });
+
+  it("system prompt teaches exit_plan_mode instead of waiting for /build", () => {
+    const text = buildBaselineSystemPrompt({
+      config: { ...DEFAULT_CONFIG, permissionMode: "plan" },
+      workspace: tmp,
+    });
+    assert.match(text, /exit_plan_mode/);
+    assert.doesNotMatch(text, /stop and wait for \/build/i);
+  });
+
+  it("plan mode tool schema hides write tools and keeps exit_plan_mode", () => {
+    const names = filterToolsForPermissionMode(
+      TOOL_DEFINITIONS,
+      "plan",
+    ).map((t) => t.function.name);
+    assert.ok(names.includes("exit_plan_mode"));
+    assert.ok(names.includes("read_file"));
+    assert.ok(names.includes("ask_user"));
+    assert.ok(!names.includes("write_file"));
+    assert.ok(names.includes("bash"));
+    assert.ok(names.includes("spawn_subagent"));
+    const full = filterToolsForPermissionMode(TOOL_DEFINITIONS, "default");
+    assert.equal(full.length, TOOL_DEFINITIONS.length);
   });
 });

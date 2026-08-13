@@ -70,7 +70,7 @@ forge config --json          # effective config snapshot (no secrets)
 forge run "next" --continue --json   # headless same-cwd resume (fail-closed if none)
 forge "next" --continue              # bare headless same-cwd resume (parity; fail-closed)
 forge "next" --json                  # bare headless JSON (same payload as forge run --json)
-# REPL: /share · /files · /pin · /stats · /tips · /news · /retry [prompt] · /last [n]
+# REPL: /share · /files · /pin · /stats · /tips · /news · /retry [prompt] · /last [n] · /paste · !cmd · @path
 # REPL: /undo [n] · /init · /review · /commit [do] · /compact-and · /fork-and-compact · /logs [n|path] · /config [json]
 # Resume (bare forge / /resume) peeks last turn + mutated files
 # Optional: FORGE_BASH_TIMEOUT_MS=600000 for long test suites
@@ -348,13 +348,14 @@ Label new runs with `forge run … --title <label>` (searchable via `forge sessi
 
 - **Git worktrees** — linked checkouts show `WORKTREE` on `/status`, doctor, HUD (`+wt`), and `doctor --json` `gitIsWorktree`. Prefer one Forge session per worktree to avoid lock races.
 
-- **`/plan` → design, `/build` → implement** — session-scoped plan mode (no sticky-prefs footgun). Live mid-run; resume restores plan unless `--permission-mode` is set. Prefer over sticky `/permissions plan`.
+- **`/plan` → design, `exit_plan_mode` or `/build` → implement** — session-scoped plan mode (no sticky-prefs footgun). Agent calls `exit_plan_mode` when ready (interactive confirm; headless stays in plan unless entered from `--yolo`). Live mid-run; resume restores plan unless `--permission-mode` is set. Prefer over sticky `/permissions plan`.
+- **`!cmd` · `@path` · `/paste`** — bang-shell (user-typed = approval; `forge run "!cmd"` is headless-instant; failed bang exits 1), file mentions (already-read + tab-complete), clipboard screenshot (mid-run queues).
 - **`/model <name> [effort]`** — live mid-run model switch (next provider call picks it up).
 - **Project instructions** — walk-up `AGENTS.md` / `CLAUDE.md` / `.cursor/rules` / copilot-instructions within the git root; `/context` lists sources; `forge doctor` tips when none.
 - **Custom slash templates** — `.forge/commands · .forge/skills/**/SKILL.md/<name>.md` with `$ARGUMENTS` / `$1..$9`; `/commands` lists; Tab + Did-you-mean include them. Starter templates: `examples/forge-commands/` (`review`, `shipcheck`).
 - **Provider failures** — REPL prints recovery tips; `forge run --json` fail payloads include `recovery: { code, tips }` (auth/rate-limit/quota/overflow/network/DNS/overloaded/content_filter/empty_response/unsupported_feature/org_verification/model_deprecated). Session `meta.lastError` surfaces on `/status`, resume, `/share`, and `forge status --json`. Recovery backlog: `/sessions errors` · `forge sessions list --errors` · `doctor --json` `sessionsWithLastError`. **Prune keeps lastError sessions** by default (`skippedLastError`); only delete them with `forge sessions prune --force-last-error` after review.
 - **Session titles** — auto-derived from mandate/goal lines (strips ULW harness noise); still override with `--title` / `/title`.
-- **Headless slash** — `forge run "/plan"` / `"/commands"` / custom templates work in CI; pure control exits with `reason: "slash"` (no model call); templates expand then run.
+- **Headless slash** — `forge run "/plan"` / `forge run "!cmd"` / `"/commands"` / custom templates work in CI; pure control exits with `reason: "slash"` (no model call); failed bang-shell exits 1; templates expand then run.
 
 ## Reliability contract
 
@@ -400,6 +401,7 @@ Reliability for multi-day single process:
 |---|---|---|
 | `FORGE_SUBAGENT_LAND` | `auto` | `auto` capture+apply isolation=worktree diffs into parent; `keep` leave worktree; `discard` drop without applying. Alias `FORGE_WORKTREE_LAND`. Conflicts always keep. |
 | `FORGE_SUBAGENT_KEEP_WORKTREE` | unset | When `1`, never apply — leave worktree on disk. |
+| `FORGE_SUBAGENT_ISOLATION` | unset | Implicit spawn isolation when the model omits `isolation`: `worktree` (default for general-purpose in a git repo) or `none`. Explicit `isolation=` still wins. |
 | `FORGE_FORMAT_ON_WRITE` | auto | `1`/`0` force on/off. Unset = enable when a project formatter is detected (prettier/biome/ruff/gofmt/rustfmt). |
 
 ### Cross-session project memory

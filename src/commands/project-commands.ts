@@ -102,6 +102,8 @@ const RESERVED = new Set([
   "unpin",
   "diff",
   "copy",
+  "paste",
+  "attach",
   "share",
   "last",
   "files",

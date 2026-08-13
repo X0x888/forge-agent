@@ -15,7 +15,7 @@ export function resolvePath(workspace: string, p: string): string {
  * Realpath an existing path, or the nearest existing ancestor + rejoin
  * trailing segments. Handles missing files and macOS `/var` → `/private/var`.
  */
-function realpathExistingPrefix(p: string): string {
+export function realpathExistingPrefix(p: string): string {
   let cur = path.resolve(p);
   const tail: string[] = [];
   while (true) {

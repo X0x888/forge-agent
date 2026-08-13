@@ -13,6 +13,7 @@ import type { TodoItem } from "../session/session.js";
 import { formatUlwCounts } from "./ulw-cycle.js";
 import {
   formatGitBranchLine,
+  formatGitTreeLine,
   type GitSnapshot,
 } from "../util/git-context.js";
 
@@ -36,6 +37,13 @@ export interface HarnessSnapshot {
    * and invalidate the provider prompt cache. "" when not a git repo.
    */
   gitBranch?: string;
+  /**
+   * Coarse working-tree line (clean / dirty + file count). Display-only count;
+   * fingerprint uses `gitDirty` so per-edit count churn does not re-admit.
+   */
+  gitTree?: string;
+  /** Boolean dirty bit — real change when it flips (first edit / commit). */
+  gitDirty?: boolean;
 }
 
 const lastAdmitted = new Map<string, string>();
@@ -74,6 +82,8 @@ export function snapshotHarness(opts: {
     openTodos,
     permissionMode: opts.permissionMode,
     gitBranch: opts.git ? formatGitBranchLine(opts.git) : "",
+    gitTree: opts.git?.root ? formatGitTreeLine(opts.git) : "",
+    gitDirty: Boolean(opts.git?.dirty),
   };
 }
 
@@ -92,6 +102,7 @@ export function fingerprintSnapshot(s: HarnessSnapshot): string {
     String(s.openTodos),
     s.permissionMode,
     s.gitBranch ?? "",
+    s.gitDirty ? "1" : "0",
   ].join("\x1f");
 }
 
@@ -135,7 +146,8 @@ function countersOnlyChange(a: HarnessSnapshot, b: HarnessSnapshot): boolean {
     a.goalObjective === b.goalObjective &&
     a.goalPaused === b.goalPaused &&
     a.permissionMode === b.permissionMode &&
-    (a.gitBranch ?? "") === (b.gitBranch ?? "")
+    (a.gitBranch ?? "") === (b.gitBranch ?? "") &&
+    Boolean(a.gitDirty) === Boolean(b.gitDirty)
   );
 }
 
@@ -155,8 +167,8 @@ export function admitHarnessIfChanged(
   if (prev === fp) return null;
 
   // First admit of an idle session with no goal/ULW: skip empty noise — but
-  // still surface the git branch line once (it no longer lives in the system
-  // prompt, so this is the model's only branch context on plain sessions).
+  // still surface git branch + coarse tree once (they no longer live in the
+  // system prompt, so this is the model's only git context on plain sessions).
   if (
     !snap.ulwEnabled &&
     !snap.goalActive &&
@@ -165,8 +177,9 @@ export function admitHarnessIfChanged(
   ) {
     lastAdmitted.set(sessionId, fp);
     lastAdmittedSnap.set(sessionId, snap);
-    return snap.gitBranch
-      ? `[Forge harness — mid-conversation update]\n${snap.gitBranch}`
+    const gitLines = [snap.gitBranch, snap.gitTree].filter(Boolean).join("\n");
+    return gitLines
+      ? `[Forge harness — mid-conversation update]\n${gitLines}`
       : null;
   }
 
@@ -192,8 +205,12 @@ export function renderHarnessAdmission(s: HarnessSnapshot): string {
     `Obey this state over earlier harness messages. Baseline system protocol is unchanged.`,
   ];
 
-  if (s.gitBranch) {
-    lines.push(``, `## Git`, s.gitBranch);
+  if (s.gitBranch || s.gitTree) {
+    lines.push(
+      ``,
+      `## Git`,
+      [s.gitBranch, s.gitTree].filter(Boolean).join("\n"),
+    );
   }
 
   if (s.ulwEnabled) {
@@ -240,6 +257,14 @@ export function renderHarnessAdmission(s: HarnessSnapshot): string {
     ``,
     `Permission mode: ${s.permissionMode}`,
   );
+
+  if (s.gitBranch || s.gitTree) {
+    lines.push(
+      ``,
+      `## Git`,
+      [s.gitBranch, s.gitTree].filter(Boolean).join("\n"),
+    );
+  }
 
   return lines.filter((l) => l !== undefined).join("\n");
 }

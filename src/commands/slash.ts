@@ -43,6 +43,7 @@ import {
   estimateTokens,
   enterSessionPlanMode,
   exitSessionPlanMode,
+  persistSessionMode,
   maybeSetTitle,
 } from "../session/session.js";
 import {
@@ -220,6 +221,11 @@ export interface SlashResult {
   /** REPL should replace its session pointer */
   replaceSession?: SessionData;
   /**
+   * Queue as a mid-run interjection instead of starting a new turn
+   * (e.g. /paste while the agent is working).
+   */
+  queueInterjection?: string;
+  /**
    * REPL must hot-swap provider credentials from the mutated `opts.auth`
    * (e.g. `/accounts switch`). Without this, live provider keeps the old token.
    */
@@ -262,6 +268,7 @@ const LIVE_READONLY = new Set([
   "/skills", // list builtin + project/user skill packs
   "/diff",
   "/copy", // clipboard last assistant reply — no session mutation
+  "/paste", // clipboard image → queued interjection (no new turn)
   "/share", // pasteable session card — optional clipboard
   "/last", // peek recent turns — read-only
   "/files", // paths touched by tools — read-only
@@ -575,7 +582,7 @@ export function isSafeDiffFilterArg(token: string): boolean {
 }
 
 export const LIVE_CONTROLS_HINT =
-  `${ULW_LIVE_CONTROLS_HINT} · /plan · /build · /provider · /model · free-text queues mid-run · /pause · /unpause · /done · /status  ·  Ctrl+C aborts the turn`;
+  `${ULW_LIVE_CONTROLS_HINT} · /plan · /build · exit_plan_mode · /provider · /model · !cmd · @path · free-text queues mid-run · /pause · /unpause · /done · /status  ·  Ctrl+C aborts the turn`;
 
 export const SLASH_COMMANDS = [
   "/help",
@@ -639,6 +646,8 @@ export const SLASH_COMMANDS = [
   "/unpin",
   "/diff",
   "/copy",
+  "/paste",
+  "/attach",
   "/share",
   "/last",
   "/files",
@@ -1921,6 +1930,28 @@ export async function handleSlash(
         handled: true,
         forwardPrompt: ulwKickoffMessage(state),
         output: banner,
+        session: opts.session,
+      };
+    }
+
+    case "/paste": {
+      const { saveClipboardImage } = await import("../util/clipboard.js");
+      const shot = saveClipboardImage();
+      if (!shot.ok) {
+        return {
+          handled: true,
+          output: `Clipboard paste failed: ${shot.error}`,
+          session: opts.session,
+        };
+      }
+      const prompt = `[[image:${shot.path}]] Please inspect the attached clipboard image and use it for the current task.`;
+      return {
+        handled: true,
+        forwardPrompt: prompt,
+        queueInterjection: prompt,
+        output: chalk.dim(
+          `Pasted clipboard image (${shot.backend}): [[image:${shot.path}]]`,
+        ),
         session: opts.session,
       };
     }
@@ -3736,7 +3767,7 @@ const stats = collectUsageStats({
           handled: true,
           output:
             "Plan mode cannot create commits (bash/git denied). " +
-            "Run `/commit` to draft a message, then `/build` (or leave plan) and `/commit do`.",
+            "Run `/commit` to draft a message, then `exit_plan_mode` or `/build` (or leave plan) and `/commit do`.",
         };
       }
       // Fail closed outside a git work tree / clean tree (avoid a useless model turn).
@@ -4617,7 +4648,7 @@ const result = rewindSessionDetailed(opts.session, n);
         if (opts.config.permissionMode === "plan") {
           return {
             handled: true,
-            output: "Plan mode cannot restore checkpoints. `/build` first.",
+            output: "Plan mode cannot restore checkpoints. `exit_plan_mode` or `/build` first.",
           };
         }
         const sha = tokens[1] || opts.session.meta.lastCheckpoint || "";
@@ -5615,9 +5646,9 @@ case "/new":
         sid,
         [
           "User entered PLAN MODE (session-scoped).",
-          "Mutations (writes/bash/apply_patch/kill_task) are hard-denied.",
+          "Mutations (writes/mutating bash/apply_patch/kill_task) are hard-denied. Read-only bash and explore spawn are allowed.",
           "Research and produce a concrete plan: goal, steps, files, risks, verification.",
-          "Do not implement until the user runs /build.",
+          "When the plan is ready, call exit_plan_mode (or type /build).",
           note ? `Plan focus: ${note}` : "",
         ]
           .filter(Boolean)
@@ -5630,8 +5661,12 @@ case "/new":
               ? ` (was ${previous}; session-only — sticky prefs untouched)`
               : " (already in plan)",
           ),
-        chalk.dim("  Reads/search/todo_write allowed · writes/bash denied"),
-        chalk.dim("  Exit with /build (restores prior mode) · or /permissions <mode>"),
+        chalk.dim(
+          "  Reads/search/todo_write/read-only bash/explore spawn allowed · writes/mutating bash denied",
+        ),
+        chalk.dim(
+          "  Agent calls exit_plan_mode when ready · or type /build / /permissions <mode>",
+        ),
       ];
       if (note) lines.push(chalk.dim(`  Focus: ${note}`));
       return {
@@ -5646,7 +5681,7 @@ case "/new":
       // Leave plan → restore prior session mode (OpenCode build-switch).
       const note = arg.trim();
       const { mode, wasPlan } = exitSessionPlanMode(opts.config, opts.session);
-      saveSession(opts.session);
+      persistSessionMode(opts.session);
       const sid = opts.session.meta.id;
       if (wasPlan) {
         pushLiveNotice(
@@ -5734,7 +5769,7 @@ case "/new":
       if (!arg) {
         const sessionNote =
           opts.session.meta.permissionMode === "plan"
-            ? chalk.blue("\nSession: PLAN (use /build to leave — sticky prefs untouched)")
+            ? chalk.blue("\nSession: PLAN (exit_plan_mode or /build to leave — sticky prefs untouched)")
             : opts.session.meta.permissionMode
               ? chalk.dim(`\nSession override: ${opts.session.meta.permissionMode}`)
               : "";
@@ -6402,7 +6437,7 @@ export async function runDoctorCheck(
     if (permissionMode === "plan") {
       lines.push(
         chalk.blue(
-          "  PLAN — mutations denied; /build to implement (session /plan preferred over sticky plan)",
+          "  PLAN — mutations denied; exit_plan_mode or /build (session /plan preferred over sticky plan)",
         ),
       );
     }
@@ -7734,7 +7769,7 @@ export function formatEffectiveConfig(
       chalk.dim("  (/temperature · /max-tokens)"),
     `  permission:      ${snap.permissionMode}` +
       (snap.permissionMode === "plan"
-        ? "  (read-only · /build to implement)"
+        ? "  (read-only · exit_plan_mode or /build)"
         : ""),
     `  sandbox:         ${snap.sandbox}  network=${snap.sandboxNetwork}  missing=${snap.sandboxMissingBackend}`,
     `  read outside:    ${snap.readOutsideWorkspace}`,
@@ -8049,7 +8084,7 @@ Look for the highest-signal facts for an agent working in this repo:
 - If \`AGENTS.md\` already exists, improve it in place rather than rewriting blindly
 - Preserve verified useful guidance; delete fluff or stale claims
 - After writing, briefly summarize what changed and why
-- Tip for humans using Forge: \`/plan\` for read-only design, \`/build\` to implement; \`/commands\` lists project slash templates; \`/skills\` lists skill packs; \`forge doctor\` / \`/context\` show loaded instruction sources, skill counts, and project stack
+- Tip for humans using Forge: \`/plan\` for read-only design, \`exit_plan_mode\` or \`/build\` to implement; \`!cmd\` / \`@path\` / \`/paste\`; \`/commands\` lists project slash templates; \`/skills\` lists skill packs; \`forge doctor\` / \`/context\` show loaded instruction sources, skill counts, and project stack
 
 Do the research with tools, then write or update \`AGENTS.md\` now.`;
 }
@@ -8068,6 +8103,7 @@ Forge slash commands
   /ulw [task]           Arm ULW + cycle=1 (soft/broad seeds backlog + decision memory)
   /memory [list|add …]  Session decisions. /memory project … for cross-session.
   /attach <image>       Attach image path for vision ([[image:path]] in next message)
+  /paste                Attach clipboard image (pngpaste / osascript / wl-paste / xclip)
   /cycle 1|0|status     Continue waves (1) or last wave then stop (0)  [live]
   /max-waves N|off      Cap ULW waves (auto LAST at N); default unlimited  [live]
   /ulw-off              Disarm ULW + cycle driver  [live]
@@ -8109,6 +8145,7 @@ Forge slash commands
   /format [on|off]      Format-on-write after file tools (prettier/biome/ruff/…)  [live]
   ask_user tool         Clarifying questions (interactive; headless fails closed)
   /diff [path]          Git status + diff (argv-safe; pathspecs/refs only)  [live]
+  !<command>            Run a shell command now (same permissions as bash)  [live]
   /logs [n|0|all|path]  Tail sandbox/safety events (0/all = full window)  [live]
   /config [json]        Effective config snapshot (no secrets)  [live]
   /copy                 Copy last assistant reply (pbcopy/wl-copy/xclip/…)  [live]

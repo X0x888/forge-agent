@@ -111,7 +111,12 @@ export function evaluateProofClaimAtStop(
   input: ProofClaimStopInput,
 ): ProofClaimStopDecision {
   // Structural proof already present — never block.
-  if (input.verificationRan) {
+  // Fresh last-verify (bang-shell / prior turn that hasn't been stale'd by
+  // later edits) counts as a successful project check.
+  if (
+    input.verificationRan ||
+    (input.lastVerificationCommand && !input.lastVerificationStale)
+  ) {
     return { block: false };
   }
 

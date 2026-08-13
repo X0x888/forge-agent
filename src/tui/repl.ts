@@ -6,6 +6,7 @@ import type { SessionData } from "../session/session.js";
 import { HookRunner } from "../harness/hooks.js";
 import { PermissionGate } from "../agent/permissions.js";
 import { runAgentLoop } from "../agent/loop.js";
+import { formatBangOutput, runBangShell } from "./bang-shell.js";
 import {
   handleSlash,
   isLiveSafeSlash,
@@ -322,6 +323,30 @@ export async function runRepl(opts: {
     // Free-text is queued as a Grok-style interjection (drained next LLM call).
     // Conversation mutators and new agent turns still require idle (or Ctrl+C).
     if (busy) {
+      if (text.startsWith("!")) {
+        try {
+          const bang = await runBangShell({
+            line: text,
+            config,
+            session,
+            permissions,
+            persist: false,
+          });
+          if (bang.handled) {
+            console.log(formatBangOutput(bang.output));
+            pushInterjection(
+              session.meta.id,
+              `[User ran bang-shell]\n${bang.output}`,
+            );
+            livePrompt();
+            return;
+          }
+        } catch (err) {
+          log.error((err as Error).message || String(err));
+          livePrompt();
+          return;
+        }
+      }
       if (!text.startsWith("/")) {
         pushInterjection(session.meta.id, text);
         const depth = peekInterjections(session.meta.id).length;
@@ -361,6 +386,20 @@ export async function runRepl(opts: {
               "warn",
             ),
           );
+          livePrompt();
+          return;
+        }
+        if (slash.queueInterjection) {
+          pushInterjection(session.meta.id, slash.queueInterjection);
+          if (slash.output) {
+            console.log(
+              formatLiveControlFeedback(text, slash.output, "ok"),
+            );
+          } else {
+            console.log(
+              formatLiveControlFeedback(text, "Queued for this turn.", "ok"),
+            );
+          }
           livePrompt();
           return;
         }
@@ -420,6 +459,26 @@ export async function runRepl(opts: {
       // Always restore the live input line so the next control is obvious
       livePrompt();
       return;
+    }
+
+    if (text.startsWith("!")) {
+      try {
+        const bang = await runBangShell({
+          line: text,
+          config,
+          session,
+          permissions,
+        });
+        if (bang.handled) {
+          console.log(formatBangOutput(bang.output));
+          prompt();
+          return;
+        }
+      } catch (err) {
+        log.error((err as Error).message || String(err));
+        prompt();
+        return;
+      }
     }
 
     // Same guard as the live path — report the throw, keep the loop alive.
@@ -956,10 +1015,11 @@ function printBanner(
         (session.meta.title ? ` · ${session.meta.title.slice(0, 40)}` : "") +
         ` · Stop: ${config.blockingStopHooks ? "blocking" : "passive"}` +
         ` · perms: ${config.permissionMode}` +
+        (config.permissionMode === "plan" ? " (exit_plan_mode or /build)" : "") +
         (git.branch ? ` · ${git.branch}${git.dirty ? "*" : ""}` : "") +
         (projectBits.length ? ` · ${projectBits.join(" · ")}` : "") +
         `\n  Native live status while working · type at live › mid-run (/cycle 0)\n` +
-        `  Paste multi-line safely (↵ sends · ^J newline) · ↑↓ history · Tab · /tips · /quit\n` +
+        `  Paste multi-line safely (↵ sends · ^J newline) · ↑↓ history · Tab @path · !cmd · /paste · /tips · /quit\n` +
         `  Fresh session: forge --new  ·  resume is automatic for this cwd\n`,
     ),
   );
@@ -983,7 +1043,7 @@ function printBanner(
       }
       console.log(
         chalk.cyan(
-          `  Tip: /plan → design · /build → ship · /commit [do] · /budget N · /notify on · /done winds ULW+goal · /model live · /undo · /context · forge tips · forge doctor --json${stackBit}\n`,
+          `  Tip: /plan → design · exit_plan_mode or /build → ship · !cmd · @path · /paste · /commit [do] · /budget N · /notify on · /done winds ULW+goal · /model live · /undo · /context · forge tips · forge doctor --json${stackBit}\n`,
         ),
       );
       savePreferences({ seenWelcomeTip: true });

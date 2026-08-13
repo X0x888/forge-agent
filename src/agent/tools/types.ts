@@ -1,4 +1,5 @@
 import type {
+  ForgeConfig,
   SandboxMissingBackend,
   SandboxNetwork,
   SandboxProfile,
@@ -10,6 +11,7 @@ import type {
   SubagentRequest,
   SubagentResult,
 } from "../subagent.js";
+import type { SessionData } from "../../session/session.js";
 
 export interface ToolContext {
   workspace: string;
@@ -51,6 +53,9 @@ export interface ToolContext {
   runSubagent?: (req: SubagentRequest) => Promise<SubagentResult>;
   /** Current subagent nesting depth (0 = root). */
   subagentDepth?: number;
+  /** Parent session — required for exit_plan_mode to flip permission mode. */
+  session?: SessionData;
+  config?: ForgeConfig;
 }
 
 export interface ToolResult {

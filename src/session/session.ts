@@ -26,6 +26,10 @@ import {
   compactMessagesStructured,
   type CompactContext,
 } from "./compaction.js";
+import {
+  clearFileReadsForSession,
+  forgetFileReadsSession,
+} from "../agent/tools/file-read-state.js";
 import { repairToolCallPairing } from "./message-repair.js";
 import {
   restoreMutationsAfterTurn,
@@ -76,13 +80,13 @@ export interface SessionMeta {
   /**
    * Session-scoped permission mode override (OpenCode-style /plan).
    * When set, resume restores this mode unless CLI `--permission-mode` is explicit.
-   * `/plan` sets this without touching sticky preferences; `/build` restores
-   * `permissionModeBeforePlan` (or default).
+   * `/plan` sets this without touching sticky preferences; `/build` or
+   * `exit_plan_mode` restores `permissionModeBeforePlan` (or default).
    */
   permissionMode?: PermissionMode;
   /**
-   * Mode to restore when leaving plan via `/build`. Only meaningful while
-   * `permissionMode === "plan"`.
+   * Mode to restore when leaving plan via `/build` or `exit_plan_mode`.
+   * Only meaningful while `permissionMode === "plan"`.
    */
   permissionModeBeforePlan?: PermissionMode;
   /**
@@ -523,6 +527,11 @@ export function exitSessionPlanMode(
   // Drop session override entirely after leaving plan — sticky prefs + CLI win.
   delete session.meta.permissionMode;
   return { mode, wasPlan };
+}
+
+/** Persist session-scoped permission mode (and plan restore) to disk. */
+export function persistSessionMode(session: SessionData): void {
+  saveSession(session);
 }
 
 /**
@@ -1044,7 +1053,7 @@ export function formatSessionSummary(session: SessionData): string {
     })(),
     `  pinned:   ${m.pinned ? "yes (/unpin to allow prune)" : "no (/pin to keep)"}`,
     m.permissionMode === "plan"
-      ? `  mode:     PLAN (session-scoped — /build to implement)`
+      ? `  mode:     PLAN (session-scoped — exit_plan_mode or /build)`
       : m.permissionMode
         ? `  mode:     ${m.permissionMode} (session override)`
         : null,
@@ -1539,6 +1548,11 @@ export function deleteSessionDetailed(
   const dir = sessionDir(full);
   try {
     fs.rmSync(dir, { recursive: true, force: true });
+    try {
+      forgetFileReadsSession(full);
+    } catch {
+      /* best-effort — disk already gone */
+    }
     return { ok: true, id: full };
   } catch {
     return { ok: false, reason: "not_found", id: full };
@@ -1693,7 +1707,11 @@ export function compactMessages(
   keepLast = 12,
   context?: CompactContext,
 ): ChatMessage[] {
-  return compactMessagesStructured(messages, { keepLast, context }).messages;
+  const next = compactMessagesStructured(messages, { keepLast, context }).messages;
+  if (context?.sessionId) {
+    clearFileReadsForSession(context.sessionId);
+  }
+  return next;
 }
 
 /**
@@ -2474,7 +2492,7 @@ export function formatResumeOrientation(
   }
   try {
     if (session.meta.permissionMode === "plan") {
-      parts.push("Mode: PLAN (session-scoped) — /build to implement");
+      parts.push("Mode: PLAN (session-scoped) — exit_plan_mode or /build");
     } else if (
       session.meta.permissionMode &&
       session.meta.permissionMode !== "default" &&
@@ -2856,6 +2874,13 @@ export function clearConversation(session: SessionData): void {
   // History gone — journal would restore against the wrong timeline.
   try {
     clearFileMutations(session.meta.id);
+  } catch {
+    /* best-effort */
+  }
+  // Same session id — unread-edit stamps would otherwise survive a wiped
+  // transcript (same hole as compact).
+  try {
+    clearFileReadsForSession(session.meta.id);
   } catch {
     /* best-effort */
   }

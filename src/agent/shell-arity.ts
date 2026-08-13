@@ -166,12 +166,39 @@ const READ_ONLY_PREFIXES = new Set([
   "git diff",
   "git log",
   "git show",
+  "git blame",
+  "git grep",
+  "git ls-files",
+  "git ls-tree",
+  "git cat-file",
+  "git describe",
+  "git rev-list",
+  "git worktree list",
+  "git stash list",
+  "git stash show",
   "git branch",
   "git rev-parse",
   "git remote",
   "rg",
   "grep",
   "find",
+  "file",
+  "stat",
+  "wc",
+  "od",
+  "hexdump",
+  "strings",
+  "nl",
+  "jq",
+  "yq",
+  "diff",
+  "cmp",
+  "tree",
+  "realpath",
+  "readlink",
+  "sha256sum",
+  "shasum",
+  "md5sum",
   "npm ls",
   "npm list",
   "npm view",
@@ -351,6 +378,64 @@ function isReadOnlyGitRemote(rawTokens: string[]): boolean {
 }
 
 /**
+ * `sed -n` / `sed --quiet` print-only. `-e` / `-f` are allowed only with `-n`
+ * (scripted print). `-i` / `--in-place` always mutate.
+ */
+function isReadOnlySed(rawTokens: string[]): boolean {
+  let sawPrintOnly = false;
+  for (const t of rawTokens.slice(1)) {
+    if (t === "-n" || t === "--quiet" || t === "--silent") {
+      sawPrintOnly = true;
+      continue;
+    }
+    if (t === "-ne" || t === "-en" || t === "-nf" || t === "-fn") {
+      sawPrintOnly = true;
+      continue;
+    }
+    if (
+      t === "-i" ||
+      t.startsWith("-i") ||
+      t === "--in-place" ||
+      t.startsWith("--in-place=")
+    ) {
+      return false;
+    }
+    if (
+      t === "-e" ||
+      t.startsWith("-e") ||
+      t === "--expression" ||
+      t.startsWith("--expression=") ||
+      t === "-f" ||
+      t.startsWith("-f") ||
+      t === "--file" ||
+      t.startsWith("--file=")
+    ) {
+      // `-ei` / `-fi` are in-place even when bundled with -e/-f.
+      if (!t.startsWith("--") && /i/.test(t)) return false;
+      continue;
+    }
+    if (t.startsWith("-") && /i/.test(t)) return false;
+  }
+  return sawPrintOnly;
+}
+
+/** `git cat-file -t/-p/-s` only. `-w` / `--batch` write the object store. */
+function isReadOnlyGitCatFile(rawTokens: string[]): boolean {
+  for (const t of rawTokens.slice(2)) {
+    if (
+      t === "-w" ||
+      t.startsWith("-w") ||
+      t === "--batch" ||
+      t.startsWith("--batch")
+    ) {
+      return false;
+    }
+    if (t.startsWith("-") && !t.startsWith("--") && /w/.test(t)) return false;
+  }
+  return true;
+}
+
+/**
  * git porcelain that accepts `--output=<path>` writes a file even when the
  * subcommand is otherwise read-only (`git log --output=/tmp/x`).
  */
@@ -390,6 +475,16 @@ export function isReadOnlyCommand(normalizedSegment: string): boolean {
   // git: --output writes a file even on otherwise RO porcelain (incl. branch)
   if (words[0] === "git" && hasGitOutputFlag(toks)) {
     return false;
+  }
+
+  // git cat-file: prefix is RO, but -w / --batch write objects.
+  if (words[0] === "git" && words[1] === "cat-file") {
+    return isReadOnlyGitCatFile(toks);
+  }
+
+  // sed: print-only (`-n` / `--quiet`). `-i` / `--in-place` mutate.
+  if (words[0] === "sed") {
+    return isReadOnlySed(toks);
   }
 
   // git branch / git remote need subcommand-aware checks (prefix alone is unsafe)

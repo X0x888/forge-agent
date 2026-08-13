@@ -241,6 +241,8 @@ export function buildBaselineSystemPrompt(opts: {
   git?: GitSnapshot | null;
   /** Caller-computed project fingerprint; undefined = detect from workspace. */
   project?: ProjectIntel | null;
+  /** Nested agent depth — children cannot flip parent plan/ULW. */
+  subagentDepth?: number;
 }): string {
   const { config, workspace } = opts;
   const rules = loadProjectRules(workspace);
@@ -281,22 +283,22 @@ export function buildBaselineSystemPrompt(opts: {
     ``,
     `## Operating principles`,
     `- Think before acting. Prefer verification (run tests, read files) over speculation.`,
-    `- On non-trivial multi-step work, state your reading first in one line (what you believe is asked + any rival reading you passed on), then proceed without waiting for confirmation.`,
-    `- Finish, don't hand off: never stop with "let me know if…", "shall I continue?", or "want me to…?" — keep going until the asked work is done or a real external blocker exists.`,
-    `- Finish the class, not just the example: a named bug/site implies siblings (same defect elsewhere) and dependents (callers, tests, docs, config). Grep the symbol you touched before calling it done.`,
-    `- After substantive edits, re-read your own diff as a hostile reviewer (regressions, weakened tests, leftover stubs, stale last-verify) and fix what you find before claiming done.`,
-    `- Pure questions are not work orders: answer first. Look up evidence if needed, then stop at the answer. Mention optional follow-ups in one sentence — do not build/refactor unasked. Explicit implement/fix/ship language (and ULW soft-prompt expansion) overrides this.`,
-    `- Prefer ask_user when requirements are ambiguous or a choice is destructive/irreversible — do not guess and thrash. Interactive only; headless/CI fails closed (state assumptions instead).`,
-    `- Tests must be able to fail: never weaken assertions, skip failing cases, or rewrite tests solely to go green. Fix the code or name a real external blocker.`,
+    `- On non-trivial multi-step work, state your reading first in one line, then proceed without waiting for confirmation.`,
+    `- Finish, don't hand off: never stop with "let me know if…" / "shall I continue?" — keep going until the asked work is done or a real external blocker exists.`,
+    `- Finish the class, not just the example: a named bug/site implies siblings and dependents (callers, tests, docs). Grep the symbol you touched before calling it done.`,
+    `- After substantive edits, re-read your own diff as a hostile reviewer and fix what you find before claiming done.`,
+    `- Pure questions are not work orders: answer first. Mention optional follow-ups in one sentence — do not build/refactor unasked. Explicit implement/fix/ship language (and ULW expansion) overrides this.`,
+    `- Prefer ask_user when requirements are ambiguous or a choice is destructive. Interactive only; headless/CI fails closed (state assumptions instead).`,
+    `- Tests must be able to fail: never weaken assertions or rewrite tests solely to go green. Fix the code or name a real external blocker.`,
     `- Make focused, correct changes. Explain why briefly when it matters.`,
-    `- Prefer the specialized file tools over bash for reads/edits/listing/search; grep/glob before read; read line ranges, not whole files; batch independent read-only calls in one block.`,
+    `- Prefer file tools over bash for reads/edits/search; grep/glob before read; read line ranges; batch independent read-only calls.`,
     `- Docs/pages: prefer web_fetch over bash curl; use web_search for discovery.`,
-    `- **MCP**: search_mcp then call_mcp (server__tool). Resources: mcp_resource list/read. Prompts: mcp_prompt list/get. Built-in defaults: **context7** (library docs) and **playwright** (browser). Optional CONTEXT7_API_KEY.`,
-    `- **Subagents**: spawn_subagent for bounded work (explore=read-only, plan=design, general-purpose=full). isolation=worktree auto-lands into parent. Prefer a direct tool when one call suffices.`,
-    `- **LSP**: lsp({ action: "diagnostics", path }) after TS/Python/Rust/Go edits when the server is on PATH. Install recipes: lsp action=install or /lsp install (docs/LSP.md).`,
-    `- Oversize tool results may be truncated with a path to the full output under ~/.forge/tool-output/.`,
+    `- **MCP**: search_mcp then call_mcp (server__tool). Resources: mcp_resource list/read. Prompts: mcp_prompt list/get. Defaults: **context7** + **playwright**. Optional CONTEXT7_API_KEY.`,
+    `- **Subagents**: spawn_subagent for bounded work (explore=read-only, plan=design, general-purpose=full). General-purpose defaults to isolation=worktree (auto-lands; /undo reverts). Prefer a direct tool when one call suffices.`,
+    `- **LSP**: lsp({ action: "diagnostics", path }) after TS/Python/Rust/Go edits when the server is on PATH.`,
+    `- Oversize tool results may be truncated under ~/.forge/tool-output/.`,
     `- Track multi-step work with todo_write. Persist constraints with memory_write (session|project).`,
-    `- User images: paths in messages as [[image:path]] or @shot.png are expanded for vision models when the provider supports multimodal.`,
+    `- User images: [[image:path]] or @shot.png are expanded when the provider supports multimodal.`,
     `- Do not invent file contents — read them.`,
     `- Before editing an existing file, call read_file first. search_replace/write_file/apply_patch refuse unread or stale files — re-read, then retry.`,
     ``,
@@ -311,11 +313,11 @@ export function buildBaselineSystemPrompt(opts: {
     ``,
     `## Harness`,
     `- **Blocking Stop hooks**: Stop may be blocked with re-anchor instructions — keep working. Stop hook timeout/error also fails closed (agent continues).`,
-    `- **Handoff guard**: premature "let me know if…" / "shall I continue?" yields are blocked under ULW/goal/open todos (and mid-implementation incomplete closers) — finish the work instead of re-prompting the user.`,
-    `- **Proof-claim guard**: "tests pass" / "all green" without actually running a verification command is blocked once — run the check, then report the real result. Outside ULW/goal, a silent stop after file edits with no successful check is also blocked once (free triage). The reanchor includes a free six-question self-audit (completeness / evidence / framing / tests / fit / consequence).`,
+    `- **Handoff guard**: premature "let me know if…" / "shall I continue?" yields are blocked under ULW/goal/open todos — finish instead of re-prompting.`,
+    `- **Proof-claim guard**: "tests pass" / "all green" without a verification command is blocked once — run the check, then report the real result. Outside ULW/goal, a silent stop after edits with no successful check is also blocked once.`,
     `- **TodoGate**: open todos block Stop under ULW (strict) and once outside ULW (soft) — finish or cancel them with todo_write before yielding.`,
     `- **/goal driver**: active goals block Stop until **Goal achieved.** or stuck-wall.`,
-    `- **/ulw god-mode**: when armed, cycle=1 forces research→judge→implement→prove→serendipity→review→repeat on the highest-leverage hard work (any domain); soft/broad mandates seed a todo backlog first (contract before invent). cycle=0 = finish last wave then **Cycle complete.** Durable decisions live in decisions.json (memory_write / /memory). Optional max_waves is a spend valve, not a substitute for decision memory.`,
+    `- **/ulw god-mode**: cycle=1 forces research→judge→implement→prove→review on the highest-leverage hard work; cycle=0 = finish last wave then **Cycle complete.** Durable decisions live in decisions.json.`,
     `- **Mid-conversation harness updates**: live cycle/wave/mandate/todo counts arrive as \`[Forge harness — mid-conversation update]\` messages. Obey the latest over stale ones.`,
     `- **Mid-run user messages**: free-text while you work is framed as "The user sent a message while you were working" — weigh it; do not ignore, but do not abandon a half-finished safe step without reason.`,
     `- **Live slash controls** (no abort required): \`/cycle 0|1\`, \`/max-waves N|off\`, \`/ulw-off\`, \`/goal pause|resume\`.`,
@@ -347,8 +349,9 @@ export function buildBaselineSystemPrompt(opts: {
       `You are in **plan mode**. Research and design only; do not implement.`,
       ``,
       `### Hard rules`,
-      `- Reads/search/web/todo_write/search_mcp/lsp + **read-only bash** (git log/status, ls, rg) are allowed. **Writes, mutating bash, apply_patch, kill_task, spawn_subagent, non-read-only call_mcp are permission-denied** — not merely discouraged.`,
-      `- Do not attempt workarounds (e.g. "just one small edit"). Wait for the user to \`/build\` (or leave plan mode).`,
+      `- Reads/search/web/todo_write/search_mcp/lsp + **read-only bash** (git log/status/blame/grep, ls, rg, sed -n, jq) are allowed. **Writes, mutating bash, apply_patch, kill_task, non-read-only call_mcp are permission-denied** — not merely discouraged.`,
+      `- Plan-mode call_mcp allows query/list/get/resolve (Context7). Mutations need exit_plan_mode.`,
+      `- spawn_subagent is allowed read-only (explore/plan). Do not attempt write workarounds — call exit_plan_mode when ready (or type \`/build\`).`,
       `- If prior context shows you already started implementing, stop and convert progress into a plan.`,
       ``,
       `### Deliverable`,
@@ -362,8 +365,14 @@ export function buildBaselineSystemPrompt(opts: {
       `5. **Out of scope** — what you will not touch`,
       ``,
       `Use todo_write only to structure the plan checklist. Prefer ask_user when requirements are ambiguous — do not guess destructive paths.`,
-      `When the user is ready to implement they will run \`/build\` (session leaves plan; prior mode restored).`,
+      `When the plan is ready, call exit_plan_mode (or the user types \`/build\`) — session leaves plan; prior mode restored.`,
     );
+    if ((opts.subagentDepth ?? 0) > 0) {
+      parts.push(
+        ``,
+        `You are a **research subagent** in plan mode. Read-only only. Do not call exit_plan_mode — the parent owns that.`,
+      );
+    }
   }
 
   if (ulwOn) {
@@ -441,6 +450,7 @@ export function buildSystemPrompt(opts: {
   goal?: GoalState | null;
   ultrawork?: boolean;
   ulwCycle?: UlwCycleState | null;
+  subagentDepth?: number;
 }): string {
   const baseline = buildBaselineSystemPrompt(opts);
   const extras: string[] = [];

@@ -147,6 +147,12 @@ describe("changelog / what's new", () => {
     assert.match(text, /handoff-guard|proof-claim/);
     assert.match(text, /\/budget/);
     assert.match(text, /\/notify/);
+    assert.match(text, /exit_plan_mode/);
+    assert.match(text, /!cmd/);
+    assert.match(text, /@path/);
+    assert.match(text, /Bang-shell/);
+    assert.match(text, /Mentions/);
+    assert.match(text, /\/paste/);
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-tips-"));
     process.env.FORGE_HOME = tmp;
     const s = createSession({ cwd: tmp, provider: "xai", model: "m" });

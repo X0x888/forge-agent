@@ -20,6 +20,12 @@ import { formatPermissionPreview } from "../util/format.js";
 import { editToolDiffPreview } from "./permission-preview.js";
 import { isTruthy } from "../util/bool.js";
 import { parseDurationMs } from "../util/duration-ms.js";
+import {
+  isMcpInvocationTool,
+  mcpAlwaysAllowPattern,
+  mcpToolNameLooksReadOnly,
+} from "../mcp/types.js";
+import type { McpManager } from "../mcp/manager.js";
 
 const WRITE_TOOLS = new Set([
   "write_file",
@@ -53,6 +59,11 @@ const READ_ONLY_TOOLS = new Set([
   "WebFetch",
   "WebSearch",
   "ListDir",
+  "ask_user",
+  "AskUser",
+  "exit_plan_mode",
+  "ExitPlanMode",
+  "exitPlanMode",
 ]);
 
 
@@ -62,6 +73,13 @@ export interface PermissionRequest {
   mode: PermissionMode;
   workspace?: string;
   config?: ForgeConfig;
+  /**
+   * User typed the command themselves (bang-shell / `!cmd`).
+   * Skip the interactive ask; plan-mode + deny rules still apply.
+   */
+  userInitiated?: boolean;
+  /** Live MCP registry — used so annotated tools beat the name heuristic. */
+  mcp?: McpManager;
 }
 
 /**
@@ -322,21 +340,22 @@ export class PermissionGate {
         return {
           decision: "deny",
           reason:
-            "plan_mode: bash mutations denied — read-only shell ok (git log/status, ls, rg); run /build to implement",
+            "plan_mode: bash mutations denied — read-only shell ok (git log/status, ls, rg); call exit_plan_mode (or /build) to implement",
           rule: "plan_mode",
         };
       }
       if (
-        WRITE_TOOLS.has(toolName) ||
-        toolName === "kill_task" ||
         toolName === "spawn_subagent" ||
         toolName === "Task" ||
         toolName === "task"
       ) {
+        return { decision: "allow", reason: "plan_readonly_subagent" };
+      }
+      if (WRITE_TOOLS.has(toolName) || toolName === "kill_task") {
         return {
           decision: "deny",
           reason:
-            "plan_mode: mutations denied — read/search/todo_write/search_mcp/lsp + read-only bash only; run /build (or leave plan) to implement",
+            "plan_mode: mutations denied — read/search/todo_write/search_mcp/lsp + read-only bash only; call exit_plan_mode (or /build) to implement",
           rule: "plan_mode",
         };
       }
@@ -349,19 +368,15 @@ export class PermissionGate {
         const q = String(
           toolInput.tool_name || toolInput.name || toolInput.tool || "",
         );
-        // Without manager context, fail closed on MCP mutations in plan
-        const looksRead =
-          /__(get|list|search|find|read|fetch|query|describe|show|lookup|inspect)_/i.test(
-            q,
-          ) ||
-          /__(get|list|search|find|read|fetch|query|describe|show|lookup|inspect)$/i.test(
-            q,
-          );
-        if (!looksRead && rulesEval?.decision !== "allow") {
+        // Prefer live annotations; fall back to kebab/snake name heuristic.
+        const looksRead = req.mcp
+          ? req.mcp.isReadOnlyTool(q)
+          : mcpToolNameLooksReadOnly(q);
+        if (!looksRead) {
           return {
             decision: "deny",
             reason:
-              "plan_mode: call_mcp denied for non-read-only tools — use search_mcp or /build",
+              "plan_mode: call_mcp denied for non-read-only tools — use search_mcp or exit_plan_mode",
             rule: "plan_mode",
           };
         }
@@ -421,7 +436,12 @@ export class PermissionGate {
             "web_fetch allow_local can reach loopback services — approve only if intentional (session-tool does not cover allow_local)",
         });
       }
-      return { decision: "allow", reason: "session_tool" };
+      if (isMcpInvocationTool(toolName)) {
+        // Session-always must not unlock every MCP server from one approve.
+        // Persist server__tool via [a]lways; [s]ession stores a pattern.
+      } else {
+        return { decision: "allow", reason: "session_tool" };
+      }
     }
 
     if (READ_ONLY_TOOLS.has(toolName)) {
@@ -467,6 +487,13 @@ export class PermissionGate {
       toolName !== "run_terminal_command"
     ) {
       return { decision: "allow", reason: "acceptEdits_safe" };
+    }
+
+    // User typed the command (`!cmd`) — that is the approval. Plan-mode and
+    // deny rules already ran above; do not fail-closed just because stdin
+    // is not a TTY (forge run "!git status").
+    if (req.userInitiated) {
+      return { decision: "allow", reason: "user_initiated" };
     }
 
     // ── Fail-closed non-interactive (Bar A daily-driver) ──────────────
@@ -539,11 +566,10 @@ export class PermissionGate {
         const q = String(
           toolInput.tool_name || toolInput.name || toolInput.tool || "",
         );
-        if (
-          /__(get|list|search|find|read|fetch|query|describe|show|lookup|inspect)/i.test(
-            q,
-          )
-        ) {
+        const looksRead = req.mcp
+          ? req.mcp.isReadOnlyTool(q)
+          : mcpToolNameLooksReadOnly(q);
+        if (looksRead) {
           return { decision: "allow", reason: "mcp_readonly_headless" };
         }
         if (mode === "acceptEdits") {
@@ -731,7 +757,12 @@ export class PermissionGate {
               ),
               opts.workspace || process.cwd(),
             )
-          : "*");
+          : isMcpInvocationTool(alwaysTool)
+            ? mcpAlwaysAllowPattern(toolInput)
+            : "*");
+    const mcpAlwaysReady =
+      !isMcpInvocationTool(alwaysTool) ||
+      Boolean(alwaysPattern && alwaysPattern !== "*");
 
     console.error(
       chalk.yellow(
@@ -742,11 +773,13 @@ export class PermissionGate {
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
       const question = rl.question(
-        `Allow? [y]es once / [a]lways: ${alwaysGrantLabel(alwaysTool, alwaysPattern)}` +
-          (alwaysPattern !== "*" && alwaysTool !== "bash"
-            ? " (dir · nested ok)"
-            : " in this workspace") +
-          ` / [s]ession tool / [n]o:${timeoutNote} `,
+        mcpAlwaysReady
+          ? `Allow? [y]es once / [a]lways: ${alwaysGrantLabel(alwaysTool, String(alwaysPattern))}` +
+            (alwaysPattern !== "*" && alwaysTool !== "bash"
+              ? " (dir · nested ok)"
+              : " in this workspace") +
+            ` / [s]ession tool / [n]o:${timeoutNote} `
+          : `Allow? [y]es once / [n]o (name a server__tool to persist [a]lways):${timeoutNote} `,
       );
       const ans = (
         await (timeoutMs > 0
@@ -788,10 +821,20 @@ export class PermissionGate {
         return { decision: "deny", reason: "user_reject" };
       }
       if (ans === "s" || ans === "session") {
+        if (isMcpInvocationTool(alwaysTool)) {
+          if (!mcpAlwaysReady || !alwaysPattern || alwaysPattern === "*") {
+            return { decision: "deny", reason: "user_session_mcp_needs_target" };
+          }
+          this.sessionPatterns.add(`${alwaysTool}:${alwaysPattern}`);
+          return { decision: "allow_session", reason: "session_mcp_tool" };
+        }
         this.sessionTools.add(toolName);
         return { decision: "allow_session", reason: "session_tool" };
       }
       if (ans === "a" || ans === "always") {
+        if (!mcpAlwaysReady || !alwaysPattern || alwaysPattern === "*") {
+          return { decision: "deny", reason: "user_always_needs_target" };
+        }
         this.sessionPatterns.add(`${alwaysTool}:${alwaysPattern}`);
         if (opts.workspace) {
           try {

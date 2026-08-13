@@ -50,6 +50,41 @@ describe("resolveHeadlessSlashPrompt", () => {
     }
   });
 
+  it("!cmd runs without a model call", async () => {
+    const session = createSession({ cwd: tmp, provider: "xai", model: "m" });
+    const hooks = new HookRunner(DEFAULT_CONFIG, tmp);
+    const r = await resolveHeadlessSlashPrompt({
+      prompt: "!echo headless-bang",
+      session,
+      config: {
+        ...DEFAULT_CONFIG,
+        workspace: tmp,
+      },
+      hooks,
+    });
+    assert.equal(r.kind, "done");
+    if (r.kind === "done") {
+      assert.match(r.output, /headless-bang/);
+      assert.equal(r.command, "!echo");
+      assert.equal(r.failed, false);
+    }
+  });
+
+  it("!false marks failed so CI exits 1", async () => {
+    const session = createSession({ cwd: tmp, provider: "xai", model: "m" });
+    const hooks = new HookRunner(DEFAULT_CONFIG, tmp);
+    const r = await resolveHeadlessSlashPrompt({
+      prompt: "!false",
+      session,
+      config: { ...DEFAULT_CONFIG, workspace: tmp },
+      hooks,
+    });
+    assert.equal(r.kind, "done");
+    if (r.kind === "done") {
+      assert.equal(r.failed, true);
+    }
+  });
+
   it("/plan is done without model call and sets plan mode", async () => {
     const session = createSession({ cwd: tmp, provider: "xai", model: "m" });
     const hooks = new HookRunner(DEFAULT_CONFIG, tmp);

@@ -19,7 +19,7 @@ What experts should expect from Forge in long, unattended, or CI runs.
 | **Expert recovery tips** | `formatProviderError` maps auth/rate-limit/quota (incl. 403 body), overflow (incl. Anthropic “prompt is too long”), network/DNS, 5xx, Anthropic 529/`overloaded`, model-not-found, Azure/OpenAI `content_filter`, empty/no-choice responses, unsupported model features, org verification, and deprecated-model to next steps; REPL + headless print tips; `forge run --json` fail payloads include `recovery: { code, tips }` and structured `reason` |
 | **Abortable streams** | `AbortSignal` cancels `fetch` and releases the SSE reader (Ctrl+C works mid-token) |
 | **Provider timeout** | Default 10 min **stall** silence budget (`FORGE_PROVIDER_TIMEOUT_MS`) — aborts only when no stream activity; healthy long streams call `touch()` on each chunk so ULW / max-effort / large outputs are not killed at a fixed wall clock. Optional absolute ceiling via `FORGE_PROVIDER_MAX_MS` (off by default). Timeout is retryable; user abort is not |
-| **Prompt-cache stability** | System prompt (message[0]) carries only stable git state (root/remote); the volatile branch line is admitted append-only via context-admit, so everyday edits no longer invalidate the server-side prompt cache (xAI cached input ≈ 4× cheaper) |
+| **Prompt-cache stability** | System prompt (message[0]) carries only stable git state (root/remote); the volatile branch + coarse dirty/clean tree are admitted append-only via context-admit (dirty↔clean flips re-admit; file-count churn does not), so everyday edits no longer invalidate the server-side prompt cache (xAI cached input ≈ 4× cheaper) |
 | **Stream usage** | OpenAI-compat requests set `stream_options.include_usage` so `/cost` is accurate; `prompt_tokens_details.cached_tokens` is surfaced as `cache_read_input_tokens` |
 | **Tool name merge** | Streamed names that re-send full chunks do not become `bashbash` |
 | **Empty choices** | Non-stream responses with no choices throw a clear error |
@@ -53,8 +53,8 @@ What experts should expect from Forge in long, unattended, or CI runs.
 | **read_file past-EOF** | Offset beyond last line returns a clear past-end message (not a false empty-file) |
 | **Unknown task_id** | `get_task_output` / `kill_task` list actives and suggest prefix/typo matches |
 | **CLI/slash typos** | Bare `forge sesions`, `sessions prun`, `--model grok-45`, `--effort medum`, `/exprot` → structured Did you mean? (fail-closed where CI-safe); tool numeric/format args fail closed; doctor flags invalid config permission rules |
-| **Headless slash** | `forge run "/plan"` / `"/commands"` / custom `.forge/commands` templates resolve without a model call when pure control (`reason: "slash"`); templates expand then run the agent |
-| **Session plan mode** | `/plan` is session-scoped (no sticky prefs); resume restores plan unless `--permission-mode` is set; `/build` clears the override |
+| **Headless slash** | `forge run "/plan"` / `forge run "!cmd"` / `"/commands"` / custom `.forge/commands` templates resolve without a model call when pure control (`reason: "slash"`); failed bang-shell exits 1; templates expand then run the agent |
+| **Session plan mode** | `/plan` is session-scoped (no sticky prefs); resume restores plan unless `--permission-mode` is set; `exit_plan_mode` or `/build` clears the override |
 | **Project instructions** | Walk-up within git root for AGENTS/CLAUDE/cursor/copilot rules; doctor JSON `projectRulesCount` / `projectCommandsCount` for CI hygiene |
 | **File mutation journal** | Successful edits append pre-images to `sessions/<id>/mutations.jsonl` (mode `0600`, ~1.5 MiB/body cap) so `/undo` / `/retry` restore **disk + chat** (OpenCode-inspired; large bodies skipped with an explicit note) |
 | **Project intelligence** | Detect package manager + preferred check commands; inject into system prompt, `/context`, doctor/status/config JSON, statusline, proof-claim reanchor, and post-edit verify tips — less “use pnpm / run npm test” steering. Monorepo walk-up (git-root bounded) + turbo/nx + bash recovery tips (wrong PM, missing script/binary, layout, next check) |
@@ -204,12 +204,13 @@ npm run ci            # check + smoke (GitHub Actions entrypoint)
 
 ## Subagent worktree land (v0.9+)
 
-`spawn_subagent` with `isolation=worktree` no longer discards edits on cleanup by default.
+`spawn_subagent` general-purpose defaults to `isolation=worktree` when the workspace is a git repo (explore/plan stay in-place; pass `isolation=none` or `FORGE_SUBAGENT_ISOLATION=none` to write the parent). Successful auto-land journals parent pre-images so `/undo` can revert the landed files.
 Forge captures the worktree diff (tracked + untracked) and `git apply`s it into the parent
 workspace. On conflict the worktree is **kept** with a recovery summary in the tool result.
 
 - `FORGE_SUBAGENT_LAND=auto|keep|discard` (default `auto`; alias `FORGE_WORKTREE_LAND`)
 - `FORGE_SUBAGENT_KEEP_WORKTREE=1` forces keep (no apply)
+- `FORGE_SUBAGENT_ISOLATION=none|worktree` overrides the implicit general-purpose default
 - Aborted/failed subagents skip apply and keep the worktree so work is not lost
 
 ## Mid-loop auto-verify nudge

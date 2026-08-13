@@ -6,7 +6,13 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { FileReadState } from "../src/agent/tools/file-read-state.js";
+import {
+  FileReadState,
+  fileReadsForSession,
+  clearFileReadsForSession,
+  forgetFileReadsSession,
+} from "../src/agent/tools/file-read-state.js";
+import { compactMessages } from "../src/session/session.js";
 import { toolRead } from "../src/agent/tools/read.js";
 import { toolEdit } from "../src/agent/tools/edit.js";
 import { toolWrite } from "../src/agent/tools/write.js";
@@ -182,5 +188,94 @@ describe("tool integration with fileReads", () => {
     );
     assert.equal(e2.isError, undefined);
     assert.equal(fs.readFileSync(path.join(dir, "chain.ts"), "utf8"), "three\n");
+  });
+});
+
+describe("compact clears FileReadState", () => {
+  it("compactMessages with sessionId forces re-read before edit", async () => {
+    const id = "sess-compact-fileread";
+    forgetFileReadsSession(id);
+    const d = tmpWorkspace();
+    const f = path.join(d, "a.ts");
+    fs.writeFileSync(f, "const x = 1;\n");
+    const state = fileReadsForSession(id);
+    assert.equal(await state.noteFromDisk(f), true);
+    assert.equal(
+      await state.checkBeforeMutate(f, { tool: "search_replace", rel: "a.ts" }),
+      null,
+    );
+    compactMessages(
+      [
+        { role: "user", content: "read a.ts" },
+        { role: "assistant", content: "ok" },
+      ],
+      12,
+      { sessionId: id },
+    );
+    assert.equal(state.size(), 0);
+    const msg = await state.checkBeforeMutate(f, {
+      tool: "search_replace",
+      rel: "a.ts",
+    });
+    assert.ok(msg);
+    assert.match(msg!, /has not been read/);
+    forgetFileReadsSession(id);
+  });
+
+  it("clearFileReadsForSession is a no-op for unknown ids", () => {
+    clearFileReadsForSession("no-such-session");
+    clearFileReadsForSession("");
+  });
+});
+
+describe("clearConversation drops FileReadState", () => {
+  it("same session id cannot edit after /clear without re-read", async () => {
+    const { createSession, clearConversation } = await import(
+      "../src/session/session.js"
+    );
+    const d = tmpWorkspace();
+    const s = createSession({
+      cwd: d,
+      provider: "xai",
+      model: "grok-4",
+    });
+    const f = path.join(d, "a.ts");
+    fs.writeFileSync(f, "const x = 1;\n");
+    const state = fileReadsForSession(s.meta.id);
+    assert.equal(await state.noteFromDisk(f), true);
+    assert.equal(
+      await state.checkBeforeMutate(f, { tool: "search_replace", rel: "a.ts" }),
+      null,
+    );
+    clearConversation(s);
+    assert.equal(state.size(), 0);
+    const msg = await state.checkBeforeMutate(f, {
+      tool: "search_replace",
+      rel: "a.ts",
+    });
+    assert.ok(msg);
+    assert.match(msg!, /has not been read/);
+    forgetFileReadsSession(s.meta.id);
+  });
+
+  it("deleteSession drops the FileReadState registry entry", async () => {
+    const { createSession, deleteSession } = await import(
+      "../src/session/session.js"
+    );
+    const d = tmpWorkspace();
+    const s = createSession({
+      cwd: d,
+      provider: "xai",
+      model: "grok-4",
+    });
+    const f = path.join(d, "a.ts");
+    fs.writeFileSync(f, "const x = 1;\n");
+    const first = fileReadsForSession(s.meta.id);
+    assert.equal(await first.noteFromDisk(f), true);
+    assert.equal(deleteSession(s.meta.id, { force: true }), true);
+    const again = fileReadsForSession(s.meta.id);
+    assert.notEqual(again, first);
+    assert.equal(again.size(), 0);
+    forgetFileReadsSession(s.meta.id);
   });
 });

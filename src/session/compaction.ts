@@ -315,6 +315,7 @@ export function buildStructuredSummary(
     `## 6. Resume`,
     `- Continue the active mandate/goal without re-scanning from zero unless evidence is stale.`,
     `- Prefer verifying current workspace state over trusting this summary alone.`,
+    `- File-read memory is session-local: re-read a path before editing if the transcript no longer contains that read.`,
   );
 
   return sections.filter((l) => l !== undefined && l !== "").join("\n");

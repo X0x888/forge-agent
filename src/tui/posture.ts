@@ -23,7 +23,12 @@ export function postureHead(config: ForgeConfig): string {
     `posture: effort ${effort ?? "—"}${effort && !config.reasoningEffort ? " (model max)" : ""}` +
     ` · ctx ${formatTokens(config.contextWindow)}${config.contextWindowExplicit ? " (pinned)" : ""}` +
     ` · temp ${config.temperature ?? "default"}` +
-    ` · max_tokens ${formatTokens(maxTok)}${config.maxTokensExplicit ? " (pinned)" : " (auto)"}`
+    ` · max_tokens ${formatTokens(maxTok)}${config.maxTokensExplicit ? " (pinned)" : " (auto)"}` +
+    (config.permissionMode === "plan"
+      ? " · PLAN"
+      : config.permissionMode === "bypassPermissions"
+        ? " · YOLO"
+        : "")
   );
 }
 

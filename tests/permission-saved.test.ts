@@ -27,6 +27,72 @@ function withForgeHome<T>(fn: (home: string) => T): T {
 }
 
 describe("permission-saved", () => {
+  it("scrubs leftover call_mcp(*) grants on load", () => {
+    withForgeHome((home) => {
+      const ws = path.join(home, "proj");
+      fs.mkdirSync(ws, { recursive: true });
+      const storePath = path.join(home, "permissions.json");
+      fs.writeFileSync(
+        storePath,
+        JSON.stringify({
+          version: 1,
+          allows: [
+            {
+              id: "pa_legacy",
+              workspaceKey: workspaceKey(ws),
+              tool: "call_mcp",
+              pattern: "*",
+              createdAt: new Date().toISOString(),
+            },
+            {
+              id: "pa_ok",
+              workspaceKey: workspaceKey(ws),
+              tool: "call_mcp",
+              pattern: "context7__query-docs",
+              createdAt: new Date().toISOString(),
+            },
+          ],
+        }),
+        { mode: 0o600 },
+      );
+      const loaded = loadSavedAllows(ws);
+      assert.equal(loaded.length, 1);
+      assert.equal(loaded[0]?.pattern, "context7__query-docs");
+      const disk = JSON.parse(fs.readFileSync(storePath, "utf8")) as {
+        allows: { pattern: string }[];
+      };
+      assert.deepEqual(
+        disk.allows.map((a) => a.pattern),
+        ["context7__query-docs"],
+      );
+    });
+  });
+
+  it("refuses call_mcp(*) always-allow", () => {
+    withForgeHome((home) => {
+      const ws = path.join(home, "proj");
+      fs.mkdirSync(ws, { recursive: true });
+      assert.throws(
+        () =>
+          addSavedAllow({
+            workspace: ws,
+            tool: "call_mcp",
+            pattern: "*",
+          }),
+        /server__tool/,
+      );
+      const ok = addSavedAllow({
+        workspace: ws,
+        tool: "call_mcp",
+        pattern: "context7__query-docs",
+      });
+      assert.equal(ok.pattern, "context7__query-docs");
+      assert.deepEqual(savedAsAllowRules(ws), [
+        "call_mcp(context7__query-docs)",
+      ]);
+    });
+  });
+
   it("workspaceKey is stable and path-normalized", () => {
     withForgeHome((home) => {
       const ws = path.join(home, "proj");

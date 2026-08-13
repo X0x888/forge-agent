@@ -296,6 +296,29 @@ export function evaluateRules(
           matched = (paths[0] || blob).slice(0, 80);
         }
       }
+    } else if (
+      t === "call_mcp" ||
+      t === "mcp_call" ||
+      t === "use_mcp"
+    ) {
+      const pat = (rule.pattern || "").trim();
+      if (!pat || pat === "*" || pat === ".") {
+        // call_mcp(*) would unlock every MCP server from one Context7 approve.
+        matched = null;
+      } else {
+        const target = String(
+          toolInput.tool_name ?? toolInput.name ?? toolInput.tool ?? "",
+        ).trim();
+        if (
+          target &&
+          (target === pat ||
+            target.endsWith(`__${pat}`) ||
+            pat.endsWith(`__${target}`) ||
+            patternToRegExp(pat).test(target))
+        ) {
+          matched = target;
+        }
+      }
     } else {
       const re = patternToRegExp(rule.pattern || "*");
       const blob = JSON.stringify(toolInput);

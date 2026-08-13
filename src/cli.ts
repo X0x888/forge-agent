@@ -422,7 +422,7 @@ Docs: docs/PRODUCTION.md · docs/RELIABILITY.md · docs/ULW.md · forge news
       // orphaning it and creating a second, unarmed one (parity with forge run).
       let earlyForwardedSession: ReturnType<typeof resolveSession> | null =
         null;
-      if (willHeadless && prompt && /^\s*\//.test(prompt)) {
+      if (willHeadless && prompt && /^\s*[\/!]/.test(prompt)) {
         const earlySession =
           preflightSession ??
           createSession({
@@ -448,8 +448,7 @@ Docs: docs/PRODUCTION.md · docs/RELIABILITY.md · docs/ULW.md · forge news
           if (resolved.kind === "done") {
             const out = stripAnsi(resolved.output);
             if (wantJson) {
-              emitOkJson({
-                ok: true,
+              const payload = {
                 reason: "slash",
                 command: resolved.command,
                 output: out,
@@ -463,11 +462,13 @@ Docs: docs/PRODUCTION.md · docs/RELIABILITY.md · docs/ULW.md · forge news
                 model: config.model,
                 permissionMode: config.permissionMode,
                 node: process.version,
-              });
+              };
+              if (resolved.failed) emitFailJson({ ...payload, error: out });
+              else emitOkJson({ ok: true, ...payload });
             } else if (out) {
               process.stdout.write(out.endsWith("\n") ? out : out + "\n");
             }
-            process.exit(0);
+            process.exit(resolved.failed ? 1 : 0);
           }
           if (resolved.kind === "prompt") {
             prompt = resolved.prompt;
@@ -985,26 +986,27 @@ Docs: docs/PRODUCTION.md
           if (resolved.kind === "done") {
             const out = stripAnsi(resolved.output);
             if (wantJson) {
-              emitOkJson({
-                ok: true,
+              const payload = {
                 reason: "slash",
                 command: resolved.command,
                 output: out,
-                sessionId: resolved.ephemeral ? null : session.meta.id,
+                sessionId: resolved.ephemeral ? null : resolved.session.meta.id,
                 sessionPath: resolved.ephemeral
                   ? null
-                  : resolveSessionDir(session.meta.id),
+                  : resolveSessionDir(resolved.session.meta.id),
                 ephemeral: Boolean(resolved.ephemeral),
                 forgeHome: forgeHome(),
                 provider: config.provider,
                 model: config.model,
                 permissionMode: config.permissionMode,
                 node: process.version,
-              });
+              };
+              if (resolved.failed) emitFailJson({ ...payload, error: out });
+              else emitOkJson({ ok: true, ...payload });
             } else if (out) {
               process.stdout.write(out.endsWith("\n") ? out : out + "\n");
             }
-            process.exit(0);
+            process.exit(resolved.failed ? 1 : 0);
           }
           if (resolved.kind === "prompt") {
             prompt = resolved.prompt;
@@ -6187,8 +6189,7 @@ async function runHeadless(opts: {
       const out = stripAnsi(resolved.output);
       const ephemeral = Boolean(resolved.ephemeral);
       if (opts.json) {
-        emitOkJson({
-          ok: true,
+        const payload = {
           reason: "slash",
           command: resolved.command,
           output: out,
@@ -6202,7 +6203,9 @@ async function runHeadless(opts: {
           model: opts.config.model,
           permissionMode: opts.config.permissionMode,
           node: process.version,
-        });
+        };
+        if (resolved.failed) emitFailJson({ ...payload, error: out });
+        else emitOkJson({ ok: true, ...payload });
       } else if (out) {
         process.stdout.write(out.endsWith("\n") ? out : out + "\n");
       }
@@ -6219,7 +6222,7 @@ async function runHeadless(opts: {
       if (maxRunTimer) clearTimeout(maxRunTimer);
       cleanupBg();
       releaseLock();
-      process.exit(0);
+      process.exit(resolved.failed ? 1 : 0);
     }
   }
 

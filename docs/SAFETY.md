@@ -72,7 +72,7 @@ ask = [
 |-----|---------|
 | `y` | Allow once |
 | `a` | Always allow this command **prefix** (arity-aware, e.g. `git status *`); persisted under `~/.forge/permissions.json` (mode `0600`) |
-| `s` | Session-always for this **tool name** (does **not** cover `web_fetch allow_local` — that still needs `y`/`a`/allow-rule/YOLO) |
+| `s` | Session-always for this **tool name** (does **not** cover `web_fetch allow_local` or `call_mcp` — those need `y`/`a` with a `server__tool` target) |
 | `n` | Reject |
 
 ```text
@@ -119,7 +119,7 @@ Wrappers peeled: `env`, `timeout`, `nice`, `stdbuf`, `time`, `command`, plus lea
 | `acceptEdits` | Auto file edits; shell gated (read-only may pass; soft-dangerous like `git commit --no-verify` still asks) |
 | `bypassPermissions` | YOLO — **deny rules + hard safety + sandbox still apply** |
 | `dontAsk` | Deny unless allow rule / read-only tools |
-| `plan` | No writes/mutating shell (hard-denied); **read-only bash** (`git status/log`, `ls`, `rg`, …) allowed for research. Prefer **`/plan`** (session-scoped, no sticky prefs) then **`/build`** to restore prior mode. `/permissions plan` still sticky for experts who want it. Live mid-run; resume restores session plan unless `--permission-mode` is set. |
+| `plan` | No writes/mutating shell (hard-denied); **read-only bash** (`git status/log/blame/grep`, `ls`, `rg`, `sed -n`, `jq`, …) allowed for research. Prefer **`/plan`** (session-scoped, no sticky prefs) then **`exit_plan_mode`** or **`/build`** to restore prior mode. `/permissions plan` still sticky for experts who want it. Live mid-run; resume restores session plan unless `--permission-mode` is set. |
 
 ## Observability
 

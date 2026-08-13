@@ -18,7 +18,7 @@ Strike metal on the anvil — not on production HEAD.
 
 ## Prefer Forge primitives
 
-- `spawn_subagent({ isolation: "worktree" })` — detached worktree under `~/.forge/worktrees/`  
+- `spawn_subagent` general-purpose defaults to a detached worktree under `~/.forge/worktrees/` (`isolation=none` to write the parent)  
 - Keep with `FORGE_SUBAGENT_KEEP_WORKTREE=1` when the user will continue there  
 - Manual: `git worktree add` / feature branch when the user wants a durable branch  
 
