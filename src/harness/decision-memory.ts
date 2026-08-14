@@ -126,6 +126,35 @@ export function mandateFingerprint(mandate: string): string {
     .slice(0, 16);
 }
 
+const DURABLE_MEMORY_KINDS: MemoryKind[] = [
+  "constraint",
+  "priority",
+  "blocker",
+  "out_of_scope",
+];
+
+function isDurableMemoryRecord(r: MemoryRecord): boolean {
+  if (r.status !== "active") return false;
+  if (DURABLE_MEMORY_KINDS.includes(r.kind)) return true;
+  // Seeded mandate line is always load-bearing even if kind is off-list.
+  return /^MANDATE:/i.test(r.text);
+}
+
+/**
+ * Fingerprint of load-bearing memory only (mandate / constraints / scope).
+ * Ship logs, readings, and "Wave N pick" decisions must not count — they
+ * used to flip context-admit on every wave close.
+ */
+export function durableMemoryFingerprint(sessionId: string): string {
+  const store = loadDecisionMemory(sessionId);
+  const lines = store.records
+    .filter(isDurableMemoryRecord)
+    .map((r) => `${r.kind}\t${r.text}`)
+    .sort();
+  if (lines.length === 0) return "";
+  return createHash("sha256").update(lines.join("\n")).digest("hex").slice(0, 16);
+}
+
 /** Split mandate into bullet/heading lines for seeding. */
 export function extractMandateBullets(mandate: string): string[] {
   const text = mandate.replace(/\r\n/g, "\n").trim();

@@ -789,6 +789,7 @@ Exit codes:
 
 --json fields (success): ok, version, node, forgeHome, sessionId, sessionPath, title, pinned, foreignLock, provider, stickyProvider, authMethod, model, reasoningEffort, cwd, git, projectLabel, projectHints, packageName, packageVersion, packageEnginesNode, packageManager, checkCommands, projectStackSummary, monorepoRoot, workspaces, nodeModulesPresent, multipleLockfiles, permissionMode, sandbox, sandboxNetwork, sandboxMissingBackend, readOutsideWorkspace, ultrawork, ulwCycle, ulwWave, ulwMaxWaves, ulwBlocks, ulwMandate, ulwSoftPrompt, ulwExpandedMandate, goalActive, goal, goalStuckThreshold, goalBlocks, goalStuckBlocks, goalCriteria, denyRules, allowRules, askRules, maxTurns, maxTurnsUnlimited, maxCostUsd, maxCostUnlimited, effectiveMaxCostUsd, sessionCostUsd, productionWarnings, formatOnWrite, subagentLandMode, projectMemoryCount, lastCheckpoint, blockingStop, maxRunMs, providerTimeoutMs, bashTimeoutMs, bashBackgroundTimeoutMs, permissionAskTimeoutMs, doomLoopThreshold, errorStreakThreshold, ulwMaxContinues, editCount, lastVerificationCommand, lastVerificationAt, lastEditAt, lastVerificationStale, openTodos, messageCount, finalText, turns, stopContinues,
   releasedOnContinueCap, hitMaxTurns, hitCostCap, finishReason, lastError, editCount, aborted, timedOut,
+  harnessUserPokes, admitCount, proofPokes, providerRounds,
   promptTokens, completionTokens, durationMs
   (FORGE_JSON_COMPACT=1 → single-line success JSON for CI log aggregation)
   (releasedOnContinueCap/hitMaxTurns/hitCostCap → safety valves; still ok unless aborted/timedOut/empty run)
@@ -6871,6 +6872,10 @@ maxTurns: opts.config.maxTurns ?? 0,
       hitMaxTurns: result.hitMaxTurns,
       hitCostCap: result.hitCostCap,
       finishReason: result.finishReason,
+      harnessUserPokes: result.harnessUserPokes ?? 0,
+      admitCount: result.admitCount ?? 0,
+      proofPokes: result.proofPokes ?? 0,
+      providerRounds: result.providerRounds ?? result.turns,
       lastError: opts.session.meta.lastError
         ? {
             at: opts.session.meta.lastError.at,
@@ -6914,6 +6919,10 @@ maxTurns: opts.config.maxTurns ?? 0,
         completionTokens: payload.completionTokens,
         cacheReadTokens: payload.cacheReadTokens,
         servedModels: payload.servedModels,
+        harnessUserPokes: payload.harnessUserPokes,
+        admitCount: payload.admitCount,
+        proofPokes: payload.proofPokes,
+        providerRounds: payload.providerRounds,
         durationMs,
         aborted: payload.aborted,
         timedOut: payload.timedOut,

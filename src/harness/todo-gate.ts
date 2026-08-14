@@ -1,4 +1,5 @@
 import { looksLikeAdvisoryUserMessage } from "../util/advisory-intent.js";
+import { isEvaluateClassMandate } from "./decision-memory.js";
 
 /**
  * Todo nudge + optional Stop gate (Grok Build–inspired).
@@ -89,10 +90,23 @@ export function maybeTodoNudge(opts: {
   openTodoCount: number;
   /** When the latest user turn is pure Q&A, do not nudge todo execution. */
   lastUserMessage?: string;
+  /**
+   * Evaluate-class ULW: the board is optional ceremony. Do not poke —
+   * 21 todo_write calls in the dogfood session were answering TodoNudge.
+   */
+  evaluateClass?: boolean;
+  /** Mandate text; used when evaluateClass is omitted. */
+  mandate?: string;
   config?: Partial<TodoNudgeConfig>;
 }): string | null {
   const cfg = { ...DEFAULT_TODO_NUDGE, ...opts.config };
   if (!cfg.enabled || !opts.harnessActive) return null;
+  if (
+    opts.evaluateClass ||
+    (opts.mandate != null && isEvaluateClassMandate(opts.mandate))
+  ) {
+    return null;
+  }
   if (
     opts.lastUserMessage &&
     looksLikeAdvisoryUserMessage(opts.lastUserMessage)

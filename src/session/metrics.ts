@@ -34,6 +34,11 @@ export interface SessionMetricsEvent {
   cacheReadTokens?: number;
   /** Distinct served models that diverged from the requested one this run. */
   servedModels?: string[];
+  /** Harness-as-second-user meters (this run). */
+  harnessUserPokes?: number;
+  admitCount?: number;
+  proofPokes?: number;
+  providerRounds?: number;
   estCostUsd?: number;
   durationMs?: number;
   aborted?: boolean;
@@ -107,6 +112,10 @@ export function buildRunEndMetrics(opts: {
   cacheReadTokens?: number;
   /** Distinct served models that diverged from the requested one this run. */
   servedModels?: string[];
+  harnessUserPokes?: number;
+  admitCount?: number;
+  proofPokes?: number;
+  providerRounds?: number;
   durationMs?: number;
   aborted?: boolean;
   timedOut?: boolean;
@@ -147,6 +156,14 @@ export function buildRunEndMetrics(opts: {
       : {}),
     ...(opts.servedModels?.length
       ? { servedModels: opts.servedModels }
+      : {}),
+    ...(opts.harnessUserPokes
+      ? { harnessUserPokes: opts.harnessUserPokes }
+      : {}),
+    ...(opts.admitCount ? { admitCount: opts.admitCount } : {}),
+    ...(opts.proofPokes ? { proofPokes: opts.proofPokes } : {}),
+    ...(opts.providerRounds
+      ? { providerRounds: opts.providerRounds }
       : {}),
     estCostUsd: estimateCostUsd(
       opts.provider,

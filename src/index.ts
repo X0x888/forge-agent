@@ -328,6 +328,7 @@ export {
   seedMemoryFromMandate,
   appendMemoryRecord,
   formatMemoryForPrompt,
+  durableMemoryFingerprint,
   formatMemoryStatus,
   copyDecisionMemory,
   clearDecisionMemory,
@@ -654,7 +655,14 @@ export {
   admitHarnessIfChanged,
   renderHarnessAdmission,
   fingerprintSnapshot,
+  markHarnessAdmitted,
 } from "./harness/context-admit.js";
+export {
+  createProofPokeState,
+  shouldEmitFixUntilGreen,
+  shouldEmitVerifyNudge,
+  lastUserIsProofPoke,
+} from "./harness/proof-poke.js";
 export {
   evaluateTodoGateAtStop,
   maybeTodoNudge,
@@ -741,6 +749,10 @@ export {
   pruneMessagesForRequest,
   requestPruneEnvConfig,
   assistantStepAges,
+  collapseStaleHarnessUserMessages,
+  countHarnessUserPokes,
+  classifyHarnessUserMessage,
+  HARNESS_USER_STUB,
   REQUEST_PRUNE_OMITTED,
 } from "./session/request-prune.js";
 export {

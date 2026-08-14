@@ -91,6 +91,34 @@ describe("TodoGate advisory release", () => {
     assert.equal(adv, null);
   });
 
+  it("evaluate-class mandate never TodoNudges even with an open board", async () => {
+    const {
+      maybeTodoNudge,
+      noteAssistantTurn,
+      resetTodoNudgeForPrompt,
+      clearTodoGateState,
+    } = await import("../src/harness/todo-gate.js");
+    const sid = "tg-nudge-eval";
+    clearTodoGateState(sid);
+    resetTodoNudgeForPrompt(sid);
+    for (let i = 0; i < 20; i++) noteAssistantTurn(sid);
+    const msg = maybeTodoNudge({
+      sessionId: sid,
+      harnessActive: true,
+      openTodoCount: 3,
+      lastUserMessage: "comprehensively evaluate this tool and then improve the ui",
+      evaluateClass: true,
+    });
+    assert.equal(msg, null);
+    const byMandate = maybeTodoNudge({
+      sessionId: sid,
+      harnessActive: true,
+      openTodoCount: 3,
+      mandate: "comprehensively evaluate this tool and then improve the ui",
+    });
+    assert.equal(byMandate, null);
+  });
+
   it("advisory release clears soft TodoGate fire count", () => {
     const sid = "tg-soft-clear";
     clearTodoGateState(sid);

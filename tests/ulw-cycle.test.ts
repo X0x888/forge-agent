@@ -583,6 +583,81 @@ describe("ulw cycle", () => {
     assert.equal(loadUlwCycle(sid)?.enabled, false);
   });
 
+  it("cycle=1 evaluate-class without a reading still blocks Cycle complete", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-ulw-ceil-noread-"));
+    process.env.FORGE_HOME = tmp;
+    const sid = "ulw-ceil-noread";
+    armUlwCycle(
+      sid,
+      "comprehensively evaluate this tool and then improve the ui",
+      { cycle: 1, maxWaves: 4, skipCheckpoint: true },
+    );
+    const d = evaluateUlwAtStop({
+      sessionId: sid,
+      lastAssistantMessage: "**Cycle complete.**\n✅ npm test — 12 passed",
+      editCount: 4,
+      openTodoCount: 0,
+      stuckThreshold: 20,
+      verificationPassed: true,
+    });
+    assert.equal(d.block, true);
+    assert.notEqual(d.lastCycleReleased, true);
+    assert.equal(loadUlwCycle(sid)?.enabled, true);
+    assert.equal(loadUlwCycle(sid)?.cycle, 1);
+  });
+
+  it("cycle=1 reading + proven work + Cycle complete + evidence releases", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-ulw-ceil-done-"));
+    process.env.FORGE_HOME = tmp;
+    const sid = "ulw-ceil-done";
+    armUlwCycle(
+      sid,
+      "comprehensively evaluate this tool and then improve the ui",
+      { cycle: 1, maxWaves: 4, skipCheckpoint: true },
+    );
+    appendMemoryRecord(sid, {
+      kind: "observation",
+      text: "Reading: daily REPL trust beats leftover chrome — ship the dock.",
+      source: "agent",
+    });
+    const d = evaluateUlwAtStop({
+      sessionId: sid,
+      lastAssistantMessage:
+        "Reading: daily REPL trust beats leftover chrome.\n**Cycle complete.**\n✅ npm test — 12 passed",
+      editCount: 6,
+      openTodoCount: 0,
+      stuckThreshold: 20,
+      verificationPassed: true,
+    });
+    assert.equal(d.block, false);
+    assert.equal(d.lastCycleReleased, true);
+    assert.equal(loadUlwCycle(sid)?.enabled, false);
+  });
+
+  it("cycle=1 still blocks a yield ask; handoff-guard owns shall-I-continue", async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-ulw-ceil-yield-"));
+    process.env.FORGE_HOME = tmp;
+    const sid = "ulw-ceil-yield";
+    armUlwCycle(sid, "improve the daily REPL", {
+      cycle: 1,
+      skipCheckpoint: true,
+    });
+    const d = evaluateUlwAtStop({
+      sessionId: sid,
+      lastAssistantMessage: "Want me to keep going?",
+      editCount: 2,
+      openTodoCount: 0,
+      stuckThreshold: 20,
+      verificationPassed: true,
+    });
+    assert.equal(d.block, true);
+    assert.notEqual(d.lastCycleReleased, true);
+    const { detectPrematureHandoff } = await import(
+      "../src/harness/handoff-guard.js"
+    );
+    assert.equal(detectPrematureHandoff("Want me to keep going?").handoff, true);
+  });
+
   it("stuck-wall releases without progress", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-ulw3-"));
     process.env.FORGE_HOME = tmp;

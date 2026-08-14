@@ -215,6 +215,116 @@ Please comprehensively audit and improve this app:
     clearAdmittedFingerprints(sid);
   });
 
+  it("ship-log memory_write does not re-admit; a new constraint does", async () => {
+    const { snapshotHarness, admitHarnessIfChanged, clearAdmittedFingerprints } =
+      await import("../src/harness/context-admit.js");
+    const {
+      durableMemoryFingerprint,
+    } = await import("../src/harness/decision-memory.js");
+    const sid = "sess-admit-shiplog";
+    fs.mkdirSync(path.join(home, "sessions", sid), { recursive: true });
+    clearAdmittedFingerprints(sid);
+    appendMemoryRecord(sid, {
+      kind: "constraint",
+      text: "MANDATE: evaluate then improve the daily REPL",
+      source: "ulw",
+    });
+    const base = {
+      ulw: null,
+      goal: null,
+      todos: [] as { id: string; content: string; status: "pending" }[],
+      permissionMode: "default",
+      sessionId: sid,
+    };
+    const first = snapshotHarness(base);
+    // Idle first admit (no ULW/goal) is silent unless git is present —
+    // still records the fingerprint so later deltas can be judged.
+    admitHarnessIfChanged(sid, first);
+    const fp0 = durableMemoryFingerprint(sid);
+    appendMemoryRecord(sid, {
+      kind: "decision",
+      text: "Wave 3 shipped: strip last-verify dump from /model",
+      source: "agent",
+    });
+    appendMemoryRecord(sid, {
+      kind: "decision",
+      text: "Reading: daily REPL trust beats chrome.",
+      source: "agent",
+    });
+    assert.equal(durableMemoryFingerprint(sid), fp0);
+    const afterShip = snapshotHarness(base);
+    assert.equal(
+      admitHarnessIfChanged(sid, afterShip, {
+        suppressCounterOnlyChanges: true,
+      }),
+      null,
+    );
+    appendMemoryRecord(sid, {
+      kind: "constraint",
+      text: "Never weaken blocking Stop",
+      source: "agent",
+    });
+    const afterConstraint = snapshotHarness(base);
+    const msg = admitHarnessIfChanged(sid, afterConstraint, {
+      suppressCounterOnlyChanges: true,
+    });
+    assert.ok(msg);
+    assert.match(msg!, /Never weaken blocking Stop/);
+    clearAdmittedFingerprints(sid);
+  });
+
+  it("markHarnessAdmitted suppresses the next admit for the same snap", async () => {
+    const {
+      snapshotHarness,
+      admitHarnessIfChanged,
+      markHarnessAdmitted,
+      clearAdmittedFingerprints,
+    } = await import("../src/harness/context-admit.js");
+    const sid = "sess-mark-admitted";
+    fs.mkdirSync(path.join(home, "sessions", sid), { recursive: true });
+    clearAdmittedFingerprints(sid);
+    appendMemoryRecord(sid, {
+      kind: "constraint",
+      text: "MANDATE: evaluate then improve",
+      source: "ulw",
+    });
+    const ulw = {
+      enabled: true,
+      cycle: 1 as const,
+      wave: 1,
+      maxWaves: 4,
+      blocks: 1,
+      mandate: "evaluate then improve",
+      softPrompt: true,
+    };
+    const snap = snapshotHarness({
+      ulw: ulw as never,
+      goal: null,
+      todos: [],
+      permissionMode: "default",
+      sessionId: sid,
+    });
+    markHarnessAdmitted(sid, snap);
+    assert.equal(
+      admitHarnessIfChanged(sid, snap, { suppressCounterOnlyChanges: true }),
+      null,
+    );
+    const afterShip = snapshotHarness({
+      ulw: { ...ulw, wave: 2, blocks: 2 } as never,
+      goal: null,
+      todos: [],
+      permissionMode: "default",
+      sessionId: sid,
+    });
+    assert.equal(
+      admitHarnessIfChanged(sid, afterShip, {
+        suppressCounterOnlyChanges: true,
+      }),
+      null,
+    );
+    clearAdmittedFingerprints(sid);
+  });
+
   it("copyDecisionMemory clones to fork id", () => {
     const a = "sess-a";
     const b = "sess-b";

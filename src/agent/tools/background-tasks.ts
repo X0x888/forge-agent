@@ -8,6 +8,7 @@ import fsp from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { pushInterjection } from "../../harness/interjection.js";
+import { loadUlwCycle } from "../../harness/ulw-cycle.js";
 import { maybeDesktopNotify } from "../../util/attention.js";
 import { forgeHome, ensureDirAsync } from "../../util/fs.js";
 import { createShellEnv } from "./env-policy.js";
@@ -254,6 +255,15 @@ ${networkClause}
 }
 
 
+function ulwLastInFlight(sessionId: string): boolean {
+  try {
+    const ulw = loadUlwCycle(sessionId);
+    return Boolean(ulw?.enabled && ulw.cycle === 0);
+  } catch {
+    return false;
+  }
+}
+
 function maybeNotifyBgComplete(
   task: BackgroundTask,
   sessionId?: string,
@@ -278,7 +288,11 @@ function maybeNotifyBgComplete(
       `command: ${cmd}${String(task.command || "").length > 120 ? "…" : ""}\n` +
       `Use get_task_output({ task_id: "${task.id}", tail: 80 }) for logs, then continue. ` +
       `Do not ask the user — act on the result.`;
-    pushInterjection(sessionId, msg);
+    // LAST / Cycle-complete in flight: desktop notify only — do not open
+    // another user-channel turn while the model is already winding down.
+    if (!ulwLastInFlight(sessionId)) {
+      pushInterjection(sessionId, msg);
+    }
     maybeDesktopNotify({
       title: `Forge · bg ${status}`,
       body: `exit=${code}  ${dur}ms  ${cmd}`,

@@ -67,14 +67,30 @@ import {
   clearStaleToolResults,
   toolClearEnvConfig,
 } from "../session/tool-clearing.js";
-import { pruneMessagesForRequest } from "../session/request-prune.js";
+import {
+  pruneMessagesForRequest,
+  countHarnessUserPokes,
+} from "../session/request-prune.js";
 import {
   storeNeedsCheckpoint,
   DEFAULT_CHECKPOINT_KEEP_STEPS,
 } from "../session/checkpoint.js";
 import { expandUserContentWithImages } from "../util/user-images.js";
 import { expandUserMentions } from "../util/user-mentions.js";
-import { maybeRecordUserConstraint } from "../harness/decision-memory.js";
+import {
+  maybeRecordUserConstraint,
+  isEvaluateClassMandate,
+} from "../harness/decision-memory.js";
+import {
+  createProofPokeState,
+  noteFixUntilGreen,
+  noteGreenVerification,
+  noteRedVerification,
+  noteUlwProofDemand,
+  noteVerifyNudge,
+  shouldEmitFixUntilGreen,
+  shouldEmitVerifyNudge,
+} from "../harness/proof-poke.js";
 import {
   drainLiveNotices,
   formatLiveNoticesMessage,
@@ -86,6 +102,7 @@ import {
 import {
   snapshotHarness,
   admitHarnessIfChanged,
+  markHarnessAdmitted,
 } from "../harness/context-admit.js";
 import { getGitSnapshot, type GitSnapshot } from "../util/git-context.js";
 import {
@@ -273,6 +290,15 @@ export interface LoopResult {
     subject?: string;
     skipped?: string;
   };
+  /**
+   * Harness-as-second-user meters (this run). Admits, Stop re-anchors,
+   * verify/fix/todo pokes, bg-task frames. Used to dogfood cost work.
+   */
+  harnessUserPokes?: number;
+  admitCount?: number;
+  proofPokes?: number;
+  /** Provider chat rounds this run (same as `turns`). */
+  providerRounds?: number;
 }
 
 /**
@@ -681,8 +707,17 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
     }
   }
 
-  // Admit initial harness snapshot (ULW/goal/todos/git) once at prompt start
-  admitHarnessState(session, config);
+  // Kickoff already carries mandate/counts/memory — do not emit a second
+  // "Obey this state" user turn. Still record the snapshot so the next
+  // boundary does not re-admit the same ULW.
+  // Baseline after the real user/kickoff row so this-run meters exclude
+  // prior-session history but include this prompt's admits and pokes.
+  const pokeBaseline = session.messages.length;
+  if (effectiveUserMessage.startsWith("## ULW armed")) {
+    markCurrentHarnessAdmitted(session, config, gitSnap);
+  } else {
+    admitHarnessState(session, config);
+  }
 
   saveSession(session);
 
@@ -691,6 +726,7 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
   let stopContinues = 0;
   /** Cap mid-loop verify nudges per prompt (anti-spam). */
   let verifyNudges = 0;
+  const proofPoke = createProofPokeState();
   let aborted = false;
   let releasedOnContinueCap = false;
   let hitMaxTurns = false;
@@ -1103,6 +1139,12 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
       const lastUserForNudge = [...session.messages]
         .reverse()
         .find((m) => m.role === "user");
+      const ulwForNudge = loadUlwCycle(session.meta.id);
+      const evaluateClass = Boolean(
+        ulwForNudge?.enabled &&
+          (isEvaluateClassMandate(ulwForNudge.mandate) ||
+            ulwForNudge.judgmentRequired),
+      );
       const nudge = maybeTodoNudge({
         sessionId: session.meta.id,
         harnessActive,
@@ -1111,6 +1153,8 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
           typeof lastUserForNudge?.content === "string"
             ? lastUserForNudge.content
             : undefined,
+        evaluateClass,
+        mandate: ulwForNudge?.mandate,
       });
       if (nudge) {
         session.messages.push({ role: "user", content: nudge });
@@ -1900,6 +1944,7 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
             harnessStats.effortBoostTurns,
             1,
           );
+          noteUlwProofDemand(proofPoke);
         }
         // Diminishing returns is user-visible: never let waves quietly thin out.
         if (stopResult.ulw?.thinStreakAdvisory) {
@@ -2123,11 +2168,10 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
         }
         log.dim(inject.slice(0, 300));
         session.messages.push({ role: "user", content: inject });
-        // The re-anchor already carries wave/blocks/todo counts — mark them
-        // admitted without emitting a second redundant harness message.
-        admitHarnessState(session, config, {
-          suppressCounterOnly: true,
-        });
+        // Re-anchor already has mandate/counts. Snapshot memory *after*
+        // the wave observation so the next boundary does not admit again
+        // just because decisions.json grew a ship log.
+        markCurrentHarnessAdmitted(session, config);
         saveSession(session);
         events.onPhase?.("thinking");
         continue;
@@ -2152,6 +2196,7 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
         subagentDepth,
         maxSubagentDepth,
         provider,
+        proofPoke,
       });
       // Tools that cooperatively return "Aborted" still leave signal.aborted set —
       // exit the loop immediately rather than starting another provider turn.
@@ -2162,20 +2207,25 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
       // check without waiting for the user to steer. Max 2 per user prompt.
       if (verifyNudges < 2 && config.permissionMode !== "plan") {
         try {
-          const { midLoopVerifyNudge } = await import(
-            "../util/project-intel.js"
-          );
-          const nudge = midLoopVerifyNudge(session.meta, workspace);
-          if (nudge) {
-            // Don't re-nudge if the last user message was already a verify nudge
-            const lastUser = [...session.messages]
-              .reverse()
-              .find((m) => m.role === "user");
-            const lastContent =
-              typeof lastUser?.content === "string" ? lastUser.content : "";
-            if (!lastContent.includes("[Forge harness — verify nudge]")) {
+          const lastUser = [...session.messages]
+            .reverse()
+            .find((m) => m.role === "user");
+          const lastContent =
+            typeof lastUser?.content === "string" ? lastUser.content : "";
+          if (
+            shouldEmitVerifyNudge(proofPoke, {
+              lastUserContent: lastContent,
+              editCount: session.meta.editCount || 0,
+            })
+          ) {
+            const { midLoopVerifyNudge } = await import(
+              "../util/project-intel.js"
+            );
+            const nudge = midLoopVerifyNudge(session.meta, workspace);
+            if (nudge) {
               session.messages.push({ role: "user", content: nudge });
               verifyNudges += 1;
+              noteVerifyNudge(proofPoke);
               saveSession(session);
               log.dim("verify-nudge: edits without fresh green check");
             }
@@ -2392,6 +2442,17 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
     }
   }
 
+  const pokeMeters = countHarnessPokesSince(session, pokeBaseline);
+  try {
+    session.meta.harnessUserPokes = pokeMeters.harnessUserPokes;
+    session.meta.admitCount = pokeMeters.admitCount;
+    session.meta.proofPokes = pokeMeters.proofPokes;
+    session.meta.providerRounds = turns;
+    saveSession(session);
+  } catch {
+    /* meters are best-effort */
+  }
+
   return {
     finalText,
     turns,
@@ -2408,6 +2469,10 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
       ? { servedModels: [...runServedModels] }
       : {}),
     ...(autoCommit ? { autoCommit } : {}),
+    harnessUserPokes: pokeMeters.harnessUserPokes,
+    admitCount: pokeMeters.admitCount,
+    proofPokes: pokeMeters.proofPokes,
+    providerRounds: turns,
   };
 }
 
@@ -2500,8 +2565,42 @@ export function installMcpLspExitHook(): void {
   process.once("beforeExit", cleanup);
 }
 
+function countHarnessPokesSince(
+  session: SessionData,
+  baseline: number,
+): { harnessUserPokes: number; admitCount: number; proofPokes: number } {
+  const from = Math.max(0, Math.min(baseline, session.messages.length));
+  return countHarnessUserPokes(session.messages.slice(from));
+}
+
 /** Re-export for callers/tests that already import loop helpers. */
 export { resolveMaxCostUsd, costCapStatus, formatCostBudgetLine };
+
+function currentHarnessSnapshot(
+  session: SessionData,
+  config: ForgeConfig,
+  git?: GitSnapshot | null,
+): import("../harness/context-admit.js").HarnessSnapshot {
+  return snapshotHarness({
+    ulw: loadUlwCycle(session.meta.id),
+    goal: loadGoal(session.meta.id),
+    todos: session.todos,
+    permissionMode: config.permissionMode,
+    git:
+      git !== undefined
+        ? git
+        : getGitSnapshot(config.workspace || session.meta.cwd || process.cwd()),
+    sessionId: session.meta.id,
+  });
+}
+
+function markCurrentHarnessAdmitted(
+  session: SessionData,
+  config: ForgeConfig,
+  git?: GitSnapshot | null,
+): void {
+  markHarnessAdmitted(session.meta.id, currentHarnessSnapshot(session, config, git));
+}
 
 /** Admit harness snapshot if changed; push as user message. */
 function admitHarnessState(
@@ -2513,14 +2612,7 @@ function admitHarnessState(
     opts && "git" in opts
       ? opts.git
       : getGitSnapshot(config.workspace || session.meta.cwd || process.cwd());
-  const snap = snapshotHarness({
-    ulw: loadUlwCycle(session.meta.id),
-    goal: loadGoal(session.meta.id),
-    todos: session.todos,
-    permissionMode: config.permissionMode,
-    git,
-    sessionId: session.meta.id,
-  });
+  const snap = currentHarnessSnapshot(session, config, git);
   const msg = admitHarnessIfChanged(session.meta.id, snap, {
     suppressCounterOnlyChanges: opts?.suppressCounterOnly,
   });
@@ -2670,6 +2762,7 @@ async function runToolCalls(opts: {
   subagentDepth?: number;
   maxSubagentDepth?: number;
   provider?: LLMProvider;
+  proofPoke?: import("../harness/proof-poke.js").ProofPokeState;
 }): Promise<void> {
   const {
     toolCalls,
@@ -2690,6 +2783,7 @@ async function runToolCalls(opts: {
     subagentDepth = 0,
     maxSubagentDepth = defaultMaxSubagentDepth(),
     provider,
+    proofPoke,
   } = opts;
 
   const isParallelSafe = (tc: ToolCall): boolean => {
@@ -2756,6 +2850,7 @@ async function runToolCalls(opts: {
             subagentDepth,
             maxSubagentDepth,
             provider,
+            proofPoke,
           }),
         ),
       );
@@ -2787,6 +2882,7 @@ async function runToolCalls(opts: {
         subagentDepth,
         maxSubagentDepth,
         provider,
+        proofPoke,
       });
       session.messages.push({
         role: "tool",
@@ -2818,6 +2914,7 @@ async function prepareToolResult(opts: {
   subagentDepth?: number;
   maxSubagentDepth?: number;
   provider?: LLMProvider;
+  proofPoke?: import("../harness/proof-poke.js").ProofPokeState;
 }): Promise<{ toolCallId: string; content: string }> {
   const {
     tc,
@@ -2838,6 +2935,7 @@ async function prepareToolResult(opts: {
     subagentDepth = 0,
     maxSubagentDepth = defaultMaxSubagentDepth(),
     provider,
+    proofPoke,
   } = opts;
   assertNotAborted(signal);
 
@@ -3140,6 +3238,7 @@ async function prepareToolResult(opts: {
         ) {
           session.meta.lastVerificationCommand = cmd.trim().slice(0, 240);
           session.meta.lastVerificationAt = new Date().toISOString();
+          if (proofPoke) noteGreenVerification(proofPoke);
         } else if (
           shouldClearLastVerification({
             command: cmd,
@@ -3151,8 +3250,11 @@ async function prepareToolResult(opts: {
           // trust a stale last✓ after a failed re-run.
           delete session.meta.lastVerificationCommand;
           delete session.meta.lastVerificationAt;
+          if (proofPoke) {
+            noteRedVerification(proofPoke, session.meta.editCount || 0);
+          }
           // Fix-until-green: tell the model immediately — don't wait for the
-          // user to say "tests failed, fix them". Cap via session flag per prompt.
+          // user to say "tests failed, fix them". One proof speaker per prompt.
           try {
             const off = (
               process.env.FORGE_FIX_UNTIL_GREEN || "1"
@@ -3166,15 +3268,17 @@ async function prepareToolResult(opts: {
               off !== "no" &&
               config.permissionMode !== "plan"
             ) {
-              const already = session.messages
-                .slice(-6)
-                .some(
-                  (m) =>
-                    m.role === "user" &&
-                    typeof m.content === "string" &&
-                    m.content.includes("[Forge harness — fix until green]"),
-                );
-              if (!already) {
+              const lastUser = [...session.messages]
+                .reverse()
+                .find((m) => m.role === "user");
+              const lastContent =
+                typeof lastUser?.content === "string" ? lastUser.content : "";
+              if (
+                proofPoke &&
+                shouldEmitFixUntilGreen(proofPoke, {
+                  lastUserContent: lastContent,
+                })
+              ) {
                 const tip = (preferred && preferred[0]) || cmd.slice(0, 120);
                 session.messages.push({
                   role: "user",
@@ -3187,6 +3291,7 @@ async function prepareToolResult(opts: {
                     "` until green. " +
                     "Do not ask the user what to do — continue until the check passes or you hit a real external blocker.",
                 });
+                noteFixUntilGreen(proofPoke);
                 saveSession(session);
               }
             }

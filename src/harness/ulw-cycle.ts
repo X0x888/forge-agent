@@ -1570,7 +1570,8 @@ export function evaluateUlwAtStop(opts: {
   if (!s || !s.enabled) return { block: false };
 
   const msg = opts.lastAssistantMessage || "";
-  const attested = s.cycle === 0 && LAST_CYCLE_ATTEST_RE.test(msg);
+  const cycleCompleteClaim = LAST_CYCLE_ATTEST_RE.test(msg);
+  const attested = s.cycle === 0 && cycleCompleteClaim;
   const attestationHasEvidence =
     !attested ||
     hasAttestationEvidence(
@@ -1603,6 +1604,41 @@ export function evaluateUlwAtStop(opts: {
       lastCycleReleased: true,
       reason: "ULW last cycle attested complete — released.",
     };
+  }
+
+  // cycle=1 + evidenced Cycle complete: max_waves is a ceiling, not a quota.
+  // Yield ("shall I continue?") is still handoff-blocked. Finish is allowed.
+  if (s.cycle === 1 && cycleCompleteClaim) {
+    const evidence = hasAttestationEvidence(
+      msg,
+      opts.verificationPassed ?? opts.verificationRan,
+    );
+    const evaluateClass =
+      isEvaluateClassMandate(s.mandate) || Boolean(s.judgmentRequired);
+    const hasReading =
+      !evaluateClass || hasMandateJudgment(opts.sessionId, msg);
+    const provenLedger = (s.waves ?? []).some((w) => w.proof);
+    const thisWaveProven = Boolean(opts.verificationPassed);
+    const waveOk =
+      provenLedger ||
+      thisWaveProven ||
+      (s.wave >= 1 && Boolean(opts.verificationPassed));
+    if (evidence && hasReading && waveOk) {
+      s.cycle = 0;
+      s.enabled = false;
+      saveUlwCycle(s);
+      try {
+        clearSoftTodoGateOnWindDown(opts.sessionId);
+      } catch {
+        /* */
+      }
+      return {
+        block: false,
+        lastCycleReleased: true,
+        reason:
+          "ULW mandate attested complete under CONTINUE — released (cap is a ceiling).",
+      };
+    }
   }
 
   // Progress / stuck tracking: editCount delta OR working-tree diff movement
@@ -1852,11 +1888,11 @@ function buildCycleReanchor(
   },
 ): string {
   const cap = normalizeMaxWaves(s.maxWaves);
-  const mem = formatMemoryForPrompt(s.sessionId, { budget: 3500 });
-  const decisionsBlock =
-    mem.activeCount > 0 || mem.corrupt
-      ? [`## Active decisions / constraints (durable — do not re-derive)`, mem.text]
-      : [];
+  // Mandate + last-wave line are enough. Full decisions.json used to be
+  // re-dumped here AND in the following admit (3k × 171 rounds).
+  const decisionsBlock = [
+    `Durable decisions: /memory · decisions.json — do not re-derive the mandate.`,
+  ];
   if (opts.mode === "continue") {
     const best = bestWave(s.waves);
     const lastEntry = s.waves?.length
@@ -1965,7 +2001,7 @@ export function formatCappedWaveDoctrine(
       `Wave 2: finish that ship, prove, attest. Do not start a new ambitious theme.`,
     ].join(" ");
   }
-  return `max_waves=${cap} — Wave 1 is judge/pick; waves 2..${cap} execute. Last wave auto LAST.`;
+  return `max_waves=${cap} — Wave 1 is judge/pick; waves 2..${cap} execute. Cap is a ceiling: if the mandate's verbs are done, attest **Cycle complete.** Last wave auto LAST.`;
 }
 
 /** Injected into the user message path when /ulw arms (soft or hard). */
@@ -1990,7 +2026,7 @@ export function ulwKickoffMessage(state: UlwCycleState): string {
     `- While cycle=1, the harness blocks Stop and forces the research→judge→implement→prove→serendipity→review→repeat loop.`,
     `- When cycle=0, finish the current wave and attest **Cycle complete.** The harness commits the dirty tree at each wave close and on Cycle complete (never pushes). FORGE_ULW_AUTO_COMMIT=0 off.`,
     cap != null
-      ? `- max_waves=${cap}: when the wave counter reaches ${cap}, the harness auto-flips to LAST (finish + **Cycle complete.**). ${formatCappedWaveDoctrine(cap, state.mandate)}`
+      ? `- max_waves=${cap}: ceiling, not a quota. If the mandate's verbs are done, attest **Cycle complete.** with evidence — do not invent work to fill unused slots. When the wave counter reaches ${cap}, auto LAST. ${formatCappedWaveDoctrine(cap, state.mandate)}`
       : `- max_waves: off (unlimited). User may set /max-waves N mid-run. Prefer a cap on unattended multi-hour runs (spend valve — not a substitute for decision memory).`,
     state.backlogRequired
       ? `- **Backlog gate:** todo_write ≥2 items covering mandate sections BEFORE free-inventing Wave 1 scope.`

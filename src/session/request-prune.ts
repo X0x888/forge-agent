@@ -85,8 +85,89 @@ export interface RequestPruneResult {
   prunedResults: number;
   /** Assistant tool_call argument blobs collapsed. */
   collapsedCalls: number;
+  /** Older harness user pokes stubbed to a one-liner. */
+  stubbedHarness?: number;
   /** True when `messages` is a new array (input was not mutated). */
   changed: boolean;
+}
+
+export const HARNESS_USER_STUB = "[Forge harness — superseded]";
+
+const HARNESS_USER_CLASSES: { id: string; prefix: string }[] = [
+  { id: "admit", prefix: "[Forge harness — mid-conversation update]" },
+  { id: "ulw_stop", prefix: "[Forge ULW cycle driver]" },
+  { id: "verify", prefix: "[Forge harness — verify nudge]" },
+  { id: "fix", prefix: "[Forge harness — fix until green]" },
+  { id: "todo", prefix: "[Forge system-reminder — TodoNudge]" },
+  { id: "bg", prefix: "[Forge harness — background task " },
+];
+
+const PROOF_POKE_CLASSES = new Set(["verify", "fix"]);
+
+/** Classify a user-channel harness poke, or null for real user / kickoff text. */
+export function classifyHarnessUserMessage(content: string): string | null {
+  return harnessUserClass(content);
+}
+
+/** Count Forge-injected user-channel pokes (for run JSON / metrics). */
+export function countHarnessUserPokes(messages: ChatMessage[]): {
+  harnessUserPokes: number;
+  admitCount: number;
+  proofPokes: number;
+} {
+  let harnessUserPokes = 0;
+  let admitCount = 0;
+  let proofPokes = 0;
+  for (const m of messages) {
+    if (m.role !== "user" || typeof m.content !== "string") continue;
+    const cls = harnessUserClass(m.content);
+    if (!cls) continue;
+    harnessUserPokes += 1;
+    if (cls === "admit") admitCount += 1;
+    if (PROOF_POKE_CLASSES.has(cls)) proofPokes += 1;
+  }
+  return { harnessUserPokes, admitCount, proofPokes };
+}
+
+function harnessUserClass(content: string): string | null {
+  const t = content.trimStart();
+  for (const c of HARNESS_USER_CLASSES) {
+    if (t.startsWith(c.prefix)) return c.id;
+  }
+  return null;
+}
+
+/**
+ * Keep the newest message of each harness-user class; stub older ones.
+ * Real user text and kickoff (`## ULW armed`) are never stubbed.
+ */
+export function collapseStaleHarnessUserMessages(
+  messages: ChatMessage[],
+): { messages: ChatMessage[]; stubbed: number; changed: boolean } {
+  const lastKept = new Set<string>();
+  let stubbed = 0;
+  let out: ChatMessage[] | null = null;
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i]!;
+    if (m.role !== "user" || typeof m.content !== "string") continue;
+    const cls = harnessUserClass(m.content);
+    if (!cls) continue;
+    if (!lastKept.has(cls)) {
+      lastKept.add(cls);
+      continue;
+    }
+    if (m.content === HARNESS_USER_STUB || m.content.startsWith(HARNESS_USER_STUB)) {
+      continue;
+    }
+    if (!out) out = messages.slice();
+    out[i] = { ...m, content: HARNESS_USER_STUB };
+    stubbed += 1;
+  }
+  return {
+    messages: out ?? messages,
+    stubbed,
+    changed: Boolean(out),
+  };
 }
 
 /**
@@ -222,7 +303,13 @@ export function pruneMessagesForRequest(
   const env = requestPruneEnvConfig();
   const enabled = opts.enabled ?? env.enabled;
   if (!enabled || messages.length === 0) {
-    return { messages, prunedResults: 0, collapsedCalls: 0, changed: false };
+    return {
+      messages,
+      prunedResults: 0,
+      collapsedCalls: 0,
+      stubbedHarness: 0,
+      changed: false,
+    };
   }
 
   const keepTurns = opts.keepTurns ?? env.keepTurns;
@@ -300,8 +387,23 @@ export function pruneMessagesForRequest(
     }
   }
 
-  if (!out) {
-    return { messages, prunedResults: 0, collapsedCalls: 0, changed: false };
+  const toolChanged = Boolean(out);
+  const afterTools = out ?? messages;
+  const harness = collapseStaleHarnessUserMessages(afterTools);
+  if (!toolChanged && !harness.changed) {
+    return {
+      messages,
+      prunedResults: 0,
+      collapsedCalls: 0,
+      stubbedHarness: 0,
+      changed: false,
+    };
   }
-  return { messages: out, prunedResults, collapsedCalls, changed: true };
+  return {
+    messages: harness.messages,
+    prunedResults,
+    collapsedCalls,
+    stubbedHarness: harness.stubbed,
+    changed: true,
+  };
 }

@@ -18,6 +18,7 @@ import {
 } from "../util/git-context.js";
 import {
   formatMemoryForPrompt,
+  durableMemoryFingerprint,
   isEvaluateClassMandate,
 } from "./decision-memory.js";
 
@@ -48,7 +49,11 @@ export interface HarnessSnapshot {
   gitTree?: string;
   /** Boolean dirty bit — real change when it flips (first edit / commit). */
   gitDirty?: boolean;
-  /** Fingerprint of active decisions.json (admit on change, not every turn). */
+  /**
+   * Fingerprint of *durable* decisions only (constraint/priority/blocker/
+   * out_of_scope). Ship logs and readings do not belong here — they used
+   * to re-admit after every wave close.
+   */
   decisionsFp?: string;
   /** Short active-constraint block for the admit message. */
   decisionsText?: string;
@@ -81,13 +86,13 @@ export function snapshotHarness(opts: {
   let decisionsText = "";
   if (opts.sessionId) {
     try {
+      decisionsFp = durableMemoryFingerprint(opts.sessionId);
       const mem = formatMemoryForPrompt(opts.sessionId, {
         budget: 1600,
         includeWave: false,
       });
       if (mem.activeCount > 0) {
         decisionsText = mem.text;
-        decisionsFp = `${mem.activeCount}:${mem.text.length}:${mem.text.slice(0, 80)}`;
       }
     } catch {
       /* sidecar optional */
@@ -144,6 +149,15 @@ export function setLastAdmittedFingerprint(
   fp: string,
 ): void {
   lastAdmitted.set(sessionId, fp);
+}
+
+/** Record that this snapshot is already in the transcript (Stop / kickoff). */
+export function markHarnessAdmitted(
+  sessionId: string,
+  snap: HarnessSnapshot,
+): void {
+  lastAdmitted.set(sessionId, fingerprintSnapshot(snap));
+  lastAdmittedSnap.set(sessionId, snap);
 }
 
 /** Test helper */
@@ -256,7 +270,7 @@ export function renderHarnessAdmission(s: HarnessSnapshot): string {
         s.cycle === 0 ? "(LAST cycle — finish wave then **Cycle complete.**)" : "(CONTINUE)"
       }`,
       s.maxWaves != null
-        ? `max_waves=${s.maxWaves} — when wave hits the cap, harness auto-flips to LAST.`
+        ? `max_waves=${s.maxWaves} is a ceiling — attest **Cycle complete.** when the mandate's verbs are done; do not invent work to fill unused slots. Cap auto-flips LAST.`
         : `max_waves=off (unlimited).`,
       `Harness w=N/M is the only wave counter. Do not invent Wave K. Close a unit with Wave shipped. / Ship landed: so w can move.`,
       s.mandate ? `Mandate: ${displayUlwMandate(s.mandate)}` : "",
@@ -293,14 +307,6 @@ export function renderHarnessAdmission(s: HarnessSnapshot): string {
 
   if (s.decisionsText) {
     lines.push(``, `## Active decisions`, s.decisionsText);
-  }
-
-  if (s.gitBranch || s.gitTree) {
-    lines.push(
-      ``,
-      `## Git`,
-      [s.gitBranch, s.gitTree].filter(Boolean).join("\n"),
-    );
   }
 
   return lines.filter((l) => l !== undefined).join("\n");

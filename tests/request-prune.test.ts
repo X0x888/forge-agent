@@ -15,6 +15,8 @@ import {
   REQUEST_PRUNE_OMITTED,
   REQUEST_PRUNE_DEFAULT_KEEP_TURNS,
   REQUEST_PRUNE_DEFAULT_HARD_AGE,
+  HARNESS_USER_STUB,
+  collapseStaleHarnessUserMessages,
 } from "../src/session/request-prune.js";
 
 function assistantCall(
@@ -304,5 +306,78 @@ describe("request-prune", () => {
     assert.equal((lastTool!.content || "").length, 8000);
     const firstTool = r.messages.find((m) => m.role === "tool");
     assert.ok((firstTool!.content || "").startsWith(REQUEST_PRUNE_OMITTED));
+  });
+
+  it("keeps the newest admit and Stop re-anchor; stubs older ones", () => {
+    const msgs: ChatMessage[] = [
+      { role: "system", content: "sys" },
+      { role: "user", content: "## ULW armed\nMandate: evaluate then improve" },
+    ];
+    for (let i = 0; i < 4; i++) {
+      msgs.push({
+        role: "user",
+        content: `[Forge harness — mid-conversation update]\nwave=${i}  ${"x".repeat(200)}`,
+      });
+      msgs.push({
+        role: "user",
+        content: `[Forge ULW cycle driver] Stop blocked — cycle=1 wave=${i} ${"y".repeat(200)}`,
+      });
+    }
+    const orig = msgs.map((m) =>
+      m.role === "user" ? String(m.content) : "",
+    );
+    const r = pruneMessagesForRequest(msgs, { spool: false });
+    assert.ok((r.stubbedHarness ?? 0) >= 6);
+    const users = r.messages.filter((m) => m.role === "user");
+    const stubs = users.filter((m) => m.content === HARNESS_USER_STUB);
+    const liveAdmits = users.filter(
+      (m) =>
+        typeof m.content === "string" &&
+        m.content.startsWith("[Forge harness — mid-conversation update]"),
+    );
+    const liveStops = users.filter(
+      (m) =>
+        typeof m.content === "string" &&
+        m.content.startsWith("[Forge ULW cycle driver]"),
+    );
+    assert.equal(liveAdmits.length, 1);
+    assert.equal(liveStops.length, 1);
+    assert.match(String(liveAdmits[0]!.content), /wave=3/);
+    assert.match(String(liveStops[0]!.content), /wave=3/);
+    assert.ok(stubs.length >= 6);
+    // session-shaped input is not mutated
+    assert.equal(
+      msgs.filter((m) => m.role === "user" && m.content === HARNESS_USER_STUB)
+        .length,
+      0,
+    );
+    assert.ok(orig[1]?.startsWith("## ULW armed"));
+    const kick = users.find((m) =>
+      String(m.content).startsWith("## ULW armed"),
+    );
+    assert.ok(kick);
+    const collapsed = collapseStaleHarnessUserMessages(msgs);
+    assert.equal(collapsed.changed, true);
+    assert.ok(collapsed.stubbed >= 6);
+  });
+
+  it("countHarnessUserPokes meters admits, stops, and proof pokes", async () => {
+    const { countHarnessUserPokes } = await import(
+      "../src/session/request-prune.js"
+    );
+    const msgs: ChatMessage[] = [
+      { role: "user", content: "## ULW armed\nMandate: evaluate" },
+      {
+        role: "user",
+        content: "[Forge harness — mid-conversation update]\nw=1",
+      },
+      { role: "user", content: "[Forge ULW cycle driver] Stop blocked" },
+      { role: "user", content: "[Forge harness — verify nudge]\nrun tests" },
+      { role: "user", content: "real user steering" },
+    ];
+    const c = countHarnessUserPokes(msgs);
+    assert.equal(c.harnessUserPokes, 3);
+    assert.equal(c.admitCount, 1);
+    assert.equal(c.proofPokes, 1);
   });
 });

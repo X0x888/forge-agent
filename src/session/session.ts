@@ -142,6 +142,15 @@ export interface SessionMeta {
     at: string;
     skipped?: string;
   };
+  /**
+   * Last-run harness-as-second-user meters (overwritten each loop).
+   * Admits / Stop re-anchors / verify-fix-todo / bg-task frames.
+   */
+  harnessUserPokes?: number;
+  admitCount?: number;
+  proofPokes?: number;
+  /** Last-run provider chat rounds. */
+  providerRounds?: number;
   /** Session id this was forked from (conversation tree parent). */
   parentSessionId?: string;
   /** Short label of parent at fork time (title or id prefix). */
