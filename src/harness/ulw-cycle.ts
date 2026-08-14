@@ -1609,10 +1609,10 @@ export function evaluateUlwAtStop(opts: {
   // cycle=1 + evidenced Cycle complete: max_waves is a ceiling, not a quota.
   // Yield ("shall I continue?") is still handoff-blocked. Finish is allowed.
   if (s.cycle === 1 && cycleCompleteClaim) {
-    const evidence = hasAttestationEvidence(
-      msg,
-      opts.verificationPassed ?? opts.verificationRan,
-    );
+    // Do not let a red check unlock finish. cycle=0 still accepts
+    // verificationRan via the attested path above; CONTINUE release
+    // requires green or checklist text in the closer.
+    const evidence = hasAttestationEvidence(msg, opts.verificationPassed);
     const evaluateClass =
       isEvaluateClassMandate(s.mandate) || Boolean(s.judgmentRequired);
     const hasReading =

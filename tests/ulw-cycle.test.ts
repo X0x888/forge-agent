@@ -634,6 +634,47 @@ describe("ulw cycle", () => {
     assert.equal(loadUlwCycle(sid)?.enabled, false);
   });
 
+  it("cycle=1 does not treat a red check as Cycle complete evidence", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-ulw-ceil-red-"));
+    process.env.FORGE_HOME = tmp;
+    const sid = "ulw-ceil-red";
+    armUlwCycle(
+      sid,
+      "comprehensively evaluate this tool and then improve the ui",
+      { cycle: 1, maxWaves: 4, skipCheckpoint: true },
+    );
+    appendMemoryRecord(sid, {
+      kind: "observation",
+      text: "Reading: daily REPL trust beats leftover chrome — ship the dock.",
+      source: "agent",
+    });
+    // First stop: proven wave lands in the ledger.
+    evaluateUlwAtStop({
+      sessionId: sid,
+      lastAssistantMessage:
+        "Reading: daily REPL trust.\nShip landed: dock.\nnpm test: 12 passed",
+      editCount: 4,
+      openTodoCount: 0,
+      stuckThreshold: 20,
+      verificationPassed: true,
+    });
+    assert.equal(loadUlwCycle(sid)?.enabled, true);
+    assert.ok((loadUlwCycle(sid)?.waves ?? []).some((w) => w.proof));
+    const d = evaluateUlwAtStop({
+      sessionId: sid,
+      lastAssistantMessage: "**Cycle complete.** all wrapped up",
+      editCount: 6,
+      openTodoCount: 0,
+      stuckThreshold: 20,
+      verificationRan: true,
+      verificationPassed: false,
+    });
+    assert.equal(d.block, true);
+    assert.notEqual(d.lastCycleReleased, true);
+    assert.equal(loadUlwCycle(sid)?.enabled, true);
+    assert.equal(loadUlwCycle(sid)?.cycle, 1);
+  });
+
   it("cycle=1 still blocks a yield ask; handoff-guard owns shall-I-continue", async () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-ulw-ceil-yield-"));
     process.env.FORGE_HOME = tmp;
