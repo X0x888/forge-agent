@@ -489,7 +489,7 @@ describe("TOOL_DEFINITIONS agent guidance", () => {
     // failure-mode recovery lives in runtime error messages (covered by
     // audit-fixes / tools-next behavior tests above).
     assert.match(byName.read_file || "", /line numbers|NNNNNN/i);
-    assert.match(byName.read_file || "", /2000 lines|offset\/limit/i);
+    assert.match(byName.read_file || "", /1000 lines|offset\/limit/i);
     assert.match(byName.read_file || "", /Binary/i);
     assert.match(byName.write_file || "", /parent director/i);
     assert.match(byName.write_file || "", /prior read_file/i);

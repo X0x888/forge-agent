@@ -100,7 +100,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       name: "read_file",
       description:
         "Read a file (or list a directory). Returns content with line numbers as NNNNNN|line — these prefixes are NOT part of the file. " +
-        "Default up to 2000 lines from offset; for large files pass offset/limit or use grep. " +
+        "Default up to 1000 lines from offset; for large files pass offset/limit or use grep. " +
         "Binary files are refused. Prefer absolute or workspace-relative paths.",
       parameters: {
         type: "object",

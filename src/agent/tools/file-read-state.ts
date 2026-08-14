@@ -124,7 +124,7 @@ export class FileReadState {
         `${opts.tool} blocked: ${rel} has not been read in this session. ` +
         `Call read_file first so the edit is based on current contents ` +
         `(prevents blind overwrites).\n` +
-        `Recovery: read_file({ path: ${JSON.stringify(rel)} }) then retry ${opts.tool}.`
+        `Recovery: read_file({ path: ${JSON.stringify(rel)} }) — a hunk or Full output spool is enough — then retry ${opts.tool}.`
       );
     }
 
@@ -136,11 +136,38 @@ export class FileReadState {
       return (
         `${opts.tool} blocked: ${rel} changed on disk since it was last read ` +
         `(size ${prev.size}→${st.size}, mtime drift ${mtimeDrift.toFixed(0)}ms). ` +
-        `Re-read, then retry the edit with fresh old_string.\n` +
+        `Re-read the current hunk (not the whole file), then retry the edit with fresh old_string.\n` +
         `Recovery: read_file({ path: ${JSON.stringify(rel)} }) then retry ${opts.tool}.`
       );
     }
     return null;
+  }
+
+  /**
+   * Drop stamps whose files vanished or changed on disk. Checkpoint compact
+   * calls this instead of wiping the map so unattended edits can continue.
+   */
+  pruneStaleFromDiskSync(): number {
+    let n = 0;
+    for (const [key, stamp] of [...this.map.entries()]) {
+      try {
+        const st = fs.statSync(key);
+        if (!st.isFile()) {
+          this.map.delete(key);
+          n += 1;
+          continue;
+        }
+        const drift = Math.abs(st.mtimeMs - stamp.mtimeMs);
+        if (st.size !== stamp.size || drift > 1.5) {
+          this.map.delete(key);
+          n += 1;
+        }
+      } catch {
+        this.map.delete(key);
+        n += 1;
+      }
+    }
+    return n;
   }
 }
 

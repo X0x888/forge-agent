@@ -22,6 +22,7 @@ import {
   seedMemoryFromMandate,
 } from "./decision-memory.js";
 import { createSafetyCheckpoint } from "../util/git-checkpoint.js";
+import { gitDiffFingerprint } from "../util/git-context.js";
 
 export type CycleFlag = 0 | 1;
 
@@ -106,6 +107,13 @@ export interface UlwCycleState {
   backlogRequired?: boolean;
   /** Open todo count snapshot at previous wave boundary (for todoProgress). */
   lastOpenTodoCount?: number;
+  /**
+   * Signature of the last stamped wave (`editCount:diffFp`). Stop will not
+   * double-increment if mid-loop already recorded this progress.
+   */
+  lastWaveSig?: string;
+  /** editCount at the last mid-loop or Stop wave stamp. */
+  lastProgressEditCount?: number;
   startedAt: string;
   updatedAt: string;
   sessionId: string;
@@ -294,6 +302,157 @@ function summarizeWave(message: string): string {
   const t = (message || "").replace(/\s+/g, " ").trim();
   if (!t) return "(no closing summary)";
   return t.length <= 140 ? t : `${t.slice(0, 139)}…`;
+}
+
+export const MID_WAVE_STAMP_STEPS = 20;
+
+export function waveProgressSig(
+  editCount: number,
+  fp?: string | null,
+): string {
+  return `${Math.max(0, editCount)}:${fp || ""}`;
+}
+
+/** Update lastDiffFp / seenDiffFps. First observation is a baseline, not progress. */
+export function applyDiffFingerprint(
+  s: UlwCycleState,
+  fp: string | null,
+): { diffChanged: boolean; diffRevisit: boolean } {
+  let diffChanged = false;
+  let diffRevisit = false;
+  if (fp) {
+    if (s.lastDiffFp === undefined) {
+      s.lastDiffFp = fp;
+      s.seenDiffFps = [...(s.seenDiffFps ?? []), fp].slice(-DIFF_FP_KEEP);
+    } else if (fp !== s.lastDiffFp) {
+      diffChanged = true;
+      diffRevisit = (s.seenDiffFps ?? []).includes(fp);
+      s.seenDiffFps = [...(s.seenDiffFps ?? []), fp].slice(-DIFF_FP_KEEP);
+      s.lastDiffFp = fp;
+    }
+  }
+  return { diffChanged, diffRevisit };
+}
+
+function appendWaveRecord(
+  s: UlwCycleState,
+  opts: {
+    sessionId: string;
+    editDelta: number;
+    netDiff?: UlwWaveRecord["netDiff"];
+    proof: boolean;
+    todoProgress: number;
+    summary: string;
+  },
+): UlwWaveRecord {
+  s.wave += 1;
+  const rec: UlwWaveRecord = {
+    wave: s.wave,
+    editDelta: opts.editDelta,
+    netDiff: opts.netDiff,
+    proof: opts.proof,
+    todoProgress: opts.todoProgress,
+    summary: opts.summary,
+    ts: nowIso(),
+  };
+  s.waves = [...(s.waves ?? []), rec].slice(-WAVE_LEDGER_KEEP);
+  try {
+    recordWaveObservation(
+      opts.sessionId,
+      s.wave,
+      `+${opts.editDelta}e proof=${opts.proof ? "✓" : "✗"} todosΔ=${opts.todoProgress} net=${opts.netDiff ?? "n/a"} — ${opts.summary}`,
+    );
+  } catch {
+    /* */
+  }
+  const thin =
+    (opts.editDelta <= 1 && opts.netDiff !== "new" && !opts.proof) ||
+    opts.netDiff === "revisit" ||
+    (opts.todoProgress === 0 &&
+      !opts.proof &&
+      opts.editDelta <= 2 &&
+      opts.netDiff !== "new");
+  s.thinStreak = thin ? (s.thinStreak ?? 0) + 1 : 0;
+  if (opts.proof) s.proofDemands = 0;
+  return rec;
+}
+
+export interface MidWaveStampResult {
+  stamped: boolean;
+  thin?: boolean;
+  wave?: number;
+  admit?: string;
+}
+
+/**
+ * Record a wave from the agent loop without Stop. Cycle stays 1.
+ * Stamps on edit/fingerprint progress, or every MID_WAVE_STAMP_STEPS idle steps.
+ */
+export function maybeStampUlwWave(opts: {
+  sessionId: string;
+  editCount: number;
+  openTodoCount: number;
+  stepsSinceStamp: number;
+  lastAssistantMessage?: string;
+  verificationRan?: boolean;
+  verificationPassed?: boolean;
+  cwd?: string;
+}): MidWaveStampResult {
+  const s = loadUlwCycle(opts.sessionId);
+  if (!s?.enabled) return { stamped: false };
+  let fp: string | null = null;
+  if (opts.cwd) {
+    try {
+      fp = gitDiffFingerprint(opts.cwd);
+    } catch {
+      fp = null;
+    }
+  }
+  const { diffChanged, diffRevisit } = applyDiffFingerprint(s, fp);
+  const baseline = s.lastProgressEditCount ?? s.lastBlockEditCount;
+  const progressed = opts.editCount > baseline || diffChanged;
+  const idleDue = opts.stepsSinceStamp >= MID_WAVE_STAMP_STEPS;
+  if (!progressed && !idleDue) return { stamped: false };
+  const sig = waveProgressSig(opts.editCount, fp);
+  if (progressed && s.lastWaveSig === sig && !idleDue) {
+    return { stamped: false };
+  }
+  const prevOpen =
+    s.lastOpenTodoCount != null ? s.lastOpenTodoCount : opts.openTodoCount;
+  const todoProgress = Math.max(0, prevOpen - opts.openTodoCount);
+  s.lastOpenTodoCount = opts.openTodoCount;
+  const netDiff: UlwWaveRecord["netDiff"] = fp
+    ? diffChanged
+      ? diffRevisit
+        ? "revisit"
+        : "new"
+      : "none"
+    : undefined;
+  const proof = detectWaveProof(
+    opts.lastAssistantMessage || "",
+    opts.verificationPassed ?? opts.verificationRan,
+  );
+  appendWaveRecord(s, {
+    sessionId: opts.sessionId,
+    editDelta: Math.max(0, opts.editCount - baseline),
+    netDiff,
+    proof,
+    todoProgress,
+    summary: summarizeWave(opts.lastAssistantMessage || "") || "(mid-loop epoch)",
+  });
+  s.lastWaveSig = sig;
+  s.lastProgressEditCount = opts.editCount;
+  if (!proof && (s.proofDemands ?? 0) < MAX_PROOF_DEMANDS) {
+    s.proofDemands = (s.proofDemands ?? 0) + 1;
+  }
+  saveUlwCycle(s);
+  const thin = (s.thinStreak ?? 0) > 0 && !progressed;
+  const streak = s.thinStreak ?? 0;
+  const admit =
+    thin && (streak === 1 || streak === THIN_ADVISORY_STREAK)
+      ? `[Forge harness — mid-conversation update]\nULW epoch ${s.wave}: this epoch added no tree movement. Next think must edit or prove — do not rescan from zero.`
+      : undefined;
+  return { stamped: true, thin, wave: s.wave, admit };
 }
 
 /**
@@ -809,19 +968,7 @@ export function evaluateUlwAtStop(opts: {
   // including bash); diffRevisit = it moved back to a previously seen state
   // (edit→revert churn). First git-backed evaluation only sets the baseline.
   const fp = opts.diffFingerprint ?? null;
-  let diffChanged = false;
-  let diffRevisit = false;
-  if (fp) {
-    if (s.lastDiffFp === undefined) {
-      s.lastDiffFp = fp;
-      s.seenDiffFps = [...(s.seenDiffFps ?? []), fp].slice(-DIFF_FP_KEEP);
-    } else if (fp !== s.lastDiffFp) {
-      diffChanged = true;
-      diffRevisit = (s.seenDiffFps ?? []).includes(fp);
-      s.seenDiffFps = [...(s.seenDiffFps ?? []), fp].slice(-DIFF_FP_KEEP);
-      s.lastDiffFp = fp;
-    }
-  }
+  const { diffChanged, diffRevisit } = applyDiffFingerprint(s, fp);
 
   // cycle=0 + attestation with evidence (or evidence already demanded once) → release
   if (
@@ -941,10 +1088,8 @@ export function evaluateUlwAtStop(opts: {
         maxWavesHit: true,
       };
     }
-    s.wave += 1;
-    // Record the wave that closed at this boundary — facts for the quality bar.
-    // Prefer successful verification for wave proof so a red check cannot
-    // satisfy the quality bar / clear proofDemands.
+    const sig = waveProgressSig(opts.editCount, fp);
+    const alreadyStamped = Boolean(s.lastWaveSig && s.lastWaveSig === sig);
     const proof = detectWaveProof(
       msg,
       opts.verificationPassed ?? opts.verificationRan,
@@ -956,47 +1101,26 @@ export function evaluateUlwAtStop(opts: {
           : "new"
         : "none"
       : undefined;
-    // Phase 5: todo progress = open todos that closed since last boundary.
     const prevOpen =
       s.lastOpenTodoCount != null ? s.lastOpenTodoCount : opts.openTodoCount;
     const todoProgress = Math.max(0, prevOpen - opts.openTodoCount);
     s.lastOpenTodoCount = opts.openTodoCount;
-    s.waves = [
-      ...(s.waves ?? []),
-      {
-        wave: s.wave, // boundary index (counter value after increment)
+    if (!alreadyStamped) {
+      appendWaveRecord(s, {
+        sessionId: opts.sessionId,
         editDelta,
         netDiff,
         proof,
         todoProgress,
         summary: summarizeWave(msg),
-        ts: nowIso(),
-      },
-    ].slice(-WAVE_LEDGER_KEEP);
-    // Phase 3 OM-lite: durable wave fact in decision memory.
-    try {
-      recordWaveObservation(
-        opts.sessionId,
-        s.wave,
-        `+${editDelta}e proof=${proof ? "✓" : "✗"} todosΔ=${todoProgress} net=${netDiff ?? "n/a"} — ${summarizeWave(msg)}`,
-      );
-    } catch {
-      /* */
-    }
-    // Thin waves: negligible edits with no tree movement and no proof — plus
-    // churn waves outright (revisit = edit→revert; the diff came back to a
-    // seen state no matter how many edit calls it took).
-    // Phase 5: also thin when no todo progress AND no proof (intent idle).
-    const thin =
-      (editDelta <= 1 && !diffChanged && !proof) ||
-      diffRevisit ||
-      (todoProgress === 0 && !proof && editDelta <= 2 && !diffChanged);
-    s.thinStreak = thin ? (s.thinStreak ?? 0) + 1 : 0;
-    if (proof) {
-      s.proofDemands = 0;
+      });
+      s.lastWaveSig = sig;
+      s.lastProgressEditCount = opts.editCount;
     }
     const proofMissing = !proof && (s.proofDemands ?? 0) < MAX_PROOF_DEMANDS;
-    if (proofMissing) s.proofDemands = (s.proofDemands ?? 0) + 1;
+    if (!alreadyStamped && proofMissing) {
+      s.proofDemands = (s.proofDemands ?? 0) + 1;
+    }
     const thinStreak = s.thinStreak ?? 0;
     const qualityFlags = {
       proofDemanded: proofMissing,

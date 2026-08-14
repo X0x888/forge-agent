@@ -16,7 +16,7 @@ export const DEFAULT_MAX_BYTES = 32 * 1024;
  * always spooled to ~/.forge/tool-output/ with a pointer, so a lean in-context
  * preview loses nothing the model cannot re-read (grok-build uses ~20k).
  */
-export const BASH_MAX_CHARS = 30_000;
+export const BASH_MAX_CHARS = 20_000;
 /** Keep newest N full-output dumps (experts generate many during ULW). */
 export const DEFAULT_TOOL_OUTPUT_KEEP = 80;
 /** Also drop dumps older than this many days. */

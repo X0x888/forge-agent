@@ -51,6 +51,7 @@ import {
   formatUlwCounts,
   formatUlwBadge,
   ULW_LIVE_CONTROLS_HINT,
+  maybeStampUlwWave,
   countsTowardVerification,
   shouldStampLastVerification,
   shouldClearLastVerification,
@@ -60,6 +61,10 @@ import {
   toolClearEnvConfig,
 } from "../session/tool-clearing.js";
 import { pruneMessagesForRequest } from "../session/request-prune.js";
+import {
+  storeNeedsCheckpoint,
+  DEFAULT_CHECKPOINT_KEEP_STEPS,
+} from "../session/checkpoint.js";
 import { expandUserContentWithImages } from "../util/user-images.js";
 import { expandUserMentions } from "../util/user-mentions.js";
 import { maybeRecordUserConstraint } from "../harness/decision-memory.js";
@@ -691,7 +696,7 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
     const goalNow = loadGoal(session.meta.id);
     const keep =
       keepLast ??
-      (reason.startsWith("overflow") ? 8 : 12);
+      (reason.startsWith("overflow") ? 2 : DEFAULT_CHECKPOINT_KEEP_STEPS);
     session.messages = compactMessages(session.messages, keep, {
       ulw: ulwNow,
       goal: goalNow,
@@ -810,6 +815,9 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
   let skipThresholdCompactUntilCount = 0;
   /** One-shot expert warning when context first crosses pressure bands. */
   let warnedContextPressure: "threshold" | "hard" | null = null;
+  /** Avoid rewriting message[0] unless plan/ULW/model actually flipped. */
+  let lastSystemEpoch = "";
+  let lastWaveStampTurn = 0;
 
   try {
     // Check maxTurns / cost cap at the top so a clean Stop on the final allowed
@@ -854,32 +862,38 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
         }
       }
 
-      // Live /plan|/build|/permissions can flip config.permissionMode mid-run.
-      // Refresh message[0] so the next model call sees PLAN MODE rules without
-      // waiting for a new user prompt (OpenCode-style plan↔build switch).
+      // Live /plan|/build can flip permission mode. Do not rebuild message[0]
+      // every turn — that busts the xAI prefix cache on a 12-hour run.
       {
-        const liveSystem = buildBaselineSystemPrompt({
-          config,
-          workspace,
-          ultrawork: session.meta.ultrawork || Boolean(loadUlwCycle(session.meta.id)?.enabled),
-          ulwCycle: loadUlwCycle(session.meta.id),
-          git: gitSnap,
-          subagentDepth,
-        });
-        if (
-          session.messages[0]?.role === "system" &&
-          session.messages[0].content !== liveSystem
-        ) {
-          session.messages[0] = { role: "system", content: liveSystem };
+        const ulwOn = Boolean(
+          session.meta.ultrawork || loadUlwCycle(session.meta.id)?.enabled,
+        );
+        const systemEpoch = `${config.permissionMode}|${ulwOn ? 1 : 0}|${subagentDepth}|${config.model}`;
+        if (systemEpoch !== lastSystemEpoch) {
+          lastSystemEpoch = systemEpoch;
+          const liveSystem = buildBaselineSystemPrompt({
+            config,
+            workspace,
+            ultrawork: ulwOn,
+            ulwCycle: loadUlwCycle(session.meta.id),
+            git: gitSnap,
+            subagentDepth,
+          });
+          if (
+            session.messages[0]?.role === "system" &&
+            session.messages[0].content !== liveSystem
+          ) {
+            session.messages[0] = { role: "system", content: liveSystem };
+          }
         }
       }
 
-      // Include tool-schema overhead; chars/3.2 estimate (see estimateTokens).
+      // Outbound (pruned) vs store. Checkpoint the store when it is huge.
+      // Do not FullReplace just because the wire is 80k — prune already
+      // handles that. Headroom still uses outbound so we don't 400 the API.
+      const storeTok = estimateTokens(session.messages);
       const est = requestTokenEstimate();
-      const overThreshold =
-        est > config.contextWindow * config.autoCompactThreshold;
-      // Hard headroom: even if under auto_compact_threshold, don't ride the
-      // provider's absolute max (xAI rejects at model max prompt length).
+      const storeDue = storeNeedsCheckpoint(session.messages.length, storeTok);
       const nearHardLimit = est > config.contextWindow * 0.92;
       // Expert-visible one-shot pressure warning (OpenCode-style overflow hygiene)
       if (nearHardLimit && warnedContextPressure !== "hard") {
@@ -888,22 +902,18 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
         log.warn(
           `Context pressure ~${pct}% of window (${formatTokens(est)} / ${formatTokens(config.contextWindow)}) — compacting for headroom. Tip: /compact · /new · raise context_window`,
         );
-      } else if (
-        overThreshold &&
-        warnedContextPressure == null
-      ) {
+      } else if (storeDue && warnedContextPressure == null) {
         warnedContextPressure = "threshold";
-        const pct = Math.min(99, Math.round((est / config.contextWindow) * 100));
         log.dim(
-          `Context ~${pct}% — auto-compact threshold. Tip: /context · /compact · /compact-and <next>`,
+          `Store ~${formatTokens(storeTok)} / ${session.messages.length} msgs — checkpoint compact. Tip: /context · /compact`,
         );
       }
       if (
-        (overThreshold || nearHardLimit) &&
+        (storeDue || nearHardLimit) &&
         session.messages.length > skipThresholdCompactUntilCount
       ) {
         let reduced = await forceCompact(
-          nearHardLimit && !overThreshold ? "headroom" : "threshold",
+          nearHardLimit && !storeDue ? "headroom" : "checkpoint",
         );
         if (!reduced && nearHardLimit) {
           reduced = forcePruneBodies("threshold-prune", {
@@ -945,6 +955,32 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
             } catch {
               /* */
             }
+          }
+        }
+      }
+
+      // ULW quality bar must run on tool-only unattended waves (Stop never fires).
+      {
+        const ulwLive = loadUlwCycle(session.meta.id);
+        if (ulwLive?.enabled) {
+          const lastAsst = [...session.messages]
+            .reverse()
+            .find((m) => m.role === "assistant");
+          const stamp = maybeStampUlwWave({
+            sessionId: session.meta.id,
+            editCount: session.meta.editCount,
+            openTodoCount: openTodos(session.todos),
+            stepsSinceStamp: turns - lastWaveStampTurn,
+            lastAssistantMessage:
+              typeof lastAsst?.content === "string" ? lastAsst.content : "",
+            verificationRan: harnessStats.verificationRuns > 0,
+            verificationPassed: harnessStats.verificationPassedRuns > 0,
+            cwd: workspace,
+          });
+          if (stamp.stamped) lastWaveStampTurn = turns;
+          if (stamp.admit) {
+            session.messages.push({ role: "user", content: stamp.admit });
+            saveSession(session);
           }
         }
       }

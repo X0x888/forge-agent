@@ -295,6 +295,7 @@ export {
   copyUlwCycle,
   disarmUlwCycle,
   evaluateUlwAtStop,
+  maybeStampUlwWave,
   isSoftPrompt,
   expandUlwMandate,
   formatUlwStatus,
@@ -702,6 +703,11 @@ export {
   assistantStepAges,
   REQUEST_PRUNE_OMITTED,
 } from "./session/request-prune.js";
+export {
+  storeNeedsCheckpoint,
+  splitInFlightTail,
+  loadCheckpointSidecar,
+} from "./session/checkpoint.js";
 export {
   saveFullOutputSync,
   collectPinnedToolOutputPaths,

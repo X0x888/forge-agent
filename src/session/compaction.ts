@@ -1,9 +1,10 @@
 /**
- * Structured conversation compaction (Grok Build–inspired sections).
+ * Store checkpoint compact — resume file for long unattended runs.
  *
- * Preserves load-bearing harness state (ULW mandate/wave, goal, todos) and
- * extracts key user messages / tool activity from dropped turns so long ULW
- * sessions survive auto-compact without losing the mandate.
+ * Wire prune (request-prune.ts) slims the API request. This module rewrites
+ * session.json only when the *store* is huge: system + verbatim job card +
+ * in-flight assistant steps. Sidecars (ulw/decisions/mutations/spools) are
+ * the source of truth; the card is extractive, not an LLM summary.
  */
 
 import type { ChatMessage } from "../providers/types.js";
@@ -11,10 +12,17 @@ import type { GoalState } from "../harness/goal.js";
 import type { UlwCycleState } from "../harness/ulw-cycle.js";
 import type { TodoItem } from "./session.js";
 import { formatUlwCounts } from "../harness/ulw-cycle.js";
+import { repairToolCallPairing } from "./message-repair.js";
 import {
-  alignKeepBoundary,
-  repairToolCallPairing,
-} from "./message-repair.js";
+  DEFAULT_CHECKPOINT_KEEP_STEPS,
+  nextCheckpointEpoch,
+  splitInFlightTail,
+  lastRealUserText,
+  mutationPathsNewestFirst,
+  collectSpoolPaths,
+  collectToolSketch,
+  persistCheckpointRecord,
+} from "./checkpoint.js";
 import { detectProjectIntel } from "../util/project-intel.js";
 import { looksLikeAdvisoryUserMessage } from "../util/advisory-intent.js";
 import { formatMemoryForPrompt } from "../harness/decision-memory.js";
@@ -44,10 +52,11 @@ export interface CompactResult {
   summary: string;
 }
 
-const DEFAULT_KEEP_LAST = 12;
+const DEFAULT_KEEP_LAST = DEFAULT_CHECKPOINT_KEEP_STEPS;
 
 /**
- * Compact history: keep system messages + structured summary + last N non-system.
+ * Checkpoint the store: system + verbatim job card + last N assistant steps.
+ * `keepLast` is in-flight assistant steps (default 3), not raw messages.
  */
 export function compactMessagesStructured(
   messages: ChatMessage[],
@@ -56,20 +65,34 @@ export function compactMessagesStructured(
     context?: CompactContext;
   },
 ): CompactResult {
-  const keepLast = opts?.keepLast ?? DEFAULT_KEEP_LAST;
-  if (messages.length <= keepLast + 2) {
-    return { messages, droppedCount: 0, summary: "" };
-  }
-
+  const keepSteps = opts?.keepLast ?? DEFAULT_KEEP_LAST;
   const system = messages.filter((m) => m.role === "system");
   const rest = messages.filter((m) => m.role !== "system");
-  if (rest.length <= keepLast) {
+  const { dropped, kept: keptRaw } = splitInFlightTail(rest, keepSteps);
+  if (dropped.length === 0) {
     return { messages, droppedCount: 0, summary: "" };
   }
 
-  // Never cut inside a tool_call batch — providers reject unpaired tool results
-  const { dropped, kept: keptRaw } = alignKeepBoundary(rest, keepLast);
-  const summary = buildStructuredSummary(dropped, opts?.context);
+  const epoch = nextCheckpointEpoch(messages);
+  const ctx = opts?.context;
+  const summary = buildStructuredSummary(dropped, ctx, {
+    epoch,
+    allMessages: messages,
+  });
+  const sketch = collectToolSketch(dropped);
+  persistCheckpointRecord(ctx?.sessionId, {
+    epoch,
+    droppedCount: dropped.length,
+    mandate: ctx?.ulw?.mandate,
+    paths: [
+      ...mutationPathsNewestFirst(ctx?.sessionId || "", 40),
+      ...sketch.paths,
+    ].filter((p, i, a) => a.indexOf(p) === i).slice(0, 40),
+    spoolPaths: collectSpoolPaths(dropped),
+    lastVerificationCommand: ctx?.lastVerificationCommand,
+    lastVerificationAt: ctx?.lastVerificationAt,
+  });
+
   const repaired = repairToolCallPairing([
     ...system,
     { role: "user", content: summary },
@@ -87,11 +110,20 @@ export function compactMessagesStructured(
 export function buildStructuredSummary(
   dropped: ChatMessage[],
   ctx?: CompactContext,
+  extra?: { epoch?: number; allMessages?: ChatMessage[] },
 ): string {
+  const epoch = extra?.epoch ?? 1;
   const sections: string[] = [
-    `[Conversation compacted — ${dropped.length} earlier messages summarized]`,
-    `Continue from the structured summary + recent context below. Do not re-ask for information captured here.`,
+    `[Conversation compacted — Forge checkpoint ${epoch} — ${dropped.length} earlier messages]`,
+    `Continue from this job card + the in-flight tail. Do not rescan the repo from zero. Sidecars (ulw.json, decisions.json, mutations.jsonl, tool-output) win if this card and the transcript disagree.`,
   ];
+
+  const realUser = lastRealUserText(extra?.allMessages || dropped);
+  if (realUser) {
+    const clipUser =
+      realUser.length > 1200 ? `${realUser.slice(0, 400)}… [full in last real user / ulw.json]` : realUser;
+    sections.push(``, `## 0. Last real user request`, clipUser);
+  }
 
   // 1. Harness / mandate (load-bearing for ULW)
   sections.push(``, `## 1. Harness & mandate`);
@@ -325,12 +357,27 @@ export function buildStructuredSummary(
     }
   }
 
+  const mutPaths = mutationPathsNewestFirst(ctx?.sessionId || "", 24);
+  const spools = collectSpoolPaths(dropped);
+  if (mutPaths.length || spools.length) {
+    sections.push(``, `## 4b. Artifact index (sidecars)`);
+    if (mutPaths.length) {
+      sections.push(`- Edited: ${mutPaths.slice(0, 20).join("; ")}`);
+    }
+    if (spools.length) {
+      sections.push(
+        `- Spools (read_file to restore; do not re-run bash/spawn): ${spools.slice(0, 8).join("; ")}`,
+      );
+    }
+  }
+
   sections.push(
     ``,
     `## 6. Resume`,
-    `- Continue the active mandate/goal without re-scanning from zero unless evidence is stale.`,
-    `- Prefer verifying current workspace state over trusting this summary alone.`,
-    `- File-read memory is session-local: re-read a path before editing if the transcript no longer contains that hunk. Restore cleared tool bodies with read_file on the Full output path — do not re-run spawn_subagent or bash.`,
+    `- Epoch ${epoch}: continue the mandate/goal from the job card + in-flight tail.`,
+    `- Do not rescan the workspace from zero. Verify only what may be stale.`,
+    `- Restore omitted tool bodies with read_file on a Full output / spool path — do not re-run spawn_subagent or bash.`,
+    `- File-read stamps survive this checkpoint if the file mtime still matches; re-read only when the guard says the file changed.`,
   );
 
   return sections.filter((l) => l !== undefined && l !== "").join("\n");

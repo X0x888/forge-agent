@@ -18,7 +18,7 @@ function noteRead(ctx: ToolContext, filePath: string, st: fs.Stats): void {
   }
 }
 
-const DEFAULT_READ_LIMIT = 2000;
+const DEFAULT_READ_LIMIT = 1000;
 const MAX_LINE_LENGTH = 2000;
 /** Soft size hint — still stream via offset/limit; avoid loading multi‑GB blobs blindly. */
 const LARGE_FILE_BYTES = 2 * 1024 * 1024;

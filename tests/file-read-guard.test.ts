@@ -191,7 +191,7 @@ describe("tool integration with fileReads", () => {
   });
 });
 
-describe("compact clears FileReadState", () => {
+describe("compact and FileReadState", () => {
   it("no-op compact (nothing dropped) leaves FileReadState intact", async () => {
     const id = "sess-compact-fileread-noop";
     forgetFileReadsSession(id);
@@ -216,7 +216,7 @@ describe("compact clears FileReadState", () => {
     forgetFileReadsSession(id);
   });
 
-  it("compactMessages that drops history forces re-read before edit", async () => {
+  it("checkpoint compact keeps FileReadState when the file is unchanged", async () => {
     const id = "sess-compact-fileread";
     forgetFileReadsSession(id);
     const d = tmpWorkspace();
@@ -234,13 +234,35 @@ describe("compact clears FileReadState", () => {
       long.push({ role: "assistant", content: `ok ${i}` });
     }
     compactMessages(long, 8, { sessionId: id });
-    assert.equal(state.size(), 0);
+    assert.ok(state.size() >= 1);
+    assert.equal(
+      await state.checkBeforeMutate(f, { tool: "search_replace", rel: "a.ts" }),
+      null,
+    );
+    forgetFileReadsSession(id);
+  });
+
+  it("checkpoint compact drops FileReadState when the file changed on disk", async () => {
+    const id = "sess-compact-fileread-stale";
+    forgetFileReadsSession(id);
+    const d = tmpWorkspace();
+    const f = path.join(d, "a.ts");
+    fs.writeFileSync(f, "const x = 1;\n");
+    const state = fileReadsForSession(id);
+    assert.equal(await state.noteFromDisk(f), true);
+    fs.writeFileSync(f, "const x = 2;\nconst y = 3;\n");
+    const long: { role: "user" | "assistant"; content: string }[] = [];
+    for (let i = 0; i < 40; i++) {
+      long.push({ role: "user", content: `turn ${i}` });
+      long.push({ role: "assistant", content: `ok ${i}` });
+    }
+    compactMessages(long, 8, { sessionId: id });
     const msg = await state.checkBeforeMutate(f, {
       tool: "search_replace",
       rel: "a.ts",
     });
     assert.ok(msg);
-    assert.match(msg!, /has not been read/);
+    assert.match(msg!, /has not been read|changed on disk/);
     forgetFileReadsSession(id);
   });
 

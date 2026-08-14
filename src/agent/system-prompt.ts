@@ -377,7 +377,7 @@ export function buildBaselineSystemPrompt(opts: {
     }
   }
 
-  if (ulwOn) {
+  if (ulwOn && (opts.subagentDepth ?? 0) === 0) {
     parts.push(
       ``,
       `## ULW GOD MODE + RELENTLESS CYCLE`,

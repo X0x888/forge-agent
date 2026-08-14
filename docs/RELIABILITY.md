@@ -39,7 +39,8 @@ What experts should expect from Forge in long, unattended, or CI runs.
 | **Unknown tool tips** | Up to 3 Did-you-mean candidates (`suggestNames`) so the model can self-correct typos without a human |
 | **Doom-loop** | Same tool + same args ×N injects a hard strategy-change nudge (OpenCode-inspired; default N=3, override `FORGE_DOOM_LOOP_THRESHOLD`); fingerprints ignore transport-only fields (`timeout_ms`, `background`, `run_in_background`, `stream`, `tail`, `allow_local`) |
 | **Error-streak** | N consecutive tool errors (any args) injects a circuit-breaker nudge (Grok-inspired; default N=5, override `FORGE_ERROR_STREAK_THRESHOLD`); permission/hard denies do not count |
-| **Request-time prune** | Outbound-only working-set prune (Grok `PruningConfig` analogue). Stored `session.json` is not rewritten. Age is **assistant tool-rounds** (ULW is one user turn). Last 3 steps stay full; older `tool_calls` args collapse; bodies >4k soft-trim (1.5k+1.5k); age ≥10 omit with a spool pointer. `FORGE_REQUEST_PRUNE=0` disables. In-session `FORGE_TOOL_CLEAR` stubbing is **opt-in** (`=1`) — it mutates history and busts the prompt-cache prefix |
+| **Request-time prune** | Outbound-only working-set prune. Stored `session.json` is not rewritten. Age is assistant tool-rounds. Last 3 steps stay full; older args collapse; old bodies omit. `FORGE_REQUEST_PRUNE=0` disables |
+| **Store checkpoint** | Rare resume-file compact when the *store* is huge (`FORGE_CHECKPOINT_STORE_TOKENS` / `_MESSAGES`), not when outbound is 80k. Job card is extractive from sidecars + in-flight tail. FileReadState survives if mtime matches |
 | **Adaptive effort** | Hard-round signals (doom-loop, error-streak, missing ULW wave proof / weak attestation) raise `reasoning_effort` one notch for the next turn only — escalate on failure, not by default; `FORGE_ADAPTIVE_EFFORT=0` disables; no-op for models without effort support |
 | **Anthropic prompt caching** | `cache_control` breakpoints on the system prompt, the last tool definition, and a rolling breakpoint on the newest message so conversation history is cache-read (not re-billed) every turn; usage reports `cache_read_input_tokens` / `cache_creation_input_tokens`; `FORGE_ANTHROPIC_CACHE=0` restores legacy body shape |
 | **ULW wave ledger** | Per-wave facts (`editDelta`, `proof`, summary) in `ulw.json` drive the quality bar: best-wave anchoring, proof demands (cap 2), thin-wave escalation, 4th-wave consolidation cadence, diminishing-returns advisory, and one-time evidence bounce on weak `**Cycle complete.**` attestations (never an infinite trap) |
@@ -159,6 +160,8 @@ What experts should expect from Forge in long, unattended, or CI runs.
 | `FORGE_ULW_MAX_CONTINUES` | `200` | Stop-continue cap while ULW is armed |
 | `FORGE_ULW_STUCK_THRESHOLD` | goal config / `5` | ULW stuck-wall blocks before release (`envPositiveInt`; invalid/0 ignored) |
 | `FORGE_ADAPTIVE_EFFORT` | on | `0`/`false` disables one-notch reasoning escalation on hard rounds |
+| `FORGE_CHECKPOINT_STORE_TOKENS` | `1500000` | Store-token trigger for checkpoint compact (not outbound) |
+| `FORGE_CHECKPOINT_STORE_MESSAGES` | `2500` | Store message-count trigger for checkpoint compact |
 | `FORGE_REQUEST_PRUNE` | on | `0`/`false` disables outbound working-set prune |
 | `FORGE_REQUEST_PRUNE_KEEP_TURNS` | `3` | Newest assistant steps kept verbatim |
 | `FORGE_REQUEST_PRUNE_HARD_AGE` | `10` | Older tool results become `[Tool result omitted — too old]` |

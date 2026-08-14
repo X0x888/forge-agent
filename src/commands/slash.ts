@@ -17,6 +17,9 @@ import {
   pruneSessions,
   sessionHasForeignLiveLock,
   compactMessages,
+} from "../session/session.js";
+import { DEFAULT_CHECKPOINT_KEEP_STEPS } from "../session/checkpoint.js";
+import {
   rebuildUserTurnMarks,
   rewindSessionDetailed,
   exportSessionMarkdown,
@@ -3658,7 +3661,7 @@ const stats = collectUsageStats({
       const before = opts.session.messages.length;
       const ulw = loadUlwCycle(opts.session.meta.id);
       const goal = loadGoal(opts.session.meta.id);
-      opts.session.messages = compactMessages(opts.session.messages, 12, {
+      opts.session.messages = compactMessages(opts.session.messages, DEFAULT_CHECKPOINT_KEEP_STEPS, {
         ulw,
         goal,
         todos: opts.session.todos,
@@ -3713,7 +3716,7 @@ const stats = collectUsageStats({
       const before = opts.session.messages.length;
       const ulw = loadUlwCycle(opts.session.meta.id);
       const goal = loadGoal(opts.session.meta.id);
-      opts.session.messages = compactMessages(opts.session.messages, 12, {
+      opts.session.messages = compactMessages(opts.session.messages, DEFAULT_CHECKPOINT_KEEP_STEPS, {
         ulw,
         goal,
         todos: opts.session.todos,
@@ -4197,7 +4200,7 @@ const result = rewindSessionDetailed(opts.session, n);
       const before = forked.messages.length;
       const ulw = loadUlwCycle(forked.meta.id);
       const goal = loadGoal(forked.meta.id);
-      forked.messages = compactMessages(forked.messages, 12, {
+      forked.messages = compactMessages(forked.messages, DEFAULT_CHECKPOINT_KEEP_STEPS, {
         ulw,
         goal,
         todos: forked.todos,

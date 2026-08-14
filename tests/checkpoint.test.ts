@@ -1,93 +1,168 @@
-/**
- * /checkpoint safety snapshot (git stash create).
- */
-import { describe, it, before, after } from "node:test";
+import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
+import type { ChatMessage } from "../src/providers/types.js";
 import {
-  classifyLiveSlash,
-  handleSlash,
-  isLiveSafeSlash,
-} from "../src/commands/slash.js";
-import { createSession } from "../src/session/session.js";
-import { DEFAULT_CONFIG } from "../src/config/types.js";
-import { HookRunner } from "../src/harness/hooks.js";
+  compactMessagesStructured,
+} from "../src/session/compaction.js";
+import {
+  splitInFlightTail,
+  storeNeedsCheckpoint,
+  lastRealUserText,
+  DEFAULT_CHECKPOINT_STORE_TOKENS,
+  DEFAULT_CHECKPOINT_STORE_MESSAGES,
+  loadCheckpointSidecar,
+} from "../src/session/checkpoint.js";
+import { pruneMessagesForRequest } from "../src/session/request-prune.js";
+import { estimateTokens } from "../src/session/session.js";
+import { armUlwCycle, disarmUlwCycle } from "../src/harness/ulw-cycle.js";
 
-function tmpRoot(): string {
-  const base = process.env.TMPDIR || path.join(process.cwd(), ".tmp");
-  fs.mkdirSync(base, { recursive: true });
-  return base;
+function withForgeHome(fn: () => void): void {
+  const prev = process.env.FORGE_HOME;
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "forge-ckpt-"));
+  process.env.FORGE_HOME = dir;
+  try {
+    fn();
+  } finally {
+    if (prev === undefined) delete process.env.FORGE_HOME;
+    else process.env.FORGE_HOME = prev;
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 }
 
-describe("/checkpoint", () => {
-  let prevHome = "";
-  let home = "";
-  const repo = process.cwd();
+function assistantCall(id: string, name: string, args: string): ChatMessage {
+  return {
+    role: "assistant",
+    content: null,
+    tool_calls: [{ id, type: "function", function: { name, arguments: args } }],
+  };
+}
 
-  before(() => {
-    prevHome = process.env.FORGE_HOME || "";
-    home = fs.mkdtempSync(path.join(tmpRoot(), "forge-cp-home-"));
-    process.env.FORGE_HOME = home;
-  });
-
-  after(() => {
-    if (prevHome) process.env.FORGE_HOME = prevHome;
-    else delete process.env.FORGE_HOME;
-    try {
-      fs.rmSync(home, { recursive: true, force: true });
-    } catch {
-      /* */
+describe("checkpoint compact", () => {
+  it("splitInFlightTail keeps the last N assistant steps", () => {
+    const rest: ChatMessage[] = [];
+    for (let i = 0; i < 10; i++) {
+      rest.push(assistantCall(`c${i}`, "read_file", "{}"));
+      rest.push({ role: "tool", tool_call_id: `c${i}`, content: "x" });
     }
+    const { dropped, kept } = splitInFlightTail(rest, 3);
+    const asst = kept.filter((m) => m.role === "assistant");
+    assert.equal(asst.length, 3);
+    assert.equal(kept[0]?.role, "assistant");
+    assert.ok(dropped.length > 0);
   });
 
-  it("is live-safe (status readonly, create control)", () => {
-    assert.equal(classifyLiveSlash("/checkpoint status"), "readonly");
-    assert.equal(classifyLiveSlash("/checkpoint"), "control");
-    assert.equal(classifyLiveSlash("/snap"), "control");
-    assert.ok(isLiveSafeSlash("/checkpoint"));
-    assert.ok(isLiveSafeSlash("/checkpoint restore"));
-  });
-
-  it("status works without a prior checkpoint", async () => {
-    const session = createSession({ cwd: repo, provider: "xai", model: "m" });
-    const hooks = new HookRunner(DEFAULT_CONFIG, repo);
-    const r = await handleSlash("/checkpoint status", {
-      session,
-      config: { ...DEFAULT_CONFIG, workspace: repo },
-      hooks,
-    });
-    assert.equal(r.handled, true);
-    assert.match(String(r.output || ""), /checkpoint/i);
-  });
-
-  it("create snapshots dirty tracked files without mutating tree", async () => {
-    const session = createSession({ cwd: repo, provider: "xai", model: "m" });
-    const hooks = new HookRunner(DEFAULT_CONFIG, repo);
-    const before = await handleSlash("/checkpoint", {
-      session,
-      config: { ...DEFAULT_CONFIG, workspace: repo },
-      hooks,
-    });
-    assert.equal(before.handled, true);
-    const out = String(before.output || "");
-    assert.match(
-      out,
-      /Checkpoint created:|Working tree clean|nothing to checkpoint|nothing snapshot|Checkpoint failed:|index\.lock/i,
-    );
-    if (/Checkpoint created:/.test(out)) {
-      assert.ok(session.meta.lastCheckpoint);
-      assert.ok(session.meta.lastCheckpointAt);
-      assert.match(out, /working tree unchanged/i);
-      const st = await handleSlash("/checkpoint status", {
-        session,
-        config: { ...DEFAULT_CONFIG, workspace: repo },
-        hooks,
-      });
-      assert.match(
-        String(st.output || ""),
-        new RegExp(session.meta.lastCheckpoint!.slice(0, 8)),
+  it("800-read prune does not need a store checkpoint", () => {
+    const msgs: ChatMessage[] = [{ role: "system", content: "sys" }];
+    for (let i = 0; i < 800; i++) {
+      msgs.push(
+        assistantCall(`c${i}`, "read_file", JSON.stringify({ path: "a.ts" })),
       );
+      msgs.push({
+        role: "tool",
+        tool_call_id: `c${i}`,
+        content: "B".repeat(32_000),
+      });
     }
+    const outbound = estimateTokens(
+      pruneMessagesForRequest(msgs, { spool: false }).messages,
+    );
+    const store = estimateTokens(msgs);
+    assert.ok(outbound < 80_000, `outbound ${outbound}`);
+    assert.ok(store > 1_000_000, `store ${store}`);
+    assert.equal(storeNeedsCheckpoint(msgs.length, outbound), false);
+    assert.equal(storeNeedsCheckpoint(800, outbound), false);
+  });
+
+  it("storeNeedsCheckpoint fires on message count / store tokens", () => {
+    assert.equal(storeNeedsCheckpoint(10, 100), false);
+    assert.equal(
+      storeNeedsCheckpoint(DEFAULT_CHECKPOINT_STORE_MESSAGES, 10),
+      true,
+    );
+    assert.equal(
+      storeNeedsCheckpoint(10, DEFAULT_CHECKPOINT_STORE_TOKENS),
+      true,
+    );
+  });
+
+  it("checkpoint writes a job card and keeps an in-flight tail", () => {
+    withForgeHome(() => {
+      const sid = "sess-ckpt-1";
+      fs.mkdirSync(path.join(process.env.FORGE_HOME!, "sessions", sid), {
+        recursive: true,
+      });
+      const ulw = armUlwCycle(sid, "Ship the auth fix and prove it.", {
+        cycle: 1,
+        skipCheckpoint: true,
+      });
+      const msgs: ChatMessage[] = [
+        { role: "system", content: "sys" },
+        { role: "user", content: "Ship the auth fix and prove it." },
+      ];
+      for (let i = 0; i < 20; i++) {
+        msgs.push(assistantCall(`c${i}`, "read_file", `{"path":"f${i}.ts"}`));
+        msgs.push({
+          role: "tool",
+          tool_call_id: `c${i}`,
+          content: "body".repeat(20),
+        });
+      }
+      const result = compactMessagesStructured(msgs, {
+        keepLast: 3,
+        context: { sessionId: sid, ulw, todos: [] },
+      });
+      assert.ok(result.droppedCount > 0);
+      assert.match(result.summary, /Forge checkpoint 1/);
+      assert.match(result.summary, /Ship the auth fix/);
+      assert.equal(result.messages[0]?.role, "system");
+      assert.match(result.messages[1]?.content || "", /checkpoint 1/);
+      const tailAsst = result.messages.filter((m) => m.role === "assistant");
+      assert.equal(tailAsst.length, 3);
+      const rec = loadCheckpointSidecar(sid);
+      assert.ok(rec);
+      assert.equal(rec!.epoch, 1);
+      disarmUlwCycle(sid);
+    });
+  });
+
+  it("lastRealUserText skips harness admits", () => {
+    const msgs: ChatMessage[] = [
+      { role: "user", content: "real mandate please" },
+      {
+        role: "user",
+        content: "[Forge harness — mid-conversation update]\ncycle=1",
+      },
+    ];
+    assert.equal(lastRealUserText(msgs), "real mandate please");
+  });
+
+  it("job card still names mandate if dropped span is deleted", () => {
+    withForgeHome(() => {
+      const sid = "sess-ckpt-card";
+      fs.mkdirSync(path.join(process.env.FORGE_HOME!, "sessions", sid), {
+        recursive: true,
+      });
+      const ulw = armUlwCycle(sid, "Never weaken tests. Fix the race in auth.", {
+        cycle: 1,
+        skipCheckpoint: true,
+      });
+      const msgs: ChatMessage[] = [
+        { role: "system", content: "You are Forge" },
+        ...Array.from({ length: 30 }, (_, i) => ({
+          role: (i % 2 === 0 ? "user" : "assistant") as "user" | "assistant",
+          content: `turn ${i} lorem ipsum filler content for compact window`,
+        })),
+      ];
+      const result = compactMessagesStructured(msgs, {
+        keepLast: 3,
+        context: { sessionId: sid, ulw, todos: [] },
+      });
+      assert.ok(result.droppedCount > 0);
+      assert.match(result.summary, /Decisions|constraints|Never weaken|auth/i);
+      disarmUlwCycle(sid);
+    });
   });
 });

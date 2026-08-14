@@ -29,6 +29,7 @@ import {
 } from "./compaction.js";
 import {
   clearFileReadsForSession,
+  fileReadsForSession,
   forgetFileReadsSession,
 } from "../agent/tools/file-read-state.js";
 import { repairToolCallPairing } from "./message-repair.js";
@@ -1780,10 +1781,14 @@ export function compactMessages(
   context?: CompactContext,
 ): ChatMessage[] {
   const result = compactMessagesStructured(messages, { keepLast, context });
-  // Only drop FileReadState when history was actually rewritten — a no-op
-  // compact must not force a re-read of files the model just opened.
+  // Checkpoint must not wipe FileReadState — unattended edits continue on
+  // stamps whose files still match disk. Drop only vanished/changed paths.
   if (context?.sessionId && result.droppedCount > 0) {
-    clearFileReadsForSession(context.sessionId);
+    try {
+      fileReadsForSession(context.sessionId).pruneStaleFromDiskSync();
+    } catch {
+      /* */
+    }
   }
   return result.messages;
 }

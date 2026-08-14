@@ -38,6 +38,7 @@ Binary entry: `src/cli.ts` → `dist/cli.js` (`bin: forge`).
 - `src/util/cost-budget.ts` — session spend cap parse/resolve (`/budget`, `--max-cost`, `FORGE_MAX_COST_USD`)
 - `src/util/production-warnings.ts` — `productionWarningsForRun` for `forge run --json` / CI (safety valves, ULW-without-budget, dirty tree, editsWithoutVerification, lockfile/node_modules)
 - `src/session/compaction.ts` — structured compact preserving mandate/goal/todos
+- `src/session/checkpoint.ts` + `compaction.ts` — store checkpoint (job card + in-flight tail) when session.json is huge; not outbound-80k FullReplace
 - `src/session/request-prune.ts` — outbound working-set prune + stale `tool_calls` collapse (`FORGE_REQUEST_PRUNE*`; does not rewrite session.json)
 - `src/session/tool-clearing.ts` — optional in-session stubbing (`FORGE_TOOL_CLEAR=1`; default off)
 - `src/agent/project-skills.ts` — skill packs: package `skills/forge-*/` (builtin) + `.forge/skills/**/SKILL.md` + `.agents/skills` + `~/.forge/skills` (project > user > builtin; `FORGE_BUILTIN_SKILLS=0` off)
