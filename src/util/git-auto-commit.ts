@@ -76,7 +76,7 @@ function shipHint(sessionId: string): string | undefined {
         (r) =>
           r.source === "agent" &&
           (r.kind === "decision" || r.kind === "observation") &&
-          /^(Ship landed|Ship:)/i.test(r.text),
+          /^(Ship landed|Ship:)|Wave \d+.*shipped/i.test(r.text),
       );
     return hit?.text;
   } catch {

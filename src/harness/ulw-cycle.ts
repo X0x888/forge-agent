@@ -540,12 +540,37 @@ export function maybeStampUlwWave(opts: {
     return { stamped: false, updated: progressed, wave: s.wave };
   }
 
+  if (s.judgmentRequired && hasMandateJudgment(opts.sessionId, opts.lastAssistantMessage)) {
+    s.judgmentRequired = false;
+  }
+
   // Edit progress without an idle epoch: one burst = one wave.
   if (progressed && !idleDue) {
     updateOpenWaveRecord(s, facts);
     s.lastProgressEditCount = opts.editCount;
     saveUlwCycle(s);
     return { stamped: false, updated: true, wave: s.wave };
+  }
+
+  // Capped ULW: max_waves counts Stop-boundary work, not loop turns.
+  // Idle epochs would burn a cap of 4 in ~80 tool rounds and LAST mid-ship.
+  if (cap != null && idleDue) {
+    if (progressed) {
+      updateOpenWaveRecord(s, facts);
+      s.lastProgressEditCount = opts.editCount;
+    }
+    if (s.wave >= cap) {
+      flipUlwToLast(s, opts.sessionId);
+      saveUlwCycle(s);
+      return {
+        stamped: false,
+        flippedToLast: true,
+        wave: s.wave,
+        admit: lastWaveAdmit(cap, s.wave),
+      };
+    }
+    saveUlwCycle(s);
+    return { stamped: false, updated: progressed, wave: s.wave };
   }
 
   // Evaluate-class: do not open wave 1 on an idle epoch with no reading.

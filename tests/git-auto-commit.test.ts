@@ -67,6 +67,11 @@ describe("ULW auto-commit", () => {
     );
     assert.match(s, /idle footer/i);
     assert.doesNotMatch(s, /comprehensively evaluate/i);
+    const w4 = buildAutoCommitSubject(
+      "comprehensively evaluate this tool and then improve the ui and ux of it.",
+      "Wave 4 LAST shipped (cycle=0): failed-tool tails + live redock.",
+    );
+    assert.match(w4, /failed-tool tails/i);
   });
 
   it("defaults on and honors FORGE_ULW_AUTO_COMMIT=0", () => {

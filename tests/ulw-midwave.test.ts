@@ -115,49 +115,57 @@ describe("ULW mid-loop wave stamp", () => {
     });
   });
 
-  it("idle epochs honor max_waves and flip LAST", () => {
+  it("capped ULW idle epochs do not increment the wave counter", () => {
     withHome(() => {
-      const sid = "sess-mid-cap-idle";
+      const sid = "sess-mid-cap-noinc";
       fs.mkdirSync(path.join(process.env.FORGE_HOME!, "sessions", sid), {
         recursive: true,
       });
       armUlwCycle(sid, "Ship the feature.", {
         cycle: 1,
-        maxWaves: 2,
+        maxWaves: 4,
         skipCheckpoint: true,
         editCount: 0,
       });
-      const w1 = maybeStampUlwWave({
-        sessionId: sid,
-        editCount: 0,
-        openTodoCount: 0,
-        stepsSinceStamp: MID_WAVE_STAMP_STEPS,
-      });
-      assert.equal(w1.stamped, true);
-      assert.equal(w1.wave, 1);
-      assert.equal(loadUlwCycle(sid)!.cycle, 1);
-
-      const w2 = maybeStampUlwWave({
-        sessionId: sid,
-        editCount: 0,
-        openTodoCount: 0,
-        stepsSinceStamp: MID_WAVE_STAMP_STEPS,
-      });
-      assert.equal(w2.stamped, true);
-      assert.equal(w2.wave, 2);
-      assert.equal(w2.flippedToLast, true);
+      for (let i = 0; i < 3; i++) {
+        const r = maybeStampUlwWave({
+          sessionId: sid,
+          editCount: 0,
+          openTodoCount: 0,
+          stepsSinceStamp: MID_WAVE_STAMP_STEPS,
+        });
+        assert.equal(r.stamped, false, "idle must not stamp a new wave when capped");
+      }
       const s = loadUlwCycle(sid)!;
-      assert.equal(s.cycle, 0);
-      assert.equal(s.wave, 2);
-      assert.match(w2.admit || "", /max_waves=2/);
+      assert.equal(s.wave, 0);
+      assert.equal(s.cycle, 1);
+      disarmUlwCycle(sid);
+    });
+  });
 
-      const extra = maybeStampUlwWave({
+  it("idle at/over a lowered cap flips LAST without incrementing", () => {
+    withHome(() => {
+      const sid = "sess-mid-cap-idle";
+      fs.mkdirSync(path.join(process.env.FORGE_HOME!, "sessions", sid), {
+        recursive: true,
+      });
+      const armed = armUlwCycle(sid, "Ship the feature.", {
+        cycle: 1,
+        maxWaves: 10,
+        skipCheckpoint: true,
+        editCount: 0,
+      });
+      armed.wave = 2;
+      saveUlwCycle(armed);
+      setMaxWaves(sid, 2);
+      assert.equal(loadUlwCycle(sid)!.cycle, 0);
+      const idle = maybeStampUlwWave({
         sessionId: sid,
         editCount: 0,
         openTodoCount: 0,
         stepsSinceStamp: MID_WAVE_STAMP_STEPS,
       });
-      assert.equal(extra.stamped, false);
+      assert.equal(idle.stamped, false);
       assert.equal(loadUlwCycle(sid)!.wave, 2);
       disarmUlwCycle(sid);
     });
@@ -175,12 +183,13 @@ describe("ULW mid-loop wave stamp", () => {
         skipCheckpoint: true,
         editCount: 0,
       });
-      for (let i = 0; i < 3; i++) {
-        maybeStampUlwWave({
+      for (let i = 1; i <= 3; i++) {
+        evaluateUlwAtStop({
           sessionId: sid,
-          editCount: 0,
+          lastAssistantMessage: `w${i}`,
+          editCount: i,
           openTodoCount: 0,
-          stepsSinceStamp: MID_WAVE_STAMP_STEPS,
+          stuckThreshold: 20,
         });
       }
       assert.equal(loadUlwCycle(sid)!.wave, 3);

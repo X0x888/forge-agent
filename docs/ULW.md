@@ -14,7 +14,7 @@ When a prompt starts with **`/ulw`** (or `forge --ulw` / `forge run --ulw`), For
 | Value | Meaning |
 |-------|---------|
 | **unset / off** (default) | Unlimited waves while `cycle=1` |
-| **`N` (positive int)** | When the wave counter hits **N**, harness auto-flips to LAST (finish + attest `**Cycle complete.**`). Mid-loop edit bursts do **not** increment the wave — only Stop re-anchors and unattended idle epochs (every 20 loop turns) do, so `max_waves=2` means two work cycles, not two `search_replace` calls. |
+| **`N` (positive int)** | When the wave counter hits **N**, harness auto-flips to LAST (finish + attest `**Cycle complete.**`). Mid-loop edit bursts do **not** increment the wave. **When a cap is set, idle loop epochs also do not increment** — `max_waves` counts Stop-boundary work units, not ~20 tool rounds. Unlimited ULW still stamps idle epochs for the quality bar. |
 
 ```text
 /ulw improve the code     # arms ULW + cycle=1 (default, unlimited waves)
