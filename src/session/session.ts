@@ -1064,14 +1064,31 @@ function sanitizeImportedTodos(raw: unknown): TodoItem[] {
   return out;
 }
 
-/** One-row `/sessions` / `forge sessions list` picker. Clips to one TTY row. */
+function clipPickerField(text: string, max: number): string {
+  const t = text.replace(/\s+/g, " ").trim();
+  if (max <= 0 || !t) return "";
+  if (visibleWidth(t) <= max) return t;
+  if (max === 1) return "…";
+  return clipAnsi(t, max - 1) + "…";
+}
+
+function formatPickerPreview(text: string, max: number): string {
+  const inner = clipPickerField(text, Math.max(0, max - 2));
+  return inner ? `“${inner}”` : "";
+}
+
+/**
+ * One-row `/sessions` / `forge sessions list` picker.
+ * Spend leftover width on title + last-you; drop model/cost/turns first.
+ */
 export function formatSessionPickerRow(
   s: SessionMeta,
   extras: string[] = [],
   columns?: number,
 ): string {
   const age = formatRelativeTime(s.updatedAt).padStart(8);
-  const title = (s.title || "(untitled)").replace(/\s+/g, " ").slice(0, 28);
+  const rawTitle = (s.title || "(untitled)").replace(/\s+/g, " ").trim();
+  const rawPrev = (s.lastUserPreview || "").replace(/\s+/g, " ").trim();
   const badges: string[] = [];
   if (s.lastVerificationCommand?.trim()) {
     badges.push(isLastVerificationStale(s) ? "✓~" : "✓");
@@ -1101,26 +1118,59 @@ export function formatSessionPickerRow(
   } catch {
     /* */
   }
-  const prev = (s.lastUserPreview || "").replace(/\s+/g, " ").trim();
-  const preview = prev
-    ? `“${prev.slice(0, 24)}${prev.length > 24 ? "…" : ""}”`
-    : "";
   const cols =
     columns ??
     (process.stdout.isTTY ? process.stdout.columns || 80 : Number.POSITIVE_INFINITY);
   const join = (parts: string[]): string => parts.filter(Boolean).join("  ");
-  const core = join([s.id.slice(0, 8), age.trim(), badges.join(" ")]);
-  const candidates = [
-    join([s.id.slice(0, 8), age, title, s.model, `t=${s.turnCount ?? 0}`, cost, badges.join(" "), preview]),
-    join([s.id.slice(0, 8), age, title, s.model, badges.join(" ")]),
-    join([s.id.slice(0, 8), age, title, badges.join(" ")]),
-    core,
-  ];
-  if (!Number.isFinite(cols) || cols < 24) return candidates[0]!;
-  for (const line of candidates) {
-    if (visibleWidth(line) <= cols) return line;
+  const badgeStr = badges.join(" ");
+  const id = s.id.slice(0, 8);
+  const gap = 2;
+
+  const fit = (
+    titleMax: number,
+    previewMax: number,
+    extrasBits: string[],
+  ): string => {
+    const title = clipPickerField(rawTitle, titleMax);
+    const preview = formatPickerPreview(rawPrev, previewMax);
+    return join([id, age, title, ...extrasBits, badgeStr, preview]);
+  };
+
+  const titleNeed = Math.min(visibleWidth(rawTitle), 48);
+  const prevNeed = rawPrev ? Math.min(visibleWidth(rawPrev) + 2, 56) : 0;
+  const extrasAll = [s.model, `t=${s.turnCount ?? 0}`, cost].filter(Boolean);
+  if (!Number.isFinite(cols) || cols < 24) {
+    return fit(titleNeed, prevNeed, extrasAll);
   }
-  return clipAnsi(core, cols);
+
+  const identity = join([id, age, badgeStr]);
+  let remaining = cols - visibleWidth(identity);
+  if (remaining < 3) return clipAnsi(identity, cols);
+
+  let titleMax = 0;
+  let previewMax = 0;
+  const take = (want: number): number => {
+    if (want <= 0 || remaining < 3) return 0;
+    const got = Math.min(want, remaining - gap);
+    if (got <= 0) return 0;
+    remaining -= got + gap;
+    return got;
+  };
+  // Readable title + last-you first; model/cost only if leftover.
+  titleMax = take(Math.min(titleNeed, 20));
+  previewMax = take(Math.min(prevNeed, 28));
+  titleMax += take(titleNeed - titleMax);
+  previewMax += take(prevNeed - previewMax);
+  const extrasBits: string[] = [];
+  for (const bit of extrasAll) {
+    const w = visibleWidth(bit) + gap;
+    if (bit && w <= remaining) {
+      extrasBits.push(bit);
+      remaining -= w;
+    }
+  }
+  const line = fit(titleMax, previewMax, extrasBits);
+  return visibleWidth(line) <= cols ? line : clipAnsi(line, cols);
 }
 
 /** Compact human summary for `forge sessions show`. */

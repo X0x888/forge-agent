@@ -1458,4 +1458,32 @@ it("/fork includes last-turn peek", async () => {
     assert.ok(visibleWidth(row) <= 36, row);
     assert.match(row.replace(/\x1b\[[0-9;]*m/g, ""), /ULW|PIN|ERR|\*/);
   });
+
+  it("formatSessionPickerRow spends leftover width on title and last-you", () => {
+    const s = createSession({ cwd: "/tmp", provider: "xai", model: "grok-4.6" });
+    s.meta.title = "comprehensively evaluate then improve the ui";
+    s.meta.lastUserPreview = "please comprehensively evaluate then improve the ui";
+    s.meta.turnCount = 12;
+    s.meta.totalPromptTokens = 10_000;
+    s.meta.totalCompletionTokens = 2_000;
+    const wide = formatSessionPickerRow(s.meta, [], 120);
+    assert.ok(visibleWidth(wide) <= 120, wide);
+    assert.match(wide, /comprehensively evaluate then improve/);
+    assert.match(wide, /please comprehensively evaluate/);
+    // Hard 28/24 clips used to hide these words on a normal 80-col row.
+    const mid = formatSessionPickerRow(s.meta, [], 80);
+    assert.ok(visibleWidth(mid) <= 80, mid);
+    assert.match(mid, /comprehensively/);
+    assert.match(mid, /please comprehensively/);
+  });
+
+  it("formatSessionPickerRow drops model before clipping last-you", () => {
+    const s = createSession({ cwd: "/tmp", provider: "xai", model: "grok-4.6" });
+    s.meta.title = "auth flake";
+    s.meta.lastUserPreview = "fix the flaky auth test please";
+    const row = formatSessionPickerRow(s.meta, [], 72);
+    assert.ok(visibleWidth(row) <= 72, row);
+    assert.match(row, /auth flake/);
+    assert.match(row, /fix the flaky auth test/);
+  });
 });
