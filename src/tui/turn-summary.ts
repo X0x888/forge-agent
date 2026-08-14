@@ -1,7 +1,9 @@
 import type { SessionData } from "../session/session.js";
 import { isLastVerificationStale } from "../session/session.js";
 import type { FileMutation } from "../session/mutations.js";
+import { readFileMutations } from "../session/mutations.js";
 import { displayRelPath } from "../agent/tools/path-util.js";
+import { detectProjectIntel } from "../util/project-intel.js";
 import { clipAnsi, visibleWidth } from "../util/format.js";
 
 /**
@@ -52,4 +54,32 @@ export function formatTurnChangeSummary(
   let mid = `${shown.join(", ")}${more}`;
   if (visibleWidth(mid) > budget) mid = clipAnsi(mid, budget);
   return `${prefix}${mid}${suffix}`;
+}
+
+/**
+ * Journal + intel shim for the Δ closer. Shared by the REPL and
+ * non-JSON `forge run` so unattended logs show the same files+verify line.
+ * Returns null when nothing was edited this turn (or the journal is missing).
+ */
+export function formatTurnChangeSummaryForSession(
+  session: SessionData,
+  turnAtStart: number,
+): string | null {
+  const edits = readFileMutations(session.meta.id).filter(
+    (m) => m.turn > turnAtStart,
+  );
+  let preferred: string | null = null;
+  try {
+    preferred =
+      detectProjectIntel(session.meta.cwd || process.cwd()).checkCommands[0] ??
+      null;
+  } catch {
+    /* intel is best-effort */
+  }
+  return formatTurnChangeSummary(
+    edits,
+    session.meta.cwd,
+    session.meta,
+    preferred,
+  );
 }

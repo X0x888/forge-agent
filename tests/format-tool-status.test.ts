@@ -6,6 +6,10 @@ import {
   formatFailedToolTail,
   visibleWidth,
 } from "../src/util/format.js";
+import {
+  formatDefaultToolEndTranscript,
+  formatVerboseToolEndTranscript,
+} from "../src/tui/tool-transcript.js";
 
 function strip(s: string): string {
   return s.replace(/\x1b\[[0-9;]*m/g, "");
@@ -282,5 +286,54 @@ describe("default tool status line", () => {
     assert.ok(!tail.includes("ok 0"));
     assert.equal(formatFailedToolTail("Permission denied"), "");
     assert.equal(formatFailedToolTail(""), "");
+  });
+
+  it("default transcript inlines the reason and keeps a last-lines tail", () => {
+    const out = [
+      "npm test",
+      ...Array.from({ length: 20 }, (_, i) => `ok ${i}`),
+      "not ok 21 — expected 2",
+      "  AssertionError: expected 2",
+      "    at file:///tmp/t.test.ts:10:5",
+    ].join("\n");
+    const text = strip(
+      formatDefaultToolEndTranscript("bash", {
+        isError: true,
+        ms: 80,
+        bytes: 400,
+        args: { command: "npm test" },
+        output: out,
+      }),
+    );
+    assert.match(text, /✗ bash command=npm test  not ok 21 — expected 2/);
+    assert.match(text, /AssertionError/);
+    assert.match(text, /t\.test\.ts/);
+    assert.match(text, /\/verbose/);
+    const ok = strip(
+      formatDefaultToolEndTranscript("write_file", {
+        isError: false,
+        ms: 12,
+        bytes: 40,
+        args: { path: "src/a.ts" },
+        output: "wrote src/a.ts",
+      }),
+    );
+    assert.match(ok, /✓ write_file path=src\/a\.ts/);
+    assert.doesNotMatch(ok, /wrote src\/a\.ts/);
+  });
+
+  it("verbose transcript prints the full output block", () => {
+    const text = strip(
+      formatVerboseToolEndTranscript("bash", {
+        isError: false,
+        ms: 9,
+        bytes: 20,
+        args: { command: "echo hi" },
+        output: "hello\nworld",
+      }),
+    );
+    assert.match(text, /✓ bash command=echo hi/);
+    assert.match(text, /hello/);
+    assert.match(text, /world/);
   });
 });

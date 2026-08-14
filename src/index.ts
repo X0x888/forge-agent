@@ -531,6 +531,14 @@ export { helpFor, HELP_START, HELP_ALL } from "./commands/help-text.js";
 export { formatBanner } from "./tui/banner.js";
 export { pickTurnEndHint } from "./tui/hints.js";
 export {
+  formatDefaultToolEndTranscript,
+  formatVerboseToolEndTranscript,
+} from "./tui/tool-transcript.js";
+export {
+  formatTurnChangeSummary,
+  formatTurnChangeSummaryForSession,
+} from "./tui/turn-summary.js";
+export {
   shouldOfferLoginPicker,
   parseLoginOfferChoice,
 } from "./tui/login-offer.js";

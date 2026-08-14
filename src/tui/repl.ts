@@ -23,7 +23,6 @@ import {
   formatResumeOrientation,
   isSyntheticUserMessage,
 } from "../session/session.js";
-import { readFileMutations } from "../session/mutations.js";
 import { log } from "../util/log.js";
 import {
   maybeTurnEndAttention,
@@ -31,15 +30,13 @@ import {
 } from "../util/attention.js";
 import { describeAuth, resolveAuthFresh } from "../auth/resolve.js";
 import type { ResolvedAuth } from "../auth/types.js";
+import { formatToolStart } from "../util/format.js";
 import {
-  formatToolStart,
-  formatToolEnd,
-  formatDiffBlock,
-  formatToolOutputHead,
-  formatFailedToolTail,
-} from "../util/format.js";
+  formatDefaultToolEndTranscript,
+  formatVerboseToolEndTranscript,
+} from "./tool-transcript.js";
 import { postureHead, postureWarnings } from "./posture.js";
-import { formatTurnChangeSummary } from "./turn-summary.js";
+import { formatTurnChangeSummaryForSession } from "./turn-summary.js";
 import {
   createMarkdownRenderer,
   type MarkdownRenderer,
@@ -721,23 +718,11 @@ export async function runRepl(opts: {
             // Minimal by default: one status line per tool. Success diffs
             // and full output stay /verbose. Failures inline the first
             // error on the ✗ row; extra tail only when there is more.
-            console.error(formatToolEnd(name, r));
-            if (verboseToolOutput) {
-              if (r.diff) {
-                console.error(formatDiffBlock(r.diff));
-              } else if (r.output) {
-                const head = formatToolOutputHead(r.output, {
-                  verbose: true,
-                });
-                if (head) console.error(head);
-              }
-            } else if (r.isError && r.output) {
-              // Reason already sits on the ✗ line. Extra last-lines
-              // (default 5) when there is more — test/compiler failures
-              // live at the end. Single-line errors stay one row.
-              const tail = formatFailedToolTail(r.output);
-              if (tail) console.error(tail);
-            }
+            console.error(
+              verboseToolOutput
+                ? formatVerboseToolEndTranscript(name, r)
+                : formatDefaultToolEndTranscript(name, r),
+            );
           },
           onToolSettled: () => {
             pendingTools = Math.max(0, pendingTools - 1);
@@ -1169,25 +1154,9 @@ function printTurnChangeSummary(
   turnAtStart: number,
 ): void {
   try {
-    const edits = readFileMutations(session.meta.id).filter(
-      (m) => m.turn > turnAtStart,
-    );
-    let preferred: string | null = null;
-    try {
-      preferred =
-        detectProjectIntel(session.meta.cwd || process.cwd()).checkCommands[0] ??
-        null;
-    } catch {
-      /* intel is best-effort */
-    }
-    const line = formatTurnChangeSummary(
-      edits,
-      session.meta.cwd,
-      session.meta,
-      preferred,
-    );
+    const line = formatTurnChangeSummaryForSession(session, turnAtStart);
     if (line) console.log(chalk.dim(line));
-    printTurnHint(session, edits.length > 0);
+    printTurnHint(session, Boolean(line));
   } catch {
     /* summary is best-effort */
     try {

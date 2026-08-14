@@ -1,8 +1,18 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { formatTurnChangeSummary } from "../src/tui/turn-summary.js";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import {
+  formatTurnChangeSummary,
+  formatTurnChangeSummaryForSession,
+} from "../src/tui/turn-summary.js";
 import { visibleWidth } from "../src/util/format.js";
-import type { FileMutation } from "../src/session/mutations.js";
+import {
+  appendFileMutation,
+  type FileMutation,
+} from "../src/session/mutations.js";
+import type { SessionData } from "../src/session/session.js";
 
 const CWD = "/repo";
 const mut = (
@@ -123,5 +133,51 @@ test("turn summary: clips to one TTY row and keeps verify", () => {
       value: prevCols,
       configurable: true,
     });
+  }
+});
+
+test("turn summary: session shim only includes edits after turnAtStart", () => {
+  const prevHome = process.env.FORGE_HOME;
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-turn-sum-"));
+  process.env.FORGE_HOME = tmp;
+  try {
+    const sid = "sess-turn-sum";
+    fs.mkdirSync(path.join(tmp, "sessions", sid), { recursive: true });
+    appendFileMutation(sid, {
+      path: "/repo/old.ts",
+      kind: "update",
+      turn: 3,
+      before: "old",
+    });
+    appendFileMutation(sid, {
+      path: "/repo/src/a.ts",
+      kind: "update",
+      turn: 5,
+      before: "a",
+    });
+    appendFileMutation(sid, {
+      path: "/repo/src/b.ts",
+      kind: "create",
+      turn: 5,
+    });
+    const session = {
+      meta: {
+        id: sid,
+        cwd: "/repo",
+        lastVerificationCommand: undefined,
+        lastVerificationAt: undefined,
+        lastEditAt: undefined,
+        editCount: 2,
+      },
+    } as SessionData;
+    const line = formatTurnChangeSummaryForSession(session, 4);
+    assert.ok(line);
+    assert.match(line, /Δ 2 files: src\/a\.ts, src\/b\.ts \(new\)/);
+    assert.doesNotMatch(line, /old\.ts/);
+    assert.equal(formatTurnChangeSummaryForSession(session, 5), null);
+  } finally {
+    if (prevHome === undefined) delete process.env.FORGE_HOME;
+    else process.env.FORGE_HOME = prevHome;
+    fs.rmSync(tmp, { recursive: true, force: true });
   }
 });

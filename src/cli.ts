@@ -114,6 +114,7 @@ import {
 import { loadSavedAllows } from "./agent/permission-saved.js";
 import { runAgentLoopThroughDrops } from "./agent/loop.js";
 import { runRepl } from "./tui/repl.js";
+import { formatTurnChangeSummaryForSession } from "./tui/turn-summary.js";
 import { forgeHome, ensureDir, inspectSecureFile } from "./util/fs.js";
 import { log, setLogLevel } from "./util/log.js";
 import { mergeRunOpts } from "./util/merge-run-opts.js";
@@ -6108,6 +6109,7 @@ async function runHeadless(opts: {
   }
 
   const t0 = Date.now();
+  const turnAtStart = opts.session.meta.turnCount;
   let result;
   try {
     result = await runAgentLoopThroughDrops({
@@ -6549,6 +6551,17 @@ async function runHeadless(opts: {
 
     if (!opts.json && result.finalText && !result.finalText.endsWith("\n")) {
       process.stdout.write("\n");
+    }
+    if (!opts.json) {
+      try {
+        const line = formatTurnChangeSummaryForSession(
+          opts.session,
+          turnAtStart,
+        );
+        if (line) process.stdout.write(`${chalk.dim(line)}\n`);
+      } catch {
+        /* summary is best-effort — never block headless exit */
+      }
     }
 
     const durationMs = Date.now() - t0;

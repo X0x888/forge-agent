@@ -141,13 +141,13 @@ import {
 } from "../util/cost-budget.js";
 import {
   formatToolStart,
-  formatToolEnd,
   truncateMiddle,
   formatTokens,
   formatRetryWait,
   summarizeToolArgs,
   extractDiffFromToolOutput,
 } from "../util/format.js";
+import { formatDefaultToolEndTranscript } from "../tui/tool-transcript.js";
 import type { ToolDefinition } from "../providers/types.js";
 import {
   McpManager,
@@ -2906,7 +2906,13 @@ async function prepareToolResult(opts: {
       events.onToolEnd(name, { isError: true, ms: 0, bytes, output, args: toolInput });
     } else {
       console.error(
-        formatToolEnd(name, { isError: true, ms: 0, bytes, output, args: toolInput }),
+        formatDefaultToolEndTranscript(name, {
+          isError: true,
+          ms: 0,
+          bytes,
+          output,
+          args: toolInput,
+        }),
       );
     }
     settle();
@@ -3013,7 +3019,13 @@ async function prepareToolResult(opts: {
       events.onToolEnd(name, { isError: true, ms: 0, bytes, output: content, args: toolInput });
     } else {
       console.error(
-        formatToolEnd(name, { isError: true, ms: 0, bytes, output: content, args: toolInput }),
+        formatDefaultToolEndTranscript(name, {
+          isError: true,
+          ms: 0,
+          bytes,
+          output: content,
+          args: toolInput,
+        }),
       );
     }
     settle();
@@ -3204,7 +3216,13 @@ async function prepareToolResult(opts: {
     });
   } else {
     console.error(
-      formatToolEnd(name, { isError: result.isError, ms, bytes, args: toolInput }),
+      formatDefaultToolEndTranscript(name, {
+        isError: result.isError,
+        ms,
+        bytes,
+        args: toolInput,
+        output,
+      }),
     );
   }
   settle();
