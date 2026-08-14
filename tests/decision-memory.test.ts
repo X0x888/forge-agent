@@ -359,6 +359,8 @@ Comprehensively improve reliability:
     });
     assert.equal(d.block, true);
     assert.match(String(d.reanchor || d.reason), /backlog required/i);
+    assert.match(String(d.reanchor || d.reason), /decisions\.json/);
+    assert.doesNotMatch(String(d.reanchor || d.reason), /## Active decisions/);
   });
 });
 

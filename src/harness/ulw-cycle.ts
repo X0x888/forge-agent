@@ -1704,18 +1704,13 @@ export function evaluateUlwAtStop(opts: {
     ) {
       s.blocks += 1;
       saveUlwCycle(s);
-      const mem = formatMemoryForPrompt(opts.sessionId, { budget: 2500 });
       const reanchor = [
         `[Forge ULW cycle driver] Stop blocked — backlog required before Wave 1 invents scope.`,
         `Mandate is broad/soft. Decompose it into an ordered todo board (≥2 items) via todo_write covering the mandate sections, then execute the top item.`,
         `Mandate: ${displayUlwMandate(s.mandate)}`,
-        mem.activeCount
-          ? `## Active decisions / constraints\n${mem.text}`
-          : null,
+        `Durable decisions: /memory · decisions.json — do not re-derive the mandate.`,
         `Do not free-invent waves until the backlog exists. ${ULW_LIVE_CONTROLS_HINT}`,
-      ]
-        .filter(Boolean)
-        .join("\n");
+      ].join("\n");
       return { block: true, reason: reanchor, reanchor };
     }
     if (s.backlogRequired && opts.openTodoCount >= 2) {

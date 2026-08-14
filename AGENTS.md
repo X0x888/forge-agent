@@ -86,7 +86,7 @@ stream-capped `web_fetch`/`web_search`, JSON arg repair, CLI `--json` always sta
 session locks (headless fail-closed; `FORGE_FORCE_SESSION_LOCK=1` override; live+bad timestamp held),
 atomic session tmp recovery, session fork/export/import (export `0600`), headless `forge run
 --session`, metrics.jsonl, permission ask timeout, empty-SSE retry, `finish_reason=length` continue (+ content_filter/empty cap hygiene),
-`releasedOnContinueCap` / `hitMaxTurns` / `hitCostCap` / `finishReason` / `pinned` / `foreignLock` JSON/metrics + stats `continueCapReleases`/`maxTurnsHits`/`costCapHits`,
+`releasedOnContinueCap` / `hitMaxTurns` / `hitCostCap` / `finishReason` / `pinned` / `foreignLock` / `harnessUserPokes` / `admitCount` / `proofPokes` / `providerRounds` JSON/metrics + stats `continueCapReleases`/`maxTurnsHits`/`costCapHits`,
 `--max-turns` / `FORGE_MAX_TURNS` / `max_turns=0` unlimited, `--max-cost` / `FORGE_MAX_COST_USD` / `max_cost_usd` / `/budget` session spend cap (estimateCostUsd; run JSON `effectiveMaxCostUsd`/`sessionCostUsd`), handoff-guard + proof-claim-guard Stop blocks (incl. silent edits-without-verify free triage), soft TodoGate outside ULW, interjection harness context, `/done` winds ULW+goal, safety valves under ULW CONTINUE auto-flip to LAST (`maybeFlipUlwToLastOnSafetyValve`), `forge sessions title`, `forge models -p`, stream usage, `meta.json`
 session sidecar (authoritative for title/pinned — title/pin writes are meta-only via
 `saveSessionMetaSidecar` so they never roll back racing messages; `saveSession` merges
