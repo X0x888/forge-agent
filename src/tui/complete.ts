@@ -506,11 +506,32 @@ export function completeAtMention(
 }
 
 /**
+ * First-day empty-Tab starters. Matches `/help start` + daily recover.
+ * Type `/` then Tab for the full catalog.
+ */
+export const EMPTY_TAB_STARTERS = [
+  "/help",
+  "/setup",
+  "/plan",
+  "/init",
+  "/doctor",
+  "/model",
+  "/permissions",
+  "/budget",
+  "/notify",
+  "/undo",
+  "/commit",
+  "/goal",
+  "/ulw",
+  "/done",
+] as const;
+
+/**
  * Full completer for the REPL.
  * - `/pe` → `/permissions`
  * - `/permissions a` → `/permissions acceptEdits`
  * - `/permissions ` → all modes
- * - bare line may complete common commands starting with /
+ * - empty line → curated starters (type `/` for the full catalog)
  * - `@src/cli` → `@src/cli.ts` (workspace file mention)
  */
 export function forgeCompleter(
@@ -520,9 +541,9 @@ export function forgeCompleter(
   const raw = line;
   // Only complete from last segment for space-separated slash cmds
   if (!raw.trimStart().startsWith("/") && !raw.startsWith("/")) {
-    // offer slash commands when user typed nothing useful? empty → show all /
+    // Empty prompt: first-day starters, not the 80-command dump.
     if (raw.trim() === "") {
-      return [[...SLASH_COMMANDS], raw];
+      return [[...EMPTY_TAB_STARTERS], raw];
     }
     const atHits = completeAtMention(raw, config?.workspace || process.cwd());
     if (atHits) return atHits;

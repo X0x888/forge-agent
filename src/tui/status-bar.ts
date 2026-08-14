@@ -50,7 +50,7 @@ export interface StatusBarContext {
   auth: ResolvedAuth;
   /** Optional plan/quota from bottom dock or /status probe */
   plan?: PlanUsageInfo;
-  /** REPL-local `/verbose` — diffs + full tool output under each tool line */
+  /** REPL-local `/verbose` — diffs + full tool output (failures always show a tail) */
   verbose?: boolean;
 }
 
@@ -624,6 +624,33 @@ export interface WorkingIndicatorOpts {
   dockInPrompt?: boolean;
   /** Called on each tick when dockInPrompt — refresh the readline prompt. */
   onTick?: (frame: number, phase: AgentPhase, detail?: string) => void;
+  /**
+   * Prompt-docked streaming heartbeat. REPL reprints `live ›` below the
+   * current token stream so mid-run controls stay reachable. Does not
+   * fire while the \r spinner owns the line.
+   */
+  onStreamTick?: (frame: number, phase: AgentPhase, detail?: string) => void;
+  /** Min ms between streaming heartbeats (default 10s). */
+  streamTickMs?: number;
+}
+
+/**
+ * After tokens/tools, restore the `live ›` dock on these phases.
+ * `waiting` (retries, ULW auto-continue) must redock — otherwise the
+ * advertised control line vanishes until the next think/tool.
+ * Never redock while a tool hold is still open.
+ */
+export function shouldRedockLiveOnPhase(
+  phase: AgentPhase,
+  pendingTools = 0,
+): boolean {
+  if (pendingTools > 0) return false;
+  return (
+    phase === "thinking" ||
+    phase === "compacting" ||
+    phase === "stop_guard" ||
+    phase === "waiting"
+  );
 }
 
 /**
@@ -649,7 +676,7 @@ export function createWorkingIndicator(
   let phase: AgentPhase = "thinking";
   let detail: string | undefined;
   let lastTickAt = 0;
-  const TICK_MS = 10_000;
+  const TICK_MS = Math.max(200, opts.streamTickMs ?? 10_000);
 
   const label = (): string => {
     const ctx = opts.getContext?.() ?? null;
@@ -707,7 +734,11 @@ export function createWorkingIndicator(
     if (now - lastTickAt < TICK_MS) return;
     lastTickAt = now;
     if (dockInPrompt) {
-      // Reminder that controls stay open during long streams
+      if (opts.onStreamTick) {
+        opts.onStreamTick(frame, phase, detail);
+        return;
+      }
+      // Fallback reminder when the REPL did not wire a redock hook
       process.stderr.write(
         "\n" +
           chalk.dim("  ⚒ still working · controls open at ") +

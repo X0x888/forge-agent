@@ -4,6 +4,10 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { editToolDiffPreview } from "../src/agent/permission-preview.js";
+import {
+  formatPermissionAskPrompt,
+  parsePermissionAskAnswer,
+} from "../src/agent/permissions.js";
 
 let ws: string;
 
@@ -113,5 +117,41 @@ describe("editToolDiffPreview", () => {
     );
     editToolDiffPreview("write_file", { path: "guard.ts", content: "changed\n" }, ws);
     assert.equal(fs.readFileSync(target, "utf8"), "untouched\n");
+  });
+});
+
+describe("permission ask UX", () => {
+  test("empty Enter / y / yes / unknown = allow once; n/s/a stay explicit", () => {
+    assert.equal(parsePermissionAskAnswer(""), "allow_once");
+    assert.equal(parsePermissionAskAnswer("   "), "allow_once");
+    assert.equal(parsePermissionAskAnswer("y"), "allow_once");
+    assert.equal(parsePermissionAskAnswer("YES"), "allow_once");
+    assert.equal(parsePermissionAskAnswer("sure"), "allow_once");
+    assert.equal(parsePermissionAskAnswer("n"), "deny");
+    assert.equal(parsePermissionAskAnswer("no"), "deny");
+    assert.equal(parsePermissionAskAnswer("s"), "session");
+    assert.equal(parsePermissionAskAnswer("session"), "session");
+    assert.equal(parsePermissionAskAnswer("a"), "always");
+    assert.equal(parsePermissionAskAnswer("always"), "always");
+    assert.equal(parsePermissionAskAnswer("__timeout__"), "timeout");
+  });
+
+  test("prompt advertises Enter as allow-once", () => {
+    const ready = formatPermissionAskPrompt({
+      mcpAlwaysReady: true,
+      alwaysTool: "write_file",
+      alwaysPattern: "src/**",
+      timeoutNote: "",
+    });
+    assert.match(ready, /↵\/\[y\] once/);
+    assert.match(ready, /\[n\]o/);
+    const mcp = formatPermissionAskPrompt({
+      mcpAlwaysReady: false,
+      alwaysTool: "call_mcp",
+      alwaysPattern: "*",
+      timeoutNote: " (30s)",
+    });
+    assert.match(mcp, /↵\/\[y\] once/);
+    assert.match(mcp, /\(30s\)/);
   });
 });

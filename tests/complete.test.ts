@@ -5,10 +5,30 @@ import {
   resolveParamChoice,
   formatParamMenu,
   COMMAND_PARAMS,
+  EMPTY_TAB_STARTERS,
 } from "../src/tui/complete.js";
+import { SLASH_COMMANDS } from "../src/commands/slash.js";
 import { DEFAULT_CONFIG } from "../src/config/types.js";
 
 describe("tab completion", () => {
+  it("empty Tab offers curated starters, not the full catalog", () => {
+    const [hits] = forgeCompleter("");
+    assert.deepEqual(hits, [...EMPTY_TAB_STARTERS]);
+    assert.ok(hits.length < 20);
+    assert.ok(hits.includes("/help"));
+    assert.ok(hits.includes("/setup"));
+    assert.ok(hits.includes("/plan"));
+    assert.ok(!hits.includes("/ralph"));
+    assert.ok(SLASH_COMMANDS.length > hits.length);
+  });
+
+  it("slash-only Tab still lists the full catalog", () => {
+    const [hits] = forgeCompleter("/");
+    assert.ok(hits.includes("/help"));
+    assert.ok(hits.includes("/ralph"));
+    assert.ok(hits.length >= SLASH_COMMANDS.length);
+  });
+
   it("completes slash command prefixes", () => {
     const [hits] = forgeCompleter("/per");
     assert.ok(hits.some((h) => h.startsWith("/permissions")));

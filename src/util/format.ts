@@ -189,12 +189,19 @@ export function formatDiffBlock(
 
 /**
  * Dimmed tool-output preview for the transcript. Head mode: first `maxLines`
- * lines (overlong lines clipped) + a count of what is hidden. Verbose mode:
- * the whole (already session-capped) output, one dim indented line per line.
+ * lines (overlong lines clipped) + a count of what is hidden. Tail mode:
+ * last `maxLines` (failures live at the end of test/compiler output).
+ * Verbose mode: the whole (already session-capped) output, one dim indented
+ * line per line.
  */
 export function formatToolOutputHead(
   output: string,
-  opts: { maxLines?: number; verbose?: boolean; indent?: string } = {},
+  opts: {
+    maxLines?: number;
+    verbose?: boolean;
+    indent?: string;
+    tail?: boolean;
+  } = {},
 ): string {
   const indent = opts.indent ?? "    ";
   const text = output.replace(/\s+$/, "");
@@ -204,15 +211,16 @@ export function formatToolOutputHead(
     return lines.map((l) => indent + chalk.dim(l)).join("\n");
   }
   const maxLines = opts.maxLines ?? 5;
+  const hidden = Math.max(0, lines.length - maxLines);
+  const more = indent + chalk.dim(`… (${hidden} more lines · /verbose to show all)`);
+  if (opts.tail) {
+    const shown = lines.slice(-maxLines).map((l) => indent + chalk.dim(clipAnsi(l, 160)));
+    return hidden > 0 ? [more, ...shown].join("\n") : shown.join("\n");
+  }
   const out = lines
     .slice(0, maxLines)
     .map((l) => indent + chalk.dim(clipAnsi(l, 160)));
-  if (lines.length > maxLines) {
-    out.push(
-      indent +
-        chalk.dim(`… (${lines.length - maxLines} more lines · /verbose to show all)`),
-    );
-  }
+  if (hidden > 0) out.push(more);
   return out.join("\n");
 }
 

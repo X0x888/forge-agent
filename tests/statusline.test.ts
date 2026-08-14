@@ -46,6 +46,7 @@ import {
   renderLiveRunHeader,
   formatBackgroundTasksList,
   createWorkingIndicator,
+  shouldRedockLiveOnPhase,
 } from "../src/tui/status-bar.js";
 import { renderBottomStatusLine } from "../src/tui/bottom-status.js";
 import { clipAnsi, visibleWidth } from "../src/util/format.js";
@@ -948,5 +949,50 @@ describe("statusline tmux badges", () => {
     });
     const plain = flags.replace(/\x1b\[[0-9;]*m/g, "");
     assert.match(plain, /\bWT\b/);
+  });
+
+  it("redocks live › on waiting / compact / stop_guard, not mid-tool", () => {
+    assert.equal(shouldRedockLiveOnPhase("thinking"), true);
+    assert.equal(shouldRedockLiveOnPhase("waiting"), true);
+    assert.equal(shouldRedockLiveOnPhase("compacting"), true);
+    assert.equal(shouldRedockLiveOnPhase("stop_guard"), true);
+    assert.equal(shouldRedockLiveOnPhase("tool"), false);
+    assert.equal(shouldRedockLiveOnPhase("waiting", 1), false);
+    assert.equal(shouldRedockLiveOnPhase("thinking", 2), false);
+  });
+
+  it("prompt-docked stream heartbeat calls onStreamTick, not the stderr reminder", async () => {
+    const ticks: number[] = [];
+    let streaming = false;
+    const indicator = createWorkingIndicator({
+      dockInPrompt: true,
+      streamTickMs: 30,
+      onTick: () => {
+        if (streaming) throw new Error("onTick must stay quiet while streaming");
+      },
+      onStreamTick: (frame) => {
+        ticks.push(frame);
+      },
+    });
+    const writes: string[] = [];
+    const origWrite = process.stderr.write.bind(process.stderr);
+    process.stderr.write = ((chunk: unknown) => {
+      writes.push(String(chunk));
+      return true;
+    }) as typeof process.stderr.write;
+    try {
+      indicator.start();
+      streaming = true;
+      indicator.setStreaming(true);
+      await new Promise((r) => setTimeout(r, 450));
+    } finally {
+      process.stderr.write = origWrite;
+      indicator.stop();
+    }
+    assert.ok(ticks.length >= 1, "expected at least one stream heartbeat");
+    assert.ok(
+      !writes.some((w) => w.includes("still working")),
+      "wired onStreamTick must not fall back to the stderr reminder",
+    );
   });
 });

@@ -66,8 +66,11 @@ import {
   renderIdleStatusLine,
   renderLiveRunHeader,
   renderTurnFooter,
+  formatSessionDetails,
   formatLiveControlFeedback,
+  formatBackgroundTasksList,
   createWorkingIndicator,
+  shouldRedockLiveOnPhase,
   type StatusBarContext,
 } from "./status-bar.js";
 import { createBottomStatusDock } from "./bottom-status.js";
@@ -240,6 +243,8 @@ export async function runRepl(opts: {
   let liveFrame = 0;
   /** When true, token stream has taken stdout — re-dock prompt after */
   let streamActive = false;
+  /** Per-turn hook: reprint live › below a long token stream (10s heartbeat). */
+  let onStreamHeartbeat: (() => void) | null = null;
 
   /**
    * Mid-run prompt — THE visible status dock (spin + phase + live ›).
@@ -286,6 +291,9 @@ export async function runRepl(opts: {
         /* ignore */
       }
     },
+    onStreamTick: () => {
+      onStreamHeartbeat?.();
+    },
   });
 
   pulseHeartbeat();
@@ -329,7 +337,7 @@ export async function runRepl(opts: {
       verboseToolOutput = !verboseToolOutput;
       const msg = verboseToolOutput
         ? "Tool detail: diffs + full output under each tool line (/verbose to minimize)"
-        : "Tool detail: status lines only (/verbose for diffs + output)";
+        : "Tool detail: status lines + error tails (/verbose for diffs + full output)";
       if (busy) {
         console.log(formatLiveControlFeedback(text, msg, "ok"));
         livePrompt();
@@ -648,6 +656,16 @@ export async function runRepl(opts: {
       livePrompt({ freshLine: true });
     };
 
+    /**
+     * Long token streams park `live ›` above the reply. Heartbeat reprints
+     * it below the current line so /cycle 0 stays reachable without
+     * flushing the markdown renderer (partial tokens stay intact).
+     */
+    onStreamHeartbeat = () => {
+      if (!busy || !streamActive) return;
+      livePrompt({ freshLine: true });
+    };
+
     try {
       const result = await runAgentLoopThroughDrops({
         config,
@@ -681,9 +699,10 @@ export async function runRepl(opts: {
             console.error(formatToolStart(name, args));
           },
           onToolEnd: (name, r) => {
-            // Minimal by default: one status line per tool. Diffs and output
-            // heads are display-only (zero model tokens) but cost render time
-            // and scroll noise on unattended runs — opt in with /verbose.
+            // Minimal by default: one status line per tool. Success diffs
+            // and full output stay /verbose (scroll noise on unattended
+            // runs). Failures always show a short tail — "✗ bash 12ms"
+            // with no reason is worse than a few extra lines.
             console.error(formatToolEnd(name, r));
             if (verboseToolOutput) {
               if (r.diff) {
@@ -694,6 +713,9 @@ export async function runRepl(opts: {
                 });
                 if (head) console.error(head);
               }
+            } else if (r.isError && r.output) {
+              const tail = formatToolOutputHead(r.output, { tail: true });
+              if (tail) console.error(tail);
             }
           },
           onToolSettled: () => {
@@ -717,14 +739,9 @@ export async function runRepl(opts: {
               working.setStreaming(false);
               sawToken = false;
               setToolHold(true);
-            } else if (
-              (phase === "thinking" ||
-                phase === "compacting" ||
-                phase === "stop_guard") &&
-              pendingTools === 0
-            ) {
+            } else if (shouldRedockLiveOnPhase(phase, pendingTools)) {
               setToolHold(false);
-              if (streamActive || sawToken) {
+              if (streamActive || sawToken || phase === "stop_guard") {
                 redockLive();
                 sawToken = false;
               } else {
@@ -732,9 +749,6 @@ export async function runRepl(opts: {
                 streamActive = false;
                 // Refresh prompt in place for phase change
                 livePrompt({ freshLine: false });
-              }
-              if (phase === "stop_guard") {
-                redockLive();
               }
             }
           },
@@ -911,6 +925,7 @@ export async function runRepl(opts: {
         log.error((err as Error).message);
       }
     } finally {
+      onStreamHeartbeat = null;
       endTurn();
       busy = false;
       abortController = null;

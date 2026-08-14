@@ -4779,6 +4779,7 @@ const result = rewindSessionDetailed(opts.session, n);
         handled: true,
         output:
           "Tool detail is a REPL toggle (session-local, not persisted).\n" +
+          "  Default: one status line per tool; failed tools also show a short error tail.\n" +
           "  Interactive: type /verbose to show diffs + full tool output; again to minimize.\n" +
           "  Headless (`forge run`) already prints full tool output — nothing to toggle.",
       };

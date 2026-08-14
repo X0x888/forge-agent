@@ -90,4 +90,32 @@ describe("formatToolOutputHead", () => {
     assert.equal(formatToolOutputHead(""), "");
     assert.equal(formatToolOutputHead("   \n  "), "");
   });
+
+  test("error tail mode shows the last lines (failures live at the end)", () => {
+    const out = [
+      "npm test",
+      ...Array.from({ length: 20 }, (_, i) => `ok ${i}`),
+      "not ok 21 — expected 2",
+      "  AssertionError: expected 2",
+      "    at file:///tmp/t.test.ts:10:5",
+    ].join("\n");
+    const head = formatToolOutputHead(out, { tail: true, maxLines: 4 });
+    const lines = head.split("\n");
+    assert.equal(lines.length, 5);
+    assert.ok(head.includes("… (20 more lines · /verbose to show all)"));
+    assert.ok(head.includes("ok 19"));
+    assert.ok(head.includes("not ok 21"));
+    assert.ok(head.includes("AssertionError"));
+    assert.ok(!head.includes("npm test"));
+    assert.ok(!head.includes("ok 0"));
+  });
+
+  test("error tail on short output is just the output", () => {
+    const head = formatToolOutputHead("ENOENT: no such file\nFile: src/missing.ts", {
+      tail: true,
+    });
+    assert.ok(head.includes("ENOENT"));
+    assert.ok(head.includes("File: src/missing.ts"));
+    assert.ok(!head.includes("more lines"));
+  });
 });

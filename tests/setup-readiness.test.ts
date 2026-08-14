@@ -210,6 +210,7 @@ describe("hints", () => {
     assert.equal(shouldShowFirstPermissionHint([]), true);
     assert.equal(shouldShowFirstPermissionHint(["first_permission"]), false);
     assert.match(FIRST_PERMISSION_HINT, /acceptEdits/);
+    assert.match(FIRST_PERMISSION_HINT, /Enter \/ y = once/);
   });
 });
 

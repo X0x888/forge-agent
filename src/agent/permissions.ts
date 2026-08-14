@@ -790,29 +790,25 @@ export class PermissionGate {
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
       const question = rl.question(
-        mcpAlwaysReady
-          ? `Allow? [y]es once / [a]lways: ${alwaysGrantLabel(alwaysTool, String(alwaysPattern))}` +
-            (alwaysPattern !== "*" && alwaysTool !== "bash"
-              ? " (dir · nested ok)"
-              : " in this workspace") +
-            ` / [s]ession tool / [n]o:${timeoutNote} `
-          : `Allow? [y]es once / [n]o (name a server__tool to persist [a]lways):${timeoutNote} `,
+        formatPermissionAskPrompt({
+          mcpAlwaysReady,
+          alwaysTool,
+          alwaysPattern: String(alwaysPattern),
+          timeoutNote,
+        }),
       );
-      const ans = (
-        await (timeoutMs > 0
-          ? Promise.race([
-              question,
-              new Promise<string>((resolve) => {
-                timer = setTimeout(() => resolve("__timeout__"), timeoutMs);
-                timer.unref?.();
-              }),
-            ])
-          : question)
-      )
-        .trim()
-        .toLowerCase();
+      const ans = await (timeoutMs > 0
+        ? Promise.race([
+            question,
+            new Promise<string>((resolve) => {
+              timer = setTimeout(() => resolve("__timeout__"), timeoutMs);
+              timer.unref?.();
+            }),
+          ])
+        : question);
 
-      if (ans === "__timeout__") {
+      const kind = parsePermissionAskAnswer(ans);
+      if (kind === "timeout") {
         const secs = Math.round(timeoutMs / 1000);
         console.error(
           chalk.red(
@@ -834,10 +830,10 @@ export class PermissionGate {
             `Raise FORGE_PERMISSION_TIMEOUT_MS, use /permissions acceptEdits, or --permission-mode dontAsk for unattended runs.`,
         };
       }
-      if (ans === "n" || ans === "no") {
+      if (kind === "deny") {
         return { decision: "deny", reason: "user_reject" };
       }
-      if (ans === "s" || ans === "session") {
+      if (kind === "session") {
         if (isMcpInvocationTool(alwaysTool)) {
           if (!mcpAlwaysReady || !alwaysPattern || alwaysPattern === "*") {
             return { decision: "deny", reason: "user_session_mcp_needs_target" };
@@ -848,7 +844,7 @@ export class PermissionGate {
         this.sessionTools.add(toolName);
         return { decision: "allow_session", reason: "session_tool" };
       }
-      if (ans === "a" || ans === "always") {
+      if (kind === "always") {
         if (!mcpAlwaysReady || !alwaysPattern || alwaysPattern === "*") {
           return { decision: "deny", reason: "user_always_needs_target" };
         }
@@ -872,6 +868,43 @@ export class PermissionGate {
       rl.close();
     }
   }
+}
+
+export type PermissionAskKind =
+  | "timeout"
+  | "deny"
+  | "session"
+  | "always"
+  | "allow_once";
+
+/** Empty Enter / y / yes / anything else that is not n|s|a = allow once. */
+export function parsePermissionAskAnswer(raw: string): PermissionAskKind {
+  const ans = raw.trim().toLowerCase();
+  if (ans === "__timeout__") return "timeout";
+  if (ans === "n" || ans === "no") return "deny";
+  if (ans === "s" || ans === "session") return "session";
+  if (ans === "a" || ans === "always") return "always";
+  return "allow_once";
+}
+
+export function formatPermissionAskPrompt(opts: {
+  mcpAlwaysReady: boolean;
+  alwaysTool: string;
+  alwaysPattern: string;
+  timeoutNote: string;
+}): string {
+  if (opts.mcpAlwaysReady) {
+    const scope =
+      opts.alwaysPattern !== "*" && opts.alwaysTool !== "bash"
+        ? " (dir · nested ok)"
+        : " in this workspace";
+    return (
+      `Allow? ↵/[y] once / [a]lways: ${alwaysGrantLabel(opts.alwaysTool, opts.alwaysPattern)}` +
+      scope +
+      ` / [s]ession tool / [n]o:${opts.timeoutNote} `
+    );
+  }
+  return `Allow? ↵/[y] once / [n]o (name a server__tool to persist [a]lways):${opts.timeoutNote} `;
 }
 
 /**

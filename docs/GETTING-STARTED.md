@@ -33,11 +33,11 @@ A bare `forge` on a TTY also offers this picker if you are not signed in. Headle
   ⚒  Forge v0.9.x
   xai/grok-4.6 · SuperGrok  ·  session a1b2c3d4  ·  perms default  ·  sandbox workspace
 
-  Type a task in English.  Or:  /setup  ·  /help start  ·  /plan
+  Type a task in English.  Or:  /setup  ·  /help start  ·  /plan  ·  Tab starters
   setup 2/6  ·  no spend cap  ·  no AGENTS.md  ·  /setup to finish
 ```
 
-Type a coding task. You do not need a slash command.
+Type a coding task. You do not need a slash command. Empty Tab offers first-day starters (`/help`, `/setup`, `/plan`, …); type `/` then Tab for the full catalog. Permission prompts: **Enter** or `y` allows once.
 
 ## 4. Finish settings (`/setup`)
 

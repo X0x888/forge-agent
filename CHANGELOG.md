@@ -2,12 +2,18 @@
 
 ## Unreleased
 
+### Changed
+- **Failed-tool tails**: default REPL transcript still prints one status line per successful tool, but a failed tool now also shows a 5-line error tail (last lines — test/compiler failures live at the end). `/verbose` still opts into diffs + full output.
+- **Empty-Tab starters**: first Tab on a blank line offers a curated first-day set (`/help`, `/setup`, `/plan`, …) instead of dumping the full slash catalog. Type `/` then Tab for everything.
+- **Permission Enter = allow**: the Allow? prompt now advertises `↵/[y] once`. Empty Enter already allowed once; the prompt hid that.
+
 ### Added
 - **Unattended ULW auto-commit**: when the agent attests **Cycle complete.** and Stop releases, Forge creates a **local** git commit of the session's work (mutation-journal paths, else the dirty tree). Never pushes. Skips plan mode, clean trees, and secrets (`.env`, `*.pem`, `auth.json`, …). `/status` and `forge run --json` show `autoCommit`. Kill-switch: `FORGE_ULW_AUTO_COMMIT=0`.
 - **Dock is the HUD**: idle `forge ›` no longer reprints the model/ctx/plan strip when the bottom dock is on (`FORGE_BOTTOM_STATUS=0` / non-TTY still get a deduped strip). `/verbose` is catalogued (Tab, `/help`, reserved, live-safe, `forge run "/verbose"`); REPL still owns the session-local toggle and shows a `VERBOSE` prompt flag. `/skills` is catalogued next to `/commands`.
 - **First-run UX**: TTY `forge` without credentials offers a login picker (headless/`--json` still fail closed). Slim banner + “Type a task in English.” Grouped `/help` (`start` default, `all` is the catalog, plus `settings`/`harness`/`sessions`/`safety`). `/setup` + `forge setup` first-day hub (model, budget, notify, `/init`, LSP, `forge init` scaffold). Compact `setup N/M` line until recommended items are done or `/setup skip`. Contextual once-hints after first edit / first spend / long turn. `/config` and doctor show attention, MCP, LSP, and a non-blocking setup section. Docs: `docs/GETTING-STARTED.md`. `FORGE_SETUP=0` disables the auto card.
 
 ### Fixed
+- **Live › during streams**: token streaming no longer abandons the `live ›` dock forever. The spinner stays latched (no markdown flicker), but a 10s heartbeat reprints `live ›` with tokens/ctx, and `waiting` / tool / hook phases redock immediately.
 - **Live harness admits stay honest about the working tree**: mid-run admissions no longer reuse the prompt-start git snapshot, so a clean tree at kickoff cannot keep saying `Working tree: clean` after the agent has edited. Mid-loop wave stamps no longer advance `lastDiffFp` on every edit (that made Stop record wave 1 as `net=none`). Auto-commit matches journal paths by realpath/basename and prefers a `Ship landed` decision for the subject instead of the raw truncated mandate.
 - **Honest turn-footer check tip**: after edits with no recorded last-verify, the footer no longer prints a dim `✓ npm test` (read as already-passed). It now says `next npm test` — a suggested check, not a green trail. Recorded `last✓` is unchanged.
 - **Permission-ask timeout env**: tips and `docs/SAFETY.md` named `FORGE_PERMISSION_ASK_TIMEOUT_MS`, but the runtime only read `FORGE_PERMISSION_TIMEOUT_MS`. Both names now work (canonical wins if both are set); recovery copy prints the canonical name.

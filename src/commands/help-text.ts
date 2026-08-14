@@ -39,7 +39,7 @@ Type /help <topic>  (start | all | settings | harness | sessions | safety)
 
 Keys
 ────
-  ↵ sends  ·  ^J newline  ·  ↑↓ history  ·  Tab @path / commands
+  ↵ sends  ·  ^J newline  ·  ↑↓ history  ·  Tab starters · / Tab all · @path
   !cmd runs a shell now  ·  /paste clipboard image  ·  Ctrl+C abort (twice to quit)
 `.trim();
 
@@ -49,7 +49,7 @@ export const HELP_TOUR = `
   1. Type what you want in English. Forge edits the repo, runs checks, and shows a Δ summary.
   2. First time here?  /setup  — confirm model, set a spend cap, write AGENTS.md, turn on /notify.
   3. Unsure about the approach?  /plan  (read-only) then  /build  to implement.
-  4. Permission prompts are normal in default mode. y = once. /permissions acceptEdits to skip asks.
+  4. Permission prompts are normal in default mode. Enter / y = once. /permissions acceptEdits to skip asks.
   5. Long unattended work:  /budget 5  ·  /notify on  ·  /goal <objective>  or  /ulw <task>.
   6. Recover:  /undo  ·  /retry  ·  /checkpoint  ·  /doctor
 
@@ -69,7 +69,7 @@ Settings
   /notify [on|off]    Desktop alert when a turn ends
   /bell [on|off]      Terminal BEL when a turn ends
   /format [on|off]    Format-on-write after file tools
-  /verbose            REPL tool diffs + full output (session-local)
+  /verbose            REPL diffs + full output (failures always show a tail)
   /fallback [models]  Same-provider fallbacks after 429/5xx
   /mcp  /lsp          MCP servers · language servers
   forge setup         Same card from the CLI  ·  forge setup --json
@@ -195,7 +195,7 @@ Forge slash commands
   /bell [on|off|test]   Terminal BEL when a turn ends (long-run attention)  [live]
   /notify [on|off|test] Desktop notify when a turn ends (osascript/notify-send)  [live]
   /format [on|off]      Format-on-write after file tools (prettier/biome/ruff/…)  [live]
-  /verbose              Toggle tool diffs + full output (REPL-local, not persisted)  [live]
+  /verbose              Toggle diffs + full output (failures always show a tail)  [live]
   ask_user              Model tool for clarifying questions (not a slash) — interactive; headless fails closed
   /diff [path]          Git status + diff (argv-safe; pathspecs/refs only)  [live]
   !<command>            Run a shell command now (same permissions as bash)  [live]

@@ -28,7 +28,7 @@ export interface HintPick {
 }
 
 export const FIRST_PERMISSION_HINT =
-  "This is normal in default mode. y = once · /permissions acceptEdits to stop asking.";
+  "This is normal in default mode. Enter / y = once · /permissions acceptEdits to stop asking.";
 
 export function pickTurnEndHint(input: TurnHintInput): HintPick | null {
   if (input.skip) return null;
