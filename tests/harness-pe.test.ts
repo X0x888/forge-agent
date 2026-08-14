@@ -216,20 +216,24 @@ describe("context admit (OpenCode-inspired)", () => {
 describe("todo nudge + gate", () => {
   beforeEach(() => clearTodoGateState());
 
-  it("nudges after several turns without todo_write under harness", () => {
+  it("does not nag an empty board into ceremony", () => {
     const sid = "nudge-1";
     resetTodoNudgeForPrompt(sid);
+    for (let i = 0; i < 12; i++) noteAssistantTurn(sid);
     assert.equal(
       maybeTodoNudge({ sessionId: sid, harnessActive: true, openTodoCount: 0 }),
       null,
     );
-    noteAssistantTurn(sid);
-    noteAssistantTurn(sid);
-    noteAssistantTurn(sid);
+  });
+
+  it("nudges a stale open board after many turns", () => {
+    const sid = "nudge-1b";
+    resetTodoNudgeForPrompt(sid);
+    for (let i = 0; i < 16; i++) noteAssistantTurn(sid);
     const msg = maybeTodoNudge({
       sessionId: sid,
       harnessActive: true,
-      openTodoCount: 0,
+      openTodoCount: 2,
     });
     assert.ok(msg);
     assert.match(msg!, /TodoNudge/);

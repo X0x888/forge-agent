@@ -185,22 +185,21 @@ export function isEvaluateClassMandate(mandate: string): boolean {
 export function isBroadMandate(mandate: string): boolean {
   const raw = mandate.replace(/\r\n/g, "\n");
   const t = raw.replace(/\s+/g, " ").trim();
-  // Keyword class first — a 74-char "comprehensively evaluate… then improve…"
-  // is the ULW product case and must not require 80 characters.
-  if (isEvaluateClassMandate(t)) return true;
-  if (t.length < 80) return false;
-  if (
-    /comprehensively|end.to.end|full.?audit|all aspects|improve (this|the) app/i.test(
-      t,
-    )
-  ) {
-    return true;
-  }
-  // Multi-bullet checklist even after whitespace collapse ("- a - b - c")
+  // Evaluate-class ("evaluate then improve") is a verb order, not a backlog.
+  // A 1-sentence product prompt must not force todo_write ≥2 and then
+  // "execute the board" as leftover chrome for five hours.
   const dashBullets = (t.match(/(?:^|\s)[-*•]\s+\S/g) || []).length;
   if (dashBullets >= 4) return true;
   const bullets = extractMandateBullets(raw);
-  return bullets.length >= 5;
+  if (bullets.length >= 5) return true;
+  // Long multi-section prose — not the 1-sentence evaluate-then-improve case.
+  if (
+    t.length >= 160 &&
+    /comprehensively|end.to.end|full.?audit|all aspects/i.test(t)
+  ) {
+    return true;
+  }
+  return false;
 }
 
 export function appendMemoryRecord(

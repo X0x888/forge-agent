@@ -635,7 +635,7 @@ export function verifyHintSuffix(cwd: string, filePath?: string): string {
  * before more churn — reduces "shall I run tests?" steering.
  *
  * Returns empty when disabled, no checks known, or verification is still fresh.
- * FORGE_AUTO_VERIFY_NUDGE=0 disables. Threshold via FORGE_AUTO_VERIFY_EDIT_THRESHOLD (default 3).
+ * FORGE_AUTO_VERIFY_NUDGE=0 disables. Threshold via FORGE_AUTO_VERIFY_EDIT_THRESHOLD (default 8).
  */
 export function midLoopVerifyNudge(sessionMeta: {
   editCount?: number;
@@ -650,7 +650,7 @@ export function midLoopVerifyNudge(sessionMeta: {
     1,
     Math.min(
       20,
-      Number.parseInt(process.env.FORGE_AUTO_VERIFY_EDIT_THRESHOLD || "3", 10) || 3,
+      Number.parseInt(process.env.FORGE_AUTO_VERIFY_EDIT_THRESHOLD || "8", 10) || 8,
     ),
   );
   const edits = Number(sessionMeta.editCount || 0);

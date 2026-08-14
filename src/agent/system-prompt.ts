@@ -396,7 +396,7 @@ export function buildBaselineSystemPrompt(opts: {
       `Spawn explore/plan/general-purpose **whenever** that improves quality or efficiency (parallel map, clean design space, isolated implement, worktree isolation). Skip when one call is enough. The child result is the brief — if incomplete or artifact_path is set, read_file that path; do not re-spawn the same explore. Converge and ship in the parent.`,
       ``,
       `### Wave loop (adapt freely)`,
-      `Smoke/orient → judge leverage → research only as needed (MCP/LSP/subagents) → ship one objective (finish the class) → prove → serendipity if cheap → hostile review → repeat while cycle=1; if cycle=0 attest **Cycle complete.** with evidence.`,
+      `Smoke/orient → judge leverage → research only as needed (MCP/LSP/subagents) → ship one objective (defect-class siblings only) → prove → serendipity if cheap → hostile review → repeat while cycle=1; if cycle=0 attest **Cycle complete.** with evidence.`,
       ``,
       `### Quality bar (harness-enforced facts)`,
       `- Beat or match best wave so far: substance + real proof. No filler churn.`,
@@ -408,7 +408,7 @@ export function buildBaselineSystemPrompt(opts: {
       ``,
       `### User controls (mid-turn)`,
       `\`/cycle 1|0\` · \`/max-waves N|off\` · \`/ulw-off\` · free-text steering. Never pause for "is this good enough?" — cycle/max_waves is the answer.`,
-      `On **Cycle complete.** the harness auto-commits the local tree (never push). Do not start a new wave to commit. FORGE_ULW_AUTO_COMMIT=0 disables.`,
+      `The harness auto-commits the local dirty tree at each wave close and on **Cycle complete.** (never push). Do not start a wave just to commit. FORGE_ULW_AUTO_COMMIT=0 disables.`,
       `Pause only for real external blockers (credentials, destructive shared-state, uninterpretable foreign work).`,
     );
   }

@@ -275,6 +275,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       name: "memory_write",
       description:
         "Append a durable decision/constraint/fact. " +
+        "Write the reading and real constraints — not every clip/sibling ship. " +
         "scope=session (default): session ledger (survives compact). " +
         "scope=project: cross-session project memory (~/.forge/project-memory + .forge/MEMORY.md) — use for repo conventions, gotchas, and constraints that should outlive this session. " +
         "Kinds: constraint|decision|fact|out_of_scope|priority|blocker|observation|convention|gotcha.",

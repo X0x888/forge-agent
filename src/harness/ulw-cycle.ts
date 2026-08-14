@@ -1761,7 +1761,7 @@ export function ulwKickoffMessage(state: UlwCycleState): string {
     `- Counters RIGHT NOW: **${formatUlwCounts(state)}**  ${state.cycle === 1 ? "(CONTINUE — god-mode relentless loops)" : "(LAST cycle)"}`,
     `- The user can flip cycle any time with /cycle 0 or /cycle 1 — including while you are mid-turn (live controls). Independent of your opinion of "done".`,
     `- While cycle=1, the harness blocks Stop and forces the research→judge→implement→prove→serendipity→review→repeat loop.`,
-    `- When cycle=0, finish the current wave and attest **Cycle complete.** The harness then commits the local diff (never pushes). FORGE_ULW_AUTO_COMMIT=0 off.`,
+    `- When cycle=0, finish the current wave and attest **Cycle complete.** The harness commits the dirty tree at each wave close and on Cycle complete (never pushes). FORGE_ULW_AUTO_COMMIT=0 off.`,
     cap != null
       ? `- max_waves=${cap}: when the wave counter reaches ${cap}, the harness auto-flips to LAST (finish + **Cycle complete.**). ${formatCappedWaveDoctrine(cap, state.mandate)}`
       : `- max_waves: off (unlimited). User may set /max-waves N mid-run. Prefer a cap on unattended multi-hour runs (spend valve — not a substitute for decision memory).`,

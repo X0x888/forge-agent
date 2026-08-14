@@ -69,8 +69,8 @@ describe("TodoGate advisory release", () => {
     const sid = "tg-nudge-adv";
     clearTodoGateState(sid);
     resetTodoNudgeForPrompt(sid);
-    // Become eligible: enough assistant turns without todo_write
-    for (let i = 0; i < 5; i++) noteAssistantTurn(sid);
+    // Become eligible: stale open board (16 turns without todo_write)
+    for (let i = 0; i < 16; i++) noteAssistantTurn(sid);
     const work = maybeTodoNudge({
       sessionId: sid,
       harnessActive: true,

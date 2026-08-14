@@ -56,8 +56,8 @@ Please comprehensively audit and improve this app:
       "comprehensively evaluate this tool and then improve the ui and ux of it.";
     assert.equal(
       isBroadMandate(short),
-      true,
-      "the product case must not require 80 characters",
+      false,
+      "evaluate-then-improve is a verb order, not a ≥2-item backlog",
     );
     assert.equal(isEvaluateClassMandate(short), true);
     const clauses = extractMandateBullets(short);

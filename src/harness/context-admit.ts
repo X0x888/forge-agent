@@ -258,7 +258,7 @@ export function renderHarnessAdmission(s: HarnessSnapshot): string {
       `Harness w=N/M is the only wave counter. Do not invent Wave K. Close a unit with Wave shipped. / Ship landed: so w can move.`,
       s.mandate ? `Mandate: ${s.mandate}` : "",
       s.softPrompt
-        ? `Soft original prompt — keep discovering real gaps; do not ask what to improve.`
+        ? `Soft original prompt — invent high-leverage work; after the reading's ship, change surface or close. Do not hunt leftover chrome.`
         : "",
     );
   } else {

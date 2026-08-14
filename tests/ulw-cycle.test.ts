@@ -66,7 +66,7 @@ describe("ulw cycle", () => {
     process.env.FORGE_HOME = tmp;
     const sid = "ulw-eval-cap";
     const s = armUlwCycle(sid, mandate, { cycle: 1, maxWaves: 2 });
-    assert.equal(s.backlogRequired, true);
+    assert.equal(s.backlogRequired, false);
     assert.equal(s.judgmentRequired, true);
     const kick = ulwKickoffMessage(s);
     assert.match(kick, /max_waves=2/);

@@ -35,8 +35,9 @@ export interface TodoGateConfig {
 
 export const DEFAULT_TODO_NUDGE: TodoNudgeConfig = {
   enabled: true,
-  turnsSinceTodoWrite: 3,
-  turnsBetweenReminders: 5,
+  /** Empty board: plan once. An open board is being executed — do not nag. */
+  turnsSinceTodoWrite: 8,
+  turnsBetweenReminders: 12,
   maxNudgesPerPrompt: 2,
 };
 
@@ -101,7 +102,11 @@ export function maybeTodoNudge(opts: {
 
   const s = getTodoNudgeState(opts.sessionId);
   if (s.nudgesThisPrompt >= cfg.maxNudgesPerPrompt) return null;
-  if (s.turnsSinceTodoWrite < cfg.turnsSinceTodoWrite) return null;
+  // Empty board: the next ship may already be obvious (evaluate-class).
+  // Do not force a ceremony board. Open board: only nudge when stale.
+  if (opts.openTodoCount <= 0) return null;
+  const need = Math.max(cfg.turnsSinceTodoWrite * 2, 16);
+  if (s.turnsSinceTodoWrite < need) return null;
 
   // Space out nudges
   if (
@@ -115,16 +120,10 @@ export function maybeTodoNudge(opts: {
   s.nudgesThisPrompt += 1;
   s.turnsSinceTodoWrite = 0; // reset streak so turnsBetween applies
 
-  const openHint =
-    opts.openTodoCount > 0
-      ? `${opts.openTodoCount} open todo(s) on the board — advance or close them.`
-      : `No todos recorded yet — create a short wave plan with todo_write, then execute.`;
-
   return [
     `[Forge system-reminder — TodoNudge]`,
-    `Multi-step harness work is active and it has been several turns without todo_write.`,
-    openHint,
-    `Update todos now, then continue. Do not stop solely to discuss the plan.`,
+    `${opts.openTodoCount} open todo(s) have not been updated in a while.`,
+    `Advance the in-progress item with tools, or todo_write to close/reprioritize. Do not rewrite the board for ceremony.`,
   ].join("\n");
 }
 
