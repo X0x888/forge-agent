@@ -45,6 +45,8 @@ describe("live mid-run slash policy", () => {
     assert.equal(classifyLiveSlash("/notify status"), "readonly");
     assert.equal(classifyLiveSlash("/notify on"), "control");
     assert.equal(classifyLiveSlash("/notify off"), "control");
+    assert.equal(classifyLiveSlash("/verbose"), "control");
+    assert.equal(classifyLiveSlash("/skills"), "readonly");
     assert.equal(classifyLiveSlash("/ulw-off"), "control");
     assert.equal(classifyLiveSlash("/tasks"), "readonly");
     assert.equal(classifyLiveSlash("/tasks log abc"), "readonly");
@@ -223,6 +225,29 @@ describe("live mid-run slash policy", () => {
     assert.equal(classifyLiveSlash("/model grok-4.5 high"), "control");
     assert.ok(isLiveSafeSlash("/model"));
     assert.ok(isLiveSafeSlash("/model grok-4"));
+  });
+});
+
+describe("/verbose catalog", () => {
+  it("is a known live-safe slash, not an unknown command", async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-verbose-"));
+    process.env.FORGE_HOME = tmp;
+    const session = createSession({
+      cwd: tmp,
+      provider: "xai",
+      model: "test",
+    });
+    const hooks = new HookRunner(DEFAULT_CONFIG, tmp);
+    const r = await handleSlash("/verbose", {
+      session,
+      config: DEFAULT_CONFIG,
+      hooks,
+    });
+    assert.equal(r.handled, true);
+    assert.match(String(r.output || ""), /REPL toggle/i);
+    assert.doesNotMatch(String(r.output || ""), /Unknown command/i);
+    assert.ok(isLiveSafeSlash("/verbose"));
+    assert.ok(isLiveSafeSlash("/skills"));
   });
 });
 

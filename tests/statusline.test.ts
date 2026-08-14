@@ -286,6 +286,11 @@ describe("statusline", () => {
       assert.match(flags, /w=0/);
       // No last-verify yet → no bare ✓ flag
       assert.doesNotMatch(flags.replace(/\x1b\[[0-9;]*m/g, ""), /✓/);
+      assert.doesNotMatch(flags, /VERBOSE/);
+      assert.match(
+        buildPromptFlags({ config, session: s, auth, verbose: true }),
+        /VERBOSE/,
+      );
 
       const footer = renderTurnFooter(
         { config, session: s, auth },

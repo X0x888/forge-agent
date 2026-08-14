@@ -177,7 +177,6 @@ export async function runRepl(opts: {
     // Live-update prompt flags when bg tasks finish while idle
     if (!busy && bgRunning !== lastKnownBgRunning) {
       lastKnownBgRunning = bgRunning;
-      lastStatusStrip = "";
       refreshIdlePromptFlags();
     } else {
       lastKnownBgRunning = bgRunning;
@@ -194,7 +193,7 @@ export async function runRepl(opts: {
     });
   };
 
-  // statusCtx / lastStatusStrip / rl are declared below; heartbeat uses them
+  // statusCtx / rl are declared below; heartbeat uses them
   // after rl is created — first pulse is deferred until then.
 
   await hooks.run("SessionStart", {
@@ -224,7 +223,7 @@ export async function runRepl(opts: {
 
   /**
    * Sticky bottom dock — model + active-account quota + weekly reset.
-   * Plan is shared into statusCtx so the idle strip / footer stay in sync.
+   * Plan is shared into statusCtx so the footer / /status HUD stay in sync.
    */
   const bottomDock = createBottomStatusDock({
     getContext: () => ({ config, session, auth }),
@@ -235,9 +234,8 @@ export async function runRepl(opts: {
     session,
     auth,
     plan: bottomDock.getPlan(),
+    verbose: verboseToolOutput,
   });
-  /** Avoid reprinting an identical strip on every empty Enter */
-  let lastStatusStrip = "";
   /** Spinner frame for prompt-docked live status */
   let liveFrame = 0;
   /** When true, token stream has taken stdout — re-dock prompt after */
@@ -297,14 +295,18 @@ export async function runRepl(opts: {
   // Always-on bottom status region (model · use% · reset · ctx)
   bottomDock.start();
 
-  /** Idle prompt (forge ›) with status strip above. */
+  /** Dedup idle strip when the dock is off (FORGE_BOTTOM_STATUS=0). */
+  let lastStatusStrip = "";
+  /** Idle prompt (forge ›). Dock is the HUD; reprint the strip only when off. */
   const prompt = (opts?: { forceStatus?: boolean }) => {
-    if (process.stdout.isTTY) {
+    if (!bottomDock.active()) {
       const strip = renderIdleStatusLine(statusCtx());
       if (strip && (opts?.forceStatus || strip !== lastStatusStrip)) {
         console.log(strip);
         lastStatusStrip = strip;
       }
+    } else {
+      lastStatusStrip = "";
     }
     const prefix = buildPromptFlags(statusCtx());
     rl.setPrompt(prefix + chalk.green("forge") + chalk.dim(" › "));
@@ -801,7 +803,6 @@ export async function runRepl(opts: {
           subtitle: session.meta.id.slice(0, 8),
         });
       }
-      lastStatusStrip = ""; // force fresh strip after turn
       try {
         const { appendSessionMetrics, buildRunEndMetrics } = await import(
           "../session/metrics.js"

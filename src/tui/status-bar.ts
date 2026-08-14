@@ -1,9 +1,12 @@
 /**
  * In-REPL status surfaces — so users do not need a second `forge status --watch` pane.
  *
- * 1. Compact strip in the prompt (always-on session health)
+ * 1. Prompt flags (ULW / GOAL / YOLO / bg) on `forge ›`
  * 2. Working indicator during agent turns (phase + elapsed)
  * 3. Post-turn footer (context / tokens / bg / todos)
+ *
+ * Session health (model · ctx · plan) lives on the always-on bottom dock,
+ * not a second idle strip above the prompt.
  */
 import chalk from "chalk";
 import type { ForgeConfig } from "../config/types.js";
@@ -47,6 +50,8 @@ export interface StatusBarContext {
   auth: ResolvedAuth;
   /** Optional plan/quota from bottom dock or /status probe */
   plan?: PlanUsageInfo;
+  /** REPL-local `/verbose` — diffs + full tool output under each tool line */
+  verbose?: boolean;
 }
 
 const SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
@@ -75,7 +80,7 @@ export function buildLiveSnapshot(ctx: StatusBarContext) {
   return snap;
 }
 
-/** Flags shown before `forge ›` — ULW, GOAL, PLAN, YOLO, bg, working. */
+/** Flags shown before `forge ›` — ULW, GOAL, PLAN, YOLO, VERBOSE, bg, working. */
 export function buildPromptFlags(ctx: StatusBarContext): string {
   const flags: string[] = [];
   const { session, config } = ctx;
@@ -130,6 +135,9 @@ export function buildPromptFlags(ctx: StatusBarContext): string {
   if (bgRunning > 0) {
     flags.push(chalk.yellow(`bg:${bgRunning}`));
   }
+  if (ctx.verbose) {
+    flags.push(chalk.cyan("VERBOSE"));
+  }
   if (act.busy) {
     flags.push(chalk.magenta(phaseShort(act)));
   }
@@ -159,8 +167,8 @@ function phaseShort(act: SessionActivity): string {
 }
 
 /**
- * Compact health strip for the line above the prompt (idle).
- * Returns empty string when nothing useful to show (fresh session).
+ * Compact health strip (model · ctx · plan). The idle REPL reprints this
+ * only when the bottom dock is off (`FORGE_BOTTOM_STATUS=0` / non-TTY).
  */
 export function renderIdleStatusLine(ctx: StatusBarContext): string {
   const snap = buildLiveSnapshot(ctx);

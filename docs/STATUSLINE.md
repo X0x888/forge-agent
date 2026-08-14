@@ -61,8 +61,8 @@ HUD/`forge status` project labels append detected **package manager** + cheapest
 | Surface | When | Shows |
 |---------|------|--------|
 | **Bottom status region** | Always (TTY REPL) | Model, auth, ctx %, **use:N%**, used/limit, **reset Nd**, ULW/GOAL/YOLO, bg |
-| **Prompt strip** | Idle, above `forge ›` | Model, context bar, tokens, **plan quota**, todos, `bg:N`, liveness |
-| **Prompt flags** | Idle input | `ULW`, `c=1/0`, `GOAL`, `PLAN`/`YOLO`/`auto`, `bg:N` |
+| **Prompt strip** | Only when the dock is off (`FORGE_BOTTOM_STATUS=0` / non-TTY) | Model, context bar, tokens, **plan quota**, todos, `bg:N`, liveness (deduped) |
+| **Prompt flags** | Idle input | `ULW`, `c=1/0`, `GOAL`, `PLAN`/`YOLO`/`auto`, `VERBOSE`, `bg:N` |
 | **Live run header** | Start of every agent turn | Model, effort, ULW/GOAL, control legend, `live ›` affordance |
 | **Busy status line** | Mid-turn (stderr) | Spinner + phase + model + effort + ULW + `/cycle 0` hint |
 | **Stream ticks** | While tokens stream | Newline status every ~10s (no `\r` garble) |

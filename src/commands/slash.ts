@@ -330,6 +330,7 @@ const LIVE_CONTROL = new Set([
   "/bell",
   "/notify",
   "/format",
+  "/verbose",
   "/budget",
   "/pin",
   "/unpin",
@@ -712,7 +713,9 @@ export const SLASH_COMMANDS = [
   "/accounts",
   "/account",
   "/doctor",
+  "/skills",
   "/commands",
+  "/verbose",
   "/quit",
 ] as const;
 
@@ -4767,6 +4770,17 @@ const result = rewindSessionDetailed(opts.session, n);
             `Usage: /notify [on|off|test|status]`,
         };
       }
+    }
+
+    case "/verbose": {
+      // REPL-local toggle (src/tui/repl.ts). Headless has no transcript dock.
+      return {
+        handled: true,
+        output:
+          "Tool detail is a REPL toggle (session-local, not persisted).\n" +
+          "  Interactive: type /verbose to show diffs + full tool output; again to minimize.\n" +
+          "  Headless (`forge run`) already prints full tool output — nothing to toggle.",
+      };
     }
 
     case "/format": {

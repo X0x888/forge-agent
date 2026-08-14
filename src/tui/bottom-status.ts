@@ -39,6 +39,15 @@ function envDisabled(): boolean {
   return v === "0" || v === "false" || v === "off" || v === "no";
 }
 
+/** True when the sticky dock will paint (TTY + not opted out). */
+export function isBottomStatusEnabled(): boolean {
+  return (
+    Boolean(process.stdout.isTTY) &&
+    !envDisabled() &&
+    process.env.NO_BOTTOM_STATUS !== "1"
+  );
+}
+
 function shortModel(model: string): string {
   const base = model.includes("/") ? model.split("/").pop()! : model;
   return base.replace(/^claude-/, "").replace(/-\d{8}$/, "");
@@ -266,10 +275,7 @@ export interface BottomStatusDockOpts {
 export function createBottomStatusDock(
   opts: BottomStatusDockOpts,
 ): BottomStatusDock {
-  const enabled =
-    Boolean(process.stdout.isTTY) &&
-    !envDisabled() &&
-    process.env.NO_BOTTOM_STATUS !== "1";
+  const enabled = isBottomStatusEnabled();
 
   let running = false;
   let plan: PlanUsageInfo | undefined;

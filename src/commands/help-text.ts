@@ -69,6 +69,7 @@ Settings
   /notify [on|off]    Desktop alert when a turn ends
   /bell [on|off]      Terminal BEL when a turn ends
   /format [on|off]    Format-on-write after file tools
+  /verbose            REPL tool diffs + full output (session-local)
   /fallback [models]  Same-provider fallbacks after 429/5xx
   /mcp  /lsp          MCP servers · language servers
   forge setup         Same card from the CLI  ·  forge setup --json
@@ -193,6 +194,7 @@ Forge slash commands
   /bell [on|off|test]   Terminal BEL when a turn ends (long-run attention)  [live]
   /notify [on|off|test] Desktop notify when a turn ends (osascript/notify-send)  [live]
   /format [on|off]      Format-on-write after file tools (prettier/biome/ruff/…)  [live]
+  /verbose              Toggle tool diffs + full output (REPL-local, not persisted)  [live]
   ask_user              Model tool for clarifying questions (not a slash) — interactive; headless fails closed
   /diff [path]          Git status + diff (argv-safe; pathspecs/refs only)  [live]
   !<command>            Run a shell command now (same permissions as bash)  [live]
@@ -214,7 +216,7 @@ Forge slash commands
   /auth                 Show stored credentials (+ multi-account)  [live]
   /accounts [status|switch|…]  Multi-account list/status/switch/clear-cooldown  [live]
   /doctor               Environment health check  [live]
-  /skills               List skill packs (builtin forge-* · .forge/skills · ~/.forge/skills)
+  /skills               List skill packs (builtin forge-* · .forge/skills · ~/.forge/skills)  [live]
   /commands             List project/user custom slash templates (.forge/commands)  [live]
   /quit                 Exit  [live — aborts run then exits]
 
@@ -225,7 +227,8 @@ Tips
 
 Status (always on — no second panel)
 ────────────────────────────────────
-  Prompt line     Context %, tokens, todos, bg:N, ULW/GOAL flags, liveness
+  Bottom dock     Model · auth · ctx · plan use% · reset · ULW/GOAL
+  Prompt flags    ULW · c=1/0 · GOAL · PLAN/YOLO · VERBOSE · bg:N  (on forge ›)
   While working   Spinner + phase (thinking / tool / compact / harness)
   After each turn Compact footer (ctx · turn tokens · bg · goal)
   /status         Full two-line HUD + session detail

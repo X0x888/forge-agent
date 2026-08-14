@@ -66,6 +66,10 @@ describe("tab completion", () => {
     assert.ok(cfgHits.some((h) => h.startsWith("/config")));
     const [cfgParams] = forgeCompleter("/config ");
     assert.ok(cfgParams.some((h) => h.includes("json")));
+    const [verbHits] = forgeCompleter("/verb");
+    assert.ok(verbHits.some((h) => h.startsWith("/verbose")));
+    const [skillHits] = forgeCompleter("/ski");
+    assert.ok(skillHits.some((h) => h.startsWith("/skills")));
   });
 });
 

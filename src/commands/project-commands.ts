@@ -100,6 +100,7 @@ const RESERVED = new Set([
   "bell",
   "notify",
   "format",
+  "verbose",
   "pin",
   "unpin",
   "diff",

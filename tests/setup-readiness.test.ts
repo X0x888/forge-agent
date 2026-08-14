@@ -248,6 +248,10 @@ describe("grouped help", () => {
     assert.match(all.text, /\/setup/);
     assert.match(HELP_START, /\/help all/);
     assert.match(HELP_ALL, /ask_user is a model tool|ask_user/);
+    assert.match(HELP_ALL, /\/verbose/);
+    assert.match(HELP_ALL, /\/skills/);
+    assert.match(HELP_ALL, /Bottom dock/);
+    assert.match(helpFor("settings").text, /\/verbose/);
   });
 
   it("topics route", () => {
