@@ -93,6 +93,10 @@ Please comprehensively audit and improve this app:
       store.records.some((r) => /Mandate verbs in order/i.test(r.text)),
     );
     assert.ok(store.records.some((r) => /^MANDATE:/i.test(r.text)));
+    assert.equal(
+      store.records.some((r) => /invents high-leverage/i.test(r.text)),
+      false,
+    );
   });
 
   it("treats a Reading: reply as mandate judgment", () => {

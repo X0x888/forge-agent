@@ -190,6 +190,8 @@ import {
 import { tokenizeSimple } from "../agent/shell-parse.js";
 import {
   armUlwCycle,
+  mandateFromUserText,
+  PLACEHOLDER_MANDATE,
   disarmUlwCycle,
   setCycleFlag,
   setMaxWaves,
@@ -2307,7 +2309,10 @@ export async function handleSlash(
       if (!state) {
         // Auto-arm ULW if user sets cycle without /ulw
         opts.session.meta.ultrawork = true;
-        state = armUlwCycle(sid, "continue prior mandate", {
+        const mandate =
+          mandateFromUserText(lastUserText(opts.session)) ||
+          PLACEHOLDER_MANDATE;
+        state = armUlwCycle(sid, mandate, {
           cycle: flag,
           editCount: opts.session.meta.editCount,
         });
@@ -2419,7 +2424,10 @@ export async function handleSlash(
       if (!state) {
         // Auto-arm ULW so the cap is stored for the coming work
         opts.session.meta.ultrawork = true;
-        state = armUlwCycle(sid, "continue prior mandate", {
+        const mandate =
+          mandateFromUserText(lastUserText(opts.session)) ||
+          PLACEHOLDER_MANDATE;
+        state = armUlwCycle(sid, mandate, {
           cycle: 1,
           maxWaves: parsed,
           editCount: opts.session.meta.editCount,

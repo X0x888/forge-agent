@@ -26,6 +26,7 @@ import {
 } from "./decision-memory.js";
 import { createSafetyCheckpoint } from "../util/git-checkpoint.js";
 import { gitDiffFingerprint } from "../util/git-context.js";
+import { looksLikeAdvisoryUserMessage } from "../util/advisory-intent.js";
 
 export type CycleFlag = 0 | 1;
 
@@ -942,6 +943,56 @@ export function isResumeFollowUp(prompt: string): boolean {
   );
 }
 
+/**
+ * Auto-arm token when /cycle, /max-waves, or `forge --ulw` has no work-order
+ * yet. Not a real mandate — adoptUlwMandate replaces it on the first one.
+ * `/ulw` / `improve the codebase` is a real soft default and must NOT match.
+ */
+export const PLACEHOLDER_MANDATE = "continue prior mandate";
+
+export function isUlwKickoffText(text: string): boolean {
+  const t = (text || "").trimStart();
+  return /^## ULW armed\b/i.test(t) || /^## ULW GOD MODE\b/i.test(t);
+}
+
+export function isPlaceholderMandate(mandate: string): boolean {
+  const t = (mandate || "").replace(/\s+/g, " ").trim().toLowerCase();
+  if (!t) return true;
+  if (isResumeFollowUp(t)) return true;
+  return t === PLACEHOLDER_MANDATE;
+}
+
+/**
+ * True when text is safe to become the ULW mandate on /cycle or CLI auto-arm.
+ * Rejects acks, Q&A, kickoff dumps, and the placeholder itself.
+ */
+export function isArmableMandate(text: string): boolean {
+  const t = (text || "").replace(/\s+/g, " ").trim();
+  if (!t || isPlaceholderMandate(t) || t.length < 12) return false;
+  if (isUlwKickoffText(text || "")) return false;
+  if (looksLikeAdvisoryUserMessage(t)) return false;
+  if (
+    /^(thanks|thank you|got it|sounds good|looks good|cool|nice|great|perfect|lgtm)[.!]*$/i.test(
+      t,
+    )
+  ) {
+    return false;
+  }
+  return true;
+}
+
+/** Resolve last-user / CLI prompt to a mandate, or null to keep the placeholder. */
+export function mandateFromUserText(text: string): string | null {
+  const raw = (text || "").trim();
+  if (!raw) return null;
+  if (isUlwKickoffText(raw)) {
+    const m = raw.match(/^Mandate:\s*(.+)$/m);
+    const inner = (m?.[1] || "").trim();
+    return inner && isArmableMandate(inner) ? inner : null;
+  }
+  return isArmableMandate(raw) ? raw.replace(/\s+/g, " ").trim() : null;
+}
+
 /** Soft / weak prompts that need god-scope expansion under ULW. */
 export function isSoftPrompt(prompt: string): boolean {
   const t = prompt.replace(/\s+/g, " ").trim();
@@ -1098,7 +1149,7 @@ export function armUlwCycle(
         ? normalizeMaxWaves(prev.maxWaves)
         : null;
   const cleanMandate =
-    mandate.replace(/\s+/g, " ").trim() || "improve the codebase";
+    mandate.replace(/\s+/g, " ").trim() || PLACEHOLDER_MANDATE;
   // Backlog gate only for multi-section / comprehensive mandates — not every
   // soft "improve the code" (that would stall classic ULW wave tests forever).
   const broad = isBroadMandate(mandate) || isBroadMandate(cleanMandate);
@@ -1178,6 +1229,49 @@ export function armUlwCycle(
     /* memory best-effort at arm; compact fail-closed surfaces corrupt */
   }
   return state;
+}
+
+/**
+ * First real work-order after /cycle or /max-waves auto-armed with a
+ * placeholder. Updates mandate + expansion without resetting the wave ledger.
+ */
+export function adoptUlwMandate(
+  sessionId: string,
+  mandate: string,
+  opts?: { cwd?: string },
+): UlwCycleState | null {
+  const s = loadUlwCycle(sessionId);
+  if (!s?.enabled) return null;
+  const next = mandate.replace(/\s+/g, " ").trim();
+  if (!next || isPlaceholderMandate(next) || isResumeFollowUp(next)) return s;
+  if (isUlwKickoffText(mandate) || !isArmableMandate(next)) return s;
+  if (!isPlaceholderMandate(s.mandate) && s.mandate === next) return s;
+  if (!isPlaceholderMandate(s.mandate)) return s;
+  const { expanded, soft } = expandUlwMandate(next);
+  s.mandate = next;
+  s.expandedMandate = expanded;
+  s.softPrompt = soft;
+  s.backlogRequired = isBroadMandate(next);
+  s.judgmentRequired = isEvaluateClassMandate(next);
+  s.judgmentDemands = 0;
+  if (opts?.cwd && !s.lastDiffFp) {
+    try {
+      const fp = gitDiffFingerprint(opts.cwd);
+      if (fp) {
+        s.lastDiffFp = fp;
+        s.seenDiffFps = [fp];
+      }
+    } catch {
+      /* */
+    }
+  }
+  saveUlwCycle(s);
+  try {
+    seedMemoryFromMandate(sessionId, next, { softPrompt: soft, force: true });
+  } catch {
+    /* */
+  }
+  return s;
 }
 
 export function setCycleFlag(sessionId: string, cycle: CycleFlag): UlwCycleState | null {
@@ -1775,18 +1869,20 @@ export function formatCappedWaveDoctrine(
 /** Injected into the user message path when /ulw arms (soft or hard). */
 export function ulwKickoffMessage(state: UlwCycleState): string {
   const cap = normalizeMaxWaves(state.maxWaves);
-  const mem = formatMemoryForPrompt(state.sessionId, { budget: 4000 });
+  const mem = formatMemoryForPrompt(state.sessionId, { budget: 2_000 });
   return [
-    state.expandedMandate,
+    `## ULW armed`,
+    `Mandate: ${state.mandate}`,
+    `God-mode protocol is in the system prompt — do not re-derive it. Work the mandate.`,
     ``,
     `## Durable decisions / constraints`,
     mem.text,
     `Use memory_write for new decisions; /memory lists the ledger. Compaction must not erase these.`,
     state.checkpointSha
-      ? `Safety checkpoint at arm: ${state.checkpointSha} (tree untouched). Restore: /checkpoint restore or git stash apply ${state.checkpointSha}`
+      ? `Safety checkpoint at arm: ${state.checkpointSha.slice(0, 12)}…  · /checkpoint restore`
       : null,
     ``,
-    `## ULW runtime controls (read carefully)`,
+    `## ULW runtime controls`,
     `- Counters RIGHT NOW: **${formatUlwCounts(state)}**  ${state.cycle === 1 ? "(CONTINUE — god-mode relentless loops)" : "(LAST cycle)"}`,
     `- The user can flip cycle any time with /cycle 0 or /cycle 1 — including while you are mid-turn (live controls). Independent of your opinion of "done".`,
     `- While cycle=1, the harness blocks Stop and forces the research→judge→implement→prove→serendipity→review→repeat loop.`,

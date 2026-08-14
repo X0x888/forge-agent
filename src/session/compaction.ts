@@ -57,6 +57,14 @@ const DEFAULT_KEEP_LAST = DEFAULT_CHECKPOINT_KEEP_STEPS;
 /** Do not re-inject the 5k god-mode dump as "last user request" after compact. */
 export function clipUserMandate(raw: string): string {
   const t = raw.trim();
+  // Slim kickoff (protocol lives in the system prompt).
+  if (/^## ULW armed\b/m.test(t)) {
+    const m = t.match(/^Mandate:\s*(.+)$/m);
+    const mandate = (m?.[1] || "").trim();
+    if (mandate) {
+      return `${mandate}  [ulw kickoff clipped — protocol is in the system prompt]`;
+    }
+  }
   const signal = t.match(/User signal[^:]*:\s*"([^"]+)"/i);
   if (signal && /ULW GOD MODE|god-mode|full operational ownership/i.test(t)) {
     return `"${signal[1]}"  [expanded mandate in ulw.json — do not re-derive or restart leftover-chrome hunting]`;
@@ -176,14 +184,8 @@ export function buildStructuredSummary(
       mandateFull.length <= 1200
         ? `- Mandate: ${mandateFull || "(none)"}`
         : `- Mandate (head): ${mandateFull.slice(0, 400)}… [full in ulw.json + decisions.json]`;
-    const expandedRaw = ulw.expandedMandate || "";
-    const expandedLine = expandedRaw
-      ? advisory
-        ? `- Expanded mandate (head, suspended while ADVISORY/Q&A): ${expandedRaw.slice(0, 400)}`
-        : expandedRaw.length <= 900
-          ? `- Expanded mandate: ${expandedRaw}`
-          : `- Expanded mandate (head): ${expandedRaw.slice(0, 500)}… [ulw.expandedMandate]`
-      : "";
+    // Never re-inject expandedMandate (the 5k god-mode dump). Protocol is
+    // already in the cache-stable system prompt.
     const ledger = formatWaveLedger(ulw.waves, 8);
     sections.push(
       `- ULW ON | ${formatUlwCounts(ulw)} ${ulw.cycle === 1 ? "(CONTINUE)" : "(LAST)"}`,
@@ -192,7 +194,6 @@ export function buildStructuredSummary(
       ledger ? `- Ledger: ${ledger}` : "",
       mandateLine,
       softLine,
-      expandedLine,
     );
   } else {
     sections.push(`- ULW: off`);

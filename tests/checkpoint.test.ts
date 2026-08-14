@@ -156,6 +156,22 @@ describe("checkpoint compact", () => {
     assert.match(clipped, /ulw\.json/);
   });
 
+  it("clipUserMandate clips the slim ULW kickoff to the Mandate line", () => {
+    const kick = [
+      "## ULW armed",
+      "Mandate: comprehensively evaluate this tool and then improve the ui and ux of it.",
+      "God-mode protocol is in the system prompt — do not re-derive it. Work the mandate.",
+      "",
+      "## Durable decisions / constraints",
+      "- [constraint] MANDATE: comprehensively evaluate this tool",
+      "- " + "x".repeat(400),
+    ].join("\n");
+    const clipped = clipUserMandate(kick);
+    assert.match(clipped, /comprehensively evaluate this tool/);
+    assert.doesNotMatch(clipped, /Durable decisions/);
+    assert.doesNotMatch(clipped, /God-mode protocol is in the system prompt/);
+  });
+
   it("job card still names mandate if dropped span is deleted", () => {
     withForgeHome(() => {
       const sid = "sess-ckpt-card";

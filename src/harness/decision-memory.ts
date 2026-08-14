@@ -306,7 +306,9 @@ export function seedMemoryFromMandate(
       if (r) seeded++;
     });
   }
-  if (opts?.softPrompt) {
+  // Evaluate-class already has a verb-order contract. The generic
+  // "invent work" line used to survive compact and restart chrome grinding.
+  if (opts?.softPrompt && !isEvaluateClassMandate(mandate)) {
     const r = appendMemoryRecord(sessionId, {
       kind: "decision",
       text: "Soft mandate: agent invents high-leverage work; never ask user to pick tasks.",

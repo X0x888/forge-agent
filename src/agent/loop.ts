@@ -46,6 +46,9 @@ import { loadGoal, detectAutoGoal, armGoal } from "../harness/goal.js";
 import {
   loadUlwCycle,
   armUlwCycle,
+  adoptUlwMandate,
+  isPlaceholderMandate,
+  isArmableMandate,
   maybeFlipUlwToLastOnSafetyValve,
   ulwKickoffMessage,
   formatUlwCounts,
@@ -602,10 +605,20 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
         `ULW cycle armed (cycle=1)${ulw.softPrompt ? " — soft prompt expanded to god-scope" : ""}`,
       );
       effectiveUserMessage = ulwKickoffMessage(ulw);
+    } else if (
+      isPlaceholderMandate(ulw.mandate) &&
+      isArmableMandate(userMessage)
+    ) {
+      // /cycle or /max-waves armed first with a placeholder. This message
+      // is the real work — do not treat it as steering.
+      ulw =
+        adoptUlwMandate(session.meta.id, userMessage, { cwd: workspace }) ||
+        ulw;
+      effectiveUserMessage = ulwKickoffMessage(ulw);
+      log.info(`ULW mandate adopted from first real user turn`);
     }
-    // Already armed: the user's text is steering, not a new mandate.
-    // Re-arming replaced "evaluate then improve" with "continue" and
-    // dumped another 5k god-mode kickoff. Explicit /ulw <new> still re-arms.
+    // Already armed with a real mandate: user text is steering.
+    // Explicit /ulw <new> still re-arms.
   }
 
   if (!opts.resumeWithoutUserMessage) {

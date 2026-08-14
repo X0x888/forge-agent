@@ -2052,11 +2052,9 @@ describe("compact advisory intent", () => {
     );
     assert.match(withSoft, /ADVISORY\/Q&A/i);
     assert.match(withSoft, /suspended while Intent is ADVISORY/i);
-    // compaction.ts uses "head" (truncated expanded mandate), not "abbrev"
-    assert.match(
-      withSoft,
-      /Expanded mandate \(head, suspended while ADVISORY/i,
-    );
+    // Compact must not re-inject expandedMandate (the 5k god-mode dump).
+    assert.doesNotMatch(withSoft, /god scope expand/i);
+    assert.doesNotMatch(withSoft, /Expanded mandate/i);
 
     const withGoal = buildStructuredSummary(
       [

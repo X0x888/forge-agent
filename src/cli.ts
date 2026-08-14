@@ -123,6 +123,8 @@ import {
   loadUlwCycle,
   formatUlwCounts,
   normalizeMaxWaves,
+  mandateFromUserText,
+  PLACEHOLDER_MANDATE,
 } from "./harness/ulw-cycle.js";
 import { openTodos } from "./agent/todos.js";
 import { formatEffectiveConfig, runDoctorCheck } from "./commands/slash.js";
@@ -612,7 +614,8 @@ Docs: docs/GETTING-STARTED.md · docs/PRODUCTION.md · docs/RELIABILITY.md · do
         const wantUlw = Boolean(opts.ulw) || maxWavesOpt !== undefined;
         if (wantUlw) {
           session.meta.ultrawork = true;
-          const mandate = prompt || "improve the codebase";
+          const mandate =
+            mandateFromUserText(prompt || "") || PLACEHOLDER_MANDATE;
           const maxWaves =
             maxWavesOpt === undefined ? undefined : maxWavesOpt;
           const state = armUlwCycle(session.meta.id, mandate, {
@@ -1161,12 +1164,16 @@ Docs: docs/PRODUCTION.md
           Boolean(runOpts.ulw || runOpts.goal) || maxWavesOpt !== undefined;
         if (wantUlw) {
           session.meta.ultrawork = true;
-          armUlwCycle(session.meta.id, prompt, {
-            cwd: session.meta.cwd || process.cwd(),
-            cycle: 1,
-            editCount: session.meta.editCount,
-            ...(maxWavesOpt !== undefined ? { maxWaves: maxWavesOpt } : {}),
-          });
+          armUlwCycle(
+            session.meta.id,
+            mandateFromUserText(prompt || "") || PLACEHOLDER_MANDATE,
+            {
+              cwd: session.meta.cwd || process.cwd(),
+              cycle: 1,
+              editCount: session.meta.editCount,
+              ...(maxWavesOpt !== undefined ? { maxWaves: maxWavesOpt } : {}),
+            },
+          );
           saveSession(session);
         }
       }

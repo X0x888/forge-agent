@@ -12,6 +12,11 @@ import {
   evaluateUlwAtStop,
   isSoftPrompt,
   isResumeFollowUp,
+  isPlaceholderMandate,
+  isArmableMandate,
+  mandateFromUserText,
+  PLACEHOLDER_MANDATE,
+  adoptUlwMandate,
   expandUlwMandate,
   loadUlwCycle,
   copyUlwCycle,
@@ -75,6 +80,73 @@ describe("ulw cycle", () => {
       formatCappedWaveDoctrine(2, mandate),
       /evaluation|first verb/i,
     );
+    assert.match(kick, /Mandate: comprehensively evaluate/);
+    assert.doesNotMatch(kick, /ULW GOD MODE \(soft user signal/);
+  });
+
+  it("adopts a real mandate after /cycle placeholder arm", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-ulw-adopt-"));
+    process.env.FORGE_HOME = tmp;
+    const sid = "ulw-adopt";
+    armUlwCycle(sid, PLACEHOLDER_MANDATE, {
+      cycle: 1,
+      skipCheckpoint: true,
+    });
+    assert.equal(isPlaceholderMandate(PLACEHOLDER_MANDATE), true);
+    assert.equal(isPlaceholderMandate("improve the codebase"), false);
+    assert.equal(isPlaceholderMandate(""), true);
+    assert.equal(
+      isPlaceholderMandate(
+        "comprehensively evaluate this tool and then improve the ui and ux of it.",
+      ),
+      false,
+    );
+    assert.equal(isArmableMandate("improve the codebase"), true);
+    assert.equal(isArmableMandate("thanks"), false);
+    assert.equal(isArmableMandate("sounds good!"), false);
+    assert.equal(
+      isArmableMandate("what do you think about the landing page?"),
+      false,
+    );
+    const kick = [
+      "## ULW armed",
+      "Mandate: comprehensively evaluate this tool and then improve the ui.",
+      "God-mode protocol is in the system prompt — do not re-derive it.",
+    ].join("\n");
+    assert.equal(isArmableMandate(kick), false);
+    assert.match(
+      mandateFromUserText(kick) || "",
+      /comprehensively evaluate this tool/,
+    );
+    assert.equal(mandateFromUserText("ok thanks"), null);
+    const next = adoptUlwMandate(
+      sid,
+      "comprehensively evaluate this tool and then improve the ui and ux of it.",
+    );
+    assert.ok(next);
+    assert.match(next!.mandate, /evaluate this tool/);
+    assert.equal(next!.judgmentRequired, true);
+    assert.equal(next!.backlogRequired, false);
+    assert.equal(next!.wave, 0);
+    const ignore = adoptUlwMandate(sid, "now polish the footer");
+    assert.equal(ignore!.mandate, next!.mandate);
+    const ack = adoptUlwMandate(sid, "sounds good!");
+    assert.equal(ack!.mandate, next!.mandate);
+  });
+
+  it("does not let steering overwrite a real /ulw default mandate", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-ulw-nosteal-"));
+    process.env.FORGE_HOME = tmp;
+    const sid = "ulw-nosteal";
+    armUlwCycle(sid, "improve the codebase", {
+      cycle: 1,
+      skipCheckpoint: true,
+    });
+    const stay = adoptUlwMandate(
+      sid,
+      "comprehensively evaluate this tool and then improve the ui.",
+    );
+    assert.equal(stay!.mandate, "improve the codebase");
   });
 
   it("judgment gate blocks wave-0 Stop until a Reading exists, then releases", () => {
