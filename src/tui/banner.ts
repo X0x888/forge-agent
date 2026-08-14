@@ -25,6 +25,8 @@ export interface BannerInput {
   setupCard?: string;
   /** Compact residue while recommended items remain. */
   setupCompact?: string;
+  /** Same-cwd resume: last-turn peek + files/verify (empty = omit). */
+  resumeOrientation?: string;
 }
 
 export function formatBanner(input: BannerInput): string {
@@ -43,7 +45,7 @@ export function formatBanner(input: BannerInput): string {
     input.permissionMode === "plan" ? " (exit_plan_mode or /build)" : "";
   const lines = [
     `  ⚒  Forge v${input.version}`,
-    `  ${input.provider}/${input.model} · ${input.authLabel}  ·  session ${sid}${title}  ·  perms ${input.permissionMode}${planNote}  ·  sandbox ${input.sandbox}`,
+    `  ${input.provider}/${input.model} · ${input.authLabel}  ·  session ${sid}${title}  ·  perms ${input.permissionMode}${planNote}  ·  sandbox ${input.sandbox}${git}${project}`,
   ];
   if (input.ulwArmed) {
     lines.push(
@@ -72,6 +74,14 @@ export function formatBanner(input: BannerInput): string {
     }
   } else if (input.setupCompact) {
     lines.push(`  ${input.setupCompact}`);
+  }
+  const resume = input.resumeOrientation?.trim();
+  if (resume && !input.showEmptyState) {
+    lines.push("");
+    for (const row of resume.split("\n")) {
+      if (row.trim()) lines.push(`  ${row}`);
+    }
+    lines.push(`  ↳ /last  ·  /files  ·  /retry`);
   }
   return lines.join("\n");
 }

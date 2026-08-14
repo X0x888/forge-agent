@@ -11,14 +11,18 @@ import {
   handleSlash,
   isLiveSafeSlash,
   classifyLiveSlash,
-  LIVE_CONTROLS_HINT,
   type SlashResult,
 } from "../commands/slash.js";
 import {
   peekInterjections,
   pushInterjection,
 } from "../harness/interjection.js";
-import { saveSession, isLastVerificationStale } from "../session/session.js";
+import {
+  saveSession,
+  isLastVerificationStale,
+  formatResumeOrientation,
+  isSyntheticUserMessage,
+} from "../session/session.js";
 import { readFileMutations } from "../session/mutations.js";
 import { log } from "../util/log.js";
 import {
@@ -60,6 +64,7 @@ import {
 import { loadHistory, appendHistory } from "./history.js";
 import { makeCompleter } from "./complete.js";
 import { createPromptEditor } from "./prompt-editor.js";
+import { setStdinLeaseHolder, stdinLeaseHeld } from "./stdin-lease.js";
 import {
   buildPromptFlags,
   buildLivePrompt,
@@ -83,7 +88,7 @@ import {
 import { getForgeVersion } from "../util/version.js";
 import { loadPreferences, dismissHint } from "../config/preferences.js";
 import { formatBanner } from "./banner.js";
-import { pickTurnEndHint } from "./hints.js";
+import { pickTurnEndHint, ABORT_RECOVERY } from "./hints.js";
 import {
   alreadyOnboarded,
   setupAutoCardDisabled,
@@ -94,7 +99,6 @@ import {
   formatSetupCompactLine,
   markSetupSeen,
 } from "../commands/setup.js";
-import { isSyntheticUserMessage } from "../session/session.js";
 import { resolveMaxCostUsd, sessionCostUsd } from "../util/cost-budget.js";
 import { isBellEnabled, isNotifyEnabled } from "../util/attention.js";
 import { loadUlwCycle } from "../harness/ulw-cycle.js";
@@ -251,6 +255,7 @@ export async function runRepl(opts: {
    * Always starts on a fresh line so tokens/spinner cannot erase it.
    */
   const livePrompt = (opts?: { freshLine?: boolean }) => {
+    if (stdinLeaseHeld() || rl.isSuspended()) return;
     try {
       if (opts?.freshLine !== false) {
         // Ensure we are not appending to a half-written model line
@@ -275,7 +280,7 @@ export async function runRepl(opts: {
     // Critical: no \r spinner — it was wiping live › off the terminal
     dockInPrompt: true,
     onTick: (frame) => {
-      if (!busy || streamActive) return;
+      if (!busy || streamActive || stdinLeaseHeld() || rl.isSuspended()) return;
       liveFrame = frame;
       try {
         rl.setPrompt(
@@ -307,6 +312,7 @@ export async function runRepl(opts: {
   let lastStatusStrip = "";
   /** Idle prompt (forge ›). Dock is the HUD; reprint the strip only when off. */
   const prompt = (opts?: { forceStatus?: boolean }) => {
+    if (stdinLeaseHeld() || rl.isSuspended()) return;
     if (!bottomDock.active()) {
       const strip = renderIdleStatusLine(statusCtx());
       if (strip && (opts?.forceStatus || strip !== lastStatusStrip)) {
@@ -321,6 +327,17 @@ export async function runRepl(opts: {
     rl.prompt();
     bottomDock.refresh();
   };
+
+  // Nested permission / ask_user prompts take the TTY; re-dock as soon as
+  // they release it so live › does not wait for the next heartbeat tick.
+  setStdinLeaseHolder({
+    suspend: () => rl.suspend(),
+    resume: () => {
+      rl.resume();
+      if (busy) livePrompt({ freshLine: true });
+      else prompt();
+    },
+  });
 
   const handleLine = async (line: string) => {
     const text = line.trim();
@@ -384,7 +401,7 @@ export async function runRepl(opts: {
         console.log(
           formatLiveControlFeedback(
             "(message)",
-            `Queued for next model step (q:${depth}).\n${LIVE_CONTROLS_HINT}`,
+            `Queued for next model step (q:${depth}). /cycle 0 last · /status · Ctrl+C abort`,
             "info",
           ),
         );
@@ -397,7 +414,7 @@ export async function runRepl(opts: {
         console.log(
           formatLiveControlFeedback(
             text,
-            `That command needs an idle prompt (Ctrl+C to abort the run first).\n${LIVE_CONTROLS_HINT}`,
+            `That command needs an idle prompt (Ctrl+C to abort the run first).`,
             "warn",
           ),
         );
@@ -604,6 +621,7 @@ export async function runRepl(opts: {
     if (slash.output) console.log(slash.output);
 
     busy = true;
+    rl.setBusy(true);
     pendingTools = 0;
     abortController = new AbortController();
     // For the end-of-turn change summary: edits with turn > this landed now.
@@ -612,14 +630,9 @@ export async function runRepl(opts: {
     beginTurn();
     pulseHeartbeat();
 
-    // Native live chrome: header + docked live › prompt (status lives IN the prompt)
+    // Native live chrome: one identity line + docked live › (status lives IN the prompt)
     process.stdout.write("\n");
     console.log(renderLiveRunHeader(statusCtx()));
-    console.log(
-      chalk.bold.cyan("  ↓  controls open here — look for ") +
-        chalk.bold.white("live ›") +
-        chalk.bold.cyan("  at the bottom while working"),
-    );
     streamActive = false;
     liveFrame = 0;
     working.start();
@@ -768,7 +781,7 @@ export async function runRepl(opts: {
         process.stdout.write("\n");
       }
       if (result.aborted) {
-        console.log(chalk.yellow("\n⚠ Run aborted."));
+        console.log(chalk.yellow(`\n${ABORT_RECOVERY}`));
       }
       if (result.stopContinues > 0) {
         log.dim(
@@ -861,6 +874,7 @@ export async function runRepl(opts: {
         log.error(formatProviderErrorText(err, {
           provider: String(config.provider),
           model: config.model,
+          repl: true,
         }));
         // Auth expiry should usually recover mid-loop; if it still escapes,
         // warm the live provider bearer so the next prompt/continue does not
@@ -928,6 +942,7 @@ export async function runRepl(opts: {
       onStreamHeartbeat = null;
       endTurn();
       busy = false;
+      rl.setBusy(false);
       abortController = null;
       pulseHeartbeat();
       prompt({ forceStatus: true });
@@ -946,6 +961,7 @@ export async function runRepl(opts: {
       bottomDock.stop();
       clearInterval(hbTimer);
       endTurn();
+      setStdinLeaseHolder(null);
       releaseSession(session.meta.id);
       releaseSessionLock(session.meta.id);
       // SessionEnd first so hooks can still observe in-flight bg tasks
@@ -1104,6 +1120,9 @@ async function printBanner(
     showEmptyState: isFirstSession,
     setupCard,
     setupCompact,
+    resumeOrientation: isFirstSession
+      ? undefined
+      : formatResumeOrientation(session, { maxChars: 180, fileLimit: 4 }),
   });
   const [first, ...rest] = text.split("\n");
   console.log(chalk.bold.cyan("\n" + first));
@@ -1142,7 +1161,20 @@ function printTurnChangeSummary(
     const edits = readFileMutations(session.meta.id).filter(
       (m) => m.turn > turnAtStart,
     );
-    const line = formatTurnChangeSummary(edits, session.meta.cwd, session.meta);
+    let preferred: string | null = null;
+    try {
+      preferred =
+        detectProjectIntel(session.meta.cwd || process.cwd()).checkCommands[0] ??
+        null;
+    } catch {
+      /* intel is best-effort */
+    }
+    const line = formatTurnChangeSummary(
+      edits,
+      session.meta.cwd,
+      session.meta,
+      preferred,
+    );
     if (line) console.log(chalk.dim(line));
     printTurnHint(session, edits.length > 0);
   } catch {

@@ -26,6 +26,7 @@ import {
   mcpToolNameLooksReadOnly,
 } from "../mcp/types.js";
 import type { McpManager } from "../mcp/manager.js";
+import { withStdinLease } from "../tui/stdin-lease.js";
 
 const WRITE_TOOLS = new Set([
   "write_file",
@@ -704,7 +705,9 @@ export class PermissionGate {
     // One prompt at a time: parallel read-only batches (Promise.all in
     // loop.ts) otherwise open concurrent readlines on the same stdin.
     return enqueuePrompt(() =>
-      this.promptUserExclusive(toolName, toolInput, dangerous, opts),
+      withStdinLease(() =>
+        this.promptUserExclusive(toolName, toolInput, dangerous, opts),
+      ),
     );
   }
 

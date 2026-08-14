@@ -41,6 +41,20 @@ export interface PromptEditor {
   close(): void;
   getLine(): string;
   setLine(text: string): void;
+  /**
+   * Release raw-mode stdin so a nested readline (permission ask, ask_user)
+   * can own the TTY. Idempotent. Does not close the editor or drop the buffer.
+   */
+  suspend(): void;
+  /** Reclaim stdin after a nested prompt. Idempotent. Does not redraw. */
+  resume(): void;
+  /** True while a nested prompt owns stdin. */
+  isSuspended(): boolean;
+  /**
+   * Mid-run: Ctrl+C with a half-typed draft must abort, not just clear.
+   * Idle: first Ctrl+C with a draft still clears the line.
+   */
+  setBusy(busy: boolean): void;
   on(event: "line", listener: (line: string) => void): this;
   on(event: "SIGINT", listener: () => void): this;
   on(event: "close", listener: () => void): this;
@@ -55,6 +69,19 @@ export interface PromptEditor {
 
 export function encodeHistoryEntry(s: string): string {
   return s.replace(/\r\n/g, "\n").replace(/\\/g, "\\\\").replace(/\n/g, "\\n");
+}
+
+/**
+ * Idle Ctrl+C: first press with a draft clears the line (no SIGINT).
+ * Mid-run (`busy`) Ctrl+C always interrupts — a half-typed /cycle or
+ * queued message must not trap the abort key.
+ */
+export function resolveCtrlC(
+  buffer: string,
+  busy: boolean,
+): "clear" | "sigint" {
+  if (busy) return "sigint";
+  return buffer.length > 0 ? "clear" : "sigint";
 }
 
 export function decodeHistoryEntry(s: string): string {
@@ -292,9 +319,13 @@ function createReadlineFallback(
       : undefined,
   }) as ReadlineInterface & { line?: string };
 
+  let suspended = false;
   const wrap: PromptEditor = {
     setPrompt: (p) => rl.setPrompt(p),
-    prompt: (preserve) => rl.prompt(preserve),
+    prompt: (preserve) => {
+      if (suspended) return;
+      rl.prompt(preserve);
+    },
     close: () => rl.close(),
     getLine: () => rl.line ?? "",
     setLine: (text) => {
@@ -303,6 +334,28 @@ function createReadlineFallback(
         anyRl.line = text;
         anyRl.cursor = text.length;
       }
+    },
+    suspend: () => {
+      if (suspended) return;
+      suspended = true;
+      try {
+        rl.pause();
+      } catch {
+        /* ignore */
+      }
+    },
+    resume: () => {
+      if (!suspended) return;
+      suspended = false;
+      try {
+        rl.resume();
+      } catch {
+        /* ignore */
+      }
+    },
+    isSuspended: () => suspended,
+    setBusy: () => {
+      /* classic readline always emits SIGINT on Ctrl+C */
     },
     on: (event, listener) => {
       ee.on(event, listener as (...args: unknown[]) => void);
@@ -343,6 +396,8 @@ class TtyPromptEditor extends EventEmitter implements PromptEditor {
   private buffer = "";
   private cursor = 0;
   private closed = false;
+  private suspended = false;
+  private busy = false;
   private pasting = false;
   private pending = "";
   /** Screen row of cursor within the editor block (0 = top). */
@@ -392,13 +447,68 @@ class TtyPromptEditor extends EventEmitter implements PromptEditor {
   }
 
   prompt(_preserve = false): void {
-    if (this.closed) return;
+    if (this.closed || this.suspended) return;
     this.redraw();
+  }
+
+  suspend(): void {
+    if (this.closed || this.suspended) return;
+    this.suspended = true;
+    this.clearBurst();
+    this.pasting = false;
+    this.pending = "";
+    try {
+      this.output.write(BRACKETED_PASTE_DISABLE);
+    } catch {
+      /* ignore */
+    }
+    this.input.removeListener("data", this.onData);
+    if (this.input.isTTY) {
+      try {
+        this.input.setRawMode(false);
+      } catch {
+        /* ignore */
+      }
+    }
+    this.painted = false;
+    this.cursorViewRow = 0;
+  }
+
+  resume(): void {
+    if (this.closed || !this.suspended) return;
+    this.suspended = false;
+    this.input.on("data", this.onData);
+    if (this.input.isTTY) {
+      try {
+        this.input.setRawMode(true);
+      } catch {
+        /* ignore */
+      }
+    }
+    try {
+      this.input.resume();
+    } catch {
+      /* ignore */
+    }
+    try {
+      this.output.write(BRACKETED_PASTE_ENABLE);
+    } catch {
+      /* ignore */
+    }
+  }
+
+  isSuspended(): boolean {
+    return this.suspended;
+  }
+
+  setBusy(busy: boolean): void {
+    this.busy = busy;
   }
 
   close(): void {
     if (this.closed) return;
     this.closed = true;
+    this.suspended = false;
     this.clearBurst();
     try {
       this.output.write(BRACKETED_PASTE_DISABLE);
@@ -419,7 +529,7 @@ class TtyPromptEditor extends EventEmitter implements PromptEditor {
   // ── Parse ────────────────────────────────────────────────────────────
 
   private feed(raw: string): void {
-    if (this.closed) return;
+    if (this.closed || this.suspended) return;
     this.pending += raw;
 
     while (this.pending.length > 0) {
@@ -596,14 +706,21 @@ class TtyPromptEditor extends EventEmitter implements PromptEditor {
     for (let i = 0; i < text.length; i++) {
       const ch = text[i]!;
       if (ch === "\x03") {
-        // Ctrl+C
-        if (this.buffer.length > 0) {
+        // Ctrl+C — mid-run always aborts so a half-typed draft cannot trap it
+        if (resolveCtrlC(this.buffer, this.busy) === "clear") {
           this.buffer = "";
           this.cursor = 0;
           this.historyIndex = -1;
           this.multiLineHint = false;
           this.finishClearLine();
         } else {
+          if (this.buffer.length > 0) {
+            this.buffer = "";
+            this.cursor = 0;
+            this.historyIndex = -1;
+            this.multiLineHint = false;
+            this.finishClearLine();
+          }
           this.emit("SIGINT");
         }
         continue;
@@ -898,7 +1015,7 @@ class TtyPromptEditor extends EventEmitter implements PromptEditor {
   }
 
   private redraw(): void {
-    if (this.closed) return;
+    if (this.closed || this.suspended) return;
 
     const cols = this.cols();
     const layout = this.computeLayout();

@@ -18,7 +18,11 @@ describe("tab completion", () => {
     assert.ok(hits.includes("/help"));
     assert.ok(hits.includes("/setup"));
     assert.ok(hits.includes("/plan"));
+    assert.ok(hits.includes("/tips"));
     assert.ok(!hits.includes("/ralph"));
+    assert.ok(!hits.includes("/ulw"));
+    assert.ok(!hits.includes("/goal"));
+    assert.ok(!hits.includes("/done"));
     assert.ok(SLASH_COMMANDS.length > hits.length);
   });
 

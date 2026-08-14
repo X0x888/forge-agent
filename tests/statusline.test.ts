@@ -774,7 +774,7 @@ describe("statusline plan mode details", () => {
 });
 
 describe("live run header controls", () => {
-  it("lists budget/done/notify alongside cycle controls", async () => {
+  it("is a one-line identity + last/budget, not a boxed catalog", async () => {
     const fs = await import("node:fs");
     const os = await import("node:os");
     const path = await import("node:path");
@@ -795,9 +795,10 @@ describe("live run header controls", () => {
     assert.match(text, /live run/);
     assert.match(text, /\/cycle 0/);
     assert.match(text, /\/budget/);
-    assert.match(text, /\/done/);
-    assert.match(text, /\/notify/);
-    assert.match(text, /\/status/);
+    assert.match(text, /live ›/);
+    assert.doesNotMatch(text, /┌/);
+    assert.doesNotMatch(text, /\/notify/);
+    assert.doesNotMatch(text, /\/status/);
   });
 
   it("live header shows PLAN when permissionMode is plan", async () => {

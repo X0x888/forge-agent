@@ -31,6 +31,17 @@ test("turn summary: files relative to cwd, new files labeled, unverified flagged
   assert.match(line, /verify: none — edits unverified/);
 });
 
+test("turn summary: unverified names the preferred project check", () => {
+  const line = formatTurnChangeSummary(
+    [mut("/repo/src/a.ts")],
+    CWD,
+    baseMeta,
+    "npm run typecheck",
+  );
+  assert.match(line!, /verify: none — run npm run typecheck/);
+  assert.doesNotMatch(line!, /edits unverified/);
+});
+
 test("turn summary: paths outside cwd stay absolute", () => {
   const line = formatTurnChangeSummary([mut("/etc/x.conf")], CWD, baseMeta);
   assert.match(line!, /Δ 1 file: \/etc\/x\.conf/);

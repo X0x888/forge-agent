@@ -544,6 +544,9 @@ Docs: docs/GETTING-STARTED.md · docs/PRODUCTION.md · docs/RELIABILITY.md · do
           autoResume: !willHeadless,
           continue: Boolean(opts.continue),
           json: wantJson,
+          // Interactive REPL prints orientation on the banner; headless
+          // `--continue` has no banner and still needs the peek.
+          skipOrientation: !willHeadless,
         });
       // Prefer resumed session provider/model/plan unless CLI -p/-m/--permission-mode set.
       {
@@ -5786,6 +5789,11 @@ function resolveSession(
     continue?: boolean;
     /** Structured stdout on session miss (bare forge --json). */
     json?: boolean;
+    /**
+     * REPL banner already prints formatResumeOrientation — skip the CLI
+     * peek so resume is one card. Headless `--continue` must keep the peek.
+     */
+    skipOrientation?: boolean;
   },
 ) {
   // --continue/--session and --new are mutually exclusive (was silent prefer --new).
@@ -5855,9 +5863,11 @@ function resolveSession(
         log.info(
           `Resumed ${s.meta.id.slice(0, 8)} — ${title} (${s.messages.length} msgs)`,
         );
-        const peek = formatResumeOrientation(s);
-        if (peek) {
-          log.dim(`${peek}\n(/last 3 for more · /retry to re-run)`);
+        if (!opts.skipOrientation) {
+          const peek = formatResumeOrientation(s);
+          if (peek) {
+            log.dim(`${peek}\n(/last 3 for more · /retry to re-run)`);
+          }
         }
       } catch {
         /* never block resume on peek */
@@ -5913,14 +5923,15 @@ function resolveSession(
             log.info(
               `Resumed ${s.meta.id.slice(0, 8)} — ${title} (${s.messages.length} msgs)${flagNote}${skipNote}. Use --new for a fresh session.`,
             );
-            // Orient experts immediately after same-cwd auto-resume.
-            try {
-              const peek = formatResumeOrientation(s);
-              if (peek) {
-                log.dim(`${peek}\n(/last 3 for more · /retry to re-run)`);
+            if (!opts.skipOrientation) {
+              try {
+                const peek = formatResumeOrientation(s);
+                if (peek) {
+                  log.dim(`${peek}\n(/last 3 for more · /retry to re-run)`);
+                }
+              } catch {
+                /* never block resume on peek */
               }
-            } catch {
-              /* never block resume on peek */
             }
           }
           // Do NOT rewrite provider/model from live config here: the caller

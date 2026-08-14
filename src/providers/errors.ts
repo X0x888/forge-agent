@@ -380,12 +380,17 @@ function summarizeProviderBody(body: string): string {
   return raw.replace(/\s+/g, " ").slice(0, 200);
 }
 
+/** REPL closer after a failed turn — mirrors abort recovery. */
+export const PROVIDER_ERROR_RECOVERY =
+  "Type to continue · /retry same prompt · /model to switch.";
+
 /** Single string for log.error / console — message + indented tips. */
 export function formatProviderErrorText(
   err: unknown,
-  opts?: { provider?: string; model?: string },
+  opts?: { provider?: string; model?: string; repl?: boolean },
 ): string {
   const { message, tips, code } = formatProviderError(err, opts);
   const tipLines = tips.map((t) => `  → ${t}`).join("\n");
-  return `${message}\n  [${code}]\n${tipLines}`;
+  const body = `${message}\n  [${code}]\n${tipLines}`;
+  return opts?.repl ? `${body}\n  ${PROVIDER_ERROR_RECOVERY}` : body;
 }

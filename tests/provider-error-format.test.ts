@@ -25,6 +25,10 @@ describe("formatProviderError", () => {
     const text = formatProviderErrorText(err, { model: "grok-4.5" });
     assert.match(text, /\[auth_expired\]/);
     assert.match(text, /→/);
+    assert.doesNotMatch(text, /\/retry/);
+    const repl = formatProviderErrorText(err, { model: "grok-4.5", repl: true });
+    assert.match(repl, /\/retry same prompt/);
+    assert.match(repl, /\/model to switch/);
   });
 
   it("formats 429 with Retry-After and account switch tips", () => {

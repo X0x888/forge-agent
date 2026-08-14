@@ -13,6 +13,7 @@ import {
   pickTurnEndHint,
   shouldShowFirstPermissionHint,
   FIRST_PERMISSION_HINT,
+  ABORT_RECOVERY,
 } from "../src/tui/hints.js";
 import {
   parseLoginOfferChoice,
@@ -76,6 +77,21 @@ describe("assessSetupReadiness", () => {
     assert.match(compact, /no spend cap/);
     assert.match(compact, /no AGENTS\.md/);
     assert.match(compact, /\/setup to finish/);
+    assert.doesNotMatch(compact, /notify off|lsp missing/);
+  });
+
+  it("compact line ignores optional notify/lsp residue", () => {
+    const r = assessSetupReadiness({
+      ...base,
+      seenProviderModelConfirm: true,
+      effectiveMaxCostUsd: 5,
+      projectRulesCount: 1,
+    });
+    assert.equal(r.recommendedOpen, 0);
+    assert.equal(r.blocking, false);
+    const compact = formatSetupCompactLine(r);
+    assert.match(compact, /setup 4\/6 ready/);
+    assert.doesNotMatch(compact, /notify off|lsp missing|\/setup to finish/);
   });
 });
 
@@ -135,6 +151,30 @@ describe("formatBanner", () => {
     assert.doesNotMatch(text, /Paste multi-line/);
   });
 
+  it("renders git branch + dirty and project bits on the identity line", () => {
+    const text = formatBanner({
+      version: "0.9.99",
+      provider: "xai",
+      model: "grok-4.6",
+      authLabel: "xai",
+      sessionId: "abcdefghijklmnop",
+      permissionMode: "default",
+      sandbox: "workspace",
+      blockingStop: true,
+      posture: "posture: —",
+      gitBranch: "main",
+      gitDirty: true,
+      projectBits: ["pm=npm", "node"],
+    });
+    assert.match(text, /main\*/);
+    assert.match(text, /pm=npm/);
+    assert.match(text, /node/);
+    // Identity line, not a third chrome row.
+    const identity = text.split("\n")[1] ?? "";
+    assert.match(identity, /main\*/);
+    assert.match(identity, /pm=npm/);
+  });
+
   it("advertises live › only when ULW is on", () => {
     const text = formatBanner({
       version: "1",
@@ -149,6 +189,38 @@ describe("formatBanner", () => {
       ulwArmed: true,
     });
     assert.match(text, /\/cycle 0/);
+  });
+
+  it("shows resume orientation on a returning session, not first-run", () => {
+    const returning = formatBanner({
+      version: "1",
+      provider: "xai",
+      model: "m",
+      authLabel: "xai",
+      sessionId: "id",
+      permissionMode: "default",
+      sandbox: "workspace",
+      blockingStop: true,
+      posture: "posture: —",
+      resumeOrientation: "you: fix the lease\nFiles: src/tui/repl.ts",
+    });
+    assert.match(returning, /you: fix the lease/);
+    assert.match(returning, /\/last {2}· {2}\/files {2}· {2}\/retry/);
+    const fresh = formatBanner({
+      version: "1",
+      provider: "xai",
+      model: "m",
+      authLabel: "xai",
+      sessionId: "id",
+      permissionMode: "default",
+      sandbox: "workspace",
+      blockingStop: true,
+      posture: "posture: —",
+      showEmptyState: true,
+      resumeOrientation: "you: leftover from a prior session",
+    });
+    assert.doesNotMatch(fresh, /leftover from a prior session/);
+    assert.match(fresh, /Type a task in English/);
   });
 });
 
@@ -211,6 +283,9 @@ describe("hints", () => {
     assert.equal(shouldShowFirstPermissionHint(["first_permission"]), false);
     assert.match(FIRST_PERMISSION_HINT, /acceptEdits/);
     assert.match(FIRST_PERMISSION_HINT, /Enter \/ y = once/);
+    assert.match(ABORT_RECOVERY, /\/retry/);
+    assert.match(ABORT_RECOVERY, /Type to continue/);
+    assert.match(ABORT_RECOVERY, /Ctrl\+C again to quit/);
   });
 });
 

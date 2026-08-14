@@ -13,6 +13,7 @@ export function formatTurnChangeSummary(
   edits: FileMutation[],
   cwd: string,
   meta: SessionData["meta"],
+  preferredCheck?: string | null,
 ): string | null {
   if (!edits.length) return null;
   const byPath = new Map<string, string>();
@@ -25,10 +26,13 @@ export function formatTurnChangeSummary(
   const more =
     names.length > shown.length ? ` +${names.length - shown.length} more` : "";
   const lv = meta.lastVerificationCommand?.trim();
+  const next = preferredCheck?.trim();
   const verify = lv
     ? isLastVerificationStale(meta)
       ? `verify: ${lv} (stale — predates last edit)`
       : `verify: ${lv} ✓`
-    : `verify: none — edits unverified`;
+    : next
+      ? `verify: none — run ${next}`
+      : `verify: none — edits unverified`;
   return `  Δ ${byPath.size} file${byPath.size === 1 ? "" : "s"}: ${shown.join(", ")}${more}  ·  ${verify}`;
 }

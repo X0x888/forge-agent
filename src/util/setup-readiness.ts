@@ -164,14 +164,14 @@ export function formatSetupCard(r: SetupAssessment): string {
 
 /** One-line banner residue while recommended items remain open. */
 export function formatSetupCompactLine(r: SetupAssessment): string {
-  const open = r.items.filter((i) => !i.ready);
+  // Optional notify/lsp belong on the full /setup card, not every resume.
+  const open = r.items.filter((i) => !i.ready && i.severity !== "optional");
+  if (open.length === 0) return `setup ${r.ready}/${r.total} ready`;
   const bits = open.slice(0, 3).map((i) => {
     if (i.id === "budget") return "no spend cap";
     if (i.id === "project_rules") return "no AGENTS.md";
     if (i.id === "auth") return "not signed in";
     if (i.id === "provider_model") return "model unconfirmed";
-    if (i.id === "attention") return "notify off";
-    if (i.id === "lsp") return "lsp missing";
     return i.label;
   });
   const more = open.length > 3 ? ` +${open.length - 3}` : "";

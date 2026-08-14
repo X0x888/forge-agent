@@ -30,6 +30,10 @@ export interface HintPick {
 export const FIRST_PERMISSION_HINT =
   "This is normal in default mode. Enter / y = once · /permissions acceptEdits to stop asking.";
 
+/** Printed after a SIGINT abort so the user knows how to continue. */
+export const ABORT_RECOVERY =
+  "⚠ Run aborted. Type to continue · /retry same prompt · Ctrl+C again to quit.";
+
 export function pickTurnEndHint(input: TurnHintInput): HintPick | null {
   if (input.skip) return null;
   const dismissed = new Set(input.dismissed.map((s) => String(s)));

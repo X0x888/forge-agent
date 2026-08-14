@@ -507,7 +507,7 @@ export function completeAtMention(
 
 /**
  * First-day empty-Tab starters. Matches `/help start` + daily recover.
- * Type `/` then Tab for the full catalog.
+ * Never /ulw or /goal here — those start work immediately (type `/` then Tab).
  */
 export const EMPTY_TAB_STARTERS = [
   "/help",
@@ -515,15 +515,13 @@ export const EMPTY_TAB_STARTERS = [
   "/plan",
   "/init",
   "/doctor",
+  "/tips",
   "/model",
   "/permissions",
   "/budget",
   "/notify",
   "/undo",
   "/commit",
-  "/goal",
-  "/ulw",
-  "/done",
 ] as const;
 
 /**

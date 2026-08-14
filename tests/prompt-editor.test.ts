@@ -14,6 +14,7 @@ import {
   layoutEditor,
   softWrapRows,
   displayWidth,
+  resolveCtrlC,
 } from "../src/tui/prompt-editor.js";
 
 describe("prompt-editor pure ops", () => {
@@ -150,5 +151,18 @@ describe("prompt-editor layout (cursor math)", () => {
     assert.equal(lay.cursorViewRow, 1);
     assert.equal(lay.cursorViewCol, 7);
     assert.equal(lay.totalViewRows, 3); // 22 width / 10 = 3 rows
+  });
+});
+
+describe("resolveCtrlC", () => {
+  it("idle: draft clears, empty line interrupts", () => {
+    assert.equal(resolveCtrlC("half typed", false), "clear");
+    assert.equal(resolveCtrlC("", false), "sigint");
+  });
+
+  it("mid-run: always interrupts, even with a draft", () => {
+    assert.equal(resolveCtrlC("/cyc", true), "sigint");
+    assert.equal(resolveCtrlC("queue this", true), "sigint");
+    assert.equal(resolveCtrlC("", true), "sigint");
   });
 });

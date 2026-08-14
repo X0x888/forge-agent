@@ -31,7 +31,6 @@ import { renderCompactStrip, renderHud } from "../statusline/render.js";
 import {
   getActivity,
   activityElapsedSec,
-  phaseElapsedSec,
   type AgentPhase,
   type SessionActivity,
 } from "../statusline/activity.js";
@@ -237,18 +236,16 @@ function liveTokenBits(ctx: StatusBarContext): string[] {
 }
 
 /**
- * Multi-line chrome printed once when an agent turn starts.
- * Makes mid-run controls discoverable (Grok-Build-like, native to Forge).
+ * One-line chrome printed when an agent turn starts.
+ * Identity + the two controls that matter mid-run — not a 6-line box.
  */
 export function renderLiveRunHeader(ctx: StatusBarContext): string {
   const { config, session } = ctx;
   const effort = resolveReasoningEffort(config.model, config.reasoningEffort);
   const ulw = loadUlwCycle(session.meta.id);
   const g = loadGoal(session.meta.id);
-  const w = Math.min(process.stdout.columns || 72, 72);
-  const bar = "─".repeat(Math.max(20, w - 2));
 
-  const modelBits = [
+  const identity = [
     `${config.provider}/${shortModel(config.model)}`,
     effort ? `effort ${effort}` : null,
     (() => {
@@ -266,54 +263,29 @@ export function renderLiveRunHeader(ctx: StatusBarContext): string {
     .filter(Boolean)
     .join(" · ");
 
-  const harnessBits: string[] = [];
+  const harness: string[] = [];
   if (ulw?.enabled) {
-    harnessBits.push(
+    harness.push(
       chalk.magenta(
         `ULW ${formatUlwBadge(ulw)} ${ulw.cycle === 1 ? "CONTINUE" : "LAST"}`,
       ),
     );
   } else if (session.meta.ultrawork) {
-    harnessBits.push(chalk.magenta("ULW"));
+    harness.push(chalk.magenta("ULW"));
   }
   if (g?.objective && !g.paused && g.status === "active") {
-    harnessBits.push(chalk.yellow("GOAL"));
+    harness.push(chalk.yellow("GOAL"));
   }
 
-  const lines = [
-    chalk.cyan(`┌${bar}`),
-    chalk.cyan("│ ") + chalk.bold("live run") + chalk.dim("  (input stays open — no Ctrl+C needed)"),
-    chalk.cyan("│ ") + chalk.dim(modelBits),
+  const bits = [
+    chalk.bold.cyan("live run"),
+    chalk.dim(identity),
+    ...harness,
+    chalk.dim(
+      `${chalk.white("/cycle 0")} last · ${chalk.white("/budget")} · type at ${chalk.cyan("live ›")}`,
+    ),
   ];
-  if (harnessBits.length) {
-    lines.push(chalk.cyan("│ ") + harnessBits.join("  "));
-  }
-  lines.push(
-    chalk.cyan("│ ") +
-      chalk.dim("controls: ") +
-      chalk.white("/cycle 0") +
-      chalk.dim(" last · ") +
-      chalk.white("/cycle 1") +
-      chalk.dim(" continue · ") +
-      chalk.white("/ulw-off") +
-      chalk.dim(" · ") +
-      chalk.white("/budget") +
-      chalk.dim(" · ") +
-      chalk.white("/done") +
-      chalk.dim(" · ") +
-      chalk.white("/notify") +
-      chalk.dim(" · ") +
-      chalk.white("/status") +
-      chalk.dim(" · free-text queues"),
-  );
-  lines.push(
-    chalk.cyan("│ ") +
-      chalk.dim("type at the ") +
-      chalk.cyan("live ›") +
-      chalk.dim(" line below while the agent works"),
-  );
-  lines.push(chalk.cyan(`└${bar}`));
-  return lines.join("\n");
+  return bits.join(chalk.dim("  ·  "));
 }
 
 /**

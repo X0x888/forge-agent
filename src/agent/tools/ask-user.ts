@@ -8,6 +8,8 @@ import readline from "node:readline/promises";
 import { stdin as stdinStream, stdout as stdoutStream } from "node:process";
 import chalk from "chalk";
 import type { ToolResult } from "./types.js";
+import { enqueuePrompt } from "../permissions.js";
+import { withStdinLease } from "../../tui/stdin-lease.js";
 
 export type AskUserInput = {
   question: string;
@@ -74,6 +76,14 @@ export async function toolAskUser(input: AskUserInput): Promise<ToolResult> {
     };
   }
 
+  return enqueuePrompt(() => withStdinLease(() => promptAskUser(question, choices, context)));
+}
+
+async function promptAskUser(
+  question: string,
+  choices: string[],
+  context: string,
+): Promise<ToolResult> {
   const lines: string[] = [
     "",
     chalk.cyan("❓ Agent question"),
