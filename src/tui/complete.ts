@@ -226,6 +226,24 @@ export const COMMAND_PARAMS: Record<string, ParamChoice[]> = {
       description: "Optional follow-up in the compacted fork",
     },
   ],
+  help: [
+    { value: "start", description: "60-second tour + getting started" },
+    { value: "all", description: "Full command catalog" },
+    { value: "settings", description: "Model, budget, notify, permissions" },
+    { value: "harness", description: "/goal /ulw /plan /done" },
+    { value: "sessions", description: "Resume, pin, share, undo" },
+    { value: "safety", description: "Sandbox, Stop, permissions" },
+  ],
+  setup: [
+    { value: "skip", description: "Hide the compact banner line" },
+    { value: "json", description: "Machine-readable checklist" },
+    { value: "model", description: "Confirm provider / model" },
+    { value: "budget", description: "Set a session spend cap" },
+    { value: "init", description: "Write AGENTS.md (model turn)" },
+    { value: "notify", description: "Turn-end desktop notify on" },
+    { value: "lsp", description: "Install TS+Python language servers" },
+    { value: "scaffold", description: "forge init file writers" },
+  ],
   init: [
     {
       value: "focus on test commands",

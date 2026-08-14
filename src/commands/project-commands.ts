@@ -80,6 +80,7 @@ const RESERVED = new Set([
   "compact-and",
   "fork-and-compact",
   "init",
+  "setup",
   "review",
   "commit",
   "checkpoint",

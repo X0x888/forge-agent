@@ -43,8 +43,17 @@ export interface UserPreferences {
   /**
    * When true, first-run expert tip was already shown (or suppressed).
    * Missing/false → show once on next interactive REPL start.
+   * Also treated as already-onboarded for the /setup card (back-compat).
    */
   seenWelcomeTip?: boolean;
+  /** Full first-run /setup card already shown. */
+  seenSetup?: boolean;
+  /** Hide the compact banner `setup N/M` line. */
+  setupSkipped?: boolean;
+  /** User confirmed provider/model in /setup. */
+  seenProviderModelConfirm?: boolean;
+  /** Dismissed first-day hint ids (no_agents, no_budget, …). */
+  dismissedHints?: string[];
   /** Opt-in format-on-write after file tools (OpenCode-inspired). */
   formatOnWrite?: boolean;
   updatedAt?: string;
@@ -83,6 +92,22 @@ export function loadPreferences(): UserPreferences {
   if (typeof raw.seenWelcomeTip === "boolean") {
     out.seenWelcomeTip = raw.seenWelcomeTip;
   }
+  if (typeof raw.seenSetup === "boolean") {
+    out.seenSetup = raw.seenSetup;
+  }
+  if (typeof raw.setupSkipped === "boolean") {
+    out.setupSkipped = raw.setupSkipped;
+  }
+  if (typeof raw.seenProviderModelConfirm === "boolean") {
+    out.seenProviderModelConfirm = raw.seenProviderModelConfirm;
+  }
+  if (Array.isArray(raw.dismissedHints)) {
+    const hints = raw.dismissedHints
+      .map((x) => String(x || "").trim())
+      .filter(Boolean)
+      .slice(0, 32);
+    if (hints.length) out.dismissedHints = hints;
+  }
   if (typeof raw.formatOnWrite === "boolean") {
     out.formatOnWrite = raw.formatOnWrite;
   }
@@ -120,6 +145,10 @@ export function savePreferences(patch: {
   bellOnTurnEnd?: boolean;
   notifyOnTurnEnd?: boolean;
   seenWelcomeTip?: boolean;
+  seenSetup?: boolean;
+  setupSkipped?: boolean;
+  seenProviderModelConfirm?: boolean;
+  dismissedHints?: string[];
   formatOnWrite?: boolean;
   /** When setting model, also record lastModelByProvider[provider]. */
   modelProvider?: string;
@@ -167,6 +196,23 @@ export function savePreferences(patch: {
     }
     if (patch.seenWelcomeTip !== undefined) {
       cur.seenWelcomeTip = patch.seenWelcomeTip;
+    }
+    if (patch.seenSetup !== undefined) {
+      cur.seenSetup = patch.seenSetup;
+    }
+    if (patch.setupSkipped !== undefined) {
+      cur.setupSkipped = patch.setupSkipped;
+    }
+    if (patch.seenProviderModelConfirm !== undefined) {
+      cur.seenProviderModelConfirm = patch.seenProviderModelConfirm;
+    }
+    if (patch.dismissedHints !== undefined) {
+      const hints = patch.dismissedHints
+        .map((x) => String(x || "").trim())
+        .filter(Boolean)
+        .slice(0, 32);
+      if (hints.length) cur.dismissedHints = hints;
+      else delete cur.dismissedHints;
     }
     if (patch.permissionMode !== undefined) {
       const mode = normalizePermissionMode(patch.permissionMode);
@@ -216,6 +262,23 @@ export function rememberRecentModel(
     cur.version = 1;
     cur.updatedAt = nowIso();
     writeJsonFile(preferencesPath(), cur, 0o600);
+    return cur;
+  });
+}
+
+/** Append a dismissed first-day hint id (deduped, capped). */
+export function dismissHint(id: string): UserPreferences {
+  const key = String(id || "").trim();
+  return withFileLock(preferencesPath(), () => {
+    const cur = loadPreferences();
+    if (!key) return cur;
+    const prev = cur.dismissedHints || [];
+    if (!prev.includes(key)) {
+      cur.dismissedHints = [...prev, key].slice(0, 32);
+      cur.version = 1;
+      cur.updatedAt = nowIso();
+      writeJsonFile(preferencesPath(), cur, 0o600);
+    }
     return cur;
   });
 }

@@ -503,6 +503,18 @@ export {
 } from "./util/mode-aliases.js";
 export type { ChangelogRelease } from "./util/changelog.js";
 export { formatExpertTips } from "./util/tips.js";
+export {
+  assessSetupReadiness,
+  formatSetupCard,
+  parseSetupAction,
+} from "./util/setup-readiness.js";
+export { helpFor, HELP_START, HELP_ALL } from "./commands/help-text.js";
+export { formatBanner } from "./tui/banner.js";
+export { pickTurnEndHint } from "./tui/hints.js";
+export {
+  shouldOfferLoginPicker,
+  parseLoginOfferChoice,
+} from "./tui/login-offer.js";
 export { log, setLogLevel, getLogLevel } from "./util/log.js";
 export { shellCompletionScript } from "./util/completion-script.js";
 export {

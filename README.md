@@ -63,8 +63,9 @@ forge login -p copilot              # same: local import, then GitHub device cod
 export XAI_API_KEY=xai-...          # or: forge login --api-key
 forge login --provider openai --device
 
-# 2. Init project scaffolding (config, example Stop hook, AGENTS.md)
-forge init
+# 2. First-day checklist (or just `forge` — TTY offers login + a setup card)
+forge setup
+forge init                          # optional file scaffold (no model)
 
 # 3. Interactive REPL (resumes newest same-cwd session ≤14d; --new for fresh)
 forge
@@ -257,6 +258,7 @@ Full contract: [docs/RELIABILITY.md](docs/RELIABILITY.md) · expert checklist: [
 | `/metrics` | Local metrics.jsonl + session counters |
 | `/stats [days]` | Usage dashboard (runs/tokens/cost/projects) · CLI: `forge stats` |
 | `/share` | Pasteable session card + resume/export commands (clipboard) |
+| `/setup` | First-day hub: model, budget, notify, AGENTS.md, LSP · CLI: `forge setup` |
 | `/tips` | Expert cheat sheet · CLI: `forge tips` |
 | `/todos` | Agent todos |
 | `/model <id> [effort]` | Switch model mid-run; optional `low`\|`medium`\|`high`\|`xhigh` (persists) **[live]** |

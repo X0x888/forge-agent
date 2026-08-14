@@ -99,7 +99,7 @@ fallbacks; auth/permissions/preferences mode `0600`), `listSessions({ cwd, query
 external_directory on grep/glob/list_dir, `forge completion`, `forge doctor` / `doctor --json`
 (structured `runDoctorCheck` + `issues[]` / `secureFiles`; exit 1 on issues), path-not-found typo
 hints, session import/load message-role sanitization, `forge stats` / `/stats`, `/share` handoff (git/goal/ULW), `sessionPath`/`forgeHome` on run/status/doctor JSON, `session_not_found` `suggestions[]`
-card, shared `formatExpertTips` (`forge tips`/`/tips`), first-run welcome tip, unknown-slash Did you mean?, CLI `command_typo`/`conflicting_flags`/`invalid_base_url`, `/retry`/`/again`,
+card, shared `formatExpertTips` (`forge tips`/`/tips`), first-run `/setup` card + grouped `/help`, unknown-slash Did you mean?, CLI `command_typo`/`conflicting_flags`/`invalid_base_url`, `/retry`/`/again`,
 `/last [n]`, resume auto-peek, `forge news`/`/news`, `forge run --continue` (fail-closed `continue_miss`/`continue_locked`; empty CLI flags fail closed) / bare `forge --continue` / bare `forge "…" --json`, `forge auth|login|logout --json`, `/done`/`/pause`/
 `/unpause`, session `lastUserPreview` list snippets, resume-by-title, relative session ages,
 `/files`, `/path` (+ copy), `/pin` + `sessions pin` (fork clears pin; status PIN badge), resume

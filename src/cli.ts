@@ -23,7 +23,7 @@ import { productionWarningsForRun } from "./util/production-warnings.js";
 import { listActiveProjectMemory } from "./harness/project-memory.js";
 import { resolveWorktreeLandMode } from "./agent/worktree.js";
 import { isFalsy } from "./util/bool.js";
-import { loadConfig, defaultConfigToml } from "./config/load.js";
+import { loadConfig } from "./config/load.js";
 import {
   resolveSandboxNetwork,
   type ForgeConfig,
@@ -139,6 +139,16 @@ import {
   loadChangelogReleases,
 } from "./util/changelog.js";
 import { formatExpertTips, expertTipsLines } from "./util/tips.js";
+import {
+  shouldOfferLoginPicker,
+  offerLoginInteractive,
+} from "./tui/login-offer.js";
+import {
+  collectSetupAssessment,
+  formatSetupCard,
+  setupJsonPayload,
+} from "./commands/setup.js";
+import { runForgeInit } from "./commands/init-scaffold.js";
 import { editDistance } from "./util/string-distance.js";
 import {
   isAcceptableUnknownModelId,
@@ -239,7 +249,7 @@ Examples:
   forge run "next step" --continue --json
   forge "next step" --continue                 # bare headless same-cwd resume (fail-closed if none)
   forge "next step" --json                     # bare headless JSON (parity with run --json)
-  forge init --json · forge tips --json · forge completion bash --json
+  forge setup --json · forge init --json · forge tips --json · forge completion bash --json
   forge sessions prune --keep 50
   forge sessions export <id> --format json --out ./session.json
   forge stats --days 7
@@ -251,7 +261,7 @@ Examples:
   forge prune-metrics --keep 500
   eval "$(forge completion bash)"
 
-Docs: docs/PRODUCTION.md · docs/RELIABILITY.md · docs/ULW.md · forge news
+Docs: docs/GETTING-STARTED.md · docs/PRODUCTION.md · docs/RELIABILITY.md · docs/ULW.md · forge news
 `,
     )
     .option("-m, --model <model>", "Model id")
@@ -488,7 +498,7 @@ Docs: docs/PRODUCTION.md · docs/RELIABILITY.md · docs/ULW.md · forge news
           /* fall through to auth */
         }
       }
-      const auth = await resolveAuthFresh(config);
+      let auth = await resolveAuthFresh(config);
       if (!auth) {
         const msg =
           "Not authenticated. Run: forge login\n" +
@@ -503,10 +513,21 @@ Docs: docs/PRODUCTION.md · docs/RELIABILITY.md · docs/ULW.md · forge news
             authMethod: null,
             hint: "forge login --api-key $KEY --json  ·  forge login  ·  set XAI_API_KEY / ANTHROPIC_API_KEY / …",
           });
-        } else {
-          log.error(msg);
+          process.exit(1);
         }
-        process.exit(1);
+        const offer = shouldOfferLoginPicker({
+          json: wantJson,
+          headless: willHeadless,
+          isTty: Boolean(process.stdin.isTTY && process.stdout.isTTY),
+        });
+        if (offer) {
+          const ok = await offerLoginInteractive();
+          if (ok) auth = await resolveAuthFresh(config);
+        }
+        if (!auth) {
+          log.error(msg);
+          process.exit(1);
+        }
       }
       // Provider/model alignment with resumed sessions happens after resolveSession
       // (sticky login must not hijack an older chat's provider). Fresh sessions keep
@@ -1310,7 +1331,7 @@ Docs: docs/PRODUCTION.md
                 `Multi-day unattended: forge login --api-key`,
             );
           }
-          log.info("Try: forge");
+          log.info("Next: forge   ·   forge setup   ·   forge doctor");
           return;
         }
         failLogin("grok_import_failed", result.reason || "Import failed", {
@@ -1365,7 +1386,7 @@ Docs: docs/PRODUCTION.md
                 `Alt: forge login -p copilot --device`,
             );
           }
-          log.info("Try: forge -p copilot");
+          log.info("Next: forge -p copilot   ·   forge setup   ·   forge doctor");
           return;
         }
         // Explicit --from-copilot fails closed; bare -p copilot falls through to device.
@@ -1464,6 +1485,9 @@ Docs: docs/PRODUCTION.md
           log.dim(
             `Multi-account: forge accounts list · forge accounts switch <id> · forge auth`,
           );
+        }
+        if (!wantJson) {
+          log.info("Next: forge   ·   forge setup   ·   forge doctor");
         }
       } catch (err) {
         if (provider === "xai" && method === "oauth" && !wantJson) {
@@ -3427,170 +3451,61 @@ Docs: docs/PRODUCTION.md
       ) => {
         const wantJson = flagJson(opts as Record<string, unknown>, command);
         ensureHome();
-        const wrote: string[] = [];
-        const existed: string[] = [];
-        const homeCfg = path.join(forgeHome(), "config.toml");
-        if (!fs.existsSync(homeCfg)) {
-          fs.writeFileSync(homeCfg, defaultConfigToml(), "utf8");
-          wrote.push(homeCfg);
-          if (!wantJson) log.success(`Wrote ${homeCfg}`);
-        } else {
-          existed.push(homeCfg);
-          if (!wantJson) log.info(`Exists: ${homeCfg}`);
-        }
-        // Seed user MCP config with built-in context7 + playwright (editable).
-        // Defaults also load without this file; seeding makes them discoverable.
-        const homeMcp = path.join(forgeHome(), "mcp.json");
-        if (!fs.existsSync(homeMcp)) {
-          const { defaultUserMcpJson } = await import("./mcp/config.js");
-          fs.writeFileSync(homeMcp, defaultUserMcpJson(), {
-            encoding: "utf8",
-            mode: 0o600,
-          });
-          try {
-            fs.chmodSync(homeMcp, 0o600);
-          } catch {
-            /* windows */
-          }
-          wrote.push(homeMcp);
-          if (!wantJson) {
-            log.success(
-              `Wrote ${homeMcp} (default MCP: context7 + playwright)`,
-            );
-          }
-        } else {
-          existed.push(homeMcp);
-          if (!wantJson) log.info(`Exists: ${homeMcp}`);
-        }
-        const projectDir = path.join(process.cwd(), ".forge");
-        ensureDir(projectDir);
-        ensureDir(path.join(projectDir, "hooks"));
-        const stopHook = path.join(projectDir, "hooks", "stop-goal-example.json");
-        if (!fs.existsSync(stopHook)) {
-          fs.writeFileSync(
-            stopHook,
-            JSON.stringify(
-              {
-                hooks: {
-                  Stop: [
-                    {
-                      hooks: [
-                        {
-                          type: "command",
-                          command: "node -e " +
-                            JSON.stringify(
-                              `let d='';process.stdin.on('data',c=>d+=c);process.stdin.on('end',()=>{const j=JSON.parse(d);if(j.goalObjective&&!(j.lastAssistantMessage||'').includes('Goal achieved')){console.log(JSON.stringify({decision:'block',reason:'Goal still active — keep working: '+j.goalObjective.slice(0,200)}));}else{console.log(JSON.stringify({decision:'allow'}));}});`,
-                            ),
-                          timeout: 10,
-                        },
-                      ],
-                    },
-                  ],
-                },
-              },
-              null,
-              2,
-            ) + "\n",
-            "utf8",
-          );
-          wrote.push(stopHook);
-          if (!wantJson) log.success(`Wrote example Stop hook: ${stopHook}`);
-        } else {
-          existed.push(stopHook);
-        }
-        const agents = path.join(process.cwd(), "AGENTS.md");
-        if (!fs.existsSync(agents)) {
-          fs.writeFileSync(
-            agents,
-            `# AGENTS.md
-
-Project instructions for Forge (and other coding agents).
-
-## Build
-
-- Install: \`npm install\`
-- Build / typecheck / test: describe the real commands for this repo
-- CI entrypoint if any
-
-## Conventions
-
-- Language, module system, style, architecture boundaries
-- Non-obvious constraints (auth, migrations, generated code)
-
-## Safety / production notes for agents
-
-- Prefer small focused diffs; run the cheapest relevant check after edits
-- Do not weaken fail-closed sandbox or commit secrets
-- Long autonomous work: use ULW/\`/goal\` only when the user wants relentless execution
-`,
-            "utf8",
-          );
-          wrote.push(agents);
-          if (!wantJson) log.success(`Wrote ${agents}`);
-        } else {
-          existed.push(agents);
-        }
-        // Smooth LSP path: install TS+Python (+ project Rust/Go) when missing
-        let lspEnsure: {
-          installed: string[];
-          failed: string[];
-          ready: string[];
-        } | null = null;
-        try {
-          const { ensureLspOnInit, buildEnsurePlan } = await import(
-            "./lsp/ensure.js"
-          );
-          if (!wantJson) {
-            log.info("LSP: ensuring TypeScript + Python servers (and project Rust/Go)…");
-          }
-          const result = await ensureLspOnInit(process.cwd(), {
-            quiet: wantJson,
-          });
-          if (result) {
-            lspEnsure = {
-              installed: result.installed,
-              failed: result.failed.map((f) => f.languageId),
-              ready: result.plan.ready.map((r) => String(r.languageId)),
-            };
-            if (!wantJson) {
-              if (result.installed.length) {
-                log.success(
-                  `LSP installed: ${result.installed.join(", ")}`,
-                );
-              }
-              if (result.failed.length) {
-                log.warn(
-                  `LSP install failed: ${result.failed.map((f) => f.languageId).join(", ")} — forge lsp ensure`,
-                );
-              }
-              if (!result.installed.length && !result.failed.length) {
-                const plan = buildEnsurePlan(process.cwd());
-                if (plan.ready.length) {
-                  log.dim(
-                    `LSP ready: ${plan.ready.map((r) => r.languageId).join(", ")}`,
-                  );
-                }
-              }
-            }
-          }
-        } catch {
-          /* never block init on LSP */
-        }
-
+        const result = await runForgeInit({
+          cwd: process.cwd(),
+          quiet: wantJson,
+        });
         if (wantJson) {
-          emitOkJson({home: forgeHome(),
-                cwd: process.cwd(),
-                wrote,
-                existed,
-                lspEnsure,
-                next: ["forge login", "forge doctor", "forge lsp ensure", "forge"],
-              }, true);
+          emitOkJson({
+            home: result.home,
+            cwd: result.cwd,
+            wrote: result.wrote,
+            existed: result.existed,
+            lspEnsure: result.lspEnsure,
+            next: ["forge login", "forge setup", "forge doctor", "forge"],
+          }, true);
           return;
         }
-        log.info("Done. Next: forge login && forge doctor && forge");
+        log.info("Done. Next: forge login && forge setup && forge doctor && forge");
         log.dim(
-          'Docs: docs/PRODUCTION.md · docs/LSP.md · forge lsp ensure · eval "$(forge completion bash)"',
+          'Docs: docs/GETTING-STARTED.md · docs/LSP.md · forge lsp ensure · eval "$(forge completion bash)"',
         );
+      },
+    );
+
+  program
+    .command("setup")
+    .description("First-day checklist: auth, model, budget, notify, AGENTS.md, LSP")
+    .option("--json", "Machine-readable JSON ({ ok, ready, total, items[] })")
+    .action(
+      async (
+        opts: { json?: boolean },
+        command?: { optsWithGlobals?: () => Record<string, unknown> },
+      ) => {
+        const wantJson = flagJson(opts as Record<string, unknown>, command);
+        ensureHome();
+        const config = loadConfig();
+        const auth = await resolveAuthFresh(config);
+        const assessed = await collectSetupAssessment({
+          config,
+          auth: auth ?? null,
+        });
+        if (wantJson) {
+          emitOkJson(
+            setupJsonPayload(assessed, {
+              forgeHome: forgeHome(),
+              provider: config.provider,
+              model: config.model,
+              authenticated: Boolean(auth),
+            }),
+            true,
+          );
+          return;
+        }
+        console.log(formatSetupCard(assessed));
+        if (!auth) {
+          log.dim("Not signed in — forge login  ·  then forge setup");
+        }
       },
     );
 
@@ -4792,6 +4707,7 @@ const TOP_LEVEL_COMMANDS = [
   "accounts",
   "sessions",
   "init",
+  "setup",
   "lsp",
   "models",
   "completion",

@@ -216,6 +216,12 @@ mustInclude(
   ["run", "/cost", "--json", "--permission-mode", "plan"],
   "budget",
 );
+mustInclude("setup --json", ["setup", "--json"], '"ready"');
+mustInclude(
+  "headless slash /setup",
+  ["run", "/setup", "--json", "--permission-mode", "plan"],
+  "Setup",
+);
 mustInclude("tips Less steering", ["tips"], "Less steering");
 mustInclude("tips handoff-guard", ["tips"], "handoff-guard");
 mustInclude("tips safety valves", ["tips"], "safety valves flip ULW");

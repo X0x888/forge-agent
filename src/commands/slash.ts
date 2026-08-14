@@ -119,6 +119,18 @@ import { forgeHome, inspectSecureFile } from "../util/fs.js";
 import { getForgeVersion } from "../util/version.js";
 import { formatWhatsNew } from "../util/changelog.js";
 import { formatExpertTips } from "../util/tips.js";
+import { loadMcpConfig } from "../mcp/config.js";
+import { buildEnsurePlan } from "../lsp/ensure.js";
+import { helpFor } from "./help-text.js";
+import {
+  collectSetupAssessment,
+  formatSetupCard,
+  markProviderModelConfirmed,
+  markSetupSeen,
+  markSetupSkipped,
+  parseSetupAction,
+  setupJsonPayload,
+} from "./setup.js";
 import {
   detectProjectIntel,
   packageManagerLockfileMismatch,
@@ -454,6 +466,31 @@ export function classifyLiveSlash(line: string): LiveSlashKind {
     if (!verb || verb === "list" || verb === "status" || verb === "ls") return "readonly";
     return "control";
   }
+  if (cmd === "/setup") {
+    const a = arg.trim().toLowerCase();
+    const head = a.split(/\s+/)[0] || "";
+    if (
+      !head ||
+      head === "status" ||
+      head === "show" ||
+      head === "card" ||
+      head === "json" ||
+      head === "help" ||
+      head === "?"
+    ) {
+      return "readonly";
+    }
+    if (head === "3" || head === "init" || head === "agents") return "idle-only";
+    if (
+      head === "6" ||
+      head === "scaffold" ||
+      head === "files" ||
+      head === "initfiles"
+    ) {
+      return "idle-only";
+    }
+    return "control";
+  }
   if (cmd === "/memory" || cmd === "/decisions") {
     return "control";
   }
@@ -633,6 +670,7 @@ export const SLASH_COMMANDS = [
   "/plan",
   "/build",
   "/execute",
+  "/setup",
   "/permissions",
   "/compact",
   "/compact-and",
@@ -729,6 +767,25 @@ export function completeSlash(
       "/max-tokens": ["4096", "8192", "16384", "32768"],
       "/context-window": ["auto", "128k", "200k", "256k", "500k", "1m"],
       "/ctx-window": ["auto", "128k", "200k", "256k", "500k", "1m"],
+      "/help": [
+        "start",
+        "all",
+        "settings",
+        "harness",
+        "sessions",
+        "safety",
+      ],
+      "/setup": [
+        "skip",
+        "json",
+        "model",
+        "budget",
+        "init",
+        "notify",
+        "lsp",
+        "scaffold",
+        "help",
+      ],
       "/plan": ["on", "off", "status", "show"],
       "/build": ["on", "off", "status", "execute"],
       "/execute": ["on", "off", "status"],
@@ -859,6 +916,13 @@ export function formatUnknownSlash(
   cmd: string,
   opts?: { workspace?: string },
 ): string {
+  const bare = cmd.trim().toLowerCase().replace(/^\//, "");
+  if (bare === "ask_user" || bare === "ask-user" || bare === "askuser") {
+    return (
+      "ask_user is a model tool, not a slash command.\n" +
+      "The agent asks clarifying questions mid-run. Type a task, or /help start."
+    );
+  }
   const suggestions = suggestSlashCommands(cmd, 5, opts);
   if (!suggestions.length) {
     return `Unknown command: ${cmd}. Type /help for commands.`;
@@ -1720,8 +1784,10 @@ export async function handleSlash(
 
   switch (cmd) {
     case "/help":
-    case "/?":
-      return { handled: true, output: HELP_TEXT };
+    case "/?": {
+      const h = helpFor(arg);
+      return { handled: true, output: h.text };
+    }
 
     case "/quit":
     case "/exit":
@@ -3766,6 +3832,151 @@ const stats = collectUsageStats({
         forwardPrompt: prompt,
         session: opts.session,
       };
+    }
+
+    case "/setup": {
+      const action = parseSetupAction(arg);
+      if (action.kind === "skip") {
+        markSetupSkipped();
+        return {
+          handled: true,
+          output: "Setup compact line hidden. /setup still works anytime.",
+        };
+      }
+      if (action.kind === "help") {
+        return {
+          handled: true,
+          output:
+            "Usage: /setup [skip|json|model|budget N|init|notify|lsp|scaffold]\n" +
+            "  Numbered: /setup 1 … 6   ·   forge setup --json",
+        };
+      }
+      const assessed = await collectSetupAssessment({
+        config: opts.config,
+        session: opts.session,
+        auth: opts.auth ?? null,
+      });
+      if (action.kind === "json") {
+        markSetupSeen();
+        return {
+          handled: true,
+          output: JSON.stringify(
+            setupJsonPayload(assessed, {
+              forgeHome: forgeHome(),
+              provider: opts.config.provider,
+              model: opts.config.model,
+            }),
+            null,
+            2,
+          ),
+        };
+      }
+      if (action.kind === "card") {
+        markSetupSeen();
+        return { handled: true, output: formatSetupCard(assessed) };
+      }
+      if (action.kind === "model") {
+        markProviderModelConfirmed();
+        return {
+          handled: true,
+          output:
+            `Provider/model confirmed: ${opts.config.provider}/${opts.config.model}\n` +
+            `  Switch with /provider  ·  /model   ·   /setup to refresh the card`,
+        };
+      }
+      if (action.kind === "budget") {
+        if (!action.amount) {
+          return {
+            handled: true,
+            output:
+              "Spend cap USD [5 / 20 / off / custom]\n" +
+              "  /setup budget 5\n" +
+              "  /setup budget 20\n" +
+              "  /setup budget off\n" +
+              "  Session-only (same as /budget). Persist via max_cost_usd in ~/.forge/config.toml",
+          };
+        }
+        const parsed = parseCostUsd(action.amount);
+        if (parsed === null || parsed === undefined) {
+          return {
+            handled: true,
+            output: `Invalid budget "${action.amount}". Pass a USD amount (e.g. 5) or off.`,
+          };
+        }
+        opts.session.meta.maxCostUsd = parsed;
+        try {
+          saveSession(opts.session);
+        } catch {
+          /* */
+        }
+        return {
+          handled: true,
+          output:
+            parsed === 0
+              ? "Spend cap OFF for this session (unlimited)."
+              : `Spend cap $${parsed} for this session. Persist in ~/.forge/config.toml (max_cost_usd).`,
+          session: opts.session,
+        };
+      }
+      if (action.kind === "init") {
+        const focus = action.focus || "";
+        const prompt = buildInitAgentsPrompt(
+          focus,
+          opts.config.workspace || opts.session.meta.cwd || process.cwd(),
+        );
+        markSetupSeen();
+        return {
+          handled: true,
+          output: focus
+            ? `Initializing / improving AGENTS.md (focus: ${focus.slice(0, 80)})…`
+            : "Initializing / improving AGENTS.md for this repository…",
+          forwardPrompt: prompt,
+          session: opts.session,
+        };
+      }
+      if (action.kind === "notify") {
+        savePreferences({ notifyOnTurnEnd: true });
+        return {
+          handled: true,
+          output:
+            "Turn-end desktop notify ON (persisted). Also: /bell on  ·  FORGE_NOTIFY=0 overrides.",
+        };
+      }
+      if (action.kind === "lsp") {
+        const workspace =
+          opts.config.workspace || opts.session.meta.cwd || process.cwd();
+        const {
+          ensureLspServers,
+          formatEnsureResult,
+        } = await import("../lsp/ensure.js");
+        const lines: string[] = [];
+        const result = await ensureLspServers({
+          workspace,
+          forceInstall: true,
+          onLog: (line) => lines.push(line),
+        });
+        return {
+          handled: true,
+          output:
+            (lines.length ? lines.join("\n") + "\n\n" : "") +
+            formatEnsureResult(result),
+        };
+      }
+      if (action.kind === "scaffold") {
+        const { runForgeInit, formatInitScaffoldSummary } = await import(
+          "./init-scaffold.js"
+        );
+        const result = await runForgeInit({
+          cwd: opts.config.workspace || opts.session.meta.cwd || process.cwd(),
+          quiet: true,
+        });
+        markSetupSeen();
+        return {
+          handled: true,
+          output: formatInitScaffoldSummary(result),
+        };
+      }
+      return { handled: true, output: formatSetupCard(assessed) };
     }
 
     case "/review": {
@@ -6334,6 +6545,15 @@ export interface DoctorResult {
   sessionsTotal?: number;
   /** Pin-protected sessions (prune-safe). */
   sessionsPinned?: number;
+  /** First-day setup checklist (non-blocking — does not affect `ok`). */
+  setupReady?: number;
+  setupTotal?: number;
+  setupItems?: Array<{
+    id: string;
+    ready: boolean;
+    severity: string;
+    action: string;
+  }>;
   /** Effective format-on-write (env FORGE_FORMAT_ON_WRITE wins over preference). */
   formatOnWrite?: boolean;
   subagentLandMode?: "auto" | "keep" | "discard";
@@ -7443,11 +7663,41 @@ export async function runDoctorCheck(
     /* */
   }
 
+  let setupReady: number | undefined;
+  let setupTotal: number | undefined;
+  let setupItems: DoctorResult["setupItems"];
+  try {
+    const assessed = await collectSetupAssessment({
+      config,
+      auth: auth ?? null,
+    });
+    setupReady = assessed.ready;
+    setupTotal = assessed.total;
+    setupItems = assessed.items.map((i) => ({
+      id: i.id,
+      ready: i.ready,
+      severity: i.severity,
+      action: i.action,
+    }));
+    lines.push("");
+    lines.push(`Setup: ${assessed.ready}/${assessed.total}  ·  /setup`);
+    for (const item of assessed.items.filter((i) => !i.ready)) {
+      lines.push(
+        chalk.dim(`  [ ] ${item.label}  ${item.detail}  →  ${item.action}`),
+      );
+    }
+  } catch {
+    /* setup card is advisory */
+  }
+
   return {
     report: lines.join("\n"),
     issues: [...issues],
     ok: issues.length === 0,
     authenticated: Boolean(auth),
+    setupReady,
+    setupTotal,
+    setupItems,
     blockingStop: !isFalsy(config.blockingStopHooks),
     modelInCatalog,
     fallbackModels: config.fallbackModels,
@@ -7598,6 +7848,12 @@ export interface EffectiveConfigSnap {
     FORGE_FILE_READ_GUARD: boolean;
     FORGE_VERIFY_HINT: boolean;
   };
+  /** Turn-end attention (no secrets). */
+  attention: { notify: boolean; bell: boolean };
+  mcp: { count: number; names: string[] };
+  lsp: { missing: string[]; ready: string[] };
+  /** Auth method only — never tokens. */
+  authMethod: string | null;
 }
 
 
@@ -7830,6 +8086,44 @@ export function buildEffectiveConfigSnap(
         return !(v === "0" || v === "false" || v === "off" || v === "no");
       })(),
     },
+    attention: {
+      notify: isNotifyEnabled(),
+      bell: isBellEnabled(),
+    },
+    mcp: (() => {
+      try {
+        const ws = c.workspace || session?.meta.cwd || process.cwd();
+        const cfg = loadMcpConfig(ws);
+        const names = Object.keys(cfg.servers || {}).filter(Boolean);
+        return { count: names.length, names };
+      } catch {
+        return { count: 0, names: [] as string[] };
+      }
+    })(),
+    lsp: (() => {
+      try {
+        const ws = c.workspace || session?.meta.cwd || process.cwd();
+        const plan = buildEnsurePlan(ws);
+        return {
+          missing: plan.items
+            .filter(
+              (i) =>
+                (i.tier === "default" || i.tier === "project") && !i.onPath,
+            )
+            .map((i) => String(i.languageId)),
+          ready: plan.ready.map((i) => String(i.languageId)),
+        };
+      } catch {
+        return { missing: [] as string[], ready: [] as string[] };
+      }
+    })(),
+    authMethod: (() => {
+      try {
+        return resolveAuth(c)?.method ?? null;
+      } catch {
+        return null;
+      }
+    })(),
   };
 }
 
@@ -7867,6 +8161,23 @@ export function formatEffectiveConfig(
     `  read outside:    ${snap.readOutsideWorkspace}`,
     `  sticky provider: ${snap.stickyProvider ?? "(none)"}`,
     `  format-on-write: ${snap.formatOnWrite ? "on" : "off"}  (/format · FORGE_FORMAT_ON_WRITE)`,
+    `  attention:        notify=${snap.attention.notify ? "on" : "off"}  bell=${snap.attention.bell ? "on" : "off"}` +
+      chalk.dim("  (/notify · /bell)"),
+    `  mcp:              ${
+      snap.mcp.count
+        ? `${snap.mcp.count} (${snap.mcp.names.slice(0, 4).join(", ")}${snap.mcp.names.length > 4 ? "…" : ""})`
+        : "none"
+    }` + chalk.dim("  ·  /mcp"),
+    `  lsp:              ${
+      snap.lsp.missing.length
+        ? `missing ${snap.lsp.missing.join(", ")}`
+        : snap.lsp.ready.length
+          ? `ready ${snap.lsp.ready.join(", ")}`
+          : "none"
+    }` + chalk.dim("  ·  /lsp ensure"),
+    snap.authMethod
+      ? `  auth:             ${snap.authMethod}  ·  /auth`
+      : `  auth:             (none)  ·  forge login`,
     `  subagent land:   ${snap.subagentLandMode}  (FORGE_SUBAGENT_LAND=auto|keep|discard)`,
     `  project memory:  ${snap.projectMemoryCount} active  · /memory project`,
     snap.lastCheckpoint
@@ -8181,106 +8492,5 @@ Look for the highest-signal facts for an agent working in this repo:
 Do the research with tools, then write or update \`AGENTS.md\` now.`;
 }
 
-const HELP_TEXT = `
-Forge slash commands
-────────────────────
-  /help                 Show this help
-  /goal <objective>     Arm relentless goal driver (Codex-style)
-  /goal                 Show goal status  [live]
-  /goal pause|resume|clear|done   [live]
-  /done [note]          Wind down: /goal done + ULW cycle=0 (LAST)  [live]
-  /pause                Shorthand for /goal pause  [live]
-  /unpause              Shorthand for /goal resume  [live]
-  /improve [focus…]       Continuous-improve (ULW; alias /ralph)
-  /ulw [task]           Arm ULW + cycle=1 (soft/broad seeds backlog + decision memory)
-  /memory [list|add …]  Session decisions. /memory project … for cross-session.
-  /attach <image>       Attach image path for vision ([[image:path]] in next message)
-  /paste                Attach clipboard image (pngpaste / osascript / wl-paste / xclip)
-  /cycle 1|0|status     Continue waves (1) or last wave then stop (0)  [live]
-  /max-waves N|off      Cap ULW waves (auto LAST at N); default unlimited  [live]
-  /ulw-off              Disarm ULW + cycle driver  [live]
-  /hooks [init|reload]  List/scaffold/reload hooks  [live]
-  /status · /hud        Full inline HUD + session details (no second panel)  [live]
-  /tasks [kill|log id]  Background shell tasks · kill/log subcommands  [live]
-  /mcp [status|connect|tools|reload]  MCP servers (search_mcp · call_mcp)  [live]
-  /lsp [status|ensure|install|detect|restart]  Language servers (auto-install TS/Python)  [live]
-  /context              Context window usage bar  [live]
-  /cost                 Token usage + rough cost + budget  [live]
-  /budget [usd|off]     Session spend cap (estimate USD; 0/off = unlimited)  [live]
-  /metrics              Local metrics.jsonl + this session counters  [live]
-  /stats [days|week]    Usage dashboard (runs/tokens/cost/projects)  [live]
-  /todos                Show agent todos  [live]
-  /provider [name]      List / switch provider (openrouter, xai, …) — sticky  [live]
-  /model <name> [effort] Switch model mid-run; free-form on OpenRouter  [live]
-  /fallback [models|off] Same-provider fallbacks after 429/5xx (defaults on)  [live]
-  /effort [level]       Thinking effort (default = model max; low…high|xhigh|max)  [live]
-  /temperature [0–2]    Session sampling temperature (/temp)  [live]
-  /max-tokens [n]       Session max output tokens  [live]
-  /context-window [n|auto]  Pin or auto-follow model max context (/ctx-window)  [live]
-  /plan [focus]         Session-scoped PLAN mode (read-only design; no sticky prefs)  [live]
-  /build [note]         Leave plan → restore prior mode and implement (/execute)  [live]
-  /permissions [mode]   Menu if empty; Tab / numbers / aliases (yolo, always…)
-                        Sticky prefs · plan|build aliases · list|clear|revoke always-allows
-  /compact              Compact conversation
-  /compact-and <prompt> Compact then continue with follow-up (Warp-style)
-  /fork-and-compact [prompt]  Fork, compact the fork, optional continue (Warp-style)
-  /init [focus]         Guided AGENTS.md setup / improve (OpenCode-style)
-  /review [target]      Code review: uncommitted|staged|<commit>|<branch>|<pr#>
-  /checkpoint [restore] Safety snapshot (/snap)
-  /commit [staged] [do] Draft commit message from git diff (do = create commit, no push)
-  /rewind [n]           Undo last n user turns + restore journaled files (/undo)
-  /retry [prompt]       Rewind last turn (+ disk) + re-run (/again; optional rewrite)
-  /export [path] [--json]  Export session as markdown or JSON (files mode 0600)
-  /fork [title]         Branch session into a new id (keep original)
-  /title [name|clear]   Show / set / clear session title (/rename)  [live]
-  /bell [on|off|test]   Terminal BEL when a turn ends (long-run attention)  [live]
-  /notify [on|off|test] Desktop notify when a turn ends (osascript/notify-send)  [live]
-  /format [on|off]      Format-on-write after file tools (prettier/biome/ruff/…)  [live]
-  ask_user tool         Clarifying questions (interactive; headless fails closed)
-  /diff [path]          Git status + diff (argv-safe; pathspecs/refs only)  [live]
-  !<command>            Run a shell command now (same permissions as bash)  [live]
-  /logs [n|0|all|path]  Tail sandbox/safety events (0/all = full window)  [live]
-  /config [json]        Effective config snapshot (no secrets)  [live]
-  /copy                 Copy last assistant reply (pbcopy/wl-copy/xclip/…)  [live]
-  /share [nocopy]       Pasteable session card + resume/export cmds (clipboard)  [live]
-  /last [n]             Peek last n user/assistant turns (after resume)  [live]
-  /files [writes|n]     Paths touched by tools this session (newest first)  [live]
-  /path [id|json]       On-disk session directory / session.json path  [live]
-  /pin [on|off|toggle]  Protect session from prune (/unpin)  [live]
-  /tips                 Expert keyboard / CI cheat sheet  [live]
-  /news [n|all]         What's new from CHANGELOG (/changelog)  [live]
-  /new [title]          Fresh session (optional searchable label; ULW not inherited)
-  /clear                Clear messages same id (counters+journal reset)
-  /clear hard           Brand-new session id (same as /new; ULW not inherited)
-  /resume [id|title|all] Resume by id prefix or unique /title (same-cwd picker)
-  /sessions [all|search|delete|prune]  List (cwd default) / search / delete [--force] / prune
-  /auth                 Show stored credentials (+ multi-account)  [live]
-  /accounts [status|switch|…]  Multi-account list/status/switch/clear-cooldown  [live]
-  /doctor               Environment health check  [live]
-  /skills               List skill packs (builtin forge-* · .forge/skills · ~/.forge/skills)
-  /commands             List project/user custom slash templates (.forge/commands)  [live]
-  /quit                 Exit  [live — aborts run then exits]
+export { HELP_TEXT, HELP_ALL, helpFor } from "./help-text.js";
 
-Tips
-────
-  Unknown /cmd typos suggest closest commands (e.g. /exprot → /export).
-  Catalog typos: /model grok-45 · /effort medum · /permissions aceptEdits · /sessions prun.
-
-Status (always on — no second panel)
-────────────────────────────────────
-  Prompt line     Context %, tokens, todos, bg:N, ULW/GOAL flags, liveness
-  While working   Spinner + phase (thinking / tool / compact / harness)
-  After each turn Compact footer (ctx · turn tokens · bg · goal)
-  /status         Full two-line HUD + session detail
-  forge status --watch   Optional external pane / tmux (still available)
-
-Tips
-────
-  ↑ / ↓           Command history (persisted in ~/.forge/history)
-  Tab             Autocomplete commands and parameters
-  /permissions    Modes 1–4 · list|clear|revoke for saved always-allows
-  Live controls   While the agent is working you can still type:
-                  /cycle 0  ·  /cycle 1  ·  /max-waves N|off  ·  /ulw-off  ·  /goal pause  ·  /status
-                  (no need to Ctrl+C first — harness updates apply at next Stop)
-  Ctrl+C          Abort the current turn; twice at idle prompt to exit
-`.trim();

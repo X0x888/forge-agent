@@ -772,6 +772,20 @@ export class PermissionGate {
         `\n⚠ Permission: ${toolName}${dangerous ? " [DANGEROUS]" : ""}${opts.reasonHint ? `\n  ${opts.reasonHint}` : ""}\n`,
       ) + (diffPreview ? `${preview}\n` : chalk.yellow(`${preview}\n`)),
     );
+    try {
+      const { loadPreferences, dismissHint } = await import(
+        "../config/preferences.js"
+      );
+      const { shouldShowFirstPermissionHint, FIRST_PERMISSION_HINT } =
+        await import("../tui/hints.js");
+      const prefs = loadPreferences();
+      if (shouldShowFirstPermissionHint(prefs.dismissedHints || [])) {
+        console.error(chalk.dim(`  ${FIRST_PERMISSION_HINT}`));
+        dismissHint("first_permission");
+      }
+    } catch {
+      /* never block permission ask */
+    }
     const rl = readline.createInterface({ input, output });
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {

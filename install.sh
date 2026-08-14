@@ -37,6 +37,7 @@ fi
 echo ""
 echo "Next:"
 echo "  forge login"
+echo "  forge setup"
 echo "  forge init"
 echo "  forge"
 echo "  eval \"\$(forge completion bash)\"   # optional"

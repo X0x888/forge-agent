@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+### Added
+- **First-run UX**: TTY `forge` without credentials offers a login picker (headless/`--json` still fail closed). Slim banner + “Type a task in English.” Grouped `/help` (`start` default, `all` is the catalog, plus `settings`/`harness`/`sessions`/`safety`). `/setup` + `forge setup` first-day hub (model, budget, notify, `/init`, LSP, `forge init` scaffold). Compact `setup N/M` line until recommended items are done or `/setup skip`. Contextual once-hints after first edit / first spend / long turn. `/config` and doctor show attention, MCP, LSP, and a non-blocking setup section. Docs: `docs/GETTING-STARTED.md`. `FORGE_SETUP=0` disables the auto card.
+
 ### Fixed
 - **Lossless tool-clear**: microcompaction spools the body to `~/.forge/tool-output/` before stubbing. Stubs say `read_file` the Full output path — never “re-run” `spawn_subagent` / bash. Dumps still referenced by a session are not pruned. ULW keep-recent floors at 10 so a legal 8-tool parallel batch fits the hot tail.
 - **Subagent handoff**: children write an artifact, report `incomplete_max_turns` instead of pretending success, synthesize findings when `finalText` is empty/mid-thought, and get a last-turn “write the report now” reminder. The child session is deleted only after a completed run with an artifact on disk.

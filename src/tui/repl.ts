@@ -50,6 +50,7 @@ import {
   setPhase,
   getActivity,
   syncBackgroundCounts,
+  activityElapsedSec,
 } from "../statusline/activity.js";
 import {
   listTasks,
@@ -77,7 +78,27 @@ import {
 } from "../session/lock.js";
 
 import { getForgeVersion } from "../util/version.js";
-import { loadPreferences, savePreferences } from "../config/preferences.js";
+import { loadPreferences, dismissHint } from "../config/preferences.js";
+import { formatBanner } from "./banner.js";
+import { pickTurnEndHint } from "./hints.js";
+import {
+  alreadyOnboarded,
+  setupAutoCardDisabled,
+} from "../util/setup-readiness.js";
+import {
+  collectSetupAssessment,
+  formatSetupCard,
+  formatSetupCompactLine,
+  markSetupSeen,
+} from "../commands/setup.js";
+import { isSyntheticUserMessage } from "../session/session.js";
+import { resolveMaxCostUsd, sessionCostUsd } from "../util/cost-budget.js";
+import { isBellEnabled, isNotifyEnabled } from "../util/attention.js";
+import { loadUlwCycle } from "../harness/ulw-cycle.js";
+import { listProjectRulePaths } from "../agent/system-prompt.js";
+
+/** True when this process already printed the full first-run /setup card. */
+let setupCardShownThisProcess = false;
 const VERSION = getForgeVersion();
 
 export async function runRepl(opts: {
@@ -118,7 +139,7 @@ export async function runRepl(opts: {
     }
   }
 
-  printBanner(config, auth, session);
+  await printBanner(config, auth, session);
 
   // Soft LSP ensure tip (once/day when recommended servers missing)
   try {
@@ -994,11 +1015,11 @@ export async function runRepl(opts: {
   }
 }
 
-function printBanner(
+async function printBanner(
   config: ForgeConfig,
   auth: ResolvedAuth,
   session: SessionData,
-): void {
+): Promise<void> {
   const cwd = config.workspace || session.meta.cwd;
   const git = getGitSnapshot(cwd);
   const intel = detectProjectIntel(cwd);
@@ -1006,50 +1027,74 @@ function printBanner(
     intel.packageManager || null,
     intel.kinds.length ? intel.kinds.join("+") : null,
     intel.checkCommands[0] || null,
-  ].filter(Boolean);
-  console.log(chalk.bold.cyan("\n  ⚒  Forge") + chalk.dim(` v${VERSION}`));
-  console.log(
-    chalk.dim(
-      `  ${auth.provider}/${config.model} · ${describeAuth(auth)}\n` +
-        `  session ${session.meta.id.slice(0, 8)}` +
-        (session.meta.title ? ` · ${session.meta.title.slice(0, 40)}` : "") +
-        ` · Stop: ${config.blockingStopHooks ? "blocking" : "passive"}` +
-        ` · perms: ${config.permissionMode}` +
-        (config.permissionMode === "plan" ? " (exit_plan_mode or /build)" : "") +
-        (git.branch ? ` · ${git.branch}${git.dirty ? "*" : ""}` : "") +
-        (projectBits.length ? ` · ${projectBits.join(" · ")}` : "") +
-        `\n  Native live status while working · type at live › mid-run (/cycle 0)\n` +
-        `  Paste multi-line safely (↵ sends · ^J newline) · ↑↓ history · Tab @path · !cmd · /paste · /tips · /quit\n` +
-        `  Fresh session: forge --new  ·  resume is automatic for this cwd\n`,
-    ),
-  );
-  printPosture(config);
-  // One-time expert tip for first interactive launch (persisted in preferences).
+  ].filter(Boolean) as string[];
+
+  let ulwArmed = false;
+  try {
+    const { loadUlwCycle } = await import("../harness/ulw-cycle.js");
+    const ulw = loadUlwCycle(session.meta.id);
+    ulwArmed = Boolean(ulw?.enabled);
+  } catch {
+    /* */
+  }
+
+  const realUserTurns = (session.messages || []).filter(
+    (m) => m.role === "user" && !isSyntheticUserMessage(m),
+  ).length;
+  const isFirstSession =
+    (session.meta.turnCount || 0) === 0 && realUserTurns === 0;
+
+  let setupCard: string | undefined;
+  let setupCompact: string | undefined;
   try {
     const prefs = loadPreferences();
-    if (!prefs.seenWelcomeTip) {
-      let stackBit = "";
-      try {
-        const intel = detectProjectIntel(cwd);
-        if (intel.checkCommands[0] || intel.packageManager) {
-          const bits = [
-            intel.packageManager || null,
-            intel.checkCommands[0] || null,
-          ].filter(Boolean);
-          if (bits.length) stackBit = ` · stack: ${bits.join(" · ")}`;
-        }
-      } catch {
-        /* */
+    if (!setupAutoCardDisabled()) {
+      const assessed = await collectSetupAssessment({
+        config,
+        session,
+        auth,
+      });
+      if (!alreadyOnboarded(prefs)) {
+        setupCardShownThisProcess = true;
+        setupCard = formatSetupCard(assessed);
+        markSetupSeen();
+      } else if (
+        !prefs.setupSkipped &&
+        (assessed.recommendedOpen > 0 || assessed.blocking)
+      ) {
+        setupCompact = formatSetupCompactLine(assessed);
       }
-      console.log(
-        chalk.cyan(
-          `  Tip: /plan → design · exit_plan_mode or /build → ship · !cmd · @path · /paste · /commit [do] · /budget N · /notify on · /done winds ULW+goal · /model live · /undo · /context · forge tips · forge doctor --json${stackBit}\n`,
-        ),
-      );
-      savePreferences({ seenWelcomeTip: true });
     }
   } catch {
-    /* never block REPL on prefs */
+    /* never block REPL on setup card */
+  }
+
+  const text = formatBanner({
+    version: VERSION,
+    provider: String(auth.provider || config.provider),
+    model: config.model,
+    authLabel: describeAuth(auth),
+    sessionId: session.meta.id,
+    sessionTitle: session.meta.title || undefined,
+    permissionMode: config.permissionMode,
+    sandbox: String(config.sandbox || "workspace"),
+    blockingStop: Boolean(config.blockingStopHooks),
+    gitBranch: git.branch,
+    gitDirty: Boolean(git.dirty),
+    projectBits,
+    ulwArmed,
+    posture: postureHead(config),
+    postureWarnings: postureWarnings(config),
+    showEmptyState: isFirstSession,
+    setupCard,
+    setupCompact,
+  });
+  const [first, ...rest] = text.split("\n");
+  console.log(chalk.bold.cyan("\n" + first));
+  for (const line of rest) {
+    if (line.startsWith("  ⚠")) console.log(chalk.yellow(line));
+    else if (line.includes("Type a task in English")) console.log(chalk.cyan(line));
+    else console.log(chalk.dim(line));
   }
 }
 
@@ -1083,7 +1128,54 @@ function printTurnChangeSummary(
     );
     const line = formatTurnChangeSummary(edits, session.meta.cwd, session.meta);
     if (line) console.log(chalk.dim(line));
+    printTurnHint(session, edits.length > 0);
   } catch {
     /* summary is best-effort */
+    try {
+      printTurnHint(session, false);
+    } catch {
+      /* */
+    }
+  }
+}
+
+function printTurnHint(session: SessionData, hadFileEdits: boolean): void {
+  try {
+    let skip = setupCardShownThisProcess;
+    try {
+      const ulw = loadUlwCycle(session.meta.id);
+      if (ulw?.enabled && ulw.cycle === 1) skip = true;
+    } catch {
+      /* */
+    }
+    const prefs = loadPreferences();
+    let projectRulesCount = 0;
+    try {
+      projectRulesCount = listProjectRulePaths(
+        session.meta.cwd || process.cwd(),
+      ).length;
+    } catch {
+      /* */
+    }
+    const pick = pickTurnEndHint({
+      dismissed: prefs.dismissedHints || [],
+      skip,
+      hadFileEdits,
+      projectRulesCount,
+      sessionCostUsd: sessionCostUsd(
+        String(session.meta.provider || "xai"),
+        session.meta,
+        session.meta.model,
+      ),
+      hasBudget: resolveMaxCostUsd(null, session.meta) != null,
+      turnElapsedSec: activityElapsedSec(),
+      notifyOn: isNotifyEnabled(),
+      bellOn: isBellEnabled(),
+    });
+    if (!pick) return;
+    console.log(chalk.cyan(`  Tip: ${pick.text}`));
+    dismissHint(pick.id);
+  } catch {
+    /* never block turn-end on hints */
   }
 }

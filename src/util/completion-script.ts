@@ -15,7 +15,7 @@ export function normalizeCompletionShell(
 
 export function shellCompletionScript(shell: string): string {
   const cmds =
-    "run login logout auth accounts sessions init models doctor stats tips news logs config status completion prune-tool-output prune-metrics";
+    "run login logout auth accounts sessions init setup models doctor stats tips news logs config status completion prune-tool-output prune-metrics";
   const zshCmds = cmds.split(" ").join(" ");
   const runFlags =
     "--json --ulw --max-waves --permission-mode --model --provider --base-url --goal --session --continue --new --title --sandbox --sandbox-network --sandbox-missing --read-outside --deny --allow --ask --cwd --effort --max-turns --no-blocking-stop";

@@ -80,6 +80,11 @@ describe("live mid-run slash policy", () => {
     assert.equal(classifyLiveSlash("/stats 7"), "readonly");
     assert.equal(classifyLiveSlash("/share"), "readonly");
     assert.equal(classifyLiveSlash("/tips"), "readonly");
+    assert.equal(classifyLiveSlash("/setup"), "readonly");
+    assert.equal(classifyLiveSlash("/setup json"), "readonly");
+    assert.equal(classifyLiveSlash("/setup skip"), "control");
+    assert.equal(classifyLiveSlash("/setup budget 5"), "control");
+    assert.equal(classifyLiveSlash("/setup init"), "idle-only");
     assert.equal(classifyLiveSlash("/news"), "readonly");
     assert.equal(classifyLiveSlash("/news 2"), "readonly");
     assert.equal(classifyLiveSlash("/changelog"), "readonly");
