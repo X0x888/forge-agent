@@ -47,7 +47,9 @@ function git(args: string[], cwd: string, timeoutMs = 30_000): string {
 }
 
 export function porcelainPaths(cwd: string): string[] {
-  const out = git(["status", "--porcelain"], cwd, 15_000);
+  // -uall: a new directory is `?? src/ui.ts`, not `?? src/` (which cannot
+  // match a journaled file and skipped the whole Cycle-complete commit).
+  const out = git(["status", "--porcelain", "-uall"], cwd, 15_000);
   if (!out) return [];
   const paths: string[] = [];
   for (const line of out.split("\n")) {
@@ -131,18 +133,32 @@ function matchJournalToDirty(
   const jKeys = new Set(journal.map((p) => relKey(root, p)));
   const jBases = journal.map((p) => path.basename(p));
   const out: string[] = [];
+  const seen = new Set<string>();
+  const push = (p: string) => {
+    if (!p || seen.has(p)) return;
+    seen.add(p);
+    out.push(p);
+  };
   for (const d of dirty) {
     const k = relKey(root, d);
     if (jKeys.has(k) || jKeys.has(d)) {
-      out.push(d);
+      push(d);
       continue;
     }
-    const base = path.basename(d);
+    const base = path.basename(d.replace(/\/$/, ""));
     if (
       jBases.includes(base) &&
-      dirty.filter((x) => path.basename(x) === base).length === 1
+      dirty.filter((x) => path.basename(x.replace(/\/$/, "")) === base)
+        .length === 1
     ) {
-      out.push(d);
+      push(d);
+      continue;
+    }
+    // `?? src/` (untracked dir, porcelain without -uall) still owns journal files under it.
+    const dNorm = k.replace(/\/$/, "");
+    if (!dNorm) continue;
+    for (const jk of jKeys) {
+      if (jk === dNorm || jk.startsWith(`${dNorm}/`)) push(jk);
     }
   }
   return out;

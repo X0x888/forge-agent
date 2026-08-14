@@ -112,6 +112,10 @@ describe("ULW auto-commit", () => {
         stuckThreshold: 20,
         verificationPassed: true,
       });
+      assert.ok(
+        porcelainPaths(root).includes("src/ui.ts"),
+        `expected file-level porcelain, got ${porcelainPaths(root).join(",")}`,
+      );
       const r = maybeAutoCommitOnUlwDone({ cwd: root, sessionId: sid });
       assert.equal(r.committed, true, r.skipped);
       assert.ok(r.sha);
