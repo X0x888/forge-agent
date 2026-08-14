@@ -1311,9 +1311,13 @@ export function reenableUlwCycle(sessionId: string): UlwCycleState | null {
 
 export function setCycleFlag(sessionId: string, cycle: CycleFlag): UlwCycleState | null {
   const s = loadUlwCycle(sessionId);
-  if (!s || !s.enabled) {
-    // Allow arming cycle control only when ULW is on — create dormant? better require /ulw first
-    return null;
+  if (!s) return null;
+  if (!s.enabled) {
+    // Stuck-wall / /ulw-off / Cycle complete leave a sidecar. /cycle 1
+    // must resume THAT mandate — auto-arm used to reset wave=0 and steal
+    // lastUserText ("continue", a kickoff, or an older task).
+    if (cycle !== 1) return null;
+    s.enabled = true;
   }
   s.cycle = cycle;
   if (cycle === 1) {
@@ -1358,7 +1362,12 @@ export function setMaxWaves(
   maxWaves: number | null,
 ): UlwCycleState | null {
   const s = loadUlwCycle(sessionId);
-  if (!s || !s.enabled) return null;
+  if (!s) return null;
+  if (!s.enabled) {
+    s.enabled = true;
+    s.cycle = 1;
+    s.stuckBlocks = 0;
+  }
   s.maxWaves = normalizeMaxWaves(maxWaves);
   // If the cap is already at/under the current wave counter while CONTINUE,
   // flip to LAST immediately so the user does not wait for the next Stop
@@ -1451,7 +1460,7 @@ export function formatUlwStatus(s: UlwCycleState | null): string {
   const best = bestWave(s.waves);
   return [
     `ULW cycle: ON  |  ${formatUlwCounts(s)}  ${s.cycle === 1 ? "(CONTINUE — relentless)" : "(LAST — finish current wave)"}`,
-    `  Mandate: ${s.mandate}`,
+    `  Mandate: ${isPlaceholderMandate(s.mandate) ? "(pending work-order)" : s.mandate}`,
     `  Soft prompt expanded: ${s.softPrompt ? "yes" : "no"}`,
     `  max_waves: ${cap != null ? cap : "off (unlimited)"}`,
     ...(ledger ? [`  Recent waves: ${ledger}`] : []),

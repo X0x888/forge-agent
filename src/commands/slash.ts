@@ -2317,6 +2317,11 @@ export async function handleSlash(
           editCount: opts.session.meta.editCount,
         });
         saveSession(opts.session);
+      } else if (flag === 1) {
+        // Re-enable after stuck-wall / /ulw-off must restore the session flag
+        // or the next "continue" will look like a missing cycle.
+        opts.session.meta.ultrawork = true;
+        saveSession(opts.session);
       }
       if (flag === 1) {
         pushLiveNotice(
@@ -2432,6 +2437,9 @@ export async function handleSlash(
           maxWaves: parsed,
           editCount: opts.session.meta.editCount,
         });
+        saveSession(opts.session);
+      } else {
+        opts.session.meta.ultrawork = true;
         saveSession(opts.session);
       }
       const flippedToLast =

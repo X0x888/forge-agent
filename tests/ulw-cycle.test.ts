@@ -193,6 +193,43 @@ describe("ulw cycle", () => {
     assert.equal(reenableUlwCycle(sid + "-ph"), null);
   });
 
+  it("/cycle 1 after stuck-wall resumes the sidecar instead of re-arming", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-ulw-cycle-resume-"));
+    process.env.FORGE_HOME = tmp;
+    const sid = "ulw-cycle-resume";
+    armUlwCycle(sid, "comprehensively evaluate this tool and then improve the ui.", {
+      cycle: 1,
+      maxWaves: 4,
+      skipCheckpoint: true,
+    });
+    evaluateUlwAtStop({
+      sessionId: sid,
+      lastAssistantMessage: "Reading: ship the dock. Wave shipped.",
+      editCount: 3,
+      openTodoCount: 0,
+      stuckThreshold: 20,
+      verificationRan: true,
+      verificationPassed: true,
+    });
+    assert.equal(loadUlwCycle(sid)?.wave, 1);
+    disarmUlwCycle(sid);
+    const next = setCycleFlag(sid, 1);
+    assert.ok(next);
+    assert.equal(next!.enabled, true);
+    assert.equal(next!.cycle, 1);
+    assert.equal(next!.wave, 1);
+    assert.equal(next!.maxWaves, 4);
+    assert.match(next!.mandate, /evaluate this tool/);
+    assert.equal(setCycleFlag(sid, 0)?.enabled, true);
+    armUlwCycle(sid + "-ph", PLACEHOLDER_MANDATE, {
+      cycle: 1,
+      skipCheckpoint: true,
+    });
+    const pending = formatUlwStatus(loadUlwCycle(sid + "-ph"));
+    assert.match(pending, /pending work-order/);
+    assert.doesNotMatch(pending, /continue prior mandate/);
+  });
+
   it("judgment gate blocks wave-0 Stop until a Reading exists, then releases", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-ulw-judge-"));
     process.env.FORGE_HOME = tmp;
