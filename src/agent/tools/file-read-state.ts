@@ -19,6 +19,11 @@ export type FileReadStamp = {
   size: number;
   /** Wall clock when we last noted this path (debug / TTL). */
   notedAt: number;
+  /**
+   * Set only after a successful full-file read_file (no offset/limit).
+   * Writes refresh the stamp without this field so the next read is not stubbed.
+   */
+  fullReadLines?: number;
 };
 
 const sessionFileReads = new Map<string, FileReadState>();
@@ -81,11 +86,17 @@ export class FileReadState {
     return this.map.size;
   }
 
-  note(filePath: string, st: { mtimeMs: number; size: number }): void {
+  note(
+    filePath: string,
+    st: { mtimeMs: number; size: number; fullReadLines?: number },
+  ): void {
     this.map.set(FileReadState.key(filePath), {
       mtimeMs: st.mtimeMs,
       size: st.size,
       notedAt: Date.now(),
+      ...(typeof st.fullReadLines === "number"
+        ? { fullReadLines: st.fullReadLines }
+        : {}),
     });
   }
 

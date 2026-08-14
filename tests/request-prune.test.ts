@@ -379,5 +379,15 @@ describe("request-prune", () => {
     assert.equal(c.harnessUserPokes, 3);
     assert.equal(c.admitCount, 1);
     assert.equal(c.proofPokes, 1);
+    const withUlwProof = countHarnessUserPokes([
+      ...msgs,
+      {
+        role: "user",
+        content:
+          "[Forge ULW cycle driver] Last wave ran no successful verification — run proof NOW",
+      },
+    ]);
+    assert.equal(withUlwProof.proofPokes, 2);
+    assert.equal(withUlwProof.harnessUserPokes, 4);
   });
 });

@@ -6,16 +6,151 @@ import { resolvePath, resolveReadablePath, displayRelPath } from "./path-util.js
 import { pathNotFoundHint } from "./path-hints.js";
 import { boundToolOutput, DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES } from "./truncate.js";
 import { numberFieldError } from "./arg-types.js";
-import { fileReadGuardEnabled } from "./file-read-state.js";
+import { fileReadGuardEnabled, FileReadState } from "./file-read-state.js";
+import { isFalsy } from "../../util/bool.js";
+import { REQUEST_PRUNE_OMITTED } from "../../session/request-prune.js";
+import type { SessionData } from "../../session/session.js";
+import type { ChatMessage } from "../../providers/types.js";
 
-function noteRead(ctx: ToolContext, filePath: string, st: fs.Stats): void {
+function noteRead(
+  ctx: ToolContext,
+  filePath: string,
+  st: fs.Stats,
+  extra?: { fullReadLines?: number },
+): void {
   if (!ctx.fileReads || !fileReadGuardEnabled()) return;
   if (!st.isFile()) return;
   try {
-    ctx.fileReads.note(filePath, { mtimeMs: st.mtimeMs, size: st.size });
+    ctx.fileReads.note(filePath, {
+      mtimeMs: st.mtimeMs,
+      size: st.size,
+      ...(typeof extra?.fullReadLines === "number"
+        ? { fullReadLines: extra.fullReadLines }
+        : {}),
+    });
   } catch {
     /* best-effort */
   }
+}
+
+/** Prefix of the unchanged-read stub (also used to detect a prior stub). */
+export const UNCHANGED_READ_STUB = "Unchanged since last read";
+
+function unchangedReadStubEnabled(): boolean {
+  const v = process.env.FORGE_UNCHANGED_READ_STUB;
+  if (v === undefined || v === "") return true;
+  return !isFalsy(v);
+}
+
+/**
+ * True when this call is a full-file read (no offset/limit window).
+ * limit=0 from line 1 is "all remaining" — still a full file.
+ */
+export function isFullFileReadArgs(args: Record<string, unknown>): boolean {
+  const hasOffset =
+    args.offset != null && String(args.offset).trim() !== "";
+  const hasLimit = args.limit != null && String(args.limit).trim() !== "";
+  if (!hasOffset && !hasLimit) return true;
+  const offset = hasOffset ? Number(args.offset) : 1;
+  const limit = hasLimit ? Number(args.limit) : -1;
+  if (!Number.isFinite(offset) || offset > 1) return false;
+  return hasLimit && limit === 0;
+}
+
+function pathMatchesReadArg(
+  argPath: string,
+  filePath: string,
+  workspace: string,
+): boolean {
+  const a = argPath.trim();
+  if (!a) return false;
+  try {
+    return FileReadState.key(path.resolve(workspace, a)) === FileReadState.key(filePath);
+  } catch {
+    return a === filePath;
+  }
+}
+
+/**
+ * True when the last read_file of this path is still a live (non-omitted,
+ * non-stub) tool result in the session transcript.
+ */
+export function lastLiveFullReadPresent(
+  session: Pick<SessionData, "messages"> | undefined,
+  filePath: string,
+  workspace: string,
+): boolean {
+  const messages: ChatMessage[] | undefined = session?.messages;
+  if (!messages?.length) return false;
+
+  const infoById = new Map<string, { path: string; full: boolean }>();
+  for (const m of messages) {
+    if (m.role !== "assistant" || !m.tool_calls) continue;
+    for (const tc of m.tool_calls) {
+      const name = (tc.function?.name || "").toLowerCase();
+      if (name !== "read_file" && name !== "read") continue;
+      if (!tc.id) continue;
+      try {
+        const o = JSON.parse(tc.function.arguments || "{}") as Record<
+          string,
+          unknown
+        >;
+        const p =
+          (typeof o.path === "string" && o.path) ||
+          (typeof o.target_file === "string" && o.target_file) ||
+          (typeof o.file === "string" && o.file) ||
+          "";
+        if (p.trim()) {
+          infoById.set(tc.id, {
+            path: p.trim(),
+            full: isFullFileReadArgs(o),
+          });
+        }
+      } catch {
+        /* */
+      }
+    }
+  }
+
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i]!;
+    if (m.role !== "tool") continue;
+    const info = m.tool_call_id ? infoById.get(m.tool_call_id) : undefined;
+    if (!info || !pathMatchesReadArg(info.path, filePath, workspace)) {
+      continue;
+    }
+    // Last read of this path was a window — do not stub a later full read.
+    if (!info.full) return false;
+    const body = m.content || "";
+    if (
+      body.startsWith(REQUEST_PRUNE_OMITTED) ||
+      body.startsWith(UNCHANGED_READ_STUB)
+    ) {
+      return false;
+    }
+    return body.startsWith("File:");
+  }
+  return false;
+}
+
+function maybeUnchangedReadStub(
+  args: Record<string, unknown>,
+  ctx: ToolContext,
+  filePath: string,
+  st: fs.Stats,
+): { output: string } | null {
+  if (!unchangedReadStubEnabled()) return null;
+  if (!ctx.fileReads || !isFullFileReadArgs(args)) return null;
+  const stamp = ctx.fileReads.get(filePath);
+  if (!stamp || typeof stamp.fullReadLines !== "number") return null;
+  const drift = Math.abs(st.mtimeMs - stamp.mtimeMs);
+  if (st.size !== stamp.size || drift > 1.5) return null;
+  if (!lastLiveFullReadPresent(ctx.session, filePath, ctx.workspace)) {
+    return null;
+  }
+  return {
+    output: `${UNCHANGED_READ_STUB} (${stamp.fullReadLines} lines, same mtime).`,
+  };
 }
 
 const DEFAULT_READ_LIMIT = 1000;
@@ -228,6 +363,9 @@ export async function toolRead(
     };
   }
 
+  const unchanged = maybeUnchangedReadStub(args, ctx, filePath, stat);
+  if (unchanged) return unchanged;
+
   // Huge files: stream only the requested window — never materialize a
   // multi-GB buffer+string (OOM kills the whole CLI mid-session).
   if (stat.size > LARGE_FILE_BYTES) {
@@ -273,7 +411,14 @@ export async function toolRead(
       maxLines: DEFAULT_MAX_LINES + 5,
       maxBytes: DEFAULT_MAX_BYTES,
     });
-    noteRead(ctx, filePath, stat);
+    noteRead(
+      ctx,
+      filePath,
+      stat,
+      isFullFileReadArgs(args) && complete
+        ? { fullReadLines: seen }
+        : undefined,
+    );
     return { output: managed.text };
   }
 
@@ -318,7 +463,14 @@ export async function toolRead(
   // Past-EOF / empty-slice: do not claim "showing 100-99" or "(empty file)" for non-empty files.
   // Still note the read — the agent observed the file exists (and its size/mtime).
   if (slice.length === 0) {
-    noteRead(ctx, filePath, stat);
+    noteRead(
+      ctx,
+      filePath,
+      stat,
+      isFullFileReadArgs(args) && lines.length === 0
+        ? { fullReadLines: 0 }
+        : undefined,
+    );
     if (lines.length === 0) {
       return {
         output: `File: ${rel} (empty file — 0 lines${largeHint})`,
@@ -345,6 +497,11 @@ export async function toolRead(
     maxLines: DEFAULT_MAX_LINES + 5,
     maxBytes: DEFAULT_MAX_BYTES,
   });
-  noteRead(ctx, filePath, stat);
+  noteRead(
+    ctx,
+    filePath,
+    stat,
+    isFullFileReadArgs(args) ? { fullReadLines: lines.length } : undefined,
+  );
   return { output: managed.text };
 }

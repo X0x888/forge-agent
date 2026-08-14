@@ -11,7 +11,7 @@ export function expertTipsLines(): string[] {
     `  Verify trail:   successful checks stamp last-verify · failed re-runs clear it · edits after verify → ✓~ stale · surfaces on /status /stats /share /done /export · sessions list ✓/✓~ · /commit do + /done warn`,
     `  ULW proof:      wave proof + proof-demand prefer successful checks · reanchor names preferred project commands · failed runs don't clear proofDemands`,
     `  Advisory ULW:   pure Q&A mid-run or post-compact is framed ADVISORY — answer first; ULW momentum does not authorize unsolicited edits · TodoGate/TodoNudge/handoff/proof-claim Done. release on advisory turns`,
-    `  Project stack:  auto pm+checks+monorepo in prompt · /context · doctor/status/run JSON · /memory project · memory_write scope=project · /init writes AGENTS.md · /setup first-day hub · FORGE_VERIFY_HINT=0 · FORGE_FILE_READ_GUARD=0 · FORGE_AUTO_VERIFY_NUDGE=0 · FORGE_FIX_UNTIL_GREEN=0`,
+    `  Project stack:  auto pm+checks+monorepo in prompt · /context · doctor/status/run JSON · /memory project · memory_write scope=project · /init writes AGENTS.md · /setup first-day hub · FORGE_VERIFY_HINT=0 · FORGE_FILE_READ_GUARD=0 · FORGE_UNCHANGED_READ_STUB=0 · FORGE_AUTO_VERIFY_NUDGE=0 · FORGE_FIX_UNTIL_GREEN=0`,
     `  Pin keepers:    /sessions pin <id> · forge sessions pin <id> · /sessions pinned · prune-safe`,
     `  Sessions:      /sessions  ·  pinned  ·  search <q>  ·  forge sessions search <q>  ·  /new [title]  ·  /clear hard  ·  /pin  ·  /path  ·  /share  ·  forge sessions title  ·  export/import --json (envelope round-trip)  ·  action typos → Did you mean?`,
     `  Resume:        bare forge (same-cwd)  ·  /resume <id|title>  ·  forge --session <id|title>`,

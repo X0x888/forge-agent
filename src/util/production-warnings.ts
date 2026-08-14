@@ -223,6 +223,14 @@ export function productionWarningsForRun(
       }
     }
     {
+      const v = (process.env.FORGE_UNCHANGED_READ_STUB || "1").trim().toLowerCase();
+      if (v === "0" || v === "false" || v === "off" || v === "no") {
+        warnings.push(
+          "FORGE_UNCHANGED_READ_STUB=0 — identical full-file rereads will resend the whole body",
+        );
+      }
+    }
+    {
       const v = (process.env.FORGE_AUTO_VERIFY_NUDGE || "1").trim().toLowerCase();
       if (v === "0" || v === "false" || v === "off" || v === "no") {
         warnings.push(

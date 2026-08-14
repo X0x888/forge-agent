@@ -56,6 +56,25 @@ describe("productionWarningsForRun", () => {
     }
   });
 
+  it("flags FORGE_UNCHANGED_READ_STUB=0", () => {
+    const prev = process.env.FORGE_UNCHANGED_READ_STUB;
+    process.env.FORGE_UNCHANGED_READ_STUB = "0";
+    try {
+      const w = productionWarningsForRun(
+        { ...DEFAULT_CONFIG },
+        {
+          _testDirtyFiles: 0,
+          _testSessionCount: 0,
+          _testPinnedCount: 0,
+        },
+      );
+      assert.ok(w.some((x) => /FORGE_UNCHANGED_READ_STUB=0/i.test(x)));
+    } finally {
+      if (prev === undefined) delete process.env.FORGE_UNCHANGED_READ_STUB;
+      else process.env.FORGE_UNCHANGED_READ_STUB = prev;
+    }
+  });
+
   it("flags missing node_modules", () => {
     const w = productionWarningsForRun(
       { ...DEFAULT_CONFIG },

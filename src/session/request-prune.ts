@@ -125,6 +125,14 @@ export function countHarnessUserPokes(messages: ChatMessage[]): {
     harnessUserPokes += 1;
     if (cls === "admit") admitCount += 1;
     if (PROOF_POKE_CLASSES.has(cls)) proofPokes += 1;
+    else if (
+      cls === "ulw_stop" &&
+      /proof NOW|Verification failed|attestation needs evidence|check failed/i.test(
+        m.content,
+      )
+    ) {
+      proofPokes += 1;
+    }
   }
   return { harnessUserPokes, admitCount, proofPokes };
 }

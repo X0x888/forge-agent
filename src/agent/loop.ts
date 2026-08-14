@@ -1074,6 +1074,9 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
           }
           if (stamp.admit) {
             session.messages.push({ role: "user", content: stamp.admit });
+            // Cycle/LAST already lives in this admit — do not let the
+            // next boundary emit a second full "Obey this state."
+            markCurrentHarnessAdmitted(session, config);
             saveSession(session);
           }
         }
