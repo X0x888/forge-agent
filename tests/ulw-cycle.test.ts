@@ -30,7 +30,9 @@ import {
   formatWaveLedger,
   VERIFICATION_CMD_RE,
   ULW_LIVE_CONTROLS_HINT,
+  summarizeWave,
 } from "../src/harness/ulw-cycle.js";
+import { appendMemoryRecord } from "../src/harness/decision-memory.js";
 import { armGoal, copyGoal, loadGoal } from "../src/harness/goal.js";
 import { createSession, forkSession } from "../src/session/session.js";
 import { runStopGuard } from "../src/harness/stop-guard.js";
@@ -533,6 +535,45 @@ describe("ulw cycle", () => {
     });
     assert.equal(d.block, true);
     assert.equal(loadUlwCycle(s.meta.id)?.stuckBlocks, 0); // progressed
+  });
+});
+
+describe("summarizeWave", () => {
+  it("prefers Reading over a mid-thought last sentence", () => {
+    const s = summarizeWave(
+      "LSP still reports the unused import — verifying.\n\n**Reading:** Forge's product is the interactive REPL. Daily-loop trust beats chrome.",
+    );
+    assert.match(s, /interactive REPL/);
+    assert.doesNotMatch(s, /verifying/);
+  });
+
+  it("falls back to decision-memory Reading when the closer is mid-thought", () => {
+    const prev = process.env.FORGE_HOME;
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-ulw-sum-"));
+    process.env.FORGE_HOME = tmp;
+    try {
+      const sid = "ulw-sum-mem";
+      fs.mkdirSync(path.join(tmp, "sessions", sid), { recursive: true });
+      appendMemoryRecord(sid, {
+        kind: "decision",
+        source: "agent",
+        text: "Reading: Forge's product is the interactive REPL + blocking harness. Daily-loop trust beats chrome.",
+      });
+      const s = summarizeWave(
+        "LSP still reports the unused import — verifying the file actually dropped it.",
+        sid,
+      );
+      assert.match(s, /interactive REPL/);
+      assert.doesNotMatch(s, /verifying/);
+    } finally {
+      if (prev === undefined) delete process.env.FORGE_HOME;
+      else process.env.FORGE_HOME = prev;
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps a short factual closer when there is no Reading", () => {
+    assert.match(summarizeWave("shipped input validation"), /input validation/);
   });
 });
 

@@ -22,6 +22,7 @@ import {
   hasMandateJudgment,
   recordWaveObservation,
   seedMemoryFromMandate,
+  activeMemoryRecords,
 } from "./decision-memory.js";
 import { createSafetyCheckpoint } from "../util/git-checkpoint.js";
 import { gitDiffFingerprint } from "../util/git-context.js";
@@ -308,10 +309,63 @@ export function hasAttestationEvidence(
   return ATTEST_EVIDENCE_RE.test(lastAssistantMessage || "");
 }
 
-function summarizeWave(message: string): string {
+function clipWaveSummary(t: string): string {
+  const s = t.replace(/\s+/g, " ").trim();
+  if (!s) return "(no closing summary)";
+  return s.length <= 140 ? s : `${s.slice(0, 139)}…`;
+}
+
+function looksLikeMidThought(t: string): boolean {
+  return (
+    t.length < 220 &&
+    /verifying|confirming|checking the|closing wave|looks pre-existing|proof is green|lsp still/i.test(
+      t,
+    )
+  );
+}
+
+function readingFromMemory(sessionId: string): string | undefined {
+  try {
+    const recs = activeMemoryRecords(sessionId);
+    for (let i = recs.length - 1; i >= 0; i--) {
+      const text = recs[i]?.text || "";
+      const m = text.match(/\*{0,2}Reading:\*{0,2}\s+(.{20,240})/i);
+      if (m?.[1]) return m[1];
+    }
+  } catch {
+    /* memory is best-effort */
+  }
+  return undefined;
+}
+
+/**
+ * Clip a wave-boundary closer. Prefer **Reading:** / Ship landed / Cycle
+ * complete over the last mid-thought sentence (ULW Stop often fires while
+ * the model is still "verifying the unused import").
+ */
+export function summarizeWave(message: string, sessionId?: string): string {
   const t = (message || "").replace(/\s+/g, " ").trim();
-  if (!t) return "(no closing summary)";
-  return t.length <= 140 ? t : `${t.slice(0, 139)}…`;
+  if (!t) {
+    if (sessionId) {
+      const fromMem = readingFromMemory(sessionId);
+      if (fromMem) return clipWaveSummary(fromMem);
+    }
+    return "(no closing summary)";
+  }
+  const reading = t.match(/\*{0,2}Reading:\*{0,2}\s+(.{20,240})/i);
+  if (reading?.[1]) return clipWaveSummary(reading[1]);
+  const ship = t.match(/Ship landed:\s*(.{10,180})/i);
+  if (ship?.[1]) return clipWaveSummary(ship[1]);
+  if (/\bCycle complete\b/i.test(t)) {
+    const after = t.replace(/^[\s\S]*?Cycle complete\.\s*/i, "").trim();
+    if (after.length >= 20) return clipWaveSummary(`Cycle complete. ${after}`);
+    return "Cycle complete.";
+  }
+  if (sessionId && looksLikeMidThought(t)) {
+    const fromMem = readingFromMemory(sessionId);
+    if (fromMem) return clipWaveSummary(fromMem);
+  }
+  return clipWaveSummary(t);
 }
 
 export const MID_WAVE_STAMP_STEPS = 20;
@@ -527,7 +581,8 @@ export function maybeStampUlwWave(opts: {
     opts.verificationPassed ?? opts.verificationRan,
   );
   const summary =
-    summarizeWave(opts.lastAssistantMessage || "") || "(mid-loop epoch)";
+    summarizeWave(opts.lastAssistantMessage || "", opts.sessionId) ||
+    "(mid-loop epoch)";
   const facts = { editDelta, proof, todoProgress, netDiff, summary };
 
   // LAST: update the open wave's facts, never increment the counter.
@@ -1376,7 +1431,7 @@ export function evaluateUlwAtStop(opts: {
         netDiff,
         proof,
         todoProgress,
-        summary: summarizeWave(msg),
+        summary: summarizeWave(msg, opts.sessionId),
       });
       s.lastWaveSig = sig;
       s.lastProgressEditCount = opts.editCount;

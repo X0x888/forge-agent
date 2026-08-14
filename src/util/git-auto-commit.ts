@@ -32,13 +32,18 @@ export function ulwAutoCommitEnabled(): boolean {
 }
 
 function git(args: string[], cwd: string, timeoutMs = 30_000): string {
-  return execFileSync("git", args, {
+  const raw = execFileSync("git", args, {
     cwd,
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"],
     timeout: timeoutMs,
     maxBuffer: 8 * 1024 * 1024,
-  }).trim();
+  });
+  // Do not trimStart: porcelain v1 unstaged-only is `" M path"` and the
+  // leading space is a status column. Trimming it made slice(3) drop `s`
+  // (`src/…` → `rc/…`) so the first dirty file failed `git add` and the
+  // whole Cycle-complete commit was skipped.
+  return raw.trimEnd();
 }
 
 export function porcelainPaths(cwd: string): string[] {
@@ -46,10 +51,34 @@ export function porcelainPaths(cwd: string): string[] {
   if (!out) return [];
   const paths: string[] = [];
   for (const line of out.split("\n")) {
-    const p = parsePorcelainPath(line);
+    const p = parsePorcelainPath(line.replace(/\r$/, ""));
     if (p) paths.push(p);
   }
   return paths;
+}
+
+/** Stage as a batch; on failure, add survivors one-by-one so one bad path cannot skip the commit. */
+export function stageAutoCommitPaths(
+  root: string,
+  paths: string[],
+): { staged: string[]; failed: string[] } {
+  if (!paths.length) return { staged: [], failed: [] };
+  try {
+    git(["add", "--", ...paths], root, 30_000);
+    return { staged: paths, failed: [] };
+  } catch {
+    const staged: string[] = [];
+    const failed: string[] = [];
+    for (const p of paths) {
+      try {
+        git(["add", "--", p], root, 15_000);
+        staged.push(p);
+      } catch {
+        failed.push(p);
+      }
+    }
+    return { staged, failed };
+  }
 }
 
 export function isSensitiveRelPath(rel: string): boolean {
@@ -194,12 +223,11 @@ export function maybeAutoCommitOnUlwDone(opts: {
     };
   }
 
-  try {
-    git(["add", "--", ...toAdd], root, 30_000);
-  } catch (err) {
+  const { staged, failed } = stageAutoCommitPaths(root, toAdd);
+  if (!staged.length) {
     return {
       committed: false,
-      skipped: `git add failed: ${String((err as Error).message || err).slice(0, 160)}`,
+      skipped: `git add failed: ${failed[0] || toAdd[0]}`.slice(0, 280),
     };
   }
 
@@ -208,7 +236,7 @@ export function maybeAutoCommitOnUlwDone(opts: {
     ulw?.mandate || "ULW cycle complete",
     shipHint(opts.sessionId),
   );
-  const body = buildAutoCommitBody(ulw, toAdd);
+  const body = buildAutoCommitBody(ulw, staged);
   try {
     git(["commit", "-m", subject, "-m", body], root, 60_000);
   } catch (err) {
@@ -228,7 +256,7 @@ export function maybeAutoCommitOnUlwDone(opts: {
     committed: true,
     sha: sha || undefined,
     subject,
-    files: toAdd.length,
+    files: staged.length,
   };
 }
 

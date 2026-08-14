@@ -69,6 +69,10 @@ describe("public package exports (index)", () => {
       parsePorcelainPath(" M src/agent/worktree.ts"),
       "src/agent/worktree.ts",
     );
+    assert.equal(
+      parsePorcelainPath("M src/agent/permissions.ts"),
+      "src/agent/permissions.ts",
+    );
     assert.equal(typeof snapshotParentPreimages, "function");
     assert.equal(typeof journalLandedPreimages, "function");
     assert.equal(typeof restoreParentPreimages, "function");

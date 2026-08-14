@@ -69,6 +69,11 @@ describe("parsePorcelainPath", () => {
     assert.equal(unquotePorcelainPath('"foo bar.ts"'), "foo bar.ts");
     assert.equal(parsePorcelainPath(""), null);
     assert.equal(parsePorcelainPath(" M"), null);
+    // trim() of a whole porcelain dump turns `" M src/…"` into `"M src/…"`.
+    assert.equal(
+      parsePorcelainPath("M src/agent/permissions.ts"),
+      "src/agent/permissions.ts",
+    );
   });
 });
 

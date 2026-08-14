@@ -295,6 +295,7 @@ export {
   copyUlwCycle,
   disarmUlwCycle,
   evaluateUlwAtStop,
+  summarizeWave,
   maybeStampUlwWave,
   isSoftPrompt,
   isResumeFollowUp,

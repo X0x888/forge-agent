@@ -9,6 +9,7 @@ import {
   isSensitiveRelPath,
   maybeAutoCommitOnUlwDone,
   porcelainPaths,
+  stageAutoCommitPaths,
   ulwAutoCommitEnabled,
 } from "../src/util/git-auto-commit.js";
 import { armUlwCycle, evaluateUlwAtStop } from "../src/harness/ulw-cycle.js";
@@ -149,6 +150,66 @@ describe("ULW auto-commit", () => {
       assert.equal(plan.skipped, "plan mode");
       const clean = maybeAutoCommitOnUlwDone({ cwd: root, sessionId: sid });
       assert.equal(clean.skipped, "working tree clean");
+    });
+  });
+
+  it("keeps the first char of an unstaged src/ path (no trimStart)", () => {
+    withRepo((root) => {
+      const dest = path.join(root, "src", "agent.ts");
+      fs.mkdirSync(path.dirname(dest), { recursive: true });
+      fs.writeFileSync(dest, "export const x = 1;\n");
+      git(["add", "src/agent.ts"], root);
+      git(["commit", "-q", "-m", "add src"], root);
+      fs.writeFileSync(dest, "export const x = 2;\n");
+      assert.deepEqual(porcelainPaths(root), ["src/agent.ts"]);
+    });
+  });
+
+  it("commits an unstaged src/ edit after cycle complete", () => {
+    withRepo((root) => {
+      const sid = "sess-ac-unstaged";
+      fs.mkdirSync(path.join(process.env.FORGE_HOME!, "sessions", sid), {
+        recursive: true,
+      });
+      const dest = path.join(root, "src", "agent.ts");
+      fs.mkdirSync(path.dirname(dest), { recursive: true });
+      fs.writeFileSync(dest, "export const x = 1;\n");
+      git(["add", "src/agent.ts"], root);
+      git(["commit", "-q", "-m", "add src"], root);
+      fs.writeFileSync(dest, "export const x = 2;\n");
+      appendFileMutation(sid, { path: dest, kind: "edit", turn: 1 });
+      armUlwCycle(sid, "fix the stdin lease", {
+        cycle: 1,
+        maxWaves: 1,
+        skipCheckpoint: true,
+        cwd: root,
+      });
+      evaluateUlwAtStop({
+        sessionId: sid,
+        lastAssistantMessage:
+          "**Cycle complete.**\n✅ npm run typecheck — green",
+        editCount: 1,
+        openTodoCount: 0,
+        stuckThreshold: 20,
+        verificationPassed: true,
+      });
+      const r = maybeAutoCommitOnUlwDone({ cwd: root, sessionId: sid });
+      assert.equal(r.committed, true, r.skipped);
+      assert.equal(porcelainPaths(root).length, 0);
+    });
+  });
+
+  it("stages survivors when one path is missing", () => {
+    withRepo((root) => {
+      const good = path.join(root, "src", "ok.ts");
+      fs.mkdirSync(path.dirname(good), { recursive: true });
+      fs.writeFileSync(good, "export const ok = 1;\n");
+      const { staged, failed } = stageAutoCommitPaths(root, [
+        "rc/agent/permissions.ts",
+        "src/ok.ts",
+      ]);
+      assert.deepEqual(staged, ["src/ok.ts"]);
+      assert.deepEqual(failed, ["rc/agent/permissions.ts"]);
     });
   });
 

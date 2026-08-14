@@ -93,8 +93,20 @@ export function unquotePorcelainPath(raw: string): string {
  * trim the line before slicing or `src/…` becomes `rc/…`.
  */
 export function parsePorcelainPath(line: string): string | null {
-  if (!line || line.length < 4) return null;
-  const body = line.slice(3);
+  if (!line) return null;
+  let body: string | null = null;
+  // Standard porcelain v1: two XY columns, then a space, then the path.
+  if (line.length >= 4 && line[2] === " ") {
+    body = line.slice(3);
+  } else if (
+    // Recover a trim()-damaged unstaged line (`" M src/…"` → `"M src/…"`).
+    line.length >= 3 &&
+    /^[MADRCU?!] /.test(line) &&
+    line[2] !== " "
+  ) {
+    body = line.slice(2);
+  }
+  if (body == null) return null;
   if (body.includes(" -> ")) {
     const dest = unquotePorcelainPath(body.split(" -> ").pop() ?? "");
     return dest || null;
