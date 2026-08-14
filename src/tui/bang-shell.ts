@@ -130,8 +130,9 @@ export async function runBangShell(opts: {
 
 export function formatBangOutput(output: string, isError = false): string {
   const paint = isError ? chalk.red : chalk.dim;
+  const head = isError ? chalk.red : chalk.cyan;
   return output
     .split("\n")
-    .map((line, i) => (i === 0 ? chalk.cyan(line) : paint(line)))
+    .map((line, i) => (i === 0 ? head(line) : paint(line)))
     .join("\n");
 }

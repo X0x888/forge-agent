@@ -3,10 +3,15 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { parseBangCommand, runBangShell } from "../src/tui/bang-shell.js";
+import {
+  formatBangOutput,
+  parseBangCommand,
+  runBangShell,
+} from "../src/tui/bang-shell.js";
 import { PermissionGate } from "../src/agent/permissions.js";
 import { createSession } from "../src/session/session.js";
 import { DEFAULT_CONFIG } from "../src/config/types.js";
+import chalk from "chalk";
 
 describe("bang-shell", () => {
   it("parses !command and ignores non-bang", () => {
@@ -105,5 +110,20 @@ describe("bang-shell", () => {
     });
     assert.equal(r.handled, true);
     assert.match(r.output, /denied/i);
+  });
+
+  it("paints failed bang-shell red instead of cyan", () => {
+    const prevLevel = chalk.level;
+    chalk.level = 3;
+    try {
+      const ok = formatBangOutput("! echo ok\nbang-ok");
+      const fail = formatBangOutput("! denied: plan mode", true);
+      assert.match(ok, /\u001b\[36m/);
+      assert.doesNotMatch(ok, /\u001b\[31m/);
+      assert.match(fail, /\u001b\[31m/);
+      assert.doesNotMatch(fail, /\u001b\[36m/);
+    } finally {
+      chalk.level = prevLevel;
+    }
   });
 });

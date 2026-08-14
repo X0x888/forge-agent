@@ -18,7 +18,12 @@ describe("tab completion", () => {
     assert.ok(hits.includes("/help"));
     assert.ok(hits.includes("/setup"));
     assert.ok(hits.includes("/plan"));
-    assert.ok(hits.includes("/tips"));
+    assert.ok(hits.includes("/last"));
+    assert.ok(hits.includes("/retry"));
+    assert.ok(hits.includes("/diff"));
+    assert.ok(!hits.includes("/tips"));
+    assert.ok(!hits.includes("/doctor"));
+    assert.ok(!hits.includes("/notify"));
     assert.ok(!hits.includes("/ralph"));
     assert.ok(!hits.includes("/ulw"));
     assert.ok(!hits.includes("/goal"));
@@ -26,16 +31,26 @@ describe("tab completion", () => {
     assert.ok(SLASH_COMMANDS.length > hits.length);
   });
 
-  it("slash-only Tab still lists the full catalog", () => {
+  it("slash-only Tab matches empty Tab starters, not the full catalog", () => {
     const [hits] = forgeCompleter("/");
-    assert.ok(hits.includes("/help"));
-    assert.ok(hits.includes("/ralph"));
-    assert.ok(hits.length >= SLASH_COMMANDS.length);
+    assert.deepEqual(hits, [...EMPTY_TAB_STARTERS]);
+    assert.ok(!hits.includes("/ralph"));
+    assert.ok(!hits.includes("/ulw"));
+    assert.ok(SLASH_COMMANDS.length > hits.length);
+  });
+
+  it("unknown slash prefix does not dump the catalog", () => {
+    const [hits] = forgeCompleter("/zzz-no-such-cmd");
+    assert.ok(!hits.includes("/ralph"));
+    assert.ok(hits.length < 8);
   });
 
   it("completes slash command prefixes", () => {
     const [hits] = forgeCompleter("/per");
     assert.ok(hits.some((h) => h.startsWith("/permissions")));
+    const [ul] = forgeCompleter("/ul");
+    assert.ok(ul.some((h) => h.startsWith("/ulw")));
+    assert.ok(!ul.includes("/help"));
   });
 
   it("completes permission modes", () => {
@@ -64,6 +79,8 @@ describe("tab completion", () => {
     assert.ok(forkHits.some((h) => h.startsWith("/fork-and-compact")));
     const [diffHits] = forgeCompleter("/di");
     assert.ok(diffHits.some((h) => h.startsWith("/diff")));
+    const [diffParams] = forgeCompleter("/diff ");
+    assert.ok(diffParams.some((h) => h.includes("--full")));
     const [metHits] = forgeCompleter("/met");
     assert.ok(metHits.some((h) => h.startsWith("/metrics")));
     const [expHits] = forgeCompleter("/export ");

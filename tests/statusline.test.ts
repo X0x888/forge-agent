@@ -41,12 +41,16 @@ import {
 } from "../src/agent/tools/background-tasks.js";
 import {
   buildPromptFlags,
+  buildIdlePrompt,
+  buildLivePrompt,
+  renderBusyStatusLine,
   renderTurnFooter,
   formatSessionDetails,
   renderLiveRunHeader,
   formatBackgroundTasksList,
   createWorkingIndicator,
   shouldRedockLiveOnPhase,
+  formatLiveControlFeedback,
 } from "../src/tui/status-bar.js";
 import { renderBottomStatusLine } from "../src/tui/bottom-status.js";
 import { clipAnsi, visibleWidth } from "../src/util/format.js";
@@ -275,11 +279,14 @@ describe("statusline", () => {
     } as ResolvedAuth;
 
     const prevCols = process.stdout.columns;
+    const prevTty = process.stdout.isTTY;
+    const prevDock = process.env.FORGE_BOTTOM_STATUS;
     // Wide enough that footer clipping does not drop ULW controls / verify tips.
     Object.defineProperty(process.stdout, "columns", {
       value: 200,
       configurable: true,
     });
+    process.env.FORGE_BOTTOM_STATUS = "0";
     try {
       const flags = buildPromptFlags({ config, session: s, auth });
       assert.match(flags, /ULW/);
@@ -301,10 +308,27 @@ describe("statusline", () => {
         { promptTokens: 100, completionTokens: 50, stopContinues: 1 },
       );
       assert.match(footer, /ctx/);
-      assert.match(footer, /todos:1/);
+      assert.match(footer, /▶ ship/);
       assert.match(footer, /harness/);
       assert.match(footer, /ULW c=1 w=0/);
-      assert.match(footer, /\/cycle 0/);
+      assert.doesNotMatch(footer, /\/cycle 0/);
+
+      Object.defineProperty(process.stdout, "isTTY", {
+        value: true,
+        configurable: true,
+      });
+      delete process.env.FORGE_BOTTOM_STATUS;
+      const slim = renderTurnFooter(
+        { config, session: s, auth },
+        { promptTokens: 100, completionTokens: 50, stopContinues: 1 },
+      );
+      assert.match(slim, /turn in=/);
+      assert.match(slim, /harness/);
+      assert.doesNotMatch(slim, /ctx /);
+      assert.doesNotMatch(slim, /▶ ship/);
+      assert.doesNotMatch(slim, /ULW /);
+      assert.doesNotMatch(slim, /\/cycle 0/);
+      process.env.FORGE_BOTTOM_STATUS = "0";
 
       // After edits, footer surfaces cheapest project check (when package.json exists).
       fs.writeFileSync(
@@ -343,6 +367,12 @@ describe("statusline", () => {
       const plain3 = footer3.replace(/\x1b\[[0-9;]*m/g, "");
       assert.match(plain3, /last✓ npm test/);
     } finally {
+      if (prevDock === undefined) delete process.env.FORGE_BOTTOM_STATUS;
+      else process.env.FORGE_BOTTOM_STATUS = prevDock;
+      Object.defineProperty(process.stdout, "isTTY", {
+        value: prevTty,
+        configurable: true,
+      });
       Object.defineProperty(process.stdout, "columns", {
         value: prevCols,
         configurable: true,
@@ -774,7 +804,7 @@ describe("statusline plan mode details", () => {
 });
 
 describe("live run header controls", () => {
-  it("is a one-line identity + last/budget, not a boxed catalog", async () => {
+  it("is a one-line identity + harness, not a boxed catalog or tutorial", async () => {
     const fs = await import("node:fs");
     const os = await import("node:os");
     const path = await import("node:path");
@@ -793,12 +823,27 @@ describe("live run header controls", () => {
       } as ResolvedAuth,
     });
     assert.match(text, /live run/);
-    assert.match(text, /\/cycle 0/);
-    assert.match(text, /\/budget/);
-    assert.match(text, /live ›/);
+    assert.match(text, /xai\/grok-4/);
+    assert.doesNotMatch(text, /\/cycle 0/);
+    assert.doesNotMatch(text, /\/budget/);
+    assert.doesNotMatch(text, /type at/);
     assert.doesNotMatch(text, /┌/);
     assert.doesNotMatch(text, /\/notify/);
     assert.doesNotMatch(text, /\/status/);
+    const clipped = renderLiveRunHeader(
+      {
+        config: { ...DEFAULT_CONFIG, workspace: tmp },
+        session: s,
+        auth: {
+          provider: "xai",
+          method: "api_key",
+          token: "t",
+        } as ResolvedAuth,
+      },
+      20,
+    );
+    const { visibleWidth } = await import("../src/util/format.js");
+    assert.ok(visibleWidth(clipped) <= 24);
   });
 
   it("live header shows PLAN when permissionMode is plan", async () => {
@@ -869,6 +914,26 @@ describe("statusline tmux badges", () => {
     const details2 = formatSessionDetails({ config, session: s, auth });
     const plain2 = details2.replace(/\x1b\[[0-9;]*m/g, "");
     assert.match(plain2, /verify\s+npm test/);
+  });
+
+  it("formatSessionDetails shows ULW badge without the live-controls lecture", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-details-ulw-"));
+    process.env.FORGE_HOME = tmp;
+    const s = createSession({
+      cwd: tmp,
+      provider: "xai",
+      model: "grok-4",
+    });
+    armUlwCycle(s.meta.id, "improve the daily REPL", { skipCheckpoint: true });
+    const auth = { provider: "xai", method: "api_key", apiKey: "t" } as any;
+    const config = { ...DEFAULT_CONFIG, workspace: tmp };
+    const plain = formatSessionDetails({ config, session: s, auth }).replace(
+      /\x1b\[[0-9;]*m/g,
+      "",
+    );
+    assert.match(plain, /ulw\s+/);
+    assert.doesNotMatch(plain, /Live mid-run/);
+    assert.doesNotMatch(plain, /type while working/);
   });
 
   it("formatSessionDetails surfaces served-model divergence (and stays quiet otherwise)", () => {
@@ -960,6 +1025,149 @@ describe("statusline tmux badges", () => {
     assert.equal(shouldRedockLiveOnPhase("tool"), false);
     assert.equal(shouldRedockLiveOnPhase("waiting", 1), false);
     assert.equal(shouldRedockLiveOnPhase("thinking", 2), false);
+  });
+
+  it("clips live › to one TTY row and keeps the caret", async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-live-clip-"));
+    process.env.FORGE_HOME = tmp;
+    const { createSession } = await import("../src/session/session.js");
+    const { DEFAULT_CONFIG } = await import("../src/config/types.js");
+    const s = createSession({ cwd: tmp, provider: "xai", model: "grok-4" });
+    const ctx = {
+      config: { ...DEFAULT_CONFIG, workspace: tmp, reasoningEffort: "high" as const },
+      session: s,
+      auth: { provider: "xai", method: "api_key", token: "t" } as ResolvedAuth,
+    };
+    const wide = buildLivePrompt(ctx, { width: 120, frame: 0, phase: "thinking" });
+    assert.match(wide.replace(/\x1b\[[0-9;]*m/g, ""), /live ›/);
+    assert.ok(visibleWidth(wide) <= 120);
+
+    const narrow = buildLivePrompt(ctx, { width: 24, frame: 0, phase: "thinking" });
+    const plain = narrow.replace(/\x1b\[[0-9;]*m/g, "");
+    assert.match(plain, /live ›/);
+    assert.ok(visibleWidth(narrow) <= 24, `width ${visibleWidth(narrow)} > 24: ${plain}`);
+    assert.equal(plain.includes("\n"), false);
+  });
+
+  it("mid-run live ACK is one line, not a box + lecture", () => {
+    const prevCols = process.stdout.columns;
+    Object.defineProperty(process.stdout, "columns", {
+      value: 80,
+      configurable: true,
+    });
+    try {
+      const ok = formatLiveControlFeedback("/cycle 0", "Cycle flag → 0 (LAST)", "ok");
+      const plain = ok.replace(/\x1b\[[0-9;]*m/g, "");
+      assert.match(plain, /live ✓ \/cycle 0/);
+      assert.match(plain, /Cycle flag/);
+      assert.equal(plain.includes("\n"), false);
+      assert.doesNotMatch(plain, /still open/);
+      assert.doesNotMatch(plain, /──/);
+      assert.ok(visibleWidth(ok) <= 80);
+
+      const queued = formatLiveControlFeedback("keep going", "Queued for this turn.", "info");
+      assert.match(queued.replace(/\x1b\[[0-9;]*m/g, ""), /live · keep going/);
+
+      const warn = formatLiveControlFeedback("/commit", "That command would start a new turn mid-run.", "warn");
+      assert.match(warn.replace(/\x1b\[[0-9;]*m/g, ""), /live ⚠ \/commit/);
+
+      const multi = formatLiveControlFeedback("/status", "line one\nline two\nline three", "ok");
+      const multiPlain = multi.replace(/\x1b\[[0-9;]*m/g, "");
+      assert.match(multiPlain, /live ✓ \/status/);
+      assert.match(multiPlain, /line two/);
+      assert.doesNotMatch(multiPlain, /still open/);
+    } finally {
+      Object.defineProperty(process.stdout, "columns", {
+        value: prevCols,
+        configurable: true,
+      });
+    }
+  });
+
+  it("live › shows ▶ current todo instead of todos:N", async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-live-todo-"));
+    process.env.FORGE_HOME = tmp;
+    const { createSession } = await import("../src/session/session.js");
+    const { DEFAULT_CONFIG } = await import("../src/config/types.js");
+    const s = createSession({ cwd: tmp, provider: "xai", model: "grok-4" });
+    s.todos = [
+      { id: "w2", content: "ship HUD", status: "in_progress" },
+      { id: "w3", content: "review", status: "pending" },
+    ];
+    const ctx = {
+      config: { ...DEFAULT_CONFIG, workspace: tmp },
+      session: s,
+      auth: { provider: "xai", method: "api_key", token: "t" } as ResolvedAuth,
+    };
+    const plain = buildLivePrompt(ctx, { width: 80, frame: 0, phase: "thinking" }).replace(
+      /\x1b\[[0-9;]*m/g,
+      "",
+    );
+    assert.match(plain, /▶ ship HUD \+1/);
+    assert.doesNotMatch(plain, /todos:2/);
+  });
+
+  it("clips idle forge › to one TTY row and keeps the caret", async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-idle-clip-"));
+    process.env.FORGE_HOME = tmp;
+    const { createSession } = await import("../src/session/session.js");
+    const { DEFAULT_CONFIG } = await import("../src/config/types.js");
+    const { armUlwCycle } = await import("../src/harness/ulw-cycle.js");
+    const s = createSession({ cwd: tmp, provider: "xai", model: "grok-4" });
+    armUlwCycle(s.meta.id, "improve", { cycle: 1, maxWaves: 4 });
+    s.meta.pinned = true;
+    const ctx = {
+      config: {
+        ...DEFAULT_CONFIG,
+        workspace: tmp,
+        permissionMode: "bypassPermissions" as const,
+      },
+      session: s,
+      auth: { provider: "xai", method: "api_key", token: "t" } as ResolvedAuth,
+      verbose: true,
+    };
+    const wide = buildIdlePrompt(ctx, { width: 120 }).replace(/\x1b\[[0-9;]*m/g, "");
+    assert.match(wide, /forge › $/);
+    assert.match(wide, /ULW/);
+    const clipped = buildIdlePrompt(ctx, { width: 18 });
+    assert.ok(visibleWidth(clipped) <= 18);
+    const plain = clipped.replace(/\x1b\[[0-9;]*m/g, "");
+    assert.match(plain, /forge › $/);
+    assert.doesNotMatch(plain, /\n/);
+  });
+
+  it("clips busy ⚒ line to one TTY row", async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-busy-clip-"));
+    process.env.FORGE_HOME = tmp;
+    const { createSession } = await import("../src/session/session.js");
+    const { DEFAULT_CONFIG } = await import("../src/config/types.js");
+    const { armUlwCycle } = await import("../src/harness/ulw-cycle.js");
+    const s = createSession({ cwd: tmp, provider: "xai", model: "grok-4" });
+    armUlwCycle(s.meta.id, "improve", { cycle: 1, maxWaves: 4 });
+    const ctx = {
+      config: {
+        ...DEFAULT_CONFIG,
+        workspace: tmp,
+        reasoningEffort: "high" as const,
+      },
+      session: s,
+      auth: { provider: "xai", method: "api_key", token: "t" } as ResolvedAuth,
+    };
+    const wide = renderBusyStatusLine(ctx, "thinking", "streaming", 0, 120);
+    assert.match(wide.replace(/\x1b\[[0-9;]*m/g, ""), /⚒/);
+    assert.ok(visibleWidth(wide) <= 120);
+
+    const narrow = renderBusyStatusLine(
+      ctx,
+      "tool",
+      "write_file src/tui/status-bar.ts",
+      0,
+      24,
+    );
+    const plain = narrow.replace(/\x1b\[[0-9;]*m/g, "");
+    assert.ok(visibleWidth(narrow) <= 24, `width ${visibleWidth(narrow)} > 24: ${plain}`);
+    assert.equal(plain.includes("\n"), false);
+    assert.match(plain, /⚒/);
   });
 
   it("prompt-docked stream heartbeat calls onStreamTick, not the stderr reminder", async () => {

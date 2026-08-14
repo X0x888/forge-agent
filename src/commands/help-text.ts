@@ -16,45 +16,39 @@ export type HelpTopic = (typeof HELP_TOPICS)[number];
 export const HELP_START = `
 Getting started
 ───────────────
-  Just type a coding task in English.
-  /setup              Account, model, budget, notify, project
-  /plan [focus]       Read-only design, then /build to implement
+  Type a task in English. Forge edits, checks, and prints a Δ.
+  /setup              Account, model, budget, notify, AGENTS.md
+  /plan [focus]       Read-only design, then /build
   /init               Write a real AGENTS.md for this repo
-  /doctor             Health check (auth, sandbox, Stop, files)
-  /help start         60-second tour
+  /doctor             Health (auth, sandbox, Stop, files)
   /help all           Full command list
   /tips               Expert / CI cheat sheet
 
 Daily
 ─────
-  /model  /provider  /permissions  /budget  /notify  /undo  /commit
+  /last /retry /diff  Peek last turns · retry · status+stat (/diff --full)
+  /model /provider    Switch model (sticky)
+  /permissions        Modes + saved always-allows
+  /budget /notify     Spend cap · desktop alert
+  /undo /commit       Rewind last turn · commit (never push)
 
-Harness (when you want the agent to not stop)
-─────────────────────────────────────────────
+Unattended
+──────────
   /goal <objective>   Relentless driver
-  /ulw [task]         Ultrawork cycle (starts working immediately)
+  /ulw [task]         Ultrawork cycle (starts now)
   /done               Wind down goal + ULW
-
-Type /help <topic>  (start | all | settings | harness | sessions | safety)
 
 Keys
 ────
-  ↵ sends  ·  ^J newline  ·  ↑↓ history  ·  Tab starters · / Tab all · @path
-  !cmd runs a shell now  ·  /paste clipboard image  ·  Ctrl+C abort (twice to quit)
+  ↵ sends  ·  ^J newline  ·  ↑↓ history  ·  Tab daily · /ul Tab more · @path
+  !cmd shell now  ·  /paste image  ·  Ctrl+C abort (twice to quit)
+
+Allow?  ↵/y once · a always · s session · n no
+More    /help all | settings | harness | sessions | safety
+Docs    docs/GETTING-STARTED.md  ·  /tips
 `.trim();
 
-export const HELP_TOUR = `
-60-second tour
-──────────────
-  1. Type what you want in English. Forge edits the repo, runs checks, and shows a Δ summary.
-  2. First time here?  /setup  — confirm model, set a spend cap, write AGENTS.md, turn on /notify.
-  3. Unsure about the approach?  /plan  (read-only) then  /build  to implement.
-  4. Permission prompts are normal in default mode. Enter / y = once. /permissions acceptEdits to skip asks.
-  5. Long unattended work:  /budget 5  ·  /notify on  ·  /goal <objective>  or  /ulw <task>.
-  6. Recover:  /undo  ·  /retry  ·  /checkpoint  ·  /doctor
-
-  Docs: docs/GETTING-STARTED.md  ·  /tips  ·  /help all
-`.trim();
+export const HELP_TOUR = HELP_START;
 
 export const HELP_SETTINGS = `
 Settings
@@ -127,7 +121,7 @@ Safety
 
   /permissions        Modes + saved always-allows
   /plan               Read-only design (no sticky prefs)
-  /diff               Git status + diff (argv-safe)
+  /diff               Status + --stat · /diff --full for the patch
   /logs               Sandbox / safety event tail
   /doctor             Flags YOLO, sandbox=off, mode 0600, Blocking Stop OFF
   /budget             Session spend cap (unlimited until you set one)
@@ -167,7 +161,7 @@ Forge slash commands
   /budget [usd|off]     Session spend cap (estimate USD; 0/off = unlimited)  [live]
   /metrics              Local metrics.jsonl + this session counters  [live]
   /stats [days|week]    Usage dashboard (runs/tokens/cost/projects)  [live]
-  /todos                Show agent todos  [live]
+  /todos                Agent board (▶ now · ○ next)  [live]
   /provider [name]      List / switch provider (openrouter, xai, …) — sticky  [live]
   /model <name> [effort] Switch model mid-run; free-form on OpenRouter  [live]
   /fallback [models|off] Same-provider fallbacks after 429/5xx (defaults on)  [live]
@@ -197,7 +191,7 @@ Forge slash commands
   /format [on|off]      Format-on-write after file tools (prettier/biome/ruff/…)  [live]
   /verbose              Toggle diffs + full output (failures always show a tail)  [live]
   ask_user              Model tool for clarifying questions (not a slash) — interactive; headless fails closed
-  /diff [path]          Git status + diff (argv-safe; pathspecs/refs only)  [live]
+  /diff [path]          Status + --stat (argv-safe) · --full / -U3 for the patch  [live]
   !<command>            Run a shell command now (same permissions as bash)  [live]
   /logs [n|0|all|path]  Tail sandbox/safety events (0/all = full window)  [live]
   /config [json]        Effective config snapshot (no secrets)  [live]
@@ -282,11 +276,7 @@ export function helpFor(arg: string): { topic: HelpTopic | "unknown"; text: stri
   if (topic === "harness") return { topic, text: HELP_HARNESS };
   if (topic === "sessions") return { topic, text: HELP_SESSIONS };
   if (topic === "safety") return { topic, text: HELP_SAFETY };
-  // start: show getting-started; /help start also appends the tour
-  const raw = String(arg || "").trim().toLowerCase();
-  if (raw === "start" || raw === "tour" || raw === "intro") {
-    return { topic: "start", text: `${HELP_START}\n\n${HELP_TOUR}` };
-  }
+  // /help, /help start, /help tour — same first-day card (no second dump)
   return { topic: "start", text: HELP_START };
 }
 

@@ -8,7 +8,8 @@ import {
   alreadyOnboarded,
   setupAutoCardDisabled,
 } from "../src/util/setup-readiness.js";
-import { formatBanner } from "../src/tui/banner.js";
+import { clipBannerIdentity, formatBanner } from "../src/tui/banner.js";
+import { visibleWidth } from "../src/util/format.js";
 import {
   pickTurnEndHint,
   shouldShowFirstPermissionHint,
@@ -165,6 +166,7 @@ describe("formatBanner", () => {
       gitBranch: "main",
       gitDirty: true,
       projectBits: ["pm=npm", "node"],
+      columns: 120,
     });
     assert.match(text, /main\*/);
     assert.match(text, /pm=npm/);
@@ -175,7 +177,26 @@ describe("formatBanner", () => {
     assert.match(identity, /pm=npm/);
   });
 
-  it("advertises live › only when ULW is on", () => {
+  it("clips identity extras from the right so one TTY row stays intact", () => {
+    const long = "  xai/grok-4.6 · xai  ·  session abcdefgh  ·  perms default  ·  sandbox workspace  ·  main*  ·  pm=npm · node";
+    const clipped = clipBannerIdentity(long, 56);
+    assert.ok(clipped.length < long.length);
+    assert.match(clipped, /xai\/grok-4\.6/);
+    assert.match(clipped, /session abcdefgh/);
+    assert.doesNotMatch(clipped, /pm=npm/);
+    assert.ok(!clipped.includes("\n"));
+  });
+
+  it("hard-clips leftover identity when two bits still overflow", () => {
+    const long =
+      "  xai/grok-4.6-preview-with-a-very-long-served-id · xai-key-label  ·  session abcdefgh";
+    const clipped = clipBannerIdentity(long, 28);
+    assert.ok(visibleWidth(clipped) <= 28, `width ${visibleWidth(clipped)} > 28`);
+    assert.ok(!clipped.includes("\n"));
+    assert.match(clipped, /xai\/grok/);
+  });
+
+  it("shows ULW on without a /cycle 0 lecture", () => {
     const text = formatBanner({
       version: "1",
       provider: "xai",
@@ -188,7 +209,20 @@ describe("formatBanner", () => {
       posture: "posture: —",
       ulwArmed: true,
     });
-    assert.match(text, /\/cycle 0/);
+    assert.match(text, /ULW on/);
+    assert.doesNotMatch(text, /\/cycle 0/);
+    const off = formatBanner({
+      version: "1",
+      provider: "xai",
+      model: "m",
+      authLabel: "xai",
+      sessionId: "id",
+      permissionMode: "default",
+      sandbox: "workspace",
+      blockingStop: true,
+      posture: "posture: —",
+    });
+    assert.doesNotMatch(off, /ULW on/);
   });
 
   it("shows resume orientation on a returning session, not first-run", () => {
@@ -282,7 +316,8 @@ describe("hints", () => {
     assert.equal(shouldShowFirstPermissionHint([]), true);
     assert.equal(shouldShowFirstPermissionHint(["first_permission"]), false);
     assert.match(FIRST_PERMISSION_HINT, /acceptEdits/);
-    assert.match(FIRST_PERMISSION_HINT, /Enter \/ y = once/);
+    assert.match(FIRST_PERMISSION_HINT, /persists/);
+    assert.doesNotMatch(FIRST_PERMISSION_HINT, /↵\/y once/);
     assert.match(ABORT_RECOVERY, /\/retry/);
     assert.match(ABORT_RECOVERY, /Type to continue/);
     assert.match(ABORT_RECOVERY, /Ctrl\+C again to quit/);
@@ -316,9 +351,12 @@ describe("grouped help", () => {
     assert.equal(parseHelpTopic(""), "start");
     assert.equal(parseHelpTopic("all"), "all");
     const start = helpFor("");
-    assert.match(start.text, /Type a coding task|Just type a coding task/);
+    assert.match(start.text, /Type a task in English/);
     assert.match(start.text, /\/setup/);
+    assert.match(start.text, /Switch model \(sticky\)/);
+    assert.match(start.text, /Allow\?/);
     assert.doesNotMatch(start.text, /\/max-waves N\|off/);
+    assert.equal(helpFor("start").text, start.text);
     const all = helpFor("all");
     assert.match(all.text, /\/max-waves/);
     assert.match(all.text, /\/setup/);

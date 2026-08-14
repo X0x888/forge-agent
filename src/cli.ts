@@ -76,6 +76,7 @@ import {
   exportSessionJson,
   importSessionJson,
   formatSessionSummary,
+  formatSessionPickerRow,
   formatSessionLookupMiss,
   listSessionLookupSuggestions,
   findRecentSessionForCwd,
@@ -1134,7 +1135,7 @@ Docs: docs/PRODUCTION.md
           );
         }
         try {
-          const peek = formatResumeOrientation(session);
+          const peek = formatResumeOrientation(session, { compact: true });
           if (peek) log.dim(peek);
         } catch {
           /* */
@@ -2670,7 +2671,7 @@ Docs: docs/PRODUCTION.md
               `Resume with: forge --session ${s.meta.id.slice(0, 8)}  ·  or same-cwd: forge run "…" --continue`,
             );
             try {
-              const peek = formatResumeOrientation(s);
+              const peek = formatResumeOrientation(s, { compact: true });
               if (peek) log.dim(peek);
             } catch {
               /* */
@@ -3317,97 +3318,22 @@ Docs: docs/PRODUCTION.md
       }
       // When listing across workspaces, show project basename so multi-project
       // experts can tell sessions apart without --cwd.
-      const showCwdCol = !cwdFilter;
       for (const s of list) {
+        const extras: string[] = [];
         const lock = readSessionLock(s.id);
-        // Only surface foreign live locks in the list — own-pid locks are noise
-        // while the REPL/`forge run` that holds them is the current process.
-        let lockNote = "";
-        if (lock && sessionHasForeignLiveLock(s.id)) {
-          lockNote = `  LOCK ${formatLockHolder(lock)}`;
-        }
-        let cwdNote = "";
-        if (showCwdCol && s.cwd) {
-          try {
-            cwdNote = `  ${path.basename(path.resolve(s.cwd))}`;
-          } catch {
-            cwdNote = `  ${path.basename(s.cwd)}`;
-          }
-        }
-        const prev = (s.lastUserPreview || "").slice(0, 40);
-        const prevNote = prev
-          ? `  “${prev}${(s.lastUserPreview || "").length > 40 ? "…" : ""}”`
-          : "";
-        const forkNote = s.parentSessionId
-          ? `  ↳${(s.parentSessionLabel || s.parentSessionId.slice(0, 6)).slice(0, 16)}`
-          : "";
-        const verifyNote = s.lastVerificationCommand?.trim()
-          ? isLastVerificationStale(s)
-            ? "  ✓~"
-            : "  ✓"
-          : "";
-        const age = formatRelativeTime(s.updatedAt).padStart(8);
-        let ulwNote = "";
-        if (s.ultrawork) {
-          try {
-            const u = loadUlwCycle(s.id);
-            ulwNote =
-              u?.enabled && typeof u.cycle === "number"
-                ? `  ULW c=${u.cycle}`
-                : "  ULW";
-          } catch {
-            ulwNote = "  ULW";
-          }
-        }
-        let goalNote = "";
+        if (lock && sessionHasForeignLiveLock(s.id)) extras.push("LOCK");
         try {
           const g = loadGoal(s.id);
-          if (g?.objective && g.status === "active" && !g.paused) {
-            goalNote = "  GOAL";
-          } else if (g?.paused) {
-            goalNote = "  GOAL⏸";
-          }
+          if (g?.objective && g.status === "active" && !g.paused) extras.push("GOAL");
+          else if (g?.paused) extras.push("GOAL⏸");
         } catch {
           /* */
         }
-        const errBadge = s.lastError ? "  ERR" : "";
-        const errDetail =
-          errorsOnly && s.lastError
-            ? `  [${s.lastError.code}] ${s.lastError.message.slice(0, 48)}`
-            : "";
-        let costNote = "";
-        try {
-          const tok =
-            (s.totalPromptTokens || 0) + (s.totalCompletionTokens || 0);
-          if (tok > 0) {
-            const c = estimateCostUsd(
-              s.provider || "xai",
-              s.totalPromptTokens || 0,
-              s.totalCompletionTokens || 0,
-              s.model,
-              s.totalCacheReadTokens || 0,
-            );
-            costNote = `  ~${formatCost(c)}`;
-            if (
-              s.maxCostUsd !== undefined &&
-              s.maxCostUsd !== null &&
-              Number(s.maxCostUsd) > 0
-            ) {
-              costNote += `/${formatCost(Number(s.maxCostUsd))}`;
-            }
-          } else if (
-            s.maxCostUsd !== undefined &&
-            s.maxCostUsd !== null &&
-            Number(s.maxCostUsd) > 0
-          ) {
-            costNote = `  bud=${formatCost(Number(s.maxCostUsd))}`;
-          }
-        } catch {
-          /* */
+        if (s.parentSessionId) extras.push("FORK");
+        if (errorsOnly && s.lastError) {
+          extras.push(`[${s.lastError.code}]`);
         }
-        console.log(
-          `${s.id}  ${age}  ${s.provider}/${s.model}  turns=${s.turnCount}  edits=${s.editCount}${costNote}${ulwNote}${goalNote}${s.pinned ? "  PIN" : ""}${errBadge}${verifyNote}${s.title ? `  ${s.title.slice(0, 40)}` : ""}${prevNote}${forkNote}${cwdNote}${lockNote}${errDetail}`,
-        );
+        console.log(formatSessionPickerRow(s, extras));
       }
       const filterNotes: string[] = [];
       if (cwdFilter) filterNotes.push(`cwd=${cwdFilter}`);
@@ -5864,7 +5790,7 @@ function resolveSession(
           `Resumed ${s.meta.id.slice(0, 8)} — ${title} (${s.messages.length} msgs)`,
         );
         if (!opts.skipOrientation) {
-          const peek = formatResumeOrientation(s);
+          const peek = formatResumeOrientation(s, { compact: true });
           if (peek) {
             log.dim(`${peek}\n(/last 3 for more · /retry to re-run)`);
           }
@@ -5925,7 +5851,7 @@ function resolveSession(
             );
             if (!opts.skipOrientation) {
               try {
-                const peek = formatResumeOrientation(s);
+                const peek = formatResumeOrientation(s, { compact: true });
                 if (peek) {
                   log.dim(`${peek}\n(/last 3 for more · /retry to re-run)`);
                 }

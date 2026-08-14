@@ -10,7 +10,13 @@ import {
 } from "../util/fs.js";
 import { editDistance } from "../util/string-distance.js";
 import { suggestName } from "../util/suggest.js";
-import { formatRelativeTime, estimateCostUsd, formatCost } from "../util/format.js";
+import {
+  formatRelativeTime,
+  estimateCostUsd,
+  formatCost,
+  clipAnsi,
+  visibleWidth,
+} from "../util/format.js";
 import {
   costCapStatus,
   formatCostBudgetLine,
@@ -1052,6 +1058,65 @@ function sanitizeImportedTodos(raw: unknown): TodoItem[] {
     });
   }
   return out;
+}
+
+/** One-row `/sessions` / `forge sessions list` picker. Clips to one TTY row. */
+export function formatSessionPickerRow(
+  s: SessionMeta,
+  extras: string[] = [],
+  columns?: number,
+): string {
+  const age = formatRelativeTime(s.updatedAt).padStart(8);
+  const title = (s.title || "(untitled)").replace(/\s+/g, " ").slice(0, 28);
+  const badges: string[] = [];
+  if (s.lastVerificationCommand?.trim()) {
+    badges.push(isLastVerificationStale(s) ? "✓~" : "✓");
+  }
+  if (s.ultrawork) badges.push("ULW");
+  if (s.pinned) badges.push("PIN");
+  if (s.permissionMode === "plan") badges.push("PLAN");
+  if (s.lastError) badges.push("ERR");
+  for (const extra of extras) {
+    const bit = extra.trim();
+    if (bit) badges.push(bit);
+  }
+  let cost = "";
+  try {
+    const tok = (s.totalPromptTokens || 0) + (s.totalCompletionTokens || 0);
+    if (tok > 0) {
+      cost = `~${formatCost(
+        estimateCostUsd(
+          s.provider || "xai",
+          s.totalPromptTokens || 0,
+          s.totalCompletionTokens || 0,
+          s.model,
+          s.totalCacheReadTokens || 0,
+        ),
+      )}`;
+    }
+  } catch {
+    /* */
+  }
+  const prev = (s.lastUserPreview || "").replace(/\s+/g, " ").trim();
+  const preview = prev
+    ? `“${prev.slice(0, 24)}${prev.length > 24 ? "…" : ""}”`
+    : "";
+  const cols =
+    columns ??
+    (process.stdout.isTTY ? process.stdout.columns || 80 : Number.POSITIVE_INFINITY);
+  const join = (parts: string[]): string => parts.filter(Boolean).join("  ");
+  const core = join([s.id.slice(0, 8), age.trim(), badges.join(" ")]);
+  const candidates = [
+    join([s.id.slice(0, 8), age, title, s.model, `t=${s.turnCount ?? 0}`, cost, badges.join(" "), preview]),
+    join([s.id.slice(0, 8), age, title, s.model, badges.join(" ")]),
+    join([s.id.slice(0, 8), age, title, badges.join(" ")]),
+    core,
+  ];
+  if (!Number.isFinite(cols) || cols < 24) return candidates[0]!;
+  for (const line of candidates) {
+    if (visibleWidth(line) <= cols) return line;
+  }
+  return clipAnsi(core, cols);
 }
 
 /** Compact human summary for `forge sessions show`. */
@@ -2389,6 +2454,10 @@ export function formatSessionTouchedFiles(
       ? "No file mutations recorded in this session yet."
       : "No file paths recorded in tool calls yet.";
   }
+  const width = Math.max(
+    24,
+    process.stdout.isTTY ? (process.stdout.columns ?? 80) : 80,
+  );
   const lines = items.map((t) => {
     const tag = t.mutated
       ? t.op === "delete"
@@ -2399,15 +2468,28 @@ export function formatSessionTouchedFiles(
             ? "P"
             : "M"
       : "R";
+    const prefix = `  ${tag}  `;
     const tools =
-      t.tools.length > 1 ? `  (${t.tools.slice(-3).join(", ")})` : `  (${t.tools[0]})`;
-    return `  ${tag}  ${t.path}${tools}`;
+      t.tools.length > 1
+        ? `  (${t.tools.slice(-3).join(", ")})`
+        : t.tools[0]
+          ? `  (${t.tools[0]})`
+          : "";
+    let row = `${prefix}${t.path}${tools}`;
+    if (visibleWidth(row) > width) {
+      row = `${prefix}${t.path}`;
+    }
+    if (visibleWidth(row) > width) {
+      const pathBudget = Math.max(8, width - visibleWidth(prefix));
+      row = `${prefix}${clipAnsi(t.path, pathBudget)}`;
+    }
+    return row;
   });
   const scope = opts?.mutatedOnly ? "mutations" : "paths";
   return (
     `Session files (${items.length} ${scope}, newest first):\n` +
     lines.join("\n") +
-    `\nR=read  A=write  M=edit  P=patch  D=delete  ·  /files writes  ·  /diff`
+    `\nR=read  A=write  M=edit  P=patch  D=delete  ·  /files writes  ·  /diff --full`
   );
 }
 
@@ -2418,10 +2500,10 @@ export function formatSessionTouchedFiles(
 export function lastUserText(session: SessionData): string {
   for (let i = session.messages.length - 1; i >= 0; i--) {
     const m = session.messages[i];
-    if (m.role === "user") {
-      const t = (m.content || "").trim();
-      if (t) return t;
-    }
+    if (m.role !== "user") continue;
+    if (isSyntheticUserMessage(m)) continue;
+    const t = (m.content || "").trim();
+    if (t) return t;
   }
   return "";
 }
@@ -2452,6 +2534,7 @@ export function formatRecentTurns(
   for (const m of session.messages) {
     if (m.role === "system") continue;
     if (m.role === "user") {
+      if (isSyntheticUserMessage(m)) continue;
       const text = (m.content || "").trim();
       if (!text) continue;
       blocks.push({ kind: "user", text });
@@ -2500,41 +2583,47 @@ export function formatRecentTurns(
 
   const slice = turns.slice(-turnsWanted);
   const startIdx = turns.length - slice.length + 1;
+  const width = Math.max(
+    24,
+    process.stdout.isTTY ? (process.stdout.columns ?? 80) : 80,
+  );
+  const clipRow = (s: string): string =>
+    visibleWidth(s) > width ? clipAnsi(s, width) : s;
   const lines: string[] = [
-    `Last ${slice.length} turn(s) of ${turns.length}` +
-      (session.meta.title ? ` — ${session.meta.title}` : "") +
-      ` · ${session.meta.id.slice(0, 8)}`,
+    clipRow(
+      `Last ${slice.length} turn(s) of ${turns.length}` +
+        (session.meta.title ? ` — ${session.meta.title}` : "") +
+        ` · ${session.meta.id.slice(0, 8)}`,
+    ),
   ];
 
   slice.forEach((t, i) => {
     const n = startIdx + i;
     lines.push("");
-    lines.push(`── turn ${n} ──`);
+    lines.push(clipRow(`── turn ${n} ──`));
     if (t.user) {
-      lines.push(`you:  ${clipPreview(t.user, maxChars)}`);
+      lines.push(clipRow(`you:  ${clipPreview(t.user, maxChars)}`));
     }
     if (t.assistants.length === 0) {
-      lines.push(`forge: (no assistant reply yet)`);
+      lines.push(clipRow(`forge: (no assistant reply yet)`));
     } else {
       const texts = t.assistants.map((a) => a.text).filter(Boolean);
       const tools = t.assistants.flatMap((a) => a.tools).filter((x) => x && x !== "·");
       const uniqTools = [...new Set(tools)];
       const body = texts.join(" ").trim();
-      if (body) lines.push(`forge: ${clipPreview(body, maxChars)}`);
-      else if (uniqTools.length) lines.push(`forge: (tool calls only)`);
-      else lines.push(`forge: (empty)`);
+      if (body) lines.push(clipRow(`forge: ${clipPreview(body, maxChars)}`));
+      else if (uniqTools.length) lines.push(clipRow(`forge: (tool calls only)`));
+      else lines.push(clipRow(`forge: (empty)`));
       if (uniqTools.length) {
         const shown = uniqTools.slice(0, 8);
         const more = uniqTools.length - shown.length;
         lines.push(
-          `tools: ${shown.join(", ")}${more > 0 ? ` +${more}` : ""}`,
+          clipRow(`tools: ${shown.join(", ")}${more > 0 ? ` +${more}` : ""}`),
         );
       }
     }
   });
 
-  lines.push("");
-  lines.push("Tip: /retry · /copy · /export · /share");
   return lines.join("\n");
 }
 
@@ -2546,21 +2635,20 @@ export function formatResumePeek(
   session: SessionData,
   opts?: { maxChars?: number },
 ): string {
-  const hasTurn = session.messages.some(
-    (m) =>
-      (m.role === "user" || m.role === "assistant") &&
-      Boolean((m.content || "").trim() || m.tool_calls?.length),
-  );
+  const hasTurn = session.messages.some((m) => {
+    if (m.role === "user") {
+      return !isSyntheticUserMessage(m) && Boolean((m.content || "").trim());
+    }
+    if (m.role === "assistant") {
+      return Boolean((m.content || "").trim() || m.tool_calls?.length);
+    }
+    return false;
+  });
   if (!hasTurn) return "";
-  // Drop the trailing tip line — resume banner already points at /last.
   return formatRecentTurns(session, {
     turns: 1,
     maxChars: opts?.maxChars ?? 200,
-  })
-    .split("\n")
-    .filter((ln) => !/^Tip:/.test(ln))
-    .join("\n")
-    .trimEnd();
+  });
 }
 
 /**
@@ -2588,8 +2676,9 @@ export function isLastVerificationStale(meta: {
 
 export function formatResumeOrientation(
   session: SessionData,
-  opts?: { maxChars?: number; fileLimit?: number },
+  opts?: { maxChars?: number; fileLimit?: number; compact?: boolean },
 ): string {
+  const compact = opts?.compact === true;
   const parts: string[] = [];
   try {
     const peek = formatResumePeek(session, { maxChars: opts?.maxChars });
@@ -2623,7 +2712,7 @@ export function formatResumeOrientation(
   }
   try {
     const hop = session.meta.lastModelFallback;
-    if (hop?.from && hop.to) {
+    if (hop?.from && hop.to && !compact) {
       parts.push(`Last model hop: ${hop.from} → ${hop.to}`);
     }
   } catch {
@@ -2633,6 +2722,7 @@ export function formatResumeOrientation(
     // Surface spend cap on resume so experts see the valve before continuing.
     // Session override is what matters on resume (config may differ on host).
     if (
+      !compact &&
       session.meta.maxCostUsd !== undefined &&
       session.meta.maxCostUsd !== null
     ) {
@@ -2663,6 +2753,7 @@ export function formatResumeOrientation(
   }
   try {
     // Preferred checks so resume doesn't require rediscovering the stack.
+    if (compact) throw new Error("skip");
     const intel = detectProjectIntel(session.meta.cwd || process.cwd());
     if (intel.checkCommands[0]) {
       parts.push(
@@ -2701,6 +2792,7 @@ export function formatResumeOrientation(
     /* */
   }
   try {
+    if (compact) throw new Error("skip");
     const n = listActiveProjectMemory(
       session.meta.cwd || process.cwd(),
     ).length;
@@ -2713,6 +2805,7 @@ export function formatResumeOrientation(
     /* */
   }
   try {
+    if (compact) throw new Error("skip");
     let cp = session.meta.lastCheckpoint;
     if (!cp) {
       try {
@@ -2727,8 +2820,8 @@ export function formatResumeOrientation(
   } catch {
     /* */
   }
-      try {
-    if (session.meta.parentSessionId) {
+  try {
+    if (session.meta.parentSessionId && !compact) {
       const pl =
         session.meta.parentSessionLabel ||
         session.meta.parentSessionId.slice(0, 8);

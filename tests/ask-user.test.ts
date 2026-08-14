@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it, before, after } from "node:test";
-import { toolAskUser } from "../src/agent/tools/ask-user.js";
+import { formatAskUserCard, toolAskUser } from "../src/agent/tools/ask-user.js";
 import { executeTool } from "../src/agent/tools/index.js";
 import { TOOL_DEFINITIONS } from "../src/agent/tools/definitions.js";
 
@@ -23,6 +23,17 @@ describe("ask_user", () => {
         (d) => d.type === "function" && d.function.name === "ask_user",
       ),
     );
+  });
+
+  it("card is question + numbered choices, not a lecture", () => {
+    const card = formatAskUserCard("Ship it?", ["yes", "no"], "destructive");
+    assert.match(card, /Ship it\?/);
+    assert.match(card, /1\) yes/);
+    assert.match(card, /2\) no/);
+    assert.match(card, /destructive/);
+    assert.doesNotMatch(card, /Agent question/);
+    assert.doesNotMatch(card, /Reply with/);
+    assert.ok(!card.startsWith("\n"), "no leading blank-line sandwich");
   });
 
   it("fails closed in headless", async () => {

@@ -286,7 +286,7 @@ Full contract: [docs/RELIABILITY.md](docs/RELIABILITY.md) · expert checklist: [
 | `/fork [title]` | Branch session into a new id |
 | `/title [name\|clear]` | Show / set / clear session title (`/rename`) |
 | `/bell [on\|off\|test]` | Terminal BEL when a turn ends (long-run attention) |
-| `/diff [path]` | Git status + diff (live-safe; argv + filter allowlist — no shell injection) |
+| `/diff [path]` | Git status + `--stat` (live-safe; argv + filter allowlist). `/diff --full` or `-U3` for the patch |
 | `/logs [n\|path]` | Tail sandbox/safety events (`forge logs`; live-safe; no secrets) |
 | `/config [json]` | Effective config snapshot (live-safe; no secrets) · CLI: `forge config` |
 | `/copy` | Clipboard last reply (pbcopy/wl-copy/xclip/…; live-safe) |
@@ -316,7 +316,7 @@ forge status --tmux       # for tmux status-right
 
 Works for **any** auth method: always shows session context/tokens/git/liveness/activity; plan credits only when the provider exposes them (e.g. SuperGrok via imported Grok session). See [docs/STATUSLINE.md](docs/STATUSLINE.md).
 
-Empty Tab offers first-day starters; type `/` then Tab for the full catalog (including project `.forge/commands` and skill packs via `/skills`). Permission prompts: **Enter** or `y` allows once. While the agent is working you can still run **live controls** (`/cycle 0`, `/cycle 1`, `/max-waves N|off`, `/ulw-off`, `/plan`, `/build`, `/model`, `/pause`, `/unpause`, `/done`, `/status`, …) without aborting — harness state updates apply at the next model step. **Free-text** mid-run is queued as an interjection (Grok-style) for the next LLM call. **Ctrl+C** aborts the current agent turn (again at idle prompt to exit).
+Empty Tab and `/` + Tab offer first-day starters; type `/ul` or `/per` then Tab for the rest (including project `.forge/commands` and skill packs via `/skills`). Permission prompts: **Enter** or `y` allows once. While the agent is working you can still run **live controls** (`/cycle 0`, `/cycle 1`, `/max-waves N|off`, `/ulw-off`, `/plan`, `/build`, `/model`, `/pause`, `/unpause`, `/done`, `/status`, …) without aborting — harness state updates apply at the next model step. **Free-text** mid-run is queued as an interjection (Grok-style) for the next LLM call. **Ctrl+C** aborts the current agent turn (again at idle prompt to exit).
 
 Headless CI can run slash prompts too: `forge run "/plan"` · `forge run "/commands"` · `forge run "/skills"` · custom templates expand then run (`reason: "slash"` when no model call). Starter templates: `examples/forge-commands/` · project skill packs: `examples/forge-skills/` (copy into `.forge/skills/<name>/SKILL.md`).
 

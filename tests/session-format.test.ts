@@ -21,11 +21,12 @@ import {
   listSessionLookupSuggestions,
   formatSessionShareCard,
   formatResumeOrientation,
+  formatSessionPickerRow,
   exportSessionJson,
   importSessionJson,
   isLastVerificationStale,
 } from "../src/session/session.js";
-import { truncateMiddle, estimateCostUsd, formatTokens } from "../src/util/format.js";
+import { truncateMiddle, estimateCostUsd, formatTokens, visibleWidth } from "../src/util/format.js";
 import { isRetryableError } from "../src/util/retry.js";
 import {
   completeSlash,
@@ -162,6 +163,68 @@ describe("session helpers", () => {
     assert.match(two, /peek-demo/);
   });
 
+  it("formatRecentTurns and lastUserText skip harness injections", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-last-synth-"));
+    process.env.FORGE_HOME = tmp;
+    const s = createSession({
+      cwd: tmp,
+      provider: "xai",
+      model: "grok-4",
+      title: "synth-skip",
+    });
+    s.messages.push({ role: "user", content: "ship the dock clip" });
+    s.messages.push({ role: "assistant", content: "clipped live ›" });
+    s.messages.push({
+      role: "user",
+      content:
+        "[Forge harness — mid-conversation update]\nObey this state over earlier harness messages.",
+    });
+    s.messages.push({ role: "assistant", content: "still working on clip" });
+    assert.equal(lastUserText(s), "ship the dock clip");
+    const peek = formatRecentTurns(s, { turns: 1 });
+    assert.match(peek, /ship the dock clip/);
+    assert.doesNotMatch(peek, /Forge harness/);
+    assert.match(peek, /still working on clip/);
+  });
+
+  it("formatRecentTurns clips each row to one TTY line", async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-last-clip-"));
+    process.env.FORGE_HOME = tmp;
+    const { createSession: mk, formatRecentTurns } = await import(
+      "../src/session/session.js"
+    );
+    const { visibleWidth } = await import("../src/util/format.js");
+    const s = mk({
+      cwd: tmp,
+      provider: "xai",
+      model: "grok-4",
+      title: "very-long-session-title-that-would-wrap",
+    });
+    s.messages.push({
+      role: "user",
+      content: `please ${"do this and that ".repeat(20)}`,
+    });
+    s.messages.push({
+      role: "assistant",
+      content: `ok ${"working through the request ".repeat(12)}`,
+    });
+    const stdout = process.stdout as NodeJS.WriteStream & { columns?: number };
+    const prevCols = stdout.columns;
+    const prevTty = stdout.isTTY;
+    stdout.isTTY = true;
+    stdout.columns = 40;
+    try {
+      const text = formatRecentTurns(s, { turns: 1, maxChars: 400 });
+      assert.doesNotMatch(text, /Tip:/);
+      for (const row of text.split("\n").filter(Boolean)) {
+        assert.ok(visibleWidth(row) <= 40, JSON.stringify(row));
+      }
+    } finally {
+      stdout.columns = prevCols;
+      stdout.isTTY = prevTty;
+    }
+  });
+
   it("/last is handled and live-safe", async () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-last-slash-"));
     process.env.FORGE_HOME = tmp;
@@ -190,6 +253,26 @@ describe("session helpers", () => {
     assert.match(peek, /ship the feature/);
     assert.match(peek, /shipped it/);
     assert.doesNotMatch(peek, /^Tip:/m);
+  });
+
+  it("formatResumePeek is empty when only harness injections exist", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-resume-synth-"));
+    process.env.FORGE_HOME = tmp;
+    const s = createSession({ cwd: tmp, provider: "xai", model: "grok-4" });
+    s.messages.push({
+      role: "user",
+      content: "[Forge harness — mid-conversation update]\nULW ON",
+    });
+    assert.equal(formatResumePeek(s), "");
+    s.messages.push({ role: "user", content: "ship the dock clip" });
+    s.messages.push({ role: "assistant", content: "clipped" });
+    s.messages.push({
+      role: "user",
+      content: "[Forge harness — mid-conversation update]\nwave 2",
+    });
+    const peek = formatResumePeek(s);
+    assert.match(peek, /ship the dock clip/);
+    assert.doesNotMatch(peek, /Forge harness/);
   });
 
   it("saveSession stores lastUserPreview for list pickers", async () => {
@@ -744,6 +827,45 @@ it("/fork includes last-turn peek", async () => {
     assert.match(o, /\/files/);
   });
 
+  it("formatResumeOrientation compact skips Checks/memory/checkpoint", async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-orient-c-"));
+    process.env.FORGE_HOME = tmp;
+    fs.writeFileSync(
+      path.join(tmp, "package.json"),
+      JSON.stringify({ name: "orient-c", scripts: { test: "node --test" } }),
+    );
+    const {
+      createSession: mk,
+      formatResumeOrientation,
+    } = await import("../src/session/session.js");
+    const s = mk({ cwd: tmp, provider: "xai", model: "m" });
+    s.messages.push({ role: "user", content: "ship the patch" });
+    s.messages.push({
+      role: "assistant",
+      content: "patched",
+      tool_calls: [
+        {
+          id: "1",
+          type: "function",
+          function: {
+            name: "write_file",
+            arguments: JSON.stringify({ path: "src/orient.ts", content: "x" }),
+          },
+        },
+      ],
+    });
+    s.meta.editCount = 2;
+    s.meta.maxCostUsd = 5;
+    const full = formatResumeOrientation(s);
+    const compact = formatResumeOrientation(s, { compact: true });
+    assert.match(full, /Checks:/);
+    assert.doesNotMatch(compact, /Checks:/);
+    assert.doesNotMatch(compact, /Project memory:/);
+    assert.doesNotMatch(compact, /Checkpoint:/);
+    assert.match(compact, /src\/orient\.ts/);
+    assert.match(compact, /Last verify:/);
+  });
+
   it("listSessions filters pinned", async () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-list-pin-"));
     process.env.FORGE_HOME = tmp;
@@ -912,6 +1034,49 @@ it("/fork includes last-turn peek", async () => {
     assert.match(text, /src\/b\.ts/);
     assert.match(text, /src\/c\.ts/);
     assert.doesNotMatch(text, /src\/a\.ts/);
+    assert.match(text, /\/diff --full/);
+  });
+
+  it("formatSessionTouchedFiles clips each row to one TTY line", async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-files-clip-"));
+    process.env.FORGE_HOME = tmp;
+    const { createSession: mk, formatSessionTouchedFiles } = await import(
+      "../src/session/session.js"
+    );
+    const { visibleWidth } = await import("../src/util/format.js");
+    const s = mk({ cwd: tmp, provider: "xai", model: "m" });
+    const long = `src/${"very-long-directory-name/".repeat(8)}file.ts`;
+    s.messages.push({
+      role: "assistant",
+      content: "",
+      tool_calls: [
+        {
+          id: "1",
+          type: "function",
+          function: {
+            name: "write_file",
+            arguments: JSON.stringify({ path: long, content: "x" }),
+          },
+        },
+      ],
+    });
+    const stdout = process.stdout as NodeJS.WriteStream & { columns?: number };
+    const prevCols = stdout.columns;
+    const prevTty = stdout.isTTY;
+    stdout.isTTY = true;
+    stdout.columns = 36;
+    try {
+      const text = formatSessionTouchedFiles(s, { mutatedOnly: true });
+      const rows = text.split("\n").filter((l) => /^\s+[A-Z]\s+/.test(l));
+      assert.ok(rows.length >= 1);
+      for (const row of rows) {
+        assert.ok(visibleWidth(row) <= 36, JSON.stringify(row));
+        assert.match(row, /^\s+A\s+/);
+      }
+    } finally {
+      stdout.columns = prevCols;
+      stdout.isTTY = prevTty;
+    }
   });
 
   it("/files lists touched paths", async () => {
@@ -1272,5 +1437,17 @@ it("/fork includes last-turn peek", async () => {
     assert.equal(imported.meta.lastVerificationAt, "2026-04-10T12:00:00.000Z");
     assert.equal(imported.meta.lastEditAt, "2026-04-10T12:10:00.000Z");
     assert.equal(isLastVerificationStale(imported.meta), true);
+  });
+
+  it("formatSessionPickerRow stays one TTY row", () => {
+    const s = createSession({ cwd: "/tmp", provider: "xai", model: "grok-4.6" });
+    s.meta.title = "very long title that would wrap a picker";
+    s.meta.lastUserPreview = "please comprehensively evaluate then improve the ui";
+    s.meta.ultrawork = true;
+    s.meta.pinned = true;
+    s.meta.lastError = { at: "t", code: "x", message: "fail" };
+    const row = formatSessionPickerRow(s.meta, ["*"], 36);
+    assert.ok(visibleWidth(row) <= 36, row);
+    assert.match(row.replace(/\x1b\[[0-9;]*m/g, ""), /ULW|PIN|ERR|\*/);
   });
 });

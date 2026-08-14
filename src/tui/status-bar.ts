@@ -3,7 +3,7 @@
  *
  * 1. Prompt flags (ULW / GOAL / YOLO / bg) on `forge ›`
  * 2. Working indicator during agent turns (phase + elapsed)
- * 3. Post-turn footer (context / tokens / bg / todos)
+ * 3. Post-turn footer (turn tokens / last✓ / harness; dock-off also prints ctx/ULW/GOAL)
  *
  * Session health (model · ctx · plan) lives on the always-on bottom dock,
  * not a second idle strip above the prompt.
@@ -18,11 +18,7 @@ import type { ResolvedAuth } from "../auth/types.js";
 import { describeAuth } from "../auth/resolve.js";
 import { listAccounts } from "../auth/store.js";
 import { loadGoal } from "../harness/goal.js";
-import {
-  loadUlwCycle,
-  formatUlwBadge,
-  ULW_LIVE_CONTROLS_HINT,
-} from "../harness/ulw-cycle.js";
+import { loadUlwCycle, formatUlwBadge } from "../harness/ulw-cycle.js";
 import { listActiveProjectMemory } from "../harness/project-memory.js";
 import { listActiveSubagents } from "../agent/subagent.js";
 import { peekInterjections } from "../harness/interjection.js";
@@ -42,6 +38,8 @@ import { getGitSnapshot } from "../util/git-context.js";
 import { detectProjectIntel } from "../util/project-intel.js";
 import type { AuthMethod, PlanUsageInfo } from "../statusline/types.js";
 import { normalizePermissionMode } from "../util/mode-aliases.js";
+import { activeTodoTitle, formatHudTodos, openTodos } from "../agent/todos.js";
+import { isBottomStatusEnabled } from "./bottom-status.js";
 
 export interface StatusBarContext {
   config: ForgeConfig;
@@ -144,6 +142,25 @@ export function buildPromptFlags(ctx: StatusBarContext): string {
   return flags.length ? chalk.dim(`[${flags.join(" ")}] `) : "";
 }
 
+/**
+ * Idle `forge ›` row. Flags clip so the caret never wraps onto a second
+ * TTY line (sibling of buildLivePrompt).
+ */
+export function buildIdlePrompt(
+  ctx: StatusBarContext,
+  opts?: { width?: number },
+): string {
+  const flags = buildPromptFlags(ctx);
+  const caret = chalk.green("forge") + chalk.dim(" › ");
+  const raw = flags + caret;
+  const cols = Math.max(8, opts?.width ?? process.stdout.columns ?? 80);
+  if (visibleWidth(raw) <= cols) return raw;
+  const caretW = visibleWidth(caret);
+  const budget = Math.max(0, cols - caretW);
+  if (budget < 1 || !flags) return clipAnsi(caret, cols);
+  return clipAnsi(flags, budget) + caret;
+}
+
 function phaseShort(act: SessionActivity): string {
   if (act.phase === "tool" && act.detail) {
     const d = act.detail.replace(/\s+/g, " ").slice(0, 16);
@@ -237,9 +254,12 @@ function liveTokenBits(ctx: StatusBarContext): string[] {
 
 /**
  * One-line chrome printed when an agent turn starts.
- * Identity + the two controls that matter mid-run — not a 6-line box.
+ * Identity + active harness — controls live on the dock / /help, not here.
  */
-export function renderLiveRunHeader(ctx: StatusBarContext): string {
+export function renderLiveRunHeader(
+  ctx: StatusBarContext,
+  columns?: number,
+): string {
   const { config, session } = ctx;
   const effort = resolveReasoningEffort(config.model, config.reasoningEffort);
   const ulw = loadUlwCycle(session.meta.id);
@@ -277,15 +297,12 @@ export function renderLiveRunHeader(ctx: StatusBarContext): string {
     harness.push(chalk.yellow("GOAL"));
   }
 
-  const bits = [
-    chalk.bold.cyan("live run"),
-    chalk.dim(identity),
-    ...harness,
-    chalk.dim(
-      `${chalk.white("/cycle 0")} last · ${chalk.white("/budget")} · type at ${chalk.cyan("live ›")}`,
-    ),
-  ];
-  return bits.join(chalk.dim("  ·  "));
+  const bits = [chalk.bold.cyan("live run"), chalk.dim(identity), ...harness];
+  const line = bits.join(chalk.dim("  ·  "));
+  const cols =
+    columns ??
+    (process.stdout.isTTY ? (process.stdout.columns ?? 80) : 120);
+  return clipAnsi(line, Math.max(24, cols));
 }
 
 /**
@@ -296,6 +313,7 @@ export function renderBusyStatusLine(
   phase: AgentPhase,
   detail?: string,
   frame = 0,
+  width?: number,
 ): string {
   const act = getActivity();
   const turnSec = activityElapsedSec(act);
@@ -338,11 +356,16 @@ export function renderBusyStatusLine(
     );
   }
   if (act.bgRunning > 0) bits.push(chalk.yellow(`bg:${act.bgRunning}`));
-  if (ulw?.enabled && ulw.cycle === 1) {
-    bits.push(chalk.dim("last=/cycle 0"));
-  }
 
-  return bits.filter(Boolean).join(" ");
+  const line = bits.filter(Boolean).join(" ");
+  const cols = Math.max(
+    8,
+    width ??
+      (process.stderr.isTTY ? process.stderr.columns : undefined) ??
+      (process.stdout.isTTY ? process.stdout.columns : undefined) ??
+      80,
+  );
+  return visibleWidth(line) <= cols ? line : clipAnsi(line, cols);
 }
 
 /**
@@ -352,7 +375,13 @@ export function renderBusyStatusLine(
  */
 export function buildLivePrompt(
   ctx: StatusBarContext,
-  opts?: { phase?: AgentPhase; detail?: string; frame?: number },
+  opts?: {
+    phase?: AgentPhase;
+    detail?: string;
+    frame?: number;
+    /** Clip to one TTY row. Default: stdout.columns. */
+    width?: number;
+  },
 ): string {
   const act = getActivity();
   const phase = opts?.phase ?? act.phase;
@@ -392,6 +421,14 @@ export function buildLivePrompt(
     );
   }
   if (effort) left.push(chalk.dim(effort));
+  {
+    const todos = formatHudTodos(
+      openTodos(ctx.session.todos),
+      activeTodoTitle(ctx.session.todos),
+      14,
+    );
+    if (todos) left.push(chalk.yellow(todos));
+  }
   if (act.bgRunning > 0) left.push(chalk.yellow(`bg:${act.bgRunning}`));
   try {
     const q = peekInterjections(ctx.session.meta.id).length;
@@ -406,19 +443,14 @@ export function buildLivePrompt(
     /* */
   }
 
-  // Right side: explicit control affordance so it cannot be missed
-  const hint =
-    ulw?.enabled && ulw.cycle === 1
-      ? chalk.dim(" last=/cycle 0")
-      : chalk.dim(" /status");
-
-  return (
-    left.join(" ") +
-    hint +
-    " " +
-    chalk.bold.cyan("live") +
-    chalk.bold.cyan(" › ")
-  );
+  const caret = chalk.bold.cyan("live") + chalk.bold.cyan(" › ");
+  const raw = `${left.join(" ")} ${caret}`;
+  const cols = Math.max(8, opts?.width ?? process.stdout.columns ?? 80);
+  if (visibleWidth(raw) <= cols) return raw;
+  // Keep the `live ›` caret so the first mid-run keystroke stays on this row.
+  const caretW = visibleWidth(caret);
+  const budget = Math.max(1, cols - caretW - 1);
+  return `${clipAnsi(left.join(" "), budget)} ${caret}`;
 }
 
 /** Visible confirmation after a mid-run control command. */
@@ -429,23 +461,19 @@ export function formatLiveControlFeedback(
 ): string {
   const color =
     kind === "warn" ? chalk.yellow : kind === "info" ? chalk.dim : chalk.green;
-  const title =
-    kind === "warn"
-      ? "live (needs idle)"
-      : kind === "info"
-        ? "live"
-        : "live ✓ applied";
-  const body = output.trim() || "(no output)";
-  return (
-    "\n" +
-    color(`── ${title} · ${command.trim()} ──`) +
-    "\n" +
-    body +
-    "\n" +
-    color("────────────────────────") +
-    "\n" +
-    chalk.dim("live › still open — type another control or wait for the run")
-  );
+  const mark = kind === "warn" ? "⚠" : kind === "info" ? "·" : "✓";
+  const cmd = command.trim() || "/";
+  const body = output.trim();
+  const lines = body ? body.split(/\n/).filter((l) => l.length > 0) : [];
+  const head = color(`live ${mark} ${cmd}`);
+  // One-line ACK for Applied / Queued / cycle flips. Multi-line /status
+  // keeps its body — no box, no "still open" lecture (live › is already there).
+  if (lines.length <= 1) {
+    const rest = lines[0] ? `  ${lines[0]}` : "";
+    const cols = process.stdout.columns ?? 100;
+    return clipAnsi(`${head}${rest}`, cols);
+  }
+  return `${head}\n${body}`;
 }
 
 /** Full HUD for /status — same as forge status, for this session. */
@@ -475,13 +503,16 @@ export function renderTurnFooter(
     ctx.config.model,
     turn.cacheReadTokens ?? 0,
   );
+  const dockOn = isBottomStatusEnabled();
   const parts: string[] = [];
   parts.push(chalk.dim("──"));
-  parts.push(
-    chalk.dim(
-      `ctx ${snap.context.percent}% (${formatTokens(snap.context.usedTokens)}/${formatTokens(snap.context.windowTokens)})`,
-    ),
-  );
+  if (!dockOn) {
+    parts.push(
+      chalk.dim(
+        `ctx ${snap.context.percent}% (${formatTokens(snap.context.usedTokens)}/${formatTokens(snap.context.windowTokens)})`,
+      ),
+    );
+  }
   if (turn.promptTokens + turn.completionTokens > 0) {
     parts.push(
       chalk.dim(
@@ -500,8 +531,9 @@ export function renderTurnFooter(
           : chalk.dim(`budget ${b.percent}% ${label}`),
     );
   }
-  if (snap.openTodos > 0) {
-    parts.push(chalk.yellow(`todos:${snap.openTodos}`));
+  if (!dockOn) {
+    const todos = formatHudTodos(snap.openTodos, snap.activeTodo);
+    if (todos) parts.push(chalk.yellow(todos));
   }
   // After edits, surface last-verify (when recorded) or the cheapest preferred
   // project check early (before ULW badges) so narrow terminals still show it.
@@ -532,23 +564,26 @@ export function renderTurnFooter(
   } catch {
     /* */
   }
-  const bg = listTasks().filter((t) => t.status === "running");
-  if (bg.length) {
-    parts.push(chalk.yellow(`bg:${bg.length} running`));
+  if (!dockOn) {
+    const bg = listTasks().filter((t) => t.status === "running");
+    if (bg.length) {
+      parts.push(chalk.yellow(`bg:${bg.length} running`));
+    }
   }
   if (turn.stopContinues && turn.stopContinues > 0) {
     parts.push(chalk.magenta(`harness×${turn.stopContinues}`));
   }
-  const ulw = loadUlwCycle(ctx.session.meta.id);
-  if (ulw?.enabled) {
-    parts.push(
-      ulw.cycle === 1
-        ? chalk.magenta(`ULW ${formatUlwBadge(ulw)}`)
-        : chalk.yellow(`ULW ${formatUlwBadge(ulw)}`),
-    );
-    parts.push(chalk.dim("hint: /cycle 0"));
+  if (!dockOn) {
+    const ulw = loadUlwCycle(ctx.session.meta.id);
+    if (ulw?.enabled) {
+      parts.push(
+        ulw.cycle === 1
+          ? chalk.magenta(`ULW ${formatUlwBadge(ulw)}`)
+          : chalk.yellow(`ULW ${formatUlwBadge(ulw)}`),
+      );
+    }
+    if (snap.goal?.active) parts.push(chalk.yellow("GOAL"));
   }
-  if (snap.goal?.active) parts.push(chalk.yellow("GOAL"));
 
   let line = parts.join("  ");
   if (visibleWidth(line) > width && width > 20) {
@@ -657,7 +692,13 @@ export function createWorkingIndicator(
         streaming && phase === "thinking" ? "thinking" : phase;
       const paintDetail =
         streaming && phase === "thinking" ? "streaming" : detail;
-      return renderBusyStatusLine(ctx, paintPhase, paintDetail, frame);
+      return renderBusyStatusLine(
+        ctx,
+        paintPhase,
+        paintDetail,
+        frame,
+        process.stderr.columns || process.stdout.columns || 80,
+      );
     }
     // Fallback when no context (tests / headless callers)
     const act = getActivity();
@@ -711,12 +752,7 @@ export function createWorkingIndicator(
         return;
       }
       // Fallback reminder when the REPL did not wire a redock hook
-      process.stderr.write(
-        "\n" +
-          chalk.dim("  ⚒ still working · controls open at ") +
-          chalk.cyan("live ›") +
-          chalk.dim("  (e.g. /cycle 0)\n"),
-      );
+      process.stderr.write("\n" + chalk.dim("  ⚒ still working") + "\n");
       return;
     }
     process.stderr.write("\n" + chalk.dim(label()) + "\n");
@@ -1021,7 +1057,6 @@ export function formatSessionDetails(ctx: StatusBarContext): string {
         `ulw      ${formatUlwBadge(ulw)}  blocks=${ulw.blocks}  ${ulw.mandate.slice(0, 50)}`,
       ),
     );
-    lines.push(chalk.dim(`         ${ULW_LIVE_CONTROLS_HINT}`));
   }
   if (g?.objective) {
     lines.push(

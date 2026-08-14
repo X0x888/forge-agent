@@ -975,31 +975,10 @@ describe("plan mode project checks", () => {
 
 
 describe("/diff verify tip", () => {
-  it("appends preferred checks when workspace has a dirty tree", async () => {
-    const d = tmpDir("forge-diff-intel-");
-    write(
-      d,
-      "package.json",
-      JSON.stringify({ scripts: { typecheck: "tsc -b", test: "node --test" } }),
-    );
-    write(d, "package-lock.json", "{}");
-    write(d, "x.ts", "export const n = 1;\n");
-    // Make a git repo with a dirty file so /diff has content
-    seedGit(d);
-    const { execFileSync } = await import("node:child_process");
-    try {
-      execFileSync("git", ["init"], { cwd: d, stdio: "ignore" });
-      execFileSync("git", ["config", "user.email", "t@t"], { cwd: d, stdio: "ignore" });
-      execFileSync("git", ["config", "user.name", "t"], { cwd: d, stdio: "ignore" });
-      execFileSync("git", ["add", "package.json"], { cwd: d, stdio: "ignore" });
-      execFileSync("git", ["commit", "-m", "i", "--allow-empty"], {
-        cwd: d,
-        stdio: "ignore",
-      });
-    } catch {
-      /* best-effort */
-    }
-    write(d, "x.ts", "export const n = 2;\n");
+  it("default /diff is status+stat, not a 12k patch", async () => {
+    // Use the real project git root — nested git init often fails chmod
+    // in the sandbox, and this repo already has scripts + a tree.
+    const d = process.cwd();
     const { handleSlash } = await import("../src/commands/slash.js");
     const { createSession, deleteSession } = await import(
       "../src/session/session.js"
@@ -1015,8 +994,20 @@ describe("/diff verify tip", () => {
         hooks,
       });
       assert.equal(r.handled, true);
-      // verify tip when dirty or always when checks exist
-      assert.match(String(r.output || ""), /verify:|npm run typecheck|status:/);
+      const out = String(r.output || "");
+      assert.match(out, /status:/);
+      assert.match(out, /verify:|npm run typecheck/);
+      assert.doesNotMatch(out, /^diff --git /m);
+      assert.match(out, /patch: \/diff --full|status: clean/);
+      const full = await handleSlash("/diff --full", {
+        session,
+        config: { ...DEFAULT_CONFIG, workspace: d },
+        hooks,
+      });
+      assert.equal(full.handled, true);
+      const fullOut = String(full.output || "");
+      assert.doesNotMatch(fullOut, /\(patch: \/diff --full\)/);
+      assert.match(fullOut, /\ndiff:|\(no unstaged\/HEAD diff\)|status: clean/);
     } finally {
       try {
         deleteSession(session.meta.id, { force: true });
@@ -1289,8 +1280,10 @@ describe("/status no last-verify tip", () => {
     });
     assert.equal(r.handled, true);
     const out = String(r.output || "").replace(/\x1b\[[0-9;]*m/g, "");
-    assert.match(out, /no last-verify/i);
-    assert.match(out, /4 edit/i);
+    // One verify line from formatSessionDetails — /status no longer reprints it.
+    assert.match(out, /verify\s+\(none after 4 edit/);
+    assert.doesNotMatch(out, /no last-verify after/);
+    assert.doesNotMatch(out, /Tip: status is always on the prompt line/);
   });
 });
 
@@ -1352,7 +1345,7 @@ describe("/commit stale last-verify", () => {
 });
 
 describe("/model status orientation", () => {
-  it("shows preferred checks + last-verify on bare /model", async () => {
+  it("bare /model is a picker — no last-verify dump", async () => {
     const d = tmpDir("forge-model-orient-");
     write(
       d,
@@ -1379,14 +1372,15 @@ describe("/model status orientation", () => {
     });
     assert.equal(r.handled, true);
     const out = String(r.output || "").replace(/\x1b\[[0-9;]*m/g, "");
-    assert.match(out, /Preferred checks:/i);
-    assert.match(out, /Last verify: npm test/i);
-    assert.match(out, /stale/i);
+    assert.match(out, /Provider:|model:/i);
+    assert.doesNotMatch(out, /Preferred checks:/i);
+    assert.doesNotMatch(out, /Last verify:/i);
+    assert.doesNotMatch(out, /No last-verify/i);
   });
 });
 
 describe("/effort status orientation", () => {
-  it("shows preferred checks + last-verify on bare /effort", async () => {
+  it("bare /effort is a picker — no last-verify dump", async () => {
     const d = tmpDir("forge-effort-orient-");
     write(
       d,
@@ -1421,13 +1415,15 @@ describe("/effort status orientation", () => {
     });
     assert.equal(r.handled, true);
     const out = String(r.output || "").replace(/\x1b\[[0-9;]*m/g, "");
-    assert.match(out, /Preferred checks:/i);
-    assert.match(out, /Last verify: npm test/i);
+    assert.match(out, /\/effort|Default:/i);
+    assert.doesNotMatch(out, /Preferred checks:/i);
+    assert.doesNotMatch(out, /Last verify:/i);
+    assert.doesNotMatch(out, /No last-verify/i);
   });
 });
 
 describe("/permissions status orientation", () => {
-  it("shows preferred checks + last-verify on bare /permissions", async () => {
+  it("bare /permissions is a picker — no last-verify dump", async () => {
     const d = tmpDir("forge-perm-orient-");
     write(
       d,
@@ -1453,8 +1449,10 @@ describe("/permissions status orientation", () => {
     });
     assert.equal(r.handled, true);
     const out = String(r.output || "").replace(/\x1b\[[0-9;]*m/g, "");
-    assert.match(out, /Preferred checks:/i);
-    assert.match(out, /Last verify: npm test/i);
+    assert.match(out, /\/permissions|Also: \/plan/i);
+    assert.doesNotMatch(out, /Preferred checks:/i);
+    assert.doesNotMatch(out, /Last verify:/i);
+    assert.doesNotMatch(out, /No last-verify/i);
   });
 });
 
@@ -1759,6 +1757,8 @@ describe("/notify trail orientation", () => {
     const out = String(r.output || "").replace(/\x1b\[[0-9;]*m/g, "");
     assert.match(out, /Session trail:/i);
     assert.match(out, /last-verify stale|last-verify npm test/i);
+    assert.doesNotMatch(out, /appends no last-verify/i);
+    assert.doesNotMatch(out, /osascript|notify-send|PowerShell balloon/i);
   });
 });
 
@@ -1786,6 +1786,7 @@ describe("/bell trail orientation", () => {
     const out = String(r.output || "").replace(/\x1b\[[0-9;]*m/g, "");
     assert.match(out, /Session trail:/i);
     assert.match(out, /last-verify stale|last-verify npm test/i);
+    assert.doesNotMatch(out, /appends no last-verify/i);
   });
 });
 

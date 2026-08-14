@@ -5,6 +5,7 @@ import { getForgeVersion } from "../util/version.js";
 import { forgeHome } from "../util/fs.js";
 import { isFormatOnWriteEnabled } from "../agent/tools/format-on-write.js";
 import { detectProjectIntel, hasNodeModules, multipleLockfiles } from "../util/project-intel.js";
+import { formatHudTodos } from "../agent/todos.js";
 
 function colorEnabled(opts: StatuslineRenderOptions): boolean {
   if (opts.plain || opts.color === false) return false;
@@ -343,8 +344,9 @@ function renderSession(
   }
   const planStr = formatPlan(snap.plan, c);
   if (planStr) l2.push(planStr);
-  if (snap.openTodos > 0) {
-    l2.push(paint(c, `todos:${snap.openTodos}`, "yellow"));
+  {
+    const todos = formatHudTodos(snap.openTodos, snap.activeTodo);
+    if (todos) l2.push(paint(c, todos, "yellow"));
   }
   if (snap.turnCount > 0) {
     l2.push(paint(c, `t:${snap.turnCount}`, "dim"));
@@ -489,8 +491,9 @@ export function renderCompactStrip(
     const planStr = formatPlan(snap.plan, c);
     if (planStr) parts.push(planStr);
   }
-  if (snap.openTodos > 0) {
-    parts.push(paint(c, `todos:${snap.openTodos}`, "yellow"));
+  {
+    const todos = formatHudTodos(snap.openTodos, snap.activeTodo);
+    if (todos) parts.push(paint(c, todos, "yellow"));
   }
   if ((snap.activity?.bgRunning ?? 0) > 0) {
     parts.push(paint(c, `bg:${snap.activity!.bgRunning}`, "yellow"));

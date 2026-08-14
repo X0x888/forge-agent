@@ -16,20 +16,10 @@ active-account quota · weekly reset · harness flags). Disable with
 While the agent works (native live chrome — not idle-only):
 
 ```
-┌──────────────────────────────────────────────────────────
-│ live run  (input stays open — no Ctrl+C needed)
-│ xai/grok-4.5 · effort high
-│ ULW c=1 w=0 CONTINUE
-│ controls: /cycle 0 last · /cycle 1 continue · /ulw-off · /budget · /done · /notify · /status
-│ type at the live › line below while the agent works
-└──────────────────────────────────────────────────────────
-⠋ ⚒ thinking… 12s xai/grok-4.5 high c=1 w=0/2 last=/cycle 0
-[ULW c=1] live › _
-  ▸ bash command=npm test
-  ✓ bash  842ms  1.2KB
-── live ✓ applied · /cycle 0 ──
-Cycle flag → 0 (LAST) …
-live › still open — type another control or wait for the run
+live run  ·  xai/grok-4.5 · effort high  ·  ULW c=1 CONTINUE
+⠋ ⚒ think 12s xai/grok-4.5 high live › _
+✓ bash command=npm test  842ms
+live ✓ /cycle 0  Cycle flag → 0 (LAST)
 [ULW c=0] live › _
 ```
 
@@ -63,11 +53,11 @@ HUD/`forge status` project labels append detected **package manager** + cheapest
 | **Bottom status region** | Always (TTY REPL) | Model, auth, ctx %, **use:N%**, used/limit, **reset Nd**, ULW/GOAL/YOLO, bg |
 | **Prompt strip** | Only when the dock is off (`FORGE_BOTTOM_STATUS=0` / non-TTY) | Model, context bar, tokens, **plan quota**, todos, `bg:N`, liveness (deduped) |
 | **Prompt flags** | Idle input | `ULW`, `c=1/0`, `GOAL`, `PLAN`/`YOLO`/`auto`, `VERBOSE`, `bg:N` |
-| **Live run header** | Start of every agent turn | Model, effort, ULW/GOAL, control legend, `live ›` affordance |
+| **Live run header** | Start of every agent turn | One identity line (model · effort · ULW/GOAL) — controls live on `/help` |
 | **Busy status line** | Mid-turn (stderr) | Spinner + phase + model + effort + ULW `c=1 w=N/M` + `last=/cycle 0` hint |
 | **Stream ticks** | While tokens stream | Newline status every ~10s (no `\r` garble) |
 | **`live ›` prompt** | Entire busy turn | Always-open control line; re-shown after tools / harness / slash |
-| **Live control ACK** | After mid-run `/cycle` etc. | Clear `live ✓ applied` box + re-prompt |
+| **Live control ACK** | After mid-run `/cycle` etc. | One-line `live ✓ /cycle 0` + re-prompt |
 | **Turn footer** | After every agent turn | Context %, turn tokens/cost, **budget %** (when `/budget` or `--max-cost` armed), todos, bg, harness continues |
 | **`/status`** | On demand (also mid-run) | Full 2-line HUD + session detail + bg task list |
 

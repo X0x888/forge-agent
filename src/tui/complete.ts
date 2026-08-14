@@ -227,7 +227,7 @@ export const COMMAND_PARAMS: Record<string, ParamChoice[]> = {
     },
   ],
   help: [
-    { value: "start", description: "60-second tour + getting started" },
+    { value: "start", description: "First-day card (same as /help)" },
     { value: "all", description: "Full command catalog" },
     { value: "settings", description: "Model, budget, notify, permissions" },
     { value: "harness", description: "/goal /ulw /plan /done" },
@@ -290,6 +290,12 @@ export const COMMAND_PARAMS: Record<string, ParamChoice[]> = {
     { value: "1", description: "Show the most recent turn" },
     { value: "3", description: "Show last 3 turns" },
     { value: "5", description: "Show last 5 turns" },
+  ],
+  diff: [
+    { value: "--full", description: "Include the unified patch (default is status + --stat)" },
+    { value: "--cached", description: "Staged changes only", aliases: ["--staged"] },
+    { value: "--name-only", description: "Path list only" },
+    { value: "-U3", description: "Unified patch with 3 lines of context" },
   ],
   files: [
     { value: "writes", description: "Only mutations (write/edit/patch/delete)", aliases: ["mutations", "edits", "m"] },
@@ -506,20 +512,20 @@ export function completeAtMention(
 }
 
 /**
- * First-day empty-Tab starters. Matches `/help start` + daily recover.
- * Never /ulw or /goal here — those start work immediately (type `/` then Tab).
+ * First-day empty-Tab starters. Matches `/help` + daily recover.
+ * Never /ulw or /goal here — those start work immediately (type `/ul` then Tab).
  */
 export const EMPTY_TAB_STARTERS = [
   "/help",
   "/setup",
   "/plan",
   "/init",
-  "/doctor",
-  "/tips",
+  "/last",
+  "/retry",
+  "/diff",
   "/model",
   "/permissions",
   "/budget",
-  "/notify",
   "/undo",
   "/commit",
 ] as const;
@@ -529,7 +535,7 @@ export const EMPTY_TAB_STARTERS = [
  * - `/pe` → `/permissions`
  * - `/permissions a` → `/permissions acceptEdits`
  * - `/permissions ` → all modes
- * - empty line → curated starters (type `/` for the full catalog)
+ * - empty line or `/` → curated starters (type `/ul` / `/per` for the rest)
  * - `@src/cli` → `@src/cli.ts` (workspace file mention)
  */
 export function forgeCompleter(
@@ -548,7 +554,6 @@ export function forgeCompleter(
     return [[], raw];
   }
 
-  const trimmedStart = raw; // keep spaces for readline
   const parts = raw.trimStart().split(/\s+/);
   const cmdToken = parts[0].toLowerCase();
 
@@ -562,13 +567,17 @@ export function forgeCompleter(
       /* */
     }
     const catalog = [...new Set([...SLASH_COMMANDS, ...custom])];
+    // Bare `/` is the same first-day card as empty Tab — not 80-command soup.
+    if (cmdToken === "/") {
+      return [[...EMPTY_TAB_STARTERS], raw];
+    }
     const hits = catalog.filter((c) => c.startsWith(cmdToken));
     // Prefer returning full command paths for autofill
     if (hits.length === 0) {
-      // fuzzy contains (built-in + project custom)
+      // fuzzy contains (built-in + project custom) — never dump the catalog
       const bare = cmdToken.replace(/^\//, "");
       const fuzzy = catalog.filter((c) => c.slice(1).includes(bare));
-      return [fuzzy.length ? fuzzy : catalog, raw];
+      return [fuzzy, raw];
     }
     return [hits, raw];
   }

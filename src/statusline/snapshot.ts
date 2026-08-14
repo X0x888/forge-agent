@@ -12,6 +12,7 @@ import { loadUlwCycle, normalizeMaxWaves } from "../harness/ulw-cycle.js";
 import { loadConfig } from "../config/load.js";
 import { resolveAuth } from "../auth/resolve.js";
 import { getGitSnapshot } from "../util/git-context.js";
+import { activeTodoTitle, openTodos } from "../agent/todos.js";
 import { detectProjectIntel } from "../util/project-intel.js";
 import { estimateCostUsd } from "../util/format.js";
 import { costCapStatus } from "../util/cost-budget.js";
@@ -229,9 +230,8 @@ export function sessionToSnapshot(
   const meta = session.meta;
   const gitSnap = getGitSnapshot(meta.cwd);
   const { liveness, idleSec } = computeLiveness(meta.id, meta.updatedAt);
-  const openTodos = session.todos.filter(
-    (t) => t.status === "pending" || t.status === "in_progress",
-  ).length;
+  const openTodoCount = openTodos(session.todos);
+  const activeTodo = activeTodoTitle(session.todos);
   const tags: string[] = [];
   if (meta.ultrawork) tags.push("ULW");
   const ulw = loadUlwCycle(meta.id);
@@ -341,7 +341,8 @@ export function sessionToSnapshot(
     lastVerificationAt: meta.lastVerificationAt ?? null,
     lastEditAt: meta.lastEditAt ?? null,
     lastVerificationStale: isLastVerificationStale(meta),
-    openTodos,
+    openTodos: openTodoCount,
+    activeTodo,
     ultrawork: meta.ultrawork,
     ...(() => {
       try {

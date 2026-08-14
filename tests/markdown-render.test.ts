@@ -21,7 +21,8 @@ const DOCS: Record<string, string> = {
   full: [
     "# Title",
     "",
-    "Some **bold** and *italic* and `inline code` here.",
+    "Some **bold** and *italic* and `inline code` and ~~struck~~ here.",
+    "See ![hero](https://x.dev/a.png) too.",
     "",
     "- item one",
     "- item two",
@@ -37,7 +38,7 @@ const DOCS: Record<string, string> = {
   ].join("\n"),
   unclosedFence: "Before.\n```python\nprint('hi')\nstill code, no close",
   linksAndRules:
-    "A [link](https://example.com/p?a=1&b=2) here.\n> quoted line\n---\n1. first\n2. second\n",
+    "A [link](https://example.com/p?a=1&b=2) here.\nSee https://x.dev/docs?q=1.\n> quoted line\n---\n1. first\n2. second\n",
   trailingBold: "Trailing **bold without close",
   headingOnly: "### Deep heading",
   snakeCase: "snake_case_names stay literal but _this_ is italic\n",
@@ -45,6 +46,11 @@ const DOCS: Record<string, string> = {
   empty: "",
   fenceAtEnd: "text\n```\ncode line\n```",
   crlf: "line one\r\nline two\r\n",
+  table:
+    "| Wave | Ship |\n| --- | --- |\n| 1 | clip |\n| 2 | **deny** |\n",
+  tasks:
+    "- [ ] open item\n- [x] **done** item\n- [X] also done\n- not a task\n* [ ] star open\n1. [ ] numbered open\n",
+  strike: "dropped ~~old path~~ kept\n~~**bold strike**~~ and `~~not strike~~`\n",
 };
 
 describe("markdown renderer chunk-boundary invariance", () => {
@@ -97,12 +103,25 @@ describe("markdown renderer chunk-boundary invariance", () => {
 describe("markdown renderer styling", () => {
   const ESC = "\x1b[";
 
-  test("headings are bold + underlined with # stripped", () => {
-    const out = renderStyled(["# Title\n"]);
-    assert.ok(out.includes(`${ESC}1m`), "bold missing");
-    assert.ok(out.includes(`${ESC}4m`), "underline missing");
-    assert.ok(out.includes("Title"));
-    assert.ok(!out.includes("# Title"));
+  test("H1 is bold + underlined; H2 bold; H3+ dim bold — hashes stripped", () => {
+    const h1 = renderStyled(["# Title\n"]);
+    assert.ok(h1.includes(`${ESC}1m`), "H1 bold missing");
+    assert.ok(h1.includes(`${ESC}4m`), "H1 underline missing");
+    assert.ok(h1.includes("Title"));
+    assert.ok(!h1.includes("# Title"));
+
+    const h2 = renderStyled(["## Section\n"]);
+    assert.ok(h2.includes(`${ESC}1m`), "H2 bold missing");
+    assert.ok(!h2.includes(`${ESC}4m`), "H2 should not underline");
+    assert.ok(h2.includes("Section"));
+    assert.ok(!h2.includes("## Section"));
+
+    const h3 = renderStyled(["### Deep heading\n"]);
+    assert.ok(h3.includes(`${ESC}1m`), "H3 bold missing");
+    assert.ok(h3.includes(`${ESC}2m`), "H3 dim missing");
+    assert.ok(!h3.includes(`${ESC}4m`), "H3 should not underline");
+    assert.ok(h3.includes("Deep heading"));
+    assert.ok(!h3.includes("### Deep heading"));
   });
 
   test("bold spanning chunk boundaries renders once the line completes", () => {
@@ -128,8 +147,10 @@ describe("markdown renderer styling", () => {
 
   test("heading at chunk edge is still a heading", () => {
     const out = renderStyled(["intro\n## Sub", "head\nnext\n"]);
-    assert.ok(out.includes(`${ESC}4m`), "underline missing");
+    assert.ok(out.includes(`${ESC}1m`), "H2 bold missing");
+    assert.ok(!out.includes(`${ESC}4m`), "H2 should not underline");
     assert.ok(out.includes("Subhead"));
+    assert.ok(!out.includes("## Subhead"));
   });
 
   test("fence state toggles across chunks", () => {
@@ -156,5 +177,98 @@ describe("markdown renderer styling", () => {
   test("unclosed emphasis stays literal", () => {
     const out = renderStyled(["a **open b\n"]);
     assert.ok(out.includes("**open"));
+  });
+
+  test("GFM tables dim pipes and style cells; separator becomes a rule", () => {
+    const out = renderStyled([
+      "| Wave | Ship |\n| --- | --- |\n| 1 | **deny** |\n",
+    ]);
+    assert.ok(out.includes("Wave"));
+    assert.ok(out.includes("Ship"));
+    assert.ok(out.includes("deny"));
+    assert.ok(!out.includes("| Wave |"), "raw pipe row leaked");
+    assert.ok(!out.includes("| --- |"), "raw separator leaked");
+    assert.ok(out.includes("─"), "separator rule missing");
+    assert.ok(out.includes(`${ESC}1mdeny${ESC}22m`), "cell emphasis missing");
+  });
+
+  test("a lone pipe is not a table", () => {
+    const out = renderStyled(["just | one\n"]);
+    assert.ok(out.includes("just | one"));
+  });
+
+  test("GFM task lists render ○/✓ and drop the checkbox", () => {
+    const out = renderStyled([
+      "- [ ] open item\n- [x] **done** item\n- [X] also\n1. [ ] numbered\n- not a task\n",
+    ]);
+    assert.ok(out.includes("○"), "open glyph missing");
+    assert.ok(out.includes("✓"), "done glyph missing");
+    assert.ok(out.includes("open item"));
+    assert.ok(out.includes("done"));
+    assert.ok(out.includes("numbered"));
+    assert.ok(out.includes("not a task"));
+    assert.ok(!out.includes("1."), "numbered marker leaked");
+    assert.ok(!out.includes("[ ]"), "open checkbox leaked");
+    assert.ok(!out.includes("[x]"), "done checkbox leaked");
+    assert.ok(!out.includes("[X]"), "uppercase checkbox leaked");
+    assert.ok(out.includes(`${ESC}1mdone${ESC}22m`), "task-body emphasis missing");
+  });
+
+  test("a fake checkbox stays a normal list", () => {
+    const out = renderStyled(["- [n] not a task\n"]);
+    assert.ok(out.includes("[n]"));
+    assert.ok(!out.includes("○"));
+    assert.ok(!out.includes("✓"));
+  });
+
+  test("bare https URLs style as autolinks; markdown links stay once", () => {
+    const out = renderStyled([
+      "See https://x.dev/docs?q=1. and [docs](https://x.dev/a).\n",
+    ]);
+    assert.ok(out.includes("https://x.dev/docs?q=1"));
+    assert.ok(
+      out.includes(`${ESC}4mhttps://x.dev/docs?q=1${ESC}24m`),
+      "bare URL missing underline",
+    );
+    assert.ok(out.includes("docs"));
+    assert.ok(
+      !out.includes(`${ESC}4mhttps://x.dev/a${ESC}24m`),
+      "markdown-link dest was restyled",
+    );
+    assert.match(
+      out,
+      /docs\?q=1(?:\x1b\[\d+m)+\./,
+      "trailing period stayed outside the URL",
+    );
+  });
+
+  test("GFM images drop the bang-link and keep alt", () => {
+    const out = renderStyled([
+      "see ![hero shot](https://x.dev/a.png) and ![](https://x.dev/b.png)\n",
+    ]);
+    assert.ok(out.includes("hero shot"));
+    assert.ok(out.includes("image"));
+    assert.ok(!out.includes("![hero"), "raw image markdown leaked");
+    assert.ok(!out.includes("](https://x.dev/a.png)"), "image url leaked");
+    assert.ok(out.includes("https://x.dev/b.png"), "empty-alt falls back to url");
+  });
+
+  test("GFM strikethrough drops tildes; unclosed stays literal", () => {
+    const out = renderStyled([
+      "dropped ~~old path~~ kept\n~~open\n`~~code~~`\n",
+    ]);
+    assert.ok(out.includes("old path"));
+    assert.ok(out.includes("dropped"));
+    assert.ok(out.includes("kept"));
+    assert.ok(!out.includes("~~old path~~"), "closed strike leaked tildes");
+    assert.ok(out.includes("~~open"), "unclosed strike should stay literal");
+    assert.ok(
+      out.includes(`${ESC}9mold path${ESC}29m`),
+      "strikethrough SGR missing",
+    );
+    assert.ok(
+      !out.includes(`${ESC}9mcode${ESC}29m`),
+      "inline code must not be struck",
+    );
   });
 });

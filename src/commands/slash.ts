@@ -8,7 +8,7 @@ import {
   formatGoalStatus,
 } from "../harness/goal.js";
 import type { SessionData } from "../session/session.js";
-import { isLastVerificationStale } from "../session/session.js";
+import { formatSessionPickerRow, isLastVerificationStale } from "../session/session.js";
 import {
   saveSession,
   listSessions,
@@ -220,7 +220,7 @@ import {
 } from "../harness/project-memory.js";
 import { pushLiveNotice } from "../harness/live-notices.js";
 import { clearSoftTodoGateOnWindDown } from "../harness/todo-gate.js";
-import { applyTodos, openTodos } from "../agent/todos.js";
+import { applyTodos, formatTodoBoard, openTodos } from "../agent/todos.js";
 import {
   COMMAND_PARAMS,
   formatParamMenu,
@@ -592,6 +592,7 @@ export function isSafeDiffFilterArg(token: string): boolean {
     "--name-only",
     "--name-status",
     "--stat",
+    "--full",
     "--numstat",
     "--shortstat",
     "--compact-summary",
@@ -924,7 +925,7 @@ export function formatUnknownSlash(
   if (bare === "ask_user" || bare === "ask-user" || bare === "askuser") {
     return (
       "ask_user is a model tool, not a slash command.\n" +
-      "The agent asks clarifying questions mid-run. Type a task, or /help start."
+      "The agent asks clarifying questions mid-run. Type a task, or /help."
     );
   }
   const suggestions = suggestSlashCommands(cmd, 5, opts);
@@ -1368,26 +1369,6 @@ export async function handleModelSlash(
         )
       : chalk.dim("\nTip: Tab completes catalog names.");
     const note = catalog.note ? chalk.dim(`\n${catalog.note}`) : "";
-    // Orient mid-run model switches with session verify trail + project checks.
-    let orient = formatSlashVerifyOrient({
-      workspace: opts.config.workspace,
-      cwd: opts.session.meta.cwd,
-      editCount: opts.session.meta.editCount,
-      lastVerificationCommand: opts.session.meta.lastVerificationCommand,
-      lastVerificationAt: opts.session.meta.lastVerificationAt,
-      lastEditAt: opts.session.meta.lastEditAt,
-    });
-    if (orient) {
-      orient = orient
-        .split("\n")
-        .map((line) => {
-          if (!line) return line;
-          return /No last-verify after/.test(line)
-            ? chalk.yellow(line)
-            : chalk.dim(line);
-        })
-        .join("\n");
-    }
     return {
       handled: true,
       output:
@@ -1399,7 +1380,6 @@ export async function handleModelSlash(
         effortLine +
         freeLine +
         note +
-        orient +
         chalk.dim(
           `\nAlso: /provider · /context-window · /temperature · /max-tokens · /config`,
         ),
@@ -2656,7 +2636,7 @@ export async function handleSlash(
         auth,
         plan: snap.plan,
       });
-      let stackBits: string[] = [];
+      let stackLine = "";
       try {
         const cwd =
           opts.config.workspace ||
@@ -2664,30 +2644,13 @@ export async function handleSlash(
           process.cwd();
         const intel = detectProjectIntel(cwd);
         if (intel.checkCommands[0] || intel.packageManager) {
-          stackBits.push(
-            `stack: ${[
+          stackLine = chalk.dim(
+            `  stack: ${[
               intel.packageManager || null,
               intel.checkCommands.slice(0, 3).join(" · ") || null,
             ]
               .filter(Boolean)
               .join(" · ")}`,
-          );
-        }
-        const last = opts.session.meta.lastVerificationCommand?.trim();
-        if (last) {
-          const stale = isLastVerificationStale(opts.session.meta)
-            ? "  ⚠ stale (edits after verify)"
-            : "";
-          stackBits.push(
-            `last-verify: ${last.slice(0, 80)}${last.length > 80 ? "…" : ""}${stale}`,
-          );
-        } else if ((opts.session.meta.editCount || 0) > 0) {
-          const tip =
-            intel.checkCommands[0] || "npm test / typecheck";
-          stackBits.push(
-            chalk.yellow(
-              `no last-verify after ${opts.session.meta.editCount} edit(s) — prefer \`${tip}\``,
-            ),
           );
         }
       } catch {
@@ -2700,20 +2663,7 @@ export async function handleSlash(
           "\n" +
           planLine +
           detail +
-          (stackBits.length
-            ? "\n" +
-              stackBits
-                .map((b) =>
-                  // yellow no-verify line already chalked; dim the rest
-                  b.includes("no last-verify")
-                    ? `  ${b}`
-                    : chalk.dim(`  ${b}`),
-                )
-                .join("\n")
-            : "") +
-          chalk.dim(
-            "\n\nTip: status is always on the prompt line. Live external pane still available: forge status --watch",
-          ),
+          (stackLine ? "\n" + stackLine : ""),
       };
     }
 
@@ -3382,9 +3332,7 @@ const stats = collectUsageStats({
       }
       return {
         handled: true,
-        output: opts.session.todos
-          .map((t) => `- [${t.status}] ${t.id}: ${t.content}`)
-          .join("\n"),
+        output: formatTodoBoard(opts.session.todos),
       };
     }
 
@@ -3658,30 +3606,10 @@ const stats = collectUsageStats({
         resolveReasoningEffort(model, opts.config.reasoningEffort) ??
         defaultEffortForModel(model);
       if (!arg) {
-        let orient = formatSlashVerifyOrient({
-          workspace: opts.config.workspace,
-          cwd: opts.session.meta.cwd,
-          editCount: opts.session.meta.editCount,
-          lastVerificationCommand: opts.session.meta.lastVerificationCommand,
-          lastVerificationAt: opts.session.meta.lastVerificationAt,
-          lastEditAt: opts.session.meta.lastEditAt,
-        });
-        if (orient) {
-          orient = orient
-            .split("\n")
-            .map((line) => {
-              if (!line) return line;
-              return /No last-verify after/.test(line)
-                ? chalk.yellow(line)
-                : chalk.dim(line);
-            })
-            .join("\n");
-        }
         return {
           handled: true,
           output:
             formatParamMenu("/effort", choices, current) +
-            orient +
             chalk.dim(
               `\nDefault: ${maxLvl} (max for this model)  ·  aliases: l/low m/med h/high max xhigh  ·  live`,
             ),
@@ -3748,8 +3676,8 @@ const stats = collectUsageStats({
         const last = opts.session.meta.lastVerificationCommand?.trim();
         if (last) {
           compactNote = isLastVerificationStale(opts.session.meta)
-            ? `\n  Last verify stale: \`${last.slice(0, 60)}\` — re-run after compact if you keep editing.`
-            : `\n  Last verify: \`${last.slice(0, 60)}\` (preserved in summary)`;
+            ? `\n  Last verify stale: \`${last.slice(0, 60)}\``
+            : `\n  Last verify: \`${last.slice(0, 60)}\``;
         } else if ((opts.session.meta.editCount || 0) > 0) {
           const cwd =
             opts.config.workspace ||
@@ -3765,7 +3693,7 @@ const stats = collectUsageStats({
       return {
         handled: true,
         output:
-          `Compacted ${before} → ${opts.session.messages.length} messages (structured harness summary; project checks preserved)` +
+          `Compacted ${before} → ${opts.session.messages.length} messages` +
           compactNote,
         session: opts.session,
       };
@@ -3778,8 +3706,7 @@ const stats = collectUsageStats({
         return {
           handled: true,
           output:
-            "Usage: /compact-and <follow-up prompt>\n" +
-            "Compacts history (structured harness summary) then runs the follow-up in the same turn.",
+            "Usage: /compact-and <follow-up prompt>",
           session: opts.session,
         };
       }
@@ -4466,11 +4393,7 @@ const result = rewindSessionDetailed(opts.session, n);
       if (!follow) {
         return {
           handled: true,
-          output:
-            base +
-            chalk.dim(
-              "\n  Tip: /fork-and-compact <prompt> to continue immediately in the fork.",
-            ),
+          output: base,
           replaceSession: forked,
         };
       }
@@ -4604,12 +4527,7 @@ const result = rewindSessionDetailed(opts.session, n);
         const on = isBellEnabled();
         const env = process.env.FORGE_BELL?.trim();
         const trailCore = formatSlashSessionTrail(opts.session.meta);
-        const trail = trailCore
-          ? `\n  ${trailCore}` +
-            chalk.dim(
-              "\n  Turn-end body appends no last-verify / last-verify stale / verified",
-            )
-          : "";
+        const trail = trailCore ? `\n  ${trailCore}` : "";
         return {
           handled: true,
           output:
@@ -4693,12 +4611,7 @@ const result = rewindSessionDetailed(opts.session, n);
         const on = isNotifyEnabled();
         const env = process.env.FORGE_NOTIFY?.trim();
         const trailCore = formatSlashSessionTrail(opts.session.meta);
-        const trail = trailCore
-          ? `\n  ${trailCore}` +
-            chalk.dim(
-              "\n  Turn-end notify body appends no last-verify / last-verify stale / verified",
-            )
-          : "";
+        const trail = trailCore ? `\n  ${trailCore}` : "";
         return {
           handled: true,
           output:
@@ -4707,7 +4620,6 @@ const result = rewindSessionDetailed(opts.session, n);
               ? ` (FORGE_NOTIFY=${env})`
               : " (preference / default off)") +
             `\n  /notify on|off   persist · /notify test   fire once · env FORGE_NOTIFY=0|1 overrides` +
-            `\n  macOS: osascript · Linux: notify-send · Windows: PowerShell balloon (best-effort)` +
             trail,
         };
       }
@@ -4779,7 +4691,7 @@ const result = rewindSessionDetailed(opts.session, n);
         handled: true,
         output:
           "Tool detail is a REPL toggle (session-local, not persisted).\n" +
-          "  Default: one status line per tool; failed tools also show a short error tail.\n" +
+          "  Default: one status line per tool (`✓ name args  12ms`); failed tools also show a short error tail.\n" +
           "  Interactive: type /verbose to show diffs + full tool output; again to minimize.\n" +
           "  Headless (`forge run`) already prints full tool output — nothing to toggle.",
       };
@@ -4965,7 +4877,7 @@ const result = rewindSessionDetailed(opts.session, n);
         }
         return {
           handled: true,
-          output: `Applied checkpoint ${sha.slice(0, 12)}…\nReview with /diff.`,
+          output: `Applied checkpoint ${sha.slice(0, 12)}…\nReview with /diff --full.`,
           session: opts.session,
         };
       }
@@ -5025,7 +4937,7 @@ const result = rewindSessionDetailed(opts.session, n);
           output:
             `Rejected /diff filter token: ${bad}\n` +
             `Allowed: pathspecs, refs (HEAD, main, abc123), and read-only flags ` +
-            `(--cached, --staged, --name-only, --name-status, --stat, -U<n>).`,
+            `(--full, --cached, --staged, --name-only, --name-status, --stat, -U<n>).`,
         };
       }
       const git = (
@@ -5043,11 +4955,15 @@ const result = rewindSessionDetailed(opts.session, n);
       try {
         // Safe read-only git view for experts reviewing agent work
         const stat = git(["status", "--short"], 8000).trim();
+        const wantPatch = filterArgs.some(
+          (t) => t === "--full" || /^-U\d+$/.test(t) || /^--unified=\d+$/.test(t),
+        );
+        const gitArgs = filterArgs.filter((t) => t !== "--full");
         let statDiff = "";
         try {
           statDiff = git(
-            filterArgs.length
-              ? ["--no-pager", "diff", "--stat", ...filterArgs]
+            gitArgs.length
+              ? ["--no-pager", "diff", "--stat", ...gitArgs]
               : ["--no-pager", "diff", "--stat", "HEAD"],
             12_000,
           ).trim();
@@ -5055,20 +4971,22 @@ const result = rewindSessionDetailed(opts.session, n);
           statDiff = git(["--no-pager", "diff", "--stat"], 12_000).trim();
         }
         let patch = "";
-        try {
-          patch = git(
-            filterArgs.length
-              ? ["--no-pager", "diff", "--no-color", ...filterArgs]
-              : ["--no-pager", "diff", "--no-color", "HEAD"],
-            15_000,
-            2 * 1024 * 1024,
-          );
-        } catch {
-          patch = git(
-            ["--no-pager", "diff", "--no-color"],
-            15_000,
-            2 * 1024 * 1024,
-          );
+        if (wantPatch) {
+          try {
+            patch = git(
+              gitArgs.length
+                ? ["--no-pager", "diff", "--no-color", ...gitArgs]
+                : ["--no-pager", "diff", "--no-color", "HEAD"],
+              15_000,
+              2 * 1024 * 1024,
+            );
+          } catch {
+            patch = git(
+              ["--no-pager", "diff", "--no-color"],
+              15_000,
+              2 * 1024 * 1024,
+            );
+          }
         }
         const max = 12_000;
         const body =
@@ -5078,8 +4996,7 @@ const result = rewindSessionDetailed(opts.session, n);
             : patch;
         let verifyTip = "";
         try {
-          // Only nudge when there is something to verify.
-          if (stat || body.trim()) {
+          if (stat || statDiff || body.trim()) {
             const intel = detectProjectIntel(cwd);
             if (intel.checkCommands[0]) {
               verifyTip = `\nverify: ${intel.checkCommands.slice(0, 3).join(" · ")}`;
@@ -5089,11 +5006,16 @@ const result = rewindSessionDetailed(opts.session, n);
           /* */
         }
         const out = [
-          `cwd: ${cwd}`,
           stat ? `status:\n${stat}` : "status: clean",
           statDiff ? `\nstat:\n${statDiff}` : "",
-          body.trim() ? `\ndiff:\n${body}` : "\n(no unstaged/HEAD diff)",
-          filterArgs.length ? `\n(filter: ${filterArgs.join(" ")})` : "",
+          wantPatch
+            ? body.trim()
+              ? `\ndiff:\n${body}`
+              : "\n(no unstaged/HEAD diff)"
+            : stat || statDiff
+              ? "\n(patch: /diff --full)"
+              : "",
+          gitArgs.length ? `\n(filter: ${gitArgs.join(" ")})` : "",
           verifyTip,
         ]
           .filter(Boolean)
@@ -5507,24 +5429,11 @@ case "/new":
                 : `No sessions for this workspace. Try: /resume all`
               : `Usage: /resume <id-prefix|title>  ·  ${scope}\n\nRecent:\n${list
                   .map((s) => {
+                    const extras: string[] = [];
                     const lock = readSessionLock(s.id);
-                    const lockNote =
-                lock && sessionHasForeignLiveLock(s.id)
-                  ? `  LOCK pid ${lock.pid}`
-                  : "";
-                    const cwdNote =
-                      showAll && s.cwd ? `  ${path.basename(s.cwd)}` : "";
-                    const age = formatRelativeTime(s.updatedAt).padStart(8);
-                    const prev = (s.lastUserPreview || "").slice(0, 28);
-                    const prevNote = prev
-                      ? `  “${prev}${(s.lastUserPreview || "").length > 28 ? "…" : ""}”`
-                      : "";
-                    const verifyNote = s.lastVerificationCommand?.trim()
-                      ? isLastVerificationStale(s)
-                        ? "  ✓~"
-                        : "  ✓"
-                      : "";
-                    return `  ${s.id.slice(0, 8)}  ${age}  ${(s.title || "").slice(0, 28).padEnd(28)}  ${s.model}${verifyNote}${prevNote}${lockNote}${cwdNote}`;
+                    if (lock && sessionHasForeignLiveLock(s.id)) extras.push("LOCK");
+                    if (showAll && s.cwd) extras.push(path.basename(s.cwd));
+                    return `  ${formatSessionPickerRow(s, extras)}`;
                   })
                   .join("\n")}${showAll ? "" : chalk.dim("\n\n/resume all — every workspace · /resume <title>")}`,
         };
@@ -5885,51 +5794,22 @@ case "/new":
         output:
           list
             .map((s) => {
-              const lock = readSessionLock(s.id);
-              const lockNote =
-                lock && sessionHasForeignLiveLock(s.id)
-                  ? `  LOCK pid ${lock.pid}`
-                  : "";
-              const active =
+              const extras: string[] = [];
+              if (
                 s.id === opts.session.meta.id ||
                 opts.session.meta.id.startsWith(s.id.slice(0, 8))
-                  ? " *"
-                  : "";
-              const cwdNote =
-                listMode === "all" && s.cwd
-                  ? `  ${path.basename(s.cwd)}`
-                  : "";
-              const prev = (s.lastUserPreview || "").slice(0, 32);
-              const prevNote = prev
-                ? `  “${prev}${(s.lastUserPreview || "").length > 32 ? "…" : ""}”`
-                : "";
-              const errNote =
-                errorsOnly && s.lastError
-                  ? `  [${s.lastError.code}] ${s.lastError.message.slice(0, 40)}`
-                  : "";
-              const age = formatRelativeTime(s.updatedAt).padStart(8);
-              let costNote = "";
-              try {
-                const tok =
-                  (s.totalPromptTokens || 0) + (s.totalCompletionTokens || 0);
-                if (tok > 0) {
-                  const c = estimateCostUsd(
-                    s.provider || "xai",
-                    s.totalPromptTokens || 0,
-                    s.totalCompletionTokens || 0,
-                    s.model,
-                    s.totalCacheReadTokens || 0,
-                  );
-                  costNote = ` ~${formatCost(c)}`;
-                }
-              } catch {
-                /* */
+              ) {
+                extras.push("*");
               }
-              return `${s.id.slice(0, 8)}  ${age}  ${(s.title || "").slice(0, 28).padEnd(28)}  ${s.model}  t=${s.turnCount}${costNote}${s.lastVerificationCommand?.trim() ? (isLastVerificationStale(s) ? " ✓~" : " ✓") : ""}${s.ultrawork ? " ULW" : ""}${s.pinned ? " PIN" : ""}${s.permissionMode === "plan" ? " PLAN" : ""}${s.lastError ? " ERR" : ""}${active}${lockNote}${cwdNote}${prevNote}${errNote}`;
+              const lock = readSessionLock(s.id);
+              if (lock && sessionHasForeignLiveLock(s.id)) extras.push("LOCK");
+              if (listMode === "all" && s.cwd) extras.push(path.basename(s.cwd));
+              if (errorsOnly && s.lastError) extras.push(s.lastError.code);
+              return formatSessionPickerRow(s, extras);
             })
             .join("\n") +
           chalk.dim(
-            `\n\n* = active  ·  ${scopeNote}  ·  /sessions [all|pinned|pin <id>|unpin <id>|errors|untitled|search <q>]  ·  delete <id|title> [--force]  ·  prune [--keep=50]  ·  /resume <id|title>  ·  /pin\nCLI: forge sessions list --cwd . [--pinned]  ·  show|export|import|fork|pin|delete <id|title>`,
+            `\n\n* = active  ·  ${scopeNote}  ·  /sessions [all|search <q>]  ·  /resume <id>  ·  /pin`,
           ),
       };
     }
@@ -6071,25 +5951,6 @@ case "/new":
             : opts.session.meta.permissionMode
               ? chalk.dim(`\nSession override: ${opts.session.meta.permissionMode}`)
               : "";
-        let orient = formatSlashVerifyOrient({
-          workspace: opts.config.workspace,
-          cwd: opts.session.meta.cwd,
-          editCount: opts.session.meta.editCount,
-          lastVerificationCommand: opts.session.meta.lastVerificationCommand,
-          lastVerificationAt: opts.session.meta.lastVerificationAt,
-          lastEditAt: opts.session.meta.lastEditAt,
-        });
-        if (orient) {
-          orient = orient
-            .split("\n")
-            .map((line) => {
-              if (!line) return line;
-              return /No last-verify after/.test(line)
-                ? chalk.yellow(line)
-                : chalk.dim(line);
-            })
-            .join("\n");
-        }
         return {
           handled: true,
           output:
@@ -6101,8 +5962,7 @@ case "/new":
             chalk.dim(
               "\nAlso: /plan · /build  ·  /permissions list | clear | revoke <id>",
             ) +
-            sessionNote +
-            orient,
+            sessionNote,
         };
       }
       // Resolve against full choices so Tab numbers for list/clear still work,

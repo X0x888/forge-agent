@@ -33,7 +33,7 @@ A bare `forge` on a TTY also offers this picker if you are not signed in. Headle
   ⚒  Forge v0.9.x
   xai/grok-4.6 · SuperGrok  ·  session a1b2c3d4  ·  perms default  ·  sandbox workspace
 
-  Type a task in English.  Or:  /setup  ·  /help start  ·  /plan  ·  Tab starters
+  Type a task in English.  Or:  /setup  ·  /help  ·  /plan  ·  Tab starters
   setup 2/6  ·  no spend cap  ·  no AGENTS.md  ·  /setup to finish
 ```
 
@@ -58,7 +58,7 @@ Type a coding task. You do not need a slash command. Empty Tab offers first-day 
 
 | Command | What it does |
 |---|---|
-| `/help` | Getting started (not the full catalog) |
+| `/help` | First-day card (tour + daily verbs; `/help all` is the catalog) |
 | `/help all` | Every slash command |
 | `/plan` | Read-only design, then `/build` to implement |
 | `/doctor` | Health check (auth, sandbox, Stop, file modes) |

@@ -33,7 +33,7 @@ export function expertTipsLines(): string[] {
     `  Ask user:       ask_user tool for clarifying questions (interactive; headless fails closed)`,
     `  Format-on-write: /format on|off · auto when prettier/biome/ruff detected · FORGE_FORMAT_ON_WRITE=0/1 force`,
     `  Dirty trees:    doctor warns at ≥20 changed files under ULW · ULW arm auto-checkpoints (FORGE_ULW_CHECKPOINT=0 off) · Cycle complete auto-commits locally (FORGE_ULW_AUTO_COMMIT=0 off) · /checkpoint restore`,
-    `  Docs:          docs/GETTING-STARTED.md  ·  /help start  ·  docs/PRODUCTION.md  ·  docs/RELIABILITY.md  ·  forge tips  ·  forge news  ·  /help`,
+    `  Docs:          docs/GETTING-STARTED.md  ·  /help  ·  docs/PRODUCTION.md  ·  docs/RELIABILITY.md  ·  forge tips  ·  forge news`,
   ];
 }
 

@@ -55,6 +55,12 @@ export interface PromptEditor {
    * Idle: first Ctrl+C with a draft still clears the line.
    */
   setBusy(busy: boolean): void;
+  /**
+   * Forget the last painted block without writing. After the token stream
+   * overwrites `live ›`, the next `prompt()` must start on a fresh line
+   * instead of CSI-up-erasing the reply.
+   */
+  abandonPaint(): void;
   on(event: "line", listener: (line: string) => void): this;
   on(event: "SIGINT", listener: () => void): this;
   on(event: "close", listener: () => void): this;
@@ -357,6 +363,9 @@ function createReadlineFallback(
     setBusy: () => {
       /* classic readline always emits SIGINT on Ctrl+C */
     },
+    abandonPaint: () => {
+      /* classic readline has no in-place paint to abandon */
+    },
     on: (event, listener) => {
       ee.on(event, listener as (...args: unknown[]) => void);
       return wrap;
@@ -503,6 +512,11 @@ class TtyPromptEditor extends EventEmitter implements PromptEditor {
 
   setBusy(busy: boolean): void {
     this.busy = busy;
+  }
+
+  abandonPaint(): void {
+    this.painted = false;
+    this.cursorViewRow = 0;
   }
 
   close(): void {

@@ -27,6 +27,7 @@ import { listTasks } from "../agent/tools/background-tasks.js";
 import { loadUlwCycle, formatUlwBadge } from "../harness/ulw-cycle.js";
 import { loadGoal } from "../harness/goal.js";
 import { normalizePermissionMode } from "../util/mode-aliases.js";
+import { formatHudTodos } from "../agent/todos.js";
 
 export interface BottomStatusContext {
   config: ForgeConfig;
@@ -226,7 +227,10 @@ export function renderBottomStatusLine(
     bits.push(paint(act.phase === "tool" ? "tool" : act.phase || "work", "magenta"));
   }
   if (bg > 0) bits.push(paint(`bg:${bg}`, "yellow"));
-  if (snap.openTodos > 0) bits.push(paint(`todos:${snap.openTodos}`, "yellow"));
+  {
+    const todos = formatHudTodos(snap.openTodos, snap.activeTodo);
+    if (todos) bits.push(paint(todos, "yellow"));
+  }
 
   let line = bits.filter(Boolean).join("  ");
   if (width > 8 && visibleWidth(line) > width) {

@@ -21,7 +21,34 @@ export function summarizeToolArgs(args: Record<string, unknown>, max = 90): stri
     const summary = summarizePatchText(patchText, max);
     if (summary) return summary;
   }
-  const prefer = ["path", "command", "pattern", "query", "old_string", "url"];
+  const sub = summarizeSubagentArgs(args, max);
+  if (sub) return sub;
+  const todos = summarizeTodoWriteArgs(args, max);
+  if (todos) return todos;
+  const ask = summarizeAskUserArgs(args, max);
+  if (ask) return ask;
+  const mem = summarizeMemoryWriteArgs(args, max);
+  if (mem) return mem;
+  const mcp = summarizeCallMcpArgs(args, max);
+  if (mcp) return mcp;
+  const prompt = summarizeMcpPromptArgs(args, max);
+  if (prompt) return prompt;
+  const prefer = [
+    "path",
+    "command",
+    "pattern",
+    "query",
+    "old_string",
+    "url",
+    "question",
+    "reason",
+    "tool_name",
+    "task_id",
+    "uri",
+    "plan",
+    "name",
+    "action",
+  ];
   for (const k of prefer) {
     if (args[k] !== undefined) {
       const v = String(args[k]).replace(/\s+/g, " ");
@@ -63,6 +90,30 @@ export function formatPermissionPreview(
       return `command: ${s}`;
     }
   }
+  if (name === "spawn_subagent" || name === "task" || name === "subagent") {
+    const sub = summarizeSubagentArgs(toolInput, max);
+    if (sub) return sub;
+  }
+  if (name === "todo_write" || name === "todowrite") {
+    const todos = summarizeTodoWriteArgs(toolInput, max);
+    if (todos) return todos;
+  }
+  if (name === "ask_user" || name === "askuser") {
+    const ask = summarizeAskUserArgs(toolInput, max);
+    if (ask) return ask;
+  }
+  if (name === "memory_write" || name === "memorywrite") {
+    const mem = summarizeMemoryWriteArgs(toolInput, max);
+    if (mem) return mem;
+  }
+  if (name === "call_mcp" || name === "callmcp") {
+    const mcp = summarizeCallMcpArgs(toolInput, max);
+    if (mcp) return mcp;
+  }
+  if (name === "mcp_prompt" || name === "mcpprompt") {
+    const prompt = summarizeMcpPromptArgs(toolInput, max);
+    if (prompt) return prompt;
+  }
   if (
     name === "write_file" ||
     name === "write" ||
@@ -79,6 +130,10 @@ export function formatPermissionPreview(
             : "";
       return `path: ${p}${extra}`.slice(0, max);
     }
+  }
+  const summary = summarizeToolArgs(toolInput, max);
+  if (summary && !summary.startsWith("{") && !summary.startsWith("[")) {
+    return summary;
   }
   try {
     const raw = JSON.stringify(toolInput, null, 2);
@@ -104,6 +159,132 @@ function extractPatchOpLines(patchText: string): string[] {
   return out;
 }
 
+/** spawn_subagent: type + label — never dump the prompt JSON onto the ✓/✗ row. */
+function summarizeSubagentArgs(
+  args: Record<string, unknown>,
+  max: number,
+): string {
+  // Don't match a generic `type` field — only real subagent payloads.
+  const kindRaw = args.subagent_type ?? args.agent_type;
+  const hasPrompt = typeof args.prompt === "string" && Boolean(args.prompt.trim());
+  const hasLabel =
+    (typeof args.description === "string" && Boolean(args.description.trim())) ||
+    (typeof args.summary === "string" && Boolean(args.summary.trim()));
+  if (kindRaw == null && !(hasPrompt && hasLabel)) return "";
+  const kind =
+    String(kindRaw ?? args.type ?? "general-purpose")
+      .replace(/\s+/g, " ")
+      .trim() || "general-purpose";
+  const label = String(args.description ?? args.summary ?? args.prompt ?? "")
+    .replace(/\s+/g, " ")
+    .trim();
+  const s = label ? `${kind}: ${label}` : kind;
+  return s.length > max ? s.slice(0, max - 1) + "…" : s;
+}
+
+/** todo_write: N items + current title — never dump the board JSON. */
+function summarizeTodoWriteArgs(
+  args: Record<string, unknown>,
+  max: number,
+): string {
+  const raw = args.todos;
+  if (!Array.isArray(raw) || raw.length === 0) return "";
+  const items = raw.filter((t): t is Record<string, unknown> =>
+    Boolean(t && typeof t === "object"),
+  );
+  if (!items.length) return "";
+  const current =
+    items.find((t) => t.status === "in_progress") ??
+    items.find((t) => t.status === "pending") ??
+    items[0];
+  const title = String(current?.content ?? current?.id ?? "")
+    .replace(/\s+/g, " ")
+    .trim();
+  const mark =
+    current?.status === "in_progress"
+      ? "▶"
+      : current?.status === "completed"
+        ? "✓"
+        : current?.status === "cancelled"
+          ? "×"
+          : "○";
+  const more = items.length > 1 ? ` +${items.length - 1}` : "";
+  const s = title ? `${items.length} · ${mark} ${title}${more}` : `${items.length} todos`;
+  return s.length > max ? s.slice(0, max - 1) + "…" : s;
+}
+
+/** ask_user: the question only — never dump choices JSON. */
+function summarizeAskUserArgs(
+  args: Record<string, unknown>,
+  max: number,
+): string {
+  const q = typeof args.question === "string" ? args.question.trim() : "";
+  if (!q) return "";
+  const n = Array.isArray(args.choices) ? args.choices.length : 0;
+  const s = n > 0 ? `${q} (${n})` : q;
+  return s.replace(/\s+/g, " ").length > max
+    ? s.replace(/\s+/g, " ").slice(0, max - 1) + "…"
+    : s.replace(/\s+/g, " ");
+}
+
+/** call_mcp: qualified tool name — never dump the arguments object. */
+function summarizeCallMcpArgs(
+  args: Record<string, unknown>,
+  max: number,
+): string {
+  const name = typeof args.tool_name === "string" ? args.tool_name.trim() : "";
+  if (!name) return "";
+  const payload = args.arguments;
+  const keys =
+    payload && typeof payload === "object" && !Array.isArray(payload)
+      ? Object.keys(payload as Record<string, unknown>)
+      : [];
+  const s = keys.length ? `${name} · ${keys.length} arg${keys.length === 1 ? "" : "s"}` : name;
+  return s.length > max ? s.slice(0, max - 1) + "…" : s;
+}
+
+/** mcp_prompt: template name — never dump the arguments object. */
+function summarizeMcpPromptArgs(
+  args: Record<string, unknown>,
+  max: number,
+): string {
+  const action = typeof args.action === "string" ? args.action.trim() : "";
+  const name = typeof args.name === "string" ? args.name.trim() : "";
+  const payload = args.arguments;
+  const hasPayload =
+    payload && typeof payload === "object" && !Array.isArray(payload);
+  // Don't match a generic `name` field — only real mcp_prompt payloads.
+  if (action !== "list" && !(name && (action === "get" || hasPayload || name.includes("__")))) {
+    return "";
+  }
+  const keys =
+    payload && typeof payload === "object" && !Array.isArray(payload)
+      ? Object.keys(payload as Record<string, unknown>)
+      : [];
+  const verb = action && action !== "get" ? action : "";
+  const label = name || "list";
+  const bits = [verb, label].filter(Boolean);
+  if (keys.length) bits.push(`${keys.length} arg${keys.length === 1 ? "" : "s"}`);
+  const s = bits.join(" · ");
+  return s.length > max ? s.slice(0, max - 1) + "…" : s;
+}
+
+/** memory_write: kind + text — never dump the full payload JSON. */
+function summarizeMemoryWriteArgs(
+  args: Record<string, unknown>,
+  max: number,
+): string {
+  const text = typeof args.text === "string" ? args.text.trim() : "";
+  if (!text) return "";
+  const kind = typeof args.kind === "string" && args.kind.trim() ? args.kind.trim() : "";
+  const scope = typeof args.scope === "string" && args.scope.trim() ? args.scope.trim() : "";
+  const prefix = [scope && scope !== "session" ? scope : "", kind].filter(Boolean).join(" · ");
+  const s = prefix ? `${prefix}: ${text}` : text;
+  return s.replace(/\s+/g, " ").length > max
+    ? s.replace(/\s+/g, " ").slice(0, max - 1) + "…"
+    : s.replace(/\s+/g, " ");
+}
+
 function summarizePatchText(patchText: string, max: number): string {
   const ops = extractPatchOpLines(patchText);
   if (!ops.length) {
@@ -120,14 +301,105 @@ export function formatToolStart(name: string, args: Record<string, unknown>): st
   return chalk.cyan(`  ▸ ${name}`) + chalk.dim(` ${summarizeToolArgs(args)}`);
 }
 
+/** Default last-lines shown under a failed tool (test/compiler failures live at the end). */
+export const FAILED_TOOL_TAIL_LINES = 5;
+
+const ERROR_LINE_RE =
+  /\b(error|fail(?:ed|ure)?|denied|fatal|exception|assert(?:ion)?|unable|cannot|can't|refused|timeout|ENOENT|EACCES|EPERM|not ok|TS\d{3,5})\b/i;
+const STACK_OR_NOISE_RE = /^(?:at |# |ℹ |ok \d|✔ |✗ |▶ | {2,}at )/;
+const EXCEPTION_CLASS_RE = /^\w+Error\b/;
+
+function clipErrorLine(line: string, max: number): string {
+  return line.length > max ? `${line.slice(0, max - 1)}…` : line;
+}
+
+/**
+ * One-line reason for the ✗ status row. Prefer a real failure (errors
+ * live at the end of test/compiler output) over the first header line
+ * (`npm test`, a TAP plan, …).
+ */
+export function firstToolErrorLine(output: string, max = 72): string {
+  const text = output.replace(/\s+$/, "");
+  if (!text) return "";
+  const lines = text
+    .split("\n")
+    .map((l) => l.trim())
+    .filter((l) => l && !STACK_OR_NOISE_RE.test(l));
+  if (lines.length === 0) {
+    const fallback = text.split("\n").map((l) => l.trim()).find(Boolean) ?? "";
+    return clipErrorLine(fallback, max);
+  }
+  // Prefer a named failure (`not ok`, `error TS2345`, `Permission denied`)
+  // over a trailing `AssertionError:` restatement. Fall back to the last
+  // error-ish line, then the last remaining line.
+  let lastError: string | undefined;
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = lines[i]!;
+    if (!ERROR_LINE_RE.test(line)) continue;
+    lastError ??= line;
+    if (!EXCEPTION_CLASS_RE.test(line)) return clipErrorLine(line, max);
+  }
+  return clipErrorLine(lastError ?? lines[lines.length - 1]!, max);
+}
+
 export function formatToolEnd(
   name: string,
-  opts: { isError?: boolean; ms: number; bytes: number },
+  opts: {
+    isError?: boolean;
+    ms: number;
+    bytes: number;
+    /** When set, default transcript can stay one line (status + args). */
+    args?: Record<string, unknown>;
+    /** Failed-tool output — failure reason is inlined on the ✗ row. */
+    output?: string;
+    /** Clip to one TTY row. Default: stdout.columns (80 when not a TTY). */
+    width?: number;
+  },
 ): string {
   const status = opts.isError ? chalk.red("✗") : chalk.green("✓");
-  return chalk.dim(
-    `  ${status} ${name}  ${opts.ms}ms  ${formatBytes(opts.bytes)}`,
+  const argBit =
+    opts.args && Object.keys(opts.args).length
+      ? ` ${summarizeToolArgs(opts.args)}`
+      : "";
+  const reason =
+    opts.isError && opts.output ? firstToolErrorLine(opts.output) : "";
+  const reasonBit = reason ? `  ${reason}` : "";
+  const line = chalk.dim(
+    `  ${status} ${name}${argBit}${reasonBit}  ${opts.ms}ms  ${formatBytes(opts.bytes)}`,
   );
+  const cols = Math.max(
+    8,
+    opts.width ?? (process.stdout.isTTY ? process.stdout.columns || 80 : 80),
+  );
+  return visibleWidth(line) <= cols ? line : clipAnsi(line, cols);
+}
+
+/**
+ * Extra transcript under a failed tool. Last `maxLines` (default 5) so
+ * test/compiler failures stay visible. Drops the line already inlined
+ * on the ✗ row (full or clipped). Empty when there is nothing extra.
+ */
+export function formatFailedToolTail(
+  output: string,
+  maxLines = FAILED_TOOL_TAIL_LINES,
+): string {
+  const text = output.replace(/\s+$/, "");
+  if (!text) return "";
+  const reason = firstToolErrorLine(text);
+  const reasonBare = reason.replace(/…$/, "");
+  const extra = text.split("\n").filter((raw) => {
+    const line = raw.trim();
+    if (!line) return false;
+    if (!reason) return true;
+    if (line === reason) return false;
+    if (reason.endsWith("…") && line.startsWith(reasonBare)) return false;
+    return true;
+  });
+  if (extra.length === 0) return "";
+  return formatToolOutputHead(extra.join("\n"), {
+    tail: true,
+    maxLines,
+  });
 }
 
 /** Tool names whose successful output may embed a shortDiff block. */

@@ -793,7 +793,14 @@ export type {
 
 export { editMissHint, formatMultiMatchLocations, locateEdit, stripReadFileLinePrefixes } from "./agent/tools/edit-match.js";
 export { executeTool, normalizeToolName, TOOL_DEFINITIONS } from "./agent/tools/index.js";
-export { applyTodos, openTodos } from "./agent/todos.js";
+export {
+  applyTodos,
+  activeTodoTitle,
+  formatHudTodos,
+  formatTodoBoard,
+  formatTodoLines,
+  openTodos,
+} from "./agent/todos.js";
 
 export {
   applySafetyCheckpoint,

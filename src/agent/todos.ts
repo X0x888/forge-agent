@@ -5,10 +5,59 @@ import type { SessionData, TodoItem } from "../session/session.js";
 import { saveSession } from "../session/session.js";
 import { editDistance } from "../util/string-distance.js";
 
-export function openTodos(todos: TodoItem[]): number {
+export function openTodos(todos: readonly TodoItem[]): number {
   return todos.filter(
     (t) => t.status === "pending" || t.status === "in_progress",
   ).length;
+}
+
+/** First in-progress title, if any. */
+export function activeTodoTitle(todos: readonly TodoItem[]): string | null {
+  const hit = todos.find((t) => t.status === "in_progress");
+  const text = hit?.content?.replace(/\s+/g, " ").trim();
+  return text || null;
+}
+
+/**
+ * Compact HUD chip: `▶ ship` / `▶ ship +1` / `todos:2`.
+ * Null when nothing is open.
+ */
+export function formatHudTodos(
+  openCount: number,
+  activeTitle?: string | null,
+  maxTitle = 18,
+): string | null {
+  if (openCount <= 0) return null;
+  const title = activeTitle?.replace(/\s+/g, " ").trim();
+  if (!title) return `todos:${openCount}`;
+  const clipped =
+    title.length > maxTitle ? `${title.slice(0, Math.max(1, maxTitle - 1))}…` : title;
+  return openCount > 1 ? `▶ ${clipped} +${openCount - 1}` : `▶ ${clipped}`;
+}
+
+const TODO_GLYPH: Record<TodoItem["status"], string> = {
+  in_progress: "▶",
+  pending: "○",
+  completed: "✓",
+  cancelled: "×",
+};
+
+/** One scannable line per item (`▶ ship it  · w3`). */
+export function formatTodoLines(todos: readonly TodoItem[]): string {
+  return todos
+    .map((t) => {
+      const g = TODO_GLYPH[t.status] ?? "○";
+      const id = t.id?.trim();
+      return id ? `${g} ${t.content}  · ${id}` : `${g} ${t.content}`;
+    })
+    .join("\n");
+}
+
+/** `/todos` card: counts + glyphs. Empty board is `No todos.` */
+export function formatTodoBoard(todos: readonly TodoItem[]): string {
+  if (todos.length === 0) return "No todos.";
+  const open = openTodos(todos);
+  return `Todos ${open}/${todos.length} open\n${formatTodoLines(todos)}`;
 }
 
 /**
@@ -135,7 +184,5 @@ export function applyTodos(
     session.todos = [...map.values()];
   }
   saveSession(session);
-  return `Todos updated (${session.todos.length} items, ${openTodos(session.todos)} open):\n${session.todos
-    .map((item) => `- [${item.status}] ${item.id}: ${item.content}`)
-    .join("\n")}`;
+  return `Todos updated (${session.todos.length} items, ${openTodos(session.todos)} open):\n${formatTodoLines(session.todos)}`;
 }

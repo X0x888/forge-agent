@@ -16,7 +16,7 @@ import { alwaysPatternFromCommand, isReadOnlyCommand } from "./shell-arity.js";
 import { addSavedAllow, loadSavedAllows, savedAsAllowRules } from "./permission-saved.js";
 import { logSandboxEvent } from "./sandbox-log.js";
 import { isWithinRoot } from "../util/fs.js";
-import { formatPermissionPreview } from "../util/format.js";
+import { clipAnsi, formatPermissionPreview, visibleWidth } from "../util/format.js";
 import { editToolDiffPreview } from "./permission-preview.js";
 import { isTruthy } from "../util/bool.js";
 import { parseDurationMs } from "../util/duration-ms.js";
@@ -771,9 +771,8 @@ export class PermissionGate {
       Boolean(alwaysPattern && alwaysPattern !== "*");
 
     console.error(
-      chalk.yellow(
-        `\n⚠ Permission: ${toolName}${dangerous ? " [DANGEROUS]" : ""}${opts.reasonHint ? `\n  ${opts.reasonHint}` : ""}\n`,
-      ) + (diffPreview ? `${preview}\n` : chalk.yellow(`${preview}\n`)),
+      chalk.yellow(formatPermissionAskHeader(toolName, dangerous, opts.reasonHint)) +
+        (diffPreview ? `${preview}\n` : chalk.yellow(`${preview}\n`)),
     );
     try {
       const { loadPreferences, dismissHint } = await import(
@@ -813,14 +812,7 @@ export class PermissionGate {
       const kind = parsePermissionAskAnswer(ans);
       if (kind === "timeout") {
         const secs = Math.round(timeoutMs / 1000);
-        console.error(
-          chalk.red(
-            `\n✖ Permission timed out after ${secs}s — denying ${toolName}\n` +
-              chalk.dim(
-                `  Tip: answer sooner, raise FORGE_PERMISSION_TIMEOUT_MS, use /permissions acceptEdits, or --permission-mode dontAsk in CI\n`,
-              ),
-          ),
-        );
+        console.error(chalk.red(formatPermissionTimeoutLine(secs, toolName)));
         logSandboxEvent({
           type: "rule_deny",
           reason: `permission_ask_timeout:${toolName}`,
@@ -890,24 +882,48 @@ export function parsePermissionAskAnswer(raw: string): PermissionAskKind {
   return "allow_once";
 }
 
+/** One-line timeout deny (no blank-line sandwich + tip lecture). */
+export function formatPermissionTimeoutLine(secs: number, toolName: string): string {
+  return `✖ timed out ${secs}s — denied ${toolName}`;
+}
+
+/** One-line ⚠ header (no blank-line sandwich). Hint stays on the next line. */
+export function formatPermissionAskHeader(
+  toolName: string,
+  dangerous: boolean,
+  reasonHint?: string,
+): string {
+  const danger = dangerous ? " [DANGEROUS]" : "";
+  const hint = reasonHint?.trim() ? `\n  ${reasonHint.trim()}` : "";
+  return `⚠ ${toolName}${danger}${hint}\n`;
+}
+
 export function formatPermissionAskPrompt(opts: {
   mcpAlwaysReady: boolean;
   alwaysTool: string;
   alwaysPattern: string;
   timeoutNote: string;
 }): string {
+  let line: string;
   if (opts.mcpAlwaysReady) {
     const scope =
       opts.alwaysPattern !== "*" && opts.alwaysTool !== "bash"
-        ? " (dir · nested ok)"
-        : " in this workspace";
-    return (
-      `Allow? ↵/[y] once / [a]lways: ${alwaysGrantLabel(opts.alwaysTool, opts.alwaysPattern)}` +
+        ? " · nested"
+        : "";
+    line =
+      `Allow? ↵/y once · a always ${alwaysGrantLabel(opts.alwaysTool, opts.alwaysPattern)}` +
       scope +
-      ` / [s]ession tool / [n]o:${opts.timeoutNote} `
-    );
+      ` · s session · n no${opts.timeoutNote} `;
+  } else {
+    line = `Allow? ↵/y once · n no · type server__tool then a to always${opts.timeoutNote} `;
   }
-  return `Allow? ↵/[y] once / [n]o (name a server__tool to persist [a]lways):${opts.timeoutNote} `;
+  const cols = Math.max(8, process.stdout.columns || 80);
+  if (visibleWidth(line) <= cols) return line;
+  const caret = "Allow? ";
+  const rest = line.startsWith(caret) ? line.slice(caret.length) : line;
+  const budget = Math.max(0, cols - visibleWidth(caret));
+  if (budget < 1) return clipAnsi(caret, cols);
+  return caret + clipAnsi(rest, budget);
 }
 
 /**

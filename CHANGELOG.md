@@ -3,9 +3,9 @@
 ## Unreleased
 
 ### Changed
-- **Daily-loop chrome**: live-run header is one identity line (not a boxed catalog). Empty-Tab starters drop `/ulw`/`/goal`/`/done` (type `/` then Tab — those start work). Compact setup residue ignores optional notify/LSP. Abort closer names `/retry` · type-to-continue · Ctrl+C again. REPL provider errors append the same recover line (`/retry` · `/model`).
+- **Daily-loop chrome**: live-run header is one identity line (not a boxed catalog). Empty-Tab and `/` + Tab starters drop `/ulw`/`/goal`/`/done` (type `/ul` then Tab — those start work). Compact setup residue ignores optional notify/LSP. Abort closer names `/retry` · type-to-continue · Ctrl+C again. REPL provider errors append the same recover line (`/retry` · `/model`).
 - **Failed-tool tails**: default REPL transcript still prints one status line per successful tool, but a failed tool now also shows a 5-line error tail (last lines — test/compiler failures live at the end). `/verbose` still opts into diffs + full output.
-- **Empty-Tab starters**: first Tab on a blank line offers a curated first-day set (`/help`, `/setup`, `/plan`, `/tips`, …) instead of dumping the full slash catalog. Type `/` then Tab for everything.
+- **Empty-Tab starters**: first Tab on a blank line — and `/` + Tab — offer a curated first-day set (`/help`, `/setup`, `/plan`, `/last`, …) instead of dumping the full slash catalog. Type `/ul` or `/per` then Tab for everything; unknown prefixes no longer dump the catalog.
 - **Permission Enter = allow**: the Allow? prompt now advertises `↵/[y] once`. Empty Enter already allowed once; the prompt hid that.
 
 ### Added

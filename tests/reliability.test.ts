@@ -1436,6 +1436,31 @@ describe("permission / tool arg previews", () => {
     assert.match(prev, /^D c\.ts/m);
     const bash = formatPermissionPreview("bash", { command: "npm test" });
     assert.match(bash, /npm test/);
+    const sub = formatPermissionPreview("spawn_subagent", {
+      subagent_type: "explore",
+      description: "map daily REPL dumps",
+      prompt: "Read src/tui/repl.ts and list leftover chrome.",
+    });
+    assert.match(sub, /explore: map daily REPL dumps/);
+    assert.ok(!sub.includes("Read src/tui/repl.ts"));
+    const mcp = formatPermissionPreview("call_mcp", {
+      tool_name: "github__list_issues",
+      arguments: { owner: "X0x888", repo: "forge-agent" },
+    });
+    assert.match(mcp, /github__list_issues · 2 args/);
+    assert.ok(!mcp.includes("X0x888"));
+    const resource = formatPermissionPreview("mcp_resource", {
+      action: "read",
+      uri: "docs://forge/help",
+    });
+    assert.match(resource, /uri=docs:\/\/forge\/help/);
+    assert.ok(!resource.includes("{\n"));
+    const search = formatPermissionPreview("search_mcp", {
+      query: "playwright click",
+      limit: 8,
+    });
+    assert.match(search, /query=playwright click/);
+    assert.ok(!search.includes("{\n"));
   });
 });
 

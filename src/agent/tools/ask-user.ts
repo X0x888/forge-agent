@@ -79,30 +79,26 @@ export async function toolAskUser(input: AskUserInput): Promise<ToolResult> {
   return enqueuePrompt(() => withStdinLease(() => promptAskUser(question, choices, context)));
 }
 
+/** Card above the readline — question + numbered choices, no lecture. */
+export function formatAskUserCard(
+  question: string,
+  choices: string[],
+  context: string,
+): string {
+  const lines: string[] = [chalk.cyan(`❓ ${question}`)];
+  if (context) lines.push(chalk.dim(`  ${context}`));
+  for (let i = 0; i < choices.length; i++) {
+    lines.push(chalk.dim(`  ${i + 1}) ${choices[i]}`));
+  }
+  return lines.join("\n");
+}
+
 async function promptAskUser(
   question: string,
   choices: string[],
   context: string,
 ): Promise<ToolResult> {
-  const lines: string[] = [
-    "",
-    chalk.cyan("❓ Agent question"),
-  ];
-  if (context) lines.push(chalk.dim(`  context: ${context}`));
-  lines.push(chalk.bold(`  ${question}`));
-  if (choices.length) {
-    for (let i = 0; i < choices.length; i++) {
-      lines.push(chalk.dim(`    ${i + 1}) ${choices[i]}`));
-    }
-    lines.push(
-      chalk.dim(
-        "  Reply with a number, free text, or 'skip' to decline.",
-      ),
-    );
-  } else {
-    lines.push(chalk.dim("  Reply with free text, or 'skip' to decline."));
-  }
-  console.error(lines.join("\n"));
+  console.error(formatAskUserCard(question, choices, context));
 
   const timeoutMs = askTimeoutMs();
   const timeoutNote =

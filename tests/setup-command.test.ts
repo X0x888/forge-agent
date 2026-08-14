@@ -42,7 +42,7 @@ describe("/setup slash", () => {
       hooks: new HookRunner(DEFAULT_CONFIG, cwd),
     });
     assert.equal(r.handled, true);
-    assert.match(String(r.output), /Getting started|Just type a coding task/);
+    assert.match(String(r.output), /Getting started|Type a task in English/);
     assert.match(String(r.output), /\/setup/);
   });
 

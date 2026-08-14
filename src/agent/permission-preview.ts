@@ -20,6 +20,8 @@ import { isTruthy } from "../util/bool.js";
 
 /** Don't diff huge files into a prompt that is meant to be glanceable. */
 const MAX_PREVIEW_FILE_BYTES = 512_000;
+/** Keep Allow? + keys on screen — 30–40 lines pushed the prompt off a typical TTY. */
+const ASK_PREVIEW_MAX_LINES = 12;
 
 function readPreviewFile(abs: string): string | undefined {
   try {
@@ -90,8 +92,8 @@ function searchReplacePreview(
   }
   if (next === undefined) return undefined;
   const rel = displayRelPath(ws, abs);
-  return formatDiffBlock(shortDiff(rel, base, next, 30), {
-    maxLines: 30,
+  return formatDiffBlock(shortDiff(rel, base, next, ASK_PREVIEW_MAX_LINES), {
+    maxLines: ASK_PREVIEW_MAX_LINES,
     indent: "  ",
   });
 }
@@ -112,8 +114,8 @@ function writePreview(
   // Mirror toolWrite's pasted read_file line-number strip.
   const body = stripReadFileLinePrefixes(input.content).text;
   const rel = displayRelPath(ws, abs);
-  return formatDiffBlock(shortDiff(rel, before, body, 30), {
-    maxLines: 30,
+  return formatDiffBlock(shortDiff(rel, before, body, ASK_PREVIEW_MAX_LINES), {
+    maxLines: ASK_PREVIEW_MAX_LINES,
     indent: "  ",
   });
 }
@@ -135,7 +137,7 @@ function patchPreview(
     if (hunk.type === "add") {
       let content = hunk.contents;
       if (content.length > 0 && !content.endsWith("\n")) content += "\n";
-      blocks.push(shortDiff(rel, "", content, 20));
+      blocks.push(shortDiff(rel, "", content, ASK_PREVIEW_MAX_LINES));
       virtual.set(abs, content);
       continue;
     }
@@ -146,7 +148,7 @@ function patchPreview(
       if (before === undefined) return undefined;
     }
     if (hunk.type === "delete") {
-      blocks.push(shortDiff(rel, before, "", 20));
+      blocks.push(shortDiff(rel, before, "", ASK_PREVIEW_MAX_LINES));
       virtual.set(abs, "");
       continue;
     }
@@ -161,11 +163,14 @@ function patchPreview(
       ? displayRelPath(ws, resolvePath(ws, hunk.movePath))
       : undefined;
     blocks.push(
-      shortDiff(moveRel ? `${rel} → ${moveRel}` : rel, before, next, 20),
+      shortDiff(moveRel ? `${rel} → ${moveRel}` : rel, before, next, ASK_PREVIEW_MAX_LINES),
     );
     virtual.set(abs, next);
     if (hunk.movePath) virtual.set(resolvePath(ws, hunk.movePath), next);
   }
   if (!blocks.length) return undefined;
-  return formatDiffBlock(blocks.join("\n"), { maxLines: 40, indent: "  " });
+  return formatDiffBlock(blocks.join("\n"), {
+    maxLines: ASK_PREVIEW_MAX_LINES,
+    indent: "  ",
+  });
 }

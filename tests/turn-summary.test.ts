@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { formatTurnChangeSummary } from "../src/tui/turn-summary.js";
+import { visibleWidth } from "../src/util/format.js";
 import type { FileMutation } from "../src/session/mutations.js";
 
 const CWD = "/repo";
@@ -48,10 +49,31 @@ test("turn summary: paths outside cwd stay absolute", () => {
 });
 
 test("turn summary: more than six files collapse into +N more", () => {
-  const edits = Array.from({ length: 8 }, (_, i) => mut(`/repo/f${i}.ts`));
-  const line = formatTurnChangeSummary(edits, CWD, baseMeta)!;
-  assert.match(line, /\+2 more/);
-  assert.doesNotMatch(line, /f6\.ts/);
+  const prevCols = process.stdout.columns;
+  const prevTty = process.stdout.isTTY;
+  Object.defineProperty(process.stdout, "isTTY", {
+    value: true,
+    configurable: true,
+  });
+  Object.defineProperty(process.stdout, "columns", {
+    value: 120,
+    configurable: true,
+  });
+  try {
+    const edits = Array.from({ length: 8 }, (_, i) => mut(`/repo/f${i}.ts`));
+    const line = formatTurnChangeSummary(edits, CWD, baseMeta)!;
+    assert.match(line, /\+2 more/);
+    assert.doesNotMatch(line, /f6\.ts/);
+  } finally {
+    Object.defineProperty(process.stdout, "isTTY", {
+      value: prevTty,
+      configurable: true,
+    });
+    Object.defineProperty(process.stdout, "columns", {
+      value: prevCols,
+      configurable: true,
+    });
+  }
 });
 
 test("turn summary: fresh verification shows ✓, stale shows predates-last-edit", () => {
@@ -70,4 +92,36 @@ test("turn summary: fresh verification shows ✓, stale shows predates-last-edit
     editCount: 2,
   } as never)!;
   assert.match(stale, /verify: npm test \(stale — predates last edit\)/);
+});
+
+test("turn summary: clips to one TTY row and keeps verify", () => {
+  const prevCols = process.stdout.columns;
+  const prevTty = process.stdout.isTTY;
+  Object.defineProperty(process.stdout, "isTTY", {
+    value: true,
+    configurable: true,
+  });
+  Object.defineProperty(process.stdout, "columns", {
+    value: 48,
+    configurable: true,
+  });
+  try {
+    const edits = Array.from({ length: 8 }, (_, i) =>
+      mut(`/repo/very/long/path/to/source/file-${i}.ts`),
+    );
+    const line = formatTurnChangeSummary(edits, CWD, baseMeta)!;
+    assert.ok(!line.includes("\n"));
+    assert.ok(visibleWidth(line) <= 48);
+    assert.match(line, /Δ 8 files:/);
+    assert.match(line, /verify:/);
+  } finally {
+    Object.defineProperty(process.stdout, "isTTY", {
+      value: prevTty,
+      configurable: true,
+    });
+    Object.defineProperty(process.stdout, "columns", {
+      value: prevCols,
+      configurable: true,
+    });
+  }
 });

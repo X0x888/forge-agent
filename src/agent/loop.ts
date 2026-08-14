@@ -137,8 +137,6 @@ import {
   formatToolEnd,
   truncateMiddle,
   formatTokens,
-  estimateCostUsd,
-  formatCost,
   formatRetryWait,
   summarizeToolArgs,
   extractDiffFromToolOutput,
@@ -179,11 +177,12 @@ export interface LoopEvents {
       bytes: number;
       diff?: string;
       output?: string;
+      args?: Record<string, unknown>;
     },
   ) => void;
   /**
    * Fired once per tool attempt after onPhase("tool"), including hard-deny
-   * and permission-deny paths that never reach onToolStart/onToolEnd.
+   * and permission-deny paths (those now also emit onToolStart/onToolEnd).
    * Used by the REPL to keep the spinner paused across parallel batches.
    */
   onToolSettled?: (name: string) => void;
@@ -700,7 +699,6 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
     const beforeCount = session.messages.length;
     const beforeTok = estimateTokens(session.messages);
     events.onPhase?.("compacting");
-    events.onStatus?.(`Compacting conversation (${reason})…`);
     await hooks.run("PreCompact", baseHookCtx(session, config));
     const ulwNow = loadUlwCycle(session.meta.id);
     const goalNow = loadGoal(session.meta.id);
@@ -910,12 +908,12 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
         warnedContextPressure = "hard";
         const pct = Math.min(99, Math.round((est / config.contextWindow) * 100));
         log.warn(
-          `Context pressure ~${pct}% of window (${formatTokens(est)} / ${formatTokens(config.contextWindow)}) — compacting for headroom. Tip: /compact · /new · raise context_window`,
+          `Context pressure ~${pct}% of window (${formatTokens(est)} / ${formatTokens(config.contextWindow)}) — compacting for headroom`,
         );
       } else if (storeDue && warnedContextPressure == null) {
         warnedContextPressure = "threshold";
         log.dim(
-          `Store ~${formatTokens(storeTok)} / ${session.messages.length} msgs — checkpoint compact. Tip: /context · /compact`,
+          `Store ~${formatTokens(storeTok)} / ${session.messages.length} msgs — checkpoint compact`,
         );
       }
       if (
@@ -1067,7 +1065,6 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
       if (nudge) {
         session.messages.push({ role: "user", content: nudge });
         saveSession(session);
-        events.onStatus?.("Todo nudge");
       }
 
       events.onPhase?.("thinking");
@@ -1158,7 +1155,6 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
           log.dim(
             `Adaptive effort: reasoning escalated to ${bumped} for this turn (hard-round signal)`,
           );
-          events.onStatus?.(`Adaptive effort → ${bumped}`);
         }
       }
       try {
@@ -1862,7 +1858,6 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
               "ULW diminishing returns — waves are thinning. /cycle 0 to wind down, /max-waves N to cap, or let a consolidation wave harden what's shipped.",
             ),
           );
-          events.onStatus?.("ULW waves thinning — consider /cycle 0");
         }
         // Track polite-yield streak for handoff-guard release cap.
         // Polite yields are a hard-round signal — bump adaptive effort so the
@@ -2017,7 +2012,6 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
               `↻ ULW ${counts} (${why}) — Stop blocked (continue #${stopContinues})`,
             ),
           );
-          log.dim(ULW_LIVE_CONTROLS_HINT);
         } else if (stopResult.todoGate) {
           log.info(
             chalk.magenta(
@@ -2292,18 +2286,7 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
   const completionTokens = session.meta.totalCompletionTokens - startComp;
   const cacheReadTokens =
     (session.meta.totalCacheReadTokens ?? 0) - startCache;
-  if (promptTokens + completionTokens > 0) {
-    const cost = estimateCostUsd(
-      String(config.provider),
-      promptTokens,
-      completionTokens,
-      config.model,
-      cacheReadTokens,
-    );
-    events.onStatus?.(
-      `tokens in=${formatTokens(promptTokens)} out=${formatTokens(completionTokens)} · est ${formatCost(cost)}`,
-    );
-  }
+  // Token/cost already live on the dock + turn footer — no transcript dump.
 
   // Successful completion clears prior failure — but continue-cap / content-filter /
   // maxTurns / cost-cap / handoff-release / proof-claim-release stamp lastError
@@ -2828,6 +2811,24 @@ async function prepareToolResult(opts: {
     events?.onToolSettled?.(name);
   };
 
+  /** Permission/plan denials skip executeTool — still pair start/end so the REPL shows ✗. */
+  const emitDeniedTool = (output: string) => {
+    if (events?.onToolStart) {
+      events.onToolStart(name, toolInput);
+    } else {
+      console.error(formatToolStart(name, toolInput));
+    }
+    const bytes = Buffer.byteLength(output, "utf8");
+    if (events?.onToolEnd) {
+      events.onToolEnd(name, { isError: true, ms: 0, bytes, output, args: toolInput });
+    } else {
+      console.error(
+        formatToolEnd(name, { isError: true, ms: 0, bytes, output, args: toolInput }),
+      );
+    }
+    settle();
+  };
+
   // Hard safety — never skipped by YOLO / bypassPermissions
   const hard = hardSafetyCheck(name, toolInput, workspace);
   if (!hard.ok) {
@@ -2837,10 +2838,11 @@ async function prepareToolResult(opts: {
       toolName: name,
       toolInput,
     });
-    settle();
+    const content = `HARD DENY [${hard.rule}]: ${hard.reason}`;
+    emitDeniedTool(content);
     return {
       toolCallId: tc.id,
-      content: `HARD DENY [${hard.rule}]: ${hard.reason}`,
+      content,
     };
   }
 
@@ -2857,10 +2859,11 @@ async function prepareToolResult(opts: {
       toolName: name,
       toolInput,
     });
-    settle();
+    const content = `Tool denied by hook: ${pre.reason || "denied"}`;
+    emitDeniedTool(content);
     return {
       toolCallId: tc.id,
-      content: `Tool denied by hook: ${pre.reason || "denied"}`,
+      content,
     };
   }
 
@@ -2878,10 +2881,11 @@ async function prepareToolResult(opts: {
       toolName: name,
       toolInput,
     });
-    settle();
+    const content = `Tool denied by permission gate: ${perm.reason}${perm.rule ? ` [${perm.rule}]` : ""}`;
+    emitDeniedTool(content);
     return {
       toolCallId: tc.id,
-      content: `Tool denied by permission gate: ${perm.reason}${perm.rule ? ` [${perm.rule}]` : ""}`,
+      content,
     };
   }
 
@@ -2892,10 +2896,6 @@ async function prepareToolResult(opts: {
   }
 
   if (argsRepairNote && !parsedArgs.ok) {
-    settle();
-    if (events?.onToolEnd) {
-      events.onToolEnd(name, { isError: true, ms: 0, bytes: 0 });
-    }
     let content =
       `Invalid JSON arguments for ${name}: ${argsRepairNote}\nRaw (truncated): ${String(tc.function.arguments || "").slice(0, 400)}\nPlease rewrite the input as valid JSON.`;
     if (errorStreak) {
@@ -2925,6 +2925,15 @@ async function prepareToolResult(opts: {
         }
       }
     }
+    const bytes = Buffer.byteLength(content, "utf8");
+    if (events?.onToolEnd) {
+      events.onToolEnd(name, { isError: true, ms: 0, bytes, output: content, args: toolInput });
+    } else {
+      console.error(
+        formatToolEnd(name, { isError: true, ms: 0, bytes, output: content, args: toolInput }),
+      );
+    }
+    settle();
     return {
       toolCallId: tc.id,
       content,
@@ -3108,9 +3117,12 @@ async function prepareToolResult(opts: {
         ? undefined
         : extractDiffFromToolOutput(name, output),
       output,
+      args: toolInput,
     });
   } else {
-    console.error(formatToolEnd(name, { isError: result.isError, ms, bytes }));
+    console.error(
+      formatToolEnd(name, { isError: result.isError, ms, bytes, args: toolInput }),
+    );
   }
   settle();
 

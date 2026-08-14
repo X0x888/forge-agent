@@ -36,6 +36,7 @@ import {
   formatToolEnd,
   formatDiffBlock,
   formatToolOutputHead,
+  formatFailedToolTail,
 } from "../util/format.js";
 import { postureHead, postureWarnings } from "./posture.js";
 import { formatTurnChangeSummary } from "./turn-summary.js";
@@ -66,7 +67,7 @@ import { makeCompleter } from "./complete.js";
 import { createPromptEditor } from "./prompt-editor.js";
 import { setStdinLeaseHolder, stdinLeaseHeld } from "./stdin-lease.js";
 import {
-  buildPromptFlags,
+  buildIdlePrompt,
   buildLivePrompt,
   renderIdleStatusLine,
   renderLiveRunHeader,
@@ -162,8 +163,7 @@ export async function runRepl(opts: {
   const refreshIdlePromptFlags = () => {
     if (busy || !process.stdout.isTTY) return;
     try {
-      const prefix = buildPromptFlags(statusCtx());
-      rl.setPrompt(prefix + chalk.green("forge") + chalk.dim(" › "));
+      rl.setPrompt(buildIdlePrompt(statusCtx()));
       // Redisplay prompt without accepting a new line
       rl.prompt(true);
     } catch {
@@ -322,8 +322,7 @@ export async function runRepl(opts: {
     } else {
       lastStatusStrip = "";
     }
-    const prefix = buildPromptFlags(statusCtx());
-    rl.setPrompt(prefix + chalk.green("forge") + chalk.dim(" › "));
+    rl.setPrompt(buildIdlePrompt(statusCtx()));
     rl.prompt();
     bottomDock.refresh();
   };
@@ -381,7 +380,7 @@ export async function runRepl(opts: {
             persist: false,
           });
           if (bang.handled) {
-            console.log(formatBangOutput(bang.output));
+            console.log(formatBangOutput(bang.output, bang.isError));
             pushInterjection(
               session.meta.id,
               `[User ran bang-shell]\n${bang.output}`,
@@ -518,7 +517,7 @@ export async function runRepl(opts: {
           permissions,
         });
         if (bang.handled) {
-          console.log(formatBangOutput(bang.output));
+          console.log(formatBangOutput(bang.output, bang.isError));
           prompt();
           return;
         }
@@ -670,13 +669,13 @@ export async function runRepl(opts: {
     };
 
     /**
-     * Long token streams park `live ›` above the reply. Heartbeat reprints
-     * it below the current line so /cycle 0 stays reachable without
-     * flushing the markdown renderer (partial tokens stay intact).
+     * Long token streams park `live ›` above the reply. Heartbeat only
+     * refreshes the sticky dock — reprinting the prompt every 10s sliced
+     * the transcript. First mid-run keystroke redocks via abandonPaint.
      */
     onStreamHeartbeat = () => {
-      if (!busy || !streamActive) return;
-      livePrompt({ freshLine: true });
+      if (!busy) return;
+      bottomDock.refresh();
     };
 
     try {
@@ -697,6 +696,9 @@ export async function runRepl(opts: {
               working.setStreaming(true);
               streamActive = true;
               sawToken = true;
+              // Stream overwrites the parked `live ›` row. Forget that paint
+              // so the next keystroke / redock starts below the reply.
+              rl.abandonPaint();
             }
             if (!md) md = createMarkdownRenderer();
             process.stdout.write(md.push(t));
@@ -709,13 +711,16 @@ export async function runRepl(opts: {
             streamActive = false;
             working.setStreaming(false);
             sawToken = false;
-            console.error(formatToolStart(name, args));
+            // Default: one line at settle (✓/✗ + args). Start line is
+            // /verbose only — otherwise every tool is two rows + a live ›.
+            if (verboseToolOutput) {
+              console.error(formatToolStart(name, args));
+            }
           },
           onToolEnd: (name, r) => {
             // Minimal by default: one status line per tool. Success diffs
-            // and full output stay /verbose (scroll noise on unattended
-            // runs). Failures always show a short tail — "✗ bash 12ms"
-            // with no reason is worse than a few extra lines.
+            // and full output stay /verbose. Failures inline the first
+            // error on the ✗ row; extra tail only when there is more.
             console.error(formatToolEnd(name, r));
             if (verboseToolOutput) {
               if (r.diff) {
@@ -727,7 +732,10 @@ export async function runRepl(opts: {
                 if (head) console.error(head);
               }
             } else if (r.isError && r.output) {
-              const tail = formatToolOutputHead(r.output, { tail: true });
+              // Reason already sits on the ✗ line. Extra last-lines
+              // (default 5) when there is more — test/compiler failures
+              // live at the end. Single-line errors stay one row.
+              const tail = formatFailedToolTail(r.output);
               if (tail) console.error(tail);
             }
           },
@@ -735,8 +743,9 @@ export async function runRepl(opts: {
             pendingTools = Math.max(0, pendingTools - 1);
             if (pendingTools === 0) {
               setToolHold(false);
-              // Between tools — re-dock live › under tool output
-              redockLive();
+              // Do not reprint live › after every tool — that fossilized
+              // a prompt row between ▸ and ✓. Dock refreshes in-place
+              // on the next think/wait phase.
             }
           },
           onPhase: (phase, detail) => {
@@ -781,13 +790,11 @@ export async function runRepl(opts: {
         process.stdout.write("\n");
       }
       if (result.aborted) {
-        console.log(chalk.yellow(`\n${ABORT_RECOVERY}`));
+        console.log(chalk.yellow(ABORT_RECOVERY));
       }
-      if (result.stopContinues > 0) {
+      if (result.releasedOnContinueCap) {
         log.dim(
-          result.releasedOnContinueCap
-            ? `Harness continued ${result.stopContinues} time(s); released on continue-cap (safety valve)`
-            : `Harness continued ${result.stopContinues} time(s) via Stop block`,
+          `Released on continue-cap after ${result.stopContinues} harness continue(s)`,
         );
       }
       if (result.hitMaxTurns) {
@@ -1122,7 +1129,11 @@ async function printBanner(
     setupCompact,
     resumeOrientation: isFirstSession
       ? undefined
-      : formatResumeOrientation(session, { maxChars: 180, fileLimit: 4 }),
+      : formatResumeOrientation(session, {
+        maxChars: 180,
+        fileLimit: 4,
+        compact: true,
+      }),
   });
   const [first, ...rest] = text.split("\n");
   console.log(chalk.bold.cyan("\n" + first));

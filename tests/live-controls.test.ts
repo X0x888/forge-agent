@@ -801,6 +801,7 @@ describe("mid-run /cycle affects stop-guard without abort", () => {
     assert.equal(isSafeDiffFilterArg("HEAD"), true);
     assert.equal(isSafeDiffFilterArg("main...HEAD"), true);
     assert.equal(isSafeDiffFilterArg("--cached"), true);
+    assert.equal(isSafeDiffFilterArg("--full"), true);
     assert.equal(isSafeDiffFilterArg("--name-only"), true);
     assert.equal(isSafeDiffFilterArg("-U5"), true);
     assert.equal(isSafeDiffFilterArg("--"), true);

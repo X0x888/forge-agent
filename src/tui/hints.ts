@@ -28,7 +28,7 @@ export interface HintPick {
 }
 
 export const FIRST_PERMISSION_HINT =
-  "This is normal in default mode. Enter / y = once · /permissions acceptEdits to stop asking.";
+  "This is normal. a persists · /permissions acceptEdits to stop asking.";
 
 /** Printed after a SIGINT abort so the user knows how to continue. */
 export const ABORT_RECOVERY =

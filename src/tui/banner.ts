@@ -1,7 +1,8 @@
 /**
  * REPL startup banner — slim, testable, first-run aware.
- * Live › /cycle 0 chrome lives on the live-run header, not here.
+ * Live › chrome lives on the live-run header, not here.
  */
+import { clipAnsi, visibleWidth } from "../util/format.js";
 
 export interface BannerInput {
   version: string;
@@ -27,6 +28,28 @@ export interface BannerInput {
   setupCompact?: string;
   /** Same-cwd resume: last-turn peek + files/verify (empty = omit). */
   resumeOrientation?: string;
+  /** Override TTY width (tests). Non-TTY defaults to 80. */
+  columns?: number;
+}
+
+function resolveBannerColumns(columns?: number): number {
+  if (typeof columns === "number" && columns > 0) return Math.max(24, columns);
+  if (process.stdout.isTTY && process.stdout.columns) {
+    return Math.max(24, process.stdout.columns);
+  }
+  return 80;
+}
+
+/** Drop optional identity bits from the right so the line stays one TTY row. */
+export function clipBannerIdentity(line: string, columns?: number): string {
+  const max = resolveBannerColumns(columns);
+  if (visibleWidth(line) <= max) return line;
+  const parts = line.split("  ·  ");
+  while (parts.length > 2 && visibleWidth(parts.join("  ·  ")) > max) {
+    parts.pop();
+  }
+  const kept = parts.join("  ·  ");
+  return visibleWidth(kept) <= max ? kept : clipAnsi(kept, max);
 }
 
 export function formatBanner(input: BannerInput): string {
@@ -43,13 +66,17 @@ export function formatBanner(input: BannerInput): string {
       : "";
   const planNote =
     input.permissionMode === "plan" ? " (exit_plan_mode or /build)" : "";
+  const identity = clipBannerIdentity(
+    `  ${input.provider}/${input.model} · ${input.authLabel}  ·  session ${sid}${title}  ·  perms ${input.permissionMode}${planNote}  ·  sandbox ${input.sandbox}${git}${project}`,
+    input.columns,
+  );
   const lines = [
     `  ⚒  Forge v${input.version}`,
-    `  ${input.provider}/${input.model} · ${input.authLabel}  ·  session ${sid}${title}  ·  perms ${input.permissionMode}${planNote}  ·  sandbox ${input.sandbox}${git}${project}`,
+    identity,
   ];
   if (input.ulwArmed) {
     lines.push(
-      `  ULW on  ·  type at live › mid-run (/cycle 0 last wave)`,
+      `  ULW on`,
     );
   }
   if (input.posture) {
@@ -64,7 +91,7 @@ export function formatBanner(input: BannerInput): string {
   if (input.showEmptyState) {
     lines.push("");
     lines.push(
-      `  Type a task in English.  Or:  /setup  ·  /help start  ·  /plan  ·  Tab starters`,
+      `  Type a task in English.  Or:  /setup  ·  /help  ·  /plan  ·  Tab starters`,
     );
   }
   if (input.setupCard) {

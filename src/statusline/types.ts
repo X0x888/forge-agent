@@ -141,6 +141,8 @@ export interface StatusSnapshot {
   lastEditAt?: string | null;
   lastVerificationStale?: boolean | null;
   openTodos: number;
+  /** First in-progress todo title, when any. */
+  activeTodo?: string | null;
   ultrawork: boolean;
   /** ULW cycle flag when armed (0|1); omit/null when not */
   ulwCycle?: number | null;
