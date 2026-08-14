@@ -8,7 +8,9 @@ import { nowIso } from "./fs.js";
 import { findGitRoot, parsePorcelainPath } from "../agent/worktree.js";
 import { activeMemoryRecords } from "../harness/decision-memory.js";
 import {
+  displayUlwMandate,
   formatWaveLedger,
+  isPlaceholderMandate,
   loadUlwCycle,
   type UlwCycleState,
 } from "../harness/ulw-cycle.js";
@@ -123,7 +125,9 @@ export function buildAutoCommitBody(
     const cap =
       ulw.maxWaves != null && ulw.maxWaves > 0 ? `/${ulw.maxWaves}` : "";
     lines.push(`Wave ${ulw.wave}${cap}.`);
-    if (ulw.mandate) lines.push(`Mandate: ${ulw.mandate.slice(0, 240)}`);
+    if (ulw.mandate) {
+      lines.push(`Mandate: ${displayUlwMandate(ulw.mandate).slice(0, 240)}`);
+    }
     const ledger = formatWaveLedger(ulw.waves, 8);
     if (ledger) lines.push(`Waves: ${ledger}`);
   }
@@ -181,8 +185,11 @@ export function maybeAutoCommitOnUlwDone(opts: {
   }
 
   const ulw = loadUlwCycle(opts.sessionId);
+  if (ulw && isPlaceholderMandate(ulw.mandate)) {
+    return { committed: false, skipped: "pending work-order" };
+  }
   const subject = buildAutoCommitSubject(
-    ulw?.mandate || "ULW cycle complete",
+    ulw ? displayUlwMandate(ulw.mandate) : "ULW cycle complete",
     shipHint(opts.sessionId),
   );
   const body = buildAutoCommitBody(ulw, staged);

@@ -154,6 +154,8 @@ export interface UlwStopDecision {
   thinStreakAdvisory?: boolean;
   /** True when a weak attestation was bounced for missing evidence */
   evidenceDemanded?: boolean;
+  /** True when this Stop actually closed a wave (not a gate / already-stamped). */
+  waveClosed?: boolean;
 }
 
 const LAST_CYCLE_ATTEST_RE =
@@ -993,6 +995,13 @@ export function mandateFromUserText(text: string): string | null {
   return isArmableMandate(raw) ? raw.replace(/\s+/g, " ").trim() : null;
 }
 
+/** Human/model-facing mandate. Never show the auto-arm placeholder. */
+export function displayUlwMandate(mandate: string): string {
+  const t = (mandate || "").trim();
+  if (!t || isPlaceholderMandate(t)) return "(pending work-order)";
+  return t;
+}
+
 /** Soft / weak prompts that need god-scope expansion under ULW. */
 export function isSoftPrompt(prompt: string): boolean {
   const t = prompt.replace(/\s+/g, " ").trim();
@@ -1223,10 +1232,13 @@ export function armUlwCycle(
   }
   saveUlwCycle(state);
   // Phase 1: durable decision memory — survive compact / multi-wave rot.
-  try {
-    seedMemoryFromMandate(sessionId, cleanMandate, { softPrompt: soft });
-  } catch {
-    /* memory best-effort at arm; compact fail-closed surfaces corrupt */
+  // Do not seed "MANDATE: continue prior mandate" — adopt writes the real one.
+  if (!isPlaceholderMandate(cleanMandate)) {
+    try {
+      seedMemoryFromMandate(sessionId, cleanMandate, { softPrompt: soft });
+    } catch {
+      /* memory best-effort at arm; compact fail-closed surfaces corrupt */
+    }
   }
   return state;
 }
@@ -1460,7 +1472,7 @@ export function formatUlwStatus(s: UlwCycleState | null): string {
   const best = bestWave(s.waves);
   return [
     `ULW cycle: ON  |  ${formatUlwCounts(s)}  ${s.cycle === 1 ? "(CONTINUE — relentless)" : "(LAST — finish current wave)"}`,
-    `  Mandate: ${isPlaceholderMandate(s.mandate) ? "(pending work-order)" : s.mandate}`,
+    `  Mandate: ${displayUlwMandate(s.mandate)}`,
     `  Soft prompt expanded: ${s.softPrompt ? "yes" : "no"}`,
     `  max_waves: ${cap != null ? cap : "off (unlimited)"}`,
     ...(ledger ? [`  Recent waves: ${ledger}`] : []),
@@ -1626,7 +1638,7 @@ export function evaluateUlwAtStop(opts: {
       const reanchor = [
         `[Forge ULW cycle driver] Stop blocked — backlog required before Wave 1 invents scope.`,
         `Mandate is broad/soft. Decompose it into an ordered todo board (≥2 items) via todo_write covering the mandate sections, then execute the top item.`,
-        `Mandate: ${s.mandate}`,
+        `Mandate: ${displayUlwMandate(s.mandate)}`,
         mem.activeCount
           ? `## Active decisions / constraints\n${mem.text}`
           : null,
@@ -1652,7 +1664,7 @@ export function evaluateUlwAtStop(opts: {
       saveUlwCycle(s);
       const reanchor = [
         `[Forge ULW cycle driver] Stop blocked — evaluate-class mandate needs a written reading before Wave 1 closes.`,
-        `Mandate: ${s.mandate}`,
+        `Mandate: ${displayUlwMandate(s.mandate)}`,
         `Write the reading NOW (what the hard work is, what you passed on, the ONE item you will ship). memory_write it, or start the reply with \`Reading:\`.`,
         `That is the first verb of the mandate — not advice, not optional. Then execute the item.`,
         ULW_LIVE_CONTROLS_HINT,
@@ -1746,6 +1758,7 @@ export function evaluateUlwAtStop(opts: {
         reason: reanchor,
         reanchor,
         maxWavesHit: true,
+        waveClosed: !alreadyStamped,
         ...qualityFlags,
       };
     }
@@ -1763,7 +1776,13 @@ export function evaluateUlwAtStop(opts: {
       thinStreak,
       preferredCheckCommands: opts.preferredCheckCommands,
     });
-    return { block: true, reason: reanchor, reanchor, ...qualityFlags };
+    return {
+      block: true,
+      reason: reanchor,
+      reanchor,
+      waveClosed: !alreadyStamped,
+      ...qualityFlags,
+    };
   }
 
   // cycle === 0: force finish current wave (no "I'll stop mid-wave")
@@ -1806,7 +1825,7 @@ function buildCycleReanchor(
       : null;
     return [
       `[Forge ULW cycle driver] Stop blocked — ${formatUlwCounts(s)} (CONTINUE).`,
-      `Mandate: ${s.mandate}`,
+      `Mandate: ${displayUlwMandate(s.mandate)}`,
       ...decisionsBlock,
       `Wave ${s.wave} begins${cap != null ? ` (max ${cap})` : ""}. Protocol: research → plan → implement → verify → review (full cycle in system prompt).`,
       lastEntry
@@ -1863,7 +1882,7 @@ function buildCycleReanchor(
 
   return [
     `[Forge ULW cycle driver] Stop blocked — ${formatUlwCounts(s)} (LAST CYCLE).`,
-    `Mandate: ${s.mandate}`,
+    `Mandate: ${displayUlwMandate(s.mandate)}`,
     ...decisionsBlock,
     `Wave: ${s.wave}${cap != null ? ` / max ${cap}` : ""} — finish THIS wave only, then attest and stop.`,
     maxHitLine,
@@ -1916,7 +1935,7 @@ export function ulwKickoffMessage(state: UlwCycleState): string {
   const mem = formatMemoryForPrompt(state.sessionId, { budget: 2_000 });
   return [
     `## ULW armed`,
-    `Mandate: ${state.mandate}`,
+    `Mandate: ${displayUlwMandate(state.mandate)}`,
     `God-mode protocol is in the system prompt — do not re-derive it. Work the mandate.`,
     ``,
     `## Durable decisions / constraints`,

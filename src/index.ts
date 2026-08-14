@@ -306,6 +306,7 @@ export {
   isUlwKickoffText,
   mandateFromUserText,
   PLACEHOLDER_MANDATE,
+  displayUlwMandate,
   adoptUlwMandate,
   maybeAdoptMandateFromUserTexts,
   reenableUlwCycle,

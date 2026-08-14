@@ -1,6 +1,7 @@
 import type { ForgeConfig, PromptProfile } from "../config/types.js";
 import type { GoalState } from "../harness/goal.js";
 import type { UlwCycleState } from "../harness/ulw-cycle.js";
+import { displayUlwMandate } from "../harness/ulw-cycle.js";
 import fs from "node:fs";
 import path from "node:path";
 import {
@@ -465,7 +466,7 @@ export function buildSystemPrompt(opts: {
       ``,
       `## Live ULW snapshot (also admitted mid-conversation)`,
       `Counters: **cycle=${s.cycle} wave=${s.wave} blocks=${s.blocks}**`,
-      s.mandate ? `Mandate: ${s.mandate}` : "",
+      s.mandate ? `Mandate: ${displayUlwMandate(s.mandate)}` : "",
     );
   }
   if (

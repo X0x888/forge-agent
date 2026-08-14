@@ -11,7 +11,11 @@ import type { ChatMessage } from "../providers/types.js";
 import type { GoalState } from "../harness/goal.js";
 import type { UlwCycleState } from "../harness/ulw-cycle.js";
 import type { TodoItem } from "./session.js";
-import { formatUlwCounts, formatWaveLedger } from "../harness/ulw-cycle.js";
+import {
+  displayUlwMandate,
+  formatUlwCounts,
+  formatWaveLedger,
+} from "../harness/ulw-cycle.js";
 import { repairToolCallPairing } from "./message-repair.js";
 import {
   DEFAULT_CHECKPOINT_KEEP_STEPS,
@@ -179,7 +183,7 @@ export function buildStructuredSummary(
       : "";
     // Prefer full mandate when it fits; otherwise keep head + sidecar pointer
     // (decision memory holds structured constraints — do not lobotomize).
-    const mandateFull = ulw.mandate || "";
+    const mandateFull = displayUlwMandate(ulw.mandate || "");
     const mandateLine =
       mandateFull.length <= 1200
         ? `- Mandate: ${mandateFull || "(none)"}`

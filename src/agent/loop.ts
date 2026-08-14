@@ -56,6 +56,7 @@ import {
   ulwKickoffMessage,
   formatUlwCounts,
   formatUlwBadge,
+  displayUlwMandate,
   ULW_LIVE_CONTROLS_HINT,
   maybeStampUlwWave,
   countsTowardVerification,
@@ -830,7 +831,7 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
     ];
     if (ulwNow?.enabled) {
       parts.push(
-        `ULW still ACTIVE: ${formatUlwCounts(ulwNow)} ${ulwNow.cycle === 1 ? "(CONTINUE)" : "(LAST)"}. Mandate: ${ulwNow.mandate}`,
+        `ULW still ACTIVE: ${formatUlwCounts(ulwNow)} ${ulwNow.cycle === 1 ? "(CONTINUE)" : "(LAST)"}. Mandate: ${displayUlwMandate(ulwNow.mandate)}`,
         "Stop never fired before the overflow (common on long tool-only waves) — that is why wave/blocks may still be low. Keep executing the cycle; the harness will re-anchor on the next clean Stop.",
         ULW_LIVE_CONTROLS_HINT,
       );
@@ -1938,7 +1939,11 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
           );
         }
 
-        if (stopResult.ulw?.block && !stopResult.allowStop) {
+        if (
+          stopResult.ulw?.block &&
+          !stopResult.allowStop &&
+          stopResult.ulw.waveClosed
+        ) {
           try {
             const { maybeAutoCommitOnUlwDone, autoCommitStamp } =
               await import("../util/git-auto-commit.js");

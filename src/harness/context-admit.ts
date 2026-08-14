@@ -10,7 +10,7 @@
 import type { GoalState } from "./goal.js";
 import type { UlwCycleState } from "./ulw-cycle.js";
 import type { TodoItem } from "../session/session.js";
-import { formatUlwCounts } from "./ulw-cycle.js";
+import { displayUlwMandate, formatUlwCounts } from "./ulw-cycle.js";
 import {
   formatGitBranchLine,
   formatGitTreeLine,
@@ -259,7 +259,7 @@ export function renderHarnessAdmission(s: HarnessSnapshot): string {
         ? `max_waves=${s.maxWaves} — when wave hits the cap, harness auto-flips to LAST.`
         : `max_waves=off (unlimited).`,
       `Harness w=N/M is the only wave counter. Do not invent Wave K. Close a unit with Wave shipped. / Ship landed: so w can move.`,
-      s.mandate ? `Mandate: ${s.mandate}` : "",
+      s.mandate ? `Mandate: ${displayUlwMandate(s.mandate)}` : "",
       s.softPrompt
         ? isEvaluateClassMandate(s.mandate)
           ? `Evaluate-class — written reading first, then the one ship. Do not hunt leftover chrome.`

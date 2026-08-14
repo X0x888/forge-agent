@@ -12,7 +12,11 @@ import {
   stageAutoCommitPaths,
   ulwAutoCommitEnabled,
 } from "../src/util/git-auto-commit.js";
-import { armUlwCycle, evaluateUlwAtStop } from "../src/harness/ulw-cycle.js";
+import {
+  armUlwCycle,
+  evaluateUlwAtStop,
+  PLACEHOLDER_MANDATE,
+} from "../src/harness/ulw-cycle.js";
 import { appendFileMutation } from "../src/session/mutations.js";
 
 function git(args: string[], cwd: string): string {
@@ -214,6 +218,24 @@ describe("ULW auto-commit", () => {
       ]);
       assert.deepEqual(staged, ["src/ok.ts"]);
       assert.deepEqual(failed, ["rc/agent/permissions.ts"]);
+    });
+  });
+
+  it("skips a pending placeholder mandate", () => {
+    withRepo((root) => {
+      const sid = "sess-ac-ph";
+      fs.mkdirSync(path.join(process.env.FORGE_HOME!, "sessions", sid), {
+        recursive: true,
+      });
+      armUlwCycle(sid, PLACEHOLDER_MANDATE, {
+        cycle: 1,
+        skipCheckpoint: true,
+        cwd: root,
+      });
+      fs.writeFileSync(path.join(root, "a.ts"), "a\n");
+      const r = maybeAutoCommitOnUlwDone({ cwd: root, sessionId: sid });
+      assert.equal(r.committed, false);
+      assert.match(r.skipped || "", /pending work-order/);
     });
   });
 

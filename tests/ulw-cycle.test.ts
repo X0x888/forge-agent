@@ -39,7 +39,10 @@ import {
   ULW_LIVE_CONTROLS_HINT,
   summarizeWave,
 } from "../src/harness/ulw-cycle.js";
-import { appendMemoryRecord } from "../src/harness/decision-memory.js";
+import {
+  appendMemoryRecord,
+  loadDecisionMemory,
+} from "../src/harness/decision-memory.js";
 import { armGoal, copyGoal, loadGoal } from "../src/harness/goal.js";
 import { createSession, forkSession } from "../src/session/session.js";
 import { runStopGuard } from "../src/harness/stop-guard.js";
@@ -94,6 +97,13 @@ describe("ulw cycle", () => {
       cycle: 1,
       skipCheckpoint: true,
     });
+    {
+      const mem = loadDecisionMemory(sid);
+      assert.equal(
+        mem.records.some((r) => /continue prior mandate/i.test(r.text)),
+        false,
+      );
+    }
     assert.equal(isPlaceholderMandate(PLACEHOLDER_MANDATE), true);
     assert.equal(isPlaceholderMandate("improve the codebase"), false);
     assert.equal(isPlaceholderMandate(""), true);
@@ -247,6 +257,7 @@ describe("ulw cycle", () => {
       stuckThreshold: 20,
     });
     assert.equal(blocked.block, true);
+    assert.equal(blocked.waveClosed, undefined);
     assert.match(blocked.reanchor || "", /written reading|Reading:/i);
     assert.equal(loadUlwCycle(sid)?.wave, 0);
 
@@ -259,6 +270,7 @@ describe("ulw cycle", () => {
       stuckThreshold: 20,
     });
     assert.equal(after.block, true);
+    assert.equal(after.waveClosed, true);
     assert.equal(loadUlwCycle(sid)?.wave, 1);
     assert.equal(loadUlwCycle(sid)?.judgmentRequired, false);
   });
@@ -514,6 +526,7 @@ describe("ulw cycle", () => {
       stuckThreshold: 10,
     });
     assert.equal(d1.block, true);
+    assert.equal(d1.waveClosed, true);
     assert.match(d1.reanchor || "", /cycle=1|CONTINUE/i);
     assert.match(d1.reanchor || "", /wave=1/);
     assert.match(d1.reanchor || "", /Live mid-run|\/cycle 0/);
