@@ -27,6 +27,12 @@ import { fileReadGuardEnabled } from "./file-read-state.js";
 import { verifyHintSuffix } from "../../util/project-intel.js";
 import { isTruthy } from "../../util/bool.js";
 
+/** So a 1.3KB tool result is not mistaken for a truncated file. */
+export function lineCountNote(text: string): string {
+  const n = text.length === 0 ? 0 : text.split(/\r?\n/).length;
+  return ` (${n} line${n === 1 ? "" : "s"})`;
+}
+
 export async function toolEdit(
   args: Record<string, unknown>,
   ctx: ToolContext,
@@ -227,10 +233,11 @@ export async function toolEdit(
           alt.result.kind !== "exact"
             ? ` (matched via ${alt.result.kind} fallback)`
             : "";
-        const diff = shortDiff(rel, content, toLineEnding(normalizeNewlines(nextLf), ending));
+        const nextText = toLineEnding(normalizeNewlines(nextLf), ending);
+        const diff = shortDiff(rel, content, nextText);
         return {
           output:
-            `Edited ${rel}${note}${strippedNote}${formatNoteSuffix(fmt)}\n\n${diff}` +
+            `Edited ${rel}${note}${lineCountNote(nextText)}${strippedNote}${formatNoteSuffix(fmt)}\n\n${diff}` +
             verifyHintSuffix(ctx.workspace, filePath),
         };
       }
@@ -269,7 +276,7 @@ export async function toolEdit(
   const diff = shortDiff(rel, content, next);
   return {
     output:
-      `Edited ${rel}${note}${strippedNote}${formatNoteSuffix(fmt)}\n\n${diff}` +
+      `Edited ${rel}${note}${lineCountNote(next)}${strippedNote}${formatNoteSuffix(fmt)}\n\n${diff}` +
       verifyHintSuffix(ctx.workspace, filePath),
   };
 }

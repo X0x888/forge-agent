@@ -985,7 +985,32 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
             verificationPassed: harnessStats.verificationPassedRuns > 0,
             cwd: workspace,
           });
-          if (stamp.stamped) lastWaveStampTurn = turns;
+          if (stamp.stamped) {
+            lastWaveStampTurn = turns;
+            try {
+              const { maybeAutoCommitOnUlwDone, autoCommitStamp } =
+                await import("../util/git-auto-commit.js");
+              const ac = maybeAutoCommitOnUlwDone({
+                cwd: workspace,
+                sessionId: session.meta.id,
+                permissionMode: config.permissionMode,
+              });
+              session.meta.lastAutoCommit = autoCommitStamp(ac);
+              if (ac.committed) {
+                const line = `Committed ${ac.sha || "HEAD"} — ${ac.subject} (${ac.files ?? 0} file(s), not pushed)`;
+                log.info(chalk.green(line));
+                events.onStatus?.(line);
+                autoCommit = {
+                  committed: ac.committed,
+                  sha: ac.sha,
+                  subject: ac.subject,
+                  skipped: ac.skipped,
+                };
+              }
+            } catch {
+              /* never fail a wave stamp on commit */
+            }
+          }
           if (stamp.admit) {
             session.messages.push({ role: "user", content: stamp.admit });
             saveSession(session);
@@ -1889,6 +1914,32 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
           );
         }
 
+        if (stopResult.ulw?.block && !stopResult.allowStop) {
+          try {
+            const { maybeAutoCommitOnUlwDone, autoCommitStamp } =
+              await import("../util/git-auto-commit.js");
+            const ac = maybeAutoCommitOnUlwDone({
+              cwd: workspace,
+              sessionId: session.meta.id,
+              permissionMode: config.permissionMode,
+            });
+            session.meta.lastAutoCommit = autoCommitStamp(ac);
+            if (ac.committed) {
+              const line = `Committed ${ac.sha || "HEAD"} — ${ac.subject} (${ac.files ?? 0} file(s), not pushed)`;
+              log.info(chalk.green(line));
+              events.onStatus?.(line);
+              autoCommit = {
+                committed: ac.committed,
+                sha: ac.sha,
+                subject: ac.subject,
+                skipped: ac.skipped,
+              };
+            }
+            saveSession(session);
+          } catch {
+            /* never fail a Stop re-anchor on commit */
+          }
+        }
         if (stopResult.allowStop) {
           if (stopResult.systemMessage) log.dim(stopResult.systemMessage);
           if (stopResult.ulw?.lastCycleReleased) {

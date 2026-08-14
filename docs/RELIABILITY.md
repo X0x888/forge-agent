@@ -177,7 +177,7 @@ What experts should expect from Forge in long, unattended, or CI runs.
 | `FORGE_AUTH_RECOVERY_MAX` | `20` | Max mid-run OAuth refresh recoveries per agent loop |
 | `FORGE_PROVIDER_DROP_RECOVERY_MAX` | `5` | Max in-loop retries after a continue-recoverable drop (`terminated`, empty stream, 5xx) with forced OAuth refresh |
 | `FORGE_ULW_AUTO_CONTINUE` | on | `0`/`false` disables ULW auto-resume when a recoverable provider error still escapes the loop |
-| `FORGE_ULW_AUTO_COMMIT` | on | `0`/`false` disables the local git commit created when ULW attests **Cycle complete.** (never pushes). Porcelain parse must not `trimStart` (`src/…` → `rc/…`); one bad path stages the rest |
+| `FORGE_ULW_AUTO_COMMIT` | on | `0`/`false` disables local git commits at each ULW wave close and on **Cycle complete.** (never pushes). Commits the dirty tree minus secrets |
 | `FORGE_ULW_AUTO_CONTINUE_MAX` | `3` | Max transcript-resume attempts after a drop escapes the loop (unattended ULW only) |
 | `FORGE_JSON_COMPACT` | off | Single-line `--json` success payloads (CI log aggregation) |
 | `FORGE_LOG_JSON` | off | Structured JSON logs on stderr |

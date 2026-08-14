@@ -11,9 +11,11 @@ export function openTodos(todos: readonly TodoItem[]): number {
   ).length;
 }
 
-/** First in-progress title, if any. */
+/** First in-progress title, else first pending — HUD should not say `todos:N` with no name. */
 export function activeTodoTitle(todos: readonly TodoItem[]): string | null {
-  const hit = todos.find((t) => t.status === "in_progress");
+  const hit =
+    todos.find((t) => t.status === "in_progress") ??
+    todos.find((t) => t.status === "pending");
   const text = hit?.content?.replace(/\s+/g, " ").trim();
   return text || null;
 }

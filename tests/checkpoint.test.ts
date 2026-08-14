@@ -72,8 +72,11 @@ describe("checkpoint compact", () => {
     const store = estimateTokens(msgs);
     assert.ok(outbound < 80_000, `outbound ${outbound}`);
     assert.ok(store > 1_000_000, `store ${store}`);
-    assert.equal(storeNeedsCheckpoint(msgs.length, outbound), false);
+    // Token size of the pruned request must not force a store compact.
     assert.equal(storeNeedsCheckpoint(800, outbound), false);
+    // 800 tool rounds ≈ 1600 messages — that *is* a store checkpoint now
+    // (threshold 1000; 2500 let a 5h ULW overflow 528k/500k after one compact).
+    assert.equal(storeNeedsCheckpoint(msgs.length, outbound), true);
   });
 
   it("storeNeedsCheckpoint fires on message count / store tokens", () => {
@@ -117,6 +120,7 @@ describe("checkpoint compact", () => {
       assert.ok(result.droppedCount > 0);
       assert.match(result.summary, /Forge checkpoint 1/);
       assert.match(result.summary, /Ship the auth fix/);
+      assert.match(result.summary, /only wave counter/);
       assert.equal(result.messages[0]?.role, "system");
       assert.match(result.messages[1]?.content || "", /checkpoint 1/);
       const tailAsst = result.messages.filter((m) => m.role === "assistant");

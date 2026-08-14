@@ -12,6 +12,7 @@ import {
   evaluateUlwAtStop,
   setMaxWaves,
   MID_WAVE_STAMP_STEPS,
+  isDeclaredWaveClose,
 } from "../src/harness/ulw-cycle.js";
 
 function withHome(fn: () => void): void {
@@ -271,6 +272,43 @@ describe("ULW mid-loop wave stamp", () => {
       const afterStop = loadUlwCycle(sid)!;
       assert.equal(afterStop.wave, 1);
       assert.equal(afterStop.waves?.length, 1);
+      disarmUlwCycle(sid);
+    });
+  });
+
+  it("declared Wave shipped increments even when max_waves is set", () => {
+    withHome(() => {
+      const sid = "sess-declared";
+      fs.mkdirSync(path.join(process.env.FORGE_HOME!, "sessions", sid), {
+        recursive: true,
+      });
+      armUlwCycle(sid, "improve the ui", {
+        cycle: 1,
+        maxWaves: 4,
+        skipCheckpoint: true,
+        editCount: 0,
+      });
+      assert.equal(isDeclaredWaveClose("Wave 2 shipped: todo board"), true);
+      assert.equal(isDeclaredWaveClose("still verifying the unused import"), false);
+      const idle = maybeStampUlwWave({
+        sessionId: sid,
+        editCount: 12,
+        openTodoCount: 0,
+        stepsSinceStamp: 1,
+        lastAssistantMessage: "still wiring",
+      });
+      assert.equal(idle.stamped, false);
+      assert.equal(loadUlwCycle(sid)!.wave, 0);
+      const hit = maybeStampUlwWave({
+        sessionId: sid,
+        editCount: 18,
+        openTodoCount: 0,
+        stepsSinceStamp: 1,
+        lastAssistantMessage: "Wave 1 shipped: scannable todo board",
+      });
+      assert.equal(hit.stamped, true);
+      assert.equal(loadUlwCycle(sid)!.wave, 1);
+      assert.match(hit.admit || "", /harness counter/i);
       disarmUlwCycle(sid);
     });
   });

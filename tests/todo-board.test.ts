@@ -53,7 +53,7 @@ describe("formatHudTodos", () => {
     assert.equal(formatHudTodos(0), null);
   });
 
-  it("shows todos:N when nothing is in progress", () => {
+  it("shows todos:N only when no title is supplied", () => {
     assert.equal(formatHudTodos(2), "todos:2");
   });
 
@@ -68,8 +68,15 @@ describe("formatHudTodos", () => {
 });
 
 describe("activeTodoTitle", () => {
-  it("returns the first in-progress title", () => {
+  it("returns in-progress, else first pending", () => {
     assert.equal(activeTodoTitle(board), "ship it");
-    assert.equal(activeTodoTitle(board.filter((t) => t.status !== "in_progress")), null);
+    assert.equal(
+      activeTodoTitle(board.filter((t) => t.status !== "in_progress")),
+      "review",
+    );
+    assert.equal(
+      activeTodoTitle(board.filter((t) => t.status === "completed")),
+      null,
+    );
   });
 });

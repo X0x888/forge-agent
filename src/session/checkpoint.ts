@@ -26,7 +26,8 @@ function isSyntheticUser(msg: ChatMessage): boolean {
 
 export const DEFAULT_CHECKPOINT_KEEP_STEPS = 3;
 export const DEFAULT_CHECKPOINT_STORE_TOKENS = 1_500_000;
-export const DEFAULT_CHECKPOINT_STORE_MESSAGES = 2_500;
+/** 1000, not 2500: a 5h ULW run hit 2492 then overflowed 528k/500k again. */
+export const DEFAULT_CHECKPOINT_STORE_MESSAGES = 1_000;
 
 export const CHECKPOINT_PREFIX = "[Forge checkpoint ";
 

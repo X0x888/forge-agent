@@ -11,7 +11,7 @@ import type { ChatMessage } from "../providers/types.js";
 import type { GoalState } from "../harness/goal.js";
 import type { UlwCycleState } from "../harness/ulw-cycle.js";
 import type { TodoItem } from "./session.js";
-import { formatUlwCounts } from "../harness/ulw-cycle.js";
+import { formatUlwCounts, formatWaveLedger } from "../harness/ulw-cycle.js";
 import { repairToolCallPairing } from "./message-repair.js";
 import {
   DEFAULT_CHECKPOINT_KEEP_STEPS,
@@ -173,9 +173,12 @@ export function buildStructuredSummary(
           ? `- Expanded mandate: ${expandedRaw}`
           : `- Expanded mandate (head): ${expandedRaw.slice(0, 500)}… [ulw.expandedMandate]`
       : "";
+    const ledger = formatWaveLedger(ulw.waves, 8);
     sections.push(
       `- ULW ON | ${formatUlwCounts(ulw)} ${ulw.cycle === 1 ? "(CONTINUE)" : "(LAST)"}`,
+      `- Harness w=N/M is the only wave counter. Do not invent Wave K. Close a unit with \`Wave shipped.\` / \`Ship landed:\` / \`Cycle complete.\` so the counter can move (ulw.json wins if this card is stale).`,
       `- max_waves: ${ulw.maxWaves != null ? ulw.maxWaves : "off (unlimited)"}`,
+      ledger ? `- Ledger: ${ledger}` : "",
       mandateLine,
       softLine,
       expandedLine,

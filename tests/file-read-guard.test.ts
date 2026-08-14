@@ -98,6 +98,7 @@ describe("tool integration with fileReads", () => {
     );
     assert.equal(ok.isError, undefined);
     assert.match(ok.output, /Edited/);
+    assert.match(ok.output, /\(\d+ lines?\)/);
     assert.equal(fs.readFileSync(path.join(dir, "x.ts"), "utf8"), "export const a = 2;\n");
   });
 

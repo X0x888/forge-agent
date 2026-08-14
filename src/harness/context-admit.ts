@@ -255,6 +255,7 @@ export function renderHarnessAdmission(s: HarnessSnapshot): string {
       s.maxWaves != null
         ? `max_waves=${s.maxWaves} — when wave hits the cap, harness auto-flips to LAST.`
         : `max_waves=off (unlimited).`,
+      `Harness w=N/M is the only wave counter. Do not invent Wave K. Close a unit with Wave shipped. / Ship landed: so w can move.`,
       s.mandate ? `Mandate: ${s.mandate}` : "",
       s.softPrompt
         ? `Soft original prompt — keep discovering real gaps; do not ask what to improve.`

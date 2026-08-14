@@ -297,6 +297,7 @@ export {
   evaluateUlwAtStop,
   summarizeWave,
   maybeStampUlwWave,
+  isDeclaredWaveClose,
   isSoftPrompt,
   isResumeFollowUp,
   expandUlwMandate,

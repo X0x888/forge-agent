@@ -1,14 +1,11 @@
 /**
- * Local auto-commit when an unattended ULW cycle actually finishes.
+ * Local git commits during unattended ULW (wave close + Cycle complete).
  * Never pushes. Kill-switch: FORGE_ULW_AUTO_COMMIT=0.
  */
 import { execFileSync } from "node:child_process";
-import path from "node:path";
 import { isFalsy } from "./bool.js";
 import { nowIso } from "./fs.js";
 import { findGitRoot, parsePorcelainPath } from "../agent/worktree.js";
-import fs from "node:fs";
-import { readFileMutations } from "../session/mutations.js";
 import { activeMemoryRecords } from "../harness/decision-memory.js";
 import {
   formatWaveLedger,
@@ -115,66 +112,17 @@ function shipHint(sessionId: string): string | undefined {
   }
 }
 
-function relKey(root: string, p: string): string {
-  const abs = path.isAbsolute(p) ? p : path.join(root, p);
-  try {
-    return path.relative(root, fs.realpathSync(abs)).replace(/\\/g, "/");
-  } catch {
-    return path.relative(root, path.resolve(root, p)).replace(/\\/g, "/");
-  }
-}
-
-function matchJournalToDirty(
-  journal: string[],
-  dirty: string[],
-  root: string,
-): string[] {
-  if (!journal.length) return dirty;
-  const jKeys = new Set(journal.map((p) => relKey(root, p)));
-  const jBases = journal.map((p) => path.basename(p));
-  const out: string[] = [];
-  const seen = new Set<string>();
-  const push = (p: string) => {
-    if (!p || seen.has(p)) return;
-    seen.add(p);
-    out.push(p);
-  };
-  for (const d of dirty) {
-    const k = relKey(root, d);
-    if (jKeys.has(k) || jKeys.has(d)) {
-      push(d);
-      continue;
-    }
-    const base = path.basename(d.replace(/\/$/, ""));
-    if (
-      jBases.includes(base) &&
-      dirty.filter((x) => path.basename(x.replace(/\/$/, "")) === base)
-        .length === 1
-    ) {
-      push(d);
-      continue;
-    }
-    // `?? src/` (untracked dir, porcelain without -uall) still owns journal files under it.
-    const dNorm = k.replace(/\/$/, "");
-    if (!dNorm) continue;
-    for (const jk of jKeys) {
-      if (jk === dNorm || jk.startsWith(`${dNorm}/`)) push(jk);
-    }
-  }
-  return out;
-}
-
 export function buildAutoCommitBody(
   ulw: Pick<UlwCycleState, "wave" | "maxWaves" | "mandate" | "waves"> | null,
   files: string[],
 ): string {
   const lines: string[] = [
-    "Unattended ULW finished — local commit only (never pushed).",
+    "Unattended ULW snapshot — local commit only (never pushed).",
   ];
   if (ulw) {
     const cap =
       ulw.maxWaves != null && ulw.maxWaves > 0 ? `/${ulw.maxWaves}` : "";
-    lines.push(`Cycle complete (wave ${ulw.wave}${cap}).`);
+    lines.push(`Wave ${ulw.wave}${cap}.`);
     if (ulw.mandate) lines.push(`Mandate: ${ulw.mandate.slice(0, 240)}`);
     const ledger = formatWaveLedger(ulw.waves, 8);
     if (ledger) lines.push(`Waves: ${ledger}`);
@@ -186,21 +134,10 @@ export function buildAutoCommitBody(
   return lines.join("\n");
 }
 
-function journalRelPaths(sessionId: string, root: string): string[] {
-  const seen = new Set<string>();
-  for (const m of readFileMutations(sessionId)) {
-    const abs = path.resolve(m.path);
-    const rel = path.relative(root, abs);
-    if (!rel || rel.startsWith("..") || path.isAbsolute(rel)) continue;
-    seen.add(rel.replace(/\\/g, "/"));
-  }
-  return [...seen];
-}
-
 /**
- * Commit the ULW session's work after **Cycle complete.**
- * Prefers mutation-journal paths; falls back to the dirty tree when the
- * agent edited via bash. Skips secrets. Never push.
+ * Commit the current dirty tree (minus secrets). Call at each wave close
+ * and on Cycle complete so a 5-hour unattended run does not pile one
+ * giant uncommitted chunk. Never pushes.
  */
 export function maybeAutoCommitOnUlwDone(opts: {
   cwd: string;
@@ -227,15 +164,11 @@ export function maybeAutoCommitOnUlwDone(opts: {
   }
   if (!dirty.length) return { committed: false, skipped: "working tree clean" };
 
-  const journal = journalRelPaths(opts.sessionId, root);
-  const candidates = matchJournalToDirty(journal, dirty, root);
-  const toAdd = candidates.filter((p) => !isSensitiveRelPath(p));
+  const toAdd = dirty.filter((p) => !isSensitiveRelPath(p));
   if (!toAdd.length) {
     return {
       committed: false,
-      skipped: candidates.length
-        ? "only sensitive paths remain"
-        : "no session files in the dirty tree",
+      skipped: "only sensitive paths remain",
     };
   }
 

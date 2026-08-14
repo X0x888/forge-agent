@@ -511,12 +511,23 @@ export interface MidWaveStampResult {
   updated?: boolean;
 }
 
+/** Agent closed a work unit in prose — that is a wave, not an idle heartbeat. */
+export function isDeclaredWaveClose(message: string): boolean {
+  const t = message || "";
+  return (
+    /\bCycle complete\b/i.test(t) ||
+    /\bShip landed:/i.test(t) ||
+    /\bWave\s+\d+\s+(LAST\s+)?shipped\b/i.test(t) ||
+    /\bWave\s+\d+\s+LAST\b/i.test(t)
+  );
+}
+
 /**
  * Unattended quality-bar heartbeat. The user-facing wave counter increments
- * only on an idle epoch (`MID_WAVE_STAMP_STEPS` loop turns) so a burst of
- * edits is one wave, not one wave per search_replace. Edit progress updates
- * the open wave in place. Honors `maxWaves` (auto LAST) and never increments
- * while LAST.
+ * on Stop, on a declared ship (`Wave N shipped` / `Ship landed` / `Cycle
+ * complete`), or (uncapped only) on an idle epoch. Edit bursts update the
+ * open wave in place so one search_replace is not one wave. `max_waves`
+ * still auto-LAST. Idle epochs never burn a cap.
  */
 export function maybeStampUlwWave(opts: {
   sessionId: string;
@@ -597,6 +608,50 @@ export function maybeStampUlwWave(opts: {
 
   if (s.judgmentRequired && hasMandateJudgment(opts.sessionId, opts.lastAssistantMessage)) {
     s.judgmentRequired = false;
+  }
+
+  // Declared ship with real progress: this is a work unit. Capped ULW
+  // must count it — otherwise the model invents Wave 3/4 while HUD stays 1/4
+  // for hours (Stop never fires because cycle=1 blocks it).
+  if (
+    isDeclaredWaveClose(opts.lastAssistantMessage || "") &&
+    progressed &&
+    editDelta >= 1
+  ) {
+    if (
+      s.judgmentRequired &&
+      s.wave === 0 &&
+      !hasMandateJudgment(opts.sessionId, opts.lastAssistantMessage)
+    ) {
+      /* still need a reading — fall through */
+    } else {
+      applyDiffFingerprint(s, fp);
+      appendWaveRecord(s, {
+        sessionId: opts.sessionId,
+        ...facts,
+      });
+      s.lastWaveSig = sig;
+      s.lastProgressEditCount = opts.editCount;
+      let flipped = false;
+      if (cap != null && s.wave >= cap) {
+        flipUlwToLast(s, opts.sessionId);
+        flipped = true;
+      }
+      saveUlwCycle(s);
+      const counts = formatUlwCounts(s);
+      return {
+        stamped: true,
+        wave: s.wave,
+        flippedToLast: flipped,
+        admit: flipped
+          ? lastWaveAdmit(cap!, s.wave)
+          : [
+              "[Forge harness — mid-conversation update]",
+              `ULW ${counts} — harness counter moved after a declared ship.`,
+              "This w=N/M is the only wave number. Do not invent Wave K.",
+            ].join("\n"),
+      };
+    }
   }
 
   // Edit progress without an idle epoch: one burst = one wave.
