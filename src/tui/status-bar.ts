@@ -18,7 +18,11 @@ import type { ResolvedAuth } from "../auth/types.js";
 import { describeAuth } from "../auth/resolve.js";
 import { listAccounts } from "../auth/store.js";
 import { loadGoal } from "../harness/goal.js";
-import { loadUlwCycle, formatUlwBadge } from "../harness/ulw-cycle.js";
+import {
+  loadUlwCycle,
+  formatUlwBadge,
+  displayUlwMandate,
+} from "../harness/ulw-cycle.js";
 import { listActiveProjectMemory } from "../harness/project-memory.js";
 import { listActiveSubagents } from "../agent/subagent.js";
 import { peekInterjections } from "../harness/interjection.js";
@@ -1054,7 +1058,7 @@ export function formatSessionDetails(ctx: StatusBarContext): string {
   if (ulw?.enabled) {
     lines.push(
       chalk.dim(
-        `ulw      ${formatUlwBadge(ulw)}  blocks=${ulw.blocks}  ${ulw.mandate.slice(0, 50)}`,
+        `ulw      ${formatUlwBadge(ulw)}  blocks=${ulw.blocks}  ${displayUlwMandate(ulw.mandate).slice(0, 50)}`,
       ),
     );
   }

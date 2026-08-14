@@ -1189,6 +1189,14 @@ it("/fork includes last-turn peek", async () => {
 
     assert.equal(deriveSessionTitle("/status"), undefined);
     assert.equal(deriveSessionTitle("  "), undefined);
+    assert.ok(
+      deriveSessionTitle("Mandate: continue prior mandate\nStart Wave 1 now") !==
+        "continue prior mandate",
+    );
+    assert.ok(
+      deriveSessionTitle("Mandate: (pending work-order)\nStart Wave 1 now") !==
+        "(pending work-order)",
+    );
 
     const long = "word ".repeat(80).trim();
     const cut = deriveSessionTitle(long, 40)!;

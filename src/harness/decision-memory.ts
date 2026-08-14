@@ -109,6 +109,12 @@ export function saveDecisionMemory(store: DecisionMemoryStore): void {
   writeJsonFile(decisionMemoryPath(store.sessionId), store);
 }
 
+/** Wipe session decisions on /clear so leftover-chrome ships do not survive. */
+export function clearDecisionMemory(sessionId: string): void {
+  if (!sessionId) return;
+  saveDecisionMemory(emptyStore(sessionId));
+}
+
 function makeId(prefix: string): string {
   return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
 }

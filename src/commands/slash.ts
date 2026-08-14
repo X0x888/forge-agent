@@ -5356,7 +5356,7 @@ case "/new":
           /* */
         }
         let clearTip = chalk.dim(
-          "  ULW/goal sidecars kept but stuck baselines zeroed. /new for a fresh session id.",
+          "  ULW kept as a pending work-order (next message is the mandate). /new for a fresh session id.",
         );
         try {
           const cwd =

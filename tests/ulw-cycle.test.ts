@@ -689,6 +689,9 @@ describe("ulw cycle", () => {
     assert.equal(s.meta.editCount, 0);
     assert.equal(loadUlwCycle(s.meta.id)?.lastBlockEditCount, 0);
     assert.equal(loadUlwCycle(s.meta.id)?.stuckBlocks, 0);
+    assert.equal(loadUlwCycle(s.meta.id)?.wave, 0);
+    assert.equal(isPlaceholderMandate(loadUlwCycle(s.meta.id)!.mandate), true);
+    assert.equal(loadDecisionMemory(s.meta.id).records.length, 0);
     assert.equal(loadGoal(s.meta.id)?.lastBlockEditCount, 0);
     assert.equal(loadGoal(s.meta.id)?.stuckBlocks, 0);
     // Fresh edits should count as progress again (stuckBlocks stays 0)

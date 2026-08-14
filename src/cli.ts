@@ -125,6 +125,7 @@ import {
   normalizeMaxWaves,
   mandateFromUserText,
   PLACEHOLDER_MANDATE,
+  displayUlwMandate,
 } from "./harness/ulw-cycle.js";
 import { openTodos } from "./agent/todos.js";
 import { formatEffectiveConfig, runDoctorCheck } from "./commands/slash.js";
@@ -650,7 +651,7 @@ Docs: docs/GETTING-STARTED.md · docs/PRODUCTION.md · docs/RELIABILITY.md · do
             const cap =
               state.maxWaves != null ? ` max_waves=${state.maxWaves}` : "";
             log.info(
-              `ULW cycle=1${cap} armed for: ${mandate.slice(0, 80)}`,
+              `ULW cycle=1${cap} armed for: ${displayUlwMandate(mandate).slice(0, 80)}`,
             );
           }
         }

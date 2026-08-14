@@ -49,11 +49,15 @@ import {
 import {
   copyUlwCycle,
   loadUlwCycle,
-  saveUlwCycle,
+  resetUlwOnClear,
+  isPlaceholderMandate,
 } from "../harness/ulw-cycle.js";
 import { listActiveProjectMemory } from "../harness/project-memory.js";
 import { copyGoal, loadGoal, saveGoal } from "../harness/goal.js";
-import { copyDecisionMemory } from "../harness/decision-memory.js";
+import {
+  copyDecisionMemory,
+  clearDecisionMemory,
+} from "../harness/decision-memory.js";
 
 /** Max stored session title length (CLI --title / sessions title / /title). */
 export const MAX_SESSION_TITLE_CHARS = 200;
@@ -1907,7 +1911,13 @@ export function deriveSessionTitle(
     raw.match(/^\s*Mandate:\s*(.+)$/im)?.[1] ||
     raw.match(/^\s*Goal:\s*(.+)$/im)?.[1] ||
     raw.match(/^\s*Objective:\s*(.+)$/im)?.[1];
-  if (mandate) raw = mandate.trim();
+  if (
+    mandate &&
+    !isPlaceholderMandate(mandate) &&
+    !/pending work-order/i.test(mandate)
+  ) {
+    raw = mandate.trim();
+  }
 
   // Drop common harness / protocol boilerplate blocks
   const dropLine =
@@ -3100,15 +3110,16 @@ export function clearConversation(session: SessionData): void {
   } catch {
     /* best-effort */
   }
-  // Reset stuck-wall baselines on harness sidecars. Otherwise lastBlockEditCount
-  // from the old timeline makes editCount=0 look like permanent no-progress.
+  // Reset stuck-wall baselines and the work-order. Otherwise lastBlockEditCount
+  // from the old timeline makes editCount=0 look like permanent no-progress,
+  // and the next typed sentence is steering on leftover chrome.
   try {
-    const ulw = loadUlwCycle(session.meta.id);
-    if (ulw) {
-      ulw.lastBlockEditCount = 0;
-      ulw.stuckBlocks = 0;
-      saveUlwCycle(ulw);
-    }
+    resetUlwOnClear(session.meta.id);
+  } catch {
+    /* best-effort */
+  }
+  try {
+    clearDecisionMemory(session.meta.id);
   } catch {
     /* best-effort */
   }

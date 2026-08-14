@@ -1427,6 +1427,40 @@ export function disarmUlwCycle(sessionId: string): void {
 }
 
 /**
+ * /clear wipes the transcript but used to keep the old mandate + wave
+ * ledger. The next typed sentence was then steering on leftover chrome.
+ * Keep cycle/maxWaves/enabled; the next real work-order is adopted.
+ */
+export function resetUlwOnClear(sessionId: string): UlwCycleState | null {
+  const s = loadUlwCycle(sessionId);
+  if (!s) return null;
+  s.lastBlockEditCount = 0;
+  s.stuckBlocks = 0;
+  s.lastProgressEditCount = undefined;
+  s.lastWaveSig = undefined;
+  s.lastOpenTodoCount = undefined;
+  s.lastDiffFp = undefined;
+  s.seenDiffFps = [];
+  s.wave = 0;
+  s.blocks = 0;
+  s.waves = [];
+  s.thinStreak = 0;
+  s.polishStreak = 0;
+  s.proofDemands = 0;
+  s.evidenceNudges = 0;
+  s.judgmentDemands = 0;
+  if (s.enabled) {
+    s.mandate = PLACEHOLDER_MANDATE;
+    s.expandedMandate = "";
+    s.softPrompt = true;
+    s.backlogRequired = false;
+    s.judgmentRequired = false;
+  }
+  saveUlwCycle(s);
+  return s;
+}
+
+/**
  * Compact counters for HUD / logs: `cycle=1 wave=3 blocks=5` or `wave=3/5` when capped.
  * Wave increments each time the driver re-anchors Stop while cycle=1 (or max-waves LAST).
  */
