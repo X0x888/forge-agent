@@ -621,16 +621,14 @@ Docs: docs/GETTING-STARTED.md · docs/PRODUCTION.md · docs/RELIABILITY.md · do
             editCount: session.meta.editCount,
             ...(maxWaves !== undefined ? { maxWaves } : {}),
           });
-          // Seed backlog todos for broad/soft mandates (parity with /ulw slash).
+          // Seed a board only when the backlog gate is actually on.
           try {
-            const { todosFromMandate, isBroadMandate } = await import(
+            const { todosFromMandate } = await import(
               "./harness/decision-memory.js"
             );
             const { applyTodos, openTodos } = await import("./agent/todos.js");
             if (
-              (state.backlogRequired ||
-                state.softPrompt ||
-                isBroadMandate(mandate)) &&
+              state.backlogRequired &&
               openTodos(session.todos || []) < 2
             ) {
               const seeded = todosFromMandate(mandate, { max: 12 });

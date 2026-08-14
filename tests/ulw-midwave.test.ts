@@ -15,6 +15,7 @@ import {
   isDeclaredWaveClose,
   isPolishClassShip,
 } from "../src/harness/ulw-cycle.js";
+import { appendMemoryRecord } from "../src/harness/decision-memory.js";
 
 function withHome(fn: () => void): void {
   const prev = process.env.FORGE_HOME;
@@ -310,6 +311,36 @@ describe("ULW mid-loop wave stamp", () => {
       assert.equal(hit.stamped, true);
       assert.equal(loadUlwCycle(sid)!.wave, 1);
       assert.match(hit.admit || "", /harness counter/i);
+      disarmUlwCycle(sid);
+    });
+  });
+
+  it("stamps a declared close from memory_write when assistant prose is empty", () => {
+    withHome(() => {
+      const sid = "sess-mem-close";
+      fs.mkdirSync(path.join(process.env.FORGE_HOME!, "sessions", sid), {
+        recursive: true,
+      });
+      armUlwCycle(sid, "improve the ui", {
+        cycle: 1,
+        maxWaves: 4,
+        skipCheckpoint: true,
+        editCount: 0,
+      });
+      appendMemoryRecord(sid, {
+        kind: "decision",
+        source: "agent",
+        text: "Wave 1 shipped: stdin lease so permission asks do not fight the editor.",
+      });
+      const hit = maybeStampUlwWave({
+        sessionId: sid,
+        editCount: 8,
+        openTodoCount: 0,
+        stepsSinceStamp: 1,
+        lastAssistantMessage: "",
+      });
+      assert.equal(hit.stamped, true, "memory_write closer must count");
+      assert.equal(loadUlwCycle(sid)!.wave, 1);
       disarmUlwCycle(sid);
     });
   });

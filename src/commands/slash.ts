@@ -206,7 +206,6 @@ import {
 import {
   appendMemoryRecord,
   formatMemoryStatus,
-  isBroadMandate,
   seedMemoryFromMandate,
   todosFromMandate,
 } from "../harness/decision-memory.js";
@@ -1976,13 +1975,13 @@ export async function handleSlash(
       } catch {
         /* */
       }
-      // Phase 4: seed backlog todos from mandate for broad/soft contracts.
+      // Seed a board only for real multi-section backlogs — not every soft
+      // evaluate-then-improve prompt (that forced a 2-item "execute the board"
+      // grind).
       let todoSeedNote = "";
       try {
         if (
-          (state.backlogRequired ||
-            state.softPrompt ||
-            isBroadMandate(mandate)) &&
+          state.backlogRequired &&
           openTodos(opts.session.todos || []) < 2
         ) {
           const seeded = todosFromMandate(mandate, { max: 12 });
@@ -8071,7 +8070,7 @@ export function formatEffectiveConfig(
       ? `  auto-commit:     ${snap.lastAutoCommit.sha}  ${snap.lastAutoCommit.subject || ""}`.trimEnd()
       : snap.lastAutoCommit?.skipped
         ? `  auto-commit:     skipped (${snap.lastAutoCommit.skipped})`
-        : `  auto-commit:     (none)  · Cycle complete commits locally  FORGE_ULW_AUTO_COMMIT=0 off`,
+        : `  auto-commit:     (none)  · wave close + Cycle complete  FORGE_ULW_AUTO_COMMIT=0 off`,
     `  edit-guard:      file-read=${snap.env.FORGE_FILE_READ_GUARD ? "on" : "off"}` +
       `  verify-hint=${snap.env.FORGE_VERIFY_HINT ? "on" : "off"}` +
       `  (FORGE_FILE_READ_GUARD · FORGE_VERIFY_HINT)`,

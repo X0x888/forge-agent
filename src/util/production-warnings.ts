@@ -256,7 +256,7 @@ export function productionWarningsForRun(
         (v === "0" || v === "false" || v === "off" || v === "no")
       ) {
         warnings.push(
-          "FORGE_ULW_AUTO_COMMIT=0 — ULW **Cycle complete.** will not create a local commit",
+          "FORGE_ULW_AUTO_COMMIT=0 — ULW will not create local commits at wave close or Cycle complete",
         );
       }
     }

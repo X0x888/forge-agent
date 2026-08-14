@@ -536,6 +536,32 @@ function notePolishShip(s: UlwCycleState, message: string): number {
   return s.polishStreak ?? 0;
 }
 
+/**
+ * The model usually closes a unit in memory_write, not assistant prose.
+ * Only count records newer than the last stamped wave so an old
+ * "Wave 1 shipped" cannot re-trigger every edit burst.
+ */
+function closerText(sessionId: string, lastAssistant: string): string {
+  let mem = "";
+  try {
+    const s = loadUlwCycle(sessionId);
+    const since = s?.waves?.length ? s.waves[s.waves.length - 1]!.ts : "";
+    const recs = activeMemoryRecords(sessionId);
+    for (let i = recs.length - 1; i >= 0; i--) {
+      const r = recs[i]!;
+      if (r.source !== "agent") continue;
+      if (since && r.at <= since) break;
+      if (isDeclaredWaveClose(r.text) || isPolishClassShip(r.text)) {
+        mem = r.text;
+        break;
+      }
+    }
+  } catch {
+    /* memory is best-effort */
+  }
+  return [lastAssistant, mem].filter((t) => t && t.trim()).join("\n");
+}
+
 function polishAdmit(streak: number): string {
   return [
     `Last ${streak} ships are the same polish class (clip / one-line chrome / leftover dump).`,
@@ -620,13 +646,16 @@ export function maybeStampUlwWave(opts: {
       : editDelta > 0
         ? "new"
         : "none";
-  const proof = detectWaveProof(
+  const closer = closerText(
+    opts.sessionId,
     opts.lastAssistantMessage || "",
+  );
+  const proof = detectWaveProof(
+    closer,
     opts.verificationPassed ?? opts.verificationRan,
   );
   const summary =
-    summarizeWave(opts.lastAssistantMessage || "", opts.sessionId) ||
-    "(mid-loop epoch)";
+    summarizeWave(closer, opts.sessionId) || "(mid-loop epoch)";
   const facts = { editDelta, proof, todoProgress, netDiff, summary };
 
   // LAST: update the open wave's facts, never increment the counter.
@@ -647,14 +676,14 @@ export function maybeStampUlwWave(opts: {
   // must count it — otherwise the model invents Wave 3/4 while HUD stays 1/4
   // for hours (Stop never fires because cycle=1 blocks it).
   if (
-    isDeclaredWaveClose(opts.lastAssistantMessage || "") &&
+    isDeclaredWaveClose(closer) &&
     progressed &&
     editDelta >= 1
   ) {
     if (
       s.judgmentRequired &&
       s.wave === 0 &&
-      !hasMandateJudgment(opts.sessionId, opts.lastAssistantMessage)
+      !hasMandateJudgment(opts.sessionId, closer)
     ) {
       /* still need a reading — fall through */
     } else {
@@ -665,7 +694,7 @@ export function maybeStampUlwWave(opts: {
       });
       s.lastWaveSig = sig;
       s.lastProgressEditCount = opts.editCount;
-      const polish = notePolishShip(s, opts.lastAssistantMessage || "");
+      const polish = notePolishShip(s, closer);
       let flipped = false;
       let polishLast = false;
       if (cap != null && s.wave >= cap) {
