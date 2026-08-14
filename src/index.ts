@@ -307,6 +307,8 @@ export {
   mandateFromUserText,
   PLACEHOLDER_MANDATE,
   adoptUlwMandate,
+  maybeAdoptMandateFromUserTexts,
+  reenableUlwCycle,
   expandUlwMandate,
   formatUlwStatus,
   formatUlwCounts,

@@ -17,6 +17,8 @@ import {
   mandateFromUserText,
   PLACEHOLDER_MANDATE,
   adoptUlwMandate,
+  maybeAdoptMandateFromUserTexts,
+  reenableUlwCycle,
   expandUlwMandate,
   loadUlwCycle,
   copyUlwCycle,
@@ -147,6 +149,48 @@ describe("ulw cycle", () => {
       "comprehensively evaluate this tool and then improve the ui.",
     );
     assert.equal(stay!.mandate, "improve the codebase");
+  });
+
+  it("adopts a placeholder mandate from a mid-run interjection", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-ulw-ij-"));
+    process.env.FORGE_HOME = tmp;
+    const sid = "ulw-ij-adopt";
+    armUlwCycle(sid, PLACEHOLDER_MANDATE, {
+      cycle: 1,
+      skipCheckpoint: true,
+    });
+    const skip = maybeAdoptMandateFromUserTexts(sid, [
+      "thanks",
+      "what do you think about the footer?",
+    ]);
+    assert.equal(skip!.mandate, PLACEHOLDER_MANDATE);
+    const next = maybeAdoptMandateFromUserTexts(sid, [
+      "ok",
+      "comprehensively evaluate this tool and then improve the ui.",
+    ]);
+    assert.match(next!.mandate, /evaluate this tool/);
+    assert.equal(next!.judgmentRequired, true);
+  });
+
+  it("re-enables a stuck-wall sidecar instead of naming the mandate continue", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-ulw-revive-"));
+    process.env.FORGE_HOME = tmp;
+    const sid = "ulw-revive";
+    armUlwCycle(
+      sid,
+      "comprehensively evaluate this tool and then improve the ui.",
+      { cycle: 1, skipCheckpoint: true },
+    );
+    disarmUlwCycle(sid);
+    assert.equal(loadUlwCycle(sid)?.enabled, false);
+    assert.equal(reenableUlwCycle(sid)?.enabled, true);
+    assert.match(loadUlwCycle(sid)!.mandate, /evaluate this tool/);
+    armUlwCycle(sid + "-ph", PLACEHOLDER_MANDATE, {
+      cycle: 1,
+      skipCheckpoint: true,
+    });
+    disarmUlwCycle(sid + "-ph");
+    assert.equal(reenableUlwCycle(sid + "-ph"), null);
   });
 
   it("judgment gate blocks wave-0 Stop until a Reading exists, then releases", () => {

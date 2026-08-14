@@ -1274,6 +1274,41 @@ export function adoptUlwMandate(
   return s;
 }
 
+/**
+ * Mid-run interjections are steering unless the armed mandate is still the
+ * auto-arm placeholder — then the first real work-order IS the mandate.
+ */
+export function maybeAdoptMandateFromUserTexts(
+  sessionId: string,
+  texts: string[],
+  opts?: { cwd?: string },
+): UlwCycleState | null {
+  const s = loadUlwCycle(sessionId);
+  if (!s?.enabled || !isPlaceholderMandate(s.mandate)) return s;
+  for (const t of texts) {
+    if (isArmableMandate(t)) {
+      return adoptUlwMandate(sessionId, t, opts) || s;
+    }
+  }
+  return s;
+}
+
+/**
+ * Stuck-wall / /ulw-off leave a disabled sidecar. "continue" must resume that
+ * mandate, not re-arm a new cycle named "continue".
+ */
+export function reenableUlwCycle(sessionId: string): UlwCycleState | null {
+  const s = loadUlwCycle(sessionId);
+  if (!s) return null;
+  if (s.enabled) return s;
+  if (isPlaceholderMandate(s.mandate)) return null;
+  s.enabled = true;
+  s.cycle = 1;
+  s.stuckBlocks = 0;
+  saveUlwCycle(s);
+  return s;
+}
+
 export function setCycleFlag(sessionId: string, cycle: CycleFlag): UlwCycleState | null {
   const s = loadUlwCycle(sessionId);
   if (!s || !s.enabled) {

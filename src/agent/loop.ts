@@ -47,8 +47,11 @@ import {
   loadUlwCycle,
   armUlwCycle,
   adoptUlwMandate,
+  maybeAdoptMandateFromUserTexts,
+  reenableUlwCycle,
   isPlaceholderMandate,
   isArmableMandate,
+  isResumeFollowUp,
   maybeFlipUlwToLastOnSafetyValve,
   ulwKickoffMessage,
   formatUlwCounts,
@@ -596,15 +599,23 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
   ) {
     let ulw = loadUlwCycle(session.meta.id);
     if (!ulw?.enabled) {
-      ulw = armUlwCycle(session.meta.id, userMessage, {
-        cycle: 1,
-        editCount: session.meta.editCount,
-        cwd: workspace,
-      });
-      log.info(
-        `ULW cycle armed (cycle=1)${ulw.softPrompt ? " — soft prompt expanded to god-scope" : ""}`,
-      );
-      effectiveUserMessage = ulwKickoffMessage(ulw);
+      if (isResumeFollowUp(userMessage)) {
+        const revived = reenableUlwCycle(session.meta.id);
+        if (revived) {
+          ulw = revived;
+          log.info("ULW cycle re-enabled on resume follow-up");
+        }
+      } else if (isArmableMandate(userMessage)) {
+        ulw = armUlwCycle(session.meta.id, userMessage, {
+          cycle: 1,
+          editCount: session.meta.editCount,
+          cwd: workspace,
+        });
+        log.info(
+          `ULW cycle armed (cycle=1)${ulw.softPrompt ? " — soft prompt expanded to god-scope" : ""}`,
+        );
+        effectiveUserMessage = ulwKickoffMessage(ulw);
+      }
     } else if (
       isPlaceholderMandate(ulw.mandate) &&
       isArmableMandate(userMessage)
@@ -2607,6 +2618,9 @@ function drainSafeBoundaryMessages(
       for (const t of interjections) {
         maybeRecordUserConstraint(session.meta.id, t, waveForMem);
       }
+      maybeAdoptMandateFromUserTexts(session.meta.id, interjections, {
+        cwd: config.workspace || session.meta.cwd,
+      });
     } catch {
       /* */
     }
