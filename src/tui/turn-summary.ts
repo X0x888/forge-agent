@@ -83,3 +83,60 @@ export function formatTurnChangeSummaryForSession(
     preferred,
   );
 }
+
+/** Inputs for the dim why-this-run-stopped closer (REPL + non-JSON forge run). */
+export interface RunStopReasonInput {
+  hitCostCap?: boolean;
+  hitMaxTurns?: boolean;
+  releasedOnContinueCap?: boolean;
+  aborted?: boolean;
+  stopContinues?: number;
+  lastErrorCode?: string | null;
+}
+
+/**
+ * One dim line when a run did not stop cleanly. Silent on a normal Stop
+ * so the Δ closer stays the last chrome. Shared by REPL and `forge run`.
+ */
+export function formatRunStopReason(input: RunStopReasonInput): string | null {
+  if (input.aborted) {
+    return "  stop: aborted — /retry or forge run --continue";
+  }
+  if (input.hitCostCap) {
+    return "  stop: cost cap — raise /budget · --max-cost · FORGE_MAX_COST_USD";
+  }
+  if (input.hitMaxTurns) {
+    return "  stop: max turns — raise max_turns or continue with a follow-up";
+  }
+  if (input.releasedOnContinueCap) {
+    const n = input.stopContinues;
+    const count =
+      typeof n === "number" && Number.isFinite(n) && n > 0
+        ? ` after ${n} harness continue${n === 1 ? "" : "s"}`
+        : "";
+    return `  stop: continue-cap${count} — narrow the task or raise FORGE_ULW_MAX_CONTINUES`;
+  }
+  const code = String(input.lastErrorCode || "").trim();
+  if (code === "handoff_released") {
+    return "  stop: handoff-guard — finish the work instead of asking to continue";
+  }
+  if (code === "proof_claim_released") {
+    return "  stop: proof-claim — run a check before claiming done";
+  }
+  if (code === "max_cost") {
+    return "  stop: cost cap — raise /budget · --max-cost · FORGE_MAX_COST_USD";
+  }
+  if (code === "max_turns") {
+    return "  stop: max turns — raise max_turns or continue with a follow-up";
+  }
+  if (code.startsWith("continue_cap")) {
+    return "  stop: continue-cap — narrow the task or raise FORGE_ULW_MAX_CONTINUES";
+  }
+  if (code === "max_run_ms") {
+    return "  stop: wall-clock — raise FORGE_MAX_RUN_MS or narrow the task";
+  }
+  if (code === "empty_run") {
+    return "  stop: empty run — forge doctor · forge auth · check model id";
+  }
+  return null;
+}

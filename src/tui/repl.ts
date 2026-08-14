@@ -36,7 +36,10 @@ import {
   formatVerboseToolEndTranscript,
 } from "./tool-transcript.js";
 import { postureHead, postureWarnings } from "./posture.js";
-import { formatTurnChangeSummaryForSession } from "./turn-summary.js";
+import {
+  formatRunStopReason,
+  formatTurnChangeSummaryForSession,
+} from "./turn-summary.js";
 import {
   createMarkdownRenderer,
   type MarkdownRenderer,
@@ -783,15 +786,16 @@ export async function runRepl(opts: {
       if (result.aborted) {
         console.log(chalk.yellow(ABORT_RECOVERY));
       }
-      if (result.releasedOnContinueCap) {
-        log.dim(
-          `Released on continue-cap after ${result.stopContinues} harness continue(s)`,
-        );
-      }
-      if (result.hitMaxTurns) {
-        log.dim(
-          `Hit maxTurns — raise max_turns or continue with a follow-up prompt`,
-        );
+      {
+        const stop = formatRunStopReason({
+          hitCostCap: result.hitCostCap,
+          hitMaxTurns: result.hitMaxTurns,
+          releasedOnContinueCap: result.releasedOnContinueCap,
+          aborted: result.aborted,
+          stopContinues: result.stopContinues,
+          lastErrorCode: session.meta.lastError?.code,
+        });
+        if (stop && !result.aborted) log.dim(stop);
       }
 
       // Refresh plan occasionally after turns (uses 60s cache — cheap)

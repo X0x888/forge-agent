@@ -114,7 +114,10 @@ import {
 import { loadSavedAllows } from "./agent/permission-saved.js";
 import { runAgentLoopThroughDrops } from "./agent/loop.js";
 import { runRepl } from "./tui/repl.js";
-import { formatTurnChangeSummaryForSession } from "./tui/turn-summary.js";
+import {
+  formatRunStopReason,
+  formatTurnChangeSummaryForSession,
+} from "./tui/turn-summary.js";
 import { forgeHome, ensureDir, inspectSecureFile } from "./util/fs.js";
 import { log, setLogLevel } from "./util/log.js";
 import { mergeRunOpts } from "./util/merge-run-opts.js";
@@ -6582,6 +6585,21 @@ async function runHeadless(opts: {
         saveSession(opts.session);
       } catch {
         /* */
+      }
+    }
+    if (!opts.json) {
+      try {
+        const stop = formatRunStopReason({
+          hitCostCap: result.hitCostCap,
+          hitMaxTurns: result.hitMaxTurns,
+          releasedOnContinueCap: result.releasedOnContinueCap,
+          aborted: result.aborted,
+          stopContinues: result.stopContinues,
+          lastErrorCode: opts.session.meta.lastError?.code,
+        });
+        if (stop) process.stdout.write(`${chalk.dim(stop)}\n`);
+      } catch {
+        /* stop reason is best-effort — never block headless exit */
       }
     }
     const payload = {

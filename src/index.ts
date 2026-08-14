@@ -537,6 +537,7 @@ export {
 export {
   formatTurnChangeSummary,
   formatTurnChangeSummaryForSession,
+  formatRunStopReason,
 } from "./tui/turn-summary.js";
 export {
   shouldOfferLoginPicker,

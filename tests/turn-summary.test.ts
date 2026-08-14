@@ -6,6 +6,7 @@ import path from "node:path";
 import {
   formatTurnChangeSummary,
   formatTurnChangeSummaryForSession,
+  formatRunStopReason,
 } from "../src/tui/turn-summary.js";
 import { visibleWidth } from "../src/util/format.js";
 import {
@@ -180,4 +181,46 @@ test("turn summary: session shim only includes edits after turnAtStart", () => {
     else process.env.FORGE_HOME = prevHome;
     fs.rmSync(tmp, { recursive: true, force: true });
   }
+});
+
+test("run stop reason: silent on a clean Stop", () => {
+  assert.equal(formatRunStopReason({}), null);
+  assert.equal(formatRunStopReason({ stopContinues: 2 }), null);
+});
+
+test("run stop reason: cost / turns / continue-cap / empty / abort", () => {
+  assert.match(formatRunStopReason({ hitCostCap: true }) ?? "", /cost cap/);
+  assert.match(formatRunStopReason({ hitMaxTurns: true }) ?? "", /max turns/);
+  assert.match(
+    formatRunStopReason({ releasedOnContinueCap: true, stopContinues: 3 }) ?? "",
+    /continue-cap after 3 harness continues/,
+  );
+  assert.match(
+    formatRunStopReason({ lastErrorCode: "empty_run" }) ?? "",
+    /empty run/,
+  );
+  assert.match(formatRunStopReason({ aborted: true }) ?? "", /aborted/);
+  assert.match(
+    formatRunStopReason({ lastErrorCode: "handoff_released" }) ?? "",
+    /handoff-guard/,
+  );
+  // Flags win over lastError
+  assert.match(
+    formatRunStopReason({
+      hitCostCap: true,
+      lastErrorCode: "handoff_released",
+    }) ?? "",
+    /cost cap/,
+  );
+});
+
+test("run stop reason: forge run prints the shared closer after empty_run stamp", () => {
+  const src = fs.readFileSync(
+    path.join(process.cwd(), "src/cli.ts"),
+    "utf8",
+  );
+  const emptyStamp = src.indexOf('code: "empty_run"');
+  const print = src.indexOf("formatRunStopReason({");
+  assert.ok(emptyStamp > 0, "empty_run stamp missing");
+  assert.ok(print > emptyStamp, "stop closer must print after empty_run stamp");
 });
