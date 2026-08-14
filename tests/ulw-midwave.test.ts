@@ -7,6 +7,7 @@ import {
   armUlwCycle,
   disarmUlwCycle,
   loadUlwCycle,
+  saveUlwCycle,
   maybeStampUlwWave,
   evaluateUlwAtStop,
   setMaxWaves,
@@ -195,6 +196,40 @@ describe("ULW mid-loop wave stamp", () => {
       });
       assert.equal(stamp.stamped, false);
       assert.equal(loadUlwCycle(sid)!.wave, 3);
+      disarmUlwCycle(sid);
+    });
+  });
+
+  it("mid-loop edits do not poison Stop netDiff to none", () => {
+    withHome(() => {
+      const sid = "sess-mid-net";
+      fs.mkdirSync(path.join(process.env.FORGE_HOME!, "sessions", sid), {
+        recursive: true,
+      });
+      const s0 = armUlwCycle(sid, "Ship the feature.", {
+        cycle: 1,
+        skipCheckpoint: true,
+        editCount: 0,
+      });
+      s0.lastDiffFp = "fp-clean";
+      saveUlwCycle(s0);
+      maybeStampUlwWave({
+        sessionId: sid,
+        editCount: 10,
+        openTodoCount: 0,
+        stepsSinceStamp: 1,
+      });
+      assert.equal(loadUlwCycle(sid)!.lastDiffFp, "fp-clean");
+      evaluateUlwAtStop({
+        sessionId: sid,
+        lastAssistantMessage: "shipped",
+        editCount: 10,
+        openTodoCount: 0,
+        stuckThreshold: 5,
+        diffFingerprint: "fp-dirty",
+      });
+      const w1 = loadUlwCycle(sid)!.waves![0]!;
+      assert.equal(w1.netDiff, "new");
       disarmUlwCycle(sid);
     });
   });

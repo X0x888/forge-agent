@@ -60,6 +60,15 @@ describe("ULW auto-commit", () => {
     assert.match(s, /evaluate/i);
   });
 
+  it("prefers a Ship landed hint over the raw mandate", () => {
+    const s = buildAutoCommitSubject(
+      "comprehensively evaluate this tool and then improve the ui and ux of it.",
+      "Ship landed: idle footer unverified check tip is next <cmd>, not a fake pass.",
+    );
+    assert.match(s, /idle footer/i);
+    assert.doesNotMatch(s, /comprehensively evaluate/i);
+  });
+
   it("defaults on and honors FORGE_ULW_AUTO_COMMIT=0", () => {
     delete process.env.FORGE_ULW_AUTO_COMMIT;
     assert.equal(ulwAutoCommitEnabled(), true);

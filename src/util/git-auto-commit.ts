@@ -7,7 +7,9 @@ import path from "node:path";
 import { isFalsy } from "./bool.js";
 import { nowIso } from "./fs.js";
 import { findGitRoot, parsePorcelainPath } from "../agent/worktree.js";
+import fs from "node:fs";
 import { readFileMutations } from "../session/mutations.js";
+import { activeMemoryRecords } from "../harness/decision-memory.js";
 import {
   formatWaveLedger,
   loadUlwCycle,
@@ -55,11 +57,66 @@ export function isSensitiveRelPath(rel: string): boolean {
   return SENSITIVE_RE.test(norm);
 }
 
-export function buildAutoCommitSubject(mandate: string): string {
-  let t = mandate.replace(/\s+/g, " ").trim();
+export function buildAutoCommitSubject(mandate: string, hint?: string): string {
+  let t = (hint || mandate || "").replace(/\s+/g, " ").trim();
   t = t.replace(/^["']|["']$/g, "");
+  t = t.replace(/^\*{0,2}Reading:\*{0,2}\s*/i, "");
+  t = t.replace(/^Ship landed:\s*/i, "");
+  t = t.replace(/^Correction:\s*/i, "");
   if (t.length > 68) t = `${t.slice(0, 67)}…`;
   return t || "ULW cycle complete";
+}
+
+function shipHint(sessionId: string): string | undefined {
+  try {
+    const recs = activeMemoryRecords(sessionId);
+    const hit = [...recs]
+      .reverse()
+      .find(
+        (r) =>
+          r.source === "agent" &&
+          (r.kind === "decision" || r.kind === "observation") &&
+          /^(Ship landed|Ship:)/i.test(r.text),
+      );
+    return hit?.text;
+  } catch {
+    return undefined;
+  }
+}
+
+function relKey(root: string, p: string): string {
+  const abs = path.isAbsolute(p) ? p : path.join(root, p);
+  try {
+    return path.relative(root, fs.realpathSync(abs)).replace(/\\/g, "/");
+  } catch {
+    return path.relative(root, path.resolve(root, p)).replace(/\\/g, "/");
+  }
+}
+
+function matchJournalToDirty(
+  journal: string[],
+  dirty: string[],
+  root: string,
+): string[] {
+  if (!journal.length) return dirty;
+  const jKeys = new Set(journal.map((p) => relKey(root, p)));
+  const jBases = journal.map((p) => path.basename(p));
+  const out: string[] = [];
+  for (const d of dirty) {
+    const k = relKey(root, d);
+    if (jKeys.has(k) || jKeys.has(d)) {
+      out.push(d);
+      continue;
+    }
+    const base = path.basename(d);
+    if (
+      jBases.includes(base) &&
+      dirty.filter((x) => path.basename(x) === base).length === 1
+    ) {
+      out.push(d);
+    }
+  }
+  return out;
 }
 
 export function buildAutoCommitBody(
@@ -126,9 +183,7 @@ export function maybeAutoCommitOnUlwDone(opts: {
   if (!dirty.length) return { committed: false, skipped: "working tree clean" };
 
   const journal = journalRelPaths(opts.sessionId, root);
-  const candidates = journal.length
-    ? dirty.filter((p) => journal.includes(p))
-    : dirty;
+  const candidates = matchJournalToDirty(journal, dirty, root);
   const toAdd = candidates.filter((p) => !isSensitiveRelPath(p));
   if (!toAdd.length) {
     return {
@@ -149,7 +204,10 @@ export function maybeAutoCommitOnUlwDone(opts: {
   }
 
   const ulw = loadUlwCycle(opts.sessionId);
-  const subject = buildAutoCommitSubject(ulw?.mandate || "ULW cycle complete");
+  const subject = buildAutoCommitSubject(
+    ulw?.mandate || "ULW cycle complete",
+    shipHint(opts.sessionId),
+  );
   const body = buildAutoCommitBody(ulw, toAdd);
   try {
     git(["commit", "-m", subject, "-m", body], root, 60_000);

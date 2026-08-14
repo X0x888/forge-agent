@@ -497,13 +497,12 @@ export function maybeStampUlwWave(opts: {
       fp = null;
     }
   }
-  const { diffChanged, diffRevisit, firstObservation } = applyDiffFingerprint(
-    s,
-    fp,
-  );
+  // Do NOT applyDiffFingerprint here — that would advance lastDiffFp on
+  // every edit burst and make the next Stop see net=none (wave 1 +10e none).
+  const treeMoved = Boolean(fp && s.lastDiffFp && fp !== s.lastDiffFp);
   const baseline = s.lastProgressEditCount ?? s.lastBlockEditCount;
   const editDelta = Math.max(0, opts.editCount - baseline);
-  const progressed = opts.editCount > baseline || diffChanged;
+  const progressed = opts.editCount > baseline || treeMoved;
   const idleDue = opts.stepsSinceStamp >= MID_WAVE_STAMP_STEPS;
   if (!progressed && !idleDue) return { stamped: false };
   const sig = waveProgressSig(opts.editCount, fp);
@@ -514,13 +513,15 @@ export function maybeStampUlwWave(opts: {
     s.lastOpenTodoCount != null ? s.lastOpenTodoCount : opts.openTodoCount;
   const todoProgress = Math.max(0, prevOpen - opts.openTodoCount);
   s.lastOpenTodoCount = opts.openTodoCount;
-  const netDiff = classifyNetDiff(
-    fp,
-    diffChanged,
-    diffRevisit,
-    firstObservation,
-    editDelta,
-  );
+  const netDiff: UlwWaveRecord["netDiff"] = !fp
+    ? undefined
+    : treeMoved
+      ? (s.seenDiffFps ?? []).includes(fp)
+        ? "revisit"
+        : "new"
+      : editDelta > 0
+        ? "new"
+        : "none";
   const proof = detectWaveProof(
     opts.lastAssistantMessage || "",
     opts.verificationPassed ?? opts.verificationRan,
@@ -586,6 +587,7 @@ export function maybeStampUlwWave(opts: {
     };
   }
 
+  applyDiffFingerprint(s, fp);
   appendWaveRecord(s, {
     sessionId: opts.sessionId,
     ...facts,

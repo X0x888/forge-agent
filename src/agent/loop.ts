@@ -658,7 +658,7 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
   }
 
   // Admit initial harness snapshot (ULW/goal/todos/git) once at prompt start
-  admitHarnessState(session, config, { git: gitSnap });
+  admitHarnessState(session, config);
 
   saveSession(session);
 
@@ -817,7 +817,7 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
       parts.push(`Goal still ACTIVE: ${goalNow.objective}`);
     }
     session.messages.push({ role: "user", content: parts.join("\n") });
-    admitHarnessState(session, config, { git: gitSnap });
+    admitHarnessState(session, config);
     saveSession(session);
   };
 
@@ -1048,7 +1048,7 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
       }
 
       // Safe provider-turn boundary: admit harness deltas, live slash, free-text
-      drainSafeBoundaryMessages(session, config, events, gitSnap, fileReads);
+      drainSafeBoundaryMessages(session, config, events, fileReads);
       maybeAdmitSelfHealReminder(session);
 
       // Soft todo nudge under ULW/goal (does not block)
@@ -2053,7 +2053,6 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
         // admitted without emitting a second redundant harness message.
         admitHarnessState(session, config, {
           suppressCounterOnly: true,
-          git: gitSnap,
         });
         saveSession(session);
         events.onPhase?.("thinking");
@@ -2447,12 +2446,16 @@ function admitHarnessState(
   config: ForgeConfig,
   opts?: { suppressCounterOnly?: boolean; git?: GitSnapshot | null },
 ): void {
+  const git =
+    opts && "git" in opts
+      ? opts.git
+      : getGitSnapshot(config.workspace || session.meta.cwd || process.cwd());
   const snap = snapshotHarness({
     ulw: loadUlwCycle(session.meta.id),
     goal: loadGoal(session.meta.id),
     todos: session.todos,
     permissionMode: config.permissionMode,
-    git: opts?.git,
+    git,
     sessionId: session.meta.id,
   });
   const msg = admitHarnessIfChanged(session.meta.id, snap, {
@@ -2500,7 +2503,6 @@ function drainSafeBoundaryMessages(
   session: SessionData,
   config: ForgeConfig,
   events?: LoopEvents,
-  git?: GitSnapshot | null,
   fileReads?: FileReadState,
 ): void {
   const liveNotices = drainLiveNotices(session.meta.id);
@@ -2579,7 +2581,7 @@ function drainSafeBoundaryMessages(
   // blocks, todo counts) is already visible to the model via re-anchors and
   // its own todo_write calls — only real changes (cycle/mandate/goal/mode)
   // earn a fresh admission message.
-  admitHarnessState(session, config, { suppressCounterOnly: true, git });
+  admitHarnessState(session, config, { suppressCounterOnly: true });
   saveSession(session);
 }
 
