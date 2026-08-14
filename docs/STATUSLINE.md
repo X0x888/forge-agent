@@ -23,7 +23,7 @@ While the agent works (native live chrome — not idle-only):
 │ controls: /cycle 0 last · /cycle 1 continue · /ulw-off · /budget · /done · /notify · /status
 │ type at the live › line below while the agent works
 └──────────────────────────────────────────────────────────
-⠋ ⚒ thinking… 12s xai/grok-4.5 high c=1 /cycle 0
+⠋ ⚒ thinking… 12s xai/grok-4.5 high c=1 w=0/2 last=/cycle 0
 [ULW c=1] live › _
   ▸ bash command=npm test
   ✓ bash  842ms  1.2KB
@@ -64,7 +64,7 @@ HUD/`forge status` project labels append detected **package manager** + cheapest
 | **Prompt strip** | Only when the dock is off (`FORGE_BOTTOM_STATUS=0` / non-TTY) | Model, context bar, tokens, **plan quota**, todos, `bg:N`, liveness (deduped) |
 | **Prompt flags** | Idle input | `ULW`, `c=1/0`, `GOAL`, `PLAN`/`YOLO`/`auto`, `VERBOSE`, `bg:N` |
 | **Live run header** | Start of every agent turn | Model, effort, ULW/GOAL, control legend, `live ›` affordance |
-| **Busy status line** | Mid-turn (stderr) | Spinner + phase + model + effort + ULW + `/cycle 0` hint |
+| **Busy status line** | Mid-turn (stderr) | Spinner + phase + model + effort + ULW `c=1 w=N/M` + `last=/cycle 0` hint |
 | **Stream ticks** | While tokens stream | Newline status every ~10s (no `\r` garble) |
 | **`live ›` prompt** | Entire busy turn | Always-open control line; re-shown after tools / harness / slash |
 | **Live control ACK** | After mid-run `/cycle` etc. | Clear `live ✓ applied` box + re-prompt |

@@ -11,6 +11,7 @@ import {
   setMaxWaves,
   evaluateUlwAtStop,
   isSoftPrompt,
+  isResumeFollowUp,
   expandUlwMandate,
   loadUlwCycle,
   copyUlwCycle,
@@ -43,6 +44,18 @@ describe("ulw cycle", () => {
       isSoftPrompt("add a /health endpoint and make npm test pass"),
       false,
     );
+    assert.equal(isSoftPrompt("continue"), false);
+    assert.equal(isSoftPrompt("keep going"), false);
+  });
+
+  it("detects resume follow-ups that must not replace the mandate", () => {
+    assert.equal(isResumeFollowUp("continue"), true);
+    assert.equal(isResumeFollowUp("Continue."), true);
+    assert.equal(isResumeFollowUp("keep going"), true);
+    assert.equal(isResumeFollowUp("resume"), true);
+    assert.equal(isResumeFollowUp("ok"), true);
+    assert.equal(isResumeFollowUp("improve the code"), false);
+    assert.equal(isResumeFollowUp("continue the auth refactor"), false);
   });
 
   it("expands soft mandates to smart god-mode (subagents + anti-thrash)", () => {

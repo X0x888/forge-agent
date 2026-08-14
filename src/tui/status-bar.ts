@@ -367,7 +367,7 @@ export function renderBusyStatusLine(
   }
   if (act.bgRunning > 0) bits.push(chalk.yellow(`bg:${act.bgRunning}`));
   if (ulw?.enabled && ulw.cycle === 1) {
-    bits.push(chalk.dim("/cycle 0"));
+    bits.push(chalk.dim("last=/cycle 0"));
   }
 
   return bits.filter(Boolean).join(" ");
@@ -437,7 +437,7 @@ export function buildLivePrompt(
   // Right side: explicit control affordance so it cannot be missed
   const hint =
     ulw?.enabled && ulw.cycle === 1
-      ? chalk.dim(" /cycle 0")
+      ? chalk.dim(" last=/cycle 0")
       : chalk.dim(" /status");
 
   return (

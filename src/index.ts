@@ -297,6 +297,7 @@ export {
   evaluateUlwAtStop,
   maybeStampUlwWave,
   isSoftPrompt,
+  isResumeFollowUp,
   expandUlwMandate,
   formatUlwStatus,
   formatUlwCounts,

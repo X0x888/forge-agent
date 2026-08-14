@@ -9,6 +9,7 @@ import {
   loadUlwCycle,
   maybeStampUlwWave,
   evaluateUlwAtStop,
+  setMaxWaves,
   MID_WAVE_STAMP_STEPS,
 } from "../src/harness/ulw-cycle.js";
 
@@ -58,7 +59,7 @@ describe("ULW mid-loop wave stamp", () => {
     });
   });
 
-  it("stamps on edit progress without Stop", () => {
+  it("edit progress updates tracking without incrementing the wave counter", () => {
     withHome(() => {
       const sid = "sess-mid-2";
       fs.mkdirSync(path.join(process.env.FORGE_HOME!, "sessions", sid), {
@@ -75,14 +76,130 @@ describe("ULW mid-loop wave stamp", () => {
         openTodoCount: 0,
         stepsSinceStamp: 1,
       });
-      assert.equal(hit.stamped, true);
+      assert.equal(hit.stamped, false);
+      assert.equal(hit.updated, true);
       const s = loadUlwCycle(sid)!;
-      assert.equal(s.waves![0]!.editDelta, 3);
+      assert.equal(s.wave, 0, "a burst of edits is not a new wave");
+      assert.equal(s.cycle, 1);
+      assert.equal(s.lastProgressEditCount, 5);
       disarmUlwCycle(sid);
     });
   });
 
-  it("Stop does not double-increment after a mid-loop stamp of the same sig", () => {
+  it("five edit bursts with max_waves=2 stay on wave 0 CONTINUE", () => {
+    withHome(() => {
+      const sid = "sess-mid-cap-edits";
+      fs.mkdirSync(path.join(process.env.FORGE_HOME!, "sessions", sid), {
+        recursive: true,
+      });
+      armUlwCycle(sid, "Ship the feature.", {
+        cycle: 1,
+        maxWaves: 2,
+        skipCheckpoint: true,
+        editCount: 0,
+      });
+      for (let i = 1; i <= 5; i++) {
+        maybeStampUlwWave({
+          sessionId: sid,
+          editCount: i * 2,
+          openTodoCount: 0,
+          stepsSinceStamp: 1,
+        });
+      }
+      const s = loadUlwCycle(sid)!;
+      assert.equal(s.wave, 0);
+      assert.equal(s.cycle, 1);
+      assert.equal(s.maxWaves, 2);
+      disarmUlwCycle(sid);
+    });
+  });
+
+  it("idle epochs honor max_waves and flip LAST", () => {
+    withHome(() => {
+      const sid = "sess-mid-cap-idle";
+      fs.mkdirSync(path.join(process.env.FORGE_HOME!, "sessions", sid), {
+        recursive: true,
+      });
+      armUlwCycle(sid, "Ship the feature.", {
+        cycle: 1,
+        maxWaves: 2,
+        skipCheckpoint: true,
+        editCount: 0,
+      });
+      const w1 = maybeStampUlwWave({
+        sessionId: sid,
+        editCount: 0,
+        openTodoCount: 0,
+        stepsSinceStamp: MID_WAVE_STAMP_STEPS,
+      });
+      assert.equal(w1.stamped, true);
+      assert.equal(w1.wave, 1);
+      assert.equal(loadUlwCycle(sid)!.cycle, 1);
+
+      const w2 = maybeStampUlwWave({
+        sessionId: sid,
+        editCount: 0,
+        openTodoCount: 0,
+        stepsSinceStamp: MID_WAVE_STAMP_STEPS,
+      });
+      assert.equal(w2.stamped, true);
+      assert.equal(w2.wave, 2);
+      assert.equal(w2.flippedToLast, true);
+      const s = loadUlwCycle(sid)!;
+      assert.equal(s.cycle, 0);
+      assert.equal(s.wave, 2);
+      assert.match(w2.admit || "", /max_waves=2/);
+
+      const extra = maybeStampUlwWave({
+        sessionId: sid,
+        editCount: 0,
+        openTodoCount: 0,
+        stepsSinceStamp: MID_WAVE_STAMP_STEPS,
+      });
+      assert.equal(extra.stamped, false);
+      assert.equal(loadUlwCycle(sid)!.wave, 2);
+      disarmUlwCycle(sid);
+    });
+  });
+
+  it("already-over-cap mid-loop flips LAST without incrementing", () => {
+    withHome(() => {
+      const sid = "sess-mid-over";
+      fs.mkdirSync(path.join(process.env.FORGE_HOME!, "sessions", sid), {
+        recursive: true,
+      });
+      armUlwCycle(sid, "Ship the feature.", {
+        cycle: 1,
+        maxWaves: 10,
+        skipCheckpoint: true,
+        editCount: 0,
+      });
+      for (let i = 0; i < 3; i++) {
+        maybeStampUlwWave({
+          sessionId: sid,
+          editCount: 0,
+          openTodoCount: 0,
+          stepsSinceStamp: MID_WAVE_STAMP_STEPS,
+        });
+      }
+      assert.equal(loadUlwCycle(sid)!.wave, 3);
+      setMaxWaves(sid, 2);
+      const s = loadUlwCycle(sid)!;
+      assert.equal(s.cycle, 0);
+      assert.equal(s.wave, 3);
+      const stamp = maybeStampUlwWave({
+        sessionId: sid,
+        editCount: 4,
+        openTodoCount: 0,
+        stepsSinceStamp: MID_WAVE_STAMP_STEPS,
+      });
+      assert.equal(stamp.stamped, false);
+      assert.equal(loadUlwCycle(sid)!.wave, 3);
+      disarmUlwCycle(sid);
+    });
+  });
+
+  it("Stop increments once after mid-loop edit tracking of the same progress", () => {
     withHome(() => {
       const sid = "sess-mid-3";
       fs.mkdirSync(path.join(process.env.FORGE_HOME!, "sessions", sid), {
@@ -99,9 +216,7 @@ describe("ULW mid-loop wave stamp", () => {
         openTodoCount: 0,
         stepsSinceStamp: 1,
       });
-      const afterMid = loadUlwCycle(sid)!;
-      const wave = afterMid.wave;
-      const n = afterMid.waves?.length ?? 0;
+      assert.equal(loadUlwCycle(sid)!.wave, 0);
       evaluateUlwAtStop({
         sessionId: sid,
         lastAssistantMessage: "still going",
@@ -110,8 +225,8 @@ describe("ULW mid-loop wave stamp", () => {
         stuckThreshold: 5,
       });
       const afterStop = loadUlwCycle(sid)!;
-      assert.equal(afterStop.wave, wave);
-      assert.equal(afterStop.waves?.length, n);
+      assert.equal(afterStop.wave, 1);
+      assert.equal(afterStop.waves?.length, 1);
       disarmUlwCycle(sid);
     });
   });

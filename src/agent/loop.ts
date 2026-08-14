@@ -48,6 +48,7 @@ import {
   maybeFlipUlwToLastOnSafetyValve,
   ulwKickoffMessage,
   isSoftPrompt,
+  isResumeFollowUp,
   formatUlwCounts,
   formatUlwBadge,
   ULW_LIVE_CONTROLS_HINT,
@@ -590,13 +591,19 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
       ulw = armUlwCycle(session.meta.id, userMessage, {
         cycle: 1,
         editCount: session.meta.editCount,
+        cwd: workspace,
       });
       log.info(
         `ULW cycle armed (cycle=1)${ulw.softPrompt ? " — soft prompt expanded to god-scope" : ""}`,
       );
       effectiveUserMessage = ulwKickoffMessage(ulw);
-    } else if (isSoftPrompt(userMessage) && !userMessage.includes("ULW runtime controls")) {
-      // Soft follow-ups under ULW still get cycle framing without resetting wave hard
+    } else if (
+      isSoftPrompt(userMessage) &&
+      !isResumeFollowUp(userMessage) &&
+      !userMessage.includes("ULW runtime controls")
+    ) {
+      // Soft follow-ups under ULW still get cycle framing without resetting wave hard.
+      // Resume words ("continue", "keep going") must not replace the mandate.
       const refreshed = armUlwCycle(session.meta.id, userMessage, {
         cwd: workspace,
         cycle: ulw.cycle,

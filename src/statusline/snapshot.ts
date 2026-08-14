@@ -8,7 +8,7 @@ import {
   type SessionData,
 } from "../session/session.js";
 import { loadGoal } from "../harness/goal.js";
-import { loadUlwCycle } from "../harness/ulw-cycle.js";
+import { loadUlwCycle, normalizeMaxWaves } from "../harness/ulw-cycle.js";
 import { loadConfig } from "../config/load.js";
 import { resolveAuth } from "../auth/resolve.js";
 import { getGitSnapshot } from "../util/git-context.js";
@@ -237,7 +237,8 @@ export function sessionToSnapshot(
   const ulw = loadUlwCycle(meta.id);
   if (ulw?.enabled) {
     tags.push(ulw.cycle === 1 ? "c=1" : "c=0");
-    if (ulw.maxWaves != null) tags.push(`mw=${ulw.maxWaves}`);
+    const cap = normalizeMaxWaves(ulw.maxWaves);
+    tags.push(cap != null ? `w=${ulw.wave}/${cap}` : `w=${ulw.wave}`);
   }
   if (meta.pinned) tags.push("PIN");
   {

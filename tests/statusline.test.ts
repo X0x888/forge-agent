@@ -258,7 +258,7 @@ describe("statusline", () => {
     ];
     saveSession(s);
 
-    armUlwCycle(s.meta.id, "improve", { cycle: 1 });
+    armUlwCycle(s.meta.id, "improve", { cycle: 1, maxWaves: 2 });
 
     const config = {
       provider: "xai",
@@ -283,7 +283,10 @@ describe("statusline", () => {
       const flags = buildPromptFlags({ config, session: s, auth });
       assert.match(flags, /ULW/);
       assert.match(flags, /c=1/);
-      assert.match(flags, /w=0/);
+      assert.match(flags, /w=0\/2/);
+      const snapTags = sessionToSnapshot(s, { authMethod: "api_key" }).tags;
+      assert.ok(snapTags.includes("w=0/2"), "HUD shows current/cap, not just mw=");
+      assert.ok(!snapTags.some((t) => t.startsWith("mw=")));
       // No last-verify yet → no bare ✓ flag
       assert.doesNotMatch(flags.replace(/\x1b\[[0-9;]*m/g, ""), /✓/);
       assert.doesNotMatch(flags, /VERBOSE/);
