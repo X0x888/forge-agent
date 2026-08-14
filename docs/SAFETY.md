@@ -189,4 +189,4 @@ When `blockingStopHooks` is enabled (default), a Stop/SubagentStop hook that **t
 
 ### Permission ask timeout
 
-Interactive permission prompts auto-deny after `FORGE_PERMISSION_ASK_TIMEOUT_MS` (when set). For unattended CI use `--permission-mode dontAsk` or `acceptEdits` rather than relying on the timeout.
+Interactive permission prompts auto-deny after `FORGE_PERMISSION_TIMEOUT_MS` (when set; alias `FORGE_PERMISSION_ASK_TIMEOUT_MS`). For unattended CI use `--permission-mode dontAsk` or `acceptEdits` rather than relying on the timeout.

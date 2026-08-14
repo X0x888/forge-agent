@@ -323,7 +323,8 @@ describe("statusline", () => {
       );
       // Strip ANSI for assertion (chalk may wrap the check tip).
       const plain = footer2.replace(/\x1b\[[0-9;]*m/g, "");
-      assert.match(plain, /✓ npm run typecheck|✓ npm test/);
+      assert.match(plain, /next npm run typecheck|next npm test/);
+      assert.doesNotMatch(plain, /✓ npm /);
 
       // When a structural check was recorded, prefer last✓ over preferred tip.
       s.meta.lastVerificationCommand = "npm test";

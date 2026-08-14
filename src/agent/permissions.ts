@@ -818,7 +818,7 @@ export class PermissionGate {
           chalk.red(
             `\n✖ Permission timed out after ${secs}s — denying ${toolName}\n` +
               chalk.dim(
-                `  Tip: answer sooner, raise FORGE_PERMISSION_ASK_TIMEOUT_MS, use /permissions acceptEdits, or --permission-mode dontAsk in CI\n`,
+                `  Tip: answer sooner, raise FORGE_PERMISSION_TIMEOUT_MS, use /permissions acceptEdits, or --permission-mode dontAsk in CI\n`,
               ),
           ),
         );
@@ -831,7 +831,7 @@ export class PermissionGate {
           decision: "deny",
           reason:
             `permission_ask_timeout after ${secs}s — user did not answer. ` +
-            `Raise FORGE_PERMISSION_ASK_TIMEOUT_MS, use /permissions acceptEdits, or --permission-mode dontAsk for unattended runs.`,
+            `Raise FORGE_PERMISSION_TIMEOUT_MS, use /permissions acceptEdits, or --permission-mode dontAsk for unattended runs.`,
         };
       }
       if (ans === "n" || ans === "no") {
@@ -876,10 +876,14 @@ export class PermissionGate {
 
 /**
  * Interactive permission prompt timeout.
- * FORGE_PERMISSION_TIMEOUT_MS — 0/unset = wait forever; min 5s when set.
+ * Canonical: FORGE_PERMISSION_TIMEOUT_MS.
+ * Alias: FORGE_PERMISSION_ASK_TIMEOUT_MS (docs/tips historically used this).
+ * 0/unset = wait forever; min 5s when set. Canonical wins if both are set.
  */
 export function permissionAskTimeoutMs(): number {
-  const raw = process.env.FORGE_PERMISSION_TIMEOUT_MS?.trim();
+  const raw =
+    process.env.FORGE_PERMISSION_TIMEOUT_MS?.trim() ||
+    process.env.FORGE_PERMISSION_ASK_TIMEOUT_MS?.trim();
   if (!raw) return 0;
   const parsed = parseDurationMs(raw);
   if (!parsed.ok || parsed.ms <= 0) return 0;

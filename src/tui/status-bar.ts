@@ -548,9 +548,11 @@ export function renderTurnFooter(
       );
       if (intel.checkCommands[0]) {
         const c = intel.checkCommands[0];
+        // Suggested next check — never a ✓. A checkmark here is read as
+        // "already passed" when nothing has been verified this session.
         parts.push(
           chalk.dim(
-            `✓ ${c.length > 22 ? `${c.slice(0, 21)}…` : c}`,
+            `next ${c.length > 22 ? `${c.slice(0, 21)}…` : c}`,
           ),
         );
       }

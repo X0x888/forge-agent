@@ -6412,6 +6412,38 @@ describe("FORGE_PERMISSION_TIMEOUT_MS duration suffixes", () => {
       else process.env.FORGE_PERMISSION_TIMEOUT_MS = prev;
     }
   });
+
+  it("accepts FORGE_PERMISSION_ASK_TIMEOUT_MS alias when canonical is unset", async () => {
+    const prevCanon = process.env.FORGE_PERMISSION_TIMEOUT_MS;
+    const prevAlias = process.env.FORGE_PERMISSION_ASK_TIMEOUT_MS;
+    delete process.env.FORGE_PERMISSION_TIMEOUT_MS;
+    process.env.FORGE_PERMISSION_ASK_TIMEOUT_MS = "30s";
+    try {
+      const { permissionAskTimeoutMs } = await import("../src/agent/permissions.js");
+      assert.equal(permissionAskTimeoutMs(), 30_000);
+    } finally {
+      if (prevCanon === undefined) delete process.env.FORGE_PERMISSION_TIMEOUT_MS;
+      else process.env.FORGE_PERMISSION_TIMEOUT_MS = prevCanon;
+      if (prevAlias === undefined) delete process.env.FORGE_PERMISSION_ASK_TIMEOUT_MS;
+      else process.env.FORGE_PERMISSION_ASK_TIMEOUT_MS = prevAlias;
+    }
+  });
+
+  it("canonical FORGE_PERMISSION_TIMEOUT_MS wins over the alias", async () => {
+    const prevCanon = process.env.FORGE_PERMISSION_TIMEOUT_MS;
+    const prevAlias = process.env.FORGE_PERMISSION_ASK_TIMEOUT_MS;
+    process.env.FORGE_PERMISSION_TIMEOUT_MS = "90s";
+    process.env.FORGE_PERMISSION_ASK_TIMEOUT_MS = "30s";
+    try {
+      const { permissionAskTimeoutMs } = await import("../src/agent/permissions.js");
+      assert.equal(permissionAskTimeoutMs(), 90_000);
+    } finally {
+      if (prevCanon === undefined) delete process.env.FORGE_PERMISSION_TIMEOUT_MS;
+      else process.env.FORGE_PERMISSION_TIMEOUT_MS = prevCanon;
+      if (prevAlias === undefined) delete process.env.FORGE_PERMISSION_ASK_TIMEOUT_MS;
+      else process.env.FORGE_PERMISSION_ASK_TIMEOUT_MS = prevAlias;
+    }
+  });
 });
 
 describe("sessions import markdown export hint", () => {

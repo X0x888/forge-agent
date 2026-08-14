@@ -64,7 +64,7 @@ What experts should expect from Forge in long, unattended, or CI runs.
 | **apply_patch** | Multi-file patch tool; all hunks validated before disk mutation; protected-path hard deny; missing update/delete targets suggest nearby path typos; delete/update pre-images journaled for undo; **Move to** refuses existing dest (disk or earlier hunk in the same patch) |
 | **Bash timeout** | Foreground/background wall-clock timeout reports `Command timed out after Nms` with exit code **124** |
 | **Bash hard-deny peels** | Catastrophic deny sees through `env`/`timeout`/`nohup`/`setsid`/`watch`, `bash|sh|busybox sh|su|script -c`, `eval`, `xargs … bash -c`, and `$(…)` / `` `…` ``; language-runtime `system`/`execSync` rm-root/home denied; **heredoc data** (`git commit`/`cat <<EOF` payloads) is not a false positive — `bash <<EOF` bodies still scanned |
-| **Permission ask timeout** | Optional `FORGE_PERMISSION_TIMEOUT_MS` auto-denies stalled interactive prompts (min 5s) |
+| **Permission ask timeout** | Optional `FORGE_PERMISSION_TIMEOUT_MS` (alias `FORGE_PERMISSION_ASK_TIMEOUT_MS`) auto-denies stalled interactive prompts (min 5s) |
 | **metrics.jsonl** | Append-only run counters (tokens, edits, duration) under `~/.forge/metrics.jsonl` — no prompts/secrets; auto-prunes past ~2000 events / 2 MiB; `forge prune-metrics --keep 500` |
 
 ## Auth / sessions
@@ -154,7 +154,7 @@ What experts should expect from Forge in long, unattended, or CI runs.
 | `FORGE_BASH_TIMEOUT_MS (ms or 90s/2m)` | `120000` | Default foreground `bash` timeout (min 5s, max 30m) |
 | `FORGE_BASH_BG_TIMEOUT_MS` | `1800000` | Default background task timeout (min 30s, max 6h) |
 | `FORGE_MAX_RUN_MS` | off | Headless `forge run` wall-clock cap (ms or `30m`; exit 124) |
-| `FORGE_PERMISSION_TIMEOUT_MS` | off | Auto-deny stalled interactive Allow? prompts (min 5s) |
+| `FORGE_PERMISSION_TIMEOUT_MS` | off | Auto-deny stalled interactive Allow? prompts (min 5s). Alias: `FORGE_PERMISSION_ASK_TIMEOUT_MS` |
 | `FORGE_DOOM_LOOP_THRESHOLD` | `3` | Identical tool+args streak before strategy nudge |
 | `FORGE_ERROR_STREAK_THRESHOLD` | `5` | Consecutive tool errors before circuit-breaker nudge |
 | `FORGE_ULW_MAX_CONTINUES` | `200` | Stop-continue cap while ULW is armed |
