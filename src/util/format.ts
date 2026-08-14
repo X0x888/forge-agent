@@ -364,8 +364,12 @@ export function formatToolEnd(
   const reason =
     opts.isError && opts.output ? firstToolErrorLine(opts.output) : "";
   const reasonBit = reason ? `  ${reason}` : "";
+  const size =
+    /^(search_replace|edit|write_file|write|apply_patch|applypatch)$/i.test(name)
+      ? `diff ${formatBytes(opts.bytes)}`
+      : formatBytes(opts.bytes);
   const line = chalk.dim(
-    `  ${status} ${name}${argBit}${reasonBit}  ${opts.ms}ms  ${formatBytes(opts.bytes)}`,
+    `  ${status} ${name}${argBit}${reasonBit}  ${opts.ms}ms  ${size}`,
   );
   const cols = Math.max(
     8,

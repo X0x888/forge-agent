@@ -99,6 +99,12 @@ export interface UlwCycleState {
   waves?: UlwWaveRecord[];
   /** Consecutive waves with negligible edits AND no verification */
   thinStreak?: number;
+  /**
+   * Consecutive declared ships that are the same polish class (clip / one-line
+   * chrome / leftover dump). High edit counts still look "thick" to thinStreak
+   * — this catches leftover-chrome grinding.
+   */
+  polishStreak?: number;
   /** Proof demands already issued for the current proof-less streak (capped) */
   proofDemands?: number;
   /** Evidence demands issued against weak cycle=0 attestations (capped at 1) */
@@ -511,6 +517,33 @@ export interface MidWaveStampResult {
   updated?: boolean;
 }
 
+/** Clip / one-line / leftover-dump ships — a class that never ends if we "finish siblings". */
+export function isPolishClassShip(text: string): boolean {
+  return /one TTY row|one-line|one line chrome|blank-line|sandwich|leftover dump|leftover chrome|leftover (?:first-thing|after-turn|human-facing)|clip(?:ped|ping)? (?:to |the |banner|Δ|picker|row)|drop the extra|scannable line/i.test(
+    text || "",
+  );
+}
+
+const POLISH_ADVISORY_STREAK = 3;
+const POLISH_LAST_STREAK = 4;
+
+function notePolishShip(s: UlwCycleState, message: string): number {
+  if (isPolishClassShip(message)) {
+    s.polishStreak = (s.polishStreak ?? 0) + 1;
+  } else {
+    s.polishStreak = 0;
+  }
+  return s.polishStreak ?? 0;
+}
+
+function polishAdmit(streak: number): string {
+  return [
+    `Last ${streak} ships are the same polish class (clip / one-line chrome / leftover dump).`,
+    "Next unit must be a different surface (trust, correctness, workflow) or attest **Cycle complete.**",
+    "Do not hunt leftover dumps. \"Finish the class\" means defect/call-site siblings, not chrome leftovers.",
+  ].join(" ");
+}
+
 /** Agent closed a work unit in prose — that is a wave, not an idle heartbeat. */
 export function isDeclaredWaveClose(message: string): boolean {
   const t = message || "";
@@ -632,24 +665,41 @@ export function maybeStampUlwWave(opts: {
       });
       s.lastWaveSig = sig;
       s.lastProgressEditCount = opts.editCount;
+      const polish = notePolishShip(s, opts.lastAssistantMessage || "");
       let flipped = false;
+      let polishLast = false;
       if (cap != null && s.wave >= cap) {
         flipUlwToLast(s, opts.sessionId);
         flipped = true;
+      } else if (polish >= POLISH_LAST_STREAK && s.cycle === 1) {
+        flipUlwToLast(s, opts.sessionId);
+        flipped = true;
+        polishLast = true;
       }
       saveUlwCycle(s);
       const counts = formatUlwCounts(s);
+      const extra =
+        polish >= POLISH_ADVISORY_STREAK ? `\n${polishAdmit(polish)}` : "";
       return {
         stamped: true,
         wave: s.wave,
         flippedToLast: flipped,
-        admit: flipped
-          ? lastWaveAdmit(cap!, s.wave)
-          : [
+        admit: polishLast
+          ? [
               "[Forge harness — mid-conversation update]",
-              `ULW ${counts} — harness counter moved after a declared ship.`,
-              "This w=N/M is the only wave number. Do not invent Wave K.",
-            ].join("\n"),
+              `ULW ${counts} — polish-class auto LAST.`,
+              polishAdmit(polish),
+            ].join("\n")
+          : flipped
+            ? lastWaveAdmit(cap!, s.wave)
+            : [
+                "[Forge harness — mid-conversation update]",
+                `ULW ${counts} — harness counter moved after a declared ship.`,
+                "This w=N/M is the only wave number. Do not invent Wave K.",
+                extra.trim(),
+              ]
+                .filter(Boolean)
+                .join("\n"),
       };
     }
   }
@@ -820,6 +870,9 @@ export function loadUlwCycle(sessionId: string): UlwCycleState | null {
   if (typeof raw.thinStreak !== "number" || !Number.isFinite(raw.thinStreak)) {
     raw.thinStreak = 0;
   }
+  if (typeof raw.polishStreak !== "number" || !Number.isFinite(raw.polishStreak)) {
+    raw.polishStreak = 0;
+  }
   if (typeof raw.proofDemands !== "number" || !Number.isFinite(raw.proofDemands)) {
     raw.proofDemands = 0;
   }
@@ -947,7 +1000,7 @@ export function expandUlwMandate(mandate: string): { expanded: string; soft: boo
         ``,
         `- Own the outcome end-to-end. Research when uncertain; spawn subagents when that is smarter; then build — no thrash, no permission-to-continue asks.`,
         `- Every wave: highest-leverage next objective vs the mandate · search-before-build · ship · cheapest real proof · hostile review · next wave while cycle=1.`,
-        `- Finish the class (siblings + dependents). Prefer substantive progress over busywork.`,
+        `- Finish the **defect** class (callers, tests, dependents). Two clip/one-line chrome leftovers is enough — change surface or LAST. Do not hunt leftover dumps.`,
       ].join("\n"),
     };
   }
@@ -970,7 +1023,7 @@ export function expandUlwMandate(mandate: string): { expanded: string; soft: boo
       `1. **ORIENT** — what this place is (stack, checks, entrypoints, git, AGENTS/README, real debt). Tools, not guesses.`,
       `2. **JUDGE** — single highest-leverage hard objective now (impact × confidence / cost). Write the reading.`,
       `3. **RESEARCH** — only as deep as uncertainty warrants; proactive subagents/MCP/web when that is the efficient path. Do not thrash blind.`,
-      `4. **SHIP** one bounded high-leverage wave (siblings + dependents). Search-before-build.`,
+      `4. **SHIP** one bounded high-leverage wave. Defect-class siblings only. Search-before-build.`,
       `5. **PROVE** — cheapest real check that can fail.`,
       `6. **SERENDIPITY** — bounded adjacent fix on an open path if cheap; label \`Serendipity:\`.`,
       `7. **HOSTILE REVIEW** — fix real defects in your diff; skip cosmetic noise.`,
@@ -986,6 +1039,8 @@ export function expandUlwMandate(mandate: string): { expanded: string; soft: boo
       `- Advice-only / "looks fine" / defer to later — a written reading on an evaluate-class mandate is the work, not a deferral.`,
       `- Skipping the mandate's first verb (evaluate/audit) to ship a tiny adjacent polish.`,
       `- Low-leverage churn or token-burning busywork while harder work remains.`,
+      `- Grinding a polish class (clip every chrome line, leftover-dump hunting) after the reading's one ship.`,
+      `- Re-reading a file after search_replace to check truncation — trust \`Edited path (N lines)\`.`,
       `- Subagent spam, infinite research without shipping, gold-plating without proof.`,
       `- "Shall I continue?" — cycle / max_waves answers that.`,
     ].join("\n"),
@@ -1037,6 +1092,7 @@ export function armUlwCycle(
     // counters reset — a fresh mandate earns a fresh quality context.
     waves: prev?.waves ?? [],
     thinStreak: 0,
+    polishStreak: 0,
     proofDemands: 0,
     evidenceNudges: 0,
     backlogRequired: broad,
@@ -1174,6 +1230,7 @@ export function copyUlwCycle(fromId: string, toId: string): UlwCycleState | null
     stuckBlocks: 0,
     lastBlockEditCount: 0,
     thinStreak: 0,
+    polishStreak: 0,
     proofDemands: 0,
     evidenceNudges: 0,
     updatedAt: nowIso(),

@@ -26,6 +26,7 @@ describe("default tool status line", () => {
     );
     assert.match(start, /▸ write_file path=src\/tui\/repl\.ts/);
     assert.match(end, /✓ write_file path=src\/tui\/repl\.ts\s+12ms/);
+    assert.match(end, /diff /);
     assert.equal(end.includes("\n"), false, "end line must stay one row");
   });
 

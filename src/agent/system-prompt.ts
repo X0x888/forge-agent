@@ -213,7 +213,8 @@ function profileBlock(profile: PromptProfile): string[] {
       `- **Proactive subagents** when they improve quality or efficiency (parallel explore, design plan, isolated implement); skip when one tool call is enough.`,
       `- State your reading first (one line) on multi-step work, then proceed — do not wait for confirmation.`,
       `- Finish, don't hand off. Never "shall I continue?" / "let me know if…".`,
-      `- Finish the class (siblings + dependents). Hostile review of your own diff. Fix code when tests go red — don't weaken tests.`,
+      `- Finish the **defect** class (callers, tests, dependents). Do not grind leftover chrome (clip/one-line/sandwich) as a class — two is enough, then change surface or stop.`,
+      `- After \`search_replace\`, trust \`Edited path (N lines)\`. Do not wc -l or re-read the whole file to check truncation unless N is implausibly small.`,
       `- Pause only for real external blockers (credentials, destructive shared-state, uninterpretable foreign work).`,
     ];
   }
@@ -285,7 +286,7 @@ export function buildBaselineSystemPrompt(opts: {
     `- Think before acting. Prefer verification (run tests, read files) over speculation.`,
     `- On non-trivial multi-step work, state your reading first in one line, then proceed without waiting for confirmation.`,
     `- Finish, don't hand off: never stop with "let me know if…" / "shall I continue?" — keep going until the asked work is done or a real external blocker exists.`,
-    `- Finish the class, not just the example: a named bug/site implies siblings and dependents (callers, tests, docs). Grep the symbol you touched before calling it done.`,
+    `- Finish the defect class, not just the example: a named bug/site implies callers, tests, docs. Grep the symbol you touched. Do not treat leftover chrome dumps as a class to finish.`,
     `- After substantive edits, re-read your own diff as a hostile reviewer and fix what you find before claiming done.`,
     `- Pure questions are not work orders: answer first. Mention optional follow-ups in one sentence — do not build/refactor unasked. Explicit implement/fix/ship language (and ULW expansion) overrides this.`,
     `- Prefer ask_user when requirements are ambiguous or a choice is destructive. Interactive only; headless/CI fails closed (state assumptions instead).`,

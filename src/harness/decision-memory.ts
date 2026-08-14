@@ -368,6 +368,37 @@ export function hasMandateJudgment(
   return false;
 }
 
+const SHIP_LOG_RE =
+  /^(Wave\s+\d+|Wave shipped|Daily-REPL set|Harness still|Wave LAST)/i;
+
+function isReadingRecord(text: string): boolean {
+  return /\bReading:/i.test(text);
+}
+
+/** Durable + last reading + last few ship logs — not 80 sibling ships. */
+export function selectMemoryForPrompt(recs: MemoryRecord[]): MemoryRecord[] {
+  const durable: MemoryRecord[] = [];
+  const readings: MemoryRecord[] = [];
+  const ships: MemoryRecord[] = [];
+  for (const r of recs) {
+    if (
+      r.kind === "priority" ||
+      r.kind === "constraint" ||
+      r.kind === "blocker" ||
+      r.kind === "out_of_scope"
+    ) {
+      durable.push(r);
+    } else if (isReadingRecord(r.text)) {
+      readings.push(r);
+    } else if (SHIP_LOG_RE.test(r.text)) {
+      ships.push(r);
+    } else {
+      durable.push(r);
+    }
+  }
+  return [...durable, ...readings.slice(-2), ...ships.slice(-3)];
+}
+
 /**
  * Format active memory for re-anchor / compact / kickoff.
  * Never silently empty when corrupt flag is set — caller should fail-closed.
@@ -382,6 +413,10 @@ export function formatMemoryForPrompt(
   if (!opts?.includeWave) {
     recs = recs.filter((r) => r.kind !== "wave");
   }
+  // Wave-shipped / leftover-chrome logs crowd out the reading. Keep the
+  // durable set + last reading + last 3 ship logs (compaction must not
+  // re-inject 80 "Wave 2 sibling" lines and restart chrome grinding).
+  recs = selectMemoryForPrompt(recs);
   // Priority first, then constraint, then rest; newest last within kind
   const order: MemoryKind[] = [
     "priority",

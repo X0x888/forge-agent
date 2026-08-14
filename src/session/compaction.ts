@@ -54,6 +54,19 @@ export interface CompactResult {
 
 const DEFAULT_KEEP_LAST = DEFAULT_CHECKPOINT_KEEP_STEPS;
 
+/** Do not re-inject the 5k god-mode dump as "last user request" after compact. */
+export function clipUserMandate(raw: string): string {
+  const t = raw.trim();
+  const signal = t.match(/User signal[^:]*:\s*"([^"]+)"/i);
+  if (signal && /ULW GOD MODE|god-mode|full operational ownership/i.test(t)) {
+    return `"${signal[1]}"  [expanded mandate in ulw.json — do not re-derive or restart leftover-chrome hunting]`;
+  }
+  if (t.length > 400 && /ULW GOD MODE/i.test(t)) {
+    return `${t.slice(0, 240)}… [ulw.expandedMandate]`;
+  }
+  return t.length > 1200 ? `${t.slice(0, 400)}… [full in last real user / ulw.json]` : t;
+}
+
 /**
  * Checkpoint the store: system + verbatim job card + last N assistant steps.
  * `keepLast` is in-flight assistant steps (default 3), not raw messages.
@@ -120,9 +133,7 @@ export function buildStructuredSummary(
 
   const realUser = lastRealUserText(extra?.allMessages || dropped);
   if (realUser) {
-    const clipUser =
-      realUser.length > 1200 ? `${realUser.slice(0, 400)}… [full in last real user / ulw.json]` : realUser;
-    sections.push(``, `## 0. Last real user request`, clipUser);
+    sections.push(``, `## 0. Last real user request`, clipUserMandate(realUser));
   }
 
   // 1. Harness / mandate (load-bearing for ULW)

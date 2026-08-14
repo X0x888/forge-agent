@@ -12,7 +12,7 @@ import type { ForgeConfig } from "../config/types.js";
 import type { SessionData } from "../session/session.js";
 import type { ResolvedAuth } from "../auth/types.js";
 import { listAccounts } from "../auth/store.js";
-import { sessionToSnapshot } from "../statusline/snapshot.js";
+import { sessionToSnapshot, outboundTokenEstimate } from "../statusline/snapshot.js";
 import { collectPlanUsage } from "../statusline/plan.js";
 import {
   formatPlan,
@@ -20,7 +20,7 @@ import {
 } from "../statusline/render.js";
 import type { AuthMethod, PlanUsageInfo } from "../statusline/types.js";
 import { formatTokens, clipAnsi, visibleWidth } from "../util/format.js";
-import { estimateTokens } from "../session/session.js";
+
 import { resolveReasoningEffort } from "../config/reasoning.js";
 import { getActivity } from "../statusline/activity.js";
 import { listTasks } from "../agent/tools/background-tasks.js";
@@ -98,7 +98,7 @@ export function renderBottomStatusLine(
 
   // Live ctx estimate while messages grow mid-run
   try {
-    const used = estimateTokens(session.messages);
+    const used = outboundTokenEstimate(session.messages);
     const win = config.contextWindow || snap.context.windowTokens || 1;
     snap.context = {
       ...snap.context,

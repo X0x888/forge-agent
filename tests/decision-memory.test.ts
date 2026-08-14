@@ -6,6 +6,7 @@ import path from "node:path";
 import {
   seedMemoryFromMandate,
   formatMemoryForPrompt,
+  selectMemoryForPrompt,
   appendMemoryRecord,
   extractMandateBullets,
   isBroadMandate,
@@ -83,6 +84,39 @@ Please comprehensively audit and improve this app:
       ),
       true,
     );
+  });
+
+  it("keeps the reading and last ship logs, not 80 Wave siblings", () => {
+    const recs = [
+      {
+        id: "1",
+        at: "1",
+        kind: "constraint" as const,
+        text: "MANDATE: evaluate then improve",
+        source: "ulw" as const,
+        status: "active" as const,
+      },
+      {
+        id: "2",
+        at: "2",
+        kind: "decision" as const,
+        text: "Reading: daily REPL trust beats chrome.",
+        source: "agent" as const,
+        status: "active" as const,
+      },
+      ...Array.from({ length: 20 }, (_, i) => ({
+        id: `s${i}`,
+        at: String(10 + i),
+        kind: "decision" as const,
+        text: `Wave 2 sibling: clip widget ${i} to one TTY row`,
+        source: "agent" as const,
+        status: "active" as const,
+      })),
+    ];
+    const kept = selectMemoryForPrompt(recs);
+    assert.ok(kept.some((r) => /MANDATE/.test(r.text)));
+    assert.ok(kept.some((r) => /Reading:/.test(r.text)));
+    assert.equal(kept.filter((r) => /Wave 2 sibling/.test(r.text)).length, 3);
   });
 
   it("seeds and formats durable constraints", () => {

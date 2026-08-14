@@ -298,6 +298,7 @@ export {
   summarizeWave,
   maybeStampUlwWave,
   isDeclaredWaveClose,
+  isPolishClassShip,
   isSoftPrompt,
   isResumeFollowUp,
   expandUlwMandate,

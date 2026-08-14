@@ -13,6 +13,7 @@ import {
   setMaxWaves,
   MID_WAVE_STAMP_STEPS,
   isDeclaredWaveClose,
+  isPolishClassShip,
 } from "../src/harness/ulw-cycle.js";
 
 function withHome(fn: () => void): void {
@@ -309,6 +310,40 @@ describe("ULW mid-loop wave stamp", () => {
       assert.equal(hit.stamped, true);
       assert.equal(loadUlwCycle(sid)!.wave, 1);
       assert.match(hit.admit || "", /harness counter/i);
+      disarmUlwCycle(sid);
+    });
+  });
+
+  it("four polish-class ships flip LAST even under the cap", () => {
+    withHome(() => {
+      const sid = "sess-polish";
+      fs.mkdirSync(path.join(process.env.FORGE_HOME!, "sessions", sid), {
+        recursive: true,
+      });
+      armUlwCycle(sid, "improve the ui", {
+        cycle: 1,
+        maxWaves: 8,
+        skipCheckpoint: true,
+        editCount: 0,
+      });
+      assert.equal(isPolishClassShip("Wave 2 shipped: clip banner to one TTY row"), true);
+      assert.equal(isPolishClassShip("Wave 2 shipped: stdin lease for permission asks"), false);
+      let edits = 0;
+      let last;
+      for (let i = 1; i <= 4; i++) {
+        edits += 6;
+        last = maybeStampUlwWave({
+          sessionId: sid,
+          editCount: edits,
+          openTodoCount: 0,
+          stepsSinceStamp: 1,
+          lastAssistantMessage: `Wave ${i} shipped: clip widget ${i} to one TTY row`,
+        });
+      }
+      assert.equal(last?.stamped, true);
+      assert.equal(last?.flippedToLast, true);
+      assert.equal(loadUlwCycle(sid)!.cycle, 0);
+      assert.match(last?.admit || "", /polish-class auto LAST|polish class/i);
       disarmUlwCycle(sid);
     });
   });

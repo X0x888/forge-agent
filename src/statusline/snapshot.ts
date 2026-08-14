@@ -7,6 +7,7 @@ import {
   estimateTokens,
   type SessionData,
 } from "../session/session.js";
+import { pruneMessagesForRequest } from "../session/request-prune.js";
 import { loadGoal } from "../harness/goal.js";
 import { loadUlwCycle, normalizeMaxWaves } from "../harness/ulw-cycle.js";
 import { loadConfig } from "../config/load.js";
@@ -141,8 +142,19 @@ function durationSec(createdAt: string): number {
   return Math.max(0, Math.floor((Date.now() - t) / 1000));
 }
 
+/** Pruned outbound estimate — HUD ctx must not count the unpruned store. */
+export function outboundTokenEstimate(messages: SessionData["messages"]): number {
+  try {
+    return estimateTokens(
+      pruneMessagesForRequest(messages, { spool: false }).messages,
+    );
+  } catch {
+    return estimateTokens(messages);
+  }
+}
+
 function buildContext(session: SessionData, windowTokens: number): ContextInfo {
-  const used = estimateTokens(session.messages);
+  const used = outboundTokenEstimate(session.messages);
   const win = windowTokens > 0 ? windowTokens : 128_000;
   return {
     usedTokens: used,

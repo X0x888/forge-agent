@@ -6,6 +6,7 @@ import path from "node:path";
 import type { ChatMessage } from "../src/providers/types.js";
 import {
   compactMessagesStructured,
+  clipUserMandate,
 } from "../src/session/compaction.js";
 import {
   splitInFlightTail,
@@ -141,6 +142,18 @@ describe("checkpoint compact", () => {
       },
     ];
     assert.equal(lastRealUserText(msgs), "real mandate please");
+  });
+
+  it("clipUserMandate does not re-inject the god-mode dump", () => {
+    const dump = [
+      "## ULW GOD MODE (soft user signal — full operational ownership)",
+      `User signal (SOFT — do **not** ask): "comprehensively evaluate this tool and then improve the ui and ux of it."`,
+      "You decide what the hard work is " + "x".repeat(800),
+    ].join("\n");
+    const clipped = clipUserMandate(dump);
+    assert.match(clipped, /comprehensively evaluate/);
+    assert.doesNotMatch(clipped, /You decide what the hard work is/);
+    assert.match(clipped, /ulw\.json/);
   });
 
   it("job card still names mandate if dropped span is deleted", () => {
