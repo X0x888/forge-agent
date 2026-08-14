@@ -38,7 +38,8 @@ Binary entry: `src/cli.ts` → `dist/cli.js` (`bin: forge`).
 - `src/util/cost-budget.ts` — session spend cap parse/resolve (`/budget`, `--max-cost`, `FORGE_MAX_COST_USD`)
 - `src/util/production-warnings.ts` — `productionWarningsForRun` for `forge run --json` / CI (safety valves, ULW-without-budget, dirty tree, editsWithoutVerification, lockfile/node_modules)
 - `src/session/compaction.ts` — structured compact preserving mandate/goal/todos
-- `src/session/tool-clearing.ts` — proactive stale tool-result clearing (microcompaction; `FORGE_TOOL_CLEAR*`)
+- `src/session/request-prune.ts` — outbound working-set prune + stale `tool_calls` collapse (`FORGE_REQUEST_PRUNE*`; does not rewrite session.json)
+- `src/session/tool-clearing.ts` — optional in-session stubbing (`FORGE_TOOL_CLEAR=1`; default off)
 - `src/agent/project-skills.ts` — skill packs: package `skills/forge-*/` (builtin) + `.forge/skills/**/SKILL.md` + `.agents/skills` + `~/.forge/skills` (project > user > builtin; `FORGE_BUILTIN_SKILLS=0` off)
 - `src/util/project-intel.ts` — package manager + preferred check commands (system prompt, `/context`, bash wrong-PM/missing-script/missing-binary tips; monorepo walk-up + turbo/nx; doctor/status/config/run JSON; last-verify trail + `editsWithoutVerification`)
 - `src/agent/tools/file-read-state.ts` — session stale/unread edit guard (`FORGE_FILE_READ_GUARD=0` off)
@@ -110,7 +111,7 @@ synthetic harness user-messages — `isSyntheticUserMessage`), `/init`, `/review
 (facts-only per-wave edits/proof; best-wave anchoring, proof demands, thin-wave escalation, 4th-wave
 consolidation, diminishing-returns advisory, one-time evidence bounce on weak attestations),
 structural `verificationRan` (execution) + `verificationPassed` (success-only proof-claim/attestation/ULW wave proof) stop signals, project-intel (pm/checks/monorepo; `FORGE_FILE_READ_GUARD` / `FORGE_VERIFY_HINT`), last-verification trail (`lastVerificationCommand`/`At` + `lastEditAt` stale detection on session + resume/status/share/done/export/list ✓; `editsWithoutVerification` in run JSON), adaptive effort (`FORGE_ADAPTIVE_EFFORT`; hard rounds bump
-reasoning one notch), stale tool-result clearing (`FORGE_TOOL_CLEAR*` microcompaction), counter-only
+reasoning one notch), request-time prune (`FORGE_REQUEST_PRUNE*`) + optional in-session `FORGE_TOOL_CLEAR`, counter-only
 admission suppression, Anthropic prompt caching (`FORGE_ANTHROPIC_CACHE`; cache usage in `ChatUsage`,
 cache buckets folded into `prompt_tokens` so totals/spend cap don't undercount),
 per-model context windows (`context_window` explicit wins; `src/config/model-info.ts` otherwise),

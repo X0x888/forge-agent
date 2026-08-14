@@ -59,6 +59,7 @@ import {
   clearStaleToolResults,
   toolClearEnvConfig,
 } from "../session/tool-clearing.js";
+import { pruneMessagesForRequest } from "../session/request-prune.js";
 import { expandUserContentWithImages } from "../util/user-images.js";
 import { expandUserMentions } from "../util/user-mentions.js";
 import { maybeRecordUserConstraint } from "../harness/decision-memory.js";
@@ -373,10 +374,12 @@ export function buildChatRequest(
 ): ChatRequest {
   const effort =
     effortOverride ?? resolveReasoningEffort(config.model, config.reasoningEffort);
+  // Request-time prune: slim the wire copy only. session.messages stays full.
+  const pruned = pruneMessagesForRequest(messages, { spool: true }).messages;
   // Phase 6: expand [[image:path]] / @shot.png markers into multimodal parts
   // for vision-capable providers (inline data URLs). Stored session history
   // keeps the original string markers — only the outbound request expands.
-  const outbound = expandMessagesForVision(messages, config.workspace);
+  const outbound = expandMessagesForVision(pruned, config.workspace);
   return {
     model: config.model,
     messages: outbound,
@@ -540,8 +543,9 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
   let handoffBlocks = 0;
   /** Consecutive Stop blocks from proof-claim guard. Resets on allow. */
   let proofClaimBlocks = 0;
-  // Proactive stale tool-result clearing (microcompaction). Cadence + size
-  // thresholds bound prompt-cache disruption; clearing itself is age-based.
+  // In-session tool-clear mutates history and busts the prompt-cache prefix.
+  // Default off — request-time prune (buildChatRequest) is the wire path.
+  // FORGE_TOOL_CLEAR=1 restores the old mutating microcompaction.
   const toolClearCfg = toolClearEnvConfig();
   const toolClearEveryTurns = envPositiveInt("FORGE_TOOL_CLEAR_EVERY_TURNS", 4);
   let lastToolClearTurn = 0;
@@ -663,9 +667,12 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
     buildChatRequest(config, session.messages, effortOverride, toolsForMode());
 
   const requestTokenEstimate = (): number =>
-    estimateRequestTokens(session.messages, {
-      toolsJsonChars: JSON.stringify(toolsForMode()).length,
-    });
+    estimateRequestTokens(
+      pruneMessagesForRequest(session.messages, { spool: false }).messages,
+      {
+        toolsJsonChars: JSON.stringify(toolsForMode()).length,
+      },
+    );
 
   /**
    * Compact history. Returns true if message count or estimated tokens dropped.
@@ -942,11 +949,8 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
         }
       }
 
-      // Proactive stale tool-result clearing (microcompaction): old bulky tool
-      // bodies are replaced by restorable stubs before they pile up into
-      // overflow territory. Anthropic calls tool-result clearing "one of the
-      // safest lightest touch forms of compaction".
-      // Phase 3: under ULW, clear more aggressively (higher signal density).
+      // Optional in-session stubbing (opt-in). Request-time prune already
+      // slims the outbound payload without rewriting session.json.
       const ulwForClear = loadUlwCycle(session.meta.id);
       const ulwAggressive = Boolean(ulwForClear?.enabled);
       const clearEvery = ulwAggressive

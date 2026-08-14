@@ -237,7 +237,7 @@ describe("tool-clearing (microcompaction)", () => {
     });
   });
 
-  it("toolClearEnvConfig: sane defaults, FORGE_TOOL_CLEAR=0 disables", () => {
+  it("toolClearEnvConfig: default off; FORGE_TOOL_CLEAR=1 enables", () => {
     const KEYS = [
       "FORGE_TOOL_CLEAR",
       "FORGE_TOOL_CLEAR_KEEP_RECENT",
@@ -248,7 +248,7 @@ describe("tool-clearing (microcompaction)", () => {
     try {
       for (const k of KEYS) delete process.env[k];
       assert.deepEqual(toolClearEnvConfig(), {
-        enabled: true,
+        enabled: false,
         keepRecent: 10,
         minChars: 1200,
         minStaleBytes: 12000,
@@ -259,6 +259,8 @@ describe("tool-clearing (microcompaction)", () => {
       process.env.FORGE_TOOL_CLEAR = "false";
       assert.equal(toolClearEnvConfig().enabled, false);
       process.env.FORGE_TOOL_CLEAR = "1";
+      assert.equal(toolClearEnvConfig().enabled, true);
+      process.env.FORGE_TOOL_CLEAR = "true";
       assert.equal(toolClearEnvConfig().enabled, true);
 
       process.env.FORGE_TOOL_CLEAR_KEEP_RECENT = "8";

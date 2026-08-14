@@ -697,6 +697,12 @@ export {
   isIdempotentRestoreTool,
 } from "./session/tool-clearing.js";
 export {
+  pruneMessagesForRequest,
+  requestPruneEnvConfig,
+  assistantStepAges,
+  REQUEST_PRUNE_OMITTED,
+} from "./session/request-prune.js";
+export {
   saveFullOutputSync,
   collectPinnedToolOutputPaths,
 } from "./agent/tools/truncate.js";

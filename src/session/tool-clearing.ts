@@ -174,7 +174,9 @@ export function clearStaleToolResults(
 }
 
 /**
- * Env knobs for the agent loop: FORGE_TOOL_CLEAR (default on; 0/false off),
+ * Env knobs for the agent loop: FORGE_TOOL_CLEAR (default off — request-time
+ * prune is the wire path and does not rewrite history / bust the prefix cache).
+ * Set FORGE_TOOL_CLEAR=1 to restore in-session stubbing.
  * FORGE_TOOL_CLEAR_KEEP_RECENT / _MIN_CHARS tune clearStaleToolResults,
  * FORGE_TOOL_CLEAR_MIN_STALE_BYTES is the caller-side trigger threshold
  * (only bother clearing once stale tool bodies exceed this many bytes).
@@ -186,7 +188,7 @@ export function toolClearEnvConfig(): {
   minStaleBytes: number;
 } {
   const raw = process.env.FORGE_TOOL_CLEAR;
-  const enabled = raw !== "0" && raw !== "false";
+  const enabled = raw === "1" || raw === "true";
   return {
     enabled,
     keepRecent: envPositiveInt(
