@@ -52,7 +52,10 @@ import {
   shouldRedockLiveOnPhase,
   formatLiveControlFeedback,
 } from "../src/tui/status-bar.js";
-import { renderBottomStatusLine } from "../src/tui/bottom-status.js";
+import {
+  renderBottomStatusLine,
+  createBottomStatusDock,
+} from "../src/tui/bottom-status.js";
 import { clipAnsi, visibleWidth } from "../src/util/format.js";
 import type { ForgeConfig } from "../src/config/types.js";
 import type { ResolvedAuth } from "../src/auth/types.js";
@@ -249,6 +252,41 @@ describe("statusline", () => {
     _resetTasksForTests();
     endTurn();
     releaseSession(s.meta.id);
+  });
+
+  it("pauses dock paints so Allow?/ask_user is not clobbered", () => {
+    const writes: string[] = [];
+    const dock = createBottomStatusDock({
+      getContext: () => ({
+        config: { ...DEFAULT_CONFIG, model: "grok-4", contextWindow: 128_000 },
+        session: createSession({
+          cwd: "/tmp",
+          provider: "xai",
+          model: "grok-4",
+        }),
+        auth: { provider: "xai", method: "api_key", token: "t" } as ResolvedAuth,
+      }),
+      forceEnabled: true,
+      paintIntervalMs: 0,
+      planIntervalMs: 0,
+      write: (s) => writes.push(s),
+    });
+    dock.start();
+    const afterStart = writes.length;
+    assert.ok(afterStart > 0, "start paints the dock");
+    dock.pause();
+    assert.equal(dock.pauseDepth(), 1);
+    dock.refresh();
+    dock.setPlan(undefined);
+    assert.equal(writes.length, afterStart, "paused dock must not paint");
+    dock.pause();
+    dock.resume();
+    assert.equal(dock.pauseDepth(), 1);
+    assert.equal(writes.length, afterStart, "nested pause still silent");
+    dock.resume();
+    assert.equal(dock.pauseDepth(), 0);
+    assert.ok(writes.length > afterStart, "resume paints once");
+    dock.stop();
   });
 
   it("prompt flags and turn footer surface session health", () => {

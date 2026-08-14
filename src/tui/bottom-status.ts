@@ -249,6 +249,13 @@ export interface BottomStatusDock {
   start: () => void;
   /** Tear down scroll region and clear the dock line */
   stop: () => void;
+  /**
+   * Pause paints (refcount). Nested permission / ask_user prompts hold
+   * stdin — the 2s timer must not save/restore the cursor over Allow?.
+   */
+  pause: () => void;
+  /** Resume paints when pause depth hits 0 */
+  resume: () => void;
   /** Recompute + paint from current ctx (sync; uses last known plan) */
   refresh: () => void;
   /** Fetch plan (network, cached) then paint — safe to call often */
@@ -259,6 +266,8 @@ export interface BottomStatusDock {
   getPlan: () => PlanUsageInfo | undefined;
   /** True when dock owns the bottom row */
   active: () => boolean;
+  /** Current pause depth (for tests) */
+  pauseDepth: () => number;
 }
 
 export interface BottomStatusDockOpts {
@@ -270,6 +279,10 @@ export interface BottomStatusDockOpts {
   planIntervalMs?: number;
   /** Paint interval ms while running (default 2000) */
   paintIntervalMs?: number;
+  /** Force the dock on (tests; skips TTY / FORGE_BOTTOM_STATUS checks). */
+  forceEnabled?: boolean;
+  /** Override stdout writes (tests). */
+  write?: (s: string) => void;
 }
 
 /**
@@ -279,9 +292,13 @@ export interface BottomStatusDockOpts {
 export function createBottomStatusDock(
   opts: BottomStatusDockOpts,
 ): BottomStatusDock {
-  const enabled = isBottomStatusEnabled();
+  const enabled = Boolean(opts.forceEnabled) || isBottomStatusEnabled();
+  const write = opts.write ?? ((s: string) => {
+    process.stdout.write(s);
+  });
 
   let running = false;
+  let pauseDepth = 0;
   let plan: PlanUsageInfo | undefined;
   let planInFlight = false;
   let lastPaint = "";
@@ -299,26 +316,26 @@ export function createBottomStatusDock(
     // Leave last row for the dock; park cursor inside the scroll region so
     // the next console.log / prompt paint does not land on the dock line.
     if (rows >= 6) {
-      process.stdout.write(`\x1b[1;${rows - 1}r\x1b[${rows - 1};1H`);
+      write(`\x1b[1;${rows - 1}r\x1b[${rows - 1};1H`);
     }
   };
 
   const resetScrollRegion = () => {
     try {
-      process.stdout.write("\x1b[r");
+      write("\x1b[r");
     } catch {
       /* ignore */
     }
   };
 
   const paintLine = (line: string) => {
-    if (!enabled || !running) return;
+    if (!enabled || !running || pauseDepth > 0) return;
     rows = Math.max(4, process.stdout.rows || 24);
     const cols = Math.max(20, process.stdout.columns || 80);
     // Save cursor, move to bottom row, clear+write, restore cursor.
     // DECSC/DECRC avoids fighting the prompt editor's relative moves.
     try {
-      process.stdout.write(
+      write(
         `\x1b7\x1b[${rows};1H\x1b[2K${line.slice(0, cols * 4)}\x1b8`,
       );
       lastPaint = line;
@@ -328,7 +345,7 @@ export function createBottomStatusDock(
   };
 
   const doPaint = () => {
-    if (!enabled || !running) return;
+    if (!enabled || !running || pauseDepth > 0) return;
     const ctx = opts.getContext();
     if (!ctx) return;
     const cols = Math.max(20, process.stdout.columns || 80);
@@ -380,6 +397,7 @@ export function createBottomStatusDock(
       }
 
       onResize = () => {
+        if (pauseDepth > 0) return;
         applyScrollRegion();
         lastPaint = "";
         doPaint();
@@ -390,6 +408,7 @@ export function createBottomStatusDock(
     stop() {
       if (!running) return;
       running = false;
+      pauseDepth = 0;
       if (paintTimer) {
         clearInterval(paintTimer);
         paintTimer = null;
@@ -405,12 +424,28 @@ export function createBottomStatusDock(
       // Clear dock row then restore full scroll region
       try {
         rows = Math.max(4, process.stdout.rows || 24);
-        process.stdout.write(`\x1b7\x1b[${rows};1H\x1b[2K\x1b8`);
+        write(`\x1b7\x1b[${rows};1H\x1b[2K\x1b8`);
       } catch {
         /* ignore */
       }
       resetScrollRegion();
       lastPaint = "";
+    },
+
+    pause() {
+      if (!enabled || !running) return;
+      pauseDepth += 1;
+    },
+
+    resume() {
+      if (!enabled || !running) return;
+      pauseDepth = Math.max(0, pauseDepth - 1);
+      if (pauseDepth === 0) {
+        // Resize during Allow? skipped applyScrollRegion — restore it now.
+        applyScrollRegion();
+        lastPaint = "";
+        doPaint();
+      }
     },
 
     refresh() {
@@ -428,5 +463,6 @@ export function createBottomStatusDock(
 
     getPlan: () => plan,
     active: () => running && enabled,
+    pauseDepth: () => pauseDepth,
   };
 }

@@ -1,6 +1,9 @@
 import { describe, it, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import { PassThrough } from "node:stream";
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   withStdinLease,
   setStdinLeaseHolder,
@@ -107,5 +110,20 @@ describe("prompt-editor suspend/resume", () => {
     assert.equal(ed.isSuspended(), false);
     assert.equal(ed.getLine(), "draft y");
     ed.close();
+  });
+});
+
+describe("REPL dock vs stdin lease", () => {
+  it("pauses the sticky dock while a nested prompt holds stdin", () => {
+    const src = fs.readFileSync(
+      path.join(path.dirname(fileURLToPath(import.meta.url)), "../src/tui/repl.ts"),
+      "utf8",
+    );
+    assert.match(src, /bottomDock\.pause\(\)/);
+    assert.match(src, /bottomDock\.resume\(\)/);
+    assert.match(
+      src,
+      /setStdinLeaseHolder\(\{[\s\S]*bottomDock\.pause\(\)[\s\S]*rl\.suspend\(\)[\s\S]*rl\.resume\(\)[\s\S]*bottomDock\.resume\(\)/,
+    );
   });
 });

@@ -327,9 +327,15 @@ export async function runRepl(opts: {
   // Nested permission / ask_user prompts take the TTY; re-dock as soon as
   // they release it so live › does not wait for the next heartbeat tick.
   setStdinLeaseHolder({
-    suspend: () => rl.suspend(),
+    suspend: () => {
+      // Dock 2s paint uses DECSC/DECRC — freeze it so Allow?/ask_user
+      // is not clobbered while the nested readline owns stdin.
+      bottomDock.pause();
+      rl.suspend();
+    },
     resume: () => {
       rl.resume();
+      bottomDock.resume();
       if (busy) livePrompt({ freshLine: true });
       else prompt();
     },
