@@ -80,6 +80,8 @@ attempt Stop
     ├─ cycle=0 without **Cycle complete.** → re-anchor finish last wave
     ├─ cycle=0 + **Cycle complete.** without evidence → bounce once, demand proof
     └─ cycle=0 + **Cycle complete.** + evidence → release
+                                              └─ local git commit of the wave (never push)
+                                                 FORGE_ULW_AUTO_COMMIT=0 off
 ```
 
 Stuck-wall: N consecutive Stop attempts with **no file edits and no working-tree diff movement** (default same as goal stuck threshold / `FORGE_ULW_STUCK_THRESHOLD`). Progress is measured two ways: `editCount` delta **or** a changed `gitDiffFingerprint` — so work done via bash heredocs/`sed -i` (which never touches edit-tool counters) cannot false-trigger a stuck release. Outside a git repo the fingerprint is unavailable and the classic editCount-only rule applies.

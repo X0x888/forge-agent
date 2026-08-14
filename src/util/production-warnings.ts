@@ -249,6 +249,17 @@ export function productionWarningsForRun(
         );
       }
     }
+    {
+      const v = (process.env.FORGE_ULW_AUTO_COMMIT || "1").trim().toLowerCase();
+      if (
+        opts?.ultrawork &&
+        (v === "0" || v === "false" || v === "off" || v === "no")
+      ) {
+        warnings.push(
+          "FORGE_ULW_AUTO_COMMIT=0 — ULW **Cycle complete.** will not create a local commit",
+        );
+      }
+    }
     // Dirty tree blast radius (best-effort; never block run on git failure).
     // Only surface when ULW is armed (unattended blast radius) or the tree is
     // extremely dirty (≥100) — a normal 40-file WIP should not spam every run.

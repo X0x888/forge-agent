@@ -6514,6 +6514,7 @@ async function runHeadless(opts: {
           }
         })(),
         lastCheckpoint: opts.session.meta.lastCheckpoint ?? null,
+        autoCommit: opts.session.meta.lastAutoCommit ?? null,
         blockingStop: !isFalsy(opts.config.blockingStopHooks),
         maxRunMs: maxRunMsFromEnv(),
         providerTimeoutMs: providerTimeoutMs(),
@@ -6879,6 +6880,7 @@ maxTurns: opts.config.maxTurns ?? 0,
           }
         })(),
         lastCheckpoint: opts.session.meta.lastCheckpoint ?? null,
+        autoCommit: result.autoCommit ?? opts.session.meta.lastAutoCommit ?? null,
       blockingStop: !isFalsy(opts.config.blockingStopHooks),
       maxRunMs: maxRunMsFromEnv(),
       providerTimeoutMs: providerTimeoutMs(),

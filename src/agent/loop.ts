@@ -260,6 +260,13 @@ export interface LoopResult {
   cacheReadTokens: number;
   /** Distinct served models that diverged from the requested one this run. */
   servedModels?: string[];
+  /** Unattended ULW auto-commit after **Cycle complete.** (never pushed). */
+  autoCommit?: {
+    committed: boolean;
+    sha?: string;
+    subject?: string;
+    skipped?: string;
+  };
 }
 
 /**
@@ -665,6 +672,7 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
   let hitMaxTurns = false;
   let hitCostCap = false;
   let lastFinishReason: string | null = null;
+  let autoCommit: LoopResult["autoCommit"];
   let overflowCompactAttempted = false;
   // max_turns <= 0 means unlimited (config default is 0). A silent 200-cap when
   // the file says 0 was a production footgun for long ULW/CI runs.
@@ -1888,6 +1896,38 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
 
         if (stopResult.allowStop) {
           if (stopResult.systemMessage) log.dim(stopResult.systemMessage);
+          if (stopResult.ulw?.lastCycleReleased) {
+            try {
+              const { maybeAutoCommitOnUlwDone, autoCommitStamp } =
+                await import("../util/git-auto-commit.js");
+              const cwd =
+                config.workspace || session.meta.cwd || process.cwd();
+              const ac = maybeAutoCommitOnUlwDone({
+                cwd,
+                sessionId: session.meta.id,
+                permissionMode: config.permissionMode,
+              });
+              autoCommit = {
+                committed: ac.committed,
+                sha: ac.sha,
+                subject: ac.subject,
+                skipped: ac.skipped,
+              };
+              session.meta.lastAutoCommit = autoCommitStamp(ac);
+              saveSession(session);
+              if (ac.committed) {
+                const line = `Committed ${ac.sha || "HEAD"} — ${ac.subject} (${ac.files ?? 0} file(s), not pushed)`;
+                log.info(chalk.green(line));
+                events.onStatus?.(line);
+                if (finalText.trim()) finalText = `${finalText.replace(/\s+$/, "")}\n\n${line}`;
+                else finalText = line;
+              } else if (ac.skipped && ac.skipped !== "working tree clean") {
+                log.dim(`Auto-commit skipped: ${ac.skipped}`);
+              }
+            } catch {
+              /* never fail a finished cycle on commit */
+            }
+          }
           // Stamp lastError when a polite-yield / proof-claim guard released
           // after its cap so resume orientation surfaces why the agent stopped
           // short (expert friction: "why did it yield?").
@@ -2305,6 +2345,7 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
     ...(runServedModels.size
       ? { servedModels: [...runServedModels] }
       : {}),
+    ...(autoCommit ? { autoCommit } : {}),
   };
 }
 

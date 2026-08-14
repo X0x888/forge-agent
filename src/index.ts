@@ -799,6 +799,13 @@ export {
   createSafetyCheckpoint,
   type SafetyCheckpointResult,
 } from "./util/git-checkpoint.js";
+export {
+  maybeAutoCommitOnUlwDone,
+  ulwAutoCommitEnabled,
+  buildAutoCommitSubject,
+  isSensitiveRelPath,
+  type AutoCommitResult,
+} from "./util/git-auto-commit.js";
 
 export {
   isDestructiveGitCommand,

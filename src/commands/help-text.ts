@@ -186,6 +186,7 @@ Forge slash commands
   /review [target]      Code review: uncommitted|staged|<commit>|<branch>|<pr#>
   /checkpoint [restore] Safety snapshot (/snap)
   /commit [staged] [do] Draft commit message from git diff (do = create commit, no push)
+                        Unattended ULW also commits locally on **Cycle complete.** (FORGE_ULW_AUTO_COMMIT=0 off)
   /rewind [n]           Undo last n user turns + restore journaled files (/undo)
   /retry [prompt]       Rewind last turn (+ disk) + re-run (/again; optional rewrite)
   /export [path] [--json]  Export session as markdown or JSON (files mode 0600)

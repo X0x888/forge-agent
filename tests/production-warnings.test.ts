@@ -287,10 +287,12 @@ describe("productionWarningsForRun", () => {
     const prevNudge = process.env.FORGE_AUTO_VERIFY_NUDGE;
     const prevFix = process.env.FORGE_FIX_UNTIL_GREEN;
     const prevCp = process.env.FORGE_ULW_CHECKPOINT;
+    const prevAc = process.env.FORGE_ULW_AUTO_COMMIT;
     process.env.FORGE_SUBAGENT_LAND = "discard";
     process.env.FORGE_AUTO_VERIFY_NUDGE = "0";
     process.env.FORGE_FIX_UNTIL_GREEN = "0";
     process.env.FORGE_ULW_CHECKPOINT = "0";
+    process.env.FORGE_ULW_AUTO_COMMIT = "0";
     try {
       const w = productionWarningsForRun(
         { ...DEFAULT_CONFIG },
@@ -317,6 +319,10 @@ describe("productionWarningsForRun", () => {
         w.some((x) => /FORGE_ULW_CHECKPOINT=0/i.test(x)),
         "ulw checkpoint off should warn under ULW",
       );
+      assert.ok(
+        w.some((x) => /FORGE_ULW_AUTO_COMMIT=0/i.test(x)),
+        "ulw auto-commit off should warn under ULW",
+      );
     } finally {
       if (prevLand === undefined) delete process.env.FORGE_SUBAGENT_LAND;
       else process.env.FORGE_SUBAGENT_LAND = prevLand;
@@ -326,6 +332,8 @@ describe("productionWarningsForRun", () => {
       else process.env.FORGE_FIX_UNTIL_GREEN = prevFix;
       if (prevCp === undefined) delete process.env.FORGE_ULW_CHECKPOINT;
       else process.env.FORGE_ULW_CHECKPOINT = prevCp;
+      if (prevAc === undefined) delete process.env.FORGE_ULW_AUTO_COMMIT;
+      else process.env.FORGE_ULW_AUTO_COMMIT = prevAc;
     }
   });
 

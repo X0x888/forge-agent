@@ -124,6 +124,13 @@ export interface SessionMeta {
   lastCheckpoint?: string;
   /** ISO timestamp when lastCheckpoint was taken. */
   lastCheckpointAt?: string;
+  /** Last unattended ULW auto-commit (local only, never pushed). */
+  lastAutoCommit?: {
+    sha?: string;
+    subject?: string;
+    at: string;
+    skipped?: string;
+  };
   /** Session id this was forked from (conversation tree parent). */
   parentSessionId?: string;
   /** Short label of parent at fork time (title or id prefix). */

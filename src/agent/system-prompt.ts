@@ -407,6 +407,7 @@ export function buildBaselineSystemPrompt(opts: {
       ``,
       `### User controls (mid-turn)`,
       `\`/cycle 1|0\` · \`/max-waves N|off\` · \`/ulw-off\` · free-text steering. Never pause for "is this good enough?" — cycle/max_waves is the answer.`,
+      `On **Cycle complete.** the harness auto-commits the local tree (never push). Do not start a new wave to commit. FORGE_ULW_AUTO_COMMIT=0 disables.`,
       `Pause only for real external blockers (credentials, destructive shared-state, uninterpretable foreign work).`,
     );
   }

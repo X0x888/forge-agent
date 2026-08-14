@@ -7836,6 +7836,7 @@ export interface EffectiveConfigSnap {
   subagentLandMode: "auto" | "keep" | "discard";
   projectMemoryCount: number;
   lastCheckpoint: string | null;
+  lastAutoCommit: { sha?: string; subject?: string; skipped?: string } | null;
   /** Detected package manager when known. */
   packageManager: string | null;
   /** Preferred verification commands. */
@@ -8029,6 +8030,13 @@ export function buildEffectiveConfigSnap(
       }
     })(),
     lastCheckpoint: session?.meta.lastCheckpoint ?? null,
+    lastAutoCommit: session?.meta.lastAutoCommit
+      ? {
+          sha: session.meta.lastAutoCommit.sha,
+          subject: session.meta.lastAutoCommit.subject,
+          skipped: session.meta.lastAutoCommit.skipped,
+        }
+      : null,
     ...(() => {
       try {
         const cwd = c.workspace || session?.meta.cwd || process.cwd();
@@ -8198,6 +8206,11 @@ export function formatEffectiveConfig(
     snap.lastCheckpoint
       ? `  checkpoint:      ${snap.lastCheckpoint.slice(0, 12)}…  · /checkpoint restore`
       : `  checkpoint:      (none)  · /checkpoint`,
+    snap.lastAutoCommit?.sha
+      ? `  auto-commit:     ${snap.lastAutoCommit.sha}  ${snap.lastAutoCommit.subject || ""}`.trimEnd()
+      : snap.lastAutoCommit?.skipped
+        ? `  auto-commit:     skipped (${snap.lastAutoCommit.skipped})`
+        : `  auto-commit:     (none)  · Cycle complete commits locally  FORGE_ULW_AUTO_COMMIT=0 off`,
     `  edit-guard:      file-read=${snap.env.FORGE_FILE_READ_GUARD ? "on" : "off"}` +
       `  verify-hint=${snap.env.FORGE_VERIFY_HINT ? "on" : "off"}` +
       `  (FORGE_FILE_READ_GUARD · FORGE_VERIFY_HINT)`,

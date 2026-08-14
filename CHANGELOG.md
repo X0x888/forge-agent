@@ -3,6 +3,7 @@
 ## Unreleased
 
 ### Added
+- **Unattended ULW auto-commit**: when the agent attests **Cycle complete.** and Stop releases, Forge creates a **local** git commit of the session's work (mutation-journal paths, else the dirty tree). Never pushes. Skips plan mode, clean trees, and secrets (`.env`, `*.pem`, `auth.json`, …). `/status` and `forge run --json` show `autoCommit`. Kill-switch: `FORGE_ULW_AUTO_COMMIT=0`.
 - **Dock is the HUD**: idle `forge ›` no longer reprints the model/ctx/plan strip when the bottom dock is on (`FORGE_BOTTOM_STATUS=0` / non-TTY still get a deduped strip). `/verbose` is catalogued (Tab, `/help`, reserved, live-safe, `forge run "/verbose"`); REPL still owns the session-local toggle and shows a `VERBOSE` prompt flag. `/skills` is catalogued next to `/commands`.
 - **First-run UX**: TTY `forge` without credentials offers a login picker (headless/`--json` still fail closed). Slim banner + “Type a task in English.” Grouped `/help` (`start` default, `all` is the catalog, plus `settings`/`harness`/`sessions`/`safety`). `/setup` + `forge setup` first-day hub (model, budget, notify, `/init`, LSP, `forge init` scaffold). Compact `setup N/M` line until recommended items are done or `/setup skip`. Contextual once-hints after first edit / first spend / long turn. `/config` and doctor show attention, MCP, LSP, and a non-blocking setup section. Docs: `docs/GETTING-STARTED.md`. `FORGE_SETUP=0` disables the auto card.
 
