@@ -61,16 +61,38 @@ Please comprehensively audit and improve this app:
     );
     assert.equal(isEvaluateClassMandate(short), true);
     const clauses = extractMandateBullets(short);
-    assert.ok(clauses.length >= 2, `expected evaluate + improve clauses, got ${clauses.length}`);
-    assert.match(clauses[0]!, /evaluate/i);
-    assert.match(clauses[1]!, /improve/i);
+    assert.equal(
+      clauses.length,
+      0,
+      "verb-order sentence must not become evaluate+improve bullets",
+    );
     const shortTodos = todosFromMandate(short);
-    assert.ok(shortTodos.length >= 2);
+    assert.equal(shortTodos.length, 1);
+    assert.match(shortTodos[0]!.content, /evaluate/i);
     const bullets = extractMandateBullets(m);
     assert.ok(bullets.length >= 4);
     const todos = todosFromMandate(m);
     assert.ok(todos.length >= 4);
     assert.equal(todos[0]!.status, "pending");
+  });
+
+  it("does not seed evaluate+improve as two priorities", () => {
+    const sid = "sess-no-split";
+    fs.mkdirSync(path.join(home, "sessions", sid), { recursive: true });
+    seedMemoryFromMandate(
+      sid,
+      "comprehensively evaluate this tool and then improve the ui and ux of it.",
+      { softPrompt: true, force: true },
+    );
+    const store = loadDecisionMemory(sid);
+    const prios = store.records.filter(
+      (r) => r.status === "active" && r.kind === "priority",
+    );
+    assert.equal(prios.length, 0, JSON.stringify(prios.map((r) => r.text)));
+    assert.ok(
+      store.records.some((r) => /Mandate verbs in order/i.test(r.text)),
+    );
+    assert.ok(store.records.some((r) => /^MANDATE:/i.test(r.text)));
   });
 
   it("treats a Reading: reply as mandate judgment", () => {

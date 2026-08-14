@@ -144,7 +144,11 @@ export function extractMandateBullets(mandate: string): string[] {
     }
   }
   if (bullets.length >= 2) return bullets.slice(0, 40);
-  // "evaluate X and then improve Y" is two mandate verbs, not one blob.
+  // Verb-order sentences ("evaluate X and then improve Y") are one mandate,
+  // not two backlog items. Those used to become [priority] evaluate +
+  // [priority] improve and survive every compact.
+  if (isEvaluateClassMandate(text)) return [];
+  // Explicit "do A then do B" checklists that are not evaluate-class.
   const thenParts = text
     .split(/\s+and then\s+|\s+then\s+/i)
     .map((s) => s.trim())
@@ -289,15 +293,19 @@ export function seedMemoryFromMandate(
     });
     if (r) seeded++;
   }
-  // Prefer priority for early bullets, constraint for the rest
-  bullets.slice(0, 12).forEach((b, i) => {
-    const r = appendMemoryRecord(sessionId, {
-      kind: i < 3 ? "priority" : "constraint",
-      text: b,
-      source: "ulw",
+  // Prefer priority for early bullets, constraint for the rest.
+  // Skip for evaluate-class one-liners — the verb-order decision below
+  // is the contract, not two fake priorities.
+  if (!(isEvaluateClassMandate(mandate) && !isBroadMandate(mandate))) {
+    bullets.slice(0, 12).forEach((b, i) => {
+      const r = appendMemoryRecord(sessionId, {
+        kind: i < 3 ? "priority" : "constraint",
+        text: b,
+        source: "ulw",
+      });
+      if (r) seeded++;
     });
-    if (r) seeded++;
-  });
+  }
   if (opts?.softPrompt) {
     const r = appendMemoryRecord(sessionId, {
       kind: "decision",

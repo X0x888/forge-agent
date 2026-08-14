@@ -1929,7 +1929,10 @@ export async function handleSlash(
       }
       let todoSeedNote = "";
       try {
-        if (openTodos(opts.session.todos || []) < 2) {
+        if (
+          state.backlogRequired &&
+          openTodos(opts.session.todos || []) < 2
+        ) {
           const seeded = todosFromMandate(mandate, { max: 12 });
           applyTodos(opts.session, seeded, false);
           todoSeedNote = `Seeded ${seeded.length} backlog todo(s).`;
