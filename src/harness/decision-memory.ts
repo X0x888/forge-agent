@@ -144,6 +144,14 @@ export function extractMandateBullets(mandate: string): string[] {
     }
   }
   if (bullets.length >= 2) return bullets.slice(0, 40);
+  // "evaluate X and then improve Y" is two mandate verbs, not one blob.
+  const thenParts = text
+    .split(/\s+and then\s+|\s+then\s+/i)
+    .map((s) => s.trim())
+    .filter((s) => s.length >= 8);
+  if (thenParts.length >= 2 && thenParts.length <= 4) {
+    return thenParts.map((s) => s.slice(0, MAX_TEXT));
+  }
   // Fallback: semicolon / "and" split for short mandates
   const parts = text
     .split(/\s*;\s+|\n+/)
@@ -154,12 +162,32 @@ export function extractMandateBullets(mandate: string): string[] {
 }
 
 /**
+ * Mandate whose first verb is evaluate/audit/review (often followed by ship).
+ * Length-independent — "comprehensively evaluate this tool and then improve
+ * the ui" is the product case and used to miss the 80-char broad gate.
+ */
+export function isEvaluateClassMandate(mandate: string): boolean {
+  const t = mandate.replace(/\s+/g, " ").trim();
+  if (!t) return false;
+  if (/comprehensively|full.?audit|end.to.end\s+(audit|review|eval)/i.test(t)) {
+    return true;
+  }
+  return (
+    /\b(evaluate|audit|assess|inspect)\b/i.test(t) &&
+    /\b(improve|fix|ship|polish|harden|ux|ui)\b/i.test(t)
+  );
+}
+
+/**
  * True when the mandate is a multi-section checklist / comprehensive audit
  * rather than a single tight objective.
  */
 export function isBroadMandate(mandate: string): boolean {
   const raw = mandate.replace(/\r\n/g, "\n");
   const t = raw.replace(/\s+/g, " ").trim();
+  // Keyword class first — a 74-char "comprehensively evaluate… then improve…"
+  // is the ULW product case and must not require 80 characters.
+  if (isEvaluateClassMandate(t)) return true;
   if (t.length < 80) return false;
   if (
     /comprehensively|end.to.end|full.?audit|all aspects|improve (this|the) app/i.test(
@@ -230,6 +258,27 @@ export function seedMemoryFromMandate(
   if (!opts?.force && store.mandateFp === fp && store.records.length > 0) {
     return { seeded: 0, store };
   }
+  // A new mandate replaces the previous MANDATE:/priority seeds — do not
+  // leave "MANDATE: continue" next to the real objective.
+  if (store.mandateFp && store.mandateFp !== fp) {
+    for (const r of store.records) {
+      if (r.status !== "active" || r.source !== "ulw") continue;
+      if (
+        r.kind === "constraint" &&
+        /^MANDATE:/i.test(r.text)
+      ) {
+        r.status = "superseded";
+      }
+      if (r.kind === "priority" || r.kind === "decision") {
+        if (
+          /^Soft mandate:|^Broad mandate:|^Mandate verbs/i.test(r.text)
+        ) {
+          r.status = "superseded";
+        }
+      }
+    }
+    saveDecisionMemory(store);
+  }
   let seeded = 0;
   const bullets = extractMandateBullets(mandate);
   const full = mandate.replace(/\s+/g, " ").trim().slice(0, MAX_TEXT);
@@ -266,6 +315,14 @@ export function seedMemoryFromMandate(
     });
     if (r) seeded++;
   }
+  if (isEvaluateClassMandate(mandate)) {
+    const r = appendMemoryRecord(sessionId, {
+      kind: "decision",
+      text: "Mandate verbs in order: written evaluation/reading first (that is the Wave 1 deliverable, not advice), then ship the one item the reading picked.",
+      source: "ulw",
+    });
+    if (r) seeded++;
+  }
   const next = loadDecisionMemory(sessionId);
   next.mandateFp = fp;
   saveDecisionMemory(next);
@@ -275,6 +332,40 @@ export function seedMemoryFromMandate(
 /** Active records for prompt injection. */
 export function activeMemoryRecords(sessionId: string): MemoryRecord[] {
   return loadDecisionMemory(sessionId).records.filter((r) => r.status === "active");
+}
+
+/**
+ * True when the agent has produced a real reading/judgment — not the
+ * auto-seeded "Soft mandate:" / "Broad mandate:" templates.
+ */
+export function hasMandateJudgment(
+  sessionId: string,
+  lastAssistantMessage?: string,
+): boolean {
+  const recs = activeMemoryRecords(sessionId);
+  if (
+    recs.some(
+      (r) =>
+        r.source === "agent" &&
+        (r.kind === "decision" || r.kind === "observation") &&
+        r.text.length >= 40 &&
+        !/^(Soft mandate:|Broad mandate:|Mandate verbs|MANDATE:)/i.test(r.text),
+    )
+  ) {
+    return true;
+  }
+  const msg = String(lastAssistantMessage || "").trim();
+  if (!msg) return false;
+  if (/^\s*(reading|judgment)\s*:/im.test(msg)) return true;
+  if (
+    msg.length > 80 &&
+    /\b(highest-leverage|what i (passed|skipped) on|i will (evaluate|audit|ship))\b/i.test(
+      msg,
+    )
+  ) {
+    return true;
+  }
+  return false;
 }
 
 /**

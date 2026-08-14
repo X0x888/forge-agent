@@ -35,6 +35,7 @@ import {
   pruneOversizedMessageBodies,
   setSessionLastError,
   clearSessionLastError,
+  clearTransientProviderError,
   isLastVerificationStale,
 } from "../session/session.js";
 import { appendFileMutation } from "../session/mutations.js";
@@ -47,8 +48,6 @@ import {
   armUlwCycle,
   maybeFlipUlwToLastOnSafetyValve,
   ulwKickoffMessage,
-  isSoftPrompt,
-  isResumeFollowUp,
   formatUlwCounts,
   formatUlwBadge,
   ULW_LIVE_CONTROLS_HINT,
@@ -597,21 +596,10 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
         `ULW cycle armed (cycle=1)${ulw.softPrompt ? " — soft prompt expanded to god-scope" : ""}`,
       );
       effectiveUserMessage = ulwKickoffMessage(ulw);
-    } else if (
-      isSoftPrompt(userMessage) &&
-      !isResumeFollowUp(userMessage) &&
-      !userMessage.includes("ULW runtime controls")
-    ) {
-      // Soft follow-ups under ULW still get cycle framing without resetting wave hard.
-      // Resume words ("continue", "keep going") must not replace the mandate.
-      const refreshed = armUlwCycle(session.meta.id, userMessage, {
-        cwd: workspace,
-        cycle: ulw.cycle,
-        editCount: session.meta.editCount,
-      });
-      effectiveUserMessage = ulwKickoffMessage(refreshed);
-      log.info("ULW soft follow-up — re-expanded mandate, cycle preserved");
     }
+    // Already armed: the user's text is steering, not a new mandate.
+    // Re-arming replaced "evaluate then improve" with "continue" and
+    // dumped another 5k god-mode kickoff. Explicit /ulw <new> still re-arms.
   }
 
   if (!opts.resumeWithoutUserMessage) {
@@ -653,6 +641,13 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
     session.messages.push({ role: "user", content: effectiveUserMessage });
     session.meta.turnCount += 1;
     resetTodoNudgeForPrompt(session.meta.id);
+    // New user turn (including typing "continue" after quota) must not keep
+    // a stale ERR:quota_exhausted banner on the HUD for the whole next run.
+    try {
+      if (clearTransientProviderError(session)) saveSession(session);
+    } catch {
+      /* */
+    }
   }
 
   // Admit initial harness snapshot (ULW/goal/todos/git) once at prompt start

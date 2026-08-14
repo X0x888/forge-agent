@@ -22,6 +22,8 @@ import {
   formatUlwCounts,
   formatUlwBadge,
   formatUlwStatus,
+  formatCappedWaveDoctrine,
+  ulwKickoffMessage,
   detectWaveProof,
   hasAttestationEvidence,
   bestWave,
@@ -46,6 +48,64 @@ describe("ulw cycle", () => {
     );
     assert.equal(isSoftPrompt("continue"), false);
     assert.equal(isSoftPrompt("keep going"), false);
+  });
+
+  it("evaluate-class general prompts get a written-reading doctrine, not tools-not-advice", () => {
+    const mandate =
+      "comprehensively evaluate this tool and then improve the ui and ux of it.";
+    const { expanded } = expandUlwMandate(mandate);
+    assert.match(expanded, /Evaluate-class|written reading|first verb/i);
+    assert.match(expanded, /not.*advice/i);
+    assert.doesNotMatch(
+      expanded,
+      /Execute Wave 1 in this turn — tools, not advice/,
+    );
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-ulw-eval-"));
+    process.env.FORGE_HOME = tmp;
+    const sid = "ulw-eval-cap";
+    const s = armUlwCycle(sid, mandate, { cycle: 1, maxWaves: 2 });
+    assert.equal(s.backlogRequired, true);
+    assert.equal(s.judgmentRequired, true);
+    const kick = ulwKickoffMessage(s);
+    assert.match(kick, /max_waves=2/);
+    assert.match(kick, /verbs in order|Wave 1: written/i);
+    assert.match(
+      formatCappedWaveDoctrine(2, mandate),
+      /evaluation|first verb/i,
+    );
+  });
+
+  it("judgment gate blocks wave-0 Stop until a Reading exists, then releases", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-ulw-judge-"));
+    process.env.FORGE_HOME = tmp;
+    const sid = "ulw-judge";
+    armUlwCycle(
+      sid,
+      "comprehensively evaluate this tool and then improve the ui.",
+      { cycle: 1, maxWaves: 2 },
+    );
+    const blocked = evaluateUlwAtStop({
+      sessionId: sid,
+      lastAssistantMessage: "shipping chrome now",
+      editCount: 1,
+      openTodoCount: 2,
+      stuckThreshold: 20,
+    });
+    assert.equal(blocked.block, true);
+    assert.match(blocked.reanchor || "", /written reading|Reading:/i);
+    assert.equal(loadUlwCycle(sid)?.wave, 0);
+
+    const after = evaluateUlwAtStop({
+      sessionId: sid,
+      lastAssistantMessage:
+        "Reading: highest-leverage work is the missing /verbose catalog plus dock-is-HUD chrome.",
+      editCount: 1,
+      openTodoCount: 2,
+      stuckThreshold: 20,
+    });
+    assert.equal(after.block, true);
+    assert.equal(loadUlwCycle(sid)?.wave, 1);
+    assert.equal(loadUlwCycle(sid)?.judgmentRequired, false);
   });
 
   it("detects resume follow-ups that must not replace the mandate", () => {

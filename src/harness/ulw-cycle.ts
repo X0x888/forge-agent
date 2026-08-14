@@ -18,6 +18,8 @@ import { maybeDesktopNotify } from "../util/attention.js";
 import {
   formatMemoryForPrompt,
   isBroadMandate,
+  isEvaluateClassMandate,
+  hasMandateJudgment,
   recordWaveObservation,
   seedMemoryFromMandate,
 } from "./decision-memory.js";
@@ -105,6 +107,13 @@ export interface UlwCycleState {
    * free-form scope (Phase 2 contract). Cleared once backlog is present.
    */
   backlogRequired?: boolean;
+  /**
+   * Evaluate-class mandate: wave 0 cannot close until a written reading
+   * exists (memory_write or "Reading:" in the assistant message). Capped.
+   */
+  judgmentRequired?: boolean;
+  /** Times we bounced Stop for a missing reading (capped, never a trap). */
+  judgmentDemands?: number;
   /** Open todo count snapshot at previous wave boundary (for todoProgress). */
   lastOpenTodoCount?: number;
   /**
@@ -160,6 +169,7 @@ const WAVE_LEDGER_KEEP = 20;
 const DIFF_FP_KEEP = 12;
 /** Proof demands per proof-less streak before accepting a stated rationale. */
 const MAX_PROOF_DEMANDS = 2;
+const MAX_JUDGMENT_DEMANDS = 2;
 /** Evidence bounces allowed on cycle=0 attestation before releasing anyway. */
 const MAX_EVIDENCE_NUDGES = 1;
 /** Thin waves in a row before surfacing a diminishing-returns advisory. */
@@ -537,6 +547,33 @@ export function maybeStampUlwWave(opts: {
     return { stamped: false, updated: true, wave: s.wave };
   }
 
+  // Evaluate-class: do not open wave 1 on an idle epoch with no reading.
+  if (
+    s.judgmentRequired &&
+    s.wave === 0 &&
+    !hasMandateJudgment(opts.sessionId, opts.lastAssistantMessage)
+  ) {
+    s.judgmentDemands = Math.min(
+      MAX_JUDGMENT_DEMANDS,
+      (s.judgmentDemands ?? 0) + 1,
+    );
+    saveUlwCycle(s);
+    if ((s.judgmentDemands ?? 0) >= MAX_JUDGMENT_DEMANDS) {
+      s.judgmentRequired = false;
+      saveUlwCycle(s);
+    } else {
+      return {
+        stamped: false,
+        wave: s.wave,
+        admit: [
+          "[Forge harness — mid-conversation update]",
+          "Evaluate-class mandate: write the reading (what the hard work is + the ONE ship) before a new wave opens.",
+          "memory_write it, or start the next reply with `Reading:`.",
+        ].join("\n"),
+      };
+    }
+  }
+
   // Idle epoch — unattended wave boundary. Honor the cap.
   if (cap != null && s.wave >= cap) {
     flipUlwToLast(s, opts.sessionId);
@@ -655,6 +692,13 @@ export function loadUlwCycle(sessionId: string): UlwCycleState | null {
   ) {
     raw.evidenceNudges = 0;
   }
+  if (typeof raw.judgmentRequired !== "boolean") raw.judgmentRequired = false;
+  if (
+    typeof raw.judgmentDemands !== "number" ||
+    !Number.isFinite(raw.judgmentDemands)
+  ) {
+    raw.judgmentDemands = 0;
+  }
   // Back-compat: older sidecars omit diff-fingerprint churn tracking
   if (!Array.isArray(raw.seenDiffFps)) raw.seenDiffFps = [];
   return raw;
@@ -732,6 +776,7 @@ export function expandUlwMandate(mandate: string): { expanded: string; soft: boo
     `The loop below is **philosophy**, not a rigid ritual. Freestyle sequence, tooling, and depth when that yields better work. Harness rails (Stop/proof/todos) stay; process theater does not.`,
   ].join("\n");
 
+  const evaluateClass = isEvaluateClassMandate(mandate) || isEvaluateClassMandate(base);
   const backlogDoctrine = broad
     ? [
         ``,
@@ -739,6 +784,16 @@ export function expandUlwMandate(mandate: string): { expanded: string; soft: boo
         `This mandate is multi-section. **First** materialize an ordered todo board (≥2 items) covering mandate sections via todo_write.`,
         `Waves execute the backlog against durable decisions — do **not** free-invent unrelated scope. Prefer P0 reliability/trust before polish when both appear.`,
         `Record new constraints with memory_write so compaction cannot erase them.`,
+      ].join("\n")
+    : "";
+  const evaluateDoctrine = evaluateClass
+    ? [
+        ``,
+        `### Evaluate-class mandate (verbs in order)`,
+        `The user asked to **evaluate/audit then improve**. A written reading is Wave 1's deliverable — that is the first verb, **not** "advice-only".`,
+        `1. Write the reading (one paragraph: what the hard work is, what you passed on, the ONE item you will ship). memory_write it.`,
+        `2. Then ship that item. Do not burn the wave budget on catalog chrome if the mandate's first verb was evaluate.`,
+        `Skipping the evaluation to jump to a tiny polish is a failed wave.`,
       ].join("\n")
     : "";
 
@@ -751,6 +806,7 @@ export function expandUlwMandate(mandate: string): { expanded: string; soft: boo
         `Execute under **ULW god-mode** until cycle=0 and the last wave is attested **Cycle complete.**`,
         smartDoctrine,
         backlogDoctrine,
+        evaluateDoctrine,
         ``,
         `- Own the outcome end-to-end. Research when uncertain; spawn subagents when that is smarter; then build — no thrash, no permission-to-continue asks.`,
         `- Every wave: highest-leverage next objective vs the mandate · search-before-build · ship · cheapest real proof · hostile review · next wave while cycle=1.`,
@@ -771,10 +827,11 @@ export function expandUlwMandate(mandate: string): { expanded: string; soft: boo
       ``,
       smartDoctrine,
       backlogDoctrine,
+      evaluateDoctrine,
       ``,
       `### Operating loop (guidance — adapt freely when freestyle is better)`,
       `1. **ORIENT** — what this place is (stack, checks, entrypoints, git, AGENTS/README, real debt). Tools, not guesses.`,
-      `2. **JUDGE** — single highest-leverage hard objective now (impact × confidence / cost).`,
+      `2. **JUDGE** — single highest-leverage hard objective now (impact × confidence / cost). Write the reading.`,
       `3. **RESEARCH** — only as deep as uncertainty warrants; proactive subagents/MCP/web when that is the efficient path. Do not thrash blind.`,
       `4. **SHIP** one bounded high-leverage wave (siblings + dependents). Search-before-build.`,
       `5. **PROVE** — cheapest real check that can fail.`,
@@ -783,11 +840,14 @@ export function expandUlwMandate(mandate: string): { expanded: string; soft: boo
       `8. **REPEAT** while cycle=1. If cycle=0, finish this wave and attest **Cycle complete.** with evidence.`,
       ``,
       `Optional: a short todo board for multi-wave work if it helps you; skip the board when the next move is already obvious.`,
-      `Execute Wave 1 in this turn — tools, not advice.`,
+      evaluateClass
+        ? `Execute Wave 1 in this turn: the written reading first (mandate verb 1), then tools to start the one ship you picked.`
+        : `Execute Wave 1 in this turn — tools, not advice.`,
       ``,
       `### Forbidden`,
       `- Asking the user to clarify a soft prompt or pick tasks.`,
-      `- Advice-only / "looks fine" / defer to later.`,
+      `- Advice-only / "looks fine" / defer to later — a written reading on an evaluate-class mandate is the work, not a deferral.`,
+      `- Skipping the mandate's first verb (evaluate/audit) to ship a tiny adjacent polish.`,
       `- Low-leverage churn or token-burning busywork while harder work remains.`,
       `- Subagent spam, infinite research without shipping, gold-plating without proof.`,
       `- "Shall I continue?" — cycle / max_waves answers that.`,
@@ -843,6 +903,8 @@ export function armUlwCycle(
     proofDemands: 0,
     evidenceNudges: 0,
     backlogRequired: broad,
+    judgmentRequired: isEvaluateClassMandate(cleanMandate),
+    judgmentDemands: 0,
     lastOpenTodoCount: undefined,
     startedAt: prev?.enabled ? prev.startedAt : nowIso(),
     updatedAt: nowIso(),
@@ -1217,6 +1279,29 @@ export function evaluateUlwAtStop(opts: {
       s.backlogRequired = false;
     }
 
+    // Evaluate-class: do not leave wave 0 without a written reading.
+    // Capped so it can never become an infinite trap.
+    if (
+      s.judgmentRequired &&
+      s.wave === 0 &&
+      !hasMandateJudgment(opts.sessionId, msg) &&
+      (s.judgmentDemands ?? 0) < MAX_JUDGMENT_DEMANDS
+    ) {
+      s.judgmentDemands = (s.judgmentDemands ?? 0) + 1;
+      saveUlwCycle(s);
+      const reanchor = [
+        `[Forge ULW cycle driver] Stop blocked — evaluate-class mandate needs a written reading before Wave 1 closes.`,
+        `Mandate: ${s.mandate}`,
+        `Write the reading NOW (what the hard work is, what you passed on, the ONE item you will ship). memory_write it, or start the reply with \`Reading:\`.`,
+        `That is the first verb of the mandate — not advice, not optional. Then execute the item.`,
+        ULW_LIVE_CONTROLS_HINT,
+      ].join("\n");
+      return { block: true, reason: reanchor, reanchor };
+    }
+    if (s.judgmentRequired && hasMandateJudgment(opts.sessionId, msg)) {
+      s.judgmentRequired = false;
+    }
+
     // Already at/over cap (e.g. user lowered max_waves mid-run) → force LAST now.
     if (cap != null && s.wave >= cap) {
       s.cycle = 0;
@@ -1440,6 +1525,29 @@ function buildCycleReanchor(
     .join("\n");
 }
 
+/** How to spend a small max_waves budget on a general mandate. */
+export function formatCappedWaveDoctrine(
+  cap: number,
+  mandate: string,
+): string {
+  const evaluate = isEvaluateClassMandate(mandate);
+  if (cap === 1) {
+    return evaluate
+      ? `max_waves=1 — one wave. Write the reading, ship the single highest-leverage item, prove.`
+      : `max_waves=1 — one wave. One highest-leverage ship + proof. No second wave.`;
+  }
+  if (cap === 2) {
+    return [
+      `max_waves=2 — two waves, spend them on the mandate's verbs in order.`,
+      evaluate
+        ? `Wave 1: written evaluation + pick ONE ship (evaluation IS the first verb — do not skip it).`
+        : `Wave 1: written reading + pick ONE ship.`,
+      `Wave 2: finish that ship, prove, attest. Do not start a new ambitious theme.`,
+    ].join(" ");
+  }
+  return `max_waves=${cap} — Wave 1 is judge/pick; waves 2..${cap} execute. Last wave auto LAST.`;
+}
+
 /** Injected into the user message path when /ulw arms (soft or hard). */
 export function ulwKickoffMessage(state: UlwCycleState): string {
   const cap = normalizeMaxWaves(state.maxWaves);
@@ -1460,18 +1568,23 @@ export function ulwKickoffMessage(state: UlwCycleState): string {
     `- While cycle=1, the harness blocks Stop and forces the research→judge→implement→prove→serendipity→review→repeat loop.`,
     `- When cycle=0, finish the current wave and attest **Cycle complete.**`,
     cap != null
-      ? `- max_waves=${cap}: when the wave counter reaches ${cap}, the harness auto-flips to LAST (finish + **Cycle complete.**).`
+      ? `- max_waves=${cap}: when the wave counter reaches ${cap}, the harness auto-flips to LAST (finish + **Cycle complete.**). ${formatCappedWaveDoctrine(cap, state.mandate)}`
       : `- max_waves: off (unlimited). User may set /max-waves N mid-run. Prefer a cap on unattended multi-hour runs (spend valve — not a substitute for decision memory).`,
     state.backlogRequired
       ? `- **Backlog gate:** todo_write ≥2 items covering mandate sections BEFORE free-inventing Wave 1 scope.`
       : null,
+    state.judgmentRequired
+      ? `- **Reading gate:** Wave 1 cannot close until you write the reading (\`Reading:\` or memory_write). That is the first mandate verb.`
+      : null,
     `- ${ULW_LIVE_CONTROLS_HINT}`,
     ``,
-    state.backlogRequired
-      ? `Start Wave 1 **now**: first todo_write a backlog from the mandate/decisions, then execute the top item with proof.`
-      : state.softPrompt
-        ? `Start Wave 1 **now**: sharp orient + highest-leverage objective against durable decisions; spawn subagents when that is smarter; ship with proof. Work smart — do not thrash or ask what to do.`
-        : `Start Wave 1 **now**: research only as needed (subagents when they win), then ship against the mandate and decisions. Smart + hard — no permission-to-continue asks.`,
+    state.judgmentRequired
+      ? `Start Wave 1 **now**: write the reading first (mandate verb 1), todo_write the backlog if required, then start the ONE ship you picked.`
+      : state.backlogRequired
+        ? `Start Wave 1 **now**: first todo_write a backlog from the mandate/decisions, then execute the top item with proof.`
+        : state.softPrompt
+          ? `Start Wave 1 **now**: sharp orient + highest-leverage objective against durable decisions; spawn subagents when that is smarter; ship with proof. Work smart — do not thrash or ask what to do.`
+          : `Start Wave 1 **now**: research only as needed (subagents when they win), then ship against the mandate and decisions. Smart + hard — no permission-to-continue asks.`,
   ]
     .filter((l) => l != null)
     .join("\n");

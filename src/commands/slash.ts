@@ -200,6 +200,7 @@ import {
   saveUlwCycle,
   ulwKickoffMessage,
   formatUlwCounts,
+  formatCappedWaveDoctrine,
   ULW_LIVE_CONTROLS_HINT,
 } from "../harness/ulw-cycle.js";
 import {
@@ -2463,7 +2464,7 @@ export async function handleSlash(
       if (state.maxWaves != null && !flippedToLast) {
         pushLiveNotice(
           sid,
-          `User set max_waves=${state.maxWaves} mid-run. When the wave counter reaches ${state.maxWaves}, auto-flip to LAST: finish that wave, review, attest **Cycle complete.** Do not start a new ambitious wave after the cap.`,
+          `User set max_waves=${state.maxWaves} mid-run. ${formatCappedWaveDoctrine(state.maxWaves, state.mandate)} When the wave counter reaches ${state.maxWaves}, auto-flip to LAST: finish that wave, review, attest **Cycle complete.** Do not start a new ambitious wave after the cap.`,
         );
       } else if (state.maxWaves == null) {
         pushLiveNotice(

@@ -382,6 +382,7 @@ export function buildBaselineSystemPrompt(opts: {
       ``,
       `## ULW GOD MODE + RELENTLESS CYCLE`,
       `ULW is **general god-mode**: sharp judgment + hard execution on whatever the hard work is — any domain. **Smart and hard** (high leverage, low waste) — not thrash, not token burn, not process theater.`,
+      `General prompts are the product. "Comprehensively evaluate then improve UX" is a complete mandate — do not wait for a tighter spec. Spend a small max_waves budget on the mandate's verbs **in order**. A written reading on an evaluate/audit mandate is Wave 1's deliverable, not advice-only.`,
       `Live counters/mandate arrive mid-conversation — do not invent cycle/wave numbers.`,
       ``,
       `### Philosophy (compass, not cage)`,

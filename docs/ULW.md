@@ -39,11 +39,13 @@ forge run "ship it" --max-waves 2
 
 ## Soft prompts → god-mode ownership
 
-`improve the code`, `fix`, `polish`, bare imperatives, empty mandate, etc. expand into **ULW god-mode**: soft signal = **you invent and own the hard work**. Never ask “what should I improve?”
+`improve the code`, `fix`, `polish`, bare imperatives, empty mandate, **and** general product asks like "comprehensively evaluate this tool and then improve the ui" expand into **ULW god-mode**: the user does **not** need a tighter spec. Never ask "what should I improve?"
 
 Hard mandates keep a fixed objective but the same **smart + hard** execution style.
 
-**Broad / multi-section mandates** (checklists, “comprehensively audit…”): the harness seeds a **todo backlog** and durable **decision memory** first. Waves execute the backlog against constraints that survive compact — free invent without a board is blocked at wave 0 until ≥2 todos exist.
+**Broad / evaluate-class mandates** (checklists, "comprehensively evaluate… then improve…" — **length-independent**): the harness seeds a **todo backlog** from mandate *verbs* (`evaluate …` / `improve …`) and durable **decision memory** first. Wave 1 cannot close until a written **reading** exists (`Reading:` or `memory_write`). That reading is the first verb — not "advice-only". Free invent without a board is blocked at wave 0 until ≥2 todos exist.
+
+**Small `max_waves`:** spend the budget on the mandate's verbs in order. `max_waves=2` means Wave 1 = written reading + pick one ship; Wave 2 = finish that ship, prove, attest. Catalog chrome is not a substitute for "evaluate".
 
 ### Smart + hard (not thrash)
 

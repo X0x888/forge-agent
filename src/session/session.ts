@@ -505,6 +505,24 @@ export function clearSessionLastError(session: SessionData): void {
   delete session.meta.lastError;
 }
 
+/** Provider/transport failures that should not stick on the HUD after resume. */
+export const TRANSIENT_PROVIDER_ERROR_CODES = new Set([
+  "quota_exhausted",
+  "rate_limited",
+  "provider_error",
+  "empty_response",
+  "overloaded",
+  "timeout",
+]);
+
+/** Drop sticky quota/429/drop banners when the user (or ULW) starts a new turn. */
+export function clearTransientProviderError(session: SessionData): boolean {
+  const code = session.meta.lastError?.code || "";
+  if (!TRANSIENT_PROVIDER_ERROR_CODES.has(code)) return false;
+  delete session.meta.lastError;
+  return true;
+}
+
 const META_PERMISSION_MODES = new Set<PermissionMode>([
   "default",
   "acceptEdits",

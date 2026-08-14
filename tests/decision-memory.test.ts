@@ -9,6 +9,8 @@ import {
   appendMemoryRecord,
   extractMandateBullets,
   isBroadMandate,
+  isEvaluateClassMandate,
+  hasMandateJudgment,
   todosFromMandate,
   loadDecisionMemory,
   copyDecisionMemory,
@@ -49,11 +51,38 @@ Please comprehensively audit and improve this app:
 - Privacy & security
 `;
     assert.equal(isBroadMandate(m), true);
+    const short =
+      "comprehensively evaluate this tool and then improve the ui and ux of it.";
+    assert.equal(
+      isBroadMandate(short),
+      true,
+      "the product case must not require 80 characters",
+    );
+    assert.equal(isEvaluateClassMandate(short), true);
+    const clauses = extractMandateBullets(short);
+    assert.ok(clauses.length >= 2, `expected evaluate + improve clauses, got ${clauses.length}`);
+    assert.match(clauses[0]!, /evaluate/i);
+    assert.match(clauses[1]!, /improve/i);
+    const shortTodos = todosFromMandate(short);
+    assert.ok(shortTodos.length >= 2);
     const bullets = extractMandateBullets(m);
     assert.ok(bullets.length >= 4);
     const todos = todosFromMandate(m);
     assert.ok(todos.length >= 4);
     assert.equal(todos[0]!.status, "pending");
+  });
+
+  it("treats a Reading: reply as mandate judgment", () => {
+    const sid = "sess-judgment";
+    fs.mkdirSync(path.join(home, "sessions", sid), { recursive: true });
+    assert.equal(hasMandateJudgment(sid, ""), false);
+    assert.equal(
+      hasMandateJudgment(
+        sid,
+        "Reading: highest-leverage work is a real TUI/REPL UX evaluation.",
+      ),
+      true,
+    );
   });
 
   it("seeds and formats durable constraints", () => {

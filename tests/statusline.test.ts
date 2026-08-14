@@ -642,6 +642,38 @@ describe("statusline lastError snapshot", () => {
     assert.match(renderHud([snap], { plain: true, width: 120 }), /ERR:rate_limited/);
   });
 
+  it("clears transient quota ERR so resume does not keep the banner", async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-sl-quota-"));
+    process.env.FORGE_HOME = tmp;
+    const {
+      setSessionLastError,
+      clearTransientProviderError,
+      saveSession,
+    } = await import("../src/session/session.js");
+    const { sessionToSnapshot } = await import("../src/statusline/snapshot.js");
+    const s = createSession({ cwd: tmp, provider: "xai", model: "m" });
+    setSessionLastError(s, {
+      code: "quota_exhausted",
+      message: "quota",
+    });
+    saveSession(s);
+    assert.ok(
+      sessionToSnapshot(s, { authMethod: "api_key" }).tags.some((t) =>
+        t.startsWith("ERR:"),
+      ),
+    );
+    assert.equal(clearTransientProviderError(s), true);
+    saveSession(s);
+    assert.ok(
+      !sessionToSnapshot(s, { authMethod: "api_key" }).tags.some((t) =>
+        t.startsWith("ERR:"),
+      ),
+    );
+    setSessionLastError(s, { code: "max_turns", message: "cap" });
+    assert.equal(clearTransientProviderError(s), false);
+    assert.equal(s.meta.lastError?.code, "max_turns");
+  });
+
   it("tags YOLO for permissionMode aliases (yolo/always/bypass)", async () => {
     const { sessionToSnapshot } = await import("../src/statusline/snapshot.js");
     const { buildPromptFlags } = await import("../src/tui/status-bar.js");
