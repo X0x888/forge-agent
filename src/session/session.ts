@@ -51,6 +51,7 @@ import {
   loadUlwCycle,
   resetUlwOnClear,
   isPlaceholderMandate,
+  mandateFromUserText,
 } from "../harness/ulw-cycle.js";
 import { listActiveProjectMemory } from "../harness/project-memory.js";
 import { copyGoal, loadGoal, saveGoal } from "../harness/goal.js";
@@ -246,7 +247,9 @@ export function saveSession(data: SessionData): void {
   data.meta.updatedAt = nowIso();
   // Keep list/picker preview fresh without loading full histories later.
   try {
-    const preview = lastUserText(data).replace(/\s+/g, " ").trim().slice(0, 80);
+    const rawPrev = lastUserText(data);
+    const fromKick = mandateFromUserText(rawPrev);
+    const preview = (fromKick || rawPrev).replace(/\s+/g, " ").trim().slice(0, 80);
     if (preview) data.meta.lastUserPreview = preview;
     else delete data.meta.lastUserPreview;
   } catch {

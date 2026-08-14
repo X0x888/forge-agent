@@ -326,8 +326,8 @@ function clipWaveSummary(t: string): string {
 
 function looksLikeMidThought(t: string): boolean {
   return (
-    t.length < 220 &&
-    /verifying|confirming|checking the|closing wave|looks pre-existing|proof is green|lsp still/i.test(
+    t.length < 280 &&
+    /verifying|confirming|checking the|closing wave|close Wave|I'?ll re-run|Wave \d+ starts|looks pre-existing|proof is green|lsp still/i.test(
       t,
     )
   );
@@ -522,7 +522,7 @@ export interface MidWaveStampResult {
 
 /** Clip / one-line / leftover-dump ships — a class that never ends if we "finish siblings". */
 export function isPolishClassShip(text: string): boolean {
-  return /one TTY row|one-line|one line chrome|blank-line|sandwich|leftover dump|leftover chrome|leftover (?:first-thing|after-turn|human-facing)|clip(?:ped|ping)? (?:to |the |banner|Δ|picker|row)|drop the extra|scannable line/i.test(
+  return /one TTY row|one-line|one line chrome|blank-line|sandwich|leftover dump|leftover chrome|leftover (?:first-thing|after-turn|human-facing)|clip(?:ped|ping)? (?:to |the |banner|Δ|picker|row)|hard-clip|drop the extra|scannable line|last-verify dump|implementation-note|quieter (?:copy|chip|label|title|dump)|lowercase (?:label|title|chip|copy)/i.test(
     text || "",
   );
 }
@@ -1749,6 +1749,7 @@ export function evaluateUlwAtStop(opts: {
       s.lastOpenTodoCount != null ? s.lastOpenTodoCount : opts.openTodoCount;
     const todoProgress = Math.max(0, prevOpen - opts.openTodoCount);
     s.lastOpenTodoCount = opts.openTodoCount;
+    const closer = closerText(opts.sessionId, msg);
     if (!alreadyStamped) {
       appendWaveRecord(s, {
         sessionId: opts.sessionId,
@@ -1756,10 +1757,14 @@ export function evaluateUlwAtStop(opts: {
         netDiff,
         proof,
         todoProgress,
-        summary: summarizeWave(msg, opts.sessionId),
+        summary: summarizeWave(closer, opts.sessionId),
       });
       s.lastWaveSig = sig;
       s.lastProgressEditCount = opts.editCount;
+      const polish = notePolishShip(s, closer);
+      if (polish >= POLISH_LAST_STREAK && s.cycle === 1) {
+        flipUlwToLast(s, opts.sessionId);
+      }
     }
     const proofMissing = !proof && (s.proofDemands ?? 0) < MAX_PROOF_DEMANDS;
     if (!alreadyStamped && proofMissing) {

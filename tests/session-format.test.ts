@@ -298,6 +298,27 @@ describe("session helpers", () => {
     assert.ok(hit.some((m) => m.id === s.meta.id));
   });
 
+  it("saveSession clips ULW kickoff lastUserPreview to the mandate", async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-lup-kick-"));
+    process.env.FORGE_HOME = tmp;
+    const { createSession: mk, saveSession } = await import(
+      "../src/session/session.js"
+    );
+    const s = mk({ cwd: tmp, provider: "xai", model: "m" });
+    s.messages.push({
+      role: "user",
+      content: [
+        "## ULW armed",
+        "Mandate: comprehensively evaluate this tool and then improve the ui and ux of it.",
+        "God-mode protocol is in the system prompt — do not re-derive it.",
+      ].join("\n"),
+    });
+    saveSession(s);
+    assert.match(s.meta.lastUserPreview || "", /comprehensively evaluate/);
+    assert.doesNotMatch(s.meta.lastUserPreview || "", /God-mode protocol/);
+    assert.doesNotMatch(s.meta.lastUserPreview || "", /## ULW armed/);
+  });
+
   it("formatSessionSummary includes last-turn peek", async () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-summary-peek-"));
     process.env.FORGE_HOME = tmp;

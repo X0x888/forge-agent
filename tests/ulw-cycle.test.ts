@@ -38,6 +38,7 @@ import {
   VERIFICATION_CMD_RE,
   ULW_LIVE_CONTROLS_HINT,
   summarizeWave,
+  isPolishClassShip,
 } from "../src/harness/ulw-cycle.js";
 import {
   appendMemoryRecord,
@@ -743,6 +744,69 @@ describe("summarizeWave", () => {
 
   it("keeps a short factual closer when there is no Reading", () => {
     assert.match(summarizeWave("shipped input validation"), /input validation/);
+  });
+
+  it("treats close-Wave mid-thought as a reading fallback", () => {
+    const prev = process.env.FORGE_HOME;
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-ulw-sum2-"));
+    process.env.FORGE_HOME = tmp;
+    try {
+      const sid = "ulw-sum-close";
+      fs.mkdirSync(path.join(tmp, "sessions", sid), { recursive: true });
+      appendMemoryRecord(sid, {
+        kind: "decision",
+        source: "agent",
+        text: "Reading: headless forge run hides failed-tool tails. Ship transcript parity.",
+      });
+      const s = summarizeWave(
+        "The resume change is tiny; I'll re-run the dock test and close Wave 2.",
+        sid,
+      );
+      assert.match(s, /headless forge run|transcript parity/);
+      assert.doesNotMatch(s, /I'll re-run/);
+    } finally {
+      if (prev === undefined) delete process.env.FORGE_HOME;
+      else process.env.FORGE_HOME = prev;
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("polish-class Stop", () => {
+  it("matches last-verify / quieter / one-TTY-row leftovers", () => {
+    assert.equal(isPolishClassShip("keep one TTY row"), true);
+    assert.equal(isPolishClassShip("strip the last-verify dump from /model"), true);
+    assert.equal(isPolishClassShip("quieter chip copy on the HUD"), true);
+    assert.equal(
+      isPolishClassShip("headless forge run failed-tool tails"),
+      false,
+    );
+  });
+
+  it("Stop-boundary polish ships increment the streak and LAST at 4", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-ulw-polish-stop-"));
+    process.env.FORGE_HOME = tmp;
+    const sid = "ulw-polish-stop";
+    armUlwCycle(sid, "improve the daily REPL", {
+      cycle: 1,
+      maxWaves: 10,
+      skipCheckpoint: true,
+    });
+    for (let i = 1; i <= 4; i++) {
+      evaluateUlwAtStop({
+        sessionId: sid,
+        lastAssistantMessage: `Wave shipped. keep one TTY row on picker ${i}`,
+        editCount: i,
+        openTodoCount: 0,
+        stuckThreshold: 20,
+        verificationRan: true,
+        verificationPassed: true,
+      });
+    }
+    const s = loadUlwCycle(sid)!;
+    assert.equal(s.polishStreak, 4);
+    assert.equal(s.cycle, 0);
+    assert.ok(s.wave >= 4);
   });
 });
 
