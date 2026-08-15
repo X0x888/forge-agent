@@ -359,13 +359,6 @@ export function formatToolEnd(
   },
 ): string {
   const status = opts.isError ? chalk.red("✗") : chalk.green("✓");
-  const argBit =
-    opts.args && Object.keys(opts.args).length
-      ? ` ${summarizeToolArgs(opts.args)}`
-      : "";
-  const reason =
-    opts.isError && opts.output ? firstToolErrorLine(opts.output) : "";
-  const reasonBit = reason ? `  ${reason}` : "";
   const editClass =
     /^(search_replace|edit|write_file|write|apply_patch|applypatch)$/i.test(name);
   const size = editClass
@@ -375,14 +368,42 @@ export function formatToolEnd(
         : `+${opts.stats.added} -${opts.stats.removed}`
       : `diff ${formatBytes(opts.bytes)}`
     : formatBytes(opts.bytes);
-  const line = chalk.dim(
-    `  ${status} ${name}${argBit}${reasonBit}  ${opts.ms}ms  ${size}`,
-  );
+  const timing = `${opts.ms}ms  ${size}`;
   const cols = Math.max(
     8,
     opts.width ?? (process.stdout.isTTY ? process.stdout.columns || 80 : 80),
   );
-  return visibleWidth(line) <= cols ? line : clipAnsi(line, cols);
+  const hasArgs = Boolean(opts.args && Object.keys(opts.args).length);
+  const reasonRaw =
+    opts.isError && opts.output ? firstToolErrorLine(opts.output) : "";
+
+  const paint = (argBit: string, reasonBit: string): string =>
+    chalk.dim(`  ${status} ${name}${argBit}${reasonBit}  ${timing}`);
+
+  let argBit = hasArgs ? ` ${summarizeToolArgs(opts.args!)}` : "";
+  let reasonBit = reasonRaw ? `  ${reasonRaw}` : "";
+  let line = paint(argBit, reasonBit);
+  if (visibleWidth(line) <= cols) return line;
+
+  // Failures: shrink long args first so the reason is not clipped off the right.
+  // Keep short paths (`src/a.ts`) intact — only cap args that actually overflow.
+  const FAIL_ARG_MAX = 28;
+  if (reasonRaw && hasArgs && summarizeToolArgs(opts.args!).length > FAIL_ARG_MAX) {
+    argBit = ` ${summarizeToolArgs(opts.args!, FAIL_ARG_MAX)}`;
+    line = paint(argBit, reasonBit);
+    if (visibleWidth(line) <= cols) return line;
+  }
+
+  if (reasonRaw) {
+    const reserved = visibleWidth(paint(argBit, "  "));
+    const reasonMax = Math.max(12, cols - reserved);
+    const clipped = firstToolErrorLine(opts.output!, reasonMax);
+    reasonBit = clipped ? `  ${clipped}` : "";
+    line = paint(argBit, reasonBit);
+    if (visibleWidth(line) <= cols) return line;
+  }
+
+  return clipAnsi(line, cols);
 }
 
 /**

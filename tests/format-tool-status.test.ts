@@ -295,6 +295,25 @@ describe("default tool status line", () => {
     assert.doesNotMatch(end, /foo\(1\)/);
   });
 
+  it("clips long args before the ✗ reason so the failure stays visible", () => {
+    const painted = formatToolEnd("bash", {
+      isError: true,
+      ms: 80,
+      bytes: 400,
+      args: {
+        command:
+          "npx tsx --test tests/very-long-path/to/some/deeply/nested/file.test.ts --test-name-pattern 'keeps the failure visible'",
+      },
+      output: "Permission denied: plan mode — /build to implement",
+      width: 80,
+    });
+    const end = strip(painted);
+    assert.match(end, /✗ bash/);
+    assert.match(end, /Permission denied/);
+    assert.equal(end.includes("\n"), false);
+    assert.ok(visibleWidth(painted) <= 80);
+  });
+
   it("clips the ✓/✗ row to one TTY row", () => {
     const end = formatToolEnd("write_file", {
       isError: true,

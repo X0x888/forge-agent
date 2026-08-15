@@ -765,6 +765,7 @@ describe("statusline lastError snapshot", () => {
     const { DEFAULT_CONFIG } = await import("../src/config/types.js");
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-sl-yolo-"));
     process.env.FORGE_HOME = tmp;
+    process.env.FORGE_BOTTOM_STATUS = "0";
     const s = createSession({ cwd: tmp, provider: "xai", model: "m" });
     for (const alias of ["yolo", "always", "bypass"] as const) {
       const snap = sessionToSnapshot(s, {
@@ -791,6 +792,48 @@ describe("statusline lastError snapshot", () => {
         `buildPromptFlags must show YOLO for permissionMode=${alias}`,
       );
     }
+  });
+
+  it("docked forge › drops ULW/GOAL/PLAN/YOLO the dock already paints", async () => {
+    const { DEFAULT_CONFIG } = await import("../src/config/types.js");
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-sl-dock-flags-"));
+    process.env.FORGE_HOME = tmp;
+    const s = createSession({ cwd: tmp, provider: "xai", model: "m" });
+    s.meta.pinned = true;
+    s.meta.lastVerificationCommand = "npm test";
+    s.meta.lastVerificationAt = new Date().toISOString();
+    armUlwCycle(s.meta.id, "improve", { cycle: 1, maxWaves: 2 });
+    const config = {
+      ...DEFAULT_CONFIG,
+      workspace: tmp,
+      permissionMode: "bypassPermissions" as const,
+    };
+    const auth = { provider: "xai", method: "api_key", apiKey: "t" } as any;
+    const docked = buildPromptFlags(
+      { config, session: s, auth, verbose: true },
+      { identity: "docked" },
+    ).replace(/\x1b\[[0-9;]*m/g, "");
+    assert.doesNotMatch(docked, /ULW/);
+    assert.doesNotMatch(docked, /YOLO/);
+    assert.doesNotMatch(docked, /PLAN/);
+    assert.match(docked, /PIN/);
+    assert.match(docked, /✓/);
+    assert.match(docked, /VERBOSE/);
+    const standalone = buildPromptFlags(
+      { config, session: s, auth },
+      { identity: "standalone" },
+    ).replace(/\x1b\[[0-9;]*m/g, "");
+    assert.match(standalone, /ULW/);
+    assert.match(standalone, /YOLO/);
+    const auto = buildPromptFlags(
+      {
+        config: { ...config, permissionMode: "acceptEdits" },
+        session: s,
+        auth,
+      },
+      { identity: "docked" },
+    ).replace(/\x1b\[[0-9;]*m/g, "");
+    assert.match(auto, /auto/);
   });
 });
 

@@ -1,7 +1,7 @@
 /**
  * In-REPL status surfaces — so users do not need a second `forge status --watch` pane.
  *
- * 1. Prompt flags (ULW / GOAL / YOLO / bg) on `forge ›`
+ * 1. Prompt flags on `forge ›` (dock-off: ULW/GOAL/PLAN/YOLO/bg; dock-on: PIN/WT/✓/auto/VERBOSE)
  * 2. Working indicator during agent turns (phase + elapsed)
  * 3. Post-turn footer (turn tokens / last✓ / harness; dock-off also prints ctx/ULW/GOAL)
  *
@@ -81,23 +81,36 @@ export function buildLiveSnapshot(ctx: StatusBarContext) {
   return snap;
 }
 
-/** Flags shown before `forge ›` — ULW, GOAL, PLAN, YOLO, VERBOSE, bg, working. */
-export function buildPromptFlags(ctx: StatusBarContext): string {
+/**
+ * Flags shown before `forge ›`.
+ * Dock-off: ULW / GOAL / PLAN / YOLO / bg / working (no other HUD).
+ * Dock-on: PIN / WT / ✓ / auto / VERBOSE — identity + ULW/GOAL/PLAN/YOLO/bg
+ * already live on the sticky dock (same split as `buildLivePrompt`).
+ */
+export function buildPromptFlags(
+  ctx: StatusBarContext,
+  opts?: { identity?: "docked" | "standalone" },
+): string {
   const flags: string[] = [];
   const { session, config } = ctx;
-  const ulw = loadUlwCycle(session.meta.id);
-  if (ulw?.enabled) {
-    flags.push(chalk.magenta("ULW"));
-    const badge = formatUlwBadge(ulw);
-    flags.push(
-      ulw.cycle === 1 ? chalk.magenta(badge) : chalk.yellow(badge),
-    );
-  } else if (session.meta.ultrawork) {
-    flags.push(chalk.magenta("ULW"));
-  }
-  const g = loadGoal(session.meta.id);
-  if (g?.objective && !g.paused && g.status === "active") {
-    flags.push(chalk.yellow("GOAL"));
+  const docked =
+    (opts?.identity ?? (isBottomStatusEnabled() ? "docked" : "standalone")) ===
+    "docked";
+  if (!docked) {
+    const ulw = loadUlwCycle(session.meta.id);
+    if (ulw?.enabled) {
+      flags.push(chalk.magenta("ULW"));
+      const badge = formatUlwBadge(ulw);
+      flags.push(
+        ulw.cycle === 1 ? chalk.magenta(badge) : chalk.yellow(badge),
+      );
+    } else if (session.meta.ultrawork) {
+      flags.push(chalk.magenta("ULW"));
+    }
+    const g = loadGoal(session.meta.id);
+    if (g?.objective && !g.paused && g.status === "active") {
+      flags.push(chalk.yellow("GOAL"));
+    }
   }
   if (session.meta.pinned) {
     flags.push(chalk.cyan("PIN"));
@@ -122,8 +135,8 @@ export function buildPromptFlags(ctx: StatusBarContext): string {
   {
     const permissionMode =
       normalizePermissionMode(config.permissionMode) ?? config.permissionMode;
-    if (permissionMode === "plan") flags.push(chalk.blue("PLAN"));
-    if (permissionMode === "bypassPermissions") {
+    if (!docked && permissionMode === "plan") flags.push(chalk.blue("PLAN"));
+    if (!docked && permissionMode === "bypassPermissions") {
       flags.push(chalk.red("YOLO"));
     } else if (permissionMode === "acceptEdits") {
       flags.push(chalk.green("auto"));
@@ -133,13 +146,13 @@ export function buildPromptFlags(ctx: StatusBarContext): string {
   const act = getActivity();
   const bgRunning =
     act.bgRunning || listTasks().filter((t) => t.status === "running").length;
-  if (bgRunning > 0) {
+  if (!docked && bgRunning > 0) {
     flags.push(chalk.yellow(`bg:${bgRunning}`));
   }
   if (ctx.verbose) {
     flags.push(chalk.cyan("VERBOSE"));
   }
-  if (act.busy) {
+  if (!docked && act.busy) {
     flags.push(chalk.magenta(phaseShort(act)));
   }
 

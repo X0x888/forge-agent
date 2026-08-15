@@ -87,9 +87,55 @@ export function formatAskUserCard(
 ): string {
   const lines: string[] = [chalk.cyan(`❓ ${question}`)];
   if (context) lines.push(chalk.dim(`  ${context}`));
-  for (let i = 0; i < choices.length; i++) {
-    lines.push(chalk.dim(`  ${i + 1}) ${choices[i]}`));
+  if (choices.length) {
+    const bits = choices.map((c, i) => `${i + 1}) ${c}`);
+    const inline = bits.join("  ");
+    // One row when it fits an 80-col TTY; otherwise stack so keys stay visible.
+    if (inline.length <= 76) {
+      lines.push(chalk.dim(`  ${inline}`));
+    } else {
+      for (const bit of bits) lines.push(chalk.dim(`  ${bit}`));
+    }
   }
+  return lines.join("\n");
+}
+
+export type AskUserMatch =
+  | { kind: "skip" }
+  | { kind: "choice"; index: number }
+  | { kind: "text"; value: string };
+
+/**
+ * Parse a typed answer. Prefer a unique choice (index, exact, prefix, first
+ * letter) over free text so `y`/`n` and short prefixes actually pick.
+ */
+export function matchAskUserAnswer(raw: string, choices: string[]): AskUserMatch {
+  const ans = raw.trim();
+  if (!ans || /^skip$/i.test(ans) || /^cancel$/i.test(ans)) {
+    return { kind: "skip" };
+  }
+  if (choices.length && /^\d+$/.test(ans)) {
+    const idx = Number(ans) - 1;
+    if (idx >= 0 && idx < choices.length) return { kind: "choice", index: idx };
+    return { kind: "text", value: ans };
+  }
+  if (choices.length) {
+    const lower = ans.toLowerCase();
+    const exact = choices.findIndex((c) => c.toLowerCase() === lower);
+    if (exact >= 0) return { kind: "choice", index: exact };
+    const prefixes = choices
+      .map((c, i) => ({ i, c: c.toLowerCase() }))
+      .filter(({ c }) => c.startsWith(lower) && c.length > lower.length);
+    if (prefixes.length === 1) return { kind: "choice", index: prefixes[0]!.i };
+    if (lower.length === 1) {
+      const letters = choices
+        .map((c, i) => ({ i, c: c.toLowerCase() }))
+        .filter(({ c }) => c.startsWith(lower));
+      if (letters.length === 1) return { kind: "choice", index: letters[0]!.i };
+    }
+  }
+  return { kind: "text", value: ans };
+}
   return lines.join("\n");
 }
 
