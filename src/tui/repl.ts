@@ -79,7 +79,7 @@ import {
   shouldRedockLiveOnPhase,
   type StatusBarContext,
 } from "./status-bar.js";
-import { createBottomStatusDock } from "./bottom-status.js";
+import { createBottomStatusDock, isBottomStatusEnabled } from "./bottom-status.js";
 import {
   acquireSessionLock,
   releaseSessionLock,
@@ -635,9 +635,12 @@ export async function runRepl(opts: {
     beginTurn();
     pulseHeartbeat();
 
-    // Native live chrome: one identity line + docked live › (status lives IN the prompt)
-    process.stdout.write("\n");
-    console.log(renderLiveRunHeader(statusCtx()));
+    // Native live chrome: identity + harness on the dock / live ›, not a
+    // second "live run" banner that restates the same model/ULW bits.
+    if (!isBottomStatusEnabled()) {
+      process.stdout.write("\n");
+      console.log(renderLiveRunHeader(statusCtx()));
+    }
     streamActive = false;
     liveFrame = 0;
     working.start();

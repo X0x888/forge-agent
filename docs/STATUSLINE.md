@@ -16,17 +16,20 @@ active-account quota · weekly reset · harness flags). Disable with
 While the agent works (native live chrome — not idle-only):
 
 ```
-live run  ·  xai/grok-4.5 · effort high  ·  ULW c=1 CONTINUE
-⠋ ⚒ think 12s xai/grok-4.5 high live › _
+⠋ ⚒ think 12s live › _
 ✓ bash command=npm test  842ms
 live ✓ /cycle 0  Cycle flag → 0 (LAST)
 [ULW c=0] live › _
 ```
 
-After each turn:
+Identity (model · ctx · ULW) stays on the bottom dock. `live ›` is phase +
+elapsed + work (`tool bash`, `wait retry 2/3`, `bg:N`). When the dock is off,
+the live prompt and turn footer still carry ctx / ULW themselves.
+
+After each turn (ctx / todos only when the dock is off — they already live there):
 
 ```
-──  ctx 32% (12.4k/128k)  turn in=1.2k out=400 ~$0.01  budget 12% $0.04/$5  todos:2
+──  turn in=1.2k out=400 ~$0.01  budget 12% $0.04/$5  last✓ npm test
 ```
 
 ## Project stack (v0.9.97+)
@@ -53,12 +56,12 @@ HUD/`forge status` project labels append detected **package manager** + cheapest
 | **Bottom status region** | Always (TTY REPL) | Model, auth, ctx %, **use:N%**, used/limit, **reset Nd**, ULW/GOAL/YOLO, bg |
 | **Prompt strip** | Only when the dock is off (`FORGE_BOTTOM_STATUS=0` / non-TTY) | Model, context bar, tokens, **plan quota**, todos, `bg:N`, liveness (deduped) |
 | **Prompt flags** | Idle input | `ULW`, `c=1/0`, `GOAL`, `PLAN`/`YOLO`/`auto`, `VERBOSE`, `bg:N` |
-| **Live run header** | Start of every agent turn | One identity line (model · effort · ULW/GOAL) — controls live on `/help` |
-| **Busy status line** | Mid-turn (stderr) | Spinner + phase + model + effort + ULW `c=1 w=N/M` + `last=/cycle 0` hint |
+| **Live run header** | Start of a turn **only when the bottom dock is off** | One identity line (model · effort · ULW/GOAL) — skipped when the dock already shows it |
+| **Busy status line** | Mid-turn (stderr; dock-off / fallback) | Spinner + honest phase (`waiting retry…`, not `waiting on bg`) + model + ULW |
 | **Stream ticks** | While tokens stream | Newline status every ~10s (no `\r` garble) |
-| **`live ›` prompt** | Entire busy turn | Always-open control line; re-shown after tools / harness / slash |
+| **`live ›` prompt** | Entire busy turn | Phase + elapsed + work (`tool bash`, `wait retry…`); identity/ctx/ULW only when the dock is off |
 | **Live control ACK** | After mid-run `/cycle` etc. | One-line `live ✓ /cycle 0` + re-prompt |
-| **Turn footer** | After every agent turn | Context %, turn tokens/cost, **budget %** (when `/budget` or `--max-cost` armed), todos, bg, harness continues |
+| **Turn footer** | After every agent turn | Turn tokens/cost, **budget %** (when `/budget` or `--max-cost` armed), last✓ / next check; ctx/todos only when the dock is off |
 | **`/status`** | On demand (also mid-run) | Full 2-line HUD + session detail + bg task list |
 
 ### Optional external pane

@@ -841,8 +841,8 @@ describe("statusline plan mode details", () => {
   });
 });
 
-describe("live run header controls", () => {
-  it("is a one-line identity + harness, not a boxed catalog or tutorial", async () => {
+describe("HUD contract — one identity strip", () => {
+  it("dock-off live header is identity + harness, not a boxed catalog", async () => {
     const fs = await import("node:fs");
     const os = await import("node:os");
     const path = await import("node:path");
@@ -860,7 +860,7 @@ describe("live run header controls", () => {
         token: "t",
       } as ResolvedAuth,
     });
-    assert.match(text, /live run/);
+    assert.doesNotMatch(text, /live run/);
     assert.match(text, /xai\/grok-4/);
     assert.doesNotMatch(text, /\/cycle 0/);
     assert.doesNotMatch(text, /\/budget/);
@@ -884,7 +884,7 @@ describe("live run header controls", () => {
     assert.ok(visibleWidth(clipped) <= 24);
   });
 
-  it("live header shows PLAN when permissionMode is plan", async () => {
+  it("dock-off live header shows PLAN when permissionMode is plan", async () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-live-plan-"));
     process.env.FORGE_HOME = tmp;
     const { createSession } = await import("../src/session/session.js");
@@ -900,6 +900,64 @@ describe("live run header controls", () => {
       } as ResolvedAuth,
     });
     assert.match(text, /PLAN/);
+  });
+
+  it("docked live › is phase + work, not a second identity/ctx/ULW strip", async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-hud-docked-"));
+    process.env.FORGE_HOME = tmp;
+    const { createSession } = await import("../src/session/session.js");
+    const { DEFAULT_CONFIG } = await import("../src/config/types.js");
+    const s = createSession({ cwd: tmp, provider: "xai", model: "grok-4" });
+    s.meta.totalCompletionTokens = 3200;
+    const ctx = {
+      config: {
+        ...DEFAULT_CONFIG,
+        workspace: tmp,
+        reasoningEffort: "high" as const,
+        contextWindow: 500_000,
+      },
+      session: s,
+      auth: { provider: "xai", method: "api_key", token: "t" } as ResolvedAuth,
+    };
+    const plain = buildLivePrompt(ctx, {
+      identity: "docked",
+      width: 120,
+      frame: 0,
+      phase: "waiting",
+      detail: "retry 2/3",
+    }).replace(/\x1b\[[0-9;]*m/g, "");
+    assert.match(plain, /wait retry 2\/3/);
+    assert.match(plain, /live ›/);
+    assert.doesNotMatch(plain, /waiting on bg/);
+    assert.doesNotMatch(plain, /xai\/grok/);
+    assert.doesNotMatch(plain, /\bctx /);
+    assert.doesNotMatch(plain, /⇣/);
+    assert.doesNotMatch(plain, /\bhigh\b/);
+  });
+
+  it("waiting labels stay honest — never invent 'waiting on bg'", async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-hud-wait-"));
+    process.env.FORGE_HOME = tmp;
+    const { createSession } = await import("../src/session/session.js");
+    const { DEFAULT_CONFIG } = await import("../src/config/types.js");
+    const s = createSession({ cwd: tmp, provider: "xai", model: "grok-4" });
+    const ctx = {
+      config: { ...DEFAULT_CONFIG, workspace: tmp },
+      session: s,
+      auth: { provider: "xai", method: "api_key", token: "t" } as ResolvedAuth,
+    };
+    const busy = renderBusyStatusLine(ctx, "waiting", "retry 2/3", 0, 120).replace(
+      /\x1b\[[0-9;]*m/g,
+      "",
+    );
+    assert.match(busy, /waiting retry 2\/3/);
+    assert.doesNotMatch(busy, /waiting on bg/);
+    const bare = renderBusyStatusLine(ctx, "waiting", undefined, 0, 80).replace(
+      /\x1b\[[0-9;]*m/g,
+      "",
+    );
+    assert.match(bare, /waiting…/);
+    assert.doesNotMatch(bare, /waiting on bg/);
   });
 });
 

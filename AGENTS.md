@@ -58,7 +58,7 @@ Binary entry: `src/cli.ts` → `dist/cli.js` (`bin: forge`).
 - Transcript is minimal by default (one status line per tool; failed tools also show a short error tail); `/verbose` opts into per-edit colored diffs + full tool output (session-local)
 - Turn end prints a one-line change summary (files touched from the mutation journal + verification status) for unattended runs
 - Startup `posture:` line shows resolved effort/ctx/temp/max_tokens; warnings only for silently-degrading pins (`src/tui/posture.ts`)
-- Live `live ›` dock shows cumulative completion tokens + `ctx used/window`; assistant replies render as styled markdown
+- Live `live ›` is phase + elapsed + work; identity/ctx/ULW stay on the bottom dock (`FORGE_BOTTOM_STATUS=0` still prints them on the live prompt). Assistant replies render as styled markdown
 - Project instructions: walk-up within git root for AGENTS/CLAUDE/cursor/copilot rules; `/context` lists sources
 - Headless: `forge run "/plan"` / custom templates work in CI (`reason: "slash"` when no model call)
 - Provider failures print recovery tips; JSON fail payloads include `recovery: { code, tips }`

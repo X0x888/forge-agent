@@ -26,7 +26,7 @@ import {
 import { listActiveProjectMemory } from "../harness/project-memory.js";
 import { listActiveSubagents } from "../agent/subagent.js";
 import { peekInterjections } from "../harness/interjection.js";
-import { sessionToSnapshot } from "../statusline/snapshot.js";
+import { outboundTokenEstimate, sessionToSnapshot } from "../statusline/snapshot.js";
 import { renderCompactStrip, renderHud } from "../statusline/render.js";
 import {
   getActivity,
@@ -36,7 +36,7 @@ import {
 } from "../statusline/activity.js";
 import { listTasks } from "../agent/tools/background-tasks.js";
 import { formatTokens, formatCost, estimateCostUsd, visibleWidth, clipAnsi } from "../util/format.js";
-import { estimateTokens, sessionDir } from "../session/session.js";
+import { sessionDir } from "../session/session.js";
 import { readSessionLock, formatLockHolder } from "../session/lock.js";
 import { getGitSnapshot } from "../util/git-context.js";
 import { detectProjectIntel } from "../util/project-intel.js";
@@ -235,7 +235,7 @@ function liveCtxEstimate(session: SessionData): number {
   // complete messages), so id + length + tail size is a safe memo key.
   const key = `${session.meta.id}:${msgs.length}:${last ? (last.content || "").length : 0}:${session.meta.totalCompletionTokens}`;
   if (liveCtxCache?.key === key) return liveCtxCache.value;
-  const value = estimateTokens(msgs);
+  const value = outboundTokenEstimate(msgs);
   liveCtxCache = { key, value };
   return value;
 }
@@ -301,7 +301,7 @@ export function renderLiveRunHeader(
     harness.push(chalk.yellow("GOAL"));
   }
 
-  const bits = [chalk.bold.cyan("live run"), chalk.dim(identity), ...harness];
+  const bits = [chalk.dim(identity), ...harness];
   const line = bits.join(chalk.dim("  ·  "));
   const cols =
     columns ??
@@ -336,7 +336,7 @@ export function renderBusyStatusLine(
     );
   } else if (phase === "waiting") {
     body = chalk.yellow(
-      `waiting on bg${detail ? `: ${shortDetail(detail, 20)}` : "…"}`,
+      `waiting${detail ? ` ${shortDetail(detail, 28)}` : "…"}`,
     );
   } else if (phase === "thinking" && detail === "streaming") {
     body = chalk.dim("replying…");
@@ -385,6 +385,12 @@ export function buildLivePrompt(
     frame?: number;
     /** Clip to one TTY row. Default: stdout.columns. */
     width?: number;
+    /**
+     * `docked` = phase + elapsed + work (identity lives on the bottom dock).
+     * `standalone` = also print ctx / ULW / effort (dock-off fallback).
+     * Default follows `isBottomStatusEnabled()`.
+     */
+    identity?: "docked" | "standalone";
   },
 ): string {
   const act = getActivity();
@@ -399,32 +405,37 @@ export function buildLivePrompt(
   const turnSec = activityElapsedSec(act);
   const effort = resolveReasoningEffort(ctx.config.model, ctx.config.reasoningEffort);
   const ulw = loadUlwCycle(ctx.session.meta.id);
+  const docked =
+    (opts?.identity ?? (isBottomStatusEnabled() ? "docked" : "standalone")) ===
+    "docked";
 
   let phaseLabel: string;
   if (phase === "tool" && detail) {
     phaseLabel = `tool ${shortDetail(detail, 20)}`;
   } else if (phase === "compacting") phaseLabel = "compact";
   else if (phase === "stop_guard") phaseLabel = "harness";
-  else if (phase === "waiting") phaseLabel = "wait";
-  else if (detail === "streaming") phaseLabel = "reply";
+  else if (phase === "waiting") {
+    phaseLabel = detail ? `wait ${shortDetail(detail, 20)}` : "wait";
+  } else if (detail === "streaming") phaseLabel = "reply";
   else phaseLabel = "think";
 
   const left: string[] = [
     chalk.magenta(spin),
     chalk.magenta("⚒"),
-    chalk.cyan("LIVE"),
     chalk.dim(phaseLabel),
   ];
   if (turnSec > 0) left.push(chalk.dim(formatSec(turnSec)));
-  left.push(...liveTokenBits(ctx));
-  if (ulw?.enabled) {
-    left.push(
-      ulw.cycle === 1
-        ? chalk.magenta(formatUlwBadge(ulw))
-        : chalk.yellow(formatUlwBadge(ulw)),
-    );
+  if (!docked) {
+    left.push(...liveTokenBits(ctx));
+    if (ulw?.enabled) {
+      left.push(
+        ulw.cycle === 1
+          ? chalk.magenta(formatUlwBadge(ulw))
+          : chalk.yellow(formatUlwBadge(ulw)),
+      );
+    }
+    if (effort) left.push(chalk.dim(effort));
   }
-  if (effort) left.push(chalk.dim(effort));
   {
     const todos = formatHudTodos(
       openTodos(ctx.session.todos),
@@ -719,7 +730,7 @@ export function createWorkingIndicator(
       );
     } else if (phase === "waiting") {
       body = chalk.yellow(
-        `waiting on bg${detail ? `: ${shortDetail(detail)}` : "…"}`,
+        `waiting${detail ? ` ${shortDetail(detail)}` : "…"}`,
       );
     } else body = chalk.dim("thinking…");
     const time = turnSec > 0 ? chalk.dim(` ${formatSec(turnSec)}`) : "";
@@ -882,7 +893,7 @@ export function formatSessionDetails(ctx: StatusBarContext): string {
   const { session, config, auth } = ctx;
   const g = loadGoal(session.meta.id);
   const ulw = loadUlwCycle(session.meta.id);
-  const est = estimateTokens(session.messages);
+  const est = liveCtxEstimate(session);
   const effort = resolveReasoningEffort(config.model, config.reasoningEffort);
   const lines = [
     chalk.dim("─".repeat(Math.min(48, process.stdout.columns || 48))),
