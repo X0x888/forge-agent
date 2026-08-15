@@ -568,7 +568,7 @@ function closerText(sessionId: string, lastAssistant: string): string {
 function polishAdmit(streak: number): string {
   return [
     `Last ${streak} ships are the same polish class (clip / one-line chrome / leftover dump).`,
-    "Next unit must be a different surface (trust, correctness, workflow) or attest **Cycle complete.**",
+    "Next unit must be a different surface (trust, correctness, workflow) — or /cycle 0, then **Cycle complete.**",
     "Do not hunt leftover dumps. \"Finish the class\" means defect/call-site siblings, not chrome leftovers.",
   ].join(" ");
 }
@@ -1606,66 +1606,10 @@ export function evaluateUlwAtStop(opts: {
     };
   }
 
-  // cycle=1 + evidenced Cycle complete: max_waves is a ceiling, not a quota.
-  // Yield ("shall I continue?") is still handoff-blocked. Finish is allowed.
-  if (s.cycle === 1 && cycleCompleteClaim) {
-    // Do not let a red check unlock finish. cycle=0 still accepts
-    // verificationRan via the attested path above; CONTINUE release
-    // requires green or checklist text in the closer.
-    const evidence = hasAttestationEvidence(msg, opts.verificationPassed);
-    const evaluateClass =
-      isEvaluateClassMandate(s.mandate) || Boolean(s.judgmentRequired);
-    const hasReading =
-      !evaluateClass || hasMandateJudgment(opts.sessionId, msg);
-    const provenLedger = (s.waves ?? []).some((w) => w.proof);
-    const thisWaveProven = Boolean(opts.verificationPassed);
-    const waveOk =
-      provenLedger ||
-      thisWaveProven ||
-      (s.wave >= 1 && Boolean(opts.verificationPassed));
-    if (evidence && hasReading && waveOk) {
-      // Stamp this closing unit so /status and auto-commit are not w=0/N.
-      const sig = waveProgressSig(opts.editCount, fp);
-      const alreadyStamped = Boolean(s.lastWaveSig && s.lastWaveSig === sig);
-      if (!alreadyStamped && (editDelta > 0 || thisWaveProven)) {
-        const prevOpen =
-          s.lastOpenTodoCount != null ? s.lastOpenTodoCount : opts.openTodoCount;
-        const closer = closerText(opts.sessionId, msg);
-        appendWaveRecord(s, {
-          sessionId: opts.sessionId,
-          editDelta,
-          netDiff: classifyNetDiff(
-            fp,
-            diffChanged,
-            diffRevisit,
-            firstObservation,
-            editDelta,
-          ),
-          proof:
-            thisWaveProven || detectWaveProof(msg, opts.verificationPassed),
-          todoProgress: Math.max(0, prevOpen - opts.openTodoCount),
-          summary: summarizeWave(closer, opts.sessionId),
-        });
-        s.lastWaveSig = sig;
-        s.lastProgressEditCount = opts.editCount;
-        s.lastOpenTodoCount = opts.openTodoCount;
-      }
-      s.cycle = 0;
-      s.enabled = false;
-      saveUlwCycle(s);
-      try {
-        clearSoftTodoGateOnWindDown(opts.sessionId);
-      } catch {
-        /* */
-      }
-      return {
-        block: false,
-        lastCycleReleased: true,
-        reason:
-          "ULW mandate attested complete under CONTINUE — released (cap is a ceiling).",
-      };
-    }
-  }
+  // cycle=1 + **Cycle complete.** is a declared ship, not a release.
+  // /max-waves N is a budget the user asked to spend. Fall through: stamp
+  // the unit, auto-LAST only when w hits the cap, then Cycle complete on
+  // cycle=0 can release. Yield ("shall I continue?") stays handoff-blocked.
 
   // Progress / stuck tracking: editCount delta OR working-tree diff movement
   // (bash heredocs/sed move the tree without touching edit-tool counters).
@@ -1871,6 +1815,7 @@ export function evaluateUlwAtStop(opts: {
       consolidation: s.wave % CONSOLIDATION_EVERY === 0,
       thinStreak,
       preferredCheckCommands: opts.preferredCheckCommands,
+      prematureCycleComplete: cycleCompleteClaim,
     });
     return {
       block: true,
@@ -1894,6 +1839,20 @@ export function evaluateUlwAtStop(opts: {
 /** Every Nth wave is a consolidation wave: review + harden, no new scope. */
 const CONSOLIDATION_EVERY = 4;
 
+function remainingWaveBudgetLine(s: UlwCycleState): string {
+  const cap = normalizeMaxWaves(s.maxWaves);
+  if (cap == null) {
+    return "max_waves=off. CONTINUE until /cycle 0. **Cycle complete.** is refused while cycle=1.";
+  }
+  const left = Math.max(0, cap - s.wave);
+  return (
+    `User set max_waves=${cap}. ${left} wave(s) remain after w=${s.wave}. ` +
+    `Spend them on the next highest-leverage ship (different surface). ` +
+    `**Cycle complete.** is refused until the cap (or /cycle 0). ` +
+    `Do not invent leftover chrome.`
+  );
+}
+
 function buildCycleReanchor(
   s: UlwCycleState,
   opts: {
@@ -1906,6 +1865,8 @@ function buildCycleReanchor(
     consolidation?: boolean;
     thinStreak?: number;
     preferredCheckCommands?: string[];
+    /** Model attested Cycle complete while cycle=1 and waves remain. */
+    prematureCycleComplete?: boolean;
   },
 ): string {
   const cap = normalizeMaxWaves(s.maxWaves);
@@ -1921,6 +1882,9 @@ function buildCycleReanchor(
       : null;
     return [
       `[Forge ULW cycle driver] Stop blocked — ${formatUlwCounts(s)} (CONTINUE).`,
+      opts.prematureCycleComplete
+        ? `You attested **Cycle complete.** while cycle=1. That does not release. ${remainingWaveBudgetLine(s)}`
+        : remainingWaveBudgetLine(s),
       `Mandate: ${displayUlwMandate(s.mandate)}`,
       ...decisionsBlock,
       `Wave ${s.wave} begins${cap != null ? ` (max ${cap})` : ""}. Protocol: research → plan → implement → verify → review (full cycle in system prompt).`,
@@ -2015,14 +1979,20 @@ export function formatCappedWaveDoctrine(
   }
   if (cap === 2) {
     return [
-      `max_waves=2 — two waves, spend them on the mandate's verbs in order.`,
+      `max_waves=2 — spend both.`,
       evaluate
-        ? `Wave 1: written evaluation + pick ONE ship (evaluation IS the first verb — do not skip it).`
-        : `Wave 1: written reading + pick ONE ship.`,
-      `Wave 2: finish that ship, prove, attest. Do not start a new ambitious theme.`,
+        ? `Wave 1: written evaluation + first ship (evaluation IS the first verb — do not skip it).`
+        : `Wave 1: written reading + first ship.`,
+      `Wave 2: next highest-leverage ship on a different surface, prove.`,
+      `**Cycle complete.** only after the cap auto-LAST (or /cycle 0). Do not invent leftover chrome.`,
     ].join(" ");
   }
-  return `max_waves=${cap} — Wave 1 is judge/pick; waves 2..${cap} execute. Cap is a ceiling: if the mandate's verbs are done, attest **Cycle complete.** Last wave auto LAST.`;
+  return (
+    `max_waves=${cap} — spend all ${cap}. Wave 1 is judge/pick + first ship; ` +
+    `waves 2..${cap} execute the next highest-leverage ships on different surfaces. ` +
+    `**Cycle complete.** is refused until the cap (auto LAST) or /cycle 0. ` +
+    `Do not invent leftover chrome.`
+  );
 }
 
 /** Injected into the user message path when /ulw arms (soft or hard). */
@@ -2047,8 +2017,8 @@ export function ulwKickoffMessage(state: UlwCycleState): string {
     `- While cycle=1, the harness blocks Stop and forces the research→judge→implement→prove→serendipity→review→repeat loop.`,
     `- When cycle=0, finish the current wave and attest **Cycle complete.** The harness commits the dirty tree at each wave close and on Cycle complete (never pushes). FORGE_ULW_AUTO_COMMIT=0 off.`,
     cap != null
-      ? `- max_waves=${cap}: ceiling, not a quota. If the mandate's verbs are done, attest **Cycle complete.** with evidence — do not invent work to fill unused slots. When the wave counter reaches ${cap}, auto LAST. ${formatCappedWaveDoctrine(cap, state.mandate)}`
-      : `- max_waves: off (unlimited). User may set /max-waves N mid-run. Prefer a cap on unattended multi-hour runs (spend valve — not a substitute for decision memory).`,
+      ? `- max_waves=${cap}: a budget the user asked to spend, not a suggestion to stop early. Close a unit with Wave shipped / Ship landed so w moves. When w reaches ${cap}, auto LAST, then attest **Cycle complete.** /cycle 0 ends early. ${formatCappedWaveDoctrine(cap, state.mandate)}`
+      : `- max_waves: off (unlimited). CONTINUE until /cycle 0. **Cycle complete.** is refused while cycle=1. User may set /max-waves N mid-run.`,
     state.backlogRequired
       ? `- **Backlog gate:** todo_write ≥2 items covering mandate sections BEFORE free-inventing Wave 1 scope.`
       : null,

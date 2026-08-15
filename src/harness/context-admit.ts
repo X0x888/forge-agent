@@ -270,14 +270,14 @@ export function renderHarnessAdmission(s: HarnessSnapshot): string {
         s.cycle === 0 ? "(LAST cycle — finish wave then **Cycle complete.**)" : "(CONTINUE)"
       }`,
       s.maxWaves != null
-        ? `max_waves=${s.maxWaves} is a ceiling — attest **Cycle complete.** when the mandate's verbs are done; do not invent work to fill unused slots. Cap auto-flips LAST.`
-        : `max_waves=off (unlimited).`,
+        ? `max_waves=${s.maxWaves} is a budget — spend every wave. **Cycle complete.** is refused until the cap (or /cycle 0). Cap auto-flips LAST.`
+        : `max_waves=off (unlimited). CONTINUE until /cycle 0. **Cycle complete.** is refused while cycle=1.`,
       `Harness w=N/M is the only wave counter. Do not invent Wave K. Close a unit with Wave shipped. / Ship landed: so w can move.`,
       s.mandate ? `Mandate: ${displayUlwMandate(s.mandate)}` : "",
       s.softPrompt
         ? isEvaluateClassMandate(s.mandate)
-          ? `Evaluate-class — written reading first, then the one ship. Do not hunt leftover chrome.`
-          : `Soft original prompt — invent high-leverage work; after the reading's ship, change surface or close. Do not hunt leftover chrome.`
+          ? `Evaluate-class — written reading first, then one ship per wave until the cap. Do not hunt leftover chrome.`
+          : `Soft original prompt — invent high-leverage work; after each ship, change surface. Close only on /cycle 0 or the cap. Do not hunt leftover chrome.`
         : "",
     );
   } else {

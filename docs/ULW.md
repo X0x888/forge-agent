@@ -47,7 +47,7 @@ Hard mandates keep a fixed objective but the same **smart + hard** execution sty
 
 **Broad checklists** (4+ bullets / multi-section): the harness still requires a **todo backlog** (`todo_write` ≥2) before Wave 1 free-invents.
 
-**`max_waves` is a ceiling, not a quota.** If the mandate's verbs are done, attest `**Cycle complete.**` with evidence — do not invent work to fill unused slots. Cap auto-flips LAST when the wave counter hits N.
+**`max_waves=N` is a budget the user asked to spend.** Wave 1 writes the reading (evaluate-class) and ships the first item; waves 2..N ship the next highest-leverage items on different surfaces. Do not invent leftover chrome — do ship the next real item. `**Cycle complete.**` under `cycle=1` does **not** release. Cap auto-flips LAST when the wave counter hits N; then attest. `/cycle 0` ends early.
 
 ### Smart + hard (not thrash)
 
@@ -77,8 +77,8 @@ Proof still matters. Low-leverage churn while harder work remains fails the qual
 ```
 attempt Stop
     │
-    ├─ cycle=1 + **Cycle complete.** + evidence (green or checklist)
-    │    + reading (evaluate-class) + proven work → release (cap is a ceiling)
+    ├─ cycle=1 + **Cycle complete.** → stamp the unit, re-anchor next wave
+    │    (does not release; remaining budget still owed)
     ├─ cycle=1 and wave will hit max_waves → auto LAST re-anchor
     ├─ cycle=1 → re-anchor next wave (unless stuck-wall)
     ├─ cycle=0 without **Cycle complete.** → re-anchor finish last wave

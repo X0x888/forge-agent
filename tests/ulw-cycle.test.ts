@@ -81,7 +81,7 @@ describe("ulw cycle", () => {
     assert.equal(s.judgmentRequired, true);
     const kick = ulwKickoffMessage(s);
     assert.match(kick, /max_waves=2/);
-    assert.match(kick, /verbs in order|Wave 1: written/i);
+    assert.match(kick, /spend both|Wave 1: written|budget/i);
     assert.match(
       formatCappedWaveDoctrine(2, mandate),
       /evaluation|first verb/i,
@@ -606,10 +606,10 @@ describe("ulw cycle", () => {
     assert.equal(loadUlwCycle(sid)?.cycle, 1);
   });
 
-  it("cycle=1 reading + proven work + Cycle complete + evidence releases", () => {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-ulw-ceil-done-"));
+  it("cycle=1 reading + proven work + Cycle complete does not release before the cap", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-ulw-budget-hold-"));
     process.env.FORGE_HOME = tmp;
-    const sid = "ulw-ceil-done";
+    const sid = "ulw-budget-hold";
     armUlwCycle(
       sid,
       "comprehensively evaluate this tool and then improve the ui",
@@ -629,12 +629,102 @@ describe("ulw cycle", () => {
       stuckThreshold: 20,
       verificationPassed: true,
     });
-    assert.equal(d.block, false);
-    assert.equal(d.lastCycleReleased, true);
+    assert.equal(d.block, true);
+    assert.notEqual(d.lastCycleReleased, true);
+    assert.equal(loadUlwCycle(sid)?.enabled, true);
+    assert.equal(loadUlwCycle(sid)?.cycle, 1);
+    const held = loadUlwCycle(sid);
+    assert.ok((held?.waves ?? []).length >= 1, "declared ship must stamp the wave");
+    assert.ok((held?.wave ?? 0) >= 1);
+    assert.ok((held?.wave ?? 0) < 4);
+    assert.match(d.reanchor || "", /refused|remain/i);
+    assert.match(d.reanchor || "", /max_waves=4/);
+  });
+
+  it("cycle=1 unlimited Cycle complete does not release", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-ulw-uncapped-cc-"));
+    process.env.FORGE_HOME = tmp;
+    const sid = "ulw-uncapped-cc";
+    armUlwCycle(sid, "improve the daily REPL", {
+      cycle: 1,
+      skipCheckpoint: true,
+    });
+    const d = evaluateUlwAtStop({
+      sessionId: sid,
+      lastAssistantMessage:
+        "**Cycle complete.**\n✅ npm test — 12 passed\nShip landed: dock.",
+      editCount: 4,
+      openTodoCount: 0,
+      stuckThreshold: 20,
+      verificationPassed: true,
+    });
+    assert.equal(d.block, true);
+    assert.notEqual(d.lastCycleReleased, true);
+    assert.equal(loadUlwCycle(sid)?.enabled, true);
+    assert.equal(loadUlwCycle(sid)?.cycle, 1);
+    assert.match(d.reanchor || "", /refused|CONTINUE/i);
+  });
+
+  it("max_waves=4 Cycle complete releases only after the cap auto-LAST", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-ulw-budget-spend-"));
+    process.env.FORGE_HOME = tmp;
+    const sid = "ulw-budget-spend";
+    armUlwCycle(
+      sid,
+      "comprehensively evaluate this tool and then improve the ui",
+      { cycle: 1, maxWaves: 4, skipCheckpoint: true },
+    );
+    appendMemoryRecord(sid, {
+      kind: "observation",
+      text: "Reading: first-run numbers — ship typeable 1–6.",
+      source: "agent",
+    });
+    for (let i = 1; i <= 4; i++) {
+      const d = evaluateUlwAtStop({
+        sessionId: sid,
+        lastAssistantMessage: `Ship landed: wave ${i} item.\n✅ npm test — 12 passed`,
+        editCount: i * 3,
+        openTodoCount: 0,
+        stuckThreshold: 20,
+        verificationPassed: true,
+      });
+      assert.equal(d.block, true);
+      assert.notEqual(d.lastCycleReleased, true);
+      if (i < 4) {
+        assert.equal(loadUlwCycle(sid)?.cycle, 1);
+        assert.equal(d.maxWavesHit, undefined);
+      } else {
+        assert.equal(d.maxWavesHit, true);
+        assert.equal(loadUlwCycle(sid)?.cycle, 0);
+        assert.equal(loadUlwCycle(sid)?.wave, 4);
+      }
+    }
+    const done = evaluateUlwAtStop({
+      sessionId: sid,
+      lastAssistantMessage:
+        "**Cycle complete.**\n✅ four ships — npm test: 12 passed",
+      editCount: 13,
+      openTodoCount: 0,
+      stuckThreshold: 20,
+      verificationPassed: true,
+    });
+    assert.equal(done.block, false);
+    assert.equal(done.lastCycleReleased, true);
     assert.equal(loadUlwCycle(sid)?.enabled, false);
-    const closed = loadUlwCycle(sid);
-    assert.ok((closed?.waves ?? []).length >= 1, "ceiling release must stamp the closing wave");
-    assert.ok((closed?.wave ?? 0) >= 1);
+  });
+
+  it("capped-wave doctrine spends the budget instead of inviting early Cycle complete", () => {
+    const mandate =
+      "comprehensively evaluate this tool and then improve the ui";
+    const four = formatCappedWaveDoctrine(4, mandate);
+    assert.match(four, /spend all 4/);
+    assert.match(four, /refused/);
+    assert.doesNotMatch(four, /ceiling/);
+    assert.doesNotMatch(four, /verbs are done/);
+    const two = formatCappedWaveDoctrine(2, mandate);
+    assert.match(two, /spend both/);
+    assert.match(two, /first verb/i);
+    assert.doesNotMatch(two, /ceiling/);
   });
 
   it("cycle=1 does not treat a red check as Cycle complete evidence", () => {
