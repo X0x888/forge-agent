@@ -31,10 +31,7 @@ import {
 import { describeAuth, resolveAuthFresh } from "../auth/resolve.js";
 import type { ResolvedAuth } from "../auth/types.js";
 import { formatToolStart } from "../util/format.js";
-import {
-  formatDefaultToolEndTranscript,
-  formatVerboseToolEndTranscript,
-} from "./tool-transcript.js";
+import { createToolEndCoalescer } from "./tool-transcript.js";
 import { postureHead, postureWarnings } from "./posture.js";
 import {
   composeTurnCloser,
@@ -684,6 +681,7 @@ export async function runRepl(opts: {
     livePrompt({ freshLine: true });
 
     let sawToken = false;
+    const toolEnds = createToolEndCoalescer((line) => console.error(line));
     /** Tool phase: pause prompt refresh so tool logs stay clean */
     let toolHold = false;
     /** Streaming markdown renderer for the current assistant text segment. */
@@ -737,6 +735,7 @@ export async function runRepl(opts: {
         events: {
           onToken: (t) => {
             if (!sawToken) {
+              toolEnds.flush();
               // Leave the live › line above; stream on following lines
               process.stdout.write("\n");
               working.setStreaming(true);
@@ -752,6 +751,7 @@ export async function runRepl(opts: {
           onToolStart: (name, args) => {
             flushMarkdown();
             if (streamActive || sawToken) {
+              toolEnds.flush();
               process.stdout.write("\n");
             }
             streamActive = false;
@@ -764,14 +764,10 @@ export async function runRepl(opts: {
             }
           },
           onToolEnd: (name, r) => {
-            // Minimal by default: one status line per tool. Success diffs
-            // and full output stay /verbose. Failures inline the first
-            // error on the ✗ row; extra tail only when there is more.
-            console.error(
-              verboseToolOutput
-                ? formatVerboseToolEndTranscript(name, r)
-                : formatDefaultToolEndTranscript(name, r),
-            );
+            // Minimal by default: one status line per tool. Consecutive
+            // same-tool ✓ rows collapse to `✓ grep ×4`. Failures and
+            // /verbose stay one-per-call. Success diffs stay /verbose.
+            toolEnds.push(name, r, { verbose: verboseToolOutput });
           },
           onToolSettled: () => {
             pendingTools = Math.max(0, pendingTools - 1);
@@ -789,8 +785,11 @@ export async function runRepl(opts: {
             if (phase === "tool") {
               pendingTools += 1;
               // Permission prompts print before onToolStart — keep the
-              // styled token stream ahead of any prompt output.
+              // styled token stream ahead of any prompt output. Flush a
+              // different-tool ×N so Allow? is not buried under a held row.
               flushMarkdown();
+              const nextName = (detail ?? "").split(/\s+/)[0];
+              if (nextName) toolEnds.flushUnless(nextName);
               streamActive = false;
               working.setStreaming(false);
               sawToken = false;
@@ -818,6 +817,7 @@ export async function runRepl(opts: {
 
       working.stop();
       streamActive = false;
+      toolEnds.flush();
       flushMarkdown();
 
       if (result.finalText && !result.finalText.endsWith("\n")) {
@@ -899,6 +899,7 @@ export async function runRepl(opts: {
       }
     } catch (err) {
       working.stop();
+      toolEnds.flush();
       flushMarkdown();
       try {
         const { formatProviderError, formatProviderErrorText } = await import(

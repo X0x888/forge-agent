@@ -7,6 +7,8 @@ import {
   visibleWidth,
 } from "../src/util/format.js";
 import {
+  createToolEndCoalescer,
+  formatCoalescedToolEnd,
   formatDefaultToolEndTranscript,
   formatVerboseToolEndTranscript,
 } from "../src/tui/tool-transcript.js";
@@ -395,5 +397,74 @@ describe("default tool status line", () => {
     assert.match(text, /✓ bash command=echo hi/);
     assert.match(text, /hello/);
     assert.match(text, /world/);
+  });
+});
+
+describe("coalesced same-tool successes", () => {
+  it("keeps a single success as a normal ✓ row", () => {
+    const bare = strip(
+      formatCoalescedToolEnd("grep", 1, {
+        ms: 12,
+        bytes: 40,
+        args: { pattern: "foo" },
+      }),
+    );
+    assert.match(bare, /✓ grep pattern=foo/);
+    assert.doesNotMatch(bare, /×/);
+  });
+
+  it("collapses consecutive same-tool successes to ×N", () => {
+    const lines: string[] = [];
+    const c = createToolEndCoalescer((line) => lines.push(strip(line)));
+    c.push("grep", { ms: 10, bytes: 20, args: { pattern: "a" } });
+    c.push("grep", { ms: 11, bytes: 21, args: { pattern: "b" } });
+    c.push("grep", { ms: 12, bytes: 22, args: { pattern: "c" } });
+    assert.equal(lines.length, 0);
+    c.flush();
+    assert.equal(lines.length, 1);
+    assert.match(lines[0]!, /✓ grep ×3 pattern=c/);
+    assert.match(lines[0]!, /33ms/);
+  });
+
+  it("flushes the group before a failure and does not join ✗ rows", () => {
+    const lines: string[] = [];
+    const c = createToolEndCoalescer((line) => lines.push(strip(line)));
+    c.push("read_file", { ms: 4, bytes: 10, args: { path: "a.ts" } });
+    c.push("read_file", { ms: 5, bytes: 11, args: { path: "b.ts" } });
+    c.push("bash", {
+      isError: true,
+      ms: 8,
+      bytes: 40,
+      args: { command: "npm test" },
+      output: "not ok — expected 2",
+    });
+    assert.equal(lines.length, 2);
+    assert.match(lines[0]!, /✓ read_file ×2 path=b\.ts/);
+    assert.match(lines[1]!, /✗ bash command=npm test/);
+    c.flush();
+    assert.equal(lines.length, 2);
+  });
+
+  it("flushUnless keeps a same-name burst and prints before a different tool", () => {
+    const lines: string[] = [];
+    const c = createToolEndCoalescer((line) => lines.push(strip(line)));
+    c.push("grep", { ms: 4, bytes: 10, args: { pattern: "a" } });
+    c.push("grep", { ms: 5, bytes: 11, args: { pattern: "b" } });
+    c.flushUnless("grep");
+    assert.equal(lines.length, 0);
+    c.flushUnless("bash");
+    assert.equal(lines.length, 1);
+    assert.match(lines[0]!, /✓ grep ×2 pattern=b/);
+  });
+
+  it("does not coalesce /verbose rows", () => {
+    const lines: string[] = [];
+    const c = createToolEndCoalescer((line) => lines.push(strip(line)));
+    c.push("grep", { ms: 4, bytes: 10, args: { pattern: "a" } }, { verbose: true });
+    c.push("grep", { ms: 5, bytes: 11, args: { pattern: "b" } }, { verbose: true });
+    assert.equal(lines.length, 2);
+    assert.match(lines[0]!, /✓ grep pattern=a/);
+    assert.match(lines[1]!, /✓ grep pattern=b/);
+    assert.doesNotMatch(lines.join("\n"), /×/);
   });
 });
