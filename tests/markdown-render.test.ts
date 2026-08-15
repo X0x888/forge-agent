@@ -48,6 +48,7 @@ const DOCS: Record<string, string> = {
   crlf: "line one\r\nline two\r\n",
   table:
     "| Wave | Ship |\n| --- | --- |\n| 1 | clip |\n| 2 | **deny** |\n",
+  tableNoNl: "| Wave | Ship |\n| --- | --- |\n| 1 | clip |",
   tasks:
     "- [ ] open item\n- [x] **done** item\n- [X] also done\n- not a task\n* [ ] star open\n1. [ ] numbered open\n",
   strike: "dropped ~~old path~~ kept\n~~**bold strike**~~ and `~~not strike~~`\n",
@@ -190,6 +191,28 @@ describe("markdown renderer styling", () => {
     assert.ok(!out.includes("| --- |"), "raw separator leaked");
     assert.ok(out.includes("─"), "separator rule missing");
     assert.ok(out.includes(`${ESC}1mdeny${ESC}22m`), "cell emphasis missing");
+  });
+
+  test("GFM tables align columns so the header sits over the body", () => {
+    const out = renderStyled([
+      "| Wave | Ship |\n| --- | --- |\n| 1 | clip |\n| 2 | **deny** |\n",
+    ]);
+    const bare = out.replace(/\x1b\[[0-9;]*m/g, "");
+    const rows = bare.split("\n").filter((l) => l.includes("│"));
+    assert.ok(rows.length >= 3, `expected ≥3 table rows, got ${rows.length}`);
+    const header = rows[0]!;
+    const body = rows[2]!;
+    assert.equal(header.length, body.length, "header/body column widths drifted");
+    assert.equal(header.indexOf("Wave"), body.indexOf("1"));
+    assert.equal(header.indexOf("Ship"), body.indexOf("clip"));
+  });
+
+  test("opening fence paints the language as a tag", () => {
+    const out = renderStyled(["```ts\nconst x = 1;\n```\n"]);
+    assert.ok(out.includes("ts"), "language tag missing");
+    assert.ok(!out.includes("```ts"), "raw fence+lang leaked");
+    assert.ok(out.includes("│"), "code gutter missing");
+    assert.ok(out.includes(`${ESC}36mts${ESC}39m`) || out.includes("ts"));
   });
 
   test("a lone pipe is not a table", () => {

@@ -4,12 +4,17 @@
  * Buffers until newline and styles one complete line at a time, so the final
  * output is byte-identical no matter where the token stream is split
  * (chunk-boundary invariance): every styling decision depends only on the
- * current line plus the fenced-code state carried between lines.
+ * current line plus the fenced-code / open-table state carried between lines.
+ *
+ * GFM tables are held until the block ends (non-table line or end()) so
+ * columns can align. The flushed table is still a pure function of the
+ * held rows — chunk splits do not change the final bytes.
  *
  * Non-TTY (color:false) is a plain passthrough — input is echoed unchanged.
  * Dependency-free (chalk only).
  */
 import chalk, { Chalk } from "chalk";
+import { visibleWidth } from "../util/format.js";
 
 export interface MarkdownRendererOptions {
   /**
@@ -42,6 +47,7 @@ export function createMarkdownRenderer(
 class LineMarkdownRenderer implements MarkdownRenderer {
   private buffer = "";
   private inFence = false;
+  private tableRows: string[] = [];
 
   constructor(private readonly c: InstanceType<typeof Chalk>) {}
 
@@ -52,7 +58,7 @@ class LineMarkdownRenderer implements MarkdownRenderer {
     while ((idx = this.buffer.indexOf("\n")) >= 0) {
       const line = this.buffer.slice(0, idx);
       this.buffer = this.buffer.slice(idx + 1);
-      out += this.styleLine(line) + "\n";
+      out += this.consumeLine(line, true);
     }
     return out;
   }
@@ -60,15 +66,52 @@ class LineMarkdownRenderer implements MarkdownRenderer {
   end(): string {
     const rest = this.buffer;
     this.buffer = "";
-    return rest ? this.styleLine(rest) : "";
+    if (rest) {
+      // Last line with no trailing newline: hold it if it is a table row,
+      // then flush without a final extra \n (source had none).
+      if (!this.inFence && isTableRow(rest)) {
+        this.tableRows.push(rest);
+        const table = this.flushTable();
+        return table.endsWith("\n") ? table.slice(0, -1) : table;
+      }
+      return this.consumeLine(rest, false);
+    }
+    return this.flushTable();
+  }
+
+  /**
+   * Hold table rows; emit everything else. `eol` adds the trailing newline
+   * a completed source line carries (push) vs. a final partial (end).
+   */
+  private consumeLine(line: string, eol: boolean): string {
+    if (!this.inFence && isTableRow(line)) {
+      this.tableRows.push(line);
+      return "";
+    }
+    const table = this.flushTable();
+    const styled = this.styleLine(line);
+    return eol ? `${table}${styled}\n` : `${table}${styled}`;
+  }
+
+  private flushTable(): string {
+    if (!this.tableRows.length) return "";
+    const rows = this.tableRows;
+    this.tableRows = [];
+    return renderAlignedTable(rows, this.c, (cell) => this.inline(cell));
   }
 
   private styleLine(line: string): string {
     const c = this.c;
     // Fenced code blocks — fence marker toggles state, content gets a gutter.
-    if (/^ {0,3}(```|~~~)/.test(line)) {
+    // Opening fence paints the language as a tag (`ts`), not ` ```ts `.
+    const fence = /^( {0,3})(```|~~~)\s*([^\s`]*)(.*)$/.exec(line);
+    if (fence) {
+      const opening = !this.inFence;
       this.inFence = !this.inFence;
-      return c.dim(line);
+      const marker = `${fence[1] ?? ""}${fence[2] ?? "```"}`;
+      const lang = (fence[3] ?? "").trim();
+      if (opening && lang) return `${c.dim(marker)} ${c.cyan(lang)}`;
+      return c.dim(marker);
     }
     if (this.inFence) {
       return line ? `${c.dim("│ ")}${line}` : c.dim("│");
@@ -105,9 +148,6 @@ class LineMarkdownRenderer implements MarkdownRenderer {
     if (list) {
       return `${list[1]}${c.cyan(list[2]!)} ${this.inline(list[3] ?? "")}`;
     }
-    // GFM tables — line-local so chunk-boundary invariance holds.
-    const table = styleTableLine(line, c, (cell) => this.inline(cell));
-    if (table !== null) return table;
     return this.inline(line);
   }
 
@@ -186,32 +226,75 @@ function isTableSeparator(line: string): boolean {
   return tableCells(line).every((cell) => /^:?-{3,}:?$/.test(cell.trim()));
 }
 
-function styleTableLine(
-  line: string,
+function colAlign(cell: string): "left" | "right" | "center" {
+  const t = cell.trim();
+  const left = t.startsWith(":");
+  const right = t.endsWith(":");
+  if (left && right) return "center";
+  if (right) return "right";
+  return "left";
+}
+
+function padVisible(
+  text: string,
+  width: number,
+  align: "left" | "right" | "center",
+): string {
+  const pad = Math.max(0, width - visibleWidth(text));
+  if (align === "right") return " ".repeat(pad) + text;
+  if (align === "center") {
+    const left = Math.floor(pad / 2);
+    return " ".repeat(left) + text + " ".repeat(pad - left);
+  }
+  return text + " ".repeat(pad);
+}
+
+/** Flush a held GFM table as aligned columns. Always ends with `\n`. */
+function renderAlignedTable(
+  rows: string[],
   c: InstanceType<typeof Chalk>,
   styleCell: (cell: string) => string,
-): string | null {
-  if (!isTableRow(line)) return null;
-  if (isTableSeparator(line)) {
-    return c.dim("─".repeat(Math.max(24, Math.min(line.trim().length, 72))));
+): string {
+  const parsed = rows.map((line) => ({
+    leading: line.match(/^\s*/)?.[0] ?? "",
+    sep: isTableSeparator(line),
+    cells: tableCells(line).map((x) => x.trim()),
+  }));
+  const colCount = Math.max(0, ...parsed.map((r) => r.cells.length));
+  const aligns: Array<"left" | "right" | "center"> = Array.from(
+    { length: colCount },
+    () => "left",
+  );
+  const sepRow = parsed.find((r) => r.sep);
+  if (sepRow) {
+    sepRow.cells.forEach((cell, i) => {
+      aligns[i] = colAlign(cell);
+    });
   }
-  const leading = line.match(/^\s*/)?.[0] ?? "";
-  const t = line.trim();
-  const starts = t.startsWith("|");
-  const ends = t.endsWith("|");
-  const raw = t.split("|");
-  const cells: string[] = [];
-  for (let i = 0; i < raw.length; i++) {
-    if (i === 0 && raw[i]!.trim() === "" && starts) continue;
-    if (i === raw.length - 1 && raw[i]!.trim() === "" && ends) continue;
-    cells.push(raw[i]!);
+  const widths = Array.from({ length: colCount }, () => 3);
+  for (const r of parsed) {
+    if (r.sep) continue;
+    r.cells.forEach((cell, i) => {
+      widths[i] = Math.max(widths[i]!, cell.length);
+    });
   }
   const pipe = c.dim("│");
-  const body = cells
-    .map((cell) => ` ${styleCell(cell.trim())} `)
-    .join(pipe);
-  return `${leading}${starts ? `${pipe} ` : ""}${body}${ends ? ` ${pipe}` : ""}`.replace(
-    /  +/g,
-    " ",
-  );
+  const headerIdx = parsed.findIndex((r) => !r.sep);
+  const out: string[] = [];
+  for (let ri = 0; ri < parsed.length; ri++) {
+    const r = parsed[ri]!;
+    const bits: string[] = [];
+    for (let i = 0; i < colCount; i++) {
+      if (r.sep) {
+        bits.push(c.dim("─".repeat(widths[i]!)));
+      } else {
+        const raw = r.cells[i] ?? "";
+        let styled = styleCell(raw);
+        if (ri === headerIdx) styled = c.bold(styled);
+        bits.push(padVisible(styled, widths[i]!, aligns[i]!));
+      }
+    }
+    out.push(`${r.leading}${pipe} ${bits.join(` ${pipe} `)} ${pipe}`);
+  }
+  return out.join("\n") + "\n";
 }
