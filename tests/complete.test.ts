@@ -4,6 +4,8 @@ import {
   forgeCompleter,
   resolveParamChoice,
   formatParamMenu,
+  formatSlashHitMenu,
+  hintForSlashHit,
   COMMAND_PARAMS,
   EMPTY_TAB_STARTERS,
 } from "../src/tui/complete.js";
@@ -130,6 +132,25 @@ describe("param resolve + menu", () => {
     assert.equal(resolveParamChoice("list", c), "list");
     assert.equal(resolveParamChoice("build", c), "build");
     assert.equal(resolveParamChoice("execute", c), "build");
+  });
+
+  it("Tab dump is a described card, not a bare name list", () => {
+    const menu = formatSlashHitMenu([...EMPTY_TAB_STARTERS], { cols: 80 });
+    assert.match(menu, /\/help\s+Getting started/);
+    assert.match(menu, /\/plan\s+Read-only design/);
+    assert.match(menu, /\/commit\s+Commit \(never push\)/);
+    assert.equal(menu.split("\n").length, EMPTY_TAB_STARTERS.length);
+    assert.doesNotMatch(menu, /\+.*more/);
+  });
+
+  it("Tab dump caps overflow and still hints params", () => {
+    const many = ["/help", "/setup", "/plan", "/init", "/last", "/retry"];
+    const menu = formatSlashHitMenu(many, { cols: 80, max: 3 });
+    assert.match(menu, /\/help\s+Getting started/);
+    assert.match(menu, /\+3 more/);
+    assert.equal(menu.split("\n").length, 4);
+    assert.equal(hintForSlashHit("/permissions acceptEdits"), "Auto-approve file edits; may still ask on dangerous shell");
+    assert.equal(hintForSlashHit("@src/cli.ts"), "");
   });
 
   it("formats a menu with current marker", () => {

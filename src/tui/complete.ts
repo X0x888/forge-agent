@@ -15,6 +15,7 @@ import { buildModelCatalogSync } from "../config/model-catalog.js";
 import { SLASH_COMMANDS } from "../commands/slash.js";
 import { listProjectCommandSlashes } from "../commands/project-commands.js";
 import { PROVIDER_IDS } from "../util/provider-id.js";
+import { clipAnsi, visibleWidth } from "../util/format.js";
 
 export interface ParamChoice {
   value: string;
@@ -529,6 +530,95 @@ export const EMPTY_TAB_STARTERS = [
   "/undo",
   "/commit",
 ] as const;
+
+/** One-line blurbs for Tab menus. Missing keys still print the command. */
+export const SLASH_HINTS: Record<string, string> = {
+  "/help": "Getting started",
+  "/setup": "Account, model, budget",
+  "/plan": "Read-only design",
+  "/init": "Write AGENTS.md",
+  "/last": "Peek last turns",
+  "/retry": "Rewind + re-run",
+  "/diff": "Status + --stat",
+  "/model": "Switch model",
+  "/permissions": "Modes + always-allows",
+  "/budget": "Session spend cap",
+  "/undo": "Rewind last turn",
+  "/commit": "Commit (never push)",
+  "/ulw": "Ultrawork cycle",
+  "/ulw-off": "Disarm ULW",
+  "/goal": "Relentless driver",
+  "/done": "Wind down goal + ULW",
+  "/cycle": "Continue or last wave",
+  "/status": "Full HUD + session",
+  "/quit": "Exit",
+  "/provider": "Switch provider",
+  "/doctor": "Health check",
+  "/tips": "Expert cheat sheet",
+  "/build": "Leave plan, implement",
+  "/review": "Review a diff/PR",
+  "/verbose": "REPL diffs + full output",
+  "/notify": "Desktop alert on turn end",
+  "/sessions": "List / search / prune",
+  "/resume": "Resume by id or title",
+  "/new": "Fresh session",
+  "/clear": "Clear this session",
+  "/share": "Pasteable handoff card",
+  "/cost": "Tokens + spend",
+  "/context": "Context window bar",
+  "/skills": "Skill packs",
+  "/commands": "Project slash templates",
+  "/mcp": "MCP servers",
+  "/lsp": "Language servers",
+  "/format": "Format-on-write",
+  "/export": "Export session",
+  "/fork": "Branch this session",
+  "/auth": "Stored credentials",
+  "/accounts": "Multi-account switch",
+  "/memory": "Session / project memory",
+  "/checkpoint": "Safety snapshot",
+  "/compact": "Compact conversation",
+};
+
+export function hintForSlashHit(hit: string): string {
+  const t = hit.trim();
+  if (!t.startsWith("/")) return "";
+  const sp = t.indexOf(" ");
+  if (sp === -1) return SLASH_HINTS[t.toLowerCase()] ?? "";
+  const cmd = t.slice(0, sp).replace(/^\//, "").toLowerCase();
+  const arg = t.slice(sp + 1).trim();
+  const choice = COMMAND_PARAMS[cmd]?.find((c) => c.value === arg);
+  return choice?.description ?? "";
+}
+
+/**
+ * Compact Tab dump: command + hint, capped so empty Tab is a card not a catalog.
+ * Hits themselves are unchanged — this is display only.
+ */
+export function formatSlashHitMenu(
+  hits: string[],
+  opts?: { cols?: number; max?: number },
+): string {
+  if (!hits.length) return "";
+  const max = Math.max(1, opts?.max ?? 12);
+  const cols = Math.max(24, opts?.cols ?? 80);
+  const shown = hits.slice(0, max);
+  const cmdWidth = Math.min(
+    22,
+    Math.max(10, ...shown.map((h) => h.length)),
+  );
+  const lines = shown.map((h) => {
+    const hint = hintForSlashHit(h);
+    const pad = Math.max(1, cmdWidth - h.length + 2);
+    const row = hint ? `  ${h}${" ".repeat(pad)}${hint}` : `  ${h}`;
+    return visibleWidth(row) <= cols ? row : clipAnsi(row, cols);
+  });
+  if (hits.length > max) {
+    const more = `  … +${hits.length - max} more · type more letters`;
+    lines.push(visibleWidth(more) <= cols ? more : clipAnsi(more, cols));
+  }
+  return lines.join("\n");
+}
 
 /**
  * Full completer for the REPL.

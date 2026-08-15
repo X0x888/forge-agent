@@ -404,6 +404,21 @@ describe("statusline", () => {
       );
       const plain3 = footer3.replace(/\x1b\[[0-9;]*m/g, "");
       assert.match(plain3, /last✓ npm test/);
+
+      // Δ closer owns proof — footer must not reprint last✓ / next.
+      const omitted = renderTurnFooter(
+        {
+          config: { ...config, workspace: tmp },
+          session: s,
+          auth,
+        },
+        { promptTokens: 100, completionTokens: 50 },
+        { omitProof: true },
+      );
+      const omittedPlain = omitted.replace(/\x1b\[[0-9;]*m/g, "");
+      assert.doesNotMatch(omittedPlain, /last✓/);
+      assert.doesNotMatch(omittedPlain, /next /);
+      assert.match(omittedPlain, /turn in=/);
     } finally {
       if (prevDock === undefined) delete process.env.FORGE_BOTTOM_STATUS;
       else process.env.FORGE_BOTTOM_STATUS = prevDock;

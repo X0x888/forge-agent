@@ -9,6 +9,7 @@ import {
   formatPermissionAskPrompt,
   formatPermissionTimeoutLine,
   parsePermissionAskAnswer,
+  wrapPermissionAskLine,
 } from "../src/agent/permissions.js";
 import { visibleWidth } from "../src/util/format.js";
 
@@ -190,7 +191,7 @@ describe("permission ask UX", () => {
     assert.doesNotMatch(line, /Tip:|FORGE_PERMISSION_TIMEOUT_MS|dontAsk/);
   });
 
-  test("clips Allow? to one TTY row and keeps the caret", () => {
+  test("wraps Allow? so safety keys survive a narrow TTY", () => {
     const orig = Object.getOwnPropertyDescriptor(process.stdout, "columns");
     Object.defineProperty(process.stdout, "columns", {
       configurable: true,
@@ -204,10 +205,52 @@ describe("permission ask UX", () => {
         timeoutNote: " (30s)",
       });
       assert.match(ready, /^Allow\?/);
-      assert.ok(visibleWidth(ready) <= 28);
+      assert.match(ready, /s session/);
+      assert.match(ready, /n no/);
+      assert.match(ready, /↵\/y once/);
+      for (const row of ready.split("\n")) {
+        assert.ok(visibleWidth(row) <= 28, row);
+      }
     } finally {
       if (orig) Object.defineProperty(process.stdout, "columns", orig);
       else delete (process.stdout as { columns?: number }).columns;
     }
+  });
+
+  test("wraps Allow? at 80 cols instead of clipping n/s off the grant label", () => {
+    const orig = Object.getOwnPropertyDescriptor(process.stdout, "columns");
+    Object.defineProperty(process.stdout, "columns", {
+      configurable: true,
+      value: 80,
+    });
+    try {
+      const ready = formatPermissionAskPrompt({
+        mcpAlwaysReady: true,
+        alwaysTool: "write_file",
+        alwaysPattern: "src/very/long/nested/path/**",
+        timeoutNote: " (30s)",
+      });
+      assert.match(ready, /s session/);
+      assert.match(ready, /n no/);
+      assert.match(ready, /a always/);
+      assert.match(ready, /\(30s\)/);
+      for (const row of ready.split("\n")) {
+        assert.ok(visibleWidth(row) <= 80, row);
+      }
+    } finally {
+      if (orig) Object.defineProperty(process.stdout, "columns", orig);
+      else delete (process.stdout as { columns?: number }).columns;
+    }
+  });
+
+  test("wrapPermissionAskLine keeps keys when the grant label must clip", () => {
+    const wrapped = wrapPermissionAskLine(
+      "Allow? ↵/y once · a always Write(src/very/long/nested/path/**) · s session · n no (30s) ",
+      28,
+    );
+    assert.match(wrapped, /\n/);
+    assert.match(wrapped, /s session/);
+    assert.match(wrapped, /n no/);
+    assert.doesNotMatch(wrapped, /dontAsk|Tip:/);
   });
 });

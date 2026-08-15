@@ -508,6 +508,7 @@ export function renderSessionHud(
 export function renderTurnFooter(
   ctx: StatusBarContext,
   turn: { promptTokens: number; completionTokens: number; cacheReadTokens?: number; stopContinues?: number },
+  opts?: { omitProof?: boolean },
 ): string {
   const snap = buildLiveSnapshot(ctx);
   const width = process.stdout.columns ?? 100;
@@ -552,28 +553,31 @@ export function renderTurnFooter(
   }
   // After edits, surface last-verify (when recorded) or the cheapest preferred
   // project check early (before ULW badges) so narrow terminals still show it.
+  // Skip when the Δ closer already carries verify — same proof twice is noise.
   try {
-    const last = ctx.session.meta.lastVerificationCommand?.trim();
-    if (last) {
-      const short = last.length > 22 ? `${last.slice(0, 21)}…` : last;
-      if (isLastVerificationStale(ctx.session.meta)) {
-        parts.push(chalk.yellow(`last✓ ${short} stale`));
-      } else {
-        parts.push(chalk.green(`last✓ ${short}`));
-      }
-    } else if ((ctx.session.meta.editCount || 0) > 0) {
-      const intel = detectProjectIntel(
-        ctx.config.workspace || ctx.session.meta.cwd || process.cwd(),
-      );
-      if (intel.checkCommands[0]) {
-        const c = intel.checkCommands[0];
-        // Suggested next check — never a ✓. A checkmark here is read as
-        // "already passed" when nothing has been verified this session.
-        parts.push(
-          chalk.dim(
-            `next ${c.length > 22 ? `${c.slice(0, 21)}…` : c}`,
-          ),
+    if (!opts?.omitProof) {
+      const last = ctx.session.meta.lastVerificationCommand?.trim();
+      if (last) {
+        const short = last.length > 22 ? `${last.slice(0, 21)}…` : last;
+        if (isLastVerificationStale(ctx.session.meta)) {
+          parts.push(chalk.yellow(`last✓ ${short} stale`));
+        } else {
+          parts.push(chalk.green(`last✓ ${short}`));
+        }
+      } else if ((ctx.session.meta.editCount || 0) > 0) {
+        const intel = detectProjectIntel(
+          ctx.config.workspace || ctx.session.meta.cwd || process.cwd(),
         );
+        if (intel.checkCommands[0]) {
+          const c = intel.checkCommands[0];
+          // Suggested next check — never a ✓. A checkmark here is read as
+          // "already passed" when nothing has been verified this session.
+          parts.push(
+            chalk.dim(
+              `next ${c.length > 22 ? `${c.slice(0, 21)}…` : c}`,
+            ),
+          );
+        }
       }
     }
   } catch {

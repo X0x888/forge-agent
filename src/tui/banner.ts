@@ -30,6 +30,11 @@ export interface BannerInput {
   resumeOrientation?: string;
   /** Override TTY width (tests). Non-TTY defaults to 80. */
   columns?: number;
+  /**
+   * When the sticky dock is on, drop provider/model/auth/ULW/PLAN that the
+   * dock already paints. Session, sandbox, git, project, and posture stay.
+   */
+  dockOn?: boolean;
 }
 
 function resolveBannerColumns(columns?: number): number {
@@ -66,15 +71,20 @@ export function formatBanner(input: BannerInput): string {
       : "";
   const planNote =
     input.permissionMode === "plan" ? " (exit_plan_mode or /build)" : "";
-  const identity = clipBannerIdentity(
-    `  ${input.provider}/${input.model} · ${input.authLabel}  ·  session ${sid}${title}  ·  perms ${input.permissionMode}${planNote}  ·  sandbox ${input.sandbox}${git}${project}`,
-    input.columns,
-  );
+  const identity = input.dockOn
+    ? clipBannerIdentity(
+        `  session ${sid}${title}  ·  sandbox ${input.sandbox}${git}${project}`,
+        input.columns,
+      )
+    : clipBannerIdentity(
+        `  ${input.provider}/${input.model} · ${input.authLabel}  ·  session ${sid}${title}  ·  perms ${input.permissionMode}${planNote}  ·  sandbox ${input.sandbox}${git}${project}`,
+        input.columns,
+      );
   const lines = [
     `  ⚒  Forge v${input.version}`,
     identity,
   ];
-  if (input.ulwArmed) {
+  if (input.ulwArmed && !input.dockOn) {
     lines.push(
       `  ULW on`,
     );

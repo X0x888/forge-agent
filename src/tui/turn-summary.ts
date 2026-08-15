@@ -95,6 +95,27 @@ export interface RunStopReasonInput {
 }
 
 /**
+ * Join the post-turn health footer with the Δ files+verify line.
+ * When both exist they become one closer (two lines only if the TTY is
+ * too narrow). An empty `──` footer collapses so Δ stands alone.
+ */
+export function composeTurnCloser(
+  footer: string,
+  delta: string | null,
+): string {
+  if (!delta) return footer;
+  const bits = footer
+    .replace(/\x1b\[[0-9;]*m/g, "")
+    .replace(/^──\s*/, "")
+    .trim();
+  if (!bits) return delta;
+  const one = `${footer}  ${delta}`;
+  const width = process.stdout.columns ?? 100;
+  if (visibleWidth(one) <= Math.max(40, width)) return one;
+  return `${footer}\n${delta}`;
+}
+
+/**
  * One dim line when a run did not stop cleanly. Silent on a normal Stop
  * so the Δ closer stays the last chrome. Shared by REPL and `forge run`.
  */

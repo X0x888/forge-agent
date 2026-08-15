@@ -6,6 +6,7 @@ import path from "node:path";
 import {
   formatTurnChangeSummary,
   formatTurnChangeSummaryForSession,
+  composeTurnCloser,
   formatRunStopReason,
 } from "../src/tui/turn-summary.js";
 import { visibleWidth } from "../src/util/format.js";
@@ -180,6 +181,58 @@ test("turn summary: session shim only includes edits after turnAtStart", () => {
     if (prevHome === undefined) delete process.env.FORGE_HOME;
     else process.env.FORGE_HOME = prevHome;
     fs.rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test("composeTurnCloser: delta-only when footer is just the rule", () => {
+  const delta = "Δ 1 file: src/a.ts · verify: none — edits unverified";
+  assert.equal(composeTurnCloser("──", delta), delta);
+  assert.equal(composeTurnCloser("\u001b[2m──\u001b[0m", delta), delta);
+});
+
+test("composeTurnCloser: joins health + Δ on a wide TTY", () => {
+  const prevCols = process.stdout.columns;
+  Object.defineProperty(process.stdout, "columns", {
+    value: 160,
+    configurable: true,
+  });
+  try {
+    const joined = composeTurnCloser(
+      "──  turn in=1.2k out=400 ~$0.01  harness on",
+      "Δ 1 file: src/a.ts · verify: none — run npm test",
+    );
+    assert.match(joined, /turn in=/);
+    assert.match(joined, /Δ 1 file/);
+    assert.doesNotMatch(joined, /\n/);
+  } finally {
+    Object.defineProperty(process.stdout, "columns", {
+      value: prevCols,
+      configurable: true,
+    });
+  }
+});
+
+test("composeTurnCloser: stacks on a narrow TTY instead of clipping Δ", () => {
+  const prevCols = process.stdout.columns;
+  Object.defineProperty(process.stdout, "columns", {
+    value: 48,
+    configurable: true,
+  });
+  try {
+    const stacked = composeTurnCloser(
+      "──  turn in=12.4k out=3.1k ~$0.42  harness on",
+      "Δ 2 files: src/a.ts, src/b.ts (new) · verify: none — run npm run typecheck",
+    );
+    assert.match(stacked, /\n/);
+    const [health, delta] = stacked.split("\n");
+    assert.match(health, /turn in=/);
+    assert.match(delta, /Δ 2 files/);
+    assert.match(delta, /typecheck/);
+  } finally {
+    Object.defineProperty(process.stdout, "columns", {
+      value: prevCols,
+      configurable: true,
+    });
   }
 });
 

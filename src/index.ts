@@ -539,6 +539,7 @@ export {
 export {
   formatTurnChangeSummary,
   formatTurnChangeSummaryForSession,
+  composeTurnCloser,
   formatRunStopReason,
 } from "./tui/turn-summary.js";
 export {

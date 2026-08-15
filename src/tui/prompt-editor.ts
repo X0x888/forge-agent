@@ -15,6 +15,7 @@ import { EventEmitter } from "node:events";
 import readline from "node:readline";
 import type { Interface as ReadlineInterface } from "node:readline";
 import chalk from "chalk";
+import { formatSlashHitMenu } from "./complete.js";
 
 const BRACKETED_PASTE_ENABLE = "\x1b[?2004h";
 const BRACKETED_PASTE_DISABLE = "\x1b[?2004l";
@@ -984,7 +985,9 @@ class TtyPromptEditor extends EventEmitter implements PromptEditor {
       // Completions dump below the block — reset paint tracking
       this.goToBlockEnd();
       this.output.write(
-        "\n" + hits.map((h) => chalk.dim("  " + h)).join("\n") + "\n",
+        "\n" +
+          chalk.dim(formatSlashHitMenu(hits, { cols: this.cols() })) +
+          "\n",
       );
       this.painted = false;
       this.cursorViewRow = 0;

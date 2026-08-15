@@ -37,6 +37,7 @@ import {
 } from "./tool-transcript.js";
 import { postureHead, postureWarnings } from "./posture.js";
 import {
+  composeTurnCloser,
   formatRunStopReason,
   formatTurnChangeSummaryForSession,
 } from "./turn-summary.js";
@@ -823,18 +824,13 @@ export async function runRepl(opts: {
       // Refresh plan occasionally after turns (uses 60s cache — cheap)
       void bottomDock.refreshPlan();
 
-      // Post-turn footer — always-on session health without /status
-      console.log(
-        renderTurnFooter(statusCtx(), {
-          promptTokens: result.promptTokens,
-          completionTokens: result.completionTokens,
-          cacheReadTokens: result.cacheReadTokens,
-          stopContinues: result.stopContinues,
-        }),
-      );
-      // Unattended-run summary: what actually changed on disk + proof status.
-      // One dim line — the useful answer when you come back to a finished run.
-      printTurnChangeSummary(session, turnAtStart);
+      // One turn closer: health bits + Δ files/verify (no last✓ + verify: pair).
+      printTurnCloser(session, turnAtStart, statusCtx(), {
+        promptTokens: result.promptTokens,
+        completionTokens: result.completionTokens,
+        cacheReadTokens: result.cacheReadTokens,
+        stopContinues: result.stopContinues,
+      });
       // Optional attention for long background ULW/goal runs (default off)
       {
         const outcome = turnEndOutcomeLabel({
@@ -1154,6 +1150,7 @@ async function printBanner(
         fileLimit: 4,
         compact: true,
       }),
+    dockOn: isBottomStatusEnabled(),
   });
   const [first, ...rest] = text.split("\n");
   console.log(chalk.bold.cyan("\n" + first));
@@ -1180,25 +1177,38 @@ function printPosture(config: ForgeConfig): void {
 }
 
 /**
- * End-of-turn change summary for unattended runs (files + verify status).
- * Formatting is pure in ./turn-summary.js (tested); this is the journal
- * read + print shim. Silent when nothing was edited.
+ * One turn closer: health footer + Δ files/verify. When this turn edited
+ * files, omit last✓/next from the footer so proof status appears once.
  */
-function printTurnChangeSummary(
+function printTurnCloser(
   session: SessionData,
   turnAtStart: number,
+  ctx: StatusBarContext,
+  turn: {
+    promptTokens: number;
+    completionTokens: number;
+    cacheReadTokens?: number;
+    stopContinues?: number;
+  },
 ): void {
+  let delta: string | null = null;
   try {
-    const line = formatTurnChangeSummaryForSession(session, turnAtStart);
-    if (line) console.log(chalk.dim(line));
-    printTurnHint(session, Boolean(line));
+    delta = formatTurnChangeSummaryForSession(session, turnAtStart);
   } catch {
-    /* summary is best-effort */
-    try {
-      printTurnHint(session, false);
-    } catch {
-      /* */
-    }
+    /* journal is best-effort */
+  }
+  try {
+    const footer = renderTurnFooter(ctx, turn, {
+      omitProof: Boolean(delta),
+    });
+    console.log(composeTurnCloser(footer, delta ? chalk.dim(delta) : null));
+  } catch {
+    if (delta) console.log(chalk.dim(delta));
+  }
+  try {
+    printTurnHint(session, Boolean(delta));
+  } catch {
+    /* never block turn-end on hints */
   }
 }
 

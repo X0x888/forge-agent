@@ -270,6 +270,34 @@ describe("formatBanner", () => {
     assert.doesNotMatch(fresh, /leftover from a prior session/);
     assert.match(fresh, /Type a task in English/);
   });
+
+  it("dock-on drops provider/model/auth/ULW that the dock already paints", () => {
+    const text = formatBanner({
+      version: "0.9.99",
+      provider: "xai",
+      model: "grok-4.6",
+      authLabel: "xai via subscription",
+      sessionId: "abcdefghijklmnop",
+      permissionMode: "plan",
+      sandbox: "workspace",
+      blockingStop: true,
+      gitBranch: "main",
+      projectBits: ["npm"],
+      ulwArmed: true,
+      posture: "posture: effort xhigh",
+      dockOn: true,
+    });
+    assert.match(text, /⚒  Forge v0\.9\.99/);
+    assert.match(text, /session abcdefgh/);
+    assert.match(text, /sandbox workspace/);
+    assert.match(text, /main/);
+    assert.match(text, /npm/);
+    assert.match(text, /posture: effort xhigh/);
+    assert.doesNotMatch(text, /xai\/grok-4\.6/);
+    assert.doesNotMatch(text, /xai via subscription/);
+    assert.doesNotMatch(text, /perms plan/);
+    assert.doesNotMatch(text, /ULW on/);
+  });
 });
 
 describe("hints", () => {

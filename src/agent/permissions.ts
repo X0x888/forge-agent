@@ -919,11 +919,43 @@ export function formatPermissionAskPrompt(opts: {
   }
   const cols = Math.max(8, process.stdout.columns || 80);
   if (visibleWidth(line) <= cols) return line;
+  // Wrap at " · " so ↵/y · a · s · n stay visible. Clip only an
+  // oversized always-grant label — never the deny/session keys.
+  return wrapPermissionAskLine(line, cols);
+}
+
+/** Pack Allow? keys onto as few rows as fit; last row keeps a trailing space for readline. */
+export function wrapPermissionAskLine(line: string, cols: number): string {
   const caret = "Allow? ";
-  const rest = line.startsWith(caret) ? line.slice(caret.length) : line;
-  const budget = Math.max(0, cols - visibleWidth(caret));
-  if (budget < 1) return clipAnsi(caret, cols);
-  return caret + clipAnsi(rest, budget);
+  const body = line.startsWith(caret) ? line.slice(caret.length) : line;
+  const tokens = body
+    .split(" · ")
+    .map((t) => t.trim())
+    .filter(Boolean);
+  const rows: string[] = [];
+  let current = "";
+  for (const token of tokens) {
+    const candidate = current
+      ? `${current} · ${token}`
+      : rows.length === 0
+        ? `${caret}${token}`
+        : `  · ${token}`;
+    if (visibleWidth(candidate) <= cols) {
+      current = candidate;
+      continue;
+    }
+    if (current) {
+      rows.push(current);
+      current = "";
+    }
+    const alone = rows.length === 0 ? `${caret}${token}` : `  · ${token}`;
+    current = visibleWidth(alone) <= cols ? alone : clipAnsi(alone, cols);
+  }
+  if (current) rows.push(current);
+  if (!rows.length) return line;
+  const last = rows[rows.length - 1];
+  if (visibleWidth(last) < cols) rows[rows.length - 1] = `${last} `;
+  return rows.join("\n");
 }
 
 /**
