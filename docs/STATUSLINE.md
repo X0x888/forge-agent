@@ -17,7 +17,7 @@ While the agent works (native live chrome — not idle-only):
 
 ```
 ⠋ ⚒ think 12s live › _
-✓ bash command=npm test  842ms
+✓ bash npm test  842ms
 live ✓ /cycle 0  Cycle flag → 0 (LAST)
 [ULW c=0] live › _
 ```

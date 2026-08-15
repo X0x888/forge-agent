@@ -4,6 +4,7 @@ import {
   formatBytes,
   formatDiffBlock,
   formatFailedToolTail,
+  formatToolDisplayName,
   formatToolEnd,
   formatToolOutputHead,
   summarizeToolArgs,
@@ -78,7 +79,9 @@ export function formatCoalescedToolEnd(
   const timing = `${opts.ms}ms  ${formatBytes(opts.bytes)}`;
   const hasArgs = Boolean(opts.args && Object.keys(opts.args).length);
   const argBit = hasArgs ? ` ${summarizeToolArgs(opts.args!)}` : "";
-  const line = chalk.dim(`  ${status} ${name} ×${count}${argBit}  ${timing}`);
+  const line = chalk.dim(
+    `  ${status} ${formatToolDisplayName(name)} ×${count}${argBit}  ${timing}`,
+  );
   const cols = Math.max(
     8,
     opts.width ?? (process.stdout.isTTY ? process.stdout.columns || 80 : 80),

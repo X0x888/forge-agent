@@ -1459,7 +1459,8 @@ describe("permission / tool arg previews", () => {
       query: "playwright click",
       limit: 8,
     });
-    assert.match(search, /query=playwright click/);
+    assert.match(search, /playwright click/);
+    assert.ok(!search.includes("query="));
     assert.ok(!search.includes("{\n"));
   });
 });

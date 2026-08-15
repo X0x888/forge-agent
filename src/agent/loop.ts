@@ -169,6 +169,7 @@ import {
   resolveMaxCostUsd,
 } from "../util/cost-budget.js";
 import {
+  formatToolDisplayName,
   formatToolStart,
   truncateMiddle,
   formatTokens,
@@ -3180,7 +3181,8 @@ async function prepareToolResult(opts: {
   // Announce tool phase BEFORE permission prompts so the REPL can pause
   // the working spinner and not clobber interactive Allow? lines.
   const argSummary = summarizeToolArgs(toolInput, 48);
-  const toolDetail = argSummary ? `${name} ${argSummary}` : name;
+  const shown = formatToolDisplayName(name);
+  const toolDetail = argSummary ? `${shown} ${argSummary}` : shown;
   events?.onPhase?.("tool", toolDetail);
 
   const settle = () => {

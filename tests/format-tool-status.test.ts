@@ -47,8 +47,10 @@ describe("default tool status line", () => {
         args: { path: "src/tui/repl.ts" },
       }),
     );
-    assert.match(start, /▸ write_file path=src\/tui\/repl\.ts/);
-    assert.match(end, /✓ write_file path=src\/tui\/repl\.ts\s+12ms/);
+    assert.match(start, /▸ write src\/tui\/repl\.ts/);
+    assert.match(end, /✓ write src\/tui\/repl\.ts\s+12ms/);
+    assert.doesNotMatch(start, /path=/);
+    assert.doesNotMatch(end, /write_file|path=/);
     assert.match(end, /diff /);
     assert.equal(end.includes("\n"), false, "end line must stay one row");
   });
@@ -63,8 +65,9 @@ describe("default tool status line", () => {
         stats: { added: 8, removed: 6 },
       }),
     );
+    assert.match(withStats, /✓ edit src\/a\.ts/);
     assert.match(withStats, /\+8 -6/);
-    assert.doesNotMatch(withStats, /diff /);
+    assert.doesNotMatch(withStats, /search_replace|path=|diff /);
     const unknown = strip(
       formatToolEnd("write_file", {
         isError: false,
@@ -107,8 +110,8 @@ describe("default tool status line", () => {
         args: { type: "module", path: "src/a.ts" },
       }),
     );
-    assert.match(end, /✓ write_file path=src\/a\.ts/);
-    assert.doesNotMatch(end, /module:/);
+    assert.match(end, /✓ write src\/a\.ts/);
+    assert.doesNotMatch(end, /module:|path=/);
   });
 
   it("summarizes todo_write as N · ▶ title, not board JSON", () => {
@@ -253,7 +256,8 @@ describe("default tool status line", () => {
         output: "Permission denied: plan mode — /build to implement\nmore",
       }),
     );
-    assert.match(end, /✗ write_file path=src\/a\.ts  Permission denied: plan mode/);
+    assert.match(end, /✗ write src\/a\.ts  Permission denied: plan mode/);
+    assert.doesNotMatch(end, /path=/);
     assert.equal(end.includes("\n"), false, "fail line must stay one row");
     assert.doesNotMatch(end, /more$/);
   });
@@ -275,7 +279,8 @@ describe("default tool status line", () => {
         output: out,
       }),
     );
-    assert.match(end, /✗ bash command=npm test  not ok 9 — expected 2/);
+    assert.match(end, /✗ bash npm test  not ok 9 — expected 2/);
+    assert.doesNotMatch(end, /command=/);
     assert.doesNotMatch(end, /npm test  \d+ms/);
     assert.doesNotMatch(end, /AssertionError/);
     assert.equal(end.includes("\n"), false);
@@ -327,7 +332,7 @@ describe("default tool status line", () => {
     });
     assert.ok(visibleWidth(end) <= 28, `width ${visibleWidth(end)} > 28`);
     assert.equal(end.includes("\n"), false);
-    assert.match(strip(end), /✗ write_file/);
+    assert.match(strip(end), /✗ write/);
   });
 
   it("failed-tool tail is last 5 extra lines and skips the ✗-row reason", () => {
@@ -367,7 +372,8 @@ describe("default tool status line", () => {
         output: out,
       }),
     );
-    assert.match(text, /✗ bash command=npm test  not ok 21 — expected 2/);
+    assert.match(text, /✗ bash npm test  not ok 21 — expected 2/);
+    assert.doesNotMatch(text, /command=/);
     assert.match(text, /AssertionError/);
     assert.match(text, /t\.test\.ts/);
     assert.match(text, /\/verbose/);
@@ -380,8 +386,8 @@ describe("default tool status line", () => {
         output: "wrote src/a.ts",
       }),
     );
-    assert.match(ok, /✓ write_file path=src\/a\.ts/);
-    assert.doesNotMatch(ok, /wrote src\/a\.ts/);
+    assert.match(ok, /✓ write src\/a\.ts/);
+    assert.doesNotMatch(ok, /wrote src\/a\.ts|path=/);
   });
 
   it("verbose transcript prints the full output block", () => {
@@ -394,9 +400,41 @@ describe("default tool status line", () => {
         output: "hello\nworld",
       }),
     );
-    assert.match(text, /✓ bash command=echo hi/);
+    assert.match(text, /✓ bash echo hi/);
+    assert.doesNotMatch(text, /command=/);
     assert.match(text, /hello/);
     assert.match(text, /world/);
+  });
+
+  it("joins grep pattern + path and keeps labeled keys for plan/task_id", () => {
+    const grep = strip(
+      formatToolEnd("grep", {
+        isError: false,
+        ms: 6,
+        bytes: 20,
+        args: { pattern: "TODO", path: "src/tui" },
+      }),
+    );
+    assert.match(grep, /✓ grep TODO src\/tui/);
+    assert.doesNotMatch(grep, /pattern=|path=/);
+    const plan = strip(
+      formatToolEnd("exit_plan_mode", {
+        isError: false,
+        ms: 5,
+        bytes: 80,
+        args: { plan: "Ship slim /diff then prove." },
+      }),
+    );
+    assert.match(plan, /plan=Ship slim \/diff then prove\./);
+    const wait = strip(
+      formatToolEnd("get_task_output", {
+        isError: false,
+        ms: 12,
+        bytes: 40,
+        args: { task_id: "abc123" },
+      }),
+    );
+    assert.match(wait, /task_id=abc123/);
   });
 });
 
@@ -409,8 +447,8 @@ describe("coalesced same-tool successes", () => {
         args: { pattern: "foo" },
       }),
     );
-    assert.match(bare, /✓ grep pattern=foo/);
-    assert.doesNotMatch(bare, /×/);
+    assert.match(bare, /✓ grep foo/);
+    assert.doesNotMatch(bare, /pattern=|×/);
   });
 
   it("collapses consecutive same-tool successes to ×N", () => {
@@ -422,7 +460,8 @@ describe("coalesced same-tool successes", () => {
     assert.equal(lines.length, 0);
     c.flush();
     assert.equal(lines.length, 1);
-    assert.match(lines[0]!, /✓ grep ×3 pattern=c/);
+    assert.match(lines[0]!, /✓ grep ×3 c/);
+    assert.doesNotMatch(lines[0]!, /pattern=/);
     assert.match(lines[0]!, /33ms/);
   });
 
@@ -439,8 +478,9 @@ describe("coalesced same-tool successes", () => {
       output: "not ok — expected 2",
     });
     assert.equal(lines.length, 2);
-    assert.match(lines[0]!, /✓ read_file ×2 path=b\.ts/);
-    assert.match(lines[1]!, /✗ bash command=npm test/);
+    assert.match(lines[0]!, /✓ read ×2 b\.ts/);
+    assert.match(lines[1]!, /✗ bash npm test/);
+    assert.doesNotMatch(lines.join("\n"), /path=|command=|read_file/);
     c.flush();
     assert.equal(lines.length, 2);
   });
@@ -454,7 +494,7 @@ describe("coalesced same-tool successes", () => {
     assert.equal(lines.length, 0);
     c.flushUnless("bash");
     assert.equal(lines.length, 1);
-    assert.match(lines[0]!, /✓ grep ×2 pattern=b/);
+    assert.match(lines[0]!, /✓ grep ×2 b/);
   });
 
   it("does not coalesce /verbose rows", () => {
@@ -463,8 +503,8 @@ describe("coalesced same-tool successes", () => {
     c.push("grep", { ms: 4, bytes: 10, args: { pattern: "a" } }, { verbose: true });
     c.push("grep", { ms: 5, bytes: 11, args: { pattern: "b" } }, { verbose: true });
     assert.equal(lines.length, 2);
-    assert.match(lines[0]!, /✓ grep pattern=a/);
-    assert.match(lines[1]!, /✓ grep pattern=b/);
-    assert.doesNotMatch(lines.join("\n"), /×/);
+    assert.match(lines[0]!, /✓ grep a/);
+    assert.match(lines[1]!, /✓ grep b/);
+    assert.doesNotMatch(lines.join("\n"), /×|pattern=/);
   });
 });

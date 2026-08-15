@@ -14,6 +14,40 @@ export function truncateMiddle(text: string, max = 80_000): string {
   );
 }
 
+/** Keys whose value is the whole story — `path=src/a.ts` is noise on every ✓ row. */
+const BARE_PRIMARY_KEYS = new Set([
+  "path",
+  "command",
+  "pattern",
+  "query",
+  "url",
+]);
+
+/**
+ * Daily transcript names. Internal ids stay on the wire; the ✓/✗ row
+ * should scan like `edit src/a.ts`, not `search_replace path=src/a.ts`.
+ * Specialized tools (spawn_subagent, todo_write, …) keep their names —
+ * their summaries already carry the meaning.
+ */
+const TOOL_DISPLAY_NAMES: Record<string, string> = {
+  search_replace: "edit",
+  edit: "edit",
+  Edit: "edit",
+  write_file: "write",
+  write: "write",
+  Write: "write",
+  read_file: "read",
+  Read: "read",
+  apply_patch: "patch",
+  applypatch: "patch",
+  ApplyPatch: "patch",
+  run_terminal_command: "bash",
+};
+
+export function formatToolDisplayName(name: string): string {
+  return TOOL_DISPLAY_NAMES[name] ?? name;
+}
+
 export function summarizeToolArgs(args: Record<string, unknown>, max = 90): string {
   // apply_patch: show file ops, not a wall of patch text
   const patchText = args.patchText ?? args.patch_text ?? args.patch;
@@ -34,10 +68,10 @@ export function summarizeToolArgs(args: Record<string, unknown>, max = 90): stri
   const prompt = summarizeMcpPromptArgs(args, max);
   if (prompt) return prompt;
   const prefer = [
-    "path",
-    "command",
     "pattern",
     "query",
+    "command",
+    "path",
     "old_string",
     "url",
     "question",
@@ -51,8 +85,13 @@ export function summarizeToolArgs(args: Record<string, unknown>, max = 90): stri
   ];
   for (const k of prefer) {
     if (args[k] !== undefined) {
-      const v = String(args[k]).replace(/\s+/g, " ");
-      const s = `${k}=${v}`;
+      const v = String(args[k]).replace(/\s+/g, " ").trim();
+      // grep/glob: `foo src/tui` beats `pattern=foo` when a search root is set.
+      const extra =
+        k === "pattern" && typeof args.path === "string" && args.path.trim()
+          ? ` ${args.path.replace(/\s+/g, " ").trim()}`
+          : "";
+      const s = BARE_PRIMARY_KEYS.has(k) ? `${v}${extra}` : `${k}=${v}`;
       return s.length > max ? s.slice(0, max - 1) + "…" : s;
     }
   }
@@ -298,7 +337,7 @@ function summarizePatchText(patchText: string, max: number): string {
 }
 
 export function formatToolStart(name: string, args: Record<string, unknown>): string {
-  return chalk.cyan(`  ▸ ${name}`) + chalk.dim(` ${summarizeToolArgs(args)}`);
+  return chalk.cyan(`  ▸ ${formatToolDisplayName(name)}`) + chalk.dim(` ${summarizeToolArgs(args)}`);
 }
 
 /** Default last-lines shown under a failed tool (test/compiler failures live at the end). */
@@ -377,8 +416,9 @@ export function formatToolEnd(
   const reasonRaw =
     opts.isError && opts.output ? firstToolErrorLine(opts.output) : "";
 
+  const label = formatToolDisplayName(name);
   const paint = (argBit: string, reasonBit: string): string =>
-    chalk.dim(`  ${status} ${name}${argBit}${reasonBit}  ${timing}`);
+    chalk.dim(`  ${status} ${label}${argBit}${reasonBit}  ${timing}`);
 
   let argBit = hasArgs ? ` ${summarizeToolArgs(opts.args!)}` : "";
   let reasonBit = reasonRaw ? `  ${reasonRaw}` : "";

@@ -165,7 +165,7 @@ describe("denied tool visibility", () => {
         bytes: 20,
         args: { path: "secret.txt" },
       }),
-      /✗ write_file path=secret\.txt/,
+      /✗ write secret\.txt/,
     );
     assert.equal(
       fs.existsSync(path.join(tmp, "secret.txt")),
