@@ -15,12 +15,14 @@ import {
   pickTurnEndHint,
   shouldShowFirstPermissionHint,
   FIRST_PERMISSION_HINT,
+  ABORT_ACK,
   ABORT_RECOVERY,
 } from "../src/tui/hints.js";
 import {
   parseLoginOfferChoice,
   shouldOfferLoginPicker,
   formatLoginOffer,
+  formatPostLoginOfferExit,
 } from "../src/tui/login-offer.js";
 import { helpFor, parseHelpTopic, HELP_START, HELP_ALL } from "../src/commands/help-text.js";
 
@@ -363,6 +365,8 @@ describe("hints", () => {
     assert.match(ABORT_RECOVERY, /\/retry/);
     assert.match(ABORT_RECOVERY, /Type to continue/);
     assert.match(ABORT_RECOVERY, /Ctrl\+C again to quit/);
+    assert.match(ABORT_ACK, /^Aborting/);
+    assert.doesNotMatch(ABORT_ACK, /Ctrl\+C|\/retry/);
   });
 });
 
@@ -391,6 +395,12 @@ describe("login offer", () => {
     assert.match(formatLoginOffer(), /not signed in/);
     assert.match(formatLoginOffer(), /type 1–4/);
     assert.doesNotMatch(formatLoginOffer(), /forge login/);
+  });
+
+  it("after the picker, quit is a one-liner and env stays silent", () => {
+    assert.equal(formatPostLoginOfferExit("quit"), "Not signed in.");
+    assert.equal(formatPostLoginOfferExit("env"), undefined);
+    assert.doesNotMatch(formatPostLoginOfferExit("quit") ?? "", /forge login/);
   });
 });
 

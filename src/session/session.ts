@@ -2748,11 +2748,6 @@ export function formatResumePeek(
 }
 
 /**
- * Resume orientation: last-turn peek + compact mutated-files line.
- * Empty when neither is available.
- */
-
-/**
  * True when a recorded last-verify is older than the latest file edit.
  * Experts must not trust a green trail after subsequent mutations.
  */
@@ -2770,11 +2765,83 @@ export function isLastVerificationStale(meta: {
   return et > vt;
 }
 
+/**
+ * First-paint resume card (banner + auto-resume). Two lines max:
+ *   you: last intent  ·  PLAN/lastErr
+ *   files  ·  Last verify
+ * Full /resume keeps the verbose dump.
+ */
+export function formatCompactResumeCard(
+  session: SessionData,
+  opts?: { maxChars?: number; fileLimit?: number },
+): string {
+  const maxChars = Math.max(40, Math.min(240, opts?.maxChars ?? 180));
+  const fileLimit = opts?.fileLimit ?? 4;
+  const flags: string[] = [];
+  try {
+    if (session.meta.permissionMode === "plan") flags.push("PLAN");
+    else if (
+      session.meta.permissionMode &&
+      session.meta.permissionMode !== "default" &&
+      session.meta.permissionMode !== "acceptEdits"
+    ) {
+      flags.push(String(session.meta.permissionMode));
+    }
+  } catch {
+    /* */
+  }
+  try {
+    const le = session.meta.lastError;
+    if (le?.code) flags.push(`lastErr ${le.code}`);
+  } catch {
+    /* */
+  }
+  const headBits: string[] = [];
+  try {
+    const you = lastUserText(session);
+    if (you) headBits.push(`you: ${clipPreview(you, maxChars)}`);
+  } catch {
+    /* */
+  }
+  headBits.push(...flags);
+
+  const trail: string[] = [];
+  try {
+    const touched = listSessionTouchedFiles(session, {
+      limit: fileLimit,
+      mutatedOnly: true,
+    });
+    if (touched.length) {
+      const bits = touched.map((t) => t.path).join(", ");
+      trail.push(`${bits}${touched.length >= fileLimit ? "…" : ""}`);
+    }
+  } catch {
+    /* */
+  }
+  try {
+    const last = session.meta.lastVerificationCommand?.trim();
+    if (last) {
+      const stale = isLastVerificationStale(session.meta) ? " ⚠ stale" : "";
+      trail.push(
+        `Last verify: ${last.slice(0, 48)}${last.length > 48 ? "…" : ""}${stale}`,
+      );
+    } else if ((session.meta.editCount || 0) > 0) {
+      trail.push(`Last verify: (none after ${session.meta.editCount} edit(s))`);
+    }
+  } catch {
+    /* */
+  }
+  return [headBits.join("  ·  "), trail.join("  ·  ")]
+    .filter((l) => l.trim())
+    .join("\n");
+}
+
 export function formatResumeOrientation(
   session: SessionData,
   opts?: { maxChars?: number; fileLimit?: number; compact?: boolean },
 ): string {
   const compact = opts?.compact === true;
+  if (compact) return formatCompactResumeCard(session, opts);
   const parts: string[] = [];
   try {
     const peek = formatResumePeek(session, { maxChars: opts?.maxChars });

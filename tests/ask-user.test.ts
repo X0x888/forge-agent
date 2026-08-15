@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
 import { describe, it, before, after } from "node:test";
-import { formatAskUserCard, toolAskUser } from "../src/agent/tools/ask-user.js";
+import {
+  formatAskUserCard,
+  formatAskUserPrompt,
+  matchAskUserAnswer,
+  toolAskUser,
+} from "../src/agent/tools/ask-user.js";
 import { executeTool } from "../src/agent/tools/index.js";
 import { TOOL_DEFINITIONS } from "../src/agent/tools/definitions.js";
 
@@ -34,6 +39,52 @@ describe("ask_user", () => {
     assert.doesNotMatch(card, /Agent question/);
     assert.doesNotMatch(card, /Reply with/);
     assert.ok(!card.startsWith("\n"), "no leading blank-line sandwich");
+    // Short choice lists stay one row so the card doesn't eat the transcript.
+    const rows = card.split("\n");
+    assert.equal(rows.length, 3, "question + context + one choice row");
+    assert.match(rows[2]!, /1\) yes/);
+    assert.match(rows[2]!, /2\) no/);
+  });
+
+  it("stacks long choice lists so keys stay visible", () => {
+    const card = formatAskUserCard(
+      "Which path?",
+      [
+        "keep the current worktree and continue",
+        "discard the isolated branch",
+        "open a pull request against main",
+      ],
+      "",
+    );
+    const rows = card.split("\n");
+    assert.ok(rows.length >= 4, "long choices stack");
+    assert.match(card, /1\) keep the current worktree/);
+    assert.match(card, /3\) open a pull request/);
+  });
+
+  it("matches unique prefix and first letter", () => {
+    const yn = ["yes", "no"];
+    assert.deepEqual(matchAskUserAnswer("y", yn), { kind: "choice", index: 0 });
+    assert.deepEqual(matchAskUserAnswer("n", yn), { kind: "choice", index: 1 });
+    assert.deepEqual(matchAskUserAnswer("ye", yn), { kind: "choice", index: 0 });
+    assert.deepEqual(matchAskUserAnswer("2", yn), { kind: "choice", index: 1 });
+    assert.deepEqual(matchAskUserAnswer("skip", yn), { kind: "skip" });
+    assert.deepEqual(matchAskUserAnswer("maybe later", yn), {
+      kind: "text",
+      value: "maybe later",
+    });
+    // Ambiguous first letter stays free text (keep vs kill).
+    assert.deepEqual(matchAskUserAnswer("k", ["keep", "kill"]), {
+      kind: "text",
+      value: "k",
+    });
+  });
+
+  it("prompt advertises letter and prefix answers", () => {
+    const card = formatAskUserCard("Ship it?", ["yes", "no"]);
+    const prompt = formatAskUserPrompt(["yes", "no"]);
+    assert.match(card, /1\) yes/);
+    assert.match(prompt, /letter \/ unique prefix/i);
   });
 
   it("fails closed in headless", async () => {

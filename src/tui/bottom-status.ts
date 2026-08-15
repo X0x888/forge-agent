@@ -135,23 +135,24 @@ export function renderBottomStatusLine(
     }
   };
 
-  const bits: string[] = [];
-  bits.push(paint("⚒ forge", "cyan"));
+  // Higher prio survives narrow TTYs. Brand/auth/reset drop before
+  // ctx / budget / ULW / GOAL / YOLO — right-clip used to eat those first.
+  const bits: { text: string; prio: number }[] = [];
+  bits.push({ text: paint("⚒ forge", "cyan"), prio: 0 });
 
-  // Active model (+ effort when set)
   const effort = resolveReasoningEffort(config.model, config.reasoningEffort);
-  bits.push(
-    paint(
+  bits.push({
+    text: paint(
       `${config.provider}/${shortModel(config.model)}` +
         (effort ? ` ·${effort}` : ""),
       "blue",
     ),
-  );
+    prio: 5,
+  });
 
   const hop = formatDockFallbackHop(session.meta.lastModelFallback);
-  if (hop) bits.push(paint(hop, "yellow"));
+  if (hop) bits.push({ text: paint(hop, "yellow"), prio: 8 });
 
-  // Auth short label
   if (snap.authMethod && snap.authMethod !== "unknown") {
     const authShort =
       snap.authMethod === "subscription"
@@ -163,90 +164,103 @@ export function renderBottomStatusLine(
       snap.accountCount && snap.accountCount > 1
         ? `×${snap.accountCount}`
         : "";
-    bits.push(paint(`${authShort}${multi}`, "dim"));
+    bits.push({ text: paint(`${authShort}${multi}`, "dim"), prio: 1 });
   }
 
-  // Context
   const pct = snap.context.percent;
   const ctxBit = `ctx ${pct}% ${formatTokens(snap.context.usedTokens)}/${formatTokens(snap.context.windowTokens)}`;
-  bits.push(
-    pct >= 90
-      ? paint(ctxBit, "red")
-      : pct >= 70
-        ? paint(ctxBit, "yellow")
-        : paint(ctxBit, "dim"),
-  );
+  bits.push({
+    text:
+      pct >= 90
+        ? paint(ctxBit, "red")
+        : pct >= 70
+          ? paint(ctxBit, "yellow")
+          : paint(ctxBit, "dim"),
+    prio: 8,
+  });
 
-  // Plan / quota (active account)
   const planStr = formatPlan(snap.plan, c);
   if (planStr) {
-    bits.push(planStr);
+    bits.push({ text: planStr, prio: 6 });
   } else if (snap.plan?.resetsAt) {
     const left = resetCountdown(snap.plan.resetsAt);
-    if (left) bits.push(paint(left, "dim"));
+    if (left) bits.push({ text: paint(left, "dim"), prio: 2 });
   }
 
-  // Subagent slice of session spend (visibility only — not a cap)
   if (
     snap.tokens.subagentCount &&
     snap.tokens.subagentCount > 0 &&
     snap.tokens.subagentUsd != null
   ) {
-    bits.push(
-      paint(
+    bits.push({
+      text: paint(
         `sub ${snap.tokens.subagentCount} ${formatCost(snap.tokens.subagentUsd)}`,
         "dim",
       ),
-    );
+      prio: 2,
+    });
   }
 
-  // Session budget when armed
   if (snap.budget) {
     const b = snap.budget;
-    bits.push(
-      paint(
+    bits.push({
+      text: paint(
         b.hit ? "budget:HIT" : `budget ${b.percent}%`,
         b.hit ? "red" : b.percent >= 80 ? "yellow" : "dim",
       ),
-    );
+      prio: 9,
+    });
   }
 
-  // Harness flags
   const ulw = loadUlwCycle(session.meta.id);
   if (ulw?.enabled) {
-    bits.push(
-      paint(
+    bits.push({
+      text: paint(
         `ULW ${formatUlwBadge(ulw)}`,
         ulw.cycle === 1 ? "magenta" : "yellow",
       ),
-    );
+      prio: 10,
+    });
   } else if (session.meta.ultrawork) {
-    bits.push(paint("ULW", "magenta"));
+    bits.push({ text: paint("ULW", "magenta"), prio: 10 });
   }
   const g = loadGoal(session.meta.id);
   if (g?.objective && !g.paused && g.status === "active") {
-    bits.push(paint("GOAL", "yellow"));
+    bits.push({ text: paint("GOAL", "yellow"), prio: 10 });
   }
   {
     const pm =
       normalizePermissionMode(config.permissionMode) ?? config.permissionMode;
-    if (pm === "bypassPermissions") bits.push(paint("YOLO", "red"));
-    else if (pm === "plan") bits.push(paint("PLAN", "blue"));
+    if (pm === "bypassPermissions") bits.push({ text: paint("YOLO", "red"), prio: 10 });
+    else if (pm === "plan") bits.push({ text: paint("PLAN", "blue"), prio: 10 });
   }
 
-  // Live activity / bg
   const act = getActivity();
   const bg = listTasks().filter((t) => t.status === "running").length;
   if (act.busy) {
-    bits.push(paint(act.phase === "tool" ? "tool" : act.phase || "work", "magenta"));
+    bits.push({
+      text: paint(act.phase === "tool" ? "tool" : act.phase || "work", "magenta"),
+      prio: 11,
+    });
   }
-  if (bg > 0) bits.push(paint(`bg:${bg}`, "yellow"));
+  if (bg > 0) bits.push({ text: paint(`bg:${bg}`, "yellow"), prio: 11 });
   {
     const todos = formatHudTodos(snap.openTodos, snap.activeTodo);
-    if (todos) bits.push(paint(todos, "yellow"));
+    if (todos) bits.push({ text: paint(todos, "yellow"), prio: 9 });
   }
 
-  let line = bits.filter(Boolean).join("  ");
+  const live = bits.filter((b) => b.text);
+  const joinBits = (rows: { text: string }[]): string =>
+    rows.map((b) => b.text).join("  ");
+  let line = joinBits(live);
+  while (live.length > 1 && width > 8 && visibleWidth(line) > width) {
+    let drop = 0;
+    for (let i = 1; i < live.length; i++) {
+      if (live[i]!.prio < live[drop]!.prio) drop = i;
+    }
+    live.splice(drop, 1);
+    line = joinBits(live);
+  }
   if (width > 8 && visibleWidth(line) > width) {
     line = clipAnsi(line, width);
   }

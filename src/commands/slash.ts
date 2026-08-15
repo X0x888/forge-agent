@@ -5499,10 +5499,10 @@ case "/new":
           (lock ? ` (${formatLockHolder(lock)})` : "") +
           `. Concurrent writes may race — prefer one writer, or wait until the other REPL exits.`;
       }
-      const orient = formatResumeOrientation(loaded);
+      const orient = formatResumeOrientation(loaded, { compact: true });
       const pinNote = loaded.meta.pinned ? " · PIN" : "";
       const peekBlock = orient
-        ? `\n\n${orient}\n${chalk.dim("(/last 3 · /files · /retry to re-run)")}`
+        ? `\n${orient}\n${chalk.dim("/last 3 · /files · /retry")}`
         : "";
       return {
         handled: true,

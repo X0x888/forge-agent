@@ -905,6 +905,35 @@ export function formatBackgroundTasksList(): string {
     .join("\n");
 }
 
+/**
+ * One-line idle-prompt notice when a bg task finishes while the user is
+ * waiting at `forge ›`. Agent-turn completion still uses the interjection.
+ */
+export function formatIdleBgCompletionNotice(
+  tasks: Array<{
+    id: string;
+    command: string;
+    status: string;
+    exitCode: number | null;
+  }>,
+): string {
+  if (!tasks.length) return "";
+  const bits = tasks.slice(0, 3).map((t) => {
+    const cmd = t.command.replace(/\s+/g, " ").trim().slice(0, 36);
+    const code =
+      t.exitCode === null || t.exitCode === undefined ? "?" : String(t.exitCode);
+    const st =
+      t.status === "completed"
+        ? "done"
+        : t.status === "failed"
+          ? "fail"
+          : t.status;
+    return `${st} ${t.id.slice(0, 10)} exit=${code}${cmd ? ` ${cmd}` : ""}`;
+  });
+  const extra = tasks.length > 3 ? ` +${tasks.length - 3}` : "";
+  return chalk.dim(`bg ${bits.join(" · ")}${extra}  (/tasks)`);
+}
+
 /** Extra session detail block under the HUD for /status. */
 export function formatSessionDetails(ctx: StatusBarContext): string {
   const { session, config, auth } = ctx;

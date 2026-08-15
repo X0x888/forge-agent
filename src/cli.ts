@@ -151,6 +151,7 @@ import { formatExpertTips, expertTipsLines } from "./util/tips.js";
 import {
   shouldOfferLoginPicker,
   offerLoginInteractive,
+  formatPostLoginOfferExit,
 } from "./tui/login-offer.js";
 import {
   collectSetupAssessment,
@@ -529,11 +530,18 @@ Docs: docs/GETTING-STARTED.md · docs/PRODUCTION.md · docs/RELIABILITY.md · do
           headless: willHeadless,
           isTty: Boolean(process.stdin.isTTY && process.stdout.isTTY),
         });
+        let declined: "quit" | "env" | undefined;
         if (offer) {
-          const ok = await offerLoginInteractive();
-          if (ok) auth = await resolveAuthFresh(config);
+          const result = await offerLoginInteractive();
+          if (result.ok) auth = await resolveAuthFresh(config);
+          else declined = result.reason;
         }
         if (!auth) {
+          if (declined) {
+            const line = formatPostLoginOfferExit(declined);
+            if (line) log.error(line);
+            process.exit(1);
+          }
           log.error(msg);
           process.exit(1);
         }

@@ -545,6 +545,7 @@ export {
 export {
   shouldOfferLoginPicker,
   parseLoginOfferChoice,
+  formatPostLoginOfferExit,
 } from "./tui/login-offer.js";
 export { log, setLogLevel, getLogLevel } from "./util/log.js";
 export { shellCompletionScript } from "./util/completion-script.js";

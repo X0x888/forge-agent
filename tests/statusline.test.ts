@@ -48,6 +48,7 @@ import {
   formatSessionDetails,
   renderLiveRunHeader,
   formatBackgroundTasksList,
+  formatIdleBgCompletionNotice,
   createWorkingIndicator,
   shouldRedockLiveOnPhase,
   formatLiveControlFeedback,
@@ -252,6 +253,28 @@ describe("statusline", () => {
     _resetTasksForTests();
     endTurn();
     releaseSession(s.meta.id);
+  });
+
+  it("idle bg completion notice keeps fail/exit and /tasks", () => {
+    const line = formatIdleBgCompletionNotice([
+      {
+        id: "bg_abc123_xyz",
+        command: "npm test -- tests/long-name.test.ts",
+        status: "failed",
+        exitCode: 1,
+      },
+      {
+        id: "bg_def456_uvw",
+        command: "sleep 1",
+        status: "completed",
+        exitCode: 0,
+      },
+    ]);
+    assert.match(line, /fail/);
+    assert.match(line, /exit=1/);
+    assert.match(line, /done/);
+    assert.match(line, /\/tasks/);
+    assert.equal(formatIdleBgCompletionNotice([]), "");
   });
 
   it("pauses dock paints so Allow?/ask_user is not clobbered", () => {
@@ -566,6 +589,39 @@ describe("statusline", () => {
     assert.match(line, /use:22%/);
     assert.match(line, /reset /);
     assert.match(line, /ctx /);
+  });
+
+  it("narrow dock drops brand before ULW/YOLO/budget", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-sl-dock-narrow-"));
+    process.env.FORGE_HOME = tmp;
+    const s = createSession({ cwd: tmp, provider: "xai", model: "grok-4.6" });
+    s.meta.ultrawork = true;
+    s.meta.totalPromptTokens = 80_000;
+    s.meta.totalCompletionTokens = 20_000;
+    const config = {
+      ...DEFAULT_CONFIG,
+      provider: "xai",
+      model: "grok-4.6",
+      contextWindow: 500_000,
+      permissionMode: "bypassPermissions",
+      maxCostUsd: 2,
+    } as ForgeConfig;
+    const auth: ResolvedAuth = {
+      provider: "xai",
+      method: "subscription",
+      token: "t",
+      accountId: "xai:test",
+      accountLabel: "sub:test@example.com",
+    };
+    const line = renderBottomStatusLine(
+      { config, session: s, auth },
+      undefined,
+      { width: 48, plain: true },
+    );
+    assert.match(line, /ULW/);
+    assert.match(line, /YOLO/);
+    assert.match(line, /budget|ctx /);
+    assert.doesNotMatch(line, /⚒/);
   });
 
   it("hides N/A plan noise in render", () => {

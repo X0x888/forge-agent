@@ -87,10 +87,20 @@ export const LOGIN_ENV_HINT =
   "Set an API key env var, then re-run forge:\n" +
   "  XAI_API_KEY  ·  ANTHROPIC_API_KEY  ·  OPENAI_API_KEY  ·  OPENROUTER_API_KEY  ·  DEEPSEEK_API_KEY";
 
+export type LoginOfferOutcome =
+  | { ok: true }
+  | { ok: false; reason: "quit" | "env" };
+
+/** After the picker already ran — do not lecture `forge login` again. */
+export function formatPostLoginOfferExit(reason: "quit" | "env"): string | undefined {
+  if (reason === "env") return undefined;
+  return "Not signed in.";
+}
+
 /**
- * Prompt + run loginInteractive. Returns true when credentials should now resolve.
+ * Prompt + run loginInteractive. Returns signed-in vs how the picker ended.
  */
-export async function offerLoginInteractive(): Promise<boolean> {
+export async function offerLoginInteractive(): Promise<LoginOfferOutcome> {
   console.log("");
   console.log(formatLoginOffer());
   const rl = readline.createInterface({ input, output });
@@ -104,11 +114,11 @@ export async function offerLoginInteractive(): Promise<boolean> {
         );
         continue;
       }
-      if (choice.kind === "quit") return false;
+      if (choice.kind === "quit") return { ok: false, reason: "quit" };
       if (choice.kind === "env") {
         console.log("");
         console.log(LOGIN_ENV_HINT);
-        return false;
+        return { ok: false, reason: "env" };
       }
 
       let provider = choice.provider || "xai";
@@ -142,7 +152,7 @@ export async function offerLoginInteractive(): Promise<boolean> {
       try {
         await loginInteractive({ provider, method });
         log.info("Signed in. Type a task in English, or /setup to finish settings.");
-        return true;
+        return { ok: true };
       } catch (err) {
         log.error((err as Error).message || String(err));
         console.log("  Try 1–4 again, or q to quit.");

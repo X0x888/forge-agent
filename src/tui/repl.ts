@@ -76,6 +76,7 @@ import {
   formatSessionDetails,
   formatLiveControlFeedback,
   formatBackgroundTasksList,
+  formatIdleBgCompletionNotice,
   createWorkingIndicator,
   shouldRedockLiveOnPhase,
   type StatusBarContext,
@@ -90,7 +91,7 @@ import {
 import { getForgeVersion } from "../util/version.js";
 import { loadPreferences, dismissHint } from "../config/preferences.js";
 import { formatBanner } from "./banner.js";
-import { pickTurnEndHint, ABORT_RECOVERY } from "./hints.js";
+import { pickTurnEndHint, ABORT_ACK, ABORT_RECOVERY } from "./hints.js";
 import {
   alreadyOnboarded,
   rewriteIdleSetupShortcut,
@@ -186,6 +187,22 @@ export async function runRepl(opts: {
     }
     // Live-update prompt flags when bg tasks finish while idle
     if (!busy && bgRunning !== lastKnownBgRunning) {
+      if (bgRunning < lastKnownBgRunning) {
+        const justDone = listTasks()
+          .filter((t) => t.status !== "running" && t.endedAt && Date.now() - t.endedAt < 15_000)
+          .sort((a, b) => (b.endedAt || 0) - (a.endedAt || 0))
+          .slice(0, Math.max(1, lastKnownBgRunning - bgRunning));
+        const notice = formatIdleBgCompletionNotice(justDone);
+        if (notice) {
+          try {
+            bottomDock.pause();
+            process.stdout.write(`\n${notice}\n`);
+            bottomDock.resume();
+          } catch {
+            /* */
+          }
+        }
+      }
       lastKnownBgRunning = bgRunning;
       refreshIdlePromptFlags();
     } else {
@@ -1037,7 +1054,7 @@ export async function runRepl(opts: {
   rl.on("SIGINT", () => {
     if (busy && abortController) {
       working.stop();
-      console.log(chalk.yellow("\nAborting current run… (Ctrl+C again to exit)"));
+      console.log(chalk.yellow(`\n${ABORT_ACK}`));
       abortController.abort();
       return;
     }

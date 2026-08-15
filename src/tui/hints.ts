@@ -30,6 +30,9 @@ export interface HintPick {
 export const FIRST_PERMISSION_HINT =
   "This is normal. a persists · /permissions acceptEdits to stop asking.";
 
+/** Immediate SIGINT ack while the run is still winding down. Recovery lives on ABORT_RECOVERY. */
+export const ABORT_ACK = "Aborting…";
+
 /** Printed after a SIGINT abort so the user knows how to continue. */
 export const ABORT_RECOVERY =
   "⚠ Run aborted. Type to continue · /retry same prompt · Ctrl+C again to quit.";

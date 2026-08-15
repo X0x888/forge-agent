@@ -388,6 +388,7 @@ describe("session helpers", () => {
     assert.match(String(r.output || ""), /Resumed/i);
     assert.match(String(r.output || ""), /continue the migration/);
     assert.match(String(r.output || ""), /\/last 3/);
+    assert.doesNotMatch(String(r.output || ""), /Checks:/);
   });
 });
 
@@ -883,8 +884,17 @@ it("/fork includes last-turn peek", async () => {
     assert.doesNotMatch(compact, /Checks:/);
     assert.doesNotMatch(compact, /Project memory:/);
     assert.doesNotMatch(compact, /Checkpoint:/);
+    assert.doesNotMatch(compact, /Last \d+ turn/);
+    assert.match(compact, /you: ship the patch/);
     assert.match(compact, /src\/orient\.ts/);
     assert.match(compact, /Last verify:/);
+    assert.ok(compact.split("\n").length <= 2, "first-paint resume is ≤2 lines");
+    s.meta.permissionMode = "plan";
+    s.meta.lastError = { code: "auth_expired", message: "bad key" };
+    const flagged = formatResumeOrientation(s, { compact: true });
+    assert.match(flagged, /PLAN/);
+    assert.match(flagged, /lastErr auth_expired/);
+    assert.ok(flagged.split("\n").length <= 2);
   });
 
   it("listSessions filters pinned", async () => {

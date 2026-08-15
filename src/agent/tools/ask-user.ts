@@ -105,6 +105,12 @@ export type AskUserMatch =
   | { kind: "choice"; index: number }
   | { kind: "text"; value: string };
 
+export function formatAskUserPrompt(choices: string[]): string {
+  return choices.length
+    ? `Your answer [1-${choices.length} / letter / unique prefix / text / skip]: `
+    : "Your answer [text / skip]: ";
+}
+
 /**
  * Parse a typed answer. Prefer a unique choice (index, exact, prefix, first
  * letter) over free text so `y`/`n` and short prefixes actually pick.
@@ -136,8 +142,6 @@ export function matchAskUserAnswer(raw: string, choices: string[]): AskUserMatch
   }
   return { kind: "text", value: ans };
 }
-  return lines.join("\n");
-}
 
 async function promptAskUser(
   question: string,
@@ -157,9 +161,7 @@ async function promptAskUser(
   });
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
-    const prompt = choices.length
-      ? `Your answer [1-${choices.length} / text / skip]:${timeoutNote} `
-      : `Your answer [text / skip]:${timeoutNote} `;
+    const prompt = `${formatAskUserPrompt(choices).replace(/: $/, "")}${timeoutNote}: `;
     const questionP = rl.question(prompt);
     const ansRaw = (
       await (timeoutMs > 0
@@ -182,40 +184,20 @@ async function promptAskUser(
       };
     }
 
-    const ans = ansRaw;
-    if (!ans || /^skip$/i.test(ans) || /^cancel$/i.test(ans)) {
+    const hit = matchAskUserAnswer(ansRaw, choices);
+    if (hit.kind === "skip") {
       return {
         output:
           "User skipped the question. Do not block — state your best assumption and continue, or ask a narrower question later.",
       };
     }
-
-    // Numeric choice
-    if (choices.length && /^\d+$/.test(ans)) {
-      const idx = Number(ans) - 1;
-      if (idx >= 0 && idx < choices.length) {
-        return {
-          output: `User chose option ${idx + 1}: ${choices[idx]}`,
-        };
-      }
+    if (hit.kind === "choice") {
       return {
-        output: `User answered "${ans}" (not a valid choice index 1-${choices.length}). Treat as free text.`,
+        output: `User chose option ${hit.index + 1}: ${choices[hit.index]}`,
       };
     }
-
-    // Match choice by exact/prefix text
-    if (choices.length) {
-      const lower = ans.toLowerCase();
-      const exact = choices.findIndex((c) => c.toLowerCase() === lower);
-      if (exact >= 0) {
-        return {
-          output: `User chose option ${exact + 1}: ${choices[exact]}`,
-        };
-      }
-    }
-
     return {
-      output: `User answered: ${ans.slice(0, 2000)}`,
+      output: `User answered: ${hit.value.slice(0, 2000)}`,
     };
   } finally {
     if (timer) clearTimeout(timer);
