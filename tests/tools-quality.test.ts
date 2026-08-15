@@ -696,6 +696,14 @@ describe("executeTool integration", () => {
     assert.match(e.diff!, /--- a\//);
     const body = await fsp.readFile(file, "utf8");
     assert.match(body, /return 2/);
+    const n = body === "" ? 0 : body.split("\n").length;
+    assert.match(e.output, new RegExp(`\\(${n} lines?\\)`));
+    const header = e.output.split("\n")[0] ?? "";
+    assert.doesNotMatch(header, /truncated|omitted|saved to/i);
+    const last = e.output.trim().split("\n").pop() ?? "";
+    if (last.startsWith("Tip:")) {
+      assert.match(last, /Tip: verify with/);
+    }
   });
 
   it("FORGE_EDIT_RECEIPT=legacy embeds shortDiff in output", async () => {

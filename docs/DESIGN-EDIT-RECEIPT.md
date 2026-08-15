@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| **Status** | Draft |
+| **Status** | Implemented (5aace80) |
 | **Author** | Forge |
 | **Date** | 2026-08-15 |
 | **Audience** | Senior engineers shipping Forge file tools |

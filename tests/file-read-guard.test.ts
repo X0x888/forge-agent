@@ -100,6 +100,13 @@ describe("tool integration with fileReads", () => {
     assert.match(ok.output, /Edited/);
     assert.match(ok.output, /\(\d+ lines?\)/);
     assert.equal(fs.readFileSync(path.join(dir, "x.ts"), "utf8"), "export const a = 2;\n");
+    const stamp = fileReads.get(path.join(dir, "x.ts"));
+    assert.ok(stamp);
+    assert.equal(
+      stamp!.fullReadLines,
+      undefined,
+      "receipt is not a read — noteFromDisk must not set fullReadLines",
+    );
   });
 
   it("search_replace refuses stale mtime after external edit", async () => {
