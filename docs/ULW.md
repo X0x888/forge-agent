@@ -43,9 +43,11 @@ forge run "ship it" --max-waves 2
 
 Hard mandates keep a fixed objective but the same **smart + hard** execution style.
 
-**Broad / evaluate-class mandates** (checklists, "comprehensively evaluate… then improve…" — **length-independent**): the harness seeds a **todo backlog** from mandate *verbs* (`evaluate …` / `improve …`) and durable **decision memory** first. Wave 1 cannot close until a written **reading** exists (`Reading:` or `memory_write`). That reading is the first verb — not "advice-only". Free invent without a board is blocked at wave 0 until ≥2 todos exist.
+**Evaluate-class mandates** ("comprehensively evaluate… then improve…"): a **verb order**, not a backlog. Wave 1 cannot close until a written **reading** exists (`Reading:` or `memory_write`). That reading is the first verb — not "advice-only". TodoNudge does not poke evaluate-class boards.
 
-**Small `max_waves`:** spend the budget on the mandate's verbs in order. `max_waves=2` means Wave 1 = written reading + pick one ship; Wave 2 = finish that ship, prove, attest. Catalog chrome is not a substitute for "evaluate".
+**Broad checklists** (4+ bullets / multi-section): the harness still requires a **todo backlog** (`todo_write` ≥2) before Wave 1 free-invents.
+
+**`max_waves` is a ceiling, not a quota.** If the mandate's verbs are done, attest `**Cycle complete.**` with evidence — do not invent work to fill unused slots. Cap auto-flips LAST when the wave counter hits N.
 
 ### Smart + hard (not thrash)
 
@@ -75,6 +77,8 @@ Proof still matters. Low-leverage churn while harder work remains fails the qual
 ```
 attempt Stop
     │
+    ├─ cycle=1 + **Cycle complete.** + evidence (green or checklist)
+    │    + reading (evaluate-class) + proven work → release (cap is a ceiling)
     ├─ cycle=1 and wave will hit max_waves → auto LAST re-anchor
     ├─ cycle=1 → re-anchor next wave (unless stuck-wall)
     ├─ cycle=0 without **Cycle complete.** → re-anchor finish last wave
@@ -83,6 +87,8 @@ attempt Stop
                                               └─ local git commit of the wave (never push)
                                                  FORGE_ULW_AUTO_COMMIT=0 off
 ```
+
+Yield (“shall I continue?”) is still handoff-blocked. A red check is not evidence.
 
 Stuck-wall: N consecutive Stop attempts with **no file edits and no working-tree diff movement** (default same as goal stuck threshold / `FORGE_ULW_STUCK_THRESHOLD`). Progress is measured two ways: `editCount` delta **or** a changed `gitDiffFingerprint` — so work done via bash heredocs/`sed -i` (which never touches edit-tool counters) cannot false-trigger a stuck release. Outside a git repo the fingerprint is unavailable and the classic editCount-only rule applies.
 

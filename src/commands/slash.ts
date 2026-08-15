@@ -5014,11 +5014,12 @@ const result = rewindSessionDetailed(opts.session, n);
             : patch;
         let verifyTip = "";
         try {
-          if (stat || statDiff || body.trim()) {
-            const intel = detectProjectIntel(cwd);
-            if (intel.checkCommands[0]) {
-              verifyTip = `\nverify: ${intel.checkCommands.slice(0, 3).join(" · ")}`;
-            }
+          // Always name the project check — useful on a clean tree too
+          // (what to run before you ship), and keeps /diff output stable
+          // for CI that runs after a commit.
+          const intel = detectProjectIntel(cwd);
+          if (intel.checkCommands[0]) {
+            verifyTip = `\nverify: ${intel.checkCommands.slice(0, 3).join(" · ")}`;
           }
         } catch {
           /* */
