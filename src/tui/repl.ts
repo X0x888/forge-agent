@@ -92,13 +92,13 @@ import { formatBanner } from "./banner.js";
 import { pickTurnEndHint, ABORT_RECOVERY } from "./hints.js";
 import {
   alreadyOnboarded,
+  rewriteIdleSetupShortcut,
   setupAutoCardDisabled,
 } from "../util/setup-readiness.js";
 import {
   collectSetupAssessment,
   formatSetupCard,
   formatSetupCompactLine,
-  markSetupSeen,
 } from "../commands/setup.js";
 import { resolveMaxCostUsd, sessionCostUsd } from "../util/cost-budget.js";
 import { isBellEnabled, isNotifyEnabled } from "../util/attention.js";
@@ -107,6 +107,8 @@ import { listProjectRulePaths } from "../agent/system-prompt.js";
 
 /** True when this process already printed the full first-run /setup card. */
 let setupCardShownThisProcess = false;
+/** Idle 1–6 remap is live while the card or compact line is advertising it. */
+let setupIdleNumbersEnabled = false;
 const VERSION = getForgeVersion();
 
 export async function runRepl(opts: {
@@ -345,11 +347,28 @@ export async function runRepl(opts: {
   });
 
   const handleLine = async (line: string) => {
-    const text = line.trim();
+    let text = line.trim();
     if (!text) {
       if (busy) livePrompt();
       else prompt();
       return;
+    }
+
+    // First-run card numbers 1–6 are typeable at the idle prompt only.
+    // Live turns leave a bare digit alone (it is a mid-run interjection).
+    if (!busy) {
+      try {
+        const prefs = loadPreferences();
+        text = rewriteIdleSetupShortcut(text, {
+          enabled:
+            !prefs.setupSkipped &&
+            (setupIdleNumbersEnabled ||
+              setupCardShownThisProcess ||
+              (!alreadyOnboarded(prefs) && !setupAutoCardDisabled())),
+        });
+      } catch {
+        /* never block input on prefs */
+      }
     }
 
     appendHistory(text);
@@ -1093,12 +1112,15 @@ async function printBanner(
       });
       if (!alreadyOnboarded(prefs)) {
         setupCardShownThisProcess = true;
+        setupIdleNumbersEnabled = true;
         setupCard = formatSetupCard(assessed);
-        markSetupSeen();
+        // Do not markSetupSeen on first paint — that burned the teaching
+        // beat before the user could type 1–6. /setup actions still stamp it.
       } else if (
         !prefs.setupSkipped &&
         (assessed.recommendedOpen > 0 || assessed.blocking)
       ) {
+        setupIdleNumbersEnabled = true;
         setupCompact = formatSetupCompactLine(assessed);
       }
     }

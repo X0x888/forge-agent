@@ -158,7 +158,7 @@ export function formatSetupCard(r: SetupAssessment): string {
   lines.push(
     "  5) Install LSP                  6) Scaffold files (forge init)",
   );
-  lines.push("  /setup skip  hides the compact banner line  ·  /setup help");
+  lines.push("  Type 1–6 here  ·  /setup skip hides this  ·  /setup help");
   return lines.join("\n");
 }
 
@@ -175,7 +175,7 @@ export function formatSetupCompactLine(r: SetupAssessment): string {
     return i.label;
   });
   const more = open.length > 3 ? ` +${open.length - 3}` : "";
-  return `setup ${r.ready}/${r.total}  ·  ${bits.join("  ·  ")}${more}  ·  /setup to finish`;
+  return `setup ${r.ready}/${r.total}  ·  ${bits.join("  ·  ")}${more}  ·  type 1–6 or /setup`;
 }
 
 export type SetupAction =
@@ -220,6 +220,20 @@ const VERB_ALIASES: Record<string, SetupAction["kind"]> = {
   files: "scaffold",
   initfiles: "scaffold",
 };
+
+/**
+ * First-run numbered menu: idle `1`–`6` is the card item, not a model prompt.
+ * Live/busy turns and already-onboarded sessions leave the digit alone.
+ */
+export function rewriteIdleSetupShortcut(
+  line: string,
+  opts: { enabled: boolean },
+): string {
+  if (!opts.enabled) return line;
+  const t = String(line ?? "").trim();
+  if (/^[1-6]$/.test(t)) return `/setup ${t}`;
+  return line;
+}
 
 export function parseSetupAction(arg: string): SetupAction {
   const raw = String(arg || "").trim();

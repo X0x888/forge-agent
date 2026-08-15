@@ -527,6 +527,7 @@ export {
   assessSetupReadiness,
   formatSetupCard,
   parseSetupAction,
+  rewriteIdleSetupShortcut,
 } from "./util/setup-readiness.js";
 export { helpFor, HELP_START, HELP_ALL } from "./commands/help-text.js";
 export { formatBanner } from "./tui/banner.js";

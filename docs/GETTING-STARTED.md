@@ -25,7 +25,7 @@ forge login --api-key               # paste a key
 forge login -p anthropic            # or openai / openrouter / copilot
 ```
 
-A bare `forge` on a TTY also offers this picker if you are not signed in. Headless / `--json` still fail closed.
+A bare `forge` on a TTY also offers this picker if you are not signed in. Type **1–4** (Enter = SuperGrok). A typo re-prompts; `q` quits. Headless / `--json` still fail closed.
 
 ## 3. First `forge`
 
@@ -33,11 +33,11 @@ A bare `forge` on a TTY also offers this picker if you are not signed in. Headle
   ⚒  Forge v0.9.x
   xai/grok-4.6 · SuperGrok  ·  session a1b2c3d4  ·  perms default  ·  sandbox workspace
 
-  Type a task in English.  Or:  /setup  ·  /help  ·  /plan  ·  Tab starters
-  setup 2/6  ·  no spend cap  ·  no AGENTS.md  ·  /setup to finish
+  Type a task in English.  Or:  1–6 on the card  ·  /setup  ·  /help  ·  Tab
+  setup 2/6  ·  no spend cap  ·  no AGENTS.md  ·  type 1–6 or /setup
 ```
 
-Type a coding task. You do not need a slash command. Empty Tab offers first-day starters (`/help`, `/setup`, `/plan`, …); type `/` then Tab for the full catalog. Permission prompts: **Enter** or `y` allows once.
+Type a coding task. You do not need a slash command. On the first-run card, **1–6** run that setup item (same as `/setup 1` … `/setup 6`). Empty Tab offers first-day starters (`/help`, `/setup`, `/plan`, …); type `/` then Tab for the full catalog. Permission prompts: **Enter** or `y` allows once.
 
 ## 4. Finish settings (`/setup`)
 
@@ -52,7 +52,7 @@ Type a coding task. You do not need a slash command. Empty Tab offers first-day 
 | Language servers | Diagnostics | `/lsp ensure` |
 | File scaffold | `config.toml`, MCP, stub AGENTS.md | `/setup scaffold` or `forge init` |
 
-`/setup skip` hides the compact banner line. `FORGE_SETUP=0` disables the auto card.
+`/setup skip` hides the compact banner line. The full first-run card stays until you take a `/setup` action (just seeing it does not count as done). `FORGE_SETUP=0` disables the auto card.
 
 ## 5. Useful first-day commands
 

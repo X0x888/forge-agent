@@ -6,6 +6,7 @@ import {
   formatSetupCompactLine,
   parseSetupAction,
   alreadyOnboarded,
+  rewriteIdleSetupShortcut,
   setupAutoCardDisabled,
 } from "../src/util/setup-readiness.js";
 import { clipBannerIdentity, formatBanner } from "../src/tui/banner.js";
@@ -72,12 +73,13 @@ describe("assessSetupReadiness", () => {
     const card = formatSetupCard(r);
     assert.match(card, /Setup  \d\/6 ready/);
     assert.match(card, /\[ \].*spend cap/);
+    assert.match(card, /Type 1–6 here/);
     assert.match(card, /\/setup skip/);
     const compact = formatSetupCompactLine(r);
     assert.match(compact, /setup \d\/6/);
     assert.match(compact, /no spend cap/);
     assert.match(compact, /no AGENTS\.md/);
-    assert.match(compact, /\/setup to finish/);
+    assert.match(compact, /type 1–6 or \/setup/);
     assert.doesNotMatch(compact, /notify off|lsp missing/);
   });
 
@@ -92,7 +94,7 @@ describe("assessSetupReadiness", () => {
     assert.equal(r.blocking, false);
     const compact = formatSetupCompactLine(r);
     assert.match(compact, /setup 4\/6 ready/);
-    assert.doesNotMatch(compact, /notify off|lsp missing|\/setup to finish/);
+    assert.doesNotMatch(compact, /notify off|lsp missing|type 1–6 or \/setup/);
   });
 });
 
@@ -109,6 +111,17 @@ describe("parseSetupAction", () => {
     assert.deepEqual(parseSetupAction("3 CI"), { kind: "init", focus: "CI" });
     assert.equal(parseSetupAction("6").kind, "scaffold");
     assert.equal(parseSetupAction("nope").kind, "help");
+  });
+});
+
+describe("rewriteIdleSetupShortcut", () => {
+  it("maps idle 1–6 to /setup N only when enabled", () => {
+    assert.equal(rewriteIdleSetupShortcut("1", { enabled: true }), "/setup 1");
+    assert.equal(rewriteIdleSetupShortcut(" 6 ", { enabled: true }), "/setup 6");
+    assert.equal(rewriteIdleSetupShortcut("1", { enabled: false }), "1");
+    assert.equal(rewriteIdleSetupShortcut("12", { enabled: true }), "12");
+    assert.equal(rewriteIdleSetupShortcut("/setup 2", { enabled: true }), "/setup 2");
+    assert.equal(rewriteIdleSetupShortcut("fix the bug", { enabled: true }), "fix the bug");
   });
 });
 
@@ -147,6 +160,7 @@ describe("formatBanner", () => {
     assert.match(text, /⚒  Forge v0\.9\.99/);
     assert.match(text, /session abcdefgh/);
     assert.match(text, /Type a task in English/);
+    assert.match(text, /1–6 on the card/);
     assert.match(text, /\/setup/);
     assert.doesNotMatch(text, /\/cycle 0/);
     assert.doesNotMatch(text, /Paste multi-line/);
@@ -342,7 +356,13 @@ describe("login offer", () => {
     assert.equal(parseLoginOfferChoice("q").kind, "quit");
     assert.equal(parseLoginOfferChoice("4").kind, "env");
     assert.equal(parseLoginOfferChoice("anthropic").kind, "provider");
+    assert.deepEqual(parseLoginOfferChoice("xyz"), {
+      kind: "invalid",
+      input: "xyz",
+    });
     assert.match(formatLoginOffer(), /not signed in/);
+    assert.match(formatLoginOffer(), /type 1–4/);
+    assert.doesNotMatch(formatLoginOffer(), /forge login/);
   });
 });
 
@@ -361,6 +381,7 @@ describe("grouped help", () => {
     assert.match(all.text, /\/max-waves/);
     assert.match(all.text, /\/setup/);
     assert.match(HELP_START, /\/help all/);
+    assert.match(HELP_START, /1–6 on the \/setup card/);
     assert.match(HELP_ALL, /ask_user is a model tool|ask_user/);
     assert.match(HELP_ALL, /\/verbose/);
     assert.match(HELP_ALL, /\/skills/);

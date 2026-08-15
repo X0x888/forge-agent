@@ -13,7 +13,8 @@ export type LoginOfferChoice =
   | { kind: "api_key"; provider: string }
   | { kind: "provider"; provider: string }
   | { kind: "env" }
-  | { kind: "quit" };
+  | { kind: "quit" }
+  | { kind: "invalid"; input: string };
 
 export function shouldOfferLoginPicker(opts: {
   json?: boolean;
@@ -29,14 +30,14 @@ export function shouldOfferLoginPicker(opts: {
 
 export function formatLoginOffer(): string {
   return [
-    "⚒  Forge  ·  not signed in",
+    "⚒  Forge  ·  not signed in  ·  type 1–4 (Enter = 1)",
     "",
-    "  1) forge login          SuperGrok / X Premium (browser)",
-    "  2) forge login --api-key",
-    "  3) forge login -p anthropic|openai|openrouter|copilot",
-    "  4) set XAI_API_KEY / ANTHROPIC_API_KEY / …",
+    "  1) SuperGrok / X Premium (browser)",
+    "  2) Paste an API key",
+    "  3) Other provider (anthropic, openai, openrouter, copilot)",
+    "  4) Use env vars already set",
     "",
-    "  Run which? [1]  ·  q to quit  ·  Enter = 1",
+    "  q quits  ·  a provider name works too",
   ].join("\n");
 }
 
@@ -79,7 +80,7 @@ export function parseLoginOfferChoice(raw: string): LoginOfferChoice {
       ? { kind: "oauth", provider: "xai" }
       : { kind: "provider", provider: parsed.provider };
   }
-  return { kind: "quit" };
+  return { kind: "invalid", input: String(raw ?? "").trim() };
 }
 
 export const LOGIN_ENV_HINT =
@@ -93,51 +94,62 @@ export async function offerLoginInteractive(): Promise<boolean> {
   console.log("");
   console.log(formatLoginOffer());
   const rl = readline.createInterface({ input, output });
-  let answer: string;
   try {
-    answer = await rl.question("  > ");
+    while (true) {
+      const answer = await rl.question("  > ");
+      const choice = parseLoginOfferChoice(answer);
+      if (choice.kind === "invalid") {
+        console.log(
+          `  Unknown "${choice.input}". Type 1–4, a provider name, or q.`,
+        );
+        continue;
+      }
+      if (choice.kind === "quit") return false;
+      if (choice.kind === "env") {
+        console.log("");
+        console.log(LOGIN_ENV_HINT);
+        return false;
+      }
+
+      let provider = choice.provider || "xai";
+      const method: LoginMethod | undefined =
+        choice.kind === "api_key"
+          ? "api_key"
+          : choice.kind === "oauth"
+            ? "oauth"
+            : undefined;
+
+      if (choice.kind === "provider" && !choice.provider) {
+        const p = (
+          await rl.question(
+            "  Provider [anthropic|openai|openrouter|copilot|xai]: ",
+          )
+        ).trim();
+        if (!p) {
+          console.log("  Need a provider name, or q to quit.");
+          continue;
+        }
+        const parsed = normalizeProviderId(p);
+        if (!parsed.ok) {
+          console.log(
+            `  Unknown provider "${p}". Try anthropic, openai, openrouter, copilot, or xai.`,
+          );
+          continue;
+        }
+        provider = parsed.provider;
+      }
+
+      try {
+        await loginInteractive({ provider, method });
+        log.info("Signed in. Type a task in English, or /setup to finish settings.");
+        return true;
+      } catch (err) {
+        log.error((err as Error).message || String(err));
+        console.log("  Try 1–4 again, or q to quit.");
+        continue;
+      }
+    }
   } finally {
     rl.close();
-  }
-  const choice = parseLoginOfferChoice(answer);
-  if (choice.kind === "quit") return false;
-  if (choice.kind === "env") {
-    console.log("");
-    console.log(LOGIN_ENV_HINT);
-    return false;
-  }
-
-  let provider = choice.provider || "xai";
-  let method: LoginMethod | undefined =
-    choice.kind === "api_key"
-      ? "api_key"
-      : choice.kind === "oauth"
-        ? "oauth"
-        : undefined;
-
-  if (choice.kind === "provider" && !choice.provider) {
-    const rl2 = readline.createInterface({ input, output });
-    let p: string;
-    try {
-      p = (
-        await rl2.question(
-          "  Provider [anthropic|openai|openrouter|copilot|xai]: ",
-        )
-      ).trim();
-    } finally {
-      rl2.close();
-    }
-    if (!p) return false;
-    const parsed = normalizeProviderId(p);
-    provider = parsed.ok ? parsed.provider : p.toLowerCase();
-  }
-
-  try {
-    await loginInteractive({ provider, method });
-    log.info("Next: forge   ·   forge setup   ·   forge doctor");
-    return true;
-  } catch (err) {
-    log.error((err as Error).message || String(err));
-    return false;
   }
 }

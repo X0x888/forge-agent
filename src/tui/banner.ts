@@ -91,7 +91,7 @@ export function formatBanner(input: BannerInput): string {
   if (input.showEmptyState) {
     lines.push("");
     lines.push(
-      `  Type a task in English.  Or:  /setup  ·  /help  ·  /plan  ·  Tab starters`,
+      `  Type a task in English.  Or:  1–6 on the card  ·  /setup  ·  /help  ·  Tab`,
     );
   }
   if (input.setupCard) {

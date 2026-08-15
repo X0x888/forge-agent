@@ -17,6 +17,7 @@ export const HELP_START = `
 Getting started
 ───────────────
   Type a task in English. Forge edits, checks, and prints a Δ.
+  1–6 on the /setup card run that item (same as /setup 1)
   /setup              Account, model, budget, notify, AGENTS.md
   /plan [focus]       Read-only design, then /build
   /init               Write a real AGENTS.md for this repo
