@@ -502,12 +502,10 @@ export async function toolApplyPatch(
     const dest = op.kind === "update" && op.moveAbs ? op.moveAbs : op.abs;
     const destRel =
       op.kind === "update" && op.moveRel ? op.moveRel : op.rel;
-    const srcRel = op.rel;
-    const content = op.kind === "add" ? op.content : op.content;
-    const resolved = afterWriteText(dest, content, fmtByAbs.get(dest) ?? null);
+    const resolved = afterWriteText(dest, op.content, fmtByAbs.get(dest) ?? null);
     return {
       kind: op.kind === "add" ? "add" : "update",
-      rel: srcRel,
+      rel: op.rel,
       moveRel:
         op.kind === "update" && op.moveRel && op.moveAbs !== op.abs
           ? destRel

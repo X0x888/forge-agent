@@ -347,6 +347,27 @@ describe("edit-receipt", () => {
     });
   });
 
+  describe("window clamp", () => {
+    it("never emits line numbers past the AFTER file", () => {
+      const after = Array.from({ length: 20 }, (_, i) => `L${i + 1}`).join("\n");
+      const before = after.replace("L10", "OLD");
+      const hunks = lineHunks(before, after);
+      const windows = selectAfterWindows(hunks, 20, {
+        maxLines: 80,
+        afterLines: splitFileLines(after),
+      });
+      for (const w of windows) {
+        assert.ok(w.start >= 1);
+        assert.ok(w.end <= 20);
+      }
+      const body = formatNumberedLines(splitFileLines(after), [
+        { start: 18, end: 40 },
+      ]);
+      assert.match(body, /20\|L20/);
+      assert.doesNotMatch(body, /21\|/);
+    });
+  });
+
   describe("buildSuccessReceipt", () => {
     it("does not embed --- a/", () => {
       const before = "a\n";

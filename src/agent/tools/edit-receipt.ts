@@ -213,7 +213,9 @@ export function formatNumberedLines(
         parts.push(`${ELLIPSIS} ${skipped} lines not shown ${ELLIPSIS}`);
       }
     }
-    for (let ln = w.start; ln <= w.end; ln++) {
+    const last = Math.min(w.end, afterLines.length);
+    for (let ln = w.start; ln <= last; ln++) {
+      if (ln < 1) continue;
       parts.push(formatOneLine(ln, afterLines[ln - 1] ?? ""));
     }
   }
@@ -455,13 +457,24 @@ export function selectAfterWindows(
     windows = trimPairToBudget(windows[0]!, windows[1]!, maxLines);
   } else if (emittedLineCount(windows) > maxLines && windows.length === 1) {
     const w = windows[0]!;
-    windows = [{ start: w.start, end: w.start + maxLines - 1 }];
+    windows = [
+      {
+        start: w.start,
+        end: Math.min(afterLineCount, w.start + maxLines - 1),
+      },
+    ];
   }
 
   if (afterLines) {
     windows = shrinkBytes(afterLines, windows, maxBytes);
   }
 
+  windows = windows
+    .map((w) => ({
+      start: Math.max(1, w.start),
+      end: Math.min(afterLineCount, w.end),
+    }))
+    .filter((w) => w.end >= w.start);
   windows.sort((a, b) => a.start - b.start);
   if (
     windows.length === 0 &&
@@ -579,7 +592,6 @@ export function buildSuccessReceipt(opts: {
   maxBytes?: number;
 }): BuiltReceipt {
   const hunks = lineHunks(opts.before, opts.after);
-  const stats = lineStats(hunks);
   const afterLines = splitFileLines(opts.after);
   const windows =
     opts.windows ??
