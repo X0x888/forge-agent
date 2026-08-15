@@ -43,7 +43,7 @@ forge run "ship it" --max-waves 2
 
 Hard mandates keep a fixed objective but the same **smart + hard** execution style.
 
-**Evaluate-class mandates** ("comprehensively evaluate… then improve…"): a **verb order**, not a backlog. Wave 1 cannot close until a written **reading** exists (`Reading:` or `memory_write`). That reading is the first verb — not "advice-only". TodoNudge does not poke evaluate-class boards.
+**Evaluate-class mandates** ("comprehensively evaluate… then improve…"): a **verb order**, not a backlog. Wave 1 cannot close until a written **reading** exists (`Reading:` or `memory_write`). That reading is the first verb — not "advice-only". Wave 1 starts in an **orient** phase (no spawn/edits) until the reading is written; later waves skip the scout (`w≥1` or a named next ship). Orient **hard-denies** writes/spawn/mutating bash even under yolo — hiding tools from the schema is not enough. TodoNudge does not poke evaluate-class boards.
 
 **Broad checklists** (4+ bullets / multi-section): the harness still requires a **todo backlog** (`todo_write` ≥2) before Wave 1 free-invents.
 
@@ -123,7 +123,7 @@ Anti-gaming is **structural, not prompt-based**: the only way to satisfy a proof
 
 - Slim re-anchors: the cycle protocol lives once in the stable system prompt; per-wave messages carry only counts, the bar, and wave-specific demands
 - Counter-only harness changes (wave/blocks/todo counts) no longer emit a full mid-conversation admission — the re-anchor already carries them
-- Outbound prune (`FORGE_REQUEST_PRUNE*`) slims old tool results/`tool_calls` on the wire without rewriting session.json. In-session stubbing is opt-in (`FORGE_TOOL_CLEAR=1`). Restore a spool with `read_file` on the Full output path — do not re-spawn a child to recover a report.
+- Outbound is append-only until ~180k tokens so xAI can cache the prefix (`FORGE_REQUEST_PRUNE=1` restores every-round slim — that kills cache). In-session stubbing is opt-in (`FORGE_TOOL_CLEAR=1`).
 - Cheapest-proof guidance: affected tests per wave, full suite on consolidation waves
 
 ## State

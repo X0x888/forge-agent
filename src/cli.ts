@@ -6902,6 +6902,13 @@ maxTurns: opts.config.maxTurns ?? 0,
       promptTokens: result.promptTokens,
       completionTokens: result.completionTokens,
       cacheReadTokens: result.cacheReadTokens,
+      lastRoundPromptTokens: opts.session.meta.lastRoundPromptTokens ?? null,
+      lastRoundCacheReadTokens: opts.session.meta.lastRoundCacheReadTokens ?? null,
+      lastRoundCacheRatio: (() => {
+        const lastP = opts.session.meta.lastRoundPromptTokens ?? 0;
+        const lastC = opts.session.meta.lastRoundCacheReadTokens ?? 0;
+        return lastP > 0 ? Math.min(1, lastC / lastP) : null;
+      })(),
       servedModels: result.servedModels,
       fallbackModels: opts.config.fallbackModels ?? null,
       fallbackChain: formatFallbackChain(opts.config),
@@ -6923,6 +6930,9 @@ maxTurns: opts.config.maxTurns ?? 0,
         promptTokens: payload.promptTokens,
         completionTokens: payload.completionTokens,
         cacheReadTokens: payload.cacheReadTokens,
+        lastRoundPromptTokens: payload.lastRoundPromptTokens ?? undefined,
+        lastRoundCacheReadTokens: payload.lastRoundCacheReadTokens ?? undefined,
+        lastRoundCacheRatio: payload.lastRoundCacheRatio ?? undefined,
         servedModels: payload.servedModels,
         harnessUserPokes: payload.harnessUserPokes,
         admitCount: payload.admitCount,

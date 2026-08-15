@@ -6,7 +6,9 @@ import path from "node:path";
 import type { ChatMessage } from "../src/providers/types.js";
 import { DEFAULT_CONFIG } from "../src/config/types.js";
 import { buildChatRequest } from "../src/agent/loop.js";
-import { estimateTokens } from "../src/session/session.js";
+import { estimateTokens, estimateRequestTokens } from "../src/session/session.js";
+import { outboundTokenEstimate } from "../src/statusline/snapshot.js";
+import { TOOL_DEFINITIONS } from "../src/agent/tools/definitions.js";
 import { repairToolCallPairing } from "../src/session/message-repair.js";
 import {
   pruneMessagesForRequest,
@@ -217,26 +219,106 @@ describe("request-prune", () => {
     assert.equal(fullArgs, 3);
   });
 
-  it("buildChatRequest prunes outbound and leaves the input array intact", () => {
+  it("keeps reasoning_content when collapsing old tool_calls", () => {
+    const msgs = steps(8, { bodyChars: 8000 });
+    const firstAsst = msgs.find((m) => m.role === "assistant");
+    assert.ok(firstAsst);
+    firstAsst!.reasoning_content = "prior thought";
+    const r = pruneMessagesForRequest(msgs, { spool: false });
+    const same = r.messages.find(
+      (m) => m.role === "assistant" && m.reasoning_content,
+    );
+    assert.equal(same?.reasoning_content, "prior thought");
+  });
+
+  it("HUD ctx includes tool-schema tokens like the wire", () => {
+    const prev = process.env.FORGE_REQUEST_PRUNE;
+    delete process.env.FORGE_REQUEST_PRUNE;
+    try {
+      const msgs = steps(4, { bodyChars: 200 });
+      const hud = outboundTokenEstimate(msgs);
+      const extras = { toolsJsonChars: JSON.stringify(TOOL_DEFINITIONS).length };
+      assert.equal(hud, estimateRequestTokens(msgs, extras));
+      assert.ok(hud > estimateTokens(msgs));
+    } finally {
+      if (prev === undefined) delete process.env.FORGE_REQUEST_PRUNE;
+      else process.env.FORGE_REQUEST_PRUNE = prev;
+    }
+  });
+
+  it("HUD ctx matches the wire (append-only under 180k)", () => {
+    const prev = process.env.FORGE_REQUEST_PRUNE;
+    delete process.env.FORGE_REQUEST_PRUNE;
+    try {
+      const msgs = steps(8, { bodyChars: 2000 });
+      const extras = { toolsJsonChars: JSON.stringify(TOOL_DEFINITIONS).length };
+      const raw = estimateRequestTokens(msgs, extras);
+      const hud = outboundTokenEstimate(msgs);
+      assert.equal(hud, raw);
+      assert.ok(hud >= estimateTokens(msgs));
+      const pruned = estimateRequestTokens(
+        pruneMessagesForRequest(msgs, { spool: false }).messages,
+        extras,
+      );
+      assert.ok(pruned <= raw);
+    } finally {
+      if (prev === undefined) delete process.env.FORGE_REQUEST_PRUNE;
+      else process.env.FORGE_REQUEST_PRUNE = prev;
+    }
+  });
+
+  it("buildChatRequest is append-only by default (prefix cache)", () => {
     withForgeHome(() => {
-      const msgs = steps(14, { bodyChars: 9000 });
-      const snap = JSON.stringify(msgs);
-      const req = buildChatRequest(
-        { ...DEFAULT_CONFIG, model: "grok-4.6" },
-        msgs,
-      );
-      assert.equal(JSON.stringify(msgs), snap);
-      const omitted = req.messages.filter(
-        (m) =>
-          typeof m.content === "string" &&
-          m.content.startsWith(REQUEST_PRUNE_OMITTED),
-      );
-      assert.ok(omitted.length >= 4);
-      const collapsed = req.messages.filter((m) => {
-        if (m.role !== "assistant" || !m.tool_calls?.length) return false;
-        return m.tool_calls[0]!.function.arguments.includes("_cleared");
-      });
-      assert.ok(collapsed.length >= 10);
+      const prev = process.env.FORGE_REQUEST_PRUNE;
+      delete process.env.FORGE_REQUEST_PRUNE;
+      try {
+        const msgs = steps(14, { bodyChars: 9000 });
+        const snap = JSON.stringify(msgs);
+        const req = buildChatRequest(
+          { ...DEFAULT_CONFIG, model: "grok-4.6" },
+          msgs,
+        );
+        assert.equal(JSON.stringify(msgs), snap);
+        const omitted = req.messages.filter(
+          (m) =>
+            typeof m.content === "string" &&
+            m.content.startsWith(REQUEST_PRUNE_OMITTED),
+        );
+        assert.equal(omitted.length, 0);
+      } finally {
+        if (prev === undefined) delete process.env.FORGE_REQUEST_PRUNE;
+        else process.env.FORGE_REQUEST_PRUNE = prev;
+      }
+    });
+  });
+
+  it("buildChatRequest prunes when FORGE_REQUEST_PRUNE=1 (legacy)", () => {
+    withForgeHome(() => {
+      const prev = process.env.FORGE_REQUEST_PRUNE;
+      process.env.FORGE_REQUEST_PRUNE = "1";
+      try {
+        const msgs = steps(14, { bodyChars: 9000 });
+        const snap = JSON.stringify(msgs);
+        const req = buildChatRequest(
+          { ...DEFAULT_CONFIG, model: "grok-4.6" },
+          msgs,
+        );
+        assert.equal(JSON.stringify(msgs), snap);
+        const omitted = req.messages.filter(
+          (m) =>
+            typeof m.content === "string" &&
+            m.content.startsWith(REQUEST_PRUNE_OMITTED),
+        );
+        assert.ok(omitted.length >= 4);
+        const collapsed = req.messages.filter((m) => {
+          if (m.role !== "assistant" || !m.tool_calls?.length) return false;
+          return m.tool_calls[0]!.function.arguments.includes("_cleared");
+        });
+        assert.ok(collapsed.length >= 10);
+      } finally {
+        if (prev === undefined) delete process.env.FORGE_REQUEST_PRUNE;
+        else process.env.FORGE_REQUEST_PRUNE = prev;
+      }
     });
   });
 

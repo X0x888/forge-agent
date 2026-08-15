@@ -23,6 +23,11 @@ import {
   journalLandedPreimages,
   restoreParentPreimages,
   defaultIsolationForSpawn,
+  shouldPruneOutbound,
+  sessionCacheRatio,
+  parseExploreMap,
+  normalizeExploreMaps,
+  REQUEST_PRUNE_AT_DEFAULT,
 } from "../src/index.js";
 
 describe("public package exports (index)", () => {
@@ -77,6 +82,12 @@ describe("public package exports (index)", () => {
     assert.equal(typeof journalLandedPreimages, "function");
     assert.equal(typeof restoreParentPreimages, "function");
     assert.equal(typeof defaultIsolationForSpawn, "function");
+    assert.equal(typeof shouldPruneOutbound, "function");
+    assert.equal(shouldPruneOutbound(100).prune, false);
+    assert.equal(typeof sessionCacheRatio, "function");
+    assert.equal(typeof parseExploreMap, "function");
+    assert.equal(typeof normalizeExploreMaps, "function");
+    assert.ok(REQUEST_PRUNE_AT_DEFAULT >= 100_000);
     assert.equal(
       defaultIsolationForSpawn({ type: "explore", workspace: process.cwd() }),
       "none",

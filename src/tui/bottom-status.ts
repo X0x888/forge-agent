@@ -20,6 +20,7 @@ import {
 } from "../statusline/render.js";
 import type { AuthMethod, PlanUsageInfo } from "../statusline/types.js";
 import { formatTokens, formatCost, clipAnsi, visibleWidth } from "../util/format.js";
+import { formatCacheRatio } from "../session/prompt-cache.js";
 
 import { resolveReasoningEffort } from "../config/reasoning.js";
 import { getActivity } from "../statusline/activity.js";
@@ -185,6 +186,19 @@ export function renderBottomStatusLine(
   } else if (snap.plan?.resetsAt) {
     const left = resetCountdown(snap.plan.resetsAt);
     if (left) bits.push({ text: paint(left, "dim"), prio: 2 });
+  }
+
+  const cachePrompt =
+    snap.tokens.cacheRatioPromptTokens || snap.tokens.promptTokens || 0;
+  if (snap.tokens.cacheRatio != null && cachePrompt >= 8_000) {
+    const r = snap.tokens.cacheRatio;
+    bits.push({
+      text: paint(
+        `cache ${formatCacheRatio(r)}`,
+        r >= 0.95 ? "dim" : r >= 0.8 ? "dim" : "yellow",
+      ),
+      prio: 5,
+    });
   }
 
   if (

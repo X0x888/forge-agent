@@ -35,6 +35,7 @@ import {
   normalizeSubagentUsage,
   type SubagentUsageRecord,
 } from "./subagent-usage.js";
+import { normalizeExploreMaps } from "./explore-map.js";
 import {
   compactMessagesStructured,
   type CompactContext,
@@ -170,11 +171,19 @@ export interface SessionMeta {
    */
   totalCacheReadTokens?: number;
   /**
+   * Last provider round (not the session smear). Dock `cache N%` prefers
+   * this so a 99% prefix after a cold start is visible.
+   */
+  lastRoundPromptTokens?: number;
+  lastRoundCacheReadTokens?: number;
+  /**
    * Per-child spend ledger. Parent token totals already include these
    * (family number). The array is how you see which subagent spent what.
    * Not a cap.
    */
   subagentUsage?: SubagentUsageRecord[];
+  /** Structured explore maps (pick + file claims). Latest wins on lookup. */
+  exploreMaps?: import("./explore-map.js").ExploreMap[];
   /**
    * Raw model ids the provider reported serving that DIVERGE from the
    * requested model (capped at 8). Provider-side tier routing made visible —
@@ -462,6 +471,19 @@ function normalizeSessionMeta(
   } else {
     delete out.maxCostUsd;
   }
+  const lastP = Number(fromSide.lastRoundPromptTokens);
+  if (Number.isFinite(lastP) && lastP > 0) {
+    out.lastRoundPromptTokens = Math.floor(lastP);
+    const lastC = Number(fromSide.lastRoundCacheReadTokens);
+    out.lastRoundCacheReadTokens =
+      Number.isFinite(lastC) && lastC > 0 ? Math.floor(lastC) : 0;
+  } else {
+    delete out.lastRoundPromptTokens;
+    delete out.lastRoundCacheReadTokens;
+  }
+  const maps = normalizeExploreMaps(fromSide.exploreMaps);
+  if (maps) out.exploreMaps = maps;
+  else delete out.exploreMaps;
   if (fromSide.pinned) out.pinned = true;
   else delete out.pinned;
   const pm = normalizeMetaPermissionMode(fromSide.permissionMode);
@@ -908,6 +930,18 @@ export function importSessionJson(
       totalPromptTokens: Number(src.totalPromptTokens) || 0,
       totalCompletionTokens: Number(src.totalCompletionTokens) || 0,
       totalCacheReadTokens: Number(src.totalCacheReadTokens) || 0,
+      ...(typeof src.lastRoundPromptTokens === "number" &&
+      src.lastRoundPromptTokens > 0
+        ? {
+            lastRoundPromptTokens: Math.floor(src.lastRoundPromptTokens),
+            lastRoundCacheReadTokens:
+              Math.max(0, Math.floor(Number(src.lastRoundCacheReadTokens) || 0)),
+          }
+        : {}),
+      ...((): { exploreMaps?: import("./explore-map.js").ExploreMap[] } => {
+        const maps = normalizeExploreMaps(src.exploreMaps);
+        return maps ? { exploreMaps: maps } : {};
+      })(),
       ...((): { subagentUsage?: SubagentUsageRecord[] } => {
         const kids = normalizeSubagentUsage(src.subagentUsage);
         return kids ? { subagentUsage: kids } : {};
@@ -3245,6 +3279,9 @@ export function clearConversation(session: SessionData): void {
   session.meta.totalPromptTokens = 0;
   session.meta.totalCompletionTokens = 0;
   delete session.meta.subagentUsage;
+  delete session.meta.exploreMaps;
+  delete session.meta.lastRoundPromptTokens;
+  delete session.meta.lastRoundCacheReadTokens;
   // Drop per-session spend override so the next conversation inherits config again.
   delete session.meta.maxCostUsd;
   session.meta.title = undefined;

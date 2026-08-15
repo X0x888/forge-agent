@@ -12,6 +12,10 @@ import {
   providerMaxWallMs,
   providerTimeoutMs,
 } from "../util/abort.js";
+import {
+  extractReasoningContent,
+  grokConvIdHeaders,
+} from "../session/prompt-cache.js";
 
 /**
  * Merge a streamed tool-name delta into the accumulator.
@@ -80,11 +84,14 @@ export class OpenAICompatProvider implements LLMProvider {
     this.apiKey = token;
   }
 
-  private headers(): Record<string, string> {
+  private headers(req?: ChatRequest): Record<string, string> {
+    const conv =
+      this.id === "xai" ? grokConvIdHeaders(req?.conversationId) : {};
     return {
       "Content-Type": "application/json",
       Authorization: `Bearer ${this.apiKey}`,
       ...this.extraHeaders,
+      ...conv,
     };
   }
 
@@ -132,7 +139,7 @@ export class OpenAICompatProvider implements LLMProvider {
     try {
       const resp = await fetch(`${this.baseUrl}/chat/completions`, {
         method: "POST",
-        headers: this.headers(),
+        headers: this.headers(req),
         body: JSON.stringify(body),
         signal: merged,
       });
@@ -158,10 +165,13 @@ export class OpenAICompatProvider implements LLMProvider {
       if (!choice) {
         throw new Error(`${this.id} API error: empty choices array (provider returned no completion — retry or switch model)`);
       }
+      const message = { ...choice.message };
+      const reasoning = extractReasoningContent(choice.message);
+      if (reasoning) message.reasoning_content = reasoning;
       return {
         id: json.id,
         model: json.model,
-        message: choice.message,
+        message,
         finish_reason: choice.finish_reason,
         usage: normalizeUsage(json.usage),
       };
@@ -191,7 +201,7 @@ export class OpenAICompatProvider implements LLMProvider {
     try {
       resp = await fetch(`${this.baseUrl}/chat/completions`, {
         method: "POST",
-        headers: this.headers(),
+        headers: this.headers(req),
         body: JSON.stringify(body),
         signal: merged,
       });
@@ -235,6 +245,7 @@ export class OpenAICompatProvider implements LLMProvider {
     const decoder = new TextDecoder();
     let buffer = "";
     let content = "";
+    let reasoningContent = "";
     const toolCalls: ToolCall[] = [];
     let finishReason: string | null = null;
     let id = "";
@@ -254,6 +265,8 @@ export class OpenAICompatProvider implements LLMProvider {
         choices?: Array<{
           delta?: {
             content?: string | null;
+            reasoning_content?: string | null;
+            reasoning?: string | { content?: string; text?: string };
             tool_calls?: Array<{
               index?: number;
               id?: string;
@@ -286,6 +299,11 @@ export class OpenAICompatProvider implements LLMProvider {
       if (delta.content) {
         content += delta.content;
         onDelta({ content: delta.content });
+      }
+      const thought = extractReasoningContent(delta);
+      if (thought) {
+        reasoningContent += thought;
+        onDelta({ reasoning_content: thought });
       }
       if (delta.tool_calls) {
         // Some single-call proxies omit `index` — fall back to the chunk
@@ -407,6 +425,7 @@ export class OpenAICompatProvider implements LLMProvider {
       role: "assistant",
       content: content || null,
       tool_calls: compactTools.length > 0 ? compactTools : undefined,
+      ...(reasoningContent ? { reasoning_content: reasoningContent } : {}),
     };
     return {
       id: id || `chatcmpl_${Date.now()}`,

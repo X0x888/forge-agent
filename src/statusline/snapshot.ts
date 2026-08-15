@@ -5,9 +5,15 @@ import {
   loadSession,
   sessionDir,
   estimateTokens,
+  estimateRequestTokens,
   type SessionData,
 } from "../session/session.js";
 import { pruneMessagesForRequest } from "../session/request-prune.js";
+import {
+  sessionCacheRatio,
+  shouldPruneOutbound,
+} from "../session/prompt-cache.js";
+import { TOOL_DEFINITIONS } from "../agent/tools/definitions.js";
 import { loadGoal } from "../harness/goal.js";
 import { loadUlwCycle, normalizeMaxWaves } from "../harness/ulw-cycle.js";
 import { loadConfig } from "../config/load.js";
@@ -142,11 +148,20 @@ function durationSec(createdAt: string): number {
   return Math.max(0, Math.floor((Date.now() - t) / 1000));
 }
 
-/** Pruned outbound estimate — HUD ctx must not count the unpruned store. */
+const TOOLS_JSON_CHARS = JSON.stringify(TOOL_DEFINITIONS).length;
+
+/**
+ * Same decision as the wire: tool-schema-inclusive estimate, append-only
+ * under the 180k cliff, prune only when `shouldPruneOutbound` says so.
+ */
 export function outboundTokenEstimate(messages: SessionData["messages"]): number {
   try {
-    return estimateTokens(
+    const extras = { toolsJsonChars: TOOLS_JSON_CHARS };
+    const raw = estimateRequestTokens(messages, extras);
+    if (!shouldPruneOutbound(raw).prune) return raw;
+    return estimateRequestTokens(
       pruneMessagesForRequest(messages, { spool: false }).messages,
+      extras,
     );
   } catch {
     return estimateTokens(messages);
@@ -186,6 +201,15 @@ function buildTokens(session: SessionData, provider: string): TokenUsageInfo {
     ...(kids && kids.length
       ? { subagentUsd: subagentUsd || 0, subagentCount: kids.length }
       : {}),
+    ...(() => {
+      const live = sessionCacheRatio(session.meta);
+      if (!live) return {};
+      return {
+        cacheRatio: live.ratio,
+        cacheRatioPromptTokens: live.promptTokens,
+        cacheRatioLive: live.live,
+      };
+    })(),
     source: "session",
   };
 }

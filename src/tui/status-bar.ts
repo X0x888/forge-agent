@@ -36,6 +36,7 @@ import {
 } from "../statusline/activity.js";
 import { listTasks } from "../agent/tools/background-tasks.js";
 import { formatTokens, formatCost, estimateCostUsd, visibleWidth, clipAnsi } from "../util/format.js";
+import { formatCacheRatio, sessionCacheRatio } from "../session/prompt-cache.js";
 import { sessionDir } from "../session/session.js";
 import { readSessionLock, formatLockHolder } from "../session/lock.js";
 import { getGitSnapshot } from "../util/git-context.js";
@@ -1048,6 +1049,14 @@ export function formatSessionDetails(ctx: StatusBarContext): string {
     chalk.dim(
       `msgs     ${session.messages.length}  ·  ~${formatTokens(est)} ctx  ·  turns ${session.meta.turnCount}  edits ${session.meta.editCount}`,
     ),
+    (() => {
+      const live = sessionCacheRatio(session.meta);
+      if (!live || live.promptTokens < 8_000) return null;
+      const label = live.live ? "last round" : "session";
+      return chalk.dim(
+        `cache    ${formatCacheRatio(live.ratio)}  ·  ${label}  ·  ${formatTokens(live.promptTokens)} prompt`,
+      );
+    })(),
     (() => {
       const last = session.meta.lastVerificationCommand?.trim();
       if (last) {

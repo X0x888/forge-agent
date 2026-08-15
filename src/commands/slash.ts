@@ -177,6 +177,10 @@ import {
   formatFamilyCostLines,
 } from "../session/subagent-usage.js";
 import {
+  formatCacheRatio,
+  sessionCacheRatio,
+} from "../session/prompt-cache.js";
+import {
   applyModelContextWindow,
   modelContextWindow,
   parseContextWindowArg,
@@ -3122,7 +3126,12 @@ return {
       const prompt = opts.session.meta.totalPromptTokens || 0;
       const cacheLine =
         cacheRead > 0 && prompt > 0
-          ? `  cached:      ${formatTokens(cacheRead)} (${Math.round((cacheRead / prompt) * 100)}% of prompt, cache rate)`
+          ? `  cached:      ${formatTokens(cacheRead)} (${Math.round((cacheRead / prompt) * 100)}% of prompt, session smear)`
+          : null;
+      const live = sessionCacheRatio(opts.session.meta);
+      const liveLine =
+        live?.live && live.promptTokens > 0
+          ? `  last round:  cache ${formatCacheRatio(live.ratio)} of ${formatTokens(live.promptTokens)}`
           : null;
       return {
         handled: true,
@@ -3131,6 +3140,7 @@ return {
           `  prompt:      ${formatTokens(opts.session.meta.totalPromptTokens)}`,
           `  completion:  ${formatTokens(opts.session.meta.totalCompletionTokens)}`,
           cacheLine,
+          liveLine,
           `  est. cost:   ${formatCost(cost)}  (rough; not a bill)`,
           ...formatFamilyCostLines(
             familyCostBreakdown(

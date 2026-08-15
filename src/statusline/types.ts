@@ -36,6 +36,12 @@ export interface TokenUsageInfo {
   /** Subagent slice of estimatedUsd when children were recorded. */
   subagentUsd?: number;
   subagentCount?: number;
+  /** Live last-round cache_read / prompt (0–1); falls back to session smear. */
+  cacheRatio?: number;
+  /** Prompt tokens used to compute cacheRatio (last-round when live). */
+  cacheRatioPromptTokens?: number;
+  /** True when cacheRatio is the last provider round, not the lifetime smear. */
+  cacheRatioLive?: boolean;
   source: "session" | "provider";
 }
 

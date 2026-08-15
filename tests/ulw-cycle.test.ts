@@ -39,7 +39,13 @@ import {
   ULW_LIVE_CONTROLS_HINT,
   summarizeWave,
   isPolishClassShip,
+  resolveUlwPhase,
+  advanceUlwPhaseOnReading,
+  shouldSkipOrient,
 } from "../src/harness/ulw-cycle.js";
+import { filterToolsForUlwPhase, citedPathsFromToolCalls } from "../src/agent/loop.js";
+import { PermissionGate } from "../src/agent/permissions.js";
+import { TOOL_DEFINITIONS } from "../src/agent/tools/definitions.js";
 import {
   appendMemoryRecord,
   loadDecisionMemory,
@@ -989,6 +995,178 @@ describe("polish-class Stop", () => {
     assert.equal(
       isPolishClassShip("headless forge run failed-tool tails"),
       false,
+    );
+    assert.equal(isPolishClassShip("dock owns identity — slim the banner"), true);
+    assert.equal(isPolishClassShip("dock overflow drops brand"), true);
+  });
+
+  it("evaluate-class arms in orient and flips to ship on a reading", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-ulw-orient-"));
+    process.env.FORGE_HOME = tmp;
+    const sid = "ulw-orient";
+    const s = armUlwCycle(
+      sid,
+      "comprehensively evaluate this tool and then improve the ui",
+      { cycle: 1, skipCheckpoint: true },
+    );
+    assert.equal(resolveUlwPhase(s), "orient");
+    assert.equal(
+      filterToolsForUlwPhase(TOOL_DEFINITIONS, "orient").some(
+        (t) => t.function.name === "spawn_subagent",
+      ),
+      false,
+    );
+    assert.equal(
+      filterToolsForUlwPhase(TOOL_DEFINITIONS, "orient").some(
+        (t) => t.function.name === "search_replace",
+      ),
+      false,
+    );
+    appendMemoryRecord(sid, {
+      kind: "decision",
+      text: "Reading: first-run numbers lie — ship typeable 1–6 on the setup card.",
+      source: "agent",
+    });
+    assert.equal(advanceUlwPhaseOnReading(sid), true);
+    assert.equal(resolveUlwPhase(loadUlwCycle(sid)), "ship");
+    assert.ok(
+      filterToolsForUlwPhase(TOOL_DEFINITIONS, "ship").some(
+        (t) => t.function.name === "search_replace",
+      ),
+    );
+    const again = armUlwCycle(
+      sid,
+      "comprehensively evaluate this tool and then improve the ui",
+      { cycle: 1, skipCheckpoint: true },
+    );
+    assert.equal(resolveUlwPhase(again), "ship");
+    assert.equal(shouldSkipOrient(again, sid), true);
+    fs.rmSync(tmp, { recursive: true, force: true });
+  });
+
+  it("orient hard-denies writes/spawn/mutating bash even under yolo", async () => {
+    const gate = new PermissionGate({ interactive: false });
+    const write = await gate.request({
+      toolName: "search_replace",
+      input: { path: "a.ts", old_string: "a", new_string: "b" },
+      mode: "bypassPermissions",
+      workspace: process.cwd(),
+      ulwPhase: "orient",
+    });
+    assert.equal(write.decision, "deny");
+    assert.match(write.reason || "", /ulw_orient/);
+
+    const spawn = await gate.request({
+      toolName: "spawn_subagent",
+      input: { prompt: "map the tui", subagent_type: "explore" },
+      mode: "bypassPermissions",
+      workspace: process.cwd(),
+      ulwPhase: "orient",
+    });
+    assert.equal(spawn.decision, "deny");
+
+    const mut = await gate.request({
+      toolName: "bash",
+      input: { command: "sed -i '' 's/a/b/' a.ts" },
+      mode: "bypassPermissions",
+      workspace: process.cwd(),
+      ulwPhase: "orient",
+    });
+    assert.equal(mut.decision, "deny");
+
+    const ro = await gate.request({
+      toolName: "bash",
+      input: { command: "git status" },
+      mode: "bypassPermissions",
+      workspace: process.cwd(),
+      ulwPhase: "orient",
+    });
+    assert.equal(ro.decision, "allow");
+
+    const ship = await gate.request({
+      toolName: "search_replace",
+      input: { path: "a.ts", old_string: "a", new_string: "b" },
+      mode: "bypassPermissions",
+      workspace: process.cwd(),
+      ulwPhase: "ship",
+    });
+    assert.equal(ship.decision, "allow");
+  });
+
+  it("later waves skip orient even if the sidecar still says orient", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-ulw-later-"));
+    const prev = process.env.FORGE_HOME;
+    process.env.FORGE_HOME = tmp;
+    try {
+      const sid = "ulw-later-wave";
+      armUlwCycle(
+        sid,
+        "comprehensively evaluate this tool and then improve the ui",
+        { cycle: 1, skipCheckpoint: true },
+      );
+      appendMemoryRecord(sid, {
+        kind: "decision",
+        text: "Reading: first-run numbers lie — next ship typeable 1–6 on the setup card.",
+        source: "agent",
+      });
+      assert.equal(advanceUlwPhaseOnReading(sid), true);
+      evaluateUlwAtStop({
+        sessionId: sid,
+        lastAssistantMessage:
+          "Wave 1 shipped. Reading: first-run numbers lie — ship typeable 1–6.",
+        editCount: 2,
+        openTodoCount: 0,
+        stuckThreshold: 20,
+        verificationRan: true,
+        verificationPassed: true,
+      });
+      const s = loadUlwCycle(sid)!;
+      assert.ok((s.wave ?? 0) >= 1);
+      s.phase = "orient";
+      s.judgmentRequired = true;
+      assert.equal(resolveUlwPhase(s), "ship");
+      assert.equal(shouldSkipOrient(s, sid), true);
+    } finally {
+      if (prev === undefined) delete process.env.FORGE_HOME;
+      else process.env.FORGE_HOME = prev;
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("citedPathsFromToolCalls extracts path-like args", () => {
+    assert.deepEqual(
+      citedPathsFromToolCalls({
+        role: "assistant",
+        content: null,
+        tool_calls: [
+          {
+            id: "1",
+            type: "function",
+            function: {
+              name: "read_file",
+              arguments: '{"path":"src/tui/repl.ts"}',
+            },
+          },
+        ],
+      }),
+      ["src/tui/repl.ts"],
+    );
+    assert.deepEqual(
+      citedPathsFromToolCalls({
+        role: "assistant",
+        content: null,
+        tool_calls: [
+          {
+            id: "2",
+            type: "function",
+            function: {
+              name: "glob",
+              arguments: '{"glob":"src/tui/*.ts"}',
+            },
+          },
+        ],
+      }),
+      ["src/tui/*.ts"],
     );
   });
 

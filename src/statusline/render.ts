@@ -6,6 +6,7 @@ import { forgeHome } from "../util/fs.js";
 import { isFormatOnWriteEnabled } from "../agent/tools/format-on-write.js";
 import { detectProjectIntel, hasNodeModules, multipleLockfiles } from "../util/project-intel.js";
 import { formatHudTodos } from "../agent/todos.js";
+import { formatCacheRatio } from "../session/prompt-cache.js";
 
 function colorEnabled(opts: StatuslineRenderOptions): boolean {
   if (opts.plain || opts.color === false) return false;
@@ -330,6 +331,15 @@ function renderSession(
       tok += ` ~${formatCost(snap.tokens.estimatedUsd)}`;
     }
     l2.push(paint(c, tok, "dim"));
+    if (
+      snap.tokens.cacheRatio != null &&
+      (snap.tokens.cacheRatioPromptTokens || snap.tokens.promptTokens || 0) >=
+        8_000
+    ) {
+      l2.push(
+        paint(c, `cache ${formatCacheRatio(snap.tokens.cacheRatio)}`, "dim"),
+      );
+    }
   }
   if (snap.budget) {
     const b = snap.budget;
@@ -476,6 +486,15 @@ export function renderCompactStrip(
       tok += ` ~${formatCost(snap.tokens.estimatedUsd)}`;
     }
     parts.push(paint(c, tok, "dim"));
+    if (
+      snap.tokens.cacheRatio != null &&
+      (snap.tokens.cacheRatioPromptTokens || snap.tokens.promptTokens || 0) >=
+        8_000
+    ) {
+      parts.push(
+        paint(c, `cache ${formatCacheRatio(snap.tokens.cacheRatio)}`, "dim"),
+      );
+    }
   }
   if (snap.budget) {
     const b = snap.budget;

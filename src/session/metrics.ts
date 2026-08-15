@@ -9,7 +9,7 @@ import { estimateCostUsd, formatCost, formatTokens } from "../util/format.js";
 
 export interface SessionMetricsEvent {
   ts: string;
-  type: "run_end" | "session_end";
+  type: "run_end" | "session_end" | "provider_round";
   sessionId: string;
   provider?: string;
   model?: string;
@@ -32,6 +32,12 @@ export interface SessionMetricsEvent {
   completionTokens?: number;
   /** Provider-reported cached-input tokens for this run (0 = unreported). */
   cacheReadTokens?: number;
+  /** cache_read / prompt (provider_round or last round on run_end). */
+  cacheRatio?: number;
+  lastRoundPromptTokens?: number;
+  lastRoundCacheReadTokens?: number;
+  /** True when this outbound request was request-pruned. */
+  pruned?: boolean;
   /** Distinct served models that diverged from the requested one this run. */
   servedModels?: string[];
   /** Harness-as-second-user meters (this run). */
@@ -110,6 +116,9 @@ export function buildRunEndMetrics(opts: {
   completionTokens: number;
   /** Provider-reported cached-input tokens for this run (0 = unreported). */
   cacheReadTokens?: number;
+  lastRoundPromptTokens?: number;
+  lastRoundCacheReadTokens?: number;
+  lastRoundCacheRatio?: number;
   /** Distinct served models that diverged from the requested one this run. */
   servedModels?: string[];
   harnessUserPokes?: number;
@@ -153,6 +162,18 @@ export function buildRunEndMetrics(opts: {
     completionTokens: opts.completionTokens,
     ...(opts.cacheReadTokens
       ? { cacheReadTokens: opts.cacheReadTokens }
+      : {}),
+    ...(opts.lastRoundPromptTokens
+      ? { lastRoundPromptTokens: opts.lastRoundPromptTokens }
+      : {}),
+    ...(opts.lastRoundCacheReadTokens
+      ? { lastRoundCacheReadTokens: opts.lastRoundCacheReadTokens }
+      : {}),
+    ...(opts.lastRoundCacheRatio != null
+      ? {
+          lastRoundCacheRatio: opts.lastRoundCacheRatio,
+          cacheRatio: opts.lastRoundCacheRatio,
+        }
       : {}),
     ...(opts.servedModels?.length
       ? { servedModels: opts.servedModels }

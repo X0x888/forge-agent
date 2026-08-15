@@ -886,6 +886,13 @@ export async function runRepl(opts: {
             promptTokens: result.promptTokens,
             completionTokens: result.completionTokens,
             cacheReadTokens: result.cacheReadTokens,
+            lastRoundPromptTokens: session.meta.lastRoundPromptTokens,
+            lastRoundCacheReadTokens: session.meta.lastRoundCacheReadTokens,
+            lastRoundCacheRatio: (() => {
+              const p = session.meta.lastRoundPromptTokens ?? 0;
+              const c = session.meta.lastRoundCacheReadTokens ?? 0;
+              return p > 0 ? Math.min(1, c / p) : undefined;
+            })(),
             servedModels: result.servedModels,
             aborted: result.aborted,
             ok: !result.aborted,

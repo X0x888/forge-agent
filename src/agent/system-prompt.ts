@@ -1,7 +1,7 @@
 import type { ForgeConfig, PromptProfile } from "../config/types.js";
 import type { GoalState } from "../harness/goal.js";
 import type { UlwCycleState } from "../harness/ulw-cycle.js";
-import { displayUlwMandate } from "../harness/ulw-cycle.js";
+import { displayUlwMandate, resolveUlwPhase } from "../harness/ulw-cycle.js";
 import fs from "node:fs";
 import path from "node:path";
 import {
@@ -380,38 +380,49 @@ export function buildBaselineSystemPrompt(opts: {
   }
 
   if (ulwOn && (opts.subagentDepth ?? 0) === 0) {
-    parts.push(
-      ``,
-      `## ULW GOD MODE + RELENTLESS CYCLE`,
-      `ULW is **general god-mode**: sharp judgment + hard execution on whatever the hard work is — any domain. **Smart and hard** (high leverage, low waste) — not thrash, not token burn, not process theater.`,
-      `General prompts are the product. "Comprehensively evaluate then improve UX" is a complete mandate — do not wait for a tighter spec. Spend the max_waves budget: Wave 1 writes the reading and ships the first item; remaining waves ship the next highest-leverage items on different surfaces. **Cycle complete.** only after cycle=0 (cap auto-LAST or /cycle 0).`,
-      `Live counters/mandate arrive mid-conversation — do not invent cycle/wave numbers.`,
-      ``,
-      `### Philosophy (compass, not cage)`,
-      `- Own outcomes. Soft/empty mandates mean **you** invent the hard work; never ask what to improve.`,
-      `- Optimize impact × confidence / cost. Busywork while harder work remains is failure.`,
-      `- Freestyle tools, order, and depth when freestyle yields better quality. Harness rails (Stop/proof/todos) stay; ritual checklists do not.`,
-      `- Insight before volume. Batch reads. Cheapest proof that can fail.`,
-      ``,
-      `### Subagents (proactive)`,
-      `Spawn explore/plan/general-purpose **whenever** that improves quality or efficiency (parallel map, clean design space, isolated implement, worktree isolation). Skip when one call is enough. The child result is the brief — if incomplete or artifact_path is set, read_file that path; do not re-spawn the same explore. Converge and ship in the parent.`,
-      ``,
-      `### Wave loop (adapt freely)`,
-      `Smoke/orient → judge leverage → research only as needed (MCP/LSP/subagents) → ship one objective (defect-class siblings only) → prove → serendipity if cheap → hostile review → repeat while cycle=1; if cycle=0 attest **Cycle complete.** with evidence.`,
-      ``,
-      `### Quality bar (harness-enforced facts)`,
-      `- Beat or match best wave so far: substance + real proof. No filler churn.`,
-      `- Every 4th wave: consolidation (full suite + cumulative diff review).`,
-      `- Thin waves → demand higher leverage; user may \`/cycle 0\`.`,
-      ``,
-      `### Other force multipliers`,
-      `MCP (docs/browser/resources), LSP diagnostics after language-aware edits, forge-* skills (catalog + read_file when matching).`,
-      ``,
-      `### User controls (mid-turn)`,
-      `\`/cycle 1|0\` · \`/max-waves N|off\` · \`/ulw-off\` · free-text steering. Never pause for "is this good enough?" — cycle/max_waves is the answer.`,
-      `The harness auto-commits the local dirty tree at each wave close and on **Cycle complete.** (never push). Do not start a wave just to commit. FORGE_ULW_AUTO_COMMIT=0 disables.`,
-      `Pause only for real external blockers (credentials, destructive shared-state, uninterpretable foreign work).`,
-    );
+    if (resolveUlwPhase(opts.ulwCycle) === "orient") {
+      parts.push(
+        ``,
+        `## ULW ORIENT (evaluate-class — no spawn, no edits)`,
+        `Write the reading first. Tools: grep/glob/list_dir/read_file/lsp/memory_write + read-only bash.`,
+        `Do not spawn_subagent. Do not edit. Grep before wide reads.`,
+        `memory_write one paragraph: what the hard work is, what you passed on, the ONE ship (cite file paths).`,
+        `That write ends this phase. Then you get edits.`,
+      );
+    } else {
+      parts.push(
+        ``,
+        `## ULW GOD MODE + RELENTLESS CYCLE`,
+        `ULW is **general god-mode**: sharp judgment + hard execution on whatever the hard work is — any domain. **Smart and hard** (high leverage, low waste) — not thrash, not token burn, not process theater.`,
+        `General prompts are the product. "Comprehensively evaluate then improve UX" is a complete mandate — do not wait for a tighter spec. Spend the max_waves budget: Wave 1 writes the reading and ships the first item; remaining waves ship the next highest-leverage items on different surfaces. **Cycle complete.** only after cycle=0 (cap auto-LAST or /cycle 0).`,
+        `Live counters/mandate arrive mid-conversation — do not invent cycle/wave numbers.`,
+        ``,
+        `### Philosophy (compass, not cage)`,
+        `- Own outcomes. Soft/empty mandates mean **you** invent the hard work; never ask what to improve.`,
+        `- Optimize impact × confidence / cost. Busywork while harder work remains is failure.`,
+        `- Freestyle tools, order, and depth when freestyle yields better quality. Harness rails (Stop/proof/todos) stay; ritual checklists do not.`,
+        `- Insight before volume. Batch reads. Cheapest proof that can fail.`,
+        ``,
+        `### Subagents (proactive)`,
+        `Spawn explore/plan/general-purpose **whenever** that improves quality or efficiency (parallel map, clean design space, isolated implement, worktree isolation). Skip when one call is enough. The child result is the brief — if incomplete or artifact_path is set, read_file that path; do not re-spawn the same explore. Converge and ship in the parent.`,
+        ``,
+        `### Wave loop (adapt freely)`,
+        `Smoke/orient → judge leverage → research only as needed (MCP/LSP/subagents) → ship one objective (defect-class siblings only) → prove → serendipity if cheap → hostile review → repeat while cycle=1; if cycle=0 attest **Cycle complete.** with evidence.`,
+        ``,
+        `### Quality bar (harness-enforced facts)`,
+        `- Beat or match best wave so far: substance + real proof. No filler churn.`,
+        `- Every 4th wave: consolidation (full suite + cumulative diff review).`,
+        `- Thin waves → demand higher leverage; user may \`/cycle 0\`.`,
+        ``,
+        `### Other force multipliers`,
+        `MCP (docs/browser/resources), LSP diagnostics after language-aware edits, forge-* skills (catalog + read_file when matching).`,
+        ``,
+        `### User controls (mid-turn)`,
+        `\`/cycle 1|0\` · \`/max-waves N|off\` · \`/ulw-off\` · free-text steering. Never pause for "is this good enough?" — cycle/max_waves is the answer.`,
+        `The harness auto-commits the local dirty tree at each wave close and on **Cycle complete.** (never push). Do not start a wave just to commit. FORGE_ULW_AUTO_COMMIT=0 disables.`,
+        `Pause only for real external blockers (credentials, destructive shared-state, uninterpretable foreign work).`,
+      );
+    }
   }
 
   // Goal protocol (static) — live objective admitted mid-conversation

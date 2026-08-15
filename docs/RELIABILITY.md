@@ -20,7 +20,7 @@ What experts should expect from Forge in long, unattended, or CI runs.
 | **Expert recovery tips** | `formatProviderError` maps auth/rate-limit/quota (incl. 403 body), overflow (incl. Anthropic “prompt is too long”), network/DNS, 5xx, Anthropic 529/`overloaded`, model-not-found, Azure/OpenAI `content_filter`, empty/no-choice responses, unsupported model features, org verification, and deprecated-model to next steps; REPL + headless print tips; `forge run --json` fail payloads include `recovery: { code, tips }` and structured `reason` |
 | **Abortable streams** | `AbortSignal` cancels `fetch` and releases the SSE reader (Ctrl+C works mid-token) |
 | **Provider timeout** | Default 10 min **stall** silence budget (`FORGE_PROVIDER_TIMEOUT_MS`) — aborts only when no stream activity; healthy long streams call `touch()` on each chunk so ULW / max-effort / large outputs are not killed at a fixed wall clock. Optional absolute ceiling via `FORGE_PROVIDER_MAX_MS` (off by default). Timeout is retryable; user abort is not |
-| **Prompt-cache stability** | System prompt (message[0]) carries only stable git state (root/remote); the volatile branch + coarse dirty/clean tree are admitted append-only via context-admit (dirty↔clean flips re-admit; file-count churn does not), so everyday edits no longer invalidate the server-side prompt cache (xAI cached input ≈ 4× cheaper) |
+| **Prompt-cache stability** | System prompt (message[0]) carries only stable git state (root/remote); the volatile branch + coarse dirty/clean tree are admitted append-only via context-admit (dirty↔clean flips re-admit; file-count churn does not). xAI requests send `x-grok-conv-id` and replay `reasoning_content`. Outbound is append-only until ~180k. Dock `cache N%` is the last provider round (not the lifetime smear). |
 | **Stream usage** | OpenAI-compat requests set `stream_options.include_usage` so `/cost` is accurate; `prompt_tokens_details.cached_tokens` is surfaced as `cache_read_input_tokens` |
 | **Tool name merge** | Streamed names that re-send full chunks do not become `bashbash` |
 | **Empty choices** | Non-stream responses with no choices throw a clear error |
@@ -39,7 +39,7 @@ What experts should expect from Forge in long, unattended, or CI runs.
 | **Unknown tool tips** | Up to 3 Did-you-mean candidates (`suggestNames`) so the model can self-correct typos without a human |
 | **Doom-loop** | Same tool + same args ×N injects a hard strategy-change nudge (OpenCode-inspired; default N=3, override `FORGE_DOOM_LOOP_THRESHOLD`); fingerprints ignore transport-only fields (`timeout_ms`, `background`, `run_in_background`, `stream`, `tail`, `allow_local`) |
 | **Error-streak** | N consecutive tool errors (any args) injects a circuit-breaker nudge (Grok-inspired; default N=5, override `FORGE_ERROR_STREAK_THRESHOLD`); permission/hard denies do not count |
-| **Request-time prune** | Outbound-only working-set prune. Stored `session.json` is not rewritten. Age is assistant tool-rounds. Last 3 steps stay full; older args collapse; old bodies omit. Older harness user pokes (admits / Stop re-anchors / verify / fix / TodoNudge / bg-task) stub to one line; newest of each class + real user / `## ULW armed` kickoff stay. `FORGE_REQUEST_PRUNE=0` disables |
+| **Request-time prune** | Outbound-only. Default is **append-only** until the estimate hits 180k (under the 200k 2× price cliff), then prune. Every-round prune (`FORGE_REQUEST_PRUNE=1`) rewrites the prefix and kills xAI cache. Stored `session.json` is never rewritten. |
 | **Unchanged read stub** | Full-file `read_file` (no offset/limit) with matching mtime/size and the last body still in the live tail returns `Unchanged since last read`. Windowed reads and post-write reads still return the body. `FORGE_UNCHANGED_READ_STUB=0` off |
 | **Unattended cost meters** | `forge run --json` / `metrics.jsonl` / last-run session meta: `harnessUserPokes`, `admitCount`, `proofPokes`, `providerRounds` |
 | **Store checkpoint** | Rare resume-file compact when the *store* is huge (`FORGE_CHECKPOINT_STORE_TOKENS` / `_MESSAGES`), not when outbound is 80k. Job card is extractive from sidecars + in-flight tail. FileReadState survives if mtime matches |
@@ -165,7 +165,8 @@ What experts should expect from Forge in long, unattended, or CI runs.
 | `FORGE_ADAPTIVE_EFFORT` | on | `0`/`false` disables one-notch reasoning escalation on hard rounds |
 | `FORGE_CHECKPOINT_STORE_TOKENS` | `1500000` | Store-token trigger for checkpoint compact (not outbound) |
 | `FORGE_CHECKPOINT_STORE_MESSAGES` | `2500` | Store message-count trigger for checkpoint compact |
-| `FORGE_REQUEST_PRUNE` | on | `0`/`false` disables outbound working-set prune |
+| `FORGE_REQUEST_PRUNE` | threshold | Default: prune only when outbound estimate ≥ `FORGE_REQUEST_PRUNE_AT` (180k) so xAI can cache the prefix. `1`/`true` = every-round prune (legacy; breaks cache). `0`/`false` = never |
+| `FORGE_REQUEST_PRUNE_AT` | `180000` | Token estimate that turns append-only off and slims the wire (stay under the 200k 2× card) |
 | `FORGE_REQUEST_PRUNE_KEEP_TURNS` | `3` | Newest assistant steps kept verbatim |
 | `FORGE_REQUEST_PRUNE_HARD_AGE` | `10` | Older tool results become `[Tool result omitted — too old]` |
 | `FORGE_TOOL_CLEAR` | off | `1`/`true` enables in-session stubbing (mutates history) |

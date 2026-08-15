@@ -59,6 +59,8 @@ import {
   displayUlwMandate,
   ULW_LIVE_CONTROLS_HINT,
   maybeStampUlwWave,
+  resolveUlwPhase,
+  advanceUlwPhaseOnReading,
   countsTowardVerification,
   shouldStampLastVerification,
   shouldClearLastVerification,
@@ -71,6 +73,16 @@ import {
   pruneMessagesForRequest,
   countHarnessUserPokes,
 } from "../session/request-prune.js";
+import {
+  appendProviderRoundMetrics,
+  shouldPruneOutbound,
+} from "../session/prompt-cache.js";
+import {
+  CITE_DELTA_POKE,
+  citeDeltaShouldPoke,
+  citeDeltaShouldStop,
+  noteCiteDelta,
+} from "../session/explore-map.js";
 import {
   storeNeedsCheckpoint,
   DEFAULT_CHECKPOINT_KEEP_STEPS,
@@ -244,6 +256,11 @@ export interface LoopOptions {
   /** Skip goal/ULW auto-arm (subagents). */
   disableHarnessAutoArm?: boolean;
   /**
+   * Explore children: end the map when two turns add no new paths
+   * (information-gain stop, not a turn cap).
+   */
+  citeDeltaStop?: boolean;
+  /**
    * Resume the existing transcript after a continue-recoverable provider drop.
    * Does not push a new user turn — same as the expert typing "continue"
    * without polluting history.
@@ -357,6 +374,74 @@ export function isReadOnlyToolName(name: string): boolean {
   return READ_ONLY.has(n) || READ_ONLY.has(name || "");
 }
 
+/** evaluate-class orient: map, do not spawn or edit. */
+const ORIENT_TOOL_NAMES = new Set([
+  "read_file",
+  "Read",
+  "read",
+  "grep",
+  "Grep",
+  "glob",
+  "Glob",
+  "list_dir",
+  "ListDir",
+  "web_search",
+  "WebSearch",
+  "web_fetch",
+  "WebFetch",
+  "todo_write",
+  "memory_write",
+  "ask_user",
+  "AskUser",
+  "bash",
+  "Bash",
+  "shell",
+  "Shell",
+  "run_terminal_command",
+  "get_task_output",
+  "task_output",
+  "search_mcp",
+  "mcp_search",
+  "lsp",
+  "LSP",
+]);
+
+export function citedPathsFromToolCalls(msg: ChatMessage): string[] {
+  const out: string[] = [];
+  for (const tc of msg.tool_calls || []) {
+    let args: Record<string, unknown> = {};
+    try {
+      args = JSON.parse(tc.function?.arguments || "{}") as Record<string, unknown>;
+    } catch {
+      continue;
+    }
+    for (const key of [
+      "path",
+      "file_path",
+      "target_file",
+      "directory",
+      "target_directory",
+      "glob",
+      "pattern",
+    ]) {
+      const v = args[key];
+      if (typeof v === "string" && v.trim()) out.push(v.trim());
+    }
+  }
+  return out;
+}
+
+export function filterToolsForUlwPhase(
+  tools: ToolDefinition[],
+  phase: "orient" | "ship" | undefined,
+): ToolDefinition[] {
+  if (phase !== "orient") return tools;
+  return tools.filter((t) => {
+    const n = t.function.name;
+    return ORIENT_TOOL_NAMES.has(n) || ORIENT_TOOL_NAMES.has(normalizeToolName(n));
+  });
+}
+
 const PLAN_MODE_TOOL_NAMES = new Set([
   "read_file",
   "Read",
@@ -416,19 +501,31 @@ export function buildChatRequest(
   messages: ChatMessage[],
   effortOverride?: ReasoningEffort,
   tools: ToolDefinition[] = TOOL_DEFINITIONS,
+  opts?: { conversationId?: string; estimatedTokens?: number },
 ): ChatRequest {
   const effort =
     effortOverride ?? resolveReasoningEffort(config.model, config.reasoningEffort);
-  // Request-time prune: slim the wire copy only. session.messages stays full.
-  const pruned = pruneMessagesForRequest(messages, { spool: true }).messages;
+  const toolsJsonChars = JSON.stringify(tools).length;
+  const estimated =
+    opts?.estimatedTokens ??
+    estimateRequestTokens(messages, { toolsJsonChars });
+  const prune = shouldPruneOutbound(estimated);
+  // Append-only by default so xAI can cache the prefix. Prune only at
+  // the 180k cliff (or FORGE_REQUEST_PRUNE=1 legacy). session.messages stays full.
+  const wire = prune.prune
+    ? pruneMessagesForRequest(messages, { spool: true }).messages
+    : messages;
   // Phase 6: expand [[image:path]] / @shot.png markers into multimodal parts
   // for vision-capable providers (inline data URLs). Stored session history
   // keeps the original string markers — only the outbound request expands.
-  const outbound = expandMessagesForVision(pruned, config.workspace);
+  const outbound = expandMessagesForVision(wire, config.workspace);
   return {
     model: config.model,
     messages: outbound,
     tools,
+    ...(opts?.conversationId
+      ? { conversationId: opts.conversationId }
+      : {}),
     // Undefined temperature → omitted; provider/server default wins (grok-build
     // parity — server-tuned sampling beats a client-guessed 0.2 on reasoning
     // models; DeepSeek thinking ignores temperature outright).
@@ -543,6 +640,8 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
   } catch {
     /* */
   }
+  const citeSeen = opts.citeDeltaStop ? new Set<string>() : null;
+  let citeStaleTurns = 0;
   const startPrompt = session.meta.totalPromptTokens;
   const startComp = session.meta.totalCompletionTokens;
   const startCache = session.meta.totalCacheReadTokens ?? 0;
@@ -553,8 +652,14 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
   const subagentDepth = opts.subagentDepth ?? 0;
   const maxSubagentDepth = opts.maxSubagentDepth ?? defaultMaxSubagentDepth();
   const baseToolDefs = opts.toolDefinitions ?? TOOL_DEFINITIONS;
-  const toolsForMode = (): typeof baseToolDefs =>
-    filterToolsForPermissionMode(baseToolDefs, config.permissionMode);
+  const toolsForMode = (): typeof baseToolDefs => {
+    const planned = filterToolsForPermissionMode(
+      baseToolDefs,
+      config.permissionMode,
+    );
+    const ulwNow = loadUlwCycle(session.meta.id);
+    return filterToolsForUlwPhase(planned, resolveUlwPhase(ulwNow));
+  };
   let mcp =
     opts.mcp ??
     (subagentDepth === 0 ? getActiveMcpManager() ?? undefined : undefined);
@@ -714,7 +819,9 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
   // Baseline after the real user/kickoff row so this-run meters exclude
   // prior-session history but include this prompt's admits and pokes.
   const pokeBaseline = session.messages.length;
-  if (effectiveUserMessage.startsWith("## ULW armed")) {
+  if (effectiveUserMessage.startsWith("## ULW armed") || ulwCycle?.enabled) {
+    // ULW kickoff already carries state. Do not append a second 2k admit
+    // (rewrites the prefix and kills xAI cache). Fingerprint only.
     markCurrentHarnessAdmitted(session, config, gitSnap);
   } else {
     admitHarnessState(session, config);
@@ -738,17 +845,32 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
   // max_turns <= 0 means unlimited (config default is 0). A silent 200-cap when
   // the file says 0 was a production footgun for long ULW/CI runs.
   const maxTurns = resolveMaxTurns(config.maxTurns);
+  /** Last outbound request was prefix-breaking prune (for per-round metrics). */
+  let lastOutboundPruned = false;
   /** Tool schemas are sent every turn but not stored in session history. */
-  const makeChatRequest = (effortOverride?: ReasoningEffort) =>
-    buildChatRequest(config, session.messages, effortOverride, toolsForMode());
+  const makeChatRequest = (effortOverride?: ReasoningEffort) => {
+    const tools = toolsForMode();
+    const estimated = estimateRequestTokens(session.messages, {
+      toolsJsonChars: JSON.stringify(tools).length,
+    });
+    lastOutboundPruned = shouldPruneOutbound(estimated).prune;
+    return buildChatRequest(config, session.messages, effortOverride, tools, {
+      conversationId: session.meta.id,
+      estimatedTokens: estimated,
+    });
+  };
 
-  const requestTokenEstimate = (): number =>
-    estimateRequestTokens(
+  const requestTokenEstimate = (): number => {
+    const tools = toolsForMode();
+    const raw = estimateRequestTokens(session.messages, {
+      toolsJsonChars: JSON.stringify(tools).length,
+    });
+    if (!shouldPruneOutbound(raw).prune) return raw;
+    return estimateRequestTokens(
       pruneMessagesForRequest(session.messages, { spool: false }).messages,
-      {
-        toolsJsonChars: JSON.stringify(toolsForMode()).length,
-      },
+      { toolsJsonChars: JSON.stringify(tools).length },
     );
+  };
 
   /**
    * Compact history. Returns true if message count or estimated tokens dropped.
@@ -877,7 +999,7 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
       parts.push(`Goal still ACTIVE: ${goalNow.objective}`);
     }
     session.messages.push({ role: "user", content: parts.join("\n") });
-    admitHarnessState(session, config);
+    admitHarnessState(session, config, { emit: false });
     saveSession(session);
   };
 
@@ -907,12 +1029,43 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
       assertNotAborted(signal);
       turns += 1;
 
+      if (citeSeen && citeDeltaShouldPoke(citeStaleTurns)) {
+        const already = session.messages.some(
+          (m) =>
+            m.role === "user" &&
+            typeof m.content === "string" &&
+            m.content.startsWith(CITE_DELTA_POKE),
+        );
+        if (citeDeltaShouldStop(citeStaleTurns, already)) {
+          if (!(finalText || "").trim()) {
+            finalText =
+              "[Forge] Cite-delta stop — map stopped growing.";
+          }
+          break;
+        }
+        if (!already) {
+          session.messages.push({
+            role: "user",
+            content:
+              `${CITE_DELTA_POKE}.\n` +
+              `The map stopped growing. Emit the structured map now:\n` +
+              `pick: <one sentence>\n` +
+              `passed_on: <what you skipped>\n` +
+              `files:\n` +
+              `  <path>:<line>  <claim>\n` +
+              `Do not start a new search.`,
+          });
+        }
+      }
+
       // Nested children never see their turn budget unless we say so. On the
       // last allowed turn, demand the report instead of another search.
+      // Skip when cite-delta already asked for the map this turn.
       if (
         subagentDepth > 0 &&
         Number.isFinite(maxTurns) &&
-        turns === maxTurns
+        turns === maxTurns &&
+        !(citeSeen && citeDeltaShouldPoke(citeStaleTurns))
       ) {
         const already = session.messages.some(
           (m) =>
@@ -935,17 +1088,16 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
       // Live /plan|/build can flip permission mode. Do not rebuild message[0]
       // every turn — that busts the xAI prefix cache on a 12-hour run.
       {
-        const ulwOn = Boolean(
-          session.meta.ultrawork || loadUlwCycle(session.meta.id)?.enabled,
-        );
-        const systemEpoch = `${config.permissionMode}|${ulwOn ? 1 : 0}|${subagentDepth}|${config.model}`;
+        const ulwNow = loadUlwCycle(session.meta.id);
+        const ulwOn = Boolean(session.meta.ultrawork || ulwNow?.enabled);
+        const systemEpoch = `${config.permissionMode}|${ulwOn ? 1 : 0}|${subagentDepth}|${config.model}|${resolveUlwPhase(ulwNow)}`;
         if (systemEpoch !== lastSystemEpoch) {
           lastSystemEpoch = systemEpoch;
           const liveSystem = buildBaselineSystemPrompt({
             config,
             workspace,
             ultrawork: ulwOn,
-            ulwCycle: loadUlwCycle(session.meta.id),
+            ulwCycle: ulwNow,
             git: gitSnap,
             subagentDepth,
           });
@@ -1715,12 +1867,38 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
         session.meta.totalCacheReadTokens =
           (session.meta.totalCacheReadTokens ?? 0) +
           (response.usage.cache_read_input_tokens ?? 0);
+        session.meta.lastRoundPromptTokens = response.usage.prompt_tokens;
+        session.meta.lastRoundCacheReadTokens =
+          response.usage.cache_read_input_tokens ?? 0;
+        try {
+          appendProviderRoundMetrics({
+            sessionId: session.meta.id,
+            provider: String(config.provider),
+            model: config.model,
+            promptTokens: response.usage.prompt_tokens,
+            cacheReadTokens: response.usage.cache_read_input_tokens ?? 0,
+            completionTokens: response.usage.completion_tokens,
+            pruned: lastOutboundPruned,
+            turn: turns,
+          });
+        } catch {
+          /* metrics never fail the turn */
+        }
       }
 
       const assistantMsg = response.message;
       session.messages.push(assistantMsg);
       finalText = assistantMsg.content || "";
       noteAssistantTurn(session.meta.id);
+      try {
+        advanceUlwPhaseOnReading(session.meta.id, assistantMsg.content || "");
+      } catch {
+        /* */
+      }
+      if (citeSeen) {
+        const cited = citedPathsFromToolCalls(assistantMsg);
+        citeStaleTurns = noteCiteDelta(citeSeen, cited, citeStaleTurns).staleTurns;
+      }
       saveSession(session);
 
       // Cost cap after usage lands — release before more tool work / continues.
@@ -2202,6 +2380,11 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
         provider,
         proofPoke,
       });
+      try {
+        advanceUlwPhaseOnReading(session.meta.id);
+      } catch {
+        /* */
+      }
       // Tools that cooperatively return "Aborted" still leave signal.aborted set —
       // exit the loop immediately rather than starting another provider turn.
       assertNotAborted(signal);
@@ -2610,7 +2793,11 @@ function markCurrentHarnessAdmitted(
 function admitHarnessState(
   session: SessionData,
   config: ForgeConfig,
-  opts?: { suppressCounterOnly?: boolean; git?: GitSnapshot | null },
+  opts?: {
+    suppressCounterOnly?: boolean;
+    git?: GitSnapshot | null;
+    emit?: boolean;
+  },
 ): void {
   const git =
     opts && "git" in opts
@@ -2619,6 +2806,7 @@ function admitHarnessState(
   const snap = currentHarnessSnapshot(session, config, git);
   const msg = admitHarnessIfChanged(session.meta.id, snap, {
     suppressCounterOnlyChanges: opts?.suppressCounterOnly,
+    emit: opts?.emit,
   });
   if (msg) {
     session.messages.push({ role: "user", content: msg });
@@ -2743,7 +2931,10 @@ function drainSafeBoundaryMessages(
   // blocks, todo counts) is already visible to the model via re-anchors and
   // its own todo_write calls — only real changes (cycle/mandate/goal/mode)
   // earn a fresh admission message.
-  admitHarnessState(session, config, { suppressCounterOnly: true });
+  admitHarnessState(session, config, {
+    suppressCounterOnly: true,
+    emit: false,
+  });
   saveSession(session);
 }
 
@@ -3065,6 +3256,7 @@ async function prepareToolResult(opts: {
     workspace,
     config,
     mcp,
+    ulwPhase: resolveUlwPhase(loadUlwCycle(session.meta.id)),
   });
   if (perm.decision === "deny") {
     await hooks.run("PermissionDenied", {

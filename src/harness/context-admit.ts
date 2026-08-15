@@ -204,11 +204,20 @@ function countersOnlyChange(a: HarnessSnapshot, b: HarnessSnapshot): boolean {
 export function admitHarnessIfChanged(
   sessionId: string,
   snap: HarnessSnapshot,
-  opts?: { suppressCounterOnlyChanges?: boolean },
+  opts?: {
+    suppressCounterOnlyChanges?: boolean;
+    /** Update the fingerprint but do not emit a user-channel dump (cache-safe). */
+    emit?: boolean;
+  },
 ): string | null {
   const fp = fingerprintSnapshot(snap);
   const prev = lastAdmitted.get(sessionId);
   if (prev === fp) return null;
+  if (opts?.emit === false) {
+    lastAdmitted.set(sessionId, fp);
+    lastAdmittedSnap.set(sessionId, snap);
+    return null;
+  }
 
   // First admit of an idle session with no goal/ULW: skip empty noise — but
   // still surface git branch + coarse tree once (they no longer live in the

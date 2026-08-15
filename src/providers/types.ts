@@ -24,6 +24,12 @@ export interface ChatMessage {
   name?: string;
   tool_call_id?: string;
   tool_calls?: ToolCall[];
+  /**
+   * Reasoning-model thought trace (xAI `reasoning_content`). Must be
+   * replayed on the next request or the prefix cache misses. Never shown
+   * in the TUI.
+   */
+  reasoning_content?: string;
 }
 
 /** Outbound message (may include image parts after vision expand). */
@@ -47,6 +53,11 @@ export interface ChatRequest {
   temperature?: number;
   max_tokens?: number;
   stream?: boolean;
+  /**
+   * Sticky conversation id for xAI prefix cache (`x-grok-conv-id`).
+   * Same session → same shard. Other providers ignore it.
+   */
+  conversationId?: string;
   /**
    * Reasoning / thinking effort when the model supports it.
    * Sent as top-level `reasoning_effort` (and OpenRouter `reasoning.effort`).
@@ -81,6 +92,8 @@ export interface ChatResponse {
 
 export interface StreamDelta {
   content?: string;
+  /** Reasoning delta — captured for replay, not painted. */
+  reasoning_content?: string;
   tool_calls?: Array<{
     index: number;
     id?: string;

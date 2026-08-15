@@ -1,8 +1,9 @@
 /**
  * Request-time working-set prune (Grok PruningConfig analogue).
  *
- * Stored session.json is never rewritten — undo, /last, and the xAI prefix
- * cache stay intact. Only the outbound ChatRequest is slimmed.
+ * Stored session.json is never rewritten. The outbound ChatRequest is slimmed
+ * only when `shouldPruneOutbound` says so (default: ≥180k). Calling this
+ * every round rewrites the prefix and kills the xAI cache.
  *
  * Forge ULW is one user message and hundreds of assistant+tool steps, so
  * age is counted in **assistant tool-rounds**, not user turns. A user-turn
@@ -100,6 +101,7 @@ const HARNESS_USER_CLASSES: { id: string; prefix: string }[] = [
   { id: "fix", prefix: "[Forge harness — fix until green]" },
   { id: "todo", prefix: "[Forge system-reminder — TodoNudge]" },
   { id: "bg", prefix: "[Forge harness — background task " },
+  { id: "cite_delta", prefix: "[Forge] Cite-delta is zero" },
 ];
 
 const PROOF_POKE_CLASSES = new Set(["verify", "fix"]);

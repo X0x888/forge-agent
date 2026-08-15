@@ -196,4 +196,34 @@ describe("openai-compat streamed tool_call index handling", () => {
     const res = await p.chatStream(makeReq(), () => {});
     assert.equal(res.usage?.cache_read_input_tokens, 400);
   });
+
+  it("accumulates reasoning_content for prefix-cache replay (not painted)", async () => {
+    mockStream([
+      {
+        id: "chatcmpl_r",
+        model: "grok-4.6",
+        choices: [{ delta: { reasoning_content: "step " } }],
+      },
+      {
+        id: "chatcmpl_r",
+        model: "grok-4.6",
+        choices: [
+          { delta: { reasoning_content: "two", content: "hi" }, finish_reason: "stop" },
+        ],
+        usage: { prompt_tokens: 8, completion_tokens: 1, total_tokens: 9 },
+      },
+    ]);
+    const painted: string[] = [];
+    const p = new OpenAICompatProvider({
+      id: "xai",
+      baseUrl: "https://api.x.ai/v1",
+      apiKey: "sk-test",
+    });
+    const res = await p.chatStream(makeReq(), (d) => {
+      if (d.content) painted.push(d.content);
+    });
+    assert.equal(res.message.content, "hi");
+    assert.equal(res.message.reasoning_content, "step two");
+    assert.deepEqual(painted, ["hi"]);
+  });
 });

@@ -218,6 +218,30 @@ describe("/budget slash + live classify", () => {
     assert.match(r.output || "", /\/budget/);
   });
 
+  it("/cost shows last-round cache separately from the session smear", async () => {
+    const session = createSession({
+      cwd: tmp,
+      provider: "xai",
+      model: "grok-4.6",
+    });
+    session.meta.totalPromptTokens = 200_000;
+    session.meta.totalCompletionTokens = 10_000;
+    session.meta.totalCacheReadTokens = 80_000;
+    session.meta.lastRoundPromptTokens = 40_000;
+    session.meta.lastRoundCacheReadTokens = 39_600;
+    const config = {
+      ...DEFAULT_CONFIG,
+      blockingStopHooks: true,
+      compatClaudeHooks: false,
+      compatCursorHooks: false,
+    };
+    const hooks = new HookRunner(config, tmp);
+    const r = await handleSlash("/cost", { session, config, hooks });
+    assert.equal(r.handled, true);
+    assert.match(r.output || "", /session smear/);
+    assert.match(r.output || "", /last round:.*99%/);
+  });
+
   it("effective config snap includes cost budget", () => {
     const session = createSession({
       cwd: tmp,

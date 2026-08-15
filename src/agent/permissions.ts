@@ -84,6 +84,11 @@ export interface PermissionRequest {
   userInitiated?: boolean;
   /** Live MCP registry — used so annotated tools beat the name heuristic. */
   mcp?: McpManager;
+  /**
+   * ULW evaluate-class scout. Enforced even under yolo / acceptEdits —
+   * hiding tools from the schema is not enough (the model still knows the names).
+   */
+  ulwPhase?: "orient" | "ship";
 }
 
 /**
@@ -202,6 +207,69 @@ export class PermissionGate {
   }
 
   /**
+   * Evaluate-class Wave 1 scout. Writes / spawn / mutating bash hard-deny.
+   * Read-only bash and research tools fall through to the rest of the gate.
+   */
+  private evaluateUlwOrient(
+    toolName: string,
+    toolInput: Record<string, unknown>,
+    req: PermissionRequest,
+  ): PermissionResult | null {
+    if (toolName === "bash" || toolName === "run_terminal_command") {
+      if (this.isReadOnlyShell(String(toolInput.command || ""))) {
+        return null;
+      }
+      return {
+        decision: "deny",
+        reason:
+          "ulw_orient: bash mutations denied — write the reading first; then you get edits",
+        rule: "ulw_orient",
+      };
+    }
+    if (
+      toolName === "spawn_subagent" ||
+      toolName === "Task" ||
+      toolName === "task"
+    ) {
+      return {
+        decision: "deny",
+        reason:
+          "ulw_orient: spawn_subagent denied — write the reading first (no spawn during scout)",
+        rule: "ulw_orient",
+      };
+    }
+    if (WRITE_TOOLS.has(toolName) || toolName === "kill_task") {
+      return {
+        decision: "deny",
+        reason:
+          "ulw_orient: edits denied — write the reading first; then you get edits",
+        rule: "ulw_orient",
+      };
+    }
+    if (
+      toolName === "call_mcp" ||
+      toolName === "mcp_call" ||
+      toolName === "use_mcp"
+    ) {
+      const q = String(
+        toolInput.tool_name || toolInput.name || toolInput.tool || "",
+      );
+      const looksRead = req.mcp
+        ? req.mcp.isReadOnlyTool(q)
+        : mcpToolNameLooksReadOnly(q);
+      if (!looksRead) {
+        return {
+          decision: "deny",
+          reason:
+            "ulw_orient: call_mcp denied for non-read-only tools — write the reading first",
+          rule: "ulw_orient",
+        };
+      }
+    }
+    return null;
+  }
+
+  /**
    * web_fetch with allow_local can reach loopback — not a free read-only tool.
    * Requires allow rule, interactive approval, pattern-always, or YOLO.
    * Session-tool alone is intentionally insufficient.
@@ -288,6 +356,12 @@ export class PermissionGate {
           rule: rulesEval.deny.rule.pattern,
         };
       }
+    }
+
+    // ULW orient: research-only, even under yolo / acceptEdits.
+    if (req.ulwPhase === "orient") {
+      const orientDeny = this.evaluateUlwOrient(toolName, toolInput, req);
+      if (orientDeny) return orientDeny;
     }
 
     // 4. YOLO

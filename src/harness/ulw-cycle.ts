@@ -122,6 +122,11 @@ export interface UlwCycleState {
   judgmentRequired?: boolean;
   /** Times we bounced Stop for a missing reading (capped, never a trap). */
   judgmentDemands?: number;
+  /**
+   * evaluate-class Wave 1: `orient` hides spawn/edits until a reading exists.
+   * Absent on old sidecars — infer from judgmentRequired.
+   */
+  phase?: "orient" | "ship";
   /** Open todo count snapshot at previous wave boundary (for todoProgress). */
   lastOpenTodoCount?: number;
   /**
@@ -478,6 +483,9 @@ function appendWaveRecord(
   },
 ): UlwWaveRecord {
   s.wave += 1;
+  // A stamped wave means the scout (if any) already named the next ships.
+  s.phase = "ship";
+  s.judgmentRequired = false;
   const rec: UlwWaveRecord = {
     wave: s.wave,
     editDelta: opts.editDelta,
@@ -522,9 +530,52 @@ export interface MidWaveStampResult {
 
 /** Clip / one-line / leftover-dump ships — a class that never ends if we "finish siblings". */
 export function isPolishClassShip(text: string): boolean {
-  return /one TTY row|one-line|one line chrome|blank-line|sandwich|leftover dump|leftover chrome|leftover (?:first-thing|after-turn|human-facing)|clip(?:ped|ping)? (?:to |the |banner|Δ|picker|row)|hard-clip|drop the extra|scannable line|last-verify dump|implementation-note|quieter (?:copy|chip|label|title|dump)|lowercase (?:label|title|chip|copy)/i.test(
+  return /one TTY row|one-line|one line chrome|blank-line|sandwich|leftover dump|leftover chrome|leftover (?:first-thing|after-turn|human-facing)|clip(?:ped|ping)? (?:to |the |banner|Δ|picker|row)|hard-clip|drop the extra|scannable line|last-verify dump|implementation-note|quieter (?:copy|chip|label|title|dump)|lowercase (?:label|title|chip|copy)|dock owns identity|banner slim|docked (?:forge|prompt) flags|dock overflow|drop provider\/model|identity strip/i.test(
     text || "",
   );
+}
+
+export type UlwPhase = "orient" | "ship";
+
+export function resolveUlwPhase(s: UlwCycleState | null | undefined): UlwPhase {
+  if (!s?.enabled) return "ship";
+  // Later waves never re-scout — the reading already named the next ships.
+  if ((s.wave ?? 0) >= 1) return "ship";
+  if (s.phase === "orient" || s.phase === "ship") return s.phase;
+  return s.judgmentRequired ? "orient" : "ship";
+}
+
+/** True when evaluate-class should skip the scout (reading exists or a wave already stamped). */
+export function shouldSkipOrient(
+  s: UlwCycleState | null | undefined,
+  sessionId?: string,
+): boolean {
+  if (!s?.enabled) return false;
+  // A stamped wave already named the next ships — do not re-scout.
+  if ((s.wave ?? 0) >= 1) return true;
+  if (sessionId) {
+    try {
+      if (hasMandateJudgment(sessionId)) return true;
+    } catch {
+      /* */
+    }
+  }
+  return false;
+}
+
+/** Flip orient → ship once a written reading exists. */
+export function advanceUlwPhaseOnReading(
+  sessionId: string,
+  closer?: string,
+): boolean {
+  const s = loadUlwCycle(sessionId);
+  if (!s?.enabled) return false;
+  if (resolveUlwPhase(s) !== "orient") return false;
+  if (!hasMandateJudgment(sessionId, closer)) return false;
+  s.phase = "ship";
+  s.judgmentRequired = false;
+  saveUlwCycle(s);
+  return true;
 }
 
 const POLISH_ADVISORY_STREAK = 3;
@@ -673,6 +724,7 @@ export function maybeStampUlwWave(opts: {
 
   if (s.judgmentRequired && hasMandateJudgment(opts.sessionId, opts.lastAssistantMessage)) {
     s.judgmentRequired = false;
+    s.phase = "ship";
   }
 
   // Declared ship with real progress: this is a work unit. Capped ULW
@@ -778,6 +830,7 @@ export function maybeStampUlwWave(opts: {
     saveUlwCycle(s);
     if ((s.judgmentDemands ?? 0) >= MAX_JUDGMENT_DEMANDS) {
       s.judgmentRequired = false;
+      s.phase = "ship";
       saveUlwCycle(s);
     } else {
       return {
@@ -920,6 +973,9 @@ export function loadUlwCycle(sessionId: string): UlwCycleState | null {
     !Number.isFinite(raw.judgmentDemands)
   ) {
     raw.judgmentDemands = 0;
+  }
+  if (raw.phase !== "orient" && raw.phase !== "ship") {
+    raw.phase = raw.judgmentRequired ? "orient" : "ship";
   }
   // Back-compat: older sidecars omit diff-fingerprint churn tracking
   if (!Array.isArray(raw.seenDiffFps)) raw.seenDiffFps = [];
@@ -1185,8 +1241,19 @@ export function armUlwCycle(
     proofDemands: 0,
     evidenceNudges: 0,
     backlogRequired: broad,
-    judgmentRequired: isEvaluateClassMandate(cleanMandate),
+    judgmentRequired: (() => {
+      const evaluate = isEvaluateClassMandate(cleanMandate);
+      if (!evaluate) return false;
+      if (prev?.enabled && shouldSkipOrient(prev, sessionId)) return false;
+      return true;
+    })(),
     judgmentDemands: 0,
+    phase: (() => {
+      const evaluate = isEvaluateClassMandate(cleanMandate);
+      if (!evaluate) return "ship";
+      if (prev?.enabled && shouldSkipOrient(prev, sessionId)) return "ship";
+      return "orient";
+    })(),
     lastOpenTodoCount: undefined,
     startedAt: prev?.enabled ? prev.startedAt : nowIso(),
     updatedAt: nowIso(),
@@ -1264,7 +1331,14 @@ export function adoptUlwMandate(
   s.expandedMandate = expanded;
   s.softPrompt = soft;
   s.backlogRequired = isBroadMandate(next);
-  s.judgmentRequired = isEvaluateClassMandate(next);
+  const evaluate = isEvaluateClassMandate(next);
+  if (evaluate && !shouldSkipOrient(s, sessionId)) {
+    s.judgmentRequired = true;
+    s.phase = "orient";
+  } else {
+    s.judgmentRequired = false;
+    s.phase = "ship";
+  }
   s.judgmentDemands = 0;
   if (opts?.cwd && !s.lastDiffFp) {
     try {
@@ -1708,6 +1782,7 @@ export function evaluateUlwAtStop(opts: {
     }
     if (s.judgmentRequired && hasMandateJudgment(opts.sessionId, msg)) {
       s.judgmentRequired = false;
+      s.phase = "ship";
     }
 
     // Already at/over cap (e.g. user lowered max_waves mid-run) → force LAST now.

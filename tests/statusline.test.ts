@@ -591,6 +591,41 @@ describe("statusline", () => {
     assert.match(line, /ctx /);
   });
 
+  it("dock paints last-round cache ratio after 8k prompt", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-sl-cache-"));
+    process.env.FORGE_HOME = tmp;
+    const s = createSession({ cwd: tmp, provider: "xai", model: "grok-4.6" });
+    s.meta.totalPromptTokens = 200_000;
+    s.meta.totalCacheReadTokens = 80_000;
+    s.meta.lastRoundPromptTokens = 40_000;
+    s.meta.lastRoundCacheReadTokens = 39_600;
+    const snap = sessionToSnapshot(s, { windowTokens: 500_000 });
+    assert.ok(snap.tokens.cacheRatio != null);
+    assert.ok(Math.abs((snap.tokens.cacheRatio ?? 0) - 0.99) < 0.01);
+    assert.equal(snap.tokens.cacheRatioLive, true);
+    const hud = renderHud([snap], { plain: true, width: 160 });
+    assert.match(hud, /cache 99%/);
+    const config = {
+      ...DEFAULT_CONFIG,
+      provider: "xai",
+      model: "grok-4.6",
+      contextWindow: 500_000,
+    } as ForgeConfig;
+    const auth: ResolvedAuth = {
+      provider: "xai",
+      method: "subscription",
+      token: "t",
+      accountId: "xai:test",
+      accountLabel: "sub:test@example.com",
+    };
+    const line = renderBottomStatusLine(
+      { config, session: s, auth },
+      undefined,
+      { width: 160, plain: true },
+    );
+    assert.match(line, /cache 99%/);
+  });
+
   it("narrow dock drops brand before ULW/YOLO/budget", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-sl-dock-narrow-"));
     process.env.FORGE_HOME = tmp;

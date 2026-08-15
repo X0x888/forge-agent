@@ -299,6 +299,8 @@ export {
   maybeStampUlwWave,
   isDeclaredWaveClose,
   isPolishClassShip,
+  resolveUlwPhase,
+  shouldSkipOrient,
   isSoftPrompt,
   isResumeFollowUp,
   isPlaceholderMandate,
@@ -758,6 +760,26 @@ export {
   HARNESS_USER_STUB,
   REQUEST_PRUNE_OMITTED,
 } from "./session/request-prune.js";
+export {
+  X_GROK_CONV_ID,
+  REQUEST_PRUNE_AT_DEFAULT,
+  grokConvIdHeaders,
+  cacheHitRatio,
+  formatCacheRatio,
+  sessionCacheRatio,
+  shouldPruneOutbound,
+  extractReasoningContent,
+} from "./session/prompt-cache.js";
+export {
+  parseExploreMap,
+  formatExploreMap,
+  rememberExploreMap,
+  lookupExploreMapFile,
+  normalizeExploreMaps,
+  exploreMapWindow,
+  noteCiteDelta,
+  citeDeltaShouldStop,
+} from "./session/explore-map.js";
 export {
   storeNeedsCheckpoint,
   splitInFlightTail,

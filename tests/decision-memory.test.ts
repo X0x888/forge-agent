@@ -325,6 +325,33 @@ Please comprehensively audit and improve this app:
     clearAdmittedFingerprints(sid);
   });
 
+  it("emit:false updates the fingerprint without a user-channel dump", async () => {
+    const { snapshotHarness, admitHarnessIfChanged, clearAdmittedFingerprints } =
+      await import("../src/harness/context-admit.js");
+    const sid = "sess-admit-silent";
+    fs.mkdirSync(path.join(home, "sessions", sid), { recursive: true });
+    clearAdmittedFingerprints(sid);
+    const ulw = {
+      enabled: true,
+      cycle: 1 as const,
+      wave: 0,
+      maxWaves: 4,
+      blocks: 0,
+      mandate: "evaluate then improve",
+      softPrompt: true,
+    };
+    const snap = snapshotHarness({
+      ulw: ulw as never,
+      goal: null,
+      todos: [],
+      permissionMode: "default",
+      sessionId: sid,
+    });
+    assert.equal(admitHarnessIfChanged(sid, snap, { emit: false }), null);
+    assert.equal(admitHarnessIfChanged(sid, snap), null);
+    clearAdmittedFingerprints(sid);
+  });
+
   it("copyDecisionMemory clones to fork id", () => {
     const a = "sess-a";
     const b = "sess-b";

@@ -46,6 +46,11 @@ import {
   formatSubagentTokensHeader,
   resolveChildUsage,
 } from "../session/subagent-usage.js";
+import {
+  formatExploreMap,
+  parseExploreMap,
+  rememberExploreMap,
+} from "../session/explore-map.js";
 
 export type SubagentType = "general-purpose" | "explore" | "plan";
 export type SubagentCapability = "full" | "read-only";
@@ -515,6 +520,7 @@ export async function runSubagent(
       mcp: isolation === "worktree" ? undefined : ctx.mcp,
       lsp: isolation === "worktree" ? undefined : ctx.lsp,
       disableHarnessAutoArm: true,
+      citeDeltaStop: subagentType === "explore",
     });
   } catch (err) {
     runError = (err as Error).message;
@@ -610,6 +616,22 @@ export async function runSubagent(
   const keepSession =
     process.env.FORGE_SUBAGENT_KEEP === "1" ||
     process.env.FORGE_SUBAGENT_KEEP === "true";
+
+  // Collapse the essay to a map before land is appended so the land
+  // summary is not thrown away.
+  const map = parseExploreMap(text);
+  if (map) {
+    rememberExploreMap(ctx.parentSession.meta, {
+      ...map,
+      childSessionId: child.meta.id,
+    });
+    text = formatExploreMap(map);
+    try {
+      saveSession(ctx.parentSession);
+    } catch {
+      /* */
+    }
+  }
 
   // Worktree land: capture diff and apply into the parent workspace by default
   // so isolation=worktree is not a dead-end. Keep on conflict / KEEP_WORKTREE /
@@ -759,7 +781,15 @@ function buildSubagentPrompt(opts: {
     opts.subagentType === "plan"
       ? "Deliver a concrete implementation plan (goal, steps, risks, verification). Do not implement."
       : opts.subagentType === "explore"
-        ? "Explore the codebase and return structured findings with file:line citations."
+        ? [
+            "You are a file-search specialist. Grep/glob/read only.",
+            "Return a short map, not an essay:",
+            "pick: <one sentence>",
+            "passed_on: <what you skipped>",
+            "files:",
+            "  <path>:<line>  <claim>",
+            "Stop when new searches cite no new paths.",
+          ].join("\n")
         : "Implement or investigate as asked. Return a concise final summary of what you found/did and any remaining risks.",
   ];
   if (opts.isolation === "worktree" && opts.worktreePath) {

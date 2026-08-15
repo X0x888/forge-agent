@@ -11,6 +11,12 @@ import { isFalsy } from "../../util/bool.js";
 import { REQUEST_PRUNE_OMITTED } from "../../session/request-prune.js";
 import type { SessionData } from "../../session/session.js";
 import type { ChatMessage } from "../../providers/types.js";
+import {
+  exploreMapWindow,
+  formatExploreMapDeref,
+  lookupExploreMapFile,
+  readHasExplicitWindow,
+} from "../../session/explore-map.js";
 
 function noteRead(
   ctx: ToolContext,
@@ -363,7 +369,26 @@ export async function toolRead(
     };
   }
 
-  const unchanged = maybeUnchangedReadStub(args, ctx, filePath, stat);
+  // Mapped paths win over the unchanged-full-read stub — the parent
+  // should get the claim + cited window, not "Unchanged since last read".
+  let derefPrefix = "";
+  let readArgs = args;
+  if (ctx.session && !readHasExplicitWindow(args)) {
+    const rel = displayRelPath(ctx.workspace, filePath);
+    const hit =
+      lookupExploreMapFile(ctx.session.meta, rel) ||
+      lookupExploreMapFile(ctx.session.meta, filePath);
+    if (hit) {
+      if (hit.file.line == null) {
+        return { output: formatExploreMapDeref(hit) };
+      }
+      const win = exploreMapWindow(hit.file.line);
+      derefPrefix = formatExploreMapDeref(hit, { autoWindow: true }) + "\n\n";
+      readArgs = { ...args, offset: win.offset, limit: win.limit };
+    }
+  }
+
+  const unchanged = maybeUnchangedReadStub(readArgs, ctx, filePath, stat);
   if (unchanged) return unchanged;
 
   // Huge files: stream only the requested window — never materialize a
@@ -375,7 +400,7 @@ export async function toolRead(
         isError: true,
       };
     }
-    const parsed = parseOffsetLimit(args);
+    const parsed = parseOffsetLimit(readArgs);
     if (typeof parsed === "string") {
       return { output: parsed, isError: true };
     }
@@ -388,10 +413,13 @@ export async function toolRead(
     );
     if (slice.length === 0) {
       if (complete && seen === 0) {
-        return { output: `File: ${rel} (empty file — 0 lines${largeHint})` };
+        return {
+          output: derefPrefix + `File: ${rel} (empty file — 0 lines${largeHint})`,
+        };
       }
       return {
         output:
+          derefPrefix +
           `File: ${rel}${complete ? ` (${seen} lines)` : ""}\n` +
           `Offset ${parsed.offset} is past end of file${complete ? ` (last line ${seen})` : ""}. ` +
           `Use offset=1${largeHint}.`,
@@ -415,11 +443,11 @@ export async function toolRead(
       ctx,
       filePath,
       stat,
-      isFullFileReadArgs(args) && complete
+      isFullFileReadArgs(readArgs) && complete
         ? { fullReadLines: seen }
         : undefined,
     );
-    return { output: managed.text };
+    return { output: derefPrefix + managed.text };
   }
 
   const buf = await fsp.readFile(filePath);
@@ -434,7 +462,7 @@ export async function toolRead(
   // "" and files that are only a trailing feel empty to experts; keep a single
   // "" split as one blank line when content is non-empty ("\n" → 2 lines).
   const lines = content === "" ? [] : content.split("\n");
-  const parsed = parseOffsetLimit(args);
+  const parsed = parseOffsetLimit(readArgs);
   if (typeof parsed === "string") {
     return { output: parsed, isError: true };
   }
@@ -467,17 +495,18 @@ export async function toolRead(
       ctx,
       filePath,
       stat,
-      isFullFileReadArgs(args) && lines.length === 0
+      isFullFileReadArgs(readArgs) && lines.length === 0
         ? { fullReadLines: 0 }
         : undefined,
     );
     if (lines.length === 0) {
       return {
-        output: `File: ${rel} (empty file — 0 lines${largeHint})`,
+        output: derefPrefix + `File: ${rel} (empty file — 0 lines${largeHint})`,
       };
     }
     return {
       output:
+        derefPrefix +
         `File: ${rel} (${lines.length} lines)\n` +
         `Offset ${offset} is past end of file (last line ${lines.length}). ` +
         `Use offset=1 or offset<=${lines.length}${largeHint}.`,
@@ -501,7 +530,7 @@ export async function toolRead(
     ctx,
     filePath,
     stat,
-    isFullFileReadArgs(args) ? { fullReadLines: lines.length } : undefined,
+    isFullFileReadArgs(readArgs) ? { fullReadLines: lines.length } : undefined,
   );
-  return { output: managed.text };
+  return { output: derefPrefix + managed.text };
 }
