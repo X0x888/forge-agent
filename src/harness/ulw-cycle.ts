@@ -1624,6 +1624,32 @@ export function evaluateUlwAtStop(opts: {
       thisWaveProven ||
       (s.wave >= 1 && Boolean(opts.verificationPassed));
     if (evidence && hasReading && waveOk) {
+      // Stamp this closing unit so /status and auto-commit are not w=0/N.
+      const sig = waveProgressSig(opts.editCount, fp);
+      const alreadyStamped = Boolean(s.lastWaveSig && s.lastWaveSig === sig);
+      if (!alreadyStamped && (editDelta > 0 || thisWaveProven)) {
+        const prevOpen =
+          s.lastOpenTodoCount != null ? s.lastOpenTodoCount : opts.openTodoCount;
+        const closer = closerText(opts.sessionId, msg);
+        appendWaveRecord(s, {
+          sessionId: opts.sessionId,
+          editDelta,
+          netDiff: classifyNetDiff(
+            fp,
+            diffChanged,
+            diffRevisit,
+            firstObservation,
+            editDelta,
+          ),
+          proof:
+            thisWaveProven || detectWaveProof(msg, opts.verificationPassed),
+          todoProgress: Math.max(0, prevOpen - opts.openTodoCount),
+          summary: summarizeWave(closer, opts.sessionId),
+        });
+        s.lastWaveSig = sig;
+        s.lastProgressEditCount = opts.editCount;
+        s.lastOpenTodoCount = opts.openTodoCount;
+      }
       s.cycle = 0;
       s.enabled = false;
       saveUlwCycle(s);

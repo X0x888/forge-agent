@@ -632,6 +632,9 @@ describe("ulw cycle", () => {
     assert.equal(d.block, false);
     assert.equal(d.lastCycleReleased, true);
     assert.equal(loadUlwCycle(sid)?.enabled, false);
+    const closed = loadUlwCycle(sid);
+    assert.ok((closed?.waves ?? []).length >= 1, "ceiling release must stamp the closing wave");
+    assert.ok((closed?.wave ?? 0) >= 1);
   });
 
   it("cycle=1 does not treat a red check as Cycle complete evidence", () => {
