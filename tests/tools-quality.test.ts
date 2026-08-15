@@ -93,8 +93,9 @@ describe("edit-match", () => {
     ].join("\n");
     const miss = "export function greett(name: string) {"; // typo in symbol
     const hint = editMissHint(content, miss);
-    assert.match(hint, /Closest lines|re-read/i);
+    assert.match(hint, /Closest current lines/);
     assert.match(hint, /greet/);
+    assert.doesNotMatch(hint, /Tips: re-read the file \(read_file\)/);
     assert.doesNotMatch(hint, /Did you mean one of these\?\n\s+\//); // path-style
     assert.doesNotMatch(hint, /workspace root is/);
   });
@@ -689,8 +690,38 @@ describe("executeTool integration", () => {
     );
     assert.equal(e.isError, undefined, e.output);
     assert.match(e.output, /line_trimmed|Edited/);
+    assert.doesNotMatch(e.output, /--- a\//);
+    assert.doesNotMatch(e.output, /diff truncated/);
+    assert.ok(e.diff, "TUI diff stays on ToolResult.diff");
+    assert.match(e.diff!, /--- a\//);
     const body = await fsp.readFile(file, "utf8");
     assert.match(body, /return 2/);
+  });
+
+  it("FORGE_EDIT_RECEIPT=legacy embeds shortDiff in output", async () => {
+    const prev = process.env.FORGE_EDIT_RECEIPT;
+    process.env.FORGE_EDIT_RECEIPT = "legacy";
+    try {
+      const ws = path.join(tmpRoot, "ws-edit-legacy");
+      await fsp.mkdir(ws, { recursive: true });
+      const file = path.join(ws, "m.ts");
+      await fsp.writeFile(file, "const x = 1;\n");
+      const e = await executeTool(
+        "search_replace",
+        JSON.stringify({
+          path: "m.ts",
+          old_string: "const x = 1;",
+          new_string: "const x = 2;",
+        }),
+        { workspace: ws, sandbox: "off" as const },
+      );
+      assert.equal(e.isError, undefined, e.output);
+      assert.match(e.output, /--- a\//);
+      assert.ok(e.diff?.startsWith("--- a/"));
+    } finally {
+      if (prev === undefined) delete process.env.FORGE_EDIT_RECEIPT;
+      else process.env.FORGE_EDIT_RECEIPT = prev;
+    }
   });
 
   it("grep finds content", async () => {
@@ -777,6 +808,8 @@ describe("executeTool integration", () => {
     assert.equal(w.isError, undefined, w.output);
     assert.match(w.output, /Wrote nested\/deep\/file\.ts/);
     assert.match(w.output, /created parent directories/i);
+    assert.doesNotMatch(w.output, /--- a\//);
+    assert.ok(w.diff);
     const body = await fsp.readFile(
       path.join(ws, "nested", "deep", "file.ts"),
       "utf8",
@@ -1358,6 +1391,22 @@ describe("stripReadFileLinePrefixes", () => {
     const r = stripReadFileLinePrefixes(raw);
     assert.equal(r.stripped, false);
     assert.equal(r.text, raw);
+  });
+
+  it("does not strip non-contiguous numbered runs", async () => {
+    const { stripReadFileLinePrefixes } = await import(
+      "../src/agent/tools/edit-match.js"
+    );
+    const twoWindows = "     1|foo\n    18|bar";
+    const gap = stripReadFileLinePrefixes(twoWindows);
+    assert.equal(gap.stripped, false);
+    const withGap = "     1|foo\n… 5 lines not shown …\n     7|bar";
+    const g = stripReadFileLinePrefixes(withGap);
+    assert.equal(g.stripped, false);
+    const header = "Edited a.ts (2 lines)\n     1|foo\n     2|bar";
+    assert.equal(stripReadFileLinePrefixes(header).stripped, false);
+    const dec = "     3|c\n     2|b";
+    assert.equal(stripReadFileLinePrefixes(dec).stripped, false);
   });
 
   it("does not strip single-line unpadded 1|pipe data", async () => {

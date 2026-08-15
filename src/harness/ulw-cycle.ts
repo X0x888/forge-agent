@@ -1129,7 +1129,7 @@ export function expandUlwMandate(mandate: string): { expanded: string; soft: boo
       `- Skipping the mandate's first verb (evaluate/audit) to ship a tiny adjacent polish.`,
       `- Low-leverage churn or token-burning busywork while harder work remains.`,
       `- Grinding a polish class (clip every chrome line, leftover-dump hunting) after the reading's one ship.`,
-      `- Re-reading a file after search_replace to check truncation — trust \`Edited path (N lines)\`.`,
+      `- Re-reading a file after a successful edit to confirm the write — use the numbered receipt window.`,
       `- Subagent spam, infinite research without shipping, gold-plating without proof.`,
       `- "Shall I continue?" — cycle / max_waves answers that.`,
     ].join("\n"),

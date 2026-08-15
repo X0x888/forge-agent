@@ -12,6 +12,7 @@ export type ToolTranscriptEnd = {
   args?: Record<string, unknown>;
   output?: string;
   diff?: string;
+  stats?: { added: number; removed: number | null };
   width?: number;
 };
 

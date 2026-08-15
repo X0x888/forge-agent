@@ -31,6 +31,7 @@ export function stripReadFileLinePrefixes(text: string): {
   // Need at least one numbered content line.
   let numbered = 0;
   let padded = 0; // leading spaces before digits (read_file padStart(6))
+  const nums: number[] = [];
   const out: string[] = [];
   for (const line of lines) {
     if (line === "") {
@@ -46,6 +47,7 @@ export function stripReadFileLinePrefixes(text: string): {
     }
     numbered += 1;
     if ((m[1] || "").length > 0) padded += 1;
+    nums.push(Number(m[2]));
     out.push(m[3]!);
   }
   if (numbered < 1) return { text, stripped: false };
@@ -53,6 +55,11 @@ export function stripReadFileLinePrefixes(text: string): {
   // require either multi-line numbered paste or padStart-style leading spaces.
   if (numbered === 1 && padded === 0) {
     return { text, stripped: false };
+  }
+  for (let i = 1; i < nums.length; i++) {
+    if (nums[i] !== nums[i - 1]! + 1) {
+      return { text, stripped: false };
+    }
   }
   return { text: out.join("\n"), stripped: true };
 }
@@ -291,17 +298,40 @@ export function locateEdit(
  * Content-oriented guidance when search_replace cannot locate old_string.
  * (Path typo hints are wrong here — the file already exists.)
  */
+function numberedPasteGapNote(oldString: string): string | undefined {
+  if (
+    /\u2026 \d+ lines not shown \u2026/.test(oldString) ||
+    /\.\.\. \d+ lines not shown \.\.\./.test(oldString)
+  ) {
+    return "copied lines are not a contiguous run (gap marker); copy one window only.";
+  }
+  const nums: number[] = [];
+  for (const line of oldString.split("\n")) {
+    if (line === "") continue;
+    const m = line.match(/^(\s*)(\d+)\|(.*)$/);
+    if (!m) return undefined;
+    nums.push(Number(m[2]));
+  }
+  for (let i = 1; i < nums.length; i++) {
+    if (nums[i] !== nums[i - 1]! + 1) {
+      return `copied lines are not a contiguous run (gap at L${nums[i - 1]}→L${nums[i]}); copy one window only.`;
+    }
+  }
+  return undefined;
+}
+
 export function editMissHint(content: string, oldString: string): string {
   if (content.length === 0) {
     return [
       "File is empty — search_replace needs existing text to match.",
-      "Use write_file to create content, or re-read to confirm the path.",
+      "Use write_file to create content, or confirm the path.",
     ].join("\n");
   }
   const parts: string[] = [
-    "Tips: re-read the file (read_file), copy an exact snippet including indentation,",
-    "add surrounding context lines to disambiguate, or use replace_all when every match should change.",
+    "Closest current lines (N| prefixes are not file text — copy a contiguous numbered run):",
   ];
+  const gapNote = numberedPasteGapNote(oldString);
+  if (gapNote) parts.push(gapNote);
   // Mixed/partial read_file paste (not fully stripped) is a common miss cause.
   if (
     oldString.includes("|") &&
@@ -316,6 +346,7 @@ export function editMissHint(content: string, oldString: string): string {
   const fileLines = content.split("\n");
   const searchLines = oldString.split("\n").filter((l, i, a) => !(i === a.length - 1 && l === ""));
   if (!searchLines.length || !fileLines.length) {
+    parts.push("Add surrounding context so old_string is unique, or set replace_all.");
     return parts.join("\n");
   }
 
@@ -338,15 +369,16 @@ export function editMissHint(content: string, oldString: string): string {
       if (score >= 0.55) scored.push({ line: i + 1, text, score });
     }
     scored.sort((x, y) => y.score - x.score || x.line - y.line);
-    const top = scored.slice(0, 3);
-    if (top.length) {
-      parts.push("Closest lines in file (re-read and copy exact text):");
-      for (const s of top) {
-        const preview = s.text.length > 120 ? s.text.slice(0, 117) + "…" : s.text;
-        parts.push(`  L${s.line}: ${preview}`);
+    const best = scored[0];
+    if (best) {
+      const start = Math.max(1, best.line - 8);
+      const end = Math.min(fileLines.length, best.line + 8);
+      for (let ln = start; ln <= end; ln++) {
+        parts.push(`${String(ln).padStart(6)}|${fileLines[ln - 1] ?? ""}`);
       }
     }
   }
+  parts.push("Add surrounding context so old_string is unique, or set replace_all.");
 
   // Multi-line: note first/last anchors if present alone
   if (searchLines.length >= 2) {

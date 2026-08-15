@@ -215,7 +215,7 @@ function profileBlock(profile: PromptProfile): string[] {
       `- State your reading first (one line) on multi-step work, then proceed — do not wait for confirmation.`,
       `- Finish, don't hand off. Never "shall I continue?" / "let me know if…".`,
       `- Finish the **defect** class (callers, tests, dependents). Do not grind leftover chrome (clip/one-line/sandwich) as a class — two is enough, then change surface or stop.`,
-      `- After \`search_replace\`, trust \`Edited path (N lines)\`. Do not wc -l or re-read the whole file to check truncation unless N is implausibly small.`,
+      `- After a successful search_replace / write_file / apply_patch, the numbered window is current file text (same N| prefixes as read_file — they are not part of the file). Copy the next old_string from it. Do not re-read to confirm the write.`,
       `- Pause only for real external blockers (credentials, destructive shared-state, uninterpretable foreign work).`,
     ];
   }

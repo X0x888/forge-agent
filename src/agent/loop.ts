@@ -200,6 +200,7 @@ export interface LoopEvents {
       ms: number;
       bytes: number;
       diff?: string;
+      stats?: { added: number; removed: number | null };
       output?: string;
       args?: Record<string, unknown>;
     },
@@ -3318,7 +3319,8 @@ async function prepareToolResult(opts: {
       bytes,
       diff: result.isError
         ? undefined
-        : extractDiffFromToolOutput(name, output),
+        : (result.diff ?? extractDiffFromToolOutput(name, output)),
+      stats: result.isError ? undefined : result.stats,
       output,
       args: toolInput,
     });

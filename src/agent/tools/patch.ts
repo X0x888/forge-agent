@@ -267,6 +267,18 @@ function parseUpdate(
   return { chunks, next: index };
 }
 
+function nearbyNumbered(lines: string[], around0: number): string {
+  if (!lines.length) return "(empty file)";
+  const center = Math.min(Math.max(around0, 0), lines.length - 1);
+  const start = Math.max(1, center + 1 - 8);
+  const end = Math.min(lines.length, center + 1 + 8);
+  const out: string[] = [];
+  for (let ln = start; ln <= end; ln++) {
+    out.push(`${String(ln).padStart(6)}|${lines[ln - 1] ?? ""}`);
+  }
+  return out.join("\n");
+}
+
 function computeReplacements(
   lines: string[],
   pathLabel: string,
@@ -280,7 +292,8 @@ function computeReplacements(
       if (context === -1) {
         throw new Error(
           `Failed to find context '${chunk.changeContext}' in ${pathLabel}\n` +
-            `Tip: re-read the file and copy an exact nearby line for @@ context.`,
+            `Current nearby lines:\n${nearbyNumbered(lines, lineIndex)}\n` +
+            `Copy a contiguous numbered run into the @@ hunk, or use search_replace for a small edit.`,
         );
       }
       lineIndex = context + 1;
@@ -299,9 +312,11 @@ function computeReplacements(
       found = seek(lines, oldLines, lineIndex, chunk.endOfFile);
     }
     if (found === -1) {
+      const dump = chunk.oldLines.slice(0, 20).join("\n");
       throw new Error(
-        `Failed to find expected lines in ${pathLabel}:\n${chunk.oldLines.join("\n")}\n` +
-          `Tip: re-read ${pathLabel} and refresh the @@ hunk from current contents (or use search_replace for a small edit).`,
+        `Failed to find expected lines in ${pathLabel}:\n${dump}\n` +
+          `Current nearby lines:\n${nearbyNumbered(lines, lineIndex)}\n` +
+          `Copy a contiguous numbered run into the @@ hunk, or use search_replace for a small edit.`,
       );
     }
     replacements.push([found, oldLines.length, [...newLines]]);

@@ -45,6 +45,20 @@ describe("parsePatch", () => {
     const next = applyUpdateChunks(original, "f.txt", chunks);
     assert.equal(next, "a\nchanged\nb\n");
   });
+
+  it("miss tips show numbered nearby lines, not re-read", () => {
+    assert.throws(
+      () =>
+        applyUpdateChunks("a\nline2\nb\n", "f.txt", [
+          { oldLines: ["nope"], newLines: ["x"] },
+        ]),
+      (err: Error) => {
+        assert.match(err.message, /Current nearby lines/);
+        assert.doesNotMatch(err.message, /Tip: re-read/);
+        return true;
+      },
+    );
+  });
 });
 
 describe("toolApplyPatch", () => {
@@ -79,6 +93,9 @@ describe("toolApplyPatch", () => {
     );
     assert.equal(result.isError, undefined);
     assert.match(result.output, /Applied patch/);
+    assert.doesNotMatch(result.output, /--- a\//);
+    assert.doesNotMatch(result.output, /Tip: re-read/);
+    assert.match(result.output, /A nested\/new\.txt \(2 lines\)/);
     assert.equal(
       fs.readFileSync(path.join(tmp, "nested/new.txt"), "utf8"),
       "created\n",

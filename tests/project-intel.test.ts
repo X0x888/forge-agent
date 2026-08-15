@@ -786,6 +786,7 @@ describe("doctor + config project intel knobs", () => {
     const snap = buildEffectiveConfigSnap(cfg);
     assert.equal(snap.env.FORGE_FILE_READ_GUARD, true);
     assert.equal(snap.env.FORGE_VERIFY_HINT, true);
+    assert.equal(snap.env.FORGE_EDIT_RECEIPT, "new");
     const text = formatEffectiveConfig(cfg);
     assert.match(text, /edit-guard:/);
     assert.match(text, /file-read=on/);

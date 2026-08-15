@@ -61,6 +61,13 @@ export interface ToolContext {
 export interface ToolResult {
   output: string;
   isError?: boolean;
+  /**
+   * Human/TUI unified-ish diff (`shortDiff`). Never sent to the model.
+   * Live-only — not stored on ChatMessage.
+   */
+  diff?: string;
+  /** Line stats for `formatToolEnd` (`+8 -6`). `removed` is null when unknown. */
+  stats?: { added: number; removed: number | null };
 }
 
 export type TodoHandler = (todos: unknown, merge: boolean) => string;

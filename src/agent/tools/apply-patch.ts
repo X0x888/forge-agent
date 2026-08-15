@@ -10,6 +10,12 @@ import { resolvePath, assertWritablePath, displayRelPath } from "./path-util.js"
 import { pathNotFoundHint } from "./path-hints.js";
 import { applyUpdateChunks, parsePatch } from "./patch.js";
 import { shortDiff } from "./edit-match.js";
+import {
+  afterWriteText,
+  buildPatchReceipt,
+  editReceiptEnabled,
+  type PatchOpReceipt,
+} from "./edit-receipt.js";
 import { atomicWriteFile } from "./atomic-write.js";
 import {
   formatNoteSuffix,
@@ -435,9 +441,11 @@ export async function toolApplyPatch(
     };
   }
 
+  const fmtByAbs = new Map<string, ReturnType<typeof maybeFormatAfterWrite>>();
   const fmtNotes: string[] = [];
   for (const target of writtenAbs) {
     const fr = maybeFormatAfterWrite(target, ctx.workspace);
+    fmtByAbs.set(target, fr);
     const note = formatNoteSuffix(fr);
     if (note) {
       const rel = displayRelPath(ctx.workspace, target);
@@ -450,8 +458,14 @@ export async function toolApplyPatch(
       await ctx.fileReads.noteFromDisk(target);
     }
   }
-  // Per-op shortDiff blocks (same shape search_replace emits) so the
-  // transcript can render colored per-edit diffs under the tool line.
+  const verifyTip =
+    writtenAbs.some((p) => {
+      const e = path.extname(p).toLowerCase();
+      return e !== ".md" && e !== ".mdx" && e !== ".txt" && e !== ".rst";
+    })
+      ? verifyHintSuffix(ctx.workspace, writtenAbs[0])
+      : "";
+
   const diffBlock = planned.length
     ? "\n\n" +
       planned
@@ -464,17 +478,46 @@ export async function toolApplyPatch(
         )
         .join("\n")
     : "";
-  return {
-    output:
-      `Applied patch (${applied.length} op(s)):\n${applied.join("\n")}` +
-      (fmtNotes.length ? `\n${fmtNotes.join("\n")}` : "") +
-      diffBlock +
-      // Only tip when at least one non-doc file was written.
-      (writtenAbs.some((p) => {
-        const e = path.extname(p).toLowerCase();
-        return e !== ".md" && e !== ".mdx" && e !== ".txt" && e !== ".rst";
-      })
-        ? verifyHintSuffix(ctx.workspace, writtenAbs[0])
-        : ""),
-  };
+
+  if (!editReceiptEnabled()) {
+    return {
+      output:
+        `Applied patch (${applied.length} op(s)):\n${applied.join("\n")}` +
+        (fmtNotes.length ? `\n${fmtNotes.join("\n")}` : "") +
+        diffBlock +
+        verifyTip,
+      diff: diffBlock.trim(),
+    };
+  }
+
+  const ops: PatchOpReceipt[] = planned.map((op) => {
+    if (op.kind === "delete") {
+      return {
+        kind: "delete",
+        rel: op.rel,
+        before: op.before,
+        after: "",
+      };
+    }
+    const dest = op.kind === "update" && op.moveAbs ? op.moveAbs : op.abs;
+    const destRel =
+      op.kind === "update" && op.moveRel ? op.moveRel : op.rel;
+    const srcRel = op.rel;
+    const content = op.kind === "add" ? op.content : op.content;
+    const resolved = afterWriteText(dest, content, fmtByAbs.get(dest) ?? null);
+    return {
+      kind: op.kind === "add" ? "add" : "update",
+      rel: srcRel,
+      moveRel:
+        op.kind === "update" && op.moveRel && op.moveAbs !== op.abs
+          ? destRel
+          : undefined,
+      before: op.kind === "add" ? "" : op.before,
+      after: resolved.after,
+      formatted: resolved.formatted,
+      formatSkipped: resolved.formatSkipped,
+    };
+  });
+
+  return buildPatchReceipt({ ops, verifyTip });
 }

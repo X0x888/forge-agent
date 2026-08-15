@@ -123,6 +123,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       description:
         "Create or overwrite a file with the given content. Prefer search_replace for existing files. " +
         "Atomic write; creates parent directories. Must stay inside the workspace. " +
+        "Success returns a numbered AFTER window (N| prefixes are not file text). " +
         "Overwriting requires a prior read_file this session (refuses unread/stale files — re-read, then retry).",
       parameters: {
         type: "object",
@@ -142,6 +143,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
         "Replace an exact string in a file. Read the file first — line-number prefixes from read_file are NOT part of the file. " +
         "Requires a prior read_file this session; refuses files changed on disk since (re-read, then retry). " +
         "old_string must match exactly once unless replace_all is true. " +
+        "Success returns a numbered AFTER window (N| prefixes are not file text). " +
         "Tolerates whitespace-only mismatches via fuzzy fallback. Preserves BOM and CRLF.",
       parameters: {
         type: "object",
@@ -162,6 +164,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       description:
         "Apply one multi-file patch (add/update/delete/move) with *** Begin Patch … *** End Patch grammar. " +
         "Prefer for coordinated edits across several files. All hunks validated before any write. " +
+        "Success returns per-file numbered AFTER windows (N| prefixes are not file text). " +
         "Update/delete requires a prior read_file this session. For a single small edit, search_replace is fine.",
       parameters: {
         type: "object",

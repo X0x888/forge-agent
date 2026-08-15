@@ -12,6 +12,14 @@ import {
   stripReadFileLinePrefixes,
 } from "./edit-match.js";
 import {
+  afterWriteText,
+  buildSuccessReceipt,
+  editReceiptEnabled,
+  lineCount,
+  lineHunks,
+  lineStats,
+} from "./edit-receipt.js";
+import {
   detectLineEnding,
   joinBom,
   normalizeNewlines,
@@ -229,17 +237,18 @@ export async function toolEdit(
           await ctx.fileReads.noteFromDisk(filePath);
         }
         const rel = displayRelPath(ctx.workspace, filePath);
-        const note =
-          alt.result.kind !== "exact"
-            ? ` (matched via ${alt.result.kind} fallback)`
-            : "";
         const nextText = toLineEnding(normalizeNewlines(nextLf), ending);
-        const diff = shortDiff(rel, content, nextText);
-        return {
-          output:
-            `Edited ${rel}${note}${lineCountNote(nextText)}${strippedNote}${formatNoteSuffix(fmt)}\n\n${diff}` +
-            verifyHintSuffix(ctx.workspace, filePath),
-        };
+        return finishEditSuccess({
+          rel,
+          filePath,
+          workspace: ctx.workspace,
+          before: content,
+          next: nextText,
+          fmt,
+          matchKind: alt.result.kind,
+          replaceAllCount: replaceAll ? alt.count : undefined,
+          strippedNote: Boolean(strippedNote),
+        });
       }
     }
     // File exists — path typo hints are misleading. Guide on content mismatch.
@@ -267,16 +276,71 @@ export async function toolEdit(
   }
 
   const rel = displayRelPath(ctx.workspace, filePath);
+  return finishEditSuccess({
+    rel,
+    filePath,
+    workspace: ctx.workspace,
+    before: content,
+    next,
+    fmt,
+    matchKind: located.result.kind,
+    replaceAllCount: replaceAll ? located.count : undefined,
+    strippedNote: Boolean(strippedNote),
+  });
+}
+
+function finishEditSuccess(opts: {
+  rel: string;
+  filePath: string;
+  workspace: string;
+  before: string;
+  next: string;
+  fmt: ReturnType<typeof maybeFormatAfterWrite>;
+  matchKind: "exact" | "line_trimmed" | "block_anchor";
+  replaceAllCount?: number;
+  strippedNote: boolean;
+}): ToolResult {
+  const verifyTip = verifyHintSuffix(opts.workspace, opts.filePath);
   const note =
-    located.result.kind !== "exact"
-      ? ` (matched via ${located.result.kind} fallback)`
-      : replaceAll
-        ? ` (${located.count} occurrence${located.count === 1 ? "" : "s"})`
+    opts.matchKind !== "exact"
+      ? ` (matched via ${opts.matchKind} fallback)`
+      : opts.replaceAllCount != null
+        ? ` (${opts.replaceAllCount} occurrence${opts.replaceAllCount === 1 ? "" : "s"})`
         : "";
-  const diff = shortDiff(rel, content, next);
-  return {
-    output:
-      `Edited ${rel}${note}${lineCountNote(next)}${strippedNote}${formatNoteSuffix(fmt)}\n\n${diff}` +
-      verifyHintSuffix(ctx.workspace, filePath),
-  };
+  if (!editReceiptEnabled()) {
+    const diff = shortDiff(opts.rel, opts.before, opts.next);
+    const st = lineStats(lineHunks(opts.before, opts.next));
+    return {
+      output:
+        `Edited ${opts.rel}${note}${lineCountNote(opts.next)}${opts.strippedNote ? " (stripped read_file line-number prefixes)" : ""}${formatNoteSuffix(opts.fmt)}\n\n${diff}` +
+        verifyTip,
+      diff,
+      stats: { added: st.added, removed: st.removed },
+    };
+  }
+  const resolved = afterWriteText(opts.filePath, opts.next, opts.fmt);
+  const st = lineStats(lineHunks(opts.before, resolved.after));
+  return buildSuccessReceipt({
+    header: {
+      kind: "edit",
+      rel: opts.rel,
+      lines: lineCount(resolved.after),
+      added: st.added,
+      removed: st.removed,
+      windows: [],
+      matchNote:
+        opts.matchKind === "line_trimmed" || opts.matchKind === "block_anchor"
+          ? opts.matchKind
+          : undefined,
+      replaceAllCount:
+        opts.matchKind === "exact" ? opts.replaceAllCount : undefined,
+      formatted: resolved.formatted,
+      formatSkipped: resolved.formatSkipped,
+      strippedPrefixes: opts.strippedNote,
+    },
+    before: opts.before,
+    after: resolved.after,
+    relForDiff: opts.rel,
+    verifyTip,
+  });
 }

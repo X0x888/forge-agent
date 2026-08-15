@@ -7743,6 +7743,7 @@ export interface EffectiveConfigSnap {
     FORGE_ERROR_STREAK_THRESHOLD: number;
     FORGE_FILE_READ_GUARD: boolean;
     FORGE_VERIFY_HINT: boolean;
+    FORGE_EDIT_RECEIPT: "new" | "legacy";
   };
   /** Turn-end attention (no secrets). */
   attention: { notify: boolean; bell: boolean };
@@ -7988,6 +7989,20 @@ export function buildEffectiveConfigSnap(
         const v = (process.env.FORGE_VERIFY_HINT || "1").trim().toLowerCase();
         return !(v === "0" || v === "false" || v === "off" || v === "no");
       })(),
+      FORGE_EDIT_RECEIPT: (() => {
+        const v = (process.env.FORGE_EDIT_RECEIPT || "").trim().toLowerCase();
+        if (
+          v === "legacy" ||
+          v === "0" ||
+          v === "false" ||
+          v === "off" ||
+          v === "no" ||
+          v === "old"
+        ) {
+          return "legacy" as const;
+        }
+        return "new" as const;
+      })(),
     },
     attention: {
       notify: isNotifyEnabled(),
@@ -8093,7 +8108,8 @@ export function formatEffectiveConfig(
         : `  auto-commit:     (none)  · wave close + Cycle complete  FORGE_ULW_AUTO_COMMIT=0 off`,
     `  edit-guard:      file-read=${snap.env.FORGE_FILE_READ_GUARD ? "on" : "off"}` +
       `  verify-hint=${snap.env.FORGE_VERIFY_HINT ? "on" : "off"}` +
-      `  (FORGE_FILE_READ_GUARD · FORGE_VERIFY_HINT)`,
+      `  edit-receipt=${snap.env.FORGE_EDIT_RECEIPT}` +
+      `  (FORGE_FILE_READ_GUARD · FORGE_VERIFY_HINT · FORGE_EDIT_RECEIPT)`,
     `  blocking Stop:   ${snap.blockingStopHooks ? "on" : "OFF"}`,
     `  profile:         ${snap.promptProfile}`,
     `  context:         window=${snap.contextWindow}` +

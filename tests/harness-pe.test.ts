@@ -417,6 +417,8 @@ describe("prompt profile + baseline system", () => {
     });
     assert.match(text, /mid-conversation update/);
     assert.match(text, /autonomous|Keep working/i);
+    assert.match(text, /numbered window is current file text/);
+    assert.doesNotMatch(text, /check truncation/);
     assert.match(text, /State your reading first/i);
     assert.match(text, /Finish, don't hand off/i);
     assert.match(text, /Finish the (defect )?class/i);

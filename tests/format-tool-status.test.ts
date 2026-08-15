@@ -15,6 +15,23 @@ function strip(s: string): string {
   return s.replace(/\x1b\[[0-9;]*m/g, "");
 }
 
+describe("verbose tool end with receipt + diff", () => {
+  it("colorizes r.diff even when output has no --- a/", () => {
+    const text = formatVerboseToolEndTranscript("search_replace", {
+      isError: false,
+      ms: 5,
+      bytes: 80,
+      args: { path: "src/a.ts" },
+      output: "Edited src/a.ts (2 lines) · −1 +1 · lines 1–2 of 2",
+      diff: "--- a/src/a.ts\n+++ b/src/a.ts\n-old\n+new",
+      stats: { added: 1, removed: 1 },
+    });
+    const bare = strip(text);
+    assert.match(bare, /\+1 -1/);
+    assert.match(bare, /--- a\/src\/a\.ts/);
+  });
+});
+
 describe("default tool status line", () => {
   it("puts args on the end line so default transcript can skip ▸", () => {
     const start = strip(
@@ -32,6 +49,30 @@ describe("default tool status line", () => {
     assert.match(end, /✓ write_file path=src\/tui\/repl\.ts\s+12ms/);
     assert.match(end, /diff /);
     assert.equal(end.includes("\n"), false, "end line must stay one row");
+  });
+
+  it("prints +added -removed when stats are set", () => {
+    const withStats = strip(
+      formatToolEnd("search_replace", {
+        isError: false,
+        ms: 8,
+        bytes: 400,
+        args: { path: "src/a.ts" },
+        stats: { added: 8, removed: 6 },
+      }),
+    );
+    assert.match(withStats, /\+8 -6/);
+    assert.doesNotMatch(withStats, /diff /);
+    const unknown = strip(
+      formatToolEnd("write_file", {
+        isError: false,
+        ms: 3,
+        bytes: 10,
+        args: { path: "huge.log" },
+        stats: { added: 12, removed: null },
+      }),
+    );
+    assert.match(unknown, /\+12 -\?/);
   });
 
   it("summarizes spawn_subagent as type: description, not prompt JSON", () => {

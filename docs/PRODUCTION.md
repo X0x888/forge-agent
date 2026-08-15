@@ -193,6 +193,7 @@ forge run "fix tests and open a PR description" \
 # Optional ULW: FORGE_ULW_MAX_CONTINUES=300
 # Project intelligence (less steering): system prompt + /context inject preferred checks;
 #   post-edit verify tip FORGE_VERIFY_HINT=0 off · stale-edit guard FORGE_FILE_READ_GUARD=0 off
+#   edit receipt FORGE_EDIT_RECEIPT=legacy restores the old truncated-diff model string
 #   doctor --json: packageManager, projectKinds, checkCommands, projectStackSummary, fileReadGuard, verifyHint
 ```
 

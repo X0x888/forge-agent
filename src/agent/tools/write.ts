@@ -11,6 +11,14 @@ import {
 } from "./format-on-write.js";
 import { fileReadGuardEnabled } from "./file-read-state.js";
 import { stripReadFileLinePrefixes, shortDiff } from "./edit-match.js";
+import {
+  afterWriteText,
+  buildSuccessReceipt,
+  editReceiptEnabled,
+  lineCount,
+  lineHunks,
+  lineStats,
+} from "./edit-receipt.js";
 import { verifyHintSuffix } from "../../util/project-intel.js";
 
 export async function toolWrite(
@@ -125,18 +133,52 @@ export async function toolWrite(
       await ctx.fileReads.noteFromDisk(filePath);
     }
     const rel = displayRelPath(ctx.workspace, filePath);
-    // Embed the same shortDiff search_replace produces so the transcript can
-    // render per-edit diffs (skipped only when the pre-image was unreadable).
-    const diff = snap.skipped ? "" : `\n\n${shortDiff(rel, snap.before ?? "", body)}`;
-    return {
-      output:
-        `Wrote ${rel}` +
-        (createdParents ? " (created parent directories)" : "") +
-        (stripped.stripped ? " (stripped read_file line-number prefixes)" : "") +
-        formatNoteSuffix(fmt) +
-        diff +
-        verifyHintSuffix(ctx.workspace, filePath),
-    };
+    const verifyTip = verifyHintSuffix(ctx.workspace, filePath);
+    const before = snap.skipped ? "" : (snap.before ?? "");
+    if (!editReceiptEnabled()) {
+      const diff = snap.skipped ? "" : shortDiff(rel, before, body);
+      const counted = snap.skipped
+        ? { added: lineCount(body), removed: null as number | null }
+        : lineStats(lineHunks(before, body));
+      const st = {
+        added: counted.added,
+        removed: snap.skipped ? null : counted.removed,
+      };
+      return {
+        output:
+          `Wrote ${rel}` +
+          (createdParents ? " (created parent directories)" : "") +
+          (stripped.stripped ? " (stripped read_file line-number prefixes)" : "") +
+          formatNoteSuffix(fmt) +
+          (diff ? `\n\n${diff}` : "") +
+          verifyTip,
+        diff,
+        stats: st,
+      };
+    }
+    const resolved = afterWriteText(filePath, body, fmt);
+    const st = snap.skipped
+      ? { added: lineCount(resolved.after), removed: null as number | null }
+      : lineStats(lineHunks(before, resolved.after));
+    return buildSuccessReceipt({
+      header: {
+        kind: "write",
+        rel,
+        lines: lineCount(resolved.after),
+        added: st.added,
+        removed: snap.skipped ? null : st.removed,
+        windows: [],
+        createdParents,
+        formatted: resolved.formatted,
+        formatSkipped: resolved.formatSkipped,
+        strippedPrefixes: stripped.stripped,
+        preimageSkipped: Boolean(snap.skipped),
+      },
+      before,
+      after: resolved.after,
+      relForDiff: rel,
+      verifyTip,
+    });
   } catch (err) {
     return {
       output: `write_file failed: ${(err as Error).message}`,

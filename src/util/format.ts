@@ -352,6 +352,8 @@ export function formatToolEnd(
     args?: Record<string, unknown>;
     /** Failed-tool output — failure reason is inlined on the ✗ row. */
     output?: string;
+    /** Line stats for edit-class tools (`+8 -6`). */
+    stats?: { added: number; removed: number | null };
     /** Clip to one TTY row. Default: stdout.columns (80 when not a TTY). */
     width?: number;
   },
@@ -364,10 +366,15 @@ export function formatToolEnd(
   const reason =
     opts.isError && opts.output ? firstToolErrorLine(opts.output) : "";
   const reasonBit = reason ? `  ${reason}` : "";
-  const size =
-    /^(search_replace|edit|write_file|write|apply_patch|applypatch)$/i.test(name)
-      ? `diff ${formatBytes(opts.bytes)}`
-      : formatBytes(opts.bytes);
+  const editClass =
+    /^(search_replace|edit|write_file|write|apply_patch|applypatch)$/i.test(name);
+  const size = editClass
+    ? opts.stats
+      ? opts.stats.removed === null
+        ? `+${opts.stats.added} -?`
+        : `+${opts.stats.added} -${opts.stats.removed}`
+      : `diff ${formatBytes(opts.bytes)}`
+    : formatBytes(opts.bytes);
   const line = chalk.dim(
     `  ${status} ${name}${argBit}${reasonBit}  ${opts.ms}ms  ${size}`,
   );
