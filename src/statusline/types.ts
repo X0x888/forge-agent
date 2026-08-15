@@ -33,6 +33,9 @@ export interface TokenUsageInfo {
   totalTokens: number;
   /** Rough USD when rates known; omit when only subscription credits apply */
   estimatedUsd?: number;
+  /** Subagent slice of estimatedUsd when children were recorded. */
+  subagentUsd?: number;
+  subagentCount?: number;
   source: "session" | "provider";
 }
 

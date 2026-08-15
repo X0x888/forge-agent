@@ -30,6 +30,12 @@ import { formatFallbackChain } from "../config/model-fallback.js";
 import { heartbeatSession } from "../statusline/active.js";
 import { touchSessionLock } from "./lock.js";
 import {
+  familyCostBreakdown,
+  formatFamilyCostLines,
+  normalizeSubagentUsage,
+  type SubagentUsageRecord,
+} from "./subagent-usage.js";
+import {
   compactMessagesStructured,
   type CompactContext,
 } from "./compaction.js";
@@ -163,6 +169,12 @@ export interface SessionMeta {
    * estimates; absent in older sessions (treated as 0).
    */
   totalCacheReadTokens?: number;
+  /**
+   * Per-child spend ledger. Parent token totals already include these
+   * (family number). The array is how you see which subagent spent what.
+   * Not a cap.
+   */
+  subagentUsage?: SubagentUsageRecord[];
   /**
    * Raw model ids the provider reported serving that DIVERGE from the
    * requested model (capped at 8). Provider-side tier routing made visible —
@@ -416,6 +428,10 @@ function normalizeSessionMeta(
     totalPromptTokens: Number(fromSide.totalPromptTokens) || 0,
     totalCompletionTokens: Number(fromSide.totalCompletionTokens) || 0,
     totalCacheReadTokens: Number(fromSide.totalCacheReadTokens) || 0,
+    ...((): { subagentUsage?: SubagentUsageRecord[] } => {
+      const kids = normalizeSubagentUsage(fromSide.subagentUsage);
+      return kids ? { subagentUsage: kids } : {};
+    })(),
     ...(typeof fromSide.lastVerificationCommand === "string" &&
     fromSide.lastVerificationCommand.trim()
       ? {
@@ -892,6 +908,10 @@ export function importSessionJson(
       totalPromptTokens: Number(src.totalPromptTokens) || 0,
       totalCompletionTokens: Number(src.totalCompletionTokens) || 0,
       totalCacheReadTokens: Number(src.totalCacheReadTokens) || 0,
+      ...((): { subagentUsage?: SubagentUsageRecord[] } => {
+        const kids = normalizeSubagentUsage(src.subagentUsage);
+        return kids ? { subagentUsage: kids } : {};
+      })(),
       ...(Array.isArray(src.servedModels) && src.servedModels.length
         ? { servedModels: src.servedModels.slice(0, 8).map(String) }
         : {}),
@@ -2284,6 +2304,10 @@ export function exportSessionMarkdown(session: SessionData): string {
           session.meta.totalCacheReadTokens || 0,
         );
         const bits = [`- Est. cost: ${formatCost(cost)}`];
+        const family = formatFamilyCostLines(
+          familyCostBreakdown(session.meta),
+        );
+        for (const line of family) bits.push(`- ${line.trim()}`);
         if (
           session.meta.maxCostUsd !== undefined &&
           session.meta.maxCostUsd !== null
@@ -3083,10 +3107,16 @@ export function formatSessionShareCard(
           m.model,
           m.totalCacheReadTokens || 0,
         );
+        const family = formatFamilyCostLines(familyCostBreakdown(m));
         const tok =
           (m.totalPromptTokens || 0) + (m.totalCompletionTokens || 0) > 0
-            ? `  tokens:   in=${m.totalPromptTokens || 0} out=${m.totalCompletionTokens || 0} · est ${formatCost(cost)}`
-            : null;
+            ? [
+                `  tokens:   in=${m.totalPromptTokens || 0} out=${m.totalCompletionTokens || 0} · est ${formatCost(cost)}`,
+                ...family,
+              ].join("\n")
+            : family.length
+              ? family.join("\n")
+              : null;
         if (
           m.maxCostUsd !== undefined &&
           m.maxCostUsd !== null
@@ -3147,6 +3177,7 @@ export function clearConversation(session: SessionData): void {
   session.meta.editCount = 0;
   session.meta.totalPromptTokens = 0;
   session.meta.totalCompletionTokens = 0;
+  delete session.meta.subagentUsage;
   // Drop per-session spend override so the next conversation inherits config again.
   delete session.meta.maxCostUsd;
   session.meta.title = undefined;

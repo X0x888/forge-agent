@@ -39,6 +39,13 @@ import {
   type SubagentWorktree,
   type WorktreeLandResult,
 } from "./worktree.js";
+import {
+  buildSubagentUsageRecord,
+  foldChildUsage,
+  formatLiveChildSpend,
+  formatSubagentTokensHeader,
+  resolveChildUsage,
+} from "../session/subagent-usage.js";
 
 export type SubagentType = "general-purpose" | "explore" | "plan";
 export type SubagentCapability = "full" | "read-only";
@@ -85,6 +92,7 @@ export interface SubagentResult {
   sessionId: string;
   promptTokens: number;
   completionTokens: number;
+  cacheReadTokens?: number;
   editCount: number;
   error?: string;
   isolation?: SubagentIsolation;
@@ -475,6 +483,7 @@ export async function runSubagent(
   let result: LoopResult | undefined;
   let runError: string | undefined;
   try {
+    const liveSpend = () => formatLiveChildSpend(child.meta);
     ctx.events?.onStatus?.(
       `subagent[${subagentType}${isolation === "worktree" ? "/wt" : ""}]: ${description.slice(0, 40)}`,
     );
@@ -492,7 +501,10 @@ export async function runSubagent(
       stream: false,
       signal: ctx.signal,
       events: {
-        onStatus: ctx.events?.onStatus,
+        onStatus: (msg) => {
+          const spend = liveSpend();
+          ctx.events?.onStatus?.(spend && !msg.includes(spend) ? `${msg}${spend}` : msg);
+        },
         onPhase: ctx.events?.onPhase,
         // Suppress token streaming to parent TUI (avoid interleaving)
       },
@@ -508,27 +520,13 @@ export async function runSubagent(
     runError = (err as Error).message;
   }
 
-  // Fold usage into parent
   if (result) {
-    ctx.parentSession.meta.totalPromptTokens += result.promptTokens || 0;
-    ctx.parentSession.meta.totalCompletionTokens +=
-      result.completionTokens || 0;
-    if (result.cacheReadTokens) {
-      ctx.parentSession.meta.totalCacheReadTokens =
-        (ctx.parentSession.meta.totalCacheReadTokens || 0) +
-        result.cacheReadTokens;
-    }
     // Same-workspace child edits count toward parent edit trail.
     // Worktree isolation defers the bump until a successful land (below).
     if (isolation !== "worktree" && child.meta.editCount > 0) {
       ctx.parentSession.meta.editCount += child.meta.editCount;
       ctx.parentSession.meta.lastEditAt =
         child.meta.lastEditAt || new Date().toISOString();
-    }
-    try {
-      saveSession(ctx.parentSession);
-    } catch {
-      /* */
     }
   }
 
@@ -568,6 +566,24 @@ export async function runSubagent(
     stopHookBlocked: stopHook.blocked,
   });
   const incomplete = status !== "completed";
+  const usage = resolveChildUsage(child.meta, result);
+  const usageRecord = buildSubagentUsageRecord({
+    sessionId: child.meta.id,
+    description,
+    subagentType,
+    status,
+    turns: result?.turns ?? child.meta.providerRounds ?? 0,
+    maxTurns: childMaxTurns,
+    usage,
+    provider: String(ctx.config.provider || child.meta.provider),
+    model: ctx.config.model || child.meta.model,
+  });
+  foldChildUsage(ctx.parentSession.meta, usageRecord);
+  try {
+    saveSession(ctx.parentSession);
+  } catch {
+    /* */
+  }
 
   if (incomplete) {
     const synthesized = synthesizeSubagentFindings(child.messages);
@@ -661,6 +677,8 @@ export async function runSubagent(
     worktreePath: worktree?.path,
     worktreeKept,
     worktreeLandStatus: worktreeLand?.status,
+    usage,
+    estCostUsd: usageRecord.estCostUsd,
   });
 
   let artifactPath: string | undefined;
@@ -702,8 +720,9 @@ export async function runSubagent(
     capabilityMode,
     description,
     sessionId: child.meta.id,
-    promptTokens: result?.promptTokens ?? 0,
-    completionTokens: result?.completionTokens ?? 0,
+    promptTokens: usage.promptTokens,
+    completionTokens: usage.completionTokens,
+    cacheReadTokens: usage.cacheReadTokens,
     editCount: child.meta.editCount,
     error: runError,
     isolation,
@@ -779,10 +798,20 @@ function formatSubagentHeader(opts: {
   worktreePath?: string;
   worktreeKept?: boolean;
   worktreeLandStatus?: string;
+  usage?: {
+    promptTokens: number;
+    completionTokens: number;
+    cacheReadTokens: number;
+  };
+  estCostUsd?: number;
 }): string {
   const landBit = opts.worktreeLandStatus
     ? ` · land: ${opts.worktreeLandStatus}`
     : "";
+  const tokensLine =
+    opts.usage && opts.estCostUsd != null
+      ? formatSubagentTokensHeader(opts.usage, opts.estCostUsd)
+      : "";
   return [
     `### Subagent result: ${opts.description}`,
     `- status: ${opts.status}`,
@@ -790,6 +819,7 @@ function formatSubagentHeader(opts: {
       (opts.isolation === "worktree" ? " · isolation: worktree" : "") +
       landBit,
     `- session_id: ${opts.sessionId}`,
+    tokensLine,
     opts.worktreePath
       ? `- worktree: ${opts.worktreePath}${opts.worktreeKept ? " (kept)" : " (removed)"}`
       : "",

@@ -173,11 +173,19 @@ function buildTokens(session: SessionData, provider: string): TokenUsageInfo {
     total > 0
       ? estimateCostUsd(provider, prompt, completion, session.meta.model, cacheRead)
       : undefined;
+  const kids = session.meta.subagentUsage;
+  const subagentUsd =
+    kids && kids.length
+      ? kids.reduce((s, k) => s + (Number(k.estCostUsd) || 0), 0)
+      : undefined;
   return {
     promptTokens: prompt,
     completionTokens: completion,
     totalTokens: total,
     estimatedUsd,
+    ...(kids && kids.length
+      ? { subagentUsd: subagentUsd || 0, subagentCount: kids.length }
+      : {}),
     source: "session",
   };
 }

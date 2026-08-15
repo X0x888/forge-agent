@@ -13,6 +13,7 @@
 - **Permission Enter = allow**: the Allow? prompt now advertises `↵/[y] once`. Empty Enter already allowed once; the prompt hid that.
 
 ### Added
+- **Family spend is visible**: parent `/cost` `/status` `/metrics` and `forge run --json` show parent vs each `spawn_subagent` (turns, tokens, est $). The spawn result header includes the same line. Completed children no longer fold as $0 (the useful explore in dogfood `d6b191ae` vanished from the HUD). Dock shows `sub N $x` when children ran. This is the bill — not a cap.
 - **Unattended cost meters**: `forge run --json` and `metrics.jsonl` now include `harnessUserPokes`, `admitCount`, `proofPokes`, and `providerRounds` so the next dogfood is a number, not a vibe.
 - **Headless daily-loop parity**: `forge run` prints the same default ✗ tool tail + Δ files/verify closer as the REPL (`formatDefaultToolEndTranscript`, `formatTurnChangeSummaryForSession`). Non-JSON runs also print why they stopped (`formatRunStopReason`: cost / turns / continue-cap / abort).
 - **Dock pause during Allow?**: bottom-dock 2s DECSC/DECRC paint is refcounted and hooked to the stdin lease so permission / `ask_user` prompts are not clobbered.

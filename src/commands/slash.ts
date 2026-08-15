@@ -173,6 +173,10 @@ import {
   formatRelativeTime,
 } from "../util/format.js";
 import {
+  familyCostBreakdown,
+  formatFamilyCostLines,
+} from "../session/subagent-usage.js";
+import {
   applyModelContextWindow,
   modelContextWindow,
   parseContextWindowArg,
@@ -3128,6 +3132,13 @@ return {
           `  completion:  ${formatTokens(opts.session.meta.totalCompletionTokens)}`,
           cacheLine,
           `  est. cost:   ${formatCost(cost)}  (rough; not a bill)`,
+          ...formatFamilyCostLines(
+            familyCostBreakdown(
+              opts.session.meta,
+              String(opts.config.provider),
+              opts.config.model,
+            ),
+          ),
           `  ${formatCostBudgetLine(budget)}`,
           `  set cap:     /budget <usd>  ·  /budget off  ·  --max-cost N  ·  FORGE_MAX_COST_USD`,
         ]
@@ -3229,6 +3240,13 @@ return {
           `  events:   ${st.events} · ${(st.bytes / 1024).toFixed(1)} KB`,
           `This session:`,
           `  tokens:   in=${formatTokens(opts.session.meta.totalPromptTokens)} out=${formatTokens(opts.session.meta.totalCompletionTokens)} · est ${formatCost(cost)}`,
+          ...formatFamilyCostLines(
+            familyCostBreakdown(
+              opts.session.meta,
+              String(opts.config.provider),
+              opts.config.model,
+            ),
+          ),
           `  turns:    ${opts.session.meta.turnCount}  edits=${opts.session.meta.editCount}`,
           `  id:       ${opts.session.meta.id}`,
           chalk.dim(`Tip: /stats [days] or forge stats --days 7 for a full usage dashboard`),
@@ -3316,6 +3334,13 @@ const stats = collectUsageStats({
           ``,
           `This session:`,
           `  tokens: in=${formatTokens(opts.session.meta.totalPromptTokens)} out=${formatTokens(opts.session.meta.totalCompletionTokens)} · est ${formatCost(cost)}`,
+          ...formatFamilyCostLines(
+            familyCostBreakdown(
+              opts.session.meta,
+              String(opts.config.provider),
+              opts.config.model,
+            ),
+          ),
           `  turns:  ${opts.session.meta.turnCount}  edits=${opts.session.meta.editCount}  id=${opts.session.meta.id.slice(0, 8)}`,
           ...sessionExtra,
           chalk.dim(`CLI: forge stats [--days N] [--json]`),

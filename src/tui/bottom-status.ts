@@ -19,7 +19,7 @@ import {
   resetCountdown,
 } from "../statusline/render.js";
 import type { AuthMethod, PlanUsageInfo } from "../statusline/types.js";
-import { formatTokens, clipAnsi, visibleWidth } from "../util/format.js";
+import { formatTokens, formatCost, clipAnsi, visibleWidth } from "../util/format.js";
 
 import { resolveReasoningEffort } from "../config/reasoning.js";
 import { getActivity } from "../statusline/activity.js";
@@ -184,6 +184,20 @@ export function renderBottomStatusLine(
   } else if (snap.plan?.resetsAt) {
     const left = resetCountdown(snap.plan.resetsAt);
     if (left) bits.push(paint(left, "dim"));
+  }
+
+  // Subagent slice of session spend (visibility only — not a cap)
+  if (
+    snap.tokens.subagentCount &&
+    snap.tokens.subagentCount > 0 &&
+    snap.tokens.subagentUsd != null
+  ) {
+    bits.push(
+      paint(
+        `sub ${snap.tokens.subagentCount} ${formatCost(snap.tokens.subagentUsd)}`,
+        "dim",
+      ),
+    );
   }
 
   // Session budget when armed

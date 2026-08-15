@@ -19,6 +19,7 @@ import {
   formatCost,
 } from "./util/format.js";
 import { parseCostUsd, resolveMaxCostUsd } from "./util/cost-budget.js";
+import { familyCostJson } from "./session/subagent-usage.js";
 import { productionWarningsForRun } from "./util/production-warnings.js";
 import { listActiveProjectMemory } from "./harness/project-memory.js";
 import { resolveWorktreeLandMode } from "./agent/worktree.js";
@@ -787,7 +788,7 @@ Exit codes:
   124  wall-clock timeout (FORGE_MAX_RUN_MS)
   130  aborted (SIGINT)
 
---json fields (success): ok, version, node, forgeHome, sessionId, sessionPath, title, pinned, foreignLock, provider, stickyProvider, authMethod, model, reasoningEffort, cwd, git, projectLabel, projectHints, packageName, packageVersion, packageEnginesNode, packageManager, checkCommands, projectStackSummary, monorepoRoot, workspaces, nodeModulesPresent, multipleLockfiles, permissionMode, sandbox, sandboxNetwork, sandboxMissingBackend, readOutsideWorkspace, ultrawork, ulwCycle, ulwWave, ulwMaxWaves, ulwBlocks, ulwMandate, ulwSoftPrompt, ulwExpandedMandate, goalActive, goal, goalStuckThreshold, goalBlocks, goalStuckBlocks, goalCriteria, denyRules, allowRules, askRules, maxTurns, maxTurnsUnlimited, maxCostUsd, maxCostUnlimited, effectiveMaxCostUsd, sessionCostUsd, productionWarnings, formatOnWrite, subagentLandMode, projectMemoryCount, lastCheckpoint, blockingStop, maxRunMs, providerTimeoutMs, bashTimeoutMs, bashBackgroundTimeoutMs, permissionAskTimeoutMs, doomLoopThreshold, errorStreakThreshold, ulwMaxContinues, editCount, lastVerificationCommand, lastVerificationAt, lastEditAt, lastVerificationStale, openTodos, messageCount, finalText, turns, stopContinues,
+--json fields (success): ok, version, node, forgeHome, sessionId, sessionPath, title, pinned, foreignLock, provider, stickyProvider, authMethod, model, reasoningEffort, cwd, git, projectLabel, projectHints, packageName, packageVersion, packageEnginesNode, packageManager, checkCommands, projectStackSummary, monorepoRoot, workspaces, nodeModulesPresent, multipleLockfiles, permissionMode, sandbox, sandboxNetwork, sandboxMissingBackend, readOutsideWorkspace, ultrawork, ulwCycle, ulwWave, ulwMaxWaves, ulwBlocks, ulwMandate, ulwSoftPrompt, ulwExpandedMandate, goalActive, goal, goalStuckThreshold, goalBlocks, goalStuckBlocks, goalCriteria, denyRules, allowRules, askRules, maxTurns, maxTurnsUnlimited, maxCostUsd, maxCostUnlimited, effectiveMaxCostUsd, sessionCostUsd, parentCostUsd, subagentCostUsd, subagentUsage, productionWarnings, formatOnWrite, subagentLandMode, projectMemoryCount, lastCheckpoint, blockingStop, maxRunMs, providerTimeoutMs, bashTimeoutMs, bashBackgroundTimeoutMs, permissionAskTimeoutMs, doomLoopThreshold, errorStreakThreshold, ulwMaxContinues, editCount, lastVerificationCommand, lastVerificationAt, lastEditAt, lastVerificationStale, openTodos, messageCount, finalText, turns, stopContinues,
   releasedOnContinueCap, hitMaxTurns, hitCostCap, finishReason, lastError, editCount, aborted, timedOut,
   harnessUserPokes, admitCount, proofPokes, providerRounds,
   promptTokens, completionTokens, durationMs
@@ -6436,12 +6437,10 @@ async function runHeadless(opts: {
           typeof opts.config.maxCostUsd === "number" && opts.config.maxCostUsd > 0
         ),
         effectiveMaxCostUsd: resolveMaxCostUsd(opts.config, opts.session.meta),
-        sessionCostUsd: estimateCostUsd(
+        ...familyCostJson(
+          opts.session.meta,
           String(opts.config.provider),
-          opts.session.meta.totalPromptTokens || 0,
-          opts.session.meta.totalCompletionTokens || 0,
           opts.config.model,
-          opts.session.meta.totalCacheReadTokens || 0,
         ),
         productionWarnings: productionWarningsForRun(opts.config, {
           ultrawork: Boolean(opts.session.meta.ultrawork),
@@ -6825,12 +6824,10 @@ maxTurns: opts.config.maxTurns ?? 0,
       ),
       // Effective cap after session /budget override (null = unlimited).
       effectiveMaxCostUsd: resolveMaxCostUsd(opts.config, opts.session.meta),
-      sessionCostUsd: estimateCostUsd(
+      ...familyCostJson(
+        opts.session.meta,
         String(opts.config.provider),
-        opts.session.meta.totalPromptTokens || 0,
-        opts.session.meta.totalCompletionTokens || 0,
         opts.config.model,
-        opts.session.meta.totalCacheReadTokens || 0,
       ),
       productionWarnings: productionWarningsForRun(opts.config, {
         ultrawork: Boolean(opts.session.meta.ultrawork),
