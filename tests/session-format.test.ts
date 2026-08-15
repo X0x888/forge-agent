@@ -22,10 +22,12 @@ import {
   formatSessionShareCard,
   formatResumeOrientation,
   formatSessionPickerRow,
+  paintPickerBadge,
   exportSessionJson,
   importSessionJson,
   isLastVerificationStale,
 } from "../src/session/session.js";
+import chalk from "chalk";
 import { truncateMiddle, estimateCostUsd, formatTokens, visibleWidth } from "../src/util/format.js";
 import { isRetryableError } from "../src/util/retry.js";
 import {
@@ -1516,5 +1518,32 @@ it("/fork includes last-turn peek", async () => {
     assert.ok(visibleWidth(row) <= 72, row);
     assert.match(row, /auth flake/);
     assert.match(row, /fix the flaky auth test/);
+  });
+
+  it("formatSessionPickerRow paints title/preview/badges so the scan has hierarchy", () => {
+    const prevLevel = chalk.level;
+    chalk.level = 3;
+    const s = createSession({ cwd: "/tmp", provider: "xai", model: "grok-4.6" });
+    s.meta.title = "auth flake";
+    s.meta.lastUserPreview = "fix the flaky auth test please";
+    s.meta.pinned = true;
+    s.meta.lastError = { at: "t", code: "x", message: "fail" };
+    try {
+      const row = formatSessionPickerRow(s.meta, ["*"], 100);
+      assert.match(row, /\x1b\[1m.*auth flake/);
+      assert.match(row, /\x1b\[2m.*fix the flaky auth test/);
+      assert.equal(paintPickerBadge("PIN"), "\x1b[36mPIN\x1b[39m");
+      assert.equal(paintPickerBadge("ERR"), "\x1b[31mERR\x1b[39m");
+      assert.match(row, /\x1b\[36mPIN/);
+      assert.match(row, /\x1b\[31mERR/);
+      assert.match(row, /\x1b\[36m\x1b\[1m\*/);
+      const untitled = createSession({ cwd: "/tmp", provider: "xai", model: "grok-4.6" });
+      untitled.meta.title = "";
+      const blank = formatSessionPickerRow(untitled.meta, [], 80);
+      assert.match(blank, /\x1b\[2m\(untitled\)/);
+      assert.doesNotMatch(blank.replace(/\x1b\[[0-9;]*m/g, ""), /undefined/);
+    } finally {
+      chalk.level = prevLevel;
+    }
   });
 });

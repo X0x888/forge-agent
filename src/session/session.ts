@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import chalk from "chalk";
 import {
   forgeHome,
   ensureDir,
@@ -1143,9 +1144,48 @@ function formatPickerPreview(text: string, max: number): string {
   return inner ? `“${inner}”` : "";
 }
 
+function paintPickerTitle(title: string, untitled: boolean): string {
+  if (!title) return title;
+  return untitled ? chalk.dim(title) : chalk.bold(title);
+}
+
+function paintPickerPreview(preview: string): string {
+  return preview ? chalk.dim(preview) : "";
+}
+
+/** Color harness / health badges; unknown extras (cwd, error codes) stay dim. */
+export function paintPickerBadge(bit: string): string {
+  switch (bit) {
+    case "*":
+      return chalk.cyan.bold("*");
+    case "✓":
+      return chalk.green("✓");
+    case "✓~":
+      return chalk.yellow("✓~");
+    case "ULW":
+      return chalk.magenta("ULW");
+    case "PIN":
+      return chalk.cyan("PIN");
+    case "PLAN":
+      return chalk.blue("PLAN");
+    case "ERR":
+      return chalk.red("ERR");
+    case "LOCK":
+      return chalk.yellow("LOCK");
+    case "GOAL":
+    case "GOAL⏸":
+      return chalk.yellow(bit);
+    case "FORK":
+      return chalk.dim("FORK");
+    default:
+      return chalk.dim(bit);
+  }
+}
+
 /**
  * One-row `/sessions` / `forge sessions list` picker.
  * Spend leftover width on title + last-you; drop model/cost/turns first.
+ * Id / age / preview recede; title + PIN/ERR/LOCK/ULW carry the scan.
  */
 export function formatSessionPickerRow(
   s: SessionMeta,
@@ -1153,6 +1193,7 @@ export function formatSessionPickerRow(
   columns?: number,
 ): string {
   const age = formatRelativeTime(s.updatedAt).padStart(8);
+  const untitled = !String(s.title || "").trim();
   const rawTitle = (s.title || "(untitled)").replace(/\s+/g, " ").trim();
   const rawPrev = (s.lastUserPreview || "").replace(/\s+/g, " ").trim();
   const badges: string[] = [];
@@ -1188,8 +1229,9 @@ export function formatSessionPickerRow(
     columns ??
     (process.stdout.isTTY ? process.stdout.columns || 80 : Number.POSITIVE_INFINITY);
   const join = (parts: string[]): string => parts.filter(Boolean).join("  ");
-  const badgeStr = badges.join(" ");
-  const id = s.id.slice(0, 8);
+  const badgeStr = badges.map(paintPickerBadge).join(" ");
+  const id = chalk.dim(s.id.slice(0, 8));
+  const ageBit = chalk.dim(age);
   const gap = 2;
 
   const fit = (
@@ -1197,19 +1239,19 @@ export function formatSessionPickerRow(
     previewMax: number,
     extrasBits: string[],
   ): string => {
-    const title = clipPickerField(rawTitle, titleMax);
-    const preview = formatPickerPreview(rawPrev, previewMax);
-    return join([id, age, title, ...extrasBits, badgeStr, preview]);
+    const title = paintPickerTitle(clipPickerField(rawTitle, titleMax), untitled);
+    const preview = paintPickerPreview(formatPickerPreview(rawPrev, previewMax));
+    return join([id, ageBit, title, ...extrasBits, badgeStr, preview]);
   };
 
   const titleNeed = Math.min(visibleWidth(rawTitle), 48);
   const prevNeed = rawPrev ? Math.min(visibleWidth(rawPrev) + 2, 56) : 0;
   const extrasAll = [s.model, `t=${s.turnCount ?? 0}`, cost].filter(Boolean);
   if (!Number.isFinite(cols) || cols < 24) {
-    return fit(titleNeed, prevNeed, extrasAll);
+    return fit(titleNeed, prevNeed, extrasAll.map((b) => chalk.dim(b)));
   }
 
-  const identity = join([id, age, badgeStr]);
+  const identity = join([id, ageBit, badgeStr]);
   let remaining = cols - visibleWidth(identity);
   if (remaining < 3) return clipAnsi(identity, cols);
 
@@ -1231,7 +1273,7 @@ export function formatSessionPickerRow(
   for (const bit of extrasAll) {
     const w = visibleWidth(bit) + gap;
     if (bit && w <= remaining) {
-      extrasBits.push(bit);
+      extrasBits.push(chalk.dim(bit));
       remaining -= w;
     }
   }
