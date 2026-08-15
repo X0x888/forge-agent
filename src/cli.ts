@@ -10,6 +10,7 @@
  *  - Multi-provider: xAI, Anthropic, OpenAI, OpenRouter, Google
  */
 import { Command } from "commander";
+import { installGroupedHelp } from "./cli/help-groups.js";
 import chalk from "chalk";
 import fs from "node:fs";
 import path from "node:path";
@@ -357,7 +358,9 @@ Docs: docs/GETTING-STARTED.md · docs/PRODUCTION.md · docs/RELIABILITY.md · do
     .option(
       "--no-blocking-stop",
       "Disable blocking Stop hooks (Grok-compatible passive mode)",
-    )
+    );
+  installGroupedHelp(program);
+  program
     .argument("[prompt...]", "Optional initial prompt (also used by `forge run`)")
     .action(async (promptParts: string[], opts) => {
       if (opts.printLogs) setLogLevel("debug");
