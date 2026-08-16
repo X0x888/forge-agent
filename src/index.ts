@@ -317,6 +317,7 @@ export {
   applyCleanBaselineAfterCommit,
   noteUlwTreeAfterAutoCommit,
   isPolishClassShip,
+  sameSurfaceHolding,
   resolveUlwPhase,
   shouldSkipOrient,
   isSoftPrompt,
@@ -342,6 +343,14 @@ export {
   VERIFICATION_CMD_RE,
   isVerificationCommand,
 } from "./harness/ulw-cycle.js";
+export {
+  SAME_SURFACE_HOLD,
+  SAME_SURFACE_ADVISORY,
+  isSameSurface,
+  isLeftoverSiblingShip,
+  nextSameSurfaceStreak,
+  surfaceKey,
+} from "./harness/same-surface.js";
 export {
   isUserFacingProductWork,
   extractJobInsight,

@@ -413,6 +413,7 @@ export function buildBaselineSystemPrompt(opts: {
         `- Beat or match best wave so far: substance + real proof. No filler churn.`,
         `- Every 4th wave: consolidation (full suite + cumulative diff review).`,
         `- Thin waves → demand higher leverage; user may \`/cycle 0\`.`,
+        `- Same-surface siblings (leftover / near-duplicate ships) → harness holds after 3 until a different-surface Reading or \`/cycle 0\`.`,
         ``,
         `### Other force multipliers`,
         `MCP (docs/browser/resources), LSP diagnostics after language-aware edits, forge-* skills (catalog + read_file when matching).`,

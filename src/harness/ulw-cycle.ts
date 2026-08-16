@@ -46,6 +46,14 @@ import {
   hasStoredProductEdge,
   type ProductQualityResult,
 } from "./product-quality.js";
+import {
+  SAME_SURFACE_ADVISORY,
+  SAME_SURFACE_HOLD,
+  isLeftoverSiblingShip,
+  matchesRecentSurface,
+  nextSameSurfaceStreak,
+  surfaceKey,
+} from "./same-surface.js";
 
 export {
   extractShipSummary,
@@ -93,6 +101,8 @@ export interface UlwWaveRecord {
   proof: boolean;
   /** One-line clip of the wave's closing assistant message */
   summary: string;
+  /** Significant tokens from the summary (same-surface classifier). */
+  surfaceKey?: string;
   ts: string;
   /**
    * Todos closed (completed|cancelled) during this wave — structural intent
@@ -141,6 +151,16 @@ export interface UlwCycleState {
    * back-compat with older sidecars.
    */
   waves?: UlwWaveRecord[];
+  /**
+   * Consecutive same-surface ships (openings siblings, leftover rest card).
+   * Unlimited ULW holds at SAME_SURFACE_HOLD until a different-surface
+   * reading or /cycle 0. Not a quality score.
+   */
+  sameSurfaceStreak?: number;
+  /** Unlimited hold is armed — Stop stays blocked. */
+  sameSurfaceHold?: boolean;
+  /** Hold admits this run (stronger copy after the first). */
+  sameSurfaceAdmitCount?: number;
   /** Consecutive waves with negligible edits AND no verification */
   thinStreak?: number;
   /**
@@ -232,6 +252,8 @@ export interface UlwStopDecision {
   wrapDemanded?: boolean;
   /** True when a user-facing ship was bounced for product-quality (edges/job). */
   soulDemanded?: boolean;
+  /** True when Stop is holding for a different-surface reading. */
+  sameSurfaceDemanded?: boolean;
   /** True when this Stop actually closed a wave (not a gate / already-stamped). */
   waveClosed?: boolean;
 }
@@ -646,12 +668,15 @@ function appendWaveRecord(
     proof: boolean;
     todoProgress: number;
     summary: string;
+    /** Declared / leftover-sibling ship — counts toward same-surface streak. */
+    themed?: boolean;
   },
 ): UlwWaveRecord {
   s.wave += 1;
   // A stamped wave means the scout (if any) already named the next ships.
   s.phase = "ship";
   s.judgmentRequired = false;
+  applySameSurfaceNote(s, opts.summary, opts.themed === true);
   const rec: UlwWaveRecord = {
     wave: s.wave,
     editDelta: opts.editDelta,
@@ -659,6 +684,7 @@ function appendWaveRecord(
     proof: opts.proof,
     todoProgress: opts.todoProgress,
     summary: opts.summary,
+    surfaceKey: surfaceKey(opts.summary) || undefined,
     ts: nowIso(),
   };
   s.waves = [...(s.waves ?? []), rec].slice(-WAVE_LEDGER_KEEP);
@@ -821,6 +847,56 @@ function polishAdmit(streak: number): string {
   ].join(" ");
 }
 
+function canArmSameSurfaceHold(
+  s: Pick<UlwCycleState, "cycle" | "wrapKind" | "maxWaves" | "cycleZeroStopAt">,
+): boolean {
+  return (
+    s.cycle === 1 &&
+    !s.wrapKind &&
+    normalizeMaxWaves(s.maxWaves) == null &&
+    s.cycleZeroStopAt == null
+  );
+}
+
+export function sameSurfaceHolding(s: UlwCycleState): boolean {
+  if (!s.enabled || !canArmSameSurfaceHold(s)) return false;
+  return Boolean(
+    s.sameSurfaceHold || (s.sameSurfaceStreak ?? 0) >= SAME_SURFACE_HOLD,
+  );
+}
+
+function clearSameSurfaceHold(s: UlwCycleState): void {
+  s.sameSurfaceHold = false;
+  s.sameSurfaceAdmitCount = 0;
+}
+
+function applySameSurfaceNote(
+  s: UlwCycleState,
+  summary: string,
+  themed: boolean,
+): void {
+  // Generic Stop closers ("did some edits") are not themed ships.
+  if (!themed) return;
+  const prev = (s.waves ?? []).map((w) => w.summary);
+  const note = nextSameSurfaceStreak(prev, summary, s.sameSurfaceStreak ?? 0, {
+    consolidation: isConsolidationCloser(summary),
+  });
+  s.sameSurfaceStreak = note.streak;
+  if (note.streak >= SAME_SURFACE_HOLD && canArmSameSurfaceHold(s)) {
+    s.sameSurfaceHold = true;
+  } else if (note.streak < SAME_SURFACE_HOLD) {
+    s.sameSurfaceHold = false;
+    s.sameSurfaceAdmitCount = 0;
+  }
+}
+
+const SAME_SURFACE_HOLD_ADMIT = [
+  "[Forge ULW cycle driver] Stop blocked — last ships are the same surface.",
+  "Write a new Reading: (what is still hard + the ONE next ship on a different surface) or /cycle 0.",
+  "Do not stamp another leftover / sibling of the last ship. A red test suite or open defect is a different surface.",
+  "Do not attest **Cycle complete.** Unlimited ULW continues only after a different-surface reading.",
+].join("\n");
+
 
 
 function splitNamedShipList(s: string): string[] {
@@ -974,6 +1050,17 @@ export function maybeAdoptNamedShips(
   ) {
     return false;
   }
+  // Same-surface hold: refuse a reading whose ONE ship is the last theme.
+  // Passed-on items may name the old surface — that is "we are leaving it."
+  if (s.sameSurfaceHold || (s.sameSurfaceStreak ?? 0) >= SAME_SURFACE_HOLD) {
+    const prev = (s.waves ?? []).map((w) => w.summary);
+    const one = parsed[0] ?? "";
+    if (matchesRecentSurface(prev, one) || isLeftoverSiblingShip(one)) {
+      return false;
+    }
+    clearSameSurfaceHold(s);
+    s.sameSurfaceStreak = 0;
+  }
   s.namedShips = parsed.map((item) => ({ text: item, status: "open" as const }));
   s.namedShipAdmitDone = false;
   if (text) {
@@ -983,6 +1070,7 @@ export function maybeAdoptNamedShips(
       /* ledger is best-effort */
     }
   }
+  saveUlwCycle(s);
   return true;
 }
 
@@ -1261,7 +1349,14 @@ export function maybeStampUlwWave(opts: {
   );
   const summary =
     summarizeWave(closer, opts.sessionId) || "(mid-loop epoch)";
-  const facts = { editDelta, proof, todoProgress, netDiff, summary };
+  const facts = {
+    editDelta,
+    proof,
+    todoProgress,
+    netDiff,
+    summary,
+    themed: true,
+  };
 
   // LAST: update the open wave's facts, never increment the counter.
   // Declared ships still close named/wrap items so LAST can wrap the plan.
@@ -1300,6 +1395,23 @@ export function maybeStampUlwWave(opts: {
     ) {
       /* still need a reading — fall through */
     } else {
+      if (
+        sameSurfaceHolding(s) &&
+        (isLeftoverChromeShip(closer) ||
+          matchesRecentSurface(
+            (s.waves ?? []).map((w) => w.summary),
+            closer,
+          ))
+      ) {
+        s.sameSurfaceHold = true;
+        s.sameSurfaceAdmitCount = (s.sameSurfaceAdmitCount ?? 0) + 1;
+        saveUlwCycle(s);
+        return {
+          stamped: false,
+          wave: s.wave,
+          admit: SAME_SURFACE_HOLD_ADMIT,
+        };
+      }
       applyDiffFingerprint(s, fp);
       appendWaveRecord(s, {
         sessionId: opts.sessionId,
@@ -1515,6 +1627,19 @@ export function loadUlwCycle(sessionId: string): UlwCycleState | null {
   {
     const stopAt = normalizeMaxWaves(raw.cycleZeroStopAt);
     raw.cycleZeroStopAt = stopAt ?? undefined;
+  }
+  if (
+    typeof raw.sameSurfaceStreak !== "number" ||
+    !Number.isFinite(raw.sameSurfaceStreak)
+  ) {
+    raw.sameSurfaceStreak = 0;
+  }
+  if (typeof raw.sameSurfaceHold !== "boolean") raw.sameSurfaceHold = false;
+  if (
+    typeof raw.sameSurfaceAdmitCount !== "number" ||
+    !Number.isFinite(raw.sameSurfaceAdmitCount)
+  ) {
+    raw.sameSurfaceAdmitCount = 0;
   }
   return raw;
 }
@@ -1825,6 +1950,9 @@ export function armUlwCycle(
     waves: prev?.waves ?? [],
     thinStreak: 0,
     polishStreak: 0,
+    sameSurfaceStreak: 0,
+    sameSurfaceHold: false,
+    sameSurfaceAdmitCount: 0,
     proofDemands: 0,
     evidenceNudges: 0,
     soulNudgeDone: false,
@@ -1980,6 +2108,7 @@ export function reenableUlwCycle(sessionId: string): UlwCycleState | null {
   s.cycle = 1;
   s.stuckBlocks = 0;
   s.soulNudgeDone = false;
+  clearSameSurfaceHold(s);
   clearUlwWrap(s);
   saveUlwCycle(s);
   return s;
@@ -2003,6 +2132,8 @@ export function setCycleFlag(
   if (cycle === 1) {
     s.stuckBlocks = 0;
     s.soulNudgeDone = false;
+    clearSameSurfaceHold(s);
+    s.sameSurfaceStreak = 0;
     clearUlwWrap(s);
     if (s.cycleZeroStopAt != null) {
       if (normalizeMaxWaves(s.maxWaves) === s.cycleZeroStopAt) {
@@ -2076,6 +2207,7 @@ export function scheduleCycleZeroStop(
   s.cycleZeroStopAt = stopAt;
   s.cycle = 1;
   s.stuckBlocks = 0;
+  clearSameSurfaceHold(s);
   clearUlwWrap(s);
   if (s.wave >= stopAt) {
     flipUlwToLast(s, sessionId, "budget");
@@ -2195,6 +2327,9 @@ export function resetUlwOnClear(sessionId: string): UlwCycleState | null {
   s.waves = [];
   s.thinStreak = 0;
   s.polishStreak = 0;
+  s.sameSurfaceStreak = 0;
+  s.sameSurfaceHold = false;
+  s.sameSurfaceAdmitCount = 0;
   s.proofDemands = 0;
   s.evidenceNudges = 0;
   s.judgmentDemands = 0;
@@ -2248,6 +2383,17 @@ export function formatUlwBadge(
  */
 export const ULW_LIVE_CONTROLS_HINT =
   "Live mid-run (type while working — no Ctrl+C): /cycle 0 stop@N+1 · /cycle 1 continue · /max-waves N|off · /ulw-off disarm · /budget N|off · /notify on · /done";
+
+function formatSameSurfaceStatusLine(s: UlwCycleState): string | undefined {
+  const streak = s.sameSurfaceStreak ?? 0;
+  if (sameSurfaceHolding(s)) {
+    return `  Same surface: hold — new Reading on a different surface or /cycle 0 (stuck-wall will not release)`;
+  }
+  if (streak >= SAME_SURFACE_ADVISORY) {
+    return `  Same surface: ${streak} in a row — next ship must be a different surface (or /cycle 0)`;
+  }
+  return undefined;
+}
 
 function formatProductQualityStatusLine(s: UlwCycleState): string | undefined {
   if (!isUserFacingProductWork(s.mandate)) return undefined;
@@ -2307,6 +2453,7 @@ export function formatUlwStatus(s: UlwCycleState | null): string {
     }`,
     ...(namedLine ? [namedLine] : []),
     ...(qualityLine ? [qualityLine] : []),
+    ...(formatSameSurfaceStatusLine(s) ? [formatSameSurfaceStatusLine(s)!] : []),
     ...(s.wrapKind
       ? [
           s.wrapKind === "user"
@@ -2466,16 +2613,17 @@ export function evaluateUlwAtStop(opts: {
     !s.wrapKind &&
     normalizeMaxWaves(s.maxWaves) == null &&
     namedShipsExhausted(s);
+  const exhaustHolding = namedExhaustHolding || sameSurfaceHolding(s);
   if (progressed) {
     s.stuckBlocks = 0;
-  } else if (!namedExhaustHolding) {
+  } else if (!exhaustHolding) {
     s.stuckBlocks += 1;
   }
   s.blocks += 1;
   s.lastBlockEditCount = opts.editCount;
 
   if (
-    !namedExhaustHolding &&
+    !exhaustHolding &&
     opts.stuckThreshold > 0 &&
     s.stuckBlocks >= opts.stuckThreshold
   ) {
@@ -2658,6 +2806,8 @@ export function evaluateUlwAtStop(opts: {
           proof,
           todoProgress,
           summary: summarizeWave(closer, opts.sessionId),
+          themed:
+            isDeclaredWaveClose(closer) || isLeftoverSiblingShip(closer),
         });
         markNamedShipDone(s, closer);
         s.lastWaveSig = sig;
@@ -2699,6 +2849,27 @@ export function evaluateUlwAtStop(opts: {
         waveClosed: shipAfterExhaust,
       };
     }
+    if (sameSurfaceHolding(s) && !adoptedNamed) {
+      const differentSurface =
+        isShipCloseText(closer) &&
+        editDelta >= 1 &&
+        !isLeftoverChromeShip(closer) &&
+        !matchesRecentSurface(
+          (s.waves ?? []).map((w) => w.summary),
+          closer,
+        );
+      if (!differentSurface || alreadyStamped) {
+        s.sameSurfaceAdmitCount = (s.sameSurfaceAdmitCount ?? 0) + 1;
+        s.sameSurfaceHold = true;
+        saveUlwCycle(s);
+        return {
+          block: true,
+          reason: SAME_SURFACE_HOLD_ADMIT,
+          reanchor: SAME_SURFACE_HOLD_ADMIT,
+          sameSurfaceDemanded: true,
+        };
+      }
+    }
     if (!alreadyStamped) {
       appendWaveRecord(s, {
         sessionId: opts.sessionId,
@@ -2707,6 +2878,8 @@ export function evaluateUlwAtStop(opts: {
         proof,
         todoProgress,
         summary: summarizeWave(closer, opts.sessionId),
+        themed:
+          isDeclaredWaveClose(closer) || isLeftoverSiblingShip(closer),
       });
       markNamedShipDone(s, closer);
       s.lastWaveSig = sig;
@@ -2871,6 +3044,9 @@ function buildCycleReanchor(
         : null,
       (opts.thinStreak ?? 0) >= 2
         ? `Waves are thinning (${opts.thinStreak} in a row with little substance). God-mode demand: pick a substantially higher-leverage hard objective (not churn) — or, if the hard work is genuinely exhausted, say so with evidence; the user can /cycle 0.`
+        : null,
+      (s.sameSurfaceStreak ?? 0) >= SAME_SURFACE_ADVISORY
+        ? `Last ${s.sameSurfaceStreak} ships are the same surface. Next ship must be a different surface (trust, correctness, a new job) — or /cycle 0. Same-surface leftovers will not increment w.`
         : null,
       s.softPrompt
         ? `Soft signal still active — you own what the hard work is within the durable decisions above. Prefer backlog todos; never ask the user to clarify or pick tasks.`

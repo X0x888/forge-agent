@@ -109,7 +109,8 @@ Mechanisms built on the ledger:
 
 | Mechanism | Behavior |
 |-----------|----------|
-| **Bar anchoring** | Each CONTINUE re-anchor names the best wave so far (proven waves first, then largest edit delta) and requires matching or beating it — no filler waves (renames, comment churn, edit/revert loops) |
+| **Bar anchoring** | Each CONTINUE re-anchor *names* the best wave so far (proven waves first, then largest edit delta). Prompt-only — Stop is not blocked if the next ship is smaller-leverage |
+| **Same-surface hold** | 3 consecutive declared ships on the same theme (summary overlap or leftover-sibling language) → unlimited ULW holds until a different-surface `Reading:` or `/cycle 0`. Stuck-wall does not increment. Capped and `/cycle 0` N+1 budgets are not held. Maze dogfood openings/rest-card grind. |
 | **Proof demand** | A wave with no verification triggers `⚠ … ran no verification — run its proof NOW`. Capped at 2 consecutive demands (a stated rationale is then accepted — some repos have no tests) |
 | **Wave rules** | Every wave: smoke-check first (prior waves may have broken something), ONE objective, search-before-build (no re-implementing), 2-line plan (objective + the exact command that proves it) |
 | **Consolidation cadence** | Every 4th wave is a CONSOLIDATION wave: no new scope — full check suite + hostile review of the cumulative `git diff` |
@@ -120,7 +121,7 @@ Mechanisms built on the ledger:
 | **Product quality** | User-facing product ships (build/evaluate an app or named surface) must name the hard user job, finish one edge (empty/error/first-run) after wave 1, and keep at most one labeled `Serendipity:`. Preview catalogs are not a job. Bounce once. `/cycle status` shows the bar. Infra, bugfix, and generic UI chrome never arm |
 | **Adaptive effort** | Hard rounds (doom-loop / error-streak / missing proof / product-quality bounce) raise reasoning effort one notch for a turn — escalate on failure, not by default (`FORGE_ADAPTIVE_EFFORT=0` disables) |
 
-Anti-gaming is **structural, not prompt-based**: the only way to satisfy a proof demand is to actually run a check — which is the desired behavior. The ledger is visible in `/cycle status` (`Recent waves: w1 +5e ✓ · w2 +1e ✗`, plus the best-wave bar).
+Anti-gaming that is **structural**: proof demand (must run a check), leftover-chrome LAST@4, named-ship exhaust, same-surface hold. Bar anchoring is prompt-only. The ledger is visible in `/cycle status` (`Recent waves: w1 +12e ✓ · w2 +1e↺ ✗`, plus the best-wave bar and `Same surface: hold` when armed).
 
 ## Token discipline (ULW rounds)
 
@@ -130,6 +131,7 @@ Anti-gaming is **structural, not prompt-based**: the only way to satisfy a proof
 - Idle mid-loop epochs never increment `w` (capped or unlimited). `w` moves on Stop or a declared `Wave shipped` / `Ship landed`.
 - After auto-commit the clean tree is a new fingerprint baseline — not a `revisit` of the arm-time clean state.
 - Unlimited evaluate-class: when every named ship from the reading is done, Stop asks for a new `Reading:` or `/cycle 0` and **stays blocked** until a different-surface reading is adopted. Stuck-wall does not release that hold. A glanceable ✓ / leftover-chrome sibling list is refused. A declared ship with real edits still stamps `w`. A cap still spends remaining waves.
+- **Same-surface hold**: 3 declared ships on the same theme (token overlap after ritual-strip, or leftover/fix-that-only language, including a theme that returns after a one-wave pivot) block unlimited ULW until a different-surface reading or `/cycle 0`. Same-surface leftovers do not increment `w`. Consolidation closers do not increment or reset the streak. Capped runs and a scheduled `/cycle 0` N+1 budget are not held.
 - Leftover-chrome class (clip **or** glanceable ✓ / live › last-line / bang-shell / idle bg tail) auto-LAST at 4. Consolidation closers do not reset that streak. Δ-closer verify is not chrome.
 - User-facing product ships have a quality bar (not a persona): name the hard user job, finish one edge (empty/error/first-run) after wave 1, at most one labeled `Serendipity:`. Arms on build/evaluate of an app or named surface — not generic UI chrome, infra, or bugfix. Preview catalogs are not a reading. Existing `Reading:` notes count as the job.
 - Ship close grammar is one matcher: `Ship landed:` · `**Ship:**` · `Wave N ship:` · `Wave ship:` · `Wave shipped.` Auto-commit subjects use that ship, not an older wave-1 note.
