@@ -298,6 +298,12 @@ export {
   summarizeWave,
   maybeStampUlwWave,
   isDeclaredWaveClose,
+  parseNamedShipsFromReading,
+  maybeAdoptNamedShips,
+  markNamedShipDone,
+  namedShipsExhausted,
+  applyCleanBaselineAfterCommit,
+  noteUlwTreeAfterAutoCommit,
   isPolishClassShip,
   resolveUlwPhase,
   shouldSkipOrient,
@@ -426,6 +432,7 @@ export {
   formatResumeOrientation,
   recoverSessionFromTmp,
   compactMessages,
+  clearRequestPruneSticky,
   rebuildUserTurnMarks,
   isSyntheticUserMessage,
   isValidSessionId,
@@ -752,6 +759,11 @@ export {
 } from "./session/tool-clearing.js";
 export {
   pruneMessagesForRequest,
+  prepareOutboundMessages,
+  applyStickyPrune,
+  captureStickyPrune,
+  stickyPruneValid,
+  normalizeRequestPruneSticky,
   requestPruneEnvConfig,
   assistantStepAges,
   collapseStaleHarnessUserMessages,
@@ -759,6 +771,10 @@ export {
   classifyHarnessUserMessage,
   HARNESS_USER_STUB,
   REQUEST_PRUNE_OMITTED,
+} from "./session/request-prune.js";
+export type {
+  RequestPruneSticky,
+  PruneKind,
 } from "./session/request-prune.js";
 export {
   X_GROK_CONV_ID,

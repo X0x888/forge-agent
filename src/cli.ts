@@ -6907,6 +6907,7 @@ maxTurns: opts.config.maxTurns ?? 0,
       cacheReadTokens: result.cacheReadTokens,
       lastRoundPromptTokens: opts.session.meta.lastRoundPromptTokens ?? null,
       lastRoundCacheReadTokens: opts.session.meta.lastRoundCacheReadTokens ?? null,
+      lastPruneKind: opts.session.meta.lastPruneKind ?? null,
       lastRoundCacheRatio: (() => {
         const lastP = opts.session.meta.lastRoundPromptTokens ?? 0;
         const lastC = opts.session.meta.lastRoundCacheReadTokens ?? 0;

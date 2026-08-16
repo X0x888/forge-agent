@@ -29,6 +29,7 @@ import {
   estimateTokens,
   estimateRequestTokens,
   compactMessages,
+  clearRequestPruneSticky,
   rebuildUserTurnMarks,
   maybeSetTitle,
   markUserTurn,
@@ -70,12 +71,14 @@ import {
   toolClearEnvConfig,
 } from "../session/tool-clearing.js";
 import {
-  pruneMessagesForRequest,
+  prepareOutboundMessages,
   countHarnessUserPokes,
+  type RequestPruneSticky,
+  type PruneKind,
 } from "../session/request-prune.js";
 import {
   appendProviderRoundMetrics,
-  shouldPruneOutbound,
+  cacheHitRatio,
 } from "../session/prompt-cache.js";
 import {
   CITE_DELTA_POKE,
@@ -496,13 +499,25 @@ export function filterToolsForPermissionMode(
   return tools.filter((t) => PLAN_MODE_TOOL_NAMES.has(t.function.name));
 }
 
+export interface BuildChatRequestOpts {
+  conversationId?: string;
+  estimatedTokens?: number;
+  /** Frozen omit set from a prior clip (session.meta.requestPruneSticky). */
+  sticky?: RequestPruneSticky | null;
+  onPrune?: (info: {
+    kind: PruneKind;
+    sticky?: RequestPruneSticky;
+    changed: boolean;
+  }) => void;
+}
+
 /** Build provider chat request including reasoning_effort when supported. */
 export function buildChatRequest(
   config: ForgeConfig,
   messages: ChatMessage[],
   effortOverride?: ReasoningEffort,
   tools: ToolDefinition[] = TOOL_DEFINITIONS,
-  opts?: { conversationId?: string; estimatedTokens?: number },
+  opts?: BuildChatRequestOpts,
 ): ChatRequest {
   const effort =
     effortOverride ?? resolveReasoningEffort(config.model, config.reasoningEffort);
@@ -510,12 +525,20 @@ export function buildChatRequest(
   const estimated =
     opts?.estimatedTokens ??
     estimateRequestTokens(messages, { toolsJsonChars });
-  const prune = shouldPruneOutbound(estimated);
-  // Append-only by default so xAI can cache the prefix. Prune only at
-  // the 180k cliff (or FORGE_REQUEST_PRUNE=1 legacy). session.messages stays full.
-  const wire = prune.prune
-    ? pruneMessagesForRequest(messages, { spool: true }).messages
-    : messages;
+  // Append-only until the 180k cliff, then one clip + sticky omit set.
+  // FORGE_REQUEST_PRUNE=1 restores every-round slim. session.messages stays full.
+  const prep = prepareOutboundMessages(messages, {
+    estimatedTokens: estimated,
+    toolsJsonChars,
+    sticky: opts?.sticky,
+    spool: true,
+  });
+  opts?.onPrune?.({
+    kind: prep.kind,
+    sticky: prep.sticky,
+    changed: prep.changed,
+  });
+  const wire = prep.messages;
   // Phase 6: expand [[image:path]] / @shot.png markers into multimodal parts
   // for vision-capable providers (inline data URLs). Stored session history
   // keeps the original string markers — only the outbound request expands.
@@ -848,29 +871,49 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
   const maxTurns = resolveMaxTurns(config.maxTurns);
   /** Last outbound request was prefix-breaking prune (for per-round metrics). */
   let lastOutboundPruned = false;
+  let lastPruneKind: PruneKind = "off";
+  let lastRoundCacheRatio = 0;
   /** Tool schemas are sent every turn but not stored in session history. */
   const makeChatRequest = (effortOverride?: ReasoningEffort) => {
     const tools = toolsForMode();
     const estimated = estimateRequestTokens(session.messages, {
       toolsJsonChars: JSON.stringify(tools).length,
     });
-    lastOutboundPruned = shouldPruneOutbound(estimated).prune;
     return buildChatRequest(config, session.messages, effortOverride, tools, {
       conversationId: session.meta.id,
       estimatedTokens: estimated,
+      sticky: session.meta.requestPruneSticky,
+      onPrune: (info) => {
+        lastPruneKind = info.kind;
+        lastOutboundPruned = info.kind !== "off";
+        if (info.kind === "off") {
+          delete session.meta.lastPruneKind;
+        } else {
+          session.meta.lastPruneKind = info.kind;
+        }
+        if (info.kind === "always") {
+          clearRequestPruneSticky(session);
+        } else if (info.sticky) {
+          session.meta.requestPruneSticky = info.sticky;
+        }
+      },
     });
   };
 
   const requestTokenEstimate = (): number => {
     const tools = toolsForMode();
-    const raw = estimateRequestTokens(session.messages, {
-      toolsJsonChars: JSON.stringify(tools).length,
+    const extras = { toolsJsonChars: JSON.stringify(tools).length };
+    const raw = estimateRequestTokens(session.messages, extras);
+    const prep = prepareOutboundMessages(session.messages, {
+      estimatedTokens: raw,
+      toolsJsonChars: extras.toolsJsonChars,
+      sticky: session.meta.requestPruneSticky,
+      spool: false,
     });
-    if (!shouldPruneOutbound(raw).prune) return raw;
-    return estimateRequestTokens(
-      pruneMessagesForRequest(session.messages, { spool: false }).messages,
-      { toolsJsonChars: JSON.stringify(tools).length },
-    );
+    return estimateRequestTokens(prep.messages, {
+      ...extras,
+      includeReasoning: true,
+    });
   };
 
   /**
@@ -900,6 +943,9 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
       lastVerificationAt: session.meta.lastVerificationAt,
       lastEditAt: session.meta.lastEditAt,
     });
+    // Compact rewrites the prefix — drop the frozen omit set so the next
+    // send first-clips against the new store instead of applying dead ids.
+    clearRequestPruneSticky(session);
     const healed = repairToolCallPairing(session.messages);
     if (healed.changed) session.messages = healed.messages;
     // Compact rewrites history — resync undo marks so /undo never restores disk
@@ -1872,6 +1918,10 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
         session.meta.lastRoundCacheReadTokens =
           response.usage.cache_read_input_tokens ?? 0;
         try {
+          const ratio = cacheHitRatio(
+            response.usage.prompt_tokens,
+            response.usage.cache_read_input_tokens ?? 0,
+          );
           appendProviderRoundMetrics({
             sessionId: session.meta.id,
             provider: String(config.provider),
@@ -1880,8 +1930,11 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
             cacheReadTokens: response.usage.cache_read_input_tokens ?? 0,
             completionTokens: response.usage.completion_tokens,
             pruned: lastOutboundPruned,
+            pruneKind: lastPruneKind,
+            cacheDrop: lastRoundCacheRatio > 0.9 && ratio < 0.05,
             turn: turns,
           });
+          lastRoundCacheRatio = ratio;
         } catch {
           /* metrics never fail the turn */
         }

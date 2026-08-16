@@ -12,6 +12,7 @@ import {
   formatWaveLedger,
   isPlaceholderMandate,
   loadUlwCycle,
+  noteUlwTreeAfterAutoCommit,
   type UlwCycleState,
 } from "../harness/ulw-cycle.js";
 
@@ -207,6 +208,11 @@ export function maybeAutoCommitOnUlwDone(opts: {
     sha = git(["rev-parse", "--short", "HEAD"], root, 5_000);
   } catch {
     sha = "";
+  }
+  try {
+    noteUlwTreeAfterAutoCommit(opts.sessionId, root);
+  } catch {
+    /* fingerprint reset is best-effort */
   }
   return {
     committed: true,

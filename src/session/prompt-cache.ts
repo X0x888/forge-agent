@@ -108,6 +108,8 @@ export function appendProviderRoundMetrics(opts: {
   cacheReadTokens: number;
   completionTokens: number;
   pruned: boolean;
+  pruneKind?: string;
+  cacheDrop?: boolean;
   turn: number;
 }): void {
   const ratio = cacheHitRatio(opts.promptTokens, opts.cacheReadTokens);
@@ -122,6 +124,8 @@ export function appendProviderRoundMetrics(opts: {
     completionTokens: opts.completionTokens,
     cacheRatio: Math.round(ratio * 10000) / 10000,
     pruned: opts.pruned || undefined,
+    pruneKind: opts.pruneKind && opts.pruneKind !== "off" ? opts.pruneKind : undefined,
+    cacheDrop: opts.cacheDrop || undefined,
     providerRounds: opts.turn,
   });
 }

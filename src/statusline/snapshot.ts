@@ -8,11 +8,8 @@ import {
   estimateRequestTokens,
   type SessionData,
 } from "../session/session.js";
-import { pruneMessagesForRequest } from "../session/request-prune.js";
-import {
-  sessionCacheRatio,
-  shouldPruneOutbound,
-} from "../session/prompt-cache.js";
+import { prepareOutboundMessages } from "../session/request-prune.js";
+import { sessionCacheRatio } from "../session/prompt-cache.js";
 import { TOOL_DEFINITIONS } from "../agent/tools/definitions.js";
 import { loadGoal } from "../harness/goal.js";
 import { loadUlwCycle, normalizeMaxWaves } from "../harness/ulw-cycle.js";
@@ -152,24 +149,41 @@ const TOOLS_JSON_CHARS = JSON.stringify(TOOL_DEFINITIONS).length;
 
 /**
  * Same decision as the wire: tool-schema-inclusive estimate, append-only
- * under the 180k cliff, prune only when `shouldPruneOutbound` says so.
+ * under the 180k cliff, then the sticky omit set. HUD counts
+ * `reasoning_content`; the prune threshold does not.
  */
-export function outboundTokenEstimate(messages: SessionData["messages"]): number {
+export function outboundTokenEstimate(
+  messages: SessionData["messages"],
+  sticky?: SessionData["meta"]["requestPruneSticky"],
+): number {
   try {
     const extras = { toolsJsonChars: TOOLS_JSON_CHARS };
     const raw = estimateRequestTokens(messages, extras);
-    if (!shouldPruneOutbound(raw).prune) return raw;
-    return estimateRequestTokens(
-      pruneMessagesForRequest(messages, { spool: false }).messages,
-      extras,
-    );
+    const prep = prepareOutboundMessages(messages, {
+      estimatedTokens: raw,
+      toolsJsonChars: TOOLS_JSON_CHARS,
+      sticky,
+      spool: false,
+    });
+    return estimateRequestTokens(prep.messages, {
+      ...extras,
+      includeReasoning: true,
+    });
   } catch {
-    return estimateTokens(messages);
+    return estimateTokens(messages, { includeReasoning: true });
   }
 }
 
+/** Same as the wire: apply the session's frozen omit set when present. */
+export function outboundTokenEstimateForSession(session: SessionData): number {
+  return outboundTokenEstimate(
+    session.messages,
+    session.meta.requestPruneSticky,
+  );
+}
+
 function buildContext(session: SessionData, windowTokens: number): ContextInfo {
-  const used = outboundTokenEstimate(session.messages);
+  const used = outboundTokenEstimateForSession(session);
   const win = windowTokens > 0 ? windowTokens : 128_000;
   return {
     usedTokens: used,

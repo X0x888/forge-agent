@@ -37,6 +37,7 @@ import {
   type SubagentUsageRecord,
 } from "./subagent-usage.js";
 import { normalizeExploreMaps } from "./explore-map.js";
+import { normalizeRequestPruneSticky } from "./request-prune.js";
 import {
   compactMessagesStructured,
   type CompactContext,
@@ -178,6 +179,11 @@ export interface SessionMeta {
   lastRoundPromptTokens?: number;
   lastRoundCacheReadTokens?: number;
   /**
+   * How the last outbound request was slimmed: first_clip | sticky |
+   * reclip | always. Absent when the last send was append-only.
+   */
+  lastPruneKind?: string;
+  /**
    * Per-child spend ledger. Parent token totals already include these
    * (family number). The array is how you see which subagent spent what.
    * Not a cap.
@@ -185,6 +191,12 @@ export interface SessionMeta {
   subagentUsage?: SubagentUsageRecord[];
   /** Structured explore maps (pick + file claims). Latest wins on lookup. */
   exploreMaps?: import("./explore-map.js").ExploreMap[];
+  /**
+   * Frozen outbound prune set. After the first ≥180k clip, later requests
+   * apply these stubs instead of re-aging — xAI prefix cache stays sticky.
+   * Cleared on compact / /clear.
+   */
+  requestPruneSticky?: import("./request-prune.js").RequestPruneSticky;
   /**
    * Raw model ids the provider reported serving that DIVERGE from the
    * requested model (capped at 8). Provider-side tier routing made visible —
@@ -482,9 +494,20 @@ function normalizeSessionMeta(
     delete out.lastRoundPromptTokens;
     delete out.lastRoundCacheReadTokens;
   }
+  const pk = typeof fromSide.lastPruneKind === "string"
+    ? fromSide.lastPruneKind.trim()
+    : "";
+  if (pk === "first_clip" || pk === "sticky" || pk === "reclip" || pk === "always") {
+    out.lastPruneKind = pk;
+  } else {
+    delete out.lastPruneKind;
+  }
   const maps = normalizeExploreMaps(fromSide.exploreMaps);
   if (maps) out.exploreMaps = maps;
   else delete out.exploreMaps;
+  const sticky = normalizeRequestPruneSticky(fromSide.requestPruneSticky);
+  if (sticky) out.requestPruneSticky = sticky;
+  else delete out.requestPruneSticky;
   if (fromSide.pinned) out.pinned = true;
   else delete out.pinned;
   const pm = normalizeMetaPermissionMode(fromSide.permissionMode);
@@ -1991,12 +2014,18 @@ const CHARS_PER_TOKEN = 3.2;
 /** Per-message role/framing overhead (provider chat templates). */
 const MSG_FRAME_TOKENS = 6;
 
-export function estimateTokens(messages: ChatMessage[]): number {
+export function estimateTokens(
+  messages: ChatMessage[],
+  opts?: { includeReasoning?: boolean },
+): number {
   let chars = 0;
   let msgs = 0;
   for (const m of messages) {
     msgs += 1;
     chars += (m.content || "").length;
+    if (opts?.includeReasoning && m.reasoning_content) {
+      chars += m.reasoning_content.length;
+    }
     if (m.tool_call_id) chars += m.tool_call_id.length + 12;
     if (m.tool_calls) {
       for (const tc of m.tool_calls) {
@@ -2012,12 +2041,20 @@ export function estimateTokens(messages: ChatMessage[]): number {
 
 /**
  * Full request estimate including tool schemas (sent every turn, not in history).
+ * `includeReasoning` is HUD-only — the prune estimator stays reasoning-free
+ * so counting thoughts cannot move the 180k clip.
  */
 export function estimateRequestTokens(
   messages: ChatMessage[],
-  extras?: { toolsJsonChars?: number; reserveTokens?: number },
+  extras?: {
+    toolsJsonChars?: number;
+    reserveTokens?: number;
+    includeReasoning?: boolean;
+  },
 ): number {
-  let n = estimateTokens(messages);
+  let n = estimateTokens(messages, {
+    includeReasoning: extras?.includeReasoning,
+  });
   if (extras?.toolsJsonChars && extras.toolsJsonChars > 0) {
     n += Math.ceil(extras.toolsJsonChars / CHARS_PER_TOKEN) + 48;
   }
@@ -3309,6 +3346,11 @@ export function formatSessionShareCard(
   return lines.join("\n");
 }
 
+/** Compact / /clear rewrite the prefix — drop the frozen omit set. */
+export function clearRequestPruneSticky(session: SessionData): void {
+  delete session.meta.requestPruneSticky;
+}
+
 export function clearConversation(session: SessionData): void {
   const system = session.messages.filter((m) => m.role === "system");
   session.messages = system;
@@ -3322,8 +3364,10 @@ export function clearConversation(session: SessionData): void {
   session.meta.totalCompletionTokens = 0;
   delete session.meta.subagentUsage;
   delete session.meta.exploreMaps;
+  clearRequestPruneSticky(session);
   delete session.meta.lastRoundPromptTokens;
   delete session.meta.lastRoundCacheReadTokens;
+  delete session.meta.lastPruneKind;
   // Drop per-session spend override so the next conversation inherits config again.
   delete session.meta.maxCostUsd;
   session.meta.title = undefined;

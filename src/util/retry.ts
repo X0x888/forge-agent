@@ -172,7 +172,7 @@ export function isRetryableError(err: unknown): boolean {
   if (/\b(408|429|500|502|503|504)\b/.test(msg)) return true;
   // Dropped SSE / empty stream — retry with same payload is usually fine
   if (
-    /stream ended with empty response|stream error:|dropped connection/i.test(
+    /stream ended with empty response|stream error:|dropped connection|empty choices array|empty response \(no content/i.test(
       msg,
     )
   ) {

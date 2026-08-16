@@ -38,6 +38,10 @@ export interface SessionMetricsEvent {
   lastRoundCacheReadTokens?: number;
   /** True when this outbound request was request-pruned. */
   pruned?: boolean;
+  /** first_clip | sticky | reclip | always — how the wire was slimmed. */
+  pruneKind?: string;
+  /** True when cacheRatio fell below 5% after a prior round above 90%. */
+  cacheDrop?: boolean;
   /** Distinct served models that diverged from the requested one this run. */
   servedModels?: string[];
   /** Harness-as-second-user meters (this run). */

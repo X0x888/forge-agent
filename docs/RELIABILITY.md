@@ -39,7 +39,7 @@ What experts should expect from Forge in long, unattended, or CI runs.
 | **Unknown tool tips** | Up to 3 Did-you-mean candidates (`suggestNames`) so the model can self-correct typos without a human |
 | **Doom-loop** | Same tool + same args ×N injects a hard strategy-change nudge (OpenCode-inspired; default N=3, override `FORGE_DOOM_LOOP_THRESHOLD`); fingerprints ignore transport-only fields (`timeout_ms`, `background`, `run_in_background`, `stream`, `tail`, `allow_local`) |
 | **Error-streak** | N consecutive tool errors (any args) injects a circuit-breaker nudge (Grok-inspired; default N=5, override `FORGE_ERROR_STREAK_THRESHOLD`); permission/hard denies do not count |
-| **Request-time prune** | Outbound-only. Default is **append-only** until the estimate hits 180k (under the 200k 2× price cliff), then prune. Every-round prune (`FORGE_REQUEST_PRUNE=1`) rewrites the prefix and kills xAI cache. Stored `session.json` is never rewritten. |
+| **Request-time prune** | Outbound-only. Default is **append-only** until the estimate hits 180k (under the 200k 2× price cliff), then **one clip** whose omit set is frozen on `session.meta.requestPruneSticky`. Later rounds re-apply those stubs instead of re-aging (xAI prefix can cache again). A second shelf reclips only if the last clip got under the cliff and the suffix grew back over. Compact/`/clear` drop the set. Every-round prune (`FORGE_REQUEST_PRUNE=1`) still rewrites the prefix. Stored `session.json` messages are never rewritten. |
 | **Unchanged read stub** | Full-file `read_file` (no offset/limit) with matching mtime/size and the last body still in the live tail returns `Unchanged since last read`. Windowed reads and post-write reads still return the body. `FORGE_UNCHANGED_READ_STUB=0` off |
 | **Unattended cost meters** | `forge run --json` / `metrics.jsonl` / last-run session meta: `harnessUserPokes`, `admitCount`, `proofPokes`, `providerRounds` |
 | **Store checkpoint** | Rare resume-file compact when the *store* is huge (`FORGE_CHECKPOINT_STORE_TOKENS` / `_MESSAGES`), not when outbound is 80k. Job card is extractive from sidecars + in-flight tail. FileReadState survives if mtime matches |
@@ -165,7 +165,7 @@ What experts should expect from Forge in long, unattended, or CI runs.
 | `FORGE_ADAPTIVE_EFFORT` | on | `0`/`false` disables one-notch reasoning escalation on hard rounds |
 | `FORGE_CHECKPOINT_STORE_TOKENS` | `1500000` | Store-token trigger for checkpoint compact (not outbound) |
 | `FORGE_CHECKPOINT_STORE_MESSAGES` | `2500` | Store message-count trigger for checkpoint compact |
-| `FORGE_REQUEST_PRUNE` | threshold | Default: prune only when outbound estimate ≥ `FORGE_REQUEST_PRUNE_AT` (180k) so xAI can cache the prefix. `1`/`true` = every-round prune (legacy; breaks cache). `0`/`false` = never |
+| `FORGE_REQUEST_PRUNE` | threshold | Default: prune only when outbound estimate ≥ `FORGE_REQUEST_PRUNE_AT` (180k) so xAI can cache the prefix; first clip is sticky. `1`/`true` = every-round prune (legacy; breaks cache). `0`/`false` = never |
 | `FORGE_REQUEST_PRUNE_AT` | `180000` | Token estimate that turns append-only off and slims the wire (stay under the 200k 2× card) |
 | `FORGE_REQUEST_PRUNE_KEEP_TURNS` | `3` | Newest assistant steps kept verbatim |
 | `FORGE_REQUEST_PRUNE_HARD_AGE` | `10` | Older tool results become `[Tool result omitted — too old]` |

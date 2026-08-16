@@ -14,7 +14,7 @@ When a prompt starts with **`/ulw`** (or `forge --ulw` / `forge run --ulw`), For
 | Value | Meaning |
 |-------|---------|
 | **unset / off** (default) | Unlimited waves while `cycle=1` |
-| **`N` (positive int)** | When the wave counter hits **N**, harness auto-flips to LAST (finish + attest `**Cycle complete.**`). Mid-loop edit bursts do **not** increment the wave. **When a cap is set, idle loop epochs also do not increment** — `max_waves` counts Stop-boundary work units, not ~20 tool rounds. Unlimited ULW still stamps idle epochs for the quality bar. |
+| **`N` (positive int)** | When the wave counter hits **N**, harness auto-flips to LAST (finish + attest `**Cycle complete.**`). Mid-loop edit bursts do **not** increment the wave. **Idle loop epochs never increment `w`** (capped or unlimited) — the counter is Stop-boundary / declared-ship work units, not ~20 tool rounds. Idle still updates open-wave facts (edits/proof) in place. |
 
 ```text
 /ulw improve the code     # arms ULW + cycle=1 (default, unlimited waves)
@@ -123,7 +123,10 @@ Anti-gaming is **structural, not prompt-based**: the only way to satisfy a proof
 
 - Slim re-anchors: the cycle protocol lives once in the stable system prompt; per-wave messages carry only counts, the bar, and wave-specific demands
 - Counter-only harness changes (wave/blocks/todo counts) no longer emit a full mid-conversation admission — the re-anchor already carries them
-- Outbound is append-only until ~180k tokens so xAI can cache the prefix (`FORGE_REQUEST_PRUNE=1` restores every-round slim — that kills cache). In-session stubbing is opt-in (`FORGE_TOOL_CLEAR=1`).
+- Outbound is append-only until ~180k tokens so xAI can cache the prefix; the first clip freezes a sticky omit set (later rounds do not re-age). `FORGE_REQUEST_PRUNE=1` restores every-round slim — that kills cache. In-session stubbing is opt-in (`FORGE_TOOL_CLEAR=1`).
+- Idle mid-loop epochs never increment `w` (capped or unlimited). `w` moves on Stop or a declared `Wave shipped` / `Ship landed`.
+- After auto-commit the clean tree is a new fingerprint baseline — not a `revisit` of the arm-time clean state.
+- Unlimited evaluate-class: when every named ship from the reading is done, Stop asks once for a new `Reading:` or `/cycle 0`. A cap still spends remaining waves.
 - Cheapest-proof guidance: affected tests per wave, full suite on consolidation waves
 
 ## State

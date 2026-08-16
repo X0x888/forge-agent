@@ -31,7 +31,7 @@ function withHome(fn: () => void): void {
 }
 
 describe("ULW mid-loop wave stamp", () => {
-  it("stamps waves on idle step count without Stop", () => {
+  it("unlimited idle epochs do not increment the wave counter", () => {
     withHome(() => {
       const sid = "sess-mid-1";
       fs.mkdirSync(path.join(process.env.FORGE_HOME!, "sessions", sid), {
@@ -49,16 +49,20 @@ describe("ULW mid-loop wave stamp", () => {
         stepsSinceStamp: 3,
       });
       assert.equal(none.stamped, false);
-      const hit = maybeStampUlwWave({
-        sessionId: sid,
-        editCount: 0,
-        openTodoCount: 0,
-        stepsSinceStamp: MID_WAVE_STAMP_STEPS,
-      });
-      assert.equal(hit.stamped, true);
-      assert.ok((hit.wave ?? 0) >= 1);
-      const s = loadUlwCycle(sid);
-      assert.ok((s?.waves?.length ?? 0) >= 1);
+      for (let i = 0; i < 4; i++) {
+        const hit = maybeStampUlwWave({
+          sessionId: sid,
+          editCount: i === 0 ? 0 : 3,
+          openTodoCount: 0,
+          stepsSinceStamp: MID_WAVE_STAMP_STEPS,
+        });
+        assert.equal(hit.stamped, false, "idle must not stamp when uncapped");
+      }
+      const s = loadUlwCycle(sid)!;
+      assert.equal(s.wave, 0);
+      assert.equal(s.cycle, 1);
+      assert.equal(s.maxWaves, null);
+      assert.equal((s.waves?.length ?? 0), 0);
       disarmUlwCycle(sid);
     });
   });
@@ -340,6 +344,38 @@ describe("ULW mid-loop wave stamp", () => {
         lastAssistantMessage: "",
       });
       assert.equal(hit.stamped, true, "memory_write closer must count");
+      assert.equal(loadUlwCycle(sid)!.wave, 1);
+      disarmUlwCycle(sid);
+    });
+  });
+
+  it("declared ship still increments after unlimited idle epochs", () => {
+    withHome(() => {
+      const sid = "sess-mid-idle-then-ship";
+      fs.mkdirSync(path.join(process.env.FORGE_HOME!, "sessions", sid), {
+        recursive: true,
+      });
+      armUlwCycle(sid, "improve the ui", {
+        cycle: 1,
+        skipCheckpoint: true,
+        editCount: 0,
+      });
+      maybeStampUlwWave({
+        sessionId: sid,
+        editCount: 6,
+        openTodoCount: 0,
+        stepsSinceStamp: MID_WAVE_STAMP_STEPS,
+        lastAssistantMessage: "still wiring",
+      });
+      assert.equal(loadUlwCycle(sid)!.wave, 0);
+      const hit = maybeStampUlwWave({
+        sessionId: sid,
+        editCount: 12,
+        openTodoCount: 0,
+        stepsSinceStamp: 1,
+        lastAssistantMessage: "Wave 1 shipped: stdin lease",
+      });
+      assert.equal(hit.stamped, true);
       assert.equal(loadUlwCycle(sid)!.wave, 1);
       disarmUlwCycle(sid);
     });

@@ -13,6 +13,7 @@
  *   age >= keepTurns      → collapse tool_call args; soft-trim fat results
  *   age >= hardAgeTurns   → omit tool results (spool pointer when we can)
  */
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import type { ChatMessage, ToolCall } from "../providers/types.js";
@@ -24,6 +25,7 @@ import {
   extractSavedOutputPath,
   isIdempotentRestoreTool,
 } from "./tool-clearing.js";
+import { shouldPruneOutbound } from "./prompt-cache.js";
 
 export const REQUEST_PRUNE_DEFAULT_KEEP_TURNS = 3;
 export const REQUEST_PRUNE_DEFAULT_HARD_AGE = 10;
@@ -415,5 +417,414 @@ export function pruneMessagesForRequest(
     collapsedCalls,
     stubbedHarness: harness.stubbed,
     changed: true,
+  };
+}
+
+/** Frozen omit/collapse set so later rounds do not re-age the prefix. */
+export interface RequestPruneSticky {
+  omitted: string[];
+  collapsed: string[];
+  softTrimmed: string[];
+  /** sha1-16 of original harness-user bodies that were stubbed. */
+  stubbedHarness: string[];
+  shelf: number;
+  clippedAt: string;
+  /** Outbound estimate of the clipped wire (no reasoning). */
+  wireTokens?: number;
+}
+
+export type PruneKind = "off" | "first_clip" | "sticky" | "reclip" | "always";
+
+export interface PrepareOutboundResult extends RequestPruneResult {
+  sticky?: RequestPruneSticky;
+  kind: PruneKind;
+}
+
+const STICKY_ID_CAP = 4_000;
+
+export function harnessStubKey(content: string): string {
+  return createHash("sha1").update(content).digest("hex").slice(0, 16);
+}
+
+function uniqIds(ids: string[]): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const id of ids) {
+    const t = String(id || "").trim();
+    if (!t || seen.has(t)) continue;
+    seen.add(t);
+    out.push(t);
+    if (out.length >= STICKY_ID_CAP) break;
+  }
+  return out;
+}
+
+export function normalizeRequestPruneSticky(
+  raw: unknown,
+): RequestPruneSticky | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const o = raw as Record<string, unknown>;
+  const strArr = (v: unknown): string[] =>
+    Array.isArray(v)
+      ? uniqIds(v.filter((x): x is string => typeof x === "string"))
+      : [];
+  const omitted = strArr(o.omitted);
+  const collapsed = strArr(o.collapsed);
+  const softTrimmed = strArr(o.softTrimmed);
+  const stubbedHarness = strArr(o.stubbedHarness);
+  if (
+    omitted.length +
+      collapsed.length +
+      softTrimmed.length +
+      stubbedHarness.length ===
+    0
+  ) {
+    return undefined;
+  }
+  const shelf = Number(o.shelf);
+  const wire = Number(o.wireTokens);
+  return {
+    omitted,
+    collapsed,
+    softTrimmed,
+    stubbedHarness,
+    shelf: Number.isFinite(shelf) && shelf >= 1 ? Math.floor(shelf) : 1,
+    clippedAt:
+      typeof o.clippedAt === "string" && o.clippedAt.trim()
+        ? o.clippedAt.trim()
+        : new Date().toISOString(),
+    ...(Number.isFinite(wire) && wire > 0
+      ? { wireTokens: Math.floor(wire) }
+      : {}),
+  };
+}
+
+/** At least half of omitted ids must still exist as tool rows. */
+export function stickyPruneValid(
+  messages: ChatMessage[],
+  sticky: RequestPruneSticky,
+): boolean {
+  if (
+    sticky.omitted.length +
+      sticky.collapsed.length +
+      sticky.softTrimmed.length +
+      sticky.stubbedHarness.length ===
+    0
+  ) {
+    return false;
+  }
+  if (sticky.omitted.length === 0) {
+    // Collapse/soft/harness-only clip: valid if any frozen id still exists.
+    const toolIds = new Set<string>();
+    const harnessKeys = new Set<string>();
+    for (const m of messages) {
+      if (m.role === "assistant" && m.tool_calls) {
+        for (const tc of m.tool_calls) {
+          if (tc.id) toolIds.add(tc.id);
+        }
+      }
+      if (m.role === "tool" && m.tool_call_id) toolIds.add(m.tool_call_id);
+      if (m.role === "user" && typeof m.content === "string") {
+        harnessKeys.add(harnessStubKey(m.content));
+      }
+    }
+    const hit =
+      sticky.collapsed.filter((id) => toolIds.has(id)).length +
+      sticky.softTrimmed.filter((id) => toolIds.has(id)).length +
+      sticky.stubbedHarness.filter((k) => harnessKeys.has(k)).length;
+    return hit > 0;
+  }
+  const present = new Set<string>();
+  for (const m of messages) {
+    if (m.role === "tool" && m.tool_call_id) present.add(m.tool_call_id);
+  }
+  const found = sticky.omitted.filter((id) => present.has(id)).length;
+  return found >= Math.ceil(sticky.omitted.length / 2);
+}
+
+export function captureStickyPrune(
+  original: ChatMessage[],
+  pruned: ChatMessage[],
+  prev?: RequestPruneSticky,
+): RequestPruneSticky {
+  const omitted = [...(prev?.omitted ?? [])];
+  const collapsed = [...(prev?.collapsed ?? [])];
+  const softTrimmed = [...(prev?.softTrimmed ?? [])];
+  const stubbedHarness = [...(prev?.stubbedHarness ?? [])];
+  const n = Math.min(original.length, pruned.length);
+  for (let i = 0; i < n; i++) {
+    const a = original[i]!;
+    const b = pruned[i]!;
+    if (a.role === "tool" && a.tool_call_id) {
+      const ac = a.content || "";
+      const bc = b.content || "";
+      if (bc !== ac) {
+        if (alreadyOmitted(bc)) {
+          if (!omitted.includes(a.tool_call_id)) omitted.push(a.tool_call_id);
+        } else if (bc.includes(SOFT_TRIM_SEP)) {
+          if (!softTrimmed.includes(a.tool_call_id)) {
+            softTrimmed.push(a.tool_call_id);
+          }
+        }
+      }
+    }
+    if (a.role === "assistant" && a.tool_calls?.length) {
+      for (const tc of a.tool_calls) {
+        if (!tc.id || alreadyClearedArgs(tc.function.arguments || "")) continue;
+        const ptc = b.tool_calls?.find((x) => x.id === tc.id);
+        if (ptc && alreadyClearedArgs(ptc.function.arguments || "")) {
+          if (!collapsed.includes(tc.id)) collapsed.push(tc.id);
+        }
+      }
+    }
+    if (
+      a.role === "user" &&
+      typeof a.content === "string" &&
+      typeof b.content === "string" &&
+      b.content === HARNESS_USER_STUB &&
+      a.content !== HARNESS_USER_STUB
+    ) {
+      const key = harnessStubKey(a.content);
+      if (!stubbedHarness.includes(key)) stubbedHarness.push(key);
+    }
+  }
+  const shelf = (prev?.shelf ?? 0) + 1;
+  return {
+    omitted: uniqIds(omitted),
+    collapsed: uniqIds(collapsed),
+    softTrimmed: uniqIds(softTrimmed),
+    stubbedHarness: uniqIds(stubbedHarness),
+    shelf,
+    clippedAt: new Date().toISOString(),
+  };
+}
+
+export function applyStickyPrune(
+  messages: ChatMessage[],
+  sticky: RequestPruneSticky,
+  opts: RequestPruneOptions = {},
+): RequestPruneResult {
+  const env = requestPruneEnvConfig();
+  const softHead = opts.softTrimHead ?? env.softTrimHead;
+  const softTail = opts.softTrimTail ?? env.softTrimTail;
+  const spool = Boolean(opts.spool);
+  const omitted = new Set(sticky.omitted);
+  const collapsed = new Set(sticky.collapsed);
+  const softTrimmed = new Set(sticky.softTrimmed);
+  const stubbed = new Set(sticky.stubbedHarness);
+  const names = nameByToolCallId(messages);
+
+  let out: ChatMessage[] | null = null;
+  let prunedResults = 0;
+  let collapsedCalls = 0;
+  let stubbedHarness = 0;
+
+  const take = (i: number): ChatMessage => {
+    if (!out) out = messages.slice();
+    return out[i]!;
+  };
+
+  for (let i = 0; i < messages.length; i++) {
+    const m = messages[i]!;
+    if (m.role === "assistant" && m.tool_calls?.length) {
+      let any = false;
+      const nextCalls = m.tool_calls.map((tc) => {
+        if (!tc.id || !collapsed.has(tc.id)) return tc;
+        const args = tc.function.arguments || "";
+        if (!args || alreadyClearedArgs(args)) return tc;
+        any = true;
+        collapsedCalls += 1;
+        return collapseToolCallArgs(tc);
+      });
+      if (any) {
+        const cur = take(i);
+        out![i] = { ...cur, tool_calls: nextCalls };
+      }
+      continue;
+    }
+    if (m.role === "tool" && m.tool_call_id) {
+      const body = m.content ?? "";
+      if (!body) continue;
+      if (omitted.has(m.tool_call_id) && !alreadyOmitted(body)) {
+        const name = names.get(m.tool_call_id) || "tool";
+        const outputPath = spool
+          ? ensureRequestPruneSpool(m.tool_call_id, body)
+          : extractSavedOutputPath(body);
+        const stub = formatOmitted({
+          name,
+          chars: body.length,
+          outputPath,
+          idempotent: isIdempotentRestoreTool(name),
+        });
+        if (stub !== body) {
+          take(i);
+          out![i] = { ...m, content: stub };
+          prunedResults += 1;
+        }
+        continue;
+      }
+      if (
+        softTrimmed.has(m.tool_call_id) &&
+        !alreadyOmitted(body) &&
+        !body.includes(SOFT_TRIM_SEP)
+      ) {
+        const trimmed = softTrim(body, softHead, softTail);
+        if (trimmed !== body) {
+          take(i);
+          out![i] = { ...m, content: trimmed };
+          prunedResults += 1;
+        }
+      }
+      continue;
+    }
+    if (
+      m.role === "user" &&
+      typeof m.content === "string" &&
+      m.content !== HARNESS_USER_STUB &&
+      stubbed.has(harnessStubKey(m.content))
+    ) {
+      take(i);
+      out![i] = { ...m, content: HARNESS_USER_STUB };
+      stubbedHarness += 1;
+    }
+  }
+
+  if (!out) {
+    return {
+      messages,
+      prunedResults: 0,
+      collapsedCalls: 0,
+      stubbedHarness: 0,
+      changed: false,
+    };
+  }
+  return {
+    messages: out,
+    prunedResults,
+    collapsedCalls,
+    stubbedHarness,
+    changed: true,
+  };
+}
+
+/**
+ * Keep in sync with session.estimateTokens (no reasoning — prune
+ * estimator must not move when HUD starts counting reasoning_content).
+ */
+function estimateWireTokens(
+  messages: ChatMessage[],
+  toolsJsonChars = 0,
+): number {
+  let chars = 0;
+  let msgs = 0;
+  for (const m of messages) {
+    msgs += 1;
+    chars += (m.content || "").length;
+    if (m.tool_call_id) chars += m.tool_call_id.length + 12;
+    if (m.tool_calls) {
+      for (const tc of m.tool_calls) {
+        chars +=
+          (tc.function.name || "").length +
+          (tc.function.arguments || "").length +
+          32;
+      }
+    }
+  }
+  let n = Math.ceil(chars / 3.2) + msgs * 6;
+  if (toolsJsonChars > 0) n += Math.ceil(toolsJsonChars / 3.2) + 48;
+  return n;
+}
+
+/**
+ * Decide whether to slim the wire, then either first-clip + freeze or
+ * re-apply a frozen omit set. `FORGE_REQUEST_PRUNE=1` stays sliding.
+ */
+export function prepareOutboundMessages(
+  messages: ChatMessage[],
+  opts: RequestPruneOptions & {
+    estimatedTokens?: number;
+    toolsJsonChars?: number;
+    sticky?: RequestPruneSticky | null;
+  } = {},
+): PrepareOutboundResult {
+  const estimated =
+    opts.estimatedTokens ??
+    estimateWireTokens(messages, opts.toolsJsonChars ?? 0);
+  const decision = shouldPruneOutbound(estimated);
+  if (!decision.prune) {
+    return {
+      messages,
+      prunedResults: 0,
+      collapsedCalls: 0,
+      stubbedHarness: 0,
+      changed: false,
+      sticky: opts.sticky ?? undefined,
+      kind: "off",
+    };
+  }
+
+  if (decision.reason === "always") {
+    const rec = pruneMessagesForRequest(messages, {
+      ...opts,
+      enabled: true,
+    });
+    return { ...rec, sticky: undefined, kind: "always" };
+  }
+
+  const frozen = opts.sticky
+    ? normalizeRequestPruneSticky(opts.sticky)
+    : undefined;
+  if (frozen && stickyPruneValid(messages, frozen)) {
+    const applied = applyStickyPrune(messages, frozen, opts);
+    const wireEst = estimateWireTokens(
+      applied.messages,
+      opts.toolsJsonChars ?? 0,
+    );
+    // Second shelf only when the *last* clip got us under the cliff
+    // and the suffix grew back over. A first clip that is still ≥180k
+    // must stay sticky — reclips every turn kill the prefix again.
+    const lastWire = frozen.wireTokens;
+    const lastUnderCliff =
+      typeof lastWire === "number" &&
+      Number.isFinite(lastWire) &&
+      !shouldPruneOutbound(lastWire).prune;
+    if (shouldPruneOutbound(wireEst).prune && lastUnderCliff) {
+      const rec = pruneMessagesForRequest(messages, {
+        ...opts,
+        enabled: true,
+      });
+      const next = stampWireTokens(
+        captureStickyPrune(messages, rec.messages, frozen),
+        rec.messages,
+        opts.toolsJsonChars ?? 0,
+      );
+      return { ...rec, sticky: next, kind: "reclip" };
+    }
+    return { ...applied, sticky: frozen, kind: "sticky" };
+  }
+
+  const rec = pruneMessagesForRequest(messages, {
+    ...opts,
+    enabled: true,
+  });
+  if (!rec.changed) {
+    return { ...rec, sticky: frozen, kind: "off" };
+  }
+  const sticky = stampWireTokens(
+    captureStickyPrune(messages, rec.messages, frozen),
+    rec.messages,
+    opts.toolsJsonChars ?? 0,
+  );
+  return { ...rec, sticky, kind: "first_clip" };
+}
+
+function stampWireTokens(
+  sticky: RequestPruneSticky,
+  messages: ChatMessage[],
+  toolsJsonChars: number,
+): RequestPruneSticky {
+  return {
+    ...sticky,
+    wireTokens: estimateWireTokens(messages, toolsJsonChars),
   };
 }

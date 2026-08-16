@@ -932,6 +932,14 @@ describe("summarizeWave", () => {
     assert.doesNotMatch(s, /verifying/);
   });
 
+  it("prefers Ship landed over Reading when both are present", () => {
+    const s = summarizeWave(
+      "**Reading:** Forge's product is the interactive REPL. Daily-loop trust beats chrome.\n\nShip landed: tables on the session picker",
+    );
+    assert.match(s, /tables on the session picker/);
+    assert.doesNotMatch(s, /interactive REPL/);
+  });
+
   it("falls back to decision-memory Reading when the closer is mid-thought", () => {
     const prev = process.env.FORGE_HOME;
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-ulw-sum-"));

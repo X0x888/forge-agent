@@ -25,10 +25,16 @@ import {
   activeMemoryRecords,
 } from "./decision-memory.js";
 import { createSafetyCheckpoint } from "../util/git-checkpoint.js";
-import { gitDiffFingerprint } from "../util/git-context.js";
+import { gitDiffFingerprint, isCleanTreeDiffFp } from "../util/git-context.js";
 import { looksLikeAdvisoryUserMessage } from "../util/advisory-intent.js";
 
 export type CycleFlag = 0 | 1;
+
+export interface NamedShipItem {
+  text: string;
+  status: "open" | "done";
+  doneAt?: string;
+}
 
 /**
  * Factual record of one completed wave. Facts only — no invented quality
@@ -122,6 +128,14 @@ export interface UlwCycleState {
   judgmentRequired?: boolean;
   /** Times we bounced Stop for a missing reading (capped, never a trap). */
   judgmentDemands?: number;
+  /**
+   * Named ships parsed from the Wave-1 reading. Unlimited evaluate-class
+   * asks for a new reading when every item is done (once). Ignored when
+   * maxWaves is set — remaining budget is still spent.
+   */
+  namedShips?: NamedShipItem[];
+  /** True after the one empty-backlog Stop admit (unlimited only). */
+  namedShipAdmitDone?: boolean;
   /**
    * evaluate-class Wave 1: `orient` hides spawn/edits until a reading exists.
    * Absent on old sidecars — infer from judgmentRequired.
@@ -352,13 +366,45 @@ function readingFromMemory(sessionId: string): string | undefined {
   return undefined;
 }
 
+function extractShipSummary(t: string): string | undefined {
+  const landed = t.match(/Ship landed:\s*(.{10,180})/i);
+  if (landed?.[1]) return landed[1];
+  const wave = t.match(/Wave\s+\d+\s+(?:LAST\s+)?shipped:\s*(.{10,180})/i);
+  if (wave?.[1]) return wave[1];
+  return undefined;
+}
+
+function shipFromMemory(sessionId: string): string | undefined {
+  try {
+    const recs = activeMemoryRecords(sessionId);
+    const s = loadUlwCycle(sessionId);
+    const since = s?.waves?.length ? s.waves[s.waves.length - 1]!.ts : "";
+    for (let i = recs.length - 1; i >= 0; i--) {
+      const r = recs[i]!;
+      if (r.source !== "agent") continue;
+      if (since && r.at <= since) break;
+      const ship = extractShipSummary(r.text);
+      if (ship) return ship;
+    }
+  } catch {
+    /* memory is best-effort */
+  }
+  return undefined;
+}
+
 /**
- * Clip a wave-boundary closer. Prefer **Reading:** / Ship landed / Cycle
- * complete over the last mid-thought sentence (ULW Stop often fires while
- * the model is still "verifying the unused import").
+ * Clip a wave-boundary closer. Prefer a declared ship over **Reading:**
+ * so the ledger is not the same paragraph four times. Mid-thought
+ * fallbacks still use a durable reading when there is no newer ship.
  */
 export function summarizeWave(message: string, sessionId?: string): string {
   const t = (message || "").replace(/\s+/g, " ").trim();
+  const ship = extractShipSummary(t);
+  if (ship) return clipWaveSummary(ship);
+  if (sessionId) {
+    const memShip = shipFromMemory(sessionId);
+    if (memShip) return clipWaveSummary(memShip);
+  }
   if (!t) {
     if (sessionId) {
       const fromMem = readingFromMemory(sessionId);
@@ -368,8 +414,6 @@ export function summarizeWave(message: string, sessionId?: string): string {
   }
   const reading = t.match(/\*{0,2}Reading:\*{0,2}\s+(.{20,240})/i);
   if (reading?.[1]) return clipWaveSummary(reading[1]);
-  const ship = t.match(/Ship landed:\s*(.{10,180})/i);
-  if (ship?.[1]) return clipWaveSummary(ship[1]);
   if (/\bCycle complete\b/i.test(t)) {
     const after = t.replace(/^[\s\S]*?Cycle complete\.\s*/i, "").trim();
     if (after.length >= 20) return clipWaveSummary(`Cycle complete. ${after}`);
@@ -422,7 +466,11 @@ function classifyNetDiff(
   editDelta: number,
 ): UlwWaveRecord["netDiff"] {
   if (!fp) return undefined;
-  if (diffChanged) return diffRevisit ? "revisit" : "new";
+  if (diffChanged) {
+    // Clean tree after a landed ship is the new baseline, not edit→revert.
+    if (diffRevisit && isCleanTreeDiffFp(fp) && editDelta >= 1) return "none";
+    return diffRevisit ? "revisit" : "new";
+  }
   // First fingerprint after edits already landed: the tree moved from
   // the arm-time (or empty) state even though this call is the baseline.
   if (firstObservation && editDelta > 0) return "new";
@@ -574,6 +622,7 @@ export function advanceUlwPhaseOnReading(
   if (!hasMandateJudgment(sessionId, closer)) return false;
   s.phase = "ship";
   s.judgmentRequired = false;
+  maybeAdoptNamedShips(s, closer);
   saveUlwCycle(s);
   return true;
 }
@@ -635,12 +684,162 @@ export function isDeclaredWaveClose(message: string): boolean {
   );
 }
 
+function splitNamedShipList(s: string): string[] {
+  return s
+    .split(/\s*(?:,|;|\band\b)\s*/i)
+    .map((x) => x.trim())
+    .filter(Boolean);
+}
+
+function clipNamedShipText(raw: string): string | undefined {
+  let s = raw.replace(/^[-*•\d.)\s]+/, "").replace(/[.]+$/, "").trim();
+  s = s.replace(/^(the\s+)?(one\s+)?(ship|item|thing)\s*(is|:)\s*/i, "").trim();
+  if (s.length < 8 || s.length > 160) return undefined;
+  if (/^reading:/i.test(s)) return undefined;
+  return s;
+}
+
+/** Pull the ONE ship + passed-on / next-ship list out of a reading. */
+export function parseNamedShipsFromReading(text: string): string[] {
+  const t = (text || "").replace(/\s+/g, " ").trim();
+  if (!t) return [];
+  const out: string[] = [];
+  const push = (raw: string) => {
+    const s = clipNamedShipText(raw);
+    if (!s) return;
+    const key = s.toLowerCase();
+    if (out.some((x) => x.toLowerCase() === key)) return;
+    out.push(s);
+  };
+  const one = t.match(
+    /(?:the\s+)?one\s+(?:ship|item)\s*(?:is|:)\s+([^.;\n]+)/i,
+  );
+  if (one?.[1]) push(one[1]);
+  const passed = t.match(
+    /passed[\s-]+on\s*:?\s+(.{8,400}?)(?:\.|$|\s+the\s+one\s+)/i,
+  );
+  if (passed?.[1]) {
+    for (const part of splitNamedShipList(passed[1])) push(part);
+  }
+  const next = t.match(/next\s+ships?\s*:?\s+(.{8,400}?)(?:\.|$)/i);
+  if (next?.[1]) {
+    for (const part of splitNamedShipList(next[1])) push(part);
+  }
+  return out.slice(0, 12);
+}
+
+function normalizeShipKey(s: string): string {
+  return s.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+}
+
+function significantShipWords(s: string): string[] {
+  return normalizeShipKey(s)
+    .split(/\s+/)
+    .filter(
+      (w) =>
+        w.length >= 4 &&
+        !/^(this|that|with|from|into|ship|landed|wave)$/.test(w),
+    );
+}
+
+export function matchNamedShip(item: string, closer: string): boolean {
+  const a = normalizeShipKey(item);
+  const b = normalizeShipKey(closer);
+  if (!a || !b) return false;
+  if (b.includes(a) || a.includes(b)) return true;
+  const aw = significantShipWords(a);
+  const bw = significantShipWords(b);
+  if (aw.length === 0) return false;
+  const hit = aw.filter((w) => bw.includes(w)).length;
+  return hit >= Math.min(2, aw.length) && hit / aw.length >= 0.5;
+}
+
+function sameNamedShipSet(prev: NamedShipItem[], parsed: string[]): boolean {
+  const a = new Set(prev.map((x) => x.text.toLowerCase()));
+  const b = new Set(parsed.map((x) => x.toLowerCase()));
+  if (a.size === 0 || a.size !== b.size) return false;
+  for (const x of b) {
+    if (!a.has(x)) return false;
+  }
+  return true;
+}
+
+export function maybeAdoptNamedShips(
+  s: UlwCycleState,
+  text?: string,
+): boolean {
+  const blob = [text, readingFromMemory(s.sessionId)]
+    .filter((x): x is string => Boolean(x && x.trim()))
+    .join("\n");
+  const parsed = parseNamedShipsFromReading(blob);
+  if (!parsed.length) return false;
+  const prev = s.namedShips ?? [];
+  const open = prev.filter((x) => x.status === "open");
+  if (open.length > 0) return false;
+  // Same reading still in memory after every item is done — do not reopen it.
+  if (sameNamedShipSet(prev, parsed)) return false;
+  s.namedShips = parsed.map((item) => ({ text: item, status: "open" as const }));
+  s.namedShipAdmitDone = false;
+  return true;
+}
+
+export function markNamedShipDone(s: UlwCycleState, closer: string): void {
+  const items = s.namedShips;
+  if (!items?.length) return;
+  const open = items.filter((x) => x.status === "open");
+  if (!open.length) return;
+  const hit = open.find((x) => matchNamedShip(x.text, closer)) ?? open[0]!;
+  hit.status = "done";
+  hit.doneAt = nowIso();
+}
+
+export function namedShipsExhausted(s: UlwCycleState): boolean {
+  const items = s.namedShips;
+  return Boolean(
+    items && items.length > 0 && items.every((x) => x.status === "done"),
+  );
+}
+
+const NAMED_SHIP_EXHAUSTED_ADMIT = [
+  "[Forge ULW cycle driver] Stop blocked — named ships from the reading are done.",
+  "Write a new Reading: (what is still hard + the ONE next ship) or /cycle 0.",
+  "Do not invent leftover chrome. Unlimited ULW continues only after a new reading.",
+].join("\n");
+
+/** After auto-commit the tree is clean — that is a new baseline, not churn. */
+export function applyCleanBaselineAfterCommit(
+  s: UlwCycleState,
+  fp: string | null,
+): void {
+  if (!fp) return;
+  s.lastDiffFp = fp;
+  s.seenDiffFps = (s.seenDiffFps ?? []).filter((x) => x !== fp);
+}
+
+export function noteUlwTreeAfterAutoCommit(
+  sessionId: string,
+  cwd?: string,
+): void {
+  const s = loadUlwCycle(sessionId);
+  if (!s) return;
+  let fp: string | null = null;
+  if (cwd) {
+    try {
+      fp = gitDiffFingerprint(cwd);
+    } catch {
+      fp = null;
+    }
+  }
+  applyCleanBaselineAfterCommit(s, fp);
+  saveUlwCycle(s);
+}
+
 /**
  * Unattended quality-bar heartbeat. The user-facing wave counter increments
- * on Stop, on a declared ship (`Wave N shipped` / `Ship landed` / `Cycle
- * complete`), or (uncapped only) on an idle epoch. Edit bursts update the
- * open wave in place so one search_replace is not one wave. `max_waves`
- * still auto-LAST. Idle epochs never burn a cap.
+ * on Stop or a declared ship (`Wave N shipped` / `Ship landed` / `Cycle
+ * complete`). Edit bursts and idle epochs update the open wave in place
+ * so one 80-turn ship is not four harness waves. `max_waves` still
+ * auto-LAST. Idle never increments `w` (capped or unlimited).
  */
 export function maybeStampUlwWave(opts: {
   sessionId: string;
@@ -694,7 +893,8 @@ export function maybeStampUlwWave(opts: {
   const netDiff: UlwWaveRecord["netDiff"] = !fp
     ? undefined
     : treeMoved
-      ? (s.seenDiffFps ?? []).includes(fp)
+      ? (s.seenDiffFps ?? []).includes(fp) &&
+        !(isCleanTreeDiffFp(fp) && editDelta >= 1)
         ? "revisit"
         : "new"
       : editDelta > 0
@@ -726,6 +926,9 @@ export function maybeStampUlwWave(opts: {
     s.judgmentRequired = false;
     s.phase = "ship";
   }
+  // Adopt even when already in ship — memory_write lands after the
+  // assistant turn, so orient may have already flipped before the list exists.
+  maybeAdoptNamedShips(s, opts.lastAssistantMessage);
 
   // Declared ship with real progress: this is a work unit. Capped ULW
   // must count it — otherwise the model invents Wave 3/4 while HUD stays 1/4
@@ -747,6 +950,7 @@ export function maybeStampUlwWave(opts: {
         sessionId: opts.sessionId,
         ...facts,
       });
+      markNamedShipDone(s, closer);
       s.lastWaveSig = sig;
       s.lastProgressEditCount = opts.editCount;
       const polish = notePolishShip(s, closer);
@@ -796,14 +1000,41 @@ export function maybeStampUlwWave(opts: {
     return { stamped: false, updated: true, wave: s.wave };
   }
 
-  // Capped ULW: max_waves counts Stop-boundary work, not loop turns.
-  // Idle epochs would burn a cap of 4 in ~80 tool rounds and LAST mid-ship.
-  if (cap != null && idleDue) {
+  // Idle epoch: update the open wave, never increment w.
+  // Capped: a cap of 4 used to LAST mid-ship (~80 tool rounds).
+  // Unlimited: an 80-turn ship used to become four harness waves.
+  if (idleDue) {
+    if (
+      s.judgmentRequired &&
+      s.wave === 0 &&
+      !hasMandateJudgment(opts.sessionId, opts.lastAssistantMessage)
+    ) {
+      s.judgmentDemands = Math.min(
+        MAX_JUDGMENT_DEMANDS,
+        (s.judgmentDemands ?? 0) + 1,
+      );
+      saveUlwCycle(s);
+      if ((s.judgmentDemands ?? 0) >= MAX_JUDGMENT_DEMANDS) {
+        s.judgmentRequired = false;
+        s.phase = "ship";
+        saveUlwCycle(s);
+      } else {
+        return {
+          stamped: false,
+          wave: s.wave,
+          admit: [
+            "[Forge harness — mid-conversation update]",
+            "Evaluate-class mandate: write the reading (what the hard work is + the ONE ship) before a new wave opens.",
+            "memory_write it, or start the next reply with `Reading:`.",
+          ].join("\n"),
+        };
+      }
+    }
     if (progressed) {
       updateOpenWaveRecord(s, facts);
       s.lastProgressEditCount = opts.editCount;
     }
-    if (s.wave >= cap) {
+    if (cap != null && s.wave >= cap) {
       flipUlwToLast(s, opts.sessionId);
       saveUlwCycle(s);
       return {
@@ -817,76 +1048,7 @@ export function maybeStampUlwWave(opts: {
     return { stamped: false, updated: progressed, wave: s.wave };
   }
 
-  // Evaluate-class: do not open wave 1 on an idle epoch with no reading.
-  if (
-    s.judgmentRequired &&
-    s.wave === 0 &&
-    !hasMandateJudgment(opts.sessionId, opts.lastAssistantMessage)
-  ) {
-    s.judgmentDemands = Math.min(
-      MAX_JUDGMENT_DEMANDS,
-      (s.judgmentDemands ?? 0) + 1,
-    );
-    saveUlwCycle(s);
-    if ((s.judgmentDemands ?? 0) >= MAX_JUDGMENT_DEMANDS) {
-      s.judgmentRequired = false;
-      s.phase = "ship";
-      saveUlwCycle(s);
-    } else {
-      return {
-        stamped: false,
-        wave: s.wave,
-        admit: [
-          "[Forge harness — mid-conversation update]",
-          "Evaluate-class mandate: write the reading (what the hard work is + the ONE ship) before a new wave opens.",
-          "memory_write it, or start the next reply with `Reading:`.",
-        ].join("\n"),
-      };
-    }
-  }
-
-  // Idle epoch — unattended wave boundary. Honor the cap.
-  if (cap != null && s.wave >= cap) {
-    flipUlwToLast(s, opts.sessionId);
-    saveUlwCycle(s);
-    return {
-      stamped: false,
-      flippedToLast: true,
-      wave: s.wave,
-      admit: lastWaveAdmit(cap, s.wave),
-    };
-  }
-
-  applyDiffFingerprint(s, fp);
-  appendWaveRecord(s, {
-    sessionId: opts.sessionId,
-    ...facts,
-  });
-  s.lastWaveSig = sig;
-  s.lastProgressEditCount = opts.editCount;
-  if (!proof && (s.proofDemands ?? 0) < MAX_PROOF_DEMANDS) {
-    s.proofDemands = (s.proofDemands ?? 0) + 1;
-  }
-
-  let flippedToLast = false;
-  if (cap != null && s.wave >= cap) {
-    flipUlwToLast(s, opts.sessionId);
-    flippedToLast = true;
-  }
-  saveUlwCycle(s);
-  const thin = (s.thinStreak ?? 0) > 0 && !progressed;
-  const streak = s.thinStreak ?? 0;
-  const thinAdmit =
-    thin && (streak === 1 || streak === THIN_ADVISORY_STREAK)
-      ? `[Forge harness — mid-conversation update]\nULW epoch ${s.wave}: this epoch added no tree movement. Next think must edit or prove — do not rescan from zero.`
-      : undefined;
-  return {
-    stamped: true,
-    thin,
-    wave: s.wave,
-    flippedToLast,
-    admit: flippedToLast && cap != null ? lastWaveAdmit(cap, s.wave) : thinAdmit,
-  };
+  return { stamped: false, wave: s.wave };
 }
 
 /**
@@ -979,7 +1141,30 @@ export function loadUlwCycle(sessionId: string): UlwCycleState | null {
   }
   // Back-compat: older sidecars omit diff-fingerprint churn tracking
   if (!Array.isArray(raw.seenDiffFps)) raw.seenDiffFps = [];
+  raw.namedShips = normalizeNamedShipItems(raw.namedShips);
+  if (typeof raw.namedShipAdmitDone !== "boolean") {
+    raw.namedShipAdmitDone = false;
+  }
   return raw;
+}
+
+function normalizeNamedShipItems(raw: unknown): NamedShipItem[] | undefined {
+  if (raw === undefined) return undefined;
+  if (!Array.isArray(raw)) return [];
+  const out: NamedShipItem[] = [];
+  for (const item of raw) {
+    if (!item || typeof item !== "object") continue;
+    const o = item as Record<string, unknown>;
+    const text = typeof o.text === "string" ? o.text.trim().slice(0, 160) : "";
+    if (text.length < 8) continue;
+    out.push({
+      text,
+      status: o.status === "done" ? "done" : "open",
+      ...(typeof o.doneAt === "string" && o.doneAt ? { doneAt: o.doneAt } : {}),
+    });
+    if (out.length >= 12) break;
+  }
+  return out;
 }
 
 export function saveUlwCycle(state: UlwCycleState): void {
@@ -1480,6 +1665,7 @@ export function copyUlwCycle(fromId: string, toId: string): UlwCycleState | null
     // Fresh stuck/quality counters on the branch — progress is independent.
     // Clone the ledger so the two sessions never share a mutable array.
     waves: [...(src.waves ?? [])],
+    namedShips: src.namedShips?.map((x) => ({ ...x })),
     stuckBlocks: 0,
     lastBlockEditCount: 0,
     thinStreak: 0,
@@ -1523,6 +1709,8 @@ export function resetUlwOnClear(sessionId: string): UlwCycleState | null {
   s.proofDemands = 0;
   s.evidenceNudges = 0;
   s.judgmentDemands = 0;
+  s.namedShips = [];
+  s.namedShipAdmitDone = false;
   if (s.enabled) {
     s.mandate = PLACEHOLDER_MANDATE;
     s.expandedMandate = "";
@@ -1565,6 +1753,19 @@ export function formatUlwBadge(
 export const ULW_LIVE_CONTROLS_HINT =
   "Live mid-run (type while working — no Ctrl+C): /cycle 0 last · /cycle 1 continue · /max-waves N|off · /ulw-off disarm · /budget N|off · /notify on · /done";
 
+function formatNamedShipsStatusLine(s: UlwCycleState): string | undefined {
+  const items = s.namedShips ?? [];
+  if (!items.length) return undefined;
+  const done = items.filter((x) => x.status === "done").length;
+  const bits = items.map((x) =>
+    x.status === "done" ? `${x.text} ✓` : x.text,
+  );
+  let body = bits.join(" · ");
+  if (body.length > 160) body = `${body.slice(0, 159)}…`;
+  const asked = s.namedShipAdmitDone ? " · asked for new reading" : "";
+  return `  Named ships: ${done}/${items.length} done — ${body}${asked}`;
+}
+
 export function formatUlwStatus(s: UlwCycleState | null): string {
   if (!s || !s.enabled) {
     return [
@@ -1578,11 +1779,13 @@ export function formatUlwStatus(s: UlwCycleState | null): string {
   const cap = normalizeMaxWaves(s.maxWaves);
   const ledger = formatWaveLedger(s.waves);
   const best = bestWave(s.waves);
+  const namedLine = formatNamedShipsStatusLine(s);
   return [
     `ULW cycle: ON  |  ${formatUlwCounts(s)}  ${s.cycle === 1 ? "(CONTINUE — relentless)" : "(LAST — finish current wave)"}`,
     `  Mandate: ${displayUlwMandate(s.mandate)}`,
     `  Soft prompt expanded: ${s.softPrompt ? "yes" : "no"}`,
     `  max_waves: ${cap != null ? cap : "off (unlimited)"}`,
+    ...(namedLine ? [namedLine] : []),
     ...(ledger ? [`  Recent waves: ${ledger}`] : []),
     ...(best
       ? [
@@ -1784,6 +1987,7 @@ export function evaluateUlwAtStop(opts: {
       s.judgmentRequired = false;
       s.phase = "ship";
     }
+    const adoptedNamed = maybeAdoptNamedShips(s, msg);
 
     // Already at/over cap (e.g. user lowered max_waves mid-run) → force LAST now.
     if (cap != null && s.wave >= cap) {
@@ -1826,6 +2030,22 @@ export function evaluateUlwAtStop(opts: {
     const todoProgress = Math.max(0, prevOpen - opts.openTodoCount);
     s.lastOpenTodoCount = opts.openTodoCount;
     const closer = closerText(opts.sessionId, msg);
+    // Do not use parse(closer) here — later replies often reprint the
+    // original Reading, which would skip the gate forever.
+    if (
+      cap == null &&
+      namedShipsExhausted(s) &&
+      !s.namedShipAdmitDone &&
+      !adoptedNamed
+    ) {
+      s.namedShipAdmitDone = true;
+      saveUlwCycle(s);
+      return {
+        block: true,
+        reason: NAMED_SHIP_EXHAUSTED_ADMIT,
+        reanchor: NAMED_SHIP_EXHAUSTED_ADMIT,
+      };
+    }
     if (!alreadyStamped) {
       appendWaveRecord(s, {
         sessionId: opts.sessionId,
@@ -1835,6 +2055,7 @@ export function evaluateUlwAtStop(opts: {
         todoProgress,
         summary: summarizeWave(closer, opts.sessionId),
       });
+      markNamedShipDone(s, closer);
       s.lastWaveSig = sig;
       s.lastProgressEditCount = opts.editCount;
       const polish = notePolishShip(s, closer);
@@ -1877,6 +2098,7 @@ export function evaluateUlwAtStop(opts: {
         ...qualityFlags,
       };
     }
+
     saveUlwCycle(s);
     const reanchor = buildCycleReanchor(s, {
       openTodos: opts.openTodoCount,

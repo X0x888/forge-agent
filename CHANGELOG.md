@@ -3,6 +3,19 @@
 ## Unreleased
 
 ### Changed
+- **Idle epochs never increment `w`**: unlimited ULW used to stamp a fake wave every 20 tool rounds (an 80-turn ship became `w=4`). Idle now updates the open wave in place for capped **and** uncapped runs. `w` moves on Stop or a declared `Wave shipped` / `Ship landed`.
+- **Sticky request-prune after 180k**: the first clip freezes omitted/collapsed/soft-trimmed/harness-stub ids on `session.meta.requestPruneSticky`. Later rounds apply that set instead of re-aging, so the xAI prefix can cache again (dogfood `aee45264` dropped from 99% to ~70% because every post-cliff turn reshaped the prefix). A second shelf reclips only if the last clip got under the cliff and the suffix grew back over — a first clip that is still ≥180k stays frozen (reclips every turn would kill the prefix again). Compact/`/clear` drop the set. `FORGE_REQUEST_PRUNE=1` stays sliding. HUD `ctx` counts `reasoning_content`; the prune threshold does not.
+- **Wave ledger prefers the ship**: `summarizeWave` uses `Ship landed:` / `Wave N shipped:` (or a newer `memory_write` ship) before the Wave-1 `Reading:` clip.
+
+### Added
+- **Unlimited named-ship backlog**: the Wave-1 reading's ONE ship + passed-on list is stored on `ulw.json`. When every item is done and `maxWaves` is unset, Stop asks **once** for a new `Reading:` or `/cycle 0`. Capped runs still spend remaining waves. `/cycle status` lists the ships.
+- **`provider_round` `pruneKind` + `cacheDrop`**: metrics distinguish `first_clip` / `sticky` / `reclip` / `always`, and flag a round that fell below 5% cache after a prior round above 90%. `/cost` last-round line and `forge run --json` expose `lastPruneKind`.
+
+### Fixed
+- **Auto-commit clean-tree is not revisit**: after a landed ULW commit the clean fingerprint is a new baseline (dropped from `seenDiffFps`). Successful ships no longer look like edit→revert churn.
+- **Empty-SSE / empty-choices retry keeps the cache shard**: those errors are retryable; `makeChatRequest` still sends `x-grok-conv-id` and `reasoning_content` on the retry.
+
+### Changed
 - **`max_waves=N` is a budget, not an early-exit**: evidenced **Cycle complete.** under `cycle=1` no longer releases (dogfood `d6b191ae` stopped at wave 1/4 after `/max-waves 4`). The harness stamps the unit and re-anchors the remaining waves. LAST + **Cycle complete.** still releases at the cap or after `/cycle 0`. Kickoff/admit/doctrine no longer say unused slots are work to skip.
 - **First-run numbers work**: the `/setup` card’s `1–6` are typeable at the idle prompt (`1` = `/setup 1`). First paint no longer stamps `seenSetup`, so the card can return until you actually run a setup action. Login picker labels are in-app choices (not `forge login` CLI strings); unknown input retries instead of quitting; post-login says “type a task.”
 - **Edit results are a receipt, not a truncated dump**: successful `search_replace` / `write_file` / `apply_patch` return `Edited path (N lines) · −X +Y · lines A–B of N` plus a numbered AFTER window (same `N|` grammar as `read_file`). The TUI still gets a colored `shortDiff` via `ToolResult.diff`; the model string no longer embeds `--- a/` or `… [diff truncated]`. Miss hints lead with a numbered ±8 window, not “re-read the file.” Kill switch: `FORGE_EDIT_RECEIPT=legacy`. Status line shows `+8 -6` when stats are present (`diff 1.3KB` was always human-only).

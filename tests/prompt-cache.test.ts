@@ -155,6 +155,55 @@ describe("xAI chat sends x-grok-conv-id and keeps reasoning_content", () => {
     assert.equal(out.message.reasoning_content, "new thought");
   });
 
+  it("empty-choices retry still sends x-grok-conv-id and reasoning_content", async () => {
+    const { withRetry } = await import("../src/util/retry.js");
+    const { isRetryableError } = await import("../src/util/retry.js");
+    assert.equal(
+      isRetryableError(new Error("xai API error: empty choices array (provider returned no completion — retry or switch model)")),
+      true,
+    );
+    let calls = 0;
+    const headers: Array<string | null> = [];
+    const bodies: Array<string | undefined> = [];
+    globalThis.fetch = (async (_url, init) => {
+      calls += 1;
+      headers.push(new Headers(init?.headers).get(X_GROK_CONV_ID));
+      const parsed = JSON.parse(String(init?.body || "{}")) as {
+        messages?: Array<{ reasoning_content?: string }>;
+      };
+      bodies.push(parsed.messages?.[1]?.reasoning_content);
+      if (calls === 1) {
+        return new Response(JSON.stringify({ id: "c0", model: "grok-4.6", choices: [] }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      return new Response(
+        JSON.stringify({
+          id: "c1",
+          model: "grok-4.6",
+          choices: [
+            {
+              message: { role: "assistant", content: "ok" },
+              finish_reason: "stop",
+            },
+          ],
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      );
+    }) as typeof fetch;
+    const p = new OpenAICompatProvider({
+      id: "xai",
+      baseUrl: "https://api.x.ai/v1",
+      apiKey: "k",
+    });
+    const out = await withRetry(() => p.chat(req), { retries: 2, baseDelayMs: 1 });
+    assert.equal(calls, 2);
+    assert.deepEqual(headers, ["sess-abc", "sess-abc"]);
+    assert.deepEqual(bodies, ["prior thought", "prior thought"]);
+    assert.equal(out.message.content, "ok");
+  });
+
   it("does not send x-grok-conv-id for non-xAI providers", async () => {
     mockJson({
       id: "c1",

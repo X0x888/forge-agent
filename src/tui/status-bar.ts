@@ -26,7 +26,10 @@ import {
 import { listActiveProjectMemory } from "../harness/project-memory.js";
 import { listActiveSubagents } from "../agent/subagent.js";
 import { peekInterjections } from "../harness/interjection.js";
-import { outboundTokenEstimate, sessionToSnapshot } from "../statusline/snapshot.js";
+import {
+  outboundTokenEstimateForSession,
+  sessionToSnapshot,
+} from "../statusline/snapshot.js";
 import { renderCompactStrip, renderHud } from "../statusline/render.js";
 import {
   getActivity,
@@ -247,9 +250,10 @@ function liveCtxEstimate(session: SessionData): number {
   const last = msgs[msgs.length - 1];
   // Messages are append-whole during a run (assistant/tool results push
   // complete messages), so id + length + tail size is a safe memo key.
-  const key = `${session.meta.id}:${msgs.length}:${last ? (last.content || "").length : 0}:${session.meta.totalCompletionTokens}`;
+  const sticky = session.meta.requestPruneSticky;
+  const key = `${session.meta.id}:${msgs.length}:${last ? (last.content || "").length : 0}:${session.meta.totalCompletionTokens}:${sticky?.shelf ?? 0}:${sticky?.omitted.length ?? 0}`;
   if (liveCtxCache?.key === key) return liveCtxCache.value;
-  const value = outboundTokenEstimate(msgs);
+  const value = outboundTokenEstimateForSession(session);
   liveCtxCache = { key, value };
   return value;
 }

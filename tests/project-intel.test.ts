@@ -1658,6 +1658,14 @@ describe("/compact last-verify note", () => {
     session.meta.lastVerificationCommand = "npm test";
     session.meta.lastVerificationAt = "2026-04-10T12:00:00.000Z";
     session.meta.lastEditAt = "2026-04-10T12:10:00.000Z";
+    session.meta.requestPruneSticky = {
+      omitted: ["old-1"],
+      collapsed: [],
+      softTrimmed: [],
+      stubbedHarness: [],
+      shelf: 1,
+      clippedAt: "2026-04-10T12:00:00.000Z",
+    };
     const hooks = new HookRunner(DEFAULT_CONFIG, d);
     const r = await handleSlash("/compact", {
       session,
@@ -1668,6 +1676,7 @@ describe("/compact last-verify note", () => {
     const out = String(r.output || "");
     assert.match(out, /Compacted/i);
     assert.match(out, /Last verify stale: `npm test`|Last verify: `npm test`/);
+    assert.equal(session.meta.requestPruneSticky, undefined);
   });
 });
 

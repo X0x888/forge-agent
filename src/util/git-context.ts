@@ -86,6 +86,16 @@ export function gitDiffFingerprint(cwd: string): string | null {
   }
 }
 
+/** sha1 of an empty numstat + empty untracked — any clean tree hashes here. */
+export const CLEAN_TREE_DIFF_FP = createHash("sha1")
+  .update("\n--\n")
+  .digest("hex")
+  .slice(0, 16);
+
+export function isCleanTreeDiffFp(fp: string | null | undefined): boolean {
+  return Boolean(fp && fp === CLEAN_TREE_DIFF_FP);
+}
+
 /** Best-effort git summary for system prompt / banner (never throws). */
 export function getGitSnapshot(cwd: string): GitSnapshot {  try {
     const root = git(["rev-parse", "--show-toplevel"], cwd);

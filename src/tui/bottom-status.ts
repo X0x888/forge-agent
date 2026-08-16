@@ -12,7 +12,10 @@ import type { ForgeConfig } from "../config/types.js";
 import type { SessionData } from "../session/session.js";
 import type { ResolvedAuth } from "../auth/types.js";
 import { listAccounts } from "../auth/store.js";
-import { sessionToSnapshot, outboundTokenEstimate } from "../statusline/snapshot.js";
+import {
+  sessionToSnapshot,
+  outboundTokenEstimateForSession,
+} from "../statusline/snapshot.js";
 import { collectPlanUsage } from "../statusline/plan.js";
 import {
   formatPlan,
@@ -99,7 +102,7 @@ export function renderBottomStatusLine(
 
   // Live ctx estimate while messages grow mid-run
   try {
-    const used = outboundTokenEstimate(session.messages);
+    const used = outboundTokenEstimateForSession(session);
     const win = config.contextWindow || snap.context.windowTokens || 1;
     snap.context = {
       ...snap.context,

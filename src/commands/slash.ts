@@ -17,6 +17,7 @@ import {
   pruneSessions,
   sessionHasForeignLiveLock,
   compactMessages,
+  clearRequestPruneSticky,
 } from "../session/session.js";
 import { DEFAULT_CHECKPOINT_KEEP_STEPS } from "../session/checkpoint.js";
 import {
@@ -3129,9 +3130,11 @@ return {
           ? `  cached:      ${formatTokens(cacheRead)} (${Math.round((cacheRead / prompt) * 100)}% of prompt, session smear)`
           : null;
       const live = sessionCacheRatio(opts.session.meta);
+      const pruneKind = opts.session.meta.lastPruneKind;
       const liveLine =
         live?.live && live.promptTokens > 0
-          ? `  last round:  cache ${formatCacheRatio(live.ratio)} of ${formatTokens(live.promptTokens)}`
+          ? `  last round:  cache ${formatCacheRatio(live.ratio)} of ${formatTokens(live.promptTokens)}` +
+            (pruneKind ? `  prune=${pruneKind}` : "")
           : null;
       return {
         handled: true,
@@ -3722,6 +3725,7 @@ const stats = collectUsageStats({
         lastVerificationAt: opts.session.meta.lastVerificationAt,
         lastEditAt: opts.session.meta.lastEditAt,
       });
+      clearRequestPruneSticky(opts.session);
       rebuildUserTurnMarks(opts.session);
       saveSession(opts.session);
       let compactNote = "";
@@ -3776,6 +3780,7 @@ const stats = collectUsageStats({
         lastVerificationAt: opts.session.meta.lastVerificationAt,
         lastEditAt: opts.session.meta.lastEditAt,
       });
+      clearRequestPruneSticky(opts.session);
       rebuildUserTurnMarks(opts.session);
       saveSession(opts.session);
       const preview =
@@ -4405,6 +4410,7 @@ const result = rewindSessionDetailed(opts.session, n);
         lastVerificationAt: forked.meta.lastVerificationAt,
         lastEditAt: forked.meta.lastEditAt,
       });
+      clearRequestPruneSticky(forked);
       rebuildUserTurnMarks(forked);
       saveSession(forked);
       const harnessBits: string[] = [];
