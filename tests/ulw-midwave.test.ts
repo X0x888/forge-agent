@@ -349,6 +349,43 @@ describe("ULW mid-loop wave stamp", () => {
     });
   });
 
+  it("does not overwrite a ship ledger row with a Reading reprint", () => {
+    withHome(() => {
+      const sid = "sess-ledger-ship";
+      fs.mkdirSync(path.join(process.env.FORGE_HOME!, "sessions", sid), {
+        recursive: true,
+      });
+      armUlwCycle(sid, "improve the ui", {
+        cycle: 1,
+        skipCheckpoint: true,
+        editCount: 0,
+      });
+      appendMemoryRecord(sid, {
+        kind: "decision",
+        source: "agent",
+        text: "Reading: Forge's product is the interactive REPL plus blocking harness. Daily-loop trust beats chrome leftovers.",
+      });
+      maybeStampUlwWave({
+        sessionId: sid,
+        editCount: 8,
+        openTodoCount: 0,
+        stepsSinceStamp: 1,
+        lastAssistantMessage: "Wave 1 shipped: stdin lease for permission asks",
+      });
+      assert.match(loadUlwCycle(sid)!.waves![0]!.summary, /stdin lease/i);
+      maybeStampUlwWave({
+        sessionId: sid,
+        editCount: 10,
+        openTodoCount: 0,
+        stepsSinceStamp: 1,
+        lastAssistantMessage:
+          "Reading: Forge's product is the interactive REPL plus blocking harness. Daily-loop trust beats chrome leftovers.\n\nstill verifying",
+      });
+      assert.match(loadUlwCycle(sid)!.waves![0]!.summary, /stdin lease/i);
+      disarmUlwCycle(sid);
+    });
+  });
+
   it("declared ship still increments after unlimited idle epochs", () => {
     withHome(() => {
       const sid = "sess-mid-idle-then-ship";

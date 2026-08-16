@@ -204,13 +204,13 @@ Max-autonomy **relentless loop**. Soft prompts like `improve the code` are expan
 | Flag | Meaning |
 |------|---------|
 | **`cycle=1`** (default on `/ulw`) | Keep going — Stop is blocked between waves |
-| **`cycle=0`** | Last wave — finish current work, attest `**Cycle complete.**`, then Stop |
+| **`cycle=0`** | LAST wrap — finish in-flight + named plan, attest `**Cycle complete.**`, then Stop |
 | **`max_waves=N`** (optional) | Cap waves; auto LAST when wave hits N (default unlimited) |
 
 ```text
 /ulw improve the code          # cycle=1 even for weak prompts
 /max-waves 3                   # optional cap (live mid-run too)
-/cycle 0                       # you're satisfied — finish this wave
+/cycle 0                       # wrap in-flight + named plan, then attest
 /cycle 1                       # resume relentless loops
 /ulw-off
 ```
@@ -247,7 +247,7 @@ Full contract: [docs/RELIABILITY.md](docs/RELIABILITY.md) · expert checklist: [
 | `/help` | Help |
 | `/goal …` | Goal lifecycle |
 | `/ulw [task]` | ULW + cycle=1 (soft prompts OK) |
-| `/cycle 1` / `0` | Continue waves / last wave then stop |
+| `/cycle 1` / `0` | Continue waves / LAST wrap then attest |
 | `/max-waves N\|off` | Cap ULW waves (auto LAST at N); default unlimited |
 | `/ulw-off` | Disarm ULW + cycle |
 | `/hooks` | List hooks |

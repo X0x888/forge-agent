@@ -3,7 +3,10 @@
  *
  * User-facing control:
  *   cycle = 1  → keep looping research → waves → serendipity → review → repeat
- *   cycle = 0  → finish the current wave as the LAST cycle, then release Stop
+ *   cycle = 0  → LAST wrap, then attest Cycle complete (not an abort)
+ *                user `/cycle 0` wraps in-flight work + already-named ships;
+ *                budget LAST (cap / polish / safety valve) wraps this wave only
+ *   /ulw-off   → disarm immediately (no wrap)
  *   maxWaves   → optional cap; when the wave counter hits the cap, auto LAST
  *                (default null = unlimited)
  *
@@ -33,6 +36,17 @@ export type CycleFlag = 0 | 1;
 export interface NamedShipItem {
   text: string;
   status: "open" | "done";
+  doneAt?: string;
+}
+
+export type UlwWrapSource = "named" | "todo" | "open_wave";
+/** Who flipped LAST: user `/cycle 0` wraps the plan; budget LAST wraps the wave. */
+export type UlwLastReason = "user" | "budget";
+
+export interface UlwWrapItem {
+  text: string;
+  source: UlwWrapSource;
+  status: "open" | "done" | "cancelled";
   doneAt?: string;
 }
 
@@ -69,7 +83,7 @@ export interface UlwCycleState {
   enabled: boolean;
   /**
    * 1 = continue relentless cycles
-   * 0 = last cycle — finish current wave then allow stop after attestation
+   * 0 = LAST wrap, then allow stop after attestation
    */
   cycle: CycleFlag;
   /** Wave counter (increments each Stop re-anchor while cycle=1 / max-waves LAST) */
@@ -134,8 +148,19 @@ export interface UlwCycleState {
    * maxWaves is set — remaining budget is still spent.
    */
   namedShips?: NamedShipItem[];
-  /** True after the one empty-backlog Stop admit (unlimited only). */
+  /** True after the empty-backlog Stop admit for the *current* named list. */
   namedShipAdmitDone?: boolean;
+  /** Empty-list admits this run (unlimited). Stronger copy after 3. */
+  namedShipAdmitCount?: number;
+  /**
+   * Frozen LAST wrap list. User `/cycle 0` includes leftover named ships;
+   * cap/polish/safety LAST is the open wave only. New readings do not append.
+   */
+  wrapItems?: UlwWrapItem[];
+  wrapKind?: UlwLastReason;
+  wrapFrozenAt?: string;
+  /** One Cycle-complete bounce while named wrap items are still open. */
+  wrapNudgeDone?: boolean;
   /**
    * evaluate-class Wave 1: `orient` hides spawn/edits until a reading exists.
    * Absent on old sidecars — infer from judgmentRequired.
@@ -173,6 +198,8 @@ export interface UlwStopDecision {
   thinStreakAdvisory?: boolean;
   /** True when a weak attestation was bounced for missing evidence */
   evidenceDemanded?: boolean;
+  /** True when Cycle complete was bounced because named wrap items are still open. */
+  wrapDemanded?: boolean;
   /** True when this Stop actually closed a wave (not a gate / already-stamped). */
   waveClosed?: boolean;
 }
@@ -352,6 +379,27 @@ function looksLikeMidThought(t: string): boolean {
   );
 }
 
+function isReadingReprintOf(
+  s: UlwCycleState,
+  incoming: string,
+  current: string,
+): boolean {
+  if (!incoming || !current || incoming === current) return false;
+  if (extractShipSummary(incoming) || /\bCycle complete\b/i.test(incoming)) {
+    return false;
+  }
+  try {
+    const reading = readingFromMemory(s.sessionId);
+    if (!reading) return false;
+    const clip = clipWaveSummary(reading);
+    if (!clip || clip.startsWith("(")) return false;
+    const head = clip.slice(0, 40);
+    return incoming === clip || (head.length >= 20 && incoming.startsWith(head));
+  } catch {
+    return false;
+  }
+}
+
 function readingFromMemory(sessionId: string): string | undefined {
   try {
     const recs = activeMemoryRecords(sessionId);
@@ -477,9 +525,14 @@ function classifyNetDiff(
   return "none";
 }
 
-function flipUlwToLast(s: UlwCycleState, sessionId: string): void {
+function flipUlwToLast(
+  s: UlwCycleState,
+  sessionId: string,
+  kind: UlwLastReason = "budget",
+): void {
   if (s.cycle !== 1) return;
   s.cycle = 0;
+  snapshotUlwWrap(s, kind);
   try {
     clearSoftTodoGateOnWindDown(sessionId);
   } catch {
@@ -491,7 +544,7 @@ function lastWaveAdmit(cap: number, wave: number): string {
   return [
     "[Forge harness — mid-conversation update]",
     `ULW max_waves=${cap} reached at wave=${wave} — auto LAST.`,
-    "Finish this wave, review, attest **Cycle complete.** Do not start a new ambitious wave.",
+    "Budget LAST — wrap this wave (prove + review), attest **Cycle complete.** Do not start a new ambitious wave.",
   ].join("\n");
 }
 
@@ -514,7 +567,13 @@ function updateOpenWaveRecord(
   else if (opts.netDiff === "revisit" && last.netDiff !== "new") {
     last.netDiff = "revisit";
   }
-  if (opts.summary && !opts.summary.startsWith("(")) last.summary = opts.summary;
+  if (
+    opts.summary &&
+    !opts.summary.startsWith("(") &&
+    !isReadingReprintOf(s, opts.summary, last.summary)
+  ) {
+    last.summary = opts.summary;
+  }
   last.ts = nowIso();
   return true;
 }
@@ -699,9 +758,21 @@ function clipNamedShipText(raw: string): string | undefined {
   return s;
 }
 
+function splitPassedOnList(s: string): string[] {
+  const t = s.trim();
+  if (!t) return [];
+  if (t.includes(";")) {
+    return t.split(/\s*;\s*/).map((x) => x.trim()).filter(Boolean);
+  }
+  return splitNamedShipList(t);
+}
+
 /** Pull the ONE ship + passed-on / next-ship list out of a reading. */
 export function parseNamedShipsFromReading(text: string): string[] {
-  const t = (text || "").replace(/\s+/g, " ").trim();
+  const t = (text || "")
+    .replace(/\(\s*later waves?[^)]*\)/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
   if (!t) return [];
   const out: string[] = [];
   const push = (raw: string) => {
@@ -712,18 +783,18 @@ export function parseNamedShipsFromReading(text: string): string[] {
     out.push(s);
   };
   const one = t.match(
-    /(?:the\s+)?one\s+(?:ship|item)\s*(?:is|:)\s+([^.;\n]+)/i,
+    /(?:the\s+)?one\s+(?:ship|item)\s*(?:is|:)\s+(.+?)(?:\.|passed[\s-]+on|$)/i,
   );
   if (one?.[1]) push(one[1]);
   const passed = t.match(
-    /passed[\s-]+on\s*:?\s+(.{8,400}?)(?:\.|$|\s+the\s+one\s+)/i,
+    /passed[\s-]+on\s*:?\s+(.+?)(?:\.\s*(?:the\s+)?one\s+ship|\s+(?:the\s+)?one\s+ship:|\.\s*$|$)/i,
   );
   if (passed?.[1]) {
-    for (const part of splitNamedShipList(passed[1])) push(part);
+    for (const part of splitPassedOnList(passed[1])) push(part);
   }
   const next = t.match(/next\s+ships?\s*:?\s+(.{8,400}?)(?:\.|$)/i);
   if (next?.[1]) {
-    for (const part of splitNamedShipList(next[1])) push(part);
+    for (const part of splitPassedOnList(next[1])) push(part);
   }
   return out.slice(0, 12);
 }
@@ -768,6 +839,8 @@ export function maybeAdoptNamedShips(
   s: UlwCycleState,
   text?: string,
 ): boolean {
+  // LAST wrap is frozen — a new Reading must not grow the plan.
+  if (s.cycle !== 1 || s.wrapKind) return false;
   const blob = [text, readingFromMemory(s.sessionId)]
     .filter((x): x is string => Boolean(x && x.trim()))
     .join("\n");
@@ -778,19 +851,42 @@ export function maybeAdoptNamedShips(
   if (open.length > 0) return false;
   // Same reading still in memory after every item is done — do not reopen it.
   if (sameNamedShipSet(prev, parsed)) return false;
+  if (
+    prev.length > 0 &&
+    prev.every((x) => x.status === "done") &&
+    parsed.every((p) => prev.some((x) => matchNamedShip(x.text, p)))
+  ) {
+    return false;
+  }
   s.namedShips = parsed.map((item) => ({ text: item, status: "open" as const }));
   s.namedShipAdmitDone = false;
   return true;
 }
+
+const CANCEL_SHIP_RE =
+  /\b(?:cancell?ed?|won'?t ship|skip(?:ping)?|out of scope)\b/i;
 
 export function markNamedShipDone(s: UlwCycleState, closer: string): void {
   const items = s.namedShips;
   if (!items?.length) return;
   const open = items.filter((x) => x.status === "open");
   if (!open.length) return;
-  const hit = open.find((x) => matchNamedShip(x.text, closer)) ?? open[0]!;
-  hit.status = "done";
-  hit.doneAt = nowIso();
+  const cancel = CANCEL_SHIP_RE.test(closer);
+  const matched = open.filter((x) => matchNamedShip(x.text, closer));
+  // Cycle complete / cancel must not FIFO-consume the next named item.
+  // Cancel may close every listed leftover in one closer.
+  const hits = cancel
+    ? matched
+    : matched.length
+      ? [matched[0]!]
+      : /\bCycle complete\b/i.test(closer)
+        ? []
+        : [open[0]!];
+  for (const hit of hits) {
+    hit.status = "done";
+    hit.doneAt = nowIso();
+    markWrapItemClosed(s, hit.text, closer, cancel ? "cancelled" : "done");
+  }
 }
 
 export function namedShipsExhausted(s: UlwCycleState): boolean {
@@ -805,6 +901,122 @@ const NAMED_SHIP_EXHAUSTED_ADMIT = [
   "Write a new Reading: (what is still hard + the ONE next ship) or /cycle 0.",
   "Do not invent leftover chrome. Unlimited ULW continues only after a new reading.",
 ].join("\n");
+
+const NAMED_SHIP_EXHAUSTED_STRONG = [
+  "[Forge ULW cycle driver] Stop blocked — named ships from the reading are done.",
+  "Hard work looks exhausted. /cycle 0 wraps what is left (in-flight wave + already-named ships), then **Cycle complete.**",
+  "A new Reading must be a different surface (trust, correctness, workflow) — not the next sibling ✓ / glanceable leftover.",
+].join("\n");
+
+const MAX_NAMED_SHIP_ADMITS = 3;
+
+export function isGlanceableClassShip(text: string): boolean {
+  return /glanceable|under the [✓✔] row|same glanceable-work|first \d+\s+(?:lines?|hits?|names?)|last \d+\s+(?:log )?lines under|extraDefaultPreview/i.test(
+    text || "",
+  );
+}
+
+const OPEN_WAVE_WRAP_TEXT =
+  "Finish the open wave: ship or revert in-flight work, prove, review";
+
+function clearUlwWrap(s: UlwCycleState): void {
+  s.wrapItems = [];
+  s.wrapKind = undefined;
+  s.wrapFrozenAt = undefined;
+  s.wrapNudgeDone = false;
+}
+
+/** Snapshot LAST wrap once. User wrap includes leftover named ships; budget wrap does not. */
+export function snapshotUlwWrap(
+  s: UlwCycleState,
+  kind: UlwLastReason,
+): void {
+  if (s.wrapKind) return;
+  s.wrapKind = kind;
+  s.wrapFrozenAt = nowIso();
+  s.wrapNudgeDone = false;
+  const items: UlwWrapItem[] = [];
+  if (kind === "user") {
+    for (const n of s.namedShips ?? []) {
+      if (n.status === "open") {
+        items.push({ text: n.text, source: "named", status: "open" });
+      }
+    }
+  }
+  items.push({
+    text: OPEN_WAVE_WRAP_TEXT,
+    source: "open_wave",
+    status: "open",
+  });
+  s.wrapItems = items;
+}
+
+/**
+ * Older LAST sidecars have no wrapKind. Infer: cap already spent → budget;
+ * otherwise treat as a user wrap so leftover named ships are not dropped.
+ */
+export function ensureUlwWrap(s: UlwCycleState): void {
+  if (s.cycle !== 0 || s.wrapKind) return;
+  const cap = normalizeMaxWaves(s.maxWaves);
+  snapshotUlwWrap(s, cap != null && s.wave >= cap ? "budget" : "user");
+}
+
+export function openNamedWrapItems(s: UlwCycleState): UlwWrapItem[] {
+  return (s.wrapItems ?? []).filter(
+    (x) => x.source === "named" && x.status === "open",
+  );
+}
+
+function markWrapItemClosed(
+  s: UlwCycleState,
+  namedText: string,
+  closer: string | undefined,
+  status: "done" | "cancelled",
+): void {
+  const items = s.wrapItems;
+  if (!items?.length) return;
+  const open = items.filter((x) => x.status === "open" && x.source === "named");
+  if (!open.length) return;
+  const blob = [namedText, closer].filter(Boolean).join("\n");
+  const hit =
+    open.find((x) => matchNamedShip(x.text, blob)) ??
+    (namedText ? open.find((x) => matchNamedShip(x.text, namedText)) : undefined);
+  if (!hit) return;
+  hit.status = status;
+  hit.doneAt = nowIso();
+}
+
+function markOpenWaveWrapDone(s: UlwCycleState): void {
+  for (const x of s.wrapItems ?? []) {
+    if (x.source === "open_wave" && x.status === "open") {
+      x.status = "done";
+      x.doneAt = nowIso();
+    }
+  }
+}
+
+export function formatWrapCard(s: UlwCycleState): string {
+  const named = (s.wrapItems ?? []).filter((x) => x.source === "named");
+  const openNamed = named.filter((x) => x.status === "open");
+  const lines: string[] = [
+    "You may stop after this wrap. Carry in-flight work to done (or cancel with reason), then review and attest **Cycle complete.**",
+    "Do not write a new Reading. Do not start a new surface.",
+  ];
+  if (s.wrapKind === "user" && named.length) {
+    lines.push(
+      `Already-named plan: ${named.length - openNamed.length}/${named.length} done.`,
+    );
+    for (const n of named) {
+      const mark = n.status === "open" ? "·" : n.status === "done" ? "✓" : "✗";
+      lines.push(`  ${mark} ${n.text}`);
+    }
+  } else if (s.wrapKind === "budget") {
+    lines.push(
+      "Budget LAST — wrap this wave only (prove + review). Leftover named ships past the cap are not new waves.",
+    );
+  }
+  return lines.join("\n");
+}
 
 /** After auto-commit the tree is clean — that is a new baseline, not churn. */
 export function applyCleanBaselineAfterCommit(
@@ -913,10 +1125,14 @@ export function maybeStampUlwWave(opts: {
   const facts = { editDelta, proof, todoProgress, netDiff, summary };
 
   // LAST: update the open wave's facts, never increment the counter.
+  // Declared ships still close named/wrap items so /cycle 0 can wrap the plan.
   if (s.cycle !== 1) {
     if (progressed) {
       updateOpenWaveRecord(s, facts);
       s.lastProgressEditCount = opts.editCount;
+    }
+    if (isDeclaredWaveClose(closer) && progressed && editDelta >= 1) {
+      markNamedShipDone(s, closer);
     }
     saveUlwCycle(s);
     return { stamped: false, updated: progressed, wave: s.wave };
@@ -1145,7 +1361,44 @@ export function loadUlwCycle(sessionId: string): UlwCycleState | null {
   if (typeof raw.namedShipAdmitDone !== "boolean") {
     raw.namedShipAdmitDone = false;
   }
+  if (
+    typeof raw.namedShipAdmitCount !== "number" ||
+    !Number.isFinite(raw.namedShipAdmitCount)
+  ) {
+    raw.namedShipAdmitCount = 0;
+  }
+  raw.wrapItems = normalizeWrapItems(raw.wrapItems);
+  if (raw.wrapKind !== "user" && raw.wrapKind !== "budget") {
+    raw.wrapKind = undefined;
+  }
+  if (typeof raw.wrapNudgeDone !== "boolean") raw.wrapNudgeDone = false;
   return raw;
+}
+
+function normalizeWrapItems(raw: unknown): UlwWrapItem[] | undefined {
+  if (raw === undefined) return undefined;
+  if (!Array.isArray(raw)) return [];
+  const out: UlwWrapItem[] = [];
+  for (const item of raw) {
+    if (!item || typeof item !== "object") continue;
+    const o = item as Record<string, unknown>;
+    const text = typeof o.text === "string" ? o.text.trim().slice(0, 200) : "";
+    if (text.length < 8) continue;
+    const source: UlwWrapSource =
+      o.source === "named" || o.source === "todo" || o.source === "open_wave"
+        ? o.source
+        : "open_wave";
+    const status: UlwWrapItem["status"] =
+      o.status === "done" || o.status === "cancelled" ? o.status : "open";
+    out.push({
+      text,
+      source,
+      status,
+      ...(typeof o.doneAt === "string" && o.doneAt ? { doneAt: o.doneAt } : {}),
+    });
+    if (out.length >= 16) break;
+  }
+  return out;
 }
 
 function normalizeNamedShipItems(raw: unknown): NamedShipItem[] | undefined {
@@ -1323,7 +1576,7 @@ export function expandUlwMandate(mandate: string): { expanded: string; soft: boo
       expanded: [
         `User mandate: ${base}`,
         ``,
-        `Execute under **ULW god-mode** until cycle=0 and the last wave is attested **Cycle complete.**`,
+        `Execute under **ULW god-mode** until cycle=0 and the wrap is attested **Cycle complete.**`,
         smartDoctrine,
         backlogDoctrine,
         evaluateDoctrine,
@@ -1357,7 +1610,7 @@ export function expandUlwMandate(mandate: string): { expanded: string; soft: boo
       `5. **PROVE** — cheapest real check that can fail.`,
       `6. **SERENDIPITY** — bounded adjacent fix on an open path if cheap; label \`Serendipity:\`.`,
       `7. **HOSTILE REVIEW** — fix real defects in your diff; skip cosmetic noise.`,
-      `8. **REPEAT** while cycle=1. If cycle=0, finish this wave and attest **Cycle complete.** with evidence.`,
+      `8. **REPEAT** while cycle=1. If cycle=0, wrap in-flight work and already-named ships (or cancel with reason), then attest **Cycle complete.** with evidence.`,
       ``,
       `Optional: a short todo board for multi-wave work if it helps you; skip the board when the next move is already obvious.`,
       evaluateClass
@@ -1576,11 +1829,16 @@ export function reenableUlwCycle(sessionId: string): UlwCycleState | null {
   s.enabled = true;
   s.cycle = 1;
   s.stuckBlocks = 0;
+  clearUlwWrap(s);
   saveUlwCycle(s);
   return s;
 }
 
-export function setCycleFlag(sessionId: string, cycle: CycleFlag): UlwCycleState | null {
+export function setCycleFlag(
+  sessionId: string,
+  cycle: CycleFlag,
+  opts?: { lastReason?: UlwLastReason },
+): UlwCycleState | null {
   const s = loadUlwCycle(sessionId);
   if (!s) return null;
   if (!s.enabled) {
@@ -1593,6 +1851,9 @@ export function setCycleFlag(sessionId: string, cycle: CycleFlag): UlwCycleState
   s.cycle = cycle;
   if (cycle === 1) {
     s.stuckBlocks = 0;
+    clearUlwWrap(s);
+  } else {
+    snapshotUlwWrap(s, opts?.lastReason ?? "user");
   }
   saveUlwCycle(s);
   return s;
@@ -1609,7 +1870,7 @@ export function maybeFlipUlwToLastOnSafetyValve(
 ): UlwCycleState | null {
   const s = loadUlwCycle(sessionId);
   if (!s?.enabled || s.cycle !== 1) return null;
-  const next = setCycleFlag(sessionId, 0);
+  const next = setCycleFlag(sessionId, 0, { lastReason: "budget" });
   // Wind-down parity with /cycle 0 / /done: drop soft TodoGate once-blocks so
   // leftover open todos do not fight the safety-valve release path.
   try {
@@ -1666,6 +1927,7 @@ export function copyUlwCycle(fromId: string, toId: string): UlwCycleState | null
     // Clone the ledger so the two sessions never share a mutable array.
     waves: [...(src.waves ?? [])],
     namedShips: src.namedShips?.map((x) => ({ ...x })),
+    wrapItems: src.wrapItems?.map((x) => ({ ...x })),
     stuckBlocks: 0,
     lastBlockEditCount: 0,
     thinStreak: 0,
@@ -1711,6 +1973,11 @@ export function resetUlwOnClear(sessionId: string): UlwCycleState | null {
   s.judgmentDemands = 0;
   s.namedShips = [];
   s.namedShipAdmitDone = false;
+  s.namedShipAdmitCount = 0;
+  s.wrapItems = [];
+  s.wrapKind = undefined;
+  s.wrapFrozenAt = undefined;
+  s.wrapNudgeDone = false;
   if (s.enabled) {
     s.mandate = PLACEHOLDER_MANDATE;
     s.expandedMandate = "";
@@ -1771,7 +2038,7 @@ export function formatUlwStatus(s: UlwCycleState | null): string {
     return [
       "ULW cycle: OFF",
       "  Arm with: /ulw <task>   or   /ulw improve the code",
-      "  Cycle flag: set with /cycle 1 (continue) or /cycle 0 (last wave then stop)",
+      "  Cycle flag: set with /cycle 1 (continue) or /cycle 0 (LAST wrap, then attest)",
       "  Wave cap:   /max-waves N  (optional; default unlimited) · /max-waves off",
       `  ${ULW_LIVE_CONTROLS_HINT}`,
     ].join("\n");
@@ -1781,11 +2048,18 @@ export function formatUlwStatus(s: UlwCycleState | null): string {
   const best = bestWave(s.waves);
   const namedLine = formatNamedShipsStatusLine(s);
   return [
-    `ULW cycle: ON  |  ${formatUlwCounts(s)}  ${s.cycle === 1 ? "(CONTINUE — relentless)" : "(LAST — finish current wave)"}`,
+    `ULW cycle: ON  |  ${formatUlwCounts(s)}  ${s.cycle === 1 ? "(CONTINUE — relentless)" : "(LAST — wrap then attest)"}`,
     `  Mandate: ${displayUlwMandate(s.mandate)}`,
     `  Soft prompt expanded: ${s.softPrompt ? "yes" : "no"}`,
     `  max_waves: ${cap != null ? cap : "off (unlimited)"}`,
     ...(namedLine ? [namedLine] : []),
+    ...(s.wrapKind
+      ? [
+          s.wrapKind === "user"
+            ? `  LAST wrap: user — in-flight wave + ${openNamedWrapItems(s).length} open named item(s)`
+            : "  LAST wrap: budget — this wave only",
+        ]
+      : []),
     ...(ledger ? [`  Recent waves: ${ledger}`] : []),
     ...(best
       ? [
@@ -1800,7 +2074,7 @@ export function formatUlwStatus(s: UlwCycleState | null): string {
     `  ${ULW_LIVE_CONTROLS_HINT}`,
     `  User controls:`,
     `    /cycle 1       — keep looping waves (until max_waves / stuck-wall / you stop)`,
-    `    /cycle 0       — treat current work as the LAST cycle; agent finishes wave then stops`,
+    `    /cycle 0       — LAST wrap: finish in-flight + named plan, then **Cycle complete.**`,
     `    /max-waves N   — cap waves (auto LAST when wave hits N); /max-waves off clears`,
     `    /ulw-off       — disarm immediately`,
     `  Agent attestation when cycle=0 and wave done: **Cycle complete.**`,
@@ -1845,6 +2119,7 @@ export function evaluateUlwAtStop(opts: {
 }): UlwStopDecision {
   const s = loadUlwCycle(opts.sessionId);
   if (!s || !s.enabled) return { block: false };
+  if (s.cycle === 0) ensureUlwWrap(s);
 
   const msg = opts.lastAssistantMessage || "";
   const cycleCompleteClaim = LAST_CYCLE_ATTEST_RE.test(msg);
@@ -1874,6 +2149,26 @@ export function evaluateUlwAtStop(opts: {
     attested &&
     (attestationHasEvidence || (s.evidenceNudges ?? 0) >= MAX_EVIDENCE_NUDGES)
   ) {
+    markNamedShipDone(s, msg);
+    const namedOpen = openNamedWrapItems(s);
+    if (namedOpen.length > 0 && !s.wrapNudgeDone) {
+      s.wrapNudgeDone = true;
+      saveUlwCycle(s);
+      const reanchor = [
+        `[Forge ULW cycle driver] Stop blocked — wrap the named plan before **Cycle complete.**`,
+        formatWrapCard(s),
+        `Still open:`,
+        ...namedOpen.map((n) => `  · ${n.text}`),
+        `Ship or cancel each item (with reason), then re-attest **Cycle complete.** with evidence.`,
+      ].join("\n");
+      return {
+        block: true,
+        reason: reanchor,
+        reanchor,
+        wrapDemanded: true,
+      };
+    }
+    markOpenWaveWrapDone(s);
     s.enabled = false;
     saveUlwCycle(s);
     return {
@@ -1991,14 +2286,8 @@ export function evaluateUlwAtStop(opts: {
 
     // Already at/over cap (e.g. user lowered max_waves mid-run) → force LAST now.
     if (cap != null && s.wave >= cap) {
-      s.cycle = 0;
+      flipUlwToLast(s, opts.sessionId, "budget");
       saveUlwCycle(s);
-      // Auto LAST: parity with /cycle 0 wind-down for soft TodoGate.
-      try {
-        clearSoftTodoGateOnWindDown(opts.sessionId);
-      } catch {
-        /* */
-      }
       const reanchor = buildCycleReanchor(s, {
         openTodos: opts.openTodoCount,
         mode: "last",
@@ -2039,11 +2328,20 @@ export function evaluateUlwAtStop(opts: {
       !adoptedNamed
     ) {
       s.namedShipAdmitDone = true;
+      s.namedShipAdmitCount = (s.namedShipAdmitCount ?? 0) + 1;
+      const glanceable =
+        (s.waves ?? []).slice(-3).filter((w) => isGlanceableClassShip(w.summary))
+          .length >= 2 || isGlanceableClassShip(closer);
+      const strong =
+        (s.namedShipAdmitCount ?? 0) >= MAX_NAMED_SHIP_ADMITS || glanceable;
+      const admit = strong
+        ? NAMED_SHIP_EXHAUSTED_STRONG
+        : NAMED_SHIP_EXHAUSTED_ADMIT;
       saveUlwCycle(s);
       return {
         block: true,
-        reason: NAMED_SHIP_EXHAUSTED_ADMIT,
-        reanchor: NAMED_SHIP_EXHAUSTED_ADMIT,
+        reason: admit,
+        reanchor: admit,
       };
     }
     if (!alreadyStamped) {
@@ -2075,14 +2373,8 @@ export function evaluateUlwAtStop(opts: {
 
     // Cap hit on this increment: this wave is the last — force LAST re-anchor.
     if (cap != null && s.wave >= cap) {
-      s.cycle = 0;
+      flipUlwToLast(s, opts.sessionId, "budget");
       saveUlwCycle(s);
-      // Auto LAST: parity with /cycle 0 wind-down for soft TodoGate.
-      try {
-        clearSoftTodoGateOnWindDown(opts.sessionId);
-      } catch {
-        /* */
-      }
       const reanchor = buildCycleReanchor(s, {
         openTodos: opts.openTodoCount,
         mode: "last",
@@ -2123,7 +2415,8 @@ export function evaluateUlwAtStop(opts: {
     };
   }
 
-  // cycle === 0: force finish current wave (no "I'll stop mid-wave")
+  // cycle === 0: wrap the frozen list, then attest (no new ambitious wave).
+  markNamedShipDone(s, closerText(opts.sessionId, msg));
   saveUlwCycle(s);
   const reanchor = buildCycleReanchor(s, {
     openTodos: opts.openTodoCount,
@@ -2234,27 +2527,31 @@ function buildCycleReanchor(
   }
 
   const maxHitLine = opts.maxWavesHit
-    ? `max_waves=${cap} reached at wave=${s.wave} — auto LAST (finish and attest; do not start a new ambitious wave).`
+    ? `max_waves=${cap} reached at wave=${s.wave} — auto LAST (wrap this wave and attest; do not start a new ambitious wave).`
     : null;
 
   return [
     `[Forge ULW cycle driver] Stop blocked — ${formatUlwCounts(s)} (LAST CYCLE).`,
     `Mandate: ${displayUlwMandate(s.mandate)}`,
     ...decisionsBlock,
-    `Wave: ${s.wave}${cap != null ? ` / max ${cap}` : ""} — finish THIS wave only, then attest and stop.`,
+    `Wave: ${s.wave}${cap != null ? ` / max ${cap}` : ""} — LAST wrap, then attest.`,
     maxHitLine,
+    formatWrapCard(s),
     ``,
     `Required before attestation:`,
-    `1. Complete or cancel all open todos (with reason) and run the final check.`,
-    `2. Review the cumulative diff (\`git diff\`) as a hostile reviewer: regressions, weakened tests, leftover stubs.`,
-    `3. Attest exactly **Cycle complete.** with a ✅/❌ checklist — what shipped + evidence per item (command → result).`,
+    `1. Finish the wrap list (named items if user LAST; this wave if budget LAST). Cancel leftovers with reason.`,
+    `2. Complete or cancel open todos and run the final check.`,
+    `3. Review the cumulative diff (\`git diff\`) as a hostile reviewer: regressions, weakened tests, leftover stubs.`,
+    `4. Attest exactly **Cycle complete.** with a ✅/❌ checklist — what shipped + evidence per item (command → result).`,
     `Attestations without machine-checkable evidence are bounced.`,
     ``,
     `Until you attest **Cycle complete.**, Stop remains blocked.`,
     `When you attest, Forge creates a local git commit of this wave's work (never pushed). FORGE_ULW_AUTO_COMMIT=0 to skip.`,
     opts.openTodos > 0
       ? `Still ${opts.openTodos} open todo(s) — close them or cancel with reason before LAST release.`
-      : `No open todos — review + attest if the wave is truly done.`,
+      : openNamedWrapItems(s).length > 0
+        ? `Named wrap items still open — ship or cancel them before **Cycle complete.**`
+        : `Wrap list has no open named items — review + attest if the wave is truly done.`,
     ``,
     `${ULW_LIVE_CONTROLS_HINT}`,
     `User may raise /max-waves or flip /cycle 1 if they want more waves after all.`,
@@ -2309,10 +2606,10 @@ export function ulwKickoffMessage(state: UlwCycleState): string {
       : null,
     ``,
     `## ULW runtime controls`,
-    `- Counters RIGHT NOW: **${formatUlwCounts(state)}**  ${state.cycle === 1 ? "(CONTINUE — god-mode relentless loops)" : "(LAST cycle)"}`,
+    `- Counters RIGHT NOW: **${formatUlwCounts(state)}**  ${state.cycle === 1 ? "(CONTINUE — god-mode relentless loops)" : "(LAST — wrap then attest)"}`,
     `- The user can flip cycle any time with /cycle 0 or /cycle 1 — including while you are mid-turn (live controls). Independent of your opinion of "done".`,
     `- While cycle=1, the harness blocks Stop and forces the research→judge→implement→prove→serendipity→review→repeat loop.`,
-    `- When cycle=0, finish the current wave and attest **Cycle complete.** The harness commits the dirty tree at each wave close and on Cycle complete (never pushes). FORGE_ULW_AUTO_COMMIT=0 off.`,
+    `- When cycle=0, wrap in-flight work and already-named ships (or cancel with reason), then attest **Cycle complete.** The harness commits the dirty tree at each wave close and on Cycle complete (never pushes). FORGE_ULW_AUTO_COMMIT=0 off.`,
     cap != null
       ? `- max_waves=${cap}: a budget the user asked to spend, not a suggestion to stop early. Close a unit with Wave shipped / Ship landed so w moves. When w reaches ${cap}, auto LAST, then attest **Cycle complete.** /cycle 0 ends early. ${formatCappedWaveDoctrine(cap, state.mandate)}`
       : `- max_waves: off (unlimited). CONTINUE until /cycle 0. **Cycle complete.** is refused while cycle=1. User may set /max-waves N mid-run.`,

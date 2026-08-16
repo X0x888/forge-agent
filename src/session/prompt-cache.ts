@@ -69,6 +69,10 @@ export type PruneOutboundDecision =
  * so xAI can cache the prefix. `FORGE_REQUEST_PRUNE=1` restores every-round
  * prune (legacy; kills prefix cache). `=0` never prunes.
  */
+export function requestPruneAtTokens(): number {
+  return envPositiveInt("FORGE_REQUEST_PRUNE_AT", REQUEST_PRUNE_AT_DEFAULT);
+}
+
 export function shouldPruneOutbound(estimatedTokens: number): PruneOutboundDecision {
   const raw = process.env.FORGE_REQUEST_PRUNE;
   if (raw !== undefined && raw !== "" && isFalsy(raw)) {
@@ -77,7 +81,7 @@ export function shouldPruneOutbound(estimatedTokens: number): PruneOutboundDecis
   if (raw !== undefined && raw !== "" && isTruthy(raw)) {
     return { prune: true, reason: "always" };
   }
-  const at = envPositiveInt("FORGE_REQUEST_PRUNE_AT", REQUEST_PRUNE_AT_DEFAULT);
+  const at = requestPruneAtTokens();
   if (Number.isFinite(estimatedTokens) && estimatedTokens >= at) {
     return { prune: true, reason: "threshold" };
   }

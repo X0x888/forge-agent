@@ -80,7 +80,7 @@ Harness
   /goal <objective>   Relentless driver (Stop blocked until attested)
   /goal pause|resume|clear|done
   /ulw [task]         Ultrawork + cycle=1 (starts working immediately)
-  /cycle 1|0          Continue waves or last wave then stop
+  /cycle 1|0          Continue waves or LAST wrap then attest
   /max-waves N|off    Cap ULW waves (auto LAST at N)
   /done               Wind down: goal done + ULW LAST
   /plan               Session-scoped read-only design
@@ -149,7 +149,7 @@ Forge slash commands
   /memory [list|add …]  Session decisions. /memory project … for cross-session.
   /attach <image>       Attach image path for vision ([[image:path]] in next message)
   /paste                Attach clipboard image (pngpaste / osascript / wl-paste / xclip)
-  /cycle 1|0|status     Continue waves (1) or last wave then stop (0)  [live]
+  /cycle 1|0|status     Continue waves (1) or LAST wrap then attest (0)  [live]
   /max-waves N|off      Cap ULW waves (auto LAST at N); default unlimited  [live]
   /ulw-off              Disarm ULW + cycle driver  [live]
   /hooks [init|reload]  List/scaffold/reload hooks  [live]

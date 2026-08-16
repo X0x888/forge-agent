@@ -1816,19 +1816,19 @@ export async function handleSlash(
           if (next) {
             pushLiveNotice(
               sid,
-              "User sent /done mid-run — ULW flipped to cycle=0 (LAST wave). Finish this wave, attest **Cycle complete.**, then stop. Do not start a new research wave.",
+              "User sent /done mid-run — ULW flipped to cycle=0 (LAST). Wrap in-flight work and already-named ships, attest **Cycle complete.** Do not start a new Reading or surface.",
             );
             parts.push(
               chalk.magenta("ULW → cycle=0 (LAST)") +
                 chalk.dim(
-                  `  ${formatUlwCounts(next)}  finish wave + **Cycle complete.**`,
+                  `  ${formatUlwCounts(next)}  wrap in-flight + named plan, then **Cycle complete.**`,
                 ),
             );
           }
         } else if (ulw?.enabled && ulw.cycle === 0) {
           parts.push(
             chalk.dim(
-              "ULW already on cycle=0 (LAST) — finish wave + **Cycle complete.**",
+              "ULW already on cycle=0 (LAST) — wrap in-flight work + named plan, then **Cycle complete.**",
             ),
           );
         }
@@ -2351,7 +2351,7 @@ export async function handleSlash(
         }
         pushLiveNotice(
           sid,
-          "User set cycle=0 (LAST) mid-run. Finish the *current* wave only: complete open work, review the diff, attest **Cycle complete.** Do NOT start a new ambitious wave.",
+          "User set cycle=0 (LAST) mid-run. You may stop after this wrap. Finish in-flight work and already-named ships (or cancel with reason), review the diff, attest **Cycle complete.** Do not write a new Reading or start a new surface.",
         );
       }
       const msg =
@@ -2359,7 +2359,7 @@ export async function handleSlash(
           ? chalk.magenta("cycle=1 CONTINUE") +
             " — harness will keep blocking Stop and forcing the next wave."
           : chalk.yellow("cycle=0 LAST") +
-            " — finish the current wave, review, attest **Cycle complete.** then Stop is allowed.";
+            " — wrap in-flight work and the named plan, review, attest **Cycle complete.** then Stop is allowed.";
       let cycleTip = "";
       if (flag === 0) {
         try {
@@ -2464,7 +2464,7 @@ export async function handleSlash(
         try {
           pushLiveNotice(
             sid,
-            `User set /max-waves ${parsed} at/under current wave ${state.wave} — ULW flipped to cycle=0 (LAST). Finish this wave and attest **Cycle complete.**`,
+            `User set /max-waves ${parsed} at/under current wave ${state.wave} — ULW flipped to cycle=0 (LAST). Budget LAST — wrap this wave (prove + review), attest **Cycle complete.** Do not start a new ambitious wave.`,
           );
         } catch {
           /* */
@@ -2475,7 +2475,7 @@ export async function handleSlash(
       if (state.maxWaves != null && !flippedToLast) {
         pushLiveNotice(
           sid,
-          `User set max_waves=${state.maxWaves} mid-run. ${formatCappedWaveDoctrine(state.maxWaves, state.mandate)} When the wave counter reaches ${state.maxWaves}, auto-flip to LAST: finish that wave, review, attest **Cycle complete.** Do not start a new ambitious wave after the cap. **Cycle complete.** before the cap is refused.`,
+          `User set max_waves=${state.maxWaves} mid-run. ${formatCappedWaveDoctrine(state.maxWaves, state.mandate)} When the wave counter reaches ${state.maxWaves}, auto-flip to LAST: wrap that wave, review, attest **Cycle complete.** Do not start a new ambitious wave after the cap. **Cycle complete.** before the cap is refused.`,
         );
       } else if (state.maxWaves == null) {
         pushLiveNotice(
@@ -2517,7 +2517,7 @@ export async function handleSlash(
           formatUlwStatus(state) +
           chalk.dim(
             flippedToLast
-              ? "\n  (cap written + LAST applied immediately; finish wave + **Cycle complete.**)"
+              ? "\n  (cap written + LAST applied immediately; wrap this wave + **Cycle complete.**)"
               : "\n  (cap written now — stop-guard honors it on next Stop; agent notified on next model call)",
           ) +
           maxWavesTip,

@@ -57,6 +57,8 @@ export interface HarnessSnapshot {
   decisionsFp?: string;
   /** Short active-constraint block for the admit message. */
   decisionsText?: string;
+  /** LAST wrap scope — user wraps named plan; budget wraps this wave. */
+  wrapKind?: "user" | "budget";
 }
 
 const lastAdmitted = new Map<string, string>();
@@ -117,6 +119,7 @@ export function snapshotHarness(opts: {
     gitDirty: Boolean(opts.git?.dirty),
     decisionsFp,
     decisionsText,
+    wrapKind: ulw?.wrapKind,
   };
 }
 
@@ -137,6 +140,7 @@ export function fingerprintSnapshot(s: HarnessSnapshot): string {
     s.gitBranch ?? "",
     s.gitDirty ? "1" : "0",
     s.decisionsFp ?? "",
+    s.wrapKind ?? "-",
   ].join("\x1f");
 }
 
@@ -191,7 +195,8 @@ function countersOnlyChange(a: HarnessSnapshot, b: HarnessSnapshot): boolean {
     a.permissionMode === b.permissionMode &&
     (a.gitBranch ?? "") === (b.gitBranch ?? "") &&
     Boolean(a.gitDirty) === Boolean(b.gitDirty) &&
-    (a.decisionsFp ?? "") === (b.decisionsFp ?? "")
+    (a.decisionsFp ?? "") === (b.decisionsFp ?? "") &&
+    (a.wrapKind ?? "") === (b.wrapKind ?? "")
   );
 }
 
@@ -276,7 +281,11 @@ export function renderHarnessAdmission(s: HarnessSnapshot): string {
         blocks: s.blocks,
         maxWaves: s.maxWaves,
       })}** ${
-        s.cycle === 0 ? "(LAST cycle — finish wave then **Cycle complete.**)" : "(CONTINUE)"
+        s.cycle === 0
+          ? s.wrapKind === "budget"
+            ? "(LAST — wrap this wave, then **Cycle complete.**)"
+            : "(LAST — wrap in-flight work + already-named ships, then **Cycle complete.**)"
+          : "(CONTINUE)"
       }`,
       s.maxWaves != null
         ? `max_waves=${s.maxWaves} is a budget — spend every wave. **Cycle complete.** is refused until the cap (or /cycle 0). Cap auto-flips LAST.`

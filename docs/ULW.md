@@ -7,7 +7,7 @@ When a prompt starts with **`/ulw`** (or `forge --ulw` / `forge run --ulw`), For
 | Value | Meaning |
 |-------|---------|
 | **`cycle=1`** | CONTINUE — after each wave, Stop is blocked and the agent must research → implement → serendipity → review → next wave |
-| **`cycle=0`** | LAST — finish the **current** wave only, independently review, attest `**Cycle complete.**`, then Stop is allowed |
+| **`cycle=0`** | LAST — **wrap**, then attest `**Cycle complete.**`. Finish in-flight work and already-named ships (or cancel with reason). Not an abort (`/ulw-off` is). Do not start a new Reading or a new surface. |
 
 ## Optional: max_waves
 
@@ -21,7 +21,7 @@ When a prompt starts with **`/ulw`** (or `forge --ulw` / `forge run --ulw`), For
 /max-waves 3              # cap at 3 waves (live; works mid-run)
 /max-waves off            # clear cap (unlimited again)
 /max-waves status         # show cap + cycle/wave
-/cycle 0                  # "good enough — finish this wave"
+/cycle 0                  # wrap in-flight + named plan, then attest
 /cycle 1                  # resume relentless loops
 /cycle status             # show flag + wave + mandate
 /ulw-off                  # disarm immediately
@@ -47,7 +47,7 @@ Hard mandates keep a fixed objective but the same **smart + hard** execution sty
 
 **Broad checklists** (4+ bullets / multi-section): the harness still requires a **todo backlog** (`todo_write` ≥2) before Wave 1 free-invents.
 
-**`max_waves=N` is a budget the user asked to spend.** Wave 1 writes the reading (evaluate-class) and ships the first item; waves 2..N ship the next highest-leverage items on different surfaces. Do not invent leftover chrome — do ship the next real item. `**Cycle complete.**` under `cycle=1` does **not** release. Cap auto-flips LAST when the wave counter hits N; then attest. `/cycle 0` ends early.
+**`max_waves=N` is a budget the user asked to spend.** Wave 1 writes the reading (evaluate-class) and ships the first item; waves 2..N ship the next highest-leverage items on different surfaces. Do not invent leftover chrome — do ship the next real item. `**Cycle complete.**` under `cycle=1` does **not** release. Cap auto-flips LAST when the wave counter hits N; then attest. `/cycle 0` ends CONTINUE early and **wraps** the open wave plus leftover named ships, then attests. Cap auto-LAST wraps the open wave only.
 
 ### Smart + hard (not thrash)
 
@@ -81,7 +81,8 @@ attempt Stop
     │    (does not release; remaining budget still owed)
     ├─ cycle=1 and wave will hit max_waves → auto LAST re-anchor
     ├─ cycle=1 → re-anchor next wave (unless stuck-wall)
-    ├─ cycle=0 without **Cycle complete.** → re-anchor finish last wave
+    ├─ cycle=0 without **Cycle complete.** → re-anchor wrap (named plan if user LAST)
+    ├─ cycle=0 + **Cycle complete.** + open named wrap → bounce once
     ├─ cycle=0 + **Cycle complete.** without evidence → bounce once, demand proof
     └─ cycle=0 + **Cycle complete.** + evidence → release
                                               └─ local git commit of the wave (never push)

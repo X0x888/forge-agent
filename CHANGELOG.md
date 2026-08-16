@@ -3,6 +3,11 @@
 ## Unreleased
 
 ### Changed
+- **`/cycle 0` wraps, it does not abort**: user LAST freezes the already-named plan and bounces **Cycle complete.** once while those items are still open. Cap / polish / safety-valve LAST wraps the open wave only — leftover named ships past the budget are not wave N+1. `/ulw-off` remains the immediate disarm. `/cycle 1` after LAST clears the frozen wrap so CONTINUE can adopt again. Named leftovers can be cancelled with reason (`Cancelled: …`) instead of shipped. System / admit / `/help` copy says wrap, not “finish this wave then stop.”
+- **Named-ship parser**: `ONE ship:` wins; `(later waves…)` is a gloss, not an item. Unlimited empty-list asks get a stronger “exhausted / different surface” line after 3 admits or a glanceable-`✓` streak. Capped runs still skip that admit.
+- **Sticky second shelf follows the API**: reclips only when the last provider `prompt_tokens` is back over 180k (stub inflation at 80k API no longer reshapes the prefix). First clip also fires if the last API prompt is already over the cliff.
+
+### Changed
 - **Idle epochs never increment `w`**: unlimited ULW used to stamp a fake wave every 20 tool rounds (an 80-turn ship became `w=4`). Idle now updates the open wave in place for capped **and** uncapped runs. `w` moves on Stop or a declared `Wave shipped` / `Ship landed`.
 - **Sticky request-prune after 180k**: the first clip freezes omitted/collapsed/soft-trimmed/harness-stub ids on `session.meta.requestPruneSticky`. Later rounds apply that set instead of re-aging, so the xAI prefix can cache again (dogfood `aee45264` dropped from 99% to ~70% because every post-cliff turn reshaped the prefix). A second shelf reclips only if the last clip got under the cliff and the suffix grew back over — a first clip that is still ≥180k stays frozen (reclips every turn would kill the prefix again). Compact/`/clear` drop the set. `FORGE_REQUEST_PRUNE=1` stays sliding. HUD `ctx` counts `reasoning_content`; the prune threshold does not.
 - **Wave ledger prefers the ship**: `summarizeWave` uses `Ship landed:` / `Wave N shipped:` (or a newer `memory_write` ship) before the Wave-1 `Reading:` clip.

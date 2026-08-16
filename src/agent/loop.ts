@@ -505,6 +505,7 @@ export function filterToolsForPermissionMode(
 export interface BuildChatRequestOpts {
   conversationId?: string;
   estimatedTokens?: number;
+  lastApiPromptTokens?: number;
   /** Frozen omit set from a prior clip (session.meta.requestPruneSticky). */
   sticky?: RequestPruneSticky | null;
   onPrune?: (info: {
@@ -534,6 +535,7 @@ export function buildChatRequest(
     estimatedTokens: estimated,
     toolsJsonChars,
     sticky: opts?.sticky,
+    lastApiPromptTokens: opts?.lastApiPromptTokens,
     spool: true,
   });
   opts?.onPrune?.({
@@ -894,6 +896,7 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
     return buildChatRequest(config, session.messages, effortOverride, tools, {
       conversationId: session.meta.id,
       estimatedTokens: estimated,
+      lastApiPromptTokens: session.meta.lastRoundPromptTokens,
       sticky: session.meta.requestPruneSticky,
       onPrune: (info) => {
         lastPruneKind = info.kind;
@@ -920,6 +923,7 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
       estimatedTokens: raw,
       toolsJsonChars: extras.toolsJsonChars,
       sticky: session.meta.requestPruneSticky,
+      lastApiPromptTokens: session.meta.lastRoundPromptTokens,
       spool: false,
     });
     return estimateRequestTokens(prep.messages, {

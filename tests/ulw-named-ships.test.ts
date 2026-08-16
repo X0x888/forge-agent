@@ -43,6 +43,17 @@ describe("named-ship backlog", () => {
     assert.ok(ships.some((s) => /session picker/i.test(s)));
   });
 
+  it("does not treat (later waves…) as a named ship", () => {
+    const ships = parseNamedShipsFromReading(
+      "Reading: daily UX is the transcript. Passed on (later waves, other surfaces): delayed start parity; user-turn landmarks; setup-card checkmarks. ONE ship: dock shows running tool name and elapsed.",
+    );
+    assert.ok(!ships.some((s) => /\(later waves/i.test(s)), String(ships));
+    assert.match(ships[0]!, /dock shows running tool/i);
+    assert.ok(ships.some((s) => /delayed start/i.test(s)));
+    assert.ok(ships.some((s) => /user-turn landmarks/i.test(s)));
+    assert.ok(ships.some((s) => /setup-card/i.test(s)));
+  });
+
   it("adopts the reading on a declared ship after memory_write", () => {
     withHome(() => {
       const sid = "sess-named-adopt";

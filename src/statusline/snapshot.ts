@@ -155,6 +155,7 @@ const TOOLS_JSON_CHARS = JSON.stringify(TOOL_DEFINITIONS).length;
 export function outboundTokenEstimate(
   messages: SessionData["messages"],
   sticky?: SessionData["meta"]["requestPruneSticky"],
+  lastApiPromptTokens?: number,
 ): number {
   try {
     const extras = { toolsJsonChars: TOOLS_JSON_CHARS };
@@ -163,6 +164,7 @@ export function outboundTokenEstimate(
       estimatedTokens: raw,
       toolsJsonChars: TOOLS_JSON_CHARS,
       sticky,
+      lastApiPromptTokens,
       spool: false,
     });
     return estimateRequestTokens(prep.messages, {
@@ -179,6 +181,7 @@ export function outboundTokenEstimateForSession(session: SessionData): number {
   return outboundTokenEstimate(
     session.messages,
     session.meta.requestPruneSticky,
+    session.meta.lastRoundPromptTokens,
   );
 }
 

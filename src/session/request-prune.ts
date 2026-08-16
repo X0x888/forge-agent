@@ -25,7 +25,7 @@ import {
   extractSavedOutputPath,
   isIdempotentRestoreTool,
 } from "./tool-clearing.js";
-import { shouldPruneOutbound } from "./prompt-cache.js";
+import { requestPruneAtTokens, shouldPruneOutbound } from "./prompt-cache.js";
 
 export const REQUEST_PRUNE_DEFAULT_KEEP_TURNS = 3;
 export const REQUEST_PRUNE_DEFAULT_HARD_AGE = 10;
@@ -745,13 +745,26 @@ export function prepareOutboundMessages(
     estimatedTokens?: number;
     toolsJsonChars?: number;
     sticky?: RequestPruneSticky | null;
+    /** Last provider prompt_tokens — clip/reclip follow the API, not stub inflation. */
+    lastApiPromptTokens?: number;
   } = {},
 ): PrepareOutboundResult {
   const estimated =
     opts.estimatedTokens ??
     estimateWireTokens(messages, opts.toolsJsonChars ?? 0);
+  const at = requestPruneAtTokens();
+  const lastApi =
+    typeof opts.lastApiPromptTokens === "number" &&
+    Number.isFinite(opts.lastApiPromptTokens) &&
+    opts.lastApiPromptTokens > 0
+      ? opts.lastApiPromptTokens
+      : undefined;
   const decision = shouldPruneOutbound(estimated);
-  if (!decision.prune) {
+  const pruneDecision =
+    decision.reason === "under_threshold" && lastApi != null && lastApi >= at
+      ? ({ prune: true, reason: "threshold" } as const)
+      : decision;
+  if (!pruneDecision.prune) {
     return {
       messages,
       prunedResults: 0,
@@ -763,7 +776,7 @@ export function prepareOutboundMessages(
     };
   }
 
-  if (decision.reason === "always") {
+  if (pruneDecision.reason === "always") {
     const rec = pruneMessagesForRequest(messages, {
       ...opts,
       enabled: true,
@@ -788,7 +801,10 @@ export function prepareOutboundMessages(
       typeof lastWire === "number" &&
       Number.isFinite(lastWire) &&
       !shouldPruneOutbound(lastWire).prune;
-    if (shouldPruneOutbound(wireEst).prune && lastUnderCliff) {
+    const apiOverCliff = lastApi != null && lastApi >= at;
+    const estOverCliff = shouldPruneOutbound(wireEst).prune;
+    // Prefer last API prompt so stub inflation cannot reclip at 80k API.
+    if (lastUnderCliff && (lastApi != null ? apiOverCliff : estOverCliff)) {
       const rec = pruneMessagesForRequest(messages, {
         ...opts,
         enabled: true,

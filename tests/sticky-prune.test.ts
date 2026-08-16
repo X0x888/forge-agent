@@ -269,6 +269,78 @@ describe("sticky request-prune", () => {
     }
   });
 
+  it("first-clips when last API prompt is over the cliff even if estimate is under", () => {
+    const prev = process.env.FORGE_REQUEST_PRUNE;
+    delete process.env.FORGE_REQUEST_PRUNE;
+    try {
+      const msgs = steps(14, { bodyChars: 6000 });
+      const under = prepareOutboundMessages(msgs, {
+        estimatedTokens: 20_000,
+        spool: false,
+      });
+      assert.equal(under.kind, "off");
+      const forced = prepareOutboundMessages(msgs, {
+        estimatedTokens: 20_000,
+        lastApiPromptTokens: 201_000,
+        spool: false,
+      });
+      assert.equal(forced.kind, "first_clip");
+    } finally {
+      if (prev === undefined) delete process.env.FORGE_REQUEST_PRUNE;
+      else process.env.FORGE_REQUEST_PRUNE = prev;
+    }
+  });
+
+  it("FORGE_REQUEST_PRUNE=1 stays sliding even when last API is over the cliff", () => {
+    const prev = process.env.FORGE_REQUEST_PRUNE;
+    process.env.FORGE_REQUEST_PRUNE = "1";
+    try {
+      const msgs = steps(14, { bodyChars: 9000 });
+      const r = prepareOutboundMessages(msgs, {
+        estimatedTokens: 20_000,
+        lastApiPromptTokens: 201_000,
+        spool: false,
+      });
+      assert.equal(r.kind, "always");
+    } finally {
+      if (prev === undefined) delete process.env.FORGE_REQUEST_PRUNE;
+      else process.env.FORGE_REQUEST_PRUNE = prev;
+    }
+  });
+
+  it("does not reclip when last API prompt is still under the cliff", () => {
+    const prev = process.env.FORGE_REQUEST_PRUNE;
+    const prevAt = process.env.FORGE_REQUEST_PRUNE_AT;
+    delete process.env.FORGE_REQUEST_PRUNE;
+    delete process.env.FORGE_REQUEST_PRUNE_AT;
+    try {
+      const base = steps(20, { bodyChars: 12_000 });
+      const first = prepareOutboundMessages(base, {
+        estimatedTokens: 200_000,
+        spool: false,
+      });
+      assert.ok(first.sticky);
+      first.sticky!.wireTokens = 1000;
+      const grown = [
+        ...base,
+        assistantCall("g", "read_file", JSON.stringify({ path: "g.ts" })),
+        toolMsg("g", "G".repeat(8000)),
+      ];
+      const second = prepareOutboundMessages(grown, {
+        estimatedTokens: 200_000,
+        sticky: first.sticky,
+        lastApiPromptTokens: 83_000,
+        spool: false,
+      });
+      assert.equal(second.kind, "sticky");
+    } finally {
+      if (prev === undefined) delete process.env.FORGE_REQUEST_PRUNE;
+      else process.env.FORGE_REQUEST_PRUNE = prev;
+      if (prevAt === undefined) delete process.env.FORGE_REQUEST_PRUNE_AT;
+      else process.env.FORGE_REQUEST_PRUNE_AT = prevAt;
+    }
+  });
+
   it("HUD with a frozen set matches the sticky wire, not a sliding re-age", () => {
     const prev = process.env.FORGE_REQUEST_PRUNE;
     delete process.env.FORGE_REQUEST_PRUNE;

@@ -98,21 +98,32 @@ export function buildAutoCommitSubject(mandate: string, hint?: string): string {
   return t || "ULW cycle complete";
 }
 
+const SHIP_HINT_RE =
+  /^(Ship landed:|Ship:)|Wave\s+\d+\s+ship\b|Wave shipped/i;
+
 function shipHint(sessionId: string): string | undefined {
   try {
+    const ulw = loadUlwCycle(sessionId);
+    const since = ulw?.waves?.length
+      ? ulw.waves[ulw.waves.length - 1]!.ts
+      : "";
     const recs = activeMemoryRecords(sessionId);
-    const hit = [...recs]
-      .reverse()
-      .find(
-        (r) =>
-          r.source === "agent" &&
-          (r.kind === "decision" || r.kind === "observation") &&
-          /^(Ship landed|Ship:)|Wave \d+.*shipped/i.test(r.text),
-      );
-    return hit?.text;
+    for (let i = recs.length - 1; i >= 0; i--) {
+      const r = recs[i]!;
+      if (r.source !== "agent") continue;
+      if (!SHIP_HINT_RE.test(r.text)) continue;
+      // Prefer a ship written for this close; if none after last wave ts,
+      // take the newest ship so Tab/resume leftovers cannot win forever.
+      if (!since || r.at > since) return r.text;
+    }
+    for (let i = recs.length - 1; i >= 0; i--) {
+      const r = recs[i]!;
+      if (r.source === "agent" && SHIP_HINT_RE.test(r.text)) return r.text;
+    }
   } catch {
-    return undefined;
+    /* */
   }
+  return undefined;
 }
 
 export function buildAutoCommitBody(
