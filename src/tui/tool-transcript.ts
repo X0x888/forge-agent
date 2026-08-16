@@ -4,7 +4,9 @@ import {
   formatBytes,
   formatDiffBlock,
   formatFailedToolTail,
+  formatSuccessfulBashTail,
   formatToolDisplayName,
+  isBashToolName,
   formatToolEnd,
   formatToolOutputHead,
   formatToolStart,
@@ -93,6 +95,9 @@ export function formatDefaultToolEndTranscript(
   } else if (!r.isError && isSubagentTool(name) && r.output) {
     const preview = formatSubagentTranscriptPreview(r.output);
     if (preview) lines.push(preview);
+  } else if (!r.isError && isBashToolName(name) && r.output) {
+    const tail = formatSuccessfulBashTail(r.output);
+    if (tail) lines.push(tail);
   }
   return lines.join("\n");
 }
@@ -175,7 +180,8 @@ export function createToolEndCoalescer(print: (line: string) => void) {
         opts?.verbose ||
         r.isError ||
         isUsefulDiff(r.diff) ||
-        (isSubagentTool(name) && Boolean(r.output?.trim()))
+        (isSubagentTool(name) && Boolean(r.output?.trim())) ||
+        (isBashToolName(name) && Boolean(formatSuccessfulBashTail(r.output ?? "")))
       ) {
         flush();
         print(

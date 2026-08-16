@@ -343,6 +343,10 @@ export function formatToolStart(name: string, args: Record<string, unknown>): st
 /** Default last-lines shown under a failed tool (test/compiler failures live at the end). */
 export const FAILED_TOOL_TAIL_LINES = 5;
 
+/** Last-lines under a successful long bash (`npm test` summary). Short `echo` stays one row. */
+export const SUCCESS_BASH_TAIL_LINES = 5;
+export const SUCCESS_BASH_TAIL_MIN_LINES = 4;
+
 const ERROR_LINE_RE =
   /\b(error|fail(?:ed|ure)?|denied|fatal|exception|assert(?:ion)?|unable|cannot|can't|refused|timeout|ENOENT|EACCES|EPERM|not ok|TS\d{3,5})\b/i;
 const STACK_OR_NOISE_RE = /^(?:at |# |ℹ |ok \d|✔ |✗ |▶ | {2,}at )/;
@@ -471,6 +475,26 @@ export function formatFailedToolTail(
   return formatToolOutputHead(extra.join("\n"), {
     tail: true,
     maxLines,
+  });
+}
+
+export function isBashToolName(name: string): boolean {
+  return /^(bash|run_terminal_command)$/i.test(name);
+}
+
+/**
+ * Last lines of a successful long bash so `npm test` / compiler summaries
+ * stay visible. Empty for short output (`echo hi`) so the default row
+ * stays one line.
+ */
+export function formatSuccessfulBashTail(output: string): string {
+  const text = output.replace(/\s+$/, "");
+  if (!text) return "";
+  const nonempty = text.split("\n").filter((l) => l.trim());
+  if (nonempty.length < SUCCESS_BASH_TAIL_MIN_LINES) return "";
+  return formatToolOutputHead(text, {
+    tail: true,
+    maxLines: SUCCESS_BASH_TAIL_LINES,
   });
 }
 

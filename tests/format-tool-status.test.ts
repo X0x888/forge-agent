@@ -468,6 +468,43 @@ describe("default tool status line", () => {
     assert.equal(bare.includes("\n"), false);
   });
 
+  it("successful long bash shows a last-lines tail; echo stays one row", () => {
+    const testOut = [
+      "> forge-agent@0.9.99 test",
+      "> tsx --test tests/*.test.ts",
+      "",
+      "✔ formatToolEnd clips",
+      "✔ spawn_subagent preview",
+      "ℹ tests 36",
+      "ℹ pass 36",
+      "ℹ fail 0",
+    ].join("\n");
+    const text = strip(
+      formatDefaultToolEndTranscript("bash", {
+        isError: false,
+        ms: 1200,
+        bytes: 400,
+        args: { command: "npm test" },
+        output: testOut,
+      }),
+    );
+    assert.match(text, /✓ bash npm test/);
+    assert.match(text, /pass 36/);
+    assert.match(text, /fail 0/);
+    assert.match(text, /more lines · \/verbose/);
+    const echo = strip(
+      formatDefaultToolEndTranscript("bash", {
+        isError: false,
+        ms: 4,
+        bytes: 3,
+        args: { command: "echo hi" },
+        output: "hi",
+      }),
+    );
+    assert.match(echo, /✓ bash echo hi/);
+    assert.equal(echo.includes("\n"), false);
+  });
+
   it("verbose transcript prints the full output block", () => {
     const text = strip(
       formatVerboseToolEndTranscript("bash", {
@@ -619,6 +656,17 @@ describe("coalesced same-tool successes", () => {
     assert.match(lines[1]!, /✓ spawn_subagent explore: b/);
     assert.match(lines.join("\n"), /pick: one/);
     assert.match(lines.join("\n"), /pick: two/);
+    assert.doesNotMatch(lines.join("\n"), /×/);
+  });
+
+  it("does not coalesce long successful bash that carries a tail", () => {
+    const lines: string[] = [];
+    const c = createToolEndCoalescer((line) => lines.push(strip(line)));
+    const out = "a\nb\nc\nd\ne\npass 12";
+    c.push("bash", { ms: 80, bytes: 20, args: { command: "npm test" }, output: out });
+    c.push("bash", { ms: 90, bytes: 22, args: { command: "npm test" }, output: out });
+    assert.equal(lines.length, 2);
+    assert.match(lines.join("\n"), /pass 12/);
     assert.doesNotMatch(lines.join("\n"), /×/);
   });
 
