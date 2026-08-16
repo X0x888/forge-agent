@@ -39,6 +39,7 @@ import {
   composeTurnCloser,
   formatRunStopReason,
   formatTurnChangeSummaryForSession,
+  formatUserTurnOpen,
 } from "./turn-summary.js";
 import {
   createMarkdownRenderer,
@@ -363,7 +364,10 @@ export async function runRepl(opts: {
     },
   });
 
-  const handleLine = async (line: string) => {
+  const handleLine = async (
+    line: string,
+    src?: { echo?: boolean },
+  ) => {
     let text = line.trim();
     if (!text) {
       if (busy) livePrompt();
@@ -439,13 +443,12 @@ export async function runRepl(opts: {
       if (!text.startsWith("/")) {
         pushInterjection(session.meta.id, text);
         const depth = peekInterjections(session.meta.id).length;
-        console.log(
-          formatLiveControlFeedback(
-            "(message)",
-            `Queued for next model step (q:${depth}). /cycle 0 last · /status · Ctrl+C abort`,
-            "info",
-          ),
-        );
+        const open = formatUserTurnOpen(text, { queued: depth });
+        console.log(open ? chalk.cyan(open) : formatLiveControlFeedback(
+          "(message)",
+          `queued q:${depth}`,
+          "info",
+        ));
         livePrompt();
         return;
       }
@@ -484,11 +487,12 @@ export async function runRepl(opts: {
             console.log(
               formatLiveControlFeedback(text, slash.output, "ok"),
             );
-          } else {
-            console.log(
-              formatLiveControlFeedback(text, "Queued for this turn.", "ok"),
-            );
           }
+          const depth = peekInterjections(session.meta.id).length;
+          const open = formatUserTurnOpen(slash.queueInterjection, {
+            queued: depth,
+          });
+          if (open) console.log(chalk.cyan(open));
           livePrompt();
           return;
         }
@@ -660,6 +664,10 @@ export async function runRepl(opts: {
 
     const userMessage = slash.forwardPrompt || text;
     if (slash.output) console.log(slash.output);
+    if (src?.echo || slash.forwardPrompt) {
+      const open = formatUserTurnOpen(userMessage);
+      if (open) console.log(chalk.cyan(open));
+    }
 
     busy = true;
     rl.setBusy(true);
@@ -1088,7 +1096,7 @@ export async function runRepl(opts: {
   });
 
   if (opts.initialPrompt) {
-    await handleLine(opts.initialPrompt).catch((err: unknown) => {
+    await handleLine(opts.initialPrompt, { echo: true }).catch((err: unknown) => {
       log.error((err as Error).message || String(err));
       prompt({ forceStatus: true });
     });

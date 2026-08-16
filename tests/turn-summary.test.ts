@@ -8,6 +8,7 @@ import {
   formatTurnChangeSummaryForSession,
   composeTurnCloser,
   formatRunStopReason,
+  formatUserTurnOpen,
 } from "../src/tui/turn-summary.js";
 import { visibleWidth } from "../src/util/format.js";
 import {
@@ -276,4 +277,23 @@ test("run stop reason: forge run prints the shared closer after empty_run stamp"
   const print = src.indexOf("formatRunStopReason({");
   assert.ok(emptyStamp > 0, "empty_run stamp missing");
   assert.ok(print > emptyStamp, "stop closer must print after empty_run stamp");
+});
+
+test("user turn open: silent on empty, clips, queues", () => {
+  assert.equal(formatUserTurnOpen(""), null);
+  assert.equal(formatUserTurnOpen("   \n\t  "), null);
+  const line = formatUserTurnOpen("fix the login bug", { width: 80 });
+  assert.equal(line, "you › fix the login bug");
+  const queued = formatUserTurnOpen("also run tests", {
+    width: 80,
+    queued: 2,
+  });
+  assert.equal(queued, "you › also run tests  ·  queued q:2");
+  const collapsed = formatUserTurnOpen("line one\n\nline two", { width: 80 });
+  assert.equal(collapsed, "you › line one line two");
+  const clipped = formatUserTurnOpen("abcdefghij", { width: 12 });
+  assert.ok(clipped);
+  assert.ok(clipped.startsWith("you › "));
+  assert.ok(clipped.endsWith("…"));
+  assert.ok(visibleWidth(clipped) <= 12);
 });

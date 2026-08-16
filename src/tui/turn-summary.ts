@@ -161,3 +161,30 @@ export function formatRunStopReason(input: RunStopReasonInput): string | null {
   }
   return null;
 }
+
+/**
+ * Scannable turn opener. Idle Enter already leaves `forge › text` in
+ * scrollback; this is for the cases that do not: mid-run queue (live ›
+ * is abandoned when tokens stream), slash-forwarded prompts, initialPrompt,
+ * and headless `forge run`.
+ */
+export function formatUserTurnOpen(
+  text: string,
+  opts?: { width?: number; queued?: number },
+): string | null {
+  const one = String(text ?? "").replace(/\s+/g, " ").trim();
+  if (!one) return null;
+  const cols = Math.max(
+    8,
+    opts?.width ??
+      (process.stdout.isTTY ? process.stdout.columns || 80 : 80),
+  );
+  const prefix = "you › ";
+  const suffix =
+    typeof opts?.queued === "number" && opts.queued > 0
+      ? `  ·  queued q:${opts.queued}`
+      : "";
+  const budget = Math.max(4, cols - visibleWidth(prefix) - visibleWidth(suffix));
+  const body = one.length > budget ? `${one.slice(0, budget - 1)}…` : one;
+  return `${prefix}${body}${suffix}`;
+}

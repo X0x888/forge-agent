@@ -119,6 +119,7 @@ import { runRepl } from "./tui/repl.js";
 import {
   formatRunStopReason,
   formatTurnChangeSummaryForSession,
+  formatUserTurnOpen,
 } from "./tui/turn-summary.js";
 import { forgeHome, ensureDir, inspectSecureFile } from "./util/fs.js";
 import { log, setLogLevel } from "./util/log.js";
@@ -6126,6 +6127,10 @@ async function runHeadless(opts: {
 
   const t0 = Date.now();
   const turnAtStart = opts.session.meta.turnCount;
+  if (!opts.json) {
+    const open = formatUserTurnOpen(headlessPrompt);
+    if (open) console.log(open);
+  }
   let result;
   try {
     result = await runAgentLoopThroughDrops({
