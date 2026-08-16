@@ -26,6 +26,44 @@ export type ToolTranscriptEnd = {
 /** Glanceable edit preview under the default ✓ row. /verbose still dumps the full block. */
 export const DEFAULT_EDIT_DIFF_LINES = 8;
 
+/** Child-report lines under ✓ spawn_subagent. */
+export const DEFAULT_SUBAGENT_PREVIEW_LINES = 8;
+
+function isSubagentTool(name: string): boolean {
+  return name === "spawn_subagent" || name === "Task";
+}
+
+/**
+ * Drop the `### Subagent result` metadata header so the TTY preview
+ * starts at the child's actual report (pick / summary / files).
+ */
+export function stripSubagentHeader(output: string): string {
+  const lines = output.replace(/\r\n/g, "\n").split("\n");
+  let i = 0;
+  if (lines[i]?.startsWith("### ")) i += 1;
+  while (i < lines.length && /^-\s/.test(lines[i]!)) i += 1;
+  if (lines[i] === "") i += 1;
+  return lines.slice(i).join("\n");
+}
+
+/** First N body lines of a subagent report, dim-indented. */
+export function formatSubagentTranscriptPreview(
+  output: string,
+  opts?: { maxLines?: number },
+): string {
+  const maxLines = opts?.maxLines ?? DEFAULT_SUBAGENT_PREVIEW_LINES;
+  const body = stripSubagentHeader(output);
+  const lines = body.split("\n").map((l) => l.replace(/\s+$/u, ""));
+  while (lines[0] === "") lines.shift();
+  while (lines.length && lines[lines.length - 1] === "") lines.pop();
+  if (!lines.length) return "";
+  const shown = lines.slice(0, maxLines);
+  const extra = lines.length - shown.length;
+  const painted = shown.map((l) => chalk.dim(`  ${l}`));
+  if (extra > 0) painted.push(chalk.dim(`  \u2026 +${extra} more \u00b7 /verbose`));
+  return painted.join("\n");
+}
+
 function isUsefulDiff(diff: string | undefined): diff is string {
   const t = (diff ?? "").trim();
   return Boolean(t) && t !== "(no line-level diff)";
@@ -52,6 +90,9 @@ export function formatDefaultToolEndTranscript(
       omitHeaders: true,
     });
     if (block) lines.push(block);
+  } else if (!r.isError && isSubagentTool(name) && r.output) {
+    const preview = formatSubagentTranscriptPreview(r.output);
+    if (preview) lines.push(preview);
   }
   return lines.join("\n");
 }
@@ -128,8 +169,14 @@ export function createToolEndCoalescer(print: (line: string) => void) {
 
   return {
     push(name: string, r: ToolTranscriptEnd, opts?: { verbose?: boolean }): void {
-      // Diffs must not join a `✓ edit ×N` burst — the compact preview is the point.
-      if (opts?.verbose || r.isError || isUsefulDiff(r.diff)) {
+      // Diffs / subagent reports must not join a `✓ edit ×N` burst —
+      // the compact preview is the point.
+      if (
+        opts?.verbose ||
+        r.isError ||
+        isUsefulDiff(r.diff) ||
+        (isSubagentTool(name) && Boolean(r.output?.trim()))
+      ) {
         flush();
         print(
           opts?.verbose

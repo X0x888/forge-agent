@@ -11,7 +11,9 @@ import {
   createToolStartDelayer,
   formatCoalescedToolEnd,
   formatDefaultToolEndTranscript,
+  formatSubagentTranscriptPreview,
   formatVerboseToolEndTranscript,
+  stripSubagentHeader,
 } from "../src/tui/tool-transcript.js";
 
 function strip(s: string): string {
@@ -421,6 +423,51 @@ describe("default tool status line", () => {
     assert.equal(none.includes("\n"), false);
   });
 
+  it("spawn_subagent default transcript previews the child report, not the header", () => {
+    const report = [
+      "### Subagent result: map daily REPL dumps",
+      "- status: completed",
+      "- type: explore · mode: read-only · turns: 4/40 · edits: 0",
+      "- session_id: abc123",
+      "- artifact_path: /tmp/artifact.md",
+      "",
+      "pick: Ctrl+R is the ship",
+      "passed_on: HUD clips",
+      "files:",
+      "  src/tui/prompt-editor.ts:1  search mode",
+    ].join("\n");
+    assert.equal(
+      stripSubagentHeader(report).startsWith("pick:"),
+      true,
+    );
+    const preview = strip(formatSubagentTranscriptPreview(report, { maxLines: 2 }));
+    assert.match(preview, /pick: Ctrl\+R is the ship/);
+    assert.match(preview, /passed_on: HUD clips/);
+    assert.match(preview, /\+2 more · \/verbose/);
+    assert.doesNotMatch(preview, /### Subagent|session_id|artifact_path/);
+    const text = strip(
+      formatDefaultToolEndTranscript("spawn_subagent", {
+        isError: false,
+        ms: 2400,
+        bytes: 800,
+        args: { subagent_type: "explore", description: "map daily REPL dumps" },
+        output: report,
+      }),
+    );
+    assert.match(text, /✓ spawn_subagent explore: map daily REPL dumps/);
+    assert.match(text, /pick: Ctrl\+R is the ship/);
+    assert.doesNotMatch(text, /### Subagent result/);
+    const bare = strip(
+      formatDefaultToolEndTranscript("spawn_subagent", {
+        isError: false,
+        ms: 10,
+        bytes: 4,
+        args: { subagent_type: "explore", description: "empty" },
+      }),
+    );
+    assert.equal(bare.includes("\n"), false);
+  });
+
   it("verbose transcript prints the full output block", () => {
     const text = strip(
       formatVerboseToolEndTranscript("bash", {
@@ -549,6 +596,30 @@ describe("coalesced same-tool successes", () => {
     assert.match(lines[1]!, /✓ edit src\/b\.ts/);
     assert.match(lines.join("\n"), /-old/);
     assert.doesNotMatch(lines.join("\n"), /×|--- a\//);
+  });
+
+  it("does not coalesce spawn_subagent rows that carry a report", () => {
+    const lines: string[] = [];
+    const c = createToolEndCoalescer((line) => lines.push(strip(line)));
+    const report = "### Subagent result: a\n- status: completed\n\npick: one";
+    c.push("spawn_subagent", {
+      ms: 100,
+      bytes: 40,
+      args: { subagent_type: "explore", description: "a" },
+      output: report,
+    });
+    c.push("spawn_subagent", {
+      ms: 120,
+      bytes: 50,
+      args: { subagent_type: "explore", description: "b" },
+      output: "### Subagent result: b\n- status: completed\n\npick: two",
+    });
+    assert.equal(lines.length, 2);
+    assert.match(lines[0]!, /✓ spawn_subagent explore: a/);
+    assert.match(lines[1]!, /✓ spawn_subagent explore: b/);
+    assert.match(lines.join("\n"), /pick: one/);
+    assert.match(lines.join("\n"), /pick: two/);
+    assert.doesNotMatch(lines.join("\n"), /×/);
   });
 
   it("does not coalesce /verbose rows", () => {

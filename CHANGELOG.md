@@ -14,6 +14,7 @@
 - **Fenced-code syntax color**: assistant markdown paints keywords / strings / numbers / comments in `ts`/`js`/`py`/`sh`/`json`/`diff` fences (line-local; block comments carry between lines). Chunk-boundary invariance still holds.
 - **`forge ›` reply opener**: each streamed assistant burst (REPL + `forge run`) starts with a dim `forge ›` so the live transcript matches `you ›` and `/last`.
 - **`/resume 3`**: `/resume`, `/sessions`, and `forge sessions list` number rows. `/resume N` loads the Nth same-cwd session (1–99). Id/title still work. Empty Tab lists `/resume`; Tab after `/resume` offers `1`/`2`/`3`.
+- **Default subagent preview**: a successful `spawn_subagent` prints the first 8 lines of the child's report under the ✓ row (header/metadata stripped). `/verbose` still dumps the full artifact. Parallel greps still coalesce; children with a report do not.
 - **Unlimited named-ship backlog**: the Wave-1 reading's ONE ship + passed-on list is stored on `ulw.json`. When every item is done and `maxWaves` is unset, Stop asks **once** for a new `Reading:` or `/cycle 0`. Capped runs still spend remaining waves. `/cycle status` lists the ships.
 - **`provider_round` `pruneKind` + `cacheDrop`**: metrics distinguish `first_clip` / `sticky` / `reclip` / `always`, and flag a round that fell below 5% cache after a prior round above 90%. `/cost` last-round line and `forge run --json` expose `lastPruneKind`.
 
