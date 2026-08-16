@@ -642,6 +642,38 @@ describe("default tool status line", () => {
     assert.equal(tiny.includes("\n"), false);
   });
 
+  it("call_mcp default transcript previews the first result lines", () => {
+    const body = [
+      "title: Forge CLI",
+      "url: https://example.com",
+      "snippet: A coding agent.",
+      "title: Docs",
+      "url: https://example.com/docs",
+    ].join("\n");
+    const text = strip(
+      formatDefaultToolEndTranscript("call_mcp", {
+        isError: false,
+        ms: 300,
+        bytes: 80,
+        args: { tool_name: "context7__query" },
+        output: body,
+      }),
+    );
+    assert.match(text, /✓ call_mcp/);
+    assert.match(text, /title: Forge CLI/);
+    assert.match(text, /\+1 more · \/verbose/);
+    const short = strip(
+      formatDefaultToolEndTranscript("call_mcp", {
+        isError: false,
+        ms: 20,
+        bytes: 4,
+        args: { tool_name: "x__ok" },
+        output: "ok",
+      }),
+    );
+    assert.equal(short.includes("\n"), false);
+  });
+
   it("verbose transcript prints the full output block", () => {
     const text = strip(
       formatVerboseToolEndTranscript("bash", {

@@ -50,6 +50,31 @@ function isWebFetchTool(name: string): boolean {
   return /^(web_fetch|WebFetch)$/i.test(name);
 }
 
+function isCallMcpTool(name: string): boolean {
+  return /^(call_mcp|CallMcp)$/i.test(name);
+}
+
+/** First nonempty lines of an MCP result under ✓ call_mcp. */
+export function formatCallMcpTranscriptPreview(
+  output: string,
+  opts?: { maxLines?: number },
+): string {
+  const maxLines = opts?.maxLines ?? 4;
+  const lines = output
+    .replace(/\r\n/g, "\n")
+    .split("\n")
+    .map((l) => l.replace(/\s+$/u, ""))
+    .filter((l) => l.trim());
+  if (lines.length < 2) return "";
+  const shown = lines.slice(0, maxLines).map((l) =>
+    l.length > 72 ? `${l.slice(0, 71)}…` : l,
+  );
+  const extra = lines.length - shown.length;
+  const painted = shown.map((l) => chalk.dim(`  ${l}`));
+  if (extra > 0) painted.push(chalk.dim(`  … +${extra} more · /verbose`));
+  return painted.join("\n");
+}
+
 /** First heading + next prose lines under ✓ web_fetch. Tiny pages stay one row. */
 export function formatWebFetchTranscriptPreview(
   output: string,
@@ -224,6 +249,9 @@ export function formatDefaultToolEndTranscript(
   } else if (!r.isError && isWebFetchTool(name) && r.output) {
     const preview = formatWebFetchTranscriptPreview(r.output);
     if (preview) lines.push(preview);
+  } else if (!r.isError && isCallMcpTool(name) && r.output) {
+    const preview = formatCallMcpTranscriptPreview(r.output);
+    if (preview) lines.push(preview);
   }
   return lines.join("\n");
 }
@@ -311,7 +339,8 @@ export function createToolEndCoalescer(print: (line: string) => void) {
         (isWebSearchTool(name) && Boolean(formatWebSearchTranscriptPreview(r.output ?? ""))) ||
         (isLspTool(name) && Boolean(formatLspTranscriptPreview(r.output ?? ""))) ||
         (isGetTaskOutputTool(name) && Boolean(formatGetTaskOutputPreview(r.output ?? ""))) ||
-        (isWebFetchTool(name) && Boolean(formatWebFetchTranscriptPreview(r.output ?? "")))
+        (isWebFetchTool(name) && Boolean(formatWebFetchTranscriptPreview(r.output ?? ""))) ||
+        (isCallMcpTool(name) && Boolean(formatCallMcpTranscriptPreview(r.output ?? "")))
       ) {
         flush();
         print(
