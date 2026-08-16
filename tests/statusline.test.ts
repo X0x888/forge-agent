@@ -638,6 +638,16 @@ describe("statusline", () => {
     assert.match(line, /cache 99%/);
   });
 
+  it("dock ctx follows last API prompt_tokens when the estimate is lower", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-sl-api-ctx-"));
+    process.env.FORGE_HOME = tmp;
+    const s = createSession({ cwd: tmp, provider: "xai", model: "grok-4.6" });
+    s.meta.lastRoundPromptTokens = 201_333;
+    const snap = sessionToSnapshot(s, { windowTokens: 500_000 });
+    assert.ok(snap.context.usedTokens >= 201_333);
+    assert.equal(snap.context.source, "session_api");
+  });
+
   it("narrow dock drops brand before ULW/YOLO/budget", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-sl-dock-narrow-"));
     process.env.FORGE_HOME = tmp;

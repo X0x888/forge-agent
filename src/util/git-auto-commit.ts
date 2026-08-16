@@ -15,6 +15,10 @@ import {
   noteUlwTreeAfterAutoCommit,
   type UlwCycleState,
 } from "../harness/ulw-cycle.js";
+import {
+  extractShipSummary,
+  pickShipHint,
+} from "../harness/ship-close.js";
 
 const SENSITIVE_RE =
   /(^|\/)(\.env(\..+)?|.*\.(pem|p12|pfx|key)|id_rsa|id_ed25519|id_dsa|auth\.json|credentials|secrets?\.json)$/i;
@@ -89,37 +93,26 @@ export function isSensitiveRelPath(rel: string): boolean {
 }
 
 export function buildAutoCommitSubject(mandate: string, hint?: string): string {
-  let t = (hint || mandate || "").replace(/\s+/g, " ").trim();
+  const fromShip = hint ? extractShipSummary(hint) : undefined;
+  let t = (fromShip || hint || mandate || "").replace(/\s+/g, " ").trim();
   t = t.replace(/^["']|["']$/g, "");
   t = t.replace(/^\*{0,2}Reading:\*{0,2}\s*/i, "");
-  t = t.replace(/^Ship landed:\s*/i, "");
   t = t.replace(/^Correction:\s*/i, "");
   if (t.length > 68) t = `${t.slice(0, 67)}…`;
   return t || "ULW cycle complete";
 }
 
-const SHIP_HINT_RE =
-  /^(Ship landed:|Ship:)|Wave\s+\d+\s+ship\b|Wave shipped/i;
-
 function shipHint(sessionId: string): string | undefined {
   try {
     const ulw = loadUlwCycle(sessionId);
-    const since = ulw?.waves?.length
-      ? ulw.waves[ulw.waves.length - 1]!.ts
-      : "";
-    const recs = activeMemoryRecords(sessionId);
-    for (let i = recs.length - 1; i >= 0; i--) {
-      const r = recs[i]!;
-      if (r.source !== "agent") continue;
-      if (!SHIP_HINT_RE.test(r.text)) continue;
-      // Prefer a ship written for this close; if none after last wave ts,
-      // take the newest ship so Tab/resume leftovers cannot win forever.
-      if (!since || r.at > since) return r.text;
-    }
-    for (let i = recs.length - 1; i >= 0; i--) {
-      const r = recs[i]!;
-      if (r.source === "agent" && SHIP_HINT_RE.test(r.text)) return r.text;
-    }
+    const waves = ulw?.waves ?? [];
+    const last = waves.length ? waves[waves.length - 1] : undefined;
+    const prev = waves.length > 1 ? waves[waves.length - 2] : undefined;
+    return pickShipHint({
+      records: activeMemoryRecords(sessionId),
+      prevWaveTs: prev?.ts,
+      lastWaveSummary: last?.summary,
+    });
   } catch {
     /* */
   }

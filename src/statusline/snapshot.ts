@@ -186,13 +186,21 @@ export function outboundTokenEstimateForSession(session: SessionData): number {
 }
 
 function buildContext(session: SessionData, windowTokens: number): ContextInfo {
-  const used = outboundTokenEstimateForSession(session);
+  const estimated = outboundTokenEstimateForSession(session);
+  const lastApi = session.meta.lastRoundPromptTokens;
+  const api =
+    typeof lastApi === "number" && Number.isFinite(lastApi) && lastApi > 0
+      ? Math.floor(lastApi)
+      : 0;
+  // Dock follows the last provider prompt_tokens when the local estimate
+  // sits under the cliff (5dbf1e54: ~173k est vs 201k API).
+  const used = api > 0 ? Math.max(estimated, api) : estimated;
   const win = windowTokens > 0 ? windowTokens : 128_000;
   return {
     usedTokens: used,
     windowTokens: win,
     percent: Math.min(100, Math.round((used / win) * 100)),
-    source: "session_estimate",
+    source: api > 0 ? "session_api" : "session_estimate",
   };
 }
 

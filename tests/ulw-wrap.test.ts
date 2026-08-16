@@ -17,6 +17,7 @@ import {
   reenableUlwCycle,
 } from "../src/harness/ulw-cycle.js";
 import { appendMemoryRecord } from "../src/harness/decision-memory.js";
+import { CLEAN_TREE_DIFF_FP } from "../src/util/git-context.js";
 
 const READING =
   "Reading: Forge's product is the interactive REPL. The ONE ship is the tool-status line. Passed on: markdown wrap, help groups, session picker.";
@@ -266,6 +267,73 @@ describe("ULW LAST wrap", () => {
       assert.equal(done.block, false);
       assert.equal(done.lastCycleReleased, true);
       assert.equal(loadUlwCycle(sid)!.wrapKind, "budget");
+      disarmUlwCycle(sid);
+    });
+  });
+
+  it("user LAST bounces once when the tree is still dirty", () => {
+    withHome(() => {
+      const sid = "wrap-dirty";
+      fs.mkdirSync(path.join(process.env.FORGE_HOME!, "sessions", sid), {
+        recursive: true,
+      });
+      armUlwCycle(sid, "improve the ui", {
+        cycle: 1,
+        skipCheckpoint: true,
+        editCount: 0,
+      });
+      setCycleFlag(sid, 0, { lastReason: "user" });
+      assert.equal(openNamedWrapItems(loadUlwCycle(sid)!).length, 0);
+      const bounce = evaluateUlwAtStop({
+        sessionId: sid,
+        lastAssistantMessage:
+          "**Cycle complete.**\n✅ npm run typecheck — green",
+        editCount: 6,
+        openTodoCount: 0,
+        stuckThreshold: 20,
+        verificationPassed: true,
+        diffFingerprint: "fp-dirty-wrap",
+      });
+      assert.equal(bounce.block, true);
+      assert.equal(bounce.wrapDemanded, true);
+      assert.match(bounce.reanchor || "", /wrap the open wave/i);
+
+      const done = evaluateUlwAtStop({
+        sessionId: sid,
+        lastAssistantMessage:
+          "**Cycle complete.** Working tree clean.\n✅ npm run typecheck — green",
+        editCount: 6,
+        openTodoCount: 0,
+        stuckThreshold: 20,
+        verificationPassed: true,
+        diffFingerprint: CLEAN_TREE_DIFF_FP,
+      });
+      assert.equal(done.block, false);
+      assert.equal(done.lastCycleReleased, true);
+      disarmUlwCycle(sid);
+    });
+  });
+
+  it("budget LAST does not bounce for a dirty tree", () => {
+    withHome(() => {
+      const sid = "wrap-budget-dirty";
+      const s0 = armNamed(sid, 4);
+      s0.wave = 4;
+      saveUlwCycle(s0);
+      setMaxWaves(sid, 4);
+      assert.equal(loadUlwCycle(sid)!.wrapKind, "budget");
+      const done = evaluateUlwAtStop({
+        sessionId: sid,
+        lastAssistantMessage:
+          "**Cycle complete.**\n✅ npm run typecheck — green",
+        editCount: 8,
+        openTodoCount: 0,
+        stuckThreshold: 20,
+        verificationPassed: true,
+        diffFingerprint: "fp-dirty-budget",
+      });
+      assert.equal(done.block, false);
+      assert.equal(done.lastCycleReleased, true);
       disarmUlwCycle(sid);
     });
   });

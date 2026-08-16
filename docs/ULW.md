@@ -83,6 +83,7 @@ attempt Stop
     ├─ cycle=1 → re-anchor next wave (unless stuck-wall)
     ├─ cycle=0 without **Cycle complete.** → re-anchor wrap (named plan if user LAST)
     ├─ cycle=0 + **Cycle complete.** + open named wrap → bounce once
+    ├─ cycle=0 + **Cycle complete.** + user LAST + dirty/unverified wave → bounce once
     ├─ cycle=0 + **Cycle complete.** without evidence → bounce once, demand proof
     └─ cycle=0 + **Cycle complete.** + evidence → release
                                               └─ local git commit of the wave (never push)
@@ -128,7 +129,9 @@ Anti-gaming is **structural, not prompt-based**: the only way to satisfy a proof
 - Idle mid-loop epochs never increment `w` (capped or unlimited). `w` moves on Stop or a declared `Wave shipped` / `Ship landed`.
 - After auto-commit the clean tree is a new fingerprint baseline — not a `revisit` of the arm-time clean state.
 - Unlimited evaluate-class: when every named ship from the reading is done, Stop asks for a new `Reading:` or `/cycle 0` and **stays blocked** until a different-surface reading is adopted. A glanceable ✓ / leftover-chrome sibling list is refused. A cap still spends remaining waves.
-- Leftover-chrome class (clip **or** glanceable ✓ preview) auto-LAST at 4. Consolidation closers do not reset that streak.
+- Leftover-chrome class (clip **or** glanceable ✓ / live › last-line / bang-shell / idle bg tail) auto-LAST at 4. Consolidation closers do not reset that streak. Δ-closer verify is not chrome.
+- Ship close grammar is one matcher: `Ship landed:` · `**Ship:**` · `Wave N ship:` · `Wave ship:` · `Wave shipped.` Auto-commit subjects use that ship, not an older wave-1 note.
+- Dock/`/status` ctx follows last provider `prompt_tokens` when it is higher than the local estimate.
 - Cheapest-proof guidance: affected tests per wave, full suite on consolidation waves
 
 ## State

@@ -30,6 +30,17 @@ import {
 import { createSafetyCheckpoint } from "../util/git-checkpoint.js";
 import { gitDiffFingerprint, isCleanTreeDiffFp } from "../util/git-context.js";
 import { looksLikeAdvisoryUserMessage } from "../util/advisory-intent.js";
+import {
+  extractShipSummary,
+  isDeclaredWaveClose,
+} from "./ship-close.js";
+
+export {
+  extractShipSummary,
+  isDeclaredWaveClose,
+  isShipCloseText,
+  pickShipHint,
+} from "./ship-close.js";
 
 export type CycleFlag = 0 | 1;
 
@@ -414,13 +425,7 @@ function readingFromMemory(sessionId: string): string | undefined {
   return undefined;
 }
 
-function extractShipSummary(t: string): string | undefined {
-  const landed = t.match(/Ship landed:\s*(.{10,180})/i);
-  if (landed?.[1]) return landed[1];
-  const wave = t.match(/Wave\s+\d+\s+(?:LAST\s+)?shipped:\s*(.{10,180})/i);
-  if (wave?.[1]) return wave[1];
-  return undefined;
-}
+
 
 function shipFromMemory(sessionId: string): string | undefined {
   try {
@@ -647,7 +652,7 @@ export function isPolishClassShip(text: string): boolean {
  * 16 of these after the reading's list was done; polish-class missed them.
  */
 export function isGlanceableClassShip(text: string): boolean {
-  return /glanceable|same glanceable-work|under the [✓✔] row|extraDefaultPreview|✓\s*preview|first \d+\s+(?:lines?|hits?|names?|result lines|prose lines)|last \d+\s+(?:log )?lines(?:\s+under)?|(?:web_search|web_fetch|call_mcp|search_mcp|get_task_output|lsp)\s+(?:diagnostics )?preview|lists (?:up to )?\d+ hit titles|child'?s report now prints|spawn_subagent.{0,60}first \d+ lines|live ›[^\n]{0,48}last[- ]line|bang-shell live/i.test(
+  return /glanceable|same glanceable-work|under the [✓✔] row|extraDefaultPreview|✓\s*preview|first \d+\s+(?:lines?|hits?|names?|result lines|prose lines)|last \d+\s+(?:log )?lines(?:\s+under)?|(?:web_search|web_fetch|call_mcp|search_mcp|get_task_output|lsp)\s+(?:diagnostics )?preview|lists (?:up to )?\d+ hit titles|child'?s report now prints|spawn_subagent.{0,60}first \d+ lines|live ›[^\n]{0,80}last[^\n]{0,40}line|bang-shell|!(?:cmd|npm)\b[^\n]{0,80}last[- ]line|last[- ]line[^\n]{0,48}live ›|(?:idle|bg-completion|background-task)[^\n]{0,80}last (?:log )?line|lsp diagnostics/i.test(
     text || "",
   );
 }
@@ -762,16 +767,7 @@ function polishAdmit(streak: number): string {
   ].join(" ");
 }
 
-/** Agent closed a work unit in prose — that is a wave, not an idle heartbeat. */
-export function isDeclaredWaveClose(message: string): boolean {
-  const t = message || "";
-  return (
-    /\bCycle complete\b/i.test(t) ||
-    /\bShip landed:/i.test(t) ||
-    /\bWave\s+\d+\s+(LAST\s+)?shipped\b/i.test(t) ||
-    /\bWave\s+\d+\s+LAST\b/i.test(t)
-  );
-}
+
 
 function splitNamedShipList(s: string): string[] {
   return s
@@ -1017,6 +1013,26 @@ function markWrapItemClosed(
   if (!hit) return;
   hit.status = status;
   hit.doneAt = nowIso();
+}
+
+const WRAP_WAVE_SETTLED_RE =
+  /\b(?:cancell?ed?|reverted|working tree clean|tree is clean|nothing to commit|already committed)\b/i;
+
+function userWrapWaveUnfinished(
+  s: UlwCycleState,
+  opts: {
+    verificationPassed?: boolean;
+    diffFingerprint?: string | null;
+  },
+  msg: string,
+): boolean {
+  if (s.wrapKind !== "user") return false;
+  if (WRAP_WAVE_SETTLED_RE.test(msg || "")) return false;
+  const dirty = Boolean(
+    opts.diffFingerprint && !isCleanTreeDiffFp(opts.diffFingerprint),
+  );
+  const unverified = opts.verificationPassed === false;
+  return dirty || unverified;
 }
 
 function markOpenWaveWrapDone(s: UlwCycleState): void {
@@ -2193,6 +2209,22 @@ export function evaluateUlwAtStop(opts: {
         `Still open:`,
         ...namedOpen.map((n) => `  · ${n.text}`),
         `Ship or cancel each item (with reason), then re-attest **Cycle complete.** with evidence.`,
+      ].join("\n");
+      return {
+        block: true,
+        reason: reanchor,
+        reanchor,
+        wrapDemanded: true,
+      };
+    }
+    if (userWrapWaveUnfinished(s, opts, msg) && !s.wrapNudgeDone) {
+      s.wrapNudgeDone = true;
+      saveUlwCycle(s);
+      const reanchor = [
+        `[Forge ULW cycle driver] Stop blocked — wrap the open wave before **Cycle complete.**`,
+        formatWrapCard(s),
+        `In-flight work is still open (dirty tree or no green check this wrap).`,
+        `Ship, revert, or note the tree is clean, then re-attest **Cycle complete.** with evidence.`,
       ].join("\n");
       return {
         block: true,

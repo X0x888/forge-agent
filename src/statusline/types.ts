@@ -24,7 +24,7 @@ export interface ContextInfo {
   windowTokens: number;
   /** 0–100 */
   percent: number;
-  source: "session_estimate" | "provider" | "unknown";
+  source: "session_estimate" | "session_api" | "provider" | "unknown";
 }
 
 export interface TokenUsageInfo {
