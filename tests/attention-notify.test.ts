@@ -142,6 +142,15 @@ describe("turnEndOutcomeLabel", () => {
       turnEndOutcomeLabel({ releasedOnContinueCap: true }),
       "continue cap",
     );
+    assert.equal(turnEndOutcomeLabel({ stuckReleased: true }), "stuck-wall");
+    assert.equal(
+      turnEndOutcomeLabel({ lastCycleReleased: true }),
+      "cycle complete",
+    );
+    assert.equal(
+      turnEndOutcomeLabel({ lastErrorCode: "ulw_stuck_wall" }),
+      "stuck-wall",
+    );
     assert.equal(turnEndOutcomeLabel({ aborted: true }), "aborted");
     assert.equal(
       turnEndOutcomeLabel({ lastErrorCode: "handoff_released" }),

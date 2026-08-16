@@ -297,6 +297,13 @@ export interface LoopResult {
    */
   hitCostCap: boolean;
   /**
+   * True when ULW or /goal stuck-wall released the cycle (N no-progress Stops).
+   * Metrics/JSON/notify must not look like a clean Stop (maze dogfood).
+   */
+  stuckReleased: boolean;
+  /** True when ULW released on evidenced **Cycle complete.** after LAST. */
+  lastCycleReleased: boolean;
+  /**
    * Last provider `finish_reason` observed on an assistant turn (e.g. stop, length,
    * content_filter, tool_calls). Null when no model turn completed (auth/abort early).
    * Headless JSON surfaces this for CI triage without scraping finalText notes.
@@ -877,6 +884,8 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
   let releasedOnContinueCap = false;
   let hitMaxTurns = false;
   let hitCostCap = false;
+  let stuckReleased = false;
+  let lastCycleReleased = false;
   let lastFinishReason: string | null = null;
   let autoCommit: LoopResult["autoCommit"];
   let overflowCompactAttempted = false;
@@ -2274,7 +2283,10 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
         }
         if (stopResult.allowStop) {
           if (stopResult.systemMessage) log.dim(stopResult.systemMessage);
-          if (stopResult.ulw?.lastCycleReleased) {
+          if (stopResult.ulw?.stuckReleased) stuckReleased = true;
+          if (stopResult.goal?.stuckReleased) stuckReleased = true;
+          if (stopResult.ulw?.lastCycleReleased) lastCycleReleased = true;
+          if (stopResult.ulw?.lastCycleReleased || stopResult.ulw?.stuckReleased) {
             try {
               const { maybeAutoCommitOnUlwDone, autoCommitStamp } =
                 await import("../util/git-auto-commit.js");
@@ -2306,9 +2318,8 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
               /* never fail a finished cycle on commit */
             }
           }
-          // Stamp lastError when a polite-yield / proof-claim guard released
-          // after its cap so resume orientation surfaces why the agent stopped
-          // short (expert friction: "why did it yield?").
+          // Stamp lastError when a polite-yield / proof-claim / stuck-wall
+          // released so resume orientation surfaces why the agent stopped.
           try {
             if (stopResult.handoff?.released) {
               setSessionLastError(session, {
@@ -2331,6 +2342,45 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
                   "Proof-claim guard released after claim-without-run Stop attempts"
                 ).slice(0, 500),
                 tips: proofClaimReleaseTips(preferredCheckCommands),
+              });
+              saveSession(session);
+            } else if (stopResult.ulw?.stuckReleased) {
+              setSessionLastError(session, {
+                code: "ulw_stuck_wall",
+                message: (
+                  stopResult.ulw.reason ||
+                  "ULW stuck-wall released after consecutive Stop attempts with no progress"
+                ).slice(0, 500),
+                tips: [
+                  "/cycle 1  ·  /ulw  to resume the mandate",
+                  "/cycle status  ·  /retry",
+                ],
+              });
+              saveSession(session);
+            } else if (stopResult.goal?.stuckReleased) {
+              setSessionLastError(session, {
+                code: "goal_stuck_wall",
+                message: (
+                  stopResult.goal.reason ||
+                  "Goal stuck-wall released after consecutive Stop attempts with no progress"
+                ).slice(0, 500),
+                tips: [
+                  "/goal set  ·  /ulw  to resume",
+                  "/goal status  ·  /retry",
+                ],
+              });
+              saveSession(session);
+            } else if (stopResult.ulw?.lastCycleReleased) {
+              setSessionLastError(session, {
+                code: "ulw_cycle_complete",
+                message: (
+                  stopResult.ulw.reason ||
+                  "ULW last cycle attested complete — released"
+                ).slice(0, 500),
+                tips: [
+                  "/cycle 1  ·  /ulw  if more work remains",
+                  "/cycle status",
+                ],
               });
               saveSession(session);
             }
@@ -2691,6 +2741,9 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
     hitCostCap ||
     lastErrCode === "handoff_released" ||
     lastErrCode === "proof_claim_released" ||
+    lastErrCode === "ulw_stuck_wall" ||
+    lastErrCode === "ulw_cycle_complete" ||
+    lastErrCode === "goal_stuck_wall" ||
     lastErrCode === "max_cost" ||
     lastErrCode === "max_turns" ||
     lastErrCode === "doom_loop" ||
@@ -2726,6 +2779,8 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
     releasedOnContinueCap,
     hitMaxTurns,
     hitCostCap,
+    stuckReleased,
+    lastCycleReleased,
     finishReason: lastFinishReason,
     promptTokens,
     completionTokens,

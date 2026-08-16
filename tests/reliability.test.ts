@@ -1519,6 +1519,27 @@ describe("session metrics + permission timeout", () => {
 
     appendSessionMetrics(
       buildRunEndMetrics({
+        sessionId: "stuck-1",
+        provider: "xai",
+        model: "m",
+        turns: 4,
+        stopContinues: 3,
+        stuckReleased: true,
+        editCount: 8,
+        promptTokens: 10,
+        completionTokens: 5,
+        ok: true,
+      }),
+    );
+    const stuckLine = fs
+      .readFileSync(metricsPath(), "utf8")
+      .trim()
+      .split("\n")
+      .at(-1)!;
+    assert.match(stuckLine, /"stuckReleased":true/);
+
+    appendSessionMetrics(
+      buildRunEndMetrics({
         sessionId: "fail-1",
         provider: "xai",
         model: "m",

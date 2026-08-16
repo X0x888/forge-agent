@@ -100,6 +100,8 @@ export interface RunStopReasonInput {
   hitCostCap?: boolean;
   hitMaxTurns?: boolean;
   releasedOnContinueCap?: boolean;
+  stuckReleased?: boolean;
+  lastCycleReleased?: boolean;
   aborted?: boolean;
   stopContinues?: number;
   lastErrorCode?: string | null;
@@ -140,6 +142,12 @@ export function formatRunStopReason(input: RunStopReasonInput): string | null {
   if (input.hitMaxTurns) {
     return "  stop: max turns — raise max_turns or continue with a follow-up";
   }
+  if (input.stuckReleased) {
+    return "  stop: stuck-wall — no progress; /cycle 1 or /ulw to resume";
+  }
+  if (input.lastCycleReleased) {
+    return "  stop: cycle complete — /cycle 1 or /ulw if more work remains";
+  }
   if (input.releasedOnContinueCap) {
     const n = input.stopContinues;
     const count =
@@ -149,6 +157,12 @@ export function formatRunStopReason(input: RunStopReasonInput): string | null {
     return `  stop: continue-cap${count} — narrow the task or raise FORGE_ULW_MAX_CONTINUES`;
   }
   const code = String(input.lastErrorCode || "").trim();
+  if (code === "ulw_stuck_wall" || code === "goal_stuck_wall") {
+    return "  stop: stuck-wall — no progress; /cycle 1 or /ulw to resume";
+  }
+  if (code === "ulw_cycle_complete") {
+    return "  stop: cycle complete — /cycle 1 or /ulw if more work remains";
+  }
   if (code === "handoff_released") {
     return "  stop: handoff-guard — finish the work instead of asking to continue";
   }

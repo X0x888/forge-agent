@@ -3264,7 +3264,11 @@ return {
               opts.config.model,
             ),
           ),
-          `  turns:    ${opts.session.meta.turnCount}  edits=${opts.session.meta.editCount}`,
+          `  turns:    ${opts.session.meta.turnCount}  edits=${opts.session.meta.editCount}` +
+            (opts.session.meta.providerRounds &&
+            opts.session.meta.providerRounds > opts.session.meta.turnCount
+              ? `  rounds=${opts.session.meta.providerRounds}`
+              : ""),
           `  id:       ${opts.session.meta.id}`,
           chalk.dim(`Tip: /stats [days] or forge stats --days 7 for a full usage dashboard`),
         ].join("\n"),
@@ -3358,7 +3362,12 @@ const stats = collectUsageStats({
               opts.config.model,
             ),
           ),
-          `  turns:  ${opts.session.meta.turnCount}  edits=${opts.session.meta.editCount}  id=${opts.session.meta.id.slice(0, 8)}`,
+          `  turns:  ${opts.session.meta.turnCount}  edits=${opts.session.meta.editCount}` +
+            (opts.session.meta.providerRounds &&
+            opts.session.meta.providerRounds > opts.session.meta.turnCount
+              ? `  rounds=${opts.session.meta.providerRounds}`
+              : "") +
+            `  id=${opts.session.meta.id.slice(0, 8)}`,
           ...sessionExtra,
           chalk.dim(`CLI: forge stats [--days N] [--json]`),
         ].join("\n"),

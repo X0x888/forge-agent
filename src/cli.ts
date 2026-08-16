@@ -802,12 +802,12 @@ Exit codes:
   130  aborted (SIGINT)
 
 --json fields (success): ok, version, node, forgeHome, sessionId, sessionPath, title, pinned, foreignLock, provider, stickyProvider, authMethod, model, reasoningEffort, cwd, git, projectLabel, projectHints, packageName, packageVersion, packageEnginesNode, packageManager, checkCommands, projectStackSummary, monorepoRoot, workspaces, nodeModulesPresent, multipleLockfiles, permissionMode, sandbox, sandboxNetwork, sandboxMissingBackend, readOutsideWorkspace, ultrawork, ulwCycle, ulwWave, ulwMaxWaves, ulwBlocks, ulwMandate, ulwSoftPrompt, ulwExpandedMandate, goalActive, goal, goalStuckThreshold, goalBlocks, goalStuckBlocks, goalCriteria, denyRules, allowRules, askRules, maxTurns, maxTurnsUnlimited, maxCostUsd, maxCostUnlimited, effectiveMaxCostUsd, sessionCostUsd, parentCostUsd, subagentCostUsd, subagentUsage, productionWarnings, formatOnWrite, subagentLandMode, projectMemoryCount, lastCheckpoint, blockingStop, maxRunMs, providerTimeoutMs, bashTimeoutMs, bashBackgroundTimeoutMs, permissionAskTimeoutMs, doomLoopThreshold, errorStreakThreshold, ulwMaxContinues, editCount, lastVerificationCommand, lastVerificationAt, lastEditAt, lastVerificationStale, openTodos, messageCount, finalText, turns, stopContinues,
-  releasedOnContinueCap, hitMaxTurns, hitCostCap, finishReason, lastError, editCount, aborted, timedOut,
+  releasedOnContinueCap, hitMaxTurns, hitCostCap, stuckReleased, lastCycleReleased, finishReason, lastError, editCount, aborted, timedOut,
   harnessUserPokes, admitCount, proofPokes, providerRounds,
   promptTokens, completionTokens, durationMs
   (FORGE_JSON_COMPACT=1 → single-line success JSON for CI log aggregation)
-  (releasedOnContinueCap/hitMaxTurns/hitCostCap → safety valves; still ok unless aborted/timedOut/empty run)
-  (lastError → {at,code,message,tips} when stamped — max_cost/max_turns/continue_cap_*/handoff_released/proof_claim_released/…)
+  (releasedOnContinueCap/hitMaxTurns/hitCostCap/stuckReleased/lastCycleReleased → safety valves; still ok unless aborted/timedOut/empty run)
+  (lastError → {at,code,message,tips} when stamped — max_cost/max_turns/continue_cap_*/handoff_released/proof_claim_released/ulw_stuck_wall/ulw_cycle_complete/goal_stuck_wall/…)
   (finishReason → last provider finish_reason, or null if no model turn)
 
 --json early failures (stdout, still exit ≠0): { ok:false, version, reason, error, … } (typos may include suggestion)
@@ -6562,6 +6562,8 @@ async function runHeadless(opts: {
         hitCostCap: result.hitCostCap,
         hitMaxTurns: result.hitMaxTurns,
         releasedOnContinueCap: result.releasedOnContinueCap,
+        stuckReleased: result.stuckReleased,
+        lastCycleReleased: result.lastCycleReleased,
         aborted: result.aborted,
         lastErrorCode: opts.session.meta.lastError?.code,
         editCount: opts.session.meta.editCount,
@@ -6617,6 +6619,8 @@ async function runHeadless(opts: {
           hitCostCap: result.hitCostCap,
           hitMaxTurns: result.hitMaxTurns,
           releasedOnContinueCap: result.releasedOnContinueCap,
+          stuckReleased: result.stuckReleased,
+          lastCycleReleased: result.lastCycleReleased,
           aborted: result.aborted,
           stopContinues: result.stopContinues,
           lastErrorCode: opts.session.meta.lastError?.code,
@@ -6892,6 +6896,8 @@ maxTurns: opts.config.maxTurns ?? 0,
       releasedOnContinueCap: result.releasedOnContinueCap,
       hitMaxTurns: result.hitMaxTurns,
       hitCostCap: result.hitCostCap,
+      stuckReleased: result.stuckReleased,
+      lastCycleReleased: result.lastCycleReleased,
       finishReason: result.finishReason,
       harnessUserPokes: result.harnessUserPokes ?? 0,
       admitCount: result.admitCount ?? 0,
@@ -6943,6 +6949,8 @@ maxTurns: opts.config.maxTurns ?? 0,
         releasedOnContinueCap: payload.releasedOnContinueCap,
         hitMaxTurns: payload.hitMaxTurns,
         hitCostCap: payload.hitCostCap,
+        stuckReleased: payload.stuckReleased,
+        lastCycleReleased: payload.lastCycleReleased,
         editCount: payload.editCount,
         promptTokens: payload.promptTokens,
         completionTokens: payload.completionTokens,

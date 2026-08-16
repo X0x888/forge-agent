@@ -15,6 +15,7 @@ import {
   displayUlwMandate,
   formatUlwCounts,
   formatWaveLedger,
+  namedShipsExhausted,
 } from "../harness/ulw-cycle.js";
 import { repairToolCallPairing } from "./message-repair.js";
 import {
@@ -191,11 +192,19 @@ export function buildStructuredSummary(
     // Never re-inject expandedMandate (the 5k god-mode dump). Protocol is
     // already in the cache-stable system prompt.
     const ledger = formatWaveLedger(ulw.waves, 8);
+    const namedHold =
+      ulw.cycle === 1 &&
+      !ulw.wrapKind &&
+      ulw.maxWaves == null &&
+      namedShipsExhausted(ulw);
     sections.push(
       `- ULW ON | ${formatUlwCounts(ulw)} ${ulw.cycle === 1 ? "(CONTINUE)" : "(LAST)"}`,
       `- Harness w=N/M is the only wave counter. Do not invent Wave K. Close a unit with \`Wave shipped.\` / \`Ship landed:\` / \`Cycle complete.\` so the counter can move (ulw.json wins if this card is stale).`,
       `- max_waves: ${ulw.maxWaves != null ? ulw.maxWaves : "off (unlimited)"}`,
       ledger ? `- Ledger: ${ledger}` : "",
+      namedHold
+        ? `- Named ships from the reading are done. Write a new Reading: (what is still hard + the ONE next ship on a different surface) or /cycle 0. Do not attest Cycle complete. A red test suite is a different surface — not leftover chrome. Stuck-wall will not release this hold.`
+        : "",
       mandateLine,
       softLine,
     );

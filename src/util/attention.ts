@@ -117,6 +117,8 @@ export interface TurnEndOutcomeInput {
   hitCostCap?: boolean;
   hitMaxTurns?: boolean;
   releasedOnContinueCap?: boolean;
+  stuckReleased?: boolean;
+  lastCycleReleased?: boolean;
   aborted?: boolean;
   lastErrorCode?: string | null;
   /** Session had file edits this run. */
@@ -136,8 +138,14 @@ export function turnEndOutcomeLabel(input: TurnEndOutcomeInput): string {
   if (input.hitCostCap) return "cost cap";
   if (input.hitMaxTurns) return "max turns";
   if (input.releasedOnContinueCap) return "continue cap";
+  if (input.stuckReleased) return "stuck-wall";
+  if (input.lastCycleReleased) return "cycle complete";
   if (input.aborted) return "aborted";
   const code = String(input.lastErrorCode || "").trim();
+  if (code === "ulw_stuck_wall" || code === "goal_stuck_wall") {
+    return "stuck-wall";
+  }
+  if (code === "ulw_cycle_complete") return "cycle complete";
   if (code === "handoff_released") return "handoff released";
   if (code === "proof_claim_released") return "proof-claim released";
   if (code === "max_cost") return "cost cap";

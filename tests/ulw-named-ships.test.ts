@@ -17,6 +17,7 @@ import {
 } from "../src/harness/ulw-cycle.js";
 import { appendMemoryRecord } from "../src/harness/decision-memory.js";
 import { CLEAN_TREE_DIFF_FP } from "../src/util/git-context.js";
+import { buildStructuredSummary } from "../src/session/compaction.js";
 
 function withHome(fn: () => void): void {
   const prev = process.env.FORGE_HOME;
@@ -236,6 +237,7 @@ describe("named-ship backlog", () => {
       const status = formatUlwStatus(loadUlwCycle(sid));
       assert.match(status, /Named ships: 0\/\d+ done/);
       assert.match(status, /tool-status/i);
+      assert.doesNotMatch(status, /stuck-wall will not release/);
       disarmUlwCycle(sid);
     });
   });
@@ -399,6 +401,11 @@ describe("named-ship backlog", () => {
       assert.equal(loadUlwCycle(sid)!.cycle, 1);
       assert.match(last!.reanchor || "", /new Reading|named ships from the reading are done/i);
       assert.doesNotMatch(last!.reanchor || "", /Hard work looks exhausted/);
+      assert.match(last!.reanchor || "", /red test suite|open defect/i);
+      assert.match(
+        formatUlwStatus(loadUlwCycle(sid)),
+        /stuck-wall will not release/,
+      );
       disarmUlwCycle(sid);
     });
   });
@@ -442,6 +449,41 @@ describe("named-ship backlog", () => {
       assert.equal(d.waveClosed, true);
       assert.equal(loadUlwCycle(sid)!.wave, before + 1);
       assert.match(d.reanchor || "", /named ships from the reading are done|new Reading/i);
+      disarmUlwCycle(sid);
+    });
+  });
+
+  it("compact job card names the unlimited named-ship hold", () => {
+    withHome(() => {
+      const sid = "sess-named-compact";
+      fs.mkdirSync(path.join(process.env.FORGE_HOME!, "sessions", sid), {
+        recursive: true,
+      });
+      const s0 = armUlwCycle(sid, "Improve this game.", {
+        cycle: 1,
+        skipCheckpoint: true,
+        editCount: 0,
+      });
+      maybeAdoptNamedShips(s0, READING);
+      saveUlwCycle(s0);
+      const named = loadUlwCycle(sid)!.namedShips ?? [];
+      let edits = 0;
+      for (let i = 0; i < named.length; i++) {
+        edits += 4;
+        maybeStampUlwWave({
+          sessionId: sid,
+          editCount: edits,
+          openTodoCount: 0,
+          stepsSinceStamp: 1,
+          lastAssistantMessage: `Wave ${i + 1} shipped: ${named[i]!.text}`,
+        });
+      }
+      const card = buildStructuredSummary(
+        [{ role: "user", content: "Improve this game." }],
+        { ulw: loadUlwCycle(sid), sessionId: sid },
+      );
+      assert.match(card, /Named ships from the reading are done/i);
+      assert.match(card, /red test suite/i);
       disarmUlwCycle(sid);
     });
   });

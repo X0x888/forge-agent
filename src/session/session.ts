@@ -1270,7 +1270,12 @@ export function formatSessionPickerRow(
 
   const titleNeed = Math.min(visibleWidth(rawTitle), 48);
   const prevNeed = rawPrev ? Math.min(visibleWidth(rawPrev) + 2, 56) : 0;
-  const extrasAll = [s.model, `t=${s.turnCount ?? 0}`, cost].filter(Boolean);
+  const rounds = s.providerRounds ?? 0;
+  const turnBit =
+    rounds > (s.turnCount ?? 0)
+      ? `t=${s.turnCount ?? 0} r=${rounds}`
+      : `t=${s.turnCount ?? 0}`;
+  const extrasAll = [s.model, turnBit, cost].filter(Boolean);
   if (!Number.isFinite(cols) || cols < 24) {
     return fit(titleNeed, prevNeed, extrasAll.map((b) => chalk.dim(b)));
   }
@@ -1396,7 +1401,10 @@ export function formatSessionSummary(session: SessionData): string {
     gitLine,
     projectLine,
     `  model:    ${m.provider}/${m.model}`,
-    `  turns:    ${m.turnCount}  edits=${m.editCount}  msgs=${session.messages.length}`,
+    `  turns:    ${m.turnCount}  edits=${m.editCount}  msgs=${session.messages.length}` +
+      (m.providerRounds && m.providerRounds > m.turnCount
+        ? `  rounds=${m.providerRounds}`
+        : ""),
     `  tokens:   in=${m.totalPromptTokens} out=${m.totalCompletionTokens}`,
     `  todos:    ${session.todos?.length || 0} (${openTodos} open)`,
     (() => {
@@ -3402,7 +3410,10 @@ export function formatSessionShareCard(
       ? `  lastErr:  [${m.lastError.code}] ${m.lastError.message.slice(0, 120)}` +
         (m.lastError.tips?.[0] ? ` → ${m.lastError.tips[0]}` : "")
       : null,
-    `  turns:    ${m.turnCount}  edits=${m.editCount}  msgs=${session.messages.length}`,
+    `  turns:    ${m.turnCount}  edits=${m.editCount}  msgs=${session.messages.length}` +
+      (m.providerRounds && m.providerRounds > m.turnCount
+        ? `  rounds=${m.providerRounds}`
+        : ""),
     (() => {
       try {
         const cost = estimateCostUsd(

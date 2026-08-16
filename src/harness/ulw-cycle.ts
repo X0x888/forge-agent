@@ -983,13 +983,15 @@ export function namedShipsExhausted(s: UlwCycleState): boolean {
 const NAMED_SHIP_EXHAUSTED_ADMIT = [
   "[Forge ULW cycle driver] Stop blocked — named ships from the reading are done.",
   "Write a new Reading: (what is still hard + the ONE next ship) or /cycle 0.",
-  "Do not invent leftover chrome. Unlimited ULW continues only after a new reading.",
+  "Do not invent leftover chrome. A red test suite or open defect is a different surface — not leftover chrome.",
+  "Unlimited ULW continues only after a new reading.",
 ].join("\n");
 
 const NAMED_SHIP_EXHAUSTED_STRONG = [
   "[Forge ULW cycle driver] Stop blocked — named ships from the reading are done.",
   "Write a new Reading: (what is still hard + the ONE next ship on a different surface) or /cycle 0.",
-  "Do not invent leftover chrome. Do not attest **Cycle complete.** — only the user /cycle 0 wraps. Unlimited ULW continues only after a new reading.",
+  "Do not invent leftover chrome. A red test suite or open defect is a different surface — not leftover chrome.",
+  "Do not attest **Cycle complete.** — only the user /cycle 0 wraps. Unlimited ULW continues only after a new reading.",
 ].join("\n");
 
 const MAX_NAMED_SHIP_ADMITS = 3;
@@ -2153,7 +2155,11 @@ function formatNamedShipsStatusLine(s: UlwCycleState): string | undefined {
   );
   let body = bits.join(" · ");
   if (body.length > 160) body = `${body.slice(0, 159)}…`;
-  const asked = s.namedShipAdmitDone ? " · asked for new reading" : "";
+  const asked = s.namedShipAdmitDone
+    ? normalizeMaxWaves(s.maxWaves) == null
+      ? " · hold: new Reading or /cycle 0 (stuck-wall will not release)"
+      : " · asked for new reading"
+    : "";
   return `  Named ships: ${done}/${items.length} done — ${body}${asked}`;
 }
 

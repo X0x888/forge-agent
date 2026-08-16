@@ -1058,7 +1058,12 @@ export function formatSessionDetails(ctx: StatusBarContext): string {
         )
       : null,
     chalk.dim(
-      `msgs     ${session.messages.length}  ·  ~${formatTokens(est)} ctx  ·  turns ${session.meta.turnCount}  edits ${session.meta.editCount}`,
+      `msgs     ${session.messages.length}  ·  ~${formatTokens(est)} ctx  ·  turns ${session.meta.turnCount}` +
+        (session.meta.providerRounds &&
+        session.meta.providerRounds > session.meta.turnCount
+          ? `  rounds ${session.meta.providerRounds}`
+          : "") +
+        `  edits ${session.meta.editCount}`,
     ),
     (() => {
       const live = sessionCacheRatio(session.meta);

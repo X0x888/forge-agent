@@ -92,7 +92,7 @@ attempt Stop
 
 Yield (“shall I continue?”) is still handoff-blocked. A red check is not evidence.
 
-Stuck-wall: N consecutive Stop attempts with **no file edits and no working-tree diff movement** (default same as goal stuck threshold / `FORGE_ULW_STUCK_THRESHOLD`). Progress is measured two ways: `editCount` delta **or** a changed `gitDiffFingerprint` — so work done via bash heredocs/`sed -i` (which never touches edit-tool counters) cannot false-trigger a stuck release. Outside a git repo the fingerprint is unavailable and the classic editCount-only rule applies.
+Stuck-wall: N consecutive Stop attempts with **no file edits and no working-tree diff movement** (default same as goal stuck threshold / `FORGE_ULW_STUCK_THRESHOLD`). Progress is measured two ways: `editCount` delta **or** a changed `gitDiffFingerprint` — so work done via bash heredocs/`sed -i` (which never touches edit-tool counters) cannot false-trigger a stuck release. Outside a git repo the fingerprint is unavailable and the classic editCount-only rule applies. **Unlimited named-ship exhaust is not stuck** — those Stops stay blocked until a new `Reading:` or `/cycle 0`. A stuck-wall or LAST **Cycle complete.** release is visible on `run_end` / `--json` / the dim stop line (`stuckReleased` / `lastCycleReleased`).
 
 `max_waves` is independent of the cycle flag: you can still `/cycle 0` early, or raise `/max-waves` / clear it mid-run.
 

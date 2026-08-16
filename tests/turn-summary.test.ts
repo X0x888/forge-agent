@@ -269,6 +269,18 @@ test("run stop reason: cost / turns / continue-cap / empty / abort", () => {
     formatRunStopReason({ lastErrorCode: "handoff_released" }) ?? "",
     /handoff-guard/,
   );
+  assert.match(
+    formatRunStopReason({ stuckReleased: true }) ?? "",
+    /stuck-wall/,
+  );
+  assert.match(
+    formatRunStopReason({ lastCycleReleased: true }) ?? "",
+    /cycle complete/,
+  );
+  assert.match(
+    formatRunStopReason({ lastErrorCode: "ulw_stuck_wall" }) ?? "",
+    /stuck-wall/,
+  );
   // Flags win over lastError
   assert.match(
     formatRunStopReason({
