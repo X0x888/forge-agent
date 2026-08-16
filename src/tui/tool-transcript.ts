@@ -7,6 +7,7 @@ import {
   formatToolDisplayName,
   formatToolEnd,
   formatToolOutputHead,
+  formatToolStart,
   summarizeToolArgs,
   visibleWidth,
 } from "../util/format.js";
@@ -142,5 +143,98 @@ export function createToolEndCoalescer(print: (line: string) => void) {
       if (pending && pending.name !== name) flush();
     },
     flush,
+  };
+}
+
+/** Short tools stay a single ✓ row; ▸ only appears once a wait is real. */
+export const TOOL_START_DELAY_MS = 700;
+
+export type ToolStartDelayerOpts = {
+  /** Override delay (tests). Default 700ms. `0` prints immediately. */
+  delayMs?: number;
+  /** Print ▸ on every start (REPL `/verbose`). */
+  immediate?: boolean;
+  setTimeout?: (fn: () => void, ms: number) => ReturnType<typeof setTimeout>;
+  clearTimeout?: (handle: ReturnType<typeof setTimeout>) => void;
+};
+
+type PendingStart = {
+  name: string;
+  args: Record<string, unknown>;
+  timer: ReturnType<typeof setTimeout> | null;
+  printed: boolean;
+};
+
+/**
+ * Hold `▸ tool args` until the tool has been running ~700ms.
+ * Fast grep/read stay one ✓ row. A 2-min `npm test` gets a start line
+ * so the transcript is not silent while `live ›` is frozen (toolHold).
+ * Headless `forge run` uses the same delayer — no more ▸+✓ on every 12ms tool.
+ *
+ * Pairing is FIFO per tool name (parallel same-name batches that all finish
+ * under the delay cancel correctly; mixed long/short same-name is rare).
+ */
+export function createToolStartDelayer(
+  print: (line: string) => void,
+  opts: ToolStartDelayerOpts = {},
+) {
+  const delayMs = Math.max(0, opts.delayMs ?? TOOL_START_DELAY_MS);
+  const schedule = opts.setTimeout ?? setTimeout;
+  const cancel = opts.clearTimeout ?? clearTimeout;
+  const queues = new Map<string, PendingStart[]>();
+
+  const fire = (item: PendingStart): void => {
+    if (item.printed) return;
+    print(formatToolStart(item.name, item.args));
+    item.printed = true;
+  };
+
+  return {
+    push(
+      name: string,
+      args: Record<string, unknown>,
+      startOpts?: { immediate?: boolean },
+    ): void {
+      const item: PendingStart = {
+        name,
+        args,
+        timer: null,
+        printed: false,
+      };
+      const q = queues.get(name) ?? [];
+      q.push(item);
+      queues.set(name, q);
+      const immediate =
+        startOpts?.immediate === true || opts.immediate === true || delayMs === 0;
+      if (immediate) {
+        fire(item);
+        return;
+      }
+      item.timer = schedule(() => {
+        item.timer = null;
+        fire(item);
+      }, delayMs);
+      item.timer?.unref?.();
+    },
+    /** Cancel or keep a matching start when the tool settles. FIFO per name. */
+    settle(name: string): void {
+      const q = queues.get(name);
+      if (!q?.length) return;
+      const item = q.shift()!;
+      if (item.timer) {
+        cancel(item.timer);
+        item.timer = null;
+      }
+      if (q.length === 0) queues.delete(name);
+    },
+    /** Drop unfired timers (turn end / abort). Does not print leftover ▸. */
+    flush(): void {
+      for (const q of queues.values()) {
+        for (const item of q) {
+          if (item.timer) cancel(item.timer);
+        }
+      }
+      queues.clear();
+    },
   };
 }

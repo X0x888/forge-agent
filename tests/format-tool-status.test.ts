@@ -8,6 +8,7 @@ import {
 } from "../src/util/format.js";
 import {
   createToolEndCoalescer,
+  createToolStartDelayer,
   formatCoalescedToolEnd,
   formatDefaultToolEndTranscript,
   formatVerboseToolEndTranscript,
@@ -506,5 +507,109 @@ describe("coalesced same-tool successes", () => {
     assert.match(lines[0]!, /✓ grep a/);
     assert.match(lines[1]!, /✓ grep b/);
     assert.doesNotMatch(lines.join("\n"), /×|pattern=/);
+  });
+});
+
+describe("delayed tool start", () => {
+  function fakeClock() {
+    const timers = new Map<number, () => void>();
+    let nextId = 1;
+    return {
+      printed: [] as string[],
+      setTimeout(fn: () => void, _ms: number) {
+        const id = nextId++;
+        timers.set(id, fn);
+        return id as unknown as ReturnType<typeof setTimeout>;
+      },
+      clearTimeout(handle: ReturnType<typeof setTimeout>) {
+        timers.delete(handle as unknown as number);
+      },
+      fireAll() {
+        for (const fn of [...timers.values()]) fn();
+        timers.clear();
+      },
+      pending() {
+        return timers.size;
+      },
+    };
+  }
+
+  it("does not print ▸ when the tool settles before the delay", () => {
+    const clock = fakeClock();
+    const d = createToolStartDelayer((line) => clock.printed.push(strip(line)), {
+      delayMs: 700,
+      setTimeout: clock.setTimeout,
+      clearTimeout: clock.clearTimeout,
+    });
+    d.push("bash", { command: "npm test" });
+    assert.equal(clock.printed.length, 0);
+    d.settle("bash");
+    clock.fireAll();
+    assert.equal(clock.printed.length, 0);
+    assert.equal(clock.pending(), 0);
+  });
+
+  it("prints ▸ once the delay fires on a still-running tool", () => {
+    const clock = fakeClock();
+    const d = createToolStartDelayer((line) => clock.printed.push(strip(line)), {
+      delayMs: 700,
+      setTimeout: clock.setTimeout,
+      clearTimeout: clock.clearTimeout,
+    });
+    d.push("bash", { command: "npm test" });
+    clock.fireAll();
+    assert.equal(clock.printed.length, 1);
+    assert.match(clock.printed[0]!, /▸ bash npm test/);
+    d.settle("bash");
+    clock.fireAll();
+    assert.equal(clock.printed.length, 1);
+  });
+
+  it("prints immediately when /verbose or delayMs is 0", () => {
+    const lines: string[] = [];
+    const verbose = createToolStartDelayer((line) => lines.push(strip(line)), {
+      delayMs: 700,
+    });
+    verbose.push("read_file", { path: "src/a.ts" }, { immediate: true });
+    assert.equal(lines.length, 1);
+    assert.match(lines[0]!, /▸ read src\/a\.ts/);
+    verbose.settle("read_file");
+
+    const instant = createToolStartDelayer((line) => lines.push(strip(line)), {
+      delayMs: 0,
+    });
+    instant.push("grep", { pattern: "foo" });
+    assert.equal(lines.length, 2);
+    assert.match(lines[1]!, /▸ grep foo/);
+    instant.settle("grep");
+  });
+
+  it("flush drops unfired starts and does not leak timers", () => {
+    const clock = fakeClock();
+    const d = createToolStartDelayer((line) => clock.printed.push(strip(line)), {
+      setTimeout: clock.setTimeout,
+      clearTimeout: clock.clearTimeout,
+    });
+    d.push("bash", { command: "sleep 30" });
+    d.flush();
+    clock.fireAll();
+    assert.equal(clock.printed.length, 0);
+    assert.equal(clock.pending(), 0);
+  });
+
+  it("cancels each of a same-name burst that all finish under the delay", () => {
+    const clock = fakeClock();
+    const d = createToolStartDelayer((line) => clock.printed.push(strip(line)), {
+      setTimeout: clock.setTimeout,
+      clearTimeout: clock.clearTimeout,
+    });
+    d.push("grep", { pattern: "a" });
+    d.push("grep", { pattern: "b" });
+    d.push("grep", { pattern: "c" });
+    d.settle("grep");
+    d.settle("grep");
+    d.settle("grep");
+    clock.fireAll();
+    assert.equal(clock.printed.length, 0);
   });
 });

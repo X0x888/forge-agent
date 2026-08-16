@@ -30,8 +30,10 @@ import {
 } from "../util/attention.js";
 import { describeAuth, resolveAuthFresh } from "../auth/resolve.js";
 import type { ResolvedAuth } from "../auth/types.js";
-import { formatToolStart } from "../util/format.js";
-import { createToolEndCoalescer } from "./tool-transcript.js";
+import {
+  createToolEndCoalescer,
+  createToolStartDelayer,
+} from "./tool-transcript.js";
 import { postureHead, postureWarnings } from "./posture.js";
 import {
   composeTurnCloser,
@@ -682,6 +684,7 @@ export async function runRepl(opts: {
 
     let sawToken = false;
     const toolEnds = createToolEndCoalescer((line) => console.error(line));
+    const toolStarts = createToolStartDelayer((line) => console.error(line));
     /** Tool phase: pause prompt refresh so tool logs stay clean */
     let toolHold = false;
     /** Streaming markdown renderer for the current assistant text segment. */
@@ -757,13 +760,13 @@ export async function runRepl(opts: {
             streamActive = false;
             working.setStreaming(false);
             sawToken = false;
-            // Default: one line at settle (✓/✗ + args). Start line is
-            // /verbose only — otherwise every tool is two rows + a live ›.
-            if (verboseToolOutput) {
-              console.error(formatToolStart(name, args));
-            }
+            // Default: hold ▸ until ~700ms so fast tools stay one ✓ row.
+            // /verbose still prints start immediately.
+            toolStarts.push(name, args, { immediate: verboseToolOutput });
           },
           onToolEnd: (name, r) => {
+            // Settle before the ✓/✗ row so a late timer cannot print ▸ after.
+            toolStarts.settle(name);
             // Minimal by default: one status line per tool. Consecutive
             // same-tool ✓ rows collapse to `✓ grep ×4`. Failures and
             // /verbose stay one-per-call. Success diffs stay /verbose.
@@ -817,6 +820,7 @@ export async function runRepl(opts: {
 
       working.stop();
       streamActive = false;
+      toolStarts.flush();
       toolEnds.flush();
       flushMarkdown();
 
@@ -906,6 +910,7 @@ export async function runRepl(opts: {
       }
     } catch (err) {
       working.stop();
+      toolStarts.flush();
       toolEnds.flush();
       flushMarkdown();
       try {

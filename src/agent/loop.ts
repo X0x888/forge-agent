@@ -180,7 +180,10 @@ import {
   summarizeToolArgs,
   extractDiffFromToolOutput,
 } from "../util/format.js";
-import { formatDefaultToolEndTranscript } from "../tui/tool-transcript.js";
+import {
+  createToolStartDelayer,
+  formatDefaultToolEndTranscript,
+} from "../tui/tool-transcript.js";
 import type { ToolDefinition } from "../providers/types.js";
 import {
   McpManager,
@@ -633,10 +636,19 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
     "FORGE_PROVIDER_DROP_RECOVERY_MAX",
     5,
   );
+  const defaultStarts = opts.events?.onToolStart
+    ? null
+    : createToolStartDelayer((line) => console.error(line));
   const events: LoopEvents = {
     onToken: opts.events?.onToken || opts.onToken,
-    onToolStart: opts.events?.onToolStart,
-    onToolEnd: opts.events?.onToolEnd,
+    onToolStart:
+      opts.events?.onToolStart ??
+      ((name, args) => defaultStarts!.push(name, args)),
+    onToolEnd: (name, result) => {
+      defaultStarts?.settle(name);
+      if (opts.events?.onToolEnd) opts.events.onToolEnd(name, result);
+      else console.error(formatDefaultToolEndTranscript(name, result));
+    },
     onToolSettled: opts.events?.onToolSettled,
     onStatus: opts.events?.onStatus,
     onPhase: opts.events?.onPhase,
@@ -2693,6 +2705,8 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
   } catch {
     /* meters are best-effort */
   }
+
+  defaultStarts?.flush();
 
   return {
     finalText,
