@@ -26,7 +26,10 @@ import { formatTokens, formatCost, clipAnsi, visibleWidth } from "../util/format
 import { formatCacheRatio } from "../session/prompt-cache.js";
 
 import { resolveReasoningEffort } from "../config/reasoning.js";
-import { getActivity } from "../statusline/activity.js";
+import {
+  getActivity,
+  type SessionActivity,
+} from "../statusline/activity.js";
 import { listTasks } from "../agent/tools/background-tasks.js";
 import { loadUlwCycle, formatUlwBadge } from "../harness/ulw-cycle.js";
 import { loadGoal } from "../harness/goal.js";
@@ -68,6 +71,47 @@ export function formatDockFallbackHop(
 
 function authMethodOf(auth: ResolvedAuth): AuthMethod {
   return (auth.method as AuthMethod) || "unknown";
+}
+
+const DOCK_PHASE_SHORT: Record<string, string> = {
+  thinking: "think",
+  compacting: "compact",
+  stop_guard: "harness",
+  waiting: "wait",
+  tool: "tool",
+};
+
+function formatPhaseSec(sec: number): string {
+  if (sec < 60) return `${sec}s`;
+  const m = Math.floor(sec / 60);
+  const s = sec % 60;
+  return s ? `${m}m${s}s` : `${m}m`;
+}
+
+/**
+ * Always-on dock chip for the current wait. The loop already sends
+ * `onPhase("tool", "bash npm test")`; the dock used to throw that away
+ * and paint the word "tool" — so a 2-min compile looked like a 12ms grep.
+ */
+export function formatDockActivity(
+  act: Pick<SessionActivity, "busy" | "phase" | "detail" | "phaseStartedAt">,
+  opts?: { now?: number; max?: number },
+): string | undefined {
+  if (!act.busy || act.phase === "idle") return undefined;
+  const max = Math.max(8, opts?.max ?? 28);
+  const now = opts?.now ?? Date.now();
+  const elapsed = Math.max(0, Math.floor((now - act.phaseStartedAt) / 1000));
+  const detail = (act.detail ?? "").replace(/\s+/g, " ").trim();
+  let work: string;
+  if (act.phase === "tool") {
+    work = detail || "tool";
+  } else if (act.phase === "waiting" && detail) {
+    work = detail.startsWith("wait") ? detail : `wait ${detail}`;
+  } else {
+    work = DOCK_PHASE_SHORT[act.phase] ?? act.phase;
+  }
+  if (work.length > max) work = `${work.slice(0, max - 1)}…`;
+  return elapsed >= 1 ? `${work} · ${formatPhaseSec(elapsed)}` : work;
 }
 
 /**
@@ -254,11 +298,9 @@ export function renderBottomStatusLine(
 
   const act = getActivity();
   const bg = listTasks().filter((t) => t.status === "running").length;
-  if (act.busy) {
-    bits.push({
-      text: paint(act.phase === "tool" ? "tool" : act.phase || "work", "magenta"),
-      prio: 11,
-    });
+  {
+    const chip = formatDockActivity(act);
+    if (chip) bits.push({ text: paint(chip, "magenta"), prio: 11 });
   }
   if (bg > 0) bits.push({ text: paint(`bg:${bg}`, "yellow"), prio: 11 });
   {

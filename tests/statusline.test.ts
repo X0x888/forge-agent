@@ -56,6 +56,7 @@ import {
 import {
   renderBottomStatusLine,
   createBottomStatusDock,
+  formatDockActivity,
 } from "../src/tui/bottom-status.js";
 import { clipAnsi, visibleWidth } from "../src/util/format.js";
 import type { ForgeConfig } from "../src/config/types.js";
@@ -657,6 +658,101 @@ describe("statusline", () => {
     assert.match(line, /YOLO/);
     assert.match(line, /budget|ctx /);
     assert.doesNotMatch(line, /⚒/);
+  });
+
+  it("formatDockActivity shows tool detail + phase elapsed, not the word tool", () => {
+    assert.equal(
+      formatDockActivity({
+        busy: false,
+        phase: "idle",
+        phaseStartedAt: Date.now(),
+      }),
+      undefined,
+    );
+    assert.equal(
+      formatDockActivity({
+        busy: true,
+        phase: "tool",
+        detail: "bash npm test",
+        phaseStartedAt: Date.now(),
+      }),
+      "bash npm test",
+    );
+    const started = Date.now() - 12_400;
+    assert.equal(
+      formatDockActivity(
+        {
+          busy: true,
+          phase: "tool",
+          detail: "bash npm test",
+          phaseStartedAt: started,
+        },
+        { now: started + 12_400 },
+      ),
+      "bash npm test · 12s",
+    );
+    assert.equal(
+      formatDockActivity(
+        {
+          busy: true,
+          phase: "tool",
+          detail: "bash npm test --coverage --reporter spec src/tui",
+          phaseStartedAt: Date.now(),
+        },
+        { max: 18 },
+      ),
+      "bash npm test --c…",
+    );
+    assert.equal(
+      formatDockActivity({
+        busy: true,
+        phase: "waiting",
+        detail: "retry 2/3: 429",
+        phaseStartedAt: Date.now(),
+      }),
+      "wait retry 2/3: 429",
+    );
+    const thinkAt = 1_700_000_000_000;
+    assert.equal(
+      formatDockActivity(
+        {
+          busy: true,
+          phase: "thinking",
+          phaseStartedAt: thinkAt,
+        },
+        { now: thinkAt + 90_000 },
+      ),
+      "think · 1m30s",
+    );
+  });
+
+  it("dock paints running tool instead of the word tool", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-sl-dock-tool-"));
+    process.env.FORGE_HOME = tmp;
+    const s = createSession({ cwd: tmp, provider: "xai", model: "grok-4.6" });
+    const config = {
+      ...DEFAULT_CONFIG,
+      provider: "xai",
+      model: "grok-4.6",
+      contextWindow: 500_000,
+    } as ForgeConfig;
+    const auth: ResolvedAuth = {
+      provider: "xai",
+      method: "subscription",
+      token: "t",
+      accountId: "xai:test",
+      accountLabel: "sub:test@example.com",
+    };
+    beginTurn();
+    setPhase("tool", "bash npm test");
+    const line = renderBottomStatusLine(
+      { config, session: s, auth },
+      undefined,
+      { width: 160, plain: true },
+    );
+    assert.match(line, /bash npm test/);
+    assert.doesNotMatch(line, /(?<![a-z])tool(?![a-z])/);
+    endTurn();
   });
 
   it("hides N/A plan noise in render", () => {
