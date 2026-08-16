@@ -127,7 +127,8 @@ Anti-gaming is **structural, not prompt-based**: the only way to satisfy a proof
 - Outbound is append-only until ~180k tokens so xAI can cache the prefix; the first clip freezes a sticky omit set (later rounds do not re-age). `FORGE_REQUEST_PRUNE=1` restores every-round slim — that kills cache. In-session stubbing is opt-in (`FORGE_TOOL_CLEAR=1`).
 - Idle mid-loop epochs never increment `w` (capped or unlimited). `w` moves on Stop or a declared `Wave shipped` / `Ship landed`.
 - After auto-commit the clean tree is a new fingerprint baseline — not a `revisit` of the arm-time clean state.
-- Unlimited evaluate-class: when every named ship from the reading is done, Stop asks once for a new `Reading:` or `/cycle 0`. A cap still spends remaining waves.
+- Unlimited evaluate-class: when every named ship from the reading is done, Stop asks for a new `Reading:` or `/cycle 0` and **stays blocked** until a different-surface reading is adopted. A glanceable ✓ / leftover-chrome sibling list is refused. A cap still spends remaining waves.
+- Leftover-chrome class (clip **or** glanceable ✓ preview) auto-LAST at 4. Consolidation closers do not reset that streak.
 - Cheapest-proof guidance: affected tests per wave, full suite on consolidation waves
 
 ## State

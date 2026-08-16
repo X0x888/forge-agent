@@ -39,6 +39,7 @@ import {
   ULW_LIVE_CONTROLS_HINT,
   summarizeWave,
   isPolishClassShip,
+  isGlanceableClassShip,
   resolveUlwPhase,
   advanceUlwPhaseOnReading,
   shouldSkipOrient,
@@ -1006,6 +1007,16 @@ describe("polish-class Stop", () => {
     );
     assert.equal(isPolishClassShip("dock owns identity — slim the banner"), true);
     assert.equal(isPolishClassShip("dock overflow drops brand"), true);
+    assert.equal(
+      isGlanceableClassShip(
+        "Wave 3 shipped: successful bash prints last 5 lines under the ✓ row",
+      ),
+      true,
+    );
+    assert.equal(
+      isGlanceableClassShip("Wave 1 shipped: Ctrl+R incremental history search"),
+      false,
+    );
   });
 
   it("evaluate-class arms in orient and flips to ship on a reading", () => {

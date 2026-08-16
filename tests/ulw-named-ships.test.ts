@@ -221,6 +221,123 @@ describe("named-ship backlog", () => {
       disarmUlwCycle(sid);
     });
   });
+
+  it("second Stop after an exhausted list does not open a free-invent wave", () => {
+    withHome(() => {
+      const sid = "sess-named-reblock";
+      fs.mkdirSync(path.join(process.env.FORGE_HOME!, "sessions", sid), {
+        recursive: true,
+      });
+      const s0 = armUlwCycle(sid, "comprehensively evaluate then improve ux", {
+        cycle: 1,
+        skipCheckpoint: true,
+        editCount: 0,
+      });
+      appendMemoryRecord(sid, {
+        kind: "decision",
+        source: "agent",
+        text: READING,
+      });
+      maybeAdoptNamedShips(s0, READING);
+      saveUlwCycle(s0);
+      const named = loadUlwCycle(sid)!.namedShips ?? [];
+      let edits = 0;
+      for (let i = 0; i < named.length; i++) {
+        edits += 4;
+        maybeStampUlwWave({
+          sessionId: sid,
+          editCount: edits,
+          openTodoCount: 0,
+          stepsSinceStamp: 1,
+          lastAssistantMessage: `Wave ${i + 1} shipped: ${named[i]!.text}`,
+        });
+      }
+      const first = evaluateUlwAtStop({
+        sessionId: sid,
+        lastAssistantMessage: "named list is done",
+        editCount: edits + 1,
+        openTodoCount: 0,
+        stuckThreshold: 20,
+      });
+      assert.match(first.reanchor || "", /named ships from the reading are done/i);
+      const wave = loadUlwCycle(sid)!.wave;
+      const second = evaluateUlwAtStop({
+        sessionId: sid,
+        lastAssistantMessage: "still done, no new reading",
+        editCount: edits + 2,
+        openTodoCount: 0,
+        stuckThreshold: 20,
+      });
+      assert.equal(second.block, true);
+      assert.match(second.reanchor || "", /Hard work looks exhausted|named ships from the reading are done/i);
+      assert.equal(loadUlwCycle(sid)!.wave, wave);
+      disarmUlwCycle(sid);
+    });
+  });
+
+  it("refuses a glanceable sibling reading after the exhausted admit", () => {
+    withHome(() => {
+      const sid = "sess-named-chrome";
+      fs.mkdirSync(path.join(process.env.FORGE_HOME!, "sessions", sid), {
+        recursive: true,
+      });
+      const s0 = armUlwCycle(sid, "comprehensively evaluate then improve ux", {
+        cycle: 1,
+        skipCheckpoint: true,
+        editCount: 0,
+      });
+      appendMemoryRecord(sid, {
+        kind: "decision",
+        source: "agent",
+        text: READING,
+      });
+      maybeAdoptNamedShips(s0, READING);
+      saveUlwCycle(s0);
+      const named = loadUlwCycle(sid)!.namedShips ?? [];
+      let edits = 0;
+      for (let i = 0; i < named.length; i++) {
+        edits += 4;
+        maybeStampUlwWave({
+          sessionId: sid,
+          editCount: edits,
+          openTodoCount: 0,
+          stepsSinceStamp: 1,
+          lastAssistantMessage: `Wave ${i + 1} shipped: ${named[i]!.text}`,
+        });
+      }
+      evaluateUlwAtStop({
+        sessionId: sid,
+        lastAssistantMessage: "named list is done",
+        editCount: edits + 1,
+        openTodoCount: 0,
+        stuckThreshold: 20,
+      });
+      const before = (loadUlwCycle(sid)!.namedShips ?? []).map((x) => x.text);
+      const chrome =
+        "Reading: glanceable ✓ class continues. The ONE ship is search_mcp lists first 5 matched tool names under the ✓ row. Passed on: leftover chrome.";
+      appendMemoryRecord(sid, {
+        kind: "decision",
+        source: "agent",
+        text: chrome,
+      });
+      const adopted = maybeAdoptNamedShips(loadUlwCycle(sid)!, chrome);
+      assert.equal(adopted, false);
+      assert.deepEqual(
+        (loadUlwCycle(sid)!.namedShips ?? []).map((x) => x.text),
+        before,
+      );
+      const blocked = evaluateUlwAtStop({
+        sessionId: sid,
+        lastAssistantMessage: chrome,
+        editCount: edits + 2,
+        openTodoCount: 0,
+        stuckThreshold: 20,
+      });
+      assert.equal(blocked.block, true);
+      assert.match(blocked.reanchor || "", /Hard work looks exhausted|named ships from the reading are done/i);
+      disarmUlwCycle(sid);
+    });
+  });
 });
 
 describe("auto-commit clean-tree baseline", () => {

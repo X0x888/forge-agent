@@ -642,6 +642,30 @@ export function isPolishClassShip(text: string): boolean {
   );
 }
 
+/**
+ * Glanceable ✓ / last-N-lines preview siblings. Dogfood `693c5fb1` shipped
+ * 16 of these after the reading's list was done; polish-class missed them.
+ */
+export function isGlanceableClassShip(text: string): boolean {
+  return /glanceable|same glanceable-work|under the [✓✔] row|extraDefaultPreview|✓\s*preview|first \d+\s+(?:lines?|hits?|names?|result lines|prose lines)|last \d+\s+(?:log )?lines(?:\s+under)?|(?:web_search|web_fetch|call_mcp|search_mcp|get_task_output|lsp)\s+(?:diagnostics )?preview|lists (?:up to )?\d+ hit titles|child'?s report now prints|spawn_subagent.{0,60}first \d+ lines|live ›[^\n]{0,48}last[- ]line|bang-shell live/i.test(
+    text || "",
+  );
+}
+
+/** Polish clip-class ∪ glanceable ✓-class — one leftover-chrome family. */
+export function isLeftoverChromeShip(text: string): boolean {
+  return isPolishClassShip(text) || isGlanceableClassShip(text);
+}
+
+/** Consolidation closers must not reset the leftover-chrome streak. */
+export function isConsolidationCloser(text: string): boolean {
+  const t = text || "";
+  return (
+    /\bconsolidat/i.test(t) &&
+    /\b(?:no new scope|full (?:check )?suite|tests pass|\d+\s+tests)\b/i.test(t)
+  );
+}
+
 export type UlwPhase = "orient" | "ship";
 
 export function resolveUlwPhase(s: UlwCycleState | null | undefined): UlwPhase {
@@ -690,7 +714,10 @@ const POLISH_ADVISORY_STREAK = 3;
 const POLISH_LAST_STREAK = 4;
 
 function notePolishShip(s: UlwCycleState, message: string): number {
-  if (isPolishClassShip(message)) {
+  // Every 4th wave is consolidation — that closer is not chrome, but it
+  // must not wipe a 3-ship glanceable streak (693c5fb1 never reached 4).
+  if (isConsolidationCloser(message)) return s.polishStreak ?? 0;
+  if (isLeftoverChromeShip(message)) {
     s.polishStreak = (s.polishStreak ?? 0) + 1;
   } else {
     s.polishStreak = 0;
@@ -713,7 +740,10 @@ function closerText(sessionId: string, lastAssistant: string): string {
       const r = recs[i]!;
       if (r.source !== "agent") continue;
       if (since && r.at <= since) break;
-      if (isDeclaredWaveClose(r.text) || isPolishClassShip(r.text)) {
+      if (
+        isDeclaredWaveClose(r.text) ||
+        isLeftoverChromeShip(r.text)
+      ) {
         mem = r.text;
         break;
       }
@@ -726,7 +756,7 @@ function closerText(sessionId: string, lastAssistant: string): string {
 
 function polishAdmit(streak: number): string {
   return [
-    `Last ${streak} ships are the same polish class (clip / one-line chrome / leftover dump).`,
+    `Last ${streak} ships are the same leftover-chrome class (clip / one-line / glanceable ✓ preview).`,
     "Next unit must be a different surface (trust, correctness, workflow) — or /cycle 0, then **Cycle complete.**",
     "Do not hunt leftover dumps. \"Finish the class\" means defect/call-site siblings, not chrome leftovers.",
   ].join(" ");
@@ -858,6 +888,15 @@ export function maybeAdoptNamedShips(
   ) {
     return false;
   }
+  // Unlimited: after we already asked for a new reading, do not adopt the
+  // next sibling ✓ / clip leftover as a fresh plan (693c5fb1 ×3).
+  if (
+    normalizeMaxWaves(s.maxWaves) == null &&
+    (s.namedShipAdmitCount ?? 0) >= 1 &&
+    parsed.every((p) => isLeftoverChromeShip(p))
+  ) {
+    return false;
+  }
   s.namedShips = parsed.map((item) => ({ text: item, status: "open" as const }));
   s.namedShipAdmitDone = false;
   return true;
@@ -909,12 +948,6 @@ const NAMED_SHIP_EXHAUSTED_STRONG = [
 ].join("\n");
 
 const MAX_NAMED_SHIP_ADMITS = 3;
-
-export function isGlanceableClassShip(text: string): boolean {
-  return /glanceable|under the [✓✔] row|same glanceable-work|first \d+\s+(?:lines?|hits?|names?)|last \d+\s+(?:log )?lines under|extraDefaultPreview/i.test(
-    text || "",
-  );
-}
 
 const OPEN_WAVE_WRAP_TEXT =
   "Finish the open wave: ship or revert in-flight work, prove, review";
@@ -2321,19 +2354,19 @@ export function evaluateUlwAtStop(opts: {
     const closer = closerText(opts.sessionId, msg);
     // Do not use parse(closer) here — later replies often reprint the
     // original Reading, which would skip the gate forever.
-    if (
-      cap == null &&
-      namedShipsExhausted(s) &&
-      !s.namedShipAdmitDone &&
-      !adoptedNamed
-    ) {
-      s.namedShipAdmitDone = true;
+    if (cap == null && namedShipsExhausted(s) && !adoptedNamed) {
+      // Stay blocked until a different-surface reading is adopted or
+      // /cycle 0. Asking once then stamping a free-invent wave is how
+      // 693c5fb1 turned three admits into 16 glanceable siblings.
       s.namedShipAdmitCount = (s.namedShipAdmitCount ?? 0) + 1;
+      s.namedShipAdmitDone = true;
       const glanceable =
-        (s.waves ?? []).slice(-3).filter((w) => isGlanceableClassShip(w.summary))
-          .length >= 2 || isGlanceableClassShip(closer);
+        (s.waves ?? []).slice(-3).filter((w) => isLeftoverChromeShip(w.summary))
+          .length >= 2 || isLeftoverChromeShip(closer);
       const strong =
-        (s.namedShipAdmitCount ?? 0) >= MAX_NAMED_SHIP_ADMITS || glanceable;
+        (s.namedShipAdmitCount ?? 0) >= MAX_NAMED_SHIP_ADMITS ||
+        glanceable ||
+        s.namedShipAdmitCount > 1;
       const admit = strong
         ? NAMED_SHIP_EXHAUSTED_STRONG
         : NAMED_SHIP_EXHAUSTED_ADMIT;

@@ -14,6 +14,7 @@ import {
   MID_WAVE_STAMP_STEPS,
   isDeclaredWaveClose,
   isPolishClassShip,
+  isGlanceableClassShip,
 } from "../src/harness/ulw-cycle.js";
 import { appendMemoryRecord } from "../src/harness/decision-memory.js";
 
@@ -448,6 +449,91 @@ describe("ULW mid-loop wave stamp", () => {
       assert.equal(last?.flippedToLast, true);
       assert.equal(loadUlwCycle(sid)!.cycle, 0);
       assert.match(last?.admit || "", /polish-class auto LAST|polish class/i);
+      disarmUlwCycle(sid);
+    });
+  });
+
+  it("four glanceable ✓ ships flip LAST even if wave 4 is consolidation", () => {
+    withHome(() => {
+      const sid = "sess-glanceable-last";
+      fs.mkdirSync(path.join(process.env.FORGE_HOME!, "sessions", sid), {
+        recursive: true,
+      });
+      armUlwCycle(sid, "improve the ui", {
+        cycle: 1,
+        skipCheckpoint: true,
+        editCount: 0,
+      });
+      assert.equal(
+        isGlanceableClassShip(
+          "Wave 2 ship: last 5 lines under the ✓ row. Same glanceable-work class.",
+        ),
+        true,
+      );
+      assert.equal(
+        isGlanceableClassShip("Wave 1 shipped: Ctrl+R incremental history search"),
+        false,
+      );
+      let edits = 0;
+      const ships = [
+        "Wave 1 shipped: spawn_subagent prints the first 8 lines of the child's report. Same glanceable-work class as edit diffs.",
+        "Wave 2 shipped: successful bash prints last 5 lines under the ✓ row.",
+        "Consolidation: 1819 tests pass. No new scope. Hostile review of the glanceable previews.",
+        "Wave 4 shipped: web_search lists up to 5 hit titles under the ✓ row.",
+        "Wave 5 shipped: get_task_output shows last 8 log lines under the ✓ row.",
+      ];
+      let last;
+      for (const closer of ships) {
+        edits += 5;
+        last = maybeStampUlwWave({
+          sessionId: sid,
+          editCount: edits,
+          openTodoCount: 0,
+          stepsSinceStamp: 1,
+          lastAssistantMessage: closer,
+        });
+      }
+      assert.equal(last?.stamped, true);
+      assert.equal(last?.flippedToLast, true, "consolidation must not reset chrome streak");
+      assert.equal(loadUlwCycle(sid)!.cycle, 0);
+      disarmUlwCycle(sid);
+    });
+  });
+
+  it("four different-surface ships do not polish-LAST", () => {
+    withHome(() => {
+      const sid = "sess-surfaces";
+      fs.mkdirSync(path.join(process.env.FORGE_HOME!, "sessions", sid), {
+        recursive: true,
+      });
+      armUlwCycle(sid, "improve the ui", {
+        cycle: 1,
+        maxWaves: 8,
+        skipCheckpoint: true,
+        editCount: 0,
+      });
+      const ships = [
+        "Wave 1 shipped: dock shows the running tool name and elapsed",
+        "Wave 2 shipped: delayed ▸ start on the transcript",
+        "Wave 3 shipped: you › user-turn landmarks",
+        "Wave 4 shipped: setup-card keys live on the rows",
+      ];
+      let edits = 0;
+      let last;
+      for (const closer of ships) {
+        edits += 5;
+        last = maybeStampUlwWave({
+          sessionId: sid,
+          editCount: edits,
+          openTodoCount: 0,
+          stepsSinceStamp: 1,
+          lastAssistantMessage: closer,
+        });
+      }
+      assert.equal(last?.stamped, true);
+      assert.equal(last?.flippedToLast, false);
+      assert.equal(loadUlwCycle(sid)!.cycle, 1);
+      assert.equal(loadUlwCycle(sid)!.wave, 4);
       disarmUlwCycle(sid);
     });
   });

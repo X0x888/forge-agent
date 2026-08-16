@@ -306,6 +306,8 @@ export {
   ensureUlwWrap,
   formatWrapCard,
   isGlanceableClassShip,
+  isLeftoverChromeShip,
+  isConsolidationCloser,
   applyCleanBaselineAfterCommit,
   noteUlwTreeAfterAutoCommit,
   isPolishClassShip,
