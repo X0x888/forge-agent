@@ -37,23 +37,33 @@ export function formatTurnChangeSummary(
       : `verify: none — edits unverified`;
   const cols = process.stdout.isTTY ? process.stdout.columns || 80 : 80;
   const prefix = `  Δ ${byPath.size} file${byPath.size === 1 ? "" : "s"}: `;
+  const callout = !lv || isLastVerificationStale(meta);
+  const fitNames = (budget: number): string => {
+    let shown = names.slice(0, 6);
+    let more = names.length > shown.length ? ` +${names.length - shown.length} more` : "";
+    while (
+      shown.length > 1 &&
+      visibleWidth(`${shown.join(", ")}${more}`) > budget
+    ) {
+      shown = shown.slice(0, -1);
+      more = ` +${names.length - shown.length} more`;
+    }
+    let mid = `${shown.join(", ")}${more}`;
+    if (visibleWidth(mid) > budget) mid = clipAnsi(mid, budget);
+    return mid;
+  };
+  if (callout) {
+    const mid = fitNames(Math.max(8, cols - visibleWidth(prefix)));
+    const files = clipAnsi(`${prefix}${mid}`, cols);
+    const check = clipAnsi(`  ${verify}`, cols);
+    return `${files}\n${chalk.yellow(check)}`;
+  }
   const suffix = `  ·  ${verify}`;
   const reserved = visibleWidth(prefix) + visibleWidth(suffix);
   if (reserved >= cols) {
     return `${prefix}${clipAnsi(suffix.trimStart(), Math.max(8, cols - visibleWidth(prefix)))}`;
   }
-  const budget = cols - reserved;
-  let shown = names.slice(0, 6);
-  let more = names.length > shown.length ? ` +${names.length - shown.length} more` : "";
-  while (
-    shown.length > 1 &&
-    visibleWidth(`${shown.join(", ")}${more}`) > budget
-  ) {
-    shown = shown.slice(0, -1);
-    more = ` +${names.length - shown.length} more`;
-  }
-  let mid = `${shown.join(", ")}${more}`;
-  if (visibleWidth(mid) > budget) mid = clipAnsi(mid, budget);
+  const mid = fitNames(cols - reserved);
   return `${prefix}${mid}${suffix}`;
 }
 

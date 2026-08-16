@@ -108,7 +108,7 @@ test("turn summary: fresh verification shows ✓, stale shows predates-last-edit
   assert.match(stale, /verify: npm test \(stale — predates last edit\)/);
 });
 
-test("turn summary: clips to one TTY row and keeps verify", () => {
+test("turn summary: unverified verify sits on its own line", () => {
   const prevCols = process.stdout.columns;
   const prevTty = process.stdout.isTTY;
   Object.defineProperty(process.stdout, "isTTY", {
@@ -123,11 +123,21 @@ test("turn summary: clips to one TTY row and keeps verify", () => {
     const edits = Array.from({ length: 8 }, (_, i) =>
       mut(`/repo/very/long/path/to/source/file-${i}.ts`),
     );
-    const line = formatTurnChangeSummary(edits, CWD, baseMeta)!;
-    assert.ok(!line.includes("\n"));
-    assert.ok(visibleWidth(line) <= 48);
-    assert.match(line, /Δ 8 files:/);
-    assert.match(line, /verify:/);
+    const card = formatTurnChangeSummary(edits, CWD, baseMeta)!;
+    const rows = card.split("\n");
+    assert.equal(rows.length, 2);
+    assert.ok(visibleWidth(rows[0]!) <= 48);
+    assert.ok(visibleWidth(rows[1]!) <= 48);
+    assert.match(rows[0]!, /Δ 8 files:/);
+    assert.match(rows[1]!, /verify:/);
+    const ok = formatTurnChangeSummary(edits, CWD, {
+      lastVerificationCommand: "npm test",
+      lastVerificationAt: "2026-01-01T00:10:00Z",
+      lastEditAt: "2026-01-01T00:05:00Z",
+      editCount: 2,
+    } as never)!;
+    assert.ok(!ok.includes("\n"));
+    assert.match(ok, /verify: npm test ✓/);
   } finally {
     Object.defineProperty(process.stdout, "isTTY", {
       value: prevTty,

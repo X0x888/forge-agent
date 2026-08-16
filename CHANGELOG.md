@@ -19,6 +19,7 @@
 - **web_search preview**: a successful search prints up to 5 hit titles under the ✓ row (no URLs). Empty "no results" stays one line. `/verbose` still dumps the full report.
 - **Background-task completion tail**: when a bg bash finishes, the mid-run interjection includes the last 8 log lines so the agent can act without a follow-up `get_task_output`. The idle `you ›` notice also shows the last log line (`pass 36`).
 - **Live › bash last-line**: foreground `bash` streams the last nonempty stdout/stderr line into `live ›` (200ms throttle) so a long `npm test` is not a frozen `tool bash`.
+- **Δ closer verify callout**: missing or stale verification prints on its own yellow line under the file list so it cannot be clipped off the Δ row. Fresh `verify: … ✓` stays one line.
 - **Unlimited named-ship backlog**: the Wave-1 reading's ONE ship + passed-on list is stored on `ulw.json`. When every item is done and `maxWaves` is unset, Stop asks **once** for a new `Reading:` or `/cycle 0`. Capped runs still spend remaining waves. `/cycle status` lists the ships.
 - **`provider_round` `pruneKind` + `cacheDrop`**: metrics distinguish `first_clip` / `sticky` / `reclip` / `always`, and flag a round that fell below 5% cache after a prior round above 90%. `/cost` last-round line and `forge run --json` expose `lastPruneKind`.
 
