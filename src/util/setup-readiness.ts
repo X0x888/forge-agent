@@ -138,27 +138,38 @@ export function assessSetupReadiness(
   };
 }
 
+/** Idle 1–6 keys. Auth is `forge login` (no number). Scaffold is 6, not assessed. */
+const SETUP_KEY: Partial<Record<SetupItemId, string>> = {
+  provider_model: "1",
+  budget: "2",
+  project_rules: "3",
+  attention: "4",
+  lsp: "5",
+};
+
+function setupMark(item: SetupItem): string {
+  if (item.ready) return "✓";
+  if (item.severity === "blocking") return "⚠";
+  if (item.severity === "optional") return "·";
+  return "○";
+}
+
 /** Full /setup card (no chalk — callers color if they want). */
 export function formatSetupCard(r: SetupAssessment): string {
   const lines = [`Setup  ${r.ready}/${r.total} ready`];
   for (const item of r.items) {
-    const mark = item.ready ? "x" : " ";
-    const arrow = item.ready ? "" : `  →  ${item.action}`;
+    const mark = setupMark(item);
+    const key = SETUP_KEY[item.id];
+    const keyBit = key ? `${key}  ` : "   ";
+    // Numbered rows are the action. Auth has no key — keep the verb.
+    const action = !item.ready && !key ? `  →  ${item.action}` : "";
     lines.push(
-      `  [${mark}] ${item.label.padEnd(18)} ${item.detail}${arrow}`,
+      `  ${mark} ${keyBit}${item.label.padEnd(18)} ${item.detail}${action}`,
     );
   }
+  lines.push(`  · 6  ${"scaffold files".padEnd(18)} forge init`);
   lines.push("");
-  lines.push(
-    "  1) Confirm provider / model     2) Set spend cap",
-  );
-  lines.push(
-    "  3) Write AGENTS.md (/init)      4) Turn-end notify",
-  );
-  lines.push(
-    "  5) Install LSP                  6) Scaffold files (forge init)",
-  );
-  lines.push("  Type 1–6 here  ·  /setup skip hides this  ·  /setup help");
+  lines.push("  Type 1–6  ·  /setup skip hides this  ·  /setup help");
   return lines.join("\n");
 }
 

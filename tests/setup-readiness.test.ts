@@ -74,15 +74,26 @@ describe("assessSetupReadiness", () => {
     const r = assessSetupReadiness(base);
     const card = formatSetupCard(r);
     assert.match(card, /Setup  \d\/6 ready/);
-    assert.match(card, /\[ \].*spend cap/);
-    assert.match(card, /Type 1–6 here/);
+    assert.match(card, /○ 2\s+spend cap/);
+    assert.match(card, /○ 3\s+project rules/);
+    assert.match(card, /· 6\s+scaffold files/);
+    assert.match(card, /Type 1–6/);
     assert.match(card, /\/setup skip/);
+    assert.doesNotMatch(card, /\[ \]|\[x\]/);
+    assert.doesNotMatch(card, /1\) Confirm provider/);
     const compact = formatSetupCompactLine(r);
     assert.match(compact, /setup \d\/6/);
     assert.match(compact, /no spend cap/);
     assert.match(compact, /no AGENTS\.md/);
     assert.match(compact, /type 1–6 or \/setup/);
     assert.doesNotMatch(compact, /notify off|lsp missing/);
+  });
+
+  it("marks blocking auth with ⚠ and keeps forge login on that row", () => {
+    const r = assessSetupReadiness({ ...base, authenticated: false });
+    const card = formatSetupCard(r);
+    assert.match(card, /⚠\s+signed in\s+not authenticated\s+→\s+forge login/);
+    assert.doesNotMatch(card, /⚠ 1 /);
   });
 
   it("compact line ignores optional notify/lsp residue", () => {
