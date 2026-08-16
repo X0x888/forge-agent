@@ -5489,7 +5489,7 @@ case "/new":
           output:
             list.length === 0
               ? showAll
-                ? "No sessions. Usage: /resume <id-prefix|title>"
+                ? "No sessions. Usage: /resume <n|id-prefix|title>"
                 : `No sessions for this workspace. Try: /resume all`
               : `Usage: /resume <n|id-prefix|title>  ·  ${scope}\n\nRecent:\n${list
                   .map((s, i) => {
