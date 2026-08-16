@@ -54,6 +54,29 @@ function isCallMcpTool(name: string): boolean {
   return /^(call_mcp|CallMcp)$/i.test(name);
 }
 
+function isSearchMcpTool(name: string): boolean {
+  return /^(search_mcp|SearchMcp)$/i.test(name);
+}
+
+/** First matched MCP tool names under ✓ search_mcp. */
+export function formatSearchMcpTranscriptPreview(
+  output: string,
+  opts?: { maxHits?: number },
+): string {
+  const maxHits = opts?.maxHits ?? 5;
+  const hits: string[] = [];
+  for (const raw of output.split("\n")) {
+    const m = raw.match(/^-\s+\*{0,2}([^*\s]+)\*{0,2}/);
+    if (m?.[1]) hits.push(m[1]);
+  }
+  if (!hits.length) return "";
+  const shown = hits.slice(0, maxHits);
+  const extra = hits.length - shown.length;
+  const painted = shown.map((h, i) => chalk.dim(`  ${i + 1}. ${h}`));
+  if (extra > 0) painted.push(chalk.dim(`  … +${extra} more · /verbose`));
+  return painted.join("\n");
+}
+
 /** First nonempty lines of an MCP result under ✓ call_mcp. */
 export function formatCallMcpTranscriptPreview(
   output: string,
@@ -233,6 +256,7 @@ export function extraDefaultPreview(name: string, r: ToolTranscriptEnd): string 
   if (isGetTaskOutputTool(name)) return formatGetTaskOutputPreview(out);
   if (isWebFetchTool(name)) return formatWebFetchTranscriptPreview(out);
   if (isCallMcpTool(name)) return formatCallMcpTranscriptPreview(out);
+  if (isSearchMcpTool(name)) return formatSearchMcpTranscriptPreview(out);
   return "";
 }
 

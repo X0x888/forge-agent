@@ -674,6 +674,37 @@ describe("default tool status line", () => {
     assert.equal(short.includes("\n"), false);
   });
 
+  it("search_mcp default transcript lists matched tool names", () => {
+    const body = [
+      'MCP tools matching "browser" (3):',
+      "- **playwright__click** [read-only] — Click an element",
+      "- **playwright__navigate** — Open a URL",
+      "- **playwright__screenshot** — Capture the page",
+    ].join("\n");
+    const text = strip(
+      formatDefaultToolEndTranscript("search_mcp", {
+        isError: false,
+        ms: 80,
+        bytes: 120,
+        args: { query: "browser" },
+        output: body,
+      }),
+    );
+    assert.match(text, /✓ search_mcp/);
+    assert.match(text, /playwright__click/);
+    assert.match(text, /playwright__screenshot/);
+    const empty = strip(
+      formatDefaultToolEndTranscript("search_mcp", {
+        isError: false,
+        ms: 20,
+        bytes: 20,
+        args: { query: "zzz" },
+        output: 'No MCP tools matched "zzz".',
+      }),
+    );
+    assert.equal(empty.includes("\n"), false);
+  });
+
   it("verbose transcript prints the full output block", () => {
     const text = strip(
       formatVerboseToolEndTranscript("bash", {
