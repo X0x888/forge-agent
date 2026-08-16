@@ -35,7 +35,46 @@ export const DEFAULT_SUBAGENT_PREVIEW_LINES = 8;
 export const DEFAULT_WEB_SEARCH_PREVIEW_HITS = 5;
 
 function isWebSearchTool(name: string): boolean {
-  return /^(web_search|websearch)$/i.test(name);
+  return /^(web_search|WebSearch)$/i.test(name);
+}
+
+function isLspTool(name: string): boolean {
+  return /^lsp$/i.test(name);
+}
+
+function isGetTaskOutputTool(name: string): boolean {
+  return /^(get_task_output|TaskOutput)$/i.test(name);
+}
+
+/** Last 8 log lines under ✓ get_task_output. Short "still running" notes stay one row. */
+export function formatGetTaskOutputPreview(
+  output: string,
+  opts?: { maxLines?: number },
+): string {
+  const maxLines = opts?.maxLines ?? 8;
+  const nonempty = output.split("\n").filter((l) => l.trim());
+  if (nonempty.length < 3) return "";
+  return formatToolOutputHead(output, { tail: true, maxLines });
+}
+
+/** Compact lsp report: count line + first hits. "No diagnostics." stays one ✓ row. */
+export function formatLspTranscriptPreview(
+  output: string,
+  opts?: { maxLines?: number },
+): string {
+  const maxLines = opts?.maxLines ?? 6;
+  const lines = output
+    .replace(/\r\n/g, "\n")
+    .split("\n")
+    .map((l) => l.replace(/\s+$/u, ""))
+    .filter((l) => l.length);
+  if (!lines.length) return "";
+  if (lines.length === 1 && /no diagnostics/i.test(lines[0]!)) return "";
+  const shown = lines.slice(0, maxLines);
+  const extra = lines.length - shown.length;
+  const painted = shown.map((l) => chalk.dim(`  ${l}`));
+  if (extra > 0) painted.push(chalk.dim(`  … +${extra} more · /verbose`));
+  return painted.join("\n");
 }
 
 /**
@@ -148,6 +187,12 @@ export function formatDefaultToolEndTranscript(
   } else if (!r.isError && isWebSearchTool(name) && r.output) {
     const preview = formatWebSearchTranscriptPreview(r.output);
     if (preview) lines.push(preview);
+  } else if (!r.isError && isLspTool(name) && r.output) {
+    const preview = formatLspTranscriptPreview(r.output);
+    if (preview) lines.push(preview);
+  } else if (!r.isError && isGetTaskOutputTool(name) && r.output) {
+    const preview = formatGetTaskOutputPreview(r.output);
+    if (preview) lines.push(preview);
   }
   return lines.join("\n");
 }
@@ -232,7 +277,9 @@ export function createToolEndCoalescer(print: (line: string) => void) {
         isUsefulDiff(r.diff) ||
         (isSubagentTool(name) && Boolean(r.output?.trim())) ||
         (isBashToolName(name) && Boolean(formatSuccessfulBashTail(r.output ?? ""))) ||
-        (isWebSearchTool(name) && Boolean(formatWebSearchTranscriptPreview(r.output ?? "")))
+        (isWebSearchTool(name) && Boolean(formatWebSearchTranscriptPreview(r.output ?? ""))) ||
+        (isLspTool(name) && Boolean(formatLspTranscriptPreview(r.output ?? ""))) ||
+        (isGetTaskOutputTool(name) && Boolean(formatGetTaskOutputPreview(r.output ?? "")))
       ) {
         flush();
         print(

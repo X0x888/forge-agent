@@ -14,6 +14,7 @@ import {
   formatSubagentTranscriptPreview,
   formatVerboseToolEndTranscript,
   formatWebSearchTranscriptPreview,
+  formatLspTranscriptPreview,
   stripSubagentHeader,
 } from "../src/tui/tool-transcript.js";
 
@@ -542,6 +543,72 @@ describe("default tool status line", () => {
       }),
     );
     assert.equal(empty.includes("\n"), false);
+  });
+
+  it("lsp diagnostics preview shows counts and first hits", () => {
+    const report = [
+      "Diagnostics: 2 error(s), 1 warning(s), 0 info/hint",
+      "src/a.ts:10:2 error [2345]: Type 'string' is not assignable",
+      "src/b.ts:4:1 error: Cannot find name 'foo'",
+      "src/c.ts:1:1 warning: unused",
+    ].join("\n");
+    const preview = strip(formatLspTranscriptPreview(report, { maxLines: 3 }));
+    assert.match(preview, /2 error\(s\)/);
+    assert.match(preview, /src\/a\.ts:10:2/);
+    assert.match(preview, /\+1 more · \/verbose/);
+    assert.equal(formatLspTranscriptPreview("No diagnostics."), "");
+    const text = strip(
+      formatDefaultToolEndTranscript("lsp", {
+        isError: false,
+        ms: 120,
+        bytes: 80,
+        args: { action: "diagnostics", path: "src/a.ts" },
+        output: report,
+      }),
+    );
+    assert.match(text, /2 error\(s\)/);
+    assert.match(text, /src\/a\.ts:10:2/);
+    const clean = strip(
+      formatDefaultToolEndTranscript("lsp", {
+        isError: false,
+        ms: 40,
+        bytes: 16,
+        args: { action: "diagnostics", path: "src/ok.ts" },
+        output: "No diagnostics.",
+      }),
+    );
+    assert.equal(clean.includes("\n"), false);
+  });
+
+  it("get_task_output default transcript shows the last log lines", () => {
+    const log = [
+      "wait: reached completed in 1200ms",
+      "ok 1 extract",
+      "ok 2 format",
+      "ok 3 flush",
+      "pass 3",
+    ].join("\n");
+    const text = strip(
+      formatDefaultToolEndTranscript("get_task_output", {
+        isError: false,
+        ms: 80,
+        bytes: 80,
+        args: { task_id: "bg_abc" },
+        output: log,
+      }),
+    );
+    assert.match(text, /✓ get_task_output task_id=bg_abc/);
+    assert.match(text, /pass 3/);
+    const short = strip(
+      formatDefaultToolEndTranscript("get_task_output", {
+        isError: false,
+        ms: 20,
+        bytes: 20,
+        args: { task_id: "bg_abc" },
+        output: "still running",
+      }),
+    );
+    assert.equal(short.includes("\n"), false);
   });
 
   it("verbose transcript prints the full output block", () => {
