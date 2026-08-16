@@ -7,6 +7,13 @@ import {
   deleteBackward,
   deleteForward,
   deleteWordBackward,
+  moveWord,
+  csiIsWordMotion,
+  findHistoryMatch,
+  startHistorySearch,
+  stepHistorySearch,
+  formatHistorySearchPrompt,
+  historySearchCursor,
   normalizePaste,
   countLines,
   cursorRowCol,
@@ -164,5 +171,97 @@ describe("resolveCtrlC", () => {
     assert.equal(resolveCtrlC("/cyc", true), "sigint");
     assert.equal(resolveCtrlC("queue this", true), "sigint");
     assert.equal(resolveCtrlC("", true), "sigint");
+  });
+});
+
+describe("history incremental search", () => {
+  const hist = [
+    "/status",
+    "fix the permission prompt",
+    "/retry",
+    "fix the dock hop",
+    "ship Ctrl+R search",
+  ];
+
+  it("findHistoryMatch is newest-first and case-insensitive", () => {
+    assert.equal(findHistoryMatch(hist, "FIX"), 3);
+    assert.equal(findHistoryMatch(hist, "fix", { fromIndex: 3, exclusive: true }), 1);
+    assert.equal(findHistoryMatch(hist, "nope"), -1);
+    assert.equal(findHistoryMatch([], "x"), -1);
+    assert.equal(findHistoryMatch(hist, "", { dir: 1 }), 0);
+  });
+
+  it("start + type keeps a still-matching hit, then steps older", () => {
+    let s = startHistorySearch(hist, -1);
+    assert.equal(s.matchIndex, hist.length - 1);
+    assert.equal(s.failed, false);
+    s = stepHistorySearch(hist, s, { type: "type", text: "s" });
+    assert.equal(hist[s.matchIndex], "ship Ctrl+R search");
+    s = stepHistorySearch(hist, s, { type: "type", text: "ea" });
+    assert.equal(hist[s.matchIndex], "ship Ctrl+R search");
+    s = stepHistorySearch(hist, startHistorySearch(hist, -1), {
+      type: "type",
+      text: "fix",
+    });
+    assert.equal(hist[s.matchIndex], "fix the dock hop");
+    assert.equal(s.failed, false);
+    const older = stepHistorySearch(hist, s, { type: "again" });
+    assert.equal(hist[older.matchIndex], "fix the permission prompt");
+    const fail = stepHistorySearch(hist, older, { type: "again" });
+    assert.equal(fail.failed, true);
+    assert.equal(fail.matchIndex, older.matchIndex);
+  });
+
+  it("backspace restores a broader match; flip walks forward", () => {
+    let s = startHistorySearch(hist, -1);
+    s = stepHistorySearch(hist, s, { type: "type", text: "retry" });
+    assert.equal(hist[s.matchIndex], "/retry");
+    s = stepHistorySearch(hist, s, { type: "backspace" });
+    assert.equal(s.query, "retr");
+    assert.equal(hist[s.matchIndex], "/retry");
+    s = stepHistorySearch(hist, s, { type: "flip", dir: 1 });
+    assert.equal(s.dir, 1);
+    // no newer /retry — stay failed on the same hit
+    assert.equal(s.failed, true);
+    assert.equal(hist[s.matchIndex], "/retry");
+  });
+
+  it("formatHistorySearchPrompt + cursor mark the query", () => {
+    const s = stepHistorySearch(
+      hist,
+      startHistorySearch(hist),
+      { type: "type", text: "dock" },
+    );
+    assert.equal(
+      formatHistorySearchPrompt(s),
+      "(bck-i-search)`dock': ",
+    );
+    assert.equal(
+      formatHistorySearchPrompt({ ...s, failed: true }),
+      "(failed bck-i-search)`dock': ",
+    );
+    assert.equal(
+      historySearchCursor("fix the dock hop", "dock"),
+      "fix the ".length + "dock".length,
+    );
+    assert.equal(historySearchCursor("abc", ""), 3);
+  });
+});
+
+describe("word motion", () => {
+  it("moveWord skips whitespace both ways", () => {
+    assert.equal(moveWord("foo  bar baz", 12, -1), 9);
+    assert.equal(moveWord("foo  bar baz", 8, -1), 5);
+    assert.equal(moveWord("foo  bar baz", 0, 1), 5);
+    assert.equal(moveWord("foo  bar baz", 5, 1), 9);
+    assert.equal(moveWord("", 0, -1), 0);
+  });
+
+  it("csiIsWordMotion reads ctrl/alt modifiers", () => {
+    assert.equal(csiIsWordMotion("1;5", "C"), 1);
+    assert.equal(csiIsWordMotion("1;3", "D"), -1);
+    assert.equal(csiIsWordMotion("5", "C"), 1);
+    assert.equal(csiIsWordMotion("", "C"), 0);
+    assert.equal(csiIsWordMotion("1;5", "A"), 0);
   });
 });

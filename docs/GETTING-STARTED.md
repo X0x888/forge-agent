@@ -37,7 +37,7 @@ A bare `forge` on a TTY also offers this picker if you are not signed in. Type *
   setup 2/6  ·  no spend cap  ·  no AGENTS.md  ·  type 1–6 or /setup
 ```
 
-Type a coding task. You do not need a slash command. On the first-run card, **1–6** run that setup item (same as `/setup 1` … `/setup 6`). Empty Tab offers first-day starters (`/help`, `/setup`, `/plan`, …); type `/` then Tab for the full catalog. Permission prompts: **Enter** or `y` allows once.
+Type a coding task. You do not need a slash command. On the first-run card, **1–6** run that setup item (same as `/setup 1` … `/setup 6`). Empty Tab offers first-day starters (`/help`, `/setup`, `/plan`, …); type `/` then Tab for the full catalog. **Ctrl+R** searches previous prompts. Permission prompts: **Enter** or `y` allows once.
 
 ## 4. Finish settings (`/setup`)
 

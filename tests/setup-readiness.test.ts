@@ -431,6 +431,7 @@ describe("grouped help", () => {
     assert.match(all.text, /\/setup/);
     assert.match(HELP_START, /\/help all/);
     assert.match(HELP_START, /1–6 on the \/setup card/);
+    assert.match(HELP_START, /\^R search/);
     assert.match(HELP_ALL, /ask_user is a model tool|ask_user/);
     assert.match(HELP_ALL, /\/verbose/);
     assert.match(HELP_ALL, /\/skills/);

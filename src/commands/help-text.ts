@@ -41,7 +41,7 @@ Unattended
 
 Keys
 ────
-  ↵ sends  ·  ^J newline  ·  ↑↓ history  ·  Tab daily · /ul Tab more · @path
+  ↵ sends  ·  ^J newline  ·  ↑↓ history  ·  ^R search  ·  Tab daily · /ul Tab more · @path
   !cmd shell now  ·  /paste image  ·  Ctrl+C abort (twice to quit)
 
 Allow?  ↵/y once · a always · s session · n no
@@ -233,6 +233,8 @@ Status (always on — no second panel)
 Tips
 ────
   ↑ / ↓           Command history (persisted in ~/.forge/history)
+  Ctrl+R / Ctrl+S Reverse / forward incremental history search (esc / ^G cancel)
+  Ctrl+← / →      Jump by word (Alt+B / Alt+F)
   Tab             Autocomplete commands and parameters
   /permissions    Modes 1–4 · list|clear|revoke for saved always-allows
   Live controls   While the agent is working you can still type:

@@ -10,6 +10,9 @@
  *
  * Paste: bracketed paste (`CSI ?2004 h`) + burst fallback. Newlines in paste
  * never submit; only explicit Enter does.
+ *
+ * History: ↑/↓ walks entries; Ctrl+R / Ctrl+S is incremental search
+ * (Esc / Ctrl+G cancel). Ctrl/Alt+←/→ and Alt+B/F jump words.
  */
 import { EventEmitter } from "node:events";
 import readline from "node:readline";
@@ -158,6 +161,174 @@ export function deleteWordBackward(
     buffer: buffer.slice(0, i) + buffer.slice(cursor),
     cursor: i,
   };
+}
+
+/** Jump to the previous / next whitespace-delimited word. */
+export function moveWord(
+  buffer: string,
+  cursor: number,
+  dir: -1 | 1,
+): number {
+  const n = buffer.length;
+  let i = Math.max(0, Math.min(cursor, n));
+  if (dir < 0) {
+    while (i > 0 && /\s/.test(buffer[i - 1]!)) i--;
+    while (i > 0 && !/\s/.test(buffer[i - 1]!)) i--;
+  } else {
+    while (i < n && !/\s/.test(buffer[i]!)) i++;
+    while (i < n && /\s/.test(buffer[i]!)) i++;
+  }
+  return i;
+}
+
+/**
+ * Ctrl/Alt + arrow: `CSI 1;5C` / `1;3D` (and `CSI 5C` on some terms).
+ * 0 = ordinary left/right.
+ */
+export function csiIsWordMotion(params: string, final: string): -1 | 1 | 0 {
+  if (final !== "C" && final !== "D") return 0;
+  const mod = params.includes(";") ? (params.split(";")[1] ?? "") : params;
+  if (mod !== "5" && mod !== "3") return 0;
+  return final === "C" ? 1 : -1;
+}
+
+export type HistorySearchDir = -1 | 1;
+
+export interface HistorySearch {
+  query: string;
+  /** Index into history, or -1 when the list is empty. */
+  matchIndex: number;
+  dir: HistorySearchDir;
+  failed: boolean;
+}
+
+function historyEntryMatches(entry: string, query: string): boolean {
+  if (!query) return true;
+  return entry.toLowerCase().includes(query.toLowerCase());
+}
+
+/**
+ * Walk history for a case-insensitive substring. `fromIndex` + `exclusive`
+ * start at the next slot in `dir` (Ctrl+R again). Default: newest first.
+ */
+export function findHistoryMatch(
+  history: readonly string[],
+  query: string,
+  opts?: {
+    fromIndex?: number;
+    exclusive?: boolean;
+    dir?: HistorySearchDir;
+  },
+): number {
+  if (!history.length) return -1;
+  const dir = opts?.dir ?? -1;
+  let i: number;
+  if (opts?.fromIndex == null) {
+    i = dir < 0 ? history.length - 1 : 0;
+  } else if (opts.exclusive) {
+    i = opts.fromIndex + dir;
+  } else {
+    i = opts.fromIndex;
+  }
+  while (i >= 0 && i < history.length) {
+    if (historyEntryMatches(history[i]!, query)) return i;
+    i += dir;
+  }
+  return -1;
+}
+
+export function startHistorySearch(
+  history: readonly string[],
+  dir: HistorySearchDir = -1,
+): HistorySearch {
+  const matchIndex = findHistoryMatch(history, "", { dir });
+  return {
+    query: "",
+    matchIndex,
+    dir,
+    failed: matchIndex < 0,
+  };
+}
+
+export type HistorySearchAction =
+  | { type: "type"; text: string }
+  | { type: "backspace" }
+  | { type: "again" }
+  | { type: "flip"; dir: HistorySearchDir };
+
+/**
+ * Refine the query (keep the current hit when it still matches) or step
+ * to the next older/newer hit. A failed step keeps the last good index.
+ */
+export function stepHistorySearch(
+  history: readonly string[],
+  search: HistorySearch,
+  action: HistorySearchAction,
+): HistorySearch {
+  let query = search.query;
+  let dir = search.dir;
+  let exclusive = false;
+  let fromIndex: number | undefined = search.matchIndex;
+
+  if (action.type === "type") {
+    query += action.text;
+    if (
+      search.matchIndex >= 0 &&
+      historyEntryMatches(history[search.matchIndex] ?? "", query)
+    ) {
+      return { query, matchIndex: search.matchIndex, dir, failed: false };
+    }
+    exclusive = search.matchIndex >= 0;
+  } else if (action.type === "backspace") {
+    if (!query) return { ...search, failed: false };
+    query = query.slice(0, -1);
+    if (
+      search.matchIndex >= 0 &&
+      historyEntryMatches(history[search.matchIndex] ?? "", query)
+    ) {
+      return { query, matchIndex: search.matchIndex, dir, failed: false };
+    }
+    fromIndex = undefined;
+  } else if (action.type === "again") {
+    exclusive = search.matchIndex >= 0;
+  } else {
+    dir = action.dir;
+    exclusive = search.matchIndex >= 0;
+  }
+
+  const hit = findHistoryMatch(history, query, {
+    fromIndex,
+    exclusive,
+    dir,
+  });
+  if (hit >= 0) return { query, matchIndex: hit, dir, failed: false };
+  return {
+    query,
+    matchIndex: search.matchIndex,
+    dir,
+    failed: true,
+  };
+}
+
+export function formatHistorySearchPrompt(search: HistorySearch): string {
+  const tag = search.failed
+    ? search.dir < 0
+      ? "failed bck-i-search"
+      : "failed fwd-i-search"
+    : search.dir < 0
+      ? "bck-i-search"
+      : "fwd-i-search";
+  return `(${tag})\`${search.query}': `;
+}
+
+export const HISTORY_SEARCH_FOOTER =
+  "  ^R older · ^S newer · esc cancel · ↵ run";
+
+/** Cursor offset of `query` inside a matched history entry (end if empty). */
+export function historySearchCursor(match: string, query: string): number {
+  if (!query) return match.length;
+  const idx = match.toLowerCase().indexOf(query.toLowerCase());
+  return idx >= 0 ? idx + query.length : match.length;
 }
 
 export function normalizePaste(text: string): string {
@@ -417,6 +588,12 @@ class TtyPromptEditor extends EventEmitter implements PromptEditor {
 
   private burstActive = false;
   private burstTimer: ReturnType<typeof setTimeout> | null = null;
+  private escTimer: ReturnType<typeof setTimeout> | null = null;
+
+  /** Ctrl+R / Ctrl+S incremental history search. */
+  private search: HistorySearch | null = null;
+  private searchSnapshot = "";
+  private searchSnapshotCursor = 0;
 
   private readonly onData: (chunk: Buffer | string) => void;
 
@@ -451,6 +628,7 @@ class TtyPromptEditor extends EventEmitter implements PromptEditor {
   }
 
   setLine(text: string): void {
+    this.search = null;
     this.buffer = text;
     this.cursor = text.length;
     this.redraw();
@@ -465,6 +643,8 @@ class TtyPromptEditor extends EventEmitter implements PromptEditor {
     if (this.closed || this.suspended) return;
     this.suspended = true;
     this.clearBurst();
+    this.clearEscTimer();
+    this.dropSearch(/* restore */ true);
     this.pasting = false;
     this.pending = "";
     try {
@@ -525,6 +705,8 @@ class TtyPromptEditor extends EventEmitter implements PromptEditor {
     this.closed = true;
     this.suspended = false;
     this.clearBurst();
+    this.clearEscTimer();
+    this.search = null;
     try {
       this.output.write(BRACKETED_PASTE_DISABLE);
     } catch {
@@ -545,6 +727,7 @@ class TtyPromptEditor extends EventEmitter implements PromptEditor {
 
   private feed(raw: string): void {
     if (this.closed || this.suspended) return;
+    this.clearEscTimer();
     this.pending += raw;
 
     while (this.pending.length > 0) {
@@ -572,6 +755,7 @@ class TtyPromptEditor extends EventEmitter implements PromptEditor {
       const ps = this.pending.indexOf(PASTE_START);
       if (ps === 0) {
         this.pending = this.pending.slice(PASTE_START.length);
+        this.acceptSearch();
         this.pasting = true;
         continue;
       }
@@ -591,7 +775,10 @@ class TtyPromptEditor extends EventEmitter implements PromptEditor {
           this.pending = this.pending.slice(used);
           continue;
         }
-        if (this.pending === "\x1b") return;
+        if (this.pending === "\x1b") {
+          this.scheduleBareEsc();
+          return;
+        }
         if (this.pending.startsWith("\x1b") && this.pending.length < 2) return;
         if (
           this.pending.length < PASTE_START.length &&
@@ -652,13 +839,32 @@ class TtyPromptEditor extends EventEmitter implements PromptEditor {
     }
     if (s.length >= 2 && s[0] === "\x1b") {
       const k = s[1]!;
+      if (k === "\x1b") {
+        if (this.search) this.cancelSearch();
+        return 2;
+      }
+      if (k === "b" || k === "B") {
+        this.acceptSearch();
+        this.moveByWord(-1);
+        return 2;
+      }
+      if (k === "f" || k === "F") {
+        this.acceptSearch();
+        this.moveByWord(1);
+        return 2;
+      }
       if (k === "\r" || k === "\n") {
+        this.acceptSearch();
         this.insert("\n");
         this.multiLineHint = true;
         this.redraw();
       } else if (k >= " ") {
-        this.insert(k);
-        this.redraw();
+        if (this.search) {
+          this.refineSearch({ type: "type", text: k });
+        } else {
+          this.insert(k);
+          this.redraw();
+        }
       }
       return 2;
     }
@@ -666,35 +872,48 @@ class TtyPromptEditor extends EventEmitter implements PromptEditor {
   }
 
   private handleCsi(params: string, final: string): void {
+    const wordDir = csiIsWordMotion(params, final);
+    if (wordDir) {
+      this.acceptSearch();
+      this.moveByWord(wordDir);
+      return;
+    }
     if (final === "A") {
+      this.acceptSearch();
       this.historyUp();
       return;
     }
     if (final === "B") {
+      this.acceptSearch();
       this.historyDown();
       return;
     }
     if (final === "C") {
+      this.acceptSearch();
       if (this.cursor < this.buffer.length) this.cursor++;
       this.redraw();
       return;
     }
     if (final === "D") {
+      this.acceptSearch();
       if (this.cursor > 0) this.cursor--;
       this.redraw();
       return;
     }
     if (final === "H" || params + final === "1~") {
+      this.acceptSearch();
       this.cursor = 0;
       this.redraw();
       return;
     }
     if (final === "F" || params + final === "4~" || params + final === "8~") {
+      this.acceptSearch();
       this.cursor = this.buffer.length;
       this.redraw();
       return;
     }
     if (params + final === "3~") {
+      this.acceptSearch();
       const r = deleteForward(this.buffer, this.cursor);
       this.buffer = r.buffer;
       this.cursor = r.cursor;
@@ -722,6 +941,11 @@ class TtyPromptEditor extends EventEmitter implements PromptEditor {
       const ch = text[i]!;
       if (ch === "\x03") {
         // Ctrl+C — mid-run always aborts so a half-typed draft cannot trap it
+        if (this.search) {
+          this.cancelSearch();
+          if (this.busy) this.emit("SIGINT");
+          continue;
+        }
         if (resolveCtrlC(this.buffer, this.busy) === "clear") {
           this.buffer = "";
           this.cursor = 0;
@@ -740,6 +964,21 @@ class TtyPromptEditor extends EventEmitter implements PromptEditor {
         }
         continue;
       }
+      if (ch === "\x12") {
+        // Ctrl+R — reverse incremental history search
+        this.enterSearch(-1);
+        continue;
+      }
+      if (ch === "\x13") {
+        // Ctrl+S — forward incremental history search
+        this.enterSearch(1);
+        continue;
+      }
+      if (ch === "\x07") {
+        // Ctrl+G — abort search (readline)
+        if (this.search) this.cancelSearch();
+        continue;
+      }
       if (ch === "\x04") {
         if (this.buffer.length === 0) {
           this.close();
@@ -752,6 +991,10 @@ class TtyPromptEditor extends EventEmitter implements PromptEditor {
         continue;
       }
       if (ch === "\x15") {
+        if (this.search) {
+          this.setSearchQuery("");
+          continue;
+        }
         this.buffer = "";
         this.cursor = 0;
         this.multiLineHint = false;
@@ -759,6 +1002,12 @@ class TtyPromptEditor extends EventEmitter implements PromptEditor {
         continue;
       }
       if (ch === "\x17") {
+        if (this.search) {
+          const q = this.search.query.replace(/\s+$/u, "");
+          const cut = q.lastIndexOf(" ");
+          this.setSearchQuery(cut >= 0 ? q.slice(0, cut) : "");
+          continue;
+        }
         const r = deleteWordBackward(this.buffer, this.cursor);
         this.buffer = r.buffer;
         this.cursor = r.cursor;
@@ -766,20 +1015,31 @@ class TtyPromptEditor extends EventEmitter implements PromptEditor {
         continue;
       }
       if (ch === "\x01") {
+        this.acceptSearch();
         this.cursor = 0;
         this.redraw();
         continue;
       }
       if (ch === "\x05") {
+        this.acceptSearch();
         this.cursor = this.buffer.length;
         this.redraw();
         continue;
       }
       if (ch === "\t") {
+        if (this.search) {
+          this.acceptSearch();
+          this.redraw();
+          continue;
+        }
         this.doComplete();
         continue;
       }
       if (ch === "\x7f" || ch === "\b") {
+        if (this.search) {
+          this.refineSearch({ type: "backspace" });
+          continue;
+        }
         const r = deleteBackward(this.buffer, this.cursor);
         this.buffer = r.buffer;
         this.cursor = r.cursor;
@@ -790,16 +1050,28 @@ class TtyPromptEditor extends EventEmitter implements PromptEditor {
       if (ch === "\r") {
         if (text[i + 1] === "\n") i++;
         if (this.burstActive) {
+          this.acceptSearch();
           this.insert("\n");
           this.multiLineHint = true;
           this.scheduleBurstEnd();
           this.redraw();
           continue;
         }
+        if (this.search) {
+          if (this.search.matchIndex < 0) {
+            this.cancelSearch();
+            continue;
+          }
+          this.acceptSearch();
+        }
         this.submit();
         continue;
       }
       if (ch === "\n") {
+        if (this.search) {
+          this.refineSearch({ type: "type", text: " " });
+          continue;
+        }
         this.insert("\n");
         this.multiLineHint = true;
         this.scheduleBurstEnd();
@@ -807,6 +1079,10 @@ class TtyPromptEditor extends EventEmitter implements PromptEditor {
         continue;
       }
       if (ch >= " " || ch === "\t") {
+        if (this.search) {
+          this.refineSearch({ type: "type", text: ch });
+          continue;
+        }
         this.insert(ch);
         this.redraw();
       }
@@ -860,6 +1136,105 @@ class TtyPromptEditor extends EventEmitter implements PromptEditor {
     }
   }
 
+  private clearEscTimer(): void {
+    if (this.escTimer) {
+      clearTimeout(this.escTimer);
+      this.escTimer = null;
+    }
+  }
+
+  private scheduleBareEsc(): void {
+    this.clearEscTimer();
+    this.escTimer = setTimeout(() => {
+      this.escTimer = null;
+      if (this.pending !== "\x1b") return;
+      this.pending = "";
+      if (this.search) this.cancelSearch();
+    }, 50);
+    this.escTimer.unref?.();
+  }
+
+  private enterSearch(dir: HistorySearchDir): void {
+    if (!this.search) {
+      this.searchSnapshot = this.buffer;
+      this.searchSnapshotCursor = this.cursor;
+      this.search = startHistorySearch(this.history, dir);
+      this.applySearchMatch();
+      this.redraw();
+      return;
+    }
+    this.refineSearch(
+      this.search.dir === dir ? { type: "again" } : { type: "flip", dir },
+    );
+  }
+
+  private refineSearch(action: HistorySearchAction): void {
+    if (!this.search) return;
+    this.search = stepHistorySearch(this.history, this.search, action);
+    this.applySearchMatch();
+    this.redraw();
+  }
+
+  private setSearchQuery(query: string): void {
+    if (!this.search) return;
+    const hit = findHistoryMatch(this.history, query, { dir: this.search.dir });
+    this.search = {
+      query,
+      matchIndex: hit >= 0 ? hit : this.search.matchIndex,
+      dir: this.search.dir,
+      failed: hit < 0,
+    };
+    this.applySearchMatch();
+    this.redraw();
+  }
+
+  private applySearchMatch(): void {
+    if (!this.search || this.search.matchIndex < 0) return;
+    const match = this.history[this.search.matchIndex];
+    if (match == null) return;
+    this.buffer = match;
+    this.cursor = historySearchCursor(match, this.search.query);
+    this.multiLineHint = match.includes("\n");
+    this.historyIndex = -1;
+  }
+
+  /** Keep the current match in the buffer and leave search mode. */
+  private acceptSearch(): void {
+    if (!this.search) return;
+    this.search = null;
+    this.historyIndex = -1;
+  }
+
+  private cancelSearch(): void {
+    if (!this.search) return;
+    this.buffer = this.searchSnapshot;
+    this.cursor = this.searchSnapshotCursor;
+    this.search = null;
+    this.multiLineHint = this.buffer.includes("\n");
+    this.redraw();
+  }
+
+  private dropSearch(restore: boolean): void {
+    if (!this.search) return;
+    if (restore) {
+      this.buffer = this.searchSnapshot;
+      this.cursor = this.searchSnapshotCursor;
+      this.multiLineHint = this.buffer.includes("\n");
+    }
+    this.search = null;
+  }
+
+  private moveByWord(dir: -1 | 1): void {
+    this.cursor = moveWord(this.buffer, this.cursor, dir);
+    this.redraw();
+  }
+
+  private activePrompt(): string {
+    return this.search
+      ? formatHistorySearchPrompt(this.search)
+      : this.promptStr;
+  }
+
   private insert(text: string): void {
     if (!text) return;
     const r = insertText(this.buffer, this.cursor, text);
@@ -870,6 +1245,7 @@ class TtyPromptEditor extends EventEmitter implements PromptEditor {
 
   private submit(): void {
     this.clearBurst();
+    this.search = null;
     const line = this.buffer;
     // Move to end of block, then newline into scrollback as submitted input
     this.goToBlockEnd();
@@ -1021,11 +1397,13 @@ class TtyPromptEditor extends EventEmitter implements PromptEditor {
 
   private computeLayout() {
     const showFooter =
-      this.multiLineHint || countLines(this.buffer) > 1;
+      Boolean(this.search) ||
+      this.multiLineHint ||
+      countLines(this.buffer) > 1;
     return layoutEditor({
       buffer: this.buffer,
       cursor: this.cursor,
-      promptPlain: stripAnsi(this.promptStr),
+      promptPlain: stripAnsi(this.activePrompt()),
       cols: this.cols(),
       showFooter,
     });
@@ -1037,7 +1415,10 @@ class TtyPromptEditor extends EventEmitter implements PromptEditor {
     const cols = this.cols();
     const layout = this.computeLayout();
     const showFooter =
-      this.multiLineHint || countLines(this.buffer) > 1;
+      Boolean(this.search) ||
+      this.multiLineHint ||
+      countLines(this.buffer) > 1;
+    const promptPaint = this.activePrompt();
 
     // 1. Cursor → top of previous block, clear everything below
     this.goToBlockTop();
@@ -1048,7 +1429,7 @@ class TtyPromptEditor extends EventEmitter implements PromptEditor {
       layout.logical[0]
         ? // rebuild cont prefix with same plain width
           (() => {
-            const promptW = displayWidth(stripAnsi(this.promptStr));
+            const promptW = displayWidth(stripAnsi(promptPaint));
             const contLabel = "… ";
             const contPad = Math.max(0, promptW - displayWidth(contLabel));
             return " ".repeat(contPad) + contLabel;
@@ -1059,20 +1440,20 @@ class TtyPromptEditor extends EventEmitter implements PromptEditor {
     for (let i = 0; i < layout.logical.length; i++) {
       if (i > 0) this.output.write("\n");
       const L = layout.logical[i]!;
-      const prefix = i === 0 ? this.promptStr : contStyled;
+      const prefix = i === 0 ? promptPaint : contStyled;
       // Clear line then write — avoids leftover glyphs when shortening
       this.output.write("\r\x1b[2K" + prefix + L.text);
     }
 
     if (showFooter) {
-      const lines = countLines(this.buffer);
-      const chars = this.buffer.length;
-      this.output.write(
-        "\n\r\x1b[2K" +
-          chalk.dim(
-            `  ${lines} line${lines === 1 ? "" : "s"} · ${chars} chars · ↵ send · ^J newline · ^U clear · ←→ edit`,
-          ),
-      );
+      const footer = this.search
+        ? HISTORY_SEARCH_FOOTER
+        : (() => {
+            const lines = countLines(this.buffer);
+            const chars = this.buffer.length;
+            return `  ${lines} line${lines === 1 ? "" : "s"} · ${chars} chars · ↵ send · ^J newline · ^U clear · ←→ edit`;
+          })();
+      this.output.write("\n\r\x1b[2K" + chalk.dim(footer));
     }
 
     // 3. After paint, physical cursor is at end of last painted row.

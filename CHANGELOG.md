@@ -8,6 +8,7 @@
 - **Wave ledger prefers the ship**: `summarizeWave` uses `Ship landed:` / `Wave N shipped:` (or a newer `memory_write` ship) before the Wave-1 `Reading:` clip.
 
 ### Added
+- **Ctrl+R history search**: the REPL prompt does reverse incremental search over `~/.forge/history` (`(bck-i-search)\`foo': …`). Ctrl+R again steps older; Ctrl+S newer; Esc / Ctrl+G cancel; Enter runs the match. Ctrl/Alt+←/→ and Alt+B/F jump words. `/help` Keys and `/tips` list them.
 - **Unlimited named-ship backlog**: the Wave-1 reading's ONE ship + passed-on list is stored on `ulw.json`. When every item is done and `maxWaves` is unset, Stop asks **once** for a new `Reading:` or `/cycle 0`. Capped runs still spend remaining waves. `/cycle status` lists the ships.
 - **`provider_round` `pruneKind` + `cacheDrop`**: metrics distinguish `first_clip` / `sticky` / `reclip` / `always`, and flag a round that fell below 5% cache after a prior round above 90%. `/cost` last-round line and `forge run --json` expose `lastPruneKind`.
 

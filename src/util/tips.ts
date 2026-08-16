@@ -28,6 +28,7 @@ export function expertTipsLines(): string[] {
     `  Project skills: /skills · .forge/skills/<name>/SKILL.md playbooks in system prompt`,
     `  /commit [do]:    draft commit message from git diff (do = create commit, never push)`,
     `  Project stack:  /context + doctor + /config show pm/checks/workspaces · monorepo walk-up (git-bounded) · turbo/nx · /init+/review+/plan use detected checks · bash tips: wrong-PM (Corepack) · missing-script · missing-binary (pnpm dlx/npx) · monorepo layout · next-check · post-edit verify tip (FORGE_VERIFY_HINT=0 off) · stale-edit guard needs read_file first (FORGE_FILE_READ_GUARD=0 off) · search_replace/write_file strip pasted N| line prefixes`,
+    `  Editor:         ↑↓ history  ·  Ctrl+R / Ctrl+S incremental search (esc / ^G cancel)  ·  Ctrl+←/→ word  ·  ^J newline  ·  ^U clear`,
     `  Mentions:       @src/cli.ts inlines the file (already-read) · Tab-completes · images still use @shot.png / [[image:path]] · /paste clipboard screenshot`,
     `  Bang-shell:     !git status / !npm test run now (same PermissionGate as bash) · mid-run queues output for the next model step`,
     `  Ask user:       ask_user tool for clarifying questions (interactive; headless fails closed)`,
