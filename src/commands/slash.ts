@@ -208,6 +208,7 @@ import {
   PLACEHOLDER_MANDATE,
   disarmUlwCycle,
   setCycleFlag,
+  scheduleCycleZeroStop,
   setMaxWaves,
   parseCycleArg,
   parseMaxWavesArg,
@@ -2319,23 +2320,40 @@ export async function handleSlash(
         };
       }
       const sid = opts.session.meta.id;
-      let state = setCycleFlag(sid, flag);
+      let state =
+        flag === 0
+          ? scheduleCycleZeroStop(sid, {
+              editCount: opts.session.meta.editCount ?? 0,
+            })
+          : setCycleFlag(sid, flag);
       if (!state) {
         // Auto-arm ULW if user sets cycle without /ulw
         opts.session.meta.ultrawork = true;
         const mandate =
           mandateFromUserText(lastUserText(opts.session)) ||
           PLACEHOLDER_MANDATE;
-        state = armUlwCycle(sid, mandate, {
-          cycle: flag,
+        armUlwCycle(sid, mandate, {
+          cycle: 1,
           editCount: opts.session.meta.editCount,
         });
+        state =
+          flag === 0
+            ? scheduleCycleZeroStop(sid, {
+                editCount: opts.session.meta.editCount ?? 0,
+              })
+            : setCycleFlag(sid, flag);
         saveSession(opts.session);
-      } else if (flag === 1) {
+      } else if (flag === 1 || (flag === 0 && state.cycle === 1)) {
         // Re-enable after stuck-wall / /ulw-off must restore the session flag
         // or the next "continue" will look like a missing cycle.
         opts.session.meta.ultrawork = true;
         saveSession(opts.session);
+      }
+      if (!state) {
+        return {
+          handled: true,
+          output: "ULW is not armed — /ulw <task> first.",
+        };
       }
       if (flag === 1) {
         pushLiveNotice(
@@ -2343,24 +2361,24 @@ export async function handleSlash(
           "User set cycle=1 (CONTINUE) mid-run. Keep the research → implement → serendipity → review loop. Do not stop until the user sets cycle=0, max_waves is hit, or /ulw-off.",
         );
       } else {
-        // LAST wind-down: reset soft TodoGate so leftover open-todo once-blocks
-        // do not fight the intentional cycle=0 finish path (parity with /done).
-        try {
-          clearSoftTodoGateOnWindDown(sid);
-        } catch {
-          /* */
-        }
+        const stopAt = state.cycleZeroStopAt ?? state.maxWaves;
         pushLiveNotice(
           sid,
-          "User set cycle=0 (LAST) mid-run. You may stop after this wrap. Finish in-flight work and already-named ships (or cancel with reason), review the diff, attest **Cycle complete.** Do not write a new Reading or start a new surface.",
+          stopAt != null && state.cycle === 1
+            ? `User set /cycle 0 mid-run. Finish the open wave, ship one more, then LAST at wave ${stopAt}. Stay CONTINUE until then. Do not attest **Cycle complete.** yet. Do not stop mid-wave.`
+            : "User set cycle=0 (LAST) mid-run. Wrap this last wave, review the diff, attest **Cycle complete.**",
         );
       }
+      const stopAt = state.cycleZeroStopAt ?? state.maxWaves;
       const msg =
         flag === 1
           ? chalk.magenta("cycle=1 CONTINUE") +
             " — harness will keep blocking Stop and forcing the next wave."
-          : chalk.yellow("cycle=0 LAST") +
-            " — wrap in-flight work and the named plan, review, attest **Cycle complete.** then Stop is allowed.";
+          : state.cycle === 1 && stopAt != null
+            ? chalk.yellow(`cycle=0 — stop at wave ${stopAt}`) +
+              " — finish this wave, ship one more, then LAST. **Cycle complete.** is refused until then."
+            : chalk.yellow("cycle=0 LAST") +
+              " — wrap this last wave, review, attest **Cycle complete.** then Stop is allowed.";
       let cycleTip = "";
       if (flag === 0) {
         try {
@@ -2373,7 +2391,7 @@ export async function handleSlash(
             cycleTip =
               "\n" +
               chalk.dim(
-                `Preferred checks before **Cycle complete.**: ${intel.checkCommands.slice(0, 3).join(" · ")}  ·  proof needs green`,
+                `Preferred checks on the last wave: ${intel.checkCommands.slice(0, 3).join(" · ")}  ·  proof needs green`,
               );
           }
           const trail = formatSlashSessionTrail(opts.session.meta);

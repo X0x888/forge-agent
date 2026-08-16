@@ -552,13 +552,16 @@ describe("mid-run /cycle affects stop-guard without abort", () => {
       hooks,
     });
     assert.equal(result.handled, true);
-    assert.match(result.output || "", /cycle=0|LAST/i);
-    assert.equal(loadUlwCycle(session.meta.id)?.cycle, 0);
-    assert.equal(getTodoGateFires(session.meta.id), 0);
+    assert.match(result.output || "", /cycle=0|stop at wave/i);
+    const scheduled = loadUlwCycle(session.meta.id);
+    assert.equal(scheduled?.cycle, 1);
+    assert.equal(scheduled?.maxWaves, 1);
+    assert.equal(scheduled?.cycleZeroStopAt, 1);
+    assert.equal(getTodoGateFires(session.meta.id), 1);
 
     // Notice queued for next LLM call
     const notices = drainLiveNotices(session.meta.id);
-    assert.ok(notices.some((n) => /cycle=0|LAST/i.test(n)));
+    assert.ok(notices.some((n) => /cycle=0|stop at wave|one more/i.test(n)));
 
     // Stop without attestation still blocks (finish wave)
     const blocked = evaluateUlwAtStop({

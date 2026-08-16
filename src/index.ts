@@ -288,6 +288,9 @@ export type { ProductionWarningOpts } from "./util/production-warnings.js";
 export {
   armUlwCycle,
   setCycleFlag,
+  scheduleCycleZeroStop,
+  cycleZeroTargetWave,
+  cycleZeroCurrentWave,
   maybeFlipUlwToLastOnSafetyValve,
   maybeFlipUlwToLastOnCostCap,
   setMaxWaves,

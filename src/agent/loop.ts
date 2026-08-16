@@ -1290,6 +1290,8 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
                   subject: ac.subject,
                   skipped: ac.skipped,
                 };
+              } else if (ac.skipped && ac.skipped !== "working tree clean") {
+                log.dim(`Auto-commit skipped: ${ac.skipped}`);
               }
             } catch {
               /* never fail a wave stamp on commit */
@@ -2276,6 +2278,8 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
                 subject: ac.subject,
                 skipped: ac.skipped,
               };
+            } else if (ac.skipped && ac.skipped !== "working tree clean") {
+              log.dim(`Auto-commit skipped: ${ac.skipped}`);
             }
             saveSession(session);
           } catch {

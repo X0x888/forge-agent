@@ -6,6 +6,10 @@ import path from "node:path";
 import {
   armUlwCycle,
   setCycleFlag,
+  scheduleCycleZeroStop,
+  cycleZeroTargetWave,
+  cycleZeroCurrentWave,
+  maybeStampUlwWave,
   maybeFlipUlwToLastOnSafetyValve,
   maybeFlipUlwToLastOnCostCap,
   setMaxWaves,
@@ -21,6 +25,7 @@ import {
   reenableUlwCycle,
   expandUlwMandate,
   loadUlwCycle,
+  saveUlwCycle,
   copyUlwCycle,
   parseCycleArg,
   parseMaxWavesArg,
@@ -1934,5 +1939,147 @@ describe("net-diff progress tracking (ULW)", () => {
     assert.equal(countsTowardVerification({ command: "ls -la" }), false);
     assert.equal(countsTowardVerification({ background: true }), false);
     assert.equal(countsTowardVerification({}), false);
+  });
+});
+
+describe("/cycle 0 stop at N+1", () => {
+  function withHome(fn: () => void): void {
+    const prev = process.env.FORGE_HOME;
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "forge-c0-"));
+    process.env.FORGE_HOME = dir;
+    try {
+      fn();
+    } finally {
+      if (prev === undefined) delete process.env.FORGE_HOME;
+      else process.env.FORGE_HOME = prev;
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  }
+
+  it("mid-wave at stamped w=42 stops at 44", () => {
+    assert.equal(
+      cycleZeroTargetWave(
+        {
+          wave: 42,
+          lastProgressEditCount: 300,
+          lastBlockEditCount: 300,
+          maxWaves: null,
+        },
+        { editCount: 310 },
+      ),
+      44,
+    );
+    assert.equal(
+      cycleZeroCurrentWave(
+        { wave: 42, lastProgressEditCount: 300, lastBlockEditCount: 300 },
+        { editCount: 310 },
+      ),
+      43,
+    );
+  });
+
+  it("at a wave boundary stops at last-stamped + 1", () => {
+    assert.equal(
+      cycleZeroTargetWave(
+        {
+          wave: 43,
+          lastProgressEditCount: 394,
+          lastBlockEditCount: 394,
+          maxWaves: null,
+        },
+        { editCount: 394 },
+      ),
+      44,
+    );
+  });
+
+  it("wave 0 with no edits stops at 1", () => {
+    assert.equal(
+      cycleZeroTargetWave(
+        { wave: 0, lastBlockEditCount: 0, maxWaves: null },
+        { editCount: 0 },
+      ),
+      1,
+    );
+  });
+
+  it("does not raise an existing tighter cap", () => {
+    assert.equal(
+      cycleZeroTargetWave(
+        {
+          wave: 3,
+          lastProgressEditCount: 10,
+          lastBlockEditCount: 10,
+          maxWaves: 4,
+        },
+        { editCount: 12 },
+      ),
+      4,
+    );
+  });
+
+  it("schedules CONTINUE with maxWaves=N+1 (maze: /cycle 0 mid-wave)", () => {
+    withHome(() => {
+      const sid = "c0-maze";
+      fs.mkdirSync(path.join(process.env.FORGE_HOME!, "sessions", sid), {
+        recursive: true,
+      });
+      const s0 = armUlwCycle(sid, "Improve this game.", {
+        cycle: 1,
+        skipCheckpoint: true,
+        editCount: 300,
+      });
+      s0.wave = 42;
+      s0.lastProgressEditCount = 300;
+      s0.lastBlockEditCount = 300;
+      saveUlwCycle(s0);
+      const next = scheduleCycleZeroStop(sid, { editCount: 310 })!;
+      assert.equal(next.cycle, 1);
+      assert.equal(next.maxWaves, 44);
+      assert.equal(next.cycleZeroStopAt, 44);
+      assert.equal(next.wrapKind, undefined);
+      assert.equal(next.enabled, true);
+
+      maybeStampUlwWave({
+        sessionId: sid,
+        editCount: 320,
+        openTodoCount: 0,
+        stepsSinceStamp: 1,
+        lastAssistantMessage: "Wave shipped: finish the open wave.",
+      });
+      assert.equal(loadUlwCycle(sid)!.wave, 43);
+      assert.equal(loadUlwCycle(sid)!.cycle, 1);
+
+      maybeStampUlwWave({
+        sessionId: sid,
+        editCount: 330,
+        openTodoCount: 0,
+        stepsSinceStamp: 1,
+        lastAssistantMessage: "Wave shipped: the extra wave.",
+      });
+      const last = loadUlwCycle(sid)!;
+      assert.equal(last.wave, 44);
+      assert.equal(last.cycle, 0);
+      assert.equal(last.wrapKind, "budget");
+    });
+  });
+
+  it("/cycle 1 after a scheduled /cycle 0 clears the N+1 cap", () => {
+    withHome(() => {
+      const sid = "c0-resume";
+      fs.mkdirSync(path.join(process.env.FORGE_HOME!, "sessions", sid), {
+        recursive: true,
+      });
+      armUlwCycle(sid, "Improve this game.", {
+        cycle: 1,
+        skipCheckpoint: true,
+      });
+      scheduleCycleZeroStop(sid, { editCount: 0 });
+      assert.equal(loadUlwCycle(sid)!.maxWaves, 1);
+      const resumed = setCycleFlag(sid, 1)!;
+      assert.equal(resumed.cycle, 1);
+      assert.equal(resumed.maxWaves, null);
+      assert.equal(resumed.cycleZeroStopAt, undefined);
+    });
   });
 });

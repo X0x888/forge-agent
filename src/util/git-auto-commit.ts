@@ -35,6 +35,10 @@ export function ulwAutoCommitEnabled(): boolean {
   return !isFalsy(process.env.FORGE_ULW_AUTO_COMMIT ?? "1");
 }
 
+/** Fallback only when the repo/user has no commit identity (maze dogfood). */
+export const ULW_COMMIT_NAME = "Forge";
+export const ULW_COMMIT_EMAIL = "forge@local";
+
 function git(args: string[], cwd: string, timeoutMs = 30_000): string {
   const raw = execFileSync("git", args, {
     cwd,
@@ -48,6 +52,37 @@ function git(args: string[], cwd: string, timeoutMs = 30_000): string {
   // (`src/…` → `rc/…`) so the first dirty file failed `git add` and the
   // whole Cycle-complete commit was skipped.
   return raw.trimEnd();
+}
+
+export function formatGitExecError(err: unknown): string {
+  const e = err as { stderr?: string | Buffer; message?: string };
+  const stderr = String(e.stderr || "")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (stderr) return stderr.slice(0, 240);
+  return String(e.message || err)
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 240);
+}
+
+export function gitHasAuthorIdentity(cwd: string): boolean {
+  try {
+    return Boolean(git(["var", "GIT_AUTHOR_IDENT"], cwd, 5_000));
+  } catch {
+    return false;
+  }
+}
+
+/** `-c` overrides used only when `git var GIT_AUTHOR_IDENT` fails. */
+export function commitIdentArgs(cwd: string): string[] {
+  if (gitHasAuthorIdentity(cwd)) return [];
+  return [
+    "-c",
+    `user.name=${ULW_COMMIT_NAME}`,
+    "-c",
+    `user.email=${ULW_COMMIT_EMAIL}`,
+  ];
 }
 
 export function porcelainPaths(cwd: string): string[] {
@@ -168,7 +203,7 @@ export function maybeAutoCommitOnUlwDone(opts: {
   } catch (err) {
     return {
       committed: false,
-      skipped: `status failed: ${String((err as Error).message || err).slice(0, 160)}`,
+      skipped: `status failed: ${formatGitExecError(err)}`,
     };
   }
   if (!dirty.length) return { committed: false, skipped: "working tree clean" };
@@ -199,11 +234,30 @@ export function maybeAutoCommitOnUlwDone(opts: {
   );
   const body = buildAutoCommitBody(ulw, staged);
   try {
-    git(["commit", "-m", subject, "-m", body], root, 60_000);
+    // Fallback author when the machine has no user.name/email (maze: 43
+    // waves staged, every commit skipped with "Author identity unknown").
+    // --no-gpg-sign / --no-verify: unattended snapshot, never wait on
+    // pinentry or a pre-commit hook.
+    git(
+      [
+        ...commitIdentArgs(root),
+        "-c",
+        "commit.gpgsign=false",
+        "commit",
+        "--no-verify",
+        "--no-gpg-sign",
+        "-m",
+        subject,
+        "-m",
+        body,
+      ],
+      root,
+      60_000,
+    );
   } catch (err) {
     return {
       committed: false,
-      skipped: `git commit failed: ${String((err as Error).message || err).slice(0, 200)}`,
+      skipped: `git commit failed: ${formatGitExecError(err)}`,
     };
   }
 

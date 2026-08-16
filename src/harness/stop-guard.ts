@@ -232,7 +232,7 @@ export async function runStopGuard(input: StopGuardInput): Promise<StopGuardResu
     if (!attested) {
       const msg = [
         `[Forge ultrawork] Stop blocked — ${input.openTodoCount} open todo(s) remain.`,
-        `Continue the next unfinished item, or set /cycle 0 and wrap in-flight work with **Cycle complete.**`,
+        `Continue the next unfinished item, or set /cycle 0 (finish this wave + one more, then LAST).`,
       ].join("\n");
       return {
         allowStop: false,

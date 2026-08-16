@@ -1969,8 +1969,8 @@ describe("/cycle 0 preferred checks tip", () => {
     });
     assert.equal(r.handled, true);
     const out = String(r.output || "").replace(/\x1b\[[0-9;]*m/g, "");
-    assert.match(out, /cycle=0 LAST/i);
-    assert.match(out, /Preferred checks before \*\*Cycle complete\*\*|Preferred checks/i);
+    assert.match(out, /cycle=0|stop at wave/i);
+    assert.match(out, /Preferred checks on the last wave|Preferred checks/i);
     assert.match(out, /npm run typecheck|npm test/);
     assert.match(out, /Session trail:|last-verify/i);
   });

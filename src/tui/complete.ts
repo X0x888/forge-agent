@@ -93,7 +93,7 @@ export const COMMAND_PARAMS: Record<string, ParamChoice[]> = {
   ],
   cycle: [
     { value: "1", description: "CONTINUE — relentless waves (Stop blocked)" },
-    { value: "0", description: "LAST — finish current wave then stop" },
+    { value: "0", description: "Finish this wave + one more, then stop" },
     { value: "status", description: "Show cycle flag, wave, mandate" },
   ],
   "max-waves": [
@@ -552,7 +552,7 @@ export const SLASH_HINTS: Record<string, string> = {
   "/ulw-off": "Disarm ULW",
   "/goal": "Relentless driver",
   "/done": "Wind down goal + ULW",
-  "/cycle": "Continue or last wave",
+  "/cycle": "Continue or stop at N+1",
   "/status": "Full HUD + session",
   "/quit": "Exit",
   "/provider": "Switch provider",

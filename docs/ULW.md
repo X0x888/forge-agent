@@ -7,7 +7,7 @@ When a prompt starts with **`/ulw`** (or `forge --ulw` / `forge run --ulw`), For
 | Value | Meaning |
 |-------|---------|
 | **`cycle=1`** | CONTINUE — after each wave, Stop is blocked and the agent must research → implement → serendipity → review → next wave |
-| **`cycle=0`** | LAST — **wrap**, then attest `**Cycle complete.**`. Finish in-flight work and already-named ships (or cancel with reason). Not an abort (`/ulw-off` is). Do not start a new Reading or a new surface. |
+| **`cycle=0` / `/cycle 0`** | Finish the open wave, ship **one more**, then LAST at wave N+1 and attest `**Cycle complete.**`. Not an abort (`/ulw-off` is). |
 
 ## Optional: max_waves
 
@@ -21,7 +21,7 @@ When a prompt starts with **`/ulw`** (or `forge --ulw` / `forge run --ulw`), For
 /max-waves 3              # cap at 3 waves (live; works mid-run)
 /max-waves off            # clear cap (unlimited again)
 /max-waves status         # show cap + cycle/wave
-/cycle 0                  # wrap in-flight + named plan, then attest
+/cycle 0                  # finish this wave + one more, then LAST
 /cycle 1                  # resume relentless loops
 /cycle status             # show flag + wave + mandate
 /ulw-off                  # disarm immediately
@@ -47,7 +47,7 @@ Hard mandates keep a fixed objective but the same **smart + hard** execution sty
 
 **Broad checklists** (4+ bullets / multi-section): the harness still requires a **todo backlog** (`todo_write` ≥2) before Wave 1 free-invents.
 
-**`max_waves=N` is a budget the user asked to spend.** Wave 1 writes the reading (evaluate-class) and ships the first item; waves 2..N ship the next highest-leverage items on different surfaces. Do not invent leftover chrome — do ship the next real item. `**Cycle complete.**` under `cycle=1` does **not** release. Cap auto-flips LAST when the wave counter hits N; then attest. `/cycle 0` ends CONTINUE early and **wraps** the open wave plus leftover named ships, then attests. Cap auto-LAST wraps the open wave only.
+**`max_waves=N` is a budget the user asked to spend.** Wave 1 writes the reading (evaluate-class) and ships the first item; waves 2..N ship the next highest-leverage items on different surfaces. Do not invent leftover chrome — do ship the next real item. `**Cycle complete.**` under `cycle=1` does **not** release. Cap auto-flips LAST when the wave counter hits N; then attest. `/cycle 0` at wave N sets the cap to **N+1** (finish this wave, ship one more) and stays CONTINUE until then. Cap / `/done` / safety-valve LAST wraps the open wave only. `/ulw-off` aborts.
 
 ### Smart + hard (not thrash)
 
@@ -166,7 +166,7 @@ Forge ports several runtime PE patterns from Grok Build / OpenCode:
 Live mid-run (no Ctrl+C):
 
 ```text
-/cycle 0                  # harness control
+/cycle 0                  # finish this wave + one more, then LAST
 /max-waves 3              # set wave cap live
 finish the auth tests first   # free-text interjection (queued)
 ```

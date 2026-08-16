@@ -163,7 +163,7 @@ export function clearTodoGateState(sessionId?: string): void {
 }
 
 /**
- * Wind-down paths (`/done`, `/goal done|clear`, `/cycle 0`, `/ulw-off`,
+ * Wind-down paths (`/done`, `/goal done|clear`, `/ulw-off`,
  * `/clear`, `/new`, safety-valve CONTINUE→LAST) call this so a leftover
  * soft once-block does not fight intentional harness release.
  * Same implementation as clearTodoGateState — named for call-site clarity.

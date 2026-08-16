@@ -6,11 +6,15 @@ import path from "node:path";
 import { execFileSync } from "node:child_process";
 import {
   buildAutoCommitSubject,
+  commitIdentArgs,
+  gitHasAuthorIdentity,
   isSensitiveRelPath,
   maybeAutoCommitOnUlwDone,
   porcelainPaths,
   stageAutoCommitPaths,
   ulwAutoCommitEnabled,
+  ULW_COMMIT_EMAIL,
+  ULW_COMMIT_NAME,
 } from "../src/util/git-auto-commit.js";
 import {
   armUlwCycle,
@@ -236,6 +240,58 @@ describe("ULW auto-commit", () => {
       const r = maybeAutoCommitOnUlwDone({ cwd: root, sessionId: sid });
       assert.equal(r.committed, false);
       assert.match(r.skipped || "", /pending work-order/);
+    });
+  });
+
+  it("commits when git author identity is unknown", () => {
+    withRepo((root) => {
+      git(["config", "--unset", "user.name"], root);
+      git(["config", "--unset", "user.email"], root);
+      git(["config", "user.useConfigOnly", "true"], root);
+      const emptyCfg = path.join(root, ".empty-gitconfig");
+      fs.writeFileSync(emptyCfg, "");
+      const prev = {
+        GIT_CONFIG_GLOBAL: process.env.GIT_CONFIG_GLOBAL,
+        GIT_CONFIG_SYSTEM: process.env.GIT_CONFIG_SYSTEM,
+        GIT_AUTHOR_NAME: process.env.GIT_AUTHOR_NAME,
+        GIT_AUTHOR_EMAIL: process.env.GIT_AUTHOR_EMAIL,
+        GIT_COMMITTER_NAME: process.env.GIT_COMMITTER_NAME,
+        GIT_COMMITTER_EMAIL: process.env.GIT_COMMITTER_EMAIL,
+      };
+      process.env.GIT_CONFIG_GLOBAL = emptyCfg;
+      process.env.GIT_CONFIG_SYSTEM = emptyCfg;
+      delete process.env.GIT_AUTHOR_NAME;
+      delete process.env.GIT_AUTHOR_EMAIL;
+      delete process.env.GIT_COMMITTER_NAME;
+      delete process.env.GIT_COMMITTER_EMAIL;
+      try {
+        assert.equal(gitHasAuthorIdentity(root), false);
+        assert.deepEqual(commitIdentArgs(root), [
+          "-c",
+          `user.name=${ULW_COMMIT_NAME}`,
+          "-c",
+          `user.email=${ULW_COMMIT_EMAIL}`,
+        ]);
+        const sid = "sess-ac-noident";
+        fs.mkdirSync(path.join(process.env.FORGE_HOME!, "sessions", sid), {
+          recursive: true,
+        });
+        armUlwCycle(sid, "improve this game.", {
+          cycle: 1,
+          skipCheckpoint: true,
+          cwd: root,
+        });
+        fs.writeFileSync(path.join(root, "ship.ts"), "export const n = 1;\n");
+        const r = maybeAutoCommitOnUlwDone({ cwd: root, sessionId: sid });
+        assert.equal(r.committed, true, r.skipped);
+        const ident = git(["log", "-1", "--format=%an <%ae>"], root);
+        assert.match(ident, /Forge <forge@local>/);
+      } finally {
+        for (const [k, v] of Object.entries(prev)) {
+          if (v === undefined) delete process.env[k];
+          else process.env[k] = v;
+        }
+      }
     });
   });
 

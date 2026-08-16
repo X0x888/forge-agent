@@ -59,6 +59,8 @@ export interface HarnessSnapshot {
   decisionsText?: string;
   /** LAST wrap scope — user wraps named plan; budget wraps this wave. */
   wrapKind?: "user" | "budget";
+  /** User `/cycle 0` scheduled stop wave (maxWaves was set to this). */
+  cycleZeroStopAt?: number | null;
 }
 
 const lastAdmitted = new Map<string, string>();
@@ -120,6 +122,7 @@ export function snapshotHarness(opts: {
     decisionsFp,
     decisionsText,
     wrapKind: ulw?.wrapKind,
+    cycleZeroStopAt: ulw?.cycleZeroStopAt ?? null,
   };
 }
 
@@ -141,6 +144,7 @@ export function fingerprintSnapshot(s: HarnessSnapshot): string {
     s.gitDirty ? "1" : "0",
     s.decisionsFp ?? "",
     s.wrapKind ?? "-",
+    s.cycleZeroStopAt == null ? "-" : String(s.cycleZeroStopAt),
   ].join("\x1f");
 }
 
@@ -196,7 +200,8 @@ function countersOnlyChange(a: HarnessSnapshot, b: HarnessSnapshot): boolean {
     (a.gitBranch ?? "") === (b.gitBranch ?? "") &&
     Boolean(a.gitDirty) === Boolean(b.gitDirty) &&
     (a.decisionsFp ?? "") === (b.decisionsFp ?? "") &&
-    (a.wrapKind ?? "") === (b.wrapKind ?? "")
+    (a.wrapKind ?? "") === (b.wrapKind ?? "") &&
+    (a.cycleZeroStopAt ?? null) === (b.cycleZeroStopAt ?? null)
   );
 }
 
@@ -288,8 +293,10 @@ export function renderHarnessAdmission(s: HarnessSnapshot): string {
           : "(CONTINUE)"
       }`,
       s.maxWaves != null
-        ? `max_waves=${s.maxWaves} is a budget — spend every wave. **Cycle complete.** is refused until the cap (or /cycle 0). Cap auto-flips LAST.`
-        : `max_waves=off (unlimited). CONTINUE until /cycle 0. **Cycle complete.** is refused while cycle=1.`,
+        ? s.cycleZeroStopAt != null
+          ? `User /cycle 0 — finish this wave + one more, LAST at wave=${s.maxWaves}. **Cycle complete.** is refused until then.`
+          : `max_waves=${s.maxWaves} is a budget — spend every wave. **Cycle complete.** is refused until the cap (or /cycle 0). Cap auto-flips LAST.`
+        : `max_waves=off (unlimited). CONTINUE until /cycle 0 (finish this wave + one more, then LAST). **Cycle complete.** is refused while cycle=1.`,
       `Harness w=N/M is the only wave counter. Do not invent Wave K. Close a unit with Wave shipped. / Ship landed: so w can move.`,
       s.mandate ? `Mandate: ${displayUlwMandate(s.mandate)}` : "",
       s.softPrompt
