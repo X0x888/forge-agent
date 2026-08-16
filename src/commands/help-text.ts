@@ -162,7 +162,7 @@ Forge slash commands
   /budget [usd|off]     Session spend cap (estimate USD; 0/off = unlimited)  [live]
   /metrics              Local metrics.jsonl + this session counters  [live]
   /stats [days|week]    Usage dashboard (runs/tokens/cost/projects)  [live]
-  /todos                Agent board (▶ now · ○ next)  [live]
+  /todos                Work board (▶ next · ○ pending · ✓ done)  [live]
   /provider [name]      List / switch provider (openrouter, xai, …) — sticky  [live]
   /model <name> [effort] Switch model mid-run; free-form on OpenRouter  [live]
   /fallback [models|off] Same-provider fallbacks after 429/5xx (defaults on)  [live]

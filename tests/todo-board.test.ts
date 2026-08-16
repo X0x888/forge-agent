@@ -8,6 +8,7 @@ import {
   openTodos,
 } from "../src/agent/todos.js";
 import type { TodoItem } from "../src/session/session.js";
+import { visibleWidth } from "../src/util/format.js";
 
 const board: TodoItem[] = [
   { id: "w3", content: "ship it", status: "in_progress" },
@@ -17,19 +18,45 @@ const board: TodoItem[] = [
 ];
 
 describe("formatTodoBoard", () => {
-  it("empty board is No todos.", () => {
-    assert.equal(formatTodoBoard([]), "No todos.");
+  it("empty board is a designed empty state", () => {
+    const text = formatTodoBoard([]);
+    assert.match(text, /Nothing on the board/);
+    assert.match(text, /todo_write/);
+    assert.doesNotMatch(text, /verify:/);
+    const withCheck = formatTodoBoard([], { checkCommand: "npm test" });
+    assert.match(withCheck, /verify: npm test/);
   });
 
-  it("prints counts + glyphs, not [in_progress] id:", () => {
+  it("prints next-up header + glyphs, not [in_progress] ids", () => {
     const text = formatTodoBoard(board);
-    assert.match(text, /^Todos 2\/4 open\n/);
-    assert.match(text, /▶ ship it {2}· w3/);
-    assert.match(text, /○ review {2}· w4/);
-    assert.match(text, /✓ read the surface {2}· w1/);
-    assert.match(text, /× catalog chrome {2}· old/);
+    assert.match(text, /Todos {2}2\/4 open {2}· {2}▶ ship it/);
+    const lines = text.split("\n");
+    assert.match(lines[1] ?? "", /▶ ship it/);
+    assert.match(lines[2] ?? "", /○ review/);
+    assert.match(text, /✓ read the surface/);
+    assert.match(text, /× catalog chrome/);
     assert.doesNotMatch(text, /\[in_progress\]/);
+    assert.doesNotMatch(text, /· w3/);
     assert.doesNotMatch(text, /^- \[/m);
+  });
+
+  it("all-done board is a designed complete state", () => {
+    const text = formatTodoBoard([
+      { id: "a", content: "shipped", status: "completed" },
+      { id: "b", content: "also", status: "completed" },
+    ]);
+    assert.match(text, /Todos {2}all done {2}· {2}2\/2/);
+    assert.match(text, /✓ shipped/);
+  });
+
+  it("clips each row to the TTY width", () => {
+    const text = formatTodoBoard(
+      [{ id: "long", content: "x".repeat(80), status: "pending" }],
+      { columns: 40 },
+    );
+    for (const row of text.split("\n")) {
+      assert.ok(visibleWidth(row) <= 40, row);
+    }
   });
 });
 

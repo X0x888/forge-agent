@@ -260,7 +260,7 @@ Full contract: [docs/RELIABILITY.md](docs/RELIABILITY.md) · expert checklist: [
 | `/share` | Pasteable session card + resume/export commands (clipboard) |
 | `/setup` | First-day hub: model, budget, notify, AGENTS.md, LSP · CLI: `forge setup` |
 | `/tips` | Expert cheat sheet · CLI: `forge tips` |
-| `/todos` | Agent todos |
+| `/todos` | Work board (▶ next · ○ pending · ✓ done) |
 | `/model <id> [effort]` | Switch model mid-run; optional `low`\|`medium`\|`high`\|`xhigh` (persists) **[live]** |
 | `/effort [level]` | Reasoning effort for models that support it (e.g. grok-4.6) **[live]** |
 | `/plan [focus]` | Session-scoped PLAN mode (read-only design; no sticky prefs) **[live]** |

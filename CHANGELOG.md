@@ -3,6 +3,7 @@
 ## Unreleased
 
 ### Added
+- **`/todos` work board**: grouped ▶/○/✓/× with a next-up header (`2/4 open · ▶ ship it`), designed empty (`Nothing on the board`) and all-done states. Agent ids stay on the model-facing `todo_write` summary, not the human card.
 - **Permission ask names the subject**: `⚠ write  src/foo.ts` (path on the title) and bash keeps the command on the hint line so you decide from the header, not the preview dump. Patch asks extract the first `*** Add/Update File`.
 - **`/last` recap trailer**: the conversation card now lists mutated files + last verify (stale/✗/✓) and `↳ /diff · /files · /undo`. Empty sessions get `type a task` instead of a bare “no turns”. Compact resume peek is unchanged.
 - **`/diff` change-review card**: default `/diff` is a scannable Δ card (colored porcelain, +/−, verify/stale, designed empty state when clean) instead of a raw `status:`/`stat:` dump. `--full` reuses the transcript `formatDiffBlock` palette. `/last` · `/commit` · `/undo` stay one keystroke away.

@@ -1,8 +1,10 @@
 /**
  * Session todo board updates (todo_write tool).
  */
+import chalk from "chalk";
 import type { SessionData, TodoItem } from "../session/session.js";
 import { saveSession } from "../session/session.js";
+import { clipAnsi, visibleWidth } from "../util/format.js";
 import { editDistance } from "../util/string-distance.js";
 
 export function openTodos(todos: readonly TodoItem[]): number {
@@ -55,11 +57,62 @@ export function formatTodoLines(todos: readonly TodoItem[]): string {
     .join("\n");
 }
 
-/** `/todos` card: counts + glyphs. Empty board is `No todos.` */
-export function formatTodoBoard(todos: readonly TodoItem[]): string {
-  if (todos.length === 0) return "No todos.";
+const STATUS_ORDER: Record<TodoItem["status"], number> = {
+  in_progress: 0,
+  pending: 1,
+  completed: 2,
+  cancelled: 3,
+};
+
+/** `/todos` work board: next-up header, grouped glyphs, designed empty/done. */
+export function formatTodoBoard(
+  todos: readonly TodoItem[],
+  opts?: { checkCommand?: string; columns?: number },
+): string {
+  const cols = Math.max(
+    24,
+    opts?.columns ??
+      (process.stdout.isTTY ? process.stdout.columns || 80 : 80),
+  );
+  const clip = (s: string) =>
+    visibleWidth(s) > cols ? clipAnsi(s, cols) : s;
+
+  if (todos.length === 0) {
+    const lines = [chalk.dim("Nothing on the board")];
+    lines.push(clip(chalk.dim("  ↳ todo_write for multi-step work")));
+    if (opts?.checkCommand?.trim()) {
+      lines.push(clip(chalk.dim(`  ↳ verify: ${opts.checkCommand.trim()}`)));
+    }
+    return lines.join("\n");
+  }
+
   const open = openTodos(todos);
-  return `Todos ${open}/${todos.length} open\n${formatTodoLines(todos)}`;
+  const active = activeTodoTitle(todos);
+  const done = todos.filter((t) => t.status === "completed").length;
+  const cancelled = todos.filter((t) => t.status === "cancelled").length;
+  let header: string;
+  if (open === 0) {
+    header =
+      cancelled === todos.length
+        ? `Todos  all cancelled  ·  ${todos.length}`
+        : `Todos  all done  ·  ${done}/${todos.length}`;
+  } else if (active) {
+    header = `Todos  ${open}/${todos.length} open  ·  ▶ ${active}`;
+  } else {
+    header = `Todos  ${open}/${todos.length} open`;
+  }
+
+  const ordered = [...todos].sort(
+    (a, b) => (STATUS_ORDER[a.status] ?? 9) - (STATUS_ORDER[b.status] ?? 9),
+  );
+  const rows = ordered.map((t) => {
+    const g = TODO_GLYPH[t.status] ?? "○";
+    const line = `${g} ${t.content.replace(/\s+/g, " ").trim()}`;
+    if (t.status === "in_progress") return clip(chalk.cyan(line));
+    if (t.status === "pending") return clip(line);
+    return clip(chalk.dim(line));
+  });
+  return [clip(header), ...rows].join("\n");
 }
 
 /**

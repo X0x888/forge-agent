@@ -3376,33 +3376,19 @@ const stats = collectUsageStats({
     }
 
     case "/todos": {
-      if (opts.session.todos.length === 0) {
-        let tip = "";
-        try {
-          const cwd =
-            opts.config.workspace ||
-            opts.session.meta.cwd ||
-            process.cwd();
-          const intel = detectProjectIntel(cwd);
-          if (intel.checkCommands[0]) {
-            tip =
-              `\nTip: agent uses todo_write for multi-step work. Preferred check: \`${intel.checkCommands[0]}\``;
-          } else {
-            tip =
-              "\nTip: agent uses todo_write for multi-step work (id/content/status).";
-          }
-        } catch {
-          tip =
-            "\nTip: agent uses todo_write for multi-step work (id/content/status).";
-        }
-        return {
-          handled: true,
-          output: "No todos." + tip,
-        };
+      let checkCommand = "";
+      try {
+        const cwd =
+          opts.config.workspace ||
+          opts.session.meta.cwd ||
+          process.cwd();
+        checkCommand = detectProjectIntel(cwd).checkCommands[0] ?? "";
+      } catch {
+        checkCommand = "";
       }
       return {
         handled: true,
-        output: formatTodoBoard(opts.session.todos),
+        output: formatTodoBoard(opts.session.todos, { checkCommand }),
       };
     }
 

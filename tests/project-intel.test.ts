@@ -1509,7 +1509,7 @@ describe("/todos empty tip", () => {
       hooks,
     });
     assert.equal(r.handled, true);
-    assert.match(String(r.output || ""), /No todos/i);
+    assert.match(String(r.output || ""), /Nothing on the board/i);
     assert.match(String(r.output || ""), /todo_write/i);
     assert.match(String(r.output || ""), /npm run typecheck|npm test/);
   });
