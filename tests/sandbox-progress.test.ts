@@ -29,4 +29,20 @@ describe("sandbox onChunk", () => {
     assert.equal(r.code, 0);
     assert.ok(seen.some((l) => /line-/.test(l)), `chunks=${JSON.stringify(seen)}`);
   });
+
+  it("flushes the last line even when it lands inside the throttle window", async () => {
+    const seen: string[] = [];
+    const r = await execCommandSandboxed({
+      command: "printf 'first\\n'; printf 'last-line\\n'",
+      cwd: process.cwd(),
+      timeoutMs: 5000,
+      profile: "off",
+      onChunk: (line) => seen.push(line),
+    });
+    assert.equal(r.code, 0);
+    assert.ok(
+      seen.some((l) => l.includes("last-line")),
+      `chunks=${JSON.stringify(seen)}`,
+    );
+  });
 });

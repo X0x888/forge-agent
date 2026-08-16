@@ -55,14 +55,20 @@ export function extractLastNonemptyLine(chunk: string, max = 48): string {
 
 export const BASH_PROGRESS_THROTTLE_MS = 200;
 
-function createChunkEmitter(
-  onChunk?: (lastLine: string) => void,
-): (text: string) => void {
-  if (!onChunk) return () => {};
+type ChunkEmitter = ((text: string) => void) & { flush: () => void };
+
+function createChunkEmitter(onChunk?: (lastLine: string) => void): ChunkEmitter {
+  if (!onChunk) {
+    const noop = (() => {}) as unknown as ChunkEmitter;
+    noop.flush = () => {};
+    return noop;
+  }
   let last = 0;
-  return (text: string) => {
+  let pending = "";
+  const emit = ((text: string) => {
     const line = extractLastNonemptyLine(text);
     if (!line) return;
+    pending = line;
     const now = Date.now();
     if (now - last < BASH_PROGRESS_THROTTLE_MS) return;
     last = now;
@@ -71,7 +77,17 @@ function createChunkEmitter(
     } catch {
       /* never break the child */
     }
+  }) as ChunkEmitter;
+  emit.flush = () => {
+    if (!pending) return;
+    try {
+      onChunk(pending);
+    } catch {
+      /* */
+    }
+    pending = "";
   };
+  return emit;
 }
 
 export interface SandboxRunResult {
@@ -251,6 +267,7 @@ function runRaw(
       settled = true;
       clearTimeout(timer);
       opts.signal?.removeEventListener("abort", onAbort);
+      emit.flush();
       resolve(result);
     };
     const killChild = () => {
