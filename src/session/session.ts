@@ -139,6 +139,10 @@ export interface SessionMeta {
   lastVerificationCommand?: string;
   /** ISO timestamp when lastVerificationCommand was recorded. */
   lastVerificationAt?: string;
+  /** False when the last recorded check failed (command still set). Absent on old sidecars = treat as green. */
+  lastVerificationOk?: boolean;
+  /** 0 green / 1 red. Mid-loop verify nudge already reads this. */
+  lastVerificationExitCode?: number;
   /** ISO timestamp of the most recent file edit (write/search_replace/apply_patch). */
   lastEditAt?: string;
   /** Last /checkpoint sha (git stash create dangling commit). */
@@ -466,6 +470,15 @@ function normalizeSessionMeta(
     ...(typeof fromSide.lastVerificationAt === "string" &&
     fromSide.lastVerificationAt.trim()
       ? { lastVerificationAt: fromSide.lastVerificationAt.trim() }
+      : {}),
+    ...(typeof fromSide.lastVerificationOk === "boolean"
+      ? { lastVerificationOk: fromSide.lastVerificationOk }
+      : {}),
+    ...(typeof fromSide.lastVerificationExitCode === "number" &&
+    Number.isFinite(fromSide.lastVerificationExitCode)
+      ? {
+          lastVerificationExitCode: fromSide.lastVerificationExitCode === 0 ? 0 : 1,
+        }
       : {}),
     ...(typeof fromSide.lastEditAt === "string" &&
     fromSide.lastEditAt.trim()
@@ -986,6 +999,15 @@ export function importSessionJson(
       src.lastVerificationAt.trim()
         ? { lastVerificationAt: src.lastVerificationAt.trim() }
         : {}),
+      ...(typeof src.lastVerificationOk === "boolean"
+        ? { lastVerificationOk: src.lastVerificationOk }
+        : {}),
+      ...(typeof src.lastVerificationExitCode === "number" &&
+      Number.isFinite(src.lastVerificationExitCode)
+        ? {
+            lastVerificationExitCode: src.lastVerificationExitCode === 0 ? 0 : 1,
+          }
+        : {}),
       ...(typeof src.lastEditAt === "string" &&
       src.lastEditAt.trim()
         ? { lastEditAt: src.lastEditAt.trim() }
@@ -1222,7 +1244,8 @@ export function formatSessionPickerRow(
   const rawPrev = (s.lastUserPreview || "").replace(/\s+/g, " ").trim();
   const badges: string[] = [];
   if (s.lastVerificationCommand?.trim()) {
-    badges.push(isLastVerificationStale(s) ? "✓~" : "✓");
+    if (s.lastVerificationOk === false) badges.push("✗");
+    else badges.push(isLastVerificationStale(s) ? "✓~" : "✓");
   }
   if (s.ultrawork) badges.push("ULW");
   if (s.pinned) badges.push("PIN");
@@ -3511,6 +3534,8 @@ export function clearConversation(session: SessionData): void {
   delete session.meta.lastError;
   delete session.meta.lastVerificationCommand;
   delete session.meta.lastVerificationAt;
+  delete session.meta.lastVerificationOk;
+  delete session.meta.lastVerificationExitCode;
   delete session.meta.lastEditAt;
   // Clear the on-disk meta sidecar title NOW so the saveSession below (whose
   // cross-process merge preserves externally-set titles) does not resurrect

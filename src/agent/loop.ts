@@ -63,8 +63,7 @@ import {
   resolveUlwPhase,
   advanceUlwPhaseOnReading,
   countsTowardVerification,
-  shouldStampLastVerification,
-  shouldClearLastVerification,
+  applyVerificationTrail,
 } from "../harness/ulw-cycle.js";
 import {
   clearStaleToolResults,
@@ -1285,7 +1284,6 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
               if (ac.committed) {
                 const line = `Committed ${ac.sha || "HEAD"} — ${ac.subject} (${ac.files ?? 0} file(s), not pushed)`;
                 log.info(chalk.green(line));
-                events.onStatus?.(line);
                 autoCommit = {
                   committed: ac.committed,
                   sha: ac.sha,
@@ -2189,7 +2187,10 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
           handoffBlocks,
           proofClaimBlocks,
           preferredCheckCommands,
-          lastVerificationCommand: session.meta.lastVerificationCommand,
+          lastVerificationCommand:
+            session.meta.lastVerificationOk === false
+              ? undefined
+              : session.meta.lastVerificationCommand,
           lastVerificationStale: isLastVerificationStale(session.meta),
         });
         // Reset only when the ULW driver actually evaluated this Stop — hook /
@@ -2283,6 +2284,13 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
         }
         if (stopResult.allowStop) {
           if (stopResult.systemMessage) log.dim(stopResult.systemMessage);
+          if (
+            !loadUlwCycle(session.meta.id)?.enabled &&
+            session.meta.ultrawork
+          ) {
+            session.meta.ultrawork = false;
+            saveSession(session);
+          }
           if (stopResult.ulw?.stuckReleased) stuckReleased = true;
           if (stopResult.goal?.stuckReleased) stuckReleased = true;
           if (stopResult.ulw?.lastCycleReleased) lastCycleReleased = true;
@@ -2308,7 +2316,6 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
               if (ac.committed) {
                 const line = `Committed ${ac.sha || "HEAD"} — ${ac.subject} (${ac.files ?? 0} file(s), not pushed)`;
                 log.info(chalk.green(line));
-                events.onStatus?.(line);
                 if (finalText.trim()) finalText = `${finalText.replace(/\s+$/, "")}\n\n${line}`;
                 else finalText = line;
               } else if (ac.skipped && ac.skipped !== "working tree clean") {
@@ -2474,7 +2481,10 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
             ),
           );
         }
-        log.dim(inject.slice(0, 300));
+        {
+          const first = (inject.split("\n")[0] || "").trim();
+          if (first) log.dim(first);
+        }
         session.messages.push({ role: "user", content: inject });
         // Re-anchor already has mandate/counts. Snapshot memory *after*
         // the wave observation so the next boundary does not admit again
@@ -3548,7 +3558,8 @@ async function prepareToolResult(opts: {
   // the quality bar rewards; prose claims are not trusted on their own).
   // Background starts observe no exit code (fire-and-forget) — excluded by
   // countsTowardVerification; run the check in the foreground for it to count.
-  // Session last-verify trail is success-only so experts don't trust a red run.
+  // Session last-verify trail records the last check (green or red) so Δ
+  // never says "verify: none" after a failed npm test.
   if (harnessStats && name === "bash") {
     const cmd = typeof toolInput.command === "string" ? toolInput.command : "";
     let preferred: string[] | undefined;
@@ -3564,27 +3575,14 @@ async function prepareToolResult(opts: {
         harnessStats.verificationPassedRuns += 1;
       }
       try {
-        if (
-          shouldStampLastVerification({
-            command: cmd,
-            isError: result.isError,
-            preferredCheckCommands: preferred,
-          })
-        ) {
-          session.meta.lastVerificationCommand = cmd.trim().slice(0, 240);
-          session.meta.lastVerificationAt = new Date().toISOString();
+        applyVerificationTrail(session.meta, {
+          command: cmd,
+          isError: result.isError,
+          preferredCheckCommands: preferred,
+        });
+        if (session.meta.lastVerificationOk === true) {
           if (proofPoke) noteGreenVerification(proofPoke);
-        } else if (
-          shouldClearLastVerification({
-            command: cmd,
-            isError: result.isError,
-            preferredCheckCommands: preferred,
-          })
-        ) {
-          // Red check invalidates any prior green trail so experts never
-          // trust a stale last✓ after a failed re-run.
-          delete session.meta.lastVerificationCommand;
-          delete session.meta.lastVerificationAt;
+        } else if (session.meta.lastVerificationOk === false) {
           if (proofPoke) {
             noteRedVerification(proofPoke, session.meta.editCount || 0);
           }

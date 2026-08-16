@@ -28,16 +28,20 @@ export function formatTurnChangeSummary(
   });
   const lv = meta.lastVerificationCommand?.trim();
   const next = preferredCheck?.trim();
+  const red = meta.lastVerificationOk === false;
+  const stale = isLastVerificationStale(meta);
   const verify = lv
-    ? isLastVerificationStale(meta)
-      ? `verify: ${lv} (stale — predates last edit)`
-      : `verify: ${lv} ✓`
+    ? stale
+      ? `verify: ${lv}${red ? " ✗" : ""} (stale — predates last edit)`
+      : red
+        ? `verify: ${lv} ✗`
+        : `verify: ${lv} ✓`
     : next
       ? `verify: none — run ${next}`
       : `verify: none — edits unverified`;
   const cols = process.stdout.isTTY ? process.stdout.columns || 80 : 80;
   const prefix = `  Δ ${byPath.size} file${byPath.size === 1 ? "" : "s"}: `;
-  const callout = !lv || isLastVerificationStale(meta);
+  const callout = !lv || red || stale;
   const fitNames = (budget: number): string => {
     let shown = names.slice(0, 6);
     let more = names.length > shown.length ? ` +${names.length - shown.length} more` : "";

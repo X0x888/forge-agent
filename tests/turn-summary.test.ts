@@ -108,6 +108,18 @@ test("turn summary: fresh verification shows ✓, stale shows predates-last-edit
   assert.match(stale, /verify: npm test \(stale — predates last edit\)/);
 });
 
+test("turn summary: a failed check shows ✗, not verify: none", () => {
+  const line = formatTurnChangeSummary([mut("/repo/a.ts")], CWD, {
+    lastVerificationCommand: "npm test",
+    lastVerificationAt: "2026-01-01T00:10:00Z",
+    lastVerificationOk: false,
+    lastEditAt: "2026-01-01T00:05:00Z",
+    editCount: 2,
+  } as never)!;
+  assert.match(line, /verify: npm test ✗/);
+  assert.doesNotMatch(line, /verify: none/);
+});
+
 test("turn summary: unverified verify sits on its own line", () => {
   const prevCols = process.stdout.columns;
   const prevTty = process.stdout.isTTY;

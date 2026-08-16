@@ -1374,6 +1374,24 @@ describe("ulw wave ledger + quality bar", () => {
     );
   });
 
+  it("applyVerificationTrail keeps a red npm test on the trail", async () => {
+    const { applyVerificationTrail } = await import(
+      "../src/harness/ulw-cycle.js"
+    );
+    const meta: {
+      lastVerificationCommand?: string;
+      lastVerificationOk?: boolean;
+      lastVerificationExitCode?: number;
+    } = { lastVerificationCommand: "npm test", lastVerificationOk: true };
+    applyVerificationTrail(meta, { command: "npm test", isError: true });
+    assert.equal(meta.lastVerificationCommand, "npm test");
+    assert.equal(meta.lastVerificationOk, false);
+    assert.equal(meta.lastVerificationExitCode, 1);
+    applyVerificationTrail(meta, { command: "npm test", isError: false });
+    assert.equal(meta.lastVerificationOk, true);
+    assert.equal(meta.lastVerificationExitCode, 0);
+  });
+
   it("demands proof after proof-less waves, then caps the demands", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-ulw-proof-"));
     process.env.FORGE_HOME = tmp;

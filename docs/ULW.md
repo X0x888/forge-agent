@@ -134,7 +134,7 @@ Anti-gaming is **structural, not prompt-based**: the only way to satisfy a proof
 - User-facing product ships have a quality bar (not a persona): name the hard user job, finish one edge (empty/error/first-run) after wave 1, at most one labeled `Serendipity:`. Arms on build/evaluate of an app or named surface — not generic UI chrome, infra, or bugfix. Preview catalogs are not a reading. Existing `Reading:` notes count as the job.
 - Ship close grammar is one matcher: `Ship landed:` · `**Ship:**` · `Wave N ship:` · `Wave ship:` · `Wave shipped.` Auto-commit subjects use that ship, not an older wave-1 note.
 - Dock/`/status` ctx follows last provider `prompt_tokens` when it is higher than the local estimate.
-- Cheapest-proof guidance: affected tests per wave, full suite on consolidation waves
+- Cheapest-proof guidance: affected tests per wave, full suite on consolidation waves. A failed full suite stamps `verify: npm test ✗` (not `none`). A red suite is a different surface, not leftover chrome.
 
 ## State
 

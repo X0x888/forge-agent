@@ -1079,8 +1079,9 @@ export function formatSessionDetails(ctx: StatusBarContext): string {
         const stale = isLastVerificationStale(session.meta)
           ? "  ⚠ stale"
           : "";
+        const mark = session.meta.lastVerificationOk === false ? " ✗" : "";
         return chalk.dim(
-          `verify   ${last.length > 60 ? `${last.slice(0, 59)}…` : last}${stale}`,
+          `verify   ${last.length > 60 ? `${last.slice(0, 59)}…` : last}${mark}${stale}`,
         );
       }
       if ((session.meta.editCount || 0) > 0) {

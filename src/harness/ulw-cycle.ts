@@ -364,6 +364,37 @@ export function shouldClearLastVerification(opts: {
   return isVerificationCommand(opts.command, opts.preferredCheckCommands);
 }
 
+/** Stamp last-verify. Green sets ok; red keeps the command (do not pretend none ran). */
+export function applyVerificationTrail(
+  meta: {
+    lastVerificationCommand?: string;
+    lastVerificationAt?: string;
+    lastVerificationOk?: boolean;
+    lastVerificationExitCode?: number;
+  },
+  opts: {
+    command: string;
+    isError?: boolean;
+    preferredCheckCommands?: string[];
+  },
+): void {
+  const cmd = (opts.command || "").trim().slice(0, 240);
+  if (!cmd) return;
+  if (shouldStampLastVerification(opts)) {
+    meta.lastVerificationCommand = cmd;
+    meta.lastVerificationAt = nowIso();
+    meta.lastVerificationOk = true;
+    meta.lastVerificationExitCode = 0;
+    return;
+  }
+  if (shouldClearLastVerification(opts)) {
+    meta.lastVerificationCommand = cmd;
+    meta.lastVerificationAt = nowIso();
+    meta.lastVerificationOk = false;
+    meta.lastVerificationExitCode = 1;
+  }
+}
+
 function escapeRegExp(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }

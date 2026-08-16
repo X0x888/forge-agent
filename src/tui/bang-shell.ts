@@ -9,10 +9,7 @@ import type { SessionData } from "../session/session.js";
 import { saveSession } from "../session/session.js";
 import type { PermissionGate } from "../agent/permissions.js";
 import { executeTool } from "../agent/tools/index.js";
-import {
-  shouldClearLastVerification,
-  shouldStampLastVerification,
-} from "../harness/ulw-cycle.js";
+import { applyVerificationTrail } from "../harness/ulw-cycle.js";
 import { detectProjectIntel } from "../util/project-intel.js";
 
 const MAX_SESSION_CHARS = 8_000;
@@ -80,25 +77,11 @@ export async function runBangShell(opts: {
     const preferred = detectProjectIntel(
       config.workspace || session.meta.cwd,
     ).checkCommands;
-    if (
-      shouldStampLastVerification({
-        command,
-        isError: result.isError,
-        preferredCheckCommands: preferred,
-      })
-    ) {
-      session.meta.lastVerificationCommand = command.trim().slice(0, 240);
-      session.meta.lastVerificationAt = new Date().toISOString();
-    } else if (
-      shouldClearLastVerification({
-        command,
-        isError: result.isError,
-        preferredCheckCommands: preferred,
-      })
-    ) {
-      delete session.meta.lastVerificationCommand;
-      delete session.meta.lastVerificationAt;
-    }
+    applyVerificationTrail(session.meta, {
+      command,
+      isError: result.isError,
+      preferredCheckCommands: preferred,
+    });
     // Persist the verify stamp even when persist:false (mid-run) so proof-claim
     // sees the successful check without racing the in-flight message list.
     if (opts.persist === false) {
