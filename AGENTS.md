@@ -45,7 +45,7 @@ Binary entry: `src/cli.ts` → `dist/cli.js` (`bin: forge`).
 - `src/session/explore-map.ts` — structured explore child maps; parent `read_file` dereference + cited-line window
 - `src/session/request-prune.ts` — outbound working-set prune (default **off** until 180k so the prefix can cache; first clip freezes a sticky omit set on `session.meta.requestPruneSticky`; later rounds apply that set instead of re-aging; `FORGE_REQUEST_PRUNE=1` legacy every-round)
 - `src/session/tool-clearing.ts` — optional in-session stubbing (`FORGE_TOOL_CLEAR=1`; default off)
-- `src/harness/product-quality.ts` — user-facing product **quality** bar (not a persona): job insight + one finished edge + at most one labeled `Serendipity:`; chrome catalogs are not a reading; bounce once; generic UI chrome / infra / bugfix never arm
+- `src/harness/product-quality.ts` — user-facing product **quality** bar (not a persona): job insight + one finished edge + at most one labeled `Serendipity:`; chrome catalogs are not a reading; bounce once (`/cycle 1` / fork / re-enable reset it); `/cycle status` lists the bar; harvest fail-open; generic UI chrome / infra / bugfix never arm
 - `src/agent/project-skills.ts` — skill packs: package `skills/forge-*/` (builtin) + `.forge/skills/**/SKILL.md` + `.agents/skills` + `~/.forge/skills` (project > user > builtin; `FORGE_BUILTIN_SKILLS=0` off)
 - `src/util/project-intel.ts` — package manager + preferred check commands (system prompt, `/context`, bash wrong-PM/missing-script/missing-binary tips; monorepo walk-up + turbo/nx; doctor/status/config/run JSON; last-verify trail + `editsWithoutVerification`)
 - `src/agent/tools/file-read-state.ts` — session stale/unread edit guard (`FORGE_FILE_READ_GUARD=0` off)

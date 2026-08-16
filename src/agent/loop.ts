@@ -2198,6 +2198,12 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
           );
           noteUlwProofDemand(proofPoke);
         }
+        if (stopResult.ulw?.soulDemanded) {
+          harnessStats.effortBoostTurns = Math.max(
+            harnessStats.effortBoostTurns,
+            1,
+          );
+        }
         // Diminishing returns is user-visible: never let waves quietly thin out.
         if (stopResult.ulw?.thinStreakAdvisory) {
           log.info(

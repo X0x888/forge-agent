@@ -19,6 +19,10 @@ import {
   maybeAdoptNamedShips,
   loadUlwCycle,
   isLeftoverChromeShip,
+  formatUlwStatus,
+  copyUlwCycle,
+  setCycleFlag,
+  reenableUlwCycle,
 } from "../src/harness/ulw-cycle.js";
 import { appendMemoryRecord } from "../src/harness/decision-memory.js";
 
@@ -75,6 +79,8 @@ describe("product-quality detectors", () => {
     );
     assert.equal(hasProductEdge("Empty state: tap to capture a thought."), true);
     assert.equal(hasProductEdge("Wave shipped: dock tool name"), false);
+    assert.equal(hasProductEdge("Reading: redesign the onboarding next."), false);
+    assert.equal(hasProductEdge("Reading: first-run numbers — typeable 1–6."), true);
     assert.deepEqual(extractSerendipities("Serendipity: pin the last thought."), [
       "pin the last thought.",
     ]);
@@ -282,6 +288,57 @@ describe("product-quality Stop bar", () => {
         "Reading: The hard work is trusting the daily REPL. Empty state: unread transcript.",
       );
       assert.equal(hasStoredJobInsight(sid), true);
+    });
+  });
+
+  it("status lists the bar; fork and /cycle 1 reset the bounce", () => {
+    withHome(() => {
+      const sid = "pq-status";
+      fs.mkdirSync(path.join(process.env.FORGE_HOME!, "sessions", sid), {
+        recursive: true,
+      });
+      const chrome = armUlwCycle(sid + "-chrome", "improve the ui", {
+        cycle: 1,
+        skipCheckpoint: true,
+      });
+      assert.doesNotMatch(formatUlwStatus(chrome), /Product quality/);
+      disarmUlwCycle(sid + "-chrome");
+
+      armUlwCycle(sid, "build a small notes app", {
+        cycle: 1,
+        skipCheckpoint: true,
+      });
+      assert.match(formatUlwStatus(loadUlwCycle(sid)), /Product quality: on/);
+      evaluateUlwAtStop({
+        sessionId: sid,
+        lastAssistantMessage: "Wave 1 shipped: a feature grid of six cards.",
+        editCount: 5,
+        openTodoCount: 0,
+        stuckThreshold: 20,
+        verificationPassed: true,
+      });
+      assert.match(formatUlwStatus(loadUlwCycle(sid)!), /bounced once/);
+      assert.equal(loadUlwCycle(sid)!.soulNudgeDone, true);
+
+      copyUlwCycle(sid, sid + "-fork");
+      assert.equal(loadUlwCycle(sid + "-fork")!.soulNudgeDone, false);
+      assert.match(formatUlwStatus(loadUlwCycle(sid + "-fork")!), /Product quality: on/);
+
+      setCycleFlag(sid, 0);
+      setCycleFlag(sid, 1);
+      assert.equal(loadUlwCycle(sid)!.soulNudgeDone, false);
+
+      evaluateUlwAtStop({
+        sessionId: sid,
+        lastAssistantMessage: "Wave 1 shipped: a feature grid of six cards.",
+        editCount: 6,
+        openTodoCount: 0,
+        stuckThreshold: 20,
+        verificationPassed: true,
+      });
+      assert.equal(loadUlwCycle(sid)!.soulNudgeDone, true);
+      disarmUlwCycle(sid);
+      assert.equal(reenableUlwCycle(sid)!.soulNudgeDone, false);
     });
   });
 });

@@ -32,7 +32,7 @@ const JOB_INSIGHT_RE =
 const NEXT_NEED_RE =
   /(?:unspoken next(?: need)?|next need|what they(?:'ll| will) need|Next need:)\s+(.{12,200})/i;
 const EDGE_RE =
-  /\b(empty state|empty-state|nothing here yet|no results yet|first[- ]run|onboarding|error state|when it fails|permission.?denied|404)\b/i;
+  /\b(empty state|empty-state|nothing here yet|no results yet|first[- ]run|error state|when it fails|permission.?denied|404)\b/i;
 /** One labeled discovery per line. Short bodies still count as a label. */
 const SERENDIPITY_RE = /\*{0,2}Serendipity:\*{0,2}\s*([^\n]{1,180})/gi;
 /** Preview catalogs are not a job. Mentioning leftover chrome in a reading is. */
@@ -112,28 +112,32 @@ export function harvestProductQualityNotes(
   text: string,
 ): void {
   if (!sessionId || !text?.trim()) return;
-  const job = usableJob(text);
-  if (job) {
-    appendMemoryRecord(sessionId, {
-      kind: "decision",
-      source: "agent",
-      text: `${JOB_PREFIX} ${job}`,
-    });
-  }
-  const next = extractNextNeed(text);
-  if (next) {
-    appendMemoryRecord(sessionId, {
-      kind: "priority",
-      source: "agent",
-      text: `${NEXT_NEED_PREFIX} ${next}`,
-    });
-  }
-  if (hasProductEdge(text)) {
-    appendMemoryRecord(sessionId, {
-      kind: "fact",
-      source: "agent",
-      text: `${EDGE_PREFIX} empty/error/first-run is in the product`,
-    });
+  try {
+    const job = usableJob(text);
+    if (job) {
+      appendMemoryRecord(sessionId, {
+        kind: "decision",
+        source: "agent",
+        text: `${JOB_PREFIX} ${job}`,
+      });
+    }
+    const next = extractNextNeed(text);
+    if (next) {
+      appendMemoryRecord(sessionId, {
+        kind: "priority",
+        source: "agent",
+        text: `${NEXT_NEED_PREFIX} ${next}`,
+      });
+    }
+    if (hasProductEdge(text)) {
+      appendMemoryRecord(sessionId, {
+        kind: "fact",
+        source: "agent",
+        text: `${EDGE_PREFIX} empty/error/first-run is in the product`,
+      });
+    }
+  } catch {
+    /* ledger is best-effort — never fail Stop or adopt */
   }
 }
 

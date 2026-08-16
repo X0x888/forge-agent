@@ -40,6 +40,9 @@ import {
   harvestStoredProductQuality,
   evaluateProductQuality,
   formatProductQualityReanchor,
+  hasStoredJobInsight,
+  hasStoredProductEdge,
+  type ProductQualityResult,
 } from "./product-quality.js";
 
 export {
@@ -914,7 +917,13 @@ export function maybeAdoptNamedShips(
   }
   s.namedShips = parsed.map((item) => ({ text: item, status: "open" as const }));
   s.namedShipAdmitDone = false;
-  if (text) harvestProductQualityNotes(s.sessionId, text);
+  if (text) {
+    try {
+      harvestProductQualityNotes(s.sessionId, text);
+    } catch {
+      /* ledger is best-effort */
+    }
+  }
   return true;
 }
 
@@ -1905,6 +1914,7 @@ export function reenableUlwCycle(sessionId: string): UlwCycleState | null {
   s.enabled = true;
   s.cycle = 1;
   s.stuckBlocks = 0;
+  s.soulNudgeDone = false;
   clearUlwWrap(s);
   saveUlwCycle(s);
   return s;
@@ -1927,6 +1937,7 @@ export function setCycleFlag(
   s.cycle = cycle;
   if (cycle === 1) {
     s.stuckBlocks = 0;
+    s.soulNudgeDone = false;
     clearUlwWrap(s);
   } else {
     snapshotUlwWrap(s, opts?.lastReason ?? "user");
@@ -2010,6 +2021,7 @@ export function copyUlwCycle(fromId: string, toId: string): UlwCycleState | null
     polishStreak: 0,
     proofDemands: 0,
     evidenceNudges: 0,
+    soulNudgeDone: false,
     updatedAt: nowIso(),
   };
   saveUlwCycle(next);
@@ -2097,6 +2109,21 @@ export function formatUlwBadge(
 export const ULW_LIVE_CONTROLS_HINT =
   "Live mid-run (type while working — no Ctrl+C): /cycle 0 last · /cycle 1 continue · /max-waves N|off · /ulw-off disarm · /budget N|off · /notify on · /done";
 
+function formatProductQualityStatusLine(s: UlwCycleState): string | undefined {
+  if (!isUserFacingProductWork(s.mandate)) return undefined;
+  const bits = ["on"];
+  if (s.sessionId) {
+    try {
+      if (hasStoredJobInsight(s.sessionId)) bits.push("job named");
+      if (hasStoredProductEdge(s.sessionId)) bits.push("edge in product");
+    } catch {
+      /* status is best-effort */
+    }
+  }
+  if (s.soulNudgeDone) bits.push("bounced once");
+  return `  Product quality: ${bits.join(" · ")}`;
+}
+
 function formatNamedShipsStatusLine(s: UlwCycleState): string | undefined {
   const items = s.namedShips ?? [];
   if (!items.length) return undefined;
@@ -2124,12 +2151,14 @@ export function formatUlwStatus(s: UlwCycleState | null): string {
   const ledger = formatWaveLedger(s.waves);
   const best = bestWave(s.waves);
   const namedLine = formatNamedShipsStatusLine(s);
+  const qualityLine = formatProductQualityStatusLine(s);
   return [
     `ULW cycle: ON  |  ${formatUlwCounts(s)}  ${s.cycle === 1 ? "(CONTINUE — relentless)" : "(LAST — wrap then attest)"}`,
     `  Mandate: ${displayUlwMandate(s.mandate)}`,
     `  Soft prompt expanded: ${s.softPrompt ? "yes" : "no"}`,
     `  max_waves: ${cap != null ? cap : "off (unlimited)"}`,
     ...(namedLine ? [namedLine] : []),
+    ...(qualityLine ? [qualityLine] : []),
     ...(s.wrapKind
       ? [
           s.wrapKind === "user"
@@ -2171,6 +2200,8 @@ export function formatUlwStatus(s: UlwCycleState | null): string {
  * - Thin-wave escalation + diminishing-returns advisory (user-visible).
  * - Attestation evidence: cycle=0 "**Cycle complete.**" without machine-
  *   checkable evidence is bounced once, then released (never an infinite trap).
+ * - Product quality: user-facing product ships name the hard job, finish one
+ *   edge after wave 1, and keep at most one labeled Serendipity:. Bounce once.
  */
 export function evaluateUlwAtStop(opts: {
   sessionId: string;
@@ -2419,14 +2450,23 @@ export function evaluateUlwAtStop(opts: {
       isUserFacingProductWork(s.mandate) &&
       (isDeclaredWaveClose(closer) || cycleCompleteClaim)
     ) {
-      harvestProductQualityNotes(opts.sessionId, closer);
-      harvestStoredProductQuality(opts.sessionId);
-      const quality = evaluateProductQuality({
-        closer,
-        sessionId: opts.sessionId,
-        wave: s.wave,
-        isLeftoverChrome: isLeftoverChromeShip,
-      });
+      try {
+        harvestProductQualityNotes(opts.sessionId, closer);
+        harvestStoredProductQuality(opts.sessionId);
+      } catch {
+        /* ledger is best-effort */
+      }
+      let quality: ProductQualityResult;
+      try {
+        quality = evaluateProductQuality({
+          closer,
+          sessionId: opts.sessionId,
+          wave: s.wave,
+          isLeftoverChrome: isLeftoverChromeShip,
+        });
+      } catch {
+        quality = { ok: true, missing: [] };
+      }
       if (!quality.ok) {
         s.soulNudgeDone = true;
         saveUlwCycle(s);
