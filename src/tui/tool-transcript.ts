@@ -211,11 +211,35 @@ function isUsefulDiff(diff: string | undefined): diff is string {
 }
 
 /**
+ * Extra lines under the default ✓ row (diff / child report / tail / hits).
+ * Shared by the printer and the coalescer so a preview cannot vanish into ×N.
+ */
+export function extraDefaultPreview(name: string, r: ToolTranscriptEnd): string {
+  if (r.isError) return "";
+  if (isUsefulDiff(r.diff)) {
+    return (
+      formatDiffBlock(r.diff, {
+        maxLines: DEFAULT_EDIT_DIFF_LINES,
+        omitHeaders: true,
+      }) ?? ""
+    );
+  }
+  const out = r.output ?? "";
+  if (!out) return "";
+  if (isSubagentTool(name)) return formatSubagentTranscriptPreview(out);
+  if (isBashToolName(name)) return formatSuccessfulBashTail(out);
+  if (isWebSearchTool(name)) return formatWebSearchTranscriptPreview(out);
+  if (isLspTool(name)) return formatLspTranscriptPreview(out);
+  if (isGetTaskOutputTool(name)) return formatGetTaskOutputPreview(out);
+  if (isWebFetchTool(name)) return formatWebFetchTranscriptPreview(out);
+  if (isCallMcpTool(name)) return formatCallMcpTranscriptPreview(out);
+  return "";
+}
+
+/**
  * Default (non-/verbose) tool-end transcript: one ✓/✗ row, plus a
  * last-lines tail when a failure has more than the inlined reason,
- * and a short colored diff when an edit tool succeeded.
- * Shared by the REPL and the loop's headless default printer so
- * `forge run` does not hide why a tool failed — or what an edit did.
+ * and a short colored preview when the tool's work product is the point.
  */
 export function formatDefaultToolEndTranscript(
   name: string,
@@ -225,32 +249,8 @@ export function formatDefaultToolEndTranscript(
   if (r.isError && r.output) {
     const tail = formatFailedToolTail(r.output);
     if (tail) lines.push(tail);
-  } else if (!r.isError && isUsefulDiff(r.diff)) {
-    const block = formatDiffBlock(r.diff, {
-      maxLines: DEFAULT_EDIT_DIFF_LINES,
-      omitHeaders: true,
-    });
-    if (block) lines.push(block);
-  } else if (!r.isError && isSubagentTool(name) && r.output) {
-    const preview = formatSubagentTranscriptPreview(r.output);
-    if (preview) lines.push(preview);
-  } else if (!r.isError && isBashToolName(name) && r.output) {
-    const tail = formatSuccessfulBashTail(r.output);
-    if (tail) lines.push(tail);
-  } else if (!r.isError && isWebSearchTool(name) && r.output) {
-    const preview = formatWebSearchTranscriptPreview(r.output);
-    if (preview) lines.push(preview);
-  } else if (!r.isError && isLspTool(name) && r.output) {
-    const preview = formatLspTranscriptPreview(r.output);
-    if (preview) lines.push(preview);
-  } else if (!r.isError && isGetTaskOutputTool(name) && r.output) {
-    const preview = formatGetTaskOutputPreview(r.output);
-    if (preview) lines.push(preview);
-  } else if (!r.isError && isWebFetchTool(name) && r.output) {
-    const preview = formatWebFetchTranscriptPreview(r.output);
-    if (preview) lines.push(preview);
-  } else if (!r.isError && isCallMcpTool(name) && r.output) {
-    const preview = formatCallMcpTranscriptPreview(r.output);
+  } else {
+    const preview = extraDefaultPreview(name, r);
     if (preview) lines.push(preview);
   }
   return lines.join("\n");
@@ -328,20 +328,8 @@ export function createToolEndCoalescer(print: (line: string) => void) {
 
   return {
     push(name: string, r: ToolTranscriptEnd, opts?: { verbose?: boolean }): void {
-      // Diffs / subagent reports must not join a `✓ edit ×N` burst —
-      // the compact preview is the point.
-      if (
-        opts?.verbose ||
-        r.isError ||
-        isUsefulDiff(r.diff) ||
-        (isSubagentTool(name) && Boolean(r.output?.trim())) ||
-        (isBashToolName(name) && Boolean(formatSuccessfulBashTail(r.output ?? ""))) ||
-        (isWebSearchTool(name) && Boolean(formatWebSearchTranscriptPreview(r.output ?? ""))) ||
-        (isLspTool(name) && Boolean(formatLspTranscriptPreview(r.output ?? ""))) ||
-        (isGetTaskOutputTool(name) && Boolean(formatGetTaskOutputPreview(r.output ?? ""))) ||
-        (isWebFetchTool(name) && Boolean(formatWebFetchTranscriptPreview(r.output ?? ""))) ||
-        (isCallMcpTool(name) && Boolean(formatCallMcpTranscriptPreview(r.output ?? "")))
-      ) {
+      // Any extraDefaultPreview must not join a `✓ tool ×N` burst.
+      if (opts?.verbose || r.isError || extraDefaultPreview(name, r)) {
         flush();
         print(
           opts?.verbose

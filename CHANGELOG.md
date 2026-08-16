@@ -25,6 +25,7 @@
 - **Bang-shell live ›**: `!npm test` streams the last output line into `live ›` (same throttle as agent bash).
 - **web_fetch preview**: a successful fetch prints the first heading + first prose lines under the ✓ row. Tiny pages stay one line.
 - **call_mcp preview**: a successful MCP call prints the first 4 result lines under the ✓ row. One-line "ok" stays one line.
+- **Preview coalescer is one function**: `extraDefaultPreview` feeds both the default ✓ printer and the ×N coalescer so a new preview cannot vanish into a burst.
 - **Unlimited named-ship backlog**: the Wave-1 reading's ONE ship + passed-on list is stored on `ulw.json`. When every item is done and `maxWaves` is unset, Stop asks **once** for a new `Reading:` or `/cycle 0`. Capped runs still spend remaining waves. `/cycle status` lists the ships.
 - **`provider_round` `pruneKind` + `cacheDrop`**: metrics distinguish `first_clip` / `sticky` / `reclip` / `always`, and flag a round that fell below 5% cache after a prior round above 90%. `/cost` last-round line and `forge run --json` expose `lastPruneKind`.
 
