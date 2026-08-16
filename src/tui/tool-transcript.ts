@@ -46,6 +46,34 @@ function isGetTaskOutputTool(name: string): boolean {
   return /^(get_task_output|TaskOutput)$/i.test(name);
 }
 
+function isWebFetchTool(name: string): boolean {
+  return /^(web_fetch|WebFetch)$/i.test(name);
+}
+
+/** First heading + next prose lines under ✓ web_fetch. Tiny pages stay one row. */
+export function formatWebFetchTranscriptPreview(
+  output: string,
+  opts?: { maxLines?: number },
+): string {
+  const maxLines = opts?.maxLines ?? 3;
+  const lines = output
+    .replace(/\r\n/g, "\n")
+    .split("\n")
+    .map((l) => l.trim())
+    .filter((l) => l.length);
+  if (lines.length <= 1 && (lines[0]?.length ?? 0) < 40) return "";
+  const picked: string[] = [];
+  for (const raw of lines) {
+    if (/^!\[/.test(raw) || /^[-*_]{3,}$/.test(raw)) continue;
+    const clean = raw.replace(/^#+\s+/, "").replace(/\*{1,2}/g, "").trim();
+    if (clean.length < 3) continue;
+    picked.push(clean.length > 72 ? `${clean.slice(0, 71)}…` : clean);
+    if (picked.length >= maxLines) break;
+  }
+  if (!picked.length) return "";
+  return picked.map((l) => chalk.dim(`  ${l}`)).join("\n");
+}
+
 /** Last 8 log lines under ✓ get_task_output. Short "still running" notes stay one row. */
 export function formatGetTaskOutputPreview(
   output: string,
@@ -193,6 +221,9 @@ export function formatDefaultToolEndTranscript(
   } else if (!r.isError && isGetTaskOutputTool(name) && r.output) {
     const preview = formatGetTaskOutputPreview(r.output);
     if (preview) lines.push(preview);
+  } else if (!r.isError && isWebFetchTool(name) && r.output) {
+    const preview = formatWebFetchTranscriptPreview(r.output);
+    if (preview) lines.push(preview);
   }
   return lines.join("\n");
 }
@@ -279,7 +310,8 @@ export function createToolEndCoalescer(print: (line: string) => void) {
         (isBashToolName(name) && Boolean(formatSuccessfulBashTail(r.output ?? ""))) ||
         (isWebSearchTool(name) && Boolean(formatWebSearchTranscriptPreview(r.output ?? ""))) ||
         (isLspTool(name) && Boolean(formatLspTranscriptPreview(r.output ?? ""))) ||
-        (isGetTaskOutputTool(name) && Boolean(formatGetTaskOutputPreview(r.output ?? "")))
+        (isGetTaskOutputTool(name) && Boolean(formatGetTaskOutputPreview(r.output ?? ""))) ||
+        (isWebFetchTool(name) && Boolean(formatWebFetchTranscriptPreview(r.output ?? "")))
       ) {
         flush();
         print(

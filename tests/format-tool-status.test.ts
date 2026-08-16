@@ -611,6 +611,37 @@ describe("default tool status line", () => {
     assert.equal(short.includes("\n"), false);
   });
 
+  it("web_fetch default transcript shows the first heading and prose", () => {
+    const page = [
+      "# Forge CLI",
+      "",
+      "A TypeScript coding agent with a blocking harness.",
+      "More body that should not all dump.",
+    ].join("\n");
+    const text = strip(
+      formatDefaultToolEndTranscript("web_fetch", {
+        isError: false,
+        ms: 200,
+        bytes: 80,
+        args: { url: "https://example.com" },
+        output: page,
+      }),
+    );
+    assert.match(text, /✓ web_fetch/);
+    assert.match(text, /Forge CLI/);
+    assert.match(text, /TypeScript coding agent/);
+    const tiny = strip(
+      formatDefaultToolEndTranscript("web_fetch", {
+        isError: false,
+        ms: 40,
+        bytes: 4,
+        args: { url: "https://example.com/ok" },
+        output: "ok",
+      }),
+    );
+    assert.equal(tiny.includes("\n"), false);
+  });
+
   it("verbose transcript prints the full output block", () => {
     const text = strip(
       formatVerboseToolEndTranscript("bash", {
