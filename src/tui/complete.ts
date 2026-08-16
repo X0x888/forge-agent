@@ -540,7 +540,7 @@ export const SLASH_HINTS: Record<string, string> = {
   "/setup": "Account, model, budget",
   "/plan": "Read-only design",
   "/init": "Write AGENTS.md",
-  "/last": "Conversation card",
+  "/last": "Conversation card + files",
   "/retry": "Rewind + re-run",
   "/diff": "Change-review card",
   "/model": "Switch model",

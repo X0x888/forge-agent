@@ -103,7 +103,7 @@ Sessions
   /title [name]       Label for resume-by-title / search
   /pin                Protect from prune
   /share              Pasteable handoff card
-  /last [n]           Conversation card
+  /last [n]           Conversation card + files/verify
   /files              Paths touched this session
   /path               On-disk session directory
   /export             Markdown or JSON (mode 0600)
@@ -198,7 +198,7 @@ Forge slash commands
   /config [json]        Effective config snapshot (no secrets)  [live]
   /copy                 Copy last assistant reply (pbcopy/wl-copy/xclip/…)  [live]
   /share [nocopy]       Pasteable session card + resume/export cmds (clipboard)  [live]
-  /last [n]             Last n turns as a conversation card  [live]
+  /last [n]             Last n turns as a conversation card + files/verify  [live]
   /files [writes|n]     Paths touched by tools this session (newest first)  [live]
   /path [id|json]       On-disk session directory / session.json path  [live]
   /pin [on|off|toggle]  Protect session from prune (/unpin)  [live]

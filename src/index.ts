@@ -448,6 +448,7 @@ export {
   type TouchedFile,
   type TouchedFileOp,
   formatRecentTurns,
+  formatLastRecapTrailer,
   formatResumePeek,
   formatResumeOrientation,
   recoverSessionFromTmp,

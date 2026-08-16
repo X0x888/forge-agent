@@ -280,7 +280,7 @@ Full contract: [docs/RELIABILITY.md](docs/RELIABILITY.md) · expert checklist: [
 | `/done [note]` | Shorthand for `/goal done` (live-safe mid-run) |
 | `/pause` | Shorthand for `/goal pause` (live-safe mid-run) |
 | `/unpause` | Shorthand for `/goal resume` (live-safe; not session `/resume`) |
-| `/last [n]` | Peek last n user/assistant turns (live-safe; great after resume) |
+| `/last [n]` | Conversation card + files/verify (live-safe; great after resume) |
 | `/news [n]` | What's new from CHANGELOG (`/changelog` · CLI: `forge news`) |
 | `/export [path] [--json]` | Export session markdown or JSON (files mode `0600`) |
 | `/fork [title]` | Branch session into a new id |

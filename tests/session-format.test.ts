@@ -9,6 +9,7 @@ import {
   rewindSession,
   lastUserText,
   formatRecentTurns,
+  formatLastRecapTrailer,
   formatResumePeek,
   exportSessionMarkdown,
   maybeSetTitle,
@@ -246,6 +247,69 @@ describe("session helpers", () => {
       stdout.columns = prevCols;
       stdout.isTTY = prevTty;
     }
+  });
+
+  it("formatRecentTurns empty state points at a first task", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-last-empty-"));
+    process.env.FORGE_HOME = tmp;
+    const s = createSession({ cwd: tmp, provider: "xai", model: "grok-4" });
+    const card = formatRecentTurns(s, { turns: 1 });
+    assert.match(card, /No user\/assistant turns/);
+    assert.match(card, /type a task/);
+    assert.match(card, /\/diff/);
+    const compact = formatRecentTurns(s, { turns: 1, compact: true });
+    assert.equal(compact, "No user/assistant turns in this session yet.");
+  });
+
+  it("formatRecentTurns recap lists files + verify; compact peek does not", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-last-recap-"));
+    process.env.FORGE_HOME = tmp;
+    const s = createSession({ cwd: tmp, provider: "xai", model: "grok-4" });
+    s.messages.push({ role: "user", content: "add the card" });
+    s.messages.push({
+      role: "assistant",
+      content: "wrote it",
+      tool_calls: [
+        {
+          id: "1",
+          type: "function",
+          function: {
+            name: "write_file",
+            arguments: JSON.stringify({ path: "src/tui/diff-card.ts", content: "x" }),
+          },
+        },
+      ],
+    });
+    s.meta.editCount = 1;
+    s.meta.lastVerificationCommand = "npm test";
+    s.meta.lastVerificationOk = true;
+    s.meta.lastVerificationAt = "2026-01-01T00:01:00Z";
+    s.meta.lastEditAt = "2026-01-01T00:00:00Z";
+    const card = formatRecentTurns(s, { turns: 1 });
+    assert.match(card, /add the card/);
+    assert.match(card, /src\/tui\/diff-card\.ts \(new\)/);
+    assert.match(card, /verify: npm test ✓/);
+    assert.match(card, /\/diff/);
+    assert.match(card, /\/files/);
+    const compact = formatRecentTurns(s, { turns: 1, compact: true });
+    assert.match(compact, /add the card/);
+    assert.doesNotMatch(compact, /verify: npm test/);
+    assert.doesNotMatch(compact, /src\/tui\/diff-card\.ts/);
+    const trailer = formatLastRecapTrailer(s, 80).join("\n");
+    assert.match(trailer, /files  src\/tui\/diff-card\.ts \(new\)/);
+  });
+
+  it("formatLastRecapTrailer flags stale verify", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-last-stale-"));
+    process.env.FORGE_HOME = tmp;
+    const s = createSession({ cwd: tmp, provider: "xai", model: "grok-4" });
+    s.meta.editCount = 2;
+    s.meta.lastVerificationCommand = "npm test";
+    s.meta.lastVerificationOk = true;
+    s.meta.lastVerificationAt = "2026-01-01T00:00:00Z";
+    s.meta.lastEditAt = "2026-01-01T00:02:00Z";
+    const trailer = formatLastRecapTrailer(s, 80).join("\n");
+    assert.match(trailer, /stale — predates last edit/);
   });
 
   it("/last is handled and live-safe", async () => {

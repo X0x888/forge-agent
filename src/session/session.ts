@@ -2847,6 +2847,75 @@ function formatTurnBubble(
 }
 
 /**
+ * Session-scoped files + verify trailer for the `/last` card.
+ * Compact resume peeks stay one-row — they already have formatCompactResumeCard.
+ */
+export function formatLastRecapTrailer(
+  session: SessionData,
+  width: number,
+): string[] {
+  const cols = Math.max(24, width);
+  const clipRow = (s: string): string =>
+    visibleWidth(s) > cols ? clipAnsi(s, cols) : s;
+  const lines: string[] = [];
+  let files: TouchedFile[] = [];
+  try {
+    files = listSessionTouchedFiles(session, { mutatedOnly: true, limit: 6 });
+  } catch {
+    /* journal / messages are best-effort */
+  }
+  if (files.length) {
+    const names = files.map((t) =>
+      t.op === "write" ? `${t.path} (new)` : t.op === "delete" ? `${t.path} (del)` : t.path,
+    );
+    const prefix = "  files  ";
+    let shown = names.slice(0, 4);
+    let more =
+      names.length > shown.length ? ` +${names.length - shown.length} more` : "";
+    while (
+      shown.length > 1 &&
+      visibleWidth(`${prefix}${shown.join(", ")}${more}`) > cols
+    ) {
+      shown = shown.slice(0, -1);
+      more = ` +${names.length - shown.length} more`;
+    }
+    let mid = `${shown.join(", ")}${more}`;
+    if (visibleWidth(prefix + mid) > cols) {
+      mid = clipAnsi(mid, Math.max(8, cols - visibleWidth(prefix)));
+    }
+    lines.push(clipRow(`${prefix}${mid}`));
+  }
+
+  const lv = session.meta.lastVerificationCommand?.trim();
+  const stale = isLastVerificationStale(session.meta);
+  const red = session.meta.lastVerificationOk === false;
+  const edits = (session.meta.editCount || 0) > 0 || files.length > 0;
+  if (lv) {
+    const mark = stale ? " (stale — predates last edit)" : red ? " ✗" : " ✓";
+    const text = `  verify: ${lv}${mark}`;
+    lines.push(clipRow(stale || red ? chalk.yellow(text) : chalk.dim(text)));
+  } else if (edits) {
+    let next = "";
+    try {
+      next =
+        detectProjectIntel(session.meta.cwd || process.cwd()).checkCommands[0] ??
+        "";
+    } catch {
+      /* */
+    }
+    const text = next
+      ? `  verify: none — run ${next}`
+      : "  verify: none — edits unverified";
+    lines.push(clipRow(chalk.yellow(text)));
+  }
+
+  if (files.length || lv || edits) {
+    lines.push(clipRow(chalk.dim("  ↳ /diff  ·  /files  ·  /undo")));
+  }
+  return lines;
+}
+
+/**
  * Last N user/assistant turns.
  * Default is a wrapped conversation card (`/last`). Pass `compact: true`
  * for the one-row resume peek (banner / session show).
@@ -2913,16 +2982,23 @@ export function formatRecentTurns(
     }
   }
 
-  if (turns.length === 0) {
-    return "No user/assistant turns in this session yet.";
-  }
-
-  const slice = turns.slice(-turnsWanted);
-  const startIdx = turns.length - slice.length + 1;
   const width = Math.max(
     24,
     process.stdout.isTTY ? (process.stdout.columns ?? 80) : 80,
   );
+  if (turns.length === 0) {
+    if (compact) return "No user/assistant turns in this session yet.";
+    const trailer = formatLastRecapTrailer(session, width);
+    return [
+      "No user/assistant turns in this session yet.",
+      ...(trailer.length
+        ? trailer
+        : [chalk.dim("  ↳ type a task  ·  /diff  ·  /help")]),
+    ].join("\n");
+  }
+
+  const slice = turns.slice(-turnsWanted);
+  const startIdx = turns.length - slice.length + 1;
   const clipRow = (s: string): string =>
     visibleWidth(s) > width ? clipAnsi(s, width) : s;
   const lines: string[] = [
@@ -2987,6 +3063,14 @@ export function formatRecentTurns(
       );
     }
   });
+
+  if (!compact) {
+    const trailer = formatLastRecapTrailer(session, width);
+    if (trailer.length) {
+      lines.push("");
+      lines.push(...trailer);
+    }
+  }
 
   return lines.join("\n");
 }
