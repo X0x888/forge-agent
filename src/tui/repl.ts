@@ -434,6 +434,7 @@ export async function runRepl(opts: {
             session,
             permissions,
             persist: false,
+            onProgress: (line) => working.setPhase("tool", `bash ${line}`),
           });
           if (bang.handled) {
             console.log(formatBangOutput(bang.output, bang.isError));
@@ -565,12 +566,16 @@ export async function runRepl(opts: {
     }
 
     if (text.startsWith("!")) {
+      const started = !working.active();
+      if (started) working.start();
+      working.setPhase("tool", `bash ${text.slice(1).trim()}`);
       try {
         const bang = await runBangShell({
           line: text,
           config,
           session,
           permissions,
+          onProgress: (line) => working.setPhase("tool", `bash ${line}`),
         });
         if (bang.handled) {
           console.log(formatBangOutput(bang.output, bang.isError));
@@ -581,6 +586,8 @@ export async function runRepl(opts: {
         log.error((err as Error).message || String(err));
         prompt();
         return;
+      } finally {
+        if (started) working.stop();
       }
     }
 

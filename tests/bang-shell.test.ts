@@ -44,6 +44,23 @@ describe("bang-shell", () => {
     assert.match(String(last?.content), /bang-ok/);
   });
 
+  it("forwards onProgress last-lines from the bang command", async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-bang-"));
+    process.env.FORGE_HOME = tmp;
+    const session = createSession({ cwd: tmp, provider: "xai", model: "m" });
+    const seen: string[] = [];
+    const r = await runBangShell({
+      line: "!printf 'bang-one\\nbang-two\\n'",
+      config: { ...DEFAULT_CONFIG, workspace: tmp, permissionMode: "default" },
+      session,
+      permissions: new PermissionGate({ interactive: false }),
+      persist: false,
+      onProgress: (line) => seen.push(line),
+    });
+    assert.equal(r.handled, true);
+    assert.ok(seen.some((l) => /bang-/.test(l)), `progress=${JSON.stringify(seen)}`);
+  });
+
   it("denies mutating bash in plan mode", async () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-bang-"));
     process.env.FORGE_HOME = tmp;

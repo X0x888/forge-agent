@@ -29,6 +29,8 @@ export async function runBangShell(opts: {
   permissions: PermissionGate;
   /** When false, print-only — caller queues the result (mid-run, avoid racing the loop). */
   persist?: boolean;
+  /** Live last-line of the bang command (throttled) for live ›. */
+  onProgress?: (detail: string) => void;
 }): Promise<{ handled: boolean; output: string; isError?: boolean }> {
   const command = parseBangCommand(opts.line);
   if (command === null) return { handled: false, output: "" };
@@ -67,6 +69,7 @@ export async function runBangShell(opts: {
       sandboxMissingBackend: config.sandboxMissingBackend,
       session,
       config,
+      onProgress: opts.onProgress,
     },
   );
   const body = String(result.output || "").trimEnd();
