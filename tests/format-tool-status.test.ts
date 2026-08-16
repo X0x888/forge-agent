@@ -13,6 +13,7 @@ import {
   formatDefaultToolEndTranscript,
   formatSubagentTranscriptPreview,
   formatVerboseToolEndTranscript,
+  formatWebSearchTranscriptPreview,
   stripSubagentHeader,
 } from "../src/tui/tool-transcript.js";
 
@@ -503,6 +504,44 @@ describe("default tool status line", () => {
     );
     assert.match(echo, /✓ bash echo hi/);
     assert.equal(echo.includes("\n"), false);
+  });
+
+  it("web_search default transcript lists hit titles, not URLs", () => {
+    const html = [
+      "## Search results for forge cli",
+      "1. **Forge CLI**",
+      "   https://example.com/forge",
+      "   A coding agent.",
+      "2. **Getting started**",
+      "   https://example.com/start",
+      "",
+      "_Source: DuckDuckGo HTML_",
+    ].join("\n");
+    const preview = strip(formatWebSearchTranscriptPreview(html));
+    assert.match(preview, /1\. Forge CLI/);
+    assert.match(preview, /2\. Getting started/);
+    assert.doesNotMatch(preview, /https:\/\/|Search results for|_Source/);
+    const text = strip(
+      formatDefaultToolEndTranscript("web_search", {
+        isError: false,
+        ms: 400,
+        bytes: 200,
+        args: { query: "forge cli" },
+        output: html,
+      }),
+    );
+    assert.match(text, /✓ web_search forge cli/);
+    assert.match(text, /1\. Forge CLI/);
+    const empty = strip(
+      formatDefaultToolEndTranscript("web_search", {
+        isError: false,
+        ms: 80,
+        bytes: 40,
+        args: { query: "zzz" },
+        output: 'No structured results for "zzz". Try a more specific query.',
+      }),
+    );
+    assert.equal(empty.includes("\n"), false);
   });
 
   it("verbose transcript prints the full output block", () => {

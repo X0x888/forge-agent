@@ -31,6 +31,53 @@ export const DEFAULT_EDIT_DIFF_LINES = 8;
 /** Child-report lines under ✓ spawn_subagent. */
 export const DEFAULT_SUBAGENT_PREVIEW_LINES = 8;
 
+/** Hit titles under ✓ web_search. */
+export const DEFAULT_WEB_SEARCH_PREVIEW_HITS = 5;
+
+function isWebSearchTool(name: string): boolean {
+  return /^(web_search|websearch)$/i.test(name);
+}
+
+/**
+ * Title-only preview of a web_search report. Understands HTML-lite
+ * `1. **title**` rows and Instant Answer `- text` bullets. Empty when
+ * there are no structured hits (one-line "no results" stays one row).
+ */
+export function formatWebSearchTranscriptPreview(
+  output: string,
+  opts?: { maxHits?: number },
+): string {
+  const maxHits = opts?.maxHits ?? DEFAULT_WEB_SEARCH_PREVIEW_HITS;
+  const hits: string[] = [];
+  for (const raw of output.replace(/\r\n/g, "\n").split("\n")) {
+    const line = raw.trim();
+    const numbered = line.match(/^\d+\.\s+\*{0,2}(.+?)\*{0,2}$/u);
+    if (numbered?.[1]) {
+      hits.push(numbered[1].trim());
+      continue;
+    }
+    const dash = line.match(/^-\s+(.+)/u);
+    if (dash?.[1] && !/^https?:\/\//i.test(dash[1])) {
+      hits.push(dash[1].trim());
+    }
+  }
+  if (!hits.length) {
+    const heading = output
+      .split("\n")
+      .map((l) => l.trim())
+      .find((l) => l.startsWith("## "));
+    if (heading && !/^##\s+Search results for\b/i.test(heading)) {
+      hits.push(heading.replace(/^##\s+/u, "").trim());
+    }
+  }
+  if (!hits.length) return "";
+  const shown = hits.slice(0, maxHits);
+  const extra = hits.length - shown.length;
+  const painted = shown.map((h, i) => chalk.dim(`  ${i + 1}. ${clipAnsi(h, 72)}`));
+  if (extra > 0) painted.push(chalk.dim(`  \u2026 +${extra} more \u00b7 /verbose`));
+  return painted.join("\n");
+}
+
 function isSubagentTool(name: string): boolean {
   return name === "spawn_subagent" || name === "Task";
 }
@@ -98,6 +145,9 @@ export function formatDefaultToolEndTranscript(
   } else if (!r.isError && isBashToolName(name) && r.output) {
     const tail = formatSuccessfulBashTail(r.output);
     if (tail) lines.push(tail);
+  } else if (!r.isError && isWebSearchTool(name) && r.output) {
+    const preview = formatWebSearchTranscriptPreview(r.output);
+    if (preview) lines.push(preview);
   }
   return lines.join("\n");
 }
@@ -181,7 +231,8 @@ export function createToolEndCoalescer(print: (line: string) => void) {
         r.isError ||
         isUsefulDiff(r.diff) ||
         (isSubagentTool(name) && Boolean(r.output?.trim())) ||
-        (isBashToolName(name) && Boolean(formatSuccessfulBashTail(r.output ?? "")))
+        (isBashToolName(name) && Boolean(formatSuccessfulBashTail(r.output ?? ""))) ||
+        (isWebSearchTool(name) && Boolean(formatWebSearchTranscriptPreview(r.output ?? "")))
       ) {
         flush();
         print(
