@@ -40,6 +40,7 @@ import {
   formatRunStopReason,
   formatTurnChangeSummaryForSession,
   formatUserTurnOpen,
+  formatAssistantTurnOpen,
 } from "./turn-summary.js";
 import {
   createMarkdownRenderer,
@@ -749,6 +750,7 @@ export async function runRepl(opts: {
               toolEnds.flush();
               // Leave the live › line above; stream on following lines
               process.stdout.write("\n");
+              process.stdout.write(`${formatAssistantTurnOpen()}\n`);
               working.setStreaming(true);
               streamActive = true;
               sawToken = true;
@@ -777,7 +779,7 @@ export async function runRepl(opts: {
             toolStarts.settle(name);
             // Minimal by default: one status line per tool. Consecutive
             // same-tool ✓ rows collapse to `✓ grep ×4`. Failures and
-            // /verbose stay one-per-call. Success diffs stay /verbose.
+            // /verbose stay one-per-call. Edits with a diff print a short preview.
             toolEnds.push(name, r, { verbose: verboseToolOutput });
           },
           onToolSettled: () => {

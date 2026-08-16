@@ -60,6 +60,22 @@ describe("formatDiffBlock", () => {
     const block = formatDiffBlock(diff, { maxLines: 10 });
     assert.ok(block.includes("… (70 more diff lines)"));
   });
+
+  test("omitHeaders drops ---/+++ and points leftover at /verbose", () => {
+    const lines = [
+      "--- a/src/a.ts",
+      "+++ b/src/a.ts",
+      ...Array.from({ length: 12 }, (_, i) => `+line${i}`),
+    ];
+    const block = formatDiffBlock(lines.join("\n"), {
+      maxLines: 8,
+      omitHeaders: true,
+    });
+    const bare = block.replace(/\x1b\[[0-9;]*m/g, "");
+    assert.ok(!bare.includes("--- a/"));
+    assert.ok(bare.includes("+line0"));
+    assert.ok(bare.includes("… (4 more · /verbose)"));
+  });
 });
 
 describe("formatToolOutputHead", () => {

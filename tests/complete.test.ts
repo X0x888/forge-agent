@@ -21,6 +21,7 @@ describe("tab completion", () => {
     assert.ok(hits.includes("/setup"));
     assert.ok(hits.includes("/plan"));
     assert.ok(hits.includes("/last"));
+    assert.ok(hits.includes("/resume"));
     assert.ok(hits.includes("/retry"));
     assert.ok(hits.includes("/diff"));
     assert.ok(!hits.includes("/tips"));
@@ -138,7 +139,8 @@ describe("param resolve + menu", () => {
     const menu = formatSlashHitMenu([...EMPTY_TAB_STARTERS], { cols: 80 });
     assert.match(menu, /\/help\s+Getting started/);
     assert.match(menu, /\/plan\s+Read-only design/);
-    assert.match(menu, /\/commit\s+Commit \(never push\)/);
+    assert.match(menu, /\/last\s+Conversation card/);
+    assert.match(menu, /\/resume\s+Resume #n/);
     assert.equal(menu.split("\n").length, EMPTY_TAB_STARTERS.length);
     assert.doesNotMatch(menu, /\+.*more/);
   });
@@ -149,7 +151,11 @@ describe("param resolve + menu", () => {
     assert.match(menu, /\/help\s+Getting started/);
     assert.match(menu, /\+3 more/);
     assert.equal(menu.split("\n").length, 4);
-    assert.equal(hintForSlashHit("/permissions acceptEdits"), "Auto-approve file edits; may still ask on dangerous shell");
+    assert.equal(
+      hintForSlashHit("/permissions acceptEdits"),
+      "Auto-approve file edits; may still ask on dangerous shell",
+    );
+    assert.equal(hintForSlashHit("/resume 1"), "Newest same-cwd session (picker #1)");
     assert.equal(hintForSlashHit("@src/cli.ts"), "");
   });
 

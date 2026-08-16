@@ -45,6 +45,8 @@ const DOCS: Record<string, string> = {
   noTrailingNewline: "one line, no newline",
   empty: "",
   fenceAtEnd: "text\n```\ncode line\n```",
+  blockComment:
+    "```ts\nconst a = 1;\n/* open\nstill comment\n*/\nconst b = 2;\n```\n",
   crlf: "line one\r\nline two\r\n",
   table:
     "| Wave | Ship |\n| --- | --- |\n| 1 | clip |\n| 2 | **deny** |\n",
@@ -142,8 +144,9 @@ describe("markdown renderer styling", () => {
 
   test("unclosed fence at end styles remaining lines as code", () => {
     const out = renderStyled(["text\n```js\nconst a = 1;"]);
+    const bare = out.replace(/\x1b\[[0-9;]*m/g, "");
     assert.ok(out.includes("│"), "code gutter missing");
-    assert.ok(out.includes("const a = 1;"));
+    assert.ok(bare.includes("const a = 1;"));
   });
 
   test("heading at chunk edge is still a heading", () => {
@@ -213,6 +216,20 @@ describe("markdown renderer styling", () => {
     assert.ok(!out.includes("```ts"), "raw fence+lang leaked");
     assert.ok(out.includes("│"), "code gutter missing");
     assert.ok(out.includes(`${ESC}36mts${ESC}39m`) || out.includes("ts"));
+  });
+
+  test("fenced ts keywords and strings are colored; comments stay comments", () => {
+    const out = renderStyled([
+      "```ts\nconst x = 1; // n\nconst s = \"hi\";\n```\n",
+    ]);
+    assert.ok(out.includes("const"));
+    assert.ok(out.includes("1"));
+    assert.ok(out.includes("hi"));
+    assert.ok(out.includes(`${ESC}35mconst${ESC}39m`), "keyword magenta missing");
+    assert.ok(out.includes(`${ESC}33m1${ESC}39m`), "number yellow missing");
+    assert.ok(out.includes(`${ESC}32m"hi"${ESC}39m`), "string green missing");
+    assert.ok(out.includes("// n"), "comment text missing");
+    assert.ok(!out.includes("**"), "fence must not run markdown");
   });
 
   test("a lone pipe is not a table", () => {

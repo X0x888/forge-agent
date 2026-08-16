@@ -64,7 +64,7 @@ Settings
   /notify [on|off]    Desktop alert when a turn ends
   /bell [on|off]      Terminal BEL when a turn ends
   /format [on|off]    Format-on-write after file tools
-  /verbose            REPL diffs + full output (failures always show a tail)
+  /verbose            Full diffs + tool output (edits already show a short diff)
   /fallback [models]  Same-provider fallbacks after 429/5xx
   /mcp  /lsp          MCP servers · language servers
   forge setup         Same card from the CLI  ·  forge setup --json
@@ -98,12 +98,12 @@ Sessions
 ────────
   Bare forge resumes the newest same-cwd session (≤14d).  forge --new  for fresh.
   /sessions           List this cwd  ·  search  ·  pinned  ·  delete  ·  prune
-  /resume [id|title]  Resume by id prefix or unique title
+  /resume [n|id|title]  Resume by list number, id prefix, or unique title
   /new [title]        Fresh session
   /title [name]       Label for resume-by-title / search
   /pin                Protect from prune
   /share              Pasteable handoff card
-  /last [n]           Peek recent turns
+  /last [n]           Conversation card
   /files              Paths touched this session
   /path               On-disk session directory
   /export             Markdown or JSON (mode 0600)
@@ -190,7 +190,7 @@ Forge slash commands
   /bell [on|off|test]   Terminal BEL when a turn ends (long-run attention)  [live]
   /notify [on|off|test] Desktop notify when a turn ends (osascript/notify-send)  [live]
   /format [on|off]      Format-on-write after file tools (prettier/biome/ruff/…)  [live]
-  /verbose              Toggle diffs + full output (failures always show a tail)  [live]
+  /verbose              Toggle full diffs + output (edits already show a short preview)  [live]
   ask_user              Model tool for clarifying questions (not a slash) — interactive; headless fails closed
   /diff [path]          Status + --stat (argv-safe) · --full / -U3 for the patch  [live]
   !<command>            Run a shell command now (same permissions as bash)  [live]
@@ -198,7 +198,7 @@ Forge slash commands
   /config [json]        Effective config snapshot (no secrets)  [live]
   /copy                 Copy last assistant reply (pbcopy/wl-copy/xclip/…)  [live]
   /share [nocopy]       Pasteable session card + resume/export cmds (clipboard)  [live]
-  /last [n]             Peek last n user/assistant turns (after resume)  [live]
+  /last [n]             Last n turns as a conversation card  [live]
   /files [writes|n]     Paths touched by tools this session (newest first)  [live]
   /path [id|json]       On-disk session directory / session.json path  [live]
   /pin [on|off|toggle]  Protect session from prune (/unpin)  [live]
@@ -207,7 +207,7 @@ Forge slash commands
   /new [title]          Fresh session (optional searchable label; ULW not inherited)
   /clear                Clear messages same id (counters+journal reset)
   /clear hard           Brand-new session id (same as /new; ULW not inherited)
-  /resume [id|title|all] Resume by id prefix or unique /title (same-cwd picker)
+  /resume [n|id|title|all] Resume #n from the picker, id prefix, or /title
   /sessions [all|search|delete|prune]  List (cwd default) / search / delete [--force] / prune
   /auth                 Show stored credentials (+ multi-account)  [live]
   /accounts [status|switch|…]  Multi-account list/status/switch/clear-cooldown  [live]

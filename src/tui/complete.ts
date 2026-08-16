@@ -341,6 +341,9 @@ export const COMMAND_PARAMS: Record<string, ParamChoice[]> = {
     },
   ],
   resume: [
+    { value: "1", description: "Newest same-cwd session (picker #1)" },
+    { value: "2", description: "Second in the /resume picker" },
+    { value: "3", description: "Third in the /resume picker" },
     { value: "all", description: "List sessions from every workspace", aliases: ["global", "-a"] },
     {
       value: "my-feature",
@@ -522,13 +525,13 @@ export const EMPTY_TAB_STARTERS = [
   "/plan",
   "/init",
   "/last",
+  "/resume",
   "/retry",
   "/diff",
   "/model",
   "/permissions",
   "/budget",
   "/undo",
-  "/commit",
 ] as const;
 
 /** One-line blurbs for Tab menus. Missing keys still print the command. */
@@ -537,7 +540,7 @@ export const SLASH_HINTS: Record<string, string> = {
   "/setup": "Account, model, budget",
   "/plan": "Read-only design",
   "/init": "Write AGENTS.md",
-  "/last": "Peek last turns",
+  "/last": "Conversation card",
   "/retry": "Rewind + re-run",
   "/diff": "Status + --stat",
   "/model": "Switch model",
@@ -557,10 +560,10 @@ export const SLASH_HINTS: Record<string, string> = {
   "/tips": "Expert cheat sheet",
   "/build": "Leave plan, implement",
   "/review": "Review a diff/PR",
-  "/verbose": "REPL diffs + full output",
+  "/verbose": "Full diffs + tool output",
   "/notify": "Desktop alert on turn end",
   "/sessions": "List / search / prune",
-  "/resume": "Resume by id or title",
+  "/resume": "Resume #n / id / title",
   "/new": "Fresh session",
   "/clear": "Clear this session",
   "/share": "Pasteable handoff card",

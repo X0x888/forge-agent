@@ -22,6 +22,8 @@ import {
   formatSessionShareCard,
   formatResumeOrientation,
   formatSessionPickerRow,
+  formatNumberedPickerRow,
+  parseSessionListIndex,
   paintPickerBadge,
   exportSessionJson,
   importSessionJson,
@@ -161,7 +163,7 @@ describe("session helpers", () => {
     const two = formatRecentTurns(s, { turns: 2 });
     assert.match(two, /first task/);
     assert.match(two, /second task/);
-    assert.match(two, /tools: bash/);
+    assert.match(two, /tools\s+bash/);
     assert.match(two, /peek-demo/);
   });
 
@@ -189,26 +191,31 @@ describe("session helpers", () => {
     assert.match(peek, /still working on clip/);
   });
 
-  it("formatRecentTurns clips each row to one TTY line", async () => {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-last-clip-"));
+  it("formatRecentTurns card wraps instead of clipping the body", async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-last-card-"));
     process.env.FORGE_HOME = tmp;
-    const { createSession: mk, formatRecentTurns } = await import(
+    const { createSession: mk, formatRecentTurns, wrapPlain } = await import(
       "../src/session/session.js"
     );
     const { visibleWidth } = await import("../src/util/format.js");
+    assert.deepEqual(wrapPlain("one two three four", 16), [
+      "one two three",
+      "four",
+    ]);
+    assert.equal(wrapPlain("short", 80).length, 1);
     const s = mk({
       cwd: tmp,
       provider: "xai",
       model: "grok-4",
-      title: "very-long-session-title-that-would-wrap",
+      title: "card-demo",
     });
     s.messages.push({
       role: "user",
-      content: `please ${"do this and that ".repeat(20)}`,
+      content: `please ${"do this and that ".repeat(8)}`.trim(),
     });
     s.messages.push({
       role: "assistant",
-      content: `ok ${"working through the request ".repeat(12)}`,
+      content: "Ship landed.\n\nNext: prove the card.",
     });
     const stdout = process.stdout as NodeJS.WriteStream & { columns?: number };
     const prevCols = stdout.columns;
@@ -217,10 +224,24 @@ describe("session helpers", () => {
     stdout.columns = 40;
     try {
       const text = formatRecentTurns(s, { turns: 1, maxChars: 400 });
-      assert.doesNotMatch(text, /Tip:/);
+      const compact = formatRecentTurns(s, {
+        turns: 1,
+        maxChars: 80,
+        compact: true,
+      });
+      assert.match(text, /you ›/);
+      assert.match(text, /forge ›/);
+      assert.match(text, /Ship landed\./);
+      assert.match(text, /Next: prove the card/);
+      assert.ok(text.split("\n").length > compact.split("\n").length);
       for (const row of text.split("\n").filter(Boolean)) {
         assert.ok(visibleWidth(row) <= 40, JSON.stringify(row));
       }
+      for (const row of compact.split("\n").filter(Boolean)) {
+        assert.ok(visibleWidth(row) <= 40, JSON.stringify(row));
+      }
+      assert.match(compact, /you:/);
+      assert.doesNotMatch(compact, /you ›/);
     } finally {
       stdout.columns = prevCols;
       stdout.isTTY = prevTty;
@@ -1478,6 +1499,50 @@ it("/fork includes last-turn peek", async () => {
     assert.equal(imported.meta.lastVerificationAt, "2026-04-10T12:00:00.000Z");
     assert.equal(imported.meta.lastEditAt, "2026-04-10T12:10:00.000Z");
     assert.equal(isLastVerificationStale(imported.meta), true);
+  });
+
+  it("parseSessionListIndex and numbered picker rows", () => {
+    assert.equal(parseSessionListIndex("1", 3), 0);
+    assert.equal(parseSessionListIndex("3", 3), 2);
+    assert.equal(parseSessionListIndex("0", 3), null);
+    assert.equal(parseSessionListIndex("4", 3), null);
+    assert.equal(parseSessionListIndex("abc", 3), null);
+    const s = createSession({
+      cwd: "/tmp",
+      provider: "xai",
+      model: "grok-4",
+      title: "alpha",
+    });
+    const row = formatNumberedPickerRow(2, s.meta, [], 80);
+    assert.match(row, /3 /);
+    assert.match(row, /alpha/);
+  });
+
+  it("/resume N loads the Nth same-cwd session", async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-resume-n-"));
+    process.env.FORGE_HOME = tmp;
+    const { createSession: mk, saveSession } = await import(
+      "../src/session/session.js"
+    );
+    const a = mk({ cwd: tmp, provider: "xai", model: "grok-4", title: "first" });
+    saveSession(a);
+    await new Promise((r) => setTimeout(r, 5));
+    const b = mk({ cwd: tmp, provider: "xai", model: "grok-4", title: "second" });
+    saveSession(b);
+    const hooks = new HookRunner(DEFAULT_CONFIG, tmp);
+    const ctx = {
+      session: a,
+      config: { ...DEFAULT_CONFIG },
+      hooks,
+    };
+    const listed = await handleSlash("/resume", ctx);
+    assert.match(String(listed.output || ""), /1 /);
+    assert.match(String(listed.output || ""), /\/resume 3/);
+    const miss = await handleSlash("/resume 9", ctx);
+    assert.match(String(miss.output || ""), /No session at index 9/);
+    const hit = await handleSlash("/resume 1", ctx);
+    assert.ok(hit.replaceSession);
+    assert.equal(hit.replaceSession?.meta.title, "second");
   });
 
   it("formatSessionPickerRow stays one TTY row", () => {

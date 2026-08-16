@@ -44,7 +44,7 @@ forge sessions list --pinned         # only pin-protected sessions
 forge run "fix" --title ci-pipeline-42 --json   # label headless session at create
 # run --json includes sessionPath (~/.forge/sessions/<id>) for support bundles
 # empty/whitespace prompts exit 1 before any API call
-# REPL: /sessions (same-cwd) · all · pinned · search · /resume <id|title> · /new [title] · /pin
+# REPL: /sessions (same-cwd) · all · pinned · search · /resume <n|id|title> · /new [title] · /pin
 forge sessions show <id|title>       # relative age · files · path · last-turn peek
 forge sessions path <id|title>       # print ~/.forge/sessions/<id> (and session.json)
 forge sessions export <id> --format json --out ./session.json   # md|json; file mode 0600
@@ -329,7 +329,7 @@ Label new runs with `forge run … --title <label>` (searchable via `forge sessi
 - `/files` after resume to see paths the agent touched; `/last 3` for recent turns; `/path` (or `forge sessions path`) for the on-disk session dir
 - `/bell on` (or `FORGE_BELL / FORGE_FORMAT_ON_WRITE · FORGE_ASK_USER_TIMEOUT_MS (ask_user) · FORGE_DONT_ASK / permissionMode=dontAsk disables asks (/config+doctor formatOnWrite)=1`) for a terminal BEL when long ULW/goal turns finish
 - Bare `forge` resumes the newest same-cwd session (≤14d); skips sessions with a foreign live lock; use `--new` or `FORGE_NO_AUTO_RESUME=1` for a clean slate
-- `/resume <id|title>` warns if the target has a foreign live lock (concurrent writers may race); shows last turn + files
+- `/resume <n|id|title>` — `n` is the numbered picker row. Warns if the target has a foreign live lock; shows last turn + files
 - `forge sessions export <id> --format json` for incident artifacts (`--format` must be `md` or `json`; `--out` files mode `0600`)
 - `forge sessions <query>` treats unknown first arg as title/id search (same as `-q`)
 - `forge sessions import` rejects invalid message roles; on-disk load soft-drops corrupt roles/todos so a bad `session.json` cannot poison the agent loop

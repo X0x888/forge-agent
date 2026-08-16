@@ -23,11 +23,20 @@ export type ToolTranscriptEnd = {
   width?: number;
 };
 
+/** Glanceable edit preview under the default ✓ row. /verbose still dumps the full block. */
+export const DEFAULT_EDIT_DIFF_LINES = 8;
+
+function isUsefulDiff(diff: string | undefined): diff is string {
+  const t = (diff ?? "").trim();
+  return Boolean(t) && t !== "(no line-level diff)";
+}
+
 /**
  * Default (non-/verbose) tool-end transcript: one ✓/✗ row, plus a
- * last-lines tail when a failure has more than the inlined reason.
+ * last-lines tail when a failure has more than the inlined reason,
+ * and a short colored diff when an edit tool succeeded.
  * Shared by the REPL and the loop's headless default printer so
- * `forge run` does not hide why a tool failed.
+ * `forge run` does not hide why a tool failed — or what an edit did.
  */
 export function formatDefaultToolEndTranscript(
   name: string,
@@ -37,6 +46,12 @@ export function formatDefaultToolEndTranscript(
   if (r.isError && r.output) {
     const tail = formatFailedToolTail(r.output);
     if (tail) lines.push(tail);
+  } else if (!r.isError && isUsefulDiff(r.diff)) {
+    const block = formatDiffBlock(r.diff, {
+      maxLines: DEFAULT_EDIT_DIFF_LINES,
+      omitHeaders: true,
+    });
+    if (block) lines.push(block);
   }
   return lines.join("\n");
 }
@@ -113,7 +128,8 @@ export function createToolEndCoalescer(print: (line: string) => void) {
 
   return {
     push(name: string, r: ToolTranscriptEnd, opts?: { verbose?: boolean }): void {
-      if (opts?.verbose || r.isError) {
+      // Diffs must not join a `✓ edit ×N` burst — the compact preview is the point.
+      if (opts?.verbose || r.isError || isUsefulDiff(r.diff)) {
         flush();
         print(
           opts?.verbose

@@ -4,6 +4,7 @@ import type { FileMutation } from "../session/mutations.js";
 import { readFileMutations } from "../session/mutations.js";
 import { displayRelPath } from "../agent/tools/path-util.js";
 import { detectProjectIntel } from "../util/project-intel.js";
+import chalk, { Chalk } from "chalk";
 import { clipAnsi, visibleWidth } from "../util/format.js";
 
 /**
@@ -187,4 +188,15 @@ export function formatUserTurnOpen(
   const budget = Math.max(4, cols - visibleWidth(prefix) - visibleWidth(suffix));
   const body = one.length > budget ? `${one.slice(0, budget - 1)}…` : one;
   return `${prefix}${body}${suffix}`;
+}
+
+/**
+ * Label for the first token of an assistant burst. Pairs with `you ›`
+ * so the live transcript (and headless stream) matches `/last` cards.
+ */
+export function formatAssistantTurnOpen(opts?: { color?: boolean }): string {
+  const on = opts?.color ?? Boolean(process.stdout.isTTY);
+  if (!on) return "forge ›";
+  const paint = new Chalk({ level: Math.max(chalk.level, 1) as 1 | 2 | 3 });
+  return paint.dim("forge ›");
 }

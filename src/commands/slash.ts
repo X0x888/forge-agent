@@ -8,7 +8,11 @@ import {
   formatGoalStatus,
 } from "../harness/goal.js";
 import type { SessionData } from "../session/session.js";
-import { formatSessionPickerRow, isLastVerificationStale } from "../session/session.js";
+import {
+  formatNumberedPickerRow,
+  isLastVerificationStale,
+  parseSessionListIndex,
+} from "../session/session.js";
 import {
   saveSession,
   listSessions,
@@ -5111,7 +5115,7 @@ const result = rewindSessionDetailed(opts.session, n);
       // Non-numeric args fail closed (was silently defaulting to 1 turn).
       const parts = arg.trim().split(/\s+/).filter(Boolean);
       let turns = 1;
-      let maxChars = 320;
+      let maxChars = 900;
       if (parts[0]) {
         const tok = parts[0].toLowerCase();
         if (tok === "last" || tok === "one" || tok === "once") {
@@ -5487,23 +5491,31 @@ case "/new":
               ? showAll
                 ? "No sessions. Usage: /resume <id-prefix|title>"
                 : `No sessions for this workspace. Try: /resume all`
-              : `Usage: /resume <id-prefix|title>  ·  ${scope}\n\nRecent:\n${list
-                  .map((s) => {
+              : `Usage: /resume <n|id-prefix|title>  ·  ${scope}\n\nRecent:\n${list
+                  .map((s, i) => {
                     const extras: string[] = [];
                     const lock = readSessionLock(s.id);
                     if (lock && sessionHasForeignLiveLock(s.id)) extras.push("LOCK");
                     if (showAll && s.cwd) extras.push(path.basename(s.cwd));
-                    return `  ${formatSessionPickerRow(s, extras)}`;
+                    return formatNumberedPickerRow(i, s, extras);
                   })
-                  .join("\n")}${showAll ? "" : chalk.dim("\n\n/resume all — every workspace · /resume <title>")}`,
+                  .join("\n")}${showAll ? "" : chalk.dim("\n\n/resume 3 · /resume all · /resume <title>")}`,
         };
       }
-      const loaded = loadSession(arg);
+      const ws = opts.session.meta.cwd || opts.config.workspace || process.cwd();
+      let loaded = /^\d{1,2}$/.test(arg) ? null : loadSession(arg);
+      if (!loaded && /^\d{1,2}$/.test(arg)) {
+        const list = listSessions({ limit: 10, cwd: ws });
+        const idx = parseSessionListIndex(arg, list.length);
+        if (idx != null) loaded = loadSession(list[idx]!.id);
+      }
+      if (!loaded) loaded = loadSession(arg);
       if (!loaded) {
-        const ws = opts.session.meta.cwd || opts.config.workspace || process.cwd();
         return {
           handled: true,
-          output: formatSessionLookupMiss(arg, { cwd: ws }),
+          output: /^\d{1,2}$/.test(arg)
+            ? `No session at index ${arg}. /resume to list · /resume <id|title>`
+            : formatSessionLookupMiss(arg, { cwd: ws }),
         };
       }
       opts.config.model = loaded.meta.model;
@@ -5853,7 +5865,7 @@ case "/new":
         handled: true,
         output:
           list
-            .map((s) => {
+            .map((s, i) => {
               const extras: string[] = [];
               if (
                 s.id === opts.session.meta.id ||
@@ -5865,11 +5877,11 @@ case "/new":
               if (lock && sessionHasForeignLiveLock(s.id)) extras.push("LOCK");
               if (listMode === "all" && s.cwd) extras.push(path.basename(s.cwd));
               if (errorsOnly && s.lastError) extras.push(s.lastError.code);
-              return formatSessionPickerRow(s, extras);
+              return formatNumberedPickerRow(i, s, extras);
             })
             .join("\n") +
           chalk.dim(
-            `\n\n* = active  ·  ${scopeNote}  ·  /sessions [all|search <q>]  ·  /resume <id>  ·  /pin`,
+            `\n\n* = active  ·  ${scopeNote}  ·  /resume 3  ·  /sessions [all|search <q>]  ·  /pin`,
           ),
       };
     }

@@ -3593,6 +3593,10 @@ async function prepareToolResult(opts: {
         bytes,
         args: toolInput,
         output,
+        diff: result.isError
+          ? undefined
+          : (result.diff ?? extractDiffFromToolOutput(name, output)),
+        stats: result.isError ? undefined : result.stats,
       }),
     );
   }

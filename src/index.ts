@@ -551,6 +551,7 @@ export {
   composeTurnCloser,
   formatRunStopReason,
   formatUserTurnOpen,
+  formatAssistantTurnOpen,
 } from "./tui/turn-summary.js";
 export {
   shouldOfferLoginPicker,

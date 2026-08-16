@@ -391,6 +391,36 @@ describe("default tool status line", () => {
     assert.doesNotMatch(ok, /wrote src\/a\.ts|path=/);
   });
 
+  it("default transcript shows a compact edit diff without --- a/ headers", () => {
+    const text = strip(
+      formatDefaultToolEndTranscript("search_replace", {
+        isError: false,
+        ms: 5,
+        bytes: 80,
+        args: { path: "src/a.ts" },
+        output: "Edited src/a.ts (2 lines) · −1 +1 · lines 1–2 of 2",
+        diff: "--- a/src/a.ts\n+++ b/src/a.ts\n-old line\n+new line",
+        stats: { added: 1, removed: 1 },
+      }),
+    );
+    assert.match(text, /✓ edit src\/a\.ts/);
+    assert.match(text, /\+1 -1/);
+    assert.match(text, /-old line/);
+    assert.match(text, /\+new line/);
+    assert.doesNotMatch(text, /--- a\/src\/a\.ts|\+\+\+ b\//);
+    const none = strip(
+      formatDefaultToolEndTranscript("search_replace", {
+        isError: false,
+        ms: 2,
+        bytes: 10,
+        args: { path: "src/a.ts" },
+        diff: "(no line-level diff)",
+      }),
+    );
+    assert.doesNotMatch(none, /no line-level/);
+    assert.equal(none.includes("\n"), false);
+  });
+
   it("verbose transcript prints the full output block", () => {
     const text = strip(
       formatVerboseToolEndTranscript("bash", {
@@ -496,6 +526,29 @@ describe("coalesced same-tool successes", () => {
     c.flushUnless("bash");
     assert.equal(lines.length, 1);
     assert.match(lines[0]!, /✓ grep ×2 b/);
+  });
+
+  it("does not coalesce successful edits that carry a diff", () => {
+    const lines: string[] = [];
+    const c = createToolEndCoalescer((line) => lines.push(strip(line)));
+    const diff = "--- a/src/a.ts\n+++ b/src/a.ts\n-old\n+new";
+    c.push("search_replace", {
+      ms: 4,
+      bytes: 20,
+      args: { path: "src/a.ts" },
+      diff,
+    });
+    c.push("search_replace", {
+      ms: 5,
+      bytes: 22,
+      args: { path: "src/b.ts" },
+      diff,
+    });
+    assert.equal(lines.length, 2);
+    assert.match(lines[0]!, /✓ edit src\/a\.ts/);
+    assert.match(lines[1]!, /✓ edit src\/b\.ts/);
+    assert.match(lines.join("\n"), /-old/);
+    assert.doesNotMatch(lines.join("\n"), /×|--- a\//);
   });
 
   it("does not coalesce /verbose rows", () => {

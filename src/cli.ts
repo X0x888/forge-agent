@@ -78,7 +78,7 @@ import {
   exportSessionJson,
   importSessionJson,
   formatSessionSummary,
-  formatSessionPickerRow,
+  formatNumberedPickerRow,
   formatSessionLookupMiss,
   listSessionLookupSuggestions,
   findRecentSessionForCwd,
@@ -120,6 +120,7 @@ import {
   formatRunStopReason,
   formatTurnChangeSummaryForSession,
   formatUserTurnOpen,
+  formatAssistantTurnOpen,
 } from "./tui/turn-summary.js";
 import { forgeHome, ensureDir, inspectSecureFile } from "./util/fs.js";
 import { log, setLogLevel } from "./util/log.js";
@@ -3342,7 +3343,7 @@ Docs: docs/PRODUCTION.md
       }
       // When listing across workspaces, show project basename so multi-project
       // experts can tell sessions apart without --cwd.
-      for (const s of list) {
+      list.forEach((s, i) => {
         const extras: string[] = [];
         const lock = readSessionLock(s.id);
         if (lock && sessionHasForeignLiveLock(s.id)) extras.push("LOCK");
@@ -3357,8 +3358,8 @@ Docs: docs/PRODUCTION.md
         if (errorsOnly && s.lastError) {
           extras.push(`[${s.lastError.code}]`);
         }
-        console.log(formatSessionPickerRow(s, extras));
-      }
+        console.log(formatNumberedPickerRow(i, s, extras));
+      });
       const filterNotes: string[] = [];
       if (cwdFilter) filterNotes.push(`cwd=${cwdFilter}`);
       if (queryFilter) filterNotes.push(`q=${JSON.stringify(queryFilter)}`);
@@ -6144,9 +6145,16 @@ async function runHeadless(opts: {
       signal: ac.signal,
       onToken: opts.json
         ? undefined
-        : (t) => {
-            process.stdout.write(t);
-          },
+        : (() => {
+            let opened = false;
+            return (t: string) => {
+              if (!opened) {
+                opened = true;
+                process.stdout.write(`${formatAssistantTurnOpen()}\n`);
+              }
+              process.stdout.write(t);
+            };
+          })(),
     });
   } catch (err) {
     await opts.hooks.run("SessionEnd", {

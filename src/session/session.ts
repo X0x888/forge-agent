@@ -17,6 +17,7 @@ import {
   formatCost,
   clipAnsi,
   visibleWidth,
+  formatToolDisplayName,
 } from "../util/format.js";
 import {
   costCapStatus,
@@ -1302,6 +1303,30 @@ export function formatSessionPickerRow(
   }
   const line = fit(titleMax, previewMax, extrasBits);
   return visibleWidth(line) <= cols ? line : clipAnsi(line, cols);
+}
+
+/** 1-based index into a printed session list. `null` if `arg` is not a small integer in range. */
+export function parseSessionListIndex(arg: string, length: number): number | null {
+  const t = String(arg ?? "").trim();
+  if (!/^\d{1,2}$/.test(t)) return null;
+  const n = Number(t);
+  if (n < 1 || n > length) return null;
+  return n - 1;
+}
+
+/** Numbered wrapper for `/resume` / `/sessions` / `forge sessions list`. */
+export function formatNumberedPickerRow(
+  index: number,
+  s: SessionMeta,
+  extras: string[] = [],
+  columns?: number,
+): string {
+  const cols =
+    columns ??
+    (process.stdout.isTTY ? process.stdout.columns || 80 : Number.POSITIVE_INFINITY);
+  const idx = chalk.dim(String(index + 1).padStart(2));
+  const inner = Number.isFinite(cols) ? Math.max(24, cols - 3) : cols;
+  return `${idx} ${formatSessionPickerRow(s, extras, inner)}`;
 }
 
 /** Compact human summary for `forge sessions show`. */
@@ -2724,16 +2749,87 @@ function clipPreview(text: string, max: number): string {
   return t.slice(0, Math.max(0, max - 1)).trimEnd() + "…";
 }
 
+/** Soft-wrap a single paragraph to `width` (spaces preferred, then hard-break). */
+export function wrapPlain(text: string, width: number): string[] {
+  const w = Math.max(16, width);
+  const t = String(text ?? "").replace(/\s+$/u, "");
+  if (!t) return [""];
+  if (visibleWidth(t) <= w) return [t];
+  const parts = t.split(/(\s+)/);
+  const rows: string[] = [];
+  let cur = "";
+  const flush = (): void => {
+    const s = cur.replace(/\s+$/u, "");
+    if (s) rows.push(s);
+    cur = "";
+  };
+  const hardBreak = (token: string): void => {
+    let rest = token;
+    while (visibleWidth(rest) > w) {
+      let acc = "";
+      let i = 0;
+      for (; i < rest.length; i++) {
+        if (visibleWidth(acc + rest[i]) > w) break;
+        acc += rest[i];
+      }
+      if (!acc) {
+        acc = rest[0]!;
+        i = 1;
+      }
+      rows.push(acc);
+      rest = rest.slice(i);
+    }
+    cur = rest;
+  };
+  for (const part of parts) {
+    if (!part) continue;
+    if (cur && visibleWidth(cur + part) > w) {
+      flush();
+      if (visibleWidth(part) > w) hardBreak(part.trimStart());
+      else cur = part.trimStart();
+    } else {
+      cur += part;
+    }
+  }
+  flush();
+  return rows.length ? rows : [""];
+}
+
+function formatTurnBubble(
+  label: string,
+  text: string,
+  maxChars: number,
+  width: number,
+): string[] {
+  const raw = String(text ?? "").replace(/^\s+|\s+$/gu, "");
+  if (!raw) return [`${label} (empty)`];
+  const clipped =
+    raw.length > maxChars
+      ? `${raw.slice(0, Math.max(0, maxChars - 1)).replace(/\s+$/u, "")}…`
+      : raw;
+  const inner = Math.max(16, width - 2);
+  const out = [label];
+  for (const para of clipped.split("\n")) {
+    for (const row of wrapPlain(para, inner)) out.push(`  ${row}`);
+  }
+  return out;
+}
+
 /**
- * Compact peek of the last N user/assistant turns (for /last after resume).
- * Tool chatter is summarized; system messages skipped.
+ * Last N user/assistant turns.
+ * Default is a wrapped conversation card (`/last`). Pass `compact: true`
+ * for the one-row resume peek (banner / session show).
  */
 export function formatRecentTurns(
   session: SessionData,
-  opts?: { turns?: number; maxChars?: number },
+  opts?: { turns?: number; maxChars?: number; compact?: boolean },
 ): string {
   const turnsWanted = Math.max(1, Math.min(20, opts?.turns ?? 1));
-  const maxChars = Math.max(40, Math.min(2000, opts?.maxChars ?? 320));
+  const compact = opts?.compact === true;
+  const maxChars = Math.max(
+    40,
+    Math.min(2000, opts?.maxChars ?? (compact ? 320 : 900)),
+  );
 
   type Block =
     | { kind: "user"; text: string }
@@ -2810,26 +2906,54 @@ export function formatRecentTurns(
     const n = startIdx + i;
     lines.push("");
     lines.push(clipRow(`── turn ${n} ──`));
-    if (t.user) {
-      lines.push(clipRow(`you:  ${clipPreview(t.user, maxChars)}`));
-    }
-    if (t.assistants.length === 0) {
-      lines.push(clipRow(`forge: (no assistant reply yet)`));
+    const texts = t.assistants.map((a) => a.text).filter(Boolean);
+    const tools = t.assistants
+      .flatMap((a) => a.tools)
+      .filter((x) => x && x !== "·");
+    const uniqTools = [...new Set(tools)].map(formatToolDisplayName);
+    if (compact) {
+      if (t.user) {
+        lines.push(clipRow(`you:  ${clipPreview(t.user, maxChars)}`));
+      }
+      if (t.assistants.length === 0) {
+        lines.push(clipRow(`forge: (no assistant reply yet)`));
+      } else {
+        const body = texts.join(" ").trim();
+        if (body) lines.push(clipRow(`forge: ${clipPreview(body, maxChars)}`));
+        else if (uniqTools.length) lines.push(clipRow(`forge: (tool calls only)`));
+        else lines.push(clipRow(`forge: (empty)`));
+      }
     } else {
-      const texts = t.assistants.map((a) => a.text).filter(Boolean);
-      const tools = t.assistants.flatMap((a) => a.tools).filter((x) => x && x !== "·");
-      const uniqTools = [...new Set(tools)];
-      const body = texts.join(" ").trim();
-      if (body) lines.push(clipRow(`forge: ${clipPreview(body, maxChars)}`));
-      else if (uniqTools.length) lines.push(clipRow(`forge: (tool calls only)`));
-      else lines.push(clipRow(`forge: (empty)`));
-      if (uniqTools.length) {
-        const shown = uniqTools.slice(0, 8);
-        const more = uniqTools.length - shown.length;
+      if (t.user) {
         lines.push(
-          clipRow(`tools: ${shown.join(", ")}${more > 0 ? ` +${more}` : ""}`),
+          ...formatTurnBubble(chalk.cyan("you ›"), t.user, maxChars, width),
         );
       }
+      if (t.assistants.length === 0) {
+        lines.push(chalk.dim("forge ›  (no assistant reply yet)"));
+      } else {
+        const body = texts.join("\n\n").trim();
+        if (body) {
+          lines.push(
+            ...formatTurnBubble(chalk.dim("forge ›"), body, maxChars, width),
+          );
+        } else if (uniqTools.length) {
+          lines.push(chalk.dim("forge ›  (tool calls only)"));
+        } else {
+          lines.push(chalk.dim("forge ›  (empty)"));
+        }
+      }
+    }
+    if (uniqTools.length) {
+      const shown = uniqTools.slice(0, 8);
+      const more = uniqTools.length - shown.length;
+      lines.push(
+        clipRow(
+          chalk.dim(
+            `tools  ${shown.join(" · ")}${more > 0 ? ` +${more}` : ""}`,
+          ),
+        ),
+      );
     }
   });
 
@@ -2857,6 +2981,7 @@ export function formatResumePeek(
   return formatRecentTurns(session, {
     turns: 1,
     maxChars: opts?.maxChars ?? 200,
+    compact: true,
   });
 }
 

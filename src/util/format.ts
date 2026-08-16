@@ -510,12 +510,20 @@ export function extractDiffFromToolOutput(
  */
 export function formatDiffBlock(
   diff: string,
-  opts: { maxLines?: number; indent?: string } = {},
+  opts: {
+    maxLines?: number;
+    indent?: string;
+    /** Compact transcript: path already lives on the ✓ row. */
+    omitHeaders?: boolean;
+  } = {},
 ): string {
   const maxLines = opts.maxLines ?? 60;
   const indent = opts.indent ?? "    ";
-  const lines = diff.split("\n");
-  const shown = lines.slice(0, maxLines);
+  const raw = diff.split("\n").filter((line) => {
+    if (!opts.omitHeaders) return true;
+    return !line.startsWith("--- ") && !line.startsWith("+++ ");
+  });
+  const shown = raw.slice(0, maxLines);
   const out = shown.map((line) => {
     if (line.startsWith("--- ") || line.startsWith("+++ ")) {
       return indent + chalk.dim.bold(line);
@@ -525,8 +533,16 @@ export function formatDiffBlock(
     if (line.startsWith("-")) return indent + chalk.red(line);
     return indent + chalk.dim(line);
   });
-  if (lines.length > maxLines) {
-    out.push(indent + chalk.dim(`… (${lines.length - maxLines} more diff lines)`));
+  if (raw.length > maxLines) {
+    const extra = raw.length - maxLines;
+    out.push(
+      indent +
+        chalk.dim(
+          opts.omitHeaders
+            ? `… (${extra} more · /verbose)`
+            : `… (${extra} more diff lines)`,
+        ),
+    );
   }
   return out.join("\n");
 }

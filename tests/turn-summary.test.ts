@@ -9,6 +9,7 @@ import {
   composeTurnCloser,
   formatRunStopReason,
   formatUserTurnOpen,
+  formatAssistantTurnOpen,
 } from "../src/tui/turn-summary.js";
 import { visibleWidth } from "../src/util/format.js";
 import {
@@ -296,4 +297,11 @@ test("user turn open: silent on empty, clips, queues", () => {
   assert.ok(clipped.startsWith("you › "));
   assert.ok(clipped.endsWith("…"));
   assert.ok(visibleWidth(clipped) <= 12);
+});
+
+test("assistant turn open pairs with you ›", () => {
+  assert.equal(formatAssistantTurnOpen({ color: false }), "forge ›");
+  const styled = formatAssistantTurnOpen({ color: true });
+  assert.match(styled, /forge ›/);
+  assert.ok(styled.includes("\x1b["), "TTY label should be dim");
 });

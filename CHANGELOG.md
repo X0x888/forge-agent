@@ -9,6 +9,11 @@
 
 ### Added
 - **Ctrl+R history search**: the REPL prompt does reverse incremental search over `~/.forge/history` (`(bck-i-search)\`foo': …`). Ctrl+R again steps older; Ctrl+S newer; Esc / Ctrl+G cancel; Enter runs the match. Ctrl/Alt+←/→ and Alt+B/F jump words. `/help` Keys and `/tips` list them.
+- **Default edit diffs**: a successful `edit` / `write` / `patch` prints an 8-line colored preview under the ✓ row (path already on the status line — no `--- a/` headers). `/verbose` still dumps the full block. Grep/read bursts still coalesce; edits with a diff do not.
+- **`/last` is a conversation card**: wrapped `you ›` / `forge ›` bubbles (default 900 chars, newlines kept) instead of one clipped TTY row. Resume banner peek stays compact.
+- **Fenced-code syntax color**: assistant markdown paints keywords / strings / numbers / comments in `ts`/`js`/`py`/`sh`/`json`/`diff` fences (line-local; block comments carry between lines). Chunk-boundary invariance still holds.
+- **`forge ›` reply opener**: each streamed assistant burst (REPL + `forge run`) starts with a dim `forge ›` so the live transcript matches `you ›` and `/last`.
+- **`/resume 3`**: `/resume`, `/sessions`, and `forge sessions list` number rows. `/resume N` loads the Nth same-cwd session (1–99). Id/title still work. Empty Tab lists `/resume`; Tab after `/resume` offers `1`/`2`/`3`.
 - **Unlimited named-ship backlog**: the Wave-1 reading's ONE ship + passed-on list is stored on `ulw.json`. When every item is done and `maxWaves` is unset, Stop asks **once** for a new `Reading:` or `/cycle 0`. Capped runs still spend remaining waves. `/cycle status` lists the ships.
 - **`provider_round` `pruneKind` + `cacheDrop`**: metrics distinguish `first_clip` / `sticky` / `reclip` / `always`, and flag a round that fell below 5% cache after a prior round above 90%. `/cost` last-round line and `forge run --json` expose `lastPruneKind`.
 

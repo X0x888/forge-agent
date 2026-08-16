@@ -15,6 +15,10 @@
  */
 import chalk, { Chalk } from "chalk";
 import { visibleWidth } from "../util/format.js";
+import {
+  highlightFenceLine,
+  type HighlightState,
+} from "./syntax.js";
 
 export interface MarkdownRendererOptions {
   /**
@@ -47,6 +51,8 @@ export function createMarkdownRenderer(
 class LineMarkdownRenderer implements MarkdownRenderer {
   private buffer = "";
   private inFence = false;
+  private fenceLang = "";
+  private fenceHi: HighlightState = { inBlockComment: false };
   private tableRows: string[] = [];
 
   constructor(private readonly c: InstanceType<typeof Chalk>) {}
@@ -110,11 +116,21 @@ class LineMarkdownRenderer implements MarkdownRenderer {
       this.inFence = !this.inFence;
       const marker = `${fence[1] ?? ""}${fence[2] ?? "```"}`;
       const lang = (fence[3] ?? "").trim();
-      if (opening && lang) return `${c.dim(marker)} ${c.cyan(lang)}`;
+      if (opening) {
+        this.fenceLang = lang;
+        this.fenceHi = { inBlockComment: false };
+        if (lang) return `${c.dim(marker)} ${c.cyan(lang)}`;
+      } else {
+        this.fenceLang = "";
+        this.fenceHi = { inBlockComment: false };
+      }
       return c.dim(marker);
     }
     if (this.inFence) {
-      return line ? `${c.dim("│ ")}${line}` : c.dim("│");
+      if (!line) return c.dim("│");
+      const painted = highlightFenceLine(line, this.fenceLang, c, this.fenceHi);
+      this.fenceHi = painted.state;
+      return `${c.dim("│ ")}${painted.text}`;
     }
     // Headings: strip hashes. H1 stands out; H2 is a section; H3+ is quieter.
     const heading = /^ {0,3}(#{1,6})\s+(.*)$/.exec(line);
