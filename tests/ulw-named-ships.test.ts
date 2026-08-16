@@ -43,6 +43,24 @@ describe("named-ship backlog", () => {
     assert.ok(ships.some((s) => /session picker/i.test(s)));
   });
 
+  it("does not treat a so-clause or next-need as a named ship", () => {
+    const ships = parseNamedShipsFromReading(
+      "Reading: tea is done. Passed on: Hearth enter still full-heals, so the 4 HP is usually 0 in play — do not grind more cups. Next: a real play bug.",
+    );
+    assert.ok(
+      !ships.some((s) => /^so the 4 HP/i.test(s)),
+      String(ships),
+    );
+    assert.ok(
+      !ships.some((s) => /real play bug/i.test(s)),
+      String(ships),
+    );
+    assert.ok(
+      ships.some((s) => /Hearth enter still full-heals/i.test(s)),
+      String(ships),
+    );
+  });
+
   it("does not treat (later waves…) as a named ship", () => {
     const ships = parseNamedShipsFromReading(
       "Reading: daily UX is the transcript. Passed on (later waves, other surfaces): delayed start parity; user-turn landmarks; setup-card checkmarks. ONE ship: dock shows running tool name and elapsed.",
@@ -269,7 +287,7 @@ describe("named-ship backlog", () => {
         stuckThreshold: 20,
       });
       assert.equal(second.block, true);
-      assert.match(second.reanchor || "", /Hard work looks exhausted|named ships from the reading are done/i);
+      assert.match(second.reanchor || "", /named ships from the reading are done|new Reading|different surface/i);
       assert.equal(loadUlwCycle(sid)!.wave, wave);
       disarmUlwCycle(sid);
     });
@@ -334,7 +352,96 @@ describe("named-ship backlog", () => {
         stuckThreshold: 20,
       });
       assert.equal(blocked.block, true);
-      assert.match(blocked.reanchor || "", /Hard work looks exhausted|named ships from the reading are done/i);
+      assert.match(blocked.reanchor || "", /named ships from the reading are done|new Reading|different surface/i);
+      disarmUlwCycle(sid);
+    });
+  });
+
+  it("stuck-wall does not release unlimited ULW while named ships are exhausted", () => {
+    withHome(() => {
+      const sid = "sess-named-stuck";
+      fs.mkdirSync(path.join(process.env.FORGE_HOME!, "sessions", sid), {
+        recursive: true,
+      });
+      const s0 = armUlwCycle(sid, "improve the codebase", {
+        cycle: 1,
+        skipCheckpoint: true,
+        editCount: 0,
+      });
+      maybeAdoptNamedShips(s0, READING);
+      saveUlwCycle(s0);
+      const named = loadUlwCycle(sid)!.namedShips ?? [];
+      let edits = 0;
+      for (let i = 0; i < named.length; i++) {
+        edits += 4;
+        maybeStampUlwWave({
+          sessionId: sid,
+          editCount: edits,
+          openTodoCount: 0,
+          stepsSinceStamp: 1,
+          lastAssistantMessage: `Wave ${i + 1} shipped: ${named[i]!.text}`,
+        });
+      }
+      let last;
+      for (let i = 0; i < 5; i++) {
+        last = evaluateUlwAtStop({
+          sessionId: sid,
+          lastAssistantMessage: "**Cycle complete.** All named surfaces shipped.",
+          editCount: edits,
+          openTodoCount: 0,
+          stuckThreshold: 3,
+          verificationPassed: true,
+        });
+      }
+      assert.equal(last!.stuckReleased, undefined);
+      assert.equal(last!.block, true);
+      assert.equal(loadUlwCycle(sid)!.enabled, true);
+      assert.equal(loadUlwCycle(sid)!.cycle, 1);
+      assert.match(last!.reanchor || "", /new Reading|named ships from the reading are done/i);
+      assert.doesNotMatch(last!.reanchor || "", /Hard work looks exhausted/);
+      disarmUlwCycle(sid);
+    });
+  });
+
+  it("declared ship with edits after exhaust stamps w and still asks for a reading", () => {
+    withHome(() => {
+      const sid = "sess-named-stamp";
+      fs.mkdirSync(path.join(process.env.FORGE_HOME!, "sessions", sid), {
+        recursive: true,
+      });
+      const s0 = armUlwCycle(sid, "improve the codebase", {
+        cycle: 1,
+        skipCheckpoint: true,
+        editCount: 0,
+      });
+      maybeAdoptNamedShips(s0, READING);
+      saveUlwCycle(s0);
+      const named = loadUlwCycle(sid)!.namedShips ?? [];
+      let edits = 0;
+      for (let i = 0; i < named.length; i++) {
+        edits += 4;
+        maybeStampUlwWave({
+          sessionId: sid,
+          editCount: edits,
+          openTodoCount: 0,
+          stepsSinceStamp: 1,
+          lastAssistantMessage: `Wave ${i + 1} shipped: ${named[i]!.text}`,
+        });
+      }
+      const before = loadUlwCycle(sid)!.wave;
+      const d = evaluateUlwAtStop({
+        sessionId: sid,
+        lastAssistantMessage:
+          "Wave shipped: toaster no longer throws when style is missing.",
+        editCount: edits + 6,
+        openTodoCount: 0,
+        stuckThreshold: 3,
+        verificationPassed: true,
+      });
+      assert.equal(d.block, true);
+      assert.equal(d.waveClosed, true);
+      assert.equal(loadUlwCycle(sid)!.wave, before + 1);
+      assert.match(d.reanchor || "", /named ships from the reading are done|new Reading/i);
       disarmUlwCycle(sid);
     });
   });

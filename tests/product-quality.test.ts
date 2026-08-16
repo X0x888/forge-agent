@@ -51,6 +51,7 @@ describe("isUserFacingProductWork", () => {
     assert.equal(isUserFacingProductWork("redesign the onboarding"), true);
     assert.equal(isUserFacingProductWork("improve the empty state"), true);
     assert.equal(isUserFacingProductWork("improve the onboarding ux"), true);
+    assert.equal(isUserFacingProductWork("Improve this game."), true);
   });
 
   it("skips infra, flags, bugfix, and generic UI chrome", () => {

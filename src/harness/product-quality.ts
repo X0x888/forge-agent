@@ -16,7 +16,7 @@ const EDGE_PREFIX = "Edge:";
 
 /** A product being built or reshaped — not a generic "the ui" chrome grind. */
 const PRODUCT_OBJECT_RE =
-  /\b(app|application|site|landing|onboarding|empty state|error state|first[- ]run|dashboard|settings page|notes app)\b/i;
+  /\b(app|application|site|landing|onboarding|empty state|error state|first[- ]run|dashboard|settings page|notes app|game)\b/i;
 /** Surfaces that only count with evaluate/build, not bare "improve the ui". */
 const PRODUCT_SURFACE_RE = /\b(cli|tui|ux|ui|product)\b/i;
 const BUILD_RE = /\b(build|make|create|redesign|reshape)\b/i;

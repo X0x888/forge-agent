@@ -33,6 +33,7 @@ import { looksLikeAdvisoryUserMessage } from "../util/advisory-intent.js";
 import {
   extractShipSummary,
   isDeclaredWaveClose,
+  isShipCloseText,
 } from "./ship-close.js";
 import {
   isUserFacingProductWork,
@@ -784,17 +785,36 @@ function polishAdmit(streak: number): string {
 
 
 function splitNamedShipList(s: string): string[] {
-  return s
+  const parts = s
     .split(/\s*(?:,|;|\band\b)\s*/i)
     .map((x) => x.trim())
     .filter(Boolean);
+  // "full-heals, so the 4 HP is usually 0" is one thought, not two ships.
+  const out: string[] = [];
+  for (const part of parts) {
+    if (out.length > 0 && /^(so|then|which|because)\b/i.test(part)) {
+      out[out.length - 1] = `${out[out.length - 1]}, ${part}`;
+      continue;
+    }
+    out.push(part);
+  }
+  return out;
 }
 
 function clipNamedShipText(raw: string): string | undefined {
   let s = raw.replace(/^[-*•\d.)\s]+/, "").replace(/[.]+$/, "").trim();
   s = s.replace(/^(the\s+)?(one\s+)?(ship|item|thing)\s*(is|:)\s*/i, "").trim();
+  s = s.replace(/\.\s*next\b.*$/i, "").trim();
   if (s.length < 8 || s.length > 160) return undefined;
   if (/^reading:/i.test(s)) return undefined;
+  // Rationale / next-need fragments are not backlog items (maze dogfood).
+  if (
+    /^(so|because|then|which|do not|don't|next:|next is|a real play bug)\b/i.test(
+      s,
+    )
+  ) {
+    return undefined;
+  }
   return s;
 }
 
@@ -823,11 +843,11 @@ export function parseNamedShipsFromReading(text: string): string[] {
     out.push(s);
   };
   const one = t.match(
-    /(?:the\s+)?one\s+(?:ship|item)\s*(?:is|:)\s+(.+?)(?:\.|passed[\s-]+on|$)/i,
+    /(?:the\s+)?one\s+(?:ship|item)\s*(?:is|:)\s+(.+?)(?:\.|passed[\s-]+on|\.\s*next\b|$)/i,
   );
   if (one?.[1]) push(one[1]);
   const passed = t.match(
-    /passed[\s-]+on\s*:?\s+(.+?)(?:\.\s*(?:the\s+)?one\s+ship|\s+(?:the\s+)?one\s+ship:|\.\s*$|$)/i,
+    /passed[\s-]+on\s*:?\s+(.+?)(?:\.\s*(?:the\s+)?one\s+ship|\s+(?:the\s+)?one\s+ship:|\.\s*next\b|\.\s*$|$)/i,
   );
   if (passed?.[1]) {
     for (const part of splitPassedOnList(passed[1])) push(part);
@@ -968,8 +988,8 @@ const NAMED_SHIP_EXHAUSTED_ADMIT = [
 
 const NAMED_SHIP_EXHAUSTED_STRONG = [
   "[Forge ULW cycle driver] Stop blocked — named ships from the reading are done.",
-  "Hard work looks exhausted. /cycle 0 wraps what is left (in-flight wave + already-named ships), then **Cycle complete.**",
-  "A new Reading must be a different surface (trust, correctness, workflow) — not the next sibling ✓ / glanceable leftover.",
+  "Write a new Reading: (what is still hard + the ONE next ship on a different surface) or /cycle 0.",
+  "Do not invent leftover chrome. Do not attest **Cycle complete.** — only the user /cycle 0 wraps. Unlimited ULW continues only after a new reading.",
 ].join("\n");
 
 const MAX_NAMED_SHIP_ADMITS = 3;
@@ -2310,15 +2330,27 @@ export function evaluateUlwAtStop(opts: {
   // Progress / stuck tracking: editCount delta OR working-tree diff movement
   // (bash heredocs/sed move the tree without touching edit-tool counters).
   const progressed = opts.editCount > s.lastBlockEditCount || diffChanged;
+  // Unlimited named-ship exhaust is "write a new Reading or /cycle 0" —
+  // those Stops are the harness holding, not a dead agent. Maze dogfood
+  // Cycle-complete ×3 punched through stuck-wall without the user wrapping.
+  const namedExhaustHolding =
+    s.cycle === 1 &&
+    !s.wrapKind &&
+    normalizeMaxWaves(s.maxWaves) == null &&
+    namedShipsExhausted(s);
   if (progressed) {
     s.stuckBlocks = 0;
-  } else {
+  } else if (!namedExhaustHolding) {
     s.stuckBlocks += 1;
   }
   s.blocks += 1;
   s.lastBlockEditCount = opts.editCount;
 
-  if (opts.stuckThreshold > 0 && s.stuckBlocks >= opts.stuckThreshold) {
+  if (
+    !namedExhaustHolding &&
+    opts.stuckThreshold > 0 &&
+    s.stuckBlocks >= opts.stuckThreshold
+  ) {
     s.enabled = false;
     s.cycle = 0;
     saveUlwCycle(s);
@@ -2483,8 +2515,42 @@ export function evaluateUlwAtStop(opts: {
     // original Reading, which would skip the gate forever.
     if (cap == null && namedShipsExhausted(s) && !adoptedNamed) {
       // Stay blocked until a different-surface reading is adopted or
-      // /cycle 0. Asking once then stamping a free-invent wave is how
-      // 693c5fb1 turned three admits into 16 glanceable siblings.
+      // /cycle 0. Cycle complete / leftover chrome do not stamp. A real
+      // declared ship with edits still increments w (maze 43–46 were invisible).
+      const shipAfterExhaust =
+        !alreadyStamped &&
+        isShipCloseText(closer) &&
+        editDelta >= 1 &&
+        !isLeftoverChromeShip(closer);
+      if (shipAfterExhaust) {
+        appendWaveRecord(s, {
+          sessionId: opts.sessionId,
+          editDelta,
+          netDiff,
+          proof,
+          todoProgress,
+          summary: summarizeWave(closer, opts.sessionId),
+        });
+        markNamedShipDone(s, closer);
+        s.lastWaveSig = sig;
+        s.lastProgressEditCount = opts.editCount;
+        const polish = notePolishShip(s, closer);
+        if (polish >= POLISH_LAST_STREAK && s.cycle === 1) {
+          flipUlwToLast(s, opts.sessionId);
+          saveUlwCycle(s);
+          const reanchor = buildCycleReanchor(s, {
+            openTodos: opts.openTodoCount,
+            mode: "last",
+            preferredCheckCommands: opts.preferredCheckCommands,
+          });
+          return {
+            block: true,
+            reason: reanchor,
+            reanchor,
+            waveClosed: true,
+          };
+        }
+      }
       s.namedShipAdmitCount = (s.namedShipAdmitCount ?? 0) + 1;
       s.namedShipAdmitDone = true;
       const glanceable =
@@ -2502,6 +2568,7 @@ export function evaluateUlwAtStop(opts: {
         block: true,
         reason: admit,
         reanchor: admit,
+        waveClosed: shipAfterExhaust,
       };
     }
     if (!alreadyStamped) {
