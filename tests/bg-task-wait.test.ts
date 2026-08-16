@@ -136,5 +136,30 @@ describe("bg completion notify", () => {
     assert.doesNotMatch(out, /user sent a message/i);
     assert.doesNotMatch(out, /user_query/);
   });
+
+  it("completion interjection includes the last log lines", async () => {
+    const {
+      formatBackgroundCompletionInterjection,
+      peekLogTextTail,
+    } = await import("../src/agent/tools/background-tasks.js");
+    const log = ["a", "b", "c", "d", "e", "f", "g", "h", "i", "pass 36"].join(
+      "\n",
+    );
+    assert.equal(peekLogTextTail(log, 3), "h\ni\npass 36");
+    const msg = formatBackgroundCompletionInterjection({
+      id: "bg_abc",
+      status: "completed",
+      exitCode: 0,
+      durationMs: 1200,
+      command: "npm test",
+      tail: peekLogTextTail(log, 3),
+    });
+    assert.match(msg, /background task completed/);
+    assert.match(msg, /task_id=bg_abc  exit=0/);
+    assert.match(msg, /--- last output ---/);
+    assert.match(msg, /pass 36/);
+    assert.doesNotMatch(msg, /^a$/m);
+    assert.match(msg, /only if you need more than this tail/);
+  });
 });
 

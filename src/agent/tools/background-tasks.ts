@@ -264,6 +264,70 @@ function ulwLastInFlight(sessionId: string): boolean {
   }
 }
 
+/** Last lines of bg stdout/stderr included in the completion interjection. */
+export const BG_COMPLETION_TAIL_LINES = 8;
+const BG_TAIL_READ_BYTES = 64 * 1024;
+
+/** Last nonempty lines of captured log text (stderr preferred by callers). */
+export function peekLogTextTail(
+  text: string,
+  maxLines = BG_COMPLETION_TAIL_LINES,
+): string {
+  const lines = text.split("\n").map((l) => l.replace(/\s+$/u, ""));
+  while (lines.length && lines[lines.length - 1] === "") lines.pop();
+  const nonempty = lines.filter((l) => l.trim());
+  return nonempty.slice(-maxLines).join("\n");
+}
+
+export function formatBackgroundCompletionInterjection(opts: {
+  id: string;
+  status: string;
+  exitCode: number | null;
+  durationMs: number;
+  command: string;
+  tail?: string;
+}): string {
+  const code =
+    opts.exitCode === null || opts.exitCode === undefined
+      ? "?"
+      : String(opts.exitCode);
+  const raw = String(opts.command || "");
+  const cmd = raw.slice(0, 120);
+  const tail = (opts.tail ?? "").trim();
+  return (
+    `[Forge harness — background task ${opts.status}]\n` +
+    `task_id=${opts.id}  exit=${code}  ${opts.durationMs}ms\n` +
+    `command: ${cmd}${raw.length > 120 ? "…" : ""}\n` +
+    (tail ? `--- last output ---\n${tail}\n` : "") +
+    `Use get_task_output({ task_id: "${opts.id}" }) only if you need more than this tail. ` +
+    `Do not ask the user — act on the result.`
+  );
+}
+
+function readTaskLogTailSync(task: BackgroundTask): string {
+  const readEnd = (file: string): string => {
+    try {
+      const st = fs.statSync(file);
+      if (st.size <= 0) return "";
+      const start = Math.max(0, st.size - BG_TAIL_READ_BYTES);
+      const fd = fs.openSync(file, "r");
+      try {
+        const buf = Buffer.alloc(st.size - start);
+        fs.readSync(fd, buf, 0, buf.length, start);
+        return buf.toString("utf8");
+      } finally {
+        fs.closeSync(fd);
+      }
+    } catch {
+      return "";
+    }
+  };
+  const err = peekLogTextTail(readEnd(task.stderrPath));
+  const out = peekLogTextTail(readEnd(task.stdoutPath));
+  if (err && out) return peekLogTextTail(`${err}\n${out}`);
+  return err || out;
+}
+
 function maybeNotifyBgComplete(
   task: BackgroundTask,
   sessionId?: string,
@@ -282,12 +346,14 @@ function maybeNotifyBgComplete(
       task.exitCode === null || task.exitCode === undefined
         ? "?"
         : String(task.exitCode);
-    const msg =
-      `[Forge harness — background task ${status}]\n` +
-      `task_id=${task.id}  exit=${code}  ${dur}ms\n` +
-      `command: ${cmd}${String(task.command || "").length > 120 ? "…" : ""}\n` +
-      `Use get_task_output({ task_id: "${task.id}", tail: 80 }) for logs, then continue. ` +
-      `Do not ask the user — act on the result.`;
+    const msg = formatBackgroundCompletionInterjection({
+      id: task.id,
+      status,
+      exitCode: task.exitCode,
+      durationMs: dur,
+      command: String(task.command || ""),
+      tail: readTaskLogTailSync(task),
+    });
     // LAST / Cycle-complete in flight: desktop notify only — do not open
     // another user-channel turn while the model is already winding down.
     if (!ulwLastInFlight(sessionId)) {
