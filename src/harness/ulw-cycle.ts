@@ -34,6 +34,13 @@ import {
   extractShipSummary,
   isDeclaredWaveClose,
 } from "./ship-close.js";
+import {
+  isUserFacingProductWork,
+  harvestProductQualityNotes,
+  harvestStoredProductQuality,
+  evaluateProductQuality,
+  formatProductQualityReanchor,
+} from "./product-quality.js";
 
 export {
   extractShipSummary,
@@ -172,6 +179,8 @@ export interface UlwCycleState {
   wrapFrozenAt?: string;
   /** One Cycle-complete bounce while named wrap items are still open. */
   wrapNudgeDone?: boolean;
+  /** One product-quality bounce (user-facing ships). Never a trap. */
+  soulNudgeDone?: boolean;
   /**
    * evaluate-class Wave 1: `orient` hides spawn/edits until a reading exists.
    * Absent on old sidecars — infer from judgmentRequired.
@@ -211,6 +220,8 @@ export interface UlwStopDecision {
   evidenceDemanded?: boolean;
   /** True when Cycle complete was bounced because named wrap items are still open. */
   wrapDemanded?: boolean;
+  /** True when a user-facing ship was bounced for product-quality (edges/job). */
+  soulDemanded?: boolean;
   /** True when this Stop actually closed a wave (not a gate / already-stamped). */
   waveClosed?: boolean;
 }
@@ -893,8 +904,17 @@ export function maybeAdoptNamedShips(
   ) {
     return false;
   }
+  // User-facing product: a preview/chrome catalog is not a reading.
+  if (
+    isUserFacingProductWork(s.mandate) &&
+    parsed.length > 0 &&
+    parsed.every((p) => isLeftoverChromeShip(p))
+  ) {
+    return false;
+  }
   s.namedShips = parsed.map((item) => ({ text: item, status: "open" as const }));
   s.namedShipAdmitDone = false;
+  if (text) harvestProductQualityNotes(s.sessionId, text);
   return true;
 }
 
@@ -1421,6 +1441,7 @@ export function loadUlwCycle(sessionId: string): UlwCycleState | null {
     raw.wrapKind = undefined;
   }
   if (typeof raw.wrapNudgeDone !== "boolean") raw.wrapNudgeDone = false;
+  if (typeof raw.soulNudgeDone !== "boolean") raw.soulNudgeDone = false;
   return raw;
 }
 
@@ -1618,6 +1639,9 @@ export function expandUlwMandate(mandate: string): { expanded: string; soft: boo
         `Skipping the evaluation to jump to a tiny polish is a failed wave.`,
       ].join("\n")
     : "";
+  const productQualityLine = isUserFacingProductWork(mandate)
+    ? "User-facing product quality: name the hard user job, finish one edge (empty/error/first-run), at most one job-adjacent Serendipity:. Garnish is not quality."
+    : "";
 
   if (!soft) {
     return {
@@ -1629,6 +1653,7 @@ export function expandUlwMandate(mandate: string): { expanded: string; soft: boo
         smartDoctrine,
         backlogDoctrine,
         evaluateDoctrine,
+        productQualityLine,
         ``,
         `- Own the outcome end-to-end. Research when uncertain; spawn subagents when that is smarter; then build — no thrash, no permission-to-continue asks.`,
         `- Every wave: highest-leverage next objective vs the mandate · search-before-build · ship · cheapest real proof · hostile review · next wave while cycle=1.`,
@@ -1650,6 +1675,7 @@ export function expandUlwMandate(mandate: string): { expanded: string; soft: boo
       smartDoctrine,
       backlogDoctrine,
       evaluateDoctrine,
+      productQualityLine,
       ``,
       `### Operating loop (guidance — adapt freely when freestyle is better)`,
       `1. **ORIENT** — what this place is (stack, checks, entrypoints, git, AGENTS/README, real debt). Tools, not guesses.`,
@@ -1727,6 +1753,7 @@ export function armUlwCycle(
     polishStreak: 0,
     proofDemands: 0,
     evidenceNudges: 0,
+    soulNudgeDone: false,
     backlogRequired: broad,
     judgmentRequired: (() => {
       const evaluate = isEvaluateClassMandate(cleanMandate);
@@ -2027,6 +2054,7 @@ export function resetUlwOnClear(sessionId: string): UlwCycleState | null {
   s.wrapKind = undefined;
   s.wrapFrozenAt = undefined;
   s.wrapNudgeDone = false;
+  s.soulNudgeDone = false;
   if (s.enabled) {
     s.mandate = PLACEHOLDER_MANDATE;
     s.expandedMandate = "";
@@ -2384,6 +2412,33 @@ export function evaluateUlwAtStop(opts: {
     const todoProgress = Math.max(0, prevOpen - opts.openTodoCount);
     s.lastOpenTodoCount = opts.openTodoCount;
     const closer = closerText(opts.sessionId, msg);
+    if (
+      s.cycle === 1 &&
+      !s.wrapKind &&
+      !s.soulNudgeDone &&
+      isUserFacingProductWork(s.mandate) &&
+      (isDeclaredWaveClose(closer) || cycleCompleteClaim)
+    ) {
+      harvestProductQualityNotes(opts.sessionId, closer);
+      harvestStoredProductQuality(opts.sessionId);
+      const quality = evaluateProductQuality({
+        closer,
+        sessionId: opts.sessionId,
+        wave: s.wave,
+        isLeftoverChrome: isLeftoverChromeShip,
+      });
+      if (!quality.ok) {
+        s.soulNudgeDone = true;
+        saveUlwCycle(s);
+        const reanchor = formatProductQualityReanchor(quality.missing);
+        return {
+          block: true,
+          reason: reanchor,
+          reanchor,
+          soulDemanded: true,
+        };
+      }
+    }
     // Do not use parse(closer) here — later replies often reprint the
     // original Reading, which would skip the gate forever.
     if (cap == null && namedShipsExhausted(s) && !adoptedNamed) {

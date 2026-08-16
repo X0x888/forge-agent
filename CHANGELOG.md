@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+### Added
+- **Product quality bar (soul as quality, not persona)**: on user-facing product work (build/evaluate an app or named surface — not generic “improve the ui” chrome, infra, or bugfix), a declared ship must name the hard user job and, after the first wave, include one finished edge (empty / error / first-run). At most one labeled `Serendipity:` per unit; leftover-chrome labeled as serendipity is refused. A preview-only reading is not a plan. Bounce once. Job/next-need/edge harvest onto `decisions.json` (existing `Reading:` notes count).
+
 ### Changed
 - **One ship grammar**: `Ship landed:` / `**Ship:**` / `Wave N ship:` / `Wave ship:` / `Wave shipped.` all stamp `w`, win the ledger over a reprinted `Reading:`, and name the auto-commit. Hint prefers a ship after the previous wave, then the ledger row — never an older wave-1 `Ship landed:` (5dbf mandate subjects; 693c Tab/resume freeze).
 - **Leftover-chrome family**: `live › last nonempty … line`, bang-shell `!cmd` last-line, idle/bg last log line, and `lsp diagnostics` count with glanceable ✓ so a 693c-style cluster reaches polish-4 without a reset. 5dbf dock / delayed `▸` / landmarks / setup stay non-chrome. Δ-closer verify is not chrome.

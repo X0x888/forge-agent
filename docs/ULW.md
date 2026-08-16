@@ -130,6 +130,7 @@ Anti-gaming is **structural, not prompt-based**: the only way to satisfy a proof
 - After auto-commit the clean tree is a new fingerprint baseline — not a `revisit` of the arm-time clean state.
 - Unlimited evaluate-class: when every named ship from the reading is done, Stop asks for a new `Reading:` or `/cycle 0` and **stays blocked** until a different-surface reading is adopted. A glanceable ✓ / leftover-chrome sibling list is refused. A cap still spends remaining waves.
 - Leftover-chrome class (clip **or** glanceable ✓ / live › last-line / bang-shell / idle bg tail) auto-LAST at 4. Consolidation closers do not reset that streak. Δ-closer verify is not chrome.
+- User-facing product ships have a quality bar (not a persona): name the hard user job, finish one edge (empty/error/first-run) after wave 1, at most one labeled `Serendipity:`. Arms on build/evaluate of an app or named surface — not generic UI chrome, infra, or bugfix. Preview catalogs are not a reading. Existing `Reading:` notes count as the job.
 - Ship close grammar is one matcher: `Ship landed:` · `**Ship:**` · `Wave N ship:` · `Wave ship:` · `Wave shipped.` Auto-commit subjects use that ship, not an older wave-1 note.
 - Dock/`/status` ctx follows last provider `prompt_tokens` when it is higher than the local estimate.
 - Cheapest-proof guidance: affected tests per wave, full suite on consolidation waves

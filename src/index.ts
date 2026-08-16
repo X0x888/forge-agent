@@ -340,6 +340,17 @@ export {
   isVerificationCommand,
 } from "./harness/ulw-cycle.js";
 export {
+  isUserFacingProductWork,
+  extractJobInsight,
+  extractNextNeed,
+  extractSerendipities,
+  hasProductEdge,
+  harvestProductQualityNotes,
+  harvestStoredProductQuality,
+  evaluateProductQuality,
+  formatProductQualityReanchor,
+} from "./harness/product-quality.js";
+export {
   loadDecisionMemory,
   saveDecisionMemory,
   seedMemoryFromMandate,
