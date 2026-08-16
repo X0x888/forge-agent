@@ -304,7 +304,17 @@ export function formatBackgroundCompletionInterjection(opts: {
   );
 }
 
-function readTaskLogTailSync(task: BackgroundTask): string {
+export function peekTaskLastLine(
+  task: Pick<BackgroundTask, "stdoutPath" | "stderrPath">,
+): string {
+  const tail = readTaskLogTailSync(task);
+  const lines = tail.split("\n").filter((l) => l.trim());
+  return lines[lines.length - 1] ?? "";
+}
+
+function readTaskLogTailSync(
+  task: Pick<BackgroundTask, "stdoutPath" | "stderrPath">,
+): string {
   const readEnd = (file: string): string => {
     try {
       const st = fs.statSync(file);

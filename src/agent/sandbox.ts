@@ -39,6 +39,39 @@ export interface SandboxRunOpts {
   missingBackend?: SandboxMissingBackend;
   /** Cancel in-flight child (Ctrl+C / turn abort) */
   signal?: AbortSignal;
+  /** Last nonempty output line (throttled) for live ›. */
+  onChunk?: (lastLine: string) => void;
+}
+
+/** Last nonempty line of a stdout/stderr chunk, stripped of ANSI, capped. */
+export function extractLastNonemptyLine(chunk: string, max = 48): string {
+  const lines = chunk.replace(/\r\n/g, "\n").replace(/\r/g, "\n").split("\n");
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const t = lines[i]!.replace(/\x1b\[[0-9;]*m/g, "").trim();
+    if (t) return t.length > max ? `${t.slice(0, max - 1)}…` : t;
+  }
+  return "";
+}
+
+export const BASH_PROGRESS_THROTTLE_MS = 200;
+
+function createChunkEmitter(
+  onChunk?: (lastLine: string) => void,
+): (text: string) => void {
+  if (!onChunk) return () => {};
+  let last = 0;
+  return (text: string) => {
+    const line = extractLastNonemptyLine(text);
+    if (!line) return;
+    const now = Date.now();
+    if (now - last < BASH_PROGRESS_THROTTLE_MS) return;
+    last = now;
+    try {
+      onChunk(line);
+    } catch {
+      /* never break the child */
+    }
+  };
 }
 
 export interface SandboxRunResult {
@@ -186,6 +219,7 @@ function runRaw(
     timeoutMs: number;
     env?: NodeJS.ProcessEnv;
     signal?: AbortSignal;
+    onChunk?: (lastLine: string) => void;
   },
 ): Promise<{ stdout: string; stderr: string; code: number | null }> {
   return new Promise((resolve) => {
@@ -207,6 +241,7 @@ function runRaw(
     // log-spewing build must not OOM the CLI before the wall-clock timeout.
     const OUTPUT_CAP = 4 * 1024 * 1024;
     let outputCapped = false;
+    const emit = createChunkEmitter(opts.onChunk);
     const finish = (result: {
       stdout: string;
       stderr: string;
@@ -245,7 +280,9 @@ function runRaw(
     opts.signal?.addEventListener("abort", onAbort, { once: true });
     child.stdout?.on("data", (d) => {
       if (outputCapped) return;
-      stdout += d.toString();
+      const text = d.toString();
+      stdout += text;
+      emit(text);
       if (stdout.length > OUTPUT_CAP) {
         stdout = stdout.slice(0, OUTPUT_CAP);
         outputCapped = true;
@@ -254,7 +291,9 @@ function runRaw(
     });
     child.stderr?.on("data", (d) => {
       if (outputCapped) return;
-      stderr += d.toString();
+      const text = d.toString();
+      stderr += text;
+      emit(text);
       if (stderr.length > OUTPUT_CAP) {
         stderr = stderr.slice(0, OUTPUT_CAP);
         outputCapped = true;
@@ -325,6 +364,7 @@ export async function runSandboxed(opts: SandboxRunOpts): Promise<SandboxRunResu
       timeoutMs: opts.timeoutMs,
       env: opts.env,
       signal: opts.signal,
+      onChunk: opts.onChunk,
     });
     return {
       ...r,
@@ -361,6 +401,7 @@ export async function runSandboxed(opts: SandboxRunOpts): Promise<SandboxRunResu
           timeoutMs: opts.timeoutMs,
           env: opts.env,
           signal: opts.signal,
+          onChunk: opts.onChunk,
         });
         return {
           ...r,
@@ -424,6 +465,7 @@ export async function runSandboxed(opts: SandboxRunOpts): Promise<SandboxRunResu
         timeoutMs: opts.timeoutMs,
         env: opts.env,
         signal: opts.signal,
+        onChunk: opts.onChunk,
       });
       return { ...r, sandboxed: true, backend: "bwrap", network };
     }
@@ -465,6 +507,7 @@ export async function execCommandSandboxed(
       timeoutMs: opts.timeoutMs,
       env: opts.env,
       signal: opts.signal,
+      onChunk: opts.onChunk,
     });
     return { ...r, sandboxed: false, backend: "none", network };
   }

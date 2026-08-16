@@ -275,6 +275,17 @@ describe("statusline", () => {
     assert.match(line, /exit=1/);
     assert.match(line, /done/);
     assert.match(line, /\/tasks/);
+    const withTail = formatIdleBgCompletionNotice([
+      {
+        id: "bg_abc123_xyz",
+        command: "npm test",
+        status: "completed",
+        exitCode: 0,
+        lastLine: "ℹ pass 36",
+      },
+    ]);
+    assert.match(withTail, /pass 36/);
+    assert.doesNotMatch(withTail, /\n/);
     assert.equal(formatIdleBgCompletionNotice([]), "");
   });
 

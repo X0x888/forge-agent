@@ -42,6 +42,8 @@ export interface ToolContext {
   sandboxMissingBackend?: SandboxMissingBackend;
   /** Propagated from agent loop so long tools can cooperatively cancel */
   signal?: AbortSignal;
+  /** Live last-line of a long bash (throttled) for live ›. */
+  onProgress?: (detail: string) => void;
   /** MCP multi-server manager (search_mcp / call_mcp). */
   mcp?: McpManager;
   /** LSP multi-language manager (lsp tool). */

@@ -3439,6 +3439,11 @@ async function prepareToolResult(opts: {
                   lsp,
                 })
             : undefined,
+        onProgress: (detail) => {
+          const line = detail.replace(/\s+/g, " ").trim().slice(0, 40);
+          if (!line) return;
+          events?.onPhase?.("tool", `${shown} ${line}`);
+        },
         onEdit: () => {
           session.meta.editCount += 1;
           session.meta.lastEditAt = new Date().toISOString();

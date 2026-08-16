@@ -342,6 +342,7 @@ export async function toolBash(
       missingBackend,
       env,
       signal: ctx.signal,
+      onChunk: ctx.onProgress,
     });
     if (result.failClosed) {
       const managed = await boundToolOutput(

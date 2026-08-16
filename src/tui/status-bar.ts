@@ -920,11 +920,12 @@ export function formatIdleBgCompletionNotice(
     command: string;
     status: string;
     exitCode: number | null;
+    lastLine?: string;
   }>,
 ): string {
   if (!tasks.length) return "";
   const bits = tasks.slice(0, 3).map((t) => {
-    const cmd = t.command.replace(/\s+/g, " ").trim().slice(0, 36);
+    const cmd = t.command.replace(/\s+/g, " ").trim().slice(0, 28);
     const code =
       t.exitCode === null || t.exitCode === undefined ? "?" : String(t.exitCode);
     const st =
@@ -933,10 +934,16 @@ export function formatIdleBgCompletionNotice(
         : t.status === "failed"
           ? "fail"
           : t.status;
-    return `${st} ${t.id.slice(0, 10)} exit=${code}${cmd ? ` ${cmd}` : ""}`;
+    const hint = (t.lastLine ?? "").replace(/\s+/g, " ").trim().slice(0, 28);
+    return `${st} ${t.id.slice(0, 10)} exit=${code}${cmd ? ` ${cmd}` : ""}${hint ? ` · ${hint}` : ""}`;
   });
   const extra = tasks.length > 3 ? ` +${tasks.length - 3}` : "";
-  return chalk.dim(`bg ${bits.join(" · ")}${extra}  (/tasks)`);
+  const suffix = "  (/tasks)";
+  const body = `bg ${bits.join(" · ")}${extra}`;
+  const cols = process.stdout.isTTY ? process.stdout.columns || 80 : 80;
+  if (visibleWidth(body + suffix) <= cols) return chalk.dim(body + suffix);
+  const budget = Math.max(8, cols - visibleWidth(suffix));
+  return chalk.dim(clipAnsi(body, budget) + suffix);
 }
 
 /** Extra session detail block under the HUD for /status. */

@@ -63,6 +63,7 @@ import {
   listTasks,
   killAllRunningTasks,
   installBackgroundTaskExitHook,
+  peekTaskLastLine,
 } from "../agent/tools/background-tasks.js";
 import { loadHistory, appendHistory } from "./history.js";
 import { makeCompleter } from "./complete.js";
@@ -193,7 +194,15 @@ export async function runRepl(opts: {
           .filter((t) => t.status !== "running" && t.endedAt && Date.now() - t.endedAt < 15_000)
           .sort((a, b) => (b.endedAt || 0) - (a.endedAt || 0))
           .slice(0, Math.max(1, lastKnownBgRunning - bgRunning));
-        const notice = formatIdleBgCompletionNotice(justDone);
+        const notice = formatIdleBgCompletionNotice(
+          justDone.map((t) => ({
+            id: t.id,
+            command: t.command,
+            status: t.status,
+            exitCode: t.exitCode,
+            lastLine: peekTaskLastLine(t),
+          })),
+        );
         if (notice) {
           try {
             bottomDock.pause();
