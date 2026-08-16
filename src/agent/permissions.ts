@@ -845,8 +845,14 @@ export class PermissionGate {
       Boolean(alwaysPattern && alwaysPattern !== "*");
 
     console.error(
-      chalk.yellow(formatPermissionAskHeader(toolName, dangerous, opts.reasonHint)) +
-        (diffPreview ? `${preview}\n` : chalk.yellow(`${preview}\n`)),
+      chalk.yellow(
+        formatPermissionAskHeader(
+          toolName,
+          dangerous,
+          opts.reasonHint,
+          permissionAskSubject(toolName, toolInput),
+        ),
+      ) + (diffPreview ? `${preview}\n` : chalk.yellow(`${preview}\n`)),
     );
     try {
       const { loadPreferences, dismissHint } = await import(
@@ -961,15 +967,80 @@ export function formatPermissionTimeoutLine(secs: number, toolName: string): str
   return `✖ timed out ${secs}s — denied ${toolName}`;
 }
 
-/** One-line ⚠ header (no blank-line sandwich). Hint stays on the next line. */
+/** Short verb for the ask title (`write_file` → `write`). */
+export function permissionAskVerb(toolName: string): string {
+  switch (toolName) {
+    case "write_file":
+    case "Write":
+      return "write";
+    case "search_replace":
+    case "Edit":
+    case "edit":
+      return "edit";
+    case "apply_patch":
+    case "ApplyPatch":
+      return "patch";
+    case "read_file":
+    case "Read":
+      return "read";
+    case "bash":
+    case "run_terminal_command":
+      return "bash";
+    default:
+      return toolName;
+  }
+}
+
+/** Path or command the human is deciding on. Empty when unknown. */
+export function permissionAskSubject(
+  toolName: string,
+  toolInput: Record<string, unknown>,
+): string {
+  const verb = permissionAskVerb(toolName);
+  if (verb === "bash") {
+    return String(toolInput.command ?? toolInput.cmd ?? "").replace(/\s+/g, " ").trim();
+  }
+  const p = String(
+    toolInput.path ?? toolInput.file_path ?? toolInput.filePath ?? "",
+  ).trim();
+  if (p) return p;
+  if (verb === "patch") {
+    const patch = String(toolInput.patchText ?? toolInput.patch ?? "");
+    const m = patch.match(
+      /^\*\*\*\s+(?:Add|Update|Delete|Move)\s+File:\s+(.+)$/im,
+    );
+    return m?.[1]?.trim() ?? "";
+  }
+  return "";
+}
+
+/**
+ * Decision title. File tools put the path on the ⚠ line; bash keeps a
+ * long command on the hint line so the verb is never clipped off.
+ * No-subject calls stay `⚠ write_file` (tests + unknown tools).
+ */
 export function formatPermissionAskHeader(
   toolName: string,
   dangerous: boolean,
   reasonHint?: string,
+  subject?: string,
 ): string {
+  const verb = permissionAskVerb(toolName);
+  const subj = subject?.trim();
   const danger = dangerous ? " [DANGEROUS]" : "";
-  const hint = reasonHint?.trim() ? `\n  ${reasonHint.trim()}` : "";
-  return `⚠ ${toolName}${danger}${hint}\n`;
+  const title =
+    subj && verb !== "bash" ? `${verb}  ${subj}` : toolName;
+  const hintRaw =
+    reasonHint?.trim() || (verb === "bash" && subj ? subj : "");
+  const cols = Math.max(
+    24,
+    process.stdout.isTTY ? process.stdout.columns || 80 : 80,
+  );
+  const hint = hintRaw
+    ? `\n  ${clipAnsi(hintRaw, Math.max(8, cols - 2))}`
+    : "";
+  const first = clipAnsi(`⚠ ${title}${danger}`, cols);
+  return `${first}${hint}\n`;
 }
 
 export function formatPermissionAskPrompt(opts: {

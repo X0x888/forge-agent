@@ -3,6 +3,7 @@
 ## Unreleased
 
 ### Added
+- **Permission ask names the subject**: `⚠ write  src/foo.ts` (path on the title) and bash keeps the command on the hint line so you decide from the header, not the preview dump. Patch asks extract the first `*** Add/Update File`.
 - **`/last` recap trailer**: the conversation card now lists mutated files + last verify (stale/✗/✓) and `↳ /diff · /files · /undo`. Empty sessions get `type a task` instead of a bare “no turns”. Compact resume peek is unchanged.
 - **`/diff` change-review card**: default `/diff` is a scannable Δ card (colored porcelain, +/−, verify/stale, designed empty state when clean) instead of a raw `status:`/`stat:` dump. `--full` reuses the transcript `formatDiffBlock` palette. `/last` · `/commit` · `/undo` stay one keystroke away.
 - **Product quality bar (soul as quality, not persona)**: on user-facing product work (build/evaluate an app, game, or named surface — not generic “improve the ui” chrome, infra, or bugfix), a declared ship must name the hard user job and, after the first wave, include one finished edge (empty / error / first-run). At most one labeled `Serendipity:` per unit; leftover-chrome labeled as serendipity is refused. A preview-only reading is not a plan. Bounce once. Job/next-need/edge harvest onto `decisions.json` (existing `Reading:` notes count). `/cycle status` shows the bar. `/cycle 1`, re-enable, and fork reset the bounce so it cannot stick forever. Harvest never fails Stop.

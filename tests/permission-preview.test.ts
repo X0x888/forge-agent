@@ -7,6 +7,8 @@ import { editToolDiffPreview } from "../src/agent/permission-preview.js";
 import {
   formatPermissionAskHeader,
   formatPermissionAskPrompt,
+  permissionAskSubject,
+  permissionAskVerb,
   formatPermissionTimeoutLine,
   parsePermissionAskAnswer,
   wrapPermissionAskLine,
@@ -157,6 +159,34 @@ describe("permission ask UX", () => {
     assert.match(danger, /^⚠ bash \[DANGEROUS\]\n/);
     assert.match(danger, /\n  rm -rf \/tmp\/x\n$/);
     assert.doesNotMatch(danger, /^\n/);
+  });
+
+  test("header names the file/command so the decision is glanceable", () => {
+    assert.equal(permissionAskVerb("write_file"), "write");
+    assert.equal(
+      permissionAskSubject("write_file", { path: "src/tui/diff-card.ts" }),
+      "src/tui/diff-card.ts",
+    );
+    const write = formatPermissionAskHeader(
+      "write_file",
+      false,
+      undefined,
+      "src/tui/diff-card.ts",
+    );
+    assert.match(write, /^⚠ write {2}src\/tui\/diff-card\.ts\n$/);
+    assert.doesNotMatch(write, /write_file/);
+    const bash = formatPermissionAskHeader(
+      "bash",
+      true,
+      undefined,
+      "rm -rf /tmp/x",
+    );
+    assert.match(bash, /^⚠ bash \[DANGEROUS\]\n/);
+    assert.match(bash, /\n  rm -rf \/tmp\/x\n$/);
+    const patch = permissionAskSubject("apply_patch", {
+      patchText: "*** Begin Patch\n*** Add File: src/new.ts\n+ok\n*** End Patch",
+    });
+    assert.equal(patch, "src/new.ts");
   });
 
   test("prompt is one scannable line: once / always / session / no", () => {
