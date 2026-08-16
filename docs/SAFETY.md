@@ -165,7 +165,7 @@ forge run "…" --permission-mode bypassPermissions
 - Prefer disposable clones or git worktrees for YOLO + ULW.  
 - Windows has no OS sandbox backend.  
 - **Not** a full untrusted-repo / multi-tenant product bar.  
-- REPL `/diff` uses argv-based `git` (`execFileSync`) so filter args are not shell-interpolated; filter tokens are allowlisted (pathspecs/refs + read-only flags including `--full` — no `--output` / `--ext-diff` / `--git-dir`). Default `/diff` is status + `--stat`; `/diff --full` or `-U3` prints the patch.
+- REPL `/diff` uses argv-based `git` (`execFileSync`) so filter args are not shell-interpolated; filter tokens are allowlisted (pathspecs/refs + read-only flags including `--full` — no `--output` / `--ext-diff` / `--git-dir`). Default `/diff` is a change-review card (porcelain + `--stat`); `/diff --full` or `-U3` prints the patch.
 
 ## Comparison snapshot
 

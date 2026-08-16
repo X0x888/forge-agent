@@ -107,6 +107,7 @@ import {
 import { normalizeProviderId, providerIdHelp } from "../util/provider-id.js";
 import { providerMaxWallMs, providerTimeoutMs } from "../util/abort.js";
 import { copyToClipboard } from "../util/clipboard.js";
+import { formatDiffReviewCard } from "../tui/diff-card.js";
 import {
   defaultBashBackgroundTimeoutMs,
   defaultBashTimeoutMs,
@@ -5066,33 +5067,28 @@ const result = rewindSessionDetailed(opts.session, n);
             ? patch.slice(0, max) +
               `\n\n… [${patch.length - max} chars truncated — use git diff in a terminal for full output]`
             : patch;
-        let verifyTip = "";
+        let checkCommands: string[] = [];
         try {
           // Always name the project check — useful on a clean tree too
           // (what to run before you ship), and keeps /diff output stable
           // for CI that runs after a commit.
-          const intel = detectProjectIntel(cwd);
-          if (intel.checkCommands[0]) {
-            verifyTip = `\nverify: ${intel.checkCommands.slice(0, 3).join(" · ")}`;
-          }
+          checkCommands = detectProjectIntel(cwd).checkCommands.slice(0, 3);
         } catch {
           /* */
         }
-        const out = [
-          stat ? `status:\n${stat}` : "status: clean",
-          statDiff ? `\nstat:\n${statDiff}` : "",
-          wantPatch
-            ? body.trim()
-              ? `\ndiff:\n${body}`
-              : "\n(no unstaged/HEAD diff)"
-            : stat || statDiff
-              ? "\n(patch: /diff --full)"
-              : "",
-          gitArgs.length ? `\n(filter: ${gitArgs.join(" ")})` : "",
-          verifyTip,
-        ]
-          .filter(Boolean)
-          .join("\n");
+        const out = formatDiffReviewCard({
+          porcelain: stat,
+          stat: statDiff,
+          patch: wantPatch ? body : undefined,
+          wantPatch,
+          filterNote: gitArgs.length ? gitArgs.join(" ") : undefined,
+          checkCommands,
+          lastVerification: {
+            command: opts.session.meta.lastVerificationCommand,
+            ok: opts.session.meta.lastVerificationOk,
+            stale: isLastVerificationStale(opts.session.meta),
+          },
+        });
         return { handled: true, output: out };
       } catch (err) {
         return {

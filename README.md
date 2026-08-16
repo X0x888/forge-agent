@@ -286,7 +286,7 @@ Full contract: [docs/RELIABILITY.md](docs/RELIABILITY.md) · expert checklist: [
 | `/fork [title]` | Branch session into a new id |
 | `/title [name\|clear]` | Show / set / clear session title (`/rename`) |
 | `/bell [on\|off\|test]` | Terminal BEL when a turn ends (long-run attention) |
-| `/diff [path]` | Git status + `--stat` (live-safe; argv + filter allowlist). `/diff --full` or `-U3` for the patch |
+| `/diff [path]` | Change-review card (Δ files + verify; live-safe; argv + filter allowlist). `/diff --full` or `-U3` for the patch |
 | `/logs [n\|path]` | Tail sandbox/safety events (`forge logs`; live-safe; no secrets) |
 | `/config [json]` | Effective config snapshot (live-safe; no secrets) · CLI: `forge config` |
 | `/copy` | Clipboard last reply (pbcopy/wl-copy/xclip/…; live-safe) |

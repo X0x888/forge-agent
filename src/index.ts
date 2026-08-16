@@ -574,6 +574,12 @@ export {
   formatAssistantTurnOpen,
 } from "./tui/turn-summary.js";
 export {
+  formatDiffReviewCard,
+  parsePorcelainFiles,
+  parseGitStat,
+  porcelainLetter,
+} from "./tui/diff-card.js";
+export {
   shouldOfferLoginPicker,
   parseLoginOfferChoice,
   formatPostLoginOfferExit,

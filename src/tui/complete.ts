@@ -542,7 +542,7 @@ export const SLASH_HINTS: Record<string, string> = {
   "/init": "Write AGENTS.md",
   "/last": "Conversation card",
   "/retry": "Rewind + re-run",
-  "/diff": "Status + --stat",
+  "/diff": "Change-review card",
   "/model": "Switch model",
   "/permissions": "Modes + always-allows",
   "/budget": "Session spend cap",

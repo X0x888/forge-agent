@@ -27,7 +27,7 @@ Getting started
 
 Daily
 ─────
-  /last /retry /diff  Peek last turns · retry · status+stat (/diff --full)
+  /last /retry /diff  Peek last turns · retry · change-review card (/diff --full)
   /model /provider    Switch model (sticky)
   /permissions        Modes + saved always-allows
   /budget /notify     Spend cap · desktop alert
@@ -122,7 +122,7 @@ Safety
 
   /permissions        Modes + saved always-allows
   /plan               Read-only design (no sticky prefs)
-  /diff               Status + --stat · /diff --full for the patch
+  /diff               Change-review card · /diff --full for the patch
   /logs               Sandbox / safety event tail
   /doctor             Flags YOLO, sandbox=off, mode 0600, Blocking Stop OFF
   /budget             Session spend cap (unlimited until you set one)
@@ -192,7 +192,7 @@ Forge slash commands
   /format [on|off]      Format-on-write after file tools (prettier/biome/ruff/…)  [live]
   /verbose              Toggle full diffs + output (edits already show a short preview)  [live]
   ask_user              Model tool for clarifying questions (not a slash) — interactive; headless fails closed
-  /diff [path]          Status + --stat (argv-safe) · --full / -U3 for the patch  [live]
+  /diff [path]          Change-review card (Δ files + verify) · --full / -U3 for the patch  [live]
   !<command>            Run a shell command now (same permissions as bash)  [live]
   /logs [n|0|all|path]  Tail sandbox/safety events (0/all = full window)  [live]
   /config [json]        Effective config snapshot (no secrets)  [live]

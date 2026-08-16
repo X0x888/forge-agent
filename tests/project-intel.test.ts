@@ -976,7 +976,7 @@ describe("plan mode project checks", () => {
 
 
 describe("/diff verify tip", () => {
-  it("default /diff is status+stat, not a 12k patch", async () => {
+  it("default /diff is a review card, not a 12k patch", async () => {
     // Use the real project git root — nested git init often fails chmod
     // in the sandbox, and this repo already has scripts + a tree.
     const d = process.cwd();
@@ -996,10 +996,10 @@ describe("/diff verify tip", () => {
       });
       assert.equal(r.handled, true);
       const out = String(r.output || "");
-      assert.match(out, /status:/);
+      assert.match(out, /Δ |Nothing to review/);
       assert.match(out, /verify:|npm run typecheck/);
       assert.doesNotMatch(out, /^diff --git /m);
-      assert.match(out, /patch: \/diff --full|status: clean/);
+      assert.match(out, /\/diff --full|Nothing to review|tree clean/);
       const full = await handleSlash("/diff --full", {
         session,
         config: { ...DEFAULT_CONFIG, workspace: d },
@@ -1007,8 +1007,11 @@ describe("/diff verify tip", () => {
       });
       assert.equal(full.handled, true);
       const fullOut = String(full.output || "");
-      assert.doesNotMatch(fullOut, /\(patch: \/diff --full\)/);
-      assert.match(fullOut, /\ndiff:|\(no unstaged\/HEAD diff\)|status: clean/);
+      assert.doesNotMatch(fullOut, /↳ \/diff --full/);
+      assert.match(
+        fullOut,
+        /Nothing to review|tree clean|Δ |\+|−|diff --git/,
+      );
     } finally {
       try {
         deleteSession(session.meta.id, { force: true });
