@@ -108,6 +108,7 @@ import { normalizeProviderId, providerIdHelp } from "../util/provider-id.js";
 import { providerMaxWallMs, providerTimeoutMs } from "../util/abort.js";
 import { copyToClipboard } from "../util/clipboard.js";
 import { formatDiffReviewCard } from "../tui/diff-card.js";
+import { assembleDoctorReport } from "../tui/doctor-card.js";
 import {
   defaultBashBackgroundTimeoutMs,
   defaultBashTimeoutMs,
@@ -6559,7 +6560,7 @@ export interface DoctorResult {
 export async function runDoctorCheck(
   config: ForgeConfig,
 ): Promise<DoctorResult> {
-  const lines: string[] = [chalk.bold("Forge doctor"), ""];
+  const lines: string[] = [];
   const issues: string[] = [];
   let modelInCatalog: boolean | null = null;
   lines.push(`Version: ${getForgeVersion()}`);
@@ -7338,13 +7339,7 @@ export async function runDoctorCheck(
     /* optional */
   }
 
-  lines.push("");
-  if (issues.length === 0) {
-    lines.push(chalk.green("✓ No blocking issues detected"));
-  } else {
-    lines.push(chalk.yellow(`⚠ ${issues.length} issue(s):`));
-    for (const i of issues) lines.push(chalk.yellow(`  • ${i}`));
-  }
+  // Verdict + next keys assemble at return (issues stay first).
 
   let multiAccount: DoctorResult["multiAccount"] = null;
   try {
@@ -7648,7 +7643,7 @@ export async function runDoctorCheck(
   }
 
   return {
-    report: lines.join("\n"),
+    report: assembleDoctorReport(lines, issues),
     issues: [...issues],
     ok: issues.length === 0,
     authenticated: Boolean(auth),
