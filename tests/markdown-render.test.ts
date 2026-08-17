@@ -318,11 +318,12 @@ describe("markdown renderer styling", () => {
 });
 
 describe("markdown prose measure", () => {
-  test("markdownMeasure caps a wide TTY at 76", () => {
+  test("markdownMeasure caps a wide TTY at 76 and never exceeds the pane", () => {
     assert.equal(markdownMeasure(200), 76);
     assert.equal(markdownMeasure(80), 76);
     assert.equal(markdownMeasure(41), 40);
-    assert.equal(markdownMeasure(10), 40);
+    assert.equal(markdownMeasure(10), 9);
+    assert.equal(markdownMeasure(1), 8);
   });
 
   test("wrapAnsiLine breaks on words and stays within width", () => {

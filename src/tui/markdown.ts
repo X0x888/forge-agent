@@ -33,9 +33,10 @@ export interface MarkdownRendererOptions {
   width?: number;
 }
 
-/** Readable measure: 40–76 cols so a wide TTY does not become a wall. */
+/** Readable measure: never wider than the TTY, never a 200-col wall. */
 export function markdownMeasure(columns: number): number {
-  return Math.max(40, Math.min(Math.max(1, columns) - 1, 76));
+  const cols = Math.max(1, columns);
+  return Math.max(8, Math.min(cols - 1, 76));
 }
 
 export interface MarkdownRenderer {
