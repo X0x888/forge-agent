@@ -72,7 +72,10 @@ import {
 import {
   OFF_CONTRACT_HOLD,
   formatHoldContextAppendix,
+  isExplorePickDone,
   isOnExploreContract,
+  isSamePickTopic,
+  loadExploreMapEntries,
   loadExploreMapPicks,
   loadWave1Reading,
 } from "./explore-contract.js";
@@ -90,6 +93,8 @@ export interface NamedShipItem {
   text: string;
   status: "open" | "done";
   doneAt?: string;
+  /** Seeded from exploreMaps — never FIFO-completed. */
+  source?: "explore-map" | "reading";
 }
 
 export type UlwWrapSource = "named" | "todo" | "open_wave";
@@ -539,11 +544,45 @@ function escapeRegExp(s: string): string {
  * signal (a bash command matching a check pattern executed during the wave);
  * the regex is the secondary signal (cited command + outcome in the message).
  */
+/** Full-suite fail count cited in a closer (`5008 / 65 fail`, `131 fail`). */
+export function parseCitedSuiteFailCount(text: string): number | undefined {
+  const t = text || "";
+  const labeled = t.match(
+    /(?:\d{3,5}\s*(?:\/|pass)\D{0,12})(\d{1,3})\s*fail/i,
+  );
+  if (labeled) {
+    const n = Number(labeled[1]);
+    return Number.isFinite(n) ? n : undefined;
+  }
+  const bare = t.match(/\b(\d{2,3})\s*fail(?:s|ed|ing)?\b/i);
+  if (bare) {
+    const n = Number(bare[1]);
+    return Number.isFinite(n) ? n : undefined;
+  }
+  return undefined;
+}
+
+/** Closer only cites an isolate `22/22` / `43/43 stay green`. */
+export function citesIsolateOnlyPass(text: string): boolean {
+  const t = text || "";
+  if (parseCitedSuiteFailCount(t) != null) return false;
+  if (/\bnpm\s+(?:run\s+)?test\b/i.test(t)) return false;
+  return (
+    /\b\d{1,2}\s*\/\s*\d{1,2}\s*(?:pass|green|stay)/i.test(t) ||
+    /\bstay green\s*\(\d{1,2}\/\d{1,2}\)/i.test(t)
+  );
+}
+
 export function detectWaveProof(
   lastAssistantMessage: string,
   verificationRan?: boolean,
+  opts?: { helperOnly?: boolean },
 ): boolean {
+  const fail = parseCitedSuiteFailCount(lastAssistantMessage || "");
+  if (fail != null && fail > 0) return false;
+  if (opts?.helperOnly) return false;
   if (verificationRan) return true;
+  if (citesIsolateOnlyPass(lastAssistantMessage || "")) return false;
   return WAVE_PROOF_RE.test(lastAssistantMessage || "");
 }
 
@@ -1026,9 +1065,81 @@ export function exploreHolding(s: UlwCycleState): boolean {
 export function noteExploreChildCompleted(sessionId: string): boolean {
   if (!sessionId) return false;
   const s = loadUlwCycle(sessionId);
-  if (!s?.enabled || !s.exploreRequired) return false;
-  s.exploreRequired = false;
-  s.exploreRequiredAt = undefined;
+  if (!s?.enabled) return false;
+  let changed = false;
+  if (s.exploreRequired) {
+    s.exploreRequired = false;
+    s.exploreRequiredAt = undefined;
+    changed = true;
+  }
+  if (changed) saveUlwCycle(s);
+  seedNamedShipsFromExploreMaps(sessionId);
+  return changed;
+}
+
+function claimsForPick(sessionId: string, pick: string): string[] {
+  const entries = loadExploreMapEntries(sessionId);
+  const hit = entries.find(
+    (e) =>
+      e.pick === pick ||
+      matchNamedShip(e.pick, pick) ||
+      matchNamedShip(pick, e.pick),
+  );
+  return hit?.claims ?? [];
+}
+
+/**
+ * Unlimited evaluate-class: explore-map picks ARE the named-ship list when
+ * the model never writes one. Marked done only on the pick's job, not FIFO.
+ */
+export function seedNamedShipsFromExploreMaps(sessionId: string): boolean {
+  if (!sessionId) return false;
+  const s = loadUlwCycle(sessionId);
+  if (!s?.enabled || s.cycle !== 1 || s.wrapKind) return false;
+  if (normalizeMaxWaves(s.maxWaves) != null) return false;
+  const picks = loadExploreMapPicks(sessionId).filter((p) => p.length >= 12);
+  if (!picks.length) return false;
+  const prev = s.namedShips ?? [];
+  if (prev.some((x) => x.source !== "explore-map" && x.status === "open")) {
+    return false;
+  }
+  const clip = (t: string) => t.replace(/\s+/g, " ").trim().slice(0, 280);
+  const asItem = (text: string): NamedShipItem => ({
+    text: clip(text),
+    status: "open",
+    source: "explore-map",
+  });
+  if (namedShipsExhausted(s)) {
+    const doneTexts = prev.map((x) => x.text);
+    const fresh = picks.filter(
+      (p) =>
+        !prev.some((x) => matchNamedShip(x.text, p) || matchNamedShip(p, x.text)) &&
+        !isSamePickTopic(p, doneTexts),
+    );
+    if (!fresh.length) return false;
+    s.namedShips = fresh.slice(0, 8).map(asItem);
+    s.namedShipAdmitCount = 0;
+    s.namedShipAdmitDone = false;
+    saveUlwCycle(s);
+    return true;
+  }
+  if (prev.length === 0) {
+    s.namedShips = picks.slice(0, 8).map(asItem);
+    saveUlwCycle(s);
+    return true;
+  }
+  let added = false;
+  const next = [...prev];
+  for (const p of picks) {
+    if (next.some((x) => matchNamedShip(x.text, p) || matchNamedShip(p, x.text))) {
+      continue;
+    }
+    if (next.length >= 12) break;
+    next.push(asItem(p));
+    added = true;
+  }
+  if (!added) return false;
+  s.namedShips = next;
   saveUlwCycle(s);
   return true;
 }
@@ -1352,7 +1463,15 @@ export function maybeAdoptNamedShips(
   if (!parsed.length) return false;
   const prev = s.namedShips ?? [];
   const open = prev.filter((x) => x.status === "open");
-  if (open.length > 0) return false;
+  const picks = loadExploreMapPicks(s.sessionId);
+  const adoptBlob = parsed.join("\n");
+  const onContractEarly =
+    isOnExploreContract(adoptBlob, picks) ||
+    parsed.some((p) => isOnExploreContract(p, picks));
+  if (open.length > 0) {
+    const onlySeeded = open.every((x) => x.source === "explore-map");
+    if (!(onlySeeded && onContractEarly)) return false;
+  }
   // Same reading still in memory after every item is done — do not reopen it.
   if (sameNamedShipSet(prev, parsed)) return false;
   if (
@@ -1371,15 +1490,23 @@ export function maybeAdoptNamedShips(
   ) {
     return false;
   }
+  // Spent explore-map picks: a joiner/toast topic recap is not a new class.
+  if (
+    normalizeMaxWaves(s.maxWaves) == null &&
+    (s.namedShipAdmitCount ?? 0) >= 1 &&
+    prev.some((x) => x.source === "explore-map") &&
+    isSamePickTopic(
+      parsed.join("\n"),
+      prev.filter((x) => x.status === "done").map((x) => x.text),
+    )
+  ) {
+    return false;
+  }
   // Unlimited mill: refuse a one-ship reading that is the same adjacent-share
   // / factory class as the last ships (log10: 106 Mad-Lib adopts).
   // A pick (Memory Walk / topology) is a different class even if the
   // reading recaps the last mill ship.
-  const picks = loadExploreMapPicks(s.sessionId);
-  const adoptBlob = parsed.join("\n");
-  const onContract =
-    isOnExploreContract(adoptBlob, picks) ||
-    parsed.some((p) => isOnExploreContract(p, picks));
+  const onContract = onContractEarly;
   if (
     normalizeMaxWaves(s.maxWaves) == null &&
     (s.namedShipAdmitCount ?? 0) >= 1 &&
@@ -1422,7 +1549,15 @@ export function maybeAdoptNamedShips(
     clearSameSurfaceHold(s);
     s.sameSurfaceStreak = 0;
   }
-  s.namedShips = parsed.map((item) => ({ text: item, status: "open" as const }));
+  const keptDone = prev.filter((x) => x.status === "done");
+  s.namedShips = [
+    ...keptDone,
+    ...parsed.map((item) => ({
+      text: item,
+      status: "open" as const,
+      source: "reading" as const,
+    })),
+  ];
   s.namedShipAdmitDone = false;
   if (text) {
     try {
@@ -1444,14 +1579,19 @@ export function markNamedShipDone(s: UlwCycleState, closer: string): void {
   const open = items.filter((x) => x.status === "open");
   if (!open.length) return;
   const cancel = CANCEL_SHIP_RE.test(closer);
-  const matched = open.filter((x) => matchNamedShip(x.text, closer));
+  const matched = open.filter((x) =>
+    x.source === "explore-map"
+      ? isExplorePickDone(closer, x.text, claimsForPick(s.sessionId, x.text))
+      : matchNamedShip(x.text, closer),
+  );
   // Cycle complete / cancel must not FIFO-consume the next named item.
-  // Cancel may close every listed leftover in one closer.
+  // Seeded explore-map picks never FIFO — topic overlap is not the job.
+  const hasSeededOpen = open.some((x) => x.source === "explore-map");
   const hits = cancel
     ? matched
     : matched.length
       ? [matched[0]!]
-      : /\bCycle complete\b/i.test(closer)
+      : /\bCycle complete\b/i.test(closer) || hasSeededOpen
         ? []
         : [open[0]!];
   for (const hit of hits) {
@@ -1651,12 +1791,15 @@ export function maybeStampUlwWave(opts: {
   lastAssistantMessage?: string;
   verificationRan?: boolean;
   verificationPassed?: boolean;
+  /** Only helper-only isolate checks ran this wave. */
+  verificationHelperOnly?: boolean;
   cwd?: string;
   /** Dirty relpaths this wave; when omitted, cwd porcelain is used. */
   changedPaths?: string[];
 }): MidWaveStampResult {
   const s = loadUlwCycle(opts.sessionId);
   if (!s?.enabled) return { stamped: false };
+  seedNamedShipsFromExploreMaps(opts.sessionId);
 
   const cap = normalizeMaxWaves(s.maxWaves);
   if (cap != null && s.cycle === 1 && s.wave >= cap) {
@@ -1708,9 +1851,15 @@ export function maybeStampUlwWave(opts: {
     opts.sessionId,
     opts.lastAssistantMessage || "",
   );
+  const helperOnly =
+    Boolean(opts.verificationHelperOnly) && opts.verificationPassed !== true;
   const proof = detectWaveProof(
     closer,
-    opts.verificationPassed ?? opts.verificationRan,
+    opts.verificationPassed === true ||
+      (opts.verificationPassed === undefined &&
+        Boolean(opts.verificationRan) &&
+        !helperOnly),
+    { helperOnly },
   );
   const summary =
     summarizeWave(closer, opts.sessionId) || "(mid-loop epoch)";
@@ -2102,12 +2251,17 @@ function normalizeNamedShipItems(raw: unknown): NamedShipItem[] | undefined {
   for (const item of raw) {
     if (!item || typeof item !== "object") continue;
     const o = item as Record<string, unknown>;
-    const text = typeof o.text === "string" ? o.text.trim().slice(0, 160) : "";
+    const cap = o.source === "explore-map" ? 280 : 160;
+    const text =
+      typeof o.text === "string" ? o.text.trim().slice(0, cap) : "";
     if (text.length < 8) continue;
     out.push({
       text,
       status: o.status === "done" ? "done" : "open",
       ...(typeof o.doneAt === "string" && o.doneAt ? { doneAt: o.doneAt } : {}),
+      ...(o.source === "explore-map" || o.source === "reading"
+        ? { source: o.source }
+        : {}),
     });
     if (out.length >= 12) break;
   }
@@ -3014,6 +3168,8 @@ export function evaluateUlwAtStop(opts: {
    * Wave ledger proof still uses verificationRan (execution).
    */
   verificationPassed?: boolean;
+  /** Only helper-only isolate checks ran this wave. */
+  verificationHelperOnly?: boolean;
   preferredCheckCommands?: string[];
   /**
    * Working-tree diff fingerprint (gitDiffFingerprint) for net-diff progress
@@ -3026,6 +3182,7 @@ export function evaluateUlwAtStop(opts: {
 }): UlwStopDecision {
   const s = loadUlwCycle(opts.sessionId);
   if (!s || !s.enabled) return { block: false };
+  seedNamedShipsFromExploreMaps(opts.sessionId);
   if (s.cycle === 0) ensureUlwWrap(s);
 
   const msg = opts.lastAssistantMessage || "";
@@ -3240,9 +3397,15 @@ export function evaluateUlwAtStop(opts: {
     }
     const sig = waveProgressSig(opts.editCount, fp);
     const alreadyStamped = Boolean(s.lastWaveSig && s.lastWaveSig === sig);
+    const helperOnly =
+      Boolean(opts.verificationHelperOnly) && opts.verificationPassed !== true;
     const proof = detectWaveProof(
       msg,
-      opts.verificationPassed ?? opts.verificationRan,
+      opts.verificationPassed === true ||
+        (opts.verificationPassed === undefined &&
+          Boolean(opts.verificationRan) &&
+          !helperOnly),
+      { helperOnly },
     );
     const netDiff = classifyNetDiff(
       fp,

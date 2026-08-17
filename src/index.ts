@@ -308,6 +308,9 @@ export {
   maybeAdoptNamedShips,
   markNamedShipDone,
   namedShipsExhausted,
+  seedNamedShipsFromExploreMaps,
+  parseCitedSuiteFailCount,
+  citesIsolateOnlyPass,
   snapshotUlwWrap,
   ensureUlwWrap,
   formatWrapCard,
@@ -380,7 +383,10 @@ export {
 } from "./harness/tests-without-body.js";
 export {
   loadExploreMapPicks,
+  loadExploreMapEntries,
   isOnExploreContract,
+  isExplorePickDone,
+  isSamePickTopic,
   formatHoldContextAppendix,
   OFF_CONTRACT_HOLD,
 } from "./harness/explore-contract.js";

@@ -69,6 +69,7 @@ import {
   countsTowardVerification,
   applyVerificationTrail,
   verificationPassedFromResult,
+  isHelperOnlyTestCommand,
   isFullSuiteCommand,
   consumeMillHoldPrune,
 } from "../harness/ulw-cycle.js";
@@ -356,6 +357,8 @@ interface HarnessRunStats {
   verificationRuns: number;
   /** Successful structural checks only — proof-claim / expert green trail. */
   verificationPassedRuns: number;
+  /** Isolate `node --test tests/wN-*.mjs` ran — not wave proof. */
+  verificationHelperOnlyRuns: number;
   effortBoostTurns: number;
 }
 
@@ -754,6 +757,7 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
   const harnessStats: HarnessRunStats = {
     verificationRuns: 0,
     verificationPassedRuns: 0,
+    verificationHelperOnlyRuns: 0,
     effortBoostTurns: 0,
   };
   /** Consecutive Stop blocks from handoff-guard (polite yield). Resets on allow. */
@@ -1295,6 +1299,7 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
               typeof lastAsst?.content === "string" ? lastAsst.content : "",
             verificationRan: harnessStats.verificationRuns > 0,
             verificationPassed: harnessStats.verificationPassedRuns > 0,
+            verificationHelperOnly: harnessStats.verificationHelperOnlyRuns > 0,
             cwd: workspace,
           });
           if (stamp.stamped || stamp.admit) {
@@ -2227,6 +2232,7 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
           lastAssistantMessage: finalText,
           verificationRan: harnessStats.verificationRuns > 0,
           verificationPassed: harnessStats.verificationPassedRuns > 0,
+          verificationHelperOnly: harnessStats.verificationHelperOnlyRuns > 0,
           handoffBlocks,
           proofClaimBlocks,
           preferredCheckCommands,
@@ -2242,6 +2248,7 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
         if (stopResult.ulw) {
           harnessStats.verificationRuns = 0;
           harnessStats.verificationPassedRuns = 0;
+          harnessStats.verificationHelperOnlyRuns = 0;
         }
         // Missing wave proof / weak attestation = hard-round signal → think harder.
         if (stopResult.ulw?.proofDemanded || stopResult.ulw?.evidenceDemanded) {
@@ -3667,6 +3674,8 @@ async function prepareToolResult(opts: {
       });
       if (passed) {
         harnessStats.verificationPassedRuns += 1;
+      } else if (isHelperOnlyTestCommand(cmd)) {
+        harnessStats.verificationHelperOnlyRuns += 1;
       }
       const prevOk = session.meta.lastVerificationOk;
       const prevCmd = session.meta.lastVerificationCommand || "";

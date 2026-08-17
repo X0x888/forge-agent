@@ -52,6 +52,8 @@ export interface StopGuardInput {
    * evidence prefer this so a red check cannot unlock "Done." / **Goal achieved.**
    */
   verificationPassed?: boolean;
+  /** Only helper-only isolate checks ran this wave. */
+  verificationHelperOnly?: boolean;
   /** Preferred project checks for handoff/proof-claim reanchor tips. */
   preferredCheckCommands?: string[];
   lastVerificationCommand?: string;
@@ -176,6 +178,7 @@ export async function runStopGuard(input: StopGuardInput): Promise<StopGuardResu
     stuckThreshold,
     verificationRan: input.verificationRan,
     verificationPassed: input.verificationPassed,
+    verificationHelperOnly: input.verificationHelperOnly,
     preferredCheckCommands: input.preferredCheckCommands,
     diffFingerprint,
     cwd: ctx.workspaceRoot,

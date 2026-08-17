@@ -205,6 +205,15 @@ export function buildStructuredSummary(
       namedHold
         ? `- Named ships from the reading are done. Write a new Reading: the ONE next ship on a different class (name an explore-map pick or a play-path / architecture ship), or /cycle 0. Do not recap the last ship as 'Last ship was' / 'what's still hard'. Do not attest Cycle complete. A red test suite is a different surface — not leftover chrome. Stuck-wall will not release this hold.`
         : "",
+      (() => {
+        const open = (ulw.namedShips ?? []).filter((x) => x.status === "open");
+        if (!open.length) return "";
+        const body = open
+          .slice(0, 6)
+          .map((x) => x.text.slice(0, 160))
+          .join(" · ");
+        return `- Open named ships (${open.length}): ${body}`;
+      })(),
       mandateLine,
       softLine,
     );

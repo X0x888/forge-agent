@@ -51,7 +51,10 @@ import {
   parseExploreMap,
   rememberExploreMap,
 } from "../session/explore-map.js";
-import { noteExploreChildCompleted } from "../harness/ulw-cycle.js";
+import {
+  noteExploreChildCompleted,
+  seedNamedShipsFromExploreMaps,
+} from "../harness/ulw-cycle.js";
 
 export type SubagentType = "general-purpose" | "explore" | "plan";
 export type SubagentCapability = "full" | "read-only";
@@ -631,6 +634,11 @@ export async function runSubagent(
       saveSession(ctx.parentSession);
     } catch {
       /* */
+    }
+    try {
+      seedNamedShipsFromExploreMaps(ctx.parentSession.meta.id);
+    } catch {
+      /* parent ULW sidecar optional */
     }
   }
   if (subagentType === "explore" && status === "completed") {

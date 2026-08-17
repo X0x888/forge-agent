@@ -57,7 +57,39 @@ const GENERIC_CONTRACT_TOKENS = new Set([
   "not",
 ]);
 
-export function loadExploreMapPicks(sessionId: string): string[] {
+export interface ExploreMapEntry {
+  pick: string;
+  claims: string[];
+}
+
+/** Topic words that must not complete a pick or refresh a spent list. */
+const TOPIC_PICK_TOKENS = new Set([
+  ...GENERIC_CONTRACT_TOKENS,
+  "online",
+  "joiner",
+  "toast",
+  "host",
+  "laptop",
+  "chrome",
+  "juice",
+  "combat",
+  "leftover",
+  "ships",
+  "play",
+  "hurting",
+  "wave",
+  "give",
+  "should",
+  "own",
+  "more",
+  "never",
+  "exist",
+  "several",
+  "couple",
+  "fairness",
+]);
+
+export function loadExploreMapEntries(sessionId: string): ExploreMapEntry[] {
   if (!sessionId) return [];
   try {
     const p = path.join(forgeHome(), "sessions", sessionId, "meta.json");
@@ -65,12 +97,77 @@ export function loadExploreMapPicks(sessionId: string): string[] {
       exploreMaps?: unknown;
     };
     const maps = normalizeExploreMaps(raw.exploreMaps);
-    return (maps ?? [])
-      .map((m) => (m.pick || "").trim())
-      .filter((t) => t.length >= 12);
+    const out: ExploreMapEntry[] = [];
+    for (const m of maps ?? []) {
+      const pick = (m.pick || "").trim();
+      if (pick.length < 12) continue;
+      const claims = (m.files ?? [])
+        .map((f) => (f.claim || "").trim())
+        .filter((c) => c.length >= 8);
+      out.push({ pick, claims });
+    }
+    return out;
   } catch {
     return [];
   }
+}
+
+export function loadExploreMapPicks(sessionId: string): string[] {
+  return loadExploreMapEntries(sessionId).map((e) => e.pick);
+}
+
+export function distinctivePickTerms(
+  pick: string,
+  claims: string[] = [],
+): string[] {
+  const blob = [pick, ...claims].join(" ");
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const w of contractWords(blob)) {
+    if (w.length < 6 || TOPIC_PICK_TOKENS.has(w)) continue;
+    if (seen.has(w)) continue;
+    seen.add(w);
+    out.push(w);
+  }
+  return out;
+}
+
+/**
+ * True when the closer ships the pick's job (distinctive terms / bigrams),
+ * not when it only shares a topic (online / joiner / toast).
+ */
+export function isExplorePickDone(
+  closer: string,
+  pick: string,
+  claims: string[] = [],
+): boolean {
+  const blob = (closer || "").toLowerCase().replace(/-/g, " ");
+  if (!blob.trim() || pick.trim().length < 12) return false;
+  const words = distinctivePickTerms(pick, claims);
+  for (let i = 0; i < words.length - 1; i++) {
+    const g = `${words[i]} ${words[i + 1]}`;
+    if (g.length >= 10 && blob.includes(g)) return true;
+  }
+  const hits = words.filter((t) => blob.includes(t));
+  return hits.length >= 2;
+}
+
+/** New reading only restates a spent pick's topic — not a new class. */
+export function isSamePickTopic(text: string, donePicks: string[]): boolean {
+  const blob = (text || "").toLowerCase().replace(/-/g, " ");
+  if (!blob.trim() || !donePicks.length) return false;
+  if (donePicks.some((p) => isExplorePickDone(blob, p))) return false;
+  const topic =
+    /\bonline\b/.test(blob) ||
+    /\bjoiner\b/.test(blob) ||
+    /\btoast\b/.test(blob) ||
+    /\bhost (?:heard|laptop)\b/.test(blob);
+  if (!topic) return false;
+  return donePicks.some((p) => {
+    const terms = distinctivePickTerms(p);
+    const jobHits = terms.filter((t) => t.length >= 7 && blob.includes(t));
+    return jobHits.length === 0;
+  });
 }
 
 export function loadWave1Reading(sessionId: string): string | undefined {
