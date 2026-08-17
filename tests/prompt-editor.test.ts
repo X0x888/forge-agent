@@ -232,13 +232,20 @@ describe("history incremental search", () => {
       startHistorySearch(hist),
       { type: "type", text: "dock" },
     );
-    assert.equal(
-      formatHistorySearchPrompt(s),
-      "(bck-i-search)`dock': ",
-    );
+    assert.equal(formatHistorySearchPrompt(s), "search › dock · ");
+    assert.doesNotMatch(formatHistorySearchPrompt(s), /bck-i-search|fwd-i-search/);
     assert.equal(
       formatHistorySearchPrompt({ ...s, failed: true }),
-      "(failed bck-i-search)`dock': ",
+      "search ✗ › dock · ",
+    );
+    assert.equal(
+      formatHistorySearchPrompt({ ...s, dir: 1 }),
+      "search ↓ › dock · ",
+    );
+    const long = "x".repeat(40);
+    assert.equal(
+      formatHistorySearchPrompt({ ...s, query: long }),
+      `search › ${"x".repeat(31)}… · `,
     );
     assert.equal(
       historySearchCursor("fix the dock hop", "dock"),

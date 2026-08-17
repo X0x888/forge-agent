@@ -310,15 +310,19 @@ export function stepHistorySearch(
   };
 }
 
+const HISTORY_QUERY_MAX = 32;
+
+/**
+ * Prompt prefix while Ctrl+R / Ctrl+S is live. The match itself is the
+ * editor buffer; this only names the mode + typed query (so a failed
+ * search still shows what you typed).
+ */
 export function formatHistorySearchPrompt(search: HistorySearch): string {
-  const tag = search.failed
-    ? search.dir < 0
-      ? "failed bck-i-search"
-      : "failed fwd-i-search"
-    : search.dir < 0
-      ? "bck-i-search"
-      : "fwd-i-search";
-  return `(${tag})\`${search.query}': `;
+  const q = search.query.replace(/\n/g, " ");
+  const shown = q.length > HISTORY_QUERY_MAX ? `${q.slice(0, HISTORY_QUERY_MAX - 1)}…` : q;
+  const dir = search.dir > 0 ? "↓ " : "";
+  const mark = search.failed ? "✗ ›" : "›";
+  return `search ${dir}${mark} ${shown} · `;
 }
 
 export const HISTORY_SEARCH_FOOTER =
@@ -1230,9 +1234,8 @@ class TtyPromptEditor extends EventEmitter implements PromptEditor {
   }
 
   private activePrompt(): string {
-    return this.search
-      ? formatHistorySearchPrompt(this.search)
-      : this.promptStr;
+    if (!this.search) return this.promptStr;
+    return chalk.dim(formatHistorySearchPrompt(this.search));
   }
 
   private insert(text: string): void {
