@@ -4,6 +4,8 @@ import {
   formatToolStart,
   formatToolEnd,
   formatFailedToolTail,
+  firstToolErrorLine,
+  compactToolDenyReason,
   visibleWidth,
 } from "../src/util/format.js";
 import {
@@ -265,6 +267,46 @@ describe("default tool status line", () => {
     assert.doesNotMatch(end, /path=/);
     assert.equal(end.includes("\n"), false, "fail line must stay one row");
     assert.doesNotMatch(end, /more$/);
+  });
+
+  it("compacts permission-gate lectures on the ✗ row", () => {
+    assert.equal(
+      compactToolDenyReason("Tool denied by permission gate: user_reject"),
+      "denied",
+    );
+    assert.equal(
+      compactToolDenyReason(
+        "Tool denied by permission gate: plan_mode: bash mutations denied — read-only shell ok",
+      ),
+      "plan mode",
+    );
+    assert.equal(
+      compactToolDenyReason(
+        "HARD DENY [cloud-metadata-imds]: Refusing cloud instance-metadata fetch",
+      ),
+      "hard deny cloud-metadata-imds",
+    );
+    assert.equal(compactToolDenyReason("not ok 9 — expected 2"), null);
+    assert.equal(
+      firstToolErrorLine("Tool denied by permission gate: user_reject"),
+      "denied",
+    );
+    const end = strip(
+      formatToolEnd("bash", {
+        isError: true,
+        ms: 0,
+        bytes: 80,
+        args: { command: "rm -rf dist" },
+        output: "Tool denied by permission gate: user_reject",
+      }),
+    );
+    assert.match(end, /✗ bash rm -rf dist  denied/);
+    assert.doesNotMatch(end, /permission gate/);
+    assert.doesNotMatch(end, /user_reject/);
+    assert.equal(
+      formatFailedToolTail("Tool denied by permission gate: user_reject"),
+      "",
+    );
   });
 
   it("inlines the real failure, not the npm/TAP header", () => {

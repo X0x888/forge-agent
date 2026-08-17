@@ -357,11 +357,41 @@ function clipErrorLine(line: string, max: number): string {
 }
 
 /**
+ * Glanceable ✗ reason for permission/plan/hard denials.
+ * The model still sees the full lecture; the transcript does not.
+ */
+export function compactToolDenyReason(output: string, max = 72): string | null {
+  const t = output.replace(/\s+$/, "").split("\n").map((l) => l.trim()).find(Boolean) ?? "";
+  if (!t) return null;
+  const gate = /^Tool denied by permission gate:\s*(.*)$/i.exec(t);
+  if (gate) {
+    const rest = gate[1] ?? "";
+    if (/^user_reject\b/i.test(rest)) return "denied";
+    if (/^permission_ask_timeout\b/i.test(rest)) return "timed out";
+    if (/^dontAsk\b/i.test(rest)) return "dontAsk";
+    if (/ulw_orient/i.test(rest)) return "orient";
+    if (/plan_mode/i.test(rest)) return "plan mode";
+    if (/HARD DENY/i.test(rest)) {
+      const rule = /HARD DENY\s*\[([^\]]+)\]/i.exec(rest);
+      return clipErrorLine(rule ? `hard deny ${rule[1]}` : "hard deny", max);
+    }
+    const short = rest.split(/\s+[—–]\s+/)[0]!.replace(/^[a-z_]+:\s*/i, "").trim();
+    return clipErrorLine(short || rest, max);
+  }
+  if (/^Tool denied by hook:/i.test(t)) return "hook denied";
+  const hard = /^HARD DENY\s*\[([^\]]+)\]:/i.exec(t);
+  if (hard) return clipErrorLine(`hard deny ${hard[1]}`, max);
+  return null;
+}
+
+/**
  * One-line reason for the ✗ status row. Prefer a real failure (errors
  * live at the end of test/compiler output) over the first header line
  * (`npm test`, a TAP plan, …).
  */
 export function firstToolErrorLine(output: string, max = 72): string {
+  const compact = compactToolDenyReason(output, max);
+  if (compact) return compact;
   const text = output.replace(/\s+$/, "");
   if (!text) return "";
   const lines = text
@@ -461,6 +491,8 @@ export function formatFailedToolTail(
 ): string {
   const text = output.replace(/\s+$/, "");
   if (!text) return "";
+  // Deny lectures are compacted onto the ✗ row — do not reprint them.
+  if (compactToolDenyReason(text)) return "";
   const reason = firstToolErrorLine(text);
   const reasonBare = reason.replace(/…$/, "");
   const extra = text.split("\n").filter((raw) => {
