@@ -672,6 +672,27 @@ describe("executeTool integration", () => {
     assert.match(r.output, /2\|const y = 2;/);
   });
 
+  it("CHANGELOG multi-match hints apply_patch", async () => {
+    const ws = path.join(tmpRoot, "ws-changelog");
+    await fsp.mkdir(ws, { recursive: true });
+    await fsp.writeFile(
+      path.join(ws, "CHANGELOG.md"),
+      "## [Unreleased]\n### a\n## [Unreleased]\n### b\n",
+    );
+    const r = await executeTool(
+      "search_replace",
+      JSON.stringify({
+        path: "CHANGELOG.md",
+        old_string: "## [Unreleased]",
+        new_string: "## [Unreleased]\n### c",
+      }),
+      { workspace: ws, sandbox: "off" as const },
+    );
+    assert.equal(r.isError, true);
+    assert.match(r.output, /multiple times/i);
+    assert.match(r.output, /apply_patch/i);
+  });
+
   it("search_replace with line-trimmed fallback", async () => {
     const ws = path.join(tmpRoot, "ws-edit");
     await fsp.mkdir(ws, { recursive: true });

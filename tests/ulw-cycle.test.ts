@@ -12,6 +12,7 @@ import {
   maybeStampUlwWave,
   maybeFlipUlwToLastOnSafetyValve,
   providerFuseTripsContinueCap,
+  formatUlwFuseLeftovers,
   stopBlockTripsContinueCap,
   maybeFlipUlwToLastOnCostCap,
   setMaxWaves,
@@ -373,6 +374,30 @@ describe("ulw cycle", () => {
     assert.equal(
       stopBlockTripsContinueCap({ enabled: false, cycle: 1, maxWaves: null }),
       true,
+    );
+  });
+
+  it("formatUlwFuseLeftovers lists open ships without Cycle complete", () => {
+    assert.equal(formatUlwFuseLeftovers(null), "");
+    assert.match(
+      formatUlwFuseLeftovers({
+        enabled: true,
+        cycle: 0,
+        wave: 3,
+        maxWaves: null,
+        blocks: 1,
+        stuckBlocks: 0,
+        lastBlockEditCount: 0,
+        mandate: "x",
+        expandedMandate: "",
+        softPrompt: false,
+        startedAt: "",
+        updatedAt: "",
+        sessionId: "fuse",
+        namedShips: [{ text: "Memory Walk reskin", status: "open" }],
+        exploreRequired: true,
+      }),
+      /Leftovers \(not Cycle complete\.\)/,
     );
   });
 

@@ -258,9 +258,14 @@ export async function toolEdit(
     const rel = displayRelPath(ctx.workspace, filePath);
     const multi = /matches multiple times/i.test(located.reason);
     const contentHint = multi ? "" : editMissHint(content, oldNative);
+    const changelogHint =
+      multi && /(?:^|\/)changelog(\.(md|markdown|txt|rst))?$/i.test(rel)
+        ? "\nCHANGELOG prepends collide under ## [Unreleased]. Use apply_patch on the heading, or include the previous first entry in old_string."
+        : "";
     return {
       output:
         `${located.reason}\nFile: ${rel}` +
+        changelogHint +
         (contentHint ? `\n${contentHint}` : ""),
       isError: true,
     };

@@ -349,6 +349,7 @@ export {
   consumeMillHoldPrune,
   contractHolding,
   exploreHolding,
+  formatUlwFuseLeftovers,
   noteExploreChildCompleted,
   notePlayLoopRan,
   isPlayLoopCloser,

@@ -127,7 +127,7 @@ export function countHarnessUserPokes(messages: ChatMessage[]): {
     const cls = harnessUserClass(m.content);
     if (!cls) continue;
     harnessUserPokes += 1;
-    if (cls === "admit") admitCount += 1;
+    if (cls === "admit" || cls === "ulw_stop") admitCount += 1;
     if (PROOF_POKE_CLASSES.has(cls)) proofPokes += 1;
     else if (
       cls === "ulw_stop" &&

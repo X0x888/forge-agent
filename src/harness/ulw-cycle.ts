@@ -2782,6 +2782,29 @@ function formatProductQualityStatusLine(s: UlwCycleState): string | undefined {
   return `  Product quality: ${bits.join(" · ")}`;
 }
 
+/** Leftovers to print when a process fuse releases — not Cycle complete. */
+export function formatUlwFuseLeftovers(s: UlwCycleState | null): string {
+  if (!s?.enabled) return "";
+  const named = (s.namedShips ?? []).filter((x) => x.status === "open");
+  const wrap = (s.wrapItems ?? []).filter((x) => x.status === "open");
+  const lines: string[] = [];
+  if (named.length) {
+    lines.push(
+      `Open named ships: ${named.map((x) => x.text).slice(0, 8).join(" · ")}`,
+    );
+  }
+  if (wrap.length) {
+    lines.push(
+      `Open wrap items: ${wrap.map((x) => x.text).slice(0, 8).join(" · ")}`,
+    );
+  }
+  if (s.exploreRequired) {
+    lines.push("Mid-run explore was still required.");
+  }
+  if (!lines.length) return "";
+  return `Leftovers (not Cycle complete.): ${lines.join(" ")}`;
+}
+
 function formatNamedShipsStatusLine(s: UlwCycleState): string | undefined {
   const items = s.namedShips ?? [];
   if (!items.length) return undefined;
@@ -3436,7 +3459,7 @@ function buildCycleReanchor(
               ? preferred.map((c) => `\`${c}\``).join(" · ")
               : "`npm test` / typecheck / project check";
             const why = opts.verificationFailed
-              ? "Last wave's check failed (red) — fix and re-run until green"
+              ? "Last wave's check failed (red) — fix the new file + one isolate; full suite at consolidation / LAST, not every wave"
               : "Last wave ran no successful verification — run proof NOW";
             return `⚠ ${why} before any new scope: ${tip}`;
           })()

@@ -54,6 +54,7 @@ import {
   isArmableMandate,
   isResumeFollowUp,
   maybeFlipUlwToLastOnSafetyValve,
+  formatUlwFuseLeftovers,
   notePlayLoopRan,
   providerFuseTripsContinueCap,
   stopBlockTripsContinueCap,
@@ -2480,10 +2481,13 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
           break;
         }
 
-        const inject =
+        let inject =
           stopResult.additionalContext ||
           stopResult.reason ||
           "Stop was blocked. Continue working.";
+        if (!/^\s*\[Forge\b/.test(inject)) {
+          inject = `[Forge ULW cycle driver] ${inject}`;
+        }
         const ulwAfter = loadUlwCycle(session.meta.id);
         if (ulwAfter?.enabled || stopResult.ulw?.maxWavesHit) {
           const counts = ulwAfter
@@ -2531,8 +2535,10 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
           );
         }
         {
+          // Leading newline so the poke is not glued onto the last
+          // assistant token (log10: "pin-rot).Wave 160 is consolidation").
           const first = (inject.split("\n")[0] || "").trim();
-          if (first) log.dim(first);
+          if (first) log.dim(`\n${first}`);
         }
         session.messages.push({ role: "user", content: inject });
         // Re-anchor already has mandate/counts. Snapshot memory *after*
@@ -2749,10 +2755,13 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
     try {
       const flipped = maybeFlipUlwToLastOnSafetyValve(session.meta.id);
       if (flipped) {
+        const leftovers = formatUlwFuseLeftovers(flipped);
         const note =
           `[Forge] ULW flipped cycle=1 → 0 (LAST) after stop-continue safety valve. ` +
-          `Raise FORGE_ULW_MAX_CONTINUES / maxStopContinues or /cycle 1 to resume waves · /done · /ulw-off.`;
+          `Raise FORGE_ULW_MAX_CONTINUES / maxStopContinues or /cycle 1 to resume waves · /done · /ulw-off.` +
+          (leftovers ? ` ${leftovers}` : "");
         log.info(chalk.magenta("ULW → cycle=0 (LAST) after continue-cap"));
+        if (leftovers) log.dim(leftovers);
         if ((finalText || "").trim()) {
           if (!finalText.includes("ULW flipped cycle=1")) {
             finalText = `${finalText.replace(/\s+$/, "")}\n\n${note}`;

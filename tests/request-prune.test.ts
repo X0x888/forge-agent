@@ -459,7 +459,7 @@ describe("request-prune", () => {
     ];
     const c = countHarnessUserPokes(msgs);
     assert.equal(c.harnessUserPokes, 3);
-    assert.equal(c.admitCount, 1);
+    assert.equal(c.admitCount, 2);
     assert.equal(c.proofPokes, 1);
     const withUlwProof = countHarnessUserPokes([
       ...msgs,
@@ -471,5 +471,6 @@ describe("request-prune", () => {
     ]);
     assert.equal(withUlwProof.proofPokes, 2);
     assert.equal(withUlwProof.harnessUserPokes, 4);
+    assert.equal(withUlwProof.admitCount, 3);
   });
 });
