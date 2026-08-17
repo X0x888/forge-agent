@@ -2,6 +2,7 @@
  * Structured provider API errors — carry HTTP status + Retry-After so the
  * retry layer can honor server backoff (OpenCode-style production reliability).
  */
+import { clipAnsi, visibleWidth } from "../util/format.js";
 
 export class ProviderApiError extends Error {
   readonly provider: string;
@@ -380,17 +381,59 @@ function summarizeProviderBody(body: string): string {
   return raw.replace(/\s+/g, " ").slice(0, 200);
 }
 
-/** REPL closer after a failed turn — mirrors abort recovery. */
+/** REPL closer after a failed turn — Allow?-style keys, not a tip lecture. */
 export const PROVIDER_ERROR_RECOVERY =
-  "Type to continue · /retry same prompt · /model to switch.";
+  "Error? /retry same prompt · /model to switch · type to continue";
 
-/** Single string for log.error / console — message + indented tips. */
+/** Pack Error? keys onto as few rows as fit; last row keeps a trailing space. */
+export function wrapErrorAskLine(line: string, cols: number): string {
+  const caret = "Error? ";
+  const body = line.startsWith(caret) ? line.slice(caret.length) : line;
+  const tokens = body
+    .split(" · ")
+    .map((t) => t.trim())
+    .filter(Boolean);
+  const rows: string[] = [];
+  let current = "";
+  for (const token of tokens) {
+    const candidate = current
+      ? `${current} · ${token}`
+      : rows.length === 0
+        ? `${caret}${token}`
+        : `  · ${token}`;
+    if (visibleWidth(candidate) <= cols) {
+      current = candidate;
+      continue;
+    }
+    if (current) {
+      rows.push(current);
+      current = "";
+    }
+    const alone = rows.length === 0 ? `${caret}${token}` : `  · ${token}`;
+    current = visibleWidth(alone) <= cols ? alone : clipAnsi(alone, cols);
+  }
+  if (current) rows.push(current);
+  if (!rows.length) return `${caret} `;
+  rows[rows.length - 1] = `${rows[rows.length - 1]!.replace(/\s+$/, "")} `;
+  return rows.join("\n");
+}
+
+/** Designed failure card for log.error / REPL — not a tip dump. */
 export function formatProviderErrorText(
   err: unknown,
-  opts?: { provider?: string; model?: string; repl?: boolean },
+  opts?: { provider?: string; model?: string; repl?: boolean; columns?: number },
 ): string {
   const { message, tips, code } = formatProviderError(err, opts);
-  const tipLines = tips.map((t) => `  → ${t}`).join("\n");
-  const body = `${message}\n  [${code}]\n${tipLines}`;
-  return opts?.repl ? `${body}\n  ${PROVIDER_ERROR_RECOVERY}` : body;
+  const cols = Math.max(
+    8,
+    opts?.columns ?? (process.stdout.isTTY ? process.stdout.columns || 80 : 80),
+  );
+  const headline = clipAnsi(`✖ ${message}`, cols);
+  const meta = clipAnsi(`  [${code}]`, cols);
+  const shown = opts?.repl ? tips.slice(0, 1) : tips.slice(0, 2);
+  const tipLines = shown.map((t) => clipAnsi(`  → ${t}`, cols));
+  const keys = opts?.repl
+    ? wrapErrorAskLine(`${PROVIDER_ERROR_RECOVERY} `, cols)
+    : "";
+  return [headline, meta, ...tipLines, keys].filter(Boolean).join("\n");
 }

@@ -23,12 +23,29 @@ describe("formatProviderError", () => {
     assert.match(f.message, /grok-4\.5/);
     assert.ok(f.tips.some((t) => /forge login/i.test(t)));
     const text = formatProviderErrorText(err, { model: "grok-4.5" });
+    assert.match(text, /✖ /);
     assert.match(text, /\[auth_expired\]/);
     assert.match(text, /→/);
     assert.doesNotMatch(text, /\/retry/);
+    assert.doesNotMatch(text, /Error\?/);
     const repl = formatProviderErrorText(err, { model: "grok-4.5", repl: true });
-    assert.match(repl, /\/retry same prompt/);
+    assert.match(repl, /^✖ /);
+    assert.match(repl, /Error\? \/retry same prompt/);
     assert.match(repl, /\/model to switch/);
+    assert.equal([...repl.matchAll(/→/g)].length, 1, "REPL card is one tip, not a lecture");
+  });
+
+  it("Error? keys wrap at · on a narrow TTY", () => {
+    const err = new ProviderApiError({
+      provider: "xai",
+      status: 429,
+      body: "rate limit exceeded",
+      retryAfterMs: 15_000,
+    });
+    const repl = formatProviderErrorText(err, { repl: true, columns: 28 });
+    assert.match(repl, /Error\?/);
+    assert.match(repl, /\n  · /);
+    assert.doesNotMatch(repl, /bck-i-search/);
   });
 
   it("formats 429 with Retry-After and account switch tips", () => {
