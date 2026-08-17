@@ -40,14 +40,26 @@ export function isFactoryFingerprint(text: string): boolean {
   return false;
 }
 
+export type MillClassOpts = {
+  /** Explore-map pick — never mill, even if the closer quotes "Far stays". */
+  onContract?: boolean;
+};
+
 export function isAdjacentShareSchema(text: string): boolean {
   const t = text || "";
   if (!t.trim()) return false;
-  // After summarizeWave the mill closer is often just "Far stays the walker's."
-  if (FAR_STAYS_RE.test(t)) return true;
+  const far = FAR_STAYS_RE.test(t);
+  const last = LAST_SHIP_WAS_RE.test(t);
+  const hard = STILL_HARD_RE.test(t);
+  const beside = BESIDE_RE.test(t);
+  const both = BOTH_RE.test(t) || SHARE_BOTH_RE.test(t);
+  // "Far stays" is this game's toast voice — not a schema by itself.
+  // Require a second mill signal so a Memory Walk / stargazer ship that
+  // quotes the line does not hold.
+  if (far && (last || hard || beside || both)) return true;
   let n = 0;
-  if (BESIDE_RE.test(t)) n += 1;
-  if (BOTH_RE.test(t) || SHARE_BOTH_RE.test(t)) n += 1;
+  if (beside) n += 1;
+  if (both) n += 1;
   return n >= 2;
 }
 
@@ -95,7 +107,9 @@ export function schemaHitsIn(
 export function matchesRecentSchema(
   prevSummaries: string[],
   closer: string,
+  opts?: MillClassOpts,
 ): boolean {
+  if (opts?.onContract) return false;
   if (!shipSchema(closer)) return false;
   return schemaHitsIn(prevSummaries, closer) >= SCHEMA_HOLD_HITS;
 }
@@ -114,12 +128,15 @@ export function factoryHitsIn(
 export function factoryClassHolding(
   prevSummaries: string[],
   closer: string,
+  opts?: MillClassOpts,
 ): boolean {
+  if (opts?.onContract) return false;
   const all = [...(prevSummaries || []), closer].filter((s) => s && s.trim());
   return factoryHitsIn(all) >= FACTORY_HOLD_HITS;
 }
 
-export function isMillClassShip(text: string): boolean {
+export function isMillClassShip(text: string, opts?: MillClassOpts): boolean {
+  if (opts?.onContract) return false;
   return isFactoryFingerprint(text) || isAdjacentShareSchema(text);
 }
 
@@ -127,7 +144,9 @@ export function isMillClassShip(text: string): boolean {
 export function isSameClassReading(
   prevSummaries: string[],
   parsedShips: string[],
+  opts?: MillClassOpts,
 ): boolean {
+  if (opts?.onContract) return false;
   if (!parsedShips.length) return false;
   const blob = parsedShips.join("\n");
   if (factoryClassHolding(prevSummaries, blob)) return true;

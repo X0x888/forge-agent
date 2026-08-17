@@ -9,9 +9,53 @@ import path from "node:path";
 import { forgeHome } from "../util/fs.js";
 import { normalizeExploreMaps } from "../session/explore-map.js";
 import { activeMemoryRecords } from "./decision-memory.js";
-import { surfaceTokens } from "./same-surface.js";
 
 export const OFF_CONTRACT_HOLD = 8;
+
+/** Tokens that walked the log10 contract hold (`same` + `copy` from the pick). */
+const GENERIC_CONTRACT_TOKENS = new Set([
+  "same",
+  "copy",
+  "find",
+  "past",
+  "next",
+  "just",
+  "then",
+  "they",
+  "them",
+  "this",
+  "that",
+  "with",
+  "from",
+  "into",
+  "have",
+  "been",
+  "does",
+  "than",
+  "your",
+  "their",
+  "when",
+  "after",
+  "before",
+  "first",
+  "last",
+  "also",
+  "only",
+  "real",
+  "hard",
+  "still",
+  "what",
+  "will",
+  "feel",
+  "felt",
+  "more",
+  "over",
+  "under",
+  "both",
+  "must",
+  "floor",
+  "not",
+]);
 
 export function loadExploreMapPicks(sessionId: string): string[] {
   if (!sessionId) return [];
@@ -45,25 +89,32 @@ export function loadWave1Reading(sessionId: string): string | undefined {
   return undefined;
 }
 
+function contractWords(text: string): string[] {
+  const raw = (text || "").toLowerCase().replace(/-/g, " ");
+  const all = raw.match(/[a-z][a-z0-9']{2,}/g) || [];
+  return all.filter((w) => w.length >= 4 && !GENERIC_CONTRACT_TOKENS.has(w));
+}
+
 export function isOnExploreContract(
   text: string,
   picks: string[],
 ): boolean {
-  const blob = (text || "").toLowerCase();
+  const blob = (text || "").toLowerCase().replace(/-/g, " ");
   if (!blob.trim() || !picks.length) return false;
   for (const pick of picks) {
-    const words = (pick.toLowerCase().match(/[a-z][a-z0-9'-]{2,}/g) || []).filter(
-      (w) => w.length >= 4,
-    );
+    const words = contractWords(pick);
     const bigrams: string[] = [];
     for (let i = 0; i < words.length - 1; i++) {
       const g = `${words[i]} ${words[i + 1]}`;
       if (g.length >= 8) bigrams.push(g);
     }
+    // "memory walk" / "online hearth" — garnish "same copy" is not a pick.
     if (bigrams.some((g) => blob.includes(g))) return true;
-    const tokens = surfaceTokens(pick).filter((w) => w.length >= 4);
-    const hits = tokens.filter((t) => blob.includes(t)).length;
-    if (hits >= 2) return true;
+    const tokens = words.filter((w) => w.length >= 5);
+    const hits = tokens.filter((t) => blob.includes(t));
+    if (hits.length >= 2) return true;
+    // One distinctive pick word (topology, couplemaze, memories).
+    if (hits.some((t) => t.length >= 8)) return true;
   }
   return false;
 }

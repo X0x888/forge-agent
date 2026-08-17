@@ -348,6 +348,7 @@ export {
   isHelperOnlyTestCommand,
   consumeMillHoldPrune,
   contractHolding,
+  providerFuseTripsContinueCap,
   stopBlockTripsContinueCap,
 } from "./harness/ulw-cycle.js";
 export {

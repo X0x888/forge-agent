@@ -88,7 +88,9 @@ export function isSameSurface(prev: string, next: string): boolean {
 export function matchesRecentSurface(
   prevSummaries: string[],
   closer: string,
+  opts?: { onContract?: boolean },
 ): boolean {
+  if (opts?.onContract) return false;
   const recent = prevSummaries.filter((s) => s && s.trim()).slice(-SAME_SURFACE_LOOKBACK);
   if (isLeftoverSiblingShip(closer) && recent.length > 0) return true;
   if (recent.some((s) => isSameSurface(s, closer))) return true;
@@ -109,11 +111,15 @@ export function nextSameSurfaceStreak(
   prevSummaries: string[],
   closer: string,
   currentStreak = 0,
-  opts?: { consolidation?: boolean },
+  opts?: { consolidation?: boolean; onContract?: boolean },
 ): SameSurfaceNote {
   const key = surfaceKey(closer);
   if (opts?.consolidation) {
     return { streak: currentStreak, same: false, surfaceKey: key };
+  }
+  // A pick ship is a different class even if it quotes mill flavor.
+  if (opts?.onContract) {
+    return { streak: 1, same: false, surfaceKey: key };
   }
   const same = matchesRecentSurface(prevSummaries, closer);
   if (same) {

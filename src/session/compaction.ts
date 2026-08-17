@@ -203,7 +203,7 @@ export function buildStructuredSummary(
       `- max_waves: ${ulw.maxWaves != null ? ulw.maxWaves : "off (unlimited)"}`,
       ledger ? `- Ledger: ${ledger}` : "",
       namedHold
-        ? `- Named ships from the reading are done. Write a new Reading: (what is still hard + the ONE next ship on a different surface) or /cycle 0. Do not attest Cycle complete. A red test suite is a different surface — not leftover chrome. Stuck-wall will not release this hold.`
+        ? `- Named ships from the reading are done. Write a new Reading: the ONE next ship on a different class (name an explore-map pick or a play-path / architecture ship), or /cycle 0. Do not recap the last ship as 'Last ship was' / 'what's still hard'. Do not attest Cycle complete. A red test suite is a different surface — not leftover chrome. Stuck-wall will not release this hold.`
         : "",
       mandateLine,
       softLine,

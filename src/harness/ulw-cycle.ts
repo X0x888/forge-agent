@@ -116,6 +116,13 @@ export interface UlwWaveRecord {
   summary: string;
   /** Significant tokens from the summary (same-surface classifier). */
   surfaceKey?: string;
+  /**
+   * Full closer clip used for mill/schema (not the commit subject).
+   * `summary` is the Shipped: line; mill phrases live here.
+   */
+  classText?: string;
+  /** Full closer was adjacent-share / factory and not an explore-map pick. */
+  millClass?: boolean;
   ts: string;
   /**
    * Todos closed (completed|cancelled) during this wave — structural intent
@@ -742,6 +749,8 @@ function appendWaveRecord(
     proof: boolean;
     todoProgress: number;
     summary: string;
+    /** Full closer — mill/schema classify this, not the Shipped: clip. */
+    classText?: string;
     /** Declared / leftover-sibling ship — counts toward same-surface streak. */
     themed?: boolean;
   },
@@ -750,9 +759,11 @@ function appendWaveRecord(
   // A stamped wave means the scout (if any) already named the next ships.
   s.phase = "ship";
   s.judgmentRequired = false;
-  applySameSurfaceNote(s, opts.summary, opts.themed === true);
-  applyContractNote(s, opts.summary, opts.themed === true, opts.sessionId);
+  const classText = clipClassText(opts.classText || opts.summary);
+  applySameSurfaceNote(s, classText, opts.themed === true, opts.sessionId);
+  applyContractNote(s, classText, opts.themed === true, opts.sessionId);
   const proof = consumeProofTaint(s) ? false : opts.proof;
+  const onContract = closerOnContract(opts.sessionId, classText);
   const rec: UlwWaveRecord = {
     wave: s.wave,
     editDelta: opts.editDelta,
@@ -760,6 +771,8 @@ function appendWaveRecord(
     proof,
     todoProgress: opts.todoProgress,
     summary: opts.summary,
+    classText: classText || undefined,
+    millClass: !onContract && isMillClassShip(classText) ? true : undefined,
     surfaceKey: surfaceKey(opts.summary) || undefined,
     ts: nowIso(),
   };
@@ -1001,20 +1014,52 @@ function holdAdmit(sessionId: string, base: string): string {
   return extra ? `${base}\n${extra}` : base;
 }
 
+function waveClassTexts(s: UlwCycleState): string[] {
+  return (s.waves ?? [])
+    .map((w) => (w.classText || w.summary || "").trim())
+    .filter(Boolean);
+}
+
+function clipClassText(text: string): string {
+  const s = (text || "").replace(/\s+/g, " ").trim();
+  if (!s) return "";
+  return s.length <= 400 ? s : `${s.slice(0, 399)}…`;
+}
+
+function closerOnContract(sessionId: string, text: string): boolean {
+  return isOnExploreContract(text, loadExploreMapPicks(sessionId));
+}
+
+/** Mill sibling? On-contract (pick) ships are never mill. */
+function isMillSiblingCloser(s: UlwCycleState, closer: string): boolean {
+  const onContract = closerOnContract(s.sessionId, closer);
+  if (onContract) return false;
+  const prev = waveClassTexts(s);
+  return (
+    isMillClassShip(closer) ||
+    matchesRecentSurface(prev, closer) ||
+    factoryClassHolding(prev, closer)
+  );
+}
+
 function applySameSurfaceNote(
   s: UlwCycleState,
-  summary: string,
+  classText: string,
   themed: boolean,
+  sessionId: string,
 ): void {
   // Generic Stop closers ("did some edits") are not themed ships.
   if (!themed) return;
-  const prev = (s.waves ?? []).map((w) => w.summary);
-  const note = nextSameSurfaceStreak(prev, summary, s.sameSurfaceStreak ?? 0, {
-    consolidation: isConsolidationCloser(summary),
+  const onContract = closerOnContract(sessionId, classText);
+  const prev = waveClassTexts(s);
+  const note = nextSameSurfaceStreak(prev, classText, s.sameSurfaceStreak ?? 0, {
+    consolidation: isConsolidationCloser(classText),
+    onContract,
   });
   s.sameSurfaceStreak = note.streak;
   const factoryHold =
-    canArmSameSurfaceHold(s) && factoryClassHolding(prev, summary);
+    canArmSameSurfaceHold(s) &&
+    factoryClassHolding(prev, classText, { onContract });
   if (
     (note.streak >= SAME_SURFACE_HOLD || factoryHold) &&
     canArmSameSurfaceHold(s)
@@ -1029,8 +1074,8 @@ function applySameSurfaceNote(
 
 const SAME_SURFACE_HOLD_ADMIT = [
   "[Forge ULW cycle driver] Stop blocked — last ships are the same surface (or the same adjacent-share / factory class).",
-  "Write a new Reading: (what is still hard + the ONE next ship on a different class) or /cycle 0.",
-  "A new noun is not a new surface. Adjacent-partner share / far-stays / toast-names-both is one schema.",
+  "Write a new Reading: the ONE next ship on a different class (name an explore-map pick, or a play-path / architecture / honest red-suite ship). Or /cycle 0.",
+  "A new noun is not a new surface. Do not recap the last ship as 'Last ship was' / 'what's still hard' — that is the mill template, not a new class.",
   "Different class: play-path bug, architecture, honest red suite, play-loop — or an unretired explore-map pick.",
   "Do not attest **Cycle complete.** Stuck-wall will not release this hold.",
 ].join("\n");
@@ -1188,13 +1233,17 @@ export function maybeAdoptNamedShips(
   }
   // Unlimited mill: refuse a one-ship reading that is the same adjacent-share
   // / factory class as the last ships (log10: 106 Mad-Lib adopts).
+  // A pick (Memory Walk / topology) is a different class even if the
+  // reading recaps the last mill ship.
+  const picks = loadExploreMapPicks(s.sessionId);
+  const adoptBlob = parsed.join("\n");
+  const onContract =
+    isOnExploreContract(adoptBlob, picks) ||
+    parsed.some((p) => isOnExploreContract(p, picks));
   if (
     normalizeMaxWaves(s.maxWaves) == null &&
     (s.namedShipAdmitCount ?? 0) >= 1 &&
-    isSameClassReading(
-      (s.waves ?? []).map((w) => w.summary),
-      parsed,
-    )
+    isSameClassReading(waveClassTexts(s), parsed, { onContract })
   ) {
     return false;
   }
@@ -1208,9 +1257,7 @@ export function maybeAdoptNamedShips(
   }
   // Contract hold: only an on-pick reading may adopt.
   if (contractHolding(s)) {
-    const picks = loadExploreMapPicks(s.sessionId);
-    const blob = parsed.join("\n");
-    if (!isOnExploreContract(blob, picks) && !parsed.some((p) => isOnExploreContract(p, picks))) {
+    if (!onContract) {
       return false;
     }
     s.contractHold = false;
@@ -1218,10 +1265,14 @@ export function maybeAdoptNamedShips(
   }
   // Same-surface hold: refuse a reading whose ONE ship is the last theme.
   // Passed-on items may name the old surface — that is "we are leaving it."
+  // A pick reading is a different class even if it quotes mill flavor.
   if (s.sameSurfaceHold || (s.sameSurfaceStreak ?? 0) >= SAME_SURFACE_HOLD) {
-    const prev = (s.waves ?? []).map((w) => w.summary);
+    const prev = waveClassTexts(s);
     const one = parsed[0] ?? "";
-    if (matchesRecentSurface(prev, one) || isLeftoverSiblingShip(one)) {
+    if (
+      !onContract &&
+      (matchesRecentSurface(prev, one) || isLeftoverSiblingShip(one))
+    ) {
       return false;
     }
     clearSameSurfaceHold(s);
@@ -1275,15 +1326,15 @@ export function namedShipsExhausted(s: UlwCycleState): boolean {
 
 const NAMED_SHIP_EXHAUSTED_ADMIT = [
   "[Forge ULW cycle driver] Stop blocked — named ships from the reading are done.",
-  "Write a new Reading: (what is still hard + the ONE next ship on a different class) or /cycle 0.",
-  "A new noun is not a new surface. Adjacent-share / far-stays factory is the same class.",
+  "Write a new Reading: the ONE next ship on a different class (name an explore-map pick, or a play-path / architecture / honest red-suite ship). Or /cycle 0.",
+  "A new noun is not a new surface. Do not recap the last ship as 'Last ship was' / 'what's still hard' — that is the mill template.",
   "A red test suite or open defect is a different surface — not leftover chrome.",
   "Unlimited ULW continues only after a new reading. Stuck-wall will not release this hold.",
 ].join("\n");
 
 const NAMED_SHIP_EXHAUSTED_STRONG = [
   "[Forge ULW cycle driver] Stop blocked — named ships from the reading are done.",
-  "Write a new Reading: (what is still hard + the ONE next ship on a different class) or /cycle 0.",
+  "Write a new Reading: the ONE next ship on a different class (name an explore-map pick, or a play-path / architecture / honest red-suite ship). Or /cycle 0.",
   "Do not Mad-Lib another beside-you / far-stays sibling. A red test suite or play-path bug is a different class.",
   "Do not attest **Cycle complete.** — /cycle 0 finishes this wave + one more, then LAST.",
   "Stuck-wall will not release this hold.",
@@ -1577,16 +1628,7 @@ export function maybeStampUlwWave(opts: {
       }
       if (
         sameSurfaceHolding(s) &&
-        (isLeftoverChromeShip(closer) ||
-          isMillClassShip(closer) ||
-          matchesRecentSurface(
-            (s.waves ?? []).map((w) => w.summary),
-            closer,
-          ) ||
-          factoryClassHolding(
-            (s.waves ?? []).map((w) => w.summary),
-            closer,
-          ))
+        (isLeftoverChromeShip(closer) || isMillSiblingCloser(s, closer))
       ) {
         s.sameSurfaceHold = true;
         s.sameSurfaceAdmitCount = (s.sameSurfaceAdmitCount ?? 0) + 1;
@@ -1601,6 +1643,7 @@ export function maybeStampUlwWave(opts: {
       appendWaveRecord(s, {
         sessionId: opts.sessionId,
         ...facts,
+        classText: closer,
       });
       markNamedShipDone(s, closer);
       s.lastWaveSig = sig;
@@ -1714,7 +1757,8 @@ export function bestWave(waves: UlwWaveRecord[] | undefined): UlwWaveRecord | nu
   const notChurn = waves.filter((w) => w.netDiff !== "revisit");
   const notMill = (notChurn.length ? notChurn : waves).filter(
     (w) =>
-      !isFactoryFingerprint(w.summary) &&
+      !w.millClass &&
+      !isFactoryFingerprint(w.classText || w.summary) &&
       !isChangelogOnlySummary(w.summary, w.editDelta),
   );
   const eligible = notMill.length ? notMill : notChurn.length ? notChurn : waves;
@@ -2444,6 +2488,22 @@ export function stopBlockTripsContinueCap(
   return normalizeMaxWaves(s.maxWaves) != null;
 }
 
+/**
+ * Length / empty / content_filter fuse. Independent of the Stop-block tally
+ * so 200 unlimited waves do not make the next truncated completion trip
+ * continue_cap without /cycle 0.
+ */
+export function providerFuseTripsContinueCap(
+  providerContinues: number,
+  maxStopContinues: number,
+): boolean {
+  if (!Number.isFinite(providerContinues) || !Number.isFinite(maxStopContinues)) {
+    return false;
+  }
+  if (maxStopContinues <= 0) return false;
+  return providerContinues > maxStopContinues;
+}
+
 export function maybeFlipUlwToLastOnSafetyValve(
   sessionId: string,
 ): UlwCycleState | null {
@@ -3019,11 +3079,7 @@ export function evaluateUlwAtStop(opts: {
       // Stay blocked until a different-surface reading is adopted or
       // /cycle 0. Cycle complete / leftover chrome do not stamp. A real
       // declared ship with edits still increments w (maze 43–46 were invisible).
-      const summaries = (s.waves ?? []).map((w) => w.summary);
-      const millSibling =
-        isMillClassShip(closer) ||
-        matchesRecentSurface(summaries, closer) ||
-        factoryClassHolding(summaries, closer);
+      const millSibling = isMillSiblingCloser(s, closer);
       const shipAfterExhaust =
         !alreadyStamped &&
         isShipCloseText(closer) &&
@@ -3038,6 +3094,7 @@ export function evaluateUlwAtStop(opts: {
           proof,
           todoProgress,
           summary: summarizeWave(closer, opts.sessionId),
+          classText: closer,
           themed:
             isDeclaredWaveClose(closer) || isLeftoverSiblingShip(closer),
         });
@@ -3087,15 +3144,7 @@ export function evaluateUlwAtStop(opts: {
         isShipCloseText(closer) &&
         editDelta >= 1 &&
         !isLeftoverChromeShip(closer) &&
-        !isMillClassShip(closer) &&
-        !matchesRecentSurface(
-          (s.waves ?? []).map((w) => w.summary),
-          closer,
-        ) &&
-        !factoryClassHolding(
-          (s.waves ?? []).map((w) => w.summary),
-          closer,
-        );
+        !isMillSiblingCloser(s, closer);
       if (!differentSurface || alreadyStamped) {
         s.sameSurfaceAdmitCount = (s.sameSurfaceAdmitCount ?? 0) + 1;
         s.sameSurfaceHold = true;
@@ -3132,6 +3181,7 @@ export function evaluateUlwAtStop(opts: {
         proof,
         todoProgress,
         summary: summarizeWave(closer, opts.sessionId),
+        classText: closer,
         themed:
           isDeclaredWaveClose(closer) || isLeftoverSiblingShip(closer),
       });

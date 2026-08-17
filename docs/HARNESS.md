@@ -50,7 +50,7 @@ UserPromptSubmit hooks
 6. **Handoff guard** — premature “let me know if…”, “shall I continue?”, “want me to…?” yields (and incomplete mid-implementation closers) are blocked under ULW/goal/open todos so the agent finishes instead of re-steering the user. Soft Q&A closers (“let me know if you have questions”) still allow Stop outside a driver. Cap: `FORGE_HANDOFF_BLOCK_CAP` (default 3) releases a stuck polite model.
 7. **Proof-claim guard** — “tests pass” / “all green” / “typecheck clean” without a structural `verificationRan` (bash check actually executed) blocks Stop once when edits/goal/ULW/todos are in flight. Complements ULW proof-demand for goal-only and plain implementation turns. Cap: `FORGE_PROOF_CLAIM_BLOCK_CAP` (default 1).
 
-Safety: a hard cap (`maxStopContinues`, default 50; ULW default 200) prevents infinite continue loops at the process level. Unlimited ULW CONTINUE Stop-blocks are the product (one per wave) and do not trip that cap; length / empty / content_filter still do.
+Safety: a hard cap (`maxStopContinues`, default 50; ULW default 200) prevents infinite continue loops at the process level. Unlimited ULW CONTINUE Stop-blocks are the product (one per wave) and do not trip that cap. Length / empty / content_filter use a separate fuse of the same size so 200 waves do not make the next truncated completion release without `/cycle 0`.
 
 ## Decision memory (Mastra-inspired)
 

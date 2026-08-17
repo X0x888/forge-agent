@@ -82,6 +82,37 @@ describe("factory fingerprint + adjacent-share schema", () => {
     assert.equal(shipSchema(REVIVE), undefined);
   });
 
+  it("Far stays alone is game voice, not a schema", () => {
+    assert.equal(isAdjacentShareSchema("Far stays the walker's."), false);
+    assert.equal(
+      isMillClassShip(
+        "Shipped: Memory Walk finds the letter. Far stays the walker's.",
+      ),
+      false,
+    );
+    assert.equal(
+      isMillClassShip(
+        "Shipped: Far still waits at the stargazer until they stand up.",
+      ),
+      false,
+    );
+    assert.equal(
+      isMillClassShip(
+        "Shipped: Memory Walk finds the letter. Far stays the walker's.",
+        { onContract: true },
+      ),
+      false,
+    );
+    assert.equal(
+      isSameClassReading(
+        [BRAZIER, MOSS],
+        ["Memory Walk as a 13-floor reskin, not couple copy"],
+        { onContract: true },
+      ),
+      false,
+    );
+  });
+
   it("rotating nouns are the same schema", () => {
     assert.equal(matchesRecentSchema([BRAZIER, MOSS], POT), true);
     assert.equal(matchesRecentSurface([BRAZIER, MOSS], POT), true);
@@ -234,6 +265,76 @@ describe("unlimited adopt + stamp refuse the mill", () => {
         "Reading: Last ship was the pot. What's still hard is the hush — they stand beside you. Far stays.",
       );
       assert.equal(adopted, false);
+      disarmUlwCycle(sid);
+    });
+  });
+
+  it("Memory Walk + Far stays is a pick, not a mill sibling", () => {
+    withHome(() => {
+      const sid = "wc-mw";
+      const dir = path.join(process.env.FORGE_HOME!, "sessions", sid);
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(
+        path.join(dir, "meta.json"),
+        JSON.stringify({
+          exploreMaps: [
+            {
+              pick:
+                "Memory Walk is CoupleMaze + copy, not find past memories; next: online-Hearth, same-BSP topology",
+              files: [],
+              at: new Date().toISOString(),
+            },
+          ],
+        }),
+      );
+      armUlwCycle(sid, "Improve this game.", {
+        cycle: 1,
+        skipCheckpoint: true,
+        editCount: 0,
+      });
+      let edits = 0;
+      for (const msg of [BRAZIER, MOSS, POT]) {
+        edits += 8;
+        const r = maybeStampUlwWave({
+          sessionId: sid,
+          editCount: edits,
+          openTodoCount: 0,
+          stepsSinceStamp: 1,
+          lastAssistantMessage: msg,
+          verificationPassed: true,
+        });
+        assert.equal(r.stamped, true, msg.slice(0, 40));
+      }
+      const held = loadUlwCycle(sid)!;
+      assert.equal(held.sameSurfaceHold, true);
+      held.soulNudgeDone = true;
+      held.namedShipAdmitCount = 1;
+      held.namedShips = [{ text: "the brazier lights you both", status: "done" }];
+      saveUlwCycle(held);
+
+      const adopted = maybeAdoptNamedShips(
+        loadUlwCycle(sid)!,
+        "Reading: The one ship is Memory Walk as a 13-floor reskin, not couple copy.",
+      );
+      assert.equal(adopted, true, "pick reading must adopt after mill hold");
+
+      const mw =
+        "Shipped: Memory Walk now finds the kept letter before the portal opens. Far stays the walker's.\n\nWave shipped.";
+      const r = maybeStampUlwWave({
+        sessionId: sid,
+        editCount: edits + 10,
+        openTodoCount: 0,
+        stepsSinceStamp: 1,
+        lastAssistantMessage: mw,
+        verificationPassed: true,
+      });
+      assert.equal(r.stamped, true, "on-contract Memory Walk must stamp");
+      const after = loadUlwCycle(sid)!;
+      assert.equal(after.wave, 4);
+      assert.equal(after.sameSurfaceHold, false);
+      const last = after.waves?.[after.waves.length - 1];
+      assert.equal(last?.millClass, undefined);
+      assert.match(after.waves?.[0]?.classText || "", /Last ship was/i);
       disarmUlwCycle(sid);
     });
   });

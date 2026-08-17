@@ -54,6 +54,7 @@ import {
   isArmableMandate,
   isResumeFollowUp,
   maybeFlipUlwToLastOnSafetyValve,
+  providerFuseTripsContinueCap,
   stopBlockTripsContinueCap,
   ulwKickoffMessage,
   formatUlwCounts,
@@ -880,6 +881,8 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
   let turns = 0;
   let finalText = "";
   let stopContinues = 0;
+  /** Length / empty / content_filter only — never shared with Stop-blocks. */
+  let providerContinues = 0;
   /** Cap mid-loop verify nudges per prompt (anti-spam). */
   let verifyNudges = 0;
   const proofPoke = createProofPokeState();
@@ -2020,8 +2023,8 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
         (!toolCalls || toolCalls.length === 0) &&
         (finishReason === "length" || finishReason === "max_tokens")
       ) {
-        stopContinues += 1;
-        if (stopContinues > maxStopContinues) {
+        providerContinues += 1;
+        if (providerFuseTripsContinueCap(providerContinues, maxStopContinues)) {
           log.warn("max_tokens continuation cap reached — releasing");
           releasedOnContinueCap = true;
           // Headless JSON / CI: surface that we released on a truncated answer,
@@ -2052,7 +2055,7 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
         }
         log.info(
           chalk.yellow(
-            `↻ Output truncated (finish_reason=${finishReason}) — continuing (#${stopContinues})`,
+            `↻ Output truncated (finish_reason=${finishReason}) — continuing (#${providerContinues})`,
           ),
         );
         session.messages.push({
@@ -2081,9 +2084,9 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
           finalText ||
           `[Forge] The provider blocked this response (finish_reason=${finishReason}). ` +
             `Rephrase, drop sensitive payloads, or try /model <other> · /compact · narrower scope.`;
-        stopContinues += 1;
+        providerContinues += 1;
         // Cap check before injecting steerage — avoid orphan user msgs when releasing.
-        if (stopContinues > maxStopContinues) {
+        if (providerFuseTripsContinueCap(providerContinues, maxStopContinues)) {
           log.warn("content-filter continue cap reached — releasing");
           releasedOnContinueCap = true;
           const capNote =
@@ -2124,8 +2127,8 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
         (!toolCalls || toolCalls.length === 0) &&
         !(finalText || "").trim()
       ) {
-        stopContinues += 1;
-        if (stopContinues > maxStopContinues) {
+        providerContinues += 1;
+        if (providerFuseTripsContinueCap(providerContinues, maxStopContinues)) {
           log.warn("empty-response continue cap reached — releasing");
           releasedOnContinueCap = true;
           finalText =
@@ -2146,7 +2149,7 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
           break;
         }
         log.warn(
-          `Empty model response (finish_reason=${finishReason || "unknown"}) — nudging continue #${stopContinues}`,
+          `Empty model response (finish_reason=${finishReason || "unknown"}) — nudging continue #${providerContinues}`,
         );
         const planHint =
           config.permissionMode === "plan"

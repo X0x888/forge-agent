@@ -11,6 +11,7 @@ import {
   cycleZeroCurrentWave,
   maybeStampUlwWave,
   maybeFlipUlwToLastOnSafetyValve,
+  providerFuseTripsContinueCap,
   stopBlockTripsContinueCap,
   maybeFlipUlwToLastOnCostCap,
   setMaxWaves,
@@ -373,6 +374,15 @@ describe("ulw cycle", () => {
       stopBlockTripsContinueCap({ enabled: false, cycle: 1, maxWaves: null }),
       true,
     );
+  });
+
+  it("provider length/empty fuse is independent of the Stop-block tally", () => {
+    assert.equal(providerFuseTripsContinueCap(1, 200), false);
+    assert.equal(providerFuseTripsContinueCap(200, 200), false);
+    assert.equal(providerFuseTripsContinueCap(201, 200), true);
+    assert.equal(providerFuseTripsContinueCap(51, 50), true);
+    assert.equal(providerFuseTripsContinueCap(0, 200), false);
+    assert.equal(providerFuseTripsContinueCap(Number.NaN, 200), false);
   });
 
   it("default maxWaves is unlimited; arm can set cap", () => {

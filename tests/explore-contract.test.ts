@@ -62,6 +62,26 @@ describe("explore-map contract", () => {
     );
   });
 
+  it("does not treat generic pick words as on-contract", () => {
+    const mazePick =
+      "Memory Walk is CoupleMaze + copy, not find past memories; next: online-Hearth, same-BSP topology";
+    assert.equal(
+      isOnExploreContract("The same copy now covers you both.", [mazePick]),
+      false,
+    );
+    assert.equal(
+      isOnExploreContract(
+        "Shipped: one BSP topology is now per-biome seeds.",
+        [mazePick],
+      ),
+      true,
+    );
+    assert.equal(
+      isOnExploreContract("online Hearth is no longer Sisyphus.", [mazePick]),
+      true,
+    );
+  });
+
   it("holds after 8 off-contract ships when picks exist", () => {
     const prev = process.env.FORGE_HOME;
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "forge-ec-"));
