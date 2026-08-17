@@ -178,6 +178,7 @@ export async function runStopGuard(input: StopGuardInput): Promise<StopGuardResu
     verificationPassed: input.verificationPassed,
     preferredCheckCommands: input.preferredCheckCommands,
     diffFingerprint,
+    cwd: ctx.workspaceRoot,
   });
 
   if (ulwDecision.stuckReleased || ulwDecision.lastCycleReleased) {

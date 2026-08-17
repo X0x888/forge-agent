@@ -131,7 +131,7 @@ describe("ULW same-surface hold", () => {
       });
       armUlwCycle(sid, "Improve this game.", {
         cycle: 1,
-        maxWaves: 4,
+        maxWaves: 10,
         skipCheckpoint: true,
       });
       let edits = 0;
@@ -159,6 +159,12 @@ describe("ULW same-surface hold", () => {
       });
       assert.equal(fourth.stamped, true);
       assert.equal(loadUlwCycle(sid)!.wave, 4);
+      assert.equal(sameSurfaceHolding(loadUlwCycle(sid)!), false);
+      assert.match(
+        fourth.admit || "",
+        /budget, not a hold|different class|LAST consolidation/i,
+      );
+      assert.match(formatUlwStatus(loadUlwCycle(sid)!), /budget — not a hold/i);
     });
   });
 

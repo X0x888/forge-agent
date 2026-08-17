@@ -368,10 +368,16 @@ export {
 export {
   isFactoryFingerprint,
   isAdjacentShareSchema,
+  isSpeakOnceSchema,
   isMillClassShip,
   factoryClassHolding,
   isSameClassReading,
 } from "./harness/work-class.js";
+export {
+  isTestOrHarnessPath,
+  isTestsWithoutBodyCloser,
+  isTestsWithoutBodyShip,
+} from "./harness/tests-without-body.js";
 export {
   loadExploreMapPicks,
   isOnExploreContract,

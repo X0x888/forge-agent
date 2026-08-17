@@ -29,7 +29,11 @@ import {
   activeMemoryRecords,
 } from "./decision-memory.js";
 import { createSafetyCheckpoint } from "../util/git-checkpoint.js";
-import { gitDiffFingerprint, isCleanTreeDiffFp } from "../util/git-context.js";
+import {
+  gitDiffFingerprint,
+  gitDirtyRelPaths,
+  isCleanTreeDiffFp,
+} from "../util/git-context.js";
 import { looksLikeAdvisoryUserMessage } from "../util/advisory-intent.js";
 import {
   extractShipSummary,
@@ -61,6 +65,10 @@ import {
   isMillClassShip,
   isSameClassReading,
 } from "./work-class.js";
+import {
+  isTestsWithoutBodyShip,
+  TESTS_WITHOUT_BODY_ADMIT,
+} from "./tests-without-body.js";
 import {
   OFF_CONTRACT_HOLD,
   formatHoldContextAppendix,
@@ -1147,6 +1155,42 @@ const SAME_SURFACE_HOLD_ADMIT = [
   "Do not attest **Cycle complete.** Stuck-wall will not release this hold.",
 ].join("\n");
 
+/** Capped ULW: advise, do not hold. Maze max20 spent 18 speak-once siblings. */
+const SAME_SURFACE_CAP_ADMIT = [
+  "[Forge ULW cycle driver] Last ships are the same surface (speak-once / leftover sibling).",
+  "This is a budget, not a hold — w still increments.",
+  "Next ship must be a different class (play-path, architecture, honest red suite) — or treat remaining waves as LAST consolidation.",
+  "Do not invent another first-X speaks-once sibling.",
+].join(" ");
+
+function sameSurfaceBudgetLine(s: UlwCycleState): string | undefined {
+  const streak = s.sameSurfaceStreak ?? 0;
+  if (streak < SAME_SURFACE_ADVISORY) return undefined;
+  const cap = normalizeMaxWaves(s.maxWaves);
+  if (cap == null) {
+    return `Last ${streak} ships are the same surface. Next ship must be a different surface (trust, correctness, a new job) — or /cycle 0. Same-surface leftovers will not increment w.`;
+  }
+  if (streak >= SAME_SURFACE_HOLD) {
+    return `Last ${streak} ships are the same surface. Remaining budget must be a different surface (trust, correctness, play-path, architecture) — or treat remaining waves as LAST consolidation. Do not invent another first-X / speaks-once sibling. w still increments (this is a budget, not a hold).`;
+  }
+  return `Last ${streak} ships are the same surface. Next budget wave must be a different surface (trust, correctness, a new job) — or wrap remaining as LAST consolidation. Do not invent leftover chrome.`;
+}
+
+function resolveChangedPaths(opts: {
+  cwd?: string;
+  changedPaths?: string[];
+}): string[] {
+  if (opts.changedPaths && opts.changedPaths.length > 0) {
+    return opts.changedPaths;
+  }
+  if (!opts.cwd) return [];
+  try {
+    return gitDirtyRelPaths(opts.cwd);
+  } catch {
+    return [];
+  }
+}
+
 const CONTRACT_HOLD_ADMIT = [
   "[Forge ULW cycle driver] Stop blocked — last ships ignored the explore-map picks.",
   "Write a new Reading that ships or retires a pick with evidence, or /cycle 0.",
@@ -1608,6 +1652,8 @@ export function maybeStampUlwWave(opts: {
   verificationRan?: boolean;
   verificationPassed?: boolean;
   cwd?: string;
+  /** Dirty relpaths this wave; when omitted, cwd porcelain is used. */
+  changedPaths?: string[];
 }): MidWaveStampResult {
   const s = loadUlwCycle(opts.sessionId);
   if (!s?.enabled) return { stamped: false };
@@ -1747,6 +1793,24 @@ export function maybeStampUlwWave(opts: {
           admit: holdAdmit(opts.sessionId, SAME_SURFACE_HOLD_ADMIT),
         };
       }
+      const changedPaths = resolveChangedPaths(opts);
+      if (
+        isTestsWithoutBodyShip({
+          proof,
+          paths: changedPaths,
+          closer,
+        })
+      ) {
+        updateOpenWaveRecord(s, facts);
+        s.lastWaveSig = sig;
+        saveUlwCycle(s);
+        return {
+          stamped: false,
+          updated: true,
+          wave: s.wave,
+          admit: TESTS_WITHOUT_BODY_ADMIT,
+        };
+      }
       applyDiffFingerprint(s, fp);
       appendWaveRecord(s, {
         sessionId: opts.sessionId,
@@ -1771,6 +1835,10 @@ export function maybeStampUlwWave(opts: {
       const counts = formatUlwCounts(s);
       const extra =
         polish >= POLISH_ADVISORY_STREAK ? `\n${polishAdmit(polish)}` : "";
+      const capSurface =
+        cap != null && (s.sameSurfaceStreak ?? 0) >= SAME_SURFACE_ADVISORY
+          ? SAME_SURFACE_CAP_ADMIT
+          : "";
       return {
         stamped: true,
         wave: s.wave,
@@ -1788,6 +1856,7 @@ export function maybeStampUlwWave(opts: {
                 `ULW ${counts} — harness counter moved after a declared ship.`,
                 "This w=N/M is the only wave number. Do not invent Wave K.",
                 extra.trim(),
+                capSurface,
               ]
                 .filter(Boolean)
                 .join("\n"),
@@ -2794,6 +2863,12 @@ function formatSameSurfaceStatusLine(s: UlwCycleState): string | undefined {
     return `  Same surface: hold — new Reading on a different class or /cycle 0 (stuck-wall will not release)`;
   }
   if (streak >= SAME_SURFACE_ADVISORY) {
+    const cap = normalizeMaxWaves(s.maxWaves);
+    if (cap != null) {
+      return streak >= SAME_SURFACE_HOLD
+        ? `  Same surface: ${streak} in a row (budget — not a hold). Next ship must be a different surface, or wrap remaining as LAST consolidation`
+        : `  Same surface: ${streak} in a row — next budget wave must be a different surface`;
+    }
     return `  Same surface: ${streak} in a row — next ship must be a different surface (or /cycle 0)`;
   }
   return undefined;
@@ -2946,6 +3021,8 @@ export function evaluateUlwAtStop(opts: {
    * as thin. Null/undefined outside git — falls back to editCount-only.
    */
   diffFingerprint?: string | null;
+  cwd?: string;
+  changedPaths?: string[];
 }): UlwStopDecision {
   const s = loadUlwCycle(opts.sessionId);
   if (!s || !s.enabled) return { block: false };
@@ -3179,6 +3256,36 @@ export function evaluateUlwAtStop(opts: {
     const todoProgress = Math.max(0, prevOpen - opts.openTodoCount);
     s.lastOpenTodoCount = opts.openTodoCount;
     const closer = closerText(opts.sessionId, msg);
+    const testsWithoutBody = isTestsWithoutBodyShip({
+      proof,
+      paths: resolveChangedPaths(opts),
+      closer,
+    });
+    if (testsWithoutBody && !alreadyStamped) {
+      updateOpenWaveRecord(s, {
+        editDelta,
+        proof,
+        todoProgress,
+        netDiff,
+        summary: summarizeWave(closer, opts.sessionId),
+      });
+      s.lastWaveSig = sig;
+      saveUlwCycle(s);
+      const reanchor = [
+        TESTS_WITHOUT_BODY_ADMIT,
+        buildCycleReanchor(s, {
+          openTodos: opts.openTodoCount,
+          mode: "continue",
+          preferredCheckCommands: opts.preferredCheckCommands,
+        }),
+      ].join("\n");
+      return {
+        block: true,
+        reason: reanchor,
+        reanchor,
+        waveClosed: false,
+      };
+    }
     if (
       s.cycle === 1 &&
       !s.wrapKind &&
@@ -3249,7 +3356,8 @@ export function evaluateUlwAtStop(opts: {
         isShipCloseText(closer) &&
         editDelta >= 1 &&
         !isLeftoverChromeShip(closer) &&
-        !millSibling;
+        !millSibling &&
+        !testsWithoutBody;
       if (shipAfterExhaust) {
         appendWaveRecord(s, {
           sessionId: opts.sessionId,
@@ -3513,9 +3621,7 @@ function buildCycleReanchor(
       (opts.thinStreak ?? 0) >= 2
         ? `Waves are thinning (${opts.thinStreak} in a row with little substance). God-mode demand: pick a substantially higher-leverage hard objective (not churn) — or, if the hard work is genuinely exhausted, say so with evidence; the user can /cycle 0.`
         : null,
-      (s.sameSurfaceStreak ?? 0) >= SAME_SURFACE_ADVISORY
-        ? `Last ${s.sameSurfaceStreak} ships are the same surface. Next ship must be a different surface (trust, correctness, a new job) — or /cycle 0. Same-surface leftovers will not increment w.`
-        : null,
+      sameSurfaceBudgetLine(s) ?? null,
       s.softPrompt
         ? `Soft signal still active — you own what the hard work is within the durable decisions above. Prefer backlog todos; never ask the user to clarify or pick tasks.`
         : null,

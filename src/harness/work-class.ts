@@ -26,7 +26,29 @@ const BOTH_RE =
 const SHARE_BOTH_RE =
   /\bshare(?:s|d)? (?:the |it |them )?(?:with )?(?:them|you both|the (?:one|partner) beside)\b/i;
 
-export type WorkSchema = "adjacent-share" | "factory";
+export type WorkSchema = "adjacent-share" | "factory" | "speak-once";
+
+/**
+ * Maze-of-Mysteries max20 mill: rotating nouns (water / wanderer / glow /
+ * burden) on one recipe (gate a monologue to "speaks once"). Token overlap
+ * is near zero, so same-surface hold never armed. Cap still spends — this
+ * class is for advisory (capped) and hold (unlimited).
+ */
+const SPEAK_ONCE_RE =
+  /\bspeaks? once\b|\bthought comes once\b|\btalk(?:s|ed)? every frame\b|\bsame (?:thought|line) (?:filled|until|every)\b|\bstay(?:ed|s)? silent until\b|\bno longer repeats\b|\bfilled the head\b/i;
+const SPEAK_ONCE_NOUN_RE =
+  /\b(?:water|glow|wanderer|burden|alcove|person|opening|thought|hidden life|other person|way onward|heavy load|feet get wet)\b/i;
+
+export function isSpeakOnceSchema(text: string): boolean {
+  const t = text || "";
+  if (!t.trim()) return false;
+  if (!SPEAK_ONCE_RE.test(t)) return false;
+  return (
+    SPEAK_ONCE_NOUN_RE.test(t) ||
+    /\bfirst\b/i.test(t) ||
+    /\bleftover defect\b/i.test(t)
+  );
+}
 
 export function isFactoryFingerprint(text: string): boolean {
   const t = text || "";
@@ -67,6 +89,7 @@ export function shipSchema(text: string): WorkSchema | undefined {
   // Factory is the tighter mill closer; adjacent-share is the theme.
   if (isFactoryFingerprint(text)) return "factory";
   if (isAdjacentShareSchema(text)) return "adjacent-share";
+  if (isSpeakOnceSchema(text)) return "speak-once";
   return undefined;
 }
 
@@ -137,7 +160,11 @@ export function factoryClassHolding(
 
 export function isMillClassShip(text: string, opts?: MillClassOpts): boolean {
   if (opts?.onContract) return false;
-  return isFactoryFingerprint(text) || isAdjacentShareSchema(text);
+  return (
+    isFactoryFingerprint(text) ||
+    isAdjacentShareSchema(text) ||
+    isSpeakOnceSchema(text)
+  );
 }
 
 /** One-ship reading that continues the mill — refuse adopt. */

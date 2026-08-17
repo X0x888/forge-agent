@@ -7,6 +7,7 @@ import {
   isFactoryFingerprint,
   isMillClassShip,
   isSameClassReading,
+  isSpeakOnceSchema,
   matchesRecentSchema,
   shipSchema,
 } from "../src/harness/work-class.js";
@@ -398,6 +399,54 @@ describe("unlimited adopt + stamp refuse the mill", () => {
       assert.match(after.waves?.[0]?.classText || "", /Last ship was/i);
       disarmUlwCycle(sid);
     });
+  });
+});
+
+const WATER_ONCE =
+  "**Job:** the first water used to talk every frame. Standing in it filled the head with the same line until you left. Now the feet speak once when they get wet.";
+const WANDERER_ONCE =
+  "**Job:** the first other person used to stay silent until you stood on their tile long enough. Now, when you first share an opening with them, a thought comes once: Someone is here.";
+const GLOW_ONCE =
+  "**Job:** the first way onward used to glow in silence. Now the first time that glow is along the corridor, a thought comes once: A light that is not the torch.";
+const BURDEN_ONCE =
+  "**Job:** a heavy load used to talk every frame. Now the body speaks once when the load first becomes too much.";
+const ENDING =
+  "**Job:** the first ending used to count. Now the ending names the life. Empty hands. One thing.";
+const PLACEMENT =
+  "**Job:** a first life could wake and walk a hollow maze. Now one thing always waits a few steps from waking.";
+const DROWN =
+  "Wave shipped: drowning now claims a burdened body after a felt wait.";
+
+describe("speak-once schema (maze max20 mill)", () => {
+  it("flags rotating first-X speaks-once jobs", () => {
+    assert.equal(isSpeakOnceSchema(WATER_ONCE), true);
+    assert.equal(isSpeakOnceSchema(WANDERER_ONCE), true);
+    assert.equal(isSpeakOnceSchema(GLOW_ONCE), true);
+    assert.equal(isSpeakOnceSchema(BURDEN_ONCE), true);
+    assert.equal(shipSchema(WATER_ONCE), "speak-once");
+    assert.equal(isMillClassShip(WATER_ONCE), true);
+  });
+
+  it("does not treat placement, drowning, or ending copy as speak-once", () => {
+    assert.equal(isSpeakOnceSchema(PLACEMENT), false);
+    assert.equal(isSpeakOnceSchema(DROWN), false);
+    assert.equal(isSpeakOnceSchema(ENDING), false);
+    assert.equal(isMillClassShip(PLACEMENT), false);
+  });
+
+  it("three speak-once siblings are the same surface", () => {
+    assert.equal(matchesRecentSchema([WATER_ONCE], WANDERER_ONCE), true);
+    assert.equal(matchesRecentSurface([WATER_ONCE], WANDERER_ONCE), true);
+    const a = nextSameSurfaceStreak([], WATER_ONCE, 0);
+    const b = nextSameSurfaceStreak([WATER_ONCE], WANDERER_ONCE, a.streak);
+    const c = nextSameSurfaceStreak(
+      [WATER_ONCE, WANDERER_ONCE],
+      GLOW_ONCE,
+      b.streak,
+    );
+    assert.equal(b.same, true);
+    assert.equal(c.same, true);
+    assert.ok(c.streak >= SAME_SURFACE_HOLD, `streak=${c.streak}`);
   });
 });
 

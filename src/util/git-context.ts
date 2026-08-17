@@ -96,6 +96,28 @@ export function isCleanTreeDiffFp(fp: string | null | undefined): boolean {
   return Boolean(fp && fp === CLEAN_TREE_DIFF_FP);
 }
 
+/**
+ * Relpaths dirty vs HEAD (tracked diffs + untracked). Empty outside git.
+ * Used to refuse a tests-without-body wave stamp without loading the journal.
+ */
+export function gitDirtyRelPaths(cwd: string): string[] {
+  const root = git(["rev-parse", "--show-toplevel"], cwd);
+  if (!root) return [];
+  const tracked = git(["diff", "HEAD", "--name-only"], root, 3000) ?? "";
+  const untracked =
+    git(["ls-files", "--others", "--exclude-standard"], root, 3000) ?? "";
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const line of `${tracked}\n${untracked}`.split("\n")) {
+    const p = line.trim();
+    if (!p || seen.has(p)) continue;
+    seen.add(p);
+    out.push(p);
+    if (out.length >= 200) break;
+  }
+  return out;
+}
+
 /** Best-effort git summary for system prompt / banner (never throws). */
 export function getGitSnapshot(cwd: string): GitSnapshot {  try {
     const root = git(["rev-parse", "--show-toplevel"], cwd);
