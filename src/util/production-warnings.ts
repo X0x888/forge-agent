@@ -341,7 +341,7 @@ export function productionWarningsForRun(
     }
     if (opts?.releasedOnContinueCap) {
       warnings.push(
-        "releasedOnContinueCap — stop-continue safety valve fired (length / content_filter / empty / Stop-block cap). Narrow the task or raise FORGE_ULW_MAX_CONTINUES / maxStopContinues.",
+        "releasedOnContinueCap — stop-continue safety valve fired (length / content_filter / empty, or Stop-block cap on capped/LAST/non-ULW). Unlimited CONTINUE Stop-blocks do not trip it. Narrow the task or raise FORGE_ULW_MAX_CONTINUES / maxStopContinues.",
       );
     }
     // Post-run: edits without a recorded structural check — CI greppable.

@@ -98,7 +98,7 @@ What experts should expect from Forge in long, unattended, or CI runs.
 | **`finish_reason=length`** | Continues generation instead of treating truncation as a final answer (provider fuse, not the Stop-block tally); **at cap** appends a clear release note to `finalText` so headless JSON is not a silent partial |
 | **`content_filter`** | Surfaces provider safety blocks and steers the model to narrow scope; **cap checked before** injecting steerage (no orphan user msgs on release); **at cap** appends a release note to `finalText`; Anthropic `stop_reason=refusal` maps to `content_filter` |
 | **Empty assistant** | Nudges the model to continue rather than stopping on a blank turn; **cap checked before** nudge inject; **at cap** sets non-empty `finalText` |
-| **Stop-continue cap** | When harness keeps blocking Stop until the shared cap, empty `finalText` gets an explicit release message (tools-only last turn); loop sets `releasedOnContinueCap` (headless JSON + metrics) for CI visibility |
+| **Stop-continue cap** | When harness keeps blocking Stop until the Stop-block fuse (capped/LAST/non-ULW), empty `finalText` gets an explicit release message; loop sets `releasedOnContinueCap` (headless JSON + metrics). Unlimited CONTINUE Stop-blocks do not trip it. |
 | **maxTurns** | `max_turns = 0` (default) is **unlimited**; positive values cap agent turns. Hitting the cap sets `hitMaxTurns` + annotates `finalText` (clean Stop on the final allowed turn is **not** flagged) |
 | **maxCostUsd** | `max_cost_usd = 0` (default) is **unlimited**; positive values cap session spend *estimate* (`estimateCostUsd`, not a bill). Sources: config / `FORGE_MAX_COST_USD` / `--max-cost` / `/budget`. Hitting the cap sets `hitCostCap` + annotates `finalText` and stamps `lastError.code=max_cost`. Session override via `/budget` (including `0`/`off` = unlimited for this session). Under ULW `cycle=1`, auto-flips to `cycle=0` (LAST) so resume is not stuck |
 | **maxTurns + ULW** | Hitting `max_turns` under ULW CONTINUE also flips to LAST (`maybeFlipUlwToLastOnSafetyValve`) |
@@ -160,7 +160,7 @@ What experts should expect from Forge in long, unattended, or CI runs.
 | `FORGE_PERMISSION_TIMEOUT_MS` | off | Auto-deny stalled interactive Allow? prompts (min 5s). Alias: `FORGE_PERMISSION_ASK_TIMEOUT_MS` |
 | `FORGE_DOOM_LOOP_THRESHOLD` | `3` | Identical tool+args streak before strategy nudge |
 | `FORGE_ERROR_STREAK_THRESHOLD` | `5` | Consecutive tool errors before circuit-breaker nudge |
-| `FORGE_ULW_MAX_CONTINUES` | `200` | Stop-continue cap while ULW is armed |
+| `FORGE_ULW_MAX_CONTINUES` | `200` | Provider length/empty/filter fuse while ULW is armed; also Stop-block fuse for capped/LAST/non-ULW. Unlimited CONTINUE Stop-blocks do not trip it |
 | `FORGE_ULW_STUCK_THRESHOLD` | goal config / `5` | ULW stuck-wall blocks before release (`envPositiveInt`; invalid/0 ignored) |
 | `FORGE_ADAPTIVE_EFFORT` | on | `0`/`false` disables one-notch reasoning escalation on hard rounds |
 | `FORGE_CHECKPOINT_STORE_TOKENS` | `1500000` | Store-token trigger for checkpoint compact (not outbound) |

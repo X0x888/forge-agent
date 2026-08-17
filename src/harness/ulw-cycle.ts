@@ -2590,8 +2590,8 @@ export function scheduleCycleZeroStop(
  * Unlimited ULW (`cycle=1`, no max_waves) *is* Stop-block + continue.
  * Counting those toward FORGE_ULW_MAX_CONTINUES (default 200) is a hidden
  * wave cap — maze log10 died at continue #201 without /cycle 0.
- * Length/empty provider loops still use the shared counter.
- * Capped ULW and LAST wrap still fuse.
+ * Length/empty/content_filter use providerFuseTripsContinueCap (own counter).
+ * Capped ULW and LAST wrap still fuse Stop-blocks.
  */
 export function stopBlockTripsContinueCap(
   s: Pick<UlwCycleState, "enabled" | "cycle" | "maxWaves"> | null | undefined,

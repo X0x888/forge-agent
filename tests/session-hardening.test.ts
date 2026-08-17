@@ -372,6 +372,15 @@ describe("(3) title/pin writes are meta-only", () => {
     assert.equal(loadSessionMeta(s.meta.id)!.title, undefined);
   });
 
+  it("clearConversation drops holdOmitToolIds", () => {
+    const s = newSession();
+    s.meta.holdOmitToolIds = ["call-mill-1", "call-mill-2"];
+    s.meta.rawPinProofTaint = true;
+    clearConversation(s);
+    assert.equal(s.meta.holdOmitToolIds, undefined);
+    assert.equal(s.meta.rawPinProofTaint, undefined);
+  });
+
   it("loadSession treats the sidecar as authoritative for title/pinned", () => {
     const s = newSession();
     s.meta.title = "primary-title";

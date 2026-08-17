@@ -529,6 +529,16 @@ function normalizeSessionMeta(
   const sticky = normalizeRequestPruneSticky(fromSide.requestPruneSticky);
   if (sticky) out.requestPruneSticky = sticky;
   else delete out.requestPruneSticky;
+  if (Array.isArray(fromSide.holdOmitToolIds)) {
+    const ids = fromSide.holdOmitToolIds
+      .map((x) => String(x ?? "").trim())
+      .filter(Boolean)
+      .slice(0, 48);
+    if (ids.length) out.holdOmitToolIds = ids;
+    else delete out.holdOmitToolIds;
+  } else {
+    delete out.holdOmitToolIds;
+  }
   if (fromSide.pinned) out.pinned = true;
   else delete out.pinned;
   const pm = normalizeMetaPermissionMode(fromSide.permissionMode);
@@ -3599,6 +3609,7 @@ export function formatSessionShareCard(
 /** Compact / /clear rewrite the prefix — drop the frozen omit set. */
 export function clearRequestPruneSticky(session: SessionData): void {
   delete session.meta.requestPruneSticky;
+  delete session.meta.holdOmitToolIds;
 }
 
 export function clearConversation(session: SessionData): void {
@@ -3628,6 +3639,7 @@ export function clearConversation(session: SessionData): void {
   delete session.meta.lastVerificationOk;
   delete session.meta.lastVerificationExitCode;
   delete session.meta.lastEditAt;
+  delete session.meta.rawPinProofTaint;
   // Clear the on-disk meta sidecar title NOW so the saveSession below (whose
   // cross-process merge preserves externally-set titles) does not resurrect
   // the wiped title from the pre-clear sidecar.
