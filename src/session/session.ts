@@ -3212,6 +3212,12 @@ export function formatResumeOrientation(
 ): string {
   const compact = opts?.compact === true;
   if (compact) return formatCompactResumeCard(session, opts);
+  const cols = Math.max(
+    24,
+    process.stdout.isTTY ? process.stdout.columns || 80 : 80,
+  );
+  const clip = (s: string): string =>
+    visibleWidth(s) > cols ? clipAnsi(s, cols) : s;
   const parts: string[] = [];
   try {
     const peek = formatResumePeek(session, { maxChars: opts?.maxChars });
@@ -3221,13 +3227,13 @@ export function formatResumeOrientation(
   }
   try {
     if (session.meta.permissionMode === "plan") {
-      parts.push("Mode: PLAN (session-scoped) — exit_plan_mode or /build");
+      parts.push("PLAN  ·  /build");
     } else if (
       session.meta.permissionMode &&
       session.meta.permissionMode !== "default" &&
       session.meta.permissionMode !== "acceptEdits"
     ) {
-      parts.push(`Mode: ${session.meta.permissionMode} (session override)`);
+      parts.push(`mode  ${session.meta.permissionMode}`);
     }
   } catch {
     /* */
@@ -3279,7 +3285,9 @@ export function formatResumeOrientation(
     });
     if (touched.length) {
       const bits = touched.map((t) => t.path).join(", ");
-      parts.push(`Files: ${bits}${touched.length >= (opts?.fileLimit ?? 6) ? "…" : ""}  (/files writes)`);
+      parts.push(
+        `files  ${bits}${touched.length >= (opts?.fileLimit ?? 6) ? "…" : ""}  ·  /files`,
+      );
     }
   } catch {
     /* */
@@ -3365,7 +3373,10 @@ export function formatResumeOrientation(
   } catch {
     /* */
   }
-  return parts.join("\n");
+  if (parts.length) {
+    parts.push("  ↳ type a task  ·  /diff  ·  /last");
+  }
+  return parts.map(clip).join("\n");
 }
 
 /**

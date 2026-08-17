@@ -934,6 +934,11 @@ it("/fork includes last-turn peek", async () => {
     assert.match(o, /ship the patch|patched/);
     assert.match(o, /src\/orient\.ts/);
     assert.match(o, /\/files/);
+    assert.match(o, /↳ type a task/);
+    assert.match(o, /\/diff/);
+    assert.match(o, /\/last/);
+    assert.doesNotMatch(o, /session-scoped/);
+    assert.doesNotMatch(o, /Mode: PLAN/);
   });
 
   it("formatResumeOrientation compact skips Checks/memory/checkpoint", async () => {
