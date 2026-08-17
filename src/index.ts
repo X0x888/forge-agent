@@ -634,6 +634,8 @@ export {
   formatRunStopReason,
   formatUserTurnOpen,
   formatAssistantTurnOpen,
+  formatThinkingTurnOpen,
+  createThinkingLandmark,
 } from "./tui/turn-summary.js";
 export {
   formatDiffReviewCard,

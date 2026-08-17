@@ -5,7 +5,7 @@ import { readFileMutations } from "../session/mutations.js";
 import { displayRelPath } from "../agent/tools/path-util.js";
 import { detectProjectIntel } from "../util/project-intel.js";
 import chalk, { Chalk } from "chalk";
-import { clipAnsi, visibleWidth } from "../util/format.js";
+import { clipAnsi, formatTokens, visibleWidth } from "../util/format.js";
 
 /**
  * Pure formatter for the end-of-turn change summary (unattended runs):
@@ -227,4 +227,156 @@ export function formatAssistantTurnOpen(opts?: { color?: boolean }): string {
   if (!on) return "forge ›";
   const paint = new Chalk({ level: Math.max(chalk.level, 1) as 1 | 2 | 3 });
   return paint.dim("forge ›");
+}
+
+/** Approx tokens from reasoning chars (count-only — never keep the text). */
+export function estimateReasoningTokens(chars: number): number {
+  if (chars <= 0) return 0;
+  return Math.max(1, Math.round(chars / 4));
+}
+
+/** Repaint key: token bucket + elapsed second. */
+export function thinkingLandmarkKey(chars: number, elapsedSec: number): string {
+  return `${estimateReasoningTokens(chars)}:${Math.max(0, Math.floor(elapsedSec))}`;
+}
+
+/**
+ * Designed empty-reply edge before `forge ›`. Count + elapsed only —
+ * never thought text. Silent until chars > 0.
+ */
+export function formatThinkingTurnOpen(opts: {
+  chars: number;
+  elapsedSec?: number;
+  width?: number;
+  color?: boolean;
+}): string | null {
+  if (opts.chars <= 0) return null;
+  const tokens = estimateReasoningTokens(opts.chars);
+  const elapsed =
+    typeof opts.elapsedSec === "number" && opts.elapsedSec > 0
+      ? ` · ${formatThinkingElapsed(opts.elapsedSec)}`
+      : "";
+  const on = opts.color ?? Boolean(process.stdout.isTTY);
+  const raw = `think › ${formatTokens(tokens)}${elapsed}`;
+  const cols = Math.max(
+    8,
+    opts.width ??
+      (process.stdout.isTTY ? process.stdout.columns || 80 : 80),
+  );
+  const clipped = visibleWidth(raw) <= cols ? raw : clipAnsi(raw, cols);
+  if (!on) return clipped;
+  const paint = new Chalk({ level: Math.max(chalk.level, 1) as 1 | 2 | 3 });
+  return paint.dim(clipped);
+}
+
+function formatThinkingElapsed(sec: number): string {
+  const n = Math.max(0, Math.floor(sec));
+  if (n < 60) return `${n}s`;
+  const m = Math.floor(n / 60);
+  const s = n % 60;
+  return s ? `${m}m${s}s` : `${m}m`;
+}
+
+export interface ThinkingLandmark {
+  /** Count-only. Never pass thought text. */
+  push: (chars: number) => void;
+  /**
+   * Replace the open think line with the reply opener (TTY) or append
+   * it (non-TTY). Returns false when nothing was showing.
+   */
+  takeForReply: (replacement: string) => boolean;
+  /** Keep think › in scrollback (tools started / turn ended with no text). */
+  settle: () => void;
+  chars: () => number;
+}
+
+/**
+ * In-place `think › 1.2k · 18s` until the first content token.
+ * Non-TTY: one line, no flood.
+ */
+export function createThinkingLandmark(opts?: {
+  write?: (s: string) => void;
+  tty?: boolean;
+  columns?: () => number;
+  now?: () => number;
+  color?: boolean;
+}): ThinkingLandmark {
+  const write = opts?.write ?? ((s: string) => process.stdout.write(s));
+  const tty =
+    opts?.tty ?? Boolean(process.stdout.isTTY && process.env.NO_COLOR == null);
+  const columns = opts?.columns ?? (() => process.stdout.columns || 80);
+  const now = opts?.now ?? Date.now;
+  const color = opts?.color ?? tty;
+  let chars = 0;
+  let startedAt = 0;
+  let painted = false;
+  let open = false;
+  let lastKey = "";
+  let lastWidth = 0;
+
+  const elapsedSec = (): number =>
+    startedAt ? Math.max(0, Math.floor((now() - startedAt) / 1000)) : 0;
+
+  const lineFor = (): string | null =>
+    formatThinkingTurnOpen({
+      chars,
+      elapsedSec: elapsedSec(),
+      width: Math.max(8, columns()),
+      color,
+    });
+
+  const paint = (first: boolean) => {
+    const line = lineFor();
+    if (!line) return;
+    const key = thinkingLandmarkKey(chars, elapsedSec());
+    if (!first && key === lastKey) return;
+    lastKey = key;
+    const width = visibleWidth(line);
+    if (first) {
+      write(tty ? `\n${line}` : `${line}\n`);
+    } else if (tty) {
+      const pad = Math.max(0, lastWidth - width);
+      write(`\r${line}${" ".repeat(pad)}`);
+    }
+    lastWidth = width;
+    painted = true;
+    open = tty;
+  };
+
+  return {
+    push(n: number) {
+      const add = Math.max(0, Math.floor(n));
+      if (add <= 0) return;
+      chars += add;
+      if (!startedAt) startedAt = now();
+      paint(!painted);
+    },
+    takeForReply(replacement: string) {
+      if (!painted) return false;
+      if (open && tty) {
+        const next = replacement || "";
+        const pad = Math.max(0, lastWidth - visibleWidth(next));
+        write(`\r${next}${" ".repeat(pad)}\n`);
+      } else {
+        write(`${replacement}\n`);
+      }
+      open = false;
+      painted = false;
+      chars = 0;
+      startedAt = 0;
+      lastKey = "";
+      lastWidth = 0;
+      return true;
+    },
+    settle() {
+      if (open) write("\n");
+      open = false;
+      painted = false;
+      chars = 0;
+      startedAt = 0;
+      lastKey = "";
+      lastWidth = 0;
+    },
+    chars: () => chars,
+  };
 }

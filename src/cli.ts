@@ -121,6 +121,7 @@ import {
   formatTurnChangeSummaryForSession,
   formatUserTurnOpen,
   formatAssistantTurnOpen,
+  createThinkingLandmark,
 } from "./tui/turn-summary.js";
 import { forgeHome, ensureDir, inspectSecureFile } from "./util/fs.js";
 import { log, setLogLevel } from "./util/log.js";
@@ -6143,16 +6144,28 @@ async function runHeadless(opts: {
       userMessage: headlessPrompt,
       stream: !opts.json,
       signal: ac.signal,
-      onToken: opts.json
+      events: opts.json
         ? undefined
         : (() => {
             let opened = false;
-            return (t: string) => {
-              if (!opened) {
-                opened = true;
-                process.stdout.write(`${formatAssistantTurnOpen()}\n`);
-              }
-              process.stdout.write(t);
+            const think = createThinkingLandmark();
+            return {
+              onReasoning: (p: { chars: number }) => {
+                if (opened) return;
+                think.push(p.chars);
+              },
+              onToken: (t: string) => {
+                if (!opened) {
+                  opened = true;
+                  if (!think.takeForReply(formatAssistantTurnOpen())) {
+                    process.stdout.write(`${formatAssistantTurnOpen()}\n`);
+                  }
+                }
+                process.stdout.write(t);
+              },
+              onPhase: (phase: string) => {
+                if (phase === "tool") think.settle();
+              },
             };
           })(),
     });

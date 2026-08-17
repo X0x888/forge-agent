@@ -41,6 +41,7 @@ import {
   formatTurnChangeSummaryForSession,
   formatUserTurnOpen,
   formatAssistantTurnOpen,
+  createThinkingLandmark,
 } from "./turn-summary.js";
 import {
   createMarkdownRenderer,
@@ -708,6 +709,7 @@ export async function runRepl(opts: {
     livePrompt({ freshLine: true });
 
     let sawToken = false;
+    const think = createThinkingLandmark();
     const toolEnds = createToolEndCoalescer((line) => console.error(line));
     const toolStarts = createToolStartDelayer((line) => console.error(line));
     /** Tool phase: pause prompt refresh so tool logs stay clean */
@@ -761,12 +763,20 @@ export async function runRepl(opts: {
         stream: true,
         signal: abortController.signal,
         events: {
+          onReasoning: (p) => {
+            if (sawToken) return;
+            think.push(p.chars);
+            rl.abandonPaint();
+          },
           onToken: (t) => {
             if (!sawToken) {
               toolEnds.flush();
-              // Leave the live › line above; stream on following lines
-              process.stdout.write("\n");
-              process.stdout.write(`${formatAssistantTurnOpen()}\n`);
+              // Leave the live › line above; stream on following lines.
+              // If think › is open, replace it in place with forge ›.
+              if (!think.takeForReply(formatAssistantTurnOpen())) {
+                process.stdout.write("\n");
+                process.stdout.write(`${formatAssistantTurnOpen()}\n`);
+              }
               working.setStreaming(true);
               streamActive = true;
               sawToken = true;
@@ -778,6 +788,7 @@ export async function runRepl(opts: {
             process.stdout.write(md.push(t));
           },
           onToolStart: (name, args) => {
+            think.settle();
             flushMarkdown();
             if (streamActive || sawToken) {
               toolEnds.flush();
@@ -812,6 +823,7 @@ export async function runRepl(opts: {
             working.setPhase(phase, detail);
             pulseHeartbeat();
             if (phase === "tool") {
+              think.settle();
               pendingTools += 1;
               // Permission prompts print before onToolStart — keep the
               // styled token stream ahead of any prompt output. Flush a
@@ -846,6 +858,7 @@ export async function runRepl(opts: {
 
       working.stop();
       streamActive = false;
+      think.settle();
       toolStarts.flush();
       toolEnds.flush();
       flushMarkdown();

@@ -19,6 +19,7 @@ import type {
   ChatRequest,
   LLMProvider,
   OutboundChatMessage,
+  StreamDelta,
   ToolCall,
 } from "../providers/types.js";
 import type { SessionData, TodoItem } from "../session/session.js";
@@ -220,6 +221,12 @@ export type LoopPhase =
 
 export interface LoopEvents {
   onToken?: (token: string) => void;
+  /**
+   * Reasoning-model thought progress. Count only — never the thought
+   * text (prefix-cache replay still stores reasoning_content on the
+   * message). Used for the `think › 1.2k` first-token landmark.
+   */
+  onReasoning?: (progress: { chars: number }) => void;
   onToolStart?: (name: string, args: Record<string, unknown>) => void;
   onToolEnd?: (
     name: string,
@@ -242,6 +249,23 @@ export interface LoopEvents {
   onStatus?: (msg: string) => void;
   /** Rich phase updates for in-REPL working indicator / HUD */
   onPhase?: (phase: LoopPhase, detail?: string) => void;
+}
+
+/**
+ * Forward a provider stream delta to UI events. Reasoning is count-only
+ * so thought text never leaves the provider layer via this path.
+ */
+export function notifyStreamDelta(
+  delta: StreamDelta,
+  events: Pick<LoopEvents, "onToken" | "onReasoning">,
+  signal?: AbortSignal,
+): void {
+  if (signal?.aborted) return;
+  const thought = delta.reasoning_content;
+  if (typeof thought === "string" && thought.length > 0) {
+    events.onReasoning?.({ chars: thought.length });
+  }
+  if (delta.content) events.onToken?.(delta.content);
 }
 
 export interface LoopOptions {
@@ -675,6 +699,7 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
     : createToolStartDelayer((line) => console.error(line));
   const events: LoopEvents = {
     onToken: opts.events?.onToken || opts.onToken,
+    onReasoning: opts.events?.onReasoning,
     onToolStart:
       opts.events?.onToolStart ??
       ((name, args) => defaultStarts!.push(name, args)),
@@ -1530,13 +1555,10 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
           withRetry(
             async () => {
               assertNotAborted(signal);
-              if (stream && events.onToken) {
+              if (stream && (events.onToken || events.onReasoning)) {
                 return provider.chatStream(
                   makeChatRequest(effortOverride),
-                  (delta) => {
-                    if (signal?.aborted) return;
-                    if (delta.content) events.onToken?.(delta.content);
-                  },
+                  (delta) => notifyStreamDelta(delta, events, signal),
                   signal,
                 );
               }
@@ -1544,6 +1566,11 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
                 makeChatRequest(effortOverride),
                 signal,
               );
+              if (r.message.reasoning_content && events.onReasoning) {
+                events.onReasoning({
+                  chars: r.message.reasoning_content.length,
+                });
+              }
               if (r.message.content && events.onToken) {
                 events.onToken(r.message.content);
               }

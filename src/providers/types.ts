@@ -26,8 +26,8 @@ export interface ChatMessage {
   tool_calls?: ToolCall[];
   /**
    * Reasoning-model thought trace (xAI `reasoning_content`). Must be
-   * replayed on the next request or the prefix cache misses. Never shown
-   * in the TUI.
+   * replayed on the next request or the prefix cache misses. Thought text
+   * is never painted — the TUI shows a count-only `think ›` landmark.
    */
   reasoning_content?: string;
 }
@@ -92,7 +92,7 @@ export interface ChatResponse {
 
 export interface StreamDelta {
   content?: string;
-  /** Reasoning delta — captured for replay, not painted. */
+  /** Reasoning delta — captured for replay; UI gets a char count only. */
   reasoning_content?: string;
   tool_calls?: Array<{
     index: number;
