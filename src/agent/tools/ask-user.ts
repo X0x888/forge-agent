@@ -10,6 +10,7 @@ import chalk from "chalk";
 import type { ToolResult } from "./types.js";
 import { enqueuePrompt } from "../permissions.js";
 import { withStdinLease } from "../../tui/stdin-lease.js";
+import { clipAnsi, visibleWidth } from "../../util/format.js";
 
 export type AskUserInput = {
   question: string;
@@ -105,10 +106,61 @@ export type AskUserMatch =
   | { kind: "choice"; index: number }
   | { kind: "text"; value: string };
 
-export function formatAskUserPrompt(choices: string[]): string {
-  return choices.length
-    ? `Your answer [1-${choices.length} / letter / unique prefix / text / skip]: `
-    : "Your answer [text / skip]: ";
+/**
+ * Allow?-style keys under the card. Choices already list 1) 2) — the
+ * prompt is just what to type, not a grammar lecture.
+ */
+export function formatAskUserPrompt(
+  choices: string[],
+  opts?: { timeoutNote?: string; columns?: number },
+): string {
+  const n = choices.length;
+  const keys = n
+    ? `Ask? 1–${n} · letter · text · ↵ skip`
+    : `Ask? text · ↵ skip`;
+  const note = (opts?.timeoutNote ?? "").trim();
+  const line = `${keys}${note ? ` ${note}` : ""} `;
+  const cols = Math.max(
+    8,
+    opts?.columns ??
+      (process.stdout.isTTY ? process.stdout.columns || 80 : 80),
+  );
+  if (visibleWidth(line) <= cols) return line;
+  return wrapAskUserPromptLine(line, cols);
+}
+
+/** Pack Ask? keys onto as few rows as fit; last row keeps a trailing space. */
+export function wrapAskUserPromptLine(line: string, cols: number): string {
+  const caret = "Ask? ";
+  const body = line.startsWith(caret) ? line.slice(caret.length) : line;
+  const tokens = body
+    .split(" · ")
+    .map((t) => t.trim())
+    .filter(Boolean);
+  const rows: string[] = [];
+  let current = "";
+  for (const token of tokens) {
+    const candidate = current
+      ? `${current} · ${token}`
+      : rows.length === 0
+        ? `${caret}${token}`
+        : `  · ${token}`;
+    if (visibleWidth(candidate) <= cols) {
+      current = candidate;
+      continue;
+    }
+    if (current) {
+      rows.push(current);
+      current = "";
+    }
+    const alone = rows.length === 0 ? `${caret}${token}` : `  · ${token}`;
+    current = visibleWidth(alone) <= cols ? alone : clipAnsi(alone, cols);
+  }
+  if (current) rows.push(current);
+  if (!rows.length) return line;
+  const last = rows[rows.length - 1]!;
+  if (visibleWidth(last) < cols) rows[rows.length - 1] = `${last} `;
+  return rows.join("\n");
 }
 
 /**
@@ -153,7 +205,7 @@ async function promptAskUser(
   const timeoutMs = askTimeoutMs();
   const timeoutNote =
     timeoutMs > 0
-      ? chalk.dim(` (timeout ${Math.round(timeoutMs / 1000)}s)`)
+      ? chalk.dim(`· ${Math.round(timeoutMs / 1000)}s`)
       : "";
   const rl = readline.createInterface({
     input: stdinStream,
@@ -161,7 +213,7 @@ async function promptAskUser(
   });
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
-    const prompt = `${formatAskUserPrompt(choices).replace(/: $/, "")}${timeoutNote}: `;
+    const prompt = formatAskUserPrompt(choices, { timeoutNote });
     const questionP = rl.question(prompt);
     const ansRaw = (
       await (timeoutMs > 0

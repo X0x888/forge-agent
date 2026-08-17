@@ -80,11 +80,26 @@ describe("ask_user", () => {
     });
   });
 
-  it("prompt advertises letter and prefix answers", () => {
+  it("prompt is Allow?-style keys, not a spec dump", () => {
     const card = formatAskUserCard("Ship it?", ["yes", "no"]);
     const prompt = formatAskUserPrompt(["yes", "no"]);
     assert.match(card, /1\) yes/);
-    assert.match(prompt, /letter \/ unique prefix/i);
+    assert.match(prompt, /^Ask\? 1[–-]2/);
+    assert.match(prompt, /letter/);
+    assert.match(prompt, /↵ skip/);
+    assert.doesNotMatch(prompt, /Your answer/);
+    assert.doesNotMatch(prompt, /unique prefix/);
+    const free = formatAskUserPrompt([]);
+    assert.match(free, /^Ask\? text · ↵ skip/);
+  });
+
+  it("prompt wraps at · so keys stay visible on a narrow TTY", () => {
+    const prompt = formatAskUserPrompt(["yes", "no"], { columns: 16 });
+    const rows = prompt.split("\n");
+    assert.ok(rows.length >= 2, "keys wrap");
+    assert.match(rows[0]!, /^Ask\? 1[–-]2/);
+    assert.match(prompt, /↵ skip/);
+    assert.ok(prompt.endsWith(" "), "trailing space for readline");
   });
 
   it("fails closed in headless", async () => {
