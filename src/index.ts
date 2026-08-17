@@ -348,6 +348,10 @@ export {
   isHelperOnlyTestCommand,
   consumeMillHoldPrune,
   contractHolding,
+  exploreHolding,
+  noteExploreChildCompleted,
+  notePlayLoopRan,
+  isPlayLoopCloser,
   providerFuseTripsContinueCap,
   stopBlockTripsContinueCap,
 } from "./harness/ulw-cycle.js";

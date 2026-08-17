@@ -67,6 +67,12 @@ export async function pathNotFoundHint(
         .join("\n")}`,
     );
   } else {
+    const elsewhere = await findBasenameElsewhere(workspace, leaf, missingPath);
+    if (elsewhere.length) {
+      parts.push(
+        `Did you mean one of these?\n${elsewhere.map((s) => `  ${s}`).join("\n")}`,
+      );
+    } else {
     // Parent dir missing — walk up and suggest similar directory names.
     // e.g. `srcx/system-prompt.ts` → Did you mean `src/`?
     const grand = path.dirname(parent);
@@ -86,8 +92,52 @@ export async function pathNotFoundHint(
         );
       }
     }
+    }
   }
 
   parts.push(`Note: workspace root is ${workspace}`);
   return parts.join("\n");
+}
+
+const SKIP_DIR = new Set([
+  "node_modules",
+  ".git",
+  "dist",
+  "build",
+  ".forge",
+  "coverage",
+]);
+
+/** `src/systems/tea-sip.js` when the file lives in `src/scenes/hearth/`. */
+async function findBasenameElsewhere(
+  workspace: string,
+  leaf: string,
+  missingPath: string,
+): Promise<string[]> {
+  if (!leaf || leaf.length < MIN_LEAF) return [];
+  const want = leaf.toLowerCase();
+  const hits: string[] = [];
+  const skipAbs = path.resolve(missingPath);
+  const walk = async (dir: string, depth: number): Promise<void> => {
+    if (hits.length >= MAX_SIMILAR || depth > 8) return;
+    let entries: import("node:fs").Dirent[];
+    try {
+      entries = await fsp.readdir(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const e of entries) {
+      if (hits.length >= MAX_SIMILAR) return;
+      if (e.name.startsWith(".") && e.name !== ".github") continue;
+      const abs = path.join(dir, e.name);
+      if (e.isDirectory()) {
+        if (SKIP_DIR.has(e.name)) continue;
+        await walk(abs, depth + 1);
+      } else if (e.name.toLowerCase() === want && abs !== skipAbs) {
+        hits.push(path.relative(workspace, abs) || e.name);
+      }
+    }
+  };
+  await walk(workspace, 0);
+  return hits;
 }

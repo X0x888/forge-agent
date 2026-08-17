@@ -54,6 +54,7 @@ import {
   isArmableMandate,
   isResumeFollowUp,
   maybeFlipUlwToLastOnSafetyValve,
+  notePlayLoopRan,
   providerFuseTripsContinueCap,
   stopBlockTripsContinueCap,
   ulwKickoffMessage,
@@ -883,6 +884,7 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
   let stopContinues = 0;
   /** Length / empty / content_filter only — never shared with Stop-blocks. */
   let providerContinues = 0;
+  let lastCommittedSha = "";
   /** Cap mid-loop verify nudges per prompt (anti-spam). */
   let verifyNudges = 0;
   const proofPoke = createProofPokeState();
@@ -1299,8 +1301,12 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
               });
               session.meta.lastAutoCommit = autoCommitStamp(ac);
               if (ac.committed) {
-                const line = `Committed ${ac.sha || "HEAD"} — ${ac.subject} (${ac.files ?? 0} file(s), not pushed)`;
-                log.info(chalk.green(line));
+                const sha = ac.sha || "HEAD";
+                const line = `Committed ${sha} — ${ac.subject} (${ac.files ?? 0} file(s), not pushed)`;
+                if (sha !== lastCommittedSha) {
+                  lastCommittedSha = sha;
+                  log.info(chalk.green(line));
+                }
                 autoCommit = {
                   committed: ac.committed,
                   sha: ac.sha,
@@ -2296,9 +2302,13 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
             });
             session.meta.lastAutoCommit = autoCommitStamp(ac);
             if (ac.committed) {
-              const line = `Committed ${ac.sha || "HEAD"} — ${ac.subject} (${ac.files ?? 0} file(s), not pushed)`;
-              log.info(chalk.green(line));
-              events.onStatus?.(line);
+              const sha = ac.sha || "HEAD";
+              const line = `Committed ${sha} — ${ac.subject} (${ac.files ?? 0} file(s), not pushed)`;
+              if (sha !== lastCommittedSha) {
+                lastCommittedSha = sha;
+                log.info(chalk.green(line));
+                events.onStatus?.(line);
+              }
               autoCommit = {
                 committed: ac.committed,
                 sha: ac.sha,
@@ -2345,8 +2355,12 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
               session.meta.lastAutoCommit = autoCommitStamp(ac);
               saveSession(session);
               if (ac.committed) {
-                const line = `Committed ${ac.sha || "HEAD"} — ${ac.subject} (${ac.files ?? 0} file(s), not pushed)`;
-                log.info(chalk.green(line));
+                const sha = ac.sha || "HEAD";
+                const line = `Committed ${sha} — ${ac.subject} (${ac.files ?? 0} file(s), not pushed)`;
+                if (sha !== lastCommittedSha) {
+                  lastCommittedSha = sha;
+                  log.info(chalk.green(line));
+                }
                 if (finalText.trim()) finalText = `${finalText.replace(/\s+$/, "")}\n\n${line}`;
                 else finalText = line;
               } else if (ac.skipped && ac.skipped !== "working tree clean") {
@@ -3583,6 +3597,19 @@ async function prepareToolResult(opts: {
       (name === "todo_write" || name === "TodoWrite")
     ) {
       noteTodoWrite(session.meta.id, turn);
+    }
+    if (
+      !result.isError &&
+      /call_mcp|playwright|browser/i.test(name) &&
+      /playwright|browser_navigate|browser_snapshot/i.test(
+        `${name} ${JSON.stringify(toolInput).slice(0, 400)}`,
+      )
+    ) {
+      try {
+        notePlayLoopRan(session.meta.id);
+      } catch {
+        /* */
+      }
     }
   } catch (err) {
     settle();

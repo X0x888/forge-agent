@@ -81,6 +81,22 @@ export function appendSessionMetrics(event: SessionMetricsEvent): void {
     } catch {
       /* windows */
     }
+    // Per-session copy — global prune dropped log10's first four hours.
+    if (event.sessionId) {
+      try {
+        const dir = path.join(forgeHome(), "sessions", event.sessionId);
+        ensureDir(dir);
+        const side = path.join(dir, "rounds.jsonl");
+        fs.appendFileSync(side, JSON.stringify(event) + "\n", { mode: 0o600 });
+        try {
+          fs.chmodSync(side, 0o600);
+        } catch {
+          /* windows */
+        }
+      } catch {
+        /* sidecar optional */
+      }
+    }
     // Cheap size check: if file is large, prune to keep newest N
     try {
       const st = fs.statSync(file);

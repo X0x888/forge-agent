@@ -20,7 +20,11 @@ import {
   collectRecentMillToolIds,
   applyMillHoldPrune,
 } from "../src/session/hold-context.js";
-import { isHelperOnlyTestCommand } from "../src/harness/ulw-cycle.js";
+import {
+  isHelperOnlyTestCommand,
+  isVerificationCommand,
+  verificationPassedFromResult,
+} from "../src/harness/ulw-cycle.js";
 import type { SessionData } from "../src/session/session.js";
 
 describe("helper-only test commands", () => {
@@ -38,6 +42,18 @@ describe("helper-only test commands", () => {
     assert.equal(isHelperOnlyTestCommand("npm test"), false);
     assert.equal(isHelperOnlyTestCommand("npm test 2>&1 | grep fail"), false);
     assert.equal(isHelperOnlyTestCommand("node --test tests/"), false);
+    assert.equal(
+      isVerificationCommand("node --test tests/w161-pickup-overflow.test.mjs"),
+      true,
+    );
+    assert.equal(
+      verificationPassedFromResult({
+        command: "node --test tests/w161-pickup-overflow.test.mjs",
+        isError: false,
+        output: "ℹ fail 0\n",
+      }),
+      false,
+    );
   });
 });
 
@@ -142,6 +158,7 @@ describe("explore-map contract", () => {
       const s = loadUlwCycle(sid)!;
       assert.ok((s.offContractStreak ?? 0) >= OFF_CONTRACT_HOLD, String(s.offContractStreak));
       assert.equal(contractHolding(s), true);
+      assert.equal(s.exploreRequired, true);
       const extra = formatHoldContextAppendix(sid);
       assert.match(extra, /Memory Walk/);
       disarmUlwCycle(sid);

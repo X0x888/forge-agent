@@ -187,6 +187,14 @@ export interface UlwCycleState {
    */
   offContractStreak?: number;
   contractHold?: boolean;
+  /**
+   * Unlimited hold requires one mid-run explore before the next ship.
+   * Wave-1 maps go stale; reprinting them is not a new reading.
+   */
+  exploreRequired?: boolean;
+  exploreRequiredAt?: string;
+  /** Playwright / play-loop ran this open wave — different class. */
+  playLoopPending?: boolean;
   /** New raw readFileSync test this wave — consume at next stamp. */
   rawPinProofTaint?: boolean;
   /** Loop should merge recent mill tool ids into sticky omit. */
@@ -321,7 +329,7 @@ const THIN_ADVISORY_STREAK = 3;
  * `verificationRan` signal — execution, not prose.
  */
 export const VERIFICATION_CMD_RE =
-  /\b(?:npm|pnpm|yarn|bun|deno)\s+(?:run\s+)?(?:test|tests|spec|typecheck|type-check|lint|check|build|ci|verify|smoke|tsc|format-check|fmt-check)\b|\b(?:pytest|py\.test|jest|vitest|mocha|ava|phpunit|rspec|ctest|mypy|pyright|ruff|golangci-lint|staticcheck|biome)\b|\bcargo\s+(?:test|check|build|clippy)\b|\bgo\s+(?:test|vet|build)\b|\bmvn\s+(?:test|verify|package|compile)\b|\bgradle(?:w)?\s+(?:test|check|build)\b|\bmake\s+(?:test|check|build|all|ci)\b|\bmix\s+test\b|\bcomposer\s+test\b|\bturbo\s+run\s+(?:test|tests|typecheck|type-check|lint|check|build|ci|verify|smoke)\b|\bnx\s+(?:run-many|run)\b|\btsc\b|\beslint\b|\bdotnet\s+(?:test|build)\b|\bnpx\s+(?:tsc|eslint|vitest|jest|prettier|biome)\b|\b(?:yarn\s+dlx|bunx)\s+(?:tsc|eslint|vitest|jest)\b|\bforge\s+(?:test|check|typecheck|ci|smoke)\b/i;
+  /\b(?:npm|pnpm|yarn|bun|deno)\s+(?:run\s+)?(?:test|tests|spec|typecheck|type-check|lint|check|build|ci|verify|smoke|tsc|format-check|fmt-check)\b|\b(?:pytest|py\.test|jest|vitest|mocha|ava|phpunit|rspec|ctest|mypy|pyright|ruff|golangci-lint|staticcheck|biome)\b|\bcargo\s+(?:test|check|build|clippy)\b|\bgo\s+(?:test|vet|build)\b|\bmvn\s+(?:test|verify|package|compile)\b|\bgradle(?:w)?\s+(?:test|check|build)\b|\bmake\s+(?:test|check|build|all|ci)\b|\bmix\s+test\b|\bcomposer\s+test\b|\bturbo\s+run\s+(?:test|tests|typecheck|type-check|lint|check|build|ci|verify|smoke)\b|\bnx\s+(?:run-many|run)\b|\btsc\b|\beslint\b|\bdotnet\s+(?:test|build)\b|\bnpx\s+(?:tsc|eslint|vitest|jest|prettier|biome)\b|\b(?:yarn\s+dlx|bunx)\s+(?:tsc|eslint|vitest|jest)\b|\bforge\s+(?:test|check|typecheck|ci|smoke)\b|\b(?:node|tsx)\b[^\n]{0,120}--test\b/i;
 
 /**
  * True when a bash command counts as structural verification.
@@ -764,6 +772,7 @@ function appendWaveRecord(
   applyContractNote(s, classText, opts.themed === true, opts.sessionId);
   const proof = consumeProofTaint(s) ? false : opts.proof;
   const onContract = closerOnContract(opts.sessionId, classText);
+  if (s.playLoopPending) s.playLoopPending = false;
   const rec: UlwWaveRecord = {
     wave: s.wave,
     editDelta: opts.editDelta,
@@ -959,6 +968,8 @@ function clearSameSurfaceHold(s: UlwCycleState): void {
   s.sameSurfaceAdmitCount = 0;
   s.contractHold = false;
   s.offContractStreak = 0;
+  s.exploreRequired = false;
+  s.exploreRequiredAt = undefined;
 }
 
 export function contractHolding(s: UlwCycleState): boolean {
@@ -981,6 +992,47 @@ function markHoldArmed(s: UlwCycleState): void {
   }
 }
 
+function markExploreRequired(s: UlwCycleState): void {
+  if (!s.exploreRequired) {
+    s.exploreRequired = true;
+    s.exploreRequiredAt = nowIso();
+  }
+}
+
+export function exploreHolding(s: UlwCycleState): boolean {
+  if (!s.enabled || !canArmSameSurfaceHold(s)) return false;
+  return Boolean(s.exploreRequired);
+}
+
+/** A completed explore child after hold — parent may adopt/ship a pick. */
+export function noteExploreChildCompleted(sessionId: string): boolean {
+  if (!sessionId) return false;
+  const s = loadUlwCycle(sessionId);
+  if (!s?.enabled || !s.exploreRequired) return false;
+  s.exploreRequired = false;
+  s.exploreRequiredAt = undefined;
+  saveUlwCycle(s);
+  return true;
+}
+
+export function notePlayLoopRan(sessionId: string): void {
+  if (!sessionId) return;
+  try {
+    const s = loadUlwCycle(sessionId);
+    if (!s?.enabled) return;
+    s.playLoopPending = true;
+    saveUlwCycle(s);
+  } catch {
+    /* sidecar optional */
+  }
+}
+
+export function isPlayLoopCloser(text: string): boolean {
+  return /\bplaywright\b|\bplay-loop\b|\bplayed the game\b|\bplay the game\b|\bzero JS errors\b/i.test(
+    text || "",
+  );
+}
+
 function applyContractNote(
   s: UlwCycleState,
   summary: string,
@@ -1000,6 +1052,7 @@ function applyContractNote(
   if (s.offContractStreak >= OFF_CONTRACT_HOLD) {
     markHoldArmed(s);
     s.contractHold = true;
+    markExploreRequired(s);
   }
 }
 
@@ -1032,6 +1085,7 @@ function closerOnContract(sessionId: string, text: string): boolean {
 
 /** Mill sibling? On-contract (pick) ships are never mill. */
 function isMillSiblingCloser(s: UlwCycleState, closer: string): boolean {
+  if (s.playLoopPending || isPlayLoopCloser(closer)) return false;
   const onContract = closerOnContract(s.sessionId, closer);
   if (onContract) return false;
   const prev = waveClassTexts(s);
@@ -1066,6 +1120,9 @@ function applySameSurfaceNote(
   ) {
     markHoldArmed(s);
     s.sameSurfaceHold = true;
+    if (factoryHold || isMillClassShip(classText, { onContract })) {
+      markExploreRequired(s);
+    }
   } else if (note.streak < SAME_SURFACE_HOLD && !factoryHold) {
     s.sameSurfaceHold = false;
     s.sameSurfaceAdmitCount = 0;
@@ -1084,6 +1141,13 @@ const CONTRACT_HOLD_ADMIT = [
   "[Forge ULW cycle driver] Stop blocked — last ships ignored the explore-map picks.",
   "Write a new Reading that ships or retires a pick with evidence, or /cycle 0.",
   "Eight off-contract ships is not a new class. Stuck-wall will not release this hold.",
+].join("\n");
+
+const EXPLORE_REQUIRED_ADMIT = [
+  "[Forge ULW cycle driver] Stop blocked — last ships are the same class and no mid-run explore has run.",
+  "Spawn ONE explore child (`spawn_subagent`, type=explore) whose prompt is the open picks plus: what did we abandon?",
+  "Do not Mad-Lib a Reading from memory. Do not ship. Fold the child's map into the next Reading.",
+  "Stuck-wall will not release. /cycle 0 wraps.",
 ].join("\n");
 
 
@@ -1253,6 +1317,10 @@ export function maybeAdoptNamedShips(
     parsed.length > 0 &&
     parsed.every((p) => isLeftoverChromeShip(p))
   ) {
+    return false;
+  }
+  // Hold without a fresh look — refuse even a pick Mad-Lib.
+  if (exploreHolding(s)) {
     return false;
   }
   // Contract hold: only an on-pick reading may adopt.
@@ -1614,6 +1682,14 @@ export function maybeStampUlwWave(opts: {
     ) {
       /* still need a reading — fall through */
     } else {
+      if (exploreHolding(s)) {
+        saveUlwCycle(s);
+        return {
+          stamped: false,
+          wave: s.wave,
+          admit: holdAdmit(opts.sessionId, EXPLORE_REQUIRED_ADMIT),
+        };
+      }
       if (
         contractHolding(s) &&
         !isOnExploreContract(closer, loadExploreMapPicks(opts.sessionId))
@@ -1882,6 +1958,9 @@ export function loadUlwCycle(sessionId: string): UlwCycleState | null {
     raw.offContractStreak = 0;
   }
   if (typeof raw.contractHold !== "boolean") raw.contractHold = false;
+  if (typeof raw.exploreRequired !== "boolean") raw.exploreRequired = false;
+  if (typeof raw.exploreRequiredAt !== "string") raw.exploreRequiredAt = undefined;
+  if (typeof raw.playLoopPending !== "boolean") raw.playLoopPending = false;
   if (typeof raw.rawPinProofTaint !== "boolean") raw.rawPinProofTaint = false;
   if (typeof raw.millHoldPrunePending !== "boolean") {
     raw.millHoldPrunePending = false;
@@ -2200,6 +2279,8 @@ export function armUlwCycle(
     sameSurfaceAdmitCount: 0,
     offContractStreak: 0,
     contractHold: false,
+    exploreRequired: false,
+    playLoopPending: false,
     rawPinProofTaint: false,
     millHoldPrunePending: false,
     proofDemands: 0,
@@ -2612,6 +2693,9 @@ export function resetUlwOnClear(sessionId: string): UlwCycleState | null {
   s.sameSurfaceStreak = 0;
   s.sameSurfaceHold = false;
   s.sameSurfaceAdmitCount = 0;
+  s.exploreRequired = false;
+  s.exploreRequiredAt = undefined;
+  s.playLoopPending = false;
   s.proofDemands = 0;
   s.evidenceNudges = 0;
   s.judgmentDemands = 0;
@@ -2668,6 +2752,9 @@ export const ULW_LIVE_CONTROLS_HINT =
 
 function formatSameSurfaceStatusLine(s: UlwCycleState): string | undefined {
   const streak = s.sameSurfaceStreak ?? 0;
+  if (exploreHolding(s)) {
+    return `  Explore: required — spawn one explore child (what did we abandon?) or /cycle 0`;
+  }
   if (contractHolding(s) && !sameSurfaceHolding(s)) {
     return `  Explore-map: hold — ship or retire a pick (${s.offContractStreak ?? 0} off-contract) or /cycle 0`;
   }
@@ -3072,6 +3159,17 @@ export function evaluateUlwAtStop(opts: {
           soulDemanded: true,
         };
       }
+    }
+    // Mid-run explore first — a Mad-Lib Reading is not a look.
+    if (exploreHolding(s) && !adoptedNamed) {
+      saveUlwCycle(s);
+      const admit = holdAdmit(opts.sessionId, EXPLORE_REQUIRED_ADMIT);
+      return {
+        block: true,
+        reason: admit,
+        reanchor: admit,
+        sameSurfaceDemanded: true,
+      };
     }
     // Do not use parse(closer) here — later replies often reprint the
     // original Reading, which would skip the gate forever.

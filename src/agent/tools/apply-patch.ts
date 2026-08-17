@@ -23,6 +23,7 @@ import {
 } from "./format-on-write.js";
 import { fileReadGuardEnabled } from "./file-read-state.js";
 import { verifyHintSuffix } from "../../util/project-intel.js";
+import { applyRawPinSideEffects } from "../../util/pin-budget.js";
 
 export async function toolApplyPatch(
   args: Record<string, unknown>,
@@ -458,13 +459,30 @@ export async function toolApplyPatch(
       await ctx.fileReads.noteFromDisk(target);
     }
   }
+  const pinNotes: string[] = [];
+  for (const op of planned) {
+    if (op.kind === "delete") continue;
+    const dest =
+      op.kind === "update" && op.moveAbs ? op.moveAbs : op.abs;
+    const before = op.kind === "add" ? "" : op.before;
+    const warn = applyRawPinSideEffects({
+      cwd: ctx.workspace,
+      absPath: dest,
+      before,
+      after: op.content,
+      sessionId: ctx.sessionId,
+      session: ctx.session,
+    });
+    if (warn) pinNotes.push(warn);
+  }
   const verifyTip =
-    writtenAbs.some((p) => {
+    (writtenAbs.some((p) => {
       const e = path.extname(p).toLowerCase();
       return e !== ".md" && e !== ".mdx" && e !== ".txt" && e !== ".rst";
     })
       ? verifyHintSuffix(ctx.workspace, writtenAbs[0])
-      : "";
+      : "") +
+    (pinNotes.length ? `\n\n${[...new Set(pinNotes)].join("\n\n")}` : "");
 
   const diffBlock = planned.length
     ? "\n\n" +

@@ -26,6 +26,7 @@ import {
   loadUlwCycle,
   maybeAdoptNamedShips,
   maybeStampUlwWave,
+  noteExploreChildCompleted,
   parseTestFailCount,
   saveUlwCycle,
   verificationPassedFromResult,
@@ -253,7 +254,10 @@ describe("unlimited adopt + stamp refuse the mill", () => {
         verificationPassed: true,
       });
       assert.equal(blocked.block, true);
-      assert.match(blocked.reanchor || "", /same surface|factory class|different class/i);
+      assert.match(
+        blocked.reanchor || "",
+        /same surface|factory class|different class|explore/i,
+      );
       assert.equal(loadUlwCycle(sid)!.wave, 3, "mill sibling must not increment w");
 
       const after = loadUlwCycle(sid)!;
@@ -307,10 +311,18 @@ describe("unlimited adopt + stamp refuse the mill", () => {
       }
       const held = loadUlwCycle(sid)!;
       assert.equal(held.sameSurfaceHold, true);
+      assert.equal(held.exploreRequired, true);
       held.soulNudgeDone = true;
       held.namedShipAdmitCount = 1;
       held.namedShips = [{ text: "the brazier lights you both", status: "done" }];
       saveUlwCycle(held);
+
+      const blockedAdopt = maybeAdoptNamedShips(
+        loadUlwCycle(sid)!,
+        "Reading: The one ship is Memory Walk as a 13-floor reskin, not couple copy.",
+      );
+      assert.equal(blockedAdopt, false, "pick reading waits for mid-run explore");
+      assert.equal(noteExploreChildCompleted(sid), true);
 
       const adopted = maybeAdoptNamedShips(
         loadUlwCycle(sid)!,

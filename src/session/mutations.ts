@@ -128,6 +128,37 @@ export function mutationsJournalStats(limit = 500): MutationsJournalStats {
   return { sessions, bytes, entries };
 }
 
+/** Keep the newest tail so /undo still sees late waves. */
+const MUTATION_JOURNAL_KEEP_BYTES = 8 * 1024 * 1024;
+
+function rotateMutationJournal(sessionId: string): void {
+  const file = journalPath(sessionId);
+  try {
+    const st = fs.statSync(file);
+    if (st.size < MAX_MUTATION_JOURNAL_BYTES) return;
+    const keep = Math.min(MUTATION_JOURNAL_KEEP_BYTES, st.size);
+    const fd = fs.openSync(file, "r");
+    let buf: Buffer;
+    try {
+      buf = Buffer.alloc(keep);
+      fs.readSync(fd, buf, 0, keep, st.size - keep);
+    } finally {
+      fs.closeSync(fd);
+    }
+    const text = buf.toString("utf8");
+    const nl = text.indexOf("\n");
+    const tail = nl >= 0 ? text.slice(nl + 1) : text;
+    fs.writeFileSync(file, tail, { mode: 0o600 });
+    try {
+      fs.chmodSync(file, 0o600);
+    } catch {
+      /* windows */
+    }
+  } catch {
+    /* best-effort */
+  }
+}
+
 /** Append one mutation (best-effort; never throws into the agent loop). */
 export function appendFileMutation(
   sessionId: string,
@@ -141,7 +172,9 @@ export function appendFileMutation(
     ensureDir(dir);
     try {
       const st = fs.statSync(journalPath(sessionId));
-      if (st.size >= MAX_MUTATION_JOURNAL_BYTES) return;
+      if (st.size >= MAX_MUTATION_JOURNAL_BYTES) {
+        rotateMutationJournal(sessionId);
+      }
     } catch {
       /* no journal yet */
     }

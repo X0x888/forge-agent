@@ -1332,6 +1332,8 @@ describe("ulw wave ledger + quality bar", () => {
     assert.ok(VERIFICATION_CMD_RE.test("turbo run test"));
     assert.ok(VERIFICATION_CMD_RE.test("turbo run typecheck"));
     assert.ok(VERIFICATION_CMD_RE.test("nx run-many -t test"));
+    assert.ok(VERIFICATION_CMD_RE.test("node --test tests/w161-foo.test.mjs"));
+    assert.ok(VERIFICATION_CMD_RE.test("tsx --test tests/foo.test.ts"));
     assert.ok(!VERIFICATION_CMD_RE.test("ls -la"));
     assert.ok(!VERIFICATION_CMD_RE.test("git status"));
     assert.ok(!VERIFICATION_CMD_RE.test("npm install"));

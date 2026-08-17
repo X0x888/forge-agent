@@ -1014,6 +1014,21 @@ describe("path-hints", () => {
     assert.match(parentTypo, /workspace root/);
   });
 
+  it("pathNotFoundHint finds the same basename in another folder", async () => {
+    const ws = path.join(tmpRoot, "ws-basename");
+    await fsp.mkdir(path.join(ws, "src", "scenes", "hearth"), { recursive: true });
+    await fsp.writeFile(
+      path.join(ws, "src", "scenes", "hearth", "tea-sip.js"),
+      "export {}\n",
+    );
+    const hint = await pathNotFoundHint(
+      path.join(ws, "src", "systems", "tea-sip.js"),
+      ws,
+    );
+    assert.match(hint, /Did you mean/);
+    assert.match(hint, /scenes[/\\]hearth[/\\]tea-sip\.js/);
+  });
+
   it("displayRelPath realpath-normalizes macOS /var vs /private/var", () => {
     const ws = path.join(tmpRoot, "rel-ws");
     fs.mkdirSync(ws, { recursive: true });
