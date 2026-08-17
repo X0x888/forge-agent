@@ -348,6 +348,7 @@ export {
   isHelperOnlyTestCommand,
   consumeMillHoldPrune,
   contractHolding,
+  stopBlockTripsContinueCap,
 } from "./harness/ulw-cycle.js";
 export {
   SAME_SURFACE_HOLD,

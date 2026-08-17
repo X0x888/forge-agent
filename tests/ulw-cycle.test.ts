@@ -11,6 +11,7 @@ import {
   cycleZeroCurrentWave,
   maybeStampUlwWave,
   maybeFlipUlwToLastOnSafetyValve,
+  stopBlockTripsContinueCap,
   maybeFlipUlwToLastOnCostCap,
   setMaxWaves,
   evaluateUlwAtStop,
@@ -340,6 +341,38 @@ describe("ulw cycle", () => {
     assert.equal(normalizeMaxWaves(5), 5);
     assert.equal(normalizeMaxWaves(0), null);
     assert.equal(normalizeMaxWaves(null), null);
+  });
+
+  it("unlimited CONTINUE Stop-blocks do not trip the continue cap (log10)", () => {
+    assert.equal(
+      stopBlockTripsContinueCap({
+        enabled: true,
+        cycle: 1,
+        maxWaves: null,
+      }),
+      false,
+    );
+    assert.equal(
+      stopBlockTripsContinueCap({
+        enabled: true,
+        cycle: 1,
+        maxWaves: 12,
+      }),
+      true,
+    );
+    assert.equal(
+      stopBlockTripsContinueCap({
+        enabled: true,
+        cycle: 0,
+        maxWaves: null,
+      }),
+      true,
+    );
+    assert.equal(stopBlockTripsContinueCap(null), true);
+    assert.equal(
+      stopBlockTripsContinueCap({ enabled: false, cycle: 1, maxWaves: null }),
+      true,
+    );
   });
 
   it("default maxWaves is unlimited; arm can set cap", () => {

@@ -54,6 +54,7 @@ import {
   isArmableMandate,
   isResumeFollowUp,
   maybeFlipUlwToLastOnSafetyValve,
+  stopBlockTripsContinueCap,
   ulwKickoffMessage,
   formatUlwCounts,
   formatUlwBadge,
@@ -2425,7 +2426,11 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
         }
 
         stopContinues += 1;
-        if (stopContinues > maxStopContinues) {
+        const ulwForCap = loadUlwCycle(session.meta.id);
+        if (
+          stopBlockTripsContinueCap(ulwForCap) &&
+          stopContinues > maxStopContinues
+        ) {
           log.warn(
             `Stop-continue cap (${maxStopContinues}) reached — releasing to prevent infinite loop`,
           );
