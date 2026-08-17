@@ -939,6 +939,16 @@ it("/fork includes last-turn peek", async () => {
     assert.match(o, /\/last/);
     assert.doesNotMatch(o, /session-scoped/);
     assert.doesNotMatch(o, /Mode: PLAN/);
+    const narrow = formatResumeOrientation(s, { columns: 24 });
+    assert.match(narrow, /↳ type a task/);
+    assert.match(narrow, /\/diff/);
+    assert.match(narrow, /\/last/);
+    for (const line of narrow.split("\n")) {
+      assert.ok(
+        visibleWidth(line) <= 24,
+        `resume key row wider than TTY: ${JSON.stringify(line)}`,
+      );
+    }
   });
 
   it("formatResumeOrientation compact skips Checks/memory/checkpoint", async () => {

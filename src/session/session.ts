@@ -3206,15 +3206,35 @@ export function formatCompactResumeCard(
     .join("\n");
 }
 
+function wrapResumeKeys(line: string, cols: number): string {
+  if (visibleWidth(line) <= cols) return line;
+  const caret = "  ↳ ";
+  const body = line.startsWith(caret) ? line.slice(caret.length) : line;
+  const tokens = body
+    .split(" · ")
+    .map((t) => t.trim())
+    .filter(Boolean);
+  if (!tokens.length) return line;
+  const out: string[] = [`${caret}${tokens[0]}`];
+  for (const tok of tokens.slice(1)) out.push(`    · ${tok}`);
+  return out.join("\n");
+}
+
 export function formatResumeOrientation(
   session: SessionData,
-  opts?: { maxChars?: number; fileLimit?: number; compact?: boolean },
+  opts?: {
+    maxChars?: number;
+    fileLimit?: number;
+    compact?: boolean;
+    columns?: number;
+  },
 ): string {
   const compact = opts?.compact === true;
   if (compact) return formatCompactResumeCard(session, opts);
   const cols = Math.max(
     24,
-    process.stdout.isTTY ? process.stdout.columns || 80 : 80,
+    opts?.columns ??
+      (process.stdout.isTTY ? process.stdout.columns || 80 : 80),
   );
   const clip = (s: string): string =>
     visibleWidth(s) > cols ? clipAnsi(s, cols) : s;
@@ -3373,10 +3393,11 @@ export function formatResumeOrientation(
   } catch {
     /* */
   }
-  if (parts.length) {
-    parts.push("  ↳ type a task  ·  /diff  ·  /last");
+  const body = parts.map(clip);
+  if (body.length) {
+    body.push(wrapResumeKeys("  ↳ type a task  ·  /diff  ·  /last", cols));
   }
-  return parts.map(clip).join("\n");
+  return body.join("\n");
 }
 
 /**
