@@ -66,6 +66,7 @@ import {
   formatHoldContextAppendix,
   isOnExploreContract,
   loadExploreMapPicks,
+  loadWave1Reading,
 } from "./explore-contract.js";
 
 export {
@@ -1151,6 +1152,28 @@ const CONTRACT_HOLD_ADMIT = [
   "Write a new Reading that ships or retires a pick with evidence, or /cycle 0.",
   "Eight off-contract ships is not a new class. Stuck-wall will not release this hold.",
 ].join("\n");
+
+function wave1JobReprintAdmit(
+  s: UlwCycleState,
+  closer: string,
+): string | undefined {
+  if (!isEvaluateClassMandate(s.mandate)) return undefined;
+  if ((s.wave ?? 0) < 3) return undefined;
+  if (closerOnContract(s.sessionId, closer)) return undefined;
+  if (!isMillClassShip(closer) && (s.offContractStreak ?? 0) < 3) {
+    return undefined;
+  }
+  const reading = loadWave1Reading(s.sessionId);
+  const picks = loadExploreMapPicks(s.sessionId);
+  if (!reading && !picks.length) return undefined;
+  const lines = [
+    "[Forge ULW cycle driver] Stop blocked — this ship is still garnish. Wave 1 already named the job.",
+    reading ? `Wave 1 reading: ${reading}` : "",
+    picks.length ? `Explore-map picks:\n${picks.slice(0, 4).map((p) => `- ${p.slice(0, 200)}`).join("\n")}` : "",
+    "Ship a pick or /cycle 0. A new noun is not a new job. This bounce is once.",
+  ].filter(Boolean);
+  return lines.join("\n");
+}
 
 const EXPLORE_REQUIRED_ADMIT = [
   "[Forge ULW cycle driver] Stop blocked — last ships are the same class and no mid-run explore has run.",
@@ -3168,6 +3191,17 @@ export function evaluateUlwAtStop(opts: {
         harvestStoredProductQuality(opts.sessionId);
       } catch {
         /* ledger is best-effort */
+      }
+      const reprint = wave1JobReprintAdmit(s, closer);
+      if (reprint) {
+        s.soulNudgeDone = true;
+        saveUlwCycle(s);
+        return {
+          block: true,
+          reason: reprint,
+          reanchor: reprint,
+          soulDemanded: true,
+        };
       }
       let quality: ProductQualityResult;
       try {

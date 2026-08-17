@@ -246,4 +246,29 @@ describe("mill hold suffix prune", () => {
     assert.equal(applyMillHoldPrune(session), 0);
     assert.equal(session.meta.requestPruneSticky, undefined);
   });
+
+  it("suffix-omits mill tools without creating sticky", () => {
+    const session = {
+      meta: {},
+      messages: [
+        {
+          role: "assistant",
+          content: "",
+          tool_calls: [
+            {
+              id: "call-mill-2",
+              type: "function",
+              function: {
+                name: "write_file",
+                arguments: '{"path":"tests/w9-hush.test.mjs"}',
+              },
+            },
+          ],
+        },
+      ],
+    } as unknown as SessionData;
+    assert.equal(applyMillHoldPrune(session), 1);
+    assert.equal(session.meta.requestPruneSticky, undefined);
+    assert.deepEqual(session.meta.holdOmitToolIds, ["call-mill-2"]);
+  });
 });

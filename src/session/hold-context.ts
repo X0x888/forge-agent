@@ -40,18 +40,26 @@ export function collectRecentMillToolIds(
   return ids;
 }
 
-/** Merge recent mill tool ids into an existing sticky omit set. */
+/** Merge recent mill tool ids into sticky omit *or* a suffix-only hold set. */
 export function applyMillHoldPrune(session: SessionData): number {
-  const frozen = normalizeRequestPruneSticky(session.meta.requestPruneSticky);
-  if (!frozen) return 0;
   const extra = collectRecentMillToolIds(session.messages, 48);
   if (!extra.length) return 0;
-  const have = new Set(frozen.omitted);
+  const frozen = normalizeRequestPruneSticky(session.meta.requestPruneSticky);
+  if (frozen) {
+    const have = new Set(frozen.omitted);
+    const add = extra.filter((id) => !have.has(id));
+    if (add.length) {
+      session.meta.requestPruneSticky = {
+        ...frozen,
+        omitted: [...frozen.omitted, ...add],
+      };
+    }
+    return add.length;
+  }
+  // No first clip yet — omit suffix mill bodies only. Do not create sticky.
+  const have = new Set(session.meta.holdOmitToolIds ?? []);
   const add = extra.filter((id) => !have.has(id));
   if (!add.length) return 0;
-  session.meta.requestPruneSticky = {
-    ...frozen,
-    omitted: [...frozen.omitted, ...add],
-  };
+  session.meta.holdOmitToolIds = [...have, ...add].slice(-48);
   return add.length;
 }

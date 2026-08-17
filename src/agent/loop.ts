@@ -79,6 +79,7 @@ import {
 } from "../session/tool-clearing.js";
 import {
   prepareOutboundMessages,
+  applyStickyPrune,
   countHarnessUserPokes,
   type RequestPruneSticky,
   type PruneKind,
@@ -522,6 +523,8 @@ export interface BuildChatRequestOpts {
   lastApiPromptTokens?: number;
   /** Frozen omit set from a prior clip (session.meta.requestPruneSticky). */
   sticky?: RequestPruneSticky | null;
+  /** Suffix mill-tool ids to omit without inventing a first clip. */
+  holdOmitIds?: string[] | null;
   onPrune?: (info: {
     kind: PruneKind;
     sticky?: RequestPruneSticky;
@@ -557,7 +560,19 @@ export function buildChatRequest(
     sticky: prep.sticky,
     changed: prep.changed,
   });
-  const wire = prep.messages;
+  let wire = prep.messages;
+  const holdIds = (opts?.holdOmitIds ?? []).filter(Boolean);
+  if (holdIds.length) {
+    const held = applyStickyPrune(wire, {
+      omitted: holdIds,
+      collapsed: [],
+      softTrimmed: [],
+      stubbedHarness: [],
+      shelf: 0,
+      clippedAt: "",
+    });
+    if (held.changed) wire = held.messages;
+  }
   // Phase 6: expand [[image:path]] / @shot.png markers into multimodal parts
   // for vision-capable providers (inline data URLs). Stored session history
   // keeps the original string markers — only the outbound request expands.
@@ -917,6 +932,7 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
       estimatedTokens: estimated,
       lastApiPromptTokens: session.meta.lastRoundPromptTokens,
       sticky: session.meta.requestPruneSticky,
+      holdOmitIds: session.meta.holdOmitToolIds,
       onPrune: (info) => {
         lastPruneKind = info.kind;
         lastOutboundPruned = info.kind !== "off";

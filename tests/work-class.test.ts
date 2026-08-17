@@ -273,6 +273,55 @@ describe("unlimited adopt + stamp refuse the mill", () => {
     });
   });
 
+  it("bounces once with Wave 1 picks when mill continues", () => {
+    withHome(() => {
+      const sid = "wc-reprint";
+      const dir = path.join(process.env.FORGE_HOME!, "sessions", sid);
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(
+        path.join(dir, "meta.json"),
+        JSON.stringify({
+          exploreMaps: [
+            {
+              pick: "Memory Walk is CoupleMaze + copy, not find past memories",
+              files: [],
+              at: new Date().toISOString(),
+            },
+          ],
+        }),
+      );
+      armUlwCycle(sid, "Evaluate this game and then improve it.", {
+        cycle: 1,
+        skipCheckpoint: true,
+        editCount: 0,
+      });
+      let edits = 0;
+      for (const msg of [BRAZIER, MOSS, POT]) {
+        edits += 8;
+        maybeStampUlwWave({
+          sessionId: sid,
+          editCount: edits,
+          openTodoCount: 0,
+          stepsSinceStamp: 1,
+          lastAssistantMessage: msg,
+          verificationPassed: true,
+        });
+      }
+      const blocked = evaluateUlwAtStop({
+        sessionId: sid,
+        lastAssistantMessage: HUSH,
+        editCount: edits + 8,
+        openTodoCount: 0,
+        stuckThreshold: 20,
+        verificationPassed: true,
+      });
+      assert.equal(blocked.block, true);
+      assert.match(blocked.reanchor || "", /Wave 1|Explore-map picks|garnish/i);
+      assert.equal(loadUlwCycle(sid)!.soulNudgeDone, true);
+      disarmUlwCycle(sid);
+    });
+  });
+
   it("Memory Walk + Far stays is a pick, not a mill sibling", () => {
     withHome(() => {
       const sid = "wc-mw";
