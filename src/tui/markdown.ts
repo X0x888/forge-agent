@@ -14,7 +14,7 @@
  * Dependency-free (chalk only).
  */
 import chalk, { Chalk } from "chalk";
-import { visibleWidth } from "../util/format.js";
+import { visibleWidth, wrapAnsiLine } from "../util/format.js";
 import {
   highlightFenceLine,
   type HighlightState,
@@ -26,6 +26,16 @@ export interface MarkdownRendererOptions {
    * Off = byte-identical passthrough.
    */
   color?: boolean;
+  /**
+   * Visible columns for prose wrap. 0 / omit = no wrap (tests, pipes).
+   * Fences, tables, lists, quotes, and headings stay one source line.
+   */
+  width?: number;
+}
+
+/** Readable measure: 40–76 cols so a wide TTY does not become a wall. */
+export function markdownMeasure(columns: number): number {
+  return Math.max(40, Math.min(Math.max(1, columns) - 1, 76));
 }
 
 export interface MarkdownRenderer {
@@ -45,6 +55,7 @@ export function createMarkdownRenderer(
   }
   return new LineMarkdownRenderer(
     new Chalk({ level: Math.max(chalk.level, 1) as 1 | 2 | 3 }),
+    opts.width ?? 0,
   );
 }
 
@@ -55,7 +66,10 @@ class LineMarkdownRenderer implements MarkdownRenderer {
   private fenceHi: HighlightState = { inBlockComment: false };
   private tableRows: string[] = [];
 
-  constructor(private readonly c: InstanceType<typeof Chalk>) {}
+  constructor(
+    private readonly c: InstanceType<typeof Chalk>,
+    private readonly width: number,
+  ) {}
 
   push(chunk: string): string {
     this.buffer += chunk;
@@ -95,8 +109,21 @@ class LineMarkdownRenderer implements MarkdownRenderer {
       return "";
     }
     const table = this.flushTable();
+    const wrap = this.width >= 8 && this.shouldWrapProse(line);
     const styled = this.styleLine(line);
-    return eol ? `${table}${styled}\n` : `${table}${styled}`;
+    const body = wrap ? wrapAnsiLine(styled, this.width).join("\n") : styled;
+    return eol ? `${table}${body}\n` : `${table}${body}`;
+  }
+
+  /** Prose only — fences/tables/lists/quotes/headings keep their line shape. */
+  private shouldWrapProse(line: string): boolean {
+    if (this.inFence) return false;
+    if (/^ {0,3}(```|~~~)/.test(line)) return false;
+    if (/^ {0,3}#{1,6}\s+/.test(line)) return false;
+    if (/^ {0,3}(-{3,}|\*{3,}|_{3,})\s*$/.test(line)) return false;
+    if (/^ {0,3}>\s?/.test(line)) return false;
+    if (/^\s*(?:[-*+]|\d{1,3}[.)])\s+/.test(line)) return false;
+    return line.trim().length > 0;
   }
 
   private flushTable(): string {

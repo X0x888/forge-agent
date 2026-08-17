@@ -45,6 +45,7 @@ import {
 } from "./turn-summary.js";
 import {
   createMarkdownRenderer,
+  markdownMeasure,
   type MarkdownRenderer,
 } from "./markdown.js";
 import { getGitSnapshot } from "../util/git-context.js";
@@ -784,7 +785,10 @@ export async function runRepl(opts: {
               // so the next keystroke / redock starts below the reply.
               rl.abandonPaint();
             }
-            if (!md) md = createMarkdownRenderer();
+            if (!md) {
+              const cols = process.stdout.columns || 80;
+              md = createMarkdownRenderer({ width: markdownMeasure(cols) });
+            }
             process.stdout.write(md.push(t));
           },
           onToolStart: (name, args) => {

@@ -1,6 +1,10 @@
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
-import { createMarkdownRenderer } from "../src/tui/markdown.js";
+import {
+  createMarkdownRenderer,
+  markdownMeasure,
+} from "../src/tui/markdown.js";
+import { visibleWidth, wrapAnsiLine } from "../src/util/format.js";
 
 /** Render a document through the styled renderer in the given chunks. */
 function renderStyled(chunks: string[]): string {
@@ -310,5 +314,57 @@ describe("markdown renderer styling", () => {
       !out.includes(`${ESC}9mcode${ESC}29m`),
       "inline code must not be struck",
     );
+  });
+});
+
+describe("markdown prose measure", () => {
+  test("markdownMeasure caps a wide TTY at 76", () => {
+    assert.equal(markdownMeasure(200), 76);
+    assert.equal(markdownMeasure(80), 76);
+    assert.equal(markdownMeasure(41), 40);
+    assert.equal(markdownMeasure(10), 40);
+  });
+
+  test("wrapAnsiLine breaks on words and stays within width", () => {
+    const words = Array.from({ length: 12 }, (_, i) => `word${i}`).join(" ");
+    const lines = wrapAnsiLine(words, 24);
+    assert.ok(lines.length > 1, "expected a wrap");
+    for (const line of lines) {
+      assert.ok(visibleWidth(line) <= 24, `${visibleWidth(line)} > 24: ${line}`);
+    }
+    assert.equal(lines.join(" ").replace(/\s+/g, " "), words);
+  });
+
+  test("prose wraps; fences stay one source line", () => {
+    const prose =
+      "The agent sits at a terminal and needs a readable measure so a two-hundred-column window does not become a wall of text.\n";
+    const fence = "```ts\nconst veryLongIdentifierThatShouldNotWrap = 1;\n```\n";
+    const doc = prose + fence;
+    const r = createMarkdownRenderer({ color: true, width: 40 });
+    const out = r.push(doc) + r.end();
+    const lines = out.split("\n").filter((l) => l.length > 0);
+    const proseLines = lines.filter((l) => !l.includes("│") && !l.includes("```"));
+    assert.ok(proseLines.length >= 2, "prose should wrap");
+    for (const line of proseLines) {
+      assert.ok(visibleWidth(line) <= 40, `prose ${visibleWidth(line)} > 40`);
+    }
+    assert.ok(
+      lines.some((l) => l.includes("veryLongIdentifierThatShouldNotWrap")),
+      "fence body must stay intact",
+    );
+  });
+
+  test("wrap is chunk-boundary invariant", () => {
+    const doc =
+      "A readable measure keeps long assistant paragraphs from becoming a wall on a wide terminal window.\n";
+    const full = (() => {
+      const r = createMarkdownRenderer({ color: true, width: 32 });
+      return r.push(doc) + r.end();
+    })();
+    for (let i = 0; i <= doc.length; i++) {
+      const r = createMarkdownRenderer({ color: true, width: 32 });
+      const split = r.push(doc.slice(0, i)) + r.push(doc.slice(i)) + r.end();
+      assert.equal(split, full, `split at ${i} diverged`);
+    }
   });
 });

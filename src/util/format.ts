@@ -725,6 +725,76 @@ export function visibleWidth(text: string): number {
   return text.replace(/\x1b\[[0-9;]*m/g, "").length;
 }
 
+/**
+ * Word-wrap a chalk-colored string to `width` visible columns.
+ * Breaks at the last space before the measure; hard-breaks if a token is
+ * longer than `width`. Open SGR is replayed on the next line so a wrap
+ * inside bold/italic does not bleed or drop the style.
+ */
+export function wrapAnsiLine(text: string, width: number): string[] {
+  if (width < 8 || visibleWidth(text) <= width) return [text];
+  const lines: string[] = [];
+  let rest = text;
+  for (let i = 0; i < 64 && visibleWidth(rest) > width; i++) {
+    const cut = splitAnsiWord(rest, width);
+    if (!cut.head || cut.head === rest) {
+      lines.push(rest);
+      return lines;
+    }
+    lines.push(cut.head);
+    rest = cut.tail;
+    if (!rest) break;
+  }
+  if (rest) lines.push(rest);
+  return lines;
+}
+
+function applySgr(style: string, seq: string): string {
+  if (seq === "\x1b[0m" || seq === "\x1b[m") return "";
+  return style + seq;
+}
+
+function splitAnsiWord(text: string, width: number): { head: string; tail: string } {
+  // eslint-disable-next-line no-control-regex
+  const re = /(\x1b\[[0-9;]*m)|./g;
+  let vis = 0;
+  let style = "";
+  let lastBreak = -1;
+  let styleAtBreak = "";
+  let cutIndex = text.length;
+  let styleAtCut = style;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text)) !== null) {
+    if (m[1]) {
+      style = applySgr(style, m[1]);
+      continue;
+    }
+    if (vis >= width) {
+      cutIndex = m.index;
+      styleAtCut = style;
+      break;
+    }
+    if (m[0] === " " || m[0] === "\t") {
+      lastBreak = m.index;
+      styleAtBreak = style;
+    }
+    vis += 1;
+  }
+  const minBreak = Math.min(8, Math.max(1, Math.floor(width / 4)));
+  if (lastBreak >= 0 && visibleWidth(text.slice(0, lastBreak)) >= minBreak) {
+    const head = text.slice(0, lastBreak).replace(/[ \t]+$/, "");
+    const tail = text.slice(lastBreak + 1).replace(/^[ \t]+/, "");
+    return { head: closeAnsi(head), tail: styleAtBreak + tail };
+  }
+  const head = text.slice(0, cutIndex);
+  const tail = text.slice(cutIndex);
+  return { head: closeAnsi(head), tail: styleAtCut + tail };
+}
+
+function closeAnsi(text: string): string {
+  return text.includes("\x1b[") ? `${text}\x1b[0m` : text;
+}
+
 /** Clip a chalk-colored string to `max` visible columns without mid-SGR cuts. */
 export function clipAnsi(text: string, max: number): string {
   if (max <= 0) return "";
