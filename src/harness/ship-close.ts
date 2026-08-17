@@ -9,12 +9,15 @@ const WAVE_SHIP_RE =
   /\*{0,2}Wave\s+(?:\d+\s+)?(?:LAST\s+)?(?:shipped|ship)\b\*{0,2}/i;
 const BOLD_SHIP_RE = /\*\*Ship:\*\*/;
 const LINE_SHIP_RE = /(?:^|\n)\s*Ship:\s+/m;
+/** Maze dogfood closer: "Shipped: The brazier lights you both." */
+const SHIPPED_RE = /(?:^|\n)\s*\*{0,2}Shipped:\*{0,2}\s+/im;
 
 export function isShipCloseText(text: string): boolean {
   const t = text || "";
   if (!t.trim()) return false;
   return (
     SHIP_LANDED_RE.test(t) ||
+    SHIPPED_RE.test(t) ||
     WAVE_SHIP_RE.test(t) ||
     BOLD_SHIP_RE.test(t) ||
     LINE_SHIP_RE.test(t)
@@ -48,6 +51,7 @@ export function extractShipSummary(text: string): string | undefined {
   if (!t.trim()) return undefined;
   return (
     bodyAfter(SHIP_LANDED_RE, t) ||
+    bodyAfter(SHIPPED_RE, t) ||
     bodyAfter(WAVE_SHIP_RE, t) ||
     bodyAfter(BOLD_SHIP_RE, t) ||
     bodyAfter(LINE_SHIP_RE, t)
@@ -81,6 +85,14 @@ export function pickShipHint(opts: {
   }
   const ledger = (opts.lastWaveSummary || "").trim();
   if (ledger && (isShipCloseText(ledger) || extractShipSummary(ledger))) {
+    return ledger;
+  }
+  // Late mill summaries are the ship body without ship-close grammar.
+  if (
+    ledger.length >= 12 &&
+    !/\bCycle complete\b/i.test(ledger) &&
+    !/^\*{0,2}Proof:/i.test(ledger)
+  ) {
     return ledger;
   }
   return undefined;

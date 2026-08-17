@@ -64,6 +64,7 @@ import {
   advanceUlwPhaseOnReading,
   countsTowardVerification,
   applyVerificationTrail,
+  verificationPassedFromResult,
 } from "../harness/ulw-cycle.js";
 import {
   clearStaleToolResults,
@@ -3575,13 +3576,19 @@ async function prepareToolResult(opts: {
     }
     if (countsTowardVerification(toolInput, preferred)) {
       harnessStats.verificationRuns += 1;
-      if (!result.isError) {
+      const rawOut = typeof result.output === "string" ? result.output : "";
+      const passed = verificationPassedFromResult({
+        command: cmd,
+        isError: result.isError,
+        output: rawOut,
+      });
+      if (passed) {
         harnessStats.verificationPassedRuns += 1;
       }
       try {
         applyVerificationTrail(session.meta, {
           command: cmd,
-          isError: result.isError,
+          isError: !passed,
           preferredCheckCommands: preferred,
         });
         if (session.meta.lastVerificationOk === true) {

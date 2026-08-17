@@ -342,6 +342,9 @@ export {
   ULW_LIVE_CONTROLS_HINT,
   VERIFICATION_CMD_RE,
   isVerificationCommand,
+  parseTestFailCount,
+  isVerificationOutputPipe,
+  verificationPassedFromResult,
 } from "./harness/ulw-cycle.js";
 export {
   SAME_SURFACE_HOLD,
@@ -351,6 +354,13 @@ export {
   nextSameSurfaceStreak,
   surfaceKey,
 } from "./harness/same-surface.js";
+export {
+  isFactoryFingerprint,
+  isAdjacentShareSchema,
+  isMillClassShip,
+  factoryClassHolding,
+  isSameClassReading,
+} from "./harness/work-class.js";
 export {
   isUserFacingProductWork,
   extractJobInsight,

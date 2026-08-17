@@ -9,6 +9,7 @@ import {
   commitIdentArgs,
   gitHasAuthorIdentity,
   isSensitiveRelPath,
+  isChangelogRelPath,
   maybeAutoCommitOnUlwDone,
   porcelainPaths,
   stageAutoCommitPaths,
@@ -56,6 +57,12 @@ function withRepo(fn: (root: string) => void): void {
 }
 
 describe("ULW auto-commit", () => {
+  it("names changelog-only snapshots", () => {
+    assert.equal(isChangelogRelPath("CHANGELOG.md"), true);
+    assert.equal(isChangelogRelPath("docs/CHANGELOG"), true);
+    assert.equal(isChangelogRelPath("src/changelog.ts"), false);
+  });
+
   it("names sensitive paths", () => {
     assert.equal(isSensitiveRelPath(".env"), true);
     assert.equal(isSensitiveRelPath("src/.env.local"), true);
@@ -145,6 +152,24 @@ describe("ULW auto-commit", () => {
       const r = maybeAutoCommitOnUlwDone({ cwd: root, sessionId: sid });
       assert.equal(r.committed, false);
       assert.match(r.skipped || "", /FORGE_ULW_AUTO_COMMIT=0/);
+    });
+  });
+
+  it("skips a changelog-only dirty tree", () => {
+    withRepo((root) => {
+      const sid = "sess-ac-cl";
+      fs.mkdirSync(path.join(process.env.FORGE_HOME!, "sessions", sid), {
+        recursive: true,
+      });
+      armUlwCycle(sid, "Improve this game based on comprehensive evaluation.", {
+        cycle: 1,
+        skipCheckpoint: true,
+        cwd: root,
+      });
+      fs.writeFileSync(path.join(root, "CHANGELOG.md"), "# Changelog\n");
+      const r = maybeAutoCommitOnUlwDone({ cwd: root, sessionId: sid });
+      assert.equal(r.committed, false, r.skipped);
+      assert.equal(r.skipped, "changelog-only");
     });
   });
 

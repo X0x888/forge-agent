@@ -127,6 +127,12 @@ export function isSensitiveRelPath(rel: string): boolean {
   return SENSITIVE_RE.test(norm);
 }
 
+/** Consolidation theater — do not mint a commit for CHANGELOG alone. */
+export function isChangelogRelPath(rel: string): boolean {
+  const base = rel.replace(/\\/g, "/").split("/").pop() || "";
+  return /^changelog(\.(md|markdown|txt|rst))?$/i.test(base);
+}
+
 export function buildAutoCommitSubject(mandate: string, hint?: string): string {
   const fromShip = hint ? extractShipSummary(hint) : undefined;
   let t = (fromShip || hint || mandate || "").replace(/\s+/g, " ").trim();
@@ -214,6 +220,9 @@ export function maybeAutoCommitOnUlwDone(opts: {
       committed: false,
       skipped: "only sensitive paths remain",
     };
+  }
+  if (toAdd.every((p) => isChangelogRelPath(p))) {
+    return { committed: false, skipped: "changelog-only" };
   }
 
   const { staged, failed } = stageAutoCommitPaths(root, toAdd);

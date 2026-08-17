@@ -12,7 +12,14 @@ import path from "node:path";
 import { ensureDir, forgeHome, nowIso } from "../util/fs.js";
 
 /** Skip journaling (and restoring) bodies larger than this. */
-export const MAX_MUTATION_BYTES = 1_500_000;
+export const MAX_MUTATION_BYTES = 256_000;
+/** Stop appending once the journal itself is this large. */
+export const MAX_MUTATION_JOURNAL_BYTES = 20 * 1024 * 1024;
+
+function isChangelogAbsPath(absPath: string): boolean {
+  const base = absPath.replace(/\\/g, "/").split("/").pop() || "";
+  return /^changelog(\.(md|markdown|txt|rst))?$/i.test(base);
+}
 
 function sessionDir(id: string): string {
   return path.join(forgeHome(), "sessions", id);
@@ -127,8 +134,17 @@ export function appendFileMutation(
   input: RecordMutationInput,
 ): void {
   try {
+    if (isChangelogAbsPath(input.path)) {
+      return;
+    }
     const dir = sessionDir(sessionId);
     ensureDir(dir);
+    try {
+      const st = fs.statSync(journalPath(sessionId));
+      if (st.size >= MAX_MUTATION_JOURNAL_BYTES) return;
+    } catch {
+      /* no journal yet */
+    }
     const entry: FileMutation = {
       path: input.path,
       kind: input.kind,
@@ -177,6 +193,13 @@ export async function snapshotForWrite(
     const st = await fsp.stat(absPath);
     if (st.isDirectory()) {
       return { kind: "update", skipped: true, reason: "path is a directory" };
+    }
+    if (isChangelogAbsPath(absPath)) {
+      return {
+        kind: "update",
+        skipped: true,
+        reason: "changelog pre-image skipped",
+      };
     }
     if (st.size > MAX_MUTATION_BYTES) {
       return {

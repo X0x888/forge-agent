@@ -54,6 +54,13 @@ import {
   nextSameSurfaceStreak,
   surfaceKey,
 } from "./same-surface.js";
+import {
+  factoryClassHolding,
+  isChangelogOnlySummary,
+  isFactoryFingerprint,
+  isMillClassShip,
+  isSameClassReading,
+} from "./work-class.js";
 
 export {
   extractShipSummary,
@@ -273,8 +280,8 @@ const WAVE_PROOF_RE =
 const ATTEST_EVIDENCE_RE =
   /✅|❌|✓|\b\d+\s+(?:tests?|specs?|checks?)\s+(?:pass(?:ed)?|ok|green)\b|\btests?\s+(?:pass(?:es|ed|ing)?|green)\b|\b(?:npm|pnpm|yarn|bun|pytest|jest|vitest|cargo|go test|tsc|typecheck|lint|build|make)\b[^\n]{0,60}?\b(?:pass(?:ed|ing)?|green|succeed(?:ed)?|ok|clean|exit\s*0)\b|\b(?:pass(?:ed|ing)?|green|ok|clean)\b[^\n]{0,40}?\b(?:tests?|specs?|typecheck|lint|build)\b|\bexit(?:\s*code)?\s*0\b/i;
 
-/** Wave ledger cap — enough for bar anchoring + status, bounded sidecar size. */
-const WAVE_LEDGER_KEEP = 20;
+/** Wave ledger cap — enough for an 8-hour unlimited run + status. */
+const WAVE_LEDGER_KEEP = 256;
 /** Recent diff fingerprints kept for churn (revisit) detection. */
 const DIFF_FP_KEEP = 12;
 /** Proof demands per proof-less streak before accepting a stated rationale. */
@@ -421,6 +428,38 @@ export function applyVerificationTrail(
     meta.lastVerificationOk = false;
     meta.lastVerificationExitCode = 1;
   }
+}
+
+/** `ℹ fail 64` / `# fail 64` from node:test (and grepped tails). */
+export function parseTestFailCount(output: string): number | undefined {
+  const tail = (output || "").length > 12_000 ? output.slice(-12_000) : output || "";
+  const m = tail.match(/(?:^|\n)\s*(?:ℹ|#)\s*fail\s+(\d+)\b/m);
+  if (!m) return undefined;
+  const n = Number(m[1]);
+  return Number.isFinite(n) ? n : undefined;
+}
+
+/** `npm test | grep` / `| tail` hides the child's exit code. */
+export function isVerificationOutputPipe(command: string): boolean {
+  const c = String(command || "");
+  if (!VERIFICATION_CMD_RE.test(c)) return false;
+  return /\|\s*(?:grep|rg|egrep|tail|head|awk|sed)\b/.test(c);
+}
+
+/**
+ * Success-only proof. A piped suite that prints `ℹ fail 64` is red even
+ * when grep exits 0. A pipe with no fail count is "ran", not passed.
+ */
+export function verificationPassedFromResult(opts: {
+  command: string;
+  isError?: boolean;
+  output?: string;
+}): boolean {
+  if (opts.isError) return false;
+  const fail = parseTestFailCount(opts.output || "");
+  if (fail != null && fail > 0) return false;
+  if (isVerificationOutputPipe(opts.command) && fail == null) return false;
+  return true;
 }
 
 function escapeRegExp(s: string): string {
@@ -882,19 +921,25 @@ function applySameSurfaceNote(
     consolidation: isConsolidationCloser(summary),
   });
   s.sameSurfaceStreak = note.streak;
-  if (note.streak >= SAME_SURFACE_HOLD && canArmSameSurfaceHold(s)) {
+  const factoryHold =
+    canArmSameSurfaceHold(s) && factoryClassHolding(prev, summary);
+  if (
+    (note.streak >= SAME_SURFACE_HOLD || factoryHold) &&
+    canArmSameSurfaceHold(s)
+  ) {
     s.sameSurfaceHold = true;
-  } else if (note.streak < SAME_SURFACE_HOLD) {
+  } else if (note.streak < SAME_SURFACE_HOLD && !factoryHold) {
     s.sameSurfaceHold = false;
     s.sameSurfaceAdmitCount = 0;
   }
 }
 
 const SAME_SURFACE_HOLD_ADMIT = [
-  "[Forge ULW cycle driver] Stop blocked — last ships are the same surface.",
-  "Write a new Reading: (what is still hard + the ONE next ship on a different surface) or /cycle 0.",
-  "Do not stamp another leftover / sibling of the last ship. A red test suite or open defect is a different surface.",
-  "Do not attest **Cycle complete.** Unlimited ULW continues only after a different-surface reading.",
+  "[Forge ULW cycle driver] Stop blocked — last ships are the same surface (or the same adjacent-share / factory class).",
+  "Write a new Reading: (what is still hard + the ONE next ship on a different class) or /cycle 0.",
+  "A new noun is not a new surface. Adjacent-partner share / far-stays / toast-names-both is one schema.",
+  "Different class: play-path bug, architecture, honest red suite, play-loop — or an unretired explore-map pick.",
+  "Do not attest **Cycle complete.** Stuck-wall will not release this hold.",
 ].join("\n");
 
 
@@ -1042,6 +1087,18 @@ export function maybeAdoptNamedShips(
   ) {
     return false;
   }
+  // Unlimited mill: refuse a one-ship reading that is the same adjacent-share
+  // / factory class as the last ships (log10: 106 Mad-Lib adopts).
+  if (
+    normalizeMaxWaves(s.maxWaves) == null &&
+    (s.namedShipAdmitCount ?? 0) >= 1 &&
+    isSameClassReading(
+      (s.waves ?? []).map((w) => w.summary),
+      parsed,
+    )
+  ) {
+    return false;
+  }
   // User-facing product: a preview/chrome catalog is not a reading.
   if (
     isUserFacingProductWork(s.mandate) &&
@@ -1109,16 +1166,18 @@ export function namedShipsExhausted(s: UlwCycleState): boolean {
 
 const NAMED_SHIP_EXHAUSTED_ADMIT = [
   "[Forge ULW cycle driver] Stop blocked — named ships from the reading are done.",
-  "Write a new Reading: (what is still hard + the ONE next ship) or /cycle 0.",
-  "Do not invent leftover chrome. A red test suite or open defect is a different surface — not leftover chrome.",
-  "Unlimited ULW continues only after a new reading.",
+  "Write a new Reading: (what is still hard + the ONE next ship on a different class) or /cycle 0.",
+  "A new noun is not a new surface. Adjacent-share / far-stays factory is the same class.",
+  "A red test suite or open defect is a different surface — not leftover chrome.",
+  "Unlimited ULW continues only after a new reading. Stuck-wall will not release this hold.",
 ].join("\n");
 
 const NAMED_SHIP_EXHAUSTED_STRONG = [
   "[Forge ULW cycle driver] Stop blocked — named ships from the reading are done.",
-  "Write a new Reading: (what is still hard + the ONE next ship on a different surface) or /cycle 0.",
-  "Do not invent leftover chrome. A red test suite or open defect is a different surface — not leftover chrome.",
-  "Do not attest **Cycle complete.** — /cycle 0 finishes this wave + one more, then LAST. Unlimited ULW continues only after a new reading.",
+  "Write a new Reading: (what is still hard + the ONE next ship on a different class) or /cycle 0.",
+  "Do not Mad-Lib another beside-you / far-stays sibling. A red test suite or play-path bug is a different class.",
+  "Do not attest **Cycle complete.** — /cycle 0 finishes this wave + one more, then LAST.",
+  "Stuck-wall will not release this hold.",
 ].join("\n");
 
 const MAX_NAMED_SHIP_ADMITS = 3;
@@ -1398,7 +1457,12 @@ export function maybeStampUlwWave(opts: {
       if (
         sameSurfaceHolding(s) &&
         (isLeftoverChromeShip(closer) ||
+          isMillClassShip(closer) ||
           matchesRecentSurface(
+            (s.waves ?? []).map((w) => w.summary),
+            closer,
+          ) ||
+          factoryClassHolding(
             (s.waves ?? []).map((w) => w.summary),
             closer,
           ))
@@ -1526,10 +1590,15 @@ export function maybeStampUlwWave(opts: {
  */
 export function bestWave(waves: UlwWaveRecord[] | undefined): UlwWaveRecord | null {
   if (!waves?.length) return null;
-  const eligible = waves.filter((w) => w.netDiff !== "revisit");
-  const base = eligible.length ? eligible : waves;
-  const proven = base.filter((w) => w.proof);
-  const pool = proven.length ? proven : base;
+  const notChurn = waves.filter((w) => w.netDiff !== "revisit");
+  const notMill = (notChurn.length ? notChurn : waves).filter(
+    (w) =>
+      !isFactoryFingerprint(w.summary) &&
+      !isChangelogOnlySummary(w.summary, w.editDelta),
+  );
+  const eligible = notMill.length ? notMill : notChurn.length ? notChurn : waves;
+  const proven = eligible.filter((w) => w.proof);
+  const pool = proven.length ? proven : eligible;
   return pool.reduce((best, w) => (w.editDelta > best.editDelta ? w : best), pool[0]);
 }
 
@@ -2793,11 +2862,17 @@ export function evaluateUlwAtStop(opts: {
       // Stay blocked until a different-surface reading is adopted or
       // /cycle 0. Cycle complete / leftover chrome do not stamp. A real
       // declared ship with edits still increments w (maze 43–46 were invisible).
+      const summaries = (s.waves ?? []).map((w) => w.summary);
+      const millSibling =
+        isMillClassShip(closer) ||
+        matchesRecentSurface(summaries, closer) ||
+        factoryClassHolding(summaries, closer);
       const shipAfterExhaust =
         !alreadyStamped &&
         isShipCloseText(closer) &&
         editDelta >= 1 &&
-        !isLeftoverChromeShip(closer);
+        !isLeftoverChromeShip(closer) &&
+        !millSibling;
       if (shipAfterExhaust) {
         appendWaveRecord(s, {
           sessionId: opts.sessionId,
@@ -2854,7 +2929,12 @@ export function evaluateUlwAtStop(opts: {
         isShipCloseText(closer) &&
         editDelta >= 1 &&
         !isLeftoverChromeShip(closer) &&
+        !isMillClassShip(closer) &&
         !matchesRecentSurface(
+          (s.waves ?? []).map((w) => w.summary),
+          closer,
+        ) &&
+        !factoryClassHolding(
           (s.waves ?? []).map((w) => w.summary),
           closer,
         );

@@ -4,7 +4,11 @@
  * Maze dogfood stamped 20 thick+proven waves on openings / rest-card /
  * leftover-audio. thinStreak and polishStreak stayed 0. This classifier
  * sees near-duplicate summaries and leftover-sibling language.
+ * Adjacent-share / factory schema (work-class.ts) is a second signal:
+ * rotating nouns on one couple-share recipe are the same surface.
  */
+
+import { matchesRecentSchema } from "./work-class.js";
 
 export const SAME_SURFACE_MIN_HITS = 2;
 export const SAME_SURFACE_OVERLAP = 0.5;
@@ -87,7 +91,8 @@ export function matchesRecentSurface(
 ): boolean {
   const recent = prevSummaries.filter((s) => s && s.trim()).slice(-SAME_SURFACE_LOOKBACK);
   if (isLeftoverSiblingShip(closer) && recent.length > 0) return true;
-  return recent.some((s) => isSameSurface(s, closer));
+  if (recent.some((s) => isSameSurface(s, closer))) return true;
+  return matchesRecentSchema(prevSummaries, closer);
 }
 
 export interface SameSurfaceNote {
