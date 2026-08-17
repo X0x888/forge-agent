@@ -20,6 +20,7 @@ import {
   lineStats,
 } from "./edit-receipt.js";
 import { verifyHintSuffix } from "../../util/project-intel.js";
+import { applyRawPinSideEffects } from "../../util/pin-budget.js";
 
 export async function toolWrite(
   args: Record<string, unknown>,
@@ -133,8 +134,18 @@ export async function toolWrite(
       await ctx.fileReads.noteFromDisk(filePath);
     }
     const rel = displayRelPath(ctx.workspace, filePath);
-    const verifyTip = verifyHintSuffix(ctx.workspace, filePath);
     const before = snap.skipped ? "" : (snap.before ?? "");
+    const pinWarn = applyRawPinSideEffects({
+      cwd: ctx.workspace,
+      absPath: filePath,
+      before,
+      after: body,
+      sessionId: ctx.sessionId,
+      session: ctx.session,
+    });
+    const verifyTip =
+      verifyHintSuffix(ctx.workspace, filePath) +
+      (pinWarn ? `\n\n${pinWarn}` : "");
     if (!editReceiptEnabled()) {
       const diff = snap.skipped ? "" : shortDiff(rel, before, body);
       const counted = snap.skipped

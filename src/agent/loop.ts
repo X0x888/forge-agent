@@ -65,7 +65,9 @@ import {
   countsTowardVerification,
   applyVerificationTrail,
   verificationPassedFromResult,
+  consumeMillHoldPrune,
 } from "../harness/ulw-cycle.js";
+import { applyMillHoldPrune } from "../session/hold-context.js";
 import {
   clearStaleToolResults,
   toolClearEnvConfig,
@@ -1271,6 +1273,16 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
             verificationPassed: harnessStats.verificationPassedRuns > 0,
             cwd: workspace,
           });
+          if (stamp.stamped || stamp.admit) {
+            try {
+              const ulwNow = loadUlwCycle(session.meta.id);
+              if (ulwNow && consumeMillHoldPrune(ulwNow)) {
+                applyMillHoldPrune(session);
+              }
+            } catch {
+              /* suffix omit is best-effort */
+            }
+          }
           if (stamp.stamped) {
             lastWaveStampTurn = turns;
             try {
@@ -2255,6 +2267,16 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
           );
         }
 
+        if (stopResult.ulw?.block && !stopResult.allowStop) {
+          try {
+            const ulwNow = loadUlwCycle(session.meta.id);
+            if (ulwNow && consumeMillHoldPrune(ulwNow)) {
+              applyMillHoldPrune(session);
+            }
+          } catch {
+            /* suffix omit is best-effort */
+          }
+        }
         if (
           stopResult.ulw?.block &&
           !stopResult.allowStop &&

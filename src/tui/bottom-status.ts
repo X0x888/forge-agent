@@ -248,6 +248,20 @@ export function renderBottomStatusLine(
     });
   }
 
+  const spentUsd =
+    (snap.tokens.estimatedUsd ?? 0) + (snap.tokens.subagentUsd ?? 0);
+  if (spentUsd >= 0.01) {
+    const cap = snap.budget?.capUsd;
+    const pct = cap && cap > 0 ? (spentUsd / cap) * 100 : 0;
+    bits.push({
+      text: paint(
+        `~${formatCost(spentUsd)}`,
+        snap.budget?.hit ? "red" : pct >= 50 ? "yellow" : "dim",
+      ),
+      prio: 8,
+    });
+  }
+
   if (
     snap.tokens.subagentCount &&
     snap.tokens.subagentCount > 0 &&

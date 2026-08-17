@@ -21,6 +21,7 @@ import {
   durableMemoryFingerprint,
   isEvaluateClassMandate,
 } from "./decision-memory.js";
+import { formatHoldContextAppendix } from "./explore-contract.js";
 
 export interface HarnessSnapshot {
   ulwEnabled: boolean;
@@ -63,6 +64,8 @@ export interface HarnessSnapshot {
   cycleZeroStopAt?: number | null;
   /** Unlimited same-surface hold is armed. */
   sameSurfaceHold?: boolean;
+  contractHold?: boolean;
+  holdAppendix?: string;
 }
 
 const lastAdmitted = new Map<string, string>();
@@ -126,6 +129,11 @@ export function snapshotHarness(opts: {
     wrapKind: ulw?.wrapKind,
     cycleZeroStopAt: ulw?.cycleZeroStopAt ?? null,
     sameSurfaceHold: Boolean(ulw?.sameSurfaceHold),
+    contractHold: Boolean(ulw?.contractHold),
+    holdAppendix:
+      ulw && (ulw.sameSurfaceHold || ulw.contractHold) && opts.sessionId
+        ? formatHoldContextAppendix(opts.sessionId)
+        : "",
   };
 }
 
@@ -149,6 +157,7 @@ export function fingerprintSnapshot(s: HarnessSnapshot): string {
     s.wrapKind ?? "-",
     s.cycleZeroStopAt == null ? "-" : String(s.cycleZeroStopAt),
     s.sameSurfaceHold ? "1" : "0",
+    s.contractHold ? "1" : "0",
   ].join("\x1f");
 }
 
@@ -206,7 +215,8 @@ function countersOnlyChange(a: HarnessSnapshot, b: HarnessSnapshot): boolean {
     (a.decisionsFp ?? "") === (b.decisionsFp ?? "") &&
     (a.wrapKind ?? "") === (b.wrapKind ?? "") &&
     (a.cycleZeroStopAt ?? null) === (b.cycleZeroStopAt ?? null) &&
-    Boolean(a.sameSurfaceHold) === Boolean(b.sameSurfaceHold)
+    Boolean(a.sameSurfaceHold) === Boolean(b.sameSurfaceHold) &&
+    Boolean(a.contractHold) === Boolean(b.contractHold)
   );
 }
 
@@ -302,8 +312,15 @@ export function renderHarnessAdmission(s: HarnessSnapshot): string {
           ? `User /cycle 0 — finish this wave + one more, LAST at wave=${s.maxWaves}. **Cycle complete.** is refused until then.`
           : `max_waves=${s.maxWaves} is a budget — spend every wave. **Cycle complete.** is refused until the cap (or /cycle 0). Cap auto-flips LAST.`
         : `max_waves=off (unlimited). CONTINUE until /cycle 0 (finish this wave + one more, then LAST). **Cycle complete.** is refused while cycle=1.`,
-      s.sameSurfaceHold
-        ? `Same-surface hold — write a new Reading on a different surface or /cycle 0. Do not stamp another leftover of the last ship.`
+      s.sameSurfaceHold || s.contractHold
+        ? [
+            s.contractHold && !s.sameSurfaceHold
+              ? `Explore-map hold — ship or retire a named pick; a new noun is not enough.`
+              : `Same-surface / factory hold — write a new Reading on a different class or /cycle 0.`,
+            s.holdAppendix || "",
+          ]
+            .filter(Boolean)
+            .join("\n")
         : `Harness w=N/M is the only wave counter. Do not invent Wave K. Close a unit with Wave shipped. / Ship landed: so w can move.`,
       s.mandate ? `Mandate: ${displayUlwMandate(s.mandate)}` : "",
       s.softPrompt

@@ -638,6 +638,33 @@ describe("statusline", () => {
     assert.match(line, /cache 99%/);
   });
 
+  it("dock paints live session spend from token totals", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-sl-cost-"));
+    process.env.FORGE_HOME = tmp;
+    const s = createSession({ cwd: tmp, provider: "xai", model: "grok-4.6" });
+    s.meta.totalPromptTokens = 2_000_000;
+    s.meta.totalCompletionTokens = 100_000;
+    s.meta.totalCacheReadTokens = 1_800_000;
+    const config = {
+      ...DEFAULT_CONFIG,
+      provider: "xai",
+      model: "grok-4.6",
+      contextWindow: 500_000,
+    } as ForgeConfig;
+    const auth: ResolvedAuth = {
+      provider: "xai",
+      method: "api_key",
+      token: "t",
+      accountId: "xai:test",
+    };
+    const line = renderBottomStatusLine(
+      { config, session: s, auth },
+      undefined,
+      { width: 160, plain: true },
+    );
+    assert.match(line, /~\$/);
+  });
+
   it("dock ctx follows last API prompt_tokens when the estimate is lower", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-sl-api-ctx-"));
     process.env.FORGE_HOME = tmp;

@@ -61,6 +61,12 @@ import {
   isMillClassShip,
   isSameClassReading,
 } from "./work-class.js";
+import {
+  OFF_CONTRACT_HOLD,
+  formatHoldContextAppendix,
+  isOnExploreContract,
+  loadExploreMapPicks,
+} from "./explore-contract.js";
 
 export {
   extractShipSummary,
@@ -168,6 +174,16 @@ export interface UlwCycleState {
   sameSurfaceHold?: boolean;
   /** Hold admits this run (stronger copy after the first). */
   sameSurfaceAdmitCount?: number;
+  /**
+   * Consecutive themed ships that did not touch an explore-map pick.
+   * Unlimited evaluate-class holds at OFF_CONTRACT_HOLD.
+   */
+  offContractStreak?: number;
+  contractHold?: boolean;
+  /** New raw readFileSync test this wave — consume at next stamp. */
+  rawPinProofTaint?: boolean;
+  /** Loop should merge recent mill tool ids into sticky omit. */
+  millHoldPrunePending?: boolean;
   /** Consecutive waves with negligible edits AND no verification */
   thinStreak?: number;
   /**
@@ -459,7 +475,26 @@ export function verificationPassedFromResult(opts: {
   const fail = parseTestFailCount(opts.output || "");
   if (fail != null && fail > 0) return false;
   if (isVerificationOutputPipe(opts.command) && fail == null) return false;
+  if (isHelperOnlyTestCommand(opts.command)) return false;
   return true;
+}
+
+/**
+ * Isolated `node --test tests/w161-foo.test.mjs` (and small wN families)
+ * ran, but they are not wave proof — the mill's 5/5 helper file.
+ */
+export function isHelperOnlyTestCommand(command: string): boolean {
+  const c = String(command || "").replace(/\s+/g, " ").trim();
+  if (!c) return false;
+  if (/\b(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?test\b/.test(c)) return false;
+  if (/node\s+--test\s+tests\/(?:\*\*|["']?\.\*|["']?$)/.test(c)) return false;
+  const isNodeTest = /\bnode\b[^\n]*--test\b/.test(c) || /\btsx\s+--test\b/.test(c);
+  if (!isNodeTest) return false;
+  const files = [...c.matchAll(/tests\/[^\s"'\\]+\.test\.(?:mjs|js|cjs|ts)/gi)].map(
+    (m) => m[0],
+  );
+  if (files.length === 0) return /tests\/w\d+/i.test(c);
+  return files.length <= 6 && files.every((f) => /\/w\d+/i.test(f));
 }
 
 function escapeRegExp(s: string): string {
@@ -716,11 +751,13 @@ function appendWaveRecord(
   s.phase = "ship";
   s.judgmentRequired = false;
   applySameSurfaceNote(s, opts.summary, opts.themed === true);
+  applyContractNote(s, opts.summary, opts.themed === true, opts.sessionId);
+  const proof = consumeProofTaint(s) ? false : opts.proof;
   const rec: UlwWaveRecord = {
     wave: s.wave,
     editDelta: opts.editDelta,
     netDiff: opts.netDiff,
-    proof: opts.proof,
+    proof,
     todoProgress: opts.todoProgress,
     summary: opts.summary,
     surfaceKey: surfaceKey(opts.summary) || undefined,
@@ -731,20 +768,20 @@ function appendWaveRecord(
     recordWaveObservation(
       opts.sessionId,
       s.wave,
-      `+${opts.editDelta}e proof=${opts.proof ? "✓" : "✗"} todosΔ=${opts.todoProgress} net=${opts.netDiff ?? "n/a"} — ${opts.summary}`,
+      `+${opts.editDelta}e proof=${proof ? "✓" : "✗"} todosΔ=${opts.todoProgress} net=${opts.netDiff ?? "n/a"} — ${opts.summary}`,
     );
   } catch {
     /* */
   }
   const thin =
-    (opts.editDelta <= 1 && opts.netDiff !== "new" && !opts.proof) ||
+    (opts.editDelta <= 1 && opts.netDiff !== "new" && !proof) ||
     opts.netDiff === "revisit" ||
     (opts.todoProgress === 0 &&
-      !opts.proof &&
+      !proof &&
       opts.editDelta <= 2 &&
       opts.netDiff !== "new");
   s.thinStreak = thin ? (s.thinStreak ?? 0) + 1 : 0;
-  if (opts.proof) s.proofDemands = 0;
+  if (proof) s.proofDemands = 0;
   return rec;
 }
 
@@ -907,6 +944,61 @@ export function sameSurfaceHolding(s: UlwCycleState): boolean {
 function clearSameSurfaceHold(s: UlwCycleState): void {
   s.sameSurfaceHold = false;
   s.sameSurfaceAdmitCount = 0;
+  s.contractHold = false;
+  s.offContractStreak = 0;
+}
+
+export function contractHolding(s: UlwCycleState): boolean {
+  if (!s.enabled || !canArmSameSurfaceHold(s)) return false;
+  return Boolean(
+    s.contractHold || (s.offContractStreak ?? 0) >= OFF_CONTRACT_HOLD,
+  );
+}
+
+export function consumeMillHoldPrune(s: UlwCycleState): boolean {
+  if (!s.millHoldPrunePending) return false;
+  s.millHoldPrunePending = false;
+  saveUlwCycle(s);
+  return true;
+}
+
+function markHoldArmed(s: UlwCycleState): void {
+  if (!s.sameSurfaceHold && !s.contractHold) {
+    s.millHoldPrunePending = true;
+  }
+}
+
+function applyContractNote(
+  s: UlwCycleState,
+  summary: string,
+  themed: boolean,
+  sessionId: string,
+): void {
+  if (!themed || isConsolidationCloser(summary)) return;
+  if (!canArmSameSurfaceHold(s)) return;
+  const picks = loadExploreMapPicks(sessionId);
+  if (!picks.length) return;
+  if (isOnExploreContract(summary, picks)) {
+    s.offContractStreak = 0;
+    s.contractHold = false;
+    return;
+  }
+  s.offContractStreak = (s.offContractStreak ?? 0) + 1;
+  if (s.offContractStreak >= OFF_CONTRACT_HOLD) {
+    markHoldArmed(s);
+    s.contractHold = true;
+  }
+}
+
+function consumeProofTaint(s: UlwCycleState): boolean {
+  if (!s.rawPinProofTaint) return false;
+  s.rawPinProofTaint = false;
+  return true;
+}
+
+function holdAdmit(sessionId: string, base: string): string {
+  const extra = formatHoldContextAppendix(sessionId);
+  return extra ? `${base}\n${extra}` : base;
 }
 
 function applySameSurfaceNote(
@@ -927,6 +1019,7 @@ function applySameSurfaceNote(
     (note.streak >= SAME_SURFACE_HOLD || factoryHold) &&
     canArmSameSurfaceHold(s)
   ) {
+    markHoldArmed(s);
     s.sameSurfaceHold = true;
   } else if (note.streak < SAME_SURFACE_HOLD && !factoryHold) {
     s.sameSurfaceHold = false;
@@ -940,6 +1033,12 @@ const SAME_SURFACE_HOLD_ADMIT = [
   "A new noun is not a new surface. Adjacent-partner share / far-stays / toast-names-both is one schema.",
   "Different class: play-path bug, architecture, honest red suite, play-loop — or an unretired explore-map pick.",
   "Do not attest **Cycle complete.** Stuck-wall will not release this hold.",
+].join("\n");
+
+const CONTRACT_HOLD_ADMIT = [
+  "[Forge ULW cycle driver] Stop blocked — last ships ignored the explore-map picks.",
+  "Write a new Reading that ships or retires a pick with evidence, or /cycle 0.",
+  "Eight off-contract ships is not a new class. Stuck-wall will not release this hold.",
 ].join("\n");
 
 
@@ -1106,6 +1205,16 @@ export function maybeAdoptNamedShips(
     parsed.every((p) => isLeftoverChromeShip(p))
   ) {
     return false;
+  }
+  // Contract hold: only an on-pick reading may adopt.
+  if (contractHolding(s)) {
+    const picks = loadExploreMapPicks(s.sessionId);
+    const blob = parsed.join("\n");
+    if (!isOnExploreContract(blob, picks) && !parsed.some((p) => isOnExploreContract(p, picks))) {
+      return false;
+    }
+    s.contractHold = false;
+    s.offContractStreak = 0;
   }
   // Same-surface hold: refuse a reading whose ONE ship is the last theme.
   // Passed-on items may name the old surface — that is "we are leaving it."
@@ -1455,6 +1564,18 @@ export function maybeStampUlwWave(opts: {
       /* still need a reading — fall through */
     } else {
       if (
+        contractHolding(s) &&
+        !isOnExploreContract(closer, loadExploreMapPicks(opts.sessionId))
+      ) {
+        s.contractHold = true;
+        saveUlwCycle(s);
+        return {
+          stamped: false,
+          wave: s.wave,
+          admit: holdAdmit(opts.sessionId, CONTRACT_HOLD_ADMIT),
+        };
+      }
+      if (
         sameSurfaceHolding(s) &&
         (isLeftoverChromeShip(closer) ||
           isMillClassShip(closer) ||
@@ -1473,7 +1594,7 @@ export function maybeStampUlwWave(opts: {
         return {
           stamped: false,
           wave: s.wave,
-          admit: SAME_SURFACE_HOLD_ADMIT,
+          admit: holdAdmit(opts.sessionId, SAME_SURFACE_HOLD_ADMIT),
         };
       }
       applyDiffFingerprint(s, fp);
@@ -1709,6 +1830,17 @@ export function loadUlwCycle(sessionId: string): UlwCycleState | null {
     !Number.isFinite(raw.sameSurfaceAdmitCount)
   ) {
     raw.sameSurfaceAdmitCount = 0;
+  }
+  if (
+    typeof raw.offContractStreak !== "number" ||
+    !Number.isFinite(raw.offContractStreak)
+  ) {
+    raw.offContractStreak = 0;
+  }
+  if (typeof raw.contractHold !== "boolean") raw.contractHold = false;
+  if (typeof raw.rawPinProofTaint !== "boolean") raw.rawPinProofTaint = false;
+  if (typeof raw.millHoldPrunePending !== "boolean") {
+    raw.millHoldPrunePending = false;
   }
   return raw;
 }
@@ -2022,6 +2154,10 @@ export function armUlwCycle(
     sameSurfaceStreak: 0,
     sameSurfaceHold: false,
     sameSurfaceAdmitCount: 0,
+    offContractStreak: 0,
+    contractHold: false,
+    rawPinProofTaint: false,
+    millHoldPrunePending: false,
     proofDemands: 0,
     evidenceNudges: 0,
     soulNudgeDone: false,
@@ -2455,8 +2591,11 @@ export const ULW_LIVE_CONTROLS_HINT =
 
 function formatSameSurfaceStatusLine(s: UlwCycleState): string | undefined {
   const streak = s.sameSurfaceStreak ?? 0;
+  if (contractHolding(s) && !sameSurfaceHolding(s)) {
+    return `  Explore-map: hold — ship or retire a pick (${s.offContractStreak ?? 0} off-contract) or /cycle 0`;
+  }
   if (sameSurfaceHolding(s)) {
-    return `  Same surface: hold — new Reading on a different surface or /cycle 0 (stuck-wall will not release)`;
+    return `  Same surface: hold — new Reading on a different class or /cycle 0 (stuck-wall will not release)`;
   }
   if (streak >= SAME_SURFACE_ADVISORY) {
     return `  Same surface: ${streak} in a row — next ship must be a different surface (or /cycle 0)`;
@@ -2682,7 +2821,8 @@ export function evaluateUlwAtStop(opts: {
     !s.wrapKind &&
     normalizeMaxWaves(s.maxWaves) == null &&
     namedShipsExhausted(s);
-  const exhaustHolding = namedExhaustHolding || sameSurfaceHolding(s);
+  const exhaustHolding =
+    namedExhaustHolding || sameSurfaceHolding(s) || contractHolding(s);
   if (progressed) {
     s.stuckBlocks = 0;
   } else if (!exhaustHolding) {
@@ -2913,9 +3053,10 @@ export function evaluateUlwAtStop(opts: {
         (s.namedShipAdmitCount ?? 0) >= MAX_NAMED_SHIP_ADMITS ||
         glanceable ||
         s.namedShipAdmitCount > 1;
-      const admit = strong
-        ? NAMED_SHIP_EXHAUSTED_STRONG
-        : NAMED_SHIP_EXHAUSTED_ADMIT;
+      const admit = holdAdmit(
+        opts.sessionId,
+        strong ? NAMED_SHIP_EXHAUSTED_STRONG : NAMED_SHIP_EXHAUSTED_ADMIT,
+      );
       saveUlwCycle(s);
       return {
         block: true,
@@ -2942,13 +3083,29 @@ export function evaluateUlwAtStop(opts: {
         s.sameSurfaceAdmitCount = (s.sameSurfaceAdmitCount ?? 0) + 1;
         s.sameSurfaceHold = true;
         saveUlwCycle(s);
+        const admit = holdAdmit(opts.sessionId, SAME_SURFACE_HOLD_ADMIT);
         return {
           block: true,
-          reason: SAME_SURFACE_HOLD_ADMIT,
-          reanchor: SAME_SURFACE_HOLD_ADMIT,
+          reason: admit,
+          reanchor: admit,
           sameSurfaceDemanded: true,
         };
       }
+    }
+    if (
+      contractHolding(s) &&
+      !adoptedNamed &&
+      !isOnExploreContract(closer, loadExploreMapPicks(opts.sessionId))
+    ) {
+      s.contractHold = true;
+      saveUlwCycle(s);
+      const admit = holdAdmit(opts.sessionId, CONTRACT_HOLD_ADMIT);
+      return {
+        block: true,
+        reason: admit,
+        reanchor: admit,
+        sameSurfaceDemanded: true,
+      };
     }
     if (!alreadyStamped) {
       appendWaveRecord(s, {

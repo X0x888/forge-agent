@@ -345,6 +345,9 @@ export {
   parseTestFailCount,
   isVerificationOutputPipe,
   verificationPassedFromResult,
+  isHelperOnlyTestCommand,
+  consumeMillHoldPrune,
+  contractHolding,
 } from "./harness/ulw-cycle.js";
 export {
   SAME_SURFACE_HOLD,
@@ -361,6 +364,22 @@ export {
   factoryClassHolding,
   isSameClassReading,
 } from "./harness/work-class.js";
+export {
+  loadExploreMapPicks,
+  isOnExploreContract,
+  formatHoldContextAppendix,
+  OFF_CONTRACT_HOLD,
+} from "./harness/explore-contract.js";
+export {
+  pinBudgetLawPresent,
+  introducesRawReadFileSync,
+  applyRawPinSideEffects,
+  RAW_PIN_WARNING,
+} from "./util/pin-budget.js";
+export {
+  collectRecentMillToolIds,
+  applyMillHoldPrune,
+} from "./session/hold-context.js";
 export {
   isUserFacingProductWork,
   extractJobInsight,

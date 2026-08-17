@@ -143,6 +143,8 @@ export interface SessionMeta {
   lastVerificationOk?: boolean;
   /** 0 green / 1 red. Mid-loop verify nudge already reads this. */
   lastVerificationExitCode?: number;
+  /** New raw readFileSync test in a pin-budget repo — ULW proof tainted this wave. */
+  rawPinProofTaint?: boolean;
   /** ISO timestamp of the most recent file edit (write/search_replace/apply_patch). */
   lastEditAt?: string;
   /** Last /checkpoint sha (git stash create dangling commit). */
