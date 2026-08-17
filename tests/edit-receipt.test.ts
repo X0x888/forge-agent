@@ -59,6 +59,17 @@ describe("edit-receipt", () => {
     });
   });
 
+  describe("large prepend is a small hunk", () => {
+    it("does not report +N/−N of the whole CHANGELOG", () => {
+      const body = Array.from({ length: 10_000 }, (_, i) => `line ${i}`).join("\n");
+      const after = `### new\n### two\n### three\n${body}`;
+      const hunks = lineHunks(body, after);
+      const st = lineStats(hunks);
+      assert.equal(st.added, 3);
+      assert.equal(st.removed, 0);
+    });
+  });
+
   describe("G1 small exact replace", () => {
     const before = "export function f() {\n  const x = 1;\n  return x;\n}\n";
     const after = "export function f() {\n  const x = 2;\n  return x;\n}\n";

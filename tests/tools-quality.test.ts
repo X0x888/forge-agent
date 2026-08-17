@@ -672,7 +672,7 @@ describe("executeTool integration", () => {
     assert.match(r.output, /2\|const y = 2;/);
   });
 
-  it("CHANGELOG multi-match hints apply_patch", async () => {
+  it("CHANGELOG multi-match prepends at the first heading", async () => {
     const ws = path.join(tmpRoot, "ws-changelog");
     await fsp.mkdir(ws, { recursive: true });
     await fsp.writeFile(
@@ -688,9 +688,11 @@ describe("executeTool integration", () => {
       }),
       { workspace: ws, sandbox: "off" as const },
     );
-    assert.equal(r.isError, true);
-    assert.match(r.output, /multiple times/i);
-    assert.match(r.output, /apply_patch/i);
+    assert.notEqual(r.isError, true, r.output);
+    assert.match(r.output, /first CHANGELOG match/i);
+    const body = await fsp.readFile(path.join(ws, "CHANGELOG.md"), "utf8");
+    assert.match(body, /## \[Unreleased\]\n### c\n### a/);
+    assert.match(body, /## \[Unreleased\]\n### b/);
   });
 
   it("search_replace with line-trimmed fallback", async () => {

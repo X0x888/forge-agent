@@ -69,6 +69,7 @@ import {
   countsTowardVerification,
   applyVerificationTrail,
   verificationPassedFromResult,
+  isFullSuiteCommand,
   consumeMillHoldPrune,
 } from "../harness/ulw-cycle.js";
 import { applyMillHoldPrune } from "../session/hold-context.js";
@@ -3651,12 +3652,24 @@ async function prepareToolResult(opts: {
       if (passed) {
         harnessStats.verificationPassedRuns += 1;
       }
+      const prevOk = session.meta.lastVerificationOk;
+      const prevCmd = session.meta.lastVerificationCommand || "";
       try {
         applyVerificationTrail(session.meta, {
           command: cmd,
           isError: !passed,
           preferredCheckCommands: preferred,
         });
+        if (
+          !passed &&
+          isFullSuiteCommand(cmd) &&
+          prevOk === false &&
+          isFullSuiteCommand(prevCmd)
+        ) {
+          const tip =
+            "\n\nSuite is still red. Prefer `node --test tests/<this-wave>.mjs` this wave; full suite at consolidation / LAST.";
+          result.output = `${String(result.output || "").replace(/\s+$/, "")}${tip}`;
+        }
         if (session.meta.lastVerificationOk === true) {
           if (proofPoke) noteGreenVerification(proofPoke);
         } else if (session.meta.lastVerificationOk === false) {

@@ -21,6 +21,7 @@ import {
   applyMillHoldPrune,
 } from "../src/session/hold-context.js";
 import {
+  isFullSuiteCommand,
   isHelperOnlyTestCommand,
   isVerificationCommand,
   verificationPassedFromResult,
@@ -42,6 +43,12 @@ describe("helper-only test commands", () => {
     assert.equal(isHelperOnlyTestCommand("npm test"), false);
     assert.equal(isHelperOnlyTestCommand("npm test 2>&1 | grep fail"), false);
     assert.equal(isHelperOnlyTestCommand("node --test tests/"), false);
+    assert.equal(isFullSuiteCommand("npm test"), true);
+    assert.equal(isFullSuiteCommand("npm test 2>&1 | grep fail"), true);
+    assert.equal(
+      isFullSuiteCommand("node --test tests/w161-foo.test.mjs"),
+      false,
+    );
     assert.equal(
       isVerificationCommand("node --test tests/w161-pickup-overflow.test.mjs"),
       true,

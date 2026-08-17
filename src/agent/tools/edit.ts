@@ -257,9 +257,36 @@ export async function toolEdit(
     // Multi-match already embeds line locations; skip closest-line tips (noise).
     const rel = displayRelPath(ctx.workspace, filePath);
     const multi = /matches multiple times/i.test(located.reason);
+    const isChangelog = /(?:^|\/)changelog(\.(md|markdown|txt|rst))?$/i.test(rel);
+    if (multi && isChangelog) {
+      const idx = content.indexOf(oldNative);
+      if (idx >= 0) {
+        const next = content.slice(0, idx) + newNative + content.slice(idx + oldNative.length);
+        const final = joinBom(next, bom);
+        await atomicWriteFile(filePath, final, { encoding: "utf8" });
+        journalUpdate();
+        ctx.onEdit?.();
+        const fmt = maybeFormatAfterWrite(filePath, ctx.workspace);
+        if (ctx.fileReads && fileReadGuardEnabled()) {
+          await ctx.fileReads.noteFromDisk(filePath);
+        }
+        return finishEditSuccess({
+          rel,
+          filePath,
+          workspace: ctx.workspace,
+          before: content,
+          next,
+          fmt,
+          matchKind: "exact",
+          extraNote: " (first CHANGELOG match — later ## [Unreleased] left alone)",
+          strippedNote: Boolean(strippedNote),
+          ctx,
+        });
+      }
+    }
     const contentHint = multi ? "" : editMissHint(content, oldNative);
     const changelogHint =
-      multi && /(?:^|\/)changelog(\.(md|markdown|txt|rst))?$/i.test(rel)
+      multi && isChangelog
         ? "\nCHANGELOG prepends collide under ## [Unreleased]. Use apply_patch on the heading, or include the previous first entry in old_string."
         : "";
     return {
@@ -306,6 +333,7 @@ function finishEditSuccess(opts: {
   fmt: ReturnType<typeof maybeFormatAfterWrite>;
   matchKind: "exact" | "line_trimmed" | "block_anchor";
   replaceAllCount?: number;
+  extraNote?: string;
   strippedNote: boolean;
   ctx?: import("./types.js").ToolContext;
 }): ToolResult {
@@ -326,12 +354,13 @@ function finishEditSuccess(opts: {
       : opts.replaceAllCount != null
         ? ` (${opts.replaceAllCount} occurrence${opts.replaceAllCount === 1 ? "" : "s"})`
         : "";
+  const extra = opts.extraNote || "";
   if (!editReceiptEnabled()) {
     const diff = shortDiff(opts.rel, opts.before, opts.next);
     const st = lineStats(lineHunks(opts.before, opts.next));
     return {
       output:
-        `Edited ${opts.rel}${note}${lineCountNote(opts.next)}${opts.strippedNote ? " (stripped read_file line-number prefixes)" : ""}${formatNoteSuffix(opts.fmt)}\n\n${diff}` +
+        `Edited ${opts.rel}${note}${extra}${lineCountNote(opts.next)}${opts.strippedNote ? " (stripped read_file line-number prefixes)" : ""}${formatNoteSuffix(opts.fmt)}\n\n${diff}` +
         verifyTip,
       diff,
       stats: { added: st.added, removed: st.removed },
@@ -360,6 +389,6 @@ function finishEditSuccess(opts: {
     before: opts.before,
     after: resolved.after,
     relForDiff: opts.rel,
-    verifyTip,
+    verifyTip: extra ? `${extra}\n${verifyTip}`.trim() : verifyTip,
   });
 }

@@ -70,8 +70,16 @@ function abortHunk(a: string[], b: string[]): LineHunk[] {
     x++;
     y++;
   }
-  if (x === a.length && y === b.length) return [];
-  return [{ aStart: x, aEnd: a.length, bStart: y, bEnd: b.length }];
+  let aEnd = a.length;
+  let bEnd = b.length;
+  // Prepends share a long suffix (CHANGELOG). Treat that as unchanged
+  // or a 3-line insert reports as +12k/−12k.
+  while (aEnd > x && bEnd > y && a[aEnd - 1] === b[bEnd - 1]) {
+    aEnd--;
+    bEnd--;
+  }
+  if (x === aEnd && y === bEnd) return [];
+  return [{ aStart: x, aEnd, bStart: y, bEnd }];
 }
 
 export function lineHunks(before: string, after: string): LineHunk[] {

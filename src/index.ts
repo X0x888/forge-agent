@@ -346,6 +346,7 @@ export {
   isVerificationOutputPipe,
   verificationPassedFromResult,
   isHelperOnlyTestCommand,
+  isFullSuiteCommand,
   consumeMillHoldPrune,
   contractHolding,
   exploreHolding,

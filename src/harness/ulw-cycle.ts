@@ -498,6 +498,15 @@ export function verificationPassedFromResult(opts: {
  * Isolated `node --test tests/w161-foo.test.mjs` (and small wN families)
  * ran, but they are not wave proof — the mill's 5/5 helper file.
  */
+/** `npm test` / `npm run test` with no single-file path — the mill's 15s red suite. */
+export function isFullSuiteCommand(command: string): boolean {
+  const c = String(command || "").replace(/\s+/g, " ").trim();
+  if (!c) return false;
+  if (!/\b(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?test\b/.test(c)) return false;
+  if (/tests\/[^\s"'\\]+\.test\./i.test(c)) return false;
+  return true;
+}
+
 export function isHelperOnlyTestCommand(command: string): boolean {
   const c = String(command || "").replace(/\s+/g, " ").trim();
   if (!c) return false;
