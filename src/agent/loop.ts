@@ -74,7 +74,10 @@ import {
   isFullSuiteCommand,
   consumeMillHoldPrune,
 } from "../harness/ulw-cycle.js";
-import { isReasonedEmptyStop } from "./reasoned-stop.js";
+import {
+  isReasonedEmptyStop,
+  REASONING_WALL_FINISH,
+} from "./reasoned-stop.js";
 import { applyMillHoldPrune } from "../session/hold-context.js";
 import {
   clearStaleToolResults,
@@ -2238,6 +2241,21 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
       }
 
       if (!toolCalls || toolCalls.length === 0) {
+        if (
+          isReasonedEmptyStop({
+            text: finalText,
+            toolCallCount: 0,
+            reasoningContent: assistantMsg.reasoning_content,
+            finishReason,
+          })
+        ) {
+          const why =
+            finishReason === REASONING_WALL_FINISH
+              ? "reasoning_wall"
+              : "thought, no text/tools";
+          log.info(chalk.dim(`Reasoned Stop (${why}) — running Stop`));
+          events.onStatus?.(`Reasoned Stop (${why})`);
+        }
         const ulwBeforeStop = loadUlwCycle(session.meta.id);
         events.onPhase?.(
           "stop_guard",

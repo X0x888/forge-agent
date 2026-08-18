@@ -256,6 +256,10 @@ export class OpenAICompatProvider implements LLMProvider {
       providerReasoningWallMs(),
       () => {
         reasoningWallFired = true;
+        if (!finishReason) {
+          finishReason = REASONING_WALL_FINISH;
+          onDelta({ finish_reason: REASONING_WALL_FINISH });
+        }
         cancelReader();
       },
     );

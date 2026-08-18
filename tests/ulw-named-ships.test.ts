@@ -9,6 +9,7 @@ import {
   loadUlwCycle,
   saveUlwCycle,
   evaluateUlwAtStop,
+  markNamedShipDone,
   maybeStampUlwWave,
   parseNamedShipsFromReading,
   maybeAdoptNamedShips,
@@ -530,6 +531,71 @@ describe("auto-commit clean-tree baseline", () => {
       const w2 = loadUlwCycle(sid)!.waves!.at(-1)!;
       assert.notEqual(w2.netDiff, "revisit");
       assert.equal(w2.netDiff, "new");
+      disarmUlwCycle(sid);
+    });
+  });
+
+  it("thought-only Stop does not spend a wave or FIFO a named ship", () => {
+    withHome(() => {
+      const sid = "sess-empty-idle-stop";
+      fs.mkdirSync(path.join(process.env.FORGE_HOME!, "sessions", sid), {
+        recursive: true,
+      });
+      const s0 = armUlwCycle(sid, "Ship the feature.", {
+        cycle: 1,
+        skipCheckpoint: true,
+        editCount: 0,
+      });
+      s0.namedShips = [
+        { text: "the tool-status line", status: "open", source: "reading" },
+        { text: "markdown wrap", status: "open", source: "reading" },
+      ];
+      saveUlwCycle(s0);
+      markNamedShipDone(s0, "");
+      assert.ok(
+        s0.namedShips.every((x) => x.status === "open"),
+        "empty closer must not FIFO",
+      );
+      saveUlwCycle(s0);
+
+      const blocked = evaluateUlwAtStop({
+        sessionId: sid,
+        lastAssistantMessage: "",
+        editCount: 0,
+        openTodoCount: 0,
+        stuckThreshold: 20,
+      });
+      assert.equal(blocked.block, true);
+      assert.equal(blocked.waveClosed, false);
+      assert.equal(loadUlwCycle(sid)!.wave, 0, "idle thought-stop is not a work unit");
+      assert.ok(
+        loadUlwCycle(sid)!.namedShips?.every((x) => x.status === "open"),
+      );
+      disarmUlwCycle(sid);
+    });
+  });
+
+  it("empty closer after real edits still stamps the wave", () => {
+    withHome(() => {
+      const sid = "sess-empty-after-edits";
+      fs.mkdirSync(path.join(process.env.FORGE_HOME!, "sessions", sid), {
+        recursive: true,
+      });
+      armUlwCycle(sid, "Ship the feature.", {
+        cycle: 1,
+        skipCheckpoint: true,
+        editCount: 0,
+      });
+      const stamped = evaluateUlwAtStop({
+        sessionId: sid,
+        lastAssistantMessage: "",
+        editCount: 6,
+        openTodoCount: 0,
+        stuckThreshold: 20,
+      });
+      assert.equal(stamped.block, true);
+      assert.equal(stamped.waveClosed, true);
+      assert.equal(loadUlwCycle(sid)!.wave, 1);
       disarmUlwCycle(sid);
     });
   });

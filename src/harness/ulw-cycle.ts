@@ -1599,14 +1599,17 @@ export function markNamedShipDone(
         })
       : matchNamedShip(x.text, closer),
   );
-  // Cycle complete / cancel must not FIFO-consume the next named item.
-  // Seeded explore-map picks never FIFO — topic overlap is not the job.
+  // Cycle complete / cancel / empty closer must not FIFO-consume the next
+  // named item. Thought-only Stop (no text) is Stop, not a ship. Seeded
+  // explore-map picks never FIFO — topic overlap is not the job.
   const hasSeededOpen = open.some((x) => x.source === "explore-map");
   const hits = cancel
     ? matched
     : matched.length
       ? [matched[0]!]
-      : /\bCycle complete\b/i.test(closer) || hasSeededOpen
+      : !closer.trim() ||
+          /\bCycle complete\b/i.test(closer) ||
+          hasSeededOpen
         ? []
         : [open[0]!];
   for (const hit of hits) {
@@ -3436,6 +3439,26 @@ export function evaluateUlwAtStop(opts: {
     const todoProgress = Math.max(0, prevOpen - opts.openTodoCount);
     s.lastOpenTodoCount = opts.openTodoCount;
     const closer = closerText(opts.sessionId, msg);
+    // Thought-only / reasoning-wall Stop is Stop (hooks + re-anchor +
+    // stuck) but not a work unit. Spending w here would burn a capped
+    // wave and close Wave 1 as the reading with no ship.
+    if (!closer.trim() && editDelta === 0 && !diffChanged) {
+      saveUlwCycle(s);
+      const atCap = cap != null && s.wave >= cap;
+      const reanchor = buildCycleReanchor(s, {
+        openTodos: opts.openTodoCount,
+        mode: atCap ? "last" : "continue",
+        maxWavesHit: atCap,
+        preferredCheckCommands: opts.preferredCheckCommands,
+      });
+      return {
+        block: true,
+        reason: reanchor,
+        reanchor,
+        waveClosed: false,
+        ...(atCap ? { maxWavesHit: true } : {}),
+      };
+    }
     const testsWithoutBody = isTestsWithoutBodyShip({
       proof,
       paths: resolveChangedPaths(opts),
