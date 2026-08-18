@@ -14,7 +14,14 @@ import {
   providerReasoningWallMs,
   providerTimeoutMs,
 } from "../util/abort.js";
-import { REASONING_WALL_FINISH } from "../agent/reasoned-stop.js";
+import {
+  REASONING_LOOP_FINISH,
+  REASONING_WALL_FINISH,
+} from "../agent/reasoned-stop.js";
+import {
+  isReasoningMantra,
+  shouldScanReasoningMantra,
+} from "../agent/reasoning-loop.js";
 import {
   extractReasoningContent,
   grokConvIdHeaders,
@@ -249,18 +256,24 @@ export class OpenAICompatProvider implements LLMProvider {
     let buffer = "";
     let content = "";
     let reasoningContent = "";
+    let mantraScanAt = 0;
     const toolCalls: ToolCall[] = [];
     let finishReason: string | null = null;
     let reasoningWallFired = false;
+    let streamCut = false;
+    const cutStream = (reason: string) => {
+      if (!finishReason) {
+        finishReason = reason;
+        onDelta({ finish_reason: reason });
+      }
+      streamCut = true;
+      cancelReader();
+    };
     const outputWall = armReasoningOutputWall(
       providerReasoningWallMs(),
       () => {
         reasoningWallFired = true;
-        if (!finishReason) {
-          finishReason = REASONING_WALL_FINISH;
-          onDelta({ finish_reason: REASONING_WALL_FINISH });
-        }
-        cancelReader();
+        cutStream(REASONING_WALL_FINISH);
       },
     );
     let id = "";
@@ -268,6 +281,7 @@ export class OpenAICompatProvider implements LLMProvider {
     let usage: ChatResponse["usage"] | undefined;
 
     const processSseLine = (line: string): void => {
+      if (streamCut) return;
       const trimmed = line.trim();
       if (!trimmed.startsWith("data:")) return;
       const data = trimmed.slice(5).trim();
@@ -320,6 +334,19 @@ export class OpenAICompatProvider implements LLMProvider {
       if (thought) {
         reasoningContent += thought;
         onDelta({ reasoning_content: thought });
+        // Thought-only mantra (maze late waves: same closer ×100s). Do not
+        // wait for the 12m wall. Skip once content or tools have started.
+        if (
+          !content &&
+          toolCalls.length === 0 &&
+          shouldScanReasoningMantra(reasoningContent.length, mantraScanAt)
+        ) {
+          mantraScanAt = reasoningContent.length;
+          if (isReasoningMantra(reasoningContent)) {
+            cutStream(REASONING_LOOP_FINISH);
+            return;
+          }
+        }
       }
       if (delta.tool_calls) {
         outputWall.noteVisibleOutput();

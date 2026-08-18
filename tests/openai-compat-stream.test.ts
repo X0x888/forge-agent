@@ -278,4 +278,37 @@ describe("openai-compat streamed tool_call index handling", () => {
       else process.env.FORGE_PROVIDER_REASONING_WALL_MS = prev;
     }
   });
+
+  it("reasoning mantra loop returns Stop without waiting for the wall", async () => {
+    const prev = process.env.FORGE_PROVIDER_REASONING_WALL_MS;
+    process.env.FORGE_PROVIDER_REASONING_WALL_MS = "off";
+    const closer =
+      "The fix is in place and verified.\n\n**Proof:** test passed.\n\nReady for the next different surface. ";
+    const thought = "Need a different surface from leftover lectures. " + closer.repeat(40);
+    mockStream([
+      {
+        id: "chatcmpl_loop",
+        model: "grok-4.6",
+        choices: [{ delta: { reasoning_content: thought } }],
+      },
+      {
+        choices: [{ delta: { content: "too late" }, finish_reason: "stop" }],
+      },
+    ]);
+    try {
+      const p = new OpenAICompatProvider({
+        id: "xai",
+        baseUrl: "https://api.x.ai/v1",
+        apiKey: "sk-test",
+      });
+      const res = await p.chatStream(makeReq(), () => {});
+      assert.equal(res.finish_reason, "reasoning_loop");
+      assert.match(res.message.reasoning_content || "", /fix is in place/);
+      assert.equal(res.message.content, null);
+      assert.equal(res.message.tool_calls, undefined);
+    } finally {
+      if (prev === undefined) delete process.env.FORGE_PROVIDER_REASONING_WALL_MS;
+      else process.env.FORGE_PROVIDER_REASONING_WALL_MS = prev;
+    }
+  });
 });

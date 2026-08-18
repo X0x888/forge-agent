@@ -76,6 +76,7 @@ import {
 } from "../harness/ulw-cycle.js";
 import {
   isReasonedEmptyStop,
+  REASONING_LOOP_FINISH,
   REASONING_WALL_FINISH,
 } from "./reasoned-stop.js";
 import { applyMillHoldPrune } from "../session/hold-context.js";
@@ -2250,9 +2251,11 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
           })
         ) {
           const why =
-            finishReason === REASONING_WALL_FINISH
-              ? "reasoning_wall"
-              : "thought, no text/tools";
+            finishReason === REASONING_LOOP_FINISH
+              ? "reasoning_loop"
+              : finishReason === REASONING_WALL_FINISH
+                ? "reasoning_wall"
+                : "thought, no text/tools";
           log.info(chalk.dim(`Reasoned Stop (${why}) — running Stop`));
           events.onStatus?.(`Reasoned Stop (${why})`);
         }
