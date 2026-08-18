@@ -223,7 +223,7 @@ See [docs/ULW.md](docs/ULW.md).
 
 Forge is built for long expert sessions and CI, not just demos:
 
-- **Retry-After** backoff on `429`/`5xx`; provider stall timeout on silence (default 10m, `FORGE_PROVIDER_TIMEOUT_MS`; optional absolute `FORGE_PROVIDER_MAX_MS`)
+- **Retry-After** backoff on `429`/`5xx`; provider stall timeout on silence (default 10m, `FORGE_PROVIDER_TIMEOUT_MS`); 12m no-output reasoning wall (`FORGE_PROVIDER_REASONING_WALL_MS`); optional absolute `FORGE_PROVIDER_MAX_MS`
 - **Abortable** streams + sandboxed bash (Ctrl+C actually stops work)
 - **Self-heal**: truncated JSON tool args, orphaned `tool_call` pairs after abort/compact, empty/`length` model turns
 - **Doom-loop** + **error-streak** circuit breakers (identical args ×3; any errors ×5)

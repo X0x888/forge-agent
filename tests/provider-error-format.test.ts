@@ -102,6 +102,10 @@ describe("formatProviderError", () => {
     assert.ok(term.tips.some((t) => /retries|OAuth|continue/i.test(t)));
     const to = formatProviderError(new Error("Provider timed out after 600000ms"));
     assert.equal(to.code, "timeout");
+    assert.ok(
+      to.tips.some((t) => /FORGE_PROVIDER_REASONING_WALL_MS/.test(t)),
+      "timeout card names the no-output reasoning wall",
+    );
     const ab = formatProviderError(new Error("Aborted"));
     assert.equal(ab.code, "aborted");
   });

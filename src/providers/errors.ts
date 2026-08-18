@@ -224,7 +224,7 @@ export function formatProviderError(
     } else if (/timed out after \d+ms/i.test(msg) || /timeout/i.test(msg)) {
       code = "timeout";
       tips.push(
-        "FORGE_PROVIDER_TIMEOUT_MS (stall)  ·  FORGE_PROVIDER_MAX_MS (optional absolute)  ·  /compact  ·  /retry",
+        "FORGE_PROVIDER_TIMEOUT_MS (stall)  ·  FORGE_PROVIDER_REASONING_WALL_MS (no-output wall, default 12m)  ·  FORGE_PROVIDER_MAX_MS (optional absolute)  ·  /compact  ·  /retry",
       );
     } else if (
       /^terminated$/i.test(msg.trim()) ||

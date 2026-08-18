@@ -7,6 +7,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { forgeHome } from "../util/fs.js";
+import { pathsMatch } from "../session/explore-map.js";
 import { activeMemoryRecords } from "./decision-memory.js";
 
 export const OFF_CONTRACT_HOLD = 8;
@@ -171,17 +172,10 @@ function pathsOverlap(
   if (!claimPaths?.length || !changedPaths?.length) return false;
   for (const a of claimPaths) {
     for (const b of changedPaths) {
-      if (pathsMatchRel(a, b)) return true;
+      if (pathsMatch(a, b)) return true;
     }
   }
   return false;
-}
-
-function pathsMatchRel(a: string, b: string): boolean {
-  const na = a.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
-  const nb = b.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
-  if (na === nb) return true;
-  return na.endsWith("/" + nb) || nb.endsWith("/" + na);
 }
 
 export interface ExplorePickDoneOpts {
