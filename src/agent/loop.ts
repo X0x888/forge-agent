@@ -74,6 +74,7 @@ import {
   isFullSuiteCommand,
   consumeMillHoldPrune,
 } from "../harness/ulw-cycle.js";
+import { isReasonedEmptyStop } from "./reasoned-stop.js";
 import { applyMillHoldPrune } from "../session/hold-context.js";
 import {
   clearStaleToolResults,
@@ -1176,11 +1177,11 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
             content:
               `${CITE_DELTA_POKE}.\n` +
               `The map stopped growing. Emit the structured map now:\n` +
-              `pick: <one sentence>\n` +
+              `pick: <one sentence naming the hole — required>\n` +
               `passed_on: <what you skipped>\n` +
               `files:\n` +
               `  <path>:<line>  <claim>\n` +
-              `Do not start a new search.`,
+              `A file list without pick: is not a map. Do not start a new search.`,
           });
         }
       }
@@ -2178,10 +2179,18 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
         continue;
       }
 
-      // Empty assistant turn (provider glitch) — nudge with expert recovery
+      // Empty assistant turn (provider glitch) — nudge with expert recovery.
+      // A reasoned stop (thought + finish_reason=stop, no text/tools) is
+      // Stop, not a glitch — maze unlimited sat 59 min × 13 on that cascade.
       if (
         (!toolCalls || toolCalls.length === 0) &&
-        !(finalText || "").trim()
+        !(finalText || "").trim() &&
+        !isReasonedEmptyStop({
+          text: finalText,
+          toolCallCount: toolCalls?.length ?? 0,
+          reasoningContent: assistantMsg.reasoning_content,
+          finishReason,
+        })
       ) {
         providerContinues += 1;
         if (providerFuseTripsContinueCap(providerContinues, maxStopContinues)) {

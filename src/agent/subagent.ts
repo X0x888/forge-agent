@@ -641,7 +641,9 @@ export async function runSubagent(
       /* parent ULW sidecar optional */
     }
   }
-  if (subagentType === "explore" && status === "completed") {
+  // A completed explore without a parseable pick is not a look — do not
+  // clear exploreRequired or the parent will farm another essay.
+  if (subagentType === "explore" && status === "completed" && map) {
     try {
       noteExploreChildCompleted(ctx.parentSession.meta.id);
     } catch {
@@ -799,12 +801,12 @@ function buildSubagentPrompt(opts: {
       : opts.subagentType === "explore"
         ? [
             "You are a file-search specialist. Grep/glob/read only.",
-            "Return a short map, not an essay:",
-            "pick: <one sentence>",
+            "Return a short map, not an essay. The last turn MUST be exactly:",
+            "pick: <one sentence naming the hole — required, or this explore failed>",
             "passed_on: <what you skipped>",
             "files:",
             "  <path>:<line>  <claim>",
-            "Stop when new searches cite no new paths.",
+            "A file list without pick: is not a map. Stop when new searches cite no new paths.",
           ].join("\n")
         : "Implement or investigate as asked. Return a concise final summary of what you found/did and any remaining risks.",
   ];

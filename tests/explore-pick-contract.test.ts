@@ -85,6 +85,16 @@ function writeMaps(sid: string): void {
   );
 }
 
+const PICK_EMPTY_LIVES =
+  "Empty later lives in one session silently fail to mark the collective — the carving still thanks you";
+const CLAIMS_EMPTY_LIVES = [
+  "contributionToken includes life/runStartedAt so two empty lives leave two marks",
+];
+const WAVE20_EMPTY_LIVES =
+  "two empty first-floor lives in one sitting now leave two marks (contributionToken includes life/runStartedAt).";
+const WAVE26_CARVING_THANKS =
+  "death thanks never names a score. getCollectiveDeathMessage is felt only. Carving no longer prints formatContribution";
+
 describe("explore pick done vs topic", () => {
   it("marks the climb and joiner Home, not toast-on-the-wire", () => {
     assert.equal(isExplorePickDone(WAVE1, PICK_A, CLAIMS_A), true);
@@ -98,6 +108,35 @@ describe("explore pick done vs topic", () => {
         [PICK_B],
       ),
       false,
+    );
+  });
+
+  it("marks the empty-lives job via claim token, not carving-thanks leftover", () => {
+    assert.equal(
+      isExplorePickDone(WAVE20_EMPTY_LIVES, PICK_EMPTY_LIVES, CLAIMS_EMPTY_LIVES),
+      true,
+      "w20 solution words + contributionToken is the pick",
+    );
+    assert.equal(
+      isExplorePickDone(WAVE26_CARVING_THANKS, PICK_EMPTY_LIVES, CLAIMS_EMPTY_LIVES),
+      false,
+      "carving+thanks copy is not the empty-lives job",
+    );
+    assert.equal(
+      isExplorePickDone(WAVE20_EMPTY_LIVES, PICK_EMPTY_LIVES, [], {
+        claimPaths: ["client/src/lib/game/collectiveProgress.ts"],
+        changedPaths: ["client/src/lib/game/collectiveProgress.ts"],
+      }),
+      true,
+      "claimed file in the wave + job words is the pick",
+    );
+    assert.equal(
+      isExplorePickDone(WAVE26_CARVING_THANKS, PICK_EMPTY_LIVES, CLAIMS_EMPTY_LIVES, {
+        claimPaths: ["client/src/lib/game/collectiveProgress.ts"],
+        changedPaths: ["src/tui/markdown.ts"],
+      }),
+      false,
+      "wrong files + leftover copy is not the pick",
     );
   });
 });
@@ -181,6 +220,63 @@ describe("seeded picks exhaust after the jobs, not the mill", () => {
         false,
         "topic recap must not adopt after exhaust",
       );
+      disarmUlwCycle(sid);
+    });
+  });
+
+  it("empty-lives ship exhausts that pick and holds after the list is done", () => {
+    withHome(() => {
+      const sid = "pick-d3fe69aa-w20";
+      const dir = path.join(process.env.FORGE_HOME!, "sessions", sid);
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(
+        path.join(dir, "meta.json"),
+        JSON.stringify({
+          exploreMaps: [
+            {
+              pick: PICK_EMPTY_LIVES,
+              files: [
+                {
+                  path: "client/src/lib/game/collectiveProgress.ts",
+                  line: 40,
+                  claim: CLAIMS_EMPTY_LIVES[0],
+                },
+              ],
+              at: new Date().toISOString(),
+            },
+          ],
+        }),
+      );
+      armUlwCycle(sid, "Improve this game.", {
+        cycle: 1,
+        skipCheckpoint: true,
+        editCount: 0,
+      });
+      assert.equal(seedNamedShipsFromExploreMaps(sid), true);
+      const w20 = maybeStampUlwWave({
+        sessionId: sid,
+        editCount: 20,
+        openTodoCount: 0,
+        stepsSinceStamp: 1,
+        lastAssistantMessage: `Wave shipped. ${WAVE20_EMPTY_LIVES}`,
+        verificationPassed: true,
+        changedPaths: ["client/src/lib/game/collectiveProgress.ts"],
+      });
+      assert.equal(w20.stamped, true);
+      const after = loadUlwCycle(sid)!;
+      assert.equal(namedShipsExhausted(after), true);
+      after.soulNudgeDone = true;
+      saveUlwCycle(after);
+      const blocked = evaluateUlwAtStop({
+        sessionId: sid,
+        lastAssistantMessage: WAVE26_CARVING_THANKS,
+        editCount: 28,
+        openTodoCount: 0,
+        stuckThreshold: 20,
+        verificationPassed: true,
+      });
+      assert.equal(blocked.block, true);
+      assert.match(blocked.reanchor || "", /named ships|new Reading|cycle 0/i);
       disarmUlwCycle(sid);
     });
   });

@@ -226,4 +226,56 @@ describe("openai-compat streamed tool_call index handling", () => {
     assert.equal(res.message.reasoning_content, "step two");
     assert.deepEqual(painted, ["hi"]);
   });
+
+  it("reasoning-only wall returns Stop, not a dropped-connection throw", async () => {
+    const prev = process.env.FORGE_PROVIDER_REASONING_WALL_MS;
+    process.env.FORGE_PROVIDER_REASONING_WALL_MS = "40ms";
+    const enc = new TextEncoder();
+    globalThis.fetch = (async () =>
+      new Response(
+        new ReadableStream<Uint8Array>({
+          async start(controller) {
+            controller.enqueue(
+              enc.encode(
+                `data: ${JSON.stringify({
+                  id: "chatcmpl_w",
+                  model: "grok-4.6",
+                  choices: [{ delta: { reasoning_content: "I MUST pick a DIFFERENT surface" } }],
+                })}\n`,
+              ),
+            );
+            await new Promise((r) => setTimeout(r, 80));
+            try {
+              controller.enqueue(
+                enc.encode(
+                  `data: ${JSON.stringify({
+                    choices: [{ delta: { content: "too late" }, finish_reason: "stop" }],
+                  })}\n`,
+                ),
+              );
+              controller.enqueue(enc.encode("data: [DONE]\n"));
+              controller.close();
+            } catch {
+              /* reader cancelled by the wall */
+            }
+          },
+        }),
+        { status: 200, headers: { "Content-Type": "text/event-stream" } },
+      )) as typeof fetch;
+    try {
+      const p = new OpenAICompatProvider({
+        id: "xai",
+        baseUrl: "https://api.x.ai/v1",
+        apiKey: "sk-test",
+      });
+      const res = await p.chatStream(makeReq(), () => {});
+      assert.equal(res.finish_reason, "reasoning_wall");
+      assert.match(res.message.reasoning_content || "", /DIFFERENT surface/);
+      assert.equal(res.message.content, null);
+      assert.equal(res.message.tool_calls, undefined);
+    } finally {
+      if (prev === undefined) delete process.env.FORGE_PROVIDER_REASONING_WALL_MS;
+      else process.env.FORGE_PROVIDER_REASONING_WALL_MS = prev;
+    }
+  });
 });

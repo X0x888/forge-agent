@@ -1078,14 +1078,21 @@ export function noteExploreChildCompleted(sessionId: string): boolean {
 }
 
 function claimsForPick(sessionId: string, pick: string): string[] {
+  return entryForPick(sessionId, pick)?.claims ?? [];
+}
+
+function pathsForPick(sessionId: string, pick: string): string[] {
+  return entryForPick(sessionId, pick)?.paths ?? [];
+}
+
+function entryForPick(sessionId: string, pick: string) {
   const entries = loadExploreMapEntries(sessionId);
-  const hit = entries.find(
+  return entries.find(
     (e) =>
       e.pick === pick ||
       matchNamedShip(e.pick, pick) ||
       matchNamedShip(pick, e.pick),
   );
-  return hit?.claims ?? [];
 }
 
 /**
@@ -1573,15 +1580,23 @@ export function maybeAdoptNamedShips(
 const CANCEL_SHIP_RE =
   /\b(?:cancell?ed?|won'?t ship|skip(?:ping)?|out of scope)\b/i;
 
-export function markNamedShipDone(s: UlwCycleState, closer: string): void {
+export function markNamedShipDone(
+  s: UlwCycleState,
+  closer: string,
+  opts?: { changedPaths?: string[] },
+): void {
   const items = s.namedShips;
   if (!items?.length) return;
   const open = items.filter((x) => x.status === "open");
   if (!open.length) return;
   const cancel = CANCEL_SHIP_RE.test(closer);
+  const changed = opts?.changedPaths ?? [];
   const matched = open.filter((x) =>
     x.source === "explore-map"
-      ? isExplorePickDone(closer, x.text, claimsForPick(s.sessionId, x.text))
+      ? isExplorePickDone(closer, x.text, claimsForPick(s.sessionId, x.text), {
+          claimPaths: pathsForPick(s.sessionId, x.text),
+          changedPaths: changed,
+        })
       : matchNamedShip(x.text, closer),
   );
   // Cycle complete / cancel must not FIFO-consume the next named item.
@@ -1800,6 +1815,7 @@ export function maybeStampUlwWave(opts: {
   const s = loadUlwCycle(opts.sessionId);
   if (!s?.enabled) return { stamped: false };
   seedNamedShipsFromExploreMaps(opts.sessionId);
+  const stampPaths = resolveChangedPaths(opts);
 
   const cap = normalizeMaxWaves(s.maxWaves);
   if (cap != null && s.cycle === 1 && s.wave >= cap) {
@@ -1880,7 +1896,7 @@ export function maybeStampUlwWave(opts: {
       s.lastProgressEditCount = opts.editCount;
     }
     if (isDeclaredWaveClose(closer) && progressed && editDelta >= 1) {
-      markNamedShipDone(s, closer);
+      markNamedShipDone(s, closer, { changedPaths: stampPaths });
     }
     saveUlwCycle(s);
     return { stamped: false, updated: progressed, wave: s.wave };
@@ -1966,7 +1982,7 @@ export function maybeStampUlwWave(opts: {
         ...facts,
         classText: closer,
       });
-      markNamedShipDone(s, closer);
+      markNamedShipDone(s, closer, { changedPaths: stampPaths });
       s.lastWaveSig = sig;
       s.lastProgressEditCount = opts.editCount;
       const polish = notePolishShip(s, closer);
@@ -3183,6 +3199,7 @@ export function evaluateUlwAtStop(opts: {
   const s = loadUlwCycle(opts.sessionId);
   if (!s || !s.enabled) return { block: false };
   seedNamedShipsFromExploreMaps(opts.sessionId);
+  const stampPaths = resolveChangedPaths(opts);
   if (s.cycle === 0) ensureUlwWrap(s);
 
   const msg = opts.lastAssistantMessage || "";
@@ -3213,7 +3230,7 @@ export function evaluateUlwAtStop(opts: {
     attested &&
     (attestationHasEvidence || (s.evidenceNudges ?? 0) >= MAX_EVIDENCE_NUDGES)
   ) {
-    markNamedShipDone(s, msg);
+    markNamedShipDone(s, msg, { changedPaths: stampPaths });
     const namedOpen = openNamedWrapItems(s);
     if (namedOpen.length > 0 && !s.wrapNudgeDone) {
       s.wrapNudgeDone = true;
@@ -3533,7 +3550,7 @@ export function evaluateUlwAtStop(opts: {
           themed:
             isDeclaredWaveClose(closer) || isLeftoverSiblingShip(closer),
         });
-        markNamedShipDone(s, closer);
+        markNamedShipDone(s, closer, { changedPaths: stampPaths });
         s.lastWaveSig = sig;
         s.lastProgressEditCount = opts.editCount;
         const polish = notePolishShip(s, closer);
@@ -3620,7 +3637,7 @@ export function evaluateUlwAtStop(opts: {
         themed:
           isDeclaredWaveClose(closer) || isLeftoverSiblingShip(closer),
       });
-      markNamedShipDone(s, closer);
+      markNamedShipDone(s, closer, { changedPaths: stampPaths });
       s.lastWaveSig = sig;
       s.lastProgressEditCount = opts.editCount;
       const polish = notePolishShip(s, closer);
@@ -3683,7 +3700,9 @@ export function evaluateUlwAtStop(opts: {
   }
 
   // cycle === 0: wrap the frozen list, then attest (no new ambitious wave).
-  markNamedShipDone(s, closerText(opts.sessionId, msg));
+  markNamedShipDone(s, closerText(opts.sessionId, msg), {
+    changedPaths: stampPaths,
+  });
   saveUlwCycle(s);
   const reanchor = buildCycleReanchor(s, {
     openTodos: opts.openTodoCount,

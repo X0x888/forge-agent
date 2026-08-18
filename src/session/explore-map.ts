@@ -24,8 +24,8 @@ const MAX_FILES = 40;
 function field(text: string, names: string[]): string {
   for (const name of names) {
     const re = new RegExp(
-      `(?:^|\\n)\\s*${name}\\s*:\\s*(.+?)(?=\\n\\s*[A-Za-z_][\\w-]*\\s*:|$)`,
-      "is",
+      `(?:^|\\n)[ \\t]*${name}[ \\t]*:[ \\t]*([^\\n]*)`,
+      "i",
     );
     const m = text.match(re);
     if (m?.[1]) return m[1].trim().replace(/\s+/g, " ").slice(0, 400);
@@ -64,7 +64,9 @@ export function parseExploreMap(text: string): ExploreMap | null {
     files.push(f);
     if (files.length >= MAX_FILES) break;
   }
-  if (!pick && files.length === 0) return null;
+  // A file list without a pick is an essay, not a map — maze_plus stored
+  // four of these and never seeded a hold list.
+  if (!pick.trim()) return null;
   return {
     pick,
     passedOn,
@@ -122,7 +124,7 @@ export function normalizeExploreMaps(raw: unknown): ExploreMap[] | undefined {
     const pick = typeof o.pick === "string" ? o.pick.trim().slice(0, 400) : "";
     const passedOn =
       typeof o.passedOn === "string" ? o.passedOn.trim().slice(0, 400) : "";
-    if (!pick && files.length === 0) continue;
+    if (!pick) continue;
     out.push({
       pick,
       passedOn,

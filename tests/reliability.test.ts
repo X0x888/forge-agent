@@ -712,6 +712,39 @@ describe("provider abort helpers", () => {
     dispose();
   });
 
+  it("reasoning output wall fires without stall touch and is not a timeout retry", async () => {
+    const {
+      armReasoningOutputWall,
+      providerReasoningWallMs,
+      isTimeoutError,
+    } = await import("../src/util/abort.js");
+    const prev = process.env.FORGE_PROVIDER_REASONING_WALL_MS;
+    process.env.FORGE_PROVIDER_REASONING_WALL_MS = "80ms";
+    try {
+      assert.equal(providerReasoningWallMs(), 80);
+      let fired = 0;
+      const wall = armReasoningOutputWall(80, () => {
+        fired += 1;
+      });
+      await new Promise((r) => setTimeout(r, 120));
+      assert.equal(fired, 1);
+      wall.dispose();
+      const quiet = armReasoningOutputWall(80, () => {
+        fired += 1;
+      });
+      quiet.noteVisibleOutput();
+      await new Promise((r) => setTimeout(r, 120));
+      assert.equal(fired, 1, "visible output cancels the wall");
+      quiet.dispose();
+      process.env.FORGE_PROVIDER_REASONING_WALL_MS = "off";
+      assert.equal(providerReasoningWallMs(), 0);
+    } finally {
+      if (prev === undefined) delete process.env.FORGE_PROVIDER_REASONING_WALL_MS;
+      else process.env.FORGE_PROVIDER_REASONING_WALL_MS = prev;
+    }
+    assert.equal(isTimeoutError(new Error("Request timed out after 80ms")), true);
+  });
+
   it("maxWallMs aborts even if touch keeps resetting stall", async () => {
     const { mergeAbortSignals, isTimeoutError } = await import(
       "../src/util/abort.js"

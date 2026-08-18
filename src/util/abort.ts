@@ -50,6 +50,65 @@ export function providerMaxWallMs(): number {
   return DEFAULT_PROVIDER_MAX_MS;
 }
 
+/**
+ * Wall for a stream that has produced **no visible output** (no content,
+ * no tool_call). Reasoning SSE / keepalives reset the stall timer but must
+ * not extend this — maze dogfood sat 59 minutes thinking then stopped empty.
+ *
+ * Default 12 minutes. `0` / `off` disables. Env: FORGE_PROVIDER_REASONING_WALL_MS.
+ */
+export const DEFAULT_PROVIDER_REASONING_WALL_MS = 720_000;
+
+export function providerReasoningWallMs(): number {
+  const raw = process.env.FORGE_PROVIDER_REASONING_WALL_MS?.trim();
+  if (raw === "0" || (raw && /^off$/i.test(raw))) return 0;
+  if (raw) {
+    const parsed = parseDurationMs(raw);
+    // 20ms floor so tests can use short walls; production default is 12m.
+    if (parsed.ok && parsed.ms >= 20 && parsed.ms <= 3_600_000) {
+      return parsed.ms;
+    }
+  }
+  return DEFAULT_PROVIDER_REASONING_WALL_MS;
+}
+
+export interface ReasoningOutputWall {
+  /** Call when a content or tool_call delta arrives. */
+  noteVisibleOutput: () => void;
+  dispose: () => void;
+}
+
+/**
+ * Fire `onFire` once if no visible output arrives within `wallMs`.
+ * Keepalives / reasoning tokens must not reset this.
+ */
+export function armReasoningOutputWall(
+  wallMs: number,
+  onFire: () => void,
+): ReasoningOutputWall {
+  if (wallMs <= 0) {
+    return { noteVisibleOutput() {}, dispose() {} };
+  }
+  let saw = false;
+  let fired = false;
+  const timer = setTimeout(() => {
+    if (saw || fired) return;
+    fired = true;
+    onFire();
+  }, wallMs);
+  timer.unref?.();
+  return {
+    noteVisibleOutput() {
+      if (saw) return;
+      saw = true;
+      clearTimeout(timer);
+    },
+    dispose() {
+      clearTimeout(timer);
+    },
+  };
+}
+
 export interface MergeAbortHandle {
   signal: AbortSignal;
   dispose: () => void;

@@ -42,6 +42,16 @@ files:
   it("returns null when there is no map", () => {
     assert.equal(parseExploreMap("I looked at a lot of files today."), null);
   });
+
+  it("returns null for a file list without pick:", () => {
+    assert.equal(
+      parseExploreMap(
+        "files:\n  src/game.js:411  Boot starts this.players = []\n  src/net/protocol.js:10  encodeMonsterTells\n",
+      ),
+      null,
+    );
+    assert.equal(parseExploreMap("pick:\nfiles:\n  a.ts:1  x\n"), null);
+  });
 });
 
 describe("explore map session lookup", () => {
@@ -70,6 +80,10 @@ describe("explore map session lookup", () => {
     const maps = normalizeExploreMaps([
       { pick: "dock", files: [{ path: "src/tui/repl.ts", line: 10, claim: "x" }] },
       { pick: "", files: [] },
+      {
+        pick: "",
+        files: [{ path: "src/game.js", line: 411, claim: "Boot starts empty" }],
+      },
       7,
       { files: [{ path: "", claim: "nope" }] },
     ]);

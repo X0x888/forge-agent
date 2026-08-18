@@ -12,10 +12,13 @@ import type {
 import { throwIfNotOk } from "./errors.js";
 import { parseToolArguments } from "../util/json-repair.js";
 import {
+  armReasoningOutputWall,
   mergeAbortSignals,
   providerMaxWallMs,
+  providerReasoningWallMs,
   providerTimeoutMs,
 } from "../util/abort.js";
+import { REASONING_WALL_FINISH } from "../agent/reasoned-stop.js";
 import {
   contentHasImages,
   toAnthropicImageContent,
@@ -464,6 +467,14 @@ export class AnthropicProvider implements LLMProvider {
     const toolCalls: ToolCall[] = [];
     let currentTool: { id: string; name: string; args: string } | null = null;
     let finishReason: string | null = null;
+    let reasoningWallFired = false;
+    const outputWall = armReasoningOutputWall(
+      providerReasoningWallMs(),
+      () => {
+        reasoningWallFired = true;
+        cancelReader();
+      },
+    );
     let id = "";
     let model = req.model;
     let usage: ChatResponse["usage"] | undefined;
@@ -523,6 +534,7 @@ export class AnthropicProvider implements LLMProvider {
       }
       if (event.type === "content_block_start" && event.content_block) {
         if (event.content_block.type === "tool_use") {
+          outputWall.noteVisibleOutput();
           currentTool = {
             id: event.content_block.id || `toolu_${toolCalls.length}`,
             name: event.content_block.name || "",
@@ -533,6 +545,7 @@ export class AnthropicProvider implements LLMProvider {
       if (event.type === "content_block_delta" && event.delta) {
         if (event.delta.type === "text_delta" && event.delta.text) {
           content += event.delta.text;
+          outputWall.noteVisibleOutput();
           onDelta({ content: event.delta.text });
         }
         if (event.delta.type === "input_json_delta" && event.delta.partial_json) {
@@ -637,6 +650,7 @@ export class AnthropicProvider implements LLMProvider {
         }
       }
     } finally {
+      outputWall.dispose();
       merged.removeEventListener("abort", onAbort);
       dispose();
       // Cancel before releaseLock: mid-stream throw paths (e.g. `stream
@@ -669,9 +683,19 @@ export class AnthropicProvider implements LLMProvider {
       currentTool = null;
     }
 
+    if (reasoningWallFired && !finishReason) {
+      finishReason = REASONING_WALL_FINISH;
+    }
+
     // Empty stream with no stop_reason is almost always a dropped connection —
     // surface as retryable rather than a silent blank assistant turn.
-    if (!content && toolCalls.length === 0 && !finishReason && !usage) {
+    if (
+      !content &&
+      toolCalls.length === 0 &&
+      !finishReason &&
+      !usage &&
+      !reasoningWallFired
+    ) {
       throw new Error(
         `${this.id} stream ended with empty response (no content, tools, or finish_reason) — likely a dropped connection; retry or switch model`,
       );

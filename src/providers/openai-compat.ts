@@ -8,10 +8,13 @@ import type {
 } from "./types.js";
 import { throwIfNotOk } from "./errors.js";
 import {
+  armReasoningOutputWall,
   mergeAbortSignals,
   providerMaxWallMs,
+  providerReasoningWallMs,
   providerTimeoutMs,
 } from "../util/abort.js";
+import { REASONING_WALL_FINISH } from "../agent/reasoned-stop.js";
 import {
   extractReasoningContent,
   grokConvIdHeaders,
@@ -248,6 +251,14 @@ export class OpenAICompatProvider implements LLMProvider {
     let reasoningContent = "";
     const toolCalls: ToolCall[] = [];
     let finishReason: string | null = null;
+    let reasoningWallFired = false;
+    const outputWall = armReasoningOutputWall(
+      providerReasoningWallMs(),
+      () => {
+        reasoningWallFired = true;
+        cancelReader();
+      },
+    );
     let id = "";
     let model = req.model;
     let usage: ChatResponse["usage"] | undefined;
@@ -298,6 +309,7 @@ export class OpenAICompatProvider implements LLMProvider {
       const delta = choice.delta ?? {};
       if (delta.content) {
         content += delta.content;
+        outputWall.noteVisibleOutput();
         onDelta({ content: delta.content });
       }
       const thought = extractReasoningContent(delta);
@@ -306,6 +318,7 @@ export class OpenAICompatProvider implements LLMProvider {
         onDelta({ reasoning_content: thought });
       }
       if (delta.tool_calls) {
+        outputWall.noteVisibleOutput();
         // Some single-call proxies omit `index` — fall back to the chunk
         // position so the call is not keyed under "undefined" and silently
         // dropped by the filter(Boolean) compact below.
@@ -393,6 +406,7 @@ export class OpenAICompatProvider implements LLMProvider {
       rethrowAbort(err, signal);
       throw err;
     } finally {
+      outputWall.dispose();
       merged.removeEventListener("abort", onAbort);
       dispose();
       // Cancel before releaseLock: mid-stream throw paths (e.g. `stream
@@ -408,13 +422,19 @@ export class OpenAICompatProvider implements LLMProvider {
     // Compact sparse toolCalls array (providers may skip indices)
     const compactTools = toolCalls.filter(Boolean);
 
+    if (reasoningWallFired && !finishReason) {
+      finishReason = REASONING_WALL_FINISH;
+    }
+
     // Empty stream with no finish_reason is almost always a dropped connection —
     // surface as retryable rather than a silent blank assistant turn.
+    // Reasoned-only / reasoning-wall ends are a Stop, not a drop.
     if (
       !content &&
       compactTools.length === 0 &&
       !finishReason &&
-      !usage
+      !usage &&
+      !reasoningContent
     ) {
       throw new Error(
         `${this.id} stream ended with empty response (no content, tools, or finish_reason) — likely a dropped connection; retry or switch model`,
