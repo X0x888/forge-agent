@@ -876,7 +876,7 @@ describe("ulw cycle", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-ulw3-"));
     process.env.FORGE_HOME = tmp;
     const sid = "ulw-stuck";
-    armUlwCycle(sid, "fix forever", { cycle: 1 });
+    armUlwCycle(sid, "fix forever", { cycle: 1, maxWaves: 10 });
     let last;
     for (let i = 0; i < 3; i++) {
       last = evaluateUlwAtStop({
@@ -889,6 +889,29 @@ describe("ulw cycle", () => {
     }
     assert.equal(last!.block, false);
     assert.equal(last!.stuckReleased, true);
+  });
+
+  it("unlimited CONTINUE does not stuck-release on thought-only Stops", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-ulw-unlim-stuck-"));
+    process.env.FORGE_HOME = tmp;
+    const sid = "ulw-unlim-stuck";
+    armUlwCycle(sid, "Improve this game.", { cycle: 1, skipCheckpoint: true });
+    let last;
+    for (let i = 0; i < 5; i++) {
+      last = evaluateUlwAtStop({
+        sessionId: sid,
+        lastAssistantMessage: "",
+        editCount: 0,
+        openTodoCount: 0,
+        stuckThreshold: 3,
+      });
+    }
+    assert.equal(last!.block, true);
+    assert.equal(last!.stuckReleased ?? false, false);
+    assert.equal(loadUlwCycle(sid)!.enabled, true);
+    assert.equal(loadUlwCycle(sid)!.cycle, 1);
+    assert.equal(loadUlwCycle(sid)!.stuckBlocks, 0);
+    assert.equal(loadUlwCycle(sid)!.wave, 0);
   });
 
   it("stop-guard integrates ULW cycle", async () => {
@@ -1950,7 +1973,7 @@ describe("net-diff progress tracking (ULW)", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-ulw-nd3-"));
     process.env.FORGE_HOME = tmp;
     const sid = "ulw-nd-nogit";
-    armUlwCycle(sid, "improve", { cycle: 1 });
+    armUlwCycle(sid, "improve", { cycle: 1, maxWaves: 10 });
     let released: boolean | undefined = false;
     for (let i = 0; i < 3; i++) {
       const d = evaluateUlwAtStop(base(sid, { diffFingerprint: null }));

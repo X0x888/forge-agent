@@ -3294,8 +3294,19 @@ export function evaluateUlwAtStop(opts: {
     !s.wrapKind &&
     normalizeMaxWaves(s.maxWaves) == null &&
     namedShipsExhausted(s);
+  // Unlimited CONTINUE is a user mandate to keep working until /cycle 0.
+  // Thought-only Stops (maze `6a86c6d1` w150: 3 empty closer, 2 picks still
+  // open) are the harness driving, not a finished game. Stuck-wall must
+  // still release capped / LAST / /goal so those cannot trap.
+  const unlimitedContinueHolding =
+    s.cycle === 1 &&
+    !s.wrapKind &&
+    normalizeMaxWaves(s.maxWaves) == null;
   const exhaustHolding =
-    namedExhaustHolding || sameSurfaceHolding(s) || contractHolding(s);
+    namedExhaustHolding ||
+    unlimitedContinueHolding ||
+    sameSurfaceHolding(s) ||
+    contractHolding(s);
   if (progressed) {
     s.stuckBlocks = 0;
   } else if (!exhaustHolding) {
