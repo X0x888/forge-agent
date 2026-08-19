@@ -213,8 +213,8 @@ Forge slash commands
   /auth                 Show stored credentials (+ multi-account)  [live]
   /accounts [status|switch|…]  Multi-account list/status/switch/clear-cooldown  [live]
   /doctor               Environment health check  [live]
-  /skills               List skill packs (builtin forge-* · .forge/skills · ~/.forge/skills)  [live]
-  /commands             List project/user custom slash templates (.forge/commands)  [live]
+  /skills               List skill packs (builtin forge-* · .forge/skills · .cursor/skills · ~/.forge/skills)  [live]
+  /commands             List project/user custom slash templates (.forge/commands · .cursor/commands)  [live]
   /quit                 Exit  [live — aborts run then exits]
 
 Tips

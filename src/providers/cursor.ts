@@ -42,6 +42,7 @@ import {
   encodeAgentTurn,
   encodeClientMessage,
   encodeConnectFrame,
+  encodeConnectUnaryRequest,
   encodeConversationActionUser,
   encodeConversationState,
   encodeExecClient,
@@ -87,11 +88,12 @@ function rethrowAbort(err: unknown, userSignal?: AbortSignal): void {
   }
 }
 
-interface ParsedMessages {
+export interface CursorConversation {
   systemPrompt: string;
   userText: string;
   turns: Array<{ userText: string; assistantText: string }>;
-  toolResults: Array<{ toolCallId: string; content: string }>;
+  /** Tool results after the last assistant, before any following user. */
+  trailingToolResults: Array<{ toolCallId: string; content: string }>;
 }
 
 function messageText(msg: ChatRequest["messages"][number]): string {
@@ -105,51 +107,108 @@ function messageText(msg: ChatRequest["messages"][number]): string {
   return msg.content ?? "";
 }
 
-function parseMessages(messages: ChatRequest["messages"]): ParsedMessages {
+function formatAssistant(msg: ChatRequest["messages"][number]): string {
+  const text = messageText(msg);
+  const calls = msg.tool_calls ?? [];
+  if (!calls.length) return text;
+  const lines = calls.map((tc) => {
+    const args = tc.function.arguments?.trim() || "{}";
+    return `[Called ${tc.function.name} id=${tc.id}] ${args}`;
+  });
+  return [text, ...lines].filter(Boolean).join("\n");
+}
+
+function foldToolResults(
+  assistant: string,
+  results: Array<{ toolCallId: string; content: string }>,
+): string {
+  if (!results.length) return assistant;
+  const extra = results
+    .map((t) => `[Tool result ${t.toolCallId}]\n${t.content}`)
+    .join("\n");
+  return [assistant, extra].filter(Boolean).join("\n");
+}
+
+/**
+ * Map Forge chat history onto Cursor AgentTurn + trailing MCP results.
+ * Tool calls/results are folded into assistant text so a reconnect (new HTTP/2
+ * Run) still has the work, not only the open stream.
+ */
+export function prepareCursorConversation(
+  messages: ChatRequest["messages"],
+): CursorConversation {
   const systemParts = messages
     .filter((m) => m.role === "system")
     .map((m) => messageText(m))
     .filter(Boolean);
   const systemPrompt =
     systemParts.join("\n") || "You are a helpful coding assistant.";
-  const toolResults: ParsedMessages["toolResults"] = [];
-  const pairs: ParsedMessages["turns"] = [];
+
+  const turns: Array<{ userText: string; assistantText: string }> = [];
   let pendingUser = "";
+  let pendingAssistant = "";
+  const trailing: Array<{ toolCallId: string; content: string }> = [];
+  let afterAssistantTools = false;
+
+  const flushTurn = () => {
+    if (pendingUser || pendingAssistant) {
+      turns.push({ userText: pendingUser, assistantText: pendingAssistant });
+      pendingUser = "";
+      pendingAssistant = "";
+    }
+  };
+
+  const absorbTrailing = () => {
+    if (!trailing.length) return;
+    pendingAssistant = foldToolResults(pendingAssistant, trailing);
+    trailing.length = 0;
+  };
 
   for (const msg of messages.filter((m) => m.role !== "system")) {
-    if (msg.role === "tool") {
-      toolResults.push({
-        toolCallId: msg.tool_call_id || "",
-        content: messageText(msg),
-      });
-      continue;
-    }
     if (msg.role === "user") {
-      if (pendingUser) pairs.push({ userText: pendingUser, assistantText: "" });
+      absorbTrailing();
+      flushTurn();
       pendingUser = messageText(msg);
+      afterAssistantTools = false;
       continue;
     }
     if (msg.role === "assistant") {
-      const text = messageText(msg);
-      if (pendingUser) {
-        pairs.push({ userText: pendingUser, assistantText: text });
-        pendingUser = "";
-      }
+      absorbTrailing();
+      const text = formatAssistant(msg);
+      pendingAssistant = pendingAssistant
+        ? `${pendingAssistant}\n${text}`
+        : text;
+      afterAssistantTools = Boolean(msg.tool_calls?.length);
+      continue;
+    }
+    if (msg.role === "tool") {
+      const item = {
+        toolCallId: msg.tool_call_id || "",
+        content: messageText(msg),
+      };
+      if (afterAssistantTools) trailing.push(item);
+      else pendingAssistant = foldToolResults(pendingAssistant, [item]);
     }
   }
 
-  let lastUser = "";
-  if (pendingUser) lastUser = pendingUser;
-  else if (pairs.length && toolResults.length === 0) {
-    const last = pairs.pop()!;
-    lastUser = last.userText;
+  let userText = "";
+  if (pendingUser && !pendingAssistant) {
+    userText = pendingUser;
+  } else {
+    flushTurn();
+    // Replay last user as the action when this is a retry / first completion
+    // (no trailing tools). Matches the previous parseMessages pop.
+    if (!trailing.length && turns.length) {
+      const last = turns.pop()!;
+      userText = last.userText;
+    }
   }
 
   return {
     systemPrompt,
-    userText: lastUser,
-    turns: pairs,
-    toolResults,
+    userText,
+    turns,
+    trailingToolResults: [...trailing],
   };
 }
 
@@ -209,7 +268,7 @@ function closeLive(key: string): void {
   }
 }
 
-function buildRunPayload(req: ChatRequest, parsed: ParsedMessages): {
+function buildRunPayload(req: ChatRequest, parsed: CursorConversation): {
   bytes: Buffer;
   blobStore: Map<string, Buffer>;
   mcpTools: Buffer[];
@@ -378,14 +437,14 @@ export class CursorProvider implements LLMProvider {
     noteVisible: () => void,
   ): Promise<ChatResponse> {
     const key = sessionKeyForRequest(req);
-    const parsed = parseMessages(req.messages);
+    const parsed = prepareCursorConversation(req.messages);
     const existing = liveSessions.get(key);
 
-    if (existing && parsed.toolResults.length) {
+    if (existing && parsed.trailingToolResults.length) {
       return this.resumeWithToolResults(
         key,
         existing,
-        parsed.toolResults,
+        parsed.trailingToolResults,
         req,
         onDelta,
         signal,
@@ -394,6 +453,16 @@ export class CursorProvider implements LLMProvider {
       );
     }
     if (existing) closeLive(key);
+    if (parsed.trailingToolResults.length) {
+      const last = parsed.turns[parsed.turns.length - 1];
+      if (last) {
+        last.assistantText = foldToolResults(
+          last.assistantText,
+          parsed.trailingToolResults,
+        );
+      }
+      if (!parsed.userText.trim()) parsed.userText = "(continue)";
+    }
 
     const payload = buildRunPayload(req, parsed);
     return this.openAndRead(
@@ -545,6 +614,7 @@ export class CursorProvider implements LLMProvider {
     let finishReason: string | null = null;
     let streamCut = false;
     let reasoningWallFired = false;
+    let usage: ChatResponse["usage"];
     const wall = armReasoningOutputWall(providerReasoningWallMs(), () => {
       reasoningWallFired = true;
       if (!finishReason) {
@@ -584,6 +654,12 @@ export class CursorProvider implements LLMProvider {
           noteVisible();
           wall.noteVisibleOutput();
           onDelta({ content: ev.text });
+        } else if (ev.kind === "usage") {
+          usage = {
+            prompt_tokens: ev.prompt_tokens,
+            completion_tokens: ev.completion_tokens,
+            total_tokens: ev.total_tokens,
+          };
         } else if (ev.kind === "thinking") {
           reasoningContent += ev.text;
           onDelta({ reasoning_content: ev.text });
@@ -701,6 +777,7 @@ export class CursorProvider implements LLMProvider {
             reasoning_content: reasoningContent || undefined,
           },
           finish_reason: finishReason || "stop",
+          usage,
         });
       };
       const fail = (err: unknown) => {
@@ -763,11 +840,13 @@ export class CursorProvider implements LLMProvider {
   }
 }
 
-/** Unary GetUsableModels — best-effort catalog refresh. */
+/** Unary GetUsableModels — best-effort catalog refresh (Connect-RPC). */
 export async function fetchCursorUsableModels(
   apiKey: string,
   opts?: { baseUrl?: string; timeoutMs?: number },
 ): Promise<Array<{ id: string; name: string }>> {
+  const key = apiKey.trim();
+  if (!key) return [];
   const base = (opts?.baseUrl || CURSOR_API_BASE).replace(/\/$/, "");
   const timeoutMs = opts?.timeoutMs ?? 8_000;
   return new Promise((resolve) => {
@@ -777,17 +856,25 @@ export async function fetchCursorUsableModels(
       resolve([]);
     }, timeoutMs);
     timer.unref?.();
-    session.on("error", () => {
+    const fail = () => {
       clearTimeout(timer);
+      try {
+        session.close();
+      } catch {
+        /* */
+      }
       resolve([]);
-    });
+    };
+    session.on("error", fail);
     session.on("connect", () => {
       const stream = session.request({
         ":method": "POST",
         ":path": MODELS_PATH,
-        "content-type": "application/proto",
+        "content-type": "application/connect+proto",
         te: "trailers",
-        authorization: `Bearer ${apiKey}`,
+        authorization: `Bearer ${key}`,
+        "connect-protocol-version": "1",
+        "x-request-id": randomUUID(),
         ...cursorApiHeaders(),
       });
       const chunks: Buffer[] = [];
@@ -796,18 +883,13 @@ export async function fetchCursorUsableModels(
         clearTimeout(timer);
         session.close();
         try {
-          const buf = Buffer.concat(chunks);
-          resolve(parseGetUsableModels(buf));
+          resolve(parseGetUsableModels(Buffer.concat(chunks)));
         } catch {
           resolve([]);
         }
       });
-      stream.on("error", () => {
-        clearTimeout(timer);
-        session.close();
-        resolve([]);
-      });
-      stream.end(Buffer.alloc(0));
+      stream.on("error", fail);
+      stream.end(encodeConnectUnaryRequest());
     });
   });
 }

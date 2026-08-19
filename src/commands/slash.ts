@@ -1317,7 +1317,7 @@ export async function handleModelSlash(
   const provider = String(opts.config.provider);
   const freeForm = providerAllowsFreeFormModels(provider);
 
-  // Best-effort remote catalog for OpenRouter / xAI when listing
+  // Best-effort remote catalog for OpenRouter / xAI / Cursor when listing
   let apiKey: string | undefined;
   if (provider === "openrouter") {
     apiKey =
@@ -1329,12 +1329,21 @@ export async function handleModelSlash(
       process.env.XAI_API_KEY?.trim() ||
       opts.auth?.token ||
       getCredential("xai")?.accessToken;
+  } else if (provider === "cursor") {
+    apiKey =
+      process.env.CURSOR_API_KEY?.trim() ||
+      process.env.CURSOR_ACCESS_TOKEN?.trim() ||
+      opts.auth?.token ||
+      getCredential("cursor")?.accessToken;
   }
 
   const catalog = arg
     ? buildModelCatalogSync(opts.config, provider)
     : await buildModelCatalog(opts.config, provider, {
-        refreshRemote: provider === "openrouter" || provider === "xai",
+        refreshRemote:
+          provider === "openrouter" ||
+          provider === "xai" ||
+          provider === "cursor",
         apiKey,
         useCache: true,
       });
@@ -6591,11 +6600,14 @@ export async function runDoctorCheck(
     // Surface expiry for OAuth/subscription without printing tokens
     const cred = getCredential(String(auth.provider));
     if (cred && !cred.refreshToken) {
-      lines.push(
-        chalk.yellow(
-          "  No refresh_token — SuperGrok session cannot renew; multi-day unattended needs forge login --api-key",
-        ),
-      );
+      const pid = String(auth.provider);
+      const renewHint =
+        pid === "cursor" || pid === "cursor-ai" || pid === "cursorai"
+          ? "Cursor session cannot renew; re-login with forge login -p cursor or --from-cursor"
+          : pid === "copilot"
+            ? "Copilot session cannot renew; re-login with forge login -p copilot"
+            : "SuperGrok session cannot renew; multi-day unattended needs forge login --api-key";
+      lines.push(chalk.yellow(`  No refresh_token — ${renewHint}`));
       issues.push(
         `OAuth/subscription for ${auth.provider} has no refresh_token — re-login (forge login) or use API key for multi-day`,
       );
@@ -8453,7 +8465,7 @@ Read the highest-value sources first:
 - build, test, lint, formatter, typecheck, and codegen config
 - CI workflows and pre-commit / task runner config
 - existing instruction files (\`AGENTS.md\`, \`CLAUDE.md\`, \`.cursor/rules/\`, \`.cursorrules\`, \`.github/copilot-instructions.md\`)
-- repo-local Forge config (\`.forge/config.toml\`), custom slash templates (\`.forge/commands/*.md\`), and skill packs (\`.forge/skills/**/SKILL.md\`) if present
+- repo-local Forge config (\`.forge/config.toml\`), custom slash templates (\`.forge/commands/*.md\`, \`.cursor/commands/*.md\`), and skill packs (\`.forge/skills/**/SKILL.md\`, \`.cursor/skills/**/SKILL.md\`) if present
 
 If architecture is still unclear after reading config and docs, inspect a small number of representative code files to find the real entrypoints, package boundaries, and execution flow. Prefer reading the files that explain how the system is wired together over random leaf files.
 

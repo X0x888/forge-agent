@@ -3703,9 +3703,9 @@ Docs: docs/PRODUCTION.md
 
   program
     .command("models")
-    .description("List known models for configured providers (OpenRouter merges remote catalog when available)")
+    .description("List known models for configured providers (OpenRouter / xAI / Cursor merge remote catalogs when available)")
     .option("-p, --provider <provider>", "Filter to one provider (xai|anthropic|openai|openrouter|deepseek|google|copilot|cursor|custom)")
-    .option("--refresh", "Refresh OpenRouter remote model catalog")
+    .option("--refresh", "Refresh OpenRouter / xAI / Cursor remote model catalog")
     .option("--json", "Machine-readable JSON")
     .action(async (opts, command) => {
       const wantJson = flagJson(opts, command);
@@ -3733,7 +3733,7 @@ Docs: docs/PRODUCTION.md
             p.models?.length ? [...p.models] : p.defaultModel ? [p.defaultModel] : [];
           let remoteCount = 0;
           let freeForm = false;
-          if (id === "openrouter" || id === "xai" || refresh) {
+          if (id === "openrouter" || id === "xai" || id === "cursor" || refresh) {
             try {
               const store = await import("./auth/store.js");
               const apiKey =
@@ -3743,10 +3743,17 @@ Docs: docs/PRODUCTION.md
                   : id === "xai"
                     ? process.env.XAI_API_KEY?.trim() ||
                       store.getCredential("xai")?.accessToken
-                    : undefined;
+                    : id === "cursor"
+                      ? process.env.CURSOR_API_KEY?.trim() ||
+                        process.env.CURSOR_ACCESS_TOKEN?.trim() ||
+                        store.getCredential("cursor")?.accessToken
+                      : undefined;
               const cat = await buildModelCatalog(config, id, {
                 refreshRemote:
-                  id === "openrouter" || id === "xai" || refresh,
+                  id === "openrouter" ||
+                  id === "xai" ||
+                  id === "cursor" ||
+                  refresh,
                 apiKey,
                 useCache: true,
               });
@@ -3826,6 +3833,13 @@ Docs: docs/PRODUCTION.md
         console.log(
           chalk.dim(
             "xAI: grok-4.6 default · newer grok-*.* ids inherit latest flagship effort/context · forge models -p xai --refresh",
+          ),
+        );
+      }
+      if (rows.some((r) => r.provider === "cursor")) {
+        console.log(
+          chalk.dim(
+            "Cursor: native quota · composer-2.5 default · forge models -p cursor --refresh · forge login -p cursor",
           ),
         );
       }

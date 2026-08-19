@@ -21,7 +21,10 @@ import { normalizeProviderId, providerIdHelp } from "../src/util/provider-id.js"
 import { DEFAULT_CONFIG } from "../src/config/types.js";
 import { createProvider } from "../src/providers/factory.js";
 import { supportsOAuth, getOAuthProfile } from "../src/auth/login.js";
-import { CursorProvider } from "../src/providers/cursor.js";
+import {
+  CursorProvider,
+  prepareCursorConversation,
+} from "../src/providers/cursor.js";
 import {
   encodeProtobufValue,
   decodeProtobufValue,
@@ -29,13 +32,20 @@ import {
   decodeFields,
   fieldStr,
   encodeConnectFrame,
+  encodeConnectUnaryRequest,
+  decodeConnectUnaryResponse,
   decodeConnectFrames,
   parseAgentServerMessage,
+  parseGetUsableModels,
+  parseUsageFields,
   encodeClientMessage,
   encodeMessage,
   encodeString,
+  encodeUint32,
   CONNECT_END_STREAM,
 } from "../src/providers/cursor-proto.js";
+import { estimateCostUsd } from "../src/util/format.js";
+import { providerSupportsRemoteCatalog } from "../src/config/model-catalog.js";
 import { upsertOAuth, getCredential, clearAllCredentials } from "../src/auth/store.js";
 import { refreshCredentialIfNeeded } from "../src/auth/refresh.js";
 
@@ -235,6 +245,120 @@ describe("cursor proto codec", () => {
     );
     const frames = decodeConnectFrames(frame);
     assert.equal(frames[0]!.flags & CONNECT_END_STREAM, CONNECT_END_STREAM);
+  });
+
+  it("decodes Connect unary frames and raw proto", () => {
+    const inner = encodeMessage(1, encodeString(1, "composer-2.5"));
+    const framed = encodeConnectUnaryRequest(inner);
+    const decoded = decodeConnectUnaryResponse(framed);
+    assert.deepEqual(Buffer.from(decoded.payload), inner);
+    const raw = decodeConnectUnaryResponse(inner);
+    assert.deepEqual(Buffer.from(raw.payload), inner);
+  });
+
+  it("parses GetUsableModels through Connect framing", () => {
+    const model = Buffer.concat([
+      encodeString(1, "composer-2.5"),
+      encodeString(4, "Composer 2.5"),
+    ]);
+    const body = encodeMessage(1, model);
+    const framed = encodeConnectUnaryRequest(body);
+    const models = parseGetUsableModels(framed);
+    assert.equal(models.length, 1);
+    assert.equal(models[0]!.id, "composer-2.5");
+    assert.equal(models[0]!.name, "Composer 2.5");
+  });
+
+  it("parses usage events from AgentServerMessage field 5", () => {
+    const usage = Buffer.concat([
+      encodeUint32(1, 1200),
+      encodeUint32(2, 80),
+      encodeUint32(3, 1280),
+    ]);
+    const payload = encodeMessage(5, usage);
+    const events = parseAgentServerMessage(payload);
+    const hit = events.find((e) => e.kind === "usage");
+    assert.ok(hit && hit.kind === "usage");
+    assert.equal(hit.prompt_tokens, 1200);
+    assert.equal(hit.completion_tokens, 80);
+    assert.equal(hit.total_tokens, 1280);
+    assert.equal(parseUsageFields(encodeString(1, "nope")), undefined);
+  });
+});
+
+describe("cursor conversation replay", () => {
+  it("uses the latest user as the action and keeps prior turns", () => {
+    const got = prepareCursorConversation([
+      { role: "system", content: "sys" },
+      { role: "user", content: "first" },
+      { role: "assistant", content: "ok" },
+      { role: "user", content: "second" },
+    ]);
+    assert.equal(got.systemPrompt, "sys");
+    assert.equal(got.userText, "second");
+    assert.equal(got.turns.length, 1);
+    assert.equal(got.turns[0]!.userText, "first");
+    assert.equal(got.turns[0]!.assistantText, "ok");
+    assert.equal(got.trailingToolResults.length, 0);
+  });
+
+  it("folds tool calls into assistant text and keeps trailing results", () => {
+    const got = prepareCursorConversation([
+      { role: "user", content: "edit it" },
+      {
+        role: "assistant",
+        content: "calling",
+        tool_calls: [
+          {
+            id: "c1",
+            type: "function",
+            function: { name: "bash", arguments: "{\"command\":\"ls\"}" },
+          },
+        ],
+      },
+      { role: "tool", tool_call_id: "c1", content: "a.ts" },
+    ]);
+    assert.match(got.turns[0]!.assistantText, /Called bash id=c1/);
+    assert.equal(got.trailingToolResults.length, 1);
+    assert.equal(got.trailingToolResults[0]!.toolCallId, "c1");
+    assert.equal(got.userText, "");
+  });
+
+  it("folds completed tool results into the turn before a follow-up assistant", () => {
+    const got = prepareCursorConversation([
+      { role: "user", content: "edit it" },
+      {
+        role: "assistant",
+        content: null,
+        tool_calls: [
+          {
+            id: "c1",
+            type: "function",
+            function: { name: "read_file", arguments: "{\"path\":\"a.ts\"}" },
+          },
+        ],
+      },
+      { role: "tool", tool_call_id: "c1", content: "export const x = 1" },
+      { role: "assistant", content: "done" },
+      { role: "user", content: "next" },
+    ]);
+    assert.equal(got.userText, "next");
+    assert.equal(got.trailingToolResults.length, 0);
+    assert.match(got.turns[0]!.assistantText, /Tool result c1/);
+    assert.match(got.turns[0]!.assistantText, /done/);
+  });
+});
+
+describe("cursor catalog + cost", () => {
+  it("treats cursor as a remote catalog provider", () => {
+    assert.equal(providerSupportsRemoteCatalog("cursor"), true);
+    assert.equal(providerSupportsRemoteCatalog("anthropic"), false);
+  });
+
+  it("native Cursor quota estimates $0", () => {
+    assert.equal(estimateCostUsd("cursor", 1_000_000, 50_000, "composer-2.5"), 0);
+    assert.equal(estimateCostUsd("cursor-ai", 1_000_000, 50_000, "grok-4.6"), 0);
+    assert.ok(estimateCostUsd("xai", 1_000_000, 50_000, "grok-4.6") > 0);
   });
 });
 

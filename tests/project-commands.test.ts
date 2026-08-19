@@ -82,6 +82,33 @@ describe("project custom commands", () => {
     assert.ok(isReservedSlashName("/plan"));
   });
 
+  it("loads .cursor/commands and lets .forge win on name clash", () => {
+    const ws = path.join(tmp, "cursor-cmds");
+    fs.mkdirSync(path.join(ws, ".forge", "commands"), { recursive: true });
+    fs.mkdirSync(path.join(ws, ".cursor", "commands"), { recursive: true });
+    fs.writeFileSync(
+      path.join(ws, ".cursor", "commands", "prcheck.md"),
+      "CURSOR_PRCHECK $ARGUMENTS\n",
+    );
+    fs.writeFileSync(
+      path.join(ws, ".cursor", "commands", "ship.md"),
+      "CURSOR_SHIP\n",
+    );
+    fs.writeFileSync(
+      path.join(ws, ".forge", "commands", "ship.md"),
+      "FORGE_SHIP\n",
+    );
+    const cmds = loadProjectCommands(ws);
+    const names = cmds.map((c) => c.name).sort();
+    assert.deepEqual(names, ["prcheck", "ship"]);
+    assert.match(findProjectCommand(ws, "prcheck")!.template, /CURSOR_PRCHECK/);
+    assert.match(findProjectCommand(ws, "ship")!.template, /FORGE_SHIP/);
+    assert.match(
+      findProjectCommand(ws, "prcheck")!.description,
+      /Cursor command/,
+    );
+  });
+
   it("project commands win over user-global on name clash", () => {
     const ws = path.join(tmp, "clash");
     fs.mkdirSync(path.join(ws, ".forge", "commands"), { recursive: true });

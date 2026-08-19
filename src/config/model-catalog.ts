@@ -3,7 +3,8 @@
  *
  * OpenRouter (and custom) accept free-form ids; the static list is a starter
  * catalog. When authenticated, we best-effort fetch OpenRouter / xAI /models
- * and cache under ~/.forge/cache (never required for offline / CI).
+ * and Cursor GetUsableModels, then cache under ~/.forge/cache
+ * (never required for offline / CI).
  *
  * xAI also accepts well-formed newer `grok-*.*` ids (version-bump, not typo);
  * effort/context then follow `grok-model.ts` even before the remote list lands.
@@ -19,9 +20,9 @@ const REMOTE_TIMEOUT_MS = 8_000;
 const MAX_REMOTE_MODELS = 400;
 const MAX_RECENT = 12;
 
-function providerSupportsRemoteCatalog(provider: string): boolean {
+export function providerSupportsRemoteCatalog(provider: string): boolean {
   const p = String(provider || "").toLowerCase();
-  return p === "openrouter" || p === "xai";
+  return p === "openrouter" || p === "xai" || p === "cursor";
 }
 
 export interface ModelCatalogEntry {
@@ -300,7 +301,39 @@ async function fetchRemoteModels(
   if (provider === "xai") {
     return fetchXaiModels(apiKey, baseUrl || "https://api.x.ai/v1");
   }
+  if (provider === "cursor") {
+    return fetchCursorModels(apiKey, baseUrl);
+  }
   return [];
+}
+
+/**
+ * Fetch Cursor AgentService GetUsableModels (best-effort; needs a session).
+ * New Composer / hosted ids then show up in /model without a Forge bump.
+ */
+export async function fetchCursorModels(
+  apiKey?: string,
+  baseUrl?: string,
+): Promise<string[]> {
+  const key = apiKey?.trim();
+  if (!key) return [];
+  try {
+    const { fetchCursorUsableModels, CURSOR_FALLBACK_MODELS } = await import(
+      "../providers/cursor.js"
+    );
+    const { CURSOR_API_BASE } = await import("../auth/cursor.js");
+    const rows = await fetchCursorUsableModels(key, {
+      baseUrl: baseUrl || CURSOR_API_BASE,
+    });
+    const ids = rows
+      .map((m) => String(m.id || "").trim())
+      .filter(Boolean);
+    const unique = [...new Set([...ids, ...CURSOR_FALLBACK_MODELS])];
+    if (unique.length) writeProviderModelsCache("cursor", unique);
+    return unique;
+  } catch {
+    return [];
+  }
 }
 
 export interface BuildCatalogOptions {
@@ -331,11 +364,19 @@ export async function buildModelCatalog(
   let remoteFetched = false;
   const wantRemote =
     opts.refreshRemote !== false && providerSupportsRemoteCatalog(p);
-  const xaiBase = config.providers.xai?.baseUrl;
+  const remoteBase =
+    p === "xai"
+      ? config.providers.xai?.baseUrl
+      : p === "cursor"
+        ? config.providers.cursor?.baseUrl
+        : undefined;
 
-  if (wantRemote && !(p === "xai" && !opts.apiKey?.trim())) {
+  if (
+    wantRemote &&
+    !((p === "xai" || p === "cursor") && !opts.apiKey?.trim())
+  ) {
     try {
-      remote = await fetchRemoteModels(p, opts.apiKey, xaiBase);
+      remote = await fetchRemoteModels(p, opts.apiKey, remoteBase);
       remoteFetched = remote.length > 0;
     } catch {
       // Fall back to cache
@@ -407,6 +448,11 @@ export async function buildModelCatalog(
       "Newer grok-*.* ids are accepted; effort/context follow the latest known flagship " +
       "(grok-4.6 → xhigh / 500k). forge models -p xai --refresh merges the live xAI catalog.";
   }
+  if (p === "cursor") {
+    note =
+      "Cursor-hosted models against native quota (Composer, Grok, Claude, GPT, Gemini, Auto). " +
+      "forge models -p cursor --refresh merges GetUsableModels when signed in.";
+  }
   if (p === "openrouter" && remoteFetched) {
     note = (note ? note + " " : "") + `Remote catalog: ${remote.length} models (cached).`;
   } else if (p === "openrouter" && remote.length) {
@@ -415,6 +461,10 @@ export async function buildModelCatalog(
     note = (note ? note + " " : "") + `Remote catalog: ${remote.length} models (cached).`;
   } else if (p === "xai" && remote.length) {
     note = (note ? note + " " : "") + `Using cached xAI catalog (${remote.length}).`;
+  } else if (p === "cursor" && remoteFetched) {
+    note = (note ? note + " " : "") + `Remote catalog: ${remote.length} models (cached).`;
+  } else if (p === "cursor" && remote.length) {
+    note = (note ? note + " " : "") + `Using cached Cursor catalog (${remote.length}).`;
   }
 
   return {

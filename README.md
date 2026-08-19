@@ -101,7 +101,7 @@ Forge supports **both API keys and subscription/OAuth** where providers allow pu
 | **Local GitHub Copilot** | `forge login --from-copilot` / `-p copilot` | Import Copilot CLI keychain or VS Code `~/.config/github-copilot/apps.json` |
 | **Copilot device code** | `forge login -p copilot --device` | GitHub device flow when no local session |
 | **Local Cursor** | `forge login --from-cursor` / `-p cursor` | Import Cursor CLI `~/.cursor/auth.json` / keychain / `CURSOR_API_KEY` |
-| **Cursor browser login** | `forge login -p cursor --oauth` | Same poll flow as `agent login` — uses Cursor native quota + models |
+| **Cursor browser login** | `forge login -p cursor --oauth` | Same poll flow as `agent login` — uses Cursor native quota + models (`forge models -p cursor --refresh`) |
 | **API key** | `XAI_API_KEY` / `forge login --api-key` | CI / multi-day unattended |
 | **Stored session** | `~/.forge/auth.json` (mode `0600`) | Auto-used when env key absent; OAuth refresh when possible |
 
@@ -269,7 +269,7 @@ Full contract: [docs/RELIABILITY.md](docs/RELIABILITY.md) · expert checklist: [
 | `/effort [level]` | Reasoning effort for models that support it (e.g. grok-4.6) **[live]** |
 | `/plan [focus]` | Session-scoped PLAN mode (read-only design; no sticky prefs) **[live]** |
 | `/build [note]` | Leave plan → restore prior mode and implement (`/execute`) **[live]** |
-| `/commands` | List project/user custom slash templates (`.forge/commands/*.md`) |
+| `/commands` | List project/user custom slash templates (`.forge/commands` · `.cursor/commands`) |
 | `/permissions <mode>` | Sticky prefs: `default` \| `acceptEdits` \| `plan` \| `bypassPermissions`; `plan`/`build` aliases; `list`/`clear`/`revoke` always-allows |
 | `/compact` | Compact history |
 | `/compact-and <prompt>` | Compact then continue with follow-up (Warp-style) |

@@ -20,7 +20,7 @@ export function expertTipsLines(): string[] {
     `  Accounts:      forge accounts list|switch|auto-switch  ·  forge login --add  ·  /accounts  ·  /auth  ·  auto-switch on 429/quota + plan threshold  ·  /fallback after 429/5xx (defaults on; off warns at posture)`,
     `  Attention:     /setup  ·  /bell on  ·  /notify on  ·  /budget N  ·  /copy  ·  /last  ·  /files  ·  /path  ·  /logs  ·  /config  ·  /pin  ·  /stats 7|week  ·  /news all  ·  /share  ·  /memory  ·  /checkpoint  ·  /retry  ·  unknown /cmd → Did you mean?`,
     `  Recovery:      /undo  ·  /checkpoint (/snap)  ·  /retry  ·  /sessions errors  ·  /context  ·  /compact  ·  sessions prune --force-last-error  ·  /init  ·  forge logs`,
-    `  Custom cmds:    .forge/commands/<name>.md  ($ARGUMENTS $1..$9)  ·  ~/.forge/commands/  ·  /commands`,
+    `  Custom cmds:    .forge/commands/<name>.md  ($ARGUMENTS $1..$9)  ·  .cursor/commands/  ·  ~/.forge/commands/  ·  /commands`,
     `  Worktrees:      doctor/status show linked worktree · spawn_subagent general-purpose defaults to isolation=worktree (auto-lands) (FORGE_SUBAGENT_LAND=auto|keep|discard) · /undo reverts a journaled land · FORGE_SUBAGENT_KEEP_WORKTREE=1 · one session per worktree`,
     `  LSP:            forge lsp ensure  (TS+Python default; Rust/Go if project)  ·  /lsp ensure  ·  FORGE_LSP_AUTO=0  ·  docs/LSP.md  ·  prefer lsp references/definition/workspace_symbols over repo-wide grep for known symbols`,
     `  Session titles: /sessions untitled · list --untitled · /title · --title · /goal auto-titles`,

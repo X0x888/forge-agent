@@ -141,6 +141,43 @@ export function encodeConnectFrame(payload: Uint8Array, flags = 0): Buffer {
   return frame;
 }
 
+/** Connect unary request (empty protobuf is a 5-byte zero-length frame). */
+export function encodeConnectUnaryRequest(
+  payload: Uint8Array = Buffer.alloc(0),
+): Buffer {
+  return encodeConnectFrame(payload, 0);
+}
+
+/**
+ * Connect unary response: framed payload + optional end-stream JSON error.
+ * Raw protobuf (no 5-byte prefix) is accepted so we can parse either style.
+ */
+export function decodeConnectUnaryResponse(buf: Uint8Array): {
+  payload: Uint8Array;
+  error?: string;
+} {
+  if (buf.length >= 5) {
+    const flags = buf[0]!;
+    const len =
+      ((buf[1]! << 24) | (buf[2]! << 16) | (buf[3]! << 8) | buf[4]!) >>> 0;
+    const connectFlags = (flags & ~0x03) === 0;
+    if (connectFlags && len <= buf.length - 5) {
+      const frames = decodeConnectFrames(buf);
+      let payload: Uint8Array = new Uint8Array();
+      let error: string | undefined;
+      for (const fr of frames) {
+        if (fr.flags & CONNECT_END_STREAM) {
+          error = parseConnectEndError(fr.payload) || error;
+        } else if (fr.payload.length) {
+          payload = fr.payload;
+        }
+      }
+      return { payload, error };
+    }
+  }
+  return { payload: buf };
+}
+
 export function decodeConnectFrames(buf: Uint8Array): Array<{
   flags: number;
   payload: Uint8Array;
@@ -439,7 +476,34 @@ export type CursorServerEvent =
       blobId: Uint8Array;
       blobData?: Uint8Array;
     }
+  | {
+      kind: "usage";
+      prompt_tokens: number;
+      completion_tokens: number;
+      total_tokens: number;
+    }
   | { kind: "end"; error?: string };
+
+/** Token usage: varint fields 1/2/3 (prompt/completion/total). Rejects junk. */
+export function parseUsageFields(
+  buf: Uint8Array,
+): {
+  prompt_tokens: number;
+  completion_tokens: number;
+  total_tokens: number;
+} | undefined {
+  const fields = decodeFields(buf);
+  if (!fields.length) return undefined;
+  if (fields.some((f) => f.wire !== 0)) return undefined;
+  const prompt = fieldVarint(fields, 1) ?? 0;
+  const completion = fieldVarint(fields, 2) ?? 0;
+  const total = fieldVarint(fields, 3) ?? prompt + completion;
+  if (prompt === 0 && completion === 0 && total === 0) return undefined;
+  if (prompt > 100_000_000 || completion > 100_000_000 || total > 200_000_000) {
+    return undefined;
+  }
+  return { prompt_tokens: prompt, completion_tokens: completion, total_tokens: total };
+}
 
 const EXEC_KIND: Record<number, string> = {
   2: "shellArgs",
@@ -515,6 +579,12 @@ export function parseAgentServerMessage(payload: Uint8Array): CursorServerEvent[
         const t = fieldStr(decodeFields(thinkMsg), 1);
         if (t) events.push({ kind: "thinking", text: t });
       }
+      for (const usageField of [5, 6, 8]) {
+        const usageBuf = fieldBytes(inner, usageField);
+        if (!usageBuf) continue;
+        const usage = parseUsageFields(usageBuf);
+        if (usage) events.push({ kind: "usage", ...usage });
+      }
     } else if (f.field === 2 && f.wire === 2) {
       const inner = decodeFields(f.bytes);
       const id = fieldVarint(inner, 1) ?? 0;
@@ -556,6 +626,9 @@ export function parseAgentServerMessage(payload: Uint8Array): CursorServerEvent[
           blobData: fieldBytes(s, 2),
         });
       }
+    } else if (f.field === 5 && f.wire === 2) {
+      const usage = parseUsageFields(f.bytes);
+      if (usage) events.push({ kind: "usage", ...usage });
     }
   }
   return events;
@@ -579,14 +652,16 @@ export function parseGetUsableModels(payload: Uint8Array): Array<{
   id: string;
   name: string;
 }> {
-  const fields = decodeFields(payload);
+  const { payload: inner, error } = decodeConnectUnaryResponse(payload);
+  if (error && !inner.length) return [];
+  const fields = decodeFields(inner);
   const models: Array<{ id: string; name: string }> = [];
   for (const m of fieldRepeated(fields, 1)) {
-    const inner = decodeFields(m.bytes);
-    const id = fieldStr(inner, 1) || "";
+    const f = decodeFields(m.bytes);
+    const id = fieldStr(f, 1) || "";
     if (!id) continue;
     const name =
-      fieldStr(inner, 4) || fieldStr(inner, 5) || fieldStr(inner, 3) || id;
+      fieldStr(f, 4) || fieldStr(f, 5) || fieldStr(f, 3) || id;
     models.push({ id, name });
   }
   return models;

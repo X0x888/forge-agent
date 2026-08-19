@@ -4,9 +4,10 @@
  * Load order (later layers fill gaps; earlier wins on name clash):
  *   1. <workspace>/.forge/skills/**\/SKILL.md
  *   2. <workspace>/.forge/skill/**\/SKILL.md
- *   3. <workspace>/.agents/skills/**\/SKILL.md
- *   4. ~/.forge/skills/**\/SKILL.md  (user global)
- *   5. Package-shipped skills/ (builtin; FORGE_BUILTIN_SKILLS=0 to disable)
+ *   3. <workspace>/.cursor/skills/**\/SKILL.md  (Cursor compat)
+ *   4. <workspace>/.agents/skills/**\/SKILL.md
+ *   5. ~/.forge/skills/**\/SKILL.md  (user global)
+ *   6. Package-shipped skills/ (builtin; FORGE_BUILTIN_SKILLS=0 to disable)
  *
  * Frontmatter (optional):
  *   ---
@@ -154,6 +155,7 @@ function skillDirs(base: string): string[] {
   return [
     path.join(base, ".forge", "skills"),
     path.join(base, ".forge", "skill"),
+    path.join(base, ".cursor", "skills"),
     path.join(base, ".agents", "skills"),
   ];
 }

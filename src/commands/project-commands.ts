@@ -3,6 +3,7 @@
  *
  * Load markdown templates from:
  *   <workspace>/.forge/commands/*.md
+ *   <workspace>/.cursor/commands/*.md  (Cursor compat; Forge wins on name clash)
  *   ~/.forge/commands/*.md   (user global; project wins on name clash)
  *
  * Frontmatter (optional YAML-ish):
@@ -183,13 +184,16 @@ function loadDir(
         body.length > MAX_TEMPLATE_CHARS
           ? body.slice(0, MAX_TEMPLATE_CHARS)
           : body;
+      const cursorCmd = filePath.includes(`${path.sep}.cursor${path.sep}commands${path.sep}`);
       into.set(base, {
         name: base,
         description:
           description ||
-          (source === "project"
-            ? `Project command (.forge/commands/${ent})`
-            : `User command (~/.forge/commands/${ent})`),
+          (cursorCmd
+            ? `Cursor command (.cursor/commands/${ent})`
+            : source === "project"
+              ? `Project command (.forge/commands/${ent})`
+              : `User command (~/.forge/commands/${ent})`),
         template,
         source,
         filePath,
@@ -207,6 +211,7 @@ export function loadProjectCommands(workspace: string): ProjectCommand[] {
   const map = new Map<string, ProjectCommand>();
   const ws = path.resolve(workspace || process.cwd());
   loadDir(path.join(ws, ".forge", "commands"), "project", map);
+  loadDir(path.join(ws, ".cursor", "commands"), "project", map);
   try {
     loadDir(path.join(forgeHome(), "commands"), "user", map);
   } catch {
@@ -257,7 +262,7 @@ export function formatProjectCommandsHelp(workspace: string): string {
       "  Add markdown templates under .forge/commands/<name>.md\n" +
       "  Optional frontmatter: description: …\n" +
       "  Body placeholders: $ARGUMENTS  $1..$9\n" +
-      "  User-global: ~/.forge/commands/"
+      "  Cursor compat: .cursor/commands/  ·  user-global: ~/.forge/commands/"
     );
   }
   return (
@@ -270,7 +275,7 @@ export function formatProjectCommandsHelp(workspace: string): string {
           }`,
       )
       .join("\n") +
-    "\n  (from .forge/commands/*.md · ~/.forge/commands/*.md)"
+    "\n  (from .forge/commands/*.md · .cursor/commands/*.md · ~/.forge/commands/*.md)"
   );
 }
 

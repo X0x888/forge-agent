@@ -304,6 +304,9 @@ describe("cost estimates: grok-4.6 rates, not grok-4 rates", () => {
   it("xai default prices grok-4.6 ($2/$6)", () => {
     assert.equal(estimateCostUsd("xai", 1_000_000, 100_000), 2 + 0.6);
   });
+  it("cursor native quota is $0", () => {
+    assert.equal(estimateCostUsd("cursor", 1_000_000, 100_000, "composer-2.5"), 0);
+  });
   it("grok-4 override keeps $3/$15", () => {
     assert.equal(
       estimateCostUsd("xai", 1_000_000, 1_000_000, "grok-4"),

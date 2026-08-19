@@ -692,6 +692,11 @@ export function estimateCostUsd(
         .toLowerCase()
         .replace(/-latest$/, "")
     : "";
+  const p = String(provider || "").toLowerCase();
+  // Native Cursor quota — HUD $0 so a spend cap does not invent OpenAI rates.
+  if (p === "cursor" || p === "cursor-ai" || p === "cursorai") {
+    return 0;
+  }
   const grok = model ? grokCostRates(model) : undefined;
   const r =
     grok ||

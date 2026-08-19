@@ -64,6 +64,36 @@ Always run smoke after deploy.
     });
   });
 
+  it("loads .cursor/skills and lets .forge win on name clash", () => {
+    withBuiltinOff(() => {
+      const ws = fs.mkdtempSync(path.join(os.tmpdir(), "forge-skills-cursor-"));
+      const forgeDir = path.join(ws, ".forge", "skills", "shared");
+      const cursorDir = path.join(ws, ".cursor", "skills", "review");
+      const clashDir = path.join(ws, ".cursor", "skills", "shared");
+      fs.mkdirSync(forgeDir, { recursive: true });
+      fs.mkdirSync(cursorDir, { recursive: true });
+      fs.mkdirSync(clashDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(forgeDir, "SKILL.md"),
+        "---\nname: shared\ndescription: forge\n---\nFORGE BODY\n",
+      );
+      fs.writeFileSync(
+        path.join(clashDir, "SKILL.md"),
+        "---\nname: shared\ndescription: cursor clash\n---\nCURSOR SHARED\n",
+      );
+      fs.writeFileSync(
+        path.join(cursorDir, "SKILL.md"),
+        "---\nname: review\ndescription: cursor review\n---\nCURSOR REVIEW\n",
+      );
+      const skills = loadProjectSkills(ws);
+      const byName = Object.fromEntries(skills.map((s) => [s.name, s]));
+      assert.ok(byName.review);
+      assert.match(byName.review.body, /CURSOR REVIEW/);
+      assert.match(byName.shared.body, /FORGE BODY/);
+      assert.doesNotMatch(byName.shared.body, /CURSOR SHARED/);
+    });
+  });
+
   it("project overrides user skill with same name", () => {
     withBuiltinOff(() => {
       const ws = fs.mkdtempSync(path.join(os.tmpdir(), "forge-skills-ov-"));
