@@ -50,6 +50,27 @@ describe("openai-compat streamed tool_call index handling", () => {
     globalThis.fetch = (async () => sseResponse(chunks)) as typeof fetch;
   }
 
+  it("sends tool_choice=required when the request asks for it", async () => {
+    let body: Record<string, unknown> | undefined;
+    globalThis.fetch = (async (_url, init) => {
+      body = JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>;
+      return sseResponse([
+        {
+          id: "chatcmpl_tc",
+          model: "grok-4.6",
+          choices: [{ delta: { content: "x" }, finish_reason: "stop" }],
+        },
+      ]);
+    }) as typeof fetch;
+    const p = new OpenAICompatProvider({
+      id: "xai",
+      baseUrl: "https://api.x.ai/v1",
+      apiKey: "sk-test",
+    });
+    await p.chatStream({ ...makeReq(), tool_choice: "required" }, () => {});
+    assert.equal(body?.tool_choice, "required");
+  });
+
   it("accumulates tool_call chunks that omit `index` (single-call proxy)", async () => {
     mockStream([
       {

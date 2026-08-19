@@ -70,6 +70,11 @@ export interface ChatRequest {
     | "high"
     | "xhigh"
     | "max";
+  /**
+   * OpenAI-compat / xAI `tool_choice`. `required` after a thought-only Stop
+   * so the next turn cannot be another silent judge.
+   */
+  tool_choice?: "auto" | "required";
 }
 
 export interface ChatUsage {

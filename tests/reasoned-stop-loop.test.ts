@@ -66,19 +66,29 @@ function textReply(text: string): ChatResponse {
   };
 }
 
-function scriptedProvider(replies: ChatResponse[]): LLMProvider & { calls: number } {
-  const state = { calls: 0 };
+function scriptedProvider(
+  replies: ChatResponse[],
+): LLMProvider & { calls: number; reqs: import("../src/providers/types.js").ChatRequest[] } {
+  const state = {
+    calls: 0,
+    reqs: [] as import("../src/providers/types.js").ChatRequest[],
+  };
   return {
     id: "xai",
     get calls() {
       return state.calls;
     },
-    async chat() {
+    get reqs() {
+      return state.reqs;
+    },
+    async chat(req) {
+      state.reqs.push(req);
       const i = Math.min(state.calls, replies.length - 1);
       state.calls += 1;
       return replies[i]!;
     },
-    async chatStream(_req, onDelta) {
+    async chatStream(req, onDelta) {
+      state.reqs.push(req);
       const i = Math.min(state.calls, replies.length - 1);
       state.calls += 1;
       const r = replies[i]!;
@@ -198,10 +208,16 @@ describe("reasoned empty Stop in the agent loop", () => {
       });
       assert.equal(result.aborted, false);
       assert.ok(provider.calls >= 2, "cycle=1 must keep driving after reasoned Stop");
+      assert.equal(
+        provider.reqs[1]?.tool_choice,
+        "required",
+        "next call after thought-only must force a tool",
+      );
       const dumped = JSON.stringify(h.session.messages);
       assert.doesNotMatch(dumped, /Previous model response was empty/);
       assert.match(dumped, /Forge ULW cycle driver/);
       assert.match(dumped, /Acting on the ULW re-anchor/);
+      assert.match(dumped, /next output MUST be a tool call/);
     } finally {
       disarmUlwCycle(h.session.meta.id);
     }

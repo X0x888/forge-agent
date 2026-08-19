@@ -116,6 +116,9 @@ export class OpenAICompatProvider implements LLMProvider {
     // on reasoning models (and DeepSeek thinking ignores temperature anyway).
     if (req.temperature != null) body.temperature = req.temperature;
     if (req.max_tokens != null) body.max_tokens = req.max_tokens;
+    if (req.tool_choice === "required" && req.tools?.length) {
+      body.tool_choice = "required";
+    }
     if (req.reasoning_effort) {
       // OpenAI-compat / xAI / DeepSeek native accept high|max here.
       body.reasoning_effort = req.reasoning_effort;

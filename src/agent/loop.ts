@@ -78,7 +78,9 @@ import {
   isReasonedEmptyStop,
   REASONING_LOOP_FINISH,
   REASONING_WALL_FINISH,
+  THOUGHT_ONLY_ACTION_POKE,
 } from "./reasoned-stop.js";
+import { formatHoldContextAppendix } from "../harness/explore-contract.js";
 import { applyMillHoldPrune } from "../session/hold-context.js";
 import {
   clearStaleToolResults,
@@ -553,6 +555,8 @@ export interface BuildChatRequestOpts {
   conversationId?: string;
   estimatedTokens?: number;
   lastApiPromptTokens?: number;
+  /** After a thought-only Stop, force the next call to emit a tool. */
+  toolChoice?: "auto" | "required";
   /** Frozen omit set from a prior clip (session.meta.requestPruneSticky). */
   sticky?: RequestPruneSticky | null;
   /** Suffix mill-tool ids to omit without inventing a first clip. */
@@ -624,6 +628,9 @@ export function buildChatRequest(
     // high-effort thinking is not truncated into length-continue re-sends.
     max_tokens: resolveEffectiveMaxTokens(config, Boolean(effort)),
     ...(effort ? { reasoning_effort: effort } : {}),
+    ...(opts?.toolChoice === "required" && tools.length
+      ? { tool_choice: "required" as const }
+      : {}),
   };
 }
 
@@ -956,6 +963,8 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
   let lastPruneKind: PruneKind = "off";
   let lastRoundCacheRatio = 0;
   /** Tool schemas are sent every turn but not stored in session history. */
+  /** After thought-only Stop, the next chat must emit a tool — not another judge. */
+  let forceToolNext = false;
   const makeChatRequest = (effortOverride?: ReasoningEffort) => {
     const tools = toolsForMode();
     const estimated = estimateRequestTokens(session.messages, {
@@ -967,6 +976,7 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
       lastApiPromptTokens: session.meta.lastRoundPromptTokens,
       sticky: session.meta.requestPruneSticky,
       holdOmitIds: session.meta.holdOmitToolIds,
+      toolChoice: forceToolNext && tools.length ? "required" : undefined,
       onPrune: (info) => {
         lastPruneKind = info.kind;
         lastOutboundPruned = info.kind !== "off";
@@ -2076,6 +2086,9 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
       }
 
       const toolCalls = assistantMsg.tool_calls;
+      if ((toolCalls && toolCalls.length > 0) || (finalText || "").trim()) {
+        forceToolNext = false;
+      }
       const finishReason = response.finish_reason || "";
       if (finishReason) lastFinishReason = finishReason;
 
@@ -2242,14 +2255,13 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
       }
 
       if (!toolCalls || toolCalls.length === 0) {
-        if (
-          isReasonedEmptyStop({
-            text: finalText,
-            toolCallCount: 0,
-            reasoningContent: assistantMsg.reasoning_content,
-            finishReason,
-          })
-        ) {
+        const reasonedEmpty = isReasonedEmptyStop({
+          text: finalText,
+          toolCallCount: 0,
+          reasoningContent: assistantMsg.reasoning_content,
+          finishReason,
+        });
+        if (reasonedEmpty) {
           const why =
             finishReason === REASONING_LOOP_FINISH
               ? "reasoning_loop"
@@ -2568,6 +2580,13 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
           "Stop was blocked. Continue working.";
         if (!/^\s*\[Forge\b/.test(inject)) {
           inject = `[Forge ULW cycle driver] ${inject}`;
+        }
+        if (reasonedEmpty) {
+          forceToolNext = true;
+          const hold = formatHoldContextAppendix(session.meta.id);
+          inject = [THOUGHT_ONLY_ACTION_POKE, hold, inject]
+            .filter((s) => (s || "").trim())
+            .join("\n");
         }
         const ulwAfter = loadUlwCycle(session.meta.id);
         if (ulwAfter?.enabled || stopResult.ulw?.maxWavesHit) {

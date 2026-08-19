@@ -16,6 +16,10 @@ import { REASONING_LOOP_FINISH } from "./reasoning-loop.js";
 export const REASONING_WALL_FINISH = "reasoning_wall";
 export { REASONING_LOOP_FINISH };
 
+/** Prefixed onto the next Stop re-anchor after a thought-only turn. */
+export const THOUGHT_ONLY_ACTION_POKE =
+  "[Forge] Previous model turn was thought-only (no text, no tools). That is not a ship. Your next output MUST be a tool call. Do not stop. Do not write the wave in thought.";
+
 export function isReasonedEmptyStop(opts: {
   text?: string | null;
   toolCallCount?: number;

@@ -362,6 +362,9 @@ export class AnthropicProvider implements LLMProvider {
       system: cached.system,
       messages: this.applyHistoryCacheBreakpoint(messages),
       tools: cached.tools,
+      ...(req.tool_choice === "required" && req.tools?.length
+        ? { tool_choice: { type: "any" } }
+        : {}),
       stream: false,
     };
     const { signal: merged, dispose } = mergeAbortSignals(
@@ -403,6 +406,9 @@ export class AnthropicProvider implements LLMProvider {
       system: cached.system,
       messages: this.applyHistoryCacheBreakpoint(messages),
       tools: cached.tools,
+      ...(req.tool_choice === "required" && req.tools?.length
+        ? { tool_choice: { type: "any" } }
+        : {}),
       stream: true,
     };
     // Stall timeout (not total wall clock): touch() on each SSE chunk so long
