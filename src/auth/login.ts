@@ -32,6 +32,12 @@ import {
   COPILOT_PROVIDER_ID,
   storeCopilotFromGitHubToken,
 } from "./copilot.js";
+import {
+  generateCursorAuthParams,
+  isCursorProvider,
+  pollCursorAuth,
+  storeCursorFromAccessToken,
+} from "./cursor.js";
 
 function base64url(buf: Buffer): string {
   return buf
@@ -119,6 +125,14 @@ const OAUTH_PROFILES: Record<
     scopes: [COPILOT_GITHUB_SCOPES],
     label: "GitHub Copilot (device code / local CLI)",
   },
+  /** Poll-based browser login (Cursor CLI loginDeepControl). See cursorBrowserLogin. */
+  cursor: {
+    authorizeUrl: "https://cursor.com/loginDeepControl",
+    tokenUrl: "https://api2.cursor.sh/auth/exchange_user_api_key",
+    clientId: "cursor-cli",
+    scopes: [],
+    label: "Cursor (subscription / native quota)",
+  },
 };
 
 export type LoginMethod = "api_key" | "oauth" | "device";
@@ -139,11 +153,12 @@ export async function loginInteractive(opts: {
   const provider = String(opts.provider);
   const forceNew = Boolean(opts.addAccount);
   // Copilot has no browser redirect OAuth — default to device code.
+  // Cursor uses poll-based browser login (same as `agent login`).
   const method =
     opts.method ??
     (provider === COPILOT_PROVIDER_ID || provider === "copilot"
       ? "device"
-      : OAUTH_PROFILES[provider]
+      : isCursorProvider(provider) || OAUTH_PROFILES[provider]
         ? "oauth"
         : "api_key");
 
@@ -154,15 +169,32 @@ export async function loginInteractive(opts: {
       const prompt =
         provider === "copilot"
           ? "Enter GitHub OAuth token for Copilot (ghu_/gho_ from VS Code or `copilot` CLI): "
-          : provider === "deepseek" || provider === "ds"
-            ? "Enter DeepSeek API key (sk-… from platform.deepseek.com): "
-            : provider === "openrouter" || provider === "or"
-              ? "Enter OpenRouter API key (sk-or-v1-… from openrouter.ai/keys): "
-              : `Enter API key for ${provider}: `;
+          : isCursorProvider(provider)
+            ? "Enter Cursor API key (crsr_… from cursor.com/dashboard/api) or access token: "
+            : provider === "deepseek" || provider === "ds"
+              ? "Enter DeepSeek API key (sk-… from platform.deepseek.com): "
+              : provider === "openrouter" || provider === "or"
+                ? "Enter OpenRouter API key (sk-or-v1-… from openrouter.ai/keys): "
+                : `Enter API key for ${provider}: `;
       key = (await rl.question(prompt)).trim();
       rl.close();
     }
     if (!key) throw new Error("API key is required");
+    if (isCursorProvider(provider)) {
+      const result = await storeCursorFromAccessToken(key, {
+        label: opts.accountLabel || "api-key-paste",
+        forceNew,
+      });
+      if (!result.imported) throw new Error(result.reason || "Cursor login failed");
+      log.success(
+        `Stored Cursor credentials` +
+          (result.email ? ` (${result.email})` : "") +
+          (result.expiresAt
+            ? ` (expires ${new Date(result.expiresAt * 1000).toISOString()})`
+            : ""),
+      );
+      return { accountId: result.accountId, created: result.created };
+    }
     if (provider === "copilot") {
       // GitHub OAuth tokens must be exchanged for a Copilot session token.
       const result = await storeCopilotFromGitHubToken(key, {
@@ -202,6 +234,10 @@ export async function loginInteractive(opts: {
     return r;
   }
 
+  if (isCursorProvider(provider)) {
+    return cursorBrowserLogin({ forceNew, accountLabel: opts.accountLabel });
+  }
+
   if (method === "device") {
     return deviceCodeLogin(provider, { forceNew });
   }
@@ -212,6 +248,44 @@ export async function loginInteractive(opts: {
   }
 
   return browserOAuthLogin(provider, { forceNew });
+}
+
+/**
+ * Cursor CLI loginDeepControl: open browser, poll api2.cursor.sh/auth/poll.
+ * Works on SSH too (`NO_OPEN_BROWSER=1` prints the URL).
+ */
+export async function cursorBrowserLogin(opts?: {
+  forceNew?: boolean;
+  accountLabel?: string;
+}): Promise<{ accountId?: string; created?: boolean }> {
+  const params = generateCursorAuthParams();
+  log.info("Opening browser for Cursor login…");
+  log.dim(`If the browser does not open, visit:\n${params.loginUrl}`);
+  if (!process.env.NO_OPEN_BROWSER?.trim()) {
+    await open(params.loginUrl).catch(() => undefined);
+  }
+  log.info("Waiting for Cursor authorization (approve in the browser)…");
+  const tokens = await pollCursorAuth(params.uuid, params.verifier);
+  const result = await storeCursorFromAccessToken(tokens.accessToken, {
+    refreshToken: tokens.refreshToken,
+    label: opts?.accountLabel,
+    forceNew: opts?.forceNew,
+  });
+  if (!result.imported) {
+    throw new Error(result.reason || "Cursor login failed");
+  }
+  log.success(
+    `Logged in to Cursor` +
+      (result.email ? ` (${result.email})` : "") +
+      (result.accountId ? ` [${result.accountId}]` : "") +
+      (result.expiresAt
+        ? ` — access token expires ${new Date(result.expiresAt * 1000).toISOString()}`
+        : ""),
+  );
+  log.dim(
+    "Uses your Cursor subscription quota and models. Next: forge -p cursor  ·  /model composer-2.5",
+  );
+  return { accountId: result.accountId, created: result.created };
 }
 
 async function exchangeAuthorizationCode(opts: {

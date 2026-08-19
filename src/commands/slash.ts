@@ -784,6 +784,7 @@ export function completeSlash(
         "openai",
         "google",
         "copilot",
+        "cursor",
         "custom",
         "list",
         "status",
@@ -978,6 +979,7 @@ const STOCK_PROVIDER_ORDER = [
   "openai",
   "google",
   "copilot",
+  "cursor",
   "custom",
 ] as const;
 
@@ -991,6 +993,7 @@ function providerAuthSummary(provider: string): string {
     else if (provider === "openai") envNames.push("OPENAI_API_KEY");
     else if (provider === "google") envNames.push("GOOGLE_API_KEY", "GEMINI_API_KEY");
     else if (provider === "copilot") envNames.push("COPILOT_GITHUB_TOKEN");
+    else if (provider === "cursor") envNames.push("CURSOR_API_KEY", "CURSOR_ACCESS_TOKEN");
     else if (provider === "custom") envNames.push("FORGE_API_KEY");
     for (const n of envNames) {
       if (process.env[n]?.trim()) return `env:${n}`;
@@ -1050,7 +1053,7 @@ export async function handleProviderSlash(
     lines.push("");
     lines.push(
       chalk.dim(
-        "Usage: /provider <name>   ·  aliases: ds→deepseek, or→openrouter, claude→anthropic, gpt→openai",
+        "Usage: /provider <name>   ·  aliases: ds→deepseek, or→openrouter, claude→anthropic, gpt→openai, cursor-ai→cursor",
       ),
     );
     lines.push(
@@ -1189,6 +1192,8 @@ export async function handleProviderSlash(
               ? "Run: forge login -p deepseek --api-key $DEEPSEEK_API_KEY"
               : nextProvider === "openrouter"
                 ? "Run: forge login -p openrouter --api-key $OPENROUTER_API_KEY"
+                : nextProvider === "cursor"
+                  ? "Run: forge login -p cursor  or  forge login --from-cursor"
                 : nextProvider === "xai"
                   ? "Run: forge login   or  export XAI_API_KEY=…"
                   : `Run: forge login -p ${nextProvider}`),

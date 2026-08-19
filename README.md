@@ -59,6 +59,8 @@ forge login --device                # headless / SSH device code
 forge login --from-grok             # reuse existing Grok Build ~/.grok session
 forge login --from-copilot          # reuse local GitHub Copilot CLI / VS Code session
 forge login -p copilot              # same: local import, then GitHub device code
+forge login --from-cursor           # reuse local Cursor CLI (`agent login`) / Desktop session
+forge login -p cursor               # same: local import, then Cursor browser login
 # or API key (CI / multi-day unattended):
 export XAI_API_KEY=xai-...          # or: forge login --api-key
 forge login --provider openai --device
@@ -98,6 +100,8 @@ Forge supports **both API keys and subscription/OAuth** where providers allow pu
 | **Import Grok Build** | `forge login --from-grok` | Copy live `~/.grok/auth.json` session |
 | **Local GitHub Copilot** | `forge login --from-copilot` / `-p copilot` | Import Copilot CLI keychain or VS Code `~/.config/github-copilot/apps.json` |
 | **Copilot device code** | `forge login -p copilot --device` | GitHub device flow when no local session |
+| **Local Cursor** | `forge login --from-cursor` / `-p cursor` | Import Cursor CLI `~/.cursor/auth.json` / keychain / `CURSOR_API_KEY` |
+| **Cursor browser login** | `forge login -p cursor --oauth` | Same poll flow as `agent login` — uses Cursor native quota + models |
 | **API key** | `XAI_API_KEY` / `forge login --api-key` | CI / multi-day unattended |
 | **Stored session** | `~/.forge/auth.json` (mode `0600`) | Auto-used when env key absent; OAuth refresh when possible |
 

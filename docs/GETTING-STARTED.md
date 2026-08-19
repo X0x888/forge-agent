@@ -22,7 +22,7 @@ Node.js 20+.
 ```bash
 forge login                         # SuperGrok / X Premium (browser)
 forge login --api-key               # paste a key
-forge login -p anthropic            # or openai / openrouter / copilot
+forge login -p anthropic            # or openai / openrouter / copilot / cursor
 ```
 
 A bare `forge` on a TTY also offers this picker if you are not signed in. Type **1–4** (Enter = SuperGrok). A typo re-prompts; `q` quits. Headless / `--json` still fail closed.

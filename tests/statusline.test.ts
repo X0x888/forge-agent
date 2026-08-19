@@ -479,6 +479,13 @@ describe("statusline", () => {
     });
     assert.ok(copilot?.note?.toLowerCase().includes("quota") || copilot?.product);
     assert.equal(copilot?.percent, undefined);
+
+    const cursor = await collectPlanUsage({
+      provider: "cursor",
+      authMethod: "subscription",
+    });
+    assert.equal(cursor?.product, "Cursor");
+    assert.equal(cursor?.percent, undefined);
   });
 
   it("parses nested SuperGrok format=credits billing body", () => {

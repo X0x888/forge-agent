@@ -12,6 +12,7 @@ export const PROVIDER_IDS = [
   "deepseek",
   "google",
   "copilot",
+  "cursor",
   "custom",
 ] as const;
 
@@ -39,6 +40,10 @@ export const PROVIDER_ALIASES: Record<string, ProviderIdToken> = {
   "gh-copilot": "copilot",
   github: "copilot",
   gh: "copilot",
+  "cursor-ai": "cursor",
+  cursorai: "cursor",
+  "cursor-cli": "cursor",
+  anysphere: "cursor",
 };
 
 export type NormalizeProviderResult =
@@ -62,5 +67,5 @@ export function normalizeProviderId(raw: unknown): NormalizeProviderResult {
 }
 
 export function providerIdHelp(): string {
-  return "xai|anthropic|openai|openrouter|deepseek|google|copilot|custom (aliases: claude|gpt|oai|ds|gemini|github-copilot|…)";
+  return "xai|anthropic|openai|openrouter|deepseek|google|copilot|cursor|custom (aliases: claude|gpt|oai|ds|gemini|github-copilot|cursor-ai|…)";
 }

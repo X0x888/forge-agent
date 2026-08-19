@@ -399,6 +399,11 @@ describe("login offer", () => {
     assert.equal(parseLoginOfferChoice("q").kind, "quit");
     assert.equal(parseLoginOfferChoice("4").kind, "env");
     assert.equal(parseLoginOfferChoice("anthropic").kind, "provider");
+    assert.deepEqual(parseLoginOfferChoice("cursor"), {
+      kind: "provider",
+      provider: "cursor",
+    });
+    assert.match(formatLoginOffer(), /cursor/);
     assert.deepEqual(parseLoginOfferChoice("xyz"), {
       kind: "invalid",
       input: "xyz",

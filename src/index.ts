@@ -75,6 +75,15 @@ export {
   isCopilotProvider,
 } from "./auth/copilot.js";
 export {
+  importLocalCursorCredentials,
+  readLocalCursorToken,
+  refreshCursorToken,
+  cursorApiHeaders,
+  CURSOR_API_BASE,
+  CURSOR_PROVIDER_ID,
+  isCursorProvider,
+} from "./auth/cursor.js";
+export {
   refreshCredentialIfNeeded,
   isAuthFailureMessage,
   isTokenAuthFailure,

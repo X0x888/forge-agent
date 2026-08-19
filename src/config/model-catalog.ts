@@ -58,7 +58,7 @@ function cachePath(provider: string): string {
 /** Free-form model ids are first-class for these providers. */
 export function providerAllowsFreeFormModels(provider: string): boolean {
   const p = String(provider || "").toLowerCase();
-  return p === "openrouter" || p === "custom" || p === "copilot";
+  return p === "openrouter" || p === "custom" || p === "copilot" || p === "cursor";
 }
 
 export function staticModelsForProvider(

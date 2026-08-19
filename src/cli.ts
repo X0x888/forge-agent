@@ -64,6 +64,7 @@ import {
 } from "./auth/accounts.js";
 import { importGrokCredentials } from "./auth/import-grok.js";
 import { importLocalCopilotCredentials } from "./auth/copilot.js";
+import { importLocalCursorCredentials, isCursorProvider } from "./auth/cursor.js";
 import { createProvider } from "./providers/factory.js";
 import {
   createSession,
@@ -280,7 +281,7 @@ Docs: docs/GETTING-STARTED.md · docs/PRODUCTION.md · docs/RELIABILITY.md · do
     )
     .option("-m, --model <model>", "Model id")
     .option("--fallback-models <models>", "Same-provider fallbacks after 429/5xx (comma list; off disables)")
-    .option("-p, --provider <provider>", "Provider: xai|anthropic|openai|openrouter|deepseek|google|copilot|custom")
+    .option("-p, --provider <provider>", "Provider: xai|anthropic|openai|openrouter|deepseek|google|copilot|cursor|custom")
     .option("--base-url <url>", "Override API base URL")
     .option(
       "--effort <level>",
@@ -1225,7 +1226,7 @@ Docs: docs/PRODUCTION.md
   program
     .command("login")
     .description(
-      "Authenticate: SuperGrok OIDC (default for xai), local Copilot, API key, Grok import, or device code",
+      "Authenticate: SuperGrok OIDC (default for xai), local Copilot/Cursor, API key, Grok import, or device code",
     )
     .option("-p, --provider <provider>", "Provider (default: sticky preference or xai)", "xai")
     .option("--api-key [key]", "Use API key (prompt if omitted)")
@@ -1236,6 +1237,10 @@ Docs: docs/PRODUCTION.md
     .option(
       "--from-copilot",
       "Import GitHub Copilot from local CLI keychain / VS Code apps.json",
+    )
+    .option(
+      "--from-cursor",
+      "Import Cursor from local CLI auth.json / keychain / CURSOR_API_KEY",
     )
     .option(
       "--oauth",
@@ -1433,6 +1438,68 @@ Docs: docs/PRODUCTION.md
         }
       }
 
+      // Import local Cursor CLI / SDK / desktop credentials.
+      const wantFromCursor =
+        Boolean(opts.fromCursor) ||
+        (isCursorProvider(provider) &&
+          !opts.device &&
+          !opts.oauth &&
+          !apiKeyFlag);
+      if (wantFromCursor) {
+        const result = await importLocalCursorCredentials();
+        if (result.imported) {
+          try {
+            savePreferences({ provider: "cursor" });
+          } catch {
+            /* preferences are best-effort */
+          }
+          if (wantJson) {
+            emitOkJson({
+              forgeHome: forgeHome(),
+              method: "from_cursor",
+              provider: "cursor",
+              accountLabel: result.email ? `cursor:${result.email}` : null,
+              accountId: result.accountId || null,
+              created: result.created ?? null,
+              source: result.source || null,
+              expiresAt: result.expiresAt
+                ? new Date(result.expiresAt * 1000).toISOString()
+                : null,
+            });
+            return;
+          }
+          log.success(
+            `Imported local Cursor session${
+              result.email ? ` (${result.email})` : ""
+            }${result.source ? ` from ${result.source}` : ""}`,
+          );
+          if (result.expiresAt) {
+            const hours = Math.max(
+              0,
+              (result.expiresAt - Math.floor(Date.now() / 1000)) / 3600,
+            );
+            log.dim(
+              `Cursor access token expires ${new Date(result.expiresAt * 1000).toISOString()} (~${hours.toFixed(1)}h). ` +
+                `Refresh token stored for auto-renew. ` +
+                `Alt: forge login -p cursor --oauth`,
+            );
+          }
+          log.info("Next: forge -p cursor   ·   forge setup   ·   forge doctor");
+          return;
+        }
+        if (opts.fromCursor) {
+          failLogin(
+            "cursor_import_failed",
+            result.reason || "Local Cursor import failed",
+            { email: result.email || null, source: result.source || null },
+          );
+        }
+        if (!wantJson) {
+          log.warn(result.reason || "Local Cursor import failed");
+          log.info("Falling back to Cursor browser login…");
+        }
+      }
+
       // Default xAI path: native SuperGrok OIDC (browser), not import-from-grok.
       // Copilot: device code (no browser redirect registered).
       let method: "api_key" | "oauth" | "device" = "api_key";
@@ -1440,15 +1507,15 @@ Docs: docs/PRODUCTION.md
       else if (opts.oauth) method = "oauth";
       else if (apiKeyFlag) method = "api_key";
       else if (provider === "copilot") method = "device";
-      else if (supportsOAuth(provider)) method = "oauth";
+      else if (isCursorProvider(provider) || supportsOAuth(provider)) method = "oauth";
       else method = "api_key";
 
-      // --json requires a non-interactive path (explicit API key or --from-copilot handled above).
+      // --json requires a non-interactive path (explicit API key or --from-copilot/--from-cursor).
       if (wantJson && method !== "api_key") {
         failLogin(
           "interactive_required",
-          `login --json only supports --api-key or --from-copilot (got method=${method}). ` +
-            `Use forge login --api-key <key> --json or forge login --from-copilot --json.`,
+          `login --json only supports --api-key, --from-copilot, or --from-cursor (got method=${method}). ` +
+            `Use forge login --api-key <key> --json or forge login --from-cursor --json.`,
           { method },
         );
       }
@@ -1466,6 +1533,13 @@ Docs: docs/PRODUCTION.md
               "./auth/copilot.js"
             );
             await storeCopilotFromGitHubToken(apiKeyValue, {
+              label: "api-key-json",
+            });
+          } else if (isCursorProvider(provider)) {
+            const { storeCursorFromAccessToken } = await import(
+              "./auth/cursor.js"
+            );
+            await storeCursorFromAccessToken(apiKeyValue, {
               label: "api-key-json",
             });
           } else {
@@ -1528,6 +1602,11 @@ Docs: docs/PRODUCTION.md
         if (provider === "copilot" && !wantJson) {
           log.dim(
             "Also: forge login --from-copilot · forge login -p copilot --device · forge login -p copilot --api-key",
+          );
+        }
+        if (isCursorProvider(provider) && !wantJson) {
+          log.dim(
+            "Also: forge login --from-cursor · forge login -p cursor --oauth · forge login -p cursor --api-key",
           );
         }
         failLogin("login_failed", (err as Error).message || String(err), {
@@ -3625,7 +3704,7 @@ Docs: docs/PRODUCTION.md
   program
     .command("models")
     .description("List known models for configured providers (OpenRouter merges remote catalog when available)")
-    .option("-p, --provider <provider>", "Filter to one provider (xai|anthropic|openai|openrouter|deepseek|google|copilot|custom)")
+    .option("-p, --provider <provider>", "Filter to one provider (xai|anthropic|openai|openrouter|deepseek|google|copilot|cursor|custom)")
     .option("--refresh", "Refresh OpenRouter remote model catalog")
     .option("--json", "Machine-readable JSON")
     .action(async (opts, command) => {

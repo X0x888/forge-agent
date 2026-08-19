@@ -63,6 +63,11 @@ const MODEL_WINDOWS: Record<string, number> = {
   "llama-4-maverick": 1_048_576,
   "mistral-large": 128_000,
   "qwen3-coder": 262_144,
+  "composer-2.5": 200_000,
+  "composer-2": 200_000,
+  composer: 200_000,
+  auto: 200_000,
+  "auto-smart": 200_000,
 };
 
 const FAMILY_WINDOWS: Array<[prefix: string, window: number]> = [
@@ -88,6 +93,7 @@ const FAMILY_WINDOWS: Array<[prefix: string, window: number]> = [
   ["qwen3", 262_144],
   ["qwen", 131_072],
   ["mistral", 128_000],
+  ["composer", 200_000],
 ];
 
 /** Shape written by model-catalog OpenRouter cache (v2). */

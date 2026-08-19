@@ -145,6 +145,7 @@ export const COMMAND_PARAMS: Record<string, ParamChoice[]> = {
     { value: "openai", description: "OpenAI", aliases: ["gpt", "oai"] },
     { value: "google", description: "Google Gemini", aliases: ["gemini"] },
     { value: "copilot", description: "GitHub Copilot", aliases: ["github"] },
+    { value: "cursor", description: "Cursor subscription (native quota)", aliases: ["cursor-ai"] },
     { value: "custom", description: "Custom OpenAI-compat base URL" },
     { value: "list", description: "List providers + auth" },
     { value: "status", description: "Same as list" },

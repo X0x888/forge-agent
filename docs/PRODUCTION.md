@@ -21,10 +21,12 @@ FORGE_SANDBOX_MISSING_BACKEND=fail-closed  # default; never silent unsandboxed b
 forge models -p xai --json   # filter catalog; empty/invalid -p → invalid_provider
 # aliases: -p claude|gpt|gemini · --sandbox readonly|ro · --permission-mode deny|yolo
 forge status --watch --json # single-shot (no hang); omit --json for live TTY loop
-forge login                  # SuperGrok OIDC (browser) · --device · --from-grok · --from-copilot · --api-key
+forge login                  # SuperGrok OIDC (browser) · --device · --from-grok · --from-copilot · --from-cursor · --api-key
 forge login --add            # add another account for the same provider (multi-account)
 forge login --from-copilot   # reuse local GitHub Copilot CLI / VS Code session
 forge login -p copilot       # local import, then GitHub device code
+forge login --from-cursor    # reuse local Cursor CLI / Desktop session
+forge login -p cursor        # local import, then Cursor browser login
 forge auth                   # status + multi-account table + refresh OAuth if needed
 forge auth --json            # CI: {ok,authenticated,active,accounts[],stored[]} — never tokens; ok:false + exit 1 when unauthenticated
 forge accounts list --json   # multi-account inventory (autoSwitch + threshold + readiness)
@@ -152,6 +154,7 @@ Exit code `1` when `ok` is false (still prints JSON first). Thresholds reflect e
 | `forge login --device` | SuperGrok device-code (SSH / headless) |
 | `forge login --from-grok` | Import live Grok Build `~/.grok` session |
 | `forge login --from-copilot` / `-p copilot` | Import local GitHub Copilot CLI keychain / VS Code apps.json (then device OAuth) |
+| `forge login --from-cursor` / `-p cursor` | Import local Cursor CLI auth.json / keychain (then browser login) |
 | `forge login --api-key` | API key (CI / multi-day unattended) |
 
 - `auth.json`, `permissions.json`, and `preferences.json` must be mode `0600` (doctor flags otherwise)

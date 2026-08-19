@@ -207,6 +207,7 @@ export function makeAccountId(provider: string, identityHint?: string): string {
       .replace(/^env:/, "env-")
       .replace(/^grok:/, "")
       .replace(/^copilot:/, "")
+      .replace(/^cursor:/, "")
       .replace(/[^a-z0-9@._+-]+/g, "-")
       .replace(/^-+|-+$/g, "")
       .slice(0, 48);
@@ -236,6 +237,7 @@ export function findAccountByIdentity(
       .toLowerCase()
       .replace(/^grok:/, "")
       .replace(/^copilot:/, "")
+      .replace(/^cursor:/, "")
       .replace(/^env:/, "")
       .trim();
   const target = norm(hint);

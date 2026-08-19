@@ -176,6 +176,11 @@ export function formatProviderError(
           "forge login -p deepseek --api-key $DEEPSEEK_API_KEY  (platform.deepseek.com)",
         );
         tips.push("export DEEPSEEK_API_KEY=sk-…  ·  forge accounts status");
+      } else if (/cursor/i.test(providerLabel)) {
+        tips.push(
+          "forge login -p cursor  ·  forge login --from-cursor  ·  export CURSOR_API_KEY=…",
+        );
+        tips.push("Dashboard key: cursor.com/dashboard/api  ·  forge accounts status");
       } else {
         tips.push(
           "Forge auto-refreshes OAuth mid-run; if this persists: forge login",

@@ -78,6 +78,34 @@ export async function refreshCredentialIfNeeded(
     return { ok: true, credential: cred, refreshed: false };
   }
 
+  // Cursor: refreshToken is the loginDeepControl refresh token; "refresh"
+  // POSTs it as Bearer to /auth/exchange_user_api_key.
+  if (provider === "cursor") {
+    try {
+      const { refreshCursorSession } = await import("./cursor.js");
+      const session = await refreshCursorSession(cred.refreshToken);
+      upsertOAuth(provider, {
+        accessToken: session.accessToken,
+        refreshToken: session.refreshToken || cred.refreshToken,
+        expiresAt: session.expiresAt,
+        clientId: cred.clientId || "cursor-cli",
+        method: cred.method,
+        subscription: cred.subscription || "Cursor",
+        accountLabel: cred.accountLabel,
+        accountId: account.id,
+      });
+      const updated = getCredential(provider);
+      log.dim(`Refreshed Cursor session token`);
+      return { ok: true, credential: updated, refreshed: true };
+    } catch (err) {
+      return {
+        ok: false,
+        error: (err as Error).message,
+        refreshed: false,
+      };
+    }
+  }
+
   // GitHub Copilot: refreshToken is a long-lived GitHub OAuth token; "refresh"
   // re-exchanges it at /copilot_internal/v2/token for a new session token.
   if (provider === "copilot") {

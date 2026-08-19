@@ -279,7 +279,7 @@ function renderSession(
         ? `×${snap.accountCount}`
         : "";
     const label = snap.authLabel
-      ? shortLabel(snap.authLabel.replace(/^(grok:|copilot:|env:)/, ""), 18)
+      ? shortLabel(snap.authLabel.replace(/^(grok:|copilot:|cursor:|env:)/, ""), 18)
       : "";
     l1.push(
       paint(

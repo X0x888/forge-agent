@@ -10,6 +10,7 @@ const DEFAULT_FALLBACKS: Record<string, readonly string[]> = {
   deepseek: ["deepseek-chat"],
   google: ["gemini-2.5-flash"],
   copilot: ["gpt-4.1"],
+  cursor: ["grok-4.6", "claude-sonnet-5"],
 };
 
 export function parseFallbackModels(raw: unknown): string[] | undefined {

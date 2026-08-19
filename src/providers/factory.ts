@@ -7,6 +7,8 @@ import {
   COPILOT_API_BASE,
   copilotApiHeaders,
 } from "../auth/copilot.js";
+import { CURSOR_API_BASE, isCursorProvider } from "../auth/cursor.js";
+import { CursorProvider } from "./cursor.js";
 
 export function createProvider(config: ForgeConfig, auth: ResolvedAuth): LLMProvider {
   const provider = auth.provider;
@@ -17,6 +19,13 @@ export function createProvider(config: ForgeConfig, auth: ResolvedAuth): LLMProv
     // No shared OpenAI fallback here — AnthropicProvider defaults to
     // https://api.anthropic.com/v1 when nothing is configured.
     return new AnthropicProvider({ baseUrl, apiKey: auth.token });
+  }
+
+  if (provider === "cursor" || isCursorProvider(String(provider))) {
+    return new CursorProvider({
+      apiKey: auth.token,
+      baseUrl: auth.baseUrl ?? pcfg?.baseUrl ?? CURSOR_API_BASE,
+    });
   }
 
   const extraHeaders: Record<string, string> = {};

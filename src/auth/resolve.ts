@@ -25,6 +25,7 @@ const ENV_KEYS: Record<string, string[]> = {
     "GITHUB_COPILOT_TOKEN",
     "GH_COPILOT_TOKEN",
   ],
+  cursor: ["CURSOR_API_KEY", "CURSOR_ACCESS_TOKEN"],
   custom: ["FORGE_API_KEY"],
 };
 
@@ -277,6 +278,34 @@ export async function resolveAuthFresh(
               }`,
             );
           }
+        }
+      } catch {
+        /* best-effort */
+      }
+    }
+  }
+
+  // Cursor: re-import local CLI/SDK session when the stored token is stale.
+  if (provider === "cursor" || provider === "cursor-ai" || provider === "cursorai") {
+    const after = resolveAuth(config, "cursor");
+    const cred = getCredential("cursor");
+    const needLocal =
+      !after ||
+      (cred && cred.method !== "api_key" && isExpired(cred, 120));
+    if (needLocal || !after) {
+      try {
+        const { importLocalCursorCredentials } = await import("./cursor.js");
+        const imp = await importLocalCursorCredentials();
+        if (imp.imported) {
+          log.info(
+            `Re-imported local Cursor session${
+              imp.email ? ` (${imp.email})` : ""
+            }${
+              imp.expiresAt
+                ? ` — expires ${new Date(imp.expiresAt * 1000).toISOString()}`
+                : ""
+            }`,
+          );
         }
       } catch {
         /* best-effort */

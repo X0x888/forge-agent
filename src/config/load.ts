@@ -61,6 +61,9 @@ const ENV_PROVIDERS = new Set<string>([
   "github_copilot",
   "gh-copilot",
   "github",
+  "cursor",
+  "cursor-ai",
+  "cursorai",
   "custom",
 ]);
 

@@ -479,6 +479,15 @@ export async function collectPlanUsage(opts: {
     };
   }
 
+  // Cursor subscription
+  if (p === "cursor" || p === "cursor-ai" || p === "cursorai") {
+    return {
+      source: "cursor",
+      product: "Cursor",
+      note: "native Cursor quota; see cursor.com/dashboard/usage",
+    };
+  }
+
   // Anthropic / OpenRouter / Google / custom API keys
   if (opts.authMethod === "api_key") {
     return {

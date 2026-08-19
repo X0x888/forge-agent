@@ -5343,6 +5343,10 @@ describe("env provider/permission/sandbox aliases", () => {
       ok: true,
       provider: "copilot",
     });
+    assert.deepEqual(normalizeProviderId("cursor-ai"), {
+      ok: true,
+      provider: "cursor",
+    });
     assert.equal(normalizeProviderId("nope").ok, false);
     assert.equal(normalizePermissionMode("yolo"), "bypassPermissions");
     assert.equal(normalizePermissionMode("ask"), "default");

@@ -63,6 +63,7 @@ export type ProviderId =
   | "deepseek"
   | "google"
   | "copilot"
+  | "cursor"
   | "custom";
 
 export interface ProviderConfig {
@@ -356,6 +357,23 @@ export const DEFAULT_CONFIG: ForgeConfig = {
         "claude-haiku-4.5",
         "gemini-2.5-pro",
         "o3-mini",
+      ],
+    },
+    cursor: {
+      id: "cursor",
+      apiKeyEnv: "CURSOR_API_KEY",
+      baseUrl: "https://api2.cursor.sh",
+      supportsOAuth: true,
+      defaultModel: "composer-2.5",
+      models: [
+        "composer-2.5",
+        "grok-4.6",
+        "grok-4.5",
+        "claude-sonnet-5",
+        "claude-opus-5",
+        "gpt-5.5",
+        "gemini-3.1-pro",
+        "auto",
       ],
     },
   },

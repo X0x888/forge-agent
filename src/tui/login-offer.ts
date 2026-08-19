@@ -34,7 +34,7 @@ export function formatLoginOffer(): string {
     "",
     "  1) SuperGrok / X Premium (browser)",
     "  2) Paste an API key",
-    "  3) Other provider (anthropic, openai, openrouter, copilot)",
+    "  3) Other provider (anthropic, openai, openrouter, copilot, cursor)",
     "  4) Use env vars already set",
     "",
     "  q quits  ·  a provider name works too",
@@ -85,7 +85,7 @@ export function parseLoginOfferChoice(raw: string): LoginOfferChoice {
 
 export const LOGIN_ENV_HINT =
   "Set an API key env var, then re-run forge:\n" +
-  "  XAI_API_KEY  ·  ANTHROPIC_API_KEY  ·  OPENAI_API_KEY  ·  OPENROUTER_API_KEY  ·  DEEPSEEK_API_KEY";
+  "  XAI_API_KEY  ·  ANTHROPIC_API_KEY  ·  OPENAI_API_KEY  ·  OPENROUTER_API_KEY  ·  DEEPSEEK_API_KEY  ·  CURSOR_API_KEY";
 
 export type LoginOfferOutcome =
   | { ok: true }
@@ -132,7 +132,7 @@ export async function offerLoginInteractive(): Promise<LoginOfferOutcome> {
       if (choice.kind === "provider" && !choice.provider) {
         const p = (
           await rl.question(
-            "  Provider [anthropic|openai|openrouter|copilot|xai]: ",
+            "  Provider [anthropic|openai|openrouter|copilot|cursor|xai]: ",
           )
         ).trim();
         if (!p) {
@@ -142,7 +142,7 @@ export async function offerLoginInteractive(): Promise<LoginOfferOutcome> {
         const parsed = normalizeProviderId(p);
         if (!parsed.ok) {
           console.log(
-            `  Unknown provider "${p}". Try anthropic, openai, openrouter, copilot, or xai.`,
+            `  Unknown provider "${p}". Try anthropic, openai, openrouter, copilot, cursor, or xai.`,
           );
           continue;
         }
