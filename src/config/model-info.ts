@@ -60,6 +60,8 @@ const MODEL_WINDOWS: Record<string, number> = {
   "claude-opus-4": 200_000,
   "claude-sonnet-5": 1_000_000,
   "claude-opus-5": 1_000_000,
+  "claude-fable-5": 1_000_000,
+  "claude-fable": 1_000_000,
   "llama-4-maverick": 1_048_576,
   "mistral-large": 128_000,
   "qwen3-coder": 262_144,
@@ -71,6 +73,7 @@ const MODEL_WINDOWS: Record<string, number> = {
 };
 
 const FAMILY_WINDOWS: Array<[prefix: string, window: number]> = [
+  ["claude-fable", 1_000_000],
   ["claude-opus-5", 1_000_000],
   ["claude-sonnet-5", 1_000_000],
   ["claude-", 200_000],

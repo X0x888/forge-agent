@@ -297,12 +297,48 @@ export function encodeConversationState(opts: {
   return Buffer.concat(parts);
 }
 
-export function encodeModelDetails(modelId: string): Buffer {
-  return Buffer.concat([
+export function encodeModelParameter(id: string, value: string): Buffer {
+  return Buffer.concat([encodeString(1, id), encodeString(2, value)]);
+}
+
+/**
+ * agent.v1.RequestedModel — field 9 on AgentRunRequest.
+ * Parameters: thinking / reasoning / effort / fast (Cursor CLI ModelParameterValue).
+ */
+export function encodeRequestedModel(opts: {
+  modelId: string;
+  maxMode?: boolean;
+  parameters?: Array<{ id: string; value: string }>;
+}): Buffer {
+  const parts = [encodeString(1, opts.modelId)];
+  if (opts.maxMode) parts.push(encodeBool(2, true));
+  for (const p of opts.parameters ?? []) {
+    parts.push(encodeMessage(3, encodeModelParameter(p.id, p.value)));
+  }
+  return Buffer.concat(parts);
+}
+
+/**
+ * agent.v1.ModelDetails.
+ * thinking_details (2) is an empty message: present = thinking on.
+ * max_mode (7) is Cursor Max Mode / 1M context.
+ */
+export function encodeModelDetails(
+  modelId: string,
+  opts?: { thinking?: boolean; maxMode?: boolean },
+): Buffer {
+  const parts = [
     encodeString(1, modelId),
     encodeString(3, modelId),
     encodeString(4, modelId),
-  ]);
+  ];
+  if (opts?.thinking) {
+    parts.push(encodeMessage(2, Buffer.alloc(0)));
+  }
+  if (opts?.maxMode) {
+    parts.push(encodeBool(7, true));
+  }
+  return Buffer.concat(parts);
 }
 
 export function encodeMcpToolDefinition(opts: {
@@ -347,16 +383,35 @@ export function encodeAgentRunRequest(opts: {
   modelId: string;
   conversationId: string;
   mcpTools?: Uint8Array;
+  thinking?: boolean;
+  maxMode?: boolean;
+  parameters?: Array<{ id: string; value: string }>;
 }): Buffer {
   const parts = [
     encodeMessage(1, opts.conversationState),
     encodeMessage(2, opts.action),
-    encodeMessage(3, encodeModelDetails(opts.modelId)),
+    encodeMessage(
+      3,
+      encodeModelDetails(opts.modelId, {
+        thinking: opts.thinking,
+        maxMode: opts.maxMode,
+      }),
+    ),
   ];
   if (opts.mcpTools && opts.mcpTools.length) {
     parts.push(encodeMessage(4, opts.mcpTools));
   }
   parts.push(encodeString(5, opts.conversationId));
+  parts.push(
+    encodeMessage(
+      9,
+      encodeRequestedModel({
+        modelId: opts.modelId,
+        maxMode: opts.maxMode,
+        parameters: opts.parameters,
+      }),
+    ),
+  );
   return Buffer.concat(parts);
 }
 

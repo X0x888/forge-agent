@@ -74,6 +74,11 @@ import {
 } from "../config/reasoning.js";
 import { isGrokLineageModel } from "../config/grok-model.js";
 import {
+  parseCursorModelId,
+  resolveCursorModelAlias,
+} from "../config/cursor-model.js";
+import { isCursorProvider } from "../auth/cursor.js";
+import {
   formatFallbackChain,
   nextFallbackModel,
   parseFallbackModels,
@@ -1432,6 +1437,10 @@ export async function handleModelSlash(
       modelArg = tokens.slice(0, -1).join(" ");
     }
   }
+  if (isCursorProvider(provider)) {
+    const aliased = resolveCursorModelAlias(modelArg);
+    if (aliased) modelArg = aliased;
+  }
 
   // Full id list for resolve + typo check (includes remote cache)
   const allChoices = catalog.ids.map((m) => ({
@@ -1449,10 +1458,20 @@ export async function handleModelSlash(
           { minLength: 3, minScore: 38, requirePrefix3: false },
         )
       : null;
+    const cursorVariant = isCursorProvider(provider)
+      ? parseCursorModelId(modelArg)
+      : null;
     const acceptUnknown =
       !tip ||
       isAcceptableUnknownModelId(modelArg, tip) ||
-      (freeForm && modelArg.includes("/"));
+      (freeForm && modelArg.includes("/")) ||
+      Boolean(
+        cursorVariant &&
+          (cursorVariant.thinking ||
+            cursorVariant.fast ||
+            cursorVariant.effort) &&
+          (!tip || cursorVariant.baseId === tip.toLowerCase()),
+      );
     if (!acceptUnknown) {
       return {
         handled: true,
@@ -1466,6 +1485,11 @@ export async function handleModelSlash(
       };
     }
     resolved = modelArg;
+  }
+
+  if (!effortArg && isCursorProvider(provider)) {
+    const fromId = parseCursorModelId(resolved).effort;
+    if (fromId) effortArg = fromId;
   }
 
   opts.config.model = resolved;

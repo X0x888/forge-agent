@@ -66,6 +66,7 @@ import {
   sha256Bytes,
   systemPromptBlob,
 } from "./cursor-proto.js";
+import { resolveCursorRunModel } from "../config/cursor-model.js";
 
 const REJECT =
   "Tool not available in this environment. Use the MCP tools provided instead.";
@@ -287,6 +288,11 @@ function buildRunPayload(req: ChatRequest, parsed: CursorConversation): {
   }
 
   const mcp = encodeToolDefs(req.tools);
+  const model = resolveCursorRunModel({
+    model: req.model,
+    reasoningEffort: req.reasoning_effort,
+    contextWindow: req.context_window,
+  });
   const run = encodeAgentRunRequest({
     conversationState: encodeConversationState({
       systemBlobId: sys.id,
@@ -296,9 +302,12 @@ function buildRunPayload(req: ChatRequest, parsed: CursorConversation): {
       parsed.userText || "(continue)",
       randomUUID(),
     ),
-    modelId: req.model,
+    modelId: model.baseId,
     conversationId: req.conversationId || randomUUID(),
     mcpTools: mcp.length ? encodeMcpTools(mcp) : undefined,
+    thinking: model.thinking,
+    maxMode: model.maxMode,
+    parameters: model.parameters,
   });
   return {
     bytes: encodeConnectFrame(encodeClientMessage({ runRequest: run })),

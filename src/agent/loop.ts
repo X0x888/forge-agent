@@ -628,6 +628,9 @@ export function buildChatRequest(
     // high-effort thinking is not truncated into length-continue re-sends.
     max_tokens: resolveEffectiveMaxTokens(config, Boolean(effort)),
     ...(effort ? { reasoning_effort: effort } : {}),
+    ...(config.contextWindow
+      ? { context_window: config.contextWindow }
+      : {}),
     ...(opts?.toolChoice === "required" && tools.length
       ? { tool_choice: "required" as const }
       : {}),

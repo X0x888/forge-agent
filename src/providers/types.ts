@@ -71,6 +71,11 @@ export interface ChatRequest {
     | "xhigh"
     | "max";
   /**
+   * Session context budget (tokens). Cursor maps ≥1M onto AgentService
+   * `max_mode` (IDE Max Mode / 1M). Other providers ignore it.
+   */
+  context_window?: number;
+  /**
    * OpenAI-compat / xAI `tool_choice`. `required` after a thought-only Stop
    * so the next turn cannot be another silent judge.
    */

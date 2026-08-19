@@ -101,7 +101,8 @@ const FAMILY_EFFORT_SPECS: Array<[prefix: string, levels: readonly ReasoningEffo
     ["kimi-k3", ["low", "high", "max"]],
     ["kimi-k2", ["low", "high", "max"]],
     ["kimi", ["low", "high", "max"]],
-    // OpenRouter Claude reasoning efforts
+    // OpenRouter / Cursor Claude reasoning efforts
+    ["claude-fable", ["low", "medium", "high", "xhigh", "max"]],
     ["claude-opus-5", ["low", "medium", "high", "xhigh", "max"]],
     ["claude-sonnet-5", ["low", "medium", "high", "xhigh", "max"]],
     ["claude-opus-4", ["low", "medium", "high", "max"]],

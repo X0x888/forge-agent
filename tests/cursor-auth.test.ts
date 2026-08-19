@@ -85,6 +85,7 @@ describe("cursor provider id", () => {
     assert.equal(p.defaultModel, "composer-2.5");
     assert.ok(p.models?.includes("composer-2.5"));
     assert.ok(p.models?.includes("grok-4.6"));
+    assert.ok(p.models?.includes("claude-fable-5"));
   });
 
   it("supportsOAuth and profile for cursor", () => {

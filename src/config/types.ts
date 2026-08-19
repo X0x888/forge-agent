@@ -369,6 +369,7 @@ export const DEFAULT_CONFIG: ForgeConfig = {
         "composer-2.5",
         "grok-4.6",
         "grok-4.5",
+        "claude-fable-5",
         "claude-sonnet-5",
         "claude-opus-5",
         "gpt-5.5",

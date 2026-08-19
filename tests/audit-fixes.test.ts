@@ -276,6 +276,8 @@ describe("model-info + reasoning: windows and effort aliases", () => {
     assert.equal(modelContextWindow("grok-4"), 256_000);
     assert.equal(modelContextWindow("grok-3"), 131_072);
     assert.equal(modelContextWindow("claude-sonnet-4-20250514"), 200_000);
+    assert.equal(modelContextWindow("claude-fable-5"), 1_000_000);
+    assert.equal(modelContextWindow("claude-fable-5-thinking-high"), 1_000_000);
     assert.equal(modelContextWindow("gpt-4.1"), 1_000_000);
     assert.equal(modelContextWindow("gpt-4o"), 128_000);
     assert.equal(modelContextWindow("x-ai/grok-4.5"), 500_000);
