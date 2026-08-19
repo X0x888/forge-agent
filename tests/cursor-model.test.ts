@@ -112,6 +112,31 @@ describe("resolveCursorRunModel — class mapping", () => {
       { id: "reasoning", value: "extra-high" },
     );
   });
+
+  it("Cursor default grok-4.6-high-fast is High + Fast, thinking off", () => {
+    const r = resolveCursorRunModel({
+      model: "grok-4.6-high-fast",
+      reasoningEffort: defaultEffortForModel("grok-4.6-high-fast"),
+    });
+    assert.equal(r.baseId, "grok-4.6");
+    assert.equal(r.thinking, false);
+    assert.equal(r.fast, true);
+    assert.deepEqual(
+      r.parameters.find((p) => p.id === "reasoning"),
+      { id: "reasoning", value: "high" },
+    );
+    assert.deepEqual(
+      r.parameters.find((p) => p.id === "fast"),
+      { id: "fast", value: "true" },
+    );
+  });
+});
+
+describe("Cursor default grok-4.6-high-fast effort", () => {
+  it("id suffix high is the default, not Grok xhigh", () => {
+    assert.equal(defaultEffortForModel("grok-4.6-high-fast"), "high");
+    assert.equal(defaultEffortForModel("grok-4.6"), "xhigh");
+  });
 });
 
 describe("Fable in the Forge model class", () => {

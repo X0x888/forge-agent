@@ -13,6 +13,7 @@
 import path from "node:path";
 import { grokEffortLevels } from "./grok-model.js";
 import { normalizeModelKey } from "./model-info.js";
+import { parseCursorModelId } from "./cursor-model.js";
 import { forgeHome, readJsonFile } from "../util/fs.js";
 
 export type ReasoningEffort =
@@ -217,10 +218,13 @@ export function effortLevelsForModel(model: string): readonly ReasoningEffort[] 
 }
 
 /**
- * Default effort for a model = **maximum** allowed level.
+ * Default effort for a model = **maximum** allowed level, unless the id
+ * already encodes a Cursor variant (`grok-4.6-high-fast` → high).
  * Undefined when the model does not support effort.
  */
 export function defaultEffortForModel(model: string): ReasoningEffort | undefined {
+  const tagged = parseCursorModelId(model).effort;
+  if (tagged && lookupEffortSpec(model)) return tagged;
   return lookupEffortSpec(model)?.default;
 }
 

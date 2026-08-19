@@ -82,9 +82,10 @@ describe("cursor provider id", () => {
     assert.ok(p);
     assert.equal(p.supportsOAuth, true);
     assert.equal(p.baseUrl, "https://api2.cursor.sh");
-    assert.equal(p.defaultModel, "composer-2.5");
+    assert.equal(p.defaultModel, "grok-4.6-high-fast");
     assert.ok(p.models?.includes("composer-2.5"));
     assert.ok(p.models?.includes("grok-4.6"));
+    assert.ok(p.models?.includes("grok-4.6-high-fast"));
     assert.ok(p.models?.includes("claude-fable-5"));
   });
 

@@ -3839,7 +3839,7 @@ Docs: docs/PRODUCTION.md
       if (rows.some((r) => r.provider === "cursor")) {
         console.log(
           chalk.dim(
-            "Cursor: native quota · composer-2.5 default · forge models -p cursor --refresh · forge login -p cursor",
+            "Cursor: native quota · grok-4.6-high-fast default · forge models -p cursor --refresh · forge login -p cursor",
           ),
         );
       }

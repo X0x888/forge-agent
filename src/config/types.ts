@@ -364,10 +364,11 @@ export const DEFAULT_CONFIG: ForgeConfig = {
       apiKeyEnv: "CURSOR_API_KEY",
       baseUrl: "https://api2.cursor.sh",
       supportsOAuth: true,
-      defaultModel: "composer-2.5",
+      defaultModel: "grok-4.6-high-fast",
       models: [
-        "composer-2.5",
+        "grok-4.6-high-fast",
         "grok-4.6",
+        "composer-2.5",
         "grok-4.5",
         "claude-fable-5",
         "claude-sonnet-5",

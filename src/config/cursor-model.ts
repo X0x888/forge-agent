@@ -40,7 +40,7 @@ const ALIASES: Record<string, string> = {
   "claude-fable": "claude-fable-5",
   composer: "composer-2.5",
   "composer-2": "composer-2.5",
-  "cursor-grok-4.6": "grok-4.6",
+  "cursor-grok-4.6": "grok-4.6-high-fast",
   "cursor-grok-4.5": "grok-4.5",
 };
 
