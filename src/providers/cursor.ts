@@ -66,6 +66,7 @@ import {
   encodeRequestContextEnv,
   encodeRequestContextResult,
   encodeString,
+  CURSOR_NATIVE_REJECT,
   hexKey,
   parseAgentServerMessage,
   parseConnectEndError,
@@ -80,8 +81,7 @@ import {
 import { resolveCursorRunModel } from "../config/cursor-model.js";
 import { forgeHome } from "../util/fs.js";
 
-const REJECT =
-  "Tool not available in this environment. Use the MCP tools provided instead.";
+const REJECT = CURSOR_NATIVE_REJECT;
 
 const RUN_PATH = "/agent.v1.AgentService/Run";
 const MODELS_PATH = "/agent.v1.AgentService/GetUsableModels";

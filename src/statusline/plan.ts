@@ -5,6 +5,7 @@
  * - xAI SuperGrok (via Grok auth): weekly credits from cli-chat-proxy
  * - OpenAI / Codex: local rate-limit hints if present; else nothing
  * - GitHub Copilot: no public quota API → note only
+ * - Cursor (logged in): GetCurrentPeriodUsage plan spend %
  * - API keys: no plan segment (token estimates live under tokens.*)
  */
 import fs from "node:fs";
@@ -14,6 +15,11 @@ import type { PlanUsageInfo, AuthMethod } from "./types.js";
 import { readGrokXaiSession } from "../auth/import-grok.js";
 import { getActiveAccount, getCredential } from "../auth/store.js";
 import { recordAccountPlan } from "../auth/accounts.js";
+import {
+  CURSOR_API_BASE,
+  cursorApiHeaders,
+  isCursorProvider,
+} from "../auth/cursor.js";
 import { nowEpoch, forgeHome, readJsonFile, writeJsonFile } from "../util/fs.js";
 
 const CACHE_DIR = () => path.join(forgeHome(), "statusline");
@@ -349,6 +355,146 @@ async function fetchXaiCredits(
   return plan;
 }
 
+/**
+ * Connect JSON `GetCurrentPeriodUsage` — Pro/Ultra included spend is USD cents
+ * on `planUsage`. Never invent: missing limit/used → no percent.
+ */
+export function parseCursorPeriodUsage(
+  data: Record<string, unknown>,
+  source = "cursor:GetCurrentPeriodUsage",
+): PlanUsageInfo {
+  const pu = asRecord(data.planUsage) ?? asRecord(data) ?? {};
+  const limitCents = numVal(pu.limit ?? pu.includedLimit);
+  const remainingCents = numVal(pu.remaining ?? pu.includedRemaining);
+  const usedCents = numVal(
+    pu.includedSpend ??
+      pu.used ??
+      (limitCents != null && remainingCents != null
+        ? Math.max(0, limitCents - remainingCents)
+        : null),
+  );
+  const named =
+    numVal(pu.totalPercentUsed) ??
+    numVal(pu.apiPercentUsed) ??
+    numVal(pu.autoPercentUsed);
+  let percent: number | undefined;
+  if (named != null) {
+    percent = Math.round(named * 10) / 10;
+  } else if (limitCents != null && limitCents > 0 && usedCents != null) {
+    percent = Math.round((usedCents / limitCents) * 1000) / 10;
+  }
+  if (percent != null) {
+    if (percent < 0) percent = 0;
+    if (percent > 100) percent = 100;
+  }
+  let resetsAt: string | undefined;
+  const cycleEnd =
+    data.billingCycleEnd ?? data.periodEnd ?? pu.billingCycleEnd ?? pu.periodEnd;
+  const cycleStart =
+    data.billingCycleStart ?? data.periodStart ?? pu.billingCycleStart;
+  const endIso = epochOrIso(cycleEnd);
+  const startIso = epochOrIso(cycleStart);
+  if (endIso) resetsAt = endIso;
+
+  const remaining =
+    remainingCents != null
+      ? remainingCents
+      : usedCents != null && limitCents != null
+        ? Math.max(0, limitCents - usedCents)
+        : undefined;
+
+  return {
+    source,
+    product: "Cursor",
+    percent,
+    used: usedCents != null ? Math.round(usedCents) / 100 : undefined,
+    limit: limitCents != null ? Math.round(limitCents) / 100 : undefined,
+    remaining: remaining != null ? Math.round(remaining) / 100 : undefined,
+    periodLabel: percent != null || limitCents != null ? "month" : undefined,
+    resetsAt,
+    ...(startIso && percent == null && !resetsAt
+      ? { note: "period start known; spend fields missing" }
+      : {}),
+  };
+}
+
+function epochOrIso(v: unknown): string | undefined {
+  if (typeof v === "string" && v.trim()) {
+    if (/^\d+$/.test(v.trim())) {
+      const n = Number(v.trim());
+      if (Number.isFinite(n) && n > 1e11) return new Date(n).toISOString();
+      if (Number.isFinite(n) && n > 1e9) return new Date(n * 1000).toISOString();
+    }
+    const t = Date.parse(v);
+    if (Number.isFinite(t)) return new Date(t).toISOString();
+  }
+  if (typeof v === "number" && Number.isFinite(v)) {
+    const ms = v > 1e11 ? v : v > 1e9 ? v * 1000 : NaN;
+    if (Number.isFinite(ms)) return new Date(ms).toISOString();
+  }
+  return undefined;
+}
+
+async function fetchCursorPlan(
+  token: string,
+  cacheKeySuffix?: string,
+): Promise<PlanUsageInfo | null> {
+  const cacheKey = cacheKeySuffix
+    ? `cursor:plan:v1:${cacheKeySuffix}`
+    : "cursor:plan:v1";
+  const cached = readCache(cacheKey, 60);
+  if (cached) return cached;
+
+  const url = `${CURSOR_API_BASE.replace(/\/$/, "")}/aiserver.v1.DashboardService/GetCurrentPeriodUsage`;
+  try {
+    const resp = await fetch(url, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: "application/json",
+        "Content-Type": "application/json",
+        "Connect-Protocol-Version": "1",
+        ...cursorApiHeaders(),
+      },
+      body: "{}",
+      signal: AbortSignal.timeout(4_000),
+    });
+    if (!resp.ok) {
+      const note: PlanUsageInfo = {
+        source: "cursor:GetCurrentPeriodUsage",
+        product: "Cursor",
+        note: `billing HTTP ${resp.status}`,
+      };
+      writeCache(cacheKey, note);
+      return note;
+    }
+    const data = (await resp.json()) as Record<string, unknown>;
+    if (!data || typeof data !== "object") {
+      const note: PlanUsageInfo = {
+        source: "cursor:GetCurrentPeriodUsage",
+        product: "Cursor",
+        note: "billing unavailable (non-object body)",
+      };
+      writeCache(cacheKey, note);
+      return note;
+    }
+    const plan = parseCursorPeriodUsage(data);
+    if (!planHasSignal(plan)) {
+      plan.note = "billing unavailable (empty spend fields)";
+    }
+    writeCache(cacheKey, plan);
+    return plan;
+  } catch (err) {
+    const note: PlanUsageInfo = {
+      source: "cursor:GetCurrentPeriodUsage",
+      product: "Cursor",
+      note: `billing unavailable (${(err as Error).message?.slice(0, 40) || "error"})`,
+    };
+    writeCache(cacheKey, note);
+    return note;
+  }
+}
+
 function num(v: unknown): number | null {
   if (typeof v === "number" && Number.isFinite(v)) return v;
   if (typeof v === "string" && v.trim() && !Number.isNaN(Number(v))) return Number(v);
@@ -479,13 +625,33 @@ export async function collectPlanUsage(opts: {
     };
   }
 
-  // Cursor subscription
-  if (p === "cursor" || p === "cursor-ai" || p === "cursorai") {
+  if (isCursorProvider(p)) {
+    const active = getActiveAccount("cursor");
+    const stored = getCredential("cursor");
+    const token = active?.accessToken || stored?.accessToken;
+    const accountId = opts.accountId || active?.id;
+    if (token) {
+      const plan = await fetchCursorPlan(token, accountId);
+      if (plan && accountId && (plan.percent != null || plan.remaining != null)) {
+        try {
+          recordAccountPlan(accountId, {
+            percent: plan.percent,
+            used: plan.used,
+            remaining: plan.remaining,
+            limit: plan.limit,
+            unit: plan.unit,
+            source: plan.source,
+          });
+        } catch {
+          /* best-effort */
+        }
+      }
+      return plan || undefined;
+    }
     return {
       source: "cursor",
       product: "Cursor",
-      note:
-        "native Cursor quota (no third-party % API) · session tokens + cache on the dock · cursor.com/dashboard/spending",
+      note: "session tokens only — forge login -p cursor for plan %",
     };
   }
 

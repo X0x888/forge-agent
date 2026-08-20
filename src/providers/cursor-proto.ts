@@ -644,15 +644,15 @@ export function encodeExecErrorResult(error: string): Buffer {
   return encodeMessage(2, encodeString(1, error));
 }
 
-const INTERACTION_REJECT =
-  "Not available in this environment. Use the MCP tools provided instead.";
+export const CURSOR_NATIVE_REJECT =
+  "Cursor native tools are off in Forge. Call write_file, search_replace, or apply_patch — not search_mcp.";
 
 /** Headless InteractionResponse — reject UI queries so the Run does not wait. */
 export function encodeInteractionResponse(
   id: number,
   variantField: number,
 ): Buffer {
-  const reason = encodeString(1, INTERACTION_REJECT);
+  const reason = encodeString(1, CURSOR_NATIVE_REJECT);
   let body: Buffer;
   if (variantField === 8) {
     body = encodeMessage(8, encodeMessage(1, Buffer.alloc(0)));
