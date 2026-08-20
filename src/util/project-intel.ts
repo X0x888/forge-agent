@@ -690,9 +690,9 @@ export function midLoopVerifyNudge(sessionMeta: {
     `Session has ${edits} edit(s) without a fresh green verification` +
     (lastCmd ? ` (last: ${lastCmd})` : "") +
     `.\n` +
-    `Run the cheapest project check now before more edits: \`${cmd}\` ` +
-    `(or the tighter sibling if you only touched a narrow surface). ` +
-    `Do not ask the user whether to verify — just run it, then continue.`
+    `Run /verify now before more edits` +
+    (cmd ? ` (project check: \`${cmd}\`)` : "") +
+    `. Do not ask the user whether to verify — type /verify, then continue.`
   );
 }
 

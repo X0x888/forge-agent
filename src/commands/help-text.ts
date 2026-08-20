@@ -41,7 +41,7 @@ Unattended
 ──────────
   /goal <objective>   Relentless driver
   /ulw [task]         Ultrawork cycle (starts now)
-  /done               Wind down goal + ULW
+  /done               Wind down + lastErr/verify Next
 
 Keys
 ────
@@ -87,7 +87,7 @@ Harness
   /ulw [task]         Ultrawork + cycle=1 (starts working immediately)
   /cycle 1|0          Continue waves or finish this + one more, then stop
   /max-waves N|off    Cap ULW waves (auto LAST at N)
-  /done               Wind down: goal done + ULW LAST
+  /done               Wind down + lastErr/verify Next
   /plan               Session-scoped read-only design
   /build              Leave plan and implement
   /improve [focus]    Continuous-improve on ULW rails
@@ -102,19 +102,19 @@ export const HELP_SESSIONS = `
 Sessions
 ────────
   Bare forge resumes the newest same-cwd session (≤14d).  forge --new  for fresh.
-  /sessions           Title-first list this cwd  ·  lastError leads  ·  search
+  /sessions           Title-first list  ·  /sessions errors → /resume 1
   /resume [n|id|title]  Resume by list number, id prefix, or unique title
   /new [title]        Fresh session
   /title [name]       Label for resume-by-title / search
   /pin                Protect from prune
-  /share              Pasteable handoff card
-  /last [n]           Conversation card + files/verify
+  /share              Pasteable handoff card + Next
+  /last [n]           Conversation card + lastErr Next + files/verify
   /verify [cmd]       Run last/project check · stamp the trail
   /files              Paths touched this session
   /path               On-disk session directory
   /export             Markdown or JSON (mode 0600)
   /fork               Branch into a new session id
-  /undo  /retry       Rewind last turn (+ journaled files)
+  /undo  /retry       Rewind last turn · 429 → /accounts not another burn
   /checkpoint         Safety snapshot (/snap)
 
   CLI: forge sessions list --cwd  ·  -q  ·  prune --keep 50
@@ -147,7 +147,7 @@ Forge slash commands
   /goal <objective>     Arm relentless goal driver (Codex-style)
   /goal                 Show goal status  [live]
   /goal pause|resume|clear|done   [live]
-  /done [note]          Wind down: /goal done + ULW cycle=0 (LAST)  [live]
+  /done [note]          Wind down + lastErr/verify Next (goal + ULW LAST)  [live]
   /pause                Shorthand for /goal pause  [live]
   /unpause              Shorthand for /goal resume  [live]
   /improve [focus…]       Continuous-improve (ULW; alias /ralph)
@@ -159,7 +159,7 @@ Forge slash commands
   /max-waves N|off      Cap ULW waves (auto LAST at N); default unlimited  [live]
   /ulw-off              Disarm ULW + cycle driver  [live]
   /hooks [init|reload]  List/scaffold/reload hooks  [live]
-  /status · /hud        HUD + session · problem first (no second panel)  [live]
+  /status · /hud        HUD + session · lastErr Next is a slash key  [live]
   /tasks [kill|log id]  Background shell tasks · kill/log subcommands  [live]
   /mcp [status|connect|tools|reload]  MCP servers (search_mcp · call_mcp)  [live]
   /lsp [status|ensure|install|detect|restart]  Language servers (auto-install TS/Python)  [live]
@@ -204,8 +204,8 @@ Forge slash commands
   /logs [n|0|all|path]  Tail sandbox/safety events (0/all = full window)  [live]
   /config [json]        Effective config snapshot (no secrets)  [live]
   /copy                 Copy last assistant reply (pbcopy/wl-copy/xclip/…)  [live]
-  /share [nocopy]       Pasteable session card + resume/export cmds (clipboard)  [live]
-  /last [n]             Last n turns as a conversation card + files/verify  [live]
+  /share [nocopy]       Pasteable session card + lastErr/verify Next (clipboard)  [live]
+  /last [n]             Conversation card + lastErr Next + files/verify  [live]
   /files [writes|n]     Paths touched by tools this session (newest first)  [live]
   /path [id|json]       On-disk session directory / session.json path  [live]
   /pin [on|off|toggle]  Protect session from prune (/unpin)  [live]
@@ -216,8 +216,8 @@ Forge slash commands
   /clear hard           Brand-new session id (same as /new; ULW not inherited)
   /resume [n|id|title|all] Resume #n from the picker, id prefix, or /title
   /sessions [all|search|delete|prune]  Title-first list (cwd) / search / delete [--force] / prune
-  /auth                 Show stored credentials (+ multi-account)  [live]
-  /accounts [status|switch|…]  Multi-account list/status/switch/clear-cooldown  [live]
+  /auth                 Stored credentials · Next /accounts (not forge login)  [live]
+  /accounts [status|switch|…]  Verdict-first list · Next is /accounts switch  [live]
   /doctor               Environment health check  [live]
   /skills               List skill packs (builtin forge-* · .forge/skills · .cursor/skills · ~/.forge/skills)  [live]
   /commands             List project/user custom slash templates (.forge/commands · .cursor/commands)  [live]
@@ -234,7 +234,7 @@ Status (always on — no second panel)
   Prompt flags    ULW · c=1/0 · GOAL · PLAN/YOLO · VERBOSE · bg:N  (on forge ›)
   While working   Spinner + phase (thinking / tool / compact / harness)
   After each turn Compact footer (ctx · turn tokens · bg · goal)
-  /status         Full two-line HUD + session detail
+  /status         Verdict-first HUD · lastErr Next is a slash key
   forge status --watch   Optional external pane / tmux (still available)
 
 Tips

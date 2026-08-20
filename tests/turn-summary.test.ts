@@ -304,11 +304,11 @@ test("run stop reason: cost / turns / continue-cap / empty / abort", () => {
   // Provider lastError used to be silent — now a Next closer
   assert.match(
     formatRunStopReason({ lastErrorCode: "rate_limited" }) ?? "",
-    /Next  wait/,
+    /Next  \/accounts/,
   );
   assert.match(
     formatRunStopReason({ lastErrorCode: "auth_expired" }) ?? "",
-    /Next  forge login/,
+    /Next  \/auth/,
   );
   assert.equal(formatRunStopReason({ lastErrorCode: "" }), null);
 });

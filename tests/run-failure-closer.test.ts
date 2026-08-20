@@ -23,14 +23,10 @@ describe("runFailureNextKeys", () => {
 
   it("rate_limited / auth / overflow / network are job-specific", () => {
     assert.deepEqual(runFailureNextKeys("rate_limited"), [
-      "wait",
-      "forge accounts switch",
+      "/accounts",
       "/retry",
     ]);
-    assert.deepEqual(runFailureNextKeys("auth_expired"), [
-      "forge login",
-      "/retry",
-    ]);
+    assert.deepEqual(runFailureNextKeys("auth_expired"), ["/auth", "/retry"]);
     assert.deepEqual(runFailureNextKeys("context_overflow"), [
       "/compact",
       "/retry",
@@ -43,11 +39,21 @@ describe("runFailureNextKeys", () => {
         "forge run --continue",
       ),
     );
+    assert.deepEqual(runFailureNextKeys("rate_limited", { surface: "run" }), [
+      "wait",
+      "forge accounts switch",
+      "forge run --continue",
+    ]);
   });
 
   it("aliases http_429 and continue_cap_*", () => {
     assert.deepEqual(runFailureNextKeys("http_429"), runFailureNextKeys("rate_limited"));
-    assert.ok(runFailureNextKeys("continue_cap_stop").includes("narrow the task"));
+    assert.deepEqual(runFailureNextKeys("continue_cap_stop"), ["/retry"]);
+    assert.ok(
+      runFailureNextKeys("continue_cap_stop", { surface: "run" }).includes(
+        "narrow the task",
+      ),
+    );
   });
 
   it("unknown code gets a designed default, not silence", () => {
@@ -61,19 +67,32 @@ describe("runFailureNextKeys", () => {
 describe("formatRunFailureCloser", () => {
   it("opens on Next, not Error?", () => {
     const line = formatRunFailureCloser("quota_exhausted", { columns: 80 });
-    assert.match(line, /^Next  forge accounts switch/);
+    assert.match(line, /^Next  \/accounts/);
     assert.doesNotMatch(line, /Error\?/);
     assert.doesNotMatch(line, /✓/);
   });
 
   it("wraps at · on a narrow TTY", () => {
-    const line = formatRunFailureCloser("rate_limited", { columns: 28 });
+    const line = formatRunFailureCloser("rate_limited", { columns: 20 });
     assert.match(line, /Next  /);
     assert.match(line, /\n  ·  /);
   });
 });
 
 describe("formatProviderErrorText closer", () => {
+  it("REPL 429 closer is a slash key, not a CLI dump", () => {
+    const err = new ProviderApiError({
+      provider: "xai",
+      status: 429,
+      body: "rate limit exceeded",
+      retryAfterMs: 8_000,
+    });
+    const text = formatProviderErrorText(err, { columns: 80, repl: true });
+    const closer = text.split("\n").at(-1)!;
+    assert.match(closer, /Next  \/accounts/);
+    assert.doesNotMatch(text, /Next  .*forge accounts switch/);
+  });
+
   it("headless 429 card ends on Next, not a tip lecture", () => {
     const err = new ProviderApiError({
       provider: "xai",

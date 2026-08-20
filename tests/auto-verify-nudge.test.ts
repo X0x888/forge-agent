@@ -32,6 +32,7 @@ describe("midLoopVerifyNudge", () => {
       );
       assert.match(msg, /verify nudge/i);
       assert.match(msg, /without a fresh green verification/i);
+      assert.match(msg, /\/verify/);
       assert.match(msg, /Do not ask the user/i);
     } finally {
       if (prev !== undefined) process.env.FORGE_AUTO_VERIFY_NUDGE = prev;

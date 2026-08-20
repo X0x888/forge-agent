@@ -13,7 +13,9 @@
  *  - Stale plan probes are ignored for proactive ranking (see PLAN_STALE_SEC)
  *  - After a switch, callers should refresh OAuth on the new account before chat
  */
+import chalk from "chalk";
 import { nowEpoch } from "../util/fs.js";
+import { visibleWidth } from "../util/format.js";
 import { log } from "../util/log.js";
 import {
   getActiveAccount,
@@ -30,6 +32,7 @@ import {
 import type {
   AccountCredential,
   AccountPlanSnapshot,
+  AccountSummary,
   ResolvedAuth,
 } from "./types.js";
 
@@ -740,53 +743,234 @@ export function recordAccountPlan(
   setAccountPlan(accountId, snap);
 }
 
+export type AccountsSurface = "repl" | "cli";
+
+export type AccountsIssueKind =
+  | "none"
+  | "ineligible"
+  | "cooldown"
+  | "expired";
+
+export interface AccountsIssue {
+  kind: AccountsIssueKind;
+  severity: "error" | "warn";
+  line: string;
+}
+
+function isCoolingAccount(r: { cooldownUntil?: string }, now = Date.now()): boolean {
+  return Boolean(r.cooldownUntil && Date.parse(r.cooldownUntil) > now);
+}
+
+function isEligibleSummary(r: AccountSummary): boolean {
+  if (r.disabled) return false;
+  if (isCoolingAccount(r)) return false;
+  if (r.expired && !r.hasRefreshToken) return false;
+  return true;
+}
+
+/** Label you can type after `/accounts switch` (or CLI equivalent). */
+export function accountSwitchSelector(r: AccountSummary): string {
+  const label = String(r.accountLabel || r.subscription || "").trim();
+  if (label && !/\s/.test(label)) return label;
+  return shortId(r.id);
+}
+
+export function collectAccountsIssues(
+  rows: readonly AccountSummary[],
+): AccountsIssue[] {
+  if (!rows.length) {
+    return [{ kind: "none", severity: "error", line: "none     no stored accounts" }];
+  }
+  const issues: AccountsIssue[] = [];
+  const eligible = rows.filter(isEligibleSummary);
+  const cooling = rows.filter((r) => isCoolingAccount(r));
+  const expired = rows.filter((r) => r.expired && !r.hasRefreshToken);
+  if (eligible.length === 0) {
+    issues.push({
+      kind: "ineligible",
+      severity: "error",
+      line: `eligible 0/${rows.length}`,
+    });
+  }
+  if (cooling.length) {
+    issues.push({
+      kind: "cooldown",
+      severity: "warn",
+      line: `cooldown ${cooling.length}`,
+    });
+  }
+  if (expired.length) {
+    issues.push({
+      kind: "expired",
+      severity: "error",
+      line: `expired  ${expired.length} without refresh`,
+    });
+  }
+  return issues.slice(0, 3);
+}
+
 /**
- * Format multi-account status for CLI / slash (no tokens).
- * Includes unattended readiness summary for heavy users.
+ * Sit-down Next after you type `/accounts`.
+ * Alternate ready → switch it. Cooling only → clear-cooldown.
+ * None / ineligible → `/auth` (REPL) or `forge login` (CLI).
+ * One healthy account and nothing wrong → designed empty (no Next).
+ */
+export function accountsNextKeys(
+  rows: readonly AccountSummary[],
+  surface: AccountsSurface = "repl",
+): string[] {
+  const slash = surface === "repl";
+  if (!rows.length) return [slash ? "/auth" : "forge login"];
+  const eligible = rows.filter(isEligibleSummary);
+  const alternate = eligible.find((r) => !r.active);
+  if (alternate) {
+    const sel = accountSwitchSelector(alternate);
+    return [
+      slash ? `/accounts switch ${sel}` : `forge accounts switch ${sel}`,
+    ];
+  }
+  if (rows.some((r) => isCoolingAccount(r))) {
+    return [slash ? "/accounts clear-cooldown" : "forge accounts clear-cooldown"];
+  }
+  if (eligible.length === 0) {
+    return [slash ? "/auth" : "forge login --add"];
+  }
+  return [];
+}
+
+export function formatAccountsVerdict(
+  issues: readonly AccountsIssue[],
+  opts?: { color?: boolean; title?: string },
+): string {
+  const color = opts?.color === true;
+  const name = (opts?.title || "accounts").trim() || "accounts";
+  const title = color ? chalk.bold(name) : name;
+  if (!issues.length) {
+    const ok = color ? chalk.green("ok") : "ok";
+    return `${title}  ·  ${ok}`;
+  }
+  if (issues.some((i) => i.kind === "none")) {
+    const bit = color ? chalk.dim("none") : "none";
+    return `${title}  ·  ${bit}`;
+  }
+  const n = issues.length;
+  const bit = `${n} issue${n === 1 ? "" : "s"}`;
+  return `${title}  ·  ${color ? chalk.yellow(bit) : bit}`;
+}
+
+export function formatAccountsCloser(
+  keys: readonly string[],
+  opts?: { columns?: number },
+): string {
+  const uniq: string[] = [];
+  for (const k of keys) {
+    const n = k.trim();
+    if (n && !uniq.includes(n)) uniq.push(n);
+  }
+  if (!uniq.length) return "";
+  const line = `Next  ${uniq.join("  ·  ")}`;
+  const cols = Math.max(
+    24,
+    opts?.columns ??
+      (process.stdout.isTTY ? process.stdout.columns || 80 : 80),
+  );
+  if (visibleWidth(line) <= cols) return line;
+  return [`Next  ${uniq[0]}`, ...uniq.slice(1).map((k) => `  ·  ${k}`)].join(
+    "\n",
+  );
+}
+
+/**
+ * Verdict-first accounts card. REPL Next is a slash key (typing
+ * `forge accounts switch` at › is a model prompt). CLI keeps forge verbs.
+ * Designed empty: `accounts  ·  none` + `/auth`, not `accounts  ·  ok`.
+ */
+export function formatAccountsCard(opts?: {
+  provider?: string;
+  surface?: AccountsSurface;
+  color?: boolean;
+  columns?: number;
+  title?: string;
+  hideNext?: readonly string[];
+}): string {
+  const surface = opts?.surface ?? "cli";
+  const color = opts?.color === true;
+  const rows = listAccountSummaries(opts?.provider);
+  const issues = collectAccountsIssues(rows);
+  const settings = getAutoSwitchSettings();
+  const readiness = assessMultiAccountReadiness(opts?.provider);
+  const lines: string[] = [
+    formatAccountsVerdict(issues, { color, title: opts?.title }),
+  ];
+  if (rows.length) {
+    lines.push(
+      `Auto-switch: ${settings.autoSwitch ? "on" : "off"}  threshold: ${settings.switchThresholdPercent}% used  ·  ${readiness.summary}`,
+    );
+    lines.push("");
+    for (const r of rows) {
+      const mark = r.active ? "*" : " ";
+      const flags: string[] = [];
+      if (r.disabled) flags.push("disabled");
+      if (r.expired) flags.push("EXPIRED");
+      if (!r.hasRefreshToken && r.method !== "api_key") flags.push("no-refresh");
+      if (isCoolingAccount(r)) {
+        const untilSec = Math.floor(Date.parse(r.cooldownUntil!) / 1000);
+        flags.push(`cooldown ${formatRelativeSec(untilSec)} left`);
+      }
+      if (r.priority) flags.push(`prio=${r.priority}`);
+      if (typeof r.lastPlanPercent === "number") {
+        flags.push(`usage=${r.lastPlanPercent}%`);
+      }
+      const flagStr = flags.length ? `  [${flags.join(", ")}]` : "";
+      const label = r.accountLabel || r.subscription || "(no label)";
+      const idCol = shortId(r.id).padEnd(28);
+      lines.push(
+        `${mark} ${idCol} ${r.provider.padEnd(10)} ${r.method.padEnd(12)} ${label}${flagStr}`,
+      );
+    }
+    if (issues.length) {
+      lines.push("");
+      for (const i of issues) {
+        const row = `⚠ ${i.line}`;
+        lines.push(
+          color && i.severity === "error" ? chalk.red(row) : color ? chalk.yellow(row) : row,
+        );
+      }
+    }
+  }
+  const hide = new Set((opts?.hideNext || []).map((k) => k.trim()));
+  const closer = formatAccountsCloser(
+    accountsNextKeys(rows, surface).filter((k) => !hide.has(k)),
+    { columns: opts?.columns },
+  );
+  if (closer) lines.push(closer);
+  return lines.filter((s, i) => s.length > 0 || i === 0).join("\n");
+}
+
+/**
+ * Verdict-first `/auth` card. Same rows as `/accounts`; title is `auth`.
+ * Already on `/auth` — do not closer `/auth` again (login is not a › key).
+ * Designed empty: `auth  ·  none` with no Next.
+ */
+export function formatAuthCard(opts?: {
+  color?: boolean;
+  columns?: number;
+}): string {
+  return formatAccountsCard({
+    surface: "repl",
+    color: opts?.color,
+    columns: opts?.columns,
+    title: "auth",
+    hideNext: ["/auth"],
+  });
+}
+
+/**
+ * Format multi-account status for CLI (no tokens).
+ * Verdict-first; Next stays forge verbs.
  */
 export function formatAccountsTable(provider?: string): string {
-  const settings = getAutoSwitchSettings();
-  const rows = listAccountSummaries(provider);
-  if (rows.length === 0) {
-    return "No stored accounts. Run: forge login";
-  }
-  const readiness = assessMultiAccountReadiness(provider);
-  const lines: string[] = [];
-  lines.push(
-    `Auto-switch: ${settings.autoSwitch ? "on" : "off"}  threshold: ${settings.switchThresholdPercent}% used  ·  ${readiness.summary}`,
-  );
-  lines.push("");
-  for (const r of rows) {
-    const mark = r.active ? "*" : " ";
-    const flags: string[] = [];
-    if (r.disabled) flags.push("disabled");
-    if (r.expired) flags.push("EXPIRED");
-    if (!r.hasRefreshToken && r.method !== "api_key") flags.push("no-refresh");
-    if (r.cooldownUntil && Date.parse(r.cooldownUntil) > Date.now()) {
-      const untilSec = Math.floor(Date.parse(r.cooldownUntil) / 1000);
-      flags.push(`cooldown ${formatRelativeSec(untilSec)} left`);
-    }
-    if (r.priority) flags.push(`prio=${r.priority}`);
-    if (typeof r.lastPlanPercent === "number") {
-      flags.push(`usage=${r.lastPlanPercent}%`);
-    }
-    const flagStr = flags.length ? `  [${flags.join(", ")}]` : "";
-    const label = r.accountLabel || r.subscription || "(no label)";
-    const idCol = shortId(r.id).padEnd(28);
-    lines.push(
-      `${mark} ${idCol} ${r.provider.padEnd(10)} ${r.method.padEnd(12)} ${label}${flagStr}`,
-    );
-  }
-  lines.push("");
-  if (readiness.warnings.length) {
-    for (const w of readiness.warnings.slice(0, 3)) {
-      lines.push(`  ⚠ ${w}`);
-    }
-  }
-  lines.push(
-    "  * = active  ·  forge accounts switch <id|label>  ·  forge accounts status  ·  forge login --add",
-  );
-  return lines.join("\n");
+  return formatAccountsCard({ provider, surface: "cli" });
 }
 
 /** Format readiness-only block (forge accounts status / doctor). */

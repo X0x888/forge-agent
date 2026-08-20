@@ -41,6 +41,11 @@ import {
   isQuotaOrRateLimitError,
   recordAccountPlan,
   formatAccountsTable,
+  formatAccountsCard,
+  formatAuthCard,
+  formatAccountsVerdict,
+  accountsNextKeys,
+  collectAccountsIssues,
   formatMultiAccountReadiness,
   assessMultiAccountReadiness,
   clearAccountCooldown,
@@ -483,6 +488,7 @@ describe("smart account switching", () => {
     upsertApiKey("xai", "sk-a", "a");
     upsertApiKey("anthropic", "sk-ant", "ant");
     const t = formatAccountsTable();
+    assert.match(t, /^accounts  ·  /m);
     assert.match(t, /Auto-switch/);
     assert.match(t, /xai/);
     assert.match(t, /anthropic/);
@@ -589,7 +595,8 @@ describe("smart account switching", () => {
     const t = formatAccountsTable("xai");
     assert.match(t, /Auto-switch/);
     assert.match(t, /cooldown/);
-    assert.match(t, /accounts status|login --add/i);
+    assert.match(t, /^accounts  ·  /m);
+    assert.match(t, /Next  forge accounts (switch|clear-cooldown)/);
   });
 
   it("env API key blocks auto-switch (CI determinism)", () => {
@@ -607,6 +614,104 @@ describe("smart account switching", () => {
     } finally {
       delete process.env.XAI_API_KEY;
     }
+  });
+});
+
+describe("/accounts verdict-first card", () => {
+  let tmp: string;
+  let prevHome: string | undefined;
+
+  beforeEach(() => {
+    tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-acct-card-"));
+    prevHome = process.env.FORGE_HOME;
+    process.env.FORGE_HOME = tmp;
+    delete process.env.XAI_API_KEY;
+    delete process.env.GROK_API_KEY;
+    delete process.env.FORGE_API_KEY;
+  });
+
+  afterEach(() => {
+    if (prevHome === undefined) delete process.env.FORGE_HOME;
+    else process.env.FORGE_HOME = prevHome;
+    try {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    } catch {
+      /* */
+    }
+  });
+
+  it("designed empty is accounts · none, not ok", () => {
+    const cli = formatAccountsCard({ surface: "cli" });
+    assert.match(cli, /^accounts  ·  none/);
+    assert.doesNotMatch(cli, /accounts\s+·\s+ok/);
+    assert.match(cli, /Next  forge login/);
+    const repl = formatAccountsCard({ surface: "repl" });
+    assert.match(repl, /^accounts  ·  none/);
+    assert.match(repl, /Next  \/auth/);
+    assert.doesNotMatch(repl, /forge login/);
+    assert.equal(formatAccountsVerdict(collectAccountsIssues([])), "accounts  ·  none");
+  });
+
+  it("REPL Next is /accounts switch <label>, not a CLI dump", () => {
+    upsertApiKey("xai", "sk-a", "alice");
+    upsertApiKey("xai", "sk-b", "bob", { forceNew: true });
+    const repl = formatAccountsCard({ surface: "repl" });
+    assert.match(repl, /^accounts  ·  ok/);
+    assert.match(repl, /Next  \/accounts switch alice/);
+    assert.doesNotMatch(repl, /forge accounts switch/);
+    assert.deepEqual(accountsNextKeys(listAccountSummaries(), "repl"), [
+      "/accounts switch alice",
+    ]);
+  });
+
+  it("one healthy account is ok with no Next", () => {
+    upsertApiKey("xai", "sk-a", "solo");
+    const repl = formatAccountsCard({ surface: "repl" });
+    assert.match(repl, /^accounts  ·  ok/);
+    assert.doesNotMatch(repl, /^Next  /m);
+    assert.deepEqual(accountsNextKeys(listAccountSummaries(), "repl"), []);
+  });
+
+  it("/accounts and bare /accounts switch open the card", async () => {
+    upsertApiKey("xai", "sk-a", "alice");
+    upsertApiKey("xai", "sk-b", "bob", { forceNew: true });
+    const { createSession } = await import("../src/session/session.js");
+    const { handleSlash } = await import("../src/commands/slash.js");
+    const { DEFAULT_CONFIG } = await import("../src/config/types.js");
+    const { HookRunner } = await import("../src/harness/hooks.js");
+    const session = createSession({ cwd: tmp, provider: "xai", model: "grok-4" });
+    const config = { ...DEFAULT_CONFIG, workspace: tmp };
+    const hooks = new HookRunner(config, tmp);
+    const list = await handleSlash("/accounts", { session, config, hooks });
+    assert.equal(list.handled, true);
+    assert.match(String(list.output || ""), /^accounts  ·  ok/);
+    assert.match(String(list.output || ""), /Next  \/accounts switch alice/);
+    const bare = await handleSlash("/accounts switch", { session, config, hooks });
+    assert.match(String(bare.output || ""), /Next  \/accounts switch alice/);
+    assert.doesNotMatch(String(bare.output || ""), /Usage: \/accounts switch/);
+  });
+
+  it("/auth is verdict-first and does not closer /auth again", async () => {
+    const empty = formatAuthCard();
+    assert.match(empty, /^auth  ·  none/);
+    assert.doesNotMatch(empty, /^Next  /m);
+    assert.doesNotMatch(empty, /forge login/);
+    upsertApiKey("xai", "sk-a", "alice");
+    upsertApiKey("xai", "sk-b", "bob", { forceNew: true });
+    const { createSession } = await import("../src/session/session.js");
+    const { handleSlash } = await import("../src/commands/slash.js");
+    const { DEFAULT_CONFIG } = await import("../src/config/types.js");
+    const { HookRunner } = await import("../src/harness/hooks.js");
+    const session = createSession({ cwd: tmp, provider: "xai", model: "grok-4" });
+    const config = { ...DEFAULT_CONFIG, workspace: tmp };
+    const hooks = new HookRunner(config, tmp);
+    const r = await handleSlash("/auth", { session, config, hooks });
+    assert.equal(r.handled, true);
+    const out = String(r.output || "");
+    assert.match(out, /^auth  ·  ok/);
+    assert.match(out, /Next  \/accounts switch alice/);
+    assert.doesNotMatch(out, /Next  \/auth/);
+    assert.doesNotMatch(out, /forge login/);
   });
 });
 

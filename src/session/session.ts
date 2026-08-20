@@ -42,10 +42,15 @@ import {
 } from "./subagent-usage.js";
 import { normalizeExploreMaps } from "./explore-map.js";
 import { normalizeRequestPruneSticky } from "./request-prune.js";
-import { isLastErrorProblem } from "./last-error.js";
+import { isLastErrorProblem, sitDownNextForLastError } from "./last-error.js";
 export {
   LAST_ERROR_OUTCOME_CODES,
   isLastErrorProblem,
+  sitDownKeyFromTip,
+  sitDownKeyFromCode,
+  sitDownKeys,
+  sitDownNextForLastError,
+  retryRefusedNext,
 } from "./last-error.js";
 import {
   compactMessagesStructured,
@@ -1414,6 +1419,28 @@ export function parseSessionListIndex(arg: string, length: number): number | nul
   return n - 1;
 }
 
+/** Verdict for `/sessions errors` — not a lecture, not `sessions  ·  ok`. */
+export function formatSessionsErrorsVerdict(count: number): string {
+  const n = Math.max(0, Math.floor(Number(count) || 0));
+  if (n <= 0) return "sessions  ·  none";
+  return `sessions  ·  ${n} error${n === 1 ? "" : "s"}`;
+}
+
+/**
+ * Typeable Next after the errors list. First row is `/resume 1`;
+ * lastErr of that row adds the sit-down key (`/accounts`, not a CLI dump).
+ * Designed empty: `Next  /status`.
+ */
+export function formatSessionsErrorsCloser(
+  first?: Pick<SessionMeta, "lastError"> | null,
+): string {
+  if (!first) return "Next  /status";
+  const keys = ["/resume 1"];
+  const next = sitDownNextForLastError(first.lastError);
+  if (next && !keys.includes(next)) keys.push(next);
+  return `Next  ${keys.join("  ·  ")}`;
+}
+
 /** Numbered wrapper for `/resume` / `/sessions` / `forge sessions list`. */
 export function formatNumberedPickerRow(
   index: number,
@@ -1534,8 +1561,7 @@ export function formatSessionSummary(session: SessionData): string {
         ? `  mode:     ${m.permissionMode} (session override)`
         : null,
     isLastErrorProblem(m.lastError)
-      ? `  lastErr:  [${m.lastError!.code}] ${m.lastError!.message.slice(0, 120)}` +
-        (m.lastError!.tips?.[0] ? ` → ${m.lastError!.tips[0]}` : "")
+      ? `  lastErr:  [${m.lastError!.code}] ${m.lastError!.message.slice(0, 120)}`
       : null,
     (() => {
       const last = m.lastVerificationCommand?.trim();
@@ -2919,8 +2945,9 @@ function formatTurnBubble(
 }
 
 /**
- * Session-scoped files + verify trailer for the `/last` card.
+ * Session-scoped files + verify + lastErr trailer for the `/last` card.
  * Compact resume peeks stay one-row — they already have formatCompactResumeCard.
+ * lastErr Next is a slash key (same as sit-down), not a CLI dump.
  */
 export function formatLastRecapTrailer(
   session: SessionData,
@@ -2930,6 +2957,12 @@ export function formatLastRecapTrailer(
   const clipRow = (s: string): string =>
     visibleWidth(s) > cols ? clipAnsi(s, cols) : s;
   const lines: string[] = [];
+  const err = session.meta.lastError;
+  const errNext = sitDownNextForLastError(err);
+  if (isLastErrorProblem(err) && err?.message) {
+    const msg = err.message.replace(/\s+/g, " ").trim().slice(0, 80);
+    lines.push(clipRow(chalk.red(`  lastErr  [${err.code}] ${msg}`)));
+  }
   let files: TouchedFile[] = [];
   try {
     files = listSessionTouchedFiles(session, { mutatedOnly: true, limit: 6 });
@@ -2970,12 +3003,22 @@ export function formatLastRecapTrailer(
     lines.push(clipRow(chalk.yellow("  verify: none — /verify")));
   }
 
+  const verifyProblem = Boolean(stale || red || (edits && !lv));
+  const keys: string[] = [];
+  if (errNext) keys.push(errNext);
+  if (verifyProblem && !keys.includes("/verify")) keys.push("/verify");
   if (files.length || lv || edits) {
-    const problem = Boolean(stale || red || (edits && !lv));
-    const keys = problem
-      ? "/verify  ·  /diff  ·  /files"
-      : "/diff  ·  /files  ·  /undo";
-    lines.push(clipRow(chalk.dim(`  ↳ ${keys}`)));
+    for (const k of verifyProblem
+      ? ["/diff", "/files"]
+      : ["/diff", "/files", "/undo"]) {
+      if (!keys.includes(k)) keys.push(k);
+    }
+  }
+  if (keys.length) {
+    const closer = errNext
+      ? `Next  ${keys.join("  ·  ")}`
+      : `  ↳ ${keys.join("  ·  ")}`;
+    lines.push(clipRow(chalk.dim(closer)));
   }
   return lines;
 }
@@ -3577,15 +3620,8 @@ export function formatSessionShareCard(
       lastVerifyLine =
         `  last-verify: ${last.slice(0, 100)}${last.length > 100 ? "…" : ""}${when}${stale}`;
     } else if ((m.editCount || 0) > 0) {
-      let tip = "npm test / typecheck";
-      try {
-        const intel = detectProjectIntel(m.cwd || process.cwd());
-        if (intel.checkCommands[0]) tip = intel.checkCommands[0];
-      } catch {
-        /* */
-      }
       lastVerifyLine =
-        `  last-verify: (none after ${m.editCount} edit(s) — prefer \`${tip}\`)`;
+        `  last-verify: (none after ${m.editCount} edit(s) — /verify)`;
     }
   } catch {
     /* */
@@ -3611,8 +3647,7 @@ export function formatSessionShareCard(
     lastVerifyLine,
     goalLine,
     isLastErrorProblem(m.lastError)
-      ? `  lastErr:  [${m.lastError!.code}] ${m.lastError!.message.slice(0, 120)}` +
-        (m.lastError!.tips?.[0] ? ` → ${m.lastError!.tips[0]}` : "")
+      ? `  lastErr:  [${m.lastError!.code}] ${m.lastError!.message.slice(0, 120)}`
       : null,
     `  turns:    ${m.turnCount}  edits=${m.editCount}  msgs=${session.messages.length}` +
       (m.providerRounds && m.providerRounds > m.turnCount
@@ -3673,6 +3708,18 @@ export function formatSessionShareCard(
     `CI:     forge "…" --json  ·  forge auth --json  ·  forge doctor --json  ·  forge tips --json  ·  forge status --session ${id8} --json`,
     `Peek:   /last 3  ·  /files  ·  /retry  ·  forge news`,
   ].filter((x): x is string => x != null);
+  const shareKeys: string[] = [];
+  const shareErr = sitDownNextForLastError(m.lastError);
+  if (shareErr) shareKeys.push(shareErr);
+  if (
+    isLastVerificationStale(m) ||
+    ((m.editCount || 0) > 0 && !m.lastVerificationCommand?.trim())
+  ) {
+    if (!shareKeys.includes("/verify")) shareKeys.push("/verify");
+  }
+  if (shareKeys.length) {
+    lines.push(`Next  ${shareKeys.join("  ·  ")}`);
+  }
 
   if (opts?.includePreview !== false) {
     const preview = lastAssistantText(session).trim();

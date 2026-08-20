@@ -112,7 +112,7 @@ import {
   resolveAuthFresh,
 } from "../auth/resolve.js";
 import type { ResolvedAuth } from "../auth/types.js";
-import { printAuthStatus } from "../auth/login.js";
+
 import {
   getActiveAccount,
   getCredential,
@@ -2035,9 +2035,26 @@ export async function handleSlash(
       } catch {
         /* never break /done */
       }
+      const { sitDownNextForLastError } = await import("../session/last-error.js");
+      const keys: string[] = [];
+      const errNext = sitDownNextForLastError(opts.session.meta.lastError);
+      if (errNext) keys.push(errNext);
+      const staleDone = isLastVerificationStale(opts.session.meta);
+      const missingDone =
+        (opts.session.meta.editCount || 0) > 0 &&
+        !opts.session.meta.lastVerificationCommand?.trim();
+      if ((staleDone || missingDone) && !keys.includes("/verify")) {
+        keys.push("/verify");
+      }
+      const issueN = (errNext ? 1 : 0) + (staleDone || missingDone ? 1 : 0);
+      const head =
+        issueN > 0
+          ? `done  ·  ${issueN} issue${issueN === 1 ? "" : "s"}`
+          : "done  ·  ok";
+      const closer = keys.length ? `Next  ${keys.join("  ·  ")}` : "";
       return {
         handled: true,
-        output: parts.filter(Boolean).join("\n"),
+        output: [head, ...parts, closer].filter(Boolean).join("\n"),
         session: opts.session,
       };
     }
@@ -3550,14 +3567,14 @@ const stats = collectUsageStats({
 
     case "/auth":
     case "/login-status": {
-      printAuthStatus();
-      return { handled: true, output: "" };
+      const { formatAuthCard } = await import("../auth/accounts.js");
+      return { handled: true, output: formatAuthCard() };
     }
 
     case "/accounts":
     case "/account": {
       const {
-        formatAccountsTable,
+        formatAccountsCard,
         formatMultiAccountReadiness,
         switchAccount,
         resolveAccountSelector,
@@ -3590,7 +3607,7 @@ const stats = collectUsageStats({
       };
       const raw = (arg || "").trim();
       if (!raw || raw === "list" || raw === "ls") {
-        return { handled: true, output: formatAccountsTable() };
+        return { handled: true, output: formatAccountsCard({ surface: "repl" }) };
       }
       const [verb, ...rest] = raw.split(/\s+/);
       const v = verb.toLowerCase();
@@ -3600,7 +3617,7 @@ const stats = collectUsageStats({
           output:
             formatMultiAccountReadiness() +
             "\n\n" +
-            formatAccountsTable(),
+            formatAccountsCard({ surface: "repl" }),
         };
       }
       if (v === "switch" || v === "use") {
@@ -3608,7 +3625,7 @@ const stats = collectUsageStats({
         if (!sel) {
           return {
             handled: true,
-            output: "Usage: /accounts switch <id|label|provider:N>",
+            output: formatAccountsCard({ surface: "repl" }),
           };
         }
         const hit = resolveAccountSelector(sel);
@@ -3745,6 +3762,10 @@ const stats = collectUsageStats({
         });
         const authUpdated =
           r.switched && r.account ? applyAuthHotSwap(r.account) : false;
+        if (r.switched) {
+          const { clearSessionLastError } = await import("../session/session.js");
+          clearSessionLastError(opts.session);
+        }
         return {
           handled: true,
           authUpdated,
@@ -3756,7 +3777,7 @@ const stats = collectUsageStats({
       return {
         handled: true,
         output:
-          formatAccountsTable() +
+          formatAccountsCard({ surface: "repl" }) +
           "\n\nUsage: /accounts [list|status|switch|remove|rename|priority|disable|enable|clear-cooldown|auto-switch]",
       };
     }
@@ -4394,18 +4415,39 @@ const result = rewindSessionDetailed(opts.session, n);
     case "/again": {
       // Drop last user turn + re-run (optional rewritten prompt).
       // Idle-only: mutates history and starts a new agent turn via forwardPrompt.
+      // lastErr that /retry cannot fix (429 / auth / budget) is refused —
+      // typing /retry after a quota crash must not burn another turn.
+      const { retryRefusedNext } = await import("../session/last-error.js");
+      const { clearSessionLastError } = await import("../session/session.js");
       const prior = lastUserText(opts.session);
       if (!prior) {
         return {
           handled: true,
-          output:
-            "Nothing to retry — no prior user turn in this session. Send a prompt first.",
+          output: "retry  ·  nothing to run\nNext  /status",
+          session: opts.session,
+        };
+      }
+      const blocked = retryRefusedNext(opts.session.meta.lastError);
+      if (blocked) {
+        const err = opts.session.meta.lastError;
+        const msg = String(err?.message || "")
+          .replace(/\s+/g, " ")
+          .trim()
+          .slice(0, 80);
+        return {
+          handled: true,
+          output: [
+            "retry  ·  lastErr",
+            `  lastErr  [${err?.code}] ${msg}`,
+            `Next  ${blocked}`,
+          ].join("\n"),
           session: opts.session,
         };
       }
       const rewritten = (arg || "").trim();
       const prompt = rewritten || prior;
       const result = rewindSessionDetailed(opts.session, 1);
+      clearSessionLastError(opts.session);
       const preview =
         prompt.length > 120 ? `${prompt.slice(0, 117).trimEnd()}…` : prompt;
       const mode = rewritten ? "with rewritten prompt" : "same prompt";
@@ -4421,6 +4463,7 @@ const result = rewindSessionDetailed(opts.session, n);
       return {
         handled: true,
         output:
+          `retry  ·  ok\n` +
           (result.removed > 0
             ? `Retrying last turn (${mode}; removed ${result.removed} msg(s))…\n→ ${preview}`
             : `Retrying last turn (${mode})…\n→ ${preview}`) +
@@ -5997,10 +6040,14 @@ case "/new":
       }
       if (!list.length) {
         if (errorsOnly) {
+          const { formatSessionsErrorsVerdict, formatSessionsErrorsCloser } =
+            await import("../session/session.js");
           return {
             handled: true,
-            output:
-              "No sessions with lastError. Provider failures stamp ERR on /sessions and forge status.",
+            output: [
+              formatSessionsErrorsVerdict(0),
+              formatSessionsErrorsCloser(null),
+            ].join("\n"),
           };
         }
         if (untitledOnly) {
@@ -6041,24 +6088,37 @@ case "/new":
               : listMode === "cwd"
                 ? `cwd=${ws}`
                 : "all workspaces";
+      const rows = list
+        .map((s, i) => {
+          const extras: string[] = [];
+          if (
+            s.id === opts.session.meta.id ||
+            opts.session.meta.id.startsWith(s.id.slice(0, 8))
+          ) {
+            extras.push("*");
+          }
+          const lock = readSessionLock(s.id);
+          if (lock && sessionHasForeignLiveLock(s.id)) extras.push("LOCK");
+          if (listMode === "all" && s.cwd) extras.push(path.basename(s.cwd));
+          return formatNumberedPickerRow(i, s, extras);
+        })
+        .join("\n");
+      if (errorsOnly) {
+        const { formatSessionsErrorsVerdict, formatSessionsErrorsCloser } =
+          await import("../session/session.js");
+        return {
+          handled: true,
+          output: [
+            formatSessionsErrorsVerdict(list.length),
+            rows,
+            formatSessionsErrorsCloser(list[0]),
+          ].join("\n"),
+        };
+      }
       return {
         handled: true,
         output:
-          list
-            .map((s, i) => {
-              const extras: string[] = [];
-              if (
-                s.id === opts.session.meta.id ||
-                opts.session.meta.id.startsWith(s.id.slice(0, 8))
-              ) {
-                extras.push("*");
-              }
-              const lock = readSessionLock(s.id);
-              if (lock && sessionHasForeignLiveLock(s.id)) extras.push("LOCK");
-              if (listMode === "all" && s.cwd) extras.push(path.basename(s.cwd));
-              return formatNumberedPickerRow(i, s, extras);
-            })
-            .join("\n") +
+          rows +
           chalk.dim(
             `\n\n* = active  ·  ${scopeNote}  ·  /resume 3  ·  /sessions [all|search <q>]  ·  /pin`,
           ),

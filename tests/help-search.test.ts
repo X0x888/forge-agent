@@ -74,6 +74,11 @@ describe("searchHelpCatalog", () => {
     assert.ok(hits.some((h) => h.command === "/budget"));
   });
 
+  it("finds /status from lastErr Next", () => {
+    const hits = searchHelpCatalog("lastErr");
+    assert.ok(hits.some((h) => h.command === "/status"));
+  });
+
   it("recovers a command typo", () => {
     const hits = searchHelpCatalog("budjet");
     assert.equal(hits[0]?.command, "/budget");

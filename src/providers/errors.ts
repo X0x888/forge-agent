@@ -2,6 +2,7 @@
  * Structured provider API errors — carry HTTP status + Retry-After so the
  * retry layer can honor server backoff (OpenCode-style production reliability).
  */
+import { sitDownKeys } from "../session/last-error.js";
 import { clipAnsi, visibleWidth } from "../util/format.js";
 import { isHttp2ProtocolError } from "../util/http2-error.js";
 
@@ -515,6 +516,10 @@ export function runFailureNextKeys(
           ? ["forge run --continue", "forge doctor"]
           : ["/retry", "/model", "type to continue"];
   }
+  if (surface === "repl") {
+    const sit = sitDownKeys(keys);
+    keys = sit.length ? sit : ["/retry"];
+  }
   const out: string[] = [];
   for (const k of keys) {
     const t = String(k || "").trim();
@@ -563,8 +568,9 @@ export function wrapErrorAskLine(line: string, cols: number): string {
 }
 
 /**
- * Last line of a dead run — `Next  wait  ·  forge accounts switch`.
- * Empty code is a designed silent edge (clean Stop / no lastError).
+ * Last line of a dead run — REPL `Next  /accounts  ·  /retry`;
+ * headless `forge run` keeps CLI verbs. Empty code is a designed
+ * silent edge (clean Stop / no lastError).
  */
 export function formatRunFailureCloser(
   code: string,

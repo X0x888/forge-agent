@@ -95,6 +95,7 @@ describe("session helpers", () => {
     });
     assert.equal(r.handled, true);
     assert.equal(r.forwardPrompt, "fix the flaky test");
+    assert.match(r.output || "", /retry  ·  ok/);
     assert.match(r.output || "", /Retrying last turn/);
     assert.equal(s.messages.filter((m) => m.role === "user").length, 0);
     assert.equal(lastUserText(s), "");
@@ -130,7 +131,34 @@ describe("session helpers", () => {
     });
     assert.equal(r.handled, true);
     assert.equal(r.forwardPrompt, undefined);
-    assert.match(r.output || "", /Nothing to retry/);
+    assert.match(r.output || "", /retry  ·  nothing to run/);
+    assert.match(r.output || "", /Next  \/status/);
+    assert.doesNotMatch(r.output || "", /Nothing to retry/);
+  });
+
+  it("/retry after 429 is refused with Next /accounts", async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-retry-429-"));
+    process.env.FORGE_HOME = tmp;
+    const s = createSession({ cwd: tmp, provider: "xai", model: "grok-4" });
+    markUserTurn(s);
+    s.messages.push({ role: "user", content: "keep going" });
+    s.messages.push({ role: "assistant", content: "…" });
+    setSessionLastError(s, {
+      code: "rate_limited",
+      message: "xai HTTP 429",
+      tips: ["forge accounts switch"],
+    });
+    const hooks = new HookRunner(DEFAULT_CONFIG, tmp);
+    const r = await handleSlash("/retry", {
+      session: s,
+      config: DEFAULT_CONFIG,
+      hooks,
+    });
+    assert.equal(r.forwardPrompt, undefined);
+    assert.match(String(r.output || ""), /retry  ·  lastErr/);
+    assert.match(String(r.output || ""), /Next  \/accounts/);
+    assert.doesNotMatch(String(r.output || ""), /forge accounts switch/);
+    assert.equal(lastUserText(s), "keep going");
   });
 
   it("formatRecentTurns peeks last N user/assistant turns", () => {
@@ -312,6 +340,30 @@ describe("session helpers", () => {
     const trailer = formatLastRecapTrailer(s, 80).join("\n");
     assert.match(trailer, /stale — predates last edit/);
     assert.match(trailer, /\/verify/);
+  });
+
+  it("formatLastRecapTrailer names lastErr + typeable Next", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-last-err-"));
+    process.env.FORGE_HOME = tmp;
+    const s = createSession({ cwd: tmp, provider: "xai", model: "grok-4" });
+    setSessionLastError(s, {
+      code: "rate_limited",
+      message: "xai HTTP 429: rate limit",
+      tips: ["forge accounts switch"],
+    });
+    const trailer = formatLastRecapTrailer(s, 80).join("\n").replace(/\x1b\[[0-9;]*m/g, "");
+    assert.match(trailer, /lastErr  \[rate_limited\]/);
+    assert.match(trailer, /Next  \/accounts/);
+    assert.doesNotMatch(trailer, /forge accounts switch/);
+    const clean = createSession({ cwd: tmp, provider: "xai", model: "grok-4" });
+    setSessionLastError(clean, {
+      code: "ulw_cycle_complete",
+      message: "released",
+    });
+    assert.doesNotMatch(
+      formatLastRecapTrailer(clean, 80).join("\n"),
+      /lastErr/,
+    );
   });
 
   it("/last is handled and live-safe", async () => {
@@ -1479,7 +1531,23 @@ it("/fork includes last-turn peek", async () => {
     delete s.meta.lastVerificationCommand;
     const card = formatSessionShareCard(s);
     assert.match(card, /last-verify: \(none after 5 edit/);
-    assert.match(card, /npm run typecheck|npm test/);
+    assert.match(card, /\/verify/);
+    assert.match(card, /Next  \/verify/);
+  });
+
+  it("formatSessionShareCard lastErr Next is a slash key", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-share-lasterr-"));
+    process.env.FORGE_HOME = tmp;
+    const s = createSession({ cwd: tmp, provider: "xai", model: "m" });
+    s.meta.lastError = {
+      code: "rate_limited",
+      message: "xai HTTP 429",
+      tips: ["forge accounts switch"],
+    };
+    const card = formatSessionShareCard(s);
+    assert.match(card, /lastErr:  \[rate_limited\]/);
+    assert.doesNotMatch(card, /→ forge accounts switch/);
+    assert.match(card, /Next  \/accounts/);
   });
 
   it("formatResumeOrientation warns when edits lack last-verify", () => {

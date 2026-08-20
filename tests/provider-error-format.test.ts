@@ -30,8 +30,9 @@ describe("formatProviderError", () => {
     assert.doesNotMatch(text, /Error\?/);
     const repl = formatProviderErrorText(err, { model: "grok-4.5", repl: true });
     assert.match(repl, /^✖ /);
-    assert.match(repl, /Next  forge login/);
+    assert.match(repl, /Next  \/auth/);
     assert.match(repl, /\/retry/);
+    assert.doesNotMatch(repl, /Next  forge login/);
     assert.equal([...repl.matchAll(/→/g)].length, 1, "REPL card is one tip, not a lecture");
   });
 
@@ -42,7 +43,7 @@ describe("formatProviderError", () => {
       body: "rate limit exceeded",
       retryAfterMs: 15_000,
     });
-    const repl = formatProviderErrorText(err, { repl: true, columns: 28 });
+    const repl = formatProviderErrorText(err, { repl: true, columns: 18 });
     assert.match(repl, /Next  /);
     assert.match(repl, /\n  ·  /);
     assert.doesNotMatch(repl, /bck-i-search/);

@@ -3,7 +3,8 @@
  *
  * HUD + session details stay below (scrapers / `/status` muscle memory).
  * Empty `/status` is `status  ·  ok`. Sit-down empty is the peek, not
- * another ✓-preview (`resume  ·  ok`).
+ * another ✓-preview (`resume  ·  ok`). lastErr Next is a slash key
+ * (`/accounts`), never a CLI dump that becomes a model prompt.
  */
 import chalk from "chalk";
 import type { ForgeConfig } from "../config/types.js";
@@ -12,6 +13,7 @@ import {
   formatCompactResumeCard,
   isLastErrorProblem,
   isLastVerificationStale,
+  sitDownNextForLastError,
 } from "../session/session.js";
 import { outboundTokenEstimateForSession } from "../statusline/snapshot.js";
 import { costCapStatus } from "../util/cost-budget.js";
@@ -55,7 +57,7 @@ export function collectStatusIssues(input: StatusIssueInput): StatusIssue[] {
       kind: "lastErr",
       severity: "error",
       line: `lastErr  [${err.code}] ${msg}`,
-      next: err.tips?.[0]?.trim() || undefined,
+      next: sitDownNextForLastError(err),
     });
   }
 

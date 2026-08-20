@@ -28,6 +28,7 @@ import {
   parseExploreMap,
   normalizeExploreMaps,
   REQUEST_PRUNE_AT_DEFAULT,
+  sitDownNextForLastError,
 } from "../src/index.js";
 
 describe("public package exports (index)", () => {
@@ -91,6 +92,18 @@ describe("public package exports (index)", () => {
     assert.equal(
       defaultIsolationForSpawn({ type: "explore", workspace: process.cwd() }),
       "none",
+    );
+  });
+
+  it("exports sit-down lastErr Next", () => {
+    assert.equal(typeof sitDownNextForLastError, "function");
+    assert.equal(
+      sitDownNextForLastError({
+        code: "rate_limited",
+        message: "429",
+        tips: ["forge accounts switch"],
+      }),
+      "/accounts",
     );
   });
 });

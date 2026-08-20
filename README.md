@@ -255,7 +255,7 @@ Full contract: [docs/RELIABILITY.md](docs/RELIABILITY.md) · expert checklist: [
 | `/max-waves N\|off` | Cap ULW waves (auto LAST at N); default unlimited |
 | `/ulw-off` | Disarm ULW + cycle |
 | `/hooks` | List hooks |
-| `/status` · `/hud` | Full inline HUD + session detail (no second panel) |
+| `/status` · `/hud` | Verdict-first HUD · lastErr Next is a slash key |
 | `/tasks` | Background shell tasks (running / recent) |
 | `/context` | Context window bar |
 | `/cost` | Token usage + rough $ |

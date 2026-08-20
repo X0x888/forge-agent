@@ -6,6 +6,11 @@ import path from "node:path";
 import {
   isLastErrorProblem,
   LAST_ERROR_OUTCOME_CODES,
+  sitDownKeyFromTip,
+  sitDownKeyFromCode,
+  sitDownKeys,
+  sitDownNextForLastError,
+  retryRefusedNext,
 } from "../src/session/last-error.js";
 import {
   collectStatusIssues,
@@ -16,6 +21,8 @@ import {
   setSessionLastError,
   formatSessionPickerRow,
   sessionPickerProblem,
+  formatSessionsErrorsVerdict,
+  formatSessionsErrorsCloser,
 } from "../src/session/session.js";
 import { DEFAULT_CONFIG } from "../src/config/types.js";
 
@@ -94,6 +101,7 @@ describe("status + picker after Cycle complete", () => {
       session,
     });
     assert.equal(issues[0]?.kind, "lastErr");
+    assert.equal(issues[0]?.next, "/accounts");
   });
 
   it("picker stays title-first after Cycle complete (no red problem)", () => {
@@ -154,6 +162,9 @@ describe("status + picker after Cycle complete", () => {
     const out = String(r.output || "");
     assert.match(out, /rate-fail/);
     assert.doesNotMatch(out, /cycle-done/);
+    assert.match(out, /^sessions  ·  1 error/m);
+    assert.match(out, /Next  \/resume 1  ·  \/accounts/);
+    assert.doesNotMatch(out, /\/resume 3/);
   });
 
   it("prune may drop a Cycle complete session (it is not a failure backlog)", async () => {
@@ -176,5 +187,122 @@ describe("status + picker after Cycle complete", () => {
     const r = pruneSessions({ keep: 0, maxAgeDays: 1 });
     assert.equal(r.skippedLastError, 0);
     assert.ok(!listSessions(100).some((m) => m.id === done.meta.id));
+  });
+});
+
+describe("sessions errors card", () => {
+  it("designed empty is none + /status, not ok", () => {
+    assert.equal(formatSessionsErrorsVerdict(0), "sessions  ·  none");
+    assert.doesNotMatch(formatSessionsErrorsVerdict(0), /ok/);
+    assert.equal(formatSessionsErrorsCloser(null), "Next  /status");
+    assert.equal(formatSessionsErrorsVerdict(2), "sessions  ·  2 errors");
+  });
+
+  it("first broken row Next is /resume 1 plus the sit-down key", () => {
+    assert.equal(
+      formatSessionsErrorsCloser({
+        lastError: {
+          at: "t",
+          code: "rate_limited",
+          message: "429",
+          tips: ["forge accounts switch"],
+        },
+      }),
+      "Next  /resume 1  ·  /accounts",
+    );
+    assert.equal(
+      formatSessionsErrorsCloser({
+        lastError: { at: "t", code: "auth_expired", message: "401" },
+      }),
+      "Next  /resume 1  ·  /auth",
+    );
+  });
+});
+
+describe("sitDownNextForLastError", () => {
+  it("designed empty is no lastErr Next", () => {
+    assert.equal(sitDownNextForLastError(undefined), undefined);
+    assert.equal(sitDownNextForLastError({ code: "", message: "" }), undefined);
+    assert.equal(
+      sitDownNextForLastError({
+        code: "ulw_cycle_complete",
+        message: "released",
+        tips: ["/cycle 1"],
+      }),
+      undefined,
+    );
+  });
+
+  it("rewrites CLI dumps into slash keys", () => {
+    assert.equal(sitDownKeyFromTip("forge accounts switch"), "/accounts");
+    assert.equal(sitDownKeyFromTip("Wait for Retry-After, or forge accounts switch"), "/accounts");
+    assert.equal(sitDownKeyFromTip("forge login"), "/auth");
+    assert.equal(sitDownKeyFromTip("forge models -p xai"), "/model");
+    assert.equal(sitDownKeyFromTip("forge doctor"), "/doctor");
+    assert.equal(sitDownKeyFromTip("forge run --continue"), "/retry");
+    assert.equal(sitDownKeyFromTip("/accounts switch"), "/accounts");
+    assert.equal(sitDownKeyFromTip("wait"), undefined);
+    assert.equal(sitDownKeyFromTip("narrow the task"), undefined);
+  });
+
+  it("maps failure codes to the key you type", () => {
+    assert.equal(sitDownKeyFromCode("rate_limited"), "/accounts");
+    assert.equal(sitDownKeyFromCode("http_429"), "/accounts");
+    assert.equal(sitDownKeyFromCode("auth_expired"), "/auth");
+    assert.equal(sitDownKeyFromCode("context_overflow"), "/compact");
+    assert.equal(sitDownKeyFromCode("not_found"), "/model");
+    assert.equal(sitDownKeyFromCode("max_cost"), "/budget");
+    assert.equal(sitDownKeyFromCode("empty_run"), "/doctor");
+    assert.equal(sitDownKeyFromCode("mystery"), "/retry");
+  });
+
+  it("prefers a usable tip, then the code, then /retry", () => {
+    assert.equal(
+      sitDownNextForLastError({
+        code: "rate_limited",
+        message: "429",
+        tips: ["forge accounts switch"],
+      }),
+      "/accounts",
+    );
+    assert.equal(
+      sitDownNextForLastError({
+        code: "auth_expired",
+        message: "401",
+        tips: ["wait"],
+      }),
+      "/auth",
+    );
+    assert.equal(
+      sitDownNextForLastError({
+        code: "network",
+        message: "dropped",
+      }),
+      "/retry",
+    );
+    assert.deepEqual(
+      sitDownKeys(["wait", "forge accounts switch", "/retry"]),
+      ["/accounts", "/retry"],
+    );
+  });
+
+  it("retryRefusedNext names the key /retry cannot fix", () => {
+    assert.equal(
+      retryRefusedNext({ code: "rate_limited", message: "429" }),
+      "/accounts",
+    );
+    assert.equal(
+      retryRefusedNext({ code: "auth_expired", message: "401" }),
+      "/auth",
+    );
+    assert.equal(
+      retryRefusedNext({ code: "max_cost", message: "cap" }),
+      "/budget",
+    );
+    assert.equal(
+      retryRefusedNext({ code: "network", message: "dropped" }),
+      undefined,
+    );
+    assert.equal(retryRefusedNext(undefined), undefined);
   });
 });

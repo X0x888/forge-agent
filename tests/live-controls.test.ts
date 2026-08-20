@@ -394,6 +394,7 @@ describe("/done and /pause goal shortcuts", () => {
     assert.equal(r.handled, true);
     assert.match(String(r.output || ""), /Last verify: `npm test`/);
     assert.match(String(r.output || ""), /2026-04-10 12:34:56/);
+    assert.match(String(r.output || ""), /done  ·  ok/);
   });
 
   it("/done warns when edits lack recorded verification", async () => {
@@ -423,6 +424,8 @@ describe("/done and /pause goal shortcuts", () => {
     assert.equal(r.handled, true);
     assert.match(String(r.output || ""), /no recorded verification/i);
     assert.match(String(r.output || ""), /npm run typecheck|npm test/);
+    assert.match(String(r.output || ""), /done  ·  1 issue/);
+    assert.match(String(r.output || ""), /Next  \/verify/);
   });
 
   it("/goal clear clears soft TodoGate fire count", async () => {
@@ -892,5 +895,33 @@ describe("mid-run /cycle affects stop-guard without abort", () => {
     const out = String(r.output || "").replace(/\x1b\[[0-9;]*m/g, "");
     assert.match(out, /Last verify: `npm test`/);
     assert.match(out, /stale \(edits after verify\)/);
+    assert.match(out, /done  ·  1 issue/);
+    assert.match(out, /Next  \/verify/);
+  });
+
+  it("/done lastErr Next is a slash key", async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-done-lasterr-"));
+    process.env.FORGE_HOME = tmp;
+    const session = createSession({
+      cwd: tmp,
+      provider: "xai",
+      model: "test",
+    });
+    session.meta.lastError = {
+      code: "rate_limited",
+      message: "xai HTTP 429",
+      tips: ["forge accounts switch"],
+    };
+    const hooks = new HookRunner(DEFAULT_CONFIG, tmp);
+    const r = await handleSlash("/done", {
+      session,
+      config: { ...DEFAULT_CONFIG, workspace: tmp },
+      hooks,
+    });
+    assert.equal(r.handled, true);
+    const out = String(r.output || "").replace(/\x1b\[[0-9;]*m/g, "");
+    assert.match(out, /done  ·  1 issue/);
+    assert.match(out, /Next  \/accounts/);
+    assert.doesNotMatch(out, /forge accounts switch/);
   });
 });

@@ -119,6 +119,11 @@ export {
   maybeProactiveSwitch,
   isQuotaOrRateLimitError,
   formatAccountsTable,
+  formatAccountsCard,
+  formatAuthCard,
+  formatAccountsVerdict,
+  accountsNextKeys,
+  collectAccountsIssues,
   formatMultiAccountReadiness,
   assessMultiAccountReadiness,
   clearAccountCooldown,
@@ -666,6 +671,12 @@ export {
   parseGitStat,
   porcelainLetter,
 } from "./tui/diff-card.js";
+export {
+  sitDownKeyFromTip,
+  sitDownKeyFromCode,
+  sitDownKeys,
+  sitDownNextForLastError,
+} from "./session/last-error.js";
 export {
   collectStatusIssues,
   formatStatusVerdict,

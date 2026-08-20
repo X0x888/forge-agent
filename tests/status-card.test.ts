@@ -57,7 +57,7 @@ describe("collectStatusIssues", () => {
     });
     assert.equal(issues[0]?.kind, "lastErr");
     assert.match(issues[0]!.line, /rate_limited/);
-    assert.equal(issues[0]!.next, "forge accounts switch");
+    assert.equal(issues[0]!.next, "/accounts");
     assert.ok(issues.some((i) => i.kind === "verify"));
   });
 
@@ -143,7 +143,7 @@ describe("formatStatusVerdict / closer", () => {
     assert.match(v, /^status  ·  \d+ issues?/);
     assert.match(v, /⚠ lastErr  \[rate_limited\]/);
     const closer = formatStatusCloser(issues, { columns: 80 });
-    assert.match(closer, /Next  forge accounts switch/);
+    assert.match(closer, /Next  \/accounts/);
     assert.match(closer, /\/verify/);
   });
 });
@@ -171,7 +171,7 @@ describe("assembleStatusReport", () => {
     assert.match(lines[1]!, /lastErr/);
     assert.match(card, /xai\/grok-4/);
     assert.match(card, /session  abcd1234/);
-    assert.match(lines.at(-1)!, /Next  forge accounts switch/);
+    assert.match(lines.at(-1)!, /Next  \/accounts/);
     assert.ok(card.indexOf("status  ·") < card.indexOf("xai/grok-4"));
     assert.ok(card.indexOf("xai/grok-4") < card.lastIndexOf("Next"));
   });
@@ -201,7 +201,7 @@ describe("/status slash wiring", () => {
     const out = strip(String(r.output || ""));
     assert.match(out, /^status\s+·\s+1 issue/);
     assert.match(out, /lastErr  \[rate_limited\]/);
-    assert.match(out, /Next  forge accounts switch/);
+    assert.match(out, /Next  \/accounts/);
   });
 });
 
@@ -230,7 +230,8 @@ describe("sit-down resume", () => {
     assert.match(card, /lastErr  \[rate_limited\]/);
     assert.match(card, /you: continue the lease/);
     assert.doesNotMatch(card, / · lastErr /);
-    assert.match(card, /Next  forge accounts switch/);
+    assert.match(card, /Next  \/accounts/);
+    assert.doesNotMatch(card, /forge accounts switch/);
     assert.equal(resumeCardHasNext(card), true);
   });
 
@@ -255,7 +256,7 @@ describe("sit-down resume", () => {
       resumeOrientation: orient,
     });
     assert.match(banner, /resume\s+·\s+1 issue/);
-    assert.match(banner, /Next  forge accounts switch/);
+    assert.match(banner, /Next  \/accounts/);
     assert.doesNotMatch(banner, /\/last {2}· {2}\/files {2}· {2}\/retry/);
   });
 
@@ -303,7 +304,7 @@ describe("sit-down resume", () => {
     assert.match(out, /Resumed/i);
     assert.match(out, /resume\s+·\s+1 issue/);
     assert.match(out, /lastErr  \[rate_limited\]/);
-    assert.match(out, /Next  forge accounts switch/);
+    assert.match(out, /Next  \/accounts/);
     assert.doesNotMatch(out, /\/last 3/);
   });
 });
