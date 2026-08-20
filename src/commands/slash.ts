@@ -4226,7 +4226,12 @@ const stats = collectUsageStats({
       }
       if (parsed.wantDraft) {
         const tree = inspectCommitTree(cwd, parsed.stagedOnly);
-        if (!tree.root || !tree.files.length) {
+        if (
+          !tree.root ||
+          tree.error ||
+          tree.unmerged.length ||
+          !tree.files.length
+        ) {
           const empty = runCommit({
             session: opts.session,
             config: opts.config,

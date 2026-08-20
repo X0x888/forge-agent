@@ -113,6 +113,7 @@ describe("/verify", () => {
     const out = strip(String(r.output || ""));
     assert.match(out, /^verify  ·  nothing to run/);
     assert.match(out, /Next  \/help verify/);
+    assert.doesNotMatch(out, /type a task/);
   });
 
   it("slash refuses rm and fails closed", async () => {

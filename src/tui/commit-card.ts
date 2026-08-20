@@ -84,6 +84,32 @@ export interface CommitTree {
   staged: string[];
   unstaged: string[];
   skipped: string[];
+  unmerged: string[];
+  error?: string;
+}
+
+function emptyTree(
+  root: string | null,
+  extra?: Partial<CommitTree>,
+): CommitTree {
+  return {
+    root,
+    files: [],
+    staged: [],
+    unstaged: [],
+    skipped: [],
+    unmerged: [],
+    ...extra,
+  };
+}
+
+/** Porcelain XY pairs that mean a conflicted / unmerged path. */
+const UNMERGED_XY = new Set(["DD", "AU", "UD", "UA", "DU", "AA", "UU"]);
+
+export function isUnmergedPorcelain(line: string): boolean {
+  const x = line[0] ?? " ";
+  const y = line[1] ?? " ";
+  return UNMERGED_XY.has(`${x}${y}`);
 }
 
 export function inspectCommitTree(
@@ -91,18 +117,17 @@ export function inspectCommitTree(
   stagedOnly = false,
 ): CommitTree {
   const root = findGitRoot(cwd);
-  if (!root) {
-    return { root: null, files: [], staged: [], unstaged: [], skipped: [], };
-  }
+  if (!root) return emptyTree(null);
   let porcelain = "";
   try {
     porcelain = gitOut(["status", "--porcelain", "-uall"], root);
-  } catch {
-    return { root, files: [], staged: [], unstaged: [], skipped: [] };
+  } catch (err) {
+    return emptyTree(root, { error: formatGitExecError(err) });
   }
   const staged: string[] = [];
   const unstaged: string[] = [];
   const skipped: string[] = [];
+  const unmerged: string[] = [];
   const seen = new Set<string>();
   for (const raw of porcelain.split("\n")) {
     const line = raw.replace(/\r$/, "");
@@ -110,6 +135,10 @@ export function inspectCommitTree(
     const p = parsePorcelainPath(line);
     if (!p || seen.has(p)) continue;
     seen.add(p);
+    if (isUnmergedPorcelain(line)) {
+      unmerged.push(p);
+      continue;
+    }
     if (isSensitiveRelPath(p) || isDisposableTestRelPath(p)) {
       skipped.push(p);
       continue;
@@ -122,7 +151,7 @@ export function inspectCommitTree(
     if (inWork) unstaged.push(p);
   }
   const files = stagedOnly ? [...staged] : [...new Set([...staged, ...unstaged])];
-  return { root, files, staged, unstaged, skipped };
+  return { root, files, staged, unstaged, skipped, unmerged };
 }
 
 export function draftCommitSubject(opts: {
@@ -252,6 +281,22 @@ export function createSessionCommit(opts: {
   if (!tree.root) {
     return { ok: false, files: [], skipped: [], error: "not a git repository" };
   }
+  if (tree.error) {
+    return {
+      ok: false,
+      files: [],
+      skipped: tree.skipped,
+      error: tree.error,
+    };
+  }
+  if (tree.unmerged.length) {
+    return {
+      ok: false,
+      files: tree.unmerged,
+      skipped: tree.skipped,
+      error: "unmerged paths — resolve conflicts first",
+    };
+  }
   const skipped = tree.skipped;
   let toCommit = tree.files;
   if (!opts.stagedOnly) {
@@ -280,6 +325,9 @@ export function createSessionCommit(opts: {
     lastVerificationCommand: opts.lastVerificationCommand,
   });
   try {
+    // Pathspecs only — a bare `git commit` would include skipped secrets
+    // already sitting in the index. The card listed `toCommit`; that is
+    // what lands.
     gitOut(
       [
         ...commitIdentArgs(tree.root),
@@ -289,6 +337,8 @@ export function createSessionCommit(opts: {
         "-m",
         subject,
         ...(body ? ["-m", body] : []),
+        "--",
+        ...toCommit,
       ],
       tree.root,
       60_000,
@@ -394,6 +444,39 @@ export function runCommit(opts: {
         columns,
       }),
       failed: true,
+    };
+  }
+
+  if (tree.error) {
+    return {
+      output: formatCommitCard({
+        kind: "fail",
+        note: tree.error,
+        next: commitNext({
+          kind: "fail",
+          stagedOnly,
+          stale,
+          missingVerify,
+        }),
+        color,
+        columns,
+      }),
+      failed: true,
+    };
+  }
+
+  if (tree.unmerged.length) {
+    return {
+      output: formatCommitCard({
+        kind: doCommit ? "fail" : "peek",
+        files: [...tree.unmerged, ...tree.files],
+        skipped: tree.skipped,
+        note: "Unmerged paths — resolve conflicts first.",
+        next: ["/diff"],
+        color,
+        columns,
+      }),
+      failed: doCommit,
     };
   }
 

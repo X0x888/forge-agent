@@ -178,7 +178,7 @@ export async function runVerify(opts: {
       output: formatVerifyCard({
         kind: "empty",
         note: "No last check · no project check",
-        next: ["/help verify", "type a task"],
+        next: ["/help verify"],
         color,
         columns,
       }),

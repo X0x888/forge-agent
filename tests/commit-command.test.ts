@@ -9,6 +9,7 @@ import {
   formatCommitVerdict,
   formatCommitCard,
   draftCommitSubject,
+  isUnmergedPorcelain,
   runCommit,
 } from "../src/tui/commit-card.js";
 import { createSession } from "../src/session/session.js";
@@ -30,6 +31,18 @@ function git(args: string[], cwd: string): string {
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"],
   }).trim();
+}
+
+/** Minimal repo without `git init` — sandbox chmod on config.lock fails. */
+function initRepo(root: string): void {
+  fs.mkdirSync(path.join(root, ".git", "objects"), { recursive: true });
+  fs.mkdirSync(path.join(root, ".git", "refs", "heads"), { recursive: true });
+  fs.writeFileSync(
+    path.join(root, ".git", "config"),
+    "[core]\n\trepositoryformatversion = 0\n\tfilemode = true\n\tbare = false\n" +
+      "[user]\n\tname = Forge Test\n\temail = forge@test\n",
+  );
+  fs.writeFileSync(path.join(root, ".git", "HEAD"), "ref: refs/heads/main\n");
 }
 
 describe("/commit", () => {
@@ -145,17 +158,10 @@ describe("/commit", () => {
 
   it("nested git: peek then do creates the commit", () => {
     const root = path.join(tmp, "repo");
-    fs.mkdirSync(root);
-    try {
-      git(["init", "-q"], root);
-      git(["config", "user.email", "forge@test"], root);
-      git(["config", "user.name", "Forge Test"], root);
-      fs.writeFileSync(path.join(root, "README.md"), "hi\n");
-      git(["add", "README.md"], root);
-      git(["-c", "commit.gpgsign=false", "commit", "-q", "-m", "init"], root);
-    } catch {
-      return; // sandbox cannot init git
-    }
+    initRepo(root);
+    fs.writeFileSync(path.join(root, "README.md"), "hi\n");
+    git(["add", "README.md"], root);
+    git(["-c", "commit.gpgsign=false", "commit", "-q", "-m", "init"], root);
     fs.writeFileSync(path.join(root, "ship.ts"), "export const n = 1;\n");
     const { session, config } = sess(root);
     session.meta.title = "Ship the commit key";
@@ -199,17 +205,10 @@ describe("/commit", () => {
 
   it("stale verify names /verify on the peek", () => {
     const root = path.join(tmp, "stale");
-    fs.mkdirSync(root);
-    try {
-      git(["init", "-q"], root);
-      git(["config", "user.email", "forge@test"], root);
-      git(["config", "user.name", "Forge Test"], root);
-      fs.writeFileSync(path.join(root, "a.txt"), "x\n");
-      git(["add", "a.txt"], root);
-      git(["-c", "commit.gpgsign=false", "commit", "-q", "-m", "i"], root);
-    } catch {
-      return;
-    }
+    initRepo(root);
+    fs.writeFileSync(path.join(root, "a.txt"), "x\n");
+    git(["add", "a.txt"], root);
+    git(["-c", "commit.gpgsign=false", "commit", "-q", "-m", "i"], root);
     fs.writeFileSync(path.join(root, "a.txt"), "y\n");
     const { session, config } = sess(root);
     session.meta.editCount = 2;
@@ -238,6 +237,73 @@ describe("/commit", () => {
       assert.equal(r.failed, true);
       assert.match(strip(r.output), /commit  ·  not a repo/);
     }
+  });
+
+  it("isUnmergedPorcelain matches conflict XY only", () => {
+    assert.equal(isUnmergedPorcelain("UU conflict.ts"), true);
+    assert.equal(isUnmergedPorcelain("AA both-added.ts"), true);
+    assert.equal(isUnmergedPorcelain("DU deleted-ours.ts"), true);
+    assert.equal(isUnmergedPorcelain("M  staged.ts"), false);
+    assert.equal(isUnmergedPorcelain(" M unstaged.ts"), false);
+    assert.equal(isUnmergedPorcelain("?? new.ts"), false);
+    assert.equal(isUnmergedPorcelain("R  old.ts -> new.ts"), false);
+  });
+
+  it("does not commit a staged .env the card skipped", () => {
+    const root = path.join(tmp, "secret");
+    initRepo(root);
+    fs.writeFileSync(path.join(root, "README.md"), "hi\n");
+    git(["add", "README.md"], root);
+    git(["-c", "commit.gpgsign=false", "commit", "-q", "-m", "init"], root);
+    fs.writeFileSync(path.join(root, "ship.ts"), "export const n = 1;\n");
+    fs.writeFileSync(path.join(root, ".env"), "SECRET=do-not-commit\n");
+    git(["add", "ship.ts", ".env"], root);
+    const { session, config } = sess(root);
+    const peek = runCommit({ session, config, color: false });
+    const peekOut = strip(peek.output);
+    assert.match(peekOut, /skipped\s+\.env/);
+    assert.doesNotMatch(peekOut, /· \.env$/m);
+    const created = runCommit({ session, config, doCommit: true, color: false });
+    assert.equal(created.failed, false);
+    const names = git(["show", "--pretty=format:", "--name-only", "HEAD"], root);
+    assert.match(names, /ship\.ts/);
+    assert.doesNotMatch(names, /\.env/);
+    const still = git(["status", "--porcelain", "-uall"], root);
+    assert.match(still, /\.env/);
+  });
+
+  it("unmerged paths refuse /commit do", () => {
+    const root = path.join(tmp, "merge");
+    initRepo(root);
+    fs.writeFileSync(path.join(root, "a.txt"), "base\n");
+    git(["add", "a.txt"], root);
+    git(["-c", "commit.gpgsign=false", "commit", "-q", "-m", "base"], root);
+    const baseBranch = git(["rev-parse", "--abbrev-ref", "HEAD"], root);
+    git(["checkout", "-q", "-b", "other"], root);
+    fs.writeFileSync(path.join(root, "a.txt"), "other\n");
+    git(["add", "a.txt"], root);
+    git(["-c", "commit.gpgsign=false", "commit", "-q", "-m", "other"], root);
+    git(["checkout", "-q", baseBranch], root);
+    fs.writeFileSync(path.join(root, "a.txt"), "main\n");
+    git(["add", "a.txt"], root);
+    git(["-c", "commit.gpgsign=false", "commit", "-q", "-m", "main"], root);
+    try {
+      git(["merge", "--no-commit", "other"], root);
+    } catch {
+      /* conflict expected */
+    }
+    const { session, config } = sess(root);
+    const peek = runCommit({ session, config, color: false });
+    const peekOut = strip(peek.output);
+    assert.match(peekOut, /Unmerged/i);
+    assert.match(peekOut, /Next  \/diff/);
+    assert.doesNotMatch(peekOut, /\/commit do/);
+    const created = runCommit({ session, config, doCommit: true, color: false });
+    assert.equal(created.failed, true);
+    assert.equal(created.sha, undefined);
+    assert.match(strip(created.output), /commit  ·  ✗/);
+    assert.match(strip(created.output), /unmerged/i);
+    assert.equal(git(["log", "-1", "--pretty=%s"], root), "main");
   });
 
   it("formatCommitVerdict kinds stay distinct", () => {
