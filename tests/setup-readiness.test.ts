@@ -468,6 +468,7 @@ describe("grouped help", () => {
     assert.match(helpFor("settings").text, /\/budget/);
     assert.match(helpFor("sessions").text, /\/resume/);
     assert.match(helpFor("safety").text, /sandbox=workspace/);
-    assert.match(helpFor("nope").text, /Unknown \/help topic/);
+    assert.match(helpFor("nope").text, /No help for “nope”/);
+    assert.doesNotMatch(helpFor("nope").text, /Unknown \/help topic/);
   });
 });

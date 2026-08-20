@@ -59,6 +59,7 @@ Type a coding task. You do not need a slash command. On the first-run card, **1â
 | Command | What it does |
 |---|---|
 | `/help` | First-day card (tour + daily verbs; `/help all` is the catalog) |
+| `/help <word>` | Find a command by job word (`budget`, `undo`, `notify`) |
 | `/help all` | Every slash command |
 | `/plan` | Read-only design, then `/build` to implement |
 | `/doctor` | Health check (auth, sandbox, Stop, file modes) |

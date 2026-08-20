@@ -1,6 +1,9 @@
 /**
- * Grouped /help — first-day start vs full catalog vs topics.
+ * Grouped /help — first-day start vs full catalog vs topics vs word search.
  */
+import { suggestName } from "../util/suggest.js";
+import { clipAnsi, visibleWidth } from "../util/format.js";
+
 
 export const HELP_TOPICS = [
   "start",
@@ -23,6 +26,7 @@ Getting started
   /init               Write a real AGENTS.md for this repo
   /doctor             Health (auth, sandbox, Stop, files)
   /help all           Full command list
+  /help <word>        Find a command (budget, undo, notify)
   /tips               Expert / CI cheat sheet
 
 Daily
@@ -46,7 +50,7 @@ Keys
 
 Allow?  ↵/y once · a always · s session · n no
 Ask?    1–N · letter · text · ↵ skip
-More    /help all | settings | harness | sessions | safety
+More    /help all | settings | harness | sessions | safety  ·  /help <word>
 Docs    docs/GETTING-STARTED.md  ·  /tips
 `.trim();
 
@@ -137,7 +141,7 @@ Safety
 export const HELP_ALL = `
 Forge slash commands
 ────────────────────
-  /help [topic]         Getting started (default) · all|start|settings|harness|sessions|safety
+  /help [topic|word]    Getting started · all|settings|… · or a command word (budget, undo)
   /setup [skip|json]    First-day hub: model, budget, notify, AGENTS.md, LSP  [live]
   /goal <objective>     Arm relentless goal driver (Codex-style)
   /goal                 Show goal status  [live]
@@ -265,23 +269,218 @@ export function parseHelpTopic(arg: string): HelpTopic | "unknown" {
   return "unknown";
 }
 
-export function helpFor(arg: string): { topic: HelpTopic | "unknown"; text: string } {
+export function helpTopicText(topic: HelpTopic): string {
+  if (topic === "all") return HELP_ALL;
+  if (topic === "settings") return HELP_SETTINGS;
+  if (topic === "harness") return HELP_HARNESS;
+  if (topic === "sessions") return HELP_SESSIONS;
+  if (topic === "safety") return HELP_SAFETY;
+  return HELP_START;
+}
+
+export type HelpResolveKind = HelpTopic | "unknown" | "search";
+
+export interface HelpCatalogEntry {
+  /** Primary slash, e.g. `/budget`. */
+  command: string;
+  /** Other slashes on the same catalog line (`/status · /hud`). */
+  aliases: string[];
+  usage: string;
+  blurb: string;
+}
+
+export interface HelpSearchHit extends HelpCatalogEntry {
+  score: number;
+}
+
+const HELP_SEARCH_MAX = 8;
+
+function escapeHelpRe(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function blobHasHelpWord(blob: string, q: string): boolean {
+  if (q.length < 3) return false;
+  const re = new RegExp(`(?:^|[^a-z0-9])${escapeHelpRe(q)}(?:[^a-z0-9]|$)`, "i");
+  return re.test(blob);
+}
+
+/** One catalog row → command + blurb, or null. */
+export function parseHelpCatalogLine(line: string): HelpCatalogEntry | null {
+  const t = line.replace(/\s+$/u, "");
+  const m = t.match(/^\s+(\/\S[\s\S]*?)\s{2,}(\S.*)$/);
+  if (!m) return null;
+  const usage = m[1].replace(/\s+/g, " ").trim();
+  const blurb = m[2].replace(/\s+\[live\]\s*$/i, "").trim();
+  if (!usage.startsWith("/")) return null;
+  const commands = [...usage.matchAll(/\/[a-z0-9_?-]+/gi)].map((x) =>
+    x[0].toLowerCase(),
+  );
+  if (!commands.length) return null;
+  return {
+    command: commands[0]!,
+    aliases: commands.slice(1),
+    usage,
+    blurb,
+  };
+}
+
+/** Dedupe by primary command; keep the longer blurb. */
+export function parseHelpCatalog(text: string = HELP_ALL): HelpCatalogEntry[] {
+  const byCmd = new Map<string, HelpCatalogEntry>();
+  for (const line of text.split("\n")) {
+    const e = parseHelpCatalogLine(line);
+    if (!e) continue;
+    const prev = byCmd.get(e.command);
+    if (!prev || e.blurb.length > prev.blurb.length) {
+      byCmd.set(e.command, e);
+    } else if (e.aliases.length) {
+      prev.aliases = [...new Set([...prev.aliases, ...e.aliases])];
+    }
+  }
+  return [...byCmd.values()];
+}
+
+export function scoreHelpEntry(entry: HelpCatalogEntry, q: string): number {
+  const query = q.trim().toLowerCase().replace(/^\//, "");
+  if (!query) return 0;
+  const names = [
+    entry.command.slice(1),
+    ...entry.aliases.map((a) => a.replace(/^\//, "")),
+  ];
+  if (names.some((n) => n === query)) return 100;
+  if (names.some((n) => n.startsWith(query))) return 80;
+  if (query.length >= 3 && names.some((n) => n.includes(query))) return 60;
+  const blob = `${entry.usage} ${entry.blurb}`.toLowerCase();
+  if (blobHasHelpWord(blob, query)) return 40 + Math.min(15, query.length);
+  return 0;
+}
+
+/**
+ * Rank catalog rows for a job word (`budget`, `spend`, `/undo`).
+ * Typos fall through to suggestName on command names.
+ */
+export function searchHelpCatalog(
+  query: string,
+  opts?: { max?: number; catalog?: HelpCatalogEntry[] },
+): HelpSearchHit[] {
+  const q = String(query || "")
+    .trim()
+    .toLowerCase()
+    .replace(/^\//, "");
+  if (!q) return [];
+  const entries = opts?.catalog ?? parseHelpCatalog();
+  const max = Math.max(1, opts?.max ?? HELP_SEARCH_MAX);
+  const scored = entries
+    .map((e) => ({ ...e, score: scoreHelpEntry(e, q) }))
+    .filter((x) => x.score > 0)
+    .sort((a, b) => b.score - a.score || a.command.localeCompare(b.command));
+  if (scored.length) return scored.slice(0, max);
+
+  const names = [
+    ...new Set(
+      entries.flatMap((e) => [
+        e.command.slice(1),
+        ...e.aliases.map((a) => a.replace(/^\//, "")),
+      ]),
+    ),
+  ];
+  const tip = suggestName(q, names, {
+    minLength: 3,
+    minScore: 36,
+    requirePrefix3: false,
+  });
+  if (!tip) return [];
+  const hit = entries.find(
+    (e) => e.command === `/${tip}` || e.aliases.includes(`/${tip}`),
+  );
+  return hit ? [{ ...hit, score: 35 }] : [];
+}
+
+export function formatHelpSearchEmpty(
+  query: string,
+  opts?: { topicTip?: string },
+): string {
+  const q = String(query || "").trim() || "that";
+  const lines = [`No help for “${q}”.`];
+  if (opts?.topicTip) {
+    lines.push(`Did you mean /help ${opts.topicTip}?`);
+  }
+  lines.push(
+    `Try a command word (budget, undo, notify)  ·  /help  ·  /help all`,
+  );
+  return lines.join("\n");
+}
+
+export function formatHelpSearchCard(
+  query: string,
+  hits: readonly HelpCatalogEntry[],
+  opts?: { columns?: number; topicTip?: string },
+): string {
+  const q = String(query || "").trim();
+  if (!hits.length) {
+    return formatHelpSearchEmpty(q, { topicTip: opts?.topicTip });
+  }
+  const cols = Math.max(
+    24,
+    opts?.columns ??
+      (process.stdout.isTTY ? process.stdout.columns || 80 : 80),
+  );
+  const cmdWidth = Math.min(
+    18,
+    Math.max(10, ...hits.map((h) => h.command.length)),
+  );
+  const lines = [`Help  ·  “${q}”`, "───────────────"];
+  for (const h of hits) {
+    const pad = Math.max(1, cmdWidth - h.command.length + 2);
+    const row = `  ${h.command}${" ".repeat(pad)}${h.blurb}`;
+    lines.push(visibleWidth(row) <= cols ? row : clipAnsi(row, cols));
+  }
+  if (opts?.topicTip) {
+    lines.push(`Also a topic: /help ${opts.topicTip}`);
+  }
+  lines.push("");
+  lines.push(
+    `More  /help  ·  /help all  ·  topics: ${HELP_TOPICS.join(" · ")}`,
+  );
+  return lines.join("\n");
+}
+
+export function helpFor(arg: string): { topic: HelpResolveKind; text: string } {
   const topic = parseHelpTopic(arg);
-  if (topic === "unknown") {
+  if (topic !== "unknown") {
+    return { topic, text: helpTopicText(topic) };
+  }
+  const raw = String(arg || "").trim();
+  const q = raw.replace(/^\//, "");
+  const topicTip = suggestName(q, [...HELP_TOPICS], {
+    minLength: 3,
+    minScore: 36,
+    requirePrefix3: false,
+  });
+  const hits = searchHelpCatalog(q);
+  const strongHits = hits.filter((h) => h.score >= 80);
+  // Topic typo wins over weak/typo command hits (`setings` → settings).
+  if (!strongHits.length && topicTip) {
     return {
-      topic,
+      topic: topicTip as HelpTopic,
       text:
-        `Unknown /help topic "${arg.trim()}".\n` +
-        `Topics: ${HELP_TOPICS.join(" · ")}`,
+        `Showing ${topicTip} (not “${raw}”).\n\n` +
+        helpTopicText(topicTip as HelpTopic),
     };
   }
-  if (topic === "all") return { topic, text: HELP_ALL };
-  if (topic === "settings") return { topic, text: HELP_SETTINGS };
-  if (topic === "harness") return { topic, text: HELP_HARNESS };
-  if (topic === "sessions") return { topic, text: HELP_SESSIONS };
-  if (topic === "safety") return { topic, text: HELP_SAFETY };
-  // /help, /help start, /help tour — same first-day card (no second dump)
-  return { topic: "start", text: HELP_START };
+  if (!hits.length) {
+    return {
+      topic: "unknown",
+      text: formatHelpSearchEmpty(raw, {
+        topicTip: topicTip ?? undefined,
+      }),
+    };
+  }
+  return {
+    topic: "search",
+    text: formatHelpSearchCard(raw, hits),
+  };
 }
 
 /** @deprecated use helpFor("") — kept so existing HELP_TEXT imports still work. */

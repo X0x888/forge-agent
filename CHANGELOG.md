@@ -3,6 +3,7 @@
 ## Unreleased
 
 ### Added
+- **`/help <word>` searches the catalog**: `/help budget` / `/help spend` / `/help undo` list matching commands instead of `Unknown /help topic`. No matches get a designed empty state (`Try a command word · /help · /help all`). Topic names still route; a close topic typo (`setings`) opens that topic. Not another ✓-preview.
 - **First live › steer hint**: one dismissible line when the live prompt first appears (`type to queue · /status · /cycle 0  (no Ctrl+C)`). `/help` Keys names `live › type to queue`. Skipped when ULW already printed the long mid-run wall. Not another ✓-preview.
 - **Cursor login + provider**: `forge login --from-cursor` / `forge login -p cursor` imports a local Cursor CLI (`agent login`) / Desktop / `CURSOR_API_KEY` session, then falls back to the same browser poll flow as `agent login`. Chat uses Cursor-hosted models (Composer, Grok, Claude, GPT, Gemini, Auto) against the user's native Cursor quota. Aliases: `cursor-ai` / `cursorai`.
 - **Cursor provider completeness**: live `GetUsableModels` catalog (`forge models -p cursor --refresh`), reconnect replays tool turns (not only the open HTTP/2 stream), native-quota HUD cost is `$0`, `.cursor/commands` + `.cursor/skills` load alongside Forge packs, doctor refresh copy is provider-aware.
