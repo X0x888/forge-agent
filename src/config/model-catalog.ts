@@ -328,7 +328,9 @@ export async function fetchCursorModels(
     const ids = rows
       .map((m) => String(m.id || "").trim())
       .filter(Boolean);
-    const unique = [...new Set([...ids, ...CURSOR_FALLBACK_MODELS])];
+    const unique = ids.length
+      ? [...new Set(ids)]
+      : [...CURSOR_FALLBACK_MODELS];
     if (unique.length) writeProviderModelsCache("cursor", unique);
     return unique;
   } catch {

@@ -64,6 +64,7 @@ function grokKey(model: string): string {
   return base
     .trim()
     .toLowerCase()
+    .replace(/^cursor-/, "")
     .replace(/:.*$/, "")
     .replace(/-latest$/, "")
     .replace(/-\d{8}$/, "")

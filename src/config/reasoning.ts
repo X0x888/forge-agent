@@ -223,9 +223,14 @@ export function effortLevelsForModel(model: string): readonly ReasoningEffort[] 
  * Undefined when the model does not support effort.
  */
 export function defaultEffortForModel(model: string): ReasoningEffort | undefined {
+  const spec = lookupEffortSpec(model);
+  if (!spec) return undefined;
   const tagged = parseCursorModelId(model).effort;
-  if (tagged && lookupEffortSpec(model)) return tagged;
-  return lookupEffortSpec(model)?.default;
+  if (tagged) {
+    const clamped = clampEffortForModel(model, tagged);
+    if (clamped) return clamped;
+  }
+  return spec.default;
 }
 
 /**
@@ -276,7 +281,8 @@ export function clampEffortForModel(
  * Effort to send on the API request.
  * - Unsupported models → undefined (omit field)
  * - Supported + configured valid (or clampable) → that level
- * - Supported + missing config → **model max**
+ * - Supported + missing config → model default (Cursor variant suffix if
+ *   the id already encodes one, otherwise the family's maximum)
  */
 export function resolveReasoningEffort(
   model: string,
@@ -288,7 +294,7 @@ export function resolveReasoningEffort(
     const clamped = clampEffortForModel(model, configured);
     if (clamped) return clamped;
   }
-  return spec.default; // always max of allowed levels
+  return defaultEffortForModel(model);
 }
 
 /** True when the level is valid for this model (or model has no effort). */

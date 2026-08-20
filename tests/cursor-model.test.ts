@@ -1,7 +1,11 @@
-import { describe, it } from "node:test";
+import { describe, it, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { buildChatRequest } from "../src/agent/loop.js";
 import { DEFAULT_CONFIG } from "../src/config/types.js";
+import { loadConfig } from "../src/config/load.js";
 import {
   parseCursorModelId,
   resolveCursorModelAlias,
@@ -10,6 +14,7 @@ import {
 import {
   defaultEffortForModel,
   modelSupportsReasoningEffort,
+  resolveReasoningEffort,
 } from "../src/config/reasoning.js";
 import { modelContextWindow } from "../src/config/model-info.js";
 import {
@@ -50,31 +55,28 @@ describe("parseCursorModelId", () => {
 });
 
 describe("resolveCursorModelAlias", () => {
-  it("maps fable / fabel typos to claude-fable-5", () => {
-    assert.equal(resolveCursorModelAlias("fable"), "claude-fable-5");
-    assert.equal(resolveCursorModelAlias("fabel"), "claude-fable-5");
-    assert.equal(resolveCursorModelAlias("claude-fable"), "claude-fable-5");
+  it("maps fable / grok shorthands to live catalog variant ids", () => {
+    assert.equal(resolveCursorModelAlias("fable"), "claude-fable-5-max");
+    assert.equal(resolveCursorModelAlias("fabel"), "claude-fable-5-max");
+    assert.equal(resolveCursorModelAlias("grok-4.6"), "cursor-grok-4.6-high-fast");
+    assert.equal(
+      resolveCursorModelAlias("grok-4.6-high-fast"),
+      "cursor-grok-4.6-high-fast",
+    );
   });
 });
 
 describe("resolveCursorRunModel — class mapping", () => {
-  it("Fable default: thinking off, max_mode at 1M, effort max", () => {
+  it("Fable default: thinking off, max_mode at 1M, variant -max", () => {
     const r = resolveCursorRunModel({
       model: "claude-fable-5",
       reasoningEffort: "max",
       contextWindow: 1_000_000,
     });
-    assert.equal(r.baseId, "claude-fable-5");
+    assert.equal(r.serverId, "claude-fable-5-max");
     assert.equal(r.thinking, false);
     assert.equal(r.maxMode, true);
-    assert.deepEqual(
-      r.parameters.find((p) => p.id === "thinking"),
-      { id: "thinking", value: "false" },
-    );
-    assert.deepEqual(
-      r.parameters.find((p) => p.id === "effort"),
-      { id: "effort", value: "max" },
-    );
+    assert.equal(r.isVariantString, true);
   });
 
   it("pins below 1M turn Max Mode off", () => {
@@ -85,32 +87,22 @@ describe("resolveCursorRunModel — class mapping", () => {
     assert.equal(r.maxMode, false);
   });
 
-  it("thinking comes from the id suffix, effort from ChatRequest", () => {
+  it("thinking + effort rebuild a catalog variant id", () => {
     const r = resolveCursorRunModel({
       model: "claude-fable-5-thinking-high",
       reasoningEffort: "max",
       contextWindow: 1_000_000,
     });
     assert.equal(r.thinking, true);
-    assert.deepEqual(
-      r.parameters.find((p) => p.id === "thinking"),
-      { id: "thinking", value: "true" },
-    );
-    assert.deepEqual(
-      r.parameters.find((p) => p.id === "effort"),
-      { id: "effort", value: "max" },
-    );
+    assert.equal(r.serverId, "claude-fable-5-thinking-max");
   });
 
-  it("xhigh maps to Cursor reasoning extra-high", () => {
+  it("xhigh + fast on grok-4.6 is cursor-grok-4.6-xhigh-fast", () => {
     const r = resolveCursorRunModel({
       model: "grok-4.6",
       reasoningEffort: "xhigh",
     });
-    assert.deepEqual(
-      r.parameters.find((p) => p.id === "reasoning"),
-      { id: "reasoning", value: "extra-high" },
-    );
+    assert.equal(r.serverId, "cursor-grok-4.6-xhigh-fast");
   });
 
   it("Cursor default grok-4.6-high-fast is High + Fast, thinking off", () => {
@@ -118,24 +110,41 @@ describe("resolveCursorRunModel — class mapping", () => {
       model: "grok-4.6-high-fast",
       reasoningEffort: defaultEffortForModel("grok-4.6-high-fast"),
     });
-    assert.equal(r.baseId, "grok-4.6");
+    assert.equal(r.serverId, "cursor-grok-4.6-high-fast");
     assert.equal(r.thinking, false);
     assert.equal(r.fast, true);
-    assert.deepEqual(
-      r.parameters.find((p) => p.id === "reasoning"),
-      { id: "reasoning", value: "high" },
-    );
-    assert.deepEqual(
-      r.parameters.find((p) => p.id === "fast"),
-      { id: "fast", value: "true" },
-    );
   });
 });
 
 describe("Cursor default grok-4.6-high-fast effort", () => {
   it("id suffix high is the default, not Grok xhigh", () => {
     assert.equal(defaultEffortForModel("grok-4.6-high-fast"), "high");
+    assert.equal(defaultEffortForModel("cursor-grok-4.6-high-fast"), "high");
     assert.equal(defaultEffortForModel("grok-4.6"), "xhigh");
+    assert.equal(
+      resolveReasoningEffort("cursor-grok-4.6-high-fast", undefined),
+      "high",
+    );
+    assert.equal(resolveReasoningEffort("grok-4.6", undefined), "xhigh");
+  });
+
+  it("unpinned High Fast does not rebuild to xhigh-fast", () => {
+    const r = resolveCursorRunModel({
+      model: "cursor-grok-4.6-high-fast",
+      reasoningEffort: resolveReasoningEffort(
+        "cursor-grok-4.6-high-fast",
+        undefined,
+      ),
+    });
+    assert.equal(r.serverId, "cursor-grok-4.6-high-fast");
+  });
+
+  it("explicit xhigh overlay rewrites the catalog variant", () => {
+    const r = resolveCursorRunModel({
+      model: "cursor-grok-4.6-high-fast",
+      reasoningEffort: "xhigh",
+    });
+    assert.equal(r.serverId, "cursor-grok-4.6-xhigh-fast");
   });
 });
 
@@ -159,6 +168,19 @@ describe("Fable in the Forge model class", () => {
     );
     assert.equal(req.reasoning_effort, "max");
     assert.equal(req.context_window, 1_000_000);
+  });
+
+  it("buildChatRequest keeps High Fast at high, not grok xhigh", () => {
+    const req = buildChatRequest(
+      {
+        ...DEFAULT_CONFIG,
+        provider: "cursor",
+        model: "cursor-grok-4.6-high-fast",
+        reasoningEffort: undefined,
+      },
+      [{ role: "user", content: "hi" }],
+    );
+    assert.equal(req.reasoning_effort, "high");
   });
 });
 
@@ -199,18 +221,41 @@ describe("Cursor proto ModelDetails + RequestedModel", () => {
     assert.equal(params.length, 2);
   });
 
-  it("AgentRunRequest includes requested_model field 9", () => {
+  it("AgentRunRequest sends model_details and conversation_id, not requested_model", () => {
     const run = encodeAgentRunRequest({
       conversationState: encodeConversationState({ turns: [] }),
       action: encodeConversationActionUser("hi", "m1"),
-      modelId: "claude-fable-5",
+      modelId: "cursor-grok-4.6-high-fast",
       conversationId: "c1",
       thinking: false,
-      maxMode: true,
-      parameters: [{ id: "effort", value: "max" }],
+      maxMode: false,
     });
     const fields = decodeFields(run);
     assert.ok(fields.some((f) => f.field === 3));
-    assert.ok(fields.some((f) => f.field === 9));
+    assert.ok(fields.some((f) => f.field === 5));
+    assert.equal(fields.some((f) => f.field === 9), false);
+  });
+});
+
+describe("loadConfig Cursor aliases", () => {
+  let tmp: string;
+  let prevHome: string | undefined;
+  beforeEach(() => {
+    tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-cursor-load-"));
+    prevHome = process.env.FORGE_HOME;
+    process.env.FORGE_HOME = tmp;
+  });
+  afterEach(() => {
+    if (prevHome === undefined) delete process.env.FORGE_HOME;
+    else process.env.FORGE_HOME = prevHome;
+    fs.rmSync(tmp, { recursive: true, force: true });
+  });
+
+  it("resolves grok-4.6 to the High Fast catalog variant", () => {
+    const cfg = loadConfig(
+      { provider: "cursor", model: "grok-4.6" },
+      tmp,
+    );
+    assert.equal(cfg.model, "cursor-grok-4.6-high-fast");
   });
 });

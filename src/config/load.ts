@@ -27,6 +27,8 @@ import {
 } from "../util/mode-aliases.js";
 import { coerceBool } from "../util/bool.js";
 import { parseFallbackModels } from "./model-fallback.js";
+import { resolveCursorModelAlias } from "./cursor-model.js";
+import { isCursorProvider } from "../auth/cursor.js";
 
 const ENV_PERMISSION_MODES = new Set<PermissionMode>([
   "default",
@@ -575,11 +577,18 @@ export function loadConfig(overrides: Partial<ForgeConfig> = {}, cwd = process.c
     cfg.reasoningEffort = e ?? undefined;
   }
 
-  // Effort: default is each model's maximum allowed level (resolved at request
-  // time when reasoningEffort is undefined). Explicit CLI/env/toml keeps a pin;
-  // when the user only switched model/provider via CLI without --effort, drop
-  // sticky prefs effort so we don't keep grok "high" under DeepSeek (which can
-  // go to "max").
+  // Cursor catalog ids are variant strings. Resolve aliases (grok-4.6 →
+  // cursor-grok-4.6-high-fast) before effort/context so suffix defaults apply.
+  if (isCursorProvider(String(cfg.provider || "")) && cfg.model) {
+    const aliased = resolveCursorModelAlias(cfg.model);
+    if (aliased) cfg.model = aliased;
+  }
+
+  // Effort: default is each model's default (family max, or a Cursor variant
+  // suffix) resolved at request time when reasoningEffort is undefined.
+  // Explicit CLI/env/toml keeps a pin; when the user only switched
+  // model/provider via CLI without --effort, drop sticky prefs effort so we
+  // don't keep grok "high" under DeepSeek (which can go to "max").
   const effortExplicit =
     globalToml.reasoningEffort != null ||
     globalJson.reasoningEffort != null ||

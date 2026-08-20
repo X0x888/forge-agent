@@ -82,10 +82,9 @@ describe("cursor provider id", () => {
     assert.ok(p);
     assert.equal(p.supportsOAuth, true);
     assert.equal(p.baseUrl, "https://api2.cursor.sh");
-    assert.equal(p.defaultModel, "grok-4.6-high-fast");
+    assert.equal(p.defaultModel, "cursor-grok-4.6-high-fast");
     assert.ok(p.models?.includes("composer-2.5"));
-    assert.ok(p.models?.includes("grok-4.6"));
-    assert.ok(p.models?.includes("grok-4.6-high-fast"));
+    assert.ok(p.models?.includes("cursor-grok-4.6-high-fast"));
     assert.ok(p.models?.includes("claude-fable-5"));
   });
 
@@ -302,6 +301,34 @@ describe("cursor conversation replay", () => {
     assert.equal(got.turns[0]!.userText, "first");
     assert.equal(got.turns[0]!.assistantText, "ok");
     assert.equal(got.trailingToolResults.length, 0);
+  });
+
+  it("merges consecutive user messages so context-admit is not a half-turn", () => {
+    const got = prepareCursorConversation([
+      { role: "system", content: "sys" },
+      { role: "user", content: "task" },
+      {
+        role: "user",
+        content:
+          "[Forge harness — mid-conversation update]\nBranch: main",
+      },
+    ]);
+    assert.equal(got.turns.length, 0);
+    assert.match(got.userText, /task/);
+    assert.match(got.userText, /mid-conversation/);
+  });
+
+  it("merges a post-turn admit into the action, not a user-only history row", () => {
+    const got = prepareCursorConversation([
+      { role: "user", content: "first" },
+      { role: "assistant", content: "ok" },
+      { role: "user", content: "second" },
+      { role: "user", content: "admit" },
+    ]);
+    assert.equal(got.turns.length, 1);
+    assert.equal(got.turns[0]!.assistantText, "ok");
+    assert.match(got.userText, /second/);
+    assert.match(got.userText, /admit/);
   });
 
   it("folds tool calls into assistant text and keeps trailing results", () => {

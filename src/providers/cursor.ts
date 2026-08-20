@@ -42,7 +42,6 @@ import {
   encodeAgentTurn,
   encodeClientMessage,
   encodeConnectFrame,
-  encodeConnectUnaryRequest,
   encodeConversationActionUser,
   encodeConversationState,
   encodeExecClient,
@@ -134,6 +133,8 @@ function foldToolResults(
  * Map Forge chat history onto Cursor AgentTurn + trailing MCP results.
  * Tool calls/results are folded into assistant text so a reconnect (new HTTP/2
  * Run) still has the work, not only the open stream.
+ * Consecutive user messages (context-admit) merge: a user-only historical
+ * turn is Connect `internal` on AgentService.
  */
 export function prepareCursorConversation(
   messages: ChatRequest["messages"],
@@ -152,7 +153,9 @@ export function prepareCursorConversation(
   let afterAssistantTools = false;
 
   const flushTurn = () => {
-    if (pendingUser || pendingAssistant) {
+    // AgentService treats a user-only historical turn as Connect `internal`.
+    // Incomplete user text stays in pendingUser and is merged or used as action.
+    if (pendingAssistant) {
       turns.push({ userText: pendingUser, assistantText: pendingAssistant });
       pendingUser = "";
       pendingAssistant = "";
@@ -168,8 +171,13 @@ export function prepareCursorConversation(
   for (const msg of messages.filter((m) => m.role !== "system")) {
     if (msg.role === "user") {
       absorbTrailing();
-      flushTurn();
-      pendingUser = messageText(msg);
+      if (pendingAssistant) {
+        flushTurn();
+        pendingUser = messageText(msg);
+      } else {
+        const next = messageText(msg);
+        pendingUser = pendingUser ? `${pendingUser}\n\n${next}` : next;
+      }
       afterAssistantTools = false;
       continue;
     }
@@ -230,6 +238,24 @@ interface PendingExec {
   toolName: string;
 }
 
+/** One in-flight chat() wait on a long-lived AgentService stream. */
+interface LiveTurn {
+  req: ChatRequest;
+  onDelta: (delta: StreamDelta) => void;
+  touch: () => void;
+  noteVisible: () => void;
+  content: string;
+  reasoningContent: string;
+  mantraScanAt: number;
+  toolCalls: ToolCall[];
+  finishReason: string | null;
+  usage?: ChatResponse["usage"];
+  wall: ReturnType<typeof armReasoningOutputWall>;
+  resolve: (r: ChatResponse) => void;
+  reject: (e: unknown) => void;
+  settled: boolean;
+}
+
 interface LiveSession {
   session: http2.ClientHttp2Session;
   stream: http2.ClientHttp2Stream;
@@ -239,6 +265,18 @@ interface LiveSession {
   mcpTools: Buffer[];
   pending: PendingExec[];
   buffer: Buffer;
+  pumpStarted: boolean;
+  streamCut: boolean;
+  turn: LiveTurn | null;
+}
+
+/** Cursor sometimes joins a local id and `fc_…` with a newline. */
+function cursorToolCallId(raw: string, fallback: string): string {
+  const first = raw
+    .split(/[\r\n]+/)
+    .map((s) => s.trim())
+    .find(Boolean);
+  return first || fallback;
 }
 
 const liveSessions = new Map<string, LiveSession>();
@@ -280,9 +318,10 @@ function buildRunPayload(req: ChatRequest, parsed: CursorConversation): {
 
   const turns: Buffer[] = [];
   for (const t of parsed.turns) {
+    if (!t.assistantText.trim()) continue;
     turns.push(
       encodeTurnStructure(
-        encodeAgentTurn(t.userText, randomUUID(), t.assistantText || undefined),
+        encodeAgentTurn(t.userText, randomUUID(), t.assistantText),
       ),
     );
   }
@@ -302,12 +341,13 @@ function buildRunPayload(req: ChatRequest, parsed: CursorConversation): {
       parsed.userText || "(continue)",
       randomUUID(),
     ),
-    modelId: model.baseId,
+    modelId: model.serverId,
     conversationId: req.conversationId || randomUUID(),
     mcpTools: mcp.length ? encodeMcpTools(mcp) : undefined,
     thinking: model.thinking,
     maxMode: model.maxMode,
     parameters: model.parameters,
+    isVariantString: model.isVariantString,
   });
   return {
     bytes: encodeConnectFrame(encodeClientMessage({ runRequest: run })),
@@ -545,33 +585,15 @@ export class CursorProvider implements LLMProvider {
       mcpTools,
       pending: [],
       buffer: Buffer.alloc(0),
+      pumpStarted: false,
+      streamCut: false,
+      turn: null,
     };
     live.heartbeat.unref?.();
     liveSessions.set(key, live);
+    this.ensurePump(key, live);
     live.write(firstFrame);
-
-    const onAbort = () => closeLive(key);
-    if (signal.aborted) {
-      onAbort();
-      const e = new Error("Aborted");
-      e.name = "AbortError";
-      throw e;
-    }
-    signal.addEventListener("abort", onAbort, { once: true });
-
-    try {
-      return await this.readLoop(
-        key,
-        live,
-        req,
-        onDelta,
-        signal,
-        touch,
-        noteVisible,
-      );
-    } finally {
-      signal.removeEventListener("abort", onAbort);
-    }
+    return this.waitForTurn(key, live, req, onDelta, signal, touch, noteVisible);
   }
 
   private async resumeWithToolResults(
@@ -585,7 +607,10 @@ export class CursorProvider implements LLMProvider {
     noteVisible: () => void,
   ): Promise<ChatResponse> {
     for (const exec of live.pending) {
-      const hit = results.find((r) => r.toolCallId === exec.toolCallId);
+      const want = cursorToolCallId(exec.toolCallId, exec.execId);
+      const hit = results.find(
+        (r) => cursorToolCallId(r.toolCallId, r.toolCallId) === want,
+      );
       const result = hit
         ? encodeMcpSuccessResult(hit.content, false)
         : encodeMcpErrorResult("Tool result not provided");
@@ -604,10 +629,46 @@ export class CursorProvider implements LLMProvider {
     }
     live.pending = [];
     live.mcpTools = encodeToolDefs(req.tools);
-    return this.readLoop(key, live, req, onDelta, signal, touch, noteVisible);
+    return this.waitForTurn(key, live, req, onDelta, signal, touch, noteVisible);
   }
 
-  private async readLoop(
+  /**
+   * One Connect reader for the life of the HTTP/2 stream. KV/requestContext
+   * keep being answered while Forge runs tools; stacking readLoop listeners
+   * dropped those frames and AgentService returned `internal`.
+   */
+  private ensurePump(key: string, live: LiveSession): void {
+    if (live.pumpStarted) return;
+    live.pumpStarted = true;
+
+    live.stream.on("response", (headers) => {
+      live.turn?.touch();
+      const status = Number(headers[":status"] || 0);
+      if (status && status >= 400) {
+        this.failTurn(
+          key,
+          live,
+          new ProviderApiError({
+            provider: "cursor",
+            status,
+            body: `Cursor AgentService HTTP ${status}`,
+          }),
+        );
+      }
+    });
+
+    live.stream.on("data", (chunk: Buffer) => {
+      if (live.streamCut) return;
+      live.buffer = Buffer.concat([live.buffer, chunk]);
+      this.consumeBuffer(key, live);
+    });
+
+    live.stream.on("end", () => this.finishTurn(key, live, { close: true }));
+    live.stream.on("error", (err) => this.failTurn(key, live, err));
+    live.session.on("error", (err) => this.failTurn(key, live, err));
+  }
+
+  private waitForTurn(
     key: string,
     live: LiveSession,
     req: ChatRequest,
@@ -616,236 +677,250 @@ export class CursorProvider implements LLMProvider {
     touch: () => void,
     noteVisible: () => void,
   ): Promise<ChatResponse> {
-    let content = "";
-    let reasoningContent = "";
-    let mantraScanAt = 0;
-    const toolCalls: ToolCall[] = [];
-    let finishReason: string | null = null;
-    let streamCut = false;
-    let reasoningWallFired = false;
-    let usage: ChatResponse["usage"];
-    const wall = armReasoningOutputWall(providerReasoningWallMs(), () => {
-      reasoningWallFired = true;
-      if (!finishReason) {
-        finishReason = REASONING_WALL_FINISH;
-        onDelta({ finish_reason: REASONING_WALL_FINISH });
-      }
-      streamCut = true;
+    if (signal.aborted) {
       closeLive(key);
-    });
-
-    const cut = (reason: string) => {
-      if (!finishReason) {
-        finishReason = reason;
-        onDelta({ finish_reason: reason });
-      }
-      streamCut = true;
-      closeLive(key);
-    };
-
-    const handlePayload = (flags: number, payload: Uint8Array): boolean => {
-      touch();
-      if (flags & CONNECT_END_STREAM) {
-        const err = parseConnectEndError(payload);
-        if (err) {
-          throw new ProviderApiError({
-            provider: "cursor",
-            status: 400,
-            body: err,
-          });
-        }
-        return true;
-      }
-      const events = parseAgentServerMessage(payload);
-      for (const ev of events) {
-        if (ev.kind === "text") {
-          content += ev.text;
-          noteVisible();
-          wall.noteVisibleOutput();
-          onDelta({ content: ev.text });
-        } else if (ev.kind === "usage") {
-          usage = {
-            prompt_tokens: ev.prompt_tokens,
-            completion_tokens: ev.completion_tokens,
-            total_tokens: ev.total_tokens,
-          };
-        } else if (ev.kind === "thinking") {
-          reasoningContent += ev.text;
-          onDelta({ reasoning_content: ev.text });
-          if (
-            shouldScanReasoningMantra(reasoningContent.length, mantraScanAt)
-          ) {
-            mantraScanAt = reasoningContent.length;
-            if (isReasoningMantra(reasoningContent)) {
-              cut(REASONING_LOOP_FINISH);
-              return true;
-            }
-          }
-        } else if (ev.kind === "kv") {
-          if (ev.kvKind === "get") {
-            const data = live.blobStore.get(hexKey(ev.blobId));
-            live.write(
-              encodeConnectFrame(
-                encodeClientMessage({
-                  kvClient: encodeKvClient({
-                    id: ev.id,
-                    getBlob: data ?? null,
-                  }),
-                }),
-              ),
-            );
-          } else {
-            if (ev.blobId?.length && ev.blobData) {
-              live.blobStore.set(hexKey(ev.blobId), Buffer.from(ev.blobData));
-            }
-            live.write(
-              encodeConnectFrame(
-                encodeClientMessage({
-                  kvClient: encodeKvClient({ id: ev.id, setBlob: true }),
-                }),
-              ),
-            );
-          }
-        } else if (ev.kind === "exec") {
-          if (ev.execKind === "requestContextArgs") {
-            live.write(
-              encodeConnectFrame(
-                encodeClientMessage({
-                  execClient: encodeExecClient({
-                    id: ev.id,
-                    execId: ev.execId,
-                    resultField: 10,
-                    result: encodeRequestContextResult(live.mcpTools),
-                  }),
-                }),
-              ),
-            );
-          } else if (ev.execKind === "mcpArgs") {
-            const mcp = parseMcpArgs(ev.payload);
-            const toolCallId = mcp.toolCallId || randomUUID();
-            const name = mcp.toolName || mcp.name;
-            const args = JSON.stringify(mcp.args ?? {});
-            const tc: ToolCall = {
-              id: toolCallId,
-              type: "function",
-              function: { name, arguments: args },
-            };
-            toolCalls.push(tc);
-            live.pending.push({
-              id: ev.id,
-              execId: ev.execId,
-              toolCallId,
-              toolName: name,
-            });
-            onDelta({
-              tool_calls: [
-                {
-                  index: toolCalls.length - 1,
-                  id: toolCallId,
-                  type: "function",
-                  function: { name, arguments: args },
-                },
-              ],
-            });
-            noteVisible();
-            wall.noteVisibleOutput();
-          } else {
-            live.write(nativeRejectFrame(ev));
-          }
-        }
-      }
-      if (live.pending.length) {
-        finishReason = "tool_calls";
-        onDelta({ finish_reason: "tool_calls" });
-        return true;
-      }
-      return false;
-    };
-
+      const e = new Error("Aborted");
+      e.name = "AbortError";
+      return Promise.reject(e);
+    }
     return new Promise<ChatResponse>((resolve, reject) => {
-      let settled = false;
-      const finish = () => {
-        if (settled) return;
-        settled = true;
-        wall.dispose();
-        if (reasoningWallFired && !finishReason) {
-          finishReason = REASONING_WALL_FINISH;
-        }
-        if (live.pending.length) {
-          finishReason = "tool_calls";
-        } else {
+      const wall = armReasoningOutputWall(providerReasoningWallMs(), () => {
+        const turn = live.turn;
+        if (!turn || turn.settled) {
+          live.streamCut = true;
           closeLive(key);
+          return;
         }
-        resolve({
-          id: `cursor-${randomUUID()}`,
-          model: req.model,
-          message: {
-            role: "assistant",
-            content: content || null,
-            tool_calls: toolCalls.length ? toolCalls : undefined,
-            reasoning_content: reasoningContent || undefined,
-          },
-          finish_reason: finishReason || "stop",
-          usage,
-        });
+        if (!turn.finishReason) {
+          turn.finishReason = REASONING_WALL_FINISH;
+          turn.onDelta({ finish_reason: REASONING_WALL_FINISH });
+        }
+        live.streamCut = true;
+        this.finishTurn(key, live, { close: true });
+      });
+      live.turn = {
+        req,
+        onDelta,
+        touch,
+        noteVisible,
+        content: "",
+        reasoningContent: "",
+        mantraScanAt: 0,
+        toolCalls: [],
+        finishReason: null,
+        resolve,
+        reject,
+        settled: false,
+        wall,
       };
-      const fail = (err: unknown) => {
-        if (settled) return;
-        settled = true;
-        wall.dispose();
-        closeLive(key);
-        reject(err);
+      const onAbort = () => {
+        const e = new Error("Aborted");
+        e.name = "AbortError";
+        this.failTurn(key, live, e);
       };
+      signal.addEventListener("abort", onAbort, { once: true });
+      const prevResolve = resolve;
+      const prevReject = reject;
+      live.turn.resolve = (r) => {
+        signal.removeEventListener("abort", onAbort);
+        prevResolve(r);
+      };
+      live.turn.reject = (e) => {
+        signal.removeEventListener("abort", onAbort);
+        prevReject(e);
+      };
+      // Leftover frames from the previous pause (KV after mcpArgs).
+      this.consumeBuffer(key, live);
+    });
+  }
 
-      live.stream.on("response", (headers) => {
-        touch();
-        const status = Number(headers[":status"] || 0);
-        if (status && status >= 400) {
-          fail(
-            new ProviderApiError({
-              provider: "cursor",
-              status,
-              body: `Cursor AgentService HTTP ${status}`,
-            }),
+  private consumeBuffer(key: string, live: LiveSession): void {
+    while (!live.streamCut && live.buffer.length >= 5) {
+      const flags = live.buffer[0]!;
+      const len = live.buffer.readUInt32BE(1);
+      if (live.buffer.length < 5 + len) break;
+      const payload = live.buffer.subarray(5, 5 + len);
+      live.buffer = live.buffer.subarray(5 + len);
+      try {
+        this.handleFrame(key, live, flags, payload);
+      } catch (err) {
+        this.failTurn(key, live, err);
+        return;
+      }
+    }
+  }
+
+  private handleFrame(
+    key: string,
+    live: LiveSession,
+    flags: number,
+    payload: Uint8Array,
+  ): void {
+    live.turn?.touch();
+    if (flags & CONNECT_END_STREAM) {
+      const err = parseConnectEndError(payload);
+      if (err) {
+        throw new ProviderApiError({
+          provider: "cursor",
+          status: 400,
+          body: err,
+        });
+      }
+      this.finishTurn(key, live, { close: true });
+      return;
+    }
+    const events = parseAgentServerMessage(payload);
+    const turn = live.turn;
+    for (const ev of events) {
+      if (ev.kind === "kv") {
+        if (ev.kvKind === "get") {
+          const data = live.blobStore.get(hexKey(ev.blobId));
+          live.write(
+            encodeConnectFrame(
+              encodeClientMessage({
+                kvClient: encodeKvClient({
+                  id: ev.id,
+                  getBlob: data ?? null,
+                }),
+              }),
+            ),
+          );
+        } else {
+          if (ev.blobId?.length && ev.blobData) {
+            live.blobStore.set(hexKey(ev.blobId), Buffer.from(ev.blobData));
+          }
+          live.write(
+            encodeConnectFrame(
+              encodeClientMessage({
+                kvClient: encodeKvClient({ id: ev.id, setBlob: true }),
+              }),
+            ),
           );
         }
-      });
-
-      live.stream.on("data", (chunk: Buffer) => {
-        if (streamCut || settled) return;
-        live.buffer = Buffer.concat([live.buffer, chunk]);
-        while (live.buffer.length >= 5) {
-          const flags = live.buffer[0]!;
-          const len = live.buffer.readUInt32BE(1);
-          if (live.buffer.length < 5 + len) break;
-          const payload = live.buffer.subarray(5, 5 + len);
-          live.buffer = live.buffer.subarray(5 + len);
-          try {
-            const done = handlePayload(flags, payload);
-            if (done) {
-              finish();
-              return;
-            }
-          } catch (err) {
-            fail(err);
+        continue;
+      }
+      if (ev.kind === "exec" && ev.execKind === "requestContextArgs") {
+        live.write(
+          encodeConnectFrame(
+            encodeClientMessage({
+              execClient: encodeExecClient({
+                id: ev.id,
+                execId: ev.execId,
+                resultField: 10,
+                result: encodeRequestContextResult(live.mcpTools),
+              }),
+            }),
+          ),
+        );
+        continue;
+      }
+      if (ev.kind === "exec" && ev.execKind !== "mcpArgs") {
+        live.write(nativeRejectFrame(ev));
+        continue;
+      }
+      if (!turn || turn.settled) continue;
+      if (ev.kind === "text") {
+        turn.content += ev.text;
+        turn.noteVisible();
+        turn.wall.noteVisibleOutput();
+        turn.onDelta({ content: ev.text });
+      } else if (ev.kind === "usage") {
+        turn.usage = {
+          prompt_tokens: ev.prompt_tokens,
+          completion_tokens: ev.completion_tokens,
+          total_tokens: ev.total_tokens,
+        };
+      } else if (ev.kind === "thinking") {
+        turn.reasoningContent += ev.text;
+        turn.onDelta({ reasoning_content: ev.text });
+        if (
+          shouldScanReasoningMantra(turn.reasoningContent.length, turn.mantraScanAt)
+        ) {
+          turn.mantraScanAt = turn.reasoningContent.length;
+          if (isReasoningMantra(turn.reasoningContent)) {
+            turn.finishReason = REASONING_LOOP_FINISH;
+            turn.onDelta({ finish_reason: REASONING_LOOP_FINISH });
+            live.streamCut = true;
+            this.finishTurn(key, live, { close: true });
             return;
           }
         }
-      });
+      } else if (ev.kind === "exec" && ev.execKind === "mcpArgs") {
+        const mcp = parseMcpArgs(ev.payload);
+        const toolCallId = cursorToolCallId(
+          mcp.toolCallId,
+          ev.execId || randomUUID(),
+        );
+        const name = mcp.toolName || mcp.name;
+        const args = JSON.stringify(mcp.args ?? {});
+        const tc: ToolCall = {
+          id: toolCallId,
+          type: "function",
+          function: { name, arguments: args },
+        };
+        turn.toolCalls.push(tc);
+        live.pending.push({
+          id: ev.id,
+          execId: ev.execId,
+          toolCallId,
+          toolName: name,
+        });
+        turn.onDelta({
+          tool_calls: [
+            {
+              index: turn.toolCalls.length - 1,
+              id: toolCallId,
+              type: "function",
+              function: { name, arguments: args },
+            },
+          ],
+        });
+        turn.noteVisible();
+        turn.wall.noteVisibleOutput();
+      }
+    }
+    if (turn && !turn.settled && live.pending.length) {
+      turn.finishReason = "tool_calls";
+      turn.onDelta({ finish_reason: "tool_calls" });
+      this.finishTurn(key, live, { close: false });
+    }
+  }
 
-      live.stream.on("end", () => finish());
-      live.stream.on("error", (err) => fail(err));
-      live.session.on("error", (err) => fail(err));
-      signal.addEventListener(
-        "abort",
-        () => {
-          const e = new Error("Aborted");
-          e.name = "AbortError";
-          fail(e);
-        },
-        { once: true },
-      );
+  private finishTurn(
+    key: string,
+    live: LiveSession,
+    opts: { close: boolean },
+  ): void {
+    const turn = live.turn;
+    if (!turn || turn.settled) {
+      if (opts.close) closeLive(key);
+      return;
+    }
+    turn.settled = true;
+    turn.wall.dispose();
+    if (live.pending.length) turn.finishReason = "tool_calls";
+    if (opts.close || !live.pending.length) closeLive(key);
+    turn.resolve({
+      id: `cursor-${randomUUID()}`,
+      model: turn.req.model,
+      message: {
+        role: "assistant",
+        content: turn.content || null,
+        tool_calls: turn.toolCalls.length ? turn.toolCalls : undefined,
+        reasoning_content: turn.reasoningContent || undefined,
+      },
+      finish_reason: turn.finishReason || "stop",
+      usage: turn.usage,
     });
+  }
+
+  private failTurn(key: string, live: LiveSession, err: unknown): void {
+    const turn = live.turn;
+    closeLive(key);
+    if (!turn || turn.settled) return;
+    turn.settled = true;
+    turn.wall.dispose();
+    turn.reject(err);
   }
 }
 
@@ -879,10 +954,9 @@ export async function fetchCursorUsableModels(
       const stream = session.request({
         ":method": "POST",
         ":path": MODELS_PATH,
-        "content-type": "application/connect+proto",
+        "content-type": "application/proto",
         te: "trailers",
         authorization: `Bearer ${key}`,
-        "connect-protocol-version": "1",
         "x-request-id": randomUUID(),
         ...cursorApiHeaders(),
       });
@@ -898,18 +972,18 @@ export async function fetchCursorUsableModels(
         }
       });
       stream.on("error", fail);
-      stream.end(encodeConnectUnaryRequest());
+      stream.end(Buffer.alloc(0));
     });
   });
 }
 
 export const CURSOR_FALLBACK_MODELS = [
+  "cursor-grok-4.6-high-fast",
+  "cursor-grok-4.6-high",
   "composer-2.5",
-  "grok-4.6",
-  "grok-4.5",
-  "claude-sonnet-5",
-  "claude-opus-5",
-  "gpt-5.5",
-  "gemini-3.1-pro",
+  "cursor-grok-4.5-high",
+  "claude-fable-5-high",
+  "claude-opus-5-high",
+  "claude-sonnet-5-high",
   "auto",
 ] as const;

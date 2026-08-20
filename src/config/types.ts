@@ -199,8 +199,9 @@ export function resolveSandboxNetwork(config: {
 export const DEFAULT_CONFIG: ForgeConfig = {
   provider: "xai",
   model: "grok-4.6",
-  // Undefined → resolveReasoningEffort uses each model's maximum allowed level
-  // (grok-4.6 → xhigh, grok-4.5 → high, deepseek-v4 → max, …). Set only when user pins /effort.
+  // Undefined → resolveReasoningEffort uses the model default (family max,
+  // or a Cursor variant suffix when the id already encodes one — e.g.
+  // cursor-grok-4.6-high-fast → high, grok-4.6 → xhigh). Pin via /effort.
   reasoningEffort: undefined,
   // Undefined → omitted from API requests; provider/server default wins.
   temperature: undefined,
@@ -364,10 +365,10 @@ export const DEFAULT_CONFIG: ForgeConfig = {
       apiKeyEnv: "CURSOR_API_KEY",
       baseUrl: "https://api2.cursor.sh",
       supportsOAuth: true,
-      defaultModel: "grok-4.6-high-fast",
+      defaultModel: "cursor-grok-4.6-high-fast",
       models: [
-        "grok-4.6-high-fast",
-        "grok-4.6",
+        "cursor-grok-4.6-high-fast",
+        "cursor-grok-4.6-high",
         "composer-2.5",
         "grok-4.5",
         "claude-fable-5",

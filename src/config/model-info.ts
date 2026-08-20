@@ -22,6 +22,7 @@ export function normalizeModelKey(model: string): string {
   return base
     .trim()
     .toLowerCase()
+    .replace(/^cursor-/, "")
     // drop openrouter free/variant suffixes after colon
     .replace(/:.*$/, "")
     .replace(/-latest$/, "")

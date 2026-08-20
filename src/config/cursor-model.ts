@@ -26,23 +26,59 @@ export interface CursorModelId {
 }
 
 export interface CursorRunModel {
+  /** Id to send on the wire (full variant string). */
+  serverId: string;
   baseId: string;
   thinking: boolean;
   fast: boolean;
   maxMode: boolean;
+  isVariantString: boolean;
   parameters: Array<{ id: string; value: string }>;
 }
 
-/** Display / typo aliases → canonical Cursor model id. */
+/** Display / typo aliases → canonical Cursor **server** model id. */
 const ALIASES: Record<string, string> = {
-  fable: "claude-fable-5",
-  fabel: "claude-fable-5",
-  "claude-fable": "claude-fable-5",
+  fable: "claude-fable-5-max",
+  fabel: "claude-fable-5-max",
+  "claude-fable": "claude-fable-5-max",
+  "claude-fable-5": "claude-fable-5-max",
   composer: "composer-2.5",
   "composer-2": "composer-2.5",
-  "cursor-grok-4.6": "grok-4.6-high-fast",
-  "cursor-grok-4.5": "grok-4.5",
+  "grok-4.6": "cursor-grok-4.6-high-fast",
+  "grok-4.6-high-fast": "cursor-grok-4.6-high-fast",
+  "cursor-grok-4.6": "cursor-grok-4.6-high-fast",
+  "cursor-grok-4.5": "cursor-grok-4.5-high",
+  "grok-4.5": "cursor-grok-4.5-high",
 };
+
+function withCursorGrokPrefix(base: string): string {
+  if (/^grok-4\.[56]$/.test(base)) return `cursor-${base}`;
+  return base;
+}
+
+function effortSuffix(effort?: ReasoningEffort): string {
+  if (!effort) return "";
+  if (effort === "xhigh") return "-xhigh";
+  if (effort === "max") return "-max";
+  if (effort === "minimal") return "-low";
+  if (effort === "high" || effort === "medium" || effort === "low") {
+    return `-${effort}`;
+  }
+  return "";
+}
+
+/** Rebuild a Cursor catalog variant id from knobs. */
+export function cursorVariantId(
+  parsed: CursorModelId,
+  effort?: ReasoningEffort,
+): string {
+  const use = effort ?? parsed.effort;
+  let id = withCursorGrokPrefix(parsed.baseId);
+  if (parsed.thinking) id += "-thinking";
+  id += effortSuffix(use);
+  if (parsed.fast) id += "-fast";
+  return id;
+}
 
 const SUFFIXES: Array<{ token: string; apply: (out: CursorModelId) => void }> = [
   { token: "-thinking", apply: (o) => { o.thinking = true; } },
@@ -94,44 +130,37 @@ export function parseCursorModelId(raw: string): CursorModelId {
   return out;
 }
 
-function forgeEffortToCursorParams(
-  effort: ReasoningEffort,
-): Array<{ id: string; value: string }> {
-  if (effort === "max") return [{ id: "effort", value: "max" }];
-  if (effort === "xhigh") return [{ id: "reasoning", value: "extra-high" }];
-  if (effort === "high" || effort === "medium" || effort === "low") {
-    return [{ id: "reasoning", value: effort }];
-  }
-  if (effort === "minimal") return [{ id: "reasoning", value: "low" }];
-  return [];
-}
-
 /**
- * Map a Forge ChatRequest onto Cursor AgentService model fields.
+ * Map a Forge ChatRequest onto Cursor AgentService.
  *
- * - thinking: off unless the id contains `-thinking`
- * - max_mode: on when Forge context window is ≥ 1M (Cursor Max Mode)
- * - effort: ChatRequest.reasoning_effort, else an effort suffix on the id
+ * Live GetUsableModels ids **are** variant strings
+ * (`cursor-grok-4.6-high-fast`). Sending a bare `grok-4.6` is `not_found`.
+ * Forge knobs rewrite that string; we do not also send param key/values that
+ * make the server look up a different base id.
  */
 export function resolveCursorRunModel(opts: {
   model: string;
   reasoningEffort?: ReasoningEffort;
   contextWindow?: number;
 }): CursorRunModel {
-  const parsed = parseCursorModelId(opts.model);
+  const aliased = resolveCursorModelAlias(opts.model) || opts.model;
+  const parsed = parseCursorModelId(aliased);
   const thinking = parsed.thinking;
   const maxMode = (opts.contextWindow ?? 0) >= 1_000_000;
-  const effort = opts.reasoningEffort ?? parsed.effort;
-  const parameters: Array<{ id: string; value: string }> = [
-    { id: "thinking", value: thinking ? "true" : "false" },
-  ];
-  if (parsed.fast) parameters.push({ id: "fast", value: "true" });
-  if (effort) parameters.push(...forgeEffortToCursorParams(effort));
+  // Suffix on the catalog id is the encoded default. Overlay only when
+  // ChatRequest carries a *different* level (explicit /effort).
+  const effort =
+    opts.reasoningEffort && opts.reasoningEffort !== parsed.effort
+      ? opts.reasoningEffort
+      : (parsed.effort ?? opts.reasoningEffort);
+  const serverId = cursorVariantId(parsed, effort);
   return {
-    baseId: parsed.baseId,
+    serverId,
+    baseId: withCursorGrokPrefix(parsed.baseId),
     thinking,
     fast: parsed.fast,
     maxMode,
-    parameters,
+    isVariantString: true,
+    parameters: [],
   };
 }

@@ -309,12 +309,14 @@ export function encodeRequestedModel(opts: {
   modelId: string;
   maxMode?: boolean;
   parameters?: Array<{ id: string; value: string }>;
+  isVariantString?: boolean;
 }): Buffer {
   const parts = [encodeString(1, opts.modelId)];
   if (opts.maxMode) parts.push(encodeBool(2, true));
   for (const p of opts.parameters ?? []) {
     parts.push(encodeMessage(3, encodeModelParameter(p.id, p.value)));
   }
+  if (opts.isVariantString) parts.push(encodeBool(8, true));
   return Buffer.concat(parts);
 }
 
@@ -331,6 +333,7 @@ export function encodeModelDetails(
     encodeString(1, modelId),
     encodeString(3, modelId),
     encodeString(4, modelId),
+    encodeString(5, modelId),
   ];
   if (opts?.thinking) {
     parts.push(encodeMessage(2, Buffer.alloc(0)));
@@ -386,6 +389,7 @@ export function encodeAgentRunRequest(opts: {
   thinking?: boolean;
   maxMode?: boolean;
   parameters?: Array<{ id: string; value: string }>;
+  isVariantString?: boolean;
 }): Buffer {
   const parts = [
     encodeMessage(1, opts.conversationState),
@@ -402,16 +406,9 @@ export function encodeAgentRunRequest(opts: {
     parts.push(encodeMessage(4, opts.mcpTools));
   }
   parts.push(encodeString(5, opts.conversationId));
-  parts.push(
-    encodeMessage(
-      9,
-      encodeRequestedModel({
-        modelId: opts.modelId,
-        maxMode: opts.maxMode,
-        parameters: opts.parameters,
-      }),
-    ),
-  );
+  // requested_model (9) is optional. Sending a partial RequestedModel made
+  // AgentService return Connect `internal`; the CLI often omits it and puts
+  // the catalog variant id on model_details alone.
   return Buffer.concat(parts);
 }
 
