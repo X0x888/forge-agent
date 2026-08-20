@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+### Changed
+- **Model fallback is off by default**: a 429/5xx no longer hops grok-4.6 → grok-4.5 → grok-4 (or Cursor `auto` / Composer) in an unattended run. `/fallback on` (or `fallback_models` / `FORGE_FALLBACK_MODELS` / `--fallback-models`) opts in. Every hop must meet **grok-4.5 high**; weaker ids are rejected, not used. Cursor uses wire ids (`cursor-grok-4.5-high`), never Auto. A Cursor-saved chain is unwrapped on xAI/OpenRouter and rebound on `/provider` so a hop cannot send `cursor-grok-*` to the wrong API. Native providers only hop within their own family. Posture / doctor / ULW production warnings no longer treat off as a footgun.
+
 ### Added
 - **Run-failure closer**: a dead run ends on a code-specific `Next` line (same grammar as `/status`), not a generic `Error?` lecture. REPL and `forge run` cards both get it; `formatRunStopReason` now speaks for `rate_limited` / auth / quota / overflow / network / doom-loop instead of going silent. `forge run --json` fail payloads include `next`. Clean Stop stays quiet. Job: a run died — see the next move.
 - **Session picker is job-first**: `/sessions`, `/resume`, and `forge sessions list` open on the title (the job), not hex id + age. A `lastError` row opens on the problem (`rate_limited xai HTTP 429`) in red — you see what broke without decoding `ERR`. Untitled still leads with dim `(untitled)`. Empty lists unchanged. Job: pick the conversation you were in, or the one that broke.

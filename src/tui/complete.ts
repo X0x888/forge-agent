@@ -129,9 +129,13 @@ export const COMMAND_PARAMS: Record<string, ParamChoice[]> = {
     },
   ],
   fallback: [
-    { value: "off", description: "Disable automatic model fallback" },
-    { value: "default", description: "Restore catalog defaults (grok-4.6 → 4.5 → 4)" },
-    { value: "status", description: "Show current fallback chain" },
+    { value: "off", description: "Disable automatic model fallback (the default)" },
+    {
+      value: "on",
+      description: "Opt in — same-provider hops at/above grok-4.5 high",
+      aliases: ["default", "defaults"],
+    },
+    { value: "status", description: "Show current fallback chain + floor" },
   ],
   provider: [
     {

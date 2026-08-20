@@ -70,7 +70,7 @@ Settings
   /bell [on|off]      Terminal BEL when a turn ends
   /format [on|off]    Format-on-write after file tools
   /verbose            Full diffs + tool output (edits already show a short diff)
-  /fallback [models]  Same-provider fallbacks after 429/5xx
+  /fallback [models]  Same-provider fallbacks after 429/5xx (off; floor grok-4.5 high)
   /mcp  /lsp          MCP servers · language servers
   forge setup         Same card from the CLI  ·  forge setup --json
   forge config        Snapshot  ·  forge doctor
@@ -170,7 +170,7 @@ Forge slash commands
   /todos                Work board (▶ next · ○ pending · ✓ done)  [live]
   /provider [name]      List / switch provider (openrouter, xai, …) — sticky  [live]
   /model <name> [effort] Switch model mid-run; free-form on OpenRouter  [live]
-  /fallback [models|off] Same-provider fallbacks after 429/5xx (defaults on)  [live]
+  /fallback [models|on|off] Same-provider fallbacks after 429/5xx (off; floor grok-4.5 high)  [live]
   /effort [level]       Thinking effort (default = model max; low…high|xhigh|max)  [live]
   /temperature [0–2]    Session sampling temperature (/temp)  [live]
   /max-tokens [n]       Session max output tokens  [live]

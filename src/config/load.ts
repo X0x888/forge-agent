@@ -26,7 +26,10 @@ import {
   normalizeSandboxNetwork,
 } from "../util/mode-aliases.js";
 import { coerceBool } from "../util/bool.js";
-import { parseFallbackModels } from "./model-fallback.js";
+import {
+  materializeFallbackModels,
+  parseFallbackModels,
+} from "./model-fallback.js";
 import { reconcileCursorModelEffort } from "./cursor-model.js";
 import { isCursorProvider } from "../auth/cursor.js";
 
@@ -619,6 +622,13 @@ export function loadConfig(overrides: Partial<ForgeConfig> = {}, cwd = process.c
     const win = modelContextWindow(cfg.model);
     if (win) cfg.contextWindow = win;
   }
+
+  // Expand `on` / drop ids below grok-4.5 high. Unset stays off.
+  cfg.fallbackModels = materializeFallbackModels(
+    cfg.fallbackModels,
+    String(cfg.provider),
+    cfg.model,
+  );
   return cfg;
 }
 
@@ -628,8 +638,10 @@ export function defaultConfigToml(): string {
 
 provider = "xai"
 model = "grok-4.6"
-# Same-provider fallbacks after 429/5xx retries (comma list). off = disable defaults.
-# fallback_models = "grok-4.5, grok-4"
+# Same-provider fallbacks after 429/5xx retries. Off by default.
+# When on, hops below grok-4.5 high are rejected (never grok-4 / haiku / auto).
+# fallback_models = "on"
+# fallback_models = "grok-4.5"
 # low | medium | high | xhigh  (only sent for models that support it)
 # Omit for model max (recommended): xhigh on grok-4.6+, high on grok-4.5.
 # Pin with low|medium|high|xhigh|max when needed:

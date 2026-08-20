@@ -80,14 +80,12 @@ test("posture: silently clamped effort is surfaced", () => {
   assert.match(w[0], /clamped to "high"/);
 });
 
-test("posture: fallback off is an inferior-by-accident warning", () => {
+test("posture: fallback off is quiet (safe default)", () => {
   const c = cfg({ model: "grok-4.5", fallbackModels: [] });
-  const w = postureWarnings(c);
-  assert.equal(w.length, 1);
-  assert.match(w[0], /model fallback off/);
+  assert.ok(!postureWarnings(c).some((x) => /fallback off/.test(x)));
 });
 
-test("posture: fallback defaults stay quiet", () => {
+test("posture: fallback unset stays quiet", () => {
   const c = cfg({ model: "grok-4.5" });
-  assert.ok(!postureWarnings(c).some((x) => /fallback off/.test(x)));
+  assert.ok(!postureWarnings(c).some((x) => /fallback/.test(x)));
 });

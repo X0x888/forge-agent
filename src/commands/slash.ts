@@ -81,9 +81,15 @@ import {
 } from "../config/cursor-model.js";
 import { isCursorProvider } from "../auth/cursor.js";
 import {
+  defaultFallbackModels,
+  FALLBACK_DEFAULT_MARKER,
+  FALLBACK_FLOOR_LABEL,
+  filterFallbackChain,
   formatFallbackChain,
+  materializeFallbackModels,
   nextFallbackModel,
   parseFallbackModels,
+  rebindFallbackModels,
 } from "../config/model-fallback.js";
 import {
   lastModelForProvider,
@@ -1178,6 +1184,23 @@ export async function handleProviderSlash(
   opts.session.meta.provider = nextProvider;
   opts.session.meta.model = nextModel;
 
+  let fallbackNote = "";
+  if (opts.config.fallbackModels !== undefined) {
+    const rebound = rebindFallbackModels(
+      opts.config.fallbackModels,
+      prevProvider,
+      nextProvider,
+      nextModel,
+    );
+    opts.config.fallbackModels = rebound;
+    persistSessionFallbackModels(opts.config, opts.session);
+    const shown = formatFallbackChain(opts.config);
+    fallbackNote =
+      shown === "off"
+        ? chalk.dim(`\nfallback: off (no ${nextProvider} hop meets ${FALLBACK_FLOOR_LABEL})`)
+        : chalk.dim(`\nfallback: ${shown}`);
+  }
+
   const ctxApply = applyModelContextWindow(opts.config, nextModel);
 
   // Resolve auth for the new provider
@@ -1258,6 +1281,7 @@ export async function handleProviderSlash(
     session: opts.session,
     output:
       `Provider ${prevProvider} → ${nextProvider} · model ${nextModel}${ctxNote}${authNote}` +
+      fallbackNote +
       freeNote +
       chalk.dim(
         `\nNext: /model · /context-window · /temperature · /max-tokens · /config`,
@@ -1271,10 +1295,16 @@ export function persistSessionFallbackModels(
   session?: SessionData,
 ): void {
   if (!session) return;
-  if (config.fallbackModels === undefined) {
+  const cleaned = materializeFallbackModels(
+    config.fallbackModels,
+    String(config.provider),
+    config.model,
+  );
+  config.fallbackModels = cleaned;
+  if (cleaned === undefined) {
     delete session.meta.fallbackModels;
   } else {
-    session.meta.fallbackModels = [...config.fallbackModels];
+    session.meta.fallbackModels = [...cleaned];
   }
   saveSession(session);
 }
@@ -1284,21 +1314,18 @@ export function handleFallbackSlash(
   opts: { config: ForgeConfig; session?: SessionData },
 ): SlashResult {
   const raw = arg.trim();
+  const floor = `floor: ${FALLBACK_FLOOR_LABEL} (below that is not accepted)`;
+  const usage = "Usage: /fallback <model[,model…]|on|off>";
   if (!raw || raw === "?" || raw === "show" || raw === "status") {
-    const chain = opts.config.fallbackModels;
-    const shown =
-      chain === undefined
-        ? "(defaults)"
-        : chain.length === 0
-          ? "off"
-          : chain.join(", ");
+    const shown = formatFallbackChain(opts.config);
     const next = nextFallbackModel(opts.config);
     return {
       handled: true,
       output:
         `fallback: ${shown}` +
         (next ? `\nnext: ${next}` : "\nnext: (none)") +
-        "\nUsage: /fallback <model[,model…]|off|default>",
+        `\n${floor}` +
+        `\n${usage}`,
     };
   }
   if (/^(off|none|false|0|disable)$/i.test(raw)) {
@@ -1307,21 +1334,60 @@ export function handleFallbackSlash(
     return { handled: true, output: "fallback: off (no automatic model switch)" };
   }
   if (/^(default|defaults|auto|on|true)$/i.test(raw)) {
-    delete opts.config.fallbackModels;
+    const chain = defaultFallbackModels(
+      String(opts.config.provider),
+      opts.config.model,
+    );
+    opts.config.fallbackModels = chain;
     persistSessionFallbackModels(opts.config, opts.session);
     const next = nextFallbackModel(opts.config);
+    if (!chain.length) {
+      return {
+        handled: true,
+        output:
+          `fallback: on, but no ${opts.config.provider} model meets ${FALLBACK_FLOOR_LABEL}` +
+          `\n${floor}`,
+      };
+    }
     return {
       handled: true,
-      output: `fallback: defaults` + (next ? ` (next ${next})` : ""),
+      output:
+        `fallback: ${chain.join(", ")}` +
+        (next ? ` (next ${next})` : " (next none)") +
+        `\n${floor}`,
     };
   }
   const parsed = parseFallbackModels(raw);
-  if (!parsed || parsed.length === 0) {
-    return { handled: true, output: "Usage: /fallback <model[,model…]|off|default>" };
+  if (
+    !parsed ||
+    parsed.length === 0 ||
+    (parsed.length === 1 && parsed[0] === FALLBACK_DEFAULT_MARKER)
+  ) {
+    return { handled: true, output: usage };
   }
-  opts.config.fallbackModels = parsed;
+  const { kept, dropped } = filterFallbackChain(
+    parsed,
+    String(opts.config.provider),
+  );
+  if (!kept.length) {
+    return {
+      handled: true,
+      output:
+        `fallback: unchanged (${formatFallbackChain(opts.config)})` +
+        `\nnone of those models meet ${FALLBACK_FLOOR_LABEL}` +
+        (dropped.length ? ` (rejected: ${dropped.join(", ")})` : "") +
+        `\n${floor}`,
+    };
+  }
+  opts.config.fallbackModels = kept;
   persistSessionFallbackModels(opts.config, opts.session);
-  return { handled: true, output: `fallback: ${parsed.join(", ")}` };
+  const dropNote = dropped.length
+    ? `\ndropped (below ${FALLBACK_FLOOR_LABEL}): ${dropped.join(", ")}`
+    : "";
+  return {
+    handled: true,
+    output: `fallback: ${kept.join(", ")}` + dropNote + `\n${floor}`,
+  };
 }
 
 export async function handleModelSlash(
@@ -6939,16 +7005,6 @@ export async function runDoctorCheck(
     }
     lines.push(`Read outside workspace: ${config.readOutsideWorkspace || "ask"}`);
     lines.push(`Fallback models: ${formatFallbackChain(config)}`);
-    if (
-      Array.isArray(config.fallbackModels) &&
-      config.fallbackModels.length === 0
-    ) {
-      lines.push(
-        chalk.yellow(
-          "  ⚠ model fallback off — a 429/5xx on the flagship will abort the run; /fallback default",
-        ),
-      );
-    }
     if ((config.readOutsideWorkspace || "ask") === "allow") {
       lines.push(
         chalk.yellow(

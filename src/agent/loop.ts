@@ -6,13 +6,14 @@ import {
   type ReasoningEffort,
 } from "../config/reasoning.js";
 import {
-  applyModelContextWindow,
   resolveEffectiveMaxTokens,
   servedModelDiverged,
 } from "../config/model-info.js";
 import {
+  applyFallbackHop,
   isModelFallbackWorthy,
   nextFallbackModel,
+  normalizeFallbackModelId,
 } from "../config/model-fallback.js";
 import type {
   ChatMessage,
@@ -1550,7 +1551,9 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
         /* never block the turn on proactive refresh */
       }
       let response: Awaited<ReturnType<typeof provider.chat>> | undefined;
-      const fallbackTried = new Set<string>([config.model]);
+      const fallbackTried = new Set<string>([
+        normalizeFallbackModelId(String(config.provider), config.model),
+      ]);
       // Adaptive effort: hard-round signals (doom-loop / error-streak / missing
       // wave proof) buy a one-notch reasoning boost for this turn only —
       // escalate on failure, not by default, so easy rounds stay cheap.
@@ -1977,24 +1980,31 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
         if (isModelFallbackWorthy(err) && !signal?.aborted) {
           const next = nextFallbackModel(config, { tried: fallbackTried });
           if (next) {
-            fallbackTried.add(next);
             const prev = config.model;
-            config.model = next;
-            applyModelContextWindow(config, next);
-            session.meta.model = next;
-            session.meta.lastModelFallback = {
-              from: prev,
-              to: next,
-              at: new Date().toISOString(),
-            };
-            saveSessionMetaSidecar(session);
-            log.warn(
-              `Model fallback: ${prev} unavailable (${
-                err instanceof Error ? err.message.slice(0, 80) : "error"
-              }) → ${next}`,
+            const provider = String(config.provider);
+            const resolved = applyFallbackHop(config, next);
+            fallbackTried.add(
+              normalizeFallbackModelId(provider, resolved),
             );
-            events.onStatus?.(`Model fallback → ${next}`);
-            continue;
+            const same =
+              normalizeFallbackModelId(provider, resolved) ===
+              normalizeFallbackModelId(provider, prev);
+            if (!same) {
+              session.meta.model = resolved;
+              session.meta.lastModelFallback = {
+                from: prev,
+                to: resolved,
+                at: new Date().toISOString(),
+              };
+              saveSessionMetaSidecar(session);
+              log.warn(
+                `Model fallback: ${prev} unavailable (${
+                  err instanceof Error ? err.message.slice(0, 80) : "error"
+                }) → ${resolved}`,
+              );
+              events.onStatus?.(`Model fallback → ${resolved}`);
+              continue;
+            }
           }
         }
         await hooks.run("StopFailure", {

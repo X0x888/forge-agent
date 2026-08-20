@@ -41,6 +41,14 @@ export {
   isModelFallbackWorthy,
   defaultFallbackModels,
   formatFallbackChain,
+  meetsFallbackFloor,
+  filterFallbackChain,
+  materializeFallbackModels,
+  applyFallbackHop,
+  rebindFallbackModels,
+  providerAcceptsFallbackId,
+  FALLBACK_FLOOR_LABEL,
+  FALLBACK_FLOOR_EFFORT,
 } from "./config/model-fallback.js";
 export { buildChatRequest } from "./agent/loop.js";
 export { compileRules, evaluateRules, extractPatchPaths, parseRuleString } from "./agent/rules.js";

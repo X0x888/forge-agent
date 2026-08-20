@@ -88,6 +88,24 @@ export function isGrokLineageModel(model: string): boolean {
   return g != null && !isNonTextGrok(g);
 }
 
+/**
+ * Whether this id is a Grok text model at/above a generation.
+ * `null` = not Grok. Mini/nano/lite/non-text are `false` even when the
+ * numeric generation would pass.
+ */
+export function grokAtLeast(
+  model: string,
+  major: number,
+  minor: number,
+): boolean | null {
+  const g = parseGrokGeneration(model);
+  if (!g) return null;
+  if (isNonTextGrok(g)) return false;
+  const flavor = `${g.key} ${g.variant}`;
+  if (/(?:^|[\s-])(mini|nano|lite)(?:[\s-]|$)/.test(flavor)) return false;
+  return cmp(g, major, minor) >= 0;
+}
+
 function isNonTextGrok(g: ParsedGrok): boolean {
   const s = `${g.key} ${g.variant}`;
   return /imagine|voice|tts|\bimage\b|\bvideo\b|grok-build/.test(s);

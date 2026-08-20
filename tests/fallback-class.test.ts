@@ -1,5 +1,5 @@
 /**
- * Fallback class siblings: ULW-without-fallback warning + lastHop share card.
+ * Fallback class siblings: ULW no longer warns when fallback is off + lastHop share card.
  */
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
@@ -17,7 +17,7 @@ import {
 } from "../src/session/session.js";
 
 describe("ULW + fallback off", () => {
-  it("flags ULW with model fallback off", () => {
+  it("does not flag ULW when model fallback is off (the default)", () => {
     const w = productionWarningsForRun(
       { ...DEFAULT_CONFIG, fallbackModels: [], maxCostUsd: 5 },
       {
@@ -27,10 +27,10 @@ describe("ULW + fallback off", () => {
         _testPinnedCount: 0,
       },
     );
-    assert.ok(w.some((x) => /fallback off/i.test(x)));
+    assert.ok(!w.some((x) => /fallback off/i.test(x)));
   });
 
-  it("does not flag ULW when fallback uses defaults", () => {
+  it("does not flag ULW when fallback is unset", () => {
     const w = productionWarningsForRun(
       { ...DEFAULT_CONFIG, maxCostUsd: 5 },
       {

@@ -25,6 +25,7 @@ export function mergeRunOpts(
     "sandboxMissing",
     "readOutside",
     "model",
+    "fallbackModels",
     "provider",
     "baseUrl",
     "effort",

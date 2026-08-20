@@ -5,6 +5,7 @@ import {
   grokEffortLevels,
   grokContextWindow,
   grokCostRates,
+  grokAtLeast,
   isGrokLineageModel,
   latestGrokFlagshipId,
 } from "../src/config/grok-model.js";
@@ -24,6 +25,16 @@ import {
   isVersionedModelSibling,
   splitModelFamilyVersion,
 } from "../src/util/suggest.js";
+
+describe("grokAtLeast", () => {
+  it("treats grok-4.5+ as at least 4.5 and rejects older/mini/non-text", () => {
+    assert.equal(grokAtLeast("grok-4.5", 4, 5), true);
+    assert.equal(grokAtLeast("cursor-grok-4.6-xhigh-fast", 4, 5), true);
+    assert.equal(grokAtLeast("grok-4", 4, 5), false);
+    assert.equal(grokAtLeast("grok-3-mini", 4, 5), false);
+    assert.equal(grokAtLeast("claude-sonnet-5", 4, 5), null);
+  });
+});
 
 describe("parseGrokGeneration", () => {
   it("parses flagship and prefixed ids", () => {

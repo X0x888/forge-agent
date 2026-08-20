@@ -37,7 +37,14 @@ import {
   type SandboxProfile,
 } from "./config/types.js";
 import { parseReasoningEffort, resolveReasoningEffort } from "./config/reasoning.js";
-import { formatFallbackChain, parseFallbackModels } from "./config/model-fallback.js";
+import {
+  FALLBACK_DEFAULT_MARKER,
+  FALLBACK_FLOOR_LABEL,
+  filterFallbackChain,
+  formatFallbackChain,
+  materializeFallbackModels,
+  parseFallbackModels,
+} from "./config/model-fallback.js";
 import { loadPreferences, savePreferences } from "./config/preferences.js";
 import { resolveAuth, resolveAuthFresh, describeAuth } from "./auth/resolve.js";
 import { loginInteractive, logout, printAuthStatus, supportsOAuth } from "./auth/login.js";
@@ -281,7 +288,7 @@ Docs: docs/GETTING-STARTED.md · docs/PRODUCTION.md · docs/RELIABILITY.md · do
 `,
     )
     .option("-m, --model <model>", "Model id")
-    .option("--fallback-models <models>", "Same-provider fallbacks after 429/5xx (comma list; off disables)")
+    .option("--fallback-models <models>", "Same-provider fallbacks after 429/5xx (off by default; on|list; floor grok-4.5 high)")
     .option("-p, --provider <provider>", "Provider: xai|anthropic|openai|openrouter|deepseek|google|copilot|cursor|custom")
     .option("--base-url <url>", "Override API base URL")
     .option(
@@ -461,6 +468,7 @@ Docs: docs/GETTING-STARTED.md · docs/PRODUCTION.md · docs/RELIABILITY.md · do
             model: config.model,
             ultrawork: Boolean(opts.ulw || opts.goal),
             title: typeof opts.title === "string" ? opts.title : undefined,
+            fallbackModels: config.fallbackModels,
           });
         try {
           const { resolveHeadlessSlashPrompt, stripAnsi } = await import(
@@ -592,15 +600,19 @@ Docs: docs/GETTING-STARTED.md · docs/PRODUCTION.md · docs/RELIABILITY.md · do
         if (!modelExplicit && session.meta.model) {
           config.model = session.meta.model;
         }
+        if (!providerExplicit && session.meta.provider) {
+          config.provider = session.meta.provider as typeof config.provider;
+        }
         if (
           opts.fallbackModels == null &&
           !process.env.FORGE_FALLBACK_MODELS &&
           Array.isArray(session.meta.fallbackModels)
         ) {
-          config.fallbackModels = session.meta.fallbackModels;
-        }
-        if (!providerExplicit && session.meta.provider) {
-          config.provider = session.meta.provider as typeof config.provider;
+          config.fallbackModels = materializeFallbackModels(
+            session.meta.fallbackModels,
+            String(config.provider),
+            config.model,
+          );
         }
         // Session-scoped /plan survives resume (OpenCode-style) unless CLI overrides.
         if (!permissionExplicit) {
@@ -725,7 +737,7 @@ Docs: docs/GETTING-STARTED.md · docs/PRODUCTION.md · docs/RELIABILITY.md · do
     )
     .argument("[prompt...]", "Prompt to run (required; empty → exit 1)")
     .option("-m, --model <model>", "Model id")
-    .option("--fallback-models <models>", "Same-provider fallbacks after 429/5xx (comma list; off disables)")
+    .option("--fallback-models <models>", "Same-provider fallbacks after 429/5xx (off by default; on|list; floor grok-4.5 high)")
     .option("-p, --provider <provider>", "Provider")
     .option("--base-url <url>", "Override API base URL")
     .option("--effort <level>", "Thinking effort (default model max): low|medium|high|xhigh|max")
@@ -1026,6 +1038,7 @@ Docs: docs/PRODUCTION.md
             ultrawork: Boolean(runOpts.ulw || runOpts.goal),
             title:
               typeof runOpts.title === "string" ? runOpts.title : undefined,
+            fallbackModels: config.fallbackModels,
           });
           createdFresh = true;
         }
@@ -1171,6 +1184,7 @@ Docs: docs/PRODUCTION.md
           model: config.model,
           ultrawork: Boolean(runOpts.ulw || runOpts.goal),
           title: typeof runOpts.title === "string" ? runOpts.title : undefined,
+          fallbackModels: config.fallbackModels,
         });
       }
       // Allow --title on resume to relabel (experts tagging CI pipelines)
@@ -5416,12 +5430,35 @@ function buildConfig(opts: Record<string, unknown>): ForgeConfig {
     if (parsed === undefined) {
       failInvalidFlag(
         "invalid_fallback_models",
-        `Invalid --fallback-models "${opts.fallbackModels}". Use a comma list, or off.`,
+        `Invalid --fallback-models "${opts.fallbackModels}". Use a comma list, on, or off. Floor: ${FALLBACK_FLOOR_LABEL}.`,
         { fallbackModels: String(opts.fallbackModels) },
         { json: wantJson },
       );
     }
-    overrides.fallbackModels = parsed;
+    if (
+      parsed.length === 1 &&
+      parsed[0] === FALLBACK_DEFAULT_MARKER
+    ) {
+      overrides.fallbackModels = parsed;
+    } else if (parsed.length === 0) {
+      overrides.fallbackModels = [];
+    } else {
+      let provider = "xai";
+      if (opts.provider != null) {
+        const norm = normalizeProviderId(opts.provider);
+        if (norm.ok) provider = norm.provider;
+      }
+      const { kept } = filterFallbackChain(parsed, provider);
+      if (!kept.length) {
+        failInvalidFlag(
+          "invalid_fallback_models",
+          `Invalid --fallback-models "${opts.fallbackModels}". Below ${FALLBACK_FLOOR_LABEL} is not accepted.`,
+          { fallbackModels: String(opts.fallbackModels) },
+          { json: wantJson },
+        );
+      }
+      overrides.fallbackModels = kept;
+    }
   }
   if (opts.provider != null) {
     const norm = normalizeProviderId(opts.provider);
@@ -6036,6 +6073,7 @@ function resolveSession(
     model: config.model,
     ultrawork: false,
     title: wantTitle ? String(opts.title) : undefined,
+    fallbackModels: config.fallbackModels,
   });
 }
 

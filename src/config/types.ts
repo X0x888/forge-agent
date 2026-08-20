@@ -94,7 +94,8 @@ export interface ForgeConfig {
   model: string;
   /**
    * Same-provider models to try after the current one exhausts 429/5xx retries.
-   * `undefined` = conservative catalog defaults. `[]` = disabled.
+   * Off by default (`undefined` / `[]`). When set, every hop must meet the
+   * grok-4.5 high intelligence floor — weaker ids are dropped, never used.
    */
   fallbackModels?: string[];
   /**

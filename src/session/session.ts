@@ -28,7 +28,10 @@ import { detectProjectIntel } from "../util/project-intel.js";
 import { countProjectSkills } from "../agent/project-skills.js";
 import type { ChatMessage } from "../providers/types.js";
 import type { PermissionMode } from "../config/types.js";
-import { formatFallbackChain } from "../config/model-fallback.js";
+import {
+  filterFallbackChain,
+  formatFallbackChain,
+} from "../config/model-fallback.js";
 import { heartbeatSession } from "../statusline/active.js";
 import { touchSessionLock } from "./lock.js";
 import {
@@ -118,8 +121,8 @@ export interface SessionMeta {
    */
   permissionModeBeforePlan?: PermissionMode;
   /**
-   * Same-provider fallback chain (`undefined` = catalog defaults, `[]` = off).
-   * Survives resume like `/model`.
+   * Same-provider fallback chain (`undefined` / `[]` = off).
+   * Survives resume like `/model`. Hops below grok-4.5 high are dropped.
    */
   fallbackModels?: string[];
   /** Last same-provider model hop this session (from → to). */
@@ -276,6 +279,8 @@ export function createSession(opts: {
   ultrawork?: boolean;
   /** Optional expert label (also settable later via /title or setSessionTitle). */
   title?: string;
+  /** Floor-filtered same-provider hop list (`[]` = explicit off). */
+  fallbackModels?: string[];
 }): SessionData {
   const id = randomUUID();
   const now = nowIso();
@@ -296,6 +301,9 @@ export function createSession(opts: {
       totalCacheReadTokens: 0,
       userTurnMarks: [],
       ...(title ? { title } : {}),
+      ...(Array.isArray(opts.fallbackModels)
+        ? { fallbackModels: [...opts.fallbackModels] }
+        : {}),
     },
     messages: [],
     todos: [],
@@ -1047,10 +1055,12 @@ export function importSessionJson(
         : {}),
       ...(Array.isArray(src.fallbackModels)
         ? {
-            fallbackModels: src.fallbackModels
-              .map((x) => String(x ?? "").trim())
-              .filter(Boolean)
-              .slice(0, 8),
+            fallbackModels: filterFallbackChain(
+              src.fallbackModels
+                .map((x) => String(x ?? "").trim())
+                .filter(Boolean),
+              String(src.provider || "xai"),
+            ).kept.slice(0, 8),
           }
         : {}),
       ...(src.lastModelFallback &&
