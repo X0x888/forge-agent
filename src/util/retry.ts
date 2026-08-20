@@ -1,5 +1,11 @@
 import { log } from "./log.js";
-import { isProviderApiError } from "../providers/errors.js";
+import { isHttp2ProtocolError } from "./http2-error.js";
+import {
+  isCursorAgentInternalBody,
+  isProviderApiError,
+} from "../providers/errors.js";
+
+export { isHttp2ProtocolError } from "./http2-error.js";
 
 export interface RetryOptions {
   retries?: number;
@@ -87,6 +93,7 @@ export function isDroppedConnectionError(err: unknown): boolean {
   const t = msg.trim();
   if (/^terminated$/i.test(t)) return true;
   if (name === "TypeError" && /terminated/i.test(t)) return true;
+  if (isHttp2ProtocolError(err)) return true;
   if (
     /other side closed|UND_ERR_|ERR_STREAM_PREMATURE_CLOSE|\bEPIPE\b|socket hang up|ECONNRESET|UND_ERR_SOCKET|connection (?:reset|closed|aborted)|premature (?:close|end)|network connection (?:lost|closed)/i.test(
       t,
@@ -95,6 +102,22 @@ export function isDroppedConnectionError(err: unknown): boolean {
     return true;
   }
   return false;
+}
+
+/** Cursor AgentService Connect-RPC `internal` (HTTP 400) — protocol, not a 400 capability miss. */
+export function isCursorProtocolInternalError(err: unknown): boolean {
+  if (!isProviderApiError(err)) return false;
+  if (!/^(cursor|cursor-ai|cursorai)$/i.test(err.provider)) return false;
+  if (err.status !== 400) return false;
+  return isCursorAgentInternalBody(err.body || err.message);
+}
+
+/**
+ * Drops that recover by opening a fresh stream — not by rotating OAuth.
+ * HTTP/2 RST and Cursor Connect `internal` are protocol/transport, not dead tokens.
+ */
+export function isReconnectWithoutAuthDrop(err: unknown): boolean {
+  return isHttp2ProtocolError(err) || isCursorProtocolInternalError(err);
 }
 
 /**
@@ -109,6 +132,8 @@ export function isPermanentProviderHalt(err: unknown): boolean {
   }
   if (isProviderApiError(err)) {
     if (err.status === 400 || err.status === 404 || err.status === 422) {
+      // Cursor Connect `internal` is a dead Run, not an unsupported-tools 400.
+      if (isCursorProtocolInternalError(err)) return false;
       return true;
     }
   }
@@ -163,6 +188,7 @@ export function isRetryableError(err: unknown): boolean {
   // Never retry overflow — same payload will fail again
   if (isContextOverflowError(err)) return false;
   if (isDroppedConnectionError(err)) return true;
+  if (isCursorProtocolInternalError(err)) return true;
   if (isProviderApiError(err)) return err.isRetryable;
   const msg = err instanceof Error ? err.message : String(err);
   // User abort is not retryable; provider wall-clock timeout is.

@@ -164,6 +164,8 @@ import {
   isContextOverflowError,
   isContinueRecoverableProviderError,
   isDroppedConnectionError,
+  isReconnectWithoutAuthDrop,
+  isRetryableError,
 } from "../util/retry.js";
 import { parseToolArguments } from "../util/json-repair.js";
 import { repairToolCallPairing } from "../session/message-repair.js";
@@ -688,6 +690,25 @@ function assertNotAborted(signal?: AbortSignal): void {
   if (signal?.aborted) throw new Error("Aborted");
 }
 
+function abortableDelay(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new Error("Aborted"));
+      return;
+    }
+    const t = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    const onAbort = () => {
+      clearTimeout(t);
+      reject(new Error("Aborted"));
+    };
+    signal?.addEventListener("abort", onAbort, { once: true });
+    t.unref?.();
+  });
+}
+
 export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
   const {
     config,
@@ -1127,18 +1148,26 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
     return any;
   };
 
-  /** After overflow recovery under ULW/goal: re-anchor without waiting for Stop. */
-  const admitAfterOverflowRecovery = (): void => {
+  /** After overflow / HTTP/2 rebase compact under ULW/goal: re-anchor without waiting for Stop. */
+  const admitAfterHistoryShrink = (
+    kind: "overflow" | "http2-rebase",
+  ): void => {
     const ulwNow = loadUlwCycle(session.meta.id);
     const goalNow = loadGoal(session.meta.id);
+    const lead =
+      kind === "overflow"
+        ? "[Forge] Context overflow recovered — history was compacted/pruned so the run can continue."
+        : "[Forge] HTTP/2 stream dropped — history was compacted/pruned so a fresh Run can rebase.";
     const parts: string[] = [
-      "[Forge] Context overflow recovered — history was compacted/pruned so the run can continue.",
+      lead,
       "Do not re-scan the whole workspace from zero. Use the compact summary + recent tail, verify only what you still need, then continue the highest-impact remaining work.",
     ];
     if (ulwNow?.enabled) {
       parts.push(
         `ULW still ACTIVE: ${formatUlwCounts(ulwNow)} ${ulwNow.cycle === 1 ? "(CONTINUE)" : "(LAST)"}. Mandate: ${displayUlwMandate(ulwNow.mandate)}`,
-        "Stop never fired before the overflow (common on long tool-only waves) — that is why wave/blocks may still be low. Keep executing the cycle; the harness will re-anchor on the next clean Stop.",
+        kind === "overflow"
+          ? "Stop never fired before the overflow (common on long tool-only waves) — that is why wave/blocks may still be low. Keep executing the cycle; the harness will re-anchor on the next clean Stop."
+          : "The HTTP/2 Run dropped mid-turn. Continue the cycle from the compact summary; do not restart the job.",
         ULW_LIVE_CONTROLS_HINT,
       );
     }
@@ -1148,6 +1177,10 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
     session.messages.push({ role: "user", content: parts.join("\n") });
     admitHarnessState(session, config, { emit: false });
     saveSession(session);
+  };
+
+  const admitAfterOverflowRecovery = (): void => {
+    admitAfterHistoryShrink("overflow");
   };
 
   /** After a no-op threshold compact, don't re-attempt until messages grow. */
@@ -1602,6 +1635,12 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
               retries: 3,
               label: `${config.provider} chat`,
               signal,
+              shouldRetry: (e, attempt) => {
+                // Same-payload HTTP/2 / Cursor `internal` retries once, then
+                // drop recovery shrinks history before a new Run rebase.
+                if (isReconnectWithoutAuthDrop(e) && attempt >= 1) return false;
+                return isRetryableError(e);
+              },
               onRetry: ({ delayMs, attempt, retries, error }) => {
                 const why = isProviderApiError(error)
                   ? `HTTP ${error.status}${error.retryAfterMs != null ? " (Retry-After)" : ""}`
@@ -1806,21 +1845,84 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
               // dead token mid-stream) is not HTTP 401/403, so the auth path
               // never ran. Typing "continue" worked because the next loop
               // proactively refreshed OAuth. Do that in-loop.
+              //
+              // HTTP/2 RST / Cursor Connect `internal` is a dead Run, not a
+              // dead token — reconnect without rotating creds, and shrink
+              // history before stuffing conversation_history on a new Run.
               let lastDropErr: unknown = err;
               let dropRecovered = false;
+              let http2RebaseCompactAttempted = false;
+              let http2RebaseNuclearAttempted = false;
               while (dropRecoveryCount < maxDropRecoveries) {
                 dropRecoveryCount += 1;
-                const why = isDroppedConnectionError(lastDropErr)
-                  ? "dropped connection"
-                  : "provider error";
-                events.onStatus?.(
-                  `Provider ${why} — refreshing and retrying (${dropRecoveryCount}/${maxDropRecoveries})…`,
-                );
+                const reconnectOnly = isReconnectWithoutAuthDrop(lastDropErr);
+                const why = reconnectOnly
+                  ? "HTTP/2 stream drop"
+                  : isDroppedConnectionError(lastDropErr)
+                    ? "dropped connection"
+                    : "provider error";
                 events.onPhase?.(
                   "waiting",
                   `provider drop ${dropRecoveryCount}/${maxDropRecoveries}`,
                 );
-                await forceRefreshLiveCreds(why);
+                if (reconnectOnly) {
+                  if (!http2RebaseCompactAttempted) {
+                    http2RebaseCompactAttempted = true;
+                    events.onStatus?.(
+                      `Provider ${why} — compacting history before rebase (${dropRecoveryCount}/${maxDropRecoveries})…`,
+                    );
+                    const pruned = forcePruneBodies("http2-rebase-prune", {
+                      maxToolChars: 6_000,
+                      maxAssistantChars: 12_000,
+                      maxToolArgChars: 4_000,
+                    });
+                    const compacted = await forceCompact("http2-rebase", 8);
+                    if (pruned || compacted) {
+                      admitAfterHistoryShrink("http2-rebase");
+                    } else {
+                      await abortableDelay(
+                        Math.min(8_000, 400 * 2 ** (dropRecoveryCount - 1)),
+                        signal,
+                      );
+                    }
+                  } else if (!http2RebaseNuclearAttempted) {
+                    http2RebaseNuclearAttempted = true;
+                    events.onStatus?.(
+                      `Provider ${why} — nuclear compact before rebase (${dropRecoveryCount}/${maxDropRecoveries})…`,
+                    );
+                    const pruned = forcePruneBodies("http2-rebase-nuclear", {
+                      maxToolChars: 1_500,
+                      maxAssistantChars: 3_000,
+                      maxToolArgChars: 1_000,
+                    });
+                    const compacted = await forceCompact(
+                      "http2-rebase-nuclear",
+                      2,
+                    );
+                    if (pruned || compacted) {
+                      admitAfterHistoryShrink("http2-rebase");
+                    } else {
+                      await abortableDelay(
+                        Math.min(8_000, 400 * 2 ** (dropRecoveryCount - 1)),
+                        signal,
+                      );
+                    }
+                  } else {
+                    const delay = Math.min(
+                      8_000,
+                      400 * 2 ** (dropRecoveryCount - 1),
+                    );
+                    events.onStatus?.(
+                      `Provider ${why} — reconnecting in ${Math.round(delay)}ms (${dropRecoveryCount}/${maxDropRecoveries})…`,
+                    );
+                    await abortableDelay(delay, signal);
+                  }
+                } else {
+                  events.onStatus?.(
+                    `Provider ${why} — refreshing and retrying (${dropRecoveryCount}/${maxDropRecoveries})…`,
+                  );
+                  await forceRefreshLiveCreds(why);
+                }
                 try {
                   response = await doChat();
                   dropRecovered = true;
@@ -1839,6 +1941,7 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
                   }
                   if (!isContinueRecoverableProviderError(err2)) throw err2;
                   if (
+                    !isReconnectWithoutAuthDrop(err2) &&
                     accountSwitchCount < maxAccountSwitches &&
                     updateCreds
                   ) {
@@ -3020,16 +3123,18 @@ export async function runAgentLoopThroughDrops(
         `Provider drop — auto-continuing ULW (${n}/${max})`,
       );
       opts.events?.onPhase?.("waiting", `ulw auto-continue ${n}/${max}`);
-      try {
-        const r = await refreshCredentialIfNeeded(
-          String(opts.config.provider),
-          { force: true, skewSec: 600 },
-        );
-        if (r.ok && r.credential?.accessToken && opts.provider.updateCredentials) {
-          opts.provider.updateCredentials(r.credential.accessToken);
+      if (!isReconnectWithoutAuthDrop(err)) {
+        try {
+          const r = await refreshCredentialIfNeeded(
+            String(opts.config.provider),
+            { force: true, skewSec: 600 },
+          );
+          if (r.ok && r.credential?.accessToken && opts.provider.updateCredentials) {
+            opts.provider.updateCredentials(r.credential.accessToken);
+          }
+        } catch {
+          /* next loop still does proactive refresh */
         }
-      } catch {
-        /* next loop still does proactive refresh */
       }
       const delay = Math.min(8_000, 400 * 2 ** (n - 1));
       await new Promise<void>((resolve, reject) => {

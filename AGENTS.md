@@ -87,7 +87,7 @@ See `docs/RELIABILITY.md` and `docs/PRODUCTION.md`. Highlights: Retry-After, abo
 stream-capped `web_fetch`/`web_search`, JSON arg repair, CLI `--json` always stamps `version`
 (`emitOkJson`/`emitFailJson` include `node`; `FORGE_JSON_COMPACT=1` for single-line success; `forge run --json` includes `productionWarnings[]`), doctor flags yolo/`sandbox=off`, bash IMDS deny, sticky login provider (preferences.json), orphan tool_call heal (load/import +
 **re-save** when healed and no foreign lock), doom-loop, error-streak circuit breaker, apply_patch
-(path typo hints; directory-target errors), atomic file writes, OAuth refresh (start + mid-run 401/403 + socket `terminated` drop auto-continue under ULW),
+(path typo hints; directory-target errors), atomic file writes, OAuth refresh (start + mid-run 401/403 + socket `terminated` drop auto-continue under ULW; HTTP/2 `NGHTTP2_INTERNAL_ERROR` reconnects without rotating OAuth and may compact before rebase),
 session locks (headless fail-closed; `FORGE_FORCE_SESSION_LOCK=1` override; live+bad timestamp held),
 atomic session tmp recovery, session fork/export/import (export `0600`), headless `forge run
 --session`, metrics.jsonl, permission ask timeout, empty-SSE retry, `finish_reason=length` continue (+ content_filter/empty cap hygiene),

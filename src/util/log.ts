@@ -92,7 +92,12 @@ export const log = {
   error(msg: string, ...args: unknown[]): void {
     if (!enabled("error")) return;
     if (jsonMode()) emitJson("error", msg, args);
-    else console.error(chalk.red(`✖ ${msg}`) + formatExtra(args));
+    else {
+      // formatProviderErrorText already leads with ✖ — don't print ✖ ✖.
+      const lead = (msg.split("\n", 1)[0] ?? "").trimStart();
+      const body = lead.startsWith("✖") ? msg : `✖ ${msg}`;
+      console.error(chalk.red(body) + formatExtra(args));
+    }
   },
   success(msg: string, ...args: unknown[]): void {
     if (!enabled("info")) return;

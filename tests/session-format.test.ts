@@ -521,6 +521,15 @@ describe("format + slash complete", () => {
     assert.equal(isRetryableError(new Error("Aborted")), false);
     assert.equal(isRetryableError(new Error("invalid api key")), false);
     assert.equal(isRetryableError(new Error("terminated")), true);
+    assert.equal(
+      isRetryableError(
+        Object.assign(
+          new Error("Stream closed with error code NGHTTP2_INTERNAL_ERROR"),
+          { code: "ERR_HTTP2_STREAM_ERROR" },
+        ),
+      ),
+      true,
+    );
   });
 
   it("does not retry context overflow", async () => {

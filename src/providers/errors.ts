@@ -3,6 +3,7 @@
  * retry layer can honor server backoff (OpenCode-style production reliability).
  */
 import { clipAnsi, visibleWidth } from "../util/format.js";
+import { isHttp2ProtocolError } from "../util/http2-error.js";
 
 export class ProviderApiError extends Error {
   readonly provider: string;
@@ -215,9 +216,9 @@ export function formatProviderError(
       } else if (isCursorInternalish(bodyBlob)) {
         code = "protocol_error";
         tips.push(
-          "Cursor AgentService rejected the Run (protocol). /retry starts a fresh conversation.",
+          "Cursor AgentService rejected the Run (protocol). /retry rebases a fresh conversation; huge sessions: /compact then /retry.",
         );
-        tips.push("/retry  ·  /model <other>  ·  forge doctor");
+        tips.push("/retry  ·  /compact  ·  /model <other>");
       } else if (isUnsupportedFeatureish(err.body)) {
         code = "unsupported_feature";
         tips.push("/model <other> that supports tools/vision/params");
@@ -237,6 +238,12 @@ export function formatProviderError(
       tips.push(
         "FORGE_PROVIDER_TIMEOUT_MS (stall)  ·  FORGE_PROVIDER_REASONING_WALL_MS (no-output wall, default 12m)  ·  FORGE_PROVIDER_MAX_MS (optional absolute)  ·  /compact  ·  /retry",
       );
+    } else if (isHttp2ProtocolError(err)) {
+      code = "network";
+      tips.push(
+        "HTTP/2 stream dropped — Forge reconnects (no OAuth refresh). Persists: /retry · /compact",
+      );
+      tips.push("/retry  ·  /compact  ·  forge run --continue");
     } else if (
       /^terminated$/i.test(msg.trim()) ||
       /other side closed|UND_ERR_|ERR_STREAM_PREMATURE_CLOSE|\bEPIPE\b|premature (?:close|end)/i.test(
@@ -367,8 +374,12 @@ function isEmptyResponseish(text: string): boolean {
 }
 
 /** Connect-RPC `internal` on AgentService — protocol, not a model capability miss. */
-function isCursorInternalish(text: string): boolean {
+export function isCursorAgentInternalBody(text: string): boolean {
   return /\binternal\s*:\s*error\b|^internal\b/i.test(text || "");
+}
+
+function isCursorInternalish(text: string): boolean {
+  return isCursorAgentInternalBody(text);
 }
 
 function isUnsupportedFeatureish(text: string): boolean {
@@ -471,7 +482,7 @@ export function runFailureNextKeys(
       keys = ["rephrase", "/model", retry];
       break;
     case "protocol_error":
-      keys = [retry];
+      keys = [retry, "/compact"];
       break;
     case "empty_response":
       keys = [retry, "forge doctor"];

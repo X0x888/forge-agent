@@ -14,7 +14,10 @@ import {
   isRetryableError,
   isDroppedConnectionError,
   isContinueRecoverableProviderError,
+  isCursorProtocolInternalError,
+  isHttp2ProtocolError,
   isPermanentProviderHalt,
+  isReconnectWithoutAuthDrop,
 } from "../src/util/retry.js";
 import { formatProviderError } from "../src/providers/errors.js";
 import { ProviderApiError } from "../src/providers/errors.js";
@@ -84,6 +87,17 @@ describe("dropped connection / continue-recoverable classification", () => {
     assert.equal(isDroppedConnectionError(new Error("terminated")), true);
     assert.equal(isDroppedConnectionError(new Error("other side closed")), true);
     assert.equal(isDroppedConnectionError(new Error("socket hang up")), true);
+    const http2 = Object.assign(
+      new Error("Stream closed with error code NGHTTP2_INTERNAL_ERROR"),
+      { code: "ERR_HTTP2_STREAM_ERROR" },
+    );
+    assert.equal(isHttp2ProtocolError(http2), true);
+    assert.equal(isDroppedConnectionError(http2), true);
+    assert.equal(isRetryableError(http2), true);
+    assert.equal(isContinueRecoverableProviderError(http2), true);
+    assert.equal(isPermanentProviderHalt(http2), false);
+    assert.equal(isReconnectWithoutAuthDrop(http2), true);
+    assert.equal(isReconnectWithoutAuthDrop(term), false);
     assert.equal(isRetryableError(term), true);
     assert.equal(isRetryableError(new Error("terminated")), true);
     assert.equal(isContinueRecoverableProviderError(term), true);
@@ -124,6 +138,16 @@ describe("dropped connection / continue-recoverable classification", () => {
       ),
       true,
     );
+    const cursorInternal = new ProviderApiError({
+      provider: "cursor",
+      status: 400,
+      body: "internal: Error",
+    });
+    assert.equal(isCursorProtocolInternalError(cursorInternal), true);
+    assert.equal(isPermanentProviderHalt(cursorInternal), false);
+    assert.equal(isRetryableError(cursorInternal), true);
+    assert.equal(isContinueRecoverableProviderError(cursorInternal), true);
+    assert.equal(isReconnectWithoutAuthDrop(cursorInternal), true);
   });
 
   it("classifies generic unknown errors as continue-recoverable (the screenshot)", () => {
@@ -132,6 +156,18 @@ describe("dropped connection / continue-recoverable classification", () => {
     const fmt = formatProviderError(err);
     assert.equal(fmt.code, "network");
     assert.equal(isContinueRecoverableProviderError(err), true);
+  });
+
+  it("classifies NGHTTP2_INTERNAL_ERROR as network, not provider_error", () => {
+    const err = Object.assign(
+      new Error("Stream closed with error code NGHTTP2_INTERNAL_ERROR"),
+      { code: "ERR_HTTP2_STREAM_ERROR" },
+    );
+    const fmt = formatProviderError(err, { provider: "cursor" });
+    assert.equal(fmt.code, "network");
+    assert.ok(fmt.tips.some((t) => /HTTP\/2|reconnect/i.test(t)));
+    assert.ok(fmt.tips.some((t) => /compact/i.test(t)));
+    assert.equal(isReconnectWithoutAuthDrop(err), true);
   });
 
   it("classifies provider glitch (non-retryable, non-HTTP) as continue-recoverable", () => {
@@ -230,6 +266,33 @@ describe("in-loop + ULW auto-continue on provider drop", () => {
     assert.equal(result.aborted, false);
     assert.match(result.finalText, /Continuing/);
     assert.ok(provider.calls >= 2, "must retry after terminated");
+  });
+
+  it("retries NGHTTP2_INTERNAL_ERROR inside withRetry and does not throw", async () => {
+    const { session, config, hooks, permissions, mcp, lsp } = harness();
+    const http2 = Object.assign(
+      new Error("Stream closed with error code NGHTTP2_INTERNAL_ERROR"),
+      { code: "ERR_HTTP2_STREAM_ERROR" },
+    );
+    const provider = mockProvider({
+      failFirst: 1,
+      failWith: http2,
+    });
+    const result = await runAgentLoop({
+      config,
+      provider,
+      session,
+      hooks,
+      permissions,
+      userMessage: "keep going on the remaining holes",
+      stream: true,
+      disableHarnessAutoArm: true,
+      mcp,
+      lsp,
+    });
+    assert.equal(result.aborted, false);
+    assert.match(result.finalText, /Continuing/);
+    assert.ok(provider.calls >= 2, "must retry after HTTP/2 RST");
   });
 
   it("force-retries a non-retryable generic provider_error in-loop (continue equivalent)", async () => {

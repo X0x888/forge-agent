@@ -160,7 +160,7 @@ Exit code `1` when `ok` is false (still prints JSON first). Thresholds reflect e
 - `auth.json`, `permissions.json`, and `preferences.json` must be mode `0600` (doctor flags otherwise)
 - `preferences.json` may store sticky `provider` from `forge login -p` (env/CLI still override)
 - Resume (`--session`/`--continue`) authenticates as the **session** provider (sticky login cannot hijack an old chat)
-- Long sessions: OAuth refresh runs at start, proactively ~10m before expiry each model turn, and mid-run on `401`/`403` token death **or** a dropped socket (`terminated` / generic `provider_error`) so unattended ULW resumes without a manual continue. In-loop drop recoveries: `FORGE_PROVIDER_DROP_RECOVERY_MAX` (default 5). If the loop still throws under ULW, REPL/`forge run` auto-continues the same transcript (`FORGE_ULW_AUTO_CONTINUE_MAX`, default 3).
+- Long sessions: OAuth refresh runs at start, proactively ~10m before expiry each model turn, and mid-run on `401`/`403` token death **or** a dropped socket (`terminated` / generic `provider_error`) so unattended ULW resumes without a manual continue. HTTP/2 `NGHTTP2_INTERNAL_ERROR` (Cursor AgentService RST) reconnects without rotating OAuth and may compact history before rebase. In-loop drop recoveries: `FORGE_PROVIDER_DROP_RECOVERY_MAX` (default 5). If the loop still throws under ULW, REPL/`forge run` auto-continues the same transcript (`FORGE_ULW_AUTO_CONTINUE_MAX`, default 3).
 
 ## Safety defaults (do not weaken lightly)
 
@@ -399,7 +399,7 @@ Reliability for multi-day single process:
 
 - Session locks: live holders are **never** TTL-stolen; lock timestamp refreshed on every save
 - REPL refuses concurrent write on live foreign lock (`FORGE_FORCE_SESSION_LOCK=1` override)
-- OAuth: proactive refresh ~10m before expiry each model turn; up to `FORGE_AUTH_RECOVERY_MAX` (default 20) mid-run recoveries; socket `terminated` / generic `provider_error` force-refresh + ULW auto-continue (`FORGE_PROVIDER_DROP_RECOVERY_MAX` / `FORGE_ULW_AUTO_CONTINUE`)
+- OAuth: proactive refresh ~10m before expiry each model turn; up to `FORGE_AUTH_RECOVERY_MAX` (default 20) mid-run recoveries; socket `terminated` / generic `provider_error` force-refresh + ULW auto-continue; HTTP/2 RST reconnects without OAuth rotation (`FORGE_PROVIDER_DROP_RECOVERY_MAX` / `FORGE_ULW_AUTO_CONTINUE`)
 - Prefer many `forge run --continue` steps over one multi-day process if using SuperGrok OIDC
 
 

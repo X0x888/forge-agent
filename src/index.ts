@@ -592,6 +592,9 @@ export {
   isContextOverflowError,
   isDroppedConnectionError,
   isContinueRecoverableProviderError,
+  isCursorProtocolInternalError,
+  isHttp2ProtocolError,
+  isReconnectWithoutAuthDrop,
   isPermanentProviderHalt,
   computeRetryDelayMs,
 } from "./util/retry.js";

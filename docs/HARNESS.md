@@ -173,6 +173,7 @@ Beyond Stop/goal/ULW, the agent loop includes expert-grade recovery so long runs
 | **Empty / content_filter** | Nudge or narrow-scope steer (no blind infinite retry) |
 | **OAuth mid-run 401/403** | Forced refresh loop (up to `FORGE_AUTH_RECOVERY_MAX`) + hot-swap refreshed bearer directly; multi-account failover |
 | **Provider drop (`terminated`)** | Socket RST / generic `provider_error` force-refreshes OAuth and retries; ULW auto-continues instead of waiting for a typed continue |
+| **HTTP/2 RST (`NGHTTP2_INTERNAL_ERROR`)** | Cursor AgentService stream RST is retryable `network`; reconnects without OAuth rotation; compact-before-rebase if same-payload retries fail |
 | **File-aware `/undo`** | `mutations.jsonl` pre-images for write/edit/patch; `/retry` restores disk too |
 | **Fork keeps harness** | `/fork` copies ULW + `/goal` sidecars (and mutation journal) onto the branch |
 

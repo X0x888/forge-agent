@@ -2709,6 +2709,11 @@ describe("stream empty / error recovery", () => {
     const terminated = new Error("terminated");
     terminated.name = "TypeError";
     assert.equal(isRetryableError(terminated), true);
+    const http2 = Object.assign(
+      new Error("Stream closed with error code NGHTTP2_INTERNAL_ERROR"),
+      { code: "ERR_HTTP2_STREAM_ERROR" },
+    );
+    assert.equal(isRetryableError(http2), true);
   });
 
   it("flags git commit --no-verify as soft-dangerous", async () => {

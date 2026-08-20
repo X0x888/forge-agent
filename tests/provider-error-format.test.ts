@@ -101,6 +101,31 @@ describe("formatProviderError", () => {
     const term = formatProviderError(new Error("terminated"));
     assert.equal(term.code, "network");
     assert.ok(term.tips.some((t) => /retries|OAuth|continue/i.test(t)));
+    const http2 = formatProviderError(
+      Object.assign(
+        new Error("Stream closed with error code NGHTTP2_INTERNAL_ERROR"),
+        { code: "ERR_HTTP2_STREAM_ERROR" },
+      ),
+      { provider: "cursor" },
+    );
+    assert.equal(http2.code, "network");
+    assert.ok(http2.tips.some((t) => /HTTP\/2|reconnect/i.test(t)));
+    assert.ok(http2.tips.some((t) => /compact/i.test(t)));
+    assert.equal(
+      http2.tips.some((t) => /refresh(?:es)? OAuth/i.test(t)),
+      false,
+      "HTTP/2 RST is not an OAuth refresh",
+    );
+    const card = formatProviderErrorText(
+      Object.assign(
+        new Error("Stream closed with error code NGHTTP2_INTERNAL_ERROR"),
+        { code: "ERR_HTTP2_STREAM_ERROR" },
+      ),
+      { provider: "cursor", repl: true, columns: 80 },
+    );
+    assert.match(card, /^✖ Stream closed/);
+    assert.doesNotMatch(card, /✖ ✖/);
+    assert.match(card, /\[network\]/);
     const to = formatProviderError(new Error("Provider timed out after 600000ms"));
     assert.equal(to.code, "timeout");
     assert.ok(
@@ -322,6 +347,39 @@ describe("formatProviderError", () => {
     );
     assert.equal(f.code, "protocol_error");
     assert.ok(f.tips.some((t) => /fresh conversation|protocol/i.test(t)));
+    assert.ok(f.tips.some((t) => /compact/i.test(t)));
     assert.equal(f.tips.some((t) => /tools\/vision/i.test(t)), false);
+  });
+});
+
+describe("log.error does not double-prefix formatted cards", () => {
+  it("leaves an existing ✖ headline alone", async () => {
+    const { log } = await import("../src/util/log.js");
+    const { formatProviderErrorText } = await import(
+      "../src/providers/errors.js"
+    );
+    const err = Object.assign(
+      new Error("Stream closed with error code NGHTTP2_INTERNAL_ERROR"),
+      { code: "ERR_HTTP2_STREAM_ERROR" },
+    );
+    const card = formatProviderErrorText(err, {
+      provider: "cursor",
+      repl: true,
+      columns: 80,
+    });
+    const lines: string[] = [];
+    const orig = console.error;
+    console.error = (...args: unknown[]) => {
+      lines.push(String(args[0] ?? ""));
+    };
+    try {
+      log.error(card);
+    } finally {
+      console.error = orig;
+    }
+    assert.equal(lines.length, 1);
+    const plain = lines[0]!.replace(/\x1b\[[0-9;]*m/g, "");
+    assert.match(plain, /^✖ Stream closed/);
+    assert.doesNotMatch(plain, /✖ ✖/);
   });
 });

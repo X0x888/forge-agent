@@ -36,6 +36,8 @@ describe("runFailureNextKeys", () => {
       "/retry",
     ]);
     assert.ok(runFailureNextKeys("network").includes("/retry"));
+    assert.ok(runFailureNextKeys("protocol_error").includes("/retry"));
+    assert.ok(runFailureNextKeys("protocol_error").includes("/compact"));
     assert.ok(
       runFailureNextKeys("rate_limited", { surface: "run" }).includes(
         "forge run --continue",
