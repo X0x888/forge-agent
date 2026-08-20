@@ -37,11 +37,17 @@ import {
   decodeConnectFrames,
   parseAgentServerMessage,
   parseGetUsableModels,
+  parseTurnEnded,
   parseUsageFields,
   encodeClientMessage,
+  encodeConversationActionUser,
+  encodeExecStreamClose,
   encodeMessage,
+  encodeRequestContext,
+  encodeRequestContextEnv,
   encodeString,
   encodeUint32,
+  fieldBytes,
   CONNECT_END_STREAM,
 } from "../src/providers/cursor-proto.js";
 import { estimateCostUsd } from "../src/util/format.js";
@@ -270,20 +276,76 @@ describe("cursor proto codec", () => {
     assert.equal(models[0]!.name, "Composer 2.5");
   });
 
-  it("parses usage events from AgentServerMessage field 5", () => {
-    const usage = Buffer.concat([
-      encodeUint32(1, 1200),
-      encodeUint32(2, 80),
-      encodeUint32(3, 1280),
+  it("parses TurnEnded usage + cache_read from InteractionUpdate field 14", () => {
+    const ended = Buffer.concat([
+      encodeUint32(1, 48_000),
+      encodeUint32(2, 900),
+      encodeUint32(3, 40_000),
+      encodeUint32(4, 0),
+      encodeUint32(5, 200),
     ]);
-    const payload = encodeMessage(5, usage);
+    const payload = encodeMessage(1, encodeMessage(14, ended));
     const events = parseAgentServerMessage(payload);
     const hit = events.find((e) => e.kind === "usage");
     assert.ok(hit && hit.kind === "usage");
-    assert.equal(hit.prompt_tokens, 1200);
-    assert.equal(hit.completion_tokens, 80);
-    assert.equal(hit.total_tokens, 1280);
+    assert.equal(hit.prompt_tokens, 48_000);
+    assert.equal(hit.completion_tokens, 1_100);
+    assert.equal(hit.cache_read_input_tokens, 40_000);
+    assert.ok(events.some((e) => e.kind === "turn_ended"));
+    const parsed = parseTurnEnded(ended);
+    assert.equal(parsed?.cache_read_input_tokens, 40_000);
     assert.equal(parseUsageFields(encodeString(1, "nope")), undefined);
+    assert.equal(parseUsageFields(encodeUint32(1, 11)), undefined);
+  });
+
+  it("RequestContext env carries the real workspace, not a stale IDE cwd", () => {
+    const env = encodeRequestContextEnv({
+      osVersion: "darwin",
+      workspace: "/Users/s./code/hobby/forge-agent",
+      shell: "/bin/zsh",
+      timeZone: "UTC",
+      projectFolder: "/tmp/cursor-projects/forge",
+      isHome: false,
+    });
+    const ctx = encodeRequestContext({
+      env,
+      toolDefs: [],
+      projectFolder: "/tmp/cursor-projects/forge",
+    });
+    const fields = decodeFields(ctx);
+    const envBuf = fieldBytes(fields, 4);
+    assert.ok(envBuf);
+    assert.equal(
+      fieldStr(decodeFields(envBuf), 21),
+      "/Users/s./code/hobby/forge-agent",
+    );
+    const action = encodeConversationActionUser("hi", "m1", ctx);
+    const uma = decodeFields(decodeFields(action)[0]!.bytes);
+    assert.ok(uma.some((f) => f.field === 2));
+  });
+
+  it("does not treat InteractionUpdate fields 5/6/8 as usage", () => {
+    const junk = Buffer.concat([
+      encodeUint32(1, 5),
+      encodeUint32(2, 2),
+      encodeUint32(3, 11),
+    ]);
+    const inner = Buffer.concat([
+      encodeMessage(1, encodeString(1, "hi")),
+      encodeMessage(5, junk),
+    ]);
+    const events = parseAgentServerMessage(encodeMessage(1, inner));
+    assert.ok(events.some((e) => e.kind === "text"));
+    assert.equal(events.some((e) => e.kind === "usage"), false);
+  });
+
+  it("encodes exec stream_close as ACM field 5", () => {
+    const inner = encodeExecStreamClose(7);
+    const framed = encodeClientMessage({ execControl: inner });
+    const fields = decodeFields(framed);
+    assert.equal(fields[0]!.field, 5);
+    const close = decodeFields(fields[0]!.bytes);
+    assert.equal(close[0]!.field, 1);
   });
 });
 

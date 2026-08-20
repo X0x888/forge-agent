@@ -205,10 +205,12 @@ describe("Fable in the Forge model class", () => {
         provider: "cursor",
         model: "cursor-grok-4.6-xhigh-fast",
         reasoningEffort: undefined,
+        workspace: "/Users/s./code/hobby/forge-agent",
       },
       [{ role: "user", content: "hi" }],
     );
     assert.equal(req.reasoning_effort, "xhigh");
+    assert.equal(req.workspace, "/Users/s./code/hobby/forge-agent");
   });
 });
 

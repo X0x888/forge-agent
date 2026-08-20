@@ -362,22 +362,75 @@ export function encodeMcpTools(defs: Uint8Array[]): Buffer {
   return Buffer.concat(defs.map((d) => encodeMessage(1, d)));
 }
 
-export function encodeRequestContext(toolDefs: Uint8Array[]): Buffer {
-  return Buffer.concat(toolDefs.map((d) => encodeMessage(7, d)));
+export function encodeRequestContextEnv(opts: {
+  osVersion: string;
+  workspace: string;
+  shell: string;
+  timeZone: string;
+  projectFolder: string;
+  isHome: boolean;
+}): Buffer {
+  const ws = opts.workspace;
+  return Buffer.concat([
+    encodeString(1, opts.osVersion),
+    encodeString(2, ws),
+    encodeString(3, opts.shell),
+    encodeBool(5, false),
+    encodeString(7, `${opts.projectFolder}/terminals`),
+    encodeString(10, opts.timeZone),
+    encodeString(11, opts.projectFolder),
+    encodeString(12, `${opts.projectFolder}/agent-transcripts`),
+    encodeBool(14, false),
+    encodeBool(20, opts.isHome),
+    encodeString(21, ws),
+  ]);
 }
 
-export function encodeRequestContextResult(toolDefs: Uint8Array[]): Buffer {
-  const ctx = encodeRequestContext(toolDefs);
+/** RequestContextPayload: env (#4) + tools (#7) + complete flags. */
+export function encodeRequestContext(opts: {
+  env: Uint8Array;
+  toolDefs: Uint8Array[];
+  projectFolder: string;
+}): Buffer {
+  const parts = [
+    encodeMessage(4, opts.env),
+    ...opts.toolDefs.map((d) => encodeMessage(7, d)),
+    encodeBool(17, false),
+    encodeBool(24, false),
+    encodeBool(40, true),
+    encodeBool(44, true),
+  ];
+  const fsOpts = Buffer.concat([
+    encodeBool(1, true),
+    encodeString(2, opts.projectFolder),
+  ]);
+  parts.push(encodeMessage(23, fsOpts));
+  return Buffer.concat(parts);
+}
+
+export function encodeRequestContextResult(ctx: Uint8Array): Buffer {
   const success = encodeMessage(1, ctx);
   return encodeMessage(1, success);
 }
 
-export function encodeUserMessageAction(text: string, messageId: string): Buffer {
-  return encodeMessage(1, encodeUserMessage(text, messageId));
+export function encodeUserMessageAction(
+  text: string,
+  messageId: string,
+  requestContext?: Uint8Array,
+): Buffer {
+  const parts = [encodeMessage(1, encodeUserMessage(text, messageId))];
+  if (requestContext && requestContext.length) {
+    parts.push(encodeMessage(2, requestContext));
+  }
+  return Buffer.concat(parts);
 }
 
-export function encodeConversationActionUser(text: string, messageId: string): Buffer {
-  return encodeMessage(1, encodeUserMessageAction(text, messageId));
+export function encodeConversationActionUser(
+  text: string,
+  messageId: string,
+  requestContext?: Uint8Array,
+): Buffer {
+  return encodeMessage(1, encodeUserMessageAction(text, messageId, requestContext));
 }
 
 export function encodeAgentRunRequest(opts: {
@@ -416,13 +469,20 @@ export function encodeClientMessage(opts: {
   runRequest?: Uint8Array;
   execClient?: Uint8Array;
   kvClient?: Uint8Array;
+  execControl?: Uint8Array;
   heartbeat?: boolean;
 }): Buffer {
   if (opts.runRequest) return encodeMessage(1, opts.runRequest);
   if (opts.execClient) return encodeMessage(2, opts.execClient);
   if (opts.kvClient) return encodeMessage(3, opts.kvClient);
+  if (opts.execControl) return encodeMessage(5, opts.execControl);
   if (opts.heartbeat) return encodeMessage(7, Buffer.alloc(0));
   return Buffer.alloc(0);
+}
+
+/** ACM #5 stream_close — without this, AgentService waits on heartbeats forever. */
+export function encodeExecStreamClose(id: number): Buffer {
+  return encodeMessage(1, encodeUint32(1, id));
 }
 
 export function encodeExecClient(opts: {
@@ -513,6 +573,8 @@ export function systemPromptBlob(systemPrompt: string): {
 export type CursorServerEvent =
   | { kind: "text"; text: string }
   | { kind: "thinking"; text: string }
+  | { kind: "heartbeat" }
+  | { kind: "turn_ended" }
   | {
       kind: "exec";
       id: number;
@@ -533,10 +595,51 @@ export type CursorServerEvent =
       prompt_tokens: number;
       completion_tokens: number;
       total_tokens: number;
+      cache_read_input_tokens?: number;
+      cache_creation_input_tokens?: number;
     }
   | { kind: "end"; error?: string };
 
-/** Token usage: varint fields 1/2/3 (prompt/completion/total). Rejects junk. */
+/**
+ * InteractionUpdate.turn_ended (#14): input, output, cache_read, cache_write,
+ * reasoning. Not the nested junk on fields 5/6/8.
+ */
+export function parseTurnEnded(buf: Uint8Array): {
+  prompt_tokens: number;
+  completion_tokens: number;
+  total_tokens: number;
+  cache_read_input_tokens?: number;
+  cache_creation_input_tokens?: number;
+} | undefined {
+  const fields = decodeFields(buf);
+  if (!fields.length) return undefined;
+  if (fields.some((f) => f.wire !== 0)) return undefined;
+  const prompt = fieldVarint(fields, 1) ?? 0;
+  const output = fieldVarint(fields, 2) ?? 0;
+  const cacheRead = fieldVarint(fields, 3) ?? 0;
+  const cacheWrite = fieldVarint(fields, 4) ?? 0;
+  const reasoning = fieldVarint(fields, 5) ?? 0;
+  if (
+    prompt === 0 &&
+    output === 0 &&
+    cacheRead === 0 &&
+    cacheWrite === 0 &&
+    reasoning === 0
+  ) {
+    return undefined;
+  }
+  if (prompt > 100_000_000 || output > 100_000_000) return undefined;
+  const completion = output + reasoning;
+  return {
+    prompt_tokens: prompt,
+    completion_tokens: completion,
+    total_tokens: prompt + completion,
+    ...(cacheRead ? { cache_read_input_tokens: cacheRead } : {}),
+    ...(cacheWrite ? { cache_creation_input_tokens: cacheWrite } : {}),
+  };
+}
+
+/** @deprecated TurnEnded is the usage source; kept for tests of the old path. */
 export function parseUsageFields(
   buf: Uint8Array,
 ): {
@@ -544,17 +647,16 @@ export function parseUsageFields(
   completion_tokens: number;
   total_tokens: number;
 } | undefined {
-  const fields = decodeFields(buf);
-  if (!fields.length) return undefined;
-  if (fields.some((f) => f.wire !== 0)) return undefined;
-  const prompt = fieldVarint(fields, 1) ?? 0;
-  const completion = fieldVarint(fields, 2) ?? 0;
-  const total = fieldVarint(fields, 3) ?? prompt + completion;
-  if (prompt === 0 && completion === 0 && total === 0) return undefined;
-  if (prompt > 100_000_000 || completion > 100_000_000 || total > 200_000_000) {
+  const ended = parseTurnEnded(buf);
+  if (!ended) return undefined;
+  if (ended.prompt_tokens < 32 && !ended.cache_read_input_tokens) {
     return undefined;
   }
-  return { prompt_tokens: prompt, completion_tokens: completion, total_tokens: total };
+  return {
+    prompt_tokens: ended.prompt_tokens,
+    completion_tokens: ended.completion_tokens,
+    total_tokens: ended.total_tokens,
+  };
 }
 
 const EXEC_KIND: Record<number, string> = {
@@ -631,11 +733,14 @@ export function parseAgentServerMessage(payload: Uint8Array): CursorServerEvent[
         const t = fieldStr(decodeFields(thinkMsg), 1);
         if (t) events.push({ kind: "thinking", text: t });
       }
-      for (const usageField of [5, 6, 8]) {
-        const usageBuf = fieldBytes(inner, usageField);
-        if (!usageBuf) continue;
-        const usage = parseUsageFields(usageBuf);
+      if (inner.some((x) => x.field === 13)) {
+        events.push({ kind: "heartbeat" });
+      }
+      const endedBuf = fieldBytes(inner, 14);
+      if (endedBuf) {
+        const usage = parseTurnEnded(endedBuf);
         if (usage) events.push({ kind: "usage", ...usage });
+        events.push({ kind: "turn_ended" });
       }
     } else if (f.field === 2 && f.wire === 2) {
       const inner = decodeFields(f.bytes);
@@ -679,8 +784,10 @@ export function parseAgentServerMessage(payload: Uint8Array): CursorServerEvent[
         });
       }
     } else if (f.field === 5 && f.wire === 2) {
-      const usage = parseUsageFields(f.bytes);
-      if (usage) events.push({ kind: "usage", ...usage });
+      const usage = parseTurnEnded(f.bytes);
+      if (usage && usage.prompt_tokens >= 32) {
+        events.push({ kind: "usage", ...usage });
+      }
     }
   }
   return events;

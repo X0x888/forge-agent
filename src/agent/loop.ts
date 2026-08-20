@@ -631,6 +631,7 @@ export function buildChatRequest(
     ...(config.contextWindow
       ? { context_window: config.contextWindow }
       : {}),
+    ...(config.workspace ? { workspace: config.workspace } : {}),
     ...(opts?.toolChoice === "required" && tools.length
       ? { tool_choice: "required" as const }
       : {}),

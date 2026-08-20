@@ -76,6 +76,12 @@ export interface ChatRequest {
    */
   context_window?: number;
   /**
+   * Absolute workspace root. Cursor AgentService RequestContext.env uses this
+   * as workspace_paths / process_working_directory; omitting it lets the
+   * backend invent a stale IDE cwd.
+   */
+  workspace?: string;
+  /**
    * OpenAI-compat / xAI `tool_choice`. `required` after a thought-only Stop
    * so the next turn cannot be another silent judge.
    */

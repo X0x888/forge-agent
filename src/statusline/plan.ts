@@ -484,7 +484,8 @@ export async function collectPlanUsage(opts: {
     return {
       source: "cursor",
       product: "Cursor",
-      note: "native Cursor quota; see cursor.com/dashboard/usage",
+      note:
+        "native Cursor quota (no third-party % API) · session tokens + cache on the dock · cursor.com/dashboard/spending",
     };
   }
 

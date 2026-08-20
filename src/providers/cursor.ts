@@ -6,6 +6,9 @@
  * shared ChatResponse shape so the agent loop is unchanged.
  */
 import http2 from "node:http2";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { randomUUID } from "node:crypto";
 import type {
   ChatRequest,
@@ -45,6 +48,7 @@ import {
   encodeConversationActionUser,
   encodeConversationState,
   encodeExecClient,
+  encodeExecStreamClose,
   encodeKvClient,
   encodeMcpErrorResult,
   encodeMcpSuccessResult,
@@ -52,6 +56,8 @@ import {
   encodeMcpTools,
   encodeMessage,
   encodeRejected,
+  encodeRequestContext,
+  encodeRequestContextEnv,
   encodeRequestContextResult,
   encodeString,
   encodeTurnStructure,
@@ -66,6 +72,7 @@ import {
   systemPromptBlob,
 } from "./cursor-proto.js";
 import { resolveCursorRunModel } from "../config/cursor-model.js";
+import { forgeHome } from "../util/fs.js";
 
 const REJECT =
   "Tool not available in this environment. Use the MCP tools provided instead.";
@@ -268,6 +275,8 @@ interface LiveSession {
   pumpStarted: boolean;
   streamCut: boolean;
   turn: LiveTurn | null;
+  workspace: string;
+  requestContext: Buffer;
 }
 
 /** Cursor sometimes joins a local id and `fc_…` with a newline. */
@@ -288,6 +297,67 @@ export function sessionKeyForRequest(req: ChatRequest): string {
   const seed =
     typeof first?.content === "string" ? first.content.slice(0, 200) : req.model;
   return `${req.model}:${sha256Bytes(Buffer.from(seed)).toString("hex").slice(0, 16)}`;
+}
+
+function workspaceFromRequest(req: ChatRequest): string {
+  const pinned = req.workspace?.trim();
+  if (pinned) return path.resolve(pinned);
+  for (const m of req.messages) {
+    if (m.role !== "system" || typeof m.content !== "string") continue;
+    const hit = m.content.match(/^Root:\s*(.+)$/m);
+    if (hit?.[1]?.trim()) return path.resolve(hit[1].trim());
+  }
+  return process.cwd();
+}
+
+function cursorProjectFolder(workspace: string): string {
+  const slug = workspace
+    .replace(/[^a-zA-Z0-9._-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 80);
+  const dir = path.join(forgeHome(), "cursor-projects", slug || "workspace");
+  try {
+    fs.mkdirSync(dir, { recursive: true });
+  } catch {
+    /* */
+  }
+  return dir;
+}
+
+function buildCursorRequestContext(workspace: string, mcpTools: Buffer[]): Buffer {
+  const projectFolder = cursorProjectFolder(workspace);
+  return encodeRequestContext({
+    env: encodeRequestContextEnv({
+      osVersion: `${process.platform} ${os.release()}`,
+      workspace,
+      shell: process.env.SHELL || "/bin/zsh",
+      timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
+      projectFolder,
+      isHome: path.resolve(workspace) === path.resolve(os.homedir()),
+    }),
+    toolDefs: mcpTools,
+    projectFolder,
+  });
+}
+
+function writeExecAndClose(
+  live: LiveSession,
+  opts: { id: number; execId: string; resultField: number; result: Uint8Array },
+): void {
+  live.write(
+    encodeConnectFrame(
+      encodeClientMessage({
+        execClient: encodeExecClient(opts),
+      }),
+    ),
+  );
+  live.write(
+    encodeConnectFrame(
+      encodeClientMessage({
+        execControl: encodeExecStreamClose(opts.id),
+      }),
+    ),
+  );
 }
 
 function closeLive(key: string): void {
@@ -311,6 +381,8 @@ function buildRunPayload(req: ChatRequest, parsed: CursorConversation): {
   bytes: Buffer;
   blobStore: Map<string, Buffer>;
   mcpTools: Buffer[];
+  workspace: string;
+  requestContext: Buffer;
 } {
   const blobStore = new Map<string, Buffer>();
   const sys = systemPromptBlob(parsed.systemPrompt);
@@ -327,6 +399,8 @@ function buildRunPayload(req: ChatRequest, parsed: CursorConversation): {
   }
 
   const mcp = encodeToolDefs(req.tools);
+  const workspace = workspaceFromRequest(req);
+  const requestContext = buildCursorRequestContext(workspace, mcp);
   const model = resolveCursorRunModel({
     model: req.model,
     reasoningEffort: req.reasoning_effort,
@@ -340,6 +414,7 @@ function buildRunPayload(req: ChatRequest, parsed: CursorConversation): {
     action: encodeConversationActionUser(
       parsed.userText || "(continue)",
       randomUUID(),
+      requestContext,
     ),
     modelId: model.serverId,
     conversationId: req.conversationId || randomUUID(),
@@ -353,6 +428,8 @@ function buildRunPayload(req: ChatRequest, parsed: CursorConversation): {
     bytes: encodeConnectFrame(encodeClientMessage({ runRequest: run })),
     blobStore,
     mcpTools: mcp,
+    workspace,
+    requestContext,
   };
 }
 
@@ -360,80 +437,51 @@ function wrapReject(rejectField: number, inner: Uint8Array): Buffer {
   return encodeMessage(rejectField, inner);
 }
 
-function nativeRejectFrame(exec: {
-  id: number;
-  execId: string;
+function nativeRejectPayload(exec: {
   execKind: string;
   payload: Uint8Array;
-}): Buffer {
-  const path = parsePathArg(exec.payload);
+}): { resultField: number; result: Buffer } {
+  const filePath = parsePathArg(exec.payload);
   const shell = parseShellArg(exec.payload);
-  let resultField = 11;
-  let result: Buffer = encodeMcpErrorResult(REJECT);
-
   switch (exec.execKind) {
     case "readArgs":
-      resultField = 7;
-      result = wrapReject(3, encodeRejected(path, REJECT));
-      break;
+      return { resultField: 7, result: wrapReject(3, encodeRejected(filePath, REJECT)) };
     case "lsArgs":
-      resultField = 8;
-      result = wrapReject(3, encodeRejected(path, REJECT));
-      break;
+      return { resultField: 8, result: wrapReject(3, encodeRejected(filePath, REJECT)) };
     case "writeArgs":
-      resultField = 3;
-      result = wrapReject(6, encodeRejected(path, REJECT));
-      break;
+      return { resultField: 3, result: wrapReject(6, encodeRejected(filePath, REJECT)) };
     case "deleteArgs":
-      resultField = 4;
-      result = wrapReject(6, encodeRejected(path, REJECT));
-      break;
+      return { resultField: 4, result: wrapReject(6, encodeRejected(filePath, REJECT)) };
     case "grepArgs":
-      resultField = 5;
-      result = wrapReject(2, encodeString(1, REJECT));
-      break;
+      return { resultField: 5, result: wrapReject(2, encodeString(1, REJECT)) };
     case "shellArgs":
     case "shellStreamArgs":
-      resultField = 2;
-      result = wrapReject(
-        4,
-        encodeRejected(shell.command, REJECT, {
-          workingDirectory: shell.workingDirectory,
-        }),
-      );
-      break;
+      return {
+        resultField: 2,
+        result: wrapReject(
+          4,
+          encodeRejected(shell.command, REJECT, {
+            workingDirectory: shell.workingDirectory,
+          }),
+        ),
+      };
     case "backgroundShellSpawnArgs":
-      resultField = 16;
-      result = wrapReject(
-        3,
-        encodeRejected(shell.command, REJECT, {
-          workingDirectory: shell.workingDirectory,
-        }),
-      );
-      break;
+      return {
+        resultField: 16,
+        result: wrapReject(
+          3,
+          encodeRejected(shell.command, REJECT, {
+            workingDirectory: shell.workingDirectory,
+          }),
+        ),
+      };
     case "fetchArgs":
-      resultField = 20;
-      result = wrapReject(2, encodeRejected(path, REJECT));
-      break;
+      return { resultField: 20, result: wrapReject(2, encodeRejected(filePath, REJECT)) };
     case "diagnosticsArgs":
-      resultField = 9;
-      result = wrapReject(3, encodeRejected("", REJECT));
-      break;
+      return { resultField: 9, result: wrapReject(3, encodeRejected("", REJECT)) };
     default:
-      resultField = 11;
-      result = encodeMcpErrorResult(REJECT);
+      return { resultField: 11, result: encodeMcpErrorResult(REJECT) };
   }
-
-  return encodeConnectFrame(
-    encodeClientMessage({
-      execClient: encodeExecClient({
-        id: exec.id,
-        execId: exec.execId,
-        resultField,
-        result,
-      }),
-    }),
-  );
 }
 
 function heartbeatFrame(): Buffer {
@@ -519,6 +567,8 @@ export class CursorProvider implements LLMProvider {
       payload.bytes,
       payload.blobStore,
       payload.mcpTools,
+      payload.workspace,
+      payload.requestContext,
       req,
       onDelta,
       signal,
@@ -561,6 +611,8 @@ export class CursorProvider implements LLMProvider {
     firstFrame: Buffer,
     blobStore: Map<string, Buffer>,
     mcpTools: Buffer[],
+    workspace: string,
+    requestContext: Buffer,
     req: ChatRequest,
     onDelta: (delta: StreamDelta) => void,
     signal: AbortSignal,
@@ -588,6 +640,8 @@ export class CursorProvider implements LLMProvider {
       pumpStarted: false,
       streamCut: false,
       turn: null,
+      workspace,
+      requestContext,
     };
     live.heartbeat.unref?.();
     liveSessions.set(key, live);
@@ -614,21 +668,17 @@ export class CursorProvider implements LLMProvider {
       const result = hit
         ? encodeMcpSuccessResult(hit.content, false)
         : encodeMcpErrorResult("Tool result not provided");
-      live.write(
-        encodeConnectFrame(
-          encodeClientMessage({
-            execClient: encodeExecClient({
-              id: exec.id,
-              execId: exec.execId,
-              resultField: 11,
-              result,
-            }),
-          }),
-        ),
-      );
+      writeExecAndClose(live, {
+        id: exec.id,
+        execId: exec.execId,
+        resultField: 11,
+        result,
+      });
     }
     live.pending = [];
     live.mcpTools = encodeToolDefs(req.tools);
+    live.workspace = workspaceFromRequest(req);
+    live.requestContext = buildCursorRequestContext(live.workspace, live.mcpTools);
     return this.waitForTurn(key, live, req, onDelta, signal, touch, noteVisible);
   }
 
@@ -756,7 +806,6 @@ export class CursorProvider implements LLMProvider {
     flags: number,
     payload: Uint8Array,
   ): void {
-    live.turn?.touch();
     if (flags & CONNECT_END_STREAM) {
       const err = parseConnectEndError(payload);
       if (err) {
@@ -770,8 +819,26 @@ export class CursorProvider implements LLMProvider {
       return;
     }
     const events = parseAgentServerMessage(payload);
+    if (events.some((e) => e.kind !== "heartbeat")) {
+      live.turn?.touch();
+    }
     const turn = live.turn;
     for (const ev of events) {
+      if (ev.kind !== "usage" || !turn || turn.settled) continue;
+      turn.usage = {
+        prompt_tokens: ev.prompt_tokens,
+        completion_tokens: ev.completion_tokens,
+        total_tokens: ev.total_tokens,
+        cache_read_input_tokens: ev.cache_read_input_tokens,
+        cache_creation_input_tokens: ev.cache_creation_input_tokens,
+      };
+    }
+    for (const ev of events) {
+      if (ev.kind === "heartbeat" || ev.kind === "usage") continue;
+      if (ev.kind === "turn_ended") {
+        this.finishTurn(key, live, { close: true });
+        continue;
+      }
       if (ev.kind === "kv") {
         if (ev.kvKind === "get") {
           const data = live.blobStore.get(hexKey(ev.blobId));
@@ -800,22 +867,22 @@ export class CursorProvider implements LLMProvider {
         continue;
       }
       if (ev.kind === "exec" && ev.execKind === "requestContextArgs") {
-        live.write(
-          encodeConnectFrame(
-            encodeClientMessage({
-              execClient: encodeExecClient({
-                id: ev.id,
-                execId: ev.execId,
-                resultField: 10,
-                result: encodeRequestContextResult(live.mcpTools),
-              }),
-            }),
-          ),
-        );
+        writeExecAndClose(live, {
+          id: ev.id,
+          execId: ev.execId,
+          resultField: 10,
+          result: encodeRequestContextResult(live.requestContext),
+        });
         continue;
       }
       if (ev.kind === "exec" && ev.execKind !== "mcpArgs") {
-        live.write(nativeRejectFrame(ev));
+        const rejected = nativeRejectPayload(ev);
+        writeExecAndClose(live, {
+          id: ev.id,
+          execId: ev.execId,
+          resultField: rejected.resultField,
+          result: rejected.result,
+        });
         continue;
       }
       if (!turn || turn.settled) continue;
@@ -824,12 +891,6 @@ export class CursorProvider implements LLMProvider {
         turn.noteVisible();
         turn.wall.noteVisibleOutput();
         turn.onDelta({ content: ev.text });
-      } else if (ev.kind === "usage") {
-        turn.usage = {
-          prompt_tokens: ev.prompt_tokens,
-          completion_tokens: ev.completion_tokens,
-          total_tokens: ev.total_tokens,
-        };
       } else if (ev.kind === "thinking") {
         turn.reasoningContent += ev.text;
         turn.onDelta({ reasoning_content: ev.text });
