@@ -143,13 +143,17 @@ export function parseXaiBillingBody(
     // (Display layer formats compactly.)
   }
 
+  // A 0 (or negative) cap is parse residue, not a spent budget. Computing
+  // remaining = max(0, 0 - used) then trips proactive auto-switch.
+  if (limit != null && limit <= 0) limit = null;
+
   let remaining = numVal(
     cfg.remaining ??
       cfg.credits_remaining ??
       data.remaining ??
       data.credits_remaining,
   );
-  if (remaining == null && used != null && limit != null) {
+  if (remaining == null && used != null && limit != null && limit > 0) {
     remaining = Math.max(0, limit - used);
   }
 
@@ -225,7 +229,7 @@ export function parseXaiBillingBody(
   }
   product = product || "SuperGrok";
 
-  return {
+  return dropStubRemaining({
     percent,
     used: used ?? undefined,
     limit: limit ?? undefined,
@@ -235,7 +239,25 @@ export function parseXaiBillingBody(
     resetsAt,
     product,
     source,
-  };
+  });
+}
+
+/**
+ * SuperGrok format=credits often includes remaining:0 / limit:0 next to a
+ * live weekly percent. A zero cap is not a spent budget — drop remaining so
+ * lastPlan / auto-switch cannot treat 1% used as empty. Keep remaining=0
+ * when percent is absent (remaining-only APIs).
+ */
+export function dropStubRemaining(plan: PlanUsageInfo): PlanUsageInfo {
+  if (
+    plan.remaining != null &&
+    plan.remaining <= 0 &&
+    (plan.limit == null || plan.limit <= 0) &&
+    plan.percent != null
+  ) {
+    return { ...plan, remaining: undefined };
+  }
+  return plan;
 }
 
 function planHasSignal(plan: PlanUsageInfo): boolean {
@@ -331,9 +353,15 @@ async function fetchXaiCredits(
           ? plan.source
           : extra.source,
       };
-      if (plan.used != null && plan.limit != null && plan.remaining == null) {
+      if (
+        plan.used != null &&
+        plan.limit != null &&
+        plan.limit > 0 &&
+        plan.remaining == null
+      ) {
         plan.remaining = Math.max(0, plan.limit - plan.used);
       }
+      plan = dropStubRemaining(plan);
     }
   } else if (!planHasSignal(plan)) {
     // Credits body empty — try plain billing as sole source

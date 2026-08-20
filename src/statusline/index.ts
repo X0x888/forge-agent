@@ -19,7 +19,12 @@ export {
   formatPlan,
   resetCountdown,
 } from "./render.js";
-export { collectPlanUsage, parseXaiBillingBody, parseCursorPeriodUsage } from "./plan.js";
+export {
+  collectPlanUsage,
+  parseXaiBillingBody,
+  parseCursorPeriodUsage,
+  dropStubRemaining,
+} from "./plan.js";
 export {
   heartbeatSession,
   releaseSession,

@@ -544,6 +544,40 @@ describe("statusline", () => {
     assert.match(rendered, /28k\/150k/);
   });
 
+  it("drops SuperGrok remaining=0 / limit=0 residue next to a live weekly %", () => {
+    const plan = parseXaiBillingBody(
+      {
+        config: {
+          creditUsagePercent: 1.2,
+          remaining: 0,
+          monthlyLimit: 0,
+          used: 645,
+        },
+      },
+      "test:credits-stub",
+    );
+    assert.equal(plan.percent, 1);
+    assert.equal(plan.used, 645);
+    assert.equal(plan.limit, undefined);
+    assert.equal(plan.remaining, undefined);
+  });
+
+  it("keeps remaining=0 when it is a spent budget against a real cap", () => {
+    const plan = parseXaiBillingBody(
+      { used: 100, limit: 100 },
+      "test:spent-cap",
+    );
+    assert.equal(plan.percent, 100);
+    assert.equal(plan.limit, 100);
+    assert.equal(plan.remaining, 0);
+  });
+
+  it("keeps remaining=0 for remaining-only bodies (no percent)", () => {
+    const plan = parseXaiBillingBody({ remaining: 0 }, "test:remaining-only");
+    assert.equal(plan.percent, undefined);
+    assert.equal(plan.remaining, 0);
+  });
+
   it("still accepts flat legacy billing shapes", () => {
     const plan = parseXaiBillingBody(
       { used: 10, limit: 100, period_end: "2099-01-01T00:00:00Z" },

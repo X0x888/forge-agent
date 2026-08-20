@@ -122,6 +122,112 @@ export function isPlanFresh(
 }
 
 /**
+ * True when `remaining <= 0` is a real spent-budget signal — not SuperGrok
+ * credits-format residue.
+ *
+ * format=credits often stores remaining=0 and limit=0 next to a live weekly
+ * percent (1% used is not empty). Percent is the switch authority when
+ * present. A zero/missing cap is not a spent budget.
+ */
+export function isPlanRemainingExhausted(
+  plan: AccountPlanSnapshot | undefined,
+): boolean {
+  if (
+    !plan ||
+    typeof plan.remaining !== "number" ||
+    !Number.isFinite(plan.remaining)
+  ) {
+    return false;
+  }
+  if (plan.remaining > 0) return false;
+  if (typeof plan.percent === "number" && Number.isFinite(plan.percent)) {
+    return false;
+  }
+  if (typeof plan.limit === "number" && plan.limit <= 0) {
+    return false;
+  }
+  return true;
+}
+
+/** Fresh weekly % at/over the auto-switch threshold, or a real remaining=0. */
+export function isPlanProactivelyExhausted(
+  plan: AccountPlanSnapshot | undefined,
+  threshold: number,
+  now = nowEpoch(),
+): boolean {
+  if (!isPlanFresh(plan, now) || !plan) return false;
+  if (typeof plan.percent === "number" && Number.isFinite(plan.percent)) {
+    return plan.percent >= threshold;
+  }
+  return isPlanRemainingExhausted(plan);
+}
+
+function isPlanFreshAndHealthy(
+  plan: AccountPlanSnapshot | undefined,
+  threshold: number,
+  now = nowEpoch(),
+): boolean {
+  if (!isPlanFresh(plan, now) || !plan) return false;
+  if (typeof plan.percent === "number" && Number.isFinite(plan.percent)) {
+    return plan.percent < threshold;
+  }
+  if (isPlanRemainingExhausted(plan)) return false;
+  return typeof plan.remaining === "number" && plan.remaining > 0;
+}
+
+/**
+ * True when `alt` is a strictly better proactive target than `current`.
+ *
+ * Both-over-threshold: hop only to a lower % (or higher remaining). Equal
+ * or worse usage stays put — otherwise forge --new ping-pongs forever.
+ */
+export function isHealthierSwitchTarget(
+  current: AccountCredential,
+  alt: AccountCredential,
+  threshold: number,
+  now = nowEpoch(),
+): boolean {
+  if (alt.disabled) return false;
+  if (isAccountInCooldown(alt) && !isAccountInCooldown(current)) return false;
+
+  const altExh = isPlanProactivelyExhausted(alt.lastPlan, threshold, now);
+  if (!altExh) {
+    return (
+      isPlanProactivelyExhausted(current.lastPlan, threshold, now) ||
+      (isAccountInCooldown(current) &&
+        !isPlanFreshAndHealthy(current.lastPlan, threshold, now)) ||
+      (isExpired(current, 60) && !current.refreshToken)
+    );
+  }
+
+  const a = alt.lastPlan;
+  const c = current.lastPlan;
+  if (
+    isPlanFresh(a, now) &&
+    a &&
+    isPlanFresh(c, now) &&
+    c &&
+    typeof a.percent === "number" &&
+    typeof c.percent === "number"
+  ) {
+    return a.percent < c.percent;
+  }
+  if (
+    isPlanFresh(a, now) &&
+    a &&
+    isPlanFresh(c, now) &&
+    c &&
+    typeof a.remaining === "number" &&
+    typeof c.remaining === "number" &&
+    typeof a.percent !== "number" &&
+    typeof c.percent !== "number"
+  ) {
+    return a.remaining > c.remaining;
+  }
+  return false;
+}
+
+/**
  * Rank candidate accounts for auto-switch (higher score = better).
  * Eligible: same provider, not disabled, not in cooldown, not expired without RT.
  */
@@ -276,7 +382,8 @@ function shortAccount(id: string, acc?: AccountCredential | null): string {
 
 /**
  * Proactive switch when the active account looks exhausted.
- * No-op when autoSwitch is off, only one account, or usage unknown/stale/below threshold.
+ * No-op when autoSwitch is off, only one account, usage unknown/stale/below
+ * threshold, or every alternate is at/over the threshold (no healthier target).
  */
 export function maybeProactiveSwitch(provider: string): SwitchResult {
   if (isEnvAuthActive(provider)) {
@@ -297,7 +404,6 @@ export function maybeProactiveSwitch(provider: string): SwitchResult {
   const plan = current.lastPlan;
   const planFresh = isPlanFresh(plan);
   const percent = planFresh ? plan?.percent : undefined;
-  const remaining = planFresh ? plan?.remaining : undefined;
   const threshold = settings.switchThresholdPercent;
   let should = false;
   let why = "";
@@ -305,14 +411,13 @@ export function maybeProactiveSwitch(provider: string): SwitchResult {
   if (typeof percent === "number" && percent >= threshold) {
     should = true;
     why = `plan usage ${percent}% ≥ ${threshold}%`;
-  } else if (
-    typeof remaining === "number" &&
-    remaining <= 0 &&
-    planFresh
-  ) {
+  } else if (planFresh && isPlanRemainingExhausted(plan)) {
     should = true;
     why = "plan remaining ≤ 0";
-  } else if (isAccountInCooldown(current)) {
+  } else if (
+    isAccountInCooldown(current) &&
+    !isPlanFreshAndHealthy(plan, threshold)
+  ) {
     should = true;
     why = "active account in cooldown";
   } else if (isExpired(current, 60) && !current.refreshToken) {
@@ -328,7 +433,17 @@ export function maybeProactiveSwitch(provider: string): SwitchResult {
     };
   }
 
+  const target = alts.find((a) => isHealthierSwitchTarget(current, a, threshold));
+  if (!target) {
+    return {
+      switched: false,
+      fromId: current.id,
+      reason: "no healthier alternate (all at/over threshold)",
+    };
+  }
+
   return switchAccount(provider, {
+    toId: target.id,
     reason: `proactive: ${why}`,
     // Don't re-cooldown if already cooling — just leave
     cooldownPrevSec: isAccountInCooldown(current) ? 0 : DEFAULT_COOLDOWN_SEC,

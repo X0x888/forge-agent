@@ -35,6 +35,9 @@ import {
   switchOnQuotaFailure,
   switchOnAuthFailure,
   maybeProactiveSwitch,
+  isPlanRemainingExhausted,
+  isPlanProactivelyExhausted,
+  isHealthierSwitchTarget,
   isQuotaOrRateLimitError,
   recordAccountPlan,
   formatAccountsTable,
@@ -330,6 +333,124 @@ describe("smart account switching", () => {
     const r = maybeProactiveSwitch("xai");
     assert.equal(r.switched, true);
     assert.equal(getActiveAccount("xai")?.id, a.accountId);
+  });
+
+  it("does not treat SuperGrok remaining=0 residue as empty when weekly % is low", () => {
+    const healthy = upsertApiKey("xai", "sk-healthy", "chestnut");
+    const full = upsertApiKey("xai", "sk-full", "sning", { forceNew: true });
+    setAutoSwitchSettings({ autoSwitch: true, switchThresholdPercent: 88 });
+    setActiveAccount(healthy.accountId);
+    // Observed SuperGrok lastPlan: credits-format % is live; remaining/limit
+    // are stub zeros. Switching away from 1% onto 84% was the incident.
+    recordAccountPlan(healthy.accountId, {
+      percent: 1,
+      used: 645,
+      remaining: 0,
+      limit: 0,
+    });
+    recordAccountPlan(full.accountId, {
+      percent: 84,
+      used: 0,
+      remaining: 0,
+      limit: 0,
+    });
+
+    assert.equal(
+      isPlanRemainingExhausted(getAccount(healthy.accountId)?.lastPlan),
+      false,
+    );
+    const r = maybeProactiveSwitch("xai");
+    assert.equal(r.switched, false);
+    assert.equal(getActiveAccount("xai")?.id, healthy.accountId);
+  });
+
+  it("still switches on remaining=0 when that is a real budget remainder", () => {
+    const spare = upsertApiKey("xai", "sk-spare", "spare");
+    const empty = upsertApiKey("xai", "sk-empty", "empty", { forceNew: true });
+    setAutoSwitchSettings({ autoSwitch: true, switchThresholdPercent: 88 });
+    recordAccountPlan(empty.accountId, { remaining: 0, limit: 1000 });
+    recordAccountPlan(spare.accountId, { remaining: 400, limit: 1000 });
+
+    assert.equal(
+      isPlanRemainingExhausted(getAccount(empty.accountId)?.lastPlan),
+      true,
+    );
+    const r = maybeProactiveSwitch("xai");
+    assert.equal(r.switched, true);
+    assert.equal(getActiveAccount("xai")?.id, spare.accountId);
+  });
+
+  it("percent at threshold still switches even with remaining=0 residue", () => {
+    const spare = upsertApiKey("xai", "sk-spare", "spare");
+    const full = upsertApiKey("xai", "sk-full", "full", { forceNew: true });
+    setAutoSwitchSettings({ autoSwitch: true, switchThresholdPercent: 88 });
+    recordAccountPlan(full.accountId, {
+      percent: 95,
+      remaining: 0,
+      limit: 0,
+    });
+    recordAccountPlan(spare.accountId, { percent: 10, remaining: 0, limit: 0 });
+
+    const r = maybeProactiveSwitch("xai");
+    assert.equal(r.switched, true);
+    assert.equal(getActiveAccount("xai")?.id, spare.accountId);
+  });
+
+  it("stays put when every account is at/over the threshold", () => {
+    const a = upsertApiKey("xai", "sk-a", "a");
+    const b = upsertApiKey("xai", "sk-b", "b", { forceNew: true });
+    setAutoSwitchSettings({ autoSwitch: true, switchThresholdPercent: 88 });
+    recordAccountPlan(b.accountId, { percent: 90 });
+    recordAccountPlan(a.accountId, { percent: 95 });
+    assert.equal(getActiveAccount("xai")?.id, b.accountId);
+
+    // Current 90% is the better of two exhausted slots — do not hop to 95%.
+    const r = maybeProactiveSwitch("xai");
+    assert.equal(r.switched, false);
+    assert.match(r.reason || "", /no healthier alternate/);
+    assert.equal(getActiveAccount("xai")?.id, b.accountId);
+    assert.equal(
+      isHealthierSwitchTarget(
+        getAccount(b.accountId)!,
+        getAccount(a.accountId)!,
+        88,
+      ),
+      false,
+    );
+  });
+
+  it("hops once to the less-used account when both are over threshold", () => {
+    const better = upsertApiKey("xai", "sk-better", "better");
+    const worse = upsertApiKey("xai", "sk-worse", "worse", { forceNew: true });
+    setAutoSwitchSettings({ autoSwitch: true, switchThresholdPercent: 88 });
+    recordAccountPlan(worse.accountId, { percent: 97 });
+    recordAccountPlan(better.accountId, { percent: 90 });
+
+    const r = maybeProactiveSwitch("xai");
+    assert.equal(r.switched, true);
+    assert.equal(getActiveAccount("xai")?.id, better.accountId);
+
+    // Cooldown on the previous slot must not be what prevents a bounce —
+    // even after it expires, 97% is not a healthier target than 90%.
+    clearAccountCooldown(worse.accountId);
+    const r2 = maybeProactiveSwitch("xai");
+    assert.equal(r2.switched, false);
+    assert.equal(getActiveAccount("xai")?.id, better.accountId);
+  });
+
+  it("does not abandon a healthy account that is still in cooldown", () => {
+    const healthy = upsertApiKey("xai", "sk-healthy", "healthy");
+    const full = upsertApiKey("xai", "sk-full", "full", { forceNew: true });
+    setAutoSwitchSettings({ autoSwitch: true, switchThresholdPercent: 88 });
+    setActiveAccount(healthy.accountId);
+    recordAccountPlan(healthy.accountId, { percent: 1, remaining: 0, limit: 0 });
+    recordAccountPlan(full.accountId, { percent: 84, remaining: 0, limit: 0 });
+    setAccountCooldown(healthy.accountId, nowEpoch() + 900);
+
+    assert.equal(isPlanProactivelyExhausted(getAccount(healthy.accountId)?.lastPlan, 88), false);
+    const r = maybeProactiveSwitch("xai");
+    assert.equal(r.switched, false);
+    assert.equal(getActiveAccount("xai")?.id, healthy.accountId);
   });
 
   it("maybeProactiveSwitch no-ops when auto-switch off", () => {
