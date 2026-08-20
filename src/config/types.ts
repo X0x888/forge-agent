@@ -201,7 +201,7 @@ export const DEFAULT_CONFIG: ForgeConfig = {
   model: "grok-4.6",
   // Undefined → resolveReasoningEffort uses the model default (family max,
   // or a Cursor variant suffix when the id already encodes one — e.g.
-  // cursor-grok-4.6-high-fast → high, grok-4.6 → xhigh). Pin via /effort.
+  // cursor-grok-4.6-xhigh-fast → xhigh, grok-4.6-high-fast → high). Pin via /effort.
   reasoningEffort: undefined,
   // Undefined → omitted from API requests; provider/server default wins.
   temperature: undefined,
@@ -365,8 +365,9 @@ export const DEFAULT_CONFIG: ForgeConfig = {
       apiKeyEnv: "CURSOR_API_KEY",
       baseUrl: "https://api2.cursor.sh",
       supportsOAuth: true,
-      defaultModel: "cursor-grok-4.6-high-fast",
+      defaultModel: "cursor-grok-4.6-xhigh-fast",
       models: [
+        "cursor-grok-4.6-xhigh-fast",
         "cursor-grok-4.6-high-fast",
         "cursor-grok-4.6-high",
         "composer-2.5",

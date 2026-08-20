@@ -44,9 +44,10 @@ const ALIASES: Record<string, string> = {
   "claude-fable-5": "claude-fable-5-max",
   composer: "composer-2.5",
   "composer-2": "composer-2.5",
-  "grok-4.6": "cursor-grok-4.6-high-fast",
+  "grok-4.6": "cursor-grok-4.6-xhigh-fast",
+  "grok-4.6-xhigh-fast": "cursor-grok-4.6-xhigh-fast",
   "grok-4.6-high-fast": "cursor-grok-4.6-high-fast",
-  "cursor-grok-4.6": "cursor-grok-4.6-high-fast",
+  "cursor-grok-4.6": "cursor-grok-4.6-xhigh-fast",
   "cursor-grok-4.5": "cursor-grok-4.5-high",
   "grok-4.5": "cursor-grok-4.5-high",
 };
@@ -134,7 +135,7 @@ export function parseCursorModelId(raw: string): CursorModelId {
  * Map a Forge ChatRequest onto Cursor AgentService.
  *
  * Live GetUsableModels ids **are** variant strings
- * (`cursor-grok-4.6-high-fast`). Sending a bare `grok-4.6` is `not_found`.
+ * (`cursor-grok-4.6-xhigh-fast`). Sending a bare `grok-4.6` is `not_found`.
  * Forge knobs rewrite that string; we do not also send param key/values that
  * make the server look up a different base id.
  */

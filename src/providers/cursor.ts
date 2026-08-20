@@ -978,6 +978,7 @@ export async function fetchCursorUsableModels(
 }
 
 export const CURSOR_FALLBACK_MODELS = [
+  "cursor-grok-4.6-xhigh-fast",
   "cursor-grok-4.6-high-fast",
   "cursor-grok-4.6-high",
   "composer-2.5",

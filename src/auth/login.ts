@@ -283,7 +283,7 @@ export async function cursorBrowserLogin(opts?: {
         : ""),
   );
   log.dim(
-    "Uses your Cursor subscription quota and models. Next: forge -p cursor  ·  /model cursor-grok-4.6-high-fast",
+    "Uses your Cursor subscription quota and models. Next: forge -p cursor  ·  /model cursor-grok-4.6-xhigh-fast",
   );
   return { accountId: result.accountId, created: result.created };
 }

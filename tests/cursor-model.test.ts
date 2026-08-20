@@ -58,7 +58,7 @@ describe("resolveCursorModelAlias", () => {
   it("maps fable / grok shorthands to live catalog variant ids", () => {
     assert.equal(resolveCursorModelAlias("fable"), "claude-fable-5-max");
     assert.equal(resolveCursorModelAlias("fabel"), "claude-fable-5-max");
-    assert.equal(resolveCursorModelAlias("grok-4.6"), "cursor-grok-4.6-high-fast");
+    assert.equal(resolveCursorModelAlias("grok-4.6"), "cursor-grok-4.6-xhigh-fast");
     assert.equal(
       resolveCursorModelAlias("grok-4.6-high-fast"),
       "cursor-grok-4.6-high-fast",
@@ -105,7 +105,17 @@ describe("resolveCursorRunModel — class mapping", () => {
     assert.equal(r.serverId, "cursor-grok-4.6-xhigh-fast");
   });
 
-  it("Cursor default grok-4.6-high-fast is High + Fast, thinking off", () => {
+  it("Cursor default grok-4.6 is xhigh + Fast, thinking off", () => {
+    const r = resolveCursorRunModel({
+      model: "grok-4.6",
+      reasoningEffort: defaultEffortForModel("cursor-grok-4.6-xhigh-fast"),
+    });
+    assert.equal(r.serverId, "cursor-grok-4.6-xhigh-fast");
+    assert.equal(r.thinking, false);
+    assert.equal(r.fast, true);
+  });
+
+  it("explicit High Fast id stays High + Fast", () => {
     const r = resolveCursorRunModel({
       model: "grok-4.6-high-fast",
       reasoningEffort: defaultEffortForModel("grok-4.6-high-fast"),
@@ -116,11 +126,16 @@ describe("resolveCursorRunModel — class mapping", () => {
   });
 });
 
-describe("Cursor default grok-4.6-high-fast effort", () => {
-  it("id suffix high is the default, not Grok xhigh", () => {
+describe("Cursor default grok-4.6-xhigh-fast effort", () => {
+  it("id suffix xhigh is the Cursor grok-4.6 default; High Fast stays high", () => {
+    assert.equal(defaultEffortForModel("cursor-grok-4.6-xhigh-fast"), "xhigh");
     assert.equal(defaultEffortForModel("grok-4.6-high-fast"), "high");
     assert.equal(defaultEffortForModel("cursor-grok-4.6-high-fast"), "high");
     assert.equal(defaultEffortForModel("grok-4.6"), "xhigh");
+    assert.equal(
+      resolveReasoningEffort("cursor-grok-4.6-xhigh-fast", undefined),
+      "xhigh",
+    );
     assert.equal(
       resolveReasoningEffort("cursor-grok-4.6-high-fast", undefined),
       "high",
@@ -181,6 +196,19 @@ describe("Fable in the Forge model class", () => {
       [{ role: "user", content: "hi" }],
     );
     assert.equal(req.reasoning_effort, "high");
+  });
+
+  it("buildChatRequest for Cursor grok-4.6 default is xhigh", () => {
+    const req = buildChatRequest(
+      {
+        ...DEFAULT_CONFIG,
+        provider: "cursor",
+        model: "cursor-grok-4.6-xhigh-fast",
+        reasoningEffort: undefined,
+      },
+      [{ role: "user", content: "hi" }],
+    );
+    assert.equal(req.reasoning_effort, "xhigh");
   });
 });
 
@@ -251,11 +279,11 @@ describe("loadConfig Cursor aliases", () => {
     fs.rmSync(tmp, { recursive: true, force: true });
   });
 
-  it("resolves grok-4.6 to the High Fast catalog variant", () => {
+  it("resolves grok-4.6 to the xhigh Fast catalog variant", () => {
     const cfg = loadConfig(
       { provider: "cursor", model: "grok-4.6" },
       tmp,
     );
-    assert.equal(cfg.model, "cursor-grok-4.6-high-fast");
+    assert.equal(cfg.model, "cursor-grok-4.6-xhigh-fast");
   });
 });

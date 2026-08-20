@@ -578,7 +578,7 @@ export function loadConfig(overrides: Partial<ForgeConfig> = {}, cwd = process.c
   }
 
   // Cursor catalog ids are variant strings. Resolve aliases (grok-4.6 →
-  // cursor-grok-4.6-high-fast) before effort/context so suffix defaults apply.
+  // cursor-grok-4.6-xhigh-fast) before effort/context so suffix defaults apply.
   if (isCursorProvider(String(cfg.provider || "")) && cfg.model) {
     const aliased = resolveCursorModelAlias(cfg.model);
     if (aliased) cfg.model = aliased;
