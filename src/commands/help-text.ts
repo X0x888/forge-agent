@@ -65,7 +65,7 @@ Settings
   /provider [name]    Switch provider (sticky)
   /model <name>       Switch model mid-run (sticky)
   /effort [level]     Thinking effort (default = model max)
-  /budget [usd|off]   Session spend cap (estimate USD)
+  /budget [usd|off]   Session spend cap · HIT/none/ok
   /permissions [mode] default | acceptEdits | plan | bypassPermissions | dontAsk
   /notify [on|off]    Desktop alert when a turn ends
   /bell [on|off]      Terminal BEL when a turn ends
@@ -132,7 +132,7 @@ Safety
   /diff               Change-review card · /diff --full for the patch
   /logs               Sandbox / safety event tail
   /doctor             Flags YOLO, sandbox=off, mode 0600, Blocking Stop OFF
-  /budget             Session spend cap (unlimited until you set one)
+  /budget             Session spend cap · HIT Next is /budget off
 
   Project .forge/config.toml cannot set YOLO, sandbox=off, or disable Stop.
 
@@ -166,7 +166,7 @@ Forge slash commands
   /lsp [status|ensure|install|detect|restart]  Language servers (auto-install TS/Python)  [live]
   /context              Context window usage bar  [live]
   /cost                 Token usage + rough cost + budget  [live]
-  /budget [usd|off]     Session spend cap (estimate USD; 0/off = unlimited)  [live]
+  /budget [usd|off]     Session spend cap · HIT/none/ok (estimate USD)  [live]
   /metrics              Local metrics.jsonl + this session counters  [live]
   /stats [days|week]    Usage dashboard (runs/tokens/cost/projects)  [live]
   /todos                Work board (▶ next · ○ pending · ✓ done)  [live]

@@ -171,7 +171,8 @@ describe("/budget slash + live classify", () => {
 
     const set = await handleSlash("/budget 3.5", { session, config, hooks });
     assert.equal(set.handled, true);
-    assert.match(set.output || "", /Budget set to \$3\.5/);
+    assert.match(set.output || "", /budget  ·  ok/);
+    assert.match(set.output || "", /\$3\.50/);
     assert.equal(session.meta.maxCostUsd, 3.5);
     const notices = drainLiveNotices(session.meta.id);
     assert.ok(notices.some((n) => /spend cap to \$3\.5/i.test(n)));

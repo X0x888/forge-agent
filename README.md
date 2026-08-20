@@ -259,6 +259,7 @@ Full contract: [docs/RELIABILITY.md](docs/RELIABILITY.md) · expert checklist: [
 | `/tasks` | Background shell tasks (running / recent) |
 | `/context` | Context window bar |
 | `/cost` | Token usage + rough $ |
+| `/budget [usd\|off]` | Spend cap · HIT Next is `/budget off` |
 | `/metrics` | Local metrics.jsonl + session counters |
 | `/stats [days]` | Usage dashboard (runs/tokens/cost/projects) · CLI: `forge stats` |
 | `/share` | Pasteable session card + resume/export commands (clipboard) |

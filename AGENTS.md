@@ -38,6 +38,7 @@ Binary entry: `src/cli.ts` → `dist/cli.js` (`bin: forge`).
 - `src/harness/handoff-guard.ts` — premature “let me know if…” / “shall I continue?” Stop block (finish doctrine) · advisory Q&A allows soft continue-asks
 - `src/harness/proof-claim-guard.ts` — “tests pass” / bare “Done.” after edits without *successful* verification (`verificationPassed`) Stop block (don't claim, prove) · advisory Q&A softens bare Done./Fixed. closers
 - `src/util/cost-budget.ts` — session spend cap parse/resolve (`/budget`, `--max-cost`, `FORGE_MAX_COST_USD`)
+- `src/tui/budget-card.ts` — `/budget` verdict-first (`HIT` / `ok` / `none`); set/off that leaves not-hit clears `max_cost` lastErr
 - `src/util/production-warnings.ts` — `productionWarningsForRun` for `forge run --json` / CI (safety valves, ULW-without-budget, dirty tree, editsWithoutVerification, lockfile/node_modules)
 - `src/session/compaction.ts` — structured compact preserving mandate/goal/todos
 - `src/session/checkpoint.ts` + `compaction.ts` — store checkpoint (job card + in-flight tail) when session.json is huge; not outbound-80k FullReplace

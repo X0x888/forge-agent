@@ -708,6 +708,16 @@ export {
   runCheckpoint,
 } from "./tui/checkpoint-card.js";
 export {
+  parseBudgetArg,
+  formatBudgetCard,
+  formatBudgetVerdict,
+  budgetNextKeys,
+  budgetKindFromStatus,
+  shouldClearMaxCostLastError,
+  applyBudgetOverride,
+  runBudget,
+} from "./tui/budget-card.js";
+export {
   shouldOfferLoginPicker,
   parseLoginOfferChoice,
   formatPostLoginOfferExit,

@@ -195,7 +195,6 @@ import { parseRuleString } from "../agent/rules.js";
 import {
   costCapStatus,
   formatCostBudgetLine,
-  parseCostUsd,
   resolveMaxCostUsd,
 } from "../util/cost-budget.js";
 import {
@@ -228,6 +227,7 @@ import {
   runCheckpoint,
   stampCheckpoint,
 } from "../tui/checkpoint-card.js";
+import { runBudget } from "../tui/budget-card.js";
 import { tokenizeSimple } from "../agent/shell-parse.js";
 import {
   armUlwCycle,
@@ -3359,78 +3359,19 @@ return {
     }
 
     case "/budget": {
-      const raw = (arg || "").trim();
-      if (!raw || /^(status|show|\?)$/i.test(raw)) {
-        const st = costCapStatus(opts.config, opts.session.meta);
-        const sessionOverride =
-          opts.session.meta.maxCostUsd !== undefined
-            ? `session override=$${opts.session.meta.maxCostUsd}`
-            : "session override=(none — using config/env)";
-        const cfg =
-          typeof opts.config.maxCostUsd === "number" && opts.config.maxCostUsd > 0
-            ? `config max_cost_usd=$${opts.config.maxCostUsd}`
-            : "config max_cost_usd=unlimited";
-        // Orient spend decisions with session work + verify trail.
-        const trail = formatSlashSessionTrail(opts.session.meta);
-        const workLine = trail ? `  ${trail.replace("Session trail: ", "Session: ")}` : "";
-        return {
-          handled: true,
-          output: [
-            formatCostBudgetLine(st),
-            `  ${sessionOverride}`,
-            `  ${cfg}`,
-            workLine,
-            `  Usage: /budget <usd>  ·  /budget off  ·  /budget status`,
-            `  Also:  --max-cost N  ·  FORGE_MAX_COST_USD  ·  max_cost_usd in config.toml`,
-            `  Note:  estimateCostUsd only — not a bill. Cap releases the agent cleanly (hitCostCap).`,
-          ]
-            .filter(Boolean)
-            .join("\n"),
-        };
-      }
-      const parsed = parseCostUsd(raw);
-      if (parsed === null || parsed === undefined) {
-        return {
-          handled: true,
-          output:
-            `Invalid budget "${raw}". Pass a USD amount (e.g. 5, $2.50) or off/0 for unlimited.`,
-        };
-      }
-      if (parsed === 0) {
-        // Explicit unlimited override for this session (shadows config cap).
-        opts.session.meta.maxCostUsd = 0;
-      } else {
-        opts.session.meta.maxCostUsd = parsed;
-      }
-      try {
-        saveSession(opts.session);
-      } catch {
-        /* best-effort */
-      }
-      // Live mid-run: tell the agent the spend valve changed so it can prioritize
-      // verification / wind-down before the cap releases the loop.
-      try {
-        pushLiveNotice(
-          opts.session.meta.id,
-          parsed === 0
-            ? "User cleared the session spend cap (/budget off). Continue normally — no hitCostCap release."
-            : `User set session spend cap to $${parsed} (/budget). Prefer finishing the current wave and verifying before the estimate hits the cap (hitCostCap releases cleanly). Estimate only — not a bill.`,
-        );
-      } catch {
-        /* */
-      }
-      const st = costCapStatus(opts.config, opts.session.meta);
+      const result = runBudget({
+        session: opts.session,
+        config: opts.config,
+        arg,
+        color: Boolean(process.stdout.isTTY),
+        persist: true,
+        notify: true,
+      });
       return {
         handled: true,
-        output: [
-          parsed === 0
-            ? `Budget cleared for this session (unlimited).`
-            : `Budget set to $${parsed} for this session.`,
-          formatCostBudgetLine(st),
-          st.hit
-            ? `Already at/over cap — next turn will release with hitCostCap.`
-            : `Agent releases cleanly when session est. reaches the cap.`,
-        ].join("\n"),
+        output: result.output,
+        failed: result.failed,
+        session: result.session ?? opts.session,
       };
     }
 
@@ -4088,37 +4029,19 @@ const stats = collectUsageStats({
         };
       }
       if (action.kind === "budget") {
-        if (!action.amount) {
-          return {
-            handled: true,
-            output:
-              "Spend cap USD [5 / 20 / off / custom]\n" +
-              "  /setup budget 5\n" +
-              "  /setup budget 20\n" +
-              "  /setup budget off\n" +
-              "  Session-only (same as /budget). Persist via max_cost_usd in ~/.forge/config.toml",
-          };
-        }
-        const parsed = parseCostUsd(action.amount);
-        if (parsed === null || parsed === undefined) {
-          return {
-            handled: true,
-            output: `Invalid budget "${action.amount}". Pass a USD amount (e.g. 5) or off.`,
-          };
-        }
-        opts.session.meta.maxCostUsd = parsed;
-        try {
-          saveSession(opts.session);
-        } catch {
-          /* */
-        }
+        const result = runBudget({
+          session: opts.session,
+          config: opts.config,
+          arg: action.amount || "",
+          color: Boolean(process.stdout.isTTY),
+          persist: true,
+          notify: true,
+        });
         return {
           handled: true,
-          output:
-            parsed === 0
-              ? "Spend cap OFF for this session (unlimited)."
-              : `Spend cap $${parsed} for this session. Persist in ~/.forge/config.toml (max_cost_usd).`,
-          session: opts.session,
+          output: result.output,
+          failed: result.failed,
+          session: result.session ?? opts.session,
         };
       }
       if (action.kind === "init") {

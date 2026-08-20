@@ -3,6 +3,8 @@
 ## Unreleased
 
 ### Changed
+- **`/budget` is the sit-down spend key**: sit-down already showed `budget HIT` + `Next  /budget`. Typing it dumped `FORGE_MAX_COST_USD` / `config.toml` (a lecture). Now opens `budget  ·  HIT` / `ok` / `none`. Designed empty: `none` + `Next  /budget 5`. HIT Next is `/budget off`. One healthy cap: `ok`, no Next. `/budget off` or a raise that leaves the cap not-hit clears `lastError.code=max_cost` so `/retry` can run (a still-HIT set does not). Invalid: `budget  ·  invalid` + `Next  /budget 5`. Live: peek readonly, set/off is control. CLI env/config dumps stay off ›. Job: type the key, unstick the cap.
+
 - **`/checkpoint` is a rewind key**: bare `/checkpoint` opens the card (`checkpoint  ·  none` / `ok`). `/checkpoint snap` takes the snapshot. `/checkpoint restore` rewinds the tree. Designed empty: `none` + `Next  /checkpoint snap`. Error: not a repo / plan / missing sha. Live: peek is readonly, snap/restore are control. Job: type the key, get the tree back.
 
 - **Model fallback is off by default**: a 429/5xx no longer hops grok-4.6 → grok-4.5 → grok-4 (or Cursor `auto` / Composer) in an unattended run. `/fallback on` (or `fallback_models` / `FORGE_FALLBACK_MODELS` / `--fallback-models`) opts in. Every hop must meet **grok-4.5 high**; weaker ids are rejected, not used. Cursor uses wire ids (`cursor-grok-4.5-high`), never Auto. A Cursor-saved chain is unwrapped on xAI/OpenRouter and rebound on `/provider` so a hop cannot send `cursor-grok-*` to the wrong API. Native providers only hop within their own family. Posture / doctor / ULW production warnings no longer treat off as a footgun.
