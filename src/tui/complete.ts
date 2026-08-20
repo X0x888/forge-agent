@@ -554,7 +554,7 @@ export const SLASH_HINTS: Record<string, string> = {
   "/goal": "Relentless driver",
   "/done": "Wind down goal + ULW",
   "/cycle": "Continue or stop at N+1",
-  "/status": "Full HUD + session",
+  "/status": "HUD + session · problem first",
   "/quit": "Exit",
   "/provider": "Switch provider",
   "/doctor": "Health check",

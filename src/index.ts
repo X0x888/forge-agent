@@ -653,6 +653,13 @@ export {
   porcelainLetter,
 } from "./tui/diff-card.js";
 export {
+  collectStatusIssues,
+  formatStatusVerdict,
+  formatStatusCloser,
+  assembleStatusReport,
+} from "./tui/status-card.js";
+export type { StatusIssue, StatusIssueKind } from "./tui/status-card.js";
+export {
   shouldOfferLoginPicker,
   parseLoginOfferChoice,
   formatPostLoginOfferExit,

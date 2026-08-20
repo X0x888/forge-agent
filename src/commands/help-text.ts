@@ -158,7 +158,7 @@ Forge slash commands
   /max-waves N|off      Cap ULW waves (auto LAST at N); default unlimited  [live]
   /ulw-off              Disarm ULW + cycle driver  [live]
   /hooks [init|reload]  List/scaffold/reload hooks  [live]
-  /status · /hud        Full inline HUD + session details (no second panel)  [live]
+  /status · /hud        HUD + session · problem first (no second panel)  [live]
   /tasks [kill|log id]  Background shell tasks · kill/log subcommands  [live]
   /mcp [status|connect|tools|reload]  MCP servers (search_mcp · call_mcp)  [live]
   /lsp [status|ensure|install|detect|restart]  Language servers (auto-install TS/Python)  [live]

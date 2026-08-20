@@ -2738,12 +2738,14 @@ export async function handleSlash(
         plan: snap.plan,
       });
       let stackLine = "";
+      let checkCommand: string | undefined;
       try {
         const cwd =
           opts.config.workspace ||
           opts.session.meta.cwd ||
           process.cwd();
         const intel = detectProjectIntel(cwd);
+        checkCommand = intel.checkCommands[0];
         if (intel.checkCommands[0] || intel.packageManager) {
           stackLine = chalk.dim(
             `  stack: ${[
@@ -2757,14 +2759,23 @@ export async function handleSlash(
       } catch {
         /* */
       }
+      const { collectStatusIssues, assembleStatusReport } = await import(
+        "../tui/status-card.js"
+      );
       return {
         handled: true,
-        output:
-          hud +
-          "\n" +
-          planLine +
-          detail +
-          (stackLine ? "\n" + stackLine : ""),
+        output: assembleStatusReport({
+          hud,
+          planLine,
+          detail,
+          stackLine,
+          issues: collectStatusIssues({
+            config: opts.config,
+            session: opts.session,
+            checkCommand,
+          }),
+          columns: process.stdout.columns,
+        }),
       };
     }
 
