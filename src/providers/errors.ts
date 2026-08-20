@@ -397,26 +397,142 @@ function summarizeProviderBody(body: string): string {
   return raw.replace(/\s+/g, " ").slice(0, 200);
 }
 
-/** REPL closer after a failed turn — Allow?-style keys, not a tip lecture. */
+/** Default REPL keys when the failure code is unknown. */
 export const PROVIDER_ERROR_RECOVERY =
-  "Error? /retry same prompt · /model to switch · type to continue";
+  "Next  /retry  ·  /model  ·  type to continue";
 
-/** Pack Error? keys onto as few rows as fit; last row keeps a trailing space. */
+export type RunFailureSurface = "repl" | "run";
+
+const RUN_FAILURE_NEXT_MAX = 3;
+
+function normalizeFailureCode(code: string): string {
+  const c = String(code || "").trim();
+  if (c === "http_429") return "rate_limited";
+  if (c === "http_401") return "auth_expired";
+  if (c === "http_403") return "auth_forbidden";
+  if (c === "http_402") return "quota_exhausted";
+  if (c === "http_529") return "provider_overloaded";
+  if (c === "http_408" || c === "http_504") return "timeout";
+  if (c === "http_404") return "not_found";
+  if (c.startsWith("continue_cap")) return "continue_cap";
+  return c;
+}
+
+function retryKey(surface: RunFailureSurface): string {
+  return surface === "run" ? "forge run --continue" : "/retry";
+}
+
+/**
+ * Code-specific Next keys for a dead run — same grammar as `/status`.
+ * Empty code → no closer (clean Stop stays silent).
+ */
+export function runFailureNextKeys(
+  code: string,
+  opts?: { surface?: RunFailureSurface },
+): string[] {
+  const raw = String(code || "").trim();
+  if (!raw) return [];
+  const surface = opts?.surface ?? "repl";
+  const retry = retryKey(surface);
+  const c = normalizeFailureCode(raw);
+  let keys: string[];
+  switch (c) {
+    case "rate_limited":
+      keys = ["wait", "forge accounts switch", retry];
+      break;
+    case "auth_expired":
+    case "auth_forbidden":
+      keys = ["forge login", retry];
+      break;
+    case "quota_exhausted":
+      keys = ["forge accounts switch", "/status"];
+      break;
+    case "context_overflow":
+    case "context_pressure":
+      keys = ["/compact", retry];
+      break;
+    case "provider_overloaded":
+    case "provider_5xx":
+      keys = [retry];
+      break;
+    case "timeout":
+    case "network":
+    case "max_run_ms":
+      keys = [retry, surface === "run" ? "raise FORGE_MAX_RUN_MS" : "forge run --continue"];
+      break;
+    case "not_found":
+    case "model_deprecated":
+    case "unsupported_feature":
+      keys = ["/model", "forge models"];
+      break;
+    case "content_filter":
+      keys = ["rephrase", "/model", retry];
+      break;
+    case "protocol_error":
+      keys = [retry];
+      break;
+    case "empty_response":
+      keys = [retry, "forge doctor"];
+      break;
+    case "empty_run":
+      keys = ["forge doctor", "forge auth"];
+      break;
+    case "aborted":
+      keys = ["type to continue", retry];
+      break;
+    case "org_verification":
+      keys = ["vendor console", "forge accounts switch"];
+      break;
+    case "max_cost":
+      keys = ["/budget"];
+      break;
+    case "max_turns":
+      keys = ["raise max_turns", "forge run --continue"];
+      break;
+    case "doom_loop":
+    case "error_streak":
+      keys = ["change approach", retry];
+      break;
+    case "continue_cap":
+      keys = ["narrow the task", retry];
+      break;
+    default:
+      keys =
+        surface === "run"
+          ? ["forge run --continue", "forge doctor"]
+          : ["/retry", "/model", "type to continue"];
+  }
+  const out: string[] = [];
+  for (const k of keys) {
+    const t = String(k || "").trim();
+    if (t && !out.includes(t)) out.push(t);
+    if (out.length >= RUN_FAILURE_NEXT_MAX) break;
+  }
+  return out;
+}
+
+/** Pack Next (or legacy Error?) keys onto as few rows as fit. */
 export function wrapErrorAskLine(line: string, cols: number): string {
-  const caret = "Error? ";
+  const caret = line.startsWith("Error? ")
+    ? "Error? "
+    : line.startsWith("Next  ")
+      ? "Next  "
+      : "Next  ";
   const body = line.startsWith(caret) ? line.slice(caret.length) : line;
   const tokens = body
-    .split(" · ")
+    .split(/\s*·\s*/)
     .map((t) => t.trim())
     .filter(Boolean);
+  const joiner = caret === "Next  " ? "  ·  " : " · ";
+  const cont = caret === "Next  " ? "  ·  " : "  · ";
   const rows: string[] = [];
   let current = "";
   for (const token of tokens) {
     const candidate = current
-      ? `${current} · ${token}`
+      ? `${current}${joiner}${token}`
       : rows.length === 0
         ? `${caret}${token}`
-        : `  · ${token}`;
+        : `${cont}${token}`;
     if (visibleWidth(candidate) <= cols) {
       current = candidate;
       continue;
@@ -425,13 +541,30 @@ export function wrapErrorAskLine(line: string, cols: number): string {
       rows.push(current);
       current = "";
     }
-    const alone = rows.length === 0 ? `${caret}${token}` : `  · ${token}`;
+    const alone = rows.length === 0 ? `${caret}${token}` : `${cont}${token}`;
     current = visibleWidth(alone) <= cols ? alone : clipAnsi(alone, cols);
   }
   if (current) rows.push(current);
-  if (!rows.length) return `${caret} `;
-  rows[rows.length - 1] = `${rows[rows.length - 1]!.replace(/\s+$/, "")} `;
+  if (!rows.length) return caret.trimEnd();
   return rows.join("\n");
+}
+
+/**
+ * Last line of a dead run — `Next  wait  ·  forge accounts switch`.
+ * Empty code is a designed silent edge (clean Stop / no lastError).
+ */
+export function formatRunFailureCloser(
+  code: string,
+  opts?: { surface?: RunFailureSurface; columns?: number },
+): string {
+  const keys = runFailureNextKeys(code, { surface: opts?.surface });
+  if (!keys.length) return "";
+  const cols = Math.max(
+    24,
+    opts?.columns ??
+      (process.stdout.isTTY ? process.stdout.columns || 80 : 80),
+  );
+  return wrapErrorAskLine(`Next  ${keys.join("  ·  ")}`, cols);
 }
 
 /** Designed failure card for log.error / REPL — not a tip dump. */
@@ -448,8 +581,9 @@ export function formatProviderErrorText(
   const meta = clipAnsi(`  [${code}]`, cols);
   const shown = opts?.repl ? tips.slice(0, 1) : tips.slice(0, 2);
   const tipLines = shown.map((t) => clipAnsi(`  → ${t}`, cols));
-  const keys = opts?.repl
-    ? wrapErrorAskLine(`${PROVIDER_ERROR_RECOVERY} `, cols)
-    : "";
-  return [headline, meta, ...tipLines, keys].filter(Boolean).join("\n");
+  const closer = formatRunFailureCloser(code, {
+    surface: opts?.repl ? "repl" : "run",
+    columns: cols,
+  });
+  return [headline, meta, ...tipLines, closer].filter(Boolean).join("\n");
 }
