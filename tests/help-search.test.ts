@@ -30,6 +30,15 @@ describe("help catalog parse", () => {
     assert.deepEqual(e!.aliases, ["/hud"]);
   });
 
+  it("indexes parenthetical aliases in the blurb", () => {
+    const e = parseHelpCatalogLine(
+      "  /rewind [n]           Undo last n user turns (/undo)",
+    );
+    assert.ok(e);
+    assert.equal(e!.command, "/rewind");
+    assert.ok(e!.aliases.includes("/undo"));
+  });
+
   it("skips non-command rows", () => {
     assert.equal(parseHelpCatalogLine("Getting started"), null);
     assert.equal(parseHelpCatalogLine("  ask_user              Model tool"), null);

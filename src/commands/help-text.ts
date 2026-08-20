@@ -305,6 +305,25 @@ function blobHasHelpWord(blob: string, q: string): boolean {
   return re.test(blob);
 }
 
+function uniqueSlashes(names: string[]): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const n of names) {
+    const s = n.toLowerCase();
+    if (!s.startsWith("/") || seen.has(s)) continue;
+    seen.add(s);
+    out.push(s);
+  }
+  return out;
+}
+
+/** Parenthetical aliases in blurbs: `(/undo)`, `(/again)`, `(/snap)`. */
+function blurbAliasSlashes(blurb: string): string[] {
+  return [...blurb.matchAll(/\(\/([a-z0-9_?-]+)\)/gi)].map(
+    (x) => `/${String(x[1]).toLowerCase()}`,
+  );
+}
+
 /** One catalog row → command + blurb, or null. */
 export function parseHelpCatalogLine(line: string): HelpCatalogEntry | null {
   const t = line.replace(/\s+$/u, "");
@@ -313,9 +332,10 @@ export function parseHelpCatalogLine(line: string): HelpCatalogEntry | null {
   const usage = m[1].replace(/\s+/g, " ").trim();
   const blurb = m[2].replace(/\s+\[live\]\s*$/i, "").trim();
   if (!usage.startsWith("/")) return null;
-  const commands = [...usage.matchAll(/\/[a-z0-9_?-]+/gi)].map((x) =>
+  const fromUsage = [...usage.matchAll(/\/[a-z0-9_?-]+/gi)].map((x) =>
     x[0].toLowerCase(),
   );
+  const commands = uniqueSlashes([...fromUsage, ...blurbAliasSlashes(blurb)]);
   if (!commands.length) return null;
   return {
     command: commands[0]!,
@@ -325,7 +345,7 @@ export function parseHelpCatalogLine(line: string): HelpCatalogEntry | null {
   };
 }
 
-/** Dedupe by primary command; keep the longer blurb. */
+/** Dedupe by primary command; keep the longer blurb. Alias names get their own row. */
 export function parseHelpCatalog(text: string = HELP_ALL): HelpCatalogEntry[] {
   const byCmd = new Map<string, HelpCatalogEntry>();
   for (const line of text.split("\n")) {
@@ -335,7 +355,18 @@ export function parseHelpCatalog(text: string = HELP_ALL): HelpCatalogEntry[] {
     if (!prev || e.blurb.length > prev.blurb.length) {
       byCmd.set(e.command, e);
     } else if (e.aliases.length) {
-      prev.aliases = [...new Set([...prev.aliases, ...e.aliases])];
+      prev.aliases = uniqueSlashes([...prev.aliases, ...e.aliases]);
+    }
+  }
+  for (const e of [...byCmd.values()]) {
+    for (const alias of e.aliases) {
+      if (byCmd.has(alias)) continue;
+      byCmd.set(alias, {
+        command: alias,
+        aliases: uniqueSlashes([e.command, ...e.aliases.filter((a) => a !== alias)]),
+        usage: alias,
+        blurb: e.blurb,
+      });
     }
   }
   return [...byCmd.values()];
@@ -348,6 +379,7 @@ export function scoreHelpEntry(entry: HelpCatalogEntry, q: string): number {
     entry.command.slice(1),
     ...entry.aliases.map((a) => a.replace(/^\//, "")),
   ];
+  if (entry.command.slice(1) === query) return 110;
   if (names.some((n) => n === query)) return 100;
   if (names.some((n) => n.startsWith(query))) return 80;
   if (query.length >= 3 && names.some((n) => n.includes(query))) return 60;
@@ -375,7 +407,15 @@ export function searchHelpCatalog(
     .map((e) => ({ ...e, score: scoreHelpEntry(e, q) }))
     .filter((x) => x.score > 0)
     .sort((a, b) => b.score - a.score || a.command.localeCompare(b.command));
-  if (scored.length) return scored.slice(0, max);
+  const seenBlurb = new Set<string>();
+  const deduped: HelpSearchHit[] = [];
+  for (const h of scored) {
+    const key = h.blurb || h.command;
+    if (seenBlurb.has(key)) continue;
+    seenBlurb.add(key);
+    deduped.push(h);
+  }
+  if (deduped.length) return deduped.slice(0, max);
 
   const names = [
     ...new Set(
@@ -385,10 +425,11 @@ export function searchHelpCatalog(
       ]),
     ),
   ];
+  // Prefix gate on: "nope" must not become /done (d=2, shared vowel).
   const tip = suggestName(q, names, {
-    minLength: 3,
-    minScore: 36,
-    requirePrefix3: false,
+    minLength: 4,
+    minScore: 38,
+    requirePrefix3: true,
   });
   if (!tip) return [];
   const hit = entries.find(
