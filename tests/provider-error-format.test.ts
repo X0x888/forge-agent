@@ -309,4 +309,18 @@ describe("formatProviderError", () => {
     assert.equal(dep.code, "model_deprecated");
     assert.ok(dep.tips.some((t) => /forge models/i.test(t)));
   });
+
+  it("classifies Cursor Connect internal as protocol, not tools/vision", () => {
+    const f = formatProviderError(
+      new ProviderApiError({
+        provider: "cursor",
+        status: 400,
+        body: "internal: Error",
+      }),
+      { model: "cursor-grok-4.6-xhigh-fast" },
+    );
+    assert.equal(f.code, "protocol_error");
+    assert.ok(f.tips.some((t) => /fresh conversation|protocol/i.test(t)));
+    assert.equal(f.tips.some((t) => /tools\/vision/i.test(t)), false);
+  });
 });

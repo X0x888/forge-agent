@@ -212,6 +212,12 @@ export function formatProviderError(
       if (isContextOverflowish(err.body)) {
         code = "context_overflow";
         tips.push("/compact  ·  /new  ·  reduce max_tokens");
+      } else if (isCursorInternalish(bodyBlob)) {
+        code = "protocol_error";
+        tips.push(
+          "Cursor AgentService rejected the Run (protocol). /retry starts a fresh conversation.",
+        );
+        tips.push("/retry  ·  /model <other>  ·  forge doctor");
       } else if (isUnsupportedFeatureish(err.body)) {
         code = "unsupported_feature";
         tips.push("/model <other> that supports tools/vision/params");
@@ -358,6 +364,11 @@ function isEmptyResponseish(text: string): boolean {
   return /empty response|empty completion|no completion choices|stream ended without choices|no choices returned|choices array is empty|missing completion|blank completion|zero choices|received empty/i.test(
     text || "",
   );
+}
+
+/** Connect-RPC `internal` on AgentService — protocol, not a model capability miss. */
+function isCursorInternalish(text: string): boolean {
+  return /\binternal\s*:\s*error\b|^internal\b/i.test(text || "");
 }
 
 function isUnsupportedFeatureish(text: string): boolean {

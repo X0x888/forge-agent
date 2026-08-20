@@ -103,6 +103,48 @@ export interface CursorConversation {
   trailingToolResults: Array<{ toolCallId: string; content: string }>;
 }
 
+/** Real user action when the held-open Run is gone and history already has the last user. */
+export const CURSOR_CONTINUE_PROMPT =
+  "Continue the interrupted turn from the conversation history above. Do not repeat completed work.";
+
+/**
+ * Keep the AgentService Run open after we yielded tool_calls. turn_ended /
+ * Connect EOF with pending MCP execs must not close it — the next chat()
+ * writes results on the same stream. Closing forced a new Run with a fake
+ * "(continue)" user turn, which is Connect `internal`.
+ */
+export function shouldCloseCursorLive(opts: {
+  close: boolean;
+  pendingCount: number;
+}): boolean {
+  return opts.close && opts.pendingCount === 0;
+}
+
+/**
+ * When the live HTTP/2 Run is gone, fold trailing tool results into history
+ * and use a real continue prompt — never a placeholder user message.
+ */
+export function applyCursorReconnectAction(
+  parsed: CursorConversation,
+): CursorConversation {
+  if (!parsed.trailingToolResults.length) return parsed;
+  const last = parsed.turns[parsed.turns.length - 1];
+  if (last) {
+    last.assistantText = foldToolResults(
+      last.assistantText,
+      parsed.trailingToolResults,
+    );
+  } else {
+    const extra = foldToolResults("", parsed.trailingToolResults);
+    parsed.userText = parsed.userText
+      ? `${parsed.userText}\n\n${extra}`
+      : extra;
+  }
+  parsed.trailingToolResults = [];
+  if (!parsed.userText.trim()) parsed.userText = CURSOR_CONTINUE_PROMPT;
+  return parsed;
+}
+
 function messageText(msg: ChatRequest["messages"][number]): string {
   if (typeof msg.content === "string") return msg.content;
   if (Array.isArray(msg.content)) {
@@ -412,12 +454,15 @@ function buildRunPayload(req: ChatRequest, parsed: CursorConversation): {
       turns,
     }),
     action: encodeConversationActionUser(
-      parsed.userText || "(continue)",
+      parsed.userText || CURSOR_CONTINUE_PROMPT,
       randomUUID(),
       requestContext,
     ),
     modelId: model.serverId,
-    conversationId: req.conversationId || randomUUID(),
+    // New HTTP/2 Run → new conversation_id. Reusing a dead Run's id (Forge
+    // session id) after the stream dropped is Connect `internal`. Tool
+    // continuations stay on the live stream and never rebuild this payload.
+    conversationId: randomUUID(),
     mcpTools: mcp.length ? encodeMcpTools(mcp) : undefined,
     thinking: model.thinking,
     maxMode: model.maxMode,
@@ -536,8 +581,13 @@ export class CursorProvider implements LLMProvider {
     const key = sessionKeyForRequest(req);
     const parsed = prepareCursorConversation(req.messages);
     const existing = liveSessions.get(key);
+    const streamDead =
+      !!existing &&
+      (existing.streamCut ||
+        existing.stream.closed ||
+        existing.stream.destroyed);
 
-    if (existing && parsed.trailingToolResults.length) {
+    if (existing && !streamDead && parsed.trailingToolResults.length) {
       return this.resumeWithToolResults(
         key,
         existing,
@@ -550,16 +600,7 @@ export class CursorProvider implements LLMProvider {
       );
     }
     if (existing) closeLive(key);
-    if (parsed.trailingToolResults.length) {
-      const last = parsed.turns[parsed.turns.length - 1];
-      if (last) {
-        last.assistantText = foldToolResults(
-          last.assistantText,
-          parsed.trailingToolResults,
-        );
-      }
-      if (!parsed.userText.trim()) parsed.userText = "(continue)";
-    }
+    applyCursorReconnectAction(parsed);
 
     const payload = buildRunPayload(req, parsed);
     return this.openAndRead(
@@ -713,7 +754,9 @@ export class CursorProvider implements LLMProvider {
       this.consumeBuffer(key, live);
     });
 
-    live.stream.on("end", () => this.finishTurn(key, live, { close: true }));
+    live.stream.on("end", () =>
+      this.finishTurn(key, live, { close: true, force: true }),
+    );
     live.stream.on("error", (err) => this.failTurn(key, live, err));
     live.session.on("error", (err) => this.failTurn(key, live, err));
   }
@@ -950,17 +993,23 @@ export class CursorProvider implements LLMProvider {
   private finishTurn(
     key: string,
     live: LiveSession,
-    opts: { close: boolean },
+    opts: { close: boolean; force?: boolean },
   ): void {
     const turn = live.turn;
+    const closeNow =
+      opts.force ||
+      shouldCloseCursorLive({
+        close: opts.close,
+        pendingCount: live.pending.length,
+      });
     if (!turn || turn.settled) {
-      if (opts.close) closeLive(key);
+      if (closeNow) closeLive(key);
       return;
     }
     turn.settled = true;
     turn.wall.dispose();
     if (live.pending.length) turn.finishReason = "tool_calls";
-    if (opts.close || !live.pending.length) closeLive(key);
+    if (closeNow) closeLive(key);
     turn.resolve({
       id: `cursor-${randomUUID()}`,
       model: turn.req.model,

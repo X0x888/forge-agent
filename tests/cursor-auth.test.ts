@@ -23,7 +23,10 @@ import { createProvider } from "../src/providers/factory.js";
 import { supportsOAuth, getOAuthProfile } from "../src/auth/login.js";
 import {
   CursorProvider,
+  applyCursorReconnectAction,
+  CURSOR_CONTINUE_PROMPT,
   prepareCursorConversation,
+  shouldCloseCursorLive,
 } from "../src/providers/cursor.js";
 import {
   encodeProtobufValue,
@@ -437,6 +440,37 @@ describe("cursor conversation replay", () => {
     assert.equal(got.trailingToolResults.length, 0);
     assert.match(got.turns[0]!.assistantText, /Tool result c1/);
     assert.match(got.turns[0]!.assistantText, /done/);
+  });
+
+  it("reconnect folds trailing tools and uses a real continue prompt", () => {
+    const got = applyCursorReconnectAction(
+      prepareCursorConversation([
+        { role: "user", content: "edit it" },
+        {
+          role: "assistant",
+          content: "calling",
+          tool_calls: [
+            {
+              id: "c1",
+              type: "function",
+              function: { name: "list_dir", arguments: "{\"path\":\".\"}" },
+            },
+          ],
+        },
+        { role: "tool", tool_call_id: "c1", content: "src/" },
+      ]),
+    );
+    assert.equal(got.trailingToolResults.length, 0);
+    assert.equal(got.userText, CURSOR_CONTINUE_PROMPT);
+    assert.match(got.turns[0]!.assistantText, /Tool result c1/);
+    assert.match(got.turns[0]!.assistantText, /src\//);
+    assert.equal(got.userText.includes("(continue)"), false);
+  });
+
+  it("keeps the live Run open when MCP results are still pending", () => {
+    assert.equal(shouldCloseCursorLive({ close: true, pendingCount: 1 }), false);
+    assert.equal(shouldCloseCursorLive({ close: true, pendingCount: 0 }), true);
+    assert.equal(shouldCloseCursorLive({ close: false, pendingCount: 0 }), false);
   });
 });
 
