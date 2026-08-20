@@ -301,6 +301,16 @@ test("run stop reason: cost / turns / continue-cap / empty / abort", () => {
     }) ?? "",
     /cost cap/,
   );
+  // Provider lastError used to be silent — now a Next closer
+  assert.match(
+    formatRunStopReason({ lastErrorCode: "rate_limited" }) ?? "",
+    /Next  wait/,
+  );
+  assert.match(
+    formatRunStopReason({ lastErrorCode: "auth_expired" }) ?? "",
+    /Next  forge login/,
+  );
+  assert.equal(formatRunStopReason({ lastErrorCode: "" }), null);
 });
 
 test("run stop reason: forge run prints the shared closer after empty_run stamp", () => {

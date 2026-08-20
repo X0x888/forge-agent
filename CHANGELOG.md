@@ -3,6 +3,7 @@
 ## Unreleased
 
 ### Added
+- **Run-failure closer**: a dead run ends on a code-specific `Next` line (same grammar as `/status`), not a generic `Error?` lecture. REPL and `forge run` cards both get it; `formatRunStopReason` now speaks for `rate_limited` / auth / quota / overflow / network / doom-loop instead of going silent. `forge run --json` fail payloads include `next`. Clean Stop stays quiet. Job: a run died — see the next move.
 - **Session picker is job-first**: `/sessions`, `/resume`, and `forge sessions list` open on the title (the job), not hex id + age. A `lastError` row opens on the problem (`rate_limited xai HTTP 429`) in red — you see what broke without decoding `ERR`. Untitled still leads with dim `(untitled)`. Empty lists unchanged. Job: pick the conversation you were in, or the one that broke.
 - **`/status` is verdict-first**: the card opens on the problem (`lastErr` / budget HIT / ctx HARD / stale or missing verify / served-model drift) plus a `Next` closer, then the HUD + session dump. Nothing wrong → designed empty `status  ·  ok` (not another ✓-preview). Job: see what's wrong without scanning identity first.
 - **`/help <word>` searches the catalog**: `/help budget` / `/help spend` / `/help undo` list matching commands instead of `Unknown /help topic`. No matches get a designed empty state (`Try a command word · /help · /help all`). Topic names still route; a close topic typo (`setings`) opens that topic. Not another ✓-preview.

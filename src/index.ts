@@ -722,8 +722,11 @@ export {
   isProviderApiError,
   formatProviderError,
   formatProviderErrorText,
+  formatRunFailureCloser,
+  runFailureNextKeys,
   parseRetryAfterMs,
 } from "./providers/errors.js";
+export type { RunFailureSurface } from "./providers/errors.js";
 export {
   completeSlash,
   suggestSlashCommands,

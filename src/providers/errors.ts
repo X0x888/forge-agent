@@ -457,8 +457,10 @@ export function runFailureNextKeys(
       break;
     case "timeout":
     case "network":
+      keys = [retry, surface === "run" ? "check network" : "forge run --continue"];
+      break;
     case "max_run_ms":
-      keys = [retry, surface === "run" ? "raise FORGE_MAX_RUN_MS" : "forge run --continue"];
+      keys = [retry, "raise FORGE_MAX_RUN_MS"];
       break;
     case "not_found":
     case "model_deprecated":

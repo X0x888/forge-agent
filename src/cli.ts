@@ -6273,13 +6273,17 @@ async function runHeadless(opts: {
     releaseLock();
     const message = (err as Error).message || String(err);
     let recovery: { code: string; tips: string[]; message: string } | undefined;
+    let nextKeys: string[] | undefined;
     try {
-      const { formatProviderError } = await import("./providers/errors.js");
+      const { formatProviderError, runFailureNextKeys } = await import(
+        "./providers/errors.js"
+      );
       const fmt = formatProviderError(err, {
         provider: String(opts.config.provider),
         model: opts.config.model,
       });
       recovery = fmt;
+      nextKeys = runFailureNextKeys(fmt.code, { surface: "run" });
     } catch {
       /* */
     }
@@ -6303,6 +6307,7 @@ async function runHeadless(opts: {
             "forge run --continue  ·  /retry",
           ],
         };
+        nextKeys = ["forge run --continue", "raise FORGE_MAX_RUN_MS"];
       } catch {
         /* */
       }
@@ -6344,6 +6349,7 @@ async function runHeadless(opts: {
         recovery: recovery
           ? { code: recovery.code, tips: recovery.tips }
           : undefined,
+        next: nextKeys,
         lastError: opts.session.meta.lastError
           ? {
               at: opts.session.meta.lastError.at,

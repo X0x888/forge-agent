@@ -26,16 +26,16 @@ describe("formatProviderError", () => {
     assert.match(text, /✖ /);
     assert.match(text, /\[auth_expired\]/);
     assert.match(text, /→/);
-    assert.doesNotMatch(text, /\/retry/);
+    assert.match(text, /Next  forge login/);
     assert.doesNotMatch(text, /Error\?/);
     const repl = formatProviderErrorText(err, { model: "grok-4.5", repl: true });
     assert.match(repl, /^✖ /);
-    assert.match(repl, /Error\? \/retry same prompt/);
-    assert.match(repl, /\/model to switch/);
+    assert.match(repl, /Next  forge login/);
+    assert.match(repl, /\/retry/);
     assert.equal([...repl.matchAll(/→/g)].length, 1, "REPL card is one tip, not a lecture");
   });
 
-  it("Error? keys wrap at · on a narrow TTY", () => {
+  it("Next keys wrap at · on a narrow TTY", () => {
     const err = new ProviderApiError({
       provider: "xai",
       status: 429,
@@ -43,9 +43,10 @@ describe("formatProviderError", () => {
       retryAfterMs: 15_000,
     });
     const repl = formatProviderErrorText(err, { repl: true, columns: 28 });
-    assert.match(repl, /Error\?/);
-    assert.match(repl, /\n  · /);
+    assert.match(repl, /Next  /);
+    assert.match(repl, /\n  ·  /);
     assert.doesNotMatch(repl, /bck-i-search/);
+    assert.doesNotMatch(repl, /Error\?/);
   });
 
   it("formats 429 with Retry-After and account switch tips", () => {
