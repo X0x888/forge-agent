@@ -74,6 +74,7 @@ import {
 } from "../config/reasoning.js";
 import { isGrokLineageModel } from "../config/grok-model.js";
 import {
+  cursorVariantId,
   parseCursorModelId,
   resolveCursorModelAlias,
 } from "../config/cursor-model.js";
@@ -1162,6 +1163,13 @@ export async function handleProviderSlash(
     nextModel = last;
   } else if (def) {
     nextModel = def;
+  }
+
+  if (isCursorProvider(nextProvider)) {
+    const aliased = resolveCursorModelAlias(nextModel);
+    if (aliased) nextModel = aliased;
+    const tagged = parseCursorModelId(nextModel).effort;
+    if (tagged) opts.config.reasoningEffort = tagged;
   }
 
   opts.config.provider = nextProvider;
@@ -3752,8 +3760,25 @@ const stats = collectUsageStats({
       }
       const level = resolved as ReasoningEffort;
       opts.config.reasoningEffort = level;
+      let modelOut = model;
+      if (isCursorProvider(opts.config.provider)) {
+        const next = cursorVariantId(parseCursorModelId(model), level);
+        if (next !== model) {
+          opts.config.model = next;
+          opts.session.meta.model = next;
+          modelOut = next;
+        }
+      }
       try {
-        savePreferences({ reasoningEffort: level });
+        savePreferences(
+          isCursorProvider(opts.config.provider)
+            ? {
+                reasoningEffort: level,
+                model: modelOut,
+                modelProvider: opts.config.provider,
+              }
+            : { reasoningEffort: level },
+        );
       } catch {
         /* never fail slash on prefs I/O */
       }
@@ -3768,7 +3793,7 @@ const stats = collectUsageStats({
       }
       return {
         handled: true,
-        output: `Reasoning effort: ${level} for ${model} (saved for future sessions)`,
+        output: `Reasoning effort: ${level} for ${modelOut} (saved for future sessions)`,
       };
     }
 

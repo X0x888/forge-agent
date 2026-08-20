@@ -27,7 +27,7 @@ import {
 } from "../util/mode-aliases.js";
 import { coerceBool } from "../util/bool.js";
 import { parseFallbackModels } from "./model-fallback.js";
-import { resolveCursorModelAlias } from "./cursor-model.js";
+import { reconcileCursorModelEffort } from "./cursor-model.js";
 import { isCursorProvider } from "../auth/cursor.js";
 
 const ENV_PERMISSION_MODES = new Set<PermissionMode>([
@@ -577,13 +577,6 @@ export function loadConfig(overrides: Partial<ForgeConfig> = {}, cwd = process.c
     cfg.reasoningEffort = e ?? undefined;
   }
 
-  // Cursor catalog ids are variant strings. Resolve aliases (grok-4.6 →
-  // cursor-grok-4.6-xhigh-fast) before effort/context so suffix defaults apply.
-  if (isCursorProvider(String(cfg.provider || "")) && cfg.model) {
-    const aliased = resolveCursorModelAlias(cfg.model);
-    if (aliased) cfg.model = aliased;
-  }
-
   // Effort: default is each model's default (family max, or a Cursor variant
   // suffix) resolved at request time when reasoningEffort is undefined.
   // Explicit CLI/env/toml keeps a pin; when the user only switched
@@ -598,6 +591,20 @@ export function loadConfig(overrides: Partial<ForgeConfig> = {}, cwd = process.c
       process.env.FORGE_REASONING_EFFORT?.trim() ||
         process.env.FORGE_EFFORT?.trim(),
     );
+
+  // Cursor catalog ids are variant strings. Resolve aliases (grok-4.6 →
+  // cursor-grok-4.6-xhigh-fast) and drop a leftover global effort pin that
+  // disagrees with the suffix (`xhigh-fast ·high` was sending High Fast).
+  if (isCursorProvider(String(cfg.provider || "")) && cfg.model) {
+    const aligned = reconcileCursorModelEffort({
+      model: cfg.model,
+      reasoningEffort: cfg.reasoningEffort,
+      effortExplicit,
+    });
+    cfg.model = aligned.model;
+    cfg.reasoningEffort = aligned.reasoningEffort;
+  }
+
   if (!effortExplicit && modelExplicit) {
     cfg.reasoningEffort = undefined;
   } else if (cfg.reasoningEffort) {

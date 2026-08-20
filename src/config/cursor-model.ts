@@ -132,6 +132,45 @@ export function parseCursorModelId(raw: string): CursorModelId {
 }
 
 /**
+ * Cursor catalog ids encode effort (`-xhigh-fast`). A leftover global
+ * `/effort` pin must not sit on a different variant — the HUD would show
+ * `cursor-grok-4.6-xhigh-fast ·high` while the wire overlays to high-fast.
+ *
+ * Explicit overlay (CLI `--effort` / config file) rewrites the id to match.
+ * Otherwise the suffix wins and the pin is dropped.
+ */
+export function reconcileCursorModelEffort(opts: {
+  model: string;
+  reasoningEffort?: ReasoningEffort;
+  effortExplicit: boolean;
+}): { model: string; reasoningEffort?: ReasoningEffort } {
+  const aliased = resolveCursorModelAlias(opts.model) || opts.model;
+  const parsed = parseCursorModelId(aliased);
+  const tagged = parsed.effort;
+  if (!tagged) {
+    return { model: aliased, reasoningEffort: opts.reasoningEffort };
+  }
+  if (
+    opts.effortExplicit &&
+    opts.reasoningEffort &&
+    opts.reasoningEffort !== tagged
+  ) {
+    return {
+      model: cursorVariantId(parsed, opts.reasoningEffort),
+      reasoningEffort: opts.reasoningEffort,
+    };
+  }
+  if (
+    !opts.effortExplicit &&
+    opts.reasoningEffort &&
+    opts.reasoningEffort !== tagged
+  ) {
+    return { model: aliased, reasoningEffort: undefined };
+  }
+  return { model: aliased, reasoningEffort: opts.reasoningEffort };
+}
+
+/**
  * Map a Forge ChatRequest onto Cursor AgentService.
  *
  * Live GetUsableModels ids **are** variant strings

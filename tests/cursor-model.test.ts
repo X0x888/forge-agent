@@ -8,9 +8,14 @@ import { DEFAULT_CONFIG } from "../src/config/types.js";
 import { loadConfig } from "../src/config/load.js";
 import {
   parseCursorModelId,
+  reconcileCursorModelEffort,
   resolveCursorModelAlias,
   resolveCursorRunModel,
 } from "../src/config/cursor-model.js";
+import { savePreferences } from "../src/config/preferences.js";
+import { handleSlash } from "../src/commands/slash.js";
+import { createSession } from "../src/session/session.js";
+import { HookRunner } from "../src/harness/hooks.js";
 import {
   defaultEffortForModel,
   modelSupportsReasoningEffort,
@@ -287,5 +292,104 @@ describe("loadConfig Cursor aliases", () => {
       tmp,
     );
     assert.equal(cfg.model, "cursor-grok-4.6-xhigh-fast");
+  });
+
+  it("drops a leftover high pin on the xhigh-fast default", () => {
+    savePreferences({ provider: "cursor", reasoningEffort: "high" });
+    const cfg = loadConfig({}, tmp);
+    assert.equal(cfg.provider, "cursor");
+    assert.equal(cfg.model, "cursor-grok-4.6-xhigh-fast");
+    assert.equal(cfg.reasoningEffort, undefined);
+    assert.equal(
+      resolveReasoningEffort(cfg.model, cfg.reasoningEffort),
+      "xhigh",
+    );
+  });
+
+  it("keeps a matching high pin on High Fast", () => {
+    savePreferences({
+      provider: "cursor",
+      model: "cursor-grok-4.6-high-fast",
+      reasoningEffort: "high",
+    });
+    const cfg = loadConfig({}, tmp);
+    assert.equal(cfg.model, "cursor-grok-4.6-high-fast");
+    assert.equal(cfg.reasoningEffort, "high");
+  });
+
+  it("CLI --effort high rewrites the default xhigh-fast id", () => {
+    const cfg = loadConfig(
+      { provider: "cursor", reasoningEffort: "high" },
+      tmp,
+    );
+    assert.equal(cfg.model, "cursor-grok-4.6-high-fast");
+    assert.equal(cfg.reasoningEffort, "high");
+  });
+});
+
+describe("reconcileCursorModelEffort", () => {
+  it("alias + leftover pin: suffix wins", () => {
+    const r = reconcileCursorModelEffort({
+      model: "grok-4.6",
+      reasoningEffort: "high",
+      effortExplicit: false,
+    });
+    assert.equal(r.model, "cursor-grok-4.6-xhigh-fast");
+    assert.equal(r.reasoningEffort, undefined);
+  });
+
+  it("explicit overlay rewrites the variant id", () => {
+    const r = reconcileCursorModelEffort({
+      model: "cursor-grok-4.6-xhigh-fast",
+      reasoningEffort: "high",
+      effortExplicit: true,
+    });
+    assert.equal(r.model, "cursor-grok-4.6-high-fast");
+    assert.equal(r.reasoningEffort, "high");
+  });
+
+  it("matching pin stays", () => {
+    const r = reconcileCursorModelEffort({
+      model: "cursor-grok-4.6-xhigh-fast",
+      reasoningEffort: "xhigh",
+      effortExplicit: false,
+    });
+    assert.equal(r.model, "cursor-grok-4.6-xhigh-fast");
+    assert.equal(r.reasoningEffort, "xhigh");
+  });
+});
+
+describe("Cursor /effort rewrites the variant id", () => {
+  it("/effort high on xhigh-fast becomes high-fast", async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "forge-cursor-effort-"));
+    const prevHome = process.env.FORGE_HOME;
+    process.env.FORGE_HOME = home;
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-ws-"));
+    try {
+      const config = {
+        ...DEFAULT_CONFIG,
+        provider: "cursor" as const,
+        model: "cursor-grok-4.6-xhigh-fast",
+        reasoningEffort: "xhigh" as const,
+        workspace: tmp,
+      };
+      const session = createSession({
+        cwd: tmp,
+        provider: "cursor",
+        model: config.model,
+      });
+      const hooks = new HookRunner(config, tmp);
+      const r = await handleSlash("/effort high", { session, config, hooks });
+      assert.equal(r.handled, true);
+      assert.equal(config.reasoningEffort, "high");
+      assert.equal(config.model, "cursor-grok-4.6-high-fast");
+      assert.equal(session.meta.model, "cursor-grok-4.6-high-fast");
+      assert.match(r.output || "", /high-fast/);
+    } finally {
+      if (prevHome === undefined) delete process.env.FORGE_HOME;
+      else process.env.FORGE_HOME = prevHome;
+      fs.rmSync(home, { recursive: true, force: true });
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
   });
 });
