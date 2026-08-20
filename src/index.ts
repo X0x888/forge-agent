@@ -700,6 +700,14 @@ export {
   runCommit,
 } from "./tui/commit-card.js";
 export {
+  parseCheckpointArg,
+  formatCheckpointCard,
+  formatCheckpointVerdict,
+  resolveCheckpointSha,
+  stampCheckpoint,
+  runCheckpoint,
+} from "./tui/checkpoint-card.js";
+export {
   shouldOfferLoginPicker,
   parseLoginOfferChoice,
   formatPostLoginOfferExit,

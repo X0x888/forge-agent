@@ -188,6 +188,7 @@ export function isDestructiveGitCommand(command: string): boolean {
 function maybeAutoCheckpointBeforeDestructiveGit(
   command: string,
   workspace: string,
+  session?: ToolContext["session"],
 ): string {
   const off = (process.env.FORGE_GIT_AUTO_CHECKPOINT || "1").trim().toLowerCase();
   if (off === "0" || off === "false" || off === "off" || off === "no") return "";
@@ -195,10 +196,14 @@ function maybeAutoCheckpointBeforeDestructiveGit(
   try {
     const snap = createSafetyCheckpoint(workspace, { label: "pre-destructive-git" });
     if (snap.ok && snap.sha) {
+      if (session) {
+        session.meta.lastCheckpoint = snap.sha;
+        session.meta.lastCheckpointAt = new Date().toISOString();
+      }
       return (
         `[forge auto-checkpoint before destructive git: ${snap.sha}` +
         (snap.ref ? ` · ${snap.ref}` : "") +
-        ` · restore: git stash apply ${snap.sha}]\n`
+        ` · restore: /checkpoint restore]\n`
       );
     }
     if (snap.clean) return "";
@@ -293,6 +298,7 @@ export async function toolBash(
   const autoCpNote = maybeAutoCheckpointBeforeDestructiveGit(
       command,
       ctx.workspace || process.cwd(),
+      ctx.session,
     );
   const started = await startBackgroundTask({
       command,
@@ -329,6 +335,7 @@ export async function toolBash(
   const autoCpNoteFg = maybeAutoCheckpointBeforeDestructiveGit(
     command,
     ctx.workspace || process.cwd(),
+    ctx.session,
   );
   try {
     const { execCommandSandboxed } = await import("./sandbox-exec.js");

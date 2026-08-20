@@ -36,6 +36,7 @@ Daily
   /permissions        Modes + saved always-allows
   /budget /notify     Spend cap · desktop alert
   /undo /commit       Rewind last turn · commit card · /commit do (never push)
+  /checkpoint         Safety snapshot · /checkpoint restore rewinds the tree
 
 Unattended
 ──────────
@@ -115,7 +116,7 @@ Sessions
   /export             Markdown or JSON (mode 0600)
   /fork               Branch into a new session id
   /undo  /retry       Rewind last turn · 429 → /accounts not another burn
-  /checkpoint         Safety snapshot (/snap)
+  /checkpoint         Safety snapshot · restore rewinds (/snap)
 
   CLI: forge sessions list --cwd  ·  -q  ·  prune --keep 50
 `.trim();
@@ -185,7 +186,7 @@ Forge slash commands
   /fork-and-compact [prompt]  Fork, compact the fork, optional continue (Warp-style)
   /init [focus]         Guided AGENTS.md setup / improve (OpenCode-style)
   /review [target]      Code review: uncommitted|staged|<commit>|<branch>|<pr#>
-  /checkpoint [restore] Safety snapshot (/snap)
+  /checkpoint [snap|restore]  Safety snapshot · restore rewinds, never git stash apply (/snap)
   /commit [staged] [do]  Card from the dirty tree; do creates the commit (no push, no model)
                         /commit draft still starts a model message. ULW auto-commits on wave close (FORGE_ULW_AUTO_COMMIT=0 off)
   /rewind [n]           Undo last n user turns + restore journaled files (/undo)

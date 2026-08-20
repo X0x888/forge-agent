@@ -224,9 +224,10 @@ import path from "node:path";
 import { displayRelPath } from "../agent/tools/path-util.js";
 import { execFileSync } from "node:child_process";
 import {
-  applySafetyCheckpoint,
-  createSafetyCheckpoint,
-} from "../util/git-checkpoint.js";
+  parseCheckpointArg,
+  runCheckpoint,
+  stampCheckpoint,
+} from "../tui/checkpoint-card.js";
 import { tokenizeSimple } from "../agent/shell-parse.js";
 import {
   armUlwCycle,
@@ -504,9 +505,9 @@ export function classifyLiveSlash(line: string): LiveSlashKind {
     return "control";
   }
   if (cmd === "/checkpoint" || cmd === "/snap") {
-    const rest = line.trim().slice(cmd.length).trim().toLowerCase();
-    const verb = rest.split(/\s+/)[0] || "";
-    if (verb === "status" || verb === "list" || verb === "ls") return "readonly";
+    const rest = line.trim().slice(cmd.length).trim();
+    const parsed = parseCheckpointArg(rest);
+    if (parsed.verb === "peek" || parsed.verb === "help") return "readonly";
     return "control";
   }
   if (cmd === "/commit") {
@@ -790,8 +791,8 @@ export function completeSlash(
     if (argPartial.includes(" ")) return [];
     const ARG_TABLE: Record<string, string[]> = {
       "/format": ["on", "off", "status", "enable", "disable"],
-      "/checkpoint": ["status", "list", "restore", "apply"],
-      "/snap": ["status", "list", "restore", "apply"],
+      "/checkpoint": ["status", "list", "snap", "create", "restore", "apply"],
+      "/snap": ["status", "list", "snap", "create", "restore", "apply"],
       "/memory": ["list", "project", "add", "seed", "clear"],
       "/hooks": ["init", "reload", "list", "scaffold"],
       "/improve": [],
@@ -2095,6 +2096,9 @@ export async function handleSlash(
         editCount: opts.session.meta.editCount,
         cwd: opts.config.workspace || opts.session.meta.cwd || process.cwd(),
       });
+      if (state.checkpointSha) {
+        stampCheckpoint(opts.session, state.checkpointSha, false);
+      }
       try {
         clearSoftTodoGateOnWindDown(opts.session.meta.id);
       } catch {
@@ -2145,6 +2149,9 @@ export async function handleSlash(
         editCount: opts.session.meta.editCount,
         cwd: opts.config.workspace || opts.session.meta.cwd || process.cwd(),
       });
+      if (state.checkpointSha) {
+        stampCheckpoint(opts.session, state.checkpointSha, false);
+      }
       // Fresh driver: drop leftover soft TodoGate once-blocks from prior work.
       try {
         clearSoftTodoGateOnWindDown(opts.session.meta.id);
@@ -5057,92 +5064,18 @@ const result = rewindSessionDetailed(opts.session, n);
 
     case "/checkpoint":
     case "/snap": {
-      const cwd =
-        opts.config.workspace || opts.session.meta.cwd || process.cwd();
-      const sub = (arg || "").trim();
-      const tokens = sub ? sub.split(/\s+/).filter(Boolean) : [];
-      const head = (tokens[0] || "").toLowerCase();
-      if (head === "status" || head === "list" || head === "ls") {
-        const lines: string[] = [
-          "Safety checkpoints (git stash create — non-mutating):",
-        ];
-        const last = opts.session.meta.lastCheckpoint;
-        if (last) {
-          lines.push(`  last: ${last}`);
-          lines.push(`  restore: git stash apply ${last}`);
-        } else {
-          lines.push("  (no checkpoint this session yet)");
-        }
-        lines.push(
-          "  /checkpoint           create snapshot (working tree untouched)",
-          "  /checkpoint restore   apply last session checkpoint",
-        );
-        return {
-          handled: true,
-          output: lines.join("\n"),
-          session: opts.session,
-        };
-      }
-      if (head === "restore" || head === "apply" || head === "pop") {
-        if (opts.config.permissionMode === "plan") {
-          return {
-            handled: true,
-            output: "Plan mode cannot restore checkpoints. `exit_plan_mode` or `/build` first.",
-          };
-        }
-        const sha = tokens[1] || opts.session.meta.lastCheckpoint || "";
-        if (!sha) {
-          return {
-            handled: true,
-            output: "No checkpoint sha. Create one with `/checkpoint`.",
-          };
-        }
-        const r = applySafetyCheckpoint(cwd, sha);
-        if (!r.ok) {
-          return {
-            handled: true,
-            output: `Checkpoint restore failed: ${r.detail || "unknown"}`,
-          };
-        }
-        return {
-          handled: true,
-          output: `Applied checkpoint ${sha.slice(0, 12)}…\nReview with /diff --full.`,
-          session: opts.session,
-        };
-      }
-      const snap = createSafetyCheckpoint(cwd, {
-        label: opts.session.meta.id.slice(0, 12),
+      const result = runCheckpoint({
+        session: opts.session,
+        config: opts.config,
+        arg,
+        color: Boolean(process.stdout.isTTY),
+        persist: true,
       });
-      if (!snap.ok) {
-        return {
-          handled: true,
-          output: `Checkpoint failed: ${snap.detail || "unknown"}`,
-        };
-      }
-      if (snap.clean || !snap.sha) {
-        return {
-          handled: true,
-          output: snap.detail || "Working tree clean — nothing to checkpoint.",
-        };
-      }
-      opts.session.meta.lastCheckpoint = snap.sha;
-      opts.session.meta.lastCheckpointAt = new Date().toISOString();
-      try {
-        saveSession(opts.session);
-      } catch {
-        /* */
-      }
       return {
         handled: true,
-        output: [
-          `Checkpoint created: ${snap.sha}`,
-          `  files: ~${snap.dirtyPaths ?? "?"}  ·  working tree unchanged`,
-          snap.ref ? `  ref:   ${snap.ref}` : "",
-          `  restore: /checkpoint restore`,
-        ]
-          .filter(Boolean)
-          .join("\n"),
-        session: opts.session,
+        output: result.output,
+        failed: result.failed,
+        session: result.session ?? opts.session,
       };
     }
 

@@ -425,18 +425,22 @@ Injected into the system prompt automatically (budget-capped). Survives `/new` a
 
 ### Safety checkpoint
 
-`/checkpoint` (alias `/snap`) creates a **non-mutating** snapshot via `git stash create`
-(dangling commit + `refs/forge/checkpoint/…`). Working tree stays byte-identical.
-Restore with `/checkpoint restore` or `git stash apply <sha>`. Live-safe mid-run.
+`/checkpoint` (alias `/snap`) peeks the last snapshot. `/checkpoint snap` takes a
+**non-mutating** snapshot (temp index + `commit-tree`: untracked included, secrets
+out, dangling commit + `refs/forge/checkpoint/…`). Working tree stays byte-identical.
+`/checkpoint restore` rewinds the tree (`git restore --source=<sha>`, not
+`git stash apply`). Live: peek is readonly; snap/restore are control.
 
 ### ULW auto-checkpoint
 
 Arming ULW (`/ulw`, soft-prompt expansion, `--ulw`) takes a non-mutating safety
-checkpoint via `git stash create` when the tree is dirty. Sha is stored on the
-ULW sidecar and announced in the kickoff message. Disable with `FORGE_ULW_CHECKPOINT=0`.
+checkpoint when the tree is dirty. Sha is stored on the ULW sidecar **and**
+`session.meta.lastCheckpoint` so `/checkpoint restore` finds it. Disable with
+`FORGE_ULW_CHECKPOINT=0`.
 
 ### Destructive git auto-checkpoint
 
 Before `git reset --hard`, `git clean -f…`, `git push --force`, `git checkout -- .`,
 branch `-D`, or `stash drop/clear`, bash takes a non-mutating safety checkpoint and
-prefixes the tool result with the sha. Disable with `FORGE_GIT_AUTO_CHECKPOINT=0`.
+prefixes the tool result with the sha and `restore: /checkpoint restore`. Disable
+with `FORGE_GIT_AUTO_CHECKPOINT=0`.

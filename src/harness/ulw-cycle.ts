@@ -2509,7 +2509,7 @@ export function armUlwCycle(
     cycle?: CycleFlag;
     maxWaves?: number | null;
     editCount?: number;
-    /** Workspace for auto safety checkpoint (git stash create). */
+    /** Workspace for auto safety checkpoint (untracked included). */
     cwd?: string;
     /** Skip auto-checkpoint (tests / FORGE_ULW_CHECKPOINT=0). */
     skipCheckpoint?: boolean;

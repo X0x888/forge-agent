@@ -878,6 +878,10 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
           editCount: session.meta.editCount,
           cwd: workspace,
         });
+        if (ulw.checkpointSha) {
+          session.meta.lastCheckpoint = ulw.checkpointSha;
+          session.meta.lastCheckpointAt = new Date().toISOString();
+        }
         log.info(
           `ULW cycle armed (cycle=1)${ulw.softPrompt ? " — soft prompt expanded to god-scope" : ""}`,
         );
