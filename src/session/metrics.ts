@@ -6,6 +6,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { forgeHome, ensureDir, nowIso } from "../util/fs.js";
 import { estimateCostUsd, formatCost, formatTokens } from "../util/format.js";
+import { isLastErrorProblem } from "./last-error.js";
 
 export interface SessionMetricsEvent {
   ts: string;
@@ -505,7 +506,7 @@ export function collectUsageStats(opts?: {
           if (meta.title) sessionTitled += 1;
           if (meta.ultrawork) sessionUlw += 1;
           if (meta.pinned) sessionPinned += 1;
-          if (meta.lastError?.message) sessionWithLastError += 1;
+          if (isLastErrorProblem(meta.lastError)) sessionWithLastError += 1;
           const lockPath = path.join(dir, "session.lock");
           if (fs.existsSync(lockPath)) {
             try {

@@ -10,6 +10,7 @@ import {
 import type { SessionData } from "../session/session.js";
 import {
   formatNumberedPickerRow,
+  isLastErrorProblem,
   isLastVerificationStale,
   parseSessionListIndex,
 } from "../session/session.js";
@@ -2710,6 +2711,7 @@ export async function handleSlash(
           provider: opts.session.meta.provider,
           authMethod: snap.authMethod,
           accountId: auth.accountId,
+          model: opts.session.meta.model || opts.config.model,
         });
       } catch {
         /* plan optional */
@@ -5898,7 +5900,7 @@ case "/new":
         ...(pinnedOnly ? { pinned: true } : {}),
       });
       if (errorsOnly) {
-        list = list.filter((s) => Boolean(s.lastError?.message));
+        list = list.filter((s) => isLastErrorProblem(s.lastError));
       }
       if (untitledOnly) {
         list = list.filter((s) => !String(s.title || "").trim());
@@ -7528,7 +7530,7 @@ export async function runDoctorCheck(
     const { listSessions } = await import("../session/session.js");
     const all = listSessions({ limit: 10_000 });
     sessionsTotal = all.length;
-    sessionsWithLastError = all.filter((s) => Boolean(s.lastError?.message)).length;
+    sessionsWithLastError = all.filter((s) => isLastErrorProblem(s.lastError)).length;
     sessionsUntitled = all.filter((s) => !String(s.title || "").trim()).length;
     sessionsPinned = all.filter((s) => Boolean(s.pinned)).length;
     if (sessionsWithLastError > 0) {

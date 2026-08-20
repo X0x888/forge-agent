@@ -1001,6 +1001,29 @@ describe("statusline lastError snapshot", () => {
     assert.equal(s.meta.lastError?.code, "max_turns");
   });
 
+  it("does not paint HUD ERR for a successful ULW wrap", async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-sl-cycle-ok-"));
+    process.env.FORGE_HOME = tmp;
+    const { setSessionLastError, saveSession } = await import(
+      "../src/session/session.js"
+    );
+    const { sessionToSnapshot } = await import("../src/statusline/snapshot.js");
+    const { renderHud } = await import("../src/statusline/render.js");
+    const s = createSession({ cwd: tmp, provider: "xai", model: "m" });
+    setSessionLastError(s, {
+      code: "ulw_cycle_complete",
+      message: "ULW last cycle attested complete — released.",
+    });
+    saveSession(s);
+    const snap = sessionToSnapshot(s, { authMethod: "api_key" });
+    assert.equal(snap.lastError?.code, "ulw_cycle_complete");
+    assert.ok(!snap.tags.some((t) => t.startsWith("ERR:")));
+    assert.doesNotMatch(
+      renderHud([snap], { plain: true, width: 120 }),
+      /ERR:ulw_cycle_complete/,
+    );
+  });
+
   it("tags YOLO for permissionMode aliases (yolo/always/bypass)", async () => {
     const { sessionToSnapshot } = await import("../src/statusline/snapshot.js");
     const { buildPromptFlags } = await import("../src/tui/status-bar.js");

@@ -91,6 +91,7 @@ import {
   resolveSessionDir,
   resolveSessionJsonPath,
   isLastVerificationStale,
+  isLastErrorProblem,
 } from "./session/session.js";
 import {
   appendSessionMetrics,
@@ -3289,7 +3290,7 @@ Docs: docs/PRODUCTION.md
         ...(pinnedOnly ? { pinned: true } : {}),
       });
       if (errorsOnly) {
-        list = list.filter((s) => Boolean(s.lastError?.message));
+        list = list.filter((s) => isLastErrorProblem(s.lastError));
       }
       if (untitledOnly) {
         list = list.filter((s) => !String(s.title || "").trim());
@@ -3307,7 +3308,7 @@ Docs: docs/PRODUCTION.md
             (s) => !String(s.title || "").trim(),
           ).length;
           sessionsWithLastError = all.filter((s) =>
-            Boolean(s.lastError?.message),
+            isLastErrorProblem(s.lastError),
           ).length;
           sessionsPinned = all.filter((s) => Boolean(s.pinned)).length;
         } catch {
@@ -3449,7 +3450,7 @@ Docs: docs/PRODUCTION.md
         const all = listSessions({ limit: 10_000 });
         const total = all.length;
         const untitled = all.filter((s) => !String(s.title || "").trim()).length;
-        const errs = all.filter((s) => Boolean(s.lastError?.message)).length;
+        const errs = all.filter((s) => isLastErrorProblem(s.lastError)).length;
         const pinned = all.filter((s) => Boolean(s.pinned)).length;
         if (total >= 100 || untitled >= 5 || errs >= 3 || pinned >= 10) {
           invNote =

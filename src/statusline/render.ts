@@ -7,6 +7,7 @@ import { isFormatOnWriteEnabled } from "../agent/tools/format-on-write.js";
 import { detectProjectIntel, hasNodeModules, multipleLockfiles } from "../util/project-intel.js";
 import { formatHudTodos } from "../agent/todos.js";
 import { formatCacheRatio } from "../session/prompt-cache.js";
+import { isLastErrorProblem } from "../session/last-error.js";
 
 function colorEnabled(opts: StatuslineRenderOptions): boolean {
   if (opts.plain || opts.color === false) return false;
@@ -302,7 +303,7 @@ function renderSession(
   if (goal?.active) {
     l1.push(paint(c, "GOAL", "yellow"));
   }
-  if (snap.lastError?.message) {
+  if (isLastErrorProblem(snap.lastError) && snap.lastError?.message) {
     l1.push(
       paint(
         c,

@@ -7,7 +7,7 @@
 import chalk from "chalk";
 import type { ForgeConfig } from "../config/types.js";
 import type { SessionData } from "../session/session.js";
-import { isLastVerificationStale } from "../session/session.js";
+import { isLastErrorProblem, isLastVerificationStale } from "../session/session.js";
 import { outboundTokenEstimateForSession } from "../statusline/snapshot.js";
 import { costCapStatus } from "../util/cost-budget.js";
 import { detectProjectIntel } from "../util/project-intel.js";
@@ -45,7 +45,7 @@ export function collectStatusIssues(input: StatusIssueInput): StatusIssue[] {
   const { config, session } = input;
   const issues: StatusIssue[] = [];
   const err = session.meta.lastError;
-  if (err?.message) {
+  if (isLastErrorProblem(err) && err?.message) {
     const msg = err.message.replace(/\s+/g, " ").trim().slice(0, 80);
     issues.push({
       kind: "lastErr",

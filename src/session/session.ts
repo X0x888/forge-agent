@@ -39,6 +39,11 @@ import {
 } from "./subagent-usage.js";
 import { normalizeExploreMaps } from "./explore-map.js";
 import { normalizeRequestPruneSticky } from "./request-prune.js";
+import { isLastErrorProblem } from "./last-error.js";
+export {
+  LAST_ERROR_OUTCOME_CODES,
+  isLastErrorProblem,
+} from "./last-error.js";
 import {
   compactMessagesStructured,
   type CompactContext,
@@ -120,8 +125,9 @@ export interface SessionMeta {
   /** Last same-provider model hop this session (from → to). */
   lastModelFallback?: { from: string; to: string; at: string };
   /**
-   * Last provider/run failure (expert recovery). Cleared on a successful turn.
-   * Never stores tokens or full request bodies.
+   * Last stop reason (expert recovery / JSON). Failures are recovery;
+   * `ulw_cycle_complete` is a successful wrap — see `isLastErrorProblem`.
+   * Cleared on a successful turn unless keepLastError. Never stores tokens.
    */
   lastError?: {
     at: string;
@@ -1248,12 +1254,13 @@ export function paintPickerBadge(bit: string): string {
 /**
  * Short lastError glance for `/sessions` / `/resume` / `forge sessions list`.
  * Code + message, one field — the picker paints and clips it.
+ * Successful wraps (`ulw_cycle_complete`) are not a problem.
  */
 export function sessionPickerProblem(
   s: Pick<SessionMeta, "lastError">,
 ): string {
   const err = s.lastError;
-  if (!err) return "";
+  if (!err || !isLastErrorProblem(err)) return "";
   const code = String(err.code || "").replace(/\s+/g, " ").trim();
   const msg = String(err.message || "").replace(/\s+/g, " ").trim();
   if (!code && !msg) return "";
@@ -1289,7 +1296,7 @@ export function formatSessionPickerRow(
   if (s.ultrawork) badges.push("ULW");
   if (s.pinned) badges.push("PIN");
   if (s.permissionMode === "plan") badges.push("PLAN");
-  if (s.lastError && !problem) badges.push("ERR");
+  if (isLastErrorProblem(s.lastError) && !problem) badges.push("ERR");
   for (const extra of extras) {
     const bit = extra.trim();
     if (!bit) continue;
@@ -1516,9 +1523,9 @@ export function formatSessionSummary(session: SessionData): string {
       : m.permissionMode
         ? `  mode:     ${m.permissionMode} (session override)`
         : null,
-    m.lastError?.message
-      ? `  lastErr:  [${m.lastError.code}] ${m.lastError.message.slice(0, 120)}` +
-        (m.lastError.tips?.[0] ? ` → ${m.lastError.tips[0]}` : "")
+    isLastErrorProblem(m.lastError)
+      ? `  lastErr:  [${m.lastError!.code}] ${m.lastError!.message.slice(0, 120)}` +
+        (m.lastError!.tips?.[0] ? ` → ${m.lastError!.tips[0]}` : "")
       : null,
     (() => {
       const last = m.lastVerificationCommand?.trim();
@@ -2092,7 +2099,7 @@ export function pruneSessions(opts?: {
         skippedLocked += 1;
         return;
       }
-      const hasErr = Boolean(meta.lastError?.message);
+      const hasErr = isLastErrorProblem(meta.lastError);
       if (hasErr && !forceLastError) {
         skippedLastError += 1;
         return;
@@ -2551,10 +2558,10 @@ export function exportSessionMarkdown(session: SessionData): string {
         return null;
       }
     })(),
-    session.meta.lastError?.message
-      ? `- Last error: [${session.meta.lastError.code}] ${session.meta.lastError.message}` +
-        (session.meta.lastError.tips?.[0]
-          ? ` → ${session.meta.lastError.tips[0]}`
+    isLastErrorProblem(session.meta.lastError)
+      ? `- Last error: [${session.meta.lastError!.code}] ${session.meta.lastError!.message}` +
+        (session.meta.lastError!.tips?.[0]
+          ? ` → ${session.meta.lastError!.tips[0]}`
           : "")
       : null,
     session.meta.lastModelFallback
@@ -3200,7 +3207,7 @@ export function formatCompactResumeCard(
   }
   try {
     const le = session.meta.lastError;
-    if (le?.code) flags.push(`lastErr ${le.code}`);
+    if (isLastErrorProblem(le) && le?.code) flags.push(`lastErr ${le.code}`);
   } catch {
     /* */
   }
@@ -3298,7 +3305,7 @@ export function formatResumeOrientation(
   }
   try {
     const le = session.meta.lastError;
-    if (le?.message) {
+    if (isLastErrorProblem(le) && le?.message) {
       parts.push(
         `Last error: [${le.code}] ${le.message.slice(0, 140)}` +
           (le.tips?.[0] ? ` → ${le.tips[0]}` : ""),
@@ -3600,9 +3607,9 @@ export function formatSessionShareCard(
     checkpointLine,
     lastVerifyLine,
     goalLine,
-    m.lastError?.message
-      ? `  lastErr:  [${m.lastError.code}] ${m.lastError.message.slice(0, 120)}` +
-        (m.lastError.tips?.[0] ? ` → ${m.lastError.tips[0]}` : "")
+    isLastErrorProblem(m.lastError)
+      ? `  lastErr:  [${m.lastError!.code}] ${m.lastError!.message.slice(0, 120)}` +
+        (m.lastError!.tips?.[0] ? ` → ${m.lastError!.tips[0]}` : "")
       : null,
     `  turns:    ${m.turnCount}  edits=${m.editCount}  msgs=${session.messages.length}` +
       (m.providerRounds && m.providerRounds > m.turnCount

@@ -6,6 +6,7 @@ import {
   sessionDir,
   estimateTokens,
   estimateRequestTokens,
+  isLastErrorProblem,
   type SessionData,
 } from "../session/session.js";
 import { prepareOutboundMessages } from "../session/request-prune.js";
@@ -317,7 +318,7 @@ export function sessionToSnapshot(
     if (permissionMode === "bypassPermissions") tags.push("YOLO");
     else if (permissionMode === "acceptEdits") tags.push("auto");
   }
-  if (meta.lastError?.message) tags.push(`ERR:${meta.lastError.code}`);
+  if (isLastErrorProblem(meta.lastError)) tags.push(`ERR:${meta.lastError!.code}`);
   if (gitSnap.isWorktree) tags.push("WORKTREE");
   // BUDGET tag when a spend cap is armed (session override or config).
   try {
@@ -538,6 +539,7 @@ export async function collectSnapshots(
             provider: s.meta.provider,
             authMethod: snap.authMethod,
             accountId: sameProvider ? accountId : undefined,
+            model: s.meta.model,
           });
         } catch {
           /* plan optional */
