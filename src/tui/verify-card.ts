@@ -210,6 +210,9 @@ export async function runVerify(opts: {
     session: opts.session,
     permissions,
     persist: opts.persist,
+    // A check is not a ship — do not increment turnCount or journal
+    // fixtures `npm test` may write (same hole as treating /verify as !cmd).
+    journal: false,
   });
   const denied = /denied/i.test(bang.output || "");
   const passed = verificationPassedFromResult({

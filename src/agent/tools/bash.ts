@@ -13,6 +13,7 @@ import { numberFieldError } from "./arg-types.js";
 import { editDistance } from "../../util/string-distance.js";
 import { parseDurationMs } from "../../util/duration-ms.js";
 import { createSafetyCheckpoint } from "../../util/git-checkpoint.js";
+import { withBashMutationJournal } from "./bash-mutation-journal.js";
 import {
   detectPackageManager,
   detectProjectIntel,
@@ -324,6 +325,7 @@ export async function toolBash(
     };
   }
 
+  return withBashMutationJournal(ctx, async () => {
   const autoCpNoteFg = maybeAutoCheckpointBeforeDestructiveGit(
     command,
     ctx.workspace || process.cwd(),
@@ -435,4 +437,5 @@ export async function toolBash(
       return { output: managed.text, isError: true };
     }
   }
+  });
 }

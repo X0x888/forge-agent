@@ -1,7 +1,7 @@
 # Project memory
 
 > Auto-maintained by Forge. Edit carefully — agent loads this across sessions.
-> key=d54ef9c78f11c027 · updated=2026-08-20T22:28:02.235Z
+> key=d54ef9c78f11c027 · updated=2026-08-20T22:52:35.198Z
 
 ## constraint
 
@@ -21,6 +21,7 @@
 - git apply --3way stages files; land path prefers plain apply then 3way+unstage so parent index stays clean. Unstage must use git() (trimEnd only) + parsePorcelainPath — never execFileSync().trim() on porcelain.
 - Never land src/agent/worktree.ts or AGENTS.md in worktree-land tests — a failed /undo restore deletes the file. Use disposable src/agent/__wt_land_* fixtures + journalLandedPreimages unit path.
 - `/auth` empty is `auth  ·  none` with no Next — login is not a › key. `/accounts` empty still closer `/auth`. `formatAuthCard` hides Next `/auth` so the lastErr key is not circular. `printAuthStatus()` is CLI-only (`forge auth`).
+- Foreground bash / idle !cmd journal git porcelain deltas into mutations.jsonl so /undo restores shell writes. /verify sets journal:false (checks must not become undo turns). FORGE_BASH_MUTATION_JOURNAL=0 off. Background tasks are not journaled. Not a repo / clean tree / no recordMutation is designed empty.
 
 ## convention
 

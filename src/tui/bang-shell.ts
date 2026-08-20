@@ -6,7 +6,8 @@
 import chalk from "chalk";
 import type { ForgeConfig } from "../config/types.js";
 import type { SessionData } from "../session/session.js";
-import { saveSession } from "../session/session.js";
+import { markUserTurn, saveSession } from "../session/session.js";
+import { appendFileMutation } from "../session/mutations.js";
 import type { PermissionGate } from "../agent/permissions.js";
 import { executeTool } from "../agent/tools/index.js";
 import {
@@ -29,6 +30,12 @@ export async function runBangShell(opts: {
   permissions: PermissionGate;
   /** When false, print-only — caller queues the result (mid-run, avoid racing the loop). */
   persist?: boolean;
+  /**
+   * Journal workspace writes (and increment turn on persist) so /undo
+   * restores disk. Default true for user `!cmd`. `/verify` sets false —
+   * a project check must not become an undo turn or journal test fixtures.
+   */
+  journal?: boolean;
   /** Live last-line of the bang command (throttled) for live ›. */
   onProgress?: (detail: string) => void;
 }): Promise<{ handled: boolean; output: string; isError?: boolean }> {
@@ -56,6 +63,16 @@ export async function runBangShell(opts: {
     return { handled: true, output: msg, isError: true };
   }
 
+  const persist = opts.persist !== false;
+  const journal = opts.journal !== false;
+  // Idle bang is a real user turn so /undo 1 restores only this write,
+  // not the previous agent turn. Mid-run (persist:false) stays on the
+  // in-flight turn — those writes rewind with that ship.
+  if (persist && journal) {
+    session.meta.turnCount = (session.meta.turnCount || 0) + 1;
+    markUserTurn(session);
+  }
+
   const result = await executeTool(
     "bash",
     JSON.stringify({ command }),
@@ -70,6 +87,27 @@ export async function runBangShell(opts: {
       session,
       config,
       onProgress: opts.onProgress,
+      ...(journal
+        ? {
+            onEdit: () => {
+              session.meta.editCount += 1;
+              session.meta.lastEditAt = new Date().toISOString();
+            },
+            recordMutation: (input: {
+              path: string;
+              kind: "create" | "update" | "delete";
+              before?: string;
+              mode?: number;
+              skipped?: boolean;
+              reason?: string;
+            }) => {
+              appendFileMutation(session.meta.id, {
+                ...input,
+                turn: Math.max(1, session.meta.turnCount || 0),
+              });
+            },
+          }
+        : {}),
     },
   );
   const body = String(result.output || "").trimEnd();

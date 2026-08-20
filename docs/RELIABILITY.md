@@ -62,7 +62,7 @@ What experts should expect from Forge in long, unattended, or CI runs.
 | **Headless slash** | `forge run "/plan"` / `forge run "!cmd"` / `"/commands"` / custom `.forge/commands` templates resolve without a model call when pure control (`reason: "slash"`); failed bang-shell exits 1; templates expand then run the agent |
 | **Session plan mode** | `/plan` is session-scoped (no sticky prefs); resume restores plan unless `--permission-mode` is set; `exit_plan_mode` or `/build` clears the override |
 | **Project instructions** | Walk-up within git root for AGENTS/CLAUDE/cursor/copilot rules; doctor JSON `projectRulesCount` / `projectCommandsCount` for CI hygiene |
-| **File mutation journal** | Successful edits append pre-images to `sessions/<id>/mutations.jsonl` (mode `0600`, ~1.5 MiB/body cap) so `/undo` / `/retry` restore **disk + chat** (OpenCode-inspired; large bodies skipped with an explicit note) |
+| **File mutation journal** | Successful edits append pre-images to `sessions/<id>/mutations.jsonl` (mode `0600`, ~1.5 MiB/body cap) so `/undo` / `/retry` restore **disk + chat** (OpenCode-inspired; large bodies skipped with an explicit note). Foreground `bash` / idle bang-shell workspace writes join the same journal via git porcelain delta (`FORGE_BASH_MUTATION_JOURNAL=0` off) |
 | **Project intelligence** | Detect package manager + preferred check commands; inject into system prompt, `/context`, doctor/status/config JSON, statusline, proof-claim reanchor, and post-edit verify tips — less “use pnpm / run npm test” steering. Monorepo walk-up (git-root bounded) + turbo/nx + bash recovery tips (wrong PM, missing script/binary, layout, next check) |
 | **Stale/unread edit guard** | Agent-loop mutations require prior `read_file` and refuse mtime/size drift (`FORGE_FILE_READ_GUARD=0` off) — OpenCode-inspired blind-overwrite protection |
 | **Edit receipt** | Successful `search_replace` / `write_file` / `apply_patch` return a numbered AFTER window to the model; TUI diffs stay on `ToolResult.diff`. `FORGE_EDIT_RECEIPT=legacy` restores the old embedded `--- a/` dump. |
@@ -159,6 +159,7 @@ What experts should expect from Forge in long, unattended, or CI runs.
 | `FORGE_PROVIDER_REASONING_WALL_MS` | `12m` / `720000` | No-content / no-tool wall. Reasoning and keepalives do not reset it. `0` / `off` disables |
 | `FORGE_PROVIDER_MAX_MS` | off (`0`) | Optional absolute wall-clock ceiling for one provider call (stall resets do not extend it); e.g. `2h` for hard unattended caps |
 | `FORGE_BASH_TIMEOUT_MS (ms or 90s/2m)` | `120000` | Default foreground `bash` timeout (min 5s, max 30m) |
+| `FORGE_BASH_MUTATION_JOURNAL` | on | `0`/`false` disables git-porcelain journaling of foreground bash / idle `!cmd` writes |
 | `FORGE_BASH_BG_TIMEOUT_MS` | `1800000` | Default background task timeout (min 30s, max 6h) |
 | `FORGE_MAX_RUN_MS` | off | Headless `forge run` wall-clock cap (ms or `30m`; exit 124) |
 | `FORGE_PERMISSION_TIMEOUT_MS` | off | Auto-deny stalled interactive Allow? prompts (min 5s). Alias: `FORGE_PERMISSION_ASK_TIMEOUT_MS` |
