@@ -5964,7 +5964,6 @@ case "/new":
               const lock = readSessionLock(s.id);
               if (lock && sessionHasForeignLiveLock(s.id)) extras.push("LOCK");
               if (listMode === "all" && s.cwd) extras.push(path.basename(s.cwd));
-              if (errorsOnly && s.lastError) extras.push(s.lastError.code);
               return formatNumberedPickerRow(i, s, extras);
             })
             .join("\n") +

@@ -563,7 +563,7 @@ export const SLASH_HINTS: Record<string, string> = {
   "/review": "Review a diff/PR",
   "/verbose": "Full diffs + tool output",
   "/notify": "Desktop alert on turn end",
-  "/sessions": "List / search / prune",
+  "/sessions": "Title-first list / search / prune",
   "/resume": "Resume #n / id / title",
   "/new": "Fresh session",
   "/clear": "Clear this session",

@@ -26,6 +26,7 @@ import {
   formatNumberedPickerRow,
   parseSessionListIndex,
   paintPickerBadge,
+  sessionPickerProblem,
   exportSessionJson,
   importSessionJson,
   isLastVerificationStale,
@@ -1671,7 +1672,6 @@ it("/fork includes last-turn peek", async () => {
     s.meta.title = "auth flake";
     s.meta.lastUserPreview = "fix the flaky auth test please";
     s.meta.pinned = true;
-    s.meta.lastError = { at: "t", code: "x", message: "fail" };
     try {
       const row = formatSessionPickerRow(s.meta, ["*"], 100);
       assert.match(row, /\x1b\[1m.*auth flake/);
@@ -1679,13 +1679,82 @@ it("/fork includes last-turn peek", async () => {
       assert.equal(paintPickerBadge("PIN"), "\x1b[36mPIN\x1b[39m");
       assert.equal(paintPickerBadge("ERR"), "\x1b[31mERR\x1b[39m");
       assert.match(row, /\x1b\[36mPIN/);
-      assert.match(row, /\x1b\[31mERR/);
       assert.match(row, /\x1b\[36m\x1b\[1m\*/);
       const untitled = createSession({ cwd: "/tmp", provider: "xai", model: "grok-4.6" });
       untitled.meta.title = "";
       const blank = formatSessionPickerRow(untitled.meta, [], 80);
       assert.match(blank, /\x1b\[2m\(untitled\)/);
       assert.doesNotMatch(blank.replace(/\x1b\[[0-9;]*m/g, ""), /undefined/);
+    } finally {
+      chalk.level = prevLevel;
+    }
+  });
+
+  it("sessionPickerProblem folds code + message", () => {
+    assert.equal(sessionPickerProblem({}), "");
+    assert.equal(
+      sessionPickerProblem({
+        lastError: { at: "t", code: "rate_limited", message: "xai HTTP 429" },
+      }),
+      "rate_limited xai HTTP 429",
+    );
+    assert.equal(
+      sessionPickerProblem({
+        lastError: { at: "t", code: "429", message: "HTTP 429 too many" },
+      }),
+      "HTTP 429 too many",
+    );
+  });
+
+  it("formatSessionPickerRow is job-first; lastError leads", () => {
+    const prevLevel = chalk.level;
+    chalk.level = 3;
+    try {
+      const healthy = createSession({
+        cwd: "/tmp",
+        provider: "xai",
+        model: "grok-4.6",
+        title: "auth flake",
+      });
+      healthy.meta.lastUserPreview = "fix the flaky auth test please";
+      const ok = formatSessionPickerRow(healthy.meta, [], 100);
+      const okPlain = ok.replace(/\x1b\[[0-9;]*m/g, "");
+      const titleAt = okPlain.indexOf("auth flake");
+      const idAt = okPlain.indexOf(healthy.meta.id.slice(0, 8));
+      const previewAt = okPlain.indexOf("fix the flaky auth test");
+      assert.ok(titleAt >= 0 && idAt >= 0 && titleAt < idAt, okPlain);
+      assert.ok(previewAt >= 0 && titleAt < previewAt, okPlain);
+
+      const broken = createSession({
+        cwd: "/tmp",
+        provider: "xai",
+        model: "grok-4.6",
+        title: "auth flake",
+      });
+      broken.meta.lastError = {
+        at: "t",
+        code: "rate_limited",
+        message: "xai HTTP 429",
+      };
+      const bad = formatSessionPickerRow(broken.meta, ["rate_limited"], 100);
+      const badPlain = bad.replace(/\x1b\[[0-9;]*m/g, "");
+      const problemAt = badPlain.indexOf("rate_limited");
+      const badTitleAt = badPlain.indexOf("auth flake");
+      const badIdAt = badPlain.indexOf(broken.meta.id.slice(0, 8));
+      assert.ok(problemAt >= 0 && problemAt < badTitleAt, badPlain);
+      assert.ok(badTitleAt < badIdAt, badPlain);
+      assert.match(bad, /\x1b\[31m.*rate_limited/);
+      assert.doesNotMatch(badPlain, /rate_limited rate_limited/);
+
+      const untitled = createSession({ cwd: "/tmp", provider: "xai", model: "grok-4.6" });
+      untitled.meta.title = "";
+      const blankPlain = formatSessionPickerRow(untitled.meta, [], 80).replace(
+        /\x1b\[[0-9;]*m/g,
+        "",
+      );
+      const untitledAt = blankPlain.indexOf("(untitled)");
+      const untitledId = blankPlain.indexOf(untitled.meta.id.slice(0, 8));
+      assert.ok(untitledAt >= 0 && untitledAt < untitledId, blankPlain);
     } finally {
       chalk.level = prevLevel;
     }

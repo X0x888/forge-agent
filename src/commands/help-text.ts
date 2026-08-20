@@ -102,7 +102,7 @@ export const HELP_SESSIONS = `
 Sessions
 ────────
   Bare forge resumes the newest same-cwd session (≤14d).  forge --new  for fresh.
-  /sessions           List this cwd  ·  search  ·  pinned  ·  delete  ·  prune
+  /sessions           Title-first list this cwd  ·  lastError leads  ·  search
   /resume [n|id|title]  Resume by list number, id prefix, or unique title
   /new [title]        Fresh session
   /title [name]       Label for resume-by-title / search
@@ -213,7 +213,7 @@ Forge slash commands
   /clear                Clear messages same id (counters+journal reset)
   /clear hard           Brand-new session id (same as /new; ULW not inherited)
   /resume [n|id|title|all] Resume #n from the picker, id prefix, or /title
-  /sessions [all|search|delete|prune]  List (cwd default) / search / delete [--force] / prune
+  /sessions [all|search|delete|prune]  Title-first list (cwd) / search / delete [--force] / prune
   /auth                 Show stored credentials (+ multi-account)  [live]
   /accounts [status|switch|…]  Multi-account list/status/switch/clear-cooldown  [live]
   /doctor               Environment health check  [live]

@@ -1246,9 +1246,29 @@ export function paintPickerBadge(bit: string): string {
 }
 
 /**
+ * Short lastError glance for `/sessions` / `/resume` / `forge sessions list`.
+ * Code + message, one field — the picker paints and clips it.
+ */
+export function sessionPickerProblem(
+  s: Pick<SessionMeta, "lastError">,
+): string {
+  const err = s.lastError;
+  if (!err) return "";
+  const code = String(err.code || "").replace(/\s+/g, " ").trim();
+  const msg = String(err.message || "").replace(/\s+/g, " ").trim();
+  if (!code && !msg) return "";
+  if (code && msg) {
+    return msg.toLowerCase().includes(code.toLowerCase())
+      ? msg
+      : `${code} ${msg}`;
+  }
+  return code || msg;
+}
+
+/**
  * One-row `/sessions` / `forge sessions list` picker.
- * Spend leftover width on title + last-you; drop model/cost/turns first.
- * Id / age / preview recede; title + PIN/ERR/LOCK/ULW carry the scan.
+ * Title (the job) leads; lastError problem leads when present.
+ * Id / age recede; model/cost/turns drop first. Still one TTY row.
  */
 export function formatSessionPickerRow(
   s: SessionMeta,
@@ -1259,6 +1279,8 @@ export function formatSessionPickerRow(
   const untitled = !String(s.title || "").trim();
   const rawTitle = (s.title || "(untitled)").replace(/\s+/g, " ").trim();
   const rawPrev = (s.lastUserPreview || "").replace(/\s+/g, " ").trim();
+  const problem = sessionPickerProblem(s);
+  const errCode = String(s.lastError?.code || "").trim();
   const badges: string[] = [];
   if (s.lastVerificationCommand?.trim()) {
     if (s.lastVerificationOk === false) badges.push("✗");
@@ -1267,10 +1289,15 @@ export function formatSessionPickerRow(
   if (s.ultrawork) badges.push("ULW");
   if (s.pinned) badges.push("PIN");
   if (s.permissionMode === "plan") badges.push("PLAN");
-  if (s.lastError) badges.push("ERR");
+  if (s.lastError && !problem) badges.push("ERR");
   for (const extra of extras) {
     const bit = extra.trim();
-    if (bit) badges.push(bit);
+    if (!bit) continue;
+    if (problem && errCode) {
+      const folded = bit.replace(/^[\[\]]+|[\[\]]+$/g, "");
+      if (folded === errCode || bit === `[${errCode}]`) continue;
+    }
+    badges.push(bit);
   }
   let cost = "";
   try {
@@ -1301,15 +1328,20 @@ export function formatSessionPickerRow(
   const fit = (
     titleMax: number,
     previewMax: number,
+    problemMax: number,
     extrasBits: string[],
   ): string => {
     const title = paintPickerTitle(clipPickerField(rawTitle, titleMax), untitled);
-    const preview = paintPickerPreview(formatPickerPreview(rawPrev, previewMax));
-    return join([id, ageBit, title, ...extrasBits, badgeStr, preview]);
+    const preview = problem
+      ? ""
+      : paintPickerPreview(formatPickerPreview(rawPrev, previewMax));
+    const prob = problem ? chalk.red(clipPickerField(problem, problemMax)) : "";
+    return join([prob, title, badgeStr, preview, ageBit, id, ...extrasBits]);
   };
 
   const titleNeed = Math.min(visibleWidth(rawTitle), 48);
-  const prevNeed = rawPrev ? Math.min(visibleWidth(rawPrev) + 2, 56) : 0;
+  const prevNeed = !problem && rawPrev ? Math.min(visibleWidth(rawPrev) + 2, 56) : 0;
+  const problemNeed = problem ? Math.min(visibleWidth(problem), 48) : 0;
   const rounds = s.providerRounds ?? 0;
   const turnBit =
     rounds > (s.turnCount ?? 0)
@@ -1317,15 +1349,19 @@ export function formatSessionPickerRow(
       : `t=${s.turnCount ?? 0}`;
   const extrasAll = [s.model, turnBit, cost].filter(Boolean);
   if (!Number.isFinite(cols) || cols < 24) {
-    return fit(titleNeed, prevNeed, extrasAll.map((b) => chalk.dim(b)));
+    return fit(
+      titleNeed,
+      prevNeed,
+      problemNeed,
+      extrasAll.map((b) => chalk.dim(b)),
+    );
   }
 
-  const identity = join([id, ageBit, badgeStr]);
-  let remaining = cols - visibleWidth(identity);
-  if (remaining < 3) return clipAnsi(identity, cols);
-
+  const badgeBudget = badgeStr ? visibleWidth(badgeStr) + gap : 0;
+  let remaining = Math.max(0, cols - badgeBudget);
   let titleMax = 0;
   let previewMax = 0;
+  let problemMax = 0;
   const take = (want: number): number => {
     if (want <= 0 || remaining < 3) return 0;
     const got = Math.min(want, remaining - gap);
@@ -1333,11 +1369,13 @@ export function formatSessionPickerRow(
     remaining -= got + gap;
     return got;
   };
-  // Readable title + last-you first; model/cost only if leftover.
+  // Job first: title, then problem or last-you; id/age recede via clip.
   titleMax = take(Math.min(titleNeed, 20));
-  previewMax = take(Math.min(prevNeed, 28));
+  if (problem) problemMax = take(Math.min(problemNeed, 28));
+  else previewMax = take(Math.min(prevNeed, 28));
   titleMax += take(titleNeed - titleMax);
-  previewMax += take(prevNeed - previewMax);
+  if (problem) problemMax += take(problemNeed - problemMax);
+  else previewMax += take(prevNeed - previewMax);
   const extrasBits: string[] = [];
   for (const bit of extrasAll) {
     const w = visibleWidth(bit) + gap;
@@ -1346,7 +1384,7 @@ export function formatSessionPickerRow(
       remaining -= w;
     }
   }
-  const line = fit(titleMax, previewMax, extrasBits);
+  const line = fit(titleMax, previewMax, problemMax, extrasBits);
   return visibleWidth(line) <= cols ? line : clipAnsi(line, cols);
 }
 

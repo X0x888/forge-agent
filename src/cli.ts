@@ -3435,9 +3435,6 @@ Docs: docs/PRODUCTION.md
           /* */
         }
         if (s.parentSessionId) extras.push("FORK");
-        if (errorsOnly && s.lastError) {
-          extras.push(`[${s.lastError.code}]`);
-        }
         console.log(formatNumberedPickerRow(i, s, extras));
       });
       const filterNotes: string[] = [];

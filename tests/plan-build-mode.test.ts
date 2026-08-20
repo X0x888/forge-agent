@@ -350,8 +350,13 @@ describe("plan/build live controls", () => {
     });
     assert.equal(r.handled, true);
     const out = String(r.output || "");
+    const plain = out.replace(/\x1b\[[0-9;]*m/g, "");
     assert.match(out, /bad-fail/);
-    assert.match(out, /ERR|rate_limited/);
+    assert.match(out, /rate_limited/);
+    assert.ok(
+      plain.indexOf("rate_limited") < plain.indexOf("bad-fail"),
+      plain,
+    );
     assert.doesNotMatch(out, /good-session/);
   });
 });
