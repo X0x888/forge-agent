@@ -440,14 +440,100 @@ export function encodeRequestContextResult(ctx: Uint8Array): Buffer {
   return encodeMessage(1, success);
 }
 
+/** ConversationHistoryTextContent — `{ text }`. */
+export function encodeHistoryTextContent(text: string): Buffer {
+  return encodeString(1, text);
+}
+
+export type CursorHistoryMessage =
+  | { role: "user"; text: string }
+  | {
+      role: "assistant";
+      text?: string;
+      reasoning?: string;
+      toolCalls?: Array<{ id: string; name: string; args: string }>;
+    }
+  | {
+      role: "tool";
+      toolCallId: string;
+      toolName: string;
+      text: string;
+      isError?: boolean;
+    };
+
+/**
+ * agent.v1.ConversationHistory — typed user/assistant/tool replay.
+ * Attach on UserMessageAction.conversation_history (field 7), not on
+ * ConversationState.root_prompt_messages_json (that slot is the system blob).
+ */
+export function encodeConversationHistory(
+  messages: CursorHistoryMessage[],
+): Buffer | undefined {
+  const parts: Buffer[] = [];
+  for (const m of messages) {
+    const encoded = encodeConversationHistoryMessage(m);
+    if (encoded) parts.push(encodeMessage(1, encoded));
+  }
+  if (!parts.length) return undefined;
+  return Buffer.concat(parts);
+}
+
+export function encodeConversationHistoryMessage(
+  m: CursorHistoryMessage,
+): Buffer | undefined {
+  if (m.role === "user") {
+    const text = m.text.trim();
+    if (!text) return undefined;
+    const content = encodeMessage(1, encodeHistoryTextContent(text));
+    return encodeMessage(1, encodeMessage(1, content));
+  }
+  if (m.role === "assistant") {
+    const contents: Buffer[] = [];
+    if (m.text?.trim()) {
+      contents.push(encodeMessage(1, encodeHistoryTextContent(m.text)));
+    }
+    if (m.reasoning?.trim()) {
+      contents.push(encodeMessage(2, encodeString(1, m.reasoning)));
+    }
+    for (const tc of m.toolCalls ?? []) {
+      contents.push(
+        encodeMessage(
+          4,
+          Buffer.concat([
+            encodeString(1, tc.id),
+            encodeString(2, tc.name),
+            encodeString(3, tc.args || "{}"),
+          ]),
+        ),
+      );
+    }
+    if (!contents.length) return undefined;
+    const assistant = Buffer.concat(
+      contents.map((c) => encodeMessage(1, c)),
+    );
+    return encodeMessage(2, assistant);
+  }
+  const toolParts = [
+    encodeString(1, m.toolCallId),
+    encodeString(2, m.toolName || "tool"),
+    encodeMessage(3, encodeMessage(1, encodeHistoryTextContent(m.text || ""))),
+  ];
+  if (m.isError) toolParts.push(encodeBool(4, true));
+  return encodeMessage(3, Buffer.concat(toolParts));
+}
+
 export function encodeUserMessageAction(
   text: string,
   messageId: string,
   requestContext?: Uint8Array,
+  conversationHistory?: Uint8Array,
 ): Buffer {
   const parts = [encodeMessage(1, encodeUserMessage(text, messageId))];
   if (requestContext && requestContext.length) {
     parts.push(encodeMessage(2, requestContext));
+  }
+  if (conversationHistory && conversationHistory.length) {
+    parts.push(encodeMessage(7, conversationHistory));
   }
   return Buffer.concat(parts);
 }
@@ -456,8 +542,17 @@ export function encodeConversationActionUser(
   text: string,
   messageId: string,
   requestContext?: Uint8Array,
+  conversationHistory?: Uint8Array,
 ): Buffer {
-  return encodeMessage(1, encodeUserMessageAction(text, messageId, requestContext));
+  return encodeMessage(
+    1,
+    encodeUserMessageAction(
+      text,
+      messageId,
+      requestContext,
+      conversationHistory,
+    ),
+  );
 }
 
 export function encodeAgentRunRequest(opts: {

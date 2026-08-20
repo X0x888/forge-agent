@@ -24,6 +24,7 @@ import { supportsOAuth, getOAuthProfile } from "../src/auth/login.js";
 import {
   CursorProvider,
   applyCursorReconnectAction,
+  buildCursorConversationState,
   collectCursorToolResults,
   CURSOR_CONTINUE_PROMPT,
   cursorShouldResumeLive,
@@ -46,6 +47,7 @@ import {
   parseUsageFields,
   encodeClientMessage,
   encodeConversationActionUser,
+  encodeConversationHistory,
   encodeConversationState,
   encodeExecClientThrow,
   encodeExecStreamClose,
@@ -53,7 +55,6 @@ import {
   encodeMcpStateResult,
   encodeMcpToolDefinition,
   encodeMessage,
-  encodeSeedChatJson,
   encodeRequestContext,
   encodeRequestContextEnv,
   encodeString,
@@ -439,16 +440,53 @@ describe("cursor proto codec", () => {
     assert.equal(ctrl[0]!.field, 2);
   });
 
-  it("seeds reconnect history as JSON strings, not AgentTurns", () => {
-    const seed = encodeSeedChatJson({
-      systemPrompt: "sys",
-      turns: [{ userText: "hi", assistantText: "called list_dir" }],
-    });
-    const state = encodeConversationState({ seedJson: seed });
+  it("ConversationState on every Run is the system blob, not chat JSON", () => {
+    const { state } = buildCursorConversationState("You are Forge.");
     const fields = decodeFields(state);
-    assert.equal(fields.every((f) => f.field === 1), true);
+    assert.equal(fields.length, 1);
+    assert.equal(fields[0]!.field, 1);
+    assert.equal(fields[0]!.bytes.length, 32);
     assert.equal(fields.some((f) => f.field === 8), false);
-    assert.match(fieldStr(fields, 1) || "", /"role":"system"/);
+    const asText = fieldStr(fields, 1) || "";
+    assert.equal(asText.includes('"role":"user"'), false);
+    assert.equal(asText.includes('"role":"assistant"'), false);
+  });
+
+  it("rebase action carries typed ConversationHistory, not root_prompt JSON", () => {
+    const history = encodeConversationHistory([
+      { role: "user", text: "mandate" },
+      {
+        role: "assistant",
+        text: "looking",
+        toolCalls: [{ id: "c1", name: "list_dir", args: "{}" }],
+      },
+      { role: "tool", toolCallId: "c1", toolName: "list_dir", text: "src/" },
+      { role: "assistant", text: "Ship landed" },
+    ]);
+    assert.ok(history);
+    const action = encodeConversationActionUser(
+      "[Forge ULW cycle driver] Stop blocked",
+      "m2",
+      undefined,
+      history,
+    );
+    const uma = decodeFields(decodeFields(action)[0]!.bytes);
+    assert.equal(uma.some((f) => f.field === 1), true);
+    const hist = uma.find((f) => f.field === 7);
+    assert.ok(hist);
+    const msgs = decodeFields(hist.bytes).filter((f) => f.field === 1);
+    assert.equal(msgs.length, 4);
+    assert.equal(decodeFields(msgs[0]!.bytes)[0]!.field, 1);
+    assert.equal(decodeFields(msgs[1]!.bytes)[0]!.field, 2);
+    assert.equal(decodeFields(msgs[2]!.bytes)[0]!.field, 3);
+    assert.equal(decodeFields(msgs[3]!.bytes)[0]!.field, 2);
+    const userMsg = decodeFields(decodeFields(msgs[0]!.bytes)[0]!.bytes);
+    const userContent = decodeFields(userMsg[0]!.bytes);
+    const userText = decodeFields(userContent[0]!.bytes);
+    assert.equal(fieldStr(userText, 1), "mandate");
+    const toolMsg = decodeFields(decodeFields(msgs[2]!.bytes)[0]!.bytes);
+    assert.equal(fieldStr(toolMsg, 1), "c1");
+    assert.equal(fieldStr(toolMsg, 2), "list_dir");
   });
 });
 
@@ -466,6 +504,9 @@ describe("cursor conversation replay", () => {
     assert.equal(got.turns[0]!.userText, "first");
     assert.equal(got.turns[0]!.assistantText, "ok");
     assert.equal(got.trailingToolResults.length, 0);
+    assert.equal(got.history.length, 2);
+    assert.equal(got.history[0]!.role, "user");
+    assert.equal(got.history[1]!.role, "assistant");
   });
 
   it("merges consecutive user messages so context-admit is not a half-turn", () => {
@@ -479,6 +520,7 @@ describe("cursor conversation replay", () => {
       },
     ]);
     assert.equal(got.turns.length, 0);
+    assert.equal(got.history.length, 0);
     assert.match(got.userText, /task/);
     assert.match(got.userText, /mid-conversation/);
   });
@@ -494,9 +536,10 @@ describe("cursor conversation replay", () => {
     assert.equal(got.turns[0]!.assistantText, "ok");
     assert.match(got.userText, /second/);
     assert.match(got.userText, /admit/);
+    assert.equal(got.history.some((m) => m.role === "user" && m.text === "second"), false);
   });
 
-  it("folds tool calls into assistant text and keeps trailing results", () => {
+  it("keeps tool calls on the assistant and trailing results for the live Run", () => {
     const got = prepareCursorConversation([
       { role: "user", content: "edit it" },
       {
@@ -512,13 +555,16 @@ describe("cursor conversation replay", () => {
       },
       { role: "tool", tool_call_id: "c1", content: "a.ts" },
     ]);
-    assert.match(got.turns[0]!.assistantText, /Called bash id=c1/);
+    const asst = got.history.find((m) => m.role === "assistant");
+    assert.ok(asst && asst.role === "assistant");
+    assert.equal(asst.toolCalls?.[0]?.name, "bash");
     assert.equal(got.trailingToolResults.length, 1);
     assert.equal(got.trailingToolResults[0]!.toolCallId, "c1");
     assert.equal(got.userText, "");
+    assert.equal(got.history.some((m) => m.role === "tool"), true);
   });
 
-  it("folds completed tool results into the turn before a follow-up assistant", () => {
+  it("records completed tools before a follow-up assistant", () => {
     const got = prepareCursorConversation([
       { role: "user", content: "edit it" },
       {
@@ -538,11 +584,14 @@ describe("cursor conversation replay", () => {
     ]);
     assert.equal(got.userText, "next");
     assert.equal(got.trailingToolResults.length, 0);
-    assert.match(got.turns[0]!.assistantText, /Tool result c1/);
-    assert.match(got.turns[0]!.assistantText, /done/);
+    assert.equal(got.history.map((m) => m.role).join(","), "user,assistant,tool,assistant");
+    const tool = got.history.find((m) => m.role === "tool");
+    assert.ok(tool && tool.role === "tool");
+    assert.equal(tool.toolName, "read_file");
+    assert.match(tool.text, /export const x/);
   });
 
-  it("reconnect folds trailing tools and uses a real continue prompt", () => {
+  it("dead-stream rebase uses a real continue prompt and keeps tools on history", () => {
     const got = applyCursorReconnectAction(
       prepareCursorConversation([
         { role: "user", content: "edit it" },
@@ -560,11 +609,9 @@ describe("cursor conversation replay", () => {
         { role: "tool", tool_call_id: "c1", content: "src/" },
       ]),
     );
-    assert.equal(got.trailingToolResults.length, 0);
     assert.equal(got.userText, CURSOR_CONTINUE_PROMPT);
-    assert.match(got.turns[0]!.assistantText, /Tool result c1/);
-    assert.match(got.turns[0]!.assistantText, /src\//);
     assert.equal(got.userText.includes("(continue)"), false);
+    assert.equal(got.history.some((m) => m.role === "tool"), true);
   });
 
   it("keeps the live Run open when MCP results are still pending", () => {
@@ -619,6 +666,37 @@ describe("cursor conversation replay", () => {
         pendingCount: 0,
         streamDead: false,
         trailingCount: 0,
+      }),
+      false,
+    );
+  });
+
+  it("resumes a healthy Run for the next user after a completed text turn", () => {
+    const got = prepareCursorConversation([
+      { role: "user", content: "comprehensively evaluate this tool" },
+      { role: "assistant", content: "Ship landed: first-live-run steer hint" },
+      {
+        role: "user",
+        content: "[Forge ULW cycle driver] Stop blocked — cycle=1 wave=1/4",
+      },
+    ]);
+    assert.match(got.userText, /Stop blocked/);
+    assert.equal(got.history.length, 2);
+    assert.equal(
+      cursorShouldResumeLive({
+        pendingCount: 0,
+        streamDead: false,
+        trailingCount: 0,
+        hasUserAction: Boolean(got.userText.trim()),
+      }),
+      true,
+    );
+    assert.equal(
+      cursorShouldResumeLive({
+        pendingCount: 0,
+        streamDead: true,
+        trailingCount: 0,
+        hasUserAction: true,
       }),
       false,
     );

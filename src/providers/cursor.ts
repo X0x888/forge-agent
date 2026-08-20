@@ -45,6 +45,7 @@ import {
   encodeClientMessage,
   encodeConnectFrame,
   encodeConversationActionUser,
+  encodeConversationHistory,
   encodeConversationState,
   encodeExecClient,
   encodeExecClientThrow,
@@ -64,7 +65,6 @@ import {
   encodeRequestContext,
   encodeRequestContextEnv,
   encodeRequestContextResult,
-  encodeSeedChatJson,
   encodeString,
   hexKey,
   parseAgentServerMessage,
@@ -75,6 +75,7 @@ import {
   parseShellArg,
   sha256Bytes,
   systemPromptBlob,
+  type CursorHistoryMessage,
 } from "./cursor-proto.js";
 import { resolveCursorRunModel } from "../config/cursor-model.js";
 import { forgeHome } from "../util/fs.js";
@@ -106,6 +107,11 @@ export interface CursorConversation {
   turns: Array<{ userText: string; assistantText: string }>;
   /** Tool results after the last assistant, before any following user. */
   trailingToolResults: Array<{ toolCallId: string; content: string }>;
+  /**
+   * Prior user/assistant/tool messages (not the action user). Typed
+   * ConversationHistory on a new Run — never root_prompt_messages_json.
+   */
+  history: CursorHistoryMessage[];
 }
 
 /** Real user action when the held-open Run is gone and history already has the last user. */
@@ -117,6 +123,10 @@ export const CURSOR_CONTINUE_PROMPT =
  * Connect EOF with pending MCP execs must not close it — the next chat()
  * writes results on the same stream. Closing forced a new Run with a fake
  * "(continue)" user turn, which is Connect `internal`.
+ *
+ * A completed text turn also stays open (`close: false` at turn_ended) so
+ * the next user / ULW poke is a conversation_action, not a history rebase.
+ * Only force-close (stream end, error, reasoning wall) tears it down.
  */
 export function shouldCloseCursorLive(opts: {
   close: boolean;
@@ -126,17 +136,24 @@ export function shouldCloseCursorLive(opts: {
 }
 
 /**
- * A live Run with unanswered MCP execs must be resumed even when Forge folded
- * those results into history because a harness user-message (context-admit)
- * followed them. Closing that Run and opening a new one is Connect `internal`.
+ * Resume the held-open Run when:
+ * - MCP execs are still unanswered (tool loop / admit-after-tools), or
+ * - the stream is healthy and Forge has a new user action (ULW continue,
+ *   next prompt). Opening a new Run and stuffing chat into
+ *   root_prompt_messages_json is Connect `internal`.
  */
 export function cursorShouldResumeLive(opts: {
   pendingCount: number;
   streamDead: boolean;
   trailingCount: number;
+  hasUserAction?: boolean;
 }): boolean {
   if (opts.streamDead) return false;
-  return opts.pendingCount > 0 || opts.trailingCount > 0;
+  return (
+    opts.pendingCount > 0 ||
+    opts.trailingCount > 0 ||
+    Boolean(opts.hasUserAction)
+  );
 }
 
 export function collectCursorToolResults(
@@ -154,26 +171,12 @@ export function collectCursorToolResults(
 }
 
 /**
- * When the live HTTP/2 Run is gone, fold trailing tool results into history
- * and use a real continue prompt — never a placeholder user message.
+ * Dead-stream rebase: trailing tools already live on `history`. Only fill
+ * an empty action — never a placeholder "(continue)" user turn.
  */
 export function applyCursorReconnectAction(
   parsed: CursorConversation,
 ): CursorConversation {
-  if (!parsed.trailingToolResults.length) return parsed;
-  const last = parsed.turns[parsed.turns.length - 1];
-  if (last) {
-    last.assistantText = foldToolResults(
-      last.assistantText,
-      parsed.trailingToolResults,
-    );
-  } else {
-    const extra = foldToolResults("", parsed.trailingToolResults);
-    parsed.userText = parsed.userText
-      ? `${parsed.userText}\n\n${extra}`
-      : extra;
-  }
-  parsed.trailingToolResults = [];
   if (!parsed.userText.trim()) parsed.userText = CURSOR_CONTINUE_PROMPT;
   return parsed;
 }
@@ -189,17 +192,6 @@ function messageText(msg: ChatRequest["messages"][number]): string {
   return msg.content ?? "";
 }
 
-function formatAssistant(msg: ChatRequest["messages"][number]): string {
-  const text = messageText(msg);
-  const calls = msg.tool_calls ?? [];
-  if (!calls.length) return text;
-  const lines = calls.map((tc) => {
-    const args = tc.function.arguments?.trim() || "{}";
-    return `[Called ${tc.function.name} id=${tc.id}] ${args}`;
-  });
-  return [text, ...lines].filter(Boolean).join("\n");
-}
-
 function foldToolResults(
   assistant: string,
   results: Array<{ toolCallId: string; content: string }>,
@@ -211,12 +203,55 @@ function foldToolResults(
   return [assistant, extra].filter(Boolean).join("\n");
 }
 
+function toolNameForCall(
+  names: Map<string, string>,
+  toolCallId: string,
+  fallback?: string,
+): string {
+  return names.get(toolCallId) || fallback || "tool";
+}
+
+function turnsFromHistory(
+  history: CursorHistoryMessage[],
+): Array<{ userText: string; assistantText: string }> {
+  const turns: Array<{ userText: string; assistantText: string }> = [];
+  let userText = "";
+  let assistantText = "";
+  const flush = () => {
+    if (!userText && !assistantText) return;
+    turns.push({ userText, assistantText });
+    userText = "";
+    assistantText = "";
+  };
+  for (const m of history) {
+    if (m.role === "user") {
+      if (assistantText) flush();
+      userText = userText ? `${userText}\n\n${m.text}` : m.text;
+      continue;
+    }
+    if (m.role === "assistant") {
+      const bits = [
+        m.text,
+        ...(m.toolCalls ?? []).map(
+          (tc) => `[Called ${tc.name} id=${tc.id}] ${tc.args}`,
+        ),
+      ].filter(Boolean);
+      const chunk = bits.join("\n");
+      assistantText = assistantText ? `${assistantText}\n${chunk}` : chunk;
+      continue;
+    }
+    assistantText = foldToolResults(assistantText, [
+      { toolCallId: m.toolCallId, content: m.text },
+    ]);
+  }
+  flush();
+  return turns;
+}
+
 /**
- * Map Forge chat history onto Cursor AgentTurn + trailing MCP results.
- * Tool calls/results are folded into assistant text so a reconnect (new HTTP/2
- * Run) still has the work, not only the open stream.
- * Consecutive user messages (context-admit) merge: a user-only historical
- * turn is Connect `internal` on AgentService.
+ * Map Forge chat onto a Cursor action + typed ConversationHistory.
+ * Consecutive user messages (context-admit / ULW poke) merge into the
+ * action — a user-only historical turn is Connect `internal`.
  */
 export function prepareCursorConversation(
   messages: ChatRequest["messages"],
@@ -228,48 +263,58 @@ export function prepareCursorConversation(
   const systemPrompt =
     systemParts.join("\n") || "You are a helpful coding assistant.";
 
-  const turns: Array<{ userText: string; assistantText: string }> = [];
-  let pendingUser = "";
-  let pendingAssistant = "";
+  const history: CursorHistoryMessage[] = [];
+  const pendingUsers: string[] = [];
   const trailing: Array<{ toolCallId: string; content: string }> = [];
+  const toolNames = new Map<string, string>();
   let afterAssistantTools = false;
 
-  const flushTurn = () => {
-    // AgentService treats a user-only historical turn as Connect `internal`.
-    // Incomplete user text stays in pendingUser and is merged or used as action.
-    if (pendingAssistant) {
-      turns.push({ userText: pendingUser, assistantText: pendingAssistant });
-      pendingUser = "";
-      pendingAssistant = "";
-    }
+  const takePendingUser = (): string => {
+    const text = pendingUsers.join("\n\n");
+    pendingUsers.length = 0;
+    return text;
+  };
+
+  const flushPendingUserToHistory = () => {
+    const text = takePendingUser();
+    if (text.trim()) history.push({ role: "user", text });
   };
 
   const absorbTrailing = () => {
-    if (!trailing.length) return;
-    pendingAssistant = foldToolResults(pendingAssistant, trailing);
+    for (const t of trailing) {
+      history.push({
+        role: "tool",
+        toolCallId: t.toolCallId,
+        toolName: toolNameForCall(toolNames, t.toolCallId),
+        text: t.content,
+      });
+    }
     trailing.length = 0;
   };
 
   for (const msg of messages.filter((m) => m.role !== "system")) {
     if (msg.role === "user") {
       absorbTrailing();
-      if (pendingAssistant) {
-        flushTurn();
-        pendingUser = messageText(msg);
-      } else {
-        const next = messageText(msg);
-        pendingUser = pendingUser ? `${pendingUser}\n\n${next}` : next;
-      }
+      pendingUsers.push(messageText(msg));
       afterAssistantTools = false;
       continue;
     }
     if (msg.role === "assistant") {
       absorbTrailing();
-      const text = formatAssistant(msg);
-      pendingAssistant = pendingAssistant
-        ? `${pendingAssistant}\n${text}`
-        : text;
-      afterAssistantTools = Boolean(msg.tool_calls?.length);
+      flushPendingUserToHistory();
+      const calls = (msg.tool_calls ?? []).map((tc) => {
+        const id = tc.id || "";
+        const name = tc.function.name || "tool";
+        if (id) toolNames.set(id, name);
+        return { id, name, args: tc.function.arguments?.trim() || "{}" };
+      });
+      history.push({
+        role: "assistant",
+        text: messageText(msg),
+        reasoning: msg.reasoning_content,
+        toolCalls: calls.length ? calls : undefined,
+      });
+      afterAssistantTools = calls.length > 0;
       continue;
     }
     if (msg.role === "tool") {
@@ -277,29 +322,36 @@ export function prepareCursorConversation(
         toolCallId: msg.tool_call_id || "",
         content: messageText(msg),
       };
+      if (item.toolCallId && msg.name) toolNames.set(item.toolCallId, msg.name);
       if (afterAssistantTools) trailing.push(item);
-      else pendingAssistant = foldToolResults(pendingAssistant, [item]);
+      else {
+        history.push({
+          role: "tool",
+          toolCallId: item.toolCallId,
+          toolName: toolNameForCall(toolNames, item.toolCallId, msg.name),
+          text: item.content,
+        });
+      }
     }
   }
 
-  let userText = "";
-  if (pendingUser && !pendingAssistant) {
-    userText = pendingUser;
-  } else {
-    flushTurn();
-    // Replay last user as the action when this is a retry / first completion
-    // (no trailing tools). Matches the previous parseMessages pop.
-    if (!trailing.length && turns.length) {
-      const last = turns.pop()!;
-      userText = last.userText;
-    }
-  }
+  const userText = takePendingUser();
+  const historyForRebase: CursorHistoryMessage[] = [
+    ...history,
+    ...trailing.map((t) => ({
+      role: "tool" as const,
+      toolCallId: t.toolCallId,
+      toolName: toolNameForCall(toolNames, t.toolCallId),
+      text: t.content,
+    })),
+  ];
 
   return {
     systemPrompt,
     userText,
-    turns,
+    turns: turnsFromHistory(historyForRebase),
     trailingToolResults: [...trailing],
+    history: historyForRebase,
   };
 }
 
@@ -352,6 +404,7 @@ interface LiveSession {
   turn: LiveTurn | null;
   workspace: string;
   requestContext: Buffer;
+  conversationId?: string;
   toolFlush?: ReturnType<typeof setTimeout>;
 }
 
@@ -455,6 +508,41 @@ function closeLive(key: string, session?: LiveSession): void {
   }
 }
 
+/**
+ * Drop stale Runs for this Forge session (model switch) or an idle leftover
+ * after /new. Never close a different conversation that still has pending
+ * MCP execs — a Cursor subagent would otherwise kill the parent Run.
+ */
+function closeOtherLives(keepKey: string, conversationId?: string): void {
+  const id = (conversationId || "").trim();
+  for (const [key, live] of [...liveSessions]) {
+    if (key === keepKey) continue;
+    if (id && live.conversationId === id) {
+      closeLive(key, live);
+      continue;
+    }
+    if (live.pending.length > 0) continue;
+    if (live.turn && !live.turn.settled) continue;
+    if (id && live.conversationId && live.conversationId !== id) {
+      closeLive(key, live);
+    }
+  }
+}
+
+/** ConversationState is always the system blob — never chat JSON in field 1. */
+export function buildCursorConversationState(systemPrompt: string): {
+  state: Buffer;
+  blobStore: Map<string, Buffer>;
+} {
+  const blobStore = new Map<string, Buffer>();
+  const sys = systemPromptBlob(systemPrompt);
+  blobStore.set(hexKey(sys.id), sys.data);
+  return {
+    state: encodeConversationState({ systemBlobId: sys.id, turns: [] }),
+    blobStore,
+  };
+}
+
 function buildRunPayload(req: ChatRequest, parsed: CursorConversation): {
   bytes: Buffer;
   blobStore: Map<string, Buffer>;
@@ -462,20 +550,9 @@ function buildRunPayload(req: ChatRequest, parsed: CursorConversation): {
   workspace: string;
   requestContext: Buffer;
 } {
-  const blobStore = new Map<string, Buffer>();
-  const sys = systemPromptBlob(parsed.systemPrompt);
-  blobStore.set(hexKey(sys.id), sys.data);
-
-  // First turn: system blob + KV (working path). History Runs: JSON seed —
-  // invented AgentTurn protobuf in field 8 is Connect `internal` on rebase.
-  const conversationState = parsed.turns.length
-    ? encodeConversationState({
-        seedJson: encodeSeedChatJson({
-          systemPrompt: parsed.systemPrompt,
-          turns: parsed.turns,
-        }),
-      })
-    : encodeConversationState({ systemBlobId: sys.id, turns: [] });
+  const { state: conversationState, blobStore } = buildCursorConversationState(
+    parsed.systemPrompt,
+  );
 
   const mcp = encodeToolDefs(req.tools);
   const workspace = workspaceFromRequest(req);
@@ -485,12 +562,16 @@ function buildRunPayload(req: ChatRequest, parsed: CursorConversation): {
     reasoningEffort: req.reasoning_effort,
     contextWindow: req.context_window,
   });
+  const history = parsed.history.length
+    ? encodeConversationHistory(parsed.history)
+    : undefined;
   const run = encodeAgentRunRequest({
     conversationState,
     action: encodeConversationActionUser(
       parsed.userText || CURSOR_CONTINUE_PROMPT,
       randomUUID(),
       requestContext,
+      history,
     ),
     modelId: model.serverId,
     // New HTTP/2 Run → new conversation_id. Reusing a dead Run's id (Forge
@@ -613,6 +694,7 @@ export class CursorProvider implements LLMProvider {
     noteVisible: () => void,
   ): Promise<ChatResponse> {
     const key = sessionKeyForRequest(req);
+    closeOtherLives(key, req.conversationId);
     const parsed = prepareCursorConversation(req.messages);
     const existing = liveSessions.get(key);
     const streamDead =
@@ -627,6 +709,7 @@ export class CursorProvider implements LLMProvider {
         pendingCount: existing.pending.length,
         streamDead,
         trailingCount: parsed.trailingToolResults.length,
+        hasUserAction: Boolean(parsed.userText.trim()),
       })
     ) {
       const results = parsed.trailingToolResults.length
@@ -732,6 +815,7 @@ export class CursorProvider implements LLMProvider {
       turn: null,
       workspace,
       requestContext,
+      conversationId: (req.conversationId || "").trim() || undefined,
     };
     live.heartbeat.unref?.();
     liveSessions.set(key, live);
@@ -950,7 +1034,7 @@ export class CursorProvider implements LLMProvider {
           clearTimeout(live.toolFlush);
           live.toolFlush = undefined;
         }
-        this.finishTurn(key, live, { close: true });
+        this.finishTurn(key, live, { close: false });
         continue;
       }
       if (ev.kind === "kv") {
