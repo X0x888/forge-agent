@@ -671,6 +671,8 @@ export {
   formatStatusVerdict,
   formatStatusCloser,
   assembleStatusReport,
+  formatSitDownResume,
+  resumeCardHasNext,
 } from "./tui/status-card.js";
 export type { StatusIssue, StatusIssueKind } from "./tui/status-card.js";
 export {

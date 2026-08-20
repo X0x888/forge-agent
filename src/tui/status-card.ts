@@ -1,13 +1,18 @@
 /**
- * `/status` verdict-first card — the problem is the first line, not identity.
+ * `/status` + sit-down resume — the problem is the first line, not identity.
  *
  * HUD + session details stay below (scrapers / `/status` muscle memory).
- * Empty edge is `status  ·  ok` — not another ✓-preview.
+ * Empty `/status` is `status  ·  ok`. Sit-down empty is the peek, not
+ * another ✓-preview (`resume  ·  ok`).
  */
 import chalk from "chalk";
 import type { ForgeConfig } from "../config/types.js";
 import type { SessionData } from "../session/session.js";
-import { isLastErrorProblem, isLastVerificationStale } from "../session/session.js";
+import {
+  formatCompactResumeCard,
+  isLastErrorProblem,
+  isLastVerificationStale,
+} from "../session/session.js";
 import { outboundTokenEstimateForSession } from "../statusline/snapshot.js";
 import { costCapStatus } from "../util/cost-budget.js";
 import { detectProjectIntel } from "../util/project-intel.js";
@@ -153,10 +158,11 @@ function clipCmd(cmd: string): string {
 
 export function formatStatusVerdict(
   issues: readonly StatusIssue[],
-  opts?: { color?: boolean },
+  opts?: { color?: boolean; title?: string },
 ): string {
   const color = opts?.color !== false;
-  const title = color ? chalk.bold("status") : "status";
+  const rawTitle = opts?.title?.trim() || "status";
+  const title = color ? chalk.bold(rawTitle) : rawTitle;
   if (!issues.length) {
     const ok = color ? chalk.green("ok") : "ok";
     return `${title}  ·  ${ok}`;
@@ -217,4 +223,49 @@ export function assembleStatusReport(parts: {
   ]
     .filter((s) => s.length > 0)
     .join("\n");
+}
+
+/** True when sit-down already printed a problem-specific Next closer. */
+export function resumeCardHasNext(text: string): boolean {
+  return /(?:^|\n)Next  /.test(text || "");
+}
+
+function stripLastErrFlag(body: string): string {
+  return String(body || "")
+    .replace(/  ·  lastErr \S+/g, "")
+    .replace(/^lastErr \S+  ·  /m, "")
+    .replace(/^lastErr \S+$/m, "")
+    .replace(/  ·  $/gm, "")
+    .trim();
+}
+
+/**
+ * Sit-down (`forge` auto-resume + `/resume`) — verdict-first when something
+ * is wrong. Designed empty is the compact peek, not `resume  ·  ok`.
+ */
+export function formatSitDownResume(
+  session: SessionData,
+  config: StatusIssueInput["config"],
+  opts?: {
+    maxChars?: number;
+    fileLimit?: number;
+    columns?: number;
+    color?: boolean;
+  },
+): string {
+  const issues = collectStatusIssues({ config, session });
+  const raw = formatCompactResumeCard(session, {
+    maxChars: opts?.maxChars,
+    fileLimit: opts?.fileLimit,
+  });
+  if (!issues.length) return raw;
+  const body = issues.some((i) => i.kind === "lastErr")
+    ? stripLastErrFlag(raw)
+    : raw;
+  const verdict = formatStatusVerdict(issues, {
+    color: opts?.color,
+    title: "resume",
+  });
+  const closer = formatStatusCloser(issues, { columns: opts?.columns });
+  return [verdict, body, closer].filter((s) => s && s.trim()).join("\n");
 }

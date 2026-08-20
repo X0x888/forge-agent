@@ -8,7 +8,10 @@ import {
   formatStatusVerdict,
   formatStatusCloser,
   assembleStatusReport,
+  formatSitDownResume,
+  resumeCardHasNext,
 } from "../src/tui/status-card.js";
+import { formatBanner } from "../src/tui/banner.js";
 import { createSession, setSessionLastError } from "../src/session/session.js";
 import { DEFAULT_CONFIG } from "../src/config/types.js";
 
@@ -199,5 +202,108 @@ describe("/status slash wiring", () => {
     assert.match(out, /^status\s+·\s+1 issue/);
     assert.match(out, /lastErr  \[rate_limited\]/);
     assert.match(out, /Next  forge accounts switch/);
+  });
+});
+
+describe("sit-down resume", () => {
+  it("designed empty is the peek, not resume · ok", () => {
+    const { session, config } = base();
+    session.messages.push({ role: "user", content: "continue the lease" });
+    session.messages.push({ role: "assistant", content: "working" });
+    const card = strip(formatSitDownResume(session, config, { color: false }));
+    assert.match(card, /you: continue the lease/);
+    assert.doesNotMatch(card, /resume\s+·\s+ok/);
+    assert.doesNotMatch(card, /^Next  /m);
+    assert.equal(resumeCardHasNext(card), false);
+  });
+
+  it("error state opens on lastErr + Next", () => {
+    const { session, config } = base();
+    session.messages.push({ role: "user", content: "continue the lease" });
+    setSessionLastError(session, {
+      code: "rate_limited",
+      message: "xai HTTP 429: rate limit",
+      tips: ["forge accounts switch"],
+    });
+    const card = strip(formatSitDownResume(session, config, { color: false }));
+    assert.match(card, /^resume\s+·\s+1 issue/);
+    assert.match(card, /lastErr  \[rate_limited\]/);
+    assert.match(card, /you: continue the lease/);
+    assert.doesNotMatch(card, / · lastErr /);
+    assert.match(card, /Next  forge accounts switch/);
+    assert.equal(resumeCardHasNext(card), true);
+  });
+
+  it("banner skips generic keys when Next is present", () => {
+    const { session, config } = base();
+    setSessionLastError(session, {
+      code: "rate_limited",
+      message: "xai HTTP 429",
+      tips: ["forge accounts switch"],
+    });
+    const orient = formatSitDownResume(session, config, { color: false });
+    const banner = formatBanner({
+      version: "0.9.99",
+      provider: "xai",
+      model: "grok-4",
+      authLabel: "xai",
+      sessionId: "id",
+      permissionMode: "default",
+      sandbox: "workspace",
+      blockingStop: true,
+      posture: "posture: —",
+      resumeOrientation: orient,
+    });
+    assert.match(banner, /resume\s+·\s+1 issue/);
+    assert.match(banner, /Next  forge accounts switch/);
+    assert.doesNotMatch(banner, /\/last {2}· {2}\/files {2}· {2}\/retry/);
+  });
+
+  it("banner keeps generic keys on a clean peek", () => {
+    const { session, config } = base();
+    session.messages.push({ role: "user", content: "fix the lease" });
+    const orient = formatSitDownResume(session, config, { color: false });
+    const banner = formatBanner({
+      version: "1",
+      provider: "xai",
+      model: "m",
+      authLabel: "xai",
+      sessionId: "id",
+      permissionMode: "default",
+      sandbox: "workspace",
+      blockingStop: true,
+      posture: "posture: —",
+      resumeOrientation: orient,
+    });
+    assert.match(banner, /you: fix the lease/);
+    assert.match(banner, /\/last {2}· {2}\/files {2}· {2}\/retry/);
+  });
+
+  it("/resume slash opens on lastErr, not generic keys", async () => {
+    const { tmp, session, config } = base();
+    session.messages.push({ role: "user", content: "continue the migration" });
+    session.messages.push({ role: "assistant", content: "migration half done" });
+    setSessionLastError(session, {
+      code: "rate_limited",
+      message: "xai HTTP 429: rate limit",
+      tips: ["forge accounts switch"],
+    });
+    const { saveSession } = await import("../src/session/session.js");
+    saveSession(session);
+    const current = createSession({ cwd: tmp, provider: "xai", model: "grok-4" });
+    const { handleSlash } = await import("../src/commands/slash.js");
+    const { HookRunner } = await import("../src/harness/hooks.js");
+    const r = await handleSlash(`/resume ${session.meta.id.slice(0, 8)}`, {
+      session: current,
+      config,
+      hooks: new HookRunner(config, tmp),
+    });
+    assert.equal(r.handled, true);
+    const out = strip(String(r.output || ""));
+    assert.match(out, /Resumed/i);
+    assert.match(out, /resume\s+·\s+1 issue/);
+    assert.match(out, /lastErr  \[rate_limited\]/);
+    assert.match(out, /Next  forge accounts switch/);
+    assert.doesNotMatch(out, /\/last 3/);
   });
 });

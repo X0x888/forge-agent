@@ -20,9 +20,9 @@ import {
 import {
   saveSession,
   isLastVerificationStale,
-  formatResumeOrientation,
   isSyntheticUserMessage,
 } from "../session/session.js";
+import { formatSitDownResume } from "./status-card.js";
 import { log } from "../util/log.js";
 import {
   maybeTurnEndAttention,
@@ -1231,10 +1231,9 @@ async function printBanner(
     setupCompact,
     resumeOrientation: isFirstSession
       ? undefined
-      : formatResumeOrientation(session, {
+      : formatSitDownResume(session, config, {
         maxChars: 180,
         fileLimit: 4,
-        compact: true,
       }),
     dockOn: isBottomStatusEnabled(),
   });

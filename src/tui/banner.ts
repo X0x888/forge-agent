@@ -3,6 +3,7 @@
  * Live › chrome lives on the live-run header, not here.
  */
 import { clipAnsi, visibleWidth } from "../util/format.js";
+import { resumeCardHasNext } from "./status-card.js";
 
 export interface BannerInput {
   version: string;
@@ -118,7 +119,10 @@ export function formatBanner(input: BannerInput): string {
     for (const row of resume.split("\n")) {
       if (row.trim()) lines.push(`  ${row}`);
     }
-    lines.push(`  ↳ /last  ·  /files  ·  /retry`);
+    // Verdict-first sit-down already owns Next — don't stack the generic keys.
+    if (!resumeCardHasNext(resume)) {
+      lines.push(`  ↳ /last  ·  /files  ·  /retry`);
+    }
   }
   return lines.join("\n");
 }

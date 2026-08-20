@@ -1,3 +1,4 @@
+import { formatSitDownResume, resumeCardHasNext } from "../tui/status-card.js";
 import {
   armGoal,
   pauseGoal,
@@ -5683,10 +5684,10 @@ case "/new":
           (lock ? ` (${formatLockHolder(lock)})` : "") +
           `. Concurrent writes may race — prefer one writer, or wait until the other REPL exits.`;
       }
-      const orient = formatResumeOrientation(loaded, { compact: true });
+      const orient = formatSitDownResume(loaded, opts.config, { color: false });
       const pinNote = loaded.meta.pinned ? " · PIN" : "";
       const peekBlock = orient
-        ? `\n${orient}\n${chalk.dim("/last 3 · /files · /retry")}`
+        ? `\n${orient}${resumeCardHasNext(orient) ? "" : `\n${chalk.dim("/last 3 · /files · /retry")}`}`
         : "";
       return {
         handled: true,
