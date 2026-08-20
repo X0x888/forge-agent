@@ -356,14 +356,59 @@ async function fetchXaiCredits(
 }
 
 /**
- * Connect JSON `GetCurrentPeriodUsage` — Pro/Ultra included spend is USD cents
- * on `planUsage`. Never invent: missing limit/used → no percent.
+ * Ultra has two included bars:
+ *   Cursor Models (Grok / Composer) → planUsage.autoPercentUsed
+ *   Other Models ($400 API)         → planUsage.apiPercentUsed + limit cents
+ * `includedSpend/limit` is total spend against the API dollar cap — mixing
+ * both bars. Pick the pool the active model burns. Never invent.
  */
+export function cursorUsagePool(
+  model?: string,
+  autoBucketModels?: string[],
+): "auto" | "api" {
+  const id = String(model || "")
+    .trim()
+    .toLowerCase();
+  const buckets = (autoBucketModels ?? []).map((s) =>
+    String(s || "")
+      .trim()
+      .toLowerCase(),
+  );
+  if (id && buckets.some((b) => b && (id === b || id.startsWith(`${b}-`)))) {
+    return "auto";
+  }
+  if (
+    /composer|vega|(?:^|[/_-])grok(?:-|$)|cursor-grok/.test(id) ||
+    id === "auto" ||
+    id === "default"
+  ) {
+    return "auto";
+  }
+  if (/claude|gpt-|o[1-4]\b|gemini|fable|opus|sonnet|haiku/.test(id)) {
+    return "api";
+  }
+  return id ? "api" : "auto";
+}
+
 export function parseCursorPeriodUsage(
   data: Record<string, unknown>,
-  source = "cursor:GetCurrentPeriodUsage",
+  sourceOrOpts:
+    | string
+    | { source?: string; model?: string } = "cursor:GetCurrentPeriodUsage",
 ): PlanUsageInfo {
+  const opts =
+    typeof sourceOrOpts === "string"
+      ? { source: sourceOrOpts }
+      : (sourceOrOpts ?? {});
+  const source = opts.source || "cursor:GetCurrentPeriodUsage";
   const pu = asRecord(data.planUsage) ?? asRecord(data) ?? {};
+  const autoBucket = Array.isArray(data.autoBucketModels)
+    ? data.autoBucketModels.map((s) => String(s))
+    : [];
+  const pool = cursorUsagePool(opts.model, autoBucket);
+
+  const autoPct = numVal(pu.autoPercentUsed);
+  const apiPct = numVal(pu.apiPercentUsed);
   const limitCents = numVal(pu.limit ?? pu.includedLimit);
   const remainingCents = numVal(pu.remaining ?? pu.includedRemaining);
   const usedCents = numVal(
@@ -373,30 +418,29 @@ export function parseCursorPeriodUsage(
         ? Math.max(0, limitCents - remainingCents)
         : null),
   );
-  const named =
-    numVal(pu.totalPercentUsed) ??
-    numVal(pu.apiPercentUsed) ??
-    numVal(pu.autoPercentUsed);
+
   let percent: number | undefined;
-  if (named != null) {
-    percent = Math.round(named * 10) / 10;
-  } else if (limitCents != null && limitCents > 0 && usedCents != null) {
+  const rawPct = pool === "auto" ? autoPct : apiPct;
+  if (rawPct != null) {
+    percent = Math.round(rawPct * 10) / 10;
+  } else if (
+    pool === "api" &&
+    limitCents != null &&
+    limitCents > 0 &&
+    usedCents != null
+  ) {
     percent = Math.round((usedCents / limitCents) * 1000) / 10;
   }
   if (percent != null) {
     if (percent < 0) percent = 0;
     if (percent > 100) percent = 100;
   }
-  let resetsAt: string | undefined;
-  const cycleEnd =
-    data.billingCycleEnd ?? data.periodEnd ?? pu.billingCycleEnd ?? pu.periodEnd;
-  const cycleStart =
-    data.billingCycleStart ?? data.periodStart ?? pu.billingCycleStart;
-  const endIso = epochOrIso(cycleEnd);
-  const startIso = epochOrIso(cycleStart);
-  if (endIso) resetsAt = endIso;
 
-  const remaining =
+  const endIso = epochOrIso(
+    data.billingCycleEnd ?? data.periodEnd ?? pu.billingCycleEnd ?? pu.periodEnd,
+  );
+
+  const apiRemaining =
     remainingCents != null
       ? remainingCents
       : usedCents != null && limitCents != null
@@ -405,16 +449,20 @@ export function parseCursorPeriodUsage(
 
   return {
     source,
-    product: "Cursor",
+    product: pool === "auto" ? "Cursor Models" : "Cursor API",
     percent,
-    used: usedCents != null ? Math.round(usedCents) / 100 : undefined,
-    limit: limitCents != null ? Math.round(limitCents) / 100 : undefined,
-    remaining: remaining != null ? Math.round(remaining) / 100 : undefined,
-    periodLabel: percent != null || limitCents != null ? "month" : undefined,
-    resetsAt,
-    ...(startIso && percent == null && !resetsAt
-      ? { note: "period start known; spend fields missing" }
+    ...(pool === "api"
+      ? {
+          used: usedCents != null ? Math.round(usedCents) / 100 : undefined,
+          limit: limitCents != null ? Math.round(limitCents) / 100 : undefined,
+          remaining:
+            apiRemaining != null ? Math.round(apiRemaining) / 100 : undefined,
+        }
       : {}),
+    periodLabel: percent != null || (pool === "api" && limitCents != null)
+      ? "month"
+      : undefined,
+    resetsAt: endIso,
   };
 }
 
@@ -438,10 +486,12 @@ function epochOrIso(v: unknown): string | undefined {
 async function fetchCursorPlan(
   token: string,
   cacheKeySuffix?: string,
+  model?: string,
 ): Promise<PlanUsageInfo | null> {
+  const pool = cursorUsagePool(model);
   const cacheKey = cacheKeySuffix
-    ? `cursor:plan:v1:${cacheKeySuffix}`
-    : "cursor:plan:v1";
+    ? `cursor:plan:v2:${cacheKeySuffix}:${pool}`
+    : `cursor:plan:v2:${pool}`;
   const cached = readCache(cacheKey, 60);
   if (cached) return cached;
 
@@ -478,7 +528,7 @@ async function fetchCursorPlan(
       writeCache(cacheKey, note);
       return note;
     }
-    const plan = parseCursorPeriodUsage(data);
+    const plan = parseCursorPeriodUsage(data, { model });
     if (!planHasSignal(plan)) {
       plan.note = "billing unavailable (empty spend fields)";
     }
@@ -555,6 +605,8 @@ export async function collectPlanUsage(opts: {
   authMethod: AuthMethod;
   /** Optional active account id for per-account cache + plan recording */
   accountId?: string;
+  /** Active model id — Cursor Ultra has separate Grok/Composer vs API pools */
+  model?: string;
 }): Promise<PlanUsageInfo | undefined> {
   const p = opts.provider.toLowerCase();
 
@@ -631,7 +683,7 @@ export async function collectPlanUsage(opts: {
     const token = active?.accessToken || stored?.accessToken;
     const accountId = opts.accountId || active?.id;
     if (token) {
-      const plan = await fetchCursorPlan(token, accountId);
+      const plan = await fetchCursorPlan(token, accountId, opts.model);
       if (plan && accountId && (plan.percent != null || plan.remaining != null)) {
         try {
           recordAccountPlan(accountId, {

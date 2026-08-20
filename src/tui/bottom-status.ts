@@ -468,6 +468,7 @@ export function createBottomStatusDock(
         provider: String(ctx.auth.provider || ctx.config.provider),
         authMethod: authMethodOf(ctx.auth),
         accountId: ctx.auth.accountId,
+        model: ctx.config.model,
       });
       plan = next;
       doPaint();

@@ -5,29 +5,58 @@ import os from "node:os";
 import path from "node:path";
 import {
   collectPlanUsage,
+  cursorUsagePool,
   parseCursorPeriodUsage,
 } from "../src/statusline/plan.js";
 import { formatPlan } from "../src/statusline/render.js";
 import { CURSOR_NATIVE_REJECT } from "../src/providers/cursor-proto.js";
 
+describe("cursorUsagePool", () => {
+  it("puts Cursor Grok / Composer on the auto bar", () => {
+    assert.equal(cursorUsagePool("cursor-grok-4.6-xhigh-fast"), "auto");
+    assert.equal(cursorUsagePool("composer-2.5"), "auto");
+    assert.equal(cursorUsagePool("grok-4.6"), "auto");
+  });
+  it("puts Claude / GPT on the API bar", () => {
+    assert.equal(cursorUsagePool("claude-sonnet-5"), "api");
+    assert.equal(cursorUsagePool("claude-fable-5-max"), "api");
+    assert.equal(cursorUsagePool("gpt-5.5"), "api");
+  });
+});
+
 describe("parseCursorPeriodUsage", () => {
-  it("maps planUsage cents to percent and dollars", () => {
-    const plan = parseCursorPeriodUsage({
-      planUsage: {
-        limit: 20_000,
-        remaining: 16_000,
-        includedSpend: 4_000,
-      },
-      billingCycleEnd: String(Date.parse("2026-09-01T00:00:00Z")),
+  const ultra = {
+    planUsage: {
+      limit: 40_000,
+      remaining: 38_467,
+      includedSpend: 1_533,
+      autoPercentUsed: 0.686,
+      apiPercentUsed: 0.322,
+      totalPercentUsed: 3.8,
+    },
+    autoBucketModels: ["composer-2.5", "cursor-grok-4.5-high"],
+    billingCycleEnd: String(Date.parse("2026-09-13T00:00:00Z")),
+  };
+
+  it("Cursor Grok uses autoPercentUsed and does not attach the $400 API cap", () => {
+    const plan = parseCursorPeriodUsage(ultra, {
+      model: "cursor-grok-4.6-xhigh-fast",
     });
-    assert.equal(plan.percent, 20);
-    assert.equal(plan.used, 40);
-    assert.equal(plan.limit, 200);
-    assert.equal(plan.remaining, 160);
-    assert.equal(plan.product, "Cursor");
-    assert.match(plan.resetsAt || "", /^2026-09-01/);
+    assert.equal(plan.product, "Cursor Models");
+    assert.equal(plan.percent, 0.7);
+    assert.equal(plan.used, undefined);
+    assert.equal(plan.limit, undefined);
     const hud = formatPlan(plan, false);
-    assert.match(hud || "", /use:20%/);
+    assert.match(hud || "", /use:0\.7%/);
+    assert.equal(/400/.test(hud || ""), false);
+  });
+
+  it("named API models use apiPercentUsed plus the dollar cap", () => {
+    const plan = parseCursorPeriodUsage(ultra, { model: "claude-sonnet-5" });
+    assert.equal(plan.product, "Cursor API");
+    assert.equal(plan.percent, 0.3);
+    assert.equal(plan.used, 15.33);
+    assert.equal(plan.limit, 400);
   });
 
   it("does not invent percent when spend fields are missing", () => {
@@ -35,31 +64,6 @@ describe("parseCursorPeriodUsage", () => {
     assert.equal(plan.percent, undefined);
     assert.equal(plan.used, undefined);
     assert.equal(plan.limit, undefined);
-  });
-
-  it("prefers totalPercentUsed from the dashboard body", () => {
-    const plan = parseCursorPeriodUsage({
-      planUsage: {
-        limit: 40_000,
-        remaining: 38_467,
-        includedSpend: 1_533,
-        totalPercentUsed: 3.8,
-        apiPercentUsed: 2.1,
-        autoPercentUsed: 1.7,
-      },
-    });
-    assert.equal(plan.percent, 3.8);
-    assert.equal(plan.used, 15.33);
-    assert.equal(plan.limit, 400);
-  });
-
-  it("derives used from limit - remaining", () => {
-    const plan = parseCursorPeriodUsage({
-      planUsage: { limit: 1000, remaining: 250 },
-    });
-    assert.equal(plan.percent, 75);
-    assert.equal(plan.used, 7.5);
-    assert.equal(plan.remaining, 2.5);
   });
 });
 
