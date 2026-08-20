@@ -285,16 +285,43 @@ export function encodeTurnStructure(agentTurn: Uint8Array): Buffer {
 
 export function encodeConversationState(opts: {
   systemBlobId?: Uint8Array;
-  turns: Uint8Array[];
+  /** Repeated JSON chat messages (`root_prompt_messages_json`). */
+  seedJson?: string[];
+  turns?: Uint8Array[];
 }): Buffer {
   const parts: Buffer[] = [];
-  if (opts.systemBlobId && opts.systemBlobId.length) {
+  if (opts.seedJson?.length) {
+    for (const msg of opts.seedJson) {
+      if (msg) parts.push(encodeString(1, msg));
+    }
+  } else if (opts.systemBlobId && opts.systemBlobId.length) {
+    // First turn: content-addressed system blob; server KV-gets the bytes.
     parts.push(encodeBytes(1, opts.systemBlobId));
   }
-  for (const t of opts.turns) {
+  for (const t of opts.turns ?? []) {
     parts.push(encodeBytes(8, t));
   }
   return Buffer.concat(parts);
+}
+
+/** JSON lines for ConversationStateStructure.seed (rebase / history Runs). */
+export function encodeSeedChatJson(opts: {
+  systemPrompt: string;
+  turns: Array<{ userText: string; assistantText: string }>;
+}): string[] {
+  const out: string[] = [];
+  if (opts.systemPrompt.trim()) {
+    out.push(JSON.stringify({ role: "system", content: opts.systemPrompt }));
+  }
+  for (const t of opts.turns) {
+    if (t.userText.trim()) {
+      out.push(JSON.stringify({ role: "user", content: t.userText }));
+    }
+    if (t.assistantText.trim()) {
+      out.push(JSON.stringify({ role: "assistant", content: t.assistantText }));
+    }
+  }
+  return out;
 }
 
 export function encodeModelParameter(id: string, value: string): Buffer {
@@ -470,12 +497,14 @@ export function encodeClientMessage(opts: {
   execClient?: Uint8Array;
   kvClient?: Uint8Array;
   execControl?: Uint8Array;
+  interactionResponse?: Uint8Array;
   heartbeat?: boolean;
 }): Buffer {
   if (opts.runRequest) return encodeMessage(1, opts.runRequest);
   if (opts.execClient) return encodeMessage(2, opts.execClient);
   if (opts.kvClient) return encodeMessage(3, opts.kvClient);
   if (opts.execControl) return encodeMessage(5, opts.execControl);
+  if (opts.interactionResponse) return encodeMessage(6, opts.interactionResponse);
   if (opts.heartbeat) return encodeMessage(7, Buffer.alloc(0));
   return Buffer.alloc(0);
 }
@@ -483,6 +512,66 @@ export function encodeClientMessage(opts: {
 /** ACM #5 stream_close — without this, AgentService waits on heartbeats forever. */
 export function encodeExecStreamClose(id: number): Buffer {
   return encodeMessage(1, encodeUint32(1, id));
+}
+
+/** ACM #5 throw — unblocks an exec variant we cannot satisfy. */
+export function encodeExecClientThrow(id: number, error: string): Buffer {
+  return encodeMessage(
+    2,
+    Buffer.concat([encodeUint32(1, id), encodeString(2, error)]),
+  );
+}
+
+export function encodeMcpStateResult(toolDefs: Uint8Array[]): Buffer {
+  const server = Buffer.concat([
+    encodeString(1, "forge"),
+    encodeString(2, "forge"),
+    ...toolDefs.map((d) => encodeMessage(5, d)),
+    encodeString(7, "ready"),
+  ]);
+  return encodeMessage(1, encodeMessage(1, server));
+}
+
+export function encodeListMcpResourcesEmpty(): Buffer {
+  return encodeMessage(1, Buffer.alloc(0));
+}
+
+export function encodeReadMcpResourceError(uri: string, error: string): Buffer {
+  return encodeMessage(
+    2,
+    Buffer.concat([encodeString(1, uri), encodeString(2, error)]),
+  );
+}
+
+export function encodeExecErrorResult(error: string): Buffer {
+  return encodeMessage(2, encodeString(1, error));
+}
+
+const INTERACTION_REJECT =
+  "Not available in this environment. Use the MCP tools provided instead.";
+
+/** Headless InteractionResponse — reject UI queries so the Run does not wait. */
+export function encodeInteractionResponse(
+  id: number,
+  variantField: number,
+): Buffer {
+  const reason = encodeString(1, INTERACTION_REJECT);
+  let body: Buffer;
+  if (variantField === 8) {
+    body = encodeMessage(8, encodeMessage(1, Buffer.alloc(0)));
+  } else if (variantField === 3) {
+    body = encodeMessage(3, encodeMessage(1, encodeMessage(3, reason)));
+  } else if (variantField === 7) {
+    body = encodeMessage(7, encodeMessage(1, encodeMessage(2, reason)));
+  } else if (variantField === 10) {
+    body = encodeMessage(10, encodeMessage(3, reason));
+  } else if (variantField === 13) {
+    body = encodeMessage(13, encodeMessage(2, reason));
+  } else {
+    const field = variantField > 0 ? variantField : 2;
+    body = encodeMessage(field, encodeMessage(2, reason));
+  }
+  return Buffer.concat([encodeUint32(1, id), body]);
 }
 
 export function encodeExecClient(opts: {
@@ -591,6 +680,11 @@ export type CursorServerEvent =
       blobData?: Uint8Array;
     }
   | {
+      kind: "interaction";
+      id: number;
+      field: number;
+    }
+  | {
       kind: "usage";
       prompt_tokens: number;
       completion_tokens: number;
@@ -677,7 +771,18 @@ const EXEC_KIND: Record<number, string> = {
   21: "recordScreenArgs",
   22: "computerUseArgs",
   23: "writeShellStdinArgs",
+  28: "subagentArgs",
+  36: "mcpStateExecArgs",
+  45: "piReadArgs",
+  46: "piBashArgs",
+  47: "piEditArgs",
+  48: "piWriteArgs",
+  49: "piGrepArgs",
+  50: "piFindArgs",
+  51: "piLsArgs",
 };
+
+const EXEC_META_FIELDS = new Set([1, 15, 19]);
 
 export function parseMcpArgs(payload: Uint8Array): {
   name: string;
@@ -746,10 +851,12 @@ export function parseAgentServerMessage(payload: Uint8Array): CursorServerEvent[
       const inner = decodeFields(f.bytes);
       const id = fieldVarint(inner, 1) ?? 0;
       const execId = fieldStr(inner, 15) || "";
+      let found = false;
       for (const [num, name] of Object.entries(EXEC_KIND)) {
         const n = Number(num);
         const payloadBytes = fieldBytes(inner, n);
         if (payloadBytes) {
+          found = true;
           events.push({
             kind: "exec",
             id,
@@ -760,6 +867,29 @@ export function parseAgentServerMessage(payload: Uint8Array): CursorServerEvent[
           });
         }
       }
+      if (!found) {
+        for (const innerF of inner) {
+          if (innerF.wire !== 2 || EXEC_META_FIELDS.has(innerF.field)) continue;
+          events.push({
+            kind: "exec",
+            id,
+            execId,
+            execKind: `unknown_${innerF.field}`,
+            field: innerF.field,
+            payload: innerF.bytes,
+          });
+          break;
+        }
+      }
+    } else if (f.field === 7 && f.wire === 2) {
+      const inner = decodeFields(f.bytes);
+      const id = fieldVarint(inner, 1) ?? 0;
+      const variant = inner.find((x) => x.wire === 2 && x.field !== 1);
+      events.push({
+        kind: "interaction",
+        id,
+        field: variant?.field ?? 0,
+      });
     } else if (f.field === 4 && f.wire === 2) {
       const inner = decodeFields(f.bytes);
       const id = fieldVarint(inner, 1) ?? 0;

@@ -44,8 +44,14 @@ import {
   parseUsageFields,
   encodeClientMessage,
   encodeConversationActionUser,
+  encodeConversationState,
+  encodeExecClientThrow,
   encodeExecStreamClose,
+  encodeInteractionResponse,
+  encodeMcpStateResult,
+  encodeMcpToolDefinition,
   encodeMessage,
+  encodeSeedChatJson,
   encodeRequestContext,
   encodeRequestContextEnv,
   encodeString,
@@ -349,6 +355,90 @@ describe("cursor proto codec", () => {
     assert.equal(fields[0]!.field, 5);
     const close = decodeFields(fields[0]!.bytes);
     assert.equal(close[0]!.field, 1);
+  });
+
+  it("parses mcp_state / unknown execs and interaction queries", () => {
+    const mcpState = encodeMessage(
+      2,
+      Buffer.concat([
+        encodeUint32(1, 3),
+        encodeMessage(36, encodeString(1, "forge")),
+      ]),
+    );
+    const st = parseAgentServerMessage(mcpState);
+    assert.equal(st[0]?.kind, "exec");
+    if (st[0]?.kind === "exec") {
+      assert.equal(st[0].execKind, "mcpStateExecArgs");
+      assert.equal(st[0].id, 3);
+    }
+
+    const unknown = encodeMessage(
+      2,
+      Buffer.concat([
+        encodeUint32(1, 9),
+        encodeMessage(99, encodeString(1, "x")),
+      ]),
+    );
+    const unk = parseAgentServerMessage(unknown);
+    assert.equal(unk[0]?.kind, "exec");
+    if (unk[0]?.kind === "exec") {
+      assert.equal(unk[0].execKind, "unknown_99");
+    }
+
+    const iq = encodeMessage(
+      7,
+      Buffer.concat([encodeUint32(1, 4), encodeMessage(2, encodeString(1, "q"))]),
+    );
+    const q = parseAgentServerMessage(iq);
+    assert.equal(q[0]?.kind, "interaction");
+    if (q[0]?.kind === "interaction") {
+      assert.equal(q[0].id, 4);
+      assert.equal(q[0].field, 2);
+    }
+  });
+
+  it("encodes interaction reject as ACM field 6", () => {
+    const framed = encodeClientMessage({
+      interactionResponse: encodeInteractionResponse(4, 2),
+    });
+    const fields = decodeFields(framed);
+    assert.equal(fields[0]!.field, 6);
+    const inner = decodeFields(fields[0]!.bytes);
+    assert.equal(inner.some((f) => f.field === 1 && f.varint === 4), true);
+    assert.equal(inner.some((f) => f.field === 2), true);
+  });
+
+  it("encodes mcp_state success with forge tools", () => {
+    const def = encodeMcpToolDefinition({
+      name: "list_dir",
+      description: "list",
+      parameters: { type: "object" },
+    });
+    const buf = encodeMcpStateResult([def]);
+    const result = decodeFields(buf);
+    assert.equal(result[0]!.field, 1);
+  });
+
+  it("encodes exec throw as ACM control field 2", () => {
+    const framed = encodeClientMessage({
+      execControl: encodeExecClientThrow(8, "nope"),
+    });
+    const fields = decodeFields(framed);
+    assert.equal(fields[0]!.field, 5);
+    const ctrl = decodeFields(fields[0]!.bytes);
+    assert.equal(ctrl[0]!.field, 2);
+  });
+
+  it("seeds reconnect history as JSON strings, not AgentTurns", () => {
+    const seed = encodeSeedChatJson({
+      systemPrompt: "sys",
+      turns: [{ userText: "hi", assistantText: "called list_dir" }],
+    });
+    const state = encodeConversationState({ seedJson: seed });
+    const fields = decodeFields(state);
+    assert.equal(fields.every((f) => f.field === 1), true);
+    assert.equal(fields.some((f) => f.field === 8), false);
+    assert.match(fieldStr(fields, 1) || "", /"role":"system"/);
   });
 });
 

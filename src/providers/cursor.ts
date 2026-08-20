@@ -42,25 +42,30 @@ import {
 import {
   CONNECT_END_STREAM,
   encodeAgentRunRequest,
-  encodeAgentTurn,
   encodeClientMessage,
   encodeConnectFrame,
   encodeConversationActionUser,
   encodeConversationState,
   encodeExecClient,
+  encodeExecClientThrow,
+  encodeExecErrorResult,
   encodeExecStreamClose,
+  encodeInteractionResponse,
   encodeKvClient,
+  encodeListMcpResourcesEmpty,
   encodeMcpErrorResult,
+  encodeMcpStateResult,
   encodeMcpSuccessResult,
   encodeMcpToolDefinition,
   encodeMcpTools,
   encodeMessage,
+  encodeReadMcpResourceError,
   encodeRejected,
   encodeRequestContext,
   encodeRequestContextEnv,
   encodeRequestContextResult,
+  encodeSeedChatJson,
   encodeString,
-  encodeTurnStructure,
   hexKey,
   parseAgentServerMessage,
   parseConnectEndError,
@@ -319,6 +324,7 @@ interface LiveSession {
   turn: LiveTurn | null;
   workspace: string;
   requestContext: Buffer;
+  toolFlush?: ReturnType<typeof setTimeout>;
 }
 
 /** Cursor sometimes joins a local id and `fc_…` with a newline. */
@@ -406,6 +412,7 @@ function closeLive(key: string): void {
   const live = liveSessions.get(key);
   if (!live) return;
   liveSessions.delete(key);
+  if (live.toolFlush) clearTimeout(live.toolFlush);
   clearInterval(live.heartbeat);
   try {
     live.stream.close();
@@ -430,15 +437,16 @@ function buildRunPayload(req: ChatRequest, parsed: CursorConversation): {
   const sys = systemPromptBlob(parsed.systemPrompt);
   blobStore.set(hexKey(sys.id), sys.data);
 
-  const turns: Buffer[] = [];
-  for (const t of parsed.turns) {
-    if (!t.assistantText.trim()) continue;
-    turns.push(
-      encodeTurnStructure(
-        encodeAgentTurn(t.userText, randomUUID(), t.assistantText),
-      ),
-    );
-  }
+  // First turn: system blob + KV (working path). History Runs: JSON seed —
+  // invented AgentTurn protobuf in field 8 is Connect `internal` on rebase.
+  const conversationState = parsed.turns.length
+    ? encodeConversationState({
+        seedJson: encodeSeedChatJson({
+          systemPrompt: parsed.systemPrompt,
+          turns: parsed.turns,
+        }),
+      })
+    : encodeConversationState({ systemBlobId: sys.id, turns: [] });
 
   const mcp = encodeToolDefs(req.tools);
   const workspace = workspaceFromRequest(req);
@@ -449,10 +457,7 @@ function buildRunPayload(req: ChatRequest, parsed: CursorConversation): {
     contextWindow: req.context_window,
   });
   const run = encodeAgentRunRequest({
-    conversationState: encodeConversationState({
-      systemBlobId: sys.id,
-      turns,
-    }),
+    conversationState,
     action: encodeConversationActionUser(
       parsed.userText || CURSOR_CONTINUE_PROMPT,
       randomUUID(),
@@ -704,7 +709,10 @@ export class CursorProvider implements LLMProvider {
     for (const exec of live.pending) {
       const want = cursorToolCallId(exec.toolCallId, exec.execId);
       const hit = results.find(
-        (r) => cursorToolCallId(r.toolCallId, r.toolCallId) === want,
+        (r) =>
+          cursorToolCallId(r.toolCallId, r.toolCallId) === want ||
+          r.toolCallId === exec.execId ||
+          r.toolCallId === exec.toolCallId,
       );
       const result = hit
         ? encodeMcpSuccessResult(hit.content, false)
@@ -879,6 +887,10 @@ export class CursorProvider implements LLMProvider {
     for (const ev of events) {
       if (ev.kind === "heartbeat" || ev.kind === "usage") continue;
       if (ev.kind === "turn_ended") {
+        if (live.toolFlush) {
+          clearTimeout(live.toolFlush);
+          live.toolFlush = undefined;
+        }
         this.finishTurn(key, live, { close: true });
         continue;
       }
@@ -909,26 +921,31 @@ export class CursorProvider implements LLMProvider {
         }
         continue;
       }
-      if (ev.kind === "exec" && ev.execKind === "requestContextArgs") {
-        writeExecAndClose(live, {
-          id: ev.id,
-          execId: ev.execId,
-          resultField: 10,
-          result: encodeRequestContextResult(live.requestContext),
-        });
+      if (ev.kind === "interaction") {
+        live.write(
+          encodeConnectFrame(
+            encodeClientMessage({
+              interactionResponse: encodeInteractionResponse(ev.id, ev.field),
+            }),
+          ),
+        );
         continue;
       }
       if (ev.kind === "exec" && ev.execKind !== "mcpArgs") {
-        const rejected = nativeRejectPayload(ev);
-        writeExecAndClose(live, {
-          id: ev.id,
-          execId: ev.execId,
-          resultField: rejected.resultField,
-          result: rejected.result,
-        });
+        this.replyNonMcpExec(live, ev);
         continue;
       }
-      if (!turn || turn.settled) continue;
+      if (!turn || turn.settled) {
+        if (ev.kind === "exec" && ev.execKind === "mcpArgs") {
+          writeExecAndClose(live, {
+            id: ev.id,
+            execId: ev.execId,
+            resultField: 11,
+            result: encodeMcpErrorResult("Tool call arrived after turn settled"),
+          });
+        }
+        continue;
+      }
       if (ev.kind === "text") {
         turn.content += ev.text;
         turn.noteVisible();
@@ -984,10 +1001,104 @@ export class CursorProvider implements LLMProvider {
       }
     }
     if (turn && !turn.settled && live.pending.length) {
+      this.scheduleToolFlush(key, live);
+    }
+  }
+
+  /**
+   * Cursor may emit several mcpArgs in consecutive frames. Flushing on the
+   * first one dropped the rest (turn.settled) and left the server waiting.
+   */
+  private scheduleToolFlush(key: string, live: LiveSession): void {
+    if (live.toolFlush) clearTimeout(live.toolFlush);
+    live.toolFlush = setTimeout(() => {
+      live.toolFlush = undefined;
+      const turn = live.turn;
+      if (!turn || turn.settled || !live.pending.length) return;
       turn.finishReason = "tool_calls";
       turn.onDelta({ finish_reason: "tool_calls" });
       this.finishTurn(key, live, { close: false });
+    }, 40);
+    live.toolFlush.unref?.();
+  }
+
+  private replyNonMcpExec(
+    live: LiveSession,
+    ev: {
+      id: number;
+      execId: string;
+      execKind: string;
+      field: number;
+      payload: Uint8Array;
+    },
+  ): void {
+    if (ev.execKind === "requestContextArgs") {
+      writeExecAndClose(live, {
+        id: ev.id,
+        execId: ev.execId,
+        resultField: 10,
+        result: encodeRequestContextResult(live.requestContext),
+      });
+      return;
     }
+    if (ev.execKind === "mcpStateExecArgs") {
+      writeExecAndClose(live, {
+        id: ev.id,
+        execId: ev.execId,
+        resultField: 36,
+        result: encodeMcpStateResult(live.mcpTools),
+      });
+      return;
+    }
+    if (ev.execKind === "listMcpResourcesExecArgs") {
+      writeExecAndClose(live, {
+        id: ev.id,
+        execId: ev.execId,
+        resultField: 17,
+        result: encodeListMcpResourcesEmpty(),
+      });
+      return;
+    }
+    if (ev.execKind === "readMcpResourceExecArgs") {
+      writeExecAndClose(live, {
+        id: ev.id,
+        execId: ev.execId,
+        resultField: 18,
+        result: encodeReadMcpResourceError(parsePathArg(ev.payload), REJECT),
+      });
+      return;
+    }
+    if (ev.execKind.startsWith("unknown_")) {
+      live.write(
+        encodeConnectFrame(
+          encodeClientMessage({
+            execControl: encodeExecClientThrow(ev.id, REJECT),
+          }),
+        ),
+      );
+      live.write(
+        encodeConnectFrame(
+          encodeClientMessage({ execControl: encodeExecStreamClose(ev.id) }),
+        ),
+      );
+      return;
+    }
+    if (ev.execKind.startsWith("pi") || ev.execKind === "subagentArgs") {
+      writeExecAndClose(live, {
+        id: ev.id,
+        execId: ev.execId,
+        resultField: ev.execKind === "subagentArgs" ? 28 : ev.field + 1,
+        result: encodeExecErrorResult(REJECT),
+      });
+      return;
+    }
+    const rejected = nativeRejectPayload(ev);
+    writeExecAndClose(live, {
+      id: ev.id,
+      execId: ev.execId,
+      resultField: rejected.resultField,
+      result: rejected.result,
+    });
   }
 
   private finishTurn(
@@ -996,6 +1107,10 @@ export class CursorProvider implements LLMProvider {
     opts: { close: boolean; force?: boolean },
   ): void {
     const turn = live.turn;
+    if (live.toolFlush) {
+      clearTimeout(live.toolFlush);
+      live.toolFlush = undefined;
+    }
     const closeNow =
       opts.force ||
       shouldCloseCursorLive({
