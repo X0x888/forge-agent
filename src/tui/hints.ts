@@ -7,7 +7,8 @@ export type HintId =
   | "no_agents"
   | "no_budget"
   | "long_run_notify"
-  | "first_permission";
+  | "first_permission"
+  | "live_steer";
 
 export interface TurnHintInput {
   dismissed: readonly string[];
@@ -29,6 +30,28 @@ export interface HintPick {
 
 export const FIRST_PERMISSION_HINT =
   "This is normal. a persists · /permissions acceptEdits to stop asking.";
+
+/**
+ * First live › — peers train Ctrl+C. One dismissible line at the moment
+ * the prompt appears. LIVE_CONTROLS_HINT stays on /ulw · /cycle (expert wall).
+ */
+export const LIVE_STEER_HINT =
+  "type to queue · /status · /cycle 0  (no Ctrl+C)";
+
+/** Printed above the live prompt so the caret and the tip share a name. */
+export function formatLiveSteerLine(text: string): string {
+  return `  live ›  ${text}`;
+}
+
+export function pickLiveSteerHint(input: {
+  dismissed: readonly string[];
+  /** Skip (ULW already printed the long mid-run wall, or tests). */
+  skip?: boolean;
+}): HintPick | null {
+  if (input.skip) return null;
+  if (input.dismissed.map(String).includes("live_steer")) return null;
+  return { id: "live_steer", text: LIVE_STEER_HINT };
+}
 
 /** Immediate SIGINT ack while the run is still winding down. Recovery lives on ABORT_RECOVERY. */
 export const ABORT_ACK = "Aborting…";

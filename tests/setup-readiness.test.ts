@@ -13,8 +13,11 @@ import { clipBannerIdentity, formatBanner } from "../src/tui/banner.js";
 import { visibleWidth } from "../src/util/format.js";
 import {
   pickTurnEndHint,
+  pickLiveSteerHint,
+  formatLiveSteerLine,
   shouldShowFirstPermissionHint,
   FIRST_PERMISSION_HINT,
+  LIVE_STEER_HINT,
   ABORT_ACK,
   ABORT_RECOVERY,
 } from "../src/tui/hints.js";
@@ -379,6 +382,21 @@ describe("hints", () => {
     assert.match(ABORT_ACK, /^Aborting/);
     assert.doesNotMatch(ABORT_ACK, /Ctrl\+C|\/retry/);
   });
+
+  it("first live › steer: show once, skip dismissed, designed empty", () => {
+    const first = pickLiveSteerHint({ dismissed: [] });
+    assert.equal(first?.id, "live_steer");
+    assert.equal(first?.text, LIVE_STEER_HINT);
+    assert.match(first!.text, /type to queue/);
+    assert.match(first!.text, /\/status/);
+    assert.match(first!.text, /\/cycle 0/);
+    assert.match(first!.text, /no Ctrl\+C/);
+    assert.doesNotMatch(first!.text, /\/ulw-off|\/max-waves|\/notify/);
+    const line = formatLiveSteerLine(first!.text);
+    assert.match(line, /^  live ›  type to queue/);
+    assert.equal(pickLiveSteerHint({ dismissed: ["live_steer"] }), null);
+    assert.equal(pickLiveSteerHint({ dismissed: [], skip: true }), null);
+  });
 });
 
 describe("login offer", () => {
@@ -437,6 +455,7 @@ describe("grouped help", () => {
     assert.match(HELP_START, /\/help all/);
     assert.match(HELP_START, /1–6 on the \/setup card/);
     assert.match(HELP_START, /\^R search/);
+    assert.match(HELP_START, /live › type to queue/);
     assert.match(HELP_ALL, /ask_user is a model tool|ask_user/);
     assert.match(HELP_ALL, /\/verbose/);
     assert.match(HELP_ALL, /\/skills/);

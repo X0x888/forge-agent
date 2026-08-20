@@ -631,7 +631,7 @@ export {
 } from "./util/setup-readiness.js";
 export { helpFor, HELP_START, HELP_ALL } from "./commands/help-text.js";
 export { formatBanner } from "./tui/banner.js";
-export { pickTurnEndHint } from "./tui/hints.js";
+export { pickTurnEndHint, pickLiveSteerHint, formatLiveSteerLine } from "./tui/hints.js";
 export {
   formatDefaultToolEndTranscript,
   formatVerboseToolEndTranscript,

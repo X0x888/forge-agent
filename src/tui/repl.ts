@@ -95,7 +95,13 @@ import {
 import { getForgeVersion } from "../util/version.js";
 import { loadPreferences, dismissHint } from "../config/preferences.js";
 import { formatBanner } from "./banner.js";
-import { pickTurnEndHint, ABORT_ACK, ABORT_RECOVERY } from "./hints.js";
+import {
+  pickTurnEndHint,
+  pickLiveSteerHint,
+  formatLiveSteerLine,
+  ABORT_ACK,
+  ABORT_RECOVERY,
+} from "./hints.js";
 import {
   alreadyOnboarded,
   rewriteIdleSetupShortcut,
@@ -704,6 +710,7 @@ export async function runRepl(opts: {
       process.stdout.write("\n");
       console.log(renderLiveRunHeader(statusCtx()));
     }
+    printLiveSteerHint(session);
     streamActive = false;
     liveFrame = 0;
     working.start();
@@ -1288,6 +1295,29 @@ function printTurnCloser(
     printTurnHint(session, Boolean(delta));
   } catch {
     /* never block turn-end on hints */
+  }
+}
+
+function printLiveSteerHint(session: SessionData): void {
+  try {
+    let skip = false;
+    try {
+      const ulw = loadUlwCycle(session.meta.id);
+      if (ulw?.enabled) skip = true;
+    } catch {
+      /* */
+    }
+    if (session.meta.ultrawork) skip = true;
+    const prefs = loadPreferences();
+    const pick = pickLiveSteerHint({
+      dismissed: prefs.dismissedHints || [],
+      skip,
+    });
+    if (!pick) return;
+    console.log(chalk.cyan(formatLiveSteerLine(pick.text)));
+    dismissHint(pick.id);
+  } catch {
+    /* never block a turn on hints */
   }
 }
 
