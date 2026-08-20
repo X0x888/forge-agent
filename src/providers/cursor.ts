@@ -126,6 +126,34 @@ export function shouldCloseCursorLive(opts: {
 }
 
 /**
+ * A live Run with unanswered MCP execs must be resumed even when Forge folded
+ * those results into history because a harness user-message (context-admit)
+ * followed them. Closing that Run and opening a new one is Connect `internal`.
+ */
+export function cursorShouldResumeLive(opts: {
+  pendingCount: number;
+  streamDead: boolean;
+  trailingCount: number;
+}): boolean {
+  if (opts.streamDead) return false;
+  return opts.pendingCount > 0 || opts.trailingCount > 0;
+}
+
+export function collectCursorToolResults(
+  messages: ChatRequest["messages"],
+): Array<{ toolCallId: string; content: string }> {
+  const out: Array<{ toolCallId: string; content: string }> = [];
+  for (const msg of messages) {
+    if (msg.role !== "tool") continue;
+    out.push({
+      toolCallId: msg.tool_call_id || "",
+      content: messageText(msg),
+    });
+  }
+  return out;
+}
+
+/**
  * When the live HTTP/2 Run is gone, fold trailing tool results into history
  * and use a real continue prompt — never a placeholder user message.
  */
@@ -408,9 +436,10 @@ function writeExecAndClose(
   );
 }
 
-function closeLive(key: string): void {
+function closeLive(key: string, session?: LiveSession): void {
   const live = liveSessions.get(key);
   if (!live) return;
+  if (session && live !== session) return;
   liveSessions.delete(key);
   if (live.toolFlush) clearTimeout(live.toolFlush);
   clearInterval(live.heartbeat);
@@ -592,19 +621,34 @@ export class CursorProvider implements LLMProvider {
         existing.stream.closed ||
         existing.stream.destroyed);
 
-    if (existing && !streamDead && parsed.trailingToolResults.length) {
+    if (
+      existing &&
+      cursorShouldResumeLive({
+        pendingCount: existing.pending.length,
+        streamDead,
+        trailingCount: parsed.trailingToolResults.length,
+      })
+    ) {
+      const results = parsed.trailingToolResults.length
+        ? parsed.trailingToolResults
+        : collectCursorToolResults(req.messages);
+      const followUpUser =
+        parsed.trailingToolResults.length === 0 && parsed.userText.trim()
+          ? parsed.userText
+          : undefined;
       return this.resumeWithToolResults(
         key,
         existing,
-        parsed.trailingToolResults,
+        results,
         req,
         onDelta,
         signal,
         touch,
         noteVisible,
+        followUpUser,
       );
     }
-    if (existing) closeLive(key);
+    if (existing) closeLive(key, existing);
     applyCursorReconnectAction(parsed);
 
     const payload = buildRunPayload(req, parsed);
@@ -705,6 +749,7 @@ export class CursorProvider implements LLMProvider {
     signal: AbortSignal,
     touch: () => void,
     noteVisible: () => void,
+    followUpUser?: string,
   ): Promise<ChatResponse> {
     for (const exec of live.pending) {
       const want = cursorToolCallId(exec.toolCallId, exec.execId);
@@ -728,6 +773,20 @@ export class CursorProvider implements LLMProvider {
     live.mcpTools = encodeToolDefs(req.tools);
     live.workspace = workspaceFromRequest(req);
     live.requestContext = buildCursorRequestContext(live.workspace, live.mcpTools);
+    const extra = followUpUser?.trim();
+    if (extra) {
+      live.write(
+        encodeConnectFrame(
+          encodeClientMessage({
+            conversationAction: encodeConversationActionUser(
+              extra,
+              randomUUID(),
+              live.requestContext,
+            ),
+          }),
+        ),
+      );
+    }
     return this.waitForTurn(key, live, req, onDelta, signal, touch, noteVisible);
   }
 
@@ -779,7 +838,7 @@ export class CursorProvider implements LLMProvider {
     noteVisible: () => void,
   ): Promise<ChatResponse> {
     if (signal.aborted) {
-      closeLive(key);
+      closeLive(key, live);
       const e = new Error("Aborted");
       e.name = "AbortError";
       return Promise.reject(e);
@@ -789,7 +848,7 @@ export class CursorProvider implements LLMProvider {
         const turn = live.turn;
         if (!turn || turn.settled) {
           live.streamCut = true;
-          closeLive(key);
+          closeLive(key, live);
           return;
         }
         if (!turn.finishReason) {
@@ -1118,13 +1177,13 @@ export class CursorProvider implements LLMProvider {
         pendingCount: live.pending.length,
       });
     if (!turn || turn.settled) {
-      if (closeNow) closeLive(key);
+      if (closeNow) closeLive(key, live);
       return;
     }
     turn.settled = true;
     turn.wall.dispose();
     if (live.pending.length) turn.finishReason = "tool_calls";
-    if (closeNow) closeLive(key);
+    if (closeNow) closeLive(key, live);
     turn.resolve({
       id: `cursor-${randomUUID()}`,
       model: turn.req.model,
@@ -1141,7 +1200,7 @@ export class CursorProvider implements LLMProvider {
 
   private failTurn(key: string, live: LiveSession, err: unknown): void {
     const turn = live.turn;
-    closeLive(key);
+    closeLive(key, live);
     if (!turn || turn.settled) return;
     turn.settled = true;
     turn.wall.dispose();

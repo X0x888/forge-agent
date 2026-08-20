@@ -496,6 +496,7 @@ export function encodeClientMessage(opts: {
   runRequest?: Uint8Array;
   execClient?: Uint8Array;
   kvClient?: Uint8Array;
+  conversationAction?: Uint8Array;
   execControl?: Uint8Array;
   interactionResponse?: Uint8Array;
   heartbeat?: boolean;
@@ -503,6 +504,7 @@ export function encodeClientMessage(opts: {
   if (opts.runRequest) return encodeMessage(1, opts.runRequest);
   if (opts.execClient) return encodeMessage(2, opts.execClient);
   if (opts.kvClient) return encodeMessage(3, opts.kvClient);
+  if (opts.conversationAction) return encodeMessage(4, opts.conversationAction);
   if (opts.execControl) return encodeMessage(5, opts.execControl);
   if (opts.interactionResponse) return encodeMessage(6, opts.interactionResponse);
   if (opts.heartbeat) return encodeMessage(7, Buffer.alloc(0));

@@ -24,7 +24,9 @@ import { supportsOAuth, getOAuthProfile } from "../src/auth/login.js";
 import {
   CursorProvider,
   applyCursorReconnectAction,
+  collectCursorToolResults,
   CURSOR_CONTINUE_PROMPT,
+  cursorShouldResumeLive,
   prepareCursorConversation,
   shouldCloseCursorLive,
 } from "../src/providers/cursor.js";
@@ -397,6 +399,14 @@ describe("cursor proto codec", () => {
     }
   });
 
+  it("encodes mid-run conversation_action as ACM field 4", () => {
+    const framed = encodeClientMessage({
+      conversationAction: encodeConversationActionUser("admit", "m9"),
+    });
+    const fields = decodeFields(framed);
+    assert.equal(fields[0]!.field, 4);
+  });
+
   it("encodes interaction reject as ACM field 6", () => {
     const framed = encodeClientMessage({
       interactionResponse: encodeInteractionResponse(4, 2),
@@ -561,6 +571,57 @@ describe("cursor conversation replay", () => {
     assert.equal(shouldCloseCursorLive({ close: true, pendingCount: 1 }), false);
     assert.equal(shouldCloseCursorLive({ close: true, pendingCount: 0 }), true);
     assert.equal(shouldCloseCursorLive({ close: false, pendingCount: 0 }), false);
+  });
+
+  it("resumes the live Run when a harness user follows unanswered tools", () => {
+    const messages = [
+      { role: "user" as const, content: "task" },
+      {
+        role: "assistant" as const,
+        content: "",
+        tool_calls: [
+          {
+            id: "c1",
+            type: "function" as const,
+            function: { name: "grep", arguments: "{}" },
+          },
+          {
+            id: "c2",
+            type: "function" as const,
+            function: { name: "read_file", arguments: "{}" },
+          },
+        ],
+      },
+      { role: "tool" as const, tool_call_id: "c1", content: "hit" },
+      { role: "tool" as const, tool_call_id: "c2", content: "file" },
+      {
+        role: "user" as const,
+        content:
+          "[Forge harness — mid-conversation update]\nEvaluate-class mandate: write the reading.",
+      },
+    ];
+    const got = prepareCursorConversation(messages);
+    assert.equal(got.trailingToolResults.length, 0);
+    assert.match(got.userText, /Evaluate-class/);
+    assert.equal(
+      cursorShouldResumeLive({
+        pendingCount: 2,
+        streamDead: false,
+        trailingCount: got.trailingToolResults.length,
+      }),
+      true,
+    );
+    const results = collectCursorToolResults(messages);
+    assert.equal(results.length, 2);
+    assert.equal(results[0]!.toolCallId, "c1");
+    assert.equal(
+      cursorShouldResumeLive({
+        pendingCount: 0,
+        streamDead: false,
+        trailingCount: 0,
+      }),
+      false,
+    );
   });
 });
 
