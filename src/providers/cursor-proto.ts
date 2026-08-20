@@ -719,6 +719,151 @@ export function encodeMcpErrorResult(error: string): Buffer {
   return encodeMessage(2, encodeString(1, error));
 }
 
+/** WriteResult.success (#1): path, lines_created, file_size. */
+export function encodeWriteSuccess(opts: {
+  path: string;
+  linesCreated: number;
+  fileSize: number;
+}): Buffer {
+  const inner = Buffer.concat([
+    encodeString(1, opts.path),
+    encodeUint32(2, Math.max(0, opts.linesCreated >>> 0)),
+    encodeUint32(3, Math.max(0, opts.fileSize >>> 0)),
+  ]);
+  return encodeMessage(1, inner);
+}
+
+/** WriteResult.error (#5) — not the leftover reject field 6. */
+export function encodeWriteError(path: string, error: string): Buffer {
+  return encodeMessage(
+    5,
+    Buffer.concat([encodeString(1, path), encodeString(2, error)]),
+  );
+}
+
+/** ReadResult.success (#1). Content is raw file text (no `N|` prefixes). */
+export function encodeReadSuccess(opts: {
+  path: string;
+  content: string;
+  totalLines: number;
+  fileSize: number;
+  truncated?: boolean;
+  rangeApplied?: boolean;
+}): Buffer {
+  const inner = Buffer.concat([
+    encodeString(1, opts.path),
+    encodeString(2, opts.content),
+    encodeUint32(3, Math.max(0, opts.totalLines >>> 0)),
+    encodeUint32(4, Math.max(0, opts.fileSize >>> 0)),
+    encodeBool(6, Boolean(opts.truncated)),
+    encodeBool(8, Boolean(opts.rangeApplied)),
+  ]);
+  return encodeMessage(1, inner);
+}
+
+export function encodeReadError(path: string, error: string): Buffer {
+  return encodeMessage(
+    2,
+    Buffer.concat([encodeString(1, path), encodeString(2, error)]),
+  );
+}
+
+export function encodeLsSuccess(opts: {
+  absPath: string;
+  files: string[];
+}): Buffer {
+  const children = opts.files.map((name) =>
+    encodeMessage(3, encodeString(1, name)),
+  );
+  const tree = Buffer.concat([
+    encodeString(1, opts.absPath),
+    ...children,
+    encodeUint32(6, opts.files.length),
+  ]);
+  return encodeMessage(1, encodeMessage(1, tree));
+}
+
+export function encodeLsError(path: string, error: string): Buffer {
+  return encodeMessage(
+    2,
+    Buffer.concat([encodeString(1, path), encodeString(2, error)]),
+  );
+}
+
+export function encodeGrepSuccess(opts: {
+  pattern: string;
+  path: string;
+  files: string[];
+}): Buffer {
+  const filesMsg = Buffer.concat([
+    ...opts.files.map((f) => encodeString(1, f)),
+    encodeUint32(2, opts.files.length),
+    encodeBool(3, false),
+  ]);
+  const union = encodeMessage(2, filesMsg);
+  const entry = Buffer.concat([
+    encodeString(1, opts.path),
+    encodeMessage(2, union),
+  ]);
+  const success = Buffer.concat([
+    encodeString(1, opts.pattern),
+    encodeString(2, opts.path),
+    encodeString(3, "files_with_matches"),
+    encodeMessage(4, entry),
+  ]);
+  return encodeMessage(1, success);
+}
+
+export function encodeGrepError(error: string): Buffer {
+  return encodeMessage(2, encodeString(1, error));
+}
+
+export function encodeDeleteSuccess(path: string): Buffer {
+  return encodeMessage(
+    1,
+    Buffer.concat([encodeString(1, path), encodeString(2, path)]),
+  );
+}
+
+export function encodeDeleteError(path: string, error: string): Buffer {
+  return encodeMessage(
+    7,
+    Buffer.concat([encodeString(1, path), encodeString(2, error)]),
+  );
+}
+
+/** Pi *ExecResult / PiWriteResult success { output }. */
+export function encodePiOutputSuccess(output: string): Buffer {
+  return encodeMessage(1, encodeString(1, output));
+}
+
+export function encodePiExecError(error: string): Buffer {
+  return encodeMessage(2, encodeString(1, error));
+}
+
+/** ShellStream oneof frames (ExecClientMessage field 14). */
+export function encodeShellStreamStart(): Buffer {
+  return encodeMessage(4, Buffer.alloc(0));
+}
+
+export function encodeShellStreamStdout(data: string): Buffer {
+  return encodeMessage(1, encodeString(1, data));
+}
+
+export function encodeShellStreamStderr(data: string): Buffer {
+  return encodeMessage(2, encodeString(1, data));
+}
+
+export function encodeShellStreamExit(code: number): Buffer {
+  return encodeMessage(
+    3,
+    Buffer.concat([
+      encodeUint32(1, code >>> 0),
+      encodeBool(4, false),
+    ]),
+  );
+}
+
 export function encodeRejected(pathOrCmd: string, reason: string, extra?: {
   workingDirectory?: string;
 }): Buffer {
@@ -915,6 +1060,170 @@ export function parseShellArg(payload: Uint8Array): {
   return {
     command: fieldStr(f, 1) || "",
     workingDirectory: fieldStr(f, 2) || "",
+  };
+}
+
+/** agent.v1 WriteArgs: path=1, file_text=2, tool_call_id=3, file_bytes=5. */
+export function parseWriteArgs(payload: Uint8Array): {
+  path: string;
+  content?: string;
+  toolCallId: string;
+  binary: boolean;
+} {
+  const f = decodeFields(payload);
+  const path = fieldStr(f, 1) || "";
+  const fileText = fieldStr(f, 2);
+  const bytes = fieldBytes(f, 5);
+  const hint = (fieldStr(f, 6) || "").trim().toLowerCase().replace(/[_ ]/g, "-");
+  let content: string | undefined;
+  let binary = false;
+  if (bytes && bytes.length > 0) {
+    const decoded = decodeWriteBytes(bytes, hint);
+    if (decoded === undefined) binary = true;
+    else content = decoded;
+  } else if (fileText !== undefined) {
+    content = fileText;
+  }
+  return {
+    path,
+    content,
+    toolCallId: fieldStr(f, 3) || "",
+    binary,
+  };
+}
+
+function decodeWriteBytes(
+  bytes: Uint8Array,
+  encodingHint: string,
+): string | undefined {
+  if (bytes.includes(0) && !/^utf-?(16|32)/.test(encodingHint)) {
+    return undefined;
+  }
+  try {
+    const label =
+      encodingHint && encodingHint !== "utf-8" && encodingHint !== "utf8"
+        ? encodingHint
+        : "utf-8";
+    return new TextDecoder(label, { fatal: true }).decode(bytes);
+  } catch {
+    try {
+      return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+    } catch {
+      return undefined;
+    }
+  }
+}
+
+/** agent.v1 ReadArgs: path=1, tool_call_id=2, offset=4, limit=5. */
+export function parseReadArgs(payload: Uint8Array): {
+  path: string;
+  toolCallId: string;
+  offset?: number;
+  limit?: number;
+} {
+  const f = decodeFields(payload);
+  const offset = fieldVarint(f, 4);
+  const limit = fieldVarint(f, 5);
+  return {
+    path: fieldStr(f, 1) || "",
+    toolCallId: fieldStr(f, 2) || "",
+    ...(offset && offset > 0 ? { offset } : {}),
+    ...(limit && limit > 0 ? { limit } : {}),
+  };
+}
+
+export function parseGrepArgs(payload: Uint8Array): {
+  pattern: string;
+  path: string;
+  glob: string;
+  toolCallId: string;
+} {
+  const f = decodeFields(payload);
+  return {
+    pattern: fieldStr(f, 1) || "",
+    path: fieldStr(f, 2) || "",
+    glob: fieldStr(f, 3) || "",
+    toolCallId: fieldStr(f, 14) || "",
+  };
+}
+
+export function parseLsArgs(payload: Uint8Array): {
+  path: string;
+  toolCallId: string;
+} {
+  const f = decodeFields(payload);
+  return {
+    path: fieldStr(f, 1) || "",
+    toolCallId: fieldStr(f, 3) || "",
+  };
+}
+
+export function parsePiWriteArgs(payload: Uint8Array): {
+  path: string;
+  content: string;
+} {
+  const f = decodeFields(payload);
+  return {
+    path: fieldStr(f, 1) || "",
+    content: fieldStr(f, 2) ?? "",
+  };
+}
+
+export function parsePiEditArgs(payload: Uint8Array): {
+  path: string;
+  oldString?: string;
+  newString?: string;
+} {
+  const f = decodeFields(payload);
+  const edits = fieldRepeated(f, 2);
+  const inner = edits[0] ? decodeFields(edits[0].bytes) : [];
+  return {
+    path: fieldStr(f, 1) || "",
+    oldString: fieldStr(inner, 1),
+    newString: fieldStr(inner, 2),
+  };
+}
+
+export function parsePiReadArgs(payload: Uint8Array): {
+  path: string;
+  offset?: number;
+  limit?: number;
+} {
+  const f = decodeFields(payload);
+  const offset = fieldVarint(f, 2);
+  const limit = fieldVarint(f, 3);
+  return {
+    path: fieldStr(f, 1) || "",
+    ...(offset && offset > 0 ? { offset } : {}),
+    ...(limit && limit > 0 ? { limit } : {}),
+  };
+}
+
+export function parsePiGrepArgs(payload: Uint8Array): {
+  pattern: string;
+  path: string;
+  glob: string;
+} {
+  const f = decodeFields(payload);
+  return {
+    pattern: fieldStr(f, 1) || "",
+    path: fieldStr(f, 2) || "",
+    glob: fieldStr(f, 3) || "",
+  };
+}
+
+export function parseBackgroundShellArgs(payload: Uint8Array): {
+  command: string;
+  workingDirectory: string;
+  toolCallId: string;
+  interactiveStdin: boolean;
+} {
+  const f = decodeFields(payload);
+  return {
+    command: fieldStr(f, 1) || "",
+    workingDirectory: fieldStr(f, 2) || "",
+    toolCallId: fieldStr(f, 3) || "",
+    interactiveStdin: fieldVarint(f, 6) === 1,
   };
 }
 

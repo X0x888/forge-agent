@@ -10,6 +10,7 @@ import {
   gitHasAuthorIdentity,
   isSensitiveRelPath,
   isChangelogRelPath,
+  isDisposableTestRelPath,
   maybeAutoCommitOnUlwDone,
   porcelainPaths,
   stageAutoCommitPaths,
@@ -332,6 +333,28 @@ describe("ULW auto-commit", () => {
       const r = maybeAutoCommitOnUlwDone({ cwd: root, sessionId: sid });
       assert.equal(r.committed, false);
       assert.match(r.skipped || "", /sensitive/);
+    });
+  });
+
+  it("does not commit worktree-land fixtures", () => {
+    withRepo((root) => {
+      const sid = "sess-ac-wtland";
+      fs.mkdirSync(path.join(process.env.FORGE_HOME!, "sessions", sid), {
+        recursive: true,
+      });
+      const junk = path.join(
+        root,
+        "src",
+        "agent",
+        "__wt_land_wt-landed-23589-temrip.md",
+      );
+      fs.mkdirSync(path.dirname(junk), { recursive: true });
+      fs.writeFileSync(junk, "landed\n");
+      assert.equal(isDisposableTestRelPath("src/agent/__wt_land_wt-landed-23589-temrip.md"), true);
+      const r = maybeAutoCommitOnUlwDone({ cwd: root, sessionId: sid });
+      assert.equal(r.committed, false);
+      assert.match(r.skipped || "", /disposable test fixtures/);
+      assert.ok(fs.existsSync(junk));
     });
   });
 });

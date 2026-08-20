@@ -133,6 +133,17 @@ export function isChangelogRelPath(rel: string): boolean {
   return /^changelog(\.(md|markdown|txt|rst))?$/i.test(base);
 }
 
+/**
+ * Worktree-land tests write disposable files under `src/agent/__wt_land_*`
+ * so `git status -uall` can see them. They are not product files — ULW
+ * auto-commit must not snapshot them (Cursor dogfood shipped five of these
+ * as "Acting on the ULW re-anchor").
+ */
+export function isDisposableTestRelPath(rel: string): boolean {
+  const base = rel.replace(/\\/g, "/").split("/").pop() || "";
+  return base.startsWith("__wt_land_");
+}
+
 export function buildAutoCommitSubject(mandate: string, hint?: string): string {
   const fromShip = hint ? extractShipSummary(hint) : undefined;
   let t = (fromShip || hint || mandate || "").replace(/\s+/g, " ").trim();
@@ -214,11 +225,15 @@ export function maybeAutoCommitOnUlwDone(opts: {
   }
   if (!dirty.length) return { committed: false, skipped: "working tree clean" };
 
-  const toAdd = dirty.filter((p) => !isSensitiveRelPath(p));
+  const toAdd = dirty.filter(
+    (p) => !isSensitiveRelPath(p) && !isDisposableTestRelPath(p),
+  );
   if (!toAdd.length) {
     return {
       committed: false,
-      skipped: "only sensitive paths remain",
+      skipped: dirty.every(isDisposableTestRelPath)
+        ? "only disposable test fixtures remain"
+        : "only sensitive paths remain",
     };
   }
   if (toAdd.every((p) => isChangelogRelPath(p))) {

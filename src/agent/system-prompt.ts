@@ -18,6 +18,7 @@ import { forgeHome } from "../util/fs.js";
 import { formatProjectMemoryForPrompt } from "../harness/project-memory.js";
 import { displayRelPath } from "./tools/path-util.js";
 import { formatSkillsForPrompt } from "./project-skills.js";
+import { isCursorProvider } from "../auth/cursor.js";
 
 /** Per-file cap so one huge AGENTS.md cannot dominate the system prompt. */
 const RULES_PER_FILE_CHARS = 12_000;
@@ -298,6 +299,11 @@ export function buildBaselineSystemPrompt(opts: {
     `- **LSP over grep for symbols**: after you know a name, use lsp references / definition / workspace_symbols (not repo-wide regex) in TS/Python/Rust/Go. grep for strings, comments, and unknown text.`,
     `- Docs/pages: prefer web_fetch over bash curl; use web_search for discovery.`,
     `- **MCP**: search_mcp then call_mcp (server__tool). Resources: mcp_resource list/read. Prompts: mcp_prompt list/get. Defaults: **context7** + **playwright**. Optional CONTEXT7_API_KEY.`,
+    ...(isCursorProvider(config.provider)
+      ? [
+          `- **Cursor provider**: you are in Forge, not Cursor IDE. Native Write/StrReplace/Shell are wired to write_file / search_replace / bash — prefer those Forge names. search_mcp is only context7/playwright (it does not list Forge editors). Never write files via python Path.write_text / heredocs (skips receipts, the read-guard, format-on-write). Workspace Root above is the git project; ~/.forge/cursor-projects is metadata, not the repo.`,
+        ]
+      : []),
     `- **Background bash**: set background=true for long jobs. Wait with get_task_output wait=… — never poll-loop. Parallel jobs: get_task_output({ task_ids, wait_mode: "any"|"all" }) (omit ids to wait on every running task).`,
     `- **Subagents**: spawn_subagent for bounded work (explore=read-only, plan=design, general-purpose=full). General-purpose defaults to isolation=worktree (auto-lands; /undo reverts). Prefer a direct tool when one call suffices.`,
     `- **LSP**: lsp({ action: "diagnostics", path }) after TS/Python/Rust/Go edits when the server is on PATH.`,

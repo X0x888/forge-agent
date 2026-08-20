@@ -1,9 +1,11 @@
 /**
  * Cursor LLM provider — AgentService/Run over HTTP/2 Connect-RPC.
  *
- * Forge owns tools: Cursor native execs are rejected and Forge function
- * defs are advertised as MCP tools. Streaming text/thinking maps onto the
- * shared ChatResponse shape so the agent loop is unchanged.
+ * Forge owns tools: native AgentService Write/Read/Shell/Grep/LS map onto
+ * Forge function tools (write_file / read_file / bash / …) so Cursor Grok
+ * uses its trained editors without skipping receipts. Control execs
+ * (request_context, mcp_state) still reply locally. Streaming text/thinking
+ * maps onto the shared ChatResponse shape so the agent loop is unchanged.
  */
 import http2 from "node:http2";
 import fs from "node:fs";
@@ -53,19 +55,21 @@ import {
   encodeExecStreamClose,
   encodeInteractionResponse,
   encodeKvClient,
+  encodeDeleteError,
   encodeListMcpResourcesEmpty,
   encodeMcpErrorResult,
   encodeMcpStateResult,
-  encodeMcpSuccessResult,
   encodeMcpToolDefinition,
   encodeMcpTools,
   encodeMessage,
+  encodeReadError,
   encodeReadMcpResourceError,
   encodeRejected,
   encodeRequestContext,
   encodeRequestContextEnv,
   encodeRequestContextResult,
   encodeString,
+  encodeWriteError,
   CURSOR_NATIVE_REJECT,
   hexKey,
   parseAgentServerMessage,
@@ -78,6 +82,12 @@ import {
   systemPromptBlob,
   type CursorHistoryMessage,
 } from "./cursor-proto.js";
+import {
+  CURSOR_CONTROL_EXEC,
+  mapCursorNativeExec,
+  writeCursorToolResult,
+  type CursorPendingExec,
+} from "./cursor-exec.js";
 import { resolveCursorRunModel } from "../config/cursor-model.js";
 import { forgeHome } from "../util/fs.js";
 
@@ -365,12 +375,7 @@ function encodeToolDefs(tools?: ToolDefinition[]): Buffer[] {
   );
 }
 
-interface PendingExec {
-  id: number;
-  execId: string;
-  toolCallId: string;
-  toolName: string;
-}
+type PendingExec = CursorPendingExec;
 
 /** One in-flight chat() wait on a long-lived AgentService stream. */
 interface LiveTurn {
@@ -605,21 +610,30 @@ function nativeRejectPayload(exec: {
   const shell = parseShellArg(exec.payload);
   switch (exec.execKind) {
     case "readArgs":
-      return { resultField: 7, result: wrapReject(3, encodeRejected(filePath, REJECT)) };
+      return { resultField: 7, result: encodeReadError(filePath, REJECT) };
     case "lsArgs":
-      return { resultField: 8, result: wrapReject(3, encodeRejected(filePath, REJECT)) };
+      return { resultField: 8, result: wrapReject(2, encodeRejected(filePath, REJECT)) };
     case "writeArgs":
-      return { resultField: 3, result: wrapReject(6, encodeRejected(filePath, REJECT)) };
+      return { resultField: 3, result: encodeWriteError(filePath, REJECT) };
     case "deleteArgs":
-      return { resultField: 4, result: wrapReject(6, encodeRejected(filePath, REJECT)) };
+      return { resultField: 4, result: encodeDeleteError(filePath, REJECT) };
     case "grepArgs":
       return { resultField: 5, result: wrapReject(2, encodeString(1, REJECT)) };
     case "shellArgs":
-    case "shellStreamArgs":
       return {
         resultField: 2,
         result: wrapReject(
           4,
+          encodeRejected(shell.command, REJECT, {
+            workingDirectory: shell.workingDirectory,
+          }),
+        ),
+      };
+    case "shellStreamArgs":
+      return {
+        resultField: 14,
+        result: wrapReject(
+          5,
           encodeRejected(shell.command, REJECT, {
             workingDirectory: shell.workingDirectory,
           }),
@@ -843,15 +857,12 @@ export class CursorProvider implements LLMProvider {
           r.toolCallId === exec.execId ||
           r.toolCallId === exec.toolCallId,
       );
-      const result = hit
-        ? encodeMcpSuccessResult(hit.content, false)
-        : encodeMcpErrorResult("Tool result not provided");
-      writeExecAndClose(live, {
-        id: exec.id,
-        execId: exec.execId,
-        resultField: 11,
-        result,
-      });
+      writeCursorToolResult(
+        live.write,
+        exec,
+        hit?.content,
+        live.workspace,
+      );
     }
     live.pending = [];
     live.mcpTools = encodeToolDefs(req.tools);
@@ -1074,21 +1085,11 @@ export class CursorProvider implements LLMProvider {
         );
         continue;
       }
-      if (ev.kind === "exec" && ev.execKind !== "mcpArgs") {
-        this.replyNonMcpExec(live, ev);
+      if (ev.kind === "exec") {
+        this.handleExec(key, live, ev);
         continue;
       }
-      if (!turn || turn.settled) {
-        if (ev.kind === "exec" && ev.execKind === "mcpArgs") {
-          writeExecAndClose(live, {
-            id: ev.id,
-            execId: ev.execId,
-            resultField: 11,
-            result: encodeMcpErrorResult("Tool call arrived after turn settled"),
-          });
-        }
-        continue;
-      }
+      if (!turn || turn.settled) continue;
       if (ev.kind === "text") {
         turn.content += ev.text;
         turn.noteVisible();
@@ -1109,41 +1110,121 @@ export class CursorProvider implements LLMProvider {
             return;
           }
         }
-      } else if (ev.kind === "exec" && ev.execKind === "mcpArgs") {
-        const mcp = parseMcpArgs(ev.payload);
-        const toolCallId = cursorToolCallId(
-          mcp.toolCallId,
-          ev.execId || randomUUID(),
-        );
-        const name = mcp.toolName || mcp.name;
-        const args = JSON.stringify(mcp.args ?? {});
-        const tc: ToolCall = {
-          id: toolCallId,
-          type: "function",
-          function: { name, arguments: args },
-        };
-        turn.toolCalls.push(tc);
-        live.pending.push({
-          id: ev.id,
-          execId: ev.execId,
-          toolCallId,
-          toolName: name,
-        });
-        turn.onDelta({
-          tool_calls: [
-            {
-              index: turn.toolCalls.length - 1,
-              id: toolCallId,
-              type: "function",
-              function: { name, arguments: args },
-            },
-          ],
-        });
-        turn.noteVisible();
-        turn.wall.noteVisibleOutput();
       }
     }
     if (turn && !turn.settled && live.pending.length) {
+      this.scheduleToolFlush(key, live);
+    }
+  }
+
+  private handleExec(
+    key: string,
+    live: LiveSession,
+    ev: {
+      id: number;
+      execId: string;
+      execKind: string;
+      field: number;
+      payload: Uint8Array;
+    },
+  ): void {
+    const turn = live.turn;
+    if (
+      CURSOR_CONTROL_EXEC.has(ev.execKind) ||
+      ev.execKind.startsWith("unknown_")
+    ) {
+      this.replyNonMcpExec(live, ev);
+      return;
+    }
+
+    if (ev.execKind === "mcpArgs") {
+      const mcp = parseMcpArgs(ev.payload);
+      const toolCallId = cursorToolCallId(
+        mcp.toolCallId,
+        ev.execId || randomUUID(),
+      );
+      const name = mcp.toolName || mcp.name;
+      this.pushForgeToolCall(key, live, turn, {
+        id: ev.id,
+        execId: ev.execId,
+        toolCallId,
+        toolName: name,
+        args: mcp.args ?? {},
+        resultKind: "mcp",
+        resultField: 11,
+      });
+      return;
+    }
+
+    const mapped = mapCursorNativeExec(ev);
+    if (!mapped) {
+      this.replyNonMcpExec(live, ev);
+      return;
+    }
+    this.pushForgeToolCall(key, live, turn, {
+      id: ev.id,
+      execId: ev.execId,
+      toolCallId: cursorToolCallId(mapped.toolCallId, ev.execId || randomUUID()),
+      toolName: mapped.toolName,
+      args: mapped.args,
+      resultKind: mapped.resultKind,
+      resultField: mapped.resultField,
+      path: mapped.path,
+      command: mapped.command,
+      workingDirectory: mapped.workingDirectory,
+      pattern: mapped.pattern,
+      rangeApplied: mapped.rangeApplied,
+    });
+  }
+
+  private pushForgeToolCall(
+    key: string,
+    live: LiveSession,
+    turn: LiveTurn | null,
+    pending: PendingExec & { args: Record<string, unknown> },
+  ): void {
+    if (!turn || turn.settled) {
+      writeCursorToolResult(
+        live.write,
+        pending,
+        undefined,
+        live.workspace,
+      );
+      return;
+    }
+    const args = JSON.stringify(pending.args ?? {});
+    const tc: ToolCall = {
+      id: pending.toolCallId,
+      type: "function",
+      function: { name: pending.toolName, arguments: args },
+    };
+    turn.toolCalls.push(tc);
+    live.pending.push({
+      id: pending.id,
+      execId: pending.execId,
+      toolCallId: pending.toolCallId,
+      toolName: pending.toolName,
+      resultKind: pending.resultKind,
+      resultField: pending.resultField,
+      path: pending.path,
+      command: pending.command,
+      workingDirectory: pending.workingDirectory,
+      pattern: pending.pattern,
+      rangeApplied: pending.rangeApplied,
+    });
+    turn.onDelta({
+      tool_calls: [
+        {
+          index: turn.toolCalls.length - 1,
+          id: pending.toolCallId,
+          type: "function",
+          function: { name: pending.toolName, arguments: args },
+        },
+      ],
+    });
+    turn.noteVisible();
+    turn.wall.noteVisibleOutput();
+    if (!turn.settled && live.pending.length) {
       this.scheduleToolFlush(key, live);
     }
   }
