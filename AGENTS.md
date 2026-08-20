@@ -58,7 +58,7 @@ Binary entry: `src/cli.ts` → `dist/cli.js` (`bin: forge`).
 
 ## Expert session UX
 
-- `/plan` → session-scoped read-only design (read-only bash allowed); `/commit · `/checkpoint` [do]` drafts/creates commits from the diff (never pushes) (no sticky prefs); `/build` restores prior mode and implements
+- `/plan` → session-scoped read-only design (read-only bash allowed); `/commit` is a verdict-first card, `/commit do` creates the local commit (never push); `/commit draft` is the model escape hatch; `/checkpoint` snapshots; `/build` restores prior mode and implements
 - `/model <name> [effort]` live mid-run; `/commands` lists `.forge/commands` templates
 - Transcript is minimal by default (one status line per tool; failed tools also show a short error tail); `/verbose` opts into per-edit colored diffs + full tool output (session-local)
 - Turn end prints a one-line change summary (files touched from the mutation journal + verification status) for unattended runs

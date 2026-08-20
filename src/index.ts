@@ -693,6 +693,13 @@ export {
   runVerify,
 } from "./tui/verify-card.js";
 export {
+  parseCommitArg,
+  formatCommitCard,
+  formatCommitVerdict,
+  draftCommitSubject,
+  runCommit,
+} from "./tui/commit-card.js";
+export {
   shouldOfferLoginPicker,
   parseLoginOfferChoice,
   formatPostLoginOfferExit,

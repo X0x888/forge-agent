@@ -1,6 +1,12 @@
 import { formatSitDownResume, resumeCardHasNext } from "../tui/status-card.js";
 import { runVerify } from "../tui/verify-card.js";
 import {
+  commitUsage,
+  inspectCommitTree,
+  parseCommitArg,
+  runCommit,
+} from "../tui/commit-card.js";
+import {
   armGoal,
   pauseGoal,
   resumeGoal,
@@ -503,6 +509,12 @@ export function classifyLiveSlash(line: string): LiveSlashKind {
     if (verb === "status" || verb === "list" || verb === "ls") return "readonly";
     return "control";
   }
+  if (cmd === "/commit") {
+    const parsed = parseCommitArg(arg);
+    if (parsed.wantDraft) return "idle-only";
+    if (parsed.doCommit) return "control";
+    return "readonly";
+  }
   if (cmd === "/hooks") {
     const rest = line.trim().slice(cmd.length).trim().toLowerCase();
     const verb = rest.split(/\s+/)[0] || "";
@@ -872,6 +884,7 @@ export function completeSlash(
         "untitled", "tree", "forks", "lineage"],
       "/pin": [],
       "/unpin": [],
+      "/commit": ["do", "staged", "draft", "help"],
     };
     const args = ARG_TABLE[cmd];
     if (!args) return [];
@@ -4203,119 +4216,55 @@ const stats = collectUsageStats({
     }
 
     case "/commit": {
-      // Draft a commit message from the working tree / index. Never force-push.
-      // Default is draft-only; "do" / "run" / "create" opts into creating the commit.
-      // Prefer explicit workspace config (tests / multi-root) over session cwd.
+      // Verdict-first card. `/commit do` creates the commit (never push).
+      // `/commit draft` is the model escape hatch.
       const cwd =
         opts.config.workspace || opts.session.meta.cwd || process.cwd();
-      const raw = (arg || "").trim().toLowerCase();
-      const tokens = raw ? raw.split(/\s+/).filter(Boolean) : [];
-      const doCommit = tokens.some((t) =>
-        ["do", "run", "create", "make", "yes", "commit"].includes(t),
-      );
-      const stagedOnly = tokens.some((t) =>
-        ["staged", "index", "cached"].includes(t),
-      );
-      if (tokens.some((t) => t.startsWith("-"))) {
-        return {
-          handled: true,
-          output:
-            "Usage: /commit [staged] [do]\n" +
-            "  (empty)  draft message from unstaged+staged diff (no git commit)\n" +
-            "  staged   draft from index only\n" +
-            "  do       after drafting, create the commit (no push)\n",
-        };
+      const parsed = parseCommitArg(arg);
+      if (parsed.help) {
+        return { handled: true, output: commitUsage() };
       }
-      // Plan mode hard-denies bash/git — refuse do, allow draft-only.
-      if (doCommit && opts.config.permissionMode === "plan") {
-        return {
-          handled: true,
-          output:
-            "Plan mode cannot create commits (bash/git denied). " +
-            "Run `/commit` to draft a message, then `exit_plan_mode` or `/build` (or leave plan) and `/commit do`.",
-        };
-      }
-      // Fail closed outside a git work tree / clean tree (avoid a useless model turn).
-      try {
-        const { execFileSync } = await import("node:child_process");
-        execFileSync("git", ["rev-parse", "--is-inside-work-tree"], {
-          cwd,
-          stdio: ["ignore", "pipe", "ignore"],
-          timeout: 5_000,
+      if (parsed.wantDraft) {
+        const tree = inspectCommitTree(cwd, parsed.stagedOnly);
+        if (!tree.root || !tree.files.length) {
+          const empty = runCommit({
+            session: opts.session,
+            config: opts.config,
+            doCommit: false,
+            stagedOnly: parsed.stagedOnly,
+            color: Boolean(process.stdout.isTTY),
+          });
+          return {
+            handled: true,
+            output: empty.output,
+            failed: empty.failed,
+            session: opts.session,
+          };
+        }
+        const prompt = buildCommitPrompt({
+          workspace: cwd,
+          stagedOnly: parsed.stagedOnly,
+          doCommit: false,
+          lastVerificationCommand: opts.session.meta.lastVerificationCommand,
         });
-        const porcelain = execFileSync(
-          "git",
-          stagedOnly
-            ? ["diff", "--cached", "--name-only"]
-            : ["status", "--porcelain"],
-          {
-            cwd,
-            encoding: "utf8",
-            stdio: ["ignore", "pipe", "ignore"],
-            timeout: 8_000,
-          },
-        ).trim();
-        if (!porcelain) {
-          return {
-            handled: true,
-            output: stagedOnly
-              ? "Nothing staged. Stage files (`git add …`) or run `/commit` without `staged`."
-              : "Working tree clean — nothing to commit. Make changes (or stage them) first.",
-          };
-        }
-      } catch (err) {
-        const msg = String((err as Error)?.message || err);
-        if (/not a git repository/i.test(msg) || /Not a git repository/i.test(msg)) {
-          return {
-            handled: true,
-            output:
-              `Not a git repository: ${cwd}\n` +
-              `Initialize with \`git init\` (or cd into a work tree) before /commit.`,
-          };
-        }
-        // rev-parse failed without clear message — still treat as not-a-repo
-        if (!/diff|status|porcelain/i.test(msg)) {
-          return {
-            handled: true,
-            output:
-              `Not a git repository: ${cwd}\n` +
-              `Initialize with \`git init\` (or cd into a work tree) before /commit.`,
-          };
-        }
-        // status/diff failed for other reasons — fall through to model with prompt
+        return {
+          handled: true,
+          output: `Drafting commit message${parsed.stagedOnly ? " (staged)" : ""} (no commit until you confirm /commit do)…`,
+          forwardPrompt: prompt,
+          session: opts.session,
+        };
       }
-      const prompt = buildCommitPrompt({
-        workspace: cwd,
-        stagedOnly,
-        doCommit,
-        lastVerificationCommand: opts.session.meta.lastVerificationCommand,
+      const result = runCommit({
+        session: opts.session,
+        config: opts.config,
+        doCommit: parsed.doCommit,
+        stagedOnly: parsed.stagedOnly,
+        color: Boolean(process.stdout.isTTY),
       });
-      let banner = doCommit
-        ? `Drafting commit message${stagedOnly ? " (staged)" : ""} and creating commit (no push)…`
-        : `Drafting commit message${stagedOnly ? " (staged)" : ""} (no commit until you confirm /commit do)…`;
-      // Nudge when committing after edits without a recorded structural check,
-      // or when last-verify is stale (edits landed after the check).
-      if (doCommit && (opts.session.meta.editCount || 0) > 0) {
-        const last = opts.session.meta.lastVerificationCommand?.trim();
-        if (!last) {
-          try {
-            const intel = detectProjectIntel(cwd);
-            const tip = intel.checkCommands[0] || "npm test / typecheck";
-            banner +=
-              `\nNote: session has edits but no recorded verification — prefer \`${tip}\` before commit.`;
-          } catch {
-            banner +=
-              `\nNote: session has edits but no recorded verification — run a cheap check before commit.`;
-          }
-        } else if (isLastVerificationStale(opts.session.meta)) {
-          banner +=
-            `\nNote: last verification (\`${last.slice(0, 80)}\`) is stale — edits landed after it; re-run before commit.`;
-        }
-      }
       return {
         handled: true,
-        output: banner,
-        forwardPrompt: prompt,
+        output: result.output,
+        failed: result.failed,
         session: opts.session,
       };
     }
@@ -8446,10 +8395,9 @@ export function formatEffectiveConfig(
   return lines.join("\n");
 }
 
-/** OpenCode-inspired code review prompt (scoped target). */
 /**
- * Prompt for /commit — draft a high-quality commit message from the diff.
- * Default is draft-only; doCommit opts into `git commit` (never push).
+ * Prompt for `/commit draft` — model-write a message from the diff.
+ * The default `/commit` key is a card; `/commit do` creates the commit.
  */
 export function buildCommitPrompt(opts: {
   workspace: string;
@@ -8524,6 +8472,7 @@ When the user wants the commit created they can run \`/commit do\` (or \`/commit
 Start by inspecting git status and the diff.`;
 }
 
+/** OpenCode-inspired code review prompt (scoped target). */
 export function buildReviewPrompt(
   target: string,
   workspace: string,

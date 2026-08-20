@@ -1064,7 +1064,7 @@ describe("/commit prompt", () => {
         hooks,
       });
       assert.equal(planDo.forwardPrompt, undefined);
-      assert.match(String(planDo.output || ""), /Plan mode cannot create commits/i);
+      assert.match(String(planDo.output || ""), /commit\s+·\s+plan|Plan mode cannot create commits/i);
 
       // Nested git may be blocked by sandbox chmod — best-effort integration.
       let gitOk = false;
@@ -1100,25 +1100,30 @@ describe("/commit prompt", () => {
           hooks,
         });
         assert.equal(r.handled, true);
-        assert.ok(r.forwardPrompt);
-        assert.match(String(r.forwardPrompt), /Draft a git commit message/);
+        assert.equal(r.forwardPrompt, undefined);
+        assert.match(String(r.output || ""), /commit\s+·\s+\d+ files/);
+        assert.match(String(r.output || ""), /Next\s+\/commit do/);
+        const draft = await handleSlash("/commit draft", {
+          session,
+          config: { ...DEFAULT_CONFIG, workspace: d },
+          hooks,
+        });
+        assert.ok(draft.forwardPrompt);
+        assert.match(String(draft.forwardPrompt), /Draft a git commit message/);
         const r2 = await handleSlash("/commit do", {
           session,
           config: { ...DEFAULT_CONFIG, workspace: d },
           hooks,
         });
-        assert.match(String(r2.forwardPrompt || ""), /Create a git commit/);
+        assert.equal(r2.forwardPrompt, undefined);
+        assert.match(String(r2.output || ""), /commit\s+·\s+ok/);
 
-        // Clean tree
-        const { execFileSync: ex2 } = await import("node:child_process");
-        ex2("git", ["add", "dirty.ts"], { cwd: d, stdio: "ignore" });
-        ex2("git", ["commit", "-m", "c"], { cwd: d, stdio: "ignore" });
         const cleanR = await handleSlash("/commit", {
           session,
           config: { ...DEFAULT_CONFIG, workspace: d },
           hooks,
         });
-        assert.match(String(cleanR.output || ""), /Working tree clean/i);
+        assert.match(String(cleanR.output || ""), /nothing to commit/i);
         assert.equal(cleanR.forwardPrompt, undefined);
       }
 
@@ -1129,7 +1134,7 @@ describe("/commit prompt", () => {
         config: { ...DEFAULT_CONFIG, workspace: outside },
         hooks,
       });
-      assert.match(String(noGit.output || ""), /Not a git repository/i);
+      assert.match(String(noGit.output || ""), /not a repo|Not a git repository/i);
       assert.equal(noGit.forwardPrompt, undefined);
     } finally {
       try {

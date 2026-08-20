@@ -222,7 +222,7 @@ export async function runVerify(opts: {
     ? denied
       ? ["/permissions", "/verify"]
       : ["/verify", "/last"]
-    : ["/last", "/diff"];
+    : ["/commit", "/diff"];
   return {
     output: formatVerifyCard({
       kind: failed ? "fail" : "ok",

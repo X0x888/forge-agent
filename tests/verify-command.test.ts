@@ -147,7 +147,7 @@ describe("/verify", () => {
     assert.equal(result.command, cmd);
     const out = strip(result.output);
     assert.match(out, /^verify  ·  ok/);
-    assert.match(out, /Next  \/last/);
+    assert.match(out, /Next  \/commit/);
     assert.equal(session.meta.lastVerificationOk, true);
     assert.equal(session.meta.lastVerificationCommand, cmd);
   });
