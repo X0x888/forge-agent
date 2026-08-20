@@ -1,4 +1,5 @@
 import { formatSitDownResume, resumeCardHasNext } from "../tui/status-card.js";
+import { runVerify } from "../tui/verify-card.js";
 import {
   armGoal,
   pauseGoal,
@@ -291,6 +292,11 @@ export interface SlashResult {
    * Set by `/provider` when switching backends (e.g. xai → openrouter).
    */
   providerUpdated?: boolean;
+  /**
+   * Headless `forge run /verify` (and similar) should exit 1.
+   * Pure-control success stays unset/false.
+   */
+  failed?: boolean;
 }
 
 /**
@@ -730,6 +736,7 @@ export const SLASH_COMMANDS = [
   "/pin",
   "/unpin",
   "/diff",
+  "/verify",
   "/copy",
   "/paste",
   "/attach",
@@ -5138,6 +5145,22 @@ const result = rewindSessionDetailed(opts.session, n);
         ]
           .filter(Boolean)
           .join("\n"),
+        session: opts.session,
+      };
+    }
+
+    case "/verify": {
+      const result = await runVerify({
+        session: opts.session,
+        config: opts.config,
+        arg,
+        persist: true,
+        color: Boolean(process.stdout.isTTY),
+      });
+      return {
+        handled: true,
+        output: result.output,
+        failed: result.failed,
         session: opts.session,
       };
     }

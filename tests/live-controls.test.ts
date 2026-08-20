@@ -170,6 +170,7 @@ describe("live mid-run slash policy", () => {
     assert.equal(classifyLiveSlash("/rewind"), "idle-only");
     assert.equal(classifyLiveSlash("/undo"), "idle-only");
     assert.equal(classifyLiveSlash("/retry"), "idle-only");
+    assert.equal(classifyLiveSlash("/verify"), "idle-only");
     assert.equal(classifyLiveSlash("/again try harder"), "idle-only");
     // /model is live control (switch mid-run); bare catalog is readonly
     assert.equal(classifyLiveSlash("/model grok-4"), "control");

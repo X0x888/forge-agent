@@ -129,6 +129,7 @@ export async function resolveHeadlessSlashPrompt(opts: {
         command: cmd,
         session,
         ephemeral,
+        failed: Boolean(slash.failed),
       };
     }
   } catch {

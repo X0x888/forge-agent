@@ -104,6 +104,7 @@ describe("formatDiffReviewCard", () => {
       }),
     );
     assert.match(card, /verify: npm test \(stale — predates last edit\)/);
+    assert.match(card, /\/verify/);
   });
 
   it("--full paints the patch and drops the --full hint", () => {

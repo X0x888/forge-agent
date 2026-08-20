@@ -64,6 +64,11 @@ describe("searchHelpCatalog", () => {
     assert.equal(hits[0]?.command, "/undo");
   });
 
+  it("finds /verify by the proof-trail job word", () => {
+    const hits = searchHelpCatalog("verify");
+    assert.equal(hits[0]?.command, "/verify");
+  });
+
   it("finds spend-cap via the blurb job word", () => {
     const hits = searchHelpCatalog("spend");
     assert.ok(hits.some((h) => h.command === "/budget"));

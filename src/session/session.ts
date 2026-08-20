@@ -2967,22 +2967,15 @@ export function formatLastRecapTrailer(
     const text = `  verify: ${lv}${mark}`;
     lines.push(clipRow(stale || red ? chalk.yellow(text) : chalk.dim(text)));
   } else if (edits) {
-    let next = "";
-    try {
-      next =
-        detectProjectIntel(session.meta.cwd || process.cwd()).checkCommands[0] ??
-        "";
-    } catch {
-      /* */
-    }
-    const text = next
-      ? `  verify: none — run ${next}`
-      : "  verify: none — edits unverified";
-    lines.push(clipRow(chalk.yellow(text)));
+    lines.push(clipRow(chalk.yellow("  verify: none — /verify")));
   }
 
   if (files.length || lv || edits) {
-    lines.push(clipRow(chalk.dim("  ↳ /diff  ·  /files  ·  /undo")));
+    const problem = Boolean(stale || red || (edits && !lv));
+    const keys = problem
+      ? "/verify  ·  /diff  ·  /files"
+      : "/diff  ·  /files  ·  /undo";
+    lines.push(clipRow(chalk.dim(`  ↳ ${keys}`)));
   }
   return lines;
 }

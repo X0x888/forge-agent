@@ -105,6 +105,7 @@ const RESERVED = new Set([
   "pin",
   "unpin",
   "diff",
+  "verify",
   "copy",
   "paste",
   "attach",

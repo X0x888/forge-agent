@@ -548,6 +548,7 @@ export const SLASH_HINTS: Record<string, string> = {
   "/last": "Conversation card + files",
   "/retry": "Rewind + re-run",
   "/diff": "Change-review card",
+  "/verify": "Run last/project check",
   "/model": "Switch model",
   "/permissions": "Modes + always-allows",
   "/budget": "Session spend cap",

@@ -31,7 +31,7 @@ Getting started
 
 Daily
 ─────
-  /last /retry /diff  Peek last turns · retry · change-review card (/diff --full)
+  /last /verify /diff Peek last turns · run the check · change-review (/retry)
   /model /provider    Switch model (sticky)
   /permissions        Modes + saved always-allows
   /budget /notify     Spend cap · desktop alert
@@ -109,6 +109,7 @@ Sessions
   /pin                Protect from prune
   /share              Pasteable handoff card
   /last [n]           Conversation card + files/verify
+  /verify [cmd]       Run last/project check · stamp the trail
   /files              Paths touched this session
   /path               On-disk session directory
   /export             Markdown or JSON (mode 0600)
@@ -198,6 +199,7 @@ Forge slash commands
   /verbose              Toggle full diffs + output (edits already show a short preview)  [live]
   ask_user              Model tool for clarifying questions (not a slash) — interactive; headless fails closed
   /diff [path]          Change-review card (Δ files + verify) · --full / -U3 for the patch  [live]
+  /verify [cmd]         Run last/project check · stamp the trail (Next on stale/red)
   !<command>            Run a shell command now (same permissions as bash)  [live]
   /logs [n|0|all|path]  Tail sandbox/safety events (0/all = full window)  [live]
   /config [json]        Effective config snapshot (no secrets)  [live]

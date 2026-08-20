@@ -9,7 +9,10 @@ import type { SessionData } from "../session/session.js";
 import { saveSession } from "../session/session.js";
 import type { PermissionGate } from "../agent/permissions.js";
 import { executeTool } from "../agent/tools/index.js";
-import { applyVerificationTrail } from "../harness/ulw-cycle.js";
+import {
+  applyVerificationTrail,
+  verificationPassedFromResult,
+} from "../harness/ulw-cycle.js";
 import { detectProjectIntel } from "../util/project-intel.js";
 
 const MAX_SESSION_CHARS = 8_000;
@@ -72,6 +75,11 @@ export async function runBangShell(opts: {
   const body = String(result.output || "").trimEnd();
   const header = `! ${command}`;
   const printed = body ? `${header}\n${body}` : header;
+  const passed = verificationPassedFromResult({
+    command,
+    isError: result.isError,
+    output: result.output,
+  });
 
   try {
     const preferred = detectProjectIntel(
@@ -79,7 +87,7 @@ export async function runBangShell(opts: {
     ).checkCommands;
     applyVerificationTrail(session.meta, {
       command,
-      isError: result.isError,
+      isError: !passed,
       preferredCheckCommands: preferred,
     });
     // Persist the verify stamp even when persist:false (mid-run) so proof-claim
@@ -111,7 +119,7 @@ export async function runBangShell(opts: {
     }
   }
 
-  return { handled: true, output: printed, isError: Boolean(result.isError) };
+  return { handled: true, output: printed, isError: !passed };
 }
 
 export function formatBangOutput(output: string, isError = false): string {

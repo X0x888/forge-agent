@@ -70,7 +70,7 @@ describe("collectStatusIssues", () => {
     const issues = collectStatusIssues({ config, session });
     assert.equal(issues[0]?.kind, "verify");
     assert.match(issues[0]!.line, /stale/);
-    assert.equal(issues[0]!.next, "npm test");
+    assert.equal(issues[0]!.next, "/verify");
   });
 
   it("flags budget HIT", () => {
@@ -144,7 +144,7 @@ describe("formatStatusVerdict / closer", () => {
     assert.match(v, /⚠ lastErr  \[rate_limited\]/);
     const closer = formatStatusCloser(issues, { columns: 80 });
     assert.match(closer, /Next  forge accounts switch/);
-    assert.match(closer, /npm test/);
+    assert.match(closer, /\/verify/);
   });
 });
 

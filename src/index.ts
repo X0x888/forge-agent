@@ -676,6 +676,12 @@ export {
 } from "./tui/status-card.js";
 export type { StatusIssue, StatusIssueKind } from "./tui/status-card.js";
 export {
+  resolveVerifyCommand,
+  formatVerifyCard,
+  formatVerifyVerdict,
+  runVerify,
+} from "./tui/verify-card.js";
+export {
   shouldOfferLoginPicker,
   parseLoginOfferChoice,
   formatPostLoginOfferExit,

@@ -287,7 +287,14 @@ export function formatDiffReviewCard(input: DiffReviewInput): string {
   }
 
   if (dirty && !input.wantPatch) {
-    lines.push(clip(chalk.dim("  ↳ /diff --full  ·  /commit  ·  /undo")));
+    const needVerify =
+      Boolean(input.lastVerification?.stale) ||
+      input.lastVerification?.ok === false ||
+      !input.lastVerification?.command?.trim();
+    const keys = needVerify
+      ? "/verify  ·  /diff --full  ·  /undo"
+      : "/diff --full  ·  /commit  ·  /undo";
+    lines.push(clip(chalk.dim(`  ↳ ${keys}`)));
   } else if (!dirty) {
     lines.push(clip(chalk.dim("  ↳ /last  ·  /commit when dirty")));
   }

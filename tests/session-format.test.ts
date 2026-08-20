@@ -311,6 +311,7 @@ describe("session helpers", () => {
     s.meta.lastEditAt = "2026-01-01T00:02:00Z";
     const trailer = formatLastRecapTrailer(s, 80).join("\n");
     assert.match(trailer, /stale — predates last edit/);
+    assert.match(trailer, /\/verify/);
   });
 
   it("/last is handled and live-safe", async () => {

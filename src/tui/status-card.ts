@@ -15,7 +15,6 @@ import {
 } from "../session/session.js";
 import { outboundTokenEstimateForSession } from "../statusline/snapshot.js";
 import { costCapStatus } from "../util/cost-budget.js";
-import { detectProjectIntel } from "../util/project-intel.js";
 import { visibleWidth } from "../util/format.js";
 
 export const STATUS_ISSUE_MAX = 3;
@@ -109,23 +108,22 @@ export function collectStatusIssues(input: StatusIssueInput): StatusIssue[] {
         kind: "verify",
         severity: "warn",
         line: `verify   ${clipCmd(last)} ✗`,
-        next: last,
+        next: "/verify",
       });
     } else if (isLastVerificationStale(session.meta)) {
       issues.push({
         kind: "verify",
         severity: "warn",
         line: `verify   ${clipCmd(last)}  ⚠ stale`,
-        next: last,
+        next: "/verify",
       });
     }
   } else if (edits > 0) {
-    const tip = resolveCheckCommand(input);
     issues.push({
       kind: "verify",
       severity: "warn",
       line: `verify   (none after ${edits} edit${edits === 1 ? "" : "s"})`,
-      next: tip || undefined,
+      next: "/verify",
     });
   }
 
@@ -139,17 +137,6 @@ export function collectStatusIssues(input: StatusIssueInput): StatusIssue[] {
   }
 
   return issues.slice(0, STATUS_ISSUE_MAX);
-}
-
-function resolveCheckCommand(input: StatusIssueInput): string {
-  if (input.checkCommand?.trim()) return input.checkCommand.trim();
-  try {
-    const cwd =
-      input.config.workspace || input.session.meta.cwd || process.cwd();
-    return detectProjectIntel(cwd).checkCommands[0] || "";
-  } catch {
-    return "";
-  }
 }
 
 function clipCmd(cmd: string): string {
