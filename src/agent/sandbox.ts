@@ -20,6 +20,12 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { forgeHome } from "../util/fs.js";
+import {
+  killProcessTree,
+  registerInflightChild,
+  spawnOwnGroupOpts,
+  unregisterInflightChild,
+} from "../util/process-tree.js";
 import type {
   SandboxMissingBackend,
   SandboxNetwork,
@@ -248,16 +254,22 @@ function runRaw(
       env: opts.env || process.env,
       shell: false,
       stdio: ["ignore", "pipe", "pipe"],
+      // Own PGID (POSIX): SIGTERM on the wrapper otherwise orphans
+      // `npm test` grandchildren, which keep pipes open so `close` never fires.
+      ...spawnOwnGroupOpts(),
     });
+    registerInflightChild(child);
     let stdout = "";
     let stderr = "";
     let settled = false;
     let timedOut = false;
+    let killed = false;
     // Mirror the execAsync fallback's maxBuffer (4MB): a runaway `yes` or a
     // log-spewing build must not OOM the CLI before the wall-clock timeout.
     const OUTPUT_CAP = 4 * 1024 * 1024;
     let outputCapped = false;
     const emit = createChunkEmitter(opts.onChunk);
+    let settleTimer: NodeJS.Timeout | undefined;
     const finish = (result: {
       stdout: string;
       stderr: string;
@@ -266,25 +278,64 @@ function runRaw(
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      if (settleTimer) clearTimeout(settleTimer);
       opts.signal?.removeEventListener("abort", onAbort);
+      unregisterInflightChild(child);
       emit.flush();
-      resolve(result);
-    };
-    const killChild = () => {
       try {
-        child.kill("SIGTERM");
+        child.stdout?.destroy();
       } catch {
         /* */
       }
-      // unref like grep.ts: a settled run must not hold the event loop for the
-      // SIGKILL grace window (delays CLI exit up to 2s).
-      setTimeout(() => {
-        try {
-          child.kill("SIGKILL");
-        } catch {
-          /* */
-        }
-      }, 2000).unref?.();
+      try {
+        child.stderr?.destroy();
+      } catch {
+        /* */
+      }
+      resolve(result);
+    };
+    const killedResult = (
+      code: number | null,
+    ): { stdout: string; stderr: string; code: number | null } => {
+      if (opts.signal?.aborted) {
+        return { stdout, stderr, code: 130 };
+      }
+      if (outputCapped) {
+        const note = `Output exceeded ${OUTPUT_CAP} bytes — killed (re-run with a narrower command or redirect to a file)`;
+        return {
+          stdout,
+          stderr: stderr ? `${stderr}\n${note}` : note,
+          code: code ?? 1,
+        };
+      }
+      if (timedOut) {
+        const note = `Command timed out after ${opts.timeoutMs}ms`;
+        return {
+          stdout,
+          stderr: stderr ? `${stderr}\n${note}` : note,
+          code: 124,
+        };
+      }
+      return { stdout, stderr, code };
+    };
+    const killChild = (immediateKill = false) => {
+      killed = true;
+      killProcessTree(child, immediateKill ? "SIGKILL" : "SIGTERM");
+      if (!immediateKill) {
+        // unref: a settled run must not hold the event loop for SIGKILL grace.
+        setTimeout(() => {
+          if (settled) return;
+          killProcessTree(child, "SIGKILL");
+        }, 2000).unref?.();
+      }
+      // Grandchildren can inherit pipes; `close` never fires. Bound wait.
+      if (!settleTimer) {
+        settleTimer = setTimeout(
+          () => finish(killedResult(opts.signal?.aborted ? 130 : timedOut ? 124 : 1)),
+          immediateKill ? 400 : 2500,
+        );
+        settleTimer.unref?.();
+      }
     };
     const timer = setTimeout(() => {
       timedOut = true;
@@ -324,28 +375,19 @@ function runRaw(
         code: opts.signal?.aborted ? 130 : timedOut ? 124 : 1,
       });
     });
+    // After kill, settle on `exit` — do not wait for `close` (orphaned pipes).
+    child.on("exit", (code) => {
+      if (opts.signal?.aborted || timedOut || outputCapped || killed) {
+        finish(killedResult(code));
+      }
+    });
     child.on("close", (code) => {
       if (opts.signal?.aborted) {
         finish({ stdout, stderr, code: 130 });
         return;
       }
-      if (outputCapped) {
-        const note = `Output exceeded ${OUTPUT_CAP} bytes — killed (re-run with a narrower command or redirect to a file)`;
-        finish({
-          stdout,
-          stderr: stderr ? `${stderr}\n${note}` : note,
-          code: code ?? 1,
-        });
-        return;
-      }
-      if (timedOut) {
-        const note = `Command timed out after ${opts.timeoutMs}ms`;
-        finish({
-          stdout,
-          stderr: stderr ? `${stderr}\n${note}` : note,
-          // 124 matches common timeout(1) / FORGE_MAX_RUN_MS convention
-          code: 124,
-        });
+      if (outputCapped || timedOut) {
+        finish(killedResult(code));
         return;
       }
       finish({

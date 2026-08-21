@@ -3891,7 +3891,7 @@ async function prepareToolResult(opts: {
           isFullSuiteCommand(prevCmd)
         ) {
           const tip =
-            "\n\nSuite is still red. Prefer `node --test tests/<this-wave>.mjs` this wave; full suite at consolidation / LAST.";
+            "\n\nSuite is still red. Prefer `node --test tests/<this-wave>.mjs` this wave. Do not foreground `npm test` / `npm run ci` — background:true then get_task_output, or skip the full suite.";
           result.output = `${String(result.output || "").replace(/\s+$/, "")}${tip}`;
         }
         if (session.meta.lastVerificationOk === true) {

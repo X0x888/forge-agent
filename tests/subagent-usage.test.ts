@@ -8,6 +8,7 @@ import {
   formatFamilyCostLines,
   formatSubagentTokensHeader,
   resolveChildUsage,
+  fallbackUsageFromTranscript,
 } from "../src/session/subagent-usage.js";
 import type { SessionMeta } from "../src/session/session.js";
 
@@ -55,6 +56,31 @@ describe("resolveChildUsage", () => {
     );
     assert.equal(u.promptTokens, 2_447_484);
     assert.equal(u.cacheReadTokens, 467_456);
+  });
+});
+
+describe("fallbackUsageFromTranscript", () => {
+  it("estimates when the provider reported 0 tokens after N turns", () => {
+    const u = fallbackUsageFromTranscript(
+      { promptTokens: 0, completionTokens: 0, cacheReadTokens: 0 },
+      [
+        { content: "x".repeat(3200) },
+        { content: "y".repeat(3200) },
+      ],
+      25,
+    );
+    assert.ok(u.promptTokens > 0);
+    assert.ok(u.promptTokens + u.completionTokens >= 1000);
+  });
+
+  it("keeps real billed usage", () => {
+    const u = fallbackUsageFromTranscript(
+      { promptTokens: 9_000, completionTokens: 12, cacheReadTokens: 100 },
+      [{ content: "hello" }],
+      3,
+    );
+    assert.equal(u.promptTokens, 9_000);
+    assert.equal(u.cacheReadTokens, 100);
   });
 });
 

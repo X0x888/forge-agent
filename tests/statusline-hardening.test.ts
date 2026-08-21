@@ -19,6 +19,7 @@ import { upsertOAuth } from "../src/auth/store.js";
 import { savePreferences } from "../src/config/preferences.js";
 import { loadConfig } from "../src/config/load.js";
 import { DEFAULT_CONFIG } from "../src/config/types.js";
+import type { ForgeConfig } from "../src/config/types.js";
 
 const ANSI_SGR = /\x1b\[[0-9;]*m/g;
 
@@ -37,6 +38,9 @@ describe("status watch hardening", () => {
     delete process.env.XAI_API_KEY;
     delete process.env.GROK_API_KEY;
     delete process.env.FORGE_API_KEY;
+    delete process.env.FORGE_PROVIDER;
+    delete process.env.CURSOR_API_KEY;
+    delete process.env.CURSOR_ACCESS_TOKEN;
   });
 
   afterEach(() => {
@@ -71,18 +75,28 @@ describe("status watch hardening", () => {
     }) as typeof fetch;
 
     const sigintBaseline = process.listenerCount("SIGINT");
+    const cfg: ForgeConfig = {
+      ...DEFAULT_CONFIG,
+      provider: "xai",
+      model: "grok-4.5",
+      workspace: tmp,
+    };
     try {
       const ac = new AbortController();
       const watch = runStatusWatch({
         intervalMs: 250,
         json: true,
         signal: ac.signal,
+        cwd: tmp,
+        sessionId: s.meta.id,
+        fetchPlan: true,
+        config: cfg,
       });
       await new Promise((r) => setTimeout(r, 1300));
       assert.equal(
         process.listenerCount("SIGINT"),
-        sigintBaseline + 1,
-        "watch must hold exactly one SIGINT listener while running",
+        sigintBaseline,
+        "watch with AbortSignal must not swallow process SIGINT",
       );
       ac.abort();
       await watch;
@@ -100,6 +114,24 @@ describe("status watch hardening", () => {
       sigintBaseline,
       "SIGINT listener leaked after watch ended",
     );
+  });
+
+  it("aborts before the first tick returns", async () => {
+    const s = createSession({ cwd: tmp, provider: "xai", model: "grok-4.5" });
+    saveSession(s);
+    const ac = new AbortController();
+    ac.abort();
+    const t0 = Date.now();
+    await runStatusWatch({
+      intervalMs: 250,
+      json: true,
+      signal: ac.signal,
+      cwd: tmp,
+      sessionId: s.meta.id,
+      fetchPlan: false,
+      config: { ...DEFAULT_CONFIG, provider: "xai", workspace: tmp },
+    });
+    assert.ok(Date.now() - t0 < 1_500, "pre-aborted watch must return immediately");
   });
 });
 
@@ -206,6 +238,9 @@ describe("plan cache hardening", () => {
     delete process.env.XAI_API_KEY;
     delete process.env.GROK_API_KEY;
     delete process.env.FORGE_API_KEY;
+    delete process.env.FORGE_PROVIDER;
+    delete process.env.CURSOR_API_KEY;
+    delete process.env.CURSOR_ACCESS_TOKEN;
   });
 
   afterEach(() => {

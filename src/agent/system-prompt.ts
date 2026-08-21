@@ -417,7 +417,7 @@ export function buildBaselineSystemPrompt(opts: {
         ``,
         `### Quality bar (harness-enforced facts)`,
         `- Beat or match best wave so far: substance + real proof. No filler churn.`,
-        `- Every 4th wave: consolidation (full suite + cumulative diff review).`,
+        `- Every 4th wave: consolidation (hostile cumulative diff + cheapest proof). Never foreground the full suite (\`npm test\` / \`npm run ci\` / \`npm run check\`) — a hung test pins the REPL; background it or skip it.`,
         `- Thin waves → demand higher leverage; user may \`/cycle 0\`.`,
         `- Same-surface siblings (leftover / near-duplicate ships) → harness holds after 3 until a different-surface Reading or \`/cycle 0\`.`,
         ``,

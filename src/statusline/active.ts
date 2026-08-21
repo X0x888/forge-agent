@@ -93,7 +93,11 @@ export function heartbeatSession(opts: {
       busy: opts.busy ?? prev?.busy,
       phase: opts.phase ?? prev?.phase,
       phaseDetail:
-        opts.phaseDetail !== undefined ? opts.phaseDetail : prev?.phaseDetail,
+        opts.busy === false || opts.phase === "idle"
+          ? opts.phaseDetail || undefined
+          : opts.phaseDetail !== undefined
+            ? opts.phaseDetail
+            : prev?.phaseDetail,
       bgRunning: opts.bgRunning ?? prev?.bgRunning,
     };
     // GC dead pids

@@ -388,6 +388,24 @@ describe("grep/glob empty results", () => {
 });
 
 describe("bash timeout", () => {
+  it("tips foreground full-suite commands", async () => {
+    const { FULL_SUITE_FOREGROUND_TIP, toolBash } = await import(
+      "../src/agent/tools/bash.js"
+    );
+    const ws = path.join(tmpRoot, "ws-bash-suite");
+    await fsp.mkdir(ws, { recursive: true });
+    await fsp.writeFile(
+      path.join(ws, "package.json"),
+      JSON.stringify({ name: "t", scripts: { test: "echo ok" } }),
+    );
+    const r = await toolBash(
+      { command: "npm test" },
+      { workspace: ws, sandbox: "off" } as any,
+    );
+    assert.match(r.output, /pin the REPL/i);
+    assert.match(FULL_SUITE_FOREGROUND_TIP, /background:true/);
+  });
+
   it("reports timeout with duration and exit code 124", async () => {
     const ws = path.join(tmpRoot, "ws-bash-timeout");
     await fsp.mkdir(ws, { recursive: true });

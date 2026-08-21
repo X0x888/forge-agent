@@ -684,7 +684,7 @@ export function isSafeDiffFilterArg(token: string): boolean {
 }
 
 export const LIVE_CONTROLS_HINT =
-  `${ULW_LIVE_CONTROLS_HINT} · /plan · /build · exit_plan_mode · /provider · /model · !cmd · @path · free-text queues mid-run · /pause · /unpause · /done · /status  ·  Ctrl+C aborts the turn`;
+  `${ULW_LIVE_CONTROLS_HINT} · /plan · /build · exit_plan_mode · /provider · /model · !cmd · @path · free-text queues mid-run · /pause · /unpause · /done · /status  ·  Ctrl+C aborts the turn (twice force-quits)`;
 
 export const SLASH_COMMANDS = [
   "/help",

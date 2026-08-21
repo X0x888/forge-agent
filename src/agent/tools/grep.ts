@@ -9,6 +9,7 @@ import { pathNotFoundHint } from "./path-hints.js";
 import { boundToolOutput } from "./truncate.js";
 import { isTruthy } from "../../util/bool.js";
 import { numberFieldError } from "./arg-types.js";
+import { killProcessTree } from "../../util/process-tree.js";
 
 // Resolved once per process — PATH scanning is a dozen+ sync FS calls.
 let rgPathCache: string | null | undefined;
@@ -109,18 +110,10 @@ function runRg(
       resolve(result);
     };
     const killChild = () => {
-      try {
-        child.kill("SIGTERM");
-        setTimeout(() => {
-          try {
-            child.kill("SIGKILL");
-          } catch {
-            /* */
-          }
-        }, 500).unref?.();
-      } catch {
-        /* */
-      }
+      killProcessTree(child, "SIGTERM");
+      setTimeout(() => {
+        killProcessTree(child, "SIGKILL");
+      }, 500).unref?.();
     };
     const onAbort = () => {
       killChild();

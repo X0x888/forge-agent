@@ -87,11 +87,15 @@ export function pickShipHint(opts: {
   if (ledger && (isShipCloseText(ledger) || extractShipSummary(ledger))) {
     return ledger;
   }
+  // Cycle complete wraps still beat the raw mandate (subject strips the prefix).
+  if (/\bCycle complete\b/i.test(ledger) && ledger.length >= 12) {
+    return ledger;
+  }
   // Late mill summaries are the ship body without ship-close grammar.
   if (
     ledger.length >= 12 &&
-    !/\bCycle complete\b/i.test(ledger) &&
-    !/^\*{0,2}Proof:/i.test(ledger)
+    !/^\*{0,2}Proof:/i.test(ledger) &&
+    !/^[✅✗]/.test(ledger)
   ) {
     return ledger;
   }

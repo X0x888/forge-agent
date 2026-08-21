@@ -20,6 +20,11 @@ import type {
 import { defaultNetworkForProfile } from "../../config/types.js";
 import { detectSandboxBackend, canonicalSandboxPath } from "../sandbox.js";
 import { syncBackgroundCounts } from "../../statusline/activity.js";
+import {
+  killProcessTree,
+  registerInflightChild,
+  spawnOwnGroupOpts,
+} from "../../util/process-tree.js";
 
 export type TaskStatus = "running" | "completed" | "failed" | "killed" | "timeout";
 
@@ -423,8 +428,9 @@ export async function startBackgroundTask(opts: {
       cwd: opts.cwd,
       env,
       stdio: ["ignore", outFd, errFd],
-      detached: false,
+      ...spawnOwnGroupOpts(),
     });
+    registerInflightChild(child);
   } catch (err) {
     fs.closeSync(outFd);
     fs.closeSync(errFd);
@@ -457,14 +463,10 @@ export async function startBackgroundTask(opts: {
   const timer = setTimeout(() => {
     if (task.status === "running") {
       try {
-        child.kill("SIGTERM");
+        killProcessTree(child, "SIGTERM");
         // unref: SIGKILL grace must not hold the event loop after timeout.
         setTimeout(() => {
-          try {
-            child.kill("SIGKILL");
-          } catch {
-            /* */
-          }
+          killProcessTree(child, "SIGKILL");
         }, 3000).unref?.();
       } catch {
         /* */
@@ -477,7 +479,7 @@ export async function startBackgroundTask(opts: {
   }, timeoutMs);
   timer.unref?.();
 
-  child.on("close", (code) => {
+  child.on("exit", (code) => {
     clearTimeout(timer);
     spawnPlan.cleanup?.();
     if (task.status === "running") {
@@ -796,14 +798,11 @@ export function killTask(id: string): string {
     );
   }
   try {
-    task.child?.kill("SIGTERM");
+    if (task.child) killProcessTree(task.child, "SIGTERM");
     // unref: SIGKILL grace must not hold the event loop (delays CLI exit).
+    const child = task.child;
     setTimeout(() => {
-      try {
-        task.child?.kill("SIGKILL");
-      } catch {
-        /* */
-      }
+      if (child) killProcessTree(child, "SIGKILL");
     }, 2000).unref?.();
   } catch (err) {
     return `Failed to kill ${id}: ${(err as Error).message}`;
@@ -828,19 +827,18 @@ export function killAllRunningTasks(opts?: {
     if (task.status !== "running") continue;
     n += 1;
     try {
+      const child = task.child;
       if (opts?.force) {
-        task.child?.kill("SIGKILL");
+        if (child) killProcessTree(child, "SIGKILL");
       } else {
-        task.child?.kill("SIGTERM");
-        const child = task.child;
+        if (child) killProcessTree(child, "SIGTERM");
         // unref: teardown-path SIGKILL grace must not delay process exit.
         setTimeout(() => {
-          try {
-            if (task.status === "running" || task.status === "killed") {
-              child?.kill("SIGKILL");
-            }
-          } catch {
-            /* */
+          if (
+            child &&
+            (task.status === "running" || task.status === "killed")
+          ) {
+            killProcessTree(child, "SIGKILL");
           }
         }, 1500).unref?.();
       }
@@ -858,7 +856,7 @@ export function killAllRunningTasks(opts?: {
 export function _resetTasksForTests(): void {
   for (const t of tasks.values()) {
     try {
-      t.child?.kill("SIGKILL");
+      if (t.child) killProcessTree(t.child, "SIGKILL");
     } catch {
       /* */
     }

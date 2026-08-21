@@ -390,8 +390,10 @@ export {
   SAME_SURFACE_ADVISORY,
   isSameSurface,
   isLeftoverSiblingShip,
+  isSitDownCardShip,
   nextSameSurfaceStreak,
   surfaceKey,
+  SIT_DOWN_SURFACE_KEY,
 } from "./harness/same-surface.js";
 export {
   isFactoryFingerprint,
@@ -555,6 +557,8 @@ export {
   parseCliNonNegInt,
   defaultBashTimeoutMs,
   defaultBashBackgroundTimeoutMs,
+  BASH_FOREGROUND_TIMEOUT_CAP_MS,
+  BASH_BACKGROUND_TIMEOUT_CAP_MS,
 } from "./util/env.js";
 export { editDistance, stringSimilarity } from "./util/string-distance.js";
 export {

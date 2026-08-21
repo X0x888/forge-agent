@@ -77,6 +77,15 @@ describe("ULW auto-commit", () => {
     assert.match(s, /evaluate/i);
   });
 
+  it("does not use the raw mandate when the wave summary is Cycle complete", () => {
+    const s = buildAutoCommitSubject(
+      "comprehensively evaulate this tool and then improve it.",
+      "Cycle complete. w10 LAST: /auth returns formatAuthCard.",
+    );
+    assert.match(s, /\/auth|formatAuthCard/i);
+    assert.doesNotMatch(s, /comprehensively evaulate/i);
+  });
+
   it("prefers a Ship landed hint over the raw mandate", () => {
     const s = buildAutoCommitSubject(
       "comprehensively evaluate this tool and then improve the ui and ux of it.",

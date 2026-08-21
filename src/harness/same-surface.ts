@@ -27,6 +27,27 @@ const STOP_WORD_RE =
 const LEFTOVER_SIBLING_RE =
   /\bleftover\b|\bfix that only\b|\bstill leaks?\b|\bsibling of\b|\bthe leftover\b|\bfix that leftover\b|\bsame openings?\b/i;
 
+/**
+ * Sit-down slash-key thesis. Forge dogfood ground /verify /commit /budget
+ * /checkpoint /undo /resume as "different surfaces" because the nouns
+ * rotated. They are one class: Next at › is a slash key, not a CLI dump.
+ */
+const SIT_DOWN_THESIS_RE =
+  /\bsit-?down\b|\bkey you type\b|\bverdict-first\b|\bslash key\b|\bnot a (?:config dump|model (?:turn|prompt)|cli dump)\b/i;
+const SIT_DOWN_SLASH_RE =
+  /\/(verify|commit|budget|checkpoint|undo|resume|accounts|auth|retry|done|share|last|sessions)\b/i;
+
+export const SIT_DOWN_SURFACE_KEY = "sit-down-card";
+
+export function isSitDownCardShip(text: string): boolean {
+  const t = text || "";
+  if (!SIT_DOWN_THESIS_RE.test(t)) return false;
+  return (
+    SIT_DOWN_SLASH_RE.test(t) ||
+    /\b(slash key|sit-down key|key you type|sit-down resume)\b/i.test(t)
+  );
+}
+
 export function normalizeSurfaceKey(text: string): string {
   return (text || "")
     .toLowerCase()
@@ -48,6 +69,7 @@ export function surfaceTokens(text: string): string[] {
 }
 
 export function surfaceKey(text: string): string {
+  if (isSitDownCardShip(text)) return SIT_DOWN_SURFACE_KEY;
   return surfaceTokens(text).slice(0, 12).join(" ");
 }
 
@@ -74,6 +96,9 @@ export function isLeftoverSiblingShip(text: string): boolean {
 
 export function isSameSurface(prev: string, next: string): boolean {
   if (!prev?.trim() || !next?.trim()) return false;
+  if (isSitDownCardShip(prev) && isSitDownCardShip(next)) {
+    return true;
+  }
   if (isLeftoverSiblingShip(next) && surfaceHits(prev, next) >= 1) {
     return true;
   }

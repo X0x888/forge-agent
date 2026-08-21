@@ -146,10 +146,19 @@ export function isDisposableTestRelPath(rel: string): boolean {
 
 export function buildAutoCommitSubject(mandate: string, hint?: string): string {
   const fromShip = hint ? extractShipSummary(hint) : undefined;
-  let t = (fromShip || hint || mandate || "").replace(/\s+/g, " ").trim();
+  let t = (fromShip || hint || "").replace(/\s+/g, " ").trim();
   t = t.replace(/^["']|["']$/g, "");
   t = t.replace(/^\*{0,2}Reading:\*{0,2}\s*/i, "");
   t = t.replace(/^Correction:\s*/i, "");
+  t = t.replace(/^\*{0,2}Cycle complete\.?\*{0,2}\s*/i, "");
+  t = t.replace(/\*{1,2}/g, "").replace(/\s+/g, " ").trim();
+  // "Cycle complete.\n✅ npm test — green" is not a ship body.
+  if (/^[✅✗]/.test(t) || /^Proof:/i.test(t)) t = "";
+  // Mandate is last resort — a packed "Cycle complete" wave used to commit
+  // the raw user prompt ("comprehensively evaulate this tool…").
+  if (t.length < 12) {
+    t = (mandate || "").replace(/\s+/g, " ").trim();
+  }
   if (t.length > 68) t = `${t.slice(0, 67)}…`;
   return t || "ULW cycle complete";
 }

@@ -47,7 +47,7 @@ Unattended
 Keys
 ────
   ↵ sends  ·  ^J newline  ·  ↑↓ history  ·  ^R search  ·  Tab daily · /ul Tab more · @path
-  live › type to queue  ·  !cmd shell now  ·  /paste image  ·  Ctrl+C abort (twice to quit)
+  live › type to queue  ·  !cmd shell now  ·  /paste image  ·  Ctrl+C abort (twice force-quits if it sticks)
 
 Allow?  ↵/y once · a always · s session · n no
 Ask?    1–N · letter · text · ↵ skip

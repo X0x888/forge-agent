@@ -378,7 +378,7 @@ describe("hints", () => {
     assert.doesNotMatch(FIRST_PERMISSION_HINT, /↵\/y once/);
     assert.match(ABORT_RECOVERY, /\/retry/);
     assert.match(ABORT_RECOVERY, /Type to continue/);
-    assert.match(ABORT_RECOVERY, /Ctrl\+C again to quit/);
+    assert.match(ABORT_RECOVERY, /Ctrl\+C again/);
     assert.match(ABORT_ACK, /^Aborting/);
     assert.doesNotMatch(ABORT_ACK, /Ctrl\+C|\/retry/);
   });

@@ -45,6 +45,8 @@ describe("helper-only test commands", () => {
     assert.equal(isHelperOnlyTestCommand("node --test tests/"), false);
     assert.equal(isFullSuiteCommand("npm test"), true);
     assert.equal(isFullSuiteCommand("npm test 2>&1 | grep fail"), true);
+    assert.equal(isFullSuiteCommand("npm run ci"), true);
+    assert.equal(isFullSuiteCommand("npm run check"), true);
     assert.equal(
       isFullSuiteCommand("node --test tests/w161-foo.test.mjs"),
       false,

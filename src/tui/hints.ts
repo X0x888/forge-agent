@@ -56,9 +56,26 @@ export function pickLiveSteerHint(input: {
 /** Immediate SIGINT ack while the run is still winding down. Recovery lives on ABORT_RECOVERY. */
 export const ABORT_ACK = "Aborting…";
 
+/** Second Ctrl+C while abort is stuck (orphaned bash grandchildren). */
+export const ABORT_STUCK_QUIT = "Abort stuck — quitting.";
+
 /** Printed after a SIGINT abort so the user knows how to continue. */
 export const ABORT_RECOVERY =
-  "⚠ Run aborted. Type to continue · /retry same prompt · Ctrl+C again to quit.";
+  "⚠ Run aborted. Type to continue · /retry same prompt · Ctrl+C again force-quits if abort sticks.";
+
+export type SigintAction = "abort" | "force-quit" | "arm-quit" | "quit";
+
+/** First Ctrl+C aborts the turn; second while aborting force-quits. */
+export function nextSigintAction(state: {
+  busy: boolean;
+  aborting: boolean;
+  quitArmed: boolean;
+}): SigintAction {
+  if (state.busy && state.aborting) return "force-quit";
+  if (state.busy) return "abort";
+  if (state.quitArmed) return "quit";
+  return "arm-quit";
+}
 
 export function pickTurnEndHint(input: TurnHintInput): HintPick | null {
   if (input.skip) return null;

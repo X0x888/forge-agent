@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+### Fixed
+- **Ctrl+C abort no longer hangs on `npm test`**: bash spawned in Forge's process group and waited on `child.on("close")`. Killing the `sh -c` wrapper orphaned `npm test` grandchildren, which kept stdout/stderr pipes open — timeout (3 min) and `Aborting…` never settled (dogfood wave 8, 20h). Foreground bash now gets its own process group; timeout/abort kill `-pid`; settle on `exit` plus a bounded wait. Second Ctrl+C while aborting SIGKILLs in-flight trees and quits. Numeric `timeout_ms` is capped at 30m like `"all"`. `npm test` has a 60s per-test timeout. `runStatusWatch` installs abort before the first tick and does not swallow SIGINT when a signal is passed.
+
+- **ULW sit-down grind + full-suite proof**: same-surface now treats `/verify` `/commit` `/budget` `/checkpoint` `/undo` as one `sit-down-card` class (lexical overlap missed eight waves). Consolidation doctrine: never foreground `npm test` / `npm run ci`. Auto-commit subjects prefer the wave summary over the raw mandate; truncated named-ships (`/commit is ve`) are dropped. Idle heartbeat clears leftover `bash }` phaseDetail. Child sessions that report 0 tokens after N turns estimate from the transcript so the family ledger is not `$0.0000`.
+
 ### Changed
 - **`/budget` is the sit-down spend key**: sit-down already showed `budget HIT` + `Next  /budget`. Typing it dumped `FORGE_MAX_COST_USD` / `config.toml` (a lecture). Now opens `budget  ·  HIT` / `ok` / `none`. Designed empty: `none` + `Next  /budget 5`. HIT Next is `/budget off`. One healthy cap: `ok`, no Next. `/budget off` or a raise that leaves the cap not-hit clears `lastError.code=max_cost` so `/retry` can run (a still-HIT set does not). Invalid: `budget  ·  invalid` + `Next  /budget 5`. Live: peek readonly, set/off is control. CLI env/config dumps stay off ›. Job: type the key, unstick the cap.
 

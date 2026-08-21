@@ -41,6 +41,7 @@ import {
 } from "./worktree.js";
 import {
   buildSubagentUsageRecord,
+  fallbackUsageFromTranscript,
   foldChildUsage,
   formatLiveChildSpend,
   formatSubagentTokensHeader,
@@ -576,7 +577,11 @@ export async function runSubagent(
     stopHookBlocked: stopHook.blocked,
   });
   const incomplete = status !== "completed";
-  const usage = resolveChildUsage(child.meta, result);
+  const usage = fallbackUsageFromTranscript(
+    resolveChildUsage(child.meta, result),
+    child.messages,
+    result?.turns ?? child.meta.providerRounds ?? 0,
+  );
   const usageRecord = buildSubagentUsageRecord({
     sessionId: child.meta.id,
     description,

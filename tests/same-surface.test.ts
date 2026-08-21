@@ -3,11 +3,13 @@ import assert from "node:assert/strict";
 import {
   isLeftoverSiblingShip,
   isSameSurface,
+  isSitDownCardShip,
   nextSameSurfaceStreak,
   surfaceHits,
   surfaceKey,
   surfaceOverlap,
   SAME_SURFACE_HOLD,
+  SIT_DOWN_SURFACE_KEY,
 } from "../src/harness/same-surface.js";
 
 const MAZE_27 =
@@ -52,6 +54,42 @@ describe("same-surface tokens", () => {
 
   it("does not treat lifetime tick vs revealed tools as the same surface", () => {
     assert.equal(isSameSurface(LIFETIME, ITEMS), false);
+  });
+});
+
+describe("sit-down-card class", () => {
+  const resume =
+    "Sit-down resume is verdict-first. When something is wrong, forge and /resume open on the problem.";
+  const verify =
+    "**Ship landed:** `/verify` is the sit-down Next for the proof trail. Trust is the key you type.";
+  const commit =
+    "**`/commit` is now a real key.** Typing it no longer starts a model turn — the same hole `/verify` closed. Sit-down already showed the problem.";
+  const budget =
+    "**`/budget` is now a sit-down key**, not a config dump. Sit-down already showed `budget HIT`.";
+  const flood = FLOOD_WARN;
+
+  it("classifies sit-down slash keys as one surface", () => {
+    assert.equal(isSitDownCardShip(resume), true);
+    assert.equal(isSitDownCardShip(verify), true);
+    assert.equal(isSitDownCardShip(commit), true);
+    assert.equal(isSitDownCardShip(budget), true);
+    assert.equal(isSitDownCardShip(flood), false);
+    assert.equal(surfaceKey(verify), SIT_DOWN_SURFACE_KEY);
+    assert.equal(isSameSurface(verify, commit), true);
+    assert.equal(isSameSurface(resume, budget), true);
+    assert.equal(isSameSurface(verify, flood), false);
+  });
+
+  it("three sit-down ships reach hold streak", () => {
+    const a = nextSameSurfaceStreak([], verify, 0);
+    assert.equal(a.streak, 1);
+    const b = nextSameSurfaceStreak([verify], commit, a.streak);
+    assert.equal(b.same, true);
+    assert.equal(b.streak, 2);
+    const c = nextSameSurfaceStreak([verify, commit], budget, b.streak);
+    assert.equal(c.same, true);
+    assert.equal(c.streak, 3);
+    assert.ok(c.streak >= SAME_SURFACE_HOLD);
   });
 });
 

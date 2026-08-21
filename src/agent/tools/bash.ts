@@ -5,9 +5,12 @@ import { createShellEnv } from "./env-policy.js";
 import { boundToolOutput, BASH_MAX_CHARS } from "./truncate.js";
 import { startBackgroundTask } from "./background-tasks.js";
 import {
+  BASH_BACKGROUND_TIMEOUT_CAP_MS,
+  BASH_FOREGROUND_TIMEOUT_CAP_MS,
   defaultBashBackgroundTimeoutMs,
   defaultBashTimeoutMs,
 } from "../../util/env.js";
+import { isFullSuiteCommand } from "../../harness/ulw-cycle.js";
 import { isTruthy } from "../../util/bool.js";
 import { numberFieldError } from "./arg-types.js";
 import { editDistance } from "../../util/string-distance.js";
@@ -28,6 +31,16 @@ import {
 } from "../../util/project-intel.js";
 
 const execAsync = promisify(exec);
+
+/** Foreground `npm test` / `npm run ci` pins the REPL if a test hangs. */
+export const FULL_SUITE_FOREGROUND_TIP =
+  "Full-suite commands pin the REPL if a test hangs. Prefer the last targeted check, or bash background:true then get_task_output.";
+
+function withFullSuiteForegroundTip(body: string, command: string): string {
+  if (!isFullSuiteCommand(command)) return body;
+  if (body.includes("pin the REPL")) return body;
+  return `${body}\n\nTip: ${FULL_SUITE_FOREGROUND_TIP}`;
+}
 
 /** Append package-manager / missing-script / missing-binary / next-check tips. */
 function withPmTip(body: string, command: string, workspace: string): string {
@@ -108,6 +121,9 @@ function withPmTip(body: string, command: string, workspace: string): string {
       /* best-effort */
     }
   }
+  if (isFullSuiteCommand(command)) {
+    tips.push(FULL_SUITE_FOREGROUND_TIP);
+  }
   if (!tips.length) return body;
   // Cap tip noise — most specific tips are pushed first.
   const capped = tips.slice(0, 3);
@@ -115,24 +131,27 @@ function withPmTip(body: string, command: string, workspace: string): string {
 }
 
 /** Parse timeout_ms: omitted → fallback; explicit invalid → null (fail closed). */
-function resolveTimeoutMs(
+export function resolveBashTimeoutMs(
   raw: unknown,
   fallback: number,
+  capMs = BASH_FOREGROUND_TIMEOUT_CAP_MS,
 ): { ok: true; ms: number } | { ok: false; tip?: string } {
-  if (raw == null || String(raw).trim() === "") return { ok: true, ms: fallback };
+  const cap = Math.max(1, capMs);
+  if (raw == null || String(raw).trim() === "") {
+    return { ok: true, ms: Math.min(fallback, cap) };
+  }
   const key = String(raw).trim().toLowerCase();
   if (key === "default" || key === "def" || key === "auto" || key === "omit") {
-    return { ok: true, ms: fallback };
+    return { ok: true, ms: Math.min(fallback, cap) };
   }
-  // max/all/unlimited → 30 minutes (safety ceiling for long jobs)
+  // max/all/unlimited → the cap (30m foreground / 6h background)
   if (key === "max" || key === "unlimited" || key === "full" || key === "all") {
-    return { ok: true, ms: Math.max(fallback, 30 * 60 * 1000) };
+    return { ok: true, ms: cap };
   }
   // Duration suffixes: 30s, 1m, 2h, 500ms (expert muscle memory).
   const parsedDur = parseDurationMs(key);
   if (parsedDur.ok && !/^\d+$/.test(key)) {
-    // Cap absurd values at 24h
-    return { ok: true, ms: Math.min(parsedDur.ms, 24 * 60 * 60 * 1000) };
+    return { ok: true, ms: Math.min(parsedDur.ms, cap) };
   }
   if (!/^\d+$/.test(key)) {
     let tip: string | undefined;
@@ -148,7 +167,15 @@ function resolveTimeoutMs(
   }
   const n = Number(key);
   if (!Number.isFinite(n) || n < 1) return { ok: false };
-  return { ok: true, ms: Math.floor(n) };
+  return { ok: true, ms: Math.min(Math.floor(n), cap) };
+}
+
+function resolveTimeoutMs(
+  raw: unknown,
+  fallback: number,
+  capMs = BASH_FOREGROUND_TIMEOUT_CAP_MS,
+): { ok: true; ms: number } | { ok: false; tip?: string } {
+  return resolveBashTimeoutMs(raw, fallback, capMs);
 }
 
 
@@ -257,7 +284,11 @@ export async function toolBash(
       isError: true,
     };
   }
-  const timeoutRes = resolveTimeoutMs(args.timeout_ms, defaultBashTimeoutMs());
+  const timeoutRes = resolveTimeoutMs(
+    args.timeout_ms,
+    defaultBashTimeoutMs(),
+    BASH_FOREGROUND_TIMEOUT_CAP_MS,
+  );
   if (!timeoutRes.ok) {
     return {
       output:
@@ -280,6 +311,7 @@ export async function toolBash(
     const bgTimeoutRes = resolveTimeoutMs(
       args.timeout_ms,
       defaultBashBackgroundTimeoutMs(),
+      BASH_BACKGROUND_TIMEOUT_CAP_MS,
     );
     if (!bgTimeoutRes.ok) {
       return {
@@ -398,7 +430,9 @@ export async function toolBash(
   const managed = await boundToolOutput(meta + (out || "(no output)"), {
       maxChars: BASH_MAX_CHARS,
     });
-    return { output: autoCpNoteFg + managed.text };
+    return {
+      output: autoCpNoteFg + withFullSuiteForegroundTip(managed.text, command),
+    };
   } catch (err) {
     if (ctx.signal?.aborted) {
       return { output: "Aborted", isError: true };

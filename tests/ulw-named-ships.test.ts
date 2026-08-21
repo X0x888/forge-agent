@@ -63,6 +63,16 @@ describe("named-ship backlog", () => {
     );
   });
 
+  it("drops mid-word truncated ships", () => {
+    const ships = parseNamedShipsFromReading(
+      "Reading: sit-down. The ONE ship is /commit is ve. Passed on: leftover chrome.",
+    );
+    assert.ok(
+      !ships.some((s) => /\/commit is ve$/i.test(s)),
+      String(ships),
+    );
+  });
+
   it("does not treat (later waves…) as a named ship", () => {
     const ships = parseNamedShipsFromReading(
       "Reading: daily UX is the transcript. Passed on (later waves, other surfaces): delayed start parity; user-turn landmarks; setup-card checkmarks. ONE ship: dock shows running tool name and elapsed.",

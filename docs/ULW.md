@@ -114,7 +114,7 @@ Mechanisms built on the ledger:
 | **Tests-without-body** | Declared `Wave shipped` with `proof=✗` and only test / lockfile dirty (or an explicit red-green / “tests first, then the body” closer) does **not** increment `w`. Wire the production body, prove it, then close. Maze max20 wave 1 stamped a red test file and shoved the real ship into wave 2. |
 | **Proof demand** | A wave with no verification triggers `⚠ … ran no verification — run its proof NOW`. Capped at 2 consecutive demands (a stated rationale is then accepted — some repos have no tests) |
 | **Wave rules** | Every wave: smoke-check first (prior waves may have broken something), ONE objective, search-before-build (no re-implementing), 2-line plan (objective + the exact command that proves it) |
-| **Consolidation cadence** | Every 4th wave is a CONSOLIDATION wave: no new scope — full check suite + hostile review of the cumulative `git diff` |
+| **Consolidation cadence** | Every 4th wave is a CONSOLIDATION wave: no new scope — hostile cumulative `git diff` + cheapest proof. Never foreground `npm test` / `npm run ci` (a hung test pins the REPL); background it or skip it. |
 | **Thin-wave escalation** | 2+ consecutive waves with ≤1 edit, no tree movement, and no proof → re-anchor demands a substantially higher-impact wave. Churn waves (fingerprint `revisit`) count as thin regardless of edit-call count — edit→revert loops cannot dodge the bar |
 | **Churn exclusion** | `revisit` waves are excluded from bestWave anchoring and marked `↺` in the ledger (`w3 +5e↺ ✗`) |
 | **Diminishing-returns advisory** | 3+ thin waves → user-visible warning + `/cycle status` shows `⚠ Diminishing returns` — the user decides `/cycle 0`; the harness never quietly lowers the bar |

@@ -14,6 +14,12 @@ export interface WatchOptions extends CollectOptions {
 
 /**
  * Live statusline loop — print HUD every intervalMs until aborted.
+ *
+ * Abort listener is installed *before* the first tick. The first tick used
+ * to run unabortably; a hung plan probe / keychain spawnSync pinned
+ * `npm test` for hours. When `signal` is passed (tests/embedders), we do
+ * **not** swallow process SIGINT — that hid Ctrl+C in the dogfood hang.
+ * CLI `forge status --watch` (no signal) still stops on SIGINT.
  */
 export async function runStatusWatch(opts: WatchOptions = {}): Promise<void> {
   const interval = Math.max(250, opts.intervalMs ?? 1000);
@@ -46,17 +52,29 @@ export async function runStatusWatch(opts: WatchOptions = {}): Promise<void> {
     process.stdout.write(body + (body.endsWith("\n") ? "" : "\n"));
   };
 
-  await tick();
+  if (opts.signal?.aborted) return;
 
   return new Promise((resolve) => {
     let inFlight = false;
+    let settled = false;
     const cleanup = () => {
+      if (settled) return;
+      settled = true;
       clearInterval(id);
       process.removeListener("SIGINT", onSigint);
+      opts.signal?.removeEventListener("abort", onAbort);
       resolve();
     };
     const onSigint = () => cleanup();
-    const id = setInterval(() => {
+    const onAbort = () => cleanup();
+    // CLI watch has no AbortSignal — SIGINT stops the loop.
+    // Tests pass `signal` and must not steal process SIGINT.
+    if (!opts.signal) {
+      process.on("SIGINT", onSigint);
+    }
+    opts.signal?.addEventListener("abort", onAbort, { once: true });
+
+    const runTick = () => {
       if (opts.signal?.aborted) {
         cleanup();
         return;
@@ -71,10 +89,11 @@ export async function runStatusWatch(opts: WatchOptions = {}): Promise<void> {
         })
         .finally(() => {
           inFlight = false;
+          if (opts.signal?.aborted) cleanup();
         });
-    }, interval);
+    };
 
-    opts.signal?.addEventListener("abort", cleanup, { once: true });
-    process.on("SIGINT", onSigint);
+    const id = setInterval(runTick, interval);
+    runTick();
   });
 }

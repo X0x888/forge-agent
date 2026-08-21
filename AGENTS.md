@@ -115,7 +115,7 @@ snippet, file-aware `/undo` (`mutations.jsonl` pre-images + journaled file mode;
 synthetic harness user-messages — `isSyntheticUserMessage`), `/init`, `/review`, `/compact-and`,
 `/fork-and-compact`, fork copies ULW/goal sidecars, `/clear`/`/clear hard`/`/new` hygiene, `/logs`
 · `forge logs`, `/config` · `forge config`, `/export` mode `0600`, `--read-outside ask|allow|deny`, doctor flags `read-outside=allow` / `sandbox-missing=fallback`, `FORGE_BASH_TIMEOUT_MS` /
-`FORGE_BASH_BG_TIMEOUT_MS`, doctor `undoJournal`, `npm run smoke`, ULW wave ledger + quality bar
+`FORGE_BASH_BG_TIMEOUT_MS` (foreground bash own-PGID; abort/timeout kill `-pid` + settle on `exit`; numeric `timeout_ms` cap 30m; second Ctrl+C force-quits), doctor `undoJournal`, `npm run smoke`, ULW wave ledger + quality bar
 (facts-only per-wave edits/proof; best-wave anchoring, proof demands, thin-wave escalation, 4th-wave
 consolidation, diminishing-returns advisory, one-time evidence bounce on weak attestations),
 structural `verificationRan` (execution) + `verificationPassed` (success-only proof-claim/attestation/ULW wave proof) stop signals, project-intel (pm/checks/monorepo; `FORGE_FILE_READ_GUARD` / `FORGE_VERIFY_HINT`), last-verification trail (`lastVerificationCommand`/`At` + `lastEditAt` stale detection on session + resume/status/share/done/export/list ✓; `editsWithoutVerification` in run JSON), adaptive effort (`FORGE_ADAPTIVE_EFFORT`; hard rounds bump

@@ -19,6 +19,7 @@ import {
   heartbeatSession,
   computeLiveness,
   releaseSession,
+  loadActiveRegistry,
 } from "../src/statusline/active.js";
 import {
   beginTurn,
@@ -187,10 +188,22 @@ describe("statusline", () => {
       provider: "xai",
       model: "grok-4",
       busy: true,
-      phase: "thinking",
+      phase: "tool",
+      phaseDetail: "bash }",
     });
     const { liveness } = computeLiveness("work-1", new Date().toISOString());
     assert.equal(liveness, "working");
+    heartbeatSession({
+      sessionId: "work-1",
+      cwd: tmp,
+      provider: "xai",
+      model: "grok-4",
+      busy: false,
+      phase: "idle",
+    });
+    const e = loadActiveRegistry().sessions["work-1"];
+    assert.equal(e?.phase, "idle");
+    assert.equal(e?.phaseDetail, undefined);
     releaseSession("work-1");
   });
 

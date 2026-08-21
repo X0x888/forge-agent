@@ -62,16 +62,21 @@ export function envDurationMs(name: string, fallback: number): number {
   return parsed.ms;
 }
 
+/** Foreground bash wall-clock cap (also `timeout_ms: "all"`). */
+export const BASH_FOREGROUND_TIMEOUT_CAP_MS = 30 * 60_000;
+/** Background bash wall-clock cap. */
+export const BASH_BACKGROUND_TIMEOUT_CAP_MS = 6 * 60 * 60_000;
+
 /** Default foreground bash timeout (ms). Min 5s, max 30m. */
 export function defaultBashTimeoutMs(): number {
   const n = envDurationMs("FORGE_BASH_TIMEOUT_MS", 120_000);
-  return Math.min(30 * 60_000, Math.max(5_000, n));
+  return Math.min(BASH_FOREGROUND_TIMEOUT_CAP_MS, Math.max(5_000, n));
 }
 
 /** Default background bash task timeout (ms). Min 30s, max 6h. */
 export function defaultBashBackgroundTimeoutMs(): number {
   const n = envDurationMs("FORGE_BASH_BG_TIMEOUT_MS", 30 * 60_000);
-  return Math.min(6 * 60 * 60_000, Math.max(30_000, n));
+  return Math.min(BASH_BACKGROUND_TIMEOUT_CAP_MS, Math.max(30_000, n));
 }
 
 /**

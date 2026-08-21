@@ -99,9 +99,12 @@ import {
   pickTurnEndHint,
   pickLiveSteerHint,
   formatLiveSteerLine,
+  nextSigintAction,
   ABORT_ACK,
   ABORT_RECOVERY,
+  ABORT_STUCK_QUIT,
 } from "./hints.js";
+import { killAllInflightTrees } from "../util/process-tree.js";
 import {
   alreadyOnboarded,
   rewriteIdleSetupShortcut,
@@ -248,6 +251,8 @@ export async function runRepl(opts: {
   });
 
   let busy = false;
+  /** True after first Ctrl+C while busy — second Ctrl+C force-quits. */
+  let aborting = false;
   let abortController: AbortController | null = null;
   /** Session-local: diffs + tool output under each end line (minimal when off). */
   let verboseToolOutput = false;
@@ -695,6 +700,7 @@ export async function runRepl(opts: {
     }
 
     busy = true;
+    aborting = false;
     rl.setBusy(true);
     pendingTools = 0;
     abortController = new AbortController();
@@ -1048,6 +1054,7 @@ export async function runRepl(opts: {
       onStreamHeartbeat = null;
       endTurn();
       busy = false;
+      aborting = false;
       rl.setBusy(false);
       abortController = null;
       pulseHeartbeat();
@@ -1121,13 +1128,31 @@ export async function runRepl(opts: {
 
   let sigintArmed = false;
   rl.on("SIGINT", () => {
-    if (busy && abortController) {
+    const action = nextSigintAction({
+      busy,
+      aborting,
+      quitArmed: sigintArmed,
+    });
+    if (action === "force-quit") {
+      working.stop();
+      killAllInflightTrees("SIGKILL");
+      try {
+        killAllRunningTasks({ force: true });
+      } catch {
+        /* */
+      }
+      console.log(chalk.yellow(`\n${ABORT_STUCK_QUIT}`));
+      void shutdown().catch(reportShutdownError);
+      return;
+    }
+    if (action === "abort" && abortController) {
+      aborting = true;
       working.stop();
       console.log(chalk.yellow(`\n${ABORT_ACK}`));
       abortController.abort();
       return;
     }
-    if (sigintArmed) {
+    if (action === "quit") {
       void shutdown().catch(reportShutdownError);
       return;
     }

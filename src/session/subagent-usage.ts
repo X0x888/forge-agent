@@ -56,6 +56,29 @@ export function resolveChildUsage(
   };
 }
 
+/**
+ * Cursor (and similar) can run 25 turns with 0 billed tokens on the child
+ * session. Approximate from the transcript so the parent family ledger
+ * does not show `sub 1 $0.0000`.
+ */
+export function fallbackUsageFromTranscript(
+  usage: UsageTriple,
+  messages: Array<{ content?: string | null }>,
+  turns: number,
+): UsageTriple {
+  if (usage.promptTokens > 0 || usage.completionTokens > 0) return usage;
+  if (turns <= 0 || !messages.length) return usage;
+  let chars = 0;
+  for (const m of messages) chars += String(m.content || "").length;
+  const est = Math.max(1, Math.ceil(chars / 3.2));
+  const completion = Math.max(0, Math.floor(est * 0.1));
+  return {
+    promptTokens: est - completion,
+    completionTokens: completion,
+    cacheReadTokens: 0,
+  };
+}
+
 export function normalizeSubagentUsage(
   raw: unknown,
 ): SubagentUsageRecord[] | undefined {

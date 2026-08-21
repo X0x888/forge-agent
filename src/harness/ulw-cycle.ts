@@ -512,10 +512,11 @@ export function verificationPassedFromResult(opts: {
  * Isolated `node --test tests/w161-foo.test.mjs` (and small wN families)
  * ran, but they are not wave proof — the mill's 5/5 helper file.
  */
-/** `npm test` / `npm run test` with no single-file path — the mill's 15s red suite. */
+/** `npm test` / `npm run test|ci|check` with no single-file path. */
 export function isFullSuiteCommand(command: string): boolean {
   const c = String(command || "").replace(/\s+/g, " ").trim();
   if (!c) return false;
+  if (/\b(?:npm|pnpm|yarn|bun)\s+run\s+(?:ci|check)\b/.test(c)) return true;
   if (!/\b(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?test\b/.test(c)) return false;
   if (/tests\/[^\s"'\\]+\.test\./i.test(c)) return false;
   return true;
@@ -1369,6 +1370,8 @@ function clipNamedShipText(raw: string): string | undefined {
   s = s.replace(/\.\s*next\b.*$/i, "").trim();
   if (s.length < 8 || s.length > 160) return undefined;
   if (/^reading:/i.test(s)) return undefined;
+  // Mid-word clip ("/commit is ve") is not a backlog item.
+  if (s.length < 24 && / [a-z]{1,2}$/.test(s)) return undefined;
   // Rationale / next-need fragments are not backlog items (maze dogfood).
   if (
     /^(so|because|then|which|do not|don't|next:|next is|a real play bug)\b/i.test(
@@ -2454,6 +2457,7 @@ export function expandUlwMandate(mandate: string): { expanded: string; soft: boo
         ``,
         `- Own the outcome end-to-end. Research when uncertain; spawn subagents when that is smarter; then build — no thrash, no permission-to-continue asks.`,
         `- Every wave: highest-leverage next objective vs the mandate · search-before-build · ship · cheapest real proof · hostile review · next wave while cycle=1.`,
+        `- Never foreground the full suite (\`npm test\` / \`npm run ci\`) as wave proof — a hung test pins the REPL. Targeted check, or background:true then get_task_output.`,
         `- Finish the **defect** class (callers, tests, dependents). Two clip/one-line chrome leftovers is enough — change surface or LAST. Do not hunt leftover dumps.`,
       ].join("\n"),
     };
@@ -2479,7 +2483,7 @@ export function expandUlwMandate(mandate: string): { expanded: string; soft: boo
       `2. **JUDGE** — single highest-leverage hard objective now (impact × confidence / cost). Write the reading.`,
       `3. **RESEARCH** — only as deep as uncertainty warrants; proactive subagents/MCP/web when that is the efficient path. Do not thrash blind.`,
       `4. **SHIP** one bounded high-leverage wave. Defect-class siblings only. Search-before-build.`,
-      `5. **PROVE** — cheapest real check that can fail.`,
+      `5. **PROVE** — cheapest real check that can fail. Never foreground \`npm test\` / \`npm run ci\` / \`npm run check\` (a hung test pins the REPL). Prefer the last targeted check; if the full suite is required, \`background: true\` then \`get_task_output\`.`,
       `6. **SERENDIPITY** — bounded adjacent fix on an open path if cheap; label \`Serendipity:\`.`,
       `7. **HOSTILE REVIEW** — fix real defects in your diff; skip cosmetic noise.`,
       `8. **REPEAT** while cycle=1. \`/cycle 0\` means finish this wave, ship one more, then LAST — do not stop mid-wave. When cycle=0 (cap LAST), wrap this last wave and attest **Cycle complete.** with evidence.`,
