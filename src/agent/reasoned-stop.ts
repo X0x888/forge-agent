@@ -12,9 +12,24 @@
  */
 
 import { REASONING_LOOP_FINISH } from "./reasoning-loop.js";
+import { envPositiveInt } from "../util/env.js";
 
 export const REASONING_WALL_FINISH = "reasoning_wall";
 export { REASONING_LOOP_FINISH };
+
+/**
+ * Consecutive thought-only Stops (reasoning_wall / reasoning_loop / thought
+ * + stop, no text/tools) before this *turn* yields. Does **not** flip ULW
+ * to LAST — the user did not ask to stop. `0` / `off` disables.
+ * Env: FORGE_THOUGHT_ONLY_MAX (default 8).
+ */
+export const DEFAULT_THOUGHT_ONLY_MAX = 8;
+
+export function thoughtOnlyStopMax(): number {
+  const raw = process.env.FORGE_THOUGHT_ONLY_MAX?.trim();
+  if (raw === "0" || (raw && /^off$/i.test(raw))) return 0;
+  return envPositiveInt("FORGE_THOUGHT_ONLY_MAX", DEFAULT_THOUGHT_ONLY_MAX);
+}
 
 /** Prefixed onto the next Stop re-anchor after a thought-only turn. */
 export const THOUGHT_ONLY_ACTION_POKE =

@@ -34,6 +34,7 @@ import { renderCompactStrip, renderHud } from "../statusline/render.js";
 import {
   getActivity,
   activityElapsedSec,
+  phaseElapsedSec,
   type AgentPhase,
   type SessionActivity,
 } from "../statusline/activity.js";
@@ -339,6 +340,9 @@ export function renderBusyStatusLine(
 ): string {
   const act = getActivity();
   const turnSec = activityElapsedSec(act);
+  const phaseSec = phaseElapsedSec(act);
+  const clockSec =
+    phase === "thinking" || phase === "tool" ? phaseSec : turnSec;
   const spin = SPINNER_FRAMES[frame % SPINNER_FRAMES.length];
   const effort = resolveReasoningEffort(ctx.config.model, ctx.config.reasoningEffort);
   const ulw = loadUlwCycle(ctx.session.meta.id);
@@ -365,7 +369,7 @@ export function renderBusyStatusLine(
   const bits: string[] = [
     `${chalk.magenta(spin)} ${chalk.magenta("⚒")}`,
     body,
-    turnSec > 0 ? chalk.dim(formatSec(turnSec)) : "",
+    clockSec > 0 ? chalk.dim(formatSec(clockSec)) : "",
     chalk.dim(`${ctx.config.provider}/${shortModel(ctx.config.model)}`),
   ];
   if (effort) bits.push(chalk.dim(effort));
@@ -421,6 +425,10 @@ export function buildLivePrompt(
   const frame = opts?.frame ?? Math.floor(Date.now() / 80);
   const spin = SPINNER_FRAMES[frame % SPINNER_FRAMES.length];
   const turnSec = activityElapsedSec(act);
+  const phaseSec = phaseElapsedSec(act);
+  // Phase clock for think/tool so a 16h turn does not look like one 999m thought.
+  const clockSec =
+    phase === "thinking" || phase === "tool" ? phaseSec : turnSec;
   const effort = resolveReasoningEffort(ctx.config.model, ctx.config.reasoningEffort);
   const ulw = loadUlwCycle(ctx.session.meta.id);
   const docked =
@@ -442,7 +450,7 @@ export function buildLivePrompt(
     chalk.magenta("⚒"),
     chalk.dim(phaseLabel),
   ];
-  if (turnSec > 0) left.push(chalk.dim(formatSec(turnSec)));
+  if (clockSec > 0) left.push(chalk.dim(formatSec(clockSec)));
   if (!docked) {
     left.push(...liveTokenBits(ctx));
     if (ulw?.enabled) {
@@ -740,6 +748,9 @@ export function createWorkingIndicator(
     // Fallback when no context (tests / headless callers)
     const act = getActivity();
     const turnSec = activityElapsedSec(act);
+    const phaseSec = phaseElapsedSec(act);
+    const clockSec =
+      phase === "thinking" || phase === "tool" ? phaseSec : turnSec;
     const spin = SPINNER_FRAMES[frame % SPINNER_FRAMES.length];
     let body: string;
     if (streaming) body = chalk.dim("replying…");
@@ -755,7 +766,7 @@ export function createWorkingIndicator(
         `waiting${detail ? ` ${shortDetail(detail)}` : "…"}`,
       );
     } else body = chalk.dim("thinking…");
-    const time = turnSec > 0 ? chalk.dim(` ${formatSec(turnSec)}`) : "";
+    const time = clockSec > 0 ? chalk.dim(` ${formatSec(clockSec)}`) : "";
     const bg =
       act.bgRunning > 0 ? chalk.yellow(`  bg:${act.bgRunning}`) : "";
     return `${chalk.magenta(spin)} ${chalk.magenta("⚒")} ${body}${time}${bg}`;

@@ -151,6 +151,7 @@ export function turnEndOutcomeLabel(input: TurnEndOutcomeInput): string {
   if (code === "max_cost") return "cost cap";
   if (code === "max_turns") return "max turns";
   if (code.startsWith("continue_cap")) return "continue cap";
+  if (code === "thought_only_cap") return "thought-only cap";
   if (code) return `err:${code.slice(0, 32)}`;
 
   const edits =

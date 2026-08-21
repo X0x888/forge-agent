@@ -701,6 +701,7 @@ ask = []
 # base_url = "https://api.x.ai/v1"
 # Env: FORGE_PROVIDER_TIMEOUT_MS (stall), FORGE_PROVIDER_MAX_MS (optional absolute),
 # FORGE_PROVIDER_REASONING_WALL_MS (default 12m no-content/tool wall; 0/off disables),
+# FORGE_THOUGHT_ONLY_MAX (default 8 consecutive thought-only Stops this turn; 0/off disables; does not LAST ULW),
 # FORGE_MAX_RUN_MS, FORGE_LOG_JSON, FORGE_HEADLESS — see .env.example
 # MCP: built-in defaults context7 + playwright (see ~/.forge/mcp.json). FORGE_MCP=0 off;
 # FORGE_MCP_DEFAULTS=0 disables only built-ins. Optional CONTEXT7_API_KEY for higher rate limits.

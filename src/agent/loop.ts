@@ -80,6 +80,7 @@ import {
   REASONING_LOOP_FINISH,
   REASONING_WALL_FINISH,
   THOUGHT_ONLY_ACTION_POKE,
+  thoughtOnlyStopMax,
 } from "./reasoned-stop.js";
 import { formatHoldContextAppendix } from "../harness/explore-contract.js";
 import { applyMillHoldPrune } from "../session/hold-context.js";
@@ -995,6 +996,8 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
   /** Tool schemas are sent every turn but not stored in session history. */
   /** After thought-only Stop, the next chat must emit a tool — not another judge. */
   let forceToolNext = false;
+  /** Consecutive thought-only Stops this turn (reasoning_wall / loop / thought+stop). */
+  let thoughtOnlyStops = 0;
   const makeChatRequest = (effortOverride?: ReasoningEffort) => {
     const tools = toolsForMode();
     const estimated = estimateRequestTokens(session.messages, {
@@ -2209,6 +2212,7 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
       const toolCalls = assistantMsg.tool_calls;
       if ((toolCalls && toolCalls.length > 0) || (finalText || "").trim()) {
         forceToolNext = false;
+        thoughtOnlyStops = 0;
       }
       const finishReason = response.finish_reason || "";
       if (finishReason) lastFinishReason = finishReason;
@@ -2657,9 +2661,50 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
           break;
         }
 
+        if (reasonedEmpty) {
+          thoughtOnlyStops += 1;
+          const thoughtMax = thoughtOnlyStopMax();
+          if (thoughtMax > 0 && thoughtOnlyStops > thoughtMax) {
+            log.warn(
+              `Thought-only Stop cap (${thoughtMax}) — ending this turn; ULW stays CONTINUE`,
+            );
+            events.onStatus?.(`Thought-only cap (${thoughtMax})`);
+            const why =
+              finishReason === REASONING_LOOP_FINISH
+                ? "reasoning_loop"
+                : finishReason === REASONING_WALL_FINISH
+                  ? "reasoning_wall"
+                  : "thought-only";
+            finalText =
+              `[Forge] Model sat in thought ${thoughtOnlyStops} times with no text/tools (${why}). ` +
+              `Ending this turn so you can steer — ULW is still CONTINUE (not LAST). ` +
+              `/retry or a follow-up keeps the cycle. Raise FORGE_THOUGHT_ONLY_MAX or FORGE_PROVIDER_REASONING_WALL_MS to wait longer.`;
+            try {
+              setSessionLastError(session, {
+                code: "thought_only_cap",
+                message: finalText.replace(/^\[Forge\]\s*/, "").slice(0, 500),
+                tips: [
+                  "/retry  ·  type a follow-up — ULW is still CONTINUE",
+                  "FORGE_THOUGHT_ONLY_MAX  ·  FORGE_PROVIDER_REASONING_WALL_MS",
+                ],
+              });
+              saveSession(session);
+            } catch {
+              /* */
+            }
+            break;
+          }
+        } else {
+          thoughtOnlyStops = 0;
+        }
+
         stopContinues += 1;
         const ulwForCap = loadUlwCycle(session.meta.id);
+        // Thought-only / reasoning_wall is a keep-driving poke, not an
+        // infinite-Stop fuse. Counting it toward FORGE_ULW_MAX_CONTINUES
+        // auto-LAST'd a 16h dogfood the user did not ask to stop.
         if (
+          !reasonedEmpty &&
           stopBlockTripsContinueCap(ulwForCap) &&
           stopContinues > maxStopContinues
         ) {
@@ -3037,7 +3082,8 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
     lastErrCode === "max_turns" ||
     lastErrCode === "doom_loop" ||
     lastErrCode === "error_streak" ||
-    lastErrCode.startsWith("continue_cap");
+    lastErrCode.startsWith("continue_cap") ||
+    lastErrCode === "thought_only_cap";
   if (!aborted && !keepLastError) {
     try {
       clearSessionLastError(session);

@@ -183,6 +183,9 @@ export function formatRunStopReason(input: RunStopReasonInput): string | null {
   if (code.startsWith("continue_cap")) {
     return "  stop: continue-cap — narrow the task or raise FORGE_ULW_MAX_CONTINUES";
   }
+  if (code === "thought_only_cap") {
+    return "  stop: thought-only — /retry (ULW still CONTINUE; model sat in thought with no tools)";
+  }
   if (code === "max_run_ms") {
     return "  stop: wall-clock — raise FORGE_MAX_RUN_MS or narrow the task";
   }

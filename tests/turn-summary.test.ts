@@ -273,6 +273,10 @@ test("run stop reason: cost / turns / continue-cap / empty / abort", () => {
     /continue-cap after 3 harness continues/,
   );
   assert.match(
+    formatRunStopReason({ lastErrorCode: "thought_only_cap" }) ?? "",
+    /thought-only/,
+  );
+  assert.match(
     formatRunStopReason({ lastErrorCode: "empty_run" }) ?? "",
     /empty run/,
   );

@@ -14,7 +14,12 @@ import { HookRunner } from "../src/harness/hooks.js";
 import { PermissionGate } from "../src/agent/permissions.js";
 import { McpManager } from "../src/mcp/manager.js";
 import { LspManager } from "../src/lsp/manager.js";
-import { armUlwCycle, disarmUlwCycle } from "../src/harness/ulw-cycle.js";
+import {
+  armUlwCycle,
+  disarmUlwCycle,
+  loadUlwCycle,
+} from "../src/harness/ulw-cycle.js";
+import { thoughtOnlyStopMax } from "../src/agent/reasoned-stop.js";
 import { REASONING_WALL_FINISH } from "../src/agent/reasoned-stop.js";
 import type { LLMProvider, ChatResponse } from "../src/providers/types.js";
 
@@ -138,7 +143,7 @@ describe("reasoned empty Stop in the agent loop", () => {
       ...DEFAULT_CONFIG,
       workspace: tmp,
       maxTurns: 4,
-      goal: { ...DEFAULT_CONFIG.goal, autoArm: false },
+      goal: { ...DEFAULT_CONFIG.goal, autoArm: false, stuckThreshold: 20 },
     };
     return {
       session,
@@ -238,5 +243,92 @@ describe("reasoned empty Stop in the agent loop", () => {
     const dumped = JSON.stringify(h.session.messages);
     assert.match(dumped, /Previous model response was empty/);
     assert.match(dumped, /Acting now/);
+  });
+
+  it("thought-only Stop does not trip capped ULW continue-cap", async () => {
+    const prevThought = process.env.FORGE_THOUGHT_ONLY_MAX;
+    process.env.FORGE_THOUGHT_ONLY_MAX = "20";
+    const h = harness();
+    h.config.maxTurns = 3;
+    armUlwCycle(h.session.meta.id, "Ship the feature.", {
+      cycle: 1,
+      maxWaves: 10,
+      skipCheckpoint: true,
+    });
+    const provider = scriptedProvider([
+      reasoningWall(),
+      reasoningWall(),
+      reasoningWall(),
+    ]);
+    try {
+      const result = await runAgentLoop({
+        ...h,
+        provider,
+        userMessage: "continue the mandate",
+        stream: true,
+        disableHarnessAutoArm: true,
+        maxStopContinues: 2,
+      });
+      assert.equal(
+        result.releasedOnContinueCap,
+        false,
+        "reasoning_wall must not count toward FORGE_ULW_MAX_CONTINUES",
+      );
+      assert.equal(h.session.meta.lastError?.code, "max_turns");
+    } finally {
+      if (prevThought === undefined) delete process.env.FORGE_THOUGHT_ONLY_MAX;
+      else process.env.FORGE_THOUGHT_ONLY_MAX = prevThought;
+      disarmUlwCycle(h.session.meta.id);
+    }
+  });
+
+  it("consecutive thought-only cap ends the turn without LAST", async () => {
+    const prevThought = process.env.FORGE_THOUGHT_ONLY_MAX;
+    process.env.FORGE_THOUGHT_ONLY_MAX = "2";
+    const h = harness();
+    h.config.maxTurns = 10;
+    armUlwCycle(h.session.meta.id, "Ship the feature.", {
+      cycle: 1,
+      maxWaves: 10,
+      skipCheckpoint: true,
+    });
+    const provider = scriptedProvider([
+      reasoningWall(),
+      reasoningWall(),
+      reasoningWall(),
+      textReply("Should not run."),
+    ]);
+    try {
+      const result = await runAgentLoop({
+        ...h,
+        provider,
+        userMessage: "continue the mandate",
+        stream: true,
+        disableHarnessAutoArm: true,
+        maxStopContinues: 2,
+      });
+      assert.equal(result.releasedOnContinueCap, false);
+      assert.equal(h.session.meta.lastError?.code, "thought_only_cap");
+      assert.equal(loadUlwCycle(h.session.meta.id)?.cycle, 1);
+      assert.match(result.finalText, /ULW is still CONTINUE/);
+      assert.ok(provider.calls <= 3, `should stop after thought-only cap, calls=${provider.calls}`);
+    } finally {
+      if (prevThought === undefined) delete process.env.FORGE_THOUGHT_ONLY_MAX;
+      else process.env.FORGE_THOUGHT_ONLY_MAX = prevThought;
+      disarmUlwCycle(h.session.meta.id);
+    }
+  });
+
+  it("thoughtOnlyStopMax honors 0/off", () => {
+    const prev = process.env.FORGE_THOUGHT_ONLY_MAX;
+    try {
+      process.env.FORGE_THOUGHT_ONLY_MAX = "0";
+      assert.equal(thoughtOnlyStopMax(), 0);
+      process.env.FORGE_THOUGHT_ONLY_MAX = "off";
+      assert.equal(thoughtOnlyStopMax(), 0);
+    } finally {
+      if (prev === undefined) delete process.env.FORGE_THOUGHT_ONLY_MAX;
+      else process.env.FORGE_THOUGHT_ONLY_MAX = prev;
+    }
   });
 });
