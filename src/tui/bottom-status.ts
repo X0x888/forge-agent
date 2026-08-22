@@ -26,6 +26,7 @@ import { formatTokens, formatCost, clipAnsi, visibleWidth } from "../util/format
 import { formatCacheRatio } from "../session/prompt-cache.js";
 
 import { resolveReasoningEffort } from "../config/reasoning.js";
+import { contextWindowCaps } from "../config/model-info.js";
 import {
   getActivity,
   type SessionActivity,
@@ -216,10 +217,24 @@ export function renderBottomStatusLine(
   }
 
   const pct = snap.context.percent;
-  const ctxBit = `ctx ${pct}% ${formatTokens(snap.context.usedTokens)}/${formatTokens(snap.context.windowTokens)}`;
+  const routeCaps = contextWindowCaps(config.model, String(config.provider || ""));
+  const pinOverHost =
+    Boolean(config.contextWindowExplicit) &&
+    Boolean(routeCaps) &&
+    config.contextWindow > (routeCaps?.window ?? Infinity);
+  const ctxBit =
+    `ctx ${pct}% ${formatTokens(snap.context.usedTokens)}/${formatTokens(snap.context.windowTokens)}` +
+    (pinOverHost && routeCaps
+      ? ` >${routeCaps.source} ${formatTokens(routeCaps.window)}`
+      : routeCaps?.native &&
+          routeCaps.native !== routeCaps.window &&
+          config.contextWindow === routeCaps.window &&
+          !config.contextWindowExplicit
+        ? ` ${routeCaps.source}`
+        : "");
   bits.push({
     text:
-      pct >= 90
+      pct >= 90 || pinOverHost
         ? paint(ctxBit, "red")
         : pct >= 70
           ? paint(ctxBit, "yellow")

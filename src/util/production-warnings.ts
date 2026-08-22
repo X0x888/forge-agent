@@ -21,6 +21,7 @@ import {
 } from "./mode-aliases.js";
 import { isFalsy } from "./bool.js";
 import { isLastVerificationStale } from "../session/session.js";
+import { contextWindowWarnings } from "../config/model-info.js";
 
 export interface ProductionWarningOpts {
   ultrawork?: boolean;
@@ -118,6 +119,9 @@ export function productionWarningsForRun(
       warnings.push(
         "blockingStopHooks=false — Stop hooks will not re-anchor the agent",
       );
+    }
+    for (const w of contextWindowWarnings(config)) {
+      warnings.push(w);
     }
     {
       const frg = (process.env.FORGE_FILE_READ_GUARD || "1").trim().toLowerCase();

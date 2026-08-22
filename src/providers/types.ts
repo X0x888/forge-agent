@@ -71,8 +71,9 @@ export interface ChatRequest {
     | "xhigh"
     | "max";
   /**
-   * Session context budget (tokens). Cursor maps ≥1M onto AgentService
-   * `max_mode` (IDE Max Mode / 1M). Other providers ignore it.
+   * Session context budget (tokens). Cursor maps ≥1M, or a window above the
+   * hosted default (Cursor Grok 256k → 500k pin), onto AgentService `max_mode`.
+   * Other providers ignore it.
    */
   context_window?: number;
   /**

@@ -1,7 +1,8 @@
 import type { ForgeConfig } from "../config/types.js";
 import {
   defaultMaxOutputTokens,
-  modelContextWindow,
+  formatContextWindowPosture,
+  contextWindowWarnings,
   resolveEffectiveMaxTokens,
 } from "../config/model-info.js";
 import {
@@ -21,7 +22,7 @@ export function postureHead(config: ForgeConfig): string {
   const maxTok = resolveEffectiveMaxTokens(config, Boolean(effort));
   return (
     `posture: effort ${effort ?? "—"}${effort && !config.reasoningEffort ? " (model max)" : ""}` +
-    ` · ctx ${formatTokens(config.contextWindow)}${config.contextWindowExplicit ? " (pinned)" : ""}` +
+    ` · ctx ${formatContextWindowPosture(config)}` +
     ` · temp ${config.temperature ?? "default"}` +
     ` · max_tokens ${formatTokens(maxTok)}${config.maxTokensExplicit ? " (pinned)" : " (auto)"}` +
     (config.permissionMode === "plan"
@@ -50,16 +51,7 @@ export function postureWarnings(config: ForgeConfig): string[] {
       );
     }
   }
-  const modelWin = modelContextWindow(config.model);
-  if (
-    config.contextWindowExplicit &&
-    modelWin &&
-    config.contextWindow < modelWin
-  ) {
-    warns.push(
-      `context_window ${config.contextWindow} is below ${config.model}'s ${modelWin} — paid capacity unused (/context-window auto)`,
-    );
-  }
+  warns.push(...contextWindowWarnings(config));
   if (config.reasoningEffort) {
     const clamped = clampEffortForModel(config.model, config.reasoningEffort);
     if (clamped && clamped !== config.reasoningEffort) {

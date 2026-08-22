@@ -619,7 +619,7 @@ export function loadConfig(overrides: Partial<ForgeConfig> = {}, cwd = process.c
   // 500k budget on a 131k/256k model means the provider rejects overflow long
   // before auto-compact would fire. Uses static table + OpenRouter cache.
   if (!cfg.contextWindowExplicit) {
-    const win = modelContextWindow(cfg.model);
+    const win = modelContextWindow(cfg.model, cfg.provider);
     if (win) cfg.contextWindow = win;
   }
 
@@ -673,9 +673,10 @@ compat_cursor_hooks = true
 
 # Context: auto-compact when estimated tokens exceed this fraction of context_window
 # auto_compact_threshold = 0.80
-# context_window defaults to the active model's real max (auto). OpenRouter
-# models use static table + cached context_length (forge models -p openrouter).
-# Pin only when you want a smaller/larger budget than the model max:
+# context_window defaults to the active route's real max (auto). Cursor-hosted
+# Grok 4.5+ is 256k (xAI grok-4.6 is 500k). OpenRouter uses static table +
+# cached context_length (forge models -p openrouter). Pin only when you want a
+# smaller/larger budget than that route default:
 # context_window = 500000
 
 [goal]

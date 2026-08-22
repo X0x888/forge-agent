@@ -30,6 +30,13 @@ export {
 } from "./config/reasoning.js";
 export {
   modelContextWindow,
+  nativeContextWindow,
+  contextWindowCaps,
+  contextWindowWarnings,
+  contextWindowRouteNote,
+  formatContextWindowPosture,
+  cursorRequestsMaxMode,
+  CURSOR_GROK_CONTEXT_WINDOW,
   normalizeModelKey,
   applyModelContextWindow,
   parseContextWindowArg,

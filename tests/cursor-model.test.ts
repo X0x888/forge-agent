@@ -292,6 +292,8 @@ describe("loadConfig Cursor aliases", () => {
       tmp,
     );
     assert.equal(cfg.model, "cursor-grok-4.6-xhigh-fast");
+    assert.equal(cfg.contextWindow, 256_000);
+    assert.equal(cfg.contextWindowExplicit, false);
   });
 
   it("drops a leftover high pin on the xhigh-fast default", () => {

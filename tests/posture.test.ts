@@ -36,7 +36,7 @@ test("posture: pinned temperature on a reasoning model warns", () => {
 
 test("posture: pinned temperature on a NON-reasoning model stays quiet", () => {
   // grok-3 has no effort support — a temp pin there is a legitimate choice.
-  const c = cfg({ model: "grok-3", temperature: 0.2 });
+  const c = cfg({ model: "grok-3", temperature: 0.2, contextWindow: 131_072 });
   assert.deepEqual(postureWarnings(c), []);
 });
 
@@ -70,6 +70,26 @@ test("posture: context_window pinned below model max warns (wasted capacity)", (
   const w = postureWarnings(c);
   assert.equal(w.length, 1);
   assert.match(w[0], /paid capacity unused/);
+});
+
+test("posture: Cursor Grok auto 256k is quiet and names the host", () => {
+  const c = cfg({
+    provider: "cursor",
+    model: "cursor-grok-4.6-high-fast",
+    contextWindow: 256_000,
+  });
+  assert.ok(!postureWarnings(c).some((x) => /context_window/.test(x)));
+  assert.match(postureHead(c), /cursor · native/);
+});
+
+test("posture: 500k pin on Cursor Grok warns overflow", () => {
+  const c = cfg({
+    provider: "cursor",
+    model: "cursor-grok-4.6-high-fast",
+    contextWindow: 500_000,
+    contextWindowExplicit: true,
+  });
+  assert.ok(postureWarnings(c).some((x) => /exceeds Cursor Grok/.test(x)));
 });
 
 test("posture: silently clamped effort is surfaced", () => {

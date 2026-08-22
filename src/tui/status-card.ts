@@ -17,7 +17,8 @@ import {
 } from "../session/session.js";
 import { outboundTokenEstimateForSession } from "../statusline/snapshot.js";
 import { costCapStatus } from "../util/cost-budget.js";
-import { visibleWidth } from "../util/format.js";
+import { formatTokens, visibleWidth } from "../util/format.js";
+import { contextWindowCaps, contextWindowWarnings } from "../config/model-info.js";
 
 export const STATUS_ISSUE_MAX = 3;
 
@@ -34,6 +35,7 @@ export interface StatusIssueInput {
   config: Pick<
     ForgeConfig,
     | "contextWindow"
+    | "contextWindowExplicit"
     | "autoCompactThreshold"
     | "maxCostUsd"
     | "provider"
@@ -86,6 +88,22 @@ export function collectStatusIssues(input: StatusIssueInput): StatusIssue[] {
     input.usedTokens ?? outboundTokenEstimateForSession(session);
   const pct = Math.min(100, Math.round((used / win) * 100));
   const thr = Math.round((config.autoCompactThreshold || 0.8) * 100);
+  const caps = contextWindowCaps(config.model, String(config.provider || ""));
+  if (
+    config.contextWindowExplicit &&
+    caps &&
+    config.contextWindow > caps.window
+  ) {
+    const overflow = contextWindowWarnings(config)[0];
+    issues.push({
+      kind: "ctx",
+      severity: "warn",
+      line: overflow
+        ? `ctx      pin ${formatTokens(config.contextWindow)} > ${caps.source} ${formatTokens(caps.window)}`
+        : `ctx      pin exceeds route max`,
+      next: "/context-window auto",
+    });
+  }
   if (pct >= 92) {
     issues.push({
       kind: "ctx",

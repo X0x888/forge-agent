@@ -213,6 +213,10 @@ import {
 } from "../session/prompt-cache.js";
 import {
   applyModelContextWindow,
+  contextWindowCaps,
+  contextWindowRouteNote,
+  contextWindowWarnings,
+  formatContextWindowPosture,
   modelContextWindow,
   parseContextWindowArg,
   resolveEffectiveMaxTokens,
@@ -1293,11 +1297,14 @@ export async function handleProviderSlash(
         `\nFree-form models OK · /model deepseek/deepseek-v4-flash · forge models -p ${nextProvider}`,
       )
     : chalk.dim(`\n/model lists catalog · Tab completes`);
-  const ctxNote = ctxApply.known
-    ? ` · ctx ${formatTokens(ctxApply.window)}${ctxApply.source === "explicit" ? " (pinned)" : " (model max)"}`
-    : chalk.dim(
-        ` · ctx ${formatTokens(opts.config.contextWindow)} (unknown model max · /context-window auto after forge models -p openrouter --refresh)`,
-      );
+  const ctxWarns = contextWindowWarnings(opts.config);
+  const ctxNote =
+    (ctxApply.known
+      ? ` · ctx ${formatContextWindowPosture(opts.config)}`
+      : chalk.dim(
+          ` · ctx ${formatTokens(opts.config.contextWindow)} (unknown model max · /context-window auto after forge models -p openrouter --refresh)`,
+        )) +
+    ctxWarns.map((w) => `\n${chalk.yellow(`⚠ ${w}`)}`).join("");
 
   return {
     handled: true,
@@ -1479,19 +1486,19 @@ export async function handleModelSlash(
       opts.config.model,
       opts.config.reasoningEffort,
     );
-    const knownWin = modelContextWindow(opts.config.model);
+    const knownWin = modelContextWindow(opts.config.model, provider);
+    const routeNote = contextWindowRouteNote(opts.config.model, provider);
     const header = [
       `Provider: ${provider}  ·  model: ${opts.config.model}`,
       `  temp=${opts.config.temperature ?? "default"}  max_tokens=${effectiveMaxTokensForDisplay(opts.config)}` +
         (curEffort ? `  effort=${curEffort}` : "") +
-        `  ctx=${formatTokens(opts.config.contextWindow)}` +
+        `  ctx=${formatContextWindowPosture(opts.config)}` +
         (opts.config.contextWindowExplicit
-          ? " (pinned)"
-          : knownWin
-            ? knownWin === opts.config.contextWindow
-              ? " (model max)"
-              : ` (model max ${formatTokens(knownWin)})`
-            : " (default)"),
+          ? ""
+          : knownWin && knownWin !== opts.config.contextWindow
+            ? ` (route max ${formatTokens(knownWin)})`
+            : ""),
+      ...(routeNote ? [`  ${routeNote}`] : []),
     ].join("\n");
     const effortLine = modelSupportsReasoningEffort(opts.config.model)
       ? chalk.dim(
@@ -1600,7 +1607,7 @@ export async function handleModelSlash(
   if (
     provider === "openrouter" &&
     !opts.config.contextWindowExplicit &&
-    modelContextWindow(resolved) == null
+    modelContextWindow(resolved, provider) == null
   ) {
     try {
       await buildModelCatalog(opts.config, "openrouter", {
@@ -1616,14 +1623,15 @@ export async function handleModelSlash(
   const ctxApply = applyModelContextWindow(opts.config, resolved);
   let windowNote = "";
   if (ctxApply.known) {
-    windowNote =
-      ` · ctx ${formatTokens(ctxApply.window)}` +
-      (ctxApply.source === "explicit" ? " (pinned)" : " (model max)");
+    windowNote = ` · ctx ${formatContextWindowPosture(opts.config)}`;
   } else if (!opts.config.contextWindowExplicit) {
     windowNote = chalk.dim(
       ` · ctx ${formatTokens(opts.config.contextWindow)} (unknown — /context-window 1m or refresh catalog)`,
     );
   }
+  windowNote += contextWindowWarnings(opts.config)
+    .map((w) => `\n${chalk.yellow(`⚠ ${w}`)}`)
+    .join("");
 
   let effortNote = "";
   if (effortArg) {
@@ -1699,30 +1707,43 @@ export async function handleModelSlash(
   };
 }
 
-/** `/context-window [n|auto]` — pin or auto-follow model max. */
+/** `/context-window [n|auto]` — pin or auto-follow this provider+model max. */
 export function handleContextWindowSlash(
   arg: string,
   opts: SlashOpts,
 ): SlashResult {
   const raw = (arg || "").trim();
-  const known = modelContextWindow(opts.config.model);
+  const provider = String(opts.config.provider || "");
+  const known = modelContextWindow(opts.config.model, provider);
+  const caps = contextWindowCaps(opts.config.model, provider);
+  const routeNote = contextWindowRouteNote(opts.config.model, provider);
   if (!raw || raw === "status" || raw === "show") {
     const mode = opts.config.contextWindowExplicit
       ? "pinned"
       : known && known === opts.config.contextWindow
-        ? "model max (auto)"
+        ? caps?.source === "cursor"
+          ? "Cursor hosted default (auto)"
+          : "model max (auto)"
         : known
-          ? `default (model max ${formatTokens(known)} available)`
+          ? `default (route max ${formatTokens(known)} available)`
           : "default (model max unknown)";
+    const warnLines = contextWindowWarnings(opts.config)
+      .map((w) => `\n${chalk.yellow(`⚠ ${w}`)}`)
+      .join("");
     return {
       handled: true,
       output:
-        `context_window: ${opts.config.contextWindow} (${formatTokens(opts.config.contextWindow)})  ·  ${mode}\n` +
+        `context_window: ${opts.config.contextWindow} (${formatContextWindowPosture(opts.config)})  ·  ${mode}\n` +
         `  model: ${opts.config.provider}/${opts.config.model}` +
-        (known ? `  ·  known max ${formatTokens(known)}` : "") +
+        (known ? `  ·  route max ${formatTokens(known)}` : "") +
+        (caps?.native && caps.native !== known
+          ? `  ·  native ${formatTokens(caps.native)}`
+          : "") +
+        (routeNote ? `\n  ${routeNote}` : "") +
+        warnLines +
         "\n" +
         chalk.dim(
-          "Usage: /context-window <n|200k|1m|auto>  ·  auto = follow model max  ·  pin persists for this session only (config.toml for permanent)",
+          "Usage: /context-window <n|200k|1m|auto>  ·  auto = follow this provider+model max  ·  pin persists for this session only (config.toml for permanent)",
         ),
     };
   }
@@ -1737,7 +1758,7 @@ export function handleContextWindowSlash(
         ) +
         chalk.dim(
           `Current: ${formatTokens(opts.config.contextWindow)}` +
-            (known ? ` · model max ${formatTokens(known)}` : ""),
+            (known ? ` · route max ${formatTokens(known)}` : ""),
         ),
     };
   }
@@ -1748,15 +1769,17 @@ export function handleContextWindowSlash(
     try {
       pushLiveNotice(
         opts.session.meta.id,
-        `User set context_window to auto (model max${applied.known ? ` ${applied.window}` : " unknown"}).`,
+        `User set context_window to auto (route max${applied.known ? ` ${applied.window}` : " unknown"}).`,
       );
     } catch {
       /* */
     }
+    const note = contextWindowRouteNote(opts.config.model, provider);
     return {
       handled: true,
       output: applied.known
-        ? `context_window: auto → ${formatTokens(applied.window)} (model max for ${opts.config.model})`
+        ? `context_window: auto → ${formatTokens(applied.window)} (${applied.source === "cursor" ? "Cursor hosted default" : `model max`} for ${opts.config.model})` +
+          (note ? `\n  ${note}` : "")
         : `context_window: auto · model max unknown for ${opts.config.model} — keeping ${formatTokens(opts.config.contextWindow)}` +
           chalk.dim(
             "\nTip: forge models -p openrouter --refresh  then /context-window auto",
@@ -1774,14 +1797,13 @@ export function handleContextWindowSlash(
   } catch {
     /* */
   }
+  const hygiene = contextWindowWarnings(opts.config);
   const warn =
-    known && parsed > known
-      ? chalk.yellow(
-          `\n⚠ ${formatTokens(parsed)} exceeds known model max ${formatTokens(known)} — provider may reject long prompts`,
-        )
+    hygiene.length > 0
+      ? hygiene.map((w) => chalk.yellow(`\n⚠ ${w}`)).join("")
       : known && parsed < known * 0.5
         ? chalk.dim(
-            `\nNote: pinned below 50% of model max ${formatTokens(known)} — long runs compact early`,
+            `\nNote: pinned below 50% of route max ${formatTokens(known)} — long runs compact early`,
           )
         : "";
   return {
@@ -3316,9 +3338,17 @@ return {
       } catch {
         /* */
       }
+      const routeNote = contextWindowRouteNote(
+        opts.config.model,
+        String(opts.config.provider || ""),
+      );
+      const winWarn = contextWindowWarnings(opts.config)
+        .map((w) => `\n${chalk.yellow(`⚠ ${w}`)}`)
+        .join("");
+      const routeLine = routeNote ? `\n  ${routeNote}` : "";
       return {
         handled: true,
-        output: `Context  [${bar}] ${pct}%\n  ~${formatTokens(est)} / ${formatTokens(opts.config.contextWindow)}  autoCompact@${thresholdPct}%\nBy role:\n${roleLines}${projectNote}${rulesNote}${skillsNote}${memoryNote}${pressureNote}`,
+        output: `Context  [${bar}] ${pct}%\n  ~${formatTokens(est)} / ${formatTokens(opts.config.contextWindow)}  autoCompact@${thresholdPct}%  ·  ${formatContextWindowPosture(opts.config)}${routeLine}\nBy role:\n${roleLines}${projectNote}${rulesNote}${skillsNote}${memoryNote}${pressureNote}${winWarn}`,
       };
     }
 
@@ -7043,7 +7073,7 @@ export async function runDoctorCheck(
         ? `$${config.maxCostUsd}`
         : "unlimited";
     lines.push(
-      `Context: window=${config.contextWindow} autoCompact@${Math.round((config.autoCompactThreshold || 0.8) * 100)}% maxTurns=${config.maxTurns > 0 ? config.maxTurns : "unlimited"} maxCost=${budget}`,
+      `Context: window=${config.contextWindow} (${formatContextWindowPosture(config)}) autoCompact@${Math.round((config.autoCompactThreshold || 0.8) * 100)}% maxTurns=${config.maxTurns > 0 ? config.maxTurns : "unlimited"} maxCost=${budget}`,
     );
     lines.push(
       chalk.dim(
@@ -7058,22 +7088,28 @@ export async function runDoctorCheck(
       );
     }
   }
-  // Expert tip: context_window far below the model's known default wastes headroom
+  // Expert tip: context_window far below the route default wastes headroom;
+  // a pin above the host overflows before compact.
   let modelDefaultContextWindow: number | null = null;
   let contextWindowRatio: number | null = null;
   try {
-    const { modelContextWindow } = await import("../config/model-info.js");
-    const known = modelContextWindow(config.model);
+    const caps = contextWindowCaps(config.model, String(config.provider || ""));
+    const known = caps?.window;
     if (known) {
       modelDefaultContextWindow = known;
       if (config.contextWindow > 0) {
         contextWindowRatio = Math.round((config.contextWindow / known) * 1000) / 1000;
       }
     }
+    const winWarns = contextWindowWarnings(config);
+    for (const w of winWarns) {
+      lines.push(chalk.yellow(`  ⚠ ${w}`));
+    }
     if (
       known &&
       config.contextWindow > 0 &&
-      config.contextWindow < known * 0.5
+      config.contextWindow < known * 0.5 &&
+      winWarns.length === 0
     ) {
       lines.push(
         chalk.yellow(
@@ -7083,11 +7119,24 @@ export async function runDoctorCheck(
     } else if (known && config.contextWindowExplicit && config.contextWindow !== known) {
       lines.push(
         chalk.dim(
-          `  model default window≈${known} (explicit context_window=${config.contextWindow})`,
+          `  route default window≈${known} (explicit context_window=${config.contextWindow})` +
+            (caps?.native && caps.native !== known
+              ? `  ·  native ${caps.native}`
+              : ""),
         ),
       );
     } else if (known) {
-      lines.push(chalk.dim(`  model default window≈${known}`));
+      const note = contextWindowRouteNote(
+        config.model,
+        String(config.provider || ""),
+      );
+      lines.push(
+        chalk.dim(
+          note
+            ? `  ${note}`
+            : `  model default window≈${known}`,
+        ),
+      );
     }
   } catch {
     /* */
@@ -8163,6 +8212,7 @@ export function formatEffectiveConfig(
   opts?: { json?: boolean; session?: SessionData | null },
 ): string {
   const snap = buildEffectiveConfigSnap(config, { session: opts?.session });
+  const ctxRoute = contextWindowRouteNote(snap.model, snap.provider);
   if (opts?.json) {
     const body = { ok: true, ...snap };
     const compact =
@@ -8224,6 +8274,7 @@ export function formatEffectiveConfig(
     `  context:         window=${snap.contextWindow}` +
       (snap.contextWindowExplicit ? " (pinned)" : " (auto)") +
       ` autoCompact@${Math.round((snap.autoCompactThreshold || 0.8) * 100)}% maxTurns=${snap.maxTurns > 0 ? snap.maxTurns : "unlimited"}` +
+      (ctxRoute ? chalk.dim(`  ·  ${ctxRoute}`) : "") +
       chalk.dim("  (/context-window)"),
     `  cost budget:     ${
       snap.effectiveMaxCostUsd != null

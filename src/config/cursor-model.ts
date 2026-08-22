@@ -4,7 +4,8 @@
  * Root cause: Cursor does not take OpenAI `reasoning_effort` / a 1M flag as
  * chat-completions fields. The CLI encodes them as:
  *   - ModelDetails.thinking_details (empty message present = thinking on)
- *   - ModelDetails.max_mode (bool; IDE 1M / Max Mode)
+ *   - ModelDetails.max_mode (bool; IDE Max Mode — 1M models, or a window
+ *     above the hosted default so Cursor Grok 500k pin requests provider max)
  *   - RequestedModel.parameters id=thinking|reasoning|effort|fast
  *   - optional id suffixes: -thinking -fast -low|-medium|-high|-xhigh|-max
  *
@@ -13,6 +14,7 @@
  * when `/effort` is unset).
  */
 import type { ReasoningEffort } from "./reasoning.js";
+import { cursorRequestsMaxMode } from "./model-info.js";
 
 export type CursorReasoning = "low" | "medium" | "high" | "extra-high";
 
@@ -186,7 +188,7 @@ export function resolveCursorRunModel(opts: {
   const aliased = resolveCursorModelAlias(opts.model) || opts.model;
   const parsed = parseCursorModelId(aliased);
   const thinking = parsed.thinking;
-  const maxMode = (opts.contextWindow ?? 0) >= 1_000_000;
+  const maxMode = cursorRequestsMaxMode(aliased, opts.contextWindow);
   // Suffix on the catalog id is the encoded default. Overlay only when
   // ChatRequest carries a *different* level (explicit /effort).
   const effort =

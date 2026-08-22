@@ -11,6 +11,10 @@
 import chalk from "chalk";
 import type { ForgeConfig } from "../config/types.js";
 import { resolveReasoningEffort } from "../config/reasoning.js";
+import {
+  contextWindowRouteNote,
+  contextWindowWarnings,
+} from "../config/model-info.js";
 import { formatFallbackChain } from "../config/model-fallback.js";
 import type { SessionData } from "../session/session.js";
 import { isLastVerificationStale } from "../session/session.js";
@@ -1115,6 +1119,17 @@ export function formatSessionDetails(ctx: StatusBarContext): string {
       const win = config.contextWindow || 1;
       const pct = Math.min(100, Math.round((est / win) * 100));
       const thr = Math.round((config.autoCompactThreshold || 0.8) * 100);
+      const route = contextWindowRouteNote(
+        config.model,
+        String(config.provider || ""),
+      );
+      const pinWarn = contextWindowWarnings(config)[0];
+      const routeBit = route ? `  ·  ${route}` : "";
+      if (pinWarn) {
+        return chalk.yellow(
+          `ctx      ${pct}% of ${formatTokens(win)}  ·  ${pinWarn}`,
+        );
+      }
       if (pct >= 92) {
         return chalk.yellow(
           `ctx      ${pct}% HARD · autoCompact@${thr}%  ·  /compact · /new`,
@@ -1127,10 +1142,12 @@ export function formatSessionDetails(ctx: StatusBarContext): string {
       }
       if (pct >= Math.max(50, thr - 15)) {
         return chalk.dim(
-          `ctx      ${pct}% elevated (autoCompact@${thr}%)  ·  /context`,
+          `ctx      ${pct}% elevated (autoCompact@${thr}%)  ·  /context${routeBit}`,
         );
       }
-      return chalk.dim(`ctx      ${pct}% of ${formatTokens(win)}  ·  autoCompact@${thr}%`);
+      return chalk.dim(
+        `ctx      ${pct}% of ${formatTokens(win)}  ·  autoCompact@${thr}%${routeBit}`,
+      );
     })(),
     chalk.dim(
       `keep     ${session.meta.pinned ? "pinned (prune-safe) · /unpin" : "not pinned · /pin to protect from prune"}`,
