@@ -34,6 +34,35 @@ describe("FileReadState", () => {
     assert.match(msg!, /has not been read/);
   });
 
+  it("refreshNotedFromDisk restamps without inventing a read", async () => {
+    const d = tmpWorkspace();
+    const f = path.join(d, "c.ts");
+    fs.writeFileSync(f, "const x = 1;\n");
+    const state = new FileReadState();
+    await state.refreshNotedFromDisk(f);
+    assert.equal(state.get(f), undefined, "must not invent a stamp");
+    assert.equal(await state.noteFromDisk(f), true);
+    const first = state.get(f)!;
+    await new Promise((r) => setTimeout(r, 15));
+    fs.writeFileSync(f, "const x = 1;\n");
+    await state.refreshNotedFromDisk(f);
+    const second = state.get(f)!;
+    assert.notEqual(second.mtimeMs, first.mtimeMs);
+    const ok = await state.checkBeforeMutate(f, {
+      tool: "search_replace",
+      rel: "c.ts",
+    });
+    assert.equal(ok, null);
+    fs.unlinkSync(f);
+    await state.refreshNotedFromDisk(f);
+    assert.equal(state.get(f), undefined, "gone file clears the note");
+    try {
+      fs.rmSync(d, { recursive: true, force: true });
+    } catch {
+      /* */
+    }
+  });
+
   it("allows mutate after noteFromDisk and blocks after external change", async () => {
     const d = tmpWorkspace();
     const f = path.join(d, "b.ts");
@@ -145,6 +174,49 @@ describe("tool integration with fileReads", () => {
       ctx,
     );
     assert.equal(ok.isError, undefined);
+  });
+
+  it("apply_patch rollback restamps so a retry is not blocked as changed on disk", async () => {
+    fs.writeFileSync(path.join(dir, "keep.txt"), "original\n");
+    fs.writeFileSync(path.join(dir, "blocked"), "not-a-dir\n");
+    await toolRead({ path: "keep.txt" }, ctx);
+    await new Promise((r) => setTimeout(r, 15));
+    const failed = await toolApplyPatch(
+      {
+        patchText: `*** Begin Patch
+*** Update File: keep.txt
+@@
+-original
++changed
+*** Add File: blocked/child.txt
++should-not-land
+*** End Patch`,
+      },
+      ctx,
+    );
+    assert.equal(failed.isError, true);
+    assert.match(failed.output, /Rolled back — workspace is unchanged/i);
+    assert.equal(
+      fs.readFileSync(path.join(dir, "keep.txt"), "utf8"),
+      "original\n",
+    );
+    const retry = await toolApplyPatch(
+      {
+        patchText: `*** Begin Patch
+*** Update File: keep.txt
+@@
+-original
++changed
+*** End Patch`,
+      },
+      ctx,
+    );
+    assert.equal(retry.isError, undefined, retry.output);
+    assert.doesNotMatch(retry.output, /changed on disk/);
+    assert.equal(
+      fs.readFileSync(path.join(dir, "keep.txt"), "utf8"),
+      "changed\n",
+    );
   });
 
   it("apply_patch update requires prior read", async () => {

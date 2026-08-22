@@ -49,7 +49,7 @@ Binary entry: `src/cli.ts` → `dist/cli.js` (`bin: forge`).
 - `src/harness/product-quality.ts` — user-facing product **quality** bar (not a persona): job insight + one finished edge + at most one labeled `Serendipity:`; chrome catalogs are not a reading; bounce once (`/cycle 1` / fork / re-enable reset it); `/cycle status` lists the bar; harvest fail-open; generic UI chrome / infra / bugfix never arm
 - `src/agent/project-skills.ts` — skill packs: package `skills/forge-*/` (builtin) + `.forge/skills/**/SKILL.md` + `.agents/skills` + `~/.forge/skills` (project > user > builtin; `FORGE_BUILTIN_SKILLS=0` off)
 - `src/util/project-intel.ts` — package manager + preferred check commands (system prompt, `/context`, bash wrong-PM/missing-script/missing-binary tips; monorepo walk-up + turbo/nx; doctor/status/config/run JSON; last-verify trail + `editsWithoutVerification`)
-- `src/agent/tools/file-read-state.ts` — session stale/unread edit guard (`FORGE_FILE_READ_GUARD=0` off)
+- `src/agent/tools/file-read-state.ts` — session stale/unread edit guard (`FORGE_FILE_READ_GUARD=0` off); `refreshNotedFromDisk` restamps after apply_patch rollback so a retry is not "changed on disk"
 - `src/agent/tools/edit-receipt.ts` — numbered AFTER receipt for search_replace/write_file/apply_patch (`FORGE_EDIT_RECEIPT=legacy` off)
 - `src/agent/tools/ask-user.ts` — interactive clarifying questions (OpenCode-inspired)
 - `src/agent/tools/format-on-write.ts` — format after file tools (`/format`, `FORGE_FORMAT_ON_WRITE`; auto when prettier/biome/ruff/… detected)

@@ -396,8 +396,9 @@ export async function runSubagent(
     };
   }
 
+  const childCap: { maxCostUsd?: number } = {};
   const familyPin = pinChildCostCap(
-    {},
+    childCap,
     ctx.config,
     ctx.parentSession.meta,
   );
@@ -468,7 +469,11 @@ export async function runSubagent(
     ultrawork: false,
     title: `subagent: ${description}`.slice(0, 200),
   });
-  pinChildCostCap(child.meta, ctx.config, ctx.parentSession.meta);
+  // Copy the pre-worktree pin. A second pinChildCostCap here can refuse
+  // after a sibling live-fold and leave child.meta uncapped (fresh config cap).
+  if (typeof childCap.maxCostUsd === "number") {
+    child.meta.maxCostUsd = childCap.maxCostUsd;
+  }
 
   const childMaxTurns =
     req.maxTurns && req.maxTurns > 0

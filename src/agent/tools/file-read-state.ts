@@ -6,6 +6,8 @@
  *  - search_replace / write_file / apply_patch refuse to clobber a file the
  *    agent never read, or one that changed on disk since the last read/write
  *  - successful writes refresh the stamp so chained edits don't thrash
+ *  - apply_patch rollback restamps noted paths (restore rewrites mtime) so
+ *    a retry is not blocked as "changed on disk" while content is unchanged
  *
  * Absent from ToolContext (unit tests, one-off executeTool) → no enforcement.
  */
@@ -109,6 +111,16 @@ export class FileReadState {
     } catch {
       return false;
     }
+  }
+
+  /**
+   * Re-stamp a path we already noted after a self-write (rollback / restore).
+   * Does not create a stamp — that would skip the unread check. Clears if gone.
+   */
+  async refreshNotedFromDisk(filePath: string): Promise<void> {
+    if (!this.get(filePath)) return;
+    const ok = await this.noteFromDisk(filePath);
+    if (!ok) this.clear(filePath);
   }
 
   /**

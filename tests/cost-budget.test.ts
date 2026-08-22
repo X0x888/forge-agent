@@ -152,6 +152,33 @@ describe("pinChildCostCap — family remaining, not a fresh cap", () => {
     assert.equal(child.maxCostUsd, undefined);
   });
 
+  it("first-pin copy stays capped when a later pin would refuse", () => {
+    const parent = {
+      maxCostUsd: 1,
+      totalPromptTokens: 50_000,
+      totalCompletionTokens: 1_000,
+      totalCacheReadTokens: 0,
+    };
+    const childCap: { maxCostUsd?: number } = {};
+    const first = pinChildCostCap(childCap, cfg, parent);
+    assert.equal(first.refuse, false);
+    const child: { maxCostUsd?: number } = {};
+    if (typeof childCap.maxCostUsd === "number") {
+      child.maxCostUsd = childCap.maxCostUsd;
+    }
+    const hitParent = {
+      maxCostUsd: 0.0001,
+      totalPromptTokens: 1_000_000,
+      totalCompletionTokens: 1_000_000,
+      totalCacheReadTokens: 0,
+    };
+    const second = pinChildCostCap({}, cfg, hitParent);
+    assert.equal(second.refuse, true);
+    assert.equal(typeof child.maxCostUsd, "number");
+    assert.ok((child.maxCostUsd ?? 0) > 0);
+    assert.ok((child.maxCostUsd ?? 0) < 5);
+  });
+
   it("does not pin when the family is unlimited", () => {
     const child: { maxCostUsd?: number } = {};
     const pin = pinChildCostCap(

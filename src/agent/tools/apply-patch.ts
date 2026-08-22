@@ -458,6 +458,18 @@ export async function toolApplyPatch(
         undoFailed.push(`${rb.label}: ${(undoErr as Error).message}`);
       }
     }
+    // restoreTextFile restamps mtime. Refresh notes so a retry is not
+    // blocked as "changed on disk" while content is the pre-image.
+    if (ctx.fileReads && fileReadGuardEnabled()) {
+      const paths = new Set<string>();
+      for (const op of planned) {
+        paths.add(op.abs);
+        if (op.kind === "update" && op.moveAbs) paths.add(op.moveAbs);
+      }
+      for (const p of paths) {
+        await ctx.fileReads.refreshNotedFromDisk(p);
+      }
+    }
     const head = `apply_patch failed after ${applied.length} op(s): ${(err as Error).message}`;
     const detail = applied.length
       ? `Attempted before failure:\n${applied.join("\n")}\n`
