@@ -479,7 +479,7 @@ export function storeCursorTokens(
   const isKey = looksLikeCursorApiKey(tokens.accessToken) && !tokens.refreshToken;
   if (isKey) {
     return upsertApiKey(CURSOR_PROVIDER_ID, tokens.accessToken, label, {
-      forceNew: Boolean(opts?.forceNew && !email),
+      forceNew: Boolean(opts?.forceNew),
     });
   }
   return upsertOAuth(CURSOR_PROVIDER_ID, {
@@ -490,7 +490,7 @@ export function storeCursorTokens(
     method: "subscription",
     subscription: "Cursor",
     accountLabel: label,
-    forceNew: Boolean(opts?.forceNew && !email),
+    forceNew: Boolean(opts?.forceNew),
   });
 }
 

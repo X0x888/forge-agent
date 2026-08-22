@@ -489,7 +489,7 @@ export async function storeCopilotFromGitHubToken(
         ? "GitHub Copilot (CLI token)"
         : "GitHub Copilot",
     accountLabel,
-    forceNew: opts?.forceNew && !opts?.login,
+    forceNew: opts?.forceNew,
   });
   return {
     imported: true,

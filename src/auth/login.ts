@@ -143,8 +143,8 @@ export async function loginInteractive(opts: {
   apiKey?: string;
   /**
    * When true, always create a new account slot even if the same provider
-   * already has credentials (multi-account). Identity match still updates
-   * the same email when known.
+   * already has credentials (multi-account). Re-login without --add still
+   * updates a matching email/identity in place.
    */
   addAccount?: boolean;
   /** Optional display label for API-key accounts. */
@@ -275,7 +275,7 @@ export async function cursorBrowserLogin(opts?: {
     throw new Error(result.reason || "Cursor login failed");
   }
   log.success(
-    `Logged in to Cursor` +
+    (result.created ? "Added Cursor account" : "Logged in to Cursor") +
       (result.email ? ` (${result.email})` : "") +
       (result.accountId ? ` [${result.accountId}]` : "") +
       (result.expiresAt
@@ -341,8 +341,6 @@ async function exchangeAuthorizationCode(opts: {
     : provider === "xai"
       ? "grok:supergrok-oidc"
       : profile.label;
-  // forceNew with a known email still updates that identity (same subscription);
-  // forceNew only matters when identity is unknown or differs.
   const r = upsertOAuth(provider, {
     accessToken: json.access_token,
     refreshToken: json.refresh_token,
@@ -351,7 +349,7 @@ async function exchangeAuthorizationCode(opts: {
     method: "subscription",
     subscription: profile.label,
     accountLabel,
-    forceNew: opts.forceNew && !email,
+    forceNew: opts.forceNew,
   });
   log.success(
     (r.created ? `Added account on ${provider}` : `Logged in to ${provider}`) +
@@ -745,7 +743,7 @@ async function deviceCodeLogin(
         method: "subscription",
         subscription: profile.label,
         accountLabel,
-        forceNew: opts?.forceNew && !email,
+        forceNew: opts?.forceNew,
       });
       log.success(
         `Device login complete for ${provider}` +

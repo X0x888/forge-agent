@@ -64,7 +64,13 @@ import {
 } from "../src/providers/cursor-proto.js";
 import { estimateCostUsd } from "../src/util/format.js";
 import { providerSupportsRemoteCatalog } from "../src/config/model-catalog.js";
-import { upsertOAuth, getCredential, clearAllCredentials } from "../src/auth/store.js";
+import {
+  upsertOAuth,
+  getCredential,
+  getAccount,
+  listAccounts,
+  clearAllCredentials,
+} from "../src/auth/store.js";
 import { refreshCredentialIfNeeded } from "../src/auth/refresh.js";
 
 function fakeJwt(payload: Record<string, unknown>): string {
@@ -797,5 +803,52 @@ describe("cursor refresh", () => {
     assert.equal(cred?.accessToken, token);
     assert.equal(cred?.refreshToken, "rt");
     assert.equal(cred?.method, "subscription");
+  });
+
+  it("forceNew keeps the first Cursor account when JWT has no email", async () => {
+    const t1 = fakeJwt({
+      exp: Math.floor(Date.now() / 1000) + 7200,
+      sub: "user-1",
+    });
+    const t2 = fakeJwt({
+      exp: Math.floor(Date.now() / 1000) + 7200,
+      sub: "user-2",
+    });
+    const a = await storeCursorFromAccessToken(t1, {
+      refreshToken: "rt-a",
+    });
+    const b = await storeCursorFromAccessToken(t2, {
+      refreshToken: "rt-b",
+      forceNew: true,
+    });
+    assert.equal(a.created, true);
+    assert.equal(b.created, true);
+    assert.notEqual(a.accountId, b.accountId);
+    assert.equal(listAccounts(CURSOR_PROVIDER_ID).length, 2);
+    assert.equal(getAccount(a.accountId!)?.accessToken, t1);
+    assert.equal(getAccount(b.accountId!)?.accessToken, t2);
+  });
+
+  it("forceNew keeps the first Cursor account when emails match", async () => {
+    const t1 = fakeJwt({
+      exp: Math.floor(Date.now() / 1000) + 7200,
+      email: "ada@cursor.test",
+    });
+    const t2 = fakeJwt({
+      exp: Math.floor(Date.now() / 1000) + 7200,
+      email: "ada@cursor.test",
+    });
+    const a = await storeCursorFromAccessToken(t1, {
+      refreshToken: "rt-a",
+    });
+    const b = await storeCursorFromAccessToken(t2, {
+      refreshToken: "rt-b",
+      forceNew: true,
+    });
+    assert.equal(b.created, true);
+    assert.notEqual(a.accountId, b.accountId);
+    assert.equal(listAccounts(CURSOR_PROVIDER_ID).length, 2);
+    assert.equal(getAccount(a.accountId!)?.accessToken, t1);
+    assert.equal(getAccount(b.accountId!)?.accessToken, t2);
   });
 });

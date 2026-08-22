@@ -147,6 +147,31 @@ describe("multi-account auth store", () => {
     assert.equal(getActiveAccount("xai")?.accessToken, "tok2");
   });
 
+  it("forceNew with the same label creates a second account instead of clobbering", () => {
+    const a = upsertOAuth("cursor", {
+      accessToken: "tok-a",
+      refreshToken: "rt-a",
+      method: "subscription",
+      subscription: "Cursor",
+      accountLabel: "cursor:subscription",
+    });
+    const b = upsertOAuth("cursor", {
+      accessToken: "tok-b",
+      refreshToken: "rt-b",
+      method: "subscription",
+      subscription: "Cursor",
+      accountLabel: "cursor:subscription",
+      forceNew: true,
+    });
+    assert.equal(a.created, true);
+    assert.equal(b.created, true);
+    assert.notEqual(a.accountId, b.accountId);
+    assert.equal(listAccounts("cursor").length, 2);
+    assert.equal(getAccount(a.accountId)?.accessToken, "tok-a");
+    assert.equal(getAccount(b.accountId)?.accessToken, "tok-b");
+    assert.equal(getActiveAccount("cursor")?.accessToken, "tok-b");
+  });
+
   it("identity lookup never matches a label-less account", () => {
     // Label-less account inserted FIRST: with the old `target.endsWith("")`
     // bug it matched every identity query and absorbed other users' tokens.

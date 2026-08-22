@@ -433,10 +433,16 @@ export function upsertAccount(
       return { accountId: target.id, created: false };
     }
 
-    const id =
+    let id =
       opts.accountId && !store.accounts[opts.accountId]
         ? opts.accountId
         : makeAccountId(provider, opts.accountLabel || opts.subscription);
+    // forceNew skips identity-match, but makeAccountId is stable for a given
+    // label — Cursor OAuth without an email always uses "cursor:subscription",
+    // so a second login would overwrite the first row. Never clobber on create.
+    while (store.accounts[id]) {
+      id = `${makeAccountId(provider, opts.accountLabel || opts.subscription)}-${randomBytes(4).toString("hex")}`;
+    }
     store.accounts[id] = {
       id,
       provider,
