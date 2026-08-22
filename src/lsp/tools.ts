@@ -17,6 +17,31 @@ const ACTIONS = new Set([
   "ensure",
 ]);
 
+export function isLspToolName(name: string): boolean {
+  const n = String(name || "").trim();
+  return n === "lsp" || n === "LSP";
+}
+
+export function normalizeLspAction(input: Record<string, unknown>): string {
+  return String(input.action ?? input.method ?? "diagnostics")
+    .trim()
+    .toLowerCase()
+    .replace(/-/g, "_");
+}
+
+export function lspDryRun(input: Record<string, unknown>): boolean {
+  return (
+    input.dry_run === true ||
+    input.dry_run === "true" ||
+    String(input.mode || "").toLowerCase() === "dry"
+  );
+}
+
+/** True when lsp will run installers (`npm install -g` / rustup / go install). */
+export function lspActionInstalls(input: Record<string, unknown>): boolean {
+  return normalizeLspAction(input) === "ensure" && !lspDryRun(input);
+}
+
 export async function toolLsp(
   args: Record<string, unknown>,
   ctx: ToolContext,
