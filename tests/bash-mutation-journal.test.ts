@@ -130,6 +130,38 @@ describe("bash mutation journal", () => {
     assert.equal(beginBashTreeSnapshot(empty), null);
   });
 
+  it("host GIT_DIR cannot redirect the journal porcelain to a decoy repo", () => {
+    const decoy = fs.mkdtempSync(path.join(os.tmpdir(), "forge-bmj-decoy-"));
+    scaffoldGitRepo(decoy);
+    fs.writeFileSync(path.join(decoy, "only-decoy.txt"), "decoy\n");
+    git(decoy, ["add", "only-decoy.txt"]);
+    git(decoy, ["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "decoy"]);
+
+    const prevGitDir = process.env.GIT_DIR;
+    process.env.GIT_DIR = path.join(decoy, ".git");
+    try {
+      const s = createSession({ cwd: dir, provider: "xai", model: "grok-4" });
+      s.meta.turnCount = 1;
+      const snap = beginBashTreeSnapshot(dir);
+      assert.ok(snap, "workspace repo must still snapshot under host GIT_DIR");
+      fs.writeFileSync(path.join(dir, "from-workspace.txt"), "hello\n");
+      const rec = ctxRecord(s.meta.id);
+      const n = applyBashTreeDelta(snap, rec);
+      assert.equal(n, 1);
+      const journal = readFileMutations(s.meta.id);
+      assert.equal(journal.length, 1);
+      assert.ok(journal[0].path.endsWith("from-workspace.txt"));
+    } finally {
+      if (prevGitDir === undefined) delete process.env.GIT_DIR;
+      else process.env.GIT_DIR = prevGitDir;
+      try {
+        fs.rmSync(decoy, { recursive: true, force: true });
+      } catch {
+        /* */
+      }
+    }
+  });
+
   it("journals a new untracked file as create and /undo removes it", () => {
     const s = createSession({ cwd: dir, provider: "xai", model: "grok-4" });
     s.meta.turnCount = 1;

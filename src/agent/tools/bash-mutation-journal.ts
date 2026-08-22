@@ -21,6 +21,7 @@ import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { MAX_MUTATION_BYTES } from "../../session/mutations.js";
+import { createChildEnv } from "./env-policy.js";
 import {
   findGitRoot,
   parsePorcelainPath,
@@ -69,6 +70,7 @@ function git(args: string[], cwd: string, timeoutMs = 8_000): string {
     stdio: ["ignore", "pipe", "pipe"],
     timeout: timeoutMs,
     maxBuffer: 2 * 1024 * 1024,
+    env: createChildEnv(),
   }).trimEnd();
 }
 
@@ -161,6 +163,7 @@ function showHead(
       stdio: ["ignore", "pipe", "pipe"],
       timeout: 8_000,
       maxBuffer: MAX_MUTATION_BYTES + 4096,
+      env: createChildEnv(),
     }) as Buffer;
     if (buf.length > MAX_MUTATION_BYTES) {
       return {

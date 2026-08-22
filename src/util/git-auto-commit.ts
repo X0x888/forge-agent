@@ -5,6 +5,7 @@
 import { execFileSync } from "node:child_process";
 import { isFalsy } from "./bool.js";
 import { nowIso } from "./fs.js";
+import { createChildEnv } from "../agent/tools/env-policy.js";
 import { findGitRoot, parsePorcelainPath } from "../agent/worktree.js";
 import { activeMemoryRecords } from "../harness/decision-memory.js";
 import {
@@ -46,6 +47,7 @@ function git(args: string[], cwd: string, timeoutMs = 30_000): string {
     stdio: ["ignore", "pipe", "pipe"],
     timeout: timeoutMs,
     maxBuffer: 8 * 1024 * 1024,
+    env: createChildEnv(),
   });
   // Do not trimStart: porcelain v1 unstaged-only is `" M path"` and the
   // leading space is a status column. Trimming it made slice(3) drop `s`

@@ -1,7 +1,7 @@
 # Project memory
 
 > Auto-maintained by Forge. Edit carefully — agent loads this across sessions.
-> key=d54ef9c78f11c027 · updated=2026-08-22T05:06:23.191Z
+> key=d54ef9c78f11c027 · updated=2026-08-22T05:13:42.035Z
 
 ## constraint
 
@@ -31,6 +31,7 @@
 - isolation=worktree auto-lands into parent only when status=completed (FORGE_SUBAGENT_LAND=auto|keep|discard); incomplete_max_turns / abort / error / stop-hook skip apply and keep the worktree. Kept on conflict. FORGE_SUBAGENT_KEEP_WORKTREE=1 forces keep.
 - `/budget` is a family spend cap. spawn_subagent pins the child to remaining (not a fresh config.maxCostUsd). Parent HIT refuses spawn. Copy the pre-worktree pin onto child.meta — do not re-pin after createSession (a sibling live-fold can refuse and leave the child uncapped). Live-fold so parallel children share remaining. Cost-cap handoff is `incomplete_cost_cap` (does not land).
 - lsp({ action: ensure }) is a mutation (npm install -g / rustup / go install). Plan / ULW PLAN / dontAsk / headless / session-tool on status do not auto-allow. diagnostics / status / install-guide / dry-run stay read-only. YOLO / allow rule still work. CLI forge lsp ensure is user-initiated.
+- Forge-spawned children use createChildEnv, not raw process.env. Git helpers (checkpoint, journal, worktree, /commit, /diff, auto-commit) must not inherit host GIT_DIR / GIT_INDEX_FILE. Extra env is policy set after the scrub. MCP/LSP stdio: createChildEnv(env, { keepSecrets: true }).
 
 ## fact
 

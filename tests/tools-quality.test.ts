@@ -10,7 +10,7 @@ import {
   applyMatch,
   editMissHint,
 } from "../src/agent/tools/edit-match.js";
-import { createShellEnv } from "../src/agent/tools/env-policy.js";
+import { createChildEnv, createShellEnv } from "../src/agent/tools/env-policy.js";
 import {
   editDistance,
   pathNotFoundHint,
@@ -172,6 +172,9 @@ describe("env policy", () => {
       PYTHONSTARTUP: "/tmp/evil.py",
       BASH_ENV: "/tmp/evil.sh",
       GIT_SSH_COMMAND: "evil",
+      GIT_DIR: "/evil/.git",
+      GIT_INDEX_FILE: "/evil/index",
+      GIT_WORK_TREE: "/evil/tree",
       GIT_CONFIG_COUNT: "1",
       GIT_CONFIG_KEY_0: "core.sshCommand",
       GIT_CONFIG_VALUE_0: "touch /tmp/pwned",
@@ -185,6 +188,9 @@ describe("env policy", () => {
     assert.equal(env.PYTHONSTARTUP, undefined);
     assert.equal(env.BASH_ENV, undefined);
     assert.equal(env.GIT_SSH_COMMAND, undefined);
+    assert.equal(env.GIT_DIR, undefined);
+    assert.equal(env.GIT_INDEX_FILE, undefined);
+    assert.equal(env.GIT_WORK_TREE, undefined);
     assert.equal(env.GIT_CONFIG_COUNT, undefined);
     assert.equal(env.GIT_CONFIG_KEY_0, undefined);
     assert.equal(env.GIT_CONFIG_VALUE_0, undefined);
@@ -195,6 +201,49 @@ describe("env policy", () => {
     assert.equal(forced.NODE_OPTIONS, "--trace-warnings");
   });
 
+
+  it("createChildEnv strips host GIT_DIR and reintroduces set extra", () => {
+    const env = createChildEnv(
+      { GIT_INDEX_FILE: "/tmp/forge.idx" },
+      {
+        base: {
+          PATH: "/usr/bin",
+          HOME: "/h",
+          GIT_DIR: "/evil/.git",
+          GIT_INDEX_FILE: "/evil/index",
+          NODE_OPTIONS: "--require /tmp/evil.js",
+          OPENAI_API_KEY: "sk-secret",
+          NORMAL_VAR: "ok",
+        },
+      },
+    );
+    assert.equal(env.PATH, "/usr/bin");
+    assert.equal(env.NORMAL_VAR, "ok");
+    assert.equal(env.GIT_DIR, undefined);
+    assert.equal(env.NODE_OPTIONS, undefined);
+    assert.equal(env.OPENAI_API_KEY, undefined);
+    assert.equal(env.GIT_INDEX_FILE, "/tmp/forge.idx");
+  });
+
+  it("createChildEnv keepSecrets retains tokens but still strips injection", () => {
+    const env = createChildEnv(
+      { GITHUB_TOKEN: "from-config" },
+      {
+        keepSecrets: true,
+        base: {
+          PATH: "/usr/bin",
+          GITHUB_TOKEN: "from-host",
+          OPENAI_API_KEY: "sk-host",
+          GIT_DIR: "/evil/.git",
+          NODE_OPTIONS: "--require /tmp/evil.js",
+        },
+      },
+    );
+    assert.equal(env.GITHUB_TOKEN, "from-config");
+    assert.equal(env.OPENAI_API_KEY, "sk-host");
+    assert.equal(env.GIT_DIR, undefined);
+    assert.equal(env.NODE_OPTIONS, undefined);
+  });
 
   it("core inherit keeps only core names", () => {
     const env = createShellEnv(

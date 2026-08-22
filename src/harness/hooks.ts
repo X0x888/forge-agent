@@ -13,6 +13,7 @@ import { forgeHome, readJsonFile, pathExists } from "../util/fs.js";
 import { log } from "../util/log.js";
 import { isFalsy } from "../util/bool.js";
 import type { ForgeConfig } from "../config/types.js";
+import { createChildEnv } from "../agent/tools/env-policy.js";
 
 export type HookEvent =
   | "SessionStart"
@@ -370,13 +371,12 @@ export class HookRunner {
         // below reaches the whole tree. (detached is a no-op target on win32.)
         detached: process.platform !== "win32",
         cwd: ctx.cwd,
-        env: {
-          ...process.env,
+        env: createChildEnv({
           FORGE_SESSION_ID: ctx.sessionId,
           FORGE_CWD: ctx.cwd,
           FORGE_HOOK_EVENT: event,
           CLAUDE_PROJECT_DIR: ctx.workspaceRoot,
-        },
+        }),
         stdio: ["pipe", "pipe", "pipe"],
       });
 

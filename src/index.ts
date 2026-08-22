@@ -959,6 +959,7 @@ export {
   numberFieldError,
 } from "./agent/tools/arg-types.js";
 export {
+  createChildEnv,
   createShellEnv,
   SHELL_INJECTION_ENV,
   type ShellEnvPolicy,

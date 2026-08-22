@@ -20,6 +20,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { forgeHome } from "../util/fs.js";
+import { createChildEnv } from "./tools/env-policy.js";
 import {
   killProcessTree,
   registerInflightChild,
@@ -251,7 +252,7 @@ function runRaw(
     }
     const child = spawn(file, args, {
       cwd: opts.cwd,
-      env: opts.env || process.env,
+      env: opts.env || createChildEnv(),
       shell: false,
       stdio: ["ignore", "pipe", "pipe"],
       // Own PGID (POSIX): SIGTERM on the wrapper otherwise orphans

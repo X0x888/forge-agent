@@ -9,6 +9,7 @@
  * - Output caps so a runaway server cannot OOM the agent
  */
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { createChildEnv } from "../agent/tools/env-policy.js";
 import { log } from "./log.js";
 
 export type JsonRpcId = string | number | null;
@@ -101,7 +102,7 @@ export class JsonRpcStdioClient {
     try {
       this.child = spawn(command, args, {
         cwd,
-        env: env ? { ...process.env, ...env } : process.env,
+        env: createChildEnv(env, { keepSecrets: true }),
         stdio: ["pipe", "pipe", "pipe"],
         // Detached so timeout kills can target the process group on Unix.
         detached: process.platform !== "win32",

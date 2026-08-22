@@ -18,6 +18,7 @@ import { randomBytes } from "node:crypto";
 import { forgeHome, ensureDir } from "../util/fs.js";
 import { log } from "../util/log.js";
 import { appendFileMutation } from "../session/mutations.js";
+import { createChildEnv } from "./tools/env-policy.js";
 import { fileReadsForSession } from "./tools/file-read-state.js";
 
 export interface SubagentWorktree {
@@ -71,6 +72,7 @@ function git(
     stdio: ["ignore", "pipe", "pipe"],
     timeout: opts?.timeoutMs ?? 30_000,
     maxBuffer: opts?.maxBuffer ?? 2 * 1024 * 1024,
+    env: createChildEnv(),
   });
   // Do not trimStart: porcelain v1 unstaged-only is `" M path"` and the
   // leading space is a status column. Trimming it made slice(3) drop `s`.
@@ -384,6 +386,7 @@ export function captureWorktreePatch(worktreePath: string): {
         stdio: ["ignore", "pipe", "pipe"],
         timeout: 60_000,
         maxBuffer: 32 * 1024 * 1024,
+        env: createChildEnv(),
       },
     );
     if (tracked) parts.push(tracked.endsWith("\n") ? tracked : tracked + "\n");
@@ -429,6 +432,7 @@ export function captureWorktreePatch(worktreePath: string): {
           stdio: ["ignore", "pipe", "pipe"],
           timeout: 30_000,
           maxBuffer: 16 * 1024 * 1024,
+          env: createChildEnv(),
         },
       );
       // git diff --no-index exits 0 only when identical; real diffs throw below.
@@ -586,6 +590,7 @@ export function applyWorktreePatch(
             encoding: "utf8",
             stdio: ["ignore", "pipe", "pipe"],
             timeout: 15_000,
+            env: createChildEnv(),
           },
         );
       }
@@ -604,6 +609,7 @@ export function applyWorktreePatch(
         stdio: ["ignore", "pipe", "pipe"],
         timeout: 60_000,
         maxBuffer: 8 * 1024 * 1024,
+        env: createChildEnv(),
       });
       return { ok: true };
     } catch (errPlain: unknown) {
@@ -615,6 +621,7 @@ export function applyWorktreePatch(
           stdio: ["ignore", "pipe", "pipe"],
           timeout: 60_000,
           maxBuffer: 8 * 1024 * 1024,
+          env: createChildEnv(),
         });
         unstageNewIndexEntries();
         return { ok: true };

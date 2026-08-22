@@ -12,6 +12,7 @@
 import { execFileSync } from "node:child_process";
 import path from "node:path";
 import chalk from "chalk";
+import { createChildEnv } from "../agent/tools/env-policy.js";
 import { findGitRoot, parsePorcelainPath } from "../agent/worktree.js";
 import type { ForgeConfig } from "../config/types.js";
 import type { SessionData } from "../session/session.js";
@@ -75,6 +76,7 @@ function gitOut(args: string[], cwd: string, timeoutMs = 15_000): string {
     stdio: ["ignore", "pipe", "pipe"],
     timeout: timeoutMs,
     maxBuffer: 8 * 1024 * 1024,
+    env: createChildEnv(),
   }).trimEnd();
 }
 

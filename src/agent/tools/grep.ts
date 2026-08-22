@@ -10,6 +10,7 @@ import { boundToolOutput } from "./truncate.js";
 import { isTruthy } from "../../util/bool.js";
 import { numberFieldError } from "./arg-types.js";
 import { killProcessTree } from "../../util/process-tree.js";
+import { createChildEnv } from "./env-policy.js";
 
 // Resolved once per process — PATH scanning is a dozen+ sync FS calls.
 let rgPathCache: string | null | undefined;
@@ -88,7 +89,7 @@ function runRg(
     }
     const child = spawn(rg, args, {
       cwd,
-      env: process.env,
+      env: createChildEnv(),
       stdio: ["ignore", "pipe", "pipe"],
     });
     let stdout = "";

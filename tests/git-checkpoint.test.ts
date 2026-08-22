@@ -134,6 +134,41 @@ describe("createSafetyCheckpoint / applySafetyCheckpoint", () => {
     assert.ok(names.split("\n").includes("keep.ts"));
   });
 
+  it("host GIT_DIR cannot redirect the snapshot to a decoy repo", () => {
+    initRepo(tmp);
+    firstCommit(tmp);
+    const dirty = path.join(tmp, "keep.ts");
+    fs.writeFileSync(dirty, "export const n = 1;\n");
+
+    const decoy = fs.mkdtempSync(path.join(os.tmpdir(), "forge-ckpt-decoy-"));
+    initRepo(decoy);
+    firstCommit(decoy);
+    const prevGitDir = process.env.GIT_DIR;
+    const prevIndex = process.env.GIT_INDEX_FILE;
+    process.env.GIT_DIR = path.join(decoy, ".git");
+    process.env.GIT_INDEX_FILE = path.join(decoy, "evil.idx");
+    let sha = "";
+    try {
+      const snap = createSafetyCheckpoint(tmp, { label: "gitdir" });
+      assert.equal(snap.ok, true, snap.detail);
+      assert.ok(snap.sha, "workspace dirty file must be snapshotted, not the clean decoy");
+      assert.ok((snap.dirtyPaths ?? 0) >= 1);
+      sha = snap.sha!;
+    } finally {
+      if (prevGitDir === undefined) delete process.env.GIT_DIR;
+      else process.env.GIT_DIR = prevGitDir;
+      if (prevIndex === undefined) delete process.env.GIT_INDEX_FILE;
+      else process.env.GIT_INDEX_FILE = prevIndex;
+      try {
+        fs.rmSync(decoy, { recursive: true, force: true });
+      } catch {
+        /* */
+      }
+    }
+    const names = git(["ls-tree", "-r", "--name-only", sha], tmp);
+    assert.ok(names.split("\n").includes("keep.ts"));
+  });
+
   it("apply of a missing sha fails closed", () => {
     initRepo(tmp);
     firstCommit(tmp);

@@ -182,7 +182,7 @@ forge run "…" --permission-mode bypassPermissions
 
 ### Shell environment
 
-Child shells inherit a scrubbed env: secret-looking names and process-injection vectors (`LD_PRELOAD`, `NODE_OPTIONS`, `DYLD_INSERT_LIBRARIES`, `PYTHONSTARTUP`, `BASH_ENV`, `GIT_SSH_COMMAND`, `GIT_CONFIG_*`, …) are dropped unless a shell env policy explicitly `set`s them.
+Forge-spawned children inherit a scrubbed env via `createChildEnv` (bash, git helpers, format-on-write, `lsp ensure`, hooks, grep, sandbox fallback). Secret-looking names and process-injection vectors (`LD_PRELOAD`, `NODE_OPTIONS`, `DYLD_INSERT_LIBRARIES`, `PYTHONSTARTUP`, `BASH_ENV`, `GIT_DIR`, `GIT_INDEX_FILE`, `GIT_WORK_TREE`, `GIT_SSH_COMMAND`, `GIT_CONFIG_*`, …) are dropped unless policy `set` reintroduces them (checkpoint temp index, hook `FORGE_*`). MCP/LSP stdio keep host tokens (`keepSecrets`) so a configured `GITHUB_TOKEN` still reaches the server; injection is still stripped.
 
 ### Blocking Stop hooks
 

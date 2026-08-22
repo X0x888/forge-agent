@@ -44,7 +44,7 @@ function git(
     stdio: ["ignore", "pipe", "pipe"],
     timeout: timeoutMs,
     maxBuffer: 8 * 1024 * 1024,
-    env: extraEnv ? { ...process.env, ...extraEnv } : process.env,
+    env: createChildEnv(extraEnv),
   }).trimEnd();
 }
 

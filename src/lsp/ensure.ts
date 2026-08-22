@@ -14,6 +14,7 @@
 import { spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
+import { createChildEnv } from "../agent/tools/env-policy.js";
 import { forgeHome, ensureDir, readJsonFile, writeJsonFile } from "../util/fs.js";
 import { log } from "../util/log.js";
 import {
@@ -288,7 +289,7 @@ function runInstall(
     const [cmd, ...args] = argv;
     const child = spawn(cmd, args, {
       stdio: ["ignore", "pipe", "pipe"],
-      env: process.env,
+      env: createChildEnv(),
       shell: process.platform === "win32",
     });
     let errTail = "";

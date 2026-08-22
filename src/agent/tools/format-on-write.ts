@@ -17,6 +17,7 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { loadPreferences } from "../../config/preferences.js";
+import { createChildEnv } from "./env-policy.js";
 
 export type FormatResult = {
   formatter: string;
@@ -343,7 +344,7 @@ export function maybeFormatAfterWrite(
       cwd: cmd.cwd || workspace,
       encoding: "utf8",
       timeout: 30_000,
-      env: process.env,
+      env: createChildEnv(),
       stdio: ["ignore", "pipe", "pipe"],
     });
     if (r.error) {

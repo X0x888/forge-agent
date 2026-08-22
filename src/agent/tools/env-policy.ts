@@ -174,6 +174,30 @@ function matchesAny(globs: string[], name: string): boolean {
 }
 
 /**
+ * Env for Forge-spawned children (git helpers, formatters, lsp ensure,
+ * hooks, grep). Scrubs secrets + injection (`GIT_DIR`, `NODE_OPTIONS`, …).
+ * `extra` is policy `set` — reintroduces names after the scrub (checkpoint
+ * temp index, hook `FORGE_*`). MCP/LSP stdio pass `{ keepSecrets: true }` so
+ * a configured `GITHUB_TOKEN` still reaches the server; injection is still
+ * stripped.
+ */
+export function createChildEnv(
+  extra?: NodeJS.ProcessEnv,
+  opts?: { keepSecrets?: boolean; base?: NodeJS.ProcessEnv },
+): NodeJS.ProcessEnv {
+  const set: Record<string, string> = {};
+  if (extra) {
+    for (const [k, v] of Object.entries(extra)) {
+      if (v !== undefined) set[k] = v;
+    }
+  }
+  return createShellEnv(opts?.base ?? process.env, {
+    ignoreDefaultExcludes: Boolean(opts?.keepSecrets),
+    ...(Object.keys(set).length ? { set } : {}),
+  });
+}
+
+/**
  * Build env for agent subprocesses. Defaults scrub secret-looking names.
  */
 export function createShellEnv(

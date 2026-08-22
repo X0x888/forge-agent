@@ -232,6 +232,7 @@ import chalk from "chalk";
 import fs from "node:fs";
 import path from "node:path";
 import { displayRelPath } from "../agent/tools/path-util.js";
+import { createChildEnv } from "../agent/tools/env-policy.js";
 import { execFileSync } from "node:child_process";
 import {
   parseCheckpointArg,
@@ -5139,6 +5140,7 @@ const result = rewindSessionDetailed(opts.session, n);
           stdio: ["ignore", "pipe", "pipe"],
           timeout: timeoutMs,
           maxBuffer,
+          env: createChildEnv(),
         });
       try {
         // Safe read-only git view for experts reviewing agent work

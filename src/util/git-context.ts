@@ -2,6 +2,7 @@ import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import path from "node:path";
 import fs from "node:fs";
+import { createChildEnv } from "../agent/tools/env-policy.js";
 
 export interface GitSnapshot {
   branch?: string;
@@ -37,6 +38,7 @@ function git(
       encoding: "utf8",
       stdio: ["ignore", "pipe", "ignore"],
       timeout,
+      env: createChildEnv(),
     }).trim();
   } catch {
     return null;
