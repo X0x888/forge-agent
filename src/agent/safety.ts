@@ -8,13 +8,19 @@ import path from "node:path";
 import os from "node:os";
 import {
   commandCheckTargets,
+  extractReadPaths,
   extractWritePaths,
   safetySegments,
   tokenizeSimple,
   normalizeSegment,
 } from "./shell-parse.js";
 import { forgeHome } from "../util/fs.js";
-import { isProtectedWritePath, protectedWriteReason } from "./protected-paths.js";
+import {
+  isProtectedReadTarget,
+  isProtectedWritePath,
+  protectedReadReason,
+  protectedWriteReason,
+} from "./protected-paths.js";
 
 export type SafetyVerdict =
   | { ok: true }
@@ -423,6 +429,35 @@ export function checkBashProtectedWrites(
   return { ok: true };
 }
 
+/**
+ * File tools already refuse isProtectedReadPath. Bash readers (cat/head/…)
+ * must too — extractReadPaths covers those dests. Inspecting a hook stays
+ * allowed. YOLO / bypassPermissions still deny.
+ */
+export function checkBashProtectedReads(
+  command: string,
+  workspace: string,
+): SafetyVerdict {
+  const root = path.resolve(workspace || process.cwd());
+  const chunks = new Set<string>([command, ...commandCheckTargets(command)]);
+  const seen = new Set<string>();
+  for (const chunk of chunks) {
+    for (const raw of extractReadPaths(chunk)) {
+      const abs = expandWritePathToken(raw, root);
+      if (!abs || seen.has(abs)) continue;
+      seen.add(abs);
+      if (isProtectedReadTarget(abs)) {
+        return {
+          ok: false,
+          reason: protectedReadReason(abs),
+          rule: "read-protected-path",
+        };
+      }
+    }
+  }
+  return { ok: true };
+}
+
 export function checkBashHardDeny(
   command: string,
   workspace?: string,
@@ -458,6 +493,8 @@ export function checkBashHardDeny(
   if (workspace) {
     const writes = checkBashProtectedWrites(cmd, workspace);
     if (!writes.ok) return writes;
+    const reads = checkBashProtectedReads(cmd, workspace);
+    if (!reads.ok) return reads;
   }
   return { ok: true };
 }
@@ -562,6 +599,28 @@ export function hardSafetyCheck(
     if (!p) return { ok: true };
     const abs = path.isAbsolute(p) ? path.resolve(p) : path.resolve(workspace, p);
     return checkWritePathHardDeny(abs, path.resolve(workspace));
+  }
+  if (
+    name === "read_file" ||
+    name === "Read" ||
+    name === "grep" ||
+    name === "Grep" ||
+    name === "glob" ||
+    name === "Glob" ||
+    name === "list_dir" ||
+    name === "ListDir"
+  ) {
+    const p = String(toolInput.path || "");
+    if (!p) return { ok: true };
+    const abs = path.isAbsolute(p) ? path.resolve(p) : path.resolve(workspace, p);
+    if (isProtectedReadTarget(abs)) {
+      return {
+        ok: false,
+        reason: protectedReadReason(abs),
+        rule: "read-protected-path",
+      };
+    }
+    return { ok: true };
   }
   if (name === "apply_patch" || name === "ApplyPatch") {
     const patchText = String(

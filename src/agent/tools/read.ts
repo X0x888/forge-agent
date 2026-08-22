@@ -2,7 +2,7 @@ import fs from "node:fs";
 import fsp from "node:fs/promises";
 import path from "node:path";
 import type { ToolContext, ToolResult } from "./types.js";
-import { resolvePath, resolveReadablePath, displayRelPath } from "./path-util.js";
+import { resolvePath, assertReadablePath, displayRelPath } from "./path-util.js";
 import { pathNotFoundHint } from "./path-hints.js";
 import { boundToolOutput, DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES } from "./truncate.js";
 import { numberFieldError } from "./arg-types.js";
@@ -340,7 +340,15 @@ export async function toolRead(
     };
   }
 
-  const filePath = await resolveReadablePath(ctx.workspace, raw);
+  let filePath: string;
+  try {
+    filePath = await assertReadablePath(ctx.workspace, raw);
+  } catch (err) {
+    return {
+      output: err instanceof Error ? err.message : String(err),
+      isError: true,
+    };
+  }
 
   let stat;
   try {

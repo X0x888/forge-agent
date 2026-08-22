@@ -4,7 +4,7 @@ import fsp from "node:fs/promises";
 import path from "node:path";
 import { glob } from "glob";
 import type { ToolContext, ToolResult } from "./types.js";
-import { resolvePath, displayRelPath } from "./path-util.js";
+import { resolvePath, assertReadablePath, displayRelPath } from "./path-util.js";
 import { pathNotFoundHint } from "./path-hints.js";
 import { boundToolOutput } from "./truncate.js";
 import { isTruthy } from "../../util/bool.js";
@@ -55,6 +55,22 @@ function parseGrepHeadLimit(raw: unknown): number | null {
   return Math.floor(n);
 }
 
+
+async function denyProtectedSearchPath(
+  pathArg: string,
+  workspace: string,
+): Promise<ToolResult | null> {
+  if (!pathArg) return null;
+  try {
+    await assertReadablePath(workspace, pathArg);
+    return null;
+  } catch (err) {
+    return {
+      output: err instanceof Error ? err.message : String(err),
+      isError: true,
+    };
+  }
+}
 
 async function assertSearchRoot(
   searchPath: string,
@@ -243,6 +259,8 @@ async function toolGrepJs(
     ? resolvePath(ctx.workspace, pathArg)
     : ctx.workspace;
   const pathLabel = pathArg || ".";
+  const denied = await denyProtectedSearchPath(pathArg, ctx.workspace);
+  if (denied) return denied;
   const badRoot = await assertSearchRoot(searchPath, pathLabel, ctx.workspace);
   if (badRoot) return badRoot;
   const globPat = args.glob ? String(args.glob) : "**/*";
@@ -404,6 +422,8 @@ export async function toolGrep(
     ? resolvePath(ctx.workspace, pathArg)
     : ctx.workspace;
   const pathLabel = pathArg || ".";
+  const denied = await denyProtectedSearchPath(pathArg, ctx.workspace);
+  if (denied) return denied;
   const badRoot = await assertSearchRoot(searchPath, pathLabel, ctx.workspace);
   if (badRoot) return badRoot;
   // head_limit: 0 = unlimited (omit --max-count; rg treats 0 as no matches)

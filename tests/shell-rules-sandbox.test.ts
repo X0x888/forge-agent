@@ -13,6 +13,7 @@ import {
   extractCommandPaths,
   extractRedirectWriteTargets,
   extractWritePaths,
+  extractReadPaths,
 } from "../src/agent/shell-parse.js";
 import {
   parseRuleString,
@@ -31,8 +32,10 @@ import {
   canonicalSandboxPath,
   sandboxWriteAllowPaths,
   SANDBOX_WRITE_DENY_REGEXES,
+  SANDBOX_READ_DENY_REGEXES,
   bwrapForgeWriteBinds,
   bwrapProtectedRoBinds,
+  bwrapCredentialReadHides,
 } from "../src/agent/sandbox.js";
 import { commandPrefix, alwaysPatternFromTokens, isReadOnlyCommand } from "../src/agent/shell-arity.js";
 import { mergePermissionTrust } from "../src/config/load.js";
@@ -190,6 +193,10 @@ describe("shell segment parsing", () => {
       ),
     );
     assert.equal(extractWritePaths("cat .git/hooks/pre-commit").length, 0);
+    assert.ok(extractReadPaths("cat ~/.forge/auth.json").includes("~/.forge/auth.json"));
+    assert.ok(extractReadPaths("head -n 20 ~/.ssh/id_ed25519").includes("~/.ssh/id_ed25519"));
+    assert.ok(extractReadPaths("base64 ~/.ssh/id_rsa").includes("~/.ssh/id_rsa"));
+    assert.equal(extractReadPaths("printf x > ~/.forge/auth.json").length, 0);
   });
 });
 
@@ -660,6 +667,8 @@ describe("sandbox write policy (hooks / forge auth)", () => {
     assert.ok(text.includes("/\\.git/hooks"));
     assert.ok(text.includes("/\\.ssh/"));
     assert.ok(SANDBOX_WRITE_DENY_REGEXES.every((re) => text.includes(re)));
+    assert.ok(SANDBOX_READ_DENY_REGEXES.every((re) => text.includes(re)));
+    assert.ok(text.includes("(deny file-read*"));
     assert.ok(!text.includes("/\\.git/config"));
     assert.ok(!text.includes("/\\.git/HEAD"));
     const denyAt = text.lastIndexOf("(deny file-write*");
@@ -667,6 +676,7 @@ describe("sandbox write policy (hooks / forge auth)", () => {
     assert.ok(denyAt > allowAt, "deny-after-allow so cwd subpath does not win");
     assert.match(describeSandbox("workspace"), /sessions,logs,tmp/);
     assert.match(describeSandbox("workspace"), /hooks\/ssh denied/);
+    assert.match(describeSandbox("workspace"), /auth\.json unread/);
   });
 
   it("bwrap binds forge slices and ro-binds existing hooks", () => {
@@ -686,6 +696,12 @@ describe("sandbox write policy (hooks / forge auth)", () => {
       path.join(forge, "tmp"),
       path.join(forge, "tmp"),
     ]);
+    const hideDir = fs.mkdtempSync(path.join(os.tmpdir(), "forge-bwrap-hide-"));
+    const hideAuth = path.join(hideDir, "auth.json");
+    fs.writeFileSync(hideAuth, "{}");
+    const hides = bwrapCredentialReadHides(hideDir, hideDir);
+    assert.deepEqual(hides, ["--bind", "/dev/null", fs.realpathSync(hideAuth)]);
+    fs.rmSync(hideDir, { recursive: true, force: true });
     const ro = bwrapProtectedRoBinds(dir);
     assert.ok(ro.includes("--ro-bind"));
     assert.ok(ro.includes(fs.realpathSync(hooks)));

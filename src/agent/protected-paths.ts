@@ -3,6 +3,10 @@
  * Bash write dests (redirect / tee / cp|mv|ln) use the same list via
  * checkBashProtectedWrites. workspace/strict OS sandbox also denies
  * .git/hooks / .ssh / ~/.forge/auth (python/sed/node), not only parsed dests.
+ *
+ * Reads of credential surfaces are a separate list (isProtectedReadPath):
+ * write-deny covers hooks/config the model may inspect; read-deny covers
+ * tokens/keys that must not enter the model (YOLO / read-outside allow).
  */
 import path from "node:path";
 import os from "node:os";
@@ -105,5 +109,97 @@ export function protectedWriteReason(absolutePath: string): string {
   return (
     `Refusing write to protected path: ${p}. ` +
     "Stay inside the workspace (or ~/.forge/sessions|logs|tmp)."
+  );
+}
+
+const PRIVATE_KEY_BASENAME = /^(id_rsa|id_ed25519|id_ecdsa|id_dsa)$/;
+
+function pathBasename(p: string): string {
+  const i = p.lastIndexOf("/");
+  return i >= 0 ? p.slice(i + 1) : p;
+}
+
+/**
+ * Credential surfaces the model must never read into context.
+ * Tighter than write-deny: inspecting `.git/hooks` / `.git/config` stays
+ * allowed. Workspace `.env` stays allowed. YOLO / `--read-outside allow`
+ * cannot bypass this.
+ */
+export function isProtectedReadPath(absolutePath: string): boolean {
+  const p = normalizeFsPath(absolutePath);
+  const home = os.homedir().replace(/\\/g, "/");
+  const forge = forgeHome().replace(/\\/g, "/");
+  const base = pathBasename(p);
+
+  if (p === `${forge}/auth.json` || p.endsWith("/.forge/auth.json")) return true;
+  if (p === `${home}/.cursor/auth.json` || p.endsWith("/.cursor/auth.json")) return true;
+  if (PRIVATE_KEY_BASENAME.test(base)) return true;
+
+  if (p.startsWith(`${home}/.ssh/`)) {
+    if (base.endsWith(".pub")) return false;
+    if (
+      base === "known_hosts" ||
+      base === "known_hosts.old" ||
+      base === "authorized_keys" ||
+      base === "config"
+    ) {
+      return false;
+    }
+    return true;
+  }
+
+  if (p.startsWith(`${home}/.gnupg/`)) {
+    if (p.includes("/private-keys-v1.d/") || base === "secring.gpg" || base === "random_seed") {
+      return true;
+    }
+    return false;
+  }
+
+  return false;
+}
+
+/**
+ * Search roots that would dump a credential file (grep/glob/list_dir).
+ * `~/.forge/sessions` stays searchable; the forge home itself is not.
+ */
+export function isProtectedReadRoot(absolutePath: string): boolean {
+  const p = normalizeFsPath(absolutePath);
+  const home = os.homedir().replace(/\\/g, "/");
+  const forge = forgeHome().replace(/\\/g, "/");
+  return (
+    p === forge ||
+    p === `${home}/.ssh` ||
+    p === `${home}/.gnupg` ||
+    p === `${home}/.cursor`
+  );
+}
+
+export function isProtectedReadTarget(absolutePath: string): boolean {
+  return isProtectedReadPath(absolutePath) || isProtectedReadRoot(absolutePath);
+}
+
+export function protectedReadReason(absolutePath: string): string {
+  const p = normalizeFsPath(absolutePath);
+  if (p.includes("/.forge/") || p.endsWith("/.forge") || p.includes("/.cursor/auth.json")) {
+    return (
+      "Refusing read of stored credentials (auth.json). " +
+      "Use forge login / forge auth / /accounts — tokens must not enter the model."
+    );
+  }
+  if (p.includes("/.ssh/") || p.includes("/.ssh") || PRIVATE_KEY_BASENAME.test(pathBasename(p))) {
+    return (
+      "Refusing read of SSH private key material. " +
+      "Use ssh-keygen / ssh-add outside the agent — never cat/read_file a private key."
+    );
+  }
+  if (p.includes("/.gnupg/")) {
+    return (
+      "Refusing read of GPG private key material. " +
+      "Manage keys with gpg outside the agent."
+    );
+  }
+  return (
+    `Refusing read of a credential surface: ${p}. ` +
+    "Tokens and private keys must not enter the model."
   );
 }

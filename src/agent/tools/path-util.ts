@@ -2,7 +2,9 @@ import fs from "node:fs";
 import path from "node:path";
 import { forgeHome, isWithinRoot, realpathWithinRoot } from "../../util/fs.js";
 import {
+  isProtectedReadTarget,
   isProtectedWritePath,
+  protectedReadReason,
   protectedWriteReason,
 } from "../protected-paths.js";
 
@@ -143,4 +145,43 @@ export async function resolveReadablePath(
     /* */
   }
   return logical;
+}
+
+/**
+ * Reads must not dump credential surfaces into the model (auth.json, private
+ * keys). Realpath so a workspace symlink cannot launder ~/.forge/auth.json.
+ * YOLO / --read-outside allow cannot bypass this.
+ */
+export async function assertReadablePath(
+  workspace: string,
+  target: string,
+): Promise<string> {
+  const logical = resolvePath(workspace, target);
+  if (isProtectedReadTarget(logical)) {
+    throw new Error(protectedReadReason(logical));
+  }
+  const resolved = await resolveReadablePath(workspace, target);
+  const candidates = [resolved, realpathExistingPrefix(resolved)];
+  try {
+    candidates.push(fs.realpathSync(resolved));
+  } catch {
+    /* missing / dangling */
+  }
+  try {
+    if (fs.lstatSync(resolved).isSymbolicLink()) {
+      const dest = fs.readlinkSync(resolved);
+      const absDest = path.isAbsolute(dest)
+        ? path.resolve(dest)
+        : path.resolve(path.dirname(resolved), dest);
+      candidates.push(absDest, realpathExistingPrefix(absDest));
+    }
+  } catch {
+    /* */
+  }
+  for (const c of candidates) {
+    if (isProtectedReadTarget(c)) {
+      throw new Error(protectedReadReason(c));
+    }
+  }
+  return resolved;
 }

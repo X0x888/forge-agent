@@ -3,9 +3,9 @@
  *
  * Profiles (inspired by Grok Build):
  *   off       — no confinement
- *   workspace — write: CWD + ~/.forge + temp; read: everywhere; network: yes
- *   read-only — write: ~/.forge + temp only; network: blocked
- *   strict    — write: CWD + ~/.forge + temp; network: blocked
+ *   workspace — write: CWD + ~/.forge/{sessions,logs,tmp} + temp; read: everywhere except auth.json; network: yes
+ *   read-only — write: ~/.forge/{sessions,logs,tmp} + temp only; network: blocked
+ *   strict    — write: CWD + ~/.forge/{sessions,logs,tmp} + temp; read: everywhere except auth.json; network: blocked
  *
  * macOS: sandbox-exec (Seatbelt)
  * Linux: bwrap (bubblewrap) when available
@@ -196,6 +196,12 @@ export const SANDBOX_WRITE_DENY_REGEXES = [
   "/id_ed25519",
 ] as const;
 
+/** Seatbelt deny file-read* of credential files (python cannot dump auth.json). */
+export const SANDBOX_READ_DENY_REGEXES = [
+  "/\\.forge/auth\\.json",
+  "/\\.cursor/auth\\.json",
+] as const;
+
 function uniquePaths(paths: string[]): string[] {
   const seen = new Set<string>();
   const out: string[] = [];
@@ -255,6 +261,28 @@ export function sandboxProtectedHostPaths(
   ]);
 }
 
+/**
+ * Hide credential files from sandboxed bash (later mount wins over ro-bind /).
+ * Missing files are skipped — designed leftover until the file exists.
+ */
+export function bwrapCredentialReadHides(
+  home = os.homedir(),
+  forge = forgeHome(),
+): string[] {
+  const args: string[] = [];
+  const hides = [path.join(forge, "auth.json"), path.join(home, ".cursor", "auth.json")];
+  for (const p of hides) {
+    try {
+      if (!fs.existsSync(p) || !fs.statSync(p).isFile()) continue;
+      const real = fs.realpathSync(p);
+      args.push("--bind", "/dev/null", real);
+    } catch {
+      /* */
+    }
+  }
+  return args;
+}
+
 /** bwrap: bind only the agent-writable forge slices (auth.json stays on the ro root). */
 export function bwrapForgeWriteBinds(forge: string): string[] {
   const args: string[] = [];
@@ -290,6 +318,10 @@ function seatbeltWriteDenyClause(): string {
   return SANDBOX_WRITE_DENY_REGEXES.map((re) => `  (regex #"${re}")`).join("\n");
 }
 
+function seatbeltReadDenyClause(): string {
+  return SANDBOX_READ_DENY_REGEXES.map((re) => `  (regex #"${re}")`).join("\n");
+}
+
 export function seatbeltProfile(opts: {
   profile: SandboxProfile;
   cwd: string;
@@ -299,6 +331,7 @@ export function seatbeltProfile(opts: {
 }): string {
   const writeAllow = seatbeltWriteAllowClause(sandboxWriteAllowPaths(opts));
   const writeDeny = seatbeltWriteDenyClause();
+  const readDeny = seatbeltReadDenyClause();
 
   const networkClause = opts.restrictNetwork
     ? `(deny network*)\n(deny network-outbound)\n(deny network-inbound)`
@@ -328,6 +361,9 @@ ${writeAllow}
 )
 (deny file-write*
 ${writeDeny}
+)
+(deny file-read*
+${readDeny}
 )
 (allow file-ioctl (literal "/dev/null") (literal "/dev/tty") (regex #"^/dev/ttys") (regex #"^/dev/fd/"))
 (allow process-exec*)
@@ -619,6 +655,7 @@ export async function runSandboxed(opts: SandboxRunOpts): Promise<SandboxRunResu
         args.push(...bwrapProtectedRoBinds(cwd));
       }
       args.push(...bwrapForgeWriteBinds(forge));
+      args.push(...bwrapCredentialReadHides(os.homedir(), forge));
       if (restrictNetwork) {
         args.push("--unshare-net");
       }
@@ -741,11 +778,11 @@ export function describeSandbox(
     case "off":
       return `off (no OS confinement; ${netLabel})`;
     case "workspace":
-      return `workspace (write: CWD + ~/.forge/{sessions,logs,tmp} + temp; hooks/ssh denied; ${netLabel})`;
+      return `workspace (write: CWD + ~/.forge/{sessions,logs,tmp} + temp; hooks/ssh denied; auth.json unread; ${netLabel})`;
     case "read-only":
       return `read-only (write: ~/.forge/{sessions,logs,tmp} + temp only; ${netLabel})`;
     case "strict":
-      return `strict (write: CWD + ~/.forge/{sessions,logs,tmp} + temp; hooks/ssh denied; ${netLabel})`;
+      return `strict (write: CWD + ~/.forge/{sessions,logs,tmp} + temp; hooks/ssh denied; auth.json unread; ${netLabel})`;
     default:
       return String(profile);
   }

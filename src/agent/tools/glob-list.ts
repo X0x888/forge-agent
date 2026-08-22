@@ -2,7 +2,7 @@ import fsp from "node:fs/promises";
 import path from "node:path";
 import { glob } from "glob";
 import type { ToolContext, ToolResult } from "./types.js";
-import { resolvePath, displayRelPath } from "./path-util.js";
+import { resolvePath, assertReadablePath, displayRelPath } from "./path-util.js";
 import { pathNotFoundHint } from "./path-hints.js";
 import { boundToolOutput } from "./truncate.js";
 
@@ -57,6 +57,16 @@ export async function toolGlob(
   const cwd = args.path
     ? resolvePath(ctx.workspace, String(args.path).trim())
     : ctx.workspace;
+  if (args.path) {
+    try {
+      await assertReadablePath(ctx.workspace, String(args.path).trim());
+    } catch (err) {
+      return {
+        output: err instanceof Error ? err.message : String(err),
+        isError: true,
+      };
+    }
+  }
 
   // Distinguish missing search root from a real empty match (agent UX).
   try {
@@ -129,6 +139,16 @@ export async function toolListDir(
   }
   const rel = args.path != null ? String(args.path).trim() : ".";
   const dir = resolvePath(ctx.workspace, rel);
+  if (args.path != null) {
+    try {
+      await assertReadablePath(ctx.workspace, rel);
+    } catch (err) {
+      return {
+        output: err instanceof Error ? err.message : String(err),
+        isError: true,
+      };
+    }
+  }
   // Distinguish missing path vs file-not-dir (parity with glob) so the model
   // does not thrash on "not found" when it passed a file path by mistake.
   try {

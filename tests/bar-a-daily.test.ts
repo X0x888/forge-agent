@@ -12,8 +12,8 @@ import { evaluateRules, compileRules } from "../src/agent/rules.js";
 import { PermissionGate } from "../src/agent/permissions.js";
 import { DEFAULT_CONFIG } from "../src/config/types.js";
 import { loadConfig, applySafeProjectOverlay } from "../src/config/load.js";
-import { assertWritablePath } from "../src/agent/tools/path-util.js";
-import { isProtectedWritePath } from "../src/agent/protected-paths.js";
+import { assertReadablePath, assertWritablePath } from "../src/agent/tools/path-util.js";
+import { isProtectedReadPath, isProtectedWritePath } from "../src/agent/protected-paths.js";
 import { executeTool } from "../src/agent/tools/index.js";
 
 describe("Bar A: hard-deny variants", () => {
@@ -577,6 +577,12 @@ describe("Bar A: protected paths + symlink write", () => {
       true,
     );
     assert.equal(isProtectedWritePath(path.join("/tmp/proj", "src", "a.ts")), false);
+    assert.equal(isProtectedReadPath(path.join(home, ".forge", "auth.json")), true);
+    assert.equal(isProtectedReadPath(path.join(home, ".ssh", "id_ed25519")), true);
+    assert.equal(isProtectedReadPath(path.join(home, ".ssh", "known_hosts")), false);
+    assert.equal(isProtectedReadPath(path.join("/tmp/proj", ".git", "hooks", "pre-commit")), false);
+    assert.equal(isProtectedReadPath(path.join("/tmp/proj", ".env")), false);
+    assert.equal(isProtectedReadPath(path.join("/tmp/proj", "id_rsa")), true);
   });
 
   it("hardSafetyCheck blocks write to .git/hooks", () => {
@@ -586,6 +592,15 @@ describe("Bar A: protected paths + symlink write", () => {
       "/tmp/proj",
     );
     assert.equal(v.ok, false);
+  });
+
+  it("assertReadablePath blocks symlink escape to auth.json", async () => {
+    const ws = fs.mkdtempSync(path.join(os.tmpdir(), "forge-ws-rd-"));
+    const realAuth = path.join(os.homedir(), ".forge", "auth.json");
+    const link = path.join(ws, "escape-auth");
+    fs.symlinkSync(realAuth, link);
+    await assert.rejects(() => assertReadablePath(ws, link), /Refusing read|credentials/i);
+    fs.rmSync(ws, { recursive: true, force: true });
   });
 
   it("assertWritablePath blocks symlink escape to auth.json", async () => {
@@ -630,6 +645,53 @@ describe("Bar A: protected paths + symlink write", () => {
       assert.equal(v.ok, false, command);
       if (!v.ok) assert.equal(v.rule, "write-protected-path", command);
     }
+  });
+
+  it("hardSafetyCheck blocks reads of auth.json and private keys", () => {
+    const home = os.homedir();
+    const auth = path.join(home, ".forge", "auth.json");
+    const denials = [
+      { tool: "read_file", input: { path: auth } },
+      { tool: "grep", input: { path: auth, pattern: "key" } },
+      { tool: "bash", input: { command: `cat ${auth}` } },
+      { tool: "bash", input: { command: "base64 ~/.ssh/id_rsa" } },
+      { tool: "read_file", input: { path: "id_rsa" } },
+    ];
+    for (const { tool, input } of denials) {
+      const v = hardSafetyCheck(tool, input, "/tmp/proj");
+      assert.equal(v.ok, false, `${tool} ${JSON.stringify(input)}`);
+      if (!v.ok) assert.equal(v.rule, "read-protected-path", tool);
+    }
+  });
+
+  it("executeTool read refuses auth.json and workspace id_rsa", async () => {
+    const ws = fs.mkdtempSync(path.join(os.tmpdir(), "forge-cred-read-"));
+    fs.writeFileSync(path.join(ws, "id_rsa"), "-----BEGIN OPENSSH PRIVATE KEY-----\nfake\n");
+    fs.writeFileSync(path.join(ws, "ok.ts"), "export const n = 1;\n");
+    const auth = path.join(os.homedir(), ".forge", "auth.json");
+    const denied = await executeTool(
+      "read_file",
+      JSON.stringify({ path: auth }),
+      { workspace: ws },
+    );
+    assert.equal(denied.isError, true);
+    assert.match(denied.output, /Refusing read|credentials|auth\.json/i);
+    const key = await executeTool(
+      "read_file",
+      JSON.stringify({ path: "id_rsa" }),
+      { workspace: ws },
+    );
+    assert.equal(key.isError, true);
+    assert.match(key.output, /Refusing read|private key/i);
+    const ok = await executeTool(
+      "read_file",
+      JSON.stringify({ path: "ok.ts" }),
+      { workspace: ws },
+    );
+    assert.ok(!ok.isError, ok.output);
+    assert.match(ok.output, /export const n/);
+    await assert.rejects(() => assertReadablePath(ws, auth), /Refusing read/);
+    fs.rmSync(ws, { recursive: true, force: true });
   });
 
   it("hardSafetyCheck still allows project writes, reads, and /dev/null", () => {

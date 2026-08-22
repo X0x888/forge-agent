@@ -144,6 +144,56 @@ describe("hard safety (even under YOLO)", () => {
     });
     assert.equal(r.decision, "deny");
   });
+
+  it("hardSafetyCheck read_file cannot dump forge auth.json", () => {
+    const home = os.homedir();
+    const auth = path.join(home, ".forge", "auth.json");
+    const v = hardSafetyCheck("read_file", { path: auth }, "/tmp/proj");
+    assert.equal(v.ok, false);
+    if (!v.ok) assert.equal(v.rule, "read-protected-path");
+  });
+
+  it("hardSafetyCheck bash cannot cat forge auth.json", () => {
+    const home = os.homedir();
+    const auth = path.join(home, ".forge", "auth.json");
+    const v = hardSafetyCheck("bash", { command: `cat ${auth}` }, "/tmp/proj");
+    assert.equal(v.ok, false);
+    if (!v.ok) assert.equal(v.rule, "read-protected-path");
+  });
+
+  it("hardSafetyCheck bash cannot cat ~/.ssh/id_ed25519", () => {
+    const v = hardSafetyCheck(
+      "bash",
+      { command: "cat ~/.ssh/id_ed25519" },
+      "/tmp/proj",
+    );
+    assert.equal(v.ok, false);
+    if (!v.ok) assert.equal(v.rule, "read-protected-path");
+  });
+
+  it("hardSafetyCheck still allows cat of a git hook", () => {
+    const v = hardSafetyCheck(
+      "bash",
+      { command: "cat .git/hooks/pre-commit" },
+      "/tmp/proj",
+    );
+    assert.equal(v.ok, true);
+  });
+
+  it("bypassPermissions still hard-denies read_file of auth.json", async () => {
+    const home = os.homedir();
+    const auth = path.join(home, ".forge", "auth.json");
+    const g = new PermissionGate({ interactive: false });
+    const r = await g.request({
+      toolName: "read_file",
+      input: { path: auth },
+      mode: "bypassPermissions",
+      workspace: "/tmp/proj",
+      config: { ...DEFAULT_CONFIG, readOutsideWorkspace: "allow" },
+    });
+    assert.equal(r.decision, "deny");
+    assert.match(r.reason || "", /credentials|auth\.json|token/i);
+  });
 });
 
 describe("external directory gate", () => {

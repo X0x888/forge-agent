@@ -3,7 +3,7 @@ import readline from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
 import path from "node:path";
 import chalk from "chalk";
-import { isSoftDangerousBash, checkBashHardDeny } from "./safety.js";
+import { isSoftDangerousBash, checkBashHardDeny, hardSafetyCheck } from "./safety.js";
 import { compileRules, evaluateRules, patternToRegExp, type RulesEvaluation } from "./rules.js";
 import {
   commandCheckTargets,
@@ -337,19 +337,17 @@ export class PermissionGate {
     const workspace = req.workspace || process.cwd();
     const config = req.config;
 
-    // 1. Hard deny ALWAYS
-    if (toolName === "bash" || toolName === "run_terminal_command") {
-      const hard = checkBashHardDeny(String(toolInput.command || ""), workspace);
-      if (!hard.ok) {
-        console.error(chalk.red(`\n✖ HARD DENY [${hard.rule}]: ${hard.reason}\n`));
-        logSandboxEvent({
-          type: "hard_deny",
-          rule: hard.rule,
-          reason: hard.reason,
-          command: String(toolInput.command || ""),
-        });
-        return { decision: "deny", reason: hard.reason, rule: hard.rule };
-      }
+    // 1. Hard deny ALWAYS (bash + file tools — YOLO cannot dump auth.json)
+    const hard = hardSafetyCheck(toolName, toolInput, workspace);
+    if (!hard.ok) {
+      console.error(chalk.red(`\n✖ HARD DENY [${hard.rule}]: ${hard.reason}\n`));
+      logSandboxEvent({
+        type: "hard_deny",
+        rule: hard.rule,
+        reason: hard.reason,
+        command: String(toolInput.command || toolInput.path || ""),
+      });
+      return { decision: "deny", reason: hard.reason, rule: hard.rule };
     }
 
     // 2. External directory (OpenCode-inspired)

@@ -1054,6 +1054,22 @@ export function extractRedirectWriteTargets(command: string): string[] {
 
 const WRITE_ALL_PATH_COMMANDS = new Set(["tee", "touch", "truncate"]);
 const WRITE_DEST_COMMANDS = new Set(["cp", "mv", "ln", "install"]);
+/** Readers that dump file bytes to stdout (credential exfil if pointed at auth.json). */
+const READ_PATH_COMMANDS = new Set([
+  "cat",
+  "head",
+  "tail",
+  "less",
+  "more",
+  "bat",
+  "hexdump",
+  "od",
+  "strings",
+  "nl",
+  "base64",
+  "xxd",
+  "jq",
+]);
 
 /**
  * Destinations bash can write without going through write_file.
@@ -1086,6 +1102,33 @@ export function extractWritePaths(command: string): string[] {
     }
   }
   for (const p of extractRedirectWriteTargets(command)) push(p);
+  return out;
+}
+
+/**
+ * Paths bash readers will dump (cat/head/tail/base64/…). Inspecting a hook
+ * is allowed; hard-safety then applies isProtectedReadPath (auth.json / keys).
+ */
+export function extractReadPaths(command: string): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  const push = (p: string) => {
+    const t = p.trim();
+    if (!t || seen.has(t)) return;
+    seen.add(t);
+    out.push(t);
+  };
+  for (const seg of splitShellSegments(command)) {
+    const toks = tokenizeSimple(normalizeSegment(seg));
+    if (toks.length === 0) continue;
+    const cmd = toks[0]!;
+    if (!READ_PATH_COMMANDS.has(cmd)) continue;
+    for (let i = 1; i < toks.length; i++) {
+      const t = toks[i]!;
+      if (t.startsWith("-") && t !== "-") continue;
+      if (isPathLikeToken(t)) push(t);
+    }
+  }
   return out;
 }
 
