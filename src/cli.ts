@@ -6798,6 +6798,7 @@ async function runHeadless(opts: {
           aborted: result.aborted,
           stopContinues: result.stopContinues,
           lastErrorCode: opts.session.meta.lastError?.code,
+          surface: "run",
         });
         if (stop) process.stdout.write(`${chalk.dim(stop)}\n`);
       } catch {

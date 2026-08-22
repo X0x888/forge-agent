@@ -898,6 +898,7 @@ export async function runRepl(opts: {
           aborted: result.aborted,
           stopContinues: result.stopContinues,
           lastErrorCode: session.meta.lastError?.code,
+          surface: "repl",
         });
         if (stop && !result.aborted) log.dim(stop);
       }

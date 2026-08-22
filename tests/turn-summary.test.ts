@@ -317,6 +317,55 @@ test("run stop reason: cost / turns / continue-cap / empty / abort", () => {
   assert.equal(formatRunStopReason({ lastErrorCode: "" }), null);
 });
 
+test("run stop reason: REPL default is slash keys, never a CLI dump", () => {
+  const dump = /forge\s|FORGE_|--max-cost|--continue/;
+  const cases: Parameters<typeof formatRunStopReason>[0][] = [
+    { aborted: true },
+    { hitCostCap: true },
+    { hitMaxTurns: true },
+    { releasedOnContinueCap: true, stopContinues: 3 },
+    { lastErrorCode: "empty_run" },
+    { lastErrorCode: "max_run_ms" },
+    { lastErrorCode: "max_cost" },
+    { lastErrorCode: "max_turns" },
+    { lastErrorCode: "continue_cap_stop" },
+    { lastErrorCode: "rate_limited" },
+  ];
+  for (const input of cases) {
+    const line = formatRunStopReason(input) ?? "";
+    assert.doesNotMatch(line, dump, JSON.stringify(input));
+  }
+  assert.match(formatRunStopReason({ aborted: true }) ?? "", /\/retry/);
+  assert.match(formatRunStopReason({ hitCostCap: true }) ?? "", /\/budget/);
+  assert.match(
+    formatRunStopReason({ lastErrorCode: "empty_run" }) ?? "",
+    /\/doctor/,
+  );
+  assert.match(
+    formatRunStopReason({ lastErrorCode: "empty_run" }) ?? "",
+    /\/auth/,
+  );
+});
+
+test("run stop reason: headless surface keeps CLI verbs", () => {
+  assert.match(
+    formatRunStopReason({ aborted: true, surface: "run" }) ?? "",
+    /forge run --continue/,
+  );
+  assert.match(
+    formatRunStopReason({ hitCostCap: true, surface: "run" }) ?? "",
+    /FORGE_MAX_COST_USD/,
+  );
+  assert.match(
+    formatRunStopReason({ lastErrorCode: "empty_run", surface: "run" }) ?? "",
+    /forge doctor/,
+  );
+  assert.match(
+    formatRunStopReason({ lastErrorCode: "rate_limited", surface: "run" }) ?? "",
+    /forge accounts switch|forge run --continue/,
+  );
+});
+
 test("run stop reason: forge run prints the shared closer after empty_run stamp", () => {
   const src = fs.readFileSync(
     path.join(process.cwd(), "src/cli.ts"),
@@ -326,6 +375,15 @@ test("run stop reason: forge run prints the shared closer after empty_run stamp"
   const print = src.indexOf("formatRunStopReason({");
   assert.ok(emptyStamp > 0, "empty_run stamp missing");
   assert.ok(print > emptyStamp, "stop closer must print after empty_run stamp");
+  const block = src.slice(print, print + 500);
+  assert.match(block, /surface:\s*"run"/);
+  const repl = fs.readFileSync(
+    path.join(process.cwd(), "src/tui/repl.ts"),
+    "utf8",
+  );
+  const replPrint = repl.indexOf("formatRunStopReason({");
+  assert.ok(replPrint > 0, "REPL stop closer missing");
+  assert.match(repl.slice(replPrint, replPrint + 500), /surface:\s*"repl"/);
 });
 
 test("user turn open: silent on empty, clips, queues", () => {

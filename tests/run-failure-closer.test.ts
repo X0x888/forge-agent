@@ -138,6 +138,39 @@ describe("formatRunStopReason provider hole", () => {
       /Next  /,
     );
   });
+
+  it("REPL surface forbids CLI dumps on safety-valve lines", () => {
+    const dump = /forge\s|FORGE_|--max-cost|--continue/;
+    assert.doesNotMatch(formatRunStopReason({ aborted: true }) ?? "", dump);
+    assert.doesNotMatch(formatRunStopReason({ hitCostCap: true }) ?? "", dump);
+    assert.doesNotMatch(
+      formatRunStopReason({ lastErrorCode: "empty_run" }) ?? "",
+      dump,
+    );
+    assert.match(formatRunStopReason({ aborted: true }) ?? "", /\/retry/);
+    assert.match(formatRunStopReason({ hitCostCap: true }) ?? "", /\/budget/);
+  });
+
+  it("headless surface keeps CLI verbs on the same flags", () => {
+    assert.match(
+      formatRunStopReason({ aborted: true, surface: "run" }) ?? "",
+      /forge run --continue/,
+    );
+    assert.match(
+      formatRunStopReason({ lastErrorCode: "empty_run", surface: "run" }) ?? "",
+      /forge doctor/,
+    );
+    assert.match(
+      formatRunStopReason({ lastErrorCode: "rate_limited", surface: "run" }) ??
+        "",
+      /Next  /,
+    );
+    assert.doesNotMatch(
+      formatRunStopReason({ lastErrorCode: "rate_limited", surface: "run" }) ??
+        "",
+      /Next  \/accounts/,
+    );
+  });
 });
 
 describe("cli fail JSON wires next", () => {

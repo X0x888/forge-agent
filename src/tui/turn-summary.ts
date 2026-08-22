@@ -113,6 +113,11 @@ export interface RunStopReasonInput {
   aborted?: boolean;
   stopContinues?: number;
   lastErrorCode?: string | null;
+  /**
+   * Default `repl` — advice after the em dash is slash keys only.
+   * `run` keeps CLI verbs for headless `forge run` logs.
+   */
+  surface?: RunFailureSurface;
 }
 
 /**
@@ -138,17 +143,21 @@ export function composeTurnCloser(
 
 /**
  * One dim line when a run did not stop cleanly. Silent on a normal Stop
- * so the Δ closer stays the last chrome. Shared by REPL and `forge run`.
+ * so the Δ closer stays the last chrome. REPL (`surface` default) is
+ * slash keys only; headless `forge run` passes `surface: "run"` for CLI verbs.
  */
 export function formatRunStopReason(input: RunStopReasonInput): string | null {
+  const surface: RunFailureSurface = input.surface ?? "repl";
+  const tail = (repl: string, run: string): string =>
+    surface === "run" ? run : repl;
   if (input.aborted) {
-    return "  stop: aborted — /retry or forge run --continue";
+    return `  stop: aborted — ${tail("/retry", "/retry or forge run --continue")}`;
   }
   if (input.hitCostCap) {
-    return "  stop: cost cap — raise /budget · --max-cost · FORGE_MAX_COST_USD";
+    return `  stop: cost cap — ${tail("/budget", "raise /budget · --max-cost · FORGE_MAX_COST_USD")}`;
   }
   if (input.hitMaxTurns) {
-    return "  stop: max turns — raise max_turns or continue with a follow-up";
+    return `  stop: max turns — ${tail("/retry", "raise max_turns or continue with a follow-up")}`;
   }
   if (input.stuckReleased) {
     return "  stop: stuck-wall — no progress; /cycle 1 or /ulw to resume";
@@ -162,7 +171,7 @@ export function formatRunStopReason(input: RunStopReasonInput): string | null {
       typeof n === "number" && Number.isFinite(n) && n > 0
         ? ` after ${n} harness continue${n === 1 ? "" : "s"}`
         : "";
-    return `  stop: continue-cap${count} — narrow the task or raise FORGE_ULW_MAX_CONTINUES`;
+    return `  stop: continue-cap${count} — ${tail("/retry", "narrow the task or raise FORGE_ULW_MAX_CONTINUES")}`;
   }
   const code = String(input.lastErrorCode || "").trim();
   if (code === "ulw_stuck_wall" || code === "goal_stuck_wall") {
@@ -178,25 +187,25 @@ export function formatRunStopReason(input: RunStopReasonInput): string | null {
     return "  stop: proof-claim — run a check before claiming done";
   }
   if (code === "max_cost") {
-    return "  stop: cost cap — raise /budget · --max-cost · FORGE_MAX_COST_USD";
+    return `  stop: cost cap — ${tail("/budget", "raise /budget · --max-cost · FORGE_MAX_COST_USD")}`;
   }
   if (code === "max_turns") {
-    return "  stop: max turns — raise max_turns or continue with a follow-up";
+    return `  stop: max turns — ${tail("/retry", "raise max_turns or continue with a follow-up")}`;
   }
   if (code.startsWith("continue_cap")) {
-    return "  stop: continue-cap — narrow the task or raise FORGE_ULW_MAX_CONTINUES";
+    return `  stop: continue-cap — ${tail("/retry", "narrow the task or raise FORGE_ULW_MAX_CONTINUES")}`;
   }
   if (code === "thought_only_cap") {
     return "  stop: thought-only — /retry (ULW still CONTINUE; model sat in thought with no tools)";
   }
   if (code === "max_run_ms") {
-    return "  stop: wall-clock — raise FORGE_MAX_RUN_MS or narrow the task";
+    return `  stop: wall-clock — ${tail("/retry", "raise FORGE_MAX_RUN_MS or narrow the task")}`;
   }
   if (code === "empty_run") {
-    return "  stop: empty run — forge doctor · forge auth · check model id";
+    return `  stop: empty run — ${tail("/doctor  ·  /auth", "forge doctor · forge auth · check model id")}`;
   }
   // Provider / run failures that used to go silent — same Next grammar as /status.
-  const closer = formatRunFailureCloser(code);
+  const closer = formatRunFailureCloser(code, { surface });
   return closer || null;
 }
 
