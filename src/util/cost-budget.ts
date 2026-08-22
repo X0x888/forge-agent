@@ -91,12 +91,17 @@ export interface CostCapStatus {
   remaining: number | null;
 }
 
+export type CostCapMeta = Pick<
+  SessionMeta,
+  | "maxCostUsd"
+  | "totalPromptTokens"
+  | "totalCompletionTokens"
+  | "totalCacheReadTokens"
+>;
+
 export function costCapStatus(
   config: Pick<ForgeConfig, "maxCostUsd" | "provider" | "model">,
-  meta: Pick<
-    SessionMeta,
-    "maxCostUsd" | "totalPromptTokens" | "totalCompletionTokens"
-  >,
+  meta: CostCapMeta,
 ): CostCapStatus {
   const cap = resolveMaxCostUsd(config, meta);
   const spent = sessionCostUsd(String(config.provider), meta, config.model);
@@ -111,6 +116,40 @@ export function costCapStatus(
     ratio: cap > 0 ? spent / cap : null,
     remaining,
   };
+}
+
+export interface PinChildCostCapResult {
+  /** Parent already HIT — do not spawn. */
+  refuse: boolean;
+  /** Remaining USD pinned onto the child, or null when unlimited. */
+  remaining: number | null;
+  /** Family cap, or null when unlimited. */
+  cap: number | null;
+}
+
+/**
+ * Pin a child's session spend cap to the family's remaining budget.
+ *
+ * `/budget` is a family valve. Children used to inherit `config.maxCostUsd`
+ * on a fresh session (spent $0), so each explore got a new full cap while
+ * the parent was already near HIT. Session `0` means unlimited — never pin
+ * remaining `0` (that would lift the cap). Refuse spawn instead.
+ */
+export function pinChildCostCap(
+  childMeta: { maxCostUsd?: number },
+  parentConfig: Pick<ForgeConfig, "maxCostUsd" | "provider" | "model">,
+  parentMeta: CostCapMeta,
+): PinChildCostCapResult {
+  const st = costCapStatus(parentConfig, parentMeta);
+  if (st.cap == null) {
+    return { refuse: false, remaining: null, cap: null };
+  }
+  const remaining = Math.round((st.remaining ?? 0) * 10_000) / 10_000;
+  if (st.hit || remaining <= 0) {
+    return { refuse: true, remaining: 0, cap: st.cap };
+  }
+  childMeta.maxCostUsd = remaining;
+  return { refuse: false, remaining, cap: st.cap };
 }
 
 /** Human one-liner for /cost / /budget / HUD. */
