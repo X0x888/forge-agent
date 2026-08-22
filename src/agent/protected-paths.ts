@@ -1,6 +1,7 @@
 /**
  * Paths the agent must never write via native file tools (Bar A daily-driver).
- * Bash still goes through OS sandbox + hard-deny; this covers write_file/edit.
+ * Bash write dests (redirect / tee / cp|mv|ln) use the same list via
+ * checkBashProtectedWrites — workspace sandbox allows .git/hooks.
  */
 import path from "node:path";
 import os from "node:os";

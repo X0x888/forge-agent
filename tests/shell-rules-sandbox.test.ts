@@ -10,6 +10,8 @@ import {
   containsRedirection,
   containsPipe,
   extractCommandPaths,
+  extractRedirectWriteTargets,
+  extractWritePaths,
 } from "../src/agent/shell-parse.js";
 import {
   parseRuleString,
@@ -166,6 +168,23 @@ describe("shell segment parsing", () => {
   it("extracts path args", () => {
     const paths = extractCommandPaths("rm -rf ./dist /tmp/out");
     assert.ok(paths.some((p) => p.includes("dist") || p.includes("/tmp")));
+  });
+
+  it("extractWritePaths sees redirects and copy dest, not reads", () => {
+    assert.deepEqual(extractRedirectWriteTargets("echo hi > /tmp/x"), ["/tmp/x"]);
+    assert.deepEqual(extractRedirectWriteTargets("echo 'a > b'"), []);
+    assert.deepEqual(extractRedirectWriteTargets("echo hi >&2"), []);
+    assert.ok(
+      extractWritePaths("cp payload .git/hooks/pre-commit").includes(
+        ".git/hooks/pre-commit",
+      ),
+    );
+    assert.ok(
+      extractWritePaths("printf x | tee .git/hooks/pre-commit").includes(
+        ".git/hooks/pre-commit",
+      ),
+    );
+    assert.equal(extractWritePaths("cat .git/hooks/pre-commit").length, 0);
   });
 });
 

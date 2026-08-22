@@ -290,7 +290,7 @@ export class PermissionGate {
 
     // 1. Hard deny ALWAYS
     if (toolName === "bash" || toolName === "run_terminal_command") {
-      const hard = checkBashHardDeny(String(toolInput.command || ""));
+      const hard = checkBashHardDeny(String(toolInput.command || ""), workspace);
       if (!hard.ok) {
         console.error(chalk.red(`\n✖ HARD DENY [${hard.rule}]: ${hard.reason}\n`));
         logSandboxEvent({

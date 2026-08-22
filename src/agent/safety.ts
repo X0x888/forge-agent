@@ -8,6 +8,7 @@ import path from "node:path";
 import os from "node:os";
 import {
   commandCheckTargets,
+  extractWritePaths,
   safetySegments,
   tokenizeSimple,
   normalizeSegment,
@@ -380,7 +381,50 @@ function primaryWord(segment: string): string {
   return tokenizeSimple(normalizeSegment(segment))[0] || "";
 }
 
-export function checkBashHardDeny(command: string): SafetyVerdict {
+function expandWritePathToken(raw: string, workspace: string): string | null {
+  let t = raw.trim();
+  if (!t || t.startsWith("&")) return null;
+  if (t.startsWith("~")) {
+    t = path.join(os.homedir(), t.slice(1).replace(/^\//, ""));
+  } else if (/^\$\{?HOME\}?(?:\/|$)/.test(t)) {
+    t = path.join(os.homedir(), t.replace(/^\$\{?HOME\}?\/?/, ""));
+  }
+  return path.isAbsolute(t) ? path.resolve(t) : path.resolve(workspace, t);
+}
+
+/**
+ * File tools already refuse isProtectedWritePath. Bash must too —
+ * workspace sandbox allows .git/hooks, and disaster regexes ignore redirects.
+ * Uses isProtectedWritePath only (not checkWritePathHardDeny) so `> /dev/null` stays allowed.
+ */
+export function checkBashProtectedWrites(
+  command: string,
+  workspace: string,
+): SafetyVerdict {
+  const root = path.resolve(workspace || process.cwd());
+  const chunks = new Set<string>([command, ...commandCheckTargets(command)]);
+  const seen = new Set<string>();
+  for (const chunk of chunks) {
+    for (const raw of extractWritePaths(chunk)) {
+      const abs = expandWritePathToken(raw, root);
+      if (!abs || seen.has(abs)) continue;
+      seen.add(abs);
+      if (isProtectedWritePath(abs)) {
+        return {
+          ok: false,
+          reason: protectedWriteReason(abs),
+          rule: "write-protected-path",
+        };
+      }
+    }
+  }
+  return { ok: true };
+}
+
+export function checkBashHardDeny(
+  command: string,
+  workspace?: string,
+): SafetyVerdict {
   const cmd = command.trim();
   if (!cmd) return { ok: true };
 
@@ -408,6 +452,10 @@ export function checkBashHardDeny(command: string): SafetyVerdict {
         };
       }
     }
+  }
+  if (workspace) {
+    const writes = checkBashProtectedWrites(cmd, workspace);
+    if (!writes.ok) return writes;
   }
   return { ok: true };
 }
@@ -500,7 +548,7 @@ export function hardSafetyCheck(
 ): SafetyVerdict {
   const name = toolName;
   if (name === "bash" || name === "run_terminal_command") {
-    return checkBashHardDeny(String(toolInput.command || ""));
+    return checkBashHardDeny(String(toolInput.command || ""), workspace);
   }
   if (
     name === "write_file" ||

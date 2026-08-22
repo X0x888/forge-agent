@@ -113,6 +113,37 @@ describe("hard safety (even under YOLO)", () => {
     const v = checkWritePathHardDeny(auth, "/tmp/proj");
     assert.equal(v.ok, false);
   });
+
+  it("hardSafetyCheck bash cannot write forge auth.json", () => {
+    const home = os.homedir();
+    const auth = path.join(home, ".forge", "auth.json");
+    const v = hardSafetyCheck(
+      "bash",
+      { command: `printf x > ${auth}` },
+      "/tmp/proj",
+    );
+    assert.equal(v.ok, false);
+  });
+
+  it("hardSafetyCheck bash cannot write ~/.ssh/id_ed25519", () => {
+    const v = hardSafetyCheck(
+      "bash",
+      { command: "printf x > ~/.ssh/id_ed25519" },
+      "/tmp/proj",
+    );
+    assert.equal(v.ok, false);
+  });
+
+  it("bypassPermissions still hard-denies bash hook write", async () => {
+    const g = new PermissionGate({ interactive: false });
+    const r = await g.request({
+      toolName: "bash",
+      input: { command: "printf evil > .git/hooks/pre-commit" },
+      mode: "bypassPermissions",
+      workspace: "/tmp/proj",
+    });
+    assert.equal(r.decision, "deny");
+  });
 });
 
 describe("external directory gate", () => {

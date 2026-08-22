@@ -4,7 +4,7 @@ Patterns ported from open-source **Grok Build**, **OpenCode**, and **Warp** (loc
 
 ## Authorization order (each tool call)
 
-1. **Hard safety** (built-in catastrophe denylist + structured checks) — never skippable  
+1. **Hard safety** (built-in catastrophe denylist + structured checks + bash writes to protected paths) — never skippable  
 2. **External directory gate** (paths outside workspace — includes `read_file`, `list_dir`, `write`/`edit`, **`grep`**, **`glob`**)
 3. **PreToolUse hooks**  
 4. **Permission rules** — `deny` > `ask` > `allow` (`deny` wins under YOLO)  

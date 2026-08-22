@@ -17,6 +17,7 @@ import { editDistance } from "../../util/string-distance.js";
 import { parseDurationMs } from "../../util/duration-ms.js";
 import { createSafetyCheckpoint } from "../../util/git-checkpoint.js";
 import { withBashMutationJournal } from "./bash-mutation-journal.js";
+import { checkBashProtectedWrites } from "../safety.js";
 import {
   detectPackageManager,
   detectProjectIntel,
@@ -281,6 +282,16 @@ export async function toolBash(
         `Example: { "command": ${exJson}, "timeout_ms": "120s" }\n` +
         `For long jobs: { "command": ${longJson}, "background": true } then get_task_output.\n` +
         "Prefer project checks from /context when verifying edits.",
+      isError: true,
+    };
+  }
+  const protectedWrite = checkBashProtectedWrites(
+    command,
+    ctx.workspace || process.cwd(),
+  );
+  if (!protectedWrite.ok) {
+    return {
+      output: `HARD DENY [${protectedWrite.rule}]: ${protectedWrite.reason}`,
       isError: true,
     };
   }

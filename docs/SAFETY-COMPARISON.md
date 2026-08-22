@@ -16,7 +16,7 @@ Same sources also drove **tool** improvements (not only authorization): realpath
 
 ## Bar A daily-driver (v0.8)
 
-Fail-closed headless permissions, segment-strict bash allow rules, expanded hard-deny variants (`${HOME}`, `find -delete`, `git push -f`, `git -C …`), protected path writes, project config safety overlay (no project YOLO / base_url / sandbox off).
+Fail-closed headless permissions, segment-strict bash allow rules, expanded hard-deny variants (`${HOME}`, `find -delete`, `git push -f`, `git -C …`), protected path writes (file tools **and** bash redirect/`tee`/`cp` dests), project config safety overlay (no project YOLO / base_url / sandbox off).
 
 ## Production reliability follow-on (v0.9.3)
 

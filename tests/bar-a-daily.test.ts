@@ -512,4 +512,54 @@ describe("Bar A: protected paths + symlink write", () => {
     assert.match(r.output, /Refusing|protected|\.git/i);
     fs.rmSync(ws, { recursive: true, force: true });
   });
+
+  it("hardSafetyCheck blocks bash writes to .git/hooks", () => {
+    const denials = [
+      "printf evil > .git/hooks/pre-commit",
+      "printf evil >> .git/config",
+      "printf evil | tee .git/hooks/pre-commit",
+      "cp payload .git/hooks/pre-commit",
+      "ln -s payload .git/hooks/pre-commit",
+      'bash -c "printf evil > .git/hooks/pre-commit"',
+    ];
+    for (const command of denials) {
+      const v = hardSafetyCheck("bash", { command }, "/tmp/proj");
+      assert.equal(v.ok, false, command);
+      if (!v.ok) assert.equal(v.rule, "write-protected-path", command);
+    }
+  });
+
+  it("hardSafetyCheck still allows project writes, reads, and /dev/null", () => {
+    const allows = [
+      "printf x > src/a.ts",
+      "echo hi > /dev/null",
+      'echo "a > b"',
+      "cat .git/hooks/pre-commit",
+      "git config user.name t",
+      "git status",
+    ];
+    for (const command of allows) {
+      const v = hardSafetyCheck("bash", { command }, "/tmp/proj");
+      assert.equal(v.ok, true, `${command} ${JSON.stringify(v)}`);
+    }
+  });
+
+  it("executeTool bash refuses .git/hooks redirect", async () => {
+    const ws = fs.mkdtempSync(path.join(os.tmpdir(), "forge-git-bash-"));
+    fs.mkdirSync(path.join(ws, ".git", "hooks"), { recursive: true });
+    const hook = path.join(ws, ".git", "hooks", "pre-commit");
+    const r = await executeTool(
+      "bash",
+      JSON.stringify({ command: "printf pwned > .git/hooks/pre-commit" }),
+      {
+        workspace: ws,
+        sandbox: "off",
+        sandboxMissingBackend: "fallback",
+      },
+    );
+    assert.equal(r.isError, true);
+    assert.match(r.output, /HARD DENY|Refusing|protected|\.git/i);
+    assert.equal(fs.existsSync(hook), false);
+    fs.rmSync(ws, { recursive: true, force: true });
+  });
 });

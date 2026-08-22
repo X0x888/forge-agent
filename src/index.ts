@@ -64,6 +64,7 @@ export {
   commandCheckTargets,
   containsRedirection,
   extractCommandPaths,
+  extractWritePaths,
 } from "./agent/shell-parse.js";
 export {
   describeSandbox,
@@ -925,6 +926,7 @@ export {
 export type { PermissionRequest, PermissionResult } from "./agent/permissions.js";
 export {
   checkBashHardDeny,
+  checkBashProtectedWrites,
   hardSafetyCheck,
   checkWritePathHardDeny,
   isSoftDangerousBash,
