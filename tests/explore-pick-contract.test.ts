@@ -7,8 +7,8 @@ import {
   isExplorePickDone,
   isSamePickTopic,
 } from "../src/harness/explore-contract.js";
+import { armUlwReady as armUlwCycle } from "./helpers/ulw-arm.js";
 import {
-  armUlwCycle,
   citesIsolateOnlyPass,
   detectWaveProof,
   disarmUlwCycle,

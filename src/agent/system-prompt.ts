@@ -327,10 +327,10 @@ export function buildBaselineSystemPrompt(opts: {
     `- **Proof-claim guard**: "tests pass" / "all green" without a verification command is blocked once — run the check, then report the real result. Outside ULW/goal, a silent stop after edits with no successful check is also blocked once.`,
     `- **TodoGate**: open todos block Stop under ULW (strict) and once outside ULW (soft) — finish or cancel them with todo_write before yielding.`,
     `- **/goal driver**: active goals block Stop until **Goal achieved.** or stuck-wall.`,
-    `- **/ulw god-mode**: cycle=1 forces research→judge→implement→prove→review on the highest-leverage hard work; \`/cycle 0\` = finish this wave + one more, then LAST. Durable decisions live in decisions.json.`,
+    `- **/ulw god-mode**: Wave 1 is PLAN (written Reading:), then BUILD. cycle=1 forces plan→ship→prove→review; \`/cycle 0\` = finish this wave + one more, then LAST. \`/plan\` / \`/build\` are the same keys. Durable decisions live in decisions.json.`,
     `- **Mid-conversation harness updates**: live cycle/wave/mandate/todo counts arrive as \`[Forge harness — mid-conversation update]\` messages. Obey the latest over stale ones.`,
     `- **Mid-run user messages**: free-text while you work is framed as "The user sent a message while you were working" — weigh it; do not ignore, but do not abandon a half-finished safe step without reason.`,
-    `- **Live slash controls** (no abort required): \`/cycle 0|1\`, \`/max-waves N|off\`, \`/ulw-off\`, \`/goal pause|resume\`.`,
+    `- **Live slash controls** (no abort required): \`/cycle 0|1\`, \`/max-waves N|off\`, \`/plan\`, \`/build\`, \`/ulw-off\`, \`/goal pause|resume\`.`,
     ``,
     `## Safety`,
     `- Never exfiltrate secrets. Never run destructive commands without necessity.`,
@@ -340,7 +340,8 @@ export function buildBaselineSystemPrompt(opts: {
     `- Do not curl/wget file:// paths — use read_file for workspace files (file:// is hard-denied).`,
   ];
 
-  if (config.permissionMode === "plan") {
+  const ulwOrient = ulwOn && resolveUlwPhase(opts.ulwCycle) === "orient";
+  if (config.permissionMode === "plan" && !ulwOrient) {
     const planCheckList = (() => {
       try {
         if (opts.project === null) return [] as string[];
@@ -389,10 +390,12 @@ export function buildBaselineSystemPrompt(opts: {
     if (resolveUlwPhase(opts.ulwCycle) === "orient") {
       parts.push(
         ``,
-        `## ULW ORIENT (evaluate-class — no spawn, no edits)`,
-        `Write the reading first. Tools: grep/glob/list_dir/read_file/lsp/memory_write + read-only bash.`,
+        `## ULW WAVE 1 — PLAN (no spawn, no edits)`,
+        `Every ULW starts here — not only evaluate-class. Research, then write the plan.`,
+        `Tools: grep/glob/list_dir/read_file/lsp/memory_write/exit_plan_mode + read-only bash.`,
         `Do not spawn_subagent. Do not edit. Grep before wide reads.`,
-        `memory_write one paragraph: what the hard work is, what you passed on, the ONE ship (cite file paths).`,
+        `Plan shape: what the hard work is, what you passed on, the ONE ship (cite file paths), the verify command.`,
+        `memory_write a \`Reading:\` **or** call exit_plan_mode({ plan }) — the driver /builds (no user confirm). Type /build to skip remaining research.`,
         `That write ends this phase. Then you get edits.`,
       );
     } else {

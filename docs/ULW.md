@@ -2,6 +2,8 @@
 
 When a prompt starts with **`/ulw`** (or `forge --ulw` / `forge run --ulw`), Forge arms a **god-mode cycle driver**: deep thought + hard execution on whatever the hard work is — any domain, not just tests or housekeeping. Soft prompts like `improve the code` (or bare `/ulw`) authorize the agent to **invent the work** and ship it.
 
+**Wave 1 is PLAN** — the same spine as `/plan` / `/build`, not a sibling. Research is hard-denied for writes/spawn (even under yolo) until a written plan exists (`Reading:` / `memory_write` / `exit_plan_mode`). The driver then `/build`s itself (no confirm). User `/build` skips remaining research. User `/plan` mid-run is a human pause (does not auto-flip). Later waves are BUILD.
+
 ## User control: cycle flag
 
 | Value | Meaning |
@@ -43,11 +45,13 @@ forge run "ship it" --max-waves 2
 
 Hard mandates keep a fixed objective but the same **smart + hard** execution style.
 
-**Evaluate-class mandates** ("comprehensively evaluate… then improve…"): a **verb order**, not a backlog. Wave 1 cannot close until a written **reading** exists (`Reading:` or `memory_write`). That reading is the first verb — not "advice-only". Wave 1 starts in an **orient** phase (no spawn/edits) until the reading is written; later waves skip the scout (`w≥1` or a named next ship). Orient **hard-denies** writes/spawn/mutating bash even under yolo — hiding tools from the schema is not enough. TodoNudge does not poke evaluate-class boards.
+**Every `/ulw` starts in PLAN** (not only evaluate-class). Writes/spawn/mutating bash are hard-denied even under yolo until a written plan exists. Later waves skip the scout (`w≥1` or a plan already on disk). `/plan` and `/build` are the same keys: `/plan` pauses into research; `/build` implements now.
+
+**Evaluate-class mandates** ("comprehensively evaluate… then improve…"): a **verb order**, not a backlog. The Wave 1 plan *is* the evaluation reading — not "advice-only". Named ships are parsed from that reading. TodoNudge does not poke evaluate-class boards.
 
 **Broad checklists** (4+ bullets / multi-section): the harness still requires a **todo backlog** (`todo_write` ≥2) before Wave 1 free-invents.
 
-**`max_waves=N` is a budget the user asked to spend.** Wave 1 writes the reading (evaluate-class) and ships the first item; waves 2..N ship the next highest-leverage items on different surfaces. Do not invent leftover chrome — do ship the next real item. `**Cycle complete.**` under `cycle=1` does **not** release. Cap auto-flips LAST when the wave counter hits N; then attest. `/cycle 0` at wave N sets the cap to **N+1** (finish this wave, ship one more) and stays CONTINUE until then. Cap / `/done` / safety-valve LAST wraps the open wave only. `/ulw-off` aborts.
+**`max_waves=N` is a budget the user asked to spend.** Wave 1 writes the plan and ships the first item; waves 2..N ship the next highest-leverage items on different surfaces. Do not invent leftover chrome — do ship the next real item. `**Cycle complete.**` under `cycle=1` does **not** release. Cap auto-flips LAST when the wave counter hits N; then attest. `/cycle 0` at wave N sets the cap to **N+1** (finish this wave, ship one more) and stays CONTINUE until then. Cap / `/done` / safety-valve LAST wraps the open wave only. `/ulw-off` aborts.
 
 ### Smart + hard (not thrash)
 

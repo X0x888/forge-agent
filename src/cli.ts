@@ -145,6 +145,7 @@ import {
   PLACEHOLDER_MANDATE,
   displayUlwMandate,
 } from "./harness/ulw-cycle.js";
+import { armUlwPlanMode } from "./harness/ulw-plan-mode.js";
 import { openTodos } from "./agent/todos.js";
 import { formatEffectiveConfig, runDoctorCheck } from "./commands/slash.js";
 import {
@@ -658,6 +659,7 @@ Docs: docs/GETTING-STARTED.md · docs/PRODUCTION.md · docs/RELIABILITY.md · do
             editCount: session.meta.editCount,
             ...(maxWaves !== undefined ? { maxWaves } : {}),
           });
+          armUlwPlanMode(session, config);
           // Seed a board only when the backlog gate is actually on.
           try {
             const { todosFromMandate } = await import(
@@ -1211,6 +1213,7 @@ Docs: docs/PRODUCTION.md
               ...(maxWavesOpt !== undefined ? { maxWaves: maxWavesOpt } : {}),
             },
           );
+          armUlwPlanMode(session, config);
           saveSession(session);
         }
       }

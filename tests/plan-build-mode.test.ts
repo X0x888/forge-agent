@@ -37,8 +37,17 @@ import { isExitPlanModeToolName } from "../src/agent/tools/exit-plan-mode.js";
 import {
   isReadOnlyToolName,
   filterToolsForPermissionMode,
+  filterToolsForUlwPhase,
 } from "../src/agent/loop.js";
 import { filterToolsForSubagent } from "../src/agent/subagent.js";
+import {
+  loadUlwCycle,
+  resolveUlwPhase,
+  completeUlwPlan,
+  advanceUlwPhaseOnReading,
+} from "../src/harness/ulw-cycle.js";
+import { appendMemoryRecord } from "../src/harness/decision-memory.js";
+import { syncUlwPlanMode } from "../src/harness/ulw-plan-mode.js";
 
 describe("plan/build live controls", () => {
   let tmp: string;
@@ -489,5 +498,111 @@ describe("exit_plan_mode tool", () => {
     assert.ok(names.includes("spawn_subagent"));
     const full = filterToolsForPermissionMode(TOOL_DEFINITIONS, "default");
     assert.equal(full.length, TOOL_DEFINITIONS.length);
+  });
+
+  it("ULW-owned exit_plan_mode auto-builds headless without ask_user", async () => {
+    const session = createSession({ cwd: tmp, provider: "xai", model: "m" });
+    const config = {
+      ...DEFAULT_CONFIG,
+      workspace: tmp,
+      permissionMode: "default" as const,
+    };
+    const hooks = new HookRunner(DEFAULT_CONFIG, tmp);
+    await handleSlash("/ulw fix the typo in README", {
+      session,
+      config,
+      hooks,
+    });
+    assert.equal(config.permissionMode, "plan");
+    assert.equal(session.meta.ulwOwnsPlan, true);
+    assert.equal(resolveUlwPhase(loadUlwCycle(session.meta.id)), "orient");
+
+    const r = await executeTool(
+      "exit_plan_mode",
+      JSON.stringify({
+        plan: "Fix the README typo in the install section. Verify: cat README.md",
+      }),
+      { workspace: tmp, session, config },
+    );
+    assert.notEqual(r.isError, true);
+    assert.match(r.output, /Plan approved/);
+    assert.equal(config.permissionMode, "default");
+    assert.equal(session.meta.ulwOwnsPlan, undefined);
+    assert.equal(resolveUlwPhase(loadUlwCycle(session.meta.id)), "ship");
+  });
+
+  it("user /plan mid-ULW does not auto-build on a later memory_write", async () => {
+    const session = createSession({ cwd: tmp, provider: "xai", model: "m" });
+    const config = {
+      ...DEFAULT_CONFIG,
+      workspace: tmp,
+      permissionMode: "acceptEdits" as const,
+    };
+    const hooks = new HookRunner(DEFAULT_CONFIG, tmp);
+    await handleSlash("/ulw ship the feature", { session, config, hooks });
+    completeUlwPlan(session.meta.id, { force: true });
+    // Simulate driver /build after a reading so we are in BUILD.
+    await handleSlash("/build", { session, config, hooks });
+    assert.equal(resolveUlwPhase(loadUlwCycle(session.meta.id)), "ship");
+
+    await handleSlash("/plan rethink the approach", { session, config, hooks });
+    assert.equal(config.permissionMode, "plan");
+    assert.equal(session.meta.ulwOwnsPlan, false);
+
+    await executeTool(
+      "memory_write",
+      JSON.stringify({
+        kind: "decision",
+        text: "Reading: ship auth next. Verify: npm test.",
+      }),
+      { workspace: tmp, session, config, sessionId: session.meta.id },
+    );
+    assert.equal(config.permissionMode, "plan");
+    assert.equal(session.meta.ulwOwnsPlan, false);
+  });
+
+  it("memory_write Reading + syncUlwPlanMode leaves plan mode", async () => {
+    const session = createSession({ cwd: tmp, provider: "xai", model: "m" });
+    const config = {
+      ...DEFAULT_CONFIG,
+      workspace: tmp,
+      permissionMode: "default" as const,
+    };
+    const hooks = new HookRunner(DEFAULT_CONFIG, tmp);
+    await handleSlash("/ulw fix the typo in foo.ts", { session, config, hooks });
+    assert.equal(config.permissionMode, "plan");
+    assert.equal(session.meta.ulwOwnsPlan, true);
+    appendMemoryRecord(session.meta.id, {
+      kind: "decision",
+      text: "Reading: fix the typo in foo.ts. Verify: npm test.",
+      source: "agent",
+    });
+    assert.equal(advanceUlwPhaseOnReading(session.meta.id), true);
+    syncUlwPlanMode(session, config);
+    assert.equal(resolveUlwPhase(loadUlwCycle(session.meta.id)), "ship");
+    assert.equal(config.permissionMode, "default");
+    assert.equal(session.meta.ulwOwnsPlan, undefined);
+  });
+
+  it("/build during ULW PLAN skips remaining research", async () => {
+    const session = createSession({ cwd: tmp, provider: "xai", model: "m" });
+    const config = {
+      ...DEFAULT_CONFIG,
+      workspace: tmp,
+      permissionMode: "default" as const,
+    };
+    const hooks = new HookRunner(DEFAULT_CONFIG, tmp);
+    await handleSlash("/ulw fix the typo in foo.ts", { session, config, hooks });
+    assert.equal(resolveUlwPhase(loadUlwCycle(session.meta.id)), "orient");
+    const r = await handleSlash("/build", { session, config, hooks });
+    assert.equal(r.handled, true);
+    assert.equal(config.permissionMode, "default");
+    assert.equal(resolveUlwPhase(loadUlwCycle(session.meta.id)), "ship");
+    assert.equal(
+      filterToolsForUlwPhase(TOOL_DEFINITIONS, "orient").some(
+        (t) => t.function.name === "spawn_subagent",
+      ),
+      false,
+    );
   });
 });

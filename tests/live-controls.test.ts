@@ -19,6 +19,7 @@ import {
 } from "../src/harness/live-notices.js";
 import {
   armUlwCycle,
+  markUlwPlanDone,
   setCycleFlag,
   loadUlwCycle,
   evaluateUlwAtStop,
@@ -531,6 +532,7 @@ describe("mid-run /cycle affects stop-guard without abort", () => {
       model: "test",
     });
     armUlwCycle(session.meta.id, "improve the code", { cycle: 1 });
+    markUlwPlanDone(session.meta.id);
 
     // Soft TodoGate fire before wind-down
     const {
@@ -602,6 +604,7 @@ describe("mid-run /cycle affects stop-guard without abort", () => {
       model: "test",
     });
     armUlwCycle(session.meta.id, "improve the code", { cycle: 1 });
+    markUlwPlanDone(session.meta.id);
 
     const hooks = new HookRunner(DEFAULT_CONFIG, tmp);
     const result = await handleSlash("/max-waves 1", {

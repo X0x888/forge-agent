@@ -18,6 +18,7 @@ import {
   evaluateUlwAtStop,
   maybeAdoptNamedShips,
   loadUlwCycle,
+  saveUlwCycle,
   isLeftoverChromeShip,
   formatUlwStatus,
   copyUlwCycle,
@@ -25,6 +26,14 @@ import {
   reenableUlwCycle,
 } from "../src/harness/ulw-cycle.js";
 import { appendMemoryRecord } from "../src/harness/decision-memory.js";
+
+function skipPlan(sid: string): void {
+  const s = loadUlwCycle(sid);
+  if (!s) return;
+  s.phase = "ship";
+  s.judgmentRequired = false;
+  saveUlwCycle(s);
+}
 
 function withHome(fn: () => void): void {
   const prev = process.env.FORGE_HOME;
@@ -177,6 +186,7 @@ describe("product-quality Stop bar", () => {
         cycle: 1,
         skipCheckpoint: true,
       });
+      skipPlan(sid);
       const d = evaluateUlwAtStop({
         sessionId: sid,
         lastAssistantMessage: "Wave 1 shipped: clamp the window past EOF.",
@@ -201,6 +211,7 @@ describe("product-quality Stop bar", () => {
         cycle: 1,
         skipCheckpoint: true,
       });
+      skipPlan(sid);
       const d = evaluateUlwAtStop({
         sessionId: sid,
         lastAssistantMessage: "Wave 1 shipped: a feature grid of six cards.",
@@ -238,6 +249,7 @@ describe("product-quality Stop bar", () => {
         cycle: 1,
         skipCheckpoint: true,
       });
+      skipPlan(sid);
       const d = evaluateUlwAtStop({
         sessionId: sid,
         lastAssistantMessage: [
@@ -309,6 +321,7 @@ describe("product-quality Stop bar", () => {
         cycle: 1,
         skipCheckpoint: true,
       });
+      skipPlan(sid);
       assert.match(formatUlwStatus(loadUlwCycle(sid)), /Product quality: on/);
       evaluateUlwAtStop({
         sessionId: sid,

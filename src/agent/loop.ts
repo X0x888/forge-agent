@@ -75,6 +75,7 @@ import {
   isFullSuiteCommand,
   consumeMillHoldPrune,
 } from "../harness/ulw-cycle.js";
+import { armUlwPlanMode, syncUlwPlanMode } from "../harness/ulw-plan-mode.js";
 import {
   isReasonedEmptyStop,
   REASONING_LOOP_FINISH,
@@ -434,7 +435,7 @@ export function isReadOnlyToolName(name: string): boolean {
   return READ_ONLY.has(n) || READ_ONLY.has(name || "");
 }
 
-/** evaluate-class orient: map, do not spawn or edit. */
+/** ULW Wave-1 PLAN: research only — no spawn, no edits. */
 const ORIENT_TOOL_NAMES = new Set([
   "read_file",
   "Read",
@@ -453,6 +454,9 @@ const ORIENT_TOOL_NAMES = new Set([
   "memory_write",
   "ask_user",
   "AskUser",
+  "exit_plan_mode",
+  "ExitPlanMode",
+  "exitPlanMode",
   "bash",
   "Bash",
   "shell",
@@ -462,6 +466,11 @@ const ORIENT_TOOL_NAMES = new Set([
   "task_output",
   "search_mcp",
   "mcp_search",
+  "call_mcp",
+  "mcp_call",
+  "use_mcp",
+  "mcp_resource",
+  "mcp_prompt",
   "lsp",
   "LSP",
 ]);
@@ -502,44 +511,9 @@ export function filterToolsForUlwPhase(
   });
 }
 
+/** `/plan` = ULW PLAN research tools + read-only spawn. */
 const PLAN_MODE_TOOL_NAMES = new Set([
-  "read_file",
-  "Read",
-  "read",
-  "grep",
-  "Grep",
-  "glob",
-  "Glob",
-  "list_dir",
-  "ListDir",
-  "web_search",
-  "WebSearch",
-  "web_fetch",
-  "WebFetch",
-  "todo_write",
-  "memory_write",
-  "ask_user",
-  "AskUser",
-  // Read-only bash stays visible; PermissionGate still hard-denies mutations.
-  "bash",
-  "Bash",
-  "shell",
-  "Shell",
-  "run_terminal_command",
-  "get_task_output",
-  "task_output",
-  "search_mcp",
-  "mcp_search",
-  "call_mcp",
-  "mcp_call",
-  "use_mcp",
-  "mcp_resource",
-  "mcp_prompt",
-  "lsp",
-  "LSP",
-  "exit_plan_mode",
-  "ExitPlanMode",
-  "exitPlanMode",
+  ...ORIENT_TOOL_NAMES,
   // Forced read-only by PermissionGate + toolSpawnSubagent when parent is plan.
   "spawn_subagent",
   "Task",
@@ -879,6 +853,7 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
           editCount: session.meta.editCount,
           cwd: workspace,
         });
+        armUlwPlanMode(session, config);
         if (ulw.checkpointSha) {
           session.meta.lastCheckpoint = ulw.checkpointSha;
           session.meta.lastCheckpointAt = new Date().toISOString();
@@ -897,6 +872,7 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
       ulw =
         adoptUlwMandate(session.meta.id, userMessage, { cwd: workspace }) ||
         ulw;
+      armUlwPlanMode(session, config);
       effectiveUserMessage = ulwKickoffMessage(ulw);
       log.info(`ULW mandate adopted from first real user turn`);
     }
@@ -2182,7 +2158,9 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
       finalText = assistantMsg.content || "";
       noteAssistantTurn(session.meta.id);
       try {
-        advanceUlwPhaseOnReading(session.meta.id, assistantMsg.content || "");
+        if (advanceUlwPhaseOnReading(session.meta.id, assistantMsg.content || "")) {
+          syncUlwPlanMode(session, config);
+        }
       } catch {
         /* */
       }
@@ -2838,7 +2816,9 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
         proofPoke,
       });
       try {
-        advanceUlwPhaseOnReading(session.meta.id);
+        if (advanceUlwPhaseOnReading(session.meta.id)) {
+          syncUlwPlanMode(session, config);
+        }
       } catch {
         /* */
       }
@@ -3380,6 +3360,7 @@ function drainSafeBoundaryMessages(
       maybeAdoptMandateFromUserTexts(session.meta.id, interjections, {
         cwd: config.workspace || session.meta.cwd,
       });
+      armUlwPlanMode(session, config);
     } catch {
       /* */
     }
@@ -3527,6 +3508,13 @@ async function runToolCalls(opts: {
         });
       }
       saveSession(session);
+      try {
+        if (advanceUlwPhaseOnReading(session.meta.id)) {
+          syncUlwPlanMode(session, config);
+        }
+      } catch {
+        /* */
+      }
     } else {
       const r = await prepareToolResult({
         tc: toolCalls[i],
@@ -3555,6 +3543,13 @@ async function runToolCalls(opts: {
         content: r.content,
       });
       saveSession(session);
+      try {
+        if (advanceUlwPhaseOnReading(session.meta.id)) {
+          syncUlwPlanMode(session, config);
+        }
+      } catch {
+        /* */
+      }
       i++;
     }
   }

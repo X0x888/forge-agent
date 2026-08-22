@@ -12,6 +12,7 @@ import {
   isBroadMandate,
   isEvaluateClassMandate,
   hasMandateJudgment,
+  hasUlwPlan,
   todosFromMandate,
   loadDecisionMemory,
   copyDecisionMemory,
@@ -109,6 +110,32 @@ Please comprehensively audit and improve this app:
         "Reading: highest-leverage work is a real TUI/REPL UX evaluation.",
       ),
       true,
+    );
+  });
+
+  it("hasUlwPlan requires a Reading:, not a 40-char agent note", () => {
+    const sid = "sess-ulw-plan";
+    fs.mkdirSync(path.join(home, "sessions", sid), { recursive: true });
+    appendMemoryRecord(sid, {
+      kind: "decision",
+      text: "I will look around and maybe polish the HUD chrome today.",
+      source: "agent",
+    });
+    assert.equal(hasMandateJudgment(sid, ""), true);
+    assert.equal(hasUlwPlan(sid, ""), false);
+    appendMemoryRecord(sid, {
+      kind: "decision",
+      text: "Reading: ship the setup card 1–6. Verify: npm test.",
+      source: "agent",
+    });
+    assert.equal(hasUlwPlan(sid, ""), true);
+    assert.equal(
+      hasUlwPlan("", "Reading: fix foo.ts and run npm test after."),
+      true,
+    );
+    assert.equal(
+      hasUlwPlan("", "Reading: leftover chrome catalog of first 5 names."),
+      false,
     );
   });
 

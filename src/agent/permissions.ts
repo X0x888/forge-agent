@@ -207,7 +207,7 @@ export class PermissionGate {
   }
 
   /**
-   * Evaluate-class Wave 1 scout. Writes / spawn / mutating bash hard-deny.
+   * ULW Wave-1 PLAN. Writes / spawn / mutating bash hard-deny (even under yolo).
    * Read-only bash and research tools fall through to the rest of the gate.
    */
   private evaluateUlwOrient(
@@ -222,7 +222,7 @@ export class PermissionGate {
       return {
         decision: "deny",
         reason:
-          "ulw_orient: bash mutations denied — write the reading first; then you get edits",
+          "ulw_orient: bash mutations denied — write the plan first (Reading: / exit_plan_mode), or type /build",
         rule: "ulw_orient",
       };
     }
@@ -234,7 +234,7 @@ export class PermissionGate {
       return {
         decision: "deny",
         reason:
-          "ulw_orient: spawn_subagent denied — write the reading first (no spawn during scout)",
+          "ulw_orient: spawn_subagent denied — write the plan first (no spawn during PLAN); or type /build",
         rule: "ulw_orient",
       };
     }
@@ -242,7 +242,7 @@ export class PermissionGate {
       return {
         decision: "deny",
         reason:
-          "ulw_orient: edits denied — write the reading first; then you get edits",
+          "ulw_orient: edits denied — write the plan first (Reading: / exit_plan_mode), or type /build",
         rule: "ulw_orient",
       };
     }
@@ -261,7 +261,7 @@ export class PermissionGate {
         return {
           decision: "deny",
           reason:
-            "ulw_orient: call_mcp denied for non-read-only tools — write the reading first",
+            "ulw_orient: call_mcp denied for non-read-only tools — write the plan first, or type /build",
           rule: "ulw_orient",
         };
       }

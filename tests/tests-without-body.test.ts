@@ -8,8 +8,8 @@ import {
   isTestsWithoutBodyCloser,
   isTestsWithoutBodyShip,
 } from "../src/harness/tests-without-body.js";
+import { armUlwReady as armUlwCycle } from "./helpers/ulw-arm.js";
 import {
-  armUlwCycle,
   disarmUlwCycle,
   evaluateUlwAtStop,
   loadUlwCycle,

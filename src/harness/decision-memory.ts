@@ -382,6 +382,29 @@ export function activeMemoryRecords(sessionId: string): MemoryRecord[] {
  * True when the agent has produced a real reading/judgment — not the
  * auto-seeded "Soft mandate:" / "Broad mandate:" templates.
  */
+const READING_HEAD_RE = /^\s*\*{0,2}(reading|judgment)\s*:\*{0,2}/im;
+const SEEDED_MANDATE_RE =
+  /^(Soft mandate:|Broad mandate:|Mandate verbs|MANDATE:)/i;
+
+/** True when text is a Wave-1 plan (Reading:/Judgment: with a real body). */
+export function isPlanShapedText(text: string): boolean {
+  const t = String(text || "").trim();
+  if (!t) return false;
+  if (!READING_HEAD_RE.test(t)) return false;
+  const body = t.replace(READING_HEAD_RE, "").trim();
+  return body.length >= 12;
+}
+
+/** Verify command or a cited file — a catalog of leftovers is not a plan. */
+const PLAN_VERIFY_RE =
+  /\b(verify(?:ing|ied)?|npm test|npm run |pnpm (?:test|run)|yarn (?:test|run)|bun test|pytest|cargo test|go test|tsc\b|typecheck|lint)\b/i;
+const PLAN_PATH_RE = /\b[\w./-]+\.(ts|tsx|js|jsx|mjs|cjs|py|rs|go|md)\b/;
+
+export function planBodyHasEvidence(text: string): boolean {
+  const t = String(text || "");
+  return PLAN_VERIFY_RE.test(t) || PLAN_PATH_RE.test(t);
+}
+
 export function hasMandateJudgment(
   sessionId: string,
   lastAssistantMessage?: string,
@@ -393,14 +416,14 @@ export function hasMandateJudgment(
         r.source === "agent" &&
         (r.kind === "decision" || r.kind === "observation") &&
         r.text.length >= 40 &&
-        !/^(Soft mandate:|Broad mandate:|Mandate verbs|MANDATE:)/i.test(r.text),
+        !SEEDED_MANDATE_RE.test(r.text),
     )
   ) {
     return true;
   }
   const msg = String(lastAssistantMessage || "").trim();
   if (!msg) return false;
-  if (/^\s*(reading|judgment)\s*:/im.test(msg)) return true;
+  if (isPlanShapedText(msg)) return true;
   if (
     msg.length > 80 &&
     /\b(highest-leverage|what i (passed|skipped) on|i will (evaluate|audit|ship))\b/i.test(
@@ -410,6 +433,39 @@ export function hasMandateJudgment(
     return true;
   }
   return false;
+}
+
+/**
+ * ULW Wave-1 plan gate — stricter than hasMandateJudgment.
+ * Random 40-char notes and a Reading: without a verify command or file
+ * path are not a plan. source=plan records from exit_plan_mode / /build
+ * still need that evidence.
+ */
+export function hasUlwPlan(
+  sessionId: string,
+  lastAssistantMessage?: string,
+): boolean {
+  const recs = activeMemoryRecords(sessionId);
+  if (
+    recs.some((r) => {
+      if (SEEDED_MANDATE_RE.test(r.text)) return false;
+      if (
+        (r.source === "agent" ||
+          r.source === "plan" ||
+          r.source === "user") &&
+        (r.kind === "decision" || r.kind === "observation") &&
+        isPlanShapedText(r.text) &&
+        planBodyHasEvidence(r.text)
+      ) {
+        return true;
+      }
+      return false;
+    })
+  ) {
+    return true;
+  }
+  const msg = String(lastAssistantMessage || "");
+  return isPlanShapedText(msg) && planBodyHasEvidence(msg);
 }
 
 const SHIP_LOG_RE =

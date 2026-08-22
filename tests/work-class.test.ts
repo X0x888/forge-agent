@@ -18,8 +18,8 @@ import {
 } from "../src/harness/same-surface.js";
 import { extractShipSummary, isShipCloseText } from "../src/harness/ship-close.js";
 import { buildAutoCommitSubject } from "../src/util/git-auto-commit.js";
+import { armUlwReady as armUlwCycle } from "./helpers/ulw-arm.js";
 import {
-  armUlwCycle,
   bestWave,
   disarmUlwCycle,
   evaluateUlwAtStop,

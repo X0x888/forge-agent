@@ -16,6 +16,8 @@ import {
   type SessionData,
 } from "../../session/session.js";
 import { pushLiveNotice } from "../../harness/live-notices.js";
+import { appendMemoryRecord } from "../../harness/decision-memory.js";
+import { completeUlwPlan, loadUlwCycle } from "../../harness/ulw-cycle.js";
 import { toolAskUser } from "./ask-user.js";
 import type { ToolResult } from "./types.js";
 
@@ -124,10 +126,11 @@ export async function toolExitPlanMode(
     };
   }
 
-  // Auto-approve only when the user entered plan from yolo/bypass.
-  // Plan mode itself is a confirmation gate; dontAsk is not enough.
+  // ULW-owned Wave-1 PLAN auto-builds (unattended cannot ask_user).
+  // User-typed /plan clears ulwOwnsPlan — keep the human gate.
+  const ulwOwned = Boolean(session.meta.ulwOwnsPlan);
   const fromYolo = session.meta.permissionModeBeforePlan === "bypassPermissions";
-  if (!fromYolo) {
+  if (!ulwOwned && !fromYolo) {
     const asked = await toolAskUser({
       question: "Leave plan mode and start implementing this plan?",
       choices: ["implement now", "stay in plan"],
@@ -144,13 +147,30 @@ export async function toolExitPlanMode(
     }
   }
 
+  const reading = /^\s*reading\s*:/i.test(plan) ? plan : `Reading: ${plan}`;
+  try {
+    appendMemoryRecord(session.meta.id, {
+      kind: "decision",
+      text: reading.slice(0, 800),
+      source: "plan",
+    });
+  } catch {
+    /* */
+  }
+  if (ulwOwned || loadUlwCycle(session.meta.id)?.enabled) {
+    completeUlwPlan(session.meta.id, { closer: reading, force: ulwOwned });
+  }
+
   const previous = config.permissionMode;
   const { mode, wasPlan } = exitSessionPlanMode(config, session);
+  delete session.meta.ulwOwnsPlan;
   if (wasPlan) {
     saveSession(session);
     pushLiveNotice(
       session.meta.id,
-      `Mode ${previous} → ${mode} — implementing approved plan.`,
+      ulwOwned
+        ? `ULW PLAN → ${mode} — implementing Wave 1 plan (auto /build).`
+        : `Mode ${previous} → ${mode} — implementing approved plan.`,
     );
   }
 

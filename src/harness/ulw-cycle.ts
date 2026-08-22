@@ -23,7 +23,8 @@ import {
   formatMemoryForPrompt,
   isBroadMandate,
   isEvaluateClassMandate,
-  hasMandateJudgment,
+  hasUlwPlan,
+  appendMemoryRecord,
   recordWaveObservation,
   seedMemoryFromMandate,
   activeMemoryRecords,
@@ -264,8 +265,9 @@ export interface UlwCycleState {
   /** One product-quality bounce (user-facing ships). Never a trap. */
   soulNudgeDone?: boolean;
   /**
-   * evaluate-class Wave 1: `orient` hides spawn/edits until a reading exists.
-   * Absent on old sidecars — infer from judgmentRequired.
+   * Wave 1 PLAN: `orient` hides spawn/edits until a written plan exists.
+   * Default for every new ULW (not only evaluate-class). Absent on old
+   * sidecars — infer from judgmentRequired.
    */
   phase?: "orient" | "ship";
   /** Open todo count snapshot at previous wave boundary (for todoProgress). */
@@ -909,6 +911,21 @@ export function isConsolidationCloser(text: string): boolean {
 
 export type UlwPhase = "orient" | "ship";
 
+/** Wave 1 PLAN unless the mandate is still a placeholder or a plan already exists. */
+function initialUlwPlanPhase(
+  sessionId: string,
+  mandate: string,
+  prev: UlwCycleState | null | undefined,
+): { phase: UlwPhase; judgmentRequired: boolean } {
+  if (isPlaceholderMandate(mandate)) {
+    return { phase: "ship", judgmentRequired: false };
+  }
+  if (prev?.enabled && shouldSkipOrient(prev, sessionId)) {
+    return { phase: "ship", judgmentRequired: false };
+  }
+  return { phase: "orient", judgmentRequired: true };
+}
+
 export function resolveUlwPhase(s: UlwCycleState | null | undefined): UlwPhase {
   if (!s?.enabled) return "ship";
   // Later waves never re-scout — the reading already named the next ships.
@@ -917,7 +934,7 @@ export function resolveUlwPhase(s: UlwCycleState | null | undefined): UlwPhase {
   return s.judgmentRequired ? "orient" : "ship";
 }
 
-/** True when evaluate-class should skip the scout (reading exists or a wave already stamped). */
+/** True when Wave 1 PLAN can be skipped (a wave already stamped, or a plan exists). */
 export function shouldSkipOrient(
   s: UlwCycleState | null | undefined,
   sessionId?: string,
@@ -927,7 +944,7 @@ export function shouldSkipOrient(
   if ((s.wave ?? 0) >= 1) return true;
   if (sessionId) {
     try {
-      if (hasMandateJudgment(sessionId)) return true;
+      if (hasUlwPlan(sessionId)) return true;
     } catch {
       /* */
     }
@@ -935,20 +952,62 @@ export function shouldSkipOrient(
   return false;
 }
 
+const USER_BUILD_READING =
+  "Reading: user /build — implement the mandate now. Verify with project checks.";
+
+/**
+ * Flip orient → ship. `force` is the sit-down `/build` skip (no plan required).
+ * Seeds a Reading: so re-arm does not drop back into PLAN.
+ */
+export function completeUlwPlan(
+  sessionId: string,
+  opts?: { closer?: string; force?: boolean },
+): boolean {
+  const s = loadUlwCycle(sessionId);
+  if (!s?.enabled) return false;
+  const orient = resolveUlwPhase(s) === "orient" || Boolean(s.judgmentRequired);
+  if (!orient) return false;
+  if (!opts?.force && !hasUlwPlan(sessionId, opts?.closer)) return false;
+  if (opts?.force && !hasUlwPlan(sessionId, opts?.closer)) {
+    try {
+      appendMemoryRecord(sessionId, {
+        kind: "decision",
+        text: USER_BUILD_READING,
+        source: "plan",
+      });
+    } catch {
+      /* */
+    }
+  }
+  s.phase = "ship";
+  s.judgmentRequired = false;
+  maybeAdoptNamedShips(s, opts?.closer);
+  saveUlwCycle(s);
+  return true;
+}
+
 /** Flip orient → ship once a written reading exists. */
 export function advanceUlwPhaseOnReading(
   sessionId: string,
   closer?: string,
 ): boolean {
-  const s = loadUlwCycle(sessionId);
-  if (!s?.enabled) return false;
-  if (resolveUlwPhase(s) !== "orient") return false;
-  if (!hasMandateJudgment(sessionId, closer)) return false;
-  s.phase = "ship";
-  s.judgmentRequired = false;
-  maybeAdoptNamedShips(s, closer);
-  saveUlwCycle(s);
-  return true;
+  return completeUlwPlan(sessionId, { closer });
+}
+
+/** Tests / setup: write a Reading: and leave PLAN. */
+export function markUlwPlanDone(sessionId: string, text?: string): boolean {
+  try {
+    appendMemoryRecord(sessionId, {
+      kind: "decision",
+      text:
+        text ||
+        "Reading: ship the armed mandate. Verify: npm test.",
+      source: "agent",
+    });
+  } catch {
+    /* */
+  }
+  return completeUlwPlan(sessionId);
 }
 
 const POLISH_ADVISORY_STREAK = 3;
@@ -1908,7 +1967,7 @@ export function maybeStampUlwWave(opts: {
     return { stamped: false, updated: progressed, wave: s.wave };
   }
 
-  if (s.judgmentRequired && hasMandateJudgment(opts.sessionId, opts.lastAssistantMessage)) {
+  if (s.judgmentRequired && hasUlwPlan(opts.sessionId, opts.lastAssistantMessage)) {
     s.judgmentRequired = false;
     s.phase = "ship";
   }
@@ -1927,7 +1986,7 @@ export function maybeStampUlwWave(opts: {
     if (
       s.judgmentRequired &&
       s.wave === 0 &&
-      !hasMandateJudgment(opts.sessionId, closer)
+      !hasUlwPlan(opts.sessionId, closer)
     ) {
       /* still need a reading — fall through */
     } else {
@@ -2050,7 +2109,7 @@ export function maybeStampUlwWave(opts: {
     if (
       s.judgmentRequired &&
       s.wave === 0 &&
-      !hasMandateJudgment(opts.sessionId, opts.lastAssistantMessage)
+      !hasUlwPlan(opts.sessionId, opts.lastAssistantMessage)
     ) {
       s.judgmentDemands = Math.min(
         MAX_JUDGMENT_DEMANDS,
@@ -2565,19 +2624,8 @@ export function armUlwCycle(
     evidenceNudges: 0,
     soulNudgeDone: false,
     backlogRequired: broad,
-    judgmentRequired: (() => {
-      const evaluate = isEvaluateClassMandate(cleanMandate);
-      if (!evaluate) return false;
-      if (prev?.enabled && shouldSkipOrient(prev, sessionId)) return false;
-      return true;
-    })(),
+    ...initialUlwPlanPhase(sessionId, cleanMandate, prev),
     judgmentDemands: 0,
-    phase: (() => {
-      const evaluate = isEvaluateClassMandate(cleanMandate);
-      if (!evaluate) return "ship";
-      if (prev?.enabled && shouldSkipOrient(prev, sessionId)) return "ship";
-      return "orient";
-    })(),
     lastOpenTodoCount: undefined,
     startedAt: prev?.enabled ? prev.startedAt : nowIso(),
     updatedAt: nowIso(),
@@ -2655,14 +2703,9 @@ export function adoptUlwMandate(
   s.expandedMandate = expanded;
   s.softPrompt = soft;
   s.backlogRequired = isBroadMandate(next);
-  const evaluate = isEvaluateClassMandate(next);
-  if (evaluate && !shouldSkipOrient(s, sessionId)) {
-    s.judgmentRequired = true;
-    s.phase = "orient";
-  } else {
-    s.judgmentRequired = false;
-    s.phase = "ship";
-  }
+  const nextPhase = initialUlwPlanPhase(sessionId, next, s);
+  s.judgmentRequired = nextPhase.judgmentRequired;
+  s.phase = nextPhase.phase;
   s.judgmentDemands = 0;
   if (opts?.cwd && !s.lastDiffFp) {
     try {
@@ -3013,11 +3056,17 @@ export function formatUlwCounts(
 /** One-line badge for prompt flags / footers: `c=1 w=3 b=5` or `w=3/5`. */
 export function formatUlwBadge(
   s: Pick<UlwCycleState, "cycle" | "wave" | "blocks"> &
-    Partial<Pick<UlwCycleState, "maxWaves">>,
+    Partial<Pick<UlwCycleState, "maxWaves" | "phase" | "judgmentRequired">>,
 ): string {
   const cap = normalizeMaxWaves(s.maxWaves);
   const parts = [`c=${s.cycle}`, cap != null ? `w=${s.wave}/${cap}` : `w=${s.wave}`];
   if (s.blocks > 0) parts.push(`b=${s.blocks}`);
+  const phase =
+    s.phase === "orient" ||
+    (Boolean(s.judgmentRequired) && (s.wave ?? 0) === 0)
+      ? "PLAN"
+      : null;
+  if (phase) parts.push(phase);
   return parts.join(" ");
 }
 
@@ -3026,7 +3075,7 @@ export function formatUlwBadge(
  * Mirrors live mid-run slash policy in the REPL.
  */
 export const ULW_LIVE_CONTROLS_HINT =
-  "Live mid-run (type while working — no Ctrl+C): /cycle 0 stop@N+1 · /cycle 1 continue · /max-waves N|off · /ulw-off disarm · /budget N|off · /notify on · /done";
+  "Live mid-run (type while working — no Ctrl+C): /cycle 0 stop@N+1 · /cycle 1 continue · /max-waves N|off · /plan · /build · /ulw-off disarm · /budget N|off · /notify on · /done";
 
 function formatSameSurfaceStatusLine(s: UlwCycleState): string | undefined {
   const streak = s.sameSurfaceStreak ?? 0;
@@ -3123,6 +3172,9 @@ export function formatUlwStatus(s: UlwCycleState | null): string {
   const qualityLine = formatProductQualityStatusLine(s);
   return [
     `ULW cycle: ON  |  ${formatUlwCounts(s)}  ${s.cycle === 1 ? "(CONTINUE — relentless)" : "(LAST — wrap then attest)"}`,
+    resolveUlwPhase(s) === "orient"
+      ? "  Phase: PLAN (research — write a Reading: / exit_plan_mode, or type /build)"
+      : "  Phase: BUILD",
     `  Mandate: ${displayUlwMandate(s.mandate)}`,
     `  Soft prompt expanded: ${s.softPrompt ? "yes" : "no"}`,
     `  max_waves: ${cap != null ? cap : "off (unlimited)"}${
@@ -3388,26 +3440,26 @@ export function evaluateUlwAtStop(opts: {
       s.backlogRequired = false;
     }
 
-    // Evaluate-class: do not leave wave 0 without a written reading.
+    // Wave 1 PLAN: do not leave wave 0 without a written plan.
     // Capped so it can never become an infinite trap.
     if (
       s.judgmentRequired &&
       s.wave === 0 &&
-      !hasMandateJudgment(opts.sessionId, msg) &&
+      !hasUlwPlan(opts.sessionId, msg) &&
       (s.judgmentDemands ?? 0) < MAX_JUDGMENT_DEMANDS
     ) {
       s.judgmentDemands = (s.judgmentDemands ?? 0) + 1;
       saveUlwCycle(s);
       const reanchor = [
-        `[Forge ULW cycle driver] Stop blocked — evaluate-class mandate needs a written reading before Wave 1 closes.`,
+        `[Forge ULW cycle driver] Stop blocked — Wave 1 starts in PLAN. Write the plan before shipping.`,
         `Mandate: ${displayUlwMandate(s.mandate)}`,
-        `Write the reading NOW (what the hard work is, what you passed on, the ONE item you will ship). memory_write it, or start the reply with \`Reading:\`.`,
-        `That is the first verb of the mandate — not advice, not optional. Then execute the item.`,
+        `Write the plan NOW (what the hard work is, what you passed on, the ONE item you will ship, and the command that proves it). memory_write a \`Reading:\`, call exit_plan_mode, or start the reply with \`Reading:\`.`,
+        `Then you get edits. Type /build to skip remaining research.`,
         ULW_LIVE_CONTROLS_HINT,
       ].join("\n");
       return { block: true, reason: reanchor, reanchor };
     }
-    if (s.judgmentRequired && hasMandateJudgment(opts.sessionId, msg)) {
+    if (s.judgmentRequired && hasUlwPlan(opts.sessionId, msg)) {
       s.judgmentRequired = false;
       s.phase = "ship";
     }
@@ -3949,12 +4001,12 @@ export function ulwKickoffMessage(state: UlwCycleState): string {
       ? `- **Backlog gate:** todo_write ≥2 items covering mandate sections BEFORE free-inventing Wave 1 scope.`
       : null,
     state.judgmentRequired
-      ? `- **Reading gate:** Wave 1 cannot close until you write the reading (\`Reading:\` or memory_write). That is the first mandate verb.`
+      ? `- **PLAN gate:** Wave 1 cannot close until you write the plan (\`Reading:\`, memory_write, or exit_plan_mode). Then the driver /builds. Type /build to skip.`
       : null,
     `- ${ULW_LIVE_CONTROLS_HINT}`,
     ``,
     state.judgmentRequired
-      ? `Start Wave 1 **now**: write the reading first (mandate verb 1), todo_write the backlog if required, then start the ONE ship you picked.`
+      ? `Start Wave 1 **now in PLAN**: write the reading first (what the hard work is, what you passed on, the ONE ship, the verify command). memory_write it, call exit_plan_mode, or start the reply with \`Reading:\`. Then you get edits. /build skips remaining research.`
       : state.backlogRequired
         ? `Start Wave 1 **now**: first todo_write a backlog from the mandate/decisions, then execute the top item with proof.`
         : state.softPrompt

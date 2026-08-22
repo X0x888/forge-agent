@@ -9,8 +9,8 @@ import {
   isOnExploreContract,
   loadExploreMapPicks,
 } from "../src/harness/explore-contract.js";
+import { armUlwReady as armUlwCycle } from "./helpers/ulw-arm.js";
 import {
-  armUlwCycle,
   contractHolding,
   disarmUlwCycle,
   loadUlwCycle,

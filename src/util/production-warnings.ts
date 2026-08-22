@@ -284,11 +284,11 @@ export function productionWarningsForRun(
       if (typeof n === "number") {
         if (opts?.ultrawork && n >= 20) {
           warnings.push(
-            `git dirty tree has ${n} changed files under ULW — commit/stash before long unattended runs or use /plan first`,
+            `git dirty tree has ${n} changed files under ULW — commit/stash before long unattended runs (Wave 1 is already PLAN)`,
           );
         } else if (!opts?.ultrawork && n >= 100) {
           warnings.push(
-            `git dirty tree has ${n} changed files — commit/stash before long ULW or use /plan first`,
+            `git dirty tree has ${n} changed files — commit/stash before long ULW`,
           );
         }
       }

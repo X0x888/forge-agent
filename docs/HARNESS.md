@@ -44,7 +44,7 @@ UserPromptSubmit hooks
    - no `**Goal achieved.**` attestation → continue
    - attestation after edits without machine-checkable evidence → bounce once demanding a real check, then normal blocks (capped — never an infinite trap)
    - stuck-wall (N no-edit Stop attempts) → release + surface to user
-3. **ULW cycle driver** (`cycle=1` re-anchor / `/cycle 0` stop at N+1 then LAST attestation)
+3. **ULW cycle driver** (`cycle=1` re-anchor / `/cycle 0` stop at N+1 then LAST attestation). **Wave 1 is PLAN** (`/plan` permission mode + yolo-proof `ulw_orient`); a written plan auto-`/build`s. User `/build` skips research; user `/plan` is a human pause.
 4. **TodoGate** — open todos under ULW without `**Cycle complete.**` / `**Goal achieved.**`; outside ULW, soft-blocks **once** per prompt so half-finished checklists are finished or cancelled (`FORGE_TODO_SOFT_OUTSIDE_ULW=0` disables). Soft fire count is reset on wind-down (`/done`, `/goal done`, `/goal clear`, `/ulw-off`, `/clear`, `/new`, safety-valve CONTINUE→LAST, **max_waves auto LAST**, **ULW stuck-wall**, **goal stuck-wall**, **goal attestation / `markGoalDone`**, **`setMaxWaves` when already at/over cap**) **and** on fresh driver arm (`/ulw`, `/goal set`) via `clearSoftTodoGateOnWindDown`
 5. **Ultrawork open-todos backstop** (session flag if cycle state missing)
 6. **Handoff guard** — premature “let me know if…”, “shall I continue?”, “want me to…?” yields (and incomplete mid-implementation closers) are blocked under ULW/goal/open todos so the agent finishes instead of re-steering the user. Soft Q&A closers (“let me know if you have questions”) still allow Stop outside a driver. Cap: `FORGE_HANDOFF_BLOCK_CAP` (default 3) releases a stuck polite model.

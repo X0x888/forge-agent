@@ -3,8 +3,8 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { armUlwReady as armUlwCycle } from "./helpers/ulw-arm.js";
 import {
-  armUlwCycle,
   disarmUlwCycle,
   evaluateUlwAtStop,
   formatUlwStatus,

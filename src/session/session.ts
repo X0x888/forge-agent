@@ -126,6 +126,11 @@ export interface SessionMeta {
    */
   permissionModeBeforePlan?: PermissionMode;
   /**
+   * ULW entered plan mode for Wave 1. Auto-`/build` on a written plan.
+   * User-typed `/plan` clears this so the human gate stays.
+   */
+  ulwOwnsPlan?: boolean;
+  /**
    * Same-provider fallback chain (`undefined` / `[]` = off).
    * Survives resume like `/model`. Hops below grok-4.5 high are dropped.
    */

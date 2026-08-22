@@ -348,6 +348,9 @@ export {
   sameSurfaceHolding,
   resolveUlwPhase,
   shouldSkipOrient,
+  completeUlwPlan,
+  markUlwPlanDone,
+  advanceUlwPhaseOnReading,
   isSoftPrompt,
   isResumeFollowUp,
   isPlaceholderMandate,
@@ -385,6 +388,7 @@ export {
   providerFuseTripsContinueCap,
   stopBlockTripsContinueCap,
 } from "./harness/ulw-cycle.js";
+export { armUlwPlanMode, syncUlwPlanMode } from "./harness/ulw-plan-mode.js";
 export {
   SAME_SURFACE_HOLD,
   SAME_SURFACE_ADVISORY,
@@ -452,6 +456,9 @@ export {
   isBroadMandate,
   isEvaluateClassMandate,
   hasMandateJudgment,
+  hasUlwPlan,
+  isPlanShapedText,
+  planBodyHasEvidence,
   todosFromMandate,
   maybeRecordUserConstraint,
   recordWaveObservation,

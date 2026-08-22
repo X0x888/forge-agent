@@ -203,7 +203,7 @@ Auto-arm from prose (default on): prompts like `don't stop until tests pass` or 
 
 ### 3. Ultrawork cycle (`/ulw` + `/cycle`)
 
-Max-autonomy **relentless loop**. Soft prompts like `improve the code` are expanded to god-scope (research → waves → serendipity → review → repeat).
+Max-autonomy **relentless loop**. Soft prompts like `improve the code` are expanded to god-scope. **Wave 1 is PLAN** (same spine as `/plan` / `/build`) — then BUILD (research → waves → prove → review → repeat).
 
 | Flag | Meaning |
 |------|---------|
@@ -212,7 +212,9 @@ Max-autonomy **relentless loop**. Soft prompts like `improve the code` are expan
 | **`max_waves=N`** (optional) | Cap waves; auto LAST when wave hits N (default unlimited) |
 
 ```text
-/ulw improve the code          # cycle=1 even for weak prompts
+/ulw improve the code          # Wave 1 PLAN, then BUILD (cycle=1)
+/plan                          # pause into research (same key)
+/build                         # skip remaining research and implement
 /max-waves 3                   # optional cap (live mid-run too)
 /cycle 0                       # finish this wave + one more, then LAST
 /cycle 1                       # resume relentless loops

@@ -51,6 +51,8 @@ import {
   resolveUlwPhase,
   advanceUlwPhaseOnReading,
   shouldSkipOrient,
+  completeUlwPlan,
+  markUlwPlanDone,
 } from "../src/harness/ulw-cycle.js";
 import { filterToolsForUlwPhase, citedPathsFromToolCalls } from "../src/agent/loop.js";
 import { PermissionGate } from "../src/agent/permissions.js";
@@ -58,6 +60,7 @@ import { TOOL_DEFINITIONS } from "../src/agent/tools/definitions.js";
 import {
   appendMemoryRecord,
   loadDecisionMemory,
+  hasUlwPlan,
 } from "../src/harness/decision-memory.js";
 import { armGoal, copyGoal, loadGoal } from "../src/harness/goal.js";
 import { createSession, forkSession } from "../src/session/session.js";
@@ -230,7 +233,7 @@ describe("ulw cycle", () => {
     });
     evaluateUlwAtStop({
       sessionId: sid,
-      lastAssistantMessage: "Reading: ship the dock. Wave shipped.",
+      lastAssistantMessage: "Reading: ship the dock in src/tui/bottom-status.ts. Wave shipped.",
       editCount: 3,
       openTodoCount: 0,
       stuckThreshold: 20,
@@ -280,7 +283,7 @@ describe("ulw cycle", () => {
     const after = evaluateUlwAtStop({
       sessionId: sid,
       lastAssistantMessage:
-        "Reading: highest-leverage work is the missing /verbose catalog plus dock-is-HUD chrome.",
+        "Reading: highest-leverage work is the missing /verbose catalog plus dock-is-HUD chrome. Verify: npm test.",
       editCount: 1,
       openTodoCount: 2,
       stuckThreshold: 20,
@@ -421,7 +424,7 @@ describe("ulw cycle", () => {
     const capped = armUlwCycle(sid, "improve more", { cycle: 1, maxWaves: 3 });
     assert.equal(capped.maxWaves, 3);
     assert.equal(formatUlwCounts(capped), "cycle=1 wave=0/3 blocks=0");
-    assert.equal(formatUlwBadge(capped), "c=1 w=0/3");
+    assert.equal(formatUlwBadge(capped), "c=1 w=0/3 PLAN");
     assert.match(formatUlwStatus(capped), /max_waves: 3/);
   });
 
@@ -430,6 +433,7 @@ describe("ulw cycle", () => {
     process.env.FORGE_HOME = tmp;
     const sid = "ulw-cap";
     armUlwCycle(sid, "ship three waves", { cycle: 1, maxWaves: 2 });
+    markUlwPlanDone(sid);
     const {
       evaluateTodoGateAtStop,
       clearTodoGateState,
@@ -509,6 +513,7 @@ describe("ulw cycle", () => {
     process.env.FORGE_HOME = tmp;
     const sid = "ulw-setmw-now";
     armUlwCycle(sid, "task", { cycle: 1, maxWaves: 10 });
+    markUlwPlanDone(sid);
     // Advance wave to 3
     evaluateUlwAtStop({
       sessionId: sid,
@@ -561,6 +566,7 @@ describe("ulw cycle", () => {
     process.env.FORGE_HOME = tmp;
     const sid = "ulw-lower";
     armUlwCycle(sid, "task", { cycle: 1, maxWaves: 10 });
+    markUlwPlanDone(sid);
     evaluateUlwAtStop({
       sessionId: sid,
       lastAssistantMessage: "w1",
@@ -598,6 +604,7 @@ describe("ulw cycle", () => {
     process.env.FORGE_HOME = tmp;
     const sid = "ulw-sess-1";
     armUlwCycle(sid, "improve the code", { cycle: 1 });
+    markUlwPlanDone(sid);
 
     const d1 = evaluateUlwAtStop({
       sessionId: sid,
@@ -697,7 +704,7 @@ describe("ulw cycle", () => {
     );
     appendMemoryRecord(sid, {
       kind: "observation",
-      text: "Reading: daily REPL trust beats leftover chrome — ship the dock.",
+      text: "Reading: daily REPL trust beats leftover chrome — ship the dock. Verify: npm test.",
       source: "agent",
     });
     const d = evaluateUlwAtStop({
@@ -756,7 +763,7 @@ describe("ulw cycle", () => {
     );
     appendMemoryRecord(sid, {
       kind: "observation",
-      text: "Reading: first-run numbers — ship typeable 1–6.",
+      text: "Reading: first-run numbers — ship typeable 1–6. Verify: npm test.",
       source: "agent",
     });
     for (let i = 1; i <= 4; i++) {
@@ -818,7 +825,7 @@ describe("ulw cycle", () => {
     );
     appendMemoryRecord(sid, {
       kind: "observation",
-      text: "Reading: daily REPL trust beats leftover chrome — ship the dock.",
+      text: "Reading: daily REPL trust beats leftover chrome — ship the dock. Verify: npm test.",
       source: "agent",
     });
     // First stop: proven wave lands in the ledger.
@@ -1047,7 +1054,7 @@ describe("summarizeWave", () => {
       appendMemoryRecord(sid, {
         kind: "decision",
         source: "agent",
-        text: "Reading: Forge's product is the interactive REPL + blocking harness. Daily-loop trust beats chrome.",
+        text: "Reading: Forge's product is the interactive REPL + blocking harness. Daily-loop trust beats chrome. Verify: npm test.",
       });
       const s = summarizeWave(
         "LSP still reports the unused import — verifying the file actually dropped it.",
@@ -1076,7 +1083,7 @@ describe("summarizeWave", () => {
       appendMemoryRecord(sid, {
         kind: "decision",
         source: "agent",
-        text: "Reading: headless forge run hides failed-tool tails. Ship transcript parity.",
+        text: "Reading: headless forge run hides failed-tool tails. Ship transcript parity. Verify: npm test.",
       });
       const s = summarizeWave(
         "The resume change is tiny; I'll re-run the dock test and close Wave 2.",
@@ -1137,9 +1144,15 @@ describe("polish-class Stop", () => {
       ),
       false,
     );
+    assert.equal(
+      filterToolsForUlwPhase(TOOL_DEFINITIONS, "orient").some(
+        (t) => t.function.name === "exit_plan_mode",
+      ),
+      true,
+    );
     appendMemoryRecord(sid, {
       kind: "decision",
-      text: "Reading: first-run numbers lie — ship typeable 1–6 on the setup card.",
+      text: "Reading: first-run numbers lie — ship typeable 1–6 on the setup card. Verify: npm test.",
       source: "agent",
     });
     assert.equal(advanceUlwPhaseOnReading(sid), true);
@@ -1156,6 +1169,84 @@ describe("polish-class Stop", () => {
     );
     assert.equal(resolveUlwPhase(again), "ship");
     assert.equal(shouldSkipOrient(again, sid), true);
+    fs.rmSync(tmp, { recursive: true, force: true });
+  });
+
+  it("every new ULW starts in PLAN, not only evaluate-class", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-ulw-default-plan-"));
+    process.env.FORGE_HOME = tmp;
+    const sid = "ulw-typo";
+    const s = armUlwCycle(sid, "fix the typo in foo.ts", {
+      cycle: 1,
+      skipCheckpoint: true,
+    });
+    assert.equal(s.judgmentRequired, true);
+    assert.equal(resolveUlwPhase(s), "orient");
+    assert.equal(hasUlwPlan(sid), false);
+
+    const blocked = evaluateUlwAtStop({
+      sessionId: sid,
+      lastAssistantMessage: "shipping the typo fix now",
+      editCount: 1,
+      openTodoCount: 0,
+      stuckThreshold: 20,
+    });
+    assert.equal(blocked.block, true);
+    assert.match(blocked.reanchor || "", /PLAN|Reading:/i);
+    assert.equal(loadUlwCycle(sid)?.wave, 0);
+
+    appendMemoryRecord(sid, {
+      kind: "decision",
+      text: "Reading: fix the typo in foo.ts. Verify: npm test.",
+      source: "agent",
+    });
+    assert.equal(advanceUlwPhaseOnReading(sid), true);
+    assert.equal(resolveUlwPhase(loadUlwCycle(sid)), "ship");
+    assert.equal(hasUlwPlan(sid), true);
+
+    const again = armUlwCycle(sid, "fix the typo in foo.ts", {
+      cycle: 1,
+      skipCheckpoint: true,
+    });
+    assert.equal(resolveUlwPhase(again), "ship");
+    fs.rmSync(tmp, { recursive: true, force: true });
+  });
+
+  it("placeholder arm is not PLAN; adopt of a real mandate is", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-ulw-ph-plan-"));
+    process.env.FORGE_HOME = tmp;
+    const sid = "ulw-ph-plan";
+    const ph = armUlwCycle(sid, PLACEHOLDER_MANDATE, {
+      cycle: 1,
+      skipCheckpoint: true,
+    });
+    assert.equal(resolveUlwPhase(ph), "ship");
+    assert.equal(ph.judgmentRequired, false);
+    const next = adoptUlwMandate(sid, "fix the typo in README");
+    assert.equal(resolveUlwPhase(next), "orient");
+    assert.equal(next!.judgmentRequired, true);
+    assert.equal(completeUlwPlan(sid, { force: true }), true);
+    assert.equal(resolveUlwPhase(loadUlwCycle(sid)), "ship");
+    fs.rmSync(tmp, { recursive: true, force: true });
+  });
+
+  it("markUlwPlanDone lets Stop stamp after PLAN", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-ulw-mark-plan-"));
+    process.env.FORGE_HOME = tmp;
+    const sid = "ulw-mark-plan";
+    armUlwCycle(sid, "improve the codebase", { cycle: 1, skipCheckpoint: true });
+    assert.equal(markUlwPlanDone(sid), true);
+    const d = evaluateUlwAtStop({
+      sessionId: sid,
+      lastAssistantMessage: "Wave shipped: first real slice.",
+      editCount: 3,
+      openTodoCount: 0,
+      stuckThreshold: 20,
+      verificationRan: true,
+      verificationPassed: true,
+    });
+    assert.equal(d.block, true);
+    assert.equal(loadUlwCycle(sid)?.wave, 1);
     fs.rmSync(tmp, { recursive: true, force: true });
   });
 
@@ -1221,14 +1312,14 @@ describe("polish-class Stop", () => {
       );
       appendMemoryRecord(sid, {
         kind: "decision",
-        text: "Reading: first-run numbers lie — next ship typeable 1–6 on the setup card.",
+        text: "Reading: first-run numbers lie — next ship typeable 1–6 on the setup card. Verify: npm test.",
         source: "agent",
       });
       assert.equal(advanceUlwPhaseOnReading(sid), true);
       evaluateUlwAtStop({
         sessionId: sid,
         lastAssistantMessage:
-          "Wave 1 shipped. Reading: first-run numbers lie — ship typeable 1–6.",
+          "Wave 1 shipped. Reading: first-run numbers lie — ship typeable 1–6. Verify: npm test.",
         editCount: 2,
         openTodoCount: 0,
         stuckThreshold: 20,
@@ -1294,6 +1385,7 @@ describe("polish-class Stop", () => {
       maxWaves: 10,
       skipCheckpoint: true,
     });
+    markUlwPlanDone(sid);
     for (let i = 1; i <= 4; i++) {
       evaluateUlwAtStop({
         sessionId: sid,
@@ -1318,6 +1410,7 @@ describe("ulw wave ledger + quality bar", () => {
     process.env.FORGE_HOME = tmp;
     const sid = "ulw-ledger";
     armUlwCycle(sid, "harden the cli", { cycle: 1 });
+    markUlwPlanDone(sid);
 
     const d1 = evaluateUlwAtStop({
       sessionId: sid,
@@ -1495,6 +1588,7 @@ describe("ulw wave ledger + quality bar", () => {
     process.env.FORGE_HOME = tmp;
     const sid = "ulw-proof-cap";
     armUlwCycle(sid, "improve", { cycle: 1 });
+    markUlwPlanDone(sid);
 
     const stop = (editCount: number) =>
       evaluateUlwAtStop({
@@ -1535,6 +1629,7 @@ describe("ulw wave ledger + quality bar", () => {
     process.env.FORGE_HOME = tmp;
     const sid = "ulw-thin";
     armUlwCycle(sid, "improve", { cycle: 1 });
+    markUlwPlanDone(sid);
 
     const stop = (editCount: number) =>
       evaluateUlwAtStop({
@@ -1561,6 +1656,7 @@ describe("ulw wave ledger + quality bar", () => {
     process.env.FORGE_HOME = tmp;
     const sid = "ulw-consol";
     armUlwCycle(sid, "improve", { cycle: 1 });
+    markUlwPlanDone(sid);
 
     const decisions = [10, 12, 14, 16].map((editCount) =>
       evaluateUlwAtStop({
@@ -1636,6 +1732,7 @@ describe("ulw wave ledger + quality bar", () => {
     process.env.FORGE_HOME = tmp;
     const sid = "ulw-status-ledger";
     armUlwCycle(sid, "improve", { cycle: 1 });
+    markUlwPlanDone(sid);
     evaluateUlwAtStop({
       sessionId: sid,
       lastAssistantMessage: "big wave",
@@ -1680,6 +1777,7 @@ describe("ulw wave ledger + quality bar", () => {
     process.env.FORGE_HOME = tmp;
     const sid = "ulw-fork-ledger";
     armUlwCycle(sid, "improve", { cycle: 1 });
+    markUlwPlanDone(sid);
     evaluateUlwAtStop({
       sessionId: sid,
       lastAssistantMessage: "wave one",
@@ -1711,6 +1809,7 @@ describe("ulw wave ledger + quality bar", () => {
     process.env.FORGE_HOME = tmp;
     const sid = "ulw-sg-proof";
     armUlwCycle(sid, "improve the code", { cycle: 1 });
+    markUlwPlanDone(sid);
     const config = {
       ...DEFAULT_CONFIG,
       blockingStopHooks: true,
@@ -1884,6 +1983,7 @@ describe("ulw wave ledger + quality bar", () => {
       cycle: 1,
       editCount: 40,
     });
+    markUlwPlanDone(sid);
     assert.equal(armed.lastBlockEditCount, 40);
 
     const d = evaluateUlwAtStop({
@@ -1952,6 +2052,7 @@ describe("net-diff progress tracking (ULW)", () => {
     process.env.FORGE_HOME = tmp;
     const sid = "ulw-nd-churn";
     armUlwCycle(sid, "improve", { cycle: 1 });
+    markUlwPlanDone(sid);
     // w1: real work, baseline fp-1
     evaluateUlwAtStop(base(sid, { editCount: 5, diffFingerprint: "fp-1" }));
     // w2: more real work, new state fp-2

@@ -63,5 +63,9 @@ describe("/improve", () => {
     const u = loadUlwCycle(session.meta.id);
     assert.equal(u?.cycle, 1);
     assert.match(u?.mandate || "", /reliability|steering/i);
+    assert.equal(u?.phase, "orient");
+    assert.equal(u?.judgmentRequired, true);
+    assert.equal(session.meta.ulwOwnsPlan, true);
+    assert.equal(r.session?.meta.permissionMode ?? session.meta.permissionMode, "plan");
   });
 });

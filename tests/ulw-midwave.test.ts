@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import {
   armUlwCycle,
+  markUlwPlanDone,
   disarmUlwCycle,
   loadUlwCycle,
   saveUlwCycle,
@@ -17,6 +18,16 @@ import {
   isGlanceableClassShip,
 } from "../src/harness/ulw-cycle.js";
 import { appendMemoryRecord } from "../src/harness/decision-memory.js";
+
+function armReady(
+  sid: string,
+  mandate: string,
+  opts?: Parameters<typeof armUlwCycle>[2],
+) {
+  armUlwCycle(sid, mandate, opts);
+  markUlwPlanDone(sid);
+  return loadUlwCycle(sid)!;
+}
 
 function withHome(fn: () => void): void {
   const prev = process.env.FORGE_HOME;
@@ -38,7 +49,7 @@ describe("ULW mid-loop wave stamp", () => {
       fs.mkdirSync(path.join(process.env.FORGE_HOME!, "sessions", sid), {
         recursive: true,
       });
-      armUlwCycle(sid, "Ship the feature.", {
+      armReady(sid, "Ship the feature.", {
         cycle: 1,
         skipCheckpoint: true,
         editCount: 0,
@@ -74,7 +85,7 @@ describe("ULW mid-loop wave stamp", () => {
       fs.mkdirSync(path.join(process.env.FORGE_HOME!, "sessions", sid), {
         recursive: true,
       });
-      armUlwCycle(sid, "Ship the feature.", {
+      armReady(sid, "Ship the feature.", {
         cycle: 1,
         skipCheckpoint: true,
         editCount: 2,
@@ -101,7 +112,7 @@ describe("ULW mid-loop wave stamp", () => {
       fs.mkdirSync(path.join(process.env.FORGE_HOME!, "sessions", sid), {
         recursive: true,
       });
-      armUlwCycle(sid, "Ship the feature.", {
+      armReady(sid, "Ship the feature.", {
         cycle: 1,
         maxWaves: 2,
         skipCheckpoint: true,
@@ -129,7 +140,7 @@ describe("ULW mid-loop wave stamp", () => {
       fs.mkdirSync(path.join(process.env.FORGE_HOME!, "sessions", sid), {
         recursive: true,
       });
-      armUlwCycle(sid, "Ship the feature.", {
+      armReady(sid, "Ship the feature.", {
         cycle: 1,
         maxWaves: 4,
         skipCheckpoint: true,
@@ -157,7 +168,7 @@ describe("ULW mid-loop wave stamp", () => {
       fs.mkdirSync(path.join(process.env.FORGE_HOME!, "sessions", sid), {
         recursive: true,
       });
-      const armed = armUlwCycle(sid, "Ship the feature.", {
+      const armed = armReady(sid, "Ship the feature.", {
         cycle: 1,
         maxWaves: 10,
         skipCheckpoint: true,
@@ -185,7 +196,7 @@ describe("ULW mid-loop wave stamp", () => {
       fs.mkdirSync(path.join(process.env.FORGE_HOME!, "sessions", sid), {
         recursive: true,
       });
-      armUlwCycle(sid, "Ship the feature.", {
+      armReady(sid, "Ship the feature.", {
         cycle: 1,
         maxWaves: 10,
         skipCheckpoint: true,
@@ -223,7 +234,7 @@ describe("ULW mid-loop wave stamp", () => {
       fs.mkdirSync(path.join(process.env.FORGE_HOME!, "sessions", sid), {
         recursive: true,
       });
-      const s0 = armUlwCycle(sid, "Ship the feature.", {
+      const s0 = armReady(sid, "Ship the feature.", {
         cycle: 1,
         skipCheckpoint: true,
         editCount: 0,
@@ -257,7 +268,7 @@ describe("ULW mid-loop wave stamp", () => {
       fs.mkdirSync(path.join(process.env.FORGE_HOME!, "sessions", sid), {
         recursive: true,
       });
-      armUlwCycle(sid, "Ship the feature.", {
+      armReady(sid, "Ship the feature.", {
         cycle: 1,
         skipCheckpoint: true,
         editCount: 0,
@@ -289,7 +300,7 @@ describe("ULW mid-loop wave stamp", () => {
       fs.mkdirSync(path.join(process.env.FORGE_HOME!, "sessions", sid), {
         recursive: true,
       });
-      armUlwCycle(sid, "improve the ui", {
+      armReady(sid, "improve the ui", {
         cycle: 1,
         maxWaves: 4,
         skipCheckpoint: true,
@@ -326,7 +337,7 @@ describe("ULW mid-loop wave stamp", () => {
       fs.mkdirSync(path.join(process.env.FORGE_HOME!, "sessions", sid), {
         recursive: true,
       });
-      armUlwCycle(sid, "improve the ui", {
+      armReady(sid, "improve the ui", {
         cycle: 1,
         maxWaves: 4,
         skipCheckpoint: true,
@@ -356,7 +367,7 @@ describe("ULW mid-loop wave stamp", () => {
       fs.mkdirSync(path.join(process.env.FORGE_HOME!, "sessions", sid), {
         recursive: true,
       });
-      armUlwCycle(sid, "improve the ui", {
+      armReady(sid, "improve the ui", {
         cycle: 1,
         skipCheckpoint: true,
         editCount: 0,
@@ -393,7 +404,7 @@ describe("ULW mid-loop wave stamp", () => {
       fs.mkdirSync(path.join(process.env.FORGE_HOME!, "sessions", sid), {
         recursive: true,
       });
-      armUlwCycle(sid, "improve the ui", {
+      armReady(sid, "improve the ui", {
         cycle: 1,
         skipCheckpoint: true,
         editCount: 0,
@@ -425,7 +436,7 @@ describe("ULW mid-loop wave stamp", () => {
       fs.mkdirSync(path.join(process.env.FORGE_HOME!, "sessions", sid), {
         recursive: true,
       });
-      armUlwCycle(sid, "improve the ui", {
+      armReady(sid, "improve the ui", {
         cycle: 1,
         maxWaves: 8,
         skipCheckpoint: true,
@@ -459,7 +470,7 @@ describe("ULW mid-loop wave stamp", () => {
       fs.mkdirSync(path.join(process.env.FORGE_HOME!, "sessions", sid), {
         recursive: true,
       });
-      armUlwCycle(sid, "improve the ui", {
+      armReady(sid, "improve the ui", {
         cycle: 1,
         skipCheckpoint: true,
         editCount: 0,
@@ -506,7 +517,7 @@ describe("ULW mid-loop wave stamp", () => {
       fs.mkdirSync(path.join(process.env.FORGE_HOME!, "sessions", sid), {
         recursive: true,
       });
-      armUlwCycle(sid, "improve the ui", {
+      armReady(sid, "improve the ui", {
         cycle: 1,
         maxWaves: 8,
         skipCheckpoint: true,

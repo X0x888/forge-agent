@@ -231,9 +231,11 @@ import { runBudget } from "../tui/budget-card.js";
 import { tokenizeSimple } from "../agent/shell-parse.js";
 import {
   armUlwCycle,
+  completeUlwPlan,
   mandateFromUserText,
   PLACEHOLDER_MANDATE,
   disarmUlwCycle,
+  resolveUlwPhase,
   setCycleFlag,
   scheduleCycleZeroStop,
   setMaxWaves,
@@ -262,6 +264,7 @@ import {
   normalizeProjectMemoryKind,
 } from "../harness/project-memory.js";
 import { pushLiveNotice } from "../harness/live-notices.js";
+import { armUlwPlanMode, syncUlwPlanMode } from "../harness/ulw-plan-mode.js";
 import { clearSoftTodoGateOnWindDown } from "../harness/todo-gate.js";
 import { applyTodos, formatTodoBoard, openTodos } from "../agent/todos.js";
 import {
@@ -2096,6 +2099,7 @@ export async function handleSlash(
         editCount: opts.session.meta.editCount,
         cwd: opts.config.workspace || opts.session.meta.cwd || process.cwd(),
       });
+      armUlwPlanMode(opts.session, opts.config);
       if (state.checkpointSha) {
         stampCheckpoint(opts.session, state.checkpointSha, false);
       }
@@ -2149,6 +2153,7 @@ export async function handleSlash(
         editCount: opts.session.meta.editCount,
         cwd: opts.config.workspace || opts.session.meta.cwd || process.cwd(),
       });
+      armUlwPlanMode(opts.session, opts.config);
       if (state.checkpointSha) {
         stampCheckpoint(opts.session, state.checkpointSha, false);
       }
@@ -2213,7 +2218,9 @@ export async function handleSlash(
               (state.backlogRequired ? "  backlog-gate" : ""),
           ),
         chalk.dim(
-          "Soft prompts still drive the harness: research → waves → serendipity → review → repeat.",
+          resolveUlwPhase(state) === "orient"
+            ? "Wave 1 is PLAN (research). Write a Reading: / exit_plan_mode — then the driver /builds. Type /build to skip."
+            : "Soft prompts still drive the harness: research → waves → serendipity → review → repeat.",
         ),
         chalk.cyan(ULW_LIVE_CONTROLS_HINT),
         ulwCheckTip,
@@ -2411,6 +2418,7 @@ export async function handleSlash(
       const sid = opts.session.meta.id;
       opts.session.meta.ultrawork = false;
       disarmUlwCycle(sid);
+      syncUlwPlanMode(opts.session, opts.config);
       // Parity with /done: reset soft TodoGate so disarm is not followed by a
       // leftover once-block for open todos the user is intentionally ending.
       try {
@@ -2499,6 +2507,7 @@ export async function handleSlash(
           cycle: 1,
           editCount: opts.session.meta.editCount,
         });
+        armUlwPlanMode(opts.session, opts.config);
         state =
           flag === 0
             ? scheduleCycleZeroStop(sid, {
@@ -2632,6 +2641,7 @@ export async function handleSlash(
           maxWaves: parsed,
           editCount: opts.session.meta.editCount,
         });
+        armUlwPlanMode(opts.session, opts.config);
         saveSession(opts.session);
       } else {
         opts.session.meta.ultrawork = true;
@@ -5939,6 +5949,7 @@ case "/new":
       // OpenCode-style: session-scoped plan mode (no sticky prefs footgun).
       const note = arg.trim();
       const { changed, previous } = enterSessionPlanMode(opts.config, opts.session);
+      opts.session.meta.ulwOwnsPlan = false;
       saveSession(opts.session);
       const sid = opts.session.meta.id;
       pushLiveNotice(
@@ -5979,9 +5990,16 @@ case "/new":
     case "/execute": {
       // Leave plan → restore prior session mode (OpenCode build-switch).
       const note = arg.trim();
-      const { mode, wasPlan } = exitSessionPlanMode(opts.config, opts.session);
-      persistSessionMode(opts.session);
       const sid = opts.session.meta.id;
+      const ulw = loadUlwCycle(sid);
+      const wasUlwOrient =
+        Boolean(ulw?.enabled) && resolveUlwPhase(ulw) === "orient";
+      const { mode, wasPlan } = exitSessionPlanMode(opts.config, opts.session);
+      if (wasUlwOrient) {
+        completeUlwPlan(sid, { force: true });
+      }
+      delete opts.session.meta.ulwOwnsPlan;
+      persistSessionMode(opts.session);
       if (wasPlan) {
         pushLiveNotice(
           sid,
@@ -6990,7 +7008,7 @@ export async function runDoctorCheck(
       if (typeof g.changedFiles === "number" && g.changedFiles >= 40) {
         lines.push(
           chalk.yellow(
-            `  ⚠ dirty tree has ${g.changedFiles} changed files — commit/stash before a long ULW wave, or /plan first`,
+            `  ⚠ dirty tree has ${g.changedFiles} changed files — commit/stash before a long ULW wave`,
           ),
         );
       }

@@ -22,7 +22,7 @@ Getting started
   Type a task in English. Forge edits, checks, and prints a Δ.
   1–6 on the /setup card run that item (same as /setup 1)
   /setup              Account, model, budget, notify, AGENTS.md
-  /plan [focus]       Read-only design, then /build
+  /plan [focus]       Read-only design (same key as ULW Wave 1), then /build
   /init               Write a real AGENTS.md for this repo
   /doctor             Health (auth, sandbox, Stop, files)
   /help all           Full command list
@@ -41,7 +41,7 @@ Daily
 Unattended
 ──────────
   /goal <objective>   Relentless driver
-  /ulw [task]         Ultrawork cycle (starts now)
+  /ulw [task]         Ultrawork: Wave 1 PLAN then BUILD
   /done               Wind down + lastErr/verify Next
 
 Keys
@@ -85,7 +85,7 @@ Harness
 
   /goal <objective>   Relentless driver (Stop blocked until attested)
   /goal pause|resume|clear|done
-  /ulw [task]         Ultrawork + cycle=1 (starts working immediately)
+  /ulw [task]         Ultrawork: Wave 1 PLAN, then BUILD (cycle=1)
   /cycle 1|0          Continue waves or finish this + one more, then stop
   /max-waves N|off    Cap ULW waves (auto LAST at N)
   /done               Wind down + lastErr/verify Next
@@ -152,7 +152,7 @@ Forge slash commands
   /pause                Shorthand for /goal pause  [live]
   /unpause              Shorthand for /goal resume  [live]
   /improve [focus…]       Continuous-improve (ULW; alias /ralph)
-  /ulw [task]           Arm ULW + cycle=1 (soft/broad seeds backlog + decision memory)
+  /ulw [task]           Arm ULW + cycle=1 (Wave 1 PLAN, then BUILD; soft/broad seeds backlog)
   /memory [list|add …]  Session decisions. /memory project … for cross-session.
   /attach <image>       Attach image path for vision ([[image:path]] in next message)
   /paste                Attach clipboard image (pngpaste / osascript / wl-paste / xclip)
@@ -177,8 +177,8 @@ Forge slash commands
   /temperature [0–2]    Session sampling temperature (/temp)  [live]
   /max-tokens [n]       Session max output tokens  [live]
   /context-window [n|auto]  Pin or auto-follow model max context (/ctx-window)  [live]
-  /plan [focus]         Session-scoped PLAN mode (read-only design; no sticky prefs)  [live]
-  /build [note]         Leave plan → restore prior mode and implement (/execute)  [live]
+  /plan [focus]         Session-scoped PLAN (ULW Wave 1 uses this; no sticky prefs)  [live]
+  /build [note]         Leave plan → implement now (skips remaining ULW Wave 1 research)  [live]
   /permissions [mode]   Menu if empty; Tab / numbers / aliases (yolo, always…)
                         Sticky prefs · plan|build aliases · list|clear|revoke always-allows
   /compact              Compact conversation

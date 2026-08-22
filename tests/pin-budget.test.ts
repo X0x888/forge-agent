@@ -10,8 +10,8 @@ import {
   pinBudgetLawPresent,
   RAW_PIN_WARNING,
 } from "../src/util/pin-budget.js";
+import { armUlwReady as armUlwCycle } from "./helpers/ulw-arm.js";
 import {
-  armUlwCycle,
   loadUlwCycle,
   maybeStampUlwWave,
 } from "../src/harness/ulw-cycle.js";

@@ -81,7 +81,9 @@ Only after you are comfortable chatting:
 
 ```
 /goal ship feature X with tests green
-/ulw improve the codebase          # starts working immediately
+/ulw improve the codebase          # Wave 1 is PLAN, then BUILD
+/plan                              # pause into research (same key)
+/build                             # skip remaining research and implement
 /done                              # wind down both
 ```
 
