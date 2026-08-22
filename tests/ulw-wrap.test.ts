@@ -67,7 +67,7 @@ describe("ULW LAST wrap", () => {
       const bounce = evaluateUlwAtStop({
         sessionId: sid,
         lastAssistantMessage:
-          "**Cycle complete.**\n✅ npm run typecheck — green",
+          "**Cycle complete.**\n✅ npm run typecheck — green\nMust-fix: none",
         editCount: 4,
         openTodoCount: 0,
         stuckThreshold: 20,
@@ -93,7 +93,7 @@ describe("ULW LAST wrap", () => {
       const done = evaluateUlwAtStop({
         sessionId: sid,
         lastAssistantMessage:
-          "**Cycle complete.**\n✅ npm run typecheck — green",
+          "**Cycle complete.**\n✅ npm run typecheck — green\nMust-fix: none",
         editCount: edits,
         openTodoCount: 0,
         stuckThreshold: 20,
@@ -120,7 +120,7 @@ describe("ULW LAST wrap", () => {
       const done = evaluateUlwAtStop({
         sessionId: sid,
         lastAssistantMessage:
-          "**Cycle complete.**\n✅ npm run typecheck — green",
+          "**Cycle complete.**\n✅ npm run typecheck — green\nMust-fix: none",
         editCount: 8,
         openTodoCount: 0,
         stuckThreshold: 20,
@@ -183,7 +183,7 @@ describe("ULW LAST wrap", () => {
       const done = evaluateUlwAtStop({
         sessionId: sid,
         lastAssistantMessage:
-          `**Cycle complete.**\n${cancelled}\n✅ npm run typecheck — green`,
+          `**Cycle complete.**\n${cancelled}\n✅ npm run typecheck — green\nMust-fix: none`,
         editCount: 4,
         openTodoCount: 0,
         stuckThreshold: 20,
@@ -233,7 +233,7 @@ describe("ULW LAST wrap", () => {
       const bounce = evaluateUlwAtStop({
         sessionId: sid,
         lastAssistantMessage:
-          "**Cycle complete.**\n✅ npm run typecheck — green",
+          "**Cycle complete.**\n✅ npm run typecheck — green\nMust-fix: none",
         editCount: 4,
         openTodoCount: 0,
         stuckThreshold: 20,
@@ -258,7 +258,7 @@ describe("ULW LAST wrap", () => {
       const done = evaluateUlwAtStop({
         sessionId: sid,
         lastAssistantMessage:
-          "**Cycle complete.**\n✅ npm run typecheck — green",
+          "**Cycle complete.**\n✅ npm run typecheck — green\nMust-fix: none",
         editCount: 8,
         openTodoCount: 0,
         stuckThreshold: 20,
@@ -287,7 +287,7 @@ describe("ULW LAST wrap", () => {
       const bounce = evaluateUlwAtStop({
         sessionId: sid,
         lastAssistantMessage:
-          "**Cycle complete.**\n✅ npm run typecheck — green",
+          "**Cycle complete.**\n✅ npm run typecheck — green\nMust-fix: none",
         editCount: 6,
         openTodoCount: 0,
         stuckThreshold: 20,
@@ -301,7 +301,7 @@ describe("ULW LAST wrap", () => {
       const done = evaluateUlwAtStop({
         sessionId: sid,
         lastAssistantMessage:
-          "**Cycle complete.** Working tree clean.\n✅ npm run typecheck — green",
+          "**Cycle complete.** Working tree clean.\n✅ npm run typecheck — green\nMust-fix: none",
         editCount: 6,
         openTodoCount: 0,
         stuckThreshold: 20,
@@ -325,7 +325,7 @@ describe("ULW LAST wrap", () => {
       const done = evaluateUlwAtStop({
         sessionId: sid,
         lastAssistantMessage:
-          "**Cycle complete.**\n✅ npm run typecheck — green",
+          "**Cycle complete.**\n✅ npm run typecheck — green\nMust-fix: none",
         editCount: 8,
         openTodoCount: 0,
         stuckThreshold: 20,

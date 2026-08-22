@@ -263,6 +263,9 @@ export function maybeAutoCommitOnUlwDone(opts: {
   if (ulw && isPlaceholderMandate(ulw.mandate)) {
     return { committed: false, skipped: "pending work-order" };
   }
+  if (ulw?.lastReflect === "score") {
+    return { committed: false, skipped: "LAST reflect score (read-only)" };
+  }
   const subject = buildAutoCommitSubject(
     ulw ? displayUlwMandate(ulw.mandate) : "ULW cycle complete",
     shipHint(opts.sessionId),

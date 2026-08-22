@@ -1989,19 +1989,19 @@ export async function handleSlash(
           if (next) {
             pushLiveNotice(
               sid,
-              "User sent /done mid-run — ULW flipped to cycle=0 (LAST). Wrap in-flight work and already-named ships, attest **Cycle complete.** Do not start a new Reading or surface.",
+              "User sent /done mid-run — ULW flipped to cycle=0 (LAST). Wrap in-flight work and already-named ships, LAST reflect scores this run (maybe one must-fix close-out), then **Cycle complete.** Do not start a new Reading or surface.",
             );
             parts.push(
               chalk.magenta("ULW → cycle=0 (LAST)") +
                 chalk.dim(
-                  `  ${formatUlwCounts(next)}  wrap in-flight + named plan, then **Cycle complete.**`,
+                  `  ${formatUlwCounts(next)}  wrap, LAST reflect, then **Cycle complete.**`,
                 ),
             );
           }
         } else if (ulw?.enabled && ulw.cycle === 0) {
           parts.push(
             chalk.dim(
-              "ULW already on cycle=0 (LAST) — wrap in-flight work + named plan, then **Cycle complete.**",
+              "ULW already on cycle=0 (LAST) — wrap, LAST reflect, then **Cycle complete.**",
             ),
           );
         }
@@ -2600,7 +2600,7 @@ export async function handleSlash(
           sid,
           stopAt != null && state.cycle === 1
             ? `User set /cycle 0 mid-run. Finish the open wave, ship one more, then LAST at wave ${stopAt}. Stay CONTINUE until then. Do not attest **Cycle complete.** yet. Do not stop mid-wave.`
-            : "User set cycle=0 (LAST) mid-run. Wrap this last wave, review the diff, attest **Cycle complete.**",
+            : "User set cycle=0 (LAST) mid-run. Wrap this last wave, LAST reflect scores this run (maybe one must-fix close-out), then attest **Cycle complete.**",
         );
       }
       const stopAt = state.cycleZeroStopAt ?? state.maxWaves;
@@ -2612,7 +2612,7 @@ export async function handleSlash(
             ? chalk.yellow(`cycle=0 — stop at wave ${stopAt}`) +
               " — finish this wave, ship one more, then LAST. **Cycle complete.** is refused until then."
             : chalk.yellow("cycle=0 LAST") +
-              " — wrap this last wave, review, attest **Cycle complete.** then Stop is allowed.";
+              " — wrap, LAST reflect (score + maybe one must-fix close-out), then **Cycle complete.**";
       let cycleTip = "";
       if (flag === 0) {
         try {

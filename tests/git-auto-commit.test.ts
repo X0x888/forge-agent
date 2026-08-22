@@ -21,6 +21,7 @@ import {
 import {
   armUlwCycle,
   evaluateUlwAtStop,
+  loadUlwCycle,
   PLACEHOLDER_MANDATE,
 } from "../src/harness/ulw-cycle.js";
 import { appendFileMutation } from "../src/session/mutations.js";
@@ -131,7 +132,7 @@ describe("ULW auto-commit", () => {
       evaluateUlwAtStop({
         sessionId: sid,
         lastAssistantMessage:
-          "**Cycle complete.**\n✅ npm run typecheck — green",
+          "**Cycle complete.**\n✅ npm run typecheck — green\nMust-fix: none",
         editCount: 1,
         openTodoCount: 0,
         stuckThreshold: 20,
@@ -148,6 +149,33 @@ describe("ULW auto-commit", () => {
       assert.equal(porcelainPaths(root).length, 0);
       const log = git(["log", "-1", "--format=%s"], root);
       assert.match(log, /improve the ui chrome/i);
+    });
+  });
+
+  it("skips during LAST reflect score (read-only)", () => {
+    withRepo((root) => {
+      const sid = "sess-ac-score";
+      fs.mkdirSync(path.join(process.env.FORGE_HOME!, "sessions", sid), {
+        recursive: true,
+      });
+      armUlwCycle(sid, "improve the ui chrome", {
+        cycle: 0,
+        skipCheckpoint: true,
+        cwd: root,
+      });
+      evaluateUlwAtStop({
+        sessionId: sid,
+        lastAssistantMessage: "**Cycle complete.**\n✅ npm run typecheck — green",
+        editCount: 1,
+        openTodoCount: 0,
+        stuckThreshold: 20,
+        verificationPassed: true,
+      });
+      assert.equal(loadUlwCycle(sid)?.lastReflect, "score");
+      fs.writeFileSync(path.join(root, "extra.ts"), "export const n = 2;\n");
+      const r = maybeAutoCommitOnUlwDone({ cwd: root, sessionId: sid });
+      assert.equal(r.committed, false);
+      assert.match(r.skipped || "", /LAST reflect score/i);
     });
   });
 
@@ -234,7 +262,7 @@ describe("ULW auto-commit", () => {
       evaluateUlwAtStop({
         sessionId: sid,
         lastAssistantMessage:
-          "**Cycle complete.**\n✅ npm run typecheck — green",
+          "**Cycle complete.**\n✅ npm run typecheck — green\nMust-fix: none",
         editCount: 1,
         openTodoCount: 0,
         stuckThreshold: 20,

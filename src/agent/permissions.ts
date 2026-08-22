@@ -90,6 +90,8 @@ export interface PermissionRequest {
    * hiding tools from the schema is not enough (the model still knows the names).
    */
   ulwPhase?: "orient" | "ship";
+  /** LAST reflect score phase — read-only, even under yolo. */
+  ulwLastReflectScore?: boolean;
 }
 
 /**
@@ -319,6 +321,77 @@ export class PermissionGate {
   }
 
   /**
+   * LAST reflect score: read-only git scorecard. Writes / spawn / mutating
+   * bash hard-deny (even under yolo) until Must-fix / Live-with is written.
+   */
+  private evaluateUlwLastScore(
+    toolName: string,
+    toolInput: Record<string, unknown>,
+    req: PermissionRequest,
+  ): PermissionResult | null {
+    if (toolName === "bash" || toolName === "run_terminal_command") {
+      if (this.isReadOnlyShell(String(toolInput.command || ""))) {
+        return null;
+      }
+      return {
+        decision: "deny",
+        reason:
+          "ulw_last_score: bash mutations denied — LAST reflect is read-only (git log / git diff). Write Must-fix vs Live-with, then Stop.",
+        rule: "ulw_last_score",
+      };
+    }
+    if (
+      toolName === "spawn_subagent" ||
+      toolName === "Task" ||
+      toolName === "task"
+    ) {
+      return {
+        decision: "deny",
+        reason:
+          "ulw_last_score: spawn_subagent denied — LAST reflect is read-only. Score this run, then Stop.",
+        rule: "ulw_last_score",
+      };
+    }
+    if (WRITE_TOOLS.has(toolName) || toolName === "kill_task") {
+      return {
+        decision: "deny",
+        reason:
+          "ulw_last_score: edits denied — LAST reflect is read-only. Write Must-fix vs Live-with, then Stop.",
+        rule: "ulw_last_score",
+      };
+    }
+    if (
+      toolName === "call_mcp" ||
+      toolName === "mcp_call" ||
+      toolName === "use_mcp"
+    ) {
+      const q = String(
+        toolInput.tool_name || toolInput.name || toolInput.tool || "",
+      );
+      const looksRead = req.mcp
+        ? req.mcp.isReadOnlyTool(q)
+        : mcpToolNameLooksReadOnly(q);
+      if (!looksRead) {
+        return {
+          decision: "deny",
+          reason:
+            "ulw_last_score: call_mcp denied for non-read-only tools — LAST reflect is read-only.",
+          rule: "ulw_last_score",
+        };
+      }
+    }
+    if (this.isLspEnsureInstall(toolName, toolInput)) {
+      return {
+        decision: "deny",
+        reason:
+          "ulw_last_score: lsp ensure denied — LAST reflect is read-only.",
+        rule: "ulw_last_score",
+      };
+    }
+    return null;
+  }
+
+  /**
    * web_fetch with allow_local can reach loopback — not a free read-only tool.
    * Requires allow rule, interactive approval, pattern-always, or YOLO.
    * Session-tool alone is intentionally insufficient.
@@ -409,6 +482,12 @@ export class PermissionGate {
     if (req.ulwPhase === "orient") {
       const orientDeny = this.evaluateUlwOrient(toolName, toolInput, req);
       if (orientDeny) return orientDeny;
+    }
+
+    // LAST reflect score: same write/spawn deny as orient (read-only git scorecard).
+    if (req.ulwLastReflectScore) {
+      const scoreDeny = this.evaluateUlwLastScore(toolName, toolInput, req);
+      if (scoreDeny) return scoreDeny;
     }
 
     // 4. YOLO

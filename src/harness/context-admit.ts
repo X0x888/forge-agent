@@ -309,8 +309,8 @@ export function renderHarnessAdmission(s: HarnessSnapshot): string {
       })}** ${
         s.cycle === 0
           ? s.wrapKind === "budget"
-            ? "(LAST — wrap this wave, then **Cycle complete.**)"
-            : "(LAST — wrap in-flight work + already-named ships, then **Cycle complete.**)"
+            ? "(LAST — wrap this wave, score this run, maybe one must-fix close-out, then **Cycle complete.**)"
+            : "(LAST — wrap in-flight + named ships, score this run, maybe one must-fix close-out, then **Cycle complete.**)"
           : "(CONTINUE)"
       }`,
       s.maxWaves != null

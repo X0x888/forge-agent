@@ -584,7 +584,7 @@ describe("mid-run /cycle affects stop-guard without abort", () => {
     setCycleFlag(session.meta.id, 0);
     const released = evaluateUlwAtStop({
       sessionId: session.meta.id,
-      lastAssistantMessage: "**Cycle complete.** Shipped X — npm test: 18 passed.",
+      lastAssistantMessage: "**Cycle complete.** Shipped X — npm test: 18 passed.\nMust-fix: none",
       editCount: 3,
       openTodoCount: 0,
       stuckThreshold: 10,

@@ -484,7 +484,7 @@ describe("ulw cycle", () => {
     const done = evaluateUlwAtStop({
       sessionId: sid,
       lastAssistantMessage:
-        "**Cycle complete.**\n✅ wave one shipped — npm test: 42 passed\n✅ wave two shipped — typecheck clean",
+        "**Cycle complete.**\n✅ wave one shipped — npm test: 42 passed\n✅ wave two shipped — typecheck clean\nMust-fix: none",
       editCount: 3,
       openTodoCount: 0,
       stuckThreshold: 20,
@@ -660,7 +660,7 @@ describe("ulw cycle", () => {
 
     const done = evaluateUlwAtStop({
       sessionId: sid,
-      lastAssistantMessage: "**Cycle complete.**\nShipped X, tests pass.",
+      lastAssistantMessage: "**Cycle complete.**\nShipped X, tests pass.\nMust-fix: none",
       editCount: 3,
       openTodoCount: 0,
       stuckThreshold: 10,
@@ -789,7 +789,7 @@ describe("ulw cycle", () => {
     const done = evaluateUlwAtStop({
       sessionId: sid,
       lastAssistantMessage:
-        "**Cycle complete.**\n✅ four ships — npm test: 12 passed",
+        "**Cycle complete.**\n✅ four ships — npm test: 12 passed\nMust-fix: none",
       editCount: 13,
       openTodoCount: 0,
       stuckThreshold: 20,
@@ -1683,7 +1683,7 @@ describe("ulw wave ledger + quality bar", () => {
     armUlwCycle(sid, "improve the code", { cycle: 1 });
     setCycleFlag(sid, 0);
 
-    const weak = "**Cycle complete.** all wrapped up";
+    const weak = "**Cycle complete.** all wrapped up\nMust-fix: none";
     const d1 = evaluateUlwAtStop({
       sessionId: sid,
       lastAssistantMessage: weak,
@@ -1717,7 +1717,7 @@ describe("ulw wave ledger + quality bar", () => {
 
     const done = evaluateUlwAtStop({
       sessionId: sid,
-      lastAssistantMessage: "**Cycle complete.**\n✅ npm test — 12 passed",
+      lastAssistantMessage: "**Cycle complete.**\n✅ npm test — 12 passed\nMust-fix: none",
       editCount: 2,
       openTodoCount: 0,
       stuckThreshold: 20,

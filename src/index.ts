@@ -412,6 +412,12 @@ export {
   providerFuseTripsContinueCap,
   stopBlockTripsContinueCap,
 } from "./harness/ulw-cycle.js";
+export {
+  parseLastScorecard,
+  lastReflectEnabled,
+  applyLastReflectGate,
+  skipUlwAutoCommitForLastReflect,
+} from "./harness/last-reflect.js";
 export { armUlwPlanMode, syncUlwPlanMode } from "./harness/ulw-plan-mode.js";
 export {
   SAME_SURFACE_HOLD,

@@ -18,3 +18,12 @@ export function armUlwReady(
   markUlwPlanDone(sessionId);
   return loadUlwCycle(sessionId)!;
 }
+
+/** LAST attest that skips close-out (Must-fix: none). */
+export function lastAttest(extra?: string): string {
+  const body =
+    extra?.trim() ||
+    "**Cycle complete.**\n✅ npm run typecheck — green";
+  if (/\bmust-fix\b/i.test(body)) return body;
+  return `${body}\nMust-fix: none\nLive-with: none this run.`;
+}

@@ -3732,6 +3732,7 @@ async function prepareToolResult(opts: {
     };
   }
 
+  const ulwNow = loadUlwCycle(session.meta.id);
   const perm = await permissions.request({
     toolName: name,
     input: toolInput,
@@ -3739,7 +3740,8 @@ async function prepareToolResult(opts: {
     workspace,
     config,
     mcp,
-    ulwPhase: resolveUlwPhase(loadUlwCycle(session.meta.id)),
+    ulwPhase: resolveUlwPhase(ulwNow),
+    ulwLastReflectScore: ulwNow?.lastReflect === "score",
   });
   if (perm.decision === "deny") {
     await hooks.run("PermissionDenied", {

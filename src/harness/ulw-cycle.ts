@@ -80,6 +80,13 @@ import {
   loadExploreMapPicks,
   loadWave1Reading,
 } from "./explore-contract.js";
+import {
+  applyLastReflectGate,
+  formatLastReflectStatusLine,
+  lastReflectEnabled,
+  normalizeLastReflectPhase,
+  type UlwLastReflectPhase,
+} from "./last-reflect.js";
 
 export {
   extractShipSummary,
@@ -260,6 +267,18 @@ export interface UlwCycleState {
    * say "stop at wave N+1" instead of a regular budget.
    */
   cycleZeroStopAt?: number;
+  /**
+   * LAST reflect after wrap: score this run's git product, then at most
+   * one must-fix close-out. Automatic on /cycle 0 LAST and /done LAST.
+   * pending → score (read-only) → closeout (one wave) → done.
+   */
+  lastReflect?: UlwLastReflectPhase;
+  /** Must-fix hole count from the scorecard (close-out list). */
+  lastReflectMustFix?: number;
+  /** Must-fix hole clips for the close-out reanchor. */
+  lastReflectHoles?: string[];
+  /** Scorecard bounces this LAST (capped; fail-open). */
+  lastReflectScoreDemands?: number;
   /** One Cycle-complete bounce while named wrap items are still open. */
   wrapNudgeDone?: boolean;
   /** One product-quality bounce (user-facing ships). Never a trap. */
@@ -310,6 +329,10 @@ export interface UlwStopDecision {
   sameSurfaceDemanded?: boolean;
   /** True when this Stop actually closed a wave (not a gate / already-stamped). */
   waveClosed?: boolean;
+  /** True when LAST reflect demanded a scorecard (read-only). */
+  lastReflectDemanded?: boolean;
+  /** True when LAST reflect demanded the one must-fix close-out wave. */
+  lastReflectCloseout?: boolean;
 }
 
 const LAST_CYCLE_ATTEST_RE =
@@ -753,6 +776,27 @@ function classifyNetDiff(
   return "none";
 }
 
+function armLastReflectPending(s: UlwCycleState): void {
+  if (!lastReflectEnabled()) {
+    s.lastReflect = "done";
+    return;
+  }
+  if (s.lastReflect === "score" || s.lastReflect === "closeout" || s.lastReflect === "done") {
+    return;
+  }
+  s.lastReflect = "pending";
+  s.lastReflectMustFix = undefined;
+  s.lastReflectHoles = undefined;
+  s.lastReflectScoreDemands = 0;
+}
+
+function clearLastReflect(s: UlwCycleState): void {
+  s.lastReflect = undefined;
+  s.lastReflectMustFix = undefined;
+  s.lastReflectHoles = undefined;
+  s.lastReflectScoreDemands = 0;
+}
+
 function flipUlwToLast(
   s: UlwCycleState,
   sessionId: string,
@@ -761,6 +805,7 @@ function flipUlwToLast(
   if (s.cycle !== 1) return;
   s.cycle = 0;
   snapshotUlwWrap(s, kind);
+  armLastReflectPending(s);
   try {
     clearSoftTodoGateOnWindDown(sessionId);
   } catch {
@@ -774,7 +819,7 @@ function lastWaveAdmit(cap: number, wave: number, fromCycleZero?: boolean): stri
     fromCycleZero
       ? `ULW /cycle 0 stop wave=${wave} reached — auto LAST.`
       : `ULW max_waves=${cap} reached at wave=${wave} — auto LAST.`,
-    "Budget LAST — wrap this wave (prove + review), attest **Cycle complete.** Do not start a new ambitious wave.",
+    "Budget LAST — wrap this wave (prove + review), then LAST reflect scores this run automatically (Must-fix vs Live-with) and at most one must-fix close-out. Then **Cycle complete.** Do not start a new ambitious wave.",
   ].join("\n");
 }
 
@@ -1714,6 +1759,7 @@ function clearUlwWrap(s: UlwCycleState): void {
   s.wrapKind = undefined;
   s.wrapFrozenAt = undefined;
   s.wrapNudgeDone = false;
+  clearLastReflect(s);
 }
 
 /** Snapshot LAST wrap once. Immediate LAST (`/done` / safety / cap) only. */
@@ -1809,8 +1855,8 @@ export function formatWrapCard(s: UlwCycleState): string {
   const named = (s.wrapItems ?? []).filter((x) => x.source === "named");
   const openNamed = named.filter((x) => x.status === "open");
   const lines: string[] = [
-    "You may stop after this wrap. Carry in-flight work to done (or cancel with reason), then review and attest **Cycle complete.**",
-    "Do not write a new Reading. Do not start a new surface.",
+    "You may stop after this wrap. Carry in-flight work to done (or cancel with reason), then LAST reflect scores this run automatically, then attest **Cycle complete.**",
+    "Do not write a new Reading. Do not start a new surface. After wrap: Must-fix vs Live-with scorecard (read-only), at most one must-fix close-out, then stop.",
   ];
   if (s.wrapKind === "user" && named.length) {
     lines.push(
@@ -2264,6 +2310,20 @@ export function loadUlwCycle(sessionId: string): UlwCycleState | null {
     raw.wrapKind = undefined;
   }
   if (typeof raw.wrapNudgeDone !== "boolean") raw.wrapNudgeDone = false;
+  raw.lastReflect = normalizeLastReflectPhase(raw.lastReflect);
+  if (
+    typeof raw.lastReflectMustFix !== "number" ||
+    !Number.isFinite(raw.lastReflectMustFix)
+  ) {
+    raw.lastReflectMustFix = undefined;
+  }
+  if (!Array.isArray(raw.lastReflectHoles)) raw.lastReflectHoles = undefined;
+  if (
+    typeof raw.lastReflectScoreDemands !== "number" ||
+    !Number.isFinite(raw.lastReflectScoreDemands)
+  ) {
+    raw.lastReflectScoreDemands = 0;
+  }
   if (typeof raw.soulNudgeDone !== "boolean") raw.soulNudgeDone = false;
   {
     const stopAt = normalizeMaxWaves(raw.cycleZeroStopAt);
@@ -2630,6 +2690,10 @@ export function armUlwCycle(
     startedAt: prev?.enabled ? prev.startedAt : nowIso(),
     updatedAt: nowIso(),
     sessionId,
+    lastReflect: undefined,
+    lastReflectMustFix: undefined,
+    lastReflectHoles: undefined,
+    lastReflectScoreDemands: 0,
   };
   // Auto safety checkpoint before autonomous waves — zero-steering undo point.
   // Disable with FORGE_ULW_CHECKPOINT=0 or opts.skipCheckpoint.
@@ -2669,6 +2733,7 @@ export function armUlwCycle(
       /* */
     }
   }
+  if (state.cycle === 0) armLastReflectPending(state);
   saveUlwCycle(state);
   // Phase 1: durable decision memory — survive compact / multi-wave rot.
   // Do not seed "MANDATE: continue prior mandate" — adopt writes the real one.
@@ -2786,6 +2851,7 @@ export function setCycleFlag(
     clearSameSurfaceHold(s);
     s.sameSurfaceStreak = 0;
     clearUlwWrap(s);
+    clearLastReflect(s);
     if (s.cycleZeroStopAt != null) {
       if (normalizeMaxWaves(s.maxWaves) === s.cycleZeroStopAt) {
         s.maxWaves = null;
@@ -2794,6 +2860,7 @@ export function setCycleFlag(
     }
   } else {
     snapshotUlwWrap(s, opts?.lastReason ?? "user");
+    armLastReflectPending(s);
   }
   saveUlwCycle(s);
   return s;
@@ -2970,6 +3037,7 @@ export function copyUlwCycle(fromId: string, toId: string): UlwCycleState | null
     waves: [...(src.waves ?? [])],
     namedShips: src.namedShips?.map((x) => ({ ...x })),
     wrapItems: src.wrapItems?.map((x) => ({ ...x })),
+    lastReflectHoles: src.lastReflectHoles ? [...src.lastReflectHoles] : undefined,
     stuckBlocks: 0,
     lastBlockEditCount: 0,
     thinStreak: 0,
@@ -3029,6 +3097,7 @@ export function resetUlwOnClear(sessionId: string): UlwCycleState | null {
   s.wrapNudgeDone = false;
   s.soulNudgeDone = false;
   s.cycleZeroStopAt = undefined;
+  clearLastReflect(s);
   if (s.enabled) {
     s.mandate = PLACEHOLDER_MANDATE;
     s.expandedMandate = "";
@@ -3192,6 +3261,7 @@ export function formatUlwStatus(s: UlwCycleState | null): string {
             : "  LAST wrap: budget — this wave only",
         ]
       : []),
+    ...(formatLastReflectStatusLine(s) ? [formatLastReflectStatusLine(s)!] : []),
     ...(ledger ? [`  Recent waves: ${ledger}`] : []),
     ...(best
       ? [
@@ -3209,7 +3279,7 @@ export function formatUlwStatus(s: UlwCycleState | null): string {
     `    /cycle 0       — finish this wave + one more (stop at N+1), then LAST`,
     `    /max-waves N   — cap waves (auto LAST when wave hits N); /max-waves off clears`,
     `    /ulw-off       — disarm immediately`,
-    `  Agent attestation when cycle=0 and wave done: **Cycle complete.**`,
+    `  Agent attestation when cycle=0: wrap, LAST reflect (score + maybe one must-fix close-out), then **Cycle complete.**`,
   ].join("\n");
 }
 
@@ -3259,7 +3329,10 @@ export function evaluateUlwAtStop(opts: {
   if (!s || !s.enabled) return { block: false };
   seedNamedShipsFromExploreMaps(opts.sessionId);
   const stampPaths = resolveChangedPaths(opts);
-  if (s.cycle === 0) ensureUlwWrap(s);
+  if (s.cycle === 0) {
+    ensureUlwWrap(s);
+    if (!s.lastReflect) armLastReflectPending(s);
+  }
 
   const msg = opts.lastAssistantMessage || "";
   const cycleCompleteClaim = LAST_CYCLE_ATTEST_RE.test(msg);
@@ -3322,6 +3395,20 @@ export function evaluateUlwAtStop(opts: {
         reason: reanchor,
         reanchor,
         wrapDemanded: true,
+      };
+    }
+    const reflect = applyLastReflectGate(s, msg, {
+      attested: true,
+      editDelta,
+    });
+    if (reflect.block) {
+      saveUlwCycle(s);
+      return {
+        block: true,
+        reason: reflect.reanchor,
+        reanchor: reflect.reanchor,
+        lastReflectDemanded: reflect.lastReflectDemanded,
+        lastReflectCloseout: reflect.lastReflectCloseout,
       };
     }
     markOpenWaveWrapDone(s);
@@ -3789,10 +3876,26 @@ export function evaluateUlwAtStop(opts: {
     };
   }
 
-  // cycle === 0: wrap the frozen list, then attest (no new ambitious wave).
+  // cycle === 0: wrap the frozen list, then LAST reflect, then attest.
   markNamedShipDone(s, closerText(opts.sessionId, msg), {
     changedPaths: stampPaths,
   });
+  if (s.lastReflect && s.lastReflect !== "done") {
+    const reflect = applyLastReflectGate(s, msg, {
+      attested: false,
+      editDelta,
+    });
+    if (reflect.block) {
+      saveUlwCycle(s);
+      return {
+        block: true,
+        reason: reflect.reanchor,
+        reanchor: reflect.reanchor,
+        lastReflectDemanded: reflect.lastReflectDemanded,
+        lastReflectCloseout: reflect.lastReflectCloseout,
+      };
+    }
+  }
   saveUlwCycle(s);
   const reanchor = buildCycleReanchor(s, {
     openTodos: opts.openTodoCount,
@@ -3918,7 +4021,7 @@ function buildCycleReanchor(
     `[Forge ULW cycle driver] Stop blocked — ${formatUlwCounts(s)} (LAST CYCLE).`,
     `Mandate: ${displayUlwMandate(s.mandate)}`,
     ...decisionsBlock,
-    `Wave: ${s.wave}${cap != null ? ` / max ${cap}` : ""} — LAST wrap, then attest.`,
+    `Wave: ${s.wave}${cap != null ? ` / max ${cap}` : ""} — LAST wrap, then LAST reflect (score this run → maybe one must-fix close-out), then attest.`,
     maxHitLine,
     formatWrapCard(s),
     ``,
@@ -3926,10 +4029,11 @@ function buildCycleReanchor(
     `1. Finish the wrap list (named items if user LAST; this wave if budget LAST). Cancel leftovers with reason.`,
     `2. Complete or cancel open todos and run the final check.`,
     `3. Review the cumulative diff (\`git diff\`) as a hostile reviewer: regressions, weakened tests, leftover stubs.`,
-    `4. Attest exactly **Cycle complete.** with a ✅/❌ checklist — what shipped + evidence per item (command → result).`,
+    `4. LAST reflect (automatic): read-only scorecard of THIS run — \`Must-fix:\` vs \`Live-with:\`. Must-fix is safety/correctness only. If Must-fix is none, skip close-out. If Must-fix has items, one close-out wave ships those only, then attest.`,
+    `5. Attest exactly **Cycle complete.** with a ✅/❌ checklist — what shipped + evidence per item (command → result). Do not hunt leftover chrome after the close-out.`,
     `Attestations without machine-checkable evidence are bounced.`,
     ``,
-    `Until you attest **Cycle complete.**, Stop remains blocked.`,
+    `Until you attest **Cycle complete.** (after reflect), Stop remains blocked.`,
     `When you attest, Forge creates a local git commit of this wave's work (never pushed). FORGE_ULW_AUTO_COMMIT=0 to skip.`,
     opts.openTodos > 0
       ? `Still ${opts.openTodos} open todo(s) — close them or cancel with reason before LAST release.`
@@ -3993,7 +4097,7 @@ export function ulwKickoffMessage(state: UlwCycleState): string {
     `- Counters RIGHT NOW: **${formatUlwCounts(state)}**  ${state.cycle === 1 ? "(CONTINUE — god-mode relentless loops)" : "(LAST — wrap then attest)"}`,
     `- The user can flip cycle any time with /cycle 0 or /cycle 1 — including while you are mid-turn (live controls). Independent of your opinion of "done".`,
     `- While cycle=1, the harness blocks Stop and forces the research→judge→implement→prove→serendipity→review→repeat loop.`,
-    `- When cycle=0 (cap / /done / safety LAST), wrap this last wave, then attest **Cycle complete.** The harness commits the dirty tree at each wave close and on Cycle complete (never pushes). FORGE_ULW_AUTO_COMMIT=0 off.`,
+    `- When cycle=0 (cap / /done / safety LAST), wrap this last wave, LAST reflect scores this run automatically (Must-fix vs Live-with, maybe one must-fix close-out), then attest **Cycle complete.** The harness commits the dirty tree at each wave close and on Cycle complete (never pushes). FORGE_ULW_AUTO_COMMIT=0 off. FORGE_ULW_LAST_REFLECT=0 skips reflect.`,
     cap != null
       ? `- max_waves=${cap}: a budget the user asked to spend, not a suggestion to stop early. Close a unit with Wave shipped / Ship landed so w moves. When w reaches ${cap}, auto LAST, then attest **Cycle complete.** /cycle 0 at wave N stops at N+1. ${formatCappedWaveDoctrine(cap, state.mandate)}`
       : `- max_waves: off (unlimited). CONTINUE until /cycle 0 (finish this wave + one more, then LAST). **Cycle complete.** is refused while cycle=1. User may set /max-waves N mid-run.`,

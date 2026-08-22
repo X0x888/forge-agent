@@ -370,6 +370,7 @@ export function compactToolDenyReason(output: string, max = 72): string | null {
     if (/^permission_ask_timeout\b/i.test(rest)) return "timed out";
     if (/^dontAsk\b/i.test(rest)) return "dontAsk";
     if (/ulw_orient/i.test(rest)) return "orient";
+    if (/ulw_last_score/i.test(rest)) return "score";
     if (/plan_mode/i.test(rest)) return "plan mode";
     if (/HARD DENY/i.test(rest)) {
       const rule = /HARD DENY\s*\[([^\]]+)\]/i.exec(rest);
