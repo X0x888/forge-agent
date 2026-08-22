@@ -15,8 +15,8 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
         "Do NOT use for file reads/edits/search/list — prefer read_file, search_replace, grep, glob, list_dir. " +
         "Set background=true for long jobs (returns task_id; poll with get_task_output, stop with kill_task). " +
         "Cloud metadata endpoints (IMDS) and file:// fetches are hard-denied. " +
-        "Timeout default 120s foreground (cap 30m; numeric timeout_ms is capped the same as all) / 30m background (cap 6h). " +
-        "Do not foreground npm test / npm run ci / npm run check — a hung test pins the REPL; background:true then get_task_output, or run the last targeted check.",
+        "Timeout default 120s fg (cap 30m) / 30m bg (cap 6h). " +
+        "Do not foreground npm test / npm run ci / npm run check — background:true then get_task_output, or run the last targeted check.",
       parameters: {
         type: "object",
         properties: {
@@ -24,7 +24,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
           timeout_ms: {
             type: "number",
             description:
-              "Timeout in ms (default 120000 foreground / 30m background). Aliases: default|max|all; duration suffixes 30s/1m. Foreground cap 30m — longer jobs must use background=true.",
+              "Timeout in ms (default 120s fg / 30m bg; fg cap 30m). Aliases: default|max|all; suffixes 30s/1m.",
           },
           background: {
             type: "boolean",
@@ -63,9 +63,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
           wait: {
             type: "number",
             description:
-              "Block until the task exits or this many ms elapse (max 30m). " +
-              "Aliases: timeout_ms. Duration suffixes accepted by the tool (30s/2m). " +
-              "true/wait defaults to 120s.",
+              "Block until exit or this many ms (max 30m). Aliases: timeout_ms. Suffixes 30s/2m; true/wait = 120s.",
           },
           timeout_ms: {
             type: "number",
@@ -144,8 +142,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
         "Replace an exact string in a file. Read the file first — line-number prefixes from read_file are NOT part of the file. " +
         "Requires a prior read_file this session; refuses files changed on disk since (re-read, then retry). " +
         "old_string must match exactly once unless replace_all is true. " +
-        "Success returns a numbered AFTER window (N| prefixes are not file text). " +
-        "Tolerates whitespace-only mismatches via fuzzy fallback. Preserves BOM and CRLF.",
+        "Success returns a numbered AFTER window (N| prefixes are not file text).",
       parameters: {
         type: "object",
         properties: {
@@ -280,9 +277,8 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       description:
         "Append a durable decision/constraint/fact. " +
         "Write the reading and real constraints — not every clip/sibling ship. " +
-        "scope=session (default): session ledger (survives compact). " +
-        "scope=project: cross-session project memory (~/.forge/project-memory + .forge/MEMORY.md) — use for repo conventions, gotchas, and constraints that should outlive this session. " +
-        "Do not write this-cycle / this-wave readings or ship lists to project (session scope or ULW mandate). Leftover cycle notes auto-archive. " +
+        "scope=session (default, survives compact) | project (conventions/gotchas in ~/.forge/project-memory + .forge/MEMORY.md). " +
+        "Never write this-cycle/this-wave notes to project. " +
         "Kinds: constraint|decision|fact|out_of_scope|priority|blocker|observation|convention|gotcha.",
       parameters: {
         type: "object",
@@ -542,8 +538,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
         "Delegate a bounded subtask to a nested agent and receive its summary plus an artifact_path. " +
         "status=incomplete_max_turns means the child hit its turn cap — read_file the artifact; do not re-spawn the same explore. " +
         "Types: general-purpose | explore (read-only) | plan (read-only design). " +
-        "isolation=worktree creates a detached git worktree under ~/.forge/worktrees/ (requires git). On success Forge captures the diff and lands it into the parent automatically (FORGE_SUBAGENT_LAND=keep|discard to override; worktree kept on conflict). Successful land journals parent pre-images so /undo can revert it. " +
-        "General-purpose defaults to worktree when the workspace is a git repo; explore/plan stay in-place. Pass isolation=none (or FORGE_SUBAGENT_ISOLATION=none) to write the parent tree directly. " +
+        "isolation=worktree (default for general-purpose in a git repo) lands the diff into the parent on success; explore/plan stay in-place. isolation=none writes the parent tree. Kept on conflict. " +
         "Do not nest when a single tool call suffices.",
       parameters: {
         type: "object",
