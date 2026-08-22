@@ -283,18 +283,20 @@ describe("ULW auto-commit", () => {
       git(["config", "--unset", "user.name"], root);
       git(["config", "--unset", "user.email"], root);
       git(["config", "user.useConfigOnly", "true"], root);
-      const emptyCfg = path.join(root, ".empty-gitconfig");
-      fs.writeFileSync(emptyCfg, "");
+      // createChildEnv strips GIT_CONFIG_GLOBAL/SYSTEM (injection). Isolate
+      // identity via HOME so `git var GIT_AUTHOR_IDENT` cannot see ~/.gitconfig.
+      const emptyHome = path.join(root, ".empty-home");
+      fs.mkdirSync(emptyHome, { recursive: true });
       const prev = {
-        GIT_CONFIG_GLOBAL: process.env.GIT_CONFIG_GLOBAL,
-        GIT_CONFIG_SYSTEM: process.env.GIT_CONFIG_SYSTEM,
+        HOME: process.env.HOME,
+        XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME,
         GIT_AUTHOR_NAME: process.env.GIT_AUTHOR_NAME,
         GIT_AUTHOR_EMAIL: process.env.GIT_AUTHOR_EMAIL,
         GIT_COMMITTER_NAME: process.env.GIT_COMMITTER_NAME,
         GIT_COMMITTER_EMAIL: process.env.GIT_COMMITTER_EMAIL,
       };
-      process.env.GIT_CONFIG_GLOBAL = emptyCfg;
-      process.env.GIT_CONFIG_SYSTEM = emptyCfg;
+      process.env.HOME = emptyHome;
+      delete process.env.XDG_CONFIG_HOME;
       delete process.env.GIT_AUTHOR_NAME;
       delete process.env.GIT_AUTHOR_EMAIL;
       delete process.env.GIT_COMMITTER_NAME;

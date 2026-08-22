@@ -459,22 +459,21 @@ describe("subagent helpers", () => {
         "worktree",
       );
     }
-    // git rev-parse walks up (even from /tmp on some macOS layouts).
-    // Point GIT_DIR at a missing path so this case is hermetically not a repo.
-    const prevGitDir = process.env.GIT_DIR;
-    process.env.GIT_DIR = path.join(tmpRoot, "definitely-not-a-git-dir");
+    // createChildEnv strips GIT_DIR. npm test sets TMPDIR=$PWD/.tmp, so
+    // tmpRoot is already inside this work tree and a ceiling cannot hide it.
+    // Use a directory that is not inside any repo.
+    const outsideRepo = fs.mkdtempSync(path.join("/tmp", "forge-norepo-"));
     try {
-      assert.equal(findGitRoot(tmpRoot), null);
+      assert.equal(findGitRoot(outsideRepo), null);
       assert.equal(
         defaultIsolationForSpawn({
           type: "general-purpose",
-          workspace: tmpRoot,
+          workspace: outsideRepo,
         }),
         "none",
       );
     } finally {
-      if (prevGitDir === undefined) delete process.env.GIT_DIR;
-      else process.env.GIT_DIR = prevGitDir;
+      fs.rmSync(outsideRepo, { recursive: true, force: true });
     }
     const prev = process.env.FORGE_SUBAGENT_ISOLATION;
     process.env.FORGE_SUBAGENT_ISOLATION = "none";
