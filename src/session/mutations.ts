@@ -4,14 +4,15 @@
  *
  * Stored as ~/.forge/sessions/<id>/mutations.jsonl (mode 0600).
  * Each successful write_file / search_replace / apply_patch / bash /
- * worktree-land op appends one entry with pre-image (or create marker).
- * Rewind restores in reverse. `/files` and `/last` merge this journal so
- * shell writes appear even when tool-call args have no `path` field.
+ * worktree-land / isolation=none spawn op appends one entry with pre-image
+ * (or create marker). Rewind restores in reverse. `/files` and `/last` merge
+ * this journal so shell / in-place-child writes appear even when tool-call
+ * args have no `path` field.
  */
 import fs from "node:fs";
 import fsp from "node:fs/promises";
 import path from "node:path";
-import { ensureDir, forgeHome, nowIso } from "../util/fs.js";
+import { ensureDir, forgeHome, isWithinRoot, nowIso } from "../util/fs.js";
 
 /** Skip journaling (and restoring) bodies larger than this. */
 export const MAX_MUTATION_BYTES = 256_000;
