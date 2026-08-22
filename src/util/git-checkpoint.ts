@@ -14,6 +14,7 @@ import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { createChildEnv } from "../agent/tools/env-policy.js";
 import { findGitRoot, parsePorcelainPath } from "../agent/worktree.js";
 import {
   formatGitExecError,
