@@ -287,6 +287,25 @@ describe("formatBanner", () => {
     assert.match(fresh, /Type a task in English/);
   });
 
+  it("shows project-memory reminder on first session and resume", () => {
+    const text = formatBanner({
+      version: "1",
+      provider: "xai",
+      model: "m",
+      authLabel: "xai",
+      sessionId: "id",
+      permissionMode: "default",
+      sandbox: "workspace",
+      blockingStop: true,
+      posture: "posture: —",
+      showEmptyState: true,
+      memoryReminder: "memory  ·  16 active  ·  Next  /memory project",
+    });
+    assert.match(text, /Type a task in English/);
+    assert.match(text, /memory {2}· {2}16 active/);
+    assert.match(text, /Next {2}\/memory project/);
+  });
+
   it("dock-on drops provider/model/auth/ULW that the dock already paints", () => {
     const text = formatBanner({
       version: "0.9.99",

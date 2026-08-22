@@ -475,6 +475,7 @@ export {
 export {
   appendProjectMemory,
   archiveProjectMemory,
+  archiveProjectMemoryHits,
   clearProjectMemory,
   formatProjectMemoryForPrompt,
   formatProjectMemoryStatus,
@@ -483,12 +484,29 @@ export {
   normalizeProjectMemoryKind,
   projectMemoryKey,
   resolveProjectMemoryRoot,
+  sweepProjectMemory,
 } from "./harness/project-memory.js";
+export {
+  classifyStaleProjectMemory,
+  formatProjectMemoryBannerLine,
+  formatProjectMemoryPruneCard,
+  looksLikeCycleScopedMemory,
+  projectMemorySweepEnabled,
+} from "./harness/project-memory-sweep.js";
 export type {
   MemoryRecord,
   MemoryKind,
   DecisionMemoryStore,
 } from "./harness/decision-memory.js";
+export type {
+  ProjectMemoryArchiveReason,
+  ProjectMemoryKind,
+  ProjectMemoryRecord,
+} from "./harness/project-memory.js";
+export type {
+  ProjectMemorySweepHit,
+  ProjectMemorySweepResult,
+} from "./harness/project-memory-sweep.js";
 export {
   expandUserContentWithImages,
   loadImageDataUrl,

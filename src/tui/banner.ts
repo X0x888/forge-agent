@@ -29,6 +29,8 @@ export interface BannerInput {
   setupCompact?: string;
   /** Same-cwd resume: last-turn peek + files/verify (empty = omit). */
   resumeOrientation?: string;
+  /** Project-memory count + leftover sweep + /memory project. */
+  memoryReminder?: string;
   /** Override TTY width (tests). Non-TTY defaults to 80. */
   columns?: number;
   /**
@@ -98,6 +100,10 @@ export function formatBanner(input: BannerInput): string {
   }
   if (input.postureWarnings?.length) {
     lines.push(`  ↳ review: /config · forge doctor`);
+  }
+  const memory = input.memoryReminder?.trim();
+  if (memory) {
+    lines.push(`  ${memory}`);
   }
   if (input.showEmptyState) {
     lines.push("");

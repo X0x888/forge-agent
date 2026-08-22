@@ -22,6 +22,12 @@ import {
   writeJsonFile,
 } from "../util/fs.js";
 import { findGitRoot } from "../agent/worktree.js";
+import {
+  classifyStaleProjectMemory,
+  projectMemorySweepEnabled,
+  type ProjectMemorySweepHit,
+  type ProjectMemorySweepResult,
+} from "./project-memory-sweep.js";
 
 export type ProjectMemoryKind =
   | "constraint"
@@ -34,6 +40,11 @@ export type ProjectMemoryKind =
   | "convention"
   | "gotcha";
 
+export type ProjectMemoryArchiveReason =
+  | "cycle-scoped"
+  | "superseded"
+  | "duplicate";
+
 export interface ProjectMemoryRecord {
   id: string;
   at: string;
@@ -41,6 +52,8 @@ export interface ProjectMemoryRecord {
   text: string;
   source: "agent" | "user" | "import";
   status: "active" | "archived";
+  archivedReason?: ProjectMemoryArchiveReason;
+  archivedAt?: string;
 }
 
 export interface ProjectMemoryStore {
@@ -143,7 +156,14 @@ export function loadProjectMemory(workspace: string): ProjectMemoryStore {
   }
 }
 
+const ARCHIVE_REASONS = new Set<ProjectMemoryArchiveReason>([
+  "cycle-scoped",
+  "superseded",
+  "duplicate",
+]);
+
 function normalizeRecord(r: ProjectMemoryRecord): ProjectMemoryRecord {
+  const reason = String(r.archivedReason || "").trim() as ProjectMemoryArchiveReason;
   return {
     id: String(r.id || makeId()),
     at: String(r.at || nowIso()),
@@ -155,6 +175,10 @@ function normalizeRecord(r: ProjectMemoryRecord): ProjectMemoryRecord {
       ? r.source
       : "agent") as ProjectMemoryRecord["source"],
     status: r.status === "archived" ? "archived" : "active",
+    ...(ARCHIVE_REASONS.has(reason) ? { archivedReason: reason } : {}),
+    ...(typeof r.archivedAt === "string" && r.archivedAt.trim()
+      ? { archivedAt: r.archivedAt.trim() }
+      : {}),
   };
 }
 
@@ -244,11 +268,73 @@ export function archiveProjectMemory(
   return n;
 }
 
+/** Archive classified leftovers. Returns how many flipped to archived. */
+export function archiveProjectMemoryHits(
+  workspace: string,
+  hits: readonly ProjectMemorySweepHit[],
+): number {
+  const auto = hits.filter((h) => h.auto);
+  if (!auto.length) return 0;
+  const store = loadProjectMemory(workspace);
+  const byId = new Map(auto.map((h) => [h.id, h]));
+  let n = 0;
+  const at = nowIso();
+  for (const r of store.records) {
+    if (r.status !== "active") continue;
+    const hit = byId.get(r.id);
+    if (!hit) continue;
+    r.status = "archived";
+    if (ARCHIVE_REASONS.has(hit.reason)) r.archivedReason = hit.reason;
+    r.archivedAt = at;
+    n++;
+  }
+  if (n) saveStore(store);
+  return n;
+}
+
+/**
+ * Archive leftover this-cycle readings, superseded facts, and near-duplicates.
+ * Default-on; FORGE_MEMORY_SWEEP=0 skips apply unless `force` (explicit prune).
+ */
+export function sweepProjectMemory(
+  workspace: string,
+  opts?: { dry?: boolean; force?: boolean },
+): ProjectMemorySweepResult {
+  const store = loadProjectMemory(workspace);
+  const activeBefore = store.records.filter((r) => r.status === "active").length;
+  const hits = classifyStaleProjectMemory(store.records);
+  const auto = hits.filter((h) => h.auto);
+  const reviewable = hits.filter((h) => !h.auto);
+  const apply =
+    !opts?.dry && (Boolean(opts?.force) || projectMemorySweepEnabled());
+  let archived: ProjectMemorySweepHit[] = [];
+  if (apply && auto.length) {
+    const n = archiveProjectMemoryHits(workspace, auto);
+    archived = n ? auto : [];
+  }
+  const activeAfter = apply
+    ? listActiveProjectMemory(workspace).length
+    : activeBefore;
+  return {
+    hits,
+    archived,
+    reviewable,
+    applied: Boolean(apply && archived.length),
+    activeBefore,
+    activeAfter,
+  };
+}
+
 /** Format for system-prompt / compact injection. */
 export function formatProjectMemoryForPrompt(
   workspace: string,
   budget = PROJECT_MEMORY_PROMPT_BUDGET,
 ): string {
+  try {
+    sweepProjectMemory(workspace);
+  } catch {
+    /* never block prompt on hygiene */
+  }
   const recs = listActiveProjectMemory(workspace);
   if (!recs.length) return "";
   // Priority order for injection when over budget
@@ -268,6 +354,7 @@ export function formatProjectMemoryForPrompt(
   );
   const lines: string[] = [
     "## Project memory (cross-session — honor unless superseded)",
+    "Leftover this-cycle / this-wave readings auto-archive. Review with /memory project · /memory project prune.",
   ];
   let used = lines.join("\n").length;
   for (const r of sorted) {
@@ -285,6 +372,11 @@ export function formatProjectMemoryForPrompt(
 export function formatProjectMemoryStatus(workspace: string): string {
   const store = loadProjectMemory(workspace);
   const active = store.records.filter((r) => r.status === "active");
+  const archived = store.records.filter((r) => r.status === "archived");
+  const recentArchived = [...archived]
+    .filter((r) => r.archivedReason)
+    .sort((a, b) => String(b.archivedAt || b.at).localeCompare(String(a.archivedAt || a.at)))
+    .slice(0, 6);
   const lines = [
     `Project memory: ${active.length} active · key=${store.key}`,
     `  root: ${store.root}`,
@@ -297,8 +389,14 @@ export function formatProjectMemoryStatus(workspace: string): string {
   if (active.length > 12) {
     lines.push(`  … +${active.length - 12} more`);
   }
+  if (recentArchived.length) {
+    lines.push(`  recently archived: ${recentArchived.length}`);
+    for (const r of recentArchived) {
+      lines.push(`    - [${r.kind}] ${r.text}  (${r.archivedReason})`);
+    }
+  }
   lines.push(
-    "  /memory project add <text>  ·  memory_write scope=project  ·  /memory project clear",
+    "  /memory project add <text>  ·  /memory project prune  ·  /memory project clear",
   );
   return lines.join("\n");
 }

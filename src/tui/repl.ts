@@ -95,6 +95,8 @@ import {
 import { getForgeVersion } from "../util/version.js";
 import { loadPreferences, dismissHint } from "../config/preferences.js";
 import { formatBanner } from "./banner.js";
+import { sweepProjectMemory } from "../harness/project-memory.js";
+import { formatProjectMemoryBannerLine } from "../harness/project-memory-sweep.js";
 import {
   pickTurnEndHint,
   pickLiveSteerHint,
@@ -1235,6 +1237,22 @@ async function printBanner(
     /* never block REPL on setup card */
   }
 
+  let memoryReminder: string | undefined;
+  try {
+    const sweep = sweepProjectMemory(cwd);
+    memoryReminder =
+      formatProjectMemoryBannerLine({
+        active: sweep.activeAfter,
+        archived: sweep.archived,
+        reviewable: sweep.reviewable,
+        leftoverDry: sweep.applied
+          ? undefined
+          : sweep.hits.filter((h) => h.auto),
+      }) || undefined;
+  } catch {
+    /* memory hygiene is best-effort */
+  }
+
   const text = formatBanner({
     version: VERSION,
     provider: String(auth.provider || config.provider),
@@ -1260,6 +1278,7 @@ async function printBanner(
         maxChars: 180,
         fileLimit: 4,
       }),
+    memoryReminder,
     dockOn: isBottomStatusEnabled(),
   });
   const [first, ...rest] = text.split("\n");
@@ -1267,7 +1286,9 @@ async function printBanner(
   for (const line of rest) {
     if (line.startsWith("  ⚠")) console.log(chalk.yellow(line));
     else if (line.includes("Type a task in English")) console.log(chalk.cyan(line));
-    else console.log(chalk.dim(line));
+    else if (/^\s*memory {2}·/.test(line) && /leftover|archived/.test(line)) {
+      console.log(chalk.yellow(line));
+    } else console.log(chalk.dim(line));
   }
 }
 

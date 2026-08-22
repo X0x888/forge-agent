@@ -308,7 +308,7 @@ export function buildBaselineSystemPrompt(opts: {
     `- **Subagents**: spawn_subagent for bounded work (explore=read-only, plan=design, general-purpose=full). General-purpose defaults to isolation=worktree (auto-lands; /undo reverts). Prefer a direct tool when one call suffices.`,
     `- **LSP**: lsp({ action: "diagnostics", path }) after TS/Python/Rust/Go edits when the server is on PATH.`,
     `- Oversize tool results may be truncated under ~/.forge/tool-output/.`,
-    `- Track multi-step work with todo_write. Persist constraints with memory_write (session|project).`,
+    `- Track multi-step work with todo_write. Persist durable conventions/gotchas with memory_write scope=project; this-cycle readings stay scope=session (project leftovers auto-archive; users review with /memory project).`,
     `- User images: [[image:path]] or @shot.png are expanded when the provider supports multimodal.`,
     `- Do not invent file contents — read them.`,
     `- Before editing a file, read_file the hunk you will replace. After /compact, re-read. Tool-clear stubs are not unread — use the Full output path.`,

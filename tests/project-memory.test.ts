@@ -18,9 +18,19 @@ import {
   projectMemoryKey,
   resolveProjectMemoryRoot,
   stableProjectMemoryMarkdown,
+  sweepProjectMemory,
 } from "../src/harness/project-memory.js";
+import {
+  classifyStaleProjectMemory,
+  formatProjectMemoryBannerLine,
+  looksLikeCycleScopedMemory,
+} from "../src/harness/project-memory-sweep.js";
 import { toolMemoryWrite } from "../src/agent/tools/memory-write.js";
 import type { ToolContext } from "../src/agent/tools/types.js";
+import { createSession } from "../src/session/session.js";
+import { DEFAULT_CONFIG } from "../src/config/types.js";
+import { handleSlash } from "../src/commands/slash.js";
+import { HookRunner } from "../src/harness/hooks.js";
 
 function tmpRoot(): string {
   const base = process.env.TMPDIR || path.join(process.cwd(), ".tmp");
@@ -170,5 +180,254 @@ describe("project memory", () => {
     assert.ok(
       again.records.some((r) => r.text.includes("reliability before polish")),
     );
+  });
+
+  it("classifies leftover cycle readings and superseded checkpoint facts", () => {
+    assert.equal(
+      looksLikeCycleScopedMemory(
+        "Daily-loop reading (this cycle): job + what's wrong. Ships: /verify, /done",
+      ),
+      true,
+    );
+    assert.equal(
+      looksLikeCycleScopedMemory(
+        "blockingStopHooks defaults to true — never weaken Stop fail-closed",
+      ),
+      false,
+    );
+    const now = Date.now();
+    const recs = [
+      {
+        id: "old",
+        at: new Date(now - 60_000).toISOString(),
+        kind: "fact" as const,
+        text: "ULW arm auto-checkpoints dirty trees via git stash create (FORGE_ULW_CHECKPOINT=0 off). Restore: /checkpoint restore.",
+        source: "agent" as const,
+        status: "active" as const,
+      },
+      {
+        id: "cycle",
+        at: new Date(now - 30_000).toISOString(),
+        kind: "decision" as const,
+        text: "Daily-loop reading (this cycle): job + what's wrong + the next key you type at ›. Ships: /verify, lastErr slash keys. Do not re-derive.",
+        source: "agent" as const,
+        status: "active" as const,
+      },
+      {
+        id: "new",
+        at: new Date(now).toISOString(),
+        kind: "gotcha" as const,
+        text: "Safety checkpoints use a temp index (untracked in, secrets out), not git stash create. Restore is git restore --source=sha overwrite + mixed reset — never git stash apply. /checkpoint restore falls back to ulw.checkpointSha.",
+        source: "agent" as const,
+        status: "active" as const,
+      },
+      {
+        id: "keep",
+        at: new Date(now).toISOString(),
+        kind: "constraint" as const,
+        text: "blockingStopHooks defaults to true — never weaken Stop fail-closed (timeout/error keeps agent working).",
+        source: "agent" as const,
+        status: "active" as const,
+      },
+    ];
+    const hits = classifyStaleProjectMemory(recs);
+    assert.ok(hits.some((h) => h.id === "cycle" && h.reason === "cycle-scoped" && h.auto));
+    assert.ok(hits.some((h) => h.id === "old" && h.reason === "superseded" && h.auto));
+    assert.ok(!hits.some((h) => h.id === "keep"));
+    assert.ok(!hits.some((h) => h.id === "new"));
+  });
+
+  it("does not treat neighboring gotchas as superseded (sit-down / porcelain)", () => {
+    const now = Date.now();
+    const recs = [
+      {
+        id: "porcelain-old",
+        at: new Date(now - 50_000).toISOString(),
+        kind: "gotcha" as const,
+        text: 'git() in worktree.ts must not trimStart porcelain: unstaged-only is " M path". trim() made slice(3) drop first char (src→rc) and hide untracked. tests/__wt_land__/ is gitignored — worktree-land fixtures live under src/agent/__wt_land_*.',
+        source: "agent" as const,
+        status: "active" as const,
+      },
+      {
+        id: "sit-down",
+        at: new Date(now - 40_000).toISOString(),
+        kind: "convention" as const,
+        text: "Sit-down Next at › is a slash key, never a CLI dump (`npm test`, `forge accounts switch`, `forge login`). lastErr map: 429/quota → /accounts, auth → /auth, overflow → /compact, max_cost → /budget, else /retry. Headless `forge run` keeps CLI verbs.",
+        source: "agent" as const,
+        status: "active" as const,
+      },
+      {
+        id: "porcelain-new",
+        at: new Date(now - 20_000).toISOString(),
+        kind: "gotcha" as const,
+        text: 'parsePorcelainPath / unquotePorcelainPath are public. git() uses trimEnd only — never trimStart porcelain. Unit test: " M src/agent/worktree.ts" → src/agent/worktree.ts.',
+        source: "agent" as const,
+        status: "active" as const,
+      },
+      {
+        id: "never-land",
+        at: new Date(now - 10_000).toISOString(),
+        kind: "gotcha" as const,
+        text: "Never land src/agent/worktree.ts or AGENTS.md in worktree-land tests — a failed /undo restore deletes the file. Use disposable src/agent/__wt_land_* fixtures + journalLandedPreimages unit path.",
+        source: "agent" as const,
+        status: "active" as const,
+      },
+      {
+        id: "auth",
+        at: new Date(now).toISOString(),
+        kind: "gotcha" as const,
+        text: "`/auth` empty is `auth  ·  none` with no Next — login is not a › key. `/accounts` empty still closer `/auth`. `formatAuthCard` hides Next `/auth` so the lastErr key is not circular.",
+        source: "agent" as const,
+        status: "active" as const,
+      },
+      {
+        id: "git-apply",
+        at: new Date(now - 5_000).toISOString(),
+        kind: "gotcha" as const,
+        text: "git apply --3way stages files; land path prefers plain apply then 3way+unstage so parent index stays clean. Unstage must use git() (trimEnd only) + parsePorcelainPath — never execFileSync().trim() on porcelain.",
+        source: "agent" as const,
+        status: "active" as const,
+      },
+      {
+        id: "checkpoint",
+        at: new Date(now + 1_000).toISOString(),
+        kind: "gotcha" as const,
+        text: "Safety checkpoints use a temp index (untracked in, secrets out), not git stash create. Restore is git restore --source=sha overwrite + mixed reset — never git stash apply.",
+        source: "agent" as const,
+        status: "active" as const,
+      },
+    ];
+    const hits = classifyStaleProjectMemory(recs);
+    assert.ok(!hits.some((h) => h.id === "porcelain-old"), JSON.stringify(hits));
+    assert.ok(!hits.some((h) => h.id === "sit-down"), JSON.stringify(hits));
+    assert.ok(!hits.some((h) => h.id === "git-apply"), JSON.stringify(hits));
+  });
+
+  it("does not auto-archive user-written cycle notes", () => {
+    const hits = classifyStaleProjectMemory([
+      {
+        id: "u",
+        at: new Date().toISOString(),
+        kind: "decision",
+        text: "Keep this cycle focused on the lease card. Ships: /verify",
+        source: "user",
+        status: "active",
+      },
+    ]);
+    assert.equal(hits.length, 1);
+    assert.equal(hits[0]?.auto, false);
+    assert.equal(hits[0]?.reason, "cycle-scoped");
+  });
+
+  it("sweep archives leftovers and prompt injection drops them", () => {
+    appendProjectMemory(ws, {
+      kind: "decision",
+      text: "Daily-loop reading (this cycle): finish the sit-down keys. Ships: /verify",
+      source: "agent",
+    });
+    appendProjectMemory(ws, {
+      kind: "constraint",
+      text: "Never weaken auth tests",
+      source: "user",
+    });
+    const result = sweepProjectMemory(ws, { force: true });
+    assert.equal(result.archived.length, 1);
+    assert.equal(result.archived[0]?.reason, "cycle-scoped");
+    const active = listActiveProjectMemory(ws);
+    assert.equal(active.length, 1);
+    assert.match(active[0]!.text, /Never weaken auth tests/);
+    const prompt = formatProjectMemoryForPrompt(ws);
+    assert.match(prompt, /Never weaken auth tests/);
+    assert.doesNotMatch(prompt, /Daily-loop reading/);
+    assert.match(prompt, /\/memory project/);
+  });
+
+  it("FORGE_MEMORY_SWEEP=0 skips auto apply; force prune still works", () => {
+    const prev = process.env.FORGE_MEMORY_SWEEP;
+    process.env.FORGE_MEMORY_SWEEP = "0";
+    try {
+      appendProjectMemory(ws, {
+        kind: "decision",
+        text: "Wave 2 reading (this cycle): only the prune card. Ships: /memory",
+        source: "agent",
+      });
+      const dry = sweepProjectMemory(ws);
+      assert.equal(dry.applied, false);
+      assert.equal(listActiveProjectMemory(ws).length, 1);
+      const forced = sweepProjectMemory(ws, { force: true });
+      assert.equal(forced.archived.length, 1);
+      assert.equal(listActiveProjectMemory(ws).length, 0);
+    } finally {
+      if (prev === undefined) delete process.env.FORGE_MEMORY_SWEEP;
+      else process.env.FORGE_MEMORY_SWEEP = prev;
+    }
+  });
+
+  it("banner reminder names /memory project", () => {
+    const line = formatProjectMemoryBannerLine({
+      active: 16,
+      archived: [
+        {
+          id: "x",
+          kind: "decision",
+          text: "this cycle leftover",
+          source: "agent",
+          reason: "cycle-scoped",
+          detail: "cycle",
+          auto: true,
+        },
+      ],
+    });
+    assert.match(String(line), /memory {2}· {2}16 active/);
+    assert.match(String(line), /archived 1 leftover/);
+    assert.match(String(line), /Next {2}\/memory project/);
+  });
+
+  it("memory_write scope=project refuses cycle-scoped text", async () => {
+    const ctx = {
+      workspace: ws,
+      sessionId: "sess-pm-cycle",
+    } as unknown as ToolContext;
+    const r = await toolMemoryWrite(
+      {
+        scope: "project",
+        kind: "decision",
+        text: "Daily-loop reading (this cycle): do not put this in project memory. Ships: /verify",
+      },
+      ctx,
+    );
+    assert.match(r.output, /Refused project memory/i);
+    assert.equal(listActiveProjectMemory(ws).length, 0);
+    assert.match(r.output, /scope=session/);
+  });
+
+  it("/memory project prune dry then apply", async () => {
+    appendProjectMemory(ws, {
+      kind: "decision",
+      text: "Reading (this cycle): prune card. Ships: /verify",
+      source: "agent",
+    });
+    const session = createSession({
+      cwd: ws,
+      provider: "xai",
+      model: "grok-4",
+    });
+    const config = { ...DEFAULT_CONFIG, workspace: ws };
+    const hooks = new HookRunner(config, ws);
+    const dry = await handleSlash("/memory project prune dry", {
+      session,
+      config,
+      hooks,
+    });
+    assert.equal(dry.handled, true);
+    assert.match(String(dry.output || ""), /memory prune {2}· {2}1 leftover \(dry\)/);
+    assert.equal(listActiveProjectMemory(ws).length, 1);
+    const apply = await handleSlash("/memory prune", {
+      session,
+      config,
+      hooks,
+    });
+    assert.match(String(apply.output || ""), /archived 1 leftover/);
+    assert.equal(listActiveProjectMemory(ws).length, 0);
   });
 });

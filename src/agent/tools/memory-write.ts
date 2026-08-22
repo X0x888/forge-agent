@@ -16,6 +16,7 @@ import {
   formatProjectMemoryStatus,
   normalizeProjectMemoryKind,
 } from "../../harness/project-memory.js";
+import { looksLikeCycleScopedMemory } from "../../harness/project-memory-sweep.js";
 
 const SESSION_KINDS = new Set<MemoryKind>([
   "constraint",
@@ -55,6 +56,34 @@ export async function toolMemoryWrite(
 
   if (scope === "project") {
     const kind = normalizeProjectMemoryKind(args.kind ?? "fact");
+    if (looksLikeCycleScopedMemory(text)) {
+      let extra = "";
+      if (ctx.sessionId) {
+        try {
+          let sessionKind = kind as MemoryKind;
+          if (!SESSION_KINDS.has(sessionKind)) sessionKind = "decision";
+          const rec = appendMemoryRecord(ctx.sessionId, {
+            kind: sessionKind,
+            text,
+            source: "agent",
+          });
+          extra = rec
+            ? `\nWrote scope=session instead [${rec.kind} ${rec.id}].`
+            : "\nSession already had an identical note.";
+        } catch {
+          /* session ledger optional */
+        }
+      }
+      return {
+        output:
+          "Refused project memory: that looks like a this-cycle / this-wave reading. " +
+          "Project memory is for durable conventions, gotchas, and constraints that should outlive the session. " +
+          "Use scope=session (default) or the ULW mandate." +
+          extra +
+          "\n" +
+          formatProjectMemoryStatus(ctx.workspace || process.cwd()),
+      };
+    }
     const rec = appendProjectMemory(ctx.workspace || process.cwd(), {
       text,
       kind,

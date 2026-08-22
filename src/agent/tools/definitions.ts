@@ -282,6 +282,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
         "Write the reading and real constraints — not every clip/sibling ship. " +
         "scope=session (default): session ledger (survives compact). " +
         "scope=project: cross-session project memory (~/.forge/project-memory + .forge/MEMORY.md) — use for repo conventions, gotchas, and constraints that should outlive this session. " +
+        "Do not write this-cycle / this-wave readings or ship lists to project (session scope or ULW mandate). Leftover cycle notes auto-archive. " +
         "Kinds: constraint|decision|fact|out_of_scope|priority|blocker|observation|convention|gotcha.",
       parameters: {
         type: "object",

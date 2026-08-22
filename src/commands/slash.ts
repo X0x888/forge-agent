@@ -265,8 +265,14 @@ import {
   clearProjectMemory,
   formatProjectMemoryStatus,
   listActiveProjectMemory,
+  loadProjectMemory,
   normalizeProjectMemoryKind,
+  sweepProjectMemory,
 } from "../harness/project-memory.js";
+import {
+  classifyStaleProjectMemory,
+  formatProjectMemoryPruneCard,
+} from "../harness/project-memory-sweep.js";
 import { pushLiveNotice } from "../harness/live-notices.js";
 import { armUlwPlanMode, syncUlwPlanMode } from "../harness/ulw-plan-mode.js";
 import { clearSoftTodoGateOnWindDown } from "../harness/todo-gate.js";
@@ -800,7 +806,7 @@ export function completeSlash(
       "/format": ["on", "off", "status", "enable", "disable"],
       "/checkpoint": ["status", "list", "snap", "create", "restore", "apply"],
       "/snap": ["status", "list", "snap", "create", "restore", "apply"],
-      "/memory": ["list", "project", "add", "seed", "clear"],
+      "/memory": ["list", "project", "add", "seed", "clear", "prune"],
       "/hooks": ["init", "reload", "list", "scaffold"],
       "/improve": [],
       "/ralph": [],
@@ -2323,6 +2329,23 @@ export async function handleSlash(
             session: opts.session,
           };
         }
+        if (
+          rest === "prune" ||
+          rest === "sweep" ||
+          rest.startsWith("prune ") ||
+          rest.startsWith("sweep ")
+        ) {
+          const dry = /\b(dry|preview|n(?:o)?-?op)\b/i.test(rest);
+          const result = sweepProjectMemory(workspace, {
+            dry,
+            force: !dry,
+          });
+          return {
+            handled: true,
+            output: formatProjectMemoryPruneCard(result, { dry }),
+            session: opts.session,
+          };
+        }
         if (rest === "clear" || rest === "reset") {
           const n = clearProjectMemory(workspace);
           return {
@@ -2373,6 +2396,23 @@ export async function handleSlash(
           output: rec
             ? `Project recorded [fact] ${rec.text}\n${formatProjectMemoryStatus(workspace)}`
             : `No-op (duplicate)\n${formatProjectMemoryStatus(workspace)}`,
+          session: opts.session,
+        };
+      }
+      if (
+        sub === "prune" ||
+        sub === "sweep" ||
+        sub.startsWith("prune ") ||
+        sub.startsWith("sweep ")
+      ) {
+        const dry = /\b(dry|preview|n(?:o)?-?op)\b/i.test(sub);
+        const result = sweepProjectMemory(workspace, {
+          dry,
+          force: !dry,
+        });
+        return {
+          handled: true,
+          output: formatProjectMemoryPruneCard(result, { dry }),
           session: opts.session,
         };
       }
@@ -3333,7 +3373,7 @@ return {
         ).length;
         memoryNote =
           n > 0
-            ? `\nProject memory: ${n} active note${n === 1 ? "" : "s"}  · /memory project`
+            ? `\nProject memory: ${n} active note${n === 1 ? "" : "s"}  · /memory project  · /memory project prune`
             : `\nProject memory: none  · /memory project add …`;
       } catch {
         /* */
@@ -6888,12 +6928,25 @@ export async function runDoctorCheck(
       /* */
     }
     try {
-      const n = listActiveProjectMemory(
-        config.workspace || process.cwd(),
-      ).length;
+      const ws = config.workspace || process.cwd();
+      const n = listActiveProjectMemory(ws).length;
       lines.push(
         `Project memory: ${n} active  · /memory project  · memory_write scope=project`,
       );
+      try {
+        const leftover = classifyStaleProjectMemory(
+          loadProjectMemory(ws).records,
+        ).filter((h) => h.auto);
+        if (leftover.length) {
+          lines.push(
+            chalk.yellow(
+              `  ⚠ ${leftover.length} leftover note${leftover.length === 1 ? "" : "s"} (cycle-scoped / superseded) — auto-archive on next session · /memory project prune`,
+            ),
+          );
+        }
+      } catch {
+        /* classify is advisory */
+      }
     } catch {
       /* */
     }
@@ -8256,7 +8309,7 @@ export function formatEffectiveConfig(
       ? `  auth:             ${snap.authMethod}  ·  /auth`
       : `  auth:             (none)  ·  forge login`,
     `  subagent land:   ${snap.subagentLandMode}  (FORGE_SUBAGENT_LAND=auto|keep|discard)`,
-    `  project memory:  ${snap.projectMemoryCount} active  · /memory project`,
+    `  project memory:  ${snap.projectMemoryCount} active  · /memory project  · /memory project prune`,
     snap.lastCheckpoint
       ? `  checkpoint:      ${snap.lastCheckpoint.slice(0, 12)}…  · /checkpoint restore`
       : `  checkpoint:      (none)  · /checkpoint`,

@@ -153,7 +153,7 @@ Forge slash commands
   /unpause              Shorthand for /goal resume  [live]
   /improve [focus…]       Continuous-improve (ULW; alias /ralph)
   /ulw [task]           Arm ULW + cycle=1 (Wave 1 PLAN, then BUILD; soft/broad seeds backlog)
-  /memory [list|add …]  Session decisions. /memory project … for cross-session.
+  /memory [list|add …]  Session decisions. /memory project [prune] for cross-session.
   /attach <image>       Attach image path for vision ([[image:path]] in next message)
   /paste                Attach clipboard image (pngpaste / osascript / wl-paste / xclip)
   /cycle 1|0|status     Continue waves (1) or finish this + one more then stop (0)  [live]

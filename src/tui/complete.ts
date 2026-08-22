@@ -219,6 +219,19 @@ export const COMMAND_PARAMS: Record<string, ParamChoice[]> = {
       description: "Soft god-scope (example)",
     },
   ],
+  memory: [
+    { value: "list", description: "Session + project notes" },
+    {
+      value: "project",
+      description: "Cross-session notes · /memory project prune",
+    },
+    {
+      value: "prune",
+      description: "Archive leftover this-cycle / superseded notes",
+    },
+    { value: "add", description: "Add a session decision" },
+    { value: "clear", description: "Archive all session notes" },
+  ],
   compact: [],
   "compact-and": [
     {
@@ -585,6 +598,8 @@ export const SLASH_HINTS: Record<string, string> = {
   "/auth": "Stored credentials",
   "/accounts": "Multi-account switch",
   "/memory": "Session / project memory",
+  "/memory project": "Cross-session notes",
+  "/memory project prune": "Archive leftover cycle / superseded notes",
   "/checkpoint": "Safety snapshot",
   "/compact": "Compact conversation",
 };
