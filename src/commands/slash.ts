@@ -17,10 +17,14 @@ import {
 } from "../harness/goal.js";
 import type { SessionData } from "../session/session.js";
 import {
+  formatLastErrorTally,
   formatNumberedPickerRow,
-  isLastErrorProblem,
+  formatSessionsErrorsCloser,
+  formatSessionsErrorsHeader,
   isLastVerificationStale,
+  lastErrorTallyRecord,
   parseSessionListIndex,
+  tallyLastErrorProblems,
 } from "../session/session.js";
 import {
   saveSession,
@@ -5914,28 +5918,36 @@ case "/new":
           };
         }
       }
-      let list = listSessions({
-        limit: errorsOnly || untitledOnly ? 50 : 15,
-        ...(listMode === "cwd" && !query && !pinnedOnly && !errorsOnly && !untitledOnly
-          ? { cwd: ws }
-          : {}),
-        ...(query ? { query } : {}),
-        ...(pinnedOnly ? { pinned: true } : {}),
-      });
-      if (errorsOnly) {
-        list = list.filter((s) => isLastErrorProblem(s.lastError));
-      }
-      if (untitledOnly) {
-        list = list.filter((s) => !String(s.title || "").trim());
-      }
+      const errorMatches = errorsOnly
+        ? listSessions({
+            limit: 0,
+            errors: true,
+            ...(query ? { query } : {}),
+          })
+        : [];
+      const errorTally = errorsOnly
+        ? tallyLastErrorProblems(errorMatches)
+        : null;
+      let list = errorsOnly
+        ? errorMatches.slice(0, 50)
+        : listSessions({
+            limit: untitledOnly ? 50 : 15,
+            ...(listMode === "cwd" &&
+            !query &&
+            !pinnedOnly &&
+            !untitledOnly
+              ? { cwd: ws }
+              : {}),
+            ...(query ? { query } : {}),
+            ...(pinnedOnly ? { pinned: true } : {}),
+            ...(untitledOnly ? { untitled: true } : {}),
+          });
       if (!list.length) {
         if (errorsOnly) {
-          const { formatSessionsErrorsVerdict, formatSessionsErrorsCloser } =
-            await import("../session/session.js");
           return {
             handled: true,
             output: [
-              formatSessionsErrorsVerdict(0),
+              formatSessionsErrorsHeader({ total: 0, byCode: [] }),
               formatSessionsErrorsCloser(null),
             ].join("\n"),
           };
@@ -5993,16 +6005,21 @@ case "/new":
           return formatNumberedPickerRow(i, s, extras);
         })
         .join("\n");
-      if (errorsOnly) {
-        const { formatSessionsErrorsVerdict, formatSessionsErrorsCloser } =
-          await import("../session/session.js");
+      if (errorsOnly && errorTally) {
+        const truncated =
+          errorTally.total > list.length
+            ? chalk.dim(`  showing ${list.length} newest`)
+            : null;
         return {
           handled: true,
           output: [
-            formatSessionsErrorsVerdict(list.length),
+            formatSessionsErrorsHeader(errorTally),
             rows,
+            truncated,
             formatSessionsErrorsCloser(list[0]),
-          ].join("\n"),
+          ]
+            .filter((line): line is string => Boolean(line))
+            .join("\n"),
         };
       }
       return {
@@ -6624,6 +6641,8 @@ export interface DoctorResult {
   projectSkillsCount?: number;
   /** Sessions with meta.lastError set (expert recovery backlog). */
   sessionsWithLastError?: number;
+  /** lastError problem counts by code (designed wraps omitted). */
+  sessionsLastErrorByCode?: Record<string, number>;
   /** Sessions without a title (harder to resume by name). */
   sessionsUntitled?: number;
   /** Total sessions scanned for inventory tips. */
@@ -7521,6 +7540,7 @@ export async function runDoctorCheck(
   let projectCommandsCount = 0;
   let projectSkillsCount = 0;
   let sessionsWithLastError = 0;
+  let sessionsLastErrorByCode: Record<string, number> = {};
   let sessionsUntitled = 0;
   let sessionsTotal = 0;
   let sessionsPinned = 0;
@@ -7600,14 +7620,18 @@ export async function runDoctorCheck(
     const { listSessions } = await import("../session/session.js");
     const all = listSessions({ limit: 10_000 });
     sessionsTotal = all.length;
-    sessionsWithLastError = all.filter((s) => isLastErrorProblem(s.lastError)).length;
+    const errTally = tallyLastErrorProblems(all);
+    sessionsWithLastError = errTally.total;
+    sessionsLastErrorByCode = lastErrorTallyRecord(errTally);
     sessionsUntitled = all.filter((s) => !String(s.title || "").trim()).length;
     sessionsPinned = all.filter((s) => Boolean(s.pinned)).length;
     if (sessionsWithLastError > 0) {
+      const codes = formatLastErrorTally(errTally);
+      const codeBit = codes ? ` (${codes})` : "";
       const backlog =
         sessionsWithLastError >= 5
-          ? `  ⚠ ${sessionsWithLastError} sessions with lastError — review /sessions errors before prune; backlog may hide real incidents`
-          : `  sessions with lastError: ${sessionsWithLastError}  → /sessions errors · forge sessions list --errors · prune keeps them until --force-last-error`;
+          ? `  ⚠ ${sessionsWithLastError} sessions with lastError${codeBit} — /sessions errors before prune`
+          : `  sessions with lastError: ${sessionsWithLastError}${codeBit}  → /sessions errors · forge sessions list --errors · prune keeps them until --force-last-error`;
       lines.push(chalk.yellow(backlog));
     }
     if (sessionsUntitled >= 5) {
@@ -7811,6 +7835,7 @@ export async function runDoctorCheck(
     projectCommandsCount,
     projectSkillsCount,
     sessionsWithLastError,
+    sessionsLastErrorByCode,
     sessionsUntitled,
     sessionsTotal,
     sessionsPinned,

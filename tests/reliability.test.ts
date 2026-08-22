@@ -2070,6 +2070,60 @@ describe("sessions list cwd filter", () => {
     assert.equal(byCreateTitle.length, 1);
     assert.equal(byCreateTitle[0]!.id, titled.meta.id);
   });
+
+  it("filters listSessions by errors and untitled before limit", async () => {
+    const fs = await import("node:fs");
+    const os = await import("node:os");
+    const path = await import("node:path");
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-list-err-"));
+    process.env.FORGE_HOME = tmp;
+    const {
+      createSession,
+      listSessions,
+      setSessionTitle,
+      setSessionLastError,
+      saveSession,
+    } = await import("../src/session/session.js");
+    const failed = createSession({
+      cwd: tmp,
+      provider: "xai",
+      model: "m",
+      title: "old-fail",
+    });
+    setSessionLastError(failed, {
+      code: "rate_limited",
+      message: "429",
+    });
+    failed.meta.updatedAt = new Date(Date.now() - 86_400_000).toISOString();
+    saveSession(failed);
+    const untitled = createSession({ cwd: tmp, provider: "xai", model: "m" });
+    untitled.meta.updatedAt = new Date(Date.now() - 43_200_000).toISOString();
+    saveSession(untitled);
+    for (let i = 0; i < 5; i++) {
+      const s = createSession({ cwd: tmp, provider: "xai", model: "m" });
+      setSessionTitle(s, `fresh-${i}`);
+      saveSession(s);
+    }
+    const limitedErr = listSessions({ limit: 3, errors: true });
+    assert.equal(limitedErr.length, 1);
+    assert.equal(limitedErr[0]!.id, failed.meta.id);
+    const cycle = createSession({
+      cwd: tmp,
+      provider: "xai",
+      model: "m",
+      title: "cycle-done",
+    });
+    setSessionLastError(cycle, {
+      code: "ulw_cycle_complete",
+      message: "released",
+    });
+    saveSession(cycle);
+    assert.equal(listSessions({ limit: 10, errors: true }).length, 1);
+    const untitledHits = listSessions({ limit: 2, untitled: true });
+    assert.equal(untitledHits.length, 1);
+    assert.equal(untitledHits[0]!.id, untitled.meta.id);
+    assert.ok(!untitledHits[0]!.title);
+  });
 });
 
 
@@ -2210,8 +2264,23 @@ describe("sessions list --json inventory summary", () => {
     assert.equal(j.sessionsTotal, 3);
     assert.equal(j.sessionsUntitled, 2);
     assert.equal(j.sessionsWithLastError, 1);
+    assert.equal(j.sessionsLastErrorByCode?.empty_run, 1);
     assert.equal(typeof j.sessionsPinned, "number");
     assert.equal(j.count, 3);
+
+    const rErr = spawnSync(
+      process.execPath,
+      [cli, "sessions", "list", "--errors", "--json", "--limit", "1"],
+      { env, encoding: "utf8", timeout: 15000 },
+    );
+    assert.equal(rErr.status, 0, rErr.stderr || rErr.stdout);
+    const jErr = JSON.parse(rErr.stdout);
+    assert.equal(jErr.ok, true);
+    assert.equal(jErr.errorsOnly, true);
+    assert.equal(jErr.count, 1);
+    assert.equal(jErr.sessionsWithLastError, 1);
+    assert.equal(jErr.sessions[0].lastError.code, "empty_run");
+    assert.equal(jErr.sessionsLastErrorByCode.empty_run, 1);
   });
 });
 

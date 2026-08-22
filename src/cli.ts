@@ -88,6 +88,8 @@ import {
   formatSessionSummary,
   formatNumberedPickerRow,
   formatSessionLookupMiss,
+  formatSessionsErrorsCloser,
+  formatSessionsErrorsHeader,
   listSessionLookupSuggestions,
   findRecentSessionForCwd,
   setSessionTitle,
@@ -99,6 +101,8 @@ import {
   resolveSessionJsonPath,
   isLastVerificationStale,
   isLastErrorProblem,
+  lastErrorTallyRecord,
+  tallyLastErrorProblems,
 } from "./session/session.js";
 import {
   appendSessionMetrics,
@@ -3199,7 +3203,7 @@ Docs: docs/PRODUCTION.md
         );
       }
       // Only filter when --cwd was explicitly passed (parent default cwd is ignored).
-      // listSessions applies cwd/query before limit so multi-project lists stay complete.
+      // listSessions applies cwd/query/pinned/errors/untitled before limit.
       const cwdFilter =
         cwdExplicit && globalOpts.cwd
           ? path.resolve(String(globalOpts.cwd))
@@ -3297,26 +3301,38 @@ Docs: docs/PRODUCTION.md
         act === "untitled" ||
         act === "notitle" ||
         act === "nameless";
-      let list = listSessions({
-        limit:
-          (errorsOnly || untitledOnly || pinnedOnly) && limit === 30
-            ? 50
-            : limit,
-        ...(cwdFilter ? { cwd: cwdFilter } : {}),
-        ...(queryFilter ? { query: queryFilter } : {}),
-        ...(pinnedOnly ? { pinned: true } : {}),
-      });
-      if (errorsOnly) {
-        list = list.filter((s) => isLastErrorProblem(s.lastError));
-      }
-      if (untitledOnly) {
-        list = list.filter((s) => !String(s.title || "").trim());
-      }
+      const effectiveLimit =
+        (errorsOnly || untitledOnly || pinnedOnly) && limit === 30
+          ? 50
+          : limit;
+      const errorMatches = errorsOnly
+        ? listSessions({
+            limit: 0,
+            errors: true,
+            ...(cwdFilter ? { cwd: cwdFilter } : {}),
+            ...(queryFilter ? { query: queryFilter } : {}),
+          })
+        : [];
+      const errorTally = errorsOnly
+        ? tallyLastErrorProblems(errorMatches)
+        : null;
+      let list = errorsOnly
+        ? effectiveLimit === 0
+          ? errorMatches
+          : errorMatches.slice(0, effectiveLimit)
+        : listSessions({
+            limit: effectiveLimit,
+            ...(cwdFilter ? { cwd: cwdFilter } : {}),
+            ...(queryFilter ? { query: queryFilter } : {}),
+            ...(pinnedOnly ? { pinned: true } : {}),
+            ...(untitledOnly ? { untitled: true } : {}),
+          });
       if (globalOpts.json) {
         // Global inventory (unfiltered) so CI/experts can prune without doctor.
         let sessionsTotal = 0;
         let sessionsUntitled = 0;
         let sessionsWithLastError = 0;
+        let sessionsLastErrorByCode: Record<string, number> = {};
         let sessionsPinned = 0;
         try {
           const all = listSessions({ limit: 10_000 });
@@ -3324,9 +3340,9 @@ Docs: docs/PRODUCTION.md
           sessionsUntitled = all.filter(
             (s) => !String(s.title || "").trim(),
           ).length;
-          sessionsWithLastError = all.filter((s) =>
-            isLastErrorProblem(s.lastError),
-          ).length;
+          const invTally = tallyLastErrorProblems(all);
+          sessionsWithLastError = invTally.total;
+          sessionsLastErrorByCode = lastErrorTallyRecord(invTally);
           sessionsPinned = all.filter((s) => Boolean(s.pinned)).length;
         } catch {
           /* */
@@ -3342,6 +3358,7 @@ Docs: docs/PRODUCTION.md
               sessionsTotal,
               sessionsUntitled,
               sessionsWithLastError,
+              sessionsLastErrorByCode,
               sessionsPinned,
               sessions: list.map((s) => {
                 const lock = readSessionLock(s.id);
@@ -3414,9 +3431,8 @@ Docs: docs/PRODUCTION.md
       }
       if (!list.length) {
         if (errorsOnly) {
-          console.log(
-            "No sessions with lastError. Provider failures stamp ERR on list and forge status.",
-          );
+          console.log(formatSessionsErrorsHeader({ total: 0, byCode: [] }));
+          console.log(formatSessionsErrorsCloser(null));
           return;
         }
         if (untitledOnly) {
@@ -3441,6 +3457,9 @@ Docs: docs/PRODUCTION.md
       }
       // When listing across workspaces, show project basename so multi-project
       // experts can tell sessions apart without --cwd.
+      if (errorsOnly && errorTally) {
+        console.log(formatSessionsErrorsHeader(errorTally));
+      }
       list.forEach((s, i) => {
         const extras: string[] = [];
         const lock = readSessionLock(s.id);
@@ -3455,6 +3474,9 @@ Docs: docs/PRODUCTION.md
         if (s.parentSessionId) extras.push("FORK");
         console.log(formatNumberedPickerRow(i, s, extras));
       });
+      if (errorsOnly && errorTally && errorTally.total > list.length) {
+        console.log(chalk.dim(`  showing ${list.length} newest`));
+      }
       const filterNotes: string[] = [];
       if (cwdFilter) filterNotes.push(`cwd=${cwdFilter}`);
       if (queryFilter) filterNotes.push(`q=${JSON.stringify(queryFilter)}`);
@@ -4422,6 +4444,7 @@ Docs: docs/PRODUCTION.md
               projectCommandsCount: check.projectCommandsCount ?? 0,
               projectSkillsCount: check.projectSkillsCount ?? 0,
               sessionsWithLastError: check.sessionsWithLastError ?? 0,
+              sessionsLastErrorByCode: check.sessionsLastErrorByCode ?? {},
               sessionsUntitled: check.sessionsUntitled ?? 0,
               sessionsTotal: check.sessionsTotal ?? 0,
               modelDefaultContextWindow:

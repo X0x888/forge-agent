@@ -19,6 +19,62 @@ export function isLastErrorProblem(
   return Boolean(code || String(err.message || "").trim());
 }
 
+export type LastErrorCodeCount = { code: string; count: number };
+
+/** Grouped lastError-problem counts — glance the class before the picker. */
+export interface LastErrorTally {
+  total: number;
+  byCode: LastErrorCodeCount[];
+}
+
+/**
+ * Count problem lastErrors by code (newest-unrelated; designed wraps omitted).
+ * Used by doctor and `/sessions errors` so a max_turns backlog cannot hide 429s.
+ */
+export function tallyLastErrorProblems(
+  sessions: ReadonlyArray<{
+    lastError?: { code?: string; message?: string } | null;
+  }>,
+): LastErrorTally {
+  const map = new Map<string, number>();
+  let total = 0;
+  for (const s of sessions) {
+    if (!isLastErrorProblem(s.lastError)) continue;
+    total += 1;
+    const code = String(s.lastError?.code || "").trim() || "unknown";
+    map.set(code, (map.get(code) || 0) + 1);
+  }
+  const byCode = [...map.entries()]
+    .map(([code, count]) => ({ code, count }))
+    .sort((a, b) => b.count - a.count || a.code.localeCompare(b.code));
+  return { total, byCode };
+}
+
+export function lastErrorTallyRecord(
+  tally: LastErrorTally,
+): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const row of tally.byCode) out[row.code] = row.count;
+  return out;
+}
+
+/** Compact `45 max_turns · 8 bad_request` line. Empty tally → `""`. */
+export function formatLastErrorTally(
+  tally: LastErrorTally,
+  opts?: { maxCodes?: number },
+): string {
+  if (tally.total <= 0 || tally.byCode.length === 0) return "";
+  const maxRaw = opts?.maxCodes;
+  const max =
+    typeof maxRaw === "number" && Number.isFinite(maxRaw) && maxRaw > 0
+      ? Math.floor(maxRaw)
+      : 8;
+  const bits = tally.byCode.slice(0, max).map((r) => `${r.count} ${r.code}`);
+  const rest = tally.byCode.slice(max).reduce((n, r) => n + r.count, 0);
+  if (rest > 0) bits.push(`+${rest} other`);
+  return bits.join(" · ");
+}
+
 /** Advice / CLI verbs that are not typeable at ›. */
 const SIT_DOWN_ADVICE = new Set([
   "wait",

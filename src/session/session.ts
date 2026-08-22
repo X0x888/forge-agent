@@ -42,7 +42,12 @@ import {
 } from "./subagent-usage.js";
 import { normalizeExploreMaps } from "./explore-map.js";
 import { normalizeRequestPruneSticky } from "./request-prune.js";
-import { isLastErrorProblem, sitDownNextForLastError } from "./last-error.js";
+import {
+  isLastErrorProblem,
+  sitDownNextForLastError,
+  formatLastErrorTally,
+  type LastErrorTally,
+} from "./last-error.js";
 export {
   LAST_ERROR_OUTCOME_CODES,
   isLastErrorProblem,
@@ -51,7 +56,11 @@ export {
   sitDownKeys,
   sitDownNextForLastError,
   retryRefusedNext,
+  tallyLastErrorProblems,
+  lastErrorTallyRecord,
+  formatLastErrorTally,
 } from "./last-error.js";
+export type { LastErrorTally, LastErrorCodeCount } from "./last-error.js";
 import {
   compactMessagesStructured,
   type CompactContext,
@@ -1432,6 +1441,23 @@ export function formatSessionsErrorsVerdict(count: number): string {
 }
 
 /**
+ * Verdict + code tally for the errors card.
+ * Designed empty: just `sessions  ·  none` (tally omitted).
+ */
+export function formatSessionsErrorsHeader(
+  tally: LastErrorTally,
+  opts?: { color?: boolean },
+): string {
+  const lines = [formatSessionsErrorsVerdict(tally.total)];
+  const codes = formatLastErrorTally(tally);
+  if (!codes) return lines[0]!;
+  const row = `  ${codes}`;
+  const color = opts?.color !== false;
+  lines.push(color ? chalk.dim(row) : row);
+  return lines.join("\n");
+}
+
+/**
  * Typeable Next after the errors list. First row is `/resume 1`;
  * lastErr of that row adds the sit-down key (`/accounts`, not a CLI dump).
  * Designed empty: `Next  /status`.
@@ -1828,12 +1854,20 @@ export interface ListSessionsOpts {
   query?: string;
   /** When true, only pinned sessions. When false, only unpinned. */
   pinned?: boolean;
+  /**
+   * When true, only sessions whose lastError is a problem (not designed wraps).
+   * Applied before `limit` so `/sessions errors` cannot miss a stale backlog.
+   */
+  errors?: boolean;
+  /** When true, only sessions with empty/missing title. Applied before `limit`. */
+  untitled?: boolean;
 }
 
 /**
  * List sessions newest-first.
  * Accepts a bare limit number (legacy) or {@link ListSessionsOpts}.
- * Filters (cwd/query) apply before the limit so multi-project lists stay complete.
+ * Filters (cwd/query/pinned/errors/untitled) apply before the limit so
+ * recovery lists stay complete.
  */
 /** Structured close-matches for session_not_found --json (id/title/path). */
 export function listSessionLookupSuggestions(
@@ -1870,6 +1904,8 @@ export function listSessions(
   const query = (opts.query || "").trim().toLowerCase();
   const pinnedFilter =
     typeof opts.pinned === "boolean" ? opts.pinned : undefined;
+  const errorsOnly = opts.errors === true;
+  const untitledOnly = opts.untitled === true;
 
   const root = path.join(forgeHome(), "sessions");
   ensureDir(root);
@@ -1902,6 +1938,8 @@ export function listSessions(
       }
       if (pinnedFilter === true && !meta.pinned) continue;
       if (pinnedFilter === false && meta.pinned) continue;
+      if (errorsOnly && !isLastErrorProblem(meta.lastError)) continue;
+      if (untitledOnly && String(meta.title || "").trim()) continue;
       if (query) {
         const hay =
           `${meta.id} ${meta.title || ""} ${meta.lastUserPreview || ""}`.toLowerCase();

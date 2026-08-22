@@ -11,6 +11,9 @@ import {
   sitDownKeys,
   sitDownNextForLastError,
   retryRefusedNext,
+  tallyLastErrorProblems,
+  formatLastErrorTally,
+  lastErrorTallyRecord,
 } from "../src/session/last-error.js";
 import {
   collectStatusIssues,
@@ -23,6 +26,7 @@ import {
   sessionPickerProblem,
   formatSessionsErrorsVerdict,
   formatSessionsErrorsCloser,
+  formatSessionsErrorsHeader,
 } from "../src/session/session.js";
 import { DEFAULT_CONFIG } from "../src/config/types.js";
 
@@ -163,8 +167,57 @@ describe("status + picker after Cycle complete", () => {
     assert.match(out, /rate-fail/);
     assert.doesNotMatch(out, /cycle-done/);
     assert.match(out, /^sessions  ·  1 error/m);
+    assert.match(out, /1 rate_limited/);
     assert.match(out, /Next  \/resume 1  ·  \/accounts/);
     assert.doesNotMatch(out, /\/resume 3/);
+  });
+
+  it("/sessions errors finds a stale lastError outside the default list window", async () => {
+    const tmp = tmpHome();
+    const { handleSlash } = await import("../src/commands/slash.js");
+    const { HookRunner } = await import("../src/harness/hooks.js");
+    const { saveSession, listSessions } = await import(
+      "../src/session/session.js"
+    );
+    const old = createSession({
+      cwd: tmp,
+      provider: "xai",
+      model: "m",
+      title: "old-fail",
+    });
+    setSessionLastError(old, {
+      code: "rate_limited",
+      message: "xai HTTP 429",
+    });
+    old.meta.updatedAt = new Date(Date.now() - 86400_000).toISOString();
+    saveSession(old);
+    for (let i = 0; i < 55; i++) {
+      const fresh = createSession({
+        cwd: tmp,
+        provider: "xai",
+        model: "m",
+        title: `fresh-${i}`,
+      });
+      saveSession(fresh);
+    }
+    // Newest 50 are clean — post-limit filter would hide old-fail.
+    const recent = listSessions({ limit: 50 });
+    assert.equal(recent.length, 50);
+    assert.ok(recent.every((s) => s.title?.startsWith("fresh-")));
+    const viaFilter = listSessions({ limit: 1, errors: true });
+    assert.equal(viaFilter.length, 1);
+    assert.equal(viaFilter[0]!.id, old.meta.id);
+    const r = await handleSlash("/sessions errors", {
+      session: old,
+      config: { ...DEFAULT_CONFIG, workspace: tmp },
+      hooks: new HookRunner(DEFAULT_CONFIG, tmp),
+    });
+    assert.equal(r.handled, true);
+    const out = String(r.output || "");
+    assert.match(out, /old-fail/);
+    assert.match(out, /rate_limited/);
+    assert.doesNotMatch(out, /fresh-/);
+    assert.match(out, /^sessions  ·  1 error/m);
   });
 
   it("prune may drop a Cycle complete session (it is not a failure backlog)", async () => {
@@ -190,12 +243,47 @@ describe("status + picker after Cycle complete", () => {
   });
 });
 
+describe("lastError tally", () => {
+  it("groups problem codes and skips Cycle complete", () => {
+    const tally = tallyLastErrorProblems([
+      { lastError: { code: "max_turns", message: "cap" } },
+      { lastError: { code: "max_turns", message: "cap" } },
+      { lastError: { code: "max_turns", message: "cap" } },
+      { lastError: { code: "rate_limited", message: "429" } },
+      { lastError: { code: "ulw_cycle_complete", message: "released" } },
+      { lastError: null },
+    ]);
+    assert.equal(tally.total, 4);
+    assert.deepEqual(tally.byCode, [
+      { code: "max_turns", count: 3 },
+      { code: "rate_limited", count: 1 },
+    ]);
+    assert.equal(formatLastErrorTally(tally), "3 max_turns · 1 rate_limited");
+    assert.deepEqual(lastErrorTallyRecord(tally), {
+      max_turns: 3,
+      rate_limited: 1,
+    });
+    assert.equal(
+      formatLastErrorTally(tally, { maxCodes: 1 }),
+      "3 max_turns · +1 other",
+    );
+    assert.equal(formatLastErrorTally({ total: 0, byCode: [] }), "");
+    const header = formatSessionsErrorsHeader(tally, { color: false });
+    assert.match(header, /^sessions  ·  4 errors/);
+    assert.match(header, /3 max_turns · 1 rate_limited/);
+  });
+});
+
 describe("sessions errors card", () => {
   it("designed empty is none + /status, not ok", () => {
     assert.equal(formatSessionsErrorsVerdict(0), "sessions  ·  none");
     assert.doesNotMatch(formatSessionsErrorsVerdict(0), /ok/);
     assert.equal(formatSessionsErrorsCloser(null), "Next  /status");
     assert.equal(formatSessionsErrorsVerdict(2), "sessions  ·  2 errors");
+    assert.equal(
+      formatSessionsErrorsHeader({ total: 0, byCode: [] }, { color: false }),
+      "sessions  ·  none",
+    );
   });
 
   it("first broken row Next is /resume 1 plus the sit-down key", () => {

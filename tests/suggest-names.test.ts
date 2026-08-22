@@ -98,6 +98,8 @@ describe("doctor projectRulesCount / projectCommandsCount", () => {
     });
     assert.ok((check.sessionsWithLastError ?? 0) >= 1);
     assert.match(check.report, /lastError/i);
+    assert.match(check.report, /rate_limited/);
+    assert.equal(check.sessionsLastErrorByCode?.rate_limited, 1);
   });
 
   it("doctor notes model default context window", async () => {

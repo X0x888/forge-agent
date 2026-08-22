@@ -712,7 +712,11 @@ export {
   sitDownKeyFromCode,
   sitDownKeys,
   sitDownNextForLastError,
+  tallyLastErrorProblems,
+  lastErrorTallyRecord,
+  formatLastErrorTally,
 } from "./session/last-error.js";
+export type { LastErrorTally, LastErrorCodeCount } from "./session/last-error.js";
 export {
   collectStatusIssues,
   formatStatusVerdict,
