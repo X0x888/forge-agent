@@ -35,6 +35,7 @@ import type {
   AccountSummary,
   ResolvedAuth,
 } from "./types.js";
+import { providerApiKeyEnvNames } from "./env-keys.js";
 
 export {
   listAccounts,
@@ -74,16 +75,7 @@ export function isEnvAuthActive(provider: string): boolean {
   if (p === "copilot" || p === "github" || p === "github-copilot") {
     return false;
   }
-  const names: string[] = ["FORGE_API_KEY"];
-  if (p === "xai" || p === "grok") names.push("XAI_API_KEY", "GROK_API_KEY");
-  else if (p === "anthropic") names.push("ANTHROPIC_API_KEY");
-  else if (p === "openai" || p === "codex") names.push("OPENAI_API_KEY");
-  else if (p === "openrouter") names.push("OPENROUTER_API_KEY");
-  else if (p === "deepseek" || p === "ds") names.push("DEEPSEEK_API_KEY");
-  else if (p === "google") names.push("GOOGLE_API_KEY", "GEMINI_API_KEY");
-  else if (p === "cursor") names.push("CURSOR_API_KEY", "CURSOR_ACCESS_TOKEN");
-  else if (p === "custom") names.push("FORGE_API_KEY");
-  for (const name of names) {
+  for (const name of providerApiKeyEnvNames(p)) {
     if (process.env[name]?.trim()) return true;
   }
   return false;

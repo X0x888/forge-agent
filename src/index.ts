@@ -73,6 +73,15 @@ export {
 } from "./agent/sandbox.js";
 export { resolveAuth, resolveAuthFresh, describeAuth } from "./auth/resolve.js";
 export {
+  PROVIDER_API_KEY_ENV,
+  FORGE_API_KEY_ENV,
+  isProviderApiKeyEnv,
+  providerApiKeyEnvNames,
+  providerOwnApiKeyEnvNames,
+  allProviderApiKeyEnvNames,
+  resolveProviderEnvId,
+} from "./auth/env-keys.js";
+export {
   loginInteractive,
   logout,
   supportsOAuth,

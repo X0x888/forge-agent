@@ -122,6 +122,7 @@ import {
   resolveAuthFresh,
 } from "../auth/resolve.js";
 import type { ResolvedAuth } from "../auth/types.js";
+import { providerOwnApiKeyEnvNames } from "../auth/env-keys.js";
 
 import {
   getActiveAccount,
@@ -1041,16 +1042,7 @@ const STOCK_PROVIDER_ORDER = [
 
 function providerAuthSummary(provider: string): string {
   try {
-    const envNames: string[] = [];
-    if (provider === "xai") envNames.push("XAI_API_KEY", "GROK_API_KEY");
-    else if (provider === "openrouter") envNames.push("OPENROUTER_API_KEY");
-    else if (provider === "deepseek") envNames.push("DEEPSEEK_API_KEY");
-    else if (provider === "anthropic") envNames.push("ANTHROPIC_API_KEY");
-    else if (provider === "openai") envNames.push("OPENAI_API_KEY");
-    else if (provider === "google") envNames.push("GOOGLE_API_KEY", "GEMINI_API_KEY");
-    else if (provider === "copilot") envNames.push("COPILOT_GITHUB_TOKEN");
-    else if (provider === "cursor") envNames.push("CURSOR_API_KEY", "CURSOR_ACCESS_TOKEN");
-    else if (provider === "custom") envNames.push("FORGE_API_KEY");
+    const envNames = providerOwnApiKeyEnvNames(provider);
     for (const n of envNames) {
       if (process.env[n]?.trim()) return `env:${n}`;
     }

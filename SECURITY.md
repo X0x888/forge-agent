@@ -30,7 +30,7 @@ Email or private channel preferred when available; otherwise open a minimal publ
 - Session export files mode `0600` (`forge sessions export --out`, `/export path`)
 - File mutation journal (`mutations.jsonl` mode `0600`) enables `/undo` disk restore; pre-images may include workspace secrets — keep `~/.forge` private
 - SSRF guards on `web_fetch` (stream body caps)
-- Shell env scrubbing for secret-looking variables
+- Shell env scrubbing for secret-looking variables; MCP/LSP stdio also drop Forge/LLM provider keys (`XAI_API_KEY`, `CURSOR_ACCESS_TOKEN`, …) even under `keepSecrets`
 - Project config cannot force `bypassPermissions`, turn sandbox off, or redirect credential paths
 - JSON config loaders clone object fallbacks (no shared mutable empty stores)
 - `/config` and `/logs` are live-safe and never dump API keys

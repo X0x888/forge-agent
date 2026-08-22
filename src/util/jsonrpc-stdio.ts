@@ -102,6 +102,9 @@ export class JsonRpcStdioClient {
     try {
       this.child = spawn(command, args, {
         cwd,
+        // keepSecrets: host GITHUB_TOKEN / CONTEXT7_API_KEY. Forge LLM keys
+        // (XAI_API_KEY, CURSOR_ACCESS_TOKEN, …) stay stripped; `env` overlay
+        // from mcp.json can still set a key explicitly.
         env: createChildEnv(env, { keepSecrets: true }),
         stdio: ["pipe", "pipe", "pipe"],
         // Detached so timeout kills can target the process group on Unix.

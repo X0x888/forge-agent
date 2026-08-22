@@ -31,6 +31,9 @@ import {
   normalizeExploreMaps,
   REQUEST_PRUNE_AT_DEFAULT,
   sitDownNextForLastError,
+  isProviderApiKeyEnv,
+  providerApiKeyEnvNames,
+  createChildEnv,
 } from "../src/index.js";
 
 describe("public package exports (index)", () => {
@@ -99,6 +102,24 @@ describe("public package exports (index)", () => {
       defaultIsolationForSpawn({ type: "explore", workspace: process.cwd() }),
       "none",
     );
+  });
+
+  it("exports provider env-key scrub for MCP/LSP keepSecrets", () => {
+    assert.equal(typeof isProviderApiKeyEnv, "function");
+    assert.equal(isProviderApiKeyEnv("XAI_API_KEY"), true);
+    assert.equal(isProviderApiKeyEnv("GITHUB_TOKEN"), false);
+    assert.ok(providerApiKeyEnvNames("xai").includes("XAI_API_KEY"));
+    assert.equal(typeof createChildEnv, "function");
+    const env = createChildEnv(undefined, {
+      keepSecrets: true,
+      base: {
+        PATH: "/bin",
+        XAI_API_KEY: "secret",
+        GITHUB_TOKEN: "gh",
+      },
+    });
+    assert.equal(env.XAI_API_KEY, undefined);
+    assert.equal(env.GITHUB_TOKEN, "gh");
   });
 
   it("exports sit-down lastErr Next", () => {

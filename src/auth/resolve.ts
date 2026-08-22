@@ -11,23 +11,7 @@ import { nowEpoch } from "../util/fs.js";
 import { refreshCredentialIfNeeded } from "./refresh.js";
 import { log } from "../util/log.js";
 import { maybeProactiveSwitch, resolvedFromAccount } from "./accounts.js";
-
-const ENV_KEYS: Record<string, string[]> = {
-  xai: ["XAI_API_KEY", "GROK_API_KEY"],
-  anthropic: ["ANTHROPIC_API_KEY"],
-  openai: ["OPENAI_API_KEY"],
-  openrouter: ["OPENROUTER_API_KEY"],
-  deepseek: ["DEEPSEEK_API_KEY"],
-  google: ["GOOGLE_API_KEY", "GEMINI_API_KEY"],
-  // GitHub OAuth tokens for Copilot exchange (not raw Copilot session tokens)
-  copilot: [
-    "COPILOT_GITHUB_TOKEN",
-    "GITHUB_COPILOT_TOKEN",
-    "GH_COPILOT_TOKEN",
-  ],
-  cursor: ["CURSOR_API_KEY", "CURSOR_ACCESS_TOKEN"],
-  custom: ["FORGE_API_KEY"],
-};
+import { FORGE_API_KEY_ENV, PROVIDER_API_KEY_ENV } from "./env-keys.js";
 
 /**
  * Resolve credentials with precedence:
@@ -53,9 +37,9 @@ export function resolveAuth(
   // handled in resolveAuthFresh so we never send a raw ghu_ to the chat API.
   if (provider !== "copilot" && provider !== "github" && provider !== "github-copilot") {
     const envNames = [
-      ...(ENV_KEYS[provider] ?? []),
+      ...(PROVIDER_API_KEY_ENV[provider] ?? []),
       ...(pcfg?.apiKeyEnv ? [pcfg.apiKeyEnv] : []),
-      "FORGE_API_KEY",
+      FORGE_API_KEY_ENV,
     ];
     for (const name of envNames) {
       const v = process.env[name]?.trim();
@@ -115,7 +99,7 @@ export function resolveAuth(
 
   // 4. Fallback: any other env key the user might have (auto-detect).
   // Skip Copilot env keys — they are GitHub OAuth tokens, not chat API keys.
-  for (const [pid, names] of Object.entries(ENV_KEYS)) {
+  for (const [pid, names] of Object.entries(PROVIDER_API_KEY_ENV)) {
     if (pid === "copilot") continue;
     for (const name of names) {
       const v = process.env[name]?.trim();

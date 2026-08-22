@@ -1,7 +1,10 @@
 /**
  * Shell environment policy (Grok-inspired).
  * Default: inherit all, but drop names matching secret patterns.
+ * Forge/LLM provider keys are always stripped from inherit — including
+ * MCP/LSP keepSecrets — unless policy `set` (mcp.json env) reintroduces them.
  */
+import { isProviderApiKeyEnv } from "../../auth/env-keys.js";
 
 export type InheritMode = "all" | "core" | "none";
 
@@ -178,8 +181,9 @@ function matchesAny(globs: string[], name: string): boolean {
  * hooks, grep). Scrubs secrets + injection (`GIT_DIR`, `NODE_OPTIONS`, …).
  * `extra` is policy `set` — reintroduces names after the scrub (checkpoint
  * temp index, hook `FORGE_*`). MCP/LSP stdio pass `{ keepSecrets: true }` so
- * a configured `GITHUB_TOKEN` still reaches the server; injection is still
- * stripped.
+ * a host `GITHUB_TOKEN` still reaches the server; Forge provider keys
+ * (`XAI_API_KEY`, `CURSOR_ACCESS_TOKEN`, …) stay stripped unless `set`.
+ * Injection is always stripped.
  */
 export function createChildEnv(
   extra?: NodeJS.ProcessEnv,
@@ -220,6 +224,10 @@ export function createShellEnv(
       // Always drop process-injection vectors (preload / interpreter opts).
       // Policy `set` can still reintroduce them deliberately below.
       if (SHELL_INJECTION_ENV.has(lowerName) || isGitConfigInjectionEnv(k)) continue;
+      // Always drop Forge/LLM credentials from inherit. keepSecrets still
+      // passes GITHUB_TOKEN; mcp.json env overlay (`set`) can reintroduce
+      // a provider key on purpose.
+      if (isProviderApiKeyEnv(k)) continue;
       if (!ignoreDefault && matchesAny(DEFAULT_SECRET_GLOBS, k)) {
         // Keep a few operational exceptions that are not credentials
         if (

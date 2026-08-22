@@ -1,7 +1,7 @@
 # Project memory
 
 > Auto-maintained by Forge. Edit carefully — agent loads this across sessions.
-> key=d54ef9c78f11c027 · updated=2026-08-22T05:31:29.462Z
+> key=d54ef9c78f11c027 · updated=2026-08-22T05:39:27.394Z
 
 ## constraint
 
@@ -21,6 +21,7 @@
 - /files and /last merge mutations.jsonl so bash / background / worktree-land writes appear (those tools have no path arg). Designed empty: no journal / FORGE_BASH_MUTATION_JOURNAL=0 / still-running bg until exit.
 - Foreground bash / idle !cmd / background bash journal git porcelain deltas into mutations.jsonl so /undo restores shell writes. Snapshot at start; porcelain applies on exit. /verify sets journal:false. FORGE_BASH_MUTATION_JOURNAL=0 off. /undo of the launch turn settles in-flight bg journals and SIGKILLs those writers. Designed empty: not a repo / clean tree / no recordMutation / still running (until exit or settle).
 - apply_patch is a transaction: mid-apply write failure rolls back earlier ops (add→unlink, update→before, delete→rewrite, move→restore src + drop dest). Journal and onEdit run only after the batch commits. Rollback restamps noted files (refreshNotedFromDisk) so a retry is not blocked as changed-on-disk. Designed leftover: empty parent dirs from a rolled-back add.
+- MCP/LSP stdio createChildEnv(keepSecrets) keeps GITHUB_TOKEN / CONTEXT7_API_KEY but never inherits Forge provider keys (XAI_API_KEY, CURSOR_ACCESS_TOKEN, OPENAI_API_KEY, … / PROVIDER_API_KEY_ENV). mcp.json env overlay (set) can pass a key on purpose. Do not add keepSecrets names to the inherit path.
 
 ## convention
 
@@ -31,7 +32,7 @@
 - isolation=worktree auto-lands into parent only when status=completed (FORGE_SUBAGENT_LAND=auto|keep|discard); incomplete_max_turns / abort / error / stop-hook skip apply and keep the worktree. Kept on conflict. FORGE_SUBAGENT_KEEP_WORKTREE=1 forces keep.
 - `/budget` is a family spend cap. spawn_subagent pins the child to remaining (not a fresh config.maxCostUsd). Parent HIT refuses spawn. Copy the pre-worktree pin onto child.meta — do not re-pin after createSession (a sibling live-fold can refuse and leave the child uncapped). Live-fold so parallel children share remaining. Cost-cap handoff is `incomplete_cost_cap` (does not land).
 - lsp({ action: ensure }) is a mutation (npm install -g / rustup / go install). Plan / ULW PLAN / dontAsk / headless / session-tool on status do not auto-allow. diagnostics / status / install-guide / dry-run stay read-only. YOLO / allow rule still work. CLI forge lsp ensure is user-initiated.
-- Forge-spawned children use createChildEnv, not raw process.env. Git helpers (checkpoint, journal, worktree, /commit, /diff, auto-commit) must not inherit host GIT_DIR / GIT_INDEX_FILE. Extra env is policy set after the scrub. MCP/LSP stdio: createChildEnv(env, { keepSecrets: true }).
+- Forge-spawned children use createChildEnv, not raw process.env. Git helpers (checkpoint, journal, worktree, /commit, /diff, auto-commit) must not inherit host GIT_DIR / GIT_INDEX_FILE. Extra env is policy set after the scrub. MCP/LSP stdio: createChildEnv(env, { keepSecrets: true }) — keeps GITHUB_TOKEN; never inherit XAI_API_KEY / CURSOR_ACCESS_TOKEN / other PROVIDER_API_KEY_ENV names unless mcp.json env sets them.
 - workspace/strict OS sandbox write allow is CWD + ~/.forge/{sessions,logs,tmp} + temp — never the ~/.forge root (auth.json). Seatbelt deny-after-allow blocks .git/hooks / .ssh / .gnupg / shell rc / id_rsa even for python/sed/node. git commit/config stay allowed (.git/config and HEAD stay writable). Background bash must use seatbeltProfile (no duplicate writer). Linux leftover: cannot ro-bind a missing .git/hooks dir.
 
 ## fact

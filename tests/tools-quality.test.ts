@@ -12,6 +12,12 @@ import {
 } from "../src/agent/tools/edit-match.js";
 import { createChildEnv, createShellEnv } from "../src/agent/tools/env-policy.js";
 import {
+  allProviderApiKeyEnvNames,
+  isProviderApiKeyEnv,
+  providerApiKeyEnvNames,
+  providerOwnApiKeyEnvNames,
+} from "../src/auth/env-keys.js";
+import {
   editDistance,
   pathNotFoundHint,
 } from "../src/agent/tools/path-hints.js";
@@ -240,9 +246,85 @@ describe("env policy", () => {
       },
     );
     assert.equal(env.GITHUB_TOKEN, "from-config");
-    assert.equal(env.OPENAI_API_KEY, "sk-host");
+    // Forge LLM keys never inherit — playwright/context7 must not see them.
+    assert.equal(env.OPENAI_API_KEY, undefined);
     assert.equal(env.GIT_DIR, undefined);
     assert.equal(env.NODE_OPTIONS, undefined);
+  });
+
+  it("keepSecrets strips every Forge provider key from inherit", () => {
+    const base: NodeJS.ProcessEnv = {
+      PATH: "/usr/bin",
+      GITHUB_TOKEN: "gh-host",
+      CONTEXT7_API_KEY: "c7-host",
+      GH_TOKEN: "gh-alias",
+      XAI_API_KEY: "xai-host",
+      GROK_API_KEY: "grok-host",
+      ANTHROPIC_API_KEY: "ant-host",
+      OPENAI_API_KEY: "oai-host",
+      OPENROUTER_API_KEY: "or-host",
+      DEEPSEEK_API_KEY: "ds-host",
+      GOOGLE_API_KEY: "goog-host",
+      GEMINI_API_KEY: "gem-host",
+      CURSOR_API_KEY: "cur-host",
+      CURSOR_ACCESS_TOKEN: "cur-tok",
+      FORGE_API_KEY: "forge-host",
+      COPILOT_GITHUB_TOKEN: "cop-host",
+      GITHUB_COPILOT_TOKEN: "cop2-host",
+      GH_COPILOT_TOKEN: "cop3-host",
+    };
+    const env = createChildEnv(undefined, { keepSecrets: true, base });
+    assert.equal(env.PATH, "/usr/bin");
+    assert.equal(env.GITHUB_TOKEN, "gh-host");
+    assert.equal(env.CONTEXT7_API_KEY, "c7-host");
+    assert.equal(env.GH_TOKEN, "gh-alias");
+    assert.equal(env.XAI_API_KEY, undefined);
+    assert.equal(env.GROK_API_KEY, undefined);
+    assert.equal(env.ANTHROPIC_API_KEY, undefined);
+    assert.equal(env.OPENAI_API_KEY, undefined);
+    assert.equal(env.OPENROUTER_API_KEY, undefined);
+    assert.equal(env.DEEPSEEK_API_KEY, undefined);
+    assert.equal(env.GOOGLE_API_KEY, undefined);
+    assert.equal(env.GEMINI_API_KEY, undefined);
+    assert.equal(env.CURSOR_API_KEY, undefined);
+    assert.equal(env.CURSOR_ACCESS_TOKEN, undefined);
+    assert.equal(env.FORGE_API_KEY, undefined);
+    assert.equal(env.COPILOT_GITHUB_TOKEN, undefined);
+    assert.equal(env.GITHUB_COPILOT_TOKEN, undefined);
+    assert.equal(env.GH_COPILOT_TOKEN, undefined);
+  });
+
+  it("provider env-key table covers aliases and keepSecrets denylist", () => {
+    assert.equal(isProviderApiKeyEnv("xai_api_key"), true);
+    assert.equal(isProviderApiKeyEnv("CURSOR_ACCESS_TOKEN"), true);
+    assert.equal(isProviderApiKeyEnv("GITHUB_TOKEN"), false);
+    assert.equal(isProviderApiKeyEnv("CONTEXT7_API_KEY"), false);
+    assert.deepEqual(providerOwnApiKeyEnvNames("grok"), [
+      "XAI_API_KEY",
+      "GROK_API_KEY",
+    ]);
+    assert.ok(providerApiKeyEnvNames("xai").includes("FORGE_API_KEY"));
+    assert.ok(providerApiKeyEnvNames("xai").includes("XAI_API_KEY"));
+    const names = allProviderApiKeyEnvNames();
+    assert.ok(names.includes("xai_api_key"));
+    assert.ok(names.includes("cursor_access_token"));
+    assert.ok(!names.includes("github_token"));
+  });
+
+  it("keepSecrets set overlay can reintroduce a provider key", () => {
+    const env = createChildEnv(
+      { OPENAI_API_KEY: "from-mcp-json" },
+      {
+        keepSecrets: true,
+        base: {
+          PATH: "/usr/bin",
+          OPENAI_API_KEY: "sk-host",
+          XAI_API_KEY: "xai-host",
+        },
+      },
+    );
+    assert.equal(env.OPENAI_API_KEY, "from-mcp-json");
+    assert.equal(env.XAI_API_KEY, undefined);
   });
 
   it("core inherit keeps only core names", () => {

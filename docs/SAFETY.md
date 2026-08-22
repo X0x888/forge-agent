@@ -182,7 +182,7 @@ forge run "…" --permission-mode bypassPermissions
 
 ### Shell environment
 
-Forge-spawned children inherit a scrubbed env via `createChildEnv` (bash, git helpers, format-on-write, `lsp ensure`, hooks, grep, sandbox fallback). Secret-looking names and process-injection vectors (`LD_PRELOAD`, `NODE_OPTIONS`, `DYLD_INSERT_LIBRARIES`, `PYTHONSTARTUP`, `BASH_ENV`, `GIT_DIR`, `GIT_INDEX_FILE`, `GIT_WORK_TREE`, `GIT_SSH_COMMAND`, `GIT_CONFIG_*`, …) are dropped unless policy `set` reintroduces them (checkpoint temp index, hook `FORGE_*`). MCP/LSP stdio keep host tokens (`keepSecrets`) so a configured `GITHUB_TOKEN` still reaches the server; injection is still stripped.
+Forge-spawned children inherit a scrubbed env via `createChildEnv` (bash, git helpers, format-on-write, `lsp ensure`, hooks, grep, sandbox fallback). Secret-looking names and process-injection vectors (`LD_PRELOAD`, `NODE_OPTIONS`, `DYLD_INSERT_LIBRARIES`, `PYTHONSTARTUP`, `BASH_ENV`, `GIT_DIR`, `GIT_INDEX_FILE`, `GIT_WORK_TREE`, `GIT_SSH_COMMAND`, `GIT_CONFIG_*`, …) are dropped unless policy `set` reintroduces them (checkpoint temp index, hook `FORGE_*`). MCP/LSP stdio keep host tokens (`keepSecrets`) so a host `GITHUB_TOKEN` still reaches the server; **Forge/LLM provider keys** (`XAI_API_KEY`, `OPENAI_API_KEY`, `CURSOR_ACCESS_TOKEN`, `FORGE_API_KEY`, …) are still stripped from inherit. Put a key in `mcp.json` `env` to pass it on purpose. Injection is always stripped.
 
 ### Blocking Stop hooks
 
