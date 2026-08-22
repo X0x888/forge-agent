@@ -62,10 +62,7 @@ export async function toolLsp(
     };
   }
 
-  const action = String(args.action ?? args.method ?? "diagnostics")
-    .trim()
-    .toLowerCase()
-    .replace(/-/g, "_");
+  const action = normalizeLspAction(args);
 
   if (!ACTIONS.has(action)) {
     return {
@@ -86,10 +83,7 @@ export async function toolLsp(
   if (action === "ensure") {
     const { ensureLspServers, formatEnsureResult, formatEnsurePlan, buildEnsurePlan } =
       await import("./ensure.js");
-    const dry =
-      args.dry_run === true ||
-      args.dry_run === "true" ||
-      String(args.mode || "").toLowerCase() === "dry";
+    const dry = lspDryRun(args);
     if (dry) {
       return { output: formatEnsurePlan(buildEnsurePlan(ctx.workspace)) };
     }

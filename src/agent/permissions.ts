@@ -27,6 +27,7 @@ import {
 } from "../mcp/types.js";
 import type { McpManager } from "../mcp/manager.js";
 import { withStdinLease } from "../tui/stdin-lease.js";
+import { isLspToolName, lspActionInstalls } from "../lsp/tools.js";
 
 const WRITE_TOOLS = new Set([
   "write_file",
@@ -184,6 +185,7 @@ export class PermissionGate {
   }
 
   isDangerous(toolName: string, toolInput: Record<string, unknown>): boolean {
+    if (this.isLspEnsureInstall(toolName, toolInput)) return true;
     if (toolName === "bash" || toolName === "run_terminal_command") {
       const cmd = String(toolInput.command || "");
       if (!checkBashHardDeny(cmd).ok) return true;
@@ -192,6 +194,45 @@ export class PermissionGate {
       return commandCheckTargets(cmd).some((s) => isSoftDangerousBash(s));
     }
     return false;
+  }
+
+  private isLspEnsureInstall(
+    toolName: string,
+    toolInput: Record<string, unknown>,
+  ): boolean {
+    return isLspToolName(toolName) && lspActionInstalls(toolInput);
+  }
+
+  /**
+   * lsp ensure installs globally — not a free read-only tool (same class as
+   * web_fetch allow_local). Session-tool on lsp status must not cover ensure.
+   */
+  private async gateLspEnsure(
+    toolName: string,
+    toolInput: Record<string, unknown>,
+    workspace: string,
+    opts?: { sessionTool?: boolean },
+  ): Promise<PermissionResult | null> {
+    if (!this.isLspEnsureInstall(toolName, toolInput)) return null;
+    if (this.isNonInteractive()) {
+      logSandboxEvent({
+        type: "rule_deny",
+        reason: "lsp_ensure_noninteractive",
+        command: "lsp ensure",
+      });
+      return {
+        decision: "deny",
+        reason: opts?.sessionTool
+          ? "lsp_ensure_noninteractive: headless lsp ensure requires an allow rule, pattern always, or bypassPermissions (session-tool alone is not enough)"
+          : "lsp_ensure_noninteractive: headless lsp ensure requires an allow rule, pattern always, or bypassPermissions",
+      };
+    }
+    return this.promptUser(toolName, toolInput, true, {
+      workspace,
+      reasonHint: opts?.sessionTool
+        ? "lsp ensure installs language servers globally (npm install -g) — session-tool on lsp status does not cover ensure"
+        : "lsp ensure installs language servers globally (npm install -g / rustup / go install) — approve only if intentional",
+    });
   }
 
   private isNonInteractive(): boolean {
@@ -265,6 +306,14 @@ export class PermissionGate {
           rule: "ulw_orient",
         };
       }
+    }
+    if (this.isLspEnsureInstall(toolName, toolInput)) {
+      return {
+        decision: "deny",
+        reason:
+          "ulw_orient: lsp ensure denied — write the plan first (Reading: / exit_plan_mode), or type /build",
+        rule: "ulw_orient",
+      };
     }
     return null;
   }
@@ -388,6 +437,13 @@ export class PermissionGate {
             "web_fetch_allow_local_dontAsk: allow_local requires an allow rule or interactive approval",
         };
       }
+      if (this.isLspEnsureInstall(toolName, toolInput)) {
+        return {
+          decision: "deny",
+          reason:
+            "lsp_ensure_dontAsk: lsp ensure requires an allow rule or interactive approval",
+        };
+      }
       if (READ_ONLY_TOOLS.has(toolName)) {
         if (toolName === "read_file" || toolName === "Read") {
           const p = String(toolInput.path || "");
@@ -433,7 +489,7 @@ export class PermissionGate {
         return {
           decision: "deny",
           reason:
-            "plan_mode: mutations denied — read/search/todo_write/search_mcp/lsp + read-only bash only; call exit_plan_mode (or /build) to implement",
+            "plan_mode: mutations denied — read/search/todo_write/search_mcp/lsp (not ensure) + read-only bash only; call exit_plan_mode (or /build) to implement",
           rule: "plan_mode",
         };
       }
@@ -471,7 +527,18 @@ export class PermissionGate {
           rule: "plan_mode",
         };
       }
-      // todo_write, reads, grep, public web_*, search_mcp, lsp allowed for research
+      if (this.isLspEnsureInstall(toolName, toolInput)) {
+        if (rulesEval?.decision === "allow") {
+          return { decision: "allow", reason: "allow_rule" };
+        }
+        return {
+          decision: "deny",
+          reason:
+            "plan_mode: lsp ensure denied — ensure installs language servers (npm install -g); diagnostics/status/dry-run stay allowed; call exit_plan_mode (or /build) to implement",
+          rule: "plan_mode",
+        };
+      }
+      // todo_write, reads, grep, public web_*, search_mcp, lsp (not ensure) allowed
       return { decision: "allow", reason: "plan_read" };
     }
 
@@ -514,6 +581,10 @@ export class PermissionGate {
             "web_fetch allow_local can reach loopback services — approve only if intentional (session-tool does not cover allow_local)",
         });
       }
+      const lspEnsureSession = await this.gateLspEnsure(toolName, toolInput, workspace, {
+        sessionTool: true,
+      });
+      if (lspEnsureSession) return lspEnsureSession;
       if (isMcpInvocationTool(toolName)) {
         // Session-always must not unlock every MCP server from one approve.
         // Persist server__tool via [a]lways; [s]ession stores a pattern.
@@ -543,6 +614,8 @@ export class PermissionGate {
             "web_fetch allow_local can reach loopback services — approve only if intentional",
         });
       }
+      const lspEnsureRo = await this.gateLspEnsure(toolName, toolInput, workspace);
+      if (lspEnsureRo) return lspEnsureRo;
       return { decision: "allow", reason: "read_only_tool" };
     }
 

@@ -224,6 +224,7 @@ import {
   type SubagentRequest,
 } from "./subagent.js";
 import { mcpCallIsReadOnly } from "../mcp/tools.js";
+import { isLspToolName, lspActionInstalls } from "../lsp/tools.js";
 
 export type LoopPhase =
   | "thinking"
@@ -3448,6 +3449,11 @@ async function runToolCalls(opts: {
     // Mode-flip must run sequentially so later writes see the restored mode.
     if (isExitPlanModeToolName(n) || isExitPlanModeToolName(tc.function.name || "")) {
       return false;
+    }
+    if (isLspToolName(n) || isLspToolName(tc.function.name || "")) {
+      const parsed = parseToolArguments(tc.function.arguments);
+      if (!parsed.ok) return false;
+      return !lspActionInstalls(parsed.value);
     }
     if (isReadOnlyToolName(n) || isReadOnlyToolName(tc.function.name || "")) {
       return true;

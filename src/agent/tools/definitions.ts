@@ -584,7 +584,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
         "Prefer diagnostics after TS/Python/Rust/Go edits when the server is on PATH. " +
         "Prefer references/definition/workspace_symbols over repo-wide grep once you know a symbol name. " +
         "Actions: diagnostics|hover|definition|references|symbols|workspace_symbols|status|install|ensure. " +
-        "ensure auto-installs TS+Python (+ Rust/Go if project markers). line/character 1-based.",
+        "ensure auto-installs TS+Python (+ Rust/Go if project markers) — a mutation, not plan/read-only. line/character 1-based.",
       parameters: {
         type: "object",
         properties: {

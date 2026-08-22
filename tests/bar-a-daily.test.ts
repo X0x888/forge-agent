@@ -318,6 +318,109 @@ describe("Bar A: fail-closed noninteractive permissions", () => {
       assert.equal(r.reason, "read_only_tool");
     }
   });
+
+  it("headless lsp ensure is denied without allow rule", async () => {
+    const g = new PermissionGate({ interactive: false });
+    for (const mode of ["default", "acceptEdits", "dontAsk", "plan"] as const) {
+      const r = await g.request({
+        toolName: "lsp",
+        input: { action: "ensure" },
+        mode,
+        workspace: "/tmp/proj",
+        config: DEFAULT_CONFIG,
+      });
+      assert.equal(r.decision, "deny", `mode=${mode}`);
+      assert.match(r.reason, /lsp ensure|plan_mode/i);
+    }
+  });
+
+  it("headless lsp status / dry-run still auto-allow as read-only", async () => {
+    const g = new PermissionGate({ interactive: false });
+    const status = await g.request({
+      toolName: "lsp",
+      input: { action: "status" },
+      mode: "acceptEdits",
+      workspace: "/tmp/proj",
+      config: DEFAULT_CONFIG,
+    });
+    assert.equal(status.decision, "allow");
+    assert.equal(status.reason, "read_only_tool");
+
+    const dry = await g.request({
+      toolName: "lsp",
+      input: { action: "ensure", dry_run: true },
+      mode: "acceptEdits",
+      workspace: "/tmp/proj",
+      config: DEFAULT_CONFIG,
+    });
+    assert.equal(dry.decision, "allow");
+    assert.equal(dry.reason, "read_only_tool");
+  });
+
+  it("headless lsp ensure passes with allow rule or YOLO", async () => {
+    const g = new PermissionGate({ interactive: false });
+    const cfg = {
+      ...DEFAULT_CONFIG,
+      permission: {
+        ...DEFAULT_CONFIG.permission,
+        allow: ["lsp", "LSP"],
+      },
+    };
+    const allowed = await g.request({
+      toolName: "lsp",
+      input: { action: "ensure" },
+      mode: "default",
+      workspace: "/tmp/proj",
+      config: cfg,
+    });
+    assert.equal(allowed.decision, "allow");
+    assert.equal(allowed.reason, "allow_rule");
+
+    const planAllowed = await g.request({
+      toolName: "lsp",
+      input: { action: "ensure" },
+      mode: "plan",
+      workspace: "/tmp/proj",
+      config: cfg,
+    });
+    assert.equal(planAllowed.decision, "allow");
+    assert.equal(planAllowed.reason, "allow_rule");
+
+    const yolo = await g.request({
+      toolName: "lsp",
+      input: { action: "ensure" },
+      mode: "bypassPermissions",
+      workspace: "/tmp/proj",
+      config: DEFAULT_CONFIG,
+    });
+    assert.equal(yolo.decision, "allow");
+    assert.equal(yolo.reason, "bypassPermissions");
+  });
+
+  it("session-tool for lsp does not free-pass ensure", async () => {
+    const g = new PermissionGate({ interactive: false });
+    (g as unknown as { sessionTools: Set<string> }).sessionTools.add("lsp");
+
+    const status = await g.request({
+      toolName: "lsp",
+      input: { action: "status" },
+      mode: "acceptEdits",
+      workspace: "/tmp/proj",
+      config: DEFAULT_CONFIG,
+    });
+    assert.equal(status.decision, "allow");
+    assert.equal(status.reason, "session_tool");
+
+    const ensure = await g.request({
+      toolName: "lsp",
+      input: { action: "ensure" },
+      mode: "acceptEdits",
+      workspace: "/tmp/proj",
+      config: DEFAULT_CONFIG,
+    });
+    assert.equal(ensure.decision, "deny");
+    assert.match(ensure.reason, /lsp ensure|session-tool/i);
+  });
 });
 
 describe("Bar A: project config cannot weaken safety", () => {

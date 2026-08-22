@@ -17,6 +17,10 @@ import {
   formatEnsurePlan,
   lspAutoEnsureEnabled,
 } from "../src/lsp/ensure.js";
+import {
+  isLspToolName,
+  lspActionInstalls,
+} from "../src/lsp/tools.js";
 
 let tmp: string;
 const prevAuto = process.env.FORGE_LSP_AUTO;
@@ -112,5 +116,20 @@ describe("env gates", () => {
     assert.equal(lspAutoEnsureEnabled(), false);
     delete process.env.FORGE_LSP_AUTO;
     assert.equal(lspAutoEnsureEnabled(), true);
+  });
+});
+
+describe("lspActionInstalls", () => {
+  it("treats ensure as an install and dry-run / other actions as not", () => {
+    assert.equal(isLspToolName("lsp"), true);
+    assert.equal(isLspToolName("LSP"), true);
+    assert.equal(isLspToolName("bash"), false);
+    assert.equal(lspActionInstalls({ action: "ensure" }), true);
+    assert.equal(lspActionInstalls({ method: "ensure" }), true);
+    assert.equal(lspActionInstalls({ action: "ensure", dry_run: true }), false);
+    assert.equal(lspActionInstalls({ action: "ensure", mode: "dry" }), false);
+    assert.equal(lspActionInstalls({ action: "status" }), false);
+    assert.equal(lspActionInstalls({ action: "install" }), false);
+    assert.equal(lspActionInstalls({ action: "diagnostics" }), false);
   });
 });

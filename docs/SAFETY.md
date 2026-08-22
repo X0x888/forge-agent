@@ -72,7 +72,7 @@ ask = [
 |-----|---------|
 | `y` | Allow once |
 | `a` | Always allow this command **prefix** (arity-aware, e.g. `git status *`); persisted under `~/.forge/permissions.json` (mode `0600`) |
-| `s` | Session-always for this **tool name** (does **not** cover `web_fetch allow_local` or `call_mcp` — those need `y`/`a` with a `server__tool` target) |
+| `s` | Session-always for this **tool name** (does **not** cover `web_fetch allow_local`, `lsp ensure`, or `call_mcp` — those need `y`/`a` with a `server__tool` target) |
 | `n` | Reject |
 
 ```text
@@ -99,6 +99,7 @@ YOLO (`bypassPermissions`) does not block external paths unless a deny rule matc
 - In `acceptEdits`, conservative **read-only** prefixes (`git status`, `ls`, `rg`, version probes, …) may auto-allow when there is no pipe/redirect. Mutations disguised as RO prefixes are denied: `find -delete|-exec`, `git branch -D`, `git remote set-url`, `git log --output=…`.
 - **Subcommand-aware RO checks** (not bare prefix): `find` without `-delete`/`-exec`/`-ok`/`-fprint*`; `git branch` listing only (not `-d`/`-m`/create); `git remote` list/show/get-url only (not `add`/`remove`/`set-url`/`prune`).
 - **`web_fetch allow_local`**: not a free read-only tool — headless/dontAsk/plan deny unless allow-rule / pattern-always (`a`) / YOLO; interactive prompts. Session-tool (`s`) on a public fetch does **not** free-pass later loopback `allow_local`. Public URLs still auto-allow.
+- **`lsp ensure`**: not a free read-only tool — it runs `npm install -g` / rustup / go install. Plan / ULW PLAN deny (even under YOLO). Headless/dontAsk/default need allow-rule / pattern-always / YOLO; interactive prompts. Session-tool (`s`) on `lsp status` does **not** free-pass later `ensure`. diagnostics / status / install-guide / `dry_run` still auto-allow. CLI `forge lsp ensure` is user-initiated.
 
 ## Segment-aware checks
 

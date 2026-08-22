@@ -322,6 +322,26 @@ describe("plan/build live controls", () => {
     assert.equal(writey.decision, "deny");
   });
 
+  it("PermissionGate plan denies lsp ensure and allows diagnostics", async () => {
+    const gate = new PermissionGate({ interactive: false });
+    const ensure = await gate.request({
+      toolName: "lsp",
+      input: { action: "ensure" },
+      mode: "plan",
+      workspace: tmp,
+    });
+    assert.equal(ensure.decision, "deny");
+    assert.match(ensure.reason || "", /exit_plan_mode|\/build|lsp ensure/);
+
+    const diag = await gate.request({
+      toolName: "lsp",
+      input: { action: "diagnostics", path: "src/x.ts" },
+      mode: "plan",
+      workspace: tmp,
+    });
+    assert.equal(diag.decision, "allow", diag.reason);
+  });
+
   it("tab-completes /plan and /build", () => {
     const [planHits] = forgeCompleter("/pl");
     assert.ok(planHits.some((h) => h.startsWith("/plan")));
