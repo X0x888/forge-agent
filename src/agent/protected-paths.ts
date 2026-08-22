@@ -1,7 +1,8 @@
 /**
  * Paths the agent must never write via native file tools (Bar A daily-driver).
  * Bash write dests (redirect / tee / cp|mv|ln) use the same list via
- * checkBashProtectedWrites — workspace sandbox allows .git/hooks.
+ * checkBashProtectedWrites. workspace/strict OS sandbox also denies
+ * .git/hooks / .ssh / ~/.forge/auth (python/sed/node), not only parsed dests.
  */
 import path from "node:path";
 import os from "node:os";

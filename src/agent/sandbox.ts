@@ -184,12 +184,16 @@ const TMP_WRITE_FALLBACKS = ["/private/tmp", "/var/tmp", "/private/var/tmp"];
  * git commit / git config must keep working.
  */
 export const SANDBOX_WRITE_DENY_REGEXES = [
-  "/\\.git/hooks(/|$)",
-  "/\\.ssh(/|$)",
-  "/\\.gnupg(/|$)",
-  "/\\.(bashrc|zshrc|profile|zprofile|bash_profile)$",
-  "/id_rsa$",
-  "/id_ed25519$",
+  "/\\.git/hooks",
+  "/\\.ssh/",
+  "/\\.gnupg/",
+  "/\\.bashrc",
+  "/\\.zshrc",
+  "/\\.profile",
+  "/\\.zprofile",
+  "/\\.bash_profile",
+  "/id_rsa",
+  "/id_ed25519",
 ] as const;
 
 function uniquePaths(paths: string[]): string[] {
@@ -321,9 +325,6 @@ ${writeAllow}
   (literal "/dev/null")
   (regex #"^/dev/fd/")
   (regex #"^/dev/ttys")
-)
-(deny file-write-data
-${writeDeny}
 )
 (deny file-write*
 ${writeDeny}
@@ -549,6 +550,7 @@ export async function runSandboxed(opts: SandboxRunOpts): Promise<SandboxRunResu
   if (platform === "darwin") {
     const sb = detected.path;
     if (sb) {
+      ensureForgeSandboxWriteRoots(forge);
       const profileText = seatbeltProfile({
         profile,
         cwd: path.resolve(opts.cwd),
@@ -614,13 +616,9 @@ export async function runSandboxed(opts: SandboxRunOpts): Promise<SandboxRunResu
       ];
       if (profile !== "read-only") {
         args.push("--bind", cwd, cwd);
+        args.push(...bwrapProtectedRoBinds(cwd));
       }
-      try {
-        fs.mkdirSync(forge, { recursive: true });
-      } catch {
-        /* */
-      }
-      args.push("--bind", path.resolve(forge), path.resolve(forge));
+      args.push(...bwrapForgeWriteBinds(forge));
       if (restrictNetwork) {
         args.push("--unshare-net");
       }
@@ -743,11 +741,11 @@ export function describeSandbox(
     case "off":
       return `off (no OS confinement; ${netLabel})`;
     case "workspace":
-      return `workspace (write: CWD + ~/.forge + temp; ${netLabel})`;
+      return `workspace (write: CWD + ~/.forge/{sessions,logs,tmp} + temp; hooks/ssh denied; ${netLabel})`;
     case "read-only":
-      return `read-only (write: ~/.forge + temp only; ${netLabel})`;
+      return `read-only (write: ~/.forge/{sessions,logs,tmp} + temp only; ${netLabel})`;
     case "strict":
-      return `strict (write: CWD + ~/.forge + temp; ${netLabel})`;
+      return `strict (write: CWD + ~/.forge/{sessions,logs,tmp} + temp; hooks/ssh denied; ${netLabel})`;
     default:
       return String(profile);
   }

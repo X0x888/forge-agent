@@ -17,9 +17,9 @@ Patterns ported from open-source **Grok Build**, **OpenCode**, and **Warp** (loc
 | Profile | Writes | Network (child bash) | Notes |
 |---------|--------|----------------------|--------|
 | `off` | unrestricted | open | Not recommended |
-| **`workspace`** (default) | CWD + `~/.forge` + temp | **open** | Everyday coding |
-| `read-only` | `~/.forge` + temp only | **blocked** | Explore without project edits via shell |
-| `strict` | CWD + `~/.forge` + temp | **blocked** | Grok-aligned tighter profile |
+| **`workspace`** (default) | CWD + `~/.forge/{sessions,logs,tmp}` + temp; `.git/hooks` / `.ssh` denied | **open** | Everyday coding |
+| `read-only` | `~/.forge/{sessions,logs,tmp}` + temp only | **blocked** | Explore without project edits via shell |
+| `strict` | CWD + `~/.forge/{sessions,logs,tmp}` + temp; `.git/hooks` / `.ssh` denied | **blocked** | Grok-aligned tighter profile |
 
 **macOS:** `sandbox-exec` (Seatbelt)  
 **Linux:** `bwrap` (bubblewrap) if installed  

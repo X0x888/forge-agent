@@ -394,8 +394,10 @@ function expandWritePathToken(raw: string, workspace: string): string | null {
 
 /**
  * File tools already refuse isProtectedWritePath. Bash must too —
- * workspace sandbox allows .git/hooks, and disaster regexes ignore redirects.
- * Uses isProtectedWritePath only (not checkWritePathHardDeny) so `> /dev/null` stays allowed.
+ * extractWritePaths covers redirect/tee/cp; workspace/strict OS sandbox
+ * denies .git/hooks and ~/.forge/auth even for python/sed/node. Disaster
+ * regexes ignore redirects. Uses isProtectedWritePath only (not
+ * checkWritePathHardDeny) so `> /dev/null` stays allowed.
  */
 export function checkBashProtectedWrites(
   command: string,

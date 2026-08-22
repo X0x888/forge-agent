@@ -28,7 +28,13 @@ import type {
   SandboxProfile,
 } from "../../config/types.js";
 import { defaultNetworkForProfile } from "../../config/types.js";
-import { detectSandboxBackend, canonicalSandboxPath } from "../sandbox.js";
+import {
+  detectSandboxBackend,
+  seatbeltProfile,
+  ensureForgeSandboxWriteRoots,
+  bwrapForgeWriteBinds,
+  bwrapProtectedRoBinds,
+} from "../sandbox.js";
 import { syncBackgroundCounts } from "../../statusline/activity.js";
 import {
   killProcessTree,
@@ -237,20 +243,22 @@ function planSpawn(opts: {
   const cwd = path.resolve(opts.cwd);
 
   if (process.platform === "darwin" && detected.path) {
-    // Lazy import seatbelt text via dynamic rebuild of minimal profile
-    const { writeSeatbeltProfile } = getSeatbeltWriter();
+    ensureForgeSandboxWriteRoots(forge);
     const profPath = path.join(
       tmp,
       `forge-bg-sbx-${process.pid}-${Date.now()}.sb`,
     );
-    writeSeatbeltProfile({
-      profile,
-      cwd,
-      forge: path.resolve(forge),
-      tmp: path.resolve(tmp),
-      restrictNetwork,
+    fs.writeFileSync(
       profPath,
-    });
+      seatbeltProfile({
+        profile,
+        cwd,
+        forge: path.resolve(forge),
+        tmp: path.resolve(tmp),
+        restrictNetwork,
+      }),
+      { mode: 0o600 },
+    );
     return {
       file: detected.path,
       args: ["-f", profPath, shell, "-c", opts.command],
@@ -282,13 +290,9 @@ function planSpawn(opts: {
     ];
     if (profile !== "read-only") {
       args.push("--bind", cwd, cwd);
+      args.push(...bwrapProtectedRoBinds(cwd));
     }
-    try {
-      fs.mkdirSync(forge, { recursive: true });
-    } catch {
-      /* */
-    }
-    args.push("--bind", path.resolve(forge), path.resolve(forge));
+    args.push(...bwrapForgeWriteBinds(forge));
     if (restrictNetwork) args.push("--unshare-net");
     args.push("--chdir", cwd, "--", shell, "-c", opts.command);
     return {
@@ -316,70 +320,6 @@ function planSpawn(opts: {
     backend: "none",
   };
 }
-
-/** Minimal seatbelt writer to avoid circular deps with full sandbox module. */
-function getSeatbeltWriter() {
-  return {
-    writeSeatbeltProfile(o: {
-      profile: SandboxProfile;
-      cwd: string;
-      forge: string;
-      tmp: string;
-      restrictNetwork: boolean;
-      profPath: string;
-    }) {
-      // Seatbelt canonicalizes subpath rules (macOS /var → /private/var), so
-      // the tmp path must be canonical or $TMPDIR writes are denied.
-      const tmp = canonicalSandboxPath(o.tmp);
-      const writePaths =
-        o.profile === "read-only"
-          ? [o.forge, tmp, "/private/tmp", "/var/tmp", "/private/var/tmp"]
-          : [
-              o.cwd,
-              o.forge,
-              tmp,
-              "/private/tmp",
-              "/var/tmp",
-              "/private/var/tmp",
-            ];
-      const writeAllow = writePaths
-        .map((p) => `  (subpath ${JSON.stringify(p)})`)
-        .join("\n");
-      const networkClause = o.restrictNetwork
-        ? `(deny network*)\n(deny network-outbound)\n(deny network-inbound)`
-        : `(allow network*)`;
-      const text = `
-(version 1)
-(debug deny)
-(allow default)
-(deny file-write*)
-(allow file-write-data
-${writeAllow}
-  (literal "/dev/null")
-  (literal "/dev/tty")
-  (regex #"^/dev/fd/")
-  (regex #"^/dev/ttys")
-)
-(allow file-write*
-${writeAllow}
-  (literal "/dev/null")
-  (regex #"^/dev/fd/")
-  (regex #"^/dev/ttys")
-)
-(allow file-ioctl (literal "/dev/null") (literal "/dev/tty") (regex #"^/dev/ttys") (regex #"^/dev/fd/"))
-(allow process-exec*)
-(allow process-fork)
-(allow process-info*)
-(allow signal)
-(allow sysctl-read)
-(allow mach-lookup)
-${networkClause}
-`.trim();
-      fs.writeFileSync(o.profPath, text, { mode: 0o600 });
-    },
-  };
-}
-
 
 function ulwLastInFlight(sessionId: string): boolean {
   try {

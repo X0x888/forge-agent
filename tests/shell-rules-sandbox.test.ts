@@ -2,6 +2,7 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
+import path from "node:path";
 import {
   splitShellSegments,
   peelWrappers,
@@ -28,6 +29,10 @@ import {
   execCommandSandboxed,
   seatbeltProfile,
   canonicalSandboxPath,
+  sandboxWriteAllowPaths,
+  SANDBOX_WRITE_DENY_REGEXES,
+  bwrapForgeWriteBinds,
+  bwrapProtectedRoBinds,
 } from "../src/agent/sandbox.js";
 import { commandPrefix, alwaysPatternFromTokens, isReadOnlyCommand } from "../src/agent/shell-arity.js";
 import { mergePermissionTrust } from "../src/config/load.js";
@@ -610,8 +615,129 @@ describe("seatbelt tmp canonicalization", () => {
   });
 
   it("canonicalSandboxPath keeps the original path when realpath fails", () => {
-    const bogus = "/definitely/not/here-forge-test";
+    const bogus = "/definitely/not-here-forge-test";
     assert.equal(canonicalSandboxPath(bogus), bogus);
+  });
+});
+
+describe("sandbox write policy (hooks / forge auth)", () => {
+  it("does not allow the ~/.forge root — only sessions/logs/tmp", () => {
+    const allow = sandboxWriteAllowPaths({
+      profile: "workspace",
+      cwd: "/ws",
+      forge: "/forge",
+      tmp: "/tmp",
+    });
+    assert.ok(allow.includes("/ws"), `cwd missing: ${allow.join(",")}`);
+    assert.ok(allow.includes("/forge/sessions"));
+    assert.ok(allow.includes("/forge/logs"));
+    assert.ok(allow.includes("/forge/tmp"));
+    assert.ok(!allow.includes("/forge"), "forge root must not be writable");
+    const ro = sandboxWriteAllowPaths({
+      profile: "read-only",
+      cwd: "/ws",
+      forge: "/forge",
+      tmp: "/tmp",
+    });
+    assert.ok(!ro.includes("/ws"), "read-only must not write CWD");
+    assert.ok(ro.includes("/forge/sessions"));
+  });
+
+  it("seatbelt deny-after-allow punches hooks/ssh; git config stays writable", () => {
+    const text = seatbeltProfile({
+      profile: "workspace",
+      cwd: "/ws",
+      forge: "/forge",
+      tmp: os.tmpdir(),
+      restrictNetwork: false,
+    });
+    assert.ok(text.includes('(subpath "/ws")'));
+    assert.ok(text.includes('(subpath "/forge/sessions")'));
+    assert.ok(
+      !text.includes('(subpath "/forge")'),
+      "must not allow the whole forge home",
+    );
+    assert.ok(text.includes("/\\.git/hooks"));
+    assert.ok(text.includes("/\\.ssh/"));
+    assert.ok(SANDBOX_WRITE_DENY_REGEXES.every((re) => text.includes(re)));
+    assert.ok(!text.includes("/\\.git/config"));
+    assert.ok(!text.includes("/\\.git/HEAD"));
+    const denyAt = text.lastIndexOf("(deny file-write*");
+    const allowAt = text.lastIndexOf("(allow file-write*");
+    assert.ok(denyAt > allowAt, "deny-after-allow so cwd subpath does not win");
+    assert.match(describeSandbox("workspace"), /sessions,logs,tmp/);
+    assert.match(describeSandbox("workspace"), /hooks\/ssh denied/);
+  });
+
+  it("bwrap binds forge slices and ro-binds existing hooks", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "forge-bwrap-pol-"));
+    const hooks = path.join(dir, ".git", "hooks");
+    fs.mkdirSync(hooks, { recursive: true });
+    const forge = path.join(dir, "forge-home");
+    const binds = bwrapForgeWriteBinds(forge);
+    assert.deepEqual(binds, [
+      "--bind",
+      path.join(forge, "sessions"),
+      path.join(forge, "sessions"),
+      "--bind",
+      path.join(forge, "logs"),
+      path.join(forge, "logs"),
+      "--bind",
+      path.join(forge, "tmp"),
+      path.join(forge, "tmp"),
+    ]);
+    const ro = bwrapProtectedRoBinds(dir);
+    assert.ok(ro.includes("--ro-bind"));
+    assert.ok(ro.includes(fs.realpathSync(hooks)));
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("workspace seatbelt denies node writes to .git/hooks", async (t) => {
+    const detected = detectSandboxBackend();
+    if (process.platform !== "darwin" || !detected.available) {
+      t.skip("sandbox-exec not available");
+      return;
+    }
+    // Nested sandbox-exec (this process already confined) cannot apply a profile.
+    const probe = await execCommandSandboxed({
+      command: "echo ok",
+      cwd: os.tmpdir(),
+      timeoutMs: 5000,
+      profile: "workspace",
+      missingBackend: "fail-closed",
+    });
+    if (!probe.sandboxed || probe.code !== 0) {
+      t.skip("nested sandbox-exec cannot apply a profile");
+      return;
+    }
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "forge-sbx-hooks-"));
+    const hooks = path.join(dir, ".git", "hooks");
+    fs.mkdirSync(hooks, { recursive: true });
+    const hook = path.join(hooks, "pre-commit");
+    const ok = path.join(dir, "ok.txt");
+    const denied = await execCommandSandboxed({
+      command: `node -e "require('fs').writeFileSync('.git/hooks/pre-commit','evil')"`,
+      cwd: dir,
+      timeoutMs: 8000,
+      profile: "workspace",
+      missingBackend: "fail-closed",
+    });
+    const allowed = await execCommandSandboxed({
+      command: `node -e "require('fs').writeFileSync('ok.txt','hi')"`,
+      cwd: dir,
+      timeoutMs: 8000,
+      profile: "workspace",
+      missingBackend: "fail-closed",
+    });
+    try {
+      assert.equal(denied.sandboxed, true);
+      assert.notEqual(denied.code, 0);
+      assert.ok(!fs.existsSync(hook), "hook must not land");
+      assert.equal(allowed.code, 0, allowed.stderr);
+      assert.equal(fs.readFileSync(ok, "utf8"), "hi");
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 
