@@ -504,6 +504,7 @@ describe("TOOL_DEFINITIONS agent guidance", () => {
     assert.match(byName.get_task_output || "", /Omit task_id|list active/i);
     assert.match(byName.todo_write || "", /merge|status|id/i);
     assert.match(byName.apply_patch || "", /Begin Patch|multi-file/i);
+    assert.match(byName.apply_patch || "", /rolls back/i);
     assert.match(byName.search_mcp || "", /MCP|server__tool/i);
     assert.match(byName.call_mcp || "", /server__tool|search_mcp/i);
     assert.match(byName.mcp_resource || "", /resource|list|read/i);

@@ -226,6 +226,99 @@ describe("toolApplyPatch", () => {
     assert.doesNotMatch(result.output, /EISDIR/i);
   });
 
+  it("rolls back earlier ops when a later write fails", async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-patch-rb-"));
+    fs.writeFileSync(path.join(tmp, "keep.txt"), "original\n");
+    fs.writeFileSync(path.join(tmp, "blocked"), "not-a-dir\n");
+    const journals: Array<{ path: string; kind: string }> = [];
+    let edits = 0;
+    const result = await toolApplyPatch(
+      {
+        patchText: `*** Begin Patch
+*** Update File: keep.txt
+@@
+-original
++changed
+*** Add File: blocked/child.txt
++should-not-land
+*** End Patch`,
+      },
+      {
+        workspace: tmp,
+        onEdit: () => {
+          edits += 1;
+        },
+        recordMutation: (input) => {
+          journals.push({ path: input.path, kind: input.kind });
+        },
+      },
+    );
+    assert.equal(result.isError, true);
+    assert.match(result.output, /Rolled back — workspace is unchanged/i);
+    assert.doesNotMatch(result.output, /NOT rolled back/i);
+    assert.equal(fs.readFileSync(path.join(tmp, "keep.txt"), "utf8"), "original\n");
+    assert.equal(fs.existsSync(path.join(tmp, "blocked/child.txt")), false);
+    assert.equal(fs.readFileSync(path.join(tmp, "blocked"), "utf8"), "not-a-dir\n");
+    assert.equal(edits, 0);
+    assert.equal(journals.length, 0);
+  });
+
+  it("rolls back a delete when a later add cannot write", async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-patch-rbdel-"));
+    const gone = path.join(tmp, "gone.txt");
+    fs.writeFileSync(gone, "restore-me\n");
+    let expectMode: number | undefined;
+    try {
+      fs.chmodSync(gone, 0o640);
+      expectMode = 0o640;
+    } catch {
+      /* sandbox / windows — content restore is the load-bearing check */
+    }
+    fs.writeFileSync(path.join(tmp, "blocked"), "not-a-dir\n");
+    const result = await toolApplyPatch(
+      {
+        patchText: `*** Begin Patch
+*** Delete File: gone.txt
+*** Add File: blocked/child.txt
++nope
+*** End Patch`,
+      },
+      { workspace: tmp },
+    );
+    assert.equal(result.isError, true);
+    assert.match(result.output, /Rolled back/i);
+    assert.equal(fs.readFileSync(gone, "utf8"), "restore-me\n");
+    if (expectMode !== undefined) {
+      assert.equal(fs.statSync(gone).mode & 0o777, expectMode);
+    }
+    assert.equal(fs.existsSync(path.join(tmp, "blocked/child.txt")), false);
+  });
+
+  it("rolls back a move when a later add cannot write", async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-patch-rbmv-"));
+    fs.writeFileSync(path.join(tmp, "src.txt"), "from\n");
+    fs.writeFileSync(path.join(tmp, "blocked"), "not-a-dir\n");
+    const result = await toolApplyPatch(
+      {
+        patchText: `*** Begin Patch
+*** Update File: src.txt
+*** Move to: dest.txt
+@@
+-from
++moved
+*** Add File: blocked/child.txt
++nope
+*** End Patch`,
+      },
+      { workspace: tmp },
+    );
+    assert.equal(result.isError, true);
+    assert.match(result.output, /Rolled back/i);
+    assert.equal(fs.readFileSync(path.join(tmp, "src.txt"), "utf8"), "from\n");
+    assert.equal(fs.existsSync(path.join(tmp, "dest.txt")), false);
+    assert.equal(fs.existsSync(path.join(tmp, "blocked/child.txt")), false);
+  });
+
   it("executeTool routes apply_patch", async () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-patch-"));
     const r = await executeTool(

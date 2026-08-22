@@ -1,6 +1,7 @@
 /**
  * apply_patch tool — multi-file add/update/delete/move in one call.
  * OpenCode / Codex-compatible patch grammar.
+ * All hunks are validated before any write; a mid-apply failure rolls back.
  */
 import fs from "node:fs";
 import fsp from "node:fs/promises";
@@ -24,6 +25,51 @@ import {
 import { fileReadGuardEnabled } from "./file-read-state.js";
 import { verifyHintSuffix } from "../../util/project-intel.js";
 import { applyRawPinSideEffects } from "../../util/pin-budget.js";
+
+async function unlinkIfExists(abs: string): Promise<void> {
+  try {
+    await fsp.unlink(abs);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+  }
+}
+
+async function restoreTextFile(
+  abs: string,
+  content: string,
+  mode?: number,
+): Promise<void> {
+  await fsp.mkdir(path.dirname(abs), { recursive: true });
+  await atomicWriteFile(abs, content, mode != null ? { mode } : undefined);
+}
+
+type PatchJournal = {
+  path: string;
+  kind: "create" | "update" | "delete";
+  before?: string;
+  mode?: number;
+  skipped?: boolean;
+  reason?: string;
+};
+
+function journalPreimage(
+  kind: "update" | "delete",
+  abs: string,
+  before: string,
+  mode?: number,
+): PatchJournal {
+  const bytes = Buffer.byteLength(before, "utf8");
+  if (bytes > 1_500_000) {
+    return {
+      path: abs,
+      kind,
+      mode,
+      skipped: true,
+      reason: `pre-image ${bytes} bytes exceeds journal cap`,
+    };
+  }
+  return { path: abs, kind, before, mode };
+}
 
 export async function toolApplyPatch(
   args: Record<string, unknown>,
@@ -345,101 +391,95 @@ export async function toolApplyPatch(
   const applied: string[] = [];
   /** Absolute paths successfully written (for opt-in format-on-write). */
   const writtenAbs: string[] = [];
+  const pendingJournals: PatchJournal[] = [];
+  const rollbacks: Array<{ label: string; undo: () => Promise<void> }> = [];
   try {
     for (const op of planned) {
       if (op.kind === "add") {
         await fsp.mkdir(path.dirname(op.abs), { recursive: true });
         await atomicWriteFile(op.abs, op.content);
-        journal({ path: op.abs, kind: "create" });
+        rollbacks.push({
+          label: `A ${op.rel}`,
+          undo: () => unlinkIfExists(op.abs),
+        });
         applied.push(`A ${op.rel}`);
         writtenAbs.push(op.abs);
-        ctx.onEdit?.();
+        pendingJournals.push({ path: op.abs, kind: "create" });
       } else if (op.kind === "delete") {
         await fsp.unlink(op.abs);
-        if (ctx.fileReads && fileReadGuardEnabled()) {
-          ctx.fileReads.clear(op.abs);
-        }
-        const bytes = Buffer.byteLength(op.before, "utf8");
-        if (bytes > 1_500_000) {
-          journal({
-            path: op.abs,
-            kind: "delete",
-            mode: op.mode,
-            skipped: true,
-            reason: `pre-image ${bytes} bytes exceeds journal cap`,
-          });
-        } else {
-          journal({
-            path: op.abs,
-            kind: "delete",
-            before: op.before,
-            mode: op.mode,
-          });
-        }
+        rollbacks.push({
+          label: `D ${op.rel}`,
+          undo: () => restoreTextFile(op.abs, op.before, op.mode),
+        });
         applied.push(`D ${op.rel}`);
-        ctx.onEdit?.();
+        pendingJournals.push(
+          journalPreimage("delete", op.abs, op.before, op.mode),
+        );
+      } else if (op.moveAbs && op.moveAbs !== op.abs) {
+        // Move = create dest then delete source. Push rollback after each
+        // disk step so a failure between them still unwinds.
+        const moveAbs = op.moveAbs;
+        await fsp.mkdir(path.dirname(moveAbs), { recursive: true });
+        await atomicWriteFile(moveAbs, op.content);
+        rollbacks.push({
+          label: `A ${op.moveRel}`,
+          undo: () => unlinkIfExists(moveAbs),
+        });
+        await fsp.unlink(op.abs);
+        rollbacks.push({
+          label: `D ${op.rel}`,
+          undo: () => restoreTextFile(op.abs, op.before, op.mode),
+        });
+        applied.push(`M ${op.rel} → ${op.moveRel}`);
+        writtenAbs.push(moveAbs);
+        pendingJournals.push({ path: moveAbs, kind: "create" });
+        pendingJournals.push(
+          journalPreimage("delete", op.abs, op.before, op.mode),
+        );
       } else {
-        if (op.moveAbs && op.moveAbs !== op.abs) {
-          // Move = create at dest + delete source (journal both for undo)
-          await fsp.mkdir(path.dirname(op.moveAbs), { recursive: true });
-          await atomicWriteFile(op.moveAbs, op.content);
-          await fsp.unlink(op.abs);
-          if (ctx.fileReads && fileReadGuardEnabled()) {
-            ctx.fileReads.clear(op.abs);
-          }
-          journal({ path: op.moveAbs, kind: "create" });
-          const bytes = Buffer.byteLength(op.before, "utf8");
-          if (bytes > 1_500_000) {
-            journal({
-              path: op.abs,
-              kind: "delete",
-              mode: op.mode,
-              skipped: true,
-              reason: `pre-image ${bytes} bytes exceeds journal cap`,
-            });
-          } else {
-            journal({
-              path: op.abs,
-              kind: "delete",
-              before: op.before,
-              mode: op.mode,
-            });
-          }
-          applied.push(`M ${op.rel} → ${op.moveRel}`);
-          writtenAbs.push(op.moveAbs);
-        } else {
-          await atomicWriteFile(op.abs, op.content);
-          const bytes = Buffer.byteLength(op.before, "utf8");
-          if (bytes > 1_500_000) {
-            journal({
-              path: op.abs,
-              kind: "update",
-              mode: op.mode,
-              skipped: true,
-              reason: `pre-image ${bytes} bytes exceeds journal cap`,
-            });
-          } else {
-            journal({
-              path: op.abs,
-              kind: "update",
-              before: op.before,
-              mode: op.mode,
-            });
-          }
-          applied.push(`M ${op.rel}`);
-          writtenAbs.push(op.abs);
-        }
-        ctx.onEdit?.();
+        await atomicWriteFile(op.abs, op.content);
+        rollbacks.push({
+          label: `M ${op.rel}`,
+          undo: () => restoreTextFile(op.abs, op.before, op.mode),
+        });
+        applied.push(`M ${op.rel}`);
+        writtenAbs.push(op.abs);
+        pendingJournals.push(
+          journalPreimage("update", op.abs, op.before, op.mode),
+        );
       }
     }
   } catch (err) {
+    const undoFailed: string[] = [];
+    for (const rb of [...rollbacks].reverse()) {
+      try {
+        await rb.undo();
+      } catch (undoErr) {
+        undoFailed.push(`${rb.label}: ${(undoErr as Error).message}`);
+      }
+    }
+    const head = `apply_patch failed after ${applied.length} op(s): ${(err as Error).message}`;
+    const detail = applied.length
+      ? `Attempted before failure:\n${applied.join("\n")}\n`
+      : "";
+    const tail = undoFailed.length
+      ? `Rollback incomplete — inspect the workspace:\n${undoFailed.join("\n")}`
+      : "Rolled back — workspace is unchanged.";
     return {
-      output:
-        `apply_patch partially applied (${applied.length} op(s)) then failed: ${(err as Error).message}\n` +
-        (applied.length ? `Applied before failure:\n${applied.join("\n")}\n` : "") +
-        `Earlier successful ops were NOT rolled back — inspect the workspace.`,
+      output: `${head}\n${detail}${tail}`,
       isError: true,
     };
+  }
+
+  for (const entry of pendingJournals) journal(entry);
+  for (let i = 0; i < planned.length; i++) ctx.onEdit?.();
+  if (ctx.fileReads && fileReadGuardEnabled()) {
+    for (const op of planned) {
+      if (op.kind === "delete") ctx.fileReads.clear(op.abs);
+      else if (op.kind === "update" && op.moveAbs && op.moveAbs !== op.abs) {
+        ctx.fileReads.clear(op.abs);
+      }
+    }
   }
 
   const fmtByAbs = new Map<string, ReturnType<typeof maybeFormatAfterWrite>>();

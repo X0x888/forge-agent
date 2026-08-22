@@ -161,7 +161,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       name: "apply_patch",
       description:
         "Apply one multi-file patch (add/update/delete/move) with *** Begin Patch … *** End Patch grammar. " +
-        "Prefer for coordinated edits across several files. All hunks validated before any write. " +
+        "Prefer for coordinated edits across several files. All hunks validated before any write. Failed apply rolls back. " +
         "Success returns per-file numbered AFTER windows (N| prefixes are not file text). " +
         "Update/delete requires a prior read_file this session. For a single small edit, search_replace is fine.",
       parameters: {
