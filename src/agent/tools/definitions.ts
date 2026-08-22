@@ -538,7 +538,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
         "Delegate a bounded subtask to a nested agent and receive its summary plus an artifact_path. " +
         "status=incomplete_max_turns means the child hit its turn cap — read_file the artifact; do not re-spawn the same explore. " +
         "Types: general-purpose | explore (read-only) | plan (read-only design). " +
-        "isolation=worktree (default for general-purpose in a git repo) lands the diff into the parent on completed only; incomplete_max_turns / abort / error keep the worktree (no land). explore/plan stay in-place. isolation=none writes the parent tree. Kept on conflict. " +
+        "isolation=worktree (default for general-purpose in a git repo) lands the diff into the parent on completed only; incomplete_max_turns / abort / error keep the worktree (no land). explore/plan stay in-place. isolation=none writes the parent tree and folds child mutations onto the parent journal so /undo restores after cleanup deletes the child. Kept on conflict. " +
         "Do not nest when a single tool call suffices.",
       parameters: {
         type: "object",

@@ -111,7 +111,7 @@ card, shared `formatExpertTips` (`forge tips`/`/tips`), first-run `/setup` card 
 `/unpause`, session `lastUserPreview` list snippets, resume-by-title, relative session ages,
 `/files`, `/path` (+ copy), `/pin` + `sessions pin` (fork clears pin; status PIN badge), resume
 orientation + `--pinned` list, doctor `sessionsPinned`, session path helpers, sessions show file
-snippet, file-aware `/undo` (`mutations.jsonl` pre-images + journaled file mode; turn marks skip
+snippet, file-aware `/undo` (`mutations.jsonl` pre-images + journaled file mode + isolation=none child fold; turn marks skip
 synthetic harness user-messages — `isSyntheticUserMessage`), `/init`, `/review`, `/compact-and`,
 `/fork-and-compact`, fork copies ULW/goal sidecars, `/clear`/`/clear hard`/`/new` hygiene, `/logs`
 · `forge logs`, `/config` · `forge config`, `/export` mode `0600`, `--read-outside ask|allow|deny`, doctor flags `read-outside=allow` / `sandbox-missing=fallback`, `FORGE_BASH_TIMEOUT_MS` /

@@ -1233,6 +1233,58 @@ it("/fork includes last-turn peek", async () => {
     assert.match(text, /\/diff --full/);
   });
 
+  it("listSessionTouchedFiles merges folded isolation=none child journal", async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-files-fold-"));
+    process.env.FORGE_HOME = tmp;
+    const {
+      createSession: mk,
+      listSessionTouchedFiles,
+      formatSessionTouchedFiles,
+    } = await import("../src/session/session.js");
+    const {
+      appendFileMutation,
+      foldChildMutationsIntoParent,
+    } = await import("../src/session/mutations.js");
+    const parent = mk({ cwd: tmp, provider: "xai", model: "m" });
+    const child = mk({ cwd: tmp, provider: "xai", model: "m" });
+    parent.messages.push({
+      role: "assistant",
+      content: "",
+      tool_calls: [
+        {
+          id: "1",
+          type: "function",
+          function: {
+            name: "spawn_subagent",
+            arguments: JSON.stringify({
+              prompt: "write src/child.ts",
+              isolation: "none",
+            }),
+          },
+        },
+      ],
+    });
+    assert.equal(listSessionTouchedFiles(parent, { mutatedOnly: true }).length, 0);
+    appendFileMutation(child.meta.id, {
+      path: path.join(tmp, "src/child.ts"),
+      kind: "create",
+      turn: 4,
+    });
+    foldChildMutationsIntoParent({
+      parentSessionId: parent.meta.id,
+      childSessionId: child.meta.id,
+      parentTurn: 1,
+    });
+    const writes = listSessionTouchedFiles(parent, { mutatedOnly: true });
+    assert.equal(writes.length, 1);
+    assert.equal(writes[0]!.path, "src/child.ts");
+    assert.ok(writes[0]!.tools.includes("journal"));
+    assert.match(
+      formatSessionTouchedFiles(parent, { mutatedOnly: true }),
+      /src\/child\.ts/,
+    );
+  });
+
   it("listSessionTouchedFiles merges mutations.jsonl (bash/bg/land have no path arg)", async () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-files-journal-"));
     process.env.FORGE_HOME = tmp;

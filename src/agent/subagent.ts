@@ -28,6 +28,7 @@ import {
   deleteSessionDetailed,
   saveSession,
 } from "../session/session.js";
+import { foldChildMutationsIntoParent } from "../session/mutations.js";
 import { loadDecisionMemory } from "../harness/decision-memory.js";
 import type { LoopEvents, LoopResult } from "./loop.js";
 import { normalizePermissionMode } from "../util/mode-aliases.js";
@@ -36,6 +37,7 @@ import {
   defaultIsolationForSpawn,
   formatWorktreeLandSummary,
   landSubagentWorktree,
+  resolveIsolationMode,
   type SubagentWorktree,
   type WorktreeLandResult,
 } from "./worktree.js";
@@ -156,6 +158,18 @@ export function shouldSkipWorktreeLand(
   status: SubagentHandoffStatus,
 ): boolean {
   return status !== "completed";
+}
+
+/**
+ * isolation=none writes the parent tree and journals only on the child
+ * session. Fold those entries onto the parent before cleanup deletes
+ * the child (and the only pre-images). Worktree land journals parent
+ * pre-images separately — do not fold worktree-local paths.
+ */
+export function shouldFoldChildMutations(
+  isolation: SubagentIsolation | string,
+): boolean {
+  return resolveIsolationMode(isolation) !== "worktree";
 }
 
 const READ_ONLY_TOOLS = new Set([
@@ -602,6 +616,21 @@ export async function runSubagent(
       ctx.parentSession.meta.editCount += child.meta.editCount;
       ctx.parentSession.meta.lastEditAt =
         child.meta.lastEditAt || new Date().toISOString();
+    }
+  }
+
+  // isolation=none journals onto the parent before cleanup deletes the
+  // child session (and the only pre-images). Worktree land owns parent
+  // undo for isolation=worktree.
+  if (shouldFoldChildMutations(isolation) && child.meta.id) {
+    try {
+      foldChildMutationsIntoParent({
+        parentSessionId: ctx.parentSession.meta.id,
+        childSessionId: child.meta.id,
+        parentTurn: ctx.parentSession.meta.turnCount,
+      });
+    } catch {
+      /* journal is best-effort */
     }
   }
 

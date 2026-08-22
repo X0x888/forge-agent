@@ -1,7 +1,7 @@
 # Project memory
 
 > Auto-maintained by Forge. Edit carefully — agent loads this across sessions.
-> key=d54ef9c78f11c027 · updated=2026-08-22T05:13:42.035Z
+> key=d54ef9c78f11c027 · updated=2026-08-22T05:21:59.534Z
 
 ## constraint
 
@@ -18,8 +18,8 @@
 - `/auth` empty is `auth  ·  none` with no Next — login is not a › key. `/accounts` empty still closer `/auth`. `formatAuthCard` hides Next `/auth` so the lastErr key is not circular. `printAuthStatus()` is CLI-only (`forge auth`).
 - Foreground bash / idle !cmd journal git porcelain deltas into mutations.jsonl so /undo restores shell writes. /verify sets journal:false (checks must not become undo turns). FORGE_BASH_MUTATION_JOURNAL=0 off. Background tasks are not journaled. Not a repo / clean tree / no recordMutation is designed empty.
 - Safety checkpoints use a temp index (untracked in, secrets out), not git stash create. Restore is git restore --source=sha overwrite + mixed reset — never git stash apply. /checkpoint restore falls back to ulw.checkpointSha. Bare /checkpoint peeks; /checkpoint snap takes the snapshot.
-- /files and /last merge mutations.jsonl so bash / background / worktree-land writes appear (those tools have no path arg). Designed empty: no journal / FORGE_BASH_MUTATION_JOURNAL=0 / still-running bg until exit.
-- Foreground bash / idle !cmd / background bash journal git porcelain deltas into mutations.jsonl so /undo restores shell writes. Snapshot at start; porcelain applies on exit. /verify sets journal:false. FORGE_BASH_MUTATION_JOURNAL=0 off. /undo of the launch turn settles in-flight bg journals and SIGKILLs those writers. Designed empty: not a repo / clean tree / no recordMutation / still running (until exit or settle).
+- /files and /last merge mutations.jsonl so bash / background / worktree-land / isolation=none spawn writes appear (those tools have no path arg). Designed empty: no journal / FORGE_BASH_MUTATION_JOURNAL=0 / still-running bg until exit.
+- Foreground bash / idle !cmd / background bash journal git porcelain deltas into mutations.jsonl so /undo restores shell writes. Snapshot at start; porcelain applies on exit. /verify sets journal:false. FORGE_BASH_MUTATION_JOURNAL=0 off. /undo of the launch turn settles in-flight bg journals and SIGKILLs those writers. isolation=none spawn folds the child's mutations.jsonl onto the parent before cleanup deletes the child session (worktree land journals parent pre-images separately). Designed empty: not a repo / clean tree / no recordMutation / still running (until exit or settle) / no child jou
 - apply_patch is a transaction: mid-apply write failure rolls back earlier ops (add→unlink, update→before, delete→rewrite, move→restore src + drop dest). Journal and onEdit run only after the batch commits. Rollback restamps noted files (refreshNotedFromDisk) so a retry is not blocked as changed-on-disk. Designed leftover: empty parent dirs from a rolled-back add.
 
 ## convention

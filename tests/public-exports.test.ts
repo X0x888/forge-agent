@@ -23,6 +23,8 @@ import {
   journalLandedPreimages,
   restoreParentPreimages,
   defaultIsolationForSpawn,
+  shouldFoldChildMutations,
+  foldChildMutationsIntoParent,
   shouldPruneOutbound,
   sessionCacheRatio,
   parseExploreMap,
@@ -83,6 +85,10 @@ describe("public package exports (index)", () => {
     assert.equal(typeof journalLandedPreimages, "function");
     assert.equal(typeof restoreParentPreimages, "function");
     assert.equal(typeof defaultIsolationForSpawn, "function");
+    assert.equal(typeof shouldFoldChildMutations, "function");
+    assert.equal(shouldFoldChildMutations("none"), true);
+    assert.equal(shouldFoldChildMutations("worktree"), false);
+    assert.equal(typeof foldChildMutationsIntoParent, "function");
     assert.equal(typeof shouldPruneOutbound, "function");
     assert.equal(shouldPruneOutbound(100).prune, false);
     assert.equal(typeof sessionCacheRatio, "function");

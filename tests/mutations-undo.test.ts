@@ -12,6 +12,7 @@ import {
   rewindSessionDetailed,
   forkSession,
   clearConversation,
+  deleteSessionDetailed,
 } from "../src/session/session.js";
 import {
   appendFileMutation,
@@ -19,6 +20,7 @@ import {
   restoreMutationsAfterTurn,
   formatRestoreResult,
   mutationsJournalStats,
+  foldChildMutationsIntoParent,
 } from "../src/session/mutations.js";
 import { executeTool } from "../src/agent/tools/index.js";
 import {
@@ -633,6 +635,117 @@ describe("/init and /compact-and slash commands", () => {
     assert.match(r.output || "", /Rewound/);
     assert.match(r.output || "", /Disk restored|already absent|z\.txt/);
     assert.equal(fs.existsSync(f), false);
+  });
+
+  it("foldChildMutationsIntoParent is a no-op for empty / same-id / excludeRoot", () => {
+    const parent = createSession({
+      cwd: home,
+      provider: "xai",
+      model: "grok-4",
+    });
+    const child = createSession({
+      cwd: home,
+      provider: "xai",
+      model: "grok-4",
+    });
+    assert.deepEqual(
+      foldChildMutationsIntoParent({
+        parentSessionId: parent.meta.id,
+        childSessionId: child.meta.id,
+        parentTurn: 1,
+      }),
+      { folded: 0, skipped: 0 },
+    );
+    assert.deepEqual(
+      foldChildMutationsIntoParent({
+        parentSessionId: parent.meta.id,
+        childSessionId: parent.meta.id,
+        parentTurn: 1,
+      }),
+      { folded: 0, skipped: 0 },
+    );
+
+    const wt = path.join(home, ".wt");
+    fs.mkdirSync(wt, { recursive: true });
+    appendFileMutation(child.meta.id, {
+      path: path.join(wt, "only-wt.ts"),
+      kind: "create",
+      turn: 3,
+    });
+    appendFileMutation(child.meta.id, {
+      path: path.join(home, "keep.ts"),
+      kind: "create",
+      turn: 3,
+    });
+    const skipped = foldChildMutationsIntoParent({
+      parentSessionId: parent.meta.id,
+      childSessionId: child.meta.id,
+      parentTurn: 2,
+      excludeRoot: wt,
+    });
+    assert.equal(skipped.folded, 1);
+    assert.equal(skipped.skipped, 1);
+    const journal = readFileMutations(parent.meta.id);
+    assert.equal(journal.length, 1);
+    assert.equal(journal[0]!.path, path.resolve(home, "keep.ts"));
+    assert.equal(journal[0]!.turn, 2);
+  });
+
+  it("isolation=none child journal folds onto parent so /undo survives child cleanup", async () => {
+    const parent = createSession({
+      cwd: home,
+      provider: "xai",
+      model: "grok-4",
+    });
+    const child = createSession({
+      cwd: home,
+      provider: "xai",
+      model: "grok-4",
+    });
+    parent.meta.turnCount = 1;
+    markUserTurn(parent);
+    parent.messages.push({ role: "user", content: "spawn" });
+
+    const target = path.join(home, "from-child.txt");
+    const result = await executeTool(
+      "write_file",
+      JSON.stringify({ path: "from-child.txt", content: "child\n" }),
+      {
+        workspace: home,
+        onEdit: () => {
+          child.meta.editCount += 1;
+        },
+        recordMutation: (input) => {
+          appendFileMutation(child.meta.id, {
+            ...input,
+            turn: child.meta.turnCount || 1,
+          });
+        },
+      },
+    );
+    assert.equal(result.isError, undefined);
+    assert.ok(fs.existsSync(target));
+    assert.equal(readFileMutations(parent.meta.id).length, 0);
+    assert.equal(readFileMutations(child.meta.id).length, 1);
+
+    const folded = foldChildMutationsIntoParent({
+      parentSessionId: parent.meta.id,
+      childSessionId: child.meta.id,
+      parentTurn: parent.meta.turnCount,
+    });
+    assert.equal(folded.folded, 1);
+    assert.equal(readFileMutations(parent.meta.id)[0]!.turn, 1);
+
+    deleteSessionDetailed(child.meta.id, { force: true });
+    assert.equal(readFileMutations(child.meta.id).length, 0);
+    assert.equal(readFileMutations(parent.meta.id).length, 1);
+
+    parent.messages.push({ role: "assistant", content: "spawned" });
+    const rw = rewindSessionDetailed(parent, 1);
+    assert.ok(rw.removed >= 1);
+    assert.ok(rw.disk);
+    assert.ok(rw.disk!.restored.length >= 1);
+    assert.equal(fs.existsSync(target), false);
   });
 });
 

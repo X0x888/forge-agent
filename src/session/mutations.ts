@@ -376,6 +376,70 @@ export function copyFileMutations(fromId: string, toId: string): void {
   writeMutationsJournal(toId, entries);
 }
 
+export interface FoldChildMutationsResult {
+  folded: number;
+  skipped: number;
+}
+
+/**
+ * Copy a same-workspace child's mutations.jsonl onto the parent journal.
+ *
+ * isolation=none (and non-git general-purpose) writes the parent tree but
+ * journals only on the child session. A completed child is
+ * deleteSessionDetailed — pre-images die and parent /undo · /files stay
+ * blind. Worktree land journals parent pre-images separately: skip the
+ * call when isolation=worktree, or pass excludeRoot=worktree path.
+ *
+ * Designed empty: no child journal / same session id / every path under
+ * excludeRoot.
+ */
+export function foldChildMutationsIntoParent(opts: {
+  parentSessionId: string;
+  childSessionId: string;
+  parentTurn: number;
+  /** Skip paths under this root (child worktree). Other paths still fold. */
+  excludeRoot?: string;
+}): FoldChildMutationsResult {
+  const parentId = String(opts.parentSessionId || "").trim();
+  const childId = String(opts.childSessionId || "").trim();
+  if (!parentId || !childId || parentId === childId) {
+    return { folded: 0, skipped: 0 };
+  }
+  const turn =
+    typeof opts.parentTurn === "number" &&
+    Number.isFinite(opts.parentTurn) &&
+    opts.parentTurn > 0
+      ? Math.floor(opts.parentTurn)
+      : 1;
+  const exclude = opts.excludeRoot
+    ? path.resolve(opts.excludeRoot)
+    : undefined;
+  let folded = 0;
+  let skipped = 0;
+  for (const m of readFileMutations(childId)) {
+    if (!m.path || typeof m.path !== "string") {
+      skipped += 1;
+      continue;
+    }
+    const abs = path.resolve(m.path);
+    if (exclude && isWithinRoot(exclude, abs)) {
+      skipped += 1;
+      continue;
+    }
+    appendFileMutation(parentId, {
+      path: abs,
+      kind: m.kind,
+      before: m.before,
+      turn,
+      mode: m.mode,
+      skipped: m.skipped,
+      reason: m.reason,
+    });
+    folded += 1;
+  }
+  return { folded, skipped };
+}
+
 /**
  * Restore disk for mutations belonging to turns after `keepThroughTurn`.
  * Applies in reverse chronological order.

@@ -2830,8 +2830,9 @@ function collectPathsFromArgs(
 
 /**
  * Paths referenced by tool calls in this session, plus mutations.jsonl
- * (bash / background / worktree-land writes have no `path` tool arg).
- * Used by `/files` and `/last` so experts see what actually landed.
+ * (bash / background / worktree-land / isolation=none spawn writes have
+ * no `path` tool arg). Used by `/files` and `/last` so experts see what
+ * actually landed.
  */
 export function listSessionTouchedFiles(
   session: SessionData,

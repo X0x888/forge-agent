@@ -8,6 +8,7 @@ import {
   synthesizeSubagentFindings,
   resolveSubagentHandoffStatus,
   shouldSkipWorktreeLand,
+  shouldFoldChildMutations,
   writeSubagentArtifact,
   formatSubagentResult,
 } from "../src/agent/subagent.js";
@@ -46,6 +47,14 @@ describe("subagent handoff", () => {
     assert.equal(shouldSkipWorktreeLand("aborted"), true);
     assert.equal(shouldSkipWorktreeLand("error"), true);
     assert.equal(shouldSkipWorktreeLand("stop_hook_blocked"), true);
+  });
+
+  it("folds isolation=none child mutations; worktree land owns parent journal", () => {
+    assert.equal(shouldFoldChildMutations("none"), true);
+    assert.equal(shouldFoldChildMutations(""), true);
+    assert.equal(shouldFoldChildMutations("worktree"), false);
+    assert.equal(shouldFoldChildMutations("git-worktree"), false);
+    assert.equal(shouldFoldChildMutations("WORKTREE"), false);
   });
 
   it("synthesizes findings from a tool-only last turn", () => {

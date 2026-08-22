@@ -225,6 +225,7 @@ export {
   synthesizeSubagentFindings,
   resolveSubagentHandoffStatus,
   shouldSkipWorktreeLand,
+  shouldFoldChildMutations,
   writeSubagentArtifact,
   formatSubagentResult,
 } from "./agent/subagent.js";
@@ -803,6 +804,7 @@ export {
 export {
   appendFileMutation,
   readFileMutations,
+  foldChildMutationsIntoParent,
   mutationsJournalStats,
   mutationsJournalPath,
   restoreMutationsAfterTurn,
@@ -811,6 +813,7 @@ export {
 } from "./session/mutations.js";
 export type {
   FileMutation,
+  FoldChildMutationsResult,
   MutationsJournalStats,
   RestoreMutationsResult,
 } from "./session/mutations.js";
