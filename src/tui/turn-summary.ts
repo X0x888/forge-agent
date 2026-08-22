@@ -6,7 +6,10 @@ import { displayRelPath } from "../agent/tools/path-util.js";
 import { detectProjectIntel } from "../util/project-intel.js";
 import chalk, { Chalk } from "chalk";
 import { clipAnsi, formatTokens, visibleWidth } from "../util/format.js";
-import { formatRunFailureCloser } from "../providers/errors.js";
+import {
+  formatRunFailureCloser,
+  type RunFailureSurface,
+} from "../providers/errors.js";
 
 /**
  * Pure formatter for the end-of-turn change summary (unattended runs):
