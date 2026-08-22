@@ -956,17 +956,137 @@ export function extractPathArgs(segment: string): string[] {
     const t = toks[i];
     if (t.startsWith("-") && t !== "-") continue;
     // skip destination after cp/mv when multiple — still collect all path-like
-    if (
-      t.includes("/") ||
-      t.startsWith("~") ||
-      t.startsWith(".") ||
-      t.includes("*") ||
-      /^[A-Za-z0-9_.-]+\.[A-Za-z0-9]+$/.test(t)
-    ) {
-      paths.push(t);
-    }
+    if (isPathLikeToken(t)) paths.push(t);
   }
   return paths;
+}
+
+function isPathLikeToken(t: string): boolean {
+  return (
+    t.includes("/") ||
+    t.startsWith("~") ||
+    t.startsWith(".") ||
+    t.includes("*") ||
+    /^[A-Za-z0-9_.-]+\.[A-Za-z0-9]+$/.test(t)
+  );
+}
+
+/**
+ * Quote-aware write redirects (`>`, `>>`, `>|`, `&>`, `&>>`).
+ * Skips fd dups (`>&2`) and quoted `echo "a > b"`.
+ */
+export function extractRedirectWriteTargets(command: string): string[] {
+  const s = command;
+  const out: string[] = [];
+  let quote: '"' | "'" | null = null;
+  let escaped = false;
+
+  const readDest = (start: number): { dest: string; end: number } => {
+    let i = start;
+    while (i < s.length && /\s/.test(s[i]!)) i++;
+    if (i >= s.length) return { dest: "", end: i };
+    let dest = "";
+    let q: '"' | "'" | null = null;
+    for (; i < s.length; i++) {
+      const ch = s[i]!;
+      if (q) {
+        if (ch === q) {
+          q = null;
+          continue;
+        }
+        dest += ch;
+        continue;
+      }
+      if (ch === '"' || ch === "'") {
+        q = ch;
+        continue;
+      }
+      if (/[\s|&;<>]/.test(ch)) break;
+      dest += ch;
+    }
+    return { dest, end: i };
+  };
+
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i]!;
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (quote) {
+      if (ch === "\\" && quote === '"') {
+        escaped = true;
+        continue;
+      }
+      if (ch === quote) quote = null;
+      continue;
+    }
+    if (ch === "\\") {
+      escaped = true;
+      continue;
+    }
+    if (ch === '"' || ch === "'") {
+      quote = ch;
+      continue;
+    }
+    if (ch === "&" && s[i + 1] === ">") {
+      let j = i + 2;
+      if (s[j] === ">") j++;
+      const { dest, end } = readDest(j);
+      if (dest) out.push(dest);
+      i = Math.max(i, end - 1);
+      continue;
+    }
+    if (ch === ">") {
+      if (s[i + 1] === "&") {
+        i++;
+        continue;
+      }
+      let j = i + 1;
+      if (s[j] === ">" || s[j] === "|") j++;
+      const { dest, end } = readDest(j);
+      if (dest) out.push(dest);
+      i = Math.max(i, end - 1);
+    }
+  }
+  return out;
+}
+
+const WRITE_ALL_PATH_COMMANDS = new Set(["tee", "touch", "truncate"]);
+const WRITE_DEST_COMMANDS = new Set(["cp", "mv", "ln", "install"]);
+
+/**
+ * Destinations bash can write without going through write_file.
+ * Redirects + tee/touch/truncate args + cp/mv/ln/install last path.
+ * Read commands (cat/head) stay out so inspecting a hook is not a deny.
+ */
+export function extractWritePaths(command: string): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  const push = (p: string) => {
+    const t = p.trim();
+    if (!t || seen.has(t)) return;
+    seen.add(t);
+    out.push(t);
+  };
+  for (const seg of splitShellSegments(command)) {
+    const toks = tokenizeSimple(normalizeSegment(seg));
+    if (toks.length === 0) continue;
+    const cmd = toks[0]!;
+    const paths: string[] = [];
+    for (let i = 1; i < toks.length; i++) {
+      const t = toks[i]!;
+      if (t.startsWith("-") && t !== "-") continue;
+      if (isPathLikeToken(t)) paths.push(t);
+    }
+    if (WRITE_ALL_PATH_COMMANDS.has(cmd)) {
+      for (const p of paths) push(p);
+    } else if (WRITE_DEST_COMMANDS.has(cmd) && paths.length) {
+      push(paths[paths.length - 1]!);
+    }
+  }
+  for (const p of extractRedirectWriteTargets(command)) push(p);
+  return out;
 }
 
 /** All path-like args across segments of a full command. */
