@@ -196,10 +196,16 @@ export const SANDBOX_WRITE_DENY_REGEXES = [
   "/id_ed25519",
 ] as const;
 
-/** Seatbelt deny file-read* of credential files (python cannot dump auth.json). */
+/** Seatbelt deny file-read* of credential files (python cannot dump auth.json / keys). */
 export const SANDBOX_READ_DENY_REGEXES = [
   "/\\.forge/auth\\.json",
   "/\\.cursor/auth\\.json",
+  "/\\.grok/auth\\.json",
+  // `$` so id_rsa.pub stays readable
+  "/id_rsa$",
+  "/id_ed25519$",
+  "/id_ecdsa$",
+  "/id_dsa$",
 ] as const;
 
 function uniquePaths(paths: string[]): string[] {
@@ -254,8 +260,18 @@ export function sandboxProtectedHostPaths(
   home = os.homedir(),
 ): string[] {
   const ws = path.resolve(cwd);
+  const hooks = path.join(ws, ".git", "hooks");
+  // bwrap cannot ro-bind a missing dest. Create an empty hooks dir so
+  // python cannot mkdir+write when the repo had no hooks yet.
+  try {
+    if (fs.existsSync(path.join(ws, ".git")) && !fs.existsSync(hooks)) {
+      fs.mkdirSync(hooks, { recursive: true });
+    }
+  } catch {
+    /* */
+  }
   return uniquePaths([
-    path.join(ws, ".git", "hooks"),
+    hooks,
     path.join(home, ".ssh"),
     path.join(home, ".gnupg"),
   ]);
@@ -270,7 +286,15 @@ export function bwrapCredentialReadHides(
   forge = forgeHome(),
 ): string[] {
   const args: string[] = [];
-  const hides = [path.join(forge, "auth.json"), path.join(home, ".cursor", "auth.json")];
+  const hides = [
+    path.join(forge, "auth.json"),
+    path.join(home, ".cursor", "auth.json"),
+    path.join(home, ".grok", "auth.json"),
+    path.join(home, ".ssh", "id_rsa"),
+    path.join(home, ".ssh", "id_ed25519"),
+    path.join(home, ".ssh", "id_ecdsa"),
+    path.join(home, ".ssh", "id_dsa"),
+  ];
   for (const p of hides) {
     try {
       if (!fs.existsSync(p) || !fs.statSync(p).isFile()) continue;
@@ -778,11 +802,11 @@ export function describeSandbox(
     case "off":
       return `off (no OS confinement; ${netLabel})`;
     case "workspace":
-      return `workspace (write: CWD + ~/.forge/{sessions,logs,tmp} + temp; hooks/ssh denied; auth.json unread; ${netLabel})`;
+      return `workspace (write: CWD + ~/.forge/{sessions,logs,tmp} + temp; hooks/ssh denied; auth.json/keys unread; ${netLabel})`;
     case "read-only":
       return `read-only (write: ~/.forge/{sessions,logs,tmp} + temp only; ${netLabel})`;
     case "strict":
-      return `strict (write: CWD + ~/.forge/{sessions,logs,tmp} + temp; hooks/ssh denied; auth.json unread; ${netLabel})`;
+      return `strict (write: CWD + ~/.forge/{sessions,logs,tmp} + temp; hooks/ssh denied; auth.json/keys unread; ${netLabel})`;
     default:
       return String(profile);
   }

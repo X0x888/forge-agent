@@ -725,21 +725,8 @@ export async function landSubagentWorktree(opts: {
     };
   }
 
-  // discard: legacy — drop worktree without applying
-  if (mode === "discard" && !forceKeep) {
-    await worktree.cleanup().catch(() => {});
-    return {
-      ...base,
-      status: "skipped",
-      changedFiles,
-      diffStat,
-      kept: false,
-      patchBytes,
-      detail: "land=discard — worktree removed without applying",
-    };
-  }
-
-  // keep / forceKeep / skipApply: report diff, leave on disk
+  // Incomplete runs keep the worktree even when land=discard — discard
+  // used to cleanup() before skipApply and destroy the only copy.
   if (forceKeep || mode === "keep" || opts.skipApply) {
     return {
       ...base,
@@ -751,6 +738,20 @@ export async function landSubagentWorktree(opts: {
       detail: opts.skipApply
         ? "apply skipped (incomplete/aborted/failed run) — worktree kept"
         : "land=keep — review and merge manually",
+    };
+  }
+
+  // discard: drop worktree without applying (completed children only)
+  if (mode === "discard") {
+    await worktree.cleanup().catch(() => {});
+    return {
+      ...base,
+      status: "skipped",
+      changedFiles,
+      diffStat,
+      kept: false,
+      patchBytes,
+      detail: "land=discard — worktree removed without applying",
     };
   }
 

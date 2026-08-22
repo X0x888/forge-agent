@@ -4,7 +4,12 @@ import fsp from "node:fs/promises";
 import path from "node:path";
 import { glob } from "glob";
 import type { ToolContext, ToolResult } from "./types.js";
-import { resolvePath, assertReadablePath, displayRelPath } from "./path-util.js";
+import {
+  resolvePath,
+  assertReadablePath,
+  displayRelPath,
+  isProtectedReadResolvedSync,
+} from "./path-util.js";
 import { pathNotFoundHint } from "./path-hints.js";
 import { boundToolOutput } from "./truncate.js";
 import { isTruthy } from "../../util/bool.js";
@@ -317,6 +322,7 @@ async function toolGrepJs(
     if (headLimit > 0 && matches.length >= headLimit) break;
     let text: string;
     try {
+      if (isProtectedReadResolvedSync(ctx.workspace, file)) continue;
       const fst = await fsp.stat(file);
       if (fst.size > JS_FALLBACK_MAX_FILE_BYTES) {
         skippedOversized += 1;

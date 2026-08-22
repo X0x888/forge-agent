@@ -20,6 +20,24 @@ export function formatDoctorHeader(
   return `${title}  ·  ${color ? chalk.yellow(bit) : bit}`;
 }
 
+/** Rewrite CLI verbs in doctor issue lines for the REPL card. */
+export function rewriteDoctorIssueForSurface(
+  issue: string,
+  surface: DoctorSurface,
+): string {
+  if (surface !== "repl") return issue;
+  return issue
+    .replace(/\bforge login --add\b/gi, "/auth")
+    .replace(/\bforge accounts clear-cooldown\b/gi, "/accounts clear-cooldown")
+    .replace(/\bforge accounts switch\b/gi, "/accounts")
+    .replace(/\bforge login -p \S+/gi, "/auth")
+    .replace(/\bforge login --from-cursor\b/gi, "/auth")
+    .replace(/\bforge login --from-copilot\b/gi, "/auth")
+    .replace(/\bforge login --api-key\b/gi, "/auth")
+    .replace(/\bforge login\b/gi, "/auth")
+    .replace(/\bforge doctor --json\b/gi, "/doctor");
+}
+
 /** Next command after the dump — login / permissions / setup. */
 export function formatDoctorCloser(
   issues: string[],
@@ -77,9 +95,11 @@ export function assembleDoctorReport(
   issues: string[],
   opts?: { color?: boolean; columns?: number; surface?: DoctorSurface },
 ): string {
-  const header = formatDoctorHeader(issues, opts);
-  const block = formatDoctorIssueBlock(issues, opts);
+  const surface: DoctorSurface = opts?.surface ?? "repl";
   const closer = formatDoctorCloser(issues, opts);
+  const shown = issues.map((i) => rewriteDoctorIssueForSurface(i, surface));
+  const header = formatDoctorHeader(shown, opts);
+  const block = formatDoctorIssueBlock(shown, opts);
   const body = facts.filter((l, i) => !(i === 0 && l.trim() === ""));
   return [header, ...block, "", ...body, closer].join("\n");
 }

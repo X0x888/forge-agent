@@ -174,8 +174,22 @@ export function foldChildUsage(
     (parent.totalCacheReadTokens || 0) + delta.cacheReadTokens;
   if (idx >= 0) ledger[idx] = record;
   else ledger.push(record);
-  parent.subagentUsage = ledger.slice(-MAX_LEDGER);
+  parent.subagentUsage = capSubagentLedger(ledger);
   return { added: !prev, delta };
+}
+
+/**
+ * Never drop a still-running child: evicting then re-folding treats it as
+ * new and double-counts parent totals. Completed rows are capped.
+ */
+export function capSubagentLedger(
+  ledger: SubagentUsageRecord[],
+): SubagentUsageRecord[] {
+  const running = ledger.filter((r) => r.status === "running");
+  const done = ledger.filter((r) => r.status !== "running");
+  if (running.length >= MAX_LEDGER) return running;
+  const room = MAX_LEDGER - running.length;
+  return [...done.slice(-room), ...running];
 }
 
 export function sumSubagentUsage(records: SubagentUsageRecord[] | undefined): UsageTriple & {

@@ -6,6 +6,7 @@
  */
 import path from "node:path";
 import os from "node:os";
+import fs from "node:fs";
 import {
   commandCheckTargets,
   extractReadPaths,
@@ -307,6 +308,75 @@ function structuredGitForceMain(segment: string): SafetyVerdict | null {
   return null;
 }
 
+/**
+ * `git config core.hooksPath <dir>` then write_file a hook there bypasses
+ * `/.git/hooks` protection. `git -c core.hooksPath=` is the one-shot form.
+ * Reads (`--get`, bare key) and `--unset` stay allowed.
+ */
+function structuredGitHooksPath(segment: string): SafetyVerdict | null {
+  const toks = tokenizeSimple(normalizeSegment(segment));
+  if (toks[0] !== "git") return null;
+  const deny: SafetyVerdict = {
+    ok: false,
+    reason:
+      "Refusing git hooksPath change (installs hooks outside .git/hooks). Use the default hooks directory.",
+    rule: "git-hooks-path",
+  };
+  for (let i = 1; i < toks.length; i++) {
+    const t = toks[i]!;
+    if (t === "-c" || t === "--config") {
+      const next = toks[i + 1] || "";
+      if (/^core\.hookspath=/i.test(next)) return deny;
+      i++;
+      continue;
+    }
+    if (/^-ccore\.hookspath=/i.test(t) || /^--config=core\.hookspath=/i.test(t)) {
+      return deny;
+    }
+  }
+  let i = 1;
+  while (i < toks.length) {
+    const t = toks[i]!;
+    if (t === "-C" || t === "-c" || t === "--config") {
+      i += 2;
+      continue;
+    }
+    if (t.startsWith("--git-dir") || t.startsWith("--work-tree")) {
+      i += t.includes("=") ? 1 : 2;
+      continue;
+    }
+    if (t.startsWith("-") && t !== "-" && !t.startsWith("--")) {
+      i += 1;
+      continue;
+    }
+    break;
+  }
+  if (toks[i] !== "config") return null;
+  const rest = toks.slice(i + 1);
+  const positional: string[] = [];
+  let unset = false;
+  let get = false;
+  for (let j = 0; j < rest.length; j++) {
+    const t = rest[j]!;
+    if (t === "--unset" || t === "--unset-all") {
+      unset = true;
+      continue;
+    }
+    if (t === "--get" || t === "--get-all" || t === "--get-regexp" || t === "--list") {
+      get = true;
+      continue;
+    }
+    if (t.startsWith("-")) continue;
+    positional.push(t);
+  }
+  if (unset || get) return null;
+  for (const t of positional) {
+    if (/^core\.hookspath=/i.test(t)) return deny;
+    if (/^core\.hookspath$/i.test(t) && positional.length >= 2) return deny;
+  }
+  return null;
+}
+
 function structuredFindDelete(segment: string): SafetyVerdict | null {
   const toks = tokenizeSimple(normalizeSegment(segment));
   if (toks[0] !== "find") return null;
@@ -398,6 +468,43 @@ function expandWritePathToken(raw: string, workspace: string): string | null {
   return path.isAbsolute(t) ? path.resolve(t) : path.resolve(workspace, t);
 }
 
+/** Logical path plus realpath / symlink dest so `ln -s auth.json ./x && cat ./x` is denied. */
+function expandProtectedPathCandidates(
+  raw: string,
+  workspace: string,
+): string[] {
+  const abs = expandWritePathToken(raw, workspace);
+  if (!abs) return [];
+  const out = new Set<string>([abs]);
+  const add = (p: string) => {
+    const n = path.resolve(p);
+    if (n) out.add(n);
+  };
+  try {
+    add(fs.realpathSync(abs));
+  } catch {
+    /* missing / dangling */
+  }
+  try {
+    const st = fs.lstatSync(abs);
+    if (st.isSymbolicLink()) {
+      const dest = fs.readlinkSync(abs);
+      const absDest = path.isAbsolute(dest)
+        ? path.resolve(dest)
+        : path.resolve(path.dirname(abs), dest);
+      add(absDest);
+      try {
+        add(fs.realpathSync(absDest));
+      } catch {
+        /* */
+      }
+    }
+  } catch {
+    /* */
+  }
+  return [...out];
+}
+
 /**
  * File tools already refuse isProtectedWritePath. Bash must too —
  * extractWritePaths covers redirect/tee/cp; workspace/strict OS sandbox
@@ -414,15 +521,16 @@ export function checkBashProtectedWrites(
   const seen = new Set<string>();
   for (const chunk of chunks) {
     for (const raw of extractWritePaths(chunk)) {
-      const abs = expandWritePathToken(raw, root);
-      if (!abs || seen.has(abs)) continue;
-      seen.add(abs);
-      if (isProtectedWritePath(abs)) {
-        return {
-          ok: false,
-          reason: protectedWriteReason(abs),
-          rule: "write-protected-path",
-        };
+      for (const abs of expandProtectedPathCandidates(raw, root)) {
+        if (seen.has(abs)) continue;
+        seen.add(abs);
+        if (isProtectedWritePath(abs)) {
+          return {
+            ok: false,
+            reason: protectedWriteReason(abs),
+            rule: "write-protected-path",
+          };
+        }
       }
     }
   }
@@ -443,15 +551,16 @@ export function checkBashProtectedReads(
   const seen = new Set<string>();
   for (const chunk of chunks) {
     for (const raw of extractReadPaths(chunk)) {
-      const abs = expandWritePathToken(raw, root);
-      if (!abs || seen.has(abs)) continue;
-      seen.add(abs);
-      if (isProtectedReadTarget(abs)) {
-        return {
-          ok: false,
-          reason: protectedReadReason(abs),
-          rule: "read-protected-path",
-        };
+      for (const abs of expandProtectedPathCandidates(raw, root)) {
+        if (seen.has(abs)) continue;
+        seen.add(abs);
+        if (isProtectedReadTarget(abs)) {
+          return {
+            ok: false,
+            reason: protectedReadReason(abs),
+            rule: "read-protected-path",
+          };
+        }
       }
     }
   }
@@ -477,6 +586,7 @@ export function checkBashHardDeny(
     const structured =
       structuredRmDeny(segment) ||
       structuredGitForceMain(segment) ||
+      structuredGitHooksPath(segment) ||
       structuredFindDelete(segment);
     if (structured) return structured;
 

@@ -1,8 +1,9 @@
 /**
  * Shell environment policy (Grok-inspired).
  * Default: inherit all, but drop names matching secret patterns.
- * Forge/LLM provider keys are always stripped from inherit — including
- * MCP/LSP keepSecrets — unless policy `set` (mcp.json env) reintroduces them.
+ * Forge/LLM provider keys are always stripped from inherit. MCP/LSP
+ * `keepSecrets` still passes GITHUB_TOKEN / CONTEXT7_API_KEY (allowlist);
+ * other secret globs stay stripped unless policy `set` reintroduces a name.
  */
 import { isProviderApiKeyEnv } from "../../auth/env-keys.js";
 
@@ -57,6 +58,13 @@ const CORE_ENV = new Set(
     "HOMEBREW_CELLAR",
     "HOMEBREW_REPOSITORY",
   ].map((s) => s.toLowerCase()),
+);
+
+/** Host tokens MCP servers actually need. keepSecrets does not mean "every *KEY*". */
+const KEEP_SECRETS_ALLOW = new Set(
+  ["GITHUB_TOKEN", "GH_TOKEN", "GITHUB_PAT", "CONTEXT7_API_KEY"].map((s) =>
+    s.toLowerCase(),
+  ),
 );
 
 const DEFAULT_SECRET_GLOBS = [
@@ -181,9 +189,9 @@ function matchesAny(globs: string[], name: string): boolean {
  * hooks, grep). Scrubs secrets + injection (`GIT_DIR`, `NODE_OPTIONS`, …).
  * `extra` is policy `set` — reintroduces names after the scrub (checkpoint
  * temp index, hook `FORGE_*`). MCP/LSP stdio pass `{ keepSecrets: true }` so
- * a host `GITHUB_TOKEN` still reaches the server; Forge provider keys
- * (`XAI_API_KEY`, `CURSOR_ACCESS_TOKEN`, …) stay stripped unless `set`.
- * Injection is always stripped.
+ * a host `GITHUB_TOKEN` / `CONTEXT7_API_KEY` still reaches the server.
+ * Other secret globs (AWS, DATABASE_URL) stay stripped. Forge provider
+ * keys stay stripped unless `set`. Injection is always stripped.
  */
 export function createChildEnv(
   extra?: NodeJS.ProcessEnv,
@@ -225,10 +233,14 @@ export function createShellEnv(
       // Policy `set` can still reintroduce them deliberately below.
       if (SHELL_INJECTION_ENV.has(lowerName) || isGitConfigInjectionEnv(k)) continue;
       // Always drop Forge/LLM credentials from inherit. keepSecrets still
-      // passes GITHUB_TOKEN; mcp.json env overlay (`set`) can reintroduce
-      // a provider key on purpose.
+      // passes GITHUB_TOKEN / CONTEXT7_API_KEY (KEEP_SECRETS_ALLOW); other
+      // *KEY*/*TOKEN* names (AWS, DATABASE_URL) stay stripped. mcp.json
+      // env overlay (`set`) can reintroduce a provider key on purpose.
       if (isProviderApiKeyEnv(k)) continue;
-      if (!ignoreDefault && matchesAny(DEFAULT_SECRET_GLOBS, k)) {
+      const secretGlob = matchesAny(DEFAULT_SECRET_GLOBS, k);
+      if (secretGlob && ignoreDefault && KEEP_SECRETS_ALLOW.has(lowerName)) {
+        /* keep GitHub / Context7 for MCP */
+      } else if (secretGlob) {
         // Keep a few operational exceptions that are not credentials
         if (
           lowerName === "keytimeout" ||

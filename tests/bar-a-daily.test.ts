@@ -578,7 +578,10 @@ describe("Bar A: protected paths + symlink write", () => {
     );
     assert.equal(isProtectedWritePath(path.join("/tmp/proj", "src", "a.ts")), false);
     assert.equal(isProtectedReadPath(path.join(home, ".forge", "auth.json")), true);
+    assert.equal(isProtectedReadPath(path.join(home, ".grok", "auth.json")), true);
     assert.equal(isProtectedReadPath(path.join(home, ".ssh", "id_ed25519")), true);
+    assert.equal(isProtectedWritePath(path.join(home, ".grok", "auth.json")), true);
+    assert.equal(isProtectedWritePath(path.join("/tmp/proj", "id_ecdsa")), true);
     assert.equal(isProtectedReadPath(path.join(home, ".ssh", "known_hosts")), false);
     assert.equal(isProtectedReadPath(path.join("/tmp/proj", ".git", "hooks", "pre-commit")), false);
     assert.equal(isProtectedReadPath(path.join("/tmp/proj", ".env")), false);
@@ -683,6 +686,13 @@ describe("Bar A: protected paths + symlink write", () => {
     );
     assert.equal(key.isError, true);
     assert.match(key.output, /Refusing read|private key/i);
+    const bashDump = await executeTool(
+      "bash",
+      JSON.stringify({ command: `cat ${auth}` }),
+      { workspace: ws },
+    );
+    assert.equal(bashDump.isError, true);
+    assert.match(bashDump.output, /HARD DENY|credentials|auth\.json/i);
     const ok = await executeTool(
       "read_file",
       JSON.stringify({ path: "ok.ts" }),

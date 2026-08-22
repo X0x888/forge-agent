@@ -1111,7 +1111,7 @@ export async function handleProviderSlash(
     );
     lines.push(
       chalk.dim(
-        "Login: forge login -p deepseek --api-key $DEEPSEEK_API_KEY  ·  openrouter: OPENROUTER_API_KEY",
+        "Login: /auth  ·  openrouter: OPENROUTER_API_KEY",
       ),
     );
     return { handled: true, output: lines.join("\n") };
@@ -1145,7 +1145,7 @@ export async function handleProviderSlash(
       output:
         `Already on provider ${nextProvider} · model ${opts.config.model}\n` +
         chalk.dim(
-          `/model · /effort · /temperature · /max-tokens · /config · forge login -p ${nextProvider}`,
+          `/model · /effort · /temperature · /max-tokens · /config · /auth`,
         ),
     };
   }
@@ -1259,16 +1259,16 @@ export async function handleProviderSlash(
     } else {
       authNote =
         chalk.yellow(
-          `\nNo credentials for ${nextProvider}. ` +
+          `\nNo credentials for ${nextProvider}. Type /auth` +
             (nextProvider === "deepseek"
-              ? "Run: forge login -p deepseek --api-key $DEEPSEEK_API_KEY"
+              ? " (or set DEEPSEEK_API_KEY)"
               : nextProvider === "openrouter"
-                ? "Run: forge login -p openrouter --api-key $OPENROUTER_API_KEY"
+                ? " (or set OPENROUTER_API_KEY)"
                 : nextProvider === "cursor"
-                  ? "Run: forge login -p cursor  or  forge login --from-cursor"
+                  ? " (or /auth from Cursor)"
                 : nextProvider === "xai"
-                  ? "Run: forge login   or  export XAI_API_KEY=…"
-                  : `Run: forge login -p ${nextProvider}`),
+                  ? " (or set XAI_API_KEY)"
+                  : ""),
         );
     }
   } catch (err) {
@@ -6791,7 +6791,9 @@ export async function runDoctorCheck(
     } else if (auth && ma.total === 1) {
       lines.push(
         chalk.dim(
-          "  Tip: forge login --add for quota failover on long unattended runs",
+          surface === "cli"
+            ? "  Tip: forge login --add for quota failover on long unattended runs"
+            : "  Tip: /auth to add another account for quota failover",
         ),
       );
     }
@@ -7319,7 +7321,13 @@ export async function runDoctorCheck(
   if (base && auth) {
     lines.push(`API base: ${base}`);
   } else if (!auth) {
-    lines.push(chalk.yellow("  ⚠ Not authenticated — forge login or set an API key env var"));
+    lines.push(
+      chalk.yellow(
+        surface === "cli"
+          ? "  ⚠ Not authenticated — forge login or set an API key env var"
+          : "  ⚠ Not authenticated — /auth or set an API key env var",
+      ),
+    );
   }
 
   const home = process.env.FORGE_HOME || path.join(process.env.HOME || "", ".forge");
@@ -8337,7 +8345,7 @@ export function formatEffectiveConfig(
     }` + chalk.dim("  ·  /lsp ensure"),
     snap.authMethod
       ? `  auth:             ${snap.authMethod}  ·  /auth`
-      : `  auth:             (none)  ·  forge login`,
+      : `  auth:             (none)  ·  /auth`,
     `  subagent land:   ${snap.subagentLandMode}  (FORGE_SUBAGENT_LAND=auto|keep|discard)`,
     `  project memory:  ${snap.projectMemoryCount} active  · /memory project  · /memory project prune`,
     snap.lastCheckpoint

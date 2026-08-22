@@ -33,7 +33,11 @@ describe("formatProviderError", () => {
     assert.match(repl, /Next  \/auth/);
     assert.match(repl, /\/retry/);
     assert.doesNotMatch(repl, /Next  forge login/);
-    assert.equal([...repl.matchAll(/→/g)].length, 1, "REPL card is one tip, not a lecture");
+    assert.doesNotMatch(repl, /forge login/);
+    assert.ok(
+      [...repl.matchAll(/→/g)].length <= 1,
+      "REPL card is at most one tip, not a lecture",
+    );
   });
 
   it("Next keys wrap at · on a narrow TTY", () => {

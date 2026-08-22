@@ -106,21 +106,26 @@ export function settleTaskJournal(
         ? mutationAbsPathsAfter(j.ctx.sessionId, j.startedAt)
         : undefined;
     let ctx = j.ctx;
+    // Natural exit must stamp the launch turn, not live turnCount (a later
+    // user turn would hide the files from `/undo` of the launch turn).
     // /undo already decremented turnCount. Stamp keepThrough+1 so restore
     // sees the entries in the doomed set (live turnCount would keep them).
-    if (
-      typeof opts?.undoThrough === "number" &&
-      ctx.sessionId &&
-      ctx.recordMutation
-    ) {
+    if (ctx.sessionId && ctx.recordMutation) {
       const sid = ctx.sessionId;
-      const turn = opts.undoThrough + 1;
-      ctx = {
-        ...ctx,
-        recordMutation: (input) => {
-          appendFileMutation(sid, { ...input, turn });
-        },
-      };
+      const turn =
+        typeof opts?.undoThrough === "number"
+          ? opts.undoThrough + 1
+          : typeof j.startedTurn === "number"
+            ? j.startedTurn
+            : undefined;
+      if (typeof turn === "number") {
+        ctx = {
+          ...ctx,
+          recordMutation: (input) => {
+            appendFileMutation(sid, { ...input, turn });
+          },
+        };
+      }
     }
     return applyBashTreeDelta(
       j.snap,

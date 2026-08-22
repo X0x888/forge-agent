@@ -36,6 +36,7 @@ import {
   bwrapForgeWriteBinds,
   bwrapProtectedRoBinds,
   bwrapCredentialReadHides,
+  sandboxProtectedHostPaths,
 } from "../src/agent/sandbox.js";
 import { commandPrefix, alwaysPatternFromTokens, isReadOnlyCommand } from "../src/agent/shell-arity.js";
 import { mergePermissionTrust } from "../src/config/load.js";
@@ -197,6 +198,30 @@ describe("shell segment parsing", () => {
     assert.ok(extractReadPaths("head -n 20 ~/.ssh/id_ed25519").includes("~/.ssh/id_ed25519"));
     assert.ok(extractReadPaths("base64 ~/.ssh/id_rsa").includes("~/.ssh/id_rsa"));
     assert.equal(extractReadPaths("printf x > ~/.forge/auth.json").length, 0);
+    assert.ok(
+      extractWritePaths("cp -t .git/hooks payload").includes(".git/hooks"),
+    );
+    assert.ok(
+      extractWritePaths("dd if=/dev/zero of=.git/hooks/pre-commit").includes(
+        ".git/hooks/pre-commit",
+      ),
+    );
+    assert.ok(
+      extractWritePaths("sed -i 's/a/b/' .git/hooks/pre-commit").includes(
+        ".git/hooks/pre-commit",
+      ),
+    );
+    assert.ok(
+      extractReadPaths("cp ~/.forge/auth.json /tmp/x").includes("~/.forge/auth.json"),
+    );
+    assert.ok(
+      extractReadPaths("dd if=~/.ssh/id_rsa of=/tmp/k").includes("~/.ssh/id_rsa"),
+    );
+    assert.ok(
+      extractReadPaths(
+        "python -c \"print(open('/Users/me/.forge/auth.json').read())\"",
+      ).some((p) => p.includes("auth.json")),
+    );
   });
 });
 
@@ -676,7 +701,7 @@ describe("sandbox write policy (hooks / forge auth)", () => {
     assert.ok(denyAt > allowAt, "deny-after-allow so cwd subpath does not win");
     assert.match(describeSandbox("workspace"), /sessions,logs,tmp/);
     assert.match(describeSandbox("workspace"), /hooks\/ssh denied/);
-    assert.match(describeSandbox("workspace"), /auth\.json unread/);
+    assert.match(describeSandbox("workspace"), /auth\.json\/keys unread/);
   });
 
   it("bwrap binds forge slices and ro-binds existing hooks", () => {
@@ -705,6 +730,17 @@ describe("sandbox write policy (hooks / forge auth)", () => {
     const ro = bwrapProtectedRoBinds(dir);
     assert.ok(ro.includes("--ro-bind"));
     assert.ok(ro.includes(fs.realpathSync(hooks)));
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("sandboxProtectedHostPaths creates a missing .git/hooks dir so bwrap can ro-bind it", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "forge-hooks-mkdir-"));
+    fs.mkdirSync(path.join(dir, ".git"), { recursive: true });
+    const hooks = path.join(dir, ".git", "hooks");
+    assert.equal(fs.existsSync(hooks), false);
+    const paths = sandboxProtectedHostPaths(dir);
+    assert.ok(fs.existsSync(hooks));
+    assert.ok(paths.some((p) => path.resolve(p) === path.resolve(hooks)));
     fs.rmSync(dir, { recursive: true, force: true });
   });
 

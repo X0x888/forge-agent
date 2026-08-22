@@ -22,12 +22,15 @@ export function isProtectedWritePath(absolutePath: string): boolean {
   const home = os.homedir().replace(/\\/g, "/");
   const forge = forgeHome().replace(/\\/g, "/");
 
-  // Forge credentials & permission memory
+  // Forge / host-agent credentials & permission memory
   if (
     p === `${forge}/auth.json` ||
     p === `${forge}/permissions.json` ||
     p === `${forge}/preferences.json` ||
-    p.startsWith(`${forge}/hooks/`)
+    p.startsWith(`${forge}/hooks/`) ||
+    p.endsWith("/.forge/auth.json") ||
+    p.endsWith("/.cursor/auth.json") ||
+    p.endsWith("/.grok/auth.json")
   ) {
     return true;
   }
@@ -68,19 +71,8 @@ export function isProtectedWritePath(absolutePath: string): boolean {
     return true;
   }
 
-  // Workspace-relative secrets by basename path
-  if (
-    /\/\.env(\.|$)/.test(p) ||
-    /\/\.env\.[^/]+$/.test(p) ||
-    p.endsWith("/id_rsa") ||
-    p.endsWith("/id_ed25519") ||
-    p.endsWith("/credentials.json")
-  ) {
-    // .env in project is common for agents to edit — only block classic private keys
-    if (p.endsWith("/id_rsa") || p.endsWith("/id_ed25519") || /\/\.ssh\//.test(p)) {
-      return true;
-    }
-  }
+  // Private keys anywhere (workspace id_rsa, not project .env — agents edit .env)
+  if (PRIVATE_KEY_BASENAME.test(pathBasename(p))) return true;
 
   return false;
 }
@@ -133,6 +125,7 @@ export function isProtectedReadPath(absolutePath: string): boolean {
 
   if (p === `${forge}/auth.json` || p.endsWith("/.forge/auth.json")) return true;
   if (p === `${home}/.cursor/auth.json` || p.endsWith("/.cursor/auth.json")) return true;
+  if (p === `${home}/.grok/auth.json` || p.endsWith("/.grok/auth.json")) return true;
   if (PRIVATE_KEY_BASENAME.test(base)) return true;
 
   if (p.startsWith(`${home}/.ssh/`)) {
@@ -180,7 +173,12 @@ export function isProtectedReadTarget(absolutePath: string): boolean {
 
 export function protectedReadReason(absolutePath: string): string {
   const p = normalizeFsPath(absolutePath);
-  if (p.includes("/.forge/") || p.endsWith("/.forge") || p.includes("/.cursor/auth.json")) {
+  if (
+    p.includes("/.forge/") ||
+    p.endsWith("/.forge") ||
+    p.includes("/.cursor/auth.json") ||
+    p.includes("/.grok/auth.json")
+  ) {
     return (
       "Refusing read of stored credentials (auth.json). " +
       "Use forge login / forge auth / /accounts — tokens must not enter the model."

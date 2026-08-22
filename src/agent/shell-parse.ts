@@ -1053,7 +1053,7 @@ export function extractRedirectWriteTargets(command: string): string[] {
 }
 
 const WRITE_ALL_PATH_COMMANDS = new Set(["tee", "touch", "truncate"]);
-const WRITE_DEST_COMMANDS = new Set(["cp", "mv", "ln", "install"]);
+const COPY_LIKE_COMMANDS = new Set(["cp", "mv", "ln", "install", "rsync"]);
 /** Readers that dump file bytes to stdout (credential exfil if pointed at auth.json). */
 const READ_PATH_COMMANDS = new Set([
   "cat",
@@ -1069,12 +1069,132 @@ const READ_PATH_COMMANDS = new Set([
   "base64",
   "xxd",
   "jq",
+  "rg",
+  "grep",
+  "egrep",
+  "fgrep",
+  "awk",
+  "cut",
+  "tac",
+  "source",
+]);
+
+const INTERPRETER_COMMANDS = new Set([
+  "python",
+  "python3",
+  "python2",
+  "node",
+  "nodejs",
+  "ruby",
+  "perl",
+  "php",
+  "lua",
+  "deno",
+  "bun",
+  "osascript",
 ]);
 
 /**
+ * cp/mv/ln/install dest + sources.
+ * `-t DEST` / `--target-directory=DEST` make DEST the write target (not the last path).
+ */
+export function copyLikeDestAndSources(toks: string[]): {
+  dest?: string;
+  sources: string[];
+} {
+  const sources: string[] = [];
+  let dest: string | undefined;
+  let destFromFlag = false;
+  for (let i = 1; i < toks.length; i++) {
+    const t = toks[i]!;
+    if (t === "-t" || t === "--target-directory") {
+      const next = toks[i + 1];
+      if (next) {
+        dest = next;
+        destFromFlag = true;
+        i++;
+      }
+      continue;
+    }
+    if (t.startsWith("--target-directory=")) {
+      dest = t.slice("--target-directory=".length);
+      destFromFlag = true;
+      continue;
+    }
+    if (t.startsWith("-") && t !== "-") continue;
+    if (isPathLikeToken(t)) sources.push(t);
+  }
+  if (!destFromFlag && sources.length) dest = sources.pop();
+  return { dest, sources };
+}
+
+function ddIoPaths(toks: string[]): { reads: string[]; writes: string[] } {
+  const reads: string[] = [];
+  const writes: string[] = [];
+  for (const t of toks.slice(1)) {
+    if (t.startsWith("if=")) reads.push(t.slice(3));
+    else if (t.startsWith("of=")) writes.push(t.slice(3));
+  }
+  return { reads, writes };
+}
+
+function sedInPlace(toks: string[]): boolean {
+  return toks.some(
+    (t) =>
+      t === "-i" ||
+      t === "--in-place" ||
+      t.startsWith("--in-place=") ||
+      (t.startsWith("-i") && t.length > 2 && !t.startsWith("--")),
+  );
+}
+
+/** Paths inside python/node -c payloads that tokenizeSimple will not see as args. */
+function credentialPathHints(text: string): string[] {
+  const out: string[] = [];
+  const re =
+    /(?:~|\$\{?HOME\}?)\/\.(?:forge|grok|cursor)\/auth\.json|\/[^\s"'`]*\/\.(?:forge|grok|cursor)\/auth\.json|(?:~|\$\{?HOME\}?|\/[^\s"'`]*)\/\.ssh\/id_(?:rsa|ed25519|ecdsa|dsa)(?![\w.])/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text)) !== null) out.push(m[0]);
+  return out;
+}
+
+function quotedStringLiterals(raw: string): string[] {
+  const out: string[] = [];
+  const s = raw;
+  let quote: '"' | "'" | null = null;
+  let escaped = false;
+  let buf = "";
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i]!;
+    if (quote) {
+      if (escaped) {
+        buf += ch;
+        escaped = false;
+        continue;
+      }
+      if (ch === "\\" && quote === '"') {
+        escaped = true;
+        continue;
+      }
+      if (ch === quote) {
+        if (buf) out.push(buf);
+        buf = "";
+        quote = null;
+        continue;
+      }
+      buf += ch;
+      continue;
+    }
+    if (ch === '"' || ch === "'") quote = ch;
+  }
+  return out;
+}
+
+/**
  * Destinations bash can write without going through write_file.
- * Redirects + tee/touch/truncate args + cp/mv/ln/install last path.
- * Read commands (cat/head) stay out so inspecting a hook is not a deny.
+ * Redirects + tee/touch/truncate args + cp/mv/ln/install dest (incl. -t)
+ * + dd of= + sed -i files. Read commands stay out so inspecting a hook is
+ * not a deny.
  */
 export function extractWritePaths(command: string): string[] {
   const out: string[] = [];
@@ -1089,16 +1209,29 @@ export function extractWritePaths(command: string): string[] {
     const toks = tokenizeSimple(normalizeSegment(seg));
     if (toks.length === 0) continue;
     const cmd = toks[0]!;
-    const paths: string[] = [];
-    for (let i = 1; i < toks.length; i++) {
-      const t = toks[i]!;
-      if (t.startsWith("-") && t !== "-") continue;
-      if (isPathLikeToken(t)) paths.push(t);
+    if (cmd === "dd") {
+      for (const p of ddIoPaths(toks).writes) push(p);
+      continue;
+    }
+    if (cmd === "sed" && sedInPlace(toks)) {
+      for (let i = 1; i < toks.length; i++) {
+        const t = toks[i]!;
+        if (t.startsWith("-") && t !== "-") continue;
+        if (isPathLikeToken(t)) push(t);
+      }
+      continue;
     }
     if (WRITE_ALL_PATH_COMMANDS.has(cmd)) {
-      for (const p of paths) push(p);
-    } else if (WRITE_DEST_COMMANDS.has(cmd) && paths.length) {
-      push(paths[paths.length - 1]!);
+      for (let i = 1; i < toks.length; i++) {
+        const t = toks[i]!;
+        if (t.startsWith("-") && t !== "-") continue;
+        if (isPathLikeToken(t)) push(t);
+      }
+      continue;
+    }
+    if (COPY_LIKE_COMMANDS.has(cmd)) {
+      const { dest } = copyLikeDestAndSources(toks);
+      if (dest) push(dest);
     }
   }
   for (const p of extractRedirectWriteTargets(command)) push(p);
@@ -1106,8 +1239,8 @@ export function extractWritePaths(command: string): string[] {
 }
 
 /**
- * Paths bash readers will dump (cat/head/tail/base64/…). Inspecting a hook
- * is allowed; hard-safety then applies isProtectedReadPath (auth.json / keys).
+ * Paths bash readers will dump (cat/head/base64/cp sources/dd if=/…).
+ * Inspecting a hook is allowed; hard-safety then applies isProtectedReadPath.
  */
 export function extractReadPaths(command: string): string[] {
   const out: string[] = [];
@@ -1122,11 +1255,42 @@ export function extractReadPaths(command: string): string[] {
     const toks = tokenizeSimple(normalizeSegment(seg));
     if (toks.length === 0) continue;
     const cmd = toks[0]!;
-    if (!READ_PATH_COMMANDS.has(cmd)) continue;
-    for (let i = 1; i < toks.length; i++) {
-      const t = toks[i]!;
-      if (t.startsWith("-") && t !== "-") continue;
-      if (isPathLikeToken(t)) push(t);
+    if (cmd === "dd") {
+      for (const p of ddIoPaths(toks).reads) push(p);
+      continue;
+    }
+    if (COPY_LIKE_COMMANDS.has(cmd)) {
+      for (const p of copyLikeDestAndSources(toks).sources) push(p);
+      continue;
+    }
+    if (cmd === "." || READ_PATH_COMMANDS.has(cmd)) {
+      for (let i = 1; i < toks.length; i++) {
+        const t = toks[i]!;
+        if (t.startsWith("-") && t !== "-") continue;
+        // Bare names too: `ln -s auth.json escape && cat escape`
+        push(t);
+      }
+    }
+    if (INTERPRETER_COMMANDS.has(pathBase(cmd))) {
+      for (const lit of quotedStringLiterals(seg)) {
+        if (
+          (isPathLikeToken(lit) || lit.startsWith("~") || lit.startsWith("/")) &&
+          !/[\s()]/.test(lit)
+        ) {
+          push(lit);
+        }
+        for (const nested of quotedStringLiterals(lit)) {
+          if (isPathLikeToken(nested) || nested.startsWith("~") || nested.startsWith("/")) {
+            push(nested);
+          }
+        }
+      }
+      for (const hint of credentialPathHints(seg)) push(hint);
+      for (let i = 1; i < toks.length; i++) {
+        const t = toks[i]!;
+        if (t.startsWith("-") && t !== "-") continue;
+        if (isPathLikeToken(t) || t.startsWith("~") || t.startsWith("/")) push(t);
+      }
     }
   }
   return out;

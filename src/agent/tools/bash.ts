@@ -21,7 +21,7 @@ import {
   beginBashTreeSnapshot,
   withBashMutationJournal,
 } from "./bash-mutation-journal.js";
-import { checkBashProtectedWrites } from "../safety.js";
+import { checkBashProtectedReads, checkBashProtectedWrites } from "../safety.js";
 import {
   detectPackageManager,
   detectProjectIntel,
@@ -289,13 +289,18 @@ export async function toolBash(
       isError: true,
     };
   }
-  const protectedWrite = checkBashProtectedWrites(
-    command,
-    ctx.workspace || process.cwd(),
-  );
+  const ws = ctx.workspace || process.cwd();
+  const protectedWrite = checkBashProtectedWrites(command, ws);
   if (!protectedWrite.ok) {
     return {
       output: `HARD DENY [${protectedWrite.rule}]: ${protectedWrite.reason}`,
+      isError: true,
+    };
+  }
+  const protectedRead = checkBashProtectedReads(command, ws);
+  if (!protectedRead.ok) {
+    return {
+      output: `HARD DENY [${protectedRead.rule}]: ${protectedRead.reason}`,
       isError: true,
     };
   }

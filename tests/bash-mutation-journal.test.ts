@@ -543,4 +543,30 @@ describe("bash mutation journal", () => {
     assert.equal(w.task.status, "killed");
     assert.equal(fs.existsSync(late), false);
   });
+
+  it("background journal stamps the launch turn when the task exits later", async () => {
+    const s = createSession({ cwd: dir, provider: "xai", model: "grok-4" });
+    s.meta.turnCount = 1;
+    markUserTurn(s);
+    s.messages.push({ role: "user", content: "bg write" });
+    const created = path.join(dir, "late-turn.txt");
+    const result = await executeTool(
+      "bash",
+      JSON.stringify({
+        command: "sleep 0.4 && printf 'x\\n' > late-turn.txt",
+        background: true,
+      }),
+      bashCtx(s),
+    );
+    s.meta.turnCount = 5;
+    const id = taskIdFrom(result.output);
+    const w = await waitForTask(id, { timeoutMs: 10_000 });
+    assert.equal(w.ok, true);
+    if (!w.ok) return;
+    const journal = readFileMutations(s.meta.id);
+    assert.equal(journal.length, 1);
+    assert.equal(journal[0].turn, 1);
+    restoreMutationsAfterTurn(s.meta.id, 0);
+    assert.equal(fs.existsSync(created), false);
+  });
 });

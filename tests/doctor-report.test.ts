@@ -42,6 +42,7 @@ describe("doctor health card", () => {
     );
     assert.match(report, /Next  \/auth  ·  \/setup/);
     assert.doesNotMatch(report, /Next  forge login/);
+    assert.doesNotMatch(report, /run forge login/);
     assert.doesNotMatch(report, /forge doctor --json/);
     assert.doesNotMatch(report, /No blocking issues detected/);
   });

@@ -99,7 +99,7 @@ export function formatBanner(input: BannerInput): string {
     lines.push(`  ⚠ ${w}`);
   }
   if (input.postureWarnings?.length) {
-    lines.push(`  ↳ review: /config · forge doctor`);
+    lines.push(`  ↳ review: /config · /doctor`);
   }
   const memory = input.memoryReminder?.trim();
   if (memory) {

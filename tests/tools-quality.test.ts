@@ -294,6 +294,25 @@ describe("env policy", () => {
     assert.equal(env.GH_COPILOT_TOKEN, undefined);
   });
 
+  it("keepSecrets still strips AWS/DB secrets (allowlist is GitHub/Context7)", () => {
+    const env = createChildEnv(undefined, {
+      keepSecrets: true,
+      base: {
+        PATH: "/usr/bin",
+        GITHUB_TOKEN: "gh-host",
+        AWS_SECRET_ACCESS_KEY: "aws-host",
+        AWS_ACCESS_KEY_ID: "AKIAhost",
+        DATABASE_URL: "postgres://x",
+        GROQ_API_KEY: "groq-host",
+      },
+    });
+    assert.equal(env.GITHUB_TOKEN, "gh-host");
+    assert.equal(env.AWS_SECRET_ACCESS_KEY, undefined);
+    assert.equal(env.AWS_ACCESS_KEY_ID, undefined);
+    assert.equal(env.DATABASE_URL, undefined);
+    assert.equal(env.GROQ_API_KEY, undefined);
+  });
+
   it("provider env-key table covers aliases and keepSecrets denylist", () => {
     assert.equal(isProviderApiKeyEnv("xai_api_key"), true);
     assert.equal(isProviderApiKeyEnv("CURSOR_ACCESS_TOKEN"), true);

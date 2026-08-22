@@ -306,6 +306,29 @@ describe("worktree capture + land", { skip: !REPO }, () => {
     assert.equal(fs.existsSync(wt.path), false);
   });
 
+  it("skipApply keeps worktree even when land=discard", async () => {
+    const wt = createSubagentWorktree({
+      workspace: REPO!,
+      label: "skip-disc",
+    });
+    const rel = testRel("wt-skip-disc");
+    fs.mkdirSync(path.dirname(path.join(wt.path, rel)), { recursive: true });
+    fs.writeFileSync(path.join(wt.path, rel), "keep-me\n");
+
+    const result = await landSubagentWorktree({
+      worktree: wt,
+      parentWorkspace: REPO!,
+      mode: "discard",
+      skipApply: true,
+    });
+
+    assert.equal(result.status, "skipped");
+    assert.equal(result.kept, true);
+    assert.ok(fs.existsSync(wt.path));
+    assert.equal(fs.existsSync(path.join(REPO!, rel)), false);
+    await wt.cleanup();
+  });
+
   it("skipApply keeps worktree and does not touch parent", async () => {
     const wt = createSubagentWorktree({
       workspace: REPO!,

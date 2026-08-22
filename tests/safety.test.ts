@@ -9,6 +9,7 @@ import { PermissionGate } from "../src/agent/permissions.js";
 import { DEFAULT_CONFIG } from "../src/config/types.js";
 import path from "node:path";
 import os from "node:os";
+import fs from "node:fs";
 
 describe("hard safety (even under YOLO)", () => {
   const denials = [
@@ -169,6 +170,72 @@ describe("hard safety (even under YOLO)", () => {
     );
     assert.equal(v.ok, false);
     if (!v.ok) assert.equal(v.rule, "read-protected-path");
+  });
+
+  it("hardSafetyCheck blocks grok auth.json and cp/python/dd dumps", () => {
+    const home = os.homedir();
+    const grok = path.join(home, ".grok", "auth.json");
+    const forge = path.join(home, ".forge", "auth.json");
+    const denials = [
+      `cat ${grok}`,
+      `cp ${forge} /tmp/laundered`,
+      `dd if=${forge} of=/tmp/x`,
+      `python -c "print(open('${forge}').read())"`,
+      `node -e "require('fs').readFileSync('${forge}','utf8')"`,
+    ];
+    for (const command of denials) {
+      const v = hardSafetyCheck("bash", { command }, "/tmp/proj");
+      assert.equal(v.ok, false, command);
+      if (!v.ok) assert.equal(v.rule, "read-protected-path", command);
+    }
+  });
+
+  it("hardSafetyCheck blocks git config core.hooksPath set, allows get", () => {
+    const set = hardSafetyCheck(
+      "bash",
+      { command: "git config core.hooksPath /tmp/evil-hooks" },
+      "/tmp/proj",
+    );
+    assert.equal(set.ok, false);
+    if (!set.ok) assert.equal(set.rule, "git-hooks-path");
+    const dashC = hardSafetyCheck(
+      "bash",
+      { command: "git -c core.hooksPath=/tmp/evil commit -am x" },
+      "/tmp/proj",
+    );
+    assert.equal(dashC.ok, false);
+    const get = hardSafetyCheck(
+      "bash",
+      { command: "git config --get core.hooksPath" },
+      "/tmp/proj",
+    );
+    assert.equal(get.ok, true);
+  });
+
+  it("hardSafetyCheck blocks cp -t into .git/hooks", () => {
+    const v = hardSafetyCheck(
+      "bash",
+      { command: "cp -t .git/hooks payload" },
+      "/tmp/proj",
+    );
+    assert.equal(v.ok, false);
+    if (!v.ok) assert.equal(v.rule, "write-protected-path");
+  });
+
+  it("hardSafetyCheck realpath follows a workspace symlink to auth.json", () => {
+    const ws = fs.mkdtempSync(path.join(os.tmpdir(), "forge-ln-auth-"));
+    const auth = path.join(os.homedir(), ".forge", "auth.json");
+    const link = path.join(ws, "escape");
+    try {
+      fs.symlinkSync(auth, link);
+    } catch {
+      fs.rmSync(ws, { recursive: true, force: true });
+      return;
+    }
+    const v = hardSafetyCheck("bash", { command: "cat escape" }, ws);
+    assert.equal(v.ok, false);
+    if (!v.ok) assert.equal(v.rule, "read-protected-path");
+    fs.rmSync(ws, { recursive: true, force: true });
   });
 
   it("hardSafetyCheck still allows cat of a git hook", () => {

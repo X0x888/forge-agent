@@ -14,6 +14,36 @@ export function resolvePath(workspace: string, p: string): string {
 }
 
 /**
+ * True when target (or a symlink dest / realpath) is a credential surface.
+ * Used by grep/glob so a workspace symlink cannot dump auth.json.
+ */
+export function isProtectedReadResolvedSync(
+  workspace: string,
+  target: string,
+): boolean {
+  const logical = resolvePath(workspace, target);
+  if (isProtectedReadTarget(logical)) return true;
+  const candidates = [logical, realpathExistingPrefix(logical)];
+  try {
+    candidates.push(fs.realpathSync(logical));
+  } catch {
+    /* missing */
+  }
+  try {
+    if (fs.lstatSync(logical).isSymbolicLink()) {
+      const dest = fs.readlinkSync(logical);
+      const absDest = path.isAbsolute(dest)
+        ? path.resolve(dest)
+        : path.resolve(path.dirname(logical), dest);
+      candidates.push(absDest, realpathExistingPrefix(absDest));
+    }
+  } catch {
+    /* */
+  }
+  return candidates.some((c) => isProtectedReadTarget(c));
+}
+
+/**
  * Realpath an existing path, or the nearest existing ancestor + rejoin
  * trailing segments. Handles missing files and macOS `/var` → `/private/var`.
  */

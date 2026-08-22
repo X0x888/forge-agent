@@ -115,6 +115,74 @@ describe("foldChildUsage", () => {
     assert.equal(parent.totalPromptTokens, 3_000_000 + 2_447_484);
     assert.equal(parent.subagentUsage?.length, 1);
   });
+
+  it("keeps a running child at the ledger cap so a re-fold is not double-counted", () => {
+    const parent = meta({
+      totalPromptTokens: 0,
+      totalCompletionTokens: 0,
+      totalCacheReadTokens: 0,
+      subagentUsage: undefined,
+    });
+    foldChildUsage(
+      parent,
+      buildSubagentUsageRecord({
+        sessionId: "runner",
+        description: "live",
+        subagentType: "explore",
+        status: "running",
+        turns: 1,
+        maxTurns: 8,
+        usage: {
+          promptTokens: 1_000,
+          completionTokens: 10,
+          cacheReadTokens: 0,
+        },
+        provider: "xai",
+        model: "grok-4.6",
+      }),
+    );
+    for (let i = 0; i < 40; i++) {
+      foldChildUsage(
+        parent,
+        buildSubagentUsageRecord({
+          sessionId: `done-${i}`,
+          description: "old",
+          subagentType: "explore",
+          status: "completed",
+          turns: 1,
+          maxTurns: 8,
+          usage: {
+            promptTokens: 10,
+            completionTokens: 1,
+            cacheReadTokens: 0,
+          },
+          provider: "xai",
+          model: "grok-4.6",
+        }),
+      );
+    }
+    assert.ok(parent.subagentUsage?.some((r) => r.sessionId === "runner"));
+    const before = parent.totalPromptTokens;
+    foldChildUsage(
+      parent,
+      buildSubagentUsageRecord({
+        sessionId: "runner",
+        description: "live",
+        subagentType: "explore",
+        status: "running",
+        turns: 2,
+        maxTurns: 8,
+        usage: {
+          promptTokens: 2_000,
+          completionTokens: 20,
+          cacheReadTokens: 0,
+        },
+        provider: "xai",
+        model: "grok-4.6",
+      }),
+    );
+    assert.equal(parent.totalPromptTokens, before + 1_000);
+  });
 });
 
 describe("familyCostBreakdown", () => {

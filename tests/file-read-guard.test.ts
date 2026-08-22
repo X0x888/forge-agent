@@ -200,6 +200,13 @@ describe("tool integration with fileReads", () => {
       fs.readFileSync(path.join(dir, "keep.txt"), "utf8"),
       "original\n",
     );
+    assert.equal(
+      await fileReads.checkBeforeMutate(path.join(dir, "keep.txt"), {
+        tool: "apply_patch",
+        rel: "keep.txt",
+      }),
+      null,
+    );
     const retry = await toolApplyPatch(
       {
         patchText: `*** Begin Patch

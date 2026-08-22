@@ -598,7 +598,15 @@ export function formatProviderErrorText(
   );
   const headline = clipAnsi(`✖ ${message}`, cols);
   const meta = clipAnsi(`  [${code}]`, cols);
-  const shown = opts?.repl ? tips.slice(0, 1) : tips.slice(0, 2);
+  const shown = opts?.repl
+    ? tips
+        .filter((t) => {
+          const hasForge = /\bforge\s+[A-Za-z]/.test(t);
+          const hasSlash = /(?:^|[\s·]|→)\/[A-Za-z]/.test(t);
+          return hasSlash && !hasForge;
+        })
+        .slice(0, 1)
+    : tips.slice(0, 2);
   const tipLines = shown.map((t) => clipAnsi(`  → ${t}`, cols));
   const closer = formatRunFailureCloser(code, {
     surface: opts?.repl ? "repl" : "run",

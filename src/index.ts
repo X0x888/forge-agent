@@ -945,6 +945,7 @@ export type { PermissionRequest, PermissionResult } from "./agent/permissions.js
 export {
   checkBashHardDeny,
   checkBashProtectedWrites,
+  checkBashProtectedReads,
   hardSafetyCheck,
   checkWritePathHardDeny,
   isSoftDangerousBash,

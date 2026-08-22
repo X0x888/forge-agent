@@ -672,7 +672,7 @@ export async function runRepl(opts: {
         );
       } else {
         log.warn(
-          `Provider set to ${config.provider} but no credentials resolved — forge login -p ${config.provider}`,
+          `Provider set to ${config.provider} but no credentials resolved — /auth`,
         );
       }
     } else if (slash.authUpdated && auth) {
@@ -1302,7 +1302,7 @@ function printPosture(config: ForgeConfig): void {
     console.log(chalk.dim(`  ${postureHead(config)}`));
     const warns = postureWarnings(config);
     for (const w of warns) console.log(chalk.yellow(`  ⚠ ${w}`));
-    if (warns.length) console.log(chalk.dim(`  ↳ review: /config · forge doctor`));
+    if (warns.length) console.log(chalk.dim(`  ↳ review: /config · /doctor`));
   } catch {
     /* posture is best-effort */
   }
