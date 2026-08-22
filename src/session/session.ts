@@ -2719,7 +2719,9 @@ const PATH_ARG_KEYS = [
 function classifyToolOp(tool: string): TouchedFileOp {
   const t = tool.toLowerCase();
   if (t === "read_file" || t === "read") return "read";
-  if (t === "write_file" || t === "write") return "write";
+  if (t === "write_file" || t === "write" || t === "journal" || t === "bash") {
+    return "write";
+  }
   if (t === "search_replace" || t === "edit" || t === "str_replace") return "edit";
   if (t === "apply_patch" || t === "applypatch") return "patch";
   if (t.includes("delete") || t === "rm") return "delete";
@@ -2730,18 +2732,33 @@ function opMutates(op: TouchedFileOp): boolean {
   return op === "write" || op === "edit" || op === "delete" || op === "patch";
 }
 
+/** Workspace-relative key so journal abs paths merge with tool-call rel paths. */
+function displayTouchedPath(cwd: string, rawPath: string): string {
+  const raw = String(rawPath || "").trim();
+  if (!raw) return raw;
+  const posix = raw.replace(/\\/g, "/");
+  if (!path.isAbsolute(raw)) return posix;
+  const root = path.resolve(cwd || process.cwd());
+  const rel = path.relative(root, raw);
+  if (rel && !rel.startsWith("..") && !path.isAbsolute(rel)) {
+    return rel.replace(/\\/g, "/");
+  }
+  return posix;
+}
+
 function pushTouchedPath(
   map: Map<string, TouchedFile>,
   order: string[],
   rawPath: string,
   tool: string,
+  opOverride?: TouchedFileOp,
 ): void {
   const p = String(rawPath || "").trim();
   if (!p || p.length > 512) return;
   // Skip obvious non-paths / URLs
   if (/^https?:\/\//i.test(p)) return;
   if (p.includes("\0")) return;
-  const op = classifyToolOp(tool);
+  const op = opOverride ?? classifyToolOp(tool);
   const prev = map.get(p);
   if (!prev) {
     map.set(p, {
@@ -2756,6 +2773,28 @@ function pushTouchedPath(
   prev.op = op;
   prev.mutated = prev.mutated || opMutates(op);
   if (!prev.tools.includes(tool)) prev.tools.push(tool);
+}
+
+function mergeJournaledTouchedFiles(
+  session: SessionData,
+  map: Map<string, TouchedFile>,
+  order: string[],
+): void {
+  let entries: ReturnType<typeof readFileMutations> = [];
+  try {
+    entries = readFileMutations(session.meta.id);
+  } catch {
+    return;
+  }
+  if (!entries.length) return;
+  const cwd = session.meta.cwd || process.cwd();
+  for (const e of entries) {
+    const display = displayTouchedPath(cwd, e.path);
+    const key = map.has(display) ? display : map.has(e.path) ? e.path : display;
+    const op: TouchedFileOp =
+      e.kind === "create" ? "write" : e.kind === "delete" ? "delete" : "edit";
+    pushTouchedPath(map, order, key, "journal", op);
+  }
 }
 
 function collectPathsFromArgs(
@@ -2790,8 +2829,9 @@ function collectPathsFromArgs(
 }
 
 /**
- * Paths referenced by tool calls in this session (newest last).
- * Used by `/files` so experts can re-orient after resume without grepping history.
+ * Paths referenced by tool calls in this session, plus mutations.jsonl
+ * (bash / background / worktree-land writes have no `path` tool arg).
+ * Used by `/files` and `/last` so experts see what actually landed.
  */
 export function listSessionTouchedFiles(
   session: SessionData,
@@ -2843,6 +2883,7 @@ export function listSessionTouchedFiles(
       collectPathsFromArgs(map, order, tool, args);
     }
   }
+  mergeJournaledTouchedFiles(session, map, order);
   let items = order.map((p) => map.get(p)!).filter(Boolean);
   if (opts?.mutatedOnly) items = items.filter((t) => t.mutated);
   // Newest last in order — reverse for display (newest first)

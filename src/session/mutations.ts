@@ -3,8 +3,10 @@
  * not just chat history (OpenCode snapshot/revert inspired, lightweight).
  *
  * Stored as ~/.forge/sessions/<id>/mutations.jsonl (mode 0600).
- * Each successful write_file / search_replace / apply_patch op appends one
- * entry with pre-image (or create marker). Rewind restores in reverse.
+ * Each successful write_file / search_replace / apply_patch / bash /
+ * worktree-land op appends one entry with pre-image (or create marker).
+ * Rewind restores in reverse. `/files` and `/last` merge this journal so
+ * shell writes appear even when tool-call args have no `path` field.
  */
 import fs from "node:fs";
 import fsp from "node:fs/promises";

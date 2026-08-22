@@ -1233,6 +1233,87 @@ it("/fork includes last-turn peek", async () => {
     assert.match(text, /\/diff --full/);
   });
 
+  it("listSessionTouchedFiles merges mutations.jsonl (bash/bg/land have no path arg)", async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-files-journal-"));
+    process.env.FORGE_HOME = tmp;
+    const {
+      createSession: mk,
+      listSessionTouchedFiles,
+      formatSessionTouchedFiles,
+      formatLastRecapTrailer,
+    } = await import("../src/session/session.js");
+    const { appendFileMutation } = await import("../src/session/mutations.js");
+    const s = mk({ cwd: tmp, provider: "xai", model: "m" });
+    s.messages.push({
+      role: "assistant",
+      content: "",
+      tool_calls: [
+        {
+          id: "1",
+          type: "function",
+          function: {
+            name: "bash",
+            arguments: JSON.stringify({
+              command: "python -c \"open('src/gen.ts','w').write('x')\"",
+            }),
+          },
+        },
+      ],
+    });
+    assert.equal(listSessionTouchedFiles(s, { mutatedOnly: true }).length, 0);
+
+    appendFileMutation(s.meta.id, {
+      path: path.join(tmp, "src/gen.ts"),
+      kind: "create",
+      turn: 1,
+    });
+    const writes = listSessionTouchedFiles(s, { mutatedOnly: true });
+    assert.equal(writes.length, 1);
+    assert.equal(writes[0]!.path, "src/gen.ts");
+    assert.equal(writes[0]!.op, "write");
+    assert.equal(writes[0]!.mutated, true);
+    assert.ok(writes[0]!.tools.includes("journal"));
+    const text = formatSessionTouchedFiles(s, { mutatedOnly: true });
+    assert.match(text, /src\/gen\.ts/);
+    assert.match(text, /journal/);
+    const trailer = formatLastRecapTrailer(s, 80).join("\n");
+    assert.match(trailer, /src\/gen\.ts/);
+  });
+
+  it("journal abs path merges with write_file rel path (one row)", async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-files-merge-"));
+    process.env.FORGE_HOME = tmp;
+    const { createSession: mk, listSessionTouchedFiles } = await import(
+      "../src/session/session.js"
+    );
+    const { appendFileMutation } = await import("../src/session/mutations.js");
+    const s = mk({ cwd: tmp, provider: "xai", model: "m" });
+    s.messages.push({
+      role: "assistant",
+      content: "",
+      tool_calls: [
+        {
+          id: "1",
+          type: "function",
+          function: {
+            name: "write_file",
+            arguments: JSON.stringify({ path: "src/b.ts", content: "hi" }),
+          },
+        },
+      ],
+    });
+    appendFileMutation(s.meta.id, {
+      path: path.join(tmp, "src/b.ts"),
+      kind: "create",
+      turn: 1,
+    });
+    const writes = listSessionTouchedFiles(s, { mutatedOnly: true });
+    assert.equal(writes.filter((t) => t.path === "src/b.ts").length, 1);
+    const row = writes.find((t) => t.path === "src/b.ts")!;
+    assert.ok(row.tools.includes("write_file"));
+    assert.ok(row.tools.includes("journal"));
+  });
+
   it("formatSessionTouchedFiles clips each row to one TTY line", async () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-files-clip-"));
     process.env.FORGE_HOME = tmp;
@@ -1306,6 +1387,30 @@ it("/fork includes last-turn peek", async () => {
     assert.equal(r.handled, true);
     assert.match(String(r.output || ""), /README\.md/);
     assert.match(String(r.output || ""), /M|mutations/i);
+  });
+
+  it("/files writes lists journal-only bash paths", async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-files-slash-j-"));
+    process.env.FORGE_HOME = tmp;
+    const s = createSession({ cwd: tmp, provider: "xai", model: "grok-4" });
+    const { appendFileMutation } = await import("../src/session/mutations.js");
+    appendFileMutation(s.meta.id, {
+      path: path.join(tmp, "src/gen.ts"),
+      kind: "create",
+      turn: 1,
+    });
+    const hooks = new HookRunner(DEFAULT_CONFIG, tmp);
+    const r = await handleSlash("/files writes", {
+      session: s,
+      config: DEFAULT_CONFIG,
+      hooks,
+    });
+    assert.equal(r.handled, true);
+    assert.match(String(r.output || ""), /src\/gen\.ts/);
+    assert.doesNotMatch(
+      String(r.output || ""),
+      /No file mutations recorded/i,
+    );
   });
 
   it("/resume by title switches session", async () => {
