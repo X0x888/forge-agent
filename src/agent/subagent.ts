@@ -135,6 +135,19 @@ export function resolveSubagentHandoffStatus(opts: {
   return "completed";
 }
 
+/**
+ * Worktree land is fail-closed: only a completed child may apply into the
+ * parent. incomplete_max_turns used to land whenever editCount > 0, then
+ * delete the worktree — a half-finished implementer dumped into the parent
+ * and removed the only copy. Abort / error / stop-hook already skipped;
+ * max-turns with edits did not.
+ */
+export function shouldSkipWorktreeLand(
+  status: SubagentHandoffStatus,
+): boolean {
+  return status !== "completed";
+}
+
 const READ_ONLY_TOOLS = new Set([
   "read_file",
   "grep",
