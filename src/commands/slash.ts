@@ -137,7 +137,10 @@ import {
 } from "../util/abort.js";
 import { copyToClipboard } from "../util/clipboard.js";
 import { formatDiffReviewCard } from "../tui/diff-card.js";
-import { assembleDoctorReport } from "../tui/doctor-card.js";
+import {
+  assembleDoctorReport,
+  type DoctorSurface,
+} from "../tui/doctor-card.js";
 import {
   defaultBashBackgroundTimeoutMs,
   defaultBashTimeoutMs,
@@ -6283,7 +6286,10 @@ case "/new":
     }
 
     case "/doctor": {
-      return { handled: true, output: await runDoctor(opts.config) };
+      return {
+        handled: true,
+        output: await runDoctor(opts.config, { surface: "repl" }),
+      };
     }
 
     case "/skills": {
@@ -6705,7 +6711,9 @@ export interface DoctorResult {
  */
 export async function runDoctorCheck(
   config: ForgeConfig,
+  opts?: { surface?: DoctorSurface },
 ): Promise<DoctorResult> {
+  const surface: DoctorSurface = opts?.surface ?? "repl";
   const lines: string[] = [];
   const issues: string[] = [];
   let modelInCatalog: boolean | null = null;
@@ -7819,7 +7827,7 @@ export async function runDoctorCheck(
   }
 
   return {
-    report: assembleDoctorReport(lines, issues),
+    report: assembleDoctorReport(lines, issues, { surface }),
     issues: [...issues],
     ok: issues.length === 0,
     authenticated: Boolean(auth),
@@ -7889,8 +7897,11 @@ export async function runDoctorCheck(
 }
 
 /** Human-readable doctor report (slash `/doctor` and plain `forge doctor`). */
-export async function runDoctor(config: ForgeConfig): Promise<string> {
-  return (await runDoctorCheck(config)).report;
+export async function runDoctor(
+  config: ForgeConfig,
+  opts?: { surface?: DoctorSurface },
+): Promise<string> {
+  return (await runDoctorCheck(config, opts)).report;
 }
 
 export interface EffectiveConfigSnap {

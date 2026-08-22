@@ -1,7 +1,7 @@
 # Project memory
 
 > Auto-maintained by Forge. Edit carefully — agent loads this across sessions.
-> key=d54ef9c78f11c027 · updated=2026-08-22T03:29:06.966Z
+> key=d54ef9c78f11c027 · updated=2026-08-22T04:11:58.646Z
 
 ## constraint
 
@@ -25,6 +25,7 @@
 - isolation=worktree auto-lands into parent (FORGE_SUBAGENT_LAND=auto|keep|discard); kept on conflict. FORGE_SUBAGENT_KEEP_WORKTREE=1 forces keep.
 - Sit-down Next at › is a slash key, never a CLI dump (`npm test`, `forge accounts switch`, `forge login`). lastErr map: 429/quota → /accounts, auth → /auth, overflow → /compact, max_cost → /budget, else /retry. Headless `forge run` keeps CLI verbs.
 - Sit-down /budget is verdict-first (HIT / ok / none). HIT Next is /budget off. Raising or clearing the cap so it no longer hits clears lastError.code=max_cost. FORGE_MAX_COST_USD / config.toml stay off ›.
+- Sit-down /doctor Next is slash keys only (/auth /permissions /setup /status). forge login and forge doctor --json stay on surface:cli (forge doctor). Default formatDoctorCloser surface is repl.
 
 ## fact
 

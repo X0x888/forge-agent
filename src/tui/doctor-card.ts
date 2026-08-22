@@ -23,12 +23,13 @@ export function formatDoctorHeader(
 /** Next command after the dump — login / permissions / setup. */
 export function formatDoctorCloser(
   issues: string[],
-  opts?: { columns?: number },
+  opts?: { columns?: number; surface?: DoctorSurface },
 ): string {
+  const surface: DoctorSurface = opts?.surface ?? "repl";
   const blob = issues.join("\n");
   const keys: string[] = [];
   if (/not authenticated|forge login/i.test(blob)) {
-    keys.push("forge login");
+    keys.push(surface === "cli" ? "forge login" : "/auth");
   }
   if (/bypassPermissions|yolo|dontAsk|permission mode/i.test(blob)) {
     keys.push("/permissions");
@@ -36,7 +37,9 @@ export function formatDoctorCloser(
   if (!issues.length || /not authenticated/i.test(blob)) {
     keys.push("/setup");
   }
-  if (!keys.length) keys.push("forge doctor --json");
+  if (!keys.length) {
+    keys.push(surface === "cli" ? "forge doctor --json" : "/status");
+  }
   const line = `Next  ${keys.join("  ·  ")}`;
   const cols = Math.max(
     24,
@@ -72,7 +75,7 @@ export function formatDoctorIssueBlock(
 export function assembleDoctorReport(
   facts: string[],
   issues: string[],
-  opts?: { color?: boolean; columns?: number },
+  opts?: { color?: boolean; columns?: number; surface?: DoctorSurface },
 ): string {
   const header = formatDoctorHeader(issues, opts);
   const block = formatDoctorIssueBlock(issues, opts);

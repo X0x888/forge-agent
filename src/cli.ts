@@ -4311,7 +4311,7 @@ Docs: docs/PRODUCTION.md
       }
       const config = buildConfig(merged);
       if (wantJson) {
-        const check = await runDoctorCheck(config);
+        const check = await runDoctorCheck(config, { surface: "cli" });
         // Prefer fresh auth (matches doctor report) for describeAuth field
         const auth =
           (await resolveAuthFresh(config).catch(() => null)) ||
@@ -4511,7 +4511,7 @@ Docs: docs/PRODUCTION.md
       }
       // Plain doctor: same health signal as --json (exit 1 on issues) so
       // scripts that forget --json still fail closed in CI.
-      const check = await runDoctorCheck(config);
+      const check = await runDoctorCheck(config, { surface: "cli" });
       console.log(check.report);
       if (!check.ok) process.exitCode = 1;
     });
