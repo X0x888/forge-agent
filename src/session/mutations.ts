@@ -254,6 +254,42 @@ export async function snapshotForWrite(
   }
 }
 
+/**
+   * Absolute paths journaled at or after `isoTs` (ISO-8601; lexicographic).
+   * Background bash apply uses this to skip concurrent write_file / fg bash.
+   */
+export function mutationAbsPathsAfter(
+  sessionId: string,
+  isoTs: string,
+): Set<string> {
+  const out = new Set<string>();
+  if (!sessionId || !isoTs) return out;
+  for (const m of readFileMutations(sessionId)) {
+    if (
+      typeof m.ts === "string" &&
+      m.ts >= isoTs &&
+      typeof m.path === "string"
+    ) {
+      out.add(path.resolve(m.path).replace(/\\/g, "/"));
+    }
+  }
+  return out;
+}
+
+export type BeforeRestoreMutationsFn = (
+  sessionId: string,
+  keepThroughTurn: number,
+) => void;
+
+let beforeRestoreHook: BeforeRestoreMutationsFn | undefined;
+
+/** Register a pre-restore settler (background bash journals). Replaces prior. */
+export function onBeforeRestoreMutations(
+  fn: BeforeRestoreMutationsFn | undefined,
+): void {
+  beforeRestoreHook = fn;
+}
+
 export function readFileMutations(sessionId: string): FileMutation[] {
   const file = journalPath(sessionId);
   let raw: string;
