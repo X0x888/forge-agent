@@ -1,7 +1,7 @@
 # Project memory
 
 > Auto-maintained by Forge. Edit carefully — agent loads this across sessions.
-> key=d54ef9c78f11c027 · updated=2026-08-22T05:46:48.091Z
+> key=d54ef9c78f11c027 · updated=2026-08-22T05:48:21.839Z
 
 ## constraint
 
