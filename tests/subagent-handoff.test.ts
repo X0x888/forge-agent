@@ -20,6 +20,10 @@ describe("subagent handoff", () => {
       resolveSubagentHandoffStatus({ hitMaxTurns: true }),
       "incomplete_max_turns",
     );
+    assert.equal(
+      resolveSubagentHandoffStatus({ hitCostCap: true }),
+      "incomplete_cost_cap",
+    );
     assert.equal(resolveSubagentHandoffStatus({}), "completed");
     assert.equal(
       resolveSubagentHandoffStatus({ error: "boom" }),
@@ -38,6 +42,7 @@ describe("subagent handoff", () => {
   it("skips worktree land unless the child completed", () => {
     assert.equal(shouldSkipWorktreeLand("completed"), false);
     assert.equal(shouldSkipWorktreeLand("incomplete_max_turns"), true);
+    assert.equal(shouldSkipWorktreeLand("incomplete_cost_cap"), true);
     assert.equal(shouldSkipWorktreeLand("aborted"), true);
     assert.equal(shouldSkipWorktreeLand("error"), true);
     assert.equal(shouldSkipWorktreeLand("stop_hook_blocked"), true);

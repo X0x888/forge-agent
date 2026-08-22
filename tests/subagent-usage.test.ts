@@ -9,6 +9,7 @@ import {
   formatSubagentTokensHeader,
   resolveChildUsage,
   fallbackUsageFromTranscript,
+  createFamilyCostCapResolver,
 } from "../src/session/subagent-usage.js";
 import type { SessionMeta } from "../src/session/session.js";
 
@@ -182,5 +183,82 @@ describe("formatSubagentTokensHeader", () => {
       ),
       "",
     );
+  });
+});
+
+describe("createFamilyCostCapResolver — siblings share remaining", () => {
+  it("live-folds a child and hits when the family is spent", () => {
+    const parent = meta({
+      id: "parent-cap",
+      maxCostUsd: 0.0001,
+      totalPromptTokens: 1_000_000,
+      totalCompletionTokens: 1_000_000,
+      totalCacheReadTokens: 0,
+      subagentUsage: undefined,
+    });
+    const child = meta({
+      id: "child-a",
+      totalPromptTokens: 0,
+      totalCompletionTokens: 0,
+      totalCacheReadTokens: 0,
+    });
+    const resolve = createFamilyCostCapResolver({
+      parentConfig: { maxCostUsd: 0, provider: "xai", model: "grok-4.6" },
+      parentMeta: parent,
+      childMeta: child,
+      description: "explore",
+      subagentType: "explore",
+      maxTurns: 8,
+    });
+    const st = resolve();
+    assert.equal(st.hit, true);
+    assert.equal(st.cap, 0.0001);
+  });
+
+  it("a second child sees HIT after the first folds remaining away", () => {
+    const parent = meta({
+      id: "parent-share",
+      maxCostUsd: 5,
+      totalPromptTokens: 0,
+      totalCompletionTokens: 0,
+      totalCacheReadTokens: 0,
+      subagentUsage: undefined,
+    });
+    const childA = meta({
+      id: "child-a",
+      totalPromptTokens: 3_000_000,
+      totalCompletionTokens: 20_000,
+      totalCacheReadTokens: 0,
+    });
+    const childB = meta({
+      id: "child-b",
+      totalPromptTokens: 0,
+      totalCompletionTokens: 0,
+      totalCacheReadTokens: 0,
+    });
+    const cfg = { maxCostUsd: 0, provider: "xai" as const, model: "grok-4.6" };
+    const resolveA = createFamilyCostCapResolver({
+      parentConfig: cfg,
+      parentMeta: parent,
+      childMeta: childA,
+      description: "first",
+      subagentType: "explore",
+      maxTurns: 8,
+    });
+    const first = resolveA();
+    assert.ok(first.spent > 0);
+    const resolveB = createFamilyCostCapResolver({
+      parentConfig: cfg,
+      parentMeta: parent,
+      childMeta: childB,
+      description: "second",
+      subagentType: "explore",
+      maxTurns: 8,
+    });
+    const second = resolveB();
+    // Sibling B has no tokens of its own; family already includes A.
+    assert.ok(second.spent >= first.spent);
+    assert.equal(second.hit, true);
+    assert.equal(parent.subagentUsage?.length, 2);
   });
 });

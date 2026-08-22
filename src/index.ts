@@ -313,10 +313,15 @@ export {
   resolveMaxCostUsd,
   sessionCostUsd,
   costCapStatus,
+  pinChildCostCap,
   formatCostBudgetLine,
   MAX_COST_USD_CEILING,
 } from "./util/cost-budget.js";
-export type { CostCapStatus } from "./util/cost-budget.js";
+export type {
+  CostCapStatus,
+  CostCapMeta,
+  PinChildCostCapResult,
+} from "./util/cost-budget.js";
 export { productionWarningsForRun } from "./util/production-warnings.js";
 export type { ProductionWarningOpts } from "./util/production-warnings.js";
 export {

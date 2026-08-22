@@ -8,6 +8,7 @@ import {
   resolveMaxCostUsd,
   sessionCostUsd,
   costCapStatus,
+  pinChildCostCap,
   formatCostBudgetLine,
   MAX_COST_USD_CEILING,
 } from "../src/util/cost-budget.js";
@@ -109,6 +110,58 @@ describe("resolveMaxCostUsd + costCapStatus", () => {
     assert.equal(st.cap, null);
     assert.equal(st.hit, false);
     assert.match(formatCostBudgetLine(st), /unlimited/);
+  });
+});
+
+describe("pinChildCostCap — family remaining, not a fresh cap", () => {
+  const cfg = { maxCostUsd: 5, provider: "xai", model: "grok-4.6" } as const;
+
+  it("pins remaining when the parent is under cap", () => {
+    const parent = {
+      maxCostUsd: 1,
+      totalPromptTokens: 50_000,
+      totalCompletionTokens: 1_000,
+      totalCacheReadTokens: 0,
+    };
+    const family = costCapStatus(cfg, parent);
+    assert.equal(family.cap, 1);
+    assert.equal(family.hit, false);
+    assert.ok((family.remaining ?? 0) > 0);
+    assert.ok((family.remaining ?? 0) < 1);
+    const child: { maxCostUsd?: number } = {};
+    const pin = pinChildCostCap(child, cfg, parent);
+    assert.equal(pin.refuse, false);
+    assert.equal(pin.cap, 1);
+    assert.equal(child.maxCostUsd, pin.remaining);
+    assert.ok((child.maxCostUsd ?? 0) < 5);
+  });
+
+  it("refuses when the parent is already HIT (does not pin 0 / unlimited)", () => {
+    const parent = {
+      maxCostUsd: 0.0001,
+      totalPromptTokens: 1_000_000,
+      totalCompletionTokens: 1_000_000,
+      totalCacheReadTokens: 0,
+    };
+    const family = costCapStatus(cfg, parent);
+    assert.equal(family.hit, true);
+    const child: { maxCostUsd?: number } = {};
+    const pin = pinChildCostCap(child, cfg, parent);
+    assert.equal(pin.refuse, true);
+    assert.equal(pin.remaining, 0);
+    assert.equal(child.maxCostUsd, undefined);
+  });
+
+  it("does not pin when the family is unlimited", () => {
+    const child: { maxCostUsd?: number } = {};
+    const pin = pinChildCostCap(
+      child,
+      { maxCostUsd: 0, provider: "xai", model: "grok-4.6" },
+      { totalPromptTokens: 9_000, totalCompletionTokens: 100, totalCacheReadTokens: 0 },
+    );
+    assert.equal(pin.refuse, false);
+    assert.equal(pin.remaining, null);
+    assert.equal(child.maxCostUsd, undefined);
   });
 });
 

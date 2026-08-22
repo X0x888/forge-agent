@@ -5,7 +5,7 @@
  * - Capability modes: full | read-only (explore/plan force read-only)
  * - Depth limit (default 1): children cannot spawn further subagents
  * - SubagentStart / SubagentStop hooks (blocking Stop semantics apply)
- * - Token usage folded into parent session
+ * - Token usage folded into parent session (live — family /budget)
  * - Shares parent MCP/LSP managers (no double server spawn)
  */
 import fs from "node:fs";
@@ -41,12 +41,18 @@ import {
 } from "./worktree.js";
 import {
   buildSubagentUsageRecord,
+  createFamilyCostCapResolver,
   fallbackUsageFromTranscript,
   foldChildUsage,
   formatLiveChildSpend,
   formatSubagentTokensHeader,
   resolveChildUsage,
 } from "../session/subagent-usage.js";
+import {
+  costCapStatus,
+  formatCostBudgetLine,
+  pinChildCostCap,
+} from "../util/cost-budget.js";
 import {
   formatExploreMap,
   parseExploreMap,
@@ -111,6 +117,7 @@ export interface SubagentResult {
   /** Land outcome when isolation=worktree (auto-apply into parent by default). */
   worktreeLand?: WorktreeLandResult;
   hitMaxTurns?: boolean;
+  hitCostCap?: boolean;
   status?: SubagentHandoffStatus;
   artifactPath?: string;
 }
@@ -118,6 +125,7 @@ export interface SubagentResult {
 export type SubagentHandoffStatus =
   | "completed"
   | "incomplete_max_turns"
+  | "incomplete_cost_cap"
   | "aborted"
   | "error"
   | "stop_hook_blocked";
@@ -126,11 +134,13 @@ export function resolveSubagentHandoffStatus(opts: {
   error?: string;
   aborted?: boolean;
   hitMaxTurns?: boolean;
+  hitCostCap?: boolean;
   stopHookBlocked?: boolean;
 }): SubagentHandoffStatus {
   if (opts.error) return "error";
   if (opts.aborted) return "aborted";
   if (opts.stopHookBlocked) return "stop_hook_blocked";
+  if (opts.hitCostCap) return "incomplete_cost_cap";
   if (opts.hitMaxTurns) return "incomplete_max_turns";
   return "completed";
 }
@@ -139,7 +149,7 @@ export function resolveSubagentHandoffStatus(opts: {
  * Worktree land is fail-closed: only a completed child may apply into the
  * parent. incomplete_max_turns used to land whenever editCount > 0, then
  * delete the worktree — a half-finished implementer dumped into the parent
- * and removed the only copy. Abort / error / stop-hook already skipped;
+ * and removed the only copy. Abort / error / stop-hook / cost-cap skip;
  * max-turns with edits did not.
  */
 export function shouldSkipWorktreeLand(
@@ -386,6 +396,33 @@ export async function runSubagent(
     };
   }
 
+  const familyPin = pinChildCostCap(
+    {},
+    ctx.config,
+    ctx.parentSession.meta,
+  );
+  if (familyPin.refuse) {
+    const line = formatCostBudgetLine(
+      costCapStatus(ctx.config, ctx.parentSession.meta),
+    );
+    return {
+      ok: false,
+      text: "",
+      turns: 0,
+      aborted: false,
+      subagentType,
+      capabilityMode,
+      description,
+      sessionId: "",
+      promptTokens: 0,
+      completionTokens: 0,
+      editCount: 0,
+      hitCostCap: true,
+      status: "incomplete_cost_cap",
+      error: `spawn_subagent denied: parent spend cap already HIT (${line}). Raise /budget or /budget off.`,
+    };
+  }
+
   const isolation = defaultIsolationForSpawn({
     type: req.subagentType,
     isolation: req.isolation,
@@ -431,6 +468,7 @@ export async function runSubagent(
     ultrawork: false,
     title: `subagent: ${description}`.slice(0, 200),
   });
+  pinChildCostCap(child.meta, ctx.config, ctx.parentSession.meta);
 
   const childMaxTurns =
     req.maxTurns && req.maxTurns > 0
@@ -539,6 +577,14 @@ export async function runSubagent(
       lsp: isolation === "worktree" ? undefined : ctx.lsp,
       disableHarnessAutoArm: true,
       citeDeltaStop: subagentType === "explore",
+      resolveCostCap: createFamilyCostCapResolver({
+        parentConfig: ctx.config,
+        parentMeta: ctx.parentSession.meta,
+        childMeta: child.meta,
+        description,
+        subagentType,
+        maxTurns: childMaxTurns,
+      }),
     });
   } catch (err) {
     runError = (err as Error).message;
@@ -564,9 +610,11 @@ export async function runSubagent(
       ? "error"
       : result?.aborted
         ? "aborted"
-        : result?.hitMaxTurns
-          ? "max_turns"
-          : "completed",
+        : result?.hitCostCap
+          ? "cost_cap"
+          : result?.hitMaxTurns
+            ? "max_turns"
+            : "completed",
     turnCount: result?.turns,
     editCount: child.meta.editCount,
     toolName: "spawn_subagent",
@@ -587,6 +635,7 @@ export async function runSubagent(
     error: runError,
     aborted: result?.aborted,
     hitMaxTurns: result?.hitMaxTurns,
+    hitCostCap: result?.hitCostCap,
     stopHookBlocked: stopHook.blocked,
   });
   const incomplete = status !== "completed";
@@ -729,6 +778,7 @@ export async function runSubagent(
     sessionId: child.meta.id,
     aborted: Boolean(result?.aborted),
     hitMaxTurns: Boolean(result?.hitMaxTurns),
+    hitCostCap: Boolean(result?.hitCostCap),
     error: runError,
     isolation,
     worktreePath: worktree?.path,
@@ -786,6 +836,7 @@ export async function runSubagent(
     worktreePath: worktree?.path,
     worktreeLand,
     hitMaxTurns: Boolean(result?.hitMaxTurns),
+    hitCostCap: Boolean(result?.hitCostCap),
     status,
     artifactPath,
   };
@@ -858,6 +909,7 @@ function formatSubagentHeader(opts: {
   sessionId: string;
   aborted: boolean;
   hitMaxTurns: boolean;
+  hitCostCap?: boolean;
   error?: string;
   isolation?: SubagentIsolation;
   worktreePath?: string;
@@ -890,6 +942,7 @@ function formatSubagentHeader(opts: {
       : "",
     opts.aborted ? `- aborted: true` : "",
     opts.hitMaxTurns ? `- hit max turns` : "",
+    opts.hitCostCap ? `- hit cost cap` : "",
     opts.error ? `- error: ${opts.error}` : "",
   ]
     .filter(Boolean)

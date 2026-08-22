@@ -192,6 +192,7 @@ import {
   costCapStatus,
   formatCostBudgetLine,
   resolveMaxCostUsd,
+  type CostCapStatus,
 } from "../util/cost-budget.js";
 import {
   formatToolDisplayName,
@@ -318,6 +319,12 @@ export interface LoopOptions {
    * without polluting history.
    */
   resumeWithoutUserMessage?: boolean;
+  /**
+   * Override spend-cap checks (child loops). Default is
+   * `costCapStatus(config, session.meta)`. Family /budget passes a
+   * live-fold resolver so siblings share remaining.
+   */
+  resolveCostCap?: () => CostCapStatus;
 }
 
 export interface LoopResult {
@@ -694,6 +701,10 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
     stream = true,
     signal,
   } = opts;
+  const capNow = () =>
+    opts.resolveCostCap
+      ? opts.resolveCostCap()
+      : costCapStatus(config, session.meta);
   // Mutable so mid-run OAuth refresh can hot-swap the bearer token
   let provider = opts.provider;
   /** Generations of successful mid-run auth recovery (not a one-shot for multi-day). */
@@ -1183,7 +1194,7 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
         break;
       }
       {
-        const cap = costCapStatus(config, session.meta);
+        const cap = capNow();
         if (cap.hit) {
           hitCostCap = true;
           break;
@@ -2172,7 +2183,7 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
 
       // Cost cap after usage lands — release before more tool work / continues.
       {
-        const cap = costCapStatus(config, session.meta);
+        const cap = capNow();
         if (cap.hit) {
           hitCostCap = true;
           log.warn(
@@ -2942,7 +2953,7 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
 
   // Cost-cap release — unattended ULW spend valve (estimate, not a bill).
   if (!aborted && hitCostCap) {
-    const st = costCapStatus(config, session.meta);
+    const st = capNow();
     const capStr =
       st.cap != null ? `$${st.cap.toFixed(st.cap < 0.01 ? 4 : 3)}` : "?";
     const spentStr = `$${st.spent.toFixed(st.spent < 0.01 ? 4 : 3)}`;

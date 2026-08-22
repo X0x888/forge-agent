@@ -5,7 +5,7 @@
  * agents can edit without touching the parent checkout. On a completed
  * handoff, Forge captures the worktree diff and lands it into the parent
  * workspace (default) so isolation is not a dead-end. Incomplete /
- * aborted / error / stop-hook skip apply and keep the worktree. Best-effort
+ * aborted / error / stop-hook / cost-cap skip apply and keep the worktree. Best-effort
  * cleanup with
  * `git worktree remove --force` (and directory rm fallback). Keep the
  * worktree on land conflict or when FORGE_SUBAGENT_KEEP_WORKTREE=1.

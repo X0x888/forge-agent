@@ -1,10 +1,16 @@
 /**
- * Family spend visibility: parent session totals plus a per-child ledger.
+ * Family spend ledger: parent session totals plus a per-child breakdown.
  *
- * Child tokens are folded into parent totals (one family number). The
- * ledger is how you see *which* explore ate the money. This is not a
- * spend cap and does not change /budget.
+ * Child tokens fold into parent totals (one family number). `/budget`
+ * uses that family number — live-fold during a child run so parallel
+ * siblings share remaining, and the parent HIT valve cannot be bypassed
+ * by a fresh child session.
  */
+import type { ForgeConfig } from "../config/types.js";
+import {
+  costCapStatus,
+  type CostCapStatus,
+} from "../util/cost-budget.js";
 import { estimateCostUsd, formatCost, formatTokens } from "../util/format.js";
 import type { SessionMeta } from "./session.js";
 
@@ -349,4 +355,38 @@ export function formatLiveChildSpend(
     u.cacheReadTokens,
   );
   return ` · ${formatTokens(u.promptTokens)} · ${formatCost(cost)}`;
+}
+
+/**
+ * Live family spend check for a child loop. Folds this child's current
+ * tokens into the parent (delta-safe) and returns the parent's
+ * `costCapStatus` so siblings share remaining.
+ */
+export function createFamilyCostCapResolver(opts: {
+  parentConfig: Pick<ForgeConfig, "maxCostUsd" | "provider" | "model">;
+  parentMeta: SessionMeta;
+  childMeta: SessionMeta;
+  description: string;
+  subagentType: string;
+  maxTurns: number;
+}): () => CostCapStatus {
+  return () => {
+    const usage = resolveChildUsage(opts.childMeta);
+    const rec = buildSubagentUsageRecord({
+      sessionId: opts.childMeta.id,
+      description: opts.description,
+      subagentType: opts.subagentType,
+      status: "running",
+      turns: Math.max(
+        0,
+        opts.childMeta.providerRounds ?? opts.childMeta.turnCount ?? 0,
+      ),
+      maxTurns: opts.maxTurns,
+      usage,
+      provider: String(opts.parentConfig.provider || opts.childMeta.provider),
+      model: opts.parentConfig.model || opts.childMeta.model,
+    });
+    foldChildUsage(opts.parentMeta, rec);
+    return costCapStatus(opts.parentConfig, opts.parentMeta);
+  };
 }
