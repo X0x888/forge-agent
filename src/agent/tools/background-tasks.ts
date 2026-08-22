@@ -10,8 +10,18 @@ import path from "node:path";
 import { pushInterjection } from "../../harness/interjection.js";
 import { loadUlwCycle } from "../../harness/ulw-cycle.js";
 import { maybeDesktopNotify } from "../../util/attention.js";
-import { forgeHome, ensureDirAsync } from "../../util/fs.js";
+import { forgeHome, ensureDirAsync, nowIso } from "../../util/fs.js";
 import { createShellEnv } from "./env-policy.js";
+import {
+  applyBashTreeDelta,
+  type BashTreeSnapshot,
+} from "./bash-mutation-journal.js";
+import type { ToolContext } from "./types.js";
+import {
+  appendFileMutation,
+  mutationAbsPathsAfter,
+  onBeforeRestoreMutations,
+} from "../../session/mutations.js";
 import type {
   SandboxMissingBackend,
   SandboxNetwork,
@@ -46,8 +56,118 @@ export interface BackgroundTask {
 }
 
 const tasks = new Map<string, BackgroundTask>();
+/** Side map so list/JSON snapshots stay lean. */
+const journals = new Map<string, BackgroundTaskJournal>();
 const MAX_TASKS = 32;
 const MAX_CAPTURE_BYTES = 2 * 1024 * 1024;
+
+export type BackgroundTaskJournal = {
+  snap: BashTreeSnapshot;
+  ctx: ToolContext;
+  startedAt: string;
+  startedTurn?: number;
+  settled?: boolean;
+};
+
+function attachJournal(
+  id: string,
+  journal: {
+    snap: BashTreeSnapshot;
+    ctx: ToolContext;
+    startedTurn?: number;
+  },
+): void {
+  journals.set(id, {
+    snap: journal.snap,
+    ctx: journal.ctx,
+    startedAt: nowIso(),
+    startedTurn: journal.startedTurn,
+    settled: false,
+  });
+}
+
+/** Apply porcelain delta once. Concurrent write_file paths are skipped. */
+export function settleTaskJournal(
+  task: BackgroundTask,
+  opts?: { undoThrough?: number },
+): number {
+  const j = journals.get(task.id);
+  if (!j || j.settled) return 0;
+  j.settled = true;
+  try {
+    const ignore =
+      j.ctx.sessionId
+        ? mutationAbsPathsAfter(j.ctx.sessionId, j.startedAt)
+        : undefined;
+    let ctx = j.ctx;
+    // /undo already decremented turnCount. Stamp keepThrough+1 so restore
+    // sees the entries in the doomed set (live turnCount would keep them).
+    if (
+      typeof opts?.undoThrough === "number" &&
+      ctx.sessionId &&
+      ctx.recordMutation
+    ) {
+      const sid = ctx.sessionId;
+      const turn = opts.undoThrough + 1;
+      ctx = {
+        ...ctx,
+        recordMutation: (input) => {
+          appendFileMutation(sid, { ...input, turn });
+        },
+      };
+    }
+    return applyBashTreeDelta(
+      j.snap,
+      ctx,
+      ignore && ignore.size ? { ignoreAbsPaths: ignore } : undefined,
+    );
+  } catch {
+    return 0;
+  }
+}
+
+/**
+ * Journal + SIGKILL in-flight bg writers for this session.
+ * When `keepThroughTurn` is set ( /undo ), only tasks started after that
+ * turn are settled — an earlier turn's codegen stays running.
+ */
+export function settleBackgroundMutationJournals(
+  sessionId: string,
+  keepThroughTurn?: number,
+): number {
+  if (!sessionId) return 0;
+  let n = 0;
+  for (const task of tasks.values()) {
+    const j = journals.get(task.id);
+    if (!j || j.settled) continue;
+    if (j.ctx.sessionId !== sessionId) continue;
+    if (typeof keepThroughTurn === "number") {
+      if (typeof j.startedTurn !== "number") continue;
+      if (j.startedTurn <= keepThroughTurn) continue;
+    }
+    if (task.status === "running") {
+      try {
+        if (task.child) killProcessTree(task.child, "SIGKILL");
+      } catch {
+        /* */
+      }
+      task.status = "killed";
+      task.endedAt = Date.now();
+    }
+    n += settleTaskJournal(
+      task,
+      typeof keepThroughTurn === "number"
+        ? { undoThrough: keepThroughTurn }
+        : undefined,
+    );
+  }
+  if (n > 0) publishBgActivity();
+  return n;
+}
+
+onBeforeRestoreMutations((sessionId, keepThroughTurn) => {
+  settleBackgroundMutationJournals(sessionId, keepThroughTurn);
+});
 
 function tasksDir(): string {
   return path.join(forgeHome(), "background-tasks");
@@ -65,6 +185,7 @@ function pruneOld(): void {
   while (tasks.size >= MAX_TASKS && done.length) {
     const t = done.shift()!;
     tasks.delete(t.id);
+    journals.delete(t.id);
   }
 }
 
@@ -393,6 +514,12 @@ export async function startBackgroundTask(opts: {
   timeoutMs?: number;
   /** When set, completion pushes a mid-run interjection so the agent continues without polling. */
   sessionId?: string;
+  /** Snapshot taken before spawn; applied on exit / /undo settle. */
+  journal?: {
+    snap: BashTreeSnapshot;
+    ctx: ToolContext;
+    startedTurn?: number;
+  };
 }): Promise<
   | { ok: true; task: BackgroundTask }
   | { ok: false; message: string; failClosed?: boolean }
@@ -457,6 +584,7 @@ export async function startBackgroundTask(opts: {
     child,
   };
   tasks.set(id, task);
+  if (opts.journal) attachJournal(id, opts.journal);
   publishBgActivity();
 
   const timeoutMs = opts.timeoutMs ?? 30 * 60_000; // 30m default for background
@@ -491,6 +619,7 @@ export async function startBackgroundTask(opts: {
       task.endedAt = task.endedAt || Date.now();
     }
     task.child = undefined;
+    settleTaskJournal(task);
     publishBgActivity();
     maybeNotifyBgComplete(task, opts.sessionId);
   });
@@ -501,6 +630,7 @@ export async function startBackgroundTask(opts: {
     task.error = err.message;
     task.endedAt = Date.now();
     task.child = undefined;
+    settleTaskJournal(task);
     publishBgActivity();
     maybeNotifyBgComplete(task, opts.sessionId);
   });
@@ -847,6 +977,7 @@ export function killAllRunningTasks(opts?: {
     }
     task.status = "killed";
     task.endedAt = Date.now();
+    settleTaskJournal(task);
   }
   if (n > 0) publishBgActivity();
   return n;
@@ -862,6 +993,7 @@ export function _resetTasksForTests(): void {
     }
   }
   tasks.clear();
+  journals.clear();
   publishBgActivity();
 }
 

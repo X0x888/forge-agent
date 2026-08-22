@@ -1,5 +1,5 @@
 /**
- * Journal foreground bash workspace writes so /undo restores disk.
+ * Journal bash workspace writes so /undo restores disk.
  *
  * write_file / search_replace / apply_patch already append mutations.jsonl.
  * Models still escape via `echo >`, `tee`, `python -c`, codegen scripts —
@@ -10,8 +10,12 @@
  * earlier this session). Newly dirty clean files use HEAD. Untracked new
  * files are creates. Ignored/artifact paths stay out (git does not list them).
  *
- * Designed empty: not a repo · clean tree · no recordMutation · background
- * · FORGE_BASH_MUTATION_JOURNAL=0. Journal is best-effort — never fail bash.
+ * Foreground wraps run() in withBashMutationJournal. Background snapshots
+ * at start and applies on exit (or /undo settle for the undone turn).
+ *
+ * Designed empty: not a repo · clean tree · no recordMutation
+ * · FORGE_BASH_MUTATION_JOURNAL=0 · still running (until exit or settle).
+ * Journal is best-effort — never fail bash.
  */
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
@@ -79,6 +83,19 @@ export function parsePorcelainRenameFrom(line: string): string | null {
   if (idx < 0) return null;
   const from = unquotePorcelainPath(body.slice(0, idx));
   return from || null;
+}
+
+/** Resolve + realpath so /var vs /private/var ignore matches hold. */
+export function normAbsVariants(p: string): string[] {
+  const resolved = path.resolve(p).replace(/\\/g, "/");
+  const out = [resolved];
+  try {
+    const real = fs.realpathSync(p).replace(/\\/g, "/");
+    if (real !== resolved) out.push(real);
+  } catch {
+    /* missing / unreadable — resolved only */
+  }
+  return out;
 }
 
 export function listPorcelain(
@@ -331,16 +348,22 @@ function classifyDelta(opts: {
 export function applyBashTreeDelta(
   snap: BashTreeSnapshot,
   ctx: ToolContext,
+  opts?: { ignoreAbsPaths?: Iterable<string> },
 ): number {
   if (!ctx.recordMutation) return 0;
   const afterLines = listPorcelain(snap.root);
   if (!afterLines) return 0;
+
+  const ignore = opts?.ignoreAbsPaths
+    ? new Set([...opts.ignoreAbsPaths].flatMap(normAbsVariants))
+    : null;
 
   let journaled = 0;
   for (const rel of collectPaths(snap.beforeLines, afterLines)) {
     const beforeLine = snap.beforeLines.get(rel);
     const afterLine = afterLines.get(rel);
     const abs = path.resolve(snap.root, rel);
+    if (ignore && normAbsVariants(abs).some((p) => ignore.has(p))) continue;
     const afterFile = snapshotWorkspaceFile(abs);
     const beforeFile = snap.beforeFiles.get(rel);
 

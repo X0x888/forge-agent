@@ -16,7 +16,11 @@ import { numberFieldError } from "./arg-types.js";
 import { editDistance } from "../../util/string-distance.js";
 import { parseDurationMs } from "../../util/duration-ms.js";
 import { createSafetyCheckpoint } from "../../util/git-checkpoint.js";
-import { withBashMutationJournal } from "./bash-mutation-journal.js";
+import {
+  bashMutationJournalEnabled,
+  beginBashTreeSnapshot,
+  withBashMutationJournal,
+} from "./bash-mutation-journal.js";
 import { checkBashProtectedWrites } from "../safety.js";
 import {
   detectPackageManager,
@@ -343,6 +347,30 @@ export async function toolBash(
       ctx.workspace || process.cwd(),
       ctx.session,
     );
+    let journal:
+      | {
+          snap: NonNullable<ReturnType<typeof beginBashTreeSnapshot>>;
+          ctx: typeof ctx;
+          startedTurn?: number;
+        }
+      | undefined;
+    try {
+      if (ctx.recordMutation && bashMutationJournalEnabled()) {
+        const snap = beginBashTreeSnapshot(ctx.workspace);
+        if (snap) {
+          journal = {
+            snap,
+            ctx,
+            startedTurn:
+              typeof ctx.session?.meta.turnCount === "number"
+                ? ctx.session.meta.turnCount
+                : undefined,
+          };
+        }
+      }
+    } catch {
+      journal = undefined;
+    }
   const started = await startBackgroundTask({
       command,
       cwd: ctx.workspace,
@@ -351,6 +379,7 @@ export async function toolBash(
       network: ctx.sandboxNetwork,
       missingBackend,
       timeoutMs: bgTimeoutMs,
+      journal,
     });
     if (!started.ok) {
       return {

@@ -255,9 +255,9 @@ export async function snapshotForWrite(
 }
 
 /**
-   * Absolute paths journaled at or after `isoTs` (ISO-8601; lexicographic).
-   * Background bash apply uses this to skip concurrent write_file / fg bash.
-   */
+ * Absolute paths journaled at or after `isoTs` (ISO-8601; lexicographic).
+ * Background bash apply uses this to skip concurrent write_file / fg bash.
+ */
 export function mutationAbsPathsAfter(
   sessionId: string,
   isoTs: string,
@@ -270,7 +270,13 @@ export function mutationAbsPathsAfter(
       m.ts >= isoTs &&
       typeof m.path === "string"
     ) {
-      out.add(path.resolve(m.path).replace(/\\/g, "/"));
+      const resolved = path.resolve(m.path).replace(/\\/g, "/");
+      out.add(resolved);
+      try {
+        out.add(fs.realpathSync(m.path).replace(/\\/g, "/"));
+      } catch {
+        /* missing */
+      }
     }
   }
   return out;
@@ -406,6 +412,11 @@ export function restoreMutationsAfterTurn(
   sessionId: string,
   keepThroughTurn: number,
 ): RestoreMutationsResult {
+  try {
+    beforeRestoreHook?.(sessionId, keepThroughTurn);
+  } catch {
+    /* settler is best-effort */
+  }
   const all = readFileMutations(sessionId);
   const kept = all.filter(
     (m) => typeof m.turn === "number" && m.turn <= keepThroughTurn,
