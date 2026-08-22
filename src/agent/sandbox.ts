@@ -173,6 +173,119 @@ export function canonicalSandboxPath(p: string): string {
   }
 }
 
+/** Agent-writable slices of ~/.forge — same contract as write_file. */
+export const FORGE_SANDBOX_WRITE_SLICES = ["sessions", "logs", "tmp"] as const;
+
+const TMP_WRITE_FALLBACKS = ["/private/tmp", "/var/tmp", "/private/var/tmp"];
+
+/**
+ * Seatbelt deny-after-allow (later rule wins). Catches python/sed/node
+ * writes extractWritePaths cannot see. Do not add .git/config or HEAD —
+ * git commit / git config must keep working.
+ */
+export const SANDBOX_WRITE_DENY_REGEXES = [
+  "/\\.git/hooks(/|$)",
+  "/\\.ssh(/|$)",
+  "/\\.gnupg(/|$)",
+  "/\\.(bashrc|zshrc|profile|zprofile|bash_profile)$",
+  "/id_rsa$",
+  "/id_ed25519$",
+] as const;
+
+function uniquePaths(paths: string[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const p of paths) {
+    const n = p.replace(/\\/g, "/");
+    if (!n || seen.has(n)) continue;
+    seen.add(n);
+    out.push(p);
+  }
+  return out;
+}
+
+export function forgeSandboxWriteRoots(forge: string): string[] {
+  const root = path.resolve(forge);
+  return FORGE_SANDBOX_WRITE_SLICES.map((s) => path.join(root, s));
+}
+
+export function ensureForgeSandboxWriteRoots(forge: string): string[] {
+  const roots = forgeSandboxWriteRoots(forge);
+  for (const p of roots) {
+    try {
+      fs.mkdirSync(p, { recursive: true });
+    } catch {
+      /* */
+    }
+  }
+  return roots;
+}
+
+/** Writable roots for workspace/strict/read-only (never ~/.forge itself). */
+export function sandboxWriteAllowPaths(opts: {
+  profile: SandboxProfile;
+  cwd: string;
+  forge: string;
+  tmp: string;
+}): string[] {
+  const tmp = canonicalSandboxPath(opts.tmp);
+  const forgeSlices = forgeSandboxWriteRoots(opts.forge).map((p) =>
+    canonicalSandboxPath(p),
+  );
+  const cwd =
+    opts.profile === "read-only"
+      ? []
+      : [canonicalSandboxPath(path.resolve(opts.cwd))];
+  return uniquePaths([...cwd, ...forgeSlices, tmp, ...TMP_WRITE_FALLBACKS]);
+}
+
+export function sandboxProtectedHostPaths(
+  cwd: string,
+  home = os.homedir(),
+): string[] {
+  const ws = path.resolve(cwd);
+  return uniquePaths([
+    path.join(ws, ".git", "hooks"),
+    path.join(home, ".ssh"),
+    path.join(home, ".gnupg"),
+  ]);
+}
+
+/** bwrap: bind only the agent-writable forge slices (auth.json stays on the ro root). */
+export function bwrapForgeWriteBinds(forge: string): string[] {
+  const args: string[] = [];
+  for (const p of ensureForgeSandboxWriteRoots(forge)) {
+    args.push("--bind", p, p);
+  }
+  return args;
+}
+
+/** Overlay existing protected dirs as read-only (later mount wins). */
+export function bwrapProtectedRoBinds(
+  cwd: string,
+  home = os.homedir(),
+): string[] {
+  const args: string[] = [];
+  for (const p of sandboxProtectedHostPaths(cwd, home)) {
+    try {
+      if (!fs.existsSync(p)) continue;
+      const real = fs.realpathSync(p);
+      args.push("--ro-bind", real, real);
+    } catch {
+      /* */
+    }
+  }
+  return args;
+}
+
+function seatbeltWriteAllowClause(paths: string[]): string {
+  return paths.map((p) => `  (subpath ${JSON.stringify(p)})`).join("\n");
+}
+
+function seatbeltWriteDenyClause(): string {
+  return SANDBOX_WRITE_DENY_REGEXES.map((re) => `  (regex #"${re}")`).join("\n");
+}
+
 export function seatbeltProfile(opts: {
   profile: SandboxProfile;
   cwd: string;
@@ -180,21 +293,8 @@ export function seatbeltProfile(opts: {
   tmp: string;
   restrictNetwork: boolean;
 }): string {
-  const cwd = opts.cwd;
-  const forge = opts.forge;
-  const tmp = canonicalSandboxPath(opts.tmp);
-  const privateTmp = "/private/tmp";
-  const varTmp = "/var/tmp";
-  const privateVarTmp = "/private/var/tmp";
-
-  const writePaths =
-    opts.profile === "read-only"
-      ? [forge, tmp, privateTmp, varTmp, privateVarTmp]
-      : [cwd, forge, tmp, privateTmp, varTmp, privateVarTmp];
-
-  const writeAllow = writePaths
-    .map((p) => `  (subpath ${JSON.stringify(p)})`)
-    .join("\n");
+  const writeAllow = seatbeltWriteAllowClause(sandboxWriteAllowPaths(opts));
+  const writeDeny = seatbeltWriteDenyClause();
 
   const networkClause = opts.restrictNetwork
     ? `(deny network*)\n(deny network-outbound)\n(deny network-inbound)`
@@ -221,6 +321,12 @@ ${writeAllow}
   (literal "/dev/null")
   (regex #"^/dev/fd/")
   (regex #"^/dev/ttys")
+)
+(deny file-write-data
+${writeDeny}
+)
+(deny file-write*
+${writeDeny}
 )
 (allow file-ioctl (literal "/dev/null") (literal "/dev/tty") (regex #"^/dev/ttys") (regex #"^/dev/fd/"))
 (allow process-exec*)
