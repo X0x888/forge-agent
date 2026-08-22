@@ -1,6 +1,9 @@
 import chalk from "chalk";
 import { visibleWidth } from "../util/format.js";
 
+/** REPL `/doctor` is slash keys; `forge doctor` keeps CLI verbs. */
+export type DoctorSurface = "repl" | "cli";
+
 /** Verdict line — "Forge doctor" stays for existing scrapers. */
 export function formatDoctorHeader(
   issues: string[],
