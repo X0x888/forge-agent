@@ -70,7 +70,7 @@ export interface SubagentRequest {
   /**
    * Isolation mode:
    * - none: same workspace as parent (explore/plan default; explicit override)
-   * - worktree: detached git worktree under ~/.forge/worktrees/ (requires git repo); auto-lands into parent on success
+   * - worktree: detached git worktree under ~/.forge/worktrees/ (requires git repo); auto-lands into parent only when status=completed
    */
   isolation?: SubagentIsolation;
 }
@@ -669,9 +669,10 @@ export async function runSubagent(
     }
   }
 
-  // Worktree land: capture diff and apply into the parent workspace by default
-  // so isolation=worktree is not a dead-end. Keep on conflict / KEEP_WORKTREE /
-  // aborted runs (skip apply but preserve the worktree for recovery).
+  // Worktree land: apply into the parent only on a completed handoff so
+  // isolation=worktree is not a dead-end. Incomplete / aborted / error /
+  // stop-hook skip apply and keep the worktree (recovery). Conflict and
+  // KEEP_WORKTREE also keep.
   const forceKeepWorktree =
     process.env.FORGE_SUBAGENT_KEEP_WORKTREE === "1" ||
     process.env.FORGE_SUBAGENT_KEEP_WORKTREE === "true" ||
@@ -680,9 +681,7 @@ export async function runSubagent(
   let worktreeLand: WorktreeLandResult | undefined;
   let worktreeKept = false;
   if (worktree) {
-    const skipApply = Boolean(
-      runError || result?.aborted || (result?.hitMaxTurns && child.meta.editCount === 0),
-    );
+    const skipApply = shouldSkipWorktreeLand(status);
     worktreeLand = await landSubagentWorktree({
       worktree,
       parentWorkspace: ctx.workspace,

@@ -224,6 +224,7 @@ export {
   listActiveSubagents,
   synthesizeSubagentFindings,
   resolveSubagentHandoffStatus,
+  shouldSkipWorktreeLand,
   writeSubagentArtifact,
   formatSubagentResult,
 } from "./agent/subagent.js";

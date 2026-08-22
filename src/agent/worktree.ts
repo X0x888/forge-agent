@@ -2,9 +2,11 @@
  * Git worktree helpers for subagent isolation.
  *
  * Creates a detached linked worktree under ~/.forge/worktrees/ so nested
- * agents can edit without touching the parent checkout. On success, Forge
- * captures the worktree diff and lands it into the parent workspace
- * (default) so isolation is not a dead-end. Best-effort cleanup with
+ * agents can edit without touching the parent checkout. On a completed
+ * handoff, Forge captures the worktree diff and lands it into the parent
+ * workspace (default) so isolation is not a dead-end. Incomplete /
+ * aborted / error / stop-hook skip apply and keep the worktree. Best-effort
+ * cleanup with
  * `git worktree remove --force` (and directory rm fallback). Keep the
  * worktree on land conflict or when FORGE_SUBAGENT_KEEP_WORKTREE=1.
  */
@@ -653,7 +655,7 @@ export async function landSubagentWorktree(opts: {
   mode?: "auto" | "keep" | "discard";
   /** Force keep (env KEEP_WORKTREE / aborted runs). */
   forceKeep?: boolean;
-  /** Skip apply (e.g. aborted subagent) but still report diff. */
+  /** Skip apply (incomplete / aborted / failed subagent) but still report diff. */
   skipApply?: boolean;
   /** Parent session id — journals pre-images so /undo can revert the land. */
   sessionId?: string;
@@ -740,7 +742,7 @@ export async function landSubagentWorktree(opts: {
       kept: true,
       patchBytes,
       detail: opts.skipApply
-        ? "apply skipped (aborted/failed run) — worktree kept"
+        ? "apply skipped (incomplete/aborted/failed run) — worktree kept"
         : "land=keep — review and merge manually",
     };
   }

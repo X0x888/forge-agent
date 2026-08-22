@@ -324,6 +324,7 @@ describe("worktree capture + land", { skip: !REPO }, () => {
 
     assert.equal(result.status, "skipped");
     assert.equal(result.kept, true);
+    assert.match(result.detail || "", /incomplete\/aborted\/failed/);
     assert.ok(fs.existsSync(wt.path));
     assert.equal(fs.existsSync(path.join(REPO!, rel)), false);
     await wt.cleanup();

@@ -7,6 +7,7 @@ import type { ChatMessage } from "../src/providers/types.js";
 import {
   synthesizeSubagentFindings,
   resolveSubagentHandoffStatus,
+  shouldSkipWorktreeLand,
   writeSubagentArtifact,
   formatSubagentResult,
 } from "../src/agent/subagent.js";
@@ -28,6 +29,18 @@ describe("subagent handoff", () => {
       resolveSubagentHandoffStatus({ aborted: true }),
       "aborted",
     );
+    assert.equal(
+      resolveSubagentHandoffStatus({ stopHookBlocked: true }),
+      "stop_hook_blocked",
+    );
+  });
+
+  it("skips worktree land unless the child completed", () => {
+    assert.equal(shouldSkipWorktreeLand("completed"), false);
+    assert.equal(shouldSkipWorktreeLand("incomplete_max_turns"), true);
+    assert.equal(shouldSkipWorktreeLand("aborted"), true);
+    assert.equal(shouldSkipWorktreeLand("error"), true);
+    assert.equal(shouldSkipWorktreeLand("stop_hook_blocked"), true);
   });
 
   it("synthesizes findings from a tool-only last turn", () => {

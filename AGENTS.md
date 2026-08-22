@@ -19,7 +19,7 @@ Binary entry: `src/cli.ts` → `dist/cli.js` (`bin: forge`).
 ## Layout
 
 - `src/harness/` — hooks, goal, stop-guard, handoff-guard, proof-claim-guard, project-memory (do not weaken blocking Stop defaults; leftover this-cycle notes auto-archive, `/memory project prune`)
-- `src/agent/` — loop, tools, permissions, subagents (`spawn_subagent`; general-purpose defaults to `isolation=worktree` and auto-lands into parent)
+- `src/agent/` — loop, tools, permissions, subagents (`spawn_subagent`; general-purpose defaults to `isolation=worktree` and auto-lands into parent only when status=completed; incomplete keeps the worktree)
 - `src/mcp/` — Model Context Protocol (search_mcp / call_mcp); built-in defaults **context7** + **playwright** (`src/mcp/defaults.ts`)
 - `src/lsp/` — Language Server Protocol; ensure pack TS+Python (+ Rust/Go when detected); `forge lsp ensure`
 - `src/providers/` — LLM clients; `errors.ts` expert recovery tips (`formatProviderError`)

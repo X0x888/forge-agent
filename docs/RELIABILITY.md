@@ -225,14 +225,14 @@ npm run ci            # check + smoke (GitHub Actions entrypoint)
 
 ## Subagent worktree land (v0.9+)
 
-`spawn_subagent` general-purpose defaults to `isolation=worktree` when the workspace is a git repo (explore/plan stay in-place; pass `isolation=none` or `FORGE_SUBAGENT_ISOLATION=none` to write the parent). Successful auto-land journals parent pre-images so `/undo` can revert the landed files.
+`spawn_subagent` general-purpose defaults to `isolation=worktree` when the workspace is a git repo (explore/plan stay in-place; pass `isolation=none` or `FORGE_SUBAGENT_ISOLATION=none` to write the parent). Completed-only auto-land journals parent pre-images so `/undo` can revert the landed files. `incomplete_max_turns` / abort / error / stop-hook skip land and keep the worktree.
 Forge captures the worktree diff (tracked + untracked) and `git apply`s it into the parent
 workspace. On conflict the worktree is **kept** with a recovery summary in the tool result.
 
 - `FORGE_SUBAGENT_LAND=auto|keep|discard` (default `auto`; alias `FORGE_WORKTREE_LAND`)
 - `FORGE_SUBAGENT_KEEP_WORKTREE=1` forces keep (no apply)
 - `FORGE_SUBAGENT_ISOLATION=none|worktree` overrides the implicit general-purpose default
-- Aborted/failed subagents skip apply and keep the worktree so work is not lost
+- Incomplete / aborted / failed / stop-hook subagents skip apply and keep the worktree so work is not lost
 
 ## Mid-loop auto-verify nudge
 

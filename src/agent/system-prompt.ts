@@ -305,7 +305,7 @@ export function buildBaselineSystemPrompt(opts: {
         ]
       : []),
     `- **Background bash**: set background=true for long jobs. Wait with get_task_output wait=… — never poll-loop. Parallel jobs: get_task_output({ task_ids, wait_mode: "any"|"all" }) (omit ids to wait on every running task).`,
-    `- **Subagents**: spawn_subagent for bounded work (explore=read-only, plan=design, general-purpose=full). General-purpose defaults to isolation=worktree (auto-lands; /undo reverts). Prefer a direct tool when one call suffices.`,
+    `- **Subagents**: spawn_subagent for bounded work (explore=read-only, plan=design, general-purpose=full). General-purpose defaults to isolation=worktree (auto-lands only when completed; incomplete_max_turns keeps the worktree; /undo reverts a land). Prefer a direct tool when one call suffices.`,
     `- **LSP**: lsp({ action: "diagnostics", path }) after TS/Python/Rust/Go edits when the server is on PATH.`,
     `- Oversize tool results may be truncated under ~/.forge/tool-output/.`,
     `- Track multi-step work with todo_write. Persist durable conventions/gotchas with memory_write scope=project; this-cycle readings stay scope=session (project leftovers auto-archive; users review with /memory project).`,
