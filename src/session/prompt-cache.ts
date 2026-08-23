@@ -12,8 +12,14 @@ import { appendSessionMetrics } from "./metrics.js";
 /** xAI Chat Completions header — pins the conversation to one cache shard. */
 export const X_GROK_CONV_ID = "x-grok-conv-id";
 
-/** Compact / prune before the 200k long-context 2× price cliff. */
+/** Compact / prune before the 200k long-context 2× price cliff (xAI 500k). */
 export const REQUEST_PRUNE_AT_DEFAULT = 180_000;
+/**
+ * Smaller hosts (Cursor Grok 256k, Claude 200k) clip earlier so prune
+ * fires before the live window is full. Never *raises* the 180k xAI cliff.
+ */
+export const REQUEST_PRUNE_WINDOW_FRACTION = 0.55;
+export const REQUEST_PRUNE_AT_FLOOR = 32_000;
 
 export function grokConvIdHeaders(
   conversationId: string | undefined,
@@ -65,15 +71,30 @@ export type PruneOutboundDecision =
 /**
  * When to slim the outbound transcript.
  *
- * Default: append-only until the estimate hits REQUEST_PRUNE_AT (180k),
- * so xAI can cache the prefix. `FORGE_REQUEST_PRUNE=1` restores every-round
- * prune (legacy; kills prefix cache). `=0` never prunes.
+ * Default: append-only until the estimate hits the route cliff
+ * (`min(180k, 55% of context_window)`), so xAI 500k still caches the
+ * prefix while Cursor Grok 256k clips before the host fills.
+ * `FORGE_REQUEST_PRUNE=1` restores every-round prune (legacy; kills
+ * prefix cache). `=0` never prunes. `FORGE_REQUEST_PRUNE_AT` pins a
+ * token cliff and skips the window fraction.
  */
-export function requestPruneAtTokens(): number {
-  return envPositiveInt("FORGE_REQUEST_PRUNE_AT", REQUEST_PRUNE_AT_DEFAULT);
+export function requestPruneAtTokens(contextWindow?: number): number {
+  const raw = process.env.FORGE_REQUEST_PRUNE_AT?.trim();
+  if (raw) return envPositiveInt("FORGE_REQUEST_PRUNE_AT", REQUEST_PRUNE_AT_DEFAULT);
+  if (contextWindow && contextWindow > 0) {
+    const frac = Math.floor(contextWindow * REQUEST_PRUNE_WINDOW_FRACTION);
+    return Math.min(
+      REQUEST_PRUNE_AT_DEFAULT,
+      Math.max(REQUEST_PRUNE_AT_FLOOR, frac),
+    );
+  }
+  return REQUEST_PRUNE_AT_DEFAULT;
 }
 
-export function shouldPruneOutbound(estimatedTokens: number): PruneOutboundDecision {
+export function shouldPruneOutbound(
+  estimatedTokens: number,
+  contextWindow?: number,
+): PruneOutboundDecision {
   const raw = process.env.FORGE_REQUEST_PRUNE;
   if (raw !== undefined && raw !== "" && isFalsy(raw)) {
     return { prune: false, reason: "off" };
@@ -81,7 +102,7 @@ export function shouldPruneOutbound(estimatedTokens: number): PruneOutboundDecis
   if (raw !== undefined && raw !== "" && isTruthy(raw)) {
     return { prune: true, reason: "always" };
   }
-  const at = requestPruneAtTokens();
+  const at = requestPruneAtTokens(contextWindow);
   if (Number.isFinite(estimatedTokens) && estimatedTokens >= at) {
     return { prune: true, reason: "threshold" };
   }

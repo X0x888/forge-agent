@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { buildChatRequest } from "../src/agent/loop.js";
+import { buildChatRequest, lastTurnIsToolContinuation } from "../src/agent/loop.js";
 import { DEFAULT_CONFIG } from "../src/config/types.js";
 import { loadConfig } from "../src/config/load.js";
 import {
@@ -216,6 +216,48 @@ describe("Fable in the Forge model class", () => {
     );
     assert.equal(req.reasoning_effort, "xhigh");
     assert.equal(req.workspace, "/Users/s./code/hobby/forge-agent");
+  });
+
+  it("buildChatRequest can mark a Cursor rebase; tool rounds are continuations", () => {
+    const req = buildChatRequest(
+      {
+        ...DEFAULT_CONFIG,
+        provider: "cursor",
+        model: "cursor-grok-4.6-xhigh-fast",
+        contextWindow: 256_000,
+      },
+      [{ role: "user", content: "hi" }],
+      undefined,
+      undefined,
+      { rebaseConversation: true },
+    );
+    assert.equal(req.rebaseConversation, true);
+    assert.equal(
+      lastTurnIsToolContinuation([
+        { role: "user", content: "go" },
+        {
+          role: "assistant",
+          content: "",
+          tool_calls: [
+            {
+              id: "c1",
+              type: "function",
+              function: { name: "bash", arguments: "{}" },
+            },
+          ],
+        },
+        { role: "tool", tool_call_id: "c1", content: "ok" },
+      ]),
+      true,
+    );
+    assert.equal(
+      lastTurnIsToolContinuation([
+        { role: "user", content: "go" },
+        { role: "assistant", content: "done" },
+        { role: "user", content: "next" },
+      ]),
+      false,
+    );
   });
 });
 

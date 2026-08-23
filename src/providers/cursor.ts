@@ -136,13 +136,34 @@ export const CURSOR_CONTINUE_PROMPT =
  *
  * A completed text turn also stays open (`close: false` at turn_ended) so
  * the next user / ULW poke is a conversation_action, not a history rebase.
- * Only force-close (stream end, error, reasoning wall) tears it down.
+ * Force-close when the host reports prompt_tokens past a fraction of the
+ * route window — compact/prune only rewrite Forge's transcript; the live
+ * Run still holds every thinking trace and the 256k model goes dull.
+ * Stream end / error / reasoning wall still tear it down.
  */
+/** Close a completed turn once the host is this full (Cursor Grok 256k). */
+export const CURSOR_HOST_REBASE_FRACTION = 0.62;
+/** Keep only the newest N assistant traces on a history rebase. */
+export const CURSOR_REBASE_KEEP_REASONING = 1;
+
+export function cursorHostNeedsRebase(
+  promptTokens?: number,
+  contextWindow?: number,
+): boolean {
+  const win = contextWindow ?? 0;
+  const prompt = promptTokens ?? 0;
+  return win > 0 && prompt > win * CURSOR_HOST_REBASE_FRACTION;
+}
+
 export function shouldCloseCursorLive(opts: {
   close: boolean;
   pendingCount: number;
+  promptTokens?: number;
+  contextWindow?: number;
 }): boolean {
-  return opts.close && opts.pendingCount === 0;
+  if (opts.pendingCount > 0) return false;
+  if (opts.close) return true;
+  return cursorHostNeedsRebase(opts.promptTokens, opts.contextWindow);
 }
 
 /**
@@ -151,19 +172,46 @@ export function shouldCloseCursorLive(opts: {
  * - the stream is healthy and Forge has a new user action (ULW continue,
  *   next prompt). Opening a new Run and stuffing chat into
  *   root_prompt_messages_json is Connect `internal`.
+ *
+ * `rebase` skips resume for a user action so the next Run gets the pruned
+ * history. Trailing/pending tools always resume (results belong on this Run).
  */
 export function cursorShouldResumeLive(opts: {
   pendingCount: number;
   streamDead: boolean;
   trailingCount: number;
   hasUserAction?: boolean;
+  rebase?: boolean;
 }): boolean {
   if (opts.streamDead) return false;
-  return (
-    opts.pendingCount > 0 ||
-    opts.trailingCount > 0 ||
-    Boolean(opts.hasUserAction)
-  );
+  if (opts.pendingCount > 0 || opts.trailingCount > 0) return true;
+  if (opts.rebase) return false;
+  return Boolean(opts.hasUserAction);
+}
+
+/** Drop stale thinking traces from a rebase history (they refill 256k). */
+export function trimCursorHistoryReasoning(
+  history: CursorHistoryMessage[],
+  keepLatest = CURSOR_REBASE_KEEP_REASONING,
+): CursorHistoryMessage[] {
+  const keep = Math.max(0, keepLatest);
+  let left = keep;
+  const out: CursorHistoryMessage[] = [];
+  for (let i = history.length - 1; i >= 0; i--) {
+    const m = history[i]!;
+    if (m.role !== "assistant" || !m.reasoning?.trim()) {
+      out.push(m);
+      continue;
+    }
+    if (left > 0) {
+      left -= 1;
+      out.push(m);
+    } else {
+      out.push({ ...m, reasoning: undefined });
+    }
+  }
+  out.reverse();
+  return out;
 }
 
 export function collectCursorToolResults(
@@ -346,7 +394,7 @@ export function prepareCursorConversation(
   }
 
   const userText = takePendingUser();
-  const historyForRebase: CursorHistoryMessage[] = [
+  const historyForRebase: CursorHistoryMessage[] = trimCursorHistoryReasoning([
     ...history,
     ...trailing.map((t) => ({
       role: "tool" as const,
@@ -354,7 +402,7 @@ export function prepareCursorConversation(
       toolName: toolNameForCall(toolNames, t.toolCallId),
       text: t.content,
     })),
-  ];
+  ]);
 
   return {
     systemPrompt,
@@ -492,6 +540,14 @@ function writeExecAndClose(
       }),
     ),
   );
+}
+
+/** Drop the held-open Run so the next chat() rebases with slim history. */
+export function closeCursorLiveForChat(req: {
+  model: string;
+  messages: ChatRequest["messages"];
+}): void {
+  closeLive(sessionKeyForRequest(req as ChatRequest));
 }
 
 function closeLive(key: string, session?: LiveSession): void {
@@ -724,6 +780,7 @@ export class CursorProvider implements LLMProvider {
         streamDead,
         trailingCount: parsed.trailingToolResults.length,
         hasUserAction: Boolean(parsed.userText.trim()),
+        rebase: Boolean(req.rebaseConversation),
       })
     ) {
       const results = parsed.trailingToolResults.length
@@ -1340,6 +1397,8 @@ export class CursorProvider implements LLMProvider {
       shouldCloseCursorLive({
         close: opts.close,
         pendingCount: live.pending.length,
+        promptTokens: turn?.usage?.prompt_tokens,
+        contextWindow: turn?.req.context_window,
       });
     if (!turn || turn.settled) {
       if (closeNow) closeLive(key, live);

@@ -2,7 +2,8 @@
  * Request-time working-set prune (Grok PruningConfig analogue).
  *
  * Stored session.json is never rewritten. The outbound ChatRequest is slimmed
- * only when `shouldPruneOutbound` says so (default: ≥180k). Calling this
+ * only when `shouldPruneOutbound` says so (default: ≥min(180k, 55% of
+ * the route window)). Calling this
  * every round rewrites the prefix and kills the xAI cache.
  *
  * Forge ULW is one user message and hundreds of assistant+tool steps, so
@@ -747,19 +748,21 @@ export function prepareOutboundMessages(
     sticky?: RequestPruneSticky | null;
     /** Last provider prompt_tokens — clip/reclip follow the API, not stub inflation. */
     lastApiPromptTokens?: number;
+    /** Route context window — pulls the clip cliff forward on 256k hosts. */
+    contextWindow?: number;
   } = {},
 ): PrepareOutboundResult {
   const estimated =
     opts.estimatedTokens ??
     estimateWireTokens(messages, opts.toolsJsonChars ?? 0);
-  const at = requestPruneAtTokens();
+  const at = requestPruneAtTokens(opts.contextWindow);
   const lastApi =
     typeof opts.lastApiPromptTokens === "number" &&
     Number.isFinite(opts.lastApiPromptTokens) &&
     opts.lastApiPromptTokens > 0
       ? opts.lastApiPromptTokens
       : undefined;
-  const decision = shouldPruneOutbound(estimated);
+  const decision = shouldPruneOutbound(estimated, opts.contextWindow);
   const pruneDecision =
     decision.reason === "under_threshold" && lastApi != null && lastApi >= at
       ? ({ prune: true, reason: "threshold" } as const)
@@ -800,9 +803,9 @@ export function prepareOutboundMessages(
     const lastUnderCliff =
       typeof lastWire === "number" &&
       Number.isFinite(lastWire) &&
-      !shouldPruneOutbound(lastWire).prune;
+      !shouldPruneOutbound(lastWire, opts.contextWindow).prune;
     const apiOverCliff = lastApi != null && lastApi >= at;
-    const estOverCliff = shouldPruneOutbound(wireEst).prune;
+    const estOverCliff = shouldPruneOutbound(wireEst, opts.contextWindow).prune;
     // Prefer last API prompt so stub inflation cannot reclip at 80k API.
     if (lastUnderCliff && (lastApi != null ? apiOverCliff : estOverCliff)) {
       const rec = pruneMessagesForRequest(messages, {

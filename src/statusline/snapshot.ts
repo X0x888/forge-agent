@@ -10,6 +10,7 @@ import {
   type SessionData,
 } from "../session/session.js";
 import { prepareOutboundMessages } from "../session/request-prune.js";
+import { modelContextWindow } from "../config/model-info.js";
 import { sessionCacheRatio } from "../session/prompt-cache.js";
 import { TOOL_DEFINITIONS } from "../agent/tools/definitions.js";
 import { loadGoal } from "../harness/goal.js";
@@ -150,13 +151,14 @@ const TOOLS_JSON_CHARS = JSON.stringify(TOOL_DEFINITIONS).length;
 
 /**
  * Same decision as the wire: tool-schema-inclusive estimate, append-only
- * under the 180k cliff, then the sticky omit set. HUD counts
+ * under the route clip cliff, then the sticky omit set. HUD counts
  * `reasoning_content`; the prune threshold does not.
  */
 export function outboundTokenEstimate(
   messages: SessionData["messages"],
   sticky?: SessionData["meta"]["requestPruneSticky"],
   lastApiPromptTokens?: number,
+  contextWindow?: number,
 ): number {
   try {
     const extras = { toolsJsonChars: TOOLS_JSON_CHARS };
@@ -166,6 +168,7 @@ export function outboundTokenEstimate(
       toolsJsonChars: TOOLS_JSON_CHARS,
       sticky,
       lastApiPromptTokens,
+      contextWindow,
       spool: false,
     });
     return estimateRequestTokens(prep.messages, {
@@ -183,6 +186,7 @@ export function outboundTokenEstimateForSession(session: SessionData): number {
     session.messages,
     session.meta.requestPruneSticky,
     session.meta.lastRoundPromptTokens,
+    modelContextWindow(session.meta.model, session.meta.provider),
   );
 }
 

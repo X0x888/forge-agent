@@ -28,8 +28,10 @@ import {
   collectCursorToolResults,
   CURSOR_CONTINUE_PROMPT,
   cursorShouldResumeLive,
+  cursorHostNeedsRebase,
   prepareCursorConversation,
   shouldCloseCursorLive,
+  trimCursorHistoryReasoning,
 } from "../src/providers/cursor.js";
 import {
   encodeProtobufValue,
@@ -624,6 +626,91 @@ describe("cursor conversation replay", () => {
     assert.equal(shouldCloseCursorLive({ close: true, pendingCount: 1 }), false);
     assert.equal(shouldCloseCursorLive({ close: true, pendingCount: 0 }), true);
     assert.equal(shouldCloseCursorLive({ close: false, pendingCount: 0 }), false);
+  });
+
+  it("closes a completed turn when the host is past 62% of the window", () => {
+    assert.equal(cursorHostNeedsRebase(160_000, 256_000), true);
+    assert.equal(cursorHostNeedsRebase(100_000, 256_000), false);
+    assert.equal(cursorHostNeedsRebase(160_000, 500_000), false);
+    assert.equal(
+      shouldCloseCursorLive({
+        close: false,
+        pendingCount: 0,
+        promptTokens: 160_000,
+        contextWindow: 256_000,
+      }),
+      true,
+    );
+    assert.equal(
+      shouldCloseCursorLive({
+        close: false,
+        pendingCount: 1,
+        promptTokens: 200_000,
+        contextWindow: 256_000,
+      }),
+      false,
+    );
+  });
+
+  it("does not resume a user action when rebase is requested; tools still resume", () => {
+    assert.equal(
+      cursorShouldResumeLive({
+        pendingCount: 0,
+        streamDead: false,
+        trailingCount: 0,
+        hasUserAction: true,
+        rebase: true,
+      }),
+      false,
+    );
+    assert.equal(
+      cursorShouldResumeLive({
+        pendingCount: 1,
+        streamDead: false,
+        trailingCount: 0,
+        hasUserAction: true,
+        rebase: true,
+      }),
+      true,
+    );
+    assert.equal(
+      cursorShouldResumeLive({
+        pendingCount: 0,
+        streamDead: false,
+        trailingCount: 2,
+        hasUserAction: false,
+        rebase: true,
+      }),
+      true,
+    );
+  });
+
+  it("drops stale assistant reasoning on rebase history and keeps the latest", () => {
+    const trimmed = trimCursorHistoryReasoning([
+      { role: "user", text: "one" },
+      { role: "assistant", text: "a1", reasoning: "old think" },
+      { role: "user", text: "two" },
+      { role: "assistant", text: "a2", reasoning: "new think" },
+    ]);
+    assert.equal(
+      trimmed.find((m) => m.role === "assistant" && m.text === "a1")?.reasoning,
+      undefined,
+    );
+    assert.equal(
+      trimmed.find((m) => m.role === "assistant" && m.text === "a2")?.reasoning,
+      "new think",
+    );
+    const conv = prepareCursorConversation([
+      { role: "user", content: "one" },
+      { role: "assistant", content: "a1", reasoning_content: "old think" },
+      { role: "user", content: "two" },
+      { role: "assistant", content: "a2", reasoning_content: "new think" },
+      { role: "user", content: "three" },
+    ]);
+    const thoughts = conv.history
+      .filter((m) => m.role === "assistant")
+      .map((m) => m.reasoning);
+    assert.deepEqual(thoughts, [undefined, "new think"]);
   });
 
   it("resumes the live Run when a harness user follows unanswered tools", () => {

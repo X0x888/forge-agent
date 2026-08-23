@@ -9,6 +9,11 @@ import {
   resolveEffectiveMaxTokens,
   servedModelDiverged,
 } from "../config/model-info.js";
+import { isCursorProvider } from "../auth/cursor.js";
+import {
+  closeCursorLiveForChat,
+  cursorHostNeedsRebase,
+} from "../providers/cursor.js";
 import {
   applyFallbackHop,
   isModelFallbackWorthy,
@@ -545,6 +550,11 @@ export interface BuildChatRequestOpts {
   toolChoice?: "auto" | "required";
   /** Frozen omit set from a prior clip (session.meta.requestPruneSticky). */
   sticky?: RequestPruneSticky | null;
+  /**
+   * Cursor: next chat() should open a new AgentService Run with the slim
+   * history instead of conversation_action on the fat live stream.
+   */
+  rebaseConversation?: boolean;
   /** Suffix mill-tool ids to omit without inventing a first clip. */
   holdOmitIds?: string[] | null;
   onPrune?: (info: {
@@ -552,6 +562,17 @@ export interface BuildChatRequestOpts {
     sticky?: RequestPruneSticky;
     changed: boolean;
   }) => void;
+}
+
+/** Tool-result round — Cursor must resume the live Run, not rebase. */
+export function lastTurnIsToolContinuation(messages: ChatMessage[]): boolean {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i]!;
+    if (m.role === "user" || m.role === "system") return false;
+    if (m.role === "tool") return true;
+    if (m.role === "assistant") return Boolean(m.tool_calls?.length);
+  }
+  return false;
 }
 
 /** Build provider chat request including reasoning_effort when supported. */
@@ -575,6 +596,7 @@ export function buildChatRequest(
     toolsJsonChars,
     sticky: opts?.sticky,
     lastApiPromptTokens: opts?.lastApiPromptTokens,
+    contextWindow: config.contextWindow,
     spool: true,
   });
   opts?.onPrune?.({
@@ -621,6 +643,7 @@ export function buildChatRequest(
     ...(opts?.toolChoice === "required" && tools.length
       ? { tool_choice: "required" as const }
       : {}),
+    ...(opts?.rebaseConversation ? { rebaseConversation: true } : {}),
   };
 }
 
@@ -986,17 +1009,41 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
   let forceToolNext = false;
   /** Consecutive thought-only Stops this turn (reasoning_wall / loop / thought+stop). */
   let thoughtOnlyStops = 0;
+  /**
+   * Cursor live Run still holds the pre-compact transcript. Next *user*
+   * action must open a new Run; tool continuations still resume.
+   */
+  let cursorRebaseDue = false;
   const makeChatRequest = (effortOverride?: ReasoningEffort) => {
     const tools = toolsForMode();
     const estimated = estimateRequestTokens(session.messages, {
       toolsJsonChars: JSON.stringify(tools).length,
     });
+    const cursorRebase =
+      isCursorProvider(config.provider) &&
+      (cursorRebaseDue ||
+        cursorHostNeedsRebase(
+          session.meta.lastRoundPromptTokens,
+          config.contextWindow,
+        ));
+    if (cursorRebase && !lastTurnIsToolContinuation(session.messages)) {
+      cursorRebaseDue = false;
+      const api = session.meta.lastRoundPromptTokens ?? 0;
+      if (api > 0) {
+        log.dim(
+          `Cursor Run rebase — ${formatTokens(api)} / ${formatTokens(config.contextWindow)} onto a new stream`,
+        );
+      } else {
+        log.dim("Cursor Run rebase — slim history onto a new stream");
+      }
+    }
     return buildChatRequest(config, session.messages, effortOverride, tools, {
       conversationId: session.meta.id,
       estimatedTokens: estimated,
       lastApiPromptTokens: session.meta.lastRoundPromptTokens,
       sticky: session.meta.requestPruneSticky,
       holdOmitIds: session.meta.holdOmitToolIds,
+      rebaseConversation: cursorRebase,
       toolChoice: forceToolNext && tools.length ? "required" : undefined,
       onPrune: (info) => {
         lastPruneKind = info.kind;
@@ -1024,6 +1071,7 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
       toolsJsonChars: extras.toolsJsonChars,
       sticky: session.meta.requestPruneSticky,
       lastApiPromptTokens: session.meta.lastRoundPromptTokens,
+      contextWindow: config.contextWindow,
       spool: false,
     });
     return estimateRequestTokens(prep.messages, {
@@ -1076,6 +1124,15 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
       log.dim(
         `Compacted conversation history (${reason}; ~${beforeTok}→${afterTok} tok)`,
       );
+      if (isCursorProvider(config.provider)) {
+        cursorRebaseDue = true;
+        if (!lastTurnIsToolContinuation(session.messages)) {
+          closeCursorLiveForChat({
+            model: config.model,
+            messages: session.messages,
+          });
+        }
+      }
     } else {
       log.dim(
         `Compact skipped/no-op (${reason}; history already near keep window)`,

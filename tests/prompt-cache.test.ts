@@ -11,6 +11,7 @@ import {
   grokConvIdHeaders,
   sessionCacheRatio,
   shouldPruneOutbound,
+  requestPruneAtTokens,
 } from "../src/session/prompt-cache.js";
 
 describe("prompt-cache helpers", () => {
@@ -86,6 +87,17 @@ describe("shouldPruneOutbound", () => {
   it("FORGE_REQUEST_PRUNE=0 never prunes", () => {
     process.env.FORGE_REQUEST_PRUNE = "0";
     assert.equal(shouldPruneOutbound(500_000).prune, false);
+  });
+
+  it("route window pulls the cliff forward on 256k, not on 500k", () => {
+    delete process.env.FORGE_REQUEST_PRUNE;
+    delete process.env.FORGE_REQUEST_PRUNE_AT;
+    assert.equal(requestPruneAtTokens(), REQUEST_PRUNE_AT_DEFAULT);
+    assert.equal(requestPruneAtTokens(500_000), REQUEST_PRUNE_AT_DEFAULT);
+    assert.equal(requestPruneAtTokens(256_000), 140_800);
+    assert.equal(shouldPruneOutbound(140_800, 256_000).prune, true);
+    assert.equal(shouldPruneOutbound(140_800).prune, false);
+    assert.equal(shouldPruneOutbound(140_800, 500_000).prune, false);
   });
 });
 

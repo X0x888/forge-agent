@@ -1016,6 +1016,7 @@ export type {
 export {
   X_GROK_CONV_ID,
   REQUEST_PRUNE_AT_DEFAULT,
+  requestPruneAtTokens,
   grokConvIdHeaders,
   cacheHitRatio,
   formatCacheRatio,

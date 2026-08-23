@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+### Fixed
+- **Cursor long sessions no longer keep a fat live Run**: compact/prune only rewrote Forge's transcript while AgentService kept every thinking trace on the held-open HTTP/2 stream (256k Cursor Grok went dull; xAI resends the slim array every turn). A completed turn now closes that stream when host `prompt_tokens` pass 62% of the route window; compact sets `rebaseConversation` so the next user/ULW action opens a new Run with pruned `conversation_history` (tool continuations still resume). Rebase history keeps only the latest assistant reasoning. Request prune cliff is `min(180k, 55% of context_window)` — xAI 500k stays 180k; Cursor 256k clips ~141k. Job: long Cursor ULW, the host sees the slim working set, not wave-1 traces.
+
 ### Added
 - **LAST reflect after `/cycle 0` / `/done`**: wrap still happens first. Then the harness automatically scores **this run's** git product (read-only `Must-fix:` vs `Live-with:` — no extra slash). `Must-fix: none` skips close-out. Listed must-fix holes get **one** mutation wave, then **Cycle complete.** Leftover chrome stays leftover. Score phase denies writes/spawn even under yolo (`ulw_last_score`); auto-commit is skipped so MEMORY snapshots are not ships. Fail-open after two missing scorecards. `FORGE_ULW_LAST_REFLECT=0` off. Job: type `/cycle 0`, sit down after score + optional one hole-close.
 

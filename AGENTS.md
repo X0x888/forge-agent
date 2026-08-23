@@ -44,7 +44,7 @@ Binary entry: `src/cli.ts` → `dist/cli.js` (`bin: forge`).
 - `src/session/checkpoint.ts` + `compaction.ts` — store checkpoint (job card + in-flight tail) when session.json is huge; not outbound-80k FullReplace
 - `src/session/prompt-cache.ts` — xAI `x-grok-conv-id`, reasoning replay, cache ratio, prune-at-180k decision
 - `src/session/explore-map.ts` — structured explore child maps; parent `read_file` dereference + cited-line window
-- `src/session/request-prune.ts` — outbound working-set prune (default **off** until 180k so the prefix can cache; first clip freezes a sticky omit set on `session.meta.requestPruneSticky`; later rounds apply that set instead of re-aging; `FORGE_REQUEST_PRUNE=1` legacy every-round)
+- `src/session/request-prune.ts` — outbound working-set prune (default **off** until `min(180k, 55% of the route window)` so the prefix can cache on xAI 500k while Cursor Grok 256k clips before the host fills; first clip freezes a sticky omit set on `session.meta.requestPruneSticky`; later rounds apply that set instead of re-aging; `FORGE_REQUEST_PRUNE=1` legacy every-round)
 - `src/session/tool-clearing.ts` — optional in-session stubbing (`FORGE_TOOL_CLEAR=1`; default off)
 - `src/harness/product-quality.ts` — user-facing product **quality** bar (not a persona): job insight + one finished edge + at most one labeled `Serendipity:`; chrome catalogs are not a reading; bounce once (`/cycle 1` / fork / re-enable reset it); `/cycle status` lists the bar; harvest fail-open; generic UI chrome / infra / bugfix never arm
 - `src/agent/project-skills.ts` — skill packs: package `skills/forge-*/` (builtin) + `.forge/skills/**/SKILL.md` + `.agents/skills` + `~/.forge/skills` (project > user > builtin; `FORGE_BUILTIN_SKILLS=0` off)

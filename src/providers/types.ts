@@ -87,6 +87,12 @@ export interface ChatRequest {
    * so the next turn cannot be another silent judge.
    */
   tool_choice?: "auto" | "required";
+  /**
+   * Cursor: close the held-open AgentService Run and open a new one with
+   * the (pruned) conversation_history. Tool continuations still resume the
+   * live stream. Other providers ignore it.
+   */
+  rebaseConversation?: boolean;
 }
 
 export interface ChatUsage {
