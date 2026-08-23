@@ -100,7 +100,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       description:
         "Read a file (or list a directory). Returns content with line numbers as NNNNNN|line — these prefixes are NOT part of the file. " +
         "Default up to 1000 lines from offset; for large files pass offset/limit or use grep. " +
-        "Binary files are refused. Prefer absolute or workspace-relative paths.",
+        "Images (png/jpg/gif/webp) attach as vision [[image:path]]. Other binary files are refused.",
       parameters: {
         type: "object",
         properties: {
@@ -611,6 +611,108 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
           },
         },
         required: ["action"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "image_gen",
+      description:
+        "Generate a new image with xAI Imagine and write it under images/. " +
+        "Use for sprites, UI, mockups, marketing — not charts with exact numbers (build those in code). " +
+        "Success returns [[image:path]] so you can see it next turn. FORGE_IMAGE_GEN=0 off.",
+      parameters: {
+        type: "object",
+        properties: {
+          prompt: {
+            type: "string",
+            description: "2–5 vivid sentences: subject, style, composition, lighting.",
+          },
+          aspect_ratio: {
+            type: "string",
+            description: "1:1 | 16:9 | 9:16 | 4:3 | 3:4 | auto (default auto)",
+          },
+          n: { type: "number", description: "How many (1–4, default 1)" },
+        },
+        required: ["prompt"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "image_edit",
+      description:
+        "Edit an existing image (path, https URL, or up to 3 images). " +
+        "Use to restyle, keep a character consistent, or derive variants from a base — never a fresh image_gen for the same subject.",
+      parameters: {
+        type: "object",
+        properties: {
+          prompt: {
+            type: "string",
+            description: "What to change; state what must stay the same.",
+          },
+          image: {
+            type: "string",
+            description: "Workspace path, https URL, or data: URI",
+          },
+          images: {
+            type: "array",
+            items: { type: "string" },
+            description: "Up to 3 refs (multi-image edit). Prompt as <IMAGE_0>…",
+          },
+          aspect_ratio: { type: "string" },
+        },
+        required: ["prompt"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "image_to_video",
+      description:
+        "Animate a still into a short video (image-to-video). " +
+        "Source becomes frame 1. Harvest sprite frames with ffmpeg. Duration 1–15s (default 6).",
+      parameters: {
+        type: "object",
+        properties: {
+          image: {
+            type: "string",
+            description: "First-frame path or https URL",
+          },
+          prompt: {
+            type: "string",
+            description: "One short motion in present tense; static camera unless asked.",
+          },
+          duration: { type: "number", description: "Seconds 1–15 (default 6)" },
+          resolution: { type: "string", description: "480p | 720p" },
+        },
+        required: ["image"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "reference_to_video",
+      description:
+        "Generate a video guided by reference images (not locked to frame 1). " +
+        "Tag <IMAGE_0>, <IMAGE_1> in the prompt. Up to 7 images.",
+      parameters: {
+        type: "object",
+        properties: {
+          prompt: { type: "string" },
+          images: {
+            type: "array",
+            items: { type: "string" },
+            description: "Reference image paths or URLs",
+          },
+          duration: { type: "number" },
+          aspect_ratio: { type: "string" },
+        },
+        required: ["prompt", "images"],
       },
     },
   },

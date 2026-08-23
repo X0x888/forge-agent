@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+### Added
+- **Native Imagine + vision + mid-run PLAN**: `image_gen` / `image_edit` / `image_to_video` / `reference_to_video` (xAI Imagine, files under `images/`). `read_file` on png/jpg/webp attaches vision (`[[image:path]]`); Playwright screenshots become lookable. ULW PLAN now allows explore/plan spawn (still denies general-purpose + edits). Same-surface hold, named-ship exhaust, and `enter_plan_mode` re-arm PLAN after wave 1 so a stale reading goes back to research instead of minting sibling files. Skills: `forge-veteran`, `forge-imagine`, `forge-game-*`. Job: vague "improve this game" decides what better means, looks at the screen, generates art if the product needs it, ships one piece, re-plans when the reading is stale.
+
 ### Fixed
 - **Cursor long sessions no longer keep a fat live Run**: compact/prune only rewrote Forge's transcript while AgentService kept every thinking trace on the held-open HTTP/2 stream (256k Cursor Grok went dull; xAI resends the slim array every turn). A completed turn now closes that stream when host `prompt_tokens` pass 62% of the route window; compact sets `rebaseConversation` so the next user/ULW action opens a new Run with pruned `conversation_history` (tool continuations still resume). Rebase history keeps only the latest assistant reasoning. Request prune cliff is `min(180k, 55% of context_window)` — xAI 500k stays 180k; Cursor 256k clips ~141k. Job: long Cursor ULW, the host sees the slim working set, not wave-1 traces.
 

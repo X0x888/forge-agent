@@ -284,11 +284,16 @@ export interface UlwCycleState {
   /** One product-quality bounce (user-facing ships). Never a trap. */
   soulNudgeDone?: boolean;
   /**
-   * Wave 1 PLAN: `orient` hides spawn/edits until a written plan exists.
-   * Default for every new ULW (not only evaluate-class). Absent on old
-   * sidecars — infer from judgmentRequired.
+   * PLAN phase: hides edits until a written plan exists.
+   * Wave 1 always starts here. Later waves re-enter when the reading
+   * is stale (same-surface hold, named-ship exhaust, enter_plan_mode).
    */
   phase?: "orient" | "ship";
+  /**
+   * Explicit re-PLAN after a ship wave. `resolveUlwPhase` honors this
+   * even when `wave >= 1` (later waves used to skip scout forever).
+   */
+  reorientRequested?: boolean;
   /** Open todo count snapshot at previous wave boundary (for todoProgress). */
   lastOpenTodoCount?: number;
   /**
@@ -973,7 +978,8 @@ function initialUlwPlanPhase(
 
 export function resolveUlwPhase(s: UlwCycleState | null | undefined): UlwPhase {
   if (!s?.enabled) return "ship";
-  // Later waves never re-scout — the reading already named the next ships.
+  if (s.reorientRequested) return "orient";
+  // Later waves skip scout unless reorientRequested (hold / enter_plan_mode).
   if ((s.wave ?? 0) >= 1) return "ship";
   if (s.phase === "orient" || s.phase === "ship") return s.phase;
   return s.judgmentRequired ? "orient" : "ship";
@@ -985,7 +991,9 @@ export function shouldSkipOrient(
   sessionId?: string,
 ): boolean {
   if (!s?.enabled) return false;
-  // A stamped wave already named the next ships — do not re-scout.
+  if (s.reorientRequested) return false;
+  // A stamped wave already named the next ships — do not re-scout
+  // unless a hold or enter_plan_mode requested re-PLAN.
   if ((s.wave ?? 0) >= 1) return true;
   if (sessionId) {
     try {
@@ -1026,9 +1034,33 @@ export function completeUlwPlan(
   }
   s.phase = "ship";
   s.judgmentRequired = false;
+  s.reorientRequested = false;
   maybeAdoptNamedShips(s, opts?.closer);
   saveUlwCycle(s);
   return true;
+}
+
+const PLAN_STALE_RE =
+  /\b(plan stale|reading stale|back to research|re-?orient|re-?plan|new research)\b/i;
+
+/** Flip ship → PLAN. Used when the reading is stale or the agent asks. */
+export function requestUlwReorient(sessionId: string): boolean {
+  const s = loadUlwCycle(sessionId);
+  if (!s?.enabled) return false;
+  if (resolveUlwPhase(s) === "orient" && s.reorientRequested) return false;
+  markUlwReorient(s);
+  saveUlwCycle(s);
+  return true;
+}
+
+export function markUlwReorient(s: UlwCycleState): void {
+  s.reorientRequested = true;
+  s.phase = "orient";
+  s.judgmentRequired = true;
+}
+
+export function closerRequestsReorient(text: string | undefined): boolean {
+  return PLAN_STALE_RE.test(text || "");
 }
 
 /** Flip orient → ship once a written reading exists. */
@@ -1361,6 +1393,7 @@ function applySameSurfaceNote(
   ) {
     markHoldArmed(s);
     s.sameSurfaceHold = true;
+    markUlwReorient(s);
     if (factoryHold || isMillClassShip(classText, { onContract })) {
       markExploreRequired(s);
     }
@@ -1372,7 +1405,7 @@ function applySameSurfaceNote(
 
 const SAME_SURFACE_HOLD_ADMIT = [
   "[Forge ULW cycle driver] Stop blocked — last ships are the same surface (or the same adjacent-share / factory class).",
-  "Write a new Reading: the ONE next ship on a different class (name an explore-map pick, or a play-path / architecture / honest red-suite ship). Or /cycle 0.",
+  "PLAN is re-armed (research, no product edits). Write a new Reading: the ONE next ship on a different class (name an explore-map pick, or a play-path / architecture / honest red-suite ship). Or /cycle 0.",
   "A new noun is not a new surface. Do not recap the last ship as 'Last ship was' / 'what's still hard' — that is the mill template, not a new class.",
   "Different class: play-path bug, architecture, honest red suite, play-loop — or an unretired explore-map pick.",
   "Do not attest **Cycle complete.** Stuck-wall will not release this hold.",
@@ -1735,7 +1768,7 @@ export function namedShipsExhausted(s: UlwCycleState): boolean {
 
 const NAMED_SHIP_EXHAUSTED_ADMIT = [
   "[Forge ULW cycle driver] Stop blocked — named ships from the reading are done.",
-  "Write a new Reading: the ONE next ship on a different class (name an explore-map pick, or a play-path / architecture / honest red-suite ship). Or /cycle 0.",
+  "PLAN is re-armed (research, no product edits). Write a new Reading: the ONE next ship on a different class (name an explore-map pick, or a play-path / architecture / honest red-suite ship). Or /cycle 0.",
   "A new noun is not a new surface. Do not recap the last ship as 'Last ship was' / 'what's still hard' — that is the mill template.",
   "A red test suite or open defect is a different surface — not leftover chrome.",
   "Unlimited ULW continues only after a new reading. Stuck-wall will not release this hold.",
@@ -1743,7 +1776,7 @@ const NAMED_SHIP_EXHAUSTED_ADMIT = [
 
 const NAMED_SHIP_EXHAUSTED_STRONG = [
   "[Forge ULW cycle driver] Stop blocked — named ships from the reading are done.",
-  "Write a new Reading: the ONE next ship on a different class (name an explore-map pick, or a play-path / architecture / honest red-suite ship). Or /cycle 0.",
+  "PLAN is re-armed (research, no product edits). Write a new Reading: the ONE next ship on a different class (name an explore-map pick, or a play-path / architecture / honest red-suite ship). Or /cycle 0.",
   "Do not Mad-Lib another beside-you / far-stays sibling. A red test suite or play-path bug is a different class.",
   "Do not attest **Cycle complete.** — /cycle 0 finishes this wave + one more, then LAST.",
   "Stuck-wall will not release this hold.",
@@ -2336,6 +2369,7 @@ export function loadUlwCycle(sessionId: string): UlwCycleState | null {
     raw.sameSurfaceStreak = 0;
   }
   if (typeof raw.sameSurfaceHold !== "boolean") raw.sameSurfaceHold = false;
+  if (typeof raw.reorientRequested !== "boolean") raw.reorientRequested = false;
   if (
     typeof raw.sameSurfaceAdmitCount !== "number" ||
     !Number.isFinite(raw.sameSurfaceAdmitCount)
@@ -2673,6 +2707,7 @@ export function armUlwCycle(
     polishStreak: 0,
     sameSurfaceStreak: 0,
     sameSurfaceHold: false,
+    reorientRequested: false,
     sameSurfaceAdmitCount: 0,
     offContractStreak: 0,
     contractHold: false,
@@ -3692,6 +3727,7 @@ export function evaluateUlwAtStop(opts: {
     }
     // Mid-run explore first — a Mad-Lib Reading is not a look.
     if (exploreHolding(s) && !adoptedNamed) {
+      markUlwReorient(s);
       saveUlwCycle(s);
       const admit = holdAdmit(opts.sessionId, EXPLORE_REQUIRED_ADMIT);
       return {
@@ -3760,6 +3796,7 @@ export function evaluateUlwAtStop(opts: {
         opts.sessionId,
         strong ? NAMED_SHIP_EXHAUSTED_STRONG : NAMED_SHIP_EXHAUSTED_ADMIT,
       );
+      markUlwReorient(s);
       saveUlwCycle(s);
       return {
         block: true,
@@ -3777,6 +3814,7 @@ export function evaluateUlwAtStop(opts: {
       if (!differentSurface || alreadyStamped) {
         s.sameSurfaceAdmitCount = (s.sameSurfaceAdmitCount ?? 0) + 1;
         s.sameSurfaceHold = true;
+        markUlwReorient(s);
         saveUlwCycle(s);
         const admit = holdAdmit(opts.sessionId, SAME_SURFACE_HOLD_ADMIT);
         return {
@@ -4105,7 +4143,7 @@ export function ulwKickoffMessage(state: UlwCycleState): string {
       ? `- **Backlog gate:** todo_write ≥2 items covering mandate sections BEFORE free-inventing Wave 1 scope.`
       : null,
     state.judgmentRequired
-      ? `- **PLAN gate:** Wave 1 cannot close until you write the plan (\`Reading:\`, memory_write, or exit_plan_mode). Then the driver /builds. Type /build to skip.`
+      ? `- **PLAN gate:** cannot ship until you write the plan (\`Reading:\`, memory_write, or exit_plan_mode). Wave 1 always; later waves re-enter when the reading is stale. Then the driver /builds. Type /build to skip.`
       : null,
     `- ${ULW_LIVE_CONTROLS_HINT}`,
     ``,

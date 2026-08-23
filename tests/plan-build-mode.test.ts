@@ -622,7 +622,7 @@ describe("exit_plan_mode tool", () => {
       filterToolsForUlwPhase(TOOL_DEFINITIONS, "orient").some(
         (t) => t.function.name === "spawn_subagent",
       ),
-      false,
+      true,
     );
   });
 });

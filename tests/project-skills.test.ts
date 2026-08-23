@@ -143,6 +143,9 @@ Always run smoke after deploy.
         "forge-redgreen",
         "forge-surface",
         "forge-polish",
+        "forge-veteran",
+        "forge-imagine",
+        "forge-game-assets",
       ]) {
         assert.ok(names.has(n), `missing builtin ${n}`);
       }

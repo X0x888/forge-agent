@@ -2120,8 +2120,8 @@ export async function handleSlash(
       opts.session.meta.ultrawork = true;
       const focus = (arg || "").trim();
       const mandate = focus
-        ? `Continuously improve this project with near-zero user steering. Focus: ${focus}. Prefer reliability and autonomy gaps a serious daily user would notice. Ship, prove, hostile-review, repeat while cycle=1.`
-        : "Continuously improve this project with near-zero user steering. Prefer reliability, autonomy, UX, and expert convenience gaps. Ship highest-leverage work, prove with project checks, hostile-review, repeat while cycle=1. Do not ask what to improve.";
+        ? `Continuously improve this project with near-zero user steering. Focus: ${focus}. Decide what better means for THIS product and what a veteran would chase; research (codebase, web, GitHub, skills); plan directions; ship one piece; review; commit; if the plan is stale, re-enter PLAN. Do not ask what to improve.`
+        : "Continuously improve this project with near-zero user steering. Decide what better means for THIS product and what a veteran would chase; research (codebase, web, GitHub, skills); plan directions; ship one piece; review; commit; if the plan is stale, re-enter PLAN. Prefer reliability, autonomy, UX, and feel. Do not ask what to improve.";
       const state = armUlwCycle(opts.session.meta.id, mandate, {
         cycle: 1,
         editCount: opts.session.meta.editCount,

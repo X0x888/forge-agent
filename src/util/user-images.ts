@@ -42,7 +42,20 @@ export function mimeForImagePath(p: string): string {
 }
 
 /** Max image bytes we'll base64-inline (default 4 MiB). */
-const MAX_IMAGE_BYTES = 4 * 1024 * 1024;
+export const MAX_IMAGE_BYTES = 4 * 1024 * 1024;
+
+/** Tool-result receipt so outbound vision expand can attach the file. */
+export function imageReadReceipt(rel: string, size: number): string {
+  const tooBig =
+    size > MAX_IMAGE_BYTES
+      ? ` Too large to inline (${size} bytes; vision cap ${MAX_IMAGE_BYTES}).`
+      : "";
+  return (
+    `Image: ${rel} (${size} bytes).${tooBig} ` +
+    `Describe what you see before editing. Use image_edit to change pixels.\n` +
+    `[[image:${rel}]]`
+  );
+}
 
 /**
  * Load a workspace-relative or absolute image as a data URL.

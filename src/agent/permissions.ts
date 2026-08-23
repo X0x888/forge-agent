@@ -29,6 +29,7 @@ import type { McpManager } from "../mcp/manager.js";
 import { withStdinLease } from "../tui/stdin-lease.js";
 import { isLspToolName, lspActionInstalls } from "../lsp/tools.js";
 
+
 const WRITE_TOOLS = new Set([
   "write_file",
   "search_replace",
@@ -37,6 +38,12 @@ const WRITE_TOOLS = new Set([
   "Write",
   "Edit",
   "ApplyPatch",
+  "image_gen",
+  "image_edit",
+  "image_to_video",
+  "reference_to_video",
+  "generate_image",
+  "edit_image",
 ]);
 
 const READ_ONLY_TOOLS = new Set([
@@ -274,10 +281,27 @@ export class PermissionGate {
       toolName === "Task" ||
       toolName === "task"
     ) {
+      const kind = String(
+        toolInput.subagent_type ?? toolInput.type ?? toolInput.agent_type ?? "",
+      )
+        .trim()
+        .toLowerCase()
+        .replace(/_/g, "-");
+      if (
+        kind === "explore" ||
+        kind === "research" ||
+        kind === "readonly" ||
+        kind === "read-only" ||
+        kind === "plan" ||
+        kind === "planner" ||
+        kind === "design"
+      ) {
+        return null;
+      }
       return {
         decision: "deny",
         reason:
-          "ulw_orient: spawn_subagent denied — write the plan first (no spawn during PLAN); or type /build",
+          "ulw_orient: general-purpose spawn denied — PLAN may spawn explore/plan only. Write the Reading, then implement; or type /build",
         rule: "ulw_orient",
       };
     }

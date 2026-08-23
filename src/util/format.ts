@@ -42,6 +42,10 @@ const TOOL_DISPLAY_NAMES: Record<string, string> = {
   applypatch: "patch",
   ApplyPatch: "patch",
   run_terminal_command: "bash",
+  image_gen: "imagine",
+  image_edit: "imagine-edit",
+  image_to_video: "imagine-video",
+  reference_to_video: "imagine-ref",
 };
 
 export function formatToolDisplayName(name: string): string {

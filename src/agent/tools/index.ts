@@ -21,6 +21,12 @@ import {
 import { toolLsp } from "../../lsp/tools.js";
 import { toolSpawnSubagent } from "./subagent-tool.js";
 import { toolMemoryWrite } from "./memory-write.js";
+import {
+  toolImageGen,
+  toolImageEdit,
+  toolImageToVideo,
+  toolReferenceToVideo,
+} from "./imagine.js";
 import { parseToolArguments } from "../../util/json-repair.js";
 import { suggestNames } from "../../util/suggest.js";
 
@@ -28,7 +34,7 @@ export type { ToolContext, ToolResult } from "./types.js";
 export { TOOL_DEFINITIONS };
 
 const AVAILABLE =
-  "bash, get_task_output, kill_task, read_file, write_file, search_replace, apply_patch, grep, glob, list_dir, todo_write, memory_write, ask_user, enter_plan_mode, exit_plan_mode, web_search, web_fetch, search_mcp, call_mcp, mcp_resource, mcp_prompt, spawn_subagent, lsp";
+  "bash, get_task_output, kill_task, read_file, write_file, search_replace, apply_patch, grep, glob, list_dir, todo_write, memory_write, ask_user, enter_plan_mode, exit_plan_mode, web_search, web_fetch, search_mcp, call_mcp, mcp_resource, mcp_prompt, spawn_subagent, lsp, image_gen, image_edit, image_to_video, reference_to_video";
 
 /** Canonical tool ids (used for doubled-name recovery). */
 const CANONICAL_TOOLS = [
@@ -72,6 +78,12 @@ const CANONICAL_TOOLS = [
   "task",
   "lsp",
   "LSP",
+  "image_gen",
+  "image_edit",
+  "image_to_video",
+  "reference_to_video",
+  "generate_image",
+  "edit_image",
   "run_terminal_command",
   "Shell",
   "Bash",
@@ -247,6 +259,16 @@ export async function executeTool(
       case "lsp":
       case "LSP":
         return await toolLsp(args, ctx);
+      case "image_gen":
+      case "generate_image":
+        return await toolImageGen(args, ctx);
+      case "image_edit":
+      case "edit_image":
+        return await toolImageEdit(args, ctx);
+      case "image_to_video":
+        return await toolImageToVideo(args, ctx);
+      case "reference_to_video":
+        return await toolReferenceToVideo(args, ctx);
       default: {
         const tips = suggestNames(
           name,

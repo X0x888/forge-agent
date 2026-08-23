@@ -21,6 +21,13 @@ Ship-with-install playbooks loaded by `src/agent/project-skills.ts` as
 | `forge-absorb` | Absorb review feedback |
 | `forge-surface` | Distinctive, non-AI-slop UI direction |
 | `forge-polish` | Visual craft QA / UI polish pass |
+| `forge-veteran` | Vague-mandate product loop (better → research → plan → ship → re-plan) |
+| `forge-imagine` | image_gen / image_edit / video |
+| `forge-game-assets` | Engine-ready game art defaults |
+| `forge-game-animation` | Video-first animation frames |
+| `forge-game-characters` | Same-character multi-image sets |
+| `forge-game-tiles` | Seamless tilesets |
+| `forge-game-ui` | HUD / icons / panels |
 | `forge-craft` | Write project skills |
 
 **Priority:** project (`.forge/skills`, `.agents/skills`) > user (`~/.forge/skills`) > builtin.

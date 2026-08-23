@@ -1136,7 +1136,7 @@ describe("polish-class Stop", () => {
       filterToolsForUlwPhase(TOOL_DEFINITIONS, "orient").some(
         (t) => t.function.name === "spawn_subagent",
       ),
-      false,
+      true,
     );
     assert.equal(
       filterToolsForUlwPhase(TOOL_DEFINITIONS, "orient").some(
@@ -1262,14 +1262,32 @@ describe("polish-class Stop", () => {
     assert.equal(write.decision, "deny");
     assert.match(write.reason || "", /ulw_orient/);
 
-    const spawn = await gate.request({
+    const explore = await gate.request({
       toolName: "spawn_subagent",
       input: { prompt: "map the tui", subagent_type: "explore" },
       mode: "bypassPermissions",
       workspace: process.cwd(),
       ulwPhase: "orient",
     });
+    assert.equal(explore.decision, "allow");
+
+    const spawn = await gate.request({
+      toolName: "spawn_subagent",
+      input: { prompt: "implement it", subagent_type: "general-purpose" },
+      mode: "bypassPermissions",
+      workspace: process.cwd(),
+      ulwPhase: "orient",
+    });
     assert.equal(spawn.decision, "deny");
+
+    const imagine = await gate.request({
+      toolName: "image_gen",
+      input: { prompt: "a sprite" },
+      mode: "bypassPermissions",
+      workspace: process.cwd(),
+      ulwPhase: "orient",
+    });
+    assert.equal(imagine.decision, "deny");
 
     const mut = await gate.request({
       toolName: "bash",

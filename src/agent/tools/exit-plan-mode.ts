@@ -17,7 +17,13 @@ import {
 } from "../../session/session.js";
 import { pushLiveNotice } from "../../harness/live-notices.js";
 import { appendMemoryRecord } from "../../harness/decision-memory.js";
-import { completeUlwPlan, loadUlwCycle } from "../../harness/ulw-cycle.js";
+import {
+  completeUlwPlan,
+  loadUlwCycle,
+  requestUlwReorient,
+  resolveUlwPhase,
+} from "../../harness/ulw-cycle.js";
+import { armUlwPlanMode } from "../../harness/ulw-plan-mode.js";
 import { toolAskUser } from "./ask-user.js";
 import type { ToolResult } from "./types.js";
 
@@ -61,6 +67,11 @@ export async function toolEnterPlanMode(
   }
   const reason = String(input.reason ?? "").trim();
   const previous = config.permissionMode;
+  const ulw = loadUlwCycle(session.meta.id);
+  if (ulw?.enabled && resolveUlwPhase(ulw) === "ship") {
+    requestUlwReorient(session.meta.id);
+    armUlwPlanMode(session, config);
+  }
   enterSessionPlanMode(config, session);
   saveSession(session);
   pushLiveNotice(

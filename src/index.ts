@@ -372,6 +372,8 @@ export {
   sameSurfaceHolding,
   resolveUlwPhase,
   shouldSkipOrient,
+  requestUlwReorient,
+  closerRequestsReorient,
   completeUlwPlan,
   markUlwPlanDone,
   advanceUlwPhaseOnReading,

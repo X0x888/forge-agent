@@ -515,9 +515,12 @@ describe("TOOL_DEFINITIONS agent guidance", () => {
     // docs in descriptions fail CI. Raised for MCP/subagent/LSP tools.
     const total = JSON.stringify(TOOL_DEFINITIONS).length;
     assert.ok(
-      total < 16_000,
-      `tool schema JSON grew to ${total} chars (budget 16k after resources/prompts/isolation)`,
+      total < 22_000,
+      `tool schema JSON grew to ${total} chars (budget 22k after Imagine tools)`,
     );
+    assert.match(byName.image_gen || "", /Imagine|images\//i);
+    assert.match(byName.image_edit || "", /image/i);
+    assert.match(byName.image_to_video || "", /video|ffmpeg/i);
     // Schema must match runtime: omit task_id lists actives (not required)
     const killReq = byFull.kill_task?.parameters?.required || [];
     const getReq = byFull.get_task_output?.parameters?.required || [];

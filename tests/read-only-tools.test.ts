@@ -23,6 +23,8 @@ describe("isReadOnlyToolName", () => {
     assert.equal(isReadOnlyToolName("search_replace"), false);
     assert.equal(isReadOnlyToolName("apply_patch"), false);
     assert.equal(isReadOnlyToolName("kill_task"), false);
+    assert.equal(isReadOnlyToolName("image_gen"), false);
+    assert.equal(isReadOnlyToolName("image_to_video"), false);
   });
 
   it("handles doubled stream-bug names via normalize", () => {

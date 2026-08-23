@@ -17,6 +17,7 @@ import {
   lookupExploreMapFile,
   readHasExplicitWindow,
 } from "../../session/explore-map.js";
+import { imageReadReceipt, isImagePath } from "../../util/user-images.js";
 
 function noteRead(
   ctx: ToolContext,
@@ -359,6 +360,12 @@ export async function toolRead(
       output: `File not found: ${raw}\n${hint}`,
       isError: true,
     };
+  }
+
+  if (stat.isFile() && isImagePath(filePath)) {
+    const rel = displayRelPath(ctx.workspace, filePath);
+    noteRead(ctx, filePath, stat);
+    return { output: imageReadReceipt(rel, stat.size) };
   }
 
   if (stat.isDirectory()) {

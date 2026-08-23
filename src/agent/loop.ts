@@ -21,6 +21,7 @@ import {
   normalizeFallbackModelId,
 } from "../config/model-fallback.js";
 import type {
+  ChatContentPart,
   ChatMessage,
   ChatRequest,
   LLMProvider,
@@ -486,6 +487,9 @@ const ORIENT_TOOL_NAMES = new Set([
   "mcp_prompt",
   "lsp",
   "LSP",
+  "spawn_subagent",
+  "Task",
+  "task",
 ]);
 
 export function citedPathsFromToolCalls(msg: ChatMessage): string[] {
@@ -647,23 +651,67 @@ export function buildChatRequest(
   };
 }
 
-/** Expand user string messages that reference image paths into multimodal content. */
+const IMAGE_MARK_RE = /\[\[image:/i;
+const AT_IMAGE_RE = /@[^\s]+\.(png|jpe?g|gif|webp|bmp)\b/i;
+
+function messageHasImageMarks(text: string): boolean {
+  return IMAGE_MARK_RE.test(text) || AT_IMAGE_RE.test(text);
+}
+
+/**
+ * Expand [[image:path]] / @shot.png into multimodal parts.
+ * User messages expand in place. Tool results cannot carry image_url on
+ * OpenAI-compat wires, so after a run of tool messages we append one user
+ * vision turn with the images (session history stays string-only).
+ */
 export function expandMessagesForVision(
   messages: ChatMessage[],
   workspace?: string,
 ): OutboundChatMessage[] {
-  return messages.map((m) => {
-    if (m.role !== "user" || typeof m.content !== "string") return m;
-    if (
-      !/\[\[image:/i.test(m.content) &&
-      !/@[^\s]+\.(png|jpe?g|gif|webp|bmp)\b/i.test(m.content)
-    ) {
-      return m;
+  const out: OutboundChatMessage[] = [];
+  const pending: ChatContentPart[] = [];
+  const flushPending = () => {
+    if (!pending.length) return;
+    const parts = pending.splice(0, pending.length);
+    const images = parts.filter((p) => p.type === "image_url").slice(-6);
+    if (!images.length) return;
+    out.push({
+      role: "user",
+      content: [
+        {
+          type: "text",
+          text: "Vision: images from the previous tool result(s). Describe what you see.",
+        },
+        ...images,
+      ],
+    });
+  };
+  for (const m of messages) {
+    if (m.role === "user" && typeof m.content === "string") {
+      flushPending();
+      if (!messageHasImageMarks(m.content)) {
+        out.push(m);
+        continue;
+      }
+      const expanded = expandUserContentWithImages(m.content, workspace);
+      out.push(typeof expanded === "string" ? m : { ...m, content: expanded });
+      continue;
     }
-    const expanded = expandUserContentWithImages(m.content, workspace);
-    if (typeof expanded === "string") return m;
-    return { ...m, content: expanded };
-  });
+    if (m.role === "tool" && typeof m.content === "string" && messageHasImageMarks(m.content)) {
+      out.push(m);
+      const expanded = expandUserContentWithImages(m.content, workspace);
+      if (typeof expanded !== "string") {
+        for (const p of expanded) {
+          if (p.type === "image_url") pending.push(p);
+        }
+      }
+      continue;
+    }
+    if (m.role !== "tool") flushPending();
+    out.push(m);
+  }
+  flushPending();
+  return out;
 }
 
 /**

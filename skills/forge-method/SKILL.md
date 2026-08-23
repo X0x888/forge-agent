@@ -35,13 +35,16 @@ Do not invent a parallel process with the same name.
 | Security-sensitive change | `forge-armor` |
 | New UI / web / product surface — distinctive look | `forge-surface` |
 | Existing UI needs craft polish / anti-slop pass | `forge-polish` |
+| Vague "make it better / more interesting" | `forge-veteran` |
+| Generate or edit images (sprites, UI, mockups) | `forge-imagine` |
+| Game sprites / tiles / characters / HUD art | `forge-game-assets` (+ animation / tiles / characters / ui) |
 | Author a new project skill | `forge-craft` |
 
 ## Forge harness (do not fight it)
 
 - **Blocking Stop** — unfinished work, soft handoffs, and unproven claims may be blocked. Finish or prove.
 - **`/goal`** — work until criteria; attest with evidence.
-- **ULW** — own the outcome; prove waves; no fake progress.
+- **ULW** — own the outcome; prove waves; no fake progress. Vague wishes use the product loop: better-for-this → research → plan → one ship → review → commit → re-plan if stale.
 - **Verification** — structural checks (`npm test`, project checks) beat prose.
 - Prefer **project** skills over builtins when names clash.
 

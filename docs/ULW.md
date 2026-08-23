@@ -2,7 +2,7 @@
 
 When a prompt starts with **`/ulw`** (or `forge --ulw` / `forge run --ulw`), Forge arms a **god-mode cycle driver**: deep thought + hard execution on whatever the hard work is — any domain, not just tests or housekeeping. Soft prompts like `improve the code` (or bare `/ulw`) authorize the agent to **invent the work** and ship it.
 
-**Wave 1 is PLAN** — the same spine as `/plan` / `/build`, not a sibling. Research is hard-denied for writes/spawn (even under yolo) until a written plan exists (`Reading:` / `memory_write` / `exit_plan_mode`). The driver then `/build`s itself (no confirm). User `/build` skips remaining research. User `/plan` mid-run is a human pause (does not auto-flip). Later waves are BUILD.
+**Wave 1 is PLAN** — the same spine as `/plan` / `/build`, not a sibling. Writes and **general-purpose** spawn are hard-denied (even under yolo) until a written plan exists (`Reading:` / `memory_write` / `exit_plan_mode`). Explore/plan subagents and web/GitHub research are allowed. The driver then `/build`s itself (no confirm). User `/build` skips remaining research. User `/plan` mid-run is a human pause (does not auto-flip). Later waves are BUILD **until the reading is stale** — same-surface hold, named-ship exhaust, and `enter_plan_mode` re-arm PLAN (research → new `Reading:` → ship). Vague wishes use the product loop: what would better mean for THIS product → research → plan directions → one ship → review → commit → re-plan if stale.
 
 ## User control: cycle flag
 
