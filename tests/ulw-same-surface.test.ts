@@ -11,6 +11,7 @@ import {
   loadUlwCycle,
   maybeAdoptNamedShips,
   maybeStampUlwWave,
+  resolveUlwPhase,
   sameSurfaceHolding,
   saveUlwCycle,
   scheduleCycleZeroStop,
@@ -69,6 +70,8 @@ describe("ULW same-surface hold", () => {
       assert.equal(s.wave, 3);
       assert.ok((s.sameSurfaceStreak ?? 0) >= 3);
       assert.equal(sameSurfaceHolding(s), true);
+      assert.equal(s.reorientRequested, true);
+      assert.equal(resolveUlwPhase(s), "orient");
       assert.match(formatUlwStatus(s), /Same surface: hold/i);
 
       const blocked = maybeStampUlwWave({

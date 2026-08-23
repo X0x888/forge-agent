@@ -2116,66 +2116,17 @@ export async function handleSlash(
     }
 
     case "/improve":
-    case "/ralph": {
-      opts.session.meta.ultrawork = true;
-      const focus = (arg || "").trim();
-      const mandate = focus
-        ? `Continuously improve this project with near-zero user steering. Focus: ${focus}. Decide what better means for THIS product and what a veteran would chase; research (codebase, web, GitHub, skills); plan directions; ship one piece; review; commit; if the plan is stale, re-enter PLAN. Do not ask what to improve.`
-        : "Continuously improve this project with near-zero user steering. Decide what better means for THIS product and what a veteran would chase; research (codebase, web, GitHub, skills); plan directions; ship one piece; review; commit; if the plan is stale, re-enter PLAN. Prefer reliability, autonomy, UX, and feel. Do not ask what to improve.";
-      const state = armUlwCycle(opts.session.meta.id, mandate, {
-        cycle: 1,
-        editCount: opts.session.meta.editCount,
-        cwd: opts.config.workspace || opts.session.meta.cwd || process.cwd(),
-      });
-      armUlwPlanMode(opts.session, opts.config);
-      if (state.checkpointSha) {
-        stampCheckpoint(opts.session, state.checkpointSha, false);
-      }
-      try {
-        clearSoftTodoGateOnWindDown(opts.session.meta.id);
-      } catch {
-        /* */
-      }
-      let todoSeedNote = "";
-      try {
-        if (
-          state.backlogRequired &&
-          openTodos(opts.session.todos || []) < 2
-        ) {
-          const seeded = todosFromMandate(mandate, { max: 12 });
-          applyTodos(opts.session, seeded, false);
-          todoSeedNote = `Seeded ${seeded.length} backlog todo(s).`;
-        }
-      } catch {
-        /* */
-      }
-      const kick = ulwKickoffMessage(state);
-      const banner = [
-        chalk.bold("Continuous improve armed") +
-          chalk.dim("  (/improve · alias /ralph · ULW cycle=1)"),
-        state.checkpointSha
-          ? chalk.dim(
-              `Safety checkpoint: ${state.checkpointSha.slice(0, 12)}…  · /checkpoint restore`,
-            )
-          : chalk.dim("Safety checkpoint: (clean tree or disabled)"),
-        todoSeedNote ? chalk.dim(todoSeedNote) : null,
-        chalk.dim(ULW_LIVE_CONTROLS_HINT),
-      ]
-        .filter(Boolean)
-        .join("\n");
-      return {
-        handled: true,
-        forwardPrompt: kick,
-        output: banner,
-        session: opts.session,
-      };
-    }
-
+    case "/ralph":
     case "/ulw":
     case "/ultrawork":
     case "/autowork": {
       opts.session.meta.ultrawork = true;
-      const mandate = arg || "improve the codebase";
+      const mandate =
+        cmd === "/improve" || cmd === "/ralph"
+          ? arg
+            ? `improve this project. Focus: ${arg}.`
+            : "improve this project"
+          : arg || "improve the codebase";
       const state = armUlwCycle(opts.session.meta.id, mandate, {
         cycle: 1,
         editCount: opts.session.meta.editCount,

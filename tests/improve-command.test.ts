@@ -45,7 +45,7 @@ describe("/improve", () => {
     assert.equal(classifyLiveSlash("/ralph reliability"), "control");
   });
 
-  it("arms ULW cycle 1 with continuous-improve mandate", async () => {
+  it("arms the same ULW driver as /ulw (optional focus, not a second mode)", async () => {
     const session = createSession({
       cwd: process.cwd(),
       provider: "xai",
@@ -59,10 +59,11 @@ describe("/improve", () => {
     });
     assert.equal(r.handled, true);
     assert.ok(r.forwardPrompt);
-    assert.match(String(r.output || ""), /Continuous improve|ULW|cycle/i);
+    assert.match(String(r.output || ""), /ULW ON|cycle=1/i);
     const u = loadUlwCycle(session.meta.id);
     assert.equal(u?.cycle, 1);
-    assert.match(u?.mandate || "", /reliability|steering/i);
+    assert.match(u?.mandate || "", /reliability/i);
+    assert.doesNotMatch(u?.mandate || "", /Continuously improve this project/i);
     assert.equal(u?.phase, "orient");
     assert.equal(u?.judgmentRequired, true);
     assert.equal(session.meta.ulwOwnsPlan, true);

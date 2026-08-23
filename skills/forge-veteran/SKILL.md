@@ -3,7 +3,7 @@ name: forge-veteran
 description: >-
   Adaptive veteran loop for vague, soft, open mandates (improve this, make it
   better / more interesting / addictive / attractive) with near-zero steering.
-  Use on ULW / /improve / "polish the product" when the user did not specify
+  Use under /ulw (and its /improve alias) when the user did not specify
   the next ship.
 inject: catalog
 ---

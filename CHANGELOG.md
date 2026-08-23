@@ -3,6 +3,7 @@
 ## Unreleased
 
 ### Added
+- **`/improve` is a /ulw side dish**, not a second driver: optional focus becomes a soft ULW mandate; same PLAN/Imagine/vision rails. Banner is ULW ON.
 - **Native Imagine + vision + mid-run PLAN**: `image_gen` / `image_edit` / `image_to_video` / `reference_to_video` (xAI Imagine, files under `images/`). `read_file` on png/jpg/webp attaches vision (`[[image:path]]`); Playwright screenshots become lookable. ULW PLAN now allows explore/plan spawn (still denies general-purpose + edits). Same-surface hold, named-ship exhaust, and `enter_plan_mode` re-arm PLAN after wave 1 so a stale reading goes back to research instead of minting sibling files. Skills: `forge-veteran`, `forge-imagine`, `forge-game-*`. Job: vague "improve this game" decides what better means, looks at the screen, generates art if the product needs it, ships one piece, re-plans when the reading is stale.
 
 ### Fixed

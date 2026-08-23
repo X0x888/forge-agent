@@ -91,7 +91,7 @@ Harness
   /done               Wind down + lastErr/verify Next
   /plan               Session-scoped read-only design
   /build              Leave plan and implement
-  /improve [focus]    Continuous-improve on ULW rails
+  /improve [focus]    Optional focus for /ulw (same rails)
 
   Live (while working) — type at live › without Ctrl+C:
     /cycle 0  ·  /ulw-off  ·  /budget  ·  /done  ·  /status  ·  free-text queues
@@ -151,8 +151,8 @@ Forge slash commands
   /done [note]          Wind down + lastErr/verify Next (goal + ULW LAST)  [live]
   /pause                Shorthand for /goal pause  [live]
   /unpause              Shorthand for /goal resume  [live]
-  /improve [focus…]       Continuous-improve (ULW; alias /ralph)
   /ulw [task]           Arm ULW + cycle=1 (Wave 1 PLAN, then BUILD; soft/broad seeds backlog)
+  /improve [focus…]     Same as /ulw with an optional focus (alias /ralph)
   /memory [list|add …]  Session decisions. /memory project [prune] for cross-session.
   /attach <image>       Attach image path for vision ([[image:path]] in next message)
   /paste                Attach clipboard image (pngpaste / osascript / wl-paste / xclip)
