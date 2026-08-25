@@ -26,13 +26,16 @@ import type { ChatMessage } from "../providers/types.js";
 import {
   createSession,
   deleteSessionDetailed,
+  loadSession,
   saveSession,
+  isValidSessionId,
 } from "../session/session.js";
 import { foldChildMutationsIntoParent } from "../session/mutations.js";
 import { loadDecisionMemory } from "../harness/decision-memory.js";
 import type { LoopEvents, LoopResult } from "./loop.js";
 import { normalizePermissionMode } from "../util/mode-aliases.js";
 import {
+  attachExistingWorktree,
   createSubagentWorktree,
   defaultIsolationForSpawn,
   formatWorktreeLandSummary,
@@ -41,6 +44,10 @@ import {
   type SubagentWorktree,
   type WorktreeLandResult,
 } from "./worktree.js";
+import {
+  defaultSubagentMaxTurns,
+  formatSubagentNext,
+} from "./subagent-policy.js";
 import {
   buildSubagentUsageRecord,
   createFamilyCostCapResolver,
@@ -82,6 +89,8 @@ export interface SubagentRequest {
    * - worktree: detached git worktree under ~/.forge/worktrees/ (requires git repo); auto-lands into parent only when status=completed
    */
   isolation?: SubagentIsolation;
+  /** Continue a kept incomplete child instead of spawning a new session. */
+  resumeSessionId?: string;
 }
 
 export interface SubagentRunContext {
@@ -131,7 +140,8 @@ export type SubagentHandoffStatus =
   | "incomplete_cost_cap"
   | "aborted"
   | "error"
-  | "stop_hook_blocked";
+  | "stop_hook_blocked"
+  | "skipped_explore_ledger";
 
 export function resolveSubagentHandoffStatus(opts: {
   error?: string;
@@ -276,8 +286,44 @@ export function defaultMaxSubagentDepth(): number {
   return envPositiveInt("FORGE_SUBAGENT_MAX_DEPTH", 1);
 }
 
-export function defaultSubagentMaxTurns(): number {
-  return envPositiveInt("FORGE_SUBAGENT_MAX_TURNS", 40);
+export { defaultSubagentMaxTurns } from "./subagent-policy.js";
+
+export function loadResumableSubagent(
+  resumeId: string,
+  parentId: string,
+): { ok: true; child: SessionData } | { ok: false; error: string } {
+  const id = String(resumeId || "").trim();
+  if (!id || !isValidSessionId(id)) {
+    return {
+      ok: false,
+      error:
+        "spawn_subagent error: resume_session_id must be a valid session id.",
+    };
+  }
+  const child = loadSession(id);
+  if (!child?.meta?.id) {
+    return {
+      ok: false,
+      error: `spawn_subagent error: resume_session_id "${id}" not found (session was deleted or never kept).`,
+    };
+  }
+  const stamp = child.meta.subagent;
+  if (!stamp?.parentId) {
+    return {
+      ok: false,
+      error:
+        `spawn_subagent error: session ${id} is not a resumable subagent ` +
+        "(missing subagent stamp). Pass the child session_id from an incomplete handoff.",
+    };
+  }
+  if (stamp.parentId !== parentId) {
+    return {
+      ok: false,
+      error:
+        `spawn_subagent error: session ${id} belongs to a different parent — cannot resume.`,
+    };
+  }
+  return { ok: true, child };
 }
 
 const SYNTH_TOOLS = new Set([
@@ -364,8 +410,8 @@ export async function runSubagent(
   req: SubagentRequest,
   ctx: SubagentRunContext,
 ): Promise<SubagentResult> {
-  const subagentType = resolveSubagentType(req.subagentType);
-  const capabilityMode = resolveCapabilityMode(
+  let subagentType = resolveSubagentType(req.subagentType);
+  let capabilityMode = resolveCapabilityMode(
     subagentType,
     req.capabilityMode,
   );
@@ -393,7 +439,33 @@ export async function runSubagent(
     };
   }
 
-  const prompt = (req.prompt || "").trim();
+  const resumeId = String(req.resumeSessionId || "").trim();
+  let resumed: SessionData | undefined;
+  if (resumeId) {
+    const loaded = loadResumableSubagent(resumeId, ctx.parentSession.meta.id);
+    if (!loaded.ok) {
+      return {
+        ok: false,
+        text: "",
+        turns: 0,
+        aborted: false,
+        subagentType,
+        capabilityMode,
+        description,
+        sessionId: "",
+        promptTokens: 0,
+        completionTokens: 0,
+        editCount: 0,
+        error: loaded.error,
+      };
+    }
+    resumed = loaded.child;
+  }
+
+  const prompt = (req.prompt || "").trim() ||
+    (resumed
+      ? "Continue from where you left off. Emit the structured report if the task is done."
+      : "");
   if (!prompt) {
     return {
       ok: false,
@@ -411,22 +483,36 @@ export async function runSubagent(
     };
   }
 
-  if (subagentType === "explore") {
+  if (resumed?.meta.subagent?.type) {
+    subagentType = resumed.meta.subagent.type;
+    capabilityMode = resolveCapabilityMode(subagentType);
+  }
+
+  if (subagentType === "explore" && !resumed) {
     const skip = exploreSpawnSkipReason(ctx.parentSession.meta.id);
     if (skip) {
+      const next = formatSubagentNext({
+        status: "skipped_explore_ledger",
+        subagentType: "explore",
+      });
       return {
-        ok: true,
-        text: `spawn_subagent skipped (explore ledger):\n${skip}`,
+        ok: false,
+        text:
+          `### Subagent result: ${description}\n` +
+          `- status: skipped_explore_ledger\n` +
+          `- type: explore · mode: read-only · turns: 0/0 · edits: 0\n` +
+          (next ? `- Next: ${next}\n` : "") +
+          `\nspawn_subagent skipped (explore ledger):\n${skip}`,
         turns: 0,
         aborted: false,
-        subagentType,
-        capabilityMode,
+        subagentType: "explore",
+        capabilityMode: "read-only",
         description,
         sessionId: "",
         promptTokens: 0,
         completionTokens: 0,
         editCount: 0,
-        status: "completed",
+        status: "skipped_explore_ledger",
       };
     }
   }
@@ -459,14 +545,67 @@ export async function runSubagent(
     };
   }
 
-  const isolation = defaultIsolationForSpawn({
-    type: req.subagentType,
-    isolation: req.isolation,
-    workspace: ctx.workspace,
-  });
+  const isolation: SubagentIsolation = resumed?.meta.subagent?.isolation
+    ? resolveIsolationMode(resumed.meta.subagent.isolation) === "worktree"
+      ? "worktree"
+      : "none"
+    : defaultIsolationForSpawn({
+        type: subagentType,
+        isolation: req.isolation,
+        workspace: ctx.workspace,
+      });
   let worktree: SubagentWorktree | null = null;
   let childWorkspace = ctx.workspace;
-  if (isolation === "worktree") {
+  if (resumed) {
+    childWorkspace = resumed.meta.cwd || ctx.workspace;
+    if (isolation === "worktree") {
+      const storedWt = resumed.meta.subagent?.worktreePath;
+      if (!storedWt) {
+        return {
+          ok: false,
+          text: "",
+          turns: 0,
+          aborted: false,
+          subagentType,
+          capabilityMode,
+          description,
+          sessionId: resumed.meta.id,
+          promptTokens: 0,
+          completionTokens: 0,
+          editCount: 0,
+          isolation,
+          error:
+            "spawn_subagent error: resume isolation=worktree has no stored worktree path. " +
+            "read_file the artifact and finish in the parent.",
+        };
+      }
+      worktree = attachExistingWorktree({
+        worktreePath: storedWt,
+        gitRoot: ctx.workspace,
+      });
+      if (!worktree) {
+        return {
+          ok: false,
+          text: "",
+          turns: 0,
+          aborted: false,
+          subagentType,
+          capabilityMode,
+          description,
+          sessionId: resumed.meta.id,
+          promptTokens: 0,
+          completionTokens: 0,
+          editCount: 0,
+          isolation,
+          error:
+            `spawn_subagent error: kept worktree missing (${storedWt}). ` +
+            `read_file the artifact and finish in the parent.`,
+        };
+      }
+      childWorkspace = worktree.path;
+      log.dim(`Subagent resume worktree: ${worktree.path}`);
+    }
+  } else if (isolation === "worktree") {
     try {
       worktree = createSubagentWorktree({
         workspace: ctx.workspace,
@@ -496,14 +635,24 @@ export async function runSubagent(
     }
   }
 
-  // Ephemeral child session
-  const child = createSession({
+  const child = resumed ?? createSession({
     cwd: childWorkspace,
     provider: String(ctx.config.provider),
     model: ctx.config.model,
     ultrawork: false,
     title: `subagent: ${description}`.slice(0, 200),
   });
+  child.meta.subagent = {
+    parentId: ctx.parentSession.meta.id,
+    type: subagentType,
+    isolation,
+    ...(worktree?.path ? { worktreePath: worktree.path } : {}),
+  };
+  try {
+    saveSession(child);
+  } catch {
+    /* stamp is in-memory even if disk fails */
+  }
   // Copy the pre-worktree pin. A second pinChildCostCap here can refuse
   // after a sibling live-fold and leave child.meta uncapped (fresh config cap).
   if (typeof childCap.maxCostUsd === "number") {
@@ -513,7 +662,7 @@ export async function runSubagent(
   const childMaxTurns =
     req.maxTurns && req.maxTurns > 0
       ? Math.floor(req.maxTurns)
-      : defaultSubagentMaxTurns();
+      : defaultSubagentMaxTurns(subagentType);
 
   // Plan-type subagents run under plan permission mode
   const childConfig: ForgeConfig = {
@@ -550,8 +699,8 @@ export async function runSubagent(
     },
   });
   if (startHook.blocked || startHook.decision === "deny") {
-    await cleanupChildSession(child.meta.id);
-    if (worktree) await worktree.cleanup().catch(() => {});
+    if (!resumed) await cleanupChildSession(child.meta.id);
+    if (worktree && !resumed) await worktree.cleanup().catch(() => {});
     return {
       ok: false,
       text: "",
@@ -579,6 +728,7 @@ export async function runSubagent(
     isolation,
     worktreePath: worktree?.path,
     maxTurns: childMaxTurns,
+    resume: Boolean(resumed),
   });
 
   let result: LoopResult | undefined;
@@ -906,14 +1056,19 @@ function buildSubagentPrompt(opts: {
   isolation?: SubagentIsolation;
   worktreePath?: string;
   maxTurns?: number;
+  resume?: boolean;
 }): string {
   const lines = [
     `[Forge subagent — ${opts.subagentType} / ${opts.capabilityMode}` +
       (opts.isolation === "worktree" ? " / worktree" : "") +
+      (opts.resume ? " / resume" : "") +
       `]`,
     `Task: ${opts.description}`,
+    opts.resume
+      ? `Resume: continue this session. Prior tool results and notes are in the transcript — do not redo completed work.`
+      : "",
     opts.maxTurns
-      ? `Turn budget: ${opts.maxTurns} (reserve the last turn for the structured report).`
+      ? `Turn budget: ${opts.maxTurns} (reserve the last turn for the structured report; last turn is report-only).`
       : "",
     ``,
     opts.capabilityMode === "read-only"
@@ -999,6 +1154,16 @@ function formatSubagentHeader(opts: {
     opts.hitMaxTurns ? `- hit max turns` : "",
     opts.hitCostCap ? `- hit cost cap` : "",
     opts.error ? `- error: ${opts.error}` : "",
+    (() => {
+      const next = formatSubagentNext({
+        status: opts.status,
+        subagentType: opts.subagentType,
+        sessionId: opts.sessionId,
+        worktreePath: opts.worktreePath,
+        worktreeKept: opts.worktreeKept,
+      });
+      return next ? `- Next: ${next}` : "";
+    })(),
   ]
     .filter(Boolean)
     .join("\n");

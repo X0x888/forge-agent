@@ -251,6 +251,16 @@ export interface SessionMeta {
   maxCostUsd?: number;
   /** User message markers for rewind (indices into messages) */
   userTurnMarks?: number[];
+  /**
+   * Nested-agent stamp so the parent can resume this session
+   * (`spawn_subagent({ resume_session_id })`). Not a fork edge.
+   */
+  subagent?: {
+    parentId: string;
+    type: "general-purpose" | "explore" | "plan";
+    isolation: "none" | "worktree";
+    worktreePath?: string;
+  };
 }
 
 export interface TodoItem {

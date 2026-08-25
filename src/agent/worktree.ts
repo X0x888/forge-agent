@@ -225,6 +225,45 @@ export function createSubagentWorktree(opts: {
   };
 }
 
+/** Re-attach a kept worktree so resume can land it on completed. */
+export function attachExistingWorktree(opts: {
+  worktreePath: string;
+  gitRoot: string;
+}): SubagentWorktree | null {
+  const wtPath = path.resolve(opts.worktreePath);
+  const gitRoot = findGitRoot(opts.gitRoot) || path.resolve(opts.gitRoot);
+  if (!wtPath || !fs.existsSync(wtPath)) return null;
+  let cleaned = false;
+  const cleanup = async (): Promise<void> => {
+    if (cleaned) return;
+    cleaned = true;
+    try {
+      git(
+        ["worktree", "remove", "--force", wtPath],
+        gitRoot,
+        { timeoutMs: 60_000 },
+      );
+    } catch {
+      try {
+        git(["worktree", "prune"], gitRoot, { timeoutMs: 15_000 });
+      } catch {
+        /* */
+      }
+      try {
+        fs.rmSync(wtPath, { recursive: true, force: true });
+      } catch {
+        /* */
+      }
+    }
+  };
+  return {
+    path: wtPath,
+    gitRoot,
+    ref: "HEAD (detached)",
+    cleanup,
+  };
+}
+
 function sanitizeLabel(label: string): string {
   return (
     label

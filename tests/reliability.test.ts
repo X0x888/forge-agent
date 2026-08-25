@@ -1053,6 +1053,63 @@ describe("doom-loop", () => {
       toolFingerprint("web_fetch", { url: "https://example.com", allow_local: false }),
     );
   });
+
+  it("trips success repeats at 2 and does not doom MCP partial", async () => {
+    const {
+      DoomLoopTracker,
+      classifyToolDoomOutcome,
+      isTaskOutputPoll,
+    } = await import("../src/agent/doom-loop.js");
+    const t = new DoomLoopTracker({ threshold: 3 });
+    const q = { query: "*" };
+    assert.equal(t.observe("search_mcp", q), null);
+    t.noteResult("search_mcp", q, "MCP tools (2): context7, playwright", false);
+    const success = t.observe("search_mcp", q);
+    assert.ok(success);
+    assert.equal(success!.kind, "doom");
+    assert.match(success!.message, /already have this result/i);
+
+    const p = new DoomLoopTracker({ threshold: 3 });
+    const partialBody =
+      "MCP tools matching \"*\" (1):\n(Partial: some servers still connecting or failed — see server errors below.)";
+    assert.equal(classifyToolDoomOutcome(partialBody, false), "partial");
+    assert.equal(p.observe("search_mcp", q), null);
+    p.noteResult("search_mcp", q, partialBody, false);
+    const wait = p.observe("search_mcp", q);
+    assert.ok(wait);
+    assert.equal(wait!.kind, "wait");
+    assert.match(wait!.message, /partial|connecting/i);
+    assert.doesNotMatch(wait!.message, /STOP repeating/);
+
+    assert.equal(
+      isTaskOutputPoll("get_task_output", { task_id: "t1" }),
+      true,
+    );
+    assert.equal(
+      isTaskOutputPoll("get_task_output", { task_id: "t1", wait: 120000 }),
+      false,
+    );
+    assert.equal(
+      isTaskOutputPoll("get_task_output", { task_id: "t1", timeout_ms: 120000 }),
+      false,
+    );
+    const poll = new DoomLoopTracker({ threshold: 3 });
+    assert.equal(poll.observe("get_task_output", { task_id: "t1" }), null);
+    const pollHit = poll.observe("get_task_output", { task_id: "t1" });
+    assert.ok(pollHit);
+    assert.equal(pollHit!.kind, "poll");
+    assert.match(pollHit!.message, /wait=/);
+
+    const stub = new DoomLoopTracker({ threshold: 3 });
+    const stubBody =
+      "[Stale tool output cleared (bash, 9000 chars). Full output: /tmp/x.txt — use read_file on that path. Do not re-run bash to restore this result.]";
+    assert.equal(classifyToolDoomOutcome(stubBody, false), "stub");
+    stub.observe("bash", { command: "ls" });
+    stub.noteResult("bash", { command: "ls" }, stubBody, false);
+    const stubHit = stub.observe("bash", { command: "ls" });
+    assert.ok(stubHit);
+    assert.equal(stubHit!.kind, "stub");
+  });
 });
 
 describe("error-streak", () => {

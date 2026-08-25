@@ -39,7 +39,7 @@ What experts should expect from Forge in long, unattended, or CI runs.
 | **Empty name** | Tool calls with blank names after stream glitches return a clear error instead of crashing |
 | **Parallel read-only tools** | Consecutive read-only tools (read/grep/glob/list/web_*) batch via `Promise.all` after name normalize (`isReadOnlyToolName`) — aliases and doubled stream-bug names included |
 | **Unknown tool tips** | Up to 3 Did-you-mean candidates (`suggestNames`) so the model can self-correct typos without a human |
-| **Doom-loop** | Same tool + same args ×N injects a hard strategy-change nudge (OpenCode-inspired; default N=3, override `FORGE_DOOM_LOOP_THRESHOLD`); fingerprints ignore transport-only fields (`timeout_ms`, `background`, `run_in_background`, `stream`, `tail`, `allow_local`) |
+| **Doom-loop** | Same tool + same args. **Success** repeats trip at 2 (“you already have this”). Errors/timeout/empty trip at N (default 3, `FORGE_DOOM_LOOP_THRESHOLD`). MCP still-connecting (`partial`) and tool-clear stubs do not doom — wait / `/mcp status` / `read_file` the saved path. `get_task_output` without `wait=` is a poll hint. Fingerprints ignore transport-only fields (`timeout_ms`, `background`, `run_in_background`, `stream`, `tail`, `allow_local`) |
 | **Error-streak** | N consecutive tool errors (any args) injects a circuit-breaker nudge (Grok-inspired; default N=5, override `FORGE_ERROR_STREAK_THRESHOLD`); permission/hard denies do not count |
 | **Request-time prune** | Outbound-only. Default is **append-only** until the estimate hits 180k (under the 200k 2× price cliff), then **one clip** whose omit set is frozen on `session.meta.requestPruneSticky`. Later rounds re-apply those stubs instead of re-aging (xAI prefix can cache again). A second shelf reclips only if the last clip got under the cliff and the suffix grew back over. Compact/`/clear` drop the set. Every-round prune (`FORGE_REQUEST_PRUNE=1`) still rewrites the prefix. Stored `session.json` messages are never rewritten. |
 | **Unchanged read stub** | Full-file `read_file` (no offset/limit) with matching mtime/size and the last body still in the live tail returns `Unchanged since last read`. Windowed reads and post-write reads still return the body. `FORGE_UNCHANGED_READ_STUB=0` off |
@@ -163,7 +163,8 @@ What experts should expect from Forge in long, unattended, or CI runs.
 | `FORGE_BASH_BG_TIMEOUT_MS` | `1800000` | Default background task timeout (min 30s, max 6h) |
 | `FORGE_MAX_RUN_MS` | off | Headless `forge run` wall-clock cap (ms or `30m`; exit 124) |
 | `FORGE_PERMISSION_TIMEOUT_MS` | off | Auto-deny stalled interactive Allow? prompts (min 5s). Alias: `FORGE_PERMISSION_ASK_TIMEOUT_MS` |
-| `FORGE_DOOM_LOOP_THRESHOLD` | `3` | Identical tool+args streak before strategy nudge |
+| `FORGE_DOOM_LOOP_THRESHOLD` | `3` | Error/empty identical streak before strategy nudge (success repeats trip at 2) |
+| `FORGE_SUBAGENT_MAX_TURNS` | unset | Override all nested turn caps (else explore/plan 25, general-purpose 80) |
 | `FORGE_ERROR_STREAK_THRESHOLD` | `5` | Consecutive tool errors before circuit-breaker nudge |
 | `FORGE_ULW_MAX_CONTINUES` | `200` | Provider length/empty/filter fuse while ULW is armed; also Stop-block fuse for capped/LAST/non-ULW. Unlimited CONTINUE Stop-blocks do not trip it |
 | `FORGE_ULW_STUCK_THRESHOLD` | goal config / `5` | ULW stuck-wall blocks before release (`envPositiveInt`; invalid/0 ignored) |
@@ -225,7 +226,8 @@ npm run ci            # check + smoke (GitHub Actions entrypoint)
 
 ## Subagent worktree land (v0.9+)
 
-`spawn_subagent` general-purpose defaults to `isolation=worktree` when the workspace is a git repo (explore/plan stay in-place; pass `isolation=none` or `FORGE_SUBAGENT_ISOLATION=none` to write the parent). Completed-only auto-land journals parent pre-images so `/undo` can revert the landed files. `isolation=none` folds the child's `mutations.jsonl` onto the parent at the spawn turn before the child session is deleted. `incomplete_max_turns` / abort / error / stop-hook skip land and keep the worktree.
+`spawn_subagent` general-purpose defaults to `isolation=worktree` when the workspace is a git repo (explore/plan stay in-place; pass `isolation=none` or `FORGE_SUBAGENT_ISOLATION=none` to write the parent). Completed-only auto-land journals parent pre-images so `/undo` can revert the landed files. `isolation=none` folds the child's `mutations.jsonl` onto the parent at the spawn turn before the child session is deleted. `incomplete_max_turns` / abort / error / stop-hook skip land and keep the worktree. Resume with `spawn_subagent({ resume_session_id })` (fresh type budget: explore/plan 25, general-purpose 80). Explore skip is `skipped_explore_ledger`, not completed.
+
 Forge captures the worktree diff (tracked + untracked) and `git apply`s it into the parent
 workspace. On conflict the worktree is **kept** with a recovery summary in the tool result.
 

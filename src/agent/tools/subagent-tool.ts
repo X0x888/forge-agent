@@ -34,11 +34,15 @@ export async function toolSpawnSubagent(
     };
   }
 
+  const resumeSessionId = String(
+    args.resume_session_id ?? args.resume_from ?? args.resumeSessionId ?? "",
+  ).trim();
   const prompt = String(args.prompt ?? args.task ?? args.message ?? "").trim();
-  if (!prompt) {
+  if (!prompt && !resumeSessionId) {
     return {
       output:
-        "spawn_subagent error: prompt is required (the task for the subagent).",
+        "spawn_subagent error: prompt is required (the task for the subagent). " +
+        "To continue an incomplete child, pass resume_session_id.",
       isError: true,
     };
   }
@@ -91,6 +95,7 @@ export async function toolSpawnSubagent(
       capabilityMode,
       maxTurns,
       isolation,
+      resumeSessionId: resumeSessionId || undefined,
     });
     return {
       output: result.error && !result.text

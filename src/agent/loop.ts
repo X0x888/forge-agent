@@ -110,7 +110,19 @@ import {
   citeDeltaShouldPoke,
   citeDeltaShouldStop,
   noteCiteDelta,
+  parseExploreMap,
 } from "../session/explore-map.js";
+import {
+  CITE_DELTA_PICK_POKE,
+  formatCiteDeltaPickPoke,
+  formatReportOnlySkip,
+  formatSubagentLastTurnPoke,
+  formatSubagentWrapPoke,
+  isReportOnlyBlockedTool,
+  SUBAGENT_LAST_TURN_POKE,
+  SUBAGENT_WRAP_POKE,
+  subagentWrapTurn,
+} from "./subagent-policy.js";
 import {
   storeNeedsCheckpoint,
   DEFAULT_CHECKPOINT_KEEP_STEPS,
@@ -514,6 +526,25 @@ export function citedPathsFromToolCalls(msg: ChatMessage): string[] {
     }
   }
   return out;
+}
+
+function assistantHasExplorePick(messages: ChatMessage[]): boolean {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i];
+    if (m.role !== "assistant") continue;
+    if (parseExploreMap(String(m.content || ""))) return true;
+  }
+  return false;
+}
+
+function lastAssistantWasToolsOnly(messages: ChatMessage[]): boolean {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i];
+    if (m.role !== "assistant") continue;
+    const tools = m.tool_calls?.length ?? 0;
+    return tools > 0 && !parseExploreMap(String(m.content || ""));
+  }
+  return false;
 }
 
 export function filterToolsForUlwPhase(
@@ -1315,10 +1346,25 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
             typeof m.content === "string" &&
             m.content.startsWith(CITE_DELTA_POKE),
         );
-        if (citeDeltaShouldStop(citeStaleTurns, already)) {
+        const hasPick = assistantHasExplorePick(session.messages);
+        const lastWasToolsOnly = lastAssistantWasToolsOnly(session.messages);
+        const pickDemanded = session.messages.some(
+          (m) =>
+            m.role === "user" &&
+            typeof m.content === "string" &&
+            m.content.startsWith(CITE_DELTA_PICK_POKE),
+        );
+        if (
+          citeDeltaShouldStop(citeStaleTurns, already, {
+            hasPick,
+            lastWasToolsOnly,
+            pickDemanded,
+          })
+        ) {
           if (!(finalText || "").trim()) {
-            finalText =
-              "[Forge] Cite-delta stop — map stopped growing.";
+            finalText = hasPick
+              ? "[Forge] Cite-delta stop — map stopped growing."
+              : "[Forge] Cite-delta stop — no pick: after the map poke.";
           }
           break;
         }
@@ -1334,33 +1380,49 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
               `  <path>:<line>  <claim>\n` +
               `A file list without pick: is not a map. Do not start a new search.`,
           });
+        } else if (lastWasToolsOnly && !hasPick && !pickDemanded) {
+          session.messages.push({
+            role: "user",
+            content: formatCiteDeltaPickPoke(),
+          });
         }
       }
 
-      // Nested children never see their turn budget unless we say so. On the
-      // last allowed turn, demand the report instead of another search.
-      // Skip when cite-delta already asked for the map this turn.
-      if (
-        subagentDepth > 0 &&
-        Number.isFinite(maxTurns) &&
-        turns === maxTurns &&
-        !(citeSeen && citeDeltaShouldPoke(citeStaleTurns))
-      ) {
-        const already = session.messages.some(
-          (m) =>
-            m.role === "user" &&
-            typeof m.content === "string" &&
-            m.content.startsWith("[Forge system-reminder — last turn]"),
-        );
-        if (!already) {
-          session.messages.push({
-            role: "user",
-            content:
-              `[Forge system-reminder — last turn]\n` +
-              `Turn budget exhausted next iteration (${maxTurns}/${maxTurns}). ` +
-              `Emit the structured findings now (citations, ranked gaps, what you did not cover). ` +
-              `Do not start a new search unless one citation is missing.`,
-          });
+      // Nested children never see their turn budget unless we say so.
+      // ~80% wrap poke, then last-turn report-only. Skip last-turn when
+      // cite-delta already asked for the map this turn.
+      if (subagentDepth > 0 && Number.isFinite(maxTurns)) {
+        const wrapAt = subagentWrapTurn(maxTurns);
+        if (wrapAt && turns === wrapAt) {
+          const already = session.messages.some(
+            (m) =>
+              m.role === "user" &&
+              typeof m.content === "string" &&
+              m.content.startsWith(SUBAGENT_WRAP_POKE),
+          );
+          if (!already) {
+            session.messages.push({
+              role: "user",
+              content: formatSubagentWrapPoke(turns, maxTurns),
+            });
+          }
+        }
+        if (
+          turns === maxTurns &&
+          !(citeSeen && citeDeltaShouldPoke(citeStaleTurns))
+        ) {
+          const already = session.messages.some(
+            (m) =>
+              m.role === "user" &&
+              typeof m.content === "string" &&
+              m.content.startsWith(SUBAGENT_LAST_TURN_POKE),
+          );
+          if (!already) {
+            session.messages.push({
+              role: "user",
+              content: formatSubagentLastTurnPoke(maxTurns),
+            });
+          }
         }
       }
 
@@ -2912,6 +2974,19 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
         continue;
       }
 
+      const lastTurnReportOnly =
+        subagentDepth > 0 &&
+        Number.isFinite(maxTurns) &&
+        turns === maxTurns;
+      const citeReportOnly =
+        Boolean(citeSeen) &&
+        session.messages.some(
+          (m) =>
+            m.role === "user" &&
+            typeof m.content === "string" &&
+            m.content.startsWith(CITE_DELTA_PICK_POKE),
+        ) &&
+        !assistantHasExplorePick(session.messages);
       await runToolCalls({
         toolCalls,
         session,
@@ -2932,6 +3007,12 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
         maxSubagentDepth,
         provider,
         proofPoke,
+        reportOnly: lastTurnReportOnly || citeReportOnly,
+        reportOnlyKind: citeReportOnly
+          ? "cite-delta"
+          : lastTurnReportOnly
+            ? "last-turn"
+            : undefined,
       });
       try {
         if (advanceUlwPhaseOnReading(session.meta.id)) {
@@ -3527,6 +3608,8 @@ async function runToolCalls(opts: {
   maxSubagentDepth?: number;
   provider?: LLMProvider;
   proofPoke?: import("../harness/proof-poke.js").ProofPokeState;
+  reportOnly?: boolean;
+  reportOnlyKind?: "last-turn" | "cite-delta";
 }): Promise<void> {
   const {
     toolCalls,
@@ -3548,6 +3631,8 @@ async function runToolCalls(opts: {
     maxSubagentDepth = defaultMaxSubagentDepth(),
     provider,
     proofPoke,
+    reportOnly,
+    reportOnlyKind,
   } = opts;
 
   const isParallelSafe = (tc: ToolCall): boolean => {
@@ -3620,6 +3705,8 @@ async function runToolCalls(opts: {
             maxSubagentDepth,
             provider,
             proofPoke,
+            reportOnly,
+            reportOnlyKind,
           }),
         ),
       );
@@ -3659,6 +3746,8 @@ async function runToolCalls(opts: {
         maxSubagentDepth,
         provider,
         proofPoke,
+        reportOnly,
+        reportOnlyKind,
       });
       session.messages.push({
         role: "tool",
@@ -3698,6 +3787,8 @@ async function prepareToolResult(opts: {
   maxSubagentDepth?: number;
   provider?: LLMProvider;
   proofPoke?: import("../harness/proof-poke.js").ProofPokeState;
+  reportOnly?: boolean;
+  reportOnlyKind?: "last-turn" | "cite-delta";
 }): Promise<{ toolCallId: string; content: string }> {
   const {
     tc,
@@ -3719,6 +3810,8 @@ async function prepareToolResult(opts: {
     maxSubagentDepth = defaultMaxSubagentDepth(),
     provider,
     proofPoke,
+    reportOnly,
+    reportOnlyKind,
   } = opts;
   assertNotAborted(signal);
 
@@ -3754,17 +3847,6 @@ async function prepareToolResult(opts: {
     argsRepairNote = parsedArgs.error;
   }
 
-  // Doom-loop: identical tool+args streak → warn (still execute once more)
-  const doomHit = doomLoop?.observe(name, toolInput) ?? null;
-  if (doomHit) {
-    log.warn(doomHit.message.slice(0, 200));
-    events?.onStatus?.(`doom-loop: ${name} ×${doomHit.count}`);
-    // Hard-round signal: next turn thinks one notch harder
-    if (harnessStats) {
-      harnessStats.effortBoostTurns = Math.max(harnessStats.effortBoostTurns, 2);
-    }
-  }
-
   // Announce tool phase BEFORE permission prompts so the REPL can pause
   // the working spinner and not clobber interactive Allow? lines.
   const argSummary = summarizeToolArgs(toolInput, 48);
@@ -3772,8 +3854,64 @@ async function prepareToolResult(opts: {
   const toolDetail = argSummary ? `${shown} ${argSummary}` : shown;
   events?.onPhase?.("tool", toolDetail);
 
+  if (reportOnly && isReportOnlyBlockedTool(name)) {
+    const content = formatReportOnlySkip(
+      name,
+      reportOnlyKind === "cite-delta" ? "cite-delta" : "last-turn",
+    );
+    if (events?.onToolStart) {
+      events.onToolStart(name, toolInput);
+    } else {
+      console.error(formatToolStart(name, toolInput));
+    }
+    const bytes = Buffer.byteLength(content, "utf8");
+    if (events?.onToolEnd) {
+      events.onToolEnd(name, {
+        isError: false,
+        ms: 0,
+        bytes,
+        output: content,
+        args: toolInput,
+      });
+    } else {
+      console.error(
+        formatDefaultToolEndTranscript(name, {
+          isError: false,
+          ms: 0,
+          bytes,
+          output: content,
+          args: toolInput,
+        }),
+      );
+    }
+    events?.onToolSettled?.(name);
+    return { toolCallId: tc.id, content };
+  }
+
+  // Doom-loop: identical tool+args streak → warn (still execute once more)
+  const doomHit = doomLoop?.observe(name, toolInput) ?? null;
+  if (doomHit) {
+    log.warn(doomHit.message.slice(0, 200));
+    events?.onStatus?.(
+      doomHit.kind === "doom"
+        ? `doom-loop: ${name} ×${doomHit.count}`
+        : `${doomHit.kind}: ${name} ×${doomHit.count}`,
+    );
+    if (doomHit.kind === "doom" || doomHit.kind === "poll") {
+      if (harnessStats) {
+        harnessStats.effortBoostTurns = Math.max(
+          harnessStats.effortBoostTurns,
+          2,
+        );
+      }
+    }
+  }
+
   const settle = () => {
     events?.onToolSettled?.(name);
+  };
+  const noteDoom = (content: string, isError?: boolean) => {
+    doomLoop?.noteResult(name, toolInput, content, isError);
   };
 
   /** Permission/plan denials skip executeTool — still pair start/end so the REPL shows ✗. */
@@ -3811,6 +3949,7 @@ async function prepareToolResult(opts: {
     });
     const content = `HARD DENY [${hard.rule}]: ${hard.reason}`;
     emitDeniedTool(content);
+    noteDoom(content, true);
     return {
       toolCallId: tc.id,
       content,
@@ -3832,6 +3971,7 @@ async function prepareToolResult(opts: {
     });
     const content = `Tool denied by hook: ${pre.reason || "denied"}`;
     emitDeniedTool(content);
+    noteDoom(content, true);
     return {
       toolCallId: tc.id,
       content,
@@ -3857,6 +3997,7 @@ async function prepareToolResult(opts: {
     });
     const content = `Tool denied by permission gate: ${perm.reason}${perm.rule ? ` [${perm.rule}]` : ""}`;
     emitDeniedTool(content);
+    noteDoom(content, true);
     return {
       toolCallId: tc.id,
       content,
@@ -3899,6 +4040,7 @@ async function prepareToolResult(opts: {
         }
       }
     }
+    noteDoom(content, true);
     const bytes = Buffer.byteLength(content, "utf8");
     if (events?.onToolEnd) {
       events.onToolEnd(name, { isError: true, ms: 0, bytes, output: content, args: toolInput });
@@ -4172,20 +4314,23 @@ async function prepareToolResult(opts: {
   if (argsRepairNote && parsedArgs.ok) {
     content = `[note: tool arguments were auto-repaired (${argsRepairNote})]\n${content}`;
   }
+  noteDoom(output, result.isError);
   if (doomHit) {
     content = `${content}\n\n${doomHit.message}`;
-    try {
-      setSessionLastError(session, {
-        code: "doom_loop",
-        message: doomHit.message.split("\n")[0] || "doom-loop",
-        tips: [
-          "Change tool/args · write, or read_file the saved output path",
-          "Do not retry the same denied mutation or the same read window",
-        ],
-      });
-      saveSession(session);
-    } catch {
-      /* */
+    if (doomHit.kind === "doom") {
+      try {
+        setSessionLastError(session, {
+          code: "doom_loop",
+          message: doomHit.message.split("\n")[0] || "doom-loop",
+          tips: [
+            "Change tool/args · write, or read_file the saved output path",
+            "Do not retry the same denied mutation or the same read window",
+          ],
+        });
+        saveSession(session);
+      } catch {
+        /* */
+      }
     }
   }
 

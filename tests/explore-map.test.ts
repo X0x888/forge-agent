@@ -107,6 +107,25 @@ describe("cite-delta", () => {
     assert.equal(citeDeltaShouldPoke(2), true);
     assert.equal(citeDeltaShouldStop(2, false), false);
     assert.equal(citeDeltaShouldStop(2, true), true);
+    assert.equal(
+      citeDeltaShouldStop(2, true, { lastWasToolsOnly: true }),
+      false,
+    );
+    assert.equal(
+      citeDeltaShouldStop(2, true, { hasPick: true, lastWasToolsOnly: true }),
+      true,
+    );
+    assert.equal(
+      citeDeltaShouldStop(2, true, { hasPick: false, lastWasToolsOnly: false }),
+      true,
+    );
+    assert.equal(
+      citeDeltaShouldStop(2, true, {
+        lastWasToolsOnly: true,
+        pickDemanded: true,
+      }),
+      true,
+    );
     assert.match(CITE_DELTA_POKE, /Cite-delta/);
     assert.equal(noteCiteDelta(seen, ["a.ts", "b.ts"], 2).staleTurns, 0);
     // Pathless grep/glob (no path args) still counts as stale.

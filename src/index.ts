@@ -229,6 +229,8 @@ export {
   resolveCapabilityMode,
   resolveChildPermissionMode,
   defaultMaxSubagentDepth,
+  defaultSubagentMaxTurns,
+  loadResumableSubagent,
   getActiveSubagentCount,
   listActiveSubagents,
   synthesizeSubagentFindings,
@@ -238,6 +240,11 @@ export {
   writeSubagentArtifact,
   formatSubagentResult,
 } from "./agent/subagent.js";
+export {
+  formatSubagentNext,
+  subagentWrapTurn,
+  isReportOnlyBlockedTool,
+} from "./agent/subagent-policy.js";
 export type {
   ActiveSubagentInfo,
   SubagentType,
@@ -1001,6 +1008,8 @@ export {
 export {
   DoomLoopTracker,
   toolFingerprint,
+  classifyToolDoomOutcome,
+  isTaskOutputPoll,
 } from "./agent/doom-loop.js";
 export {
   extractSavedOutputPath,

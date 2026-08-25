@@ -220,10 +220,23 @@ export function citeDeltaShouldPoke(staleTurns: number): boolean {
   return staleTurns >= 2;
 }
 
-/** True after the poke was already injected and cites still are not growing. */
+/**
+ * Stop when the map is done (`pick:`) or the poke was ignored.
+ * One tools-only turn after the first poke gets a report-only pick demand.
+ * A second tools-only turn (`pickDemanded`) is ignore — stop.
+ */
 export function citeDeltaShouldStop(
   staleTurns: number,
   alreadyPoked: boolean,
+  opts?: {
+    hasPick?: boolean;
+    lastWasToolsOnly?: boolean;
+    pickDemanded?: boolean;
+  },
 ): boolean {
-  return alreadyPoked && staleTurns >= 2;
+  if (!alreadyPoked || staleTurns < 2) return false;
+  if (opts?.hasPick) return true;
+  if (opts?.pickDemanded) return true;
+  if (opts?.lastWasToolsOnly) return false;
+  return true;
 }

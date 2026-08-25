@@ -160,7 +160,7 @@ Beyond Stop/goal/ULW, the agent loop includes expert-grade recovery so long runs
 
 | Mechanism | Behavior |
 |---|---|
-| **Doom-loop** | Identical tool+args ×N → strategy-change nudge (`FORGE_DOOM_LOOP_THRESHOLD`, default 3) |
+| **Doom-loop** | Identical tool+args: success repeats trip at 2; errors at N (`FORGE_DOOM_LOOP_THRESHOLD`, default 3). MCP `partial` / tool-clear stubs / `get_task_output` without `wait=` get a typed Next, not generic STOP. |
 | **Error-streak** | N consecutive tool errors → circuit-breaker nudge (`FORGE_ERROR_STREAK_THRESHOLD`, default 5) |
 | **Request-time prune** | Default **append-only** until outbound estimate ≥ 180k (xAI prefix cache). First clip freezes a sticky omit set on `session.meta.requestPruneSticky`; later rounds apply that set (prefix stays byte-identical). Re-clip on compact/`/clear` or if the already-pruned wire is still ≥180k. `FORGE_REQUEST_PRUNE=1` restores every-round slim. Session.json messages are not rewritten. Mid-run ULW admits are fingerprint-only (`emit: false`); Stop re-anchors still append. |
 | **Adaptive effort** | Hard rounds (doom-loop / error-streak / missing wave proof) bump reasoning effort one notch for a turn (`FORGE_ADAPTIVE_EFFORT`) |

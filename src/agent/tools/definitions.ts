@@ -536,8 +536,8 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       name: "spawn_subagent",
       description:
         "Delegate a bounded subtask to a nested agent and receive its summary plus an artifact_path. " +
-        "status=incomplete_max_turns means the child hit its turn cap — read_file the artifact; do not re-spawn the same explore. " +
-        "Types: general-purpose | explore (read-only) | plan (read-only design). " +
+        "status=incomplete_max_turns: read_file the artifact; resume_session_id continues that child (do not start a new implementer; do not re-explore unless pick: is missing). " +
+        "skipped_explore_ledger is not a look. Types: general-purpose | explore (read-only) | plan (read-only design). " +
         "isolation=worktree (default for general-purpose in a git repo) lands the diff into the parent on completed only; incomplete_max_turns / abort / error keep the worktree (no land). explore/plan stay in-place. isolation=none writes the parent tree and folds child mutations onto the parent journal so /undo restores after cleanup deletes the child. Kept on conflict. " +
         "Do not nest when a single tool call suffices.",
       parameters: {
@@ -545,7 +545,8 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
         properties: {
           prompt: {
             type: "string",
-            description: "Full task instructions for the subagent (required).",
+            description:
+              "Full task instructions (required unless resume_session_id).",
           },
           description: {
             type: "string",
@@ -563,7 +564,13 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
           },
           max_turns: {
             type: "number",
-            description: "Cap nested agent turns (default 40, max 200)",
+            description:
+              "Cap nested agent turns (default 80 general-purpose / 25 explore|plan, max 200)",
+          },
+          resume_session_id: {
+            type: "string",
+            description:
+              "Continue a kept incomplete child (session_id from the handoff). Fresh turn budget.",
           },
           isolation: {
             type: "string",
@@ -571,7 +578,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
               "none (same workspace) | worktree (detached git worktree). Default: worktree for general-purpose when git exists; none for explore/plan.",
           },
         },
-        required: ["prompt"],
+        required: [],
       },
     },
   },

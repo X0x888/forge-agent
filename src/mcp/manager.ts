@@ -118,10 +118,15 @@ export class McpManager {
 
   async ensureRegistry(): Promise<void> {
     this.start();
-    if (this.registry.length) return;
-    // Connect only servers that haven't been tried yet — parallel, fail-open
+    const pending = [...this.clients.values()].filter((c) => {
+      const st = c.getStatus().state;
+      return st === "idle" || st === "connecting";
+    });
+    if (pending.length === 0 && this.registry.length) return;
+    // Connect idle/connecting servers — parallel, fail-open. Do not return
+    // early on a partial registry (playwright ready, context7 still idle).
     await Promise.all(
-      [...this.clients.values()].map(async (c) => {
+      pending.map(async (c) => {
         try {
           await c.listTools();
         } catch {
