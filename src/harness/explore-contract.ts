@@ -292,7 +292,9 @@ export function isOnExploreContract(
 export function formatHoldContextAppendix(sessionId: string): string {
   const lines: string[] = [];
   const reading = loadWave1Reading(sessionId);
-  if (reading) lines.push(`Wave 1 reading: ${reading}`);
+  if (reading) {
+    lines.push(`Original job (not the live unit): ${reading}`);
+  }
   const picks = loadExploreMapPicks(sessionId);
   if (picks.length) {
     lines.push("Explore-map picks still open (not a new noun):");
@@ -302,7 +304,7 @@ export function formatHoldContextAppendix(sessionId: string): string {
   }
   if (lines.length) {
     lines.push(
-      "Ship a pick, retire it with evidence, or /cycle 0. Stuck-wall will not release.",
+      "Ship a pick, retire it with evidence, or /cycle 0. Do not revive Wave 1 as the current ship. Stuck-wall will not release.",
     );
   }
   return lines.join("\n");

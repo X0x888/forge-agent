@@ -35,6 +35,22 @@ export function thoughtOnlyStopMax(): number {
 export const THOUGHT_ONLY_ACTION_POKE =
   "[Forge] Previous model turn was thought-only (no text, no tools). That is not a ship. Your next output MUST be a tool call. Do not stop. Do not write the wave in thought.";
 
+/** Maze 494926dd: thought-only pokes reprinted Wave 1 and the model argued with a ghost. */
+export const THOUGHT_ONLY_OBSERVE_POKE =
+  "Do not reprint Wave 1. Observe the current tree (`git diff --stat`) or the open named-ship ledger, then one tool call that ships or re-grounds. Hidden thought is not a ship.";
+
+export function formatThoughtOnlyRecoverPoke(consecutive: number): string {
+  const n = Number.isFinite(consecutive) ? consecutive : 1;
+  if (n >= 3) {
+    return [
+      THOUGHT_ONLY_ACTION_POKE,
+      THOUGHT_ONLY_OBSERVE_POKE,
+      "Cheap next call: bash `git diff --stat`. Then ship, or spawn one explore only if a hold required it.",
+    ].join("\n");
+  }
+  return `${THOUGHT_ONLY_ACTION_POKE}\n${THOUGHT_ONLY_OBSERVE_POKE}`;
+}
+
 export function isReasonedEmptyStop(opts: {
   text?: string | null;
   toolCallCount?: number;

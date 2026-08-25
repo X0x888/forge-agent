@@ -410,6 +410,8 @@ export {
   formatUlwFuseLeftovers,
   noteExploreChildCompleted,
   notePlayLoopRan,
+  exploreSpawnSkipReason,
+  canLeaveUlwPlan,
   isPlayLoopCloser,
   providerFuseTripsContinueCap,
   stopBlockTripsContinueCap,
@@ -458,7 +460,17 @@ export {
   introducesRawReadFileSync,
   applyRawPinSideEffects,
   RAW_PIN_WARNING,
+  PIN_ONLY_WARNING,
 } from "./util/pin-budget.js";
+export {
+  decideWaveJobCredit,
+  isPinOnlyTestSource,
+  isBehavioralTestSource,
+  isChromeOnlyPaths,
+  PIN_ONLY_ADMIT,
+  JOB_FLAT_ADMIT,
+  REORIENT_EVIDENCE_ADMIT,
+} from "./harness/job-delta.js";
 export {
   collectRecentMillToolIds,
   applyMillHoldPrune,

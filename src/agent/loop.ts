@@ -86,10 +86,9 @@ import {
   isReasonedEmptyStop,
   REASONING_LOOP_FINISH,
   REASONING_WALL_FINISH,
-  THOUGHT_ONLY_ACTION_POKE,
+  formatThoughtOnlyRecoverPoke,
   thoughtOnlyStopMax,
 } from "./reasoned-stop.js";
-import { formatHoldContextAppendix } from "../harness/explore-contract.js";
 import { applyMillHoldPrune } from "../session/hold-context.js";
 import {
   clearStaleToolResults,
@@ -2844,8 +2843,10 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
         }
         if (reasonedEmpty) {
           forceToolNext = true;
-          const hold = formatHoldContextAppendix(session.meta.id);
-          inject = [THOUGHT_ONLY_ACTION_POKE, hold, inject]
+          inject = [
+            formatThoughtOnlyRecoverPoke(thoughtOnlyStops),
+            inject,
+          ]
             .filter((s) => (s || "").trim())
             .join("\n");
         }

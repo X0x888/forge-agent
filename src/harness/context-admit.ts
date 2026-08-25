@@ -315,9 +315,9 @@ export function renderHarnessAdmission(s: HarnessSnapshot): string {
       }`,
       s.maxWaves != null
         ? s.cycleZeroStopAt != null
-          ? `User /cycle 0 — finish this wave + one more, LAST at wave=${s.maxWaves}. **Cycle complete.** is refused until then.`
-          : `max_waves=${s.maxWaves} is a budget — spend every wave. **Cycle complete.** is refused until the cap (or /cycle 0). Cap auto-flips LAST.`
-        : `max_waves=off (unlimited). CONTINUE until /cycle 0 (finish this wave + one more, then LAST). **Cycle complete.** is refused while cycle=1.`,
+          ? `/cycle 0 → LAST at wave=${s.maxWaves}.`
+          : `max_waves=${s.maxWaves} budget. **Cycle complete.** refused until cap.`
+        : `max_waves=off. CONTINUE until /cycle 0.`,
       s.sameSurfaceHold || s.contractHold || s.exploreRequired
         ? [
             s.exploreRequired

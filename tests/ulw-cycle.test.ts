@@ -1459,7 +1459,7 @@ describe("ulw wave ledger + quality bar", () => {
     assert.equal(st.waves![1].proof, false);
     assert.equal(st.thinStreak, 1);
     // Re-anchor anchors the bar to the best proven wave and demands proof
-    assert.match(d2.reanchor || "", /best wave so far w1/);
+    assert.match(d2.reanchor || "", /best wave w1/);
     assert.match(d2.reanchor || "", /no successful verification|ran no verification/);
   });
 

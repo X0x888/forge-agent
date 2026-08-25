@@ -10,6 +10,7 @@ import {
   formatUlwStatus,
   loadUlwCycle,
   maybeAdoptNamedShips,
+  noteExploreChildCompleted,
   maybeStampUlwWave,
   resolveUlwPhase,
   sameSurfaceHolding,
@@ -292,6 +293,7 @@ describe("ULW same-surface hold", () => {
       );
       assert.equal(refused, false);
       assert.equal(sameSurfaceHolding(loadUlwCycle(sid)!), true);
+      noteExploreChildCompleted(sid);
       const after = loadUlwCycle(sid)!;
       const adopted = maybeAdoptNamedShips(
         after,

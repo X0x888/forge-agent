@@ -70,6 +70,7 @@ import {
   isTestsWithoutBodyShip,
   TESTS_WITHOUT_BODY_ADMIT,
 } from "./tests-without-body.js";
+import { decideWaveJobCredit } from "./job-delta.js";
 import {
   OFF_CONTRACT_HOLD,
   formatHoldContextAppendix,
@@ -219,6 +220,20 @@ export interface UlwCycleState {
   playLoopPending?: boolean;
   /** New raw readFileSync test this wave — consume at next stamp. */
   rawPinProofTaint?: boolean;
+  /**
+   * Consecutive chrome-only (css/md/test) declared ships. The first may
+   * stamp; the next does not increment w (job-delta).
+   */
+  chromePathStreak?: number;
+  /**
+   * After named-ship exhaust / same-surface hold, leaving PLAN needs a
+   * real look (explore child or play-loop), not a Mad-Lib Reading.
+   */
+  reorientNeedsEvidence?: boolean;
+  /** Set by a completed explore map or play-loop since the last reorient. */
+  reorientEvidence?: boolean;
+  /** Wave counter when the last explore child completed (spawn cooldown). */
+  lastExploreWave?: number;
   /** Loop should merge recent mill tool ids into sticky omit. */
   millHoldPrunePending?: boolean;
   /** Consecutive waves with negligible edits AND no verification */
@@ -1020,6 +1035,7 @@ export function completeUlwPlan(
   if (!s?.enabled) return false;
   const orient = resolveUlwPhase(s) === "orient" || Boolean(s.judgmentRequired);
   if (!orient) return false;
+  if (!opts?.force && !canLeaveUlwPlan(s)) return false;
   if (!opts?.force && !hasUlwPlan(sessionId, opts?.closer)) return false;
   if (opts?.force && !hasUlwPlan(sessionId, opts?.closer)) {
     try {
@@ -1035,6 +1051,7 @@ export function completeUlwPlan(
   s.phase = "ship";
   s.judgmentRequired = false;
   s.reorientRequested = false;
+  s.reorientNeedsEvidence = false;
   maybeAdoptNamedShips(s, opts?.closer);
   saveUlwCycle(s);
   return true;
@@ -1057,6 +1074,14 @@ export function markUlwReorient(s: UlwCycleState): void {
   s.reorientRequested = true;
   s.phase = "orient";
   s.judgmentRequired = true;
+  s.reorientNeedsEvidence = true;
+  s.reorientEvidence = false;
+}
+
+/** Wave-1 PLAN is a Reading. Later re-PLAN needs a look, not a sentence. */
+export function canLeaveUlwPlan(s: UlwCycleState): boolean {
+  if (!s.reorientNeedsEvidence) return true;
+  return Boolean(s.reorientEvidence);
 }
 
 export function closerRequestsReorient(text: string | undefined): boolean {
@@ -1203,15 +1228,13 @@ export function noteExploreChildCompleted(sessionId: string): boolean {
   if (!sessionId) return false;
   const s = loadUlwCycle(sessionId);
   if (!s?.enabled) return false;
-  let changed = false;
-  if (s.exploreRequired) {
-    s.exploreRequired = false;
-    s.exploreRequiredAt = undefined;
-    changed = true;
-  }
-  if (changed) saveUlwCycle(s);
+  s.exploreRequired = false;
+  s.exploreRequiredAt = undefined;
+  s.reorientEvidence = true;
+  s.lastExploreWave = s.wave;
+  saveUlwCycle(s);
   seedNamedShipsFromExploreMaps(sessionId);
-  return changed;
+  return true;
 }
 
 function claimsForPick(sessionId: string, pick: string): string[] {
@@ -1294,10 +1317,63 @@ export function notePlayLoopRan(sessionId: string): void {
     const s = loadUlwCycle(sessionId);
     if (!s?.enabled) return;
     s.playLoopPending = true;
+    s.reorientEvidence = true;
     saveUlwCycle(s);
   } catch {
     /* sidecar optional */
   }
+}
+
+const EXPLORE_SPAWN_COOLDOWN_WAVES = 3;
+
+/**
+ * Spend the hole ledger before another "find next hole" explore.
+ * Holds (`exploreRequired`) always allow a look.
+ */
+export function exploreSpawnSkipReason(sessionId: string): string | undefined {
+  if (!sessionId) return undefined;
+  let s: UlwCycleState | null = null;
+  try {
+    s = loadUlwCycle(sessionId);
+  } catch {
+    return undefined;
+  }
+  if (!s?.enabled) return undefined;
+  if (s.exploreRequired || s.reorientNeedsEvidence) return undefined;
+  if ((s.wave ?? 0) < 1) return undefined;
+  const openMap = (s.namedShips ?? []).filter(
+    (n) => n.status === "open" && n.source === "explore-map",
+  );
+  if (openMap.length > 0) {
+    return [
+      `Open explore-map ships remain (${openMap.length}). Ship or retire those before another explore.`,
+      ...openMap.slice(0, 4).map((n) => `- ${n.text.slice(0, 200)}`),
+    ].join("\n");
+  }
+  if (
+    s.lastExploreWave != null &&
+    s.wave - s.lastExploreWave < EXPLORE_SPAWN_COOLDOWN_WAVES
+  ) {
+    return `Explore already ran at wave ${s.lastExploreWave}. Ship the job, or wait until a hold requires a new look.`;
+  }
+  return undefined;
+}
+
+function jobCreditForStamp(
+  s: UlwCycleState,
+  opts: { paths: string[]; cwd?: string; closer: string },
+): ReturnType<typeof decideWaveJobCredit> {
+  return decideWaveJobCredit({
+    paths: opts.paths,
+    cwd: opts.cwd,
+    pinTaint: Boolean(s.rawPinProofTaint),
+    playLoop: Boolean(s.playLoopPending) || isPlayLoopCloser(opts.closer),
+    chromeStreak: s.chromePathStreak ?? 0,
+  });
+}
+
+function noteChromeStreak(s: UlwCycleState, chrome: boolean): void {
+  s.chromePathStreak = chrome ? (s.chromePathStreak ?? 0) + 1 : 0;
 }
 
 export function isPlayLoopCloser(text: string): boolean {
@@ -1405,10 +1481,8 @@ function applySameSurfaceNote(
 
 const SAME_SURFACE_HOLD_ADMIT = [
   "[Forge ULW cycle driver] Stop blocked — last ships are the same surface (or the same adjacent-share / factory class).",
-  "PLAN is re-armed (research, no product edits). Write a new Reading: the ONE next ship on a different class (name an explore-map pick, or a play-path / architecture / honest red-suite ship). Or /cycle 0.",
-  "A new noun is not a new surface. Do not recap the last ship as 'Last ship was' / 'what's still hard' — that is the mill template, not a new class.",
-  "Different class: play-path bug, architecture, honest red suite, play-loop — or an unretired explore-map pick.",
-  "Do not attest **Cycle complete.** Stuck-wall will not release this hold.",
+  "PLAN is re-armed. Spawn one explore (or play-loop), then the ONE next ship on a different class. A new sentence is not a ticket.",
+  "Stuck-wall will not release this hold. Or /cycle 0.",
 ].join("\n");
 
 /** Capped ULW: advise, do not hold. Maze max20 spent 18 speak-once siblings. */
@@ -1603,6 +1677,7 @@ export function maybeAdoptNamedShips(
 ): boolean {
   // LAST wrap is frozen — a new Reading must not grow the plan.
   if (s.cycle !== 1 || s.wrapKind) return false;
+  if (s.reorientNeedsEvidence && !s.reorientEvidence) return false;
   const blob = [text, readingFromMemory(s.sessionId)]
     .filter((x): x is string => Boolean(x && x.trim()))
     .join("\n");
@@ -1768,17 +1843,14 @@ export function namedShipsExhausted(s: UlwCycleState): boolean {
 
 const NAMED_SHIP_EXHAUSTED_ADMIT = [
   "[Forge ULW cycle driver] Stop blocked — named ships from the reading are done.",
-  "PLAN is re-armed (research, no product edits). Write a new Reading: the ONE next ship on a different class (name an explore-map pick, or a play-path / architecture / honest red-suite ship). Or /cycle 0.",
-  "A new noun is not a new surface. Do not recap the last ship as 'Last ship was' / 'what's still hard' — that is the mill template.",
-  "A red test suite or open defect is a different surface — not leftover chrome.",
-  "Unlimited ULW continues only after a new reading. Stuck-wall will not release this hold.",
+  "PLAN is re-armed (research, no product edits). Spawn one explore (or play-loop), then write a new Reading: the ONE next ship on a different class.",
+  "A new sentence is not a ticket. A red test suite or open defect is a different class. Stuck-wall will not release this hold. Or /cycle 0.",
 ].join("\n");
 
 const NAMED_SHIP_EXHAUSTED_STRONG = [
   "[Forge ULW cycle driver] Stop blocked — named ships from the reading are done.",
-  "PLAN is re-armed (research, no product edits). Write a new Reading: the ONE next ship on a different class (name an explore-map pick, or a play-path / architecture / honest red-suite ship). Or /cycle 0.",
-  "Do not Mad-Lib another beside-you / far-stays sibling. A red test suite or play-path bug is a different class.",
-  "Do not attest **Cycle complete.** — /cycle 0 finishes this wave + one more, then LAST.",
+  "PLAN is re-armed. Spawn one explore (or play-loop), then the ONE next ship on a different class.",
+  "A new sentence is not a ticket. Do not Mad-Lib a sibling. A red test suite or open defect is a different class. Or /cycle 0.",
   "Stuck-wall will not release this hold.",
 ].join("\n");
 
@@ -2046,9 +2118,15 @@ export function maybeStampUlwWave(opts: {
     return { stamped: false, updated: progressed, wave: s.wave };
   }
 
-  if (s.judgmentRequired && hasUlwPlan(opts.sessionId, opts.lastAssistantMessage)) {
+  if (
+    s.judgmentRequired &&
+    hasUlwPlan(opts.sessionId, opts.lastAssistantMessage) &&
+    canLeaveUlwPlan(s)
+  ) {
     s.judgmentRequired = false;
     s.phase = "ship";
+    s.reorientRequested = false;
+    s.reorientNeedsEvidence = false;
   }
   // Adopt even when already in ship — memory_write lands after the
   // assistant turn, so orient may have already flipped before the list exists.
@@ -2120,6 +2198,23 @@ export function maybeStampUlwWave(opts: {
           admit: TESTS_WITHOUT_BODY_ADMIT,
         };
       }
+      const credit = jobCreditForStamp(s, {
+        paths: changedPaths,
+        cwd: opts.cwd,
+        closer,
+      });
+      if (!credit.ok) {
+        updateOpenWaveRecord(s, facts);
+        s.lastWaveSig = sig;
+        saveUlwCycle(s);
+        return {
+          stamped: false,
+          updated: true,
+          wave: s.wave,
+          admit: credit.admit,
+        };
+      }
+      noteChromeStreak(s, credit.chrome);
       applyDiffFingerprint(s, fp);
       appendWaveRecord(s, {
         sessionId: opts.sessionId,
@@ -2389,6 +2484,22 @@ export function loadUlwCycle(sessionId: string): UlwCycleState | null {
   if (typeof raw.rawPinProofTaint !== "boolean") raw.rawPinProofTaint = false;
   if (typeof raw.millHoldPrunePending !== "boolean") {
     raw.millHoldPrunePending = false;
+  }
+  if (
+    typeof raw.chromePathStreak !== "number" ||
+    !Number.isFinite(raw.chromePathStreak)
+  ) {
+    raw.chromePathStreak = 0;
+  }
+  if (typeof raw.reorientNeedsEvidence !== "boolean") {
+    raw.reorientNeedsEvidence = false;
+  }
+  if (typeof raw.reorientEvidence !== "boolean") raw.reorientEvidence = false;
+  if (
+    typeof raw.lastExploreWave !== "number" ||
+    !Number.isFinite(raw.lastExploreWave)
+  ) {
+    raw.lastExploreWave = undefined;
   }
   return raw;
 }
@@ -2714,6 +2825,9 @@ export function armUlwCycle(
     exploreRequired: false,
     playLoopPending: false,
     rawPinProofTaint: false,
+    chromePathStreak: 0,
+    reorientNeedsEvidence: false,
+    reorientEvidence: false,
     millHoldPrunePending: false,
     proofDemands: 0,
     evidenceNudges: 0,
@@ -3581,9 +3695,15 @@ export function evaluateUlwAtStop(opts: {
       ].join("\n");
       return { block: true, reason: reanchor, reanchor };
     }
-    if (s.judgmentRequired && hasUlwPlan(opts.sessionId, msg)) {
+    if (
+      s.judgmentRequired &&
+      hasUlwPlan(opts.sessionId, msg) &&
+      canLeaveUlwPlan(s)
+    ) {
       s.judgmentRequired = false;
       s.phase = "ship";
+      s.reorientRequested = false;
+      s.reorientNeedsEvidence = false;
     }
     const adoptedNamed = maybeAdoptNamedShips(s, msg);
 
@@ -3678,6 +3798,36 @@ export function evaluateUlwAtStop(opts: {
         waveClosed: false,
       };
     }
+    const stopCredit = jobCreditForStamp(s, {
+      paths: stampPaths,
+      cwd: opts.cwd,
+      closer,
+    });
+    if (!stopCredit.ok && isShipCloseText(closer) && !alreadyStamped) {
+      updateOpenWaveRecord(s, {
+        editDelta,
+        proof,
+        todoProgress,
+        netDiff,
+        summary: summarizeWave(closer, opts.sessionId),
+      });
+      s.lastWaveSig = sig;
+      saveUlwCycle(s);
+      const reanchor = [
+        stopCredit.admit,
+        buildCycleReanchor(s, {
+          openTodos: opts.openTodoCount,
+          mode: "continue",
+          preferredCheckCommands: opts.preferredCheckCommands,
+        }),
+      ].join("\n");
+      return {
+        block: true,
+        reason: reanchor,
+        reanchor,
+        waveClosed: false,
+      };
+    }
     if (
       s.cycle === 1 &&
       !s.wrapKind &&
@@ -3750,8 +3900,11 @@ export function evaluateUlwAtStop(opts: {
         editDelta >= 1 &&
         !isLeftoverChromeShip(closer) &&
         !millSibling &&
-        !testsWithoutBody;
+        !testsWithoutBody &&
+        stopCredit.ok &&
+        !stopCredit.chrome;
       if (shipAfterExhaust) {
+        noteChromeStreak(s, false);
         appendWaveRecord(s, {
           sessionId: opts.sessionId,
           editDelta,
@@ -3841,6 +3994,9 @@ export function evaluateUlwAtStop(opts: {
       };
     }
     if (!alreadyStamped) {
+      if (isShipCloseText(closer) && stopCredit.ok) {
+        noteChromeStreak(s, stopCredit.chrome);
+      }
       appendWaveRecord(s, {
         sessionId: opts.sessionId,
         editDelta,
@@ -4001,18 +4157,13 @@ function buildCycleReanchor(
         : remainingWaveBudgetLine(s),
       `Mandate: ${displayUlwMandate(s.mandate)}`,
       ...decisionsBlock,
-      `Wave ${s.wave} begins${cap != null ? ` (max ${cap})` : ""}. Protocol: research → plan → implement → verify → review (full cycle in system prompt).`,
+      `Wave ${s.wave} begins${cap != null ? ` (max ${cap})` : ""}. Protocol is in the system prompt — one ship that moves the job, then prove it.`,
       lastEntry
         ? `Last wave closed: +${lastEntry.editDelta} edits, proof ${lastEntry.proof ? "✓" : "✗"}${lastEntry.todoProgress != null ? `, todosΔ=${lastEntry.todoProgress}` : ""}.`
         : null,
-      ``,
-      `Wave rules:`,
-      `1. SMOKE-CHECK first — run the cheapest existing check (tests/typecheck/build) to catch breakage from prior waves before adding scope.`,
-      `2. ONE objective — prefer the next open todo (backlog) or highest-impact bounded item against the mandate/decisions; search before building.`,
-      `3. Plan in 2 lines — objective + the exact command that proves it — then ship it and run that proof.`,
       best
-        ? `Bar: best wave so far w${best.wave} (+${best.editDelta} edits${best.proof ? ", proof ✓" : ""}). Match or beat it — compound on shipped work; no filler waves (renames, comment-only churn, edit/revert loops).`
-        : `Bar: these first waves set the standard — substantive change + real proof, every wave.`,
+        ? `Bar: best wave w${best.wave} (+${best.editDelta}e${best.proof ? ", proof ✓" : ""}). Pin-only tests do not stamp w.`
+        : `Bar: substance + a test that calls production (or a play-loop). Pin-only tests do not stamp w.`,
       opts.proofMissing
         ? (() => {
             const preferred = (opts.preferredCheckCommands || [])

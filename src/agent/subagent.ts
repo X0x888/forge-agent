@@ -61,6 +61,7 @@ import {
   rememberExploreMap,
 } from "../session/explore-map.js";
 import {
+  exploreSpawnSkipReason,
   noteExploreChildCompleted,
   seedNamedShipsFromExploreMaps,
 } from "../harness/ulw-cycle.js";
@@ -408,6 +409,26 @@ export async function runSubagent(
       editCount: 0,
       error: "spawn_subagent error: prompt is required.",
     };
+  }
+
+  if (subagentType === "explore") {
+    const skip = exploreSpawnSkipReason(ctx.parentSession.meta.id);
+    if (skip) {
+      return {
+        ok: true,
+        text: `spawn_subagent skipped (explore ledger):\n${skip}`,
+        turns: 0,
+        aborted: false,
+        subagentType,
+        capabilityMode,
+        description,
+        sessionId: "",
+        promptTokens: 0,
+        completionTokens: 0,
+        editCount: 0,
+        status: "completed",
+      };
+    }
   }
 
   const childCap: { maxCostUsd?: number } = {};

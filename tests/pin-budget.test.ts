@@ -73,10 +73,10 @@ describe("pin-budget law", () => {
         lastAssistantMessage: "Wave shipped: ACT no longer swings at a downed partner.",
         verificationPassed: true,
       });
-      assert.equal(hit.stamped, true);
-      const wave = loadUlwCycle(sid)!.waves?.at(-1);
-      assert.equal(wave?.proof, false);
-      assert.equal(loadUlwCycle(sid)!.rawPinProofTaint, false);
+      assert.equal(hit.stamped, false);
+      assert.match(hit.admit || "", /pin-only|Pin-budget|cannot stamp/i);
+      assert.equal(loadUlwCycle(sid)!.wave, 0);
+      assert.equal(loadUlwCycle(sid)!.rawPinProofTaint, true);
     } finally {
       if (prev === undefined) delete process.env.FORGE_HOME;
       else process.env.FORGE_HOME = prev;

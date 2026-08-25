@@ -3,6 +3,8 @@ import assert from "node:assert/strict";
 import {
   isReasonedEmptyStop,
   REASONING_WALL_FINISH,
+  formatThoughtOnlyRecoverPoke,
+  THOUGHT_ONLY_OBSERVE_POKE,
 } from "../src/agent/reasoned-stop.js";
 
 describe("isReasonedEmptyStop", () => {
@@ -80,5 +82,15 @@ describe("isReasonedEmptyStop", () => {
       }),
       false,
     );
+  });
+
+  it("thought-only recover poke never reprints Wave 1", () => {
+    const once = formatThoughtOnlyRecoverPoke(1);
+    assert.match(once, /MUST be a tool call/);
+    assert.match(once, /Do not reprint Wave 1/);
+    assert.ok(once.includes(THOUGHT_ONLY_OBSERVE_POKE));
+    assert.doesNotMatch(once, /Wave 1 reading:/);
+    const later = formatThoughtOnlyRecoverPoke(3);
+    assert.match(later, /git diff --stat/);
   });
 });

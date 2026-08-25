@@ -15,6 +15,7 @@ import {
   maybeAdoptNamedShips,
   applyCleanBaselineAfterCommit,
   formatUlwStatus,
+  noteExploreChildCompleted,
 } from "../src/harness/ulw-cycle.js";
 import { appendMemoryRecord } from "../src/harness/decision-memory.js";
 import { CLEAN_TREE_DIFF_FP } from "../src/util/git-context.js";
@@ -171,6 +172,22 @@ describe("named-ship backlog", () => {
         source: "agent",
         text: "Reading: stdin lease is still the hard work. The ONE ship is the permission-ask lease. Passed on: picker hierarchy, leftover chrome.",
       });
+      const ghost = evaluateUlwAtStop({
+        sessionId: sid,
+        lastAssistantMessage:
+          "Reading: stdin lease is still the hard work. The ONE ship is the permission-ask lease. Passed on: picker hierarchy, leftover chrome.",
+        editCount: edits + 2,
+        openTodoCount: 0,
+        stuckThreshold: 20,
+      });
+      assert.equal(ghost.block, true);
+      assert.match(ghost.reanchor || "", /not a ticket|spawn one explore/i);
+      assert.equal(
+        (loadUlwCycle(sid)!.namedShips ?? []).every((x) => x.status === "done"),
+        true,
+        "a Mad-Lib Reading must not adopt before a look",
+      );
+      noteExploreChildCompleted(sid);
       const next = evaluateUlwAtStop({
         sessionId: sid,
         lastAssistantMessage:
