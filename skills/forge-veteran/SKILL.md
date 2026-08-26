@@ -61,7 +61,7 @@ Match the product, then load the matching skill:
 
 Then actually look:
 
-- Codebase: `spawn_subagent` `explore` (PLAN allows explore/plan only)
+- Codebase: `spawn_subagent` `explore` (PLAN allows explore/plan only). Emit several explores **in the same round** as `web_search`.
 - Web: `web_search` current practice; `site:github.com` for examples
 - Screen: Playwright screenshot → `read_file` the png (vision)
 

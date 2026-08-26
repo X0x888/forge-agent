@@ -12,6 +12,7 @@ import type {
   SubagentResult,
 } from "../subagent.js";
 import type { SessionData } from "../../session/session.js";
+import type { OrderGate } from "../spawn-join.js";
 
 export interface ToolContext {
   workspace: string;
@@ -58,6 +59,12 @@ export interface ToolContext {
   /** Parent session — required for exit_plan_mode to flip permission mode. */
   session?: SessionData;
   config?: ForgeConfig;
+  /** ULW phase from the parent loop (spawn type default; avoid a second sidecar read). */
+  ulwPhase?: "orient" | "ship";
+  ulwLastReflectScore?: boolean;
+  /** Per-batch land order gate (parallel spawn). Sequential spawn omits these. */
+  landGate?: OrderGate;
+  landTicket?: number;
 }
 
 export interface ToolResult {

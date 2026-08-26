@@ -539,7 +539,8 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
         "status=incomplete_max_turns: read_file the artifact; resume_session_id continues that child (do not start a new implementer; do not re-explore unless pick: is missing). " +
         "skipped_explore_ledger is not a look. Types: general-purpose | explore (read-only) | plan (read-only design). " +
         "isolation=worktree (default for general-purpose in a git repo) lands the diff into the parent on completed only; incomplete_max_turns / abort / error keep the worktree (no land). explore/plan stay in-place. isolation=none writes the parent tree and folds child mutations onto the parent journal so /undo restores after cleanup deletes the child. Kept on conflict. " +
-        "Do not nest when a single tool call suffices.",
+        "Do not nest when a single tool call suffices. " +
+        "PLAN/orient omitted type = explore; same-round overlap with web_search/read_file (cap 8). isolation=none GP is serial.",
       parameters: {
         type: "object",
         properties: {
@@ -555,7 +556,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
           subagent_type: {
             type: "string",
             description:
-              "general-purpose | explore | plan (default general-purpose)",
+              "general-purpose | explore | plan. Default: explore while PLAN/orient; else general-purpose.",
           },
           capability_mode: {
             type: "string",

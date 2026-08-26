@@ -276,6 +276,23 @@ function sanitizeLabel(label: string): string {
 
 export type IsolationMode = "none" | "worktree";
 
+/** Pull isolation from spawn tool args (`isolation` / `isolate` / `worktree`). */
+export function isolationArgFromSpawn(args: Record<string, unknown>): unknown {
+  const isolation = args.isolation ?? args.isolate;
+  if (
+    isolation !== undefined &&
+    isolation !== null &&
+    String(isolation).trim() !== ""
+  ) {
+    return isolation;
+  }
+  if (args.worktree === true || args.worktree === "true") return "worktree";
+  if (typeof args.worktree === "string" && args.worktree.trim() !== "") {
+    return args.worktree;
+  }
+  return undefined;
+}
+
 /**
  * Default isolation for a spawn. General-purpose implement work goes to a
  * detached worktree when the workspace is a git repo so parent files stay

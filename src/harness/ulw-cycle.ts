@@ -1223,7 +1223,11 @@ export function exploreHolding(s: UlwCycleState): boolean {
   return Boolean(s.exploreRequired);
 }
 
-/** A completed explore child after hold — parent may adopt/ship a pick. */
+/**
+ * A completed explore child after hold — parent may adopt/ship a pick.
+ * Keep fully sync (no await between load and save) — parallel explores
+ * serialize each call as a whole on the JS thread.
+ */
 export function noteExploreChildCompleted(sessionId: string): boolean {
   if (!sessionId) return false;
   const s = loadUlwCycle(sessionId);
@@ -1258,6 +1262,8 @@ function entryForPick(sessionId: string, pick: string) {
 /**
  * Unlimited evaluate-class: explore-map picks ARE the named-ship list when
  * the model never writes one. Marked done only on the pick's job, not FIFO.
+ * Keep fully sync (no await between load and save) — parallel explores
+ * serialize each call as a whole on the JS thread.
  */
 export function seedNamedShipsFromExploreMaps(sessionId: string): boolean {
   if (!sessionId) return false;
@@ -2677,7 +2683,7 @@ export function expandUlwMandate(mandate: string): { expanded: string; soft: boo
     `**Spawn when:** large surface to map in parallel; design/architecture tradeoffs need a clean think-space; independent workstreams can run without shared mid-flight state; isolation=worktree protects the parent tree; a deep dive would drown this thread.`,
     `**Types:** explore (read-only research), plan (design), general-purpose (implement slice). Brief the child with a crisp objective; fold the result and act.`,
     `**Skip when:** the next step is a single obvious tool call; overhead > benefit; you already have enough context to ship.`,
-    `Fan-out intelligently (parallel explores), then **converge** and ship in the parent — subagents are force multipliers, not a substitute for judgment.`,
+    `Fan-out intelligently (parallel explores in the same round as web_search; PLAN omitted type = explore; no GP until Reading/\`/build\`), then **converge** and ship in the parent — subagents are force multipliers, not a substitute for judgment.`,
     ``,
     `### Doctrine, not a cage`,
     `The loop below is **philosophy**, not a rigid ritual. Freestyle sequence, tooling, and depth when that yields better work. Harness rails (Stop/proof/todos) stay; process theater does not.`,

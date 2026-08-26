@@ -14,6 +14,9 @@ import {
   loadLspConfig,
   filterToolsForSubagent,
   resolveSubagentType,
+  resolveSpawnSubagentType,
+  isParallelSafeToolCall,
+  createOrderGate,
   isMcpToolReadOnly,
   mcpToolNameLooksReadOnly,
   isMcpInvocationTool,
@@ -63,6 +66,9 @@ describe("public package exports (index)", () => {
     assert.equal(typeof loadLspConfig, "function");
     assert.equal(typeof filterToolsForSubagent, "function");
     assert.equal(resolveSubagentType("explore"), "explore");
+    assert.equal(typeof resolveSpawnSubagentType, "function");
+    assert.equal(typeof isParallelSafeToolCall, "function");
+    assert.equal(typeof createOrderGate, "function");
     assert.equal(typeof isMcpToolReadOnly, "function");
     assert.equal(typeof mcpToolNameLooksReadOnly, "function");
     assert.equal(mcpToolNameLooksReadOnly("context7__query-docs"), true);

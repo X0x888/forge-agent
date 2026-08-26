@@ -329,4 +329,51 @@ describe("createFamilyCostCapResolver — siblings share remaining", () => {
     assert.equal(second.hit, true);
     assert.equal(parent.subagentUsage?.length, 2);
   });
+
+  it("interleaved resolvers stay delta-safe (A, B, A)", () => {
+    const parent = meta({
+      id: "parent-interleave",
+      maxCostUsd: 50,
+      totalPromptTokens: 0,
+      totalCompletionTokens: 0,
+      totalCacheReadTokens: 0,
+      subagentUsage: undefined,
+    });
+    const childA = meta({
+      id: "child-a",
+      totalPromptTokens: 1000,
+      totalCompletionTokens: 10,
+      totalCacheReadTokens: 0,
+    });
+    const childB = meta({
+      id: "child-b",
+      totalPromptTokens: 2000,
+      totalCompletionTokens: 20,
+      totalCacheReadTokens: 0,
+    });
+    const cfg = { maxCostUsd: 0, provider: "xai" as const, model: "grok-4.6" };
+    const resolveA = createFamilyCostCapResolver({
+      parentConfig: cfg,
+      parentMeta: parent,
+      childMeta: childA,
+      description: "first",
+      subagentType: "explore",
+      maxTurns: 8,
+    });
+    const resolveB = createFamilyCostCapResolver({
+      parentConfig: cfg,
+      parentMeta: parent,
+      childMeta: childB,
+      description: "second",
+      subagentType: "explore",
+      maxTurns: 8,
+    });
+    const a1 = resolveA();
+    const b1 = resolveB();
+    childA.totalPromptTokens = 1500;
+    const a2 = resolveA();
+    assert.ok(b1.spent >= a1.spent);
+    assert.ok(a2.spent >= b1.spent);
+    assert.equal(parent.subagentUsage?.length, 2);
+  });
 });

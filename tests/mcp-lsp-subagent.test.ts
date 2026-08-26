@@ -85,7 +85,7 @@ describe("tool definitions include MCP/LSP/subagent", () => {
     assert.equal(isReadOnlyToolName("search_mcp"), true);
     assert.equal(isReadOnlyToolName("lsp"), true);
     assert.equal(isReadOnlyToolName("call_mcp"), false);
-    assert.equal(isReadOnlyToolName("spawn_subagent"), false);
+    assert.equal(isReadOnlyToolName("spawn_subagent"), false); // parallel-safe is a different predicate
   });
 });
 
@@ -620,6 +620,26 @@ describe("permissions for new tools", () => {
     });
     assert.equal(spawn.decision, "allow");
     assert.equal(spawn.reason, "plan_readonly_subagent");
+
+    const omitted = await gate.request({
+      toolName: "spawn_subagent",
+      input: { prompt: "x" },
+      mode: "plan",
+      workspace: tmpRoot,
+      config: cfg,
+    });
+    assert.equal(omitted.decision, "allow");
+    assert.equal(omitted.reason, "plan_readonly_subagent");
+
+    const gpPlan = await gate.request({
+      toolName: "spawn_subagent",
+      input: { prompt: "x", subagent_type: "general-purpose" },
+      mode: "plan",
+      workspace: tmpRoot,
+      config: cfg,
+    });
+    assert.equal(gpPlan.decision, "allow");
+    assert.equal(gpPlan.reason, "plan_readonly_subagent");
   });
 
   it("plan mode denies lsp ensure and allows status / dry-run", async () => {
@@ -857,6 +877,25 @@ describe("permissions for new tools", () => {
       config: cfg,
     });
     assert.equal(fullAccept.decision, "allow");
+
+    const omittedDefault = await gate.request({
+      toolName: "spawn_subagent",
+      input: { prompt: "find X" },
+      mode: "default",
+      workspace: tmpRoot,
+      config: cfg,
+    });
+    assert.equal(omittedDefault.decision, "deny");
+    assert.match(omittedDefault.reason || "", /subagent_noninteractive_deny/);
+
+    const omittedPlan = await gate.request({
+      toolName: "spawn_subagent",
+      input: { prompt: "find X" },
+      mode: "plan",
+      workspace: tmpRoot,
+      config: { ...DEFAULT_CONFIG, permissionMode: "plan", workspace: tmpRoot },
+    });
+    assert.equal(omittedPlan.decision, "allow");
   });
 });
 

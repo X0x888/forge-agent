@@ -28,6 +28,7 @@ import {
 import type { McpManager } from "../mcp/manager.js";
 import { withStdinLease } from "../tui/stdin-lease.js";
 import { isLspToolName, lspActionInstalls } from "../lsp/tools.js";
+import { resolveSpawnSubagentType } from "./subagent.js";
 
 
 const WRITE_TOOLS = new Set([
@@ -281,27 +282,20 @@ export class PermissionGate {
       toolName === "Task" ||
       toolName === "task"
     ) {
-      const kind = String(
-        toolInput.subagent_type ?? toolInput.type ?? toolInput.agent_type ?? "",
-      )
-        .trim()
-        .toLowerCase()
-        .replace(/_/g, "-");
-      if (
-        kind === "explore" ||
-        kind === "research" ||
-        kind === "readonly" ||
-        kind === "read-only" ||
-        kind === "plan" ||
-        kind === "planner" ||
-        kind === "design"
-      ) {
+      const kind = resolveSpawnSubagentType(
+        toolInput.subagent_type ?? toolInput.type ?? toolInput.agent_type,
+        { ulwOrient: true },
+      );
+      if (kind === "explore" || kind === "plan") {
         return null;
       }
       return {
         decision: "deny",
         reason:
-          "ulw_orient: general-purpose spawn denied — PLAN may spawn explore/plan only. Write the Reading, then implement; or type /build",
+          "ulw_orient: general-purpose spawn denied — PLAN may spawn explore/plan only. " +
+          "Next: retry this turn as spawn_subagent({ subagent_type: \"explore\" }) (or \"plan\") " +
+          "in the same round as web_search/read_file; they overlap. Do not wait for a later think. " +
+          "Write the Reading, then implement; or type /build",
         rule: "ulw_orient",
       };
     }
@@ -781,11 +775,14 @@ export class PermissionGate {
         toolName === "Task" ||
         toolName === "task"
       ) {
-        const t = String(
-          toolInput.subagent_type || toolInput.type || toolInput.agent_type || "",
-        )
-          .toLowerCase()
-          .replace(/_/g, "-");
+        const t = resolveSpawnSubagentType(
+          toolInput.subagent_type ?? toolInput.type ?? toolInput.agent_type,
+          {
+            // Plan mode already allowed any spawn above; this branch is
+            // default/acceptEdits/dontAsk headless only.
+            ulwOrient: req.ulwPhase === "orient",
+          },
+        );
         const modeRaw = String(
           toolInput.capability_mode || toolInput.mode || "",
         )
@@ -794,7 +791,6 @@ export class PermissionGate {
         if (
           t === "explore" ||
           t === "plan" ||
-          t === "research" ||
           modeRaw === "read-only" ||
           modeRaw === "readonly"
         ) {

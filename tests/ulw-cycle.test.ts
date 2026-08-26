@@ -1279,6 +1279,26 @@ describe("polish-class Stop", () => {
       ulwPhase: "orient",
     });
     assert.equal(spawn.decision, "deny");
+    assert.match(spawn.reason || "", /Next:/);
+    assert.match(spawn.reason || "", /explore/);
+
+    const omitted = await gate.request({
+      toolName: "spawn_subagent",
+      input: { prompt: "map the product", description: "core loop" },
+      mode: "bypassPermissions",
+      workspace: process.cwd(),
+      ulwPhase: "orient",
+    });
+    assert.equal(omitted.decision, "allow");
+
+    const omittedDefault = await gate.request({
+      toolName: "spawn_subagent",
+      input: { prompt: "map the product", description: "core loop" },
+      mode: "default",
+      workspace: process.cwd(),
+      ulwPhase: "orient",
+    });
+    assert.equal(omittedDefault.decision, "allow");
 
     const imagine = await gate.request({
       toolName: "image_gen",

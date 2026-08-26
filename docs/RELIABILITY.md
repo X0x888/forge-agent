@@ -37,7 +37,7 @@ What experts should expect from Forge in long, unattended, or CI runs.
 | **Orphan tool_calls** | Abort mid-batch or compact cut injects synthetic tool results so the next API call does not 400 |
 | **Compact boundary** | Compaction never starts a keep-window on a bare `tool` message |
 | **Empty name** | Tool calls with blank names after stream glitches return a clear error instead of crashing |
-| **Parallel read-only tools** | Consecutive read-only tools (read/grep/glob/list/web_*) batch via `Promise.all` after name normalize (`isReadOnlyToolName`) — aliases and doubled stream-bug names included |
+| **Parallel-safe tools** | Consecutive read-only tools (read/grep/glob/list/web_*) **and** spawn that cannot mutate the parent mid-flight (explore/plan; worktree GP) batch via `Promise.all` after name normalize (`isReadOnlyToolName` / `isParallelSafeToolCall`) — cap 8. `isReadOnlyToolName("spawn_subagent")` stays false. Explicit `isolation=none` GP is a barrier. Land is serial original-order (`OrderGate`; ticket `finally`). `FORGE_SUBAGENT_PARALLEL=0` serializes spawn only |
 | **Unknown tool tips** | Up to 3 Did-you-mean candidates (`suggestNames`) so the model can self-correct typos without a human |
 | **Doom-loop** | Same tool + same args. **Success** repeats trip at 2 (“you already have this”). Errors/timeout/empty trip at N (default 3, `FORGE_DOOM_LOOP_THRESHOLD`). MCP still-connecting (`partial`) and tool-clear stubs do not doom — wait / `/mcp status` / `read_file` the saved path. `get_task_output` without `wait=` is a poll hint. Fingerprints ignore transport-only fields (`timeout_ms`, `background`, `run_in_background`, `stream`, `tail`, `allow_local`) |
 | **Error-streak** | N consecutive tool errors (any args) injects a circuit-breaker nudge (Grok-inspired; default N=5, override `FORGE_ERROR_STREAK_THRESHOLD`); permission/hard denies do not count |
@@ -149,7 +149,7 @@ What experts should expect from Forge in long, unattended, or CI runs.
 | **grep abort** | `grep` honors turn `AbortSignal` (kills `rg` / stops JS fallback); rg path resolved once per process |
 | **Abort hygiene** | Cooperative `Aborted` tool results do not count toward error-streak; loop asserts abort immediately after tool batches |
 | **Background task teardown** | REPL exit and headless `forge run` end force-kill in-process `background=true` shells; `beforeExit`/`exit` safety net; SessionEnd runs before kill so hooks can observe tasks |
-| **Parallel reads** | Up to 8 consecutive read-only tools run in parallel; results stay ordered |
+| **Parallel reads + spawn** | Up to 8 consecutive parallel-safe tools (read-only + explore/plan/worktree GP); results stay ordered. Cap-8 worktree GP may autostart N MCP/LSP stacks — operator-beware; `FORGE_SUBAGENT_CHILD_MCP=0` skips child autostart |
 
 ## Operator env knobs
 
@@ -165,6 +165,8 @@ What experts should expect from Forge in long, unattended, or CI runs.
 | `FORGE_PERMISSION_TIMEOUT_MS` | off | Auto-deny stalled interactive Allow? prompts (min 5s). Alias: `FORGE_PERMISSION_ASK_TIMEOUT_MS` |
 | `FORGE_DOOM_LOOP_THRESHOLD` | `3` | Error/empty identical streak before strategy nudge (success repeats trip at 2) |
 | `FORGE_SUBAGENT_MAX_TURNS` | unset | Override all nested turn caps (else explore/plan 25, general-purpose 80) |
+| `FORGE_SUBAGENT_PARALLEL` | on | `isFalsy` (`0`/`false`/`off`/`no`/`disabled`) → spawn never parallel-safe (read-only batches unchanged) |
+| `FORGE_SUBAGENT_CHILD_MCP` | on | `isFalsy` → worktree children pass `mcpAutostart`/`lspAutostart` false so nested `runAgentLoop` does **not** construct (`mcp: undefined` alone still autostarts) |
 | `FORGE_ERROR_STREAK_THRESHOLD` | `5` | Consecutive tool errors before circuit-breaker nudge |
 | `FORGE_ULW_MAX_CONTINUES` | `200` | Provider length/empty/filter fuse while ULW is armed; also Stop-block fuse for capped/LAST/non-ULW. Unlimited CONTINUE Stop-blocks do not trip it |
 | `FORGE_ULW_STUCK_THRESHOLD` | goal config / `5` | ULW stuck-wall blocks before release (`envPositiveInt`; invalid/0 ignored) |

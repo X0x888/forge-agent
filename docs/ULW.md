@@ -63,7 +63,7 @@ ULW is not “burn tokens until something ships.” Doctrine:
 
 ### Proactive subagents
 
-Spawn `explore` / `plan` / `general-purpose` **whenever** that improves quality or efficiency (parallel map, design space, isolated implement, `isolation=worktree`). Skip when one tool call is enough. Converge and ship in the parent.
+Spawn `explore` / `plan` / `general-purpose` **whenever** that improves quality or efficiency (parallel map, design space, isolated implement, `isolation=worktree`). Same-round explore/plan and worktree GP overlap with `web_search` (cap 8; `isolation=none` GP is serial). Wave 1 PLAN omitted `subagent_type` is explore; explicit GP is denied with a Next to retry as explore. LAST still denies all spawn. Skip when one tool call is enough. Converge and ship in the parent.
 
 | Multiplier | Use |
 |------------|-----|

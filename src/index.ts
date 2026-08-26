@@ -173,6 +173,10 @@ export {
   runAgentLoopThroughDrops,
   resolveMaxTurns,
   isReadOnlyToolName,
+  isSpawnToolName,
+  subagentParallelEnabled,
+  isParallelSafeToolCall,
+  partitionParallelBatches,
   filterToolsForPermissionMode,
   installMcpLspExitHook,
 } from "./agent/loop.js";
@@ -226,6 +230,11 @@ export {
   runSubagentTracked,
   filterToolsForSubagent,
   resolveSubagentType,
+  resolveSpawnSubagentType,
+  subagentTypeRawIsOmitted,
+  isSpawnParallelSafe,
+  wrapChildLoopEvents,
+  childManagerAutostart,
   resolveCapabilityMode,
   resolveChildPermissionMode,
   defaultMaxSubagentDepth,
@@ -240,6 +249,10 @@ export {
   writeSubagentArtifact,
   formatSubagentResult,
 } from "./agent/subagent.js";
+export {
+  createOrderGate,
+  enqueueGitWorktreeMeta,
+} from "./agent/spawn-join.js";
 export {
   formatSubagentNext,
   subagentWrapTurn,
@@ -269,6 +282,7 @@ export {
   restoreParentPreimages,
   unquotePorcelainPath,
   defaultIsolationForSpawn,
+  isolationArgFromSpawn,
   resolveIsolationMode,
   resolveWorktreeLandMode,
   worktreeBaseDir,

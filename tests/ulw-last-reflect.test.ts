@@ -273,5 +273,16 @@ Live-with:
       ulwLastReflectScore: true,
     });
     assert.equal(git.decision, "allow");
+
+    const spawn = await g.request({
+      toolName: "spawn_subagent",
+      input: { prompt: "look around" },
+      mode: "bypassPermissions",
+      workspace: "/tmp/proj",
+      config: DEFAULT_CONFIG,
+      ulwLastReflectScore: true,
+    });
+    assert.equal(spawn.decision, "deny");
+    assert.equal(spawn.rule, "ulw_last_score");
   });
 });

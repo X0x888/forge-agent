@@ -174,7 +174,10 @@ import {
   executeTool,
   normalizeToolName,
 } from "./tools/index.js";
-import { isExitPlanModeToolName } from "./tools/exit-plan-mode.js";
+import {
+  isEnterPlanModeToolName,
+  isExitPlanModeToolName,
+} from "./tools/exit-plan-mode.js";
 import { buildBaselineSystemPrompt } from "./system-prompt.js";
 import { log } from "../util/log.js";
 import { envPositiveInt } from "../util/env.js";
@@ -237,11 +240,16 @@ import {
 } from "../lsp/manager.js";
 import {
   defaultMaxSubagentDepth,
+  isSpawnParallelSafe,
+  resolveSpawnSubagentType,
   runSubagentTracked,
+  subagentTypeRawIsOmitted,
   type SubagentRequest,
 } from "./subagent.js";
 import { mcpCallIsReadOnly } from "../mcp/tools.js";
 import { isLspToolName, lspActionInstalls } from "../lsp/tools.js";
+import { createOrderGate, type OrderGate } from "./spawn-join.js";
+import { isFalsy } from "../util/bool.js";
 
 export type LoopPhase =
   | "thinking"
@@ -324,6 +332,10 @@ export interface LoopOptions {
   mcp?: McpManager;
   /** Shared LSP manager (parent owns lifecycle; children reuse). */
   lsp?: LspManager;
+  /** When false, do not construct/start MCP if `mcp` is unset. Default true. */
+  mcpAutostart?: boolean;
+  /** When false, do not construct LspManager if `lsp` is unset. Default true. */
+  lspAutostart?: boolean;
   /** Skip goal/ULW auto-arm (subagents). */
   disableHarnessAutoArm?: boolean;
   /**
@@ -451,16 +463,119 @@ const READ_ONLY = new Set([
 ]);
 
 /**
- * True when the tool (after name normalize) is safe to run in parallel batches.
- * call_mcp is read-only only when the target tool has readOnlyHint (checked at
- * batch time via isReadOnlyToolCall).
+ * Permission / dontAsk / doom fingerprint: tools that do not mutate the
+ * workspace. Parallel batching uses `isParallelSafeToolCall` (this set plus
+ * spawn that cannot touch the parent tree mid-flight).
  */
 export function isReadOnlyToolName(name: string): boolean {
   const n = normalizeToolName(name || "");
   return READ_ONLY.has(n) || READ_ONLY.has(name || "");
 }
 
-/** ULW Wave-1 PLAN: research only — no spawn, no edits. */
+export function isSpawnToolName(name: string): boolean {
+  const n = normalizeToolName(name || "");
+  return n === "spawn_subagent" || n === "Task" || n === "task";
+}
+
+/** Unset = on. `isFalsy` includes `0` / `false` / `off` / `no` / `disabled`. */
+export function subagentParallelEnabled(): boolean {
+  return !isFalsy(process.env.FORGE_SUBAGENT_PARALLEL);
+}
+
+export interface ParallelSafeOpts {
+  mcp?: McpManager;
+  workspace: string;
+  /** config.permissionMode === "plan" || ulw phase === "orient" */
+  planOrOrient: boolean;
+}
+
+/**
+ * Consecutive-batch predicate. spawn_subagent is NOT read-only; it is
+ * parallel-safe only when the child cannot mutate the parent tree mid-flight.
+ */
+export function isParallelSafeToolCall(
+  tc: ToolCall,
+  opts: ParallelSafeOpts,
+): boolean {
+  const n = normalizeToolName(tc.function.name || "");
+  if (
+    isExitPlanModeToolName(n) ||
+    isExitPlanModeToolName(tc.function.name || "") ||
+    isEnterPlanModeToolName(n) ||
+    isEnterPlanModeToolName(tc.function.name || "")
+  ) {
+    return false;
+  }
+  if (isLspToolName(n) || isLspToolName(tc.function.name || "")) {
+    const parsed = parseToolArguments(tc.function.arguments);
+    if (!parsed.ok) return false;
+    return !lspActionInstalls(parsed.value);
+  }
+  if (isReadOnlyToolName(n) || isReadOnlyToolName(tc.function.name || "")) {
+    return true;
+  }
+  if (n === "call_mcp" || n === "mcp_call" || n === "use_mcp") {
+    const parsed = parseToolArguments(tc.function.arguments);
+    if (!parsed.ok) return false;
+    return mcpCallIsReadOnly(opts.mcp, parsed.value);
+  }
+  if (isSpawnToolName(n) || isSpawnToolName(tc.function.name || "")) {
+    if (!subagentParallelEnabled()) return false;
+    return isSpawnParallelSafe(tc, opts);
+  }
+  return false;
+}
+
+/** Consecutive groups, each length <= 8. Barriers (false) are singleton groups. */
+export function partitionParallelBatches(
+  calls: ToolCall[],
+  opts: ParallelSafeOpts,
+): ToolCall[][] {
+  const groups: ToolCall[][] = [];
+  let i = 0;
+  while (i < calls.length) {
+    const cur = calls[i];
+    if (!cur) break;
+    if (isParallelSafeToolCall(cur, opts)) {
+      const batch: ToolCall[] = [];
+      while (
+        i < calls.length &&
+        calls[i] &&
+        isParallelSafeToolCall(calls[i]!, opts) &&
+        batch.length < 8
+      ) {
+        batch.push(calls[i]!);
+        i++;
+      }
+      groups.push(batch);
+    } else {
+      groups.push([cur]);
+      i++;
+    }
+  }
+  return groups;
+}
+
+function spawnDisplayArgs(
+  name: string,
+  toolInput: Record<string, unknown>,
+  opts: { planOrOrient: boolean; lastScore?: boolean },
+): Record<string, unknown> {
+  if (!isSpawnToolName(name)) return toolInput;
+  const raw =
+    toolInput.subagent_type ?? toolInput.type ?? toolInput.agent_type;
+  if (!subagentTypeRawIsOmitted(raw)) return toolInput;
+  return {
+    ...toolInput,
+    subagent_type: resolveSpawnSubagentType(raw, {
+      planMode: opts.planOrOrient,
+      ulwOrient: opts.planOrOrient,
+      ulwLastReflectScore: opts.lastScore,
+    }),
+  };
+}
+
+/** ULW Wave-1 PLAN: research + explore/plan spawn, no GP/edits. */
 const ORIENT_TOOL_NAMES = new Set([
   "read_file",
   "Read",
@@ -887,12 +1002,14 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
   let lsp =
     opts.lsp ??
     (subagentDepth === 0 ? getActiveLspManager() ?? undefined : undefined);
-  if (!mcp) {
+  const mcpAutostart = opts.mcpAutostart !== false;
+  const lspAutostart = opts.lspAutostart !== false;
+  if (!mcp && mcpAutostart) {
     mcp = new McpManager({ workspace, signal });
     mcp.start();
     if (subagentDepth === 0) setActiveMcpManager(mcp);
   }
-  if (!lsp) {
+  if (!lsp && lspAutostart) {
     lsp = new LspManager({ workspace, signal });
     if (subagentDepth === 0) setActiveLspManager(lsp);
   }
@@ -3635,34 +3752,12 @@ async function runToolCalls(opts: {
     reportOnlyKind,
   } = opts;
 
-  const isParallelSafe = (tc: ToolCall): boolean => {
-    const n = normalizeToolName(tc.function.name || "");
-    // Mode-flip must run sequentially so later writes see the restored mode.
-    if (isExitPlanModeToolName(n) || isExitPlanModeToolName(tc.function.name || "")) {
-      return false;
-    }
-    if (isLspToolName(n) || isLspToolName(tc.function.name || "")) {
-      const parsed = parseToolArguments(tc.function.arguments);
-      if (!parsed.ok) return false;
-      return !lspActionInstalls(parsed.value);
-    }
-    if (isReadOnlyToolName(n) || isReadOnlyToolName(tc.function.name || "")) {
-      return true;
-    }
-    // call_mcp is parallel-safe only when the target is annotated read-only
-    if (n === "call_mcp" || n === "mcp_call" || n === "use_mcp") {
-      const parsed = parseToolArguments(tc.function.arguments);
-      if (!parsed.ok) return false;
-      return mcpCallIsReadOnly(mcp, parsed.value);
-    }
-    return false;
-  };
-
-  // Sequential by default; batch consecutive read-only tools in parallel
-  // but append results in original order (providers are picky about this).
-  // Normalize names before the read-only check so aliases (Read/read_file)
-  // and doubled stream-bug names still batch.
-  // Run exit_plan_mode first so same-turn writes see the restored mode.
+  // Sequential by default; batch consecutive parallel-safe tools (read-only
+  // plus spawn that cannot mutate the parent tree mid-flight). Results stay
+  // in original tool-call order. exit_plan_mode runs first so same-turn
+  // writes see the restored mode. Re-partition after each group so a live
+  // mode/phase flip (exit_plan_mode, Wave-1 Reading) cannot leave omitted
+  // isolation=none GP in an explore-sized Promise.all.
   const exitIdx = toolCalls.findIndex((tc) =>
     isExitPlanModeToolName(normalizeToolName(tc.function.name || "")),
   );
@@ -3670,44 +3765,68 @@ async function runToolCalls(opts: {
     const [exitCall] = toolCalls.splice(exitIdx, 1);
     toolCalls.unshift(exitCall);
   }
-  let i = 0;
-  while (i < toolCalls.length) {
+  const livePlanOrOrient = (): boolean =>
+    config.permissionMode === "plan" ||
+    resolveUlwPhase(loadUlwCycle(session.meta.id)) === "orient";
+  let rest = toolCalls;
+  while (rest.length > 0) {
     assertNotAborted(signal);
-    if (isParallelSafe(toolCalls[i])) {
-      const batch: ToolCall[] = [];
-      while (
-        i < toolCalls.length &&
-        isParallelSafe(toolCalls[i]) &&
-        batch.length < 8
-      ) {
-        batch.push(toolCalls[i]);
-        i++;
+    const planOrOrient = livePlanOrOrient();
+    const parallelOpts: ParallelSafeOpts = {
+      mcp,
+      workspace,
+      planOrOrient,
+    };
+    const batch = partitionParallelBatches(rest, parallelOpts)[0] ?? [];
+    rest = rest.slice(batch.length);
+    const basePrep = {
+      session,
+      config,
+      hooks,
+      permissions,
+      workspace,
+      signal,
+      events,
+      turn,
+      doomLoop,
+      errorStreak,
+      harnessStats,
+      fileReads,
+      mcp,
+      lsp,
+      subagentDepth,
+      maxSubagentDepth,
+      provider,
+      proofPoke,
+      reportOnly,
+      reportOnlyKind,
+      planOrOrient,
+    };
+    if (batch.length === 0) break;
+    const parallel = batch.every((tc) =>
+      isParallelSafeToolCall(tc, parallelOpts),
+    );
+    if (parallel) {
+      let spawnSeq = 0;
+      const spawnTickets = batch.map((tc) =>
+        isSpawnToolName(tc.function.name) ? spawnSeq++ : undefined,
+      );
+      const landGate: OrderGate | undefined =
+        spawnSeq > 0 ? createOrderGate(signal) : undefined;
+      if (spawnSeq > 1) {
+        log.dim(`subagent parallel batch: ${spawnSeq}`);
       }
       const results = await Promise.all(
-        batch.map((tc) =>
+        batch.map((tc, idx) =>
           prepareToolResult({
+            ...basePrep,
             tc,
-            session,
-            config,
-            hooks,
-            permissions,
-            workspace,
-            signal,
-            events,
-            turn,
-            doomLoop,
-            errorStreak,
-            harnessStats,
-            fileReads,
-            mcp,
-            lsp,
-            subagentDepth,
-            maxSubagentDepth,
-            provider,
-            proofPoke,
-            reportOnly,
-            reportOnlyKind,
-          }),
+            landGate,
+            landTicket: spawnTickets[idx],
+          }).catch((err) => ({
+            toolCallId: tc.id,
+            content: `${normalizeToolName(tc.function.name)} error: ${(err as Error).message}`,
+          })),
         ),
       );
       for (const r of results) {
@@ -3727,27 +3846,8 @@ async function runToolCalls(opts: {
       }
     } else {
       const r = await prepareToolResult({
-        tc: toolCalls[i],
-        session,
-        config,
-        hooks,
-        permissions,
-        workspace,
-        signal,
-        events,
-        turn,
-        doomLoop,
-        errorStreak,
-        harnessStats,
-        fileReads,
-        mcp,
-        lsp,
-        subagentDepth,
-        maxSubagentDepth,
-        provider,
-        proofPoke,
-        reportOnly,
-        reportOnlyKind,
+        ...basePrep,
+        tc: batch[0]!,
       });
       session.messages.push({
         role: "tool",
@@ -3762,12 +3862,11 @@ async function runToolCalls(opts: {
       } catch {
         /* */
       }
-      i++;
     }
   }
 }
 
-async function prepareToolResult(opts: {
+type PrepareToolResultOpts = {
   tc: ToolCall;
   session: SessionData;
   config: ForgeConfig;
@@ -3789,7 +3888,26 @@ async function prepareToolResult(opts: {
   proofPoke?: import("../harness/proof-poke.js").ProofPokeState;
   reportOnly?: boolean;
   reportOnlyKind?: "last-turn" | "cite-delta";
-}): Promise<{ toolCallId: string; content: string }> {
+  planOrOrient?: boolean;
+  landGate?: OrderGate;
+  landTicket?: number;
+};
+
+async function prepareToolResult(
+  opts: PrepareToolResultOpts,
+): Promise<{ toolCallId: string; content: string }> {
+  try {
+    return await prepareToolResultInner(opts);
+  } finally {
+    if (opts.landGate != null && opts.landTicket != null) {
+      await opts.landGate.finish(opts.landTicket);
+    }
+  }
+}
+
+async function prepareToolResultInner(
+  opts: PrepareToolResultOpts,
+): Promise<{ toolCallId: string; content: string }> {
   const {
     tc,
     session,
@@ -3812,6 +3930,9 @@ async function prepareToolResult(opts: {
     proofPoke,
     reportOnly,
     reportOnlyKind,
+    planOrOrient = false,
+    landGate,
+    landTicket,
   } = opts;
   assertNotAborted(signal);
 
@@ -3847,9 +3968,15 @@ async function prepareToolResult(opts: {
     argsRepairNote = parsedArgs.error;
   }
 
+  const ulwNowEarly = loadUlwCycle(session.meta.id);
+  const displayArgs = spawnDisplayArgs(name, toolInput, {
+    planOrOrient,
+    lastScore: ulwNowEarly?.lastReflect === "score",
+  });
+
   // Announce tool phase BEFORE permission prompts so the REPL can pause
   // the working spinner and not clobber interactive Allow? lines.
-  const argSummary = summarizeToolArgs(toolInput, 48);
+  const argSummary = summarizeToolArgs(displayArgs, 48);
   const shown = formatToolDisplayName(name);
   const toolDetail = argSummary ? `${shown} ${argSummary}` : shown;
   events?.onPhase?.("tool", toolDetail);
@@ -3860,9 +3987,9 @@ async function prepareToolResult(opts: {
       reportOnlyKind === "cite-delta" ? "cite-delta" : "last-turn",
     );
     if (events?.onToolStart) {
-      events.onToolStart(name, toolInput);
+      events.onToolStart(name, displayArgs);
     } else {
-      console.error(formatToolStart(name, toolInput));
+      console.error(formatToolStart(name, displayArgs));
     }
     const bytes = Buffer.byteLength(content, "utf8");
     if (events?.onToolEnd) {
@@ -3871,7 +3998,7 @@ async function prepareToolResult(opts: {
         ms: 0,
         bytes,
         output: content,
-        args: toolInput,
+        args: displayArgs,
       });
     } else {
       console.error(
@@ -3880,7 +4007,7 @@ async function prepareToolResult(opts: {
           ms: 0,
           bytes,
           output: content,
-          args: toolInput,
+          args: displayArgs,
         }),
       );
     }
@@ -3917,13 +4044,13 @@ async function prepareToolResult(opts: {
   /** Permission/plan denials skip executeTool — still pair start/end so the REPL shows ✗. */
   const emitDeniedTool = (output: string) => {
     if (events?.onToolStart) {
-      events.onToolStart(name, toolInput);
+      events.onToolStart(name, displayArgs);
     } else {
-      console.error(formatToolStart(name, toolInput));
+      console.error(formatToolStart(name, displayArgs));
     }
     const bytes = Buffer.byteLength(output, "utf8");
     if (events?.onToolEnd) {
-      events.onToolEnd(name, { isError: true, ms: 0, bytes, output, args: toolInput });
+      events.onToolEnd(name, { isError: true, ms: 0, bytes, output, args: displayArgs });
     } else {
       console.error(
         formatDefaultToolEndTranscript(name, {
@@ -3931,7 +4058,7 @@ async function prepareToolResult(opts: {
           ms: 0,
           bytes,
           output,
-          args: toolInput,
+          args: displayArgs,
         }),
       );
     }
@@ -4005,9 +4132,9 @@ async function prepareToolResult(opts: {
   }
 
   if (events?.onToolStart) {
-    events.onToolStart(name, toolInput);
+    events.onToolStart(name, displayArgs);
   } else {
-    console.error(formatToolStart(name, toolInput));
+    console.error(formatToolStart(name, displayArgs));
   }
 
   if (argsRepairNote && !parsedArgs.ok) {
@@ -4043,7 +4170,7 @@ async function prepareToolResult(opts: {
     noteDoom(content, true);
     const bytes = Buffer.byteLength(content, "utf8");
     if (events?.onToolEnd) {
-      events.onToolEnd(name, { isError: true, ms: 0, bytes, output: content, args: toolInput });
+      events.onToolEnd(name, { isError: true, ms: 0, bytes, output: content, args: displayArgs });
     } else {
       console.error(
         formatDefaultToolEndTranscript(name, {
@@ -4051,7 +4178,7 @@ async function prepareToolResult(opts: {
           ms: 0,
           bytes,
           output: content,
-          args: toolInput,
+          args: displayArgs,
         }),
       );
     }
@@ -4085,6 +4212,10 @@ async function prepareToolResult(opts: {
         subagentDepth,
         session,
         config,
+        ulwPhase: resolveUlwPhase(ulwNow),
+        ulwLastReflectScore: ulwNow?.lastReflect === "score",
+        landGate,
+        landTicket,
         runSubagent:
           provider && subagentDepth < maxSubagentDepth
             ? (req: SubagentRequest) =>
@@ -4101,6 +4232,8 @@ async function prepareToolResult(opts: {
                   maxDepth: maxSubagentDepth,
                   mcp,
                   lsp,
+                  landGate,
+                  landTicket,
                 })
             : undefined,
         onProgress: (detail) => {
@@ -4273,7 +4406,7 @@ async function prepareToolResult(opts: {
         : (result.diff ?? extractDiffFromToolOutput(name, output)),
       stats: result.isError ? undefined : result.stats,
       output,
-      args: toolInput,
+      args: displayArgs,
     });
   } else {
     console.error(
@@ -4281,7 +4414,7 @@ async function prepareToolResult(opts: {
         isError: result.isError,
         ms,
         bytes,
-        args: toolInput,
+        args: displayArgs,
         output,
         diff: result.isError
           ? undefined

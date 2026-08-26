@@ -438,4 +438,24 @@ describe("worktree capture + land", { skip: !REPO }, () => {
       forgetFileReadsSession(s.meta.id);
     }
   });
+
+  it("add overlapping remove on one git root does not throw", async () => {
+    const { enqueueGitWorktreeMeta } = await import(
+      "../src/agent/spawn-join.js"
+    );
+    const first = createSubagentWorktree({
+      workspace: REPO!,
+      label: "addrm-a",
+    });
+    const add = enqueueGitWorktreeMeta(REPO!, () =>
+      createSubagentWorktree({
+        workspace: REPO!,
+        label: "addrm-b",
+      }),
+    );
+    const remove = enqueueGitWorktreeMeta(REPO!, () => first.cleanup());
+    const second = await add;
+    await remove;
+    await second.cleanup();
+  });
 });

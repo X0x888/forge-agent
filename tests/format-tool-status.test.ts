@@ -108,6 +108,24 @@ describe("default tool status line", () => {
     assert.equal(end.includes("\n"), false);
   });
 
+  it("PLAN omitted type display is explore when display args carry the resolved type", () => {
+    const end = strip(
+      formatToolEnd("spawn_subagent", {
+        isError: false,
+        ms: 12,
+        bytes: 100,
+        args: {
+          description: "Explore product core loop",
+          prompt: "Map the loop. Do not invent files.",
+          subagent_type: "explore",
+        },
+      }),
+    );
+    assert.match(end, /✓ spawn_subagent explore: Explore product core loop/);
+    assert.doesNotMatch(end, /general-purpose/);
+    assert.doesNotMatch(end, /"prompt"/);
+  });
+
   it("does not treat a generic type= field as a subagent", () => {
     const end = strip(
       formatToolEnd("write_file", {
@@ -279,6 +297,12 @@ describe("default tool status line", () => {
         "Tool denied by permission gate: plan_mode: bash mutations denied — read-only shell ok",
       ),
       "plan mode",
+    );
+    assert.equal(
+      compactToolDenyReason(
+        'Tool denied by permission gate: ulw_orient: general-purpose spawn denied — PLAN may spawn explore/plan only. Next: retry this turn as spawn_subagent({ subagent_type: "explore" })',
+      ),
+      "orient",
     );
     assert.equal(
       compactToolDenyReason(

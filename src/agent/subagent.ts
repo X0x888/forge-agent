@@ -38,12 +38,23 @@ import {
   attachExistingWorktree,
   createSubagentWorktree,
   defaultIsolationForSpawn,
+  findGitRoot,
   formatWorktreeLandSummary,
+  isolationArgFromSpawn,
   landSubagentWorktree,
   resolveIsolationMode,
+  type IsolationMode,
   type SubagentWorktree,
   type WorktreeLandResult,
 } from "./worktree.js";
+import {
+  enqueueGitWorktreeMeta,
+  type OrderGate,
+} from "./spawn-join.js";
+import { parseToolArguments } from "../util/json-repair.js";
+import { loadSessionMeta } from "../session/session.js";
+import { isFalsy } from "../util/bool.js";
+import type { ToolCall } from "../providers/types.js";
 import {
   defaultSubagentMaxTurns,
   formatSubagentNext,
@@ -107,6 +118,8 @@ export interface SubagentRunContext {
   maxDepth?: number;
   mcp?: McpManager;
   lsp?: LspManager;
+  landGate?: OrderGate;
+  landTicket?: number;
 }
 
 export interface SubagentResult {
@@ -240,6 +253,88 @@ export function resolveSubagentType(raw: unknown): SubagentType {
     return "general-purpose";
   }
   return "general-purpose";
+}
+
+export function subagentTypeRawIsOmitted(raw: unknown): boolean {
+  return raw == null || String(raw).trim() === "";
+}
+
+/**
+ * PLAN / ulw_orient omitted type → explore. LAST score never remaps.
+ * BUILD / default omitted type stays general-purpose (`resolveSubagentType`).
+ */
+export function resolveSpawnSubagentType(
+  raw: unknown,
+  opts?: {
+    planMode?: boolean;
+    ulwOrient?: boolean;
+    ulwLastReflectScore?: boolean;
+  },
+): SubagentType {
+  if (opts?.ulwLastReflectScore) return resolveSubagentType(raw);
+  if (subagentTypeRawIsOmitted(raw) && (opts?.planMode || opts?.ulwOrient)) {
+    return "explore";
+  }
+  return resolveSubagentType(raw);
+}
+
+/** Worktree children skip MCP/LSP autostart when the env is falsy. */
+export function childManagerAutostart(isolation: SubagentIsolation): boolean {
+  return !(isolation === "worktree" && isFalsy(process.env.FORGE_SUBAGENT_CHILD_MCP));
+}
+
+/**
+ * Parallel-safe when the child cannot mutate the parent tree mid-flight.
+ * Unparseable args / missing resume stamp fail closed.
+ */
+export function isSpawnParallelSafe(
+  tc: Pick<ToolCall, "function">,
+  opts: { workspace: string; planOrOrient: boolean },
+): boolean {
+  const parsed = parseToolArguments(tc.function.arguments);
+  if (!parsed.ok) return false;
+  const args = parsed.value;
+  const resumeId = String(
+    args.resume_session_id ?? args.resume_from ?? args.resumeSessionId ?? "",
+  ).trim();
+
+  let isolation: IsolationMode;
+  let type: SubagentType;
+
+  if (resumeId) {
+    const meta = loadSessionMeta(resumeId);
+    const stamp = meta?.subagent;
+    if (!stamp) return false;
+    isolation = resolveIsolationMode(stamp.isolation);
+    type = stamp.type ?? "general-purpose";
+  } else {
+    type = resolveSpawnSubagentType(
+      args.subagent_type ?? args.type ?? args.agent_type,
+      { planMode: opts.planOrOrient, ulwOrient: opts.planOrOrient },
+    );
+    isolation = defaultIsolationForSpawn({
+      type,
+      isolation: isolationArgFromSpawn(args),
+      workspace: opts.workspace,
+    });
+  }
+
+  if (type === "explore" || type === "plan") return true;
+  return isolation === "worktree";
+}
+
+/** Child inner tools must not drive the parent spawn row or pendingTools. */
+export function wrapChildLoopEvents(parent?: LoopEvents): LoopEvents {
+  return {
+    onStatus: parent?.onStatus,
+    onPhase: (phase, detail) => {
+      if (phase === "tool") return;
+      parent?.onPhase?.(phase, detail);
+    },
+    // Defined no-ops so the child loop does not synthesize a start delayer.
+    onToolStart: () => {},
+    onToolEnd: () => {},
+  };
 }
 
 export function resolveCapabilityMode(
@@ -583,6 +678,11 @@ export async function runSubagent(
         worktreePath: storedWt,
         gitRoot: ctx.workspace,
       });
+      if (worktree) {
+        const origCleanup = worktree.cleanup.bind(worktree);
+        worktree.cleanup = () =>
+          enqueueGitWorktreeMeta(worktree!.gitRoot, origCleanup);
+      }
       if (!worktree) {
         return {
           ok: false,
@@ -607,10 +707,16 @@ export async function runSubagent(
     }
   } else if (isolation === "worktree") {
     try {
-      worktree = createSubagentWorktree({
-        workspace: ctx.workspace,
-        label: description,
-      });
+      const gitRoot = findGitRoot(ctx.workspace) ?? ctx.workspace;
+      worktree = await enqueueGitWorktreeMeta(gitRoot, () =>
+        createSubagentWorktree({
+          workspace: ctx.workspace,
+          label: description,
+        }),
+      );
+      const origCleanup = worktree.cleanup.bind(worktree);
+      worktree.cleanup = () =>
+        enqueueGitWorktreeMeta(worktree!.gitRoot, origCleanup);
       childWorkspace = worktree.path;
       log.dim(`Subagent worktree: ${worktree.path}`);
       ctx.events?.onStatus?.(
@@ -740,8 +846,17 @@ export async function runSubagent(
     );
     // Dynamic import avoids circular dependency (loop → tools → subagent → loop).
     const { runAgentLoop } = await import("./loop.js");
+    const autostart = childManagerAutostart(isolation);
+    const childEvents = wrapChildLoopEvents({
+      onStatus: (msg) => {
+        const spend = liveSpend();
+        ctx.events?.onStatus?.(
+          spend && !msg.includes(spend) ? `${msg}${spend}` : msg,
+        );
+      },
+      onPhase: ctx.events?.onPhase,
+    });
     // Worktree isolation: do not share parent MCP/LSP (different cwd roots).
-    // Child gets its own managers scoped to the worktree workspace.
     result = await runAgentLoop({
       config: childConfig,
       provider: ctx.provider,
@@ -751,20 +866,15 @@ export async function runSubagent(
       userMessage: framedPrompt,
       stream: false,
       signal: ctx.signal,
-      events: {
-        onStatus: (msg) => {
-          const spend = liveSpend();
-          ctx.events?.onStatus?.(spend && !msg.includes(spend) ? `${msg}${spend}` : msg);
-        },
-        onPhase: ctx.events?.onPhase,
-        // Suppress token streaming to parent TUI (avoid interleaving)
-      },
+      events: childEvents,
       maxStopContinues: 20,
       subagentDepth: depth + 1,
       maxSubagentDepth: maxDepth,
       toolDefinitions: tools,
       mcp: isolation === "worktree" ? undefined : ctx.mcp,
       lsp: isolation === "worktree" ? undefined : ctx.lsp,
+      mcpAutostart: autostart,
+      lspAutostart: autostart,
       disableHarnessAutoArm: true,
       citeDeltaStop: subagentType === "explore",
       resolveCostCap: createFamilyCostCapResolver({
@@ -934,16 +1044,23 @@ export async function runSubagent(
     process.env.FORGE_SUBAGENT_KEEP === "true";
   let worktreeLand: WorktreeLandResult | undefined;
   let worktreeKept = false;
-  if (worktree) {
-    const skipApply = shouldSkipWorktreeLand(status);
-    worktreeLand = await landSubagentWorktree({
+  const slot = async (): Promise<WorktreeLandResult | undefined> => {
+    if (!worktree) return undefined;
+    return landSubagentWorktree({
       worktree,
       parentWorkspace: ctx.workspace,
       forceKeep: forceKeepWorktree,
-      skipApply,
+      skipApply: shouldSkipWorktreeLand(status),
       sessionId: ctx.parentSession.meta.id,
       turn: ctx.parentSession.meta.turnCount,
     });
+  };
+  if (ctx.landGate && ctx.landTicket != null) {
+    worktreeLand = await ctx.landGate.run(ctx.landTicket, slot);
+  } else {
+    worktreeLand = await slot();
+  }
+  if (worktreeLand) {
     worktreeKept = worktreeLand.kept;
     const landBlock = formatWorktreeLandSummary(worktreeLand);
     text = text ? `${text}\n\n${landBlock}` : landBlock;
@@ -951,8 +1068,6 @@ export async function runSubagent(
       log.dim(
         `Subagent worktree landed (${worktreeLand.changedFiles.length} file(s)) into ${worktreeLand.parentPath}`,
       );
-      // Landed files now live in the parent tree — count toward edit trail so
-      // proof-claim / verify-hint rails fire the same as a same-workspace subagent.
       const landed = Math.max(
         1,
         worktreeLand.changedFiles.length || child.meta.editCount || 0,
@@ -967,7 +1082,7 @@ export async function runSubagent(
       }
     } else if (worktreeKept) {
       log.dim(
-        `Subagent worktree kept (${worktreeLand.status}): ${worktree.path}`,
+        `Subagent worktree kept (${worktreeLand.status}): ${worktreeLand.worktreePath}`,
       );
     }
   }

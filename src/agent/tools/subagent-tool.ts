@@ -4,22 +4,16 @@
 import type { ToolContext, ToolResult } from "./types.js";
 import {
   resolveCapabilityMode,
+  resolveSpawnSubagentType,
   resolveSubagentType,
   runSubagentTracked,
 } from "../subagent.js";
-import { defaultIsolationForSpawn } from "../worktree.js";
+import {
+  defaultIsolationForSpawn,
+  isolationArgFromSpawn,
+} from "../worktree.js";
 
-function isolationArgFromSpawn(args: Record<string, unknown>): unknown {
-  const isolation = args.isolation ?? args.isolate;
-  if (isolation !== undefined && isolation !== null && String(isolation).trim() !== "") {
-    return isolation;
-  }
-  if (args.worktree === true || args.worktree === "true") return "worktree";
-  if (typeof args.worktree === "string" && args.worktree.trim() !== "") {
-    return args.worktree;
-  }
-  return undefined;
-}
+export { isolationArgFromSpawn };
 
 export async function toolSpawnSubagent(
   args: Record<string, unknown>,
@@ -50,8 +44,13 @@ export async function toolSpawnSubagent(
   const description = String(
     args.description ?? args.summary ?? "",
   ).trim();
-  const subagentType = resolveSubagentType(
+  const subagentType = resolveSpawnSubagentType(
     args.subagent_type ?? args.type ?? args.agent_type,
+    {
+      planMode: ctx.config?.permissionMode === "plan",
+      ulwOrient: ctx.ulwPhase === "orient",
+      ulwLastReflectScore: ctx.ulwLastReflectScore,
+    },
   );
   const capabilityMode =
     ctx.config?.permissionMode === "plan"

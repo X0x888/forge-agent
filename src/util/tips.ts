@@ -21,7 +21,7 @@ export function expertTipsLines(): string[] {
     `  Attention:     /setup  ·  /bell on  ·  /notify on  ·  /budget N  ·  /copy  ·  /last  ·  /files  ·  /path  ·  /logs  ·  /config  ·  /pin  ·  /stats 7|week  ·  /news all  ·  /share  ·  /memory  ·  /checkpoint  ·  /retry  ·  unknown /cmd → Did you mean?`,
     `  Recovery:      /undo  ·  /checkpoint (/snap)  ·  /retry  ·  /sessions errors  ·  /context  ·  /compact  ·  sessions prune --force-last-error  ·  /init  ·  forge logs`,
     `  Custom cmds:    .forge/commands/<name>.md  ($ARGUMENTS $1..$9)  ·  .cursor/commands/  ·  ~/.forge/commands/  ·  /commands`,
-    `  Worktrees:      doctor/status show linked worktree · spawn_subagent general-purpose defaults to isolation=worktree (auto-lands) (FORGE_SUBAGENT_LAND=auto|keep|discard) · /undo reverts a journaled land · FORGE_SUBAGENT_KEEP_WORKTREE=1 · one session per worktree`,
+    `  Worktrees:      doctor/status show linked worktree · spawn_subagent general-purpose defaults to isolation=worktree (auto-lands) (FORGE_SUBAGENT_LAND=auto|keep|discard) · explore/plan + worktree GP overlap in one round (FORGE_SUBAGENT_PARALLEL=0 off; isFalsy incl. disabled) · /undo reverts a journaled land · FORGE_SUBAGENT_KEEP_WORKTREE=1 · one session per worktree`,
     `  LSP:            forge lsp ensure  (TS+Python default; Rust/Go if project)  ·  /lsp ensure  ·  FORGE_LSP_AUTO=0  ·  docs/LSP.md  ·  prefer lsp references/definition/workspace_symbols over repo-wide grep for known symbols`,
     `  Session titles: /sessions untitled · list --untitled · /title · --title · /goal auto-titles`,
     `  Session inventory: sessions list --json · doctor warns at ≥100 sessions · run --json productionWarnings · forge sessions prune --keep 50`,

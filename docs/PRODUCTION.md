@@ -410,6 +410,8 @@ Reliability for multi-day single process:
 | `FORGE_SUBAGENT_LAND` | `auto` | `auto` capture+apply isolation=worktree diffs into parent; `keep` leave worktree; `discard` drop without applying. Alias `FORGE_WORKTREE_LAND`. Conflicts always keep. |
 | `FORGE_SUBAGENT_KEEP_WORKTREE` | unset | When `1`, never apply — leave worktree on disk. |
 | `FORGE_SUBAGENT_ISOLATION` | unset | Implicit spawn isolation when the model omits `isolation`: `worktree` (default for general-purpose in a git repo) or `none`. Explicit `isolation=` still wins. |
+| `FORGE_SUBAGENT_PARALLEL` | on | `isFalsy` (`0`/`false`/`off`/`no`/`disabled`) serializes `spawn_subagent` (read-only batches unchanged). |
+| `FORGE_SUBAGENT_CHILD_MCP` | on | `isFalsy` skips MCP/LSP autostart for worktree children. In-place explore still uses parent managers. |
 | `FORGE_FORMAT_ON_WRITE` | auto | `1`/`0` force on/off. Unset = enable when a project formatter is detected (prettier/biome/ruff/gofmt/rustfmt). |
 
 ### Cross-session project memory
