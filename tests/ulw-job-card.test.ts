@@ -15,6 +15,7 @@ import {
   exploreSpawnSkipReason,
   loadUlwCycle,
   maybeStampUlwWave,
+  midReflectHolding,
   noteUlwThoughtOnlyStop,
   saveUlwCycle,
   THOUGHT_ONLY_LOOK_CYCLE,
@@ -350,5 +351,134 @@ describe("product-quality arms from Wave-1 reading", () => {
       }),
       true,
     );
+  });
+});
+
+describe("jobMoved is named/pick/play or reading files", () => {
+  it("does not treat a full-suite pass or control-flow net=new as a job move", () => {
+    assert.equal(
+      waveMovedJob({
+        wave: 4,
+        editDelta: 12,
+        proof: true,
+        proofKind: "full",
+        netDiff: "new",
+        editKind: "control-flow",
+        summary: "npm test green",
+        ts: "",
+      }),
+      false,
+    );
+    assert.equal(
+      waveMovedJob({
+        wave: 5,
+        editDelta: 9,
+        proof: true,
+        proofKind: "play",
+        summary: "play-loop on floor 1",
+        ts: "",
+      }),
+      true,
+    );
+    assert.equal(
+      waveMovedJob({
+        wave: 1,
+        editDelta: 6,
+        proof: true,
+        jobMoved: true,
+        summary: "planted the cry",
+        ts: "",
+      }),
+      true,
+    );
+  });
+});
+
+describe("consolidation Must-fix + no job-move holds", () => {
+  it("blocks the next stamp after 4 off-job credited waves", () => {
+    withHome(() => {
+      const sid = "cons-hold";
+      fs.mkdirSync(path.join(process.env.FORGE_HOME!, "sessions", sid), {
+        recursive: true,
+      });
+      armUlwReady(sid, "improve the code", {
+        cycle: 1,
+        skipCheckpoint: true,
+      });
+      const closers = [
+        "Wave shipped: plant the cry seed on floor 1.",
+        "Wave shipped: hearth join timeout no longer freezes.",
+        "Wave shipped: host bag ticks while the joiner is away.",
+        "Wave shipped: journal leftover recipes become the walk goal.",
+      ];
+      let edits = 0;
+      let last;
+      for (let i = 0; i < 4; i++) {
+        edits += 5;
+        last = maybeStampUlwWave({
+          sessionId: sid,
+          editCount: edits,
+          openTodoCount: 0,
+          stepsSinceStamp: 1,
+          lastAssistantMessage: closers[i],
+          verificationPassed: true,
+          verificationHelperOnly: true,
+          changedPaths: [`src/area${i}/mod.js`],
+        });
+      }
+      assert.equal(last?.stamped, true, JSON.stringify(last));
+      const held = loadUlwCycle(sid)!;
+      assert.equal(
+        midReflectHolding(held),
+        true,
+        `hold=${held.midReflectHold} holes=${JSON.stringify(held.midReflectHoles)} wave=${held.wave} same=${held.sameSurfaceHold}`,
+      );
+      assert.ok((held.midReflectHoles ?? []).length > 0);
+      edits += 5;
+      const blocked = maybeStampUlwWave({
+        sessionId: sid,
+        editCount: edits,
+        openTodoCount: 0,
+        stepsSinceStamp: 1,
+        lastAssistantMessage: "Wave shipped: yet another npc controller.",
+        verificationPassed: true,
+        verificationHelperOnly: true,
+        changedPaths: ["src/area9/npc.js"],
+      });
+      assert.equal(blocked.stamped, false, JSON.stringify(blocked));
+      assert.match(
+        blocked.admit || "",
+        /Must-fix|consolidation|job-move|explore/i,
+      );
+    });
+  });
+});
+
+describe("play/look is a proof kind", () => {
+  it("stamps proofKind=play on a play-loop closer", () => {
+    withHome(() => {
+      const sid = "play-kind";
+      fs.mkdirSync(path.join(process.env.FORGE_HOME!, "sessions", sid), {
+        recursive: true,
+      });
+      armUlwReady(sid, "improve this game", {
+        cycle: 1,
+        skipCheckpoint: true,
+      });
+      const r = maybeStampUlwWave({
+        sessionId: sid,
+        editCount: 4,
+        openTodoCount: 0,
+        stepsSinceStamp: 1,
+        lastAssistantMessage:
+          "Wave shipped: planted the cry. Playwright play-loop, zero JS errors.",
+        verificationPassed: true,
+      });
+      assert.equal(r.stamped, true);
+      const w = loadUlwCycle(sid)!.waves?.at(-1);
+      assert.equal(w?.proofKind, "play");
+      assert.equal(w?.proof, true);
+      assert.equal(w?.jobMoved, true);
+    });
   });
 });

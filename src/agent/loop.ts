@@ -82,6 +82,7 @@ import {
   consumeMillHoldPrune,
   noteUlwThoughtOnlyStop,
 } from "../harness/ulw-cycle.js";
+import { collectUlwJobKeepPaths } from "../harness/ulw-job-card.js";
 import { armUlwPlanMode, syncUlwPlanMode } from "../harness/ulw-plan-mode.js";
 import {
   isReasonedEmptyStop,
@@ -709,6 +710,8 @@ export interface BuildChatRequestOpts {
   rebaseConversation?: boolean;
   /** Suffix mill-tool ids to omit without inventing a first clip. */
   holdOmitIds?: string[] | null;
+  /** Wave-1 / named-ship / explore-map files — prune keeps these tools. */
+  jobKeepPaths?: string[];
   onPrune?: (info: {
     kind: PruneKind;
     sticky?: RequestPruneSticky;
@@ -750,6 +753,7 @@ export function buildChatRequest(
     lastApiPromptTokens: opts?.lastApiPromptTokens,
     contextWindow: config.contextWindow,
     spool: true,
+    jobKeepPaths: opts?.jobKeepPaths,
   });
   opts?.onPrune?.({
     kind: prep.kind,
@@ -1242,6 +1246,16 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
       lastApiPromptTokens: session.meta.lastRoundPromptTokens,
       sticky: session.meta.requestPruneSticky,
       holdOmitIds: session.meta.holdOmitToolIds,
+      jobKeepPaths: (() => {
+        try {
+          const ulw = loadUlwCycle(session.meta.id);
+          return collectUlwJobKeepPaths(session.meta.id, {
+            namedShips: ulw?.namedShips,
+          });
+        } catch {
+          return undefined;
+        }
+      })(),
       rebaseConversation: cursorRebase,
       toolChoice: forceToolNext && tools.length ? "required" : undefined,
       onPrune: (info) => {
@@ -1272,6 +1286,9 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
       lastApiPromptTokens: session.meta.lastRoundPromptTokens,
       contextWindow: config.contextWindow,
       spool: false,
+      jobKeepPaths: collectUlwJobKeepPaths(session.meta.id, {
+        namedShips: loadUlwCycle(session.meta.id)?.namedShips,
+      }),
     });
     return estimateRequestTokens(prep.messages, {
       ...extras,
@@ -2780,7 +2797,12 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
           try {
             const ulwNow = loadUlwCycle(session.meta.id);
             if (ulwNow && consumeMillHoldPrune(ulwNow)) {
-              applyMillHoldPrune(session);
+              applyMillHoldPrune(
+                session,
+                collectUlwJobKeepPaths(session.meta.id, {
+                  namedShips: ulwNow.namedShips,
+                }),
+              );
             }
             if (
               ulwNow?.reorientRequested ||
@@ -4314,9 +4336,21 @@ async function prepareToolResultInner(
     if (
       !result.isError &&
       /call_mcp|playwright|browser/i.test(name) &&
-      /playwright|browser_navigate|browser_snapshot/i.test(
+      /playwright|browser_navigate|browser_snapshot|browser_take_screenshot/i.test(
         `${name} ${JSON.stringify(toolInput).slice(0, 400)}`,
       )
+    ) {
+      try {
+        notePlayLoopRan(session.meta.id);
+      } catch {
+        /* */
+      }
+    }
+    if (
+      !result.isError &&
+      (name === "read_file" || name === "Read") &&
+      typeof toolInput.path === "string" &&
+      /\.(png|jpe?g|webp|gif)$/i.test(toolInput.path)
     ) {
       try {
         notePlayLoopRan(session.meta.id);

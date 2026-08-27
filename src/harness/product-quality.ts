@@ -71,6 +71,15 @@ export function isUserFacingProductWork(
   return false;
 }
 
+/** Game/app/empty-state — after wave 1 these ships need a play/look proof kind. */
+export function productNeedsPlayLook(
+  mandate: string,
+  reading?: string,
+): boolean {
+  const blob = `${mandate || ""} ${reading || ""}`;
+  return PRODUCT_OBJECT_RE.test(blob);
+}
+
 export function extractJobInsight(text: string): string | undefined {
   const t = text || "";
   const m = t.match(JOB_INSIGHT_RE);
@@ -187,6 +196,7 @@ export function storedNextNeeds(sessionId: string): string[] {
 export type ProductQualityMiss =
   | "job"
   | "edge"
+  | "look"
   | "serendipity_budget"
   | "serendipity_chrome";
 
@@ -201,6 +211,14 @@ export function evaluateProductQuality(opts: {
   /** Stamped waves so far — edge is owed after the first product ship. */
   wave?: number;
   isLeftoverChrome?: (text: string) => boolean;
+  /** Caller: user-facing product (mandate or Wave-1 reading). */
+  userFacing?: boolean;
+  /** Game/app/empty-state — play/look is a proof kind after wave 1. */
+  needsPlayLook?: boolean;
+  /** Playwright / screenshot / play-loop this wave. */
+  playLook?: boolean;
+  /** Test that calls a production function return (pin-only inverse). */
+  behavioralProof?: boolean;
 }): ProductQualityResult {
   const closer = opts.closer || "";
   const missing: ProductQualityMiss[] = [];
@@ -214,6 +232,15 @@ export function evaluateProductQuality(opts: {
     hasProductEdge(closer) ||
     (opts.sessionId ? hasStoredProductEdge(opts.sessionId) : false);
   if ((opts.wave ?? 0) >= 1 && !edge) missing.push("edge");
+
+  if (
+    opts.needsPlayLook &&
+    (opts.wave ?? 0) >= 1 &&
+    !opts.playLook &&
+    !opts.behavioralProof
+  ) {
+    missing.push("look");
+  }
 
   const hits = extractSerendipities(closer);
   if (hits.length > 1) missing.push("serendipity_budget");
@@ -244,6 +271,11 @@ export function formatProductQualityReanchor(
       "Finish one edge in this ship: empty state, error path, or first-run.",
     );
   }
+  if (missing.includes("look")) {
+    lines.push(
+      "After wave 1, a user-facing ship needs a play/look: Playwright screenshot + read_file, a play-loop, or a test that calls a production function return. Isolates and suite keywords are not a look.",
+    );
+  }
   if (missing.includes("serendipity_budget")) {
     lines.push(
       "At most one Serendipity: per unit. A second one is garnish — drop it or /cycle 0.",
@@ -254,6 +286,10 @@ export function formatProductQualityReanchor(
       "That Serendipity: is leftover chrome (✓-row / last-N lines), not a job-adjacent discovery.",
     );
   }
-  lines.push("Fix the ship, then Stop again. This bounce is once.");
+  lines.push(
+    missing.includes("look")
+      ? "Fix the ship, then Stop again. The look is required on every user-facing ship after wave 1."
+      : "Fix the ship, then Stop again. This bounce is once.",
+  );
   return lines.join("\n");
 }

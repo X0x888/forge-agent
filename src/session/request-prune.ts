@@ -27,6 +27,10 @@ import {
   isIdempotentRestoreTool,
 } from "./tool-clearing.js";
 import { requestPruneAtTokens, shouldPruneOutbound } from "./prompt-cache.js";
+import {
+  collectJobKeepToolIds,
+  collectRecentMillToolIds,
+} from "./mill-omit.js";
 
 export const REQUEST_PRUNE_DEFAULT_KEEP_TURNS = 3;
 export const REQUEST_PRUNE_DEFAULT_HARD_AGE = 10;
@@ -81,6 +85,8 @@ export interface RequestPruneOptions extends Partial<RequestPruneConfig> {
    * tool_call_id. Estimate path should leave this false — no disk I/O.
    */
   spool?: boolean;
+  /** Wave-1 / named-ship / explore-map files — never hard-omit these tools. */
+  jobKeepPaths?: string[];
 }
 
 export interface RequestPruneResult {
@@ -96,6 +102,16 @@ export interface RequestPruneResult {
 }
 
 export const HARNESS_USER_STUB = "[Forge harness — superseded]";
+
+/** Compact / re-anchor job card — never stub, even as an older ulw_stop. */
+export function isJobCardUserContent(content: string): boolean {
+  const t = (content || "").trimStart();
+  if (t.startsWith("[Conversation compacted")) return true;
+  if (/^## 1a\. Job card\b/m.test(t)) return true;
+  if (/\bWave 1 reading:/i.test(t)) return true;
+  if (/\bLast job-moving ship:/i.test(t)) return true;
+  return false;
+}
 
 const HARNESS_USER_CLASSES: { id: string; prefix: string }[] = [
   { id: "admit", prefix: "[Forge harness — mid-conversation update]" },
@@ -169,6 +185,7 @@ export function collapseStaleHarnessUserMessages(
       lastKept.add(cls);
       continue;
     }
+    if (isJobCardUserContent(m.content)) continue;
     if (m.content === HARNESS_USER_STUB || m.content.startsWith(HARNESS_USER_STUB)) {
       continue;
     }
@@ -334,6 +351,12 @@ export function pruneMessagesForRequest(
 
   const ages = assistantStepAges(messages);
   const names = nameByToolCallId(messages);
+  const jobKeepIds = new Set(
+    collectJobKeepToolIds(messages, opts.jobKeepPaths),
+  );
+  const millIds = new Set(
+    collectRecentMillToolIds(messages, 256, opts.jobKeepPaths),
+  );
 
   let out: ChatMessage[] | null = null;
   let prunedResults = 0;
@@ -355,6 +378,7 @@ export function pruneMessagesForRequest(
       const nextCalls = m.tool_calls.map((tc) => {
         const args = tc.function.arguments || "";
         if (!args || alreadyClearedArgs(args)) return tc;
+        if (tc.id && jobKeepIds.has(tc.id)) return tc;
         any = true;
         collapsedCalls += 1;
         return collapseToolCallArgs(tc);
@@ -371,8 +395,27 @@ export function pruneMessagesForRequest(
     if (!body || alreadyOmitted(body)) continue;
 
     const name = (m.tool_call_id && names.get(m.tool_call_id)) || "tool";
+    const id = m.tool_call_id || "";
+    const keep = Boolean(id && jobKeepIds.has(id));
+    const mill = Boolean(id && millIds.has(id));
 
-    if (age >= hardAge) {
+    // Job-keep (Wave-1 files, play screenshot, full suite, explore): never
+    // hard-omit. Soft-trim only if the body is huge.
+    if (keep) {
+      if (body.length > softChars) {
+        const trimmed = softTrim(body, softHead, softTail);
+        if (trimmed !== body) {
+          take(i);
+          out![i] = { ...m, content: trimmed };
+          prunedResults += 1;
+        }
+      }
+      continue;
+    }
+
+    // Mill edit class: hard-omit as soon as it leaves the hot tail.
+    const hard = age >= hardAge || mill;
+    if (hard) {
       const outputPath = spool
         ? ensureRequestPruneSpool(m.tool_call_id || "", body)
         : extractSavedOutputPath(body);
@@ -682,6 +725,7 @@ export function applyStickyPrune(
       m.role === "user" &&
       typeof m.content === "string" &&
       m.content !== HARNESS_USER_STUB &&
+      !isJobCardUserContent(m.content) &&
       stubbed.has(harnessStubKey(m.content))
     ) {
       take(i);

@@ -438,6 +438,7 @@ export {
   noteUlwThoughtOnlyStop,
   CONSOLIDATION_EVERY,
   THOUGHT_ONLY_LOOK_CYCLE,
+  midReflectHolding,
   providerFuseTripsContinueCap,
   stopBlockTripsContinueCap,
 } from "./harness/ulw-cycle.js";
@@ -515,13 +516,16 @@ export {
   formatUlwJobCard,
   waveMovedJob,
   lastJobMovingWave,
+  collectUlwJobKeepPaths,
 } from "./harness/ulw-job-card.js";
 export {
   collectRecentMillToolIds,
   applyMillHoldPrune,
+  isMillEditClass,
 } from "./session/hold-context.js";
 export {
   isUserFacingProductWork,
+  productNeedsPlayLook,
   extractJobInsight,
   extractNextNeed,
   extractSerendipities,

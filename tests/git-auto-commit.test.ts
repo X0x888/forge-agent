@@ -87,6 +87,15 @@ describe("ULW auto-commit", () => {
     assert.doesNotMatch(s, /comprehensively evaulate/i);
   });
 
+  it("does not title a commit from the ULW re-anchor", () => {
+    const s = buildAutoCommitSubject(
+      "improve this game",
+      "Acting on the ULW re-anchor. Do not stop. Do not ask permission to continue.",
+    );
+    assert.doesNotMatch(s, /Acting on the ULW re-anchor/i);
+    assert.match(s, /improve this game/i);
+  });
+
   it("prefers a Ship landed hint over the raw mandate", () => {
     const s = buildAutoCommitSubject(
       "comprehensively evaluate this tool and then improve the ui and ux of it.",

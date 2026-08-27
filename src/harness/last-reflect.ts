@@ -106,20 +106,7 @@ export function ledgerMustFixItems(facts: LastReflectLedgerFacts): string[] {
       "Last credited waves did not close a named/pick/play job (volume is not movement).",
     );
   }
-  const userFacing =
-    /\b(game|app|application|tui|cli)\b/i.test(facts.mandate || "") ||
-    /\b(evaluate|build|redesign)\b/i.test(facts.mandate || "");
-  if (
-    userFacing &&
-    !facts.playLoopRan &&
-    waves.length >= 4 &&
-    !hadFull &&
-    millN + chromeN >= 1
-  ) {
-    holes.push(
-      "User-facing product had no play-loop / screenshot look and no full-suite ✓ this run.",
-    );
-  }
+
   const seen = new Set<string>();
   const out: string[] = [];
   for (const h of holes) {

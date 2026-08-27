@@ -11,6 +11,7 @@ import {
   harvestProductQualityNotes,
   evaluateProductQuality,
   hasStoredJobInsight,
+  productNeedsPlayLook,
 } from "../src/harness/product-quality.js";
 import {
   armUlwCycle,
@@ -121,6 +122,29 @@ describe("product-quality detectors", () => {
       });
       assert.equal(q.ok, true);
     });
+  });
+
+  it("requires a play/look after wave 1 for a game/app, not a suite keyword", () => {
+    assert.equal(productNeedsPlayLook("improve this game"), true);
+    assert.equal(productNeedsPlayLook("comprehensively evaluate then improve ux"), false);
+    const miss = evaluateProductQuality({
+      closer:
+        "Job: first-hour cry. Empty state: floor 1 is empty.\nWave shipped: npc. npm test 12 passed.",
+      sessionId: "",
+      wave: 1,
+      needsPlayLook: true,
+    });
+    assert.equal(miss.ok, false);
+    assert.ok(miss.missing.includes("look"));
+    const ok = evaluateProductQuality({
+      closer:
+        "Job: first-hour cry. Empty state: floor 1 is empty.\nWave shipped: play-loop, Playwright, zero JS errors.",
+      sessionId: "",
+      wave: 1,
+      needsPlayLook: true,
+      playLook: true,
+    });
+    assert.equal(ok.ok, true);
   });
 
   it("does not require an edge on the first product ship", () => {

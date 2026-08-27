@@ -19,6 +19,7 @@ import {
   REQUEST_PRUNE_DEFAULT_HARD_AGE,
   HARNESS_USER_STUB,
   collapseStaleHarnessUserMessages,
+  isJobCardUserContent,
 } from "../src/session/request-prune.js";
 
 function assistantCall(
@@ -472,5 +473,72 @@ describe("request-prune", () => {
     assert.equal(withUlwProof.proofPokes, 2);
     assert.equal(withUlwProof.harnessUserPokes, 4);
     assert.equal(withUlwProof.admitCount, 3);
+  });
+
+  it("omits mill edit class and keeps Wave-1 job reads", () => {
+    const msgs: ChatMessage[] = [{ role: "system", content: "sys" }];
+    const jobPath = "src/tui/repl.ts";
+    for (let i = 0; i < 12; i++) {
+      const millId = `m${i}`;
+      const keepId = `k${i}`;
+      msgs.push(
+        assistantCall(
+          millId,
+          "write_file",
+          JSON.stringify({ path: `src/npcs/toast-${i}.js`, contents: "x" }),
+        ),
+      );
+      msgs.push(toolMsg(millId, "W".repeat(4000)));
+      msgs.push(
+        assistantCall(
+          keepId,
+          "read_file",
+          JSON.stringify({ path: jobPath }),
+        ),
+      );
+      msgs.push(toolMsg(keepId, "JOBBODY".repeat(200)));
+    }
+    const r = pruneMessagesForRequest(msgs, {
+      spool: false,
+      jobKeepPaths: [jobPath],
+    });
+    const ages = assistantStepAges(r.messages);
+    let millOmitted = 0;
+    let jobKept = 0;
+    for (let i = 0; i < r.messages.length; i++) {
+      const m = r.messages[i]!;
+      if (m.role !== "tool") continue;
+      const age = ages[i] ?? -1;
+      if (age < REQUEST_PRUNE_DEFAULT_KEEP_TURNS) continue;
+      const id = m.tool_call_id || "";
+      if (id.startsWith("m") && (m.content || "").startsWith(REQUEST_PRUNE_OMITTED)) {
+        millOmitted += 1;
+      }
+      if (id.startsWith("k") && (m.content || "").includes("JOBBODY")) {
+        jobKept += 1;
+      }
+    }
+    assert.ok(millOmitted >= 3, `mill omitted ${millOmitted}`);
+    assert.ok(jobKept >= 3, `job kept ${jobKept}`);
+  });
+
+  it("never stubs a job-card user message", () => {
+    assert.equal(
+      isJobCardUserContent(
+        "[Conversation compacted — Forge checkpoint 1]\nWave 1 reading: plant the cry\n",
+      ),
+      true,
+    );
+    const msgs: ChatMessage[] = [
+      {
+        role: "user",
+        content:
+          "[Forge ULW cycle driver] Stop blocked\nWave 1 reading: plant the cry on floor 1\nLast job-moving ship: w1",
+      },
+      { role: "user", content: "[Forge ULW cycle driver] Stop blocked — later" },
+    ];
+    const c = collapseStaleHarnessUserMessages(msgs);
+    assert.equal(c.stubbed, 0);
+    assert.match(String(c.messages[0]?.content), /Wave 1 reading: plant the cry/);
   });
 });

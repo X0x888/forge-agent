@@ -5,11 +5,15 @@
  * must reprint it, or w125 only sees mill volume. Facts only — no scores.
  */
 import { activeMemoryRecords, isPlanShapedText } from "./decision-memory.js";
-import { loadWave1Reading } from "./explore-contract.js";
+import {
+  loadExploreMapEntries,
+  loadWave1Reading,
+} from "./explore-contract.js";
 import {
   isFactoryFingerprint,
   isChangelogOnlySummary,
 } from "./work-class.js";
+
 
 /** Play / screenshot / Playwright — a look, not a mill grep. */
 export const PLAY_LOOK_RE =
@@ -57,9 +61,73 @@ export interface UlwJobCard {
   jobMovedCount: number;
 }
 
+const FILE_PATH_RE = /\b[\w./-]+\.(ts|tsx|js|jsx|mjs|cjs|py|rs|go|md)\b/g;
+
+export function extractReadingFilePaths(text: string): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  const re = new RegExp(FILE_PATH_RE.source, "gi");
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text || "")) !== null) {
+    const p = m[0]!.replace(/\\/g, "/");
+    const k = p.toLowerCase();
+    if (seen.has(k)) continue;
+    seen.add(k);
+    out.push(p);
+  }
+  return out;
+}
+
+export function collectUlwJobKeepPaths(
+  sessionId: string,
+  extra?: { namedShips?: Array<{ text: string; status?: string }> },
+): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  const push = (p: string) => {
+    const n = (p || "").replace(/\\/g, "/").trim();
+    if (!n || seen.has(n.toLowerCase())) return;
+    seen.add(n.toLowerCase());
+    out.push(n);
+  };
+  const reading = sessionId ? loadWave1Reading(sessionId) : undefined;
+  for (const p of extractReadingFilePaths(reading || "")) push(p);
+  try {
+    for (const e of loadExploreMapEntries(sessionId)) {
+      for (const p of e.paths) push(p);
+    }
+  } catch {
+    /* */
+  }
+  for (const n of extra?.namedShips ?? []) {
+    for (const p of extractReadingFilePaths(n.text || "")) push(p);
+  }
+  return out;
+}
+
+export function pathsOnReadingFiles(
+  paths: string[] | undefined,
+  readingFiles: string[] | undefined,
+): boolean {
+  if (!paths?.length || !readingFiles?.length) return false;
+  const keep = new Set(readingFiles.map((p) => p.replace(/\\/g, "/").toLowerCase()));
+  for (const p of paths) {
+    const n = (p || "").replace(/\\/g, "/").toLowerCase();
+    if (!n) continue;
+    if (keep.has(n)) return true;
+    for (const k of keep) {
+      if (n.endsWith("/" + k) || k.endsWith("/" + n)) return true;
+      const a = n.split("/").pop();
+      const b = k.split("/").pop();
+      if (a && b && a === b && a.length >= 8) return true;
+    }
+  }
+  return false;
+}
+
 /**
- * Job movement — named/pick/play/full-suite/control-flow, not mill volume.
- * Explicit `jobMoved` on the ledger wins for current stamps.
+ * Job movement — named/pick/play or the reading's files.
+ * A full-suite pass or any control-flow net=new is not a job move.
  */
 export function waveMovedJob(w: UlwJobWaveFact | undefined): boolean {
   if (!w) return false;
@@ -71,10 +139,8 @@ export function waveMovedJob(w: UlwJobWaveFact | undefined): boolean {
   const text = `${w.classText || ""} ${w.summary || ""}`;
   if (isChangelogOnlySummary(w.summary || "", w.editDelta ?? 0)) return false;
   if (isFactoryFingerprint(text)) return false;
-  if (w.proofKind === "full" && w.proof) return true;
+  if (w.proofKind === "play") return true;
   if (PLAY_LOOK_RE.test(text)) return true;
-  if (w.editKind === "control-flow" && w.netDiff === "new") return true;
-  if ((w.todoProgress ?? 0) > 0 && w.proof) return true;
   return false;
 }
 
@@ -238,7 +304,7 @@ export function formatUlwJobCard(
     }
   }
   lines.push(
-    "Bar is a job-moving ship (named/pick/play/full-suite/control-flow on the reading's files), not mill edit count.",
+    "Bar is a job-moving ship (named/pick/play, or control-flow on the reading's files), not mill edit count or a suite pass.",
   );
   let out = lines.filter(Boolean).join("\n");
   if (out.length > max) out = `${out.slice(0, max - 1)}…`;

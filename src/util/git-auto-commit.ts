@@ -147,6 +147,17 @@ export function isDisposableTestRelPath(rel: string): boolean {
   return base.startsWith("__wt_land_");
 }
 
+function isReanchorCommitHint(text: string | undefined): boolean {
+  const t = (text || "").replace(/\s+/g, " ").trim();
+  if (!t) return false;
+  return (
+    /\bActing on the ULW re-anchor\b/i.test(t) ||
+    /\bStop blocked\b/i.test(t) ||
+    /\bDo not stop\. Do not ask permission\b/i.test(t) ||
+    /^\[Forge ULW cycle driver\]/i.test(t)
+  );
+}
+
 export function buildAutoCommitSubject(mandate: string, hint?: string): string {
   const fromShip = hint ? extractShipSummary(hint) : undefined;
   let t = (fromShip || hint || "").replace(/\s+/g, " ").trim();
@@ -155,6 +166,7 @@ export function buildAutoCommitSubject(mandate: string, hint?: string): string {
   t = t.replace(/^Correction:\s*/i, "");
   t = t.replace(/^\*{0,2}Cycle complete\.?\*{0,2}\s*/i, "");
   t = t.replace(/\*{1,2}/g, "").replace(/\s+/g, " ").trim();
+  if (isReanchorCommitHint(t)) t = "";
   // "Cycle complete.\n✅ npm test — green" is not a ship body.
   if (/^[✅✗]/.test(t) || /^Proof:/i.test(t)) t = "";
   // Mandate is last resort — a packed "Cycle complete" wave used to commit
@@ -270,6 +282,9 @@ export function maybeAutoCommitOnUlwDone(opts: {
   const lastWave = ulw?.waves?.length
     ? ulw.waves[ulw.waves.length - 1]
     : undefined;
+  if (lastWave && (lastWave.editDelta ?? 0) <= 0) {
+    return { committed: false, skipped: "zero-edit wave" };
+  }
   if (
     lastWave &&
     (lastWave.millClass || lastWave.siblingMill) &&
@@ -277,10 +292,17 @@ export function maybeAutoCommitOnUlwDone(opts: {
   ) {
     return { committed: false, skipped: "mill ship (not a job move)" };
   }
+  const hint = shipHint(opts.sessionId);
+  if (isReanchorCommitHint(hint)) {
+    return { committed: false, skipped: "re-anchor is not a ship" };
+  }
   const subject = buildAutoCommitSubject(
     ulw ? displayUlwMandate(ulw.mandate) : "ULW cycle complete",
-    shipHint(opts.sessionId),
+    hint,
   );
+  if (isReanchorCommitHint(subject)) {
+    return { committed: false, skipped: "re-anchor is not a ship" };
+  }
   const body = buildAutoCommitBody(ulw, staged);
   try {
     // Fallback author when the machine has no user.name/email (maze: 43

@@ -113,7 +113,7 @@ Mechanisms built on the ledger:
 
 | Mechanism | Behavior |
 |-----------|----------|
-| **Bar anchoring** | Each CONTINUE re-anchor *names* the best **job-moving** wave so far (named/pick/play/full-suite/control-flow). Sibling new-modules, chrome, isolate-only, and factory mill do not raise the bar. Prompt-only — Stop is not blocked if the next ship is smaller-leverage |
+| **Bar anchoring** | Each CONTINUE re-anchor *names* the best **job-moving** wave so far (named/pick/play, or edits on the Wave-1 reading's files). A full-suite pass or any control-flow `net=new` is not a job move. Sibling new-modules, chrome, isolate-only, and factory mill do not raise the bar. |
 | **Same-surface hold** | 3 consecutive declared ships on the same **tree surface** (same 1–3 production files + chrome/TTY kind; closer overlap and maze schemas are extra hints) → ULW holds until a different-class `Reading:`, explore/play-loop, or `/cycle 0`. Cap is a budget for **distinct surfaces**, not mill units — capped runs hold too. `/cycle 0` N+1 still finishes. Stuck-wall does not increment. An explore-map pick is never mill. A new noun is not a new surface. |
 | **Tests-without-body** | Declared `Wave shipped` with `proof=✗` and only test / lockfile dirty (or an explicit red-green / “tests first, then the body” closer) does **not** increment `w`. Wire the production body, prove it, then close. Maze max20 wave 1 stamped a red test file and shoved the real ship into wave 2. |
 | **Proof demand** | A wave with no verification triggers `⚠ … ran no verification — run its proof NOW`. Capped at 2 consecutive demands (a stated rationale is then accepted — some repos have no tests) |
