@@ -308,11 +308,11 @@ describe("cadence re-PLAN on off-job ships", () => {
         });
       }
       const s = loadUlwCycle(sid)!;
-      assert.ok((s.offJobStreak ?? 0) >= 3 || s.reorientRequested);
-      if ((s.offJobStreak ?? 0) >= 3) {
-        assert.equal(s.reorientRequested, true);
-        assert.equal(s.exploreRequired, true);
-      }
+      assert.ok(
+        (s.offJobStreak ?? 0) >= 3,
+        `off-job streak ${s.offJobStreak}`,
+      );
+      assert.equal(s.reorientRequested, true);
     });
   });
 });

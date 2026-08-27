@@ -1670,11 +1670,11 @@ function maybeCadenceReorient(s: UlwCycleState): void {
     s.midReflectHoles = holes.length ? holes : undefined;
     s.midReflectWave = s.wave;
   }
-  // Named-ship exhaust / capped remaining budget already have holds.
-  // Only a mill of off-job credited ships forces explore+PLAN.
+  // Named-ship exhaust, polish-4 LAST, and capped remaining budget already
+  // have holds. Off-job mill re-arms PLAN (look required to leave it) but
+  // does not steal exploreHolding from those rails.
   if ((s.offJobStreak ?? 0) < OFF_JOB_REORIENT) return;
   markUlwReorient(s);
-  markExploreRequired(s);
 }
 
 export function isPlayLoopCloser(text: string): boolean {
