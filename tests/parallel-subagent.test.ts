@@ -89,7 +89,10 @@ describe("isSpawnParallelSafe + partitionParallelBatches", () => {
   before(() => {
     tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "forge-par-home-"));
     process.env.FORGE_HOME = tmpHome;
-    nonGit = fs.mkdtempSync(path.join(os.tmpdir(), "forge-par-nongit-"));
+    // npm test sets TMPDIR=$PWD/.tmp inside the git worktree. Walk-up
+    // findGitRoot would then treat a "non-git" fixture as a repo.
+    const outsideGit = findGitRoot(os.tmpdir()) ? "/tmp" : os.tmpdir();
+    nonGit = fs.mkdtempSync(path.join(outsideGit, "forge-par-nongit-"));
   });
 
   after(() => {
