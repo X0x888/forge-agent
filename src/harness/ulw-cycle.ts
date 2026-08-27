@@ -1664,21 +1664,17 @@ function noteOffJobShip(s: UlwCycleState, rec: UlwWaveRecord): void {
 function maybeCadenceReorient(s: UlwCycleState): void {
   if (s.cycle !== 1 || s.wrapKind) return;
   const consolidation = s.wave > 0 && s.wave % CONSOLIDATION_EVERY === 0;
-  const offJob = (s.offJobStreak ?? 0) >= OFF_JOB_REORIENT;
   if (consolidation) {
     s.soulNudgeDone = false;
     const holes = lastReflectLedger(s);
     s.midReflectHoles = holes.length ? holes : undefined;
     s.midReflectWave = s.wave;
   }
-  if (!offJob && !(consolidation && (s.midReflectHoles?.length ?? 0) > 0)) {
-    return;
-  }
+  // Named-ship exhaust / capped remaining budget already have holds.
+  // Only a mill of off-job credited ships forces explore+PLAN.
+  if ((s.offJobStreak ?? 0) < OFF_JOB_REORIENT) return;
   markUlwReorient(s);
   markExploreRequired(s);
-  if (consolidation && (s.midReflectHoles?.length ?? 0) > 0 && offJob) {
-    markHoldArmed(s);
-  }
 }
 
 export function isPlayLoopCloser(text: string): boolean {
