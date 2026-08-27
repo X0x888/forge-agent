@@ -455,6 +455,7 @@ describe("ulw cycle", () => {
       editCount: 1,
       openTodoCount: 0,
       stuckThreshold: 20,
+      verificationPassed: true,
     });
     // wave becomes 1 < 2 → CONTINUE
     assert.equal(d1.block, true);
@@ -471,6 +472,7 @@ describe("ulw cycle", () => {
       editCount: 2,
       openTodoCount: 0,
       stuckThreshold: 20,
+      verificationPassed: true,
     });
     // wave becomes 2 >= 2 → auto LAST
     assert.equal(d2.block, true);
@@ -1424,11 +1426,17 @@ describe("polish-class Stop", () => {
       skipCheckpoint: true,
     });
     markUlwPlanDone(sid);
-    for (let i = 1; i <= 4; i++) {
+    const polish = [
+      "Wave shipped. keep one TTY row on the picker",
+      "Wave shipped. leftover dump after the turn is gone",
+      "Wave shipped. quieter chip copy on the HUD",
+      "Wave shipped. dock owns identity — slim the banner",
+    ];
+    for (let i = 0; i < polish.length; i++) {
       evaluateUlwAtStop({
         sessionId: sid,
-        lastAssistantMessage: `Wave shipped. keep one TTY row on picker ${i}`,
-        editCount: i,
+        lastAssistantMessage: polish[i]!,
+        editCount: i + 1,
         openTodoCount: 0,
         stuckThreshold: 20,
         verificationRan: true,

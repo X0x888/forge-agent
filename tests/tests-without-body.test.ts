@@ -39,6 +39,9 @@ describe("tests-without-body classifier", () => {
     assert.equal(isTestOrHarnessPath("client/src/lib/game/carriedGifts.test.ts"), true);
     assert.equal(isTestOrHarnessPath("package.json"), true);
     assert.equal(isTestOrHarnessPath("client/src/lib/game/carriedGifts.ts"), false);
+    assert.equal(isTestOrHarnessPath("tests/test_tool.py"), true);
+    assert.equal(isTestOrHarnessPath("tool_test.py"), true);
+    assert.equal(isTestOrHarnessPath("tool.py"), false);
     assert.equal(isTestsWithoutBodyCloser(REDGREEN), true);
     assert.equal(isTestsWithoutBodyCloser(BODY), false);
   });

@@ -178,6 +178,13 @@ describe("honest verification", () => {
     const out = "ℹ tests 4931\nℹ pass 4867\nℹ fail 64\nℹ cancelled 0\n";
     assert.equal(parseTestFailCount(out), 64);
     assert.equal(parseTestFailCount("ℹ fail 0\n"), 0);
+    assert.equal(parseTestFailCount("FAILED (failures=2, errors=1)\n"), 3);
+    assert.equal(parseTestFailCount("===== 4 failed, 10 passed in 0.2s =====\n"), 4);
+    assert.equal(parseTestFailCount("command hung waiting for result\n"), 1);
+    assert.equal(
+      parseTestFailCount("1 passed in 0.20s — retry on timeout\n"),
+      undefined,
+    );
   });
 
   it("treats npm test | grep as a pipe, and fail 64 as not passed", () => {

@@ -54,6 +54,8 @@ export interface StopGuardInput {
   verificationPassed?: boolean;
   /** Only helper-only isolate checks ran this wave. */
   verificationHelperOnly?: boolean;
+  /** Project full-suite check passed this wave. */
+  verificationFullSuite?: boolean;
   /** Preferred project checks for handoff/proof-claim reanchor tips. */
   preferredCheckCommands?: string[];
   lastVerificationCommand?: string;
@@ -179,6 +181,7 @@ export async function runStopGuard(input: StopGuardInput): Promise<StopGuardResu
     verificationRan: input.verificationRan,
     verificationPassed: input.verificationPassed,
     verificationHelperOnly: input.verificationHelperOnly,
+    verificationFullSuite: input.verificationFullSuite,
     preferredCheckCommands: input.preferredCheckCommands,
     diffFingerprint,
     cwd: ctx.workspaceRoot,

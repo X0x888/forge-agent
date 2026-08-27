@@ -77,7 +77,7 @@ import {
   countsTowardVerification,
   applyVerificationTrail,
   verificationPassedFromResult,
-  isHelperOnlyTestCommand,
+  isIsolateTestCommand,
   isFullSuiteCommand,
   consumeMillHoldPrune,
 } from "../harness/ulw-cycle.js";
@@ -432,6 +432,8 @@ interface HarnessRunStats {
   verificationPassedRuns: number;
   /** Isolate `node --test tests/wN-*.mjs` ran — not wave proof. */
   verificationHelperOnlyRuns: number;
+  /** Full project suite passed this wave — ULW proof=✓. */
+  verificationFullSuiteRuns: number;
   effortBoostTurns: number;
 }
 
@@ -1026,6 +1028,7 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
     verificationRuns: 0,
     verificationPassedRuns: 0,
     verificationHelperOnlyRuns: 0,
+    verificationFullSuiteRuns: 0,
     effortBoostTurns: 0,
   };
   /** Consecutive Stop blocks from handoff-guard (polite yield). Resets on allow. */
@@ -1656,6 +1659,7 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
             verificationRan: harnessStats.verificationRuns > 0,
             verificationPassed: harnessStats.verificationPassedRuns > 0,
             verificationHelperOnly: harnessStats.verificationHelperOnlyRuns > 0,
+            verificationFullSuite: harnessStats.verificationFullSuiteRuns > 0,
             cwd: workspace,
           });
           if (stamp.stamped || stamp.admit) {
@@ -2700,6 +2704,7 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
           verificationRan: harnessStats.verificationRuns > 0,
           verificationPassed: harnessStats.verificationPassedRuns > 0,
           verificationHelperOnly: harnessStats.verificationHelperOnlyRuns > 0,
+          verificationFullSuite: harnessStats.verificationFullSuiteRuns > 0,
           handoffBlocks,
           proofClaimBlocks,
           preferredCheckCommands,
@@ -2716,6 +2721,7 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
           harnessStats.verificationRuns = 0;
           harnessStats.verificationPassedRuns = 0;
           harnessStats.verificationHelperOnlyRuns = 0;
+          harnessStats.verificationFullSuiteRuns = 0;
         }
         // Missing wave proof / weak attestation = hard-round signal → think harder.
         if (stopResult.ulw?.proofDemanded || stopResult.ulw?.evidenceDemanded) {
@@ -4312,10 +4318,14 @@ async function prepareToolResultInner(
         isError: result.isError,
         output: rawOut,
       });
-      if (passed) {
-        harnessStats.verificationPassedRuns += 1;
-      } else if (isHelperOnlyTestCommand(cmd)) {
+      const isolate = isIsolateTestCommand(cmd);
+      if (isolate) {
         harnessStats.verificationHelperOnlyRuns += 1;
+      } else if (passed) {
+        harnessStats.verificationPassedRuns += 1;
+        if (isFullSuiteCommand(cmd, preferred)) {
+          harnessStats.verificationFullSuiteRuns += 1;
+        }
       }
       const prevOk = session.meta.lastVerificationOk;
       const prevCmd = session.meta.lastVerificationCommand || "";
@@ -4332,7 +4342,7 @@ async function prepareToolResultInner(
           isFullSuiteCommand(prevCmd)
         ) {
           const tip =
-            "\n\nSuite is still red. Prefer `node --test tests/<this-wave>.mjs` this wave. Do not foreground `npm test` / `npm run ci` — background:true then get_task_output, or skip the full suite.";
+            "\n\nSuite is still red. Isolates this wave are proof=ran. Consolidation/LAST still need the full suite (timeout = proof=✗ — do not skip).";
           result.output = `${String(result.output || "").replace(/\s+$/, "")}${tip}`;
         }
         if (session.meta.lastVerificationOk === true) {

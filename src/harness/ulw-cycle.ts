@@ -70,7 +70,14 @@ import {
   isTestsWithoutBodyShip,
   TESTS_WITHOUT_BODY_ADMIT,
 } from "./tests-without-body.js";
-import { decideWaveJobCredit } from "./job-delta.js";
+import {
+  decideWaveJobCredit,
+  isChromeKind,
+  productionRelPaths,
+  sameTreeSurface,
+  treeSurfaceKey,
+  type ProdEditKind,
+} from "./job-delta.js";
 import {
   OFF_CONTRACT_HOLD,
   formatHoldContextAppendix,
@@ -85,6 +92,7 @@ import {
   applyLastReflectGate,
   formatLastReflectStatusLine,
   lastReflectEnabled,
+  ledgerMustFixItems,
   normalizeLastReflectPhase,
   type UlwLastReflectPhase,
 } from "./last-reflect.js";
@@ -135,6 +143,14 @@ export interface UlwWaveRecord {
   netDiff?: "new" | "revisit" | "none";
   /** True when verification evidence was detected (test/typecheck/lint/build run or cited) */
   proof: boolean;
+  /** full = project suite; isolate = targeted file/method (proof=ran, not ✓). */
+  proofKind?: "full" | "isolate" | "none";
+  /** Tree surface (paths + edit kind), not closer tokens. */
+  treeSurfaceKey?: string;
+  /** Production diff kind for this ship. */
+  editKind?: ProdEditKind;
+  /** Chrome/string-literal TTY ship. */
+  chrome?: boolean;
   /** One-line clip of the wave's closing assistant message */
   summary: string;
   /** Significant tokens from the summary (same-surface classifier). */
@@ -261,6 +277,15 @@ export interface UlwCycleState {
   /** Times we bounced Stop for a missing reading (capped, never a trap). */
   judgmentDemands?: number;
   /**
+   * Consecutive chrome/pin job-delta ships (credited or refused).
+   * 3 in a row auto-LAST — thick TTY mills are still thin.
+   */
+  jobThinStreak?: number;
+  /** Pin-only credit refusals this run (LAST scorecard). */
+  pinCreditRefused?: number;
+  /** A project full-suite check passed this run. */
+  fullSuitePassed?: boolean;
+  /**
    * Named ships parsed from the Wave-1 reading. Unlimited evaluate-class
    * asks for a new reading when every item is done (once). Ignored when
    * maxWaves is set — remaining budget is still spent.
@@ -381,6 +406,8 @@ const MAX_JUDGMENT_DEMANDS = 2;
 const MAX_EVIDENCE_NUDGES = 1;
 /** Thin waves in a row before surfacing a diminishing-returns advisory. */
 const THIN_ADVISORY_STREAK = 3;
+/** Every Nth wave is a consolidation wave: review + harden, no new scope. */
+const CONSOLIDATION_EVERY = 4;
 
 /**
  * Bash command shape that counts as running verification. The agent loop
@@ -388,7 +415,7 @@ const THIN_ADVISORY_STREAK = 3;
  * `verificationRan` signal — execution, not prose.
  */
 export const VERIFICATION_CMD_RE =
-  /\b(?:npm|pnpm|yarn|bun|deno)\s+(?:run\s+)?(?:test|tests|spec|typecheck|type-check|lint|check|build|ci|verify|smoke|tsc|format-check|fmt-check)\b|\b(?:pytest|py\.test|jest|vitest|mocha|ava|phpunit|rspec|ctest|mypy|pyright|ruff|golangci-lint|staticcheck|biome)\b|\bcargo\s+(?:test|check|build|clippy)\b|\bgo\s+(?:test|vet|build)\b|\bmvn\s+(?:test|verify|package|compile)\b|\bgradle(?:w)?\s+(?:test|check|build)\b|\bmake\s+(?:test|check|build|all|ci)\b|\bmix\s+test\b|\bcomposer\s+test\b|\bturbo\s+run\s+(?:test|tests|typecheck|type-check|lint|check|build|ci|verify|smoke)\b|\bnx\s+(?:run-many|run)\b|\btsc\b|\beslint\b|\bdotnet\s+(?:test|build)\b|\bnpx\s+(?:tsc|eslint|vitest|jest|prettier|biome)\b|\b(?:yarn\s+dlx|bunx)\s+(?:tsc|eslint|vitest|jest)\b|\bforge\s+(?:test|check|typecheck|ci|smoke)\b|\b(?:node|tsx)\b[^\n]{0,120}--test\b/i;
+  /\b(?:npm|pnpm|yarn|bun|deno)\s+(?:run\s+)?(?:test|tests|spec|typecheck|type-check|lint|check|build|ci|verify|smoke|tsc|format-check|fmt-check)\b|\b(?:pytest|py\.test|jest|vitest|mocha|ava|phpunit|rspec|ctest|mypy|pyright|ruff|golangci-lint|staticcheck|biome)\b|\bpython(?:3)?\s+-m\s+unittest\b|\bcargo\s+(?:test|check|build|clippy)\b|\bgo\s+(?:test|vet|build)\b|\bmvn\s+(?:test|verify|package|compile)\b|\bgradle(?:w)?\s+(?:test|check|build)\b|\bmake\s+(?:test|check|build|all|ci)\b|\bmix\s+test\b|\bcomposer\s+test\b|\bturbo\s+run\s+(?:test|tests|typecheck|type-check|lint|check|build|ci|verify|smoke)\b|\bnx\s+(?:run-many|run)\b|\btsc\b|\beslint\b|\bdotnet\s+(?:test|build)\b|\bnpx\s+(?:tsc|eslint|vitest|jest|prettier|biome)\b|\b(?:yarn\s+dlx|bunx)\s+(?:tsc|eslint|vitest|jest)\b|\bforge\s+(?:test|check|typecheck|ci|smoke)\b|\b(?:node|tsx)\b[^\n]{0,120}--test\b/i;
 
 /**
  * True when a bash command counts as structural verification.
@@ -523,10 +550,33 @@ export function applyVerificationTrail(
 /** `ℹ fail 64` / `# fail 64` from node:test (and grepped tails). */
 export function parseTestFailCount(output: string): number | undefined {
   const tail = (output || "").length > 12_000 ? output.slice(-12_000) : output || "";
-  const m = tail.match(/(?:^|\n)\s*(?:ℹ|#)\s*fail\s+(\d+)\b/m);
-  if (!m) return undefined;
-  const n = Number(m[1]);
-  return Number.isFinite(n) ? n : undefined;
+  const node = tail.match(/(?:^|\n)\s*(?:ℹ|#)\s*fail\s+(\d+)\b/m);
+  if (node) {
+    const n = Number(node[1]);
+    return Number.isFinite(n) ? n : undefined;
+  }
+  const pytest =
+    tail.match(/(?:^|\n)=+[^\n]*\b(\d+)\s+failed\b/im) ||
+    tail.match(/\b(\d+)\s+failed(?:,|\s)/i);
+  if (pytest) {
+    const n = Number(pytest[1]);
+    return Number.isFinite(n) ? n : undefined;
+  }
+  const failures = tail.match(/FAILED\s*\(\s*failures\s*=\s*(\d+)/i);
+  const errors = tail.match(/FAILED\s*\([^)]*errors\s*=\s*(\d+)/i);
+  const failN = failures ? Number(failures[1]) : 0;
+  const errN = errors ? Number(errors[1]) : 0;
+  if (failures || errors) {
+    const n = (Number.isFinite(failN) ? failN : 0) + (Number.isFinite(errN) ? errN : 0);
+    return n;
+  }
+  if (
+    /\b(?:hung|timed out)\b/i.test(tail) &&
+    !/\b(?:ok|passed|fail 0|Ran \d+|tests?\s+\d+)\b/i.test(tail)
+  ) {
+    return 1;
+  }
+  return undefined;
 }
 
 /** `npm test | grep` / `| tail` hides the child's exit code. */
@@ -549,36 +599,75 @@ export function verificationPassedFromResult(opts: {
   const fail = parseTestFailCount(opts.output || "");
   if (fail != null && fail > 0) return false;
   if (isVerificationOutputPipe(opts.command) && fail == null) return false;
-  if (isHelperOnlyTestCommand(opts.command)) return false;
+  // Isolates may be green for /verify; they are not ULW proof=✓ (see isIsolateTestCommand).
   return true;
+}
+
+/** `npm test` / `npm run test|ci|check` / unittest discover / bare pytest. */
+export function isFullSuiteCommand(
+  command: string,
+  preferredCheckCommands?: string[],
+): boolean {
+  const c = String(command || "").replace(/\s+/g, " ").trim();
+  if (!c) return false;
+  if (isIsolateTestCommand(c)) return false;
+  if (/\b(?:npm|pnpm|yarn|bun)\s+run\s+(?:ci|check)\b/.test(c)) return true;
+  if (/\b(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?test\b/.test(c)) {
+    if (/tests\/[^\s"'\\]+\.test\./i.test(c)) return false;
+    return true;
+  }
+  if (/\bpython(?:3)?\s+-m\s+unittest\b/.test(c)) {
+    if (/\bdiscover\b/.test(c)) return true;
+    const rest = c.replace(/^.*\bunittest\b/, "").trim();
+    return !rest || /^-[a-zA-Z]+$/.test(rest);
+  }
+  if (/\b(?:python(?:3)?\s+-m\s+)?pytest\b/.test(c) || /\bpy\.test\b/.test(c)) {
+    if (/::/.test(c) || /\.py\b/.test(c)) return false;
+    return true;
+  }
+  const preferred = preferredCheckCommands || [];
+  for (const p of preferred) {
+    const want = String(p || "").replace(/\s+/g, " ").trim();
+    if (!want) continue;
+    if (c === want || c.endsWith(` && ${want}`) || c.endsWith(`; ${want}`)) {
+      return !isIsolateTestCommand(want);
+    }
+  }
+  return false;
 }
 
 /**
- * Isolated `node --test tests/w161-foo.test.mjs` (and small wN families)
- * ran, but they are not wave proof — the mill's 5/5 helper file.
+ * Targeted file/method check — ran, not wave proof=✓.
+ * python -m unittest …TestCase.test_* and node --test tests/foo.test.ts.
  */
-/** `npm test` / `npm run test|ci|check` with no single-file path. */
-export function isFullSuiteCommand(command: string): boolean {
-  const c = String(command || "").replace(/\s+/g, " ").trim();
-  if (!c) return false;
-  if (/\b(?:npm|pnpm|yarn|bun)\s+run\s+(?:ci|check)\b/.test(c)) return true;
-  if (!/\b(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?test\b/.test(c)) return false;
-  if (/tests\/[^\s"'\\]+\.test\./i.test(c)) return false;
-  return true;
-}
-
-export function isHelperOnlyTestCommand(command: string): boolean {
+export function isIsolateTestCommand(command: string): boolean {
   const c = String(command || "").replace(/\s+/g, " ").trim();
   if (!c) return false;
   if (/\b(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?test\b/.test(c)) return false;
+  if (/\b(?:npm|pnpm|yarn|bun)\s+run\s+(?:ci|check)\b/.test(c)) return false;
+  if (/\bpython(?:3)?\s+-m\s+unittest\b/.test(c)) {
+    if (/\bdiscover\b/.test(c)) return false;
+    const rest = c.replace(/^.*\bunittest\b/, "").trim();
+    if (!rest || /^-[a-zA-Z]+\s*$/.test(rest)) return false;
+    return true;
+  }
+  if (/\b(?:python(?:3)?\s+-m\s+)?pytest\b/.test(c) || /\bpy\.test\b/.test(c)) {
+    return /::/.test(c) || /\.py\b/.test(c);
+  }
+  if (/[*?]/.test(c)) return false;
   if (/node\s+--test\s+tests\/(?:\*\*|["']?\.\*|["']?$)/.test(c)) return false;
   const isNodeTest = /\bnode\b[^\n]*--test\b/.test(c) || /\btsx\s+--test\b/.test(c);
   if (!isNodeTest) return false;
-  const files = [...c.matchAll(/tests\/[^\s"'\\]+\.test\.(?:mjs|js|cjs|ts)/gi)].map(
+  const files = [...c.matchAll(/[^\s"'\\]+\.(?:test|spec)\.[cm]?[jt]sx?/gi)].map(
     (m) => m[0],
   );
   if (files.length === 0) return /tests\/w\d+/i.test(c);
-  return files.length <= 6 && files.every((f) => /\/w\d+/i.test(f));
+  return files.length <= 8;
+}
+
+/** @deprecated isolate checks — kept as the historical name. */
+export function isHelperOnlyTestCommand(command: string): boolean {
+  return isIsolateTestCommand(command);
 }
 
 function escapeRegExp(s: string): string {
@@ -880,12 +969,17 @@ function appendWaveRecord(
     editDelta: number;
     netDiff?: UlwWaveRecord["netDiff"];
     proof: boolean;
+    proofKind?: UlwWaveRecord["proofKind"];
     todoProgress: number;
     summary: string;
     /** Full closer — mill/schema classify this, not the Shipped: clip. */
     classText?: string;
     /** Declared / leftover-sibling ship — counts toward same-surface streak. */
     themed?: boolean;
+    treeSurfaceKey?: string;
+    editKind?: ProdEditKind;
+    chrome?: boolean;
+    paths?: string[];
   },
 ): UlwWaveRecord {
   s.wave += 1;
@@ -893,9 +987,17 @@ function appendWaveRecord(
   s.phase = "ship";
   s.judgmentRequired = false;
   const classText = clipClassText(opts.classText || opts.summary);
-  applySameSurfaceNote(s, classText, opts.themed === true, opts.sessionId);
+  applySameSurfaceNote(s, classText, opts.themed === true, opts.sessionId, {
+    treeKey: opts.treeSurfaceKey,
+    paths: opts.paths,
+    kind: opts.editKind,
+  });
   applyContractNote(s, classText, opts.themed === true, opts.sessionId);
-  const proof = consumeProofTaint(s) ? false : opts.proof;
+  const tainted = consumeProofTaint(s);
+  const proof = tainted ? false : opts.proof;
+  const proofKind: UlwWaveRecord["proofKind"] = tainted
+    ? "none"
+    : opts.proofKind ?? (proof ? "full" : "none");
   const onContract = closerOnContract(opts.sessionId, classText);
   if (s.playLoopPending) s.playLoopPending = false;
   const rec: UlwWaveRecord = {
@@ -903,24 +1005,32 @@ function appendWaveRecord(
     editDelta: opts.editDelta,
     netDiff: opts.netDiff,
     proof,
+    proofKind,
     todoProgress: opts.todoProgress,
     summary: opts.summary,
     classText: classText || undefined,
     millClass: !onContract && isMillClassShip(classText) ? true : undefined,
     surfaceKey: surfaceKey(opts.summary) || undefined,
+    treeSurfaceKey: opts.treeSurfaceKey,
+    editKind: opts.editKind,
+    chrome: opts.chrome,
     ts: nowIso(),
   };
   s.waves = [...(s.waves ?? []), rec].slice(-WAVE_LEDGER_KEEP);
+  const proofMark =
+    proofKind === "isolate" ? "ran" : proof ? "✓" : "✗";
   try {
     recordWaveObservation(
       opts.sessionId,
       s.wave,
-      `+${opts.editDelta}e proof=${proof ? "✓" : "✗"} todosΔ=${opts.todoProgress} net=${opts.netDiff ?? "n/a"} — ${opts.summary}`,
+      `+${opts.editDelta}e proof=${proofMark} todosΔ=${opts.todoProgress} net=${opts.netDiff ?? "n/a"} — ${opts.summary}`,
     );
   } catch {
     /* */
   }
+  const jobThin = Boolean(opts.chrome) || isChromeKind(opts.editKind);
   const thin =
+    jobThin ||
     (opts.editDelta <= 1 && opts.netDiff !== "new" && !proof) ||
     opts.netDiff === "revisit" ||
     (opts.todoProgress === 0 &&
@@ -955,7 +1065,7 @@ export function isPolishClassShip(text: string): boolean {
  * 16 of these after the reading's list was done; polish-class missed them.
  */
 export function isGlanceableClassShip(text: string): boolean {
-  return /glanceable|same glanceable-work|under the [✓✔] row|extraDefaultPreview|✓\s*preview|first \d+\s+(?:lines?|hits?|names?|result lines|prose lines)|last \d+\s+(?:log )?lines(?:\s+under)?|(?:web_search|web_fetch|call_mcp|search_mcp|get_task_output|lsp)\s+(?:diagnostics )?preview|lists (?:up to )?\d+ hit titles|child'?s report now prints|spawn_subagent.{0,60}first \d+ lines|live ›[^\n]{0,80}last[^\n]{0,40}line|bang-shell|!(?:cmd|npm)\b[^\n]{0,80}last[- ]line|last[- ]line[^\n]{0,48}live ›|(?:idle|bg-completion|background-task)[^\n]{0,80}last (?:log )?line|lsp diagnostics/i.test(
+  return /glance(?:s|able)?|same glanceable-work|under the [✓✔] row|extraDefaultPreview|✓\s*preview|first \d+\s+(?:lines?|hits?|names?|result lines|prose lines)|last \d+\s+(?:log )?lines(?:\s+under)?|(?:web_search|web_fetch|call_mcp|search_mcp|get_task_output|lsp)\s+(?:diagnostics )?preview|lists (?:up to )?\d+ hit titles|child'?s report now prints|spawn_subagent.{0,60}first \d+ lines|live ›[^\n]{0,80}last[^\n]{0,40}line|bang-shell|!(?:cmd|npm)\b[^\n]{0,80}last[- ]line|last[- ]line[^\n]{0,48}live ›|(?:idle|bg-completion|background-task)[^\n]{0,80}last (?:log )?line|lsp diagnostics|no abs path/i.test(
     text || "",
   );
 }
@@ -1115,11 +1225,15 @@ export function markUlwPlanDone(sessionId: string, text?: string): boolean {
 const POLISH_ADVISORY_STREAK = 3;
 const POLISH_LAST_STREAK = 4;
 
-function notePolishShip(s: UlwCycleState, message: string): number {
+function notePolishShip(
+  s: UlwCycleState,
+  message: string,
+  chrome?: boolean,
+): number {
   // Every 4th wave is consolidation — that closer is not chrome, but it
   // must not wipe a 3-ship glanceable streak (693c5fb1 never reached 4).
   if (isConsolidationCloser(message)) return s.polishStreak ?? 0;
-  if (isLeftoverChromeShip(message)) {
+  if (chrome || isLeftoverChromeShip(message)) {
     s.polishStreak = (s.polishStreak ?? 0) + 1;
   } else {
     s.polishStreak = 0;
@@ -1167,12 +1281,9 @@ function polishAdmit(streak: number): string {
 function canArmSameSurfaceHold(
   s: Pick<UlwCycleState, "cycle" | "wrapKind" | "maxWaves" | "cycleZeroStopAt">,
 ): boolean {
-  return (
-    s.cycle === 1 &&
-    !s.wrapKind &&
-    normalizeMaxWaves(s.maxWaves) == null &&
-    s.cycleZeroStopAt == null
-  );
+  // Cap is a budget for distinct surfaces, not mill units. User `/cycle 0`
+  // N+1 (cycleZeroStopAt) still clears so those wrap waves can finish.
+  return s.cycle === 1 && !s.wrapKind && s.cycleZeroStopAt == null;
 }
 
 export function sameSurfaceHolding(s: UlwCycleState): boolean {
@@ -1375,11 +1486,83 @@ function jobCreditForStamp(
     pinTaint: Boolean(s.rawPinProofTaint),
     playLoop: Boolean(s.playLoopPending) || isPlayLoopCloser(opts.closer),
     chromeStreak: s.chromePathStreak ?? 0,
+    declared: true,
   });
 }
 
 function noteChromeStreak(s: UlwCycleState, chrome: boolean): void {
   s.chromePathStreak = chrome ? (s.chromePathStreak ?? 0) + 1 : 0;
+}
+
+const JOB_THIN_LAST = 3;
+
+function noteJobThin(
+  s: UlwCycleState,
+  credit: ReturnType<typeof decideWaveJobCredit>,
+): void {
+  const thin =
+    !credit.ok ||
+    credit.chrome ||
+    isChromeKind(credit.kind);
+  if (thin) {
+    s.jobThinStreak = (s.jobThinStreak ?? 0) + 1;
+  } else {
+    s.jobThinStreak = 0;
+  }
+  if (!credit.ok && credit.reason === "pin") {
+    s.pinCreditRefused = (s.pinCreditRefused ?? 0) + 1;
+  }
+}
+
+function maybeFlipLastOnJobThin(s: UlwCycleState, sessionId: string): boolean {
+  if (s.cycle !== 1 || s.wrapKind) return false;
+  if ((s.jobThinStreak ?? 0) < JOB_THIN_LAST) return false;
+  flipUlwToLast(s, sessionId);
+  return true;
+}
+
+function resolveWaveProof(opts: {
+  closer: string;
+  verificationRan?: boolean;
+  verificationPassed?: boolean;
+  verificationHelperOnly?: boolean;
+  verificationFullSuite?: boolean;
+  consolidation?: boolean;
+  lastCycle?: boolean;
+}): { proof: boolean; proofKind: NonNullable<UlwWaveRecord["proofKind"]> } {
+  const isolate = Boolean(opts.verificationHelperOnly);
+  const full =
+    opts.verificationFullSuite === true && opts.verificationPassed === true;
+  if (full) {
+    return { proof: true, proofKind: "full" };
+  }
+  if (isolate) {
+    return { proof: false, proofKind: "isolate" };
+  }
+  if (
+    (opts.consolidation || opts.lastCycle) &&
+    opts.verificationFullSuite === false
+  ) {
+    return { proof: false, proofKind: "none" };
+  }
+  const proof = detectWaveProof(
+    opts.closer,
+    opts.verificationPassed === true ||
+      (opts.verificationPassed === undefined &&
+        Boolean(opts.verificationRan) &&
+        !isolate),
+    { helperOnly: isolate },
+  );
+  return { proof, proofKind: proof ? "full" : "none" };
+}
+
+function lastReflectLedger(s: UlwCycleState): string[] {
+  return ledgerMustFixItems({
+    waves: s.waves,
+    sameSurfaceStreak: s.sameSurfaceStreak,
+    pinCreditRefused: s.pinCreditRefused,
+    fullSuitePassed: s.fullSuitePassed,
+  });
 }
 
 export function isPlayLoopCloser(text: string): boolean {
@@ -1451,19 +1634,33 @@ function isMillSiblingCloser(s: UlwCycleState, closer: string): boolean {
   );
 }
 
+function waveTreeKeys(s: UlwCycleState): string[] {
+  return (s.waves ?? [])
+    .map((w) => (w.treeSurfaceKey || "").trim())
+    .filter(Boolean);
+}
+
 function applySameSurfaceNote(
   s: UlwCycleState,
   classText: string,
   themed: boolean,
   sessionId: string,
+  tree?: { treeKey?: string; paths?: string[]; kind?: ProdEditKind },
 ): void {
   // Generic Stop closers ("did some edits") are not themed ships.
   if (!themed) return;
   const onContract = closerOnContract(sessionId, classText);
   const prev = waveClassTexts(s);
+  const treeKey =
+    tree?.treeKey ||
+    (tree?.paths?.length
+      ? treeSurfaceKey(tree.paths, tree.kind)
+      : undefined);
   const note = nextSameSurfaceStreak(prev, classText, s.sameSurfaceStreak ?? 0, {
     consolidation: isConsolidationCloser(classText),
     onContract,
+    treeKey,
+    prevTreeKeys: waveTreeKeys(s),
   });
   s.sameSurfaceStreak = note.streak;
   const factoryHold =
@@ -1491,25 +1688,20 @@ const SAME_SURFACE_HOLD_ADMIT = [
   "Stuck-wall will not release this hold. Or /cycle 0.",
 ].join("\n");
 
-/** Capped ULW: advise, do not hold. Maze max20 spent 18 speak-once siblings. */
+/** Capped ULW still holds mill units; remaining budget is LAST consolidation. */
 const SAME_SURFACE_CAP_ADMIT = [
-  "[Forge ULW cycle driver] Last ships are the same surface (speak-once / leftover sibling).",
-  "This is a budget, not a hold — w still increments.",
-  "Next ship must be a different class (play-path, architecture, honest red suite) — or treat remaining waves as LAST consolidation.",
-  "Do not invent another first-X speaks-once sibling.",
+  "[Forge ULW cycle driver] Last ships are the same surface.",
+  "Cap is a budget for distinct surfaces — w does not increment on mill siblings.",
+  "PLAN is re-armed. Spawn one explore (or play-loop), then a different class — or treat remaining waves as LAST consolidation.",
 ].join(" ");
 
 function sameSurfaceBudgetLine(s: UlwCycleState): string | undefined {
   const streak = s.sameSurfaceStreak ?? 0;
   if (streak < SAME_SURFACE_ADVISORY) return undefined;
-  const cap = normalizeMaxWaves(s.maxWaves);
-  if (cap == null) {
-    return `Last ${streak} ships are the same surface. Next ship must be a different surface (trust, correctness, a new job) — or /cycle 0. Same-surface leftovers will not increment w.`;
+  if (sameSurfaceHolding(s)) {
+    return `Last ${streak} ships are the same surface. w does not increment. Next ship must be a different surface (or /cycle 0 / LAST consolidation).`;
   }
-  if (streak >= SAME_SURFACE_HOLD) {
-    return `Last ${streak} ships are the same surface. Remaining budget must be a different surface (trust, correctness, play-path, architecture) — or treat remaining waves as LAST consolidation. Do not invent another first-X / speaks-once sibling. w still increments (this is a budget, not a hold).`;
-  }
-  return `Last ${streak} ships are the same surface. Next budget wave must be a different surface (trust, correctness, a new job) — or wrap remaining as LAST consolidation. Do not invent leftover chrome.`;
+  return `Last ${streak} ships are the same surface. Next ship must be a different surface (trust, correctness, a new job) — or /cycle 0. Same-surface leftovers will not increment w.`;
 }
 
 function resolveChangedPaths(opts: {
@@ -1533,24 +1725,78 @@ const CONTRACT_HOLD_ADMIT = [
   "Eight off-contract ships is not a new class. Stuck-wall will not release this hold.",
 ].join("\n");
 
+function namedShipHit(s: UlwCycleState, closer: string, paths: string[]): boolean {
+  const items = (s.namedShips ?? []).filter((x) => x.status === "open");
+  if (!items.length) return false;
+  const blob = [closer, ...paths].join("\n");
+  return items.some((x) => matchNamedShip(x.text, blob) || matchNamedShip(x.text, closer));
+}
+
+function isGarnishShip(
+  s: UlwCycleState,
+  closer: string,
+  paths: string[],
+  credit: ReturnType<typeof decideWaveJobCredit>,
+): boolean {
+  if (!isEvaluateClassMandate(s.mandate)) return false;
+  if ((s.wave ?? 0) < 3) return false;
+  if (closerOnContract(s.sessionId, closer)) return false;
+  if (namedShipHit(s, closer, paths)) return false;
+  if (!credit.ok && (credit.reason === "pin" || credit.reason === "chrome")) {
+    return true;
+  }
+  if (credit.ok && credit.chrome) return true;
+  const key = treeSurfaceKey(paths, credit.kind);
+  const prev = waveTreeKeys(s).slice(-3);
+  if (key && prev.some((p) => sameTreeSurface(p, key))) {
+    if (credit.kind === "control-flow" || credit.kind === "new-module") {
+      return false;
+    }
+    return true;
+  }
+  // Closer-only mill (no production files): streak is the extra signal.
+  // Do not use streak when the tree shows a real different surface.
+  if (
+    productionRelPaths(paths).length === 0 &&
+    (s.sameSurfaceStreak ?? 0) >= SAME_SURFACE_HOLD
+  ) {
+    return true;
+  }
+  return false;
+}
+
 function wave1JobReprintAdmit(
   s: UlwCycleState,
   closer: string,
+  paths: string[] = [],
+  credit?: ReturnType<typeof decideWaveJobCredit>,
 ): string | undefined {
   if (!isEvaluateClassMandate(s.mandate)) return undefined;
   if ((s.wave ?? 0) < 3) return undefined;
   if (closerOnContract(s.sessionId, closer)) return undefined;
-  if (!isMillClassShip(closer) && (s.offContractStreak ?? 0) < 3) {
-    return undefined;
-  }
+  const decided =
+    credit ??
+    decideWaveJobCredit({
+      paths,
+      declared: true,
+      chromeStreak: s.chromePathStreak ?? 0,
+    });
+  if (!isGarnishShip(s, closer, paths, decided)) return undefined;
   const reading = loadWave1Reading(s.sessionId);
   const picks = loadExploreMapPicks(s.sessionId);
-  if (!reading && !picks.length) return undefined;
+  const named = (s.namedShips ?? [])
+    .filter((x) => x.status === "open")
+    .map((x) => x.text);
   const lines = [
     "[Forge ULW cycle driver] Stop blocked — this ship is still garnish. Wave 1 already named the job.",
     reading ? `Wave 1 reading: ${reading}` : "",
-    picks.length ? `Explore-map picks:\n${picks.slice(0, 4).map((p) => `- ${p.slice(0, 200)}`).join("\n")}` : "",
-    "Ship a pick or /cycle 0. A new noun is not a new job. This bounce is once.",
+    named.length
+      ? `Named ships:\n${named.slice(0, 4).map((p) => `- ${p.slice(0, 200)}`).join("\n")}`
+      : "",
+    picks.length
+      ? `Explore-map picks:\n${picks.slice(0, 4).map((p) => `- ${p.slice(0, 200)}`).join("\n")}`
+      : "",
+    "Ship a named item or a different-surface production change, or /cycle 0. A new noun is not a new job. This bounce repeats until the surface changes.",
   ].filter(Boolean);
   return lines.join("\n");
 }
@@ -2030,6 +2276,8 @@ export function maybeStampUlwWave(opts: {
   verificationPassed?: boolean;
   /** Only helper-only isolate checks ran this wave. */
   verificationHelperOnly?: boolean;
+  /** Project full-suite check passed this wave. */
+  verificationFullSuite?: boolean;
   cwd?: string;
   /** Dirty relpaths this wave; when omitted, cwd porcelain is used. */
   changedPaths?: string[];
@@ -2089,21 +2337,25 @@ export function maybeStampUlwWave(opts: {
     opts.sessionId,
     opts.lastAssistantMessage || "",
   );
-  const helperOnly =
-    Boolean(opts.verificationHelperOnly) && opts.verificationPassed !== true;
-  const proof = detectWaveProof(
+  if (opts.verificationFullSuite && opts.verificationPassed === true) {
+    s.fullSuitePassed = true;
+  }
+  const consolidationCloser = isConsolidationCloser(closer);
+  const { proof, proofKind } = resolveWaveProof({
     closer,
-    opts.verificationPassed === true ||
-      (opts.verificationPassed === undefined &&
-        Boolean(opts.verificationRan) &&
-        !helperOnly),
-    { helperOnly },
-  );
+    verificationRan: opts.verificationRan,
+    verificationPassed: opts.verificationPassed,
+    verificationHelperOnly: opts.verificationHelperOnly,
+    verificationFullSuite: opts.verificationFullSuite,
+    consolidation: consolidationCloser || (s.wave + 1) % CONSOLIDATION_EVERY === 0,
+    lastCycle: s.cycle !== 1,
+  });
   const summary =
     summarizeWave(closer, opts.sessionId) || "(mid-loop epoch)";
   const facts = {
     editDelta,
     proof,
+    proofKind,
     todoProgress,
     netDiff,
     summary,
@@ -2210,32 +2462,52 @@ export function maybeStampUlwWave(opts: {
         closer,
       });
       if (!credit.ok) {
+        noteJobThin(s, credit);
+        noteChromeStreak(s, true);
+        notePolishShip(s, closer, true);
+        markUlwReorient(s);
         updateOpenWaveRecord(s, facts);
         s.lastWaveSig = sig;
+        const thinLast = maybeFlipLastOnJobThin(s, opts.sessionId);
         saveUlwCycle(s);
         return {
           stamped: false,
           updated: true,
           wave: s.wave,
-          admit: credit.admit,
+          flippedToLast: thinLast,
+          admit: thinLast
+            ? [
+                credit.admit,
+                "[Forge harness — mid-conversation update]",
+                "Chrome/pin mill is thin — auto LAST. Full check suite required before Cycle complete.",
+              ].join("\n")
+            : credit.admit,
         };
       }
+      noteJobThin(s, credit);
       noteChromeStreak(s, credit.chrome);
       applyDiffFingerprint(s, fp);
       appendWaveRecord(s, {
         sessionId: opts.sessionId,
         ...facts,
         classText: closer,
+        treeSurfaceKey: treeSurfaceKey(changedPaths, credit.kind),
+        editKind: credit.kind,
+        chrome: credit.chrome,
+        paths: changedPaths,
       });
       markNamedShipDone(s, closer, { changedPaths: stampPaths });
       s.lastWaveSig = sig;
       s.lastProgressEditCount = opts.editCount;
-      const polish = notePolishShip(s, closer);
+      const polish = notePolishShip(s, closer, credit.chrome);
       let flipped = false;
       let polishLast = false;
       if (cap != null && s.wave >= cap) {
         flipUlwToLast(s, opts.sessionId);
         flipped = true;
+      } else if (maybeFlipLastOnJobThin(s, opts.sessionId)) {
+        flipped = true;
+        polishLast = true;
       } else if (polish >= POLISH_LAST_STREAK && s.cycle === 1) {
         flipUlwToLast(s, opts.sessionId);
         flipped = true;
@@ -2246,9 +2518,7 @@ export function maybeStampUlwWave(opts: {
       const extra =
         polish >= POLISH_ADVISORY_STREAK ? `\n${polishAdmit(polish)}` : "";
       const capSurface =
-        cap != null && (s.sameSurfaceStreak ?? 0) >= SAME_SURFACE_ADVISORY
-          ? SAME_SURFACE_CAP_ADMIT
-          : "";
+        sameSurfaceHolding(s) && cap != null ? SAME_SURFACE_CAP_ADMIT : "";
       return {
         stamped: true,
         wave: s.wave,
@@ -2260,7 +2530,7 @@ export function maybeStampUlwWave(opts: {
               polishAdmit(polish),
             ].join("\n")
           : flipped
-            ? lastWaveAdmit(cap!, s.wave, s.cycleZeroStopAt != null)
+            ? lastWaveAdmit(cap ?? s.wave, s.wave, s.cycleZeroStopAt != null)
             : [
                 "[Forge harness — mid-conversation update]",
                 `ULW ${counts} — harness counter moved after a declared ship.`,
@@ -2368,7 +2638,7 @@ export function formatWaveLedger(
           w.todoProgress != null && w.todoProgress > 0
             ? ` tΔ${w.todoProgress}`
             : ""
-        } ${w.proof ? "✓" : "✗"}`,
+        } ${w.proofKind === "isolate" ? "ran" : w.proof ? "✓" : "✗"}`,
     )
     .join(" · ");
 }
@@ -2497,6 +2767,19 @@ export function loadUlwCycle(sessionId: string): UlwCycleState | null {
   ) {
     raw.chromePathStreak = 0;
   }
+  if (
+    typeof raw.jobThinStreak !== "number" ||
+    !Number.isFinite(raw.jobThinStreak)
+  ) {
+    raw.jobThinStreak = 0;
+  }
+  if (
+    typeof raw.pinCreditRefused !== "number" ||
+    !Number.isFinite(raw.pinCreditRefused)
+  ) {
+    raw.pinCreditRefused = 0;
+  }
+  if (typeof raw.fullSuitePassed !== "boolean") raw.fullSuitePassed = false;
   if (typeof raw.reorientNeedsEvidence !== "boolean") {
     raw.reorientNeedsEvidence = false;
   }
@@ -2832,6 +3115,9 @@ export function armUlwCycle(
     playLoopPending: false,
     rawPinProofTaint: false,
     chromePathStreak: 0,
+    jobThinStreak: 0,
+    pinCreditRefused: 0,
+    fullSuitePassed: false,
     reorientNeedsEvidence: false,
     reorientEvidence: false,
     millHoldPrunePending: false,
@@ -3197,6 +3483,7 @@ export function copyUlwCycle(fromId: string, toId: string): UlwCycleState | null
     lastBlockEditCount: 0,
     thinStreak: 0,
     polishStreak: 0,
+    jobThinStreak: 0,
     proofDemands: 0,
     evidenceNudges: 0,
     soulNudgeDone: false,
@@ -3251,6 +3538,9 @@ export function resetUlwOnClear(sessionId: string): UlwCycleState | null {
   s.wrapFrozenAt = undefined;
   s.wrapNudgeDone = false;
   s.soulNudgeDone = false;
+  s.jobThinStreak = 0;
+  s.pinCreditRefused = 0;
+  s.fullSuitePassed = false;
   s.cycleZeroStopAt = undefined;
   clearLastReflect(s);
   if (s.enabled) {
@@ -3310,15 +3600,9 @@ function formatSameSurfaceStatusLine(s: UlwCycleState): string | undefined {
     return `  Explore-map: hold — ship or retire a pick (${s.offContractStreak ?? 0} off-contract) or /cycle 0`;
   }
   if (sameSurfaceHolding(s)) {
-    return `  Same surface: hold — new Reading on a different class or /cycle 0 (stuck-wall will not release)`;
+    return `  Same surface: hold — new Reading on a different class or /cycle 0 (stuck-wall will not release; cap does not spend mill units)`;
   }
   if (streak >= SAME_SURFACE_ADVISORY) {
-    const cap = normalizeMaxWaves(s.maxWaves);
-    if (cap != null) {
-      return streak >= SAME_SURFACE_HOLD
-        ? `  Same surface: ${streak} in a row (budget — not a hold). Next ship must be a different surface, or wrap remaining as LAST consolidation`
-        : `  Same surface: ${streak} in a row — next budget wave must be a different surface`;
-    }
     return `  Same surface: ${streak} in a row — next ship must be a different surface (or /cycle 0)`;
   }
   return undefined;
@@ -3470,6 +3754,8 @@ export function evaluateUlwAtStop(opts: {
   verificationPassed?: boolean;
   /** Only helper-only isolate checks ran this wave. */
   verificationHelperOnly?: boolean;
+  /** Project full-suite check passed this wave. */
+  verificationFullSuite?: boolean;
   preferredCheckCommands?: string[];
   /**
    * Working-tree diff fingerprint (gitDiffFingerprint) for net-diff progress
@@ -3555,6 +3841,7 @@ export function evaluateUlwAtStop(opts: {
     const reflect = applyLastReflectGate(s, msg, {
       attested: true,
       editDelta,
+      ledgerMustFix: lastReflectLedger(s),
     });
     if (reflect.block) {
       saveUlwCycle(s);
@@ -3732,16 +4019,21 @@ export function evaluateUlwAtStop(opts: {
     }
     const sig = waveProgressSig(opts.editCount, fp);
     const alreadyStamped = Boolean(s.lastWaveSig && s.lastWaveSig === sig);
-    const helperOnly =
-      Boolean(opts.verificationHelperOnly) && opts.verificationPassed !== true;
-    const proof = detectWaveProof(
-      msg,
-      opts.verificationPassed === true ||
-        (opts.verificationPassed === undefined &&
-          Boolean(opts.verificationRan) &&
-          !helperOnly),
-      { helperOnly },
-    );
+    if (opts.verificationFullSuite && opts.verificationPassed === true) {
+      s.fullSuitePassed = true;
+    }
+    const closer = closerText(opts.sessionId, msg);
+    const { proof, proofKind } = resolveWaveProof({
+      closer,
+      verificationRan: opts.verificationRan,
+      verificationPassed: opts.verificationPassed,
+      verificationHelperOnly: opts.verificationHelperOnly,
+      verificationFullSuite: opts.verificationFullSuite,
+      consolidation:
+        isConsolidationCloser(closer) ||
+        (s.wave + 1) % CONSOLIDATION_EVERY === 0,
+      lastCycle: false,
+    });
     const netDiff = classifyNetDiff(
       fp,
       diffChanged,
@@ -3753,7 +4045,6 @@ export function evaluateUlwAtStop(opts: {
       s.lastOpenTodoCount != null ? s.lastOpenTodoCount : opts.openTodoCount;
     const todoProgress = Math.max(0, prevOpen - opts.openTodoCount);
     s.lastOpenTodoCount = opts.openTodoCount;
-    const closer = closerText(opts.sessionId, msg);
     // Thought-only / reasoning-wall Stop is Stop (hooks + re-anchor +
     // stuck) but not a work unit. Spending w here would burn a capped
     // wave and close Wave 1 as the reading with no ship.
@@ -3810,6 +4101,10 @@ export function evaluateUlwAtStop(opts: {
       closer,
     });
     if (!stopCredit.ok && isShipCloseText(closer) && !alreadyStamped) {
+      noteJobThin(s, stopCredit);
+      noteChromeStreak(s, true);
+      notePolishShip(s, closer, true);
+      markUlwReorient(s);
       updateOpenWaveRecord(s, {
         editDelta,
         proof,
@@ -3818,21 +4113,45 @@ export function evaluateUlwAtStop(opts: {
         summary: summarizeWave(closer, opts.sessionId),
       });
       s.lastWaveSig = sig;
+      const thinLast = maybeFlipLastOnJobThin(s, opts.sessionId);
       saveUlwCycle(s);
       const reanchor = [
         stopCredit.admit,
+        thinLast
+          ? "Chrome/pin mill is thin — auto LAST. Full check suite required before Cycle complete."
+          : "",
         buildCycleReanchor(s, {
           openTodos: opts.openTodoCount,
-          mode: "continue",
+          mode: thinLast ? "last" : "continue",
           preferredCheckCommands: opts.preferredCheckCommands,
         }),
-      ].join("\n");
+      ]
+        .filter(Boolean)
+        .join("\n");
       return {
         block: true,
         reason: reanchor,
         reanchor,
         waveClosed: false,
       };
+    }
+    if (
+      s.cycle === 1 &&
+      !s.wrapKind &&
+      (isDeclaredWaveClose(closer) || cycleCompleteClaim)
+    ) {
+      const reprint = wave1JobReprintAdmit(s, closer, stampPaths, stopCredit);
+      if (reprint) {
+        s.soulNudgeDone = true;
+        markUlwReorient(s);
+        saveUlwCycle(s);
+        return {
+          block: true,
+          reason: reprint,
+          reanchor: reprint,
+          soulDemanded: true,
+        };
+      }
     }
     if (
       s.cycle === 1 &&
@@ -3846,17 +4165,6 @@ export function evaluateUlwAtStop(opts: {
         harvestStoredProductQuality(opts.sessionId);
       } catch {
         /* ledger is best-effort */
-      }
-      const reprint = wave1JobReprintAdmit(s, closer);
-      if (reprint) {
-        s.soulNudgeDone = true;
-        saveUlwCycle(s);
-        return {
-          block: true,
-          reason: reprint,
-          reanchor: reprint,
-          soulDemanded: true,
-        };
       }
       let quality: ProductQualityResult;
       try {
@@ -3916,11 +4224,16 @@ export function evaluateUlwAtStop(opts: {
           editDelta,
           netDiff,
           proof,
+          proofKind,
           todoProgress,
           summary: summarizeWave(closer, opts.sessionId),
           classText: closer,
           themed:
             isDeclaredWaveClose(closer) || isLeftoverSiblingShip(closer),
+          treeSurfaceKey: treeSurfaceKey(stampPaths, stopCredit.kind),
+          editKind: stopCredit.kind,
+          chrome: stopCredit.chrome,
+          paths: stampPaths,
         });
         markNamedShipDone(s, closer, { changedPaths: stampPaths });
         s.lastWaveSig = sig;
@@ -4001,6 +4314,7 @@ export function evaluateUlwAtStop(opts: {
     }
     if (!alreadyStamped) {
       if (isShipCloseText(closer) && stopCredit.ok) {
+        noteJobThin(s, stopCredit);
         noteChromeStreak(s, stopCredit.chrome);
       }
       appendWaveRecord(s, {
@@ -4008,17 +4322,28 @@ export function evaluateUlwAtStop(opts: {
         editDelta,
         netDiff,
         proof,
+        proofKind,
         todoProgress,
         summary: summarizeWave(closer, opts.sessionId),
         classText: closer,
         themed:
           isDeclaredWaveClose(closer) || isLeftoverSiblingShip(closer),
+        treeSurfaceKey: treeSurfaceKey(stampPaths, stopCredit.kind),
+        editKind: stopCredit.kind,
+        chrome: stopCredit.ok && stopCredit.chrome,
+        paths: stampPaths,
       });
       markNamedShipDone(s, closer, { changedPaths: stampPaths });
       s.lastWaveSig = sig;
       s.lastProgressEditCount = opts.editCount;
-      const polish = notePolishShip(s, closer);
-      if (polish >= POLISH_LAST_STREAK && s.cycle === 1) {
+      const polish = notePolishShip(
+        s,
+        closer,
+        stopCredit.ok && stopCredit.chrome,
+      );
+      if (maybeFlipLastOnJobThin(s, opts.sessionId)) {
+        /* LAST from chrome/pin mill */
+      } else if (polish >= POLISH_LAST_STREAK && s.cycle === 1) {
         flipUlwToLast(s, opts.sessionId);
       }
     }
@@ -4084,6 +4409,7 @@ export function evaluateUlwAtStop(opts: {
     const reflect = applyLastReflectGate(s, msg, {
       attested: false,
       editDelta,
+      ledgerMustFix: lastReflectLedger(s),
     });
     if (reflect.block) {
       saveUlwCycle(s);
@@ -4104,9 +4430,6 @@ export function evaluateUlwAtStop(opts: {
   });
   return { block: true, reason: reanchor, reanchor };
 }
-
-/** Every Nth wave is a consolidation wave: review + harden, no new scope. */
-const CONSOLIDATION_EVERY = 4;
 
 function remainingWaveBudgetLine(s: UlwCycleState): string {
   const cap = normalizeMaxWaves(s.maxWaves);
@@ -4186,7 +4509,7 @@ function buildCycleReanchor(
           })()
         : null,
       opts.consolidation
-        ? `CONSOLIDATION WAVE (every ${CONSOLIDATION_EVERY}th): no new scope — run the full check suite, then review the cumulative \`git diff\` as a hostile reviewer (regressions, weakened tests, leftover stubs). Fix real defects only.`
+        ? `CONSOLIDATION WAVE (every ${CONSOLIDATION_EVERY}th): no new scope — run the project's full check suite (AGENTS.md / preferred checks) in the foreground with a timeout. Isolates are proof=ran, not proof=✓. Skip/hang/targeted-only is proof=✗ — do not skip the suite. Then review the cumulative \`git diff\` as a hostile reviewer (regressions, weakened tests, leftover stubs). Fix real defects only.`
         : null,
       (opts.thinStreak ?? 0) >= 2
         ? `Waves are thinning (${opts.thinStreak} in a row with little substance). God-mode demand: pick a substantially higher-leverage hard objective (not churn) — or, if the hard work is genuinely exhausted, say so with evidence; the user can /cycle 0.`
@@ -4224,7 +4547,7 @@ function buildCycleReanchor(
     `1. Finish the wrap list (named items if user LAST; this wave if budget LAST). Cancel leftovers with reason.`,
     `2. Complete or cancel open todos and run the final check.`,
     `3. Review the cumulative diff (\`git diff\`) as a hostile reviewer: regressions, weakened tests, leftover stubs.`,
-    `4. LAST reflect (automatic): read-only scorecard of THIS run — \`Must-fix:\` vs \`Live-with:\`. Must-fix is safety/correctness only. If Must-fix is none, skip close-out. If Must-fix has items, one close-out wave ships those only, then attest.`,
+    `4. LAST reflect (automatic): harness fills Must-fix from the wave ledger (proof=✗, pin-only refuses, same-surface mill, full suite never passed, chrome clusters). You may add, not erase. Must-fix: none is illegal while the ledger lists holes. One close-out wave ships those only, then attest.`,
     `5. Attest exactly **Cycle complete.** with a ✅/❌ checklist — what shipped + evidence per item (command → result). Do not hunt leftover chrome after the close-out.`,
     `Attestations without machine-checkable evidence are bounced.`,
     ``,

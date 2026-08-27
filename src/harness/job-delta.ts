@@ -1,35 +1,37 @@
 /**
- * Job-delta credit — maze unlimited dogfood (494926dd, 813 waves).
+ * Job-delta credit — tree and tests, not closer poetry.
  *
- * Soft prompts are a job and unlimited ULW is the loop. The mill still
- * got paid: `Wave shipped` + a green pin test moved `w` while the wish
- * did not. Credit is computed from the tree and the tests, not from the
- * closer's poetry.
+ * Pin-only = stdout/stderr/help/source-text asserts without a production
+ * function return/state check. Language-agnostic (JS assert.match, Python
+ * assertIn). A production file whose diff is string-literal / TTY / help
+ * plus those pins is chrome, not a job. Second consecutive chrome ship
+ * does not increment w.
  */
 import fs from "node:fs";
 import path from "node:path";
-import { isTestOrHarnessPath } from "./tests-without-body.js";
+import { gitUnifiedDiff } from "../util/git-context.js";
+import { isTestOrHarnessPath, isWaveTestPath } from "./tests-without-body.js";
 
 const PIN_API_RE =
   /\bpinPresent\s*\(|\bpinAbsent\s*\(|\breadSrc\s*\(|\breadSrcMany\s*\(/;
 const RAW_READ_RE = /\breadFileSync\s*\(/;
-const PROD_IMPORT_RE = /from\s+['"](?:\.\.\/)+src\//;
+const JS_PROD_IMPORT_RE = /from\s+['"](?:\.\.\/)+src\//;
 const ASSERT_RE =
   /\bassert\.(?:equal|deepEqual|strictEqual|notEqual|ok|match|doesNotMatch)\s*\(/;
 
-/** Second consecutive css/md/test-only ship does not increment w. */
+/** Second consecutive css/md/test-only (or string-literal production) ship does not increment w. */
 export const CHROME_PATH_HOLD = 1;
 
 export const PIN_ONLY_ADMIT = [
   "[Forge harness — mid-conversation update]",
   "Wave shipped on pin-only tests does not increment w.",
-  "pinPresent / readSrc / raw readFileSync pins are not proof. Assert a production function's return, or run a play-loop.",
+  "TTY / help / source-text pins (assertIn, assert.match on stdout) are not proof. Assert a production function's return or state, or run a play-loop.",
   "Unlimited ULW continues. This w=N/M is the only wave number.",
 ].join("\n");
 
 export const JOB_FLAT_ADMIT = [
   "[Forge harness — mid-conversation update]",
-  "Wave shipped on chrome-only paths (css / markdown / tests) does not increment w after the first of that class.",
+  "Wave shipped on chrome-only paths (css / markdown / tests / string-literal TTY) does not increment w after the first of that class.",
   "Batch a production play-path, architecture, or play-loop so the job moves. Unlimited ULW continues.",
   "This w=N/M is the only wave number.",
 ].join("\n");
@@ -43,32 +45,324 @@ export const REORIENT_EVIDENCE_ADMIT = [
 
 export type WaveTestProofKind = "behavioral" | "pin-only" | "none";
 
-export type StampJobDecision =
-  | { ok: true; chrome: boolean }
-  | { ok: false; reason: "pin" | "chrome"; admit: string };
+export type ProdEditKind =
+  | "string-literal"
+  | "tty"
+  | "control-flow"
+  | "new-module"
+  | "unknown";
 
-/** True when the file's contract is source-text pins, not a function return. */
+export type StampJobDecision =
+  | { ok: true; chrome: boolean; kind: ProdEditKind }
+  | { ok: false; reason: "pin" | "chrome"; admit: string; kind: ProdEditKind };
+
+const PY_STDLIB_RE =
+  /^(os|sys|re|json|unittest|pytest|pathlib|typing|io|textwrap|argparse|subprocess|tempfile|shutil|collections|functools|itertools|math|datetime|copy|enum|dataclasses|abc|contextlib|logging|traceback|inspect|struct|hashlib|base64|uuid|random|string|time|platform|glob|fnmatch|csv|configparser|unittest\.mock|mock)$/i;
+
+const TTY_NAME_RE =
+  /\b(?:stdout|stderr|std_out|std_err|getvalue|capfd|capsys|help_text|help_output|epilog|cli_output|captured|output|out\b|err\b)\b/i;
+
+export function isChromeKind(kind: ProdEditKind | undefined): boolean {
+  return kind === "string-literal" || kind === "tty";
+}
+
+function normPath(p: string): string {
+  return (p || "").replace(/\\/g, "/").trim();
+}
+
+export function productionRelPaths(paths: string[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const raw of paths || []) {
+    const n = normPath(raw);
+    if (!n || isChromeOnlyPath(n)) continue;
+    if (seen.has(n)) continue;
+    seen.add(n);
+    out.push(n);
+  }
+  return out;
+}
+
+/**
+ * Surface key from the dirty tree, not the closer.
+ * `kind:file|file` — same 1–3 production files + chrome-kind family = one surface.
+ */
+export function treeSurfaceKey(
+  paths: string[],
+  kind: ProdEditKind = "unknown",
+): string {
+  const prod = productionRelPaths(paths).sort().slice(0, 3);
+  const k = isChromeKind(kind) ? "chrome" : kind;
+  if (!prod.length) {
+    const rest = (paths || [])
+      .map(normPath)
+      .filter(Boolean)
+      .sort()
+      .slice(0, 3);
+    if (!rest.length) return "";
+    return `chrome:${rest.join("|")}`;
+  }
+  return `${k}:${prod.join("|")}`;
+}
+
+export function sameTreeSurface(a: string, b: string): boolean {
+  if (!a || !b) return false;
+  if (a === b) return true;
+  const pa = parseTreeKey(a);
+  const pb = parseTreeKey(b);
+  if (!pa.files.length || !pb.files.length) return false;
+  const chromeA = pa.kind === "chrome" || isChromeKind(pa.kind as ProdEditKind);
+  const chromeB = pb.kind === "chrome" || isChromeKind(pb.kind as ProdEditKind);
+  const overlap = pa.files.some((f) => pb.files.includes(f));
+  if (!overlap) return false;
+  if (chromeA && chromeB) return true;
+  return pa.kind === pb.kind;
+}
+
+function parseTreeKey(key: string): { kind: string; files: string[] } {
+  const idx = key.indexOf(":");
+  if (idx < 0) return { kind: "unknown", files: [] };
+  return {
+    kind: key.slice(0, idx) || "unknown",
+    files: key
+      .slice(idx + 1)
+      .split("|")
+      .map((s) => s.trim())
+      .filter(Boolean),
+  };
+}
+
+function stripQuoted(s: string): string {
+  return s
+    .replace(/`(?:\\.|[^`\\])*`/g, '""')
+    .replace(/"(?:\\.|[^"\\])*"/g, '""')
+    .replace(/'(?:\\.|[^'\\])*'/g, '""');
+}
+
+function isCommentOrBlank(l: string): boolean {
+  const t = l.trim();
+  return (
+    !t ||
+    t.startsWith("#") ||
+    t.startsWith("//") ||
+    t.startsWith("*") ||
+    t.startsWith("/*") ||
+    t.startsWith("*/")
+  );
+}
+
+function isTtyLine(l: string): boolean {
+  return (
+    /\bprint\s*\(/.test(l) ||
+    /\bconsole\.(?:log|error|info|warn|debug)\s*\(/.test(l) ||
+    /\b(?:sys\.stderr|sys\.stdout|argparse|add_argument|formatter_class)\b/.test(
+      l,
+    ) ||
+    /\b(?:stderr|stdout)\.(?:write|print)/.test(l) ||
+    /\b(?:epilog|description|help)\s*=/.test(l)
+  );
+}
+
+function isStringLiteralLine(l: string): boolean {
+  const t = l.trim();
+  if (isCommentOrBlank(t)) return true;
+  if (/^[\w.]+\s*=\s*['"`]/.test(t)) return true;
+  if (/^['"`]/.test(t)) return true;
+  if (/['"`]\s*,?\s*$/.test(t) && /['"`]/.test(t) && !isControlFlowLine(t)) {
+    return true;
+  }
+  return false;
+}
+
+function isControlFlowLine(l: string): boolean {
+  const t = stripQuoted(l);
+  if (!t.trim() || isCommentOrBlank(t)) return false;
+  return (
+    /\b(?:if|elif|else|for|while|switch|case|try|except|catch|finally|throw|raise|return|await|yield|break|continue|with|match)\b/.test(
+      t,
+    ) ||
+    /\b(?:async\s+def|def|function|class)\b/.test(t) ||
+    /=>|&&|\|\||===|!==/.test(t)
+  );
+}
+
+export function classifyProdEditKindFromDiff(diff: string): ProdEditKind {
+  const raw = String(diff || "");
+  if (!raw.trim()) return "unknown";
+  const isNewFile = /\bnew file mode\b/.test(raw);
+  const changed: string[] = [];
+  for (const line of raw.split("\n")) {
+    if (
+      line.startsWith("+++") ||
+      line.startsWith("---") ||
+      line.startsWith("diff ") ||
+      line.startsWith("index ") ||
+      line.startsWith("@@")
+    ) {
+      continue;
+    }
+    if (line.startsWith("+") || line.startsWith("-")) {
+      const body = line.slice(1);
+      if (body.trim()) changed.push(body);
+    }
+  }
+  if (!changed.length) return "unknown";
+  const flow = changed.filter(isControlFlowLine);
+  const tty = changed.filter(isTtyLine);
+  if (flow.length > 0) return isNewFile ? "new-module" : "control-flow";
+  if (changed.every((l) => isStringLiteralLine(l) || isTtyLine(l))) {
+    return tty.length ? "tty" : "string-literal";
+  }
+  const decorative = changed.filter(
+    (l) => isStringLiteralLine(l) || isTtyLine(l),
+  ).length;
+  if (decorative >= Math.ceil(changed.length * 0.7) && flow.length === 0) {
+    return tty.length ? "tty" : "string-literal";
+  }
+  return "unknown";
+}
+
+export function inspectProdEditKind(opts: {
+  cwd?: string;
+  paths?: string[];
+  diffs?: Record<string, string>;
+}): ProdEditKind {
+  const prod = productionRelPaths(opts.paths || []);
+  if (!prod.length) return "unknown";
+  const kinds: ProdEditKind[] = [];
+  for (const rel of prod) {
+    const provided = opts.diffs?.[rel];
+    if (typeof provided === "string") {
+      kinds.push(classifyProdEditKindFromDiff(provided));
+      continue;
+    }
+    if (opts.cwd) {
+      try {
+        const d = gitUnifiedDiff(opts.cwd, [rel]);
+        if (d && d.trim()) {
+          kinds.push(classifyProdEditKindFromDiff(d));
+          continue;
+        }
+      } catch {
+        /* git optional */
+      }
+    }
+    kinds.push("unknown");
+  }
+  if (kinds.includes("new-module")) return "new-module";
+  if (kinds.includes("control-flow")) return "control-flow";
+  if (kinds.includes("tty")) return "tty";
+  if (kinds.includes("string-literal")) return "string-literal";
+  return "unknown";
+}
+
+function pythonProductionImports(src: string): string[] {
+  const out: string[] = [];
+  const re =
+    /^(?:from\s+([\w.]+)\s+import|import\s+([\w.]+))/gm;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(src || "")) !== null) {
+    const mod = (m[1] || m[2] || "").split(".")[0] || "";
+    if (!mod || PY_STDLIB_RE.test(mod) || /^tests?$/i.test(mod)) continue;
+    out.push(mod);
+  }
+  return out;
+}
+
+function hasTtyOrSourcePin(src: string): boolean {
+  const t = src || "";
+  if (PIN_API_RE.test(t)) return true;
+  if (RAW_READ_RE.test(t) && /\bassert\.match\b/.test(t)) return true;
+  if (/\bassert(?:In|NotIn|Regex)\s*\(/.test(t) && TTY_NAME_RE.test(t)) {
+    return true;
+  }
+  if (/\bassert\.(?:match|doesNotMatch)\s*\(/.test(t)) return true;
+  if (
+    /assert(?:Equal|strictEqual)\s*\(\s*(?:stdout|stderr|output|help|captured|text|body|out|err)\b/i.test(
+      t,
+    )
+  ) {
+    return true;
+  }
+  if (
+    /assert\s+.{0,160}\bin\s+.{0,80}(?:stdout|stderr|output|help|getvalue|out\b|err\b)/i.test(
+      t,
+    )
+  ) {
+    return true;
+  }
+  if (TTY_NAME_RE.test(t) && /\bassert(?:In|NotIn|Equal|Regex|match)\b/i.test(t)) {
+    return true;
+  }
+  return false;
+}
+
+function hasBehavioralReturnOrStateAssert(src: string): boolean {
+  const t = src || "";
+  if (JS_PROD_IMPORT_RE.test(t) && ASSERT_RE.test(t)) {
+    const stripped = t
+      .replace(/pinPresent\s*\([\s\S]*?\)\s*;?/g, "")
+      .replace(/pinAbsent\s*\([\s\S]*?\)\s*;?/g, "")
+      .replace(/readSrc(?:Many)?\s*\([^)]*\)/g, "");
+    const ttyOnly =
+      hasTtyOrSourcePin(stripped) &&
+      !/\bassert\.(?:equal|deepEqual|strictEqual|ok)\s*\(\s*(?!stdout|stderr|output|help)/i.test(
+        stripped,
+      );
+    if (JS_PROD_IMPORT_RE.test(stripped) && ASSERT_RE.test(stripped) && !ttyOnly) {
+      return true;
+    }
+  }
+  if (!pythonProductionImports(t).length) return false;
+  if (
+    /(?:self\.)?assert(?:True|False|Is|IsNone|IsNotNone|IsInstance|Greater|Less|AlmostEqual|CountEqual|SetEqual|DictEqual|ListEqual)\s*\(\s*[A-Za-z_]\w*\s*\(/.test(
+      t,
+    )
+  ) {
+    return true;
+  }
+  if (
+    /(?:self\.)?assertEqual\s*\(\s*[A-Za-z_]\w*\s*\([^)]*\)/.test(t) &&
+    !/(?:self\.)?assertEqual\s*\(\s*(?:stdout|stderr|output|help|captured|out|err|buf)\b/i.test(
+      t,
+    )
+  ) {
+    return true;
+  }
+  if (
+    /=\s*[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*\s*\([^)]*\)[\s\S]{0,240}(?:self\.)?assert(?:Equal|True|False|Is|IsNone)/.test(
+      t,
+    ) &&
+    !TTY_NAME_RE.test(t.slice(0, Math.min(t.length, 8000)))
+  ) {
+    return true;
+  }
+  return false;
+}
+
+/** True when the file's contract is source-text / TTY pins, not a function return. */
 export function isPinOnlyTestSource(src: string): boolean {
   const t = src || "";
+  if (hasBehavioralReturnOrStateAssert(t)) return false;
   const hasPinApi = PIN_API_RE.test(t);
   const hasRawPin = RAW_READ_RE.test(t) && /\bassert\.match\b/.test(t);
-  if (!hasPinApi && !hasRawPin) return false;
-  if (!PROD_IMPORT_RE.test(t) || !ASSERT_RE.test(t)) return true;
-  const stripped = t
-    .replace(/pinPresent\s*\([\s\S]*?\)\s*;?/g, "")
-    .replace(/pinAbsent\s*\([\s\S]*?\)\s*;?/g, "")
-    .replace(/readSrc(?:Many)?\s*\([^)]*\)/g, "");
-  return !(PROD_IMPORT_RE.test(stripped) && ASSERT_RE.test(stripped));
+  if (hasPinApi || hasRawPin) {
+    if (!JS_PROD_IMPORT_RE.test(t) || !ASSERT_RE.test(t)) return true;
+    const stripped = t
+      .replace(/pinPresent\s*\([\s\S]*?\)\s*;?/g, "")
+      .replace(/pinAbsent\s*\([\s\S]*?\)\s*;?/g, "")
+      .replace(/readSrc(?:Many)?\s*\([^)]*\)/g, "");
+    return !(JS_PROD_IMPORT_RE.test(stripped) && ASSERT_RE.test(stripped));
+  }
+  return hasTtyOrSourcePin(t);
 }
 
 export function isBehavioralTestSource(src: string): boolean {
-  const t = src || "";
-  if (!PROD_IMPORT_RE.test(t) || !ASSERT_RE.test(t)) return false;
-  return !isPinOnlyTestSource(t);
+  return hasBehavioralReturnOrStateAssert(src || "");
 }
 
 export function isChromeOnlyPath(p: string): boolean {
-  const n = (p || "").replace(/\\/g, "/").trim();
+  const n = normPath(p);
   if (!n) return false;
   if (isTestOrHarnessPath(n)) return true;
   if (/\.(css|md)$/i.test(n)) return true;
@@ -77,30 +371,37 @@ export function isChromeOnlyPath(p: string): boolean {
   return false;
 }
 
-export function isChromeOnlyPaths(paths: string[]): boolean {
-  const list = (paths || []).map((p) => p.replace(/\\/g, "/").trim()).filter(Boolean);
+export function isChromeOnlyPaths(
+  paths: string[],
+  kind?: ProdEditKind,
+): boolean {
+  const list = (paths || []).map(normPath).filter(Boolean);
   if (!list.length) return false;
-  return list.every(isChromeOnlyPath);
+  if (list.every(isChromeOnlyPath)) return true;
+  return false;
+}
+
+function readMaybe(cwd: string | undefined, rel: string): string {
+  if (!cwd || !rel) return "";
+  try {
+    return fs.readFileSync(path.resolve(cwd, rel), "utf8");
+  } catch {
+    return "";
+  }
 }
 
 export function waveTestProofKind(opts: {
   cwd?: string;
   paths?: string[];
 }): WaveTestProofKind {
-  const tests = (opts.paths || [])
-    .map((p) => p.replace(/\\/g, "/").trim())
-    .filter((p) => /\.(?:test|spec)\.[cm]?[jt]sx?$/i.test(p));
+  const tests = (opts.paths || []).map(normPath).filter(isWaveTestPath);
   if (!tests.length) return "none";
   if (!opts.cwd) return "none";
   let anyBeh = false;
   let anyPin = false;
   for (const rel of tests) {
-    let src = "";
-    try {
-      src = fs.readFileSync(path.resolve(opts.cwd, rel), "utf8");
-    } catch {
-      continue;
-    }
+    const src = readMaybe(opts.cwd, rel);
+    if (!src) continue;
     if (isBehavioralTestSource(src)) anyBeh = true;
     else if (isPinOnlyTestSource(src)) anyPin = true;
   }
@@ -111,7 +412,8 @@ export function waveTestProofKind(opts: {
 
 /**
  * Should this declared ship increment `w`?
- * Empty paths (tests that omit cwd) do not refuse — unknown is not chrome.
+ * Empty paths with no cwd do not refuse (closer-only tests). Declared ships
+ * that pass a cwd and still have no dirty paths are chrome, not unknown-ok.
  */
 export function decideWaveJobCredit(opts: {
   paths?: string[];
@@ -119,17 +421,33 @@ export function decideWaveJobCredit(opts: {
   pinTaint?: boolean;
   playLoop?: boolean;
   chromeStreak?: number;
+  declared?: boolean;
+  diffs?: Record<string, string>;
+  prodKind?: ProdEditKind;
 }): StampJobDecision {
-  if (opts.playLoop) return { ok: true, chrome: false };
+  if (opts.playLoop) return { ok: true, chrome: false, kind: "control-flow" };
   const paths = opts.paths || [];
-  const kind = waveTestProofKind({ cwd: opts.cwd, paths });
-  const pinBlocked =
-    kind === "pin-only" ||
-    (Boolean(opts.pinTaint) && kind !== "behavioral");
-  if (pinBlocked) return { ok: false, reason: "pin", admit: PIN_ONLY_ADMIT };
-  const chrome = isChromeOnlyPaths(paths);
-  if (chrome && (opts.chromeStreak ?? 0) >= CHROME_PATH_HOLD) {
-    return { ok: false, reason: "chrome", admit: JOB_FLAT_ADMIT };
+  const kind =
+    opts.prodKind ??
+    inspectProdEditKind({ cwd: opts.cwd, paths, diffs: opts.diffs });
+  if (opts.declared && paths.length === 0 && opts.cwd) {
+    if ((opts.chromeStreak ?? 0) >= CHROME_PATH_HOLD) {
+      return { ok: false, reason: "chrome", admit: JOB_FLAT_ADMIT, kind };
+    }
+    return { ok: true, chrome: true, kind: kind === "unknown" ? "tty" : kind };
   }
-  return { ok: true, chrome };
+  const testKind = waveTestProofKind({ cwd: opts.cwd, paths });
+  const pinBlocked =
+    (testKind === "pin-only" && kind !== "control-flow" && kind !== "new-module") ||
+    (Boolean(opts.pinTaint) && testKind !== "behavioral");
+  if (pinBlocked) {
+    return { ok: false, reason: "pin", admit: PIN_ONLY_ADMIT, kind };
+  }
+  const chrome =
+    isChromeOnlyPaths(paths, kind) ||
+    (isChromeKind(kind) && productionRelPaths(paths).length > 0);
+  if (chrome && (opts.chromeStreak ?? 0) >= CHROME_PATH_HOLD) {
+    return { ok: false, reason: "chrome", admit: JOB_FLAT_ADMIT, kind };
+  }
+  return { ok: true, chrome, kind };
 }

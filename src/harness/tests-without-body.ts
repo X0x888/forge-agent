@@ -8,6 +8,8 @@
  */
 
 const TEST_FILE_RE = /\.(?:test|spec)\.[cm]?[jt]sx?$/i;
+/** test_foo.py / foo_test.py — language-agnostic test files, not JS-shaped. */
+const PY_TEST_FILE_RE = /(?:^|\/)(?:test_[^/]+\.py|[^/]+_test\.py)$/i;
 const TEST_DIR_RE = /(?:^|\/)(?:__tests__|tests?)\//;
 const HARNESS_BASENAME_RE =
   /^(package\.json|package-lock\.json|pnpm-lock\.yaml|yarn\.lock|bun\.lockb)$/i;
@@ -19,9 +21,20 @@ export function isTestOrHarnessPath(p: string): boolean {
   const n = (p || "").replace(/\\/g, "/");
   if (!n.trim()) return false;
   const base = n.split("/").pop() || "";
-  if (TEST_FILE_RE.test(base)) return true;
+  if (TEST_FILE_RE.test(base) || TEST_FILE_RE.test(n)) return true;
+  if (PY_TEST_FILE_RE.test(n)) return true;
   if (TEST_DIR_RE.test(n)) return true;
   return HARNESS_BASENAME_RE.test(base);
+}
+
+/** Test sources the credit layer should parse (JS/TS + Python). */
+export function isWaveTestPath(p: string): boolean {
+  const n = (p || "").replace(/\\/g, "/").trim();
+  if (!n) return false;
+  if (TEST_FILE_RE.test(n)) return true;
+  if (PY_TEST_FILE_RE.test(n)) return true;
+  if (/\.py$/i.test(n) && TEST_DIR_RE.test(n)) return true;
+  return false;
 }
 
 export function isTestsWithoutBodyCloser(text: string): boolean {

@@ -5,10 +5,13 @@ import os from "node:os";
 import path from "node:path";
 import {
   CHROME_PATH_HOLD,
+  classifyProdEditKindFromDiff,
   decideWaveJobCredit,
   isBehavioralTestSource,
   isChromeOnlyPaths,
   isPinOnlyTestSource,
+  sameTreeSurface,
+  treeSurfaceKey,
   PIN_ONLY_ADMIT,
   JOB_FLAT_ADMIT,
   waveTestProofKind,
@@ -93,14 +96,38 @@ describe("job-delta", () => {
       playLoop: true,
       chromeStreak: 4,
     });
-    assert.deepEqual(d, { ok: true, chrome: false });
+    assert.deepEqual(d, { ok: true, chrome: false, kind: "control-flow" });
   });
 
-  it("empty paths do not refuse (unknown is not chrome)", () => {
+  it("empty paths without cwd do not refuse (closer-only tests)", () => {
     assert.deepEqual(decideWaveJobCredit({ paths: [] }), {
       ok: true,
       chrome: false,
+      kind: "unknown",
     });
+  });
+
+  it("declared empty paths with cwd are chrome, not unknown-ok", () => {
+    const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "forge-jd-empty-"));
+    try {
+      const first = decideWaveJobCredit({
+        paths: [],
+        cwd,
+        declared: true,
+      });
+      assert.equal(first.ok, true);
+      if (first.ok) assert.equal(first.chrome, true);
+      const second = decideWaveJobCredit({
+        paths: [],
+        cwd,
+        declared: true,
+        chromeStreak: CHROME_PATH_HOLD,
+      });
+      assert.equal(second.ok, false);
+      if (!second.ok) assert.equal(second.reason, "chrome");
+    } finally {
+      fs.rmSync(cwd, { recursive: true, force: true });
+    }
   });
 
   it("classifies tests on disk", () => {
@@ -123,5 +150,136 @@ describe("job-delta", () => {
     } finally {
       fs.rmSync(cwd, { recursive: true, force: true });
     }
+  });
+});
+
+const PY_TTY_PIN = `
+import io
+import unittest
+from cli import format_status
+
+class TestStatus(unittest.TestCase):
+    def test_status_line(self):
+        buf = io.StringIO()
+        format_status(buf)
+        self.assertIn("READY", buf.getvalue())
+        self.assertNotIn("abs path", buf.getvalue())
+`;
+
+const PY_BEHAVIORAL = `
+import unittest
+from cli import idle_before_require_backend_cli
+
+class TestIdle(unittest.TestCase):
+    def test_idle_gate(self):
+        self.assertTrue(idle_before_require_backend_cli({"ready": True}))
+`;
+
+describe("job-delta language-agnostic pins", () => {
+  it("treats Python assertIn on captured TTY as pin-only", () => {
+    assert.equal(isPinOnlyTestSource(PY_TTY_PIN), true);
+    assert.equal(isBehavioralTestSource(PY_TTY_PIN), false);
+    assert.equal(
+      isPinOnlyTestSource(`
+import unittest
+from tool import items
+class T(unittest.TestCase):
+    def test_has(self):
+        self.assertIn("idle", items())
+`),
+      false,
+    );
+  });
+
+  it("treats Python assertTrue on a production function as behavioral", () => {
+    assert.equal(isBehavioralTestSource(PY_BEHAVIORAL), true);
+    assert.equal(isPinOnlyTestSource(PY_BEHAVIORAL), false);
+  });
+
+  it("refuses Python TTY pin tests even with a production .py path", () => {
+    const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "forge-jd-py-"));
+    try {
+      fs.mkdirSync(path.join(cwd, "tests"));
+      fs.writeFileSync(path.join(cwd, "cli.py"), 'print("READY")\n');
+      fs.writeFileSync(path.join(cwd, "tests/test_cli.py"), PY_TTY_PIN);
+      const d = decideWaveJobCredit({
+        cwd,
+        paths: ["cli.py", "tests/test_cli.py"],
+        declared: true,
+      });
+      assert.equal(d.ok, false);
+      if (!d.ok) assert.equal(d.reason, "pin");
+    } finally {
+      fs.rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it("credits a control-flow production ship with behavioral tests", () => {
+    const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "forge-jd-cf-"));
+    try {
+      fs.mkdirSync(path.join(cwd, "tests"));
+      fs.writeFileSync(
+        path.join(cwd, "cli.py"),
+        "def idle_before_require_backend_cli(s):\n    if not s.get('ready'):\n        return False\n    return True\n",
+      );
+      fs.writeFileSync(path.join(cwd, "tests/test_cli.py"), PY_BEHAVIORAL);
+      const d = decideWaveJobCredit({
+        cwd,
+        paths: ["cli.py", "tests/test_cli.py"],
+        declared: true,
+        diffs: {
+          "cli.py": `diff --git a/cli.py b/cli.py
+new file mode 100644
+--- /dev/null
++++ b/cli.py
+@@ -0,0 +1,4 @@
++def idle_before_require_backend_cli(s):
++    if not s.get('ready'):
++        return False
++    return True
+`,
+        },
+      });
+      assert.equal(d.ok, true, JSON.stringify(d));
+      if (d.ok) {
+        assert.equal(d.chrome, false);
+        assert.equal(d.kind, "new-module");
+      }
+    } finally {
+      fs.rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it("classifies string-literal / TTY diffs vs control-flow", () => {
+    assert.equal(
+      classifyProdEditKindFromDiff(`
+--- a/cli.py
++++ b/cli.py
+@@ -1,2 +1,2 @@
+-print("READY")
++print("BUSY")
+`),
+      "tty",
+    );
+    assert.equal(
+      classifyProdEditKindFromDiff(`
+--- a/cli.py
++++ b/cli.py
+@@ -1,1 +1,4 @@
+ def run():
++    if idle:
++        return False
+     return True
+`),
+      "control-flow",
+    );
+  });
+
+  it("clusters the same 1–3 production files as one tree surface", () => {
+    const a = treeSurfaceKey(["cli.py", "tests/test_cli.py"], "tty");
+    const b = treeSurfaceKey(["cli.py", "tests/test_cli.py"], "string-literal");
+    const c = treeSurfaceKey(["cli.py"], "control-flow");
+    assert.equal(sameTreeSurface(a, b), true);
+    assert.equal(sameTreeSurface(a, c), false);
   });
 });

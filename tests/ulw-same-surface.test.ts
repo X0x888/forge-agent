@@ -127,7 +127,7 @@ describe("ULW same-surface hold", () => {
     });
   });
 
-  it("capped runs do not hold", () => {
+  it("capped runs hold mill siblings (cap is distinct-surface budget)", () => {
     withHome(() => {
       const sid = "ss-cap";
       fs.mkdirSync(path.join(process.env.FORGE_HOME!, "sessions", sid), {
@@ -152,7 +152,7 @@ describe("ULW same-surface hold", () => {
       }
       const s = loadUlwCycle(sid)!;
       assert.equal(s.wave, 3);
-      assert.equal(sameSurfaceHolding(s), false);
+      assert.equal(sameSurfaceHolding(s), true);
       const fourth = maybeStampUlwWave({
         sessionId: sid,
         editCount: edits + 8,
@@ -161,14 +161,11 @@ describe("ULW same-surface hold", () => {
         lastAssistantMessage: REST_3,
         verificationPassed: true,
       });
-      assert.equal(fourth.stamped, true);
-      assert.equal(loadUlwCycle(sid)!.wave, 4);
-      assert.equal(sameSurfaceHolding(loadUlwCycle(sid)!), false);
-      assert.match(
-        fourth.admit || "",
-        /budget, not a hold|different class|LAST consolidation/i,
-      );
-      assert.match(formatUlwStatus(loadUlwCycle(sid)!), /budget — not a hold/i);
+      assert.equal(fourth.stamped, false);
+      assert.equal(loadUlwCycle(sid)!.wave, 3);
+      assert.equal(sameSurfaceHolding(loadUlwCycle(sid)!), true);
+      assert.match(fourth.admit || "", /same surface|PLAN|different class/i);
+      assert.match(formatUlwStatus(loadUlwCycle(sid)!), /Same surface: hold/i);
     });
   });
 

@@ -74,6 +74,16 @@ describe("sit-down-card class", () => {
     assert.equal(isSitDownCardShip(commit), true);
     assert.equal(isSitDownCardShip(budget), true);
     assert.equal(isSitDownCardShip(flood), false);
+    assert.equal(
+      isSitDownCardShip(
+        "Sit-down glance: --help / argv is the operator first line, not a dump.",
+      ),
+      true,
+    );
+    assert.equal(
+      isSitDownCardShip("Wave shipped: document --help for the new flag."),
+      false,
+    );
     assert.equal(surfaceKey(verify), SIT_DOWN_SURFACE_KEY);
     assert.equal(isSameSurface(verify, commit), true);
     assert.equal(isSameSurface(resume, budget), true);

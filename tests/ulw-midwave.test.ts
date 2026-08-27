@@ -446,14 +446,20 @@ describe("ULW mid-loop wave stamp", () => {
       assert.equal(isPolishClassShip("Wave 2 shipped: stdin lease for permission asks"), false);
       let edits = 0;
       let last;
-      for (let i = 1; i <= 4; i++) {
+      const polish = [
+        "Wave 1 shipped: clip banner to one TTY row",
+        "Wave 2 shipped: leftover dump after the turn is gone",
+        "Wave 3 shipped: quieter chip copy on the HUD",
+        "Wave 4 shipped: dock owns identity — slim the banner",
+      ];
+      for (const msg of polish) {
         edits += 6;
         last = maybeStampUlwWave({
           sessionId: sid,
           editCount: edits,
           openTodoCount: 0,
           stepsSinceStamp: 1,
-          lastAssistantMessage: `Wave ${i} shipped: clip widget ${i} to one TTY row`,
+          lastAssistantMessage: msg,
         });
       }
       assert.equal(last?.stamped, true);

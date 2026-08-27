@@ -43,6 +43,14 @@ describe("helper-only test commands", () => {
     assert.equal(isHelperOnlyTestCommand("npm test"), false);
     assert.equal(isHelperOnlyTestCommand("npm test 2>&1 | grep fail"), false);
     assert.equal(isHelperOnlyTestCommand("node --test tests/"), false);
+    assert.equal(
+      isHelperOnlyTestCommand("tsx --test tests/*.test.ts"),
+      false,
+    );
+    assert.equal(
+      isHelperOnlyTestCommand("node --test tests/*.test.ts"),
+      false,
+    );
     assert.equal(isFullSuiteCommand("npm test"), true);
     assert.equal(isFullSuiteCommand("npm test 2>&1 | grep fail"), true);
     assert.equal(isFullSuiteCommand("npm run ci"), true);
@@ -50,6 +58,35 @@ describe("helper-only test commands", () => {
     assert.equal(
       isFullSuiteCommand("node --test tests/w161-foo.test.mjs"),
       false,
+    );
+    assert.equal(
+      isHelperOnlyTestCommand(
+        "python3 -m unittest tests.test_tool.TestLine.test_line",
+      ),
+      true,
+    );
+    assert.equal(
+      isHelperOnlyTestCommand("python3 -m unittest discover"),
+      false,
+    );
+    assert.equal(isFullSuiteCommand("python3 -m unittest discover"), true);
+    assert.equal(
+      isFullSuiteCommand("python3 -m unittest tests.test_tool.TestLine.test_line"),
+      false,
+    );
+    assert.equal(
+      verificationPassedFromResult({
+        command: "python3 -m unittest tests.test_tool.TestLine.test_line",
+        isError: false,
+        output: "Ran 1 test in 0.001s\n\nOK\n",
+      }),
+      true,
+    );
+    assert.equal(
+      isHelperOnlyTestCommand(
+        "python3 -m unittest tests.test_tool.TestLine.test_line",
+      ),
+      true,
     );
     assert.equal(
       isVerificationCommand("node --test tests/w161-pickup-overflow.test.mjs"),
@@ -61,7 +98,7 @@ describe("helper-only test commands", () => {
         isError: false,
         output: "ℹ fail 0\n",
       }),
-      false,
+      true,
     );
   });
 });

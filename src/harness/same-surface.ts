@@ -1,14 +1,13 @@
 /**
  * Same-surface sibling grind — structural, not a quality score.
  *
- * Maze dogfood stamped 20 thick+proven waves on openings / rest-card /
- * leftover-audio. thinStreak and polishStreak stayed 0. This classifier
- * sees near-duplicate summaries and leftover-sibling language.
- * Adjacent-share / factory schema (work-class.ts) is a second signal:
- * rotating nouns on one couple-share recipe are the same surface.
+ * Primary signal is the dirty tree (job-delta treeSurfaceKey): same 1–3
+ * production files + chrome/TTY kind. Closer token overlap and maze
+ * schemas (work-class.ts) are extra hints, not the hold.
  */
 
 import { matchesRecentSchema } from "./work-class.js";
+import { sameTreeSurface } from "./job-delta.js";
 
 export const SAME_SURFACE_MIN_HITS = 2;
 export const SAME_SURFACE_OVERLAP = 0.5;
@@ -28,22 +27,28 @@ const LEFTOVER_SIBLING_RE =
   /\bleftover\b|\bfix that only\b|\bstill leaks?\b|\bsibling of\b|\bthe leftover\b|\bfix that leftover\b|\bsame openings?\b/i;
 
 /**
- * Sit-down slash-key thesis. Forge dogfood ground /verify /commit /budget
- * /checkpoint /undo /resume as "different surfaces" because the nouns
- * rotated. They are one class: Next at › is a slash key, not a CLI dump.
+ * Operator-facing CLI/TUI glance — argv, --help, stderr first line,
+ * dashboard — not a Forge slash-key catalog. Slash keys remain an extra
+ * signal so existing sit-down cards still cluster.
  */
 const SIT_DOWN_THESIS_RE =
   /\bsit-?down\b|\bkey you type\b|\bverdict-first\b|\bslash key\b|\bnot a (?:config dump|model (?:turn|prompt)|cli dump)\b/i;
 const SIT_DOWN_SLASH_RE =
   /\/(verify|commit|budget|checkpoint|undo|resume|accounts|auth|retry|done|share|last|sessions)\b/i;
+const SIT_DOWN_GLANCE_RE =
+  /\b(?:argv|--help|--status|help epilog|operator-facing)\b/i;
 
 export const SIT_DOWN_SURFACE_KEY = "sit-down-card";
 
 export function isSitDownCardShip(text: string): boolean {
   const t = text || "";
   if (!SIT_DOWN_THESIS_RE.test(t)) return false;
+  const glance =
+    SIT_DOWN_GLANCE_RE.test(t) ||
+    (/\bstderr\b/i.test(t) && /\bfirst line\b/i.test(t));
   return (
     SIT_DOWN_SLASH_RE.test(t) ||
+    glance ||
     /\b(slash key|sit-down key|key you type|sit-down resume)\b/i.test(t)
   );
 }
@@ -113,12 +118,19 @@ export function isSameSurface(prev: string, next: string): boolean {
 export function matchesRecentSurface(
   prevSummaries: string[],
   closer: string,
-  opts?: { onContract?: boolean },
+  opts?: { onContract?: boolean; treeKey?: string; prevTreeKeys?: string[] },
 ): boolean {
   if (opts?.onContract) return false;
+  if (
+    opts?.treeKey &&
+    (opts.prevTreeKeys || []).some((k) => sameTreeSurface(k, opts.treeKey!))
+  ) {
+    return true;
+  }
   const recent = prevSummaries.filter((s) => s && s.trim()).slice(-SAME_SURFACE_LOOKBACK);
   if (isLeftoverSiblingShip(closer) && recent.length > 0) return true;
   if (recent.some((s) => isSameSurface(s, closer))) return true;
+  // Maze schemas are extra signals, not the primary hold.
   return matchesRecentSchema(prevSummaries, closer);
 }
 
@@ -136,9 +148,14 @@ export function nextSameSurfaceStreak(
   prevSummaries: string[],
   closer: string,
   currentStreak = 0,
-  opts?: { consolidation?: boolean; onContract?: boolean },
+  opts?: {
+    consolidation?: boolean;
+    onContract?: boolean;
+    treeKey?: string;
+    prevTreeKeys?: string[];
+  },
 ): SameSurfaceNote {
-  const key = surfaceKey(closer);
+  const key = opts?.treeKey || surfaceKey(closer);
   if (opts?.consolidation) {
     return { streak: currentStreak, same: false, surfaceKey: key };
   }
@@ -146,7 +163,10 @@ export function nextSameSurfaceStreak(
   if (opts?.onContract) {
     return { streak: 1, same: false, surfaceKey: key };
   }
-  const same = matchesRecentSurface(prevSummaries, closer);
+  const same = matchesRecentSurface(prevSummaries, closer, {
+    treeKey: opts?.treeKey,
+    prevTreeKeys: opts?.prevTreeKeys,
+  });
   if (same) {
     return { streak: Math.max(1, currentStreak) + 1, same: true, surfaceKey: key };
   }

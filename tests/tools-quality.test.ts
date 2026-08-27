@@ -552,8 +552,8 @@ describe("bash timeout", () => {
       { command: "npm test" },
       { workspace: ws, sandbox: "off" } as any,
     );
-    assert.match(r.output, /pin the REPL/i);
-    assert.match(FULL_SUITE_FOREGROUND_TIP, /background:true/);
+    assert.match(r.output, /hang the REPL|timeout|proof=✗/i);
+    assert.match(FULL_SUITE_FOREGROUND_TIP, /timeout|proof=✗/i);
   });
 
   it("reports timeout with duration and exit code 124", async () => {

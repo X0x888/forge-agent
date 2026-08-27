@@ -424,6 +424,7 @@ export {
   isVerificationOutputPipe,
   verificationPassedFromResult,
   isHelperOnlyTestCommand,
+  isIsolateTestCommand,
   isFullSuiteCommand,
   consumeMillHoldPrune,
   contractHolding,
@@ -442,6 +443,8 @@ export {
   lastReflectEnabled,
   applyLastReflectGate,
   skipUlwAutoCommitForLastReflect,
+  ledgerMustFixItems,
+  mergeLastScorecard,
 } from "./harness/last-reflect.js";
 export { armUlwPlanMode, syncUlwPlanMode } from "./harness/ulw-plan-mode.js";
 export {
@@ -464,6 +467,7 @@ export {
 } from "./harness/work-class.js";
 export {
   isTestOrHarnessPath,
+  isWaveTestPath,
   isTestsWithoutBodyCloser,
   isTestsWithoutBodyShip,
 } from "./harness/tests-without-body.js";
@@ -488,6 +492,10 @@ export {
   isPinOnlyTestSource,
   isBehavioralTestSource,
   isChromeOnlyPaths,
+  treeSurfaceKey,
+  sameTreeSurface,
+  classifyProdEditKindFromDiff,
+  inspectProdEditKind,
   PIN_ONLY_ADMIT,
   JOB_FLAT_ADMIT,
   REORIENT_EVIDENCE_ADMIT,

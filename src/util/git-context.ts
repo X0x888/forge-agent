@@ -120,6 +120,28 @@ export function gitDirtyRelPaths(cwd: string): string[] {
   return out;
 }
 
+const UNIFIED_DIFF_CAP = 200_000;
+
+/**
+ * Unified diff vs HEAD for the given relpaths (or the whole tree).
+ * Empty outside git / on failure. Untracked paths are omitted (use
+ * gitDirtyRelPaths + file reads for those).
+ */
+export function gitUnifiedDiff(cwd: string, paths?: string[]): string | null {
+  const root = git(["rev-parse", "--show-toplevel"], cwd);
+  if (!root) return null;
+  const args = ["diff", "HEAD", "--"];
+  if (paths?.length) {
+    for (const p of paths.slice(0, 40)) {
+      const n = String(p || "").trim();
+      if (n && !n.startsWith("-")) args.push(n);
+    }
+  }
+  const diff = git(args, root, 4000);
+  if (diff == null) return null;
+  return diff.length > UNIFIED_DIFF_CAP ? diff.slice(0, UNIFIED_DIFF_CAP) : diff;
+}
+
 /** Best-effort git summary for system prompt / banner (never throws). */
 export function getGitSnapshot(cwd: string): GitSnapshot {  try {
     const root = git(["rev-parse", "--show-toplevel"], cwd);

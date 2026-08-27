@@ -79,6 +79,18 @@ describe("applyLastReflectGate", () => {
     assert.equal(s.lastReflect, "done");
   });
 
+  it("Must-fix: none is illegal when the ledger lists holes", () => {
+    const s = { lastReflect: "score" as const };
+    const r = applyLastReflectGate(s, "Must-fix: none\nLive-with: chrome", {
+      ledgerMustFix: [
+        "Full check suite never passed this run (isolates are proof=ran, not proof=✓).",
+      ],
+    });
+    assert.equal(r.block, true);
+    assert.equal(s.lastReflect, "closeout");
+    assert.match(r.reanchor || "", /full check suite never passed/i);
+  });
+
   it("enters one close-out when Must-fix has holes", () => {
     const s = { lastReflect: "score" as const };
     const r = applyLastReflectGate(
@@ -155,6 +167,7 @@ describe("evaluateUlwAtStop LAST reflect", () => {
       editCount: 2,
       openTodoCount: 0,
       stuckThreshold: 20,
+      verificationPassed: true,
     });
     assert.equal(loadUlwCycle(sid)?.cycle, 0);
     assert.equal(loadUlwCycle(sid)?.lastReflect, "pending");

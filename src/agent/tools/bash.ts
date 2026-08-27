@@ -37,9 +37,9 @@ import {
 
 const execAsync = promisify(exec);
 
-/** Foreground `npm test` / `npm run ci` pins the REPL if a test hangs. */
+/** Foreground full suite — timeout is proof=✗; do not skip on consolidation/LAST. */
 export const FULL_SUITE_FOREGROUND_TIP =
-  "Full-suite commands pin the REPL if a test hangs. Prefer the last targeted check, or bash background:true then get_task_output.";
+  "Full-suite commands can hang the REPL. Run with a timeout; hang/skip is proof=✗. Isolates are proof=ran. Consolidation and LAST still need the project suite (do not skip).";
 
 function withFullSuiteForegroundTip(body: string, command: string): string {
   if (!isFullSuiteCommand(command)) return body;
