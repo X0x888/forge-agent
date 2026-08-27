@@ -15,6 +15,10 @@ import {
   PIN_ONLY_ADMIT,
   JOB_FLAT_ADMIT,
   waveTestProofKind,
+  isSiblingPathMill,
+  siblingMillHits,
+  siblingMillHolding,
+  siblingStem,
 } from "../src/harness/job-delta.js";
 
 const PIN_ONLY = `
@@ -281,5 +285,29 @@ new file mode 100644
     const c = treeSurfaceKey(["cli.py"], "control-flow");
     assert.equal(sameTreeSurface(a, b), true);
     assert.equal(sameTreeSurface(a, c), false);
+  });
+});
+
+describe("sibling path mill (not maze regex)", () => {
+  it("matches numbered stems in the same directory", () => {
+    assert.equal(siblingStem("src/systems/foo-2.js").stem, "foo");
+    assert.equal(siblingStem("src/systems/foo-2.js").numbered, true);
+    assert.equal(
+      isSiblingPathMill(
+        ["src/systems/npc-3.js"],
+        ["src/systems/npc.js", "src/systems/npc-2.js"],
+      ),
+      true,
+    );
+    assert.equal(
+      isSiblingPathMill(["lib/alpha.ts"], ["lib/beta.ts"]),
+      false,
+    );
+    const prev = [
+      { editKind: "new-module" as const, treeSurfaceKey: "new-module:src/npcs/a.js" },
+      { editKind: "new-module" as const, treeSurfaceKey: "new-module:src/npcs/b.js" },
+    ];
+    assert.equal(siblingMillHits(prev, ["src/npcs/c.js"], "new-module"), 2);
+    assert.equal(siblingMillHolding(prev, ["src/npcs/c.js"], "new-module"), true);
   });
 });

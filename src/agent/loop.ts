@@ -80,6 +80,7 @@ import {
   isIsolateTestCommand,
   isFullSuiteCommand,
   consumeMillHoldPrune,
+  noteUlwThoughtOnlyStop,
 } from "../harness/ulw-cycle.js";
 import { armUlwPlanMode, syncUlwPlanMode } from "../harness/ulw-plan-mode.js";
 import {
@@ -2781,6 +2782,17 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
             if (ulwNow && consumeMillHoldPrune(ulwNow)) {
               applyMillHoldPrune(session);
             }
+            if (
+              ulwNow?.reorientRequested ||
+              (ulwNow &&
+                ulwNow.wave > 0 &&
+                ulwNow.wave % 4 === 0)
+            ) {
+              harnessStats.effortBoostTurns = Math.max(
+                harnessStats.effortBoostTurns,
+                1,
+              );
+            }
           } catch {
             /* suffix omit is best-effort */
           }
@@ -2942,6 +2954,19 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
 
         if (reasonedEmpty) {
           thoughtOnlyStops += 1;
+          let thoughtForceLook = false;
+          try {
+            const n = noteUlwThoughtOnlyStop(session.meta.id);
+            thoughtForceLook = n.forceLook;
+            if (thoughtForceLook) {
+              harnessStats.effortBoostTurns = Math.max(
+                harnessStats.effortBoostTurns,
+                1,
+              );
+            }
+          } catch {
+            /* sidecar optional */
+          }
           const thoughtMax = thoughtOnlyStopMax();
           if (thoughtMax > 0 && thoughtOnlyStops > thoughtMax) {
             log.warn(
@@ -3028,8 +3053,17 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
         }
         if (reasonedEmpty) {
           forceToolNext = true;
+          let forceLook = false;
+          try {
+            const u = loadUlwCycle(session.meta.id);
+            forceLook = Boolean(
+              u?.exploreRequired && (u.thoughtOnlyCycle ?? 0) >= 3,
+            );
+          } catch {
+            /* */
+          }
           inject = [
-            formatThoughtOnlyRecoverPoke(thoughtOnlyStops),
+            formatThoughtOnlyRecoverPoke(thoughtOnlyStops, { forceLook }),
             inject,
           ]
             .filter((s) => (s || "").trim())

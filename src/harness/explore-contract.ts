@@ -243,16 +243,27 @@ export function isSamePickTopic(text: string, donePicks: string[]): boolean {
   });
 }
 
+const SEEDED_PLAN_READING_RE =
+  /user \/build|ship the armed mandate/i;
+
 export function loadWave1Reading(sessionId: string): string | undefined {
   if (!sessionId) return undefined;
   try {
     const recs = activeMemoryRecords(sessionId);
+    let seeded: string | undefined;
     for (const r of recs) {
       const m = String(r.text || "").match(
         /\*{0,2}Reading:\*{0,2}\s+(.{20,400})/i,
       );
-      if (m?.[1]) return m[1].replace(/\s+/g, " ").trim().slice(0, 280);
+      if (!m?.[1]) continue;
+      const body = m[1].replace(/\s+/g, " ").trim().slice(0, 280);
+      if (SEEDED_PLAN_READING_RE.test(body)) {
+        if (!seeded) seeded = body;
+        continue;
+      }
+      return body;
     }
+    return seeded;
   } catch {
     /* */
   }

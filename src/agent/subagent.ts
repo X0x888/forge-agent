@@ -80,6 +80,7 @@ import {
 } from "../session/explore-map.js";
 import {
   exploreSpawnSkipReason,
+  loadUlwCycle,
   noteExploreChildCompleted,
   seedNamedShipsFromExploreMaps,
 } from "../harness/ulw-cycle.js";
@@ -613,10 +614,23 @@ export async function runSubagent(
   }
 
   const childCap: { maxCostUsd?: number } = {};
+  let reserveLook = false;
+  try {
+    const ulw = loadUlwCycle(ctx.parentSession.meta.id);
+    reserveLook = Boolean(
+      ulw?.exploreRequired ||
+        ulw?.reorientRequested ||
+        ulw?.reorientNeedsEvidence ||
+        ulw?.siblingMillHold,
+    );
+  } catch {
+    /* sidecar optional */
+  }
   const familyPin = pinChildCostCap(
     childCap,
     ctx.config,
     ctx.parentSession.meta,
+    { role: subagentType, reserveLook },
   );
   if (familyPin.refuse) {
     const line = formatCostBudgetLine(

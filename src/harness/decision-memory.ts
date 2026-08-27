@@ -475,7 +475,17 @@ function isReadingRecord(text: string): boolean {
   return /\bReading:/i.test(text);
 }
 
-/** Durable + last reading + last few ship logs — not 80 sibling ships. */
+/** Mill / leftover-chrome ship logs crowd out Wave 1 if we keep "last 3". */
+function isMillShipLog(text: string): boolean {
+  const t = text || "";
+  if (/\bsibling\b/i.test(t)) return true;
+  if (/\blast ship was\b/i.test(t) && /\bstill hard\b/i.test(t)) return true;
+  if (/\bfar stays\b/i.test(t)) return true;
+  if (/\bspeaks? once\b/i.test(t)) return true;
+  return false;
+}
+
+/** Durable + Wave-1 Reading + last non-mill ship — not 80 mill closers. */
 export function selectMemoryForPrompt(recs: MemoryRecord[]): MemoryRecord[] {
   const durable: MemoryRecord[] = [];
   const readings: MemoryRecord[] = [];
@@ -496,7 +506,21 @@ export function selectMemoryForPrompt(recs: MemoryRecord[]): MemoryRecord[] {
       durable.push(r);
     }
   }
-  return [...durable, ...readings.slice(-2), ...ships.slice(-3)];
+  const wave1 = readings[0];
+  const later = readings
+    .slice(1)
+    .filter((r) => !isMillShipLog(r.text));
+  const lastReading = later.length ? later[later.length - 1] : undefined;
+  const readingKeep: MemoryRecord[] = [];
+  if (wave1) readingKeep.push(wave1);
+  if (lastReading && lastReading.id !== wave1?.id) readingKeep.push(lastReading);
+  const nonMillShips = ships.filter((r) => !isMillShipLog(r.text));
+  const millShips = ships.filter((r) => isMillShipLog(r.text));
+  // Pin last non-mill closer. Do not inject mill siblings at all.
+  const shipKeep = nonMillShips.length
+    ? nonMillShips.slice(-1)
+    : millShips.slice(-0);
+  return [...durable, ...readingKeep, ...shipKeep];
 }
 
 /**
@@ -513,9 +537,8 @@ export function formatMemoryForPrompt(
   if (!opts?.includeWave) {
     recs = recs.filter((r) => r.kind !== "wave");
   }
-  // Wave-shipped / leftover-chrome logs crowd out the reading. Keep the
-  // durable set + last reading + last 3 ship logs (compaction must not
-  // re-inject 80 "Wave 2 sibling" lines and restart chrome grinding).
+  // Wave-shipped mill logs crowd out the reading. Pin Wave-1 Reading +
+  // last non-mill ship (compaction must not re-inject 80 sibling closers).
   recs = selectMemoryForPrompt(recs);
   // Priority first, then constraint, then rest; newest last within kind
   const order: MemoryKind[] = [

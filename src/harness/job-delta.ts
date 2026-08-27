@@ -451,3 +451,116 @@ export function decideWaveJobCredit(opts: {
   }
   return { ok: true, chrome, kind };
 }
+
+/** 3 numbered / same-dir new-module siblings hold — files may differ. */
+export const SIBLING_MILL_HOLD = 3;
+
+export const SIBLING_MILL_ADMIT = [
+  "[Forge ULW cycle driver] Stop blocked — last ships are sibling new-modules (same stem or same-dir factory).",
+  "PLAN is re-armed. Spawn one explore (or play-loop), then a different-surface Reading. A numbered foo-n.js is not a new job.",
+  "Unlimited ULW continues. Stuck-wall will not release. Or /cycle 0.",
+].join("\n");
+
+const NUMBERED_STEM_RE = /^(.*?)[-_.](?:v|w)?(\d+)$/i;
+
+export function siblingStem(rel: string): {
+  dir: string;
+  stem: string;
+  numbered: boolean;
+} {
+  const n = normPath(rel).replace(/^\.\//, "");
+  const slash = n.lastIndexOf("/");
+  const dir = slash >= 0 ? n.slice(0, slash) : "";
+  const file = slash >= 0 ? n.slice(slash + 1) : n;
+  const base = file.replace(/\.[^.]+$/, "");
+  const m = NUMBERED_STEM_RE.exec(base);
+  if (m?.[1] && m[1].length >= 2) {
+    return { dir, stem: m[1].toLowerCase(), numbered: true };
+  }
+  return { dir, stem: base.toLowerCase(), numbered: false };
+}
+
+/** `kind:file|file` tree key → production paths. */
+export function filesFromTreeKey(key: string | undefined): string[] {
+  const raw = String(key || "");
+  const idx = raw.indexOf(":");
+  if (idx < 0) return [];
+  return raw
+    .slice(idx + 1)
+    .split("|")
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
+/**
+ * Same recipe, rotating file: `foo.js` vs `foo-2.js`, or `npc-1` vs `npc-2`
+ * in one directory. Root-level files are never mill by path.
+ */
+export function isSiblingPathMill(
+  current: string[],
+  previous: string[],
+): boolean {
+  const a = productionRelPaths(current);
+  const b = productionRelPaths(previous);
+  if (!a.length || !b.length) return false;
+  for (const p of a) {
+    const sa = siblingStem(p);
+    if (!sa.dir) continue;
+    for (const q of b) {
+      if (normPath(p) === normPath(q)) continue;
+      const sb = siblingStem(q);
+      if (sa.dir === sb.dir && sa.stem === sb.stem && sa.stem.length >= 2) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+export type SiblingMillWave = {
+  editKind?: ProdEditKind | string;
+  treeSurfaceKey?: string;
+};
+
+/**
+ * How many recent waves share this ship's numbered stem or same-dir
+ * new-module factory. Maze regex is not required.
+ */
+export function siblingMillHits(
+  prevWaves: SiblingMillWave[] | undefined,
+  currentPaths: string[],
+  currentKind: ProdEditKind | string = "unknown",
+  lookback = 8,
+): number {
+  const files = productionRelPaths(currentPaths);
+  if (!files.length) return 0;
+  const dirs = new Set(
+    files.map((p) => siblingStem(p).dir).filter(Boolean),
+  );
+  const recent = (prevWaves || []).slice(-lookback);
+  let hits = 0;
+  for (const w of recent) {
+    const prevFiles = filesFromTreeKey(w.treeSurfaceKey);
+    if (!prevFiles.length) continue;
+    if (isSiblingPathMill(files, prevFiles)) {
+      hits += 1;
+      continue;
+    }
+    if (currentKind !== "new-module" || w.editKind !== "new-module") continue;
+    const prevDirs = prevFiles.map((p) => siblingStem(p).dir);
+    if ([...dirs].some((d) => prevDirs.includes(d))) hits += 1;
+  }
+  return hits;
+}
+
+/** True when this ship is the 3rd sibling mill (do not increment w). */
+export function siblingMillHolding(
+  prevWaves: SiblingMillWave[] | undefined,
+  currentPaths: string[],
+  currentKind: ProdEditKind | string = "unknown",
+): boolean {
+  return (
+    siblingMillHits(prevWaves, currentPaths, currentKind) >=
+    SIBLING_MILL_HOLD - 1
+  );
+}

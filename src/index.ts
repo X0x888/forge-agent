@@ -435,6 +435,9 @@ export {
   exploreSpawnSkipReason,
   canLeaveUlwPlan,
   isPlayLoopCloser,
+  noteUlwThoughtOnlyStop,
+  CONSOLIDATION_EVERY,
+  THOUGHT_ONLY_LOOK_CYCLE,
   providerFuseTripsContinueCap,
   stopBlockTripsContinueCap,
 } from "./harness/ulw-cycle.js";
@@ -496,10 +499,23 @@ export {
   sameTreeSurface,
   classifyProdEditKindFromDiff,
   inspectProdEditKind,
+  siblingStem,
+  isSiblingPathMill,
+  siblingMillHits,
+  siblingMillHolding,
+  filesFromTreeKey,
   PIN_ONLY_ADMIT,
   JOB_FLAT_ADMIT,
   REORIENT_EVIDENCE_ADMIT,
+  SIBLING_MILL_ADMIT,
+  SIBLING_MILL_HOLD,
 } from "./harness/job-delta.js";
+export {
+  buildUlwJobCard,
+  formatUlwJobCard,
+  waveMovedJob,
+  lastJobMovingWave,
+} from "./harness/ulw-job-card.js";
 export {
   collectRecentMillToolIds,
   applyMillHoldPrune,
@@ -521,6 +537,7 @@ export {
   seedMemoryFromMandate,
   appendMemoryRecord,
   formatMemoryForPrompt,
+  selectMemoryForPrompt,
   durableMemoryFingerprint,
   formatMemoryStatus,
   copyDecisionMemory,

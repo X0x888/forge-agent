@@ -92,5 +92,8 @@ describe("isReasonedEmptyStop", () => {
     assert.doesNotMatch(once, /Wave 1 reading:/);
     const later = formatThoughtOnlyRecoverPoke(3);
     assert.match(later, /git diff --stat/);
+    const look = formatThoughtOnlyRecoverPoke(3, { forceLook: true });
+    assert.match(look, /spawn_subagent type=explore/);
+    assert.doesNotMatch(look, /Wave 1 reading:/);
   });
 });

@@ -179,6 +179,29 @@ describe("pinChildCostCap — family remaining, not a fresh cap", () => {
     assert.ok((child.maxCostUsd ?? 0) < 5);
   });
 
+  it("reserves a look slice for explore on re-PLAN (GP gets less)", () => {
+    const parent = {
+      maxCostUsd: 1,
+      totalPromptTokens: 50_000,
+      totalCompletionTokens: 1_000,
+      totalCacheReadTokens: 0,
+    };
+    const gp: { maxCostUsd?: number } = {};
+    const look: { maxCostUsd?: number } = {};
+    const gpPin = pinChildCostCap(gp, cfg, parent, {
+      role: "general-purpose",
+      reserveLook: true,
+    });
+    const lookPin = pinChildCostCap(look, cfg, parent, {
+      role: "explore",
+      reserveLook: true,
+    });
+    assert.equal(gpPin.refuse, false);
+    assert.equal(lookPin.refuse, false);
+    assert.ok((gp.maxCostUsd ?? 0) < (look.maxCostUsd ?? 0));
+    assert.ok((look.maxCostUsd ?? 0) <= (lookPin.remaining ?? 0) + 0.0001);
+  });
+
   it("does not pin when the family is unlimited", () => {
     const child: { maxCostUsd?: number } = {};
     const pin = pinChildCostCap(

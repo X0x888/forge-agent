@@ -8,8 +8,9 @@ import type { SessionData } from "./session.js";
 import { normalizeRequestPruneSticky } from "./request-prune.js";
 
 const MILL_TOOL_RE = /write_file|search_replace|^edit$|apply_patch/i;
+/** Maze systems/* stays as a fixture; numbered foo-n.js is the general mill. */
 const MILL_PATH_RE =
-  /CHANGELOG|tests\/w\d+|systems\/[\w-]*(share|overflow|taste|hush|kindle|groove|overflow)/i;
+  /CHANGELOG|tests\/w\d+|systems\/[\w-]*(share|overflow|taste|hush|kindle|groove)|[\w./-]*[-_.](?:v|w)?\d+\.(?:js|ts|mjs|cjs|jsx|tsx|py)\b/i;
 
 export function isMillToolCall(tc: ToolCall | undefined): boolean {
   if (!tc?.function) return false;

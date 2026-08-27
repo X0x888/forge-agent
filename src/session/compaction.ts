@@ -17,6 +17,10 @@ import {
   formatWaveLedger,
   namedShipsExhausted,
 } from "../harness/ulw-cycle.js";
+import {
+  buildUlwJobCard,
+  formatUlwJobCard,
+} from "../harness/ulw-job-card.js";
 import { repairToolCallPairing } from "./message-repair.js";
 import {
   DEFAULT_CHECKPOINT_KEEP_STEPS,
@@ -197,26 +201,31 @@ export function buildStructuredSummary(
       !ulw.wrapKind &&
       ulw.maxWaves == null &&
       namedShipsExhausted(ulw);
+    const jobCard = formatUlwJobCard(
+      buildUlwJobCard({
+        sessionId: ctx?.sessionId || ulw.sessionId,
+        mandate: ulw.mandate,
+        waves: ulw.waves,
+        namedShips: ulw.namedShips,
+        playLoopRan: ulw.playLoopRan,
+        fullSuitePassed: ulw.fullSuitePassed,
+        midReflectHoles: ulw.midReflectHoles,
+      }),
+    );
     sections.push(
       `- ULW ON | ${formatUlwCounts(ulw)} ${ulw.cycle === 1 ? "(CONTINUE)" : "(LAST)"}`,
       `- Harness w=N/M is the only wave counter. Do not invent Wave K. Close a unit with \`Wave shipped.\` / \`Ship landed:\` / \`Cycle complete.\` so the counter can move (ulw.json wins if this card is stale).`,
       `- max_waves: ${ulw.maxWaves != null ? ulw.maxWaves : "off (unlimited)"}`,
-      ledger ? `- Ledger: ${ledger}` : "",
+      ledger ? `- Ledger (last 8): ${ledger}` : "",
       namedHold
         ? `- Named ships from the reading are done. Write a new Reading: the ONE next ship on a different class (name an explore-map pick or a play-path / architecture ship), or /cycle 0. Do not recap the last ship as 'Last ship was' / 'what's still hard'. Do not attest Cycle complete. A red test suite is a different surface — not leftover chrome. Stuck-wall will not release this hold.`
         : "",
-      (() => {
-        const open = (ulw.namedShips ?? []).filter((x) => x.status === "open");
-        if (!open.length) return "";
-        const body = open
-          .slice(0, 6)
-          .map((x) => x.text.slice(0, 160))
-          .join(" · ");
-        return `- Open named ships (${open.length}): ${body}`;
-      })(),
       mandateLine,
       softLine,
     );
+    if (jobCard.trim()) {
+      sections.push(``, `## 1a. Job card (verbatim from sidecars)`, jobCard);
+    }
   } else {
     sections.push(`- ULW: off`);
   }

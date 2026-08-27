@@ -75,9 +75,17 @@ import {
   isChromeKind,
   productionRelPaths,
   sameTreeSurface,
+  siblingMillHolding,
+  siblingMillHits,
+  SIBLING_MILL_ADMIT,
   treeSurfaceKey,
   type ProdEditKind,
 } from "./job-delta.js";
+import {
+  buildUlwJobCard,
+  formatUlwJobCard,
+  waveMovedJob,
+} from "./ulw-job-card.js";
 import {
   OFF_CONTRACT_HOLD,
   formatHoldContextAppendix,
@@ -151,6 +159,10 @@ export interface UlwWaveRecord {
   editKind?: ProdEditKind;
   /** Chrome/string-literal TTY ship. */
   chrome?: boolean;
+  /** Numbered / same-dir new-module sibling — does not raise bestWave. */
+  siblingMill?: boolean;
+  /** Named/pick/play/full-suite/control-flow job movement (not mill volume). */
+  jobMoved?: boolean;
   /** One-line clip of the wave's closing assistant message */
   summary: string;
   /** Significant tokens from the summary (same-surface classifier). */
@@ -234,6 +246,17 @@ export interface UlwCycleState {
   exploreRequiredAt?: string;
   /** Playwright / play-loop ran this open wave — different class. */
   playLoopPending?: boolean;
+  /** A play-loop ran at least once this cycle (proof kind / job card). */
+  playLoopRan?: boolean;
+  /** Consecutive credited ships that did not move the named/pick/play job. */
+  offJobStreak?: number;
+  /** Numbered/same-dir new-module mill is holding. */
+  siblingMillHold?: boolean;
+  /** Thought-only Stops this cycle (force explore/play after N; never LAST). */
+  thoughtOnlyCycle?: number;
+  /** Ledger Must-fix from the last consolidation score (not a quality number). */
+  midReflectHoles?: string[];
+  midReflectWave?: number;
   /** New raw readFileSync test this wave — consume at next stamp. */
   rawPinProofTaint?: boolean;
   /**
@@ -407,7 +430,11 @@ const MAX_EVIDENCE_NUDGES = 1;
 /** Thin waves in a row before surfacing a diminishing-returns advisory. */
 const THIN_ADVISORY_STREAK = 3;
 /** Every Nth wave is a consolidation wave: review + harden, no new scope. */
-const CONSOLIDATION_EVERY = 4;
+export const CONSOLIDATION_EVERY = 4;
+/** Off-job credited ships before cadence re-PLAN + explore. */
+const OFF_JOB_REORIENT = 3;
+/** Thought-only Stops in a cycle before forcing a look (not LAST). */
+export const THOUGHT_ONLY_LOOK_CYCLE = 3;
 
 /**
  * Bash command shape that counts as running verification. The agent loop
@@ -999,7 +1026,20 @@ function appendWaveRecord(
     ? "none"
     : opts.proofKind ?? (proof ? "full" : "none");
   const onContract = closerOnContract(opts.sessionId, classText);
+  const play = Boolean(s.playLoopPending) || isPlayLoopCloser(classText);
   if (s.playLoopPending) s.playLoopPending = false;
+  const sibHits = siblingMillHits(
+    s.waves,
+    opts.paths || [],
+    opts.editKind || "unknown",
+  );
+  const siblingMill =
+    !onContract &&
+    !play &&
+    sibHits >= 1 &&
+    (opts.editKind === "new-module" || sibHits >= 1);
+  const named = namedShipHit(s, classText, opts.paths || []);
+  const millClass = !onContract && isMillClassShip(classText) ? true : undefined;
   const rec: UlwWaveRecord = {
     wave: s.wave,
     editDelta: opts.editDelta,
@@ -1009,14 +1049,26 @@ function appendWaveRecord(
     todoProgress: opts.todoProgress,
     summary: opts.summary,
     classText: classText || undefined,
-    millClass: !onContract && isMillClassShip(classText) ? true : undefined,
+    millClass,
+    siblingMill: siblingMill || undefined,
     surfaceKey: surfaceKey(opts.summary) || undefined,
     treeSurfaceKey: opts.treeSurfaceKey,
     editKind: opts.editKind,
     chrome: opts.chrome,
     ts: nowIso(),
   };
+  rec.jobMoved =
+    !opts.chrome &&
+    !millClass &&
+    !siblingMill &&
+    (named ||
+      play ||
+      proofKind === "full" ||
+      (opts.editKind === "control-flow" && opts.netDiff === "new") ||
+      waveMovedJob(rec));
   s.waves = [...(s.waves ?? []), rec].slice(-WAVE_LEDGER_KEEP);
+  if (opts.themed) noteOffJobShip(s, rec);
+  maybeCadenceReorient(s);
   const proofMark =
     proofKind === "isolate" ? "ran" : proof ? "✓" : "✗";
   try {
@@ -1188,6 +1240,26 @@ export function markUlwReorient(s: UlwCycleState): void {
   s.reorientEvidence = false;
 }
 
+/**
+ * Thought-only Stop this cycle. After THOUGHT_ONLY_LOOK_CYCLE, re-PLAN +
+ * explore — never auto-LAST (unlimited duration).
+ */
+export function noteUlwThoughtOnlyStop(sessionId: string): {
+  count: number;
+  forceLook: boolean;
+} {
+  const s = loadUlwCycle(sessionId);
+  if (!s?.enabled) return { count: 0, forceLook: false };
+  s.thoughtOnlyCycle = (s.thoughtOnlyCycle ?? 0) + 1;
+  const forceLook = s.thoughtOnlyCycle >= THOUGHT_ONLY_LOOK_CYCLE;
+  if (forceLook && s.cycle === 1 && !s.wrapKind) {
+    markUlwReorient(s);
+    markExploreRequired(s);
+  }
+  saveUlwCycle(s);
+  return { count: s.thoughtOnlyCycle, forceLook };
+}
+
 /** Wave-1 PLAN is a Reading. Later re-PLAN needs a look, not a sentence. */
 export function canLeaveUlwPlan(s: UlwCycleState): boolean {
   if (!s.reorientNeedsEvidence) return true;
@@ -1347,6 +1419,7 @@ export function noteExploreChildCompleted(sessionId: string): boolean {
   s.exploreRequiredAt = undefined;
   s.reorientEvidence = true;
   s.lastExploreWave = s.wave;
+  s.thoughtOnlyCycle = 0;
   saveUlwCycle(s);
   seedNamedShipsFromExploreMaps(sessionId);
   return true;
@@ -1434,6 +1507,8 @@ export function notePlayLoopRan(sessionId: string): void {
     const s = loadUlwCycle(sessionId);
     if (!s?.enabled) return;
     s.playLoopPending = true;
+    s.playLoopRan = true;
+    s.thoughtOnlyCycle = 0;
     s.reorientEvidence = true;
     saveUlwCycle(s);
   } catch {
@@ -1456,7 +1531,16 @@ export function exploreSpawnSkipReason(sessionId: string): string | undefined {
     return undefined;
   }
   if (!s?.enabled) return undefined;
-  if (s.exploreRequired || s.reorientNeedsEvidence) return undefined;
+  if (s.exploreRequired || s.reorientNeedsEvidence || s.reorientRequested) {
+    return undefined;
+  }
+  // Off-job mill or sibling factory — a look even if Wave-1 picks remain.
+  if (
+    (s.offJobStreak ?? 0) >= OFF_JOB_REORIENT ||
+    s.siblingMillHold
+  ) {
+    return undefined;
+  }
   if ((s.wave ?? 0) < 1) return undefined;
   const openMap = (s.namedShips ?? []).filter(
     (n) => n.status === "open" && n.source === "explore-map",
@@ -1562,7 +1646,39 @@ function lastReflectLedger(s: UlwCycleState): string[] {
     sameSurfaceStreak: s.sameSurfaceStreak,
     pinCreditRefused: s.pinCreditRefused,
     fullSuitePassed: s.fullSuitePassed,
+    playLoopRan: s.playLoopRan,
+    mandate: s.mandate,
+    wave: s.wave,
   });
+}
+
+function noteOffJobShip(s: UlwCycleState, rec: UlwWaveRecord): void {
+  if (waveMovedJob(rec)) {
+    s.offJobStreak = 0;
+    s.siblingMillHold = false;
+    return;
+  }
+  s.offJobStreak = (s.offJobStreak ?? 0) + 1;
+}
+
+function maybeCadenceReorient(s: UlwCycleState): void {
+  if (s.cycle !== 1 || s.wrapKind) return;
+  const consolidation = s.wave > 0 && s.wave % CONSOLIDATION_EVERY === 0;
+  const offJob = (s.offJobStreak ?? 0) >= OFF_JOB_REORIENT;
+  if (consolidation) {
+    s.soulNudgeDone = false;
+    const holes = lastReflectLedger(s);
+    s.midReflectHoles = holes.length ? holes : undefined;
+    s.midReflectWave = s.wave;
+  }
+  if (!offJob && !(consolidation && (s.midReflectHoles?.length ?? 0) > 0)) {
+    return;
+  }
+  markUlwReorient(s);
+  markExploreRequired(s);
+  if (consolidation && (s.midReflectHoles?.length ?? 0) > 0 && offJob) {
+    markHoldArmed(s);
+  }
 }
 
 export function isPlayLoopCloser(text: string): boolean {
@@ -1746,6 +1862,12 @@ function isGarnishShip(
     return true;
   }
   if (credit.ok && credit.chrome) return true;
+  if (
+    siblingMillHolding(s.waves, paths, credit.kind) &&
+    (credit.kind === "new-module" || credit.kind === "control-flow")
+  ) {
+    return true;
+  }
   const key = treeSurfaceKey(paths, credit.kind);
   const prev = waveTreeKeys(s).slice(-3);
   if (key && prev.some((p) => sameTreeSurface(p, key))) {
@@ -2461,6 +2583,27 @@ export function maybeStampUlwWave(opts: {
         cwd: opts.cwd,
         closer,
       });
+      if (
+        credit.ok &&
+        siblingMillHolding(s.waves, changedPaths, credit.kind) &&
+        !closerOnContract(opts.sessionId, closer) &&
+        !isPlayLoopCloser(closer)
+      ) {
+        s.siblingMillHold = true;
+        markHoldArmed(s);
+        markUlwReorient(s);
+        markExploreRequired(s);
+        noteJobThin(s, credit);
+        updateOpenWaveRecord(s, facts);
+        s.lastWaveSig = sig;
+        saveUlwCycle(s);
+        return {
+          stamped: false,
+          updated: true,
+          wave: s.wave,
+          admit: holdAdmit(opts.sessionId, SIBLING_MILL_ADMIT),
+        };
+      }
       if (!credit.ok) {
         noteJobThin(s, credit);
         noteChromeStreak(s, true);
@@ -2615,13 +2758,16 @@ export function bestWave(waves: UlwWaveRecord[] | undefined): UlwWaveRecord | nu
   const notMill = (notChurn.length ? notChurn : waves).filter(
     (w) =>
       !w.millClass &&
+      !w.siblingMill &&
+      !w.chrome &&
       !isFactoryFingerprint(w.classText || w.summary) &&
       !isChangelogOnlySummary(w.summary, w.editDelta),
   );
   const eligible = notMill.length ? notMill : notChurn.length ? notChurn : waves;
-  const proven = eligible.filter((w) => w.proof);
-  const pool = proven.length ? proven : eligible;
-  return pool.reduce((best, w) => (w.editDelta > best.editDelta ? w : best), pool[0]);
+  const job = eligible.filter((w) => waveMovedJob(w));
+  const proven = eligible.filter((w) => w.proof && w.proofKind !== "isolate");
+  const pool = job.length ? job : proven.length ? proven : eligible;
+  return pool.reduce((best, w) => (w.editDelta > best.editDelta ? w : best), pool[0]!);
 }
 
 /** One-line factual ledger for re-anchors/status: `w1 +12e ✓ · w2 +1e↺ ✗` (↺ = churn revisit). */
@@ -2757,6 +2903,27 @@ export function loadUlwCycle(sessionId: string): UlwCycleState | null {
   if (typeof raw.exploreRequired !== "boolean") raw.exploreRequired = false;
   if (typeof raw.exploreRequiredAt !== "string") raw.exploreRequiredAt = undefined;
   if (typeof raw.playLoopPending !== "boolean") raw.playLoopPending = false;
+  if (typeof raw.playLoopRan !== "boolean") raw.playLoopRan = false;
+  if (
+    typeof raw.offJobStreak !== "number" ||
+    !Number.isFinite(raw.offJobStreak)
+  ) {
+    raw.offJobStreak = 0;
+  }
+  if (typeof raw.siblingMillHold !== "boolean") raw.siblingMillHold = false;
+  if (
+    typeof raw.thoughtOnlyCycle !== "number" ||
+    !Number.isFinite(raw.thoughtOnlyCycle)
+  ) {
+    raw.thoughtOnlyCycle = 0;
+  }
+  if (!Array.isArray(raw.midReflectHoles)) raw.midReflectHoles = undefined;
+  if (
+    typeof raw.midReflectWave !== "number" ||
+    !Number.isFinite(raw.midReflectWave)
+  ) {
+    raw.midReflectWave = undefined;
+  }
   if (typeof raw.rawPinProofTaint !== "boolean") raw.rawPinProofTaint = false;
   if (typeof raw.millHoldPrunePending !== "boolean") {
     raw.millHoldPrunePending = false;
@@ -3113,6 +3280,12 @@ export function armUlwCycle(
     contractHold: false,
     exploreRequired: false,
     playLoopPending: false,
+    playLoopRan: false,
+    offJobStreak: 0,
+    siblingMillHold: false,
+    thoughtOnlyCycle: 0,
+    midReflectHoles: undefined,
+    midReflectWave: undefined,
     rawPinProofTaint: false,
     chromePathStreak: 0,
     jobThinStreak: 0,
@@ -3527,6 +3700,12 @@ export function resetUlwOnClear(sessionId: string): UlwCycleState | null {
   s.exploreRequired = false;
   s.exploreRequiredAt = undefined;
   s.playLoopPending = false;
+  s.playLoopRan = false;
+  s.offJobStreak = 0;
+  s.siblingMillHold = false;
+  s.thoughtOnlyCycle = 0;
+  s.midReflectHoles = undefined;
+  s.midReflectWave = undefined;
   s.proofDemands = 0;
   s.evidenceNudges = 0;
   s.judgmentDemands = 0;
@@ -3593,6 +3772,9 @@ export const ULW_LIVE_CONTROLS_HINT =
 
 function formatSameSurfaceStatusLine(s: UlwCycleState): string | undefined {
   const streak = s.sameSurfaceStreak ?? 0;
+  if (s.siblingMillHold) {
+    return `  Sibling mill: hold — numbered/same-dir new-modules; explore/play then a different-surface Reading or /cycle 0`;
+  }
   if (exploreHolding(s)) {
     return `  Explore: required — spawn one explore child (what did we abandon?) or /cycle 0`;
   }
@@ -3609,7 +3791,13 @@ function formatSameSurfaceStatusLine(s: UlwCycleState): string | undefined {
 }
 
 function formatProductQualityStatusLine(s: UlwCycleState): string | undefined {
-  if (!isUserFacingProductWork(s.mandate)) return undefined;
+  if (
+    !isUserFacingProductWork(s.mandate, {
+      reading: s.sessionId ? loadWave1Reading(s.sessionId) : undefined,
+    })
+  ) {
+    return undefined;
+  }
   const bits = ["on"];
   if (s.sessionId) {
     try {
@@ -4156,8 +4344,11 @@ export function evaluateUlwAtStop(opts: {
     if (
       s.cycle === 1 &&
       !s.wrapKind &&
-      !s.soulNudgeDone &&
-      isUserFacingProductWork(s.mandate) &&
+      (!s.soulNudgeDone ||
+        (s.wave > 0 && s.wave % CONSOLIDATION_EVERY === 0)) &&
+      isUserFacingProductWork(s.mandate, {
+        reading: loadWave1Reading(s.sessionId),
+      }) &&
       (isDeclaredWaveClose(closer) || cycleCompleteClaim)
     ) {
       try {
@@ -4313,6 +4504,26 @@ export function evaluateUlwAtStop(opts: {
       };
     }
     if (!alreadyStamped) {
+      if (
+        isShipCloseText(closer) &&
+        stopCredit.ok &&
+        siblingMillHolding(s.waves, stampPaths, stopCredit.kind) &&
+        !closerOnContract(opts.sessionId, closer) &&
+        !isPlayLoopCloser(closer)
+      ) {
+        s.siblingMillHold = true;
+        markHoldArmed(s);
+        markUlwReorient(s);
+        markExploreRequired(s);
+        saveUlwCycle(s);
+        const admit = holdAdmit(opts.sessionId, SIBLING_MILL_ADMIT);
+        return {
+          block: true,
+          reason: admit,
+          reanchor: admit,
+          sameSurfaceDemanded: true,
+        };
+      }
       if (isShipCloseText(closer) && stopCredit.ok) {
         noteJobThin(s, stopCredit);
         noteChromeStreak(s, stopCredit.chrome);
@@ -4487,11 +4698,22 @@ function buildCycleReanchor(
       `Mandate: ${displayUlwMandate(s.mandate)}`,
       ...decisionsBlock,
       `Wave ${s.wave} begins${cap != null ? ` (max ${cap})` : ""}. Protocol is in the system prompt — one ship that moves the job, then prove it.`,
+      formatUlwJobCard(
+        buildUlwJobCard({
+          sessionId: s.sessionId,
+          mandate: s.mandate,
+          waves: s.waves,
+          namedShips: s.namedShips,
+          playLoopRan: s.playLoopRan,
+          fullSuitePassed: s.fullSuitePassed,
+          midReflectHoles: s.midReflectHoles,
+        }),
+      ),
       lastEntry
-        ? `Last wave closed: +${lastEntry.editDelta} edits, proof ${lastEntry.proof ? "✓" : "✗"}${lastEntry.todoProgress != null ? `, todosΔ=${lastEntry.todoProgress}` : ""}.`
+        ? `Last wave closed: +${lastEntry.editDelta} edits, proof ${lastEntry.proof ? "✓" : "✗"}${lastEntry.todoProgress != null ? `, todosΔ=${lastEntry.todoProgress}` : ""}${lastEntry.jobMoved ? ", job-move" : ""}.`
         : null,
       best
-        ? `Bar: best wave w${best.wave} (+${best.editDelta}e${best.proof ? ", proof ✓" : ""}). Pin-only tests do not stamp w.`
+        ? `Bar: best wave w${best.wave} (+${best.editDelta}e${best.proof ? ", proof ✓" : ""}${waveMovedJob(best) ? ", job-move" : ""}). Sibling new-modules do not raise this bar. Pin-only tests do not stamp w.`
         : `Bar: substance + a test that calls production (or a play-loop). Pin-only tests do not stamp w.`,
       opts.proofMissing
         ? (() => {
@@ -4509,7 +4731,7 @@ function buildCycleReanchor(
           })()
         : null,
       opts.consolidation
-        ? `CONSOLIDATION WAVE (every ${CONSOLIDATION_EVERY}th): no new scope — run the project's full check suite (AGENTS.md / preferred checks) in the foreground with a timeout. Isolates are proof=ran, not proof=✓. Skip/hang/targeted-only is proof=✗ — do not skip the suite. Then review the cumulative \`git diff\` as a hostile reviewer (regressions, weakened tests, leftover stubs). Fix real defects only.`
+        ? `CONSOLIDATION WAVE (every ${CONSOLIDATION_EVERY}th): no new scope — run the project's full check suite (AGENTS.md / preferred checks) with bash background:true then get_task_output wait. Timeout / hang / skip / isolate-only is proof=✗. Isolates are proof=ran, not proof=✓. Then review the cumulative \`git diff\` as a hostile reviewer (regressions, weakened tests, leftover stubs). Fix real defects only. PLAN is re-armed — explore or play-loop, then a different-surface Reading.`
         : null,
       (opts.thinStreak ?? 0) >= 2
         ? `Waves are thinning (${opts.thinStreak} in a row with little substance). God-mode demand: pick a substantially higher-leverage hard objective (not churn) — or, if the hard work is genuinely exhausted, say so with evidence; the user can /cycle 0.`

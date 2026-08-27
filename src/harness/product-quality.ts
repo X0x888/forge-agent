@@ -39,22 +39,35 @@ const SERENDIPITY_RE = /\*{0,2}Serendipity:\*{0,2}\s*([^\n]{1,180})/gi;
 const CHROME_CATALOG_RE =
   /first \d+\s+(?:lines?|hits?|names?)|under the [✓✔] row|last \d+\s+(?:log )?lines/i;
 
-export function isUserFacingProductWork(mandate: string): boolean {
+export function isUserFacingProductWork(
+  mandate: string,
+  opts?: { reading?: string },
+): boolean {
   const t = (mandate || "").replace(/\s+/g, " ").trim();
-  if (!t) return false;
-  if (INFRA_RE.test(t) && !PRODUCT_OBJECT_RE.test(t) && !PRODUCT_SURFACE_RE.test(t)) {
+  const reading = (opts?.reading || "").replace(/\s+/g, " ").trim();
+  const blob = reading ? `${t} ${reading}` : t;
+  if (!t && !reading) return false;
+  if (
+    INFRA_RE.test(t) &&
+    !PRODUCT_OBJECT_RE.test(blob) &&
+    !PRODUCT_SURFACE_RE.test(blob)
+  ) {
     return false;
   }
-  if (BUGFIX_RE.test(t) && !BUILD_RE.test(t) && !EVAL_RE.test(t)) return false;
+  if (BUGFIX_RE.test(t) && !BUILD_RE.test(t) && !EVAL_RE.test(t) && !reading) {
+    return false;
+  }
 
-  if (BUILD_RE.test(t) && (PRODUCT_OBJECT_RE.test(t) || PRODUCT_SURFACE_RE.test(t))) {
+  if (BUILD_RE.test(t) && (PRODUCT_OBJECT_RE.test(blob) || PRODUCT_SURFACE_RE.test(blob))) {
     return true;
   }
-  if (EVAL_RE.test(t) && (PRODUCT_OBJECT_RE.test(t) || PRODUCT_SURFACE_RE.test(t))) {
+  if (EVAL_RE.test(t) && (PRODUCT_OBJECT_RE.test(blob) || PRODUCT_SURFACE_RE.test(blob))) {
     return true;
   }
   // Polish a named product surface — not "improve the ui" / "polish the tui".
   if (POLISH_RE.test(t) && PRODUCT_OBJECT_RE.test(t)) return true;
+  // Wave-1 reading named a product even when the one-line mandate was soft.
+  if (reading && PRODUCT_OBJECT_RE.test(reading)) return true;
   return false;
 }
 

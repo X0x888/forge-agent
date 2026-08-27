@@ -40,10 +40,16 @@ export interface LastReflectLedgerFacts {
     proof?: boolean;
     proofKind?: string;
     chrome?: boolean;
+    millClass?: boolean;
+    siblingMill?: boolean;
+    jobMoved?: boolean;
   }>;
   sameSurfaceStreak?: number;
   pinCreditRefused?: number;
   fullSuitePassed?: boolean;
+  playLoopRan?: boolean;
+  mandate?: string;
+  wave?: number;
 }
 
 /**
@@ -87,6 +93,31 @@ export function ledgerMustFixItems(facts: LastReflectLedgerFacts): string[] {
   const chromeN = waves.filter((w) => w.chrome).length;
   if (chromeN >= 2) {
     holes.push(`Chrome-only path cluster on ${chromeN} credited waves.`);
+  }
+  const millN = waves.filter((w) => w.millClass || w.siblingMill).length;
+  if (millN >= 3) {
+    holes.push(
+      `${millN} mill/sibling-module wave(s) — numbered foo-n.js is not a job.`,
+    );
+  }
+  const jobN = waves.filter((w) => w.jobMoved).length;
+  if (waves.length >= 4 && jobN === 0) {
+    holes.push(
+      "Last credited waves did not close a named/pick/play job (volume is not movement).",
+    );
+  }
+  const userFacing =
+    /\b(game|app|application|tui|cli)\b/i.test(facts.mandate || "") ||
+    /\b(evaluate|build|redesign)\b/i.test(facts.mandate || "");
+  if (
+    userFacing &&
+    !facts.playLoopRan &&
+    (facts.wave ?? waves.length) >= 4 &&
+    !waves.some((w) => w.proofKind === "full" && w.proof)
+  ) {
+    holes.push(
+      "User-facing product had no play-loop / screenshot look and no full-suite ✓ this run.",
+    );
   }
   const seen = new Set<string>();
   const out: string[] = [];

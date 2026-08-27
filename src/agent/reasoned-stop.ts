@@ -39,8 +39,18 @@ export const THOUGHT_ONLY_ACTION_POKE =
 export const THOUGHT_ONLY_OBSERVE_POKE =
   "Do not reprint Wave 1. Observe the current tree (`git diff --stat`) or the open named-ship ledger, then one tool call that ships or re-grounds. Hidden thought is not a ship.";
 
-export function formatThoughtOnlyRecoverPoke(consecutive: number): string {
+export function formatThoughtOnlyRecoverPoke(
+  consecutive: number,
+  opts?: { forceLook?: boolean },
+): string {
   const n = Number.isFinite(consecutive) ? consecutive : 1;
+  if (opts?.forceLook) {
+    return [
+      THOUGHT_ONLY_ACTION_POKE,
+      THOUGHT_ONLY_OBSERVE_POKE,
+      "Cheap next call: spawn_subagent type=explore (what did we abandon?) or a Playwright play-loop. Do not grep for the next mill. Hidden thought is not a look.",
+    ].join("\n");
+  }
   if (n >= 3) {
     return [
       THOUGHT_ONLY_ACTION_POKE,

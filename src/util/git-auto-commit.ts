@@ -16,6 +16,7 @@ import {
   noteUlwTreeAfterAutoCommit,
   type UlwCycleState,
 } from "../harness/ulw-cycle.js";
+import { waveMovedJob } from "../harness/ulw-job-card.js";
 import {
   extractShipSummary,
   pickShipHint,
@@ -265,6 +266,16 @@ export function maybeAutoCommitOnUlwDone(opts: {
   }
   if (ulw?.lastReflect === "score") {
     return { committed: false, skipped: "LAST reflect score (read-only)" };
+  }
+  const lastWave = ulw?.waves?.length
+    ? ulw.waves[ulw.waves.length - 1]
+    : undefined;
+  if (
+    lastWave &&
+    (lastWave.millClass || lastWave.siblingMill) &&
+    !waveMovedJob(lastWave)
+  ) {
+    return { committed: false, skipped: "mill ship (not a job move)" };
   }
   const subject = buildAutoCommitSubject(
     ulw ? displayUlwMandate(ulw.mandate) : "ULW cycle complete",

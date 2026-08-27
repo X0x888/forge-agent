@@ -165,11 +165,24 @@ Please comprehensively audit and improve this app:
         source: "agent" as const,
         status: "active" as const,
       })),
+      {
+        id: "real",
+        at: "99",
+        kind: "decision" as const,
+        text: "Wave 3 shipped the Memory Walk reskin with play-loop proof",
+        source: "agent" as const,
+        status: "active" as const,
+      },
     ];
     const kept = selectMemoryForPrompt(recs);
     assert.ok(kept.some((r) => /MANDATE/.test(r.text)));
     assert.ok(kept.some((r) => /Reading:/.test(r.text)));
-    assert.equal(kept.filter((r) => /Wave 2 sibling/.test(r.text)).length, 3);
+    assert.equal(
+      kept.filter((r) => /Wave 2 sibling/.test(r.text)).length,
+      0,
+      "mill sibling ship logs must not crowd out Wave 1",
+    );
+    assert.ok(kept.some((r) => /Memory Walk reskin/.test(r.text)));
   });
 
   it("seeds and formats durable constraints", () => {

@@ -158,6 +158,12 @@ Always run smoke after deploy.
       // Catalog lists others; progressive — full body of forge-prove not required
       assert.match(prompt, /\bforge-prove\b/);
       assert.match(prompt, /skills\/forge-prove\/SKILL\.md/);
+      assert.doesNotMatch(prompt, /skill:forge-veteran/);
+      const ulwPrompt = formatSkillsForPrompt(ws, {
+        inlineNames: ["forge-veteran"],
+      });
+      assert.match(ulwPrompt, /skill:forge-veteran/);
+      assert.match(ulwPrompt, /Veteran product loop/);
       // Multi-line frontmatter description: >- must not leak as the description
       assert.ok(!/skill:forge-method.*—\s*>-/.test(prompt));
       assert.match(method.description, /built-in skills|playbook/i);

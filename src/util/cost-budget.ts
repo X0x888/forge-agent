@@ -135,10 +135,14 @@ export interface PinChildCostCapResult {
  * the parent was already near HIT. Session `0` means unlimited — never pin
  * remaining `0` (that would lift the cap). Refuse spawn instead.
  */
+/** Slice of remaining family budget held for explore/play on re-PLAN. */
+export const LOOK_BUDGET_RESERVE = 0.15;
+
 export function pinChildCostCap(
   childMeta: { maxCostUsd?: number },
   parentConfig: Pick<ForgeConfig, "maxCostUsd" | "provider" | "model">,
   parentMeta: CostCapMeta,
+  opts?: { role?: string; reserveLook?: boolean },
 ): PinChildCostCapResult {
   const st = costCapStatus(parentConfig, parentMeta);
   if (st.cap == null) {
@@ -148,8 +152,17 @@ export function pinChildCostCap(
   if (st.hit || remaining <= 0) {
     return { refuse: true, remaining: 0, cap: st.cap };
   }
-  childMeta.maxCostUsd = remaining;
-  return { refuse: false, remaining, cap: st.cap };
+  const role = (opts?.role || "").toLowerCase();
+  const look = role === "explore" || role === "plan";
+  let pin = remaining;
+  if (opts?.reserveLook && !look) {
+    pin = Math.round(remaining * (1 - LOOK_BUDGET_RESERVE) * 10_000) / 10_000;
+    if (pin <= 0) {
+      return { refuse: true, remaining: 0, cap: st.cap };
+    }
+  }
+  childMeta.maxCostUsd = pin;
+  return { refuse: false, remaining: pin, cap: st.cap };
 }
 
 /** Human one-liner for /cost / /budget / HUD. */

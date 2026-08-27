@@ -427,10 +427,10 @@ export function buildBaselineSystemPrompt(opts: {
         `- Beat or match best wave so far: substance + real proof. No filler churn.`,
         `- \`w\` moves when the job moves: production change + a test that *calls* it (or a play-loop). \`pinPresent\` / \`readSrc\` / raw \`readFileSync\` pins are not proof and do not stamp \`w\`.`,
         `- Named-ship exhaust / same-surface hold re-arms PLAN. Leaving PLAN needs a real look (explore child or play-loop), not a new sentence.`,
-        `- Open explore-map ships are the ledger — do not re-explore until they are spent or a hold requires a new look.`,
-        `- Thought-only is not a ship. Observe the tree, then a tool call. Do not revive Wave 1 as the live unit.`,
-        `- Every 4th wave / LAST: consolidation (hostile cumulative diff + the project's full check suite). Foreground it with a timeout; hang/skip/targeted-only is proof=✗. Isolates (\`node --test tests/foo.test.ts\`, \`python -m unittest …TestCase.test_*\`) are proof=ran, not proof=✓.`,
-        `- Thin waves → demand higher leverage; user may \`/cycle 0\`.`,
+        `- Open explore-map ships are the ledger — do not re-explore until they are spent or a hold requires a new look. Off-job mill (3 ships that did not close a named/pick/play job) requires a look even if picks remain.`,
+        `- Thought-only is not a ship. After a streak, spawn explore or a play-loop — do not grep for the next mill. Do not revive Wave 1 as the live unit.`,
+        `- Every 4th wave / LAST: consolidation (hostile cumulative diff + the project's full check suite). Run it background:true then get_task_output wait; hang/skip/targeted-only is proof=✗. Isolates (\`node --test tests/foo.test.ts\`, \`python -m unittest …TestCase.test_*\`) are proof=ran, not proof=✓.`,
+        `- Thin waves → demand higher leverage; user may \`/cycle 0\`. Unlimited duration is not a mill budget — sibling foo-n.js / same-dir new-modules do not raise the bar.`,
         `- Same-surface siblings (same 1–3 production files / chrome-TTY kind, leftover, or near-duplicate ships) → harness holds after 3 even when max_waves is set. Cap is a budget for distinct surfaces, not mill units. \`/cycle 0\` N+1 still finishes.`,
         ``,
         `### Other force multipliers`,
@@ -455,7 +455,9 @@ export function buildBaselineSystemPrompt(opts: {
   if (rules) {
     parts.push(``, `## Project rules`, rules);
   }
-  const skills = formatSkillsForPrompt(workspace);
+  const skills = formatSkillsForPrompt(workspace, {
+    inlineNames: ulwOn ? ["forge-veteran"] : undefined,
+  });
   if (skills.trim()) {
     parts.push(``, skills);
   }

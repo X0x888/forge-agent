@@ -292,9 +292,15 @@ export function countBuiltinSkills(workspace?: string): number {
  * Format skills for system prompt injection.
  * Catalog always; full bodies for project/user and inject:always|body (budgeted).
  */
-export function formatSkillsForPrompt(workspace: string): string {
+export function formatSkillsForPrompt(
+  workspace: string,
+  opts?: { inlineNames?: string[] },
+): string {
   const skills = loadProjectSkills(workspace);
   if (!skills.length) return "";
+  const inlineNames = new Set(
+    (opts?.inlineNames ?? []).map((n) => n.toLowerCase()),
+  );
 
   const pkgRoot = forgePackageRoot();
   const lines: string[] = [
@@ -313,9 +319,13 @@ export function formatSkillsForPrompt(workspace: string): string {
     lines.push(`- **${s.name}** [${s.source}] — ${desc} · \`${p}\``);
   }
 
-  // Bodies to inline: always + body inject (project/user default body; forge-method always)
+  // Bodies to inline: always + body inject (project/user default body; forge-method always).
+  // ULW Wave 1 / re-PLAN inlines forge-veteran — catalog-only is never read at w80.
   const toInline = skills.filter(
-    (s) => s.inject === "always" || s.inject === "body",
+    (s) =>
+      s.inject === "always" ||
+      s.inject === "body" ||
+      inlineNames.has(s.name.toLowerCase()),
   );
   // Prefer project, then user, then builtin; within that, forge-method first
   toInline.sort((a, b) => {
