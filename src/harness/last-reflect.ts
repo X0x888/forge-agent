@@ -101,7 +101,7 @@ export function ledgerMustFixItems(facts: LastReflectLedgerFacts): string[] {
     );
   }
   const jobN = waves.filter((w) => w.jobMoved).length;
-  if (waves.length >= 4 && jobN === 0) {
+  if (waves.length >= 4 && jobN === 0 && millN + chromeN >= 2) {
     holes.push(
       "Last credited waves did not close a named/pick/play job (volume is not movement).",
     );
@@ -112,8 +112,9 @@ export function ledgerMustFixItems(facts: LastReflectLedgerFacts): string[] {
   if (
     userFacing &&
     !facts.playLoopRan &&
-    (facts.wave ?? waves.length) >= 4 &&
-    !waves.some((w) => w.proofKind === "full" && w.proof)
+    waves.length >= 4 &&
+    !hadFull &&
+    millN + chromeN >= 1
   ) {
     holes.push(
       "User-facing product had no play-loop / screenshot look and no full-suite ✓ this run.",
