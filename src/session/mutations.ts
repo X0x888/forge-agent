@@ -592,3 +592,47 @@ export function formatRestoreResult(r: RestoreMutationsResult): string {
   if (!lines.length) return "";
   return lines.join("\n");
 }
+
+/**
+ * Sit-down `/undo` result. Disk path dump stays on formatRestoreResult
+ * for verbose restore; the key you type is verdict + Next `/verify`.
+ */
+export function formatUndoCard(input: {
+  turns: number;
+  removed: number;
+  restored?: number;
+  failed?: number;
+  skipped?: number;
+  editsNow?: number;
+  lastVerify?: string;
+  staleVerify?: boolean;
+}): string {
+  if (input.removed <= 0) {
+    return ["undo  ·  nothing to rewind", "Next  /status"].join("\n");
+  }
+  const fail = input.failed ?? 0;
+  const restored = input.restored ?? 0;
+  const skipped = input.skipped ?? 0;
+  const turns = input.turns;
+  const turnBit = `${turns} turn${turns === 1 ? "" : "s"}`;
+  const verdict = fail ? "undo  ·  partial" : `undo  ·  ${turnBit}`;
+  const bits: string[] = [`${input.removed} messages`];
+  if (restored) bits.push(`disk ${restored}`);
+  if (skipped) bits.push(`skipped ${skipped}`);
+  if (fail) bits.push(`failed ${fail}`);
+  const lines = [verdict, `  ${bits.join("  ·  ")}`];
+  if (input.editsNow != null && restored) {
+    lines.push(`  edits now ${input.editsNow}`);
+  }
+  const last = input.lastVerify?.trim();
+  if (last && restored) {
+    lines.push(
+      input.staleVerify
+        ? `  last-verify stale  \`${last.slice(0, 40)}\``
+        : `  last-verify  \`${last.slice(0, 40)}\``,
+    );
+  }
+  const next = fail ? "/undo" : restored ? "/verify" : "/status";
+  lines.push(`Next  ${next}`);
+  return lines.join("\n");
+}

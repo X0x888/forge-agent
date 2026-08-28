@@ -69,6 +69,7 @@ import {
 } from "../session/session.js";
 import {
   formatRestoreResult,
+  formatUndoCard,
   mutationsJournalStats,
 } from "../session/mutations.js";
 // readSessionLock already imported below for /sessions list
@@ -4249,54 +4250,29 @@ const stats = collectUsageStats({
           n = parsed;
         }
       }
-const result = rewindSessionDetailed(opts.session, n);
+      const result = rewindSessionDetailed(opts.session, n);
       if (result.removed <= 0) {
         return {
           handled: true,
-          output: "Nothing to rewind.",
+          output: formatUndoCard({ turns: 0, removed: 0 }),
           session: opts.session,
         };
       }
-      const diskNote = result.disk ? formatRestoreResult(result.disk) : "";
-      let verifyTip = "";
-      try {
-        if (result.disk && result.disk.restored.length > 0) {
-          const cwd =
-            opts.config.workspace ||
-            opts.session.meta.cwd ||
-            process.cwd();
-          const intel = detectProjectIntel(cwd);
-          if (intel.checkCommands[0]) {
-            verifyTip =
-              `\nverify: ${intel.checkCommands.slice(0, 3).join(" · ")}`;
-          }
-        }
-      } catch {
-        /* */
-      }
-      // Orient experts: edit trail was recomputed from surviving mutations.
-      let trailNote = "";
-      try {
-        const edits = opts.session.meta.editCount || 0;
-        const last = opts.session.meta.lastVerificationCommand?.trim();
-        if (result.disk && result.disk.restored.length > 0) {
-          trailNote = `\nedits now: ${edits}`;
-          if (last) {
-            trailNote += isLastVerificationStale(opts.session.meta)
-              ? ` · last-verify still stale (\`${last.slice(0, 40)}\`)`
-              : ` · last-verify \`${last.slice(0, 40)}\``;
-          }
-        }
-      } catch {
-        /* */
-      }
+      const disk = result.disk;
       return {
         handled: true,
-        output:
-          `Rewound ${result.turns || n} user turn(s); removed ${result.removed} message(s).` +
-          (diskNote ? `\n${diskNote}` : "") +
-          trailNote +
-          verifyTip,
+        output: formatUndoCard({
+          turns: result.turns || n,
+          removed: result.removed,
+          restored: disk?.restored.length,
+          failed: disk?.failed.length,
+          skipped: disk?.skipped.length,
+          editsNow: opts.session.meta.editCount,
+          lastVerify: opts.session.meta.lastVerificationCommand,
+          staleVerify: disk?.restored.length
+            ? isLastVerificationStale(opts.session.meta)
+            : false,
+        }),
         session: opts.session,
       };
     }

@@ -911,6 +911,7 @@ export {
   mutationsJournalPath,
   restoreMutationsAfterTurn,
   formatRestoreResult,
+  formatUndoCard,
   MAX_MUTATION_BYTES,
 } from "./session/mutations.js";
 export type {

@@ -19,6 +19,7 @@ import {
   readFileMutations,
   restoreMutationsAfterTurn,
   formatRestoreResult,
+  formatUndoCard,
   mutationsJournalStats,
   foldChildMutationsIntoParent,
 } from "../src/session/mutations.js";
@@ -190,7 +191,7 @@ describe("file mutation journal + undo", () => {
       hooks,
     });
     assert.equal(r.handled, true);
-    assert.match(String(r.output || ""), /edits now: 0/);
+    assert.match(String(r.output || ""), /edits now 0/);
   });
   it("search_replace journals update and /undo restores pre-image", async () => {
     const s = createSession({
@@ -351,6 +352,30 @@ describe("file mutation journal + undo", () => {
     assert.match(text, /Disk restored/);
     assert.match(text, /Skipped/);
     assert.match(text, /too large/);
+  });
+
+  it("formatUndoCard is verdict-first", () => {
+    const empty = formatUndoCard({ turns: 0, removed: 0 });
+    assert.match(empty, /^undo  ·  nothing to rewind/m);
+    assert.match(empty, /Next  \/status/);
+    const ok = formatUndoCard({
+      turns: 1,
+      removed: 4,
+      restored: 2,
+      editsNow: 3,
+    });
+    assert.match(ok, /^undo  ·  1 turn/m);
+    assert.match(ok, /disk 2/);
+    assert.match(ok, /Next  \/verify/);
+    assert.doesNotMatch(ok, /Rewound|Disk restored/);
+    const partial = formatUndoCard({
+      turns: 1,
+      removed: 2,
+      restored: 1,
+      failed: 1,
+    });
+    assert.match(partial, /^undo  ·  partial/m);
+    assert.match(partial, /Next  \/undo/);
   });
 
   it("mutationsJournalStats counts sessions with journals", () => {
@@ -632,8 +657,10 @@ describe("/init and /compact-and slash commands", () => {
       config: { ...DEFAULT_CONFIG, workspace: ws },
       hooks,
     });
-    assert.match(r.output || "", /Rewound/);
-    assert.match(r.output || "", /Disk restored|already absent|z\.txt/);
+    assert.match(r.output || "", /^undo  ·  1 turn/m);
+    assert.match(r.output || "", /disk 1/);
+    assert.match(r.output || "", /Next  \/verify/);
+    assert.doesNotMatch(r.output || "", /Rewound|Disk restored/);
     assert.equal(fs.existsSync(f), false);
   });
 
