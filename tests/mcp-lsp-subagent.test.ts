@@ -414,6 +414,30 @@ describe("LSP config", () => {
     delete process.env.FORGE_LSP;
   });
 
+  it("formatLspStatus is a sit-down peek, not a schema dump", async () => {
+    const { LspManager, formatLspStatus } = await import(
+      "../src/lsp/manager.js"
+    );
+    const off = formatLspStatus(
+      new LspManager({
+        workspace: tmpRoot,
+        config: { enabled: false, servers: [], sources: [] },
+      }),
+    );
+    assert.match(off, /lsp  ·  off/);
+    assert.match(off, /disabled/i);
+    assert.doesNotMatch(off, /forge lsp ensure|lsp\(\{ action/);
+    const none = formatLspStatus(
+      new LspManager({
+        workspace: tmpRoot,
+        config: { enabled: true, servers: [], sources: [] },
+      }),
+    );
+    assert.match(none, /lsp  ·  none/);
+    assert.match(none, /Next  \/lsp ensure/);
+    assert.doesNotMatch(none, /Tool: lsp|forge lsp ensure/);
+  });
+
   it("lsp diagnostics missing path fails closed", async () => {
     const { LspManager } = await import("../src/lsp/manager.js");
     const mgr = new LspManager({

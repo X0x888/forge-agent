@@ -2953,8 +2953,7 @@ export async function handleSlash(
         setActiveLspManager(manager);
         return {
           handled: true,
-          output: "LSP managers restarted (servers start lazily on next use).\n" +
-            formatLspStatus(manager),
+          output: formatLspStatus(manager, { note: "restarted" }),
         };
       }
       if (verb === "install" || verb === "setup" || verb === "help") {

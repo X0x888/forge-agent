@@ -236,47 +236,44 @@ export function getActiveLspManager(): LspManager | null {
   return activeLsp;
 }
 
-export function formatLspStatus(manager: LspManager): string {
+/**
+ * Sit-down `/lsp` peek. Install recipes stay on `/lsp install`.
+ */
+export function formatLspStatus(
+  manager: LspManager,
+  opts?: { note?: string },
+): string {
   if (!manager.enabled) {
-    return "LSP disabled (FORGE_LSP=0).";
+    return ["lsp  ·  off", "  disabled  ·  FORGE_LSP=0"].join("\n");
   }
-  const lines: string[] = ["LSP language servers:"];
   const statuses = manager.status();
-  if (!statuses.length) {
-    lines.push("  (none configured)");
-  } else {
-    for (const s of statuses) {
-      lines.push(
-        `  ${s.languageId}  [${s.state}]  ${s.command}` +
-          (s.openDocuments != null ? `  docs=${s.openDocuments}` : "") +
-          (s.error ? `  err: ${s.error.slice(0, 80)}` : ""),
-      );
-    }
-  }
-  if (manager.sources.length) {
-    lines.push("Sources:");
-    for (const src of manager.sources) lines.push(`  ${src}`);
-  }
-  // Missing-on-PATH install tips + ensure shortcut
+  let missing = 0;
   try {
-    const tips = formatMissingServerTips(manager.servers, commandOnPath);
-    if (tips.length) {
-      lines.push("Missing (install on PATH):");
-      lines.push(...tips);
-      lines.push(
-        "Smooth install: forge lsp ensure  ·  /lsp ensure  ·  recipes: /lsp install  ·  docs/LSP.md",
-      );
-    } else {
-      lines.push(
-        "All configured servers found on PATH (or not yet needed). forge lsp ensure · /lsp ensure",
-      );
-    }
+    missing = formatMissingServerTips(manager.servers, commandOnPath).length;
   } catch {
     /* */
   }
-  lines.push(
-    "Tool: lsp({ action, path, line?, character?, query? }). Actions: diagnostics|hover|definition|references|symbols|workspace_symbols|status|install|ensure",
-  );
+  const errors = statuses.filter((s) => s.state === "error");
+  const ready = statuses.filter((s) => s.state === "ready");
+  let verdict = "lsp  ·  idle";
+  if (!statuses.length) verdict = "lsp  ·  none";
+  else if (errors.length) verdict = "lsp  ·  error";
+  else if (missing) verdict = "lsp  ·  missing";
+  else if (ready.length === statuses.length) verdict = "lsp  ·  ready";
+  else if (ready.length)
+    verdict = `lsp  ·  ${ready.length}/${statuses.length} ready`;
+  const lines = [verdict];
+  const note = opts?.note?.trim();
+  if (note) lines.push(`  ${note}`);
+  for (const s of statuses.slice(0, 6)) {
+    const err = s.error ? `  ${s.error.slice(0, 60)}` : "";
+    lines.push(`  ${s.languageId}  ${s.state}${err}`);
+  }
+  if (statuses.length > 6) {
+    lines.push(`  … +${statuses.length - 6} more`);
+  }
+  if (missing || !statuses.length) lines.push("Next  /lsp ensure");
+  else if (errors.length) lines.push("Next  /lsp restart");
   return lines.join("\n");
 }
 
