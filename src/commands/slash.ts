@@ -113,6 +113,7 @@ import {
   buildModelCatalogSync,
   providerAllowsFreeFormModels,
   readProviderModelsCache,
+  recentModelsForProvider,
   trackRecentModel,
 } from "../config/model-catalog.js";
 import { describeSandbox, detectSandboxBackend } from "../agent/sandbox.js";
@@ -241,6 +242,7 @@ import {
   stampCheckpoint,
 } from "../tui/checkpoint-card.js";
 import { runBudget } from "../tui/budget-card.js";
+import { assembleModelCard, peekModelCard } from "../tui/model-card.js";
 import { tokenizeSimple } from "../agent/shell-parse.js";
 import {
   armUlwCycle,
@@ -1434,114 +1436,31 @@ export async function handleModelSlash(
 ): Promise<SlashResult> {
   const provider = String(opts.config.provider);
   const freeForm = providerAllowsFreeFormModels(provider);
+  const want = String(arg || "").trim();
 
-  // Best-effort remote catalog for OpenRouter / xAI / Cursor when listing
-  let apiKey: string | undefined;
-  if (provider === "openrouter") {
-    apiKey =
-      process.env.OPENROUTER_API_KEY?.trim() ||
-      opts.auth?.token ||
-      getCredential("openrouter")?.accessToken;
-  } else if (provider === "xai") {
-    apiKey =
-      process.env.XAI_API_KEY?.trim() ||
-      opts.auth?.token ||
-      getCredential("xai")?.accessToken;
-  } else if (provider === "cursor") {
-    apiKey =
-      process.env.CURSOR_API_KEY?.trim() ||
-      process.env.CURSOR_ACCESS_TOKEN?.trim() ||
-      opts.auth?.token ||
-      getCredential("cursor")?.accessToken;
-  }
-
-  const catalog = arg
-    ? buildModelCatalogSync(opts.config, provider)
-    : await buildModelCatalog(opts.config, provider, {
-        refreshRemote:
-          provider === "openrouter" ||
-          provider === "xai" ||
-          provider === "cursor",
-        apiKey,
-        useCache: true,
-      });
-
-  // Interactive menu: prefer recent + static (+ a few remote popular), not hundreds
-  const menuIds = catalog.models.map((m) => m.id);
-  const choices = menuIds.map((m) => {
-    const entry = catalog.models.find((e) => e.id === m);
-    const effortHint = modelSupportsReasoningEffort(m)
-      ? ` · effort ${defaultEffortForModel(m) ?? "—"}`
-      : "";
-    const src =
-      entry?.source === "recent"
-        ? "recent"
-        : entry?.source === "remote"
-          ? "remote"
-          : m === opts.config.model
-            ? "current"
-            : "catalog";
-    return {
-      value: m,
-      description: src + effortHint,
-    };
-  });
-
-  if (!arg) {
-    const curEffort = resolveReasoningEffort(
-      opts.config.model,
-      opts.config.reasoningEffort,
-    );
-    const knownWin = modelContextWindow(opts.config.model, provider);
-    const routeNote = contextWindowRouteNote(opts.config.model, provider);
-    const header = [
-      `Provider: ${provider}  ·  model: ${opts.config.model}`,
-      `  temp=${opts.config.temperature ?? "default"}  max_tokens=${effectiveMaxTokensForDisplay(opts.config)}` +
-        (curEffort ? `  effort=${curEffort}` : "") +
-        `  ctx=${formatContextWindowPosture(opts.config)}` +
-        (opts.config.contextWindowExplicit
-          ? ""
-          : knownWin && knownWin !== opts.config.contextWindow
-            ? ` (route max ${formatTokens(knownWin)})`
-            : ""),
-      ...(routeNote ? [`  ${routeNote}`] : []),
-    ].join("\n");
-    const effortLine = modelSupportsReasoningEffort(opts.config.model)
-      ? chalk.dim(
-          `\nEffort: ${curEffort ?? "—"}  ·  /effort low|medium|high|xhigh  or  /model <name> <effort>`,
-        )
-      : chalk.dim(
-          "\nReasoning effort: not wired for this model (prefs kept for grok-4.6).",
-        );
-    const freeLine = freeForm
-      ? chalk.dim(
-          `\nFree-form: /model org/model-id  (e.g. deepseek/deepseek-v4-flash)` +
-            (catalog.remoteCount
-              ? `  ·  ${catalog.remoteCount} OpenRouter ids cached`
-              : "  ·  forge models -p openrouter refreshes remote catalog"),
-        )
-      : chalk.dim("\nTip: Tab completes catalog names.");
-    const note = catalog.note ? chalk.dim(`\n${catalog.note}`) : "";
+  if (!want) {
     return {
       handled: true,
-      output:
-        header +
-        "\n" +
-        (choices.length
-          ? formatParamMenu("/model", choices, opts.config.model)
-          : `Usage: /model <name> [effort]`) +
-        effortLine +
-        freeLine +
-        note +
-        chalk.dim(
-          `\nAlso: /provider · /context-window · /temperature · /max-tokens · /config`,
-        ),
+      output: peekModelCard({
+        config: opts.config,
+        served: opts.session.meta.servedModels,
+      }),
     };
   }
 
+  // OpenRouter ctx refresh after a free-form pick whose window is unknown.
+  const apiKey =
+    provider === "openrouter"
+      ? process.env.OPENROUTER_API_KEY?.trim() ||
+        opts.auth?.token ||
+        getCredential("openrouter")?.accessToken
+      : undefined;
+
+  const catalog = buildModelCatalogSync(opts.config, provider);
+
   // /model <name> [effort] — last token may be an effort level
-  const tokens = arg.split(/\s+/).filter(Boolean);
-  let modelArg = arg;
+  const tokens = want.split(/\s+/).filter(Boolean);
+  let modelArg = want;
   let effortArg: string | undefined;
   if (tokens.length >= 2) {
     const maybeEffort = parseReasoningEffort(tokens[tokens.length - 1]!);
@@ -1588,13 +1507,14 @@ export async function handleModelSlash(
     if (!acceptUnknown) {
       return {
         handled: true,
-        output:
-          `Unknown model "${modelArg}". Did you mean: ${tip}?\n` +
-          chalk.dim(
-            freeForm
-              ? "Tab completes · free-form ids with org/name still accepted (e.g. deepseek/deepseek-v4-flash)."
-              : "Tab completes catalog names. Newer grok-*.* version bumps are accepted.",
-          ),
+        failed: true,
+        output: assembleModelCard({
+          kind: "unknown",
+          model: opts.config.model,
+          provider,
+          note: `Unknown model "${modelArg}". Did you mean: ${tip}?`,
+          unknownTip: tip,
+        }),
       };
     }
     resolved = modelArg;
@@ -1691,6 +1611,9 @@ export async function handleModelSlash(
     }
   }
 
+  if (opts.session.meta.servedModels?.length) {
+    delete opts.session.meta.servedModels;
+  }
   trackRecentModel(provider, resolved);
   saveSession(opts.session);
   try {
@@ -1701,14 +1624,37 @@ export async function handleModelSlash(
   } catch {
     /* */
   }
+  const extras: string[] = [];
+  if (effortArg) {
+    const e = parseReasoningEffort(effortArg);
+    if (!e) extras.push(`ignored effort "${effortArg}"`);
+    else if (!modelSupportsReasoningEffort(resolved)) {
+      extras.push(`${resolved} does not support reasoning effort`);
+    } else if (
+      opts.config.reasoningEffort &&
+      opts.config.reasoningEffort !== e
+    ) {
+      extras.push(
+        `effort ${opts.config.reasoningEffort} (clamped from ${e})`,
+      );
+    }
+  }
+  const warn = contextWindowWarnings(opts.config)[0];
+  if (warn) extras.push(warn);
+  const recent =
+    recentModelsForProvider(provider).find((m) => m !== resolved) ?? null;
   return {
     handled: true,
-    output:
-      `Model set to ${provider}/${resolved}${effortNote}${windowNote}` +
-      ` (saved · live mid-run)` +
-      chalk.dim(
-        `  ·  /context-window · /temperature · /max-tokens · /provider · /config`,
-      ),
+    output: assembleModelCard({
+      kind: "ok",
+      model: resolved,
+      provider,
+      effort: resolveReasoningEffort(resolved, opts.config.reasoningEffort),
+      ctx: formatContextWindowPosture(opts.config),
+      recentOther: recent,
+      effortWired: modelSupportsReasoningEffort(resolved),
+      note: ["set · live", ...extras].join(" · "),
+    }),
     session: opts.session,
   };
 }

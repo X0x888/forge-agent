@@ -767,7 +767,8 @@ it("/model catalog typos suggest instead of saving broken id", async () => {
       config: { ...DEFAULT_CONFIG, provider: "xai", model: "grok-4.5" },
       hooks,
     });
-    assert.match(r2.output || "", /Model set to (xai\/)?my-custom-finetune-v3/);
+    assert.match(r2.output || "", /model  ·  my-custom-finetune-v3/);
+    assert.match(r2.output || "", /set · live/);
   });
 
 it("session lookup miss suggests title typos", async () => {

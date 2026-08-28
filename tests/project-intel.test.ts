@@ -1381,7 +1381,9 @@ describe("/model status orientation", () => {
     });
     assert.equal(r.handled, true);
     const out = String(r.output || "").replace(/\x1b\[[0-9;]*m/g, "");
-    assert.match(out, /Provider:|model:/i);
+    assert.match(out, /model  ·  grok-4/);
+    assert.doesNotMatch(out, /Provider:/);
+    assert.doesNotMatch(out, /pick a value/);
     assert.doesNotMatch(out, /Preferred checks:/i);
     assert.doesNotMatch(out, /Last verify:/i);
     assert.doesNotMatch(out, /No last-verify/i);

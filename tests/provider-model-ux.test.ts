@@ -198,11 +198,15 @@ describe("/model free-form on openrouter", () => {
     );
   });
 
-  it("bare /model shows provider header and free-form tip", async () => {
+  it("bare /model is a verdict card, not a catalog lecture", async () => {
     const opts = makeOpts("openrouter", "deepseek/deepseek-v4-flash");
     const r = await handleModelSlash("", opts);
-    assert.match(r.output || "", /Provider: openrouter/);
-    assert.match(r.output || "", /Free-form|free-form/i);
+    const out = String(r.output || "").replace(/\x1b\[[0-9;]*m/g, "");
+    assert.match(out, /model  ·  deepseek\/deepseek-v4-flash/);
+    assert.match(out, /openrouter/);
+    assert.doesNotMatch(out, /Provider:/);
+    assert.doesNotMatch(out, /pick a value/);
+    assert.doesNotMatch(out, /forge models/);
   });
 });
 

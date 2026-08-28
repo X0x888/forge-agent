@@ -845,6 +845,13 @@ export {
   runBudget,
 } from "./tui/budget-card.js";
 export {
+  formatModelCard,
+  formatModelVerdict,
+  modelKindFromServed,
+  modelNextKeys,
+  peekModelCard,
+} from "./tui/model-card.js";
+export {
   shouldOfferLoginPicker,
   parseLoginOfferChoice,
   formatPostLoginOfferExit,
