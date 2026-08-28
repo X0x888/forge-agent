@@ -1426,7 +1426,7 @@ describe("/effort status orientation", () => {
     });
     assert.equal(r.handled, true);
     const out = String(r.output || "").replace(/\x1b\[[0-9;]*m/g, "");
-    assert.match(out, /\/effort|Default:/i);
+    assert.match(out, /effort  ·  /);
     assert.doesNotMatch(out, /Preferred checks:/i);
     assert.doesNotMatch(out, /Last verify:/i);
     assert.doesNotMatch(out, /No last-verify/i);
