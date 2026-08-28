@@ -321,7 +321,9 @@ describe("handleFallbackSlash", () => {
   it("sets / shows / disables the chain and rejects below-floor ids", () => {
     const config = { ...DEFAULT_CONFIG, model: "grok-4.6", provider: "xai" };
     let r = handleFallbackSlash("", { config });
-    assert.match(r.output ?? "", /off/);
+    assert.match(r.output ?? "", /fallback  ·  off/);
+    assert.doesNotMatch(r.output ?? "", /Usage:/);
+    assert.match(r.output ?? "", /Next  \/fallback on/);
     assert.match(r.output ?? "", new RegExp(FALLBACK_FLOOR_LABEL.replace(".", "\\.")));
     r = handleFallbackSlash("on", { config });
     assert.deepEqual(config.fallbackModels, ["grok-4.6", "grok-4.5"]);

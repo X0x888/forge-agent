@@ -320,6 +320,28 @@ export function formatFallbackChain(
   return kept.length ? kept.join(" → ") : "off";
 }
 
+/**
+ * Sit-down `/fallback` peek. Floor lecture stays a dim body line.
+ */
+export function formatFallbackCard(input: {
+  chain: string;
+  next?: string | null;
+  note?: string;
+  kind?: "off" | "ok" | "empty";
+}): string {
+  const chain = String(input.chain || "off").trim() || "off";
+  const off = chain === "off" || input.kind === "off";
+  const verdict = off ? "fallback  ·  off" : `fallback  ·  ${chain}`;
+  const lines = [verdict];
+  lines.push(`  floor: ${FALLBACK_FLOOR_LABEL}`);
+  const nxt = input.next?.trim();
+  if (nxt && !off) lines.push(`  next ${nxt}`);
+  const note = input.note?.trim();
+  if (note) lines.push(`  ${note}`);
+  lines.push(off ? "Next  /fallback on" : "Next  /fallback off");
+  return lines.join("\n");
+}
+
 export function defaultFallbackModels(
   provider: string,
   _currentModel?: string,

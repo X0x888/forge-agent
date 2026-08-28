@@ -99,6 +99,7 @@ import {
   FALLBACK_DEFAULT_MARKER,
   FALLBACK_FLOOR_LABEL,
   filterFallbackChain,
+  formatFallbackCard,
   formatFallbackChain,
   materializeFallbackModels,
   nextFallbackModel,
@@ -1363,24 +1364,23 @@ export function handleFallbackSlash(
   opts: { config: ForgeConfig; session?: SessionData },
 ): SlashResult {
   const raw = arg.trim();
-  const floor = `floor: ${FALLBACK_FLOOR_LABEL} (below that is not accepted)`;
-  const usage = "Usage: /fallback <model[,model…]|on|off>";
   if (!raw || raw === "?" || raw === "show" || raw === "status") {
     const shown = formatFallbackChain(opts.config);
-    const next = nextFallbackModel(opts.config);
     return {
       handled: true,
-      output:
-        `fallback: ${shown}` +
-        (next ? `\nnext: ${next}` : "\nnext: (none)") +
-        `\n${floor}` +
-        `\n${usage}`,
+      output: formatFallbackCard({
+        chain: shown,
+        next: nextFallbackModel(opts.config),
+      }),
     };
   }
   if (/^(off|none|false|0|disable)$/i.test(raw)) {
     opts.config.fallbackModels = [];
     persistSessionFallbackModels(opts.config, opts.session);
-    return { handled: true, output: "fallback: off (no automatic model switch)" };
+    return {
+      handled: true,
+      output: formatFallbackCard({ chain: "off", note: "no automatic model switch" }),
+    };
   }
   if (/^(default|defaults|auto|on|true)$/i.test(raw)) {
     const chain = defaultFallbackModels(
@@ -1393,17 +1393,18 @@ export function handleFallbackSlash(
     if (!chain.length) {
       return {
         handled: true,
-        output:
-          `fallback: on, but no ${opts.config.provider} model meets ${FALLBACK_FLOOR_LABEL}` +
-          `\n${floor}`,
+        output: formatFallbackCard({
+          chain: "off",
+          note: `on, but no ${opts.config.provider} model meets ${FALLBACK_FLOOR_LABEL}`,
+        }),
       };
     }
     return {
       handled: true,
-      output:
-        `fallback: ${chain.join(", ")}` +
-        (next ? ` (next ${next})` : " (next none)") +
-        `\n${floor}`,
+      output: formatFallbackCard({
+        chain: chain.join(" → "),
+        next,
+      }),
     };
   }
   const parsed = parseFallbackModels(raw);
@@ -1412,7 +1413,14 @@ export function handleFallbackSlash(
     parsed.length === 0 ||
     (parsed.length === 1 && parsed[0] === FALLBACK_DEFAULT_MARKER)
   ) {
-    return { handled: true, output: usage };
+    return {
+      handled: true,
+      output: formatFallbackCard({
+        chain: formatFallbackChain(opts.config),
+        next: nextFallbackModel(opts.config),
+        note: "Usage: /fallback <model[,model…]|on|off>",
+      }),
+    };
   }
   const { kept, dropped } = filterFallbackChain(
     parsed,
@@ -1421,21 +1429,26 @@ export function handleFallbackSlash(
   if (!kept.length) {
     return {
       handled: true,
-      output:
-        `fallback: unchanged (${formatFallbackChain(opts.config)})` +
-        `\nnone of those models meet ${FALLBACK_FLOOR_LABEL}` +
-        (dropped.length ? ` (rejected: ${dropped.join(", ")})` : "") +
-        `\n${floor}`,
+      output: formatFallbackCard({
+        chain: formatFallbackChain(opts.config),
+        next: nextFallbackModel(opts.config),
+        note:
+          `none of those models meet ${FALLBACK_FLOOR_LABEL}` +
+          (dropped.length ? ` (rejected: ${dropped.join(", ")})` : ""),
+      }),
     };
   }
   opts.config.fallbackModels = kept;
   persistSessionFallbackModels(opts.config, opts.session);
-  const dropNote = dropped.length
-    ? `\ndropped (below ${FALLBACK_FLOOR_LABEL}): ${dropped.join(", ")}`
-    : "";
   return {
     handled: true,
-    output: `fallback: ${kept.join(", ")}` + dropNote + `\n${floor}`,
+    output: formatFallbackCard({
+      chain: kept.join(" → "),
+      next: nextFallbackModel(opts.config),
+      note: dropped.length
+        ? `dropped (below ${FALLBACK_FLOOR_LABEL}): ${dropped.join(", ")}`
+        : undefined,
+    }),
   };
 }
 
