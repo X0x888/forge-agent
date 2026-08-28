@@ -3,6 +3,11 @@
  */
 import { suggestName } from "../util/suggest.js";
 import { clipAnsi, visibleWidth } from "../util/format.js";
+import {
+  formatHelpStartCard,
+  formatHelpStartItem,
+  parseHelpStartKey,
+} from "../tui/help-card.js";
 
 
 export const HELP_TOPICS = [
@@ -16,44 +21,8 @@ export const HELP_TOPICS = [
 
 export type HelpTopic = (typeof HELP_TOPICS)[number];
 
-export const HELP_START = `
-Getting started
-───────────────
-  Type a task in English. Forge edits, checks, and prints a Δ.
-  1–6 on the /setup card run that item (same as /setup 1)
-  /setup              Account, model, budget, notify, AGENTS.md
-  /plan [focus]       Read-only design (same key as ULW Wave 1), then /build
-  /init               Write a real AGENTS.md for this repo
-  /doctor             Health (auth, sandbox, Stop, files)
-  /help all           Full command list
-  /help <word>        Find a command (budget, undo, notify)
-  /tips               Expert / CI cheat sheet
-
-Daily
-─────
-  /last /verify /diff Peek last turns · run the check · change-review (/retry)
-  /model /provider    Switch model (sticky)
-  /permissions        Modes + saved always-allows
-  /budget /notify     Spend cap · desktop alert
-  /undo /commit       Rewind last turn · commit card · /commit do (never push)
-  /checkpoint         Safety snapshot · /checkpoint restore rewinds the tree
-
-Unattended
-──────────
-  /goal <objective>   Relentless driver
-  /ulw [task]         Ultrawork: Wave 1 PLAN then BUILD
-  /done               Wind down + lastErr/verify Next
-
-Keys
-────
-  ↵ sends  ·  ^J newline  ·  ↑↓ history  ·  ^R search  ·  Tab daily · /ul Tab more · @path
-  live › type to queue  ·  !cmd shell now  ·  /paste image  ·  Ctrl+C abort (twice force-quits if it sticks)
-
-Allow?  ↵/y once · a always · s session · n no
-Ask?    1–N · letter · text · ↵ skip
-More    /help all | settings | harness | sessions | safety  ·  /help <word>
-Docs    docs/GETTING-STARTED.md  ·  /tips
-`.trim();
+/** First-day `/help` card (numbered 1–6). Catalog is `/help all`. */
+export const HELP_START = formatHelpStartCard();
 
 export const HELP_TOUR = HELP_START;
 
@@ -491,6 +460,13 @@ export function formatHelpSearchCard(
 }
 
 export function helpFor(arg: string): { topic: HelpResolveKind; text: string } {
+  const startKey = parseHelpStartKey(arg);
+  if (startKey != null) {
+    return {
+      topic: "start",
+      text: formatHelpStartItem(startKey) || formatHelpStartCard(),
+    };
+  }
   const topic = parseHelpTopic(arg);
   if (topic !== "unknown") {
     return { topic, text: helpTopicText(topic) };
