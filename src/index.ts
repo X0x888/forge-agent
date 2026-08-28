@@ -191,6 +191,7 @@ export {
   getActiveMcpManager,
   setActiveMcpManager,
   formatMcpStatus,
+  formatMcpToolsList,
 } from "./mcp/manager.js";
 export {
   loadMcpConfig,

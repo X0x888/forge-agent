@@ -554,53 +554,62 @@ export function getActiveMcpManager(): McpManager | null {
   return activeManager;
 }
 
-export function formatMcpStatus(manager: McpManager): string {
+/**
+ * Sit-down `/mcp` peek. Tool catalog stays on `/mcp tools`.
+ */
+export function formatMcpStatus(
+  manager: McpManager,
+  opts?: { note?: string },
+): string {
   if (!manager.enabled) {
-    return "MCP disabled (FORGE_MCP=0).";
+    return ["mcp  ·  off", "  FORGE_MCP=0"].join("\n");
   }
-  const lines: string[] = ["MCP servers:"];
   const statuses = manager.status();
   if (!statuses.length) {
-    lines.push("  (none configured)");
-    lines.push(
-      "  Built-ins: context7 + playwright (FORGE_MCP_DEFAULTS=0 to disable).",
-    );
-    lines.push(
-      "  Add more in .forge/mcp.json or ~/.forge/mcp.json (Claude/Cursor compatible).",
-    );
-  } else {
-    for (const s of statuses) {
-      const where = s.command
-        ? s.command
-        : s.url
-          ? s.url
-          : "";
-      const builtin =
-        s.name === "context7" || s.name === "playwright" ? "  (default)" : "";
-      const extra =
-        (s.resourceCount ? ` res=${s.resourceCount}` : "") +
-        (s.promptCount ? ` prompts=${s.promptCount}` : "");
-      lines.push(
-        `  ${s.name}  [${s.state}]  tools=${s.toolCount}${extra}  ${s.transport}${where ? `  ${where}` : ""}${builtin}${s.error ? `  err: ${s.error.slice(0, 80)}` : ""}`,
-      );
-    }
+    return [
+      "mcp  ·  none",
+      "  Built-ins: context7 + playwright",
+      "Next  /mcp connect",
+    ].join("\n");
   }
-  if (manager.sources.length) {
-    lines.push("Sources:");
-    for (const src of manager.sources) lines.push(`  ${src}`);
+  const ready = statuses.filter((s) => s.state === "ready");
+  const errors = statuses.filter((s) => s.state === "error");
+  const connecting = statuses.filter((s) => s.state === "connecting");
+  let verdict = "mcp  ·  idle";
+  if (errors.length) verdict = "mcp  ·  error";
+  else if (ready.length === statuses.length) verdict = "mcp  ·  ready";
+  else if (ready.length)
+    verdict = `mcp  ·  ${ready.length}/${statuses.length} ready`;
+  else if (connecting.length) verdict = "mcp  ·  connecting";
+  const lines = [verdict];
+  const note = opts?.note?.trim();
+  if (note) lines.push(`  ${note}`);
+  for (const s of statuses.slice(0, 6)) {
+    const tools = s.toolCount ? `  tools=${s.toolCount}` : "";
+    const err = s.error ? `  ${s.error.slice(0, 60)}` : "";
+    lines.push(`  ${s.name}  ${s.state}${tools}${err}`);
   }
-  lines.push(
-    "Defaults: context7 (docs) · playwright (browser) · FORGE_MCP_DEFAULTS=0 off · CONTEXT7_API_KEY optional",
-  );
+  if (statuses.length > 6) {
+    lines.push(`  … +${statuses.length - 6} more`);
+  }
+  const next = errors.length || ready.length === 0 ? "/mcp connect" : "/mcp tools";
+  lines.push(`Next  ${next}`);
+  return lines.join("\n");
+}
+
+/** `/mcp tools` — the catalog, not the sit-down peek. */
+export function formatMcpToolsList(manager: McpManager): string {
   const tools = manager.listRegisteredTools();
-  if (tools.length) {
-    lines.push(`Registered tools (${tools.length}):`);
-    for (const t of tools.slice(0, 40)) {
-      lines.push(
-        `  ${t.qualifiedName}${t.readOnly ? "  (read-only)" : ""}  ${(t.tool.description || "").slice(0, 60)}`,
-      );
-    }
-    if (tools.length > 40) lines.push(`  … +${tools.length - 40} more`);
+  if (!tools.length) {
+    return ["mcp tools  ·  none", "Next  /mcp connect"].join("\n");
   }
+  const lines = [`mcp tools  ·  ${tools.length}`];
+  for (const t of tools.slice(0, 40)) {
+    lines.push(
+      `  ${t.qualifiedName}${t.readOnly ? "  (read-only)" : ""}`,
+    );
+  }
+  if (tools.length > 40) lines.push(`  … +${tools.length - 40} more`);
+  lines.push("Next  /mcp");
   return lines.join("\n");
 }

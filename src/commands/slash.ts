@@ -2882,6 +2882,7 @@ export async function handleSlash(
         getActiveMcpManager,
         setActiveMcpManager,
         formatMcpStatus,
+        formatMcpToolsList,
         McpManager,
       } = await import("../mcp/manager.js");
       let manager = getActiveMcpManager();
@@ -2903,14 +2904,14 @@ export async function handleSlash(
         const errN = statuses.filter((s) => s.state === "error").length;
         return {
           handled: true,
-          output:
-            `MCP connect: ${ready} ready, ${errN} error(s), ${statuses.length} configured.\n` +
-            formatMcpStatus(manager),
+          output: formatMcpStatus(manager, {
+            note: `connect  ${ready} ready  ·  ${errN} error`,
+          }),
         };
       }
       if (verb === "tools") {
         await manager.ensureRegistry().catch(() => {});
-        return { handled: true, output: formatMcpStatus(manager) };
+        return { handled: true, output: formatMcpToolsList(manager) };
       }
       // status / list / default
       return { handled: true, output: formatMcpStatus(manager) };

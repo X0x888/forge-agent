@@ -15,7 +15,11 @@ import {
   expandEnvVars,
   matchToolFilter,
 } from "../src/mcp/config.js";
-import { McpManager } from "../src/mcp/manager.js";
+import {
+  McpManager,
+  formatMcpStatus,
+  formatMcpToolsList,
+} from "../src/mcp/manager.js";
 import { mcpCallIsReadOnly } from "../src/mcp/tools.js";
 import {
   qualifyMcpTool,
@@ -115,6 +119,28 @@ describe("MCP config + types", () => {
     assert.equal(cfg.servers.context7, undefined);
     assert.equal(cfg.servers.playwright, undefined);
     delete process.env.FORGE_MCP_DEFAULTS;
+  });
+
+  it("/mcp peek is verdict-first, not a 40-tool catalog", () => {
+    const mgr = new McpManager({
+      workspace: tmpRoot,
+      config: { enabled: true, servers: {}, sources: [] },
+    });
+    const out = formatMcpStatus(mgr);
+    assert.match(out, /^mcp  ·  none/m);
+    assert.match(out, /Next  \/mcp connect/);
+    assert.doesNotMatch(out, /Registered tools/);
+    assert.doesNotMatch(out, /MCP servers:/);
+    const tools = formatMcpToolsList(mgr);
+    assert.match(tools, /^mcp tools  ·  none/m);
+    const off = new McpManager({
+      workspace: tmpRoot,
+      config: { enabled: false, servers: {}, sources: [] },
+    });
+    const offOut = formatMcpStatus(off);
+    assert.match(offOut, /^mcp  ·  off/m);
+    assert.match(offOut, /FORGE_MCP=0/);
+    assert.doesNotMatch(offOut, /Next  unset/);
   });
 
   it("loads project .forge/mcp.json (overrides defaults)", async () => {
