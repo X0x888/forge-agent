@@ -554,7 +554,7 @@ export const EMPTY_TAB_STARTERS = [
 
 /** One-line blurbs for Tab menus. Missing keys still print the command. */
 export const SLASH_HINTS: Record<string, string> = {
-  "/help": "Getting started · or a word",
+  "/help": "1–6 · /help all · or a word",
   "/setup": "Account, model, budget",
   "/plan": "Read-only design",
   "/init": "Write AGENTS.md",

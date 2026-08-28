@@ -20,6 +20,7 @@ import {
   restoreMutationsAfterTurn,
   formatRestoreResult,
   formatUndoCard,
+  formatRetryCard,
   mutationsJournalStats,
   foldChildMutationsIntoParent,
 } from "../src/session/mutations.js";
@@ -373,9 +374,38 @@ describe("file mutation journal + undo", () => {
       removed: 2,
       restored: 1,
       failed: 1,
+      failedDetails: [{ path: "/tmp/a.ts", error: "EACCES" }],
+      skippedDetails: [{ path: "/tmp/big", reason: "too large" }],
     });
     assert.match(partial, /^undo  ·  partial/m);
-    assert.match(partial, /Next  \/undo/);
+    assert.match(partial, /\/tmp\/a\.ts: EACCES/);
+    assert.match(partial, /\/tmp\/big: too large/);
+    assert.match(partial, /Next  \/diff/);
+    assert.doesNotMatch(partial, /Next  \/undo/);
+  });
+
+  it("formatRetryCard surfaces skipped and Next /diff on partial", () => {
+    const ok = formatRetryCard({
+      removed: 2,
+      preview: "retry me",
+      disk: { restored: ["a"], failed: [], skipped: [] },
+    });
+    assert.match(ok, /^retry  ·  ok/m);
+    assert.match(ok, /Next  \/last/);
+    const partial = formatRetryCard({
+      removed: 2,
+      preview: "retry me",
+      disk: {
+        restored: [],
+        failed: [{ path: "/tmp/a.ts", error: "EACCES" }],
+        skipped: [{ path: "/tmp/big", reason: "too large" }],
+      },
+    });
+    assert.match(partial, /^retry  ·  partial/m);
+    assert.match(partial, /skipped 1/);
+    assert.match(partial, /failed 1/);
+    assert.match(partial, /Next  \/diff/);
+    assert.doesNotMatch(partial, /Next  \/undo/);
   });
 
   it("mutationsJournalStats counts sessions with journals", () => {

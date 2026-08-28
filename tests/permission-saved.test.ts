@@ -295,5 +295,12 @@ describe("external_directory grants reach the checker", () => {
     const none = formatPermissionsCard({ mode: "default", emptyList: true });
     assert.match(none, /permissions  ·  none/);
     assert.match(none, /no saved allow rules/);
+    const plan = formatPermissionsCard({
+      mode: "default",
+      sessionMode: "plan",
+    });
+    assert.match(plan, /session plan/);
+    assert.match(plan, /Next  \/build/);
+    assert.doesNotMatch(plan, /Next  \/permissions list/);
   });
 });

@@ -137,7 +137,7 @@ describe("param resolve + menu", () => {
 
   it("Tab dump is a described card, not a bare name list", () => {
     const menu = formatSlashHitMenu([...EMPTY_TAB_STARTERS], { cols: 80 });
-    assert.match(menu, /\/help\s+Getting started/);
+    assert.match(menu, /\/help\s+1–6/);
     assert.match(menu, /\/plan\s+Read-only design/);
     assert.match(menu, /\/last\s+Conversation card/);
     assert.match(menu, /\/resume\s+Resume #n/);
@@ -148,7 +148,7 @@ describe("param resolve + menu", () => {
   it("Tab dump caps overflow and still hints params", () => {
     const many = ["/help", "/setup", "/plan", "/init", "/last", "/retry"];
     const menu = formatSlashHitMenu(many, { cols: 80, max: 3 });
-    assert.match(menu, /\/help\s+Getting started/);
+    assert.match(menu, /\/help\s+1–6/);
     assert.match(menu, /\+3 more/);
     assert.equal(menu.split("\n").length, 4);
     assert.equal(

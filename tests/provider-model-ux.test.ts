@@ -28,6 +28,10 @@ import {
   handleTemperatureSlash,
   handleMaxTokensSlash,
 } from "../src/commands/slash.js";
+import {
+  providerSwitchAuthBits,
+  formatProviderSwitchCard,
+} from "../src/util/provider-id.js";
 import { createSession } from "../src/session/session.js";
 import { HookRunner } from "../src/harness/hooks.js";
 import { forgeCompleter } from "../src/tui/complete.js";
@@ -183,6 +187,33 @@ describe("/provider slash", () => {
     const r = await handleProviderSlash("openroutr", opts);
     assert.match(r.output || "", /Did you mean|Unknown provider/i);
     assert.equal(opts.config.provider, "xai");
+  });
+
+  it("thrown auth resolve is not No credentials", () => {
+    const miss = providerSwitchAuthBits({
+      authUpdated: false,
+      provider: "openrouter",
+    });
+    assert.equal(miss.needsAuth, true);
+    assert.match(miss.notes.join(" "), /No credentials  ·  set OPENROUTER_API_KEY/);
+    const boom = providerSwitchAuthBits({
+      authUpdated: false,
+      resolveError: "refresh failed: 500",
+      provider: "openrouter",
+    });
+    assert.equal(boom.needsAuth, false);
+    assert.match(boom.notes.join(" "), /Auth resolve failed: refresh failed: 500/);
+    assert.doesNotMatch(boom.notes.join(" "), /No credentials/);
+    const card = formatProviderSwitchCard({
+      from: "xai",
+      to: "openrouter",
+      model: "x-ai/grok-4.6",
+      note: boom.notes.join(" · "),
+      needsAuth: boom.needsAuth,
+    });
+    assert.match(card, /Auth resolve failed/);
+    assert.match(card, /Next  \/model/);
+    assert.doesNotMatch(card, /Next  \/auth/);
   });
 });
 

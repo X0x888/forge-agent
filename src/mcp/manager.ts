@@ -554,9 +554,7 @@ export function getActiveMcpManager(): McpManager | null {
   return activeManager;
 }
 
-/**
- * Sit-down `/mcp` peek. Tool catalog stays on `/mcp tools`.
- */
+/** `/mcp` status peek. Catalog is `/mcp tools`. */
 export function formatMcpStatus(
   manager: McpManager,
   opts?: { note?: string },

@@ -669,6 +669,18 @@ describe("default tool status line", () => {
     assert.match(preview, /\+1 more · \/verbose/);
     assert.equal(formatDiagnosticsReport([]), "diagnostics  ·  ok");
     assert.equal(formatLspTranscriptPreview("diagnostics  ·  ok"), "");
+    const unknownOnly = formatDiagnosticsReport([
+      {
+        path: "src/x.ts",
+        line: 1,
+        character: 1,
+        severity: "unknown",
+        message: "odd",
+      },
+    ]);
+    assert.match(unknownOnly, /diagnostics  ·  1 unknown/);
+    assert.match(unknownOnly, /src\/x\.ts:1:1 unknown/);
+    assert.doesNotMatch(unknownOnly, /diagnostics  ·  ok/);
     const text = strip(
       formatDefaultToolEndTranscript("lsp", {
         isError: false,

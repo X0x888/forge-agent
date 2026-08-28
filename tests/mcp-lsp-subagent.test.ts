@@ -19,6 +19,7 @@ import {
   McpManager,
   formatMcpStatus,
   formatMcpToolsList,
+  setActiveMcpManager,
 } from "../src/mcp/manager.js";
 import { mcpCallIsReadOnly } from "../src/mcp/tools.js";
 import {
@@ -42,6 +43,9 @@ import {
 import { PermissionGate } from "../src/agent/permissions.js";
 import { DEFAULT_CONFIG } from "../src/config/types.js";
 import { JsonRpcStdioClient } from "../src/util/jsonrpc-stdio.js";
+import { handleSlash } from "../src/commands/slash.js";
+import { createSession } from "../src/session/session.js";
+import { HookRunner } from "../src/harness/hooks.js";
 
 let tmpRoot: string;
 const prevHome = process.env.FORGE_HOME;
@@ -141,6 +145,33 @@ describe("MCP config + types", () => {
     assert.match(offOut, /^mcp  ·  off/m);
     assert.match(offOut, /FORGE_MCP=0/);
     assert.doesNotMatch(offOut, /Next  unset/);
+  });
+
+  it("/mcp list is the tools catalog, not the status peek", async () => {
+    const prev = process.env.FORGE_MCP;
+    process.env.FORGE_MCP = "0";
+    try {
+      const ws = path.join(tmpRoot, "mcp-list");
+      fs.mkdirSync(ws, { recursive: true });
+      const session = createSession({
+        cwd: ws,
+        provider: "xai",
+        model: "grok-4.6",
+      });
+      const config = { ...DEFAULT_CONFIG, workspace: ws };
+      const r = await handleSlash("/mcp list", {
+        session,
+        config,
+        hooks: new HookRunner(config, ws),
+      });
+      const out = String(r.output || "");
+      assert.match(out, /^mcp tools  ·  /m);
+      assert.doesNotMatch(out, /^mcp  ·  (none|off)/m);
+    } finally {
+      setActiveMcpManager(null);
+      if (prev === undefined) delete process.env.FORGE_MCP;
+      else process.env.FORGE_MCP = prev;
+    }
   });
 
   it("loads project .forge/mcp.json (overrides defaults)", async () => {

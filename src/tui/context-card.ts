@@ -1,11 +1,4 @@
-/**
- * `/context` + `/compact` — the sit-down keys for long-session pressure.
- *
- * Typing `/context` used to dump a unicode bar + role/rules/skills lecture
- * with a tip salad. `/compact` printed `N → M messages` with no token
- * delta. Trust is the key you type: `context  ·  HARD` + `Next  /compact`,
- * then `compact  ·  ok` with ~tokens actually dropped.
- */
+/** `/context` + `/compact` peek — pressure + token delta. Lecture is `/context all`. */
 import chalk from "chalk";
 import { formatTokens } from "../util/format.js";
 import { formatVerifyCloser } from "./verify-card.js";

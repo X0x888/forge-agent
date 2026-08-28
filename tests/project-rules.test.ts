@@ -124,7 +124,7 @@ describe("project rules discovery", () => {
     fs.writeFileSync(path.join(ws, "AGENTS.md"), "ctx rules");
     const session = createSession({ cwd: ws, provider: "xai", model: "m" });
     const hooks = new HookRunner(DEFAULT_CONFIG, ws);
-    const r = await handleSlash("/context", {
+    const r = await handleSlash("/context all", {
       session,
       config: { ...DEFAULT_CONFIG, workspace: ws },
       hooks,

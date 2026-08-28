@@ -1,11 +1,4 @@
-/**
- * `/model` — the sit-down key for the session model.
- *
- * `/status` served-drift Next is `/model`. Typing it used to dump
- * `Provider: …` + a numbered catalog (`formatParamMenu`). Trust is the
- * key you type: see `model  ·  grok-4.6` (or `drift`), then `/model <id>`.
- * Tab still completes catalog names. CLI `forge models` stays off ›.
- */
+/** `/model` peek — current id, drift vs served, no catalog dump. */
 import chalk from "chalk";
 import type { ForgeConfig } from "../config/types.js";
 import { formatContextWindowPosture } from "../config/model-info.js";

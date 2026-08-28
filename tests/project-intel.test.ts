@@ -883,7 +883,7 @@ describe("/context project stack", () => {
     });
     const hooks = new HookRunner(DEFAULT_CONFIG, d);
     try {
-      const r = await handleSlash("/context", {
+      const r = await handleSlash("/context all", {
         session,
         config: { ...DEFAULT_CONFIG, workspace: d },
         hooks,

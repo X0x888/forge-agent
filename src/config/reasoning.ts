@@ -213,14 +213,14 @@ export function modelSupportsReasoningEffort(model: string): boolean {
   return lookupEffortSpec(model) != null;
 }
 
-/**
- * Sit-down `/effort` peek. Numbered catalog stays on Tab complete.
- */
+/** `/effort` current-level peek. Allowed levels stay on Tab. */
 export function formatEffortCard(input: {
   model: string;
   current?: ReasoningEffort | null;
   note?: string;
   kind?: "ok" | "off" | "unknown";
+  tip?: string | null;
+  levels?: readonly string[];
 }): string {
   const kind =
     input.kind ??
@@ -234,10 +234,13 @@ export function formatEffortCard(input: {
     ].join("\n");
   }
   if (kind === "unknown") {
+    const tip = String(input.tip || "").trim();
+    const listed = (input.levels ?? []).filter(Boolean);
     return [
       "effort  ·  unknown",
       note ? `  ${note}` : "",
-      "Next  /effort",
+      listed.length ? `  ${listed.join(" | ")}` : "",
+      `Next  ${tip ? `/effort ${tip}` : "/effort"}`,
     ]
       .filter(Boolean)
       .join("\n");

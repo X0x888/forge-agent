@@ -320,9 +320,7 @@ export function formatFallbackChain(
   return kept.length ? kept.join(" → ") : "off";
 }
 
-/**
- * Sit-down `/fallback` peek. Floor lecture stays a dim body line.
- */
+/** `/fallback` 429-recovery peek. Exhausted hops print `next none`. */
 export function formatFallbackCard(input: {
   chain: string;
   next?: string | null;
@@ -335,7 +333,7 @@ export function formatFallbackCard(input: {
   const lines = [verdict];
   lines.push(`  floor: ${FALLBACK_FLOOR_LABEL}`);
   const nxt = input.next?.trim();
-  if (nxt && !off) lines.push(`  next ${nxt}`);
+  if (!off) lines.push(nxt ? `  next ${nxt}` : "  next none");
   const note = input.note?.trim();
   if (note) lines.push(`  ${note}`);
   lines.push(off ? "Next  /fallback on" : "Next  /fallback off");

@@ -593,16 +593,15 @@ export function formatRestoreResult(r: RestoreMutationsResult): string {
   return lines.join("\n");
 }
 
-/**
- * Sit-down `/undo` result. Disk path dump stays on formatRestoreResult
- * for verbose restore; the key you type is verdict + Next `/verify`.
- */
+/** `/undo` result card. Partial lists failed paths; Next is never `/undo`. */
 export function formatUndoCard(input: {
   turns: number;
   removed: number;
   restored?: number;
   failed?: number;
   skipped?: number;
+  failedDetails?: Array<{ path: string; error: string }>;
+  skippedDetails?: Array<{ path: string; reason: string }>;
   editsNow?: number;
   lastVerify?: string;
   staleVerify?: boolean;
@@ -632,12 +631,27 @@ export function formatUndoCard(input: {
         : `  last-verify  \`${last.slice(0, 40)}\``,
     );
   }
-  const next = fail ? "/undo" : restored ? "/verify" : "/status";
+  pushRestorePathTail(lines, input.failedDetails ?? [], (d) => d.error);
+  pushRestorePathTail(lines, input.skippedDetails ?? [], (d) => d.reason);
+  const next = fail ? "/diff" : restored ? "/verify" : "/status";
   lines.push(`Next  ${next}`);
   return lines.join("\n");
 }
 
-/** `/retry` success — same disk counts as undo, no 30-path dump. */
+function pushRestorePathTail<T extends { path: string }>(
+  lines: string[],
+  items: T[],
+  detail: (item: T) => string,
+  cap = 3,
+): void {
+  if (!items.length) return;
+  for (const it of items.slice(0, cap)) {
+    lines.push(`  ${it.path}: ${detail(it)}`);
+  }
+  if (items.length > cap) lines.push(`  … +${items.length - cap} more`);
+}
+
+/** `/retry` result — disk counts, skipped visible, no 30-path dump. */
 export function formatRetryCard(input: {
   removed: number;
   rewritten?: boolean;
@@ -647,10 +661,12 @@ export function formatRetryCard(input: {
 }): string {
   const fail = input.disk?.failed.length ?? 0;
   const restored = input.disk?.restored.length ?? 0;
+  const skipped = input.disk?.skipped.length ?? 0;
   const verdict = fail ? "retry  ·  partial" : "retry  ·  ok";
   const bits: string[] = [];
   if (input.removed) bits.push(`${input.removed} messages`);
   if (restored) bits.push(`disk ${restored}`);
+  if (skipped) bits.push(`skipped ${skipped}`);
   if (fail) bits.push(`failed ${fail}`);
   if (input.rewritten) bits.push("rewritten prompt");
   const lines = [verdict];
@@ -660,6 +676,6 @@ export function formatRetryCard(input: {
   }
   const preview = input.preview.trim();
   if (preview) lines.push(`  → ${preview}`);
-  lines.push(`Next  ${fail ? "/undo" : "/last"}`);
+  lines.push(`Next  ${fail ? "/diff" : "/last"}`);
   return lines.join("\n");
 }

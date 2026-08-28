@@ -760,6 +760,8 @@ export {
   PROVIDER_IDS,
   PROVIDER_ALIASES,
   providerIdHelp,
+  providerSwitchAuthBits,
+  formatProviderSwitchCard,
 } from "./util/provider-id.js";
 export {
   normalizePermissionMode,

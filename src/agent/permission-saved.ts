@@ -154,7 +154,7 @@ export function savedAsAllowRules(workspace: string): string[] {
   });
 }
 
-/** Sit-down `/permissions` peek. Numbered modes stay on Tab. */
+/** Bare `/permissions` mode peek. Numbered modes stay on Tab. */
 export function formatPermissionsCard(input: {
   mode: string;
   sessionMode?: string;
@@ -171,11 +171,13 @@ export function formatPermissionsCard(input: {
   const lines = [`permissions  ·  ${input.mode}`];
   const bits: string[] = [];
   const session = (input.sessionMode || "").trim();
+  const planSession =
+    session.toLowerCase() === "plan" && session !== input.mode;
   if (session && session !== input.mode) bits.push(`session ${session}`);
   if (input.allowCount && input.allowCount > 0) {
     bits.push(`${input.allowCount} saved`);
   }
   if (bits.length) lines.push(`  ${bits.join("  ·  ")}`);
-  lines.push("Next  /permissions list");
+  lines.push(planSession ? "Next  /build" : "Next  /permissions list");
   return lines.join("\n");
 }

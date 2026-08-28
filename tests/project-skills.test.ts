@@ -237,7 +237,7 @@ Always run smoke after deploy.
         const session = createSession({ cwd: ws, provider: "xai", model: "m" });
         const cfg = { ...DEFAULT_CONFIG, workspace: ws };
         const hooks = new HookRunner(cfg, ws);
-        const r = await handleSlash("/context", {
+        const r = await handleSlash("/context all", {
           session,
           config: cfg,
           hooks,

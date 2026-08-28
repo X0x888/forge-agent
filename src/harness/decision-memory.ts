@@ -612,11 +612,7 @@ export function formatMemoryStatus(sessionId: string): string {
     .join("\n");
 }
 
-/**
- * Sit-down `/memory` peek. The dump (`formatMemoryStatus` + project
- * path list) stays on `/memory list`. Banner already speaks
- * `memory  ·  N active` — empty `/memory` must match, with Next prune.
- */
+/** Bare `/memory` leftover/healthy peek. Ledger is `/memory list`. */
 export function formatMemoryPeekCard(
   sessionId: string,
   workspace: string,

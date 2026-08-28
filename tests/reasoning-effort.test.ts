@@ -345,6 +345,31 @@ describe("/effort slash", () => {
     assert.match(out, /Next  \/effort xhigh|Next  \/model/);
   });
 
+  it("unknown /effort Nexts the tip and lists levels", async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "forge-effort-unk-"));
+    process.env.FORGE_HOME = home;
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-ws-"));
+    const config = {
+      ...DEFAULT_CONFIG,
+      model: "grok-4.6",
+      reasoningEffort: "high" as const,
+      workspace: tmp,
+    };
+    const session = createSession({
+      cwd: tmp,
+      provider: "xai",
+      model: "grok-4.6",
+    });
+    const hooks = new HookRunner(config, tmp);
+    const r = await handleSlash("/effort highe", { session, config, hooks });
+    const out = String(r.output || "");
+    assert.match(out, /effort  ·  unknown/);
+    assert.match(out, /Did you mean: high/);
+    assert.match(out, /low \| medium \| high \| xhigh/);
+    assert.match(out, /Next  \/effort high/);
+    assert.doesNotMatch(out, /Next  \/effort$/m);
+  });
+
   it("sets effort on supporting model", async () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "forge-effort-slash-"));
     process.env.FORGE_HOME = home;

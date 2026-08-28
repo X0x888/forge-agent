@@ -138,6 +138,7 @@ import {
   formatProviderSwitchCard,
   normalizeProviderId,
   providerIdHelp,
+  providerSwitchAuthBits,
 } from "../util/provider-id.js";
 import {
   providerMaxWallMs,
@@ -252,6 +253,7 @@ import { runBudget } from "../tui/budget-card.js";
 import { assembleModelCard, peekModelCard } from "../tui/model-card.js";
 import {
   contextKindFromPct,
+  contextNextKeys,
   contextPressureNote,
   formatCompactCard,
   formatContextCard,
@@ -600,9 +602,9 @@ export function classifyLiveSlash(line: string): LiveSlashKind {
       const a = arg.toLowerCase();
       if (!a || a === "status" || a === "show") return "readonly";
     }
-    // bare /effort shows the menu; setting a level is control
+    // bare /effort shows the peek; setting a level is control
     if (cmd === "/effort" && !arg) return "readonly";
-    // bare /model shows catalog; setting a model is control (live mid-run)
+    // bare /model shows the peek; setting a model is control (live mid-run)
     if (cmd === "/model" && !arg) return "readonly";
     // bare /provider lists providers; switch is control
     if (cmd === "/provider" && !arg) return "readonly";
@@ -838,6 +840,7 @@ export function completeSlash(
       "/bell": ["on", "off", "test", "status"],
       "/notify": ["on", "off", "test", "status"],
       "/mcp": ["status", "connect", "tools", "reload", "list"],
+      "/context": ["all"],
       "/lsp": [
         "status",
         "ensure",
@@ -1235,7 +1238,6 @@ export async function handleProviderSlash(
   opts.session.meta.provider = nextProvider;
   opts.session.meta.model = nextModel;
 
-  let fallbackNote = "";
   if (opts.config.fallbackModels !== undefined) {
     const rebound = rebindFallbackModels(
       opts.config.fallbackModels,
@@ -1245,18 +1247,12 @@ export async function handleProviderSlash(
     );
     opts.config.fallbackModels = rebound;
     persistSessionFallbackModels(opts.config, opts.session);
-    const shown = formatFallbackChain(opts.config);
-    fallbackNote =
-      shown === "off"
-        ? chalk.dim(`\nfallback: off (no ${nextProvider} hop meets ${FALLBACK_FLOOR_LABEL})`)
-        : chalk.dim(`\nfallback: ${shown}`);
   }
 
   const ctxApply = applyModelContextWindow(opts.config, nextModel);
 
-  // Resolve auth for the new provider
-  let authNote = "";
   let authUpdated = false;
+  let resolveError: string | undefined;
   try {
     const fresh = await resolveAuthFresh(opts.config, nextProvider);
     if (fresh) {
@@ -1271,26 +1267,9 @@ export async function handleProviderSlash(
         opts.auth = fresh;
       }
       authUpdated = true;
-      authNote = ` · ${describeAuth(fresh)}`;
-    } else {
-      authNote =
-        chalk.yellow(
-          `\nNo credentials for ${nextProvider}. Type /auth` +
-            (nextProvider === "deepseek"
-              ? " (or set DEEPSEEK_API_KEY)"
-              : nextProvider === "openrouter"
-                ? " (or set OPENROUTER_API_KEY)"
-                : nextProvider === "cursor"
-                  ? " (or /auth from Cursor)"
-                : nextProvider === "xai"
-                  ? " (or set XAI_API_KEY)"
-                  : ""),
-        );
     }
   } catch (err) {
-    authNote = chalk.yellow(
-      `\nAuth resolve failed: ${err instanceof Error ? err.message : String(err)}`,
-    );
+    resolveError = err instanceof Error ? err.message : String(err);
   }
 
   try {
@@ -1314,10 +1293,14 @@ export async function handleProviderSlash(
     /* */
   }
 
-  const needsAuth = !authUpdated;
-  const noteBits: string[] = [];
-  if (needsAuth) noteBits.push("No credentials");
-  else if (opts.auth) noteBits.push(describeAuth(opts.auth));
+  const authBits = providerSwitchAuthBits({
+    authUpdated,
+    resolveError,
+    provider: nextProvider,
+  });
+  const needsAuth = authBits.needsAuth;
+  const noteBits: string[] = [...authBits.notes];
+  if (authUpdated && opts.auth) noteBits.push(describeAuth(opts.auth));
   if (opts.config.fallbackModels !== undefined) {
     noteBits.push(`fallback ${formatFallbackChain(opts.config)}`);
   }
@@ -2917,18 +2900,19 @@ export async function handleSlash(
         const statuses = await manager.connectAll();
         const ready = statuses.filter((s) => s.state === "ready").length;
         const errN = statuses.filter((s) => s.state === "error").length;
+        const bits = [`${ready} ready`];
+        if (errN) bits.push(`${errN} error${errN === 1 ? "" : "s"}`);
         return {
           handled: true,
           output: formatMcpStatus(manager, {
-            note: `connect  ${ready} ready  ·  ${errN} error`,
+            note: `connect  ${bits.join("  ·  ")}`,
           }),
         };
       }
-      if (verb === "tools") {
+      if (verb === "tools" || verb === "list") {
         await manager.ensureRegistry().catch(() => {});
         return { handled: true, output: formatMcpToolsList(manager) };
       }
-      // status / list / default
       return { handled: true, output: formatMcpStatus(manager) };
     }
 
@@ -3160,146 +3144,147 @@ return {
     }
 
     case "/context": {
+      const wantAll = /^(all|full)$/i.test((arg || "").trim());
       const est = estimateTokens(opts.session.messages);
       const pct = Math.min(100, Math.round((est / opts.config.contextWindow) * 100));
-      const byRole: Record<string, number> = {};
-      for (const m of opts.session.messages) {
-        const n = estimateTokens([m]);
-        byRole[m.role] = (byRole[m.role] || 0) + n;
-      }
-      const roleLines = Object.entries(byRole)
-        .map(([r, n]) => `  ${r.padEnd(10)} ${formatTokens(n)}`)
-        .join("\n");
-      // Project instruction sources (OpenCode-style multi-file rules)
-      let rulesNote = "";
-      try {
-        const { listProjectRulePaths, loadProjectRules } = await import(
-          "../agent/system-prompt.js"
-        );
-        const ws = opts.config.workspace || process.cwd();
-        const paths = listProjectRulePaths(ws);
-        const body = loadProjectRules(ws);
-        if (paths.length) {
-          const labels = paths.slice(0, 8).map((p) => {
-            const rel = displayRelPath(ws, p);
-            return path.isAbsolute(rel)
-              ? p.replace(process.env.HOME || "", "~")
-              : rel;
-          });
-          const more = paths.length > 8 ? ` (+${paths.length - 8} more)` : "";
-          rulesNote =
-            `\nProject rules (~${formatTokens(estimateTokens([{ role: "system", content: body }]))}):\n` +
-            labels.map((l) => `  · ${l}`).join("\n") +
-            more;
-        } else {
-          rulesNote = `\nProject rules: none  (tip: AGENTS.md · /init)`;
-        }
-      } catch {
-        /* */
-      }
-      // Skill packs (builtin + project/user) — estimate matches prompt injection
-      let skillsNote = "";
-      try {
-        const { loadProjectSkills, formatSkillsForPrompt } = await import(
-          "../agent/project-skills.js"
-        );
-        const ws = opts.config.workspace || process.cwd();
-        const skills = loadProjectSkills(ws);
-        if (skills.length) {
-          const labels = skills.slice(0, 8).map((s) => {
-            const rel = displayRelPath(ws, s.filePath);
-            const loc = path.isAbsolute(rel)
-              ? s.filePath.replace(process.env.HOME || "", "~")
-              : rel;
-            return `${s.name} [${s.source}]${s.description ? ` — ${s.description.slice(0, 36)}` : ""} (${loc})`;
-          });
-          const more =
-            skills.length > 8 ? ` (+${skills.length - 8} more)` : "";
-          const injected = formatSkillsForPrompt(ws);
-          skillsNote =
-            `\nSkills (~${formatTokens(estimateTokens([{ role: "system", content: injected }]))} injected; /skills):\n` +
-            labels.map((l) => `  · ${l}`).join("\n") +
-            more;
-        } else {
-          skillsNote = `\nSkills: none  (tip: skills/forge-* · .forge/skills/<name>/SKILL.md · /skills)`;
-        }
-      } catch {
-        /* */
-      }
-      // Project intelligence (package manager + preferred check commands)
-      let projectNote = "";
-      try {
-        const { detectProjectIntel } = await import("../util/project-intel.js");
-        const ws = opts.config.workspace || process.cwd();
-        const intel = detectProjectIntel(ws);
-        if (
-          intel.packageManager ||
-          intel.kinds.length ||
-          intel.checkCommands.length ||
-          intel.packageName ||
-          intel.workspaces?.length
-        ) {
-          const head: string[] = [];
-          if (intel.packageName) {
-            head.push(
-              intel.packageVersion
-                ? `${intel.packageName}@${intel.packageVersion}`
-                : intel.packageName,
-            );
-          }
-          if (intel.packageManager) head.push(`pm=${intel.packageManager}`);
-          if (intel.kinds.length) head.push(intel.kinds.join("+"));
-          const cmds = intel.checkCommands.length
-            ? `\n  checks: ${intel.checkCommands.slice(0, 6).join("  ·  ")}`
-            : "";
-          const ws = intel.workspaces?.length
-            ? `\n  workspaces: ${intel.workspaces.slice(0, 6).join("  ·  ")}` +
-              (intel.workspaces.length > 6
-                ? ` (+${intel.workspaces.length - 6} more)`
-                : "")
-            : "";
-          const mono = intel.monorepoRoot
-            ? `\n  monorepo-root: ${intel.monorepoRoot}`
-            : "";
-          projectNote =
-            `\nProject stack: ${head.join(" · ") || "(detected)"}${cmds}${ws}${mono}` +
-            `\n  (injected into system prompt · agent prefers these for verification)`;
-        } else {
-          projectNote = `\nProject stack: none detected`;
-        }
-      } catch {
-        /* */
-      }
       const thresholdPct = Math.round(
         (opts.config.autoCompactThreshold || 0.8) * 100,
       );
       const kind = contextKindFromPct(pct, thresholdPct);
-      let memoryNote = "";
-      try {
-        const n = listActiveProjectMemory(
-          opts.config.workspace || process.cwd(),
-        ).length;
-        memoryNote =
-          n > 0
-            ? `\nProject memory: ${n} active note${n === 1 ? "" : "s"}  · /memory project  · /memory project prune`
-            : `\nProject memory: none  · /memory project add …`;
-      } catch {
-        /* */
+      let detail = "";
+      if (wantAll) {
+        const byRole: Record<string, number> = {};
+        for (const m of opts.session.messages) {
+          const n = estimateTokens([m]);
+          byRole[m.role] = (byRole[m.role] || 0) + n;
+        }
+        const roleLines = Object.entries(byRole)
+          .map(([r, n]) => `  ${r.padEnd(10)} ${formatTokens(n)}`)
+          .join("\n");
+        let rulesNote = "";
+        try {
+          const { listProjectRulePaths, loadProjectRules } = await import(
+            "../agent/system-prompt.js"
+          );
+          const ws = opts.config.workspace || process.cwd();
+          const paths = listProjectRulePaths(ws);
+          const body = loadProjectRules(ws);
+          if (paths.length) {
+            const labels = paths.slice(0, 8).map((p) => {
+              const rel = displayRelPath(ws, p);
+              return path.isAbsolute(rel)
+                ? p.replace(process.env.HOME || "", "~")
+                : rel;
+            });
+            const more = paths.length > 8 ? ` (+${paths.length - 8} more)` : "";
+            rulesNote =
+              `\nProject rules (~${formatTokens(estimateTokens([{ role: "system", content: body }]))}):\n` +
+              labels.map((l) => `  · ${l}`).join("\n") +
+              more;
+          } else {
+            rulesNote = `\nProject rules: none  (tip: AGENTS.md · /init)`;
+          }
+        } catch {
+          /* */
+        }
+        let skillsNote = "";
+        try {
+          const { loadProjectSkills, formatSkillsForPrompt } = await import(
+            "../agent/project-skills.js"
+          );
+          const ws = opts.config.workspace || process.cwd();
+          const skills = loadProjectSkills(ws);
+          if (skills.length) {
+            const labels = skills.slice(0, 8).map((s) => {
+              const rel = displayRelPath(ws, s.filePath);
+              const loc = path.isAbsolute(rel)
+                ? s.filePath.replace(process.env.HOME || "", "~")
+                : rel;
+              return `${s.name} [${s.source}]${s.description ? ` — ${s.description.slice(0, 36)}` : ""} (${loc})`;
+            });
+            const more =
+              skills.length > 8 ? ` (+${skills.length - 8} more)` : "";
+            const injected = formatSkillsForPrompt(ws);
+            skillsNote =
+              `\nSkills (~${formatTokens(estimateTokens([{ role: "system", content: injected }]))} injected; /skills):\n` +
+              labels.map((l) => `  · ${l}`).join("\n") +
+              more;
+          } else {
+            skillsNote = `\nSkills: none  (tip: skills/forge-* · .forge/skills/<name>/SKILL.md · /skills)`;
+          }
+        } catch {
+          /* */
+        }
+        let projectNote = "";
+        try {
+          const { detectProjectIntel } = await import("../util/project-intel.js");
+          const ws = opts.config.workspace || process.cwd();
+          const intel = detectProjectIntel(ws);
+          if (
+            intel.packageManager ||
+            intel.kinds.length ||
+            intel.checkCommands.length ||
+            intel.packageName ||
+            intel.workspaces?.length
+          ) {
+            const head: string[] = [];
+            if (intel.packageName) {
+              head.push(
+                intel.packageVersion
+                  ? `${intel.packageName}@${intel.packageVersion}`
+                  : intel.packageName,
+              );
+            }
+            if (intel.packageManager) head.push(`pm=${intel.packageManager}`);
+            if (intel.kinds.length) head.push(intel.kinds.join("+"));
+            const cmds = intel.checkCommands.length
+              ? `\n  checks: ${intel.checkCommands.slice(0, 6).join("  ·  ")}`
+              : "";
+            const ws = intel.workspaces?.length
+              ? `\n  workspaces: ${intel.workspaces.slice(0, 6).join("  ·  ")}` +
+                (intel.workspaces.length > 6
+                  ? ` (+${intel.workspaces.length - 6} more)`
+                  : "")
+              : "";
+            const mono = intel.monorepoRoot
+              ? `\n  monorepo-root: ${intel.monorepoRoot}`
+              : "";
+            projectNote =
+              `\nProject stack: ${head.join(" · ") || "(detected)"}${cmds}${ws}${mono}` +
+              `\n  (injected into system prompt · agent prefers these for verification)`;
+          } else {
+            projectNote = `\nProject stack: none detected`;
+          }
+        } catch {
+          /* */
+        }
+        let memoryNote = "";
+        try {
+          const n = listActiveProjectMemory(
+            opts.config.workspace || process.cwd(),
+          ).length;
+          memoryNote =
+            n > 0
+              ? `\nProject memory: ${n} active note${n === 1 ? "" : "s"}  · /memory project  · /memory project prune`
+              : `\nProject memory: none  · /memory project add …`;
+        } catch {
+          /* */
+        }
+        const routeNote = contextWindowRouteNote(
+          opts.config.model,
+          String(opts.config.provider || ""),
+        );
+        detail = [
+          roleLines ? `By role:\n${roleLines}` : "",
+          projectNote.trim(),
+          rulesNote.trim(),
+          skillsNote.trim(),
+          memoryNote.trim(),
+          routeNote ? routeNote : "",
+        ]
+          .filter(Boolean)
+          .join("\n");
       }
-      const routeNote = contextWindowRouteNote(
-        opts.config.model,
-        String(opts.config.provider || ""),
-      );
-      const detail = [
-        roleLines ? `By role:\n${roleLines}` : "",
-        projectNote.trim(),
-        rulesNote.trim(),
-        skillsNote.trim(),
-        memoryNote.trim(),
-        routeNote ? routeNote : "",
-      ]
-        .filter(Boolean)
-        .join("\n");
       const note = [
         contextPressureNote(kind, pct, thresholdPct),
         ...contextWindowWarnings(opts.config),
@@ -3314,8 +3299,13 @@ return {
           window: opts.config.contextWindow,
           pct,
           thresholdPct,
-          detail,
+          detail: detail || undefined,
           note,
+          next: wantAll
+            ? contextNextKeys(kind)
+            : kind === "ok"
+              ? ["/context all"]
+              : contextNextKeys(kind),
         }),
       };
     }
@@ -3816,6 +3806,8 @@ const stats = collectUsageStats({
             model,
             current,
             kind: "unknown",
+            tip,
+            levels,
             note: tip
               ? `Unknown effort "${arg}". Did you mean: ${tip}?`
               : `Unknown effort "${arg}"`,
@@ -4271,6 +4263,8 @@ const stats = collectUsageStats({
           restored: disk?.restored.length,
           failed: disk?.failed.length,
           skipped: disk?.skipped.length,
+          failedDetails: disk?.failed,
+          skippedDetails: disk?.skipped,
           editsNow: opts.session.meta.editCount,
           lastVerify: opts.session.meta.lastVerificationCommand,
           staleVerify: disk?.restored.length

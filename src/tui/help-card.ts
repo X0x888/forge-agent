@@ -1,10 +1,4 @@
-/**
- * `/help` — first-day sit-down, not a 40-line catalog wall.
- *
- * Empty `/help` used to dump Getting started + Daily + Unattended + Keys.
- * Trust is the key you type: `help  ·  start`, numbered 1–6 like `/setup`,
- * Next `/setup`. `/help all` stays the catalog. `/help 1` points at that key.
- */
+/** Empty `/help` is a numbered 1–6 start card. Catalog is `/help all`. */
 import { formatVerifyCloser } from "./verify-card.js";
 
 export interface HelpStartItem {

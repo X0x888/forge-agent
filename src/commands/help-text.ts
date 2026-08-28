@@ -112,7 +112,7 @@ Safety
 export const HELP_ALL = `
 Forge slash commands
 ────────────────────
-  /help [topic|word]    Getting started · all|settings|… · or a command word (budget, undo)
+  /help [topic|word]    1–6 start · all|settings|… · or a command word (budget, undo)
   /setup [skip|json]    First-day hub: model, budget, notify, AGENTS.md, LSP  [live]
   /goal <objective>     Arm relentless goal driver (Codex-style)
   /goal                 Show goal status  [live]

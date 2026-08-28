@@ -114,8 +114,29 @@ describe("/context slash", () => {
     assert.equal(r.handled, true);
     assert.match(out, /context  ·  ok/);
     assert.match(out, /autoCompact@80%/);
+    assert.match(out, /Next  \/context all/);
     assert.doesNotMatch(out, /█|░/);
     assert.doesNotMatch(out, /Next  \/compact/);
+    assert.doesNotMatch(out, /By role:|Project stack:|Project rules:|Skills:/);
+  });
+
+  it("/context all keeps the stack lecture", async () => {
+    const s = createSession({ cwd: tmp, provider: "xai", model: "grok-4.6" });
+    const config = {
+      ...DEFAULT_CONFIG,
+      workspace: tmp,
+      contextWindow: 500_000,
+      autoCompactThreshold: 0.8,
+    };
+    const r = await handleSlash("/context all", {
+      session: s,
+      config,
+      hooks: new HookRunner(config, tmp),
+    });
+    const out = strip(r.output || "");
+    assert.match(out, /context  ·  ok/);
+    assert.match(out, /Project stack:|Project rules:|Skills:/);
+    assert.doesNotMatch(out, /Next  \/context all/);
   });
 
   it("HARD window peeks context  ·  HARD + Next /compact", async () => {
@@ -136,6 +157,7 @@ describe("/context slash", () => {
     assert.match(out, /context  ·  HARD/);
     assert.match(out, /Pressure: HARD/);
     assert.match(out, /Next  \/compact/);
+    assert.doesNotMatch(out, /By role:|Project stack:|Project rules:|Skills:/);
   });
 
   it("/compact prints token delta", async () => {

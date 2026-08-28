@@ -236,9 +236,7 @@ export function getActiveLspManager(): LspManager | null {
   return activeLsp;
 }
 
-/**
- * Sit-down `/lsp` peek. Install recipes stay on `/lsp install`.
- */
+/** `/lsp` ready/missing peek. Recipes stay on `/lsp install`. */
 export function formatLspStatus(
   manager: LspManager,
   opts?: { note?: string },
@@ -292,7 +290,10 @@ export function formatDiagnosticsReport(
     bits.push(`${counts.warning} warning${counts.warning === 1 ? "" : "s"}`);
   const info = counts.info + counts.hint;
   if (info) bits.push(`${info} info`);
-  if (!diags.length || !bits.length) return "diagnostics  ·  ok";
+  if (counts.unknown)
+    bits.push(`${counts.unknown} unknown`);
+  if (!diags.length) return "diagnostics  ·  ok";
+  if (!bits.length) bits.push(`${diags.length} unknown`);
   const sorted = [...diags].sort(
     (a, b) =>
       (order[a.severity] ?? 9) - (order[b.severity] ?? 9) ||

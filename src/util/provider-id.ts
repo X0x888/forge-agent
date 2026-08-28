@@ -1,6 +1,7 @@
 /**
  * Canonical provider ids + expert aliases (CLI -p and FORGE_PROVIDER).
  */
+import { providerOwnApiKeyEnvNames } from "../auth/env-keys.js";
 import type { ProviderId } from "../config/types.js";
 
 export const PROVIDER_IDS = [
@@ -68,6 +69,31 @@ export function normalizeProviderId(raw: unknown): NormalizeProviderResult {
 
 export function providerIdHelp(): string {
   return "xai|anthropic|openai|openrouter|deepseek|google|copilot|cursor|custom (aliases: claude|gpt|oai|ds|gemini|github-copilot|cursor-ai|…)";
+}
+
+/**
+ * Auth line for `/provider` SET. A thrown resolve is not “No credentials”.
+ */
+export function providerSwitchAuthBits(input: {
+  authUpdated: boolean;
+  resolveError?: string;
+  provider: string;
+}): { needsAuth: boolean; notes: string[] } {
+  const err = String(input.resolveError || "")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (err) {
+    return {
+      needsAuth: false,
+      notes: [`Auth resolve failed: ${err.slice(0, 80)}`],
+    };
+  }
+  if (input.authUpdated) return { needsAuth: false, notes: [] };
+  const env = providerOwnApiKeyEnvNames(input.provider)[0];
+  return {
+    needsAuth: true,
+    notes: [env ? `No credentials  ·  set ${env}` : "No credentials"],
+  };
 }
 
 /** Live `/provider <name>` result — not the bare catalog peek. */

@@ -337,6 +337,9 @@ describe("handleFallbackSlash", () => {
     assert.deepEqual(config.fallbackModels, []);
     r = handleFallbackSlash("default", { config });
     assert.deepEqual(config.fallbackModels, ["grok-4.6", "grok-4.5"]);
+    r = handleFallbackSlash("grok-4.6", { config });
+    assert.deepEqual(config.fallbackModels, ["grok-4.6"]);
+    assert.match(r.output ?? "", /next none/);
   });
 
   it("persists the chain on session meta (survives resume)", async () => {
