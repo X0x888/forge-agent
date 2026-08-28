@@ -1231,7 +1231,9 @@ it("/fork includes last-turn peek", async () => {
     assert.match(text, /src\/b\.ts/);
     assert.match(text, /src\/c\.ts/);
     assert.doesNotMatch(text, /src\/a\.ts/);
-    assert.match(text, /\/diff --full/);
+    assert.match(text, /^files  ·  2 writes/m);
+    assert.match(text, /Next  \/diff/);
+    assert.doesNotMatch(text, /Session files \(/);
   });
 
   it("listSessionTouchedFiles merges folded isolation=none child journal", async () => {
@@ -1439,7 +1441,15 @@ it("/fork includes last-turn peek", async () => {
     });
     assert.equal(r.handled, true);
     assert.match(String(r.output || ""), /README\.md/);
-    assert.match(String(r.output || ""), /M|mutations/i);
+    assert.match(String(r.output || ""), /^files  ·  1 write/m);
+    assert.match(String(r.output || ""), /Next  \/diff/);
+    const empty = await handleSlash("/files", {
+      session: createSession({ cwd: tmp, provider: "xai", model: "grok-4" }),
+      config: DEFAULT_CONFIG,
+      hooks,
+    });
+    assert.match(String(empty.output || ""), /^files  ·  none/m);
+    assert.doesNotMatch(String(empty.output || ""), /Session files \(/);
   });
 
   it("/files writes lists journal-only bash paths", async () => {

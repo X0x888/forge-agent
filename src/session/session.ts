@@ -2909,15 +2909,13 @@ export function formatSessionTouchedFiles(
 ): string {
   const items = listSessionTouchedFiles(session, opts);
   if (!items.length) {
-    return opts?.mutatedOnly
-      ? "No file mutations recorded in this session yet."
-      : "No file paths recorded in tool calls yet.";
+    return "files  ·  none\nNext  /last";
   }
   const width = Math.max(
     24,
     process.stdout.isTTY ? (process.stdout.columns ?? 80) : 80,
   );
-  const lines = items.map((t) => {
+  const rows = items.map((t) => {
     const tag = t.mutated
       ? t.op === "delete"
         ? "D"
@@ -2944,12 +2942,12 @@ export function formatSessionTouchedFiles(
     }
     return row;
   });
-  const scope = opts?.mutatedOnly ? "mutations" : "paths";
-  return (
-    `Session files (${items.length} ${scope}, newest first):\n` +
-    lines.join("\n") +
-    `\nR=read  A=write  M=edit  P=patch  D=delete  ·  /files writes  ·  /diff --full`
-  );
+  const n = items.length;
+  const verdict = opts?.mutatedOnly
+    ? `files  ·  ${n} write${n === 1 ? "" : "s"}`
+    : `files  ·  ${n}`;
+  const next = opts?.mutatedOnly ? "/diff" : "/files writes";
+  return [verdict, ...rows, `Next  ${next}`].join("\n");
 }
 
 /**

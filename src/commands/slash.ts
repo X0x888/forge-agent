@@ -5253,14 +5253,14 @@ if (parts[1]) {
       }
       let out = formatSessionTouchedFiles(opts.session, { limit, mutatedOnly });
       // When listing mutations, nudge preferred verification (less steering).
-      if (mutatedOnly || /wrote|edited|mutation/i.test(out)) {
+      if (mutatedOnly && !/^files  ·  none\b/m.test(out)) {
         try {
           const cwd =
             opts.config.workspace ||
             opts.session.meta.cwd ||
             process.cwd();
           const intel = detectProjectIntel(cwd);
-          if (intel.checkCommands[0] && !/no (files|mutations)/i.test(out)) {
+          if (intel.checkCommands[0]) {
             out +=
               `\nverify: ${intel.checkCommands.slice(0, 3).join(" · ")}`;
           }
