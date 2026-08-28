@@ -153,3 +153,29 @@ export function savedAsAllowRules(workspace: string): string[] {
     return `${tool}(${a.pattern})`;
   });
 }
+
+/** Sit-down `/permissions` peek. Numbered modes stay on Tab. */
+export function formatPermissionsCard(input: {
+  mode: string;
+  sessionMode?: string;
+  allowCount?: number;
+  emptyList?: boolean;
+}): string {
+  if (input.emptyList) {
+    return [
+      "permissions  ·  none",
+      "  no saved allow rules",
+      "Next  /permissions",
+    ].join("\n");
+  }
+  const lines = [`permissions  ·  ${input.mode}`];
+  const bits: string[] = [];
+  const session = (input.sessionMode || "").trim();
+  if (session && session !== input.mode) bits.push(`session ${session}`);
+  if (input.allowCount && input.allowCount > 0) {
+    bits.push(`${input.allowCount} saved`);
+  }
+  if (bits.length) lines.push(`  ${bits.join("  ·  ")}`);
+  lines.push("Next  /permissions list");
+  return lines.join("\n");
+}

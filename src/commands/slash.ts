@@ -6038,11 +6038,19 @@ case "/new":
       }
       // Management verbs (also via menu numbers after modes)
       if (verb === "list" || sub.startsWith("list ")) {
-        const { loadSavedAllows } = await import("../agent/permission-saved.js");
+        const { loadSavedAllows, formatPermissionsCard } = await import(
+          "../agent/permission-saved.js"
+        );
         const ws = opts.config.workspace || process.cwd();
         const allows = loadSavedAllows(ws);
         if (!allows.length) {
-          return { handled: true, output: "No saved allow rules for this workspace." };
+          return {
+            handled: true,
+            output: formatPermissionsCard({
+              mode: opts.config.permissionMode,
+              emptyList: true,
+            }),
+          };
         }
         return {
           handled: true,
@@ -6072,24 +6080,23 @@ case "/new":
         };
       }
       if (!arg) {
-        const sessionNote =
-          opts.session.meta.permissionMode === "plan"
-            ? chalk.blue("\nSession: PLAN (exit_plan_mode or /build to leave — sticky prefs untouched)")
-            : opts.session.meta.permissionMode
-              ? chalk.dim(`\nSession override: ${opts.session.meta.permissionMode}`)
-              : "";
+        const { loadSavedAllows, formatPermissionsCard } = await import(
+          "../agent/permission-saved.js"
+        );
+        const ws = opts.config.workspace || process.cwd();
+        let allowCount = 0;
+        try {
+          allowCount = loadSavedAllows(ws).length;
+        } catch {
+          /* */
+        }
         return {
           handled: true,
-          output:
-            formatParamMenu(
-              "/permissions",
-              modeChoices,
-              opts.config.permissionMode,
-            ) +
-            chalk.dim(
-              "\nAlso: /plan · /build  ·  /permissions list | clear | revoke <id>",
-            ) +
-            sessionNote,
+          output: formatPermissionsCard({
+            mode: opts.config.permissionMode,
+            sessionMode: opts.session.meta.permissionMode,
+            allowCount,
+          }),
         };
       }
       // Resolve against full choices so Tab numbers for list/clear still work,
@@ -6119,11 +6126,19 @@ case "/new":
         };
       }
       if (resolved === "list") {
-        const { loadSavedAllows } = await import("../agent/permission-saved.js");
+        const { loadSavedAllows, formatPermissionsCard } = await import(
+          "../agent/permission-saved.js"
+        );
         const ws = opts.config.workspace || process.cwd();
         const allows = loadSavedAllows(ws);
         if (!allows.length) {
-          return { handled: true, output: "No saved allow rules for this workspace." };
+          return {
+            handled: true,
+            output: formatPermissionsCard({
+              mode: opts.config.permissionMode,
+              emptyList: true,
+            }),
+          };
         }
         return {
           handled: true,

@@ -10,6 +10,7 @@ import {
   clearSavedAllows,
   savedAsAllowRules,
   workspaceKey,
+  formatPermissionsCard,
 } from "../src/agent/permission-saved.js";
 import { PermissionGate } from "../src/agent/permissions.js";
 import { DEFAULT_CONFIG } from "../src/config/types.js";
@@ -284,5 +285,15 @@ describe("external_directory grants reach the checker", () => {
       assert.equal(r.decision, "deny");
       assert.match(r.reason, /outside workspace/i);
     });
+  });
+
+  it("formatPermissionsCard peek is verdict-first, not a numbered menu", () => {
+    const peek = formatPermissionsCard({ mode: "default", allowCount: 0 });
+    assert.match(peek, /permissions  ·  default/);
+    assert.match(peek, /Next  \/permissions list/);
+    assert.doesNotMatch(peek, /pick a value/);
+    const none = formatPermissionsCard({ mode: "default", emptyList: true });
+    assert.match(none, /permissions  ·  none/);
+    assert.match(none, /no saved allow rules/);
   });
 });
