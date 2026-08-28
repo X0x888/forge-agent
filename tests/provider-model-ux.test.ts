@@ -161,7 +161,11 @@ describe("/provider slash", () => {
     assert.equal(r.providerUpdated, true);
     assert.equal(opts.config.provider, "openrouter");
     assert.notEqual(opts.config.model, "grok-4.5");
-    assert.match(r.output || "", /openrouter/i);
+    const out = String(r.output || "").replace(/\x1b\[[0-9;]*m/g, "");
+    assert.match(out, /provider  ·  openrouter/);
+    assert.match(out, /xai → openrouter/);
+    assert.doesNotMatch(out, /forge models/);
+    assert.doesNotMatch(out, /Next: \/model · \/context-window/);
     // sticky
     assert.equal(loadPreferences().provider, "openrouter");
   });

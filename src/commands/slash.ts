@@ -134,7 +134,11 @@ import {
   isExpired,
   listAccounts,
 } from "../auth/store.js";
-import { normalizeProviderId, providerIdHelp } from "../util/provider-id.js";
+import {
+  formatProviderSwitchCard,
+  normalizeProviderId,
+  providerIdHelp,
+} from "../util/provider-id.js";
 import {
   providerMaxWallMs,
   providerReasoningWallMs,
@@ -1154,11 +1158,11 @@ export async function handleProviderSlash(
   if (nextProvider === prevProvider) {
     return {
       handled: true,
-      output:
-        `Already on provider ${nextProvider} · model ${opts.config.model}\n` +
-        chalk.dim(
-          `/model · /effort · /temperature · /max-tokens · /config · /auth`,
-        ),
+      output: formatProviderSwitchCard({
+        to: nextProvider,
+        model: opts.config.model,
+        already: true,
+      }),
     };
   }
 
@@ -1310,32 +1314,28 @@ export async function handleProviderSlash(
     /* */
   }
 
-  const freeNote = providerAllowsFreeFormModels(nextProvider)
-    ? chalk.dim(
-        `\nFree-form models OK · /model deepseek/deepseek-v4-flash · forge models -p ${nextProvider}`,
-      )
-    : chalk.dim(`\n/model lists catalog · Tab completes`);
-  const ctxWarns = contextWindowWarnings(opts.config);
-  const ctxNote =
-    (ctxApply.known
-      ? ` · ctx ${formatContextWindowPosture(opts.config)}`
-      : chalk.dim(
-          ` · ctx ${formatTokens(opts.config.contextWindow)} (unknown model max · /context-window auto after forge models -p openrouter --refresh)`,
-        )) +
-    ctxWarns.map((w) => `\n${chalk.yellow(`⚠ ${w}`)}`).join("");
+  const needsAuth = !authUpdated;
+  const noteBits: string[] = [];
+  if (needsAuth) noteBits.push("No credentials");
+  else if (opts.auth) noteBits.push(describeAuth(opts.auth));
+  if (opts.config.fallbackModels !== undefined) {
+    noteBits.push(`fallback ${formatFallbackChain(opts.config)}`);
+  }
+  noteBits.push(...contextWindowWarnings(opts.config));
 
   return {
     handled: true,
     authUpdated,
     providerUpdated: true,
     session: opts.session,
-    output:
-      `Provider ${prevProvider} → ${nextProvider} · model ${nextModel}${ctxNote}${authNote}` +
-      fallbackNote +
-      freeNote +
-      chalk.dim(
-        `\nNext: /model · /context-window · /temperature · /max-tokens · /config`,
-      ),
+    output: formatProviderSwitchCard({
+      from: prevProvider,
+      to: nextProvider,
+      model: nextModel,
+      ctx: formatContextWindowPosture(opts.config),
+      note: noteBits.join(" · ") || undefined,
+      needsAuth,
+    }),
   };
 }
 

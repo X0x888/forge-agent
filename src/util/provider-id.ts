@@ -69,3 +69,29 @@ export function normalizeProviderId(raw: unknown): NormalizeProviderResult {
 export function providerIdHelp(): string {
   return "xai|anthropic|openai|openrouter|deepseek|google|copilot|cursor|custom (aliases: claude|gpt|oai|ds|gemini|github-copilot|cursor-ai|…)";
 }
+
+/** Live `/provider <name>` result — not the bare catalog peek. */
+export function formatProviderSwitchCard(input: {
+  to: string;
+  model: string;
+  from?: string;
+  already?: boolean;
+  ctx?: string;
+  note?: string;
+  needsAuth?: boolean;
+}): string {
+  const lines = [`provider  ·  ${input.to}`];
+  if (input.already) {
+    lines.push(`  already on  ·  ${input.model}`);
+  } else if (input.from && input.from !== input.to) {
+    lines.push(`  ${input.from} → ${input.to}  ·  ${input.model}`);
+  } else {
+    lines.push(`  ${input.model}`);
+  }
+  const ctx = input.ctx?.trim();
+  if (ctx) lines.push(`  ctx ${ctx}`);
+  const note = input.note?.trim();
+  if (note) lines.push(`  ${note}`);
+  lines.push(`Next  ${input.needsAuth ? "/auth" : "/model"}`);
+  return lines.join("\n");
+}
