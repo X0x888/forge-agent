@@ -913,6 +913,7 @@ export {
   restoreMutationsAfterTurn,
   formatRestoreResult,
   formatUndoCard,
+  formatRetryCard,
   MAX_MUTATION_BYTES,
 } from "./session/mutations.js";
 export type {

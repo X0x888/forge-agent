@@ -636,3 +636,30 @@ export function formatUndoCard(input: {
   lines.push(`Next  ${next}`);
   return lines.join("\n");
 }
+
+/** `/retry` success — same disk counts as undo, no 30-path dump. */
+export function formatRetryCard(input: {
+  removed: number;
+  rewritten?: boolean;
+  preview: string;
+  disk?: RestoreMutationsResult | null;
+  editsNow?: number;
+}): string {
+  const fail = input.disk?.failed.length ?? 0;
+  const restored = input.disk?.restored.length ?? 0;
+  const verdict = fail ? "retry  ·  partial" : "retry  ·  ok";
+  const bits: string[] = [];
+  if (input.removed) bits.push(`${input.removed} messages`);
+  if (restored) bits.push(`disk ${restored}`);
+  if (fail) bits.push(`failed ${fail}`);
+  if (input.rewritten) bits.push("rewritten prompt");
+  const lines = [verdict];
+  if (bits.length) lines.push(`  ${bits.join("  ·  ")}`);
+  if (input.editsNow != null && restored) {
+    lines.push(`  edits now ${input.editsNow}`);
+  }
+  const preview = input.preview.trim();
+  if (preview) lines.push(`  → ${preview}`);
+  lines.push(`Next  ${fail ? "/undo" : "/last"}`);
+  return lines.join("\n");
+}

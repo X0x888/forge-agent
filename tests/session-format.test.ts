@@ -96,7 +96,8 @@ describe("session helpers", () => {
     assert.equal(r.handled, true);
     assert.equal(r.forwardPrompt, "fix the flaky test");
     assert.match(r.output || "", /retry  ·  ok/);
-    assert.match(r.output || "", /Retrying last turn/);
+    assert.match(r.output || "", /→ fix the flaky test/);
+    assert.doesNotMatch(r.output || "", /Disk restored|Retrying last turn/);
     assert.equal(s.messages.filter((m) => m.role === "user").length, 0);
     assert.equal(lastUserText(s), "");
   });
@@ -117,6 +118,7 @@ describe("session helpers", () => {
     });
     assert.equal(r.forwardPrompt, "try a different approach");
     assert.match(r.output || "", /rewritten prompt/);
+    assert.doesNotMatch(r.output || "", /Disk restored|Retrying last turn/);
   });
 
   it("/retry with empty session is a no-op", async () => {

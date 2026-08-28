@@ -68,7 +68,7 @@ import {
   maybeSetTitle,
 } from "../session/session.js";
 import {
-  formatRestoreResult,
+  formatRetryCard,
   formatUndoCard,
   mutationsJournalStats,
 } from "../session/mutations.js";
@@ -4321,25 +4321,23 @@ const stats = collectUsageStats({
       clearSessionLastError(opts.session);
       const preview =
         prompt.length > 120 ? `${prompt.slice(0, 117).trimEnd()}…` : prompt;
-      const mode = rewritten ? "with rewritten prompt" : "same prompt";
-      const diskNote = result.disk ? formatRestoreResult(result.disk) : "";
-      let trailNote = "";
+      let editsNow: number | undefined;
       try {
         if (result.disk && result.disk.restored.length > 0) {
-          trailNote = `\nedits now: ${opts.session.meta.editCount || 0}`;
+          editsNow = opts.session.meta.editCount || 0;
         }
       } catch {
         /* */
       }
       return {
         handled: true,
-        output:
-          `retry  ·  ok\n` +
-          (result.removed > 0
-            ? `Retrying last turn (${mode}; removed ${result.removed} msg(s))…\n→ ${preview}`
-            : `Retrying last turn (${mode})…\n→ ${preview}`) +
-          (diskNote ? `\n${diskNote}` : "") +
-          trailNote,
+        output: formatRetryCard({
+          removed: result.removed,
+          rewritten: Boolean(rewritten),
+          preview,
+          disk: result.disk,
+          editsNow,
+        }),
         forwardPrompt: prompt,
         session: opts.session,
       };
