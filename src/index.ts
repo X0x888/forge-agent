@@ -543,6 +543,7 @@ export {
   formatMemoryForPrompt,
   selectMemoryForPrompt,
   durableMemoryFingerprint,
+  formatMemoryPeekCard,
   formatMemoryStatus,
   copyDecisionMemory,
   clearDecisionMemory,

@@ -430,4 +430,34 @@ describe("project memory", () => {
     assert.match(String(apply.output || ""), /archived 1 leftover/);
     assert.equal(listActiveProjectMemory(ws).length, 0);
   });
+
+  it("bare /memory is leftover/healthy peek, not a ledger dump", async () => {
+    const session = createSession({
+      cwd: ws,
+      provider: "xai",
+      model: "grok-4",
+    });
+    const config = { ...DEFAULT_CONFIG, workspace: ws };
+    const hooks = new HookRunner(config, ws);
+    const empty = await handleSlash("/memory", { session, config, hooks });
+    assert.match(String(empty.output || ""), /^memory {2}· {2}none/m);
+    assert.match(String(empty.output || ""), /session 0 {2}· {2}project 0/);
+    assert.match(String(empty.output || ""), /Next {2}\/memory add/);
+    assert.doesNotMatch(String(empty.output || ""), /Decision memory:|root:|store:/);
+
+    appendProjectMemory(ws, {
+      kind: "decision",
+      text: "Reading (this cycle): peek leftover. Ships: /memory",
+      source: "agent",
+    });
+    const leftover = await handleSlash("/memory", { session, config, hooks });
+    assert.match(String(leftover.output || ""), /^memory {2}· {2}leftover/m);
+    assert.match(String(leftover.output || ""), /1 leftover/);
+    assert.match(String(leftover.output || ""), /Next {2}\/memory project prune/);
+    assert.doesNotMatch(String(leftover.output || ""), /Decision memory:/);
+
+    const list = await handleSlash("/memory list", { session, config, hooks });
+    assert.match(String(list.output || ""), /Decision memory:/);
+    assert.match(String(list.output || ""), /Project memory:/);
+  });
 });

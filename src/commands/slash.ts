@@ -272,6 +272,7 @@ import {
 } from "../harness/ulw-cycle.js";
 import {
   appendMemoryRecord,
+  formatMemoryPeekCard,
   formatMemoryStatus,
   seedMemoryFromMandate,
   todosFromMandate,
@@ -2319,7 +2320,14 @@ export async function handleSlash(
           session: opts.session,
         };
       }
-      if (!sub || sub === "list" || sub === "status") {
+      if (!sub || sub === "status") {
+        return {
+          handled: true,
+          output: formatMemoryPeekCard(sid, workspace),
+          session: opts.session,
+        };
+      }
+      if (sub === "list") {
         return {
           handled: true,
           output: `${formatMemoryStatus(sid)}\n\n${formatProjectMemoryStatus(workspace)}`,

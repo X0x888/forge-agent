@@ -14,6 +14,7 @@ import {
   writeJsonFile,
   nowIso,
 } from "../util/fs.js";
+import { loadProjectMemory, sweepProjectMemory } from "./project-memory.js";
 
 export type MemoryKind =
   | "constraint"
@@ -609,6 +610,45 @@ export function formatMemoryStatus(sessionId: string): string {
   ]
     .filter(Boolean)
     .join("\n");
+}
+
+/**
+ * Sit-down `/memory` peek. The dump (`formatMemoryStatus` + project
+ * path list) stays on `/memory list`. Banner already speaks
+ * `memory  ·  N active` — empty `/memory` must match, with Next prune.
+ */
+export function formatMemoryPeekCard(
+  sessionId: string,
+  workspace: string,
+): string {
+  const store = loadDecisionMemory(sessionId);
+  const sessionN = store.records.filter((r) => r.status === "active").length;
+  let projectN = 0;
+  let leftover = 0;
+  try {
+    const proj = loadProjectMemory(workspace);
+    projectN = proj.records.filter((r) => r.status === "active").length;
+    leftover = sweepProjectMemory(workspace, { dry: true }).hits.filter(
+      (h) => h.auto,
+    ).length;
+  } catch {
+    /* offline / missing store */
+  }
+  const total = sessionN + projectN;
+  let verdict = `memory  ·  ${total} active`;
+  if (store.corrupt) verdict = "memory  ·  corrupt";
+  else if (leftover > 0) verdict = "memory  ·  leftover";
+  else if (total === 0) verdict = "memory  ·  none";
+  const bits = [`session ${sessionN}`, `project ${projectN}`];
+  if (leftover > 0) bits.push(`${leftover} leftover`);
+  const next = store.corrupt
+    ? "/memory list"
+    : leftover > 0
+      ? "/memory project prune"
+      : total === 0
+        ? "/memory add"
+        : "/memory project";
+  return [verdict, `  ${bits.join("  ·  ")}`, `Next  ${next}`].join("\n");
 }
 
 /** Copy memory to a forked session. */
