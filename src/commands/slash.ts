@@ -243,6 +243,12 @@ import {
 } from "../tui/checkpoint-card.js";
 import { runBudget } from "../tui/budget-card.js";
 import { assembleModelCard, peekModelCard } from "../tui/model-card.js";
+import {
+  contextKindFromPct,
+  contextPressureNote,
+  formatCompactCard,
+  formatContextCard,
+} from "../tui/context-card.js";
 import { tokenizeSimple } from "../agent/shell-parse.js";
 import {
   armUlwCycle,
@@ -3133,9 +3139,6 @@ return {
     case "/context": {
       const est = estimateTokens(opts.session.messages);
       const pct = Math.min(100, Math.round((est / opts.config.contextWindow) * 100));
-      const barLen = 24;
-      const filled = Math.round((pct / 100) * barLen);
-      const bar = "█".repeat(filled) + "░".repeat(barLen - filled);
       const byRole: Record<string, number> = {};
       for (const m of opts.session.messages) {
         const n = estimateTokens([m]);
@@ -3247,22 +3250,7 @@ return {
       const thresholdPct = Math.round(
         (opts.config.autoCompactThreshold || 0.8) * 100,
       );
-      let pressureNote = "";
-      if (pct >= 92) {
-        pressureNote =
-          chalk.yellow(
-            `\nPressure: HARD (~${pct}%) — auto headroom compact may fire. Tip: /compact · /compact-and <next> · /new · raise context_window`,
-          );
-      } else if (pct >= thresholdPct) {
-        pressureNote =
-          chalk.yellow(
-            `\nPressure: above auto-compact threshold (${thresholdPct}%). Tip: /compact · /compact-and <next> · /context after compact`,
-          );
-      } else if (pct >= Math.max(50, thresholdPct - 15)) {
-        pressureNote = chalk.dim(
-          `\nPressure: elevated (~${pct}%; auto-compact @${thresholdPct}%). Tip: /compact before a long ULW wave`,
-        );
-      }
+      const kind = contextKindFromPct(pct, thresholdPct);
       let memoryNote = "";
       try {
         const n = listActiveProjectMemory(
@@ -3279,13 +3267,33 @@ return {
         opts.config.model,
         String(opts.config.provider || ""),
       );
-      const winWarn = contextWindowWarnings(opts.config)
-        .map((w) => `\n${chalk.yellow(`⚠ ${w}`)}`)
-        .join("");
-      const routeLine = routeNote ? `\n  ${routeNote}` : "";
+      const detail = [
+        roleLines ? `By role:\n${roleLines}` : "",
+        projectNote.trim(),
+        rulesNote.trim(),
+        skillsNote.trim(),
+        memoryNote.trim(),
+        routeNote ? routeNote : "",
+      ]
+        .filter(Boolean)
+        .join("\n");
+      const note = [
+        contextPressureNote(kind, pct, thresholdPct),
+        ...contextWindowWarnings(opts.config),
+      ]
+        .filter(Boolean)
+        .join(" · ");
       return {
         handled: true,
-        output: `Context  [${bar}] ${pct}%\n  ~${formatTokens(est)} / ${formatTokens(opts.config.contextWindow)}  autoCompact@${thresholdPct}%  ·  ${formatContextWindowPosture(opts.config)}${routeLine}\nBy role:\n${roleLines}${projectNote}${rulesNote}${skillsNote}${memoryNote}${pressureNote}${winWarn}`,
+        output: formatContextCard({
+          kind,
+          used: est,
+          window: opts.config.contextWindow,
+          pct,
+          thresholdPct,
+          detail,
+          note,
+        }),
       };
     }
 
@@ -3845,6 +3853,7 @@ const stats = collectUsageStats({
 
     case "/compact": {
       const before = opts.session.messages.length;
+      const beforeTokens = estimateTokens(opts.session.messages);
       const ulw = loadUlwCycle(opts.session.meta.id);
       const goal = loadGoal(opts.session.meta.id);
       opts.session.messages = compactMessages(opts.session.messages, DEFAULT_CHECKPOINT_KEEP_STEPS, {
@@ -3865,8 +3874,8 @@ const stats = collectUsageStats({
         const last = opts.session.meta.lastVerificationCommand?.trim();
         if (last) {
           compactNote = isLastVerificationStale(opts.session.meta)
-            ? `\n  Last verify stale: \`${last.slice(0, 60)}\``
-            : `\n  Last verify: \`${last.slice(0, 60)}\``;
+            ? `Last verify stale: \`${last.slice(0, 60)}\``
+            : `Last verify: \`${last.slice(0, 60)}\``;
         } else if ((opts.session.meta.editCount || 0) > 0) {
           const cwd =
             opts.config.workspace ||
@@ -3874,16 +3883,20 @@ const stats = collectUsageStats({
             process.cwd();
           const intel = detectProjectIntel(cwd);
           const tip = intel.checkCommands[0] || "npm test / typecheck";
-          compactNote = `\n  No last-verify after ${opts.session.meta.editCount} edit(s) — prefer \`${tip}\``;
+          compactNote = `No last-verify after ${opts.session.meta.editCount} edit(s) — prefer \`${tip}\``;
         }
       } catch {
         /* */
       }
       return {
         handled: true,
-        output:
-          `Compacted ${before} → ${opts.session.messages.length} messages` +
-          compactNote,
+        output: formatCompactCard({
+          beforeMsgs: before,
+          afterMsgs: opts.session.messages.length,
+          beforeTokens,
+          afterTokens: estimateTokens(opts.session.messages),
+          note: compactNote,
+        }),
         session: opts.session,
       };
     }
@@ -3900,6 +3913,7 @@ const stats = collectUsageStats({
         };
       }
       const before = opts.session.messages.length;
+      const beforeTokens = estimateTokens(opts.session.messages);
       const ulw = loadUlwCycle(opts.session.meta.id);
       const goal = loadGoal(opts.session.meta.id);
       opts.session.messages = compactMessages(opts.session.messages, DEFAULT_CHECKPOINT_KEEP_STEPS, {
@@ -3917,22 +3931,28 @@ const stats = collectUsageStats({
       saveSession(opts.session);
       const preview =
         follow.length > 120 ? `${follow.slice(0, 117).trimEnd()}…` : follow;
-      let compactNote = "";
+      const notes: string[] = [`continuing: ${preview}`];
       try {
         const last = opts.session.meta.lastVerificationCommand?.trim();
         if (last) {
-          compactNote = isLastVerificationStale(opts.session.meta)
-            ? `\n  Last verify stale: \`${last.slice(0, 60)}\``
-            : `\n  Last verify: \`${last.slice(0, 60)}\``;
+          notes.push(
+            isLastVerificationStale(opts.session.meta)
+              ? `Last verify stale: \`${last.slice(0, 60)}\``
+              : `Last verify: \`${last.slice(0, 60)}\``,
+          );
         }
       } catch {
         /* */
       }
       return {
         handled: true,
-        output:
-          `Compacted ${before} → ${opts.session.messages.length} messages, continuing…\n→ ${preview}` +
-          compactNote,
+        output: formatCompactCard({
+          beforeMsgs: before,
+          afterMsgs: opts.session.messages.length,
+          beforeTokens,
+          afterTokens: estimateTokens(opts.session.messages),
+          note: notes.join("\n"),
+        }),
         forwardPrompt: follow,
         session: opts.session,
       };

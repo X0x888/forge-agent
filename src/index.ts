@@ -852,6 +852,14 @@ export {
   peekModelCard,
 } from "./tui/model-card.js";
 export {
+  formatContextCard,
+  formatContextVerdict,
+  contextKindFromPct,
+  contextNextKeys,
+  formatCompactCard,
+  formatCompactVerdict,
+} from "./tui/context-card.js";
+export {
   shouldOfferLoginPicker,
   parseLoginOfferChoice,
   formatPostLoginOfferExit,
