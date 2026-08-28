@@ -34,6 +34,21 @@ function git(args: string[], cwd: string): string {
   }).trim();
 }
 
+/**
+ * Minimal repo without `git init` — sandbox chmod on .git/hooks fails.
+ */
+function scaffoldGitRepo(root: string): void {
+  const gitDir = path.join(root, ".git");
+  fs.mkdirSync(path.join(gitDir, "objects"), { recursive: true });
+  fs.mkdirSync(path.join(gitDir, "refs", "heads"), { recursive: true });
+  fs.writeFileSync(path.join(gitDir, "HEAD"), "ref: refs/heads/main\n");
+  fs.writeFileSync(
+    path.join(gitDir, "config"),
+    "[core]\n\trepositoryformatversion = 0\n\tfilemode = true\n\tbare = false\n" +
+      "[user]\n\tname = Forge Test\n\temail = forge@test\n",
+  );
+}
+
 function withRepo(fn: (root: string) => void): void {
   const prevHome = process.env.FORGE_HOME;
   const prevFlag = process.env.FORGE_ULW_AUTO_COMMIT;
@@ -41,12 +56,22 @@ function withRepo(fn: (root: string) => void): void {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "forge-ac-repo-"));
   process.env.FORGE_HOME = home;
   try {
-    git(["init", "-q"], root);
-    git(["config", "user.email", "forge@test"], root);
-    git(["config", "user.name", "Forge Test"], root);
+    scaffoldGitRepo(root);
     fs.writeFileSync(path.join(root, "README.md"), "hi\n");
     git(["add", "README.md"], root);
-    git(["commit", "-q", "-m", "init"], root);
+    git(
+      [
+        "-c",
+        "user.email=forge@test",
+        "-c",
+        "user.name=Forge Test",
+        "commit",
+        "-q",
+        "-m",
+        "init",
+      ],
+      root,
+    );
     fn(root);
   } finally {
     if (prevHome === undefined) delete process.env.FORGE_HOME;
@@ -317,9 +342,12 @@ describe("ULW auto-commit", () => {
 
   it("commits when git author identity is unknown", () => {
     withRepo((root) => {
-      git(["config", "--unset", "user.name"], root);
-      git(["config", "--unset", "user.email"], root);
-      git(["config", "user.useConfigOnly", "true"], root);
+      // Rewrite config on disk — `git config --unset` chmod's config.lock (sandbox).
+      fs.writeFileSync(
+        path.join(root, ".git", "config"),
+        "[core]\n\trepositoryformatversion = 0\n\tfilemode = true\n\tbare = false\n" +
+          "[user]\n\tuseConfigOnly = true\n",
+      );
       // createChildEnv strips GIT_CONFIG_GLOBAL/SYSTEM (injection). Isolate
       // identity via HOME so `git var GIT_AUTHOR_IDENT` cannot see ~/.gitconfig.
       const emptyHome = path.join(root, ".empty-home");
