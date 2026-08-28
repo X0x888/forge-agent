@@ -281,27 +281,32 @@ export function formatDiagnosticsReport(
   diags: LspDiagnostic[],
   opts?: { max?: number },
 ): string {
-  if (!diags.length) return "No diagnostics.";
   const max = opts?.max ?? 50;
   const order = { error: 0, warning: 1, info: 2, hint: 3, unknown: 4 };
+  const counts = { error: 0, warning: 0, info: 0, hint: 0, unknown: 0 };
+  for (const d of diags) counts[d.severity] = (counts[d.severity] || 0) + 1;
+  const bits: string[] = [];
+  if (counts.error)
+    bits.push(`${counts.error} error${counts.error === 1 ? "" : "s"}`);
+  if (counts.warning)
+    bits.push(`${counts.warning} warning${counts.warning === 1 ? "" : "s"}`);
+  const info = counts.info + counts.hint;
+  if (info) bits.push(`${info} info`);
+  if (!diags.length || !bits.length) return "diagnostics  ·  ok";
   const sorted = [...diags].sort(
     (a, b) =>
       (order[a.severity] ?? 9) - (order[b.severity] ?? 9) ||
       a.path.localeCompare(b.path) ||
       a.line - b.line,
   );
-  const counts = { error: 0, warning: 0, info: 0, hint: 0, unknown: 0 };
-  for (const d of diags) counts[d.severity] = (counts[d.severity] || 0) + 1;
-  const lines: string[] = [
-    `Diagnostics: ${counts.error} error(s), ${counts.warning} warning(s), ${counts.info + counts.hint} info/hint`,
-  ];
+  const lines: string[] = [`diagnostics  ·  ${bits.join("  ·  ")}`];
   for (const d of sorted.slice(0, max)) {
     const code = d.code != null ? ` [${d.code}]` : "";
     const src = d.source ? ` (${d.source})` : "";
     lines.push(
-      `${d.path}:${d.line}:${d.character} ${d.severity}${code}${src}: ${d.message}`,
+      `  ${d.path}:${d.line}:${d.character} ${d.severity}${code}${src}: ${d.message}`,
     );
   }
-  if (sorted.length > max) lines.push(`… +${sorted.length - max} more`);
+  if (sorted.length > max) lines.push(`  … +${sorted.length - max} more`);
   return lines.join("\n");
 }

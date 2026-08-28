@@ -145,7 +145,12 @@ export function formatLspTranscriptPreview(
     .map((l) => l.replace(/\s+$/u, ""))
     .filter((l) => l.length);
   if (!lines.length) return "";
-  if (lines.length === 1 && /no diagnostics/i.test(lines[0]!)) return "";
+  if (
+    lines.length === 1 &&
+    /no diagnostics|diagnostics  ·  ok/i.test(lines[0]!)
+  ) {
+    return "";
+  }
   const shown = lines.slice(0, maxLines);
   const extra = lines.length - shown.length;
   const painted = shown.map((l) => chalk.dim(`  ${l}`));

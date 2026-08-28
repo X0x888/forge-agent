@@ -20,6 +20,8 @@ import {
   formatLspTranscriptPreview,
   stripSubagentHeader,
 } from "../src/tui/tool-transcript.js";
+import { formatDiagnosticsReport } from "../src/lsp/manager.js";
+import type { LspDiagnostic } from "../src/lsp/types.js";
 
 function strip(s: string): string {
   return s.replace(/\x1b\[[0-9;]*m/g, "");
@@ -634,17 +636,39 @@ describe("default tool status line", () => {
   });
 
   it("lsp diagnostics preview shows counts and first hits", () => {
-    const report = [
-      "Diagnostics: 2 error(s), 1 warning(s), 0 info/hint",
-      "src/a.ts:10:2 error [2345]: Type 'string' is not assignable",
-      "src/b.ts:4:1 error: Cannot find name 'foo'",
-      "src/c.ts:1:1 warning: unused",
-    ].join("\n");
+    const diags: LspDiagnostic[] = [
+      {
+        path: "src/a.ts",
+        line: 10,
+        character: 2,
+        severity: "error",
+        message: "Type 'string' is not assignable",
+        code: 2345,
+      },
+      {
+        path: "src/b.ts",
+        line: 4,
+        character: 1,
+        severity: "error",
+        message: "Cannot find name 'foo'",
+      },
+      {
+        path: "src/c.ts",
+        line: 1,
+        character: 1,
+        severity: "warning",
+        message: "unused",
+      },
+    ];
+    const report = formatDiagnosticsReport(diags);
+    assert.match(report, /diagnostics  ·  2 errors  ·  1 warning/);
+    assert.doesNotMatch(report, /No diagnostics/);
     const preview = strip(formatLspTranscriptPreview(report, { maxLines: 3 }));
-    assert.match(preview, /2 error\(s\)/);
+    assert.match(preview, /2 errors/);
     assert.match(preview, /src\/a\.ts:10:2/);
     assert.match(preview, /\+1 more · \/verbose/);
-    assert.equal(formatLspTranscriptPreview("No diagnostics."), "");
+    assert.equal(formatDiagnosticsReport([]), "diagnostics  ·  ok");
+    assert.equal(formatLspTranscriptPreview("diagnostics  ·  ok"), "");
     const text = strip(
       formatDefaultToolEndTranscript("lsp", {
         isError: false,
@@ -654,7 +678,7 @@ describe("default tool status line", () => {
         output: report,
       }),
     );
-    assert.match(text, /2 error\(s\)/);
+    assert.match(text, /2 errors/);
     assert.match(text, /src\/a\.ts:10:2/);
     const clean = strip(
       formatDefaultToolEndTranscript("lsp", {
@@ -662,7 +686,7 @@ describe("default tool status line", () => {
         ms: 40,
         bytes: 16,
         args: { action: "diagnostics", path: "src/ok.ts" },
-        output: "No diagnostics.",
+        output: formatDiagnosticsReport([]),
       }),
     );
     assert.equal(clean.includes("\n"), false);
