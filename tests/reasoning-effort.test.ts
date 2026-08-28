@@ -322,6 +322,29 @@ describe("/effort slash", () => {
     assert.equal(classifyLiveSlash("/model"), "readonly");
   });
 
+  it("empty /effort is a verdict card, not a numbered menu", async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "forge-effort-peek-"));
+    process.env.FORGE_HOME = home;
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-ws-"));
+    const config = {
+      ...DEFAULT_CONFIG,
+      model: "grok-4.6",
+      reasoningEffort: "high" as const,
+      workspace: tmp,
+    };
+    const session = createSession({
+      cwd: tmp,
+      provider: "xai",
+      model: "grok-4.6",
+    });
+    const hooks = new HookRunner(config, tmp);
+    const r = await handleSlash("/effort", { session, config, hooks });
+    const out = String(r.output || "");
+    assert.match(out, /effort  ·  high/);
+    assert.doesNotMatch(out, /pick a value/i);
+    assert.match(out, /Next  \/effort xhigh|Next  \/model/);
+  });
+
   it("sets effort on supporting model", async () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "forge-effort-slash-"));
     process.env.FORGE_HOME = home;

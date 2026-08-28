@@ -81,6 +81,7 @@ import {
   clampEffortForModel,
   defaultEffortForModel,
   effortLevelsForModel,
+  formatEffortCard,
   modelSupportsReasoningEffort,
   parseReasoningEffort,
   resolveReasoningEffort,
@@ -3772,24 +3773,13 @@ const stats = collectUsageStats({
       if (!modelSupportsReasoningEffort(model)) {
         return {
           handled: true,
-          output:
-            chalk.yellow(
-              `${model} does not support reasoning effort.\n`,
-            ) +
-            chalk.dim(
-              "Effort is sent for models that expose thinking controls " +
-                "(e.g. grok-4.6, grok-4.5, deepseek-v4-*, many OpenRouter reasoning models). " +
-                "Default is each model’s maximum allowed level.",
-            ),
+          output: formatEffortCard({ model, kind: "off" }),
         };
       }
       const levels = effortLevelsForModel(model);
-      const maxLvl = defaultEffortForModel(model);
       const choices = levels.map((e) => ({
         value: e,
-        description:
-          REASONING_EFFORT_DESCRIPTIONS[e] +
-          (e === maxLvl ? " ← model max (default)" : ""),
+        description: REASONING_EFFORT_DESCRIPTIONS[e],
       }));
       const current =
         resolveReasoningEffort(model, opts.config.reasoningEffort) ??
@@ -3797,11 +3787,7 @@ const stats = collectUsageStats({
       if (!arg) {
         return {
           handled: true,
-          output:
-            formatParamMenu("/effort", choices, current) +
-            chalk.dim(
-              `\nDefault: ${maxLvl} (max for this model)  ·  aliases: l/low m/med h/high max xhigh  ·  live`,
-            ),
+          output: formatEffortCard({ model, current }),
         };
       }
       const resolved =
@@ -3814,12 +3800,14 @@ const stats = collectUsageStats({
         });
         return {
           handled: true,
-          output:
-            chalk.yellow(
-              tip
-                ? `Unknown effort: ${arg}. Did you mean: ${tip}?\n`
-                : `Unknown effort: ${arg}\n`,
-            ) + formatParamMenu("/effort", choices, current),
+          output: formatEffortCard({
+            model,
+            current,
+            kind: "unknown",
+            note: tip
+              ? `Unknown effort "${arg}". Did you mean: ${tip}?`
+              : `Unknown effort "${arg}"`,
+          }),
         };
       }
       const level = resolved as ReasoningEffort;
@@ -3857,7 +3845,11 @@ const stats = collectUsageStats({
       }
       return {
         handled: true,
-        output: `Reasoning effort: ${level} for ${modelOut} (saved for future sessions)`,
+        output: formatEffortCard({
+          model: modelOut,
+          current: level,
+          note: "saved",
+        }),
       };
     }
 

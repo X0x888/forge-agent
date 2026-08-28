@@ -213,6 +213,48 @@ export function modelSupportsReasoningEffort(model: string): boolean {
   return lookupEffortSpec(model) != null;
 }
 
+/**
+ * Sit-down `/effort` peek. Numbered catalog stays on Tab complete.
+ */
+export function formatEffortCard(input: {
+  model: string;
+  current?: ReasoningEffort | null;
+  note?: string;
+  kind?: "ok" | "off" | "unknown";
+}): string {
+  const kind =
+    input.kind ??
+    (modelSupportsReasoningEffort(input.model) ? "ok" : "off");
+  const note = input.note?.trim();
+  if (kind === "off") {
+    return [
+      "effort  ·  off",
+      `  ${input.model} does not support reasoning effort`,
+      "Next  /model",
+    ].join("\n");
+  }
+  if (kind === "unknown") {
+    return [
+      "effort  ·  unknown",
+      note ? `  ${note}` : "",
+      "Next  /effort",
+    ]
+      .filter(Boolean)
+      .join("\n");
+  }
+  const max = defaultEffortForModel(input.model);
+  const cur = input.current ?? max;
+  const bits = [input.model];
+  if (max && cur === max) bits.push("max for this model");
+  else if (max) bits.push(`max ${max}`);
+  const lines = [`effort  ·  ${cur ?? "—"}`, `  ${bits.join("  ·  ")}`];
+  if (note) lines.push(`  ${note}`);
+  const next =
+    cur && max && cur !== max ? `/effort ${max}` : "/model";
+  lines.push(`Next  ${next}`);
+  return lines.join("\n");
+}
+
 export function effortLevelsForModel(model: string): readonly ReasoningEffort[] {
   return lookupEffortSpec(model)?.levels ?? [];
 }

@@ -20,6 +20,7 @@ export {
   parseReasoningEffort,
   resolveReasoningEffort,
   modelSupportsReasoningEffort,
+  formatEffortCard,
   effortLevelsForModel,
   defaultEffortForModel,
   clampEffortForModel,
