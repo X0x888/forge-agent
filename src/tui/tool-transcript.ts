@@ -28,8 +28,8 @@ export type ToolTranscriptEnd = {
 /** Glanceable edit preview under the default ✓ row. /verbose still dumps the full block. */
 export const DEFAULT_EDIT_DIFF_LINES = 8;
 
-/** Child-report lines under ✓ spawn_subagent. */
-export const DEFAULT_SUBAGENT_PREVIEW_LINES = 8;
+/** Child-report lines under the spawn glance (status · isolation · cost). */
+export const DEFAULT_SUBAGENT_PREVIEW_LINES = 2;
 
 /** Hit titles under ✓ web_search. */
 export const DEFAULT_WEB_SEARCH_PREVIEW_HITS = 5;
@@ -210,22 +210,104 @@ export function stripSubagentHeader(output: string): string {
   return lines.slice(i).join("\n");
 }
 
-/** First N body lines of a subagent report, dim-indented. */
+export interface SubagentGlance {
+  status?: string;
+  isolation?: string;
+  land?: string;
+  turns?: string;
+  cost?: string;
+  aborted?: boolean;
+  hitMaxTurns?: boolean;
+  hitCostCap?: boolean;
+}
+
+/** Parse the parent-facing spawn header (status / isolation / cost). */
+export function parseSubagentGlance(output: string): SubagentGlance {
+  const glance: SubagentGlance = {};
+  for (const raw of String(output || "").split(/\n/)) {
+    const line = raw.trim();
+    if (line.startsWith("### ")) continue;
+    if (!line.startsWith("- ")) break;
+    const rest = line.slice(2).trim();
+    if (rest.startsWith("status:")) {
+      glance.status = rest.slice("status:".length).trim();
+      continue;
+    }
+    if (rest.startsWith("type:")) {
+      const iso = rest.match(/isolation:\s*(\S+)/i);
+      if (iso?.[1]) glance.isolation = iso[1];
+      const turns = rest.match(/turns:\s*(\S+)/i);
+      if (turns?.[1]) glance.turns = turns[1];
+      const land = rest.match(/land:\s*(\S+)/i);
+      if (land?.[1]) glance.land = land[1];
+      continue;
+    }
+    if (rest.startsWith("tokens:")) {
+      const est = rest.match(/est\s+(\$\S+)/i);
+      if (est?.[1]) glance.cost = est[1];
+      continue;
+    }
+    if (rest.startsWith("worktree:")) {
+      if (!glance.isolation) glance.isolation = "worktree";
+      if (/\(kept\)/i.test(rest)) glance.land = glance.land || "kept";
+      continue;
+    }
+    if (/^aborted:/i.test(rest)) glance.aborted = true;
+    if (/hit max turns/i.test(rest)) glance.hitMaxTurns = true;
+    if (/hit cost cap/i.test(rest)) glance.hitCostCap = true;
+  }
+  return glance;
+}
+
+export function formatSubagentGlanceLine(
+  glance: SubagentGlance,
+  opts?: { color?: boolean },
+): string {
+  const bits: string[] = [];
+  if (glance.status) bits.push(glance.status);
+  if (glance.isolation) bits.push(glance.isolation);
+  if (glance.land && glance.land !== "removed") bits.push(`land ${glance.land}`);
+  if (glance.turns) bits.push(glance.turns);
+  if (glance.cost) bits.push(glance.cost);
+  if (glance.aborted) bits.push("aborted");
+  if (glance.hitMaxTurns) bits.push("max-turns");
+  if (glance.hitCostCap) bits.push("cost-cap");
+  if (!bits.length) return "";
+  const row = `  ${bits.join("  ·  ")}`;
+  const color = opts?.color !== false;
+  if (!color) return row;
+  const bad =
+    glance.aborted ||
+    /error|abort/i.test(glance.status || "");
+  const warn =
+    glance.hitMaxTurns ||
+    glance.hitCostCap ||
+    /incomplete/i.test(glance.status || "");
+  if (bad) return chalk.red(row);
+  if (warn) return chalk.yellow(row);
+  return chalk.dim(row);
+}
+
+/** Status · isolation · cost, then the first N body lines (not the header dump). */
 export function formatSubagentTranscriptPreview(
   output: string,
-  opts?: { maxLines?: number },
+  opts?: { maxLines?: number; color?: boolean },
 ): string {
   const maxLines = opts?.maxLines ?? DEFAULT_SUBAGENT_PREVIEW_LINES;
+  const color = opts?.color !== false;
+  const glance = formatSubagentGlanceLine(parseSubagentGlance(output), {
+    color,
+  });
   const body = stripSubagentHeader(output);
   const lines = body.split("\n").map((l) => l.replace(/\s+$/u, ""));
   while (lines[0] === "") lines.shift();
   while (lines.length && lines[lines.length - 1] === "") lines.pop();
-  if (!lines.length) return "";
   const shown = lines.slice(0, maxLines);
   const extra = lines.length - shown.length;
-  const painted = shown.map((l) => chalk.dim(`  ${l}`));
-  if (extra > 0) painted.push(chalk.dim(`  \u2026 +${extra} more \u00b7 /verbose`));
-  return painted.join("\n");
+  const dim = (s: string) => (color ? chalk.dim(s) : s);
+  const painted = shown.map((l) => dim(`  ${l}`));
+  if (extra > 0) painted.push(dim(`  \u2026 +${extra} more \u00b7 /verbose`));
+  return [glance, ...painted].filter((l) => l.length > 0).join("\n");
 }
 
 function isUsefulDiff(diff: string | undefined): diff is string {

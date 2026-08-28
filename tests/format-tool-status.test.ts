@@ -13,6 +13,7 @@ import {
   createToolStartDelayer,
   formatCoalescedToolEnd,
   formatDefaultToolEndTranscript,
+  formatSubagentGlanceLine,
   formatSubagentTranscriptPreview,
   formatVerboseToolEndTranscript,
   formatWebSearchTranscriptPreview,
@@ -491,12 +492,13 @@ describe("default tool status line", () => {
     assert.equal(none.includes("\n"), false);
   });
 
-  it("spawn_subagent default transcript previews the child report, not the header", () => {
+  it("spawn_subagent default transcript glances status/isolation/cost, not the header dump", () => {
     const report = [
       "### Subagent result: map daily REPL dumps",
       "- status: completed",
-      "- type: explore · mode: read-only · turns: 4/40 · edits: 0",
+      "- type: explore · mode: read-only · turns: 4/40 · edits: 0 · isolation: worktree",
       "- session_id: abc123",
+      "- tokens: in=12.0k out=400 · est $0.12",
       "- artifact_path: /tmp/artifact.md",
       "",
       "pick: Ctrl+R is the ship",
@@ -508,7 +510,10 @@ describe("default tool status line", () => {
       stripSubagentHeader(report).startsWith("pick:"),
       true,
     );
-    const preview = strip(formatSubagentTranscriptPreview(report, { maxLines: 2 }));
+    const preview = strip(
+      formatSubagentTranscriptPreview(report, { maxLines: 2, color: false }),
+    );
+    assert.match(preview, /completed  ·  worktree  ·  4\/40  ·  \$0\.12/);
     assert.match(preview, /pick: Ctrl\+R is the ship/);
     assert.match(preview, /passed_on: HUD clips/);
     assert.match(preview, /\+2 more · \/verbose/);
@@ -523,6 +528,7 @@ describe("default tool status line", () => {
       }),
     );
     assert.match(text, /✓ spawn_subagent explore: map daily REPL dumps/);
+    assert.match(text, /completed  ·  worktree/);
     assert.match(text, /pick: Ctrl\+R is the ship/);
     assert.doesNotMatch(text, /### Subagent result/);
     const bare = strip(
@@ -534,6 +540,22 @@ describe("default tool status line", () => {
       }),
     );
     assert.equal(bare.includes("\n"), false);
+  });
+
+  it("spawn_subagent glance flags incomplete worktree-kept children", () => {
+    const line = strip(
+      formatSubagentGlanceLine(
+        {
+          status: "incomplete_max_turns",
+          isolation: "worktree",
+          land: "kept",
+          turns: "40/40",
+          hitMaxTurns: true,
+        },
+        { color: false },
+      ),
+    );
+    assert.match(line, /incomplete_max_turns  ·  worktree  ·  land kept  ·  40\/40  ·  max-turns/);
   });
 
   it("successful long bash shows a last-lines tail; echo stays one row", () => {
