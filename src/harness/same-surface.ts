@@ -7,7 +7,7 @@
  */
 
 import { matchesRecentSchema } from "./work-class.js";
-import { sameTreeSurface } from "./job-delta.js";
+import { productionRelPaths, sameTreeSurface } from "./job-delta.js";
 
 export const SAME_SURFACE_MIN_HITS = 2;
 export const SAME_SURFACE_OVERLAP = 0.5;
@@ -28,17 +28,23 @@ const LEFTOVER_SIBLING_RE =
 
 /**
  * Operator-facing CLI/TUI glance — argv, --help, stderr first line,
- * dashboard — not a Forge slash-key catalog. Slash keys remain an extra
- * signal so existing sit-down cards still cluster.
+ * dashboard — and Forge slash peeks (one user job: verdict + Next).
  */
 const SIT_DOWN_THESIS_RE =
   /\bsit-?down\b|\bkey you type\b|\bverdict-first\b|\bslash key\b|\bnot a (?:config dump|model (?:turn|prompt)|cli dump)\b/i;
 const SIT_DOWN_SLASH_RE =
-  /\/(verify|commit|budget|checkpoint|undo|resume|accounts|auth|retry|done|share|last|sessions)\b/i;
+  /\/(verify|commit|budget|checkpoint|undo|resume|accounts|auth|retry|done|share|last|sessions|model|context|help|memory|mcp|lsp|effort|fallback|provider|permissions|files|compact)\b/i;
 const SIT_DOWN_GLANCE_RE =
   /\b(?:argv|--help|--status|help epilog|operator-facing)\b/i;
+const PEEK_MILL_BODY_RE =
+  /\bsit-?down\b|\bverdict-first\b|\bpeek\b|\bformatParamMenu\b|\bcatalog (?:dump|lecture|wall)\b|\bnumbered (?:1–6|menu|catalog)\b|\bformat\w*Card\b|\bNext\s+\/|\bleftover dumps?\b|\bdump lecture\b|\bremainder catalog\b/i;
+/** TUI sit-down cards — a new *-card.ts is not a new job. */
+const PEEK_MILL_CARD_RE = /(^|\/)(?:src\/)?tui\/[^/]+-card\.tsx?$/i;
+const PEEK_MILL_SLASH_RE = /(^|\/)(?:src\/)?commands\/slash\.ts$/i;
 
 export const SIT_DOWN_SURFACE_KEY = "sit-down-card";
+/** Dirty-tree key for slash-peek remainders — new *-card.ts is not a new job. */
+export const PEEK_SLASH_TREE_KEY = "peek:slash-card";
 
 export function isSitDownCardShip(text: string): boolean {
   const t = text || "";
@@ -51,6 +57,43 @@ export function isSitDownCardShip(text: string): boolean {
     glance ||
     /\b(slash key|sit-down key|key you type|sit-down resume)\b/i.test(t)
   );
+}
+
+/**
+ * Remainder catalog / formatXCard mill — one user job regardless of which
+ * slash name or new card file. Explore-map dump picks are this class.
+ */
+export function isSlashPeekMillShip(text: string): boolean {
+  const t = text || "";
+  if (!t.trim()) return false;
+  if (isSitDownCardShip(t)) return true;
+  if (!SIT_DOWN_SLASH_RE.test(t) && !/\bformat\w*Card\b/.test(t)) return false;
+  return PEEK_MILL_BODY_RE.test(t);
+}
+
+export function isDumpCatalogPick(text: string): boolean {
+  const t = text || "";
+  if (isSlashPeekMillShip(t)) return true;
+  return /\bformatParamMenu\b|\bcatalog (?:dump|lecture|wall)\b|\bnumbered (?:menu|catalog)\b|\bstill (?:dumps?|lectures?)\b|\bleftover dumps?\b|\bdump lecture\b|\bremainder catalog\b/i.test(
+    t,
+  );
+}
+
+export function isPeekMillRelPath(rel: string): boolean {
+  const n = (rel || "").replace(/\\/g, "/");
+  return PEEK_MILL_CARD_RE.test(n) || PEEK_MILL_SLASH_RE.test(n);
+}
+
+/**
+ * Dirty tree is only sit-down cards (and maybe slash.ts dispatcher).
+ * slash.ts alone is a real command ship, not remainder mill.
+ */
+export function isPeekMillPaths(paths: string[]): boolean {
+  const prod = productionRelPaths(paths || []);
+  if (!prod.length) return false;
+  const cards = prod.filter((p) => PEEK_MILL_CARD_RE.test(p.replace(/\\/g, "/")));
+  if (!cards.length) return false;
+  return prod.every((p) => isPeekMillRelPath(p));
 }
 
 export function normalizeSurfaceKey(text: string): string {
@@ -74,7 +117,9 @@ export function surfaceTokens(text: string): string[] {
 }
 
 export function surfaceKey(text: string): string {
-  if (isSitDownCardShip(text)) return SIT_DOWN_SURFACE_KEY;
+  if (isSlashPeekMillShip(text) || isSitDownCardShip(text)) {
+    return SIT_DOWN_SURFACE_KEY;
+  }
   return surfaceTokens(text).slice(0, 12).join(" ");
 }
 
@@ -101,6 +146,9 @@ export function isLeftoverSiblingShip(text: string): boolean {
 
 export function isSameSurface(prev: string, next: string): boolean {
   if (!prev?.trim() || !next?.trim()) return false;
+  if (isSlashPeekMillShip(prev) && isSlashPeekMillShip(next)) {
+    return true;
+  }
   if (isSitDownCardShip(prev) && isSitDownCardShip(next)) {
     return true;
   }
@@ -120,7 +168,8 @@ export function matchesRecentSurface(
   closer: string,
   opts?: { onContract?: boolean; treeKey?: string; prevTreeKeys?: string[] },
 ): boolean {
-  if (opts?.onContract) return false;
+  // Dump-pick contract is not a new class. Maze picks still skip this mill.
+  if (opts?.onContract && !isSlashPeekMillShip(closer)) return false;
   if (
     opts?.treeKey &&
     (opts.prevTreeKeys || []).some((k) => sameTreeSurface(k, opts.treeKey!))
@@ -155,16 +204,22 @@ export function nextSameSurfaceStreak(
     prevTreeKeys?: string[];
   },
 ): SameSurfaceNote {
-  const key = opts?.treeKey || surfaceKey(closer);
+  const mill = isSlashPeekMillShip(closer);
+  const key =
+    mill && !opts?.treeKey
+      ? SIT_DOWN_SURFACE_KEY
+      : opts?.treeKey || surfaceKey(closer);
   if (opts?.consolidation) {
     return { streak: currentStreak, same: false, surfaceKey: key };
   }
-  // A pick ship is a different class even if it quotes mill flavor.
-  if (opts?.onContract) {
+  // A pick ship is a different class even if it quotes mill flavor —
+  // except slash-peek remainders, which are the same job as the last dump.
+  if (opts?.onContract && !mill) {
     return { streak: 1, same: false, surfaceKey: key };
   }
   const same = matchesRecentSurface(prevSummaries, closer, {
-    treeKey: opts?.treeKey,
+    onContract: Boolean(opts?.onContract) && !mill,
+    treeKey: mill ? PEEK_SLASH_TREE_KEY : opts?.treeKey,
     prevTreeKeys: opts?.prevTreeKeys,
   });
   if (same) {

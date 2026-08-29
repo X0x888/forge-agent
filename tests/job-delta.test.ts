@@ -7,6 +7,8 @@ import {
   CHROME_PATH_HOLD,
   classifyProdEditKindFromDiff,
   decideWaveJobCredit,
+  PEEK_MILL_HOLD,
+  PEEK_MILL_ADMIT,
   isBehavioralTestSource,
   isChromeOnlyPaths,
   isPinOnlyTestSource,
@@ -251,6 +253,43 @@ new file mode 100644
       }
     } finally {
       fs.rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it("if/return wrapping string builders is TTY, not control-flow", () => {
+    assert.equal(
+      classifyProdEditKindFromDiff(`
+--- a/src/tui/model-card.ts
++++ b/src/tui/model-card.ts
+@@ -0,0 +1,8 @@
++export function formatModelCard(kind) {
++  if (kind === "ok") return \`model  ·  grok-4.6\`;
++  lines.push(\`  asked \${asked}\`);
++  return lines.join("\\n");
++}
+`),
+      "tty",
+    );
+  });
+
+  it("second consecutive slash-peek mill does not increment w", () => {
+    const first = decideWaveJobCredit({
+      paths: ["src/tui/model-card.ts"],
+      peekMill: true,
+      peekMillStreak: 0,
+      declared: true,
+    });
+    assert.equal(first.ok, true);
+    const second = decideWaveJobCredit({
+      paths: ["src/tui/context-card.ts"],
+      peekMill: true,
+      peekMillStreak: PEEK_MILL_HOLD,
+      declared: true,
+    });
+    assert.equal(second.ok, false);
+    if (!second.ok) {
+      assert.equal(second.reason, "peek");
+      assert.equal(second.admit, PEEK_MILL_ADMIT);
     }
   });
 

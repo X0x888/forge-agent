@@ -55,7 +55,11 @@ import {
 import {
   SAME_SURFACE_ADVISORY,
   SAME_SURFACE_HOLD,
+  PEEK_SLASH_TREE_KEY,
+  isDumpCatalogPick,
   isLeftoverSiblingShip,
+  isPeekMillPaths,
+  isSlashPeekMillShip,
   matchesRecentSurface,
   nextSameSurfaceStreak,
   surfaceKey,
@@ -271,6 +275,11 @@ export interface UlwCycleState {
    */
   chromePathStreak?: number;
   /**
+   * Consecutive slash-peek remainder ships. The first may stamp; the next
+   * does not increment w (dump catalogs are one job).
+   */
+  peekMillStreak?: number;
+  /**
    * After named-ship exhaust / same-surface hold, leaving PLAN needs a
    * real look (explore child or play-loop), not a Mad-Lib Reading.
    */
@@ -417,9 +426,6 @@ const LAST_CYCLE_ATTEST_RE =
  * Gate = execution, not judgment: a wave "proved" only when a check actually
  * ran (loop passes verificationRan) or the message cites command + outcome.
  */
-const WAVE_PROOF_RE =
-  /\b(?:npm|pnpm|yarn|bun|deno|pytest|jest|vitest|mocha|ava|cargo|go|mvn|gradle|make|tsc|mypy|pyright|ruff|eslint|golangci|ctest|phpunit|rspec|dotnet)\b[^\n]{0,60}?\b(?:test|tests|spec|check|typecheck|type-check|lint|clippy|vet|build|compile|ci|verify)\b|\b(?:tsc|mypy|pyright|ruff|eslint|golangci(?:-lint)?|clippy)\b[^\n]{0,40}?\b(?:pass(?:ed|ing)?|clean|ok|no errors?|✓|✅)\b|\b(?:test|tests|spec|typecheck|lint|build)\b[^\n]{0,60}?\b(?:pass(?:ed|ing)?|green|succeed(?:ed)?|ok|clean|✓|✅)\b|\b\d+\s+(?:tests?|specs?|checks?)\s+(?:pass(?:ed)?|ok|green)\b|\bpass(?:ed|ing)?\b[^\n]{0,40}?\b(?:tests?|specs?|typecheck|lint|build)\b|✅|✓\s*(?:tests?|checks?|build)/i;
-
 /** Evidence required on a cycle=0 attestation: checklist marks or command results. */
 const ATTEST_EVIDENCE_RE =
   /✅|❌|✓|\b\d+\s+(?:tests?|specs?|checks?)\s+(?:pass(?:ed)?|ok|green)\b|\btests?\s+(?:pass(?:es|ed|ing)?|green)\b|\b(?:npm|pnpm|yarn|bun|pytest|jest|vitest|cargo|go test|tsc|typecheck|lint|build|make)\b[^\n]{0,60}?\b(?:pass(?:ed|ing)?|green|succeed(?:ed)?|ok|clean|exit\s*0)\b|\b(?:pass(?:ed|ing)?|green|ok|clean)\b[^\n]{0,40}?\b(?:tests?|specs?|typecheck|lint|build)\b|\bexit(?:\s*code)?\s*0\b/i;
@@ -676,6 +682,8 @@ export function isFullSuiteCommand(
 export function isIsolateTestCommand(command: string): boolean {
   const c = String(command || "").replace(/\s+/g, " ").trim();
   if (!c) return false;
+  // tsc / typecheck — ran, not wave proof=✓ (same class as file/method isolates).
+  if (isTypecheckCommand(c)) return true;
   if (/\b(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?test\b/.test(c)) return false;
   if (/\b(?:npm|pnpm|yarn|bun)\s+run\s+(?:ci|check)\b/.test(c)) return false;
   if (/\bpython(?:3)?\s+-m\s+unittest\b/.test(c)) {
@@ -751,7 +759,31 @@ export function detectWaveProof(
   if (opts?.helperOnly) return false;
   if (verificationRan) return true;
   if (citesIsolateOnlyPass(lastAssistantMessage || "")) return false;
-  return WAVE_PROOF_RE.test(lastAssistantMessage || "");
+  // Closer speech is not proof. Background isolates + "typecheck green"
+  // used to mint proof=full while structural verify stayed 0.
+  return false;
+}
+
+/** `npm run typecheck` / `tsc --noEmit` / `turbo run typecheck` — ran, not wave proof=✓. */
+export function isTypecheckCommand(command: string): boolean {
+  const c = String(command || "").replace(/\s+/g, " ").trim();
+  if (!c) return false;
+  // Compound commands that also run tests are a suite, not typecheck-only.
+  if (/\b(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?(?:check|ci|test)\b/.test(c)) {
+    return false;
+  }
+  if (/\b(?:pytest|vitest|jest|mocha|cargo\s+test|go\s+test)\b/.test(c)) {
+    return false;
+  }
+  if (/\b(?:npm|pnpm|yarn|bun)\s+run\s+(?:typecheck|type-check|tsc)\b/.test(c)) {
+    return true;
+  }
+  if (/\b(?:npx|yarn dlx|bunx)\s+tsc\b/.test(c)) return true;
+  if (/\btsc\b/.test(c) && /--noEmit/.test(c)) return true;
+  if (/\b(?:turbo|nx|moon)\s+(?:run\s+)?(?:typecheck|type-check|tsc)\b/.test(c)) {
+    return true;
+  }
+  return false;
 }
 
 /** Attestation carries machine-checkable evidence, not just a claim. */
@@ -1047,7 +1079,12 @@ function appendWaveRecord(
     sibHits >= 1 &&
     (opts.editKind === "new-module" || sibHits >= 1);
   const named = namedShipHit(s, classText, opts.paths || []);
-  const millClass = !onContract && isMillClassShip(classText) ? true : undefined;
+  const peekMill = isSlashPeekMillShip(classText);
+  const millClass =
+    (peekMill && (s.sameSurfaceStreak ?? 0) >= 2) ||
+    (!onContract && isMillClassShip(classText))
+      ? true
+      : undefined;
   const rec: UlwWaveRecord = {
     wave: s.wave,
     editDelta: opts.editDelta,
@@ -1466,7 +1503,9 @@ export function seedNamedShipsFromExploreMaps(sessionId: string): boolean {
   if (!s?.enabled || s.cycle !== 1 || s.wrapKind) return false;
   if (normalizeMaxWaves(s.maxWaves) != null) return false;
   const picks = loadExploreMapPicks(sessionId).filter((p) => p.length >= 12);
-  if (!picks.length) return false;
+  // Dump remainder catalogs are never jobs — even the first explore.
+  const usable = picks.filter((p) => !isDumpCatalogPick(p));
+  if (!usable.length) return false;
   const prev = s.namedShips ?? [];
   if (prev.some((x) => x.source !== "explore-map" && x.status === "open")) {
     return false;
@@ -1479,7 +1518,7 @@ export function seedNamedShipsFromExploreMaps(sessionId: string): boolean {
   });
   if (namedShipsExhausted(s)) {
     const doneTexts = prev.map((x) => x.text);
-    const fresh = picks.filter(
+    const fresh = usable.filter(
       (p) =>
         !prev.some((x) => matchNamedShip(x.text, p) || matchNamedShip(p, x.text)) &&
         !isSamePickTopic(p, doneTexts),
@@ -1492,13 +1531,13 @@ export function seedNamedShipsFromExploreMaps(sessionId: string): boolean {
     return true;
   }
   if (prev.length === 0) {
-    s.namedShips = picks.slice(0, 8).map(asItem);
+    s.namedShips = usable.slice(0, 8).map(asItem);
     saveUlwCycle(s);
     return true;
   }
   let added = false;
   const next = [...prev];
-  for (const p of picks) {
+  for (const p of usable) {
     if (next.some((x) => matchNamedShip(x.text, p) || matchNamedShip(p, x.text))) {
       continue;
     }
@@ -1553,6 +1592,12 @@ export function exploreSpawnSkipReason(sessionId: string): string | undefined {
     return undefined;
   }
   if ((s.wave ?? 0) < 1) return undefined;
+  const recentPeek = (s.waves ?? [])
+    .slice(-3)
+    .filter((w) => isSlashPeekMillShip(w.summary || w.classText || ""));
+  if (recentPeek.length >= 3) {
+    return "Last ships are slash-peek mill. Ship a different class (or /cycle 0) before another dump explore.";
+  }
   const openMap = (s.namedShips ?? []).filter(
     (n) => n.status === "open" && n.source === "explore-map",
   );
@@ -1581,12 +1626,29 @@ function jobCreditForStamp(
     pinTaint: Boolean(s.rawPinProofTaint),
     playLoop: Boolean(s.playLoopPending) || isPlayLoopCloser(opts.closer),
     chromeStreak: s.chromePathStreak ?? 0,
+    peekMill: isSlashPeekMillShip(opts.closer) || isPeekMillPaths(opts.paths),
+    peekMillStreak: s.peekMillStreak ?? 0,
     declared: true,
   });
 }
 
 function noteChromeStreak(s: UlwCycleState, chrome: boolean): void {
   s.chromePathStreak = chrome ? (s.chromePathStreak ?? 0) + 1 : 0;
+}
+
+function notePeekMillStreak(s: UlwCycleState, peek: boolean): void {
+  s.peekMillStreak = peek ? (s.peekMillStreak ?? 0) + 1 : 0;
+}
+
+function stampTreeKey(
+  closer: string,
+  paths: string[],
+  kind?: ProdEditKind,
+): string {
+  if (isSlashPeekMillShip(closer) || isPeekMillPaths(paths)) {
+    return PEEK_SLASH_TREE_KEY;
+  }
+  return treeSurfaceKey(paths, kind);
 }
 
 const JOB_THIN_LAST = 3;
@@ -1634,6 +1696,10 @@ function resolveWaveProof(opts: {
   if (full) {
     return { proof: true, proofKind: "full" };
   }
+  // A successful non-isolate check wins over typecheck/isolate that also ran.
+  if (opts.verificationPassed === true) {
+    return { proof: true, proofKind: "full" };
+  }
   if (isolate) {
     return { proof: false, proofKind: "isolate" };
   }
@@ -1643,14 +1709,9 @@ function resolveWaveProof(opts: {
   ) {
     return { proof: false, proofKind: "none" };
   }
-  const proof = detectWaveProof(
-    opts.closer,
-    opts.verificationPassed === true ||
-      (opts.verificationPassed === undefined &&
-        Boolean(opts.verificationRan) &&
-        !isolate),
-    { helperOnly: isolate },
-  );
+  const proof = detectWaveProof(opts.closer, false, {
+    helperOnly: isolate,
+  });
   return { proof, proofKind: proof ? "full" : "none" };
 }
 
@@ -1659,6 +1720,7 @@ function lastReflectLedger(s: UlwCycleState): string[] {
     waves: s.waves,
     sameSurfaceStreak: s.sameSurfaceStreak,
     pinCreditRefused: s.pinCreditRefused,
+    peekMillStreak: s.peekMillStreak,
     fullSuitePassed: s.fullSuitePassed,
     playLoopRan: s.playLoopRan,
     mandate: s.mandate,
@@ -1706,11 +1768,7 @@ function maybeCadenceReorient(s: UlwCycleState): void {
     const holes = lastReflectLedger(s);
     s.midReflectHoles = holes.length ? holes : undefined;
     s.midReflectWave = s.wave;
-    if (
-      holes.length &&
-      !lastWavesMovedJob(s, 4) &&
-      normalizeMaxWaves(s.maxWaves) == null
-    ) {
+    if (holes.length && !lastWavesMovedJob(s, 4)) {
       s.midReflectHold = true;
       markUlwReorient(s);
       markExploreRequired(s);
@@ -1735,7 +1793,10 @@ function applyContractNote(
 ): void {
   if (!themed || isConsolidationCloser(summary)) return;
   if (!canArmSameSurfaceHold(s)) return;
-  const picks = loadExploreMapPicks(sessionId);
+  // Remainder mill has its own skip; do not spend the maze contract fuse
+  // (that re-opens dump explores).
+  if (isSlashPeekMillShip(summary) || isDumpCatalogPick(summary)) return;
+  const picks = jobExploreMapPicks(sessionId);
   if (!picks.length) return;
   if (isOnExploreContract(summary, picks)) {
     s.offContractStreak = 0;
@@ -1773,13 +1834,19 @@ function clipClassText(text: string): string {
   return s.length <= 400 ? s : `${s.slice(0, 399)}…`;
 }
 
+function jobExploreMapPicks(sessionId: string): string[] {
+  return loadExploreMapPicks(sessionId).filter((p) => !isDumpCatalogPick(p));
+}
+
 function closerOnContract(sessionId: string, text: string): boolean {
-  return isOnExploreContract(text, loadExploreMapPicks(sessionId));
+  if (isSlashPeekMillShip(text) || isDumpCatalogPick(text)) return false;
+  return isOnExploreContract(text, jobExploreMapPicks(sessionId));
 }
 
 /** Mill sibling? On-contract (pick) ships are never mill. */
 function isMillSiblingCloser(s: UlwCycleState, closer: string): boolean {
   if (s.playLoopPending || isPlayLoopCloser(closer)) return false;
+  if (isSlashPeekMillShip(closer) && (s.peekMillStreak ?? 0) >= 1) return true;
   const onContract = closerOnContract(s.sessionId, closer);
   if (onContract) return false;
   const prev = waveClassTexts(s);
@@ -2059,7 +2126,9 @@ function significantShipWords(s: string): string[] {
     .filter(
       (w) =>
         w.length >= 4 &&
-        !/^(this|that|with|from|into|ship|landed|wave)$/.test(w),
+        !/^(this|that|with|from|into|ship|landed|wave|peek|card|dump|next|keys|down|sit|verdict|first)$/.test(
+          w,
+        ),
     );
 }
 
@@ -2067,12 +2136,16 @@ export function matchNamedShip(item: string, closer: string): boolean {
   const a = normalizeShipKey(item);
   const b = normalizeShipKey(closer);
   if (!a || !b) return false;
-  if (b.includes(a) || a.includes(b)) return true;
+  if (a === b) return true;
+  if (a.length >= 24 && b.includes(a)) return true;
   const aw = significantShipWords(a);
   const bw = significantShipWords(b);
   if (aw.length === 0) return false;
   const hit = aw.filter((w) => bw.includes(w)).length;
-  return hit >= Math.min(2, aw.length) && hit / aw.length >= 0.5;
+  // Closer that quotes the item. 50% smear ("ship"/"card") is not enough.
+  if (aw.length >= 2 && hit === aw.length) return true;
+  if (aw.length >= 3 && hit >= 3 && hit / aw.length >= 0.7) return true;
+  return false;
 }
 
 function sameNamedShipSet(prev: NamedShipItem[], parsed: string[]): boolean {
@@ -2095,11 +2168,19 @@ export function maybeAdoptNamedShips(
   const blob = [text, readingFromMemory(s.sessionId)]
     .filter((x): x is string => Boolean(x && x.trim()))
     .join("\n");
-  const parsed = parseNamedShipsFromReading(blob);
+  let parsed = parseNamedShipsFromReading(blob);
   if (!parsed.length) return false;
+  const dumpish = (p: string) =>
+    isDumpCatalogPick(p) || isSlashPeekMillShip(p);
+  const real = parsed.filter((p) => !dumpish(p));
+  if (real.length) parsed = real;
+  else if (parsed.length >= 2) {
+    // Remainder catalog is not a plan. One peek as THE ship is allowed.
+    return false;
+  }
   const prev = s.namedShips ?? [];
   const open = prev.filter((x) => x.status === "open");
-  const picks = loadExploreMapPicks(s.sessionId);
+  const picks = jobExploreMapPicks(s.sessionId);
   const adoptBlob = parsed.join("\n");
   const onContractEarly =
     isOnExploreContract(adoptBlob, picks) ||
@@ -2113,9 +2194,33 @@ export function maybeAdoptNamedShips(
   if (
     prev.length > 0 &&
     prev.every((x) => x.status === "done") &&
-    parsed.every((p) => prev.some((x) => matchNamedShip(x.text, p)))
+    parsed.every((p) =>
+      prev.some(
+        (x) =>
+          matchNamedShip(x.text, p) ||
+          matchNamedShip(p, x.text) ||
+          normalizeShipKey(x.text) === normalizeShipKey(p),
+      ),
+    )
   ) {
     return false;
+  }
+  if (prev.length > 0 && prev.every((x) => x.status === "done")) {
+    const unmatched = parsed.filter(
+      (p) =>
+        !prev.some(
+          (x) =>
+            matchNamedShip(x.text, p) ||
+            matchNamedShip(p, x.text) ||
+            normalizeShipKey(x.text) === normalizeShipKey(p),
+        ),
+    );
+    if (
+      unmatched.length &&
+      unmatched.every((p) => isLeftoverChromeShip(p) || isDumpCatalogPick(p) || p.length < 24)
+    ) {
+      return false;
+    }
   }
   // Unlimited: after we already asked for a new reading, do not adopt the
   // next sibling ✓ / clip leftover as a fresh plan (693c5fb1 ×3).
@@ -2155,6 +2260,14 @@ export function maybeAdoptNamedShips(
     isUserFacingProductWork(s.mandate) &&
     parsed.length > 0 &&
     parsed.every((p) => isLeftoverChromeShip(p))
+  ) {
+    return false;
+  }
+  // Remainder dump catalogs are not a new plan after the first peek mill.
+  if (
+    (s.namedShipAdmitCount ?? 0) >= 1 &&
+    parsed.length > 0 &&
+    parsed.every((p) => isDumpCatalogPick(p) || isSlashPeekMillShip(p))
   ) {
     return false;
   }
@@ -2585,7 +2698,7 @@ export function maybeStampUlwWave(opts: {
       }
       if (
         contractHolding(s) &&
-        !isOnExploreContract(closer, loadExploreMapPicks(opts.sessionId))
+        !closerOnContract(opts.sessionId, closer)
       ) {
         s.contractHold = true;
         saveUlwCycle(s);
@@ -2655,6 +2768,7 @@ export function maybeStampUlwWave(opts: {
       if (!credit.ok) {
         noteJobThin(s, credit);
         noteChromeStreak(s, true);
+        notePeekMillStreak(s, isSlashPeekMillShip(closer) || credit.reason === "peek");
         notePolishShip(s, closer, true);
         markUlwReorient(s);
         updateOpenWaveRecord(s, facts);
@@ -2677,12 +2791,13 @@ export function maybeStampUlwWave(opts: {
       }
       noteJobThin(s, credit);
       noteChromeStreak(s, credit.chrome);
+      notePeekMillStreak(s, isSlashPeekMillShip(closer));
       applyDiffFingerprint(s, fp);
       appendWaveRecord(s, {
         sessionId: opts.sessionId,
         ...facts,
         classText: closer,
-        treeSurfaceKey: treeSurfaceKey(changedPaths, credit.kind),
+        treeSurfaceKey: stampTreeKey(closer, changedPaths, credit.kind),
         editKind: credit.kind,
         chrome: credit.chrome,
         paths: changedPaths,
@@ -2973,6 +3088,12 @@ export function loadUlwCycle(sessionId: string): UlwCycleState | null {
     raw.midReflectWave = undefined;
   }
   if (typeof raw.midReflectHold !== "boolean") raw.midReflectHold = false;
+  if (
+    typeof raw.peekMillStreak !== "number" ||
+    !Number.isFinite(raw.peekMillStreak)
+  ) {
+    raw.peekMillStreak = 0;
+  }
   if (typeof raw.rawPinProofTaint !== "boolean") raw.rawPinProofTaint = false;
   if (typeof raw.millHoldPrunePending !== "boolean") {
     raw.millHoldPrunePending = false;
@@ -3338,6 +3459,7 @@ export function armUlwCycle(
     midReflectHold: false,
     rawPinProofTaint: false,
     chromePathStreak: 0,
+    peekMillStreak: 0,
     jobThinStreak: 0,
     pinCreditRefused: 0,
     fullSuitePassed: false,
@@ -4084,6 +4206,9 @@ export function evaluateUlwAtStop(opts: {
       attested: true,
       editDelta,
       ledgerMustFix: lastReflectLedger(s),
+      fullSuitePassed:
+        Boolean(s.fullSuitePassed) || Boolean(opts.verificationFullSuite),
+      changedPaths: stampPaths,
     });
     if (reflect.block) {
       saveUlwCycle(s);
@@ -4345,6 +4470,10 @@ export function evaluateUlwAtStop(opts: {
     if (!stopCredit.ok && isShipCloseText(closer) && !alreadyStamped) {
       noteJobThin(s, stopCredit);
       noteChromeStreak(s, true);
+      notePeekMillStreak(
+        s,
+        isSlashPeekMillShip(closer) || stopCredit.reason === "peek",
+      );
       notePolishShip(s, closer, true);
       markUlwReorient(s);
       updateOpenWaveRecord(s, {
@@ -4491,6 +4620,7 @@ export function evaluateUlwAtStop(opts: {
         !stopCredit.chrome;
       if (shipAfterExhaust) {
         noteChromeStreak(s, false);
+        notePeekMillStreak(s, false);
         appendWaveRecord(s, {
           sessionId: opts.sessionId,
           editDelta,
@@ -4502,7 +4632,7 @@ export function evaluateUlwAtStop(opts: {
           classText: closer,
           themed:
             isDeclaredWaveClose(closer) || isLeftoverSiblingShip(closer),
-          treeSurfaceKey: treeSurfaceKey(stampPaths, stopCredit.kind),
+          treeSurfaceKey: stampTreeKey(closer, stampPaths, stopCredit.kind),
           editKind: stopCredit.kind,
           chrome: stopCredit.chrome,
           paths: stampPaths,
@@ -4574,7 +4704,7 @@ export function evaluateUlwAtStop(opts: {
     if (
       contractHolding(s) &&
       !adoptedNamed &&
-      !isOnExploreContract(closer, loadExploreMapPicks(opts.sessionId))
+      !closerOnContract(opts.sessionId, closer)
     ) {
       s.contractHold = true;
       saveUlwCycle(s);
@@ -4629,6 +4759,7 @@ export function evaluateUlwAtStop(opts: {
       if (isShipCloseText(closer) && stopCredit.ok) {
         noteJobThin(s, stopCredit);
         noteChromeStreak(s, stopCredit.chrome);
+        notePeekMillStreak(s, isSlashPeekMillShip(closer));
       }
       appendWaveRecord(s, {
         sessionId: opts.sessionId,
@@ -4641,7 +4772,7 @@ export function evaluateUlwAtStop(opts: {
         classText: closer,
         themed:
           isDeclaredWaveClose(closer) || isLeftoverSiblingShip(closer),
-        treeSurfaceKey: treeSurfaceKey(stampPaths, stopCredit.kind),
+        treeSurfaceKey: stampTreeKey(closer, stampPaths, stopCredit.kind),
         editKind: stopCredit.kind,
         chrome: stopCredit.ok && stopCredit.chrome,
         paths: stampPaths,
@@ -4723,6 +4854,9 @@ export function evaluateUlwAtStop(opts: {
       attested: false,
       editDelta,
       ledgerMustFix: lastReflectLedger(s),
+      fullSuitePassed:
+        Boolean(s.fullSuitePassed) || Boolean(opts.verificationFullSuite),
+      changedPaths: stampPaths,
     });
     if (reflect.block) {
       saveUlwCycle(s);

@@ -22,6 +22,7 @@ import {
   armUlwCycle,
   evaluateUlwAtStop,
   loadUlwCycle,
+  saveUlwCycle,
   PLACEHOLDER_MANDATE,
 } from "../src/harness/ulw-cycle.js";
 import { appendFileMutation } from "../src/session/mutations.js";
@@ -242,6 +243,74 @@ describe("ULW auto-commit", () => {
       const r = maybeAutoCommitOnUlwDone({ cwd: root, sessionId: sid });
       assert.equal(r.committed, false, r.skipped);
       assert.equal(r.skipped, "changelog-only");
+    });
+  });
+
+  it("skips slash-peek mill snapshots after the first of that class", () => {
+    withRepo((root) => {
+      const sid = "sess-ac-peek-mill";
+      fs.mkdirSync(path.join(process.env.FORGE_HOME!, "sessions", sid), {
+        recursive: true,
+      });
+      armUlwCycle(sid, "Improve the ui and ux of this tool.", {
+        cycle: 1,
+        skipCheckpoint: true,
+        cwd: root,
+      });
+      const s = loadUlwCycle(sid)!;
+      s.wave = 2;
+      s.peekMillStreak = 2;
+      s.waves = [
+        {
+          wave: 1,
+          editDelta: 4,
+          proof: false,
+          summary:
+            "Ship landed: `/model` is a verdict-first sit-down card, not formatParamMenu.",
+          classText: "`/model` is a sit-down peek.",
+          millClass: true,
+          ts: new Date().toISOString(),
+        },
+        {
+          wave: 2,
+          editDelta: 3,
+          proof: false,
+          summary:
+            "Ship landed: `/context` is a sit-down peek, not a bar lecture.",
+          classText: "`/context` is a sit-down peek.",
+          millClass: true,
+          ts: new Date().toISOString(),
+        },
+      ];
+      saveUlwCycle(s);
+      fs.mkdirSync(path.join(root, "src/tui"), { recursive: true });
+      fs.writeFileSync(path.join(root, "src/tui/context-card.ts"), "x\n");
+      const r = maybeAutoCommitOnUlwDone({ cwd: root, sessionId: sid });
+      assert.equal(r.committed, false, r.skipped);
+      assert.match(r.skipped || "", /slash-peek mill|mill ship/i);
+    });
+  });
+
+  it("skips LAST close-out tests-only snapshots", () => {
+    withRepo((root) => {
+      const sid = "sess-ac-last-tests";
+      fs.mkdirSync(path.join(process.env.FORGE_HOME!, "sessions", sid), {
+        recursive: true,
+      });
+      armUlwCycle(sid, "Improve the ui and ux of this tool.", {
+        cycle: 0,
+        skipCheckpoint: true,
+        cwd: root,
+      });
+      const s = loadUlwCycle(sid)!;
+      s.lastReflect = "closeout";
+      s.lastReflectMustFix = 1;
+      saveUlwCycle(s);
+      fs.mkdirSync(path.join(root, "tests"), { recursive: true });
+      fs.writeFileSync(path.join(root, "tests/git-auto-commit.test.ts"), "x\n");
+      const r = maybeAutoCommitOnUlwDone({ cwd: root, sessionId: sid });
+      assert.equal(r.committed, false, r.skipped);
+      assert.equal(r.skipped, "LAST close-out tests-only");
     });
   });
 

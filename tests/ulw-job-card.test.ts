@@ -395,6 +395,45 @@ describe("jobMoved is named/pick/play or reading files", () => {
 });
 
 describe("consolidation Must-fix + no job-move holds", () => {
+  it("holds on capped ULW the same as unlimited", () => {
+    withHome(() => {
+      const sid = "cons-hold-cap";
+      fs.mkdirSync(path.join(process.env.FORGE_HOME!, "sessions", sid), {
+        recursive: true,
+      });
+      armUlwReady(sid, "improve the code", {
+        cycle: 1,
+        maxWaves: 20,
+        skipCheckpoint: true,
+      });
+      const closers = [
+        "Wave shipped: plant the cry seed on floor 1.",
+        "Wave shipped: hearth join timeout no longer freezes.",
+        "Wave shipped: host bag ticks while the joiner is away.",
+        "Wave shipped: journal leftover recipes become the walk goal.",
+      ];
+      let edits = 0;
+      let last;
+      for (let i = 0; i < 4; i++) {
+        edits += 5;
+        last = maybeStampUlwWave({
+          sessionId: sid,
+          editCount: edits,
+          openTodoCount: 0,
+          stepsSinceStamp: 1,
+          lastAssistantMessage: closers[i],
+          verificationPassed: true,
+          verificationHelperOnly: true,
+          changedPaths: [`src/area${i}/mod.js`],
+        });
+      }
+      assert.equal(last?.stamped, true, JSON.stringify(last));
+      const held = loadUlwCycle(sid)!;
+      assert.equal(midReflectHolding(held), true);
+      assert.ok((held.midReflectHoles ?? []).length > 0);
+    });
+  });
+
   it("blocks the next stamp after 4 off-job credited waves", () => {
     withHome(() => {
       const sid = "cons-hold";

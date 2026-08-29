@@ -17,6 +17,8 @@ import {
   type UlwCycleState,
 } from "../harness/ulw-cycle.js";
 import { waveMovedJob } from "../harness/ulw-job-card.js";
+import { isTestOrHarnessPath } from "../harness/tests-without-body.js";
+import { isSlashPeekMillShip } from "../harness/same-surface.js";
 import {
   extractShipSummary,
   pickShipHint,
@@ -279,6 +281,12 @@ export function maybeAutoCommitOnUlwDone(opts: {
   if (ulw?.lastReflect === "score") {
     return { committed: false, skipped: "LAST reflect score (read-only)" };
   }
+  if (
+    ulw?.lastReflect === "closeout" &&
+    toAdd.every((p) => isTestOrHarnessPath(p) || isChangelogRelPath(p))
+  ) {
+    return { committed: false, skipped: "LAST close-out tests-only" };
+  }
   const lastWave = ulw?.waves?.length
     ? ulw.waves[ulw.waves.length - 1]
     : undefined;
@@ -291,6 +299,19 @@ export function maybeAutoCommitOnUlwDone(opts: {
     !waveMovedJob(lastWave)
   ) {
     return { committed: false, skipped: "mill ship (not a job move)" };
+  }
+  if (
+    lastWave &&
+    isSlashPeekMillShip(lastWave.summary || lastWave.classText || "") &&
+    (ulw?.peekMillStreak ?? 0) >= 2
+  ) {
+    return { committed: false, skipped: "slash-peek mill" };
+  }
+  if (
+    lastWave?.chrome &&
+    toAdd.every((p) => isTestOrHarnessPath(p) || isChangelogRelPath(p))
+  ) {
+    return { committed: false, skipped: "chrome/tests-without-body" };
   }
   const hint = shipHint(opts.sessionId);
   if (isReanchorCommitHint(hint)) {

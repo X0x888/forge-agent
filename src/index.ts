@@ -427,6 +427,7 @@ export {
   verificationPassedFromResult,
   isHelperOnlyTestCommand,
   isIsolateTestCommand,
+  isTypecheckCommand,
   isFullSuiteCommand,
   consumeMillHoldPrune,
   contractHolding,
@@ -451,6 +452,7 @@ export {
   skipUlwAutoCommitForLastReflect,
   ledgerMustFixItems,
   mergeLastScorecard,
+  closeoutAddressesHoles,
 } from "./harness/last-reflect.js";
 export { armUlwPlanMode, syncUlwPlanMode } from "./harness/ulw-plan-mode.js";
 export {
@@ -459,9 +461,14 @@ export {
   isSameSurface,
   isLeftoverSiblingShip,
   isSitDownCardShip,
+  isSlashPeekMillShip,
+  isDumpCatalogPick,
+  isPeekMillPaths,
+  isPeekMillRelPath,
   nextSameSurfaceStreak,
   surfaceKey,
   SIT_DOWN_SURFACE_KEY,
+  PEEK_SLASH_TREE_KEY,
 } from "./harness/same-surface.js";
 export {
   isFactoryFingerprint,
@@ -509,6 +516,8 @@ export {
   filesFromTreeKey,
   PIN_ONLY_ADMIT,
   JOB_FLAT_ADMIT,
+  PEEK_MILL_ADMIT,
+  PEEK_MILL_HOLD,
   REORIENT_EVIDENCE_ADMIT,
   SIBLING_MILL_ADMIT,
   SIBLING_MILL_HOLD,

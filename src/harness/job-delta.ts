@@ -36,6 +36,16 @@ export const JOB_FLAT_ADMIT = [
   "This w=N/M is the only wave number.",
 ].join("\n");
 
+/** Second consecutive slash-peek remainder does not increment w. */
+export const PEEK_MILL_HOLD = 1;
+
+export const PEEK_MILL_ADMIT = [
+  "[Forge harness — mid-conversation update]",
+  "Wave shipped on a slash-peek remainder (formatXCard / catalog dump) does not increment w after the first of that class.",
+  "A leftover dump is not a new job. Different class or /cycle 0.",
+  "This w=N/M is the only wave number.",
+].join("\n");
+
 export const REORIENT_EVIDENCE_ADMIT = [
   "[Forge ULW cycle driver] Stop blocked — PLAN is re-armed and a new Reading is not a ticket.",
   "Named-ship exhaust / same-surface hold requires a real look: one explore child (parseable map) or a play-loop.",
@@ -54,7 +64,12 @@ export type ProdEditKind =
 
 export type StampJobDecision =
   | { ok: true; chrome: boolean; kind: ProdEditKind }
-  | { ok: false; reason: "pin" | "chrome"; admit: string; kind: ProdEditKind };
+  | {
+      ok: false;
+      reason: "pin" | "chrome" | "peek";
+      admit: string;
+      kind: ProdEditKind;
+    };
 
 const PY_STDLIB_RE =
   /^(os|sys|re|json|unittest|pytest|pathlib|typing|io|textwrap|argparse|subprocess|tempfile|shutil|collections|functools|itertools|math|datetime|copy|enum|dataclasses|abc|contextlib|logging|traceback|inspect|struct|hashlib|base64|uuid|random|string|time|platform|glob|fnmatch|csv|configparser|unittest\.mock|mock)$/i;
@@ -159,7 +174,9 @@ function isTtyLine(l: string): boolean {
       l,
     ) ||
     /\b(?:stderr|stdout)\.(?:write|print)/.test(l) ||
-    /\b(?:epilog|description|help)\s*=/.test(l)
+    /\b(?:epilog|description|help)\s*=/.test(l) ||
+    /\b(?:lines\.push|format\w*Card|chalk\.)/.test(l) ||
+    /`[^`]*·[^`]*`/.test(l)
   );
 }
 
@@ -174,7 +191,14 @@ function isStringLiteralLine(l: string): boolean {
   return false;
 }
 
+function isStringReturnLine(l: string): boolean {
+  return /\breturn\s*(?:`|'|"|lines\.|String\()/.test(l);
+}
+
 function isControlFlowLine(l: string): boolean {
+  if (isTtyLine(l) || isStringLiteralLine(l) || isStringReturnLine(l)) {
+    return false;
+  }
   const t = stripQuoted(l);
   if (!t.trim() || isCommentOrBlank(t)) return false;
   return (
@@ -203,20 +227,21 @@ export function classifyProdEditKindFromDiff(diff: string): ProdEditKind {
     }
     if (line.startsWith("+") || line.startsWith("-")) {
       const body = line.slice(1);
-      if (body.trim()) changed.push(body);
+      if (body.trim() && !/^[{}();,]+$/.test(body.trim())) changed.push(body);
     }
   }
   if (!changed.length) return "unknown";
   const flow = changed.filter(isControlFlowLine);
   const tty = changed.filter(isTtyLine);
-  if (flow.length > 0) return isNewFile ? "new-module" : "control-flow";
-  if (changed.every((l) => isStringLiteralLine(l) || isTtyLine(l))) {
-    return tty.length ? "tty" : "string-literal";
-  }
   const decorative = changed.filter(
     (l) => isStringLiteralLine(l) || isTtyLine(l),
   ).length;
-  if (decorative >= Math.ceil(changed.length * 0.7) && flow.length === 0) {
+  // if/return wrapping string builders is still TTY chrome, not a job.
+  if (decorative >= Math.ceil(changed.length * 0.7)) {
+    return tty.length ? "tty" : "string-literal";
+  }
+  if (flow.length > 0) return isNewFile ? "new-module" : "control-flow";
+  if (changed.every((l) => isStringLiteralLine(l) || isTtyLine(l))) {
     return tty.length ? "tty" : "string-literal";
   }
   return "unknown";
@@ -421,6 +446,8 @@ export function decideWaveJobCredit(opts: {
   pinTaint?: boolean;
   playLoop?: boolean;
   chromeStreak?: number;
+  peekMill?: boolean;
+  peekMillStreak?: number;
   declared?: boolean;
   diffs?: Record<string, string>;
   prodKind?: ProdEditKind;
@@ -430,6 +457,9 @@ export function decideWaveJobCredit(opts: {
   const kind =
     opts.prodKind ??
     inspectProdEditKind({ cwd: opts.cwd, paths, diffs: opts.diffs });
+  if (opts.peekMill && (opts.peekMillStreak ?? 0) >= PEEK_MILL_HOLD) {
+    return { ok: false, reason: "peek", admit: PEEK_MILL_ADMIT, kind };
+  }
   if (opts.declared && paths.length === 0 && opts.cwd) {
     if ((opts.chromeStreak ?? 0) >= CHROME_PATH_HOLD) {
       return { ok: false, reason: "chrome", admit: JOB_FLAT_ADMIT, kind };

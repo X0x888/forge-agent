@@ -78,6 +78,7 @@ import {
   applyVerificationTrail,
   verificationPassedFromResult,
   isIsolateTestCommand,
+  isTypecheckCommand,
   isFullSuiteCommand,
   consumeMillHoldPrune,
   noteUlwThoughtOnlyStop,
@@ -4387,7 +4388,8 @@ async function prepareToolResultInner(
         output: rawOut,
       });
       const isolate = isIsolateTestCommand(cmd);
-      if (isolate) {
+      const typecheck = isTypecheckCommand(cmd);
+      if (isolate || typecheck) {
         harnessStats.verificationHelperOnlyRuns += 1;
       } else if (passed) {
         harnessStats.verificationPassedRuns += 1;

@@ -69,6 +69,10 @@ describe("isUserFacingProductWork", () => {
     assert.equal(isUserFacingProductWork("improve the ui"), false);
     assert.equal(isUserFacingProductWork("improve the ui chrome"), false);
     assert.equal(isUserFacingProductWork("polish the tui"), false);
+    assert.equal(
+      isUserFacingProductWork("Improve the ui and ux of this tool."),
+      true,
+    );
     assert.equal(isUserFacingProductWork("fix the type error in loop.ts"), false);
     assert.equal(isUserFacingProductWork("add a flag for prune"), false);
     assert.equal(isUserFacingProductWork("fix the login bug"), false);

@@ -40,6 +40,9 @@ import {
   formatCappedWaveDoctrine,
   ulwKickoffMessage,
   detectWaveProof,
+  isTypecheckCommand,
+  isIsolateTestCommand,
+  isFullSuiteCommand,
   hasAttestationEvidence,
   bestWave,
   formatWaveLedger,
@@ -1420,7 +1423,7 @@ describe("polish-class Stop", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-ulw-polish-stop-"));
     process.env.FORGE_HOME = tmp;
     const sid = "ulw-polish-stop";
-    armUlwCycle(sid, "improve the daily REPL", {
+    armUlwCycle(sid, "clip leftover dumps in the picker", {
       cycle: 1,
       maxWaves: 10,
       skipCheckpoint: true,
@@ -1448,6 +1451,48 @@ describe("polish-class Stop", () => {
     assert.equal(s.cycle, 0);
     assert.ok(s.wave >= 4);
   });
+
+  it("second slash-peek mill does not increment w", () => {
+    const prev = process.env.FORGE_HOME;
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-ulw-peek-mill-"));
+    process.env.FORGE_HOME = tmp;
+    try {
+      const sid = "ulw-peek-mill-w";
+      fs.mkdirSync(path.join(tmp, "sessions", sid), { recursive: true });
+      armUlwCycle(sid, "Improve the ui and ux of this tool.", {
+        cycle: 1,
+        skipCheckpoint: true,
+      });
+      markUlwPlanDone(sid);
+      const r1 = maybeStampUlwWave({
+        sessionId: sid,
+        editCount: 4,
+        openTodoCount: 0,
+        stepsSinceStamp: 1,
+        lastAssistantMessage:
+          "Ship landed: `/model` is a verdict-first sit-down card, not formatParamMenu.",
+        changedPaths: ["src/tui/model-card.ts"],
+      });
+      assert.equal(r1.stamped, true, JSON.stringify(r1));
+      assert.equal(loadUlwCycle(sid)!.wave, 1);
+      const r2 = maybeStampUlwWave({
+        sessionId: sid,
+        editCount: 8,
+        openTodoCount: 0,
+        stepsSinceStamp: 1,
+        lastAssistantMessage:
+          "Ship landed: `/context` is a sit-down peek, not a bar lecture.",
+        changedPaths: ["src/tui/context-card.ts"],
+      });
+      assert.equal(r2.stamped, false, JSON.stringify(r2));
+      assert.match(r2.admit || "", /slash-peek remainder|peek mill|formatXCard/i);
+      assert.equal(loadUlwCycle(sid)!.wave, 1);
+    } finally {
+      if (prev === undefined) delete process.env.FORGE_HOME;
+      else process.env.FORGE_HOME = prev;
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("ulw wave ledger + quality bar", () => {
@@ -1465,6 +1510,7 @@ describe("ulw wave ledger + quality bar", () => {
       openTodoCount: 0,
       stuckThreshold: 20,
       verificationRan: true,
+      verificationPassed: true,
     });
     assert.equal(d1.block, true);
     let st = loadUlwCycle(sid)!;
@@ -1491,10 +1537,54 @@ describe("ulw wave ledger + quality bar", () => {
     assert.match(d2.reanchor || "", /no successful verification|ran no verification/);
   });
 
+  it("typecheck-only is proof=ran; a passing suite still wins", () => {
+    const prev = process.env.FORGE_HOME;
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-ulw-tsc-proof-"));
+    process.env.FORGE_HOME = tmp;
+    try {
+      const sid = "ulw-tsc-proof";
+      fs.mkdirSync(path.join(tmp, "sessions", sid), { recursive: true });
+      armUlwCycle(sid, "harden the cli", { cycle: 1, skipCheckpoint: true });
+      markUlwPlanDone(sid);
+      maybeStampUlwWave({
+        sessionId: sid,
+        editCount: 3,
+        openTodoCount: 0,
+        stepsSinceStamp: 1,
+        lastAssistantMessage: "Wave shipped: input validation",
+        verificationRan: true,
+        verificationPassed: false,
+        verificationHelperOnly: true,
+        changedPaths: ["src/cli.ts"],
+      });
+      assert.equal(loadUlwCycle(sid)!.waves?.[0]?.proof, false);
+      assert.equal(loadUlwCycle(sid)!.waves?.[0]?.proofKind, "isolate");
+      maybeStampUlwWave({
+        sessionId: sid,
+        editCount: 6,
+        openTodoCount: 0,
+        stepsSinceStamp: 1,
+        lastAssistantMessage: "Wave shipped: idle-before-backend",
+        verificationRan: true,
+        verificationPassed: true,
+        verificationHelperOnly: true,
+        verificationFullSuite: true,
+        changedPaths: ["src/idle.ts"],
+      });
+      const last = loadUlwCycle(sid)!.waves!.at(-1);
+      assert.equal(last?.proof, true);
+      assert.equal(last?.proofKind, "full");
+    } finally {
+      if (prev === undefined) delete process.env.FORGE_HOME;
+      else process.env.FORGE_HOME = prev;
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("detectWaveProof trusts execution over prose", () => {
     assert.equal(detectWaveProof("all good", true), true);
-    assert.equal(detectWaveProof("ran npm test — 42 passed", false), true);
-    assert.equal(detectWaveProof("tsc clean", false), true);
+    assert.equal(detectWaveProof("ran npm test — 42 passed", false), false);
+    assert.equal(detectWaveProof("tsc clean", false), false);
     assert.equal(detectWaveProof("improved naming", false), false);
     assert.equal(hasAttestationEvidence("**Cycle complete.** done", false), false);
     assert.equal(
@@ -1515,6 +1605,16 @@ describe("ulw wave ledger + quality bar", () => {
     assert.ok(VERIFICATION_CMD_RE.test("cargo test"));
     assert.ok(VERIFICATION_CMD_RE.test("pytest -q"));
     assert.ok(VERIFICATION_CMD_RE.test("npx tsc --noEmit"));
+    assert.equal(isTypecheckCommand("npm run typecheck"), true);
+    assert.equal(isTypecheckCommand("npx tsc --noEmit"), true);
+    assert.equal(isTypecheckCommand("turbo run typecheck"), true);
+    assert.equal(isTypecheckCommand("npm run check"), false);
+    assert.equal(isTypecheckCommand("npm test"), false);
+    assert.equal(isTypecheckCommand("npx tsc --noEmit && npm test"), false);
+    assert.equal(isIsolateTestCommand("npx tsc --noEmit"), true);
+    assert.equal(isIsolateTestCommand("npm run typecheck"), true);
+    assert.equal(isFullSuiteCommand("npm run typecheck"), false);
+    assert.equal(isFullSuiteCommand("npm test"), true);
     assert.ok(VERIFICATION_CMD_RE.test("mix test"));
     assert.ok(VERIFICATION_CMD_RE.test("turbo run test"));
     assert.ok(VERIFICATION_CMD_RE.test("turbo run typecheck"));
@@ -1664,6 +1764,7 @@ describe("ulw wave ledger + quality bar", () => {
       openTodoCount: 0,
       stuckThreshold: 50,
       verificationRan: true,
+      verificationPassed: true,
     });
     assert.equal(d4.proofDemanded, false);
     assert.equal(loadUlwCycle(sid)!.proofDemands, 0);
@@ -1786,6 +1887,7 @@ describe("ulw wave ledger + quality bar", () => {
       openTodoCount: 0,
       stuckThreshold: 50,
       verificationRan: true,
+      verificationPassed: true,
     });
     evaluateUlwAtStop({
       sessionId: sid,
@@ -1873,6 +1975,7 @@ describe("ulw wave ledger + quality bar", () => {
       editCount: 4,
       lastAssistantMessage: "added tests",
       verificationRan: true,
+      verificationPassed: true,
     });
     assert.equal(r.allowStop, false);
     assert.equal(loadUlwCycle(sid)!.waves![0].proof, true);

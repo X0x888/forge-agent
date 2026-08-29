@@ -9,6 +9,7 @@ import path from "node:path";
 import { forgeHome } from "../util/fs.js";
 import { pathsMatch } from "../session/explore-map.js";
 import { activeMemoryRecords } from "./decision-memory.js";
+import { isDumpCatalogPick } from "./same-surface.js";
 
 export const OFF_CONTRACT_HOLD = 8;
 
@@ -306,7 +307,9 @@ export function formatHoldContextAppendix(sessionId: string): string {
   if (reading) {
     lines.push(`Original job (not the live unit): ${reading}`);
   }
-  const picks = loadExploreMapPicks(sessionId);
+  const picks = loadExploreMapPicks(sessionId).filter(
+    (p) => !isDumpCatalogPick(p),
+  );
   if (picks.length) {
     lines.push("Explore-map picks still open (not a new noun):");
     for (const p of picks.slice(0, 4)) {

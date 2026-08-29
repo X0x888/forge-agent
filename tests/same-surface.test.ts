@@ -4,6 +4,9 @@ import {
   isLeftoverSiblingShip,
   isSameSurface,
   isSitDownCardShip,
+  isSlashPeekMillShip,
+  isDumpCatalogPick,
+  isPeekMillPaths,
   nextSameSurfaceStreak,
   surfaceHits,
   surfaceKey,
@@ -97,6 +100,58 @@ describe("sit-down-card class", () => {
     assert.equal(b.same, true);
     assert.equal(b.streak, 2);
     const c = nextSameSurfaceStreak([verify, commit], budget, b.streak);
+    assert.equal(c.same, true);
+    assert.equal(c.streak, 3);
+    assert.ok(c.streak >= SAME_SURFACE_HOLD);
+  });
+});
+
+describe("slash-peek mill is one job", () => {
+  const model =
+    "Ship: `/model` is a verdict-first sit-down card, not formatParamMenu. ``` model  ·  grok-4.6 Next  /effort ```";
+  const context =
+    "Ship: `/context` is a sit-down peek, not a bar lecture. ``` context  ·  HARD Next  /compact ```";
+  const mcp =
+    "`/mcp` is a connect/ready/error peek. The catalog moved to `/mcp tools`.";
+
+  it("clusters /model /context /mcp peeks as the same surface", () => {
+    assert.equal(isSlashPeekMillShip(model), true);
+    assert.equal(isSlashPeekMillShip(context), true);
+    assert.equal(isSlashPeekMillShip(mcp), true);
+    assert.equal(isSameSurface(model, context), true);
+    assert.equal(isSameSurface(model, mcp), true);
+    assert.equal(surfaceKey(model), SIT_DOWN_SURFACE_KEY);
+    assert.equal(surfaceKey(mcp), SIT_DOWN_SURFACE_KEY);
+  });
+
+  it("treats *-card.ts trees as one peek-mill surface", () => {
+    assert.equal(
+      isPeekMillPaths(["src/tui/model-card.ts", "src/commands/slash.ts"]),
+      true,
+    );
+    assert.equal(isPeekMillPaths(["src/tui/context-card.ts"]), true);
+    assert.equal(isPeekMillPaths(["src/commands/slash.ts"]), false);
+    assert.equal(
+      isPeekMillPaths(["src/tui/model-card.ts", "src/session/mutations.ts"]),
+      false,
+    );
+    assert.equal(
+      isDumpCatalogPick("`/model` still dumps formatParamMenu as a numbered catalog."),
+      true,
+    );
+  });
+
+  it("explore dump-picks do not reset the peek-mill streak", () => {
+    const a = nextSameSurfaceStreak([], model, 0);
+    assert.equal(a.streak, 1);
+    const b = nextSameSurfaceStreak([model], context, a.streak, {
+      onContract: true,
+    });
+    assert.equal(b.same, true);
+    assert.equal(b.streak, 2);
+    const c = nextSameSurfaceStreak([model, context], mcp, b.streak, {
+      onContract: true,
+    });
     assert.equal(c.same, true);
     assert.equal(c.streak, 3);
     assert.ok(c.streak >= SAME_SURFACE_HOLD);

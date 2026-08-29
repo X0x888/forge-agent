@@ -16,6 +16,9 @@ import {
   applyCleanBaselineAfterCommit,
   formatUlwStatus,
   noteExploreChildCompleted,
+  matchNamedShip,
+  exploreSpawnSkipReason,
+  seedNamedShipsFromExploreMaps,
 } from "../src/harness/ulw-cycle.js";
 import { appendMemoryRecord } from "../src/harness/decision-memory.js";
 import { CLEAN_TREE_DIFF_FP } from "../src/util/git-context.js";
@@ -38,6 +41,130 @@ const READING =
   "Reading: Forge's product is the interactive REPL. The ONE ship is the tool-status line. Passed on: markdown wrap, help groups, session picker.";
 
 describe("named-ship backlog", () => {
+  it("does not complete HUD chips because /model shipped", () => {
+    assert.equal(
+      matchNamedShip(
+        "this wave: HUD chips / glanceable ✓ / markdown wrap",
+        "Ship: `/model` is a verdict-first sit-down card. Passed on: HUD/✓ chrome.",
+      ),
+      false,
+    );
+    assert.equal(
+      matchNamedShip(
+        "the tool-status line",
+        "Wave 1 shipped: the tool-status line",
+      ),
+      true,
+    );
+  });
+
+  it("skips dump explores after three peek-mill waves", () => {
+    withHome(() => {
+      const sid = "sess-peek-explore-skip";
+      fs.mkdirSync(path.join(process.env.FORGE_HOME!, "sessions", sid), {
+        recursive: true,
+      });
+      const s0 = armUlwCycle(sid, "Improve the ui and ux of this tool.", {
+        cycle: 1,
+        skipCheckpoint: true,
+        editCount: 0,
+      });
+      s0.phase = "ship";
+      s0.judgmentRequired = false;
+      s0.waves = [1, 2, 3].map((n) => ({
+        wave: n,
+        editDelta: 4,
+        proof: false,
+        summary: `Ship: \`/model\` peek ${n} is a sit-down card, not formatParamMenu.`,
+        classText: `\`/context\` is a sit-down peek, not a lecture ${n}.`,
+        ts: new Date().toISOString(),
+      }));
+      s0.wave = 3;
+      saveUlwCycle(s0);
+      assert.match(
+        exploreSpawnSkipReason(sid) || "",
+        /slash-peek mill/i,
+      );
+      disarmUlwCycle(sid);
+    });
+  });
+
+  it("does not seed dump-catalog explore picks as named ships", () => {
+    withHome(() => {
+      const sid = "sess-dump-seed";
+      fs.mkdirSync(path.join(process.env.FORGE_HOME!, "sessions", sid), {
+        recursive: true,
+      });
+      armUlwCycle(sid, "Improve the ui and ux of this tool.", {
+        cycle: 1,
+        skipCheckpoint: true,
+        editCount: 0,
+      });
+      fs.writeFileSync(
+        path.join(process.env.FORGE_HOME!, "sessions", sid, "meta.json"),
+        JSON.stringify({
+          exploreMaps: [
+            {
+              pick: "`/model` still dumps formatParamMenu as a numbered catalog.",
+              files: [
+                {
+                  path: "src/tui/model-card.ts",
+                  line: 1,
+                  claim: "dumps the numbered menu",
+                },
+              ],
+              at: new Date().toISOString(),
+            },
+            {
+              pick: "the tool-status line is the one job of the REPL chrome.",
+              files: [
+                {
+                  path: "src/tui/bottom-status.ts",
+                  line: 1,
+                  claim: "status line is the job",
+                },
+              ],
+              at: new Date().toISOString(),
+            },
+          ],
+        }),
+      );
+      assert.equal(seedNamedShipsFromExploreMaps(sid), true);
+      const ships = loadUlwCycle(sid)!.namedShips ?? [];
+      assert.equal(
+        ships.some((s) => /formatParamMenu|numbered catalog/i.test(s.text)),
+        false,
+        JSON.stringify(ships),
+      );
+      assert.ok(
+        ships.some((s) => /tool-status/i.test(s.text)),
+        JSON.stringify(ships),
+      );
+      disarmUlwCycle(sid);
+    });
+  });
+
+  it("refuses a remainder dump catalog as the named-ship plan", () => {
+    withHome(() => {
+      const sid = "sess-dump-adopt";
+      fs.mkdirSync(path.join(process.env.FORGE_HOME!, "sessions", sid), {
+        recursive: true,
+      });
+      const s0 = armUlwCycle(sid, "Improve the ui and ux of this tool.", {
+        cycle: 1,
+        skipCheckpoint: true,
+        editCount: 0,
+      });
+      s0.phase = "ship";
+      s0.judgmentRequired = false;
+      const dumpReading =
+        "Reading: sit-down peeks. The ONE ship is `/model` is a sit-down card, not formatParamMenu. Passed on: `/context` catalog dump lecture, `/help` numbered catalog wall.";
+      assert.equal(maybeAdoptNamedShips(s0, dumpReading), false);
+      assert.equal((s0.namedShips ?? []).length, 0);
+      disarmUlwCycle(sid);
+    });
+  });
+
   it("parses the ONE ship plus passed-on list", () => {
     const ships = parseNamedShipsFromReading(READING);
     assert.ok(ships.length >= 3, String(ships));
@@ -302,7 +429,7 @@ describe("named-ship backlog", () => {
       }
       const first = evaluateUlwAtStop({
         sessionId: sid,
-        lastAssistantMessage: "named list is done",
+        lastAssistantMessage: `${READING}\n\nnamed list is done`,
         editCount: edits + 1,
         openTodoCount: 0,
         stuckThreshold: 20,

@@ -16,9 +16,12 @@ const EDGE_PREFIX = "Edge:";
 
 /** A product being built or reshaped — not a generic "the ui" chrome grind. */
 const PRODUCT_OBJECT_RE =
-  /\b(app|application|site|landing|onboarding|empty state|error state|first[- ]run|dashboard|settings page|notes app|game)\b/i;
+  /\b(app|application|site|landing|onboarding|empty state|error state|first[- ]run|dashboard|settings page|notes app|game|repl)\b/i;
 /** Surfaces that only count with evaluate/build, not bare "improve the ui". */
 const PRODUCT_SURFACE_RE = /\b(cli|tui|ux|ui|product)\b/i;
+/** Polish of *this* product (Forge dogfood), not generic "improve the ui". */
+const THIS_PRODUCT_RE =
+  /\b(this tool|this cli|the repl|forge)\b/i;
 const BUILD_RE = /\b(build|make|create|redesign|reshape)\b/i;
 const EVAL_RE = /\b(evaluate|audit|assess)\b/i;
 const POLISH_RE = /\b(improve|polish)\b/i;
@@ -66,6 +69,14 @@ export function isUserFacingProductWork(
   }
   // Polish a named product surface — not "improve the ui" / "polish the tui".
   if (POLISH_RE.test(t) && PRODUCT_OBJECT_RE.test(t)) return true;
+  // Dogfood: "improve the ui and ux of this tool" is this product.
+  if (
+    POLISH_RE.test(t) &&
+    PRODUCT_SURFACE_RE.test(t) &&
+    THIS_PRODUCT_RE.test(blob)
+  ) {
+    return true;
+  }
   // Wave-1 reading named a product even when the one-line mandate was soft.
   if (reading && PRODUCT_OBJECT_RE.test(reading)) return true;
   return false;

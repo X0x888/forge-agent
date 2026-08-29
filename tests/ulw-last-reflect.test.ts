@@ -10,6 +10,8 @@ import {
   parseLastScorecard,
   applyLastReflectGate,
   lastReflectEnabled,
+  closeoutAddressesHoles,
+  ledgerMustFixItems,
 } from "../src/harness/last-reflect.js";
 import {
   armUlwCycle,
@@ -124,6 +126,71 @@ describe("applyLastReflectGate", () => {
       editDelta: 2,
     });
     assert.equal(r.block, false);
+    assert.equal(s.lastReflect, "done");
+  });
+
+  it("ledger lists slash-peek mill as a must-fix hole", () => {
+    const holes = ledgerMustFixItems({ peekMillStreak: 3, waves: [] });
+    assert.ok(
+      holes.some((h) => /slash-peek/i.test(h)),
+      JSON.stringify(holes),
+    );
+    assert.equal(
+      closeoutAddressesHoles({
+        holes: holes.filter((h) => /slash-peek/i.test(h)),
+        editDelta: 2,
+        paths: ["tests/git-auto-commit.test.ts"],
+      }),
+      false,
+    );
+  });
+
+  it("close-out test-only edits do not address proof=✗ holes", () => {
+    const hole =
+      "6 wave(s) closed without successful proof.";
+    assert.equal(
+      closeoutAddressesHoles({
+        holes: [hole],
+        editDelta: 2,
+        paths: ["tests/git-auto-commit.test.ts"],
+      }),
+      false,
+    );
+    assert.equal(
+      closeoutAddressesHoles({
+        holes: [hole],
+        editDelta: 2,
+        paths: ["tests/git-auto-commit.test.ts"],
+        fullSuitePassed: true,
+      }),
+      true,
+    );
+    assert.equal(
+      closeoutAddressesHoles({
+        holes: [hole],
+        fullSuitePassed: true,
+        paths: ["src/harness/ulw-cycle.ts"],
+        editDelta: 2,
+      }),
+      true,
+    );
+    const s = {
+      lastReflect: "closeout" as const,
+      lastReflectMustFix: 1,
+      lastReflectHoles: [hole],
+    };
+    const blocked = applyLastReflectGate(s, "**Cycle complete.** ✅ 19 pass", {
+      editDelta: 2,
+      changedPaths: ["tests/git-auto-commit.test.ts"],
+    });
+    assert.equal(blocked.block, true);
+    assert.equal(s.lastReflect, "closeout");
+    const done = applyLastReflectGate(s, "**Cycle complete.**", {
+      editDelta: 2,
+      fullSuitePassed: true,
+      changedPaths: ["src/session/mutations.ts"],
+    });
+    assert.equal(done.block, false);
     assert.equal(s.lastReflect, "done");
   });
 

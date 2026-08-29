@@ -5,6 +5,7 @@
  * Kill-switch: FORGE_ULW_LAST_REFLECT=0 (fail-open, skip to attest).
  */
 import { isFalsy } from "../util/bool.js";
+import { isTestOrHarnessPath } from "./tests-without-body.js";
 
 export type UlwLastReflectPhase = "pending" | "score" | "closeout" | "done";
 
@@ -46,6 +47,7 @@ export interface LastReflectLedgerFacts {
   }>;
   sameSurfaceStreak?: number;
   pinCreditRefused?: number;
+  peekMillStreak?: number;
   fullSuitePassed?: boolean;
   playLoopRan?: boolean;
   mandate?: string;
@@ -98,6 +100,11 @@ export function ledgerMustFixItems(facts: LastReflectLedgerFacts): string[] {
   if (millN >= 3) {
     holes.push(
       `${millN} mill/sibling-module wave(s) — numbered foo-n.js is not a job.`,
+    );
+  }
+  if ((facts.peekMillStreak ?? 0) >= 2) {
+    holes.push(
+      "Slash-peek remainder mill — leftover dumps / formatXCard are not a job.",
     );
   }
   const jobN = waves.filter((w) => w.jobMoved).length;
@@ -232,6 +239,7 @@ export function formatLastReflectCloseoutReanchor(mustFix: string[]): string {
     ...items,
     ``,
     `Do not hunt leftover chrome. Do not start a new surface. Do not invent extra ships.`,
+    `Test-only edits and closer speech do not close ledger holes. Proof=✗ needs the full suite; chrome cluster needs a production file.`,
     `Then attest **Cycle complete.** with evidence. After this wave, leftover hunting is refused.`,
   ].join("\n");
 }
@@ -281,6 +289,54 @@ type LastReflectMut = {
   checkpointSha?: string;
 };
 
+function isProductRelPath(p: string): boolean {
+  const n = (p || "").replace(/\\/g, "/").trim();
+  if (!n || isTestOrHarnessPath(n)) return false;
+  return true;
+}
+
+/**
+ * LAST close-out is not any-edit. Test-only / sandbox-EPERM theater does
+ * not address ledger holes. Proof=✗ holes need a full suite; chrome
+ * cluster needs a production file; path:line holes need that path.
+ */
+export function closeoutAddressesHoles(opts: {
+  holes: string[];
+  fullSuitePassed?: boolean;
+  paths?: string[];
+  editDelta?: number;
+}): boolean {
+  const holes = (opts.holes ?? []).map((h) => String(h || "").trim()).filter(Boolean);
+  const paths = (opts.paths ?? [])
+    .map((p) => p.replace(/\\/g, "/").trim())
+    .filter(Boolean);
+  const testsOnly =
+    paths.length > 0 && paths.every((p) => isTestOrHarnessPath(p));
+  if (holes.length === 0) return (opts.editDelta ?? 0) > 0;
+  const needSuite = holes.some((h) =>
+    /full check suite|without successful proof|isolates are proof/i.test(h),
+  );
+  const needJob = holes.some((h) =>
+    /chrome-only|same-surface|mill\/sibling|slash-peek/i.test(h),
+  );
+  if (testsOnly) {
+    if (needSuite && opts.fullSuitePassed && !needJob) return true;
+    return false;
+  }
+  if (needSuite && !opts.fullSuitePassed) return false;
+  if (needJob && paths.length && !paths.some(isProductRelPath)) return false;
+  const fileHoles = holes
+    .map((h) => h.match(/^([\w./-]+\.[A-Za-z][\w]*)/))
+    .filter((m): m is RegExpMatchArray => Boolean(m?.[1]));
+  if (fileHoles.length && paths.length) {
+    return fileHoles.some((m) => {
+      const want = m[1]!;
+      return paths.some((p) => p === want || p.endsWith(`/${want}`) || p.endsWith(want));
+    });
+  }
+  return (opts.editDelta ?? 0) > 0;
+}
+
 /**
  * LAST wrap is settled (or attested). Score the run, maybe one close-out.
  * Fail-open after MAX_LAST_REFLECT_SCORE_DEMANDS scorecard bounces.
@@ -292,6 +348,8 @@ export function applyLastReflectGate(
     attested?: boolean;
     editDelta?: number;
     ledgerMustFix?: string[];
+    fullSuitePassed?: boolean;
+    changedPaths?: string[];
   },
 ): LastReflectGateResult {
   if (!lastReflectEnabled()) {
@@ -355,12 +413,18 @@ export function applyLastReflectGate(
   }
 
   if (s.lastReflect === "closeout") {
-    const retracted = card.present && card.mustFix.length === 0;
-    const shipped = (opts?.editDelta ?? 0) > 0;
-    if (!shipped && !retracted) {
+    const holes = s.lastReflectHoles ?? [];
+    const retracted = card.present && card.mustFix.length === 0 && holes.length === 0;
+    const addressed = closeoutAddressesHoles({
+      holes,
+      fullSuitePassed: opts?.fullSuitePassed,
+      paths: opts?.changedPaths,
+      editDelta: opts?.editDelta,
+    });
+    if (!addressed && !retracted) {
       return {
         block: true,
-        reanchor: formatLastReflectCloseoutReanchor(s.lastReflectHoles ?? []),
+        reanchor: formatLastReflectCloseoutReanchor(holes),
         lastReflectCloseout: true,
       };
     }
