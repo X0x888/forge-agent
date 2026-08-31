@@ -470,7 +470,7 @@ describe("ULW mid-loop wave stamp", () => {
     });
   });
 
-  it("four glanceable ✓ ships flip LAST even if wave 4 is consolidation", () => {
+  it("four glanceable ✓ ships do not auto-LAST on unlimited ULW", () => {
     withHome(() => {
       const sid = "sess-glanceable-last";
       fs.mkdirSync(path.join(process.env.FORGE_HOME!, "sessions", sid), {
@@ -511,8 +511,13 @@ describe("ULW mid-loop wave stamp", () => {
         });
       }
       assert.equal(last?.stamped, true);
-      assert.equal(last?.flippedToLast, true, "consolidation must not reset chrome streak");
-      assert.equal(loadUlwCycle(sid)!.cycle, 0);
+      assert.equal(
+        last?.flippedToLast,
+        false,
+        "unlimited leftover-chrome must not auto-LAST",
+      );
+      assert.equal(loadUlwCycle(sid)!.cycle, 1);
+      assert.ok((loadUlwCycle(sid)!.polishStreak ?? 0) >= 4);
       disarmUlwCycle(sid);
     });
   });

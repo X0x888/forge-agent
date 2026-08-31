@@ -389,6 +389,11 @@ export interface LoopResult {
   /** True when ULW released on evidenced **Cycle complete.** after LAST. */
   lastCycleReleased: boolean;
   /**
+   * True when `/cycle 0` wrap sat down and left ULW armed (CONTINUE).
+   * Distinct from lastCycleReleased — the mandate is not over.
+   */
+  lastCycleSatDown: boolean;
+  /**
    * Last provider `finish_reason` observed on an assistant turn (e.g. stop, length,
    * content_filter, tool_calls). Null when no model turn completed (auth/abort early).
    * Headless JSON surfaces this for CI triage without scraping finalText notes.
@@ -1198,6 +1203,7 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
   let hitCostCap = false;
   let stuckReleased = false;
   let lastCycleReleased = false;
+  let lastCycleSatDown = false;
   let lastFinishReason: string | null = null;
   let autoCommit: LoopResult["autoCommit"];
   let overflowCompactAttempted = false;
@@ -2868,7 +2874,12 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
           if (stopResult.ulw?.stuckReleased) stuckReleased = true;
           if (stopResult.goal?.stuckReleased) stuckReleased = true;
           if (stopResult.ulw?.lastCycleReleased) lastCycleReleased = true;
-          if (stopResult.ulw?.lastCycleReleased || stopResult.ulw?.stuckReleased) {
+          if (stopResult.ulw?.lastCycleSatDown) lastCycleSatDown = true;
+          if (
+            stopResult.ulw?.lastCycleReleased ||
+            stopResult.ulw?.lastCycleSatDown ||
+            stopResult.ulw?.stuckReleased
+          ) {
             try {
               const { maybeAutoCommitOnUlwDone, autoCommitStamp } =
                 await import("../util/git-auto-commit.js");
@@ -3475,6 +3486,7 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
     hitCostCap,
     stuckReleased,
     lastCycleReleased,
+    lastCycleSatDown,
     finishReason: lastFinishReason,
     promptTokens,
     completionTokens,

@@ -70,6 +70,7 @@ import { createSession, forkSession } from "../src/session/session.js";
 import { runStopGuard } from "../src/harness/stop-guard.js";
 import { HookRunner } from "../src/harness/hooks.js";
 import { DEFAULT_CONFIG } from "../src/config/types.js";
+import { lastAttest } from "./helpers/ulw-arm.js";
 
 describe("ulw cycle", () => {
   it("detects soft prompts", () => {
@@ -1452,6 +1453,40 @@ describe("polish-class Stop", () => {
     assert.ok(s.wave >= 4);
   });
 
+  it("unlimited Stop-boundary polish ships do not auto-LAST", () => {
+    const tmp = fs.mkdtempSync(
+      path.join(os.tmpdir(), "forge-ulw-polish-unlimited-"),
+    );
+    process.env.FORGE_HOME = tmp;
+    const sid = "ulw-polish-unlimited";
+    armUlwCycle(sid, "clip leftover dumps in the picker", {
+      cycle: 1,
+      skipCheckpoint: true,
+    });
+    markUlwPlanDone(sid);
+    const polish = [
+      "Wave shipped. keep one TTY row on the picker",
+      "Wave shipped. leftover dump after the turn is gone",
+      "Wave shipped. quieter chip copy on the HUD",
+      "Wave shipped. dock owns identity — slim the banner",
+    ];
+    for (let i = 0; i < polish.length; i++) {
+      evaluateUlwAtStop({
+        sessionId: sid,
+        lastAssistantMessage: polish[i]!,
+        editCount: i + 1,
+        openTodoCount: 0,
+        stuckThreshold: 20,
+        verificationRan: true,
+        verificationPassed: true,
+      });
+    }
+    const s = loadUlwCycle(sid)!;
+    assert.equal(s.polishStreak, 4);
+    assert.equal(s.cycle, 1);
+    assert.equal(s.enabled, true);
+  });
+
   it("second slash-peek mill does not increment w", () => {
     const prev = process.env.FORGE_HOME;
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-ulw-peek-mill-"));
@@ -2404,6 +2439,100 @@ describe("/cycle 0 stop at N+1", () => {
       assert.equal(last.wave, 44);
       assert.equal(last.cycle, 0);
       assert.equal(last.wrapKind, "budget");
+    });
+  });
+
+  it("/cycle 0 LAST + Cycle complete sits down with ULW still on", () => {
+    withHome(() => {
+      const prevReflect = process.env.FORGE_ULW_LAST_REFLECT;
+      process.env.FORGE_ULW_LAST_REFLECT = "0";
+      const sid = "c0-sit";
+      fs.mkdirSync(path.join(process.env.FORGE_HOME!, "sessions", sid), {
+        recursive: true,
+      });
+      armUlwCycle(sid, "Improve this game.", {
+        cycle: 1,
+        skipCheckpoint: true,
+        editCount: 0,
+      });
+      markUlwPlanDone(sid);
+      scheduleCycleZeroStop(sid, { editCount: 0 });
+      assert.equal(loadUlwCycle(sid)!.maxWaves, 1);
+      evaluateUlwAtStop({
+        sessionId: sid,
+        lastAssistantMessage: "Wave shipped: wrap unit",
+        editCount: 2,
+        openTodoCount: 0,
+        stuckThreshold: 20,
+        verificationPassed: true,
+      });
+      assert.equal(loadUlwCycle(sid)!.cycle, 0);
+      assert.equal(loadUlwCycle(sid)!.cycleZeroStopAt, 1);
+      const done = evaluateUlwAtStop({
+        sessionId: sid,
+        lastAssistantMessage: lastAttest(
+          "**Cycle complete.**\n✅ npm test — 1 passed",
+        ),
+        editCount: 2,
+        openTodoCount: 0,
+        stuckThreshold: 20,
+        verificationPassed: true,
+      });
+      assert.equal(done.block, false);
+      assert.equal(done.lastCycleSatDown, true);
+      assert.notEqual(done.lastCycleReleased, true);
+      const s = loadUlwCycle(sid)!;
+      assert.equal(s.enabled, true);
+      assert.equal(s.cycle, 1);
+      assert.equal(s.maxWaves, null);
+      assert.equal(s.cycleZeroStopAt, undefined);
+      if (prevReflect === undefined) delete process.env.FORGE_ULW_LAST_REFLECT;
+      else process.env.FORGE_ULW_LAST_REFLECT = prevReflect;
+    });
+  });
+
+  it("/done after /cycle 0 LAST still kills ULW", () => {
+    withHome(() => {
+      const prevReflect = process.env.FORGE_ULW_LAST_REFLECT;
+      process.env.FORGE_ULW_LAST_REFLECT = "0";
+      const sid = "c0-done-kill";
+      fs.mkdirSync(path.join(process.env.FORGE_HOME!, "sessions", sid), {
+        recursive: true,
+      });
+      armUlwCycle(sid, "Improve this game.", {
+        cycle: 1,
+        skipCheckpoint: true,
+      });
+      markUlwPlanDone(sid);
+      scheduleCycleZeroStop(sid, { editCount: 0 });
+      evaluateUlwAtStop({
+        sessionId: sid,
+        lastAssistantMessage: "Wave shipped: wrap unit",
+        editCount: 2,
+        openTodoCount: 0,
+        stuckThreshold: 20,
+        verificationPassed: true,
+      });
+      assert.equal(loadUlwCycle(sid)!.cycle, 0);
+      setCycleFlag(sid, 0);
+      assert.equal(loadUlwCycle(sid)!.wrapKind, "user");
+      assert.equal(loadUlwCycle(sid)!.cycleZeroStopAt, undefined);
+      const done = evaluateUlwAtStop({
+        sessionId: sid,
+        lastAssistantMessage: lastAttest(
+          "**Cycle complete.**\n✅ npm test — 1 passed",
+        ),
+        editCount: 2,
+        openTodoCount: 0,
+        stuckThreshold: 20,
+        verificationPassed: true,
+      });
+      assert.equal(done.block, false);
+      assert.equal(done.lastCycleReleased, true);
+      assert.notEqual(done.lastCycleSatDown, true);
+      assert.equal(loadUlwCycle(sid)!.enabled, false);
+      if (prevReflect === undefined) delete process.env.FORGE_ULW_LAST_REFLECT;
+      else process.env.FORGE_ULW_LAST_REFLECT = prevReflect;
     });
   });
 

@@ -214,7 +214,7 @@ describe("ULW LAST wrap", () => {
       saveUlwCycle(s);
       const adopted = maybeAdoptNamedShips(
         loadUlwCycle(sid)!,
-        "Reading: new surface. The ONE ship is permission-ask lease. Passed on: leftover chrome.",
+        "Reading: new surface. The ONE ship is the permission-ask stdin lease for the REPL. Passed on: leftover chrome.",
       );
       assert.equal(adopted, true);
       disarmUlwCycle(sid);

@@ -2501,14 +2501,14 @@ export async function handleSlash(
       if (flag === 1) {
         pushLiveNotice(
           sid,
-          "User set cycle=1 (CONTINUE) mid-run. Keep the research → implement → serendipity → review loop. Do not stop until the user sets cycle=0, max_waves is hit, or /ulw-off.",
+          "User set cycle=1 (CONTINUE) mid-run. Keep the research → implement → serendipity → review loop. Do not stop until /done, a user max_waves cap, or /ulw-off. /cycle 0 sits down after one more wave — ULW stays on.",
         );
       } else {
         const stopAt = state.cycleZeroStopAt ?? state.maxWaves;
         pushLiveNotice(
           sid,
           stopAt != null && state.cycle === 1
-            ? `User set /cycle 0 mid-run. Finish the open wave, ship one more, then LAST at wave ${stopAt}. Stay CONTINUE until then. Do not attest **Cycle complete.** yet. Do not stop mid-wave.`
+            ? `User set /cycle 0 mid-run. Finish the open wave, ship one more, LAST-reflect at wave ${stopAt}, then sit down. ULW stays ON. Type to continue. /done or /ulw-off ends. Do not attest **Cycle complete.** yet. Do not stop mid-wave.`
             : "User set cycle=0 (LAST) mid-run. Wrap this last wave, LAST reflect scores this run (maybe one must-fix close-out), then attest **Cycle complete.**",
         );
       }
@@ -2518,8 +2518,8 @@ export async function handleSlash(
           ? chalk.magenta("cycle=1 CONTINUE") +
             " — harness will keep blocking Stop and forcing the next wave."
           : state.cycle === 1 && stopAt != null
-            ? chalk.yellow(`cycle=0 — stop at wave ${stopAt}`) +
-              " — finish this wave, ship one more, then LAST. **Cycle complete.** is refused until then."
+            ? chalk.yellow(`cycle=0 — sit down at wave ${stopAt}`) +
+              " — finish this wave, ship one more, LAST-reflect, sit down. ULW stays on. /done ends."
             : chalk.yellow("cycle=0 LAST") +
               " — wrap, LAST reflect (score + maybe one must-fix close-out), then **Cycle complete.**";
       let cycleTip = "";

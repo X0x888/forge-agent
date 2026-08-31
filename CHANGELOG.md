@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+### Fixed
+- **`/cycle 0` no longer kills unlimited ULW**: maze dogfood `444da1a6` typed `/cycle 0` mid-run (wave 26 → LAST at 27); LAST reflect then the model attested **Cycle complete.** and the harness released (~$60, `ultrawork` cleared) without `/done`. `/cycle 0` still wraps N+1 + LAST reflect + one close-out, then **sits down** — ULW stays ON; type to continue. `/done`, a user `/max-waves` cap, and safety valves still release. Unlimited leftover-chrome / pin mill no longer auto-LAST (capped runs still do). Live › first-steer hint no longer advertises `/cycle 0` as the no-Ctrl+C action.
+
 ### Added
 - **Unlimited ULW job card (first stack, not the finish line)**: duration stays uncapped — there is no hidden `max_waves`. Compact, CONTINUE re-anchor, and decision-memory reprint Wave-1 `Reading:` / open named ships / last job-moving ship. Outbound prune keeps those job-keep tools and hard-omits mill *edit class* (any write/edit not on the reading's files — not only `foo-n.js`). `jobMoved` is named/pick/play or the reading's files; a full-suite pass or any control-flow `net=new` is not a job move. Consolidation Must-fix + no job-move **holds**. User-facing game/app ships after wave 1 need a play/look proof kind (Playwright/`read_file` png, or a production-return test). Auto-commit skips zero-edit waves and "Acting on the ULW re-anchor" subjects. Live uncapped dogfood on a non-maze product is still owed.
 

@@ -148,6 +148,10 @@ describe("turnEndOutcomeLabel", () => {
       "cycle complete",
     );
     assert.equal(
+      turnEndOutcomeLabel({ lastCycleSatDown: true }),
+      "wrap sat down",
+    );
+    assert.equal(
       turnEndOutcomeLabel({ lastErrorCode: "ulw_stuck_wall" }),
       "stuck-wall",
     );

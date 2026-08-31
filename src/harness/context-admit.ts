@@ -308,16 +308,18 @@ export function renderHarnessAdmission(s: HarnessSnapshot): string {
         maxWaves: s.maxWaves,
       })}** ${
         s.cycle === 0
-          ? s.wrapKind === "budget"
+          ? s.cycleZeroStopAt != null
+            ? "(LAST wrap — score this run, maybe one must-fix close-out, sit down; ULW stays on)"
+            : s.wrapKind === "budget"
             ? "(LAST — wrap this wave, score this run, maybe one must-fix close-out, then **Cycle complete.**)"
             : "(LAST — wrap in-flight + named ships, score this run, maybe one must-fix close-out, then **Cycle complete.**)"
           : "(CONTINUE)"
       }`,
       s.maxWaves != null
         ? s.cycleZeroStopAt != null
-          ? `/cycle 0 → LAST at wave=${s.maxWaves}.`
+          ? `/cycle 0 → sit down at wave=${s.maxWaves} (ULW stays on). /done ends.`
           : `max_waves=${s.maxWaves} budget. **Cycle complete.** refused until cap.`
-        : `max_waves=off. CONTINUE until /cycle 0.`,
+        : `max_waves=off. CONTINUE until /cycle 0 (sit down) or /done.`,
       s.sameSurfaceHold || s.contractHold || s.exploreRequired
         ? [
             s.exploreRequired
@@ -334,7 +336,7 @@ export function renderHarnessAdmission(s: HarnessSnapshot): string {
       s.softPrompt
         ? isEvaluateClassMandate(s.mandate)
           ? `Evaluate-class — written reading first, then one ship per wave until the cap. Do not hunt leftover chrome.`
-          : `Soft original prompt — invent high-leverage work; after each ship, change surface. Close only on /cycle 0 or the cap. Do not hunt leftover chrome.`
+          : `Soft original prompt — invent high-leverage work; after each ship, change surface. Sit down on /cycle 0; /done or a user cap ends. Do not hunt leftover chrome.`
         : "",
     );
   } else {

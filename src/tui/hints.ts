@@ -36,7 +36,7 @@ export const FIRST_PERMISSION_HINT =
  * the prompt appears. LIVE_CONTROLS_HINT stays on /ulw · /cycle (expert wall).
  */
 export const LIVE_STEER_HINT =
-  "type to queue · /status · /cycle 0  (no Ctrl+C)";
+  "type to queue · /status  (no Ctrl+C)";
 
 /** Printed above the live prompt so the caret and the tip share a name. */
 export function formatLiveSteerLine(text: string): string {

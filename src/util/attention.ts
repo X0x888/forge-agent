@@ -119,6 +119,7 @@ export interface TurnEndOutcomeInput {
   releasedOnContinueCap?: boolean;
   stuckReleased?: boolean;
   lastCycleReleased?: boolean;
+  lastCycleSatDown?: boolean;
   aborted?: boolean;
   lastErrorCode?: string | null;
   /** Session had file edits this run. */
@@ -139,6 +140,7 @@ export function turnEndOutcomeLabel(input: TurnEndOutcomeInput): string {
   if (input.hitMaxTurns) return "max turns";
   if (input.releasedOnContinueCap) return "continue cap";
   if (input.stuckReleased) return "stuck-wall";
+  if (input.lastCycleSatDown) return "wrap sat down";
   if (input.lastCycleReleased) return "cycle complete";
   if (input.aborted) return "aborted";
   const code = String(input.lastErrorCode || "").trim();

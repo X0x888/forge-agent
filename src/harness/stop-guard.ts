@@ -187,7 +187,11 @@ export async function runStopGuard(input: StopGuardInput): Promise<StopGuardResu
     cwd: ctx.workspaceRoot,
   });
 
-  if (ulwDecision.stuckReleased || ulwDecision.lastCycleReleased) {
+  if (
+    ulwDecision.stuckReleased ||
+    ulwDecision.lastCycleReleased ||
+    ulwDecision.lastCycleSatDown
+  ) {
     return {
       allowStop: true,
       systemMessage: ulwDecision.reason,

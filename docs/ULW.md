@@ -9,7 +9,7 @@ When a prompt starts with **`/ulw`** (or `forge --ulw` / `forge run --ulw`), For
 | Value | Meaning |
 |-------|---------|
 | **`cycle=1`** | CONTINUE — after each wave, Stop is blocked and the agent must research → implement → serendipity → review → next wave |
-| **`cycle=0` / `/cycle 0`** | Finish the open wave, ship **one more**, then LAST at wave N+1 and attest `**Cycle complete.**`. Not an abort (`/ulw-off` is). |
+| **`cycle=0` / `/cycle 0`** | Finish the open wave, ship **one more**, LAST-reflect at wave N+1, then **sit down**. ULW stays ON — type to continue. `/done` or `/ulw-off` ends. Not an abort. |
 
 ## Optional: max_waves
 
@@ -23,7 +23,7 @@ When a prompt starts with **`/ulw`** (or `forge --ulw` / `forge run --ulw`), For
 /max-waves 3              # cap at 3 waves (live; works mid-run)
 /max-waves off            # clear cap (unlimited again)
 /max-waves status         # show cap + cycle/wave
-/cycle 0                  # finish this wave + one more, then LAST
+/cycle 0                  # finish this wave + one more, LAST-reflect, sit down (ULW stays on)
 /cycle 1                  # resume relentless loops
 /cycle status             # show flag + wave + mandate
 /ulw-off                  # disarm immediately
@@ -51,7 +51,7 @@ Hard mandates keep a fixed objective but the same **smart + hard** execution sty
 
 **Broad checklists** (4+ bullets / multi-section): the harness still requires a **todo backlog** (`todo_write` ≥2) before Wave 1 free-invents.
 
-**`max_waves=N` is a budget the user asked to spend.** Wave 1 writes the plan and ships the first item; waves 2..N ship the next highest-leverage items on different surfaces. Do not invent leftover chrome — do ship the next real item. `**Cycle complete.**` under `cycle=1` does **not** release. Cap auto-flips LAST when the wave counter hits N; then attest. `/cycle 0` at wave N sets the cap to **N+1** (finish this wave, ship one more) and stays CONTINUE until then. Cap / `/done` / safety-valve LAST wraps the open wave only. `/ulw-off` aborts.
+**`max_waves=N` is a budget the user asked to spend.** Wave 1 writes the plan and ships the first item; waves 2..N ship the next highest-leverage items on different surfaces. Do not invent leftover chrome — do ship the next real item. `**Cycle complete.**` under `cycle=1` does **not** release. Cap auto-flips LAST when the wave counter hits N; then attest (that **is** a kill). `/cycle 0` at wave N sets the cap to **N+1** (finish this wave, ship one more, LAST-reflect, sit down — ULW stays on). `/done` / user cap / safety-valve LAST wraps the open wave only and releases. `/ulw-off` aborts.
 
 ### Smart + hard (not thrash)
 
@@ -96,7 +96,7 @@ attempt Stop
 
 Yield (“shall I continue?”) is still handoff-blocked. A red check is not evidence.
 
-Stuck-wall: N consecutive Stop attempts with **no file edits and no working-tree diff movement** (default same as goal stuck threshold / `FORGE_ULW_STUCK_THRESHOLD`). Progress is measured two ways: `editCount` delta **or** a changed `gitDiffFingerprint` — so work done via bash heredocs/`sed -i` (which never touches edit-tool counters) cannot false-trigger a stuck release. Outside a git repo the fingerprint is unavailable and the classic editCount-only rule applies. **Unlimited named-ship exhaust is not stuck** — those Stops stay blocked until a new `Reading:` or `/cycle 0`. A stuck-wall or LAST **Cycle complete.** release is visible on `run_end` / `--json` / the dim stop line (`stuckReleased` / `lastCycleReleased`).
+Stuck-wall: N consecutive Stop attempts with **no file edits and no working-tree diff movement** (default same as goal stuck threshold / `FORGE_ULW_STUCK_THRESHOLD`). Progress is measured two ways: `editCount` delta **or** a changed `gitDiffFingerprint` — so work done via bash heredocs/`sed -i` (which never touches edit-tool counters) cannot false-trigger a stuck release. Outside a git repo the fingerprint is unavailable and the classic editCount-only rule applies. **Unlimited named-ship exhaust is not stuck** — those Stops stay blocked until a new `Reading:` or `/cycle 0`. A stuck-wall or LAST **Cycle complete.** kill is visible on `run_end` / `--json` / the dim stop line (`stuckReleased` / `lastCycleReleased`). `/cycle 0` wrap sit-down is `lastCycleSatDown` (ULW stays on).
 
 `max_waves` is independent of the cycle flag: you can still `/cycle 0` early, or raise `/max-waves` / clear it mid-run.
 
@@ -146,7 +146,7 @@ Anti-gaming that is **structural**: proof demand (must run a check), leftover-ch
 - **Mid-run explore**: mill or contract hold latches `exploreRequired`. Stop refuses adopt/stamp until one `spawn_subagent` explore child **completes with a parseable `pick:`**. A file list without a pick does not clear the hold. Then a pick Reading may adopt. Not a wall-clock quota and not armed on leftover-sibling token holds. Play-loop (Playwright / played-the-game) is a different class and can release a mill sibling.
 - **Honest proof**: `ℹ fail N` on a grepped suite is red. Isolated `node --test tests/wN-*.mjs` is not wave proof. A new raw `readFileSync` in a pin-budget repo taints that wave’s proof.
 - **Hold context**: class/contract hold omits recent mill tool-call ids from the suffix (into sticky when it exists; otherwise `holdOmitToolIds` — never invents a first clip) and admits Wave 1 + picks at the tail. Evaluate-class garnish after wave 3 bounces once with the Wave 1 pick.
-- Leftover-chrome class (clip **or** glanceable ✓ / live › last-line / bang-shell / idle bg tail) auto-LAST at 4. Consolidation closers do not reset that streak. Δ-closer verify is not chrome.
+- Leftover-chrome class (clip **or** glanceable ✓ / live › last-line / bang-shell / idle bg tail) auto-LAST at 4 **only on a user `/max-waves` cap**. Unlimited duration holds and demands a different surface — it does not kill the run. Consolidation closers do not reset that streak. Δ-closer verify is not chrome.
 - User-facing product ships have a quality bar (not a persona): name the hard user job, finish one edge (empty/error/first-run) after wave 1, at most one labeled `Serendipity:`. Arms on build/evaluate of an app or named surface — not generic UI chrome, infra, or bugfix. Preview catalogs are not a reading. Existing `Reading:` notes count as the job.
 - Ship close grammar is one matcher: `Ship landed:` · `**Ship:**` · `Wave N ship:` · `Wave ship:` · `Wave shipped.` Auto-commit subjects use that ship, not an older wave-1 note.
 - Dock/`/status` ctx follows last provider `prompt_tokens` when it is higher than the local estimate.
@@ -182,7 +182,7 @@ Forge ports several runtime PE patterns from Grok Build / OpenCode:
 Live mid-run (no Ctrl+C):
 
 ```text
-/cycle 0                  # finish this wave + one more, then LAST
+/cycle 0                  # finish this wave + one more, LAST-reflect, sit down (ULW stays on)
 /max-waves 3              # set wave cap live
 finish the auth tests first   # free-text interjection (queued)
 ```

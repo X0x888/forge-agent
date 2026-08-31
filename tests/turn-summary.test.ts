@@ -294,6 +294,10 @@ test("run stop reason: cost / turns / continue-cap / empty / abort", () => {
     /cycle complete/,
   );
   assert.match(
+    formatRunStopReason({ lastCycleSatDown: true }) ?? "",
+    /wrap sat down/,
+  );
+  assert.match(
     formatRunStopReason({ lastErrorCode: "ulw_stuck_wall" }) ?? "",
     /stuck-wall/,
   );

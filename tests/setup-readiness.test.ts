@@ -408,8 +408,8 @@ describe("hints", () => {
     assert.equal(first?.text, LIVE_STEER_HINT);
     assert.match(first!.text, /type to queue/);
     assert.match(first!.text, /\/status/);
-    assert.match(first!.text, /\/cycle 0/);
     assert.match(first!.text, /no Ctrl\+C/);
+    assert.doesNotMatch(first!.text, /\/cycle 0/);
     assert.doesNotMatch(first!.text, /\/ulw-off|\/max-waves|\/notify/);
     const line = formatLiveSteerLine(first!.text);
     assert.match(line, /^  live ›  type to queue/);

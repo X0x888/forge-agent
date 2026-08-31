@@ -110,6 +110,7 @@ export interface RunStopReasonInput {
   releasedOnContinueCap?: boolean;
   stuckReleased?: boolean;
   lastCycleReleased?: boolean;
+  lastCycleSatDown?: boolean;
   aborted?: boolean;
   stopContinues?: number;
   lastErrorCode?: string | null;
@@ -161,6 +162,9 @@ export function formatRunStopReason(input: RunStopReasonInput): string | null {
   }
   if (input.stuckReleased) {
     return "  stop: stuck-wall — no progress; /cycle 1 or /ulw to resume";
+  }
+  if (input.lastCycleSatDown) {
+    return "  stop: wrap sat down — still ULW · type to continue · /done to end";
   }
   if (input.lastCycleReleased) {
     return "  stop: cycle complete — /cycle 1 or /ulw if more work remains";
