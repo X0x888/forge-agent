@@ -71,6 +71,45 @@ describe("openai-compat streamed tool_call index handling", () => {
     assert.equal(body?.tool_choice, "required");
   });
 
+  it("does not emit lone UTF-16 surrogate hex escapes (xAI serde_json 400)", async () => {
+    let raw = "";
+    globalThis.fetch = (async (_url, init) => {
+      raw = String(init?.body ?? "");
+      return sseResponse([
+        {
+          id: "chatcmpl_surr",
+          model: "grok-4.6",
+          choices: [{ delta: { content: "ok" }, finish_reason: "stop" }],
+        },
+      ]);
+    }) as typeof fetch;
+    const p = new OpenAICompatProvider({
+      id: "xai",
+      baseUrl: "https://api.x.ai/v1",
+      apiKey: "sk-test",
+    });
+    // Dogfood: DuckDuckGo snippet ended mid-emoji → messages[n].content \ud83d
+    const split = "🔥".slice(0, 1);
+    await p.chatStream(
+      {
+        ...makeReq(),
+        messages: [
+          {
+            role: "tool",
+            content: `unique features: ${split}\n\n_Source: DuckDuckGo HTML`,
+          },
+        ],
+      },
+      () => {},
+    );
+    assert.doesNotMatch(raw, /\\ud[89ab][0-9a-f]{2}/i);
+    JSON.parse(raw);
+    const parsed = JSON.parse(raw) as {
+      messages: Array<{ content: string }>;
+    };
+    assert.match(parsed.messages[0]!.content, /\uFFFD/);
+  });
+
   it("accumulates tool_call chunks that omit `index` (single-call proxy)", async () => {
     mockStream([
       {

@@ -5,6 +5,7 @@
  */
 import type { ToolContext, ToolResult } from "./types.js";
 import { boundToolOutput } from "./truncate.js";
+import { sliceUtf16Safe } from "../../util/json-utf8.js";
 import { mergeAbortSignals } from "../../util/abort.js";
 import { readBodyCapped, decodeCodePoint } from "./web-fetch.js";
 import { numberFieldError } from "./arg-types.js";
@@ -231,7 +232,7 @@ export function parseDdgHtml(html: string, n: number): HtmlHit[] {
     }
   }
   for (let i = 0; i < hits.length && i < snips.length; i++) {
-    if (snips[i]) hits[i].snippet = snips[i].slice(0, 240);
+    if (snips[i]) hits[i].snippet = sliceUtf16Safe(snips[i], 0, 240);
   }
   return hits;
 }

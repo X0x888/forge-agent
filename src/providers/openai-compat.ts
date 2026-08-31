@@ -26,6 +26,7 @@ import {
   extractReasoningContent,
   grokConvIdHeaders,
 } from "../session/prompt-cache.js";
+import { jsonStringifyUtf8 } from "../util/json-utf8.js";
 
 /**
  * Merge a streamed tool-name delta into the accumulator.
@@ -153,7 +154,7 @@ export class OpenAICompatProvider implements LLMProvider {
       const resp = await fetch(`${this.baseUrl}/chat/completions`, {
         method: "POST",
         headers: this.headers(req),
-        body: JSON.stringify(body),
+        body: jsonStringifyUtf8(body),
         signal: merged,
       });
       await throwIfNotOk(this.id, resp);
@@ -215,7 +216,7 @@ export class OpenAICompatProvider implements LLMProvider {
       resp = await fetch(`${this.baseUrl}/chat/completions`, {
         method: "POST",
         headers: this.headers(req),
-        body: JSON.stringify(body),
+        body: jsonStringifyUtf8(body),
         signal: merged,
       });
     } catch (err) {

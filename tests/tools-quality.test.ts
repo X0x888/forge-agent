@@ -392,6 +392,22 @@ describe("read_file past EOF", () => {
 });
 
 describe("managed truncation", () => {
+  it("sanitizes unpaired surrogates under the cap (xAI JSON body)", async () => {
+    const split = "🔥".slice(0, 1);
+    const r = await boundToolOutput(`unique features: ${split}\n`, {
+      maxLines: 100,
+      maxBytes: 10_000,
+    });
+    assert.equal(r.truncated, false);
+    assert.equal(
+      /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/.test(
+        r.text,
+      ),
+      false,
+    );
+    assert.match(r.text, /\uFFFD/);
+  });
+
   it("saves full output when over limit", async () => {
     process.env.FORGE_HOME = path.join(tmpRoot, "forge-home");
     const big = Array.from({ length: 3000 }, (_, i) => `line ${i}`).join("\n");

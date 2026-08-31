@@ -33,6 +33,7 @@ import {
   persistCheckpointRecord,
 } from "./checkpoint.js";
 import { detectProjectIntel } from "../util/project-intel.js";
+import { jsonStringifyUtf8, sliceUtf16Safe } from "../util/json-utf8.js";
 import { looksLikeAdvisoryUserMessage } from "../util/advisory-intent.js";
 import { formatMemoryForPrompt } from "../harness/decision-memory.js";
 import { formatProjectMemoryForPrompt } from "../harness/project-memory.js";
@@ -476,9 +477,9 @@ export function pruneOversizedMessageBodies(
         return {
           ...m,
           content:
-            c.slice(0, Math.floor(maxTool * 0.7)) +
+            sliceUtf16Safe(c, 0, Math.floor(maxTool * 0.7)) +
             `\n\n… [pruned ${c.length - maxTool} chars for context recovery — ${restore}] …\n\n` +
-            c.slice(-(Math.floor(maxTool * 0.2))),
+            sliceUtf16Safe(c, -(Math.floor(maxTool * 0.2))),
         };
       }
       return m;
@@ -492,7 +493,7 @@ export function pruneOversizedMessageBodies(
         next = {
           ...next,
           content:
-            c.slice(0, Math.floor(maxAsst * 0.75)) +
+            sliceUtf16Safe(c, 0, Math.floor(maxAsst * 0.75)) +
             `\n… [pruned assistant text for context recovery]`,
         };
       }
@@ -502,13 +503,13 @@ export function pruneOversizedMessageBodies(
           const args = tc.function.arguments || "";
           if (args.length <= maxArg) return tc;
           argsPruned = true;
-          const preview = args.slice(0, Math.max(80, maxArg - 80));
+          const preview = sliceUtf16Safe(args, 0, Math.max(80, maxArg - 80));
           return {
             ...tc,
             function: {
               ...tc.function,
               // Valid JSON stub — raw truncation often breaks the next API call
-              arguments: JSON.stringify({
+              arguments: jsonStringifyUtf8({
                 _pruned: true,
                 _originalChars: args.length,
                 _preview: preview,
@@ -532,7 +533,7 @@ export function pruneOversizedMessageBodies(
         return {
           ...m,
           content:
-            c.slice(0, maxAsst) +
+            sliceUtf16Safe(c, 0, maxAsst) +
             `\n… [pruned user message for context recovery]`,
         };
       }

@@ -8,6 +8,7 @@ import fsp from "node:fs/promises";
 import path from "node:path";
 import { ensureDir, ensureDirAsync, forgeHome } from "../../util/fs.js";
 import { truncateMiddle } from "../../util/format.js";
+import { replaceUnpairedSurrogates } from "../../util/json-utf8.js";
 
 export const DEFAULT_MAX_LINES = 2000;
 export const DEFAULT_MAX_BYTES = 32 * 1024;
@@ -249,7 +250,7 @@ export async function boundToolOutput(
   const overChars = maxChars !== undefined && body.length > maxChars;
 
   if (!overLines && !overBytes && !overChars) {
-    return { text: body, truncated: false };
+    return { text: replaceUnpairedSurrogates(body), truncated: false };
   }
 
   const outputPath = await saveFullOutput(body);
@@ -284,7 +285,7 @@ export async function boundToolOutput(
     `Use read_file on that path if you need more.]`;
 
   return {
-    text: preview + footer,
+    text: replaceUnpairedSurrogates(preview + footer),
     truncated: true,
     outputPath,
   };

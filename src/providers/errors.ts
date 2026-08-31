@@ -224,6 +224,10 @@ export function formatProviderError(
         code = "unsupported_feature";
         tips.push("/model <other> that supports tools/vision/params");
         tips.push("forge models -p " + err.provider + "  ·  drop unsupported params");
+      } else if (isLoneSurrogateJsonish(bodyBlob)) {
+        // serde_json (xAI): split emoji → `"\ud83d"` → 400 hex escape
+        tips.push("/retry — split emoji/surrogate in a message; Forge sanitizes on send");
+        tips.push("/compact  ·  /model <other>");
       } else {
         tips.push("Check model supports tools/vision for this request");
         tips.push("/model <other>  ·  forge doctor");
@@ -381,6 +385,13 @@ export function isCursorAgentInternalBody(text: string): boolean {
 
 function isCursorInternalish(text: string): boolean {
   return isCursorAgentInternalBody(text);
+}
+
+/** xAI/serde_json 400 when JSON has a lone `\uD800`–`\uDBFF` escape. */
+function isLoneSurrogateJsonish(text: string): boolean {
+  return /unexpected end of hex escape|lone leading surrogate in hex escape/i.test(
+    text || "",
+  );
 }
 
 function isUnsupportedFeatureish(text: string): boolean {

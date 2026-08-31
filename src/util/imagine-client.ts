@@ -8,6 +8,7 @@ import { isFalsy } from "./bool.js";
 import { mergeAbortSignals } from "./abort.js";
 import { nowEpoch } from "./fs.js";
 import { ProviderApiError, parseRetryAfterMs } from "../providers/errors.js";
+import { jsonStringifyUtf8 } from "./json-utf8.js";
 import type { ResolvedAuth } from "../auth/types.js";
 
 export const IMAGINE_IMAGE_MODEL = "grok-imagine-image-2.0";
@@ -113,7 +114,7 @@ async function imagineFetchJson(
         "Content-Type": "application/json",
         Authorization: `Bearer ${auth.token}`,
       },
-      body: body === undefined ? undefined : JSON.stringify(body),
+      body: body === undefined ? undefined : jsonStringifyUtf8(body),
       signal: merged,
     });
     const text = await res.text();

@@ -6,6 +6,7 @@
  * blobs, and native-tool rejects.
  */
 import { createHash } from "node:crypto";
+import { jsonStringifyUtf8 } from "../util/json-utf8.js";
 
 export const CONNECT_END_STREAM = 0b0000_0010;
 export const CONNECT_COMPRESSED = 0b0000_0001;
@@ -311,14 +312,14 @@ export function encodeSeedChatJson(opts: {
 }): string[] {
   const out: string[] = [];
   if (opts.systemPrompt.trim()) {
-    out.push(JSON.stringify({ role: "system", content: opts.systemPrompt }));
+    out.push(jsonStringifyUtf8({ role: "system", content: opts.systemPrompt }));
   }
   for (const t of opts.turns) {
     if (t.userText.trim()) {
-      out.push(JSON.stringify({ role: "user", content: t.userText }));
+      out.push(jsonStringifyUtf8({ role: "user", content: t.userText }));
     }
     if (t.assistantText.trim()) {
-      out.push(JSON.stringify({ role: "assistant", content: t.assistantText }));
+      out.push(jsonStringifyUtf8({ role: "assistant", content: t.assistantText }));
     }
   }
   return out;
@@ -896,7 +897,7 @@ export function systemPromptBlob(systemPrompt: string): {
   id: Buffer;
   data: Buffer;
 } {
-  const json = JSON.stringify({ role: "system", content: systemPrompt });
+  const json = jsonStringifyUtf8({ role: "system", content: systemPrompt });
   const data = Buffer.from(json, "utf8");
   return { id: sha256Bytes(data), data };
 }

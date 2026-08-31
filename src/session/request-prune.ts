@@ -22,6 +22,7 @@ import { ensureDir } from "../util/fs.js";
 import { envPositiveInt } from "../util/env.js";
 import { isFalsy } from "../util/bool.js";
 import { toolOutputDir } from "../agent/tools/truncate.js";
+import { sliceUtf16Safe } from "../util/json-utf8.js";
 import {
   extractSavedOutputPath,
   isIdempotentRestoreTool,
@@ -274,7 +275,7 @@ export function collapseToolCallArgs(tc: ToolCall): ToolCall {
 
 function softTrim(body: string, head: number, tail: number): string {
   if (body.length <= head + tail + SOFT_TRIM_SEP.length) return body;
-  return body.slice(0, head) + SOFT_TRIM_SEP + body.slice(-tail);
+  return sliceUtf16Safe(body, 0, head) + SOFT_TRIM_SEP + sliceUtf16Safe(body, -tail);
 }
 
 /** Stable spool so a second request does not write a new file. */

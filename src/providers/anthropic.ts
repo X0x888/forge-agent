@@ -11,6 +11,7 @@ import type {
 } from "./types.js";
 import { throwIfNotOk } from "./errors.js";
 import { parseToolArguments } from "../util/json-repair.js";
+import { jsonStringifyUtf8 } from "../util/json-utf8.js";
 import {
   armReasoningOutputWall,
   mergeAbortSignals,
@@ -330,7 +331,7 @@ export class AnthropicProvider implements LLMProvider {
           type: "function",
           function: {
             name: block.name || "",
-            arguments: JSON.stringify(block.input ?? {}),
+            arguments: jsonStringifyUtf8(block.input ?? {}),
           },
         });
       }
@@ -376,7 +377,7 @@ export class AnthropicProvider implements LLMProvider {
       const resp = await fetch(`${this.baseUrl}/messages`, {
         method: "POST",
         headers: this.headers(),
-        body: JSON.stringify(body),
+        body: jsonStringifyUtf8(body),
         signal: merged,
       });
       await throwIfNotOk("anthropic", resp);
@@ -423,7 +424,7 @@ export class AnthropicProvider implements LLMProvider {
       resp = await fetch(`${this.baseUrl}/messages`, {
         method: "POST",
         headers: this.headers(),
-        body: JSON.stringify(body),
+        body: jsonStringifyUtf8(body),
         signal: merged,
       });
     } catch (err) {

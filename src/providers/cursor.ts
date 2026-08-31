@@ -21,6 +21,7 @@ import type {
   ToolDefinition,
 } from "./types.js";
 import { ProviderApiError } from "./errors.js";
+import { jsonStringifyUtf8 } from "../util/json-utf8.js";
 import {
   armReasoningOutputWall,
   mergeAbortSignals,
@@ -1249,7 +1250,7 @@ export class CursorProvider implements LLMProvider {
       );
       return;
     }
-    const args = JSON.stringify(pending.args ?? {});
+    const args = jsonStringifyUtf8(pending.args ?? {});
     const tc: ToolCall = {
       id: pending.toolCallId,
       type: "function",

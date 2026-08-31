@@ -247,6 +247,23 @@ describe("formatProviderError", () => {
     assert.ok(f.tips.some((t) => /compact/i.test(t)));
   });
 
+  it("classifies xAI serde hex-escape 400 as retryable JSON unicode", () => {
+    const err = new ProviderApiError({
+      provider: "xai",
+      status: 400,
+      body: JSON.stringify({
+        error: {
+          message:
+            "Failed to parse the request body as JSON: messages[20].content: unexpected end of hex escape at line 1 column 117666",
+        },
+      }),
+    });
+    const f = formatProviderError(err, { provider: "xai", model: "grok-4.6" });
+    assert.equal(f.code, "bad_request");
+    assert.ok(f.tips.some((t) => /retry/i.test(t)));
+    assert.ok(f.tips.some((t) => /surrogate|emoji/i.test(t)));
+  });
+
   it("does not over-classify generic 'does not exist' / bare billing as model/quota", () => {
     const fileMissing = formatProviderError(
       new ProviderApiError({

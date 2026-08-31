@@ -1,16 +1,17 @@
 import chalk from "chalk";
 import { grokCostRates } from "../config/grok-model.js";
+import { replaceUnpairedSurrogates, sliceUtf16Safe } from "./json-utf8.js";
 
 /** Truncate long tool output keeping head + tail so errors at the end remain visible. */
 export function truncateMiddle(text: string, max = 80_000): string {
-  if (text.length <= max) return text;
+  if (text.length <= max) return replaceUnpairedSurrogates(text);
   const head = Math.floor(max * 0.6);
   const tail = Math.floor(max * 0.35);
   const omitted = text.length - head - tail;
-  return (
-    text.slice(0, head) +
-    `\n\n… [${omitted} chars omitted] …\n\n` +
-    text.slice(-tail)
+  return replaceUnpairedSurrogates(
+    sliceUtf16Safe(text, 0, head) +
+      `\n\n… [${omitted} chars omitted] …\n\n` +
+      sliceUtf16Safe(text, -tail),
   );
 }
 

@@ -83,6 +83,31 @@ describe("web_search decodeHtml", () => {
   });
 });
 
+describe("web_search snippet slice is UTF-16 safe", () => {
+  it("does not split an emoji at the 240-char cap", async () => {
+    const { parseDdgHtml } = await import("../src/agent/tools/web-search.js");
+    const fire = "🔥";
+    const snippet = "x".repeat(239) + fire + " tail";
+    const html = `
+      <a rel="nofollow" class="result__a" href="https://example.com/pet">Pet</a>
+      <span class="result__snippet">${snippet}</span>
+    `;
+    const hits = parseDdgHtml(html, 1);
+    assert.equal(hits.length, 1);
+    const s = hits[0]!.snippet || "";
+    assert.equal(
+      /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/.test(
+        s,
+      ),
+      false,
+    );
+    // Cap drops the split pair rather than keeping \uD83D
+    assert.ok(s.length <= 239);
+    assert.equal(s.endsWith("x"), true);
+    assert.equal(s.includes(fire), false);
+  });
+});
+
 describe("permission always-grant display", () => {
   it("shows the exact persisted pattern, e.g. Bash(rm *) from rm -rf /tmp/x", async () => {
     const { alwaysGrantLabel } = await import("../src/agent/permissions.js");
