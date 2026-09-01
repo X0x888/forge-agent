@@ -76,13 +76,19 @@ import {
   advanceUlwPhaseOnReading,
   countsTowardVerification,
   applyVerificationTrail,
-  verificationPassedFromResult,
-  isIsolateTestCommand,
-  isTypecheckCommand,
+  classifyVerificationRun,
   isFullSuiteCommand,
+  ulwPreferredCheckCommands,
   consumeMillHoldPrune,
   noteUlwThoughtOnlyStop,
+  type VerificationRunClass,
 } from "../harness/ulw-cycle.js";
+import {
+  getTask,
+  onBackgroundTaskSettled,
+  readTaskLogTailForVerification,
+  type BackgroundTask,
+} from "./tools/background-tasks.js";
 import { collectUlwJobKeepPaths } from "../harness/ulw-job-card.js";
 import { armUlwPlanMode, syncUlwPlanMode } from "../harness/ulw-plan-mode.js";
 import {
@@ -146,6 +152,7 @@ import {
   shouldEmitFixUntilGreen,
   shouldEmitVerifyNudge,
 } from "../harness/proof-poke.js";
+import path from "node:path";
 import {
   drainLiveNotices,
   formatLiveNoticesMessage,
@@ -433,7 +440,7 @@ export interface LoopResult {
  *   instead of paying high effort on every turn (escalate on failure, not
  *   by default).
  */
-interface HarnessRunStats {
+export interface HarnessRunStats {
   /** Structural check bash executed (pass or fail) — ULW wave ledger. */
   verificationRuns: number;
   /** Successful structural checks only — proof-claim / expert green trail. */
@@ -443,6 +450,132 @@ interface HarnessRunStats {
   /** Full project suite passed this wave — ULW proof=✓. */
   verificationFullSuiteRuns: number;
   effortBoostTurns: number;
+  /**
+   * Background task ids already credited (settle listener or a
+   * get_task_output join) — one check run is one credit however many
+   * channels observe it.
+   */
+  creditedBgTaskIds: Set<string>;
+}
+
+/** A background task started by THIS loop's bash tool (cwd = workspace). */
+function taskBelongsToWorkspace(
+  taskCwd: string | undefined,
+  workspace: string,
+): boolean {
+  if (!taskCwd || !workspace) return true;
+  try {
+    return path.resolve(taskCwd) === path.resolve(workspace);
+  } catch {
+    return true;
+  }
+}
+
+/**
+ * One credit path for every channel that observes a check run: foreground
+ * bash results, background tasks joined via get_task_output, and background
+ * tasks that settle while the model keeps working. Counters feed the ULW
+ * wave ledger; the trail feeds /status /share and the proof-claim guard.
+ */
+function applyVerificationCredit(opts: {
+  harnessStats: HarnessRunStats;
+  meta: SessionData["meta"];
+  proofPoke?: import("../harness/proof-poke.js").ProofPokeState;
+  cls: VerificationRunClass;
+  command: string;
+  preferred?: string[];
+}): void {
+  const { harnessStats, meta, cls } = opts;
+  if (!cls.ran) return;
+  harnessStats.verificationRuns += 1;
+  if (cls.isolate) {
+    harnessStats.verificationHelperOnlyRuns += 1;
+  } else if (cls.passed) {
+    harnessStats.verificationPassedRuns += 1;
+    if (cls.fullSuite) harnessStats.verificationFullSuiteRuns += 1;
+  }
+  try {
+    applyVerificationTrail(meta, {
+      command: opts.command,
+      isError: !cls.passed,
+      preferredCheckCommands: opts.preferred,
+    });
+    if (meta.lastVerificationOk === true) {
+      if (opts.proofPoke) noteGreenVerification(opts.proofPoke);
+    } else if (meta.lastVerificationOk === false) {
+      if (opts.proofPoke) {
+        noteRedVerification(opts.proofPoke, meta.editCount || 0);
+      }
+    }
+  } catch {
+    /* trail is best-effort */
+  }
+}
+
+/**
+ * Credit a settled background task once. `completed` (exit 0, no `fail N`)
+ * is passed; `failed` / `timeout` / `killed` ran and did not pass — a hung
+ * suite is proof=✗, exactly as the consolidation doctrine says.
+ */
+export function creditBackgroundTaskVerification(opts: {
+  task: BackgroundTask;
+  harnessStats: HarnessRunStats;
+  meta: SessionData["meta"];
+  proofPoke?: import("../harness/proof-poke.js").ProofPokeState;
+  preferred?: string[];
+}): VerificationRunClass | null {
+  const { task, harnessStats } = opts;
+  if (task.status === "running") return null;
+  if (harnessStats.creditedBgTaskIds.has(task.id)) return null;
+  harnessStats.creditedBgTaskIds.add(task.id);
+  const exitCode =
+    typeof task.exitCode === "number"
+      ? task.exitCode
+      : task.status === "completed"
+        ? 0
+        : 1;
+  let cls = classifyVerificationRun({
+    command: task.command,
+    exitCode,
+    isError: task.status !== "completed",
+    output: readTaskLogTailForVerification(task),
+    preferredCheckCommands: opts.preferred,
+  });
+  if (!cls.ran) return cls;
+  if (task.status !== "completed") cls = { ...cls, passed: false, fullSuite: false };
+  applyVerificationCredit({
+    harnessStats,
+    meta: opts.meta,
+    proofPoke: opts.proofPoke,
+    cls,
+    command: task.command,
+    preferred: opts.preferred,
+  });
+  return cls;
+}
+
+/** Task ids a get_task_output call addressed (args) or printed (output). */
+export function bgTaskIdsFromToolCall(
+  toolInput: Record<string, unknown>,
+  output: unknown,
+): string[] {
+  const ids = new Set<string>();
+  const add = (v: unknown): void => {
+    if (typeof v === "string") {
+      for (const p of v.split(/[\s,]+/)) if (p.trim()) ids.add(p.trim());
+    } else if (Array.isArray(v)) {
+      for (const x of v) add(x);
+    }
+  };
+  add(toolInput.task_id);
+  add(toolInput.taskId);
+  add(toolInput.task_ids);
+  add(toolInput.taskIds);
+  const text = typeof output === "string" ? output : "";
+  for (const m of text.matchAll(/^task_id:\s*(\S+)/gm)) {
+    if (m[1]) ids.add(m[1]);
+  }
+  return [...ids];
 }
 
 const READ_ONLY = new Set([
@@ -1041,6 +1174,7 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
     verificationHelperOnlyRuns: 0,
     verificationFullSuiteRuns: 0,
     effortBoostTurns: 0,
+    creditedBgTaskIds: new Set<string>(),
   };
   /** Consecutive Stop blocks from handoff-guard (polite yield). Resets on allow. */
   let handoffBlocks = 0;
@@ -1197,6 +1331,32 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
   /** Cap mid-loop verify nudges per prompt (anti-spam). */
   let verifyNudges = 0;
   const proofPoke = createProofPokeState();
+  // Background checks are proof when they settle: the spawn observed
+  // nothing, the exit observes everything a foreground run does. Dogfood
+  // ran 20/28 and 45/61 checks in the background (as the doctrine says)
+  // and every one was proof=✗ — the harness contradicted itself.
+  const offBgSettled = onBackgroundTaskSettled((task) => {
+    if (task.status === "running") return;
+    if (!taskBelongsToWorkspace(task.cwd, workspace)) return;
+    if (harnessStats.creditedBgTaskIds.has(task.id)) return;
+    void (async () => {
+      let preferred: string[] | undefined;
+      try {
+        const { detectProjectIntel } = await import("../util/project-intel.js");
+        preferred = detectProjectIntel(workspace).checkCommands;
+      } catch {
+        preferred = undefined;
+      }
+      preferred = ulwPreferredCheckCommands(session.meta.id, preferred);
+      creditBackgroundTaskVerification({
+        task,
+        harnessStats,
+        meta: session.meta,
+        proofPoke,
+        preferred,
+      });
+    })();
+  });
   let aborted = false;
   let releasedOnContinueCap = false;
   let hitMaxTurns = false;
@@ -2714,6 +2874,11 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
         } catch {
           preferredCheckCommands = undefined;
         }
+        // The Reading's declared verify command joins the stack table.
+        preferredCheckCommands = ulwPreferredCheckCommands(
+          session.meta.id,
+          preferredCheckCommands,
+        );
         const stopResult = await runStopGuard({
           config,
           hooks,
@@ -3475,6 +3640,7 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
   }
 
   defaultStarts?.flush();
+  offBgSettled();
 
   return {
     finalText,
@@ -4382,6 +4548,30 @@ async function prepareToolResultInner(
   // countsTowardVerification; run the check in the foreground for it to count.
   // Session last-verify trail records the last check (green or red) so Δ
   // never says "verify: none" after a failed npm test.
+  if (harnessStats && name === "get_task_output") {
+    // Joining a background check observes its exit code — that is proof,
+    // whichever channel (this join or the settle listener) sees it first.
+    let preferred: string[] | undefined;
+    try {
+      const { detectProjectIntel } = await import("../util/project-intel.js");
+      preferred = detectProjectIntel(workspace).checkCommands;
+    } catch {
+      preferred = undefined;
+    }
+    preferred = ulwPreferredCheckCommands(session.meta.id, preferred);
+    for (const id of bgTaskIdsFromToolCall(toolInput, result.output)) {
+      const task = getTask(id);
+      if (!task || task.status === "running") continue;
+      if (!taskBelongsToWorkspace(task.cwd, workspace)) continue;
+      creditBackgroundTaskVerification({
+        task,
+        harnessStats,
+        meta: session.meta,
+        proofPoke,
+        preferred,
+      });
+    }
+  }
   if (harnessStats && name === "bash") {
     const cmd = typeof toolInput.command === "string" ? toolInput.command : "";
     let preferred: string[] | undefined;
@@ -4391,32 +4581,29 @@ async function prepareToolResultInner(
     } catch {
       preferred = undefined;
     }
+    // The Reading's declared verify command (`Verify: ./build.sh --self-test`)
+    // joins the stack table so any project's check is recognised.
+    preferred = ulwPreferredCheckCommands(session.meta.id, preferred);
     if (countsTowardVerification(toolInput, preferred)) {
-      harnessStats.verificationRuns += 1;
       const rawOut = typeof result.output === "string" ? result.output : "";
-      const passed = verificationPassedFromResult({
+      const cls = classifyVerificationRun({
         command: cmd,
         isError: result.isError,
         output: rawOut,
+        preferredCheckCommands: preferred,
       });
-      const isolate = isIsolateTestCommand(cmd);
-      const typecheck = isTypecheckCommand(cmd);
-      if (isolate || typecheck) {
-        harnessStats.verificationHelperOnlyRuns += 1;
-      } else if (passed) {
-        harnessStats.verificationPassedRuns += 1;
-        if (isFullSuiteCommand(cmd, preferred)) {
-          harnessStats.verificationFullSuiteRuns += 1;
-        }
-      }
+      const passed = cls.passed;
       const prevOk = session.meta.lastVerificationOk;
       const prevCmd = session.meta.lastVerificationCommand || "";
+      applyVerificationCredit({
+        harnessStats,
+        meta: session.meta,
+        proofPoke,
+        cls,
+        command: cmd,
+        preferred,
+      });
       try {
-        applyVerificationTrail(session.meta, {
-          command: cmd,
-          isError: !passed,
-          preferredCheckCommands: preferred,
-        });
         if (
           !passed &&
           isFullSuiteCommand(cmd) &&
@@ -4427,12 +4614,7 @@ async function prepareToolResultInner(
             "\n\nSuite is still red. Isolates this wave are proof=ran. Consolidation/LAST still need the full suite (timeout = proof=✗ — do not skip).";
           result.output = `${String(result.output || "").replace(/\s+$/, "")}${tip}`;
         }
-        if (session.meta.lastVerificationOk === true) {
-          if (proofPoke) noteGreenVerification(proofPoke);
-        } else if (session.meta.lastVerificationOk === false) {
-          if (proofPoke) {
-            noteRedVerification(proofPoke, session.meta.editCount || 0);
-          }
+        if (session.meta.lastVerificationOk === false) {
           // Fix-until-green: tell the model immediately — don't wait for the
           // user to say "tests failed, fix them". One proof speaker per prompt.
           try {

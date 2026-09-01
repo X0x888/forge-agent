@@ -18,6 +18,14 @@
 import path from "node:path";
 import { forgeHome, readJsonFile, writeJsonFile, nowIso, nowEpoch } from "../util/fs.js";
 import { isTruthy } from "../util/bool.js";
+import {
+  VERIFICATION_CMD_RE,
+  isVerificationCommand,
+} from "./verify-command.js";
+import {
+  extractDeclaredChecks,
+  mergePreferredChecks,
+} from "./declared-checks.js";
 import { clearSoftTodoGateOnWindDown } from "./todo-gate.js";
 import { maybeDesktopNotify } from "../util/attention.js";
 import {
@@ -122,6 +130,7 @@ export {
   pickShipHint,
 } from "./ship-close.js";
 import {
+  BET_DECLINE_WINDOW,
   BET_MAX_SWAPS,
   BET_OFF_HOLD,
   CONCRETE_DELIVERABLE_RE,
@@ -258,8 +267,19 @@ export interface UlwCycleState {
   betSwaps?: number;
   /** Unlimited hold: job-moving ships off any bet reached BET_OFF_HOLD. */
   betHold?: boolean;
-  /** `Bet: none — <why>` reason; bet machinery is quiet for this mandate. */
+  /** `Bet: none — <why>` reason; bet machinery is quiet for a window of ships. */
   betDeclined?: string;
+  /** Credited ships since the decline (BET_DECLINE_WINDOW re-asks). */
+  betDeclineShips?: number;
+  /** Spent decline reasons — the same why cannot decline twice. */
+  betDeclineHistory?: string[];
+  /**
+   * Verify commands the model declared in a Reading / Bet (`Verify:
+   * ./build.sh --self-test`). Merged into the preferred check list so a
+   * project the stack detector does not know (Swift + build.sh, `make
+   * selfcheck`, `just ci`) still earns proof=✓ from a real exit code.
+   */
+  declaredChecks?: string[];
   /**
    * Wave ledger (newest last, capped). Facts per wave for the quality bar,
    * thin-wave detection, and /cycle status transparency. Optional for
@@ -491,60 +511,7 @@ const OFF_JOB_REORIENT = 3;
 /** Thought-only Stops in a cycle before forcing a look (not LAST). */
 export const THOUGHT_ONLY_LOOK_CYCLE = 3;
 
-/**
- * Bash command shape that counts as running verification. The agent loop
- * matches executed commands against this to produce the structural
- * `verificationRan` signal — execution, not prose.
- */
-export const VERIFICATION_CMD_RE =
-  /\b(?:npm|pnpm|yarn|bun|deno)\s+(?:run\s+)?(?:test|tests|spec|typecheck|type-check|lint|check|build|ci|verify|smoke|tsc|format-check|fmt-check)\b|\b(?:pytest|py\.test|jest|vitest|mocha|ava|phpunit|rspec|ctest|mypy|pyright|ruff|golangci-lint|staticcheck|biome)\b|\bpython(?:3)?\s+-m\s+unittest\b|\bcargo\s+(?:test|check|build|clippy)\b|\bgo\s+(?:test|vet|build)\b|\bmvn\s+(?:test|verify|package|compile)\b|\bgradle(?:w)?\s+(?:test|check|build)\b|\bmake\s+(?:test|check|build|all|ci)\b|\bmix\s+test\b|\bcomposer\s+test\b|\bturbo\s+run\s+(?:test|tests|typecheck|type-check|lint|check|build|ci|verify|smoke)\b|\bnx\s+(?:run-many|run)\b|\btsc\b|\beslint\b|\bdotnet\s+(?:test|build)\b|\bnpx\s+(?:tsc|eslint|vitest|jest|prettier|biome)\b|\b(?:yarn\s+dlx|bunx)\s+(?:tsc|eslint|vitest|jest)\b|\bforge\s+(?:test|check|typecheck|ci|smoke)\b|\b(?:node|tsx)\b[^\n]{0,120}--test\b/i;
-
-/**
- * True when a bash command counts as structural verification.
- * Matches VERIFICATION_CMD_RE, or an exact preferred project check command
- * (from project-intel) so custom scripts like `npm run unit` still count.
- */
-export function isVerificationCommand(
-  command: string,
-  preferredCheckCommands?: string[],
-): boolean {
-  const cmd = String(command || "").trim();
-  if (!cmd) return false;
-  if (VERIFICATION_CMD_RE.test(cmd)) return true;
-  const preferred = preferredCheckCommands || [];
-  if (!preferred.length) return false;
-  // Normalize whitespace; allow preferred as a full command or a trailing segment
-  // after cd/&& (common agent pattern: `cd pkg && npm test`).
-  const compact = cmd.replace(/\s+/g, " ").trim();
-  for (const p of preferred) {
-    const want = String(p || "").replace(/\s+/g, " ").trim();
-    if (!want) continue;
-    if (compact === want) return true;
-    if (
-      compact.endsWith(` && ${want}`) ||
-      compact.endsWith(`; ${want}`) ||
-      compact.endsWith(` | ${want}`) ||
-      compact.endsWith(` || ${want}`)
-    ) {
-      return true;
-    }
-    // Leading env assignments / prior segments: `FOO=1 npm test`, `cd x && npm test`
-    if (new RegExp(`(?:^|[;&|]\\s*)${escapeRegExp(want)}(?:\\s|$)`).test(compact)) {
-      return true;
-    }
-    // Preferred is a package script name ("unit") and cmd is `npm run unit` etc.
-    if (/^[a-zA-Z0-9:_-]+$/.test(want)) {
-      if (
-        new RegExp(
-          `\\b(?:npm|pnpm|yarn|bun|deno)\\s+run\\s+${escapeRegExp(want)}\\b`,
-        ).test(compact)
-      ) {
-        return true;
-      }
-    }
-  }
-  return false;
-}
+export { VERIFICATION_CMD_RE, isObserverOnlyCommand, isVerificationCommand } from "./verify-command.js";
 
 /**
  * True when a bash tool call counts toward the structural verification
@@ -685,6 +652,57 @@ export function verificationPassedFromResult(opts: {
   return true;
 }
 
+export interface VerificationRunClass {
+  /** The command is a check (VERIFICATION_CMD_RE / preferred / declared). */
+  ran: boolean;
+  /** Exit 0 and no `fail N` in the output. */
+  passed: boolean;
+  /** Isolate file/method check or typecheck — proof=ran, not proof=✓. */
+  isolate: boolean;
+  /** Project full suite (and passed). */
+  fullSuite: boolean;
+}
+
+/**
+ * One classification for a check run, whichever channel observed it: a
+ * foreground bash result, a background task the model joined with
+ * get_task_output, or a background task that settled while the model kept
+ * working. The *spawn* of a background task observes nothing (that is why
+ * countsTowardVerification refuses it); the settle/join observes the exit
+ * code and the output — the same evidence a foreground run gives. Dogfood
+ * ran 20 of 28 checks in the background on a Swift app and 45 of 61 on a
+ * Rust workspace; every one of them was proof=✗ before this.
+ */
+export function classifyVerificationRun(opts: {
+  command: string;
+  exitCode?: number | null;
+  isError?: boolean;
+  output?: string;
+  preferredCheckCommands?: string[];
+}): VerificationRunClass {
+  const cmd = String(opts.command || "");
+  const none: VerificationRunClass = {
+    ran: false,
+    passed: false,
+    isolate: false,
+    fullSuite: false,
+  };
+  if (!isVerificationCommand(cmd, opts.preferredCheckCommands)) return none;
+  const exitFailed =
+    typeof opts.exitCode === "number" && Number.isFinite(opts.exitCode)
+      ? opts.exitCode !== 0
+      : Boolean(opts.isError);
+  const passed = verificationPassedFromResult({
+    command: cmd,
+    isError: exitFailed,
+    output: opts.output || "",
+  });
+  const isolate = isIsolateTestCommand(cmd) || isTypecheckCommand(cmd);
+  const fullSuite =
+    passed && !isolate && isFullSuiteCommand(cmd, opts.preferredCheckCommands);
+  return { ran: true, passed, isolate, fullSuite };
+}
+
 /** `npm test` / `npm run test|ci|check` / unittest discover / bare pytest. */
 export function isFullSuiteCommand(
   command: string,
@@ -707,6 +725,14 @@ export function isFullSuiteCommand(
     if (/::/.test(c) || /\.py\b/.test(c)) return false;
     return true;
   }
+  // Whole-project suites in other stacks (isolate shapes returned false above).
+  if (
+    /\bcargo\s+(?:test|nextest\s+run)\b|\bswift\s+test\b|\bgo\s+test\b|\bdotnet\s+test\b|\b(?:flutter|dart)\s+test\b|\bmix\s+test\b|\brspec\b|\bzig\s+build\s+test\b|\bmake\s+(?:test|check|ci|verify)\b|\b(?:just|task)\s+(?:test|check|ci|verify)\b|\bgradle(?:w)?\s+test\b|\bmvn\s+(?:test|verify)\b|\bcomposer\s+test\b|\bstack\s+test\b|\bcabal\s+test\b|\bsbt\s+test\b|\blein\s+test\b/.test(
+      c,
+    )
+  ) {
+    return true;
+  }
   const preferred = preferredCheckCommands || [];
   for (const p of preferred) {
     const want = String(p || "").replace(/\s+/g, " ").trim();
@@ -714,8 +740,19 @@ export function isFullSuiteCommand(
     if (c === want || c.endsWith(` && ${want}`) || c.endsWith(`; ${want}`)) {
       return !isIsolateTestCommand(want);
     }
+    // Declared check runs with extra segments (`./build.sh && app --self-test; echo`).
+    if (
+      /^(?:\.\/|scripts?\/|bin\/|tools?\/)[\w./-]+/.test(want) &&
+      new RegExp(`(?:^|[;&|]\\s*)${escapeRegExpLocal(want)}(?:\\s|$)`).test(c)
+    ) {
+      return !isIsolateTestCommand(want);
+    }
   }
   return false;
+}
+
+function escapeRegExpLocal(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 /**
@@ -738,6 +775,24 @@ export function isIsolateTestCommand(command: string): boolean {
   if (/\b(?:python(?:3)?\s+-m\s+)?pytest\b/.test(c) || /\bpy\.test\b/.test(c)) {
     return /::/.test(c) || /\.py\b/.test(c);
   }
+  // Targeted runs in other stacks — a package / filter / single file.
+  if (/\bcargo\s+(?:test|nextest\s+run)\b/.test(c)) {
+    return (
+      /\s(?:-p|--package|--test|--lib|--bin|--doc|--example)\b/.test(c) ||
+      /\bcargo\s+(?:test|nextest\s+run)\s+(?!-)[\w:]+/.test(c)
+    );
+  }
+  if (/\bswift\s+test\b/.test(c)) return /--filter\b/.test(c);
+  if (/\bgo\s+test\b/.test(c)) {
+    return (
+      /\s-run\b/.test(c) ||
+      (/\bgo\s+test\b[^\n]*\s\.\/[\w/-]+/.test(c) && !/\.\/\.\.\./.test(c))
+    );
+  }
+  if (/\bdotnet\s+test\b/.test(c)) return /--filter\b/.test(c);
+  if (/\b(?:flutter|dart)\s+test\b/.test(c)) return /\btest\/\S+\.dart\b/.test(c);
+  if (/\bmix\s+test\b/.test(c)) return /\.exs\b/.test(c);
+  if (/\brspec\b/.test(c)) return /\bspec\/\S+/.test(c);
   if (/[*?]/.test(c)) return false;
   if (/node\s+--test\s+tests\/(?:\*\*|["']?\.\*|["']?$)/.test(c)) return false;
   const isNodeTest = /\bnode\b[^\n]*--test\b/.test(c) || /\btsx\s+--test\b/.test(c);
@@ -754,9 +809,6 @@ export function isHelperOnlyTestCommand(command: string): boolean {
   return isIsolateTestCommand(command);
 }
 
-function escapeRegExp(s: string): string {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
 
 /**
  * Detect verification evidence for a wave. `verificationRan` is the structural
@@ -824,6 +876,18 @@ export function isTypecheckCommand(command: string): boolean {
   if (/\b(?:npx|yarn dlx|bunx)\s+tsc\b/.test(c)) return true;
   if (/\btsc\b/.test(c) && /--noEmit/.test(c)) return true;
   if (/\b(?:turbo|nx|moon)\s+(?:run\s+)?(?:typecheck|type-check|tsc)\b/.test(c)) {
+    return true;
+  }
+  // Compile / lint-class checks in other stacks: real verification, ran
+  // not ✓ — the suite is the proof, the build is the smoke.
+  if (
+    /\b(?:cargo\s+(?:check|build|clippy)|swift\s+build|go\s+(?:build|vet)|dotnet\s+build|zig\s+build)\b/.test(
+      c,
+    ) &&
+    !/\b(?:cargo\s+(?:test|nextest)|swift\s+test|go\s+test|dotnet\s+test|zig\s+build\s+test)\b/.test(
+      c,
+    )
+  ) {
     return true;
   }
   return false;
@@ -1109,7 +1173,9 @@ function appendWaveRecord(
   });
   applyContractNote(s, classText, opts.themed === true, opts.sessionId);
   const onContract = closerOnContract(opts.sessionId, classText);
-  const play = Boolean(s.playLoopPending) || isPlayLoopCloser(classText);
+  // Structural only: a browser/Playwright call or a screenshot read this
+  // wave. "Play-loop:" in the closer is a claim, not a look.
+  const play = Boolean(s.playLoopPending);
   if (s.playLoopPending) s.playLoopPending = false;
   const tainted = consumeProofTaint(s);
   const proof = tainted ? false : opts.proof || play;
@@ -1154,8 +1220,13 @@ function appendWaveRecord(
     chrome: opts.chrome,
     ts: nowIso(),
   };
+  // Job files are the OPEN job: the Wave-1 reading, open named ships, and
+  // explore picks not yet done. Every path any explore ever cited used to
+  // count forever — a single-file Swift app credited 185/256 waves as
+  // job moves because every edit touched Sources/main.swift.
   const readingFiles = collectUlwJobKeepPaths(opts.sessionId, {
     namedShips: s.namedShips,
+    openOnly: true,
   });
   rec.jobMoved =
     !opts.chrome &&
@@ -1318,6 +1389,7 @@ export function completeUlwPlan(
   s.reorientNeedsEvidence = false;
   maybeAdoptNamedShips(s, opts?.closer);
   maybeAdoptBet(s, opts?.closer);
+  maybeAdoptDeclaredChecks(s, opts?.closer);
   saveUlwCycle(s);
   return true;
 }
@@ -1679,7 +1751,8 @@ function jobCreditForStamp(
     paths: opts.paths,
     cwd: opts.cwd,
     pinTaint: Boolean(s.rawPinProofTaint),
-    playLoop: Boolean(s.playLoopPending) || isPlayLoopCloser(opts.closer),
+    // Structural look only — prose "play-loop" must not bypass chrome/pin refusals.
+    playLoop: Boolean(s.playLoopPending),
     chromeStreak: s.chromePathStreak ?? 0,
     peekMill: isSlashPeekMillShip(opts.closer) || isPeekMillPaths(opts.paths),
     peekMillStreak: s.peekMillStreak ?? 0,
@@ -1753,8 +1826,15 @@ function resolveWaveProof(opts: {
   verificationFullSuite?: boolean;
   consolidation?: boolean;
   lastCycle?: boolean;
+  /**
+   * Structural look this wave: a Playwright / browser MCP call or a
+   * screenshot read_file (notePlayLoopRan). Closer prose ("Play-loop: …")
+   * is not a look — a Swift menu-bar app with no browser stamped seven
+   * proof=play waves by writing the word.
+   */
+  playLook?: boolean;
 }): { proof: boolean; proofKind: NonNullable<UlwWaveRecord["proofKind"]> } {
-  if (isPlayLoopCloser(opts.closer)) {
+  if (opts.playLook) {
     return { proof: true, proofKind: "play" };
   }
   const isolate = Boolean(opts.verificationHelperOnly);
@@ -1814,15 +1894,36 @@ function noteBetShip(
   rec: UlwWaveRecord,
   classText: string,
 ): void {
-  if (!s.openMandate || s.betDeclined) return;
+  if (!s.openMandate) return;
   if (isConsolidationCloser(classText)) return;
+  if (s.betDeclined) {
+    // `Bet: none — why` buys a window of hole-closing, not a waiver for the
+    // run: a 250-wave open mandate used to opt out at wave 1 and never be
+    // asked again. After BET_DECLINE_WINDOW credited ships the question
+    // returns; the spent reason is kept so it cannot decline twice.
+    s.betDeclineShips = (s.betDeclineShips ?? 0) + 1;
+    if (s.betDeclineShips >= BET_DECLINE_WINDOW) {
+      s.betDeclineHistory = [
+        ...(s.betDeclineHistory ?? []),
+        s.betDeclined,
+      ].slice(-4);
+      s.betDeclined = undefined;
+      s.betDeclineShips = 0;
+      s.betRequired = !s.bet;
+      s.betOffStreak = 0;
+      s.betHold = false;
+    }
+    return;
+  }
   if (rec.onBet && s.bet) {
     s.bet.slices += 1;
     s.betOffStreak = 0;
     s.betHold = false;
     return;
   }
-  if (!waveMovedJob(rec)) return;
+  // Every credited ship that is not a slice counts — a hole-close is smoke
+  // whether or not the job-move classifier liked it (that classifier was
+  // crediting 74% of dogfood waves once explore paths covered the tree).
   s.betOffStreak = (s.betOffStreak ?? 0) + 1;
   if (betHoldArmable(s) && s.betOffStreak >= BET_OFF_HOLD) {
     s.betHold = true;
@@ -1858,6 +1959,11 @@ function maybeCadenceReorient(s: UlwCycleState): void {
   const consolidation = s.wave > 0 && s.wave % CONSOLIDATION_EVERY === 0;
   if (consolidation) {
     s.soulNudgeDone = false;
+    // Proof demands are capped per proof-less streak and used to reset only
+    // on proof — a 256-wave run with no recognised check was asked twice,
+    // at waves 1 and 2, then never again. Every consolidation re-arms the
+    // demand so a proof-less streak is challenged at least every 4 waves.
+    s.proofDemands = 0;
     const holes = lastReflectLedger(s);
     s.midReflectHoles = holes.length ? holes : undefined;
     s.midReflectWave = s.wave;
@@ -1943,7 +2049,8 @@ function isMillSiblingCloser(
   paths: string[],
   kind?: ProdEditKind,
 ): boolean {
-  if (s.playLoopPending || isPlayLoopCloser(closer)) return false;
+  // Structural look only — "Play-loop:" prose must not dodge the mill hold.
+  if (s.playLoopPending) return false;
   if (isSlashPeekMillShip(closer) && (s.peekMillStreak ?? 0) >= 1) return true;
   const onContract = closerOnContract(s.sessionId, closer);
   if (onContract) return false;
@@ -2478,12 +2585,19 @@ export function maybeAdoptBet(
     const parsed = parseBetLine(source);
     if (!parsed) continue;
     if (parsed.kind === "none") {
-      if (s.betDeclined && s.betDeclined === parsed.reason) return undefined;
+      if (s.betDeclined && s.betDeclined === parsed.reason) continue;
+      // A spent decline (window closed) cannot be re-used: the same reason
+      // is not a second decline — the hold proceeds until a new why is
+      // written, a bet lands, or /cycle 0.
+      if ((s.betDeclineHistory ?? []).some((h) => sameBetText(h, parsed.reason))) {
+        continue;
+      }
       // A decline while a bet is open cancels it; memory keeps the why.
       s.bet = undefined;
       s.betHold = false;
       s.betRequired = false;
       s.betDeclined = parsed.reason;
+      s.betDeclineShips = 0;
       rememberBet(s.sessionId, `Bet: none — ${parsed.reason}`);
       return "declined";
     }
@@ -2511,6 +2625,74 @@ export function maybeAdoptBet(
     return "adopted";
   }
   return undefined;
+}
+
+function declaredChecksFromMemory(sessionId: string): string[] {
+  try {
+    const recs = activeMemoryRecords(sessionId);
+    const out: string[] = [];
+    for (let i = recs.length - 1; i >= 0; i--) {
+      const t = String(recs[i]?.text || "");
+      if (!/\b(?:Reading|Bet|Verify|Verification|Proof|Prove|Check)\s*:/i.test(t)) {
+        continue;
+      }
+      for (const c of extractDeclaredChecks(t)) {
+        if (!out.some((x) => x.toLowerCase() === c.toLowerCase())) out.push(c);
+      }
+      if (out.length >= 4) break;
+    }
+    return out.slice(0, 4);
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Harvest the Reading's / Bet's "command that proves it" onto the sidecar.
+ * The stack table (project-intel) does not know every project — a Swift
+ * app with `./build.sh --self-test`, `make selfcheck`, `just ci`. Declared
+ * checks join the preferred list, so running one (foreground, or a joined /
+ * settled background task) is structural proof. Newest first, capped.
+ */
+export function maybeAdoptDeclaredChecks(
+  s: UlwCycleState,
+  text?: string,
+): boolean {
+  const found = [
+    ...extractDeclaredChecks(text || ""),
+    ...(s.declaredChecks?.length ? [] : declaredChecksFromMemory(s.sessionId)),
+  ];
+  if (!found.length) return false;
+  const next = [...(s.declaredChecks ?? [])];
+  let added = false;
+  for (const c of found) {
+    if (next.some((x) => x.toLowerCase() === c.toLowerCase())) continue;
+    next.unshift(c);
+    added = true;
+  }
+  if (!added) return false;
+  s.declaredChecks = next.slice(0, 4);
+  return true;
+}
+
+/**
+ * Preferred check commands for this session: the Reading's declared
+ * checks first, then the stack table. Used by the loop for foreground and
+ * background verification credit and by proof tips.
+ */
+export function ulwPreferredCheckCommands(
+  sessionId: string | undefined,
+  base?: string[],
+): string[] | undefined {
+  if (!sessionId) return base;
+  let declared: string[] = [];
+  try {
+    const s = loadUlwCycle(sessionId);
+    declared = s?.enabled ? s.declaredChecks ?? [] : [];
+  } catch {
+    declared = [];
+  }
+  return mergePreferredChecks(base, declared);
 }
 
 export function markNamedShipDone(
@@ -2819,6 +3001,7 @@ export function maybeStampUlwWave(opts: {
     verificationFullSuite: opts.verificationFullSuite,
     consolidation: consolidationCloser || (s.wave + 1) % CONSOLIDATION_EVERY === 0,
     lastCycle: s.cycle !== 1,
+    playLook: Boolean(s.playLoopPending),
   });
   const summary =
     summarizeWave(closer, opts.sessionId) || "(mid-loop epoch)";
@@ -2860,6 +3043,7 @@ export function maybeStampUlwWave(opts: {
   // assistant turn, so orient may have already flipped before the list exists.
   maybeAdoptNamedShips(s, opts.lastAssistantMessage);
   maybeAdoptBet(s, opts.lastAssistantMessage);
+  maybeAdoptDeclaredChecks(s, opts.lastAssistantMessage);
 
   // Declared ship with real progress: this is a work unit. Capped ULW
   // must count it — otherwise the model invents Wave 3/4 while HUD stays 1/4
@@ -2961,7 +3145,7 @@ export function maybeStampUlwWave(opts: {
         siblingMillHolding(s.waves, changedPaths, credit.kind) &&
         !closerOnContract(opts.sessionId, closer) &&
         !onBetNow &&
-        !isPlayLoopCloser(closer)
+        !s.playLoopPending
       ) {
         s.siblingMillHold = true;
         markHoldArmed(s);
@@ -3301,6 +3485,23 @@ export function loadUlwCycle(sessionId: string): UlwCycleState | null {
     raw.betDeclined = undefined;
   }
   if (
+    typeof raw.betDeclineShips !== "number" ||
+    !Number.isFinite(raw.betDeclineShips)
+  ) {
+    raw.betDeclineShips = 0;
+  }
+  raw.betDeclineHistory = Array.isArray(raw.betDeclineHistory)
+    ? raw.betDeclineHistory
+        .filter((x): x is string => typeof x === "string" && x.trim().length > 0)
+        .slice(-4)
+    : undefined;
+  raw.declaredChecks = Array.isArray(raw.declaredChecks)
+    ? raw.declaredChecks
+        .filter((x): x is string => typeof x === "string" && x.trim().length > 0)
+        .map((x) => x.trim().slice(0, 200))
+        .slice(0, 4)
+    : undefined;
+  if (
     typeof raw.thoughtOnlyCycle !== "number" ||
     !Number.isFinite(raw.thoughtOnlyCycle)
   ) {
@@ -3592,7 +3793,7 @@ export function expandUlwMandate(mandate: string): { expanded: string; soft: boo
         `### Bet (open mandate — invent, not only repair)`,
         `Holes are not the spine of an open mandate. In the Wave-1 Reading name one **Bet:** — a capability THIS product cannot do today that a demanding user would notice — with the files it creates and the first slice plus the command that proves it. \`Bet: <capability> — <path> — first slice: <what + proof>\`. memory_write it.`,
         `Ship bet slices as waves (production change on the bet's files + a test that calls it); close holes as smoke and \`Serendipity:\`. Bet slices are job moves and never sibling mill. ${BET_OFF_HOLD} job-moving ships that touch no bet (named or not) hold unlimited ULW until a slice lands, a new Bet: with a path is written, or /cycle 0.`,
-        `\`Bet: none — <why no capability is worth more than the open holes>\` is a valid decline (once, with the why). A leftover list is not a bet; a smaller fix is not a bet.`,
+        `\`Bet: none — <why no capability is worth more than the open holes>\` declines for a window of ${BET_DECLINE_WINDOW} ships, then the question returns (the same why does not decline twice). A leftover list is not a bet; a smaller fix is not a bet.`,
       ].join("\n")
     : "";
 
@@ -3611,7 +3812,7 @@ export function expandUlwMandate(mandate: string): { expanded: string; soft: boo
         ``,
         `- Own the outcome end-to-end. Research when uncertain; spawn subagents when that is smarter; then build — no thrash, no permission-to-continue asks.`,
         `- Every wave: highest-leverage next objective vs the mandate · search-before-build · ship · cheapest real proof · hostile review · next wave while cycle=1.`,
-        `- Never foreground the full suite (\`npm test\` / \`npm run ci\`) as wave proof — a hung test pins the REPL. Targeted check, or background:true then get_task_output.`,
+        `- Never foreground the full suite (\`npm test\` / \`npm run ci\`) as wave proof — a hung test pins the REPL. Targeted check, or background:true then get_task_output wait — a joined or settled background check is proof exactly like a foreground run (its exit code is the evidence). Name the project's check in the Reading (\`Verify: <command>\`) when the stack table would not know it.`,
         `- Finish the **defect** class (callers, tests, dependents). Two clip/one-line chrome leftovers is enough — change surface or LAST. Do not hunt leftover dumps.`,
       ].join("\n"),
     };
@@ -3638,7 +3839,7 @@ export function expandUlwMandate(mandate: string): { expanded: string; soft: boo
       `2. **JUDGE** — single highest-leverage hard objective now (impact × confidence / cost). Write the reading.`,
       `3. **RESEARCH** — only as deep as uncertainty warrants; proactive subagents/MCP/web when that is the efficient path. Do not thrash blind.`,
       `4. **SHIP** one bounded high-leverage wave — a Bet slice by default; the reading's hole when the hole is the user's job. Defect-class siblings only. Search-before-build.`,
-      `5. **PROVE** — cheapest real check that can fail. Never foreground \`npm test\` / \`npm run ci\` / \`npm run check\` (a hung test pins the REPL). Prefer the last targeted check; if the full suite is required, \`background: true\` then \`get_task_output\`.`,
+      `5. **PROVE** — cheapest real check that can fail. Never foreground \`npm test\` / \`npm run ci\` / \`npm run check\` (a hung test pins the REPL). Prefer the last targeted check; if the full suite is required, \`background: true\` then \`get_task_output\` wait — a joined or settled background check counts as proof (exit code is the evidence). Name the project's check once in the Reading (\`Verify: <command>\`) so the harness recognises it in any stack.`,
       `6. **SERENDIPITY** — bounded adjacent fix on an open path if cheap; label \`Serendipity:\`.`,
       `7. **HOSTILE REVIEW** — fix real defects in your diff; skip cosmetic noise.`,
       `8. **REPEAT** while cycle=1. \`/cycle 0\` means finish this wave, ship one more, LAST-reflect, sit down — ULW stays on. Do not stop mid-wave. When cycle=0 from /done or a user max_waves cap, wrap this last wave and attest **Cycle complete.** with evidence.`,
@@ -3653,7 +3854,8 @@ export function expandUlwMandate(mandate: string): { expanded: string; soft: boo
       `- Advice-only / "looks fine" / defer to later — a written reading on an evaluate-class mandate is the work, not a deferral.`,
       `- Skipping the mandate's first verb (evaluate/audit) to ship a tiny adjacent polish.`,
       `- Low-leverage churn or token-burning busywork while harder work remains.`,
-      `- Six hole-closes in a row while a Bet sits unshipped — inventing is the mandate; repair is the smoke.`,
+      `- Six credited ships in a row that touch no Bet — inventing is the mandate; repair is the smoke.`,
+      `- Writing "Play-loop:" / "played the game" as proof — a look is a Playwright/browser call or a screenshot read_file, and a check is a command that ran (foreground, or a background task you joined).`,
       `- Grinding a polish class (clip every chrome line, leftover-dump hunting) after the reading's one ship.`,
       `- Re-reading a file after a successful edit to confirm the write — use the numbered receipt window.`,
       `- Subagent spam, infinite research without shipping, gold-plating without proof.`,
@@ -3713,6 +3915,10 @@ export function armUlwCycle(
     betSwaps: 0,
     betHold: false,
     betDeclined: undefined,
+    betDeclineShips: 0,
+    betDeclineHistory: undefined,
+    // Declared verify commands survive a re-arm — the project did not change.
+    declaredChecks: prev?.enabled ? prev.declaredChecks : undefined,
     // Wave ledger persists across re-arms (same session story); streak
     // counters reset — a fresh mandate earns a fresh quality context.
     waves: prev?.waves ?? [],
@@ -3836,6 +4042,8 @@ export function adoptUlwMandate(
   s.betSwaps = 0;
   s.betHold = false;
   s.betDeclined = undefined;
+  s.betDeclineShips = 0;
+  s.betDeclineHistory = undefined;
   s.backlogRequired = isBroadMandate(next);
   const nextPhase = initialUlwPlanPhase(sessionId, next, s);
   s.judgmentRequired = nextPhase.judgmentRequired;
@@ -4222,6 +4430,9 @@ export function resetUlwOnClear(sessionId: string): UlwCycleState | null {
     s.betSwaps = 0;
     s.betHold = false;
     s.betDeclined = undefined;
+    s.betDeclineShips = 0;
+    s.betDeclineHistory = undefined;
+    s.declaredChecks = undefined;
     s.backlogRequired = false;
     s.judgmentRequired = false;
   }
@@ -4701,6 +4912,7 @@ export function evaluateUlwAtStop(opts: {
     }
     const adoptedNamed = maybeAdoptNamedShips(s, msg);
     maybeAdoptBet(s, msg);
+    maybeAdoptDeclaredChecks(s, msg);
 
     // Already at/over cap (e.g. user lowered max_waves mid-run) → force LAST now.
     if (cap != null && s.wave >= cap) {
@@ -4735,6 +4947,7 @@ export function evaluateUlwAtStop(opts: {
         isConsolidationCloser(closer) ||
         (s.wave + 1) % CONSOLIDATION_EVERY === 0,
       lastCycle: false,
+      playLook: Boolean(s.playLoopPending),
     });
     const netDiff = classifyNetDiff(
       fp,
@@ -4865,10 +5078,9 @@ export function evaluateUlwAtStop(opts: {
     const userFacingShip = isUserFacingProductWork(s.mandate, {
       reading: readingNow,
     });
-    const playLookNow =
-      Boolean(s.playLoopPending) ||
-      Boolean(s.playLoopRan) ||
-      isPlayLoopCloser(closer);
+    // Structural only: Playwright / browser MCP calls or a screenshot read
+    // (notePlayLoopRan). The closer saying "play-loop" is a claim.
+    const playLookNow = Boolean(s.playLoopPending) || Boolean(s.playLoopRan);
     const behavioralNow =
       waveTestProofKind({ cwd: opts.cwd, paths: stampPaths }) === "behavioral";
     if (
@@ -5094,7 +5306,7 @@ export function evaluateUlwAtStop(opts: {
         siblingMillHolding(s.waves, stampPaths, stopCredit.kind) &&
         !closerOnContract(opts.sessionId, closer) &&
         !onBetStop &&
-        !isPlayLoopCloser(closer)
+        !s.playLoopPending
       ) {
         s.siblingMillHold = true;
         markHoldArmed(s);
@@ -5348,7 +5560,7 @@ function buildCycleReanchor(
           })()
         : null,
       opts.consolidation
-        ? `CONSOLIDATION WAVE (every ${CONSOLIDATION_EVERY}th): no new scope — run the project's full check suite (AGENTS.md / preferred checks) with bash background:true then get_task_output wait. Timeout / hang / skip / isolate-only is proof=✗. Isolates are proof=ran, not proof=✓. Then review the cumulative \`git diff\` as a hostile reviewer (regressions, weakened tests, leftover stubs). Fix real defects only. PLAN is re-armed — explore or play-loop, then a different-surface Reading.`
+        ? `CONSOLIDATION WAVE (every ${CONSOLIDATION_EVERY}th): no new scope — run the project's full check suite (AGENTS.md / preferred checks) with bash background:true then get_task_output wait; the joined run's exit 0 is proof=✓. Timeout / hang / skip / isolate-only is proof=✗. Isolates are proof=ran, not proof=✓. Then review the cumulative \`git diff\` as a hostile reviewer (regressions, weakened tests, leftover stubs). Fix real defects only. PLAN is re-armed — explore or play-loop, then a different-surface Reading.`
         : null,
       (opts.thinStreak ?? 0) >= 2
         ? `Waves are thinning (${opts.thinStreak} in a row with little substance). God-mode demand: pick a substantially higher-leverage hard objective (not churn) — or, if the hard work is genuinely exhausted, say so with evidence; the user can /cycle 0.`
@@ -5465,7 +5677,7 @@ export function ulwKickoffMessage(state: UlwCycleState): string {
       ? `- **PLAN gate:** cannot ship until you write the plan (\`Reading:\`, memory_write, or exit_plan_mode). Wave 1 always; later waves re-enter when the reading is stale. Then the driver /builds. Type /build to skip.`
       : null,
     state.betRequired
-      ? `- **Bet gate (open mandate):** the Reading names one \`Bet:\` — a capability this product cannot do today that a demanding user would notice (not a hole), the files it creates, and the first provable slice. Bet slices are job moves and never sibling mill; hole-fixes are smoke and Serendipity:. ${BET_OFF_HOLD} job-moving ships that touch no bet hold unlimited ULW. \`Bet: none — <why>\` declines once.`
+      ? `- **Bet gate (open mandate):** the Reading names one \`Bet:\` — a capability this product cannot do today that a demanding user would notice (not a hole), the files it creates, and the first provable slice. Bet slices are job moves and never sibling mill; hole-fixes are smoke and Serendipity:. ${BET_OFF_HOLD} credited ships that touch no bet hold unlimited ULW. \`Bet: none — <why>\` declines for ${BET_DECLINE_WINDOW} ships, then the question returns.`
       : null,
     `- ${ULW_LIVE_CONTROLS_HINT}`,
     ``,

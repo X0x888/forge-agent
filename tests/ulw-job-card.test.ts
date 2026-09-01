@@ -16,6 +16,7 @@ import {
   loadUlwCycle,
   maybeStampUlwWave,
   midReflectHolding,
+  notePlayLoopRan,
   noteUlwThoughtOnlyStop,
   saveUlwCycle,
   THOUGHT_ONLY_LOOK_CYCLE,
@@ -494,7 +495,35 @@ describe("consolidation Must-fix + no job-move holds", () => {
 });
 
 describe("play/look is a proof kind", () => {
-  it("stamps proofKind=play on a play-loop closer", () => {
+  it("prose 'Playwright play-loop' is a claim, not a look — proofKind stays what the check earned", () => {
+    withHome(() => {
+      const sid = "play-kind-prose";
+      fs.mkdirSync(path.join(process.env.FORGE_HOME!, "sessions", sid), {
+        recursive: true,
+      });
+      armUlwReady(sid, "improve this game", {
+        cycle: 1,
+        skipCheckpoint: true,
+      });
+      // Dogfood: a Swift menu-bar app with no browser stamped seven
+      // proof=play waves by writing "Play-loop:" in the closer.
+      const r = maybeStampUlwWave({
+        sessionId: sid,
+        editCount: 4,
+        openTodoCount: 0,
+        stepsSinceStamp: 1,
+        lastAssistantMessage:
+          "Wave shipped: planted the cry. Playwright play-loop, zero JS errors.",
+        verificationPassed: true,
+      });
+      assert.equal(r.stamped, true);
+      const w = loadUlwCycle(sid)!.waves?.at(-1);
+      assert.notEqual(w?.proofKind, "play");
+      assert.equal(w?.proofKind, "full");
+    });
+  });
+
+  it("stamps proofKind=play after a structural look (browser call / screenshot read)", () => {
     withHome(() => {
       const sid = "play-kind";
       fs.mkdirSync(path.join(process.env.FORGE_HOME!, "sessions", sid), {
@@ -504,6 +533,8 @@ describe("play/look is a proof kind", () => {
         cycle: 1,
         skipCheckpoint: true,
       });
+      // The loop calls this on playwright/browser MCP calls and png reads.
+      notePlayLoopRan(sid);
       const r = maybeStampUlwWave({
         sessionId: sid,
         editCount: 4,
@@ -518,6 +549,8 @@ describe("play/look is a proof kind", () => {
       assert.equal(w?.proofKind, "play");
       assert.equal(w?.proof, true);
       assert.equal(w?.jobMoved, true);
+      // The look is consumed by the stamp — the next wave must look again.
+      assert.equal(loadUlwCycle(sid)!.playLoopPending, false);
     });
   });
 });

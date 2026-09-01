@@ -31,6 +31,12 @@ export const BET_OFF_ADVISORY = 3;
 export const BET_OFF_HOLD = 6;
 /** Unshipped bets a run may replace before only a slice releases the hold. */
 export const BET_MAX_SWAPS = 2;
+/**
+ * Credited ships a `Bet: none — why` buys before the question returns. A
+ * decline is a window, not a waiver: an open mandate that opts out at wave
+ * 1 must re-decide with the hole ledger in front of it, not grind 250 waves.
+ */
+export const BET_DECLINE_WINDOW = 6;
 
 /**
  * Concrete-deliverable markers — a mandate with one of these is a work
@@ -282,8 +288,15 @@ export interface BetStatusSource {
   bet?: BetState;
   betRequired?: boolean;
   betDeclined?: string;
+  /** Credited ships since the decline (window of BET_DECLINE_WINDOW). */
+  betDeclineShips?: number;
   betHold?: boolean;
   betOffStreak?: number;
+}
+
+function declineWindowClip(s: BetStatusSource): string {
+  const n = Math.min(s.betDeclineShips ?? 0, BET_DECLINE_WINDOW);
+  return `${n}/${BET_DECLINE_WINDOW} ships, then asked again`;
 }
 
 export function formatBetStatusLine(s: BetStatusSource): string | undefined {
@@ -296,11 +309,11 @@ export function formatBetStatusLine(s: BetStatusSource): string | undefined {
     return `  Bet: ${b.text.slice(0, 120)} — slices ${b.slices} · ${off} ship(s) since it moved${hold}`;
   }
   if (s.betDeclined) {
-    return `  Bet: declined — ${s.betDeclined.slice(0, 120)}`;
+    return `  Bet: declined (${declineWindowClip(s)}) — ${s.betDeclined.slice(0, 120)}`;
   }
   if (s.betRequired) {
     const hold = holding ? " · HOLD (write one, decline, or /cycle 0)" : "";
-    return `  Bet: none yet — open mandate; the next Reading names one (\`Bet: <capability> — <path> — first slice\`) or declines (\`Bet: none — why\`) · ${off} job-moving ship(s) without one${hold}`;
+    return `  Bet: none yet — open mandate; the next Reading names one (\`Bet: <capability> — <path> — first slice\`) or declines (\`Bet: none — why\`) · ${off} credited ship(s) without one${hold}`;
   }
   return undefined;
 }
@@ -313,7 +326,9 @@ export function formatBetCardLine(s: BetStatusSource): string | undefined {
     const b = s.bet;
     return `Open bet: ${b.text.slice(0, 200)}${betPathsClip(b)} — slices ${b.slices} · ${off} ship(s) since it moved. A bet slice is the wave; a hole is smoke.`;
   }
-  if (s.betDeclined) return `Bet: declined — ${s.betDeclined.slice(0, 160)}`;
+  if (s.betDeclined) {
+    return `Bet: declined (${declineWindowClip(s)}) — ${s.betDeclined.slice(0, 160)}`;
+  }
   if (s.betRequired) {
     return "Bet: none on file (open mandate) — name one: `Bet: <capability this product cannot do today> — <path> — first slice`, or `Bet: none — why`.";
   }
@@ -322,7 +337,14 @@ export function formatBetCardLine(s: BetStatusSource): string | undefined {
 
 /** Re-anchor advisory between the advisory and hold thresholds. */
 export function formatBetReanchorLine(s: BetStatusSource): string | undefined {
-  if (!s.openMandate || s.betDeclined) return undefined;
+  if (!s.openMandate) return undefined;
+  if (s.betDeclined) {
+    const left = BET_DECLINE_WINDOW - Math.min(s.betDeclineShips ?? 0, BET_DECLINE_WINDOW);
+    if (left <= 2) {
+      return `⚠ Bet decline window closes in ${left} ship(s) — then the open mandate owes a \`Bet:\` again (the same why does not decline twice). What can this product still not do?`;
+    }
+    return undefined;
+  }
   const off = s.betOffStreak ?? 0;
   if (s.bet) {
     if (off >= BET_OFF_HOLD) {
@@ -335,9 +357,9 @@ export function formatBetReanchorLine(s: BetStatusSource): string | undefined {
   }
   if (s.betRequired) {
     if (off >= BET_OFF_HOLD) {
-      return `⚠ ${off} job-moving ships on an open mandate with no Bet on file — HOLD is armed: write \`Bet: <capability> — <path> — first slice\` (or \`Bet: none — why\`) before the next Stop.`;
+      return `⚠ ${off} credited ships on an open mandate with no Bet on file — HOLD is armed: write \`Bet: <capability> — <path> — first slice\` (or \`Bet: none — why\`) before the next Stop.`;
     }
-    return `⚠ Open mandate with no Bet on file${off >= BET_OFF_ADVISORY ? ` (${off} job-moving ships without one; unlimited ULW holds at ${BET_OFF_HOLD})` : ""} — name one this wave (\`Bet: <capability> — <path> — first slice\`) or \`Bet: none — why\`.`;
+    return `⚠ Open mandate with no Bet on file${off >= BET_OFF_ADVISORY ? ` (${off} credited ships without one; unlimited ULW holds at ${BET_OFF_HOLD})` : ""} — name one this wave (\`Bet: <capability> — <path> — first slice\`) or \`Bet: none — why\`.`;
   }
   return undefined;
 }

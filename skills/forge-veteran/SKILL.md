@@ -43,11 +43,11 @@ Write a `Reading:` that includes:
 - **Product** — what a demanding user of this repo actually uses it for
 - **Better** — 2–4 directions a veteran would chase (not a chrome catalog)
 - **Passed on** — siblings you will not ship this wave, with a one-line why
-- **ONE ship** — file paths + the command that can fail
-- **Bet** — the capability this product cannot do today that a demanding user would notice: `Bet: <capability> — <path it lives in> — first slice: <what + the command that proves it>`. Holes are not the spine of an open mandate; a smaller fix is not a bet. `Bet: none — <why>` declines once, with the why.
-- **Feel vs proof** — if this is a game or UI, name the play/look check (Playwright + `read_file` the png)
+- **ONE ship** — file paths + `Verify: <the command that can fail>` (the harness adopts that command as the project's check — `./build.sh --self-test`, `make selfcheck`, `just ci` count in any stack)
+- **Bet** — the capability this product cannot do today that a demanding user would notice: `Bet: <capability> — <path it lives in> — first slice: <what + the command that proves it>`. Holes are not the spine of an open mandate; a smaller fix is not a bet. `Bet: none — <why>` declines for a window of six ships, then the question returns; the same why never declines twice.
+- **Feel vs proof** — if this is a game or UI, name the play/look check (Playwright + `read_file` the png). The look is the call, not the sentence — "Play-loop:" in a closer proves nothing.
 
-A leftover list of HUD chips is not a reading. A job a player/user notices is. A run that only closes holes on an open mandate is repair, not the work — the harness holds after six declared ships off the open Bet.
+A leftover list of HUD chips is not a reading. A job a player/user notices is. A run that only closes holes on an open mandate is repair, not the work — the harness holds after six credited ships off any Bet.
 
 ## 2. Research like a veteran of this domain
 
@@ -72,7 +72,7 @@ Do not skip research because tests are red unless the red is the user's job.
 
 ## 3. Ship one piece
 
-One objective — a Bet slice by default under an open mandate (production on the bet's files + a test that calls it); the reading's hole when the hole is the user's job. Prove it. Hostile-review the diff. Commit (ULW auto-commits waves).
+One objective — a Bet slice by default under an open mandate (production on the bet's files + a test that calls it); the reading's hole when the hole is the user's job. Prove it: a `background: true` suite counts when you `get_task_output` it (or it settles) — its exit code is the evidence, foreground or not. Hostile-review the diff. Commit (ULW auto-commits waves).
 
 If you generated art, `read_file` it and say what is still wrong.
 

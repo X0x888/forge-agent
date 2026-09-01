@@ -61,6 +61,8 @@ Long ULW runs fail when cliff compaction or context rot drops the user's exact c
 - Injected on every ULW Stop re-anchor and into structured compact (`## 1b. Decisions`)
 - Agent tool: `memory_write`; slash: `/memory list|add …|seed`
 - Wave-boundary OM-lite facts are recorded as `kind=wave` observations
+- Cap 400 with a **load-bearing trim**: superseded rows go first, then wave observations beyond 48, then the oldest non-durable rows; priorities/constraints/blockers/out-of-scope, `MANDATE:`, `Bet:` and the first `Reading:` are never evicted (both 400-record dogfood runs had lost their mandate to an oldest-first slice)
+- `Job:` / `Next need:` are one-slot notes — a new Reading supersedes the previous row instead of appending (107 duplicate `Job:` rows ate one ledger)
 - Soft/broad mandates require a **todo backlog (≥2)** before free-invent Wave 1 (contract before god-mode)
 - `/max-waves` and `/budget` remain **spend valves**, not substitutes for durable intent
 

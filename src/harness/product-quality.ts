@@ -8,6 +8,7 @@
 import {
   appendMemoryRecord,
   activeMemoryRecords,
+  supersedeMemoryRecords,
 } from "./decision-memory.js";
 
 const JOB_PREFIX = "Job:";
@@ -146,21 +147,48 @@ export function harvestProductQualityNotes(
 ): void {
   if (!sessionId || !text?.trim()) return;
   try {
+    // One slot each: every re-Reading used to append another `Job:` row
+    // (107 in one dogfood ledger), evicting the mandate at the 400 cap
+    // and eating compaction's memory budget. Replace, keep history.
     const job = usableJob(text);
     if (job) {
-      appendMemoryRecord(sessionId, {
-        kind: "decision",
-        source: "agent",
-        text: `${JOB_PREFIX} ${job}`,
-      });
+      const line = `${JOB_PREFIX} ${job}`;
+      const exists = agentTexts(sessionId).some(
+        (t) => t.toLowerCase() === line.toLowerCase(),
+      );
+      if (!exists) {
+        supersedeMemoryRecords(
+          sessionId,
+          (r) =>
+            r.source === "agent" &&
+            r.text.toLowerCase().startsWith(JOB_PREFIX.toLowerCase()),
+        );
+        appendMemoryRecord(sessionId, {
+          kind: "decision",
+          source: "agent",
+          text: line,
+        });
+      }
     }
     const next = extractNextNeed(text);
     if (next) {
-      appendMemoryRecord(sessionId, {
-        kind: "priority",
-        source: "agent",
-        text: `${NEXT_NEED_PREFIX} ${next}`,
-      });
+      const line = `${NEXT_NEED_PREFIX} ${next}`;
+      const exists = activeMemoryRecords(sessionId).some(
+        (r) => r.text.toLowerCase() === line.toLowerCase(),
+      );
+      if (!exists) {
+        supersedeMemoryRecords(
+          sessionId,
+          (r) =>
+            r.source === "agent" &&
+            r.text.toLowerCase().startsWith(NEXT_NEED_PREFIX.toLowerCase()),
+        );
+        appendMemoryRecord(sessionId, {
+          kind: "priority",
+          source: "agent",
+          text: line,
+        });
+      }
     }
     if (hasProductEdge(text)) {
       appendMemoryRecord(sessionId, {

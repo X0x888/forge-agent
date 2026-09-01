@@ -172,11 +172,15 @@ describe("explore-map contract", () => {
         }),
       );
       assert.deepEqual(loadExploreMapPicks(sid), [pick]);
-      armUlwCycle(sid, "Improve this game.", {
+      // A hard mandate: on an open one ("Improve this game.") the Bet
+      // contract holds first — six credited ships that touch no bet — so
+      // the eight-ship explore contract is tested on its own here.
+      armUlwCycle(sid, "Fix the Memory Walk reskin pick and the joiner HUD tag from the explore map; add tests.", {
         cycle: 1,
         skipCheckpoint: true,
         editCount: 0,
       });
+      assert.equal(loadUlwCycle(sid)!.openMandate, false);
       const ships = [
         "Wave shipped: hidden lifetime now ticks from the start of a life.",
         "Wave shipped: functional tools no longer spawn fully revealed.",

@@ -57,6 +57,8 @@ export interface UlwJobCardSource {
 
 export interface UlwJobCard {
   wave1Reading?: string;
+  /** Latest adopted Reading when it differs from Wave 1 (re-PLAN happened). */
+  currentReading?: string;
   /** Open bet / bet owed / bet declined — one line, or none on hard mandates. */
   betLine?: string;
   openNamedShips: string[];
@@ -72,7 +74,13 @@ export interface UlwJobCard {
   jobMovedCount: number;
 }
 
-const FILE_PATH_RE = /\b[\w./-]+\.(ts|tsx|js|jsx|mjs|cjs|py|rs|go|md)\b/g;
+/**
+ * Source paths a Reading may name. Was JS/Python/Rust/Go/MD only — a Swift
+ * or Kotlin or C# Reading yielded no job files, so nothing it shipped could
+ * be "on the reading's files".
+ */
+const FILE_PATH_RE =
+  /\b[\w./-]+\.(ts|tsx|js|jsx|mjs|cjs|py|rs|go|md|swift|kt|kts|java|scala|rb|php|cs|c|cc|cpp|h|hpp|m|mm|ex|exs|zig|dart|vue|svelte|lua|sh|sql|css|html)\b/g;
 
 export function extractReadingFilePaths(text: string): string[] {
   const out: string[] = [];
@@ -89,9 +97,45 @@ export function extractReadingFilePaths(text: string): string[] {
   return out;
 }
 
+function normShipText(t: string): string {
+  return (t || "").replace(/\s+/g, " ").trim().toLowerCase();
+}
+
+/**
+ * An explore pick is still the job while its seeded named ship is open.
+ * Seeds are `clip(pick)` (whitespace-normalised, 280 chars), so a prefix
+ * comparison is exact for the seeded text.
+ */
+function pickIsOpen(
+  pick: string,
+  namedShips: Array<{ text: string; status?: string; source?: string }>,
+): boolean {
+  const seeded = namedShips.filter((n) => n.source === "explore-map");
+  if (!seeded.length) return true; // nothing seeded yet — the map is the job
+  const p = normShipText(pick);
+  for (const n of seeded) {
+    const t = normShipText(n.text);
+    if (!t) continue;
+    if (p === t || p.startsWith(t) || t.startsWith(p)) {
+      return n.status !== "done";
+    }
+  }
+  return true;
+}
+
+/**
+ * Paths that ARE the job: the Wave-1 reading's files, explore-map picks,
+ * named ships. `openOnly` (job-move credit) drops done picks and done named
+ * ships — a closed pick's files stop being the job. The prune keep-set
+ * still uses the broad form so old job tools are not clipped off the wire.
+ */
 export function collectUlwJobKeepPaths(
   sessionId: string,
-  extra?: { namedShips?: Array<{ text: string; status?: string }> },
+  extra?: {
+    namedShips?: Array<{ text: string; status?: string; source?: string }>;
+    /** Only open picks / open named ships count (job-move credit). */
+    openOnly?: boolean;
+  },
 ): string[] {
   const out: string[] = [];
   const seen = new Set<string>();
@@ -101,16 +145,19 @@ export function collectUlwJobKeepPaths(
     seen.add(n.toLowerCase());
     out.push(n);
   };
+  const named = extra?.namedShips ?? [];
   const reading = sessionId ? loadWave1Reading(sessionId) : undefined;
   for (const p of extractReadingFilePaths(reading || "")) push(p);
   try {
     for (const e of loadExploreMapEntries(sessionId)) {
+      if (extra?.openOnly && !pickIsOpen(e.pick, named)) continue;
       for (const p of e.paths) push(p);
     }
   } catch {
     /* */
   }
-  for (const n of extra?.namedShips ?? []) {
+  for (const n of named) {
+    if (extra?.openOnly && n.status === "done") continue;
     for (const p of extractReadingFilePaths(n.text || "")) push(p);
   }
   return out;
@@ -212,6 +259,25 @@ function wave1ReadingFromMemory(sessionId: string): string | undefined {
   return undefined;
 }
 
+/** Latest `Reading:` in memory — the live plan after a re-PLAN. */
+function currentReadingFromMemory(sessionId: string): string | undefined {
+  if (!sessionId) return undefined;
+  try {
+    const recs = activeMemoryRecords(sessionId);
+    for (let i = recs.length - 1; i >= 0; i--) {
+      const t = String(recs[i]?.text || "");
+      const m = t.match(/\*{0,2}Reading:\*{0,2}\s+(.{20,400})/i);
+      if (!m?.[1]) continue;
+      const body = m[1].replace(/\s+/g, " ").trim().slice(0, 400);
+      if (/user \/build|ship the armed mandate/i.test(body)) continue;
+      return body;
+    }
+  } catch {
+    /* */
+  }
+  return undefined;
+}
+
 function lastPlayFromMemory(sessionId: string): string | undefined {
   if (!sessionId) return undefined;
   try {
@@ -241,10 +307,16 @@ export function buildUlwJobCard(src: UlwJobCardSource): UlwJobCard {
   const playMem = src.sessionId
     ? lastPlayFromMemory(src.sessionId)
     : undefined;
+  const wave1 = src.sessionId ? wave1ReadingFromMemory(src.sessionId) : undefined;
+  const current = src.sessionId
+    ? currentReadingFromMemory(src.sessionId)
+    : undefined;
   return {
-    wave1Reading: src.sessionId
-      ? wave1ReadingFromMemory(src.sessionId)
-      : undefined,
+    wave1Reading: wave1,
+    currentReading:
+      current && wave1 && current.slice(0, 80) !== wave1.slice(0, 80)
+        ? current
+        : undefined,
     betLine: formatBetCardLine(src),
     openNamedShips: open.slice(0, 8),
     lastNonMillShip: last
@@ -284,6 +356,9 @@ export function formatUlwJobCard(
   const lines: string[] = [];
   if (card.wave1Reading) {
     lines.push(`Wave 1 reading: ${card.wave1Reading}`);
+  }
+  if (card.currentReading) {
+    lines.push(`Current reading (latest re-PLAN): ${card.currentReading}`);
   }
   if (card.betLine) lines.push(card.betLine);
   if (card.openNamedShips.length) {

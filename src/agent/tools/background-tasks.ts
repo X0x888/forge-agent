@@ -566,6 +566,7 @@ export async function startBackgroundTask(opts: {
     task.child = undefined;
     settleTaskJournal(task);
     publishBgActivity();
+    emitSettled(task);
     maybeNotifyBgComplete(task, opts.sessionId);
   });
   child.on("error", (err) => {
@@ -577,6 +578,7 @@ export async function startBackgroundTask(opts: {
     task.child = undefined;
     settleTaskJournal(task);
     publishBgActivity();
+    emitSettled(task);
     maybeNotifyBgComplete(task, opts.sessionId);
   });
 
@@ -585,6 +587,59 @@ export async function startBackgroundTask(opts: {
 
 export function getTask(id: string): BackgroundTask | undefined {
   return tasks.get(id);
+}
+
+type SettledListener = (task: BackgroundTask) => void;
+const settledListeners = new Set<SettledListener>();
+
+/**
+ * Observe background tasks leaving `running`. The spawn of a background
+ * check observes nothing — the settle observes the exit code and the logs,
+ * the same evidence a foreground run gives. The agent loop credits ULW
+ * verification from here (and from get_task_output joins) so `background:
+ * true` suites are proof, not a proof=✗ hole.
+ */
+export function onBackgroundTaskSettled(listener: SettledListener): () => void {
+  settledListeners.add(listener);
+  return () => {
+    settledListeners.delete(listener);
+  };
+}
+
+function emitSettled(task: BackgroundTask): void {
+  for (const l of [...settledListeners]) {
+    try {
+      l(task);
+    } catch {
+      /* listeners never break the bg lifecycle */
+    }
+  }
+}
+
+/** Last bytes of stdout+stderr for a settled task (fail-count parsing). */
+export function readTaskLogTailForVerification(
+  task: BackgroundTask,
+  maxBytes = 24_000,
+): string {
+  const readEnd = (file: string): string => {
+    try {
+      const st = fs.statSync(file);
+      const start = Math.max(0, st.size - maxBytes);
+      const fd = fs.openSync(file, "r");
+      try {
+        const buf = Buffer.alloc(st.size - start);
+        fs.readSync(fd, buf, 0, buf.length, start);
+        return buf.toString("utf8");
+      } finally {
+        fs.closeSync(fd);
+      }
+    } catch {
+      return "";
+    }
+  };
+  const out = readEnd(task.stdoutPath);
+  const err = readEnd(task.stderrPath);
+  return [out, err].filter(Boolean).join("\n");
 }
 
 export function listTasks(): BackgroundTask[] {

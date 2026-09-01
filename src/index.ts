@@ -546,7 +546,26 @@ export {
   formatBetStatusLine,
   formatBetCardLine,
   formatBetReanchorLine,
+  BET_DECLINE_WINDOW,
 } from "./harness/bet-contract.js";
+export {
+  classifyVerificationRun,
+  isObserverOnlyCommand,
+  maybeAdoptDeclaredChecks,
+  ulwPreferredCheckCommands,
+} from "./harness/ulw-cycle.js";
+export type { VerificationRunClass } from "./harness/ulw-cycle.js";
+export {
+  extractDeclaredChecks,
+  looksLikeCheckCommand,
+  mergePreferredChecks,
+  MAX_DECLARED_CHECKS,
+} from "./harness/declared-checks.js";
+export {
+  onBackgroundTaskSettled,
+  readTaskLogTailForVerification,
+} from "./agent/tools/background-tasks.js";
+export { localCheckScripts } from "./util/project-intel.js";
 export {
   collectRecentMillToolIds,
   applyMillHoldPrune,
@@ -567,6 +586,9 @@ export {
 export {
   loadDecisionMemory,
   saveDecisionMemory,
+  trimDecisionRecords,
+  supersedeMemoryRecords,
+  WAVE_RECORDS_KEEP,
   seedMemoryFromMandate,
   appendMemoryRecord,
   formatMemoryForPrompt,

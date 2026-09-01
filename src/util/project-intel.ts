@@ -87,6 +87,12 @@ function stackFingerprint(root: string): string {
     "tsconfig.json",
     "turbo.json",
     "nx.json",
+    "Package.swift",
+    "build.zig",
+    "pubspec.yaml",
+    "build.sh",
+    "test.sh",
+    "check.sh",
   ];
   const parts: string[] = [];
   for (const m of markers) {
@@ -361,10 +367,79 @@ function otherEcosystemCommands(cwd: string, kinds: string[]): string[] {
   if (has("php") || exists(cwd, "composer.json")) {
     out.push("composer test", "./vendor/bin/phpunit");
   }
+  // Stacks the table did not know: a Swift menu-bar app ran its suite twenty
+  // times in one dogfood run and earned proof=✗ every time because neither
+  // `swift test` nor its build.sh was a recognised check.
+  if (has("swift") || exists(cwd, "Package.swift")) {
+    out.push("swift build", "swift test");
+  }
+  if (has("zig") || exists(cwd, "build.zig")) {
+    out.push("zig build test");
+  }
+  if (has("dotnet") || hasEntryMatching(cwd, /\.(?:sln|csproj|fsproj)$/i)) {
+    out.push("dotnet build", "dotnet test");
+  }
+  if (has("dart") || exists(cwd, "pubspec.yaml")) {
+    out.push(isFlutterProject(cwd) ? "flutter test" : "dart test");
+  }
+  // Repo-local check runners: ./build.sh, ./test.sh, scripts/check.sh …
+  for (const script of localCheckScripts(cwd)) out.push(script);
   // Makefile last — only when no higher-signal stack commands yet.
   if ((has("make") || exists(cwd, "Makefile")) && out.length === 0) {
     out.push("make test", "make check");
   }
+  return out;
+}
+
+function hasEntryMatching(cwd: string, re: RegExp): boolean {
+  try {
+    return fs.readdirSync(cwd).some((name) => re.test(name));
+  } catch {
+    return false;
+  }
+}
+
+function isFlutterProject(cwd: string): boolean {
+  try {
+    const raw = fs.readFileSync(path.join(cwd, "pubspec.yaml"), "utf8");
+    return /^\s*flutter\s*:/m.test(raw) || /sdk:\s*flutter/.test(raw);
+  } catch {
+    return false;
+  }
+}
+
+const LOCAL_CHECK_SCRIPT_RE =
+  /^(?:build|test|tests|check|checks|verify|ci|smoke|lint|selftest|self-test|run-tests|run_tests)\.(?:sh|bash|zsh)$/i;
+
+/** Executable repo-local `*.sh` check runners at the root or under scripts/. */
+export function localCheckScripts(cwd: string): string[] {
+  const out: string[] = [];
+  const consider = (dir: string, prefix: string) => {
+    let names: string[] = [];
+    try {
+      names = fs.readdirSync(path.join(cwd, dir));
+    } catch {
+      return;
+    }
+    for (const name of names.sort()) {
+      if (!LOCAL_CHECK_SCRIPT_RE.test(name)) continue;
+      const abs = path.join(cwd, dir, name);
+      try {
+        const st = fs.statSync(abs);
+        if (!st.isFile()) continue;
+        // Executable bit or a shebang — a check runner someone runs directly.
+        const exec = (st.mode & 0o111) !== 0;
+        const shebang = !exec && fs.readFileSync(abs, "utf8").startsWith("#!");
+        if (!exec && !shebang) continue;
+      } catch {
+        continue;
+      }
+      out.push(`${prefix}${name}`);
+      if (out.length >= 3) return;
+    }
+  };
+  consider(".", "./");
+  if (out.length < 3) consider("scripts", "scripts/");
   return out;
 }
 

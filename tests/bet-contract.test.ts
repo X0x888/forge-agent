@@ -8,6 +8,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import {
+  BET_DECLINE_WINDOW,
   BET_MAX_SWAPS,
   BET_OFF_HOLD,
   betHolding,
@@ -568,7 +569,7 @@ describe("bet contract — harness", () => {
     });
   });
 
-  it("Bet: none — <why> declines once and quiets the contract", () => {
+  it("Bet: none — <why> declines for a window of ships, then the question returns", () => {
     withHome(() => {
       const sid = "bet-none";
       armOpen(
@@ -576,18 +577,83 @@ describe("bet contract — harness", () => {
         `${READING_NO_BET}\nBet: none — every open hole is a first-run crash; no capability beats that today.`,
       );
       const stamp = stamper(sid, { edits: 0 });
-      for (let i = 0; i <= BET_OFF_HOLD; i++) {
+      // Inside the window: declined, quiet, no hold.
+      for (let i = 0; i < BET_DECLINE_WINDOW - 1; i++) {
         const r = stamp(HOLE_SHIPS[i]!.msg, HOLE_SHIPS[i]!.paths);
         assert.equal(r.stamped, true, HOLE_SHIPS[i]!.msg);
       }
-      const s = loadUlwCycle(sid)!;
-      assert.equal(s.wave, BET_OFF_HOLD + 1);
+      let s = loadUlwCycle(sid)!;
       assert.equal(s.bet, undefined);
       assert.equal(s.betRequired, false);
       assert.match(s.betDeclined || "", /first-run crash/);
+      assert.equal(s.betDeclineShips, BET_DECLINE_WINDOW - 1);
       assert.equal(betHolding(s), false);
-      assert.match(formatUlwStatus(s), /Bet: declined/);
+      assert.match(formatUlwStatus(s), /Bet: declined \(\d+\/\d+ ships, then asked again\)/);
       assert.ok(activeMemoryRecords(sid).some((r) => /^Bet: none — every open hole/.test(r.text)));
+
+      // Window closes: the open mandate owes a Bet again; the spent why is kept.
+      const r6 = stamp(HOLE_SHIPS[BET_DECLINE_WINDOW - 1]!.msg, HOLE_SHIPS[BET_DECLINE_WINDOW - 1]!.paths);
+      assert.equal(r6.stamped, true);
+      s = loadUlwCycle(sid)!;
+      assert.equal(s.betDeclined, undefined);
+      assert.equal(s.betRequired, true);
+      assert.deepEqual(
+        (s.betDeclineHistory ?? []).map((h) => /first-run crash/.test(h)),
+        [true],
+      );
+      assert.equal(s.betOffStreak, 0);
+      assert.match(formatUlwStatus(s), /Bet: none yet/);
+
+      // The same why does not decline twice — the streak keeps counting.
+      const again = stamp(
+        `${HOLE_SHIPS[BET_DECLINE_WINDOW]!.msg}\nBet: none — every open hole is a first-run crash; no capability beats that today.`,
+        HOLE_SHIPS[BET_DECLINE_WINDOW]!.paths,
+      );
+      assert.equal(again.stamped, true);
+      s = loadUlwCycle(sid)!;
+      assert.equal(s.betDeclined, undefined);
+      assert.equal(s.betOffStreak, 1);
+
+      // A new why declines again (a fresh window).
+      const fresh = stamp(
+        `${HOLE_SHIPS[BET_DECLINE_WINDOW + 1]!.msg}\nBet: none — the export surface is blocked on the auth rewrite landing first.`,
+        HOLE_SHIPS[BET_DECLINE_WINDOW + 1]!.paths,
+      );
+      assert.equal(fresh.stamped, true);
+      s = loadUlwCycle(sid)!;
+      assert.match(s.betDeclined || "", /auth rewrite/);
+      assert.equal(s.betRequired, false);
+    });
+  });
+
+  it("every credited ship off the bet counts toward the hold, not only job-moving ones", () => {
+    withHome(() => {
+      const sid = "bet-any-ship";
+      armOpen(sid, READING_NO_BET);
+      const stamp = stamper(sid, { edits: 0 });
+      // Distinct surfaces (no sibling stems, no shared tokens) that touch
+      // none of the reading's files and no pick: previously jobMoved=false
+      // meant they never counted; the run could grind holes forever.
+      const OFF_JOB: Array<{ msg: string; paths: string[] }> = [
+        { msg: "Ship landed: backoff honors Retry-After above the client curve. Proof: npm test.", paths: ["src/net/backoff.ts"] },
+        { msg: "Ship landed: store index rebuilds after a torn write. Proof: npm test.", paths: ["src/store/index.ts"] },
+        { msg: "Ship landed: help epilog names the sit-down keys. Proof: npm test.", paths: ["src/cli/help.ts"] },
+        { msg: "Ship landed: mcp health probe times out per server. Proof: npm test.", paths: ["src/mcp/health.ts"] },
+        { msg: "Ship landed: lsp pool recycles crashed servers. Proof: npm test.", paths: ["src/lsp/pool.ts"] },
+        { msg: "Ship landed: oidc nonce rotates on every 403. Proof: npm test.", paths: ["src/auth/oidc.ts"] },
+        { msg: "Ship landed: clock skew tolerance widened to 90s. Proof: npm test.", paths: ["src/util/clock.ts"] },
+      ];
+      for (let i = 0; i < BET_OFF_HOLD; i++) {
+        const r = stamp(OFF_JOB[i]!.msg, OFF_JOB[i]!.paths);
+        assert.equal(r.stamped, true, `${i}: ${r.admit || ""}`);
+        assert.equal(loadUlwCycle(sid)!.waves!.at(-1)!.jobMoved, false, "not a job move");
+      }
+      const s = loadUlwCycle(sid)!;
+      assert.equal(s.betOffStreak, BET_OFF_HOLD);
+      assert.equal(betHolding(s), true);
+      const held = stamp(OFF_JOB[BET_OFF_HOLD]!.msg, OFF_JOB[BET_OFF_HOLD]!.paths);
+      assert.equal(held.stamped, false);
+      assert.match(held.admit || "", /no Bet on file/);
     });
   });
 

@@ -104,10 +104,96 @@ function normalizeRecord(r: MemoryRecord): MemoryRecord {
   };
 }
 
+/** Wave observations kept when the store is over cap (read-time already hides them). */
+export const WAVE_RECORDS_KEEP = 48;
+
+function isLoadBearingRecord(r: MemoryRecord): boolean {
+  if (r.status !== "active") return false;
+  if (DURABLE_MEMORY_KINDS.includes(r.kind)) return true;
+  if (/^MANDATE:/i.test(r.text)) return true;
+  if (/\bBet:/i.test(r.text)) return true;
+  return false;
+}
+
+/**
+ * Trim to MAX_RECORDS without evicting what the run stands on. The old
+ * oldest-first slice dropped the seeded `MANDATE:` constraint and the
+ * Wave-1 Reading from both 400-record dogfood runs — 200 wave observations
+ * and 107 duplicate `Job:` decisions did the evicting. Order of eviction:
+ * superseded rows, wave observations beyond WAVE_RECORDS_KEEP, then the
+ * oldest non-durable rows; durable kinds, `MANDATE:`, `Bet:` and the first
+ * `Reading:` are never dropped.
+ */
+export function trimDecisionRecords(
+  records: MemoryRecord[],
+  max = MAX_RECORDS,
+): MemoryRecord[] {
+  if (records.length <= max) return records;
+  let recs = [...records];
+  const over = () => recs.length - max;
+  // 1. superseded history, oldest first
+  if (over() > 0) {
+    const sup = recs.filter((r) => r.status === "superseded");
+    const dropN = Math.min(over(), sup.length);
+    const drop = new Set(sup.slice(0, dropN).map((r) => r.id));
+    recs = recs.filter((r) => !drop.has(r.id));
+  }
+  // 2. wave observations beyond the keep window (oldest first)
+  if (over() > 0) {
+    const waves = recs.filter((r) => r.kind === "wave");
+    const excess = Math.max(0, waves.length - WAVE_RECORDS_KEEP);
+    const dropN = Math.min(over(), excess);
+    const drop = new Set(waves.slice(0, dropN).map((r) => r.id));
+    recs = recs.filter((r) => !drop.has(r.id));
+  }
+  // 3. oldest non-durable, non-wave rows (never the first Reading, never
+  //    durable kinds) — Job: spam goes before the kept wave window.
+  const firstReading = recs.find((r) => /\bReading:/i.test(r.text));
+  if (over() > 0) {
+    const candidates = recs.filter(
+      (r) =>
+        r.kind !== "wave" && !isLoadBearingRecord(r) && r.id !== firstReading?.id,
+    );
+    const dropN = Math.min(over(), candidates.length);
+    const drop = new Set(candidates.slice(0, dropN).map((r) => r.id));
+    recs = recs.filter((r) => !drop.has(r.id));
+  }
+  // 4. the kept wave window itself, oldest first, when nothing else can go
+  if (over() > 0) {
+    const waves = recs.filter((r) => r.kind === "wave");
+    const dropN = Math.min(over(), waves.length);
+    const drop = new Set(waves.slice(0, dropN).map((r) => r.id));
+    recs = recs.filter((r) => !drop.has(r.id));
+  }
+  // 5. hard cap — only when the store is all load-bearing (pathological)
+  if (over() > 0) recs = recs.slice(-max);
+  return recs;
+}
+
 export function saveDecisionMemory(store: DecisionMemoryStore): void {
   store.updatedAt = nowIso();
-  store.records = store.records.slice(-MAX_RECORDS);
+  store.records = trimDecisionRecords(store.records);
   writeJsonFile(decisionMemoryPath(store.sessionId), store);
+}
+
+/**
+ * Mark active records matching `where` superseded (history kept). Used for
+ * one-slot notes (`Job:` / `Next need:`) that a run rewrites every Reading —
+ * 107 duplicate `Job:` rows crowded one dogfood ledger.
+ */
+export function supersedeMemoryRecords(
+  sessionId: string,
+  where: (r: MemoryRecord) => boolean,
+): number {
+  const store = loadDecisionMemory(sessionId);
+  let n = 0;
+  for (const r of store.records) {
+    if (r.status !== "active" || !where(r)) continue;
+    r.status = "superseded";
+    n += 1;
+  }
+  if (n > 0) saveDecisionMemory(store);
+  return n;
 }
 
 /** Wipe session decisions on /clear so leftover-chrome ships do not survive. */
@@ -398,8 +484,9 @@ export function isPlanShapedText(text: string): boolean {
 
 /** Verify command or a cited file — a catalog of leftovers is not a plan. */
 const PLAN_VERIFY_RE =
-  /\b(verify(?:ing|ied)?|npm test|npm run |pnpm (?:test|run)|yarn (?:test|run)|bun test|pytest|cargo test|go test|tsc\b|typecheck|lint)\b/i;
-const PLAN_PATH_RE = /\b[\w./-]+\.(ts|tsx|js|jsx|mjs|cjs|py|rs|go|md)\b/;
+  /\b(verify(?:ing|ied)?|proof|npm test|npm run |pnpm (?:test|run)|yarn (?:test|run)|bun test|pytest|cargo test|go test|swift test|swift build|xcodebuild|zig build|dotnet test|make (?:test|check)|just (?:test|check|ci)|tsc\b|typecheck|lint|self-?test)\b|\.\/[\w.-]*(?:build|test|check|ci)[\w.-]*\.sh\b/i;
+const PLAN_PATH_RE =
+  /\b[\w./-]+\.(ts|tsx|js|jsx|mjs|cjs|py|rs|go|md|swift|kt|kts|java|scala|rb|php|cs|c|cc|cpp|h|hpp|m|mm|ex|exs|zig|dart|vue|svelte|lua|sh|sql)\b/;
 
 export function planBodyHasEvidence(text: string): boolean {
   const t = String(text || "");
