@@ -182,6 +182,62 @@ describe("project memory", () => {
     );
   });
 
+  it("merges mirror-only bullets into an existing JSON store; archived ones stay archived", () => {
+    appendProjectMemory(ws, { kind: "constraint", text: "Never weaken Stop fail-closed" });
+    appendProjectMemory(ws, { kind: "gotcha", text: "old gotcha the sweep retired" });
+    assert.equal(archiveProjectMemory(ws, "old gotcha the sweep retired"), 1);
+    // The tracked mirror arrives from another machine / path / a git revert:
+    // it carries bullets this store never had, plus the one it archived.
+    const md = path.join(ws, ".forge", "MEMORY.md");
+    fs.writeFileSync(
+      md,
+      [
+        "# Project memory",
+        "",
+        "> Auto-maintained by Forge. Edit carefully — agent loads this across sessions.",
+        "> key=d54ef9c78f11c027 · updated=2026-08-22T10:21:17.205Z",
+        "",
+        "## constraint",
+        "",
+        "- Never weaken Stop fail-closed",
+        "- Safety checkpoints use a temp index (untracked in, secrets out), not git stash create.",
+        "",
+        "## gotcha",
+        "",
+        "- old gotcha the sweep retired",
+        "",
+        "## convention",
+        "",
+        "- Sit-down Next at › is a slash key, never a CLI dump.",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+    const merged = loadProjectMemory(ws);
+    const active = merged.records.filter((r) => r.status === "active");
+    assert.equal(active.length, 3, "two mirror-only bullets merged, archived one not resurrected");
+    assert.ok(active.some((r) => r.kind === "constraint" && /temp index/.test(r.text)));
+    assert.ok(active.some((r) => r.kind === "convention" && /slash key/.test(r.text)));
+    assert.ok(
+      merged.records.some((r) => r.status === "archived" && /old gotcha/.test(r.text)),
+    );
+    assert.ok(
+      active.filter((r) => r.source === "import").length === 2,
+      "merged records are marked import",
+    );
+    // Persisted: a reload from JSON keeps them and merges nothing more.
+    const again = loadProjectMemory(ws);
+    assert.equal(again.records.filter((r) => r.status === "active").length, 3);
+    assert.equal(again.records.length, merged.records.length);
+    // The rewritten mirror is the union of active records.
+    const body = fs.readFileSync(md, "utf8");
+    assert.match(body, /temp index/);
+    assert.match(body, /slash key/);
+    assert.match(body, /Never weaken Stop fail-closed/);
+    assert.doesNotMatch(body, /old gotcha/);
+    assert.equal(listActiveProjectMemory(ws).length, 3);
+  });
+
   it("classifies leftover cycle readings and superseded checkpoint facts", () => {
     assert.equal(
       looksLikeCycleScopedMemory(

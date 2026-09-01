@@ -18,7 +18,7 @@
     "build": "tsc -p tsconfig.json",
     "dev": "tsx src/cli.ts",
     "start": "node dist/cli.js",
-    "test": "mkdir -p .tmp && TMPDIR=\"$PWD/.tmp\" tsx --test --test-timeout=60000 tests/*.test.ts",
+    "test": "mkdir -p .tmp/forge-home && FORGE_HOME=\"$PWD/.tmp/forge-home\" TMPDIR=\"$PWD/.tmp\" tsx --test --test-timeout=60000 tests/*.test.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "prepack": "npm run build",
     "check": "npm run typecheck && npm run build && npm test",

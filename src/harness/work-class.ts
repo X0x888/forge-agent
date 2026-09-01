@@ -65,7 +65,14 @@ export function isFactoryFingerprint(text: string): boolean {
 export type MillClassOpts = {
   /** Explore-map pick — never mill, even if the closer quotes "Far stays". */
   onContract?: boolean;
+  /** Bet slice — the bet's own files are the wave, never mill. */
+  onBet?: boolean;
 };
+
+/** Pick and bet-slice ships are their own class — none of these mills. */
+function ownClass(opts?: MillClassOpts): boolean {
+  return Boolean(opts?.onContract || opts?.onBet);
+}
 
 export function isAdjacentShareSchema(text: string): boolean {
   const t = text || "";
@@ -132,7 +139,7 @@ export function matchesRecentSchema(
   closer: string,
   opts?: MillClassOpts,
 ): boolean {
-  if (opts?.onContract) return false;
+  if (ownClass(opts)) return false;
   if (!shipSchema(closer)) return false;
   return schemaHitsIn(prevSummaries, closer) >= SCHEMA_HOLD_HITS;
 }
@@ -153,13 +160,13 @@ export function factoryClassHolding(
   closer: string,
   opts?: MillClassOpts,
 ): boolean {
-  if (opts?.onContract) return false;
+  if (ownClass(opts)) return false;
   const all = [...(prevSummaries || []), closer].filter((s) => s && s.trim());
   return factoryHitsIn(all) >= FACTORY_HOLD_HITS;
 }
 
 export function isMillClassShip(text: string, opts?: MillClassOpts): boolean {
-  if (opts?.onContract) return false;
+  if (ownClass(opts)) return false;
   return (
     isFactoryFingerprint(text) ||
     isAdjacentShareSchema(text) ||
@@ -173,7 +180,7 @@ export function isSameClassReading(
   parsedShips: string[],
   opts?: MillClassOpts,
 ): boolean {
-  if (opts?.onContract) return false;
+  if (ownClass(opts)) return false;
   if (!parsedShips.length) return false;
   const blob = parsedShips.join("\n");
   if (factoryClassHolding(prevSummaries, blob)) return true;

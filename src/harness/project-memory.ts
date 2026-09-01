@@ -141,7 +141,7 @@ export function loadProjectMemory(workspace: string): ProjectMemoryStore {
       if (fromMd.records.length) return fromMd;
       return emptyStore(root);
     }
-    return {
+    const store: ProjectMemoryStore = {
       version: 1,
       key: typeof raw.key === "string" ? raw.key : projectMemoryKey(root),
       root: path.resolve(root),
@@ -151,9 +151,50 @@ export function loadProjectMemory(workspace: string): ProjectMemoryStore {
       updatedAt:
         typeof raw.updatedAt === "string" ? raw.updatedAt : nowIso(),
     };
+    // The tracked mirror travels with the repo (git checkout on another
+    // machine, a moved path, a reverted .forge/MEMORY.md). Bullets it carries
+    // that this store has never seen are merged in — a JSON store must not
+    // silently shadow them. Archived records stay archived (local sweep wins).
+    if (mergeMirrorIntoStore(store)) saveStore(store);
+    return store;
   } catch {
     return emptyStore(root);
   }
+}
+
+function recordFingerprint(kind: ProjectMemoryKind, text: string): string {
+  return `${kind}::${text.trim().toLowerCase()}`;
+}
+
+/** Mirror bullets absent from the store (any status) become `import` records. */
+function mergeMirrorIntoStore(store: ProjectMemoryStore): number {
+  let bullets: Array<{ kind: ProjectMemoryKind; text: string }>;
+  try {
+    bullets = parseMarkdownMirror(store.root);
+  } catch {
+    return 0;
+  }
+  if (!bullets.length) return 0;
+  const seen = new Set(
+    store.records.map((r) => recordFingerprint(r.kind, r.text)),
+  );
+  let merged = 0;
+  const at = nowIso();
+  for (const b of bullets) {
+    const fp = recordFingerprint(b.kind, b.text);
+    if (seen.has(fp)) continue;
+    seen.add(fp);
+    store.records.push({
+      id: makeId(),
+      at,
+      kind: b.kind,
+      text: b.text,
+      source: "import",
+      status: "active",
+    });
+    merged++;
+  }
+  return merged;
 }
 
 const ARCHIVE_REASONS = new Set<ProjectMemoryArchiveReason>([
@@ -466,32 +507,43 @@ function writeMarkdownMirror(store: ProjectMemoryStore): void {
 }
 
 /** Import active bullets from .forge/MEMORY.md when JSON is empty/missing. */
+/** `## kind` sections + `- bullet` lines of .forge/MEMORY.md, in file order. */
+function parseMarkdownMirror(
+  root: string,
+): Array<{ kind: ProjectMemoryKind; text: string }> {
+  const mdPath = projectMemoryMarkdownPath(root);
+  if (!fs.existsSync(mdPath)) return [];
+  const txt = fs.readFileSync(mdPath, "utf8");
+  const out: Array<{ kind: ProjectMemoryKind; text: string }> = [];
+  let kind: ProjectMemoryKind = "fact";
+  for (const line of txt.split("\n")) {
+    const h = line.match(/^##\s+(\w[\w-]*)\s*$/);
+    if (h) {
+      kind = normalizeProjectMemoryKind(h[1]);
+      continue;
+    }
+    const b = line.match(/^\s*-\s+(.+)\s*$/);
+    if (b) {
+      const text = b[1].trim().slice(0, MAX_TEXT);
+      if (!text || text.startsWith("Auto-maintained")) continue;
+      out.push({ kind, text });
+    }
+  }
+  return out;
+}
+
 function importMarkdownMirror(root: string): ProjectMemoryStore {
   const store = emptyStore(root);
-  const mdPath = projectMemoryMarkdownPath(root);
   try {
-    if (!fs.existsSync(mdPath)) return store;
-    const txt = fs.readFileSync(mdPath, "utf8");
-    let kind: ProjectMemoryKind = "fact";
-    for (const line of txt.split("\n")) {
-      const h = line.match(/^##\s+(\w[\w-]*)\s*$/);
-      if (h) {
-        kind = normalizeProjectMemoryKind(h[1]);
-        continue;
-      }
-      const b = line.match(/^\s*-\s+(.+)\s*$/);
-      if (b) {
-        const text = b[1].trim().slice(0, MAX_TEXT);
-        if (!text || text.startsWith("Auto-maintained")) continue;
-        store.records.push({
-          id: makeId(),
-          at: nowIso(),
-          kind,
-          text,
-          source: "import",
-          status: "active",
-        });
-      }
+    for (const b of parseMarkdownMirror(root)) {
+      store.records.push({
+        id: makeId(),
+        at: nowIso(),
+        kind: b.kind,
+        text: b.text,
+        source: "import",
+        status: "active",
+      });
     }
     if (store.records.length) {
       // Persist imported mirror into JSON so subsequent loads are fast

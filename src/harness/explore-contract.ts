@@ -130,6 +130,30 @@ export function loadExploreMapPicks(sessionId: string): string[] {
   return loadExploreMapEntries(sessionId).map((e) => e.pick);
 }
 
+/** `bet:` lines from explore maps — candidates for the open-mandate Bet:. */
+export function loadExploreMapBets(sessionId: string): string[] {
+  if (!sessionId) return [];
+  try {
+    const p = path.join(forgeHome(), "sessions", sessionId, "meta.json");
+    const raw = JSON.parse(fs.readFileSync(p, "utf8")) as {
+      exploreMaps?: unknown;
+    };
+    const maps = Array.isArray(raw.exploreMaps) ? raw.exploreMaps : [];
+    const out: string[] = [];
+    for (const item of maps) {
+      if (!item || typeof item !== "object" || Array.isArray(item)) continue;
+      const bet = (item as { bet?: unknown }).bet;
+      if (typeof bet !== "string") continue;
+      const t = bet.trim();
+      if (t.length < 12 || out.includes(t)) continue;
+      out.push(t);
+    }
+    return out;
+  } catch {
+    return [];
+  }
+}
+
 export function distinctivePickTerms(
   pick: string,
   claims: string[] = [],

@@ -44,9 +44,10 @@ Write a `Reading:` that includes:
 - **Better** — 2–4 directions a veteran would chase (not a chrome catalog)
 - **Passed on** — siblings you will not ship this wave, with a one-line why
 - **ONE ship** — file paths + the command that can fail
+- **Bet** — the capability this product cannot do today that a demanding user would notice: `Bet: <capability> — <path it lives in> — first slice: <what + the command that proves it>`. Holes are not the spine of an open mandate; a smaller fix is not a bet. `Bet: none — <why>` declines once, with the why.
 - **Feel vs proof** — if this is a game or UI, name the play/look check (Playwright + `read_file` the png)
 
-A leftover list of HUD chips is not a reading. A job a player/user notices is.
+A leftover list of HUD chips is not a reading. A job a player/user notices is. A run that only closes holes on an open mandate is repair, not the work — the harness holds after six declared ships off the open Bet.
 
 ## 2. Research like a veteran of this domain
 
@@ -59,6 +60,8 @@ Match the product, then load the matching skill:
 | CLI / TUI | Sit-down keys, verdict-first cards | `forge-shape` then ship |
 | Library / harness | Proof, no mill, kernel not file N+1 | `forge-prove`, `forge-rootcause` |
 
+Every row: also ask what the product cannot do yet — that is the Bet; the row's chase is where to look for it. Explore children may answer `bet:` beside `pick:`.
+
 Then actually look:
 
 - Codebase: `spawn_subagent` `explore` (PLAN allows explore/plan only). Emit several explores **in the same round** as `web_search`.
@@ -69,7 +72,7 @@ Do not skip research because tests are red unless the red is the user's job.
 
 ## 3. Ship one piece
 
-One objective. Prove it. Hostile-review the diff. Commit (ULW auto-commits waves).
+One objective — a Bet slice by default under an open mandate (production on the bet's files + a test that calls it); the reading's hole when the hole is the user's job. Prove it. Hostile-review the diff. Commit (ULW auto-commits waves).
 
 If you generated art, `read_file` it and say what is still wrong.
 

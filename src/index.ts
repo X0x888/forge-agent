@@ -530,6 +530,24 @@ export {
   collectUlwJobKeepPaths,
 } from "./harness/ulw-job-card.js";
 export {
+  BET_OFF_ADVISORY,
+  BET_OFF_HOLD,
+  BET_MAX_SWAPS,
+  isOpenMandate,
+  parseBetLine,
+  extractBetPaths,
+  betPathHit,
+  betShipHit,
+  sameBetText,
+  betHoldArmable,
+  betHolding,
+  formatBetHoldAdmit,
+  formatBetOwedAdmit,
+  formatBetStatusLine,
+  formatBetCardLine,
+  formatBetReanchorLine,
+} from "./harness/bet-contract.js";
+export {
   collectRecentMillToolIds,
   applyMillHoldPrune,
   isMillEditClass,

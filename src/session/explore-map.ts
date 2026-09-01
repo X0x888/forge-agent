@@ -13,6 +13,8 @@ export interface ExploreMapFile {
 export interface ExploreMap {
   pick: string;
   passedOn: string;
+  /** Optional: a capability the product lacks that no hole-fix delivers. */
+  bet?: string;
   files: ExploreMapFile[];
   childSessionId?: string;
   at: string;
@@ -53,6 +55,7 @@ export function parseExploreMap(text: string): ExploreMap | null {
   const raw = String(text || "");
   const pick = field(raw, ["pick"]);
   const passedOn = field(raw, ["passed_on", "passed-on", "passed on"]);
+  const bet = field(raw, ["bet"]);
   const files: ExploreMapFile[] = [];
   const seen = new Set<string>();
   for (const line of raw.split("\n")) {
@@ -70,6 +73,7 @@ export function parseExploreMap(text: string): ExploreMap | null {
   return {
     pick,
     passedOn,
+    ...(bet && !/^none\b/i.test(bet) ? { bet } : {}),
     files,
     at: new Date().toISOString(),
   };
@@ -79,6 +83,7 @@ export function formatExploreMap(map: ExploreMap): string {
   const lines = [
     map.pick ? `pick: ${map.pick}` : "",
     map.passedOn ? `passed_on: ${map.passedOn}` : "",
+    map.bet ? `bet: ${map.bet}` : "",
     map.files.length ? "files:" : "",
     ...map.files.map(
       (f) =>
@@ -124,10 +129,12 @@ export function normalizeExploreMaps(raw: unknown): ExploreMap[] | undefined {
     const pick = typeof o.pick === "string" ? o.pick.trim().slice(0, 400) : "";
     const passedOn =
       typeof o.passedOn === "string" ? o.passedOn.trim().slice(0, 400) : "";
+    const bet = typeof o.bet === "string" ? o.bet.trim().slice(0, 400) : "";
     if (!pick) continue;
     out.push({
       pick,
       passedOn,
+      ...(bet ? { bet } : {}),
       files,
       ...(typeof o.childSessionId === "string" && o.childSessionId.trim()
         ? { childSessionId: o.childSessionId.trim().slice(0, 80) }

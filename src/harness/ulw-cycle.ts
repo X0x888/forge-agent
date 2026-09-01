@@ -100,6 +100,7 @@ import {
   formatHoldContextAppendix,
   isExplorePickDone,
   isOnExploreContract,
+  loadExploreMapBets,
   isSamePickTopic,
   loadExploreMapEntries,
   loadExploreMapPicks,
@@ -120,6 +121,24 @@ export {
   isShipCloseText,
   pickShipHint,
 } from "./ship-close.js";
+import {
+  BET_MAX_SWAPS,
+  BET_OFF_HOLD,
+  CONCRETE_DELIVERABLE_RE,
+  CONCRETE_TOKEN_RE,
+  OPEN_WISH_RE,
+  betHoldArmable,
+  betHolding,
+  betShipHit,
+  formatBetOwedAdmit,
+  formatBetHoldAdmit,
+  formatBetReanchorLine,
+  formatBetStatusLine,
+  isOpenMandate,
+  parseBetLine,
+  sameBetText,
+  type BetState,
+} from "./bet-contract.js";
 
 export type CycleFlag = 0 | 1;
 
@@ -172,6 +191,8 @@ export interface UlwWaveRecord {
   siblingMill?: boolean;
   /** Named/pick/play or the reading's files — not a suite pass or any CF net=new. */
   jobMoved?: boolean;
+  /** Declared ship touched the open bet (job move, never sibling mill). */
+  onBet?: boolean;
   /** One-line clip of the wave's closing assistant message */
   summary: string;
   /** Significant tokens from the summary (same-surface classifier). */
@@ -225,6 +246,20 @@ export interface UlwCycleState {
   /** Expanded operational mandate shown to the model */
   expandedMandate: string;
   softPrompt: boolean;
+  /** Soft or improve-class mandate with no concrete deliverable (bet contract). */
+  openMandate?: boolean;
+  /** Open bet — the capability this run is inventing (job move, never sibling mill). */
+  bet?: BetState;
+  /** Open mandate still owes a `Bet:` (or `Bet: none — why`). */
+  betRequired?: boolean;
+  /** Consecutive credited job-moving ships that did not touch a bet. */
+  betOffStreak?: number;
+  /** Unshipped bets replaced by a new Bet: (BET_MAX_SWAPS, then only a slice releases). */
+  betSwaps?: number;
+  /** Unlimited hold: job-moving ships off any bet reached BET_OFF_HOLD. */
+  betHold?: boolean;
+  /** `Bet: none — <why>` reason; bet machinery is quiet for this mandate. */
+  betDeclined?: string;
   /**
    * Wave ledger (newest last, capped). Facts per wave for the quality bar,
    * thin-wave detection, and /cycle status transparency. Optional for
@@ -416,6 +451,8 @@ export interface UlwStopDecision {
   soulDemanded?: boolean;
   /** True when Stop is holding for a different-surface reading. */
   sameSurfaceDemanded?: boolean;
+  /** True when Stop is holding for a bet slice / new `Bet:` (open mandate). */
+  betDemanded?: boolean;
   /** True when this Stop actually closed a wave (not a gate / already-stamped). */
   waveClosed?: boolean;
   /** True when LAST reflect demanded a scorecard (read-only). */
@@ -1060,10 +1097,15 @@ function appendWaveRecord(
   s.phase = "ship";
   s.judgmentRequired = false;
   const classText = clipClassText(opts.classText || opts.summary);
+  // Slice test before the same-surface note: an on-bet ship is its own
+  // class for the streak and the mill schemas, so the note must know it.
+  const onBet =
+    !opts.chrome && betShipHit(s.bet, opts.paths, opts.editKind);
   applySameSurfaceNote(s, classText, opts.themed === true, opts.sessionId, {
     treeKey: opts.treeSurfaceKey,
     paths: opts.paths,
     kind: opts.editKind,
+    onBet,
   });
   applyContractNote(s, classText, opts.themed === true, opts.sessionId);
   const onContract = closerOnContract(opts.sessionId, classText);
@@ -1083,6 +1125,7 @@ function appendWaveRecord(
   );
   const siblingMill =
     !onContract &&
+    !onBet &&
     !play &&
     sibHits >= 1 &&
     (opts.editKind === "new-module" || sibHits >= 1);
@@ -1090,7 +1133,7 @@ function appendWaveRecord(
   const peekMill = isSlashPeekMillShip(classText);
   const millClass =
     (peekMill && (s.sameSurfaceStreak ?? 0) >= 2) ||
-    (!onContract && isMillClassShip(classText))
+    isMillClassShip(classText, { onContract, onBet })
       ? true
       : undefined;
   const rec: UlwWaveRecord = {
@@ -1104,6 +1147,7 @@ function appendWaveRecord(
     classText: classText || undefined,
     millClass,
     siblingMill: siblingMill || undefined,
+    onBet: onBet || undefined,
     surfaceKey: surfaceKey(opts.summary) || undefined,
     treeSurfaceKey: opts.treeSurfaceKey,
     editKind: opts.editKind,
@@ -1120,10 +1164,12 @@ function appendWaveRecord(
     (named ||
       play ||
       onContract ||
+      onBet ||
       pathsOnReadingFiles(opts.paths, readingFiles));
   s.waves = [...(s.waves ?? []), rec].slice(-WAVE_LEDGER_KEEP);
   if (rec.jobMoved) s.midReflectHold = false;
   if (opts.themed) noteOffJobShip(s, rec);
+  if (opts.themed) noteBetShip(s, rec, classText);
   maybeCadenceReorient(s);
   const proofMark =
     proofKind === "isolate" ? "ran" : proofKind === "play" ? "play" : proof ? "✓" : "✗";
@@ -1271,6 +1317,7 @@ export function completeUlwPlan(
   s.reorientRequested = false;
   s.reorientNeedsEvidence = false;
   maybeAdoptNamedShips(s, opts?.closer);
+  maybeAdoptBet(s, opts?.closer);
   saveUlwCycle(s);
   return true;
 }
@@ -1757,6 +1804,32 @@ function noteOffJobShip(s: UlwCycleState, rec: UlwWaveRecord): void {
   s.offJobStreak = (s.offJobStreak ?? 0) + 1;
 }
 
+/**
+ * Open-mandate bet ledger. A slice resets the off-streak. Only credited
+ * job-moving ships count against it (mill / chrome have their own holds);
+ * BET_OFF_HOLD of them hold unlimited ULW (cap is a budget).
+ */
+function noteBetShip(
+  s: UlwCycleState,
+  rec: UlwWaveRecord,
+  classText: string,
+): void {
+  if (!s.openMandate || s.betDeclined) return;
+  if (isConsolidationCloser(classText)) return;
+  if (rec.onBet && s.bet) {
+    s.bet.slices += 1;
+    s.betOffStreak = 0;
+    s.betHold = false;
+    return;
+  }
+  if (!waveMovedJob(rec)) return;
+  s.betOffStreak = (s.betOffStreak ?? 0) + 1;
+  if (betHoldArmable(s) && s.betOffStreak >= BET_OFF_HOLD) {
+    s.betHold = true;
+    markHoldArmed(s);
+  }
+}
+
 function lastWavesMovedJob(s: UlwCycleState, n = 4): boolean {
   return (s.waves ?? []).slice(-n).some((w) => waveMovedJob(w));
 }
@@ -1863,12 +1936,20 @@ function closerOnContract(sessionId: string, text: string): boolean {
   return isOnExploreContract(text, jobExploreMapPicks(sessionId));
 }
 
-/** Mill sibling? On-contract (pick) ships are never mill. */
-function isMillSiblingCloser(s: UlwCycleState, closer: string): boolean {
+/** Mill sibling? On-contract (pick) and on-bet (slice) ships are never mill. */
+function isMillSiblingCloser(
+  s: UlwCycleState,
+  closer: string,
+  paths: string[],
+  kind?: ProdEditKind,
+): boolean {
   if (s.playLoopPending || isPlayLoopCloser(closer)) return false;
   if (isSlashPeekMillShip(closer) && (s.peekMillStreak ?? 0) >= 1) return true;
   const onContract = closerOnContract(s.sessionId, closer);
   if (onContract) return false;
+  // The tree says slice: the bet's own files are where the capability
+  // lives, so overlap with the last slices' closers is not a grind.
+  if (betShipHit(s.bet, paths, kind)) return false;
   const prev = waveClassTexts(s);
   return (
     isMillClassShip(closer) ||
@@ -1888,11 +1969,18 @@ function applySameSurfaceNote(
   classText: string,
   themed: boolean,
   sessionId: string,
-  tree?: { treeKey?: string; paths?: string[]; kind?: ProdEditKind },
+  tree?: {
+    treeKey?: string;
+    paths?: string[];
+    kind?: ProdEditKind;
+    /** Bet slice (tree-only, see betShipHit) — its own class, never held. */
+    onBet?: boolean;
+  },
 ): void {
   // Generic Stop closers ("did some edits") are not themed ships.
   if (!themed) return;
   const onContract = closerOnContract(sessionId, classText);
+  const onBet = Boolean(tree?.onBet);
   const prev = waveClassTexts(s);
   const treeKey =
     tree?.treeKey ||
@@ -1902,13 +1990,14 @@ function applySameSurfaceNote(
   const note = nextSameSurfaceStreak(prev, classText, s.sameSurfaceStreak ?? 0, {
     consolidation: isConsolidationCloser(classText),
     onContract,
+    onBet,
     treeKey,
     prevTreeKeys: waveTreeKeys(s),
   });
   s.sameSurfaceStreak = note.streak;
   const factoryHold =
     canArmSameSurfaceHold(s) &&
-    factoryClassHolding(prev, classText, { onContract });
+    factoryClassHolding(prev, classText, { onContract, onBet });
   if (
     (note.streak >= SAME_SURFACE_HOLD || factoryHold) &&
     canArmSameSurfaceHold(s)
@@ -1916,7 +2005,7 @@ function applySameSurfaceNote(
     markHoldArmed(s);
     s.sameSurfaceHold = true;
     markUlwReorient(s);
-    if (factoryHold || isMillClassShip(classText, { onContract })) {
+    if (factoryHold || isMillClassShip(classText, { onContract, onBet })) {
       markExploreRequired(s);
     }
   } else if (note.streak < SAME_SURFACE_HOLD && !factoryHold) {
@@ -1985,6 +2074,7 @@ function isGarnishShip(
   if ((s.wave ?? 0) < 3) return false;
   if (closerOnContract(s.sessionId, closer)) return false;
   if (namedShipHit(s, closer, paths)) return false;
+  if (betShipHit(s.bet, paths, credit.kind)) return false;
   if (!credit.ok && (credit.reason === "pin" || credit.reason === "chrome")) {
     return true;
   }
@@ -2342,6 +2432,87 @@ export function maybeAdoptNamedShips(
 const CANCEL_SHIP_RE =
   /\b(?:cancell?ed?|won'?t ship|skip(?:ping)?|out of scope)\b/i;
 
+function betFromMemory(sessionId: string): string | undefined {
+  try {
+    const recs = activeMemoryRecords(sessionId);
+    for (let i = recs.length - 1; i >= 0; i--) {
+      const t = String(recs[i]?.text || "");
+      if (/\bBet:/i.test(t)) return t;
+    }
+  } catch {
+    /* memory is best-effort */
+  }
+  return undefined;
+}
+
+function rememberBet(sessionId: string, text: string): void {
+  try {
+    appendMemoryRecord(sessionId, {
+      kind: "priority",
+      text,
+      source: "harness",
+    });
+  } catch {
+    /* memory is best-effort */
+  }
+}
+
+/**
+ * Adopt a `Bet:` from the closer or decision memory (open mandates only).
+ * A restated bet does not reset the off-streak; `Bet: none — <why>`
+ * declines and quiets the contract for this mandate. A bet needs a path.
+ */
+export function maybeAdoptBet(
+  s: UlwCycleState,
+  text?: string,
+): "adopted" | "declined" | "same" | undefined {
+  if (!s.openMandate) return undefined;
+  if (s.cycle !== 1 || s.wrapKind) return undefined;
+  // Memory is the initial channel (a memory_write Reading). Once a bet is
+  // on file only the live closer can replace it — memory clips text, and a
+  // clipped copy must never read as a new bet.
+  const sources = [text, s.bet ? undefined : betFromMemory(s.sessionId)].filter(
+    (x): x is string => Boolean(x && x.trim()),
+  );
+  for (const source of sources) {
+    const parsed = parseBetLine(source);
+    if (!parsed) continue;
+    if (parsed.kind === "none") {
+      if (s.betDeclined && s.betDeclined === parsed.reason) return undefined;
+      // A decline while a bet is open cancels it; memory keeps the why.
+      s.bet = undefined;
+      s.betHold = false;
+      s.betRequired = false;
+      s.betDeclined = parsed.reason;
+      rememberBet(s.sessionId, `Bet: none — ${parsed.reason}`);
+      return "declined";
+    }
+    if (s.bet && sameBetText(s.bet.text, parsed.text)) return "same";
+    if (!parsed.paths.length) continue;
+    // Replacing an unshipped bet is a swap; after BET_MAX_SWAPS only a
+    // slice (or a decline / /cycle 0) releases the hold.
+    if (s.bet && s.bet.slices === 0) {
+      s.betSwaps = (s.betSwaps ?? 0) + 1;
+    }
+    s.bet = {
+      text: parsed.text,
+      paths: parsed.paths,
+      setAt: nowIso(),
+      setWave: s.wave,
+      slices: 0,
+    };
+    s.betRequired = false;
+    s.betDeclined = undefined;
+    if ((s.betSwaps ?? 0) <= BET_MAX_SWAPS) {
+      s.betOffStreak = 0;
+      s.betHold = false;
+    }
+    rememberBet(s.sessionId, `Bet: ${parsed.text}`);
+    return "adopted";
+  }
+  return undefined;
+}
+
 export function markNamedShipDone(
   s: UlwCycleState,
   closer: string,
@@ -2688,6 +2859,7 @@ export function maybeStampUlwWave(opts: {
   // Adopt even when already in ship — memory_write lands after the
   // assistant turn, so orient may have already flipped before the list exists.
   maybeAdoptNamedShips(s, opts.lastAssistantMessage);
+  maybeAdoptBet(s, opts.lastAssistantMessage);
 
   // Declared ship with real progress: this is a work unit. Capped ULW
   // must count it — otherwise the model invents Wave 3/4 while HUD stays 1/4
@@ -2732,9 +2904,18 @@ export function maybeStampUlwWave(opts: {
           admit: holdAdmit(opts.sessionId, CONTRACT_HOLD_ADMIT),
         };
       }
+      // Tree and credit first: the same-surface gate must know whether
+      // this ship is a bet slice (paths + kind). The credit decision is pure.
+      const changedPaths = resolveChangedPaths(opts);
+      const credit = jobCreditForStamp(s, {
+        paths: changedPaths,
+        cwd: opts.cwd,
+        closer,
+      });
       if (
         sameSurfaceHolding(s) &&
-        (isLeftoverChromeShip(closer) || isMillSiblingCloser(s, closer))
+        (isLeftoverChromeShip(closer) ||
+          isMillSiblingCloser(s, closer, changedPaths, credit.kind))
       ) {
         s.sameSurfaceHold = true;
         s.sameSurfaceAdmitCount = (s.sameSurfaceAdmitCount ?? 0) + 1;
@@ -2745,7 +2926,6 @@ export function maybeStampUlwWave(opts: {
           admit: holdAdmit(opts.sessionId, SAME_SURFACE_HOLD_ADMIT),
         };
       }
-      const changedPaths = resolveChangedPaths(opts);
       if (
         isTestsWithoutBodyShip({
           proof,
@@ -2763,15 +2943,24 @@ export function maybeStampUlwWave(opts: {
           admit: TESTS_WITHOUT_BODY_ADMIT,
         };
       }
-      const credit = jobCreditForStamp(s, {
-        paths: changedPaths,
-        cwd: opts.cwd,
-        closer,
-      });
+      const onBetNow = betShipHit(s.bet, changedPaths, credit.kind);
+      if (betHolding(s) && !onBetNow) {
+        s.betHold = true;
+        updateOpenWaveRecord(s, facts);
+        s.lastWaveSig = sig;
+        saveUlwCycle(s);
+        return {
+          stamped: false,
+          updated: true,
+          wave: s.wave,
+          admit: holdAdmit(opts.sessionId, betHoldAdmit(s, opts.sessionId)),
+        };
+      }
       if (
         credit.ok &&
         siblingMillHolding(s.waves, changedPaths, credit.kind) &&
         !closerOnContract(opts.sessionId, closer) &&
+        !onBetNow &&
         !isPlayLoopCloser(closer)
       ) {
         s.siblingMillHold = true;
@@ -3098,6 +3287,19 @@ export function loadUlwCycle(sessionId: string): UlwCycleState | null {
     raw.offJobStreak = 0;
   }
   if (typeof raw.siblingMillHold !== "boolean") raw.siblingMillHold = false;
+  if (typeof raw.openMandate !== "boolean") raw.openMandate = false;
+  raw.bet = normalizeBetState(raw.bet);
+  if (typeof raw.betRequired !== "boolean") raw.betRequired = false;
+  if (typeof raw.betOffStreak !== "number" || !Number.isFinite(raw.betOffStreak)) {
+    raw.betOffStreak = 0;
+  }
+  if (typeof raw.betSwaps !== "number" || !Number.isFinite(raw.betSwaps)) {
+    raw.betSwaps = 0;
+  }
+  if (typeof raw.betHold !== "boolean") raw.betHold = false;
+  if (typeof raw.betDeclined !== "string" || !raw.betDeclined.trim()) {
+    raw.betDeclined = undefined;
+  }
   if (
     typeof raw.thoughtOnlyCycle !== "number" ||
     !Number.isFinite(raw.thoughtOnlyCycle)
@@ -3178,6 +3380,28 @@ function normalizeWrapItems(raw: unknown): UlwWrapItem[] | undefined {
     if (out.length >= 16) break;
   }
   return out;
+}
+
+function normalizeBetState(raw: unknown): BetState | undefined {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
+  const o = raw as Record<string, unknown>;
+  const text = typeof o.text === "string" ? o.text.trim().slice(0, 400) : "";
+  if (text.length < 8) return undefined;
+  const paths = Array.isArray(o.paths)
+    ? o.paths
+        .filter((x): x is string => typeof x === "string" && x.trim().length > 0)
+        .map((x) => x.trim().slice(0, 200))
+        .slice(0, 8)
+    : [];
+  const num = (v: unknown): number =>
+    typeof v === "number" && Number.isFinite(v) && v >= 0 ? Math.floor(v) : 0;
+  return {
+    text,
+    paths,
+    setAt: typeof o.setAt === "string" ? o.setAt : "",
+    setWave: num(o.setWave),
+    slices: num(o.slices),
+  };
 }
 
 function normalizeNamedShipItems(raw: unknown): NamedShipItem[] | undefined {
@@ -3290,10 +3514,15 @@ export function isSoftPrompt(prompt: string): boolean {
   if (SOFT_PROMPT_RE.test(t)) return true;
   // No concrete deliverable markers
   const hasConcrete =
-    /\b(test|tests|pass|endpoint|file|bug|error|fail|migrate|add|implement|remove|delete|until|acceptance|criteria|must|should not)\b/i.test(
-      t,
-    ) || /`[^`]+`|\.[a-z]{1,4}\b|\/[\w./-]+/.test(t);
-  if (!hasConcrete && t.length < 80 && /improve|better|nice|clean|polish|fix/i.test(t)) {
+    CONCRETE_DELIVERABLE_RE.test(t) || CONCRETE_TOKEN_RE.test(t);
+  // Open wishes ("invent something", "build what's missing") are soft too —
+  // they are the open mandate the bet contract exists for. Verbs with an
+  // object (`build a login page`, `design the onboarding flow`) stay hard.
+  if (
+    !hasConcrete &&
+    t.length < 80 &&
+    (/improve|better|nice|clean|polish|fix/i.test(t) || OPEN_WISH_RE.test(t))
+  ) {
     return true;
   }
   return false;
@@ -3334,6 +3563,7 @@ export function expandUlwMandate(mandate: string): { expanded: string; soft: boo
   ].join("\n");
 
   const evaluateClass = isEvaluateClassMandate(mandate) || isEvaluateClassMandate(base);
+  const open = isOpenMandate(mandate, soft);
   const backlogDoctrine = broad
     ? [
         ``,
@@ -3356,6 +3586,15 @@ export function expandUlwMandate(mandate: string): { expanded: string; soft: boo
   const productQualityLine = isUserFacingProductWork(mandate)
     ? "User-facing product quality: name the hard user job, finish one edge (empty/error/first-run), at most one job-adjacent Serendipity:. Garnish is not quality."
     : "";
+  const betDoctrine = open
+    ? [
+        ``,
+        `### Bet (open mandate — invent, not only repair)`,
+        `Holes are not the spine of an open mandate. In the Wave-1 Reading name one **Bet:** — a capability THIS product cannot do today that a demanding user would notice — with the files it creates and the first slice plus the command that proves it. \`Bet: <capability> — <path> — first slice: <what + proof>\`. memory_write it.`,
+        `Ship bet slices as waves (production change on the bet's files + a test that calls it); close holes as smoke and \`Serendipity:\`. Bet slices are job moves and never sibling mill. ${BET_OFF_HOLD} job-moving ships that touch no bet (named or not) hold unlimited ULW until a slice lands, a new Bet: with a path is written, or /cycle 0.`,
+        `\`Bet: none — <why no capability is worth more than the open holes>\` is a valid decline (once, with the why). A leftover list is not a bet; a smaller fix is not a bet.`,
+      ].join("\n")
+    : "";
 
   if (!soft) {
     return {
@@ -3368,6 +3607,7 @@ export function expandUlwMandate(mandate: string): { expanded: string; soft: boo
         backlogDoctrine,
         evaluateDoctrine,
         productQualityLine,
+        betDoctrine,
         ``,
         `- Own the outcome end-to-end. Research when uncertain; spawn subagents when that is smarter; then build — no thrash, no permission-to-continue asks.`,
         `- Every wave: highest-leverage next objective vs the mandate · search-before-build · ship · cheapest real proof · hostile review · next wave while cycle=1.`,
@@ -3385,18 +3625,19 @@ export function expandUlwMandate(mandate: string): { expanded: string; soft: boo
       ``,
       `You decide **what** the hard work is and **how** to do it like a top-tier veteran: sharp judgment, deep when needed, decisive shipping. Any domain this workspace needs — correctness, product value, architecture, reliability, UX, tooling, design, ops, incomplete work, research-backed builds — **not** a fixed menu, **not** tests/housekeeping theater by default.`,
       ``,
-      `One-sentence reading (what the hard work is + what you passed on), then tools. No pep talks. No "what should I improve?".`,
+      `One-sentence reading (what the hard work is + what you passed on) **and one Bet:** (a capability this product cannot do today — the path it lives in, the first slice), then tools. No pep talks. No "what should I improve?".`,
       ``,
       smartDoctrine,
       backlogDoctrine,
       evaluateDoctrine,
       productQualityLine,
+      betDoctrine,
       ``,
       `### Operating loop (guidance — adapt freely when freestyle is better)`,
       `1. **ORIENT** — what this place is (stack, checks, entrypoints, git, AGENTS/README, real debt). Tools, not guesses.`,
       `2. **JUDGE** — single highest-leverage hard objective now (impact × confidence / cost). Write the reading.`,
       `3. **RESEARCH** — only as deep as uncertainty warrants; proactive subagents/MCP/web when that is the efficient path. Do not thrash blind.`,
-      `4. **SHIP** one bounded high-leverage wave. Defect-class siblings only. Search-before-build.`,
+      `4. **SHIP** one bounded high-leverage wave — a Bet slice by default; the reading's hole when the hole is the user's job. Defect-class siblings only. Search-before-build.`,
       `5. **PROVE** — cheapest real check that can fail. Never foreground \`npm test\` / \`npm run ci\` / \`npm run check\` (a hung test pins the REPL). Prefer the last targeted check; if the full suite is required, \`background: true\` then \`get_task_output\`.`,
       `6. **SERENDIPITY** — bounded adjacent fix on an open path if cheap; label \`Serendipity:\`.`,
       `7. **HOSTILE REVIEW** — fix real defects in your diff; skip cosmetic noise.`,
@@ -3412,6 +3653,7 @@ export function expandUlwMandate(mandate: string): { expanded: string; soft: boo
       `- Advice-only / "looks fine" / defer to later — a written reading on an evaluate-class mandate is the work, not a deferral.`,
       `- Skipping the mandate's first verb (evaluate/audit) to ship a tiny adjacent polish.`,
       `- Low-leverage churn or token-burning busywork while harder work remains.`,
+      `- Six hole-closes in a row while a Bet sits unshipped — inventing is the mandate; repair is the smoke.`,
       `- Grinding a polish class (clip every chrome line, leftover-dump hunting) after the reading's one ship.`,
       `- Re-reading a file after a successful edit to confirm the write — use the numbered receipt window.`,
       `- Subagent spam, infinite research without shipping, gold-plating without proof.`,
@@ -3446,6 +3688,9 @@ export function armUlwCycle(
   // Backlog gate only for multi-section / comprehensive mandates — not every
   // soft "improve the code" (that would stall classic ULW wave tests forever).
   const broad = isBroadMandate(mandate) || isBroadMandate(cleanMandate);
+  // Bet contract: soft / improve-class with no deliverable owes a Bet:.
+  const open =
+    !isPlaceholderMandate(cleanMandate) && isOpenMandate(cleanMandate, soft);
   const state: UlwCycleState = {
     enabled: true,
     cycle: opts?.cycle ?? 1,
@@ -3461,6 +3706,13 @@ export function armUlwCycle(
     mandate: cleanMandate,
     expandedMandate: expanded,
     softPrompt: soft,
+    openMandate: open,
+    bet: undefined,
+    betRequired: open,
+    betOffStreak: 0,
+    betSwaps: 0,
+    betHold: false,
+    betDeclined: undefined,
     // Wave ledger persists across re-arms (same session story); streak
     // counters reset — a fresh mandate earns a fresh quality context.
     waves: prev?.waves ?? [],
@@ -3577,6 +3829,13 @@ export function adoptUlwMandate(
   s.mandate = next;
   s.expandedMandate = expanded;
   s.softPrompt = soft;
+  s.openMandate = isOpenMandate(next, soft);
+  s.bet = undefined;
+  s.betRequired = s.openMandate;
+  s.betOffStreak = 0;
+  s.betSwaps = 0;
+  s.betHold = false;
+  s.betDeclined = undefined;
   s.backlogRequired = isBroadMandate(next);
   const nextPhase = initialUlwPlanPhase(sessionId, next, s);
   s.judgmentRequired = nextPhase.judgmentRequired;
@@ -3635,15 +3894,23 @@ export function reenableUlwCycle(sessionId: string): UlwCycleState | null {
   s.stuckBlocks = 0;
   s.soulNudgeDone = false;
   clearSameSurfaceHold(s);
+  clearBetHold(s);
   clearUlwWrap(s);
   saveUlwCycle(s);
   return s;
+}
+
+/** User continue / `/cycle 0` release the bet hold; the bet and swaps stay. */
+function clearBetHold(s: UlwCycleState): void {
+  s.betHold = false;
+  s.betOffStreak = 0;
 }
 
 function applyCycleContinue(s: UlwCycleState): void {
   s.stuckBlocks = 0;
   s.soulNudgeDone = false;
   clearSameSurfaceHold(s);
+  clearBetHold(s);
   s.sameSurfaceStreak = 0;
   clearUlwWrap(s);
   clearLastReflect(s);
@@ -3760,6 +4027,7 @@ export function scheduleCycleZeroStop(
   s.cycle = 1;
   s.stuckBlocks = 0;
   clearSameSurfaceHold(s);
+  clearBetHold(s);
   clearUlwWrap(s);
   if (s.wave >= stopAt) {
     flipUlwToLast(s, sessionId, "budget");
@@ -3947,6 +4215,13 @@ export function resetUlwOnClear(sessionId: string): UlwCycleState | null {
     s.mandate = PLACEHOLDER_MANDATE;
     s.expandedMandate = "";
     s.softPrompt = true;
+    s.openMandate = false;
+    s.bet = undefined;
+    s.betRequired = false;
+    s.betOffStreak = 0;
+    s.betSwaps = 0;
+    s.betHold = false;
+    s.betDeclined = undefined;
     s.backlogRequired = false;
     s.judgmentRequired = false;
   }
@@ -4104,6 +4379,7 @@ export function formatUlwStatus(s: UlwCycleState | null): string {
     }`,
     ...(namedLine ? [namedLine] : []),
     ...(qualityLine ? [qualityLine] : []),
+    ...(formatBetStatusLine(s) ? [formatBetStatusLine(s)!] : []),
     ...(formatSameSurfaceStatusLine(s) ? [formatSameSurfaceStatusLine(s)!] : []),
     ...(s.wrapKind
       ? [
@@ -4424,6 +4700,7 @@ export function evaluateUlwAtStop(opts: {
       s.reorientNeedsEvidence = false;
     }
     const adoptedNamed = maybeAdoptNamedShips(s, msg);
+    maybeAdoptBet(s, msg);
 
     // Already at/over cap (e.g. user lowered max_waves mid-run) → force LAST now.
     if (cap != null && s.wave >= cap) {
@@ -4666,7 +4943,12 @@ export function evaluateUlwAtStop(opts: {
       // Stay blocked until a different-surface reading is adopted or
       // /cycle 0. Cycle complete / leftover chrome do not stamp. A real
       // declared ship with edits still increments w (maze 43–46 were invisible).
-      const millSibling = isMillSiblingCloser(s, closer);
+      const millSibling = isMillSiblingCloser(
+        s,
+        closer,
+        stampPaths,
+        stopCredit.kind,
+      );
       const shipAfterExhaust =
         !alreadyStamped &&
         isShipCloseText(closer) &&
@@ -4744,7 +5026,7 @@ export function evaluateUlwAtStop(opts: {
         isShipCloseText(closer) &&
         editDelta >= 1 &&
         !isLeftoverChromeShip(closer) &&
-        !isMillSiblingCloser(s, closer);
+        !isMillSiblingCloser(s, closer, stampPaths, stopCredit.kind);
       if ((!differentSurface || alreadyStamped) && !hittingCap) {
         s.sameSurfaceAdmitCount = (s.sameSurfaceAdmitCount ?? 0) + 1;
         s.sameSurfaceHold = true;
@@ -4774,6 +5056,18 @@ export function evaluateUlwAtStop(opts: {
         sameSurfaceDemanded: true,
       };
     }
+    const onBetStop = betShipHit(s.bet, stampPaths, stopCredit.kind);
+    if (betHolding(s) && !onBetStop) {
+      s.betHold = true;
+      saveUlwCycle(s);
+      const admit = holdAdmit(opts.sessionId, betHoldAdmit(s, opts.sessionId));
+      return {
+        block: true,
+        reason: admit,
+        reanchor: admit,
+        betDemanded: true,
+      };
+    }
     if (
       s.cycle === 1 &&
       !s.wrapKind &&
@@ -4799,6 +5093,7 @@ export function evaluateUlwAtStop(opts: {
         stopCredit.ok &&
         siblingMillHolding(s.waves, stampPaths, stopCredit.kind) &&
         !closerOnContract(opts.sessionId, closer) &&
+        !onBetStop &&
         !isPlayLoopCloser(closer)
       ) {
         s.siblingMillHold = true;
@@ -4936,6 +5231,28 @@ export function evaluateUlwAtStop(opts: {
   return { block: true, reason: reanchor, reanchor };
 }
 
+/** Hold copy: bet ignored (on file) vs bet never named. */
+function betHoldAdmit(s: UlwCycleState, sessionId: string): string {
+  if (s.bet) {
+    return formatBetHoldAdmit({
+      bet: s.bet,
+      betOffStreak: s.betOffStreak,
+      betSwaps: s.betSwaps,
+    });
+  }
+  let candidates: string[] = [];
+  try {
+    candidates = loadExploreMapBets(sessionId);
+  } catch {
+    candidates = [];
+  }
+  return formatBetOwedAdmit({
+    mandate: displayUlwMandate(s.mandate),
+    betOffStreak: s.betOffStreak,
+    candidates,
+  });
+}
+
 function remainingWaveBudgetLine(s: UlwCycleState): string {
   const cap = normalizeMaxWaves(s.maxWaves);
   if (cap == null) {
@@ -5001,8 +5318,14 @@ function buildCycleReanchor(
           playLoopRan: s.playLoopRan,
           fullSuitePassed: s.fullSuitePassed,
           midReflectHoles: s.midReflectHoles,
+          openMandate: s.openMandate,
+          bet: s.bet,
+          betRequired: s.betRequired,
+          betDeclined: s.betDeclined,
+          betOffStreak: s.betOffStreak,
         }),
       ),
+      formatBetReanchorLine(s) ?? null,
       lastEntry
         ? `Last wave closed: +${lastEntry.editDelta} edits, proof ${lastEntry.proof ? "✓" : "✗"}${lastEntry.todoProgress != null ? `, todosΔ=${lastEntry.todoProgress}` : ""}${lastEntry.jobMoved ? ", job-move" : ""}.`
         : null,
@@ -5141,10 +5464,13 @@ export function ulwKickoffMessage(state: UlwCycleState): string {
     state.judgmentRequired
       ? `- **PLAN gate:** cannot ship until you write the plan (\`Reading:\`, memory_write, or exit_plan_mode). Wave 1 always; later waves re-enter when the reading is stale. Then the driver /builds. Type /build to skip.`
       : null,
+    state.betRequired
+      ? `- **Bet gate (open mandate):** the Reading names one \`Bet:\` — a capability this product cannot do today that a demanding user would notice (not a hole), the files it creates, and the first provable slice. Bet slices are job moves and never sibling mill; hole-fixes are smoke and Serendipity:. ${BET_OFF_HOLD} job-moving ships that touch no bet hold unlimited ULW. \`Bet: none — <why>\` declines once.`
+      : null,
     `- ${ULW_LIVE_CONTROLS_HINT}`,
     ``,
     state.judgmentRequired
-      ? `Start Wave 1 **now in PLAN**: write the reading first (what the hard work is, what you passed on, the ONE ship, the verify command). memory_write it, call exit_plan_mode, or start the reply with \`Reading:\`. Then you get edits. /build skips remaining research.`
+      ? `Start Wave 1 **now in PLAN**: write the reading first (what the hard work is, what you passed on, the ONE ship, the verify command${state.betRequired ? ", and one `Bet:` — the capability this product cannot do today, with the path it lives in and its first slice" : ""}). memory_write it, call exit_plan_mode, or start the reply with \`Reading:\`. Then you get edits. /build skips remaining research.`
       : state.backlogRequired
         ? `Start Wave 1 **now**: first todo_write a backlog from the mandate/decisions, then execute the top item with proof.`
         : state.softPrompt

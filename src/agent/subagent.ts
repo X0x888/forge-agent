@@ -1211,6 +1211,7 @@ function buildSubagentPrompt(opts: {
             "Return a short map, not an essay. The last turn MUST be exactly:",
             "pick: <one sentence naming the hole — required, or this explore failed>",
             "passed_on: <what you skipped>",
+            "bet: <optional — one capability this product cannot do today that no hole-fix delivers, with the path it would live in; omit if none>",
             "files:",
             "  <path>:<line>  <claim>",
             "A file list without pick: is not a map. Stop when new searches cite no new paths.",

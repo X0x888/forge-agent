@@ -166,10 +166,19 @@ export function isSameSurface(prev: string, next: string): boolean {
 export function matchesRecentSurface(
   prevSummaries: string[],
   closer: string,
-  opts?: { onContract?: boolean; treeKey?: string; prevTreeKeys?: string[] },
+  opts?: {
+    onContract?: boolean;
+    /** Bet slice — the bet's own files are a class, not a surface to leave. */
+    onBet?: boolean;
+    treeKey?: string;
+    prevTreeKeys?: string[];
+  },
 ): boolean {
-  // Dump-pick contract is not a new class. Maze picks still skip this mill.
-  if (opts?.onContract && !isSlashPeekMillShip(closer)) return false;
+  // A pick or a bet slice is its own class; a dump-pick remainder is not.
+  // Maze picks still skip this mill.
+  if ((opts?.onContract || opts?.onBet) && !isSlashPeekMillShip(closer)) {
+    return false;
+  }
   if (
     opts?.treeKey &&
     (opts.prevTreeKeys || []).some((k) => sameTreeSurface(k, opts.treeKey!))
@@ -200,6 +209,8 @@ export function nextSameSurfaceStreak(
   opts?: {
     consolidation?: boolean;
     onContract?: boolean;
+    /** Bet slice — consecutive slices on one file are the wave, not a grind. */
+    onBet?: boolean;
     treeKey?: string;
     prevTreeKeys?: string[];
   },
@@ -214,11 +225,14 @@ export function nextSameSurfaceStreak(
   }
   // A pick ship is a different class even if it quotes mill flavor —
   // except slash-peek remainders, which are the same job as the last dump.
-  if (opts?.onContract && !mill) {
+  // A bet slice is the same: the bet's files are where the capability
+  // lives, so the streak never counts them.
+  if ((opts?.onContract || opts?.onBet) && !mill) {
     return { streak: 1, same: false, surfaceKey: key };
   }
   const same = matchesRecentSurface(prevSummaries, closer, {
     onContract: Boolean(opts?.onContract) && !mill,
+    onBet: Boolean(opts?.onBet) && !mill,
     treeKey: mill ? PEEK_SLASH_TREE_KEY : opts?.treeKey,
     prevTreeKeys: opts?.prevTreeKeys,
   });

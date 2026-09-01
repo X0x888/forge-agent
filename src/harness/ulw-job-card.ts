@@ -13,6 +13,7 @@ import {
   isFactoryFingerprint,
   isChangelogOnlySummary,
 } from "./work-class.js";
+import { formatBetCardLine, type BetState } from "./bet-contract.js";
 
 
 /** Play / screenshot / Playwright — a look, not a mill grep. */
@@ -30,6 +31,8 @@ export interface UlwJobWaveFact {
   siblingMill?: boolean;
   chrome?: boolean;
   jobMoved?: boolean;
+  /** Declared ship touched the open bet (open mandates). */
+  onBet?: boolean;
   netDiff?: string;
   todoProgress?: number;
   editKind?: string;
@@ -44,10 +47,18 @@ export interface UlwJobCardSource {
   playLoopRan?: boolean;
   fullSuitePassed?: boolean;
   midReflectHoles?: string[];
+  /** Bet contract (open mandates): the capability this run is inventing. */
+  openMandate?: boolean;
+  bet?: BetState;
+  betRequired?: boolean;
+  betDeclined?: string;
+  betOffStreak?: number;
 }
 
 export interface UlwJobCard {
   wave1Reading?: string;
+  /** Open bet / bet owed / bet declined — one line, or none on hard mandates. */
+  betLine?: string;
   openNamedShips: string[];
   lastNonMillShip?: {
     wave: number;
@@ -133,6 +144,7 @@ export function waveMovedJob(w: UlwJobWaveFact | undefined): boolean {
   if (!w) return false;
   if (w.jobMoved === true) return true;
   if (w.jobMoved === false) return false;
+  if (w.onBet) return true;
   if (w.netDiff === "revisit") return false;
   if (w.millClass || w.siblingMill || w.chrome) return false;
   if (w.proofKind === "isolate") return false;
@@ -233,6 +245,7 @@ export function buildUlwJobCard(src: UlwJobCardSource): UlwJobCard {
     wave1Reading: src.sessionId
       ? wave1ReadingFromMemory(src.sessionId)
       : undefined,
+    betLine: formatBetCardLine(src),
     openNamedShips: open.slice(0, 8),
     lastNonMillShip: last
       ? {
@@ -272,6 +285,7 @@ export function formatUlwJobCard(
   if (card.wave1Reading) {
     lines.push(`Wave 1 reading: ${card.wave1Reading}`);
   }
+  if (card.betLine) lines.push(card.betLine);
   if (card.openNamedShips.length) {
     const body = card.openNamedShips
       .slice(0, 6)
@@ -304,7 +318,7 @@ export function formatUlwJobCard(
     }
   }
   lines.push(
-    "Bar is a job-moving ship (named/pick/play, or control-flow on the reading's files), not mill edit count or a suite pass.",
+    "Bar is a job-moving ship (named/pick/play/bet slice, or control-flow on the reading's files), not mill edit count or a suite pass.",
   );
   let out = lines.filter(Boolean).join("\n");
   if (out.length > max) out = `${out.slice(0, max - 1)}…`;

@@ -203,7 +203,7 @@ Auto-arm from prose (default on): prompts like `don't stop until tests pass` or 
 
 ### 3. Ultrawork cycle (`/ulw` + `/cycle`)
 
-Max-autonomy **relentless loop**. Soft prompts like `improve the code` are expanded to god-scope. **Wave 1 is PLAN** (same spine as `/plan` / `/build`) — then BUILD (research → waves → prove → review → repeat).
+Max-autonomy **relentless loop**. Soft prompts like `improve the code` are expanded to god-scope. **Wave 1 is PLAN** (same spine as `/plan` / `/build`) — then BUILD (research → waves → prove → review → repeat). Open mandates also owe a **Bet:** — a capability the product cannot do today, not another hole-close — and unlimited ULW holds after six ships that ignore it (see [docs/ULW.md](docs/ULW.md#bets-open-mandates)).
 
 | Flag | Meaning |
 |------|---------|

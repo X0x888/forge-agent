@@ -76,6 +76,25 @@ Spawn `explore` / `plan` / `general-purpose` **whenever** that improves quality 
 
 Proof still matters. Low-leverage churn while harder work remains fails the quality bar.
 
+## Bets (open mandates)
+
+Soft prompts and improve-class asks with no deliverable (`improve the code`, `make this tool more useful`, "Improve the UI, UX, performance, reliability comprehensively", "be creative") are **open mandates**. Every other ULW mechanism is satisfiable by a proven hole-close, and the explore contract only produces holes (`pick:`) — 2,407 dogfood waves across 17 open-mandate runs stamped zero `new-module` ships. A **Bet** is the counterpart of a pick: one capability THIS product cannot do today that a demanding user would notice, named with the files it creates and its first provable slice.
+
+```text
+Reading: <the hard work, what you passed on, the ONE ship, the verify command>
+Bet: <capability> — <path it lives in, e.g. src/export/csv.ts> — first slice: <what lands this wave + the command that proves it>
+Bet: none — <why no capability is worth more than the open holes>      # decline once, with the why
+```
+
+| Mechanism | Behavior |
+|-----------|----------|
+| **Bet gate** | `/ulw` on an open mandate owes a `Bet:` (closer or `memory_write`). No blocking demand: the kickoff, the PLAN prompt, `forge-veteran` and every CONTINUE re-anchor ask for it (`⚠ Open mandate with no Bet on file`); the hold below is the structural backstop. Memory seeds the first bet (a `memory_write` Reading); once one is on file only the live closer can replace it. |
+| **Bet slice = job move** | A declared ship whose production change lands on the bet's files or directory is `onBet` — the tree is the only slice test. A closer that merely names the bet's job (a "session ledger" hole-close on `src/session/ledger.ts` beside a "CSV export of the session ledger" bet) is off-bet work: a bet is only adopted with a path, so a term match could only ever credit ships that did not touch it. A slice counts as a job move, raises the bar, is **never** sibling mill, and **never counts toward the same-surface hold** — `src/plugins/host-1.ts` → `host-2.ts` → `host-3.ts` inside the bet's directory are slices, not a factory, and four slices in a row on `src/export/csv.ts` are the wave, not a same-surface grind. Test-only diffs and TTY/string-literal chrome are not slices. |
+| **Bet hold** | Unlimited CONTINUE: the off-bet streak counts **credited job-moving** ships that touched no bet (named/pick/play or the reading's files — mill and chrome have their own holds), whether or not a bet is on file. 3 warn on the re-anchor; **6** hold ULW (`betHold`) until a slice lands, a new `Bet:` with a path is written, `Bet: none — why` declines, or `/cycle 0`. A restated bet does not reset the streak; replacing an unshipped bet is a swap and after **2** swaps only a slice (or decline / `/cycle 0`) releases. Consolidation closers do not count. `/cycle 0` and a `/cycle 1` continue clear the hold and the streak (the bet and its swap count stay), same as the same-surface hold. Capped runs never bet-hold (a cap is a budget). Hard mandates have no bet machinery. |
+| **On the wire** | The open bet (slices shipped, ships since it moved) rides the job card — CONTINUE re-anchor, compact, `/cycle status` — and is remembered in decision memory as `Bet: …` so compaction cannot erase it. Explore children may answer `bet:` beside `pick:`; those are candidates the demand reprints. |
+
+`Bet:` is a capability, not a hole. "No longer crashes on 401" is a pick; "one-command CSV export of the session ledger" is a bet. Holes stay welcome as smoke and `Serendipity:` — they are not the wave. Open *wishes* (`invent something`, `build what's missing`) are soft prompts; a build order with an object (`build a login page`, `design the onboarding flow`, `create a migration for the users table`) is a hard mandate and gets neither god-scope nor a Bet gate.
+
 ## Stop behavior
 
 ```

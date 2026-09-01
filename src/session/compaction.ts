@@ -211,6 +211,11 @@ export function buildStructuredSummary(
         playLoopRan: ulw.playLoopRan,
         fullSuitePassed: ulw.fullSuitePassed,
         midReflectHoles: ulw.midReflectHoles,
+        openMandate: ulw.openMandate,
+        bet: ulw.bet,
+        betRequired: ulw.betRequired,
+        betDeclined: ulw.betDeclined,
+        betOffStreak: ulw.betOffStreak,
       }),
     );
     sections.push(
