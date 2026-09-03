@@ -200,8 +200,13 @@ export async function runStopGuard(input: StopGuardInput): Promise<StopGuardResu
   // the next Stop reaches the drivers exactly as it would have. Capped at
   // one block per session inside the guard (`st.blocked`), kill-switch
   // FORGE_GUIDELINE_AUDIT_BLOCK=0.
+  //
+  // `lastUserMessage` for the same reason step 1b takes it nine lines above:
+  // a pure question is an answer, not a run, and no guard on this path may
+  // charge one a round.
   const guidelineDecision = evaluateGuidelineAuditAtStop({
     sessionId: ctx.sessionId,
+    lastUserMessage: input.lastUserMessage,
   });
   if (guidelineDecision.block) {
     return {

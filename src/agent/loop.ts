@@ -57,7 +57,7 @@ import {
   noteGuidelineToolCall,
   type GuidelineFinalizeResult,
 } from "../harness/guideline-audit.js";
-import { buildRunReport } from "../harness/run-report.js";
+import { buildRunReport, lastRealUserPrompt } from "../harness/run-report.js";
 import { proofClaimReleaseTips } from "../harness/proof-claim-guard.js";
 import { loadGoal, detectAutoGoal, armGoal } from "../harness/goal.js";
 import {
@@ -1337,7 +1337,13 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
 
   saveSession(session);
 
-  /** Stamp + registry + user notice once per run (Stop allow or run end). */
+  /**
+   * Stamp + registry + user notice once per run (Stop allow or run end).
+   *
+   * `repeat` is a later run of the same session reading the audit that an
+   * earlier one already closed — nothing happened this turn, so it is neither
+   * announced again nor hung on this run's result.
+   */
   let guidelineResult: GuidelineFinalizeResult | undefined;
   const finalizeGuidelineAuditForRun = (): void => {
     if (guidelineResult) return;
@@ -1345,8 +1351,9 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
       const r = finalizeGuidelineAudit({
         sessionId: session.meta.id,
         workspace,
+        lastUserMessage: lastRealUserPrompt(session)?.text,
       });
-      if (r.skipped) return;
+      if (r.skipped || r.repeat) return;
       guidelineResult = r;
       for (const line of formatGuidelineAuditNotice(r)) log.info(line);
     } catch {
@@ -3874,7 +3881,12 @@ function admitHarnessState(
 /**
  * Agent-guidelines audit brief — once per session, as the first harness
  * message after the prompt. Deferred while mutations are denied (plan mode /
- * ULW orient) and re-tried at every safe boundary. Subagents never audit.
+ * ULW orient), and on a pure question, and re-tried at every safe boundary.
+ * Subagents never audit.
+ *
+ * `lastRealUserPrompt` and not the last user-role row: by the time a safe
+ * boundary comes round the last user-role message is a harness admit, and
+ * the advisory carve-out has to read what the *user* typed.
  */
 function maybeAdmitGuidelineAudit(
   session: SessionData,
@@ -3889,6 +3901,7 @@ function maybeAdmitGuidelineAudit(
       workspace: config.workspace || session.meta.cwd || process.cwd(),
       subagent: Boolean(session.meta.subagent),
       readOnly,
+      lastUserMessage: lastRealUserPrompt(session)?.text,
     });
     if (brief) session.messages.push({ role: "user", content: brief });
   } catch {

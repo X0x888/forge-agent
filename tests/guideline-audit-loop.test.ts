@@ -4,6 +4,11 @@
  * the file at Stop and reports it on the LoopResult — and under ULW the
  * ignored brief is still bounced, because the cycle driver answers every
  * Stop it is given.
+ *
+ * And the other half of that: a turn that is only a question is not a work
+ * turn. It is not diverted into a proofread, not held at Stop for one, and
+ * does not end with a write to the user's tracked AGENTS.md — but the audit
+ * stays pending, so the next real work prompt of the same session audits.
  */
 import { describe, it, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
@@ -21,7 +26,9 @@ import { LspManager } from "../src/lsp/manager.js";
 import {
   GUIDELINE_BRIEF_PREFIX,
   clearGuidelineAuditState,
+  guidelineAuditState,
 } from "../src/harness/guideline-audit.js";
+import { buildRunReport } from "../src/harness/run-report.js";
 import {
   loadUlwCycle,
   setCycleFlag,
@@ -151,7 +158,7 @@ describe("guideline audit in the agent loop", () => {
         if (calls === 1) {
           const users = req.messages.filter((m) => m.role === "user");
           const promptIdx = users.findIndex(
-            (m) => typeof m.content === "string" && m.content === "what does this repo do?",
+            (m) => typeof m.content === "string" && m.content === "add a streaming importer",
           );
           assert.ok(promptIdx >= 0, "user prompt present");
           // The brief follows the prompt (after the one-line git admit).
@@ -181,7 +188,7 @@ describe("guideline audit in the agent loop", () => {
       session,
       hooks,
       permissions,
-      userMessage: "what does this repo do?",
+      userMessage: "add a streaming importer",
       stream: false,
       disableHarnessAutoArm: true,
       mcp,
@@ -197,6 +204,181 @@ describe("guideline audit in the agent loop", () => {
     // Registry written under FORGE_HOME.
     const regDir = path.join(home, "guidelines");
     assert.ok(fs.existsSync(regDir) && fs.readdirSync(regDir).length === 1);
+  });
+
+  // The class this closes: a harness mechanism that fires on a turn which is
+  // not work. A question in any repo whose AGENTS.md is unstamped used to cost
+  // an injected proofread brief, a blocked Stop ("read_file each one now;
+  // revise or rewrite…") and a write into the user's tracked file. Drop the
+  // advisory carve-out from `maybeGuidelineAuditBrief` and this test sees the
+  // brief; drop it from `finalizeGuidelineAudit` too and it sees the stamp.
+  it("a plain question is not audited: no brief, no bounce, no stamp — and the next work prompt still audits", async () => {
+    const { config, hooks, permissions, mcp, lsp } = harness();
+    const session = createSession({ cwd: tmp, provider: "xai", model: "grok-4.6" });
+    const seen: string[] = [];
+    let calls = 0;
+    const provider: LLMProvider = {
+      id: "xai",
+      async chat(req) {
+        calls += 1;
+        for (const m of req.messages) {
+          if (m.role === "user" && typeof m.content === "string") seen.push(m.content);
+        }
+        // Answers the question. Never opens AGENTS.md.
+        return stopReply("It is a small CLI that runs an agent loop.");
+      },
+      async chatStream(req, onDelta) {
+        const r = await this.chat(req);
+        if (r.message.content) onDelta({ content: r.message.content });
+        return r;
+      },
+    };
+
+    const result = await runAgentLoop({
+      config,
+      provider,
+      session,
+      hooks,
+      permissions,
+      userMessage: "what does this repo do?",
+      stream: false,
+      disableHarnessAutoArm: true,
+      mcp,
+      lsp,
+    });
+
+    // One round: the answer was not held for homework.
+    assert.equal(calls, 1, `a question costs one round, got ${calls}`);
+    assert.equal(result.aborted, false);
+    assert.equal(
+      seen.filter((m) => m.startsWith(GUIDELINE_BRIEF_PREFIX)).length,
+      0,
+      "no proofread brief on a question",
+    );
+    assert.equal(
+      seen.filter((m) => /guideline-audit\] Stop blocked/.test(m)).length,
+      0,
+      "the Stop is not blocked on a question",
+    );
+    assert.equal(result.guidelines, undefined, "no audit outcome on a Q&A run");
+    // The user's tracked file is untouched — no stamp, no registry sidecar.
+    assert.doesNotMatch(
+      fs.readFileSync(path.join(tmp, "AGENTS.md"), "utf8"),
+      /proofread/,
+      "an unrequested write to a tracked file is the whole defect",
+    );
+    assert.equal(fs.existsSync(path.join(home, "guidelines")), false);
+    // Deferred, not skipped.
+    assert.equal(guidelineAuditState(session.meta.id)?.phase, "pending");
+
+    // …and the next prompt that is actually work audits exactly as it would
+    // have. Deferring must never mean skipping forever.
+    const seen2: string[] = [];
+    let calls2 = 0;
+    const provider2: LLMProvider = {
+      id: "xai",
+      async chat(req) {
+        calls2 += 1;
+        for (const m of req.messages) {
+          if (m.role === "user" && typeof m.content === "string") seen2.push(m.content);
+        }
+        if (calls2 === 1) return readReply("AGENTS.md");
+        return stopReply("Done — the importer streams now.");
+      },
+      async chatStream(req, onDelta) {
+        const r = await this.chat(req);
+        if (r.message.content) onDelta({ content: r.message.content });
+        return r;
+      },
+    };
+    const result2 = await runAgentLoop({
+      config,
+      provider: provider2,
+      session,
+      hooks,
+      permissions,
+      userMessage: "add a streaming importer",
+      stream: false,
+      disableHarnessAutoArm: true,
+      mcp,
+      lsp,
+    });
+    assert.ok(
+      seen2.some((m) => m.startsWith(GUIDELINE_BRIEF_PREFIX)),
+      "the deferred brief goes out on the work prompt",
+    );
+    assert.deepEqual(result2.guidelines?.stamped, ["AGENTS.md"]);
+    assert.match(fs.readFileSync(path.join(tmp, "AGENTS.md"), "utf8"), /proofread/);
+  });
+
+  // Same class, the finalize door: the audit is closed once per session, so a
+  // later turn must not re-announce it. Without the `repeat` flag every
+  // subsequent prompt re-printed "AGENTS.md proofread … stamp updated" and
+  // hung `guidelines` on a run that audited nothing.
+  it("a later turn does not re-report the audit an earlier turn closed", async () => {
+    const { config, hooks, permissions, mcp, lsp } = harness();
+    const session = createSession({ cwd: tmp, provider: "xai", model: "grok-4.6" });
+    let calls = 0;
+    const provider: LLMProvider = {
+      id: "xai",
+      async chat() {
+        calls += 1;
+        if (calls === 1) return readReply("AGENTS.md");
+        return stopReply("Done.");
+      },
+      async chatStream(req, onDelta) {
+        const r = await this.chat(req);
+        if (r.message.content) onDelta({ content: r.message.content });
+        return r;
+      },
+    };
+    const first = await runAgentLoop({
+      config,
+      provider,
+      session,
+      hooks,
+      permissions,
+      userMessage: "add a streaming importer",
+      stream: false,
+      disableHarnessAutoArm: true,
+      mcp,
+      lsp,
+    });
+    assert.deepEqual(first.guidelines?.stamped, ["AGENTS.md"]);
+
+    const second = await runAgentLoop({
+      config,
+      provider,
+      session,
+      hooks,
+      permissions,
+      userMessage: "now add a retry",
+      stream: false,
+      disableHarnessAutoArm: true,
+      mcp,
+      lsp,
+    });
+    assert.equal(
+      second.guidelines,
+      undefined,
+      "the audit belongs to the turn that ran it, not to every later turn",
+    );
+
+    // The result key is not the only surface. The run report and its addendum
+    // read the same stored result through `formatGuidelineReportLines`, and
+    // the REPL renders that after every run — so suppressing only the loop's
+    // own notice left the card re-announcing the stamp on every later prompt.
+    const guidelineSection = (): string =>
+      (
+        buildRunReport({ session, workspace: tmp, result: {} }).sections.find(
+          (s) => s.title === "Agent guidelines",
+        )?.lines || []
+      ).join("\n");
+    assert.doesNotMatch(
+      guidelineSection(),
+      /stamp updated|revised by the agent/,
+      "the run report re-announced an audit this run did not perform",
+    );
   });
 
   it("with the kill-switch off there is no brief and no stamp", async () => {
@@ -363,7 +545,7 @@ describe("guideline audit in the agent loop", () => {
         session,
         hooks,
         permissions,
-        userMessage: "what does this repo do?",
+        userMessage: "add a streaming importer",
         stream: false,
         disableHarnessAutoArm: true,
         mcp,

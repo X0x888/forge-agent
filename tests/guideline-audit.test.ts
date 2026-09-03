@@ -17,6 +17,7 @@ import {
   formatGuidelineAuditBrief,
   formatGuidelineAuditNotice,
   formatGuidelineCard,
+  formatGuidelineReportLines,
   formatGuidelineStatusLine,
   guidelineAuditBriefed,
   guidelineRegistryPath,
@@ -572,8 +573,14 @@ describe("session audit flow", () => {
     assert.ok(reg.files["AGENTS.md"].stampedAt);
     assert.ok(reg.files["AGENTS.md"].revisedAt);
     assert.equal(reg.lastAuditSession, "s6");
-    // Idempotent
-    assert.equal(finalizeGuidelineAudit({ sessionId: "s6", workspace: root }), r);
+    // Idempotent — same answer, no second stamp, and flagged as a repeat so a
+    // later run of this session does not re-announce it.
+    const again = finalizeGuidelineAudit({ sessionId: "s6", workspace: root });
+    assert.deepEqual(again, { ...r, repeat: true });
+    assert.equal(
+      (fs.readFileSync(path.join(root, "AGENTS.md"), "utf8").match(/proofread/g) || []).length,
+      1,
+    );
     // Next session: fresh, no brief.
     clearGuidelineAuditState();
     assert.equal(maybeGuidelineAuditBrief({ sessionId: "s7", workspace: root }), null);
@@ -732,6 +739,124 @@ describe("session audit flow", () => {
       lastAssistantMessage: "The answer is 42.",
     });
     assert.equal(r2.allowStop, true);
+  });
+
+  // A question is not a work turn. Every other Stop-blocking guard in
+  // src/harness/ carves Q&A out with the same predicate; the audit does it at
+  // all three of its turn-acting doors. Each of the three is pinned alone
+  // here, because at loop level the brief defer hides the other two.
+  it("an advisory prompt defers the brief without ever skipping it", () => {
+    const root = mkProject({ "AGENTS.md": GOOD });
+    assert.equal(
+      maybeGuidelineAuditBrief({
+        sessionId: "adv1",
+        workspace: root,
+        lastUserMessage: "what does this repo do?",
+      }),
+      null,
+      "a question is not diverted into a proofread",
+    );
+    assert.equal(guidelineAuditBriefed("adv1"), false);
+    // Deferred, not skipped: the next work prompt of the same session audits.
+    const brief = maybeGuidelineAuditBrief({
+      sessionId: "adv1",
+      workspace: root,
+      lastUserMessage: "add a streaming importer",
+    });
+    assert.ok(brief, "the deferred brief goes out on the next work prompt");
+    assert.ok(brief!.startsWith(GUIDELINE_BRIEF_PREFIX));
+  });
+
+  it("an advisory prompt does not bounce the Stop, and does not spend the one block", () => {
+    const root = mkProject({ "AGENTS.md": GOOD });
+    assert.ok(
+      maybeGuidelineAuditBrief({
+        sessionId: "adv2",
+        workspace: root,
+        lastUserMessage: "add a streaming importer",
+      }),
+    );
+    // Same session, a question next: the brief was ignored, but a question
+    // may not be charged a round for it.
+    assert.equal(
+      evaluateGuidelineAuditAtStop({
+        sessionId: "adv2",
+        lastUserMessage: "what does this repo do?",
+      }).block,
+      false,
+    );
+    // …and the cap is unspent, so real work is still held.
+    assert.equal(evaluateGuidelineAuditAtStop({ sessionId: "adv2" }).block, true);
+  });
+
+  it("an advisory turn does not stamp the user's tracked file", () => {
+    const root = mkProject({ "AGENTS.md": GOOD });
+    assert.ok(
+      maybeGuidelineAuditBrief({
+        sessionId: "adv3",
+        workspace: root,
+        lastUserMessage: "add a streaming importer",
+      }),
+    );
+    noteGuidelineToolCall("adv3", "read_file", { path: "AGENTS.md" });
+    const skipped = finalizeGuidelineAudit({
+      sessionId: "adv3",
+      workspace: root,
+      lastUserMessage: "what does this repo do?",
+    });
+    assert.equal(skipped.skipped, true);
+    assert.deepEqual(skipped.stamped, []);
+    assert.doesNotMatch(
+      fs.readFileSync(path.join(root, "AGENTS.md"), "utf8"),
+      /proofread/,
+      "reading a file to answer a question is not a proofread",
+    );
+    // Withheld, not lost: the same audit closes on a work turn.
+    const done = finalizeGuidelineAudit({
+      sessionId: "adv3",
+      workspace: root,
+      lastUserMessage: "add a streaming importer",
+    });
+    assert.deepEqual(done.stamped, ["AGENTS.md"]);
+  });
+
+  it("a second finalize in a later run is flagged repeat, not re-reported", () => {
+    const root = mkProject({ "AGENTS.md": GOOD });
+    assert.ok(maybeGuidelineAuditBrief({ sessionId: "rep1", workspace: root }));
+    noteGuidelineToolCall("rep1", "read_file", { path: "AGENTS.md" });
+    const first = finalizeGuidelineAudit({ sessionId: "rep1", workspace: root });
+    assert.deepEqual(first.stamped, ["AGENTS.md"]);
+    assert.notEqual(first.repeat, true);
+    const again = finalizeGuidelineAudit({ sessionId: "rep1", workspace: root });
+    assert.equal(again.repeat, true, "a later run did not run this audit");
+  });
+
+  // The report section is the third surface reading the stored result, after
+  // the loop's notice and the `guidelines` result key. It has to honour the
+  // repeat too, or the run report and its addendum re-announce a stamp that
+  // was written several prompts ago — which is what `docs/HARNESS.md` and the
+  // CHANGELOG entry both promise they do not.
+  it("the run report announces the audit for the run that ran it, and not after", () => {
+    const root = mkProject({ "AGENTS.md": GOOD });
+    assert.ok(maybeGuidelineAuditBrief({ sessionId: "rep2", workspace: root }));
+    noteGuidelineToolCall("rep2", "read_file", { path: "AGENTS.md" });
+    finalizeGuidelineAudit({ sessionId: "rep2", workspace: root });
+
+    // The auditing run's own report still carries it. `finalizeGuidelineAudit`
+    // runs inside runAgentLoop and the report renders after it returns, so
+    // suppressing on the first close would blank the report that earned it.
+    const own = formatGuidelineReportLines({ sessionId: "rep2", workspace: root });
+    assert.match(own.join("\n"), /proofread.*stamp updated/);
+
+    // A later run closes nothing; its report says what the files are like now.
+    finalizeGuidelineAudit({ sessionId: "rep2", workspace: root });
+    const later = formatGuidelineReportLines({ sessionId: "rep2", workspace: root });
+    assert.doesNotMatch(
+      later.join("\n"),
+      /stamp updated|revised by the agent/,
+      "a later prompt re-announced an audit it did not run",
+    );
+    assert.deepEqual(later, [formatGuidelineStatusLine(surveyGuidelines(root))]);
   });
 
   it("/guidelines stamp stamps every non-import file", () => {

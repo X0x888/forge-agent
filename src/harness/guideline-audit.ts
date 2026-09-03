@@ -42,12 +42,22 @@
  * Registry: `~/.forge/guidelines/<projectKey>.json` (hash per file, mode 0600).
  * Sibling stamps (`· sisyphus-all`, `· oh-my-claude`) count as proofread.
  *
+ * **Advisory Q&A turns never audit.** A question is not a work turn: it may
+ * not be diverted into a proofread, may not be held at Stop for one, and may
+ * not end with a write to a file the user never asked anyone to touch. Every
+ * other Stop-blocking guard in this directory carves Q&A out the same way
+ * (`looksLikeAdvisoryUserMessage`); the audit does it at all three of its
+ * turn-acting doors — brief, Stop, stamp. It is a **defer, not a skip**:
+ * `phase` stays `"pending"`, so the next real work prompt in the same
+ * session audits exactly as it would have.
+ *
  * Kill-switch: FORGE_GUIDELINE_AUDIT=0. Subagents never audit.
  */
 import fs from "node:fs";
 import path from "node:path";
 import { createHash } from "node:crypto";
 import { isFalsy } from "../util/bool.js";
+import { looksLikeAdvisoryUserMessage } from "../util/advisory-intent.js";
 import { ensureDir, forgeHome, nowIso, readJsonFile, writeJsonFile } from "../util/fs.js";
 import {
   collectInstructionFiles,
@@ -714,6 +724,14 @@ interface SessionAuditState {
   /** Stop-block already spent (cap 1). */
   blocked: boolean;
   result?: GuidelineFinalizeResult;
+  /**
+   * The run that closed this audit has ended, so every surface has already
+   * announced it once. Set on the *repeat* finalize and not on the first one,
+   * because `finalizeGuidelineAuditForRun` runs inside `runAgentLoop` while
+   * the report is rendered after it returns: setting this on the first close
+   * would strip the audit from the report of the very run that performed it.
+   */
+  reported?: boolean;
 }
 
 const sessions = new Map<string, SessionAuditState>();
@@ -739,6 +757,8 @@ export function maybeGuidelineAuditBrief(opts: {
   subagent?: boolean;
   /** Mutations are denied (plan mode / ULW orient) — defer. */
   readOnly?: boolean;
+  /** The user's own last prompt. Advisory Q&A defers, exactly as readOnly does. */
+  lastUserMessage?: string;
 }): string | null {
   if (!guidelineAuditEnabled()) return null;
   if (opts.subagent) return null;
@@ -758,6 +778,14 @@ export function maybeGuidelineAuditBrief(opts: {
   }
   if (st.phase !== "pending") return null;
   if (opts.readOnly) return null;
+  // A pure question is not a work turn. Ordering a proofread ahead of it
+  // spends the user's round on something they did not ask for, and the Stop
+  // guard then costs a second one. Defer exactly as `readOnly` does — `phase`
+  // stays "pending", so the next work prompt of this same session audits.
+  // Deferring is not skipping.
+  if (opts.lastUserMessage && looksLikeAdvisoryUserMessage(opts.lastUserMessage)) {
+    return null;
+  }
   st.phase = "briefed";
   st.briefedAt = nowIso();
   return formatGuidelineAuditBrief(st.survey);
@@ -907,7 +935,14 @@ const BASH_LOOK_HEADS = new Set([
 const BASH_EDIT_RE =
   /(?:>|>>|\btee\b|\bsed\s+-i|\bperl\s+-p?i|\bmv\b|\bcp\b|\brm\b)/;
 
-/** Record that the model looked at / edited a guideline file this session. */
+/**
+ * Record that the model looked at / edited a guideline file this session.
+ *
+ * Only while a brief is open (`phase === "briefed"`), which is also what
+ * keeps an advisory turn free of it: the brief defers on a question, so a
+ * `read_file AGENTS.md` that answers "what does this repo do?" credits
+ * nothing and earns no stamp. Evidence is evidence *of a proofread*.
+ */
 export function noteGuidelineToolCall(
   sessionId: string,
   toolName: string,
@@ -965,31 +1000,63 @@ export interface GuidelineFinalizeResult {
    * of sessions the file is fine, and it is not.
    */
   unresolved: GuidelineUnresolvedFile[];
-  /** Model was never briefed (fresh / disabled / subagent / not a project). */
+  /** Model was never briefed (fresh / disabled / subagent / advisory / not a project). */
   skipped: boolean;
+  /**
+   * This audit was already closed and reported by an earlier run of the same
+   * session — nothing happened on *this* turn. The caller must not announce
+   * it again or hang it on this run's result.
+   */
+  repeat?: boolean;
 }
 
 /**
  * Close the audit for this session: stamp files the model looked at or
  * changed, update the registry, and report what really changed. Safe to
- * call more than once — the second call returns the stored result.
+ * call more than once — the second call returns the stored result, flagged
+ * `repeat` so a later run does not announce a turn's work as its own.
  */
 export function finalizeGuidelineAudit(opts: {
   sessionId: string;
   workspace: string;
+  /** The user's own last prompt. An advisory turn does not stamp. */
+  lastUserMessage?: string;
 }): GuidelineFinalizeResult {
+  const nothing = (): GuidelineFinalizeResult => ({
+    stamped: [],
+    revised: [],
+    ignored: [],
+    unresolved: [],
+    skipped: true,
+  });
   const st = sessions.get(opts.sessionId);
-  if (!st) return { stamped: [], revised: [], ignored: [], unresolved: [], skipped: true };
-  if (st.result) return st.result;
-  if (st.phase !== "briefed") {
-    const r: GuidelineFinalizeResult = {
-      stamped: [],
-      revised: [],
-      ignored: [],
-      unresolved: [],
-      skipped: true,
-    };
-    return r;
+  if (!st) return nothing();
+  // Already closed by an earlier run of this session. Hand the stored result
+  // back for the card, but flagged: without this every later prompt of the
+  // session re-printed "AGENTS.md proofread … stamp updated" and hung
+  // `guidelines` on a run that audited nothing.
+  if (st.result) {
+    st.reported = true;
+    return { ...st.result, repeat: true };
+  }
+  if (st.phase !== "briefed") return nothing();
+  // Decision (advisory turns do not stamp): a Q&A turn ends with no write to
+  // the user's tracked guideline file. The stamp is an attestation that the
+  // file was proofread; on a turn where nobody was asked to read it there is
+  // nothing to attest, and silencing the audit for the next
+  // FORGE_GUIDELINE_RECHECK_DAYS on the strength of it is the same defect the
+  // unresolved-issue rule below already refuses. It is also a real write: on
+  // ULW, `finalizeGuidelineAuditForRun` runs immediately before the release
+  // auto-commit in loop.ts, so the stamp would land in a commit the user did
+  // not ask for, off the back of a question. Reading AGENTS.md to *answer* a
+  // question is not a proofread either — that is the point of the withheld
+  // stamp, not a gap in it.
+  //
+  // Cheap to reverse: delete this one guard and an advisory turn stamps
+  // again (the brief must also be un-deferred in `maybeGuidelineAuditBrief`
+  // for the audit to reach this point at all).
+  if (opts.lastUserMessage && looksLikeAdvisoryUserMessage(opts.lastUserMessage)) {
+    return nothing();
   }
   const reg = loadGuidelineRegistry(st.root);
   const stamped: string[] = [];
@@ -1129,13 +1196,23 @@ export function formatGuidelineAuditNotice(r: GuidelineFinalizeResult): string[]
   return out;
 }
 
-/** Report section body (run report / /status). */
+/**
+ * Report section body (run report / addendum / `/status`).
+ *
+ * The stored result belongs to the run that produced it. Once that run has
+ * ended (`reported`, set on the repeat finalize) this falls back to the plain
+ * survey line, so a later prompt's report says what the files are like now
+ * rather than re-announcing `AGENTS.md proofread … stamp updated` for work
+ * that happened several prompts ago. The loop suppresses the same repeat on
+ * its own notice and on the `guidelines` result key; this is the third
+ * surface reading that state, and the only other one.
+ */
 export function formatGuidelineReportLines(opts: {
   sessionId?: string;
   workspace: string;
 }): string[] {
   const st = opts.sessionId ? sessions.get(opts.sessionId) : undefined;
-  if (st?.result && !st.result.skipped) {
+  if (st?.result && !st.result.skipped && !st.reported) {
     const lines = formatGuidelineAuditNotice(st.result).map((l) =>
       l.replace(/^Agent guidelines:\s*/, ""),
     );
@@ -1158,14 +1235,26 @@ export function formatGuidelineReportLines(opts: {
  * Wired at stop-guard **step 1c**, ahead of the drivers — the ULW driver
  * answers every Stop it is handed while armed, so a guard behind it never
  * runs in a `/ulw` session. See the comment at the call site.
+ *
+ * Advisory Q&A never bounces, like every sibling guard on this path
+ * (report-guard, todo-gate, handoff-guard, proof-claim-guard). The brief
+ * already defers on an advisory prompt, so this is the second door on the
+ * same rule: a question must not cost a round. Returning early leaves the
+ * one-block cap unspent, so a later work prompt in the same session is still
+ * held if it ignores the brief.
  */
 export function evaluateGuidelineAuditAtStop(opts: {
   sessionId: string;
+  /** The user's own last prompt. Q&A turns are answers, not runs. */
+  lastUserMessage?: string;
 }): { block: boolean; reason?: string; reanchor?: string } {
   const st = sessions.get(opts.sessionId);
   if (!st || st.phase !== "briefed") return { block: false };
   if (isFalsy(process.env.FORGE_GUIDELINE_AUDIT_BLOCK ?? "1")) return { block: false };
   if (st.blocked) return { block: false };
+  if (opts.lastUserMessage && looksLikeAdvisoryUserMessage(opts.lastUserMessage)) {
+    return { block: false };
+  }
   const wanted = st.survey.files.filter((f) => f.needsAudit).map((f) => f.rel);
   if (st.survey.missingPrimary) wanted.push("AGENTS.md");
   const touched = wanted.filter((rel) => st.looked.has(rel) || st.edited.has(rel));
