@@ -50,6 +50,14 @@ import {
 import { appendFileMutation } from "../session/mutations.js";
 import { HookRunner, type HookContext } from "../harness/hooks.js";
 import { runStopGuard } from "../harness/stop-guard.js";
+import {
+  finalizeGuidelineAudit,
+  formatGuidelineAuditNotice,
+  maybeGuidelineAuditBrief,
+  noteGuidelineToolCall,
+  type GuidelineFinalizeResult,
+} from "../harness/guideline-audit.js";
+import { buildRunReport } from "../harness/run-report.js";
 import { proofClaimReleaseTips } from "../harness/proof-claim-guard.js";
 import { loadGoal, detectAutoGoal, armGoal } from "../harness/goal.js";
 import {
@@ -428,6 +436,8 @@ export interface LoopResult {
   proofPokes?: number;
   /** Provider chat rounds this run (same as `turns`). */
   providerRounds?: number;
+  /** Agent-guidelines audit outcome for this run (stamped / revised files). */
+  guidelines?: GuidelineFinalizeResult;
 }
 
 /**
@@ -1180,6 +1190,8 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
   let handoffBlocks = 0;
   /** Consecutive Stop blocks from proof-claim guard. Resets on allow. */
   let proofClaimBlocks = 0;
+  /** Report-guard bounces this run (homework / last-round-only closer). */
+  let reportBlocks = 0;
   // In-session tool-clear mutates history and busts the prompt-cache prefix.
   // Default off — request-time prune (buildChatRequest) is the wire path.
   // FORGE_TOOL_CLEAR=1 restores the old mutating microcompaction.
@@ -1319,8 +1331,28 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
   } else {
     admitHarnessState(session, config);
   }
+  // Agent-guidelines audit: the first action of a session (deferred while
+  // plan mode / ULW orient deny mutations — re-checked at each boundary).
+  maybeAdmitGuidelineAudit(session, config);
 
   saveSession(session);
+
+  /** Stamp + registry + user notice once per run (Stop allow or run end). */
+  let guidelineResult: GuidelineFinalizeResult | undefined;
+  const finalizeGuidelineAuditForRun = (): void => {
+    if (guidelineResult) return;
+    try {
+      const r = finalizeGuidelineAudit({
+        sessionId: session.meta.id,
+        workspace,
+      });
+      if (r.skipped) return;
+      guidelineResult = r;
+      for (const line of formatGuidelineAuditNotice(r)) log.info(line);
+    } catch {
+      /* never fail a run on the audit */
+    }
+  };
 
   let turns = 0;
   let finalText = "";
@@ -2897,6 +2929,14 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
           verificationFullSuite: harnessStats.verificationFullSuiteRuns > 0,
           handoffBlocks,
           proofClaimBlocks,
+          stopContinues,
+          reportBlocks,
+          runFactsProvider: () =>
+            buildRunReport({
+              session,
+              workspace,
+              result: { stopContinues, finalText },
+            }).facts,
           preferredCheckCommands,
           lastVerificationCommand:
             session.meta.lastVerificationOk === false
@@ -2904,6 +2944,14 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
               : session.meta.lastVerificationCommand,
           lastVerificationStale: isLastVerificationStale(session.meta),
         });
+        // Report-guard bounces (homework hand-back / last-round-only closer).
+        if (stopResult.report?.block) {
+          reportBlocks += 1;
+          harnessStats.effortBoostTurns = Math.max(
+            harnessStats.effortBoostTurns,
+            1,
+          );
+        }
         // Reset only when the ULW driver actually evaluated this Stop — hook /
         // goal blocks return early without consuming the signal, and the runs
         // still belong to the wave in progress.
@@ -3029,6 +3077,7 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
         }
         if (stopResult.allowStop) {
           if (stopResult.systemMessage) log.dim(stopResult.systemMessage);
+          finalizeGuidelineAuditForRun();
           if (
             !loadUlwCycle(session.meta.id)?.enabled &&
             session.meta.ultrawork
@@ -3641,6 +3690,7 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
 
   defaultStarts?.flush();
   offBgSettled();
+  finalizeGuidelineAuditForRun();
 
   return {
     finalText,
@@ -3665,6 +3715,7 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
     admitCount: pokeMeters.admitCount,
     proofPokes: pokeMeters.proofPokes,
     providerRounds: turns,
+    ...(guidelineResult ? { guidelines: guidelineResult } : {}),
   };
 }
 
@@ -3820,6 +3871,31 @@ function admitHarnessState(
   }
 }
 
+/**
+ * Agent-guidelines audit brief — once per session, as the first harness
+ * message after the prompt. Deferred while mutations are denied (plan mode /
+ * ULW orient) and re-tried at every safe boundary. Subagents never audit.
+ */
+function maybeAdmitGuidelineAudit(
+  session: SessionData,
+  config: ForgeConfig,
+): void {
+  try {
+    const readOnly =
+      config.permissionMode === "plan" ||
+      resolveUlwPhase(loadUlwCycle(session.meta.id)) === "orient";
+    const brief = maybeGuidelineAuditBrief({
+      sessionId: session.meta.id,
+      workspace: config.workspace || session.meta.cwd || process.cwd(),
+      subagent: Boolean(session.meta.subagent),
+      readOnly,
+    });
+    if (brief) session.messages.push({ role: "user", content: brief });
+  } catch {
+    /* audit is best-effort */
+  }
+}
+
 /** Doom/error-streak warnings live in tool bodies that microcompaction deletes. */
 function maybeAdmitSelfHealReminder(session: SessionData): void {
   const code = session.meta.lastError?.code;
@@ -3869,6 +3945,8 @@ function drainSafeBoundaryMessages(
       `Applied mid-run control${liveNotices.length > 1 ? "s" : ""}`,
     );
   }
+  // Deferred guideline brief (plan mode / ULW orient ended).
+  maybeAdmitGuidelineAudit(session, config);
 
   const interjections = drainInterjections(session.meta.id);
   if (interjections.length) {
@@ -4669,6 +4747,13 @@ async function prepareToolResultInner(
   const ms = Date.now() - t0;
   const output = truncateMiddle(result.output);
   const bytes = Buffer.byteLength(output, "utf8");
+  if (!result.isError) {
+    try {
+      noteGuidelineToolCall(session.meta.id, name, toolInput);
+    } catch {
+      /* */
+    }
+  }
 
   if (events?.onToolEnd) {
     events.onToolEnd(name, {

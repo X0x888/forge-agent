@@ -116,6 +116,10 @@ attempt Stop
 
 Yield (“shall I continue?”) is still handoff-blocked. A red check is not evidence.
 
+Before the driver sees a LAST `**Cycle complete.**`, the report guard's attestation pass reads it: homework handed back ("you can now run…") and, after two or more harness rounds, a close-out-only attestation are bounced once each so the attestation is the whole-run report. That block spends no wave and no evidence nudge — the driver has not evaluated the Stop yet.
+
+On release and on sit-down the shaped attestation **is** the run report, so the harness adds only what it knows and the model does not: the guideline audit, any `Operator:` item, how to resume, and where `report.md` was saved. The full card (outcome sentence, What shipped = every wave since the mandate, Verified, Not done = open named ships / unsliced bet / LAST must-fix, Needs you) is always written to the session's `report.md` and reprinted by `/report`, and it is printed in full when no guard shaped the closer — a stuck-wall release, a spend or turn cap, or the continue cap, where the reason the run ended is the thing the user needs. See `docs/HARNESS.md` → Run report.
+
 Stuck-wall: N consecutive Stop attempts with **no file edits and no working-tree diff movement** (default same as goal stuck threshold / `FORGE_ULW_STUCK_THRESHOLD`). Progress is measured two ways: `editCount` delta **or** a changed `gitDiffFingerprint` — so work done via bash heredocs/`sed -i` (which never touches edit-tool counters) cannot false-trigger a stuck release. Outside a git repo the fingerprint is unavailable and the classic editCount-only rule applies. **Unlimited named-ship exhaust is not stuck** — those Stops stay blocked until a new `Reading:` or `/cycle 0`. A stuck-wall or LAST **Cycle complete.** kill is visible on `run_end` / `--json` / the dim stop line (`stuckReleased` / `lastCycleReleased`). `/cycle 0` wrap sit-down is `lastCycleSatDown` (ULW stays on).
 
 `max_waves` is independent of the cycle flag: you can still `/cycle 0` early, or raise `/max-waves` / clear it mid-run.

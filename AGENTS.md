@@ -1,139 +1,69 @@
+<!-- proofread 2026-09-03T20:45Z · forge -->
+
 # AGENTS.md — Forge CLI
 
-## What this is
-
-Forge is a TypeScript (Node 20+) AI coding agent CLI. The product differentiator is the **harness**: blocking Stop hooks, Codex-style `/goal`, and ultrawork mode.
+Forge is a TypeScript (Node 20+) AI coding agent CLI. The product is the **harness**: blocking Stop hooks, `/goal`, and ULW (relentless waves) with a wave ledger, proof demands, and a Bet contract. Everything else (providers, auth, TUI) serves that.
 
 ## Commands
 
 ```bash
 npm install
-npm run build
-npm test
-npm run typecheck
-npm run dev
+npm run typecheck        # tsc --noEmit (fast, run after every edit)
+npm test                 # node:test via tsx; ~2,700 tests in about a minute; FORGE_HOME is sandboxed to .tmp/
+npm run build            # tsc → dist/ (bin: forge)
+npm run dev -- "…"       # tsx src/cli.ts
+npm run smoke            # build + scripts/smoke.mjs
 ```
 
-Binary entry: `src/cli.ts` → `dist/cli.js` (`bin: forge`).
+One test file: `npx tsx --test tests/foo.test.ts` (an isolate is proof=ran, not proof=✓ — the suite is the bar).
+The script clears `.tmp/forge-*` first: `TMPDIR` is pinned inside the repo and fixtures leave their scratch behind, and a `.tmp` grown to six figures of files makes the background-task tests time out at 10s with an unrelated-looking failure.
+Known baseline: 11 loop/retry tests fail on a clean `main` (hooks TypeError from a Cursor-native `~/.cursor/hooks.json`) — diff the `✖` lines against a run at the merge-base before blaming a change.
 
-## Layout
+## Layout (where things live)
 
-- `src/harness/` — hooks, goal, stop-guard, handoff-guard, proof-claim-guard, project-memory (do not weaken blocking Stop defaults; leftover this-cycle notes auto-archive, `/memory project prune`; the tracked `.forge/MEMORY.md` is merged into the local JSON store on load — mirror-only bullets become `import` records, archived ones stay archived)
-- `src/agent/` — loop, tools, permissions, subagents (`spawn_subagent`; general-purpose defaults to `isolation=worktree` and auto-lands into parent only when status=completed; incomplete keeps the worktree, including `land=discard`; `resume_session_id` continues a kept child; explore skip is `skipped_explore_ledger`). Same-round explore/plan and worktree GP overlap with `web_search` (cap 8; `isolation=none` GP is serial; `FORGE_SUBAGENT_PARALLEL=0` off). PLAN/orient omitted type is explore. Native Imagine (`image_gen` / `image_edit` / `image_to_video`) + vision on `read_file` of images. Credential reads (`auth.json`, `id_rsa`, `~/.grok/auth.json`) are hard-denied — YOLO / `--read-outside allow` cannot dump tokens into the model.
-- `src/mcp/` — Model Context Protocol (search_mcp / call_mcp); built-in defaults **context7** + **playwright** (`src/mcp/defaults.ts`)
-- `src/lsp/` — Language Server Protocol; ensure pack TS+Python (+ Rust/Go when detected); `forge lsp ensure`. Agent `lsp({ action: "ensure" })` is a mutation (not plan/read-only) — same gate class as `web_fetch allow_local`.
-- `src/providers/` — LLM clients; `errors.ts` expert recovery tips (`formatProviderError`)
-- `src/auth/` — multi-account credentials (never log tokens); `accounts.ts` smart switch; auth.json v2; `src/util/file-lock.ts` `withFileLock` serializes cross-process load→mutate→save on auth.json/preferences.json (fail-open, bounded wait — never brick login)
-- `src/statusline/` — provider-agnostic HUD (`forge status`); never invent plan metrics; SuperGrok weekly `use%`+reset via nested `config.creditUsagePercent` / period end
-- `src/util/git-auto-commit.ts` — unattended ULW commits the dirty tree at each wave close and on **Cycle complete.** (never push); `FORGE_ULW_AUTO_COMMIT=0` off
-- `src/tui/bottom-status.ts` — always-on REPL bottom dock (model · ctx · `cache N%` last-round · plan quota · reset · `sub N $x` when children spent); `ULW` badge follows live `ulw.enabled` (stuck-wall / Cycle complete clear `meta.ultrawork`); `FORGE_BOTTOM_STATUS=0` off
-- `src/session/subagent-usage.ts` — parent family spend ledger (`meta.subagentUsage`); fold uses child.meta so completed explores cannot vanish; `/budget` is the family cap (children pin to remaining; parent HIT refuses spawn; live-fold so parallel siblings share remaining; cost-cap handoff is `incomplete_cost_cap` and does not land)
-- `src/commands/` — slash handlers; `project-commands.ts` (`.forge/commands/*.md`); `headless-slash.ts` for `forge run "/…"`
-- `src/harness/ulw-job-card.ts` — Wave-1 reading + open ships + open bet + last job-move on compact/re-anchor (unlimited duration is not a mill budget)
-- `src/harness/bet-contract.ts` — **Bet contract for open mandates** (soft / improve-class with no deliverable — `isOpenMandate`): the Wave-1 Reading owes one `Bet:` (a capability this product cannot do today, with a path and a first slice) — asked by kickoff / PLAN / every re-anchor, never a blocking demand; on-bet declared ships are job moves and never sibling mill (`onBet`); 6 **credited** ships that touch no bet (on file or not; every stamped non-slice wave counts, not only job-moving ones) hold unlimited ULW (`betHold`) until a slice, a new `Bet:` with a path (2 unshipped swaps, then only a slice), `Bet: none — why`, or `/cycle 0` — restated bets do not reset; `Bet: none — why` is a **window** (`BET_DECLINE_WINDOW`=6 credited ships, `betDeclineShips`), then `betRequired` returns and the spent why goes to `betDeclineHistory` (the same reason never declines twice); memory seeds only the first bet; `/cycle 0` and `/cycle 1` continue clear the hold (`clearBetHold`, bet + swaps stay); capped runs and hard mandates never bet-hold; open wishes (`invent something`, `build what's missing` — `OPEN_WISH_RE`) are soft, build orders with an object (`build a login page`) stay hard; the bet rides the job card + decision memory (`Bet: …`); explore children may answer `bet:` beside `pick:`. Motivation: 2,407 dogfood waves on open mandates stamped zero `new-module` ships
-- `src/harness/verify-command.ts` — leaf recogniser for "ran a check": `VERIFICATION_CMD_RE` (npm/pytest/cargo/go/swift/xcodebuild/zig/dotnet/dart/just/make/… + repo scripts `./build.sh` / `scripts/test.sh` / `--self-test`), quoted spans ignored, observer/arranger heads (`pgrep`, `echo`, `grep`, `rm`, `git`, `cat`) never count (`isObserverOnlyCommand`); `isVerificationCommand(cmd, preferred)` also matches preferred/declared checks as segments
-- `src/harness/declared-checks.ts` — harvests the Reading's / Bet's `Verify:` / `Proof:` / inline-code check command (`extractDeclaredChecks`, strict: allow-listed runner head or check-shaped script path; prose/observers/product verbs refused); `ulw.json.declaredChecks` (newest first, 4) merges ahead of project-intel via `ulwPreferredCheckCommands` so any stack's check earns structural proof
-- **Background verification credit** (`src/agent/loop.ts` + `src/agent/tools/background-tasks.ts`): a `background:true` check is proof when it settles (`onBackgroundTaskSettled`) or is joined by `get_task_output` — `classifyVerificationRun` (ran / passed / isolate / fullSuite from command + exit code + log tail) feeds the same counters and last-verify trail as a foreground result; one task credits once (`creditedBgTaskIds`); only the spawn observes nothing (`countsTowardVerification` still refuses starts). Dogfood ran 20/28 and 45/61 checks in the background as the doctrine says and stamped proof=✗ on every one
-- `src/harness/decision-memory.ts` — session decision ledger; cap 400 with a load-bearing trim (`trimDecisionRecords`: superseded → waves beyond `WAVE_RECORDS_KEEP`=48 → oldest non-durable; `MANDATE:`, durable kinds, `Bet:` and the first `Reading:` never evicted — both 400-record dogfood runs had lost their mandate); `Job:` / `Next need:` are one-slot notes (`supersedeMemoryRecords`)
-- `src/harness/ulw-cycle.ts` — ULW cycle flag 1/0; optional `maxWaves` cap (auto LAST on Stop; **idle epochs never increment `w`** — capped or unlimited; thought-only Stop (no text, no edits) does not increment `w` or FIFO a named ship; the counter is work units, not ~20 tool rounds; **`max_waves=N` is a budget** — evidenced **Cycle complete.** under cycle=1 does not release; LAST only at a user max_waves cap or `/done`); **`/cycle 0` at wave N sits down at N+1** (finish the open wave, ship one more, LAST-reflect, sit down — ULW stays ON; `/done` ends) — `/done` / cap / polish-under-cap / safety LAST wraps the open wave only; **LAST reflect** (`src/harness/last-reflect.ts`) then scores this run automatically (read-only `Must-fix:` vs `Live-with:`; at most one must-fix close-out that **must address ledger holes** — test-only / sandbox-EPERM theater is not close-out; `FORGE_ULW_LAST_REFLECT=0` skips); capped ULW still gets consolidation mid-reflect hold; polish of **this tool / REPL** arms the product-quality bar; `/cycle 1` after LAST clears the wrap; `/ulw-off` aborts; every ULW Wave 1 is **PLAN** (`/plan` mode + yolo-proof `ulw_orient` — no general-purpose spawn/edits until a written `Reading:` / `exit_plan_mode` / user `/build`; explore/plan research allowed; stale readings re-arm PLAN; then the driver `/build`s); later waves skip the scout; evaluate-class mandates keep their verbs (the Wave 1 plan *is* the reading, not advice); follow-up user text does not re-arm or replace the mandate (`/ulw <new>` still does); soft prompts expand to god-scope; Stop blocks yield while cycle=1; wave ledger + quality bar (proof demands, thin-wave escalation, evidence attestation); **same-surface hold** (`src/harness/same-surface.ts`) — 3 declared ships on one tree surface (same 1–3 production files + chrome/TTY kind; closer overlap / leftover-sibling / speak-once are extra hints) blocks ULW until a different-surface `Reading:` or `/cycle 0` (stuck-wall does not increment; cap holds mill units — `/cycle 0` N+1 still finishes); slash-peek remainder catalogs (`formatXCard` / dump lectures / `/model` `/context` `/help` …) are **one surface** — a new `*-card.ts` or an explore dump-pick does **not** reset the streak or mint a new job; dump-catalog explore picks never seed `namedShips` and are not explore-contract; a remainder catalog is not a Wave-1 reading; the second consecutive peek mill does not increment `w`; **tests-without-body** (`src/harness/tests-without-body.ts`) — `Wave shipped` on a red-only test file does not increment `w`; **job-delta** (`src/harness/job-delta.ts`) — pin-only tests (JS `pinPresent`/`readSrc`/`assert.match` on stdout, Python `assertIn` on TTY) and a second consecutive chrome-only (css/md/test/string-literal) ship do not increment `w`; `if`/`return` wrapping TTY string builders is still TTY, not control-flow (pin-only still refuses); isolate file/method checks **and `tsc`/`typecheck`/`turbo run typecheck`** are proof=ran not proof=✓ (a passing suite still wins if both ran); closer speech ("typecheck green", "N pass") is not wave proof=full — only a successful foreground non-isolate suite is; unlimited seeds `namedShips` from explore-map picks (job-complete only, no FIFO) and exhausts when they are done; isolate `wN` / cited `fail N` is not wave proof; net-diff progress tracking (`gitDiffFingerprint`: bash-channel edits count as progress, edit→revert churn = revisit → thin + excluded from bestWave); auto-commit clean-tree is a new baseline (not revisit); unlimited CONTINUE never stuck-releases (user `/cycle 0` / `/ulw-off`); unlimited named-ship backlog re-arms PLAN (stays blocked until an explore child or play-loop, then a different-surface reading, or `/cycle 0`; a new sentence is not a ticket; stuck-wall does not release that hold; a declared ship with edits still stamps `w` only when job-delta moved; glanceable ✓ re-lists are refused); explore spawn is skipped while explore-map ships remain (cooldown 3 waves unless a hold requires a look) **and** after 3 slash-peek mill ships (no "next dump" explore); ULW auto-commit skips LAST close-out tests-only, chrome/tests-without-body, and slash-peek mill snapshots after the first of that class; thought-only recover pokes `git diff --stat` and must not reprint Wave 1; leftover-chrome class includes glanceable ✓ + live › last-line / bang-shell / idle bg tails (consolidation does not reset polish-4); one ship grammar (`Ship landed` / `**Ship:**` / `Wave N ship` / `Wave shipped`) for stamps + ledger + auto-commit; HUD ctx follows last API `prompt_tokens`; user LAST bounces a dirty/unverified open wave once; background bash **starts** excluded from structural verification (`countsTowardVerification` — the spawn observes no exit code) while the **settle / `get_task_output` join** credits the run (`classifyVerificationRun`); proof demands re-arm every consolidation wave (`proofDemands = 0`); `proof=play` and the product-quality look are **structural** (`playLoopPending` from browser/Playwright calls or png reads — closer prose never stamps play, never bypasses chrome/pin/sibling-mill); `jobMoved` uses the **open** job's paths (`collectUlwJobKeepPaths(…, { openOnly: true })` — done picks' files stop being the job); the job card prints the current Reading beside Wave 1 after a re-PLAN
-- `src/harness/context-admit.ts` — mid-conversation harness admissions (stable system + live counters; counter-only churn suppressed; volatile git branch line admitted append-only — message[0] keeps cache-stable git root/remote only)
-- `src/config/model-info.ts` — per-model context windows (xAI grok-4.6/4.5=500k, grok-4=256k, claude=200k, gpt-4.1=1M; **Cursor-hosted Grok 4.5+ = 256k**, native 500k on xAI); Grok flagship ids newer than the last known milestone inherit that milestone (`src/config/grok-model.ts`)
-- `src/harness/interjection.ts` — free-text mid-run messages (Grok-style `<user_query>`)
-- `src/util/advisory-intent.ts` — Q&A/advisory vs work-order classifier (compact handoff + mid-run interjections under ULW)
-- `src/harness/todo-gate.ts` — TodoNudge + TodoGate under ULW; soft once outside ULW; `clearSoftTodoGateOnWindDown` on `/done`/`/goal done|clear`/`/ulw-off`/`/clear`/`/new`/safety-valve LAST **and** fresh driver arm (`/ulw`, `/goal set`); also max_waves auto LAST, stuck-wall, goal attestation/`markGoalDone`, and `setMaxWaves` when already at/over cap · advisory Q&A releases TodoGate + skips TodoNudge (pairs with compact ADVISORY framing)
-- `src/harness/handoff-guard.ts` — premature “let me know if…” / “shall I continue?” Stop block (finish doctrine) · advisory Q&A allows soft continue-asks
-- `src/harness/proof-claim-guard.ts` — “tests pass” / bare “Done.” after edits without *successful* verification (`verificationPassed`) Stop block (don't claim, prove) · advisory Q&A softens bare Done./Fixed. closers
-- `src/util/cost-budget.ts` — session spend cap parse/resolve (`/budget`, `--max-cost`, `FORGE_MAX_COST_USD`)
-- `src/tui/budget-card.ts` — `/budget` verdict-first (`HIT` / `ok` / `none`); set/off that leaves not-hit clears `max_cost` lastErr
-- `src/util/production-warnings.ts` — `productionWarningsForRun` for `forge run --json` / CI (safety valves, ULW-without-budget, dirty tree, editsWithoutVerification, lockfile/node_modules)
-- `src/session/compaction.ts` — structured compact preserving mandate/goal/todos
-- `src/session/checkpoint.ts` + `compaction.ts` — store checkpoint (job card + in-flight tail) when session.json is huge; not outbound-80k FullReplace
-- `src/session/prompt-cache.ts` — xAI `x-grok-conv-id`, reasoning replay, cache ratio, prune-at-180k decision
-- `src/session/explore-map.ts` — structured explore child maps; parent `read_file` dereference + cited-line window
-- `src/session/request-prune.ts` — outbound working-set prune (default **off** until `min(180k, 55% of the route window)` so the prefix can cache on xAI 500k while Cursor Grok 256k clips before the host fills; first clip freezes a sticky omit set on `session.meta.requestPruneSticky`; later rounds apply that set instead of re-aging; `FORGE_REQUEST_PRUNE=1` legacy every-round)
-- `src/session/tool-clearing.ts` — optional in-session stubbing (`FORGE_TOOL_CLEAR=1`; default off)
-- `src/harness/product-quality.ts` — user-facing product **quality** bar (not a persona): job insight + one finished edge + at most one labeled `Serendipity:`; chrome catalogs are not a reading; bounce once (`/cycle 1` / fork / re-enable reset it); `/cycle status` lists the bar; harvest fail-open; generic UI chrome / infra / bugfix never arm
-- `src/agent/project-skills.ts` — skill packs: package `skills/forge-*/` (builtin) + `.forge/skills/**/SKILL.md` + `.agents/skills` + `~/.forge/skills` (project > user > builtin; `FORGE_BUILTIN_SKILLS=0` off)
-- `src/util/project-intel.ts` — package manager + preferred check commands (system prompt, `/context`, bash wrong-PM/missing-script/missing-binary tips; monorepo walk-up + turbo/nx; Swift `Package.swift` → `swift build`/`swift test`, Zig, .NET, Dart/Flutter, executable repo check scripts `./build.sh` / `./test.sh` / `scripts/check.sh` (`localCheckScripts`); doctor/status/config/run JSON; last-verify trail + `editsWithoutVerification`)
-- `src/agent/tools/file-read-state.ts` — session stale/unread edit guard (`FORGE_FILE_READ_GUARD=0` off); `refreshNotedFromDisk` restamps after apply_patch rollback so a retry is not "changed on disk"
-- `src/agent/tools/edit-receipt.ts` — numbered AFTER receipt for search_replace/write_file/apply_patch (`FORGE_EDIT_RECEIPT=legacy` off)
-- `src/agent/tools/ask-user.ts` — interactive clarifying questions (OpenCode-inspired)
-- `src/agent/tools/format-on-write.ts` — format after file tools (`/format`, `FORGE_FORMAT_ON_WRITE`; auto when prettier/biome/ruff/… detected)
-- `src/agent/sandbox.ts` + `rules.ts` + `shell-parse.ts` — OS sandbox, deny/allow/ask rules, segment-aware shell checks
-- `src/agent/permission-preview.ts` — in-memory colored diff previews for edit-tool permission asks (never writes)
-- `src/tui/markdown.ts` — streaming markdown renderer for assistant output (line-buffered; chunk-split invariant; non-TTY passthrough)
-
-## Expert session UX
-
-- `/plan` → session-scoped read-only design (read-only bash allowed); `/commit` is a verdict-first card, `/commit do` creates the local commit (never push); `/commit draft` is the model escape hatch; `/checkpoint` peeks the safety snapshot, `/checkpoint snap` takes it (untracked included), `/checkpoint restore` rewinds (never `git stash apply`); `/build` restores prior mode and implements
-- `/model <name> [effort]` live mid-run; `/commands` lists `.forge/commands` templates
-- Transcript is minimal by default (one status line per tool; failed tools also show a short error tail); `/verbose` opts into per-edit colored diffs + full tool output (session-local)
-- Turn end prints a one-line change summary (files touched from the mutation journal + verification status) for unattended runs
-- Startup `posture:` line shows resolved effort/ctx/temp/max_tokens; warnings only for silently-degrading pins (`src/tui/posture.ts`)
-- Live `live ›` is phase + elapsed + work; identity/ctx/ULW stay on the bottom dock (`FORGE_BOTTOM_STATUS=0` still prints them on the live prompt). Assistant replies render as styled markdown
-- Project instructions: walk-up within git root for AGENTS/CLAUDE/cursor/copilot rules; `/context` lists sources
-- Headless: `forge run "/plan"` / custom templates work in CI (`reason: "slash"` when no model call)
-- Provider failures print recovery tips; JSON fail payloads include `recovery: { code, tips }`
+- `src/cli.ts` — commander entry: interactive REPL, headless `forge run` (`--json`), `doctor`, `sessions`, `stats`.
+- `src/agent/loop.ts` — the agent loop: tool dispatch, Stop path (`runStopGuard`), safe-boundary admissions, background-task credit. Big; grep for the guard name you need.
+- `src/agent/system-prompt.ts` — baseline prompt (cache-stable) + project rules loader (`AGENTS.md` / `CLAUDE.md` / cursor / copilot, **12k chars per file**, 28k total); `instruction-paths.ts` is the workspace → git-root walk it shares with the guideline audit — change the walk there, never in one of the two.
+- `src/agent/tools/` — file/bash/search/MCP/LSP/subagent tools; `file-read-state.ts` (stale-edit guard), `edit-receipt.ts`, `format-on-write.ts`.
+- `src/agent/` also: `permissions.ts` / `rules.ts` / `sandbox.ts` / `shell-parse.ts` (deny > ask > allow; segment-strict bash), `subagent.ts` (explore / plan / general-purpose, worktree isolation).
+- `src/harness/` — the product:
+  - `stop-guard.ts` composes, in order: user Stop hooks → `report-guard.ts` (attestation pass) → `guideline-audit.ts` — both **before the drivers**, which never hand a Stop on while ULW is armed → `goal.ts` → `ulw-cycle.ts` → `todo-gate.ts` → `handoff-guard.ts` → `proof-claim-guard.ts` → `report-guard.ts`.
+  - `ulw-cycle.ts` — cycle flag, wave ledger, LAST wrap, holds (`same-surface.ts`, `explore-contract.ts`, `bet-contract.ts`), `job-delta.ts`, `tests-without-body.ts`, `declared-checks.ts`, `verify-command.ts`, `last-reflect.ts`.
+  - `context-admit.ts` — live counters as mid-conversation messages (never rewrite message[0]); `live-notices.ts`, `interjection.ts`.
+  - `decision-memory.ts` (session `decisions.json`) and `project-memory.ts` (`~/.forge/project-memory/*.json` + tracked `.forge/MEMORY.md` mirror).
+  - `guideline-audit.ts` — first action of a session: survey/brief/stamp the `AGENTS.md`-class files the prompt actually loads (registry `~/.forge/guidelines/`); a look is an argument that resolves to the file, never a mention of its name.
+  - `run-report.ts` — standalone end-of-run report (`/report`, `/status` head, `forge run --json`.report, `~/.forge/sessions/<id>/report.md`).
+- `src/session/` — sessions under `~/.forge/sessions/<id>/` (`session.json`, `meta.json`, `ulw.json`, `goal.json`, `decisions.json`, `mutations.jsonl`), compaction, request prune, prompt cache, metrics.
+- `src/providers/` — xAI / OpenAI-compat / Anthropic / Cursor / Copilot / DeepSeek clients; `errors.ts` recovery tips.
+- `src/auth/` — multi-account credentials (`auth.json` v2, mode 0600, never logged).
+- `src/commands/slash.ts` — every `/command` (+ `runDoctorCheck`); `help-text.ts`; `project-commands.ts` (`.forge/commands/*.md`).
+- `src/tui/` — REPL, bottom dock, status/turn/commit cards, markdown renderer.
+- `src/mcp/`, `src/lsp/` — MCP (defaults context7 + playwright) and LSP ensure packs.
+- `skills/forge-*/` — built-in skill packs; `docs/` — HARNESS, ULW, RELIABILITY, PRODUCTION, SAFETY, TOOLS.
+- `tests/*.test.ts` — one file per module; `tests/helpers/ulw-arm.ts` arms ULW past PLAN for ledger tests.
 
 ## Conventions
 
-- ESM only (`"type": "module"`, `.js` extensions in imports)
-- Strict TypeScript
-- Prefer small focused modules
-- Tests: `node:test` via `tsx --test`
+- ESM only (`"type": "module"`, `.js` extensions in imports). Strict TypeScript. Small focused modules; new harness rules get their own `src/harness/<name>.ts` + `tests/<name>.test.ts`.
+- Harness guards are **pure `evaluateXAtStop()` functions** with a capped block count and an env kill-switch (`FORGE_<NAME>=0`); wire them in `stop-guard.ts`, count blocks in `loop.ts`.
+- Harness messages injected into the transcript are `role: "user"` and must start with `[Forge` (or another `SYNTHETIC_USER_PREFIXES` entry in `session.ts`) so `/undo`, `/retry` and turn marks skip them.
+- Keep the system prompt cache-stable: live state goes through `context-admit.ts`, never into message[0].
+- Structural proof beats prose: a check counts only when a verification command actually ran (`verificationRan` / `verificationPassed`); closer text never stamps proof.
+- Sidecar JSON under `~/.forge` is written mode 0600 via `writeJsonFile`; nothing in the repo is a secret store.
+- Tests must be able to fail: never weaken an assertion to go green; a revert of the change must turn the test red.
+- Use the project's own vocabulary in code comments: wave, ship, Reading, Bet, LAST, hold, mill, chrome, job move.
 
 ## Non-negotiables
 
-1. `blockingStopHooks` defaults to **true** — this is the Grok gap we close. Stop/SubagentStop hook **timeout/error fails closed** (agent keeps working).
-2. `/goal` stuck-wall must always be able to release (never infinite trap without progress).
-3. Sensitive JSON under `~/.forge` written mode `0600` (`auth.json`, `permissions.json`, `preferences.json`).
+1. `blockingStopHooks` defaults to **true**. Stop/SubagentStop hook timeout or error **fails closed** (the agent keeps working).
+2. Every driver must be able to release: `/goal` stuck-wall, ULW `/cycle 0` → `/done` / `/ulw-off`, guard caps. Never an infinite trap without progress.
+3. Never push, never `rm -rf`, never drop data on the user's behalf; ULW auto-commit is local only (`FORGE_ULW_AUTO_COMMIT=0` off).
+4. Credentials never enter the model: `auth.json`, `id_rsa`, `~/.grok/auth.json` reads are hard-denied even under YOLO.
 
-## Production reliability (v0.9+)
+## Working here
 
-See `docs/RELIABILITY.md` and `docs/PRODUCTION.md`. Highlights: Retry-After, abortable streams/bash,
-stream-capped `web_fetch`/`web_search`, JSON arg repair, CLI `--json` always stamps `version`
-(`emitOkJson`/`emitFailJson` include `node`; `FORGE_JSON_COMPACT=1` for single-line success; `forge run --json` includes `productionWarnings[]`), doctor flags yolo/`sandbox=off`, bash IMDS deny, sticky login provider (preferences.json), orphan tool_call heal (load/import +
-**re-save** when healed and no foreign lock), doom-loop, error-streak circuit breaker, apply_patch
-(path typo hints; directory-target errors), atomic file writes, OAuth refresh (start + mid-run 401/403 + socket `terminated` drop auto-continue under ULW; HTTP/2 `NGHTTP2_INTERNAL_ERROR` reconnects without rotating OAuth and may compact before rebase),
-session locks (headless fail-closed; `FORGE_FORCE_SESSION_LOCK=1` override; live+bad timestamp held),
-atomic session tmp recovery, session fork/export/import (export `0600`), headless `forge run
---session`, metrics.jsonl, permission ask timeout, empty-SSE retry, `finish_reason=length` continue (+ content_filter/empty cap hygiene),
-`releasedOnContinueCap` / `hitMaxTurns` / `hitCostCap` / `finishReason` / `pinned` / `foreignLock` / `harnessUserPokes` / `admitCount` / `proofPokes` / `providerRounds` JSON/metrics + stats `continueCapReleases`/`maxTurnsHits`/`costCapHits`,
-`--max-turns` / `FORGE_MAX_TURNS` / `max_turns=0` unlimited, `--max-cost` / `FORGE_MAX_COST_USD` / `max_cost_usd` / `/budget` session spend cap (estimateCostUsd; run JSON `effectiveMaxCostUsd`/`sessionCostUsd`), handoff-guard + proof-claim-guard Stop blocks (incl. silent edits-without-verify free triage), soft TodoGate outside ULW, interjection harness context, `/done` winds ULW+goal, safety valves under ULW CONTINUE auto-flip to LAST (`maybeFlipUlwToLastOnSafetyValve`), `forge sessions title`, `forge models -p`, stream usage, `meta.json`
-session sidecar (authoritative for title/pinned — title/pin writes are meta-only via
-`saveSessionMetaSidecar` so they never roll back racing messages; `saveSession` merges
-externally-set title/pin), strict session-id slugs (`isValidSessionId`; resolve + sidecar-normalize
-reject traversal), foreign-lock EPERM counts as ALIVE (sessionHasForeignLiveLock + stats), tunable loop guards (`FORGE_DOOM_LOOP_THRESHOLD`, `FORGE_ERROR_STREAK_THRESHOLD`),
-interactive same-cwd auto-resume, `/title`, `--title` on `forge`/`forge run`, `/bell` turn-end
-attention, `/notify` desktop notify (osascript/notify-send; `FORGE_NOTIFY`), `turnEndOutcomeLabel` safety-valve notify bodies, background-task teardown on exit, JSON store isolation (`readJsonFile` clones
-fallbacks; auth/permissions/preferences mode `0600`), `listSessions({ cwd, query, limit })` +
-`forge sessions list --cwd`/`-q`, `/sessions` same-cwd default + search, `forge sessions prune`
-(skips foreign locks) / `delete --force`, shell-safe `/diff` (argv + filter allowlist),
-external_directory on grep/glob/list_dir, `forge completion`, `forge doctor` / `doctor --json`
-(structured `runDoctorCheck` + `issues[]` / `secureFiles`; exit 1 on issues), path-not-found typo
-hints, session import/load message-role sanitization, `forge stats` / `/stats`, `/share` handoff (git/goal/ULW), `sessionPath`/`forgeHome` on run/status/doctor JSON, `session_not_found` `suggestions[]`
-card, shared `formatExpertTips` (`forge tips`/`/tips`), first-run `/setup` card + grouped `/help`, unknown-slash Did you mean?, CLI `command_typo`/`conflicting_flags`/`invalid_base_url`, `/retry`/`/again`,
-`/last [n]`, resume auto-peek, `forge news`/`/news`, `forge run --continue` (fail-closed `continue_miss`/`continue_locked`; empty CLI flags fail closed) / bare `forge --continue` / bare `forge "…" --json`, `forge auth|login|logout --json`, `/done`/`/pause`/
-`/unpause`, session `lastUserPreview` list snippets, resume-by-title, relative session ages,
-`/files`, `/path` (+ copy), `/pin` + `sessions pin` (fork clears pin; status PIN badge), resume
-orientation + `--pinned` list, doctor `sessionsPinned`, session path helpers, sessions show file
-snippet, file-aware `/undo` (`mutations.jsonl` pre-images + journaled file mode + isolation=none child fold; turn marks skip
-synthetic harness user-messages — `isSyntheticUserMessage`), `/init`, `/review`, `/compact-and`,
-`/fork-and-compact`, fork copies ULW/goal sidecars, `/clear`/`/clear hard`/`/new` hygiene, `/logs`
-· `forge logs`, `/config` · `forge config`, `/export` mode `0600`, `--read-outside ask|allow|deny`, doctor flags `read-outside=allow` / `sandbox-missing=fallback`, `FORGE_BASH_TIMEOUT_MS` /
-`FORGE_BASH_BG_TIMEOUT_MS` (foreground bash own-PGID; abort/timeout kill `-pid` + settle on `exit`; numeric `timeout_ms` cap 30m; second Ctrl+C force-quits), doctor `undoJournal`, `npm run smoke`, ULW wave ledger + quality bar
-(facts-only per-wave edits/proof; best-wave anchoring, proof demands, thin-wave escalation, 4th-wave
-consolidation, diminishing-returns advisory, one-time evidence bounce on weak attestations),
-structural `verificationRan` (execution) + `verificationPassed` (success-only proof-claim/attestation/ULW wave proof) stop signals, project-intel (pm/checks/monorepo; `FORGE_FILE_READ_GUARD` / `FORGE_VERIFY_HINT`), last-verification trail (`lastVerificationCommand`/`At` + `lastEditAt` stale detection on session + resume/status/share/done/export/list ✓; `editsWithoutVerification` in run JSON), adaptive effort (`FORGE_ADAPTIVE_EFFORT`; hard rounds bump
-reasoning one notch), request-time prune (`FORGE_REQUEST_PRUNE*`) + optional in-session `FORGE_TOOL_CLEAR`, counter-only
-admission suppression, Anthropic prompt caching (`FORGE_ANTHROPIC_CACHE`; cache usage in `ChatUsage`,
-cache buckets folded into `prompt_tokens` so totals/spend cap don't undercount),
-per-model context windows (`context_window` explicit wins; `src/config/model-info.ts` otherwise — Cursor-hosted Grok 4.5+ auto 256k, not xAI 500k),
-prompt-cache-stable system prompt (volatile git branch via context-admit, not message[0]), Stop hook
-crash/HTTP fail-closed + stdin-EPIPE safe + 20k payload caps (all bulky fields) + 64KB hook
-stdout/stderr caps + hook timeout process-group kill (TERM→KILL, unref'd timers), Retry-After
-honored above client backoff
-(≤120s), served-model divergence tracking (`servedModelDiverged`: provider-reported served model ≠ requested →
-session `servedModels` + metrics + one onStatus warning per model — provider tier routing made visible), 10-min default provider **stall** timeout on stream silence (`FORGE_PROVIDER_TIMEOUT_MS`; optional absolute `FORGE_PROVIDER_MAX_MS`); 12-min **reasoning wall** (`FORGE_PROVIDER_REASONING_WALL_MS`) when a stream has no content/tool_call (thought-only `finish_reason=stop` is Stop, not empty-continue; does **not** count toward `FORGE_ULW_MAX_CONTINUES` / auto-LAST); repeating hidden thought is `reasoning_loop` Stop (not a 12m wait); consecutive thought-only this turn caps at `FORGE_THOUGHT_ONLY_MAX` (default 8, turn-end only, ULW stays CONTINUE), 4MB child-output caps
-(bash/rg), streaming read_file for >2MB files, byte-guaranteed tool-output truncation, atomic
-session-lock create (`wx`), cache-aware cost estimates (per-model `cacheIn`: DeepSeek cache-hit pricing, xAI $0.50/M cached, Anthropic 0.1×; DeepSeek `prompt_cache_hit_tokens` + xAI `cached_tokens` normalized into `ChatUsage.cache_read_input_tokens` → session `totalCacheReadTokens`; unknown-cache models price cached input at full rate), auto max_tokens (16k non-reasoning · 32k deepseek/64k other reasoning-active; `/max-tokens` pin wins), temperature omitted unless pinned (server-tuned defaults), OpenRouter nested `reasoning.effort` maps `max`→`xhigh` (native top-level keeps `max`).
+- After edits: `npm run typecheck`, then the test file for the module, then `npm test` before claiming done. The suite is a minute; there is no excuse for shipping on an isolate.
+- Test fixtures must `git init` their temp workspace. An empty `.git` dir is not a repo, `TMPDIR` points inside this repo during `npm test`, and git walks up — a fixture that arms ULW will otherwise auto-commit the developer's working tree.
+- Real ULW runs are the ground truth for harness changes: `~/.forge/sessions/*/ulw.json` (waves ledger, proofKind, bets). Survey them before adding a rule.
+- Changelog: add an entry under `## Unreleased` in `CHANGELOG.md` for user-visible behaviour, in the same "job:" style as its neighbours.
+- Deep detail lives in `docs/HARNESS.md` and `docs/ULW.md` — extend those, not this file. This file is a map, not a manual: keep it under 12k chars so the prompt loader shows all of it.

@@ -888,6 +888,13 @@ describe("statusline", () => {
     assert.equal(visibleWidth(colored), "hello world".length);
     const clipped = clipAnsi(colored, 5);
     assert.ok(visibleWidth(clipped) <= 5);
+    // Colour that was opened still gets closed.
+    assert.ok(clipped.endsWith("\x1b[0m"));
+    // …but clipping plain text used to graft a reset onto it, so a clipped
+    // session title or `/help` row carried an escape under NO_COLOR and in
+    // every other plain path. Close only what was opened.
+    assert.equal(clipAnsi("hello world", 5), "hello");
+    assert.equal(clipAnsi("hello world", 99), "hello world");
   });
 
   it("parallel tool hold stays until all pending settle", () => {

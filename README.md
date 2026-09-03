@@ -267,6 +267,8 @@ Full contract: [docs/RELIABILITY.md](docs/RELIABILITY.md) · expert checklist: [
 | `/share` | Pasteable session card + resume/export commands (clipboard) |
 | `/setup` | First-day hub: model, budget, notify, AGENTS.md, LSP · CLI: `forge setup` |
 | `/tips` | Expert cheat sheet · CLI: `forge tips` |
+| `/report` | Standalone run report: outcome · what shipped · verified · not done · needs you (also printed after multi-round runs / ULW ends; `forge run --json` → `report`) |
+| `/guidelines [audit\|stamp]` | Agent-guidelines audit state (AGENTS.md / CLAUDE.md proofread stamp, manual / stale / conflict flags) |
 | `/todos` | Work board (▶ next · ○ pending · ✓ done) |
 | `/model <id> [effort]` | Switch model mid-run; optional `low`\|`medium`\|`high`\|`xhigh` (persists) **[live]** |
 | `/effort [level]` | Reasoning effort for models that support it (e.g. grok-4.6) **[live]** |
@@ -406,7 +408,10 @@ src/
   harness/
     hooks.ts          # Claude-compatible hooks, blocking Stop
     goal.ts           # /goal state machine
-    stop-guard.ts     # composes hooks + goal + ultrawork
+    stop-guard.ts     # composes hooks + goal + ultrawork + guards
+    guideline-audit.ts# first action: proofread AGENTS.md / CLAUDE.md
+    run-report.ts     # standalone end-of-run report
+    report-guard.ts   # no homework hand-back; run-wide closing message
   session/            # durable sessions under ~/.forge/sessions
   commands/slash.ts   # /goal /ulw /hooks …
   tui/repl.ts         # interactive readline REPL

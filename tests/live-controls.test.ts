@@ -24,7 +24,7 @@ import {
   loadUlwCycle,
   evaluateUlwAtStop,
 } from "../src/harness/ulw-cycle.js";
-import { createSession } from "../src/session/session.js";
+import { createSession, saveSession } from "../src/session/session.js";
 import { DEFAULT_CONFIG } from "../src/config/types.js";
 import { HookRunner } from "../src/harness/hooks.js";
 
@@ -126,6 +126,34 @@ describe("live mid-run slash policy", () => {
     assert.ok(isLiveSafeSlash("/permissions list"));
     assert.ok(isLiveSafeSlash("/copy"));
     assert.ok(isLiveSafeSlash("/last 3"));
+  });
+
+  it("pins every live-safe read-only command, and the verbs that are not", () => {
+    // The live-safe set is only as safe as what this table pins. A command
+    // whose write verb is held out by a branch in classifyLiveSlash keeps
+    // that split only while a test says so: reorder the branch below the
+    // LIVE_READONLY lookup and `/guidelines stamp` becomes mid-run safe,
+    // free to rewrite the repo's AGENTS.md under the agent and then silence
+    // the audit for a fortnight on a file nobody proofread.
+    for (const cmd of [
+      "/accounts",
+      "/auth",
+      "/commands",
+      "/context",
+      "/doctor",
+      "/hud",
+      "/report",
+      "/statusline",
+      "/guidelines",
+      "/guidelines status",
+    ]) {
+      assert.equal(classifyLiveSlash(cmd), "readonly", cmd);
+      assert.ok(isLiveSafeSlash(cmd), cmd);
+    }
+    for (const cmd of ["/guidelines stamp", "/guidelines audit"]) {
+      assert.equal(classifyLiveSlash(cmd), "idle-only", cmd);
+      assert.equal(isLiveSafeSlash(cmd), false, cmd);
+    }
   });
 
   it("allows title rename mid-run as control", () => {
@@ -332,6 +360,69 @@ describe("/done and /pause goal shortcuts", () => {
     assert.equal(ulw!.cycle, 0);
     const notices = drainLiveNotices(session.meta.id);
     assert.ok(notices.some((n) => /cycle=0|LAST/i.test(n)));
+  });
+
+  it("/done prints the standalone run report and saves it beside the session", async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-done-report-"));
+    process.env.FORGE_HOME = tmp;
+    clearLiveNotices();
+    const session = createSession({ cwd: tmp, provider: "xai", model: "test" });
+    session.meta.turnCount = 1;
+    session.meta.editCount = 2;
+    session.meta.lastVerificationCommand = "npm test";
+    session.meta.lastVerificationAt = new Date().toISOString();
+    session.meta.lastVerificationOk = true;
+    saveSession(session);
+    const { appendFileMutation } = await import("../src/session/mutations.js");
+    appendFileMutation(session.meta.id, {
+      path: path.join(tmp, "src/a.ts"),
+      kind: "update",
+      turn: 1,
+      before: "x",
+    });
+    const hooks = new HookRunner(DEFAULT_CONFIG, tmp);
+    const r = await handleSlash("/done", {
+      session,
+      config: { ...DEFAULT_CONFIG, workspace: tmp },
+      hooks,
+    });
+    const out = String(r.output || "");
+    // Outcome sentence first, then the labelled sections — no scrolling back.
+    assert.match(out, /Done — 1 file changed, verified with `npm test`/);
+    assert.match(out, /\nWhat shipped\n/);
+    assert.match(out, /\nNeeds you\n/);
+    const { runReportPath } = await import("../src/harness/run-report.js");
+    assert.ok(fs.existsSync(runReportPath(session.meta.id)));
+  });
+
+  it("/done on a live ULW run reports winding down, never Done", async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-done-ulw-report-"));
+    process.env.FORGE_HOME = tmp;
+    clearLiveNotices();
+    const session = createSession({ cwd: tmp, provider: "xai", model: "test" });
+    session.meta.turnCount = 1;
+    session.meta.editCount = 12;
+    session.meta.lastVerificationCommand = "npm test";
+    session.meta.lastVerificationAt = new Date().toISOString();
+    session.meta.lastVerificationOk = true;
+    session.meta.ultrawork = true;
+    saveSession(session);
+    armUlwCycle(session.meta.id, "improve the importer", { cycle: 1 });
+    markUlwPlanDone(session.meta.id);
+    const hooks = new HookRunner(DEFAULT_CONFIG, tmp);
+    const r = await handleSlash("/done", {
+      session,
+      config: { ...DEFAULT_CONFIG, workspace: tmp },
+      hooks,
+    });
+    const out = String(r.output || "");
+    // /done flips cycle=1 → 0 and then asks for the report in the same
+    // breath: the wrap, LAST reflect and **Cycle complete.** are all ahead.
+    assert.equal(loadUlwCycle(session.meta.id)?.cycle, 0);
+    assert.match(out, /Winding down — ULW is on its last cycle/);
+    assert.doesNotMatch(out, /^Done —/m);
+    assert.doesNotMatch(out, /sat down/);
+    assert.match(out, /ULW is on LAST \(cycle=0\)/);
   });
 
   it("/done clears soft TodoGate fire count", async () => {

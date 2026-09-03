@@ -5,7 +5,12 @@ import { readFileMutations } from "../session/mutations.js";
 import { displayRelPath } from "../agent/tools/path-util.js";
 import { detectProjectIntel } from "../util/project-intel.js";
 import chalk, { Chalk } from "chalk";
-import { clipAnsi, formatTokens, visibleWidth } from "../util/format.js";
+import {
+  clipAnsi,
+  forcedChalkLevel,
+  formatTokens,
+  visibleWidth,
+} from "../util/format.js";
 import {
   formatRunFailureCloser,
   type RunFailureSurface,
@@ -247,7 +252,7 @@ export function formatUserTurnOpen(
 export function formatAssistantTurnOpen(opts?: { color?: boolean }): string {
   const on = opts?.color ?? Boolean(process.stdout.isTTY);
   if (!on) return "forge ›";
-  const paint = new Chalk({ level: Math.max(chalk.level, 1) as 1 | 2 | 3 });
+  const paint = new Chalk({ level: forcedChalkLevel() });
   return paint.dim("forge ›");
 }
 
@@ -287,7 +292,7 @@ export function formatThinkingTurnOpen(opts: {
   );
   const clipped = visibleWidth(raw) <= cols ? raw : clipAnsi(raw, cols);
   if (!on) return clipped;
-  const paint = new Chalk({ level: Math.max(chalk.level, 1) as 1 | 2 | 3 });
+  const paint = new Chalk({ level: forcedChalkLevel() });
   return paint.dim(clipped);
 }
 

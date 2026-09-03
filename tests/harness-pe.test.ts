@@ -439,6 +439,20 @@ describe("prompt profile + baseline system", () => {
     assert.match(text, /Reliability \(runtime self-heal\)/);
     assert.match(text, /doom-loop/i);
     assert.match(text, /Context overflow|overflow/i);
+    // The final-report contract and the guideline-audit brief are the two
+    // model-side halves of the report guard and the audit. Deleting them
+    // would make the size-ceiling test *greener*, so they are asserted here.
+    assert.match(text, /## Final report \(closing message\)/);
+    assert.match(text, /the user will not scroll/i);
+    assert.match(text, /\*\*What shipped\*\*/);
+    assert.match(text, /\*\*Verified\*\*/);
+    assert.match(text, /\*\*Not done\*\*/);
+    assert.match(text, /\*\*Needs you\*\*/);
+    assert.match(text, /Never hand homework back/i);
+    assert.match(text, /`Operator:`/);
+    assert.match(text, /Agent guidelines audit/i);
+    assert.match(text, /authorised to revise or rewrite them/i);
+    assert.match(text, /never write the stamp yourself/i);
   });
 
   it("baseline prompt stays lean (grok-build style size ceiling)", async () => {
@@ -469,8 +483,10 @@ describe("prompt profile + baseline system", () => {
         git: null,
         project: null,
       });
+      // 17k: the final-report contract + guideline-audit bullet (+914 chars
+      // measured) joined the baseline in 0.10; anything past this is bloat.
       assert.ok(
-        text.length < 16_500,
+        text.length < 17_000,
         `baseline system prompt grew to ${text.length} chars`,
       );
       // Without builtins the core doctrine alone must stay small.
@@ -483,8 +499,9 @@ describe("prompt profile + baseline system", () => {
           git: null,
           project: null,
         });
+        // 9.5k: same cause as above (+896 chars measured).
         assert.ok(
-          lean.length < 8500,
+          lean.length < 9500,
           `core baseline (no builtins) grew to ${lean.length} chars`,
         );
       } finally {

@@ -13,8 +13,8 @@
  * Non-TTY (color:false) is a plain passthrough — input is echoed unchanged.
  * Dependency-free (chalk only).
  */
-import chalk, { Chalk } from "chalk";
-import { visibleWidth, wrapAnsiLine } from "../util/format.js";
+import { Chalk } from "chalk";
+import { forcedChalkLevel, visibleWidth, wrapAnsiLine } from "../util/format.js";
 import {
   highlightFenceLine,
   type HighlightState,
@@ -55,7 +55,7 @@ export function createMarkdownRenderer(
     return { push: (chunk) => chunk, end: () => "" };
   }
   return new LineMarkdownRenderer(
-    new Chalk({ level: Math.max(chalk.level, 1) as 1 | 2 | 3 }),
+    new Chalk({ level: forcedChalkLevel() }),
     opts.width ?? 0,
   );
 }

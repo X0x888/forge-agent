@@ -10,8 +10,10 @@ import {
   formatRunStopReason,
   formatUserTurnOpen,
   formatAssistantTurnOpen,
+  formatThinkingTurnOpen,
 } from "../src/tui/turn-summary.js";
 import { visibleWidth } from "../src/util/format.js";
+import { createMarkdownRenderer } from "../src/tui/markdown.js";
 import {
   appendFileMutation,
   type FileMutation,
@@ -414,4 +416,32 @@ test("assistant turn open pairs with you ›", () => {
   const styled = formatAssistantTurnOpen({ color: true });
   assert.match(styled, /forge ›/);
   assert.ok(styled.includes("\x1b["), "TTY label should be dim");
+});
+
+test("NO_COLOR wins over color:true on the forced-chalk surfaces", () => {
+  // `forge ›` and `think ›` build a Chalk instance at
+  // `Math.max(chalk.level, 1)` because chalk under-detects some real TTYs.
+  // That max also undid NO_COLOR: log.ts sets FORCE_COLOR=0, chalk falls to
+  // level 0, and the max put it straight back to 1. The streamed markdown
+  // renderer did the same on every assistant message.
+  const prior = process.env.NO_COLOR;
+  try {
+    process.env.NO_COLOR = "1";
+    const open = formatAssistantTurnOpen({ color: true });
+    assert.equal(open, "forge ›");
+    const think = formatThinkingTurnOpen({ chars: 400, elapsedSec: 3, color: true });
+    assert.ok(think);
+    assert.ok(!think!.includes("\x1b["), JSON.stringify(think));
+    // The markdown renderer keeps its layout and drops only the escapes.
+    const r = createMarkdownRenderer({ color: true, width: 40 });
+    const md = r.push("# Title\n\n- a **bold** item with `code`\n") + r.end();
+    assert.ok(!md.includes("\x1b["), JSON.stringify(md));
+    assert.match(md, /Title/);
+    assert.match(md, /a bold item with code/);
+  } finally {
+    if (prior == null) delete process.env.NO_COLOR;
+    else process.env.NO_COLOR = prior;
+  }
+  // Unset again: the same three surfaces still paint.
+  assert.ok(formatAssistantTurnOpen({ color: true }).includes("\x1b["));
 });

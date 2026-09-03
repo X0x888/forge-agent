@@ -903,6 +903,32 @@ export async function runRepl(opts: {
         });
         if (stop && !result.aborted) log.dim(stop);
       }
+      // Standalone run report after multi-round runs / driver ends — the
+      // user will not scroll; the model's last message covers the last round.
+      try {
+        const { maybeRenderRunReportForRun } = await import(
+          "../harness/run-report.js"
+        );
+        const card = maybeRenderRunReportForRun({
+          session,
+          workspace: config.workspace || session.meta.cwd || process.cwd(),
+          result: {
+            aborted: result.aborted,
+            hitMaxTurns: result.hitMaxTurns,
+            hitCostCap: result.hitCostCap,
+            stuckReleased: result.stuckReleased,
+            lastCycleReleased: result.lastCycleReleased,
+            lastCycleSatDown: result.lastCycleSatDown,
+            releasedOnContinueCap: result.releasedOnContinueCap,
+            stopContinues: result.stopContinues,
+            finalText: result.finalText,
+          },
+          color: Boolean(process.stdout.isTTY),
+        });
+        if (card) console.log(`\n${card}`);
+      } catch {
+        /* report is best-effort */
+      }
 
       // Refresh plan occasionally after turns (uses 60s cache — cheap)
       void bottomDock.refreshPlan();

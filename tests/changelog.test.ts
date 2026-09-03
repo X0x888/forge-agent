@@ -112,6 +112,43 @@ describe("changelog / what's new", () => {
     }
   });
 
+  it("the packaged CHANGELOG has no mojibake, no replacement char, no stray controls", () => {
+    // A hand-edited Unreleased entry shipped an em-dash that had been through
+    // a latin-1 round trip: U+00E2 U+0080 U+0094 where U+2014 belonged. It is
+    // a committed defect in the very file `forge news` renders, and nothing
+    // caught it. Cheap to pin here: this file already reads the packaged
+    // CHANGELOG, and `formatWhatsNew` is the surface a user sees it through.
+    const p = findChangelogPath();
+    assert.ok(p, "CHANGELOG.md should ship with the package");
+    const surfaces: [string, string][] = [
+      ["CHANGELOG.md", fs.readFileSync(p!, "utf8")],
+      ["forge news", formatWhatsNew({ count: 2, maxBullets: 40 })],
+    ];
+    const checks: [string, RegExp][] = [
+      // U+00C2 / U+00C3 followed by a C1 control or latin-1 punctuation is
+      // the signature of UTF-8 read as latin-1 (em-dash, curly quote, middot).
+      ["mojibake", /[\u00c2\u00c3][\u0080-\u00bf]/],
+      // Nothing outside tab / LF / CR belongs in markdown.
+      // eslint-disable-next-line no-control-regex
+      ["control char", /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/],
+      ["replacement char", /\ufffd/],
+    ];
+    for (const [what, text] of surfaces) {
+      for (const [kind, re] of checks) {
+        const m = re.exec(text);
+        assert.equal(
+          m,
+          null,
+          `${what}: ${kind} U+${(m?.[0]?.codePointAt(0) ?? 0)
+            .toString(16)
+            .padStart(4, "0")} at ${JSON.stringify(
+            text.slice(Math.max(0, (m?.index ?? 0) - 60), (m?.index ?? 0) + 20),
+          )}`,
+        );
+      }
+    }
+  });
+
   it("/news is handled and live-safe", async () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-news-"));
     process.env.FORGE_HOME = tmp;

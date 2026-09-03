@@ -388,6 +388,8 @@ const LIVE_READONLY = new Set([
   "/news", // what's new from CHANGELOG
   "/changelog",
   "/sessions", // list only — delete/prune classified below
+  "/report", // standalone run report — read-only
+  "/guidelines", // status card only — classifyLiveSlash sends audit/stamp to idle
 ]);
 
 /** Harness control commands safe mid-turn (no forwardPrompt). */
@@ -589,6 +591,14 @@ export function classifyLiveSlash(line: string): LiveSlashKind {
   }
   if (cmd === "/memory" || cmd === "/decisions") {
     return "control";
+  }
+  // /guidelines status is a card; `stamp` writes the repo's AGENTS.md and
+  // `audit` re-arms the session's audit state — neither belongs mid-run,
+  // where the agent may be editing the same file.
+  if (cmd === "/guidelines") {
+    const a = (arg.split(/\s+/)[0] || "").toLowerCase();
+    if (!a || a === "status") return "readonly";
+    return "idle-only";
   }
   if (LIVE_READONLY.has(cmd)) return "readonly";
   if (LIVE_CONTROL.has(cmd)) {
@@ -800,6 +810,8 @@ export const SLASH_COMMANDS = [
   "/logs",
   "/config",
   "/tips",
+  "/report",
+  "/guidelines",
   "/news",
   "/changelog",
   "/new",
@@ -2048,9 +2060,29 @@ export async function handleSlash(
           ? `done  ·  ${issueN} issue${issueN === 1 ? "" : "s"}`
           : "done  ·  ok";
       const closer = keys.length ? `Next  ${keys.join("  ·  ")}` : "";
+      // /done is a typed command with no model turn behind it, so there is
+      // no closing report to defer to — print the full card. (At the end of
+      // a model run the harness prints only its addendum instead; the
+      // closer, shaped by the report guard, is the report the user reads.)
+      // Under ULW this fires right after the cycle flips to LAST, so the
+      // outcome reads "Winding down", not "Done".
+      let report = "";
+      try {
+        const { buildRunReport, renderRunReportText, writeRunReport } =
+          await import("../harness/run-report.js");
+        const cwd =
+          opts.config.workspace || opts.session.meta.cwd || process.cwd();
+        const built = buildRunReport({ session: opts.session, workspace: cwd });
+        writeRunReport(opts.session.meta.id, built);
+        report = renderRunReportText(built, {
+          color: Boolean(process.stdout.isTTY),
+        });
+      } catch {
+        /* report is best-effort — never break /done */
+      }
       return {
         handled: true,
-        output: [head, ...parts, closer].filter(Boolean).join("\n"),
+        output: [head, ...parts, report, closer].filter(Boolean).join("\n"),
         session: opts.session,
       };
     }
@@ -2856,6 +2888,21 @@ export async function handleSlash(
       const { collectStatusIssues, assembleStatusReport } = await import(
         "../tui/status-card.js"
       );
+      // Head of /status is the run report's outcome + open items — the
+      // status view must stand on its own.
+      let runLines: string[] = [];
+      try {
+        const { buildRunReport, statusHeadLines } = await import(
+          "../harness/run-report.js"
+        );
+        const cwd =
+          opts.config.workspace || opts.session.meta.cwd || process.cwd();
+        runLines = statusHeadLines(
+          buildRunReport({ session: opts.session, workspace: cwd }),
+        );
+      } catch {
+        runLines = [];
+      }
       return {
         handled: true,
         output: assembleStatusReport({
@@ -2863,6 +2910,7 @@ export async function handleSlash(
           planLine,
           detail,
           stackLine,
+          runLines,
           issues: collectStatusIssues({
             config: opts.config,
             session: opts.session,
@@ -5366,6 +5414,69 @@ if (parts[1]) {
       };
     }
 
+    case "/report": {
+      // Standalone run report: outcome line first, then What shipped /
+      // Verified / Not done / Agent guidelines / Needs you / Resume.
+      const { buildRunReport, renderRunReportText, writeRunReport } =
+        await import("../harness/run-report.js");
+      const cwd = opts.config.workspace || opts.session.meta.cwd || process.cwd();
+      const report = buildRunReport({ session: opts.session, workspace: cwd });
+      const saved = writeRunReport(opts.session.meta.id, report);
+      const text = renderRunReportText(report, {
+        color: Boolean(process.stdout.isTTY),
+      });
+      return {
+        handled: true,
+        output: saved ? `${text}\n${chalk.dim(`  saved: ${saved}`)}` : text,
+      };
+    }
+
+    case "/guidelines": {
+      // Agent-guidelines audit: status | audit (re-brief next prompt) | stamp
+      const {
+        formatGuidelineCard,
+        requestGuidelineAudit,
+        stampGuidelinesNow,
+        guidelineAuditEnabled,
+      } = await import("../harness/guideline-audit.js");
+      const cwd = opts.config.workspace || opts.session.meta.cwd || process.cwd();
+      const sub = arg.trim().split(/\s+/)[0]?.toLowerCase() || "";
+      if (sub === "audit" || sub === "recheck" || sub === "again") {
+        requestGuidelineAudit(opts.session.meta.id);
+        return {
+          handled: true,
+          output:
+            (guidelineAuditEnabled()
+              ? "Guideline audit re-armed — the next prompt briefs the agent to proofread AGENTS.md / CLAUDE.md first."
+              : "FORGE_GUIDELINE_AUDIT=0 — audit is off; unset it to re-arm.") +
+            "\n" +
+            formatGuidelineCard({ workspace: cwd, sessionId: opts.session.meta.id }),
+        };
+      }
+      if (sub === "stamp") {
+        const stamped = stampGuidelinesNow(cwd);
+        return {
+          handled: true,
+          output:
+            (stamped.length
+              ? `Stamped ${stamped.join(", ")} as proofread now (you read them).`
+              : "Nothing to stamp.") +
+            "\n" +
+            formatGuidelineCard({ workspace: cwd, sessionId: opts.session.meta.id }),
+        };
+      }
+      if (sub && sub !== "status") {
+        return {
+          handled: true,
+          output: `Unknown /guidelines subcommand "${sub}". Use: /guidelines · /guidelines audit · /guidelines stamp`,
+        };
+      }
+      return {
+        handled: true,
+        output: formatGuidelineCard({ workspace: cwd, sessionId: opts.session.meta.id }),
+      };
+    }
+
             case "/news":
     case "/changelog": {
       // /news · /news 2 · /news all|full|max|latest — parity with forge news.
@@ -6575,6 +6686,10 @@ export interface DoctorResult {
   formatOnWrite?: boolean;
   subagentLandMode?: "auto" | "keep" | "discard";
   projectMemoryCount?: number;
+  /** Agent-guidelines audit status line (AGENTS.md fresh / manual / missing…). */
+  guidelines?: string;
+  /** True when a guideline file is missing, unstamped, bloated, stale, or conflicting. */
+  guidelinesAuditDue?: boolean;
   /** Detected package manager (npm/pnpm/yarn/bun). */
   packageManager?: string | null;
   /** Ecosystem labels (node, typescript, rust, …). */
@@ -6858,6 +6973,23 @@ export async function runDoctorCheck(
           chalk.yellow(
             "  ⚠ land=discard — isolation=worktree edits are dropped on cleanup",
           ),
+        );
+      }
+    } catch {
+      /* */
+    }
+    try {
+      const ws = config.workspace || process.cwd();
+      const { surveyGuidelines, formatGuidelineStatusLine } = await import(
+        "../harness/guideline-audit.js"
+      );
+      const gs = surveyGuidelines(ws);
+      if (!gs.notAProject) {
+        const line = formatGuidelineStatusLine(gs);
+        lines.push(
+          gs.needsAudit
+            ? chalk.yellow(`Agent guidelines: ${line}  · audit due on next prompt  · /guidelines`)
+            : `Agent guidelines: ${line}  · /guidelines`,
         );
       }
     } catch {
@@ -7791,6 +7923,21 @@ export async function runDoctorCheck(
         return 0;
       }
     })(),
+    ...(await (async () => {
+      try {
+        const { surveyGuidelines, formatGuidelineStatusLine } = await import(
+          "../harness/guideline-audit.js"
+        );
+        const gs = surveyGuidelines(config.workspace || process.cwd());
+        if (gs.notAProject) return {};
+        return {
+          guidelines: formatGuidelineStatusLine(gs),
+          guidelinesAuditDue: gs.needsAudit,
+        };
+      } catch {
+        return {};
+      }
+    })()),
     packageManager,
     projectKinds,
     checkCommands,

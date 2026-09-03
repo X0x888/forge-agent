@@ -3,12 +3,21 @@
  *
  * Composes:
  *  1. User-defined Stop hooks (blocking)
+ *  1b. Report guard, attestation pass — the drivers release on
+ *     **Cycle complete.** / **Goal achieved.** and return, so the run's
+ *     closing message is checked for homework and run-wide shape here,
+ *     before any driver consumes the Stop
+ *  1c. Guideline-audit guard — briefed first action ignored (once). Also
+ *     ahead of the drivers: ULW never answers a Stop neutrally while it is
+ *     armed, so anything behind step 3 is dead in every ULW run
  *  2. /goal relentless driver
  *  3. ULW cycle driver (cycle=1 loop / cycle=0 last-wave)
  *  4. TodoGate (open todos under ULW; soft once outside ULW)
  *  5. Ultrawork open-todos backstop
  *  6. Handoff guard — premature "let me know if…" / "shall I continue?" yields
  *  7. Proof-claim guard — "tests pass" / silent edits-without-verify (free triage)
+ *  8. Report guard — homework hand-back / last-round-only closer after
+ *     multi-round runs (capped)
  */
 import type { ForgeConfig } from "../config/types.js";
 import type { HookRunner, HookContext, HookResult } from "./hooks.js";
@@ -29,6 +38,12 @@ import {
   type ProofClaimStopDecision,
 } from "./proof-claim-guard.js";
 import { envPositiveInt } from "../util/env.js";
+import { evaluateGuidelineAuditAtStop } from "./guideline-audit.js";
+import {
+  evaluateAttestationHomeworkAtStop,
+  evaluateReportAtStop,
+  type ReportStopDecision,
+} from "./report-guard.js";
 import { gitDiffFingerprint } from "../util/git-context.js";
 
 export interface StopGuardInput {
@@ -70,6 +85,12 @@ export interface StopGuardInput {
    * After FORGE_PROOF_CLAIM_BLOCK_CAP (default 1) the guard releases.
    */
   proofClaimBlocks?: number;
+  /** Harness Stop re-anchors so far this run (review rounds) — report guard. */
+  stopContinues?: number;
+  /** Report-guard bounces already spent this run (cap FORGE_REPORT_BLOCK_CAP=2). */
+  reportBlocks?: number;
+  /** Lazily built run facts for the report-guard reanchor. */
+  runFactsProvider?: () => string[];
 }
 
 export interface StopGuardResult {
@@ -86,6 +107,8 @@ export interface StopGuardResult {
   handoff?: HandoffStopDecision;
   /** Proof-claim guard decision when it evaluated (block or release). */
   proofClaim?: ProofClaimStopDecision;
+  /** Report guard decision when it blocked or released. */
+  report?: ReportStopDecision;
 }
 
 export async function runStopGuard(input: StopGuardInput): Promise<StopGuardResult> {
@@ -128,6 +151,64 @@ export async function runStopGuard(input: StopGuardInput): Promise<StopGuardResu
       reason: hookResult.reason || "Stop blocked by hook",
       additionalContext: hookResult.additionalContext || hookResult.reason,
       systemMessage: hookResult.systemMessage,
+      hook: hookResult,
+    };
+  }
+
+  // Report guard, attestation pass. The closer a user reads after a long run
+  // is **Cycle complete.** / **Goal achieved.**, and the drivers below release
+  // on it and return — step 8 never sees the run's most important message.
+  // Checked here, before any driver consumes this Stop, so a bounce costs one
+  // round and never a wave or an evidence nudge.
+  const attestationDecision = evaluateAttestationHomeworkAtStop({
+    lastAssistantMessage: input.lastAssistantMessage,
+    lastUserMessage: input.lastUserMessage,
+    ulwEnabled: Boolean(ulw?.enabled),
+    ulwCycle: ulw?.cycle,
+    stopContinues: input.stopContinues,
+    editCount: input.editCount,
+    reportBlocks: input.reportBlocks,
+    factsProvider: input.runFactsProvider,
+  });
+  if (attestationDecision.block) {
+    return {
+      allowStop: false,
+      reason: attestationDecision.reason,
+      additionalContext:
+        attestationDecision.reanchor || attestationDecision.reason,
+      systemMessage: attestationDecision.reason,
+      hook: hookResult,
+      report: attestationDecision,
+    };
+  }
+
+  // Guideline-audit guard, step 1c: the session's first action was to
+  // proofread the agent guideline files and none was read. Once, then
+  // release.
+  //
+  // It sits here, not behind the drivers, for the reason step 1b does:
+  // `evaluateUlwAtStop` answers neutrally only when ULW is off — while it is
+  // armed every path either blocks or sets a release flag, and stop-guard
+  // returns on both. A guard behind step 3 therefore never runs in a ULW
+  // run, which is where a badly steering AGENTS.md does the most damage.
+  // The alternative — re-checking on each ULW release path — would have to
+  // be repeated at four early returns (goal stuck-wall, ULW stuck /
+  // released / sat down) and would still miss the blocking waves.
+  //
+  // Blocking here spends no wave, no evidence nudge and no wrap flag: the
+  // drivers have not evaluated this Stop yet. The model reads the files and
+  // the next Stop reaches the drivers exactly as it would have. Capped at
+  // one block per session inside the guard (`st.blocked`), kill-switch
+  // FORGE_GUIDELINE_AUDIT_BLOCK=0.
+  const guidelineDecision = evaluateGuidelineAuditAtStop({
+    sessionId: ctx.sessionId,
+  });
+  if (guidelineDecision.block) {
+    return {
+      allowStop: false,
+      reason: guidelineDecision.reason,
+      additionalContext: guidelineDecision.reanchor || guidelineDecision.reason,
+      systemMessage: guidelineDecision.reason,
       hook: hookResult,
     };
   }
@@ -325,13 +406,41 @@ export async function runStopGuard(input: StopGuardInput): Promise<StopGuardResu
     };
   }
 
+  // Report guard: homework handed back, or a last-round-only closer after a
+  // multi-round run. The closing message must stand on its own.
+  const reportDecision = evaluateReportAtStop({
+    lastAssistantMessage: input.lastAssistantMessage,
+    lastUserMessage: input.lastUserMessage,
+    stopContinues: input.stopContinues ?? 0,
+    editCount: input.editCount,
+    ultrawork: Boolean(input.ultrawork || ulw?.enabled),
+    goalActive,
+    openTodoCount: input.openTodoCount,
+    reportBlocks: input.reportBlocks,
+    factsProvider: input.runFactsProvider,
+  });
+  if (reportDecision.block) {
+    return {
+      allowStop: false,
+      reason: reportDecision.reason,
+      additionalContext: reportDecision.reanchor || reportDecision.reason,
+      systemMessage: reportDecision.reason,
+      hook: hookResult,
+      goal: goalDecision,
+      ulw: ulwDecision,
+      report: reportDecision,
+    };
+  }
+
   return {
     allowStop: true,
     additionalContext: hookResult.additionalContext,
     systemMessage:
       (handoffDecision.released && handoffDecision.reason) ||
       (proofClaimDecision.released && proofClaimDecision.reason) ||
+      (reportDecision.released && reportDecision.reason) ||
       hookResult.systemMessage,
+    ...(reportDecision.released ? { report: reportDecision } : {}),
     hook: hookResult,
     goal: goalDecision,
     ulw: ulwDecision,

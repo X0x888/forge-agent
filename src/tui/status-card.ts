@@ -217,11 +217,18 @@ export function assembleStatusReport(parts: {
   issues: readonly StatusIssue[];
   columns?: number;
   color?: boolean;
+  /**
+   * Run-report head (outcome sentence + what is still open) so `/status`
+   * stands on its own without scrolling back through the transcript.
+   */
+  runLines?: readonly string[];
 }): string {
   const verdict = formatStatusVerdict(parts.issues, { color: parts.color });
   const closer = formatStatusCloser(parts.issues, { columns: parts.columns });
+  const run = (parts.runLines || []).filter((l) => l && l.trim());
   return [
     verdict,
+    ...run,
     String(parts.hud || "").trimEnd(),
     String(parts.planLine || "").trimEnd(),
     String(parts.detail || "").trimEnd(),

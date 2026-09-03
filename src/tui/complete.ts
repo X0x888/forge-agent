@@ -577,6 +577,8 @@ export const SLASH_HINTS: Record<string, string> = {
   "/provider": "Switch provider",
   "/doctor": "Health check",
   "/tips": "Expert cheat sheet",
+  "/report": "Standalone run report (outcome · shipped · verified · not done · needs you)",
+  "/guidelines": "Agent-guidelines audit (AGENTS.md / CLAUDE.md) · audit · stamp",
   "/build": "Leave plan, implement",
   "/review": "Review a diff/PR",
   "/verbose": "Full diffs + tool output",

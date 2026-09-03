@@ -2,6 +2,23 @@ import chalk from "chalk";
 import { grokCostRates } from "../config/grok-model.js";
 import { replaceUnpairedSurrogates, sliceUtf16Safe } from "./json-utf8.js";
 
+/**
+ * Chalk level for the surfaces that force colour **on** rather than trusting
+ * `chalk.level` (a real TTY chalk under-detects: the REPL's streamed markdown,
+ * the `forge ›` / `think ›` turn openers).
+ *
+ * `Math.max(chalk.level, 1)` was defeating `NO_COLOR` on exactly those
+ * surfaces: `src/util/log.ts` sets `FORCE_COLOR=0` when `NO_COLOR` is set,
+ * chalk drops to level 0, and the max put it straight back to 1. `NO_COLOR`
+ * wins here, like it does in `bottom-status.ts`, `statusline/render.ts` and
+ * the run report. Level 0 keeps the renderer (widths, tables, clipping) and
+ * only drops the escapes.
+ */
+export function forcedChalkLevel(): 0 | 1 | 2 | 3 {
+  if (process.env.NO_COLOR != null) return 0;
+  return Math.max(chalk.level, 1) as 1 | 2 | 3;
+}
+
 /** Truncate long tool output keeping head + tail so errors at the end remain visible. */
 export function truncateMiddle(text: string, max = 80_000): string {
   if (text.length <= max) return replaceUnpairedSurrogates(text);
@@ -856,5 +873,9 @@ export function clipAnsi(text: string, max: number): string {
     out += m[0];
     vis += 1;
   }
-  return out + "\x1b[0m";
+  // Only close what was opened. `closeAnsi` above already guards this way;
+  // clipping plain text used to graft a reset onto it, so under NO_COLOR (or
+  // any plain path — a clipped session title, a `/help` row) an escape came
+  // out of a string that had no colour in it at all.
+  return out.includes("\x1b[") ? out + "\x1b[0m" : out;
 }

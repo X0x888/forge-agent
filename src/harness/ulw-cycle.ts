@@ -2867,6 +2867,9 @@ export function formatWrapCard(s: UlwCycleState): string {
       ? "Do not write a new Reading. Do not start a new surface. After wrap: Must-fix vs Live-with, at most one must-fix close-out, then sit down."
       : "Do not write a new Reading. Do not start a new surface. After wrap: Must-fix vs Live-with scorecard (read-only), at most one must-fix close-out, then stop.",
   ];
+  lines.push(
+    "Close with a run-wide final report the user can read without scrolling: one outcome sentence, then **What shipped** (every wave since the mandate, not this close-out) · **Verified** · **Not done** · **Needs you** (`Operator:` items only, else Nothing).",
+  );
   if (s.wrapKind === "user" && named.length) {
     lines.push(
       `Already-named plan: ${named.length - openNamed.length}/${named.length} done.`,

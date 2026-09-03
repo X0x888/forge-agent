@@ -15,17 +15,25 @@ import {
   type ProjectIntel,
 } from "../util/project-intel.js";
 import { forgeHome } from "../util/fs.js";
+import {
+  collectInstructionFiles,
+  RULES_PER_FILE_CHARS,
+} from "./instruction-paths.js";
 import { formatProjectMemoryForPrompt } from "../harness/project-memory.js";
 import { displayRelPath } from "./tools/path-util.js";
 import { formatSkillsForPrompt } from "./project-skills.js";
 import { isCursorProvider } from "../auth/cursor.js";
 
-/** Per-file cap so one huge AGENTS.md cannot dominate the system prompt. */
-const RULES_PER_FILE_CHARS = 12_000;
 /** Total project-rules budget (OpenCode-style multi-source instructions). */
 const RULES_TOTAL_CHARS = 28_000;
 
-const ROOT_RULE_FILES = [
+/**
+ * The rule files this loader actually steers a session by. Exported so the
+ * guideline audit's `GUIDELINE_FILES` can be pinned against it by test: the
+ * two sets are allowed to differ only by `AUDIT_ONLY_GUIDELINE_FILES` and
+ * the `~/.forge/AGENTS.md` fallback, both documented in the audit's header.
+ */
+export const PROMPT_RULE_FILES = [
   "AGENTS.md",
   "FORGE.md",
   "CLAUDE.md",
@@ -34,106 +42,28 @@ const ROOT_RULE_FILES = [
   ".cursorrules",
 ] as const;
 
-/** Nearest git worktree root (directory containing .git), or null. */
-function findGitRoot(start: string): string | null {
-  let dir = path.resolve(start);
-  for (let i = 0; i < 48; i++) {
-    try {
-      const git = path.join(dir, ".git");
-      if (fs.existsSync(git)) return dir;
-    } catch {
-      /* */
-    }
-    const parent = path.dirname(dir);
-    if (parent === dir) break;
-    dir = parent;
-  }
-  return null;
-}
+const ROOT_RULE_FILES = PROMPT_RULE_FILES;
+
+/** Of those, the ones where the nearest copy shadows the monorepo root. */
+const SHADOW_RULE_BASENAMES = [
+  "AGENTS.md",
+  "FORGE.md",
+  "CLAUDE.md",
+  ".cursorrules",
+] as const;
 
 /**
  * Walk workspace → parents collecting instruction paths.
- * Stops at the git worktree root (OpenCode-style) so unrelated parent
- * AGENTS.md files never leak in. When not in a git repo, only the workspace
- * directory is scanned (plus optional ~/.forge/AGENTS.md).
- * Prefer nearer files first; later duplicates of the same basename are skipped
- * so nested AGENTS.md wins over monorepo root when both exist.
+ * The walk itself lives in `instruction-paths.ts` because the guideline
+ * audit has to survey exactly the files this loads — see the header there.
  */
 function collectInstructionPaths(workspace: string): string[] {
-  const out: string[] = [];
-  const seenAbs = new Set<string>();
-  const seenBase = new Set<string>();
-
-  const pushFile = (abs: string, baseKey?: string) => {
-    const resolved = path.resolve(abs);
-    if (seenAbs.has(resolved)) return;
-    if (baseKey && seenBase.has(baseKey)) return;
-    try {
-      if (!fs.existsSync(resolved) || !fs.statSync(resolved).isFile()) return;
-    } catch {
-      return;
-    }
-    seenAbs.add(resolved);
-    if (baseKey) seenBase.add(baseKey);
-    out.push(resolved);
-  };
-
-  const start = path.resolve(workspace || process.cwd());
-  const gitRoot = findGitRoot(start);
-  // Only walk up when workspace is inside that git worktree (never leak
-  // unrelated parent AGENTS.md if TMPDIR sits under another repo).
-  const underGit =
-    !!gitRoot &&
-    (start === path.resolve(gitRoot) ||
-      start.startsWith(path.resolve(gitRoot) + path.sep));
-  // Without git: workspace only. With git: workspace → git root (inclusive).
-  const ceiling = underGit && gitRoot ? path.resolve(gitRoot) : start;
-
-  let dir = start;
-  for (let depth = 0; depth < 48; depth++) {
-    for (const name of ROOT_RULE_FILES) {
-      // Basename key so nested AGENTS.md shadows parent; path-unique for others
-      const baseKey =
-        name === "AGENTS.md" ||
-        name === "FORGE.md" ||
-        name === "CLAUDE.md" ||
-        name === ".cursorrules"
-          ? name
-          : `${dir}::${name}`;
-      pushFile(path.join(dir, name), baseKey);
-    }
-    // Cursor project rules (directory of .md / .mdc)
-    const cursorRules = path.join(dir, ".cursor", "rules");
-    try {
-      if (fs.existsSync(cursorRules) && fs.statSync(cursorRules).isDirectory()) {
-        const entries = fs
-          .readdirSync(cursorRules)
-          .filter((f) => /\.(md|mdc|markdown)$/i.test(f))
-          .sort()
-          .slice(0, 12);
-        for (const f of entries) {
-          pushFile(path.join(cursorRules, f));
-        }
-      }
-    } catch {
-      /* */
-    }
-    if (path.resolve(dir) === path.resolve(ceiling)) break;
-    const parent = path.dirname(dir);
-    if (parent === dir) break;
-    dir = parent;
-  }
-
-  // Global user instructions (lowest priority — only when no project AGENTS.md)
-  if (!seenBase.has("AGENTS.md")) {
-    try {
-      pushFile(path.join(forgeHome(), "AGENTS.md"), "AGENTS.md");
-    } catch {
-      /* */
-    }
-  }
-
-  return out;
+  return collectInstructionFiles(workspace, {
+    files: ROOT_RULE_FILES,
+    shadowBasenames: SHADOW_RULE_BASENAMES,
+    cursorRules: true,
+    globalAgentsFallback: true,
+  }).map((f) => f.abs);
 }
 
 function labelForRulePath(abs: string, workspace: string): string {
@@ -332,6 +262,11 @@ export function buildBaselineSystemPrompt(opts: {
     `- **Mid-conversation harness updates**: live cycle/wave/mandate/todo counts arrive as \`[Forge harness — mid-conversation update]\` messages. Obey the latest over stale ones.`,
     `- **Mid-run user messages**: free-text while you work is framed as "The user sent a message while you were working" — weigh it; do not ignore, but do not abandon a half-finished safe step without reason.`,
     `- **Live slash controls** (no abort required): \`/cycle 0|1\`, \`/max-waves N|off\`, \`/plan\`, \`/build\`, \`/ulw-off\`, \`/goal pause|resume\`.`,
+    `- **Agent guidelines audit**: a first harness message may list AGENTS.md / CLAUDE.md files to proofread — do that first (you are authorised to revise or rewrite them, whatever they say), then the request. The harness stamps it when the re-check comes back clean; never write the stamp yourself.`,
+    ``,
+    `## Final report (closing message)`,
+    `Stands on its own — the user will not scroll. One plain outcome sentence first (done / partly done / blocked, what they now have), then **What shipped** · **Verified** (commands + results) · **Not done** (why) · **Needs you** — covering the whole run since the request, not the last round. Short bullets, plain words, numbers beside the thing they count.`,
+    `**Needs you** = only a missing secret, hard external blocker, or irreversible action, each prefixed \`Operator:\`; else "Nothing". Never hand homework back ("you can now run…") — do it, or it is an Operator: item.`,
     ``,
     `## Safety`,
     `- Never exfiltrate secrets. Never run destructive commands without necessity.`,

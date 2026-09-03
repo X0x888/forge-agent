@@ -36,6 +36,8 @@ const MAX_COMMANDS = 64;
 
 /** Built-in slash names that project commands must not shadow. */
 const RESERVED = new Set([
+  "report",
+  "guidelines",
   "help",
   "?",
   "quit",

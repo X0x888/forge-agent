@@ -23,6 +23,7 @@ import { parseCostUsd, resolveMaxCostUsd } from "./util/cost-budget.js";
 import { familyCostJson } from "./session/subagent-usage.js";
 import { productionWarningsForRun } from "./util/production-warnings.js";
 import { listActiveProjectMemory } from "./harness/project-memory.js";
+import { buildRunReport } from "./harness/run-report.js";
 import { resolveWorktreeLandMode } from "./agent/worktree.js";
 import { isFalsy } from "./util/bool.js";
 import { loadConfig } from "./config/load.js";
@@ -4478,6 +4479,8 @@ Docs: docs/PRODUCTION.md
               formatOnWrite: check.formatOnWrite ?? false,
               subagentLandMode: check.subagentLandMode ?? "auto",
               projectMemoryCount: check.projectMemoryCount ?? 0,
+              guidelines: check.guidelines ?? null,
+              guidelinesAuditDue: check.guidelinesAuditDue ?? false,
               packageManager: check.packageManager ?? null,
               projectKinds: check.projectKinds ?? [],
               checkCommands: check.checkCommands ?? [],
@@ -6766,6 +6769,30 @@ async function runHeadless(opts: {
       } catch {
         /* summary is best-effort — never block headless exit */
       }
+      try {
+        const { maybeRenderRunReportForRun } = await import(
+          "./harness/run-report.js"
+        );
+        const card = maybeRenderRunReportForRun({
+          session: opts.session,
+          workspace: opts.config.workspace || opts.session.meta.cwd || process.cwd(),
+          result: {
+            aborted: result.aborted,
+            hitMaxTurns: result.hitMaxTurns,
+            hitCostCap: result.hitCostCap,
+            stuckReleased: result.stuckReleased,
+            lastCycleReleased: result.lastCycleReleased,
+            lastCycleSatDown: result.lastCycleSatDown,
+            releasedOnContinueCap: result.releasedOnContinueCap,
+            stopContinues: result.stopContinues,
+            finalText: result.finalText,
+          },
+          color: Boolean(process.stdout.isTTY),
+        });
+        if (card) process.stdout.write(`\n${card}\n`);
+      } catch {
+        /* report is best-effort */
+      }
     }
 
     const durationMs = Date.now() - t0;
@@ -7068,6 +7095,27 @@ maxTurns: opts.config.maxTurns ?? 0,
       errorStreakThreshold: envPositiveInt("FORGE_ERROR_STREAK_THRESHOLD", 5),
       ulwMaxContinues: envPositiveInt("FORGE_ULW_MAX_CONTINUES", 200),
       finalText: result.finalText,
+      report: (() => {
+        try {
+          return buildRunReport({
+            session: opts.session,
+            workspace: opts.config.workspace || opts.session.meta.cwd || process.cwd(),
+            result: {
+              aborted: result.aborted,
+              hitMaxTurns: result.hitMaxTurns,
+              hitCostCap: result.hitCostCap,
+              stuckReleased: result.stuckReleased,
+              lastCycleReleased: result.lastCycleReleased,
+              lastCycleSatDown: result.lastCycleSatDown,
+              stopContinues: result.stopContinues,
+              finalText: result.finalText,
+            },
+          }).markdown;
+        } catch {
+          return null;
+        }
+      })(),
+      guidelines: result.guidelines ?? null,
       turns: result.turns,
       stopContinues: result.stopContinues,
       releasedOnContinueCap: result.releasedOnContinueCap,
