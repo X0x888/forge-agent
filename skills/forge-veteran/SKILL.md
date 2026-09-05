@@ -60,25 +60,27 @@ Match the product, then load the matching skill:
 | CLI / TUI | Sit-down keys, verdict-first cards | `forge-shape` then ship |
 | Library / harness | Proof, no mill, kernel not file N+1 | `forge-prove`, `forge-rootcause` |
 
-Every row: also ask what the product cannot do yet — that is the Bet; the row's chase is where to look for it. Explore children may answer `bet:` beside `pick:`.
+Every row: also ask what the product cannot do yet — that is the Bet; the row's chase is where to look for it. A Bet is written as the capability **and the new file it creates** (`Bet: one voice for every meal caption — src/lib/voice.ts — first slice: mealCaption(field) used by the toolbar; verify: npm test`). "X still says Y" is a hole in Bet grammar and is refused — fix it as smoke, do not bet it. Explore children may answer `bet:` beside `pick:`.
 
 Then actually look:
 
 - Codebase: `spawn_subagent` `explore` (PLAN allows explore/plan only). Emit several explores **in the same round** as `web_search`.
 - Web: `web_search` current practice; `site:github.com` for examples
-- Screen: Playwright screenshot → `read_file` the png (vision)
+- Screen: Playwright screenshot → `read_file` the png (vision). Write the png under `~/.forge/sessions/<id>/looks/`, never into the repo; point any `--user-data-dir` at `~/.forge/tmp`.
 
 Do not skip research because tests are red unless the red is the user's job.
 
 ## 3. Ship one piece
 
-One objective — a Bet slice by default under an open mandate (production on the bet's files + a test that calls it); the reading's hole when the hole is the user's job. Prove it: a `background: true` suite counts when you `get_task_output` it (or it settles) — its exit code is the evidence, foreground or not. Hostile-review the diff. Commit (ULW auto-commits waves).
+One objective — a Bet slice by default under an open mandate (production on the path the bet creates + a test that calls it); the reading's hole when the hole is the user's job. Prove it: a `background: true` suite counts when you `get_task_output` it (or it settles) — its exit code is the evidence, foreground or not. Hostile-review the diff. Commit (ULW auto-commits waves).
+
+Write the code as if it had always been this way: comments describe what the code does, never what it used to do ("used to", "no longer", "previously" belong in the closer and the commit). A sentence that has to reach a second surface is a function, not a second copy — one formatter the surfaces import, one context object instead of a fifteenth argument. The harness measures both: a fourth file carrying one idea holds, and a tree whose shape does not improve across two consolidations holds.
 
 If you generated art, `read_file` it and say what is still wrong.
 
 ## 4. Continue or re-PLAN
 
-The plan is stale when: the last three ships were the same surface, you learned the architecture cannot hold another sibling, the reading's ships are done, or play showed a different hole.
+The plan is stale when: the last three ships were the same surface, one idea has landed on a third file with no shared module, you learned the architecture cannot hold another sibling, the reading's ships are done, or play showed a different hole.
 
 Then **enter_plan_mode** (or write that the reading is stale). Do not mint `src/systems/foo-n.js` because the harness wants a wave.
 

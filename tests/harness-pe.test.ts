@@ -479,10 +479,13 @@ describe("prompt profile + baseline system", () => {
     const fakeHome = fs.mkdtempSync(path.join(os.tmpdir(), "forge-sp-home-"));
     process.env.FORGE_HOME = fakeHome;
     const bare = fs.mkdtempSync(path.join(os.tmpdir(), "forge-sp-size-"));
-    // npm test runs with TMPDIR inside this repo — give the bare workspace its
-    // own .git so the rules walk stops here instead of slurping the repo's
-    // AGENTS.md (which would make the ceiling meaningless).
-    fs.mkdirSync(path.join(bare, ".git"));
+    // npm test runs with TMPDIR inside this repo — the bare workspace must be
+    // a real repo, not an empty .git dir: `git rev-parse` walks past the
+    // latter to this repo's root, and the prompt then carried forge-agent's
+    // own ## Project memory (1.7k on the developer's machine) into a test
+    // that is meant to measure the code's doctrine.
+    const { execFileSync } = await import("node:child_process");
+    execFileSync("git", ["init", "-q"], { cwd: bare, stdio: "ignore" });
     try {
       const { DEFAULT_CONFIG } = await import("../src/config/types.js");
       const text = buildBaselineSystemPrompt({
@@ -491,10 +494,16 @@ describe("prompt profile + baseline system", () => {
         git: null,
         project: null,
       });
-      // 17k: the final-report contract + guideline-audit bullet (+914 chars
-      // measured) joined the baseline in 0.10; anything past this is bloat.
+      assert.doesNotMatch(
+        text,
+        /## Project memory/,
+        "a fresh repo has no project memory; the fixture leaked the developer's",
+      );
+      // 16k: measured 15.6k once the fixture stopped importing project
+      // memory (the old 17k ceiling had ~1.7k of it inside). Anything past
+      // this is doctrine bloat — trim a bullet, do not raise the number.
       assert.ok(
-        text.length < 17_000,
+        text.length < 16_000,
         `baseline system prompt grew to ${text.length} chars`,
       );
       // Without builtins the core doctrine alone must stay small.

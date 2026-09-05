@@ -2445,19 +2445,29 @@ export async function handleSlash(
     }
 
     case "/cycle": {
+      // Spend against what it bought — the number HashPet's user could not see.
+      const cycleSpend = {
+        costUsd: estimateCostUsd(
+          String(opts.config.provider),
+          opts.session.meta.totalPromptTokens,
+          opts.session.meta.totalCompletionTokens,
+          opts.config.model,
+          opts.session.meta.totalCacheReadTokens || 0,
+        ),
+      };
       if (!arg) {
         return {
           handled: true,
           output:
             formatParamMenu("/cycle", COMMAND_PARAMS.cycle) +
             "\n\n" +
-            formatUlwStatus(loadUlwCycle(opts.session.meta.id)),
+            formatUlwStatus(loadUlwCycle(opts.session.meta.id), { spend: cycleSpend }),
         };
       }
       if (arg === "status") {
         return {
           handled: true,
-          output: formatUlwStatus(loadUlwCycle(opts.session.meta.id)),
+          output: formatUlwStatus(loadUlwCycle(opts.session.meta.id), { spend: cycleSpend }),
         };
       }
       // number menu: 1/2/3 map via resolveParamChoice, or parseCycleArg
@@ -2471,7 +2481,7 @@ export async function handleSlash(
       if (fromMenu === "status") {
         return {
           handled: true,
-          output: formatUlwStatus(loadUlwCycle(opts.session.meta.id)),
+          output: formatUlwStatus(loadUlwCycle(opts.session.meta.id), { spend: cycleSpend }),
         };
       }
       if (flag === null) {

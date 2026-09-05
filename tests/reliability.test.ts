@@ -1892,6 +1892,12 @@ describe("session metrics + permission timeout", () => {
       .filter((l) => l.trim());
     assert.equal(roundLines.length, 20);
     assert.ok(roundLines.every((l) => /"type":"provider_round"/.test(l)));
+    // Every round is priced: a 7,970-round run used to sum to $0 here.
+    const priced = roundLines.map((l) => JSON.parse(l) as { estCostUsd?: number });
+    assert.ok(priced.every((r) => typeof r.estCostUsd === "number" && r.estCostUsd > 0));
+    const first = priced[0]!.estCostUsd!;
+    // xai default: (1000-900)*2 + 900*0.5 + 10*6 per 1M tokens.
+    assert.ok(Math.abs(first - (100 * 2 + 900 * 0.5 + 10 * 6) / 1_000_000) < 1e-12, String(first));
     // Per-session sidecar still receives both kinds.
     const side = fs
       .readFileSync(path.join(tmp, "sessions", "s1", "rounds.jsonl"), "utf8")

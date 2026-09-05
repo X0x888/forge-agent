@@ -7,6 +7,7 @@
  */
 import { envPositiveInt } from "../util/env.js";
 import { isFalsy, isTruthy } from "../util/bool.js";
+import { estimateCostUsd } from "../util/format.js";
 import { appendSessionMetrics } from "./metrics.js";
 
 /** xAI Chat Completions header — pins the conversation to one cache shard. */
@@ -147,6 +148,17 @@ export function appendProviderRoundMetrics(opts: {
     promptTokens: opts.promptTokens,
     cacheReadTokens: opts.cacheReadTokens,
     completionTokens: opts.completionTokens,
+    // Priced per round: a 7,970-round HashPet run summed to $0 in
+    // rounds.jsonl because only run_end was priced, and the REPL's run_end
+    // carried no tokens. The price of a wave has to be readable from the
+    // round ledger alone.
+    estCostUsd: estimateCostUsd(
+      opts.provider,
+      opts.promptTokens,
+      opts.completionTokens,
+      opts.model,
+      opts.cacheReadTokens,
+    ),
     cacheRatio: Math.round(ratio * 10000) / 10000,
     pruned: opts.pruned || undefined,
     pruneKind: opts.pruneKind && opts.pruneKind !== "off" ? opts.pruneKind : undefined,

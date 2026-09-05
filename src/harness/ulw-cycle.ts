@@ -17,7 +17,7 @@
  */
 import path from "node:path";
 import { forgeHome, readJsonFile, writeJsonFile, nowIso, nowEpoch } from "../util/fs.js";
-import { isTruthy } from "../util/bool.js";
+import { isFalsy, isTruthy } from "../util/bool.js";
 import {
   VERIFICATION_CMD_RE,
   isVerificationCommand,
@@ -133,11 +133,14 @@ import {
   BET_DECLINE_WINDOW,
   BET_MAX_SWAPS,
   BET_OFF_HOLD,
+  BET_RUN_ADOPT_SOFT,
+  BET_STUB_SLICES,
   CONCRETE_DELIVERABLE_RE,
   CONCRETE_TOKEN_RE,
   OPEN_WISH_RE,
   betHoldArmable,
   betHolding,
+  betNewPathReason,
   betShipHit,
   formatBetOwedAdmit,
   formatBetHoldAdmit,
@@ -145,9 +148,31 @@ import {
   formatBetStatusLine,
   isOpenMandate,
   parseBetLine,
+  resolveBetNewPaths,
   sameBetText,
   type BetState,
 } from "./bet-contract.js";
+import {
+  formatIdeaHoldAdmit,
+  formatIdeaReanchorLine,
+  formatIdeaStatusLine,
+  ideaHoldEnabled,
+  ideaHoldReleases,
+  ideaNoteFor,
+  treeKeyFiles,
+  type IdeaHoldState,
+} from "./idea-surface.js";
+import {
+  formatTreeShapeConsolidationClause,
+  formatTreeShapeHoldAdmit,
+  formatTreeShapeStatusLine,
+  gitHeadSha,
+  measureTreeShape,
+  treeShapeHoldEnabled,
+  unimprovedTrips,
+  type TreeShapeSnapshot,
+  type TreeShapeTripKey,
+} from "./tree-shape.js";
 
 export type CycleFlag = 0 | 1;
 
@@ -273,6 +298,10 @@ export interface UlwCycleState {
   betDeclineShips?: number;
   /** Spent decline reasons — the same why cannot decline twice. */
   betDeclineHistory?: string[];
+  /** Last `Bet:` refused (hole-shaped clause / no new path); cleared on adopt or decline. */
+  betRefused?: string;
+  /** Bets adopted this run (a one-slice bet is a stub past BET_RUN_ADOPT_SOFT). */
+  betsAdopted?: number;
   /**
    * Verify commands the model declared in a Reading / Bet (`Verify:
    * ./build.sh --self-test`). Merged into the preferred check list so a
@@ -296,6 +325,39 @@ export interface UlwCycleState {
   sameSurfaceHold?: boolean;
   /** Hold admits this run (stronger copy after the first). */
   sameSurfaceAdmitCount?: number;
+  /**
+   * Idea the last declared ship continued (closer terms + distinct carrier
+   * files in the lookback). Status / re-anchor advisory; not a score.
+   */
+  ideaNote?: { terms: string[]; files: string[] };
+  /** One idea on IDEA_FILE_HOLD files with no shared module — Stop holds. */
+  ideaHold?: IdeaHoldState;
+  /** Idea holds armed this run (LAST reflect ledger). */
+  ideaHolds?: number;
+  /** Wave of the last collapse ship — idea comparison restarts after it. */
+  ideaWindowFrom?: number;
+  /**
+   * Credited ships since the last capability ship (a new production module,
+   * or a bet slice on a path the bet creates). Open mandates hold at
+   * CAPABILITY_DROUGHT_HOLD — a run that only repairs is a bug tracker.
+   */
+  capabilityDrought?: number;
+  /** Capability ships this run. */
+  capabilityShips?: number;
+  /** Job-moving waves this run (the ledger is capped; this is not). */
+  jobMoves?: number;
+  /** Credited ships this run (same reason). */
+  creditedShips?: number;
+  /** Drought hold armed — Stop stays blocked until a capability ship. */
+  capabilityHold?: boolean;
+  /** HEAD sha when ULW armed — base of the run's cumulative diff (tree shape). */
+  startHead?: string;
+  /** Tree-shape snapshot from the last consolidation measure. */
+  treeShape?: TreeShapeSnapshot;
+  /** The one before it — a trip present in both and no better arms the hold. */
+  treeShapePrev?: TreeShapeSnapshot;
+  /** Unimproved trips holding Stop until a re-measure shows a decrease. */
+  treeShapeHold?: { keys: TreeShapeTripKey[]; since: number; admits: number };
   /**
    * Consecutive themed ships that did not touch an explore-map pick.
    * Unlimited evaluate-class holds at OFF_CONTRACT_HOLD.
@@ -473,6 +535,12 @@ export interface UlwStopDecision {
   sameSurfaceDemanded?: boolean;
   /** True when Stop is holding for a bet slice / new `Bet:` (open mandate). */
   betDemanded?: boolean;
+  /** True when Stop is holding because one idea was painted onto a 4th file. */
+  ideaDemanded?: boolean;
+  /** True when Stop is holding because the tree's shape did not improve across consolidations. */
+  shapeDemanded?: boolean;
+  /** True when Stop is holding for a capability ship after a long repair-only run. */
+  capabilityDemanded?: boolean;
   /** True when this Stop actually closed a wave (not a gate / already-stamped). */
   waveClosed?: boolean;
   /** True when LAST reflect demanded a scorecard (read-only). */
@@ -506,6 +574,18 @@ const MAX_EVIDENCE_NUDGES = 1;
 const THIN_ADVISORY_STREAK = 3;
 /** Every Nth wave is a consolidation wave: review + harden, no new scope. */
 export const CONSOLIDATION_EVERY = 4;
+/**
+ * Credited ships without a capability ship before the re-anchor warns /
+ * unlimited open-mandate ULW holds. HashPet's combined score peaked around
+ * wave ~50 of 791 and its last new module landed in the first hour; every
+ * meter stayed green because every meter measured stalling.
+ */
+export const CAPABILITY_DROUGHT_ADVISORY = 12;
+export const CAPABILITY_DROUGHT_HOLD = 24;
+
+export function capabilityHoldEnabled(): boolean {
+  return !isFalsy(process.env.FORGE_ULW_CAPABILITY_HOLD ?? "1");
+}
 /** Off-job credited ships before cadence re-PLAN + explore. */
 const OFF_JOB_REORIENT = 3;
 /** Thought-only Stops in a cycle before forcing a look (not LAST). */
@@ -1154,6 +1234,8 @@ function appendWaveRecord(
     editKind?: ProdEditKind;
     chrome?: boolean;
     paths?: string[];
+    /** Workspace — the consolidation tree-shape measure needs a tree. */
+    cwd?: string;
   },
 ): UlwWaveRecord {
   s.wave += 1;
@@ -1171,6 +1253,10 @@ function appendWaveRecord(
     kind: opts.editKind,
     onBet,
   });
+  // Idea before the record is appended: the note compares this closer
+  // against the previous ships, and the bet exemption above must not
+  // reach it — a slice on a 4th disjoint file is still a paint.
+  applyIdeaNote(s, classText, opts.themed === true, opts.paths, opts.editKind);
   applyContractNote(s, classText, opts.themed === true, opts.sessionId);
   const onContract = closerOnContract(opts.sessionId, classText);
   // Structural only: a browser/Playwright call or a screenshot read this
@@ -1237,11 +1323,15 @@ function appendWaveRecord(
       onContract ||
       onBet ||
       pathsOnReadingFiles(opts.paths, readingFiles));
+  // Files the ledger knew before this ship — a path outside that set is a
+  // new module when no diff kind is available.
+  const knownBefore = ledgerKnownFiles(s);
   s.waves = [...(s.waves ?? []), rec].slice(-WAVE_LEDGER_KEEP);
   if (rec.jobMoved) s.midReflectHold = false;
   if (opts.themed) noteOffJobShip(s, rec);
   if (opts.themed) noteBetShip(s, rec, classText);
-  maybeCadenceReorient(s);
+  if (opts.themed) noteCapabilityShip(s, rec, classText, opts.paths, knownBefore);
+  maybeCadenceReorient(s, opts.cwd);
   const proofMark =
     proofKind === "isolate" ? "ran" : proofKind === "play" ? "play" : proof ? "✓" : "✗";
   try {
@@ -1364,7 +1454,7 @@ const USER_BUILD_READING =
  */
 export function completeUlwPlan(
   sessionId: string,
-  opts?: { closer?: string; force?: boolean },
+  opts?: { closer?: string; force?: boolean; cwd?: string },
 ): boolean {
   const s = loadUlwCycle(sessionId);
   if (!s?.enabled) return false;
@@ -1388,7 +1478,7 @@ export function completeUlwPlan(
   s.reorientRequested = false;
   s.reorientNeedsEvidence = false;
   maybeAdoptNamedShips(s, opts?.closer);
-  maybeAdoptBet(s, opts?.closer);
+  maybeAdoptBet(s, opts?.closer, { cwd: opts?.cwd ?? ulwSessionCwd(sessionId) });
   maybeAdoptDeclaredChecks(s, opts?.closer);
   saveUlwCycle(s);
   return true;
@@ -1547,6 +1637,9 @@ function clearSameSurfaceHold(s: UlwCycleState): void {
   s.offContractStreak = 0;
   s.exploreRequired = false;
   s.exploreRequiredAt = undefined;
+  s.ideaHold = undefined;
+  s.ideaNote = undefined;
+  s.treeShapeHold = undefined;
 }
 
 export function contractHolding(s: UlwCycleState): boolean {
@@ -1564,7 +1657,7 @@ export function consumeMillHoldPrune(s: UlwCycleState): boolean {
 }
 
 function markHoldArmed(s: UlwCycleState): void {
-  if (!s.sameSurfaceHold && !s.contractHold) {
+  if (!s.sameSurfaceHold && !s.contractHold && !s.ideaHold && !s.treeShapeHold) {
     s.millHoldPrunePending = true;
   }
 }
@@ -1872,6 +1965,12 @@ function lastReflectLedger(s: UlwCycleState): string[] {
     playLoopRan: s.playLoopRan,
     mandate: s.mandate,
     wave: s.wave,
+    ideaHolds: s.ideaHolds,
+    ideaHold: s.ideaHold,
+    treeShapeTrips: s.treeShape?.trips,
+    capabilityDrought: s.capabilityDrought,
+    capabilityDroughtHold: CAPABILITY_DROUGHT_HOLD,
+    openMandate: s.openMandate,
   });
 }
 
@@ -1935,6 +2034,118 @@ function lastWavesMovedJob(s: UlwCycleState, n = 4): boolean {
   return (s.waves ?? []).slice(-n).some((w) => waveMovedJob(w));
 }
 
+/**
+ * Capability ship: a new production module (diff kind, or a production path
+ * the ledger has never recorded when no diff is available), or a bet slice
+ * on a path the bet creates. Everything else credited is a repair.
+ */
+function isCapabilityShip(
+  s: UlwCycleState,
+  rec: UlwWaveRecord,
+  paths: string[] | undefined,
+  knownBefore: string[],
+): boolean {
+  if (rec.chrome || rec.millClass || rec.siblingMill) return false;
+  if (rec.editKind === "new-module") return true;
+  if (rec.onBet && s.bet?.newPaths?.length) return true;
+  const prod = productionRelPaths(paths || []);
+  if (!prod.length) return false;
+  const known = new Set(knownBefore);
+  return prod.some((p) => !known.has(p));
+}
+
+/** Run-wide counters the capped ledger cannot answer, plus the drought. */
+function noteCapabilityShip(
+  s: UlwCycleState,
+  rec: UlwWaveRecord,
+  classText: string,
+  paths: string[] | undefined,
+  knownBefore: string[],
+): void {
+  if (isConsolidationCloser(classText)) return;
+  s.creditedShips = (s.creditedShips ?? 0) + 1;
+  if (rec.jobMoved) s.jobMoves = (s.jobMoves ?? 0) + 1;
+  if (isCapabilityShip(s, rec, paths, knownBefore)) {
+    s.capabilityShips = (s.capabilityShips ?? 0) + 1;
+    s.capabilityDrought = 0;
+    s.capabilityHold = false;
+    return;
+  }
+  s.capabilityDrought = (s.capabilityDrought ?? 0) + 1;
+  if (capabilityHoldArmable(s) && s.capabilityDrought >= CAPABILITY_DROUGHT_HOLD) {
+    if (!s.capabilityHold) markHoldArmed(s);
+    s.capabilityHold = true;
+    markUlwReorient(s);
+  }
+}
+
+/** Unlimited CONTINUE on an open mandate that has not declined the bet question. */
+function capabilityHoldArmable(s: UlwCycleState): boolean {
+  return (
+    capabilityHoldEnabled() &&
+    betHoldArmable({
+      cycle: s.cycle,
+      wrapKind: s.wrapKind,
+      maxWaves: s.maxWaves,
+      cycleZeroStopAt: s.cycleZeroStopAt,
+      openMandate: s.openMandate,
+      betDeclined: s.betDeclined,
+    })
+  );
+}
+
+export function capabilityHolding(s: UlwCycleState): boolean {
+  if (!s.enabled || !capabilityHoldArmable(s)) return false;
+  return Boolean(s.capabilityHold);
+}
+
+/** A capability ship at the gate releases before stamping. */
+function capabilityHoldClearedBy(
+  s: UlwCycleState,
+  paths: string[] | undefined,
+  kind: ProdEditKind | string | undefined,
+): boolean {
+  if (!s.capabilityHold) return true;
+  const probe: UlwWaveRecord = {
+    wave: s.wave,
+    editDelta: 1,
+    proof: false,
+    summary: "",
+    ts: "",
+    editKind: kind as ProdEditKind | undefined,
+    onBet: betShipHit(s.bet, paths, kind) || undefined,
+  };
+  if (!isCapabilityShip(s, probe, paths, ledgerKnownFiles(s))) return false;
+  s.capabilityHold = false;
+  return true;
+}
+
+function formatCapabilityHoldAdmit(s: UlwCycleState): string {
+  return [
+    `[Forge ULW cycle driver] Stop blocked — ${s.capabilityDrought ?? 0} credited ships since the last new module (${s.capabilityShips ?? 0} capability ship(s) this run). An open mandate that only repairs is a bug tracker, not a product.`,
+    "The release is a capability: `Bet: <what the product will be able to do> — <new file it creates> — first slice: …`, then ship that file this wave (a new production module with control flow, or a slice on the bet's new path). Or `Bet: none — <why no capability is worth more than the holes>` (a window of 6 ships). Or /cycle 0.",
+    "Holes stay smoke and Serendipity:. Stuck-wall will not release this hold.",
+  ].join("\n");
+}
+
+function formatCapabilityStatusLine(s: UlwCycleState): string | undefined {
+  const n = s.capabilityDrought ?? 0;
+  if (capabilityHolding(s)) {
+    return `  Capability: HOLD — ${n} ships since the last new module; ship a Bet slice on a new file, decline, or /cycle 0`;
+  }
+  if (n >= CAPABILITY_DROUGHT_ADVISORY) {
+    return `  Capability: ${n} ship(s) since the last new module (${s.capabilityShips ?? 0} this run)${s.openMandate && normalizeMaxWaves(s.maxWaves) == null ? ` — unlimited holds at ${CAPABILITY_DROUGHT_HOLD}` : ""}`;
+  }
+  return undefined;
+}
+
+function formatCapabilityReanchorLine(s: UlwCycleState): string | undefined {
+  const n = s.capabilityDrought ?? 0;
+  if (n < CAPABILITY_DROUGHT_ADVISORY || capabilityHolding(s)) return undefined;
+  const holds = capabilityHoldArmable(s);
+  return `⚠ ${n} credited ships since the last new module — the run is repairing, not inventing.${holds ? ` Unlimited ULW holds at ${CAPABILITY_DROUGHT_HOLD}: name a Bet with a new file and ship its first slice.` : " What can this product still not do?"}`;
+}
+
 export function midReflectHolding(s: UlwCycleState): boolean {
   if (!s.enabled || s.cycle !== 1 || s.wrapKind) return false;
   return Boolean(s.midReflectHold);
@@ -1954,7 +2165,69 @@ function consolidationHoldAdmit(s: UlwCycleState): string {
   );
 }
 
-function maybeCadenceReorient(s: UlwCycleState): void {
+/**
+ * Consolidation: measure the run's cumulative shape. A trip that is still
+ * present and no better than at the previous consolidation arms the
+ * tree-shape hold (unlimited CONTINUE only — a cap is a budget).
+ */
+function measureTreeShapeAtConsolidation(s: UlwCycleState, cwd?: string): void {
+  if (!cwd || !s.startHead) return;
+  let snap: TreeShapeSnapshot | null = null;
+  try {
+    snap = measureTreeShape({ cwd, base: s.startHead, wave: s.wave });
+  } catch {
+    snap = null;
+  }
+  if (!snap) return;
+  const unimproved = unimprovedTrips(s.treeShape, snap);
+  s.treeShapePrev = s.treeShape;
+  s.treeShape = snap;
+  if (unimproved.length && treeShapeHoldEnabled() && canArmSameSurfaceHold(s)) {
+    if (!s.treeShapeHold) markHoldArmed(s);
+    s.treeShapeHold = { keys: unimproved, since: s.wave, admits: 0 };
+    markUlwReorient(s);
+  }
+}
+
+export function treeShapeHolding(s: UlwCycleState): boolean {
+  if (!s.enabled || !canArmSameSurfaceHold(s) || !treeShapeHoldEnabled()) return false;
+  return Boolean(s.treeShapeHold?.keys.length);
+}
+
+/**
+ * Re-measure while holding: the first held trip whose number went down
+ * releases. Without a cwd nothing can be measured and the hold stands.
+ */
+function treeShapeHoldClearedBy(s: UlwCycleState, cwd: string | undefined): boolean {
+  if (!s.treeShapeHold) return true;
+  if (!cwd || !s.startHead || !s.treeShape) return false;
+  let snap: TreeShapeSnapshot | null = null;
+  try {
+    snap = measureTreeShape({ cwd, base: s.startHead, wave: s.wave });
+  } catch {
+    snap = null;
+  }
+  if (!snap) return false;
+  const before = s.treeShape.tripValues;
+  const improved = s.treeShapeHold.keys.some((k) => {
+    const was = before[k];
+    const now = snap!.tripValues[k];
+    return was !== undefined && (now === undefined || now < was);
+  });
+  if (!improved) return false;
+  s.treeShapePrev = s.treeShape;
+  s.treeShape = snap;
+  s.treeShapeHold = undefined;
+  return true;
+}
+
+function treeShapeHoldAdmit(s: UlwCycleState): string {
+  if (!s.treeShapeHold || !s.treeShape) return "";
+  s.treeShapeHold.admits += 1;
+  return formatTreeShapeHoldAdmit(s.treeShape, s.treeShapeHold.keys);
+}
+
+function maybeCadenceReorient(s: UlwCycleState, cwd?: string): void {
   if (s.cycle !== 1 || s.wrapKind) return;
   const consolidation = s.wave > 0 && s.wave % CONSOLIDATION_EVERY === 0;
   if (consolidation) {
@@ -1964,6 +2237,8 @@ function maybeCadenceReorient(s: UlwCycleState): void {
     // at waves 1 and 2, then never again. Every consolidation re-arms the
     // demand so a proof-less streak is challenged at least every 4 waves.
     s.proofDemands = 0;
+    // Shape before holes: the trips are part of this consolidation's Must-fix.
+    measureTreeShapeAtConsolidation(s, cwd);
     const holes = lastReflectLedger(s);
     s.midReflectHoles = holes.length ? holes : undefined;
     s.midReflectWave = s.wave;
@@ -2119,6 +2394,101 @@ function applySameSurfaceNote(
     s.sameSurfaceHold = false;
     s.sameSurfaceAdmitCount = 0;
   }
+}
+
+/**
+ * Idea-surface note after a declared ship: which idea it continued and on
+ * how many distinct files. Hold arms on IDEA_FILE_HOLD carriers with no
+ * shared module. On-bet / on-contract ships are not exempt — see
+ * idea-surface.ts. Consolidation closers neither arm nor clear.
+ */
+function applyIdeaNote(
+  s: UlwCycleState,
+  classText: string,
+  themed: boolean,
+  paths: string[] | undefined,
+  kind: ProdEditKind | string | undefined,
+): void {
+  if (!themed || !ideaHoldEnabled()) return;
+  if (isConsolidationCloser(classText)) return;
+  const from = s.ideaWindowFrom ?? 0;
+  const prev = (s.waves ?? []).filter(
+    (w) =>
+      w.wave > from &&
+      !isConsolidationCloser(w.classText || w.summary || ""),
+  );
+  const note = ideaNoteFor(prev, classText, paths);
+  s.ideaNote = note.terms.length ? { terms: note.terms, files: note.files } : undefined;
+  // A collapse of the noted idea — a new module touched with a carrier, or
+  // a sweep across carriers — is the release, never the 5th surface. The
+  // window restarts there so later wiring through the new module is not
+  // compared against the paint it replaced.
+  if (
+    note.terms.length &&
+    ideaHoldReleases(
+      { terms: note.terms, files: note.files, wave: s.wave, admits: 0 },
+      classText,
+      paths,
+      kind,
+      { knownFiles: ledgerKnownFiles(s) },
+    ) === "collapse"
+  ) {
+    s.ideaHold = undefined;
+    s.ideaNote = undefined;
+    s.ideaWindowFrom = s.wave;
+    return;
+  }
+  if (note.hold && canArmSameSurfaceHold(s)) {
+    if (!s.ideaHold) {
+      s.ideaHolds = (s.ideaHolds ?? 0) + 1;
+      markHoldArmed(s);
+    }
+    s.ideaHold = {
+      terms: note.terms,
+      files: note.files,
+      wave: s.wave,
+      admits: s.ideaHold?.admits ?? 0,
+    };
+    markUlwReorient(s);
+  } else if (!note.hold) {
+    s.ideaHold = undefined;
+  }
+}
+
+export function ideaHolding(s: UlwCycleState): boolean {
+  if (!s.enabled || !canArmSameSurfaceHold(s) || !ideaHoldEnabled()) return false;
+  return Boolean(s.ideaHold);
+}
+
+/** A ship that collapses the idea or changes it clears the hold before stamping. */
+function ideaHoldClearedBy(
+  s: UlwCycleState,
+  closer: string,
+  paths: string[] | undefined,
+  kind: ProdEditKind | string | undefined,
+): boolean {
+  if (!s.ideaHold) return true;
+  const why = ideaHoldReleases(s.ideaHold, closer, paths, kind, {
+    knownFiles: ledgerKnownFiles(s),
+  });
+  if (!why) return false;
+  if (why === "collapse") s.ideaWindowFrom = s.wave;
+  s.ideaHold = undefined;
+  return true;
+}
+
+/** Every production file the run's wave ledger has recorded a change to. */
+function ledgerKnownFiles(s: UlwCycleState): string[] {
+  const out = new Set<string>();
+  for (const w of s.waves ?? []) {
+    for (const f of treeKeyFiles(w.treeSurfaceKey)) out.add(f);
+  }
+  return [...out];
+}
+
+function ideaHoldAdmit(s: UlwCycleState): string {
+  if (s.ideaHold) s.ideaHold.admits += 1;
+  return s.ideaHold ? formatIdeaHoldAdmit(s.ideaHold) : "";
 }
 
 const SAME_SURFACE_HOLD_ADMIT = [
@@ -2572,7 +2942,8 @@ function rememberBet(sessionId: string, text: string): void {
 export function maybeAdoptBet(
   s: UlwCycleState,
   text?: string,
-): "adopted" | "declined" | "same" | undefined {
+  opts?: { cwd?: string },
+): "adopted" | "declined" | "same" | "refused" | undefined {
   if (!s.openMandate) return undefined;
   if (s.cycle !== 1 || s.wrapKind) return undefined;
   // Memory is the initial channel (a memory_write Reading). Once a bet is
@@ -2584,6 +2955,13 @@ export function maybeAdoptBet(
   for (const source of sources) {
     const parsed = parseBetLine(source);
     if (!parsed) continue;
+    if (parsed.kind === "hole") {
+      // Bet grammar around a defect. Refused, and the reason rides the
+      // re-anchor so the next Reading names a capability instead.
+      if (s.bet && sameBetText(s.bet.text, parsed.text)) continue;
+      s.betRefused = parsed.why;
+      return "refused";
+    }
     if (parsed.kind === "none") {
       if (s.betDeclined && s.betDeclined === parsed.reason) continue;
       // A spent decline (window closed) cannot be re-used: the same reason
@@ -2598,23 +2976,40 @@ export function maybeAdoptBet(
       s.betRequired = false;
       s.betDeclined = parsed.reason;
       s.betDeclineShips = 0;
+      s.betRefused = undefined;
       rememberBet(s.sessionId, `Bet: none — ${parsed.reason}`);
       return "declined";
     }
     if (s.bet && sameBetText(s.bet.text, parsed.text)) return "same";
     if (!parsed.paths.length) continue;
+    // The tree decides what the bet creates. Every path already present
+    // is a hole with a path — refused like a hole-shaped clause. Without a
+    // cwd (memory seed, tests) the check is skipped and the old rule holds.
+    const newPaths = resolveBetNewPaths(parsed.paths, opts?.cwd);
+    const noNew = betNewPathReason(parsed.paths, newPaths);
+    if (noNew) {
+      s.betRefused = noNew;
+      return "refused";
+    }
     // Replacing an unshipped bet is a swap; after BET_MAX_SWAPS only a
-    // slice (or a decline / /cycle 0) releases the hold.
-    if (s.bet && s.bet.slices === 0) {
+    // slice (or a decline / /cycle 0) releases the hold. Past
+    // BET_RUN_ADOPT_SOFT bets in a run a one-slice bet is a stub and its
+    // replacement is a swap too.
+    const stubSlices =
+      (s.betsAdopted ?? 0) >= BET_RUN_ADOPT_SOFT ? BET_STUB_SLICES : 1;
+    if (s.bet && s.bet.slices < stubSlices) {
       s.betSwaps = (s.betSwaps ?? 0) + 1;
     }
     s.bet = {
       text: parsed.text,
       paths: parsed.paths,
+      ...(newPaths?.length ? { newPaths } : {}),
       setAt: nowIso(),
       setWave: s.wave,
       slices: 0,
     };
+    s.betsAdopted = (s.betsAdopted ?? 0) + 1;
+    s.betRefused = undefined;
     s.betRequired = false;
     s.betDeclined = undefined;
     if ((s.betSwaps ?? 0) <= BET_MAX_SWAPS) {
@@ -3045,7 +3440,7 @@ export function maybeStampUlwWave(opts: {
   // Adopt even when already in ship — memory_write lands after the
   // assistant turn, so orient may have already flipped before the list exists.
   maybeAdoptNamedShips(s, opts.lastAssistantMessage);
-  maybeAdoptBet(s, opts.lastAssistantMessage);
+  maybeAdoptBet(s, opts.lastAssistantMessage, { cwd: opts.cwd });
   maybeAdoptDeclaredChecks(s, opts.lastAssistantMessage);
 
   // Declared ship with real progress: this is a work unit. Capped ULW
@@ -3113,6 +3508,39 @@ export function maybeStampUlwWave(opts: {
           admit: holdAdmit(opts.sessionId, SAME_SURFACE_HOLD_ADMIT),
         };
       }
+      // One idea on its 4th disjoint file: not a new ship. Bet slices and
+      // picks are not exempt here.
+      if (
+        ideaHolding(s) &&
+        !ideaHoldClearedBy(s, closer, changedPaths, credit.kind)
+      ) {
+        const admit = ideaHoldAdmit(s);
+        updateOpenWaveRecord(s, facts);
+        s.lastWaveSig = sig;
+        markUlwReorient(s);
+        saveUlwCycle(s);
+        return {
+          stamped: false,
+          updated: true,
+          wave: s.wave,
+          admit: holdAdmit(opts.sessionId, admit),
+        };
+      }
+      // Tree shape did not improve across two consolidations: this ship
+      // must move one of those numbers down (re-measured now).
+      if (treeShapeHolding(s) && !treeShapeHoldClearedBy(s, opts.cwd)) {
+        const admit = treeShapeHoldAdmit(s);
+        updateOpenWaveRecord(s, facts);
+        s.lastWaveSig = sig;
+        markUlwReorient(s);
+        saveUlwCycle(s);
+        return {
+          stamped: false,
+          updated: true,
+          wave: s.wave,
+          admit: holdAdmit(opts.sessionId, admit),
+        };
+      }
       if (
         isTestsWithoutBodyShip({
           proof,
@@ -3141,6 +3569,21 @@ export function maybeStampUlwWave(opts: {
           updated: true,
           wave: s.wave,
           admit: holdAdmit(opts.sessionId, betHoldAdmit(s, opts.sessionId)),
+        };
+      }
+      if (
+        capabilityHolding(s) &&
+        !capabilityHoldClearedBy(s, changedPaths, credit.kind)
+      ) {
+        updateOpenWaveRecord(s, facts);
+        s.lastWaveSig = sig;
+        markUlwReorient(s);
+        saveUlwCycle(s);
+        return {
+          stamped: false,
+          updated: true,
+          wave: s.wave,
+          admit: holdAdmit(opts.sessionId, formatCapabilityHoldAdmit(s)),
         };
       }
       if (
@@ -3201,6 +3644,7 @@ export function maybeStampUlwWave(opts: {
         editKind: credit.kind,
         chrome: credit.chrome,
         paths: changedPaths,
+        cwd: opts.cwd,
       });
       markNamedShipDone(s, closer, { changedPaths: stampPaths });
       s.lastWaveSig = sig;
@@ -3362,6 +3806,24 @@ export function ulwStatePath(sessionId: string): string {
   return path.join(forgeHome(), "sessions", sessionId, "ulw.json");
 }
 
+/**
+ * The session's workspace from its own `meta.json` — for callers that have
+ * only a session id (plan completion, memory_write). `session.ts` imports
+ * this module, so the meta is read directly rather than through it.
+ */
+export function ulwSessionCwd(sessionId: string): string | undefined {
+  try {
+    const meta = readJsonFile<{ cwd?: unknown } | null>(
+      path.join(forgeHome(), "sessions", sessionId, "meta.json"),
+      null,
+    );
+    const cwd = meta && typeof meta.cwd === "string" ? meta.cwd.trim() : "";
+    return cwd || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 /** Normalize legacy/partial ulw.json into a valid maxWaves (null = unlimited). */
 export function normalizeMaxWaves(raw: unknown): number | null {
   if (raw == null || raw === "") return null;
@@ -3449,6 +3911,32 @@ export function loadUlwCycle(sessionId: string): UlwCycleState | null {
     raw.sameSurfaceStreak = 0;
   }
   if (typeof raw.sameSurfaceHold !== "boolean") raw.sameSurfaceHold = false;
+  raw.ideaNote = normalizeIdeaNote(raw.ideaNote);
+  raw.ideaHold = normalizeIdeaHold(raw.ideaHold);
+  if (typeof raw.ideaHolds !== "number" || !Number.isFinite(raw.ideaHolds)) {
+    raw.ideaHolds = 0;
+  }
+  if (
+    typeof raw.ideaWindowFrom !== "number" ||
+    !Number.isFinite(raw.ideaWindowFrom)
+  ) {
+    raw.ideaWindowFrom = undefined;
+  }
+  if (typeof raw.startHead !== "string" || !/^[0-9a-f]{7,40}$/.test(raw.startHead)) {
+    raw.startHead = undefined;
+  }
+  for (const k of [
+    "capabilityDrought",
+    "capabilityShips",
+    "jobMoves",
+    "creditedShips",
+  ] as const) {
+    if (typeof raw[k] !== "number" || !Number.isFinite(raw[k])) raw[k] = 0;
+  }
+  if (typeof raw.capabilityHold !== "boolean") raw.capabilityHold = false;
+  raw.treeShape = normalizeTreeShape(raw.treeShape);
+  raw.treeShapePrev = normalizeTreeShape(raw.treeShapePrev);
+  raw.treeShapeHold = normalizeTreeShapeHold(raw.treeShapeHold);
   if (typeof raw.reorientRequested !== "boolean") raw.reorientRequested = false;
   if (
     typeof raw.sameSurfaceAdmitCount !== "number" ||
@@ -3498,6 +3986,12 @@ export function loadUlwCycle(sessionId: string): UlwCycleState | null {
         .filter((x): x is string => typeof x === "string" && x.trim().length > 0)
         .slice(-4)
     : undefined;
+  if (typeof raw.betRefused !== "string" || !raw.betRefused.trim()) {
+    raw.betRefused = undefined;
+  }
+  if (typeof raw.betsAdopted !== "number" || !Number.isFinite(raw.betsAdopted)) {
+    raw.betsAdopted = 0;
+  }
   raw.declaredChecks = Array.isArray(raw.declaredChecks)
     ? raw.declaredChecks
         .filter((x): x is string => typeof x === "string" && x.trim().length > 0)
@@ -3599,13 +4093,141 @@ function normalizeBetState(raw: unknown): BetState | undefined {
     : [];
   const num = (v: unknown): number =>
     typeof v === "number" && Number.isFinite(v) && v >= 0 ? Math.floor(v) : 0;
+  const newPaths = Array.isArray(o.newPaths)
+    ? o.newPaths
+        .filter((x): x is string => typeof x === "string" && x.trim().length > 0)
+        .map((x) => x.trim().slice(0, 200))
+        .slice(0, 8)
+    : [];
   return {
     text,
     paths,
+    ...(newPaths.length ? { newPaths } : {}),
     setAt: typeof o.setAt === "string" ? o.setAt : "",
     setWave: num(o.setWave),
     slices: num(o.slices),
   };
+}
+
+function stringList(raw: unknown, cap: number, len = 200): string[] {
+  return Array.isArray(raw)
+    ? raw
+        .filter((x): x is string => typeof x === "string" && x.trim().length > 0)
+        .map((x) => x.trim().slice(0, len))
+        .slice(0, cap)
+    : [];
+}
+
+function normalizeIdeaNote(
+  raw: unknown,
+): { terms: string[]; files: string[] } | undefined {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
+  const o = raw as Record<string, unknown>;
+  const terms = stringList(o.terms, 6, 80);
+  const files = stringList(o.files, 12);
+  if (!terms.length) return undefined;
+  return { terms, files };
+}
+
+function normalizeIdeaHold(raw: unknown): IdeaHoldState | undefined {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
+  const o = raw as Record<string, unknown>;
+  const terms = stringList(o.terms, 6, 80);
+  const files = stringList(o.files, 12);
+  if (!terms.length || !files.length) return undefined;
+  const num = (v: unknown): number =>
+    typeof v === "number" && Number.isFinite(v) && v >= 0 ? Math.floor(v) : 0;
+  return { terms, files, wave: num(o.wave), admits: num(o.admits) };
+}
+
+const TREE_SHAPE_KEYS: TreeShapeTripKey[] = [
+  "export-sprawl",
+  "wide-signature",
+  "repeated-predicate",
+  "history-comments",
+  "constant-flags",
+  "unreferenced-assets",
+];
+
+function normalizeTreeShape(raw: unknown): TreeShapeSnapshot | undefined {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
+  const o = raw as Record<string, unknown>;
+  const facts = o.facts;
+  if (!facts || typeof facts !== "object") return undefined;
+  const f = facts as Record<string, unknown>;
+  const num = (v: unknown): number =>
+    typeof v === "number" && Number.isFinite(v) ? Math.trunc(v) : 0;
+  const tripValues: Partial<Record<TreeShapeTripKey, number>> = {};
+  if (o.tripValues && typeof o.tripValues === "object") {
+    for (const k of TREE_SHAPE_KEYS) {
+      const v = (o.tripValues as Record<string, unknown>)[k];
+      if (typeof v === "number" && Number.isFinite(v)) tripValues[k] = v;
+    }
+  }
+  const trips = stringList(o.trips, 8, 400);
+  const tripKeys = stringList(o.tripKeys, 8, 40).filter((k): k is TreeShapeTripKey =>
+    (TREE_SHAPE_KEYS as string[]).includes(k),
+  );
+  return {
+    atWave: num(o.atWave),
+    measuredAt: typeof o.measuredAt === "string" ? o.measuredAt : "",
+    base: typeof o.base === "string" ? o.base : "",
+    facts: {
+      netExports: num(f.netExports),
+      exportsInExistingFiles: num(f.exportsInExistingFiles),
+      newModules: num(f.newModules),
+      wideSignatures: Array.isArray(f.wideSignatures)
+        ? (f.wideSignatures as Array<Record<string, unknown>>)
+            .filter((x) => x && typeof x === "object")
+            .map((x) => ({
+              file: String(x.file ?? "").slice(0, 200),
+              name: String(x.name ?? "").slice(0, 80),
+              arity: num(x.arity),
+            }))
+            .slice(0, 8)
+        : [],
+      repeatedPredicates: Array.isArray(f.repeatedPredicates)
+        ? (f.repeatedPredicates as Array<Record<string, unknown>>)
+            .filter((x) => x && typeof x === "object")
+            .map((x) => ({
+              predicate: String(x.predicate ?? "").slice(0, 80),
+              files: num(x.files),
+              count: num(x.count),
+            }))
+            .slice(0, 5)
+        : [],
+      historyComments: num(f.historyComments),
+      constantFlags: Array.isArray(f.constantFlags)
+        ? (f.constantFlags as Array<Record<string, unknown>>)
+            .filter((x) => x && typeof x === "object")
+            .map((x) => ({
+              file: String(x.file ?? "").slice(0, 200),
+              name: String(x.name ?? "").slice(0, 80),
+            }))
+            .slice(0, 8)
+        : [],
+      assetsAdded: stringList(f.assetsAdded, 40),
+      unreferencedAssets: stringList(f.unreferencedAssets, 40),
+      filesTouched: num(f.filesTouched),
+    },
+    trips,
+    tripKeys,
+    tripValues,
+  };
+}
+
+function normalizeTreeShapeHold(
+  raw: unknown,
+): { keys: TreeShapeTripKey[]; since: number; admits: number } | undefined {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
+  const o = raw as Record<string, unknown>;
+  const keys = stringList(o.keys, 8, 40).filter((k): k is TreeShapeTripKey =>
+    (TREE_SHAPE_KEYS as string[]).includes(k),
+  );
+  if (!keys.length) return undefined;
+  const num = (v: unknown): number =>
+    typeof v === "number" && Number.isFinite(v) && v >= 0 ? Math.floor(v) : 0;
+  return { keys, since: num(o.since), admits: num(o.admits) };
 }
 
 function normalizeNamedShipItems(raw: unknown): NamedShipItem[] | undefined {
@@ -3920,6 +4542,8 @@ export function armUlwCycle(
     betDeclined: undefined,
     betDeclineShips: 0,
     betDeclineHistory: undefined,
+    betRefused: undefined,
+    betsAdopted: 0,
     // Declared verify commands survive a re-arm — the project did not change.
     declaredChecks: prev?.enabled ? prev.declaredChecks : undefined,
     // Wave ledger persists across re-arms (same session story); streak
@@ -3989,6 +4613,16 @@ export function armUlwCycle(
       /* best-effort */
     }
   }
+  // Base of the run's cumulative diff for the tree-shape meter. HEAD, not
+  // the stash checkpoint: the checkpoint is a snapshot object, not an
+  // ancestor, and `git diff <stash>` would read the dirty tree as the base.
+  if (opts?.cwd) {
+    try {
+      state.startHead = gitHeadSha(opts.cwd) ?? undefined;
+    } catch {
+      /* not a repo */
+    }
+  }
   // Baseline the working-tree fingerprint at arm so the first wave can
   // detect real progress (otherwise the first stamp is always net=none).
   // Only when cwd is explicit — tests that pass synthetic fingerprints
@@ -4047,6 +4681,8 @@ export function adoptUlwMandate(
   s.betDeclined = undefined;
   s.betDeclineShips = 0;
   s.betDeclineHistory = undefined;
+  s.betRefused = undefined;
+  s.betsAdopted = 0;
   s.backlogRequired = isBroadMandate(next);
   const nextPhase = initialUlwPlanPhase(sessionId, next, s);
   s.judgmentRequired = nextPhase.judgmentRequired;
@@ -4115,6 +4751,9 @@ export function reenableUlwCycle(sessionId: string): UlwCycleState | null {
 function clearBetHold(s: UlwCycleState): void {
   s.betHold = false;
   s.betOffStreak = 0;
+  // The drought hold is the bet contract's backstop; the user's continue
+  // clears it the same way (the count itself stays — it is a run fact).
+  s.capabilityHold = false;
 }
 
 function applyCycleContinue(s: UlwCycleState): void {
@@ -4396,6 +5035,18 @@ export function resetUlwOnClear(sessionId: string): UlwCycleState | null {
   s.sameSurfaceStreak = 0;
   s.sameSurfaceHold = false;
   s.sameSurfaceAdmitCount = 0;
+  s.ideaNote = undefined;
+  s.ideaHold = undefined;
+  s.ideaHolds = 0;
+  s.ideaWindowFrom = undefined;
+  s.treeShape = undefined;
+  s.treeShapePrev = undefined;
+  s.treeShapeHold = undefined;
+  s.capabilityDrought = 0;
+  s.capabilityShips = 0;
+  s.jobMoves = 0;
+  s.creditedShips = 0;
+  s.capabilityHold = false;
   s.exploreRequired = false;
   s.exploreRequiredAt = undefined;
   s.playLoopPending = false;
@@ -4435,6 +5086,8 @@ export function resetUlwOnClear(sessionId: string): UlwCycleState | null {
     s.betDeclined = undefined;
     s.betDeclineShips = 0;
     s.betDeclineHistory = undefined;
+    s.betRefused = undefined;
+    s.betsAdopted = 0;
     s.declaredChecks = undefined;
     s.backlogRequired = false;
     s.judgmentRequired = false;
@@ -4564,7 +5217,32 @@ function formatNamedShipsStatusLine(s: UlwCycleState): string | undefined {
   return `  Named ships: ${done}/${items.length} done — ${body}${asked}`;
 }
 
-export function formatUlwStatus(s: UlwCycleState | null): string {
+/**
+ * Spend line for `/cycle status`: the run's estimated cost against what it
+ * bought. HashPet's $740 bought 599 commits and, past wave ~50, no new
+ * module — a number the user could not see while it ran.
+ */
+export function formatUlwSpendLine(
+  s: Pick<UlwCycleState, "jobMoves" | "creditedShips" | "capabilityShips" | "wave">,
+  spend: { costUsd: number; providerRounds?: number } | undefined,
+): string | undefined {
+  if (!spend || !Number.isFinite(spend.costUsd) || spend.costUsd <= 0) return undefined;
+  const cost = spend.costUsd;
+  const jobs = s.jobMoves ?? 0;
+  const caps = s.capabilityShips ?? 0;
+  const fmt = (n: number) => (n < 0.01 ? `$${n.toFixed(4)}` : n < 10 ? `$${n.toFixed(2)}` : `$${n.toFixed(0)}`);
+  const bits = [`${fmt(cost)} this run`];
+  if (s.wave > 0) bits.push(`${fmt(cost / s.wave)} per wave`);
+  bits.push(jobs > 0 ? `${fmt(cost / jobs)} per job move (${jobs})` : "no job move yet");
+  bits.push(caps > 0 ? `${fmt(cost / caps)} per new module (${caps})` : "no new module yet");
+  if (spend.providerRounds) bits.push(`${spend.providerRounds} rounds`);
+  return `  Spend: ${bits.join(" · ")}`;
+}
+
+export function formatUlwStatus(
+  s: UlwCycleState | null,
+  opts?: { spend?: { costUsd: number; providerRounds?: number } },
+): string {
   if (!s || !s.enabled) {
     return [
       "ULW cycle: OFF",
@@ -4595,6 +5273,14 @@ export function formatUlwStatus(s: UlwCycleState | null): string {
     ...(qualityLine ? [qualityLine] : []),
     ...(formatBetStatusLine(s) ? [formatBetStatusLine(s)!] : []),
     ...(formatSameSurfaceStatusLine(s) ? [formatSameSurfaceStatusLine(s)!] : []),
+    ...(formatIdeaStatusLine(ideaHolding(s) ? s.ideaHold : undefined, s.ideaNote)
+      ? [formatIdeaStatusLine(ideaHolding(s) ? s.ideaHold : undefined, s.ideaNote)!]
+      : []),
+    ...(formatTreeShapeStatusLine(s.treeShape, treeShapeHolding(s))
+      ? [formatTreeShapeStatusLine(s.treeShape, treeShapeHolding(s))!]
+      : []),
+    ...(formatCapabilityStatusLine(s) ? [formatCapabilityStatusLine(s)!] : []),
+    ...(formatUlwSpendLine(s, opts?.spend) ? [formatUlwSpendLine(s, opts?.spend)!] : []),
     ...(s.wrapKind
       ? [
           s.wrapKind === "user"
@@ -4914,7 +5600,7 @@ export function evaluateUlwAtStop(opts: {
       s.reorientNeedsEvidence = false;
     }
     const adoptedNamed = maybeAdoptNamedShips(s, msg);
-    maybeAdoptBet(s, msg);
+    maybeAdoptBet(s, msg, { cwd: opts.cwd });
     maybeAdoptDeclaredChecks(s, msg);
 
     // Already at/over cap (e.g. user lowered max_waves mid-run) → force LAST now.
@@ -5191,6 +5877,7 @@ export function evaluateUlwAtStop(opts: {
           editKind: stopCredit.kind,
           chrome: stopCredit.chrome,
           paths: stampPaths,
+          cwd: opts.cwd,
         });
         markNamedShipDone(s, closer, { changedPaths: stampPaths });
         s.lastWaveSig = sig;
@@ -5256,6 +5943,42 @@ export function evaluateUlwAtStop(opts: {
         };
       }
     }
+    if (ideaHolding(s) && !adoptedNamed) {
+      const releases =
+        isShipCloseText(closer) &&
+        editDelta >= 1 &&
+        !alreadyStamped &&
+        ideaHoldClearedBy(s, closer, stampPaths, stopCredit.kind);
+      if (!releases) {
+        const admit = holdAdmit(opts.sessionId, ideaHoldAdmit(s));
+        markUlwReorient(s);
+        saveUlwCycle(s);
+        return {
+          block: true,
+          reason: admit,
+          reanchor: admit,
+          ideaDemanded: true,
+        };
+      }
+    }
+    if (treeShapeHolding(s) && !adoptedNamed) {
+      const releases =
+        isShipCloseText(closer) &&
+        editDelta >= 1 &&
+        !alreadyStamped &&
+        treeShapeHoldClearedBy(s, opts.cwd);
+      if (!releases) {
+        const admit = holdAdmit(opts.sessionId, treeShapeHoldAdmit(s));
+        markUlwReorient(s);
+        saveUlwCycle(s);
+        return {
+          block: true,
+          reason: admit,
+          reanchor: admit,
+          shapeDemanded: true,
+        };
+      }
+    }
     if (
       contractHolding(s) &&
       !adoptedNamed &&
@@ -5282,6 +6005,24 @@ export function evaluateUlwAtStop(opts: {
         reanchor: admit,
         betDemanded: true,
       };
+    }
+    if (capabilityHolding(s) && !adoptedNamed) {
+      const releases =
+        isShipCloseText(closer) &&
+        editDelta >= 1 &&
+        !alreadyStamped &&
+        capabilityHoldClearedBy(s, stampPaths, stopCredit.kind);
+      if (!releases) {
+        markUlwReorient(s);
+        saveUlwCycle(s);
+        const admit = holdAdmit(opts.sessionId, formatCapabilityHoldAdmit(s));
+        return {
+          block: true,
+          reason: admit,
+          reanchor: admit,
+          capabilityDemanded: true,
+        };
+      }
     }
     if (
       s.cycle === 1 &&
@@ -5344,6 +6085,7 @@ export function evaluateUlwAtStop(opts: {
         editKind: stopCredit.kind,
         chrome: stopCredit.ok && stopCredit.chrome,
         paths: stampPaths,
+        cwd: opts.cwd,
       });
       markNamedShipDone(s, closer, { changedPaths: stampPaths });
       s.lastWaveSig = sig;
@@ -5563,12 +6305,15 @@ function buildCycleReanchor(
           })()
         : null,
       opts.consolidation
-        ? `CONSOLIDATION WAVE (every ${CONSOLIDATION_EVERY}th): no new scope — run the project's full check suite (AGENTS.md / preferred checks) with bash background:true then get_task_output wait; the joined run's exit 0 is proof=✓. Timeout / hang / skip / isolate-only is proof=✗. Isolates are proof=ran, not proof=✓. Then review the cumulative \`git diff\` as a hostile reviewer (regressions, weakened tests, leftover stubs). Fix real defects only. PLAN is re-armed — explore or play-loop, then a different-surface Reading.`
+        ? `CONSOLIDATION WAVE (every ${CONSOLIDATION_EVERY}th): no new scope — run the project's full check suite (AGENTS.md / preferred checks) with bash background:true then get_task_output wait; the joined run's exit 0 is proof=✓. Timeout / hang / skip / isolate-only is proof=✗. Isolates are proof=ran, not proof=✓. Then review the cumulative \`git diff\` as a hostile reviewer (regressions, weakened tests, leftover stubs) — and as an architect: one idea forked across surfaces, a signature that grew arguments, a flag that is always false, comments that narrate the change. ${s.treeShape?.trips.length ? "See TREE SHAPE below — collapse is this wave's job." : "Fix real defects and collapse duplication; no new surfaces."} PLAN is re-armed — explore or play-loop, then a different-surface Reading.`
         : null,
+      opts.consolidation ? formatTreeShapeConsolidationClause(s.treeShape) ?? null : null,
       (opts.thinStreak ?? 0) >= 2
         ? `Waves are thinning (${opts.thinStreak} in a row with little substance). God-mode demand: pick a substantially higher-leverage hard objective (not churn) — or, if the hard work is genuinely exhausted, say so with evidence; the user can /cycle 0.`
         : null,
       sameSurfaceBudgetLine(s) ?? null,
+      ideaHolding(s) ? null : formatIdeaReanchorLine(s.ideaNote) ?? null,
+      formatCapabilityReanchorLine(s) ?? null,
       s.softPrompt
         ? `Soft signal still active — you own what the hard work is within the durable decisions above. Prefer backlog todos; never ask the user to clarify or pick tasks.`
         : null,

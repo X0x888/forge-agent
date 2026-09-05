@@ -191,9 +191,10 @@ mustInclude(
   ["run", "/skills", "--json", "--permission-mode", "plan"],
   '"reason":"slash"',
 );
+// Bare /context is a sit-down card; the project stack lives under /context all.
 mustInclude(
   "headless slash /context project stack",
-  ["run", "/context", "--json", "--permission-mode", "plan"],
+  ["run", "/context all", "--json", "--permission-mode", "plan"],
   "Project stack",
 );
 mustInclude(

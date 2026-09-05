@@ -19,7 +19,21 @@
  * written (two unshipped swaps, then only a slice), `Bet: none — <why>`
  * declines, or `/cycle 0`. No blocking demand before that — the kickoff,
  * PLAN prompt and re-anchor ask first.
+ *
+ * A bet is a capability, and the tree is the only judge of that too. The
+ * HashPet dogfood (791 waves) wrote 234 `Bet:` lines — 96 of them shaped
+ * like holes ("MOOD still hunts while STATUS says ATE — `pet-face.ts`"),
+ * none naming a file that did not exist — and every one was adopted: a
+ * hole with a path was a slice, a slice was a job move exempt from the
+ * same-surface hold, and 71 swaps cost nothing because the hold never
+ * armed. Two structural tests now: a hole-shaped capability clause is a
+ * pick and is refused as a bet, and at least one bet path must be **new**
+ * (absent from the tree at adoption) — a slice is a production change on
+ * a path the bet creates. Without a cwd (tests, memory seeding) the
+ * new-path test is skipped and the old file/directory match applies.
  */
+import fs from "node:fs";
+import path from "node:path";
 import { pathsMatch } from "../session/explore-map.js";
 import { distinctivePickTerms } from "./explore-contract.js";
 import { productionRelPaths, type ProdEditKind } from "./job-delta.js";
@@ -37,6 +51,42 @@ export const BET_MAX_SWAPS = 2;
  * 1 must re-decide with the hole ledger in front of it, not grind 250 waves.
  */
 export const BET_DECLINE_WINDOW = 6;
+/**
+ * Bets adopted in one run before a replacement of a bet with fewer than
+ * BET_STUB_SLICES slices also counts as a swap. The first bets of a run may
+ * be honest misses; the 30th one-slice bet is a mill that learned the
+ * grammar (HashPet adopted 234).
+ */
+export const BET_RUN_ADOPT_SOFT = 6;
+/** A bet replaced with fewer slices than this is a stub, not a shipped capability. */
+export const BET_STUB_SLICES = 2;
+
+/**
+ * Hole-shaped capability clause. A bet reads `Bet: <capability> — <path>
+ * — first slice: …`; only the clause before the first dash is judged, so
+ * a slice or verify that says "never a hostname" still passes. "still X",
+ * "instead of", "no longer", "does not", "never", "wrong", "leaks",
+ * "ignores", "fails to", "broken", "crash", "regression", "bug", "fix"
+ * describe a defect the product has — a pick — not a thing it cannot do.
+ * "cannot" / "can't" are the grammar of a capability gap and stay allowed.
+ */
+export const BET_HOLE_SHAPE_RE =
+  /\bstill\b|\binstead of\b|\bno longer\b|\bnever\b|\bdoes ?not\b|\bdoesn'?t\b|\bdon'?t\b|\bdidn'?t\b|\bwon'?t\b|\bisn'?t\b|\baren'?t\b|\bwrong(?:ly)?\b|\bleak(?:s|ed|ing)?\b|\bignore[sd]?\b|\bfails? to\b|\bfailing\b|\bbroken\b|\bcrash(?:es|ed|ing)?\b|\bregress(?:ion|ions|es|ed)?\b|\bbug\b|\bfix(?:es|ed|ing)?\b|\btypo\b|\bflicker(?:s|ing)?\b|\boff[- ]by[- ]one\b|\bstale\b/i;
+
+/** The capability clause: text before the first ` — ` / ` – ` / ` -- ` separator. */
+export function betCapabilityClause(body: string): string {
+  const t = (body || "").replace(/\s+/g, " ").trim();
+  const m = t.split(/\s+(?:—|–|--)\s+/);
+  return (m[0] || t).trim();
+}
+
+/** Why a capability clause is a hole, or undefined when it reads as a capability. */
+export function betHoleShapeReason(body: string): string | undefined {
+  const clause = betCapabilityClause(body);
+  const m = clause.match(BET_HOLE_SHAPE_RE);
+  if (!m) return undefined;
+  return `"${m[0]}" describes a defect the product has today — that is a pick (a hole), not a capability it cannot do`;
+}
 
 /**
  * Concrete-deliverable markers — a mandate with one of these is a work
@@ -82,6 +132,13 @@ export interface BetState {
   text: string;
   /** Files / directories the bet creates or lives in (relative). */
   paths: string[];
+  /**
+   * The subset of `paths` that did not exist when the bet was adopted —
+   * what the capability creates. When present, a slice is a production
+   * change on one of these (or inside a new directory); `paths` alone
+   * would credit every edit in `extension/src/lib/`.
+   */
+  newPaths?: string[];
   setAt: string;
   setWave: number;
   /** Declared ships that touched this bet. */
@@ -90,7 +147,9 @@ export interface BetState {
 
 export type ParsedBet =
   | { kind: "bet"; text: string; paths: string[] }
-  | { kind: "none"; reason: string };
+  | { kind: "none"; reason: string }
+  /** Bet grammar around a defect — refused, with the reason for the Next:. */
+  | { kind: "hole"; text: string; why: string };
 
 const BET_LINE_RE = /\*{0,2}\bBet:\*{0,2}[ \t]*([^\n]{1,400})/i;
 const BET_NONE_RE = /^none\b[\s—–:-]*(.*)$/i;
@@ -147,7 +206,56 @@ export function parseBetLine(text: string): ParsedBet | null {
   }
   if (body.length < MIN_BET_TEXT) return null;
   if (isDumpCatalogPick(body)) return null;
+  const hole = betHoleShapeReason(body);
+  if (hole) return { kind: "hole", text: body.slice(0, 400), why: hole };
   return { kind: "bet", text: body.slice(0, 400), paths: extractBetPaths(body) };
+}
+
+/**
+ * Bet paths absent from the tree — what the capability creates. Resolved
+ * against `cwd`, then each ancestor up to the git root (a Reading written
+ * from `extension/` names `src/lib/voice.ts`). Undefined when there is no
+ * cwd to look at (tests, memory seeding): the caller keeps the old rule.
+ */
+export function resolveBetNewPaths(
+  paths: string[],
+  cwd: string | undefined,
+): string[] | undefined {
+  if (!cwd) return undefined;
+  const roots: string[] = [];
+  let dir = path.resolve(cwd);
+  for (let i = 0; i < 6; i++) {
+    roots.push(dir);
+    if (fs.existsSync(path.join(dir, ".git"))) break;
+    const parent = path.dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  const out: string[] = [];
+  for (const raw of paths || []) {
+    const p = normPath(raw);
+    if (!p) continue;
+    const exists = roots.some((r) => {
+      try {
+        return fs.existsSync(path.join(r, p));
+      } catch {
+        return false;
+      }
+    });
+    if (!exists) out.push(p);
+  }
+  return out;
+}
+
+/** Every bet path already exists — the bet names nothing it creates. */
+export function betNewPathReason(
+  paths: string[],
+  newPaths: string[] | undefined,
+): string | undefined {
+  if (newPaths === undefined) return undefined;
+  if (!paths.length) return undefined;
+  if (newPaths.length) return undefined;
+  return `every path it names already exists (${paths.slice(0, 3).join(", ")}) — a Bet names the file the capability creates`;
 }
 
 function betDirs(paths: string[]): string[] {
@@ -163,10 +271,32 @@ function betDirs(paths: string[]): string[] {
   return dirs;
 }
 
-/** Changed production paths touch the bet's files or its directory. */
-export function betPathHit(betPaths: string[], changedPaths: string[]): boolean {
+/**
+ * Changed production paths touch the bet's files or its directory. With
+ * `newPaths` (the bet was adopted against a real tree) the slice test is
+ * the paths the bet creates: one of them, or anything inside a new
+ * directory. Without it, the file-or-directory match of an old sidecar.
+ */
+export function betPathHit(
+  betPaths: string[],
+  changedPaths: string[],
+  opts?: { newPaths?: string[] },
+): boolean {
   const changed = productionRelPaths(changedPaths || []).map(normPath);
   if (!changed.length || !betPaths?.length) return false;
+  if (opts?.newPaths?.length) {
+    const created = opts.newPaths.map(normPath);
+    const files = created.filter((p) => EXT_RE.test(p));
+    const dirs = created
+      .filter((p) => !EXT_RE.test(p))
+      .map((d) => d.toLowerCase());
+    for (const c of changed) {
+      if (files.some((f) => pathsMatch(c, f))) return true;
+      const lc = c.toLowerCase();
+      if (dirs.some((d) => lc === d || lc.startsWith(`${d}/`))) return true;
+    }
+    return false;
+  }
   const files = betPaths.map(normPath).filter((p) => EXT_RE.test(p));
   const dirs = betDirs(betPaths);
   for (const c of changed) {
@@ -181,19 +311,20 @@ export function betPathHit(betPaths: string[], changedPaths: string[]): boolean 
 
 /**
  * Declared ship is a slice of the open bet — tree only: a production change
- * on the bet's files or directory that is not TTY/string-literal chrome.
- * The closer is not consulted. A bet is only adopted with a path, so a
- * closer that merely names the job (a "session ledger" hole-close beside a
- * "CSV export of the session ledger" bet) is off-bet work, not a slice.
+ * on the paths the bet creates (or, for a bet adopted without a tree, its
+ * files or directory) that is not TTY/string-literal chrome. The closer is
+ * not consulted. A bet is only adopted with a path, so a closer that merely
+ * names the job (a "session ledger" hole-close beside a "CSV export of the
+ * session ledger" bet) is off-bet work, not a slice.
  */
 export function betShipHit(
-  bet: Pick<BetState, "text" | "paths"> | undefined,
+  bet: Pick<BetState, "text" | "paths" | "newPaths"> | undefined,
   paths: string[] | undefined,
   kind: ProdEditKind | string | undefined,
 ): boolean {
   if (!bet) return false;
   if (kind === "tty" || kind === "string-literal") return false;
-  return betPathHit(bet.paths, paths || []);
+  return betPathHit(bet.paths, paths || [], { newPaths: bet.newPaths });
 }
 
 /** Same bet re-written — a restated Bet: does not reset the off-streak. */
@@ -292,6 +423,17 @@ export interface BetStatusSource {
   betDeclineShips?: number;
   betHold?: boolean;
   betOffStreak?: number;
+  /** Last `Bet:` line refused (hole-shaped / no new path) — cleared on adoption. */
+  betRefused?: string;
+  /** Bets adopted this run. */
+  betsAdopted?: number;
+  betSwaps?: number;
+}
+
+/** One line for the re-anchor and status when the last Bet: was refused. */
+export function formatBetRefusedLine(s: BetStatusSource): string | undefined {
+  if (!s.openMandate || !s.betRefused) return undefined;
+  return `⚠ Bet refused — ${s.betRefused.slice(0, 200)}. Write \`Bet: <what the product will be able to do> — <new file it creates> — first slice: …\`; the defect stays a pick (smoke / Serendipity:).`;
 }
 
 function declineWindowClip(s: BetStatusSource): string {
@@ -306,7 +448,14 @@ export function formatBetStatusLine(s: BetStatusSource): string | undefined {
   if (s.bet) {
     const b = s.bet;
     const hold = holding ? " · HOLD (ship a slice, new Bet:, or /cycle 0)" : "";
-    return `  Bet: ${b.text.slice(0, 120)} — slices ${b.slices} · ${off} ship(s) since it moved${hold}`;
+    const creates = b.newPaths?.length
+      ? ` · creates ${b.newPaths.slice(0, 2).join(", ")}`
+      : "";
+    const adopted =
+      (s.betsAdopted ?? 0) > 1
+        ? ` · ${s.betsAdopted} bets this run${(s.betSwaps ?? 0) > 0 ? ` (${s.betSwaps} swapped unshipped)` : ""}`
+        : "";
+    return `  Bet: ${b.text.slice(0, 120)} — slices ${b.slices}${creates} · ${off} ship(s) since it moved${hold}${adopted}`;
   }
   if (s.betDeclined) {
     return `  Bet: declined (${declineWindowClip(s)}) — ${s.betDeclined.slice(0, 120)}`;
@@ -338,6 +487,8 @@ export function formatBetCardLine(s: BetStatusSource): string | undefined {
 /** Re-anchor advisory between the advisory and hold thresholds. */
 export function formatBetReanchorLine(s: BetStatusSource): string | undefined {
   if (!s.openMandate) return undefined;
+  const refused = formatBetRefusedLine(s);
+  if (refused) return refused;
   if (s.betDeclined) {
     const left = BET_DECLINE_WINDOW - Math.min(s.betDeclineShips ?? 0, BET_DECLINE_WINDOW);
     if (left <= 2) {
@@ -352,6 +503,12 @@ export function formatBetReanchorLine(s: BetStatusSource): string | undefined {
     }
     if (off >= BET_OFF_ADVISORY) {
       return `⚠ ${off} job-moving ships since the Bet moved — this wave is a Bet slice (or a new \`Bet:\`), not another hole-close. Unlimited ULW holds at ${BET_OFF_HOLD}.`;
+    }
+    if (
+      (s.betsAdopted ?? 0) >= BET_RUN_ADOPT_SOFT &&
+      s.bet.slices < BET_STUB_SLICES
+    ) {
+      return `⚠ ${s.betsAdopted} bets adopted this run — a Bet is a capability to build out, not a label for the next file. Ship this one to ${BET_STUB_SLICES}+ slices before naming another; replacing it now counts as a swap.`;
     }
     return undefined;
   }

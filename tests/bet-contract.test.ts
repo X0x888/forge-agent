@@ -11,17 +11,26 @@ import {
   BET_DECLINE_WINDOW,
   BET_MAX_SWAPS,
   BET_OFF_HOLD,
+  BET_RUN_ADOPT_SOFT,
+  BET_STUB_SLICES,
+  betCapabilityClause,
+  betHoleShapeReason,
   betHolding,
+  betNewPathReason,
   betPathHit,
   betShipHit,
   extractBetPaths,
   formatBetReanchorLine,
   isOpenMandate,
   parseBetLine,
+  resolveBetNewPaths,
   sameBetText,
 } from "../src/harness/bet-contract.js";
 import {
+  CAPABILITY_DROUGHT_ADVISORY,
+  CAPABILITY_DROUGHT_HOLD,
   armUlwCycle,
+  capabilityHolding,
   evaluateUlwAtStop,
   formatUlwStatus,
   isSoftPrompt,
@@ -869,6 +878,465 @@ describe("bet contract — harness", () => {
       assert.equal(s.wave, 5);
       assert.equal(s.bet!.slices, 5);
       assert.equal(sameSurfaceHolding(s), false);
+    });
+  });
+});
+
+/**
+ * HashPet dogfood (session 23b2c2a5, 791 waves): 234 `Bet:` lines were
+ * adopted, 96 shaped like holes, none naming a file that did not exist.
+ * Every one was a slice, a job move, and an exemption from the same-surface
+ * hold. These are the lines that got through.
+ */
+const HASHPET_HOLE_BETS = [
+  "Bet: MOOD still hunts while STATUS says ATE — `extension/src/lib/pet-face.ts` `digitalMoodLine` — first slice: `ATE` on chew.",
+  "Bet: Empty fridge after bless still Tap a star instead of planting tomorrow. — `extension/src/lib/first-hour.ts` — first slice: `Tomorrow wants Arts.` Verify: `cd extension && npm test -- src/__tests__/first-hour.test.ts`.",
+  "Bet: The ate-Philosophy line never preempts hour-hold — `extension/src/lib/insight-generator.ts` — first slice: `huntAteInsightDue` after a found chew.",
+  "Bet: Last digest never stamps the found field — `extension/src/lib/digest-loot.ts` — first slice: loot.knowledge is the meal's field, never a hostname.",
+  "Bet: PoW wait copy still says Nexus is chewing. while the kicker is Chewing Philosophy. — `extension/src/lib/home-intent.ts` `pokeHashingLine` — first slice: `Nexus is chewing Philosophy.`",
+  "Bet: sit-days badge ignores the leftover meal — `extension/src/lib/badge.ts` — first slice: leftover wins the title.",
+  "Bet: the toolbar title is wrong after a recast — `extension/src/lib/badge.ts` — first slice: recast title.",
+];
+
+/** Capability clauses from the same run — early bets, when the product score was climbing. */
+const HASHPET_CAPABILITY_BETS = [
+  "Bet: A blessed meal is felt — `extension/src/lib/daily-appetite.ts` — first slice: `applyBlessedMeal` on `maybeCompleteAppetite` before the digest commit.",
+  "Bet: Answer an insight by tapping the body — `extension/src/popup/PopupApp.tsx` — first slice: live `currentInsight` + poke calls `replyInsight('heard')`.",
+  "Bet: The companion body cannot gaze or speak today's field as a Digest/Clean tap verb — `extension/src/lib/pet-face.ts` — first slice: crave look when `appetiteMatch`. Never a hostname.",
+  "Bet: one voice table for every meal caption — `extension/src/lib/voice.ts` — first slice: `mealCaption(field)` used by toolbar and ticker; verify: `cd extension && npm test`.",
+];
+
+describe("bet contract — a bet is a capability with a new path", () => {
+  it("hole-shaped capability clauses are refused as bets (HashPet lines)", () => {
+    for (const line of HASHPET_HOLE_BETS) {
+      const p = parseBetLine(line);
+      assert.ok(p && p.kind === "hole", `should be a hole: ${line}`);
+      assert.match(p.why, /pick \(a hole\)/);
+    }
+    for (const line of HASHPET_CAPABILITY_BETS) {
+      const p = parseBetLine(line);
+      assert.ok(p && p.kind === "bet", `should be a bet: ${line}`);
+    }
+    // Only the capability clause is judged — a slice or verify that says
+    // "never a hostname" is a constraint, not a hole.
+    assert.equal(
+      betHoleShapeReason(
+        "a privacy ledger of hashed visits — src/privacy/ledger.ts — first slice: rows never carry a hostname",
+      ),
+      undefined,
+    );
+    assert.equal(betCapabilityClause("x still y — src/a.ts — first slice: z"), "x still y");
+    // "cannot" is the grammar of a capability gap.
+    assert.equal(
+      betHoleShapeReason("this tool cannot export a run today — src/export/csv.ts"),
+      undefined,
+    );
+    // The existing corpus bets still parse.
+    assert.ok(parseBetLine(`Bet: ${BET_TEXT}`)?.kind === "bet");
+    assert.ok(parseBetLine(`Bet: ${PLUGIN_BET}`)?.kind === "bet");
+  });
+
+  it("new paths are the ones absent from the tree; no cwd skips the test", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "forge-bet-tree-"));
+    try {
+      fs.mkdirSync(path.join(dir, "src", "lib"), { recursive: true });
+      fs.writeFileSync(path.join(dir, "src", "lib", "badge.ts"), "export const a = 1;\n");
+      assert.deepEqual(
+        resolveBetNewPaths(["src/lib/badge.ts", "src/lib/voice.ts", "src/voice/"], dir),
+        ["src/lib/voice.ts", "src/voice"],
+      );
+      assert.deepEqual(resolveBetNewPaths(["src/lib/badge.ts"], dir), []);
+      assert.equal(resolveBetNewPaths(["src/lib/badge.ts"], undefined), undefined);
+      // Resolved from a nested cwd up to the git root too.
+      fs.mkdirSync(path.join(dir, ".git"));
+      fs.mkdirSync(path.join(dir, "extension"));
+      assert.deepEqual(
+        resolveBetNewPaths(["src/lib/badge.ts", "src/lib/voice.ts"], path.join(dir, "extension")),
+        ["src/lib/voice.ts"],
+      );
+      assert.match(
+        betNewPathReason(["src/lib/badge.ts"], []) || "",
+        /already exists .*src\/lib\/badge\.ts.*names the file the capability creates/,
+      );
+      assert.equal(betNewPathReason(["src/lib/badge.ts"], undefined), undefined);
+      assert.equal(betNewPathReason(["src/lib/voice.ts"], ["src/lib/voice.ts"]), undefined);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("with newPaths the slice test is the created path, not the whole directory", () => {
+    const bet = {
+      text: "voice table",
+      paths: ["extension/src/lib/voice.ts"],
+      newPaths: ["extension/src/lib/voice.ts"],
+    };
+    // Editing a sibling in extension/src/lib/ is a hole-close, not a slice.
+    assert.equal(betShipHit(bet, ["extension/src/lib/badge.ts"], "control-flow"), false);
+    assert.equal(betShipHit(bet, ["extension/src/lib/voice.ts"], "control-flow"), true);
+    assert.equal(betShipHit(bet, ["extension/src/lib/voice.ts"], "tty"), false);
+    // A new directory credits everything inside it.
+    const dirBet = { text: "plugins", paths: ["src/plugins"], newPaths: ["src/plugins"] };
+    assert.equal(betShipHit(dirBet, ["src/plugins/host.ts"], "new-module"), true);
+    assert.equal(betShipHit(dirBet, ["src/tui/repl.ts"], "control-flow"), false);
+    // Legacy sidecar (no newPaths): the old file-or-directory rule.
+    const legacy = { text: "csv", paths: ["src/export/csv.ts"] };
+    assert.equal(betShipHit(legacy, ["src/export/json.ts"], "control-flow"), true);
+  });
+
+  it("a hole-shaped Bet: is refused at adoption and the re-anchor says why; a real one clears it", () => {
+    withHome(() => {
+      const sid = "bet-refuse";
+      armOpen(sid, READING_NO_BET);
+      const c = { edits: 0 };
+      const stamp = stamper(sid, c);
+      const r = stamp(`${HOLE_SHIPS[0]!.msg}\n${HASHPET_HOLE_BETS[0]}`, HOLE_SHIPS[0]!.paths);
+      assert.equal(r.stamped, true);
+      let s = loadUlwCycle(sid)!;
+      assert.equal(s.bet, undefined, "hole was not adopted as a bet");
+      assert.match(s.betRefused || "", /"still".*pick \(a hole\)/);
+      assert.equal(s.betRequired, true, "the mandate still owes a bet");
+      assert.match(formatBetReanchorLine(s) || "", /Bet refused — "still"/);
+      assert.match(formatBetReanchorLine(s) || "", /new file it creates/);
+      // The wave itself was a hole-close, not a slice.
+      assert.equal(s.waves![s.waves!.length - 1]!.onBet, undefined);
+
+      const ok = stamp(`${HOLE_SHIPS[1]!.msg}\nBet: ${PLUGIN_BET}`, HOLE_SHIPS[1]!.paths);
+      assert.equal(ok.stamped, true);
+      s = loadUlwCycle(sid)!;
+      assert.match(s.bet!.text, /plugin runtime/);
+      assert.equal(s.betRefused, undefined);
+      assert.equal(s.betsAdopted, 1);
+      assert.doesNotMatch(formatBetReanchorLine(s) || "", /refused/);
+    });
+  });
+
+  it("with a cwd, a Bet: whose every path exists is refused; one that creates a file is adopted with newPaths", () => {
+    withHome(() => {
+      const sid = "bet-tree";
+      const tree = fs.mkdtempSync(path.join(os.tmpdir(), "forge-bet-cwd-"));
+      try {
+        fs.mkdirSync(path.join(tree, "src", "auth"), { recursive: true });
+        fs.writeFileSync(path.join(tree, "src", "auth", "refresh.ts"), "export const x = 1;\n");
+        armOpen(sid, READING_NO_BET);
+        const c = { edits: 0 };
+        const stampAt = (msg: string, paths: string[]) => {
+          c.edits += 6;
+          return maybeStampUlwWave({
+            sessionId: sid,
+            editCount: c.edits,
+            openTodoCount: 0,
+            stepsSinceStamp: 1,
+            lastAssistantMessage: msg,
+            verificationPassed: true,
+            changedPaths: paths,
+            cwd: tree,
+          });
+        };
+        // Capability grammar, but the only path is a file that already exists.
+        stampAt(
+          `${HOLE_SHIPS[0]!.msg}\nBet: a refresh that survives a rotated OIDC key — src/auth/refresh.ts — first slice: rotate on 403`,
+          HOLE_SHIPS[0]!.paths,
+        );
+        let s = loadUlwCycle(sid)!;
+        assert.equal(s.bet, undefined);
+        assert.match(s.betRefused || "", /already exists \(src\/auth\/refresh\.ts\)/);
+
+        stampAt(
+          `${HOLE_SHIPS[1]!.msg}\nBet: a session timeline a user can scrub — src/timeline/view.ts — first slice: render one wave; verify: npm test`,
+          HOLE_SHIPS[1]!.paths,
+        );
+        s = loadUlwCycle(sid)!;
+        assert.match(s.bet!.text, /timeline/);
+        assert.deepEqual(s.bet!.newPaths, ["src/timeline/view.ts"]);
+        assert.equal(s.betRefused, undefined);
+
+        // A ship on the existing sibling is not a slice; the new file is.
+        stampAt("Wave shipped: refresh also handles 403. Proof: npm test.", ["src/auth/refresh.ts"]);
+        s = loadUlwCycle(sid)!;
+        assert.equal(s.bet!.slices, 0);
+        assert.equal(s.betOffStreak, 2);
+        stampAt("Ship landed: timeline view renders one wave. Proof: npm test.", ["src/timeline/view.ts"]);
+        s = loadUlwCycle(sid)!;
+        assert.equal(s.bet!.slices, 1);
+        assert.equal(s.betOffStreak, 0);
+        assert.match(formatUlwStatus(s), /creates src\/timeline\/view\.ts/);
+      } finally {
+        fs.rmSync(tree, { recursive: true, force: true });
+      }
+    });
+  });
+
+  it("past BET_RUN_ADOPT_SOFT bets, replacing a one-slice bet is a swap and the re-anchor says so", () => {
+    withHome(() => {
+      const sid = "bet-adopt-soft";
+      armOpen(sid, READING_NO_BET);
+      const c = { edits: 0 };
+      const stamp = stamper(sid, c);
+      const CAPS = [
+        "a session timeline a user can scrub",
+        "one-command CSV export of the ledger",
+        "a plugin runtime loading slash manifests",
+        "shareable HTML run reports for teammates",
+        "keyboard-navigable settings panel",
+        "offline replay of a recorded conversation",
+        "voice table for every meal caption",
+        "spend forecast before a wave starts",
+      ];
+      const betAt = (i: number) =>
+        `Bet: ${CAPS[i - 1]} — src/cap${i}/index.ts — first slice: src/cap${i}/index.ts does one thing; proof: node --test tests/cap${i}.test.ts`;
+      // Six bets, each shipped one slice, then replaced — free so far.
+      for (let i = 1; i <= BET_RUN_ADOPT_SOFT; i++) {
+        stamp(`Ship landed: cap ${i} does one thing. Proof: npm test.\n${betAt(i)}`, [
+          `src/cap${i}/index.ts`,
+        ]);
+      }
+      let s = loadUlwCycle(sid)!;
+      assert.equal(s.betsAdopted, BET_RUN_ADOPT_SOFT);
+      assert.equal(s.betSwaps, 0, "one-slice replacements were free below the soft cap");
+      assert.equal(s.bet!.slices, 1);
+      assert.match(formatBetReanchorLine(s) || "", /bets adopted this run/);
+      assert.match(formatBetReanchorLine(s) || "", new RegExp(`${BET_STUB_SLICES}\\+ slices`));
+      // The seventh replaces a one-slice bet: now a swap.
+      stamp(`Ship landed: cap 7 does one thing. Proof: npm test.\n${betAt(7)}`, ["src/cap7/index.ts"]);
+      s = loadUlwCycle(sid)!;
+      assert.equal(s.betsAdopted, BET_RUN_ADOPT_SOFT + 1);
+      assert.equal(s.betSwaps, 1);
+      assert.match(formatUlwStatus(s), /7 bets this run \(1 swapped unshipped\)/);
+      // Shipping it to two slices makes the next replacement honest again.
+      stamp("Ship landed: cap 7 does a second thing. Proof: npm test.", ["src/cap7/index.ts"]);
+      s = loadUlwCycle(sid)!;
+      assert.equal(s.bet!.slices, 2);
+      assert.equal(formatBetReanchorLine(s), undefined);
+      stamp(`Ship landed: cap 8 does one thing. Proof: npm test.\n${betAt(8)}`, ["src/cap8/index.ts"]);
+      s = loadUlwCycle(sid)!;
+      assert.equal(s.betSwaps, 1, "a two-slice bet is shipped, not swapped");
+    });
+  });
+});
+
+describe("capability drought — a run that only repairs", () => {
+  /**
+   * Repairs on files the ledger already knows: rotate through six existing
+   * files with a distinct sentence each time (a shared suffix would be one
+   * idea painted onto six files — the idea hold would rightly fire).
+   */
+  const REPAIR_VERBS = [
+    "tolerates a slow DNS answer",
+    "survives a half-written cache file",
+    "recovers from an interrupted download",
+    "rejects a malformed manifest early",
+    "keeps its width under a narrow terminal",
+    "prefers the newest milestone window",
+    "honours the retry budget under load",
+    "logs the failing host once",
+    "closes the socket on abort",
+    "drops the stale lock on restart",
+    "warms the index before the first query",
+    "caps the backoff at a minute",
+    "reads the proxy from the environment",
+    "ignores a trailing slash in the base",
+    "escapes the shell path on Windows",
+    "reuses one keep-alive agent",
+    "trims the banner to the row",
+    "sorts the milestones numerically",
+  ];
+  /** Distinct decline reasons — the same why never declines twice. */
+  const DECLINES = [
+    "every open hole is a first-run crash and no capability beats that today",
+    "the retry path still loses data under load and that outranks any new surface",
+    "the catalog race corrupts sessions and must close before anything is invented",
+    "the dock misreports context and a wrong number is worse than a missing feature",
+    "the milestone table drifts and every user hits it before any new command would",
+  ];
+  const repairs = (n: number, from = 0) =>
+    Array.from({ length: n }, (_, k) => {
+      const i = from + k;
+      const h = HOLE_SHIPS[i % 6]!;
+      const noun = h.paths[0]!.split("/").pop()!.replace(/\.ts$/, "");
+      // Re-decline the bet question as each 6-ship window lapses, so the
+      // bet-owed hold stays out of a test about the drought counter.
+      const decline =
+        i > 0 && i % BET_DECLINE_WINDOW === 0
+          ? `\nBet: none — ${DECLINES[(i / BET_DECLINE_WINDOW) % DECLINES.length]}`
+          : "";
+      return {
+        msg: `Wave shipped: ${noun} ${REPAIR_VERBS[i % REPAIR_VERBS.length]}. Proof: npm test.${decline}`,
+        paths: h.paths,
+      };
+    });
+
+  it("counts credited ships since the last new module; a new path resets it", () => {
+    withHome(() => {
+      const sid = "drought-count";
+      // Decline the bet question so only the drought is under test.
+      armOpen(sid, `${READING_NO_BET}\nBet: none — every hole here is a first-run crash and no capability beats that today.`);
+      const c = { edits: 0 };
+      const stamp = stamper(sid, c);
+      // First ship on an unknown file is a capability ship (no diff → ledger-new path).
+      const first = stamp("Ship landed: auth refresh rotates the token. Proof: npm test.", ["src/auth/refresh.ts"]);
+      let s = loadUlwCycle(sid)!;
+      assert.equal(first.stamped, true);
+      assert.equal(s.capabilityShips, 1);
+      assert.equal(s.capabilityDrought, 0);
+      // First touches of the other five files are capability ships too
+      // (ledger-new paths); the drought resets on each, so it ends at 0.
+      for (const r of repairs(6)) stamp(r.msg, r.paths);
+      s = loadUlwCycle(sid)!;
+      assert.equal(s.capabilityShips, 6);
+      assert.equal(s.capabilityDrought, 0);
+      // From here every path is known: repairs only (indices continue so the
+      // re-decline cadence lines up with the bet window).
+      const notStamped: string[] = [];
+      for (const r of repairs(12, 6)) {
+        const res = stamp(r.msg, r.paths);
+        if (!res.stamped) notStamped.push(res.admit || "(no admit)");
+      }
+      s = loadUlwCycle(sid)!;
+      assert.deepEqual(notStamped, [], notStamped.join("\n---\n"));
+      assert.equal(s.capabilityDrought, 12);
+      assert.equal(s.creditedShips, 19);
+      assert.match(formatUlwStatus(s), /Capability: 12 ship\(s\) since the last new module \(6 this run\)/);
+      // A new module resets.
+      stamp("Ship landed: a CSV exporter for the ledger. Proof: npm test.", ["src/export/csv.ts"]);
+      s = loadUlwCycle(sid)!;
+      assert.equal(s.capabilityDrought, 0);
+      assert.equal(s.capabilityShips, 7);
+    });
+  });
+
+  it("an open unlimited mandate holds at CAPABILITY_DROUGHT_HOLD; a new module releases; /cycle 0 clears", () => {
+    withHome(() => {
+      const sid = "drought-hold";
+      // Decline the bet question so the bet-owed hold does not fire first;
+      // the drought hold is armable once the decline window lapses.
+      armOpen(sid, `${READING_NO_BET}\nBet: none — every hole here is a first-run crash and no capability beats that today.`);
+      const c = { edits: 0 };
+      const stamp = stamper(sid, c);
+      const stop = stopper(sid, c);
+      // Six first touches (ledger-new paths = capability ships), then repairs.
+      for (const r of repairs(6)) stamp(r.msg, r.paths);
+      for (const r of repairs(6 + CAPABILITY_DROUGHT_ADVISORY).slice(6)) stamp(r.msg, r.paths);
+      let s = loadUlwCycle(sid)!;
+      assert.equal(s.capabilityDrought, CAPABILITY_DROUGHT_ADVISORY);
+      assert.equal(capabilityHolding(s), false);
+      assert.match(formatUlwStatus(s), /Capability: 12 ship\(s\) since the last new module/);
+      // Take the sidecar to one below the bar with a real bet on file (an
+      // empty bet slot would re-seed the last decline from memory) and the
+      // bet question quiet.
+      s.capabilityDrought = CAPABILITY_DROUGHT_HOLD - 1;
+      s.bet = {
+        text: "a session timeline a user can scrub — src/timeline/view.ts — first slice: render one wave",
+        paths: ["src/timeline/view.ts"],
+        newPaths: ["src/timeline/view.ts"],
+        setAt: new Date().toISOString(),
+        setWave: s.wave,
+        slices: 0,
+      };
+      s.betDeclined = undefined;
+      s.betRequired = false;
+      s.betOffStreak = 0;
+      fs.writeFileSync(
+        path.join(process.env.FORGE_HOME!, "sessions", sid, "ulw.json"),
+        JSON.stringify(s),
+      );
+      const r = repairs(1)[0]!;
+      const tick = stamp(`${r.msg} #bar`, r.paths);
+      assert.equal(tick.stamped, true, "the ship that reaches the bar still stamps");
+      s = loadUlwCycle(sid)!;
+      assert.equal(s.capabilityDrought, CAPABILITY_DROUGHT_HOLD);
+      assert.equal(capabilityHolding(s), true);
+      assert.match(formatUlwStatus(s), /Capability: HOLD/);
+      // The next repair is blocked at Stop with the drought admit.
+      const blocked = stop(`${HOLE_SHIPS[1]!.msg} #after-bar`, HOLE_SHIPS[1]!.paths);
+      assert.equal(blocked.block, true);
+      assert.equal(blocked.capabilityDemanded, true, blocked.reanchor);
+      assert.match(blocked.reanchor || "", /credited ships since the last new module/);
+      assert.match(blocked.reanchor || "", /bug tracker, not a product/);
+      s = loadUlwCycle(sid)!;
+      assert.equal(s.capabilityDrought, CAPABILITY_DROUGHT_HOLD, "the blocked repair did not stamp");
+      // A new module releases and resets.
+      const released = stop(
+        "Ship landed: a session timeline view renders one wave — src/timeline/view.ts. Proof: node --test tests/timeline.test.ts",
+        ["src/timeline/view.ts"],
+      );
+      assert.equal(released.capabilityDemanded, undefined, released.reanchor);
+      s = loadUlwCycle(sid)!;
+      assert.equal(capabilityHolding(s), false);
+      assert.equal(s.capabilityDrought, 0);
+      assert.equal(s.capabilityShips, 7);
+    });
+    withHome(() => {
+      const sid = "drought-cycle0";
+      armOpen(sid, READING_NO_BET);
+      const s = loadUlwCycle(sid)!;
+      s.capabilityDrought = CAPABILITY_DROUGHT_HOLD;
+      s.capabilityHold = true;
+      fs.writeFileSync(
+        path.join(process.env.FORGE_HOME!, "sessions", sid, "ulw.json"),
+        JSON.stringify(s),
+      );
+      assert.equal(capabilityHolding(loadUlwCycle(sid)!), true);
+      scheduleCycleZeroStop(sid);
+      const after = loadUlwCycle(sid)!;
+      assert.equal(capabilityHolding(after), false);
+      assert.equal(after.capabilityDrought, CAPABILITY_DROUGHT_HOLD, "the count is a run fact and stays");
+    });
+  });
+
+  it("hard mandates and capped runs never hold, only advise; the kill-switch disables the hold", () => {
+    withHome(() => {
+      const sid = "drought-hard";
+      mkSession(sid);
+      armUlwCycle(sid, "add a /health endpoint and make npm test pass", {
+        cycle: 1,
+        skipCheckpoint: true,
+        editCount: 0,
+      });
+      markUlwPlanDone(sid, READING_NO_BET);
+      const s = loadUlwCycle(sid)!;
+      assert.equal(s.openMandate, false);
+      s.capabilityDrought = CAPABILITY_DROUGHT_HOLD + 5;
+      s.capabilityHold = true;
+      fs.writeFileSync(
+        path.join(process.env.FORGE_HOME!, "sessions", sid, "ulw.json"),
+        JSON.stringify(s),
+      );
+      const loaded = loadUlwCycle(sid)!;
+      assert.equal(capabilityHolding(loaded), false, "hard mandate: no hold");
+      assert.match(formatUlwStatus(loaded), /Capability: \d+ ship\(s\) since the last new module/);
+      assert.doesNotMatch(formatUlwStatus(loaded), /Capability: HOLD/);
+    });
+    withHome(() => {
+      const sid = "drought-capped";
+      armOpen(sid, READING_NO_BET, { maxWaves: 40 });
+      const s = loadUlwCycle(sid)!;
+      s.capabilityDrought = CAPABILITY_DROUGHT_HOLD;
+      s.capabilityHold = true;
+      fs.writeFileSync(
+        path.join(process.env.FORGE_HOME!, "sessions", sid, "ulw.json"),
+        JSON.stringify(s),
+      );
+      assert.equal(capabilityHolding(loadUlwCycle(sid)!), false, "a cap is a budget");
+    });
+    withHome(() => {
+      const prev = process.env.FORGE_ULW_CAPABILITY_HOLD;
+      process.env.FORGE_ULW_CAPABILITY_HOLD = "0";
+      try {
+        const sid = "drought-off";
+        armOpen(sid, READING_NO_BET);
+        const s = loadUlwCycle(sid)!;
+        s.capabilityDrought = CAPABILITY_DROUGHT_HOLD;
+        s.capabilityHold = true;
+        fs.writeFileSync(
+          path.join(process.env.FORGE_HOME!, "sessions", sid, "ulw.json"),
+          JSON.stringify(s),
+        );
+        assert.equal(capabilityHolding(loadUlwCycle(sid)!), false);
+      } finally {
+        if (prev === undefined) delete process.env.FORGE_ULW_CAPABILITY_HOLD;
+        else process.env.FORGE_ULW_CAPABILITY_HOLD = prev;
+      }
     });
   });
 });

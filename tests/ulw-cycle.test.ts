@@ -37,6 +37,7 @@ import {
   formatUlwCounts,
   formatUlwBadge,
   formatUlwStatus,
+  formatUlwSpendLine,
   formatCappedWaveDoctrine,
   ulwKickoffMessage,
   detectWaveProof,
@@ -2553,5 +2554,40 @@ describe("/cycle 0 stop at N+1", () => {
       assert.equal(resumed.maxWaves, null);
       assert.equal(resumed.cycleZeroStopAt, undefined);
     });
+  });
+});
+
+describe("ULW spend line — cost against what it bought", () => {
+  it("prints per-wave, per-job-move and per-new-module; silent without a price", () => {
+    const s = { wave: 20, jobMoves: 10, creditedShips: 18, capabilityShips: 2 };
+    const line = formatUlwSpendLine(s, { costUsd: 40, providerRounds: 300 })!;
+    assert.match(line, /^  Spend: \$40 this run · \$2\.00 per wave · \$4\.00 per job move \(10\) · \$20 per new module \(2\) · 300 rounds$/);
+    assert.match(
+      formatUlwSpendLine({ wave: 3, jobMoves: 0, creditedShips: 0, capabilityShips: 0 }, { costUsd: 1.5 })!,
+      /\$1\.50 this run · \$0\.50 per wave · no job move yet · no new module yet/,
+    );
+    assert.equal(formatUlwSpendLine(s, undefined), undefined);
+    assert.equal(formatUlwSpendLine(s, { costUsd: 0 }), undefined);
+    // Cursor-native quota prices to $0 — no misleading line.
+    assert.equal(formatUlwSpendLine(s, { costUsd: Number.NaN }), undefined);
+  });
+
+  it("formatUlwStatus carries the spend line when given a price", () => {
+    const prev = process.env.FORGE_HOME;
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "forge-spend-"));
+    process.env.FORGE_HOME = home;
+    try {
+      const sid = "spend-status";
+      fs.mkdirSync(path.join(home, "sessions", sid), { recursive: true });
+      armUlwCycle(sid, "improve this tool", { cycle: 1, skipCheckpoint: true, editCount: 0 });
+      const s = loadUlwCycle(sid)!;
+      assert.doesNotMatch(formatUlwStatus(s), /Spend:/);
+      assert.match(formatUlwStatus(s, { spend: { costUsd: 12.5 } }), /Spend: \$13 this run · no job move yet/);
+      assert.match(formatUlwStatus(s, { spend: { costUsd: 2.25 } }), /Spend: \$2\.25 this run/);
+    } finally {
+      if (prev === undefined) delete process.env.FORGE_HOME;
+      else process.env.FORGE_HOME = prev;
+      fs.rmSync(home, { recursive: true, force: true });
+    }
   });
 });

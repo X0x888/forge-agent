@@ -1908,7 +1908,7 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
           if (stamp.stamped) {
             lastWaveStampTurn = turns;
             try {
-              const { maybeAutoCommitOnUlwDone, autoCommitStamp } =
+              const { maybeAutoCommitOnUlwDone, autoCommitStamp, formatLeftUnstagedAdmit } =
                 await import("../util/git-auto-commit.js");
               const ac = maybeAutoCommitOnUlwDone({
                 cwd: workspace,
@@ -1931,6 +1931,13 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
                 };
               } else if (ac.skipped && ac.skipped !== "working tree clean") {
                 log.dim(`Auto-commit skipped: ${ac.skipped}`);
+              }
+              // Looks / scratch left out of the commit: tell the model where
+              // they belong, once per commit, as a harness message.
+              const left = formatLeftUnstagedAdmit(ac, session.meta.id);
+              if (left) {
+                log.dim(`Auto-commit left ${ac.leftUnstaged!.length} look/scratch file(s) unstaged`);
+                session.messages.push({ role: "user", content: left });
               }
             } catch {
               /* never fail a wave stamp on commit */
@@ -3061,7 +3068,7 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
           stopResult.ulw.waveClosed
         ) {
           try {
-            const { maybeAutoCommitOnUlwDone, autoCommitStamp } =
+            const { maybeAutoCommitOnUlwDone, autoCommitStamp, formatLeftUnstagedAdmit } =
               await import("../util/git-auto-commit.js");
             const ac = maybeAutoCommitOnUlwDone({
               cwd: workspace,
@@ -3085,6 +3092,11 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
               };
             } else if (ac.skipped && ac.skipped !== "working tree clean") {
               log.dim(`Auto-commit skipped: ${ac.skipped}`);
+            }
+            const left = formatLeftUnstagedAdmit(ac, session.meta.id);
+            if (left) {
+              log.dim(`Auto-commit left ${ac.leftUnstaged!.length} look/scratch file(s) unstaged`);
+              session.messages.push({ role: "user", content: left });
             }
             saveSession(session);
           } catch {
@@ -3139,6 +3151,11 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
                 else finalText = line;
               } else if (ac.skipped && ac.skipped !== "working tree clean") {
                 log.dim(`Auto-commit skipped: ${ac.skipped}`);
+              }
+              if (ac.leftUnstaged?.length) {
+                const note = `Left unstaged (looks / scratch, not product files): ${ac.leftUnstaged.slice(0, 4).join(", ")}${ac.leftUnstaged.length > 4 ? ` (+${ac.leftUnstaged.length - 4} more)` : ""}`;
+                log.dim(note);
+                finalText = finalText.trim() ? `${finalText.replace(/\s+$/, "")}\n${note}` : note;
               }
             } catch {
               /* never fail a finished cycle on commit */

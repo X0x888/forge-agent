@@ -7,12 +7,16 @@ import { execFileSync } from "node:child_process";
 import {
   buildAutoCommitSubject,
   commitIdentArgs,
+  formatLeftUnstagedAdmit,
   gitHasAuthorIdentity,
+  isForgeScratchRelPath,
+  isLookArtefactRelPath,
   isSensitiveRelPath,
   isChangelogRelPath,
   isDisposableTestRelPath,
   maybeAutoCommitOnUlwDone,
   porcelainPaths,
+  sessionLooksDir,
   stageAutoCommitPaths,
   ulwAutoCommitEnabled,
   ULW_COMMIT_EMAIL,
@@ -500,6 +504,136 @@ describe("ULW auto-commit", () => {
       assert.equal(r.committed, false);
       assert.match(r.skipped || "", /disposable test fixtures/);
       assert.ok(fs.existsSync(junk));
+    });
+  });
+
+  it("strips the model's own Wave N prefix from the subject (the body carries the harness wave)", () => {
+    assert.equal(
+      buildAutoCommitSubject("improve this game", "Wave 160 — Consolidation. No new product scope. Verify: npm test."),
+      "Consolidation. No new product scope. Verify: npm test.",
+    );
+    assert.equal(
+      buildAutoCommitSubject("improve this game", "Ship landed: Wave 84: Appetite hunt. Digest is no longer FIFO wallpaper."),
+      "Appetite hunt. Digest is no longer FIFO wallpaper.",
+    );
+    // A subject that merely mentions a wave mid-sentence is untouched.
+    assert.equal(
+      buildAutoCommitSubject("improve this game", "Ship landed: the ledger shows wave 3 twice."),
+      "the ledger shows wave 3 twice.",
+    );
+  });
+
+  it("classifies look artefacts and .forge scratch", () => {
+    for (const p of [
+      "images/death-care-look.png",
+      "images/leftover-beat-look.html",
+      "images/badge-states.png",
+      "screenshots/home.png",
+      "docs/shots/after-fix.jpg",
+      "capture-01.webp",
+      "before.png",
+    ]) {
+      assert.equal(isLookArtefactRelPath(p), true, p);
+    }
+    for (const p of [
+      "extension/public/icon-128.png",
+      "assets/sprite-idle.png",
+      "index.html",
+      "src/popup/popup.html",
+      "images/logo.svg",
+      "src/lib/look.ts",
+    ]) {
+      assert.equal(isLookArtefactRelPath(p), false, p);
+    }
+    for (const p of [
+      ".forge/chrome-look/Default/Cookies",
+      ".forge/chrome-look12/Local State",
+      ".forge/tmp/x.json",
+    ]) {
+      assert.equal(isForgeScratchRelPath(p), true, p);
+    }
+    for (const p of [
+      ".forge/MEMORY.md",
+      ".forge/commands/deploy.md",
+      ".forge/skills/game/SKILL.md",
+      ".forge/hooks.json",
+      "src/.forge-like/x.ts",
+    ]) {
+      assert.equal(isForgeScratchRelPath(p), false, p);
+    }
+  });
+
+  it("leaves unreferenced looks and .forge scratch unstaged; a referenced sprite commits", () => {
+    withRepo((root) => {
+      const sid = "sess-ac-looks";
+      fs.mkdirSync(path.join(process.env.FORGE_HOME!, "sessions", sid), {
+        recursive: true,
+      });
+      armUlwCycle(sid, "improve this game", { cycle: 1, skipCheckpoint: true, editCount: 0 });
+      const s = loadUlwCycle(sid)!;
+      s.waves = [
+        {
+          wave: 1,
+          editDelta: 5,
+          proof: true,
+          summary: "Ship landed: the companion blinks — `pet-face.ts` `blinkOpenness`.",
+          ts: new Date().toISOString(),
+        },
+      ];
+      saveUlwCycle(s);
+      // Product change + a sprite it loads + two looks nobody loads + a browser profile.
+      fs.mkdirSync(path.join(root, "src", "lib"), { recursive: true });
+      fs.writeFileSync(
+        path.join(root, "src", "lib", "pet-face.ts"),
+        "export const SPRITE = 'images/sprite-idle.png';\nexport function blinkOpenness(t: number) { return t % 2; }\n",
+      );
+      fs.mkdirSync(path.join(root, "images"));
+      fs.writeFileSync(path.join(root, "images", "sprite-idle.png"), Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+      fs.writeFileSync(path.join(root, "images", "death-care-look.png"), Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+      fs.writeFileSync(path.join(root, "images", "leftover-beat-look.html"), "<html>look</html>\n");
+      fs.mkdirSync(path.join(root, ".forge", "chrome-look", "Default"), { recursive: true });
+      fs.writeFileSync(path.join(root, ".forge", "chrome-look", "Default", "Cookies"), "sqlite\n");
+      fs.mkdirSync(path.join(root, ".forge", "commands"), { recursive: true });
+      fs.writeFileSync(path.join(root, ".forge", "commands", "deploy.md"), "# deploy\n");
+
+      const r = maybeAutoCommitOnUlwDone({ cwd: root, sessionId: sid });
+      assert.equal(r.committed, true, r.skipped);
+      assert.deepEqual(
+        [...(r.leftUnstaged ?? [])].sort(),
+        [".forge/chrome-look/Default/Cookies", "images/death-care-look.png", "images/leftover-beat-look.html"],
+      );
+      const committed = git(["show", "--name-only", "--format=", "HEAD"], root)
+        .split("\n")
+        .filter(Boolean)
+        .sort();
+      assert.deepEqual(committed, [".forge/commands/deploy.md", "images/sprite-idle.png", "src/lib/pet-face.ts"]);
+      // Left on disk, still dirty — not deleted, just not shipped.
+      assert.ok(fs.existsSync(path.join(root, "images", "death-care-look.png")));
+      const dirty = porcelainPaths(root).sort();
+      assert.deepEqual(dirty, [".forge/chrome-look/Default/Cookies", "images/death-care-look.png", "images/leftover-beat-look.html"]);
+
+      const admit = formatLeftUnstagedAdmit(r, sid)!;
+      assert.match(admit, /^\[Forge harness — mid-conversation update\]/);
+      assert.match(admit, /left 3 file\(s\) unstaged/);
+      assert.match(admit, /death-care-look\.png/);
+      assert.ok(admit.includes(sessionLooksDir(sid)));
+      assert.match(admit, /do not `git add` them/);
+      assert.equal(formatLeftUnstagedAdmit({ leftUnstaged: [] }, sid), undefined);
+    });
+  });
+
+  it("a dirty tree of looks alone is not a commit", () => {
+    withRepo((root) => {
+      const sid = "sess-ac-looks-only";
+      fs.mkdirSync(path.join(process.env.FORGE_HOME!, "sessions", sid), {
+        recursive: true,
+      });
+      fs.mkdirSync(path.join(root, "images"));
+      fs.writeFileSync(path.join(root, "images", "home-look.png"), Buffer.from([1, 2, 3]));
+      const r = maybeAutoCommitOnUlwDone({ cwd: root, sessionId: sid });
+      assert.equal(r.committed, false);
+      assert.match(r.skipped || "", /only look artefacts \/ scratch remain/);
+      assert.deepEqual(r.leftUnstaged, ["images/home-look.png"]);
     });
   });
 });

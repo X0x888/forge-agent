@@ -52,6 +52,17 @@ export interface LastReflectLedgerFacts {
   playLoopRan?: boolean;
   mandate?: string;
   wave?: number;
+  /** Idea-surface holds armed this run (one sentence painted onto 4+ files). */
+  ideaHolds?: number;
+  /** Open idea hold at reflect time — the paint was never collapsed. */
+  ideaHold?: { terms: string[]; files: string[] };
+  /** Tree-shape trips from the last consolidation measure (accretion). */
+  treeShapeTrips?: string[];
+  /** Credited ships since the last new module (open mandates). */
+  capabilityDrought?: number;
+  /** The drought bar — only listed when the run is at or past it. */
+  capabilityDroughtHold?: number;
+  openMandate?: boolean;
 }
 
 /**
@@ -111,6 +122,27 @@ export function ledgerMustFixItems(facts: LastReflectLedgerFacts): string[] {
   if (waves.length >= 4 && jobN === 0 && millN + chromeN >= 2) {
     holes.push(
       "Last credited waves did not close a named/pick/play job (volume is not movement).",
+    );
+  }
+  if (facts.ideaHold?.terms?.length) {
+    holes.push(
+      `One idea ("${facts.ideaHold.terms.slice(0, 3).join(", ")}") is still painted onto ${facts.ideaHold.files.length} files with no shared module — collapse it into one formatter.`,
+    );
+  } else if ((facts.ideaHolds ?? 0) >= 2) {
+    holes.push(
+      `${facts.ideaHolds} idea-surface holds this run — one sentence kept landing on a 4th file; the collapse is the ship, not the next surface.`,
+    );
+  }
+  for (const trip of facts.treeShapeTrips ?? []) {
+    holes.push(`Tree shape: ${trip}`);
+  }
+  if (
+    facts.openMandate &&
+    facts.capabilityDroughtHold &&
+    (facts.capabilityDrought ?? 0) >= facts.capabilityDroughtHold
+  ) {
+    holes.push(
+      `${facts.capabilityDrought} credited ships since the last new module — the run repaired, it did not invent; the open mandate still owes a capability.`,
     );
   }
 

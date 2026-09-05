@@ -3,8 +3,9 @@
  * Never pushes. Kill-switch: FORGE_ULW_AUTO_COMMIT=0.
  */
 import { execFileSync } from "node:child_process";
+import path from "node:path";
 import { isFalsy } from "./bool.js";
-import { nowIso } from "./fs.js";
+import { forgeHome, nowIso } from "./fs.js";
 import { createChildEnv } from "../agent/tools/env-policy.js";
 import { findGitRoot, parsePorcelainPath } from "../agent/worktree.js";
 import { activeMemoryRecords } from "../harness/decision-memory.js";
@@ -23,9 +24,45 @@ import {
   extractShipSummary,
   pickShipHint,
 } from "../harness/ship-close.js";
+import { findUnreferencedAssets } from "../harness/tree-shape.js";
 
 const SENSITIVE_RE =
   /(^|\/)(\.env(\..+)?|.*\.(pem|p12|pfx|key)|id_rsa|id_ed25519|id_dsa|auth\.json|credentials|secrets?\.json)$/i;
+
+/**
+ * A look: an image or HTML file whose name or directory says "screenshot".
+ * HashPet's run committed 78 of these (968 KB) under `images/`, none of
+ * them loaded by the extension — the play-loop asked for a look, the model
+ * wrote the look into the repo, auto-commit staged everything dirty. A
+ * sprite the manifest names is a product file and stays; a look nothing
+ * references is left unstaged and named in the wave admit.
+ */
+const LOOK_EXT_RE = /\.(png|jpe?g|gif|webp|bmp|html?)$/i;
+const LOOK_NAME_RE =
+  /(^|[-_.])(look|looks|screenshot|screenshots|shot|shots|capture|captures|preview|previews|states?|frame\d*|before|after|snap|snapshot)([-_.]|$)/i;
+const LOOK_DIR_RE = /(^|\/)(images|img|screenshots|shots|looks|captures|previews|snapshots)\//i;
+
+export function isLookArtefactRelPath(rel: string): boolean {
+  const n = rel.replace(/\\/g, "/");
+  if (!LOOK_EXT_RE.test(n)) return false;
+  const base = n.split("/").pop() || "";
+  return LOOK_NAME_RE.test(base.replace(/\.[^.]+$/, "")) || LOOK_DIR_RE.test(n);
+}
+
+/**
+ * The project's `.forge/` holds the tracked memory mirror, commands, skills
+ * and hooks. Anything else under it — a Chromium profile the model pointed
+ * `--user-data-dir` at, a scratch dir — is not a ship (HashPet's `.forge/`
+ * carried 19 `chrome-look*` profiles, 36 MB).
+ */
+const FORGE_KEEP_RE =
+  /^\.forge\/(MEMORY\.md|AGENTS\.md|hooks\.json|config\.toml|commands\/|skills\/|hooks\/)/;
+
+export function isForgeScratchRelPath(rel: string): boolean {
+  const n = rel.replace(/\\/g, "/").replace(/^\.\//, "");
+  if (!n.startsWith(".forge/")) return false;
+  return !FORGE_KEEP_RE.test(n);
+}
 
 export interface AutoCommitResult {
   committed: boolean;
@@ -33,6 +70,8 @@ export interface AutoCommitResult {
   subject?: string;
   files?: number;
   skipped?: string;
+  /** Look artefacts / scratch left unstaged on purpose (named in the admit). */
+  leftUnstaged?: string[];
 }
 
 export function ulwAutoCommitEnabled(): boolean {
@@ -168,6 +207,10 @@ export function buildAutoCommitSubject(mandate: string, hint?: string): string {
   t = t.replace(/^Correction:\s*/i, "");
   t = t.replace(/^\*{0,2}Cycle complete\.?\*{0,2}\s*/i, "");
   t = t.replace(/\*{1,2}/g, "").replace(/\s+/g, " ").trim();
+  // The model's own wave count drifts from the harness's (HashPet subjects
+  // said "Wave 160 — Consolidation" while the body said "Wave 791."). The
+  // body carries the harness number; the subject carries the ship.
+  t = t.replace(/^Wave\s+\d+\s*(?:[—–-]+|:)\s*/i, "").trim();
   if (isReanchorCommitHint(t)) t = "";
   // "Cycle complete.\n✅ npm test — green" is not a ship body.
   if (/^[✅✗]/.test(t) || /^Proof:/i.test(t)) t = "";
@@ -251,15 +294,38 @@ export function maybeAutoCommitOnUlwDone(opts: {
   }
   if (!dirty.length) return { committed: false, skipped: "working tree clean" };
 
-  const toAdd = dirty.filter(
-    (p) => !isSensitiveRelPath(p) && !isDisposableTestRelPath(p),
+  let toAdd = dirty.filter(
+    (p) =>
+      !isSensitiveRelPath(p) &&
+      !isDisposableTestRelPath(p) &&
+      !isForgeScratchRelPath(p),
   );
+  // Looks nothing references stay out of the commit. One `git grep` per
+  // candidate, capped inside findUnreferencedAssets.
+  const leftUnstaged = dirty.filter(isForgeScratchRelPath);
+  const looks = toAdd.filter(isLookArtefactRelPath);
+  if (looks.length) {
+    let orphan: string[] = [];
+    try {
+      orphan = findUnreferencedAssets(root, looks);
+    } catch {
+      orphan = [];
+    }
+    if (orphan.length) {
+      const drop = new Set(orphan);
+      toAdd = toAdd.filter((p) => !drop.has(p));
+      leftUnstaged.push(...orphan);
+    }
+  }
   if (!toAdd.length) {
     return {
       committed: false,
-      skipped: dirty.every(isDisposableTestRelPath)
-        ? "only disposable test fixtures remain"
-        : "only sensitive paths remain",
+      skipped: leftUnstaged.length
+        ? "only look artefacts / scratch remain"
+        : dirty.every(isDisposableTestRelPath)
+          ? "only disposable test fixtures remain"
+          : "only sensitive paths remain",
+      ...(leftUnstaged.length ? { leftUnstaged } : {}),
     };
   }
   if (toAdd.every((p) => isChangelogRelPath(p))) {
@@ -369,7 +435,32 @@ export function maybeAutoCommitOnUlwDone(opts: {
     sha: sha || undefined,
     subject,
     files: staged.length,
+    ...(leftUnstaged.length ? { leftUnstaged } : {}),
   };
+}
+
+/** Where a session's looks belong: outside the repo, beside its ledger. */
+export function sessionLooksDir(sessionId: string): string {
+  return path.join(forgeHome(), "sessions", sessionId, "looks");
+}
+
+/**
+ * Harness line after a commit that left looks / scratch unstaged. Named so
+ * the model stops writing them into the tree, not so it stages them.
+ */
+export function formatLeftUnstagedAdmit(
+  result: Pick<AutoCommitResult, "leftUnstaged">,
+  sessionId: string,
+): string | undefined {
+  const left = result.leftUnstaged ?? [];
+  if (!left.length) return undefined;
+  const shown = left.slice(0, 4).join(", ");
+  const more = left.length > 4 ? ` (+${left.length - 4} more)` : "";
+  return [
+    "[Forge harness — mid-conversation update]",
+    `Auto-commit left ${left.length} file(s) unstaged — looks nothing in the product references, or \`.forge/\` scratch: ${shown}${more}.`,
+    `Screenshots, look HTML and browser profiles belong outside the repo: ${sessionLooksDir(sessionId)} (or --user-data-dir under ~/.forge/tmp). A sprite the product loads is a product file and commits as usual. Delete or move these; do not \`git add\` them.`,
+  ].join("\n");
 }
 
 export function autoCommitStamp(result: AutoCommitResult): {
