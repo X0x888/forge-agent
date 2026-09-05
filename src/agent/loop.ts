@@ -434,6 +434,13 @@ export interface LoopResult {
   harnessUserPokes?: number;
   admitCount?: number;
   proofPokes?: number;
+  /**
+   * Stop-guard blocks this run by guard id (`handoff`, `proofClaim`,
+   * `report`, `todoGate`, `goal`, `ulw`, `hook`, `verify`, `fix`, …).
+   * Non-zero keys only. The per-guard cost of the harness — what an
+   * over-eager guard costs shows up here, not in a hunch.
+   */
+  guardBlocks?: Record<string, number>;
   /** Provider chat rounds this run (same as `turns`). */
   providerRounds?: number;
   /** Agent-guidelines audit outcome for this run (stamped / revised files). */
@@ -1352,6 +1359,8 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
         sessionId: session.meta.id,
         workspace,
         lastUserMessage: lastRealUserPrompt(session)?.text,
+        autoApply: Boolean(config.guidelineAutoApply),
+        turn: session.meta.turnCount,
       });
       if (r.skipped || r.repeat) return;
       guidelineResult = r;
@@ -3304,7 +3313,10 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
           stopResult.reason ||
           "Stop was blocked. Continue working.";
         if (!/^\s*\[Forge\b/.test(inject)) {
-          inject = `[Forge ULW cycle driver] ${inject}`;
+          // A user Stop hook's reason carries no Forge tag; mark it so the
+          // guardBlocks meter files it under `hook`, not the ULW driver.
+          const viaHook = Boolean(stopResult.hook?.blocked);
+          inject = `[Forge ULW cycle driver]${viaHook ? " [Stop hook]" : ""} ${inject}`;
         }
         if (reasonedEmpty) {
           forceToolNext = true;
@@ -3685,10 +3697,15 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
   }
 
   const pokeMeters = countHarnessPokesSince(session, pokeBaseline);
+  const guardBlocks = Object.keys(pokeMeters.guardBlocks).length
+    ? pokeMeters.guardBlocks
+    : undefined;
   try {
     session.meta.harnessUserPokes = pokeMeters.harnessUserPokes;
     session.meta.admitCount = pokeMeters.admitCount;
     session.meta.proofPokes = pokeMeters.proofPokes;
+    if (guardBlocks) session.meta.guardBlocks = guardBlocks;
+    else delete session.meta.guardBlocks;
     session.meta.providerRounds = turns;
     saveSession(session);
   } catch {
@@ -3721,6 +3738,7 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
     harnessUserPokes: pokeMeters.harnessUserPokes,
     admitCount: pokeMeters.admitCount,
     proofPokes: pokeMeters.proofPokes,
+    ...(guardBlocks ? { guardBlocks } : {}),
     providerRounds: turns,
     ...(guidelineResult ? { guidelines: guidelineResult } : {}),
   };
@@ -3820,7 +3838,7 @@ export function installMcpLspExitHook(): void {
 function countHarnessPokesSince(
   session: SessionData,
   baseline: number,
-): { harnessUserPokes: number; admitCount: number; proofPokes: number } {
+): ReturnType<typeof countHarnessUserPokes> {
   const from = Math.max(0, Math.min(baseline, session.messages.length));
   return countHarnessUserPokes(session.messages.slice(from));
 }
@@ -3902,6 +3920,7 @@ function maybeAdmitGuidelineAudit(
       subagent: Boolean(session.meta.subagent),
       readOnly,
       lastUserMessage: lastRealUserPrompt(session)?.text,
+      autoApply: Boolean(config.guidelineAutoApply),
     });
     if (brief) session.messages.push({ role: "user", content: brief });
   } catch {

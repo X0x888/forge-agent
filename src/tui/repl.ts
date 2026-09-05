@@ -120,7 +120,10 @@ import {
 import { resolveMaxCostUsd, sessionCostUsd } from "../util/cost-budget.js";
 import { isBellEnabled, isNotifyEnabled } from "../util/attention.js";
 import { loadUlwCycle } from "../harness/ulw-cycle.js";
-import { listProjectRulePaths } from "../agent/system-prompt.js";
+import {
+  listProjectRulePaths,
+  projectRulesWarnings,
+} from "../agent/system-prompt.js";
 
 /** True when this process already printed the full first-run /setup card. */
 let setupCardShownThisProcess = false;
@@ -991,6 +994,13 @@ export async function runRepl(opts: {
               return p > 0 ? Math.min(1, c / p) : undefined;
             })(),
             servedModels: result.servedModels,
+            // Harness meters — headless always wrote these; interactive
+            // runs did not, so every dogfood session read as poke-free.
+            harnessUserPokes: result.harnessUserPokes,
+            admitCount: result.admitCount,
+            proofPokes: result.proofPokes,
+            guardBlocks: result.guardBlocks,
+            providerRounds: result.providerRounds ?? result.turns,
             aborted: result.aborted,
             ok: !result.aborted,
             headless: false,
@@ -1297,7 +1307,10 @@ async function printBanner(
     projectBits,
     ulwArmed,
     posture: postureHead(config),
-    postureWarnings: postureWarnings(config),
+    postureWarnings: [
+      ...postureWarnings(config),
+      ...projectRulesWarnings(config.workspace || process.cwd()),
+    ],
     showEmptyState: isFirstSession,
     setupCard,
     setupCompact,

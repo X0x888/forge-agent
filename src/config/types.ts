@@ -165,6 +165,13 @@ export interface ForgeConfig {
   goal: GoalConfig;
   /** When true, Stop hooks can block the agent from finishing (Claude Code semantics) */
   blockingStopHooks: boolean;
+  /**
+   * Guideline audit: land the model's doctrine proposal for AGENTS.md-class
+   * files directly (journaled for /undo) instead of parking it for
+   * `/guidelines apply`. Default false — the model fixes factual defects in
+   * the file itself, but rewriting the user's instructions is the user's call.
+   */
+  guidelineAutoApply: boolean;
   /** Load Claude-compatible settings.json hooks */
   compatClaudeHooks: boolean;
   /** Load Cursor-compatible hooks.json */
@@ -240,6 +247,7 @@ export const DEFAULT_CONFIG: ForgeConfig = {
     autoArm: true,
   },
   blockingStopHooks: true,
+  guidelineAutoApply: false,
   compatClaudeHooks: true,
   compatCursorHooks: true,
   autoCompactThreshold: 0.8,

@@ -23,17 +23,17 @@ Known baseline: 11 loop/retry tests fail on a clean `main` (hooks TypeError from
 
 - `src/cli.ts` — commander entry: interactive REPL, headless `forge run` (`--json`), `doctor`, `sessions`, `stats`.
 - `src/agent/loop.ts` — the agent loop: tool dispatch, Stop path (`runStopGuard`), safe-boundary admissions, background-task credit. Big; grep for the guard name you need.
-- `src/agent/system-prompt.ts` — baseline prompt (cache-stable) + project rules loader (`AGENTS.md` / `CLAUDE.md` / cursor / copilot, **12k chars per file**, 28k total); `instruction-paths.ts` is the workspace → git-root walk it shares with the guideline audit — change the walk there, never in one of the two.
+- `src/agent/system-prompt.ts` — baseline prompt (cache-stable) + project rules loader (`AGENTS.md` / `CLAUDE.md` / cursor / copilot; **28k total, split fairly across the loaded files, 12k floor per file** — `ruleFileBudget`; a clipped file gets a visible `[clipped …]` marker, a startup warning, a `/context` `loaded/total` line and a doctor row); `instruction-paths.ts` is the workspace → git-root walk it shares with the guideline audit — change the walk there, never in one of the two.
 - `src/agent/tools/` — file/bash/search/MCP/LSP/subagent tools; `file-read-state.ts` (stale-edit guard), `edit-receipt.ts`, `format-on-write.ts`.
 - `src/agent/` also: `permissions.ts` / `rules.ts` / `sandbox.ts` / `shell-parse.ts` (deny > ask > allow; segment-strict bash), `subagent.ts` (explore / plan / general-purpose, worktree isolation).
 - `src/harness/` — the product:
-  - `stop-guard.ts` composes, in order: user Stop hooks → `report-guard.ts` (attestation pass) → `guideline-audit.ts` — both **before the drivers**, which never hand a Stop on while ULW is armed → `goal.ts` → `ulw-cycle.ts` → `todo-gate.ts` → `handoff-guard.ts` → `proof-claim-guard.ts` → `report-guard.ts`.
+  - `stop-guard.ts` composes, in order: user Stop hooks → `report-guard.ts` (attestation pass, **before the drivers**, which never hand a Stop on while ULW is armed) → `goal.ts` → `ulw-cycle.ts` → `todo-gate.ts` → `handoff-guard.ts` → `proof-claim-guard.ts` → `report-guard.ts`. Every block is counted per guard in `guardBlocks` (run JSON · `metrics.jsonl` · `forge stats` harness row).
   - `ulw-cycle.ts` — cycle flag, wave ledger, LAST wrap, holds (`same-surface.ts`, `explore-contract.ts`, `bet-contract.ts`), `job-delta.ts`, `tests-without-body.ts`, `declared-checks.ts`, `verify-command.ts`, `last-reflect.ts`.
   - `context-admit.ts` — live counters as mid-conversation messages (never rewrite message[0]); `live-notices.ts`, `interjection.ts`.
   - `decision-memory.ts` (session `decisions.json`) and `project-memory.ts` (`~/.forge/project-memory/*.json` + tracked `.forge/MEMORY.md` mirror).
-  - `guideline-audit.ts` — first action of a session: survey/brief/stamp the `AGENTS.md`-class files the prompt actually loads (registry `~/.forge/guidelines/`); a look is an argument that resolves to the file, never a mention of its name.
+  - `guideline-audit.ts` — first action of a work turn: survey the `AGENTS.md`-class files the prompt actually loads; **fact defects** (dead paths, missing scripts, PM mismatch, clipped, empty) are fixed in place by the model, **doctrine** (long / conflict / no-commands) goes to a proposal outside the repo for `/guidelines diff|apply|discard` (or `guidelineAutoApply`); evidence-triggered, no Stop block (registry `~/.forge/guidelines/`); a look is an argument that resolves to the file, never a mention of its name.
   - `run-report.ts` — standalone end-of-run report (`/report`, `/status` head, `forge run --json`.report, `~/.forge/sessions/<id>/report.md`).
-- `src/session/` — sessions under `~/.forge/sessions/<id>/` (`session.json`, `meta.json`, `ulw.json`, `goal.json`, `decisions.json`, `mutations.jsonl`), compaction, request prune, prompt cache, metrics.
+- `src/session/` — sessions under `~/.forge/sessions/<id>/` (`session.json`, `meta.json`, `ulw.json`, `goal.json`, `decisions.json`, `mutations.jsonl`), compaction, request prune, prompt cache, metrics (`~/.forge/metrics.jsonl` = run-level; `rounds.jsonl` = per provider round — never mix them back, the round volume evicted run history).
 - `src/providers/` — xAI / OpenAI-compat / Anthropic / Cursor / Copilot / DeepSeek clients; `errors.ts` recovery tips.
 - `src/auth/` — multi-account credentials (`auth.json` v2, mode 0600, never logged).
 - `src/commands/slash.ts` — every `/command` (+ `runDoctorCheck`); `help-text.ts`; `project-commands.ts` (`.forge/commands/*.md`).
@@ -45,8 +45,8 @@ Known baseline: 11 loop/retry tests fail on a clean `main` (hooks TypeError from
 ## Conventions
 
 - ESM only (`"type": "module"`, `.js` extensions in imports). Strict TypeScript. Small focused modules; new harness rules get their own `src/harness/<name>.ts` + `tests/<name>.test.ts`.
-- Harness guards are **pure `evaluateXAtStop()` functions** with a capped block count and an env kill-switch (`FORGE_<NAME>=0`); wire them in `stop-guard.ts`, count blocks in `loop.ts`.
-- Harness messages injected into the transcript are `role: "user"` and must start with `[Forge` (or another `SYNTHETIC_USER_PREFIXES` entry in `session.ts`) so `/undo`, `/retry` and turn marks skip them.
+- Harness guards are **pure `evaluateXAtStop()` functions** with a capped block count and an env kill-switch (`FORGE_<NAME>=0`); wire them in `stop-guard.ts`, prefix the injected reason `[Forge <guard>]` and add that prefix to `GUARD_BLOCK_CLASSES` in `request-prune.ts` so the block is metered.
+- Harness messages injected into the transcript are `role: "user"` and must start with `[Forge` (or another `SYNTHETIC_USER_PREFIXES` entry in `session.ts`) so `/undo`, `/retry` and turn marks skip them. Anything that classifies the user's or the model's prose by regex (`advisory-intent.ts`, `report-guard.ts`) is pinned to `tests/fixtures/prose-corpus.ts` — add the sentence that broke you to the corpus before you touch the pattern.
 - Keep the system prompt cache-stable: live state goes through `context-admit.ts`, never into message[0].
 - Structural proof beats prose: a check counts only when a verification command actually ran (`verificationRan` / `verificationPassed`); closer text never stamps proof.
 - Sidecar JSON under `~/.forge` is written mode 0600 via `writeJsonFile`; nothing in the repo is a secret store.
@@ -66,4 +66,4 @@ Known baseline: 11 loop/retry tests fail on a clean `main` (hooks TypeError from
 - Test fixtures must `git init` their temp workspace. An empty `.git` dir is not a repo, `TMPDIR` points inside this repo during `npm test`, and git walks up — a fixture that arms ULW will otherwise auto-commit the developer's working tree.
 - Real ULW runs are the ground truth for harness changes: `~/.forge/sessions/*/ulw.json` (waves ledger, proofKind, bets). Survey them before adding a rule.
 - Changelog: add an entry under `## Unreleased` in `CHANGELOG.md` for user-visible behaviour, in the same "job:" style as its neighbours.
-- Deep detail lives in `docs/HARNESS.md` and `docs/ULW.md` — extend those, not this file. This file is a map, not a manual: keep it under 12k chars so the prompt loader shows all of it.
+- Deep detail lives in `docs/HARNESS.md`, `docs/ULW.md` and the per-module contracts in `docs/MODULES.md` — extend those, not this file. This file is a map, not a manual: keep it under 12k chars so the prompt loader shows all of it.

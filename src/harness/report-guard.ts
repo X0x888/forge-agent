@@ -28,19 +28,40 @@ import { looksLikeAdvisoryUserMessage } from "../util/advisory-intent.js";
 
 const OPERATOR_RE = /\bOperator:/i;
 
-/** Lines that hand the user work the agent could do. */
+/**
+ * Lines that hand the user work the agent could do.
+ *
+ * Directive forms only. "You'll need to configure…", "you should run…",
+ * "you might want to add…" hand work back. "You can now run `forge status`
+ * to see it" is an affordance — it tells the user what they have, which is
+ * exactly what a closing message is for — and used to be bounced on the
+ * bare modal `can`. The corpus in `tests/fixtures/prose-corpus.ts` pins both
+ * sides of that line.
+ */
 const HOMEWORK_PATTERNS: RegExp[] = [
-  /\byou(?:'ll\s+need\s+to|'ll\s+want\s+to|'ll\s+have\s+to|'d\s+need\s+to|'d\s+want\s+to|\s+(?:can|could|should|may|might|will\s+need\s+to|need\s+to|have\s+to|will\s+want\s+to|might\s+want\s+to|may\s+want\s+to|would\s+need\s+to|will\s+have\s+to))\s+(?:now\s+|then\s+|also\s+|still\s+|manually\s+)?(?:run|re-?run|add|update|set|configure|verify|check|test|review|install|enable|create|write|wire|hook|deploy|merge|open|try|apply|fix|finish|implement|edit|change|adjust|tweak|bump|regenerate|rebuild|restart|commit|push|clean|remove|delete|rename|move|migrate|fill|replace|complete|extend|integrate|validate|double-?check)\b/i,
+  /\byou(?:'ll\s+need\s+to|'ll\s+want\s+to|'ll\s+have\s+to|'d\s+need\s+to|'d\s+want\s+to|\s+(?:should|must|will\s+need\s+to|need\s+to|have\s+to|will\s+want\s+to|might\s+want\s+to|may\s+want\s+to|would\s+need\s+to|will\s+have\s+to|would\s+want\s+to|ought\s+to))\s+(?:now\s+|then\s+|also\s+|still\s+|manually\s+|probably\s+)?(?:run|re-?run|add|update|set|configure|verify|check|test|review|install|enable|create|write|wire|hook|deploy|merge|open|try|apply|fix|finish|implement|edit|change|adjust|tweak|bump|regenerate|rebuild|restart|commit|push|clean|remove|delete|rename|move|migrate|fill|replace|complete|extend|integrate|validate|double-?check)\b/i,
   /\b(?:next\s+steps?|follow-?ups?|to-?dos?|remaining\s+(?:work|items?|tasks?)|what'?s\s+left|left\s+to\s+do|action\s+items?)\s+(?:for|on)\s+(?:you|your\s+(?:side|end))\b/i,
-  /\b(?:for\s+you\s+to|on\s+your\s+(?:side|end)\s+(?:to|:)|left\s+(?:for|to)\s+you)\b/i,
+  /\b(?:for\s+you\s+to\s+(?:run|add|update|set|configure|verify|check|test|review|install|enable|create|write|wire|hook|deploy|merge|apply|fix|finish|implement|edit|change|complete)|on\s+your\s+(?:side|end)\s+(?:to|:)|left\s+(?:for|to)\s+you)\b/i,
   /^\s*(?:[-*•]\s*)?please\s+(?:run|re-?run|add|update|verify|check|test|review|install|configure|apply|merge|fix|finish|complete|deploy|restart|regenerate)\b/im,
   /\b(?:i(?:'m|\s+am)\s+leaving|i(?:'ll|\s+will)\s+leave|i\s+(?:leave|left)|leaving)\s+(?:that|this|it|the\s+(?:[\w-]+\s+){0,3}?)(?:to|for)\s+you\b/i,
-  /\b(?:i\s+)?(?:did\s+not|didn't|have\s+not|haven't|could\s+not|couldn't)\s+(?:run|test|verify|check|finish|complete)\b[^.\n]{0,60}\byou\s+(?:can|could|should|may|might)\b/i,
+  /\b(?:i\s+)?(?:did\s+not|didn't|have\s+not|haven't|could\s+not|couldn't)\s+(?:run|test|verify|check|finish|complete)\b[^.\n]{0,60}\byou\s+(?:can|could|should|may|might|will\s+need\s+to|need\s+to)\b/i,
+  // "you can now run the migration when you are ready" — the deferral turns
+  // an affordance into a hand-back: the agent is parking an action on the
+  // user's calendar.
+  /\byou\s+can\s+(?:now\s+|then\s+)?(?:run|re-?run|deploy|apply|merge|push|trigger|kick\s+off|start|execute|release|publish)\b[^.\n]{0,80}\b(?:when(?:ever)?\s+you(?:'re|\s+are)\s+ready|when\s+you\s+(?:like|want|wish|get\s+a\s+chance|have\s+a\s+moment)|at\s+your\s+convenience|whenever\s+(?:you\s+like|suits))\b/i,
+  // "you can run lint and fix anything it reports" — the coordinated verb is
+  // the work being handed over.
+  /\byou\s+can\s+(?:now\s+|then\s+)?\w+[^.\n]{0,80}\band\s+(?:then\s+)?(?:fix|add|update|wire|configure|finish|complete|implement|set|install|apply|merge|review|verify|check|adjust|tweak|clean\s+up|resolve|address|handle)\b/i,
 ];
 
-/** Exemptions on the same line: the four allowed reasons + code/quotes. */
+/**
+ * Exemptions on the same line: the allowed reasons a closing message may
+ * leave something to the user — a secret, an external/environment blocker,
+ * an irreversible action, or a decision that is theirs to make — plus
+ * code/quotes (stripped before matching).
+ */
 const ALLOWED_REASON_RE =
-  /\b(?:secret|credential|api[\s-]?key|token|password|passphrase|2fa|mfa|oauth|log\s*in|login|sign[\s-]?in|account|billing|subscription|quota|rate[\s-]?limit|external|third[\s-]?party|network|vpn|firewall|dns|upstream|vendor|human\s+approval|approval\s+on|shared\s+prod|production\s+(?:db|database|data)|irreversible|destructive|force[\s-]?push|drop\s+(?:the\s+)?(?:table|database|db)|delete\s+(?:the\s+)?(?:prod|production|remote|branch|repo)|wipe|rm\s+-rf|purge|revoke|rotate\s+(?:the\s+)?(?:key|token|secret))\b/i;
+  /\b(?:secret|credential|api[\s-]?key|token|password|passphrase|2fa|mfa|oauth|log\s*in|login|sign[\s-]?in|account|billing|subscription|quota|rate[\s-]?limit|external|third[\s-]?party|network|vpn|firewall|dns|upstream|vendor|human\s+approval|approval\s+on|shared\s+prod|production\s+(?:db|database|data)|irreversible|destructive|force[\s-]?push|drop\s+(?:the\s+)?(?:table|database|db)|delete\s+(?:the\s+)?(?:prod|production|remote|branch|repo)|wipe|rm\s+-rf|purge|revoke|rotate\s+(?:the\s+)?(?:key|token|secret)|docker|container|simulator|emulator|device|hardware|gpu|not\s+installed|isn't\s+installed|missing\s+(?:binary|tool|dependency|runtime)|no\s+(?:docker|network|internet|display)|sandbox|EPERM|EACCES|permission\s+denied|(?:your|the\s+user'?s?)\s+(?:call|decision|choice|preference)|decide|decision|design\s+choice|product\s+(?:call|decision)|up\s+to\s+you|if\s+you\s+(?:prefer|want|like|disagree))\b/i;
 
 /** Driver attestations — the drivers own their shape, not the homework rule. */
 const ATTESTATION_RE =
@@ -107,8 +128,18 @@ export function detectHomework(message: string): HomeworkDetection {
   };
 }
 
+/**
+ * A section label: a markdown heading, or a line that is nothing but a short
+ * bold / underlined phrase (optionally with a trailing colon).
+ *
+ * Any label counts. The old check required labels from a fixed list
+ * (`What shipped`, `Verified`, …), so a report a careful writer had already
+ * sectioned as `## Changes` / `## Testing` / `## Caveats` was bounced and
+ * told to re-write itself in harness-ese. The shape we need is "an outcome
+ * sentence and sections", not those four words.
+ */
 const REPORT_LABEL_RE =
-  /^\s*(?:#{1,4}\s+|\*\*|__)\s*(?:what\s+shipped|shipped|what\s+changed|changes|delivered|outcome|result|summary|verified|verification|proof|tests?|checks?|not\s+done|left|remaining|open|needs?\s+you|for\s+you|operator|next|resume|status|what\s+the\s+user\s+gets|what\s+you\s+get)\b/im;
+  /^\s*(?:#{1,6}\s+\S.{0,70}|\*\*[^*\n]{2,60}\*\*\s*:?|__[^_\n]{2,60}__\s*:?)\s*$/;
 
 /** Count of bold / heading section labels a report is expected to have. */
 export function countReportLabels(message: string): number {
@@ -223,14 +254,14 @@ function homeworkReanchor(
     ...homework.lines.map((l) => `  ↳ ${l}`),
     ``,
     `Never hand homework back. Do it now with tools (run the check, add the test, wire the config, finish the piece), then close.`,
-    `The only things a closing message may leave to the user: a missing secret, a hard external blocker, or an irreversible action — each as its own line starting with \`Operator:\` and saying why.`,
+    `The only things a closing message may leave to the user: a missing secret, a hard external or environment blocker, an irreversible action, or a decision that is theirs — each as its own line starting with \`Operator:\` and saying why.`,
     ...facts,
     ``,
     closer,
   ].join("\n");
 }
 
-const RUN_WIDE_CLOSER = `Then write the final report: one outcome sentence first, then **What shipped** · **Verified** · **Not done** · **Needs you** (Operator: items or "Nothing"), covering the whole run since the user's request.`;
+const RUN_WIDE_CLOSER = `Then write the final report: one outcome sentence first, then sections under headings of your choosing (for example **What shipped** · **Verified** · **Not done** · **Needs you** — Operator: items or "Nothing"), covering the whole run since the user's request.`;
 
 export interface AttestationReportInput {
   lastAssistantMessage: string;
@@ -301,19 +332,19 @@ export function evaluateAttestationHomeworkAtStop(
     const reanchor = homeworkReanchor(
       homework,
       facts,
-      `Then re-attest with the same marker, and make the attestation the whole-run report: one outcome sentence, then **What shipped** · **Verified** · **Not done** · **Needs you** (Operator: items or "Nothing").`,
+      `Then re-attest with the same marker, and make the attestation the whole-run report: one outcome sentence, then sections (for example **What shipped** · **Verified** · **Not done** · **Needs you** — Operator: items or "Nothing").`,
     );
     return { block: true, kind: "homework", homework, reason: reanchor, reanchor };
   }
 
   const reanchor = [
     `[Forge report-guard] Stop blocked — after ${input.stopContinues} harness rounds the attestation covers only the close-out.`,
-    `This message is the run's report and the user will not scroll. Re-attest with the same marker, then:`,
+    `This message is the run's report and the user will not scroll. Re-attest with the same marker, then — under headings of your choosing, for example:`,
     `  1. One plain outcome sentence (done / partly done / blocked, and what they now have).`,
     `  2. **What shipped** — every wave since the mandate, not this close-out; numbers beside the thing they count.`,
     `  3. **Verified** — the commands you ran and their results.`,
     `  4. **Not done** — with why.`,
-    `  5. **Needs you** — only \`Operator:\` items (secret / external blocker / irreversible), else "Nothing".`,
+    `  5. **Needs you** — only \`Operator:\` items (secret / external blocker / irreversible / your decision), else "Nothing".`,
     `Bullets of one or two sentences, plain words a layman reads in one pass. No new work is required — report, then stop.`,
     ...facts,
   ].join("\n");
@@ -367,12 +398,12 @@ export function evaluateReportAtStop(input: ReportStopInput): ReportStopDecision
 
   const reanchor = [
     `[Forge report-guard] Stop blocked — after ${input.stopContinues} harness rounds the closing message covers only the last round.`,
-    `The user will not scroll. Write a report of the whole run since their request that stands on its own:`,
+    `The user will not scroll. Write a report of the whole run since their request that stands on its own — under headings of your choosing, for example:`,
     `  1. One plain outcome sentence first (done / partly done / blocked, and what they now have).`,
     `  2. **What shipped** — every change of the run, not the last fix; numbers beside the thing they count.`,
     `  3. **Verified** — the commands you ran and their results.`,
     `  4. **Not done** — with why.`,
-    `  5. **Needs you** — only \`Operator:\` items (secret / external blocker / irreversible), else "Nothing".`,
+    `  5. **Needs you** — only \`Operator:\` items (secret / external blocker / irreversible / your decision), else "Nothing".`,
     `Bullets of one or two sentences, plain words a layman reads in one pass. No new work is required — report, then stop.`,
     ...factsBlock,
   ].join("\n");

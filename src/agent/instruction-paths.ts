@@ -26,6 +26,61 @@ import { forgeHome } from "../util/fs.js";
  */
 export const RULES_PER_FILE_CHARS = 12_000;
 
+/** Total project-rules budget (OpenCode-style multi-source instructions). */
+export const RULES_TOTAL_CHARS = 28_000;
+
+/**
+ * Per-file cap for `n` loaded rules files. A lone `AGENTS.md` gets the whole
+ * total budget; two share it; from three up the classic per-file floor
+ * applies. Nearer files are loaded first, so a nested map still wins room.
+ *
+ * The old fixed 12k per file left a lone 26.8k `AGENTS.md` two-thirds unseen
+ * while 16k of the 28k total sat idle — the bug the guideline audit was
+ * built around instead of fixing here. Lives in this leaf so the audit can
+ * ask "would the prompt clip this file?" without importing the prompt.
+ */
+export function ruleFileBudget(fileCount: number): number {
+  const n = Math.max(1, fileCount);
+  return Math.max(RULES_PER_FILE_CHARS, Math.floor(RULES_TOTAL_CHARS / n));
+}
+
+/**
+ * The rule files the system prompt actually steers a session by. Exported
+ * so the guideline audit's `GUIDELINE_FILES` can be pinned against it by
+ * test: the two sets are allowed to differ only by `AUDIT_ONLY_GUIDELINE_FILES`
+ * and the `~/.forge/AGENTS.md` fallback, both documented in the audit's header.
+ */
+export const PROMPT_RULE_FILES = [
+  "AGENTS.md",
+  "FORGE.md",
+  "CLAUDE.md",
+  ".forge/rules.md",
+  ".github/copilot-instructions.md",
+  ".cursorrules",
+] as const;
+
+/** Of those, the ones where the nearest copy shadows the monorepo root. */
+export const PROMPT_SHADOW_BASENAMES = [
+  "AGENTS.md",
+  "FORGE.md",
+  "CLAUDE.md",
+  ".cursorrules",
+] as const;
+
+/**
+ * The files the prompt loader would load from `workspace`, in load order.
+ * The audit uses the count to compute the per-file budget a surveyed file
+ * competes for, so "clipped" means the same thing on both sides.
+ */
+export function promptRuleFiles(workspace: string): InstructionFile[] {
+  return collectInstructionFiles(workspace, {
+    files: PROMPT_RULE_FILES,
+    shadowBasenames: PROMPT_SHADOW_BASENAMES,
+    cursorRules: true,
+    globalAgentsFallback: true,
+  });
+}
+
 /**
  * The user-level `AGENTS.md` the prompt loader falls back to when the walk
  * found no project one. Exported because the guideline audit deliberately

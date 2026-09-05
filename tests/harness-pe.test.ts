@@ -442,17 +442,25 @@ describe("prompt profile + baseline system", () => {
     // The final-report contract and the guideline-audit brief are the two
     // model-side halves of the report guard and the audit. Deleting them
     // would make the size-ceiling test *greener*, so they are asserted here.
-    assert.match(text, /## Final report \(closing message\)/);
+    assert.match(text, /## Closing message/);
+    // Proportionate: a question is an answer, a one-round fix a sentence; the
+    // whole-run report is asked of multi-round runs — and under the writer's
+    // own headings, not four mandated bold labels.
+    assert.match(text, /Proportionate to the run/i);
+    assert.match(text, /A question gets an answer/i);
+    assert.match(text, /After a multi-round run/i);
     assert.match(text, /the user will not scroll/i);
-    assert.match(text, /\*\*What shipped\*\*/);
-    assert.match(text, /\*\*Verified\*\*/);
-    assert.match(text, /\*\*Not done\*\*/);
-    assert.match(text, /\*\*Needs you\*\*/);
+    assert.match(text, /headings of your choosing/i);
+    assert.doesNotMatch(text, /\*\*What shipped\*\* · \*\*Verified\*\*/);
     assert.match(text, /Never hand homework back/i);
+    assert.match(text, /Telling the user what they can now do with the result is fine/i);
     assert.match(text, /`Operator:`/);
     assert.match(text, /Agent guidelines audit/i);
-    assert.match(text, /authorised to revise or rewrite them/i);
-    assert.match(text, /never write the stamp yourself/i);
+    // Facts are fixed in place; doctrine goes to a proposal, never the tracked file.
+    assert.match(text, /Fix factual ones .* in the file/i);
+    assert.match(text, /proposal file it names, never into the tracked file/i);
+    assert.doesNotMatch(text, /authorised to revise or rewrite them/i);
+    assert.match(text, /you never write the stamp/i);
   });
 
   it("baseline prompt stays lean (grok-build style size ceiling)", async () => {

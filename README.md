@@ -409,7 +409,7 @@ src/
     hooks.ts          # Claude-compatible hooks, blocking Stop
     goal.ts           # /goal state machine
     stop-guard.ts     # composes hooks + goal + ultrawork + guards
-    guideline-audit.ts# first action: proofread AGENTS.md / CLAUDE.md
+    guideline-audit.ts# AGENTS.md / CLAUDE.md: fix dead paths, propose doctrine
     run-report.ts     # standalone end-of-run report
     report-guard.ts   # no homework hand-back; run-wide closing message
   session/            # durable sessions under ~/.forge/sessions

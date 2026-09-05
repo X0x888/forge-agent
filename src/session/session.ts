@@ -199,6 +199,8 @@ export interface SessionMeta {
   harnessUserPokes?: number;
   admitCount?: number;
   proofPokes?: number;
+  /** Last-run Stop-guard blocks by guard id (non-zero keys only). */
+  guardBlocks?: Record<string, number>;
   /** Last-run provider chat rounds. */
   providerRounds?: number;
   /** Session id this was forked from (conversation tree parent). */

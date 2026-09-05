@@ -7,9 +7,6 @@
  *     **Cycle complete.** / **Goal achieved.** and return, so the run's
  *     closing message is checked for homework and run-wide shape here,
  *     before any driver consumes the Stop
- *  1c. Guideline-audit guard — briefed first action ignored (once). Also
- *     ahead of the drivers: ULW never answers a Stop neutrally while it is
- *     armed, so anything behind step 3 is dead in every ULW run
  *  2. /goal relentless driver
  *  3. ULW cycle driver (cycle=1 loop / cycle=0 last-wave)
  *  4. TodoGate (open todos under ULW; soft once outside ULW)
@@ -38,7 +35,6 @@ import {
   type ProofClaimStopDecision,
 } from "./proof-claim-guard.js";
 import { envPositiveInt } from "../util/env.js";
-import { evaluateGuidelineAuditAtStop } from "./guideline-audit.js";
 import {
   evaluateAttestationHomeworkAtStop,
   evaluateReportAtStop,
@@ -179,42 +175,6 @@ export async function runStopGuard(input: StopGuardInput): Promise<StopGuardResu
       systemMessage: attestationDecision.reason,
       hook: hookResult,
       report: attestationDecision,
-    };
-  }
-
-  // Guideline-audit guard, step 1c: the session's first action was to
-  // proofread the agent guideline files and none was read. Once, then
-  // release.
-  //
-  // It sits here, not behind the drivers, for the reason step 1b does:
-  // `evaluateUlwAtStop` answers neutrally only when ULW is off — while it is
-  // armed every path either blocks or sets a release flag, and stop-guard
-  // returns on both. A guard behind step 3 therefore never runs in a ULW
-  // run, which is where a badly steering AGENTS.md does the most damage.
-  // The alternative — re-checking on each ULW release path — would have to
-  // be repeated at four early returns (goal stuck-wall, ULW stuck /
-  // released / sat down) and would still miss the blocking waves.
-  //
-  // Blocking here spends no wave, no evidence nudge and no wrap flag: the
-  // drivers have not evaluated this Stop yet. The model reads the files and
-  // the next Stop reaches the drivers exactly as it would have. Capped at
-  // one block per session inside the guard (`st.blocked`), kill-switch
-  // FORGE_GUIDELINE_AUDIT_BLOCK=0.
-  //
-  // `lastUserMessage` for the same reason step 1b takes it nine lines above:
-  // a pure question is an answer, not a run, and no guard on this path may
-  // charge one a round.
-  const guidelineDecision = evaluateGuidelineAuditAtStop({
-    sessionId: ctx.sessionId,
-    lastUserMessage: input.lastUserMessage,
-  });
-  if (guidelineDecision.block) {
-    return {
-      allowStop: false,
-      reason: guidelineDecision.reason,
-      additionalContext: guidelineDecision.reanchor || guidelineDecision.reason,
-      systemMessage: guidelineDecision.reason,
-      hook: hookResult,
     };
   }
 

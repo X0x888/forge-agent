@@ -825,7 +825,7 @@ Exit codes:
 
 --json fields (success): ok, version, node, forgeHome, sessionId, sessionPath, title, pinned, foreignLock, provider, stickyProvider, authMethod, model, reasoningEffort, cwd, git, projectLabel, projectHints, packageName, packageVersion, packageEnginesNode, packageManager, checkCommands, projectStackSummary, monorepoRoot, workspaces, nodeModulesPresent, multipleLockfiles, permissionMode, sandbox, sandboxNetwork, sandboxMissingBackend, readOutsideWorkspace, ultrawork, ulwCycle, ulwWave, ulwMaxWaves, ulwBlocks, ulwMandate, ulwSoftPrompt, ulwExpandedMandate, goalActive, goal, goalStuckThreshold, goalBlocks, goalStuckBlocks, goalCriteria, denyRules, allowRules, askRules, maxTurns, maxTurnsUnlimited, maxCostUsd, maxCostUnlimited, effectiveMaxCostUsd, sessionCostUsd, parentCostUsd, subagentCostUsd, subagentUsage, productionWarnings, formatOnWrite, subagentLandMode, projectMemoryCount, lastCheckpoint, blockingStop, maxRunMs, providerTimeoutMs, bashTimeoutMs, bashBackgroundTimeoutMs, permissionAskTimeoutMs, doomLoopThreshold, errorStreakThreshold, ulwMaxContinues, editCount, lastVerificationCommand, lastVerificationAt, lastEditAt, lastVerificationStale, openTodos, messageCount, finalText, turns, stopContinues,
   releasedOnContinueCap, hitMaxTurns, hitCostCap, stuckReleased, lastCycleReleased, finishReason, lastError, editCount, aborted, timedOut,
-  harnessUserPokes, admitCount, proofPokes, providerRounds,
+  harnessUserPokes, admitCount, proofPokes, guardBlocks, providerRounds,
   promptTokens, completionTokens, durationMs
   (FORGE_JSON_COMPACT=1 → single-line success JSON for CI log aggregation)
   (releasedOnContinueCap/hitMaxTurns/hitCostCap/stuckReleased/lastCycleReleased → safety valves; still ok unless aborted/timedOut/empty run)
@@ -3991,7 +3991,7 @@ Docs: docs/PRODUCTION.md
 
   program
     .command("prune-metrics")
-    .description("Prune ~/.forge/metrics.jsonl (keep newest N events)")
+    .description("Prune ~/.forge/metrics.jsonl + rounds.jsonl (keep newest N events each)")
     .option("--keep <n>", "Keep newest N events", "500")
     .option("--json", "Machine-readable JSON")
     .action((opts, command) => {
@@ -4005,6 +4005,11 @@ Docs: docs/PRODUCTION.md
       log.success(
         `Pruned metrics: removed ${result.deleted}, kept ${result.kept} (was ${result.beforeEvents})`,
       );
+      if (result.rounds) {
+        log.dim(
+          `rounds.jsonl: removed ${result.rounds.deleted}, kept ${result.rounds.kept} (was ${result.rounds.beforeEvents})`,
+        );
+      }
       if (before.events === 0) log.dim("metrics.jsonl was already empty");
     });
 
@@ -7127,6 +7132,7 @@ maxTurns: opts.config.maxTurns ?? 0,
       harnessUserPokes: result.harnessUserPokes ?? 0,
       admitCount: result.admitCount ?? 0,
       proofPokes: result.proofPokes ?? 0,
+      guardBlocks: result.guardBlocks ?? {},
       providerRounds: result.providerRounds ?? result.turns,
       lastError: opts.session.meta.lastError
         ? {
@@ -7187,6 +7193,7 @@ maxTurns: opts.config.maxTurns ?? 0,
         harnessUserPokes: payload.harnessUserPokes,
         admitCount: payload.admitCount,
         proofPokes: payload.proofPokes,
+        guardBlocks: payload.guardBlocks,
         providerRounds: payload.providerRounds,
         durationMs,
         aborted: payload.aborted,

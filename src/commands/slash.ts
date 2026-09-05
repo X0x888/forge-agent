@@ -597,7 +597,8 @@ export function classifyLiveSlash(line: string): LiveSlashKind {
   // where the agent may be editing the same file.
   if (cmd === "/guidelines") {
     const a = (arg.split(/\s+/)[0] || "").toLowerCase();
-    if (!a || a === "status") return "readonly";
+    // `diff` only reads the proposal beside the registry — safe mid-run too.
+    if (!a || a === "status" || a === "diff" || a === "show" || a === "review") return "readonly";
     return "idle-only";
   }
   if (LIVE_READONLY.has(cmd)) return "readonly";
@@ -3211,22 +3212,33 @@ return {
           .join("\n");
         let rulesNote = "";
         try {
-          const { listProjectRulePaths, loadProjectRules } = await import(
+          const { listProjectRulePaths, loadProjectRulesReport } = await import(
             "../agent/system-prompt.js"
           );
           const ws = opts.config.workspace || process.cwd();
           const paths = listProjectRulePaths(ws);
-          const body = loadProjectRules(ws);
+          const report = loadProjectRulesReport(ws);
+          const body = report.text;
           if (paths.length) {
+            const fmtN = (n: number) => n.toLocaleString("en-US");
+            const loadedByAbs = new Map(report.files.map((f) => [f.abs, f]));
             const labels = paths.slice(0, 8).map((p) => {
               const rel = displayRelPath(ws, p);
-              return path.isAbsolute(rel)
+              const label = path.isAbsolute(rel)
                 ? p.replace(process.env.HOME || "", "~")
                 : rel;
+              const f = loadedByAbs.get(p);
+              if (!f) return `${label}  (not loaded — budget spent)`;
+              // A clipped file is the one fact here the user cannot see
+              // anywhere else: the prompt shows the model a marker, this
+              // shows the user the same cut.
+              return f.clipped
+                ? `${label}  ${fmtN(f.loaded)}/${fmtN(f.chars)} chars — CLIPPED${f.unseenHeadings.length ? ` (unseen: ${f.unseenHeadings.slice(0, 3).join(", ")})` : ""}`
+                : `${label}  ${fmtN(f.chars)} chars`;
             });
             const more = paths.length > 8 ? ` (+${paths.length - 8} more)` : "";
             rulesNote =
-              `\nProject rules (~${formatTokens(estimateTokens([{ role: "system", content: body }]))}):\n` +
+              `\nProject rules (~${formatTokens(estimateTokens([{ role: "system", content: body }]))} · ${fmtN(report.used)}/${fmtN(report.budget)} chars):\n` +
               labels.map((l) => `  · ${l}`).join("\n") +
               more;
           } else {
@@ -5433,48 +5445,90 @@ if (parts[1]) {
 
     case "/guidelines": {
       // Agent-guidelines audit: status | audit (re-brief next prompt) | stamp
+      // (acknowledge) | diff | apply | discard (doctrine proposals)
       const {
         formatGuidelineCard,
         requestGuidelineAudit,
         stampGuidelinesNow,
         guidelineAuditEnabled,
+        formatGuidelineProposalDiff,
+        applyGuidelineProposals,
+        discardGuidelineProposals,
       } = await import("../harness/guideline-audit.js");
       const cwd = opts.config.workspace || opts.session.meta.cwd || process.cwd();
-      const sub = arg.trim().split(/\s+/)[0]?.toLowerCase() || "";
+      const words = arg.trim().split(/\s+/).filter(Boolean);
+      const sub = words[0]?.toLowerCase() || "";
+      const relArg = words[1];
+      const card = () =>
+        formatGuidelineCard({ workspace: cwd, sessionId: opts.session.meta.id });
       if (sub === "audit" || sub === "recheck" || sub === "again") {
         requestGuidelineAudit(opts.session.meta.id);
         return {
           handled: true,
           output:
             (guidelineAuditEnabled()
-              ? "Guideline audit re-armed — the next prompt briefs the agent to proofread AGENTS.md / CLAUDE.md first."
+              ? "Guideline audit re-armed — the next work prompt briefs the agent to check AGENTS.md / CLAUDE.md alongside the request."
               : "FORGE_GUIDELINE_AUDIT=0 — audit is off; unset it to re-arm.") +
             "\n" +
-            formatGuidelineCard({ workspace: cwd, sessionId: opts.session.meta.id }),
+            card(),
         };
       }
-      if (sub === "stamp") {
+      if (sub === "stamp" || sub === "ack" || sub === "acknowledge") {
         const stamped = stampGuidelinesNow(cwd);
         return {
           handled: true,
           output:
             (stamped.length
-              ? `Stamped ${stamped.join(", ")} as proofread now (you read them).`
+              ? `Stamped ${stamped.join(", ")} as proofread now and acknowledged their current issues (quiet until the file changes).`
               : "Nothing to stamp.") +
             "\n" +
-            formatGuidelineCard({ workspace: cwd, sessionId: opts.session.meta.id }),
+            card(),
+        };
+      }
+      if (sub === "diff" || sub === "show" || sub === "review") {
+        return { handled: true, output: formatGuidelineProposalDiff(cwd, relArg) };
+      }
+      if (sub === "apply" || sub === "accept") {
+        const landed = applyGuidelineProposals({
+          workspace: cwd,
+          sessionId: opts.session.meta.id,
+          turn: opts.session.meta.turnCount,
+          rel: relArg,
+        });
+        return {
+          handled: true,
+          output:
+            (landed.length
+              ? landed
+                  .map(
+                    (p) =>
+                      `Applied ${p.rel} (${p.before.lines} → ${p.after.lines} lines) — stamped; /undo reverts.`,
+                  )
+                  .join("\n")
+              : "No guideline proposal is pending.") +
+            "\n" +
+            card(),
+        };
+      }
+      if (sub === "discard" || sub === "reject" || sub === "drop") {
+        const dropped = discardGuidelineProposals(cwd, relArg);
+        return {
+          handled: true,
+          output:
+            (dropped.length
+              ? `Discarded proposal${dropped.length === 1 ? "" : "s"} for ${dropped.join(", ")}.`
+              : "No guideline proposal is pending.") +
+            "\n" +
+            card(),
         };
       }
       if (sub && sub !== "status") {
         return {
           handled: true,
-          output: `Unknown /guidelines subcommand "${sub}". Use: /guidelines · /guidelines audit · /guidelines stamp`,
+          output: `Unknown /guidelines subcommand "${sub}". Use: /guidelines · audit · stamp · diff · apply · discard`,
         };
       }
-      return {
-        handled: true,
-        output: formatGuidelineCard({ workspace: cwd, sessionId: opts.session.meta.id }),
-      };
+      return { handled: true, output: card() };
     }
 
             case "/news":
@@ -6690,6 +6744,16 @@ export interface DoctorResult {
   guidelines?: string;
   /** True when a guideline file is missing, unstamped, bloated, stale, or conflicting. */
   guidelinesAuditDue?: boolean;
+  /**
+   * Rules files the system prompt could not load in full (per-file
+   * `loaded/chars` and the headings past the cut). Empty when all fit.
+   */
+  rulesClipped?: Array<{
+    label: string;
+    chars: number;
+    loaded: number;
+    unseenHeadings: string[];
+  }>;
   /** Detected package manager (npm/pnpm/yarn/bun). */
   packageManager?: string | null;
   /** Ecosystem labels (node, typescript, rust, …). */
@@ -6991,6 +7055,16 @@ export async function runDoctorCheck(
             ? chalk.yellow(`Agent guidelines: ${line}  · audit due on next prompt  · /guidelines`)
             : `Agent guidelines: ${line}  · /guidelines`,
         );
+      }
+    } catch {
+      /* */
+    }
+    try {
+      // Rules the prompt could not load in full — the silent clip is the
+      // one thing about AGENTS.md a user cannot see from the file itself.
+      const { projectRulesWarnings } = await import("../agent/system-prompt.js");
+      for (const w of projectRulesWarnings(config.workspace || process.cwd())) {
+        lines.push(chalk.yellow(`  ⚠ rules clipped: ${w}`));
       }
     } catch {
       /* */
@@ -7453,8 +7527,11 @@ export async function runDoctorCheck(
   try {
     const m = metricsStats();
     if (m.events > 0) {
+      const rounds = m.rounds?.events
+        ? ` · rounds ${m.rounds.events} (${(m.rounds.bytes / 1024).toFixed(1)} KB)`
+        : "";
       lines.push(
-        `  metrics: ${m.events} events · ${(m.bytes / 1024).toFixed(1)} KB (~/.forge/metrics.jsonl)`,
+        `  metrics: ${m.events} runs · ${(m.bytes / 1024).toFixed(1)} KB (~/.forge/metrics.jsonl)${rounds}`,
       );
     } else {
       lines.push(`  metrics: empty`);
@@ -7934,6 +8011,22 @@ export async function runDoctorCheck(
           guidelines: formatGuidelineStatusLine(gs),
           guidelinesAuditDue: gs.needsAudit,
         };
+      } catch {
+        return {};
+      }
+    })()),
+    ...(await (async () => {
+      try {
+        const { loadProjectRulesReport } = await import("../agent/system-prompt.js");
+        const clipped = loadProjectRulesReport(config.workspace || process.cwd())
+          .files.filter((f) => f.clipped)
+          .map((f) => ({
+            label: f.label,
+            chars: f.chars,
+            loaded: f.loaded,
+            unseenHeadings: f.unseenHeadings,
+          }));
+        return clipped.length ? { rulesClipped: clipped } : {};
       } catch {
         return {};
       }

@@ -16,54 +16,26 @@ import {
 } from "../util/project-intel.js";
 import { forgeHome } from "../util/fs.js";
 import {
-  collectInstructionFiles,
-  RULES_PER_FILE_CHARS,
+  promptRuleFiles,
+  ruleFileBudget,
+  PROMPT_RULE_FILES,
+  RULES_TOTAL_CHARS,
 } from "./instruction-paths.js";
 import { formatProjectMemoryForPrompt } from "../harness/project-memory.js";
 import { displayRelPath } from "./tools/path-util.js";
 import { formatSkillsForPrompt } from "./project-skills.js";
 import { isCursorProvider } from "../auth/cursor.js";
 
-/** Total project-rules budget (OpenCode-style multi-source instructions). */
-const RULES_TOTAL_CHARS = 28_000;
-
-/**
- * The rule files this loader actually steers a session by. Exported so the
- * guideline audit's `GUIDELINE_FILES` can be pinned against it by test: the
- * two sets are allowed to differ only by `AUDIT_ONLY_GUIDELINE_FILES` and
- * the `~/.forge/AGENTS.md` fallback, both documented in the audit's header.
- */
-export const PROMPT_RULE_FILES = [
-  "AGENTS.md",
-  "FORGE.md",
-  "CLAUDE.md",
-  ".forge/rules.md",
-  ".github/copilot-instructions.md",
-  ".cursorrules",
-] as const;
-
-const ROOT_RULE_FILES = PROMPT_RULE_FILES;
-
-/** Of those, the ones where the nearest copy shadows the monorepo root. */
-const SHADOW_RULE_BASENAMES = [
-  "AGENTS.md",
-  "FORGE.md",
-  "CLAUDE.md",
-  ".cursorrules",
-] as const;
+export { PROMPT_RULE_FILES, ruleFileBudget };
 
 /**
  * Walk workspace → parents collecting instruction paths.
- * The walk itself lives in `instruction-paths.ts` because the guideline
- * audit has to survey exactly the files this loads — see the header there.
+ * The walk, the file list and the budget live in `instruction-paths.ts`
+ * because the guideline audit has to survey exactly the files this loads
+ * and judge "clipped" by the same arithmetic — see the header there.
  */
 function collectInstructionPaths(workspace: string): string[] {
-  return collectInstructionFiles(workspace, {
-    files: ROOT_RULE_FILES,
-    shadowBasenames: SHADOW_RULE_BASENAMES,
-    cursorRules: true,
-    globalAgentsFallback: true,
-  }).map((f) => f.abs);
+  return promptRuleFiles(workspace).map((f) => f.abs);
 }
 
 function labelForRulePath(abs: string, workspace: string): string {
@@ -78,33 +50,148 @@ function labelForRulePath(abs: string, workspace: string): string {
   return abs;
 }
 
+/** One rules file as the prompt loaded it (or clipped it). */
+export interface LoadedRuleFile {
+  abs: string;
+  /** Short label the prompt prints (`AGENTS.md`, `packages/api/AGENTS.md`, `~/.forge/AGENTS.md`). */
+  label: string;
+  /** Chars of the trimmed file on disk. */
+  chars: number;
+  /** Chars that made it into the prompt. */
+  loaded: number;
+  clipped: boolean;
+  /** `#`/`##`/`###` headings that fall after the cut — what the model cannot see. */
+  unseenHeadings: string[];
+}
+
+export interface ProjectRulesReport {
+  text: string;
+  files: LoadedRuleFile[];
+  /** Total chars loaded (labels and clip markers included). */
+  used: number;
+  budget: number;
+}
+
+const HEADING_RE = /^#{1,3}\s+(.+?)\s*$/gm;
+
+function headingsIn(text: string, limit = 6): string[] {
+  const out: string[] = [];
+  HEADING_RE.lastIndex = 0;
+  let m: RegExpExecArray | null;
+  while ((m = HEADING_RE.exec(text)) !== null && out.length < limit) {
+    out.push(m[1].trim());
+  }
+  return out;
+}
+
 /**
- * Load project / user instruction files for the system prompt.
+ * The marker the model sees at the end of a clipped block. Silent clipping
+ * was the defect: a model steered by the first 12k of a file had no way to
+ * know a "Non-negotiables" section existed past the cut, and neither did the
+ * user. Says what is missing and what to do about it.
+ */
+export function formatRulesClipMarker(f: {
+  chars: number;
+  loaded: number;
+  unseenHeadings: string[];
+}): string {
+  const fmt = (n: number) => n.toLocaleString("en-US");
+  const unseen = f.unseenHeadings.length
+    ? ` — not in context: ${f.unseenHeadings
+        .slice(0, 4)
+        .map((h) => `"${h}"`)
+        .join(", ")}${f.unseenHeadings.length > 4 ? ", …" : ""}`
+    : "";
+  return `[clipped — ${fmt(f.loaded)} of ${fmt(f.chars)} chars loaded${unseen}. Ask the user to shorten this file or move detail to docs/.]`;
+}
+
+/**
+ * Load project / user instruction files for the system prompt, and report
+ * exactly what was loaded from each.
  * Sources (nearest wins per basename): AGENTS.md, FORGE.md, CLAUDE.md,
  * .forge/rules.md, .github/copilot-instructions.md, .cursorrules,
  * .cursor/rules/*.{md,mdc}, and ~/.forge/AGENTS.md.
  */
-export function loadProjectRules(workspace: string): string {
+export function loadProjectRulesReport(workspace: string): ProjectRulesReport {
   const paths = collectInstructionPaths(workspace);
+  const perFile = ruleFileBudget(paths.length);
   const chunks: string[] = [];
+  const files: LoadedRuleFile[] = [];
   let used = 0;
   for (const abs of paths) {
     if (used >= RULES_TOTAL_CHARS) break;
     try {
       const text = fs.readFileSync(abs, "utf8").trim();
       if (!text) continue;
-      const room = RULES_TOTAL_CHARS - used;
-      const slice = text.slice(0, Math.min(RULES_PER_FILE_CHARS, room));
-      if (!slice.trim()) continue;
       const label = labelForRulePath(abs, workspace);
-      const block = `# From ${label}\n${slice}`;
+      const header = `# From ${label}\n`;
+      const room = RULES_TOTAL_CHARS - used - header.length;
+      if (room <= 0) break;
+      const cap = Math.min(perFile, room);
+      let slice = text;
+      let marker = "";
+      let unseenHeadings: string[] = [];
+      if (text.length > cap) {
+        // Reserve the marker's own room so the block stays inside the budget.
+        const probe = formatRulesClipMarker({
+          chars: text.length,
+          loaded: cap,
+          unseenHeadings: headingsIn(text.slice(cap)),
+        });
+        const cut = Math.max(0, cap - probe.length - 1);
+        slice = text.slice(0, cut);
+        unseenHeadings = headingsIn(text.slice(cut));
+        marker = formatRulesClipMarker({
+          chars: text.length,
+          loaded: slice.length,
+          unseenHeadings,
+        });
+      }
+      if (!slice.trim()) continue;
+      const block = `${header}${slice}${marker ? `\n${marker}` : ""}`;
       chunks.push(block);
       used += block.length;
+      files.push({
+        abs,
+        label,
+        chars: text.length,
+        loaded: slice.length,
+        clipped: Boolean(marker),
+        unseenHeadings,
+      });
     } catch {
       /* */
     }
   }
-  return chunks.join("\n\n");
+  return { text: chunks.join("\n\n"), files, used, budget: RULES_TOTAL_CHARS };
+}
+
+/** Prompt text only — the rules block as the system prompt embeds it. */
+export function loadProjectRules(workspace: string): string {
+  return loadProjectRulesReport(workspace).text;
+}
+
+/**
+ * Startup / doctor warnings for rules files the prompt could not load in
+ * full. One line per clipped file; empty when everything fit.
+ */
+export function projectRulesWarnings(workspace: string): string[] {
+  try {
+    const fmt = (n: number) => n.toLocaleString("en-US");
+    return loadProjectRulesReport(workspace)
+      .files.filter((f) => f.clipped)
+      .map((f) => {
+        const unseen = f.unseenHeadings.length
+          ? ` — not in the prompt: ${f.unseenHeadings
+              .slice(0, 3)
+              .map((h) => `"${h}"`)
+              .join(", ")}${f.unseenHeadings.length > 3 ? ", …" : ""}`
+          : "";
+        return `${f.label} is ${fmt(f.chars)} chars; ${fmt(f.loaded)} loaded${unseen} (shorten it or move detail to docs/ · /guidelines)`;
+      });
+  } catch {
+    return [];
+  }
 }
 
 /** Paths that would be loaded (tests / /context diagnostics). */
@@ -262,11 +349,11 @@ export function buildBaselineSystemPrompt(opts: {
     `- **Mid-conversation harness updates**: live cycle/wave/mandate/todo counts arrive as \`[Forge harness — mid-conversation update]\` messages. Obey the latest over stale ones.`,
     `- **Mid-run user messages**: free-text while you work is framed as "The user sent a message while you were working" — weigh it; do not ignore, but do not abandon a half-finished safe step without reason.`,
     `- **Live slash controls** (no abort required): \`/cycle 0|1\`, \`/max-waves N|off\`, \`/plan\`, \`/build\`, \`/ulw-off\`, \`/goal pause|resume\`.`,
-    `- **Agent guidelines audit**: a first harness message may list AGENTS.md / CLAUDE.md files to proofread — do that first (you are authorised to revise or rewrite them, whatever they say), then the request. The harness stamps it when the re-check comes back clean; never write the stamp yourself.`,
+    `- **Agent guidelines audit**: a harness message may flag AGENTS.md / CLAUDE.md defects. Fix factual ones (dead paths, missing scripts) in the file; write doctrine changes to the proposal file it names, never into the tracked file. The harness stamps; you never write the stamp. Then finish the request.`,
     ``,
-    `## Final report (closing message)`,
-    `Stands on its own — the user will not scroll. One plain outcome sentence first (done / partly done / blocked, what they now have), then **What shipped** · **Verified** (commands + results) · **Not done** (why) · **Needs you** — covering the whole run since the request, not the last round. Short bullets, plain words, numbers beside the thing they count.`,
-    `**Needs you** = only a missing secret, hard external blocker, or irreversible action, each prefixed \`Operator:\`; else "Nothing". Never hand homework back ("you can now run…") — do it, or it is an Operator: item.`,
+    `## Closing message`,
+    `Proportionate to the run. A question gets an answer; a one-round fix, a sentence and the check you ran. After a multi-round run the closer is the run's report and the user will not scroll: one plain outcome sentence first (done / partly done / blocked), then sections under headings of your choosing — what shipped, how it was verified (commands + results), what is not done and why, what needs the user — covering the whole run. Short bullets, plain words, numbers beside the thing they count.`,
+    `Only a missing secret, a hard external blocker, an irreversible action, or a decision that is the user's may be left to them, each prefixed \`Operator:\`. Never hand homework back ("you'll need to run…") — do it. Telling the user what they can now do with the result is fine.`,
     ``,
     `## Safety`,
     `- Never exfiltrate secrets. Never run destructive commands without necessity.`,

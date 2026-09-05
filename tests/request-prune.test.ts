@@ -475,6 +475,64 @@ describe("request-prune", () => {
     assert.equal(withUlwProof.admitCount, 3);
   });
 
+  it("countHarnessUserPokes files each Stop-guard block under its guard", async () => {
+    const { countHarnessUserPokes, classifyGuardBlock } = await import(
+      "../src/session/request-prune.js"
+    );
+    const msgs: ChatMessage[] = [
+      { role: "user", content: "fix the flaky test" },
+      {
+        role: "user",
+        content:
+          "[Forge handoff-guard] Stop blocked — premature yield / handoff.\nFinish.",
+      },
+      {
+        role: "user",
+        content:
+          "[Forge proof-claim] Stop blocked — verification claimed without running it.",
+      },
+      {
+        role: "user",
+        content:
+          "[Forge report-guard] Stop blocked — the closing message hands work back to the user.",
+      },
+      { role: "user", content: "[Forge TodoGate] Stop blocked — 2 open todo(s) remain." },
+      { role: "user", content: "[Forge /goal driver] Stop blocked — goal not yet achieved." },
+      { role: "user", content: "[Forge ULW cycle driver] Stop blocked — wave 3 open." },
+      { role: "user", content: "[Forge ULW cycle driver] Stop blocked — wave 4 open." },
+      // A user Stop hook's reason is re-tagged by the loop; it must not
+      // inflate the ULW driver's count.
+      {
+        role: "user",
+        content: "[Forge ULW cycle driver] [Stop hook] Stop blocked by hook: lint first",
+      },
+      { role: "user", content: "[Forge harness — verify nudge]\nrun the suite" },
+      { role: "user", content: "[Forge harness — mid-conversation update]\nw=2" },
+      // Not a guard — plain model output echoed as a user quote.
+      { role: "user", content: "the [Forge report-guard] thing bounced me" },
+    ];
+    const c = countHarnessUserPokes(msgs);
+    assert.deepEqual(c.guardBlocks, {
+      handoff: 1,
+      proofClaim: 1,
+      report: 1,
+      todoGate: 1,
+      goal: 1,
+      ulw: 2,
+      hook: 1,
+      verify: 1,
+      admit: 1,
+    });
+    // Every classified block is also a poke; guard-only prefixes count too.
+    assert.equal(c.harnessUserPokes, 10);
+    assert.equal(c.proofPokes, 1);
+    assert.equal(classifyGuardBlock("[Forge proof-claim] x"), "proofClaim");
+    assert.equal(classifyGuardBlock("  [Forge ultrawork] Stop blocked"), "ultrawork");
+    assert.equal(classifyGuardBlock("plain text"), null);
+    // No blocks → empty record (loop drops it from the result / run JSON).
+    assert.deepEqual(countHarnessUserPokes([msgs[0]]).guardBlocks, {});
+  });
+
   it("omits mill edit class and keeps Wave-1 job reads", () => {
     const msgs: ChatMessage[] = [{ role: "system", content: "sys" }];
     const jobPath = "src/tui/repl.ts";

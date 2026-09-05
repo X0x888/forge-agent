@@ -53,6 +53,12 @@ export interface SessionMetricsEvent {
   harnessUserPokes?: number;
   admitCount?: number;
   proofPokes?: number;
+  /**
+   * Stop-guard blocks and harness bounces by guard (`handoff`, `proofClaim`,
+   * `report`, `todoGate`, `goal`, `ulw`, `hook`, `verify`, `fix`, …). Only
+   * non-zero keys are written. The per-guard cost of the harness.
+   */
+  guardBlocks?: Record<string, number>;
   providerRounds?: number;
   estCostUsd?: number;
   durationMs?: number;
@@ -65,58 +71,74 @@ export interface SessionMetricsEvent {
   lastErrorCode?: string;
 }
 
+/** Run-level events (`run_end` / `session_end`) — what `forge stats` reads. */
 export function metricsPath(): string {
   return path.join(forgeHome(), "metrics.jsonl");
 }
 
+/**
+ * Per-provider-round events (`provider_round`). Kept apart from
+ * `metrics.jsonl` on purpose: one ULW run writes hundreds of rounds, and
+ * while both shared a 2,000-line file the auto-prune evicted every
+ * `run_end` within a day — the run-level history `forge stats` reports on
+ * was silently the last few hours.
+ */
+export function roundsPath(): string {
+  return path.join(forgeHome(), "rounds.jsonl");
+}
+
 /** Soft cap — auto-prune when event count exceeds this after append. */
 export const METRICS_AUTO_PRUNE_KEEP = 2_000;
+/** Rounds are ~10× more frequent than runs and only matter for recent cache forensics. */
+export const ROUNDS_AUTO_PRUNE_KEEP = 5_000;
+
+function appendJsonlLine(file: string, event: SessionMetricsEvent): void {
+  ensureDir(path.dirname(file));
+  fs.appendFileSync(file, JSON.stringify(event) + "\n", { mode: 0o600 });
+  try {
+    fs.chmodSync(file, 0o600);
+  } catch {
+    /* windows */
+  }
+}
+
+/** Cheap size check: prune the file to the newest `keep` lines when large. */
+function maybeAutoPrune(file: string, keep: number): void {
+  try {
+    const st = fs.statSync(file);
+    // ~200 bytes/line → 2000 lines ≈ 400KB; also hard-cap at 2 MiB
+    if (st.size > 2 * 1024 * 1024) {
+      pruneJsonl(file, keep);
+    } else if (st.size > 400_000) {
+      const n = fs
+        .readFileSync(file, "utf8")
+        .split("\n")
+        .filter((l) => l.trim()).length;
+      if (n > keep) pruneJsonl(file, keep);
+    }
+  } catch {
+    /* non-fatal */
+  }
+}
 
 export function appendSessionMetrics(event: SessionMetricsEvent): void {
   try {
-    const file = metricsPath();
-    ensureDir(path.dirname(file));
-    fs.appendFileSync(file, JSON.stringify(event) + "\n", { mode: 0o600 });
-    try {
-      fs.chmodSync(file, 0o600);
-    } catch {
-      /* windows */
-    }
+    const isRound = event.type === "provider_round";
+    const file = isRound ? roundsPath() : metricsPath();
+    appendJsonlLine(file, event);
     // Per-session copy — global prune dropped log10's first four hours.
     if (event.sessionId) {
       try {
         const dir = path.join(forgeHome(), "sessions", event.sessionId);
-        ensureDir(dir);
-        const side = path.join(dir, "rounds.jsonl");
-        fs.appendFileSync(side, JSON.stringify(event) + "\n", { mode: 0o600 });
-        try {
-          fs.chmodSync(side, 0o600);
-        } catch {
-          /* windows */
-        }
+        appendJsonlLine(path.join(dir, "rounds.jsonl"), event);
       } catch {
         /* sidecar optional */
       }
     }
-    // Cheap size check: if file is large, prune to keep newest N
-    try {
-      const st = fs.statSync(file);
-      // ~200 bytes/line → 2000 lines ≈ 400KB; also hard-cap at 2 MiB
-      if (st.size > 2 * 1024 * 1024) {
-        pruneMetrics({ keep: METRICS_AUTO_PRUNE_KEEP });
-      } else if (st.size > 400_000) {
-        // Count lines only when moderately large
-        const n = fs
-          .readFileSync(file, "utf8")
-          .split("\n")
-          .filter((l) => l.trim()).length;
-        if (n > METRICS_AUTO_PRUNE_KEEP) {
-          pruneMetrics({ keep: METRICS_AUTO_PRUNE_KEEP });
-        }
-      }
-    } catch {
-      /* non-fatal */
-    }
+    maybeAutoPrune(
+      file,
+      isRound ? ROUNDS_AUTO_PRUNE_KEEP : METRICS_AUTO_PRUNE_KEEP,
+    );
   } catch {
     /* never fail the agent on metrics I/O */
   }
@@ -151,6 +173,7 @@ export function buildRunEndMetrics(opts: {
   harnessUserPokes?: number;
   admitCount?: number;
   proofPokes?: number;
+  guardBlocks?: Record<string, number>;
   providerRounds?: number;
   durationMs?: number;
   aborted?: boolean;
@@ -160,6 +183,7 @@ export function buildRunEndMetrics(opts: {
   ultrawork?: boolean;
   lastErrorCode?: string;
 }): SessionMetricsEvent {
+  const guardBlocks = compactGuardBlocks(opts.guardBlocks);
   return {
     ts: nowIso(),
     type: "run_end",
@@ -212,6 +236,7 @@ export function buildRunEndMetrics(opts: {
       : {}),
     ...(opts.admitCount ? { admitCount: opts.admitCount } : {}),
     ...(opts.proofPokes ? { proofPokes: opts.proofPokes } : {}),
+    ...(guardBlocks ? { guardBlocks } : {}),
     ...(opts.providerRounds
       ? { providerRounds: opts.providerRounds }
       : {}),
@@ -234,23 +259,47 @@ export function buildRunEndMetrics(opts: {
   };
 }
 
+/** Drop zero / non-numeric entries; undefined when nothing is left. */
+function compactGuardBlocks(
+  rec: Record<string, number> | undefined,
+): Record<string, number> | undefined {
+  if (!rec) return undefined;
+  const out: Record<string, number> = {};
+  for (const [k, v] of Object.entries(rec)) {
+    const n = Number(v);
+    if (Number.isFinite(n) && n > 0) out[k.slice(0, 32)] = Math.trunc(n);
+  }
+  return Object.keys(out).length ? out : undefined;
+}
+
 export interface MetricsStats {
   events: number;
   bytes: number;
   path: string;
+  /** `rounds.jsonl` (provider_round events) — absent when never written. */
+  rounds?: { events: number; bytes: number; path: string };
+}
+
+function countJsonl(file: string): { events: number; bytes: number } {
+  try {
+    if (!fs.existsSync(file)) return { events: 0, bytes: 0 };
+    const st = fs.statSync(file);
+    const raw = fs.readFileSync(file, "utf8");
+    const events = raw.split("\n").filter((l) => l.trim()).length;
+    return { events, bytes: st.size };
+  } catch {
+    return { events: 0, bytes: 0 };
+  }
 }
 
 export function metricsStats(): MetricsStats {
   const file = metricsPath();
-  try {
-    if (!fs.existsSync(file)) return { events: 0, bytes: 0, path: file };
-    const st = fs.statSync(file);
-    const raw = fs.readFileSync(file, "utf8");
-    const events = raw.split("\n").filter((l) => l.trim()).length;
-    return { events, bytes: st.size, path: file };
-  } catch {
-    return { events: 0, bytes: 0, path: file };
-  }
+  const main = countJsonl(file);
+  const rfile = roundsPath();
+  const rounds = fs.existsSync(rfile)
+    ? { ...countJsonl(rfile), path: rfile }
+    : undefined;
+  return { ...main, path: file, ...(rounds ? { rounds } : {}) };
 }
 
 export interface PruneMetricsResult {
@@ -259,15 +308,30 @@ export interface PruneMetricsResult {
   deleted: number;
   kept: number;
   path: string;
+  /** Same prune applied to `rounds.jsonl` (when it exists). */
+  rounds?: Omit<PruneMetricsResult, "rounds">;
 }
 
 /**
  * Keep the newest N metrics lines (default 500). Counter-only log hygiene.
+ * `rounds.jsonl` gets the same cut (it is the larger file; `forge metrics
+ * prune` must not leave the round log growing unbounded).
  */
 export function pruneMetrics(opts?: { keep?: number }): PruneMetricsResult {
-  const file = metricsPath();
   const keep = Math.max(1, opts?.keep ?? 500);
-  const empty: PruneMetricsResult = {
+  const main = pruneJsonl(metricsPath(), keep);
+  const rfile = roundsPath();
+  if (fs.existsSync(rfile)) {
+    return { ...main, rounds: pruneJsonl(rfile, keep) };
+  }
+  return main;
+}
+
+function pruneJsonl(
+  file: string,
+  keep: number,
+): Omit<PruneMetricsResult, "rounds"> {
+  const empty: Omit<PruneMetricsResult, "rounds"> = {
     beforeEvents: 0,
     afterEvents: 0,
     deleted: 0,
@@ -381,6 +445,21 @@ export interface UsageStats {
   byProject: Record<string, number>;
   /** Failure codes from run_end.lastErrorCode (never bodies). */
   byLastErrorCode: Record<string, number>;
+  /**
+   * Harness overhead across the window: how much of the conversation the
+   * harness itself spoke, and which guard bounced the model how often.
+   */
+  harness: {
+    /** Provider rounds summed over runs that reported them. */
+    providerRounds: number;
+    /** Every Forge-injected user-channel message. */
+    pokes: number;
+    proofPokes: number;
+    /** Runs whose run_end carried the meters (older records did not). */
+    meteredRuns: number;
+    /** Guard id → total blocks across the window. */
+    guardBlocks: Record<string, number>;
+  };
   /** On-disk session inventory (not limited to metrics window). */
   sessions: {
     total: number;
@@ -439,10 +518,31 @@ export function collectUsageStats(opts?: {
   let turns = 0;
   let edits = 0;
   const byLastErrorCode: Record<string, number> = {};
+  let hProviderRounds = 0;
+  let hPokes = 0;
+  let hProofPokes = 0;
+  let hMeteredRuns = 0;
+  const hGuardBlocks: Record<string, number> = {};
 
   for (const e of filtered) {
     if (e.type !== "run_end" && e.type !== "session_end") continue;
     runs += 1;
+    if (
+      e.harnessUserPokes != null ||
+      e.providerRounds != null ||
+      e.guardBlocks
+    ) {
+      hMeteredRuns += 1;
+      hProviderRounds += Number(e.providerRounds) || 0;
+      hPokes += Number(e.harnessUserPokes) || 0;
+      hProofPokes += Number(e.proofPokes) || 0;
+      if (e.guardBlocks && typeof e.guardBlocks === "object") {
+        for (const [k, v] of Object.entries(e.guardBlocks)) {
+          const n = Number(v) || 0;
+          if (n > 0) hGuardBlocks[k] = (hGuardBlocks[k] || 0) + n;
+        }
+      }
+    }
     if (e.ok) okRuns += 1;
     else if (e.ok === false) failedRuns += 1;
     if (e.aborted) abortedRuns += 1;
@@ -570,6 +670,13 @@ export function collectUsageStats(opts?: {
     byModel,
     byProject,
     byLastErrorCode,
+    harness: {
+      providerRounds: hProviderRounds,
+      pokes: hPokes,
+      proofPokes: hProofPokes,
+      meteredRuns: hMeteredRuns,
+      guardBlocks: hGuardBlocks,
+    },
     sessions: {
       total: sessionTotal,
       locked: sessionLocked,
@@ -593,12 +700,29 @@ export function formatUsageStats(stats: UsageStats): string {
   const okPct =
     stats.runs > 0 ? Math.round((stats.okRuns / stats.runs) * 100) : 0;
   const durMin = stats.durationMs / 60_000;
+  const h = stats.harness;
+  const harnessLine = (() => {
+    if (!h || !h.meteredRuns) {
+      return `  harness:    (no metered runs — meters ride run_end from v0.9.x on)`;
+    }
+    const share =
+      h.providerRounds > 0
+        ? ` (${Math.round((h.pokes / h.providerRounds) * 100)}% of ${h.providerRounds} rounds)`
+        : "";
+    const guards = Object.entries(h.guardBlocks)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 8)
+      .map(([k, v]) => `${k}=${v}`)
+      .join(" ");
+    return `  harness:    pokes=${h.pokes}${share}  proof=${h.proofPokes}  blocks: ${guards || "none"}  · ${h.meteredRuns}/${stats.runs} runs metered`;
+  })();
   return [
     `Forge usage (${window})`,
     `  runs:       ${stats.runs}  ok=${stats.okRuns} (${okPct}%)  failed=${stats.failedRuns}  aborted=${stats.abortedRuns}  timedOut=${stats.timedOutRuns}  continueCap=${stats.continueCapReleases}  maxTurns=${stats.maxTurnsHits}  costCap=${stats.costCapHits}  stuckWall=${stats.stuckWallHits}  cycleComplete=${stats.cycleCompleteReleases}`,
     `  mode:       headless=${stats.headlessRuns}  ULW=${stats.ulwRuns}`,
     `  tokens:     in=${formatTokens(stats.promptTokens)} out=${formatTokens(stats.completionTokens)}  est ${formatCost(stats.estCostUsd)}`,
     `  work:       turns=${stats.turns}  edits=${stats.edits}  wall≈${durMin.toFixed(1)}m`,
+    harnessLine,
     `  sessions:   ${stats.sessions.total} on disk  titled=${stats.sessions.titled}  ULW=${stats.sessions.ultrawork}  pinned=${stats.sessions.pinned}  lastError=${stats.sessions.withLastError}  locked=${stats.sessions.locked}`,
     `By provider:`,
     top(stats.byProvider),

@@ -181,7 +181,7 @@ Forge slash commands
   /pin [on|off|toggle]  Protect session from prune (/unpin)  [live]
   /tips                 Expert keyboard / CI cheat sheet  [live]
   /report               Standalone run report: outcome · shipped · verified · not done · needs you  [live]
-  /guidelines [audit|stamp]  Agent-guidelines audit (AGENTS.md / CLAUDE.md proofread state)  [live]
+  /guidelines [audit|stamp|diff|apply|discard]  Agent-guidelines audit: facts fixed in place, doctrine proposals reviewed here  [live]
   /news [n|all]         What's new from CHANGELOG (/changelog)  [live]
   /new [title]          Fresh session (optional searchable label; ULW not inherited)
   /clear                Clear messages same id (counters+journal reset)

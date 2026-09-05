@@ -36,7 +36,7 @@ const GOOD_REPORT = `Done — the login flow now rejects expired tokens and 3 fi
 describe("detectHomework", () => {
   it("flags work handed back to the user", () => {
     const cases = [
-      "You can now run `npm run build` to see the change.",
+      "You should now run `npm run build` before you deploy.",
       "Next steps for you: add the env var and re-run the migration.",
       "You'll need to configure the webhook URL in the dashboard.",
       "Please run the test suite to confirm.",
@@ -55,6 +55,8 @@ describe("detectHomework", () => {
       "You should force-push only if you accept losing the remote history (irreversible).",
       "The external service is down; you can re-run once the network is back.",
       "Run `npm test` yourself if you like — I ran it and it passed.",
+      // An affordance is not a directive: this tells the user what they have.
+      "You can now run `npm run build` to see the change.",
     ];
     for (const c of cases) {
       assert.equal(detectHomework(c).homework, false, c);
@@ -112,7 +114,7 @@ describe("evaluateReportAtStop", () => {
 
     const released = evaluateReportAtStop({
       ...base,
-      lastAssistantMessage: "Done. You can now run `npm run lint`.",
+      lastAssistantMessage: "Done. You should now run `npm run lint`.",
       reportBlocks: 2,
     });
     assert.equal(released.block, false);
@@ -154,7 +156,7 @@ describe("evaluateReportAtStop", () => {
       ...base,
       stopContinues: 5,
       ultrawork: true,
-      lastAssistantMessage: `${bare}\nYou can now run the migration against staging.`,
+      lastAssistantMessage: `${bare}\nYou'll need to run the migration against staging yourself.`,
     });
     assert.equal(d.block, true);
     assert.equal(d.kind, "homework");

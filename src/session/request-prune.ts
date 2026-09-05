@@ -126,27 +126,73 @@ const HARNESS_USER_CLASSES: { id: string; prefix: string }[] = [
 
 const PROOF_POKE_CLASSES = new Set(["verify", "fix"]);
 
+/**
+ * Stop-guard blocks and other harness bounces, by the guard that spoke.
+ * Counted, never collapsed: this list feeds the run's `guardBlocks` meter
+ * (run JSON · metrics · `forge stats`) so the cost of each guard is a
+ * number, not a feeling. The pruning list above is separate on purpose —
+ * adding a class there changes what is stubbed off the wire.
+ */
+const GUARD_BLOCK_CLASSES: { id: string; prefix: string }[] = [
+  // Longest-prefix entries first: a user Stop hook's block is re-tagged by
+  // the loop as `[Forge ULW cycle driver] [Stop hook] …`.
+  { id: "hook", prefix: "[Forge ULW cycle driver] [Stop hook]" },
+  { id: "handoff", prefix: "[Forge handoff-guard]" },
+  { id: "proofClaim", prefix: "[Forge proof-claim]" },
+  { id: "report", prefix: "[Forge report-guard]" },
+  { id: "todoGate", prefix: "[Forge TodoGate]" },
+  { id: "todoNudge", prefix: "[Forge system-reminder — TodoNudge]" },
+  { id: "goal", prefix: "[Forge /goal driver]" },
+  { id: "goalEvidence", prefix: "[Forge system-reminder — Goal attestation needs evidence]" },
+  { id: "ulw", prefix: "[Forge ULW cycle driver]" },
+  { id: "ultrawork", prefix: "[Forge ultrawork]" },
+  { id: "verify", prefix: "[Forge harness — verify nudge]" },
+  { id: "fix", prefix: "[Forge harness — fix until green]" },
+  { id: "guidelines", prefix: "[Forge harness — agent guidelines audit]" },
+  { id: "doomLoop", prefix: "[Forge system-reminder — doom-loop]" },
+  { id: "errorStreak", prefix: "[Forge system-reminder — error-streak]" },
+  { id: "admit", prefix: "[Forge harness — mid-conversation update]" },
+  { id: "background", prefix: "[Forge harness — background task " },
+];
+
+/** Which guard / driver a harness user-channel message belongs to, or null. */
+export function classifyGuardBlock(content: string): string | null {
+  const t = content.trimStart();
+  for (const c of GUARD_BLOCK_CLASSES) {
+    if (t.startsWith(c.prefix)) return c.id;
+  }
+  return null;
+}
+
 /** Classify a user-channel harness poke, or null for real user / kickoff text. */
 export function classifyHarnessUserMessage(content: string): string | null {
   return harnessUserClass(content);
 }
 
-/** Count Forge-injected user-channel pokes (for run JSON / metrics). */
-export function countHarnessUserPokes(messages: ChatMessage[]): {
+export interface HarnessPokeMeters {
+  /** Every Forge-injected user-channel message (any class). */
   harnessUserPokes: number;
   admitCount: number;
   proofPokes: number;
-} {
+  /** Per-guard counts (`handoff`, `proofClaim`, `report`, `ulw`, …); absent keys are zero. */
+  guardBlocks: Record<string, number>;
+}
+
+/** Count Forge-injected user-channel pokes (for run JSON / metrics). */
+export function countHarnessUserPokes(messages: ChatMessage[]): HarnessPokeMeters {
   let harnessUserPokes = 0;
   let admitCount = 0;
   let proofPokes = 0;
+  const guardBlocks: Record<string, number> = {};
   for (const m of messages) {
     if (m.role !== "user" || typeof m.content !== "string") continue;
     const cls = harnessUserClass(m.content);
-    if (!cls) continue;
+    const guard = classifyGuardBlock(m.content);
+    if (!cls && !guard) continue;
     harnessUserPokes += 1;
+    if (guard) guardBlocks[guard] = (guardBlocks[guard] || 0) + 1;
     if (cls === "admit" || cls === "ulw_stop") admitCount += 1;
-    if (PROOF_POKE_CLASSES.has(cls)) proofPokes += 1;
+    if (cls && PROOF_POKE_CLASSES.has(cls)) proofPokes += 1;
     else if (
       cls === "ulw_stop" &&
       /proof NOW|Verification failed|attestation needs evidence|check failed/i.test(
@@ -156,7 +202,7 @@ export function countHarnessUserPokes(messages: ChatMessage[]): {
       proofPokes += 1;
     }
   }
-  return { harnessUserPokes, admitCount, proofPokes };
+  return { harnessUserPokes, admitCount, proofPokes, guardBlocks };
 }
 
 function harnessUserClass(content: string): string | null {

@@ -1827,6 +1827,165 @@ describe("session metrics + permission timeout", () => {
     assert.match(textOut, /lastError=/);
     assert.match(textOut, /By lastError code/);
     assert.match(textOut, /rate_limited/);
+    // No run carried harness meters → the row says so instead of printing 0%.
+    assert.match(textOut, /harness:\s+\(no metered runs/);
+  });
+
+  it("provider_round events live in rounds.jsonl so run_end history survives auto-prune", async () => {
+    const fs = await import("node:fs");
+    const os = await import("node:os");
+    const path = await import("node:path");
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-rounds-"));
+    process.env.FORGE_HOME = tmp;
+    const {
+      appendSessionMetrics,
+      buildRunEndMetrics,
+      metricsPath,
+      roundsPath,
+      metricsStats,
+      pruneMetrics,
+      readMetricsEvents,
+    } = await import("../src/session/metrics.js");
+    const { appendProviderRoundMetrics } = await import(
+      "../src/session/prompt-cache.js"
+    );
+    for (let i = 0; i < 20; i++) {
+      appendProviderRoundMetrics({
+        sessionId: "s1",
+        provider: "xai",
+        model: "m",
+        promptTokens: 1000 + i,
+        cacheReadTokens: 900,
+        completionTokens: 10,
+        pruned: false,
+        turn: i + 1,
+      });
+    }
+    appendSessionMetrics(
+      buildRunEndMetrics({
+        sessionId: "s1",
+        provider: "xai",
+        model: "m",
+        turns: 20,
+        stopContinues: 2,
+        editCount: 3,
+        promptTokens: 20_000,
+        completionTokens: 200,
+        ok: true,
+        harnessUserPokes: 4,
+        proofPokes: 1,
+        guardBlocks: { proofClaim: 1, ulw: 2, report: 0 },
+        providerRounds: 20,
+      }),
+    );
+    // Rounds never touch metrics.jsonl; the run record is the only line there.
+    const runLines = fs
+      .readFileSync(metricsPath(), "utf8")
+      .split("\n")
+      .filter((l) => l.trim());
+    assert.equal(runLines.length, 1);
+    assert.match(runLines[0], /"type":"run_end"/);
+    assert.match(runLines[0], /"guardBlocks":\{"proofClaim":1,"ulw":2\}/);
+    const roundLines = fs
+      .readFileSync(roundsPath(), "utf8")
+      .split("\n")
+      .filter((l) => l.trim());
+    assert.equal(roundLines.length, 20);
+    assert.ok(roundLines.every((l) => /"type":"provider_round"/.test(l)));
+    // Per-session sidecar still receives both kinds.
+    const side = fs
+      .readFileSync(path.join(tmp, "sessions", "s1", "rounds.jsonl"), "utf8")
+      .split("\n")
+      .filter((l) => l.trim());
+    assert.equal(side.length, 21);
+    const st = metricsStats();
+    assert.equal(st.events, 1);
+    assert.equal(st.rounds?.events, 20);
+    // readMetricsEvents (forge stats) sees only run-level records.
+    assert.equal(readMetricsEvents().length, 1);
+    // Prune cuts both files.
+    const pruned = pruneMetrics({ keep: 5 });
+    assert.equal(pruned.afterEvents, 1);
+    assert.equal(pruned.rounds?.afterEvents, 5);
+    assert.equal(pruned.rounds?.deleted, 15);
+    assert.equal(metricsStats().rounds?.events, 5);
+  });
+
+  it("collectUsageStats totals harness pokes and guard blocks across metered runs", async () => {
+    const fs = await import("node:fs");
+    const os = await import("node:os");
+    const path = await import("node:path");
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-harness-stats-"));
+    process.env.FORGE_HOME = tmp;
+    const {
+      appendSessionMetrics,
+      buildRunEndMetrics,
+      collectUsageStats,
+      formatUsageStats,
+    } = await import("../src/session/metrics.js");
+    appendSessionMetrics(
+      buildRunEndMetrics({
+        sessionId: "a",
+        provider: "xai",
+        model: "m",
+        turns: 30,
+        stopContinues: 5,
+        editCount: 4,
+        promptTokens: 1,
+        completionTokens: 1,
+        ok: true,
+        harnessUserPokes: 9,
+        proofPokes: 2,
+        guardBlocks: { ulw: 5, proofClaim: 2, handoff: 1 },
+        providerRounds: 30,
+      }),
+    );
+    appendSessionMetrics(
+      buildRunEndMetrics({
+        sessionId: "b",
+        provider: "xai",
+        model: "m",
+        turns: 10,
+        stopContinues: 1,
+        editCount: 1,
+        promptTokens: 1,
+        completionTokens: 1,
+        ok: true,
+        harnessUserPokes: 1,
+        guardBlocks: { report: 1 },
+        providerRounds: 10,
+      }),
+    );
+    // Legacy record without meters — counted as a run, not as metered.
+    appendSessionMetrics(
+      buildRunEndMetrics({
+        sessionId: "c",
+        provider: "xai",
+        model: "m",
+        turns: 2,
+        stopContinues: 0,
+        editCount: 0,
+        promptTokens: 1,
+        completionTokens: 1,
+        ok: true,
+      }),
+    );
+    const stats = collectUsageStats();
+    assert.equal(stats.runs, 3);
+    assert.equal(stats.harness.meteredRuns, 2);
+    assert.equal(stats.harness.providerRounds, 40);
+    assert.equal(stats.harness.pokes, 10);
+    assert.equal(stats.harness.proofPokes, 2);
+    assert.deepEqual(stats.harness.guardBlocks, {
+      ulw: 5,
+      proofClaim: 2,
+      handoff: 1,
+      report: 1,
+    });
+    const text = formatUsageStats(stats);
+    assert.match(text, /harness:\s+pokes=10 \(25% of 40 rounds\)\s+proof=2/);
+    assert.match(text, /blocks: ulw=5 proofClaim=2 handoff=1 report=1/);
+    assert.match(text, /2\/3 runs metered/);
   });
 });
 

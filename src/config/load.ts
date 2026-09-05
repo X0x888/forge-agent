@@ -103,6 +103,7 @@ function normalizeConfigShape(raw: Record<string, unknown>): Partial<ForgeConfig
     max_cost: "maxCostUsd",
     permission_mode: "permissionMode",
     blocking_stop_hooks: "blockingStopHooks",
+    guideline_auto_apply: "guidelineAutoApply",
     compat_claude_hooks: "compatClaudeHooks",
     compat_cursor_hooks: "compatCursorHooks",
     auto_compact_threshold: "autoCompactThreshold",
@@ -135,6 +136,13 @@ function normalizeConfigShape(raw: Record<string, unknown>): Partial<ForgeConfig
       delete g.auto_arm;
     }
     out.goal = g;
+  }
+  // `[guidelines] auto_apply = true` table form → flat `guidelineAutoApply`.
+  if (out.guidelines && typeof out.guidelines === "object") {
+    const g = out.guidelines as Record<string, unknown>;
+    const v = g.auto_apply ?? g.autoApply;
+    if (v !== undefined && !("guidelineAutoApply" in out)) out.guidelineAutoApply = v;
+    delete out.guidelines;
   }
   if (out.permission && typeof out.permission === "object") {
     const p = { ...(out.permission as Record<string, unknown>) };
@@ -484,6 +492,11 @@ export function loadConfig(overrides: Partial<ForgeConfig> = {}, cwd = process.c
   }
   if (process.env.FORGE_BLOCKING_STOP === "0") cfg.blockingStopHooks = false;
   if (process.env.FORGE_BLOCKING_STOP === "1") cfg.blockingStopHooks = true;
+  {
+    const raw = process.env.FORGE_GUIDELINE_AUTO_APPLY?.trim().toLowerCase();
+    if (raw === "1" || raw === "true" || raw === "on") cfg.guidelineAutoApply = true;
+    if (raw === "0" || raw === "false" || raw === "off") cfg.guidelineAutoApply = false;
+  }
   if (process.env.FORGE_GOAL_GATE === "0") cfg.goal.enabled = false;
   if (process.env.FORGE_GOAL_STUCK_THRESHOLD) {
     // Positive only — 0 would disable stuck-wall release forever (footgun).
@@ -566,6 +579,10 @@ export function loadConfig(overrides: Partial<ForgeConfig> = {}, cwd = process.c
   {
     const b = coerceBool(cfg.blockingStopHooks as unknown);
     if (b !== undefined) cfg.blockingStopHooks = b;
+  }
+  {
+    const b = coerceBool(cfg.guidelineAutoApply as unknown);
+    cfg.guidelineAutoApply = b ?? false;
   }
   if (!cfg.sandbox) cfg.sandbox = DEFAULT_CONFIG.sandbox;
   if (!cfg.sandboxMissingBackend) {
