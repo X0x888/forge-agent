@@ -449,6 +449,13 @@ describe("cycle orchestrator", () => {
     const suite = resolveVerifyCommand({ verifyCommand: "cargo test" }, ["cargo test"]);
     assert.equal(suite.command, "cargo test");
     assert.equal(suite.note, undefined);
+    // A stray pyproject at a JS monorepo root: the fuller check must share the isolate's ecosystem.
+    const mono = ["npm run check", "npm run build", "pytest"];
+    const js = resolveVerifyCommand({ verifyCommand: "cd extension && npx vitest run src/x.test.ts" }, mono);
+    assert.equal(js.command, "npm run check", "never pytest for an npm isolate");
+    assert.equal(resolveVerifyCommand({ verifyNone: "none" }, mono).command, "npm run check");
+    assert.equal(resolveVerifyCommand({}, mono).command, "npm run check");
+    assert.equal(resolveVerifyCommand({ verifyCommand: "pytest tests/test_a.py" }, mono).command, "pytest");
     // Nothing fuller in the stack table: the isolate is all there is, and says so.
     const only = resolveVerifyCommand({ verifyCommand: "node --test tests/a.test.js" }, []);
     assert.equal(only.command, "node --test tests/a.test.js");

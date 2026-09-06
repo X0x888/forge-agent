@@ -388,9 +388,15 @@ export function resolveVerifyCommand(
   plan: Pick<ParsedPlan, "verifyCommand" | "verifyNone">,
   projectChecks: string[],
 ): { command?: string; declared?: string; note?: string } {
-  const suite = projectChecks.find((c) => isFullSuiteCommand(c, projectChecks));
-  const fallback = suite ?? projectChecks[0];
   const declared = plan.verifyCommand;
+  // A monorepo root with a stray pyproject.toml lists `pytest` next to the
+  // npm scripts; the fuller check must live in the same ecosystem as what
+  // the Planner declared (or, absent that, as the stack table's first row).
+  const eco = commandEcosystem(declared ?? projectChecks[0] ?? "");
+  const suite = projectChecks.find(
+    (c) => isFullSuiteCommand(c, projectChecks) && (eco === "other" || commandEcosystem(c) === eco),
+  );
+  const fallback = suite ?? projectChecks.find((c) => eco === "other" || commandEcosystem(c) === eco) ?? projectChecks[0];
   if (declared) {
     if (isIsolateTestCommand(declared) || isTypecheckCommand(declared)) {
       return fallback && fallback !== declared
@@ -409,6 +415,17 @@ export function resolveVerifyCommand(
       : { command: undefined };
   }
   return { command: fallback };
+}
+
+type CommandEcosystem = "js" | "py" | "rust" | "go" | "other";
+
+function commandEcosystem(command: string): CommandEcosystem {
+  const c = command.toLowerCase();
+  if (/\b(npm|npx|pnpm|yarn|bun|node|tsx|vitest|jest|mocha|deno)\b/.test(c)) return "js";
+  if (/\b(pytest|python3?|uv|poetry|tox|pip)\b/.test(c)) return "py";
+  if (/\bcargo\b/.test(c)) return "rust";
+  if (/\bgo\s+(test|build|vet)\b/.test(c)) return "go";
+  return "other";
 }
 
 async function runReviewer(s: CycleState, rt: CycleRuntime, executorCloser: string): Promise<CycleReviewNotes> {

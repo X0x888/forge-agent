@@ -330,6 +330,13 @@ export function isIsolateTestCommand(command: string): boolean {
   if (/\bmix\s+test\b/.test(c)) return /\.exs\b/.test(c);
   if (/\brspec\b/.test(c)) return /\bspec\/\S+/.test(c);
   if (/[*?]/.test(c)) return false;
+  // vitest / jest / mocha / ava: a handful of named files or a name filter is
+  // an isolate; the bare runner is the suite.
+  if (/\b(?:vitest|jest|mocha|ava)\b/.test(c)) {
+    if (/\s(?:-t|--testNamePattern|--grep|-g|--match)\b/.test(c)) return true;
+    const named = [...c.matchAll(/[^\s"'\\]+\.(?:test|spec)\.[cm]?[jt]sx?/gi)];
+    return named.length > 0 && named.length <= 8;
+  }
   if (/node\s+--test\s+tests\/(?:\*\*|["']?\.\*|["']?$)/.test(c)) return false;
   const isNodeTest = /\bnode\b[^\n]*--test\b/.test(c) || /\btsx\s+--test\b/.test(c);
   if (!isNodeTest) return false;

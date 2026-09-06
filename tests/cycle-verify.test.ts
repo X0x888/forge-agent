@@ -4,7 +4,19 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { judgeAgainstBaseline, runCheckCommand } from "../src/harness/cycle/verify.js";
-import { extractFailingTests } from "../src/harness/verification.js";
+import { extractFailingTests, isIsolateTestCommand } from "../src/harness/verification.js";
+
+describe("isIsolateTestCommand — vitest / jest / mocha", () => {
+  it("named files or a name filter are isolates; the bare runner is the suite", () => {
+    assert.equal(isIsolateTestCommand("cd extension && npx vitest run src/__tests__/badge.test.ts"), true);
+    assert.equal(isIsolateTestCommand("npx jest src/a.test.ts src/b.test.ts"), true);
+    assert.equal(isIsolateTestCommand("npx vitest run -t 'plants tomorrow'"), true);
+    assert.equal(isIsolateTestCommand("npx mocha --grep badge"), true);
+    assert.equal(isIsolateTestCommand("cd extension && npx vitest run"), false);
+    assert.equal(isIsolateTestCommand("npx jest --coverage"), false);
+    assert.equal(isIsolateTestCommand("cd extension && npm test"), false);
+  });
+});
 
 describe("extractFailingTests", () => {
   it("node:test — top-level and nested ✖ rows, durations stripped, the 'failing tests:' banner skipped", () => {
