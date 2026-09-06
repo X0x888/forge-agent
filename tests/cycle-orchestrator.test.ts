@@ -76,6 +76,9 @@ function fakeRuntime(cwd: string, o: FakeOpts = {}) {
         failures: failures.map((f) => f.replace(/^✖ /, "")),
       };
     },
+    creditCheck(_run, passed) {
+      calls.push(`credit:${passed ? "pass" : "fail"}`);
+    },
     commit({ subject }) {
       calls.push(`commit:${subject}`);
       if (o.commitOk === false) return { committed: false, skipped: "working tree clean" };
@@ -142,7 +145,7 @@ describe("cycle orchestrator", () => {
     assert.equal(s.verifyCommand, "npm test");
     assert.equal(s.identity, "a CLI for tests");
     assert.equal(todos.length, 3);
-    assert.deepEqual(calls, ["role:planner", "todos:3", "check:npm test"], "the baseline runs once at cycle 1");
+    assert.deepEqual(calls, ["role:planner", "todos:3", "check:npm test", "credit:pass"], "the baseline runs once at cycle 1");
     assert.deepEqual(s.verifyBaseline?.failures, []);
     assert.ok(fs.existsSync(path.join(cycleArtifactsDir(sid, 1), "plan.md")));
     assert.ok(fs.existsSync(path.join(cycleArtifactsDir(sid, 1), "verify.baseline.log")));
@@ -182,8 +185,10 @@ describe("cycle orchestrator", () => {
     assert.match(r2.reanchor ?? "", /Cycle 2 plan — theme 2/);
     assert.deepEqual(calls, [
       "check:npm test",
+      "credit:pass",
       "role:reviewer",
       "check:npm test",
+      "credit:pass",
       "commit:ulw cycle 1: test plan",
       "role:planner",
       "todos:2",
@@ -290,6 +295,11 @@ describe("cycle orchestrator", () => {
     assert.equal(s.cycles[0].verifyInherited, 1, "the post-review run had one inherited failure left");
     assert.deepEqual(s.verifyBaseline?.failures, ["hud width"], "the accepted set shrinks to what is still failing");
     assert.equal(calls.filter((c) => c === "role:reviewer").length, 1);
+    assert.deepEqual(
+      calls.filter((c) => c.startsWith("credit:")),
+      ["credit:fail", "credit:pass", "credit:pass"],
+      "run-level verification counts the gate's verdict, not the exit code",
+    );
   });
 
   it("a red run that names no failing test is red whatever the baseline says", async () => {
@@ -326,7 +336,7 @@ describe("cycle orchestrator", () => {
     assert.equal(r?.committed?.skipped, "review blocked");
     assert.equal(r?.planAdmitted, true);
     assert.ok(!base.calls.some((c) => c.startsWith("commit:")), "blocked never commits");
-    assert.deepEqual(base.calls.slice(0, 2), ["check:npm test", "role:reviewer"]);
+    assert.deepEqual(base.calls.slice(0, 3), ["check:npm test", "credit:pass", "role:reviewer"]);
     assert.equal(loadCycleState(sid)!.cycles[0].reviewVerdict, "blocked");
     assert.match(brief, /do not delete/);
   });
@@ -382,7 +392,7 @@ describe("cycle orchestrator", () => {
       facts: facts({ openTodoCount: 1, lastAssistantMessage: "half way" }),
     });
     assert.equal(r?.planAdmitted, true);
-    assert.deepEqual(calls.slice(0, 3), ["check:npm test", "role:reviewer", "check:npm test"]);
+    assert.deepEqual(calls.slice(0, 4), ["check:npm test", "credit:pass", "role:reviewer", "check:npm test"]);
   });
 
   it("the Reviewer's must-fix and unfulfilled items reach the next Planner brief", async () => {

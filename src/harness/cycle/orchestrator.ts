@@ -61,6 +61,12 @@ export interface CycleRuntime {
   workspace: string;
   runRole(role: CycleRole, brief: string, opts: { cycle: number }): Promise<RoleRunResult>;
   runCheck(command: string): Promise<CheckRun>;
+  /**
+   * The gate's verdict on a run the harness made — what the run-level
+   * verification totals should count (green vs baseline is a pass even
+   * when the exit code is not 0).
+   */
+  creditCheck?(run: CheckRun, passed: boolean): void;
   commit(opts: { subject: string; body: string }): AutoCommitResult;
   /** Replace the executor's board with the plan items (id = item id). */
   seedTodos(items: CyclePlanItem[]): void;
@@ -345,6 +351,7 @@ async function captureBaseline(s: CycleState, rt: CycleRuntime): Promise<void> {
   rt.log?.(`ULW baseline: running \`${s.verifyCommand}\` on the untouched tree`);
   try {
     const run = await rt.runCheck(s.verifyCommand);
+    safe(() => rt.creditCheck?.(run, run.cls.passed), undefined);
     s.verifyBaseline = {
       command: run.command,
       exitCode: run.exitCode,
@@ -492,6 +499,7 @@ async function verifyCycle(
   saveCycleState(s);
   const run = await rt.runCheck(s.verifyCommand);
   const verdict = judgeAgainstBaseline(run, s.verifyBaseline);
+  safe(() => rt.creditCheck?.(run, verdict.passed), undefined);
   writeArtifact(
     s.sessionId,
     s.cycle,

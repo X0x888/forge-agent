@@ -1724,18 +1724,30 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
               signal,
               preferredCheckCommands: cyclePreferredCheckCommands(session.meta.id, preferred),
             });
-            // The harness's own check is a verification run like any other:
-            // it feeds the run-level totals and the last-verify trail.
+            return run;
+          },
+          creditCheck(run, passed) {
+            // The harness's own check is a verification run like any other,
+            // counted by the gate's verdict: green vs baseline is a pass.
+            let preferred: string[] | undefined;
+            try {
+              preferred = detectProjectIntel(workspace).checkCommands;
+            } catch {
+              preferred = undefined;
+            }
             applyVerificationCredit({
               harnessStats,
               meta: session.meta,
               proofPoke,
-              cls: run.cls,
-              command,
+              cls: {
+                ...run.cls,
+                passed,
+                fullSuite: passed && (run.cls.fullSuite || isFullSuiteCommand(run.command, preferred)),
+              },
+              command: run.command,
               preferred,
             });
             saveSession(session);
-            return run;
           },
           commit: ({ subject, body }) => {
             // Stamp the guideline audit first so the proofread mark rides the
