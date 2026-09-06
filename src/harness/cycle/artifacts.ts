@@ -87,7 +87,8 @@ function bullets(lines: string[] | undefined): string[] {
     if (!l) continue;
     const m = l.match(/^(?:[-*•]|\d+[.)])\s+(.+)$/);
     const body = (m ? m[1] : l).trim();
-    if (!body || /^none\.?$/i.test(body)) continue;
+    // "none" / "omit" / "n/a" are the labelled way to say the section is empty.
+    if (!body || /^(?:none|omit(?:ted)?|n\/a|nothing|-)\.?$/i.test(body)) continue;
     out.push(body.replace(/\s+/g, " "));
   }
   return out;

@@ -150,4 +150,17 @@ describe("Plan complete token", () => {
     assert.ok(PLAN_COMPLETE_RE.test("All three items shipped. Plan complete"));
     assert.equal(PLAN_COMPLETE_RE.test("the plan is complete in spirit"), false);
   });
+
+  it("Operator: omit / none / n/a parse as no operator lines", () => {
+    for (const word of ["omit", "none", "n/a", "omitted."]) {
+      const plan = parsePlanArtifact(
+        `# Cycle 1 plan — x\nVerdict: continue\nVerify: npm test\nItems:\n1. a — files: a.ts — proof: npm test\nOperator: ${word}\n`,
+      );
+      assert.deepEqual(plan?.operator, [], word);
+    }
+    const real = parsePlanArtifact(
+      `# Cycle 1 plan — x\nVerdict: continue\nVerify: npm test\nItems:\n1. a — files: a.ts — proof: npm test\nOperator: needs the STRIPE_KEY secret\n`,
+    );
+    assert.deepEqual(real?.operator, ["needs the STRIPE_KEY secret"]);
+  });
 });
