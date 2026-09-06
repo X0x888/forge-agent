@@ -38,7 +38,7 @@ import {
   resolvePromptProfile,
 } from "../src/agent/system-prompt.js";
 import { DEFAULT_CONFIG } from "../src/config/types.js";
-import { armUlwCycle } from "../src/harness/ulw-cycle.js";
+import { armWithPlan } from "./helpers/cycle-arm.js";
 import { PermissionGate } from "../src/agent/permissions.js";
 import type { ChatMessage } from "../src/providers/types.js";
 
@@ -133,7 +133,7 @@ describe("context admit (OpenCode-inspired)", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-admit-"));
     process.env.FORGE_HOME = tmp;
     const sid = "admit-1";
-    const ulw = armUlwCycle(sid, "improve the code", { cycle: 1 });
+    const ulw = armWithPlan({ sessionId: sid, cwd: tmp, mandate: "improve the code" });
     const snap1 = snapshotHarness({
       ulw,
       goal: null,
@@ -143,14 +143,14 @@ describe("context admit (OpenCode-inspired)", () => {
     const msg1 = admitHarnessIfChanged(sid, snap1);
     assert.ok(msg1);
     assert.match(msg1!, /Forge harness — mid-conversation/);
-    assert.match(msg1!, /cycle=1/);
+    assert.match(msg1!, /cycle=1 phase=execute/);
     assert.match(msg1!, /improve the code/);
 
     // Unchanged → null
     assert.equal(admitHarnessIfChanged(sid, snap1), null);
 
     // Wave change → new admission
-    const snap2 = { ...snap1, wave: 3, blocks: 2 };
+    const snap2 = { ...snap1, wave: 3 };
     const msg2 = admitHarnessIfChanged(sid, snap2);
     assert.ok(msg2);
     assert.match(msg2!, /wave=3/);
@@ -177,7 +177,7 @@ describe("context admit (OpenCode-inspired)", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-admit-sup-"));
     process.env.FORGE_HOME = tmp;
     const sid = "admit-suppress";
-    const ulw = armUlwCycle(sid, "improve the code", { cycle: 1 });
+    const ulw = armWithPlan({ sessionId: sid, cwd: tmp, mandate: "improve the code" });
     const snap1 = snapshotHarness({
       ulw,
       goal: null,
@@ -187,23 +187,23 @@ describe("context admit (OpenCode-inspired)", () => {
     // Baseline admit goes through
     assert.ok(admitHarnessIfChanged(sid, snap1));
 
-    // Counter-only churn (wave/blocks/todos) → suppressed with the flag…
-    const snap2 = { ...snap1, wave: 2, blocks: 3, openTodos: 4 };
+    // Counter-only churn (wave/items/todos) → suppressed with the flag…
+    const snap2 = { ...snap1, wave: 2, itemsOpen: 3, openTodos: 4 };
     assert.equal(
       admitHarnessIfChanged(sid, snap2, { suppressCounterOnlyChanges: true }),
       null,
     );
     // …but admitted without it (legacy behavior preserved)
-    const snap2b = { ...snap1, wave: 7, blocks: 8 };
+    const snap2b = { ...snap1, wave: 7 };
     assert.ok(admitHarnessIfChanged(sid, snap2b));
 
-    // Real change (cycle flip) always admits, even with the flag
-    const snap3 = { ...snap2b, cycle: 0 as const };
+    // Real change (/cycle 0) always admits, even with the flag
+    const snap3 = { ...snap2b, cycleZeroRequested: true };
     const msg3 = admitHarnessIfChanged(sid, snap3, {
       suppressCounterOnlyChanges: true,
     });
     assert.ok(msg3);
-    assert.match(msg3!, /LAST/);
+    assert.match(msg3!, /\/cycle 0 is set/);
 
     // Suppression updates the stored fingerprint: re-sending snap3 is a no-op
     assert.equal(
@@ -264,13 +264,13 @@ describe("todo nudge + gate", () => {
     assert.match(r.reanchor || "", /TodoGate/);
   });
 
-  it("TodoGate allows after Cycle complete attestation", () => {
+  it("TodoGate allows after a Plan complete closer", () => {
     const r = evaluateTodoGateAtStop({
       sessionId: "tg-2",
       ulwEnabled: true,
       ultraworkFlag: true,
       openTodoCount: 1,
-      lastAssistantMessage: "**Cycle complete.** Shipped X.",
+      lastAssistantMessage: "**Plan complete.** Shipped X.",
     });
     assert.equal(r.block, false);
   });
@@ -333,25 +333,16 @@ describe("structured compaction", () => {
       { role: "tool", tool_call_id: "1", content: "…" },
       { role: "user", content: "also fix auth" },
     ];
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-sum-"));
+    process.env.FORGE_HOME = tmp;
+    const ulw = armWithPlan({ sessionId: "sum-1", cwd: tmp, mandate: "improve the code" });
+    ulw.wave = 2;
     const summary = buildStructuredSummary(dropped, {
-      ulw: {
-        enabled: true,
-        cycle: 1,
-        wave: 2,
-        blocks: 1,
-        stuckBlocks: 0,
-        lastBlockEditCount: 0,
-        mandate: "improve the code",
-        expandedMandate: "god-scope…",
-        softPrompt: true,
-        startedAt: "",
-        updatedAt: "",
-        sessionId: "x",
-      },
+      ulw,
       todos: [{ id: "t1", content: "fix auth", status: "pending" }],
     });
     assert.match(summary, /improve the code/);
-    assert.match(summary, /cycle=1 wave=2/);
+    assert.match(summary, /cycle=1 phase=execute wave=2/);
     assert.match(summary, /fix auth/);
     assert.match(summary, /also fix auth/);
     assert.match(summary, /read_file/);
@@ -400,26 +391,12 @@ describe("prompt profile + baseline system", () => {
       config: DEFAULT_CONFIG,
       workspace: tmp,
       ultrawork: true,
-      ulwCycle: {
-        enabled: true,
-        cycle: 1,
-        wave: 9,
-        blocks: 4,
-        stuckBlocks: 0,
-        lastBlockEditCount: 0,
-        mandate: "x",
-        expandedMandate: "y",
-        softPrompt: true,
-        startedAt: "",
-        updatedAt: "",
-        sessionId: "s",
-      },
     });
     assert.match(text, /mid-conversation update/);
     assert.match(text, /autonomous|Keep working/i);
     assert.match(text, /numbered window is current file text/);
     assert.doesNotMatch(text, /check truncation/);
-    assert.match(text, /State your reading first/i);
+    assert.match(text, /state your reading first/i);
     assert.match(text, /Finish, don't hand off/i);
     assert.match(text, /Finish the (defect )?class/i);
     assert.match(text, /hostile reviewer|Hostile self-review/i);
@@ -432,10 +409,9 @@ describe("prompt profile + baseline system", () => {
     assert.match(text, /TodoGate/i);
     assert.match(text, /serendipity/i);
     // Live counters should NOT be baked as the only source — protocol is static
-    assert.match(
-      text,
-      /Live counters\/mandate (?:are injected|arrive) mid-conversation/i,
-    );
+    assert.match(text, /ULW EXECUTOR PROTOCOL/);
+    assert.match(text, /Plan complete\./);
+    assert.doesNotMatch(text, /Bet:|Reading:|god-mode|GOD MODE/);
     assert.match(text, /Reliability \(runtime self-heal\)/);
     assert.match(text, /doom-loop/i);
     assert.match(text, /Context overflow|overflow/i);

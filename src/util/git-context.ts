@@ -50,7 +50,7 @@ function git(
  * `git diff HEAD --numstat` (staged+unstaged tracked changes) plus untracked
  * paths with sizes. Any content divergence from HEAD changes it; reverting to
  * HEAD restores an earlier fingerprint — which is exactly the churn signal
- * the ULW wave ledger needs (edit→revert = revisit, further work = new).
+ * the ULW cycle ledger needs (edit→revert = revisit, further work = new).
  * Null outside a git repo / on git failure. Cheap: two git calls, no content.
  */
 export function gitDiffFingerprint(cwd: string): string | null {
@@ -121,6 +121,83 @@ export function gitDirtyRelPaths(cwd: string): string[] {
 }
 
 const UNIFIED_DIFF_CAP = 200_000;
+
+/** HEAD sha. Null outside a repo / on an unborn branch. */
+export function gitHeadSha(cwd: string): string | null {
+  const out = git(["rev-parse", "HEAD"], cwd, 3000);
+  const sha = (out || "").trim();
+  return /^[0-9a-f]{40}$/.test(sha) ? sha : null;
+}
+
+/**
+ * Cumulative diff since a base commit: tracked changes (committed and dirty)
+ * plus untracked files as `+++` bodies. Capped; `truncated` tells the reader
+ * to open the files. Empty base → diff against HEAD only.
+ */
+export function gitDiffSinceHead(
+  cwd: string,
+  base: string | null,
+  cap = 120_000,
+): { diff: string; files: string[]; truncated: boolean } {
+  const root = git(["rev-parse", "--show-toplevel"], cwd);
+  if (!root) return { diff: "", files: [], truncated: false };
+  const ref = base && /^[0-9a-f]{40}$/.test(base) ? base : "HEAD";
+  const names = git(["diff", ref, "--name-only"], root, 4000) ?? "";
+  const untracked = git(["ls-files", "--others", "--exclude-standard"], root, 3000) ?? "";
+  const files: string[] = [];
+  const seen = new Set<string>();
+  for (const line of `${names}\n${untracked}`.split("\n")) {
+    const p = line.trim();
+    if (!p || seen.has(p)) continue;
+    seen.add(p);
+    files.push(p);
+  }
+  let diff = git(["diff", ref, "--"], root, 8000) ?? "";
+  for (const u of untracked.split("\n").map((l) => l.trim()).filter(Boolean).slice(0, 60)) {
+    if (diff.length > cap) break;
+    try {
+      const abs = path.join(root, u);
+      const st = fs.statSync(abs);
+      if (!st.isFile() || st.size > 200_000) continue;
+      const body = fs.readFileSync(abs, "utf8");
+      if (/\0/.test(body.slice(0, 2000))) continue;
+      diff += `\ndiff --git a/${u} b/${u}\nnew file\n--- /dev/null\n+++ b/${u}\n${body
+        .split("\n")
+        .map((l) => `+${l}`)
+        .join("\n")}\n`;
+    } catch {
+      /* skip */
+    }
+  }
+  const truncated = diff.length > cap;
+  return { diff: truncated ? diff.slice(0, cap) : diff, files, truncated };
+}
+
+/** `git log --oneline base..HEAD` (or the last 20 when base is unknown). */
+export function gitLogSince(cwd: string, base: string | null, max = 40): string {
+  const root = git(["rev-parse", "--show-toplevel"], cwd);
+  if (!root) return "";
+  const range = base && /^[0-9a-f]{40}$/.test(base) ? [`${base}..HEAD`] : ["-n", "20"];
+  const out = git(["log", "--oneline", "--no-decorate", `--max-count=${max}`, ...range], root, 4000);
+  return out ?? "";
+}
+
+/** `git status --short` for a brief (capped). */
+export function gitStatusShort(cwd: string, max = 60): string {
+  const root = git(["rev-parse", "--show-toplevel"], cwd);
+  if (!root) return "";
+  const branch = git(["rev-parse", "--abbrev-ref", "HEAD"], root) || "";
+  const out = git(["status", "--short"], root, 4000) ?? "";
+  const lines = out.split("\n").filter(Boolean);
+  const shown = lines.slice(0, max);
+  return [
+    branch ? `branch ${branch}` : "",
+    lines.length ? shown.join("\n") : "clean",
+    lines.length > max ? `… +${lines.length - max} more` : "",
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
 
 /**
  * Unified diff vs HEAD for the given relpaths (or the whole tree).

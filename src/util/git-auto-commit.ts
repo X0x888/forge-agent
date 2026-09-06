@@ -1,30 +1,18 @@
 /**
- * Local git commits during unattended ULW (wave close + Cycle complete).
+ * Local git commits during unattended ULW — one per reviewed, verified cycle.
  * Never pushes. Kill-switch: FORGE_ULW_AUTO_COMMIT=0.
+ *
+ * Staging rules are the harness's, not the model's: secrets never, disposable
+ * test fixtures never, `.forge/` scratch never, and a look (screenshot / look
+ * HTML) only when something in the tree references it.
  */
+import fs from "node:fs";
 import { execFileSync } from "node:child_process";
 import path from "node:path";
 import { isFalsy } from "./bool.js";
 import { forgeHome, nowIso } from "./fs.js";
 import { createChildEnv } from "../agent/tools/env-policy.js";
 import { findGitRoot, parsePorcelainPath } from "../agent/worktree.js";
-import { activeMemoryRecords } from "../harness/decision-memory.js";
-import {
-  displayUlwMandate,
-  formatWaveLedger,
-  isPlaceholderMandate,
-  loadUlwCycle,
-  noteUlwTreeAfterAutoCommit,
-  type UlwCycleState,
-} from "../harness/ulw-cycle.js";
-import { waveMovedJob } from "../harness/ulw-job-card.js";
-import { isTestOrHarnessPath } from "../harness/tests-without-body.js";
-import { isSlashPeekMillShip } from "../harness/same-surface.js";
-import {
-  extractShipSummary,
-  pickShipHint,
-} from "../harness/ship-close.js";
-import { findUnreferencedAssets } from "../harness/tree-shape.js";
 
 const SENSITIVE_RE =
   /(^|\/)(\.env(\..+)?|.*\.(pem|p12|pfx|key)|id_rsa|id_ed25519|id_dsa|auth\.json|credentials|secrets?\.json)$/i;
@@ -32,15 +20,15 @@ const SENSITIVE_RE =
 /**
  * A look: an image or HTML file whose name or directory says "screenshot".
  * HashPet's run committed 78 of these (968 KB) under `images/`, none of
- * them loaded by the extension — the play-loop asked for a look, the model
- * wrote the look into the repo, auto-commit staged everything dirty. A
- * sprite the manifest names is a product file and stays; a look nothing
- * references is left unstaged and named in the wave admit.
+ * them loaded by the extension. A sprite the manifest names is a product
+ * file and stays; a look nothing references is left unstaged and named.
  */
 const LOOK_EXT_RE = /\.(png|jpe?g|gif|webp|bmp|html?)$/i;
 const LOOK_NAME_RE =
   /(^|[-_.])(look|looks|screenshot|screenshots|shot|shots|capture|captures|preview|previews|states?|frame\d*|before|after|snap|snapshot)([-_.]|$)/i;
 const LOOK_DIR_RE = /(^|\/)(images|img|screenshots|shots|looks|captures|previews|snapshots)\//i;
+const ASSET_EXT_RE = /\.(png|jpe?g|gif|webp|bmp|ico|html?)$/i;
+const ASSET_LOOKUP_CAP = 40;
 
 export function isLookArtefactRelPath(rel: string): boolean {
   const n = rel.replace(/\\/g, "/");
@@ -51,9 +39,8 @@ export function isLookArtefactRelPath(rel: string): boolean {
 
 /**
  * The project's `.forge/` holds the tracked memory mirror, commands, skills
- * and hooks. Anything else under it — a Chromium profile the model pointed
- * `--user-data-dir` at, a scratch dir — is not a ship (HashPet's `.forge/`
- * carried 19 `chrome-look*` profiles, 36 MB).
+ * and hooks. Anything else under it — a Chromium profile, a scratch dir —
+ * is not a ship.
  */
 const FORGE_KEEP_RE =
   /^\.forge\/(MEMORY\.md|AGENTS\.md|hooks\.json|config\.toml|commands\/|skills\/|hooks\/)/;
@@ -78,7 +65,7 @@ export function ulwAutoCommitEnabled(): boolean {
   return !isFalsy(process.env.FORGE_ULW_AUTO_COMMIT ?? "1");
 }
 
-/** Fallback only when the repo/user has no commit identity (maze dogfood). */
+/** Fallback only when the repo/user has no commit identity. */
 export const ULW_COMMIT_NAME = "Forge";
 export const ULW_COMMIT_EMAIL = "forge@local";
 
@@ -92,10 +79,16 @@ function git(args: string[], cwd: string, timeoutMs = 30_000): string {
     env: createChildEnv(),
   });
   // Do not trimStart: porcelain v1 unstaged-only is `" M path"` and the
-  // leading space is a status column. Trimming it made slice(3) drop `s`
-  // (`src/…` → `rc/…`) so the first dirty file failed `git add` and the
-  // whole Cycle-complete commit was skipped.
+  // leading space is a status column.
   return raw.trimEnd();
+}
+
+function gitQuiet(args: string[], cwd: string, timeoutMs = 8_000): string | null {
+  try {
+    return git(args, cwd, timeoutMs);
+  } catch {
+    return null;
+  }
 }
 
 export function formatGitExecError(err: unknown): string {
@@ -130,8 +123,7 @@ export function commitIdentArgs(cwd: string): string[] {
 }
 
 export function porcelainPaths(cwd: string): string[] {
-  // -uall: a new directory is `?? src/ui.ts`, not `?? src/` (which cannot
-  // match a journaled file and skipped the whole Cycle-complete commit).
+  // -uall: a new directory is `?? src/ui.ts`, not `?? src/`.
   const out = git(["status", "--porcelain", "-uall"], cwd, 15_000);
   if (!out) return [];
   const paths: string[] = [];
@@ -171,7 +163,7 @@ export function isSensitiveRelPath(rel: string): boolean {
   return SENSITIVE_RE.test(norm);
 }
 
-/** Consolidation theater — do not mint a commit for CHANGELOG alone. */
+/** Do not mint a commit for CHANGELOG alone. */
 export function isChangelogRelPath(rel: string): boolean {
   const base = rel.replace(/\\/g, "/").split("/").pop() || "";
   return /^changelog(\.(md|markdown|txt|rst))?$/i.test(base);
@@ -179,99 +171,80 @@ export function isChangelogRelPath(rel: string): boolean {
 
 /**
  * Worktree-land tests write disposable files under `src/agent/__wt_land_*`
- * so `git status -uall` can see them. They are not product files — ULW
- * auto-commit must not snapshot them (Cursor dogfood shipped five of these
- * as "Acting on the ULW re-anchor").
+ * so `git status -uall` can see them. They are not product files.
  */
 export function isDisposableTestRelPath(rel: string): boolean {
   const base = rel.replace(/\\/g, "/").split("/").pop() || "";
   return base.startsWith("__wt_land_");
 }
 
-function isReanchorCommitHint(text: string | undefined): boolean {
-  const t = (text || "").replace(/\s+/g, " ").trim();
-  if (!t) return false;
-  return (
-    /\bActing on the ULW re-anchor\b/i.test(t) ||
-    /\bStop blocked\b/i.test(t) ||
-    /\bDo not stop\. Do not ask permission\b/i.test(t) ||
-    /^\[Forge ULW cycle driver\]/i.test(t)
-  );
+function untrackedFiles(cwd: string): string[] {
+  const out = gitQuiet(["ls-files", "--others", "--exclude-standard"], cwd, 4000);
+  return (out || "")
+    .split("\n")
+    .map((l) => l.trim())
+    .filter(Boolean);
 }
 
-export function buildAutoCommitSubject(mandate: string, hint?: string): string {
-  const fromShip = hint ? extractShipSummary(hint) : undefined;
-  let t = (fromShip || hint || "").replace(/\s+/g, " ").trim();
-  t = t.replace(/^["']|["']$/g, "");
-  t = t.replace(/^\*{0,2}Reading:\*{0,2}\s*/i, "");
-  t = t.replace(/^Correction:\s*/i, "");
-  t = t.replace(/^\*{0,2}Cycle complete\.?\*{0,2}\s*/i, "");
-  t = t.replace(/\*{1,2}/g, "").replace(/\s+/g, " ").trim();
-  // The model's own wave count drifts from the harness's (HashPet subjects
-  // said "Wave 160 — Consolidation" while the body said "Wave 791."). The
-  // body carries the harness number; the subject carries the ship.
-  t = t.replace(/^Wave\s+\d+\s*(?:[—–-]+|:)\s*/i, "").trim();
-  if (isReanchorCommitHint(t)) t = "";
-  // "Cycle complete.\n✅ npm test — green" is not a ship body.
-  if (/^[✅✗]/.test(t) || /^Proof:/i.test(t)) t = "";
-  // Mandate is last resort — a packed "Cycle complete" wave used to commit
-  // the raw user prompt ("comprehensively evaulate this tool…").
-  if (t.length < 12) {
-    t = (mandate || "").replace(/\s+/g, " ").trim();
-  }
-  if (t.length > 68) t = `${t.slice(0, 67)}…`;
-  return t || "ULW cycle complete";
-}
-
-function shipHint(sessionId: string): string | undefined {
-  try {
-    const ulw = loadUlwCycle(sessionId);
-    const waves = ulw?.waves ?? [];
-    const last = waves.length ? waves[waves.length - 1] : undefined;
-    const prev = waves.length > 1 ? waves[waves.length - 2] : undefined;
-    return pickShipHint({
-      records: activeMemoryRecords(sessionId),
-      prevWaveTs: prev?.ts,
-      lastWaveSummary: last?.summary,
-    });
-  } catch {
-    /* */
-  }
-  return undefined;
-}
-
-export function buildAutoCommitBody(
-  ulw: Pick<UlwCycleState, "wave" | "maxWaves" | "mandate" | "waves"> | null,
-  files: string[],
-): string {
-  const lines: string[] = [
-    "Unattended ULW snapshot — local commit only (never pushed).",
-  ];
-  if (ulw) {
-    const cap =
-      ulw.maxWaves != null && ulw.maxWaves > 0 ? `/${ulw.maxWaves}` : "";
-    lines.push(`Wave ${ulw.wave}${cap}.`);
-    if (ulw.mandate) {
-      lines.push(`Mandate: ${displayUlwMandate(ulw.mandate).slice(0, 240)}`);
+function untrackedReferences(cwd: string, needle: string): boolean {
+  for (const rel of untrackedFiles(cwd).slice(0, 200)) {
+    if (ASSET_EXT_RE.test(rel)) continue;
+    try {
+      const st = fs.statSync(path.join(cwd, rel));
+      if (!st.isFile() || st.size > 2 * 1024 * 1024) continue;
+      if (fs.readFileSync(path.join(cwd, rel), "utf8").includes(needle)) return true;
+    } catch {
+      /* skip */
     }
-    const ledger = formatWaveLedger(ulw.waves, 8);
-    if (ledger) lines.push(`Waves: ${ledger}`);
   }
-  if (files.length) {
-    lines.push(`Files: ${files.slice(0, 20).join(", ")}`);
-    if (files.length > 20) lines.push(`… +${files.length - 20} more`);
-  }
-  return lines.join("\n");
+  return false;
 }
 
 /**
- * Commit the current dirty tree (minus secrets). Call at each wave close
- * and on Cycle complete so a 5-hour unattended run does not pile one
- * giant uncommitted chunk. Never pushes.
+ * Assets nothing references: `git grep -l -F <basename>` over tracked files
+ * that are not themselves assets, plus the untracked dirty tree. Capped.
  */
-export function maybeAutoCommitOnUlwDone(opts: {
+export function findUnreferencedAssets(cwd: string, assets: string[]): string[] {
+  const out: string[] = [];
+  for (const rel of assets.slice(0, ASSET_LOOKUP_CAP)) {
+    const base = path.basename(rel);
+    if (!base) continue;
+    const hits = gitQuiet(
+      [
+        "grep",
+        "-l",
+        "-I",
+        "-F",
+        base,
+        "--",
+        ".",
+        ":!*.png",
+        ":!*.jpg",
+        ":!*.jpeg",
+        ":!*.gif",
+        ":!*.webp",
+        ":!*.bmp",
+        ":!*.ico",
+        ":!*.html",
+        ":!*.htm",
+      ],
+      cwd,
+      4000,
+    );
+    const referenced = Boolean(hits && hits.trim()) || untrackedReferences(cwd, base);
+    if (!referenced) out.push(rel);
+  }
+  return out;
+}
+
+/**
+ * Commit the current dirty tree (minus secrets, scratch and orphan looks)
+ * with the given subject and body. Never pushes.
+ */
+export function commitDirtyTree(opts: {
   cwd: string;
-  sessionId: string;
+  subject: string;
+  body: string;
   permissionMode?: string;
 }): AutoCommitResult {
   if (!ulwAutoCommitEnabled()) {
@@ -294,14 +267,24 @@ export function maybeAutoCommitOnUlwDone(opts: {
   }
   if (!dirty.length) return { committed: false, skipped: "working tree clean" };
 
+  // A run scoped to a subdirectory (monorepo package, or a fixture whose
+  // temp dir sits inside a repo) commits only what lies under its workspace.
+  // Without this, `git rev-parse` walks up and the cycle commit sweeps the
+  // enclosing repo's dirty tree — a test run once committed this repo.
+  const scope = path.relative(root, path.resolve(opts.cwd)).replace(/\\/g, "/");
+  if (scope && !scope.startsWith("..")) {
+    dirty = dirty.filter((p) => p === scope || p.startsWith(`${scope}/`));
+    if (!dirty.length) {
+      return { committed: false, skipped: `no changes under ${scope}/` };
+    }
+  }
+
   let toAdd = dirty.filter(
     (p) =>
       !isSensitiveRelPath(p) &&
       !isDisposableTestRelPath(p) &&
       !isForgeScratchRelPath(p),
   );
-  // Looks nothing references stay out of the commit. One `git grep` per
-  // candidate, capped inside findUnreferencedAssets.
   const leftUnstaged = dirty.filter(isForgeScratchRelPath);
   const looks = toAdd.filter(isLookArtefactRelPath);
   if (looks.length) {
@@ -340,60 +323,11 @@ export function maybeAutoCommitOnUlwDone(opts: {
     };
   }
 
-  const ulw = loadUlwCycle(opts.sessionId);
-  if (ulw && isPlaceholderMandate(ulw.mandate)) {
-    return { committed: false, skipped: "pending work-order" };
-  }
-  if (ulw?.lastReflect === "score") {
-    return { committed: false, skipped: "LAST reflect score (read-only)" };
-  }
-  if (
-    ulw?.lastReflect === "closeout" &&
-    toAdd.every((p) => isTestOrHarnessPath(p) || isChangelogRelPath(p))
-  ) {
-    return { committed: false, skipped: "LAST close-out tests-only" };
-  }
-  const lastWave = ulw?.waves?.length
-    ? ulw.waves[ulw.waves.length - 1]
-    : undefined;
-  if (lastWave && (lastWave.editDelta ?? 0) <= 0) {
-    return { committed: false, skipped: "zero-edit wave" };
-  }
-  if (
-    lastWave &&
-    (lastWave.millClass || lastWave.siblingMill) &&
-    !waveMovedJob(lastWave)
-  ) {
-    return { committed: false, skipped: "mill ship (not a job move)" };
-  }
-  if (
-    lastWave &&
-    isSlashPeekMillShip(lastWave.summary || lastWave.classText || "") &&
-    (ulw?.peekMillStreak ?? 0) >= 2
-  ) {
-    return { committed: false, skipped: "slash-peek mill" };
-  }
-  if (
-    lastWave?.chrome &&
-    toAdd.every((p) => isTestOrHarnessPath(p) || isChangelogRelPath(p))
-  ) {
-    return { committed: false, skipped: "chrome/tests-without-body" };
-  }
-  const hint = shipHint(opts.sessionId);
-  if (isReanchorCommitHint(hint)) {
-    return { committed: false, skipped: "re-anchor is not a ship" };
-  }
-  const subject = buildAutoCommitSubject(
-    ulw ? displayUlwMandate(ulw.mandate) : "ULW cycle complete",
-    hint,
-  );
-  if (isReanchorCommitHint(subject)) {
-    return { committed: false, skipped: "re-anchor is not a ship" };
-  }
-  const body = buildAutoCommitBody(ulw, staged);
+  const subject = (opts.subject || "").replace(/\s+/g, " ").trim().slice(0, 72) || "ULW cycle";
+  const body = [opts.body.trim(), `Files: ${staged.slice(0, 20).join(", ")}${staged.length > 20 ? ` … +${staged.length - 20} more` : ""}`]
+    .filter(Boolean)
+    .join("\n");
   try {
-    // Fallback author when the machine has no user.name/email (maze: 43
-    // waves staged, every commit skipped with "Author identity unknown").
     // --no-gpg-sign / --no-verify: unattended snapshot, never wait on
     // pinentry or a pre-commit hook.
     git(
@@ -424,11 +358,6 @@ export function maybeAutoCommitOnUlwDone(opts: {
     sha = git(["rev-parse", "--short", "HEAD"], root, 5_000);
   } catch {
     sha = "";
-  }
-  try {
-    noteUlwTreeAfterAutoCommit(opts.sessionId, root);
-  } catch {
-    /* fingerprint reset is best-effort */
   }
   return {
     committed: true,

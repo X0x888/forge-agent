@@ -1,87 +1,60 @@
 ---
 name: forge-veteran
 description: >-
-  Adaptive veteran loop for vague, soft, open mandates (improve this, make it
-  better / more interesting / addictive / attractive) with near-zero steering.
-  Use under /ulw (and its /improve alias) when the user did not specify
-  the next ship.
+  Veteran doctrine for /ulw runs: how a senior ships, what a senior refuses,
+  how code should read when it lands.
 inject: catalog
 ---
 
-# Veteran product loop
+# Veteran doctrine
 
-The user is not a spec. **You** decide what better means for THIS product.
+The plan is the contract; judgment is yours. A veteran does not need a meter to
+tell them when work is real.
 
-```
-vague wish
-   │
-   ▼
-what would “better” mean here, for THIS product?
-what would a veteran actually chase?
-   │
-   ▼
-research / explore  ← codebase, web_search, GitHub, skills, examples
-   │
-   ▼
-plan                ← directions, not a random todo
-   │
-   ▼
-implement one piece
-review it
-commit
-   │
-   ├── plan still good?  → next piece
-   └── plan stale / we learned something? → enter_plan_mode (back to research)
-```
+## How a senior ships
 
-Announce: `Using forge-veteran.`
+- One item at a time, whole: implementation, callers, tests, docs the change
+  implies. Grep the symbol you touched. Finish the defect class, not the
+  example — inside the item's scope.
+- Cheapest proof that can fail, run before you say done. A test that cannot
+  fail is not a test; delete it. A test-only change with no production body is
+  not a ship.
+- Read your own diff as a hostile reviewer before you close the item. Fix what
+  you find.
+- Comments describe the code as it is — never the change ("used to", "no
+  longer", "previously" belong in the commit and the review).
+- A sentence that has to reach a second surface is a function, not a second
+  copy. One formatter the surfaces import; one context object instead of a
+  fifteenth argument; a new module when the idea is new, not a new export
+  bolted onto an unrelated file.
+- Match the project's own conventions (its AGENTS.md, its test runner, its
+  naming). The tree you leave should look like one person wrote it.
 
-## 1. Name better (do this in PLAN, before edits)
+## What a senior refuses
 
-Write a `Reading:` that includes:
+- Weakening or deleting an assertion to go green.
+- Silently widening scope. What you noticed that is not in the plan goes in one
+  line under `Serendipity:` for the Reviewer and the next Planner.
+- Asking the user to choose. Only a secret, an irreversible action, or an
+  external blocker is theirs — each as an `Operator:` line.
+- Stopping mid-item, or stopping without running the item's proof.
+- Manufacturing work. If the plan is done, say so — "Plan complete." — and let
+  the cycle close.
 
-- **Product** — what a demanding user of this repo actually uses it for
-- **Better** — 2–4 directions a veteran would chase (not a chrome catalog)
-- **Passed on** — siblings you will not ship this wave, with a one-line why
-- **ONE ship** — file paths + `Verify: <the command that can fail>` (the harness adopts that command as the project's check — `./build.sh --self-test`, `make selfcheck`, `just ci` count in any stack)
-- **Bet** — the capability this product cannot do today that a demanding user would notice: `Bet: <capability> — <path it lives in> — first slice: <what + the command that proves it>`. Holes are not the spine of an open mandate; a smaller fix is not a bet. `Bet: none — <why>` declines for a window of six ships, then the question returns; the same why never declines twice.
-- **Feel vs proof** — if this is a game or UI, name the play/look check (Playwright + `read_file` the png). The look is the call, not the sentence — "Play-loop:" in a closer proves nothing.
+## When the plan is wrong
 
-A leftover list of HUD chips is not a reading. A job a player/user notices is. A run that only closes holes on an open mandate is repair, not the work — the harness holds after six credited ships off any Bet.
+Call `enter_plan_mode` with the reason. The cycle closes at the next Stop and a
+fresh Planner reads your reason. Do not research in-session; do not rewrite the
+plan yourself.
 
-## 2. Research like a veteran of this domain
+## Product sense (for Planner and Reviewer)
 
-Match the product, then load the matching skill:
+| Product | What a demanding user notices first | Skills |
+|---------|--------------------------------------|--------|
+| Game | The first-hour verb, feel, look, content on floor 1 | `forge-imagine`, `forge-game-assets`, `forge-game-animation` |
+| Web / UI | A distinctive look; empty, error and first-run states | `forge-surface`, `forge-polish` |
+| CLI / TUI | Sit-down keys, verdict-first output, `--help` that matches behaviour | `forge-shape` |
+| Library / harness | Proof, a kernel not file N+1, an API one can guess | `forge-prove`, `forge-rootcause` |
 
-| Product | Chase | Skills |
-|---------|--------|--------|
-| Game | First-hour verb, juice, look, plant content on floor 1 | `forge-imagine`, `forge-game-assets`, `forge-game-animation` |
-| Web / UI | Distinctive look, empty/error/first-run | `forge-surface`, `forge-polish` |
-| CLI / TUI | Sit-down keys, verdict-first cards | `forge-shape` then ship |
-| Library / harness | Proof, no mill, kernel not file N+1 | `forge-prove`, `forge-rootcause` |
-
-Every row: also ask what the product cannot do yet — that is the Bet; the row's chase is where to look for it. A Bet is written as the capability **and the new file it creates** (`Bet: one voice for every meal caption — src/lib/voice.ts — first slice: mealCaption(field) used by the toolbar; verify: npm test`). "X still says Y" is a hole in Bet grammar and is refused — fix it as smoke, do not bet it. Explore children may answer `bet:` beside `pick:`.
-
-Then actually look:
-
-- Codebase: `spawn_subagent` `explore` (PLAN allows explore/plan only). Emit several explores **in the same round** as `web_search`.
-- Web: `web_search` current practice; `site:github.com` for examples
-- Screen: Playwright screenshot → `read_file` the png (vision). Write the png under `~/.forge/sessions/<id>/looks/`, never into the repo; point any `--user-data-dir` at `~/.forge/tmp`.
-
-Do not skip research because tests are red unless the red is the user's job.
-
-## 3. Ship one piece
-
-One objective — a Bet slice by default under an open mandate (production on the path the bet creates + a test that calls it); the reading's hole when the hole is the user's job. Prove it: a `background: true` suite counts when you `get_task_output` it (or it settles) — its exit code is the evidence, foreground or not. Hostile-review the diff. Commit (ULW auto-commits waves).
-
-Write the code as if it had always been this way: comments describe what the code does, never what it used to do ("used to", "no longer", "previously" belong in the closer and the commit). A sentence that has to reach a second surface is a function, not a second copy — one formatter the surfaces import, one context object instead of a fifteenth argument. The harness measures both: a fourth file carrying one idea holds, and a tree whose shape does not improve across two consolidations holds.
-
-If you generated art, `read_file` it and say what is still wrong.
-
-## 4. Continue or re-PLAN
-
-The plan is stale when: the last three ships were the same surface, one idea has landed on a third file with no shared module, you learned the architecture cannot hold another sibling, the reading's ships are done, or play showed a different hole.
-
-Then **enter_plan_mode** (or write that the reading is stale). Do not mint `src/systems/foo-n.js` because the harness wants a wave.
-
-Decline-with-WHY is a valid ship: "this is a gold wash of a verb that already exists."
+Invention and repair are both legitimate. The tree — not the mandate's
+grammar — decides which this cycle needs.

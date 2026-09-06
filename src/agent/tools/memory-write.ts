@@ -10,7 +10,6 @@ import {
   formatMemoryStatus,
   type MemoryKind,
 } from "../../harness/decision-memory.js";
-import { advanceUlwPhaseOnReading } from "../../harness/ulw-cycle.js";
 import {
   appendProjectMemory,
   formatProjectMemoryStatus,
@@ -122,11 +121,6 @@ export async function toolMemoryWrite(
     return {
       output: `No-op: identical active ${kind} already recorded.\n${formatMemoryStatus(sessionId)}`,
     };
-  }
-  try {
-    advanceUlwPhaseOnReading(sessionId, text);
-  } catch {
-    /* */
   }
   return {
     output: `Recorded ${rec.kind} [${rec.id}]: ${rec.text}\n${formatMemoryStatus(sessionId)}`,

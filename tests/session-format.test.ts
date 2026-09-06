@@ -359,7 +359,7 @@ describe("session helpers", () => {
     assert.doesNotMatch(trailer, /forge accounts switch/);
     const clean = createSession({ cwd: tmp, provider: "xai", model: "grok-4" });
     setSessionLastError(clean, {
-      code: "ulw_cycle_complete",
+      code: "ulw_done",
       message: "released",
     });
     assert.doesNotMatch(
@@ -451,15 +451,15 @@ describe("session helpers", () => {
     s.messages.push({
       role: "user",
       content: [
-        "## ULW armed",
+        "[Forge ULW cycle driver] armed — plan-cycle mode.",
         "Mandate: comprehensively evaluate this tool and then improve the ui and ux of it.",
-        "God-mode protocol is in the system prompt — do not re-derive it.",
+        "A fresh-context Planner is writing cycle 1's plan now.",
       ].join("\n"),
     });
     saveSession(s);
     assert.match(s.meta.lastUserPreview || "", /comprehensively evaluate/);
-    assert.doesNotMatch(s.meta.lastUserPreview || "", /God-mode protocol/);
-    assert.doesNotMatch(s.meta.lastUserPreview || "", /## ULW armed/);
+    assert.doesNotMatch(s.meta.lastUserPreview || "", /fresh-context Planner/);
+    assert.doesNotMatch(s.meta.lastUserPreview || "", /cycle driver\] armed/);
   });
 
   it("formatSessionSummary includes last-turn peek", async () => {
@@ -874,12 +874,10 @@ it("/fork includes last-turn peek", async () => {
     s.messages.push({ role: "user", content: "before fork" });
     s.messages.push({ role: "assistant", content: "ready to fork" });
     // Optional ULW so harness-copy line is exercised when present
-    try {
-      const { armUlwCycle } = await import("../src/harness/ulw-cycle.js");
-      armUlwCycle(s.meta.id, "keep going", { cycle: 1 });
+    {
+      const { armWithPlan } = await import("./helpers/cycle-arm.js");
+      armWithPlan({ sessionId: s.meta.id, cwd: tmp, mandate: "keep going" });
       s.meta.ultrawork = true;
-    } catch {
-      /* optional */
     }
     const hooks = new HookRunner(DEFAULT_CONFIG, tmp);
     const r = await handleSlash("/fork experiment", {

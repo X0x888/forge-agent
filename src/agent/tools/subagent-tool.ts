@@ -46,11 +46,7 @@ export async function toolSpawnSubagent(
   ).trim();
   const subagentType = resolveSpawnSubagentType(
     args.subagent_type ?? args.type ?? args.agent_type,
-    {
-      planMode: ctx.config?.permissionMode === "plan",
-      ulwOrient: ctx.ulwPhase === "orient",
-      ulwLastReflectScore: ctx.ulwLastReflectScore,
-    },
+    { planMode: ctx.config?.permissionMode === "plan" },
   );
   const capabilityMode =
     ctx.config?.permissionMode === "plan"

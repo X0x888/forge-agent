@@ -410,7 +410,7 @@ describe("hints", () => {
     assert.match(first!.text, /\/status/);
     assert.match(first!.text, /no Ctrl\+C/);
     assert.doesNotMatch(first!.text, /\/cycle 0/);
-    assert.doesNotMatch(first!.text, /\/ulw-off|\/max-waves|\/notify/);
+    assert.doesNotMatch(first!.text, /\/ulw-off|\/max-cycles|\/notify/);
     const line = formatLiveSteerLine(first!.text);
     assert.match(line, /^  live ›  type to queue/);
     assert.equal(pickLiveSteerHint({ dismissed: ["live_steer"] }), null);
@@ -467,11 +467,11 @@ describe("grouped help", () => {
     assert.match(start.text, /\/setup/);
     assert.match(start.text, /Switch model \(sticky\)/);
     assert.match(start.text, /Allow\?/);
-    assert.doesNotMatch(start.text, /\/max-waves N\|off/);
+    assert.doesNotMatch(start.text, /\/max-cycles N\|off/);
     assert.doesNotMatch(start.text, /Getting started/);
     assert.equal(helpFor("start").text, start.text);
     const all = helpFor("all");
-    assert.match(all.text, /\/max-waves/);
+    assert.match(all.text, /\/max-cycles/);
     assert.match(all.text, /\/setup/);
     assert.match(HELP_START, /\/help all/);
     assert.match(HELP_START, /help  ·  start/);

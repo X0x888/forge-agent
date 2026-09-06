@@ -12,7 +12,7 @@ import {
 import { createSession } from "../src/session/session.js";
 import { DEFAULT_CONFIG } from "../src/config/types.js";
 import { HookRunner } from "../src/harness/hooks.js";
-import { loadUlwCycle } from "../src/harness/ulw-cycle.js";
+import { loadCycleState } from "../src/harness/cycle/index.js";
 
 function tmpRoot(): string {
   const base = process.env.TMPDIR || path.join(process.cwd(), ".tmp");
@@ -59,14 +59,14 @@ describe("/improve", () => {
     });
     assert.equal(r.handled, true);
     assert.ok(r.forwardPrompt);
-    assert.match(String(r.output || ""), /ULW ON|cycle=1/i);
-    const u = loadUlwCycle(session.meta.id);
-    assert.equal(u?.cycle, 1);
-    assert.match(u?.mandate || "", /reliability/i);
-    assert.doesNotMatch(u?.mandate || "", /Continuously improve this project/i);
-    assert.equal(u?.phase, "orient");
-    assert.equal(u?.judgmentRequired, true);
-    assert.equal(session.meta.ulwOwnsPlan, true);
-    assert.equal(r.session?.meta.permissionMode ?? session.meta.permissionMode, "plan");
+    assert.match(String(r.output || ""), /ULW ON/i);
+    const u = loadCycleState(session.meta.id);
+    assert.ok(u);
+    assert.equal(u.enabled, true);
+    assert.equal(u.phase, "plan", "the Planner runs at the next boundary");
+    assert.equal(u.cycle, 0);
+    assert.match(u.mandate || "", /reliability/i);
+    assert.doesNotMatch(u.mandate || "", /Continuously improve this project/i);
+    assert.equal(u.humanPlan, false);
   });
 });

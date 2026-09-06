@@ -6,8 +6,8 @@
 export function expertTipsLines(): string[] {
   return [
     `Forge expert tips`,
-    `  Live mid-run:  /improve  ·  /hooks init  ·  /cycle 0|1  ·  /max-waves N|off  ·  /ulw-off  ·  /budget N|off  ·  /notify on  ·  /plan  ·  /build  ·  enter_plan_mode  ·  exit_plan_mode  ·  /model  ·  /fallback  ·  /pause  ·  /unpause  ·  /done  ·  /status  ·  /checkpoint  ·  /tasks kill|log  ·  get_task_output wait= / wait_mode=any|all  ·  !cmd  ·  @path`,
-    `  Less steering:  handoff-guard blocks "shall I continue?" · proof-claim blocks "tests pass" / bare "Done." / silent edits-without-verify without a *successful* check (+ self-audit checklist) · soft TodoGate outside ULW · /done winds ULW+goal · state your reading first · safety valves flip ULW to LAST`,
+    `  Live mid-run:  /improve  ·  /hooks init  ·  /cycle 0|1  ·  /replan  ·  /max-cycles N|off  ·  /ulw-off  ·  /budget N|off  ·  /notify on  ·  /plan  ·  /build  ·  enter_plan_mode  ·  exit_plan_mode  ·  /model  ·  /fallback  ·  /pause  ·  /unpause  ·  /done  ·  /status  ·  /checkpoint  ·  /tasks kill|log  ·  get_task_output wait= / wait_mode=any|all  ·  !cmd  ·  @path`,
+    `  Less steering:  handoff-guard blocks "shall I continue?" · proof-claim blocks "tests pass" / bare "Done." / silent edits-without-verify without a *successful* check (+ self-audit checklist) · soft TodoGate outside ULW · /done winds ULW+goal · state your reading first · safety valves set ULW to /cycle 0`,
     `  Verify trail:   successful checks stamp last-verify · failed re-runs clear it · edits after verify → ✓~ stale · surfaces on /status /stats /share /done /export · sessions list ✓/✓~ · /commit do + /done warn`,
     `  ULW proof:      wave proof + proof-demand prefer successful checks · reanchor names preferred project commands · failed runs don't clear proofDemands`,
     `  Advisory ULW:   pure Q&A mid-run or post-compact is framed ADVISORY — answer first; ULW momentum does not authorize unsolicited edits · TodoGate/TodoNudge/handoff/proof-claim Done. release on advisory turns`,
@@ -33,7 +33,7 @@ export function expertTipsLines(): string[] {
     `  Bang-shell:     !git status / !npm test run now (same PermissionGate as bash) · mid-run queues output for the next model step`,
     `  Ask user:       ask_user tool for clarifying questions (interactive; headless fails closed)`,
     `  Format-on-write: /format on|off · auto when prettier/biome/ruff detected · FORGE_FORMAT_ON_WRITE=0/1 force`,
-    `  Dirty trees:    doctor warns at ≥20 changed files under ULW · ULW arm auto-checkpoints (FORGE_ULW_CHECKPOINT=0 off) · wave-close + Cycle complete auto-commit locally (FORGE_ULW_AUTO_COMMIT=0 off) · /checkpoint restore`,
+    `  Dirty trees:    doctor warns at ≥20 changed files under ULW · ULW arm auto-checkpoints (FORGE_ULW_CHECKPOINT=0 off) · each reviewed, green cycle commits locally (FORGE_ULW_AUTO_COMMIT=0 off) · /checkpoint restore`,
     `  Docs:          docs/GETTING-STARTED.md  ·  /help  ·  docs/PRODUCTION.md  ·  docs/RELIABILITY.md  ·  forge tips  ·  forge news`,
   ];
 }

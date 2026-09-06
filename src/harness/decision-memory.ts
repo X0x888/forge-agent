@@ -111,7 +111,7 @@ function isLoadBearingRecord(r: MemoryRecord): boolean {
   if (r.status !== "active") return false;
   if (DURABLE_MEMORY_KINDS.includes(r.kind)) return true;
   if (/^MANDATE:/i.test(r.text)) return true;
-  if (/\bBet:/i.test(r.text)) return true;
+  if (/^Plan \d+:/i.test(r.text)) return true;
   return false;
 }
 
@@ -121,8 +121,8 @@ function isLoadBearingRecord(r: MemoryRecord): boolean {
  * Wave-1 Reading from both 400-record dogfood runs — 200 wave observations
  * and 107 duplicate `Job:` decisions did the evicting. Order of eviction:
  * superseded rows, wave observations beyond WAVE_RECORDS_KEEP, then the
- * oldest non-durable rows; durable kinds, `MANDATE:`, `Bet:` and the first
- * `Reading:` are never dropped.
+ * oldest non-durable rows; durable kinds, `MANDATE:` and `Plan N:` rows are
+ * never dropped.
  */
 export function trimDecisionRecords(
   records: MemoryRecord[],
@@ -146,13 +146,10 @@ export function trimDecisionRecords(
     const drop = new Set(waves.slice(0, dropN).map((r) => r.id));
     recs = recs.filter((r) => !drop.has(r.id));
   }
-  // 3. oldest non-durable, non-wave rows (never the first Reading, never
-  //    durable kinds) — Job: spam goes before the kept wave window.
-  const firstReading = recs.find((r) => /\bReading:/i.test(r.text));
+  // 3. oldest non-durable, non-wave rows (never durable kinds).
   if (over() > 0) {
     const candidates = recs.filter(
-      (r) =>
-        r.kind !== "wave" && !isLoadBearingRecord(r) && r.id !== firstReading?.id,
+      (r) => r.kind !== "wave" && !isLoadBearingRecord(r),
     );
     const dropN = Math.min(over(), candidates.length);
     const drop = new Set(candidates.slice(0, dropN).map((r) => r.id));
@@ -266,11 +263,7 @@ export function extractMandateBullets(mandate: string): string[] {
     }
   }
   if (bullets.length >= 2) return bullets.slice(0, 40);
-  // Verb-order sentences ("evaluate X and then improve Y") are one mandate,
-  // not two backlog items. Those used to become [priority] evaluate +
-  // [priority] improve and survive every compact.
-  if (isEvaluateClassMandate(text)) return [];
-  // Explicit "do A then do B" checklists that are not evaluate-class.
+  // Explicit "do A then do B" checklists.
   const thenParts = text
     .split(/\s+and then\s+|\s+then\s+/i)
     .map((s) => s.trim())
@@ -285,47 +278,6 @@ export function extractMandateBullets(mandate: string): string[] {
     .filter((s) => s.length >= 12)
     .slice(0, 12);
   return parts.length >= 2 ? parts : [text.slice(0, MAX_TEXT)];
-}
-
-/**
- * Mandate whose first verb is evaluate/audit/review (often followed by ship).
- * Length-independent — "comprehensively evaluate this tool and then improve
- * the ui" is the product case and used to miss the 80-char broad gate.
- */
-export function isEvaluateClassMandate(mandate: string): boolean {
-  const t = mandate.replace(/\s+/g, " ").trim();
-  if (!t) return false;
-  if (/comprehensively|full.?audit|end.to.end\s+(audit|review|eval)/i.test(t)) {
-    return true;
-  }
-  return (
-    /\b(evaluate|audit|assess|inspect)\b/i.test(t) &&
-    /\b(improve|fix|ship|polish|harden|ux|ui)\b/i.test(t)
-  );
-}
-
-/**
- * True when the mandate is a multi-section checklist / comprehensive audit
- * rather than a single tight objective.
- */
-export function isBroadMandate(mandate: string): boolean {
-  const raw = mandate.replace(/\r\n/g, "\n");
-  const t = raw.replace(/\s+/g, " ").trim();
-  // Evaluate-class ("evaluate then improve") is a verb order, not a backlog.
-  // A 1-sentence product prompt must not force todo_write ≥2 and then
-  // "execute the board" as leftover chrome for five hours.
-  const dashBullets = (t.match(/(?:^|\s)[-*•]\s+\S/g) || []).length;
-  if (dashBullets >= 4) return true;
-  const bullets = extractMandateBullets(raw);
-  if (bullets.length >= 5) return true;
-  // Long multi-section prose — not the 1-sentence evaluate-then-improve case.
-  if (
-    t.length >= 160 &&
-    /comprehensively|end.to.end|full.?audit|all aspects/i.test(t)
-  ) {
-    return true;
-  }
-  return false;
 }
 
 export function appendMemoryRecord(
@@ -376,7 +328,7 @@ export function appendMemoryRecord(
 export function seedMemoryFromMandate(
   sessionId: string,
   mandate: string,
-  opts?: { softPrompt?: boolean; force?: boolean },
+  opts?: { force?: boolean },
 ): { seeded: number; store: DecisionMemoryStore } {
   const store = loadDecisionMemory(sessionId);
   const fp = mandateFingerprint(mandate);
@@ -394,13 +346,6 @@ export function seedMemoryFromMandate(
       ) {
         r.status = "superseded";
       }
-      if (r.kind === "priority" || r.kind === "decision") {
-        if (
-          /^Soft mandate:|^Broad mandate:|^Mandate verbs/i.test(r.text)
-        ) {
-          r.status = "superseded";
-        }
-      }
     }
     saveDecisionMemory(store);
   }
@@ -416,44 +361,14 @@ export function seedMemoryFromMandate(
     if (r) seeded++;
   }
   // Prefer priority for early bullets, constraint for the rest.
-  // Skip for evaluate-class one-liners — the verb-order decision below
-  // is the contract, not two fake priorities.
-  if (!(isEvaluateClassMandate(mandate) && !isBroadMandate(mandate))) {
-    bullets.slice(0, 12).forEach((b, i) => {
-      const r = appendMemoryRecord(sessionId, {
-        kind: i < 3 ? "priority" : "constraint",
-        text: b,
-        source: "ulw",
-      });
-      if (r) seeded++;
-    });
-  }
-  // Evaluate-class already has a verb-order contract. The generic
-  // "invent work" line used to survive compact and restart chrome grinding.
-  if (opts?.softPrompt && !isEvaluateClassMandate(mandate)) {
+  bullets.slice(0, 12).forEach((b, i) => {
     const r = appendMemoryRecord(sessionId, {
-      kind: "decision",
-      text: "Soft mandate: agent invents high-leverage work; never ask user to pick tasks.",
+      kind: i < 3 ? "priority" : "constraint",
+      text: b,
       source: "ulw",
     });
     if (r) seeded++;
-  }
-  if (isBroadMandate(mandate)) {
-    const r = appendMemoryRecord(sessionId, {
-      kind: "decision",
-      text: "Broad mandate: decompose into ordered todos first; waves execute backlog, not free invent.",
-      source: "ulw",
-    });
-    if (r) seeded++;
-  }
-  if (isEvaluateClassMandate(mandate)) {
-    const r = appendMemoryRecord(sessionId, {
-      kind: "decision",
-      text: "Mandate verbs in order: written evaluation/reading first (that is the Wave 1 deliverable, not advice), then ship the one item the reading picked.",
-      source: "ulw",
-    });
-    if (r) seeded++;
-  }
+  });
   const next = loadDecisionMemory(sessionId);
   next.mandateFp = fp;
   saveDecisionMemory(next);
@@ -465,119 +380,11 @@ export function activeMemoryRecords(sessionId: string): MemoryRecord[] {
   return loadDecisionMemory(sessionId).records.filter((r) => r.status === "active");
 }
 
-/**
- * True when the agent has produced a real reading/judgment — not the
- * auto-seeded "Soft mandate:" / "Broad mandate:" templates.
- */
-const READING_HEAD_RE = /^\s*\*{0,2}(reading|judgment)\s*:\*{0,2}/im;
-const SEEDED_MANDATE_RE =
-  /^(Soft mandate:|Broad mandate:|Mandate verbs|MANDATE:)/i;
-
-/** True when text is a Wave-1 plan (Reading:/Judgment: with a real body). */
-export function isPlanShapedText(text: string): boolean {
-  const t = String(text || "").trim();
-  if (!t) return false;
-  if (!READING_HEAD_RE.test(t)) return false;
-  const body = t.replace(READING_HEAD_RE, "").trim();
-  return body.length >= 12;
-}
-
-/** Verify command or a cited file — a catalog of leftovers is not a plan. */
-const PLAN_VERIFY_RE =
-  /\b(verify(?:ing|ied)?|proof|npm test|npm run |pnpm (?:test|run)|yarn (?:test|run)|bun test|pytest|cargo test|go test|swift test|swift build|xcodebuild|zig build|dotnet test|make (?:test|check)|just (?:test|check|ci)|tsc\b|typecheck|lint|self-?test)\b|\.\/[\w.-]*(?:build|test|check|ci)[\w.-]*\.sh\b/i;
-const PLAN_PATH_RE =
-  /\b[\w./-]+\.(ts|tsx|js|jsx|mjs|cjs|py|rs|go|md|swift|kt|kts|java|scala|rb|php|cs|c|cc|cpp|h|hpp|m|mm|ex|exs|zig|dart|vue|svelte|lua|sh|sql)\b/;
-
-export function planBodyHasEvidence(text: string): boolean {
-  const t = String(text || "");
-  return PLAN_VERIFY_RE.test(t) || PLAN_PATH_RE.test(t);
-}
-
-export function hasMandateJudgment(
-  sessionId: string,
-  lastAssistantMessage?: string,
-): boolean {
-  const recs = activeMemoryRecords(sessionId);
-  if (
-    recs.some(
-      (r) =>
-        r.source === "agent" &&
-        (r.kind === "decision" || r.kind === "observation") &&
-        r.text.length >= 40 &&
-        !SEEDED_MANDATE_RE.test(r.text),
-    )
-  ) {
-    return true;
-  }
-  const msg = String(lastAssistantMessage || "").trim();
-  if (!msg) return false;
-  if (isPlanShapedText(msg)) return true;
-  if (
-    msg.length > 80 &&
-    /\b(highest-leverage|what i (passed|skipped) on|i will (evaluate|audit|ship))\b/i.test(
-      msg,
-    )
-  ) {
-    return true;
-  }
-  return false;
-}
-
-/**
- * ULW Wave-1 plan gate — stricter than hasMandateJudgment.
- * Random 40-char notes and a Reading: without a verify command or file
- * path are not a plan. source=plan records from exit_plan_mode / /build
- * still need that evidence.
- */
-export function hasUlwPlan(
-  sessionId: string,
-  lastAssistantMessage?: string,
-): boolean {
-  const recs = activeMemoryRecords(sessionId);
-  if (
-    recs.some((r) => {
-      if (SEEDED_MANDATE_RE.test(r.text)) return false;
-      if (
-        (r.source === "agent" ||
-          r.source === "plan" ||
-          r.source === "user") &&
-        (r.kind === "decision" || r.kind === "observation") &&
-        isPlanShapedText(r.text) &&
-        planBodyHasEvidence(r.text)
-      ) {
-        return true;
-      }
-      return false;
-    })
-  ) {
-    return true;
-  }
-  const msg = String(lastAssistantMessage || "");
-  return isPlanShapedText(msg) && planBodyHasEvidence(msg);
-}
-
-const SHIP_LOG_RE =
-  /^(Wave\s+\d+|Wave shipped|Daily-REPL set|Harness still|Wave LAST)/i;
-
-function isReadingRecord(text: string): boolean {
-  return /\bReading:/i.test(text);
-}
-
-/** Mill / leftover-chrome ship logs crowd out Wave 1 if we keep "last 3". */
-function isMillShipLog(text: string): boolean {
-  const t = text || "";
-  if (/\bsibling\b/i.test(t)) return true;
-  if (/\blast ship was\b/i.test(t) && /\bstill hard\b/i.test(t)) return true;
-  if (/\bfar stays\b/i.test(t)) return true;
-  if (/\bspeaks? once\b/i.test(t)) return true;
-  return false;
-}
-
-/** Durable + Wave-1 Reading + last non-mill ship — not 80 mill closers. */
+/** Durable rows first; plan decisions and the newest agent notes after. */
 export function selectMemoryForPrompt(recs: MemoryRecord[]): MemoryRecord[] {
   const durable: MemoryRecord[] = [];
-  const readings: MemoryRecord[] = [];
-  const ships: MemoryRecord[] = [];
+  const plans: MemoryRecord[] = [];
+  const rest: MemoryRecord[] = [];
   for (const r of recs) {
     if (
       r.kind === "priority" ||
@@ -586,29 +393,13 @@ export function selectMemoryForPrompt(recs: MemoryRecord[]): MemoryRecord[] {
       r.kind === "out_of_scope"
     ) {
       durable.push(r);
-    } else if (isReadingRecord(r.text)) {
-      readings.push(r);
-    } else if (SHIP_LOG_RE.test(r.text)) {
-      ships.push(r);
+    } else if (/^Plan \d+:/i.test(r.text)) {
+      plans.push(r);
     } else {
-      durable.push(r);
+      rest.push(r);
     }
   }
-  const wave1 = readings[0];
-  const later = readings
-    .slice(1)
-    .filter((r) => !isMillShipLog(r.text));
-  const lastReading = later.length ? later[later.length - 1] : undefined;
-  const readingKeep: MemoryRecord[] = [];
-  if (wave1) readingKeep.push(wave1);
-  if (lastReading && lastReading.id !== wave1?.id) readingKeep.push(lastReading);
-  const nonMillShips = ships.filter((r) => !isMillShipLog(r.text));
-  const millShips = ships.filter((r) => isMillShipLog(r.text));
-  // Pin last non-mill closer. Do not inject mill siblings at all.
-  const shipKeep = nonMillShips.length
-    ? nonMillShips.slice(-1)
-    : millShips.slice(-0);
-  return [...durable, ...readingKeep, ...shipKeep];
+  return [...durable, ...plans.slice(-2), ...rest.slice(-8)];
 }
 
 /**
@@ -625,8 +416,6 @@ export function formatMemoryForPrompt(
   if (!opts?.includeWave) {
     recs = recs.filter((r) => r.kind !== "wave");
   }
-  // Wave-shipped mill logs crowd out the reading. Pin Wave-1 Reading +
-  // last non-mill ship (compaction must not re-inject 80 sibling closers).
   recs = selectMemoryForPrompt(recs);
   // Priority first, then constraint, then rest; newest last within kind
   const order: MemoryKind[] = [
@@ -797,22 +586,4 @@ export function recordWaveObservation(
     source: "harness",
     wave,
   });
-}
-
-/**
- * Seed todo items from mandate bullets (for backlog contract).
- * Returns TodoItem-shaped objects without writing the session.
- */
-export function todosFromMandate(
-  mandate: string,
-  opts?: { max?: number },
-): Array<{ id: string; content: string; status: "pending" }> {
-  const max = opts?.max ?? 12;
-  const bullets = extractMandateBullets(mandate);
-  const items = (bullets.length >= 2 ? bullets : [mandate.trim()]).slice(0, max);
-  return items.map((content, i) => ({
-    id: `m${i + 1}`,
-    content: content.slice(0, 200),
-    status: "pending" as const,
-  }));
 }

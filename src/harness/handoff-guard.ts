@@ -56,7 +56,7 @@ const INCOMPLETE_MARKERS_RE =
 
 /** Terminal attestations — never block these as handoffs. */
 const ATTESTATION_RE =
-  /\*\*Goal achieved\.\*\*|\*\*Cycle complete\.\*\*|all tasks complete|all acceptance criteria (?:met|passed)/i;
+  /\*\*Goal achieved\.\*\*|\*{0,2}Plan complete\.?\*{0,2}|all tasks complete|all acceptance criteria (?:met|passed)/i;
 
 export interface HandoffDetection {
   handoff: boolean;
@@ -251,7 +251,7 @@ export function evaluateHandoffAtStop(
     ``,
     `There is no fifth reason to stop short. Do NOT ask “shall I continue?” or “let me know if…”.`,
     `Continue with tools now: implement the next concrete step, verify, and only stop when the mandate is resolved`,
-    `(or attest **Goal achieved.** / **Cycle complete.** when a driver is armed).`,
+    `(or close with **Goal achieved.** / "Plan complete." when a driver is armed).`,
     verifyLine,
   ].join("\n");
 

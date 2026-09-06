@@ -9,18 +9,13 @@
 
 import type { ChatMessage } from "../providers/types.js";
 import type { GoalState } from "../harness/goal.js";
-import type { UlwCycleState } from "../harness/ulw-cycle.js";
 import type { TodoItem } from "./session.js";
 import {
+  cycleActive,
   displayUlwMandate,
   formatUlwCounts,
-  formatWaveLedger,
-  namedShipsExhausted,
-} from "../harness/ulw-cycle.js";
-import {
-  buildUlwJobCard,
-  formatUlwJobCard,
-} from "../harness/ulw-job-card.js";
+  type CycleState,
+} from "../harness/cycle/index.js";
 import { repairToolCallPairing } from "./message-repair.js";
 import {
   DEFAULT_CHECKPOINT_KEEP_STEPS,
@@ -44,7 +39,7 @@ import {
 export { looksLikeAdvisoryUserMessage } from "../util/advisory-intent.js";
 
 export interface CompactContext {
-  ulw?: UlwCycleState | null;
+  ulw?: CycleState | null;
   goal?: GoalState | null;
   todos?: TodoItem[];
   sessionId?: string;
@@ -64,23 +59,16 @@ export interface CompactResult {
 
 const DEFAULT_KEEP_LAST = DEFAULT_CHECKPOINT_KEEP_STEPS;
 
-/** Do not re-inject the 5k god-mode dump as "last user request" after compact. */
+/** Do not re-inject the ULW kickoff as "last user request" after compact. */
 export function clipUserMandate(raw: string): string {
   const t = raw.trim();
   // Slim kickoff (protocol lives in the system prompt).
-  if (/^## ULW armed\b/m.test(t)) {
+  if (/^\[Forge ULW cycle driver\] armed\b/m.test(t)) {
     const m = t.match(/^Mandate:\s*(.+)$/m);
     const mandate = (m?.[1] || "").trim();
     if (mandate) {
       return `${mandate}  [ulw kickoff clipped — protocol is in the system prompt]`;
     }
-  }
-  const signal = t.match(/User signal[^:]*:\s*"([^"]+)"/i);
-  if (signal && /ULW GOD MODE|god-mode|full operational ownership/i.test(t)) {
-    return `"${signal[1]}"  [expanded mandate in ulw.json — do not re-derive or restart leftover-chrome hunting]`;
-  }
-  if (t.length > 400 && /ULW GOD MODE/i.test(t)) {
-    return `${t.slice(0, 240)}… [ulw.expandedMandate]`;
   }
   return t.length > 1200 ? `${t.slice(0, 400)}… [full in last real user / ulw.json]` : t;
 }
@@ -114,7 +102,7 @@ export function compactMessagesStructured(
   persistCheckpointRecord(ctx?.sessionId, {
     epoch,
     droppedCount: dropped.length,
-    mandate: ctx?.ulw?.mandate,
+    mandate: ctx?.ulw?.mandate ?? undefined,
     paths: [
       ...mutationPathsNewestFirst(ctx?.sessionId || "", 40),
       ...sketch.paths,
@@ -176,61 +164,34 @@ export function buildStructuredSummary(
     }
   } else {
     sections.push(
-      `- Intent: pure questions are not work orders — answer first; do not build/refactor unasked. Explicit implement/fix/ship language overrides. Soft prompts under ULW still expand to god-scope.`,
+      `- Intent: pure questions are not work orders — answer first; do not build/refactor unasked. Explicit implement/fix/ship language overrides.`,
     );
   }
 
-  const ulw = ctx?.ulw?.enabled ? ctx.ulw : null;
+  const ulw = ctx?.ulw && cycleActive(ctx.ulw) ? ctx.ulw : null;
   if (ulw) {
-    const softLine = ulw.softPrompt
-      ? advisory
-        ? `- Soft prompt expanded to god-scope (suspended while Intent is ADVISORY/Q&A — answer first)`
-        : `- Soft prompt expanded to god-scope`
-      : "";
-    // Prefer full mandate when it fits; otherwise keep head + sidecar pointer
-    // (decision memory holds structured constraints — do not lobotomize).
-    const mandateFull = displayUlwMandate(ulw.mandate || "");
+    const mandateFull = displayUlwMandate(ulw);
     const mandateLine =
       mandateFull.length <= 1200
         ? `- Mandate: ${mandateFull || "(none)"}`
         : `- Mandate (head): ${mandateFull.slice(0, 400)}… [full in ulw.json + decisions.json]`;
-    // Never re-inject expandedMandate (the 5k god-mode dump). Protocol is
-    // already in the cache-stable system prompt.
-    const ledger = formatWaveLedger(ulw.waves, 8);
-    const namedHold =
-      ulw.cycle === 1 &&
-      !ulw.wrapKind &&
-      ulw.maxWaves == null &&
-      namedShipsExhausted(ulw);
-    const jobCard = formatUlwJobCard(
-      buildUlwJobCard({
-        sessionId: ctx?.sessionId || ulw.sessionId,
-        mandate: ulw.mandate,
-        waves: ulw.waves,
-        namedShips: ulw.namedShips,
-        playLoopRan: ulw.playLoopRan,
-        fullSuitePassed: ulw.fullSuitePassed,
-        midReflectHoles: ulw.midReflectHoles,
-        openMandate: ulw.openMandate,
-        bet: ulw.bet,
-        betRequired: ulw.betRequired,
-        betDeclined: ulw.betDeclined,
-        betOffStreak: ulw.betOffStreak,
-      }),
-    );
+    const open = ulw.items.filter((i) => i.status === "open");
     sections.push(
-      `- ULW ON | ${formatUlwCounts(ulw)} ${ulw.cycle === 1 ? "(CONTINUE)" : "(LAST)"}`,
-      `- Harness w=N/M is the only wave counter. Do not invent Wave K. Close a unit with \`Wave shipped.\` / \`Ship landed:\` / \`Cycle complete.\` so the counter can move (ulw.json wins if this card is stale).`,
-      `- max_waves: ${ulw.maxWaves != null ? ulw.maxWaves : "off (unlimited)"}`,
-      ledger ? `- Ledger (last 8): ${ledger}` : "",
-      namedHold
-        ? `- Named ships from the reading are done. Write a new Reading: the ONE next ship on a different class (name an explore-map pick or a play-path / architecture ship), or /cycle 0. Do not recap the last ship as 'Last ship was' / 'what's still hard'. Do not attest Cycle complete. A red test suite is a different surface — not leftover chrome. Stuck-wall will not release this hold.`
-        : "",
+      `- ULW ON | ${formatUlwCounts(ulw)}${ulw.planTitle ? ` — plan: ${ulw.planTitle}` : ""}`,
+      `- Plan-cycle driver: ship the open items in order, mark each with todo_write, close with "Plan complete." — a fresh Reviewer, the verify command and the commit follow (ulw.json wins if this card is stale).`,
+      `- max_cycles: ${ulw.maxCycles != null ? ulw.maxCycles : "off (until fulfilled or /cycle 0)"}${ulw.cycleZeroRequested ? " · /cycle 0 set — this cycle is the last" : ""}`,
       mandateLine,
-      softLine,
+      ulw.identity ? `- Identity: ${ulw.identity.slice(0, 400)}` : "",
+      ulw.verifyCommand ? `- Verify: \`${ulw.verifyCommand}\`` : "",
     );
-    if (jobCard.trim()) {
-      sections.push(``, `## 1a. Job card (verbatim from sidecars)`, jobCard);
+    if (ulw.items.length) {
+      sections.push(``, `## 1a. Plan items (verbatim from ulw.json)`);
+      for (const i of ulw.items) {
+        sections.push(
+          `- [${i.status === "done" ? "x" : i.status === "cancelled" ? "-" : " "}] ${i.id} ${i.title}${i.files.length ? ` (${i.files.slice(0, 3).join(", ")})` : ""}${i.proof ? ` — proof: ${i.proof}` : ""}`,
+        );
+      }
+      if (!open.length) sections.push(`- All items done — close with "Plan complete."`);
     }
   } else {
     sections.push(`- ULW: off`);

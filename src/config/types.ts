@@ -85,6 +85,24 @@ export interface GoalConfig {
   autoArm: boolean;
 }
 
+/**
+ * ULW plan-cycle driver. The Planner and the Reviewer are fresh-context
+ * subagents; each may run on its own model / effort (a stronger planner, a
+ * cheaper executor). Unset = the session model.
+ */
+export interface UlwConfig {
+  plannerModel?: string;
+  plannerEffort?: string;
+  reviewerModel?: string;
+  reviewerEffort?: string;
+  /** Stop after this many committed cycles (null = until fulfilled or /cycle 0). */
+  maxCycles?: number | null;
+  /** Executor fix rounds when the verify command is red after review (default 3). */
+  fixRounds?: number;
+  /** Consecutive no-progress Stops in EXECUTE before the cycle closes early (default 4). */
+  stuckThreshold?: number;
+}
+
 export interface HookFileRef {
   path: string;
 }
@@ -163,6 +181,7 @@ export interface ForgeConfig {
    */
   promptProfile?: PromptProfile;
   goal: GoalConfig;
+  ulw?: UlwConfig;
   /** When true, Stop hooks can block the agent from finishing (Claude Code semantics) */
   blockingStopHooks: boolean;
   /**
@@ -246,6 +265,7 @@ export const DEFAULT_CONFIG: ForgeConfig = {
     stuckThreshold: 3,
     autoArm: true,
   },
+  ulw: {},
   blockingStopHooks: true,
   guidelineAutoApply: false,
   compatClaudeHooks: true,

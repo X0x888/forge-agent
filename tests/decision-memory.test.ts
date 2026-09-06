@@ -9,17 +9,12 @@ import {
   selectMemoryForPrompt,
   appendMemoryRecord,
   extractMandateBullets,
-  isBroadMandate,
-  isEvaluateClassMandate,
-  hasMandateJudgment,
-  hasUlwPlan,
-  todosFromMandate,
   loadDecisionMemory,
   copyDecisionMemory,
   decisionMemoryPath,
 } from "../src/harness/decision-memory.js";
 import { compactMessagesStructured } from "../src/session/compaction.js";
-import { armUlwCycle, evaluateUlwAtStop } from "../src/harness/ulw-cycle.js";
+import { armWithPlan } from "./helpers/cycle-arm.js";
 import { expandMessagesForVision } from "../src/agent/loop.js";
 import type { ChatMessage } from "../src/providers/types.js";
 
@@ -43,7 +38,7 @@ describe("decision memory (Phase 1–5)", () => {
     }
   });
 
-  it("extracts bullets and detects broad mandates", () => {
+  it("extracts bullets from a multi-section mandate and leaves a verb-order sentence whole", () => {
     const m = `
 Please comprehensively audit and improve this app:
 - Reliability: no false signed out
@@ -52,94 +47,34 @@ Please comprehensively audit and improve this app:
 - macOS polish
 - Privacy & security
 `;
-    assert.equal(isBroadMandate(m), true);
-    const short =
-      "comprehensively evaluate this tool and then improve the ui and ux of it.";
-    assert.equal(
-      isBroadMandate(short),
-      false,
-      "evaluate-then-improve is a verb order, not a ≥2-item backlog",
-    );
-    assert.equal(isEvaluateClassMandate(short), true);
-    const clauses = extractMandateBullets(short);
-    assert.equal(
-      clauses.length,
-      0,
-      "verb-order sentence must not become evaluate+improve bullets",
-    );
-    const shortTodos = todosFromMandate(short);
-    assert.equal(shortTodos.length, 1);
-    assert.match(shortTodos[0]!.content, /evaluate/i);
     const bullets = extractMandateBullets(m);
     assert.ok(bullets.length >= 4);
-    const todos = todosFromMandate(m);
-    assert.ok(todos.length >= 4);
-    assert.equal(todos[0]!.status, "pending");
+    const short =
+      "comprehensively evaluate this tool and then improve the ui and ux of it.";
+    const clauses = extractMandateBullets(short);
+    assert.equal(clauses.length, 2, "an explicit 'then' checklist splits in two");
   });
 
-  it("does not seed evaluate+improve as two priorities", () => {
-    const sid = "sess-no-split";
+  it("seeds MANDATE: plus bullets as priorities/constraints", () => {
+    const sid = "sess-seed";
     fs.mkdirSync(path.join(home, "sessions", sid), { recursive: true });
     seedMemoryFromMandate(
       sid,
-      "comprehensively evaluate this tool and then improve the ui and ux of it.",
-      { softPrompt: true, force: true },
+      "Improve reliability:\n- no false signed out\n- multi-account works\n- tray sync\n- privacy",
+      { force: true },
     );
     const store = loadDecisionMemory(sid);
-    const prios = store.records.filter(
-      (r) => r.status === "active" && r.kind === "priority",
-    );
-    assert.equal(prios.length, 0, JSON.stringify(prios.map((r) => r.text)));
-    assert.ok(
-      store.records.some((r) => /Mandate verbs in order/i.test(r.text)),
-    );
     assert.ok(store.records.some((r) => /^MANDATE:/i.test(r.text)));
+    const prios = store.records.filter((r) => r.status === "active" && r.kind === "priority");
+    assert.equal(prios.length, 3, "first three bullets are priorities");
     assert.equal(
-      store.records.some((r) => /invents high-leverage/i.test(r.text)),
+      store.records.some((r) => /Soft mandate|Broad mandate|Mandate verbs/i.test(r.text)),
       false,
+      "no classifier-seeded doctrine rows",
     );
   });
 
-  it("treats a Reading: reply as mandate judgment", () => {
-    const sid = "sess-judgment";
-    fs.mkdirSync(path.join(home, "sessions", sid), { recursive: true });
-    assert.equal(hasMandateJudgment(sid, ""), false);
-    assert.equal(
-      hasMandateJudgment(
-        sid,
-        "Reading: highest-leverage work is a real TUI/REPL UX evaluation.",
-      ),
-      true,
-    );
-  });
-
-  it("hasUlwPlan requires a Reading:, not a 40-char agent note", () => {
-    const sid = "sess-ulw-plan";
-    fs.mkdirSync(path.join(home, "sessions", sid), { recursive: true });
-    appendMemoryRecord(sid, {
-      kind: "decision",
-      text: "I will look around and maybe polish the HUD chrome today.",
-      source: "agent",
-    });
-    assert.equal(hasMandateJudgment(sid, ""), true);
-    assert.equal(hasUlwPlan(sid, ""), false);
-    appendMemoryRecord(sid, {
-      kind: "decision",
-      text: "Reading: ship the setup card 1–6. Verify: npm test.",
-      source: "agent",
-    });
-    assert.equal(hasUlwPlan(sid, ""), true);
-    assert.equal(
-      hasUlwPlan("", "Reading: fix foo.ts and run npm test after."),
-      true,
-    );
-    assert.equal(
-      hasUlwPlan("", "Reading: leftover chrome catalog of first 5 names."),
-      false,
-    );
-  });
-
-  it("keeps the reading and last ship logs, not 80 Wave siblings", () => {
+  it("keeps durable rows, the last two plans and the newest notes", () => {
     const recs = [
       {
         id: "1",
@@ -149,48 +84,38 @@ Please comprehensively audit and improve this app:
         source: "ulw" as const,
         status: "active" as const,
       },
-      {
-        id: "2",
-        at: "2",
+      ...Array.from({ length: 4 }, (_, i) => ({
+        id: `p${i}`,
+        at: String(2 + i),
         kind: "decision" as const,
-        text: "Reading: daily REPL trust beats chrome.",
-        source: "agent" as const,
+        text: `Plan ${i + 1}: theme ${i + 1}`,
+        source: "harness" as const,
         status: "active" as const,
-      },
+      })),
       ...Array.from({ length: 20 }, (_, i) => ({
         id: `s${i}`,
         at: String(10 + i),
         kind: "decision" as const,
-        text: `Wave 2 sibling: clip widget ${i} to one TTY row`,
+        text: `note ${i}`,
         source: "agent" as const,
         status: "active" as const,
       })),
-      {
-        id: "real",
-        at: "99",
-        kind: "decision" as const,
-        text: "Wave 3 shipped the Memory Walk reskin with play-loop proof",
-        source: "agent" as const,
-        status: "active" as const,
-      },
     ];
     const kept = selectMemoryForPrompt(recs);
     assert.ok(kept.some((r) => /MANDATE/.test(r.text)));
-    assert.ok(kept.some((r) => /Reading:/.test(r.text)));
-    assert.equal(
-      kept.filter((r) => /Wave 2 sibling/.test(r.text)).length,
-      0,
-      "mill sibling ship logs must not crowd out Wave 1",
+    assert.deepEqual(
+      kept.filter((r) => /^Plan/.test(r.text)).map((r) => r.text),
+      ["Plan 3: theme 3", "Plan 4: theme 4"],
     );
-    assert.ok(kept.some((r) => /Memory Walk reskin/.test(r.text)));
+    assert.equal(kept.filter((r) => /^note/.test(r.text)).length, 8);
+    assert.ok(kept.some((r) => r.text === "note 19"));
+    assert.equal(kept.some((r) => r.text === "note 0"), false);
   });
 
   it("seeds and formats durable constraints", () => {
     const sid = "sess-mem-1";
     fs.mkdirSync(path.join(home, "sessions", sid), { recursive: true });
-    const r = seedMemoryFromMandate(sid, "P0 fix auth. P1 polish UI.", {
-      softPrompt: false,
-    });
+    const r = seedMemoryFromMandate(sid, "P0 fix auth. P1 polish UI.");
     assert.ok(r.seeded >= 1);
     const fmt = formatMemoryForPrompt(sid);
     assert.ok(fmt.activeCount >= 1);
@@ -216,8 +141,10 @@ Please comprehensively audit and improve this app:
         content: `turn ${i} lorem ipsum filler content for compact window`,
       })),
     ];
-    const ulw = armUlwCycle(sid, "Never weaken tests. Fix the race in auth.", {
-      cycle: 1,
+    const ulw = armWithPlan({
+      sessionId: sid,
+      cwd: fs.mkdtempSync(path.join(os.tmpdir(), "forge-arm-")),
+      mandate: "Never weaken tests. Fix the race in auth.",
     });
     const result = compactMessagesStructured(msgs, {
       keepLast: 4,
@@ -328,17 +255,14 @@ Please comprehensively audit and improve this app:
       text: "MANDATE: evaluate then improve",
       source: "ulw",
     });
-    const ulw = {
-      enabled: true,
-      cycle: 1 as const,
-      wave: 1,
-      maxWaves: 4,
-      blocks: 1,
+    const ulw = armWithPlan({
+      sessionId: sid,
+      cwd: fs.mkdtempSync(path.join(os.tmpdir(), "forge-arm-")),
       mandate: "evaluate then improve",
-      softPrompt: true,
-    };
+      maxCycles: 4,
+    });
     const snap = snapshotHarness({
-      ulw: ulw as never,
+      ulw,
       goal: null,
       todos: [],
       permissionMode: "default",
@@ -350,7 +274,7 @@ Please comprehensively audit and improve this app:
       null,
     );
     const afterShip = snapshotHarness({
-      ulw: { ...ulw, wave: 2, blocks: 2 } as never,
+      ulw: { ...ulw, wave: 2, blocks: 2 },
       goal: null,
       todos: [],
       permissionMode: "default",
@@ -371,17 +295,14 @@ Please comprehensively audit and improve this app:
     const sid = "sess-admit-silent";
     fs.mkdirSync(path.join(home, "sessions", sid), { recursive: true });
     clearAdmittedFingerprints(sid);
-    const ulw = {
-      enabled: true,
-      cycle: 1 as const,
-      wave: 0,
-      maxWaves: 4,
-      blocks: 0,
+    const ulw = armWithPlan({
+      sessionId: sid,
+      cwd: fs.mkdtempSync(path.join(os.tmpdir(), "forge-arm-")),
       mandate: "evaluate then improve",
-      softPrompt: true,
-    };
+      maxCycles: 4,
+    });
     const snap = snapshotHarness({
-      ulw: ulw as never,
+      ulw,
       goal: null,
       todos: [],
       permissionMode: "default",
@@ -405,30 +326,6 @@ Please comprehensively audit and improve this app:
     assert.equal(store.sessionId, b);
   });
 
-  it("broad ULW blocks invent until backlog (wave 0)", () => {
-    const sid = "sess-backlog";
-    fs.mkdirSync(path.join(home, "sessions", sid), { recursive: true });
-    const mandate = `
-Comprehensively improve reliability:
-- No false signed out
-- Multi-account works
-- Tray sync
-- Privacy
-- Performance
-`;
-    armUlwCycle(sid, mandate, { cycle: 1, editCount: 0 });
-    const d = evaluateUlwAtStop({
-      sessionId: sid,
-      lastAssistantMessage: "I will improve things now.",
-      editCount: 0,
-      openTodoCount: 0,
-      stuckThreshold: 5,
-    });
-    assert.equal(d.block, true);
-    assert.match(String(d.reanchor || d.reason), /backlog required/i);
-    assert.match(String(d.reanchor || d.reason), /decisions\.json/);
-    assert.doesNotMatch(String(d.reanchor || d.reason), /## Active decisions/);
-  });
 });
 
 describe("vision expand (Phase 6)", () => {

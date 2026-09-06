@@ -18,7 +18,8 @@ import {
 } from "../src/session/checkpoint.js";
 import { pruneMessagesForRequest } from "../src/session/request-prune.js";
 import { estimateTokens } from "../src/session/session.js";
-import { armUlwCycle, disarmUlwCycle } from "../src/harness/ulw-cycle.js";
+import { armWithPlan } from "./helpers/cycle-arm.js";
+import { disarmCycle } from "../src/harness/cycle/index.js";
 
 function withForgeHome(fn: () => void): void {
   const prev = process.env.FORGE_HOME;
@@ -98,9 +99,11 @@ describe("checkpoint compact", () => {
       fs.mkdirSync(path.join(process.env.FORGE_HOME!, "sessions", sid), {
         recursive: true,
       });
-      const ulw = armUlwCycle(sid, "Ship the auth fix and prove it.", {
-        cycle: 1,
-        skipCheckpoint: true,
+      const ulw = armWithPlan({
+        sessionId: sid,
+        cwd: fs.mkdtempSync(path.join(os.tmpdir(), "forge-arm-")),
+        mandate: "Ship the auth fix and prove it.",
+        items: [{ title: "fix the auth race" }],
       });
       const msgs: ChatMessage[] = [
         { role: "system", content: "sys" },
@@ -121,7 +124,8 @@ describe("checkpoint compact", () => {
       assert.ok(result.droppedCount > 0);
       assert.match(result.summary, /Forge checkpoint 1/);
       assert.match(result.summary, /Ship the auth fix/);
-      assert.match(result.summary, /only wave counter/);
+      assert.match(result.summary, /Plan-cycle driver/);
+      assert.match(result.summary, /fix the auth race/);
       assert.equal(result.messages[0]?.role, "system");
       assert.match(result.messages[1]?.content || "", /checkpoint 1/);
       const tailAsst = result.messages.filter((m) => m.role === "assistant");
@@ -129,7 +133,7 @@ describe("checkpoint compact", () => {
       const rec = loadCheckpointSidecar(sid);
       assert.ok(rec);
       assert.equal(rec!.epoch, 1);
-      disarmUlwCycle(sid);
+      disarmCycle(sid);
     });
   });
 
@@ -144,32 +148,17 @@ describe("checkpoint compact", () => {
     assert.equal(lastRealUserText(msgs), "real mandate please");
   });
 
-  it("clipUserMandate does not re-inject the god-mode dump", () => {
-    const dump = [
-      "## ULW GOD MODE (soft user signal — full operational ownership)",
-      `User signal (SOFT — do **not** ask): "comprehensively evaluate this tool and then improve the ui and ux of it."`,
-      "You decide what the hard work is " + "x".repeat(800),
-    ].join("\n");
-    const clipped = clipUserMandate(dump);
-    assert.match(clipped, /comprehensively evaluate/);
-    assert.doesNotMatch(clipped, /You decide what the hard work is/);
-    assert.match(clipped, /ulw\.json/);
-  });
-
-  it("clipUserMandate clips the slim ULW kickoff to the Mandate line", () => {
+  it("clipUserMandate clips the ULW kickoff to the Mandate line", () => {
     const kick = [
-      "## ULW armed",
+      "[Forge ULW cycle driver] armed — plan-cycle mode.",
       "Mandate: comprehensively evaluate this tool and then improve the ui and ux of it.",
-      "God-mode protocol is in the system prompt — do not re-derive it. Work the mandate.",
-      "",
-      "## Durable decisions / constraints",
-      "- [constraint] MANDATE: comprehensively evaluate this tool",
-      "- " + "x".repeat(400),
+      "Budget: unlimited cycles until the Planner judges the mandate fulfilled, or /cycle 0.",
+      "A fresh-context Planner is writing cycle 1's plan now " + "x".repeat(400),
     ].join("\n");
     const clipped = clipUserMandate(kick);
     assert.match(clipped, /comprehensively evaluate this tool/);
-    assert.doesNotMatch(clipped, /Durable decisions/);
-    assert.doesNotMatch(clipped, /God-mode protocol is in the system prompt/);
+    assert.doesNotMatch(clipped, /fresh-context Planner/);
+    assert.match(clipped, /kickoff clipped/);
   });
 
   it("job card still names mandate if dropped span is deleted", () => {
@@ -178,9 +167,10 @@ describe("checkpoint compact", () => {
       fs.mkdirSync(path.join(process.env.FORGE_HOME!, "sessions", sid), {
         recursive: true,
       });
-      const ulw = armUlwCycle(sid, "Never weaken tests. Fix the race in auth.", {
-        cycle: 1,
-        skipCheckpoint: true,
+      const ulw = armWithPlan({
+        sessionId: sid,
+        cwd: fs.mkdtempSync(path.join(os.tmpdir(), "forge-arm-")),
+        mandate: "Never weaken tests. Fix the race in auth.",
       });
       const msgs: ChatMessage[] = [
         { role: "system", content: "You are Forge" },
@@ -195,7 +185,7 @@ describe("checkpoint compact", () => {
       });
       assert.ok(result.droppedCount > 0);
       assert.match(result.summary, /Decisions|constraints|Never weaken|auth/i);
-      disarmUlwCycle(sid);
+      disarmCycle(sid);
     });
   });
 });

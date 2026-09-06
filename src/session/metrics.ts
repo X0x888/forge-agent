@@ -23,10 +23,14 @@ export interface SessionMetricsEvent {
   hitMaxTurns?: boolean;
   /** True when the agent loop released because maxCostUsd was reached. */
   hitCostCap?: boolean;
-  /** True when ULW or /goal stuck-wall released the cycle. */
+  /** True when the /goal stuck-wall released the run. */
   stuckReleased?: boolean;
-  /** True when ULW released on evidenced Cycle complete after LAST. */
+  /** True when the ULW plan-cycle driver released this run. */
   lastCycleReleased?: boolean;
+  /** Why the ULW driver released (fulfilled / cycle-zero / max-cycles / blocked / fix-cap). */
+  ulwEndReason?: string;
+  /** Plan cycles committed this run. */
+  ulwCycles?: number;
   editCount?: number;
   /** Last structural verification bash command (truncated). */
   lastVerificationCommand?: string | null;
@@ -156,6 +160,8 @@ export function buildRunEndMetrics(opts: {
   hitCostCap?: boolean;
   stuckReleased?: boolean;
   lastCycleReleased?: boolean;
+  ulwEndReason?: string;
+  ulwCycles?: number;
   editCount: number;
   lastVerificationCommand?: string | null;
   lastVerificationAt?: string | null;
@@ -200,6 +206,8 @@ export function buildRunEndMetrics(opts: {
     ...(opts.hitCostCap ? { hitCostCap: true } : {}),
     ...(opts.stuckReleased ? { stuckReleased: true } : {}),
     ...(opts.lastCycleReleased ? { lastCycleReleased: true } : {}),
+    ...(opts.ulwEndReason ? { ulwEndReason: opts.ulwEndReason } : {}),
+    ...(typeof opts.ulwCycles === "number" && opts.ulwCycles > 0 ? { ulwCycles: opts.ulwCycles } : {}),
     editCount: opts.editCount,
     ...(opts.lastVerificationCommand
       ? { lastVerificationCommand: opts.lastVerificationCommand }
@@ -427,10 +435,14 @@ export interface UsageStats {
   maxTurnsHits: number;
   /** Runs that released because maxCostUsd was reached. */
   costCapHits: number;
-  /** Runs that released on ULW/goal stuck-wall. */
+  /** Runs that released on the /goal stuck-wall. */
   stuckWallHits: number;
-  /** Runs that released on ULW Cycle complete after LAST. */
+  /** Runs the ULW plan-cycle driver released (any end reason). */
   cycleCompleteReleases: number;
+  /** ULW releases the Planner judged fulfilled. */
+  ulwFulfilled: number;
+  /** Plan cycles committed across runs. */
+  ulwCyclesCommitted: number;
   headlessRuns: number;
   ulwRuns: number;
   promptTokens: number;
@@ -509,6 +521,8 @@ export function collectUsageStats(opts?: {
   let costCapHits = 0;
   let stuckWallHits = 0;
   let cycleCompleteReleases = 0;
+  let ulwFulfilled = 0;
+  let ulwCyclesCommitted = 0;
   let headlessRuns = 0;
   let ulwRuns = 0;
   let promptTokens = 0;
@@ -552,6 +566,8 @@ export function collectUsageStats(opts?: {
     if (e.hitCostCap) costCapHits += 1;
     if (e.stuckReleased) stuckWallHits += 1;
     if (e.lastCycleReleased) cycleCompleteReleases += 1;
+    if (e.ulwEndReason === "fulfilled") ulwFulfilled += 1;
+    ulwCyclesCommitted += Number(e.ulwCycles) || 0;
     if (e.headless) headlessRuns += 1;
     if (e.ultrawork) ulwRuns += 1;
     promptTokens += Number(e.promptTokens) || 0;
@@ -658,6 +674,8 @@ export function collectUsageStats(opts?: {
     costCapHits,
     stuckWallHits,
     cycleCompleteReleases,
+    ulwFulfilled,
+    ulwCyclesCommitted,
     headlessRuns,
     ulwRuns,
     promptTokens,
@@ -718,8 +736,8 @@ export function formatUsageStats(stats: UsageStats): string {
   })();
   return [
     `Forge usage (${window})`,
-    `  runs:       ${stats.runs}  ok=${stats.okRuns} (${okPct}%)  failed=${stats.failedRuns}  aborted=${stats.abortedRuns}  timedOut=${stats.timedOutRuns}  continueCap=${stats.continueCapReleases}  maxTurns=${stats.maxTurnsHits}  costCap=${stats.costCapHits}  stuckWall=${stats.stuckWallHits}  cycleComplete=${stats.cycleCompleteReleases}`,
-    `  mode:       headless=${stats.headlessRuns}  ULW=${stats.ulwRuns}`,
+    `  runs:       ${stats.runs}  ok=${stats.okRuns} (${okPct}%)  failed=${stats.failedRuns}  aborted=${stats.abortedRuns}  timedOut=${stats.timedOutRuns}  continueCap=${stats.continueCapReleases}  maxTurns=${stats.maxTurnsHits}  costCap=${stats.costCapHits}  stuckWall=${stats.stuckWallHits}  ulwReleased=${stats.cycleCompleteReleases}`,
+    `  mode:       headless=${stats.headlessRuns}  ULW=${stats.ulwRuns}  fulfilled=${stats.ulwFulfilled}  cycles=${stats.ulwCyclesCommitted}`,
     `  tokens:     in=${formatTokens(stats.promptTokens)} out=${formatTokens(stats.completionTokens)}  est ${formatCost(stats.estCostUsd)}`,
     `  work:       turns=${stats.turns}  edits=${stats.edits}  wall≈${durMin.toFixed(1)}m`,
     harnessLine,

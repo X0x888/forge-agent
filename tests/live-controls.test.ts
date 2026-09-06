@@ -17,13 +17,8 @@ import {
   clearLiveNotices,
   formatLiveNoticesMessage,
 } from "../src/harness/live-notices.js";
-import {
-  armUlwCycle,
-  markUlwPlanDone,
-  setCycleFlag,
-  loadUlwCycle,
-  evaluateUlwAtStop,
-} from "../src/harness/ulw-cycle.js";
+import { armCycle, loadCycleState } from "../src/harness/cycle/index.js";
+import { armWithPlan } from "./helpers/cycle-arm.js";
 import { createSession, saveSession } from "../src/session/session.js";
 import { DEFAULT_CONFIG } from "../src/config/types.js";
 import { HookRunner } from "../src/harness/hooks.js";
@@ -34,10 +29,12 @@ describe("live mid-run slash policy", () => {
     assert.equal(classifyLiveSlash("/cycle 1"), "control");
     assert.equal(classifyLiveSlash("/cycle status"), "readonly");
     assert.equal(classifyLiveSlash("/cycle"), "readonly");
+    assert.equal(classifyLiveSlash("/max-cycles 3"), "control");
+    assert.equal(classifyLiveSlash("/max-cycles off"), "control");
+    assert.equal(classifyLiveSlash("/max-cycles status"), "readonly");
+    assert.equal(classifyLiveSlash("/max-cycles"), "readonly");
     assert.equal(classifyLiveSlash("/max-waves 3"), "control");
-    assert.equal(classifyLiveSlash("/max-waves off"), "control");
-    assert.equal(classifyLiveSlash("/max-waves status"), "readonly");
-    assert.equal(classifyLiveSlash("/max-waves"), "readonly");
+    assert.equal(classifyLiveSlash("/replan"), "control");
     assert.equal(classifyLiveSlash("/budget"), "readonly");
     assert.equal(classifyLiveSlash("/budget status"), "readonly");
     assert.equal(classifyLiveSlash("/budget 5"), "control");
@@ -335,7 +332,7 @@ describe("/done and /pause goal shortcuts", () => {
     assert.ok(notices.some((n) => /goal done|released/i.test(n)));
   });
 
-  it("/done flips ULW cycle=1 → 0 (LAST) alongside goal", async () => {
+  it("/done sets /cycle 0 on the ULW run alongside goal", async () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-done-ulw-"));
     process.env.FORGE_HOME = tmp;
     clearLiveNotices();
@@ -344,7 +341,7 @@ describe("/done and /pause goal shortcuts", () => {
       provider: "xai",
       model: "test",
     });
-    armUlwCycle(session.meta.id, "improve reliability", { cycle: 1 });
+    armWithPlan({ sessionId: session.meta.id, cwd: tmp, mandate: "improve reliability" });
     session.meta.ultrawork = true;
     const hooks = new HookRunner(DEFAULT_CONFIG, tmp);
     const r = await handleSlash("/done", {
@@ -353,13 +350,13 @@ describe("/done and /pause goal shortcuts", () => {
       hooks,
     });
     assert.equal(r.handled, true);
-    assert.match(String(r.output || ""), /cycle=0|LAST/i);
-    const ulw = loadUlwCycle(session.meta.id);
+    assert.match(String(r.output || ""), /cycle 0/i);
+    const ulw = loadCycleState(session.meta.id);
     assert.ok(ulw);
     assert.equal(ulw!.enabled, true);
-    assert.equal(ulw!.cycle, 0);
+    assert.equal(ulw!.cycleZeroRequested, true);
     const notices = drainLiveNotices(session.meta.id);
-    assert.ok(notices.some((n) => /cycle=0|LAST/i.test(n)));
+    assert.ok(notices.some((n) => /cycle 0/i.test(n)));
   });
 
   it("/done prints the standalone run report and saves it beside the session", async () => {
@@ -407,8 +404,7 @@ describe("/done and /pause goal shortcuts", () => {
     session.meta.lastVerificationOk = true;
     session.meta.ultrawork = true;
     saveSession(session);
-    armUlwCycle(session.meta.id, "improve the importer", { cycle: 1 });
-    markUlwPlanDone(session.meta.id);
+    armWithPlan({ sessionId: session.meta.id, cwd: tmp, mandate: "improve the importer" });
     const hooks = new HookRunner(DEFAULT_CONFIG, tmp);
     const r = await handleSlash("/done", {
       session,
@@ -416,13 +412,12 @@ describe("/done and /pause goal shortcuts", () => {
       hooks,
     });
     const out = String(r.output || "");
-    // /done flips cycle=1 → 0 and then asks for the report in the same
-    // breath: the wrap, LAST reflect and **Cycle complete.** are all ahead.
-    assert.equal(loadUlwCycle(session.meta.id)?.cycle, 0);
-    assert.match(out, /Winding down — ULW is on its last cycle/);
+    // /done sets /cycle 0 and then asks for the report in the same breath:
+    // the review, verify and commit are all ahead.
+    assert.equal(loadCycleState(session.meta.id)?.cycleZeroRequested, true);
+    assert.match(out, /Winding down — ULW cycle 1/);
     assert.doesNotMatch(out, /^Done —/m);
-    assert.doesNotMatch(out, /sat down/);
-    assert.match(out, /ULW is on LAST \(cycle=0\)/);
+    assert.match(out, /ULW finishes cycle 1/);
   });
 
   it("/done clears soft TodoGate fire count", async () => {
@@ -622,8 +617,7 @@ describe("mid-run /cycle affects stop-guard without abort", () => {
       provider: "xai",
       model: "test",
     });
-    armUlwCycle(session.meta.id, "improve the code", { cycle: 1 });
-    markUlwPlanDone(session.meta.id);
+    armWithPlan({ sessionId: session.meta.id, cwd: tmp, mandate: "improve the code" });
 
     // Soft TodoGate fire before wind-down
     const {
@@ -649,42 +643,23 @@ describe("mid-run /cycle affects stop-guard without abort", () => {
       hooks,
     });
     assert.equal(result.handled, true);
-    assert.match(result.output || "", /cycle=0|stop at wave/i);
-    const scheduled = loadUlwCycle(session.meta.id);
-    assert.equal(scheduled?.cycle, 1);
-    assert.equal(scheduled?.maxWaves, 1);
-    assert.equal(scheduled?.cycleZeroStopAt, 1);
-    assert.equal(getTodoGateFires(session.meta.id), 1);
+    assert.match(result.output || "", /cycle 0/i);
+    assert.match(result.output || "", /reviewed and committed, then the run stops/i);
+    const scheduled = loadCycleState(session.meta.id);
+    assert.equal(scheduled?.cycleZeroRequested, true);
+    assert.equal(scheduled?.enabled, true);
 
     // Notice queued for next LLM call
     const notices = drainLiveNotices(session.meta.id);
-    assert.ok(notices.some((n) => /cycle=0|stop at wave|one more/i.test(n)));
+    assert.ok(notices.some((n) => /cycle 0/i.test(n)));
 
-    // Stop without attestation still blocks (finish wave)
-    const blocked = evaluateUlwAtStop({
-      sessionId: session.meta.id,
-      lastAssistantMessage: "I think we're done.",
-      editCount: 2,
-      openTodoCount: 0,
-      stuckThreshold: 10,
-    });
-    assert.equal(blocked.block, true);
-    assert.match(blocked.reanchor || "", /LAST|Cycle complete/i);
-
-    // Attestation with machine-checkable evidence releases
-    setCycleFlag(session.meta.id, 0);
-    const released = evaluateUlwAtStop({
-      sessionId: session.meta.id,
-      lastAssistantMessage: "**Cycle complete.** Shipped X — npm test: 18 passed.\nMust-fix: none",
-      editCount: 3,
-      openTodoCount: 0,
-      stuckThreshold: 10,
-    });
-    assert.equal(released.block, false);
-    assert.equal(released.lastCycleReleased, true);
+    // /cycle 1 resumes cycling
+    const back = await handleSlash("/cycle 1", { session, config: DEFAULT_CONFIG, hooks });
+    assert.match(back.output || "", /re-plans after each committed cycle/i);
+    assert.equal(loadCycleState(session.meta.id)?.cycleZeroRequested, false);
   });
 
-  it("/max-waves mid-run is honored on next Stop", async () => {
+  it("/max-cycles mid-run writes the cap; /max-waves is the deprecated alias", async () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-live-mw-"));
     process.env.FORGE_HOME = tmp;
     clearLiveNotices();
@@ -694,38 +669,33 @@ describe("mid-run /cycle affects stop-guard without abort", () => {
       provider: "xai",
       model: "test",
     });
-    armUlwCycle(session.meta.id, "improve the code", { cycle: 1 });
-    markUlwPlanDone(session.meta.id);
+    armWithPlan({ sessionId: session.meta.id, cwd: tmp, mandate: "improve the code" });
 
     const hooks = new HookRunner(DEFAULT_CONFIG, tmp);
-    const result = await handleSlash("/max-waves 1", {
+    const result = await handleSlash("/max-cycles 1", {
       session,
       config: DEFAULT_CONFIG,
       hooks,
     });
     assert.equal(result.handled, true);
-    assert.match(result.output || "", /max_waves=1/i);
-    assert.equal(loadUlwCycle(session.meta.id)?.maxWaves, 1);
+    assert.match(result.output || "", /max_cycles 1/i);
+    assert.match(result.output || "", /this cycle is the last/i);
+    assert.equal(loadCycleState(session.meta.id)?.maxCycles, 1);
 
     const notices = drainLiveNotices(session.meta.id);
-    assert.ok(notices.some((n) => /max_waves=1/i.test(n)));
+    assert.ok(notices.some((n) => /max_cycles 1/i.test(n)));
 
-    const hit = evaluateUlwAtStop({
-      sessionId: session.meta.id,
-      lastAssistantMessage: "done-ish",
-      editCount: 1,
-      openTodoCount: 0,
-      stuckThreshold: 10,
-    });
-    assert.equal(hit.maxWavesHit, true);
-    assert.equal(loadUlwCycle(session.meta.id)?.cycle, 0);
-
-    await handleSlash("/max-waves off", {
+    const alias = await handleSlash("/max-waves off", {
       session,
       config: DEFAULT_CONFIG,
       hooks,
     });
-    assert.equal(loadUlwCycle(session.meta.id)?.maxWaves, null);
+    assert.match(alias.output || "", /\/max-waves is now \/max-cycles/);
+    assert.equal(loadCycleState(session.meta.id)?.maxCycles, null);
+
+    const unarmed = createSession({ cwd: tmp, provider: "xai", model: "test" });
+    const r = await handleSlash("/max-cycles 2", { session: unarmed, config: DEFAULT_CONFIG, hooks });
+    assert.match(r.output || "", /not armed/i);
   });
 
   it("/ulw auto-titles untitled sessions from mandate", async () => {
@@ -833,7 +803,7 @@ describe("mid-run /cycle affects stop-guard without abort", () => {
       provider: "xai",
       model: "test",
     });
-    armUlwCycle(session.meta.id, "improve", { cycle: 1 });
+    armCycle({ sessionId: session.meta.id, mandate: "improve", cwd: tmp });
     session.meta.ultrawork = true;
     const {
       evaluateTodoGateAtStop,
@@ -858,17 +828,9 @@ describe("mid-run /cycle affects stop-guard without abort", () => {
     });
 
     assert.equal(session.meta.ultrawork, false);
-    assert.equal(loadUlwCycle(session.meta.id)?.enabled, false);
+    assert.equal(loadCycleState(session.meta.id)?.enabled, false);
+    assert.equal(loadCycleState(session.meta.id)?.endReason, "disarmed");
     assert.equal(getTodoGateFires(session.meta.id), 0);
-
-    const d = evaluateUlwAtStop({
-      sessionId: session.meta.id,
-      lastAssistantMessage: "stopping",
-      editCount: 1,
-      openTodoCount: 0,
-      stuckThreshold: 10,
-    });
-    assert.equal(d.block, false);
 
     const notices = drainLiveNotices(session.meta.id);
     assert.ok(notices.some((n) => /disarm|ulw-off/i.test(n)));

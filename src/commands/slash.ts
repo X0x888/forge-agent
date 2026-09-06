@@ -260,31 +260,27 @@ import {
 } from "../tui/context-card.js";
 import { tokenizeSimple } from "../agent/shell-parse.js";
 import {
-  armUlwCycle,
-  completeUlwPlan,
+  armCycle,
+  disarmCycle,
+  loadActiveCycle,
+  loadCycleState,
   mandateFromUserText,
-  PLACEHOLDER_MANDATE,
-  disarmUlwCycle,
-  resolveUlwPhase,
   setCycleFlag,
-  scheduleCycleZeroStop,
-  setMaxWaves,
+  setMaxCycles,
+  requestReplan,
+  setHumanPlan,
   parseCycleArg,
-  parseMaxWavesArg,
+  parseMaxCyclesArg,
   formatUlwStatus,
-  loadUlwCycle,
-  saveUlwCycle,
+  formatUlwBadge,
   ulwKickoffMessage,
-  formatUlwCounts,
-  formatCappedWaveDoctrine,
   ULW_LIVE_CONTROLS_HINT,
-} from "../harness/ulw-cycle.js";
+} from "../harness/cycle/index.js";
 import {
   appendMemoryRecord,
   formatMemoryPeekCard,
   formatMemoryStatus,
   seedMemoryFromMandate,
-  todosFromMandate,
 } from "../harness/decision-memory.js";
 import {
   appendProjectMemory,
@@ -301,9 +297,8 @@ import {
   formatProjectMemoryPruneCard,
 } from "../harness/project-memory-sweep.js";
 import { pushLiveNotice } from "../harness/live-notices.js";
-import { armUlwPlanMode, syncUlwPlanMode } from "../harness/ulw-plan-mode.js";
 import { clearSoftTodoGateOnWindDown } from "../harness/todo-gate.js";
-import { applyTodos, formatTodoBoard, openTodos } from "../agent/todos.js";
+import { formatTodoBoard } from "../agent/todos.js";
 import {
   COMMAND_PARAMS,
   formatParamMenu,
@@ -395,6 +390,9 @@ const LIVE_READONLY = new Set([
 /** Harness control commands safe mid-turn (no forwardPrompt). */
 const LIVE_CONTROL = new Set([
   "/cycle",
+  "/replan",
+  "/max-cycles",
+  "/max_cycles",
   "/max-waves",
   "/max_waves",
   "/memory",
@@ -608,8 +606,13 @@ export function classifyLiveSlash(line: string): LiveSlashKind {
       const a = arg.toLowerCase();
       if (!a || a === "status" || a === "3" /* menu status */) return "readonly";
     }
-    // /max-waves status (or bare) is read-only; set/clear is control
-    if (cmd === "/max-waves" || cmd === "/max_waves") {
+    // /max-cycles status (or bare) is read-only; set/clear is control
+    if (
+      cmd === "/max-cycles" ||
+      cmd === "/max_cycles" ||
+      cmd === "/max-waves" ||
+      cmd === "/max_waves"
+    ) {
       const a = arg.toLowerCase();
       if (!a || a === "status" || a === "show") return "readonly";
     }
@@ -752,6 +755,8 @@ export const SLASH_COMMANDS = [
   "/decisions",
   "/ulw-off",
   "/cycle",
+  "/replan",
+  "/max-cycles",
   "/max-waves",
   "/hooks",
   "/status",
@@ -905,8 +910,10 @@ export function completeSlash(
       "/build": ["on", "off", "status", "execute"],
       "/execute": ["on", "off", "status"],
       "/cycle": ["0", "1", "on", "off", "status"],
-      "/max-waves": ["off", "status", "4", "8", "12"],
-      "/max_waves": ["off", "status", "4", "8", "12"],
+      "/max-cycles": ["off", "status", "1", "2", "3", "5"],
+      "/max_cycles": ["off", "status", "1", "2", "3", "5"],
+      "/max-waves": ["off", "status", "1", "2", "3", "5"],
+      "/max_waves": ["off", "status", "1", "2", "3", "5"],
       "/ulw": ["on", "status"],
       "/goal": [
         "status",
@@ -1933,9 +1940,9 @@ export async function handleSlash(
       return handleGoal(arg, opts.session);
 
     case "/done": {
-      // Expert wind-down: mark goal done AND flip ULW to last-wave (cycle=0)
-      // so one command releases both drivers. Agents still need **Cycle complete.**
-      // / **Goal achieved.** attestation on the next stop when required.
+      // Expert wind-down: mark goal done AND set ULW to /cycle 0 so one
+      // command releases both drivers. The goal still needs its
+      // **Goal achieved.** attestation; ULW finishes the open cycle.
       const note = arg.trim();
       const sid = opts.session.meta.id;
       const parts: string[] = [];
@@ -1945,29 +1952,20 @@ export async function handleSlash(
         opts.session,
       );
       if (goalResult.output) parts.push(goalResult.output);
-      // ULW: cycle 0 last-wave so Stop can release after attestation
+      // ULW: finish the open cycle (review, verify, commit), then stop.
       try {
-        const ulw = loadUlwCycle(sid);
-        if (ulw?.enabled && ulw.cycle === 1) {
-          const next = setCycleFlag(sid, 0);
-          if (next) {
+        const ulw = loadActiveCycle(sid);
+        if (ulw && !ulw.cycleZeroRequested) {
+          const r = setCycleFlag(sid, 0);
+          if (r.ok) {
             pushLiveNotice(
               sid,
-              "User sent /done mid-run — ULW flipped to cycle=0 (LAST). Wrap in-flight work and already-named ships, LAST reflect scores this run (maybe one must-fix close-out), then **Cycle complete.** Do not start a new Reading or surface.",
+              `User sent /done mid-run — ${r.line} Finish the open item, then close the plan; do not start new items.`,
             );
-            parts.push(
-              chalk.magenta("ULW → cycle=0 (LAST)") +
-                chalk.dim(
-                  `  ${formatUlwCounts(next)}  wrap, LAST reflect, then **Cycle complete.**`,
-                ),
-            );
+            parts.push(chalk.magenta(formatUlwBadge(loadActiveCycle(sid))) + chalk.dim(`  ${r.line}`));
           }
-        } else if (ulw?.enabled && ulw.cycle === 0) {
-          parts.push(
-            chalk.dim(
-              "ULW already on cycle=0 (LAST) — wrap, LAST reflect, then **Cycle complete.**",
-            ),
-          );
+        } else if (ulw) {
+          parts.push(chalk.dim("ULW already finishing its last cycle (/cycle 0)."));
         }
       } catch {
         /* */
@@ -1983,7 +1981,7 @@ export async function handleSlash(
       if (parts.length === 0 || (parts.length === 1 && /No active goal/i.test(parts[0] || ""))) {
         parts.push(
           chalk.dim(
-            "No ULW cycle=1 to wind down. Tip: /ulw-off · /cycle 0 · /goal clear",
+            "No ULW run to wind down. Tip: /ulw-off · /cycle 0 · /goal clear",
           ),
         );
       }
@@ -2065,8 +2063,8 @@ export async function handleSlash(
       // no closing report to defer to — print the full card. (At the end of
       // a model run the harness prints only its addendum instead; the
       // closer, shaped by the report guard, is the report the user reads.)
-      // Under ULW this fires right after the cycle flips to LAST, so the
-      // outcome reads "Winding down", not "Done".
+      // Under ULW this fires right after /cycle 0 is set, so the outcome
+      // reads "Winding down", not "Done".
       let report = "";
       try {
         const { buildRunReport, renderRunReportText, writeRunReport } =
@@ -2105,53 +2103,31 @@ export async function handleSlash(
     case "/ultrawork":
     case "/autowork": {
       opts.session.meta.ultrawork = true;
+      // /improve <focus> is a direction; bare /ulw is case c — no mandate, the
+      // Planner derives the direction from the product itself.
       const mandate =
         cmd === "/improve" || cmd === "/ralph"
           ? arg
             ? `improve this project. Focus: ${arg}.`
             : "improve this project"
-          : arg || "improve the codebase";
-      const state = armUlwCycle(opts.session.meta.id, mandate, {
-        cycle: 1,
-        editCount: opts.session.meta.editCount,
+          : mandateFromUserText(arg);
+      const prev = loadCycleState(opts.session.meta.id);
+      const state = armCycle({
+        sessionId: opts.session.meta.id,
+        mandate,
         cwd: opts.config.workspace || opts.session.meta.cwd || process.cwd(),
+        maxCycles: prev && !prev.legacy && !prev.enabled ? prev.maxCycles : opts.config.ulw?.maxCycles ?? null,
       });
-      armUlwPlanMode(opts.session, opts.config);
-      if (state.checkpointSha) {
-        stampCheckpoint(opts.session, state.checkpointSha, false);
-      }
+      setHumanPlan(opts.session.meta.id, opts.config.permissionMode === "plan");
       // Fresh driver: drop leftover soft TodoGate once-blocks from prior work.
       try {
         clearSoftTodoGateOnWindDown(opts.session.meta.id);
       } catch {
         /* */
       }
-      // Seed a board only for real multi-section backlogs — not every soft
-      // evaluate-then-improve prompt (that forced a 2-item "execute the board"
-      // grind).
-      let todoSeedNote = "";
-      try {
-        if (
-          state.backlogRequired &&
-          openTodos(opts.session.todos || []) < 2
-        ) {
-          const seeded = todosFromMandate(mandate, { max: 12 });
-          applyTodos(opts.session, seeded, false);
-          todoSeedNote = chalk.dim(
-            `Backlog seeded: ${seeded.length} todo(s) from mandate (edit via todo_write)`,
-          );
-          // Clear backlog gate if we already have ≥2
-          if (seeded.length >= 2 && state.backlogRequired) {
-            state.backlogRequired = false;
-            saveUlwCycle(state);
-          }
-        }
-      } catch {
-        /* */
-      }
       // Auto-title untitled sessions from the mandate so /sessions and resume
       // pickers stay navigable during long unattended ULW runs.
-      maybeSetTitle(opts.session, mandate);
+      if (mandate) maybeSetTitle(opts.session, mandate);
       saveSession(opts.session);
       let ulwCheckTip = "";
       try {
@@ -2162,39 +2138,27 @@ export async function handleSlash(
         const intel = detectProjectIntel(cwd);
         if (intel.checkCommands[0]) {
           ulwCheckTip = chalk.dim(
-            `Preferred checks: ${intel.checkCommands.slice(0, 3).join(" · ")}  ·  proof-demand requires green`,
+            `Project checks: ${intel.checkCommands.slice(0, 3).join(" · ")}  ·  the Planner declares the cycle gate (Verify:)`,
           );
         }
       } catch {
         /* */
       }
-      const capTip =
-        state.maxWaves == null
-          ? chalk.dim(
-              "Tip: /max-waves N and /budget are spend valves — decision memory holds intent across waves.",
-            )
-          : "";
       const banner = [
         chalk.magenta("⚡ ULW ON") +
           chalk.dim(
-            `  ${formatUlwCounts(state)} (CONTINUE)  soft=${state.softPrompt ? "yes" : "no"}` +
-              (state.backlogRequired ? "  backlog-gate" : ""),
+            `  plan-cycle mode${state.maxCycles != null ? `  max_cycles=${state.maxCycles}` : ""}${mandate ? "" : "  (no mandate — the Planner derives the direction)"}`,
           ),
         chalk.dim(
-          resolveUlwPhase(state) === "orient"
-            ? "Wave 1 is PLAN (research). Write a Reading: / exit_plan_mode — then the driver /builds. Type /build to skip."
-            : "Soft prompts still drive the harness: research → waves → serendipity → review → repeat.",
+          "Cycle 1: a fresh-context Planner researches (identity, category, whole tree) and writes the plan; you execute it; a fresh Reviewer revises; the harness runs the verify command and commits; then it re-plans.",
         ),
         chalk.cyan(ULW_LIVE_CONTROLS_HINT),
         ulwCheckTip,
-        todoSeedNote,
-        capTip,
         formatUlwStatus(state),
         chalk.dim(formatMemoryStatus(opts.session.meta.id).split("\n")[0]),
       ]
         .filter(Boolean)
         .join("\n");
-      // Always forward an expanded kickoff so even bare `/ulw` or soft text runs the cycle
       return {
         handled: true,
         forwardPrompt: ulwKickoffMessage(state),
@@ -2366,13 +2330,10 @@ export async function handleSlash(
         };
       }
       if (sub === "seed" || sub.startsWith("seed ")) {
-        const ulw = loadUlwCycle(sid);
+        const ulw = loadCycleState(sid);
         const mandate =
           sub.slice(4).trim() || ulw?.mandate || "improve the codebase";
-        const r = seedMemoryFromMandate(sid, mandate, {
-          softPrompt: ulw?.softPrompt,
-          force: true,
-        });
+        const r = seedMemoryFromMandate(sid, mandate, { force: true });
         return {
           handled: true,
           output: `Seeded ${r.seeded} record(s)\n${formatMemoryStatus(sid)}`,
@@ -2421,8 +2382,7 @@ export async function handleSlash(
     case "/ulw-off": {
       const sid = opts.session.meta.id;
       opts.session.meta.ultrawork = false;
-      disarmUlwCycle(sid);
-      syncUlwPlanMode(opts.session, opts.config);
+      disarmCycle(sid);
       // Parity with /done: reset soft TodoGate so disarm is not followed by a
       // leftover once-block for open todos the user is intentionally ending.
       try {
@@ -2433,7 +2393,7 @@ export async function handleSlash(
       saveSession(opts.session);
       pushLiveNotice(
         sid,
-        "User disarmed ULW mid-run (/ulw-off). The cycle driver will no longer block Stop. Wrap up cleanly; do not start a new ULW wave.",
+        "User disarmed ULW mid-run (/ulw-off). The cycle driver will no longer block Stop. Wrap up cleanly; do not start a new plan item.",
       );
       return {
         handled: true,
@@ -2445,53 +2405,34 @@ export async function handleSlash(
     }
 
     case "/cycle": {
-      // Spend against what it bought — the number HashPet's user could not see.
-      const cycleSpend = {
-        costUsd: estimateCostUsd(
-          String(opts.config.provider),
-          opts.session.meta.totalPromptTokens,
-          opts.session.meta.totalCompletionTokens,
-          opts.config.model,
-          opts.session.meta.totalCacheReadTokens || 0,
-        ),
-      };
+      const sid = opts.session.meta.id;
       if (!arg) {
         return {
           handled: true,
           output:
             formatParamMenu("/cycle", COMMAND_PARAMS.cycle) +
             "\n\n" +
-            formatUlwStatus(loadUlwCycle(opts.session.meta.id), { spend: cycleSpend }),
+            formatUlwStatus(loadCycleState(sid)),
         };
       }
-      if (arg === "status") {
-        return {
-          handled: true,
-          output: formatUlwStatus(loadUlwCycle(opts.session.meta.id), { spend: cycleSpend }),
-        };
-      }
-      // number menu: 1/2/3 map via resolveParamChoice, or parseCycleArg
       const fromMenu = resolveParamChoice(arg, COMMAND_PARAMS.cycle);
-      const flag =
+      const parsed =
         fromMenu === "status"
-          ? null
+          ? "status"
           : fromMenu === "1" || fromMenu === "0"
             ? (Number(fromMenu) as 0 | 1)
             : parseCycleArg(arg);
-      if (fromMenu === "status") {
-        return {
-          handled: true,
-          output: formatUlwStatus(loadUlwCycle(opts.session.meta.id), { spend: cycleSpend }),
-        };
+      if (parsed === "status") {
+        return { handled: true, output: formatUlwStatus(loadCycleState(sid)) };
       }
-      if (flag === null) {
+      if (parsed === null) {
         const tip = suggestName(arg.trim().toLowerCase(), [
           "0",
           "1",
           "status",
           "off",
           "on",
-          "last",
+          "finish",
           "continue",
         ], { minLength: 1, minScore: 36, requirePrefix3: false });
         return {
@@ -2504,229 +2445,103 @@ export async function handleSlash(
             ) + formatParamMenu("/cycle", COMMAND_PARAMS.cycle),
         };
       }
-      const sid = opts.session.meta.id;
-      let state =
-        flag === 0
-          ? scheduleCycleZeroStop(sid, {
-              editCount: opts.session.meta.editCount ?? 0,
-            })
-          : setCycleFlag(sid, flag);
-      if (!state) {
-        // Auto-arm ULW if user sets cycle without /ulw
-        opts.session.meta.ultrawork = true;
-        const mandate =
-          mandateFromUserText(lastUserText(opts.session)) ||
-          PLACEHOLDER_MANDATE;
-        armUlwCycle(sid, mandate, {
-          cycle: 1,
-          editCount: opts.session.meta.editCount,
-        });
-        armUlwPlanMode(opts.session, opts.config);
-        state =
-          flag === 0
-            ? scheduleCycleZeroStop(sid, {
-                editCount: opts.session.meta.editCount ?? 0,
-              })
-            : setCycleFlag(sid, flag);
-        saveSession(opts.session);
-      } else if (flag === 1 || (flag === 0 && state.cycle === 1)) {
-        // Re-enable after stuck-wall / /ulw-off must restore the session flag
-        // or the next "continue" will look like a missing cycle.
-        opts.session.meta.ultrawork = true;
-        saveSession(opts.session);
+      const r = setCycleFlag(sid, parsed);
+      if (!r.ok) {
+        return { handled: true, output: chalk.yellow(r.line) };
       }
-      if (!state) {
-        return {
-          handled: true,
-          output: "ULW is not armed — /ulw <task> first.",
-        };
-      }
-      if (flag === 1) {
-        pushLiveNotice(
-          sid,
-          "User set cycle=1 (CONTINUE) mid-run. Keep the research → implement → serendipity → review loop. Do not stop until /done, a user max_waves cap, or /ulw-off. /cycle 0 sits down after one more wave — ULW stays on.",
-        );
-      } else {
-        const stopAt = state.cycleZeroStopAt ?? state.maxWaves;
-        pushLiveNotice(
-          sid,
-          stopAt != null && state.cycle === 1
-            ? `User set /cycle 0 mid-run. Finish the open wave, ship one more, LAST-reflect at wave ${stopAt}, then sit down. ULW stays ON. Type to continue. /done or /ulw-off ends. Do not attest **Cycle complete.** yet. Do not stop mid-wave.`
-            : "User set cycle=0 (LAST) mid-run. Wrap this last wave, LAST reflect scores this run (maybe one must-fix close-out), then attest **Cycle complete.**",
-        );
-      }
-      const stopAt = state.cycleZeroStopAt ?? state.maxWaves;
-      const msg =
-        flag === 1
-          ? chalk.magenta("cycle=1 CONTINUE") +
-            " — harness will keep blocking Stop and forcing the next wave."
-          : state.cycle === 1 && stopAt != null
-            ? chalk.yellow(`cycle=0 — sit down at wave ${stopAt}`) +
-              " — finish this wave, ship one more, LAST-reflect, sit down. ULW stays on. /done ends."
-            : chalk.yellow("cycle=0 LAST") +
-              " — wrap, LAST reflect (score + maybe one must-fix close-out), then **Cycle complete.**";
-      let cycleTip = "";
-      if (flag === 0) {
-        try {
-          const cwd =
-            opts.config.workspace ||
-            opts.session.meta.cwd ||
-            process.cwd();
-          const intel = detectProjectIntel(cwd);
-          if (intel.checkCommands[0]) {
-            cycleTip =
-              "\n" +
-              chalk.dim(
-                `Preferred checks on the last wave: ${intel.checkCommands.slice(0, 3).join(" · ")}  ·  proof needs green`,
-              );
-          }
-          const trail = formatSlashSessionTrail(opts.session.meta);
-          if (trail) cycleTip += "\n" + chalk.dim(`  ${trail}`);
-        } catch {
-          /* */
-        }
-      }
+      opts.session.meta.ultrawork = true;
+      saveSession(opts.session);
+      pushLiveNotice(
+        sid,
+        parsed === 0
+          ? `User set /cycle 0 mid-run — ${r.line} Finish the open item; do not start new ones beyond the plan.`
+          : `User set /cycle 1 mid-run — ${r.line}`,
+      );
       return {
         handled: true,
         output:
-          `${msg}\n${formatUlwStatus(state)}` +
+          (parsed === 0 ? chalk.yellow(r.line) : chalk.magenta(r.line)) +
+          "\n" +
+          formatUlwStatus(loadCycleState(sid)) +
           chalk.dim(
-            "\n  (flag written now — stop-guard honors it on next Stop; agent notified on next model call)",
-          ) +
-          cycleTip,
+            "\n  (flag written now — the driver honors it at the next Stop; agent notified on next model call)",
+          ),
         session: opts.session,
       };
     }
 
+    case "/replan": {
+      const sid = opts.session.meta.id;
+      const r = requestReplan(sid);
+      if (r.ok) {
+        pushLiveNotice(sid, `User sent /replan — ${r.line} Finish or stop the item you are on.`);
+      }
+      return {
+        handled: true,
+        output: (r.ok ? chalk.magenta(r.line) : chalk.yellow(r.line)) + "\n" + formatUlwStatus(loadCycleState(sid)),
+        session: opts.session,
+      };
+    }
+
+    case "/max-cycles":
+    case "/max_cycles":
     case "/max-waves":
     case "/max_waves": {
       const sid = opts.session.meta.id;
-      if (!arg || arg.toLowerCase() === "status" || arg.toLowerCase() === "show") {
+      const renamed =
+        cmd === "/max-waves" || cmd === "/max_waves"
+          ? chalk.dim("(/max-waves is now /max-cycles — the unit is a reviewed, committed plan cycle)\n")
+          : "";
+      const parsed = parseMaxCyclesArg(arg);
+      if (parsed === "status") {
         return {
           handled: true,
           output:
+            renamed +
             (!arg
-              ? formatParamMenu("/max-waves", COMMAND_PARAMS["max-waves"]) + "\n\n"
-              : "") + formatUlwStatus(loadUlwCycle(sid)),
+              ? formatParamMenu("/max-cycles", COMMAND_PARAMS["max-cycles"]) + "\n\n"
+              : "") + formatUlwStatus(loadCycleState(sid)),
         };
-      }
-      // Literal N first — do NOT use menu index (menu "1" would map to first choice "3").
-      let parsed: number | null | undefined = parseMaxWavesArg(arg);
-      if (parsed === undefined) {
-        const fromMenu = resolveParamChoice(arg, COMMAND_PARAMS["max-waves"]);
-        if (fromMenu === "status") {
-          return {
-            handled: true,
-            output: formatUlwStatus(loadUlwCycle(sid)),
-          };
-        }
-        if (fromMenu === "off") parsed = null;
-        else if (fromMenu != null && /^\d+$/.test(fromMenu)) parsed = Number(fromMenu);
       }
       if (parsed === undefined) {
         const tip = suggestName(arg.trim().toLowerCase(), [
           "off",
           "status",
+          "1",
+          "2",
           "3",
           "5",
-          "10",
           "clear",
           "unlimited",
         ], { minLength: 1, minScore: 36, requirePrefix3: false });
         return {
           handled: true,
           output:
+            renamed +
             chalk.yellow(
               tip
-                ? `Unknown /max-waves "${arg}". Did you mean: ${tip}?\n`
-                : `Unknown /max-waves "${arg}". Pass a positive integer, or off.\n`,
-            ) + formatParamMenu("/max-waves", COMMAND_PARAMS["max-waves"]),
+                ? `Unknown /max-cycles "${arg}". Did you mean: ${tip}?\n`
+                : `Unknown /max-cycles "${arg}". Pass a positive integer, or off.\n`,
+            ) + formatParamMenu("/max-cycles", COMMAND_PARAMS["max-cycles"]),
         };
       }
-      let state = setMaxWaves(sid, parsed);
-      if (!state) {
-        // Auto-arm ULW so the cap is stored for the coming work
-        opts.session.meta.ultrawork = true;
-        const mandate =
-          mandateFromUserText(lastUserText(opts.session)) ||
-          PLACEHOLDER_MANDATE;
-        state = armUlwCycle(sid, mandate, {
-          cycle: 1,
-          maxWaves: parsed,
-          editCount: opts.session.meta.editCount,
-        });
-        armUlwPlanMode(opts.session, opts.config);
-        saveSession(opts.session);
-      } else {
-        opts.session.meta.ultrawork = true;
-        saveSession(opts.session);
+      const r = setMaxCycles(sid, parsed);
+      if (!r.ok) {
+        return { handled: true, output: renamed + chalk.yellow(r.line) };
       }
-      const flippedToLast =
-        state.cycle === 0 &&
-        parsed != null &&
-        state.wave >= (state.maxWaves ?? Infinity);
-      // Live notice when setMaxWaves immediately flipped CONTINUE → LAST
-      if (flippedToLast) {
-        try {
-          pushLiveNotice(
-            sid,
-            `User set /max-waves ${parsed} at/under current wave ${state.wave} — ULW flipped to cycle=0 (LAST). Budget LAST — wrap this wave (prove + review), attest **Cycle complete.** Do not start a new ambitious wave.`,
-          );
-        } catch {
-          /* */
-        }
-      }
-      const capLabel =
-        state.maxWaves != null ? String(state.maxWaves) : "off (unlimited)";
-      if (state.maxWaves != null && !flippedToLast) {
-        pushLiveNotice(
-          sid,
-          `User set max_waves=${state.maxWaves} mid-run. ${formatCappedWaveDoctrine(state.maxWaves, state.mandate)} When the wave counter reaches ${state.maxWaves}, auto-flip to LAST: wrap that wave, review, attest **Cycle complete.** Do not start a new ambitious wave after the cap. **Cycle complete.** before the cap is refused.`,
-        );
-      } else if (state.maxWaves == null) {
-        pushLiveNotice(
-          sid,
-          "User cleared max_waves mid-run (unlimited). Cycle flag still controls CONTINUE vs LAST.",
-        );
-      }
-      let maxWavesTip = "";
-      if (flippedToLast) {
-        try {
-          const cwd =
-            opts.config.workspace ||
-            opts.session.meta.cwd ||
-            process.cwd();
-          const intel = detectProjectIntel(cwd);
-          if (intel.checkCommands[0]) {
-            maxWavesTip =
-              "\n" +
-              chalk.dim(
-                `Preferred checks before **Cycle complete.**: ${intel.checkCommands.slice(0, 3).join(" · ")}  ·  proof needs green`,
-              );
-          }
-          const trail = formatSlashSessionTrail(opts.session.meta);
-          if (trail) maxWavesTip += "\n" + chalk.dim(`  ${trail}`);
-        } catch {
-          /* */
-        }
-      }
+      opts.session.meta.ultrawork = true;
+      saveSession(opts.session);
+      pushLiveNotice(sid, `User set ${r.line}`);
       return {
         handled: true,
         output:
-          chalk.magenta(`max_waves=${capLabel}`) +
-          (flippedToLast
-            ? chalk.yellow(
-                `  → cycle=0 (LAST) now (wave ${state.wave} ≥ cap ${state.maxWaves})`,
-              )
-            : "") +
+          renamed +
+          chalk.magenta(r.line) +
           "\n" +
-          formatUlwStatus(state) +
+          formatUlwStatus(loadCycleState(sid)) +
           chalk.dim(
-            flippedToLast
-              ? "\n  (cap written + LAST applied immediately; wrap this wave + **Cycle complete.**)"
-              : "\n  (cap written now — stop-guard honors it on next Stop; agent notified on next model call)",
-          ) +
-          maxWavesTip,
+            "\n  (cap written now — the driver honors it after the current cycle commits; agent notified on next model call)",
+          ),
         session: opts.session,
       };
     }
@@ -3930,7 +3745,7 @@ const stats = collectUsageStats({
     case "/compact": {
       const before = opts.session.messages.length;
       const beforeTokens = estimateTokens(opts.session.messages);
-      const ulw = loadUlwCycle(opts.session.meta.id);
+      const ulw = loadCycleState(opts.session.meta.id);
       const goal = loadGoal(opts.session.meta.id);
       opts.session.messages = compactMessages(opts.session.messages, DEFAULT_CHECKPOINT_KEEP_STEPS, {
         ulw,
@@ -3990,7 +3805,7 @@ const stats = collectUsageStats({
       }
       const before = opts.session.messages.length;
       const beforeTokens = estimateTokens(opts.session.messages);
-      const ulw = loadUlwCycle(opts.session.meta.id);
+      const ulw = loadCycleState(opts.session.meta.id);
       const goal = loadGoal(opts.session.meta.id);
       opts.session.messages = compactMessages(opts.session.messages, DEFAULT_CHECKPOINT_KEEP_STEPS, {
         ulw,
@@ -4480,10 +4295,8 @@ const stats = collectUsageStats({
       // Surface harness inheritance so experts know ULW/goal survived the branch.
       const harnessBits: string[] = [];
       try {
-        const ulw = loadUlwCycle(forked.meta.id);
-        if (ulw?.enabled) {
-          harnessBits.push(`ULW ${formatUlwCounts(ulw)}`);
-        }
+        const ulw = loadActiveCycle(forked.meta.id);
+        if (ulw) harnessBits.push(formatUlwBadge(ulw));
       } catch {
         /* */
       }
@@ -4546,7 +4359,7 @@ const stats = collectUsageStats({
         : "fork+compact";
       const forked = forkSession(opts.session, { title: titleHint });
       const before = forked.messages.length;
-      const ulw = loadUlwCycle(forked.meta.id);
+      const ulw = loadCycleState(forked.meta.id);
       const goal = loadGoal(forked.meta.id);
       forked.messages = compactMessages(forked.messages, DEFAULT_CHECKPOINT_KEEP_STEPS, {
         ulw,
@@ -4562,7 +4375,7 @@ const stats = collectUsageStats({
       rebuildUserTurnMarks(forked);
       saveSession(forked);
       const harnessBits: string[] = [];
-      if (ulw?.enabled) harnessBits.push(`ULW ${formatUlwCounts(ulw)}`);
+      if (ulw && ulw.enabled && !ulw.legacy) harnessBits.push(formatUlwBadge(ulw));
       if (goal?.objective && goal.status === "active" && !goal.paused) {
         harnessBits.push("goal active");
       }
@@ -5637,7 +5450,7 @@ case "/new":
       const titleNote = s.meta.title ? ` — ${s.meta.title}` : "";
       const wasUlw =
         opts.session.meta.ultrawork ||
-        Boolean(loadUlwCycle(opts.session.meta.id)?.enabled);
+        Boolean(loadActiveCycle(opts.session.meta.id));
       let newTip = wasUlw
         ? chalk.dim(
             "\n  ULW/goal not carried over — re-arm with /ulw or /goal if needed.",
@@ -6106,9 +5919,10 @@ case "/new":
       // OpenCode-style: session-scoped plan mode (no sticky prefs footgun).
       const note = arg.trim();
       const { changed, previous } = enterSessionPlanMode(opts.config, opts.session);
-      opts.session.meta.ulwOwnsPlan = false;
       saveSession(opts.session);
       const sid = opts.session.meta.id;
+      // Under ULW the human owns planning until /build; the harness Planner stands down.
+      setHumanPlan(sid, true);
       pushLiveNotice(
         sid,
         [
@@ -6148,14 +5962,10 @@ case "/new":
       // Leave plan → restore prior session mode (OpenCode build-switch).
       const note = arg.trim();
       const sid = opts.session.meta.id;
-      const ulw = loadUlwCycle(sid);
-      const wasUlwOrient =
-        Boolean(ulw?.enabled) && resolveUlwPhase(ulw) === "orient";
       const { mode, wasPlan } = exitSessionPlanMode(opts.config, opts.session);
-      if (wasUlwOrient) {
-        completeUlwPlan(sid, { force: true });
-      }
-      delete opts.session.meta.ulwOwnsPlan;
+      // Hand planning back to the harness Planner (runs at the next boundary
+      // when no plan is on disk).
+      setHumanPlan(sid, false);
       persistSessionMode(opts.session);
       if (wasPlan) {
         pushLiveNotice(
@@ -7104,7 +6914,7 @@ export async function runDoctorCheck(
     }
     lines.push(
       chalk.dim(
-        "  harness: handoff-guard · proof-claim · soft TodoGate · /budget · safety valves flip ULW to LAST · /done winds ULW+goal",
+        "  harness: handoff-guard · proof-claim · soft TodoGate · /budget · safety valves set ULW to /cycle 0 · /done winds ULW+goal",
       ),
     );
   }
@@ -8518,7 +8328,7 @@ export function formatEffectiveConfig(
       ? `  auto-commit:     ${snap.lastAutoCommit.sha}  ${snap.lastAutoCommit.subject || ""}`.trimEnd()
       : snap.lastAutoCommit?.skipped
         ? `  auto-commit:     skipped (${snap.lastAutoCommit.skipped})`
-        : `  auto-commit:     (none)  · wave close + Cycle complete  FORGE_ULW_AUTO_COMMIT=0 off`,
+        : `  auto-commit:     (none)  · one commit per reviewed, green cycle  FORGE_ULW_AUTO_COMMIT=0 off`,
     `  edit-guard:      file-read=${snap.env.FORGE_FILE_READ_GUARD ? "on" : "off"}` +
       `  verify-hint=${snap.env.FORGE_VERIFY_HINT ? "on" : "off"}` +
       `  edit-receipt=${snap.env.FORGE_EDIT_RECEIPT}` +

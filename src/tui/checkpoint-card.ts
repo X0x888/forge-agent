@@ -13,7 +13,6 @@
 import chalk from "chalk";
 import { clearFileReadsForSession } from "../agent/tools/file-read-state.js";
 import type { ForgeConfig } from "../config/types.js";
-import { loadUlwCycle } from "../harness/ulw-cycle.js";
 import type { SessionData } from "../session/session.js";
 import { saveSession } from "../session/session.js";
 import {
@@ -82,13 +81,7 @@ export function resolveCheckpointSha(
 ): string {
   const want = String(explicit || "").trim();
   if (want) return want;
-  const local = String(session.meta.lastCheckpoint || "").trim();
-  if (local) return local;
-  try {
-    return String(loadUlwCycle(session.meta.id)?.checkpointSha || "").trim();
-  } catch {
-    return "";
-  }
+  return String(session.meta.lastCheckpoint || "").trim();
 }
 
 export function stampCheckpoint(

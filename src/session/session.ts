@@ -80,12 +80,12 @@ import {
   type RestoreMutationsResult,
 } from "./mutations.js";
 import {
-  copyUlwCycle,
-  loadUlwCycle,
-  resetUlwOnClear,
-  isPlaceholderMandate,
+  copyCycleState,
+  formatUlwBadge,
+  loadActiveCycle,
+  resetCycleOnClear,
   mandateFromUserText,
-} from "../harness/ulw-cycle.js";
+} from "../harness/cycle/index.js";
 import { listActiveProjectMemory } from "../harness/project-memory.js";
 import { copyGoal, loadGoal, saveGoal } from "../harness/goal.js";
 import {
@@ -149,7 +149,7 @@ export interface SessionMeta {
   lastModelFallback?: { from: string; to: string; at: string };
   /**
    * Last stop reason (expert recovery / JSON). Failures are recovery;
-   * `ulw_cycle_complete` is a successful wrap — see `isLastErrorProblem`.
+   * `ulw_done` is a designed ULW end — see `isLastErrorProblem`.
    * Cleared on a successful turn unless keepLastError. Never stores tokens.
    */
   lastError?: {
@@ -349,7 +349,20 @@ export function saveSession(data: SessionData): void {
   // Keep list/picker preview fresh without loading full histories later.
   try {
     const rawPrev = lastUserText(data);
-    const fromKick = mandateFromUserText(rawPrev);
+    // A ULW session armed before any real prompt has only the kickoff (a
+    // synthetic [Forge …] row lastUserText skips): preview its mandate.
+    let fromKick: string | null = null;
+    if (!rawPrev.trim()) {
+      for (let i = data.messages.length - 1; i >= 0; i--) {
+        const m = data.messages[i];
+        if (m.role !== "user" || typeof m.content !== "string") continue;
+        const kick = m.content.match(/^\[Forge ULW cycle driver\] armed[\s\S]*?^Mandate:\s*(.+)$/m)?.[1];
+        if (kick) {
+          fromKick = mandateFromUserText(kick);
+          break;
+        }
+      }
+    }
     const preview = (fromKick || rawPrev).replace(/\s+/g, " ").trim().slice(0, 80);
     if (preview) data.meta.lastUserPreview = preview;
     else delete data.meta.lastUserPreview;
@@ -939,7 +952,7 @@ export function forkSession(
   // Fork inherits ULW + /goal harness drivers (sidecar files keyed by session id).
   // Without this, /fork mid-ULW silently drops the relentless cycle — a production footgun.
   try {
-    copyUlwCycle(source.meta.id, id);
+    copyCycleState(source.meta.id, id);
   } catch {
     /* best-effort */
   }
@@ -1296,7 +1309,7 @@ export function paintPickerBadge(bit: string): string {
 /**
  * Short lastError glance for `/sessions` / `/resume` / `forge sessions list`.
  * Code + message, one field — the picker paints and clips it.
- * Successful wraps (`ulw_cycle_complete`) are not a problem.
+ * Designed ULW ends (`ulw_done`) are not a problem.
  */
 export function sessionPickerProblem(
   s: Pick<SessionMeta, "lastError">,
@@ -1576,10 +1589,8 @@ export function formatSessionSummary(session: SessionData): string {
     (() => {
       if (!m.ultrawork) return `  ultrawork: no`;
       try {
-        const u = loadUlwCycle(m.id);
-        if (u?.enabled && typeof u.cycle === "number") {
-          return `  ultrawork: yes  ULW c=${u.cycle} w=${u.wave}`;
-        }
+        const u = loadActiveCycle(m.id);
+        if (u) return `  ultrawork: yes  ${formatUlwBadge(u)}`;
       } catch {
         /* */
       }
@@ -2316,11 +2327,7 @@ export function deriveSessionTitle(
     raw.match(/^\s*Mandate:\s*(.+)$/im)?.[1] ||
     raw.match(/^\s*Goal:\s*(.+)$/im)?.[1] ||
     raw.match(/^\s*Objective:\s*(.+)$/im)?.[1];
-  if (
-    mandate &&
-    !isPlaceholderMandate(mandate) &&
-    !/pending work-order/i.test(mandate)
-  ) {
+  if (mandate && !/pending work-order|\(none\)|\(derived\)/i.test(mandate)) {
     raw = mandate.trim();
   }
 
@@ -3554,14 +3561,7 @@ export function formatResumeOrientation(
   }
   try {
     if (compact) throw new Error("skip");
-    let cp = session.meta.lastCheckpoint;
-    if (!cp) {
-      try {
-        cp = loadUlwCycle(session.meta.id)?.checkpointSha;
-      } catch {
-        /* */
-      }
-    }
+    const cp = session.meta.lastCheckpoint;
     if (cp) {
       parts.push(`Checkpoint: ${cp.slice(0, 12)}…  (/checkpoint restore)`);
     }
@@ -3602,11 +3602,8 @@ export function formatSessionShareCard(
   let ulwFlag: string | null = null;
   if (m.ultrawork) {
     try {
-      const u = loadUlwCycle(m.id);
-      ulwFlag =
-        u?.enabled && typeof u.cycle === "number"
-          ? `ULW c=${u.cycle} w=${u.wave}`
-          : "ULW";
+      const u = loadActiveCycle(m.id);
+      ulwFlag = u ? formatUlwBadge(u) : "ULW";
     } catch {
       ulwFlag = "ULW";
     }
@@ -3693,15 +3690,6 @@ export function formatSessionShareCard(
   let checkpointLine: string | null = null;
   if (m.lastCheckpoint) {
     checkpointLine = `  checkpoint: ${m.lastCheckpoint.slice(0, 12)}… · /checkpoint restore`;
-  } else {
-    try {
-      const u = loadUlwCycle(m.id);
-      if (u?.checkpointSha) {
-        checkpointLine = `  checkpoint: ${u.checkpointSha.slice(0, 12)}… (ulw) · /checkpoint restore`;
-      }
-    } catch {
-      /* */
-    }
   }
   let lastVerifyLine: string | null = null;
   try {
@@ -3884,7 +3872,7 @@ export function clearConversation(session: SessionData): void {
   // from the old timeline makes editCount=0 look like permanent no-progress,
   // and the next typed sentence is steering on leftover chrome.
   try {
-    resetUlwOnClear(session.meta.id);
+    resetCycleOnClear(session.meta.id);
   } catch {
     /* best-effort */
   }

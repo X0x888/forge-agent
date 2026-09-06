@@ -33,7 +33,6 @@ import {
 } from "./format-on-write.js";
 import { fileReadGuardEnabled } from "./file-read-state.js";
 import { verifyHintSuffix } from "../../util/project-intel.js";
-import { applyRawPinSideEffects } from "../../util/pin-budget.js";
 import { isTruthy } from "../../util/bool.js";
 
 /** So a 1.3KB tool result is not mistaken for a truncated file. */
@@ -337,17 +336,7 @@ function finishEditSuccess(opts: {
   strippedNote: boolean;
   ctx?: import("./types.js").ToolContext;
 }): ToolResult {
-  const pinWarn = applyRawPinSideEffects({
-    cwd: opts.workspace,
-    absPath: opts.filePath,
-    before: opts.before,
-    after: opts.next,
-    sessionId: opts.ctx?.sessionId,
-    session: opts.ctx?.session,
-  });
-  const verifyTip =
-    verifyHintSuffix(opts.workspace, opts.filePath) +
-    (pinWarn ? `\n\n${pinWarn}` : "");
+  const verifyTip = verifyHintSuffix(opts.workspace, opts.filePath);
   const note =
     opts.matchKind !== "exact"
       ? ` (matched via ${opts.matchKind} fallback)`

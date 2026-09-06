@@ -15,7 +15,6 @@ import {
 import { searchHelpCatalog } from "../src/commands/help-text.js";
 import { DEFAULT_CONFIG } from "../src/config/types.js";
 import { HookRunner } from "../src/harness/hooks.js";
-import { armUlwCycle } from "../src/harness/ulw-cycle.js";
 import { createSession } from "../src/session/session.js";
 import { isDestructiveGitCommand } from "../src/agent/tools/bash.js";
 import { createSafetyCheckpoint } from "../src/util/git-checkpoint.js";
@@ -153,49 +152,6 @@ describe("/checkpoint card", () => {
     assert.match(out, /checkpoint {2}· {2}none/);
     assert.match(out, /Next {2}\/checkpoint snap/);
     assert.doesNotMatch(out, /git stash apply/);
-  });
-
-  it("restore uses ulw.checkpointSha when meta is empty", async () => {
-    initRepo(tmp);
-    firstCommit(tmp);
-    fs.writeFileSync(path.join(tmp, "wip.ts"), "a\n");
-    const snap = createSafetyCheckpoint(tmp);
-    assert.ok(snap.sha);
-
-    const { session, config } = sess();
-    armUlwCycle(session.meta.id, "test checkpoint restore", {
-      cycle: 1,
-      cwd: tmp,
-      skipCheckpoint: true,
-    });
-    const ulwPath = path.join(
-      process.env.FORGE_HOME!,
-      "sessions",
-      session.meta.id,
-      "ulw.json",
-    );
-    const ulw = JSON.parse(fs.readFileSync(ulwPath, "utf8")) as {
-      checkpointSha?: string;
-    };
-    ulw.checkpointSha = snap.sha;
-    fs.writeFileSync(ulwPath, JSON.stringify(ulw));
-
-    assert.equal(session.meta.lastCheckpoint, undefined);
-    assert.equal(resolveCheckpointSha(session), snap.sha);
-
-    fs.writeFileSync(path.join(tmp, "wip.ts"), "b\n");
-    const hooks = new HookRunner(config, tmp);
-    const r = await handleSlash("/checkpoint restore", {
-      session,
-      config,
-      hooks,
-    });
-    assert.equal(r.handled, true);
-    const out = strip(String(r.output || ""));
-    assert.match(out, /checkpoint {2}· {2}restored/);
-    assert.match(out, /Next {2}\/diff/);
-    assert.doesNotMatch(out, /git stash apply/);
-    assert.equal(fs.readFileSync(path.join(tmp, "wip.ts"), "utf8"), "a\n");
   });
 
   it("snap then restore rewinds an untracked file", async () => {

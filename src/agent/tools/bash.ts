@@ -10,7 +10,7 @@ import {
   defaultBashBackgroundTimeoutMs,
   defaultBashTimeoutMs,
 } from "../../util/env.js";
-import { isFullSuiteCommand } from "../../harness/ulw-cycle.js";
+import { isFullSuiteCommand } from "../../harness/verification.js";
 import { isTruthy } from "../../util/bool.js";
 import { numberFieldError } from "./arg-types.js";
 import { editDistance } from "../../util/string-distance.js";

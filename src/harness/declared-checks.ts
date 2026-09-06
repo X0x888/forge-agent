@@ -1,8 +1,7 @@
 /**
  * Declared verify commands — the Reading's "command that proves it".
  *
- * Every ULW Wave-1 Reading (and every Bet:) is asked for the command that
- * can fail. Dogfood wrote them (`./build.sh && --self-test`, `cargo test
+ * The ULW Planner is asked for the command that can fail (`Verify:`). Dogfood wrote them (`./build.sh && --self-test`, `cargo test
  * -p together-core`) and the harness threw them away: only project-intel's
  * stack table (npm/cargo/pytest/…) and VERIFICATION_CMD_RE decided what a
  * check was, so a Swift app with a build.sh earned proof=✗ on 248 of 256

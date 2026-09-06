@@ -61,44 +61,38 @@ import { buildRunReport, lastRealUserPrompt } from "../harness/run-report.js";
 import { proofClaimReleaseTips } from "../harness/proof-claim-guard.js";
 import { loadGoal, detectAutoGoal, armGoal } from "../harness/goal.js";
 import {
-  loadUlwCycle,
-  armUlwCycle,
-  adoptUlwMandate,
-  maybeAdoptMandateFromUserTexts,
-  reenableUlwCycle,
-  isPlaceholderMandate,
-  isArmableMandate,
+  loadCycleState,
+  loadActiveCycle,
+  cycleActive,
+  armCycle,
+  mandateFromUserText,
   isResumeFollowUp,
-  maybeFlipUlwToLastOnSafetyValve,
-  formatUlwFuseLeftovers,
-  notePlayLoopRan,
+  requestCycleZeroOnSafetyValve,
   providerFuseTripsContinueCap,
   stopBlockTripsContinueCap,
   ulwKickoffMessage,
   formatUlwCounts,
   formatUlwBadge,
-  displayUlwMandate,
-  ULW_LIVE_CONTROLS_HINT,
-  maybeStampUlwWave,
-  resolveUlwPhase,
-  advanceUlwPhaseOnReading,
+  cyclePreferredCheckCommands,
+  cycleKeepPaths,
+  ensureCyclePlanned,
+  runCheckCommand,
+  type CycleRuntime,
+  type CyclePlanItem,
+} from "../harness/cycle/index.js";
+import {
   countsTowardVerification,
   applyVerificationTrail,
   classifyVerificationRun,
   isFullSuiteCommand,
-  ulwPreferredCheckCommands,
-  consumeMillHoldPrune,
-  noteUlwThoughtOnlyStop,
   type VerificationRunClass,
-} from "../harness/ulw-cycle.js";
+} from "../harness/verification.js";
 import {
   getTask,
   onBackgroundTaskSettled,
   readTaskLogTailForVerification,
   type BackgroundTask,
 } from "./tools/background-tasks.js";
-import { collectUlwJobKeepPaths } from "../harness/ulw-job-card.js";
-import { armUlwPlanMode, syncUlwPlanMode } from "../harness/ulw-plan-mode.js";
 import {
   isReasonedEmptyStop,
   REASONING_LOOP_FINISH,
@@ -106,7 +100,6 @@ import {
   formatThoughtOnlyRecoverPoke,
   thoughtOnlyStopMax,
 } from "./reasoned-stop.js";
-import { applyMillHoldPrune } from "../session/hold-context.js";
 import {
   clearStaleToolResults,
   toolClearEnvConfig,
@@ -146,16 +139,12 @@ import {
 } from "../session/checkpoint.js";
 import { expandUserContentWithImages } from "../util/user-images.js";
 import { expandUserMentions } from "../util/user-mentions.js";
-import {
-  maybeRecordUserConstraint,
-  isEvaluateClassMandate,
-} from "../harness/decision-memory.js";
+import { maybeRecordUserConstraint } from "../harness/decision-memory.js";
 import {
   createProofPokeState,
   noteFixUntilGreen,
   noteGreenVerification,
   noteRedVerification,
-  noteUlwProofDemand,
   noteVerifyNudge,
   shouldEmitFixUntilGreen,
   shouldEmitVerifyNudge,
@@ -174,7 +163,26 @@ import {
   admitHarnessIfChanged,
   markHarnessAdmitted,
 } from "../harness/context-admit.js";
-import { getGitSnapshot, type GitSnapshot } from "../util/git-context.js";
+import {
+  getGitSnapshot,
+  gitDiffSinceHead,
+  gitHeadSha,
+  gitLogSince,
+  gitStatusShort,
+  type GitSnapshot,
+} from "../util/git-context.js";
+import {
+  autoCommitStamp,
+  commitDirtyTree,
+  formatLeftUnstagedAdmit,
+} from "../util/git-auto-commit.js";
+import { detectProjectIntel } from "../util/project-intel.js";
+import { appendProjectMemory } from "../harness/project-memory.js";
+import {
+  describeGuidelineFile,
+  formatGuidelineStatusLine,
+  surveyGuidelines,
+} from "../harness/guideline-audit.js";
 import {
   FileReadState,
   fileReadsForSession,
@@ -397,17 +405,21 @@ export interface LoopResult {
    */
   hitCostCap: boolean;
   /**
-   * True when ULW or /goal stuck-wall released the cycle (N no-progress Stops).
-   * Metrics/JSON/notify must not look like a clean Stop (maze dogfood).
+   * True when the /goal stuck-wall released the run (N no-progress Stops).
+   * Metrics/JSON/notify must not look like a clean Stop.
    */
   stuckReleased: boolean;
-  /** True when ULW released on evidenced **Cycle complete.** after LAST. */
+  /** True when the ULW cycle driver released this run (fulfilled / cycle 0 / cap / blocked). */
   lastCycleReleased: boolean;
-  /**
-   * True when `/cycle 0` wrap sat down and left ULW armed (CONTINUE).
-   * Distinct from lastCycleReleased — the mandate is not over.
-   */
-  lastCycleSatDown: boolean;
+  /** Why the ULW driver released, when it did. */
+  ulwEndReason?: string;
+  /** Structural checks this run: totals across every Stop boundary. */
+  verification?: {
+    ran: boolean;
+    passed: boolean;
+    fullSuite: boolean;
+    lastCommand?: string;
+  };
   /**
    * Last provider `finish_reason` observed on an assistant turn (e.g. stop, length,
    * content_filter, tool_calls). Null when no model turn completed (auth/abort early).
@@ -420,7 +432,7 @@ export interface LoopResult {
   cacheReadTokens: number;
   /** Distinct served models that diverged from the requested one this run. */
   servedModels?: string[];
-  /** Unattended ULW auto-commit after **Cycle complete.** (never pushed). */
+  /** ULW cycle commit this run (never pushed). */
   autoCommit?: {
     committed: boolean;
     sha?: string;
@@ -451,14 +463,14 @@ export interface LoopResult {
  * Per-run harness signals shared between the loop and tool execution.
  * - verificationRuns: bash commands matching isVerificationCommand() executed
  *   since the last Stop evaluation — the structural "proof" signal for the
- *   ULW wave ledger (execution, not prose claims).
+ *   ULW cycle ledger (execution, not prose claims).
  * - effortBoostTurns: adaptive effort budget — hard-round signals (doom-loop,
  *   error-streak, missing wave proof) buy a temporary reasoning-effort bump
  *   instead of paying high effort on every turn (escalate on failure, not
  *   by default).
  */
 export interface HarnessRunStats {
-  /** Structural check bash executed (pass or fail) — ULW wave ledger. */
+  /** Structural check bash executed (pass or fail) — ULW cycle ledger. */
   verificationRuns: number;
   /** Successful structural checks only — proof-claim / expert green trail. */
   verificationPassedRuns: number;
@@ -466,6 +478,11 @@ export interface HarnessRunStats {
   verificationHelperOnlyRuns: number;
   /** Full project suite passed this wave — ULW proof=✓. */
   verificationFullSuiteRuns: number;
+  /** Run-level totals (never reset at a Stop) — LoopResult.verification. */
+  totalRuns: number;
+  totalPassed: number;
+  totalFullSuite: number;
+  lastCommand?: string;
   effortBoostTurns: number;
   /**
    * Background task ids already credited (settle listener or a
@@ -492,7 +509,7 @@ function taskBelongsToWorkspace(
  * One credit path for every channel that observes a check run: foreground
  * bash results, background tasks joined via get_task_output, and background
  * tasks that settle while the model keeps working. Counters feed the ULW
- * wave ledger; the trail feeds /status /share and the proof-claim guard.
+ * cycle ledger; the trail feeds /status /share and the proof-claim guard.
  */
 function applyVerificationCredit(opts: {
   harnessStats: HarnessRunStats;
@@ -505,11 +522,17 @@ function applyVerificationCredit(opts: {
   const { harnessStats, meta, cls } = opts;
   if (!cls.ran) return;
   harnessStats.verificationRuns += 1;
+  harnessStats.totalRuns += 1;
+  harnessStats.lastCommand = opts.command;
   if (cls.isolate) {
     harnessStats.verificationHelperOnlyRuns += 1;
   } else if (cls.passed) {
     harnessStats.verificationPassedRuns += 1;
-    if (cls.fullSuite) harnessStats.verificationFullSuiteRuns += 1;
+    harnessStats.totalPassed += 1;
+    if (cls.fullSuite) {
+      harnessStats.verificationFullSuiteRuns += 1;
+      harnessStats.totalFullSuite += 1;
+    }
   }
   try {
     applyVerificationTrail(meta, {
@@ -719,7 +742,7 @@ export function partitionParallelBatches(
 function spawnDisplayArgs(
   name: string,
   toolInput: Record<string, unknown>,
-  opts: { planOrOrient: boolean; lastScore?: boolean },
+  opts: { planOrOrient: boolean },
 ): Record<string, unknown> {
   if (!isSpawnToolName(name)) return toolInput;
   const raw =
@@ -729,14 +752,12 @@ function spawnDisplayArgs(
     ...toolInput,
     subagent_type: resolveSpawnSubagentType(raw, {
       planMode: opts.planOrOrient,
-      ulwOrient: opts.planOrOrient,
-      ulwLastReflectScore: opts.lastScore,
     }),
   };
 }
 
-/** ULW Wave-1 PLAN: research + explore/plan spawn, no GP/edits. */
-const ORIENT_TOOL_NAMES = new Set([
+/** `/plan`: research + read-only spawn, no writes. */
+const PLAN_MODE_TOOL_NAMES = new Set([
   "read_file",
   "Read",
   "read",
@@ -822,33 +843,17 @@ function lastAssistantWasToolsOnly(messages: ChatMessage[]): boolean {
   return false;
 }
 
-export function filterToolsForUlwPhase(
-  tools: ToolDefinition[],
-  phase: "orient" | "ship" | undefined,
-): ToolDefinition[] {
-  if (phase !== "orient") return tools;
-  return tools.filter((t) => {
-    const n = t.function.name;
-    return ORIENT_TOOL_NAMES.has(n) || ORIENT_TOOL_NAMES.has(normalizeToolName(n));
-  });
-}
-
-/** `/plan` = ULW PLAN research tools + read-only spawn. */
-const PLAN_MODE_TOOL_NAMES = new Set([
-  ...ORIENT_TOOL_NAMES,
-  // Forced read-only by PermissionGate + toolSpawnSubagent when parent is plan.
-  "spawn_subagent",
-  "Task",
-  "task",
-]);
-
 /** Hide write tools from the model while in /plan (Claude/Grok-style). */
 export function filterToolsForPermissionMode(
   tools: ToolDefinition[],
   mode: string,
 ): ToolDefinition[] {
   if (mode !== "plan") return tools;
-  return tools.filter((t) => PLAN_MODE_TOOL_NAMES.has(t.function.name));
+  return tools.filter(
+    (t) =>
+      PLAN_MODE_TOOL_NAMES.has(t.function.name) ||
+      PLAN_MODE_TOOL_NAMES.has(normalizeToolName(t.function.name)),
+  );
 }
 
 export interface BuildChatRequestOpts {
@@ -1117,7 +1122,7 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
     onPhase: opts.events?.onPhase,
   };
   // ULW cycle needs more stop-continues than a normal turn
-  const ulwArmed = Boolean(loadUlwCycle(session.meta.id)?.enabled);
+  const ulwArmed = cycleActive(loadCycleState(session.meta.id));
   const maxStopContinues =
     opts.maxStopContinues ??
     (ulwArmed ? envPositiveInt("FORGE_ULW_MAX_CONTINUES", 200) : 50);
@@ -1151,14 +1156,8 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
   const subagentDepth = opts.subagentDepth ?? 0;
   const maxSubagentDepth = opts.maxSubagentDepth ?? defaultMaxSubagentDepth();
   const baseToolDefs = opts.toolDefinitions ?? TOOL_DEFINITIONS;
-  const toolsForMode = (): typeof baseToolDefs => {
-    const planned = filterToolsForPermissionMode(
-      baseToolDefs,
-      config.permissionMode,
-    );
-    const ulwNow = loadUlwCycle(session.meta.id);
-    return filterToolsForUlwPhase(planned, resolveUlwPhase(ulwNow));
-  };
+  const toolsForMode = (): typeof baseToolDefs =>
+    filterToolsForPermissionMode(baseToolDefs, config.permissionMode);
   let mcp =
     opts.mcp ??
     (subagentDepth === 0 ? getActiveMcpManager() ?? undefined : undefined);
@@ -1190,6 +1189,9 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
     verificationPassedRuns: 0,
     verificationHelperOnlyRuns: 0,
     verificationFullSuiteRuns: 0,
+    totalRuns: 0,
+    totalPassed: 0,
+    totalFullSuite: 0,
     effortBoostTurns: 0,
     creditedBgTaskIds: new Set<string>(),
   };
@@ -1229,52 +1231,37 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
     }
   }
 
-  // If session is already in ULW but cycle state missing, (re)arm from this message
+  // Session flagged ultrawork (forge --ulw / `/ulw` before the first prompt)
+  // with no armed cycle: this message is the mandate (or, for a bare follow-up,
+  // case c — no mandate). An armed run treats user text as steering; the
+  // Planner reads it at the next re-plan.
   let effectiveUserMessage = userMessage;
   if (
     !opts.resumeWithoutUserMessage &&
     !opts.disableHarnessAutoArm &&
     session.meta.ultrawork
   ) {
-    let ulw = loadUlwCycle(session.meta.id);
-    if (!ulw?.enabled) {
-      if (isResumeFollowUp(userMessage)) {
-        const revived = reenableUlwCycle(session.meta.id);
-        if (revived) {
-          ulw = revived;
-          log.info("ULW cycle re-enabled on resume follow-up");
-        }
-      } else if (isArmableMandate(userMessage)) {
-        ulw = armUlwCycle(session.meta.id, userMessage, {
-          cycle: 1,
-          editCount: session.meta.editCount,
-          cwd: workspace,
-        });
-        armUlwPlanMode(session, config);
-        if (ulw.checkpointSha) {
-          session.meta.lastCheckpoint = ulw.checkpointSha;
-          session.meta.lastCheckpointAt = new Date().toISOString();
-        }
-        log.info(
-          `ULW cycle armed (cycle=1)${ulw.softPrompt ? " — soft prompt expanded to god-scope" : ""}`,
-        );
-        effectiveUserMessage = ulwKickoffMessage(ulw);
-      }
-    } else if (
-      isPlaceholderMandate(ulw.mandate) &&
-      isArmableMandate(userMessage)
-    ) {
-      // /cycle or /max-waves armed first with a placeholder. This message
-      // is the real work — do not treat it as steering.
-      ulw =
-        adoptUlwMandate(session.meta.id, userMessage, { cwd: workspace }) ||
-        ulw;
-      armUlwPlanMode(session, config);
-      effectiveUserMessage = ulwKickoffMessage(ulw);
-      log.info(`ULW mandate adopted from first real user turn`);
+    const existing = loadCycleState(session.meta.id);
+    if (!existing || !cycleActive(existing)) {
+      const mandate = isResumeFollowUp(userMessage)
+        ? null
+        : mandateFromUserText(userMessage);
+      const armed = armCycle({
+        sessionId: session.meta.id,
+        mandate,
+        cwd: workspace,
+        maxCycles: existing && !existing.legacy ? existing.maxCycles : null,
+      });
+      log.info(
+        `ULW armed — plan-cycle mode${mandate ? "" : " (no mandate: the Planner derives the direction)"}`,
+      );
+      effectiveUserMessage = ulwKickoffMessage(armed);
+    } else if (!effectiveUserMessage.trim()) {
+      // `forge run "" --ulw` / `/ulw` with nothing after it: the driver was
+      // armed before this turn; the kickoff is the turn's user row.
+      const armed = loadActiveCycle(session.meta.id);
+      if (armed) effectiveUserMessage = ulwKickoffMessage(armed);
     }
-    // Already armed with a real mandate: user text is steering.
-    // Explicit /ulw <new> still re-arms.
   }
 
   if (!opts.resumeWithoutUserMessage) {
@@ -1285,9 +1272,10 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
   }
 
   const goal = loadGoal(session.meta.id);
-  const ulwCycle = loadUlwCycle(session.meta.id);
+  const ulwCycle = loadCycleState(session.meta.id);
+  const ulwOn = cycleActive(ulwCycle);
   const harnessActive =
-    session.meta.ultrawork || Boolean(ulwCycle?.enabled) || Boolean(goal?.objective && goal.status === "active" && !goal.paused);
+    session.meta.ultrawork || ulwOn || Boolean(goal?.objective && goal.status === "active" && !goal.paused);
 
   // Baseline system only — live ULW/goal counters admitted mid-conversation.
   // Git snapshot is computed ONCE per prompt: the system message carries only
@@ -1298,8 +1286,7 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
   const system = buildBaselineSystemPrompt({
     config,
     workspace,
-    ultrawork: session.meta.ultrawork || Boolean(ulwCycle?.enabled),
-    ulwCycle,
+    ultrawork: session.meta.ultrawork || ulwOn,
     git: gitSnap,
     subagentDepth,
   });
@@ -1331,7 +1318,7 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
   // Baseline after the real user/kickoff row so this-run meters exclude
   // prior-session history but include this prompt's admits and pokes.
   const pokeBaseline = session.messages.length;
-  if (effectiveUserMessage.startsWith("## ULW armed") || ulwCycle?.enabled) {
+  if (effectiveUserMessage.startsWith("[Forge ULW cycle driver] armed") || ulwOn) {
     // ULW kickoff already carries state. Do not append a second 2k admit
     // (rewrites the prefix and kills xAI cache). Fingerprint only.
     markCurrentHarnessAdmitted(session, config, gitSnap);
@@ -1339,7 +1326,7 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
     admitHarnessState(session, config);
   }
   // Agent-guidelines audit: the first action of a session (deferred while
-  // plan mode / ULW orient deny mutations — re-checked at each boundary).
+  // plan mode denies mutations — re-checked at each boundary).
   maybeAdmitGuidelineAudit(session, config);
 
   saveSession(session);
@@ -1395,7 +1382,7 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
       } catch {
         preferred = undefined;
       }
-      preferred = ulwPreferredCheckCommands(session.meta.id, preferred);
+      preferred = cyclePreferredCheckCommands(session.meta.id, preferred);
       creditBackgroundTaskVerification({
         task,
         harnessStats,
@@ -1411,7 +1398,7 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
   let hitCostCap = false;
   let stuckReleased = false;
   let lastCycleReleased = false;
-  let lastCycleSatDown = false;
+  let ulwEndReason: string | undefined;
   let lastFinishReason: string | null = null;
   let autoCommit: LoopResult["autoCommit"];
   let overflowCompactAttempted = false;
@@ -1463,10 +1450,7 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
       holdOmitIds: session.meta.holdOmitToolIds,
       jobKeepPaths: (() => {
         try {
-          const ulw = loadUlwCycle(session.meta.id);
-          return collectUlwJobKeepPaths(session.meta.id, {
-            namedShips: ulw?.namedShips,
-          });
+          return cycleKeepPaths(session.meta.id);
         } catch {
           return undefined;
         }
@@ -1501,9 +1485,7 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
       lastApiPromptTokens: session.meta.lastRoundPromptTokens,
       contextWindow: config.contextWindow,
       spool: false,
-      jobKeepPaths: collectUlwJobKeepPaths(session.meta.id, {
-        namedShips: loadUlwCycle(session.meta.id)?.namedShips,
-      }),
+      jobKeepPaths: cycleKeepPaths(session.meta.id),
     });
     return estimateRequestTokens(prep.messages, {
       ...extras,
@@ -1523,7 +1505,7 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
     const beforeTok = estimateTokens(session.messages);
     events.onPhase?.("compacting");
     await hooks.run("PreCompact", baseHookCtx(session, config));
-    const ulwNow = loadUlwCycle(session.meta.id);
+    const ulwNow = loadCycleState(session.meta.id);
     const goalNow = loadGoal(session.meta.id);
     const keep =
       keepLast ??
@@ -1635,7 +1617,7 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
   const admitAfterHistoryShrink = (
     kind: "overflow" | "http2-rebase",
   ): void => {
-    const ulwNow = loadUlwCycle(session.meta.id);
+    const ulwNow = loadCycleState(session.meta.id);
     const goalNow = loadGoal(session.meta.id);
     const lead =
       kind === "overflow"
@@ -1645,13 +1627,16 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
       lead,
       "Do not re-scan the whole workspace from zero. Use the compact summary + recent tail, verify only what you still need, then continue the highest-impact remaining work.",
     ];
-    if (ulwNow?.enabled) {
+    if (ulwNow && cycleActive(ulwNow)) {
+      const open = ulwNow.items.filter((i) => i.status === "open");
       parts.push(
-        `ULW still ACTIVE: ${formatUlwCounts(ulwNow)} ${ulwNow.cycle === 1 ? "(CONTINUE)" : "(LAST)"}. Mandate: ${displayUlwMandate(ulwNow.mandate)}`,
+        `ULW still ACTIVE: ${formatUlwCounts(ulwNow)}${ulwNow.planTitle ? ` — plan: ${ulwNow.planTitle}` : ""}.`,
+        open.length
+          ? `Open plan items: ${open.map((i) => `${i.id} ${i.title}`).slice(0, 6).join(" · ")}`
+          : "",
         kind === "overflow"
-          ? "Stop never fired before the overflow (common on long tool-only waves) — that is why wave/blocks may still be low. Keep executing the cycle; the harness will re-anchor on the next clean Stop."
-          : "The HTTP/2 Run dropped mid-turn. Continue the cycle from the compact summary; do not restart the job.",
-        ULW_LIVE_CONTROLS_HINT,
+          ? "Keep executing the plan; the harness re-anchors at the next clean Stop."
+          : "The HTTP/2 Run dropped mid-turn. Continue the plan from the compact summary; do not restart the job.",
       );
     }
     if (goalNow?.objective && goalNow.status === "active" && !goalNow.paused) {
@@ -1672,12 +1657,198 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
   let warnedContextPressure: "threshold" | "hard" | null = null;
   /** Avoid rewriting message[0] unless plan/ULW/model actually flipped. */
   let lastSystemEpoch = "";
-  let lastWaveStampTurn = 0;
+
+  /**
+   * The cycle driver's hands: fresh-context Planner / Reviewer subagents, the
+   * harness-run verify command, git, the todo board and the transcript admit.
+   * Only a root loop with a provider can supply it; a subagent never drives.
+   */
+  const cycleRuntime: CycleRuntime | undefined =
+    provider && subagentDepth === 0
+      ? {
+          workspace,
+          runRole: async (role, brief, roleOpts) => {
+            const roleModel =
+              role === "planner" ? config.ulw?.plannerModel : config.ulw?.reviewerModel;
+            const roleEffort =
+              role === "planner" ? config.ulw?.plannerEffort : config.ulw?.reviewerEffort;
+            events.onPhase?.("tool", `cycle ${roleOpts.cycle} ${role}`);
+            events.onStatus?.(`ULW cycle ${roleOpts.cycle}: ${role} (fresh context)`);
+            const res = await runSubagentTracked(
+              {
+                prompt: brief,
+                description: `cycle ${roleOpts.cycle} ${role}`,
+                role,
+                model: roleModel,
+                reasoningEffort: roleEffort,
+                inlineSkills: [role === "planner" ? "forge-planner" : "forge-reviewer", "forge-veteran"],
+              },
+              {
+                config,
+                provider,
+                parentSession: session,
+                hooks,
+                permissions,
+                workspace,
+                signal,
+                events,
+                depth: subagentDepth,
+                maxDepth: maxSubagentDepth,
+                mcp,
+                lsp,
+              },
+            );
+            return {
+              ok: res.ok,
+              text: res.body ?? res.text,
+              status: res.status ?? (res.ok ? "completed" : "error"),
+              promptTokens: res.promptTokens,
+              completionTokens: res.completionTokens,
+              editCount: res.editCount,
+              error: res.error,
+            };
+          },
+          runCheck: async (command) => {
+            events.onPhase?.("tool", `verify ${command.slice(0, 40)}`);
+            events.onStatus?.(`ULW verify: ${command}`);
+            let preferred: string[] | undefined;
+            try {
+              const { detectProjectIntel } = await import("../util/project-intel.js");
+              preferred = detectProjectIntel(workspace).checkCommands;
+            } catch {
+              preferred = undefined;
+            }
+            const run = await runCheckCommand({
+              command,
+              cwd: workspace,
+              signal,
+              preferredCheckCommands: cyclePreferredCheckCommands(session.meta.id, preferred),
+            });
+            try {
+              applyVerificationTrail(session.meta, {
+                command,
+                isError: !run.cls.passed,
+                preferredCheckCommands: preferred,
+              });
+              saveSession(session);
+            } catch {
+              /* trail is best-effort */
+            }
+            return run;
+          },
+          commit: ({ subject, body }) => {
+            // Stamp the guideline audit first so the proofread mark rides the
+            // cycle commit instead of dirtying the tree after it.
+            finalizeGuidelineAuditForRun();
+            const ac = commitDirtyTree({
+              cwd: workspace,
+              subject,
+              body,
+              permissionMode: config.permissionMode,
+            });
+            session.meta.lastAutoCommit = autoCommitStamp(ac);
+            if (ac.committed) {
+              const sha = ac.sha || "HEAD";
+              const line = `Committed ${sha} — ${ac.subject} (${ac.files ?? 0} file(s), not pushed)`;
+              if (sha !== lastCommittedSha) {
+                lastCommittedSha = sha;
+                log.info(chalk.green(line));
+                events.onStatus?.(line);
+              }
+              autoCommit = {
+                committed: ac.committed,
+                sha: ac.sha,
+                subject: ac.subject,
+                skipped: ac.skipped,
+              };
+            }
+            const left = formatLeftUnstagedAdmit(ac, session.meta.id);
+            if (left) session.messages.push({ role: "user", content: left });
+            saveSession(session);
+            return ac;
+          },
+          seedTodos: (items: CyclePlanItem[]) => {
+            applyTodos(
+              session,
+              items.map((i) => ({
+                id: i.id,
+                content: i.title,
+                status:
+                  i.status === "done"
+                    ? "completed"
+                    : i.status === "cancelled"
+                      ? "cancelled"
+                      : "pending",
+              })),
+              false,
+            );
+            saveSession(session);
+          },
+          todos: () => session.todos,
+          admit: (text) => {
+            session.messages.push({ role: "user", content: text });
+            saveSession(session);
+          },
+          gitHead: () => gitHeadSha(workspace),
+          gitDiffSince: (head) => gitDiffSinceHead(workspace, head),
+          gitLogSince: (head) => gitLogSince(workspace, head),
+          gitStatus: () => gitStatusShort(workspace),
+          userMessagesSince: (iso) => userMessagesSince(session, iso),
+          guidelineSurvey: () => {
+            const s = surveyGuidelines(workspace);
+            const head = formatGuidelineStatusLine(s);
+            const files = s.files.map((f) => `- ${describeGuidelineFile(f)}`);
+            return [head, ...files].join("\n");
+          },
+          projectChecks: () => {
+            try {
+              return detectProjectIntel(workspace).checkCommands ?? [];
+            } catch {
+              return [];
+            }
+          },
+          rememberIdentity: (text) => {
+            try {
+              appendProjectMemory(workspace, { text: `Identity: ${text}`, kind: "fact", source: "agent" });
+            } catch {
+              /* project memory is best-effort */
+            }
+          },
+          log: (line) => log.info(chalk.magenta(line)),
+        }
+      : undefined;
+
+  // Turn start under ULW with no plan on disk: the Planner writes cycle 1's
+  // plan before the executor's first model call. A fulfilled / blocked
+  // verdict ends the run here with the report.
+  let earlyRelease = false;
+  if (cycleRuntime) {
+    try {
+      const planned = await ensureCyclePlanned(session.meta.id, cycleRuntime);
+      if (planned?.released) {
+        lastCycleReleased = true;
+        ulwEndReason = planned.endReason;
+        session.meta.ultrawork = false;
+        saveSession(session);
+        log.info(chalk.magenta(planned.reason));
+        finalText = planned.reason;
+        earlyRelease = true;
+      } else if (planned?.reanchor) {
+        session.messages.push({ role: "user", content: planned.reanchor });
+        markCurrentHarnessAdmitted(session, config);
+        saveSession(session);
+      }
+    } catch (err) {
+      if (signal?.aborted) throw err;
+      log.warn(`ULW planner failed at turn start: ${(err as Error).message}`);
+    }
+  }
 
   try {
     // Check maxTurns / cost cap at the top so a clean Stop on the final allowed
     // turn is not mis-reported as hitMaxTurns/hitCostCap.
     for (;;) {
+      if (earlyRelease) break;
       if (turns >= maxTurns) {
         hitMaxTurns = true;
         break;
@@ -1782,16 +1953,15 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
       // Live /plan|/build can flip permission mode. Do not rebuild message[0]
       // every turn — that busts the xAI prefix cache on a 12-hour run.
       {
-        const ulwNow = loadUlwCycle(session.meta.id);
-        const ulwOn = Boolean(session.meta.ultrawork || ulwNow?.enabled);
-        const systemEpoch = `${config.permissionMode}|${ulwOn ? 1 : 0}|${subagentDepth}|${config.model}|${resolveUlwPhase(ulwNow)}`;
+        const ulwLiveOn =
+          Boolean(session.meta.ultrawork) || cycleActive(loadCycleState(session.meta.id));
+        const systemEpoch = `${config.permissionMode}|${ulwLiveOn ? 1 : 0}|${subagentDepth}|${config.model}`;
         if (systemEpoch !== lastSystemEpoch) {
           lastSystemEpoch = systemEpoch;
           const liveSystem = buildBaselineSystemPrompt({
             config,
             workspace,
-            ultrawork: ulwOn,
-            ulwCycle: ulwNow,
+            ultrawork: ulwLiveOn,
             git: gitSnap,
             subagentDepth,
           });
@@ -1875,88 +2045,9 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
         }
       }
 
-      // ULW quality bar must run on tool-only unattended waves (Stop never fires).
-      {
-        const ulwLive = loadUlwCycle(session.meta.id);
-        if (ulwLive?.enabled) {
-          const lastAsst = [...session.messages]
-            .reverse()
-            .find((m) => m.role === "assistant");
-          const stamp = maybeStampUlwWave({
-            sessionId: session.meta.id,
-            editCount: session.meta.editCount,
-            openTodoCount: openTodos(session.todos),
-            stepsSinceStamp: turns - lastWaveStampTurn,
-            lastAssistantMessage:
-              typeof lastAsst?.content === "string" ? lastAsst.content : "",
-            verificationRan: harnessStats.verificationRuns > 0,
-            verificationPassed: harnessStats.verificationPassedRuns > 0,
-            verificationHelperOnly: harnessStats.verificationHelperOnlyRuns > 0,
-            verificationFullSuite: harnessStats.verificationFullSuiteRuns > 0,
-            cwd: workspace,
-          });
-          if (stamp.stamped || stamp.admit) {
-            try {
-              const ulwNow = loadUlwCycle(session.meta.id);
-              if (ulwNow && consumeMillHoldPrune(ulwNow)) {
-                applyMillHoldPrune(session);
-              }
-            } catch {
-              /* suffix omit is best-effort */
-            }
-          }
-          if (stamp.stamped) {
-            lastWaveStampTurn = turns;
-            try {
-              const { maybeAutoCommitOnUlwDone, autoCommitStamp, formatLeftUnstagedAdmit } =
-                await import("../util/git-auto-commit.js");
-              const ac = maybeAutoCommitOnUlwDone({
-                cwd: workspace,
-                sessionId: session.meta.id,
-                permissionMode: config.permissionMode,
-              });
-              session.meta.lastAutoCommit = autoCommitStamp(ac);
-              if (ac.committed) {
-                const sha = ac.sha || "HEAD";
-                const line = `Committed ${sha} — ${ac.subject} (${ac.files ?? 0} file(s), not pushed)`;
-                if (sha !== lastCommittedSha) {
-                  lastCommittedSha = sha;
-                  log.info(chalk.green(line));
-                }
-                autoCommit = {
-                  committed: ac.committed,
-                  sha: ac.sha,
-                  subject: ac.subject,
-                  skipped: ac.skipped,
-                };
-              } else if (ac.skipped && ac.skipped !== "working tree clean") {
-                log.dim(`Auto-commit skipped: ${ac.skipped}`);
-              }
-              // Looks / scratch left out of the commit: tell the model where
-              // they belong, once per commit, as a harness message.
-              const left = formatLeftUnstagedAdmit(ac, session.meta.id);
-              if (left) {
-                log.dim(`Auto-commit left ${ac.leftUnstaged!.length} look/scratch file(s) unstaged`);
-                session.messages.push({ role: "user", content: left });
-              }
-            } catch {
-              /* never fail a wave stamp on commit */
-            }
-          }
-          if (stamp.admit) {
-            session.messages.push({ role: "user", content: stamp.admit });
-            // Cycle/LAST already lives in this admit — do not let the
-            // next boundary emit a second full "Obey this state."
-            markCurrentHarnessAdmitted(session, config);
-            saveSession(session);
-          }
-        }
-      }
-
       // Optional in-session stubbing (opt-in). Request-time prune already
       // slims the outbound payload without rewriting session.json.
-      const ulwForClear = loadUlwCycle(session.meta.id);
-      const ulwAggressive = Boolean(ulwForClear?.enabled);
+      const ulwAggressive = cycleActive(loadCycleState(session.meta.id));
       const clearEvery = ulwAggressive
         ? Math.min(toolClearEveryTurns, 2)
         : toolClearEveryTurns;
@@ -2013,12 +2104,6 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
       const lastUserForNudge = [...session.messages]
         .reverse()
         .find((m) => m.role === "user");
-      const ulwForNudge = loadUlwCycle(session.meta.id);
-      const evaluateClass = Boolean(
-        ulwForNudge?.enabled &&
-          (isEvaluateClassMandate(ulwForNudge.mandate) ||
-            ulwForNudge.judgmentRequired),
-      );
       const nudge = maybeTodoNudge({
         sessionId: session.meta.id,
         harnessActive,
@@ -2027,8 +2112,6 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
           typeof lastUserForNudge?.content === "string"
             ? lastUserForNudge.content
             : undefined,
-        evaluateClass,
-        mandate: ulwForNudge?.mandate,
       });
       if (nudge) {
         session.messages.push({ role: "user", content: nudge });
@@ -2184,11 +2267,10 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
           // Context overflow: progressive compact then re-issue (never same payload)
           if (isContextOverflowError(err)) {
             if (overflowCompactAttempted) {
-              const ulwDead = loadUlwCycle(session.meta.id);
-              const ulwNote =
-                ulwDead?.enabled && ulwDead.cycle === 1
-                  ? ` ULW remains armed (${formatUlwCounts(ulwDead)}) — after /compact or /new, re-issue the mandate; cycle does not auto-clear on provider death.`
-                  : "";
+              const ulwDead = loadActiveCycle(session.meta.id);
+              const ulwNote = ulwDead
+                ? ` ULW remains armed (${formatUlwCounts(ulwDead)}) — after /compact or /new, re-arm with /ulw; the cycle does not auto-clear on provider death.`
+                : "";
               throw new Error(
                 `Context still overflows after progressive compact: ${(err as Error).message || err}. ` +
                   `Start a new session (/new) or raise context_window / lower history.${ulwNote}`,
@@ -2224,11 +2306,10 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
                   skipThresholdCompactUntilCount = 0;
                 } catch (err3) {
                   if (isContextOverflowError(err3)) {
-                    const ulwDead = loadUlwCycle(session.meta.id);
-                    const ulwNote =
-                      ulwDead?.enabled && ulwDead.cycle === 1
-                        ? ` ULW remains armed (${formatUlwCounts(ulwDead)}) — session history was compacted; resume with a smaller request or /new.`
-                        : "";
+                    const ulwDead = loadActiveCycle(session.meta.id);
+                    const ulwNote = ulwDead
+                      ? ` ULW remains armed (${formatUlwCounts(ulwDead)}) — session history was compacted; resume with a smaller request or /new.`
+                      : "";
                     throw new Error(
                       `Context still overflows after progressive compact: ${(err3 as Error).message || err3}. ` +
                         `Start a new session (/new) or raise context_window / lower history.${ulwNote}`,
@@ -2696,13 +2777,6 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
       session.messages.push(assistantMsg);
       finalText = assistantMsg.content || "";
       noteAssistantTurn(session.meta.id);
-      try {
-        if (advanceUlwPhaseOnReading(session.meta.id, assistantMsg.content || "")) {
-          syncUlwPlanMode(session, config);
-        }
-      } catch {
-        /* */
-      }
       if (citeSeen) {
         const cited = citedPathsFromToolCalls(assistantMsg);
         citeStaleTurns = noteCiteDelta(citeSeen, cited, citeStaleTurns).staleTurns;
@@ -2913,24 +2987,19 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
           log.info(chalk.dim(`Reasoned Stop (${why}) — running Stop`));
           events.onStatus?.(`Reasoned Stop (${why})`);
         }
-        const ulwBeforeStop = loadUlwCycle(session.meta.id);
+        const ulwBeforeStop = loadActiveCycle(session.meta.id);
         events.onPhase?.(
           "stop_guard",
-          ulwBeforeStop?.enabled
-            ? formatUlwBadge(ulwBeforeStop)
-            : undefined,
+          ulwBeforeStop ? formatUlwBadge(ulwBeforeStop) : undefined,
         );
         let preferredCheckCommands: string[] | undefined;
         try {
-          const { detectProjectIntel } = await import(
-            "../util/project-intel.js"
-          );
           preferredCheckCommands = detectProjectIntel(workspace).checkCommands;
         } catch {
           preferredCheckCommands = undefined;
         }
-        // The Reading's declared verify command joins the stack table.
-        preferredCheckCommands = ulwPreferredCheckCommands(
+        // The Planner's declared verify command joins the stack table.
+        preferredCheckCommands = cyclePreferredCheckCommands(
           session.meta.id,
           preferredCheckCommands,
         );
@@ -2939,6 +3008,7 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
           hooks,
           ctx: baseHookCtx(session, config),
           ultrawork: session.meta.ultrawork,
+          cycleRuntime,
           openTodoCount: openTodos(session.todos),
           editCount: session.meta.editCount,
           lastUserMessage: (() => {
@@ -2975,36 +3045,28 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
             1,
           );
         }
-        // Reset only when the ULW driver actually evaluated this Stop — hook /
-        // goal blocks return early without consuming the signal, and the runs
-        // still belong to the wave in progress.
-        if (stopResult.ulw) {
+        // The cycle driver consumed this Stop's verification signals when it
+        // stamped a wave or closed the cycle; hook / goal blocks return early
+        // without consuming them.
+        if (stopResult.ulw?.waveStamped || stopResult.ulw?.cycleClosed) {
           harnessStats.verificationRuns = 0;
           harnessStats.verificationPassedRuns = 0;
           harnessStats.verificationHelperOnlyRuns = 0;
           harnessStats.verificationFullSuiteRuns = 0;
         }
-        // Missing wave proof / weak attestation = hard-round signal → think harder.
-        if (stopResult.ulw?.proofDemanded || stopResult.ulw?.evidenceDemanded) {
-          harnessStats.effortBoostTurns = Math.max(
-            harnessStats.effortBoostTurns,
-            1,
-          );
-          noteUlwProofDemand(proofPoke);
-        }
-        if (stopResult.ulw?.soulDemanded) {
+        // A red verify after review or a fresh plan is a hard round.
+        if (stopResult.ulw?.phase === "fix" || stopResult.ulw?.planAdmitted) {
           harnessStats.effortBoostTurns = Math.max(
             harnessStats.effortBoostTurns,
             1,
           );
         }
-        // Diminishing returns is user-visible: never let waves quietly thin out.
-        if (stopResult.ulw?.thinStreakAdvisory) {
-          log.info(
-            chalk.yellow(
-              "ULW diminishing returns — waves are thinning. /cycle 0 to wind down, /max-waves N to cap, or let a consolidation wave harden what's shipped.",
-            ),
-          );
+        if (stopResult.ulw?.committed?.sha) {
+          autoCommit = {
+            committed: true,
+            sha: stopResult.ulw.committed.sha,
+            subject: stopResult.ulw.committed.subject,
+          };
         }
         // Track polite-yield streak for handoff-guard release cap.
         // Polite yields are a hard-round signal — bump adaptive effort so the
@@ -3036,129 +3098,24 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
           );
         }
 
-        if (stopResult.ulw?.block && !stopResult.allowStop) {
-          try {
-            const ulwNow = loadUlwCycle(session.meta.id);
-            if (ulwNow && consumeMillHoldPrune(ulwNow)) {
-              applyMillHoldPrune(
-                session,
-                collectUlwJobKeepPaths(session.meta.id, {
-                  namedShips: ulwNow.namedShips,
-                }),
-              );
-            }
-            if (
-              ulwNow?.reorientRequested ||
-              (ulwNow &&
-                ulwNow.wave > 0 &&
-                ulwNow.wave % 4 === 0)
-            ) {
-              harnessStats.effortBoostTurns = Math.max(
-                harnessStats.effortBoostTurns,
-                1,
-              );
-            }
-          } catch {
-            /* suffix omit is best-effort */
-          }
-        }
-        if (
-          stopResult.ulw?.block &&
-          !stopResult.allowStop &&
-          stopResult.ulw.waveClosed
-        ) {
-          try {
-            const { maybeAutoCommitOnUlwDone, autoCommitStamp, formatLeftUnstagedAdmit } =
-              await import("../util/git-auto-commit.js");
-            const ac = maybeAutoCommitOnUlwDone({
-              cwd: workspace,
-              sessionId: session.meta.id,
-              permissionMode: config.permissionMode,
-            });
-            session.meta.lastAutoCommit = autoCommitStamp(ac);
-            if (ac.committed) {
-              const sha = ac.sha || "HEAD";
-              const line = `Committed ${sha} — ${ac.subject} (${ac.files ?? 0} file(s), not pushed)`;
-              if (sha !== lastCommittedSha) {
-                lastCommittedSha = sha;
-                log.info(chalk.green(line));
-                events.onStatus?.(line);
-              }
-              autoCommit = {
-                committed: ac.committed,
-                sha: ac.sha,
-                subject: ac.subject,
-                skipped: ac.skipped,
-              };
-            } else if (ac.skipped && ac.skipped !== "working tree clean") {
-              log.dim(`Auto-commit skipped: ${ac.skipped}`);
-            }
-            const left = formatLeftUnstagedAdmit(ac, session.meta.id);
-            if (left) {
-              log.dim(`Auto-commit left ${ac.leftUnstaged!.length} look/scratch file(s) unstaged`);
-              session.messages.push({ role: "user", content: left });
-            }
-            saveSession(session);
-          } catch {
-            /* never fail a Stop re-anchor on commit */
-          }
-        }
         if (stopResult.allowStop) {
           if (stopResult.systemMessage) log.dim(stopResult.systemMessage);
           finalizeGuidelineAuditForRun();
           if (
-            !loadUlwCycle(session.meta.id)?.enabled &&
+            !cycleActive(loadCycleState(session.meta.id)) &&
             session.meta.ultrawork
           ) {
             session.meta.ultrawork = false;
             saveSession(session);
           }
-          if (stopResult.ulw?.stuckReleased) stuckReleased = true;
           if (stopResult.goal?.stuckReleased) stuckReleased = true;
-          if (stopResult.ulw?.lastCycleReleased) lastCycleReleased = true;
-          if (stopResult.ulw?.lastCycleSatDown) lastCycleSatDown = true;
-          if (
-            stopResult.ulw?.lastCycleReleased ||
-            stopResult.ulw?.lastCycleSatDown ||
-            stopResult.ulw?.stuckReleased
-          ) {
-            try {
-              const { maybeAutoCommitOnUlwDone, autoCommitStamp } =
-                await import("../util/git-auto-commit.js");
-              const cwd =
-                config.workspace || session.meta.cwd || process.cwd();
-              const ac = maybeAutoCommitOnUlwDone({
-                cwd,
-                sessionId: session.meta.id,
-                permissionMode: config.permissionMode,
-              });
-              autoCommit = {
-                committed: ac.committed,
-                sha: ac.sha,
-                subject: ac.subject,
-                skipped: ac.skipped,
-              };
-              session.meta.lastAutoCommit = autoCommitStamp(ac);
-              saveSession(session);
-              if (ac.committed) {
-                const sha = ac.sha || "HEAD";
-                const line = `Committed ${sha} — ${ac.subject} (${ac.files ?? 0} file(s), not pushed)`;
-                if (sha !== lastCommittedSha) {
-                  lastCommittedSha = sha;
-                  log.info(chalk.green(line));
-                }
-                if (finalText.trim()) finalText = `${finalText.replace(/\s+$/, "")}\n\n${line}`;
-                else finalText = line;
-              } else if (ac.skipped && ac.skipped !== "working tree clean") {
-                log.dim(`Auto-commit skipped: ${ac.skipped}`);
-              }
-              if (ac.leftUnstaged?.length) {
-                const note = `Left unstaged (looks / scratch, not product files): ${ac.leftUnstaged.slice(0, 4).join(", ")}${ac.leftUnstaged.length > 4 ? ` (+${ac.leftUnstaged.length - 4} more)` : ""}`;
-                log.dim(note);
-                finalText = finalText.trim() ? `${finalText.replace(/\s+$/, "")}\n${note}` : note;
-              }
-            } catch {
-              /* never fail a finished cycle on commit */
+          if (stopResult.ulw?.released) {
+            lastCycleReleased = true;
+            ulwEndReason = stopResult.ulw.endReason;
+            if (stopResult.ulw.reason) {
+              finalText = finalText.trim()
+                ? `${finalText.replace(/\s+$/, "")}\n\n${stopResult.ulw.reason}`
+                : stopResult.ulw.reason;
             }
           }
           // Stamp lastError when a polite-yield / proof-claim / stuck-wall
@@ -3187,19 +3144,6 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
                 tips: proofClaimReleaseTips(preferredCheckCommands),
               });
               saveSession(session);
-            } else if (stopResult.ulw?.stuckReleased) {
-              setSessionLastError(session, {
-                code: "ulw_stuck_wall",
-                message: (
-                  stopResult.ulw.reason ||
-                  "ULW stuck-wall released after consecutive Stop attempts with no progress"
-                ).slice(0, 500),
-                tips: [
-                  "/cycle 1  ·  /ulw  to resume the mandate",
-                  "/cycle status  ·  /retry",
-                ],
-              });
-              saveSession(session);
             } else if (stopResult.goal?.stuckReleased) {
               setSessionLastError(session, {
                 code: "goal_stuck_wall",
@@ -3213,17 +3157,20 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
                 ],
               });
               saveSession(session);
-            } else if (stopResult.ulw?.lastCycleReleased) {
+            } else if (stopResult.ulw?.released) {
+              const clean =
+                stopResult.ulw.endReason === "fulfilled" ||
+                stopResult.ulw.endReason === "cycle-zero" ||
+                stopResult.ulw.endReason === "max-cycles";
               setSessionLastError(session, {
-                code: "ulw_cycle_complete",
+                code: clean ? "ulw_done" : "ulw_released",
                 message: (
                   stopResult.ulw.reason ||
-                  "ULW last cycle attested complete — released"
+                  `ULW released (${stopResult.ulw.endReason ?? "unknown"})`
                 ).slice(0, 500),
-                tips: [
-                  "/cycle 1  ·  /ulw  if more work remains",
-                  "/cycle status",
-                ],
+                tips: clean
+                  ? ["/report  ·  /ulw [mandate] to run another"]
+                  : ["/ulw [mandate]  to re-arm", "/cycle status  ·  /report"],
               });
               saveSession(session);
             }
@@ -3235,18 +3182,11 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
 
         if (reasonedEmpty) {
           thoughtOnlyStops += 1;
-          let thoughtForceLook = false;
-          try {
-            const n = noteUlwThoughtOnlyStop(session.meta.id);
-            thoughtForceLook = n.forceLook;
-            if (thoughtForceLook) {
-              harnessStats.effortBoostTurns = Math.max(
-                harnessStats.effortBoostTurns,
-                1,
-              );
-            }
-          } catch {
-            /* sidecar optional */
+          if (thoughtOnlyStops >= 3) {
+            harnessStats.effortBoostTurns = Math.max(
+              harnessStats.effortBoostTurns,
+              1,
+            );
           }
           const thoughtMax = thoughtOnlyStopMax();
           if (thoughtMax > 0 && thoughtOnlyStops > thoughtMax) {
@@ -3262,14 +3202,14 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
                   : "thought-only";
             finalText =
               `[Forge] Model sat in thought ${thoughtOnlyStops} times with no text/tools (${why}). ` +
-              `Ending this turn so you can steer — ULW is still CONTINUE (not LAST). ` +
+              `Ending this turn so you can steer — ULW stays armed. ` +
               `/retry or a follow-up keeps the cycle. Raise FORGE_THOUGHT_ONLY_MAX or FORGE_PROVIDER_REASONING_WALL_MS to wait longer.`;
             try {
               setSessionLastError(session, {
                 code: "thought_only_cap",
                 message: finalText.replace(/^\[Forge\]\s*/, "").slice(0, 500),
                 tips: [
-                  "/retry  ·  type a follow-up — ULW is still CONTINUE",
+                  "/retry  ·  type a follow-up — ULW stays armed",
                   "FORGE_THOUGHT_ONLY_MAX  ·  FORGE_PROVIDER_REASONING_WALL_MS",
                 ],
               });
@@ -3284,10 +3224,10 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
         }
 
         stopContinues += 1;
-        const ulwForCap = loadUlwCycle(session.meta.id);
+        const ulwForCap = loadCycleState(session.meta.id);
         // Thought-only / reasoning_wall is a keep-driving poke, not an
         // infinite-Stop fuse. Counting it toward FORGE_ULW_MAX_CONTINUES
-        // auto-LAST'd a 16h dogfood the user did not ask to stop.
+        // ended a 16h dogfood the user did not ask to stop.
         if (
           !reasonedEmpty &&
           stopBlockTripsContinueCap(ulwForCap) &&
@@ -3302,7 +3242,7 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
           if (!(finalText || "").trim()) {
             finalText =
               `[Forge] Stop-continue cap (${maxStopContinues}) reached — releasing to prevent infinite loop. ` +
-              `Use /cycle 0, /max-waves N, /done, or /ulw-off if the harness is still blocking progress.`;
+              `Use /cycle 0, /max-cycles N, /done, or /ulw-off if the harness is still blocking progress.`;
           }
           try {
             setSessionLastError(session, {
@@ -3314,7 +3254,7 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
                 .replace(/^\[Forge\]\s*/, "")
                 .slice(0, 500),
               tips: [
-                "/cycle 0  ·  /max-waves N  ·  /done  ·  /ulw-off",
+                "/cycle 0  ·  /max-cycles N  ·  /done  ·  /ulw-off",
                 "/retry  ·  narrow the mandate",
               ],
             });
@@ -3337,37 +3277,18 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
         }
         if (reasonedEmpty) {
           forceToolNext = true;
-          let forceLook = false;
-          try {
-            const u = loadUlwCycle(session.meta.id);
-            forceLook = Boolean(
-              u?.exploreRequired && (u.thoughtOnlyCycle ?? 0) >= 3,
-            );
-          } catch {
-            /* */
-          }
           inject = [
-            formatThoughtOnlyRecoverPoke(thoughtOnlyStops, { forceLook }),
+            formatThoughtOnlyRecoverPoke(thoughtOnlyStops, { forceLook: false }),
             inject,
           ]
             .filter((s) => (s || "").trim())
             .join("\n");
         }
-        const ulwAfter = loadUlwCycle(session.meta.id);
-        if (ulwAfter?.enabled || stopResult.ulw?.maxWavesHit) {
-          const counts = ulwAfter
-            ? formatUlwCounts(ulwAfter)
-            : stopResult.ulw?.maxWavesHit
-              ? "max_waves hit"
-              : "ULW";
-          const why = stopResult.ulw?.maxWavesHit
-            ? "max_waves LAST"
-            : ulwAfter?.cycle === 0
-              ? "LAST"
-              : "CONTINUE";
+        const ulwAfter = loadActiveCycle(session.meta.id);
+        if (ulwAfter && stopResult.ulw) {
           log.info(
             chalk.magenta(
-              `↻ ULW ${counts} (${why}) — Stop blocked (continue #${stopContinues})`,
+              `↻ ULW ${formatUlwCounts(ulwAfter)} — ${stopResult.ulw.reason} (continue #${stopContinues})`,
             ),
           );
         } else if (stopResult.todoGate) {
@@ -3455,13 +3376,6 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
             ? "last-turn"
             : undefined,
       });
-      try {
-        if (advanceUlwPhaseOnReading(session.meta.id)) {
-          syncUlwPlanMode(session, config);
-        }
-      } catch {
-        /* */
-      }
       // Tools that cooperatively return "Aborted" still leave signal.aborted set —
       // exit the loop immediately rather than starting another provider turn.
       assertNotAborted(signal);
@@ -3543,12 +3457,11 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
     log.warn(`maxTurns (${maxTurns}) reached — releasing`);
     let ulwNote = "";
     try {
-      const flipped = maybeFlipUlwToLastOnSafetyValve(session.meta.id);
-      if (flipped) {
+      if (requestCycleZeroOnSafetyValve(session.meta.id)) {
         ulwNote =
-          ` ULW flipped cycle=1 → 0 (LAST) so the session is not stuck under CONTINUE after the turn cap. ` +
-          `Raise max_turns and /cycle 1 to resume waves, or /done · /ulw-off to wind down.`;
-        log.info(chalk.magenta("ULW → cycle=0 (LAST) after maxTurns"));
+          ` ULW set to finish the open cycle (/cycle 0) so a resume reviews and commits instead of re-blocking after the turn cap. ` +
+          `Raise max_turns and /cycle 1 to keep cycling, or /done · /ulw-off to wind down.`;
+        log.info(chalk.magenta("ULW → /cycle 0 after maxTurns"));
       }
     } catch {
       /* */
@@ -3571,7 +3484,7 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
         tips: [
           "Raise max_turns / FORGE_MAX_TURNS or max_turns=0 unlimited",
           "forge run --continue  ·  /retry  ·  narrow the task",
-          "ULW was flipped to cycle=0 (LAST) if it was CONTINUE — /cycle 1 to resume waves",
+          "ULW was set to finish the open cycle — /cycle 1 to keep cycling",
         ],
       });
       saveSession(session);
@@ -3588,15 +3501,14 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
     const spentStr = `$${st.spent.toFixed(st.spent < 0.01 ? 4 : 3)}`;
     log.warn(`maxCostUsd (${capStr}) reached — releasing (spent ~${spentStr})`);
     // Under ULW cycle=1 the next continue would re-block forever after a spend
-    // release — flip to LAST so resume/continue can finish or stop cleanly.
+    // release — set /cycle 0 so resume/continue finishes the open cycle.
     let ulwNote = "";
     try {
-      const flipped = maybeFlipUlwToLastOnSafetyValve(session.meta.id);
-      if (flipped) {
+      if (requestCycleZeroOnSafetyValve(session.meta.id)) {
         ulwNote =
-          ` ULW flipped cycle=1 → 0 (LAST) so the session is not stuck under CONTINUE after the spend release. ` +
-          `Raise the budget and /cycle 1 to resume waves, or /done · /ulw-off to wind down.`;
-        log.info(chalk.magenta("ULW → cycle=0 (LAST) after cost cap"));
+          ` ULW set to finish the open cycle (/cycle 0) so a resume reviews and commits instead of re-blocking after the spend release. ` +
+          `Raise the budget and /cycle 1 to keep cycling, or /done · /ulw-off to wind down.`;
+        log.info(chalk.magenta("ULW → /cycle 0 after cost cap"));
       }
     } catch {
       /* */
@@ -3620,7 +3532,7 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
         tips: [
           "Raise max_cost_usd / FORGE_MAX_COST_USD / --max-cost N",
           "/budget off  ·  /budget 10  ·  forge run --max-cost 5",
-          "ULW was flipped to cycle=0 (LAST) if it was CONTINUE — /cycle 1 to resume waves",
+          "ULW was set to finish the open cycle — /cycle 1 to keep cycling",
           "Estimate only (estimateCostUsd) — not provider billing",
         ],
       });
@@ -3630,8 +3542,8 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
     }
   }
 
-  // Continue-cap release (length / content_filter / empty / Stop-block) under ULW
-  // CONTINUE — same stuck risk as maxTurns/costCap. Skip when those already flipped.
+  // Continue-cap release (length / content_filter / empty / Stop-block) under
+  // ULW — same stuck risk as maxTurns/costCap. Skip when those already set it.
   if (
     !aborted &&
     releasedOnContinueCap &&
@@ -3639,17 +3551,13 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
     !hitCostCap
   ) {
     try {
-      const flipped = maybeFlipUlwToLastOnSafetyValve(session.meta.id);
-      if (flipped) {
-        const leftovers = formatUlwFuseLeftovers(flipped);
+      if (requestCycleZeroOnSafetyValve(session.meta.id)) {
         const note =
-          `[Forge] ULW flipped cycle=1 → 0 (LAST) after stop-continue safety valve. ` +
-          `Raise FORGE_ULW_MAX_CONTINUES / maxStopContinues or /cycle 1 to resume waves · /done · /ulw-off.` +
-          (leftovers ? ` ${leftovers}` : "");
-        log.info(chalk.magenta("ULW → cycle=0 (LAST) after continue-cap"));
-        if (leftovers) log.dim(leftovers);
+          `[Forge] ULW set to finish the open cycle (/cycle 0) after the stop-continue safety valve. ` +
+          `Raise FORGE_ULW_MAX_CONTINUES / maxStopContinues or /cycle 1 to keep cycling · /done · /ulw-off.`;
+        log.info(chalk.magenta("ULW → /cycle 0 after continue-cap"));
         if ((finalText || "").trim()) {
-          if (!finalText.includes("ULW flipped cycle=1")) {
+          if (!finalText.includes("ULW set to finish the open cycle")) {
             finalText = `${finalText.replace(/\s+$/, "")}\n\n${note}`;
           }
         } else {
@@ -3661,7 +3569,7 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
           if (prev?.code?.startsWith("continue_cap")) {
             const tips = [
               ...(prev.tips || []),
-              "ULW was flipped to cycle=0 (LAST) if it was CONTINUE — /cycle 1 to resume waves",
+              "ULW was set to finish the open cycle — /cycle 1 to keep cycling",
             ];
             setSessionLastError(session, {
               code: prev.code,
@@ -3695,8 +3603,8 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
     hitCostCap ||
     lastErrCode === "handoff_released" ||
     lastErrCode === "proof_claim_released" ||
-    lastErrCode === "ulw_stuck_wall" ||
-    lastErrCode === "ulw_cycle_complete" ||
+    lastErrCode === "ulw_released" ||
+    lastErrCode === "ulw_done" ||
     lastErrCode === "goal_stuck_wall" ||
     lastErrCode === "max_cost" ||
     lastErrCode === "max_turns" ||
@@ -3743,7 +3651,13 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
     hitCostCap,
     stuckReleased,
     lastCycleReleased,
-    lastCycleSatDown,
+    ...(ulwEndReason ? { ulwEndReason } : {}),
+    verification: {
+      ran: harnessStats.totalRuns > 0,
+      passed: harnessStats.totalPassed > 0,
+      fullSuite: harnessStats.totalFullSuite > 0,
+      ...(harnessStats.lastCommand ? { lastCommand: harnessStats.lastCommand } : {}),
+    },
     finishReason: lastFinishReason,
     promptTokens,
     completionTokens,
@@ -3788,8 +3702,7 @@ export async function runAgentLoopThroughDrops(
       if (!isContinueRecoverableProviderError(err)) throw err;
       let ulwEnabled = Boolean(opts.session.meta.ultrawork);
       try {
-        const ulw = loadUlwCycle(opts.session.meta.id);
-        if (ulw?.enabled) ulwEnabled = true;
+        if (cycleActive(loadCycleState(opts.session.meta.id))) ulwEnabled = true;
       } catch {
         /* sidecar optional */
       }
@@ -3852,6 +3765,37 @@ export function installMcpLspExitHook(): void {
   process.once("beforeExit", cleanup);
 }
 
+/**
+ * Real user messages (not harness admits / re-anchors / interjection frames
+ * unwrapped) since an ISO timestamp — what the Planner reads as steering.
+ * The transcript carries no per-message timestamps, so "since" is
+ * approximated by the user-turn marks recorded after that time.
+ */
+function userMessagesSince(session: SessionData, _sinceIso: string): string[] {
+  // No per-message timestamps: the last plan admission is the marker.
+  let fromIdx = 0;
+  for (let i = session.messages.length - 1; i >= 0; i--) {
+    const m = session.messages[i];
+    if (
+      m.role === "user" &&
+      typeof m.content === "string" &&
+      /^\[Forge ULW cycle driver\] (?:Cycle \d+ plan|armed)/.test(m.content)
+    ) {
+      fromIdx = i + 1;
+      break;
+    }
+  }
+  const out: string[] = [];
+  for (const m of session.messages.slice(fromIdx)) {
+    if (m.role !== "user" || typeof m.content !== "string") continue;
+    const t = m.content.trim();
+    if (!t || t.startsWith("[Forge")) continue;
+    const ij = t.match(/<user_query>\s*([\s\S]*?)\s*<\/user_query>/);
+    out.push((ij ? ij[1] : t).trim());
+  }
+  return out.filter(Boolean).slice(-8);
+}
+
 function countHarnessPokesSince(
   session: SessionData,
   baseline: number,
@@ -3869,7 +3813,7 @@ function currentHarnessSnapshot(
   git?: GitSnapshot | null,
 ): import("../harness/context-admit.js").HarnessSnapshot {
   return snapshotHarness({
-    ulw: loadUlwCycle(session.meta.id),
+    ulw: loadCycleState(session.meta.id),
     goal: loadGoal(session.meta.id),
     todos: session.todos,
     permissionMode: config.permissionMode,
@@ -3928,9 +3872,7 @@ function maybeAdmitGuidelineAudit(
   config: ForgeConfig,
 ): void {
   try {
-    const readOnly =
-      config.permissionMode === "plan" ||
-      resolveUlwPhase(loadUlwCycle(session.meta.id)) === "orient";
+    const readOnly = config.permissionMode === "plan";
     const brief = maybeGuidelineAuditBrief({
       sessionId: session.meta.id,
       workspace: config.workspace || session.meta.cwd || process.cwd(),
@@ -4004,15 +3946,13 @@ function drainSafeBoundaryMessages(
     let ijCtx: import("../harness/interjection.js").InterjectionContext | undefined;
     let waveForMem: number | undefined;
     try {
-      const ulwNow = loadUlwCycle(session.meta.id);
+      const ulwNow = loadActiveCycle(session.meta.id);
       const goalNow = loadGoal(session.meta.id);
       const open = openTodos(session.todos);
-      waveForMem = ulwNow?.enabled ? ulwNow.wave : undefined;
+      waveForMem = ulwNow ? ulwNow.totalWaves : undefined;
       ijCtx = {};
-      if (ulwNow?.enabled) {
-        ijCtx.ulwLine = `${formatUlwCounts(ulwNow)} ${
-          ulwNow.cycle === 1 ? "(CONTINUE)" : "(LAST)"
-        }`;
+      if (ulwNow) {
+        ijCtx.ulwLine = `${formatUlwCounts(ulwNow)} — the Planner reads this at the next re-plan`;
       }
       if (
         goalNow?.objective &&
@@ -4041,10 +3981,6 @@ function drainSafeBoundaryMessages(
       for (const t of interjections) {
         maybeRecordUserConstraint(session.meta.id, t, waveForMem);
       }
-      maybeAdoptMandateFromUserTexts(session.meta.id, interjections, {
-        cwd: config.workspace || session.meta.cwd,
-      });
-      armUlwPlanMode(session, config);
     } catch {
       /* */
     }
@@ -4133,9 +4069,7 @@ async function runToolCalls(opts: {
     const [exitCall] = toolCalls.splice(exitIdx, 1);
     toolCalls.unshift(exitCall);
   }
-  const livePlanOrOrient = (): boolean =>
-    config.permissionMode === "plan" ||
-    resolveUlwPhase(loadUlwCycle(session.meta.id)) === "orient";
+  const livePlanOrOrient = (): boolean => config.permissionMode === "plan";
   let rest = toolCalls;
   while (rest.length > 0) {
     assertNotAborted(signal);
@@ -4205,13 +4139,6 @@ async function runToolCalls(opts: {
         });
       }
       saveSession(session);
-      try {
-        if (advanceUlwPhaseOnReading(session.meta.id)) {
-          syncUlwPlanMode(session, config);
-        }
-      } catch {
-        /* */
-      }
     } else {
       const r = await prepareToolResult({
         ...basePrep,
@@ -4223,13 +4150,6 @@ async function runToolCalls(opts: {
         content: r.content,
       });
       saveSession(session);
-      try {
-        if (advanceUlwPhaseOnReading(session.meta.id)) {
-          syncUlwPlanMode(session, config);
-        }
-      } catch {
-        /* */
-      }
     }
   }
 }
@@ -4336,11 +4256,7 @@ async function prepareToolResultInner(
     argsRepairNote = parsedArgs.error;
   }
 
-  const ulwNowEarly = loadUlwCycle(session.meta.id);
-  const displayArgs = spawnDisplayArgs(name, toolInput, {
-    planOrOrient,
-    lastScore: ulwNowEarly?.lastReflect === "score",
-  });
+  const displayArgs = spawnDisplayArgs(name, toolInput, { planOrOrient });
 
   // Announce tool phase BEFORE permission prompts so the REPL can pause
   // the working spinner and not clobber interactive Allow? lines.
@@ -4473,7 +4389,6 @@ async function prepareToolResultInner(
     };
   }
 
-  const ulwNow = loadUlwCycle(session.meta.id);
   const perm = await permissions.request({
     toolName: name,
     input: toolInput,
@@ -4481,8 +4396,6 @@ async function prepareToolResultInner(
     workspace,
     config,
     mcp,
-    ulwPhase: resolveUlwPhase(ulwNow),
-    ulwLastReflectScore: ulwNow?.lastReflect === "score",
   });
   if (perm.decision === "deny") {
     await hooks.run("PermissionDenied", {
@@ -4580,8 +4493,6 @@ async function prepareToolResultInner(
         subagentDepth,
         session,
         config,
-        ulwPhase: resolveUlwPhase(ulwNow),
-        ulwLastReflectScore: ulwNow?.lastReflect === "score",
         landGate,
         landTicket,
         runSubagent:
@@ -4639,36 +4550,11 @@ async function prepareToolResultInner(
     ) {
       noteTodoWrite(session.meta.id, turn);
     }
-    if (
-      !result.isError &&
-      /call_mcp|playwright|browser/i.test(name) &&
-      /playwright|browser_navigate|browser_snapshot|browser_take_screenshot/i.test(
-        `${name} ${JSON.stringify(toolInput).slice(0, 400)}`,
-      )
-    ) {
-      try {
-        notePlayLoopRan(session.meta.id);
-      } catch {
-        /* */
-      }
-    }
-    if (
-      !result.isError &&
-      (name === "read_file" || name === "Read") &&
-      typeof toolInput.path === "string" &&
-      /\.(png|jpe?g|webp|gif)$/i.test(toolInput.path)
-    ) {
-      try {
-        notePlayLoopRan(session.meta.id);
-      } catch {
-        /* */
-      }
-    }
   } catch (err) {
     settle();
     throw err;
   }
-  // Structural verification signal for the ULW wave ledger: a check command
+  // Structural verification signal for the ULW cycle ledger: a check command
   // actually executed this wave (pass or fail — running it is the behavior
   // the quality bar rewards; prose claims are not trusted on their own).
   // Background starts observe no exit code (fire-and-forget) — excluded by
@@ -4685,7 +4571,7 @@ async function prepareToolResultInner(
     } catch {
       preferred = undefined;
     }
-    preferred = ulwPreferredCheckCommands(session.meta.id, preferred);
+    preferred = cyclePreferredCheckCommands(session.meta.id, preferred);
     for (const id of bgTaskIdsFromToolCall(toolInput, result.output)) {
       const task = getTask(id);
       if (!task || task.status === "running") continue;
@@ -4708,9 +4594,9 @@ async function prepareToolResultInner(
     } catch {
       preferred = undefined;
     }
-    // The Reading's declared verify command (`Verify: ./build.sh --self-test`)
+    // The Planner's declared verify command (`Verify: ./build.sh --self-test`)
     // joins the stack table so any project's check is recognised.
-    preferred = ulwPreferredCheckCommands(session.meta.id, preferred);
+    preferred = cyclePreferredCheckCommands(session.meta.id, preferred);
     if (countsTowardVerification(toolInput, preferred)) {
       const rawOut = typeof result.output === "string" ? result.output : "";
       const cls = classifyVerificationRun({
@@ -4738,7 +4624,7 @@ async function prepareToolResultInner(
           isFullSuiteCommand(prevCmd)
         ) {
           const tip =
-            "\n\nSuite is still red. Isolates this wave are proof=ran. Consolidation/LAST still need the full suite (timeout = proof=✗ — do not skip).";
+            "\n\nSuite is still red. Isolates are proof=ran; the cycle gate is the full suite the harness runs after review (timeout = proof=✗ — do not skip).";
           result.output = `${String(result.output || "").replace(/\s+$/, "")}${tip}`;
         }
         if (session.meta.lastVerificationOk === false) {

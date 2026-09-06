@@ -32,7 +32,7 @@ import {
   type SessionActivity,
 } from "../statusline/activity.js";
 import { listTasks } from "../agent/tools/background-tasks.js";
-import { loadUlwCycle, formatUlwBadge } from "../harness/ulw-cycle.js";
+import { loadActiveCycle, formatUlwBadge } from "../harness/cycle/index.js";
 import { loadGoal } from "../harness/goal.js";
 import { normalizePermissionMode } from "../util/mode-aliases.js";
 import { formatHudTodos } from "../agent/todos.js";
@@ -302,12 +302,12 @@ export function renderBottomStatusLine(
     });
   }
 
-  const ulw = loadUlwCycle(session.meta.id);
-  if (ulw?.enabled) {
+  const ulw = loadActiveCycle(session.meta.id);
+  if (ulw) {
     bits.push({
       text: paint(
-        `ULW ${formatUlwBadge(ulw)}`,
-        ulw.cycle === 1 ? "magenta" : "yellow",
+        formatUlwBadge(ulw),
+        ulw.cycleZeroRequested ? "yellow" : "magenta",
       ),
       prio: 10,
     });

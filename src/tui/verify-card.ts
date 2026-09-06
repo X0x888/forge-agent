@@ -12,7 +12,7 @@ import type { ForgeConfig } from "../config/types.js";
 import {
   isVerificationCommand,
   verificationPassedFromResult,
-} from "../harness/ulw-cycle.js";
+} from "../harness/verification.js";
 import type { SessionData } from "../session/session.js";
 import { detectProjectIntel } from "../util/project-intel.js";
 import { visibleWidth } from "../util/format.js";

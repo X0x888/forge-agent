@@ -10,7 +10,7 @@
 import path from "node:path";
 import { forgeHome, readJsonFile, writeJsonFile, nowEpoch, nowIso } from "../util/fs.js";
 import { clearSoftTodoGateOnWindDown } from "./todo-gate.js";
-import { hasAttestationEvidence } from "./ulw-cycle.js";
+import { hasAttestationEvidence } from "./verification.js";
 import { maybeDesktopNotify } from "../util/attention.js";
 
 export type GoalStatus = "active" | "paused" | "achieved" | "cleared" | "stuck";

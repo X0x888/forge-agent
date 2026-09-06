@@ -119,7 +119,7 @@ import {
 } from "../commands/setup.js";
 import { resolveMaxCostUsd, sessionCostUsd } from "../util/cost-budget.js";
 import { isBellEnabled, isNotifyEnabled } from "../util/attention.js";
-import { loadUlwCycle } from "../harness/ulw-cycle.js";
+import { loadActiveCycle, ulwCyclesCommittedFor } from "../harness/cycle/index.js";
 import {
   listProjectRulePaths,
   projectRulesWarnings,
@@ -898,7 +898,7 @@ export async function runRepl(opts: {
           releasedOnContinueCap: result.releasedOnContinueCap,
           stuckReleased: result.stuckReleased,
           lastCycleReleased: result.lastCycleReleased,
-          lastCycleSatDown: result.lastCycleSatDown,
+          ulwEndReason: result.ulwEndReason,
           aborted: result.aborted,
           stopContinues: result.stopContinues,
           lastErrorCode: session.meta.lastError?.code,
@@ -921,7 +921,6 @@ export async function runRepl(opts: {
             hitCostCap: result.hitCostCap,
             stuckReleased: result.stuckReleased,
             lastCycleReleased: result.lastCycleReleased,
-            lastCycleSatDown: result.lastCycleSatDown,
             releasedOnContinueCap: result.releasedOnContinueCap,
             stopContinues: result.stopContinues,
             finalText: result.finalText,
@@ -951,7 +950,6 @@ export async function runRepl(opts: {
           releasedOnContinueCap: result.releasedOnContinueCap,
           stuckReleased: result.stuckReleased,
           lastCycleReleased: result.lastCycleReleased,
-          lastCycleSatDown: result.lastCycleSatDown,
           aborted: result.aborted,
           lastErrorCode: session.meta.lastError?.code,
           editCount: session.meta.editCount,
@@ -982,6 +980,8 @@ export async function runRepl(opts: {
             hitCostCap: result.hitCostCap,
             stuckReleased: result.stuckReleased,
             lastCycleReleased: result.lastCycleReleased,
+            ulwEndReason: result.ulwEndReason,
+            ulwCycles: ulwCyclesCommittedFor(session.meta.id),
             editCount: session.meta.editCount,
             promptTokens: result.promptTokens,
             completionTokens: result.completionTokens,
@@ -1235,9 +1235,7 @@ async function printBanner(
 
   let ulwArmed = false;
   try {
-    const { loadUlwCycle } = await import("../harness/ulw-cycle.js");
-    const ulw = loadUlwCycle(session.meta.id);
-    ulwArmed = Boolean(ulw?.enabled);
+    ulwArmed = Boolean(loadActiveCycle(session.meta.id));
   } catch {
     /* */
   }
@@ -1389,8 +1387,7 @@ function printLiveSteerHint(session: SessionData): void {
   try {
     let skip = false;
     try {
-      const ulw = loadUlwCycle(session.meta.id);
-      if (ulw?.enabled) skip = true;
+      if (loadActiveCycle(session.meta.id)) skip = true;
     } catch {
       /* */
     }
@@ -1412,8 +1409,7 @@ function printTurnHint(session: SessionData, hadFileEdits: boolean): void {
   try {
     let skip = setupCardShownThisProcess;
     try {
-      const ulw = loadUlwCycle(session.meta.id);
-      if (ulw?.enabled && ulw.cycle === 1) skip = true;
+      if (loadActiveCycle(session.meta.id)) skip = true;
     } catch {
       /* */
     }

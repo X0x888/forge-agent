@@ -24,7 +24,7 @@ export const OPTION_HELP_GROUPS: ReadonlyArray<{
   },
   {
     title: "Harness",
-    test: /--ulw\b|--max-waves|--goal\b/,
+    test: /--ulw\b|--max-cycles|--max-waves|--goal\b/,
   },
   {
     title: "Output",

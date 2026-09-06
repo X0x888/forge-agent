@@ -22,7 +22,6 @@ import {
   activeMemoryRecords,
   type MemoryRecord,
 } from "../src/harness/decision-memory.js";
-import { harvestProductQualityNotes } from "../src/harness/product-quality.js";
 
 function withHome(fn: (home: string) => void): void {
   const prev = process.env.FORGE_HOME;
@@ -56,11 +55,11 @@ function rec(
 }
 
 describe("trimDecisionRecords", () => {
-  it("evicts wave observations before the mandate and the first Reading", () => {
+  it("evicts wave observations before the mandate and the plan rows", () => {
     const records: MemoryRecord[] = [
       rec("constraint", "MANDATE: Improve the UI, UX, performance, reliability of this tool comprehensively.", { source: "ulw" }),
-      rec("decision", "Reading: Product is a menu-bar isolator. ONE ship: hotkey pause. Verify: ./build.sh --self-test", { source: "agent" }),
-      rec("priority", "Bet: one-command CSV export — src/export/csv.ts — first slice: rows", { source: "harness" }),
+      rec("decision", "Plan 1: first-run polish — the CLI should orient a new user", { source: "harness" }),
+      rec("priority", "one-command CSV export first", { source: "harness" }),
     ];
     for (let i = 0; i < 300; i++) records.push(rec("wave", `w${i + 1}: +6e proof=✗`));
     for (let i = 0; i < 120; i++) records.push(rec("decision", `Job: reading ${i}`, { source: "agent" }));
@@ -68,8 +67,8 @@ describe("trimDecisionRecords", () => {
     const out = trimDecisionRecords(records, 400);
     assert.equal(out.length, 400);
     assert.ok(out.some((r) => /^MANDATE:/.test(r.text)), "mandate survives");
-    assert.ok(out.some((r) => /^Reading: Product is a menu-bar isolator/.test(r.text)), "first Reading survives");
-    assert.ok(out.some((r) => /^Bet:/.test(r.text)), "bet survives");
+    assert.ok(out.some((r) => /^Plan 1:/.test(r.text)), "plan row survives");
+    assert.ok(out.some((r) => /CSV export/.test(r.text)), "priority survives");
     // Only waves were dropped — the newest waves are kept.
     const waves = out.filter((r) => r.kind === "wave");
     assert.equal(waves.length, 300 - 23);
@@ -80,7 +79,7 @@ describe("trimDecisionRecords", () => {
   it("never drops below WAVE_RECORDS_KEEP waves while non-durable decisions can go first", () => {
     const records: MemoryRecord[] = [
       rec("constraint", "MANDATE: improve the code", { source: "ulw" }),
-      rec("decision", "Reading: first plan. Verify: npm test", { source: "agent" }),
+      rec("decision", "Plan 1: first plan", { source: "harness" }),
     ];
     for (let i = 0; i < 60; i++) records.push(rec("wave", `w${i + 1}: +3e proof=✓`));
     for (let i = 0; i < 400; i++) records.push(rec("decision", `Job: churn ${i}`, { source: "agent" }));
@@ -88,7 +87,7 @@ describe("trimDecisionRecords", () => {
     assert.equal(out.length, 400);
     assert.equal(out.filter((r) => r.kind === "wave").length, WAVE_RECORDS_KEEP);
     assert.ok(out.some((r) => /^MANDATE:/.test(r.text)));
-    assert.equal(out.find((r) => /^Reading:/.test(r.text))?.text, "Reading: first plan. Verify: npm test");
+    assert.equal(out.find((r) => /^Plan 1:/.test(r.text))?.text, "Plan 1: first plan");
     // Oldest Job: rows went first.
     assert.equal(out.some((r) => r.text === "Job: churn 0"), false);
     assert.equal(out.some((r) => r.text === "Job: churn 399"), true);
@@ -111,17 +110,15 @@ describe("trimDecisionRecords", () => {
 });
 
 describe("decision memory store hygiene", () => {
-  it("a 450-wave run still has its MANDATE constraint and Wave-1 Reading on disk", () => {
+  it("a 450-wave run still has its MANDATE constraint and Plan 1 on disk", () => {
     withHome(() => {
       const sid = "mem-long-run";
       fs.mkdirSync(path.join(process.env.FORGE_HOME!, "sessions", sid), { recursive: true });
-      seedMemoryFromMandate(sid, "Improve the UI, UX, performance, reliability of this tool comprehensively.", {
-        softPrompt: true,
-      });
+      seedMemoryFromMandate(sid, "Improve the UI, UX, performance, reliability of this tool comprehensively.");
       appendMemoryRecord(sid, {
         kind: "decision",
-        source: "agent",
-        text: "Reading: Product is a folder messenger. ONE ship: DaemonRecovery on first launch. Verify: npm test",
+        source: "harness",
+        text: "Plan 1: Product is a folder messenger — DaemonRecovery on first launch",
       });
       for (let w = 1; w <= 450; w++) {
         recordWaveObservation(sid, w, `+6e proof=✗ — w${w} ship`);
@@ -129,46 +126,24 @@ describe("decision memory store hygiene", () => {
       const store = loadDecisionMemory(sid);
       assert.ok(store.records.length <= 400);
       assert.ok(store.records.some((r) => /^MANDATE: Improve the UI/.test(r.text)), "mandate kept");
-      assert.ok(store.records.some((r) => /^Reading: Product is a folder messenger/.test(r.text)), "reading kept");
+      assert.ok(store.records.some((r) => /^Plan 1: Product is a folder messenger/.test(r.text)), "plan kept");
       const waves = store.records.filter((r) => r.kind === "wave");
       // Waves fill the slack under the cap (they are facts) but are the
       // first to go when something else needs the room; the oldest went.
       assert.ok(waves.length >= WAVE_RECORDS_KEEP);
       assert.equal(waves.some((r) => /^w1:/.test(r.text)), false, "oldest wave evicted");
       assert.match(waves.at(-1)!.text, /w450/);
-      // A new Reading after the cap evicts a wave, never the mandate.
+      // A new plan row after the cap evicts a wave, never the mandate.
       appendMemoryRecord(sid, {
         kind: "decision",
-        source: "agent",
-        text: "Reading: re-PLAN — first launch when the daemon never comes up. Verify: npm test",
+        source: "harness",
+        text: "Plan 2: first launch when the daemon never comes up",
       });
       const after = loadDecisionMemory(sid);
       assert.ok(after.records.length <= 400);
       assert.ok(after.records.some((r) => /^MANDATE: Improve the UI/.test(r.text)));
-      assert.ok(after.records.some((r) => /^Reading: re-PLAN/.test(r.text)));
+      assert.ok(after.records.some((r) => /^Plan 2:/.test(r.text)));
       assert.equal(after.records.filter((r) => r.kind === "wave").length, waves.length - 1);
-    });
-  });
-
-  it("Job: and Next need: are one-slot notes — a new Reading supersedes the previous", () => {
-    withHome(() => {
-      const sid = "mem-job-slot";
-      fs.mkdirSync(path.join(process.env.FORGE_HOME!, "sessions", sid), { recursive: true });
-      harvestProductQualityNotes(sid, "Reading: Product is a menu-bar isolator. Job: hotkey pause during login. Next need: wake-safe rebuild.");
-      harvestProductQualityNotes(sid, "Reading: Product is a menu-bar isolator. Job: allowed-apps icon for running Dock apps. Next need: icon cache.");
-      harvestProductQualityNotes(sid, "Reading: Product is a menu-bar isolator. Job: quit-and-restore menu title. Next need: quit safety.");
-      const active = activeMemoryRecords(sid);
-      const jobs = active.filter((r) => /^Job:/.test(r.text));
-      const needs = active.filter((r) => /^Next need:/.test(r.text));
-      assert.equal(jobs.length, 1);
-      assert.match(jobs[0]!.text, /quit-and-restore/);
-      assert.equal(needs.length, 1);
-      assert.match(needs[0]!.text, /quit safety/);
-      const all = loadDecisionMemory(sid).records;
-      assert.equal(all.filter((r) => /^Job:/.test(r.text) && r.status === "superseded").length, 2);
-      // Same Reading again does not churn the slot.
-      harvestProductQualityNotes(sid, "Reading: Product is a menu-bar isolator. Job: quit-and-restore menu title. Next need: quit safety.");
-      assert.equal(loadDecisionMemory(sid).records.filter((r) => /^Job:/.test(r.text)).length, 3);
     });
   });
 

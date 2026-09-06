@@ -1,222 +1,139 @@
-# Ultrawork (ULW) relentless cycle
+# Ultrawork (ULW) — the plan-cycle driver
 
-When a prompt starts with **`/ulw`** (or `forge --ulw` / `forge run --ulw`), Forge arms a **god-mode cycle driver**: deep thought + hard execution on whatever the hard work is — any domain, not just tests or housekeeping. Soft prompts like `improve the code` (or bare `/ulw`) authorize the agent to **invent the work** and ship it.
+`/ulw [mandate]` (or `forge --ulw`, `forge run --ulw`) arms a **plan-cycle** driver. The unit of work is a **cycle**, not a wave:
 
-**Wave 1 is PLAN** — the same spine as `/plan` / `/build`, not a sibling. Writes and **general-purpose** spawn are hard-denied (even under yolo) until a written plan exists (`Reading:` / `memory_write` / `exit_plan_mode`). Explore/plan subagents and web/GitHub research are allowed. The driver then `/build`s itself (no confirm). User `/build` skips remaining research. User `/plan` mid-run is a human pause (does not auto-flip). Later waves are BUILD **until the reading is stale** — same-surface hold, named-ship exhaust, and `enter_plan_mode` re-arm PLAN (research → new `Reading:` → ship). Vague wishes use the product loop: what would better mean for THIS product → research → plan directions → one ship → review → commit → re-plan if stale.
+```
+PLAN ──► EXECUTE ──► REVIEW ──► VERIFY ──► COMMIT ──► RELEASED
+ ▲         │  ▲                    │                    ▲
+ │         └──┘ (Stop = wave)      └─ red ─► FIX ─┐     │
+ └──────────────── re-plan ◄──────────────────────┴─────┘  (/cycle 0 · max_cycles · fulfilled)
+```
 
-## User control: cycle flag
+- **PLAN** — a fresh-context **Planner** subagent (empty transcript, its own model/effort) reads the product, researches its category online, surveys the whole tree, and writes `plan.md`.
+- **EXECUTE** — the session model is the **executor**. The plan's items are its todo board. Every Stop is a wave boundary: open items → re-anchor; `Plan complete.` or an empty board → the cycle closes. As many waves as the plan needs.
+- **REVIEW** — a fresh-context **Reviewer** subagent reads the plan and the cycle's cumulative diff (`git diff <cycle start>` + untracked files) as a reviewer and as an architect, **revises in place**, and writes `review.md`.
+- **VERIFY** — the **harness itself** runs the declared verify command. Green commits; red sends the executor back with the tail (`fix_rounds`, default 3).
+- **COMMIT** — one local commit per reviewed, green cycle (`ulw cycle N: <title>`; never pushed; `FORGE_ULW_AUTO_COMMIT=0` off).
+- **Re-plan** — a fresh Planner reads the previous plans, reviews, the Reviewer's `Must-fix`, unfinished items and anything the user typed since the last plan. `Verdict: fulfilled` ends the run. `/cycle 0` or `max_cycles` ends it after the commit.
 
-| Value | Meaning |
-|-------|---------|
-| **`cycle=1`** | CONTINUE — after each wave, Stop is blocked and the agent must research → implement → serendipity → review → next wave |
-| **`cycle=0` / `/cycle 0`** | Finish the open wave, ship **one more**, LAST-reflect at wave N+1, then **sit down**. ULW stays ON — type to continue. `/done` or `/ulw-off` ends. Not an abort. |
+Nothing in the driver classifies prose. The Planner and Reviewer judge; the harness enforces the sequence and structural facts: no writes before a plan exists, no commit before a completed review and a green harness-run check, no Stop mid-cycle, every cycle leaves `plan.md`, `review.md` and a commit.
 
-## Optional: max_waves
+## Three cases, one procedure
 
-| Value | Meaning |
-|-------|---------|
-| **unset / off** (default) | Unlimited **duration** while `cycle=1` — not a mill budget. Sibling factories still hold. |
-| **`N` (positive int)** | When the wave counter hits **N**, harness auto-flips to LAST (finish + attest `**Cycle complete.**`). Mid-loop edit bursts do **not** increment the wave. **Idle loop epochs never increment `w`** (capped or unlimited) — the counter is Stop-boundary / declared-ship work units, not ~20 tool rounds. Idle still updates open-wave facts (edits/proof) in place. |
+The mandate only changes where the direction comes from.
+
+| Case | Prompt | What happens |
+|------|--------|--------------|
+| **a — clear goal** | `/ulw add --version with a test` | Cycle 1 plans and ships it. At re-plan the Planner writes `Verdict: fulfilled` and the run stops. |
+| **b — direction** | `/ulw polish the first-run experience` | The direction frames every plan; the run cycles until fulfilled or `/cycle 0`. |
+| **c — no prompt** | `/ulw` | The Planner derives the direction from the product: identity (README, `--help`, manifests, tests as spec) + category research + the tree's gaps. |
+
+Invention and repair are both legitimate in every case; the tree decides which the cycle needs. There is no Bet contract and no mandate classifier.
+
+## Controls
 
 ```text
-/ulw improve the code     # arms ULW + cycle=1 (default, unlimited waves)
-/max-waves 3              # cap at 3 waves (live; works mid-run)
-/max-waves off            # clear cap (unlimited again)
-/max-waves status         # show cap + cycle/wave
-/cycle 0                  # finish this wave + one more, LAST-reflect, sit down (ULW stays on)
-/cycle 1                  # resume relentless loops
-/cycle status             # show flag + wave + mandate
-/ulw-off                  # disarm immediately
+/ulw [mandate]         arm (bare /ulw = case c)
+/cycle 0               finish this cycle (execute → review → verify → commit), then stop
+/cycle 1               keep re-planning after each commit
+/cycle status          cycle, phase, plan items, verify, last review, cycle ledger
+/replan                close the open cycle now (review, verify, commit) and re-plan
+/max-cycles N|off      stop after cycle N is committed (deprecated alias: /max-waves)
+/plan                  human pause: the harness Planner stands down until /build
+/build                 hand planning back to the harness
+/done                  /goal done + /cycle 0
+/ulw-off               disarm immediately
 ```
 
-CLI:
+Free text while the executor works is queued as an interjection; the next Planner reads it under *What the user said since the last plan*.
 
-```bash
-forge --ulw "improve the code"
-forge --ulw --max-waves 5 "harden the CLI"
-forge run "polish the CLI" --ulw --max-waves 3
-# --max-waves N>0 implies ULW when --ulw omitted
-forge run "ship it" --max-waves 2
-```
+CLI: `forge --ulw [--max-cycles N] "…"` · `forge run "…" --ulw --max-cycles 2 --json` (`--max-cycles N>0` implies `--ulw`). Headless JSON carries `ulwCycle`, `ulwPhase`, `ulwMaxCycles`, `ulwMandate`, `ulwCycles[]` (per cycle: items, review verdict, verify, commit), `ulwEndReason`, `verification`.
 
-## Soft prompts → god-mode ownership
+## Artifacts
 
-`improve the code`, `fix`, `polish`, bare imperatives, empty mandate, **and** general product asks like "comprehensively evaluate this tool and then improve the ui" expand into **ULW god-mode**: the user does **not** need a tighter spec. Never ask "what should I improve?"
+Under `~/.forge/sessions/<id>/`:
 
-Hard mandates keep a fixed objective but the same **smart + hard** execution style.
+- `ulw.json` (schema 2) — `cycle`, `phase`, `items[]`, `verifyCommand`, `cycles[]` (title, items done/total, waves, review verdict, verify result, commit sha, tokens per role), `ledger[]` (one row per Stop: edit delta, tree movement, proof ran), `identity`, `direction`, `lastReview`. A schema-1 sidecar from the retired wave engine loads as `legacy` and disabled; `/ulw` re-arms.
+- `cycles/<n>/plan.md`, `review.md`, `verify.log` (`verify.<round>.log` after a red round), `plan.failed.md` when the Planner never produced a parseable plan.
+- `decisions.json` gains a `Plan N: <title>` row per cycle; the product identity goes to project memory (`Identity: …`).
 
-**Every `/ulw` starts in PLAN** (not only evaluate-class). Writes/spawn/mutating bash are hard-denied even under yolo until a written plan exists. Later waves skip the scout (`w≥1` or a plan already on disk). `/plan` and `/build` are the same keys: `/plan` pauses into research; `/build` implements now.
-
-**Evaluate-class mandates** ("comprehensively evaluate… then improve…"): a **verb order**, not a backlog. The Wave 1 plan *is* the evaluation reading — not "advice-only". Named ships are parsed from that reading. TodoNudge does not poke evaluate-class boards.
-
-**Broad checklists** (4+ bullets / multi-section): the harness still requires a **todo backlog** (`todo_write` ≥2) before Wave 1 free-invents.
-
-**`max_waves=N` is a budget the user asked to spend.** Wave 1 writes the plan and ships the first item; waves 2..N ship the next highest-leverage items on different surfaces. Do not invent leftover chrome — do ship the next real item. `**Cycle complete.**` under `cycle=1` does **not** release. Cap auto-flips LAST when the wave counter hits N; then attest (that **is** a kill). `/cycle 0` at wave N sets the cap to **N+1** (finish this wave, ship one more, LAST-reflect, sit down — ULW stays on). `/done` / user cap / safety-valve LAST wraps the open wave only and releases. `/ulw-off` aborts.
-
-### Smart + hard (not thrash)
-
-ULW is not “burn tokens until something ships.” Doctrine:
-
-- Optimize **impact × confidence / cost**
-- Insight before volume; cheapest proof that can fail
-- **Philosophy, not a cage** — freestyle when freestyle is better; harness rails (Stop / proof / todos) stay
-
-### Proactive subagents
-
-Spawn `explore` / `plan` / `general-purpose` **whenever** that improves quality or efficiency (parallel map, design space, isolated implement, `isolation=worktree`). Same-round explore/plan and worktree GP overlap with `web_search` (cap 8; `isolation=none` GP is serial). Wave 1 PLAN omitted `subagent_type` is explore; explicit GP is denied with a Next to retry as explore. LAST still denies all spawn. Skip when one tool call is enough. Converge and ship in the parent.
-
-| Multiplier | Use |
-|------------|-----|
-| Subagents | Parallel research, design, isolated slices |
-| MCP | Docs / browser / resources when they pay off |
-| LSP | Diagnostics after language-aware edits |
-| Skills | Optional project playbooks (`.forge/skills`) — not required |
-
-### Not busywork theater
-
-Proof still matters. Low-leverage churn while harder work remains fails the quality bar.
-
-## Bets (open mandates)
-
-Soft prompts and improve-class asks with no deliverable (`improve the code`, `make this tool more useful`, "Improve the UI, UX, performance, reliability comprehensively", "be creative") are **open mandates**. Every other ULW mechanism is satisfiable by a proven hole-close, and the explore contract only produces holes (`pick:`) — 2,407 dogfood waves across 17 open-mandate runs stamped zero `new-module` ships. A **Bet** is the counterpart of a pick: one capability THIS product cannot do today that a demanding user would notice, named with the files it creates and its first provable slice.
+### plan.md contract
 
 ```text
-Reading: <the hard work, what you passed on, the ONE ship, the verify command>
-Bet: <capability> — <path it lives in, e.g. src/export/csv.ts> — first slice: <what lands this wave + the command that proves it>
-Bet: none — <why no capability is worth more than the open holes>      # declines for a window of 6 credited ships, then the question returns
+# Cycle N plan — <title>
+Verdict: continue | fulfilled — <why> | blocked — <what only the user can unblock>
+Identity: <one paragraph: who uses this product, for what job>
+Direction: <this cycle's theme>
+Verify: `npm test` | none — <why>
+Items:
+1. <ship title> — files: <path>, <path> — proof: <command or observable>
+Out of scope:
+- <passed on, and why>
+Guidelines: ok | fix: <what the AGENTS.md-class file needs>
+Operator: <secret / irreversible action / external blocker / identity change — else omit>
 ```
 
-| Mechanism | Behavior |
-|-----------|----------|
-| **Bet gate** | `/ulw` on an open mandate owes a `Bet:` (closer or `memory_write`). No blocking demand: the kickoff, the PLAN prompt, `forge-veteran` and every CONTINUE re-anchor ask for it (`⚠ Open mandate with no Bet on file`); the hold below is the structural backstop. Memory seeds the first bet (a `memory_write` Reading); once one is on file only the live closer can replace it. |
-| **Bet = capability with a new path** | Two structural tests at adoption. The capability clause (before the first ` — `) may not carry defect grammar — `still`, `instead of`, `no longer`, `never`, `does not`, `wrong`, `leaks`, `ignores`, `fails to`, `broken`, `crash`, `regression`, `bug`, `fix` … (`cannot` stays: it is the grammar of a gap) — or the line is a **pick** and is refused (`parseBetLine` → `kind: "hole"`). And at least one of its paths must be **absent from the tree** (`resolveBetNewPaths` against the cwd and its ancestors up to the git root); a bet whose every path already exists is refused too. The refusal rides the re-anchor (`⚠ Bet refused — "still" describes a defect the product has today…`) and clears on the next real bet. HashPet adopted 234 bets, 96 hole-shaped, none creating a file. Past `BET_RUN_ADOPT_SOFT` (6) bets in a run, replacing a bet with fewer than `BET_STUB_SLICES` (2) slices is a swap. Without a cwd (memory seeding, tests) the new-path test is skipped. |
-| **Bet slice = job move** | A declared ship whose production change lands on **a path the bet creates** (`newPaths`, or anything inside a new directory) is `onBet` — the tree is the only slice test; a bet adopted without a tree falls back to its files or directory. A closer that merely names the bet's job (a "session ledger" hole-close on `src/session/ledger.ts` beside a "CSV export of the session ledger" bet) is off-bet work, and so is a sibling in the bet's directory (`badge.ts` beside a bet on `voice.ts`) — that directory match is exactly how HashPet credited half its waves. A slice counts as a job move, raises the bar, is **never** sibling mill, and **never counts toward the same-surface hold** — four slices in a row on `src/export/csv.ts` are the wave, not a same-surface grind (the **idea-surface** hold below still applies). Test-only diffs and TTY/string-literal chrome are not slices. |
-| **Bet hold** | Unlimited CONTINUE: the off-bet streak counts every **credited** ship that touched no bet — a stamped wave that is not a slice, whether or not the job-move classifier liked it (that classifier credited 74% of dogfood waves once explore paths covered the tree) and whether or not a bet is on file. 3 warn on the re-anchor; **6** hold ULW (`betHold`) until a slice lands, a new `Bet:` with a path is written, `Bet: none — why` declines, or `/cycle 0`. A restated bet does not reset the streak; replacing an unshipped bet is a swap and after **2** swaps only a slice (or decline / `/cycle 0`) releases. Consolidation closers do not count. `/cycle 0` and a `/cycle 1` continue clear the hold and the streak (the bet and its swap count stay), same as the same-surface hold. Capped runs never bet-hold (a cap is a budget). Hard mandates have no bet machinery. |
-| **Decline is a window** | `Bet: none — <why>` quiets the contract for **6** credited ships (`BET_DECLINE_WINDOW`), then the open mandate owes a `Bet:` again — `betRequired` returns, the off-streak restarts at 0, the spent why goes to `betDeclineHistory` and the same reason (≥70% shared terms) does not decline twice. `/cycle status` and the job card show `Bet: declined (n/6 ships, then asked again)`; the re-anchor warns when 2 ships remain. A decline is a decision the run must re-make with the hole ledger in front of it, not a waiver for 250 waves. |
-| **On the wire** | The open bet (slices shipped, ships since it moved) rides the job card — CONTINUE re-anchor, compact, `/cycle status` — and is remembered in decision memory as `Bet: …` so compaction cannot erase it. Explore children may answer `bet:` beside `pick:`; those are candidates the demand reprints. |
+`Verify:` goes through the strict check-command harvest (`looksLikeCheckCommand`): prose is refused, `none — why` falls back to the stack table so a wrong "none" cannot switch the gate off. `Guidelines: fix: …` becomes the plan's first item. A `continue` plan with no items does not parse; the Planner is retried once, then the run releases as `blocked` with the artifact on disk.
 
-`Bet:` is a capability, not a hole. "No longer crashes on 401" is a pick; "one-command CSV export of the session ledger" is a bet. Holes stay welcome as smoke and `Serendipity:` — they are not the wave. Open *wishes* (`invent something`, `build what's missing`) are soft prompts; a build order with an object (`build a login page`, `design the onboarding flow`, `create a migration for the users table`) is a hard mandate and gets neither god-scope nor a Bet gate.
-
-## Stop behavior
-
-```
-attempt Stop
-    │
-    ├─ cycle=1 + **Cycle complete.** → stamp the unit, re-anchor next wave
-    │    (does not release; remaining budget still owed)
-    ├─ cycle=1 and wave will hit max_waves → auto LAST re-anchor
-    ├─ cycle=1 → re-anchor next wave (unless stuck-wall)
-    ├─ cycle=0 without **Cycle complete.** → re-anchor wrap (named plan if user LAST)
-    ├─ cycle=0 + **Cycle complete.** + open named wrap → bounce once
-    ├─ cycle=0 + **Cycle complete.** + user LAST + dirty/unverified wave → bounce once
-    ├─ cycle=0 + **Cycle complete.** without evidence → bounce once, demand proof
-    └─ cycle=0 + **Cycle complete.** + evidence → release
-                                              └─ local git commit of the wave (never push)
-                                                 FORGE_ULW_AUTO_COMMIT=0 off
-```
-
-Yield (“shall I continue?”) is still handoff-blocked. A red check is not evidence.
-
-Before the driver sees a LAST `**Cycle complete.**`, the report guard's attestation pass reads it: homework handed back ("you can now run…") and, after two or more harness rounds, a close-out-only attestation are bounced once each so the attestation is the whole-run report. That block spends no wave and no evidence nudge — the driver has not evaluated the Stop yet.
-
-On release and on sit-down the shaped attestation **is** the run report, so the harness adds only what it knows and the model does not: the guideline audit, any `Operator:` item, how to resume, and where `report.md` was saved. The full card (outcome sentence, What shipped = every wave since the mandate, Verified, Not done = open named ships / unsliced bet / LAST must-fix, Needs you) is always written to the session's `report.md` and reprinted by `/report`, and it is printed in full when no guard shaped the closer — a stuck-wall release, a spend or turn cap, or the continue cap, where the reason the run ended is the thing the user needs. See `docs/HARNESS.md` → Run report.
-
-Stuck-wall: N consecutive Stop attempts with **no file edits and no working-tree diff movement** (default same as goal stuck threshold / `FORGE_ULW_STUCK_THRESHOLD`). Progress is measured two ways: `editCount` delta **or** a changed `gitDiffFingerprint` — so work done via bash heredocs/`sed -i` (which never touches edit-tool counters) cannot false-trigger a stuck release. Outside a git repo the fingerprint is unavailable and the classic editCount-only rule applies. **Unlimited named-ship exhaust is not stuck** — those Stops stay blocked until a new `Reading:` or `/cycle 0`. A stuck-wall or LAST **Cycle complete.** kill is visible on `run_end` / `--json` / the dim stop line (`stuckReleased` / `lastCycleReleased`). `/cycle 0` wrap sit-down is `lastCycleSatDown` (ULW stays on).
-
-`max_waves` is independent of the cycle flag: you can still `/cycle 0` early, or raise `/max-waves` / clear it mid-run.
-
-## Quality bar (wave ledger)
-
-Every wave boundary records **facts** in `ulw.json` — never invented scores:
-
-- `editDelta` — file edits made during the wave
-- `netDiff` — working-tree diff movement at the boundary: `new` (unseen state = real progress), `revisit` (a previously seen fingerprint = edit→revert churn), `none` (unchanged); absent outside git
-- `proof` — whether verification **actually ran**: a check command executed during the wave — a foreground bash result, or a `background:true` task that **settled or was joined** with `get_task_output` (the exit code and log tail are observed there and classified exactly like a foreground run). The background *spawn* alone never counts — no exit code yet. Checks are recognised by shape (`VERIFICATION_CMD_RE` — npm/pytest/cargo/go/swift/xcodebuild/zig/dotnet/dart/just/make/… plus repo scripts like `./build.sh`, `scripts/test.sh`, `--self-test`), by the stack table (project-intel), or by the Reading's declared `Verify:` command. `pgrep -lf 'cargo test'`, `echo "npm test"`, `rm -rf ./test` are observers/arrangers and never count.
-- `summary` — one-line clip of the wave's closing message
-
-Mechanisms built on the ledger:
-
-| Mechanism | Behavior |
-|-----------|----------|
-| **Bar anchoring** | Each CONTINUE re-anchor *names* the best **job-moving** wave so far (named/pick/play/bet slice, or edits on the job's files). Job files are the **open** job: the Wave-1 reading's paths, open named ships, and explore picks not yet done — a done pick's files stop being the job (every explore path ever cited used to count forever; a single-file Swift app credited 185/256 waves as job moves). A full-suite pass or any control-flow `net=new` is not a job move. Sibling new-modules, chrome, isolate-only, and factory mill do not raise the bar. The job card also prints the **current** Reading when a re-PLAN replaced Wave 1's. |
-| **Same-surface hold** | 3 consecutive declared ships on the same **tree surface** (same 1–3 production files + chrome/TTY kind; closer overlap and maze schemas are extra hints) → ULW holds until a different-class `Reading:`, explore/play-loop, or `/cycle 0`. Cap is a budget for **distinct surfaces**, not mill units — capped runs hold too. `/cycle 0` N+1 still finishes. Stuck-wall does not increment. An explore-map pick is never mill. A new noun is not a new surface. |
-| **Idea-surface hold** | `src/harness/idea-surface.ts`. The same-surface hold is per file; HashPet painted one sentence per file — "names the found chew" on 29 files, ten in a row, 55% of them on-bet (which resets the per-file streak to 1). The idea hold keys on the closer's distinctive terms and bigrams (backticked identifiers whole; ritual words, filler adverbs and run **mantras** — terms in ≥60% of the window — dropped) against the last `IDEA_LOOKBACK` (10) credited ships. One idea on `IDEA_FILE_HOLD` (4) distinct production files **with no file in common** holds unlimited ULW: a paint has no home, a build-out touches its module on every slice. **On-bet and on-contract ships are not exempt.** Release: a collapse (a new module — diff kind, or a path the ledger never saw — touched with a carrier, or `IDEA_COLLAPSE_SWEEP` (3) carriers rewired at once; the window restarts there), a different idea (its own 4th surface holds again), or `/cycle 0`. Advisory at 3 files on the re-anchor and `/cycle status` (`Idea surface: "found chew, philosophy" on 3 files — the next surface holds`). Consolidation closers neither arm nor clear. LAST reflect lists a paint never collapsed. `FORGE_ULW_IDEA_HOLD=0`. |
-| **Tree-shape meter** | `src/harness/tree-shape.ts`. Every consolidation reads the run's cumulative diff (`git diff <startHead>` — HEAD at arm — plus untracked production files) for six facts: exports added to existing files vs new modules; added signatures with `SHAPE_WIDE_ARITY` (7)+ parameters; one predicate literal (`sitDays >= 2`) added in `SHAPE_PREDICATE_FILES` (4)+ files; comment lines that narrate the change ("used to", "no longer"); `export const x = true|false`; new image/HTML files no tracked or untracked non-asset file references. A **trip** is a fact past its threshold. Trips fill the consolidation Must-fix (`Tree shape: …`), flip the consolidation prompt to `TREE SHAPE tripped … this consolidation is a COLLAPSE`, ride `/cycle status` (`Tree shape: ⚠ 1 trip(s) at w4 — +12 exports (12 in existing files, 0 new modules) · \`sitDays >= 2\` in 5 files`), and when the same trip is present and **no smaller** at the next consolidation, **hold** Stop until a ship shrinks that number (re-measured at the gate; the first decrease releases) or `/cycle 0`. A collapse is a job move. `FORGE_TREE_SHAPE=0` meter off; `FORGE_TREE_SHAPE_HOLD=0` hold off. |
-| **Capability drought** | `capabilityDrought` = credited ships since the last **capability ship** — a new production module (diff kind, or a path the ledger never recorded) or a bet slice on a path the bet creates. Re-anchor advisory at `CAPABILITY_DROUGHT_ADVISORY` (12); an open, unlimited, undeclined mandate **holds** at `CAPABILITY_DROUGHT_HOLD` (24) — a run that only repairs is a bug tracker, not a product — until a new module / new-path slice, `Bet: none — why`, or `/cycle 0` (the count stays; it is a run fact). Hard mandates and capped runs only advise. Run-wide `capabilityShips` / `jobMoves` / `creditedShips` also feed the spend line. `FORGE_ULW_CAPABILITY_HOLD=0`. |
-| **Spend line** | `/cycle status` → `Spend: $40 this run · $2.00 per wave · $4.00 per job move (10) · $20 per new module (2)` from the session's tokens at the provider's rates (`estimateCostUsd`); silent when unpriced. `rounds.jsonl` rows carry `estCostUsd` too. HashPet's ≈$740 bought 599 commits and, after wave ~50, no new module. |
-| **Tests-without-body** | Declared `Wave shipped` with `proof=✗` and only test / lockfile dirty (or an explicit red-green / “tests first, then the body” closer) does **not** increment `w`. Wire the production body, prove it, then close. Maze max20 wave 1 stamped a red test file and shoved the real ship into wave 2. |
-| **Proof demand** | A wave with no verification triggers `⚠ … ran no verification — run its proof NOW`. Capped at 2 consecutive demands (a stated rationale is then accepted — some repos have no tests); the cap **re-arms every consolidation wave**, so a proof-less streak is challenged at least every 4 waves (a 256-wave run with no recognised check used to be asked twice, at waves 1 and 2, then never again). |
-| **Background proof** | A `background:true` check is proof when it **settles** (`onBackgroundTaskSettled`) or when `get_task_output` **joins** it — the loop classifies the task's command, exit code and log tail exactly like a foreground result (`classifyVerificationRun`: ran / passed / isolate / full-suite) and credits one task once. Only the spawn observes nothing. Dogfood ran 20 of 28 checks in the background on a Swift app and 45 of 61 on a Rust workspace — as the doctrine told it to — and stamped proof=✗ on every one; `fullSuitePassed` never flipped and LAST reflect demanded a hole no channel could close. |
-| **Declared checks** | The Reading's / Bet's `Verify: <command>` (also `Proof:` / `Check:` / inline code) is harvested onto `ulw.json` (`declaredChecks`, newest first, 4) and merged **ahead of** the stack table for verification credit, full-suite credit and proof tips — `./build.sh && --self-test`, `make selfcheck`, `just ci` count in a project the table never heard of. Harvest is strict: an allow-listed runner head or a test/check-shaped script path; prose (`Verify: the login flow works`), observers (`echo`, `pgrep`) and product verbs (`forge export --csv`) are refused. Memory seeds the first set; every closer may add. project-intel also knows Swift (`Package.swift`), Zig, .NET, Dart/Flutter and executable repo scripts (`./build.sh`, `scripts/check.sh`). |
-| **Look is structural** | `proof=play` requires a Playwright / browser MCP call or a screenshot `read_file` this wave (`notePlayLoopRan`). "Play-loop:" / "played the game" in the closer is a claim — a Swift menu-bar app with no browser stamped seven `play` waves by writing the word. The same structural look gates the product-quality "look" and the chrome/pin/sibling-mill bypasses. |
-| **Wave rules** | Every wave: smoke-check first (prior waves may have broken something), ONE objective, search-before-build (no re-implementing), 2-line plan (objective + the exact command that proves it) |
-| **Consolidation cadence** | Every 4th wave is a CONSOLIDATION wave: no new scope — the project's **full** check suite via `background:true` then `get_task_output` wait (the joined run's exit 0 **is** proof=✓, see Background proof) and a hostile read of the cumulative `git diff` **as a reviewer and as an architect**: regressions, weakened tests, stubs — and one idea forked across surfaces, a signature that grew arguments, a flag that is always false, comments that narrate the change. The tree-shape meter runs here; a trip makes the collapse this wave's job ("fix real defects only" told 59 consecutive HashPet consolidations that duplication was out of scope). Isolates (`node --test tests/foo.test.ts`, `python -m unittest …TestCase.test_*`, `cargo test -p x`, `swift test --filter`) and compile-class checks (`cargo check`, `swift build`, `go vet`) are proof=ran, not proof=✓. Skip/hang/targeted-only is proof=✗. Timeout the suite; do not skip it. Ledger Must-fix is filled (proof, mill, chrome, idea paint, tree-shape trips, drought); holes + no job-move re-arm PLAN. Proof demands re-arm here. |
-| **Thin-wave escalation** | 2+ consecutive waves with ≤1 edit, no tree movement, and no proof → re-anchor demands a substantially higher-impact wave. Churn waves (fingerprint `revisit`) count as thin regardless of edit-call count — edit→revert loops cannot dodge the bar |
-| **Churn exclusion** | `revisit` waves are excluded from bestWave anchoring and marked `↺` in the ledger (`w3 +5e↺ ✗`) |
-| **Diminishing-returns advisory** | 3+ thin waves → user-visible warning + `/cycle status` shows `⚠ Diminishing returns` — the user decides `/cycle 0`; the harness never quietly lowers the bar |
-| **Evidence attestation** | `**Cycle complete.**` without ✅/❌ checklist or command results is bounced once with a proof demand, then released (never an infinite trap) |
-| **Product quality** | User-facing product ships (build/evaluate an app or named surface, or a Wave-1 reading that names a product) must name the hard user job, finish one edge (empty/error/first-run) after wave 1, and keep at most one labeled `Serendipity:`. Preview catalogs are not a job. Re-checked every consolidation. `/cycle status` shows the bar. Infra, bugfix, and generic UI chrome never arm |
-| **Adaptive effort** | Hard rounds (doom-loop / error-streak / missing proof / product-quality bounce / re-PLAN / consolidation) raise reasoning effort one notch for a turn (`FORGE_ADAPTIVE_EFFORT=0` disables) |
-
-Anti-gaming that is **structural**: proof demand (must run a check), leftover-chrome LAST@4, named-ship exhaust, same-surface hold, idea-surface hold, tree-shape hold, capability drought, bet new-path. Bar anchoring is prompt-only. The ledger is visible in `/cycle status` (`Recent waves: w1 +12e ✓ · w2 +1e↺ ✗`, plus the best-wave bar, `Same surface: hold` / `Idea surface:` / `Tree shape:` / `Capability:` / `Spend:` lines when they apply).
-
-**Stalling vs accretion.** Everything above the idea-surface row measures whether the run is *moving* — thin, churn, same file, mill, no proof. HashPet (session `23b2c2a5`, 791 waves) satisfied all of it: proof ✓ on 256/256 retained waves, job-move 75%, thin streak 0, same-surface streak never above 1 — while grok scored its architecture 74 → 36 (`resolveHomeIntent` 4 → 15 args, 440 exports into ~40 existing files, `sitDays >= 2` ×114, 319 "used to" comments, 78 unreferenced looks committed). The idea hold, the tree-shape meter and the drought measure what the run is *growing*; the bet new-path rule closes the exemption that let a hole with a path count as a capability. Auto-commit (`src/util/git-auto-commit.ts`, `docs/MODULES.md`) leaves unreferenced looks and `.forge/` scratch unstaged.
-
-## Token discipline (ULW rounds)
-
-- Slim re-anchors: the cycle protocol lives once in the stable system prompt; per-wave messages carry the **job card** (Wave-1 reading, open named ships, last job-moving ship, last play/look) plus counts. Compact/prune keep that card — mill suffix does not replace Wave 1.
-- Unlimited duration is not a mill budget. Three numbered `foo-n.js` / same-dir new-module siblings hold and demand explore/play + a new Reading, even with `max_waves` off. Stuck-wall does not release. User can still run 125 waves when each ship is a different-surface job move.
-- Counter-only harness changes (wave/blocks/todo counts) no longer emit a full mid-conversation admission — the re-anchor already carries them
-- Outbound is append-only until ~180k tokens so xAI can cache the prefix; the first clip freezes a sticky omit set (later rounds do not re-age). `FORGE_REQUEST_PRUNE=1` restores every-round slim — that kills cache. In-session stubbing is opt-in (`FORGE_TOOL_CLEAR=1`).
-- Idle mid-loop epochs never increment `w` (capped or unlimited). `w` moves on Stop or a declared `Wave shipped` / `Ship landed`.
-- After auto-commit the clean tree is a new fingerprint baseline — not a `revisit` of the arm-time clean state.
-- Unlimited evaluate-class: when every named ship from the reading is done, Stop asks for a new `Reading:` or `/cycle 0` and **stays blocked** until a different-surface reading is adopted. Stuck-wall does not release that hold. A glanceable ✓ / leftover-chrome sibling list is refused. A declared ship with real edits still stamps `w`. A cap still spends remaining waves.
-- **Same-surface hold**: 3 declared ships on the same tree surface (same 1–3 production files + chrome/TTY kind; closer overlap / leftover-sibling / maze schemas are extra hints) block ULW until a different-class reading or `/cycle 0`. Same-surface leftovers do not increment `w`. Consolidation closers do not increment or reset the streak. **Capped runs hold** — `max_waves` is a budget for distinct surfaces. A scheduled `/cycle 0` N+1 budget still finishes. `maybeAdoptNamedShips` refuses a one-ship mill reading after exhaust. A pick reading/ship is never mill, even if it quotes mill flavor. `bestWave` ignores factory-fingerprint, `millClass`, sibling new-modules, chrome, and changelog-only rows. A job-moving ship is the bar.
-- **Tests-without-body stamp refuse**: `Wave shipped` on a red-only test file (or `forge-redgreen` / “tests first, then wiring”) does not move `w` and does not auto-commit. The later body + green check is the wave.
-- **Explore-map contract**: when kickoff explores left `meta.exploreMaps` picks, 8 consecutive ships that do not touch a pick hold unlimited ULW and reprint the picks + Wave 1 reading. Match pick **bigrams** (`memory walk`, `online hearth`) and distinctive tokens (`topology`) — not generics (`same`, `copy`, `find`). On-contract ships reset the streak. Stuck-wall does not increment.
-- **Picks are the named-ship list**: unlimited ULW seeds `namedShips` from explore-map picks when the model never writes a list. A pick completes on its job: claim tokens / mapped files + a job word, or two distinctive terms with at least one from a file claim — not pick-title flavor (`carving`+`thanks`) and never topic words (`online`, `joiner`, `toast`) or FIFO. A file-only explore essay is not a map (`pick:` required). When every seeded pick is done, exhaust holds for a different-class `Reading:` or `/cycle 0`. Caps still spend. Compact reprints open seeded picks.
-- **Reasoned Stop is Stop**: thought + `finish_reason=stop` with no text/tools (or the 12-minute no-output reasoning wall) runs Stop. Empty-continue is only for 0-reasoning glitches. `FORGE_PROVIDER_REASONING_WALL_MS=0` disables the wall. Thought-only Stop re-anchors; it does not increment `w` or FIFO a named ship, and it does **not** count toward `FORGE_ULW_MAX_CONTINUES` (a 16h dogfood auto-LAST'd at continue-cap 200 from reasoning_wall pokes the user did not ask to stop). Consecutive thought-only Stops this turn cap at `FORGE_THOUGHT_ONLY_MAX` (default 8) and **end the turn only** — ULW stays CONTINUE; `/retry`. After 3 thought-only Stops **in the cycle**, PLAN re-arms and the next poke demands explore/play (not another mill grep) — still no auto-LAST. A repeating hidden closer (`reasoning_loop`) is the same Stop. Unlimited CONTINUE does not stuck-release those Stops (`/cycle 0` is the wrap). The **next** provider call after a thought-only Stop is `tool_choice=required` so it cannot stack another silent judge.
-- **Isolate green is not wave proof**: `node --test tests/foo.test.ts`, `python -m unittest …TestCase.test_*`, helper-only `wN-*.mjs`, and closer-only `22/22` / `43/43 stay green` are proof=ran, not proof=✓. Proof=✓ requires the project's full suite (AGENTS.md / preferred checks). A cited full-suite `fail N>0` or hung suite keeps `proof=false`. Tests-without-body still refuses to increment `w`. LAST reflect fills Must-fix from the ledger; `Must-fix: none` is illegal when isolates never became a full-suite pass.
-- **Mid-run explore**: mill or contract hold latches `exploreRequired`. Stop refuses adopt/stamp until one `spawn_subagent` explore child **completes with a parseable `pick:`**. A file list without a pick does not clear the hold. Then a pick Reading may adopt. Not a wall-clock quota and not armed on leftover-sibling token holds. Play-loop (Playwright / played-the-game) is a different class and can release a mill sibling.
-- **Honest proof**: `ℹ fail N` on a grepped suite is red. Isolated `node --test tests/wN-*.mjs` is not wave proof. A new raw `readFileSync` in a pin-budget repo taints that wave’s proof.
-- **Hold context**: class/contract hold omits recent mill tool-call ids from the suffix (into sticky when it exists; otherwise `holdOmitToolIds` — never invents a first clip) and admits Wave 1 + picks at the tail. Evaluate-class garnish after wave 3 bounces once with the Wave 1 pick.
-- Leftover-chrome class (clip **or** glanceable ✓ / live › last-line / bang-shell / idle bg tail) auto-LAST at 4 **only on a user `/max-waves` cap**. Unlimited duration holds and demands a different surface — it does not kill the run. Consolidation closers do not reset that streak. Δ-closer verify is not chrome.
-- User-facing product ships have a quality bar (not a persona): name the hard user job, finish one edge (empty/error/first-run) after wave 1, at most one labeled `Serendipity:`. Arms on build/evaluate of an app or named surface — not generic UI chrome, infra, or bugfix. Preview catalogs are not a reading. Existing `Reading:` notes count as the job.
-- Ship close grammar is one matcher: `Ship landed:` · `**Ship:**` · `Wave N ship:` · `Wave ship:` · `Wave shipped.` Auto-commit subjects use that ship, not an older wave-1 note.
-- Dock/`/status` ctx follows last provider `prompt_tokens` when it is higher than the local estimate.
-- Cheapest-proof guidance: affected tests per wave, full suite on consolidation waves. A failed full suite stamps `verify: npm test ✗` (not `none`). A red suite is a different surface, not leftover chrome.
-
-## State
-
-`~/.forge/sessions/<id>/ulw.json` — independent of the model’s opinion of “done”.
-
-## Prompt engineering (runtime)
-
-Forge ports several runtime PE patterns from Grok Build / OpenCode:
-
-| Mechanism | Behavior |
-|-----------|----------|
-| **Soft → god-scope** | Weak prompts expand at arm time (`expandUlwMandate`) |
-| **Baseline system** | Stable protocol (cache-friendly); no live wave counters in system |
-| **Harness admission** | `[Forge harness — mid-conversation update]` when cycle/wave/goal/todos change |
-| **Free-text interjection** | Mid-run non-slash text: `The user sent a message while you were working:` + `<user_query>` |
-| **Structured compact** | `/compact` and auto-compact preserve mandate, goal, todos, user messages |
-| **TodoNudge / TodoGate** | Soft reminder + Stop block while open todos remain under ULW; outside ULW soft-blocks once per prompt |
-| **Handoff guard** | Blocks premature “let me know if…” / “shall I continue?” yields (finish doctrine) |
-| **Proof-claim guard** | Blocks “tests pass” / “all green” without structural `verificationRan` (don't claim, prove) |
-| **Spend cap** | `--max-cost` / `/budget` / `FORGE_MAX_COST_USD` releases cleanly (`hitCostCap`) so unattended ULW cannot runaway-spend |
-| **Safety-valve → LAST** | `hitCostCap` / `hitMaxTurns` / `releasedOnContinueCap` under `cycle=1` auto-flip to `cycle=0` (LAST) via `maybeFlipUlwToLastOnSafetyValve` so resume is not stuck re-blocking. **Unlimited CONTINUE Stop-blocks do not trip** `FORGE_ULW_MAX_CONTINUES` (every wave is a Stop-block — log10 died at #201 without `/cycle 0`). Length / empty / content_filter use a **separate** fuse (200 Stop-blocks do not make the next truncated completion trip the cap). Capped ULW and LAST wrap still fuse Stop-blocks. |
-| **setMaxWaves immediate LAST** | `/max-waves N` when `wave >= N` under CONTINUE flips to LAST immediately (no wait for next Stop) and clears soft TodoGate |
-| **Wave ledger + quality bar** | Factual per-wave edits/proof in `ulw.json`; bar anchoring, proof demands, consolidation cadence, evidence attestation (see above) |
-| **Counter-only admission suppression** | Wave/blocks/todo churn updates the admitted fingerprint without a redundant harness message |
-| **Prompt profile** | ULW defaults to `autonomous` (keep-going); config `prompt_profile` overrides |
-| **Fork mid-ULW** | `/fork` / `/fork-and-compact` copy `ulw.json` + `goal.json` so the branch keeps the driver |
-| **File-aware undo** | `/undo` / `/retry` restore journaled disk mutations from the undone turns |
-
-Live mid-run (no Ctrl+C):
+### review.md contract
 
 ```text
-/cycle 0                  # finish this wave + one more, LAST-reflect, sit down (ULW stays on)
-/max-waves 3              # set wave cap live
-finish the auth tests first   # free-text interjection (queued)
+# Cycle N review
+Verdict: ship | ship-with-revisions | blocked — <why>
+Fulfillment:
+- <item> — done | partial | missing — <note>
+Revisions:
+- <what changed and why>
+Must-fix:
+- <left for the next plan's first items>
+Architecture:
+- <duplication, wide signatures, dead flags, narrating comments>
+Operator: <only what a human must decide>
 ```
+
+Fulfilment from the fresh reader beats the executor's board: `missing` reopens the item for the next plan. `Must-fix` and `Operator` lines flow into the next Planner brief and the run report.
+
+## Roles
+
+Both roles run through `runSubagent` with a `role` (`src/agent/subagent.ts`):
+
+| Role | Tools | Isolation | Skills inlined | Config |
+|------|-------|-----------|----------------|--------|
+| Planner | read-only + `web_search` / `web_fetch` / MCP + `spawn_subagent` explore | none | `forge-planner`, `forge-veteran` | `[ulw] planner_model`, `planner_effort`, `FORGE_ULW_PLANNER_MAX_TURNS` (60) |
+| Reviewer | full write, no spawn | none (revises the live tree) | `forge-reviewer`, `forge-veteran` | `[ulw] reviewer_model`, `reviewer_effort`, `FORGE_ULW_REVIEWER_MAX_TURNS` (80) |
+
+The executor's system prompt carries only the **ULW executor protocol**: ship the items, mark them with `todo_write`, close with `Plan complete.`, `enter_plan_mode` to request a re-plan (the cycle closes at the next Stop), `Operator:` for the four things only the user can do.
+
+## Stop behaviour
+
+`evaluateCycleAtStop` (`src/harness/cycle/orchestrator.ts`) is the ULW branch of the Stop guard. Per phase:
+
+| Phase | Stop → |
+|-------|--------|
+| `plan` | run the Planner (or yield when the user holds `/plan`) |
+| `execute` | stamp a wave; `Plan complete.` / empty board / `/replan` → close the cycle; `stuck_threshold` (default 4) no-progress Stops → close the cycle (the Reviewer takes over, never a release); else re-anchor with the open items |
+| `fix` | re-run the verify command; green → commit; red → next fix round; past `fix_rounds` → release `fix-cap`, nothing committed, `Operator:` line |
+| `review` / `verify` / `commit` | resume the interrupted transition |
+
+Releases: `fulfilled`, `blocked` (Planner), `cycle-zero`, `max-cycles`, `fix-cap`, `runtime-unavailable` (no provider / subagent depth > 0), `disarmed`. A clean end stamps `lastError.code = ulw_done` (a designed outcome, not a problem); the others stamp `ulw_released`.
+
+Safety valves (cost cap, max turns, continue cap) set `/cycle 0` so a resume finishes the open cycle instead of re-blocking. Unlimited cycling's Stop-blocks never trip the process continue cap; a capped run or `/cycle 0` still fuses.
+
+## Config
+
+```toml
+[ulw]
+planner_model = "grok-4.6"     # unset = session model
+planner_effort = "xhigh"
+reviewer_model = "grok-4.6"
+reviewer_effort = "xhigh"
+max_cycles = 0                 # 0 / unset = until fulfilled or /cycle 0
+fix_rounds = 3
+stuck_threshold = 4
+```
+
+Env: `FORGE_ULW=0` (driver off), `FORGE_ULW_AUTO_COMMIT=0`, `FORGE_ULW_VERIFY_TIMEOUT_MS` (20 min), `FORGE_ULW_FIX_ROUNDS`, `FORGE_ULW_STUCK_THRESHOLD`, `FORGE_ULW_PLANNER_MAX_TURNS`, `FORGE_ULW_REVIEWER_MAX_TURNS`, `FORGE_ULW_MAX_CONTINUES`.
+
+## Why this shape
+
+The retired wave engine measured stalling and accretion with meters — same-surface, idea-surface, tree-shape, Bet contract, capability drought — because there was no reviewer. HashPet (`~/.forge/sessions/23b2c2a5*`, 791 waves) satisfied every meter while its architecture went 74 → 36. A fresh reviewer reading `git diff <cycle start>` once per cycle sees in one look what the meters approximated one wave at a time. The classifier that decided which meters applied (`isSoftPrompt` / `isOpenMandate`) is gone with them: the Planner, with the whole tree and the category in front of it, decides whether a mandate is fulfilled.

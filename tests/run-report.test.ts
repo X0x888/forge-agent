@@ -19,7 +19,8 @@ import {
   shouldPrintRunReport,
   statusHeadLines,
 } from "../src/harness/run-report.js";
-import { armUlwReady } from "./helpers/ulw-arm.js";
+import { armWithPlan } from "./helpers/cycle-arm.js";
+import { saveCycleState, disarmCycle } from "../src/harness/cycle/index.js";
 import { looksLikeRunReport } from "../src/harness/report-guard.js";
 
 import { assembleStatusReport } from "../src/tui/status-card.js";
@@ -119,24 +120,62 @@ describe("run report", () => {
     );
   });
 
-  it("ULW run: waves in What shipped, proof counts, open named ships and must-fix in Not done", async () => {
+  it("ULW run: cycles in What shipped, verify per cycle, open items and must-fix in Not done", async () => {
     const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "forge-rr4-"));
     const s = createSession({ cwd, provider: "xai", model: "grok-4", ultrawork: true });
     s.meta.turnCount = 1;
     saveSession(s);
-    const st = armUlwReady(s.meta.id, "improve the onboarding flow comprehensively");
-    st.waves = [
-      { wave: 1, editDelta: 3, proof: true, proofKind: "full", summary: "Welcome screen explains the three modes", ts: new Date().toISOString() },
-      { wave: 2, editDelta: 2, proof: false, summary: "Keyboard hints on the first prompt", ts: new Date().toISOString() },
+    const st = armWithPlan({
+      sessionId: s.meta.id,
+      cwd,
+      mandate: "improve the onboarding flow comprehensively",
+      verifyCommand: "npm test",
+      items: [
+        { title: "welcome screen explains the three modes", status: "done" },
+        { title: "resume card on relaunch" },
+      ],
+    });
+    st.cycle = 2;
+    st.cycles = [
+      {
+        n: 1,
+        title: "first-run polish",
+        startedAt: new Date().toISOString(),
+        endedAt: new Date().toISOString(),
+        itemsTotal: 2,
+        itemsDone: 2,
+        waves: 3,
+        reviewVerdict: "ship",
+        verifyCommand: "npm test",
+        verifyPassed: true,
+        commitSha: "abc1234",
+        mustFix: [],
+      },
+      {
+        n: 2,
+        title: "resume flow",
+        startedAt: new Date().toISOString(),
+        itemsTotal: 2,
+        itemsDone: 1,
+        waves: 1,
+        reviewVerdict: "ship-with-revisions",
+        verifyCommand: "npm test",
+        verifyPassed: false,
+        mustFix: ["the resume card ignores a missing session file"],
+      },
     ];
-    st.namedShips = [
-      { text: "resume card on relaunch", status: "open" },
-      { text: "welcome screen", status: "done" },
-    ];
-    st.lastReflectHoles = ["1 wave(s) closed without successful proof."];
-    st.fullSuitePassed = true;
-    const { saveUlwCycle } = await import("../src/harness/ulw-cycle.js");
-    saveUlwCycle(st);
+    st.lastReview = {
+      verdict: "ship-with-revisions",
+      fulfillment: [],
+      revisions: [],
+      mustFix: ["the resume card ignores a missing session file"],
+      architecture: [],
+      operator: ["decide whether resume should ever auto-open a foreign session"],
+    };
+    saveCycleState(st);
+    disarmCycle(s.meta.id);
+    const done = { ...st, enabled: false, phase: "released" as const, endReason: "fulfilled" as const };
+    saveCycleState(done);
 
     const r = buildRunReport({
       session: s,
@@ -144,22 +183,20 @@ describe("run report", () => {
       noGit: true,
       result: { lastCycleReleased: true, stopContinues: 4 },
     });
-    assert.match(r.outcome, /^Done — ULW run complete: 2 waves shipped \(1 with proof\), 0 commits landed, 0 files changed\./);
+    assert.match(r.outcome, /^Done — the Planner judged the mandate fulfilled after 1 committed cycle\(s\): 2 cycles, 0 commits landed, 0 files changed\./);
     assert.equal(r.request, "improve the onboarding flow comprehensively");
-    const shipped = r.sections[0].lines;
-    assert.match(shipped[0], /^Wave 1 ✓ Welcome screen/);
-    assert.match(shipped[1], /^Wave 2 ✗ Keyboard hints/);
-    assert.match(r.sections[1].lines.join("\n"), /1 of 2 waves closed with proof; the full suite passed this run/);
+    const shipped = r.sections[0].lines.join("\n");
+    assert.match(shipped, /Cycle 1 — first-run polish: 2\/2 items, commit abc1234/);
+    assert.match(shipped, /Cycle 2 — resume flow: 1\/2 items/);
+    assert.match(r.sections[1].lines.join("\n"), /Cycle 1: `npm test` green/);
+    assert.match(r.sections[1].lines.join("\n"), /Cycle 2: `npm test` RED/);
     const notDone = r.sections[2].lines.join("\n");
-    assert.match(notDone, /Named ship still open: resume card on relaunch/);
-    assert.match(notDone, /Must-fix from LAST reflect: 1 wave\(s\) closed without successful proof/);
+    assert.match(notDone, /resume card on relaunch \(cycle 2, open\)/);
+    assert.match(notDone, /Must-fix: the resume card ignores a missing session file/);
     assert.doesNotMatch(notDone, /welcome screen/);
+    const needs = r.sections.find((x) => x.title === "Needs you")!.lines.join("\n");
+    assert.match(needs, /Operator: decide whether resume/);
     assert.ok(r.facts.some((f) => /4 harness rounds/.test(f)));
-
-    // Sit-down keeps ULW on and says so in Resume.
-    const sat = buildRunReport({ session: s, workspace: cwd, noGit: true, result: { lastCycleSatDown: true } });
-    assert.match(sat.outcome, /^Paused — \/cycle 0 sat down/);
-    assert.ok(sat.sections.find((x) => x.title === "Resume")!.lines.some((l) => /ULW/.test(l)));
   });
 
   it("ledger markdown does not leak into the report, and the commit count is the real one", async () => {
@@ -179,22 +216,14 @@ describe("run report", () => {
     const s = createSession({ cwd, provider: "xai", model: "grok-4", ultrawork: true });
     s.meta.turnCount = 1;
     saveSession(s);
-    const st = armUlwReady(s.meta.id, "**Improve** the `importer` comprehensively");
+    const st = armWithPlan({
+      sessionId: s.meta.id,
+      cwd,
+      mandate: "**Improve** the `importer` comprehensively",
+      items: [{ title: "- **resume card** on relaunch" }],
+    });
     st.startedAt = since;
-    st.waves = [
-      {
-        wave: 1,
-        editDelta: 3,
-        proof: true,
-        proofKind: "full",
-        // Real ledgers hold orphan bold from the closer's own markdown.
-        summary: "** CLI `together run` cannot force a writer",
-        ts: new Date().toISOString(),
-      },
-    ];
-    st.namedShips = [{ text: "- **resume card** on relaunch", status: "open" }];
-    const { saveUlwCycle } = await import("../src/harness/ulw-cycle.js");
-    saveUlwCycle(st);
+    saveCycleState(st);
 
     const r = buildRunReport({
       session: s,
@@ -204,14 +233,13 @@ describe("run report", () => {
     assert.equal(r.request, "Improve the importer comprehensively");
     assert.match(r.outcome, /23 commits landed/);
     const shipped = r.sections[0].lines.join("\n");
-    assert.match(shipped, /^Wave 1 ✓ CLI together run cannot force a writer$/m);
-    assert.doesNotMatch(shipped, /\*\*/);
     assert.match(shipped, /23 commits since the request/);
     assert.match(shipped, /\+15 more/, "shows the page, counts the total");
     assert.match(
       r.sections[2].lines.join("\n"),
-      /Named ship still open: resume card on relaunch/,
+      /resume card on relaunch \(cycle 1, open\)/,
     );
+    assert.doesNotMatch(r.sections[2].lines.join("\n"), /\*\*/);
   });
 
   it("shouldPrintRunReport: driver ends and multi-round edits, not single-round chats; render persists report.md", () => {
@@ -219,7 +247,6 @@ describe("run report", () => {
     assert.equal(shouldPrintRunReport({ stopContinues: 2, editCount: 3 }), true);
     assert.equal(shouldPrintRunReport({ stopContinues: 5, editCount: 0 }), false);
     assert.equal(shouldPrintRunReport({ lastCycleReleased: true }), true);
-    assert.equal(shouldPrintRunReport({ lastCycleSatDown: true }), true);
     assert.equal(shouldPrintRunReport({ hitCostCap: true }), true);
     assert.equal(shouldPrintRunReport({ lastCycleReleased: true, aborted: true }), false);
 
@@ -350,7 +377,7 @@ Done — the importer streams now and 3 waves shipped since the mandate.
     assert.doesNotMatch(addendum!, /\nWhat shipped\n/);
   });
 
-  it("a live ULW run is winding down, not done, until a driver flag says so", async () => {
+  it("a live ULW run is in progress (or winding down under /cycle 0), not done, until the driver releases", async () => {
     const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "forge-rr8-"));
     const s = createSession({ cwd, provider: "xai", model: "grok-4", ultrawork: true });
     s.meta.turnCount = 1;
@@ -358,31 +385,23 @@ Done — the importer streams now and 3 waves shipped since the mandate.
     s.meta.lastVerificationAt = new Date().toISOString();
     s.meta.lastVerificationOk = true;
     saveSession(s);
-    const st = armUlwReady(s.meta.id, "improve the importer");
-    st.cycle = 0;
+    const st = armWithPlan({ sessionId: s.meta.id, cwd, mandate: "improve the importer" });
     st.wave = 12;
-    const { saveUlwCycle } = await import("../src/harness/ulw-cycle.js");
-    saveUlwCycle(st);
+    saveCycleState(st);
 
-    // No result flags: /done and /status both build the report this way.
+    // No result flags: /status builds the report this way.
     const r = buildRunReport({ session: s, workspace: cwd, noGit: true });
-    assert.match(r.outcome, /^Winding down — ULW is on its last cycle after 12 waves/);
-    assert.match(r.outcome, /the wrap, LAST reflect and \*\*Cycle complete\.\*\* are still ahead/);
+    assert.match(r.outcome, /^In progress — ULW cycle 1 in execute \(test plan\), 0 committed so far/);
     const resume = r.sections.find((x) => x.title === "Resume")!.lines.join("\n");
-    assert.match(resume, /ULW is on LAST \(cycle=0\)/);
-    assert.doesNotMatch(resume, /sat down/);
+    assert.match(resume, /ULW is still ON \(cycle 1, execute\)/);
 
-    // The driver actually sitting a wrap down is a different sentence.
-    const sat = buildRunReport({
-      session: s,
-      workspace: cwd,
-      noGit: true,
-      result: { lastCycleSatDown: true },
-    });
-    assert.match(sat.outcome, /^Paused — \/cycle 0 sat down/);
+    st.cycleZeroRequested = true;
+    saveCycleState(st);
+    const winding = buildRunReport({ session: s, workspace: cwd, noGit: true });
+    assert.match(winding.outcome, /^Winding down — ULW cycle 1 in execute/);
     assert.match(
-      sat.sections.find((x) => x.title === "Resume")!.lines.join("\n"),
-      /wrap sat down \(cycle=0\) and ULW stays on/,
+      winding.sections.find((x) => x.title === "Resume")!.lines.join("\n"),
+      /ULW finishes cycle 1 \(review, verify, commit\) and stops/,
     );
   });
 

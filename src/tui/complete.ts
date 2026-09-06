@@ -92,20 +92,21 @@ export const COMMAND_PARAMS: Record<string, ParamChoice[]> = {
     },
   ],
   cycle: [
-    { value: "1", description: "CONTINUE — relentless waves (Stop blocked)" },
-    { value: "0", description: "Finish this wave + one more, then stop" },
-    { value: "status", description: "Show cycle flag, wave, mandate" },
+    { value: "1", description: "Keep cycling — re-plan after each committed cycle" },
+    { value: "0", description: "Finish this cycle (review, verify, commit), then stop" },
+    { value: "status", description: "Show cycle, phase, plan items, mandate" },
   ],
-  "max-waves": [
-    { value: "3", description: "Cap at 3 waves (auto LAST when wave hits 3)" },
-    { value: "5", description: "Cap at 5 waves" },
-    { value: "10", description: "Cap at 10 waves" },
+  "max-cycles": [
+    { value: "1", description: "Stop after 1 reviewed, committed cycle" },
+    { value: "2", description: "Stop after 2 cycles" },
+    { value: "3", description: "Stop after 3 cycles" },
+    { value: "5", description: "Stop after 5 cycles" },
     {
       value: "off",
-      description: "Unlimited waves (clear cap)",
+      description: "Until the Planner says fulfilled (clear cap)",
       aliases: ["none", "clear", "unlimited", "0"],
     },
-    { value: "status", description: "Show max_waves + ULW status" },
+    { value: "status", description: "Show max_cycles + ULW status" },
   ],
   accounts: [
     { value: "list", description: "List all stored accounts" },
@@ -216,7 +217,7 @@ export const COMMAND_PARAMS: Record<string, ParamChoice[]> = {
   ulw: [
     {
       value: "improve the code",
-      description: "Soft god-scope (example)",
+      description: "Direction (example) — bare /ulw lets the Planner derive one",
     },
   ],
   memory: [
@@ -567,11 +568,13 @@ export const SLASH_HINTS: Record<string, string> = {
   "/budget": "Session spend cap",
   "/undo": "Rewind last turn",
   "/commit": "Commit (never push)",
-  "/ulw": "Ultrawork cycle",
+  "/ulw": "Plan-cycle driver",
   "/ulw-off": "Disarm ULW",
   "/goal": "Relentless driver",
   "/done": "Wind down goal + ULW",
-  "/cycle": "Continue or stop at N+1",
+  "/cycle": "Keep cycling or finish this cycle",
+  "/replan": "Close the cycle now, re-plan",
+  "/max-cycles": "Stop after N cycles",
   "/status": "HUD + session · problem first",
   "/quit": "Exit",
   "/provider": "Switch provider",

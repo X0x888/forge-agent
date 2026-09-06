@@ -15,8 +15,6 @@ import { HookRunner } from "../src/harness/hooks.js";
 import { runStopGuard } from "../src/harness/stop-guard.js";
 import { DEFAULT_CONFIG } from "../src/config/types.js";
 import { clearGuidelineAuditState } from "../src/harness/guideline-audit.js";
-import { loadUlwCycle, setCycleFlag } from "../src/harness/ulw-cycle.js";
-import { armUlwReady } from "./helpers/ulw-arm.js";
 
 const GOOD_REPORT = `Done — the login flow now rejects expired tokens and 3 files changed.
 
@@ -141,7 +139,7 @@ describe("evaluateReportAtStop", () => {
   });
 
   it("leaves the shape of a driver attestation alone — the attestation pass owns it", () => {
-    const bare = "**Cycle complete.**\n✅ npm test — green\nMust-fix: none";
+    const bare = "**Plan complete.**\n✅ npm test — green";
     assert.equal(
       evaluateReportAtStop({
         ...base,
@@ -185,7 +183,7 @@ describe("evaluateReportAtStop", () => {
         ...base,
         stopContinues: 5,
         ultrawork: true,
-        lastAssistantMessage: "**Cycle complete.**\n✅ npm test — green\nMust-fix: none",
+        lastAssistantMessage: "**Plan complete.**\n✅ npm test — green",
       }).block,
       false,
     );
@@ -200,43 +198,30 @@ describe("evaluateReportAtStop", () => {
     );
   });
 
-  it("terminal attestation: cycle=1 declares a wave, cycle=0 and Goal achieved close the run", () => {
-    const cc = "**Cycle complete.** wave 12 shipped.";
-    assert.equal(isTerminalAttestation(cc, { ulwEnabled: true, ulwCycle: 1 }), false);
-    assert.equal(isTerminalAttestation(cc, { ulwEnabled: true, ulwCycle: 0 }), true);
-    assert.equal(isTerminalAttestation(cc, {}), true);
-    assert.equal(
-      isTerminalAttestation("**Goal achieved.** every criterion met.", {
-        ulwEnabled: true,
-        ulwCycle: 1,
-      }),
-      true,
-    );
-    assert.equal(isTerminalAttestation("Done, all green.", {}), false);
+  it("terminal attestation: Goal achieved closes the run; a ULW plan closer never does", () => {
+    assert.equal(isTerminalAttestation("**Plan complete.** items shipped."), false);
+    assert.equal(isTerminalAttestation("**Goal achieved.** every criterion met."), true);
+    assert.equal(isTerminalAttestation("Done, all green."), false);
   });
 
   it("attestation pass: homework in the closer blocks, a wave-level ship does not, cap releases", () => {
-    const withHomework = `**Cycle complete.**\n12 waves shipped, suite green.\nYou can now run \`npm run deploy\` when you are ready.`;
+    const withHomework = `**Goal achieved.**\n12 rounds shipped, suite green.\nYou can now run \`npm run deploy\` when you are ready.`;
     const d = evaluateAttestationHomeworkAtStop({
       lastAssistantMessage: withHomework,
-      ulwEnabled: true,
-      ulwCycle: 0,
       stopContinues: 40,
       editCount: 60,
-      factsProvider: () => ["Shipped: 12 waves", "Verified: npm test passed"],
+      factsProvider: () => ["Shipped: 12 rounds", "Verified: npm test passed"],
     });
     assert.equal(d.block, true);
     assert.equal(d.kind, "homework");
     assert.match(d.reanchor || "", /hands work back to the user/);
     assert.match(d.reanchor || "", /re-attest with the same marker/i);
-    assert.match(d.reanchor || "", /Shipped: 12 waves/);
+    assert.match(d.reanchor || "", /Shipped: 12 rounds/);
 
-    // The same text mid-run under cycle=1 is a wave ship — the driver owns it.
+    // The ULW executor's plan closer is the driver's, not a terminal attestation.
     assert.equal(
       evaluateAttestationHomeworkAtStop({
-        lastAssistantMessage: withHomework,
-        ulwEnabled: true,
-        ulwCycle: 1,
+        lastAssistantMessage: withHomework.replace("**Goal achieved.**", "**Plan complete.**"),
         stopContinues: 40,
         editCount: 60,
       }).block,
@@ -245,8 +230,6 @@ describe("evaluateReportAtStop", () => {
 
     const released = evaluateAttestationHomeworkAtStop({
       lastAssistantMessage: withHomework,
-      ulwEnabled: true,
-      ulwCycle: 0,
       stopContinues: 40,
       editCount: 60,
       reportBlocks: 2,
@@ -256,11 +239,9 @@ describe("evaluateReportAtStop", () => {
   });
 
   it("attestation pass: after many rounds a bare attestation is bounced for the run-wide report", () => {
-    const bare = "**Cycle complete.**\n✅ npm test — green\nMust-fix: none";
+    const bare = "**Goal achieved.**\n✅ npm test — green";
     const d = evaluateAttestationHomeworkAtStop({
       lastAssistantMessage: bare,
-      ulwEnabled: true,
-      ulwCycle: 0,
       stopContinues: 40,
       editCount: 60,
     });
@@ -269,13 +250,11 @@ describe("evaluateReportAtStop", () => {
     assert.match(d.reanchor || "", /covers only the close-out/);
 
     // A full report that opens with the marker is accepted.
-    const full = `**Cycle complete.**\n\nDone — the importer now streams and 12 waves shipped since the mandate.\n\n**What shipped**\n- Streaming importer.\n\n**Verified**\n- \`npm test\` passed (212 tests).\n\n**Needs you**\n- Nothing.`;
+    const full = `**Goal achieved.**\n\nDone — the importer now streams and 12 rounds shipped since the request.\n\n**What shipped**\n- Streaming importer.\n\n**Verified**\n- \`npm test\` passed (212 tests).\n\n**Needs you**\n- Nothing.`;
     assert.equal(looksLikeRunReport(full), true);
     assert.equal(
       evaluateAttestationHomeworkAtStop({
         lastAssistantMessage: full,
-        ulwEnabled: true,
-        ulwCycle: 0,
         stopContinues: 40,
         editCount: 60,
       }).block,
@@ -286,54 +265,11 @@ describe("evaluateReportAtStop", () => {
     assert.equal(
       evaluateAttestationHomeworkAtStop({
         lastAssistantMessage: bare,
-        ulwEnabled: false,
         stopContinues: 1,
         editCount: 2,
       }).block,
       false,
     );
-  });
-
-  it("runStopGuard checks the ULW closer before the driver, and spends no wave doing it", async () => {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-rg-ulw-"));
-    process.env.FORGE_HOME = tmp;
-    clearGuidelineAuditState();
-    const sid = "rg-ulw-1";
-    armUlwReady(sid, "improve this tool");
-    setCycleFlag(sid, 0);
-    const before = loadUlwCycle(sid)!;
-    const config = {
-      ...DEFAULT_CONFIG,
-      blockingStopHooks: true,
-      compatClaudeHooks: false,
-      compatCursorHooks: false,
-      goal: { ...DEFAULT_CONFIG.goal, enabled: false },
-    };
-    const hooks = new HookRunner(config, tmp);
-    const r = await runStopGuard({
-      config,
-      hooks,
-      ctx: { sessionId: sid, cwd: tmp, workspaceRoot: tmp },
-      ultrawork: true,
-      openTodoCount: 0,
-      editCount: 9,
-      verificationRan: true,
-      verificationPassed: true,
-      stopContinues: 12,
-      reportBlocks: 0,
-      lastAssistantMessage:
-        "**Cycle complete.**\n9 waves shipped, suite green.\nYou'll need to add the CHANGELOG entry yourself.",
-      runFactsProvider: () => ["Shipped: 9 waves"],
-    });
-    assert.equal(r.allowStop, false);
-    assert.equal(r.report?.kind, "homework");
-    assert.match(r.additionalContext || "", /Shipped: 9 waves/);
-    // The driver never evaluated this Stop: no wave, no evidence nudge spent.
-    const after = loadUlwCycle(sid)!;
-    assert.equal(after.enabled, true);
-    assert.equal(after.wave, before.wave);
-    assert.equal(after.waves?.length ?? 0, before.waves?.length ?? 0);
-    assert.equal(after.evidenceNudges ?? 0, before.evidenceNudges ?? 0);
   });
 
   it("composes through runStopGuard after the proof-claim guard", async () => {

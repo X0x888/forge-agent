@@ -7,8 +7,12 @@
  * become a model prompt — same hole `/verify` closed for `npm test`.
  */
 
-/** Codes that mean the run ended as designed — keep on meta, not as lastErr. */
-export const LAST_ERROR_OUTCOME_CODES = new Set(["ulw_cycle_complete"]);
+/**
+ * Codes that mean the run ended as designed — keep on meta, not as lastErr.
+ * `ulw_done`: the plan-cycle driver released on fulfilled / /cycle 0 /
+ * max_cycles. `ulw_released` (blocked, fix-cap, stuck, runtime) is a problem.
+ */
+export const LAST_ERROR_OUTCOME_CODES = new Set(["ulw_done"]);
 
 export function isLastErrorProblem(
   err?: { code?: string; message?: string } | null,

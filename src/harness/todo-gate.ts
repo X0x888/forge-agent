@@ -1,5 +1,4 @@
 import { looksLikeAdvisoryUserMessage } from "../util/advisory-intent.js";
-import { isEvaluateClassMandate } from "./decision-memory.js";
 
 /**
  * Todo nudge + optional Stop gate (Grok Build–inspired).
@@ -90,23 +89,10 @@ export function maybeTodoNudge(opts: {
   openTodoCount: number;
   /** When the latest user turn is pure Q&A, do not nudge todo execution. */
   lastUserMessage?: string;
-  /**
-   * Evaluate-class ULW: the board is optional ceremony. Do not poke —
-   * 21 todo_write calls in the dogfood session were answering TodoNudge.
-   */
-  evaluateClass?: boolean;
-  /** Mandate text; used when evaluateClass is omitted. */
-  mandate?: string;
   config?: Partial<TodoNudgeConfig>;
 }): string | null {
   const cfg = { ...DEFAULT_TODO_NUDGE, ...opts.config };
   if (!cfg.enabled || !opts.harnessActive) return null;
-  if (
-    opts.evaluateClass ||
-    (opts.mandate != null && isEvaluateClassMandate(opts.mandate))
-  ) {
-    return null;
-  }
   if (
     opts.lastUserMessage &&
     looksLikeAdvisoryUserMessage(opts.lastUserMessage)
@@ -164,7 +150,7 @@ export function clearTodoGateState(sessionId?: string): void {
 
 /**
  * Wind-down paths (`/done`, `/goal done|clear`, `/ulw-off`,
- * `/clear`, `/new`, safety-valve CONTINUE→LAST) call this so a leftover
+ * `/clear`, `/new`, safety-valve /cycle 0) call this so a leftover
  * soft once-block does not fight intentional harness release.
  * Same implementation as clearTodoGateState — named for call-site clarity.
  */
@@ -174,7 +160,7 @@ export function clearSoftTodoGateOnWindDown(sessionId: string): void {
 }
 
 const ATTEST_RE =
-  /\*\*Goal achieved\.\*\*|\*\*Cycle complete\.\*\*|\*\*Wave complete\.\*\*|all tasks complete/i;
+  /\*\*Goal achieved\.\*\*|\*{0,2}Plan complete\.?\*{0,2}|all tasks complete/i;
 
 /**
  * Evaluate todo gate at Stop. Returns block message or null to allow.
@@ -242,7 +228,7 @@ export function evaluateTodoGateAtStop(opts: {
     const msg = [
       `[Forge TodoGate] Stop blocked once — ${opts.openTodoCount} open todo(s) remain.`,
       `Finish or cancel them with todo_write, then stop. (Soft gate outside ULW — will not re-block this prompt.)`,
-      `Under ULW the gate is stricter until **Cycle complete.** / **Goal achieved.**`,
+      `Under ULW the plan items on the board gate Stop until "Plan complete." / **Goal achieved.**`,
     ].join("\n");
     return { block: true, reason: msg, reanchor: msg, soft: true };
   }
@@ -255,7 +241,7 @@ export function evaluateTodoGateAtStop(opts: {
   incrementTodoGateFires(opts.sessionId);
   const msg = [
     `[Forge TodoGate] Stop blocked — ${opts.openTodoCount} open todo(s) remain.`,
-    `Complete, cancel with reason, or finish the wave and attest **Cycle complete.** / **Goal achieved.**`,
+    `Complete, cancel with reason, or close the plan with "Plan complete." / **Goal achieved.**`,
     `TodoGate fire ${fires + 1}/${cfg.maxFiresPerPrompt} this prompt.`,
   ].join("\n");
 

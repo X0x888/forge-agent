@@ -93,13 +93,6 @@ export interface PermissionRequest {
   userInitiated?: boolean;
   /** Live MCP registry — used so annotated tools beat the name heuristic. */
   mcp?: McpManager;
-  /**
-   * ULW evaluate-class scout. Enforced even under yolo / acceptEdits —
-   * hiding tools from the schema is not enough (the model still knows the names).
-   */
-  ulwPhase?: "orient" | "ship";
-  /** LAST reflect score phase — read-only, even under yolo. */
-  ulwLastReflectScore?: boolean;
 }
 
 /**
@@ -258,158 +251,6 @@ export class PermissionGate {
   }
 
   /**
-   * ULW Wave-1 PLAN. Writes / spawn / mutating bash hard-deny (even under yolo).
-   * Read-only bash and research tools fall through to the rest of the gate.
-   */
-  private evaluateUlwOrient(
-    toolName: string,
-    toolInput: Record<string, unknown>,
-    req: PermissionRequest,
-  ): PermissionResult | null {
-    if (toolName === "bash" || toolName === "run_terminal_command") {
-      if (this.isReadOnlyShell(String(toolInput.command || ""))) {
-        return null;
-      }
-      return {
-        decision: "deny",
-        reason:
-          "ulw_orient: bash mutations denied — write the plan first (Reading: / exit_plan_mode), or type /build",
-        rule: "ulw_orient",
-      };
-    }
-    if (
-      toolName === "spawn_subagent" ||
-      toolName === "Task" ||
-      toolName === "task"
-    ) {
-      const kind = resolveSpawnSubagentType(
-        toolInput.subagent_type ?? toolInput.type ?? toolInput.agent_type,
-        { ulwOrient: true },
-      );
-      if (kind === "explore" || kind === "plan") {
-        return null;
-      }
-      return {
-        decision: "deny",
-        reason:
-          "ulw_orient: general-purpose spawn denied — PLAN may spawn explore/plan only. " +
-          "Next: retry this turn as spawn_subagent({ subagent_type: \"explore\" }) (or \"plan\") " +
-          "in the same round as web_search/read_file; they overlap. Do not wait for a later think. " +
-          "Write the Reading, then implement; or type /build",
-        rule: "ulw_orient",
-      };
-    }
-    if (WRITE_TOOLS.has(toolName) || toolName === "kill_task") {
-      return {
-        decision: "deny",
-        reason:
-          "ulw_orient: edits denied — write the plan first (Reading: / exit_plan_mode), or type /build",
-        rule: "ulw_orient",
-      };
-    }
-    if (
-      toolName === "call_mcp" ||
-      toolName === "mcp_call" ||
-      toolName === "use_mcp"
-    ) {
-      const q = String(
-        toolInput.tool_name || toolInput.name || toolInput.tool || "",
-      );
-      const looksRead = req.mcp
-        ? req.mcp.isReadOnlyTool(q)
-        : mcpToolNameLooksReadOnly(q);
-      if (!looksRead) {
-        return {
-          decision: "deny",
-          reason:
-            "ulw_orient: call_mcp denied for non-read-only tools — write the plan first, or type /build",
-          rule: "ulw_orient",
-        };
-      }
-    }
-    if (this.isLspEnsureInstall(toolName, toolInput)) {
-      return {
-        decision: "deny",
-        reason:
-          "ulw_orient: lsp ensure denied — write the plan first (Reading: / exit_plan_mode), or type /build",
-        rule: "ulw_orient",
-      };
-    }
-    return null;
-  }
-
-  /**
-   * LAST reflect score: read-only git scorecard. Writes / spawn / mutating
-   * bash hard-deny (even under yolo) until Must-fix / Live-with is written.
-   */
-  private evaluateUlwLastScore(
-    toolName: string,
-    toolInput: Record<string, unknown>,
-    req: PermissionRequest,
-  ): PermissionResult | null {
-    if (toolName === "bash" || toolName === "run_terminal_command") {
-      if (this.isReadOnlyShell(String(toolInput.command || ""))) {
-        return null;
-      }
-      return {
-        decision: "deny",
-        reason:
-          "ulw_last_score: bash mutations denied — LAST reflect is read-only (git log / git diff). Write Must-fix vs Live-with, then Stop.",
-        rule: "ulw_last_score",
-      };
-    }
-    if (
-      toolName === "spawn_subagent" ||
-      toolName === "Task" ||
-      toolName === "task"
-    ) {
-      return {
-        decision: "deny",
-        reason:
-          "ulw_last_score: spawn_subagent denied — LAST reflect is read-only. Score this run, then Stop.",
-        rule: "ulw_last_score",
-      };
-    }
-    if (WRITE_TOOLS.has(toolName) || toolName === "kill_task") {
-      return {
-        decision: "deny",
-        reason:
-          "ulw_last_score: edits denied — LAST reflect is read-only. Write Must-fix vs Live-with, then Stop.",
-        rule: "ulw_last_score",
-      };
-    }
-    if (
-      toolName === "call_mcp" ||
-      toolName === "mcp_call" ||
-      toolName === "use_mcp"
-    ) {
-      const q = String(
-        toolInput.tool_name || toolInput.name || toolInput.tool || "",
-      );
-      const looksRead = req.mcp
-        ? req.mcp.isReadOnlyTool(q)
-        : mcpToolNameLooksReadOnly(q);
-      if (!looksRead) {
-        return {
-          decision: "deny",
-          reason:
-            "ulw_last_score: call_mcp denied for non-read-only tools — LAST reflect is read-only.",
-          rule: "ulw_last_score",
-        };
-      }
-    }
-    if (this.isLspEnsureInstall(toolName, toolInput)) {
-      return {
-        decision: "deny",
-        reason:
-          "ulw_last_score: lsp ensure denied — LAST reflect is read-only.",
-        rule: "ulw_last_score",
-      };
-    }
-    return null;
-  }
-
-  /**
    * web_fetch with allow_local can reach loopback — not a free read-only tool.
    * Requires allow rule, interactive approval, pattern-always, or YOLO.
    * Session-tool alone is intentionally insufficient.
@@ -494,18 +335,6 @@ export class PermissionGate {
           rule: rulesEval.deny.rule.pattern,
         };
       }
-    }
-
-    // ULW orient: research-only, even under yolo / acceptEdits.
-    if (req.ulwPhase === "orient") {
-      const orientDeny = this.evaluateUlwOrient(toolName, toolInput, req);
-      if (orientDeny) return orientDeny;
-    }
-
-    // LAST reflect score: same write/spawn deny as orient (read-only git scorecard).
-    if (req.ulwLastReflectScore) {
-      const scoreDeny = this.evaluateUlwLastScore(toolName, toolInput, req);
-      if (scoreDeny) return scoreDeny;
     }
 
     // 4. YOLO
@@ -777,11 +606,6 @@ export class PermissionGate {
       ) {
         const t = resolveSpawnSubagentType(
           toolInput.subagent_type ?? toolInput.type ?? toolInput.agent_type,
-          {
-            // Plan mode already allowed any spawn above; this branch is
-            // default/acceptEdits/dontAsk headless only.
-            ulwOrient: req.ulwPhase === "orient",
-          },
         );
         const modeRaw = String(
           toolInput.capability_mode || toolInput.mode || "",

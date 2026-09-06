@@ -78,16 +78,18 @@ import {
   parseExploreMap,
   rememberExploreMap,
 } from "../session/explore-map.js";
-import {
-  exploreSpawnSkipReason,
-  loadUlwCycle,
-  noteExploreChildCompleted,
-  seedNamedShipsFromExploreMaps,
-} from "../harness/ulw-cycle.js";
+import { loadProjectSkills } from "./project-skills.js";
 
 export type SubagentType = "general-purpose" | "explore" | "plan";
 export type SubagentCapability = "full" | "read-only";
 export type SubagentIsolation = "none" | "worktree";
+/**
+ * Harness roles. A role is a subagent the harness launches with an empty
+ * transcript and a fixed brief: the Planner writes a cycle plan (read-only,
+ * research tools, may spawn explore children); the Reviewer reads the cycle
+ * diff and revises in place (full write, no spawn).
+ */
+export type SubagentRole = "planner" | "reviewer";
 
 export interface SubagentRequest {
   prompt: string;
@@ -103,6 +105,20 @@ export interface SubagentRequest {
   isolation?: SubagentIsolation;
   /** Continue a kept incomplete child instead of spawning a new session. */
   resumeSessionId?: string;
+  /** Harness role — fixes type, capability, isolation and the prompt frame. */
+  role?: SubagentRole;
+  /** Per-role model / effort override (config `[ulw] planner_model` …). */
+  model?: string;
+  reasoningEffort?: string;
+  /** Skill bodies inlined into the child's prompt (by name, e.g. forge-planner). */
+  inlineSkills?: string[];
+}
+
+export interface SubagentVerification {
+  ran: boolean;
+  passed: boolean;
+  fullSuite: boolean;
+  lastCommand?: string;
 }
 
 export interface SubagentRunContext {
@@ -146,6 +162,10 @@ export interface SubagentResult {
   hitCostCap?: boolean;
   status?: SubagentHandoffStatus;
   artifactPath?: string;
+  /** Structural checks the child ran (harvested from its loop). */
+  verification?: SubagentVerification;
+  /** Final assistant text without the parent-facing header. */
+  body?: string;
 }
 
 export type SubagentHandoffStatus =
@@ -261,21 +281,14 @@ export function subagentTypeRawIsOmitted(raw: unknown): boolean {
 }
 
 /**
- * PLAN / ulw_orient omitted type → explore. LAST score never remaps.
- * BUILD / default omitted type stays general-purpose (`resolveSubagentType`).
+ * PLAN omitted type → explore. BUILD / default omitted type stays
+ * general-purpose (`resolveSubagentType`).
  */
 export function resolveSpawnSubagentType(
   raw: unknown,
-  opts?: {
-    planMode?: boolean;
-    ulwOrient?: boolean;
-    ulwLastReflectScore?: boolean;
-  },
+  opts?: { planMode?: boolean },
 ): SubagentType {
-  if (opts?.ulwLastReflectScore) return resolveSubagentType(raw);
-  if (subagentTypeRawIsOmitted(raw) && (opts?.planMode || opts?.ulwOrient)) {
-    return "explore";
-  }
+  if (subagentTypeRawIsOmitted(raw) && opts?.planMode) return "explore";
   return resolveSubagentType(raw);
 }
 
@@ -311,7 +324,7 @@ export function isSpawnParallelSafe(
   } else {
     type = resolveSpawnSubagentType(
       args.subagent_type ?? args.type ?? args.agent_type,
-      { planMode: opts.planOrOrient, ulwOrient: opts.planOrOrient },
+      { planMode: opts.planOrOrient },
     );
     isolation = defaultIsolationForSpawn({
       type,
@@ -369,13 +382,51 @@ export function filterToolsForSubagent(
 ): ToolDefinition[] {
   return TOOL_DEFINITIONS.filter((t) => {
     const name = t.function.name;
-    if (SUBAGENT_DENY_ALWAYS.has(name) && !opts?.allowSpawn) return false;
     if (name === "spawn_subagent") return Boolean(opts?.allowSpawn);
+    if (SUBAGENT_DENY_ALWAYS.has(name)) return false;
     if (capability === "read-only") {
       return READ_ONLY_TOOLS.has(name);
     }
     return true;
   });
+}
+
+/** Type / capability / isolation a harness role fixes. */
+export function resolveRoleShape(role: SubagentRole): {
+  subagentType: SubagentType;
+  capabilityMode: SubagentCapability;
+  isolation: SubagentIsolation;
+  allowSpawn: boolean;
+} {
+  if (role === "planner") {
+    return { subagentType: "plan", capabilityMode: "read-only", isolation: "none", allowSpawn: true };
+  }
+  return { subagentType: "general-purpose", capabilityMode: "full", isolation: "none", allowSpawn: false };
+}
+
+export function defaultRoleMaxTurns(role: SubagentRole): number {
+  return role === "planner"
+    ? envPositiveInt("FORGE_ULW_PLANNER_MAX_TURNS", 60)
+    : envPositiveInt("FORGE_ULW_REVIEWER_MAX_TURNS", 80);
+}
+
+/** Skill bodies by name from builtin / user / project packs, for a role brief. */
+export function inlineSkillBodies(workspace: string, names: string[]): string {
+  if (!names.length) return "";
+  try {
+    const skills = loadProjectSkills(workspace);
+    const want = new Set(names.map((n) => n.toLowerCase()));
+    const out: string[] = [];
+    for (const s of skills) {
+      if (!want.has(s.name.toLowerCase())) continue;
+      const body = String(s.body || "").trim();
+      if (!body) continue;
+      out.push(`## Skill: ${s.name}\n${body}`);
+    }
+    return out.join("\n\n");
+  } catch {
+    return "";
+  }
 }
 
 export function defaultMaxSubagentDepth(): number {
@@ -506,16 +557,24 @@ export async function runSubagent(
   req: SubagentRequest,
   ctx: SubagentRunContext,
 ): Promise<SubagentResult> {
-  let subagentType = resolveSubagentType(req.subagentType);
-  let capabilityMode = resolveCapabilityMode(
+  const role = req.role;
+  const roleShape = role ? resolveRoleShape(role) : undefined;
+  let subagentType = roleShape?.subagentType ?? resolveSubagentType(req.subagentType);
+  let capabilityMode = roleShape?.capabilityMode ?? resolveCapabilityMode(
     subagentType,
     req.capabilityMode,
   );
   const description =
     (req.description || "").trim().slice(0, 120) ||
+    (role ? `cycle ${role}` : "") ||
     (req.prompt || "").trim().slice(0, 80) ||
     "subagent";
-  const maxDepth = ctx.maxDepth ?? defaultMaxSubagentDepth();
+  // A role that may spawn (the Planner's explore children) needs one more
+  // level than the default depth budget.
+  const maxDepth = Math.max(
+    ctx.maxDepth ?? defaultMaxSubagentDepth(),
+    roleShape?.allowSpawn ? ctx.depth + 2 : 0,
+  );
   const depth = ctx.depth;
 
   if (depth >= maxDepth) {
@@ -584,53 +643,12 @@ export async function runSubagent(
     capabilityMode = resolveCapabilityMode(subagentType);
   }
 
-  if (subagentType === "explore" && !resumed) {
-    const skip = exploreSpawnSkipReason(ctx.parentSession.meta.id);
-    if (skip) {
-      const next = formatSubagentNext({
-        status: "skipped_explore_ledger",
-        subagentType: "explore",
-      });
-      return {
-        ok: false,
-        text:
-          `### Subagent result: ${description}\n` +
-          `- status: skipped_explore_ledger\n` +
-          `- type: explore · mode: read-only · turns: 0/0 · edits: 0\n` +
-          (next ? `- Next: ${next}\n` : "") +
-          `\nspawn_subagent skipped (explore ledger):\n${skip}`,
-        turns: 0,
-        aborted: false,
-        subagentType: "explore",
-        capabilityMode: "read-only",
-        description,
-        sessionId: "",
-        promptTokens: 0,
-        completionTokens: 0,
-        editCount: 0,
-        status: "skipped_explore_ledger",
-      };
-    }
-  }
-
   const childCap: { maxCostUsd?: number } = {};
-  let reserveLook = false;
-  try {
-    const ulw = loadUlwCycle(ctx.parentSession.meta.id);
-    reserveLook = Boolean(
-      ulw?.exploreRequired ||
-        ulw?.reorientRequested ||
-        ulw?.reorientNeedsEvidence ||
-        ulw?.siblingMillHold,
-    );
-  } catch {
-    /* sidecar optional */
-  }
   const familyPin = pinChildCostCap(
     childCap,
     ctx.config,
     ctx.parentSession.meta,
-    { role: subagentType, reserveLook },
+    { role: subagentType, reserveLook: false },
   );
   if (familyPin.refuse) {
     const line = formatCostBudgetLine(
@@ -658,11 +676,13 @@ export async function runSubagent(
     ? resolveIsolationMode(resumed.meta.subagent.isolation) === "worktree"
       ? "worktree"
       : "none"
-    : defaultIsolationForSpawn({
-        type: subagentType,
-        isolation: req.isolation,
-        workspace: ctx.workspace,
-      });
+    : roleShape
+      ? roleShape.isolation
+      : defaultIsolationForSpawn({
+          type: subagentType,
+          isolation: req.isolation,
+          workspace: ctx.workspace,
+        });
   let worktree: SubagentWorktree | null = null;
   let childWorkspace = ctx.workspace;
   if (resumed) {
@@ -755,12 +775,13 @@ export async function runSubagent(
     }
   }
 
+  const childModel = (req.model || "").trim() || ctx.config.model;
   const child = resumed ?? createSession({
     cwd: childWorkspace,
     provider: String(ctx.config.provider),
-    model: ctx.config.model,
+    model: childModel,
     ultrawork: false,
-    title: `subagent: ${description}`.slice(0, 200),
+    title: `${role ? `cycle ${role}` : "subagent"}: ${description}`.slice(0, 200),
   });
   child.meta.subagent = {
     parentId: ctx.parentSession.meta.id,
@@ -782,12 +803,16 @@ export async function runSubagent(
   const childMaxTurns =
     req.maxTurns && req.maxTurns > 0
       ? Math.floor(req.maxTurns)
-      : defaultSubagentMaxTurns(subagentType);
+      : role
+        ? defaultRoleMaxTurns(role)
+        : defaultSubagentMaxTurns(subagentType);
 
   // Plan-type subagents run under plan permission mode
   const childConfig: ForgeConfig = {
     ...ctx.config,
     workspace: childWorkspace,
+    model: childModel,
+    ...(req.reasoningEffort ? { reasoningEffort: req.reasoningEffort as ForgeConfig["reasoningEffort"] } : {}),
     // Cap turns for nested work
     maxTurns: childMaxTurns,
     // Don't inherit ULW/goal auto-arm into child
@@ -800,8 +825,9 @@ export async function runSubagent(
   };
 
   const tools = filterToolsForSubagent(capabilityMode, {
-    // Never allow children to nest further at max depth-1 boundary
-    allowSpawn: depth + 1 < maxDepth,
+    // Never allow children to nest further at max depth-1 boundary; a role
+    // decides for itself (the Planner spawns explore children, the Reviewer none).
+    allowSpawn: roleShape ? roleShape.allowSpawn && depth + 1 < maxDepth : depth + 1 < maxDepth,
   });
 
   const startHook = await ctx.hooks.run("SubagentStart", {
@@ -849,6 +875,8 @@ export async function runSubagent(
     worktreePath: worktree?.path,
     maxTurns: childMaxTurns,
     resume: Boolean(resumed),
+    role,
+    skills: inlineSkillBodies(childWorkspace, req.inlineSkills ?? []),
   });
 
   let result: LoopResult | undefined;
@@ -1019,7 +1047,7 @@ export async function runSubagent(
 
   // Collapse the essay to a map before land is appended so the land
   // summary is not thrown away.
-  const map = parseExploreMap(text);
+  const map = role ? null : parseExploreMap(text);
   if (map) {
     rememberExploreMap(ctx.parentSession.meta, {
       ...map,
@@ -1031,21 +1059,8 @@ export async function runSubagent(
     } catch {
       /* */
     }
-    try {
-      seedNamedShipsFromExploreMaps(ctx.parentSession.meta.id);
-    } catch {
-      /* parent ULW sidecar optional */
-    }
   }
-  // A completed explore without a parseable pick is not a look — do not
-  // clear exploreRequired or the parent will farm another essay.
-  if (subagentType === "explore" && status === "completed" && map) {
-    try {
-      noteExploreChildCompleted(ctx.parentSession.meta.id);
-    } catch {
-      /* parent ULW sidecar optional */
-    }
-  }
+  const body = text;
 
   // Worktree land: apply into the parent only on a completed handoff so
   // isolation=worktree is not a dead-end. Incomplete / aborted / error /
@@ -1173,6 +1188,8 @@ export async function runSubagent(
     hitCostCap: Boolean(result?.hitCostCap),
     status,
     artifactPath,
+    body,
+    ...(result?.verification ? { verification: result.verification } : {}),
   };
 }
 
@@ -1186,7 +1203,27 @@ function buildSubagentPrompt(opts: {
   worktreePath?: string;
   maxTurns?: number;
   resume?: boolean;
+  role?: SubagentRole;
+  skills?: string;
 }): string {
+  if (opts.role) {
+    // A role brief is self-contained: the harness wrote it from facts.
+    return [
+      `[Forge subagent — ${opts.role} / ${opts.capabilityMode}]`,
+      opts.maxTurns
+        ? `Turn budget: ${opts.maxTurns} (reserve the last turn for the document; last turn is document-only).`
+        : "",
+      opts.capabilityMode === "read-only"
+        ? "You are read-only: research and judge. Do not modify files or run mutating shell commands."
+        : "You may edit. Prefer verification after edits.",
+      opts.skills ? `\n${opts.skills}\n` : "",
+      opts.prompt,
+      ``,
+      `Your final message is the document described above and nothing else. Do not ask the user questions.`,
+    ]
+      .filter((l) => l !== "")
+      .join("\n");
+  }
   const lines = [
     `[Forge subagent — ${opts.subagentType} / ${opts.capabilityMode}` +
       (opts.isolation === "worktree" ? " / worktree" : "") +

@@ -1,7 +1,5 @@
 import type { ForgeConfig, PromptProfile } from "../config/types.js";
 import type { GoalState } from "../harness/goal.js";
-import type { UlwCycleState } from "../harness/ulw-cycle.js";
-import { displayUlwMandate, resolveUlwPhase } from "../harness/ulw-cycle.js";
 import fs from "node:fs";
 import path from "node:path";
 import {
@@ -208,10 +206,9 @@ export function listProjectRulePaths(workspace: string): string[] {
 export function resolvePromptProfile(opts: {
   config: ForgeConfig;
   ultrawork?: boolean;
-  ulwCycle?: UlwCycleState | null;
 }): PromptProfile {
   if (opts.config.promptProfile) return opts.config.promptProfile;
-  if (opts.ulwCycle?.enabled || opts.ultrawork) return "autonomous";
+  if (opts.ultrawork) return "autonomous";
   return "default";
 }
 
@@ -225,14 +222,13 @@ function profileBlock(profile: PromptProfile): string[] {
   }
   if (profile === "autonomous") {
     return [
-      `## Response profile: autonomous (ULW / god-mode)`,
-      `- Own the hard work like a top senior: **smart and hard** — high leverage, low waste; not thrash or token burn.`,
+      `## Response profile: autonomous (ULW executor)`,
+      `- Work like a veteran: **smart and hard** — high leverage, low waste; not thrash or token burn.`,
       `- Prefer action + verification over advice-only. When you say you will do X, tool-call in the same turn.`,
-      `- Judge leverage → research only as deep as needed → implement → prove. Freestyle when freestyle is better; doctrine is compass, not cage.`,
-      `- **Proactive subagents** when they improve quality or efficiency (parallel explore, design plan, isolated implement; isolation=none GP is serial); skip when one tool call is enough.`,
-      `- State your reading first (one line) on multi-step work, then proceed — do not wait for confirmation.`,
+      `- Implement → prove → next item. Freestyle tools and order when that yields better work; the plan is the contract.`,
+      `- **Proactive subagents** when they improve quality or efficiency (parallel explore, isolated implement; isolation=none GP is serial); skip when one tool call is enough.`,
       `- Finish, don't hand off. Never "shall I continue?" / "let me know if…".`,
-      `- Finish the **defect** class (callers, tests, dependents). Do not grind leftover chrome (clip/one-line/sandwich) as a class — two is enough, then change surface or stop.`,
+      `- Finish the **defect** class (callers, tests, dependents), inside the item's scope.`,
       `- After a successful search_replace / write_file / apply_patch, the numbered window is current file text (same N| prefixes as read_file — they are not part of the file). Copy the next old_string from it. Do not re-read to confirm the write.`,
       `- Pause only for real external blockers (credentials, destructive shared-state, uninterpretable foreign work).`,
     ];
@@ -255,7 +251,6 @@ export function buildBaselineSystemPrompt(opts: {
   config: ForgeConfig;
   workspace: string;
   ultrawork?: boolean;
-  ulwCycle?: UlwCycleState | null;
   profile?: PromptProfile;
   /** Caller-computed snapshot (loop computes once per prompt); null = no git. */
   git?: GitSnapshot | null;
@@ -277,13 +272,12 @@ export function buildBaselineSystemPrompt(opts: {
         : opts.project;
     return formatProjectIntelForPrompt(intel);
   })();
-  const ulwOn = Boolean(opts.ulwCycle?.enabled || opts.ultrawork);
+  const ulwOn = Boolean(opts.ultrawork);
   const profile =
     opts.profile ??
     resolvePromptProfile({
       config,
       ultrawork: opts.ultrawork,
-      ulwCycle: opts.ulwCycle,
     });
 
   const parts: string[] = [
@@ -346,10 +340,10 @@ export function buildBaselineSystemPrompt(opts: {
     `- **Proof-claim guard**: "tests pass" / "all green" without a verification command is blocked once — run the check, then report the real result. Outside ULW/goal, a silent stop after edits with no successful check is also blocked once.`,
     `- **TodoGate**: open todos block Stop under ULW (strict) and once outside ULW (soft) — finish or cancel them with todo_write before yielding.`,
     `- **/goal driver**: active goals block Stop until **Goal achieved.** or stuck-wall.`,
-    `- **/ulw god-mode**: Wave 1 is PLAN (written Reading:), then BUILD. cycle=1 forces plan→ship→prove→review; \`/cycle 0\` = finish this wave + one more, LAST-reflect, sit down (ULW stays on). \`/done\` / user max_waves / \`/ulw-off\` end. \`/plan\` / \`/build\` are the same keys. Durable decisions live in decisions.json.`,
-    `- **Mid-conversation harness updates**: live cycle/wave/mandate/todo counts arrive as \`[Forge harness — mid-conversation update]\` messages. Obey the latest over stale ones.`,
-    `- **Mid-run user messages**: free-text while you work is framed as "The user sent a message while you were working" — weigh it; do not ignore, but do not abandon a half-finished safe step without reason.`,
-    `- **Live slash controls** (no abort required): \`/cycle 0|1\`, \`/max-waves N|off\`, \`/plan\`, \`/build\`, \`/ulw-off\`, \`/goal pause|resume\`.`,
+    `- **/ulw plan-cycle driver**: a fresh Planner writes each cycle's plan; you execute its items; a fresh Reviewer revises the cycle diff; the harness verifies, commits, re-plans. Close with "Plan complete." \`/cycle 0\` finishes the cycle then stops.`,
+    `- **Mid-conversation harness updates**: live cycle/phase/item counts arrive as \`[Forge harness — mid-conversation update]\` messages. Obey the latest over stale ones.`,
+    `- **Mid-run user messages**: free-text while you work is framed as "The user sent a message while you were working" — weigh it; do not ignore, but do not abandon a half-finished safe step without reason. Under ULW the Planner reads it at the next re-plan.`,
+    `- **Live slash controls** (no abort required): \`/cycle 0|1\`, \`/replan\`, \`/max-cycles N|off\`, \`/plan\`, \`/build\`, \`/ulw-off\`, \`/goal pause|resume\`.`,
     `- **Agent guidelines audit**: a harness message may flag AGENTS.md / CLAUDE.md defects. Fix factual ones (dead paths, missing scripts) in the file; write doctrine changes to the proposal file it names, never into the tracked file. The harness stamps; you never write the stamp. Then finish the request.`,
     ``,
     `## Closing message`,
@@ -364,8 +358,7 @@ export function buildBaselineSystemPrompt(opts: {
     `- Do not curl/wget file:// paths — use read_file for workspace files (file:// is hard-denied).`,
   ];
 
-  const ulwOrient = ulwOn && resolveUlwPhase(opts.ulwCycle) === "orient";
-  if (config.permissionMode === "plan" && !ulwOrient) {
+  if (config.permissionMode === "plan") {
     const planCheckList = (() => {
       try {
         if (opts.project === null) return [] as string[];
@@ -411,57 +404,22 @@ export function buildBaselineSystemPrompt(opts: {
   }
 
   if (ulwOn && (opts.subagentDepth ?? 0) === 0) {
-    if (resolveUlwPhase(opts.ulwCycle) === "orient") {
-      parts.push(
-        ``,
-        `## ULW PLAN (research, then directions — no product edits)`,
-        `Wave 1 starts here. Later waves re-enter when the reading is stale (same-surface hold, named-ship exhaust, enter_plan_mode).`,
-        `This is not a random todo. For a vague mandate, answer first:`,
-        `1. What would "better" mean here, for THIS product?`,
-        `2. What would a veteran actually chase (not chrome, not a sibling of the last ship)?`,
-        `3. Research: codebase (grep/read, spawn explore), web_search, GitHub, matching forge-* / game skills.`,
-        `4. What can this product NOT do today that a demanding user would notice? That is a **Bet:** — a capability, not a hole. On an open mandate (soft / improve-class) the Reading names one: \`Bet: <capability> — <path it lives in> — first slice: <what + the command that proves it>\` (or \`Bet: none — why\`).`,
-        `Then write directions — the ONE next ship, what you passed on, the verify command, and the Bet.`,
-        `Spawn explore/plan to research (same round as web_search/read_file; they overlap; omitted type is explore). Do not spawn general-purpose. Do not edit. Do not image_gen yet.`,
-        `memory_write a \`Reading:\` **or** call exit_plan_mode({ plan }) — the driver /builds (no user confirm). Type /build to skip remaining research.`,
-        `That write ends this phase. Then you get edits.`,
-      );
-    } else {
-      parts.push(
-        ``,
-        `## ULW GOD MODE + RELENTLESS CYCLE`,
-        `ULW is **general god-mode**: sharp judgment + hard execution on whatever the hard work is — smart and hard, not thrash or process theater.`,
-        `General prompts are the product. "Comprehensively evaluate then improve UX" is a complete mandate — do not wait for a tighter spec. Spend the max_waves budget: Wave 1 writes the reading and ships the first item; remaining waves ship the next highest-leverage items on different surfaces. **Cycle complete.** only after cycle=0 from a user max_waves cap or /done. \`/cycle 0\` at wave N sits down at N+1 — finish the open wave, ship one more, LAST-reflect, sit down (ULW stays on). /done ends.`,
-        `Live counters/mandate arrive mid-conversation — do not invent cycle/wave numbers.`,
-        ``,
-        `### Philosophy (compass, not cage)`,
-        `- Own outcomes: soft/empty mandates mean **you** invent the hard work; never ask what to improve. Optimize impact × confidence / cost — busywork while harder work remains is failure.`,
-        `- Freestyle tools, order and depth when that yields better quality; harness rails (Stop/proof/todos) stay. Insight before volume. Batch reads. Cheapest proof that can fail.`,
-        ``,
-        `### Subagents (proactive)`,
-        `Spawn explore/plan/general-purpose **whenever** it improves quality or efficiency (parallel map, design space, isolated implement, worktree). Same-round explore/plan and worktree GP overlap with web_search (cap 8); isolation=none GP is serial. Skip when one call is enough. The child's \`- Next:\` is the brief (read artifact; resume_session_id for incomplete implementers; do not re-explore unless pick: is missing). skipped_explore_ledger is not a look. Converge and ship in the parent.`,
-        ``,
-        `### Wave loop`,
-        `vague wish → better-for-THIS-product → research (codebase/web/GitHub/skills) → plan (directions) → one ship → review → commit. Plan still good? next piece. Stale? enter_plan_mode. Holds re-arm PLAN.`,
-        `Smoke, prove, hostile review. Repeat while cycle=1. Imagine + read_file screenshots when the product must look like something.`,
-        ``,
-        `### Quality bar (harness-enforced facts)`,
-        `- Beat or match best wave so far: substance + real proof. No filler churn.`,
-        `- \`w\` moves when the job moves: production change + a test that *calls* it (or a play-loop). \`pinPresent\` / \`readSrc\` / raw \`readFileSync\` pins are not proof and do not stamp \`w\`.`,
-        `- Named-ship exhaust / same-surface hold re-arms PLAN. Leaving PLAN needs a real look (explore child or play-loop), not a new sentence.`,
-        `- Open explore-map ships are the ledger — do not re-explore until they are spent or a hold requires a new look. Off-job mill (3 ships that did not close a named/pick/play job) requires a look even if picks remain.`,
-        `- Thought-only is not a ship. After a streak, spawn explore or a play-loop — do not grep for the next mill. Do not revive Wave 1 as the live unit.`,
-        `- Every 4th wave / LAST: consolidation — the project's full check suite (background:true then get_task_output wait; hang/skip/targeted-only is proof=✗; isolates are proof=ran) and a hostile read of the cumulative diff as an **architect**: the harness measures the tree's shape (exports piled into existing files vs new modules, a signature past 7 params, one predicate literal in 4+ files, "used to" comments, exported constant booleans, image/HTML files nothing references). A trip is that consolidation's job — collapse it; the same trip unimproved at the next consolidation holds Stop until a ship shrinks the number.`,
-        `- Thin waves → demand higher leverage; user may \`/cycle 0\`. Unlimited duration is not a mill budget — sibling foo-n.js / same-dir new-modules do not raise the bar.`,
-        `- Same-surface siblings (same 1–3 production files / chrome-TTY kind, leftover, or near-duplicate ships) hold after 3 even under max_waves. One **idea** on a 4th disjoint file (toolbar, then card, then ticker, then flask saying the same sentence) holds too, bet slice or not — the 4th surface is not a ship; collapse it into one module those files import. Cap is a budget for distinct surfaces. \`/cycle 0\` N+1 still finishes.`,
-        `- **Bet contract (open mandates)**: the spine is the Bet — a capability this product cannot do today, named with the **new file** it creates — not the hole list. A defect in Bet grammar ("X still Y", "no longer", "wrong") is a pick and is refused; a Bet whose every path already exists is refused. Slices (production change on the path the Bet creates + a test that calls it) are job moves and never sibling mill. Six credited ships that touch no Bet hold unlimited ULW until a slice, a new \`Bet:\` (two unshipped swaps, then only a slice), or \`Bet: none — why\` (a window of 6). 24 credited ships with no new module hold an open mandate outright. Holes are smoke and Serendipity:, not the wave.`,
-        ``,
-        `### User controls (mid-turn)`,
-        `\`/cycle 1|0\` · \`/max-waves N|off\` · \`/ulw-off\` · free-text steering. Never pause for "is this good enough?" — cycle/max_waves is the answer.`,
-        `The harness auto-commits the dirty tree at each wave close and on **Cycle complete.** (never push; FORGE_ULW_AUTO_COMMIT=0 off), leaving unreferenced looks and \`.forge/\` scratch unstaged. Do not start a wave just to commit.`,
-        `Pause only for real external blockers (credentials, destructive shared-state, uninterpretable foreign work).`,
-      );
-    }
+    parts.push(
+      ``,
+      `## ULW EXECUTOR PROTOCOL`,
+      `You are the **executor** in a plan-cycle run. The unit of work is a cycle: a fresh-context Planner writes the plan, you execute it, a fresh-context Reviewer reads the cycle diff and revises, the harness runs the verify command and commits, then a new plan arrives. Every cycle is coherent and reviewed; there is no wave quota and no meter to satisfy.`,
+      ``,
+      `### Your part`,
+      `- The plan arrives as a \`[Forge ULW cycle driver] Cycle N plan\` message; its items are on your todo board by id. Ship them in order: implement, run the item's proof, mark it done with todo_write. Cancel an item only with a reason.`,
+      `- Close with **"Plan complete."** when every item is done or cancelled. Do not stop mid-item. Do not invent extra items — what you noticed goes in one line under \`Serendipity:\` for the Reviewer and the next Planner.`,
+      `- Tests must be able to fail; never weaken an assertion to go green. A test-only change with no production body is not a ship.`,
+      `- Proof: the cheapest check that can fail per item; the cycle gate is the declared verify command, run by the harness after review.`,
+      `- Need to re-think the plan? call enter_plan_mode with the reason — the cycle closes at the next Stop and a fresh Planner reads your reason. Do not research in-session.`,
+      `- Operator: lines are for a secret, an irreversible action, or an external blocker only. Never ask the user to choose.`,
+      ``,
+      `### Controls`,
+      `\`/cycle 0\` (finish this cycle, then stop) · \`/cycle 1\` · \`/replan\` · \`/max-cycles N|off\` · \`/plan\` (human pause) · \`/ulw-off\`. The harness commits each reviewed, green cycle locally (never push; FORGE_ULW_AUTO_COMMIT=0 off). Do not commit yourself.`,
+    );
   }
 
   // Goal protocol (static) — live objective admitted mid-conversation
@@ -495,44 +453,4 @@ export function buildBaselineSystemPrompt(opts: {
   }
 
   return parts.filter((p) => p !== undefined && p !== "").join("\n");
-}
-
-/**
- * @deprecated Prefer buildBaselineSystemPrompt + mid-conversation admissions.
- * Kept for callers that want a single combined system string (includes a
- * snapshot of live ULW/goal when provided).
- */
-export function buildSystemPrompt(opts: {
-  config: ForgeConfig;
-  workspace: string;
-  goal?: GoalState | null;
-  ultrawork?: boolean;
-  ulwCycle?: UlwCycleState | null;
-  subagentDepth?: number;
-}): string {
-  const baseline = buildBaselineSystemPrompt(opts);
-  const extras: string[] = [];
-  if (opts.ulwCycle?.enabled) {
-    const s = opts.ulwCycle;
-    extras.push(
-      ``,
-      `## Live ULW snapshot (also admitted mid-conversation)`,
-      `Counters: **cycle=${s.cycle} wave=${s.wave} blocks=${s.blocks}**`,
-      s.mandate ? `Mandate: ${displayUlwMandate(s.mandate)}` : "",
-    );
-  }
-  if (
-    opts.goal &&
-    opts.goal.objective &&
-    !opts.goal.paused &&
-    opts.goal.status === "active"
-  ) {
-    extras.push(
-      ``,
-      `## Live goal snapshot`,
-      `Objective: ${opts.goal.objective}`,
-      ...opts.goal.criteria.map((c, i) => `  ${i + 1}. ${c}`),
-    );
-  }
-  return [baseline, ...extras].filter((p) => p !== undefined && p !== "").join("\n");
 }

@@ -44,18 +44,17 @@ UserPromptSubmit hooks
    - no `**Goal achieved.**` attestation → continue
    - attestation after edits without machine-checkable evidence → bounce once demanding a real check, then normal blocks (capped — never an infinite trap)
    - stuck-wall (N no-edit Stop attempts) → release + surface to user
-3. **ULW cycle driver** (`cycle=1` re-anchor / `/cycle 0` stop at N+1 then LAST attestation). **Wave 1 is PLAN** (`/plan` permission mode + yolo-proof `ulw_orient`); a written plan auto-`/build`s. User `/build` skips research; user `/plan` is a human pause.
-4. **TodoGate** — open todos under ULW without `**Cycle complete.**` / `**Goal achieved.**`; outside ULW, soft-blocks **once** per prompt so half-finished checklists are finished or cancelled (`FORGE_TODO_SOFT_OUTSIDE_ULW=0` disables). Soft fire count is reset on wind-down (`/done`, `/goal done`, `/goal clear`, `/ulw-off`, `/clear`, `/new`, safety-valve CONTINUE→LAST, **max_waves auto LAST**, **ULW stuck-wall**, **goal stuck-wall**, **goal attestation / `markGoalDone`**, **`setMaxWaves` when already at/over cap**) **and** on fresh driver arm (`/ulw`, `/goal set`) via `clearSoftTodoGateOnWindDown`
-5. **Ultrawork open-todos backstop** (session flag if cycle state missing)
+3. **ULW plan-cycle driver** (`src/harness/cycle/`, `docs/ULW.md`). The executor's Stop is a wave boundary: open plan items → re-anchor; `Plan complete.` / an empty board / `/replan` / `stuck_threshold` no-progress Stops → the orchestrator runs the fresh-context **Reviewer**, the **verify command** (harness-run), the **commit**, and then the fresh-context **Planner** for the next cycle — all inside this Stop evaluation. Releases on `Verdict: fulfilled` / `blocked`, `/cycle 0`, `max_cycles`, or a red check past `fix_rounds`. No prose is classified; the roles judge.
+4. **TodoGate** — open todos under ULW (the plan items) without `Plan complete.` / `**Goal achieved.**`; outside ULW, soft-blocks **once** per prompt so half-finished checklists are finished or cancelled (`FORGE_TODO_SOFT_OUTSIDE_ULW=0` disables). Soft fire count is reset on wind-down (`/done`, `/goal done`, `/goal clear`, `/ulw-off`, `/clear`, `/new`, **goal stuck-wall**, **goal attestation / `markGoalDone`**) **and** on fresh driver arm (`/ulw`, `/goal set`) via `clearSoftTodoGateOnWindDown`
 6. **Handoff guard** — premature “let me know if…”, “shall I continue?”, “want me to…?” yields (and incomplete mid-implementation closers) are blocked under ULW/goal/open todos so the agent finishes instead of re-steering the user. Soft Q&A closers (“let me know if you have questions”) still allow Stop outside a driver. Cap: `FORGE_HANDOFF_BLOCK_CAP` (default 3) releases a stuck polite model.
 7. **Proof-claim guard** — “tests pass” / “all green” / “typecheck clean” without a structural `verificationRan` (bash check actually executed) blocks Stop once when edits/goal/ULW/todos are in flight. Complements ULW proof-demand for goal-only and plain implementation turns. Cap: `FORGE_PROOF_CLAIM_BLOCK_CAP` (default 1).
 8. **Report guard** (`src/harness/report-guard.ts`) — the closing message must stand on its own. It runs twice: an **attestation pass ahead of the drivers** (below) and step 8 for every other closer. (a) **Homework hand-back**: a *directive* to the user — “you **should** run…”, “you'll **need to** configure…”, “next step for you: add…”, “when you're ready, run…”, or an imperative that coordinates work (“run X **and fix** Y”) — blocks once. Telling the user what they *can now* do with the result is an affordance, not homework, and passes. The only things a closer may leave to the user are a missing secret, a hard external blocker, an irreversible action, or a decision that is the user's, each as an `Operator:` line (lines that name those reasons are exempt). (b) **Run-wide shape**: after ≥ 2 harness rounds with edits, a closer that is not outcome-first with ≥ 2 labelled sections (any markdown heading or a short standalone bold/underlined label — **What shipped** / **Verified** / **Not done** / **Needs you** are the examples the prompt gives, not a required vocabulary) is bounced once with the harness facts (files, commits, verify state, open items) so the model reports the whole run since the request, not the last round. Advisory Q&A and driver attestations never bounce. Both classifiers are pinned against `tests/fixtures/prose-corpus.ts` (`tests/prose-classifiers.test.ts`): every regex change has to keep the labelled corpus green, so a narrower homework pattern cannot quietly start passing real hand-backs or a wider one start bouncing affordances. Cap: `FORGE_REPORT_BLOCK_CAP` (default 2); `FORGE_REPORT_GUARD=0` off.
 
-**Attestation pass (step 1b).** The closer a user reads after a hundred waves is the driver attestation, and steps 2 and 3 release on it and return — step 8 never sees the run's most important message. `evaluateAttestationHomeworkAtStop` runs the same two checks on `**Cycle complete.**` under `/cycle 0` (a cycle=1 one declares a wave, not a release) and on `**Goal achieved.**`, *before* any driver evaluates the Stop, so a bounce costs one round and spends no wave, no evidence nudge and no wrap flag. Same `FORGE_REPORT_BLOCK_CAP`.
+**Attestation pass (step 1b).** The closer a user reads after a long goal run is `**Goal achieved.**`, and step 2 releases on it and returns — step 8 never sees the run's most important message. `evaluateAttestationHomeworkAtStop` runs the same two checks on it *before* the driver evaluates the Stop, so a bounce costs one round. The ULW plan-cycle driver releases on its own facts and the run report is printed from the cycle artifacts, so its executor closers are never terminal attestations. Same `FORGE_REPORT_BLOCK_CAP`.
 
 **No guideline-audit guard.** Earlier builds blocked one Stop when the session's first brief asked for a proofread of `AGENTS.md`-class files and none was read (step 1c). It is gone: the audit now fixes fact defects and *proposes* doctrine (below), and neither deserves a bounce — an ignored fact brief is a line in the run report and re-briefs next session; a proposal waits for `/guidelines apply`. `FORGE_GUIDELINE_AUDIT_BLOCK` is no longer read.
 
-Safety: a hard cap (`maxStopContinues`, default 50; ULW default 200) prevents infinite continue loops at the process level. Unlimited ULW CONTINUE Stop-blocks are the product (one per wave) and do not trip that cap. Length / empty / content_filter use a separate fuse of the same size so 200 waves do not make the next truncated completion release without `/cycle 0`.
+Safety: a hard cap (`maxStopContinues`, default 50; ULW default 200) prevents infinite continue loops at the process level. Unlimited ULW cycling's Stop-blocks are the product (one per wave) and do not trip that cap; a capped run or `/cycle 0` still fuses. Length / empty / content_filter use a separate fuse of the same size.
 
 ## Agent guidelines audit (fix facts, propose doctrine)
 
@@ -78,23 +77,21 @@ A wrong `AGENTS.md` / `CLAUDE.md` caps every session no matter how strong the mo
 Long ULW runs fail when cliff compaction or context rot drops the user's exact constraints. Forge keeps an append-only **decision ledger** per session:
 
 - Path: `~/.forge/sessions/<id>/decisions.json`
-- Seeded on `/ulw` arm from the mandate (priorities + constraints)
-- Injected on every ULW Stop re-anchor and into structured compact (`## 1b. Decisions`)
+- Each admitted plan appends `Plan N: <title>`; the Planner reads the ledger through the compact summary and its brief
+- Injected into structured compact (`## 1b. Decisions`)
 - Agent tool: `memory_write`; slash: `/memory list|add …|seed`
-- Wave-boundary OM-lite facts are recorded as `kind=wave` observations
-- Cap 400 with a **load-bearing trim**: superseded rows go first, then wave observations beyond 48, then the oldest non-durable rows; priorities/constraints/blockers/out-of-scope, `MANDATE:`, `Bet:` and the first `Reading:` are never evicted (both 400-record dogfood runs had lost their mandate to an oldest-first slice)
-- `Job:` / `Next need:` are one-slot notes — a new Reading supersedes the previous row instead of appending (107 duplicate `Job:` rows ate one ledger)
-- Soft/broad mandates require a **todo backlog (≥2)** before free-invent Wave 1 (contract before god-mode)
-- `/max-waves` and `/budget` remain **spend valves**, not substitutes for durable intent
+- Cap 400 with a **load-bearing trim**: superseded rows go first, then wave observations beyond 48, then the oldest non-durable rows; priorities/constraints/blockers/out-of-scope, `MANDATE:` and `Plan N:` rows are never evicted (both 400-record dogfood runs had lost their mandate to an oldest-first slice)
+- `/max-cycles` and `/budget` remain **spend valves**, not substitutes for durable intent
 
 ## Mid-conversation context (OpenCode-inspired)
 
-The **baseline system prompt** stays stable within a session epoch (workspace, tools, ULW *protocol*, project rules). Live harness fields (cycle/wave/mandate, goal objective, open todo counts) are **admitted** as chronological user messages:
+The **baseline system prompt** stays stable within a session epoch (workspace, tools, ULW executor *protocol*, project rules). Live harness fields (cycle/phase/plan items, goal objective, open todo counts) are **admitted** as chronological user messages:
 
 ```text
 [Forge harness — mid-conversation update]
 ## ULW
-ON | cycle=1 wave=3 blocks=5 (CONTINUE)
+ON | **cycle=2 phase=execute wave=3** — plan: first-run polish
+Items: 2/5 done — ship the open ones in order, mark each with todo_write, close with "Plan complete."
 …
 ```
 

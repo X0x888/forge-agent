@@ -760,20 +760,6 @@ describe("permissions for new tools", () => {
     assert.equal(status.decision, "allow");
   });
 
-  it("ulw_orient denies lsp ensure even under yolo", async () => {
-    const gate = new PermissionGate({ interactive: false });
-    const r = await gate.request({
-      toolName: "lsp",
-      input: { action: "ensure" },
-      mode: "bypassPermissions",
-      workspace: tmpRoot,
-      config: DEFAULT_CONFIG,
-      ulwPhase: "orient",
-    });
-    assert.equal(r.decision, "deny");
-    assert.match(r.reason || "", /ulw_orient: lsp ensure denied/);
-  });
-
   it("plan mode allows kebab-case Context7 call_mcp and denies mutations", async () => {
     const gate = new PermissionGate({ interactive: false });
     const cfg = {

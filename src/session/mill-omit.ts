@@ -1,9 +1,9 @@
 /**
- * Mill-edit class for outbound prune. Edit/write tools that are not the
- * Wave-1 job files — not only numbered foo-n.js.
+ * Off-plan edit class for outbound prune. Edit/write tools that touch none
+ * of the plan's files — not only numbered foo-n.js — are the first results
+ * the request prune stubs when the transcript grows.
  */
 import type { ChatMessage, ToolCall } from "../providers/types.js";
-import { isChromeOnlyPath } from "../harness/job-delta.js";
 
 const MILL_TOOL_RE = /write_file|search_replace|^edit$|apply_patch/i;
 const KEEP_READ_RE = /read_file|^grep$|^glob$|list_dir/i;
@@ -65,11 +65,14 @@ export function pathOnJobKeep(rel: string, jobKeepPaths?: string[]): boolean {
   return false;
 }
 
+const TEST_OR_CHROME_RE =
+  /(^|\/)(tests?|__tests__|spec|specs)\/|\.(test|spec)\.[cm]?[jt]sx?$|\.(css|md)$/i;
+
 export function isMillPath(rel: string): boolean {
   const n = (rel || "").replace(/\\/g, "/");
   if (!n) return false;
   if (MILL_PATH_RE.test(n)) return true;
-  if (isChromeOnlyPath(n)) return true;
+  if (TEST_OR_CHROME_RE.test(n)) return true;
   return false;
 }
 

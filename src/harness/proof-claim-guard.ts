@@ -17,7 +17,7 @@ import { looksLikeAdvisoryUserMessage } from "../util/advisory-intent.js";
  * infinite-loop (FORGE_PROOF_CLAIM_BLOCK_CAP).
  */
 
-import { detectWaveProof } from "./ulw-cycle.js";
+import { detectWaveProof } from "./verification.js";
 
 /**
  * Strong success claims that imply a check already ran.
@@ -36,7 +36,7 @@ const DONE_WITHOUT_PROOF_RE =
 
 /** Terminal attestations with their own evidence path — skip here. */
 const ATTESTATION_RE =
-  /\*\*Goal achieved\.\*\*|\*\*Cycle complete\.\*\*|\*\*Wave complete\.\*\*/i;
+  /\*\*Goal achieved\.\*\*|\*{0,2}Plan complete\.?\*{0,2}/i;
 
 export interface ProofClaimDetection {
   claim: boolean;
@@ -139,7 +139,7 @@ export function evaluateProofClaimAtStop(
     allowDoneClosers:
       workInFlight && input.editCount > 0 && !userAdvisory,
   });
-  // Terminal attestations (**Goal achieved.** / **Cycle complete.**) own their
+  // Driver attestations (**Goal achieved.** / Plan complete.) own their
   // evidence path — never bounce them via done-closers or wave-proof prose.
   if (detection.match === "attestation") {
     return { block: false, detection: { claim: false } };

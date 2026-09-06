@@ -2,14 +2,14 @@
 
 # AGENTS.md — Forge CLI
 
-Forge is a TypeScript (Node 20+) AI coding agent CLI. The product is the **harness**: blocking Stop hooks, `/goal`, and ULW (relentless waves) with a wave ledger, proof demands, and a Bet contract. Everything else (providers, auth, TUI) serves that.
+Forge is a TypeScript (Node 20+) AI coding agent CLI. The product is the **harness**: blocking Stop hooks, `/goal`, and ULW — a **plan-cycle** driver where a fresh-context Planner writes the plan, the session model executes it, a fresh-context Reviewer revises the cycle diff, and the harness runs the verify command and commits. Everything else (providers, auth, TUI) serves that.
 
 ## Commands
 
 ```bash
 npm install
 npm run typecheck        # tsc --noEmit (fast, run after every edit)
-npm test                 # node:test via tsx; ~2,700 tests in about a minute; FORGE_HOME is sandboxed to .tmp/
+npm test                 # node:test via tsx; ~2,400 tests in about two minutes; FORGE_HOME is sandboxed to .tmp/
 npm run build            # tsc → dist/ (bin: forge)
 npm run dev -- "…"       # tsx src/cli.ts
 npm run smoke            # build + scripts/smoke.mjs
@@ -17,7 +17,7 @@ npm run smoke            # build + scripts/smoke.mjs
 
 One test file: `npx tsx --test tests/foo.test.ts` (an isolate is proof=ran, not proof=✓ — the suite is the bar).
 The script clears `.tmp/forge-*` first: `TMPDIR` is pinned inside the repo and fixtures leave their scratch behind, and a `.tmp` grown to six figures of files makes the background-task tests time out at 10s with an unrelated-looking failure.
-Known baseline: 11 loop/retry tests fail on a clean `main` (hooks TypeError from a Cursor-native `~/.cursor/hooks.json`) — diff the `✖` lines against a run at the merge-base before blaming a change.
+Known baseline: the markdown-renderer / NO_COLOR / HUD-width tests and the `forge run` CLI tests fail on a clean `main` without a TTY or a `dist/` build — diff the `✖` lines against a run at the merge-base before blaming a change.
 
 ## Layout (where things live)
 
@@ -27,8 +27,8 @@ Known baseline: 11 loop/retry tests fail on a clean `main` (hooks TypeError from
 - `src/agent/tools/` — file/bash/search/MCP/LSP/subagent tools; `file-read-state.ts` (stale-edit guard), `edit-receipt.ts`, `format-on-write.ts`.
 - `src/agent/` also: `permissions.ts` / `rules.ts` / `sandbox.ts` / `shell-parse.ts` (deny > ask > allow; segment-strict bash), `subagent.ts` (explore / plan / general-purpose, worktree isolation).
 - `src/harness/` — the product:
-  - `stop-guard.ts` composes, in order: user Stop hooks → `report-guard.ts` (attestation pass, **before the drivers**, which never hand a Stop on while ULW is armed) → `goal.ts` → `ulw-cycle.ts` → `todo-gate.ts` → `handoff-guard.ts` → `proof-claim-guard.ts` → `report-guard.ts`. Every block is counted per guard in `guardBlocks` (run JSON · `metrics.jsonl` · `forge stats` harness row).
-  - `ulw-cycle.ts` — cycle flag, wave ledger, LAST wrap, holds (`same-surface.ts`, `explore-contract.ts`, `bet-contract.ts` — a Bet names the **new file** it creates; hole grammar is refused), `job-delta.ts`, `tests-without-body.ts`, `declared-checks.ts`, `verify-command.ts`, `last-reflect.ts`. **Accretion, not only stalling**: `idea-surface.ts` (one sentence on a 4th disjoint file holds, bet slice or not), `tree-shape.ts` (consolidation measures the run's cumulative diff — exports into existing files, 7+-param signatures, one predicate in 4+ files, "used to" comments, constant flags, unreferenced looks; an unimproved trip holds), the capability drought (24 credited ships with no new module hold an open mandate). HashPet (`~/.forge/sessions/23b2c2a5*`) is the run that motivated all three: every stalling meter green, architecture 74 → 36.
+  - `stop-guard.ts` composes, in order: user Stop hooks → `report-guard.ts` (attestation pass for `**Goal achieved.**`, **before the drivers**) → `goal.ts` → `cycle/` (the ULW driver) → `todo-gate.ts` → `handoff-guard.ts` → `proof-claim-guard.ts` → `report-guard.ts`. Every block is counted per guard in `guardBlocks` (run JSON · `metrics.jsonl` · `forge stats` harness row).
+  - `cycle/` — the ULW plan-cycle driver: `state.ts` (schema-2 `ulw.json`: cycle, phase, plan items, `cycles[]`, ledger), `machine.ts` (pure `decideAtStop`), `artifacts.ts` (`plan.md` / `review.md` parsers — labelled lines, never intent), `briefs.ts` (what the fresh Planner / Reviewer are handed), `orchestrator.ts` (runs the roles, the harness-run verify and the commit through an injected `CycleRuntime`; `ensureCyclePlanned` at turn start), `verify.ts`, `controls.ts` (`/cycle 0` = finish the open cycle then stop; `/replan`; `/max-cycles`), `status.ts`. There is **no mandate classifier and no wave meter**: the Planner decides `fulfilled`, the Reviewer judges the diff, the harness enforces sequence and facts (no writes before a plan, no commit before a completed review and a green harness-run check). HashPet (`~/.forge/sessions/23b2c2a5*`, 791 waves, every meter green, architecture 74 → 36) is why the meters became a Reviewer. `verification.ts` / `verify-command.ts` / `declared-checks.ts` classify what a check run is.
   - `context-admit.ts` — live counters as mid-conversation messages (never rewrite message[0]); `live-notices.ts`, `interjection.ts`.
   - `decision-memory.ts` (session `decisions.json`) and `project-memory.ts` (`~/.forge/project-memory/*.json` + tracked `.forge/MEMORY.md` mirror).
   - `guideline-audit.ts` — first action of a work turn: survey the `AGENTS.md`-class files the prompt actually loads; **fact defects** (dead paths, missing scripts, PM mismatch, clipped, empty) are fixed in place by the model, **doctrine** (long / conflict / no-commands) goes to a proposal outside the repo for `/guidelines diff|apply|discard` (or `guidelineAutoApply`); evidence-triggered, no Stop block (registry `~/.forge/guidelines/`); a look is an argument that resolves to the file, never a mention of its name.
@@ -39,8 +39,8 @@ Known baseline: 11 loop/retry tests fail on a clean `main` (hooks TypeError from
 - `src/commands/slash.ts` — every `/command` (+ `runDoctorCheck`); `help-text.ts`; `project-commands.ts` (`.forge/commands/*.md`).
 - `src/tui/` — REPL, bottom dock, status/turn/commit cards, markdown renderer.
 - `src/mcp/`, `src/lsp/` — MCP (defaults context7 + playwright) and LSP ensure packs.
-- `skills/forge-*/` — built-in skill packs; `docs/` — HARNESS, ULW, RELIABILITY, PRODUCTION, SAFETY, TOOLS.
-- `tests/*.test.ts` — one file per module; `tests/helpers/ulw-arm.ts` arms ULW past PLAN for ledger tests.
+- `skills/forge-*/` — built-in skill packs; `forge-planner` / `forge-reviewer` are the ULW role briefs, `forge-veteran` the shared doctrine; `docs/` — HARNESS, ULW, RELIABILITY, PRODUCTION, SAFETY, TOOLS.
+- `tests/*.test.ts` — one file per module; `tests/helpers/cycle-arm.ts` arms ULW with a plan already admitted (`armWithPlan`) and makes a real git repo (`mkGitRepo`); `tests/cycle-*.test.ts` drive the orchestrator with a fake `CycleRuntime`.
 
 ## Conventions
 
@@ -51,19 +51,19 @@ Known baseline: 11 loop/retry tests fail on a clean `main` (hooks TypeError from
 - Structural proof beats prose: a check counts only when a verification command actually ran (`verificationRan` / `verificationPassed`); closer text never stamps proof.
 - Sidecar JSON under `~/.forge` is written mode 0600 via `writeJsonFile`; nothing in the repo is a secret store.
 - Tests must be able to fail: never weaken an assertion to go green; a revert of the change must turn the test red.
-- Use the project's own vocabulary in code comments: wave, ship, Reading, Bet, LAST, hold, mill, chrome, job move.
+- Use the project's own vocabulary in code comments: cycle, plan, item, Planner, Reviewer, executor, verify, commit, wave (one Stop inside EXECUTE).
 
 ## Non-negotiables
 
 1. `blockingStopHooks` defaults to **true**. Stop/SubagentStop hook timeout or error **fails closed** (the agent keeps working).
-2. Every driver must be able to release: `/goal` stuck-wall, ULW `/cycle 0` → `/done` / `/ulw-off`, guard caps. Never an infinite trap without progress.
+2. Every driver must be able to release: `/goal` stuck-wall, ULW `Verdict: fulfilled` / `/cycle 0` / `max_cycles` / `fix_rounds` / `/ulw-off`, guard caps. Never an infinite trap without progress.
 3. Never push, never `rm -rf`, never drop data on the user's behalf; ULW auto-commit is local only (`FORGE_ULW_AUTO_COMMIT=0` off).
 4. Credentials never enter the model: `auth.json`, `id_rsa`, `~/.grok/auth.json` reads are hard-denied even under YOLO.
 
 ## Working here
 
 - After edits: `npm run typecheck`, then the test file for the module, then `npm test` before claiming done. The suite is a minute; there is no excuse for shipping on an isolate.
-- Test fixtures must `git init` their temp workspace. An empty `.git` dir is not a repo, `TMPDIR` points inside this repo during `npm test`, and git walks up — a fixture that arms ULW will otherwise auto-commit the developer's working tree.
-- Real ULW runs are the ground truth for harness changes: `~/.forge/sessions/*/ulw.json` (waves ledger, proofKind, bets). Survey them before adding a rule.
+- Test fixtures must `git init` their temp workspace. An empty `.git` dir is not a repo, `TMPDIR` points inside this repo during `npm test`, and git walks up — a fixture that commits a cycle will otherwise commit the developer's working tree.
+- Real ULW runs are the ground truth for harness changes: `~/.forge/sessions/*/ulw.json` (`cycles[]`, ledger) and `cycles/<n>/plan.md` / `review.md`. Survey them before adding a rule.
 - Changelog: add an entry under `## Unreleased` in `CHANGELOG.md` for user-visible behaviour, in the same "job:" style as its neighbours.
 - Deep detail lives in `docs/HARNESS.md`, `docs/ULW.md` and the per-module contracts in `docs/MODULES.md` — extend those, not this file. This file is a map, not a manual: keep it under 12k chars so the prompt loader shows all of it.

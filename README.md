@@ -2,7 +2,7 @@
 
 **Forge** is an open-source AI coding agent CLI with a **first-class harness** — the control plane that other tools partially implement.
 
-> **v0.9.99** — sit-down Next keys (`/verify` `/commit` `/budget` `/status`), Cursor provider (hosted Grok **256k**), **`/ulw` Wave 1 PLAN→BUILD**, bash writes join file-aware `/undo`, SuperGrok OIDC. Still **`/plan` ↔ `/build`**, apply_patch, `doctor --json`, blocking Stop, `/goal`, ULW.
+> **Unreleased** — **`/ulw` is a plan-cycle driver**: a fresh-context Planner writes each cycle's plan, you (the session model) execute it, a fresh-context Reviewer revises the cycle diff, the harness runs the verify command and commits, then re-plans. Still sit-down Next keys, Cursor provider (hosted Grok **256k**), **`/plan` ↔ `/build`**, apply_patch, `doctor --json`, blocking Stop, `/goal`.
 
 Key capability comparison:
 
@@ -190,7 +190,7 @@ While a goal is active:
 
 1. Every time the model tries to stop, the harness **blocks Stop** and re-injects the objective + acceptance criteria.
 2. Release only when the model attests **`**Goal achieved.**`** (after real work), or the **stuck-wall** fires (default: 3 consecutive Stop attempts with no file edits).
-3. Arming `/goal` also enables ultrawork mode for that session.
+3. `/goal` is the bounded driver; for open-ended or autonomous work use `/ulw`.
 
 CLI equivalent:
 
@@ -201,29 +201,29 @@ forge run "continue" --goal "…"
 
 Auto-arm from prose (default on): prompts like `don't stop until tests pass` or `goal: …` arm the same driver.
 
-### 3. Ultrawork cycle (`/ulw` + `/cycle`)
+### 3. Ultrawork — the plan-cycle driver (`/ulw`)
 
-Max-autonomy **relentless loop**. Soft prompts like `improve the code` are expanded to god-scope. **Wave 1 is PLAN** (same spine as `/plan` / `/build`) — then BUILD (research → waves → prove → review → repeat). Open mandates also owe a **Bet:** — a capability the product cannot do today, not another hole-close — and unlimited ULW holds after six ships that ignore it (see [docs/ULW.md](docs/ULW.md#bets-open-mandates)).
+Max-autonomy mode. The unit of work is a **cycle**: a fresh-context **Planner** subagent researches the product (identity, category, whole tree) and writes `plan.md`; the session model **executes** the plan's items for as many waves as it takes; a fresh-context **Reviewer** subagent reads the cycle diff as a reviewer and as an architect and **revises in place**; the harness runs the declared verify command itself and **commits** on green; then it re-plans. The Planner writing `Verdict: fulfilled` ends the run.
 
-| Flag | Meaning |
-|------|---------|
-| **`cycle=1`** (default on `/ulw`) | Keep going — Stop is blocked between waves |
-| **`cycle=0` / `/cycle 0`** | Finish this wave + one more (stop at N+1), then LAST and attest `**Cycle complete.**` |
-| **`max_waves=N`** (optional) | Cap waves; auto LAST when wave hits N (default unlimited) |
+Three prompts, one procedure:
+
+| Case | Prompt | Ends when |
+|------|--------|-----------|
+| clear goal | `/ulw add --version with a test` | the Planner judges it fulfilled (usually after cycle 1) |
+| direction | `/ulw polish the first-run experience` | fulfilled, `/cycle 0`, or `/max-cycles N` |
+| no prompt | `/ulw` | the Planner derives the direction from the product itself |
 
 ```text
-/ulw improve the code          # Wave 1 PLAN, then BUILD (cycle=1)
-/plan                          # pause into research (same key)
-/build                         # skip remaining research and implement
-/max-waves 3                   # optional cap (live mid-run too)
-/cycle 0                       # finish this wave + one more, then LAST
-/cycle 1                       # resume relentless loops
+/ulw [mandate]        # arm; bare /ulw lets the Planner derive the direction
+/cycle 0              # finish this cycle (execute → review → verify → commit), then stop
+/cycle 1              # keep re-planning after each commit
+/replan               # close the open cycle now and re-plan
+/max-cycles 3         # stop after cycle 3 is committed
+/plan · /build        # human pause / hand planning back
 /ulw-off
 ```
 
-CLI: `forge --ulw --max-waves 5 "harden the CLI"` · `forge run "…" --ulw --max-waves 3`
-
-See [docs/ULW.md](docs/ULW.md).
+CLI: `forge --ulw --max-cycles 2 "harden the CLI"` · `forge run "…" --ulw --json` (per-cycle `ulwCycles[]` in the payload). Per-role model/effort in `~/.forge/config.toml` `[ulw]` (`planner_model`, `reviewer_effort`, …). Artifacts under `~/.forge/sessions/<id>/cycles/<n>/`. See [docs/ULW.md](docs/ULW.md).
 
 ### 4. Production reliability (v0.9.3+) + expert UX (v0.9.5)
 
@@ -252,10 +252,11 @@ Full contract: [docs/RELIABILITY.md](docs/RELIABILITY.md) · expert checklist: [
 |---|---|
 | `/help` | Help |
 | `/goal …` | Goal lifecycle |
-| `/ulw [task]` | ULW + cycle=1 (soft prompts OK) |
-| `/cycle 1` / `0` | Continue waves / finish this + one more, then stop |
-| `/max-waves N\|off` | Cap ULW waves (auto LAST at N); default unlimited |
-| `/ulw-off` | Disarm ULW + cycle |
+| `/ulw [mandate]` | Plan-cycle driver (bare `/ulw` = the Planner derives the direction) |
+| `/cycle 1` / `0` | Keep cycling / finish this cycle (review, verify, commit), then stop |
+| `/replan` | Close the open cycle now and re-plan |
+| `/max-cycles N\|off` | Stop after N committed cycles; default until fulfilled |
+| `/ulw-off` | Disarm ULW |
 | `/hooks` | List hooks |
 | `/status` · `/hud` | Verdict-first HUD · lastErr Next is a slash key |
 | `/tasks` | Background shell tasks (running / recent) |
@@ -267,7 +268,7 @@ Full contract: [docs/RELIABILITY.md](docs/RELIABILITY.md) · expert checklist: [
 | `/share` | Pasteable session card + resume/export commands (clipboard) |
 | `/setup` | First-day hub: model, budget, notify, AGENTS.md, LSP · CLI: `forge setup` |
 | `/tips` | Expert cheat sheet · CLI: `forge tips` |
-| `/report` | Standalone run report: outcome · what shipped · verified · not done · needs you (also printed after multi-round runs / ULW ends; `forge run --json` → `report`) |
+| `/report` | Standalone run report: outcome · what shipped (per cycle) · verified · not done · needs you (also printed after multi-round runs / ULW ends; `forge run --json` → `report`) |
 | `/guidelines [audit\|stamp]` | Agent-guidelines audit state (AGENTS.md / CLAUDE.md proofread stamp, manual / stale / conflict flags) |
 | `/todos` | Work board (▶ next · ○ pending · ✓ done) |
 | `/model <id> [effort]` | Switch model mid-run; optional `low`\|`medium`\|`high`\|`xhigh` (persists) **[live]** |
@@ -325,7 +326,7 @@ forge status --tmux       # for tmux status-right
 
 Works for **any** auth method: always shows session context/tokens/git/liveness/activity; plan credits only when the provider exposes them (e.g. SuperGrok via imported Grok session). See [docs/STATUSLINE.md](docs/STATUSLINE.md).
 
-Empty Tab and `/` + Tab offer first-day starters; type `/ul` or `/per` then Tab for the rest (including project `.forge/commands` and skill packs via `/skills`). Permission prompts: **Enter** or `y` allows once. While the agent is working you can still run **live controls** (`/cycle 0`, `/cycle 1`, `/max-waves N|off`, `/ulw-off`, `/plan`, `/build`, `/model`, `/pause`, `/unpause`, `/done`, `/status`, …) without aborting — harness state updates apply at the next model step. **Free-text** mid-run is queued as an interjection (Grok-style) for the next LLM call. **Ctrl+C** aborts the current agent turn (again at idle prompt to exit).
+Empty Tab and `/` + Tab offer first-day starters; type `/ul` or `/per` then Tab for the rest (including project `.forge/commands` and skill packs via `/skills`). Permission prompts: **Enter** or `y` allows once. While the agent is working you can still run **live controls** (`/cycle 0`, `/cycle 1`, `/replan`, `/max-cycles N|off`, `/ulw-off`, `/plan`, `/build`, `/model`, `/pause`, `/unpause`, `/done`, `/status`, …) without aborting — harness state updates apply at the next model step. **Free-text** mid-run is queued as an interjection (Grok-style) for the next LLM call. **Ctrl+C** aborts the current agent turn (again at idle prompt to exit).
 
 Headless CI can run slash prompts too: `forge run "/plan"` · `forge run "/commands"` · `forge run "/skills"` · custom templates expand then run (`reason: "slash"` when no model call). Starter templates: `examples/forge-commands/` · project skill packs: `examples/forge-skills/` (copy into `.forge/skills/<name>/SKILL.md`).
 
@@ -408,10 +409,12 @@ src/
   harness/
     hooks.ts          # Claude-compatible hooks, blocking Stop
     goal.ts           # /goal state machine
-    stop-guard.ts     # composes hooks + goal + ultrawork + guards
+    cycle/            # ULW plan-cycle driver: Planner → executor → Reviewer → verify → commit
+    stop-guard.ts     # composes hooks + goal + cycle driver + guards
     guideline-audit.ts# AGENTS.md / CLAUDE.md: fix dead paths, propose doctrine
     run-report.ts     # standalone end-of-run report
     report-guard.ts   # no homework hand-back; run-wide closing message
+  skills/forge-planner, forge-reviewer, forge-veteran   # role doctrine
   session/            # durable sessions under ~/.forge/sessions
   commands/slash.ts   # /goal /ulw /hooks …
   tui/repl.ts         # interactive readline REPL
@@ -427,7 +430,7 @@ src/
 - **Codex** — `/goal` lifecycle, plan→act→verify loop, stuck-wall escape  
 - **OpenCode** — multi-provider, `/connect`-style login, project `AGENTS.md`, `/plan`↔`/build`, custom commands, instruction walk-up  
 - **Grok Build** — auth shapes, slash surface, compat hooks (plus the Stop gap we close)  
-- **oh-my-claude** — ultrawork, goal auto-arm, stop-guard composition  
+- **oh-my-claude** — ultrawork (the name), goal auto-arm, stop-guard composition  
 - **Warp** — `/compact-and`, agent workflow polish  
 
 ---

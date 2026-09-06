@@ -1,0 +1,250 @@
+/**
+ * Role briefs — what the fresh-context Planner and Reviewer are handed.
+ *
+ * A brief is facts plus the output contract. The executor's prose never
+ * enters: the Planner reads the mandate, the identity, the prior cycles'
+ * plans and reviews, the user's interjections and the tree; the Reviewer
+ * reads the plan and the cycle diff. Freshness is the point — the model that
+ * made the changes is not the one that judges them.
+ */
+import { planArtifactContract, reviewArtifactContract } from "./artifacts.js";
+import type { CycleRecord, CycleState } from "./state.js";
+
+export interface PlannerBriefInput {
+  state: CycleState;
+  workspace: string;
+  gitLog: string;
+  gitStatus: string;
+  guidelineSurvey: string;
+  projectChecks: string[];
+  userMessages: string[];
+  priorPlans: Array<{ n: number; text: string }>;
+  priorReviews: Array<{ n: number; text: string }>;
+}
+
+function cycleLine(c: CycleRecord): string {
+  const bits = [
+    `cycle ${c.n}${c.title ? ` — ${c.title}` : ""}`,
+    `${c.itemsDone}/${c.itemsTotal} items`,
+    `${c.waves} wave(s)`,
+    c.reviewVerdict ? `review: ${c.reviewVerdict}` : "",
+    c.verifyCommand
+      ? `verify: ${c.verifyCommand} ${c.verifyPassed ? "✓" : c.verifyPassed === false ? "✗" : "–"}`
+      : "",
+    c.commitSha ? `commit ${c.commitSha}` : "",
+  ].filter(Boolean);
+  return bits.join(" · ");
+}
+
+function clipBlock(text: string, max: number): string {
+  const t = (text || "").trim();
+  if (t.length <= max) return t;
+  return `${t.slice(0, max)}\n… [clipped ${t.length - max} chars]`;
+}
+
+export function buildPlannerBrief(input: PlannerBriefInput): string {
+  const s = input.state;
+  const next = s.cycle + 1;
+  const lines: string[] = [
+    `[Forge cycle planner — cycle ${next}]`,
+    `You are the Planner for an autonomous plan-cycle run. You have no prior context on purpose: read, research, judge, write the plan. You do not implement.`,
+    ``,
+    `## Workspace`,
+    input.workspace,
+    ``,
+    `## Mandate`,
+    s.mandate
+      ? s.mandate
+      : `(none) — the user gave no direction. Derive it from the product itself: what it is, who it serves, what a tool of this kind is expected to do, and where this tree falls short. That gap is the direction.`,
+  ];
+  if (s.identity) {
+    lines.push(``, `## Identity (persisted — reaffirm or propose a change as an Operator: line)`, s.identity);
+  }
+  if (s.direction) {
+    lines.push(``, `## Direction so far`, s.direction);
+  }
+  if (s.cycles.length) {
+    lines.push(``, `## Previous cycles`);
+    for (const c of s.cycles) lines.push(`- ${cycleLine(c)}`);
+    const last = s.cycles[s.cycles.length - 1];
+    if (last?.mustFix.length) {
+      lines.push(``, `## Must-fix left by the last review (these come first)`);
+      for (const m of last.mustFix) lines.push(`- ${m}`);
+    }
+    const unfulfilled = s.items.filter((i) => i.status === "open");
+    if (unfulfilled.length) {
+      lines.push(``, `## Plan items not finished last cycle`);
+      for (const i of unfulfilled) lines.push(`- ${i.title}`);
+    }
+  }
+  if (input.priorPlans.length) {
+    lines.push(``, `## Prior plan(s)`);
+    for (const p of input.priorPlans.slice(-2)) {
+      lines.push(`### Cycle ${p.n} plan`, clipBlock(p.text, 3_000));
+    }
+  }
+  if (input.priorReviews.length) {
+    lines.push(``, `## Prior review(s)`);
+    for (const r of input.priorReviews.slice(-2)) {
+      lines.push(`### Cycle ${r.n} review`, clipBlock(r.text, 3_000));
+    }
+  }
+  if (input.userMessages.length) {
+    lines.push(``, `## What the user said since the last plan (weigh it; it outranks the previous direction)`);
+    for (const m of input.userMessages.slice(-6)) lines.push(`- ${clipBlock(m, 600).replace(/\n/g, " ")}`);
+  }
+  lines.push(
+    ``,
+    `## Tree`,
+    input.gitStatus || "(git status unavailable)",
+    ``,
+    `## Commits this run`,
+    input.gitLog || "(none yet)",
+    ``,
+    `## Project checks the stack table knows`,
+    input.projectChecks.length ? input.projectChecks.map((c) => `- \`${c}\``).join("\n") : "- (none detected — declare one or say none)",
+    ``,
+    `## Agent guidelines survey`,
+    input.guidelineSurvey || "(no AGENTS.md-class file found — the plan's first item may create one)",
+    ``,
+    `## Procedure`,
+    `1. Identity: what is this product, who uses it, for what job. README, docs, --help, manifests, tests as spec. One paragraph.`,
+    `2. Category: research online what the best tools of this kind do and what their users complain about; recall what a demanding user expects.`,
+    `3. Tree: the whole tree, not a surface — module map, coupling, hot files, dead code, duplication, coverage of the core job. Run the product as a first-time user when it can be run.`,
+    `4. Gap: should-be minus is — missing capabilities, broken promises (docs vs behaviour), rough edges on the core job, architectural debt that blocks the above. Rank by user impact × confidence / cost.`,
+    `5. Harmonize: one coherent theme for this cycle, as many items as it needs (1 or 9). Each item names its files and the observable or command that proves it. Invention and repair are both legitimate; the tree decides which this cycle needs.`,
+    `6. Guidelines: does the AGENTS.md-class file describe this product and carry the conventions an executor needs? Fact defects and missing conventions are the plan's first item; removing existing doctrine is a proposal, not an edit.`,
+    `7. A mandate that is already met is a plan: Verdict: fulfilled. A mandate that only the user can unblock is Verdict: blocked. Never invent work to avoid either.`,
+    ``,
+    `## Output`,
+    `Your final message is the plan and nothing else, in exactly this shape:`,
+    planArtifactContract(next),
+  );
+  return lines.join("\n");
+}
+
+export interface ReviewerBriefInput {
+  state: CycleState;
+  workspace: string;
+  planText: string;
+  diff: string;
+  diffTruncated: boolean;
+  changedFiles: string[];
+  verifyCommand?: string;
+  executorCloser: string;
+}
+
+export function buildReviewerBrief(input: ReviewerBriefInput): string {
+  const s = input.state;
+  const lines: string[] = [
+    `[Forge cycle reviewer — cycle ${s.cycle}]`,
+    `You are the Reviewer for an autonomous plan-cycle run. You have no prior context on purpose. You read the plan and the cycle's diff as a hostile senior reviewer and as an architect, and you revise in place — you have write access. The harness runs the verify command after you and commits only on green.`,
+    ``,
+    `## Workspace`,
+    input.workspace,
+    ``,
+    `## The plan this cycle executed`,
+    clipBlock(input.planText, 6_000),
+    ``,
+    `## Files changed this cycle (${input.changedFiles.length})`,
+    input.changedFiles.length ? input.changedFiles.map((f) => `- ${f}`).join("\n") : "- (no tracked changes — check untracked files)",
+    ``,
+    `## Cycle diff${input.diffTruncated ? " (truncated — read the files for the rest)" : ""}`,
+    "```diff",
+    input.diff || "(empty)",
+    "```",
+    ``,
+    `## Executor's closing message`,
+    clipBlock(input.executorCloser, 2_000) || "(none)",
+    ``,
+    `## Verify`,
+    input.verifyCommand
+      ? `\`${input.verifyCommand}\` — run it yourself after your revisions; the harness runs it again and a red run blocks the commit.`
+      : `No project check is declared. Say so under Must-fix if this repo should have one.`,
+    ``,
+    `## Duty`,
+    `- Fulfilment: for every plan item, is it done, partial, or missing? Judge from the tree, not the closer.`,
+    `- Regressions, weakened or deleted assertions, stubs, TODOs left as work, error paths swallowed.`,
+    `- Shape: one idea forked across files, a signature that grew arguments, a flag that is always the same value, comments that narrate the change ("used to", "no longer"), exports bolted onto an unrelated module when a new module was due.`,
+    `- Tests: a test that cannot fail is deleted; a test-only change with no production body is reverted or given its body; the suite is the gate, never the deliverable.`,
+    `- Revise what you can now — small, correct, in the project's own conventions. What you cannot fix in this review goes under Must-fix; it becomes the next plan's first items.`,
+    `- Do not widen scope. Do not start the next cycle's work.`,
+    ``,
+    `## Output`,
+    `Your final message is the review and nothing else, in exactly this shape:`,
+    reviewArtifactContract(s.cycle),
+  ];
+  return lines.join("\n");
+}
+
+/** What the executor reads when a plan lands. */
+export function formatPlanAdmission(opts: {
+  cycle: number;
+  title: string;
+  planText: string;
+  verifyCommand?: string;
+  maxCycles: number | null;
+  cycleZeroRequested: boolean;
+}): string {
+  const budget = opts.cycleZeroRequested
+    ? `This is the last cycle (/cycle 0 is set): after review and commit the run stops.`
+    : opts.maxCycles != null
+      ? `Cycle ${opts.cycle} of ${opts.maxCycles}.`
+      : `Cycle ${opts.cycle}; the run re-plans after each committed cycle until the Planner says fulfilled or you /cycle 0.`;
+  return [
+    `[Forge ULW cycle driver] Cycle ${opts.cycle} plan — ${opts.title}`,
+    ``,
+    opts.planText.trim(),
+    ``,
+    `You are the executor. Ship the items in order: implement, run the item's proof, mark it done with todo_write (the board already lists them by id). Cancel an item only with a reason. Close with "Plan complete." when every item is done or cancelled. A fresh reviewer then reads the cycle diff and revises; the harness runs ${opts.verifyCommand ? `\`${opts.verifyCommand}\`` : "the project check"} and commits on green. ${budget}`,
+    `Do not stop mid-item, do not ask the user to choose; Operator: lines are for a secret, an irreversible action, or an external blocker only. Live controls: /cycle 0 · /replan · /ulw-off.`,
+  ].join("\n");
+}
+
+export function formatItemsOpenReanchor(opts: {
+  cycle: number;
+  wave: number;
+  items: Array<{ id: string; title: string; files: string[]; proof?: string }>;
+  verifyCommand?: string;
+  stuckBlocks: number;
+  stuckThreshold: number;
+}): string {
+  const rows = opts.items
+    .slice(0, 8)
+    .map(
+      (i) =>
+        `  • ${i.id} ${i.title}${i.files.length ? ` (${i.files.slice(0, 3).join(", ")})` : ""}${i.proof ? ` — proof: ${i.proof}` : ""}`,
+    );
+  const stuck =
+    opts.stuckBlocks > 0
+      ? ` No tree movement for ${opts.stuckBlocks} Stop(s); at ${opts.stuckThreshold} the cycle closes and the reviewer takes over.`
+      : "";
+  return [
+    `[Forge ULW cycle driver] Stop blocked — cycle ${opts.cycle}, wave ${opts.wave}: ${opts.items.length} plan item(s) still open.`,
+    ...rows,
+    opts.items.length > 8 ? `  … +${opts.items.length - 8} more` : "",
+    `Continue the plan: implement the next item, run its proof${opts.verifyCommand ? ` (cheapest first; \`${opts.verifyCommand}\` is the cycle gate)` : ""}, mark it done with todo_write. Close with "Plan complete." when the board is clear.${stuck}`,
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+export function formatFixReanchor(opts: {
+  cycle: number;
+  command: string;
+  round: number;
+  cap: number;
+  tail: string;
+  mustFix: string[];
+}): string {
+  return [
+    `[Forge ULW cycle driver] Stop blocked — cycle ${opts.cycle} was reviewed; \`${opts.command}\` is RED (fix round ${opts.round}/${opts.cap}).`,
+    opts.mustFix.length ? `Reviewer must-fix: ${opts.mustFix.slice(0, 4).join(" · ")}` : "",
+    "```",
+    clipBlock(opts.tail, 3_000) || "(no output captured)",
+    "```",
+    `Fix the failure in the code — never weaken or delete an assertion to go green — then stop; the harness re-runs the check and commits on green.`,
+  ]
+    .filter(Boolean)
+    .join("\n");
+}

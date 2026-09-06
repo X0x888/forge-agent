@@ -145,7 +145,6 @@ const GUARD_BLOCK_CLASSES: { id: string; prefix: string }[] = [
   { id: "goal", prefix: "[Forge /goal driver]" },
   { id: "goalEvidence", prefix: "[Forge system-reminder — Goal attestation needs evidence]" },
   { id: "ulw", prefix: "[Forge ULW cycle driver]" },
-  { id: "ultrawork", prefix: "[Forge ultrawork]" },
   { id: "verify", prefix: "[Forge harness — verify nudge]" },
   { id: "fix", prefix: "[Forge harness — fix until green]" },
   { id: "guidelines", prefix: "[Forge harness — agent guidelines audit]" },

@@ -74,19 +74,14 @@ describe("desktop notify preference", () => {
     assert.match(text, /Forge · bg /);
   });
 
-  it("goal + ULW stuck-wall wire maybeDesktopNotify", async () => {
+  it("goal driver wires maybeDesktopNotify", async () => {
     const fs = await import("node:fs");
     const goal = fs.readFileSync(
       new URL("../src/harness/goal.ts", import.meta.url),
       "utf8",
     );
-    const ulw = fs.readFileSync(
-      new URL("../src/harness/ulw-cycle.ts", import.meta.url),
-      "utf8",
-    );
     assert.match(goal, /Forge · Goal achieved/);
     assert.match(goal, /Forge · Goal stuck-wall/);
-    assert.match(ulw, /Forge · ULW stuck-wall/);
   });
 
   it("maybeRingBell still honors force", () => {
@@ -145,15 +140,11 @@ describe("turnEndOutcomeLabel", () => {
     assert.equal(turnEndOutcomeLabel({ stuckReleased: true }), "stuck-wall");
     assert.equal(
       turnEndOutcomeLabel({ lastCycleReleased: true }),
-      "cycle complete",
+      "ULW released",
     );
     assert.equal(
-      turnEndOutcomeLabel({ lastCycleSatDown: true }),
-      "wrap sat down",
-    );
-    assert.equal(
-      turnEndOutcomeLabel({ lastErrorCode: "ulw_stuck_wall" }),
-      "stuck-wall",
+      turnEndOutcomeLabel({ lastErrorCode: "ulw_released" }),
+      "ULW released",
     );
     assert.equal(turnEndOutcomeLabel({ aborted: true }), "aborted");
     assert.equal(

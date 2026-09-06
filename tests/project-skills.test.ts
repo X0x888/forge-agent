@@ -163,7 +163,7 @@ Always run smoke after deploy.
         inlineNames: ["forge-veteran"],
       });
       assert.match(ulwPrompt, /skill:forge-veteran/);
-      assert.match(ulwPrompt, /Veteran product loop/);
+      assert.match(ulwPrompt, /Veteran doctrine/);
       // Multi-line frontmatter description: >- must not leak as the description
       assert.ok(!/skill:forge-method.*—\s*>-/.test(prompt));
       assert.match(method.description, /built-in skills|playbook/i);

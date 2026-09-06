@@ -13,7 +13,7 @@ import { executeTool } from "../agent/tools/index.js";
 import {
   applyVerificationTrail,
   verificationPassedFromResult,
-} from "../harness/ulw-cycle.js";
+} from "../harness/verification.js";
 import { detectProjectIntel } from "../util/project-intel.js";
 
 const MAX_SESSION_CHARS = 8_000;

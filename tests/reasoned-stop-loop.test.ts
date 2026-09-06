@@ -14,11 +14,8 @@ import { HookRunner } from "../src/harness/hooks.js";
 import { PermissionGate } from "../src/agent/permissions.js";
 import { McpManager } from "../src/mcp/manager.js";
 import { LspManager } from "../src/lsp/manager.js";
-import {
-  armUlwCycle,
-  disarmUlwCycle,
-  loadUlwCycle,
-} from "../src/harness/ulw-cycle.js";
+import { disarmCycle, loadCycleState } from "../src/harness/cycle/index.js";
+import { armWithPlan } from "./helpers/cycle-arm.js";
 import { thoughtOnlyStopMax } from "../src/agent/reasoned-stop.js";
 import { REASONING_WALL_FINISH } from "../src/agent/reasoned-stop.js";
 import type { LLMProvider, ChatResponse } from "../src/providers/types.js";
@@ -195,10 +192,7 @@ describe("reasoned empty Stop in the agent loop", () => {
 
   it("ULW still re-anchors a reasoned stop (no empty-continue poke)", async () => {
     const h = harness();
-    armUlwCycle(h.session.meta.id, "Ship the feature.", {
-      cycle: 1,
-      skipCheckpoint: true,
-    });
+    armWithPlan({ sessionId: h.session.meta.id, cwd: tmp, mandate: "Ship the feature." });
     const provider = scriptedProvider([
       reasonedEmpty(),
       textReply("Acting on the ULW re-anchor."),
@@ -224,7 +218,7 @@ describe("reasoned empty Stop in the agent loop", () => {
       assert.match(dumped, /Acting on the ULW re-anchor/);
       assert.match(dumped, /next output MUST be a tool call/);
     } finally {
-      disarmUlwCycle(h.session.meta.id);
+      disarmCycle(h.session.meta.id);
     }
   });
 
@@ -250,11 +244,7 @@ describe("reasoned empty Stop in the agent loop", () => {
     process.env.FORGE_THOUGHT_ONLY_MAX = "20";
     const h = harness();
     h.config.maxTurns = 3;
-    armUlwCycle(h.session.meta.id, "Ship the feature.", {
-      cycle: 1,
-      maxWaves: 10,
-      skipCheckpoint: true,
-    });
+    armWithPlan({ sessionId: h.session.meta.id, cwd: tmp, mandate: "Ship the feature.", maxCycles: 10 });
     const provider = scriptedProvider([
       reasoningWall(),
       reasoningWall(),
@@ -278,7 +268,7 @@ describe("reasoned empty Stop in the agent loop", () => {
     } finally {
       if (prevThought === undefined) delete process.env.FORGE_THOUGHT_ONLY_MAX;
       else process.env.FORGE_THOUGHT_ONLY_MAX = prevThought;
-      disarmUlwCycle(h.session.meta.id);
+      disarmCycle(h.session.meta.id);
     }
   });
 
@@ -287,11 +277,7 @@ describe("reasoned empty Stop in the agent loop", () => {
     process.env.FORGE_THOUGHT_ONLY_MAX = "2";
     const h = harness();
     h.config.maxTurns = 10;
-    armUlwCycle(h.session.meta.id, "Ship the feature.", {
-      cycle: 1,
-      maxWaves: 10,
-      skipCheckpoint: true,
-    });
+    armWithPlan({ sessionId: h.session.meta.id, cwd: tmp, mandate: "Ship the feature.", maxCycles: 10 });
     const provider = scriptedProvider([
       reasoningWall(),
       reasoningWall(),
@@ -309,13 +295,13 @@ describe("reasoned empty Stop in the agent loop", () => {
       });
       assert.equal(result.releasedOnContinueCap, false);
       assert.equal(h.session.meta.lastError?.code, "thought_only_cap");
-      assert.equal(loadUlwCycle(h.session.meta.id)?.cycle, 1);
-      assert.match(result.finalText, /ULW is still CONTINUE/);
+      assert.equal(loadCycleState(h.session.meta.id)?.enabled, true);
+      assert.match(result.finalText, /ULW stays armed/);
       assert.ok(provider.calls <= 3, `should stop after thought-only cap, calls=${provider.calls}`);
     } finally {
       if (prevThought === undefined) delete process.env.FORGE_THOUGHT_ONLY_MAX;
       else process.env.FORGE_THOUGHT_ONLY_MAX = prevThought;
-      disarmUlwCycle(h.session.meta.id);
+      disarmCycle(h.session.meta.id);
     }
   });
 

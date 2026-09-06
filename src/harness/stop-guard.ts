@@ -4,13 +4,13 @@
  * Composes:
  *  1. User-defined Stop hooks (blocking)
  *  1b. Report guard, attestation pass — the drivers release on
- *     **Cycle complete.** / **Goal achieved.** and return, so the run's
+ *     **Goal achieved.** and return, so the run's
  *     closing message is checked for homework and run-wide shape here,
  *     before any driver consumes the Stop
  *  2. /goal relentless driver
- *  3. ULW cycle driver (cycle=1 loop / cycle=0 last-wave)
+ *  3. ULW plan-cycle driver (executor Stop = wave boundary; may run the
+ *     Reviewer / Planner / verify command and commit)
  *  4. TodoGate (open todos under ULW; soft once outside ULW)
- *  5. Ultrawork open-todos backstop
  *  6. Handoff guard — premature "let me know if…" / "shall I continue?" yields
  *  7. Proof-claim guard — "tests pass" / silent edits-without-verify (free triage)
  *  8. Report guard — homework hand-back / last-round-only closer after
@@ -24,7 +24,14 @@ import {
   loadGoal,
   type GoalDecision,
 } from "./goal.js";
-import { evaluateUlwAtStop, loadUlwCycle, type UlwStopDecision } from "./ulw-cycle.js";
+import {
+  evaluateCycleAtStop,
+  loadCycleState,
+  cycleActive,
+  stuckThresholdDefault,
+  type CycleRuntime,
+  type CycleStopOutcome,
+} from "./cycle/index.js";
 import { evaluateTodoGateAtStop } from "./todo-gate.js";
 import {
   evaluateHandoffAtStop,
@@ -34,7 +41,6 @@ import {
   evaluateProofClaimAtStop,
   type ProofClaimStopDecision,
 } from "./proof-claim-guard.js";
-import { envPositiveInt } from "../util/env.js";
 import {
   evaluateAttestationHomeworkAtStop,
   evaluateReportAtStop,
@@ -47,6 +53,8 @@ export interface StopGuardInput {
   hooks: HookRunner;
   ctx: HookContext;
   ultrawork: boolean;
+  /** Hands for the cycle driver (subagents, verify, git). Absent in tests / subagents. */
+  cycleRuntime?: CycleRuntime;
   openTodoCount: number;
   editCount: number;
   lastAssistantMessage: string;
@@ -55,7 +63,7 @@ export interface StopGuardInput {
   /**
    * Structural proof signal: a verification command (test/typecheck/lint/build)
    * actually executed since the previous Stop evaluation. Gate = execution,
-   * not judgment — the wave ledger trusts this over prose claims.
+   * not judgment — the cycle ledger trusts this over prose claims.
    */
   verificationRan?: boolean;
   /**
@@ -95,7 +103,7 @@ export interface StopGuardResult {
   additionalContext?: string;
   systemMessage?: string;
   goal?: GoalDecision;
-  ulw?: UlwStopDecision;
+  ulw?: CycleStopOutcome;
   hook?: HookResult;
   /** True when Stop was blocked by TodoGate */
   todoGate?: boolean;
@@ -111,12 +119,13 @@ export async function runStopGuard(input: StopGuardInput): Promise<StopGuardResu
   const { config, hooks, ctx } = input;
 
   const goal = loadGoal(ctx.sessionId);
-  const ulw = loadUlwCycle(ctx.sessionId);
+  const ulw = loadCycleState(ctx.sessionId);
+  const ulwOn = cycleActive(ulw);
   // Net-diff progress tracking (goal + ULW): bash-channel edits must count as
   // progress and edit→revert churn must not. Two cheap git calls, only when a
   // driver is actually armed — never on plain sessions' Stop path.
   const driverArmed =
-    Boolean(ulw?.enabled) ||
+    ulwOn ||
     Boolean(
       goal && goal.objective && !goal.paused && goal.status === "active",
     );
@@ -126,7 +135,7 @@ export async function runStopGuard(input: StopGuardInput): Promise<StopGuardResu
   const hookCtx: HookContext = {
     ...ctx,
     goalObjective: goal?.objective,
-    ultrawork: input.ultrawork || Boolean(ulw?.enabled),
+    ultrawork: input.ultrawork || ulwOn,
     editCount: input.editCount,
     lastAssistantMessage: input.lastAssistantMessage,
     stopReason: "agent_end",
@@ -152,15 +161,13 @@ export async function runStopGuard(input: StopGuardInput): Promise<StopGuardResu
   }
 
   // Report guard, attestation pass. The closer a user reads after a long run
-  // is **Cycle complete.** / **Goal achieved.**, and the drivers below release
+  // is **Goal achieved.**, and the goal driver below releases
   // on it and return — step 8 never sees the run's most important message.
   // Checked here, before any driver consumes this Stop, so a bounce costs one
   // round and never a wave or an evidence nudge.
   const attestationDecision = evaluateAttestationHomeworkAtStop({
     lastAssistantMessage: input.lastAssistantMessage,
     lastUserMessage: input.lastUserMessage,
-    ulwEnabled: Boolean(ulw?.enabled),
-    ulwCycle: ulw?.cycle,
     stopContinues: input.stopContinues,
     editCount: input.editCount,
     reportBlocks: input.reportBlocks,
@@ -211,33 +218,25 @@ export async function runStopGuard(input: StopGuardInput): Promise<StopGuardResu
     };
   }
 
-  // ULW relentless cycle (even for soft prompts).
-  // Invalid/missing FORGE_ULW_STUCK_THRESHOLD falls back (0 is not a valid threshold).
-  const stuckThreshold = envPositiveInt(
-    "FORGE_ULW_STUCK_THRESHOLD",
-    config.goal.stuckThreshold > 0 ? config.goal.stuckThreshold : 5,
-  );
-
-  const ulwDecision = evaluateUlwAtStop({
-    sessionId: ctx.sessionId,
-    lastAssistantMessage: input.lastAssistantMessage,
-    editCount: input.editCount,
-    openTodoCount: input.openTodoCount,
-    stuckThreshold,
-    verificationRan: input.verificationRan,
-    verificationPassed: input.verificationPassed,
-    verificationHelperOnly: input.verificationHelperOnly,
-    verificationFullSuite: input.verificationFullSuite,
-    preferredCheckCommands: input.preferredCheckCommands,
-    diffFingerprint,
-    cwd: ctx.workspaceRoot,
+  // ULW plan-cycle driver: the executor's Stop is a wave boundary; the
+  // orchestrator may run the Reviewer / Planner / verify command here.
+  const stuckThreshold = stuckThresholdDefault(config.ulw?.stuckThreshold);
+  const ulwDecision = await evaluateCycleAtStop(ctx.sessionId, {
+    runtime: input.cycleRuntime,
+    fixRoundsCap: config.ulw?.fixRounds,
+    facts: {
+      editCount: input.editCount,
+      openTodoCount: input.openTodoCount,
+      lastAssistantMessage: input.lastAssistantMessage,
+      diffFingerprint,
+      verificationRan: Boolean(input.verificationRan),
+      verificationPassed: Boolean(input.verificationPassed),
+      verificationFullSuite: Boolean(input.verificationFullSuite),
+      stuckThreshold,
+    },
   });
 
-  if (
-    ulwDecision.stuckReleased ||
-    ulwDecision.lastCycleReleased ||
-    ulwDecision.lastCycleSatDown
-  ) {
+  if (ulwDecision?.allowStop) {
     return {
       allowStop: true,
       systemMessage: ulwDecision.reason,
@@ -247,14 +246,14 @@ export async function runStopGuard(input: StopGuardInput): Promise<StopGuardResu
     };
   }
 
-  if (ulwDecision.block) {
+  if (ulwDecision && !ulwDecision.allowStop) {
     return {
       allowStop: false,
       reason: ulwDecision.reason,
       additionalContext: ulwDecision.reanchor,
       systemMessage: ulwDecision.reason,
       goal: goalDecision,
-      ulw: ulwDecision,
+      ulw: ulwDecision ?? undefined,
       hook: hookResult,
     };
   }
@@ -262,7 +261,7 @@ export async function runStopGuard(input: StopGuardInput): Promise<StopGuardResu
   // TodoGate: open todos under ULW (cycle state or session flag)
   const todoGate = evaluateTodoGateAtStop({
     sessionId: ctx.sessionId,
-    ulwEnabled: Boolean(ulw?.enabled),
+    ulwEnabled: ulwOn,
     ultraworkFlag: input.ultrawork,
     openTodoCount: input.openTodoCount,
     lastAssistantMessage: input.lastAssistantMessage,
@@ -276,32 +275,9 @@ export async function runStopGuard(input: StopGuardInput): Promise<StopGuardResu
       systemMessage: todoGate.reason,
       hook: hookResult,
       goal: goalDecision,
-      ulw: ulwDecision,
+      ulw: ulwDecision ?? undefined,
       todoGate: true,
     };
-  }
-
-  // Backstop: ultrawork session flag with open todos (if cycle state missing)
-  if (input.ultrawork && input.openTodoCount > 0) {
-    const attested = /\*\*Goal achieved\.\*\*|\*\*Cycle complete\.\*\*|all tasks complete/i.test(
-      input.lastAssistantMessage || "",
-    );
-    if (!attested) {
-      const msg = [
-        `[Forge ultrawork] Stop blocked — ${input.openTodoCount} open todo(s) remain.`,
-        `Continue the next unfinished item, or set /cycle 0 (finish this wave + one more, then LAST).`,
-      ].join("\n");
-      return {
-        allowStop: false,
-        reason: msg,
-        additionalContext: msg,
-        systemMessage: msg,
-        hook: hookResult,
-        goal: goalDecision,
-        ulw: ulwDecision,
-        todoGate: true,
-      };
-    }
   }
 
   // Handoff guard: block premature "let me know if…" / "shall I continue?" yields
@@ -316,7 +292,7 @@ export async function runStopGuard(input: StopGuardInput): Promise<StopGuardResu
   const handoffDecision = evaluateHandoffAtStop({
     lastAssistantMessage: input.lastAssistantMessage,
     lastUserMessage: input.lastUserMessage,
-    ultrawork: Boolean(input.ultrawork || ulw?.enabled),
+    ultrawork: Boolean(input.ultrawork || ulwOn),
     goalActive,
     openTodoCount: input.openTodoCount,
     editCount: input.editCount,
@@ -331,7 +307,7 @@ export async function runStopGuard(input: StopGuardInput): Promise<StopGuardResu
       systemMessage: handoffDecision.reason,
       hook: hookResult,
       goal: goalDecision,
-      ulw: ulwDecision,
+      ulw: ulwDecision ?? undefined,
       handoff: handoffDecision,
     };
   }
@@ -344,7 +320,7 @@ export async function runStopGuard(input: StopGuardInput): Promise<StopGuardResu
     verificationRan: Boolean(
       input.verificationPassed ?? input.verificationRan,
     ),
-    ultrawork: Boolean(input.ultrawork || ulw?.enabled),
+    ultrawork: Boolean(input.ultrawork || ulwOn),
     goalActive,
     openTodoCount: input.openTodoCount,
     editCount: input.editCount,
@@ -362,7 +338,7 @@ export async function runStopGuard(input: StopGuardInput): Promise<StopGuardResu
       systemMessage: proofClaimDecision.reason,
       hook: hookResult,
       goal: goalDecision,
-      ulw: ulwDecision,
+      ulw: ulwDecision ?? undefined,
       handoff:
         handoffDecision.detection?.handoff || handoffDecision.released
           ? handoffDecision
@@ -378,7 +354,7 @@ export async function runStopGuard(input: StopGuardInput): Promise<StopGuardResu
     lastUserMessage: input.lastUserMessage,
     stopContinues: input.stopContinues ?? 0,
     editCount: input.editCount,
-    ultrawork: Boolean(input.ultrawork || ulw?.enabled),
+    ultrawork: Boolean(input.ultrawork || ulwOn),
     goalActive,
     openTodoCount: input.openTodoCount,
     reportBlocks: input.reportBlocks,
@@ -392,7 +368,7 @@ export async function runStopGuard(input: StopGuardInput): Promise<StopGuardResu
       systemMessage: reportDecision.reason,
       hook: hookResult,
       goal: goalDecision,
-      ulw: ulwDecision,
+      ulw: ulwDecision ?? undefined,
       report: reportDecision,
     };
   }
@@ -408,7 +384,7 @@ export async function runStopGuard(input: StopGuardInput): Promise<StopGuardResu
     ...(reportDecision.released ? { report: reportDecision } : {}),
     hook: hookResult,
     goal: goalDecision,
-    ulw: ulwDecision,
+    ulw: ulwDecision ?? undefined,
     handoff: handoffDecision.detection?.handoff || handoffDecision.released
       ? handoffDecision
       : undefined,

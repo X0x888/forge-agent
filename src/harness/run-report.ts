@@ -3,8 +3,8 @@
  *
  * The user will not scroll. After many review rounds the model's last
  * message covers the last round; the harness knows the whole run: the
- * request, the wave ledger, files changed, commits landed in the window,
- * the last verification, open todos / named ships / bet / must-fix, the
+ * request, the cycle ledger, files changed, commits landed in the window,
+ * the last verification, open plan items / must-fix, the
  * guideline audit, and what only the user can do.
  *
  * Shape (sisyphus REPORT.md, made native): one outcome line first, then
@@ -23,7 +23,13 @@ import {
   sessionDir,
 } from "../session/session.js";
 import { readFileMutations } from "../session/mutations.js";
-import { loadUlwCycle, type UlwCycleState } from "./ulw-cycle.js";
+import {
+  cycleActive,
+  cycleReportFacts,
+  displayUlwMandate,
+  loadCycleState,
+  type CycleState,
+} from "./cycle/index.js";
 import { loadGoal, type GoalState } from "./goal.js";
 import { formatGuidelineReportLines } from "./guideline-audit.js";
 import { looksLikeRunReport } from "./report-guard.js";
@@ -58,12 +64,11 @@ export interface RunReportInput {
     hitCostCap?: boolean;
     stuckReleased?: boolean;
     lastCycleReleased?: boolean;
-    lastCycleSatDown?: boolean;
     releasedOnContinueCap?: boolean;
     stopContinues?: number;
     finalText?: string;
   };
-  ulw?: UlwCycleState | null;
+  ulw?: CycleState | null;
   goal?: GoalState | null;
   /** Override guideline lines (tests). */
   guidelineLines?: string[];
@@ -79,7 +84,7 @@ function clip(s: string, n: number): string {
 }
 
 /**
- * Prose lifted out of the ledger (wave summaries, named ships, bets, holes)
+ * Prose lifted out of the ledger (cycle titles, must-fix, Operator lines)
  * arrives with the markdown it was written in, and the extractor keeps
  * orphans: real ledgers hold `** CLI \`together run\` still cannot…`. The
  * report renders its own emphasis, so strip theirs.
@@ -171,9 +176,11 @@ function openTodoList(todos: TodoItem[]): TodoItem[] {
 /** ISO timestamp the run window starts at (ULW arm, else the request). */
 export function runWindowStart(
   session: SessionData,
-  ulw: UlwCycleState | null | undefined,
+  ulw: CycleState | null | undefined,
 ): string {
-  if (ulw?.enabled && ulw.startedAt) return ulw.startedAt;
+  if (ulw && !ulw.legacy && ulw.startedAt && (ulw.enabled || ulw.cycles.length)) {
+    return ulw.startedAt;
+  }
   // Mutations carry the turn; the request turn is the current turnCount.
   const turn = session.meta.turnCount;
   try {
@@ -195,8 +202,9 @@ export function buildRunReport(input: RunReportInput): RunReport {
   const r = input.result || {};
   const cwd = workspace || meta.cwd || process.cwd();
 
-  const request = ulw?.enabled && ulw.mandate
-    ? clipProse(ulw.mandate, 160)
+  const ulwRun = Boolean(ulw && !ulw.legacy && (ulw.enabled || ulw.cycles.length));
+  const request = ulwRun && ulw
+    ? clipProse(displayUlwMandate(ulw), 160)
     : clipProse(lastRealUserPrompt(session)?.text || meta.lastUserPreview || meta.title || "", 160);
 
   const since = runWindowStart(session, ulw);
@@ -211,7 +219,7 @@ export function buildRunReport(input: RunReportInput): RunReport {
   }
   const sinceMs = Date.parse(since) || 0;
   const runMuts = mutations.filter((m) =>
-    ulw?.enabled ? Date.parse(m.ts || "") >= sinceMs - 1000 : m.turn === requestTurn,
+    ulwRun ? Date.parse(m.ts || "") >= sinceMs - 1000 : m.turn === requestTurn,
   );
   const byPath = new Map<string, string>();
   for (const m of runMuts) byPath.set(m.path, m.kind);
@@ -226,9 +234,9 @@ export function buildRunReport(input: RunReportInput): RunReport {
     ? 0
     : Math.max(commits.length, gitCommitCountSince(cwd, since));
 
-  // --- waves
-  const waves = ulw?.waves ?? [];
-  const provenWaves = waves.filter((w) => w.proof).length;
+  // --- cycles
+  const cycleFacts = cycleReportFacts(ulwRun ? ulw : null);
+  const cycles = ulwRun && ulw ? ulw.cycles : [];
 
   // --- verification
   const lv = meta.lastVerificationCommand?.trim();
@@ -244,9 +252,6 @@ export function buildRunReport(input: RunReportInput): RunReport {
 
   // --- open work
   const todos = openTodoList(session.todos);
-  const openShips = (ulw?.namedShips ?? []).filter((s) => s.status === "open");
-  const mustFix = ulw?.lastReflectHoles ?? [];
-  const bet = ulw?.bet;
   const goalActive =
     goal && goal.objective && goal.status === "active" && !goal.paused
       ? goal
@@ -268,23 +273,15 @@ export function buildRunReport(input: RunReportInput): RunReport {
   if (r.aborted) {
     outcome = `Aborted by the user — ${filesPhrase}${verifyPhrase ? `, ${verifyPhrase}` : ""}.`;
   } else if (r.lastCycleReleased) {
-    outcome = `Done — ULW run complete: ${waves.length} wave${waves.length === 1 ? "" : "s"} shipped (${provenWaves} with proof), ${commitTotal} commit${commitTotal === 1 ? "" : "s"} landed, ${filesPhrase}.`;
-  } else if (r.lastCycleSatDown) {
-    outcome = `Paused — /cycle 0 sat down after ${ulw?.wave ?? waves.length} wave${(ulw?.wave ?? waves.length) === 1 ? "" : "s"}; ULW stays on. ${commitTotal} commit${commitTotal === 1 ? "" : "s"} landed, ${filesPhrase}.`;
+    outcome = `${cycleFacts.outcome || "Done — ULW run complete"}: ${cycles.length} cycle${cycles.length === 1 ? "" : "s"}, ${commitTotal} commit${commitTotal === 1 ? "" : "s"} landed, ${filesPhrase}.`;
   } else if (r.stuckReleased) {
     outcome = `Stalled — the driver released after repeated no-progress stops. ${filesPhrase}${verifyPhrase ? `, ${verifyPhrase}` : ""}.`;
   } else if (r.hitCostCap) {
     outcome = `Stopped at the spend cap — ${filesPhrase}${verifyPhrase ? `, ${verifyPhrase}` : ""}.`;
   } else if (r.hitMaxTurns) {
     outcome = `Stopped at max turns — ${filesPhrase}${verifyPhrase ? `, ${verifyPhrase}` : ""}.`;
-  } else if (ulw?.enabled && ulw.cycle === 1) {
-    outcome = `In progress — ULW wave ${ulw.wave}${ulw.maxWaves != null ? `/${ulw.maxWaves}` : ""}, ${waves.length} shipped so far, ${filesPhrase}.`;
-  } else if (ulw?.enabled) {
-    // cycle=0 with no driver-end flag: LAST is armed and nothing has closed.
-    // The wrap, the LAST reflect score and **Cycle complete.** are all still
-    // ahead, so this report must not read like the run finished. `/done`
-    // flips the cycle and then asks for a report in the same breath.
-    outcome = `Winding down — ULW is on its last cycle after ${ulw.wave ?? waves.length} wave${(ulw.wave ?? waves.length) === 1 ? "" : "s"}; the wrap, LAST reflect and **Cycle complete.** are still ahead. ${filesPhrase}.`;
+  } else if (ulw && cycleActive(ulw)) {
+    outcome = `${ulw.cycleZeroRequested ? "Winding down" : "In progress"} — ULW cycle ${ulw.cycle}${ulw.maxCycles != null ? `/${ulw.maxCycles}` : ""} in ${ulw.phase}${ulw.planTitle ? ` (${clipProse(ulw.planTitle, 60)})` : ""}, ${cycles.filter((c) => c.commitSha).length} committed so far, ${filesPhrase}.`;
   } else if (goalActive) {
     outcome = `In progress — goal still active: ${clipProse(goalActive.objective, 80)}. ${filesPhrase}.`;
   } else if (byPath.size === 0 && commitTotal === 0) {
@@ -301,14 +298,12 @@ export function buildRunReport(input: RunReportInput): RunReport {
   const sections: RunReportSection[] = [];
 
   const shipped: string[] = [];
-  if (waves.length) {
-    const shown = waves.slice(-10);
-    if (waves.length > shown.length) shipped.push(`${waves.length - shown.length} earlier wave${waves.length - shown.length === 1 ? "" : "s"} not listed.`);
-    for (const w of shown) {
-      shipped.push(
-        `Wave ${w.wave} ${w.proof ? "✓" : "✗"} ${clipProse(w.summary || "(no summary)", 110)}`,
-      );
+  if (cycleFacts.shipped.length) {
+    const shown = cycleFacts.shipped.slice(-10);
+    if (cycleFacts.shipped.length > shown.length) {
+      shipped.push(`${cycleFacts.shipped.length - shown.length} earlier cycle(s) not listed.`);
     }
+    shipped.push(...shown);
   }
   if (commits.length) {
     const shown = commits.slice(0, 8);
@@ -340,19 +335,13 @@ export function buildRunReport(input: RunReportInput): RunReport {
   } else {
     verified.push(byPath.size ? "No verification command ran this run." : "Nothing to verify.");
   }
-  if (waves.length) {
-    verified.push(
-      `${provenWaves} of ${waves.length} waves closed with proof${ulw?.fullSuitePassed ? "; the full suite passed this run" : "; the full suite never passed this run"}.`,
-    );
-  }
+  verified.push(...cycleFacts.verified.slice(-6));
   sections.push({ title: "Verified", lines: verified });
 
   const notDone: string[] = [];
   for (const t of todos.slice(0, 8)) notDone.push(`Todo ${t.status === "in_progress" ? "(in progress)" : "(open)"}: ${clipProse(t.content, 120)}`);
   if (todos.length > 8) notDone.push(`+${todos.length - 8} more open todos.`);
-  for (const s of openShips.slice(0, 6)) notDone.push(`Named ship still open: ${clipProse(s.text, 120)}`);
-  if (bet && bet.slices === 0) notDone.push(`Bet not yet sliced: ${clipProse(bet.text, 120)}`);
-  for (const h of mustFix.slice(0, 6)) notDone.push(`Must-fix from LAST reflect: ${clipProse(h, 140)}`);
+  for (const n of cycleFacts.notDone.slice(0, 8)) notDone.push(clipProse(n, 140));
   if (goalActive) {
     notDone.push(`Goal not attested: ${clipProse(goalActive.objective, 120)}`);
     for (const c of goalActive.criteria.slice(0, 6)) notDone.push(`  criterion: ${clipProse(c, 110)}`);
@@ -374,6 +363,7 @@ export function buildRunReport(input: RunReportInput): RunReport {
 
   const needs: string[] = [];
   for (const o of operatorItemsFrom(r.finalText)) needs.push(`Operator: ${o}`);
+  for (const o of cycleFacts.needsYou.slice(0, 4)) needs.push(`Operator: ${clipProse(o, 140)}`);
   const err = meta.lastError;
   if (err && /auth|quota|login|credential|token/i.test(`${err.code} ${err.message}`)) {
     needs.push(`Operator: ${clip(err.message, 120)} (${err.code})`);
@@ -384,16 +374,11 @@ export function buildRunReport(input: RunReportInput): RunReport {
   const resume: string[] = [
     `Session ${meta.id.slice(0, 8)}${meta.title ? ` · ${clipProse(meta.title, 60)}` : ""} — \`forge --continue\` resumes it; \`/report\` reprints this.`,
   ];
-  if (ulw?.enabled && !r.lastCycleReleased) {
-    // cycle=0 is two different states: the driver actually sat a wrap down,
-    // or LAST is armed and the wrap has not happened yet. Saying "sat down"
-    // for the second one tells the user the run is over when it is not.
+  if (ulw && cycleActive(ulw) && !r.lastCycleReleased) {
     resume.push(
-      ulw.cycle === 1
-        ? `ULW is still ON (cycle=1, wave ${ulw.wave}). Type to steer, \`/cycle 0\` to wind down, \`/done\` to end.`
-        : r.lastCycleSatDown
-          ? `ULW wrap sat down (cycle=0) and ULW stays on. Type to continue, \`/done\` or \`/ulw-off\` to end.`
-          : `ULW is on LAST (cycle=0): wrap the open work, LAST reflect scores the run, then **Cycle complete.** \`/cycle 1\` to keep going instead.`,
+      ulw.cycleZeroRequested
+        ? `ULW finishes cycle ${ulw.cycle} (review, verify, commit) and stops. \`/cycle 1\` to keep cycling, \`/ulw-off\` to abort.`
+        : `ULW is still ON (cycle ${ulw.cycle}, ${ulw.phase}). Type to steer (the Planner reads it at the next re-plan), \`/cycle 0\` to finish this cycle and stop, \`/replan\` to close it now.`,
     );
   }
   sections.push({ title: "Resume", lines: resume });
@@ -556,7 +541,6 @@ export function endedUnshaped(r: {
 export function shouldPrintRunReport(r: {
   stopContinues?: number;
   lastCycleReleased?: boolean;
-  lastCycleSatDown?: boolean;
   stuckReleased?: boolean;
   hitCostCap?: boolean;
   hitMaxTurns?: boolean;
@@ -566,7 +550,6 @@ export function shouldPrintRunReport(r: {
   if (r.aborted) return false;
   if (
     r.lastCycleReleased ||
-    r.lastCycleSatDown ||
     r.stuckReleased ||
     r.hitCostCap ||
     r.hitMaxTurns
@@ -635,9 +618,9 @@ export function maybeRenderRunReportForRun(opts: {
   }
 }
 
-function safeLoadUlw(id: string): UlwCycleState | null {
+function safeLoadUlw(id: string): CycleState | null {
   try {
-    return loadUlwCycle(id);
+    return loadCycleState(id);
   } catch {
     return null;
   }

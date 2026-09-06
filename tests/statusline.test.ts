@@ -62,7 +62,7 @@ import {
 import { clipAnsi, visibleWidth } from "../src/util/format.js";
 import type { ForgeConfig } from "../src/config/types.js";
 import type { ResolvedAuth } from "../src/auth/types.js";
-import { armUlwCycle } from "../src/harness/ulw-cycle.js";
+import { armWithPlan } from "./helpers/cycle-arm.js";
 
 describe("statusline", () => {
   beforeEach(() => {
@@ -349,7 +349,7 @@ describe("statusline", () => {
     ];
     saveSession(s);
 
-    armUlwCycle(s.meta.id, "improve", { cycle: 1, maxWaves: 2 });
+    armWithPlan({ sessionId: s.meta.id, cwd: tmp, mandate: "improve", maxCycles: 2 });
 
     const config = {
       provider: "xai",
@@ -376,11 +376,11 @@ describe("statusline", () => {
     try {
       const flags = buildPromptFlags({ config, session: s, auth });
       assert.match(flags, /ULW/);
-      assert.match(flags, /c=1/);
-      assert.match(flags, /w=0\/2/);
+      assert.match(flags, /c1\/2/);
+      assert.match(flags, /EXEC/);
       const snapTags = sessionToSnapshot(s, { authMethod: "api_key" }).tags;
-      assert.ok(snapTags.includes("w=0/2"), "HUD shows current/cap, not just mw=");
-      assert.ok(!snapTags.some((t) => t.startsWith("mw=")));
+      assert.ok(snapTags.includes("c1/2"), "HUD shows cycle/cap");
+      assert.ok(snapTags.includes("execute"), "HUD shows the phase");
       // No last-verify yet → no bare ✓ flag
       assert.doesNotMatch(flags.replace(/\x1b\[[0-9;]*m/g, ""), /✓/);
       assert.doesNotMatch(flags, /VERBOSE/);
@@ -396,7 +396,7 @@ describe("statusline", () => {
       assert.match(footer, /ctx/);
       assert.match(footer, /▶ ship/);
       assert.match(footer, /harness/);
-      assert.match(footer, /ULW c=1 w=0/);
+      assert.match(footer, /ULW c1\/2 EXEC/);
       assert.doesNotMatch(footer, /\/cycle 0/);
 
       Object.defineProperty(process.stdout, "isTTY", {
@@ -1065,16 +1065,16 @@ describe("statusline lastError snapshot", () => {
     const { renderHud } = await import("../src/statusline/render.js");
     const s = createSession({ cwd: tmp, provider: "xai", model: "m" });
     setSessionLastError(s, {
-      code: "ulw_cycle_complete",
+      code: "ulw_done",
       message: "ULW last cycle attested complete — released.",
     });
     saveSession(s);
     const snap = sessionToSnapshot(s, { authMethod: "api_key" });
-    assert.equal(snap.lastError?.code, "ulw_cycle_complete");
+    assert.equal(snap.lastError?.code, "ulw_done");
     assert.ok(!snap.tags.some((t) => t.startsWith("ERR:")));
     assert.doesNotMatch(
       renderHud([snap], { plain: true, width: 120 }),
-      /ERR:ulw_cycle_complete/,
+      /ERR:ulw_done/,
     );
   });
 
@@ -1121,7 +1121,7 @@ describe("statusline lastError snapshot", () => {
     s.meta.pinned = true;
     s.meta.lastVerificationCommand = "npm test";
     s.meta.lastVerificationAt = new Date().toISOString();
-    armUlwCycle(s.meta.id, "improve", { cycle: 1, maxWaves: 2 });
+    armWithPlan({ sessionId: s.meta.id, cwd: tmp, mandate: "improve", maxCycles: 2 });
     const config = {
       ...DEFAULT_CONFIG,
       workspace: tmp,
@@ -1397,7 +1397,7 @@ describe("statusline tmux badges", () => {
       provider: "xai",
       model: "grok-4",
     });
-    armUlwCycle(s.meta.id, "improve the daily REPL", { skipCheckpoint: true });
+    armWithPlan({ sessionId: s.meta.id, cwd: tmp, mandate: "improve the daily REPL" });
     const auth = { provider: "xai", method: "api_key", apiKey: "t" } as any;
     const config = { ...DEFAULT_CONFIG, workspace: tmp };
     const plain = formatSessionDetails({ config, session: s, auth }).replace(
@@ -1585,9 +1585,8 @@ describe("statusline tmux badges", () => {
     process.env.FORGE_HOME = tmp;
     const { createSession } = await import("../src/session/session.js");
     const { DEFAULT_CONFIG } = await import("../src/config/types.js");
-    const { armUlwCycle } = await import("../src/harness/ulw-cycle.js");
     const s = createSession({ cwd: tmp, provider: "xai", model: "grok-4" });
-    armUlwCycle(s.meta.id, "improve", { cycle: 1, maxWaves: 4 });
+    armWithPlan({ sessionId: s.meta.id, cwd: tmp, mandate: "improve", maxCycles: 4 });
     s.meta.pinned = true;
     const ctx = {
       config: {
@@ -1614,9 +1613,8 @@ describe("statusline tmux badges", () => {
     process.env.FORGE_HOME = tmp;
     const { createSession } = await import("../src/session/session.js");
     const { DEFAULT_CONFIG } = await import("../src/config/types.js");
-    const { armUlwCycle } = await import("../src/harness/ulw-cycle.js");
     const s = createSession({ cwd: tmp, provider: "xai", model: "grok-4" });
-    armUlwCycle(s.meta.id, "improve", { cycle: 1, maxWaves: 4 });
+    armWithPlan({ sessionId: s.meta.id, cwd: tmp, mandate: "improve", maxCycles: 4 });
     const ctx = {
       config: {
         ...DEFAULT_CONFIG,

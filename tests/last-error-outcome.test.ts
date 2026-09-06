@@ -39,16 +39,16 @@ describe("isLastErrorProblem", () => {
       true,
     );
     assert.equal(
-      isLastErrorProblem({ code: "ulw_stuck_wall", message: "no progress" }),
+      isLastErrorProblem({ code: "ulw_released", message: "verify stayed red" }),
       true,
     );
   });
 
-  it("treats ulw_cycle_complete as a finished job, not a crash", () => {
-    assert.ok(LAST_ERROR_OUTCOME_CODES.has("ulw_cycle_complete"));
+  it("treats ulw_done as a finished job, not a crash", () => {
+    assert.ok(LAST_ERROR_OUTCOME_CODES.has("ulw_done"));
     assert.equal(
       isLastErrorProblem({
-        code: "ulw_cycle_complete",
+        code: "ulw_done",
         message: "ULW last cycle attested complete — released.",
       }),
       false,
@@ -73,7 +73,7 @@ describe("status + picker after Cycle complete", () => {
       model: "grok-4",
     });
     setSessionLastError(session, {
-      code: "ulw_cycle_complete",
+      code: "ulw_done",
       message: "ULW last cycle attested complete — released.",
       tips: ["/cycle 1"],
     });
@@ -118,7 +118,7 @@ describe("status + picker after Cycle complete", () => {
     });
     s.meta.lastError = {
       at: "t",
-      code: "ulw_cycle_complete",
+      code: "ulw_done",
       message: "ULW last cycle attested complete — released.",
     };
     assert.equal(sessionPickerProblem(s.meta), "");
@@ -126,7 +126,7 @@ describe("status + picker after Cycle complete", () => {
     const titleAt = row.indexOf("evaluate then improve");
     const idAt = row.indexOf(s.meta.id.slice(0, 8));
     assert.ok(titleAt >= 0 && titleAt < idAt, row);
-    assert.doesNotMatch(row, /ulw_cycle_complete/);
+    assert.doesNotMatch(row, /ulw_done/);
     assert.doesNotMatch(row, /released/);
   });
 
@@ -142,7 +142,7 @@ describe("status + picker after Cycle complete", () => {
       title: "cycle-done",
     });
     setSessionLastError(good, {
-      code: "ulw_cycle_complete",
+      code: "ulw_done",
       message: "ULW last cycle attested complete — released.",
     });
     saveSession(good);
@@ -232,7 +232,7 @@ describe("status + picker after Cycle complete", () => {
       title: "cycle-done",
     });
     setSessionLastError(done, {
-      code: "ulw_cycle_complete",
+      code: "ulw_done",
       message: "ULW last cycle attested complete — released.",
     });
     done.meta.updatedAt = new Date(Date.now() - 90 * 86400_000).toISOString();
@@ -250,7 +250,7 @@ describe("lastError tally", () => {
       { lastError: { code: "max_turns", message: "cap" } },
       { lastError: { code: "max_turns", message: "cap" } },
       { lastError: { code: "rate_limited", message: "429" } },
-      { lastError: { code: "ulw_cycle_complete", message: "released" } },
+      { lastError: { code: "ulw_done", message: "released" } },
       { lastError: null },
     ]);
     assert.equal(tally.total, 4);
@@ -313,7 +313,7 @@ describe("sitDownNextForLastError", () => {
     assert.equal(sitDownNextForLastError({ code: "", message: "" }), undefined);
     assert.equal(
       sitDownNextForLastError({
-        code: "ulw_cycle_complete",
+        code: "ulw_done",
         message: "released",
         tips: ["/cycle 1"],
       }),

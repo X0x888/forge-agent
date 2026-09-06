@@ -137,6 +137,26 @@ function normalizeConfigShape(raw: Record<string, unknown>): Partial<ForgeConfig
     }
     out.goal = g;
   }
+  // `[ulw]` table: snake_case keys → UlwConfig.
+  if (out.ulw && typeof out.ulw === "object") {
+    const u = { ...(out.ulw as Record<string, unknown>) };
+    const ulwMap: Record<string, string> = {
+      planner_model: "plannerModel",
+      planner_effort: "plannerEffort",
+      reviewer_model: "reviewerModel",
+      reviewer_effort: "reviewerEffort",
+      max_cycles: "maxCycles",
+      fix_rounds: "fixRounds",
+      stuck_threshold: "stuckThreshold",
+    };
+    for (const [snake, camel] of Object.entries(ulwMap)) {
+      if (snake in u && !(camel in u)) {
+        u[camel] = u[snake];
+        delete u[snake];
+      }
+    }
+    out.ulw = u;
+  }
   // `[guidelines] auto_apply = true` table form → flat `guidelineAutoApply`.
   if (out.guidelines && typeof out.guidelines === "object") {
     const g = out.guidelines as Record<string, unknown>;
@@ -701,6 +721,17 @@ enabled = true
 stuck_threshold = 3
 auto_arm = true
 
+# ULW plan-cycle driver. Planner / Reviewer are fresh-context subagents and
+# may run on their own model / effort (unset = the session model).
+# [ulw]
+# planner_model = "grok-4.6"
+# planner_effort = "xhigh"
+# reviewer_model = "grok-4.6"
+# reviewer_effort = "xhigh"
+# max_cycles = 0        # 0 / unset = until the Planner says fulfilled, or /cycle 0
+# fix_rounds = 3        # executor rounds when the verify command is red after review
+# stuck_threshold = 4   # no-progress Stops in EXECUTE before the cycle closes early
+
 # Permission rules — deny always wins (including YOLO)
 # Project .forge/config.toml may only ADD deny rules, never remove global ones.
 # Project cannot set: base_url, bypassPermissions, sandbox=off, missing-backend fallback.
@@ -719,7 +750,7 @@ ask = []
 # base_url = "https://api.x.ai/v1"
 # Env: FORGE_PROVIDER_TIMEOUT_MS (stall), FORGE_PROVIDER_MAX_MS (optional absolute),
 # FORGE_PROVIDER_REASONING_WALL_MS (default 12m no-content/tool wall; 0/off disables),
-# FORGE_THOUGHT_ONLY_MAX (default 8 consecutive thought-only Stops this turn; 0/off disables; does not LAST ULW),
+# FORGE_THOUGHT_ONLY_MAX (default 8 consecutive thought-only Stops this turn; 0/off disables; ULW stays armed),
 # FORGE_MAX_RUN_MS, FORGE_LOG_JSON, FORGE_HEADLESS — see .env.example
 # MCP: built-in defaults context7 + playwright (see ~/.forge/mcp.json). FORGE_MCP=0 off;
 # FORGE_MCP_DEFAULTS=0 disables only built-ins. Optional CONTEXT7_API_KEY for higher rate limits.

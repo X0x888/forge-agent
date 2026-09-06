@@ -20,7 +20,7 @@ export { REASONING_LOOP_FINISH };
 /**
  * Consecutive thought-only Stops (reasoning_wall / reasoning_loop / thought
  * + stop, no text/tools) before this *turn* yields. Does **not** flip ULW
- * to LAST — the user did not ask to stop. `0` / `off` disables.
+ * to /cycle 0 — the user did not ask to stop. `0` / `off` disables.
  * Env: FORGE_THOUGHT_ONLY_MAX (default 8).
  */
 export const DEFAULT_THOUGHT_ONLY_MAX = 8;

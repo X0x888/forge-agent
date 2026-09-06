@@ -19,9 +19,8 @@
  * Advisory Q&A turns never bounce.
  *
  * The closer a user of this tool actually reads is the driver attestation
- * (`**Cycle complete.**` after `/cycle 0`, `**Goal achieved.**`), and the
- * goal / ULW drivers release on it inside stop-guard long before step 8 can
- * look at it. `evaluateAttestationHomeworkAtStop` is that same check run
+ * (`**Goal achieved.**`), and the goal driver releases on it inside
+ * stop-guard long before step 8 can look at it. `evaluateAttestationHomeworkAtStop` is that same check run
  * ahead of the drivers, so a bounce costs one round and never a wave.
  */
 import { looksLikeAdvisoryUserMessage } from "../util/advisory-intent.js";
@@ -65,10 +64,10 @@ const ALLOWED_REASON_RE =
 
 /** Driver attestations — the drivers own their shape, not the homework rule. */
 const ATTESTATION_RE =
-  /\*\*Goal achieved\.\*\*|\*\*Cycle complete\.\*\*|\*\*Wave complete\.\*\*/i;
+  /\*\*Goal achieved\.\*\*|\*{0,2}Plan complete\.?\*{0,2}/i;
 /** Same tokens, for stripping the marker off the outcome line. */
 const ATTESTATION_TOKEN_RE =
-  /\*\*(?:Goal achieved|Cycle complete|Wave complete)\.\*\*/gi;
+  /\*\*Goal achieved\.\*\*|\*{0,2}Plan complete\.?\*{0,2}/gi;
 
 /** Any driver attestation in the message. */
 export function isAttestation(message: string): boolean {
@@ -77,18 +76,12 @@ export function isAttestation(message: string): boolean {
 
 /**
  * Is this the closer of the whole run — the message the user reads first?
- * `**Goal achieved.**` always is. `**Cycle complete.**` is only when ULW is
- * winding down (`/cycle 0`) or already off; under cycle=1 it declares a wave
- * and the run continues.
+ * `**Goal achieved.**` is. The ULW plan-cycle driver releases on its own
+ * facts and prints the run report itself, so its executor closers are never
+ * terminal attestations here.
  */
-export function isTerminalAttestation(
-  message: string,
-  opts?: { ulwEnabled?: boolean; ulwCycle?: number },
-): boolean {
-  const msg = String(message || "");
-  if (/\*\*Goal achieved\.\*\*/i.test(msg)) return true;
-  if (!/\*\*Cycle complete\.\*\*/i.test(msg)) return false;
-  return !opts?.ulwEnabled || opts.ulwCycle === 0;
+export function isTerminalAttestation(message: string): boolean {
+  return /\*\*Goal achieved\.\*\*/i.test(String(message || ""));
 }
 
 export interface HomeworkDetection {
@@ -155,7 +148,7 @@ export function countReportLabels(message: string): number {
  * (a sentence, not a heading-only stub) and at least two labelled sections?
  *
  * The first three non-empty lines are candidates, so a title ("## Summary"),
- * a section label, or a driver attestation (`**Cycle complete.**` on its own
+ * a section label, or a driver attestation (`**Goal achieved.**` on its own
  * line, the required opening of a ULW closer) does not read as a missing
  * outcome.
  */
@@ -266,9 +259,6 @@ const RUN_WIDE_CLOSER = `Then write the final report: one outcome sentence first
 export interface AttestationReportInput {
   lastAssistantMessage: string;
   lastUserMessage?: string;
-  /** ULW armed, and its cycle flag — a cycle=1 "Cycle complete." is a wave. */
-  ulwEnabled?: boolean;
-  ulwCycle?: number;
   /** Harness Stop re-anchors this run so far. */
   stopContinues?: number;
   editCount?: number;
@@ -278,10 +268,11 @@ export interface AttestationReportInput {
 }
 
 /**
- * The terminal attestation, checked before the goal / ULW drivers consume the
- * Stop. `**Cycle complete.**` after `/cycle 0` is the last thing the user
- * reads after a hundred waves: it may not hand homework back, and after a
- * multi-round run it may not be a bare "12 waves, all green" either.
+ * The terminal attestation, checked before the goal driver consumes the
+ * Stop. `**Goal achieved.**` is the last thing the user reads after a long
+ * run: it may not hand homework back, and after a multi-round run it may not
+ * be a bare "all green" either. (The ULW plan-cycle driver releases on its
+ * own facts and prints the run report itself.)
  *
  * Blocking here leaves every driver's state untouched (no wave is spent, no
  * evidence nudge is consumed) — the model re-attests on the next round and
@@ -293,12 +284,7 @@ export function evaluateAttestationHomeworkAtStop(
   if (!reportGuardEnabled()) return { block: false };
   const msg = String(input.lastAssistantMessage || "");
   if (!msg.trim()) return { block: false };
-  if (
-    !isTerminalAttestation(msg, {
-      ulwEnabled: input.ulwEnabled,
-      ulwCycle: input.ulwCycle,
-    })
-  ) {
+  if (!isTerminalAttestation(msg)) {
     return { block: false };
   }
   if (

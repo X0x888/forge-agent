@@ -115,7 +115,8 @@ export interface RunStopReasonInput {
   releasedOnContinueCap?: boolean;
   stuckReleased?: boolean;
   lastCycleReleased?: boolean;
-  lastCycleSatDown?: boolean;
+  /** Why the ULW driver released (fulfilled / cycle-zero / max-cycles / blocked / fix-cap …). */
+  ulwEndReason?: string;
   aborted?: boolean;
   stopContinues?: number;
   lastErrorCode?: string | null;
@@ -166,13 +167,16 @@ export function formatRunStopReason(input: RunStopReasonInput): string | null {
     return `  stop: max turns — ${tail("/retry", "raise max_turns or continue with a follow-up")}`;
   }
   if (input.stuckReleased) {
-    return "  stop: stuck-wall — no progress; /cycle 1 or /ulw to resume";
-  }
-  if (input.lastCycleSatDown) {
-    return "  stop: wrap sat down — still ULW · type to continue · /done to end";
+    return "  stop: stuck-wall — no progress; /goal or /ulw to resume";
   }
   if (input.lastCycleReleased) {
-    return "  stop: cycle complete — /cycle 1 or /ulw if more work remains";
+    const why = input.ulwEndReason;
+    if (why === "fulfilled") return "  stop: ULW fulfilled — the Planner judged the mandate met · /ulw to re-arm";
+    if (why === "cycle-zero") return "  stop: ULW /cycle 0 — cycle reviewed and committed · /ulw to re-arm";
+    if (why === "max-cycles") return "  stop: ULW max_cycles — /ulw or /max-cycles off to continue";
+    if (why === "fix-cap") return "  stop: ULW verify stayed red — inspect cycles/*/verify.*.log · /ulw to re-arm";
+    if (why === "blocked") return "  stop: ULW blocked — see Operator: lines · /ulw to re-arm";
+    return `  stop: ULW released${why ? ` (${why})` : ""} — /ulw to re-arm`;
   }
   if (input.releasedOnContinueCap) {
     const n = input.stopContinues;
@@ -183,11 +187,14 @@ export function formatRunStopReason(input: RunStopReasonInput): string | null {
     return `  stop: continue-cap${count} — ${tail("/retry", "narrow the task or raise FORGE_ULW_MAX_CONTINUES")}`;
   }
   const code = String(input.lastErrorCode || "").trim();
-  if (code === "ulw_stuck_wall" || code === "goal_stuck_wall") {
-    return "  stop: stuck-wall — no progress; /cycle 1 or /ulw to resume";
+  if (code === "goal_stuck_wall") {
+    return "  stop: stuck-wall — no progress; /goal or /ulw to resume";
   }
-  if (code === "ulw_cycle_complete") {
-    return "  stop: cycle complete — /cycle 1 or /ulw if more work remains";
+  if (code === "ulw_done") {
+    return "  stop: ULW done — /report · /ulw to run another";
+  }
+  if (code === "ulw_released") {
+    return "  stop: ULW released — /cycle status · /ulw to re-arm";
   }
   if (code === "handoff_released") {
     return "  stop: handoff-guard — finish the work instead of asking to continue";
@@ -205,7 +212,7 @@ export function formatRunStopReason(input: RunStopReasonInput): string | null {
     return `  stop: continue-cap — ${tail("/retry", "narrow the task or raise FORGE_ULW_MAX_CONTINUES")}`;
   }
   if (code === "thought_only_cap") {
-    return "  stop: thought-only — /retry (ULW still CONTINUE; model sat in thought with no tools)";
+    return "  stop: thought-only — /retry (ULW stays armed; model sat in thought with no tools)";
   }
   if (code === "max_run_ms") {
     return `  stop: wall-clock — ${tail("/retry", "raise FORGE_MAX_RUN_MS or narrow the task")}`;

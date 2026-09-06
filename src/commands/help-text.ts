@@ -54,9 +54,9 @@ Harness
 
   /goal <objective>   Relentless driver (Stop blocked until attested)
   /goal pause|resume|clear|done
-  /ulw [task]         Ultrawork: Wave 1 PLAN, then BUILD (cycle=1)
-  /cycle 1|0          Continue waves or finish this + one more, then stop
-  /max-waves N|off    Cap ULW waves (auto LAST at N)
+  /ulw [task]         Ultrawork: plan-cycle driver (Planner → you → Reviewer → verify → commit)
+  /cycle 1|0          Keep cycling, or finish this cycle then stop
+  /max-cycles N|off   Stop after N committed cycles
   /done               Wind down + lastErr/verify Next
   /plan               Session-scoped read-only design
   /build              Leave plan and implement
@@ -117,7 +117,7 @@ Forge slash commands
   /goal <objective>     Arm relentless goal driver (Codex-style)
   /goal                 Show goal status  [live]
   /goal pause|resume|clear|done   [live]
-  /done [note]          Wind down + lastErr/verify Next (goal + ULW LAST)  [live]
+  /done [note]          Wind down + lastErr/verify Next (goal + ULW /cycle 0)  [live]
   /pause                Shorthand for /goal pause  [live]
   /unpause              Shorthand for /goal resume  [live]
   /ulw [task]           Arm ULW + cycle=1 (Wave 1 PLAN, then BUILD; soft/broad seeds backlog)
@@ -125,8 +125,9 @@ Forge slash commands
   /memory [list|add …]  Session decisions. /memory project [prune] for cross-session.
   /attach <image>       Attach image path for vision ([[image:path]] in next message)
   /paste                Attach clipboard image (pngpaste / osascript / wl-paste / xclip)
-  /cycle 1|0|status     Continue waves (1) or finish this + one more then stop (0)  [live]
-  /max-waves N|off      Cap ULW waves (auto LAST at N); default unlimited  [live]
+  /cycle 1|0|status     Keep cycling (1) or finish this cycle then stop (0)  [live]
+  /replan               Close the open cycle now (review, verify, commit) and re-plan  [live]
+  /max-cycles N|off     Stop after N committed cycles; default until fulfilled  [live]
   /ulw-off              Disarm ULW + cycle driver  [live]
   /hooks [init|reload]  List/scaffold/reload hooks  [live]
   /status · /hud        HUD + session · lastErr Next is a slash key  [live]
@@ -157,7 +158,7 @@ Forge slash commands
   /review [target]      Code review: uncommitted|staged|<commit>|<branch>|<pr#>
   /checkpoint [snap|restore]  Safety snapshot · restore rewinds, never git stash apply (/snap)
   /commit [staged] [do]  Card from the dirty tree; do creates the commit (no push, no model)
-                        /commit draft still starts a model message. ULW auto-commits on wave close (FORGE_ULW_AUTO_COMMIT=0 off)
+                        /commit draft still starts a model message. ULW commits each reviewed, green cycle (FORGE_ULW_AUTO_COMMIT=0 off)
   /rewind [n]           Undo last n user turns + restore journaled files (/undo)
   /retry [prompt]       Rewind last turn (+ disk) + re-run (/again; optional rewrite)
   /export [path] [--json]  Export session as markdown or JSON (files mode 0600)
@@ -217,7 +218,7 @@ Tips
   Tab             Autocomplete commands and parameters
   /permissions    Modes 1–4 · list|clear|revoke for saved always-allows
   Live controls   While the agent is working you can still type:
-                  /cycle 0  ·  /cycle 1  ·  /max-waves N|off  ·  /ulw-off  ·  /goal pause  ·  /status
+                  /cycle 0  ·  /cycle 1  ·  /replan  ·  /max-cycles N|off  ·  /ulw-off  ·  /goal pause  ·  /status
                   (no need to Ctrl+C first — harness updates apply at next Stop)
   Ctrl+C          Abort the current turn; twice at idle prompt to exit
 `.trim();

@@ -264,7 +264,7 @@ export function productionWarningsForRun(
         (v === "0" || v === "false" || v === "off" || v === "no")
       ) {
         warnings.push(
-          "FORGE_ULW_AUTO_COMMIT=0 — ULW will not create local commits at wave close or Cycle complete",
+          "FORGE_ULW_AUTO_COMMIT=0 — ULW will not commit reviewed, green cycles locally",
         );
       }
     }
@@ -341,7 +341,7 @@ export function productionWarningsForRun(
     }
     if (opts?.releasedOnContinueCap) {
       warnings.push(
-        "releasedOnContinueCap — stop-continue safety valve fired (length / content_filter / empty, or Stop-block cap on capped/LAST/non-ULW). Unlimited CONTINUE Stop-blocks do not trip it. Narrow the task or raise FORGE_ULW_MAX_CONTINUES / maxStopContinues.",
+        "releasedOnContinueCap — stop-continue safety valve fired (length / content_filter / empty, or Stop-block cap on capped / /cycle 0 / non-ULW). Unlimited cycling Stop-blocks do not trip it. Narrow the task or raise FORGE_ULW_MAX_CONTINUES / maxStopContinues.",
       );
     }
     // Post-run: edits without a recorded structural check — CI greppable.

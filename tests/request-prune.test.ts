@@ -527,7 +527,7 @@ describe("request-prune", () => {
     assert.equal(c.harnessUserPokes, 10);
     assert.equal(c.proofPokes, 1);
     assert.equal(classifyGuardBlock("[Forge proof-claim] x"), "proofClaim");
-    assert.equal(classifyGuardBlock("  [Forge ultrawork] Stop blocked"), "ultrawork");
+    assert.equal(classifyGuardBlock("  [Forge ULW cycle driver] Stop blocked"), "ulw");
     assert.equal(classifyGuardBlock("plain text"), null);
     // No blocks → empty record (loop drops it from the result / run JSON).
     assert.deepEqual(countHarnessUserPokes([msgs[0]]).guardBlocks, {});

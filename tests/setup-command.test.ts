@@ -52,7 +52,7 @@ describe("/setup slash", () => {
       config: { ...DEFAULT_CONFIG, workspace: cwd },
       hooks: new HookRunner(DEFAULT_CONFIG, cwd),
     });
-    assert.match(String(r.output), /\/max-waves/);
+    assert.match(String(r.output), /\/max-cycles/);
     assert.match(String(r.output), /\/setup/);
   });
 

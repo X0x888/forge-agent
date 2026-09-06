@@ -8,9 +8,12 @@
  */
 
 import type { GoalState } from "./goal.js";
-import type { UlwCycleState } from "./ulw-cycle.js";
 import type { TodoItem } from "../session/session.js";
-import { displayUlwMandate, formatUlwCounts } from "./ulw-cycle.js";
+import {
+  cycleActive,
+  displayUlwMandate,
+  type CycleState,
+} from "./cycle/index.js";
 import {
   formatGitBranchLine,
   formatGitTreeLine,
@@ -19,19 +22,21 @@ import {
 import {
   formatMemoryForPrompt,
   durableMemoryFingerprint,
-  isEvaluateClassMandate,
 } from "./decision-memory.js";
-import { formatHoldContextAppendix } from "./explore-contract.js";
 
 export interface HarnessSnapshot {
   ulwEnabled: boolean;
-  cycle: 0 | 1 | null;
+  /** Cycle number and phase of the plan-cycle driver. */
+  cycle: number;
+  phase: string;
   wave: number;
   /** null = unlimited */
-  maxWaves: number | null;
-  blocks: number;
+  maxCycles: number | null;
+  itemsOpen: number;
+  itemsTotal: number;
+  planTitle: string;
+  cycleZeroRequested: boolean;
   mandate: string;
-  softPrompt: boolean;
   goalActive: boolean;
   goalObjective: string;
   goalPaused: boolean;
@@ -58,29 +63,20 @@ export interface HarnessSnapshot {
   decisionsFp?: string;
   /** Short active-constraint block for the admit message. */
   decisionsText?: string;
-  /** LAST wrap scope — user wraps named plan; budget wraps this wave. */
-  wrapKind?: "user" | "budget";
-  /** User `/cycle 0` scheduled stop wave (maxWaves was set to this). */
-  cycleZeroStopAt?: number | null;
-  /** Unlimited same-surface hold is armed. */
-  sameSurfaceHold?: boolean;
-  contractHold?: boolean;
-  exploreRequired?: boolean;
-  holdAppendix?: string;
 }
 
 const lastAdmitted = new Map<string, string>();
 const lastAdmittedSnap = new Map<string, HarnessSnapshot>();
 
 export function snapshotHarness(opts: {
-  ulw: UlwCycleState | null | undefined;
+  ulw: CycleState | null | undefined;
   goal: GoalState | null | undefined;
   todos: TodoItem[];
   permissionMode: string;
   git?: GitSnapshot | null;
   sessionId?: string;
 }): HarnessSnapshot {
-  const ulw = opts.ulw?.enabled ? opts.ulw : null;
+  const ulw = opts.ulw && cycleActive(opts.ulw) ? opts.ulw : null;
   const goal =
     opts.goal &&
     opts.goal.objective &&
@@ -111,12 +107,15 @@ export function snapshotHarness(opts: {
 
   return {
     ulwEnabled: Boolean(ulw),
-    cycle: ulw ? ulw.cycle : null,
+    cycle: ulw?.cycle ?? 0,
+    phase: ulw?.phase ?? "",
     wave: ulw?.wave ?? 0,
-    maxWaves: ulw?.maxWaves ?? null,
-    blocks: ulw?.blocks ?? 0,
-    mandate: ulw?.mandate ?? "",
-    softPrompt: Boolean(ulw?.softPrompt),
+    maxCycles: ulw?.maxCycles ?? null,
+    itemsOpen: ulw ? ulw.items.filter((i) => i.status === "open").length : 0,
+    itemsTotal: ulw?.items.length ?? 0,
+    planTitle: ulw?.planTitle ?? "",
+    cycleZeroRequested: Boolean(ulw?.cycleZeroRequested),
+    mandate: ulw ? displayUlwMandate(ulw) : "",
     goalActive: Boolean(goal),
     goalObjective: goal?.objective ?? "",
     goalPaused: Boolean(opts.goal?.paused),
@@ -127,29 +126,21 @@ export function snapshotHarness(opts: {
     gitDirty: Boolean(opts.git?.dirty),
     decisionsFp,
     decisionsText,
-    wrapKind: ulw?.wrapKind,
-    cycleZeroStopAt: ulw?.cycleZeroStopAt ?? null,
-    sameSurfaceHold: Boolean(ulw?.sameSurfaceHold),
-    contractHold: Boolean(ulw?.contractHold),
-    exploreRequired: Boolean(ulw?.exploreRequired),
-    holdAppendix:
-      ulw &&
-      (ulw.sameSurfaceHold || ulw.contractHold || ulw.exploreRequired) &&
-      opts.sessionId
-        ? formatHoldContextAppendix(opts.sessionId)
-        : "",
   };
 }
 
 export function fingerprintSnapshot(s: HarnessSnapshot): string {
   return [
     s.ulwEnabled ? "1" : "0",
-    s.cycle === null ? "-" : String(s.cycle),
+    String(s.cycle),
+    s.phase,
     String(s.wave),
-    s.maxWaves == null ? "-" : String(s.maxWaves),
-    String(s.blocks),
+    s.maxCycles == null ? "-" : String(s.maxCycles),
+    String(s.itemsOpen),
+    String(s.itemsTotal),
+    s.planTitle,
+    s.cycleZeroRequested ? "1" : "0",
     s.mandate,
-    s.softPrompt ? "1" : "0",
     s.goalActive ? "1" : "0",
     s.goalObjective,
     s.goalPaused ? "1" : "0",
@@ -158,11 +149,6 @@ export function fingerprintSnapshot(s: HarnessSnapshot): string {
     s.gitBranch ?? "",
     s.gitDirty ? "1" : "0",
     s.decisionsFp ?? "",
-    s.wrapKind ?? "-",
-    s.cycleZeroStopAt == null ? "-" : String(s.cycleZeroStopAt),
-    s.sameSurfaceHold ? "1" : "0",
-    s.contractHold ? "1" : "0",
-    s.exploreRequired ? "1" : "0",
   ].join("\x1f");
 }
 
@@ -198,31 +184,28 @@ export function clearAdmittedFingerprints(sessionId?: string): void {
 }
 
 /**
- * True when only soft counters changed between two snapshots (ULW wave/blocks,
- * open todo count). Those deltas are already carried by Stop re-anchors and
- * the model's own todo_write calls, so re-admitting them as a full harness
- * message is redundant tokens. Real changes (cycle flag, mandate, goal,
- * permission mode) always admit.
+ * True when only soft counters changed between two snapshots (wave, open
+ * item / todo counts). Those deltas are already carried by Stop re-anchors
+ * and the model's own todo_write calls, so re-admitting them as a full
+ * harness message is redundant tokens. Real changes (cycle, phase, plan,
+ * mandate, goal, permission mode) always admit.
  */
 function countersOnlyChange(a: HarnessSnapshot, b: HarnessSnapshot): boolean {
   return (
     a.ulwEnabled === b.ulwEnabled &&
     a.cycle === b.cycle &&
-    a.maxWaves === b.maxWaves &&
+    a.phase === b.phase &&
+    a.maxCycles === b.maxCycles &&
+    a.planTitle === b.planTitle &&
+    a.cycleZeroRequested === b.cycleZeroRequested &&
     a.mandate === b.mandate &&
-    a.softPrompt === b.softPrompt &&
     a.goalActive === b.goalActive &&
     a.goalObjective === b.goalObjective &&
     a.goalPaused === b.goalPaused &&
     a.permissionMode === b.permissionMode &&
     (a.gitBranch ?? "") === (b.gitBranch ?? "") &&
     Boolean(a.gitDirty) === Boolean(b.gitDirty) &&
-    (a.decisionsFp ?? "") === (b.decisionsFp ?? "") &&
-    (a.wrapKind ?? "") === (b.wrapKind ?? "") &&
-    (a.cycleZeroStopAt ?? null) === (b.cycleZeroStopAt ?? null) &&
-    Boolean(a.sameSurfaceHold) === Boolean(b.sameSurfaceHold) &&
-    Boolean(a.contractHold) === Boolean(b.contractHold) &&
-    Boolean(a.exploreRequired) === Boolean(b.exploreRequired)
+    (a.decisionsFp ?? "") === (b.decisionsFp ?? "")
   );
 }
 
@@ -301,43 +284,16 @@ export function renderHarnessAdmission(s: HarnessSnapshot): string {
     lines.push(
       ``,
       `## ULW`,
-      `ON | **${formatUlwCounts({
-        cycle: s.cycle ?? 1,
-        wave: s.wave,
-        blocks: s.blocks,
-        maxWaves: s.maxWaves,
-      })}** ${
-        s.cycle === 0
-          ? s.cycleZeroStopAt != null
-            ? "(LAST wrap — score this run, maybe one must-fix close-out, sit down; ULW stays on)"
-            : s.wrapKind === "budget"
-            ? "(LAST — wrap this wave, score this run, maybe one must-fix close-out, then **Cycle complete.**)"
-            : "(LAST — wrap in-flight + named ships, score this run, maybe one must-fix close-out, then **Cycle complete.**)"
-          : "(CONTINUE)"
-      }`,
-      s.maxWaves != null
-        ? s.cycleZeroStopAt != null
-          ? `/cycle 0 → sit down at wave=${s.maxWaves} (ULW stays on). /done ends.`
-          : `max_waves=${s.maxWaves} budget. **Cycle complete.** refused until cap.`
-        : `max_waves=off. CONTINUE until /cycle 0 (sit down) or /done.`,
-      s.sameSurfaceHold || s.contractHold || s.exploreRequired
-        ? [
-            s.exploreRequired
-              ? `Mid-run explore required — spawn one explore child (what did we abandon?) before the next ship.`
-              : s.contractHold && !s.sameSurfaceHold
-                ? `Explore-map hold — ship or retire a named pick; a new noun is not enough.`
-                : `Same-surface / factory hold — write a new Reading on a different class or /cycle 0.`,
-            s.holdAppendix || "",
-          ]
-            .filter(Boolean)
-            .join("\n")
-        : `Harness w=N/M is the only wave counter. Do not invent Wave K. Close a unit with Wave shipped. / Ship landed: so w can move.`,
-      s.mandate ? `Mandate: ${displayUlwMandate(s.mandate)}` : "",
-      s.softPrompt
-        ? isEvaluateClassMandate(s.mandate)
-          ? `Evaluate-class — written reading first, then one ship per wave until the cap. Do not hunt leftover chrome.`
-          : `Soft original prompt — invent high-leverage work; after each ship, change surface. Sit down on /cycle 0; /done or a user cap ends. Do not hunt leftover chrome.`
-        : "",
+      `ON | **cycle=${s.cycle}${s.maxCycles != null ? `/${s.maxCycles}` : ""} phase=${s.phase} wave=${s.wave}**${s.planTitle ? ` — plan: ${s.planTitle}` : ""}`,
+      s.itemsTotal
+        ? `Items: ${s.itemsTotal - s.itemsOpen}/${s.itemsTotal} done — ship the open ones in order, mark each with todo_write, close with "Plan complete."`
+        : `No plan admitted yet — the Planner is writing it.`,
+      s.cycleZeroRequested
+        ? `/cycle 0 is set: this cycle is reviewed and committed, then the run stops.`
+        : s.maxCycles != null
+          ? `Budget: ${s.maxCycles} cycle(s); the run stops after cycle ${s.maxCycles} is committed.`
+          : `Unlimited cycles until the Planner judges the mandate fulfilled, or /cycle 0.`,
+      s.mandate ? `Mandate: ${s.mandate}` : "",
     );
   } else {
     lines.push(``, `## ULW`, `OFF`);

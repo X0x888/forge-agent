@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 import {
-  buildAutoCommitSubject,
+  commitDirtyTree,
   commitIdentArgs,
   formatLeftUnstagedAdmit,
   gitHasAuthorIdentity,
@@ -14,7 +14,6 @@ import {
   isSensitiveRelPath,
   isChangelogRelPath,
   isDisposableTestRelPath,
-  maybeAutoCommitOnUlwDone,
   porcelainPaths,
   sessionLooksDir,
   stageAutoCommitPaths,
@@ -22,14 +21,9 @@ import {
   ULW_COMMIT_EMAIL,
   ULW_COMMIT_NAME,
 } from "../src/util/git-auto-commit.js";
-import {
-  armUlwCycle,
-  evaluateUlwAtStop,
-  loadUlwCycle,
-  saveUlwCycle,
-  PLACEHOLDER_MANDATE,
-} from "../src/harness/ulw-cycle.js";
-import { appendFileMutation } from "../src/session/mutations.js";
+
+const commit = (cwd: string, subject = "ulw cycle 1: test plan", permissionMode?: string) =>
+  commitDirtyTree({ cwd, subject, body: "Plan-cycle commit — local only.", permissionMode });
 
 function git(args: string[], cwd: string): string {
   return execFileSync("git", args, {
@@ -88,7 +82,7 @@ function withRepo(fn: (root: string) => void): void {
   }
 }
 
-describe("ULW auto-commit", () => {
+describe("ULW cycle commit", () => {
   it("names changelog-only snapshots", () => {
     assert.equal(isChangelogRelPath("CHANGELOG.md"), true);
     assert.equal(isChangelogRelPath("docs/CHANGELOG"), true);
@@ -102,44 +96,6 @@ describe("ULW auto-commit", () => {
     assert.equal(isSensitiveRelPath("src/tui/repl.ts"), false);
   });
 
-  it("clips mandate subjects", () => {
-    const s = buildAutoCommitSubject("comprehensively evaluate this tool and then improve the ui and ux of it.");
-    assert.ok(s.length <= 68);
-    assert.match(s, /evaluate/i);
-  });
-
-  it("does not use the raw mandate when the wave summary is Cycle complete", () => {
-    const s = buildAutoCommitSubject(
-      "comprehensively evaulate this tool and then improve it.",
-      "Cycle complete. w10 LAST: /auth returns formatAuthCard.",
-    );
-    assert.match(s, /\/auth|formatAuthCard/i);
-    assert.doesNotMatch(s, /comprehensively evaulate/i);
-  });
-
-  it("does not title a commit from the ULW re-anchor", () => {
-    const s = buildAutoCommitSubject(
-      "improve this game",
-      "Acting on the ULW re-anchor. Do not stop. Do not ask permission to continue.",
-    );
-    assert.doesNotMatch(s, /Acting on the ULW re-anchor/i);
-    assert.match(s, /improve this game/i);
-  });
-
-  it("prefers a Ship landed hint over the raw mandate", () => {
-    const s = buildAutoCommitSubject(
-      "comprehensively evaluate this tool and then improve the ui and ux of it.",
-      "Ship landed: idle footer unverified check tip is next <cmd>, not a fake pass.",
-    );
-    assert.match(s, /idle footer/i);
-    assert.doesNotMatch(s, /comprehensively evaluate/i);
-    const w4 = buildAutoCommitSubject(
-      "comprehensively evaluate this tool and then improve the ui and ux of it.",
-      "Wave 4 LAST shipped (cycle=0): failed-tool tails + live redock.",
-    );
-    assert.match(w4, /failed-tool tails/i);
-  });
-
   it("defaults on and honors FORGE_ULW_AUTO_COMMIT=0", () => {
     delete process.env.FORGE_ULW_AUTO_COMMIT;
     assert.equal(ulwAutoCommitEnabled(), true);
@@ -148,85 +104,37 @@ describe("ULW auto-commit", () => {
     delete process.env.FORGE_ULW_AUTO_COMMIT;
   });
 
-  it("commits journaled files after cycle complete", () => {
+  it("commits a dirty tree with the cycle subject and body", () => {
     withRepo((root) => {
-      const sid = "sess-ac-1";
-      fs.mkdirSync(path.join(process.env.FORGE_HOME!, "sessions", sid), {
-        recursive: true,
-      });
-      armUlwCycle(sid, "improve the ui chrome", {
-        cycle: 1,
-        maxWaves: 1,
-        skipCheckpoint: true,
-        cwd: root,
-      });
       const dest = path.join(root, "src", "ui.ts");
       fs.mkdirSync(path.dirname(dest), { recursive: true });
       fs.writeFileSync(dest, "export const x = 1;\n");
-      appendFileMutation(sid, {
-        path: dest,
-        kind: "create",
-        turn: 1,
-      });
-      evaluateUlwAtStop({
-        sessionId: sid,
-        lastAssistantMessage:
-          "**Cycle complete.**\n✅ npm run typecheck — green\nMust-fix: none",
-        editCount: 1,
-        openTodoCount: 0,
-        stuckThreshold: 20,
-        verificationPassed: true,
-      });
       assert.ok(
         porcelainPaths(root).includes("src/ui.ts"),
         `expected file-level porcelain, got ${porcelainPaths(root).join(",")}`,
       );
-      const r = maybeAutoCommitOnUlwDone({ cwd: root, sessionId: sid });
+      const r = commitDirtyTree({
+        cwd: root,
+        subject: "ulw cycle 1: first-run polish",
+        body: "Plan-cycle commit — local only (never pushed).\nItems: 1/1 done",
+      });
       assert.equal(r.committed, true, r.skipped);
       assert.ok(r.sha);
-      assert.match(r.subject || "", /improve the ui chrome/i);
+      assert.equal(r.subject, "ulw cycle 1: first-run polish");
+      assert.equal(r.files, 1);
       assert.equal(porcelainPaths(root).length, 0);
-      const log = git(["log", "-1", "--format=%s"], root);
-      assert.match(log, /improve the ui chrome/i);
-    });
-  });
-
-  it("skips during LAST reflect score (read-only)", () => {
-    withRepo((root) => {
-      const sid = "sess-ac-score";
-      fs.mkdirSync(path.join(process.env.FORGE_HOME!, "sessions", sid), {
-        recursive: true,
-      });
-      armUlwCycle(sid, "improve the ui chrome", {
-        cycle: 0,
-        skipCheckpoint: true,
-        cwd: root,
-      });
-      evaluateUlwAtStop({
-        sessionId: sid,
-        lastAssistantMessage: "**Cycle complete.**\n✅ npm run typecheck — green",
-        editCount: 1,
-        openTodoCount: 0,
-        stuckThreshold: 20,
-        verificationPassed: true,
-      });
-      assert.equal(loadUlwCycle(sid)?.lastReflect, "score");
-      fs.writeFileSync(path.join(root, "extra.ts"), "export const n = 2;\n");
-      const r = maybeAutoCommitOnUlwDone({ cwd: root, sessionId: sid });
-      assert.equal(r.committed, false);
-      assert.match(r.skipped || "", /LAST reflect score/i);
+      const log = git(["log", "-1", "--format=%s%n%b"], root);
+      assert.match(log, /^ulw cycle 1: first-run polish/);
+      assert.match(log, /Items: 1\/1 done/);
+      assert.match(log, /Files: src\/ui\.ts/);
     });
   });
 
   it("skips when disabled", () => {
     withRepo((root) => {
       process.env.FORGE_ULW_AUTO_COMMIT = "0";
-      const sid = "sess-ac-off";
-      fs.mkdirSync(path.join(process.env.FORGE_HOME!, "sessions", sid), {
-        recursive: true,
-      });
       fs.writeFileSync(path.join(root, "a.ts"), "a\n");
-      const r = maybeAutoCommitOnUlwDone({ cwd: root, sessionId: sid });
+      const r = commit(root);
       assert.equal(r.committed, false);
       assert.match(r.skipped || "", /FORGE_ULW_AUTO_COMMIT=0/);
     });
@@ -234,103 +142,18 @@ describe("ULW auto-commit", () => {
 
   it("skips a changelog-only dirty tree", () => {
     withRepo((root) => {
-      const sid = "sess-ac-cl";
-      fs.mkdirSync(path.join(process.env.FORGE_HOME!, "sessions", sid), {
-        recursive: true,
-      });
-      armUlwCycle(sid, "Improve this game based on comprehensive evaluation.", {
-        cycle: 1,
-        skipCheckpoint: true,
-        cwd: root,
-      });
       fs.writeFileSync(path.join(root, "CHANGELOG.md"), "# Changelog\n");
-      const r = maybeAutoCommitOnUlwDone({ cwd: root, sessionId: sid });
+      const r = commit(root);
       assert.equal(r.committed, false, r.skipped);
       assert.equal(r.skipped, "changelog-only");
     });
   });
 
-  it("skips slash-peek mill snapshots after the first of that class", () => {
-    withRepo((root) => {
-      const sid = "sess-ac-peek-mill";
-      fs.mkdirSync(path.join(process.env.FORGE_HOME!, "sessions", sid), {
-        recursive: true,
-      });
-      armUlwCycle(sid, "Improve the ui and ux of this tool.", {
-        cycle: 1,
-        skipCheckpoint: true,
-        cwd: root,
-      });
-      const s = loadUlwCycle(sid)!;
-      s.wave = 2;
-      s.peekMillStreak = 2;
-      s.waves = [
-        {
-          wave: 1,
-          editDelta: 4,
-          proof: false,
-          summary:
-            "Ship landed: `/model` is a verdict-first sit-down card, not formatParamMenu.",
-          classText: "`/model` is a sit-down peek.",
-          millClass: true,
-          ts: new Date().toISOString(),
-        },
-        {
-          wave: 2,
-          editDelta: 3,
-          proof: false,
-          summary:
-            "Ship landed: `/context` is a sit-down peek, not a bar lecture.",
-          classText: "`/context` is a sit-down peek.",
-          millClass: true,
-          ts: new Date().toISOString(),
-        },
-      ];
-      saveUlwCycle(s);
-      fs.mkdirSync(path.join(root, "src/tui"), { recursive: true });
-      fs.writeFileSync(path.join(root, "src/tui/context-card.ts"), "x\n");
-      const r = maybeAutoCommitOnUlwDone({ cwd: root, sessionId: sid });
-      assert.equal(r.committed, false, r.skipped);
-      assert.match(r.skipped || "", /slash-peek mill|mill ship/i);
-    });
-  });
-
-  it("skips LAST close-out tests-only snapshots", () => {
-    withRepo((root) => {
-      const sid = "sess-ac-last-tests";
-      fs.mkdirSync(path.join(process.env.FORGE_HOME!, "sessions", sid), {
-        recursive: true,
-      });
-      armUlwCycle(sid, "Improve the ui and ux of this tool.", {
-        cycle: 0,
-        skipCheckpoint: true,
-        cwd: root,
-      });
-      const s = loadUlwCycle(sid)!;
-      s.lastReflect = "closeout";
-      s.lastReflectMustFix = 1;
-      saveUlwCycle(s);
-      fs.mkdirSync(path.join(root, "tests"), { recursive: true });
-      fs.writeFileSync(path.join(root, "tests/git-auto-commit.test.ts"), "x\n");
-      const r = maybeAutoCommitOnUlwDone({ cwd: root, sessionId: sid });
-      assert.equal(r.committed, false, r.skipped);
-      assert.equal(r.skipped, "LAST close-out tests-only");
-    });
-  });
-
   it("skips plan mode and clean trees", () => {
     withRepo((root) => {
-      const sid = "sess-ac-plan";
-      fs.mkdirSync(path.join(process.env.FORGE_HOME!, "sessions", sid), {
-        recursive: true,
-      });
-      const plan = maybeAutoCommitOnUlwDone({
-        cwd: root,
-        sessionId: sid,
-        permissionMode: "plan",
-      });
+      const plan = commit(root, "x", "plan");
       assert.equal(plan.skipped, "plan mode");
-      const clean = maybeAutoCommitOnUlwDone({ cwd: root, sessionId: sid });
+      const clean = commit(root);
       assert.equal(clean.skipped, "working tree clean");
     });
   });
@@ -349,33 +172,13 @@ describe("ULW auto-commit", () => {
 
   it("commits an unstaged src/ edit after cycle complete", () => {
     withRepo((root) => {
-      const sid = "sess-ac-unstaged";
-      fs.mkdirSync(path.join(process.env.FORGE_HOME!, "sessions", sid), {
-        recursive: true,
-      });
       const dest = path.join(root, "src", "agent.ts");
       fs.mkdirSync(path.dirname(dest), { recursive: true });
       fs.writeFileSync(dest, "export const x = 1;\n");
       git(["add", "src/agent.ts"], root);
       git(["commit", "-q", "-m", "add src"], root);
       fs.writeFileSync(dest, "export const x = 2;\n");
-      appendFileMutation(sid, { path: dest, kind: "edit", turn: 1 });
-      armUlwCycle(sid, "fix the stdin lease", {
-        cycle: 1,
-        maxWaves: 1,
-        skipCheckpoint: true,
-        cwd: root,
-      });
-      evaluateUlwAtStop({
-        sessionId: sid,
-        lastAssistantMessage:
-          "**Cycle complete.**\n✅ npm run typecheck — green\nMust-fix: none",
-        editCount: 1,
-        openTodoCount: 0,
-        stuckThreshold: 20,
-        verificationPassed: true,
-      });
-      const r = maybeAutoCommitOnUlwDone({ cwd: root, sessionId: sid });
+      const r = commit(root);
       assert.equal(r.committed, true, r.skipped);
       assert.equal(porcelainPaths(root).length, 0);
     });
@@ -392,24 +195,6 @@ describe("ULW auto-commit", () => {
       ]);
       assert.deepEqual(staged, ["src/ok.ts"]);
       assert.deepEqual(failed, ["rc/agent/permissions.ts"]);
-    });
-  });
-
-  it("skips a pending placeholder mandate", () => {
-    withRepo((root) => {
-      const sid = "sess-ac-ph";
-      fs.mkdirSync(path.join(process.env.FORGE_HOME!, "sessions", sid), {
-        recursive: true,
-      });
-      armUlwCycle(sid, PLACEHOLDER_MANDATE, {
-        cycle: 1,
-        skipCheckpoint: true,
-        cwd: root,
-      });
-      fs.writeFileSync(path.join(root, "a.ts"), "a\n");
-      const r = maybeAutoCommitOnUlwDone({ cwd: root, sessionId: sid });
-      assert.equal(r.committed, false);
-      assert.match(r.skipped || "", /pending work-order/);
     });
   });
 
@@ -447,17 +232,8 @@ describe("ULW auto-commit", () => {
           "-c",
           `user.email=${ULW_COMMIT_EMAIL}`,
         ]);
-        const sid = "sess-ac-noident";
-        fs.mkdirSync(path.join(process.env.FORGE_HOME!, "sessions", sid), {
-          recursive: true,
-        });
-        armUlwCycle(sid, "improve this game.", {
-          cycle: 1,
-          skipCheckpoint: true,
-          cwd: root,
-        });
         fs.writeFileSync(path.join(root, "ship.ts"), "export const n = 1;\n");
-        const r = maybeAutoCommitOnUlwDone({ cwd: root, sessionId: sid });
+        const r = commit(root);
         assert.equal(r.committed, true, r.skipped);
         const ident = git(["log", "-1", "--format=%an <%ae>"], root);
         assert.match(ident, /Forge <forge@local>/);
@@ -472,14 +248,9 @@ describe("ULW auto-commit", () => {
 
   it("does not stage .env", () => {
     withRepo((root) => {
-      const sid = "sess-ac-env";
-      fs.mkdirSync(path.join(process.env.FORGE_HOME!, "sessions", sid), {
-        recursive: true,
-      });
       const envPath = path.join(root, ".env");
       fs.writeFileSync(envPath, "SECRET=1\n");
-      appendFileMutation(sid, { path: envPath, kind: "create", turn: 1 });
-      const r = maybeAutoCommitOnUlwDone({ cwd: root, sessionId: sid });
+      const r = commit(root);
       assert.equal(r.committed, false);
       assert.match(r.skipped || "", /sensitive/);
     });
@@ -487,10 +258,6 @@ describe("ULW auto-commit", () => {
 
   it("does not commit worktree-land fixtures", () => {
     withRepo((root) => {
-      const sid = "sess-ac-wtland";
-      fs.mkdirSync(path.join(process.env.FORGE_HOME!, "sessions", sid), {
-        recursive: true,
-      });
       const junk = path.join(
         root,
         "src",
@@ -500,27 +267,11 @@ describe("ULW auto-commit", () => {
       fs.mkdirSync(path.dirname(junk), { recursive: true });
       fs.writeFileSync(junk, "landed\n");
       assert.equal(isDisposableTestRelPath("src/agent/__wt_land_wt-landed-23589-temrip.md"), true);
-      const r = maybeAutoCommitOnUlwDone({ cwd: root, sessionId: sid });
+      const r = commit(root);
       assert.equal(r.committed, false);
       assert.match(r.skipped || "", /disposable test fixtures/);
       assert.ok(fs.existsSync(junk));
     });
-  });
-
-  it("strips the model's own Wave N prefix from the subject (the body carries the harness wave)", () => {
-    assert.equal(
-      buildAutoCommitSubject("improve this game", "Wave 160 — Consolidation. No new product scope. Verify: npm test."),
-      "Consolidation. No new product scope. Verify: npm test.",
-    );
-    assert.equal(
-      buildAutoCommitSubject("improve this game", "Ship landed: Wave 84: Appetite hunt. Digest is no longer FIFO wallpaper."),
-      "Appetite hunt. Digest is no longer FIFO wallpaper.",
-    );
-    // A subject that merely mentions a wave mid-sentence is untouched.
-    assert.equal(
-      buildAutoCommitSubject("improve this game", "Ship landed: the ledger shows wave 3 twice."),
-      "the ledger shows wave 3 twice.",
-    );
   });
 
   it("classifies look artefacts and .forge scratch", () => {
@@ -569,18 +320,6 @@ describe("ULW auto-commit", () => {
       fs.mkdirSync(path.join(process.env.FORGE_HOME!, "sessions", sid), {
         recursive: true,
       });
-      armUlwCycle(sid, "improve this game", { cycle: 1, skipCheckpoint: true, editCount: 0 });
-      const s = loadUlwCycle(sid)!;
-      s.waves = [
-        {
-          wave: 1,
-          editDelta: 5,
-          proof: true,
-          summary: "Ship landed: the companion blinks — `pet-face.ts` `blinkOpenness`.",
-          ts: new Date().toISOString(),
-        },
-      ];
-      saveUlwCycle(s);
       // Product change + a sprite it loads + two looks nobody loads + a browser profile.
       fs.mkdirSync(path.join(root, "src", "lib"), { recursive: true });
       fs.writeFileSync(
@@ -596,7 +335,7 @@ describe("ULW auto-commit", () => {
       fs.mkdirSync(path.join(root, ".forge", "commands"), { recursive: true });
       fs.writeFileSync(path.join(root, ".forge", "commands", "deploy.md"), "# deploy\n");
 
-      const r = maybeAutoCommitOnUlwDone({ cwd: root, sessionId: sid });
+      const r = commit(root);
       assert.equal(r.committed, true, r.skipped);
       assert.deepEqual(
         [...(r.leftUnstaged ?? [])].sort(),
@@ -622,15 +361,33 @@ describe("ULW auto-commit", () => {
     });
   });
 
+  it("a workspace inside a repo commits only its own subtree — never the enclosing repo's dirty files", () => {
+    withRepo((root) => {
+      // The enclosing repo has an unrelated dirty file …
+      fs.writeFileSync(path.join(root, "README.md"), "hi\nchanged outside\n");
+      // … and the run's workspace is a bare subdirectory (no .git of its own).
+      const ws = path.join(root, "scratch", "run-1");
+      fs.mkdirSync(ws, { recursive: true });
+      const nothing = commit(ws);
+      assert.equal(nothing.committed, false);
+      assert.match(nothing.skipped || "", /no changes under scratch\/run-1\//);
+      assert.deepEqual(porcelainPaths(root), ["README.md"], "the outer edit is untouched");
+
+      fs.writeFileSync(path.join(ws, "index.ts"), "export const a = 1;\n");
+      const r = commit(ws);
+      assert.equal(r.committed, true, r.skipped);
+      assert.equal(r.files, 1);
+      const committed = git(["show", "--name-only", "--format=", "HEAD"], root).split("\n").filter(Boolean);
+      assert.deepEqual(committed, ["scratch/run-1/index.ts"]);
+      assert.deepEqual(porcelainPaths(root), ["README.md"], "README.md was never staged");
+    });
+  });
+
   it("a dirty tree of looks alone is not a commit", () => {
     withRepo((root) => {
-      const sid = "sess-ac-looks-only";
-      fs.mkdirSync(path.join(process.env.FORGE_HOME!, "sessions", sid), {
-        recursive: true,
-      });
       fs.mkdirSync(path.join(root, "images"));
       fs.writeFileSync(path.join(root, "images", "home-look.png"), Buffer.from([1, 2, 3]));
-      const r = maybeAutoCommitOnUlwDone({ cwd: root, sessionId: sid });
+      const r = commit(root);
       assert.equal(r.committed, false);
       assert.match(r.skipped || "", /only look artefacts \/ scratch remain/);
       assert.deepEqual(r.leftUnstaged, ["images/home-look.png"]);

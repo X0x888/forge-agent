@@ -60,19 +60,12 @@ describe("isReadOnlyToolName spawn pin", () => {
 });
 
 describe("resolveSpawnSubagentType", () => {
-  it("omitted is explore only when plan or orient", () => {
-    assert.equal(resolveSpawnSubagentType(undefined, { ulwOrient: true }), "explore");
+  it("omitted is explore only in plan mode", () => {
+    assert.equal(resolveSpawnSubagentType(undefined, { planMode: true }), "explore");
     assert.equal(resolveSpawnSubagentType("", { planMode: true }), "explore");
     assert.equal(resolveSpawnSubagentType(undefined, {}), "general-purpose");
     assert.equal(
-      resolveSpawnSubagentType(undefined, {
-        planMode: true,
-        ulwLastReflectScore: true,
-      }),
-      "general-purpose",
-    );
-    assert.equal(
-      resolveSpawnSubagentType("general-purpose", { ulwOrient: true }),
+      resolveSpawnSubagentType("general-purpose", { planMode: true }),
       "general-purpose",
     );
   });

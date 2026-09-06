@@ -18,12 +18,11 @@ import {
 import { pushLiveNotice } from "../../harness/live-notices.js";
 import { appendMemoryRecord } from "../../harness/decision-memory.js";
 import {
-  completeUlwPlan,
-  loadUlwCycle,
-  requestUlwReorient,
-  resolveUlwPhase,
-} from "../../harness/ulw-cycle.js";
-import { armUlwPlanMode } from "../../harness/ulw-plan-mode.js";
+  cycleActive,
+  loadCycleState,
+  requestReplan,
+  setHumanPlan,
+} from "../../harness/cycle/index.js";
 import { toolAskUser } from "./ask-user.js";
 import type { ToolResult } from "./types.js";
 
@@ -67,10 +66,17 @@ export async function toolEnterPlanMode(
   }
   const reason = String(input.reason ?? "").trim();
   const previous = config.permissionMode;
-  const ulw = loadUlwCycle(session.meta.id);
-  if (ulw?.enabled && resolveUlwPhase(ulw) === "ship") {
-    requestUlwReorient(session.meta.id);
-    armUlwPlanMode(session, config);
+  // Under ULW the executor does not research in-session: a fresh Planner
+  // does. Entering plan mode is a request to close this cycle and re-plan.
+  const cycle = loadCycleState(session.meta.id);
+  if (cycle && cycleActive(cycle) && cycle.phase === "execute") {
+    const r = requestReplan(session.meta.id);
+    pushLiveNotice(session.meta.id, `enter_plan_mode under ULW → ${r.line}`);
+    return {
+      output:
+        `ULW: re-plan requested${reason ? ` (${reason.slice(0, 160)})` : ""}. ` +
+        `Finish or stop the item you are on; at the next Stop the cycle is reviewed, verified and committed, and a fresh Planner writes the next plan with your reason in front of it. Write tools stay available until then.`,
+    };
   }
   enterSessionPlanMode(config, session);
   saveSession(session);
@@ -137,11 +143,8 @@ export async function toolExitPlanMode(
     };
   }
 
-  // ULW-owned Wave-1 PLAN auto-builds (unattended cannot ask_user).
-  // User-typed /plan clears ulwOwnsPlan — keep the human gate.
-  const ulwOwned = Boolean(session.meta.ulwOwnsPlan);
   const fromYolo = session.meta.permissionModeBeforePlan === "bypassPermissions";
-  if (!ulwOwned && !fromYolo) {
+  if (!fromYolo) {
     const asked = await toolAskUser({
       question: "Leave plan mode and start implementing this plan?",
       choices: ["implement now", "stay in plan"],
@@ -168,20 +171,17 @@ export async function toolExitPlanMode(
   } catch {
     /* */
   }
-  if (ulwOwned || loadUlwCycle(session.meta.id)?.enabled) {
-    completeUlwPlan(session.meta.id, { closer: reading, force: ulwOwned });
-  }
+  // A human /plan pause under ULW ends here: the harness Planner takes over
+  // at the next boundary with this reading in decision memory.
+  setHumanPlan(session.meta.id, false);
 
   const previous = config.permissionMode;
   const { mode, wasPlan } = exitSessionPlanMode(config, session);
-  delete session.meta.ulwOwnsPlan;
   if (wasPlan) {
     saveSession(session);
     pushLiveNotice(
       session.meta.id,
-      ulwOwned
-        ? `ULW PLAN → ${mode} — implementing Wave 1 plan (auto /build).`
-        : `Mode ${previous} → ${mode} — implementing approved plan.`,
+      `Mode ${previous} → ${mode} — implementing approved plan.`,
     );
   }
 

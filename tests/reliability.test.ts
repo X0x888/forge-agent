@@ -2336,7 +2336,7 @@ describe("sessions list cwd filter", () => {
       title: "cycle-done",
     });
     setSessionLastError(cycle, {
-      code: "ulw_cycle_complete",
+      code: "ulw_done",
       message: "released",
     });
     saveSession(cycle);
@@ -2727,10 +2727,10 @@ describe("session prune", () => {
     const { handleSlash } = await import("../src/commands/slash.js");
     const { DEFAULT_CONFIG } = await import("../src/config/types.js");
     const { HookRunner } = await import("../src/harness/hooks.js");
-    const { armUlwCycle } = await import("../src/harness/ulw-cycle.js");
+    const { armCycle } = await import("../src/harness/cycle/index.js");
     const current = createSession({ cwd: tmp, provider: "xai", model: "m" });
     current.meta.ultrawork = true;
-    armUlwCycle(current.meta.id, "old mandate", { cycle: 1 });
+    armCycle({ sessionId: current.meta.id, mandate: "old mandate", cwd: tmp });
     const hooks = new HookRunner(DEFAULT_CONFIG, tmp);
     const r = await handleSlash("/new incident-hotfix", {
       session: current,
@@ -2759,8 +2759,8 @@ describe("session prune", () => {
     const { handleSlash } = await import("../src/commands/slash.js");
     const { DEFAULT_CONFIG } = await import("../src/config/types.js");
     const { HookRunner } = await import("../src/harness/hooks.js");
-    const { armUlwCycle, loadUlwCycle } = await import(
-      "../src/harness/ulw-cycle.js"
+    const { armCycle, loadCycleState } = await import(
+      "../src/harness/cycle/index.js"
     );
     const {
       evaluateTodoGateAtStop,
@@ -2769,7 +2769,7 @@ describe("session prune", () => {
     } = await import("../src/harness/todo-gate.js");
     const current = createSession({ cwd: tmp, provider: "xai", model: "m" });
     current.meta.ultrawork = true;
-    armUlwCycle(current.meta.id, "keep going", { cycle: 1 });
+    armCycle({ sessionId: current.meta.id, mandate: "keep going", cwd: tmp });
     current.messages.push({ role: "user", content: "old work" });
     clearTodoGateState(current.meta.id);
     evaluateTodoGateAtStop({
@@ -2792,8 +2792,8 @@ describe("session prune", () => {
     assert.equal(r.replaceSession!.meta.ultrawork, false);
     assert.equal(r.replaceSession!.messages.length, 0);
     // Old session ULW sidecar untouched
-    assert.equal(loadUlwCycle(current.meta.id)?.enabled, true);
-    assert.equal(loadUlwCycle(r.replaceSession!.meta.id), null);
+    assert.equal(loadCycleState(current.meta.id)?.enabled, true);
+    assert.equal(loadCycleState(r.replaceSession!.meta.id), null);
     // Soft TodoGate fire count cleared for the old session id
     assert.equal(getTodoGateFires(current.meta.id), 0);
   });

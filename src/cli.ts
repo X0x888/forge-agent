@@ -142,15 +142,16 @@ import { log, setLogLevel } from "./util/log.js";
 import { mergeRunOpts } from "./util/merge-run-opts.js";
 import { armGoal, formatGoalStatus, loadGoal } from "./harness/goal.js";
 import {
-  armUlwCycle,
-  loadUlwCycle,
+  armCycle,
+  loadActiveCycle,
+  loadCycleState,
+  ulwCyclesCommittedFor,
   formatUlwCounts,
-  normalizeMaxWaves,
+  formatUlwBadge,
+  normalizeMaxCycles,
   mandateFromUserText,
-  PLACEHOLDER_MANDATE,
   displayUlwMandate,
-} from "./harness/ulw-cycle.js";
-import { armUlwPlanMode } from "./harness/ulw-plan-mode.js";
+} from "./harness/cycle/index.js";
 import { openTodos } from "./agent/todos.js";
 import { formatEffectiveConfig, runDoctorCheck } from "./commands/slash.js";
 import {
@@ -351,11 +352,12 @@ Docs: docs/GETTING-STARTED.md · docs/PRODUCTION.md · docs/RELIABILITY.md · do
       (v: string, acc: string[]) => acc.concat(v),
       [] as string[],
     )
-    .option("--ulw", "Start in ultrawork (max autonomy) mode")
+    .option("--ulw", "Start in ultrawork (plan-cycle) mode")
     .option(
-      "--max-waves <n>",
-      "ULW wave cap (positive int; auto LAST when wave hits N). 0/omit = unlimited. Implies --ulw when set >0",
+      "--max-cycles <n>",
+      "ULW cycle cap (positive int; stop after cycle N is committed). 0/omit = until fulfilled. Implies --ulw when set >0",
     )
+    .option("--max-waves <n>", "Deprecated alias of --max-cycles")
     .option("--goal <objective>", "Arm a relentless /goal on start")
     .option(
       "--new",
@@ -411,8 +413,12 @@ Docs: docs/GETTING-STARTED.md · docs/PRODUCTION.md · docs/RELIABILITY.md · do
           process.exit(1);
         }
       }
-      // --json is headless-only (same payload as forge run --json).
-      if (wantJson && !prompt) {
+      // --json is headless-only (same payload as forge run --json). Under
+      // --ulw an empty prompt is case c (the Planner derives the direction).
+      const ulwNoMandateRoot =
+        Boolean(opts.ulw) ||
+        parseCliMaxCycles(opts.maxCycles ?? opts.maxWaves, wantJson) !== undefined;
+      if (wantJson && !prompt && !ulwNoMandateRoot) {
         emitFailJson({
           reason: "empty_prompt",
           error:
@@ -650,48 +656,22 @@ Docs: docs/GETTING-STARTED.md · docs/PRODUCTION.md · docs/RELIABILITY.md · do
       }
       const provider = createProvider(config, effectiveAuth);
       {
-        const maxWavesOpt = parseCliMaxWaves(opts.maxWaves, wantJson);
-        const wantUlw = Boolean(opts.ulw) || maxWavesOpt !== undefined;
+        const maxCyclesOpt = parseCliMaxCycles(opts.maxCycles ?? opts.maxWaves, wantJson);
+        const wantUlw = Boolean(opts.ulw) || maxCyclesOpt !== undefined;
         if (wantUlw) {
           session.meta.ultrawork = true;
-          const mandate =
-            mandateFromUserText(prompt || "") || PLACEHOLDER_MANDATE;
-          const maxWaves =
-            maxWavesOpt === undefined ? undefined : maxWavesOpt;
-          const state = armUlwCycle(session.meta.id, mandate, {
+          const state = armCycle({
+            sessionId: session.meta.id,
+            mandate: mandateFromUserText(prompt || ""),
             cwd: session.meta.cwd || process.cwd(),
-            cycle: 1,
-            editCount: session.meta.editCount,
-            ...(maxWaves !== undefined ? { maxWaves } : {}),
+            maxCycles: maxCyclesOpt ?? null,
           });
-          armUlwPlanMode(session, config);
-          // Seed a board only when the backlog gate is actually on.
-          try {
-            const { todosFromMandate } = await import(
-              "./harness/decision-memory.js"
-            );
-            const { applyTodos, openTodos } = await import("./agent/todos.js");
-            if (
-              state.backlogRequired &&
-              openTodos(session.todos || []) < 2
-            ) {
-              const seeded = todosFromMandate(mandate, { max: 12 });
-              applyTodos(session, seeded, false);
-              if (seeded.length >= 2 && state.backlogRequired) {
-                state.backlogRequired = false;
-                const { saveUlwCycle } = await import("./harness/ulw-cycle.js");
-                saveUlwCycle(state);
-              }
-            }
-          } catch {
-            /* */
-          }
           saveSession(session);
           if (!wantJson) {
             const cap =
-              state.maxWaves != null ? ` max_waves=${state.maxWaves}` : "";
+              state.maxCycles != null ? ` max_cycles=${state.maxCycles}` : "";
             log.info(
-              `ULW cycle=1${cap} armed for: ${displayUlwMandate(mandate).slice(0, 80)}`,
+              `ULW plan-cycle armed${cap} for: ${displayUlwMandate(state).slice(0, 80)}`,
             );
           }
         }
@@ -792,11 +772,12 @@ Docs: docs/GETTING-STARTED.md · docs/PRODUCTION.md · docs/RELIABILITY.md · do
       (v: string, acc: string[]) => acc.concat(v),
       [] as string[],
     )
-    .option("--ulw", "Ultrawork mode")
+    .option("--ulw", "Ultrawork (plan-cycle) mode")
     .option(
-      "--max-waves <n>",
-      "ULW wave cap (positive int; auto LAST at N). 0/omit = unlimited. Implies --ulw when set >0",
+      "--max-cycles <n>",
+      "ULW cycle cap (positive int; stop after cycle N is committed). 0/omit = until fulfilled. Implies --ulw when set >0",
     )
+    .option("--max-waves <n>", "Deprecated alias of --max-cycles")
     .option("--goal <objective>", "Arm /goal")
     .option("--cwd <path>", "Workspace", process.cwd())
     .option(
@@ -823,13 +804,13 @@ Exit codes:
   124  wall-clock timeout (FORGE_MAX_RUN_MS)
   130  aborted (SIGINT)
 
---json fields (success): ok, version, node, forgeHome, sessionId, sessionPath, title, pinned, foreignLock, provider, stickyProvider, authMethod, model, reasoningEffort, cwd, git, projectLabel, projectHints, packageName, packageVersion, packageEnginesNode, packageManager, checkCommands, projectStackSummary, monorepoRoot, workspaces, nodeModulesPresent, multipleLockfiles, permissionMode, sandbox, sandboxNetwork, sandboxMissingBackend, readOutsideWorkspace, ultrawork, ulwCycle, ulwWave, ulwMaxWaves, ulwBlocks, ulwMandate, ulwSoftPrompt, ulwExpandedMandate, goalActive, goal, goalStuckThreshold, goalBlocks, goalStuckBlocks, goalCriteria, denyRules, allowRules, askRules, maxTurns, maxTurnsUnlimited, maxCostUsd, maxCostUnlimited, effectiveMaxCostUsd, sessionCostUsd, parentCostUsd, subagentCostUsd, subagentUsage, productionWarnings, formatOnWrite, subagentLandMode, projectMemoryCount, lastCheckpoint, blockingStop, maxRunMs, providerTimeoutMs, bashTimeoutMs, bashBackgroundTimeoutMs, permissionAskTimeoutMs, doomLoopThreshold, errorStreakThreshold, ulwMaxContinues, editCount, lastVerificationCommand, lastVerificationAt, lastEditAt, lastVerificationStale, openTodos, messageCount, finalText, turns, stopContinues,
+--json fields (success): ok, version, node, forgeHome, sessionId, sessionPath, title, pinned, foreignLock, provider, stickyProvider, authMethod, model, reasoningEffort, cwd, git, projectLabel, projectHints, packageName, packageVersion, packageEnginesNode, packageManager, checkCommands, projectStackSummary, monorepoRoot, workspaces, nodeModulesPresent, multipleLockfiles, permissionMode, sandbox, sandboxNetwork, sandboxMissingBackend, readOutsideWorkspace, ultrawork, ulwCycle, ulwPhase, ulwMaxCycles, ulwBlocks, ulwMandate, ulwCycles, ulwEndReason, goalActive, goal, goalStuckThreshold, goalBlocks, goalStuckBlocks, goalCriteria, denyRules, allowRules, askRules, maxTurns, maxTurnsUnlimited, maxCostUsd, maxCostUnlimited, effectiveMaxCostUsd, sessionCostUsd, parentCostUsd, subagentCostUsd, subagentUsage, productionWarnings, formatOnWrite, subagentLandMode, projectMemoryCount, lastCheckpoint, blockingStop, maxRunMs, providerTimeoutMs, bashTimeoutMs, bashBackgroundTimeoutMs, permissionAskTimeoutMs, doomLoopThreshold, errorStreakThreshold, ulwMaxContinues, editCount, lastVerificationCommand, lastVerificationAt, lastEditAt, lastVerificationStale, openTodos, messageCount, finalText, turns, stopContinues,
   releasedOnContinueCap, hitMaxTurns, hitCostCap, stuckReleased, lastCycleReleased, finishReason, lastError, editCount, aborted, timedOut,
   harnessUserPokes, admitCount, proofPokes, guardBlocks, providerRounds,
   promptTokens, completionTokens, durationMs
   (FORGE_JSON_COMPACT=1 → single-line success JSON for CI log aggregation)
   (releasedOnContinueCap/hitMaxTurns/hitCostCap/stuckReleased/lastCycleReleased → safety valves; still ok unless aborted/timedOut/empty run)
-  (lastError → {at,code,message,tips} when stamped — max_cost/max_turns/continue_cap_*/handoff_released/proof_claim_released/ulw_stuck_wall/ulw_cycle_complete/goal_stuck_wall/…)
+  (lastError → {at,code,message,tips} when stamped — max_cost/max_turns/continue_cap_*/handoff_released/proof_claim_released/ulw_done/ulw_released/goal_stuck_wall/…)
   (finishReason → last provider finish_reason, or null if no model turn)
 
 --json early failures (stdout, still exit ≠0): { ok:false, version, reason, error, … } (typos may include suggestion)
@@ -896,7 +877,12 @@ Docs: docs/PRODUCTION.md
       if (runOpts.goal != null) {
         runOpts.goal = assertGoalOpt(runOpts.goal, { json: wantJson });
       }
-      if (!prompt) {
+      // Under --ulw an empty prompt is case c: the Planner derives the
+      // direction from the product. Everywhere else it is a usage error.
+      const ulwNoMandate =
+        Boolean(runOpts.ulw) ||
+        parseCliMaxCycles(runOpts.maxCycles ?? runOpts.maxWaves, wantJson) !== undefined;
+      if (!prompt && !ulwNoMandate) {
         const msg =
           'Empty prompt. Usage: forge run "your task" [--title label] [--json]';
         if (wantJson) {
@@ -1203,22 +1189,19 @@ Docs: docs/PRODUCTION.md
         setSessionTitle(session, runOpts.title);
       }
       {
-        const maxWavesOpt = parseCliMaxWaves(runOpts.maxWaves, wantJson);
-        const wantUlw =
-          Boolean(runOpts.ulw || runOpts.goal) || maxWavesOpt !== undefined;
+        const maxCyclesOpt = parseCliMaxCycles(
+          runOpts.maxCycles ?? runOpts.maxWaves,
+          wantJson,
+        );
+        const wantUlw = Boolean(runOpts.ulw) || maxCyclesOpt !== undefined;
         if (wantUlw) {
           session.meta.ultrawork = true;
-          armUlwCycle(
-            session.meta.id,
-            mandateFromUserText(prompt || "") || PLACEHOLDER_MANDATE,
-            {
-              cwd: session.meta.cwd || process.cwd(),
-              cycle: 1,
-              editCount: session.meta.editCount,
-              ...(maxWavesOpt !== undefined ? { maxWaves: maxWavesOpt } : {}),
-            },
-          );
-          armUlwPlanMode(session, config);
+          armCycle({
+            sessionId: session.meta.id,
+            mandate: mandateFromUserText(prompt || ""),
+            cwd: session.meta.cwd || process.cwd(),
+            maxCycles: maxCyclesOpt ?? null,
+          });
           saveSession(session);
         }
       }
@@ -2434,19 +2417,15 @@ Docs: docs/PRODUCTION.md
                   : null,
                 ulw: (() => {
                   try {
-                    const u = loadUlwCycle(s.meta.id);
-                    if (!u?.enabled) return null;
-                    const mandate = String(u.mandate || "").trim();
+                    const u = loadActiveCycle(s.meta.id);
+                    if (!u) return null;
+                    const mandate = displayUlwMandate(u);
                     return {
                       cycle: u.cycle,
+                      phase: u.phase,
                       wave: u.wave,
                       blocks: u.blocks,
-                      softPrompt: Boolean(u.softPrompt),
-                      mandate: mandate
-                        ? mandate.length > 200
-                          ? `${mandate.slice(0, 200)}…`
-                          : mandate
-                        : null,
+                      mandate: mandate.length > 200 ? `${mandate.slice(0, 200)}…` : mandate,
                     };
                   } catch {
                     return null;
@@ -2967,13 +2946,9 @@ Docs: docs/PRODUCTION.md
               sourceForeignLock,
               ulw: (() => {
                 try {
-                  const u = loadUlwCycle(forked.meta.id);
-                  if (!u?.enabled) return null;
-                  return {
-                    cycle: u.cycle,
-                    wave: u.wave,
-                    softPrompt: Boolean(u.softPrompt),
-                  };
+                  const u = loadActiveCycle(forked.meta.id);
+                  if (!u) return null;
+                  return { cycle: u.cycle, phase: u.phase, wave: u.wave };
                 } catch {
                   return null;
                 }
@@ -3006,8 +2981,8 @@ Docs: docs/PRODUCTION.md
         } else {
           let badge = "";
           try {
-            const u = loadUlwCycle(forked.meta.id);
-            if (u?.enabled) badge += ` ULW c=${u.cycle}`;
+            const u = loadActiveCycle(forked.meta.id);
+            if (u) badge += ` ${formatUlwBadge(u)}`;
           } catch {
             /* */
           }
@@ -3365,15 +3340,15 @@ Docs: docs/PRODUCTION.md
                 const lock = readSessionLock(s.id);
                 const foreignLock = sessionHasForeignLiveLock(s.id);
                 let ulwCycle: number | null = null;
-                let ulwWave: number | null = null;
-                let ulwMaxWaves: number | null = null;
+                let ulwPhase: string | null = null;
+                let ulwMaxCycles: number | null = null;
                 let goalActive = false;
                 try {
-                  const u = loadUlwCycle(s.id);
-                  if (u?.enabled) {
+                  const u = loadActiveCycle(s.id);
+                  if (u) {
                     ulwCycle = u.cycle;
-                    ulwWave = u.wave;
-                    ulwMaxWaves = u.maxWaves ?? null;
+                    ulwPhase = u.phase;
+                    ulwMaxCycles = u.maxCycles ?? null;
                   }
                 } catch {
                   /* */
@@ -3401,8 +3376,8 @@ Docs: docs/PRODUCTION.md
                       }
                     : null,
                   ulwCycle,
-                  ulwWave,
-                  ulwMaxWaves,
+                  ulwPhase,
+                  ulwMaxCycles,
                   goalActive,
                   totalPromptTokens: s.totalPromptTokens || 0,
                   totalCompletionTokens: s.totalCompletionTokens || 0,
@@ -4943,6 +4918,7 @@ function unknownOptionHint(message: string): {
     "--sandbox-missing",
     "--read-outside",
     "--max-turns",
+    "--max-cycles",
     "--max-waves",
     "--base-url",
     "--api-key",
@@ -5243,13 +5219,13 @@ function failInvalidFlag(
 }
 
 /**
- * Parse `--max-waves` CLI flag.
+ * Parse `--max-cycles` (and the deprecated `--max-waves` alias).
  * - omitted / undefined → undefined (leave existing / default unlimited)
  * - 0 → null (unlimited / clear)
  * - positive integer → cap
  * - invalid → fail closed
  */
-function parseCliMaxWaves(
+function parseCliMaxCycles(
   raw: unknown,
   wantJson: boolean,
 ): number | null | undefined {
@@ -5257,23 +5233,23 @@ function parseCliMaxWaves(
   const s = String(raw).trim();
   if (s === "") {
     failInvalidFlag(
-      "invalid_max_waves",
-      `Invalid --max-waves "". Pass a positive integer, or 0 for unlimited.`,
-      { maxWaves: String(raw) },
+      "invalid_max_cycles",
+      `Invalid --max-cycles "". Pass a positive integer, or 0 for unlimited.`,
+      { maxCycles: String(raw) },
       { json: wantJson },
     );
   }
   const n = Number(s);
   if (!Number.isFinite(n) || n < 0 || Math.floor(n) !== n || n > 10_000) {
     failInvalidFlag(
-      "invalid_max_waves",
-      `Invalid --max-waves "${raw}". Pass an integer 0–10000 (0 = unlimited).`,
-      { maxWaves: String(raw) },
+      "invalid_max_cycles",
+      `Invalid --max-cycles "${raw}". Pass an integer 0–10000 (0 = unlimited).`,
+      { maxCycles: String(raw) },
       { json: wantJson },
     );
   }
   if (n === 0) return null;
-  return normalizeMaxWaves(n);
+  return normalizeMaxCycles(n);
 }
 
 /**
@@ -6016,8 +5992,8 @@ function resolveSession(
               : "";
           const flags: string[] = [];
           try {
-            const ulw = loadUlwCycle(s.meta.id);
-            if (ulw?.enabled) flags.push(formatUlwCounts(ulw));
+            const ulw = loadActiveCycle(s.meta.id);
+            if (ulw) flags.push(formatUlwCounts(ulw));
           } catch {
             /* */
           }
@@ -6518,63 +6494,59 @@ async function runHeadless(opts: {
         ultrawork: Boolean(opts.session.meta.ultrawork),
         ulwCycle: (() => {
           try {
-            const u = loadUlwCycle(opts.session.meta.id);
-            return u?.enabled ? u.cycle : null;
+            const u = loadCycleState(opts.session.meta.id);
+            return u && !u.legacy ? u.cycle : null;
           } catch {
             return null;
           }
         })(),
-        ulwWave: (() => {
+        ulwPhase: (() => {
           try {
-            const u = loadUlwCycle(opts.session.meta.id);
-            return u?.enabled ? u.wave : null;
+            const u = loadCycleState(opts.session.meta.id);
+            return u && !u.legacy ? u.phase : null;
           } catch {
             return null;
           }
         })(),
-        ulwMaxWaves: (() => {
+        ulwMaxCycles: (() => {
           try {
-            const u = loadUlwCycle(opts.session.meta.id);
-            if (!u?.enabled) return null;
-            return u.maxWaves ?? null;
+            const u = loadCycleState(opts.session.meta.id);
+            return u && !u.legacy ? u.maxCycles : null;
           } catch {
             return null;
           }
         })(),
         ulwBlocks: (() => {
           try {
-            const u = loadUlwCycle(opts.session.meta.id);
-            return u?.enabled ? u.blocks : null;
+            return loadActiveCycle(opts.session.meta.id)?.blocks ?? null;
           } catch {
             return null;
           }
         })(),
         ulwMandate: (() => {
           try {
-            const u = loadUlwCycle(opts.session.meta.id);
-            if (!u?.enabled) return null;
-            const text = String(u.mandate || "").trim();
-            if (!text) return null;
+            const u = loadActiveCycle(opts.session.meta.id);
+            if (!u) return null;
+            const text = displayUlwMandate(u);
             return text.length > 200 ? `${text.slice(0, 200)}…` : text;
           } catch {
             return null;
           }
         })(),
-        ulwSoftPrompt: (() => {
+        ulwCycles: (() => {
           try {
-            const u = loadUlwCycle(opts.session.meta.id);
-            return u?.enabled ? Boolean(u.softPrompt) : null;
-          } catch {
-            return null;
-          }
-        })(),
-        ulwExpandedMandate: (() => {
-          try {
-            const u = loadUlwCycle(opts.session.meta.id);
-            if (!u?.enabled || !u.softPrompt) return null;
-            const text = String(u.expandedMandate || "").trim();
-            if (!text) return null;
-            return text.length > 240 ? `${text.slice(0, 240)}…` : text;
+            const u = loadActiveCycle(opts.session.meta.id) ?? loadCycleState(opts.session.meta.id);
+            if (!u || u.legacy) return null;
+            return u.cycles.map((c) => ({
+              n: c.n,
+              title: c.title ?? null,
+              itemsDone: c.itemsDone,
+              itemsTotal: c.itemsTotal,
+              waves: c.waves,
+              reviewVerdict: c.reviewVerdict ?? null,
+              verifyPassed: c.verifyPassed ?? null,
+              commitSha: c.commitSha ?? null,
+            }));
           } catch {
             return null;
           }
@@ -6746,7 +6718,6 @@ async function runHeadless(opts: {
         releasedOnContinueCap: result.releasedOnContinueCap,
         stuckReleased: result.stuckReleased,
         lastCycleReleased: result.lastCycleReleased,
-        lastCycleSatDown: result.lastCycleSatDown,
         aborted: result.aborted,
         lastErrorCode: opts.session.meta.lastError?.code,
         editCount: opts.session.meta.editCount,
@@ -6787,7 +6758,6 @@ async function runHeadless(opts: {
             hitCostCap: result.hitCostCap,
             stuckReleased: result.stuckReleased,
             lastCycleReleased: result.lastCycleReleased,
-            lastCycleSatDown: result.lastCycleSatDown,
             releasedOnContinueCap: result.releasedOnContinueCap,
             stopContinues: result.stopContinues,
             finalText: result.finalText,
@@ -6828,7 +6798,7 @@ async function runHeadless(opts: {
           releasedOnContinueCap: result.releasedOnContinueCap,
           stuckReleased: result.stuckReleased,
           lastCycleReleased: result.lastCycleReleased,
-          lastCycleSatDown: result.lastCycleSatDown,
+          ulwEndReason: result.ulwEndReason,
           aborted: result.aborted,
           stopContinues: result.stopContinues,
           lastErrorCode: opts.session.meta.lastError?.code,
@@ -6949,63 +6919,59 @@ async function runHeadless(opts: {
       ultrawork: Boolean(opts.session.meta.ultrawork),
       ulwCycle: (() => {
         try {
-          const u = loadUlwCycle(opts.session.meta.id);
-          return u?.enabled ? u.cycle : null;
+          const u = loadCycleState(opts.session.meta.id);
+          return u && !u.legacy ? u.cycle : null;
         } catch {
           return null;
         }
       })(),
-      ulwWave: (() => {
+      ulwPhase: (() => {
         try {
-          const u = loadUlwCycle(opts.session.meta.id);
-          return u?.enabled ? u.wave : null;
+          const u = loadCycleState(opts.session.meta.id);
+          return u && !u.legacy ? u.phase : null;
         } catch {
           return null;
         }
       })(),
-      ulwMaxWaves: (() => {
+      ulwMaxCycles: (() => {
         try {
-          const u = loadUlwCycle(opts.session.meta.id);
-          if (!u?.enabled) return null;
-          return u.maxWaves ?? null;
+          const u = loadCycleState(opts.session.meta.id);
+          return u && !u.legacy ? u.maxCycles : null;
         } catch {
           return null;
         }
       })(),
       ulwBlocks: (() => {
         try {
-          const u = loadUlwCycle(opts.session.meta.id);
-          return u?.enabled ? u.blocks : null;
+          return loadActiveCycle(opts.session.meta.id)?.blocks ?? null;
         } catch {
           return null;
         }
       })(),
       ulwMandate: (() => {
         try {
-          const u = loadUlwCycle(opts.session.meta.id);
-          if (!u?.enabled) return null;
-          const text = String(u.mandate || "").trim();
-          if (!text) return null;
+          const u = loadActiveCycle(opts.session.meta.id);
+          if (!u) return null;
+          const text = displayUlwMandate(u);
           return text.length > 200 ? `${text.slice(0, 200)}…` : text;
         } catch {
           return null;
         }
       })(),
-      ulwSoftPrompt: (() => {
+      ulwCycles: (() => {
         try {
-          const u = loadUlwCycle(opts.session.meta.id);
-          return u?.enabled ? Boolean(u.softPrompt) : null;
-        } catch {
-          return null;
-        }
-      })(),
-      ulwExpandedMandate: (() => {
-        try {
-          const u = loadUlwCycle(opts.session.meta.id);
-          if (!u?.enabled || !u.softPrompt) return null;
-          const text = String(u.expandedMandate || "").trim();
-          if (!text) return null;
-          return text.length > 240 ? `${text.slice(0, 240)}…` : text;
+          const u = loadActiveCycle(opts.session.meta.id) ?? loadCycleState(opts.session.meta.id);
+          if (!u || u.legacy) return null;
+          return u.cycles.map((c) => ({
+            n: c.n,
+            title: c.title ?? null,
+            itemsDone: c.itemsDone,
+            itemsTotal: c.itemsTotal,
+            waves: c.waves,
+            reviewVerdict: c.reviewVerdict ?? null,
+            verifyPassed: c.verifyPassed ?? null,
+            commitSha: c.commitSha ?? null,
+          }));
         } catch {
           return null;
         }
@@ -7111,7 +7077,6 @@ maxTurns: opts.config.maxTurns ?? 0,
               hitCostCap: result.hitCostCap,
               stuckReleased: result.stuckReleased,
               lastCycleReleased: result.lastCycleReleased,
-              lastCycleSatDown: result.lastCycleSatDown,
               stopContinues: result.stopContinues,
               finalText: result.finalText,
             },
@@ -7128,6 +7093,8 @@ maxTurns: opts.config.maxTurns ?? 0,
       hitCostCap: result.hitCostCap,
       stuckReleased: result.stuckReleased,
       lastCycleReleased: result.lastCycleReleased,
+      ulwEndReason: result.ulwEndReason ?? null,
+      verification: result.verification ?? null,
       finishReason: result.finishReason,
       harnessUserPokes: result.harnessUserPokes ?? 0,
       admitCount: result.admitCount ?? 0,
@@ -7182,6 +7149,8 @@ maxTurns: opts.config.maxTurns ?? 0,
         hitCostCap: payload.hitCostCap,
         stuckReleased: payload.stuckReleased,
         lastCycleReleased: payload.lastCycleReleased,
+        ulwEndReason: payload.ulwEndReason ?? undefined,
+        ulwCycles: ulwCyclesCommittedFor(opts.session.meta.id),
         editCount: payload.editCount,
         promptTokens: payload.promptTokens,
         completionTokens: payload.completionTokens,

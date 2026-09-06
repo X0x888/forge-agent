@@ -8,7 +8,6 @@ import fsp from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { pushInterjection } from "../../harness/interjection.js";
-import { loadUlwCycle } from "../../harness/ulw-cycle.js";
 import { maybeDesktopNotify } from "../../util/attention.js";
 import { forgeHome, ensureDirAsync, nowIso } from "../../util/fs.js";
 import { createShellEnv } from "./env-policy.js";
@@ -326,15 +325,6 @@ function planSpawn(opts: {
   };
 }
 
-function ulwLastInFlight(sessionId: string): boolean {
-  try {
-    const ulw = loadUlwCycle(sessionId);
-    return Boolean(ulw?.enabled && ulw.cycle === 0);
-  } catch {
-    return false;
-  }
-}
-
 /** Last lines of bg stdout/stderr included in the completion interjection. */
 export const BG_COMPLETION_TAIL_LINES = 8;
 const BG_TAIL_READ_BYTES = 64 * 1024;
@@ -435,11 +425,7 @@ function maybeNotifyBgComplete(
       command: String(task.command || ""),
       tail: readTaskLogTailSync(task),
     });
-    // LAST / Cycle-complete in flight: desktop notify only — do not open
-    // another user-channel turn while the model is already winding down.
-    if (!ulwLastInFlight(sessionId)) {
-      pushInterjection(sessionId, msg);
-    }
+    pushInterjection(sessionId, msg);
     maybeDesktopNotify({
       title: `Forge · bg ${status}`,
       body: `exit=${code}  ${dur}ms  ${cmd}`,

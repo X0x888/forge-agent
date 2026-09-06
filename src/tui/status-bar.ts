@@ -23,10 +23,10 @@ import { describeAuth } from "../auth/resolve.js";
 import { listAccounts } from "../auth/store.js";
 import { loadGoal } from "../harness/goal.js";
 import {
-  loadUlwCycle,
+  loadActiveCycle,
   formatUlwBadge,
   displayUlwMandate,
-} from "../harness/ulw-cycle.js";
+} from "../harness/cycle/index.js";
 import { listActiveProjectMemory } from "../harness/project-memory.js";
 import { listActiveSubagents } from "../agent/subagent.js";
 import { peekInterjections } from "../harness/interjection.js";
@@ -106,12 +106,11 @@ export function buildPromptFlags(
     (opts?.identity ?? (isBottomStatusEnabled() ? "docked" : "standalone")) ===
     "docked";
   if (!docked) {
-    const ulw = loadUlwCycle(session.meta.id);
-    if (ulw?.enabled) {
-      flags.push(chalk.magenta("ULW"));
+    const ulw = loadActiveCycle(session.meta.id);
+    if (ulw) {
       const badge = formatUlwBadge(ulw);
       flags.push(
-        ulw.cycle === 1 ? chalk.magenta(badge) : chalk.yellow(badge),
+        ulw.cycleZeroRequested ? chalk.yellow(badge) : chalk.magenta(badge),
       );
     } else if (session.meta.ultrawork) {
       flags.push(chalk.magenta("ULW"));
@@ -289,7 +288,7 @@ export function renderLiveRunHeader(
 ): string {
   const { config, session } = ctx;
   const effort = resolveReasoningEffort(config.model, config.reasoningEffort);
-  const ulw = loadUlwCycle(session.meta.id);
+  const ulw = loadActiveCycle(session.meta.id);
   const g = loadGoal(session.meta.id);
 
   const identity = [
@@ -311,12 +310,8 @@ export function renderLiveRunHeader(
     .join(" · ");
 
   const harness: string[] = [];
-  if (ulw?.enabled) {
-    harness.push(
-      chalk.magenta(
-        `ULW ${formatUlwBadge(ulw)} ${ulw.cycle === 1 ? "CONTINUE" : "LAST"}`,
-      ),
-    );
+  if (ulw) {
+    harness.push(chalk.magenta(formatUlwBadge(ulw)));
   } else if (session.meta.ultrawork) {
     harness.push(chalk.magenta("ULW"));
   }
@@ -349,7 +344,7 @@ export function renderBusyStatusLine(
     phase === "thinking" || phase === "tool" ? phaseSec : turnSec;
   const spin = SPINNER_FRAMES[frame % SPINNER_FRAMES.length];
   const effort = resolveReasoningEffort(ctx.config.model, ctx.config.reasoningEffort);
-  const ulw = loadUlwCycle(ctx.session.meta.id);
+  const ulw = loadActiveCycle(ctx.session.meta.id);
 
   let body: string;
   if (phase === "tool" && detail) {
@@ -378,11 +373,11 @@ export function renderBusyStatusLine(
   ];
   if (effort) bits.push(chalk.dim(effort));
   bits.push(...liveTokenBits(ctx));
-  if (ulw?.enabled) {
+  if (ulw) {
     bits.push(
-      ulw.cycle === 1
-        ? chalk.magenta(formatUlwBadge(ulw))
-        : chalk.yellow(formatUlwBadge(ulw)),
+      ulw.cycleZeroRequested
+        ? chalk.yellow(formatUlwBadge(ulw))
+        : chalk.magenta(formatUlwBadge(ulw)),
     );
   }
   if (act.bgRunning > 0) bits.push(chalk.yellow(`bg:${act.bgRunning}`));
@@ -434,7 +429,7 @@ export function buildLivePrompt(
   const clockSec =
     phase === "thinking" || phase === "tool" ? phaseSec : turnSec;
   const effort = resolveReasoningEffort(ctx.config.model, ctx.config.reasoningEffort);
-  const ulw = loadUlwCycle(ctx.session.meta.id);
+  const ulw = loadActiveCycle(ctx.session.meta.id);
   const docked =
     (opts?.identity ?? (isBottomStatusEnabled() ? "docked" : "standalone")) ===
     "docked";
@@ -457,11 +452,11 @@ export function buildLivePrompt(
   if (clockSec > 0) left.push(chalk.dim(formatSec(clockSec)));
   if (!docked) {
     left.push(...liveTokenBits(ctx));
-    if (ulw?.enabled) {
+    if (ulw) {
       left.push(
-        ulw.cycle === 1
-          ? chalk.magenta(formatUlwBadge(ulw))
-          : chalk.yellow(formatUlwBadge(ulw)),
+        ulw.cycleZeroRequested
+          ? chalk.yellow(formatUlwBadge(ulw))
+          : chalk.magenta(formatUlwBadge(ulw)),
       );
     }
     if (effort) left.push(chalk.dim(effort));
@@ -623,12 +618,12 @@ export function renderTurnFooter(
     parts.push(chalk.magenta(`harness×${turn.stopContinues}`));
   }
   if (!dockOn) {
-    const ulw = loadUlwCycle(ctx.session.meta.id);
-    if (ulw?.enabled) {
+    const ulw = loadActiveCycle(ctx.session.meta.id);
+    if (ulw) {
       parts.push(
-        ulw.cycle === 1
-          ? chalk.magenta(`ULW ${formatUlwBadge(ulw)}`)
-          : chalk.yellow(`ULW ${formatUlwBadge(ulw)}`),
+        ulw.cycleZeroRequested
+          ? chalk.yellow(formatUlwBadge(ulw))
+          : chalk.magenta(formatUlwBadge(ulw)),
       );
     }
     if (snap.goal?.active) parts.push(chalk.yellow("GOAL"));
@@ -965,7 +960,7 @@ export function formatIdleBgCompletionNotice(
 export function formatSessionDetails(ctx: StatusBarContext): string {
   const { session, config, auth } = ctx;
   const g = loadGoal(session.meta.id);
-  const ulw = loadUlwCycle(session.meta.id);
+  const ulw = loadActiveCycle(session.meta.id);
   const est = liveCtxEstimate(session);
   const effort = resolveReasoningEffort(config.model, config.reasoningEffort);
   const lines = [
@@ -1166,10 +1161,10 @@ export function formatSessionDetails(ctx: StatusBarContext): string {
       ),
     );
   }
-  if (ulw?.enabled) {
+  if (ulw) {
     lines.push(
       chalk.dim(
-        `ulw      ${formatUlwBadge(ulw)}  blocks=${ulw.blocks}  ${displayUlwMandate(ulw.mandate).slice(0, 50)}`,
+        `ulw      ${formatUlwBadge(ulw)}  blocks=${ulw.blocks}  ${displayUlwMandate(ulw).slice(0, 50)}`,
       ),
     );
   }

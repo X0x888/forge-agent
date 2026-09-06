@@ -14,7 +14,7 @@ import { modelContextWindow } from "../config/model-info.js";
 import { sessionCacheRatio } from "../session/prompt-cache.js";
 import { TOOL_DEFINITIONS } from "../agent/tools/definitions.js";
 import { loadGoal } from "../harness/goal.js";
-import { loadUlwCycle, normalizeMaxWaves } from "../harness/ulw-cycle.js";
+import { loadActiveCycle } from "../harness/cycle/index.js";
 import { loadConfig } from "../config/load.js";
 import { resolveAuth } from "../auth/resolve.js";
 import { getGitSnapshot } from "../util/git-context.js";
@@ -308,11 +308,11 @@ export function sessionToSnapshot(
   const activeTodo = activeTodoTitle(session.todos);
   const tags: string[] = [];
   if (meta.ultrawork) tags.push("ULW");
-  const ulw = loadUlwCycle(meta.id);
-  if (ulw?.enabled) {
-    tags.push(ulw.cycle === 1 ? "c=1" : "c=0");
-    const cap = normalizeMaxWaves(ulw.maxWaves);
-    tags.push(cap != null ? `w=${ulw.wave}/${cap}` : `w=${ulw.wave}`);
+  const ulw = loadActiveCycle(meta.id);
+  if (ulw) {
+    tags.push(`c${ulw.cycle}${ulw.maxCycles != null ? `/${ulw.maxCycles}` : ""}`);
+    tags.push(ulw.phase);
+    if (ulw.cycleZeroRequested) tags.push("last");
   }
   if (meta.pinned) tags.push("PIN");
   {
@@ -420,11 +420,11 @@ export function sessionToSnapshot(
     ultrawork: meta.ultrawork,
     ...(() => {
       try {
-        const u = loadUlwCycle(meta.id);
-        if (!u?.enabled) return { ulwCycle: null, ulwWave: null };
-        return { ulwCycle: u.cycle, ulwWave: u.wave };
+        const u = loadActiveCycle(meta.id);
+        if (!u) return { ulwCycle: null, ulwPhase: null, ulwWave: null };
+        return { ulwCycle: u.cycle, ulwPhase: u.phase, ulwWave: u.wave };
       } catch {
-        return { ulwCycle: null, ulwWave: null };
+        return { ulwCycle: null, ulwPhase: null, ulwWave: null };
       }
     })(),
     pinned: Boolean(meta.pinned),

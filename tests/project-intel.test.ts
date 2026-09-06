@@ -25,6 +25,7 @@ import {
   verifyHintSuffix,
 } from "../src/util/project-intel.js";
 import { buildBaselineSystemPrompt } from "../src/agent/system-prompt.js";
+import { newCycleState } from "../src/harness/cycle/state.js";
 import type { ForgeConfig } from "../src/config/types.js";
 
 function tmpDir(prefix: string): string {
@@ -1871,9 +1872,9 @@ describe("/ulw preferred checks tip", () => {
     assert.equal(r.handled, true);
     const out = String(r.output || "").replace(/\x1b\[[0-9;]*m/g, "");
     assert.match(out, /ULW ON/i);
-    assert.match(out, /Preferred checks:/i);
+    assert.match(out, /Project checks:/i);
     assert.match(out, /npm run typecheck|npm test/);
-    assert.match(out, /proof-demand requires green/i);
+    assert.match(out, /the Planner declares the cycle gate/i);
   });
 });
 
@@ -1944,8 +1945,8 @@ describe("/goal resume preferred checks tip", () => {
   });
 });
 
-describe("/cycle 0 preferred checks tip", () => {
-  it("LAST wind-down lists preferred checks + session trail", async () => {
+describe("/cycle 0 on an armed run", () => {
+  it("says the run stops after the open cycle is reviewed and committed", async () => {
     const d = tmpDir("forge-cycle0-checks-");
     write(
       d,
@@ -1957,17 +1958,10 @@ describe("/cycle 0 preferred checks tip", () => {
     const { handleSlash } = await import("../src/commands/slash.js");
     const { HookRunner } = await import("../src/harness/hooks.js");
     const { DEFAULT_CONFIG } = await import("../src/config/types.js");
+    const { armWithPlan } = await import("./helpers/cycle-arm.js");
     const session = createSession({ cwd: d, provider: "xai", model: "m" });
-    session.meta.editCount = 2;
-    session.meta.lastVerificationCommand = "npm test";
-    session.meta.lastVerificationAt = "2026-04-10T12:00:00.000Z";
-    session.meta.lastEditAt = "2026-04-10T12:10:00.000Z";
     const hooks = new HookRunner(DEFAULT_CONFIG, d);
-    await handleSlash("/ulw ship it", {
-      session,
-      config: { ...DEFAULT_CONFIG, workspace: d },
-      hooks,
-    });
+    armWithPlan({ sessionId: session.meta.id, cwd: d, mandate: "ship it", verifyCommand: "npm test" });
     const r = await handleSlash("/cycle 0", {
       session,
       config: { ...DEFAULT_CONFIG, workspace: d },
@@ -1975,56 +1969,9 @@ describe("/cycle 0 preferred checks tip", () => {
     });
     assert.equal(r.handled, true);
     const out = String(r.output || "").replace(/\x1b\[[0-9;]*m/g, "");
-    assert.match(out, /cycle=0|stop at wave/i);
-    assert.match(out, /Preferred checks on the last wave|Preferred checks/i);
-    assert.match(out, /npm run typecheck|npm test/);
-    assert.match(out, /Session trail:|last-verify/i);
-  });
-});
-
-describe("/max-waves LAST preferred checks tip", () => {
-  it("auto-LAST flip lists preferred checks + session trail", async () => {
-    const d = tmpDir("forge-maxwaves-last-");
-    write(
-      d,
-      "package.json",
-      JSON.stringify({ scripts: { typecheck: "tsc -b", test: "node --test" } }),
-    );
-    write(d, "package-lock.json", "{}");
-    const { createSession } = await import("../src/session/session.js");
-    const { handleSlash } = await import("../src/commands/slash.js");
-    const { HookRunner } = await import("../src/harness/hooks.js");
-    const { DEFAULT_CONFIG } = await import("../src/config/types.js");
-    const {
-      armUlwCycle,
-      loadUlwCycle,
-      saveUlwCycle,
-    } = await import("../src/harness/ulw-cycle.js");
-    const session = createSession({ cwd: d, provider: "xai", model: "m" });
-    session.meta.editCount = 2;
-    session.meta.lastVerificationCommand = "npm test";
-    session.meta.lastVerificationAt = "2026-04-10T12:00:00.000Z";
-    session.meta.lastEditAt = "2026-04-10T12:10:00.000Z";
-    const hooks = new HookRunner(DEFAULT_CONFIG, d);
-    await handleSlash("/ulw ship it", {
-      session,
-      config: { ...DEFAULT_CONFIG, workspace: d },
-      hooks,
-    });
-    // Advance wave so max_waves=1 flips to LAST immediately
-    const u = loadUlwCycle(session.meta.id)!;
-    u.wave = 1;
-    saveUlwCycle(u);
-    const r = await handleSlash("/max-waves 1", {
-      session,
-      config: { ...DEFAULT_CONFIG, workspace: d },
-      hooks,
-    });
-    assert.equal(r.handled, true);
-    const out = String(r.output || "").replace(/\x1b\[[0-9;]*m/g, "");
-    assert.match(out, /LAST/i);
-    assert.match(out, /Preferred checks before \*\*Cycle complete\*\*|Preferred checks/i);
-    assert.match(out, /npm run typecheck|npm test/);
+    assert.match(out, /cycle 1 finishes its 1 open item\(s\), is reviewed and committed, then the run stops/i);
+    assert.match(out, /Verify: npm test/);
+    assert.match(out, /Stop: after this cycle is reviewed and committed/);
   });
 });
 
@@ -2058,22 +2005,19 @@ describe("compact advisory intent", () => {
       ],
       {
         cwd: process.cwd(),
-        ulw: {
-          enabled: true,
-          cycle: 1,
-          wave: 2,
-          blocks: 0,
-          mandate: "ship it",
-          softPrompt: true,
-          expandedMandate: "god scope expand",
-        } as any,
+        ulw: (() => {
+          const st = newCycleState({ sessionId: "compact-adv", mandate: "ship it" });
+          st.cycle = 1;
+          st.phase = "execute";
+          st.planTitle = "ship it";
+          st.items = [{ id: "i1", title: "ship it", files: [], status: "open" }];
+          return st;
+        })(),
       },
     );
     assert.match(withSoft, /ADVISORY\/Q&A/i);
-    assert.match(withSoft, /suspended while Intent is ADVISORY/i);
-    // Compact must not re-inject expandedMandate (the 5k god-mode dump).
-    assert.doesNotMatch(withSoft, /god scope expand/i);
-    assert.doesNotMatch(withSoft, /Expanded mandate/i);
+    assert.match(withSoft, /ULW ON/);
+    assert.match(withSoft, /Plan items/);
 
     const withGoal = buildStructuredSummary(
       [
