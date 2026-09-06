@@ -271,7 +271,22 @@ export function commitDirtyTree(opts: {
   // temp dir sits inside a repo) commits only what lies under its workspace.
   // Without this, `git rev-parse` walks up and the cycle commit sweeps the
   // enclosing repo's dirty tree — a test run once committed this repo.
-  const scope = path.relative(root, path.resolve(opts.cwd)).replace(/\\/g, "/");
+  // Real paths on both sides: `--show-toplevel` resolves symlinks (macOS
+  // `/tmp` → `/private/tmp`) and a mismatch here would read as "outside
+  // the repo" and skip the scope filter.
+  let cwdReal = path.resolve(opts.cwd);
+  try {
+    cwdReal = fs.realpathSync(cwdReal);
+  } catch {
+    /* keep the resolved path */
+  }
+  let rootReal = root;
+  try {
+    rootReal = fs.realpathSync(root);
+  } catch {
+    /* keep git's answer */
+  }
+  const scope = path.relative(rootReal, cwdReal).replace(/\\/g, "/");
   if (scope && !scope.startsWith("..")) {
     dirty = dirty.filter((p) => p === scope || p.startsWith(`${scope}/`));
     if (!dirty.length) {

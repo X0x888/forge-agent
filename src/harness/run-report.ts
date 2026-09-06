@@ -377,7 +377,7 @@ export function buildRunReport(input: RunReportInput): RunReport {
   if (ulw && cycleActive(ulw) && !r.lastCycleReleased) {
     resume.push(
       ulw.cycleZeroRequested
-        ? `ULW finishes cycle ${ulw.cycle} (review, verify, commit) and stops. \`/cycle 1\` to keep cycling, \`/ulw-off\` to abort.`
+        ? `ULW finishes cycle ${ulw.cycle} (verify, review, verify, commit) and stops. \`/cycle 1\` to keep cycling, \`/ulw-off\` to abort.`
         : `ULW is still ON (cycle ${ulw.cycle}, ${ulw.phase}). Type to steer (the Planner reads it at the next re-plan), \`/cycle 0\` to finish this cycle and stop, \`/replan\` to close it now.`,
     );
   }

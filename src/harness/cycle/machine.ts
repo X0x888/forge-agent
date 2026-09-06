@@ -27,7 +27,7 @@ export interface StopFacts {
 export type CycleAction =
   /** No plan on disk — run the Planner (cycle 0, or after a commit). */
   | { kind: "plan" }
-  /** EXECUTE is over — review → verify → commit → next. */
+  /** EXECUTE is over — verify → review → verify → commit → next. */
   | { kind: "close-cycle"; why: "items-done" | "plan-complete" | "replan" | "stuck" }
   /** FIX phase — re-run the verify command. */
   | { kind: "verify" }

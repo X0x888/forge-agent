@@ -2,7 +2,7 @@
 
 **Forge** is an open-source AI coding agent CLI with a **first-class harness** — the control plane that other tools partially implement.
 
-> **Unreleased** — **`/ulw` is a plan-cycle driver**: a fresh-context Planner writes each cycle's plan, you (the session model) execute it, a fresh-context Reviewer revises the cycle diff, the harness runs the verify command and commits, then re-plans. Still sit-down Next keys, Cursor provider (hosted Grok **256k**), **`/plan` ↔ `/build`**, apply_patch, `doctor --json`, blocking Stop, `/goal`.
+> **Unreleased** — **`/ulw` is a plan-cycle driver**: a fresh-context Planner writes each cycle's plan, you (the session model) execute it, the harness runs the verify command (new failures only — pre-existing ones are baselined), a fresh-context Reviewer revises the cycle diff, the check runs again and the cycle commits, then re-plans. Still sit-down Next keys, Cursor provider (hosted Grok **256k**), **`/plan` ↔ `/build`**, apply_patch, `doctor --json`, blocking Stop, `/goal`.
 
 Key capability comparison:
 
@@ -215,7 +215,7 @@ Three prompts, one procedure:
 
 ```text
 /ulw [mandate]        # arm; bare /ulw lets the Planner derive the direction
-/cycle 0              # finish this cycle (execute → review → verify → commit), then stop
+/cycle 0              # finish this cycle (execute → verify → review → verify → commit), then stop
 /cycle 1              # keep re-planning after each commit
 /replan               # close the open cycle now and re-plan
 /max-cycles 3         # stop after cycle 3 is committed
@@ -253,7 +253,7 @@ Full contract: [docs/RELIABILITY.md](docs/RELIABILITY.md) · expert checklist: [
 | `/help` | Help |
 | `/goal …` | Goal lifecycle |
 | `/ulw [mandate]` | Plan-cycle driver (bare `/ulw` = the Planner derives the direction) |
-| `/cycle 1` / `0` | Keep cycling / finish this cycle (review, verify, commit), then stop |
+| `/cycle 1` / `0` | Keep cycling / finish this cycle (verify, review, verify, commit), then stop |
 | `/replan` | Close the open cycle now and re-plan |
 | `/max-cycles N\|off` | Stop after N committed cycles; default until fulfilled |
 | `/ulw-off` | Disarm ULW |

@@ -49,5 +49,5 @@ Your final message is the review and nothing else, in exactly the shape the
 brief reprints (`# Cycle N review`, `Verdict: ship | ship-with-revisions |
 blocked`, `Fulfillment:`, `Revisions:`, `Must-fix:`, `Architecture:`,
 `Operator:`). `blocked` means the cycle should not be committed as it stands
-and says why; the harness still runs the verify command and commits on green,
+and says why; a `blocked` cycle is not committed — the work stays in the tree for the next plan. Otherwise the harness runs the verify command again and commits on green,
 so use `blocked` only for a defect the check cannot see.

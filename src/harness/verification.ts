@@ -13,6 +13,38 @@ import { VERIFICATION_CMD_RE, isVerificationCommand } from "./verify-command.js"
 
 export { VERIFICATION_CMD_RE, isObserverOnlyCommand, isVerificationCommand } from "./verify-command.js";
 
+/**
+ * Names of the tests a check run reported as failing, for the runners the
+ * stack table knows: node:test (`✖ name` / `not ok N - name`), jest / vitest
+ * (`✕ name`, `× name`, `FAIL path`), pytest (`FAILED path::name`), cargo
+ * (`test name ... FAILED`), go (`--- FAIL: Name`), mocha (`N) name`).
+ * Durations are stripped so the same failure hashes the same across runs.
+ * Empty when the runner is unknown — callers treat that as opaque red.
+ */
+export function extractFailingTests(output: string): string[] {
+  const out = new Set<string>();
+  const push = (raw: string) => {
+    const t = raw
+      .replace(/\s*\(\d+(?:\.\d+)?\s*m?s\)\s*$/i, "")
+      .replace(/\s+/g, " ")
+      .trim();
+    if (t && !/^failing tests:?$/i.test(t)) out.add(t);
+  };
+  for (const line of String(output || "").split("\n")) {
+    const l = line.replace(/\x1b\[[0-9;]*m/g, "").replace(/\r$/, "");
+    let m: RegExpMatchArray | null;
+    if ((m = l.match(/^\s*✖\s+(.+)$/))) push(m[1]);
+    else if ((m = l.match(/^\s*not ok\s+\d+\s*-\s*(.+)$/))) push(m[1]);
+    else if ((m = l.match(/^\s*[✕×]\s+(.+)$/))) push(m[1]);
+    else if ((m = l.match(/^\s*FAIL\s+(\S+\.(?:test|spec)\.[cm]?[jt]sx?)\b/))) push(m[1]);
+    else if ((m = l.match(/^FAILED\s+(\S+::\S+)/))) push(m[1]);
+    else if ((m = l.match(/^test\s+(\S+)\s+\.\.\.\s+FAILED\s*$/))) push(m[1]);
+    else if ((m = l.match(/^\s*---\s+FAIL:\s+(\S+)/))) push(m[1]);
+    else if ((m = l.match(/^\s+\d+\)\s+(.+)$/))) push(m[1]);
+  }
+  return [...out];
+}
+
 /** Evidence required on a cycle=0 attestation: checklist marks or command results. */
 const ATTEST_EVIDENCE_RE =
   /✅|❌|✓|\b\d+\s+(?:tests?|specs?|checks?)\s+(?:pass(?:ed)?|ok|green)\b|\btests?\s+(?:pass(?:es|ed|ing)?|green)\b|\b(?:npm|pnpm|yarn|bun|pytest|jest|vitest|cargo|go test|tsc|typecheck|lint|build|make)\b[^\n]{0,60}?\b(?:pass(?:ed|ing)?|green|succeed(?:ed)?|ok|clean|exit\s*0)\b|\b(?:pass(?:ed|ing)?|green|ok|clean)\b[^\n]{0,40}?\b(?:tests?|specs?|typecheck|lint|build)\b|\bexit(?:\s*code)?\s*0\b/i;

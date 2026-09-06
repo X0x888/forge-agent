@@ -68,7 +68,7 @@ export function disarmCycle(sessionId: string): CycleState | null {
 }
 
 /**
- * /cycle 0 — finish the open cycle (execute → review → verify → commit), then
+ * /cycle 0 — finish the open cycle (execute → verify → review → verify → commit), then
  * stop. /cycle 1 — keep re-planning after each commit.
  */
 export function setCycleFlag(sessionId: string, flag: 0 | 1): { ok: boolean; line: string } {
@@ -100,7 +100,7 @@ export function requestReplan(sessionId: string): { ok: boolean; line: string } 
   saveCycleState(s);
   return {
     ok: true,
-    line: `ULW /replan — cycle ${s.cycle} closes at the next Stop: review, verify, commit, then a fresh plan.`,
+    line: `ULW /replan — cycle ${s.cycle} closes at the next Stop: verify, review, verify, commit, then a fresh plan.`,
   };
 }
 

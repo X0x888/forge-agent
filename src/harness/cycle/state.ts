@@ -76,6 +76,8 @@ export interface CycleRecord {
   waves: number;
   verifyCommand?: string;
   verifyPassed?: boolean;
+  /** Pre-existing failures the gate tolerated (green vs baseline). */
+  verifyInherited?: number;
   commitSha?: string;
   commitSubject?: string;
   mustFix: string[];
@@ -132,6 +134,18 @@ export interface CycleState {
   cycles: CycleRecord[];
   lastReview?: CycleReviewNotes;
   lastVerifyTail?: string;
+  /**
+   * The verify command's failures before the cycle touched anything (taken
+   * at cycle 1's plan admission, then the accepted set after each commit).
+   * The gate is "no new failures", not "exit 0" — a repo with pre-existing
+   * environment failures is otherwise never green.
+   */
+  verifyBaseline?: {
+    command: string;
+    exitCode: number | null;
+    failures: string[];
+    at: string;
+  };
   endReason?: CycleEndReason;
   startedAt: string;
   updatedAt: string;

@@ -38,7 +38,12 @@ import {
   type CycleReviewNotes,
   type CycleState,
 } from "./state.js";
-import type { CheckRun } from "./verify.js";
+import { judgeAgainstBaseline, type CheckRun, type GateVerdict } from "./verify.js";
+import {
+  isFullSuiteCommand,
+  isIsolateTestCommand,
+  isTypecheckCommand,
+} from "../verification.js";
 
 export type CycleRole = "planner" | "reviewer";
 
@@ -253,7 +258,7 @@ export async function planNextCycle(s: CycleState, rt: CycleRuntime): Promise<Cy
       mustFix: [],
       plannerTokens: tokens,
     });
-    const why = plan.verdictNote ? ` — ${plan.verdictNote}` : "";
+    const why = plan.verdictNote ? ` — ${plan.verdictNote.replace(/[.\s]+$/, "")}` : "";
     const ops = plan.operator.length ? ` Operator: ${plan.operator.join("; ")}` : "";
     return release(
       s,
@@ -289,18 +294,12 @@ export async function planNextCycle(s: CycleState, rt: CycleRuntime): Promise<Cy
     });
   }
   s.outOfScope = plan.outOfScope;
-  if (plan.verifyCommand) {
-    s.verifyCommand = plan.verifyCommand;
-    if (!s.declaredChecks.some((c) => c.toLowerCase() === plan.verifyCommand!.toLowerCase())) {
-      s.declaredChecks = [plan.verifyCommand, ...s.declaredChecks].slice(0, 4);
-    }
-  } else if (plan.verifyNone) {
-    // The Planner says this repo has no check; fall back to the stack table
-    // so a wrong "none" cannot switch the gate off.
-    s.verifyCommand = safe(() => rt.projectChecks(), [])[0];
-  } else if (!s.verifyCommand) {
-    s.verifyCommand = safe(() => rt.projectChecks(), [])[0];
+  const gate = resolveVerifyCommand(plan, safe(() => rt.projectChecks(), []));
+  s.verifyCommand = gate.command;
+  if (gate.declared && !s.declaredChecks.some((c) => c.toLowerCase() === gate.declared!.toLowerCase())) {
+    s.declaredChecks = [gate.declared, ...s.declaredChecks].slice(0, 4);
   }
+  if (gate.note) rt.log?.(`ULW cycle ${s.cycle} verify: ${gate.note}`);
   s.cycleStartHead = safe(() => rt.gitHead(), null);
   const planPath = writeArtifact(s.sessionId, s.cycle, "plan.md", raw);
   s.cycles.push(planRecord(s, plan, planPath, tokens));
@@ -319,11 +318,17 @@ export async function planNextCycle(s: CycleState, rt: CycleRuntime): Promise<Cy
     cycle: s.cycle,
     title: plan.title,
     planText: raw,
+    items: s.items.map((i) => ({ id: i.id, title: i.title })),
     verifyCommand: s.verifyCommand,
     maxCycles: s.maxCycles,
     cycleZeroRequested: s.cycleZeroRequested,
   });
   rt.log?.(`ULW cycle ${s.cycle} plan admitted — ${plan.title} (${s.items.length} item(s))`);
+  // The first cycle's tree is the user's: run the gate once now so later red
+  // runs can be diffed against what was already failing.
+  if (s.cycle === 1 && s.verifyCommand && !s.verifyBaseline) {
+    await captureBaseline(s, rt);
+  }
   return {
     allowStop: false,
     released: false,
@@ -333,6 +338,70 @@ export async function planNextCycle(s: CycleState, rt: CycleRuntime): Promise<Cy
     waveStamped: false,
     phase: s.phase,
   };
+}
+
+async function captureBaseline(s: CycleState, rt: CycleRuntime): Promise<void> {
+  if (!s.verifyCommand) return;
+  rt.log?.(`ULW baseline: running \`${s.verifyCommand}\` on the untouched tree`);
+  try {
+    const run = await rt.runCheck(s.verifyCommand);
+    s.verifyBaseline = {
+      command: run.command,
+      exitCode: run.exitCode,
+      failures: run.failures,
+      at: nowIso(),
+    };
+    writeArtifact(
+      s.sessionId,
+      s.cycle,
+      "verify.baseline.log",
+      `$ ${run.command}\n# exit ${run.exitCode ?? "timeout"} · ${run.ms}ms · ${run.failures.length} failing\n${run.tail}`,
+    );
+    saveCycleState(s);
+    rt.log?.(
+      run.cls.passed
+        ? `ULW baseline: green`
+        : `ULW baseline: red — ${run.failures.length} pre-existing failure(s) will not count against the cycle`,
+    );
+  } catch (err) {
+    rt.log?.(`ULW baseline: could not run (${(err as Error).message}); the gate is exit 0`);
+  }
+}
+
+/**
+ * The cycle gate. The Planner's `Verify:` is honoured when it is a whole
+ * check; an isolate (one test file, a typecheck) is proof=ran, not proof=✓,
+ * so the stack table's full suite gates instead and the isolate stays on
+ * `declaredChecks` for the executor's own runs. `none — why` and a missing
+ * line fall back to the stack table so a wrong "none" cannot switch the
+ * gate off. Dogfood: the first real run declared a single-file test and the
+ * suite never ran before the commit.
+ */
+export function resolveVerifyCommand(
+  plan: Pick<ParsedPlan, "verifyCommand" | "verifyNone">,
+  projectChecks: string[],
+): { command?: string; declared?: string; note?: string } {
+  const suite = projectChecks.find((c) => isFullSuiteCommand(c, projectChecks));
+  const fallback = suite ?? projectChecks[0];
+  const declared = plan.verifyCommand;
+  if (declared) {
+    if (isIsolateTestCommand(declared) || isTypecheckCommand(declared)) {
+      return fallback && fallback !== declared
+        ? {
+            command: fallback,
+            declared,
+            note: `\`${declared}\` is an isolate — the cycle gate is \`${fallback}\`; the isolate stays a declared check`,
+          }
+        : { command: declared, declared, note: `\`${declared}\` is an isolate and the stack table has no fuller check` };
+    }
+    return { command: declared, declared };
+  }
+  if (plan.verifyNone) {
+    return fallback
+      ? { command: fallback, note: `Planner said none (${plan.verifyNone}); the stack table's \`${fallback}\` gates` }
+      : { command: undefined };
+  }
+  return { command: fallback };
 }
 
 async function runReviewer(s: CycleState, rt: CycleRuntime, executorCloser: string): Promise<CycleReviewNotes> {
@@ -356,8 +425,10 @@ async function runReviewer(s: CycleState, rt: CycleRuntime, executorCloser: stri
   if (record) record.reviewerTokens = (record.reviewerTokens ?? 0) + res.promptTokens + res.completionTokens;
   const raw = roleBody(res.text);
   const parsed = parseReviewArtifact(raw);
+  // No parseable review is a review that did not happen: fail closed (no
+  // commit); the work stays in the tree and the next Planner sees why.
   const notes: CycleReviewNotes = parsed ?? {
-    verdict: "ship-with-revisions",
+    verdict: "blocked",
     fulfillment: [],
     revisions: res.editCount > 0 ? [`${res.editCount} edit(s) by the reviewer (no parseable review)`] : [],
     mustFix: [`Reviewer returned no parseable review (${res.status}${res.error ? `: ${res.error}` : ""})`],
@@ -368,7 +439,7 @@ async function runReviewer(s: CycleState, rt: CycleRuntime, executorCloser: stri
     s.sessionId,
     s.cycle,
     "review.md",
-    raw.trim() || `# Cycle ${s.cycle} review\nVerdict: ship-with-revisions\nMust-fix:\n- ${notes.mustFix.join("\n- ")}\n`,
+    raw.trim() || `# Cycle ${s.cycle} review\nVerdict: blocked\nMust-fix:\n- ${notes.mustFix.join("\n- ")}\n`,
   );
   if (record) {
     record.reviewPath = reviewPath;
@@ -411,64 +482,126 @@ function commitCycle(s: CycleState, rt: CycleRuntime): AutoCommitResult {
   return res;
 }
 
-async function verifyCycle(s: CycleState, rt: CycleRuntime): Promise<CheckRun | null> {
+async function verifyCycle(
+  s: CycleState,
+  rt: CycleRuntime,
+  label: string,
+): Promise<{ run: CheckRun; verdict: GateVerdict } | null> {
   if (!s.verifyCommand) return null;
   s.phase = "verify";
   saveCycleState(s);
   const run = await rt.runCheck(s.verifyCommand);
+  const verdict = judgeAgainstBaseline(run, s.verifyBaseline);
   writeArtifact(
     s.sessionId,
     s.cycle,
-    `verify${s.fixRounds > 0 ? `.${s.fixRounds}` : ""}.log`,
-    `$ ${run.command}\n# exit ${run.exitCode ?? "timeout"} · ${run.ms}ms\n${run.output}`,
+    `verify.${label}.log`,
+    `$ ${run.command}\n# exit ${run.exitCode ?? "timeout"} · ${run.ms}ms · ${verdict.note}\n` +
+      (verdict.newFailures.length ? `# new: ${verdict.newFailures.join(" | ")}\n` : "") +
+      (verdict.inherited.length ? `# pre-existing: ${verdict.inherited.join(" | ")}\n` : "") +
+      run.output,
   );
   const record = currentCycleRecord(s);
   if (record) {
     record.verifyCommand = s.verifyCommand;
-    record.verifyPassed = run.cls.passed;
+    record.verifyPassed = verdict.passed;
+    record.verifyInherited = verdict.inherited.length || undefined;
   }
-  s.lastVerifyTail = run.output.slice(-3_000);
-  return run;
+  s.lastVerifyTail = run.tail.slice(-3_000);
+  rt.log?.(`ULW cycle ${s.cycle} verify (${label}): ${verdict.note}`);
+  return { run, verdict };
 }
 
-/** Commit the cycle and decide what follows: release or the next plan. */
-async function finishCycle(
+/** After a cycle closes (committed or not): /cycle 0, max_cycles, or the next plan. */
+async function advanceAfterCycle(
   s: CycleState,
   rt: CycleRuntime,
-  opts: { fixRoundsCap: number },
+  committed: CycleStopOutcome["committed"],
 ): Promise<CycleStopOutcome> {
-  s.phase = "commit";
-  const ac = commitCycle(s, rt);
   const record = currentCycleRecord(s);
-  if (record) record.endedAt = nowIso();
-  if (ac.committed) rt.log?.(`ULW cycle ${s.cycle} committed ${ac.sha ?? ""} — ${ac.subject}`);
-  else if (ac.skipped) rt.log?.(`ULW cycle ${s.cycle} commit skipped: ${ac.skipped}`);
+  if (record) {
+    record.endedAt = nowIso();
+    record.itemsDone = s.items.filter((i) => i.status === "done").length;
+    record.waves = s.wave;
+  }
   saveCycleState(s);
-  const committed = { sha: ac.sha, subject: ac.subject, skipped: ac.skipped };
+  const how = committed?.sha ? ` and committed (${committed.sha})` : committed?.skipped ? ` (not committed: ${committed.skipped})` : "";
   if (s.cycleZeroRequested) {
-    const out = release(
-      s,
-      "cycle-zero",
-      `/cycle 0 — cycle ${s.cycle} reviewed${ac.committed ? ` and committed (${ac.sha})` : ""}; ULW released.`,
-    );
+    const out = release(s, "cycle-zero", `/cycle 0 — cycle ${s.cycle} reviewed${how}; ULW released.`);
     return { ...out, cycleClosed: true, committed };
   }
   if (s.maxCycles != null && s.cycle >= s.maxCycles) {
     const out = release(
       s,
       "max-cycles",
-      `max_cycles ${s.maxCycles} reached — cycle ${s.cycle} reviewed${ac.committed ? ` and committed (${ac.sha})` : ""}; ULW released.`,
+      `max_cycles ${s.maxCycles} reached — cycle ${s.cycle} reviewed${how}; ULW released.`,
     );
     return { ...out, cycleClosed: true, committed };
   }
   const next = await planNextCycle(s, rt);
-  void opts;
   return { ...next, cycleClosed: true, committed };
 }
 
+/** Commit the cycle. The gate that passed becomes the next cycle's baseline. */
+async function finishCycle(s: CycleState, rt: CycleRuntime, accepted: CheckRun | null): Promise<CycleStopOutcome> {
+  s.phase = "commit";
+  const ac = commitCycle(s, rt);
+  if (ac.committed) rt.log?.(`ULW cycle ${s.cycle} committed ${ac.sha ?? ""} — ${ac.subject}`);
+  else if (ac.skipped) rt.log?.(`ULW cycle ${s.cycle} commit skipped: ${ac.skipped}`);
+  if (accepted && s.verifyCommand) {
+    s.verifyBaseline = {
+      command: accepted.command,
+      exitCode: accepted.exitCode,
+      failures: accepted.failures,
+      at: nowIso(),
+    };
+  }
+  return advanceAfterCycle(s, rt, { sha: ac.sha, subject: ac.subject, skipped: ac.skipped });
+}
+
+function fixOrRelease(
+  s: CycleState,
+  run: CheckRun,
+  verdict: GateVerdict,
+  opts: { fixRoundsCap: number; reviewed: boolean },
+): CycleStopOutcome {
+  s.fixRounds += 1;
+  s.phase = "fix";
+  saveCycleState(s);
+  if (s.fixRounds > opts.fixRoundsCap) {
+    return release(
+      s,
+      "fix-cap",
+      `\`${run.command}\` stayed red after ${opts.fixRoundsCap} fix round(s) in cycle ${s.cycle} (${verdict.note}); nothing committed. Operator: the tree is dirty and the check is red — inspect ${path.join("cycles", String(s.cycle))}/verify.*.log.`,
+    );
+  }
+  return {
+    allowStop: false,
+    released: false,
+    reanchor: formatFixReanchor({
+      cycle: s.cycle,
+      command: run.command,
+      round: s.fixRounds,
+      cap: opts.fixRoundsCap,
+      tail: run.tail,
+      newFailures: verdict.newFailures,
+      inherited: verdict.inherited,
+      reviewed: opts.reviewed,
+      mustFix: s.lastReview?.mustFix ?? [],
+    }),
+    reason: `Cycle ${s.cycle} verify RED (${run.command}: ${verdict.note}) — fix round ${s.fixRounds}/${opts.fixRoundsCap}`,
+    waveStamped: false,
+    phase: s.phase,
+  };
+}
+
 /**
- * EXECUTE is over: review → verify → (fix | commit → next). Resumes from
- * whichever phase the sidecar recorded when a previous transition was cut.
+ * EXECUTE is over. The sequence is verify → (fix) → review → verify → (fix)
+ * → commit: the Reviewer reads a tree that already passes the gate, so what
+ * the executor changed to get green is reviewed too, and the gate runs once
+ * more after the Reviewer's own revisions. A Reviewer `blocked` verdict ends
+ * the cycle without a commit; the work stays in the tree for the next plan.
+ * Resumes from whichever phase the sidecar recorded when a transition was cut.
  */
 async function closeCycle(
   s: CycleState,
@@ -476,44 +609,28 @@ async function closeCycle(
   facts: StopFacts,
   opts: { fixRoundsCap: number; why: string },
 ): Promise<CycleStopOutcome> {
-  if (s.phase === "execute" || s.phase === "review") {
+  const record = currentCycleRecord(s);
+  const reviewed = Boolean(record?.reviewPath);
+  if (!reviewed) {
+    if (s.phase === "execute") rt.log?.(`ULW cycle ${s.cycle} → verify (${opts.why})`);
+    const pre = await verifyCycle(s, rt, s.fixRounds > 0 ? `pre-review.${s.fixRounds}` : "pre-review");
+    if (pre && !pre.verdict.passed) {
+      return fixOrRelease(s, pre.run, pre.verdict, { fixRoundsCap: opts.fixRoundsCap, reviewed: false });
+    }
     s.phase = "review";
     saveCycleState(s);
-    rt.log?.(`ULW cycle ${s.cycle} → review (${opts.why})`);
-    await runReviewer(s, rt, facts.lastAssistantMessage);
-  }
-  if (s.phase === "review" || s.phase === "verify" || s.phase === "fix") {
-    const run = await verifyCycle(s, rt);
-    if (run && !run.cls.passed) {
-      s.fixRounds += 1;
-      s.phase = "fix";
-      saveCycleState(s);
-      if (s.fixRounds > opts.fixRoundsCap) {
-        return release(
-          s,
-          "fix-cap",
-          `\`${run.command}\` stayed red after ${opts.fixRoundsCap} fix round(s) in cycle ${s.cycle}; nothing committed. Operator: the tree is dirty and the check is red — inspect ${path.join("cycles", String(s.cycle))}/verify.*.log.`,
-        );
-      }
-      const reanchor = formatFixReanchor({
-        cycle: s.cycle,
-        command: run.command,
-        round: s.fixRounds,
-        cap: opts.fixRoundsCap,
-        tail: run.output,
-        mustFix: s.lastReview?.mustFix ?? [],
-      });
-      return {
-        allowStop: false,
-        released: false,
-        reanchor,
-        reason: `Cycle ${s.cycle} verify RED (${run.command}) — fix round ${s.fixRounds}/${opts.fixRoundsCap}`,
-        waveStamped: false,
-        phase: s.phase,
-      };
+    rt.log?.(`ULW cycle ${s.cycle} → review`);
+    const notes = await runReviewer(s, rt, facts.lastAssistantMessage);
+    if (notes.verdict === "blocked") {
+      rt.log?.(`ULW cycle ${s.cycle} review: blocked — no commit; the next plan starts from the must-fix`);
+      return advanceAfterCycle(s, rt, { skipped: "review blocked" });
     }
   }
-  return finishCycle(s, rt, opts);
+  const post = await verifyCycle(s, rt, s.fixRounds > 0 ? `post-review.${s.fixRounds}` : "post-review");
+  if (post && !post.verdict.passed) {
+    return fixOrRelease(s, post.run, post.verdict, { fixRoundsCap: opts.fixRoundsCap, reviewed: true });
+  }
+  return finishCycle(s, rt, post?.run ?? null);
 }
 
 export interface EvaluateCycleOptions {

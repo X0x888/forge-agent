@@ -401,7 +401,7 @@ Done — the importer streams now and 3 waves shipped since the mandate.
     assert.match(winding.outcome, /^Winding down — ULW cycle 1 in execute/);
     assert.match(
       winding.sections.find((x) => x.title === "Resume")!.lines.join("\n"),
-      /ULW finishes cycle 1 \(review, verify, commit\) and stops/,
+      /ULW finishes cycle 1 \(verify, review, verify, commit\) and stops/,
     );
   });
 

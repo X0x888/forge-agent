@@ -93,7 +93,7 @@ export const COMMAND_PARAMS: Record<string, ParamChoice[]> = {
   ],
   cycle: [
     { value: "1", description: "Keep cycling — re-plan after each committed cycle" },
-    { value: "0", description: "Finish this cycle (review, verify, commit), then stop" },
+    { value: "0", description: "Finish this cycle (verify, review, verify, commit), then stop" },
     { value: "status", description: "Show cycle, phase, plan items, mandate" },
   ],
   "max-cycles": [

@@ -3,20 +3,21 @@
 `/ulw [mandate]` (or `forge --ulw`, `forge run --ulw`) arms a **plan-cycle** driver. The unit of work is a **cycle**, not a wave:
 
 ```
-PLAN ──► EXECUTE ──► REVIEW ──► VERIFY ──► COMMIT ──► RELEASED
- ▲         │  ▲                    │                    ▲
- │         └──┘ (Stop = wave)      └─ red ─► FIX ─┐     │
- └──────────────── re-plan ◄──────────────────────┴─────┘  (/cycle 0 · max_cycles · fulfilled)
+PLAN ──► EXECUTE ──► VERIFY ──► REVIEW ──► VERIFY ──► COMMIT ──► RELEASED
+ ▲         │  ▲         │                     │                     ▲
+ │         └──┘ (Stop)  └─ red ─► FIX ─┐      └─ red ─► FIX ─┐      │
+ └──────────────── re-plan ◄───────────┴─────────────────────┴──────┘  (/cycle 0 · max_cycles · fulfilled)
 ```
 
 - **PLAN** — a fresh-context **Planner** subagent (empty transcript, its own model/effort) reads the product, researches its category online, surveys the whole tree, and writes `plan.md`.
 - **EXECUTE** — the session model is the **executor**. The plan's items are its todo board. Every Stop is a wave boundary: open items → re-anchor; `Plan complete.` or an empty board → the cycle closes. As many waves as the plan needs.
-- **REVIEW** — a fresh-context **Reviewer** subagent reads the plan and the cycle's cumulative diff (`git diff <cycle start>` + untracked files) as a reviewer and as an architect, **revises in place**, and writes `review.md`.
-- **VERIFY** — the **harness itself** runs the declared verify command. Green commits; red sends the executor back with the tail (`fix_rounds`, default 3).
+- **VERIFY** — the **harness itself** runs the verify command (the Planner's `Verify:` when it is a whole check; an isolate — one test file, a typecheck — is proof=ran, and the stack table's suite gates instead). The gate is judged against a **baseline**: the failures the suite already had on the untouched tree (run once at cycle 1's admission, then the accepted set after each commit). New failures are red and send the executor back with their names (`fix_rounds`, default 3); pre-existing ones are reported, not the executor's job. A red run that names no failing test (a crash, a timeout, an unknown runner) is red whatever the baseline says.
+- **REVIEW** — on a tree that passes the gate, a fresh-context **Reviewer** subagent reads the plan and the cycle's cumulative diff (`git diff <cycle start>` + untracked files) as a reviewer and as an architect, **revises in place**, and writes `review.md`. Because it runs after the gate, what the executor changed to get green is reviewed too. `Verdict: blocked` (or a review that does not parse) closes the cycle **without a commit**; the work stays in the tree and the next Planner starts from the `Must-fix`.
+- **VERIFY again** — the check runs once more over the Reviewer's revisions; red goes back to the executor (same `fix_rounds` budget), then commits without a second review.
 - **COMMIT** — one local commit per reviewed, green cycle (`ulw cycle N: <title>`; never pushed; `FORGE_ULW_AUTO_COMMIT=0` off).
 - **Re-plan** — a fresh Planner reads the previous plans, reviews, the Reviewer's `Must-fix`, unfinished items and anything the user typed since the last plan. `Verdict: fulfilled` ends the run. `/cycle 0` or `max_cycles` ends it after the commit.
 
-Nothing in the driver classifies prose. The Planner and Reviewer judge; the harness enforces the sequence and structural facts: no writes before a plan exists, no commit before a completed review and a green harness-run check, no Stop mid-cycle, every cycle leaves `plan.md`, `review.md` and a commit.
+Nothing in the driver classifies prose. The Planner and Reviewer judge; the harness enforces the sequence and structural facts: no writes before a plan exists, no commit before a completed review and a green harness-run check, no Stop mid-cycle, every cycle leaves `plan.md`, `review.md` and a commit (or a `blocked` review and no commit).
 
 ## Three cases, one procedure
 
@@ -34,10 +35,10 @@ Invention and repair are both legitimate in every case; the tree decides which t
 
 ```text
 /ulw [mandate]         arm (bare /ulw = case c)
-/cycle 0               finish this cycle (execute → review → verify → commit), then stop
+/cycle 0               finish this cycle (execute → verify → review → verify → commit), then stop
 /cycle 1               keep re-planning after each commit
 /cycle status          cycle, phase, plan items, verify, last review, cycle ledger
-/replan                close the open cycle now (review, verify, commit) and re-plan
+/replan                close the open cycle now (verify, review, verify, commit) and re-plan
 /max-cycles N|off      stop after cycle N is committed (deprecated alias: /max-waves)
 /plan                  human pause: the harness Planner stands down until /build
 /build                 hand planning back to the harness
@@ -54,7 +55,7 @@ CLI: `forge --ulw [--max-cycles N] "…"` · `forge run "…" --ulw --max-cycles
 Under `~/.forge/sessions/<id>/`:
 
 - `ulw.json` (schema 2) — `cycle`, `phase`, `items[]`, `verifyCommand`, `cycles[]` (title, items done/total, waves, review verdict, verify result, commit sha, tokens per role), `ledger[]` (one row per Stop: edit delta, tree movement, proof ran), `identity`, `direction`, `lastReview`. A schema-1 sidecar from the retired wave engine loads as `legacy` and disabled; `/ulw` re-arms.
-- `cycles/<n>/plan.md`, `review.md`, `verify.log` (`verify.<round>.log` after a red round), `plan.failed.md` when the Planner never produced a parseable plan.
+- `cycles/<n>/plan.md`, `review.md`, `verify.baseline.log` (cycle 1: the untouched tree), `verify.pre-review.log` / `verify.post-review.log` (`.<round>` after a red round), `plan.failed.md` when the Planner never produced a parseable plan.
 - `decisions.json` gains a `Plan N: <title>` row per cycle; the product identity goes to project memory (`Identity: …`).
 
 ### plan.md contract
@@ -112,7 +113,7 @@ The executor's system prompt carries only the **ULW executor protocol**: ship th
 |-------|--------|
 | `plan` | run the Planner (or yield when the user holds `/plan`) |
 | `execute` | stamp a wave; `Plan complete.` / empty board / `/replan` → close the cycle; `stuck_threshold` (default 4) no-progress Stops → close the cycle (the Reviewer takes over, never a release); else re-anchor with the open items |
-| `fix` | re-run the verify command; green → commit; red → next fix round; past `fix_rounds` → release `fix-cap`, nothing committed, `Operator:` line |
+| `fix` | re-run the verify command; green → the Reviewer (if it has not run) or the commit; red → next fix round; past `fix_rounds` → release `fix-cap`, nothing committed, `Operator:` line |
 | `review` / `verify` / `commit` | resume the interrupted transition |
 
 Releases: `fulfilled`, `blocked` (Planner), `cycle-zero`, `max-cycles`, `fix-cap`, `runtime-unavailable` (no provider / subagent depth > 0), `disarmed`. A clean end stamps `lastError.code = ulw_done` (a designed outcome, not a problem); the others stamp `ulw_released`.

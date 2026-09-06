@@ -1724,16 +1724,17 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
               signal,
               preferredCheckCommands: cyclePreferredCheckCommands(session.meta.id, preferred),
             });
-            try {
-              applyVerificationTrail(session.meta, {
-                command,
-                isError: !run.cls.passed,
-                preferredCheckCommands: preferred,
-              });
-              saveSession(session);
-            } catch {
-              /* trail is best-effort */
-            }
+            // The harness's own check is a verification run like any other:
+            // it feeds the run-level totals and the last-verify trail.
+            applyVerificationCredit({
+              harnessStats,
+              meta: session.meta,
+              proofPoke,
+              cls: run.cls,
+              command,
+              preferred,
+            });
+            saveSession(session);
             return run;
           },
           commit: ({ subject, body }) => {

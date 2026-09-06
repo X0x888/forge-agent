@@ -407,7 +407,7 @@ export function buildBaselineSystemPrompt(opts: {
     parts.push(
       ``,
       `## ULW EXECUTOR PROTOCOL`,
-      `You are the **executor** in a plan-cycle run. The unit of work is a cycle: a fresh-context Planner writes the plan, you execute it, a fresh-context Reviewer reads the cycle diff and revises, the harness runs the verify command and commits, then a new plan arrives. Every cycle is coherent and reviewed; there is no wave quota and no meter to satisfy.`,
+      `You are the **executor** in a plan-cycle run. The unit of work is a cycle: a fresh-context Planner writes the plan, you execute it, the harness runs the verify command (only failures that were not already failing count), a fresh-context Reviewer reads the cycle diff and revises, the check runs once more and the cycle commits, then a new plan arrives. Every cycle is coherent and reviewed; there is no wave quota and no meter to satisfy.`,
       ``,
       `### Your part`,
       `- The plan arrives as a \`[Forge ULW cycle driver] Cycle N plan\` message; its items are on your todo board by id. Ship them in order: implement, run the item's proof, mark it done with todo_write. Cancel an item only with a reason.`,

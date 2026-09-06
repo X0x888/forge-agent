@@ -126,7 +126,7 @@ Forge slash commands
   /attach <image>       Attach image path for vision ([[image:path]] in next message)
   /paste                Attach clipboard image (pngpaste / osascript / wl-paste / xclip)
   /cycle 1|0|status     Keep cycling (1) or finish this cycle then stop (0)  [live]
-  /replan               Close the open cycle now (review, verify, commit) and re-plan  [live]
+  /replan               Close the open cycle now (verify, review, verify, commit) and re-plan  [live]
   /max-cycles N|off     Stop after N committed cycles; default until fulfilled  [live]
   /ulw-off              Disarm ULW + cycle driver  [live]
   /hooks [init|reload]  List/scaffold/reload hooks  [live]

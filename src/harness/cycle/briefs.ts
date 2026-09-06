@@ -182,10 +182,14 @@ export function formatPlanAdmission(opts: {
   cycle: number;
   title: string;
   planText: string;
+  items?: Array<{ id: string; title: string }>;
   verifyCommand?: string;
   maxCycles: number | null;
   cycleZeroRequested: boolean;
 }): string {
+  const board = opts.items?.length
+    ? `Todo board (update these ids with todo_write; do not add copies): ${opts.items.map((i) => `${i.id} = ${i.title.slice(0, 60)}`).join(" · ")}`
+    : "";
   const budget = opts.cycleZeroRequested
     ? `This is the last cycle (/cycle 0 is set): after review and commit the run stops.`
     : opts.maxCycles != null
@@ -196,7 +200,8 @@ export function formatPlanAdmission(opts: {
     ``,
     opts.planText.trim(),
     ``,
-    `You are the executor. Ship the items in order: implement, run the item's proof, mark it done with todo_write (the board already lists them by id). Cancel an item only with a reason. Close with "Plan complete." when every item is done or cancelled. A fresh reviewer then reads the cycle diff and revises; the harness runs ${opts.verifyCommand ? `\`${opts.verifyCommand}\`` : "the project check"} and commits on green. ${budget}`,
+    `You are the executor. Ship the items in order: implement, run the item's proof, mark it done with todo_write. Cancel an item only with a reason. Close with "Plan complete." when every item is done or cancelled. The harness then runs ${opts.verifyCommand ? `\`${opts.verifyCommand}\`` : "the project check"} (only failures that were not already failing before the cycle count), a fresh reviewer reads the cycle diff and revises, the check runs once more and the cycle commits on green. ${budget}`,
+    board,
     `Do not stop mid-item, do not ask the user to choose; Operator: lines are for a secret, an irreversible action, or an external blocker only. Live controls: /cycle 0 · /replan · /ulw-off.`,
   ].join("\n");
 }
@@ -236,14 +241,29 @@ export function formatFixReanchor(opts: {
   cap: number;
   tail: string;
   mustFix: string[];
+  /** Failures the baseline did not have — the executor's to fix. */
+  newFailures?: string[];
+  /** Failures that were already there — named so they are left alone. */
+  inherited?: string[];
+  /** Whether the Reviewer has already read this cycle (post-review verify). */
+  reviewed?: boolean;
 }): string {
+  const fresh = opts.newFailures ?? [];
+  const inherited = opts.inherited ?? [];
+  const stage = opts.reviewed ? "after review" : "before review";
   return [
-    `[Forge ULW cycle driver] Stop blocked — cycle ${opts.cycle} was reviewed; \`${opts.command}\` is RED (fix round ${opts.round}/${opts.cap}).`,
+    `[Forge ULW cycle driver] Stop blocked — cycle ${opts.cycle} ${stage}: \`${opts.command}\` is RED (fix round ${opts.round}/${opts.cap}).`,
+    fresh.length
+      ? `New failures (yours to fix): ${fresh.slice(0, 8).map((f) => `\`${f}\``).join(" · ")}${fresh.length > 8 ? ` · +${fresh.length - 8} more` : ""}`
+      : "",
+    inherited.length
+      ? `${inherited.length} failure(s) were already failing before this cycle and do not count — do not edit those tests to chase them.`
+      : "",
     opts.mustFix.length ? `Reviewer must-fix: ${opts.mustFix.slice(0, 4).join(" · ")}` : "",
     "```",
     clipBlock(opts.tail, 3_000) || "(no output captured)",
     "```",
-    `Fix the failure in the code — never weaken or delete an assertion to go green — then stop; the harness re-runs the check and commits on green.`,
+    `Fix the failure in the code — never weaken or delete an assertion to go green — then stop; the harness re-runs the check${opts.reviewed ? " and commits on green" : ", then the reviewer reads the cycle"}.`,
   ]
     .filter(Boolean)
     .join("\n");

@@ -729,7 +729,7 @@ auto_arm = true
 # reviewer_model = "grok-4.6"
 # reviewer_effort = "xhigh"
 # max_cycles = 0        # 0 / unset = until the Planner says fulfilled, or /cycle 0
-# fix_rounds = 3        # executor rounds when the verify command is red after review
+# fix_rounds = 3        # executor rounds when the verify command is red (new failures vs the baseline)
 # stuck_threshold = 4   # no-progress Stops in EXECUTE before the cycle closes early
 
 # Permission rules — deny always wins (including YOLO)
