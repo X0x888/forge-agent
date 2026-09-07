@@ -1064,10 +1064,7 @@ export async function runSubagent(
     }
   }
 
-  const keepSession =
-    process.env.FORGE_SUBAGENT_KEEP === "1" ||
-    process.env.FORGE_SUBAGENT_KEEP === "true" ||
-    Boolean(req.keepSession);
+  const keepSession = subagentKeepEnv() || Boolean(req.keepSession);
 
   // Collapse the essay to a map before land is appended so the land
   // summary is not thrown away.
@@ -1400,8 +1397,18 @@ export function shouldKeepChildSession(o: {
   return !(o.status === "completed" && o.artifactWritten);
 }
 
-/** Remove a kept child session once its caller is done with it. */
+/** `FORGE_SUBAGENT_KEEP=1|true` — every child session survives its run, for reading afterwards. */
+export function subagentKeepEnv(): boolean {
+  return process.env.FORGE_SUBAGENT_KEEP === "1" || process.env.FORGE_SUBAGENT_KEEP === "true";
+}
+
+/**
+ * Remove a kept child session once its caller is done with it. Under
+ * `FORGE_SUBAGENT_KEEP` the session stays, as every other child's does — the
+ * two turns of a role are exactly what a reader of a dogfood run opens.
+ */
 export async function cleanupSubagentSession(id: string): Promise<void> {
+  if (subagentKeepEnv()) return;
   await cleanupChildSession(id);
 }
 

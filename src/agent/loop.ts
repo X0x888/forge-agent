@@ -1840,11 +1840,13 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
           },
           rememberPromises: (promises) => {
             // One fact row per promise as last inspected; the store dedupes on
-            // text, so a promise that changes state adds its new row.
+            // text, so a promise adds a row only when its state changes. Where
+            // it was seen stays on ulw.json — it is rewritten every cycle and
+            // would grow the tracked MEMORY.md mirror by a row per rewording.
             for (const p of promises.slice(0, 24)) {
               try {
                 appendProjectMemory(workspace, {
-                  text: `Promise: ${p.text} — ${p.state}${p.seen ? ` — ${p.seen}` : ""}`.slice(0, 400),
+                  text: `Promise: ${p.text} — ${p.state}`.slice(0, 400),
                   kind: "fact",
                   source: "agent",
                 });

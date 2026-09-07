@@ -14,6 +14,8 @@ import {
   defaultSubagentMaxTurns,
   loadResumableSubagent,
   shouldKeepChildSession,
+  cleanupSubagentSession,
+  subagentKeepEnv,
 } from "../src/agent/subagent.js";
 import {
   formatSubagentNext,
@@ -59,6 +61,32 @@ describe("subagent handoff", () => {
     // Incomplete runs are kept for recovery whatever the caller said.
     assert.equal(shouldKeepChildSession({ status: "incomplete_max_turns", artifactWritten: true }), true);
     assert.equal(shouldKeepChildSession({ keepRequested: false, status: "error", artifactWritten: true }), true);
+  });
+
+  it("a role's cleanup honours FORGE_SUBAGENT_KEEP: the kept session stays for the reader", async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "forge-keep-"));
+    const prevHome = process.env.FORGE_HOME;
+    const prevKeep = process.env.FORGE_SUBAGENT_KEEP;
+    process.env.FORGE_HOME = home;
+    try {
+      const child = createSession({ cwd: home, provider: "xai", model: "grok-4", ultrawork: false });
+      saveSession(child);
+      const dir = path.join(home, "sessions", child.meta.id);
+      assert.ok(fs.existsSync(dir));
+      process.env.FORGE_SUBAGENT_KEEP = "1";
+      assert.equal(subagentKeepEnv(), true);
+      await cleanupSubagentSession(child.meta.id);
+      assert.ok(fs.existsSync(dir), "kept: the env asked for every child to survive");
+      delete process.env.FORGE_SUBAGENT_KEEP;
+      assert.equal(subagentKeepEnv(), false);
+      await cleanupSubagentSession(child.meta.id);
+      assert.equal(fs.existsSync(dir), false, "removed once the caller is done and nobody asked to keep it");
+    } finally {
+      if (prevHome === undefined) delete process.env.FORGE_HOME;
+      else process.env.FORGE_HOME = prevHome;
+      if (prevKeep === undefined) delete process.env.FORGE_SUBAGENT_KEEP;
+      else process.env.FORGE_SUBAGENT_KEEP = prevKeep;
+    }
   });
 
   it("skips worktree land unless the child completed", () => {
