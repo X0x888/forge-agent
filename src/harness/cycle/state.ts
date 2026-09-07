@@ -45,7 +45,22 @@ export interface CyclePlanItem {
   title: string;
   files: string[];
   proof?: string;
+  /** The job in Identity this item serves, in the Planner's words (forge-surface: every decision traceable to subject + audience + job). */
+  serves?: string;
+  /** What the Planner ran or saw that shows the item is not yet so (forge-redgreen: a proof that already passes is not an item). */
+  redNow?: string;
   status: "open" | "done" | "cancelled";
+}
+
+/**
+ * One promise the product makes — README, `--help`, tests as spec, the
+ * identity — and whether the tree keeps it, as the Planner last inspected it
+ * (forge-assay: a checklist against current state, never memory).
+ */
+export interface CyclePromise {
+  text: string;
+  state: "kept" | "broken" | "absent";
+  seen?: string;
 }
 
 /** One Stop boundary inside EXECUTE — facts, never scores. */
@@ -69,6 +84,18 @@ export interface CycleRecord {
   direction?: string;
   /** The plan's Looked line — what the Planner ran or opened before judging. */
   looked?: string;
+  /** The scout document the Planner wrote before it was handed the record (turn 1). */
+  scoutPath?: string;
+  /** The alternatives the Planner weighed, `leave it` among them (forge-shape). */
+  considered?: string[];
+  /** The Planner's `Worth the cycle:` — its claim before the spend; the Reviewer's `worth` is the finding after. */
+  worthClaim?: string;
+  /** The look document the Reviewer wrote before it was handed the diff (turn 1). */
+  lookPath?: string;
+  /** What the Reviewer ran or opened before reading the diff (forge-prove: run, read, then claim). */
+  reviewerLooked?: string;
+  /** `Dispute:` lines the executor wrote about the last review, with its evidence — for the next Planner. */
+  disputes?: string[];
   startedAt: string;
   endedAt?: string;
   planPath?: string;
@@ -100,6 +127,8 @@ export interface CycleRecord {
 
 export interface CycleReviewNotes {
   verdict: ReviewVerdict;
+  /** What the Reviewer ran or opened as the product's user before judging worth. */
+  looked?: string;
   fulfillment: Array<{ item: string; state: "done" | "partial" | "missing"; note?: string }>;
   revisions: string[];
   mustFix: string[];
@@ -123,6 +152,8 @@ export interface CycleState {
   mandate: string | null;
   identity?: string;
   direction?: string;
+  /** The product's own promises as the Planner last inspected them; the run's checklist (forge-assay). */
+  promises?: CyclePromise[];
   planTitle?: string;
   planVerdict?: PlanVerdict;
   items: CyclePlanItem[];

@@ -265,6 +265,7 @@ import {
   getActiveLspManager,
 } from "../lsp/manager.js";
 import {
+  cleanupSubagentSession,
   defaultMaxSubagentDepth,
   isSpawnParallelSafe,
   resolveSpawnSubagentType,
@@ -1672,8 +1673,9 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
               role === "planner" ? config.ulw?.plannerModel : config.ulw?.reviewerModel;
             const roleEffort =
               role === "planner" ? config.ulw?.plannerEffort : config.ulw?.reviewerEffort;
+            const turn = roleOpts.resumeSessionId ? "turn 2" : roleOpts.keepSession ? "turn 1" : "fresh context";
             events.onPhase?.("tool", `cycle ${roleOpts.cycle} ${role}`);
-            events.onStatus?.(`ULW cycle ${roleOpts.cycle}: ${role} (fresh context)`);
+            events.onStatus?.(`ULW cycle ${roleOpts.cycle}: ${role} (${turn})`);
             const res = await runSubagentTracked(
               {
                 prompt: brief,
@@ -1681,7 +1683,12 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
                 role,
                 model: roleModel,
                 reasoningEffort: roleEffort,
-                inlineSkills: [role === "planner" ? "forge-planner" : "forge-reviewer", "forge-veteran"],
+                // forge-rootcause rides with both roles: the class of change
+                // the record shows twice is a symptom, at the run level as at a bug.
+                inlineSkills: [role === "planner" ? "forge-planner" : "forge-reviewer", "forge-veteran", "forge-rootcause"],
+                ...(roleOpts.resumeSessionId ? { resumeSessionId: roleOpts.resumeSessionId } : {}),
+                ...(roleOpts.keepSession ? { keepSession: true } : {}),
+                ...(roleOpts.maxTurns ? { maxTurns: roleOpts.maxTurns } : {}),
               },
               {
                 config,
@@ -1706,7 +1713,11 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
               completionTokens: res.completionTokens,
               editCount: res.editCount,
               error: res.error,
+              ...(res.sessionId ? { sessionId: res.sessionId } : {}),
             };
+          },
+          cleanupRoleSession: async (sessionId) => {
+            await cleanupSubagentSession(sessionId);
           },
           runCheck: async (command) => {
             events.onPhase?.("tool", `verify ${command.slice(0, 40)}`);
@@ -1825,6 +1836,21 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
               appendProjectMemory(workspace, { text: `Identity: ${text}`, kind: "fact", source: "agent" });
             } catch {
               /* project memory is best-effort */
+            }
+          },
+          rememberPromises: (promises) => {
+            // One fact row per promise as last inspected; the store dedupes on
+            // text, so a promise that changes state adds its new row.
+            for (const p of promises.slice(0, 24)) {
+              try {
+                appendProjectMemory(workspace, {
+                  text: `Promise: ${p.text} — ${p.state}${p.seen ? ` — ${p.seen}` : ""}`.slice(0, 400),
+                  kind: "fact",
+                  source: "agent",
+                });
+              } catch {
+                /* project memory is best-effort */
+              }
             }
           },
           log: (line) => log.info(chalk.magenta(line)),

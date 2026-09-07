@@ -74,11 +74,20 @@ function cycleRow(c: CycleRecord): string {
     verify ? `verify ${verify}` : "",
     c.commitSha ? c.commitSha : c.endedAt ? "no commit" : "open",
     // The Reviewer's answer to "would a user notice this cycle?" — the
-    // column to read down when a run has been going all night.
-    c.worth ? `worth ${/^\s*no\b/i.test(c.worth) ? "no" : "yes"}` : "",
+    // column to read down when a run has been going all night — and whether
+    // the Planner claimed it before the spend.
+    c.worth ? `worth ${/^\s*no\b/i.test(c.worth) ? "no" : "yes"}${c.worthClaim ? " (claimed)" : ""}` : c.worthClaim ? "worth claimed" : "",
   ]
     .filter(Boolean)
     .join(" · ");
+}
+
+/** `2 kept · 1 broken · 1 absent` — the product's own checklist as last inspected. */
+function promiseTally(s: CycleState): string {
+  const p = s.promises ?? [];
+  if (!p.length) return "";
+  const n = (state: "kept" | "broken" | "absent") => p.filter((x) => x.state === state).length;
+  return `${n("kept")} kept · ${n("broken")} broken · ${n("absent")} absent`;
 }
 
 export function formatUlwStatus(s: CycleState | null | undefined): string {
@@ -95,6 +104,8 @@ export function formatUlwStatus(s: CycleState | null | undefined): string {
     `  Mandate: ${displayUlwMandate(s).slice(0, 200)}`,
   ];
   if (s.identity) lines.push(`  Identity: ${s.identity.slice(0, 200)}`);
+  const tally = promiseTally(s);
+  if (tally) lines.push(`  Promises: ${tally}`);
   if (s.planTitle) lines.push(`  Plan: ${s.planTitle}`);
   const open = openItems(s);
   if (s.items.length) {
@@ -137,11 +148,15 @@ export function cycleReportFacts(s: CycleState | null | undefined): {
   if (!s || s.legacy) {
     return { active: false, outcome: "", shipped: [], notDone: [], needsYou: [], verified: [] };
   }
+  // The Planner's claim before the spend and the Reviewer's finding after,
+  // side by side: whether the boss's sentence held is readable per cycle.
   const shipped = s.cycles
     .filter((c) => c.itemsDone > 0 || c.commitSha)
     .map(
       (c) =>
-        `Cycle ${c.n}${c.title ? ` — ${c.title}` : ""}: ${c.itemsDone}/${c.itemsTotal} items${c.commitSha ? `, commit ${c.commitSha}` : ""}`,
+        `Cycle ${c.n}${c.title ? ` — ${c.title}` : ""}: ${c.itemsDone}/${c.itemsTotal} items${c.commitSha ? `, commit ${c.commitSha}` : ""}` +
+        (c.worthClaim ? ` · claimed: ${oneLine(c.worthClaim, 160)}` : "") +
+        (c.worth ? ` · found: ${oneLine(c.worth, 160)}` : ""),
     );
   const verified = s.cycles
     .filter((c) => c.verifyCommand)
@@ -150,6 +165,11 @@ export function cycleReportFacts(s: CycleState | null | undefined): {
   for (const i of openItems(s)) notDone.push(`${i.title} (cycle ${s.cycle}, open)`);
   const last = s.cycles[s.cycles.length - 1];
   for (const m of last?.mustFix ?? []) notDone.push(`Must-fix: ${m}`);
+  // The product's own promises the tree does not keep are open work by definition.
+  for (const p of s.promises ?? []) {
+    if (p.state === "kept") continue;
+    notDone.push(`Promise ${p.state}: ${p.text}${p.seen ? ` — ${p.seen}` : ""}`);
+  }
   const needsYou: string[] = [];
   for (const o of s.lastReview?.operator ?? []) needsYou.push(o);
   const st: CycleState = s;
@@ -169,4 +189,9 @@ export function cycleReportFacts(s: CycleState | null | undefined): {
                 ? `ULW ended (${st.endReason})`
                 : "";
   return { active: cycleActive(s), outcome, shipped, notDone, needsYou, verified };
+}
+
+function oneLine(text: string, max: number): string {
+  const t = text.replace(/\s+/g, " ").trim();
+  return t.length > max ? `${t.slice(0, max)}…` : t;
 }

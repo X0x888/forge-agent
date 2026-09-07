@@ -415,7 +415,7 @@ export function buildBaselineSystemPrompt(opts: {
       `- Tests must be able to fail; never weaken an assertion to go green. A test-only change with no production body is not a ship.`,
       `- Proof: the cheapest check that can fail per item; the cycle gate is the declared verify command, run by the harness after review.`,
       `- Need to re-think the plan? call enter_plan_mode with the reason — the cycle closes at the next Stop and a fresh Planner reads your reason. Do not research in-session.`,
-      `- Each plan admission after the first carries the Reviewer's notes on your last cycle (what it changed and why, what your board overstated, shape notes). They stand for the run: the Reviewer should not make the same revision twice.`,
+      `- Each plan admission after the first carries the Reviewer's notes on your last cycle (what it changed and why, what your board overstated, shape notes). They stand for the run: the Reviewer should not make the same revision twice. A revision you can show was wrong goes on one \`Dispute:\` line with the evidence; the next Planner reads it — do not re-argue it in the tree.`,
       `- Operator: lines are for a secret, an irreversible action, or an external blocker only. Never ask the user to choose; ask_user is off while the driver is armed.`,
       ``,
       `### Controls`,

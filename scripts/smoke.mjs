@@ -225,7 +225,7 @@ mustInclude(
 );
 mustInclude("tips Less steering", ["tips"], "Less steering");
 mustInclude("tips handoff-guard", ["tips"], "handoff-guard");
-mustInclude("tips safety valves", ["tips"], "safety valves flip ULW");
+mustInclude("tips safety valves", ["tips"], "safety valves set ULW to /cycle 0");
 mustInclude("tips --json Less steering", ["tips", "--json"], "Less steering");
 mustInclude(
   "headless slash /tips",

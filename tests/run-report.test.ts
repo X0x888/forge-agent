@@ -150,6 +150,8 @@ describe("run report", () => {
         verifyPassed: true,
         commitSha: "abc1234",
         mustFix: [],
+        worthClaim: "the first screen is the product's whole first impression",
+        worth: "yes — a new user sees the three modes without the docs",
       },
       {
         n: 2,
@@ -172,6 +174,10 @@ describe("run report", () => {
       architecture: [],
       operator: ["decide whether resume should ever auto-open a foreign session"],
     };
+    st.promises = [
+      { text: "README: relaunch resumes where you left off", state: "broken", seen: "a fresh prompt on relaunch" },
+      { text: "--help lists the three modes", state: "kept" },
+    ];
     saveCycleState(st);
     disarmCycle(s.meta.id);
     const done = { ...st, enabled: false, phase: "released" as const, endReason: "fulfilled" as const };
@@ -186,13 +192,15 @@ describe("run report", () => {
     assert.match(r.outcome, /^Done — the Planner judged the mandate fulfilled after 1 committed cycle\(s\): 2 cycles, 0 commits landed, 0 files changed\./);
     assert.equal(r.request, "improve the onboarding flow comprehensively");
     const shipped = r.sections[0].lines.join("\n");
-    assert.match(shipped, /Cycle 1 — first-run polish: 2\/2 items, commit abc1234/);
+    assert.match(shipped, /Cycle 1 — first-run polish: 2\/2 items, commit abc1234 · claimed: the first screen is the product's whole first impression · found: yes — a new user sees the three modes/);
     assert.match(shipped, /Cycle 2 — resume flow: 1\/2 items/);
     assert.match(r.sections[1].lines.join("\n"), /Cycle 1: `npm test` green/);
     assert.match(r.sections[1].lines.join("\n"), /Cycle 2: `npm test` RED/);
     const notDone = r.sections[2].lines.join("\n");
     assert.match(notDone, /resume card on relaunch \(cycle 2, open\)/);
     assert.match(notDone, /Must-fix: the resume card ignores a missing session file/);
+    assert.match(notDone, /Promise broken: README: relaunch resumes where you left off — a fresh prompt on relaunch/);
+    assert.doesNotMatch(notDone, /--help lists the three modes/, "a kept promise is not open work");
     assert.doesNotMatch(notDone, /welcome screen/);
     const needs = r.sections.find((x) => x.title === "Needs you")!.lines.join("\n");
     assert.match(needs, /Operator: decide whether resume/);

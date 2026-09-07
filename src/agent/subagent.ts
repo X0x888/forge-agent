@@ -105,6 +105,12 @@ export interface SubagentRequest {
   isolation?: SubagentIsolation;
   /** Continue a kept incomplete child instead of spawning a new session. */
   resumeSessionId?: string;
+  /**
+   * Keep the child session after a clean completion so the caller can resume
+   * it with a second turn (the cycle roles: scout then plan, look then
+   * review). The caller owns the cleanup (`cleanupSubagentSession`).
+   */
+  keepSession?: boolean;
   /** Harness role — fixes type, capability, isolation and the prompt frame. */
   role?: SubagentRole;
   /** Per-role model / effort override (config `[ulw] planner_model` …). */
@@ -1060,7 +1066,8 @@ export async function runSubagent(
 
   const keepSession =
     process.env.FORGE_SUBAGENT_KEEP === "1" ||
-    process.env.FORGE_SUBAGENT_KEEP === "true";
+    process.env.FORGE_SUBAGENT_KEEP === "true" ||
+    Boolean(req.keepSession);
 
   // Collapse the essay to a map before land is appended so the land
   // summary is not thrown away.
@@ -1174,8 +1181,9 @@ export async function runSubagent(
   });
 
   // Delete only after the artifact exists, and only on a clean Stop.
-  // Incomplete runs keep the child session so the parent can recover.
-  if (!keepSession && status === "completed" && artifactPath) {
+  // Incomplete runs keep the child session so the parent can recover; a
+  // caller that asked to keep it (a two-turn role) cleans up itself.
+  if (!shouldKeepChildSession({ keepRequested: keepSession, status, artifactWritten: Boolean(artifactPath) })) {
     await cleanupChildSession(child.meta.id);
   } else if (keepSession || incomplete) {
     log.dim(
@@ -1224,16 +1232,21 @@ function buildSubagentPrompt(opts: {
   skills?: string;
 }): string {
   if (opts.role) {
-    // A role brief is self-contained: the harness wrote it from facts.
+    // A role brief is self-contained: the harness wrote it from facts. On a
+    // resumed role (the second of two turns) the skills are already in the
+    // transcript and the tool results of the first turn stand.
     return [
-      `[Forge subagent — ${opts.role} / ${opts.capabilityMode}]`,
+      `[Forge subagent — ${opts.role} / ${opts.capabilityMode}${opts.resume ? " / turn 2" : ""}]`,
       opts.maxTurns
         ? `Turn budget: ${opts.maxTurns} (reserve the last turn for the document; last turn is document-only).`
+        : "",
+      opts.resume
+        ? "Second turn of this role: what you ran and saw last turn is in the transcript — do not redo it."
         : "",
       opts.capabilityMode === "read-only"
         ? "You are read-only: research and judge. Do not modify files or run mutating shell commands."
         : "You may edit. Prefer verification after edits.",
-      opts.skills ? `\n${opts.skills}\n` : "",
+      opts.skills && !opts.resume ? `\n${opts.skills}\n` : "",
       opts.prompt,
       ``,
       `Your final message is the document described above and nothing else. Do not ask the user questions.`,
@@ -1370,6 +1383,26 @@ export function formatSubagentResult(opts: {
         `\n… [subagent output truncated to ${cap} chars]`
       : body;
   return `${header}\n\n${clipped}`;
+}
+
+/**
+ * Whether a child session survives its run: the caller asked (a two-turn
+ * role, or `FORGE_SUBAGENT_KEEP`), or the run did not complete cleanly with
+ * its artifact on disk — an incomplete child is kept so the parent can
+ * resume it.
+ */
+export function shouldKeepChildSession(o: {
+  keepRequested?: boolean;
+  status: SubagentHandoffStatus;
+  artifactWritten: boolean;
+}): boolean {
+  if (o.keepRequested) return true;
+  return !(o.status === "completed" && o.artifactWritten);
+}
+
+/** Remove a kept child session once its caller is done with it. */
+export async function cleanupSubagentSession(id: string): Promise<void> {
+  await cleanupChildSession(id);
 }
 
 async function cleanupChildSession(id: string): Promise<void> {

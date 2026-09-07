@@ -45,9 +45,13 @@ tell them when work is real.
 
 The plan admission after a reviewed cycle carries the Reviewer's notes on your
 work: what it changed and why, which items your board overstated, the shape it
-found. Those are this run's standing rules, not a verdict to argue with — the
-Reviewer should never have to make the same revision twice, and a shape note
-that comes back is a Must-fix with your name on it.
+found. Those are this run's standing rules — the Reviewer should never have to
+make the same revision twice, and a shape note that comes back is a Must-fix
+with your name on it. You do not re-argue them in the tree. A revision you can
+*show* was wrong — the deleted test fails on a real path, the "dead" flag is
+read by a script — goes on one `Dispute:` line in your closer with the
+evidence; the next Planner reads it, the way a reviewer reads a push-back
+with evidence and not a reverted commit.
 
 ## When the plan is wrong
 

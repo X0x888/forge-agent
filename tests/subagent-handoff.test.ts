@@ -13,6 +13,7 @@ import {
   formatSubagentResult,
   defaultSubagentMaxTurns,
   loadResumableSubagent,
+  shouldKeepChildSession,
 } from "../src/agent/subagent.js";
 import {
   formatSubagentNext,
@@ -46,6 +47,18 @@ describe("subagent handoff", () => {
       resolveSubagentHandoffStatus({ stopHookBlocked: true }),
       "stop_hook_blocked",
     );
+  });
+
+  it("keeps a completed child only when asked; an incomplete child is always kept", () => {
+    // A two-turn role asks: the session survives its clean first turn so the second can resume it.
+    assert.equal(shouldKeepChildSession({ keepRequested: true, status: "completed", artifactWritten: true }), true);
+    // Nobody asked and the run completed with its artifact on disk: cleaned up as before.
+    assert.equal(shouldKeepChildSession({ status: "completed", artifactWritten: true }), false);
+    // No artifact yet — the child stays so nothing is lost.
+    assert.equal(shouldKeepChildSession({ status: "completed", artifactWritten: false }), true);
+    // Incomplete runs are kept for recovery whatever the caller said.
+    assert.equal(shouldKeepChildSession({ status: "incomplete_max_turns", artifactWritten: true }), true);
+    assert.equal(shouldKeepChildSession({ keepRequested: false, status: "error", artifactWritten: true }), true);
   });
 
   it("skips worktree land unless the child completed", () => {

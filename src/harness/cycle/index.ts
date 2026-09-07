@@ -11,6 +11,7 @@ export * from "./machine.js";
 export * from "./artifacts.js";
 export * from "./briefs.js";
 export * from "./orchestrator.js";
+export * from "./roles.js";
 export * from "./controls.js";
 export * from "./status.js";
 export * from "./verify.js";

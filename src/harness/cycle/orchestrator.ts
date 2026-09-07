@@ -14,20 +14,42 @@ import { envPositiveInt } from "../../util/env.js";
 import { appendMemoryRecord } from "../decision-memory.js";
 import type { AutoCommitResult } from "../../util/git-auto-commit.js";
 import {
+  explainPlanParseFailure,
+  extractDisputeLines,
   extractSerendipityLines,
+  parseLookArtifact,
   parsePlanArtifact,
   parseReviewArtifact,
+  parseScoutArtifact,
+  planArtifactContract,
   type ParsedPlan,
+  type ParsedScout,
 } from "./artifacts.js";
 import {
   buildPlannerBrief,
+  buildPlannerPlanBrief,
+  buildPlannerScoutBrief,
   buildReviewerBrief,
+  buildReviewerLookBrief,
+  buildReviewerReviewBrief,
   formatFixReanchor,
   formatItemsOpenReanchor,
   formatPlanAdmission,
+  runSpend,
+  type PlannerPlanInput,
+  type ReviewerBriefInput,
   type ReviewNotesForExecutor,
 } from "./briefs.js";
 import { decideAtStop, syncItemsFromTodos, type CycleAction, type StopFacts } from "./machine.js";
+import {
+  plannerPlanTurns,
+  reviewerLookTurns,
+  roleBody,
+  roleTokens,
+  runRoleTurnAgain,
+  runRoleTwoTurn,
+  safeCleanup,
+} from "./roles.js";
 import {
   currentCycleRecord,
   ensureCycleArtifactsDir,
@@ -36,6 +58,7 @@ import {
   saveCycleState,
   type CycleEndReason,
   type CyclePlanItem,
+  type CyclePromise,
   type CycleRecord,
   type CycleReviewNotes,
   type CycleState,
@@ -57,11 +80,25 @@ export interface RoleRunResult {
   completionTokens: number;
   editCount: number;
   error?: string;
+  /** The child session, when the runtime kept it for a second turn. */
+  sessionId?: string;
+}
+
+export interface RoleRunOptions {
+  cycle: number;
+  /** Continue the role's kept session with this brief as its second turn. */
+  resumeSessionId?: string;
+  /** Keep the session after this turn so a second turn can resume it. */
+  keepSession?: boolean;
+  /** Turn budget for this turn (a role's default otherwise). */
+  maxTurns?: number;
 }
 
 export interface CycleRuntime {
   workspace: string;
-  runRole(role: CycleRole, brief: string, opts: { cycle: number }): Promise<RoleRunResult>;
+  runRole(role: CycleRole, brief: string, opts: RoleRunOptions): Promise<RoleRunResult>;
+  /** Remove a role session the harness asked to keep, once its second turn is done. */
+  cleanupRoleSession?(sessionId: string): Promise<void>;
   runCheck(command: string): Promise<CheckRun>;
   /**
    * The gate's verdict on a run the harness made — what the run-level
@@ -84,6 +121,8 @@ export interface CycleRuntime {
   projectChecks(): string[];
   /** Persist the product identity outside the session (project memory). */
   rememberIdentity?(text: string): void;
+  /** Persist the product's promises as last inspected (project memory), beside the identity. */
+  rememberPromises?(promises: CyclePromise[]): void;
   log?(line: string): void;
 }
 
@@ -135,13 +174,6 @@ function readArtifact(file: string | undefined): string {
   }
 }
 
-/** Strip the subagent result header so the artifact is the document alone. */
-function roleBody(text: string): string {
-  const t = String(text || "");
-  const idx = t.search(/^\s*(?:#\s*Cycle\s+\d+\s+(?:plan|review)|Verdict\s*:)/im);
-  return idx > 0 ? t.slice(idx) : t;
-}
-
 function release(s: CycleState, reason: CycleEndReason, line: string): CycleStopOutcome {
   s.enabled = false;
   s.phase = "released";
@@ -157,17 +189,28 @@ function release(s: CycleState, reason: CycleEndReason, line: string): CycleStop
   };
 }
 
+/** The Planner's turn-1 document, kept beside the plan as evidence it was written before the record. */
+interface ScoutResult {
+  raw: string;
+  parsed: ParsedScout | null;
+  path: string;
+}
+
 function planRecord(
   s: CycleState,
   plan: ParsedPlan,
   planPath: string,
   plannerTokens: number,
+  scout?: ScoutResult,
 ): CycleRecord {
   return {
     n: s.cycle,
     title: plan.title,
     direction: plan.direction,
-    looked: plan.looked,
+    looked: plan.looked ?? scout?.parsed?.looked,
+    ...(scout ? { scoutPath: scout.path } : {}),
+    ...(plan.considered.length ? { considered: plan.considered } : scout?.parsed?.considered.length ? { considered: scout.parsed.considered } : {}),
+    ...(plan.worthClaim ? { worthClaim: plan.worthClaim } : {}),
     startedAt: nowIso(),
     planPath,
     planVerdict: plan.verdict,
@@ -180,15 +223,21 @@ function planRecord(
   };
 }
 
+/**
+ * Run the Planner in two turns — the scout with the product and no record,
+ * then the plan with the record — and parse what came back. A plan that does
+ * not parse is retried once: on the kept session as one more document turn
+ * (the scouting stands), or as a fresh single brief when there is no session.
+ */
 async function runPlanner(
   s: CycleState,
   rt: CycleRuntime,
-  opts: { retry?: boolean } = {},
 ): Promise<
-  | { plan: ParsedPlan; raw: string; tokens: number }
-  | { error: string; raw: string; tokens: number }
+  | { plan: ParsedPlan; raw: string; tokens: number; scout?: ScoutResult }
+  | { error: string; raw: string; tokens: number; scout?: ScoutResult }
 > {
   const lastPlanAt = currentCycleRecord(s)?.startedAt ?? s.startedAt;
+  const next = s.cycle + 1;
   // Older records (before direction/worth were stamped) read them back from
   // the artifacts so a resumed run gets the same ledger.
   for (const c of s.cycles) {
@@ -207,33 +256,57 @@ async function runPlanner(
       }
     }
   }
-  let brief = buildPlannerBrief({
+  const gitStatus = safe(() => rt.gitStatus(), "");
+  const projectChecks = safe(() => rt.projectChecks(), []);
+  const planInput: Omit<PlannerPlanInput, "scoutText"> = {
     state: s,
     workspace: rt.workspace,
     gitLog: safe(() => rt.gitLogSince(s.runStartHead), ""),
-    gitStatus: safe(() => rt.gitStatus(), ""),
+    gitStatus,
     guidelineSurvey: safe(() => rt.guidelineSurvey(), ""),
-    projectChecks: safe(() => rt.projectChecks(), []),
+    projectChecks,
     userMessages: safe(() => rt.userMessagesSince(lastPlanAt), []),
+    spend: runSpend(s),
+  };
+  const tt = await runRoleTwoTurn(rt, "planner", {
+    cycle: next,
+    firstBrief: buildPlannerScoutBrief({ state: s, workspace: rt.workspace, gitStatus, projectChecks }),
+    secondBrief: (scoutText) => buildPlannerPlanBrief({ ...planInput, scoutText }),
+    singleBrief: (scoutText) => buildPlannerBrief({ ...planInput, ...(scoutText.trim() ? { scoutText } : {}) }),
+    secondMaxTurns: plannerPlanTurns(),
   });
-  if (opts.retry) {
-    brief += `\n\n[Forge] Your previous plan did not parse: no \`Verdict:\` line, or \`Verdict: continue\` with an empty \`Items:\` list. End with the contract exactly.`;
+  let tokens = roleTokens(tt);
+  let scout: ScoutResult | undefined;
+  const scoutRaw = tt.first ? roleBody(tt.first.text) : "";
+  if (scoutRaw.trim()) {
+    scout = {
+      raw: scoutRaw,
+      parsed: parseScoutArtifact(scoutRaw),
+      path: writeArtifact(s.sessionId, next, "scout.md", scoutRaw),
+    };
   }
-  const res = await rt.runRole("planner", brief, { cycle: s.cycle + 1 });
-  const raw = roleBody(res.text);
-  const tokens = res.promptTokens + res.completionTokens;
-  if (!res.ok && !raw.trim()) {
-    return { error: res.error || `planner ${res.status}`, raw, tokens };
+  let raw = roleBody(tt.second.text);
+  if (!tt.second.ok && !raw.trim()) {
+    await safeCleanup(rt, tt.sessionId);
+    return { error: tt.second.error || `planner ${tt.second.status}`, raw, tokens, scout };
   }
-  const plan = parsePlanArtifact(raw);
+  let plan = parsePlanArtifact(raw);
   if (!plan) {
-    if (!opts.retry) {
-      const again = await runPlanner(s, rt, { retry: true });
-      return { ...again, tokens: again.tokens + tokens };
-    }
-    return { error: "planner produced no parseable plan after a retry", raw, tokens };
+    // One retry, with what was missing named (presence and shape, never intent).
+    const why = explainPlanParseFailure(raw) || "no `Verdict:` line, or `Verdict: continue` with an empty `Items:` list";
+    const note = `[Forge] Your previous plan did not parse: ${why}. Write the plan again and end with the contract exactly:\n${planArtifactContract(next)}`;
+    const again =
+      tt.mode === "two-turn" && tt.sessionId
+        ? await runRoleTurnAgain(rt, "planner", tt.sessionId, note, { cycle: next, maxTurns: plannerPlanTurns() })
+        : await rt.runRole("planner", `${buildPlannerBrief({ ...planInput, ...(scoutRaw.trim() ? { scoutText: scoutRaw } : {}) })}\n\n${note}`, { cycle: next });
+    tokens = roleTokens(tt, again);
+    const againRaw = roleBody(again.text);
+    if (againRaw.trim()) raw = againRaw;
+    plan = parsePlanArtifact(againRaw);
   }
-  return { plan, raw, tokens };
+  await safeCleanup(rt, tt.sessionId);
+  if (!plan) return { error: "planner produced no parseable plan after a retry", raw, tokens, scout };
+  return { plan, raw, tokens, scout };
 }
 
 /**
@@ -256,10 +329,18 @@ export async function planNextCycle(s: CycleState, rt: CycleRuntime): Promise<Cy
       `Planner could not produce a plan for cycle ${n}: ${out.error}. Operator: read ${p} and re-arm with /ulw.`,
     );
   }
-  const { plan, raw, tokens } = out;
-  if (plan.identity) {
-    s.identity = plan.identity;
-    safe(() => rt.rememberIdentity?.(plan.identity!), undefined);
+  const { plan, raw, tokens, scout } = out;
+  const identity = plan.identity ?? scout?.parsed?.identity;
+  if (identity) {
+    s.identity = identity;
+    safe(() => rt.rememberIdentity?.(identity), undefined);
+  }
+  // The product's promises as the Planner inspected them this cycle: the
+  // scout's rows, or the plan's own when there was no separate scout.
+  const promises = scout?.parsed?.promises.length ? scout.parsed.promises : plan.promises;
+  if (promises.length) {
+    s.promises = promises;
+    safe(() => rt.rememberPromises?.(promises), undefined);
   }
   if (plan.direction) s.direction = plan.direction;
   if (plan.verdict !== "continue") {
@@ -271,6 +352,9 @@ export async function planNextCycle(s: CycleState, rt: CycleRuntime): Promise<Cy
       startedAt: nowIso(),
       endedAt: nowIso(),
       planPath,
+      ...(scout ? { scoutPath: scout.path } : {}),
+      looked: plan.looked ?? scout?.parsed?.looked,
+      ...(plan.considered.length ? { considered: plan.considered } : scout?.parsed?.considered.length ? { considered: scout.parsed.considered } : {}),
       planVerdict: plan.verdict,
       itemsTotal: 0,
       itemsDone: 0,
@@ -322,7 +406,7 @@ export async function planNextCycle(s: CycleState, rt: CycleRuntime): Promise<Cy
   if (gate.note) rt.log?.(`ULW cycle ${s.cycle} verify: ${gate.note}`);
   s.cycleStartHead = safe(() => rt.gitHead(), null);
   const planPath = writeArtifact(s.sessionId, s.cycle, "plan.md", raw);
-  s.cycles.push(planRecord(s, plan, planPath, tokens));
+  s.cycles.push(planRecord(s, plan, planPath, tokens, scout));
   saveCycleState(s);
   safe(() => rt.seedTodos(s.items), undefined);
   safe(
@@ -464,6 +548,10 @@ function commandEcosystem(command: string): CommandEcosystem {
   return "other";
 }
 
+/**
+ * The Reviewer in two turns: the look — the product on the tree as the cycle
+ * left it, no diff — then the review. forge-prove: run, read, then claim.
+ */
 async function runReviewer(s: CycleState, rt: CycleRuntime, executorCloser: string): Promise<CycleReviewNotes> {
   const record = currentCycleRecord(s);
   const planText = readArtifact(record?.planPath);
@@ -471,7 +559,7 @@ async function runReviewer(s: CycleState, rt: CycleRuntime, executorCloser: stri
     () => rt.gitDiffSince(s.cycleStartHead),
     { diff: "", files: [] as string[], truncated: false },
   );
-  const brief = buildReviewerBrief({
+  const reviewInput: ReviewerBriefInput = {
     state: s,
     workspace: rt.workspace,
     planText,
@@ -480,9 +568,30 @@ async function runReviewer(s: CycleState, rt: CycleRuntime, executorCloser: stri
     changedFiles: files,
     verifyCommand: s.verifyCommand,
     executorCloser,
+  };
+  const tt = await runRoleTwoTurn(rt, "reviewer", {
+    cycle: s.cycle,
+    firstBrief: buildReviewerLookBrief({
+      state: s,
+      workspace: rt.workspace,
+      direction: record?.direction ?? s.direction,
+      plannerLooked: record?.looked,
+      verifyCommand: s.verifyCommand,
+    }),
+    secondBrief: (lookText) => buildReviewerReviewBrief({ ...reviewInput, lookText }),
+    singleBrief: () => buildReviewerBrief(reviewInput),
+    firstMaxTurns: reviewerLookTurns(),
   });
-  const res = await rt.runRole("reviewer", brief, { cycle: s.cycle });
-  if (record) record.reviewerTokens = (record.reviewerTokens ?? 0) + res.promptTokens + res.completionTokens;
+  await safeCleanup(rt, tt.sessionId);
+  const res = tt.second;
+  if (record) record.reviewerTokens = (record.reviewerTokens ?? 0) + roleTokens(tt);
+  const lookRaw = tt.first ? roleBody(tt.first.text) : "";
+  let lookLooked: string | undefined;
+  if (lookRaw.trim()) {
+    const lookPath = writeArtifact(s.sessionId, s.cycle, "look.md", lookRaw);
+    lookLooked = parseLookArtifact(lookRaw)?.looked;
+    if (record) record.lookPath = lookPath;
+  }
   const raw = roleBody(res.text);
   const parsed = parseReviewArtifact(raw);
   // No parseable review is a review that did not happen: fail closed (no
@@ -495,6 +604,9 @@ async function runReviewer(s: CycleState, rt: CycleRuntime, executorCloser: stri
     architecture: [],
     operator: [],
   };
+  // The look is the Reviewer's own record of having used the product; the
+  // review's Looked: restates it, and stands in when the look turn wrote none.
+  if (!notes.looked && lookLooked) notes.looked = lookLooked;
   // A review that parsed is the artifact. Anything else — an errored child's
   // transcript synthesis, prose — is kept beside it as review.failed.md, and
   // review.md carries the structured blocked verdict the run actually used.
@@ -511,6 +623,7 @@ async function runReviewer(s: CycleState, rt: CycleRuntime, executorCloser: stri
     record.mustFix = notes.mustFix;
     record.architecture = notes.architecture;
     record.worth = notes.worth;
+    if (notes.looked) record.reviewerLooked = notes.looked;
     record.revisions = notes.revisions;
     record.disputed = notes.fulfillment
       .filter((f) => f.state !== "done")
@@ -725,7 +838,7 @@ export async function evaluateCycleAtStop(
   if (rt) syncItemsFromTodos(s, rt.todos());
   const action: CycleAction = decideAtStop(s, opts.facts);
   const stamped = s.phase === "execute" && action.kind !== "plan" && action.kind !== "yield";
-  if (stamped) rememberSerendipity(s, opts.facts.lastAssistantMessage);
+  if (stamped) rememberExecutorLines(s, opts.facts.lastAssistantMessage);
   saveCycleState(s);
   const needsRuntime = action.kind === "plan" || action.kind === "close-cycle" || action.kind === "verify";
   if (needsRuntime && !rt) {
@@ -794,22 +907,31 @@ export async function ensureCyclePlanned(
   return planNextCycle(s, rt);
 }
 
-const SERENDIPITY_RECORD_KEEP = 12;
+const EXECUTOR_LINES_KEEP = 12;
 
-/** The executor's `Serendipity:` lines at this Stop join the cycle's record for the next Planner. */
-function rememberSerendipity(s: CycleState, closer: string): void {
-  const found = extractSerendipityLines(closer);
-  if (!found.length) return;
+/**
+ * The executor's labelled lines at this Stop join the cycle's record for the
+ * next Planner: `Serendipity:` (noticed and left alone) and `Dispute:` (a
+ * Reviewer revision it can show was wrong, with the evidence).
+ */
+function rememberExecutorLines(s: CycleState, closer: string): void {
   const record = currentCycleRecord(s);
   if (!record) return;
-  const have = record.serendipity ?? [];
-  const seen = new Set(have.map((l) => l.toLowerCase()));
+  const noticed = extractSerendipityLines(closer);
+  if (noticed.length) record.serendipity = mergeLines(record.serendipity, noticed);
+  const disputed = extractDisputeLines(closer);
+  if (disputed.length) record.disputes = mergeLines(record.disputes, disputed);
+}
+
+function mergeLines(have: string[] | undefined, found: string[]): string[] {
+  const out = [...(have ?? [])];
+  const seen = new Set(out.map((l) => l.toLowerCase()));
   for (const l of found) {
     if (seen.has(l.toLowerCase())) continue;
     seen.add(l.toLowerCase());
-    have.push(l);
+    out.push(l);
   }
-  record.serendipity = have.slice(-SERENDIPITY_RECORD_KEEP);
+  return out.slice(-EXECUTOR_LINES_KEEP);
 }
 
 function safe<T>(fn: () => T, fallback: T): T {

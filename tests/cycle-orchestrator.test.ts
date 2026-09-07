@@ -1,4 +1,4 @@
-import { describe, it, beforeEach } from "node:test";
+import { describe, it, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
@@ -19,14 +19,22 @@ import {
 import type { StopFacts } from "../src/harness/cycle/machine.js";
 import { armWithPlan, mkGitRepo } from "./helpers/cycle-arm.js";
 
+/** The alternatives block and the item shape every `continue` plan owes the parser. */
+const CONSIDERED = `Considered:\n- rough edge: theme — cheap and visible\n- leave it — the tree runs; the theme is what a user meets first`;
+const ITEM = (title: string, file: string) =>
+  `${title} — files: ${file} — serves: the user's first minute — red now: ran it, not there yet — proof: npm test`;
+
 const PLAN_OK = (n: number, items = 2) =>
-  `# Cycle ${n} plan — theme ${n}\nVerdict: continue\nIdentity: a CLI for tests\nDirection: theme ${n}\nVerify: \`npm test\`\nItems:\n${Array.from(
+  `# Cycle ${n} plan — theme ${n}\nVerdict: continue\nIdentity: a CLI for tests\nLooked: ran the binary\n${CONSIDERED}\nDirection: theme ${n}\nWorth the cycle: theme ${n} beats leaving it because a user meets it first\nVerify: \`npm test\`\nItems:\n${Array.from(
     { length: items },
-    (_, i) => `${i + 1}. item ${n}.${i + 1} — files: src/f${i}.ts — proof: npm test`,
+    (_, i) => `${i + 1}. ${ITEM(`item ${n}.${i + 1}`, `src/f${i}.ts`)}`,
   ).join("\n")}\nOut of scope:\n- nothing`;
 const PLAN_FULFILLED = `# Cycle 2 plan\nVerdict: fulfilled — the widget exists and is tested`;
 const REVIEW_OK = `# Cycle 1 review\nVerdict: ship\nFulfillment:\n- item — done\nRevisions:\n- none\nMust-fix:\n- none`;
 const REVIEW_MUSTFIX = `# Cycle 1 review\nVerdict: ship-with-revisions\nMust-fix:\n- the flag prints nothing`;
+const SCOUT = (n: number) =>
+  `# Cycle ${n} scout\nIdentity: a CLI for tests, scouted\nLooked: built dist and ran --help; no first-run card\nPromises:\n- README: a first-run card — broken — bare prompt\n- --help lists every command — kept — matches\nConsidered:\n- broken promise: the first-run card — the first thing a new user meets\n- leave it — the CLI works without it`;
+const LOOK = (n: number) => `# Cycle ${n} look\nLooked: ran node dist/cli.js in an empty dir — the card shows`;
 
 interface FakeOpts {
   planner?: string[];
@@ -35,20 +43,27 @@ interface FakeOpts {
   /** Failing test names per red run (consumed in order). */
   checkFailures?: string[][];
   commitOk?: boolean;
+  /** Keep role sessions so the orchestrator runs each role in two turns. */
+  twoTurn?: boolean;
 }
 
 function fakeRuntime(cwd: string, o: FakeOpts = {}) {
   const calls: string[] = [];
   const todos: Array<{ id: string; status: string }> = [];
   const admitted: string[] = [];
+  const briefs: Array<{ role: CycleRole; turn: number; brief: string }> = [];
+  const remembered: { promises: unknown[] } = { promises: [] };
   const planner = [...(o.planner ?? [])];
   const reviewer = [...(o.reviewer ?? [])];
   const checks = [...(o.checkPasses ?? [])];
   let commits = 0;
+  let sessions = 0;
   const rt: CycleRuntime = {
     workspace: cwd,
-    async runRole(role: CycleRole) {
-      calls.push(`role:${role}`);
+    async runRole(role: CycleRole, brief, opts) {
+      const turn = opts.resumeSessionId ? 2 : opts.keepSession ? 1 : 0;
+      calls.push(turn ? `role:${role}#${turn}` : `role:${role}`);
+      briefs.push({ role, turn, brief });
       const text = role === "planner" ? planner.shift() : reviewer.shift();
       return {
         ok: Boolean(text),
@@ -58,7 +73,14 @@ function fakeRuntime(cwd: string, o: FakeOpts = {}) {
         completionTokens: 5,
         editCount: role === "reviewer" ? 1 : 0,
         error: text ? undefined : `no ${role} script`,
+        ...(o.twoTurn && opts.keepSession ? { sessionId: opts.resumeSessionId ?? `${role}-sess-${++sessions}` } : {}),
       };
+    },
+    async cleanupRoleSession(id) {
+      calls.push(`cleanup:${id}`);
+    },
+    rememberPromises(p) {
+      remembered.promises.push(...p);
     },
     async runCheck(command) {
       calls.push(`check:${command}`);
@@ -101,7 +123,7 @@ function fakeRuntime(cwd: string, o: FakeOpts = {}) {
     guidelineSurvey: () => "AGENTS.md fresh",
     projectChecks: () => ["npm test"],
   };
-  return { rt, calls, todos, admitted };
+  return { rt, calls, todos, admitted, briefs, remembered };
 }
 
 const facts = (o: Partial<StopFacts> = {}): StopFacts => ({
@@ -123,7 +145,13 @@ describe("cycle orchestrator", () => {
     home = fs.mkdtempSync(path.join(os.tmpdir(), "forge-orch-home-"));
     process.env.FORGE_HOME = home;
     process.env.FORGE_ULW_AUTO_COMMIT = "1";
+    // These tests script one document per role run: the single-brief mode.
+    // The two-turn mode has its own describe below.
+    process.env.FORGE_ULW_TWO_TURN = "0";
     cwd = mkGitRepo();
+  });
+  afterEach(() => {
+    delete process.env.FORGE_ULW_TWO_TURN;
   });
 
   it("turn start: the Planner writes cycle 1, items seed the board, the plan is admitted", async () => {
@@ -431,7 +459,7 @@ describe("cycle orchestrator", () => {
     saveCycleState(st);
     fs.writeFileSync(
       rec.planPath,
-      "# Cycle 1 plan — x\nVerdict: continue\nDirection: Sit leftover sits with Murmur\nVerify: npm test\nItems:\n1. the flag — files: a.ts — proof: npm test\nOut of scope:\n- Day-0 hunt `Nexus ate Philosophy.` — the next rename\n",
+      `# Cycle 1 plan — x\nVerdict: continue\n${CONSIDERED}\nDirection: Sit leftover sits with Murmur\nVerify: npm test\nItems:\n1. ${ITEM("the flag", "a.ts")}\nOut of scope:\n- Day-0 hunt \`Nexus ate Philosophy.\` — the next rename\n`,
     );
     let brief = "";
     const base = fakeRuntime(cwd, {
@@ -449,7 +477,7 @@ describe("cycle orchestrator", () => {
     };
     await evaluateCycleAtStop(sid, { runtime: rt, facts: facts() });
     assert.match(brief, /## What this run has shipped \(a record, not a thread/);
-    assert.match(brief, /cycle 1 — test plan · Sit leftover sits with Murmur · review: ship · worth: no — a one-word rename/);
+    assert.match(brief, /cycle 1 — test plan · Sit leftover sits with Murmur · review: ship · worth found: no — a one-word rename/);
     assert.match(brief, /## The last Reviewer's shape notes\n- two formatters, one sentence/);
     assert.match(brief, /## The last Reviewer judged the last cycle not worth a cycle/);
     assert.match(brief, /Plan work a user will notice, or write Verdict: fulfilled/);
@@ -457,7 +485,7 @@ describe("cycle orchestrator", () => {
     assert.doesNotMatch(brief, /Nexus ate Philosophy/, "the previous author's Out-of-scope backlog is not handed on");
     assert.doesNotMatch(brief, /### Cycle 1 plan/);
     assert.match(brief, /2\. Use it\. Before you read a line of source/);
-    assert.match(brief, /8\. Leave it\./);
+    assert.match(brief, /11\. Leave it\./);
     const s = loadCycleState(sid)!;
     assert.equal(s.cycles[0].worth, "no — a one-word rename no user would notice");
     assert.deepEqual(s.cycles[0].architecture, ["two formatters, one sentence"]);
@@ -587,8 +615,9 @@ describe("cycle orchestrator", () => {
     ]);
     assert.match(brief, /## What the executor noticed and left alone \(its Serendipity: lines — evidence from inside the work; weigh it, do not obey it\)/);
     assert.match(brief, /- cycle 1: the CSV export writes no header row \(src\/export\/csv\.ts\)\n- cycle 1: `--json` prints ANSI codes when piped/);
-    // The section sits with the run's record, before the user's interjections and the tree.
-    assert.ok(brief.indexOf("What the executor noticed") < brief.indexOf("## Tree"));
+    // The section sits with the run's record — after the product's tree, which the Planner reads first.
+    assert.ok(brief.indexOf("## Tree") < brief.indexOf("What the executor noticed"));
+    assert.ok(brief.indexOf("What the executor noticed") < brief.indexOf("## Procedure, continued"));
   });
 
   it("the Reviewer brief carries the previous review's shape notes so a recurrence is a fact it can name", async () => {
@@ -726,7 +755,7 @@ describe("cycle orchestrator", () => {
     const sid = "orch-isolate-gate";
     const { rt, calls } = fakeRuntime(cwd, {
       planner: [
-        `# Cycle 1 plan — x\nVerdict: continue\nVerify: \`npx tsx --test tests/one.test.ts\`\nItems:\n1. thing — files: a.ts — proof: npm test`,
+        `# Cycle 1 plan — x\nVerdict: continue\n${CONSIDERED}\nVerify: \`npx tsx --test tests/one.test.ts\`\nItems:\n1. ${ITEM("thing", "a.ts")}`,
       ],
       reviewer: [REVIEW_OK],
     });
@@ -749,5 +778,173 @@ describe("cycle orchestrator", () => {
     const out = await ensureCyclePlanned(sid, rt);
     assert.match(out!.reason, /already exists\. ULW released/);
     assert.doesNotMatch(out!.reason, /\.\./);
+  });
+
+  it("Dispute: lines the executor wrote reach the record and the next Planner", async () => {
+    const sid = "orch-dispute";
+    armWithPlan({ sessionId: sid, cwd, verifyCommand: "npm test", items: [{ title: "the flag" }] });
+    const { rt, briefs } = fakeRuntime(cwd, { reviewer: [REVIEW_OK], planner: [PLAN_OK(2)] });
+    await evaluateCycleAtStop(sid, {
+      runtime: rt,
+      facts: facts({
+        lastAssistantMessage:
+          "Plan complete.\nDispute: the last Reviewer called `catchAt` dead — scripts/seed.mjs reads it (run log in cycles/1)\nSerendipity: the README example is stale",
+      }),
+    });
+    const st = loadCycleState(sid)!;
+    assert.deepEqual(st.cycles[0].disputes, ["the last Reviewer called `catchAt` dead — scripts/seed.mjs reads it (run log in cycles/1)"]);
+    assert.deepEqual(st.cycles[0].serendipity, ["the README example is stale"]);
+    const plannerBrief = briefs.find((b) => b.role === "planner")!.brief;
+    assert.match(plannerBrief, /## What the executor disputed in the last review/);
+    assert.match(plannerBrief, /scripts\/seed\.mjs reads it/);
+  });
+
+  it("a single-brief plan that carries Promises: persists them as the run's checklist", async () => {
+    const sid = "orch-promises-single";
+    const plan = PLAN_OK(1).replace(
+      "Direction:",
+      "Promises:\n- README: a first-run card — broken — bare prompt\n- --help lists every command — kept\nDirection:",
+    );
+    const { rt, remembered } = fakeRuntime(cwd, { planner: [plan] });
+    const { armCycle } = await import("../src/harness/cycle/index.js");
+    armCycle({ sessionId: sid, mandate: null, cwd });
+    await ensureCyclePlanned(sid, rt);
+    const st = loadCycleState(sid)!;
+    assert.deepEqual(st.promises, [
+      { text: "README: a first-run card", state: "broken", seen: "bare prompt" },
+      { text: "--help lists every command", state: "kept" },
+    ]);
+    assert.equal(remembered.promises.length, 2, "the promises reach project memory beside the identity");
+    assert.deepEqual(st.cycles[0].considered, ["rough edge: theme — cheap and visible", "leave it — the tree runs; the theme is what a user meets first"]);
+    assert.match(st.cycles[0].worthClaim ?? "", /beats leaving it/);
+  });
+});
+
+describe("cycle orchestrator — two turns per role", () => {
+  let home: string;
+  let cwd: string;
+  beforeEach(() => {
+    home = fs.mkdtempSync(path.join(os.tmpdir(), "forge-orch2-home-"));
+    process.env.FORGE_HOME = home;
+    process.env.FORGE_ULW_AUTO_COMMIT = "1";
+    delete process.env.FORGE_ULW_TWO_TURN;
+    cwd = mkGitRepo();
+  });
+
+  it("the Reviewer looks then reviews, the Planner scouts then plans; the scout never sees the record, the plan does", async () => {
+    const sid = "orch2-full";
+    armWithPlan({ sessionId: sid, cwd, verifyCommand: "npm test", items: [{ title: "ship" }] });
+    const { rt, calls, briefs, remembered } = fakeRuntime(cwd, {
+      twoTurn: true,
+      reviewer: [LOOK(1), `${REVIEW_OK}\nWorth: yes — the card shows`],
+      planner: [SCOUT(2), PLAN_OK(2)],
+    });
+    const r = await evaluateCycleAtStop(sid, { runtime: rt, facts: facts() });
+    assert.equal(r?.planAdmitted, true);
+    assert.equal(r?.committed?.sha, "abc1");
+    assert.deepEqual(calls, [
+      "check:npm test",
+      "credit:pass",
+      "role:reviewer#1",
+      "role:reviewer#2",
+      "cleanup:reviewer-sess-1",
+      "check:npm test",
+      "credit:pass",
+      "commit:ulw cycle 1: test plan",
+      "role:planner#1",
+      "role:planner#2",
+      "cleanup:planner-sess-2",
+      "todos:2",
+    ]);
+    // Sequence is the enforcement: turn 1 has the product, turn 2 the record.
+    const scoutBrief = briefs.find((b) => b.role === "planner" && b.turn === 1)!.brief;
+    const planBrief = briefs.find((b) => b.role === "planner" && b.turn === 2)!.brief;
+    assert.match(scoutBrief, /turn 1 of 2: the scout/);
+    assert.doesNotMatch(scoutBrief, /## What this run has shipped/);
+    assert.doesNotMatch(scoutBrief, /test plan/, "no cycle title from the record reaches the scout");
+    assert.match(scoutBrief, /# Cycle 2 scout/);
+    assert.match(planBrief, /turn 2 of 2: the plan/);
+    assert.match(planBrief, /## Your scout \(turn 1\)\n# Cycle 2 scout\nIdentity: a CLI for tests, scouted/);
+    assert.match(planBrief, /## What this run has shipped/);
+    assert.match(planBrief, /cycle 1 — test plan/);
+    assert.match(planBrief, /worth found: yes — the card shows/);
+    assert.match(planBrief, /## Spend so far/);
+    const lookBrief = briefs.find((b) => b.role === "reviewer" && b.turn === 1)!.brief;
+    const reviewBrief = briefs.find((b) => b.role === "reviewer" && b.turn === 2)!.brief;
+    assert.match(lookBrief, /turn 1 of 2: the look/);
+    assert.doesNotMatch(lookBrief, /```diff/);
+    assert.match(reviewBrief, /## Your look \(turn 1\)\n# Cycle 1 look\nLooked: ran node dist\/cli\.js/);
+    assert.match(reviewBrief, /```diff/);
+    // Artifacts and record.
+    assert.ok(fs.existsSync(path.join(cycleArtifactsDir(sid, 1), "look.md")));
+    assert.ok(fs.existsSync(path.join(cycleArtifactsDir(sid, 2), "scout.md")));
+    const st = loadCycleState(sid)!;
+    assert.match(st.cycles[0].reviewerLooked ?? "", /the card shows/);
+    assert.ok(st.cycles[0].lookPath?.endsWith("look.md"));
+    assert.ok(st.cycles[1].scoutPath?.endsWith("scout.md"));
+    assert.equal(st.cycles[1].looked, "ran the binary", "the plan's own Looked: wins; the scout's stands in when it is absent");
+    assert.match(st.cycles[1].worthClaim ?? "", /beats leaving it/);
+    assert.equal(st.cycles[1].considered?.length, 2);
+    assert.equal(st.identity, "a CLI for tests", "the plan reaffirms the identity");
+    assert.deepEqual(st.promises, [
+      { text: "README: a first-run card", state: "broken", seen: "bare prompt" },
+      { text: "--help lists every command", state: "kept", seen: "matches" },
+    ]);
+    assert.equal(remembered.promises.length, 2);
+    // The next scout is handed the promises to re-inspect — and nothing else from the record.
+    const { rt: rt2, briefs: briefs2 } = fakeRuntime(cwd, { twoTurn: true, reviewer: [LOOK(2), REVIEW_OK], planner: [SCOUT(3), PLAN_FULFILLED] });
+    await evaluateCycleAtStop(sid, { runtime: rt2, facts: facts() });
+    const scout3 = briefs2.find((b) => b.role === "planner" && b.turn === 1)!.brief;
+    assert.match(scout3, /## Promises as you last recorded them/);
+    assert.match(scout3, /README: a first-run card — broken — bare prompt/);
+    assert.doesNotMatch(scout3, /## What this run has shipped/);
+  });
+
+  it("a plan turn that does not parse is retried on the kept session — the scout is not redone — with what was missing named", async () => {
+    const sid = "orch2-retry";
+    const { rt, calls, briefs } = fakeRuntime(cwd, {
+      twoTurn: true,
+      planner: [SCOUT(1), "# Cycle 1 plan — x\nVerdict: continue\nVerify: npm test\nItems:\n1. thing — files: a.ts — proof: npm test", PLAN_OK(1)],
+    });
+    const { armCycle } = await import("../src/harness/cycle/index.js");
+    armCycle({ sessionId: sid, mandate: null, cwd });
+    const out = await ensureCyclePlanned(sid, rt);
+    assert.equal(out?.planAdmitted, true);
+    assert.equal(calls.filter((c) => c === "role:planner#1").length, 1, "one scout");
+    assert.equal(calls.filter((c) => c === "role:planner#2").length, 2, "the plan turn ran twice");
+    const retry = briefs[2].brief;
+    assert.match(retry, /did not parse: Considered: missing/);
+    assert.match(retry, /item 1 \(thing\) has no serves: \/ red now:/);
+    assert.doesNotMatch(retry, /## What this run has shipped/, "the retry is a short resumed turn, not the brief again");
+    assert.match(retry, /# Cycle 1 plan — <short title>/, "the contract is reprinted");
+    assert.equal(calls.filter((c) => c.startsWith("cleanup:")).length, 1, "the kept session is released once, after the retry");
+    assert.equal(loadCycleState(sid)!.phase, "execute");
+  });
+
+  it("a Planner whose plan turn never parses releases as blocked; the scout it wrote is on disk", async () => {
+    const sid = "orch2-noparse";
+    const { rt, calls } = fakeRuntime(cwd, { twoTurn: true, planner: [SCOUT(1), "prose", "still prose"] });
+    const { armCycle } = await import("../src/harness/cycle/index.js");
+    armCycle({ sessionId: sid, mandate: null, cwd });
+    const out = await ensureCyclePlanned(sid, rt);
+    assert.ok(out?.released);
+    assert.equal(out.endReason, "blocked");
+    assert.ok(fs.existsSync(path.join(cycleArtifactsDir(sid, 1), "scout.md")));
+    assert.ok(fs.existsSync(path.join(cycleArtifactsDir(sid, 1), "plan.failed.md")));
+    assert.equal(calls.filter((c) => c.startsWith("cleanup:")).length, 1);
+  });
+
+  it("a review turn without its own Looked: takes the look's; a fulfilled plan's record keeps its scout", async () => {
+    const sid = "orch2-look-standin";
+    armWithPlan({ sessionId: sid, cwd, verifyCommand: "npm test", items: [{ title: "ship" }] });
+    const { rt } = fakeRuntime(cwd, { twoTurn: true, reviewer: [LOOK(1), REVIEW_OK], planner: [SCOUT(2), PLAN_FULFILLED] });
+    const r = await evaluateCycleAtStop(sid, { runtime: rt, facts: facts() });
+    assert.equal(r?.released, true);
+    const st = loadCycleState(sid)!;
+    assert.match(st.lastReview?.looked ?? "", /the card shows/);
+    assert.match(st.cycles[0].reviewerLooked ?? "", /the card shows/);
+    assert.ok(st.cycles[1].scoutPath?.endsWith("scout.md"));
+    assert.equal(st.cycles[1].planVerdict, "fulfilled");
+    assert.match(st.cycles[1].looked ?? "", /no first-run card/, "the fulfilled record carries the scout's Looked:");
   });
 });

@@ -11,6 +11,7 @@
 import { looksLikeCheckCommand } from "../declared-checks.js";
 import type {
   CyclePlanItem,
+  CyclePromise,
   CycleReviewNotes,
   PlanVerdict,
   ReviewVerdict,
@@ -19,19 +20,29 @@ import type {
 export const PLAN_COMPLETE_RE = /\*{0,2}Plan complete\.?\*{0,2}/i;
 
 /**
- * `Serendipity:` — the executor's declared token for what it noticed and did
- * not build (the protocol promises the line reaches the Reviewer and the next
- * Planner). Read as a labelled line, never as intent: the same-line remainder
- * and any bullet lines directly under a bare label.
+ * The executor's declared tokens in its closers, read as labelled lines,
+ * never as intent: the same-line remainder and any bullet lines directly
+ * under a bare label.
+ *
+ * `Serendipity:` — what it noticed and did not build (the protocol promises
+ * the line reaches the Reviewer and the next Planner).
+ * `Dispute:` — a Reviewer revision it can show was wrong, with the evidence
+ * (forge-absorb: push back with evidence; the next Planner reads it, the
+ * tree is not re-argued).
  */
-const SERENDIPITY_LABEL_RE = /^\s*(?:[-*•]\s*)?\*{0,2}Serendipity\*{0,2}\s*:\s*\*{0,2}\s*(.*)$/i;
-const SERENDIPITY_KEEP = 12;
+export type ExecutorLabel = "Serendipity" | "Dispute";
+const LABELLED_KEEP = 12;
 
-export function extractSerendipityLines(text: string): string[] {
+function labelledLineRe(label: ExecutorLabel): RegExp {
+  return new RegExp(`^\\s*(?:[-*•]\\s*)?\\*{0,2}${label}\\*{0,2}\\s*:\\s*\\*{0,2}\\s*(.*)$`, "i");
+}
+
+export function extractLabelledLines(text: string, label: ExecutorLabel): string[] {
+  const re = labelledLineRe(label);
   const out: string[] = [];
   const lines = String(text || "").replace(/\r\n/g, "\n").split("\n");
   for (let i = 0; i < lines.length; i++) {
-    const m = lines[i].match(SERENDIPITY_LABEL_RE);
+    const m = lines[i].match(re);
     if (!m) continue;
     const same = m[1].trim().replace(/\*{1,2}$/, "").trim();
     if (same && !/^(?:none|nothing|n\/a|-)\.?$/i.test(same)) out.push(same);
@@ -53,7 +64,15 @@ export function extractSerendipityLines(text: string): string[] {
       seen.add(k);
       return true;
     })
-    .slice(0, SERENDIPITY_KEEP);
+    .slice(0, LABELLED_KEEP);
+}
+
+export function extractSerendipityLines(text: string): string[] {
+  return extractLabelledLines(text, "Serendipity");
+}
+
+export function extractDisputeLines(text: string): string[] {
+  return extractLabelledLines(text, "Dispute");
 }
 
 export interface ParsedPlan {
@@ -63,6 +82,12 @@ export interface ParsedPlan {
   direction?: string;
   /** What the Planner ran or opened before judging — the product, not the tree. */
   looked?: string;
+  /** The alternatives weighed, one per gap bin plus `leave it` (forge-shape: no plan without the roads not taken). */
+  considered: string[];
+  /** Why this cycle beats leaving it, for the user in Identity — the Planner's claim before the spend. */
+  worthClaim?: string;
+  /** The product's promises as inspected, when the plan carries them (a scout does; a single-brief plan may). */
+  promises: CyclePromise[];
   /** Declared and accepted by looksLikeCheckCommand; undefined when "none". */
   verifyCommand?: string;
   verifyNone?: string;
@@ -76,8 +101,42 @@ export interface ParsedPlan {
   verdictNote?: string;
 }
 
+/** The Planner's turn-1 document: what it saw before it was handed the record. */
+export interface ParsedScout {
+  identity?: string;
+  looked?: string;
+  promises: CyclePromise[];
+  considered: string[];
+}
+
 const SECTION_RE =
-  /^\s*(?:#{1,6}\s*)?\*{0,2}(Verdict|Identity|Direction|Looked|Verify|Items|Out of scope|Guidelines|Operator|Title|Fulfillment|Revisions|Must-fix|Architecture|Worth|Notes|Summary)\*{0,2}\s*:\s*(.*)$/i;
+  /^\s*(?:#{1,6}\s*)?\*{0,2}(Verdict|Identity|Direction|Looked|Considered|Worth the cycle|Promises|Verify|Items|Out of scope|Guidelines|Operator|Title|Fulfillment|Revisions|Must-fix|Architecture|Worth|Notes|Summary)\*{0,2}\s*:\s*(.*)$/i;
+
+const LEAVE_IT_RE = /^\*{0,2}leave\s+it\b/i;
+
+/**
+ * `<promise> — kept | broken | absent — <where seen>`; `(kept)` at the end
+ * is the short form. A line with no state is not a promise row — the
+ * harness does not guess which way the Planner meant it.
+ */
+function parsePromiseLines(lines: string[] | undefined): CyclePromise[] {
+  const out: CyclePromise[] = [];
+  for (const b of bullets(lines)) {
+    const m = b.match(/^(.*?)\s+(?:—|–|-|\|)\s*\*{0,2}(kept|broken|absent)\*{0,2}\b\s*(?:[—–:|-]\s*)?(.*)$/i);
+    if (m) {
+      const seen = (m[3] || "").trim();
+      out.push({
+        text: m[1].trim().slice(0, 240),
+        state: m[2].toLowerCase() as CyclePromise["state"],
+        ...(seen ? { seen: seen.slice(0, 240) } : {}),
+      });
+      continue;
+    }
+    const p = b.match(/^(.*?)\s*\(\s*(kept|broken|absent)\s*\)\s*$/i);
+    if (p) out.push({ text: p[1].trim().slice(0, 240), state: p[2].toLowerCase() as CyclePromise["state"] });
+  }
+  return out;
+}
 
 function splitSections(text: string): Map<string, string[]> {
   const out = new Map<string, string[]>();
@@ -156,14 +215,20 @@ function parsePlanVerdict(raw: string | undefined): { verdict: PlanVerdict; note
 }
 
 export function parsePlanItemLine(body: string, index: number): CyclePlanItem {
-  // "<title> — files: a, b — proof: <cmd>"  (— or | or ; as separators)
+  // "<title> — files: a, b — serves: <job> — red now: <seen> — proof: <cmd>"  (— or | as separators)
   const parts = body.split(/\s+(?:—|–|\|)\s+/).map((p) => p.trim()).filter(Boolean);
   let title = parts[0] || body;
   const files: string[] = [];
   let proof: string | undefined;
+  let serves: string | undefined;
+  let redNow: string | undefined;
+  // The prose labels keep an unlabelled segment that follows them (a dash
+  // inside "red now: ran it — no card"); `files:` stays strict.
+  let prose: "proof" | "serves" | "redNow" | null = null;
   for (const p of parts.slice(1)) {
     const fm = p.match(/^files?\s*:\s*(.+)$/i);
     if (fm) {
+      prose = null;
       files.push(
         ...fm[1]
           .split(/[,\s]+/)
@@ -174,11 +239,36 @@ export function parsePlanItemLine(body: string, index: number): CyclePlanItem {
     }
     const pm = p.match(/^(?:proof|verify|proves?)\s*:\s*(.+)$/i);
     if (pm) {
+      prose = "proof";
       const raw = pm[1].trim();
       proof = /^`[^`]*`$/.test(raw) ? raw.slice(1, -1).trim() : raw;
       continue;
     }
-    // Unlabelled trailing segments belong to the title.
+    const sm = p.match(/^serves?\s*:\s*(.+)$/i);
+    if (sm) {
+      prose = "serves";
+      serves = sm[1].trim();
+      continue;
+    }
+    const rm = p.match(/^red(?:\s+now)?\s*:\s*(.+)$/i);
+    if (rm) {
+      prose = "redNow";
+      redNow = rm[1].trim();
+      continue;
+    }
+    if (prose === "proof" && proof) {
+      proof = `${proof} — ${p}`;
+      continue;
+    }
+    if (prose === "serves" && serves) {
+      serves = `${serves} — ${p}`;
+      continue;
+    }
+    if (prose === "redNow" && redNow) {
+      redNow = `${redNow} — ${p}`;
+      continue;
+    }
+    // Unlabelled segments before any label belong to the title.
     title = `${title} — ${p}`;
   }
   title = title.replace(/\*{1,2}/g, "").replace(/\s+/g, " ").trim().slice(0, 200);
@@ -187,8 +277,39 @@ export function parsePlanItemLine(body: string, index: number): CyclePlanItem {
     title,
     files,
     proof,
+    ...(serves ? { serves: serves.replace(/\s+/g, " ").slice(0, 300) } : {}),
+    ...(redNow ? { redNow: redNow.replace(/\s+/g, " ").slice(0, 300) } : {}),
     status: "open",
   };
+}
+
+/**
+ * Why a plan did not parse, for the Planner's retry. Empty when it parses.
+ * Presence and shape only — the same rules `parsePlanArtifact` applies.
+ */
+export function explainPlanParseFailure(text: string): string {
+  const sections = splitSections(text);
+  const problems: string[] = [];
+  if (!sections.has("verdict") && !sections.has("items")) {
+    return "no Verdict: line (the document has none of the plan's labelled sections)";
+  }
+  const { verdict } = parsePlanVerdict(firstLine(sections.get("verdict")));
+  if (verdict !== "continue") return "";
+  const items = bullets(sections.get("items")).map(parsePlanItemLine);
+  if (items.length === 0) problems.push("Verdict: continue with an empty Items: list");
+  const considered = bullets(sections.get("considered"));
+  if (considered.length < 2) {
+    problems.push(
+      "Considered: missing or a single entry (a continue plan lists the alternatives it weighed — one per gap bin — and leave it among them)",
+    );
+  } else if (!considered.some((c) => LEAVE_IT_RE.test(c))) {
+    problems.push("Considered: has no `leave it` entry (say why leaving the product as it stands lost)");
+  }
+  items.forEach((it, i) => {
+    const missing = [!it.serves ? "serves:" : "", !it.redNow ? "red now:" : ""].filter(Boolean);
+    if (missing.length) problems.push(`item ${i + 1} (${it.title.slice(0, 60)}) has no ${missing.join(" / ")}`);
+  });
+  return problems.join("; ");
 }
 
 export function parsePlanArtifact(text: string): ParsedPlan | null {
@@ -196,6 +317,7 @@ export function parsePlanArtifact(text: string): ParsedPlan | null {
   if (!sections.has("verdict") && !sections.has("items")) return null;
   const { verdict, note } = parsePlanVerdict(firstLine(sections.get("verdict")));
   const items = bullets(sections.get("items")).map(parsePlanItemLine);
+  const considered = bullets(sections.get("considered"));
   const verifyRaw = firstLine(sections.get("verify"));
   let verifyCommand: string | undefined;
   let verifyNone: string | undefined;
@@ -211,7 +333,14 @@ export function parsePlanArtifact(text: string): ParsedPlan | null {
       else verifyRefused = cleaned;
     }
   }
-  if (verdict === "continue" && items.length === 0) return null;
+  if (verdict === "continue") {
+    // The shape a continue plan owes (forge-shape: the roads not taken,
+    // leave-it among them; forge-surface: every item traceable to the job;
+    // forge-redgreen: every item red before it is planned). Presence only.
+    if (items.length === 0) return null;
+    if (considered.length < 2 || !considered.some((c) => LEAVE_IT_RE.test(c))) return null;
+    if (items.some((i) => !i.serves || !i.redNow)) return null;
+  }
   return {
     title: titleOf(text, sections) || items[0]?.title.slice(0, 80) || "cycle plan",
     verdict,
@@ -219,6 +348,9 @@ export function parsePlanArtifact(text: string): ParsedPlan | null {
     identity: paragraph(sections.get("identity")),
     direction: paragraph(sections.get("direction")),
     looked: paragraph(sections.get("looked")),
+    considered,
+    worthClaim: paragraph(sections.get("worth-the-cycle")),
+    promises: parsePromiseLines(sections.get("promises")),
     verifyCommand,
     verifyNone,
     verifyRefused,
@@ -226,6 +358,24 @@ export function parsePlanArtifact(text: string): ParsedPlan | null {
     outOfScope: bullets(sections.get("out-of-scope")),
     guidelines: paragraph(sections.get("guidelines")),
     operator: bullets(sections.get("operator")),
+  };
+}
+
+/** The Reviewer's turn-1 document: what it ran or opened before the diff. Null when there is no Looked: line. */
+export function parseLookArtifact(text: string): { looked: string } | null {
+  const looked = paragraph(splitSections(text).get("looked"));
+  return looked ? { looked } : null;
+}
+
+/** The Planner's turn-1 document. Null only when none of its sections is there. */
+export function parseScoutArtifact(text: string): ParsedScout | null {
+  const sections = splitSections(text);
+  if (!["identity", "looked", "promises", "considered"].some((k) => sections.has(k))) return null;
+  return {
+    identity: paragraph(sections.get("identity")),
+    looked: paragraph(sections.get("looked")),
+    promises: parsePromiseLines(sections.get("promises")),
+    considered: bullets(sections.get("considered")),
   };
 }
 
@@ -252,6 +402,7 @@ export function parseReviewArtifact(text: string): CycleReviewNotes | null {
   });
   return {
     verdict,
+    looked: paragraph(sections.get("looked")),
     fulfillment,
     revisions: bullets(sections.get("revisions")),
     mustFix: bullets(sections.get("must-fix")),
@@ -261,17 +412,37 @@ export function parseReviewArtifact(text: string): CycleReviewNotes | null {
   };
 }
 
+/** The exact shape the Planner's first turn ends with — written before it is handed the record. */
+export function scoutArtifactContract(cycle: number): string {
+  return [
+    `# Cycle ${cycle} scout`,
+    `Identity: <one paragraph: who uses this product, for what job>`,
+    `Looked: <what you ran or opened as its user and what you saw — or: could not run — <why>>`,
+    `Promises:`,
+    `- <what the product promises: README, --help, tests as spec, the identity> — kept | broken | absent — <where you saw it>`,
+    `Considered:`,
+    `- missing capability: <candidate> — <one-line trade-off>`,
+    `- broken promise: <candidate> — <trade-off>`,
+    `- rough edge: <candidate> — <trade-off>`,
+    `- debt: <candidate> — <trade-off>`,
+    `- leave it — <why the product may be fine as it stands>`,
+  ].join("\n");
+}
+
 /** The exact shape the Planner must end with. Reprinted in its brief. */
 export function planArtifactContract(cycle: number): string {
   return [
     `# Cycle ${cycle} plan — <short title>`,
     `Verdict: continue | fulfilled — <why the mandate is met, or why the product is in good shape and nothing left is worth a cycle> | blocked — <what only the user can unblock>`,
-    `Identity: <one paragraph: who uses this product, for what job>`,
+    `Identity: <one paragraph: who uses this product, for what job — reaffirmed, or an Operator: line>`,
     `Looked: <what you ran or opened as its user and what you saw — or: could not run — <why>>`,
+    `Considered:`,
+    `- <the alternatives you weighed, one per gap bin, struck or kept after the record — and always: leave it — <why it lost, or why it wins>>`,
     `Direction: <this cycle's theme in one or two sentences: what a user will notice>`,
+    `Worth the cycle: <why this beats leave it for the user in Identity, and why it is from this product and not any product of its kind>`,
     `Verify: <the one command that proves the cycle, e.g. \`npm test\`> | none — <why this repo has no check>`,
     `Items:`,
-    `1. <ship title> — files: <path>, <path> — proof: <command or observable>`,
+    `1. <ship title> — files: <path>, <path> — serves: <the job in Identity this serves, in words> — red now: <what you ran or saw that shows it is not yet so, or: unchecked — why> — proof: <command or observable, behaviour from the outside>`,
     `2. …`,
     `Out of scope:`,
     `- <what was deliberately passed on and why>`,
@@ -285,6 +456,7 @@ export function reviewArtifactContract(cycle: number): string {
   return [
     `# Cycle ${cycle} review`,
     `Verdict: ship | ship-with-revisions | blocked — <why>`,
+    `Looked: <what you ran or opened as the product's user before you read the diff, and what you saw — or: could not run — <why>>`,
     `Fulfillment:`,
     `- <item title> — done | partial | missing — <note>`,
     `Revisions:`,
