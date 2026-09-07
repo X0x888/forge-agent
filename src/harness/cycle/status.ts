@@ -73,6 +73,9 @@ function cycleRow(c: CycleRecord): string {
     c.reviewVerdict ? c.reviewVerdict : "",
     verify ? `verify ${verify}` : "",
     c.commitSha ? c.commitSha : c.endedAt ? "no commit" : "open",
+    // The Reviewer's answer to "would a user notice this cycle?" — the
+    // column to read down when a run has been going all night.
+    c.worth ? `worth ${/^\s*no\b/i.test(c.worth) ? "no" : "yes"}` : "",
   ]
     .filter(Boolean)
     .join(" · ");

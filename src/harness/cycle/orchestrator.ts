@@ -164,6 +164,8 @@ function planRecord(
   return {
     n: s.cycle,
     title: plan.title,
+    direction: plan.direction,
+    looked: plan.looked,
     startedAt: nowIso(),
     planPath,
     planVerdict: plan.verdict,
@@ -185,14 +187,24 @@ async function runPlanner(
   | { error: string; raw: string; tokens: number }
 > {
   const lastPlanAt = currentCycleRecord(s)?.startedAt ?? s.startedAt;
-  const priorPlans = s.cycles
-    .filter((c) => c.planPath)
-    .map((c) => ({ n: c.n, text: readArtifact(c.planPath) }))
-    .filter((p) => p.text);
-  const priorReviews = s.cycles
-    .filter((c) => c.reviewPath)
-    .map((c) => ({ n: c.n, text: readArtifact(c.reviewPath) }))
-    .filter((p) => p.text);
+  // Older records (before direction/worth were stamped) read them back from
+  // the artifacts so a resumed run gets the same ledger.
+  for (const c of s.cycles) {
+    if (!c.direction && c.planPath) {
+      const p = parsePlanArtifact(readArtifact(c.planPath));
+      if (p) {
+        c.direction = p.direction;
+        c.looked = p.looked;
+      }
+    }
+    if (c.worth === undefined && !c.architecture && c.reviewPath) {
+      const r = parseReviewArtifact(readArtifact(c.reviewPath));
+      if (r) {
+        c.architecture = r.architecture;
+        c.worth = r.worth;
+      }
+    }
+  }
   let brief = buildPlannerBrief({
     state: s,
     workspace: rt.workspace,
@@ -201,8 +213,6 @@ async function runPlanner(
     guidelineSurvey: safe(() => rt.guidelineSurvey(), ""),
     projectChecks: safe(() => rt.projectChecks(), []),
     userMessages: safe(() => rt.userMessagesSince(lastPlanAt), []),
-    priorPlans,
-    priorReviews,
   });
   if (opts.retry) {
     brief += `\n\n[Forge] Your previous plan did not parse: no \`Verdict:\` line, or \`Verdict: continue\` with an empty \`Items:\` list. End with the contract exactly.`;
@@ -270,7 +280,7 @@ export async function planNextCycle(s: CycleState, rt: CycleRuntime): Promise<Cy
       s,
       plan.verdict,
       plan.verdict === "fulfilled"
-        ? `Planner: mandate fulfilled${why}. ULW released after ${s.cycles.length - 1} committed cycle(s).${ops}`
+        ? `Planner: ${s.mandate ? "mandate fulfilled" : "the product is in good shape — nothing left is worth a cycle"}${why}. ULW released after ${s.cycles.length - 1} committed cycle(s).${ops}`
         : `Planner: blocked${why}.${ops}`,
     );
   }
@@ -469,6 +479,8 @@ async function runReviewer(s: CycleState, rt: CycleRuntime, executorCloser: stri
     record.reviewPath = reviewPath;
     record.reviewVerdict = notes.verdict;
     record.mustFix = notes.mustFix;
+    record.architecture = notes.architecture;
+    record.worth = notes.worth;
   }
   // Fulfilment from a fresh reader beats the executor's board.
   for (const f of notes.fulfillment) {

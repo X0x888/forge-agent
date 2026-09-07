@@ -18,20 +18,22 @@ export interface PlannerBriefInput {
   guidelineSurvey: string;
   projectChecks: string[];
   userMessages: string[];
-  priorPlans: Array<{ n: number; text: string }>;
-  priorReviews: Array<{ n: number; text: string }>;
 }
 
+/**
+ * One line per shipped cycle: what it set out to do and how it was judged.
+ * A record of what shipped, deliberately not the previous plan's body — a
+ * 30-cycle HashPet run continued the last plan's theme and its Out-of-scope
+ * list for nine cycles of one-string renames. The Planner starts from the
+ * product every cycle; this tells it what is already done.
+ */
 function cycleLine(c: CycleRecord): string {
   const bits = [
     `cycle ${c.n}${c.title ? ` — ${c.title}` : ""}`,
-    `${c.itemsDone}/${c.itemsTotal} items`,
-    `${c.waves} wave(s)`,
+    c.direction ? clipBlock(c.direction, 220).replace(/\n/g, " ") : "",
     c.reviewVerdict ? `review: ${c.reviewVerdict}` : "",
-    c.verifyCommand
-      ? `verify: ${c.verifyCommand} ${c.verifyPassed ? "✓" : c.verifyPassed === false ? "✗" : "–"}`
-      : "",
-    c.commitSha ? `commit ${c.commitSha}` : "",
+    c.worth ? `worth: ${clipBlock(c.worth, 160).replace(/\n/g, " ")}` : "",
+    c.commitSha ? `commit ${c.commitSha}` : c.endedAt ? "no commit" : "",
   ].filter(Boolean);
   return bits.join(" · ");
 }
@@ -64,29 +66,32 @@ export function buildPlannerBrief(input: PlannerBriefInput): string {
     lines.push(``, `## Direction so far`, s.direction);
   }
   if (s.cycles.length) {
-    lines.push(``, `## Previous cycles`);
+    lines.push(
+      ``,
+      `## What this run has shipped (a record, not a thread — do not continue the last theme because it was last; start from the product)`,
+    );
     for (const c of s.cycles) lines.push(`- ${cycleLine(c)}`);
     const last = s.cycles[s.cycles.length - 1];
     if (last?.mustFix.length) {
       lines.push(``, `## Must-fix left by the last review (these come first)`);
       for (const m of last.mustFix) lines.push(`- ${m}`);
     }
+    if (last?.architecture?.length) {
+      lines.push(``, `## The last Reviewer's shape notes`);
+      for (const a of last.architecture.slice(0, 6)) lines.push(`- ${clipBlock(a, 300).replace(/\n/g, " ")}`);
+    }
+    if (last?.worth && /^\s*no\b/i.test(last.worth)) {
+      lines.push(
+        ``,
+        `## The last Reviewer judged the last cycle not worth a cycle`,
+        clipBlock(last.worth, 400),
+        `Plan work a user will notice, or write Verdict: fulfilled — the product is in good shape.`,
+      );
+    }
     const unfulfilled = s.items.filter((i) => i.status === "open");
     if (unfulfilled.length) {
       lines.push(``, `## Plan items not finished last cycle`);
       for (const i of unfulfilled) lines.push(`- ${i.title}`);
-    }
-  }
-  if (input.priorPlans.length) {
-    lines.push(``, `## Prior plan(s)`);
-    for (const p of input.priorPlans.slice(-2)) {
-      lines.push(`### Cycle ${p.n} plan`, clipBlock(p.text, 3_000));
-    }
-  }
-  if (input.priorReviews.length) {
-    lines.push(``, `## Prior review(s)`);
-    for (const r of input.priorReviews.slice(-2)) {
-      lines.push(`### Cycle ${r.n} review`, clipBlock(r.text, 3_000));
     }
   }
   if (input.userMessages.length) {
@@ -109,18 +114,30 @@ export function buildPlannerBrief(input: PlannerBriefInput): string {
     ``,
     `## Procedure`,
     `1. Identity: what is this product, who uses it, for what job. README, docs, --help, manifests, tests as spec. One paragraph.`,
-    `2. Category: research online what the best tools of this kind do and what their users complain about; recall what a demanding user expects.`,
-    `3. Tree: the whole tree, not a surface — module map, coupling, hot files, dead code, duplication, coverage of the core job. Run the product as a first-time user when it can be run.`,
-    `4. Gap: should-be minus is — missing capabilities, broken promises (docs vs behaviour), rough edges on the core job, architectural debt that blocks the above. Rank by user impact × confidence / cost.`,
-    `5. Harmonize: one coherent theme for this cycle, as many items as it needs (1 or 9). Each item names its files and the observable or command that proves it. Invention and repair are both legitimate; the tree decides which this cycle needs.`,
-    `6. Guidelines: does the AGENTS.md-class file describe this product and carry the conventions an executor needs? Fact defects and missing conventions are the plan's first item; removing existing doctrine is a proposal, not an edit.`,
-    `7. A mandate that is already met is a plan: Verdict: fulfilled. A mandate that only the user can unblock is Verdict: blocked. Never invent work to avoid either.`,
+    `2. Use it. Before you read a line of source, be its user: build it if it needs building, run the binary, start the app and open it in the browser (call_mcp → playwright), load the extension, walk the first minute a new user walks. You may run any command; you may not edit. Write what you did and saw under Looked:. If it cannot be run here, say why and judge from its user-facing surfaces — never from grep alone.`,
+    `3. Category: research online what the best tools of this kind do and what their users complain about; recall what a demanding user expects.`,
+    `4. Tree: the whole tree, not a surface — module map, coupling, hot files, dead code, duplication, coverage of the core job.`,
+    `5. Gap: should-be minus is — missing capabilities, broken promises (docs vs behaviour), rough edges on the core job, architectural debt that blocks the above. The rank is one question: would a user notice this in their first minute, or first day? Something no user would notice is not a cycle.`,
+    `6. Harmonize: one coherent theme, as many items as it needs (1 or 9). A vocabulary, copy or consistency gap is one item across every surface it touches, or it goes under Out of scope — never one string per cycle. Each item names its files and the observable or command that proves it. Invention and repair are both legitimate; the product decides which this cycle needs.`,
+    `7. Guidelines: does the AGENTS.md-class file describe this product and carry the conventions an executor needs? Fact defects and missing conventions are the plan's first item; removing existing doctrine is a proposal, not an edit.`,
+    `8. Leave it. A mandate that is already met is Verdict: fulfilled. With no mandate, a product in good shape whose remaining ideas no user would notice is also Verdict: fulfilled — say so and the run stops. A mandate that only the user can unblock is Verdict: blocked. Never invent work to avoid any of these.`,
     ``,
     `## Output`,
     `Your final message is the plan and nothing else, in exactly this shape:`,
     planArtifactContract(next),
   );
   return lines.join("\n");
+}
+
+/** The last few cycles' Worth: judgments — the record behind "third invisible cycle in a row". */
+function recentWorthLines(s: CycleState): string[] {
+  const prior = s.cycles.filter((c) => c.n < s.cycle && (c.worth || c.title)).slice(-4);
+  if (!prior.length) return [];
+  return [
+    `## Recent cycles — was each worth a user's notice?`,
+    ...prior.map((c) => `- cycle ${c.n}${c.title ? ` — ${c.title}` : ""}: ${c.worth ? clipBlock(c.worth, 160).replace(/\n/g, " ") : "(no Worth: recorded)"}`),
+    ``,
+  ];
 }
 
 export interface ReviewerBriefInput {
@@ -157,6 +174,7 @@ export function buildReviewerBrief(input: ReviewerBriefInput): string {
     `## Executor's closing message`,
     clipBlock(input.executorCloser, 2_000) || "(none)",
     ``,
+    ...recentWorthLines(s),
     `## Verify`,
     input.verifyCommand
       ? `\`${input.verifyCommand}\` — run it yourself after your revisions; the harness runs it again and a red run blocks the commit.`
@@ -167,7 +185,9 @@ export function buildReviewerBrief(input: ReviewerBriefInput): string {
     `- Regressions, weakened or deleted assertions, stubs, TODOs left as work, error paths swallowed.`,
     `- Shape: one idea forked across files, a signature that grew arguments, a flag that is always the same value, comments that narrate the change ("used to", "no longer"), exports bolted onto an unrelated module when a new module was due.`,
     `- Tests: a test that cannot fail is deleted; a test-only change with no production body is reverted or given its body; the suite is the gate, never the deliverable.`,
+    `- Persisted data and public surface: a storage key, schema, exported API, CLI flag or wire format that changed needs a migration or a compatibility path in this diff, or a Must-fix that names the break.`,
     `- Revise what you can now — small, correct, in the project's own conventions. What you cannot fix in this review goes under Must-fix; it becomes the next plan's first items.`,
+    `- Worth: you judge the cycle, not only the diff. Would a user notice what this cycle changed — in their first minute, first day? Answer under Worth:. A cycle no user would notice ships if it is correct, and your Worth: no tells the next Planner to find user-visible work or declare the product done; the third such cycle in a row is a Must-fix: stop planning invisible cycles.`,
     `- Do not widen scope. Do not start the next cycle's work.`,
     ``,
     `## Output`,

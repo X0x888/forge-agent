@@ -410,8 +410,83 @@ describe("cycle orchestrator", () => {
     await evaluateCycleAtStop(sid, { runtime: rt, facts: facts() });
     assert.match(brief, /Must-fix left by the last review/);
     assert.match(brief, /the flag prints nothing/);
-    assert.match(brief, /Prior review/);
     assert.match(brief, /## Mandate\nadd a widget/);
+  });
+
+  it("the Planner brief is a ledger of what shipped, not the last plan's body: direction, verdict, worth — never Out of scope", async () => {
+    const sid = "orch-ledger";
+    armWithPlan({ sessionId: sid, cwd, verifyCommand: "npm test", items: [{ title: "the flag" }] });
+    // Give the armed plan a direction + out-of-scope list as a real plan.md would carry.
+    const st = loadCycleState(sid)!;
+    const rec = st.cycles[st.cycles.length - 1];
+    rec.direction = "Sit leftover sits with Murmur";
+    rec.looked = "ran the popup";
+    rec.planPath = path.join(cycleArtifactsDir(sid, 1), "plan.md");
+    fs.mkdirSync(path.dirname(rec.planPath), { recursive: true });
+    const { saveCycleState } = await import("../src/harness/cycle/state.js");
+    saveCycleState(st);
+    fs.writeFileSync(
+      rec.planPath,
+      "# Cycle 1 plan — x\nVerdict: continue\nDirection: Sit leftover sits with Murmur\nVerify: npm test\nItems:\n1. the flag — files: a.ts — proof: npm test\nOut of scope:\n- Day-0 hunt `Nexus ate Philosophy.` — the next rename\n",
+    );
+    let brief = "";
+    const base = fakeRuntime(cwd, {
+      reviewer: [
+        `# Cycle 1 review\nVerdict: ship\nFulfillment:\n- the flag — done\nMust-fix:\n- none\nArchitecture:\n- two formatters, one sentence\nWorth: no — a one-word rename no user would notice\n`,
+      ],
+      planner: [PLAN_FULFILLED],
+    });
+    const rt: CycleRuntime = {
+      ...base.rt,
+      async runRole(role, b) {
+        if (role === "planner") brief = b;
+        return base.rt.runRole(role, b, { cycle: 0 });
+      },
+    };
+    await evaluateCycleAtStop(sid, { runtime: rt, facts: facts() });
+    assert.match(brief, /## What this run has shipped \(a record, not a thread/);
+    assert.match(brief, /cycle 1 — test plan · Sit leftover sits with Murmur · review: ship · worth: no — a one-word rename/);
+    assert.match(brief, /## The last Reviewer's shape notes\n- two formatters, one sentence/);
+    assert.match(brief, /## The last Reviewer judged the last cycle not worth a cycle/);
+    assert.match(brief, /Plan work a user will notice, or write Verdict: fulfilled/);
+    assert.doesNotMatch(brief, /Prior plan/);
+    assert.doesNotMatch(brief, /Nexus ate Philosophy/, "the previous author's Out-of-scope backlog is not handed on");
+    assert.doesNotMatch(brief, /### Cycle 1 plan/);
+    assert.match(brief, /2\. Use it\. Before you read a line of source/);
+    assert.match(brief, /8\. Leave it\./);
+    const s = loadCycleState(sid)!;
+    assert.equal(s.cycles[0].worth, "no — a one-word rename no user would notice");
+    assert.deepEqual(s.cycles[0].architecture, ["two formatters, one sentence"]);
+  });
+
+  it("the Reviewer brief carries the recent cycles' Worth: so 'third invisible cycle' is a fact it can see", async () => {
+    const sid = "orch-worth-ledger";
+    armWithPlan({ sessionId: sid, cwd, verifyCommand: "npm test", items: [{ title: "x" }] });
+    const st = loadCycleState(sid)!;
+    // Two earlier cycles judged not worth it; the armed cycle is n=3.
+    st.cycle = 3;
+    st.cycles[0].n = 3;
+    st.cycles.unshift(
+      { n: 1, title: "Flask sit digested, not ate", startedAt: "t", itemsTotal: 1, itemsDone: 1, waves: 1, mustFix: [], worth: "no — a rename" },
+      { n: 2, title: "Hunt sit digested, not ate", startedAt: "t", itemsTotal: 1, itemsDone: 1, waves: 1, mustFix: [], worth: "no — another rename" },
+    );
+    const { saveCycleState } = await import("../src/harness/cycle/state.js");
+    saveCycleState(st);
+    let brief = "";
+    const base = fakeRuntime(cwd, { reviewer: [REVIEW_OK], planner: [PLAN_FULFILLED] });
+    const rt: CycleRuntime = {
+      ...base.rt,
+      async runRole(role, b) {
+        if (role === "reviewer") brief = b;
+        return base.rt.runRole(role, b, { cycle: 0 });
+      },
+    };
+    await evaluateCycleAtStop(sid, { runtime: rt, facts: facts() });
+    assert.match(brief, /## Recent cycles — was each worth a user's notice\?/);
+    assert.match(brief, /- cycle 1 — Flask sit digested, not ate: no — a rename/);
+    assert.match(brief, /- cycle 2 — Hunt sit digested, not ate: no — another rename/);
+    assert.match(brief, /Worth: you judge the cycle, not only the diff/);
+    assert.match(brief, /Persisted data and public surface/);
   });
 
   it("a Planner that never parses releases as blocked with the failed artifact on disk", async () => {

@@ -65,6 +65,10 @@ export interface CycleWaveRecord {
 export interface CycleRecord {
   n: number;
   title?: string;
+  /** The plan's Direction line — what the cycle set out to make a user notice. */
+  direction?: string;
+  /** The plan's Looked line — what the Planner ran or opened before judging. */
+  looked?: string;
   startedAt: string;
   endedAt?: string;
   planPath?: string;
@@ -81,6 +85,9 @@ export interface CycleRecord {
   commitSha?: string;
   commitSubject?: string;
   mustFix: string[];
+  /** The Reviewer's shape notes and its answer to "would a user notice this cycle?" */
+  architecture?: string[];
+  worth?: string;
   plannerTokens?: number;
   reviewerTokens?: number;
 }
@@ -91,6 +98,8 @@ export interface CycleReviewNotes {
   revisions: string[];
   mustFix: string[];
   architecture: string[];
+  /** The Reviewer's answer to "would a user notice this cycle?" */
+  worth?: string;
   operator: string[];
 }
 

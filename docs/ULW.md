@@ -62,9 +62,10 @@ Under `~/.forge/sessions/<id>/`:
 
 ```text
 # Cycle N plan — <title>
-Verdict: continue | fulfilled — <why> | blocked — <what only the user can unblock>
+Verdict: continue | fulfilled — <why; with no mandate: the product is in good shape> | blocked — <what only the user can unblock>
 Identity: <one paragraph: who uses this product, for what job>
-Direction: <this cycle's theme>
+Looked: <what the Planner ran or opened as the product's user, and saw — or: could not run — <why>>
+Direction: <this cycle's theme — what a user will notice>
 Verify: `npm test` | none — <why>
 Items:
 1. <ship title> — files: <path>, <path> — proof: <command or observable>
@@ -74,7 +75,9 @@ Guidelines: ok | fix: <what the AGENTS.md-class file needs>
 Operator: <secret / irreversible action / external blocker / identity change — else omit>
 ```
 
-`Verify:` goes through the strict check-command harvest (`looksLikeCheckCommand`): prose is refused, `none — why` falls back to the stack table so a wrong "none" cannot switch the gate off. `Guidelines: fix: …` becomes the plan's first item. A `continue` plan with no items does not parse; the Planner is retried once, then the run releases as `blocked` with the artifact on disk.
+`Verify:` goes through the strict check-command harvest (`looksLikeCheckCommand`): prose is refused, `none — why` falls back to the stack table so a wrong "none" cannot switch the gate off. `Guidelines: fix: …` becomes the plan's first item. A `continue` plan with no items does not parse; the Planner is retried once, then the run releases as `blocked` with the artifact on disk. `Looked:` is the Planner's own record of having used the product before judging it — read the cycles' `Looked:` lines in a row to see whether a run planned from the product or from `grep`.
+
+**What the Planner is handed** (`briefs.ts`): mandate, identity, a one-line-per-cycle ledger of what this run has shipped (title · direction · review verdict · worth · commit), the last review's `Must-fix` and `Architecture` notes, its `Worth: no` if it gave one, unfinished items, what the user typed since the last plan, the tree, the run's commits, the stack table, the guideline survey. **Not** the previous plan's body or its `Out of scope` list — a 30-cycle HashPet run continued the last plan's theme and its out-of-scope backlog for nine cycles of one-string renames. The record tells the Planner what is done; every cycle starts from the product.
 
 ### review.md contract
 
@@ -89,10 +92,11 @@ Must-fix:
 - <left for the next plan's first items>
 Architecture:
 - <duplication, wide signatures, dead flags, narrating comments>
+Worth: yes — <what a user would notice> | no — <why this was not worth a cycle>
 Operator: <only what a human must decide>
 ```
 
-Fulfilment from the fresh reader beats the executor's board: `missing` reopens the item for the next plan. `Must-fix` and `Operator` lines flow into the next Planner brief and the run report.
+Fulfilment from the fresh reader beats the executor's board: `missing` reopens the item for the next plan. `Must-fix` and `Operator` lines flow into the next Planner brief and the run report. `Worth:` is the Reviewer judging the cycle, not only the diff: a correct cycle no user would notice still ships, its `Worth: no` reaches the next Planner ("find user-visible work or write `Verdict: fulfilled`"), and the Reviewer's brief carries the last four cycles' `Worth:` so a third invisible cycle in a row becomes a `Must-fix`. No meter counts these; the roles read the record.
 
 ## Roles
 
@@ -100,7 +104,7 @@ Both roles run through `runSubagent` with a `role` (`src/agent/subagent.ts`):
 
 | Role | Tools | Isolation | Skills inlined | Config |
 |------|-------|-----------|----------------|--------|
-| Planner | read-only + `web_search` / `web_fetch` / MCP + `spawn_subagent` explore | none | `forge-planner`, `forge-veteran` | `[ulw] planner_model`, `planner_effort`, `FORGE_ULW_PLANNER_MAX_TURNS` (60) |
+| Planner | runs, never edits: full `bash` + `web_search` / `web_fetch` / MCP (browser via playwright) + `spawn_subagent` explore; the file-editing tools are removed (`denyEdits`) | none | `forge-planner`, `forge-veteran` | `[ulw] planner_model`, `planner_effort`, `FORGE_ULW_PLANNER_MAX_TURNS` (60) |
 | Reviewer | full write, no spawn | none (revises the live tree) | `forge-reviewer`, `forge-veteran` | `[ulw] reviewer_model`, `reviewer_effort`, `FORGE_ULW_REVIEWER_MAX_TURNS` (80) |
 
 The executor's system prompt carries only the **ULW executor protocol**: ship the items, mark them with `todo_write`, close with `Plan complete.`, `enter_plan_mode` to request a re-plan (the cycle closes at the next Stop), `Operator:` for the four things only the user can do.

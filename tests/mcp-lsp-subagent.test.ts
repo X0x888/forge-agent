@@ -35,6 +35,7 @@ import { loadLspConfig } from "../src/lsp/config.js";
 import { languageIdForPath, DEFAULT_LSP_SERVERS } from "../src/lsp/types.js";
 import {
   filterToolsForSubagent,
+  resolveRoleShape,
   resolveSubagentType,
   resolveCapabilityMode,
   resolveChildPermissionMode,
@@ -649,6 +650,28 @@ describe("subagent helpers", () => {
     assert.ok(names.includes("write_file"));
     assert.ok(names.includes("bash"));
     assert.ok(!names.includes("spawn_subagent"));
+  });
+
+  it("the Planner role runs the product but never edits: full bash + MCP, no file-editing tools, may spawn explore", () => {
+    const shape = resolveRoleShape("planner");
+    assert.equal(shape.capabilityMode, "full");
+    assert.equal(shape.denyEdits, true);
+    assert.equal(shape.allowSpawn, true);
+    assert.equal(
+      resolveChildPermissionMode(shape.subagentType, shape.capabilityMode, "bypassPermissions"),
+      "bypassPermissions",
+      "not plan mode — `npm run build` / `node dist/cli.js` must be allowed",
+    );
+    const names = filterToolsForSubagent(shape.capabilityMode, { allowSpawn: true, denyEdits: shape.denyEdits }).map(
+      (t) => t.function.name,
+    );
+    assert.ok(names.includes("bash"));
+    assert.ok(names.includes("call_mcp") || names.includes("search_mcp"), "browser looks go through MCP");
+    assert.ok(names.includes("spawn_subagent"));
+    for (const w of ["write_file", "search_replace", "apply_patch"]) assert.ok(!names.includes(w), `${w} is not a Planner tool`);
+    const reviewer = resolveRoleShape("reviewer");
+    assert.equal(reviewer.denyEdits, false);
+    assert.ok(filterToolsForSubagent("full", { denyEdits: false }).some((t) => t.function.name === "write_file"));
   });
 
   it("default depth is positive", () => {

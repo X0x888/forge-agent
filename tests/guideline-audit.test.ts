@@ -171,6 +171,31 @@ describe("guideline fact checks", () => {
     ]);
   });
 
+  it("`cd <dir> && npm test` is checked against <dir>/package.json, not the root's (monorepo guideline)", () => {
+    const root = mkProject(
+      {
+        "extension/package.json": '{"name":"ext","scripts":{"test":"vitest run","build":"webpack"}}',
+        "extension/scripts/pack.sh": "#!/bin/sh\n",
+      },
+      { pkg: '{"name":"root","scripts":{"check":"tsc --noEmit"}}' },
+    );
+    const stale = findStaleGuidelineCommands(
+      [
+        "- `cd extension && npm test` — the extension's script: fine",
+        "- `cd extension && npm run build` — fine",
+        "- `cd extension && ./scripts/pack.sh` — exists under extension/",
+        "- `cd extension && npm run lint` — really missing there",
+        "- `npm test` — the root has no test script",
+        "- `npm run check` — fine",
+      ].join("\n"),
+      root,
+    );
+    assert.deepEqual(stale, [
+      "`npm run lint` — no `lint` script in package.json",
+      "`npm test` — no `test` script in package.json",
+    ]);
+  });
+
   it("flags a package-manager command that contradicts the only lockfile, and only then", () => {
     const npmRepo = mkProject({ "package-lock.json": "{}" });
     assert.equal(

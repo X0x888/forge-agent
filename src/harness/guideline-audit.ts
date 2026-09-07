@@ -462,13 +462,31 @@ const NPM_LIFECYCLE = new Set(["test", "start", "stop", "restart"]);
 export function findStaleGuidelineCommands(text: string, root: string, limit = 8): string[] {
   const stale: string[] = [];
   const seen = new Set<string>();
-  const scripts = packageScripts(root);
-  const targets = makeTargets(root);
+  const rootScripts = packageScripts(root);
+  const rootTargets = makeTargets(root);
   for (const cmd of extractGuidelineCommands(text)) {
+    // `cd extension && npm test` names extension/package.json's script, not
+    // the root's — a monorepo guideline was flagged stale for every command
+    // it documented correctly.
+    let dir = root;
+    let scripts = rootScripts;
+    let targets = rootTargets;
     for (const seg of splitShellSegments(cmd)) {
       const toks = tokenizeSimple(seg).filter((t) => t && !t.startsWith("-"));
       if (!toks.length) continue;
       const head = toks[0];
+      if (head === "cd") {
+        const target = toks[1];
+        if (target && !/[$*{}<>~]/.test(target)) {
+          const next = path.resolve(dir, target);
+          if (next.startsWith(path.resolve(root)) && fs.existsSync(next)) {
+            dir = next;
+            scripts = packageScripts(dir);
+            targets = makeTargets(dir);
+          }
+        }
+        continue;
+      }
       let label: string | null = null;
       if (scripts && /^(?:npm|pnpm|yarn|bun)$/.test(head)) {
         let name: string | undefined;
@@ -489,7 +507,7 @@ export function findStaleGuidelineCommands(text: string, root: string, limit = 8
         }
       } else if (/^\.{0,2}\//.test(head) || /^(?:scripts|bin|tools)\//.test(head)) {
         if (/[*{}$<>]/.test(head)) continue;
-        const abs = path.resolve(root, head);
+        const abs = path.resolve(dir, head);
         if (abs.startsWith(path.resolve(root)) && !fs.existsSync(abs)) {
           label = `\`${seg.trim()}\` — ${head} does not exist`;
         }

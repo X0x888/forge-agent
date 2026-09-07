@@ -23,6 +23,8 @@ export interface ParsedPlan {
   verdict: PlanVerdict;
   identity?: string;
   direction?: string;
+  /** What the Planner ran or opened before judging — the product, not the tree. */
+  looked?: string;
   /** Declared and accepted by looksLikeCheckCommand; undefined when "none". */
   verifyCommand?: string;
   verifyNone?: string;
@@ -37,7 +39,7 @@ export interface ParsedPlan {
 }
 
 const SECTION_RE =
-  /^\s*(?:#{1,6}\s*)?\*{0,2}(Verdict|Identity|Direction|Verify|Items|Out of scope|Guidelines|Operator|Title|Fulfillment|Revisions|Must-fix|Architecture|Notes|Summary)\*{0,2}\s*:\s*(.*)$/i;
+  /^\s*(?:#{1,6}\s*)?\*{0,2}(Verdict|Identity|Direction|Looked|Verify|Items|Out of scope|Guidelines|Operator|Title|Fulfillment|Revisions|Must-fix|Architecture|Worth|Notes|Summary)\*{0,2}\s*:\s*(.*)$/i;
 
 function splitSections(text: string): Map<string, string[]> {
   const out = new Map<string, string[]>();
@@ -178,6 +180,7 @@ export function parsePlanArtifact(text: string): ParsedPlan | null {
     verdictNote: note,
     identity: paragraph(sections.get("identity")),
     direction: paragraph(sections.get("direction")),
+    looked: paragraph(sections.get("looked")),
     verifyCommand,
     verifyNone,
     verifyRefused,
@@ -215,6 +218,7 @@ export function parseReviewArtifact(text: string): CycleReviewNotes | null {
     revisions: bullets(sections.get("revisions")),
     mustFix: bullets(sections.get("must-fix")),
     architecture: bullets(sections.get("architecture")),
+    worth: paragraph(sections.get("worth")),
     operator: bullets(sections.get("operator")),
   };
 }
@@ -223,9 +227,10 @@ export function parseReviewArtifact(text: string): CycleReviewNotes | null {
 export function planArtifactContract(cycle: number): string {
   return [
     `# Cycle ${cycle} plan — <short title>`,
-    `Verdict: continue | fulfilled — <why the mandate is met> | blocked — <what only the user can unblock>`,
+    `Verdict: continue | fulfilled — <why the mandate is met, or why the product is in good shape and nothing left is worth a cycle> | blocked — <what only the user can unblock>`,
     `Identity: <one paragraph: who uses this product, for what job>`,
-    `Direction: <this cycle's theme in one or two sentences>`,
+    `Looked: <what you ran or opened as its user and what you saw — or: could not run — <why>>`,
+    `Direction: <this cycle's theme in one or two sentences: what a user will notice>`,
     `Verify: <the one command that proves the cycle, e.g. \`npm test\`> | none — <why this repo has no check>`,
     `Items:`,
     `1. <ship title> — files: <path>, <path> — proof: <command or observable>`,
@@ -250,6 +255,7 @@ export function reviewArtifactContract(cycle: number): string {
     `- <defect you could not fix this review; the next plan's first items>`,
     `Architecture:`,
     `- <shape observations: duplication, wide signatures, dead flags, narrating comments>`,
+    `Worth: <would a user notice this cycle? yes — <what> | no — <why this was not worth a cycle>>`,
     `Operator: <only what a human must decide — else omit>`,
   ].join("\n");
 }

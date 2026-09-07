@@ -292,7 +292,7 @@ export function renderHarnessAdmission(s: HarnessSnapshot): string {
         ? `/cycle 0 is set: this cycle is reviewed and committed, then the run stops.`
         : s.maxCycles != null
           ? `Budget: ${s.maxCycles} cycle(s); the run stops after cycle ${s.maxCycles} is committed.`
-          : `Unlimited cycles until the Planner judges the mandate fulfilled, or /cycle 0.`,
+          : `Unlimited cycles until the Planner judges the mandate fulfilled (or, with no mandate, the product in good shape), or /cycle 0.`,
       s.mandate ? `Mandate: ${s.mandate}` : "",
     );
   } else {

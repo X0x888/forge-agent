@@ -376,14 +376,18 @@ export function resolveChildPermissionMode(
   return normalizePermissionMode(parentMode) ?? parentMode;
 }
 
+/** File-editing tools a role that runs but does not edit never sees. */
+const EDIT_TOOLS = new Set(["write_file", "search_replace", "apply_patch", "edit", "Write", "Edit", "ApplyPatch"]);
+
 export function filterToolsForSubagent(
   capability: SubagentCapability,
-  opts?: { allowSpawn?: boolean },
+  opts?: { allowSpawn?: boolean; denyEdits?: boolean },
 ): ToolDefinition[] {
   return TOOL_DEFINITIONS.filter((t) => {
     const name = t.function.name;
     if (name === "spawn_subagent") return Boolean(opts?.allowSpawn);
     if (SUBAGENT_DENY_ALWAYS.has(name)) return false;
+    if (opts?.denyEdits && EDIT_TOOLS.has(name)) return false;
     if (capability === "read-only") {
       return READ_ONLY_TOOLS.has(name);
     }
@@ -397,11 +401,23 @@ export function resolveRoleShape(role: SubagentRole): {
   capabilityMode: SubagentCapability;
   isolation: SubagentIsolation;
   allowSpawn: boolean;
+  /** The role runs the product (build, start, open, click) but never edits a file. */
+  denyEdits: boolean;
 } {
   if (role === "planner") {
-    return { subagentType: "plan", capabilityMode: "read-only", isolation: "none", allowSpawn: true };
+    // Full capability so the Planner can be the product's user — build it,
+    // run it, open it in the browser — with the file-editing tools removed.
+    // Read-only plan mode denied `npm run build` / `node dist/cli.js`, and a
+    // Planner that could only grep planned from grep.
+    return {
+      subagentType: "general-purpose",
+      capabilityMode: "full",
+      isolation: "none",
+      allowSpawn: true,
+      denyEdits: true,
+    };
   }
-  return { subagentType: "general-purpose", capabilityMode: "full", isolation: "none", allowSpawn: false };
+  return { subagentType: "general-purpose", capabilityMode: "full", isolation: "none", allowSpawn: false, denyEdits: false };
 }
 
 export function defaultRoleMaxTurns(role: SubagentRole): number {
@@ -828,6 +844,7 @@ export async function runSubagent(
     // Never allow children to nest further at max depth-1 boundary; a role
     // decides for itself (the Planner spawns explore children, the Reviewer none).
     allowSpawn: roleShape ? roleShape.allowSpawn && depth + 1 < maxDepth : depth + 1 < maxDepth,
+    denyEdits: roleShape?.denyEdits ?? false,
   });
 
   const startHook = await ctx.hooks.run("SubagentStart", {
