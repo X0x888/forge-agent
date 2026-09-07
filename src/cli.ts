@@ -72,7 +72,11 @@ import {
 } from "./auth/accounts.js";
 import { importGrokCredentials } from "./auth/import-grok.js";
 import { importLocalCopilotCredentials } from "./auth/copilot.js";
-import { importLocalCursorCredentials, isCursorProvider } from "./auth/cursor.js";
+import {
+  ensureCursorAccountEmails,
+  importLocalCursorCredentials,
+  isCursorProvider,
+} from "./auth/cursor.js";
 import { createProvider } from "./providers/factory.js";
 import {
   createSession,
@@ -1744,6 +1748,7 @@ Docs: docs/PRODUCTION.md
     .option("--json", "Machine-readable JSON (never includes tokens)")
     .action(async (opts, command) => {
       const config = loadConfig();
+      await ensureCursorAccountEmails().catch(() => 0);
       const auth = await resolveAuthFresh(config);
       if (flagJson(opts, command)) {
         const accounts = listAccountSummaries();
@@ -1816,7 +1821,7 @@ Docs: docs/PRODUCTION.md
     .description("List all stored accounts (default)")
     .option("-p, --provider <provider>", "Filter by provider")
     .option("--json", "Machine-readable JSON")
-    .action((opts, command) => {
+    .action(async (opts, command) => {
       const wantJson = flagJson(opts, command) || flagJson(accountsCmd.opts(), accountsCmd);
       const providerRaw =
         typeof opts.provider === "string" ? opts.provider.trim() : "";
@@ -1833,6 +1838,7 @@ Docs: docs/PRODUCTION.md
         }
         provider = norm.provider;
       }
+      await ensureCursorAccountEmails().catch(() => 0);
       const accounts = listAccountSummaries(provider);
       const settings = getAutoSwitchSettings();
       const readiness = assessMultiAccountReadiness(provider);
@@ -1858,7 +1864,7 @@ Docs: docs/PRODUCTION.md
     )
     .option("-p, --provider <provider>", "Filter by provider")
     .option("--json", "Machine-readable JSON")
-    .action((opts, command) => {
+    .action(async (opts, command) => {
       const wantJson = flagJson(opts, command);
       const providerRaw =
         typeof opts.provider === "string" ? opts.provider.trim() : "";
@@ -1875,6 +1881,7 @@ Docs: docs/PRODUCTION.md
         }
         provider = norm.provider;
       }
+      await ensureCursorAccountEmails().catch(() => 0);
       const readiness = assessMultiAccountReadiness(provider);
       if (wantJson) {
         emitOkJson({
@@ -2211,8 +2218,9 @@ Docs: docs/PRODUCTION.md
     });
 
   // Default action for bare `forge accounts`
-  accountsCmd.action((opts) => {
+  accountsCmd.action(async (opts) => {
     const wantJson = Boolean(opts?.json);
+    await ensureCursorAccountEmails().catch(() => 0);
     const accounts = listAccountSummaries();
     const settings = getAutoSwitchSettings();
     const readiness = assessMultiAccountReadiness();

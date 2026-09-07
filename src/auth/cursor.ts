@@ -16,7 +16,7 @@ import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { upsertApiKey, upsertOAuth } from "./store.js";
+import { listAccounts, patchAccount, upsertApiKey, upsertOAuth } from "./store.js";
 import { nowEpoch } from "../util/fs.js";
 
 export const CURSOR_PROVIDER_ID = "cursor";
@@ -148,6 +148,88 @@ export function emailFromCursorToken(token: string): string | undefined {
   const sub = payload.sub;
   if (typeof sub === "string" && sub.includes("@")) return sub;
   return undefined;
+}
+
+/** True when the stored label does not identify the Cursor user. */
+export function isPlaceholderCursorLabel(label?: string): boolean {
+  const raw = String(label || "").trim();
+  if (!raw) return true;
+  if (raw.includes("@")) return false;
+  const l = raw.toLowerCase();
+  if (l === "cursor:subscription" || l === "subscription" || l === "cursor") {
+    return true;
+  }
+  if (l.startsWith("cursor:subscription")) return true;
+  if (l === "api-key" || l === "api-key-paste" || l === "api-key-json") {
+    return true;
+  }
+  if (l.startsWith("cursor:env:") || l.startsWith("env:")) return true;
+  if (l.startsWith("cursor:keychain:") || l.startsWith("keychain:")) return true;
+  if (/auth\.json/i.test(l)) return true;
+  if (l.startsWith("cursor:/") || l.startsWith("/")) return true;
+  return false;
+}
+
+function firstEmailField(...values: unknown[]): string | undefined {
+  for (const v of values) {
+    if (typeof v === "string" && v.includes("@")) return v.trim();
+  }
+  return undefined;
+}
+
+/** Email from DashboardService/GetMe (or a similar profile object). */
+export function emailFromCursorProfile(data: unknown): string | undefined {
+  if (!data || typeof data !== "object") return undefined;
+  const rec = data as Record<string, unknown>;
+  const nested =
+    rec.user && typeof rec.user === "object"
+      ? (rec.user as Record<string, unknown>)
+      : rec.account && typeof rec.account === "object"
+        ? (rec.account as Record<string, unknown>)
+        : undefined;
+  return firstEmailField(
+    rec.email,
+    rec.userEmail,
+    rec.accountEmail,
+    nested?.email,
+    nested?.userEmail,
+  );
+}
+
+/**
+ * Best-effort Cursor account email: JWT claims first, then GetMe.
+ * Fail-open — a missing/slow profile must not block login.
+ */
+export async function fetchCursorAccountEmail(
+  token: string,
+  opts?: { signal?: AbortSignal },
+): Promise<string | undefined> {
+  const t = token.trim();
+  if (!t) return undefined;
+  const fromJwt = emailFromCursorToken(t);
+  if (fromJwt) return fromJwt;
+  const url =
+    process.env.FORGE_CURSOR_GET_ME_URL?.trim() ||
+    `${CURSOR_API_BASE.replace(/\/$/, "")}/aiserver.v1.DashboardService/GetMe`;
+  try {
+    const resp = await fetch(url, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${t}`,
+        Accept: "application/json",
+        "Content-Type": "application/json",
+        "Connect-Protocol-Version": "1",
+        ...cursorApiHeaders(),
+      },
+      body: "{}",
+      signal: opts?.signal ?? AbortSignal.timeout(4_000),
+    });
+    if (!resp.ok) return undefined;
+    const data = (await resp.json().catch(() => null)) as unknown;
+    return emailFromCursorProfile(data);
+  } catch {
+    return undefined;
+  }
 }
 
 export function looksLikeCursorApiKey(token: string): boolean {
@@ -469,13 +551,21 @@ function accountLabelFor(email?: string, source?: string): string {
   return "cursor:subscription";
 }
 
+function resolveCursorStoreLabel(
+  email: string | undefined,
+  opts?: { label?: string; source?: string },
+): string {
+  const requested = opts?.label?.trim();
+  if (requested && !isPlaceholderCursorLabel(requested)) return requested;
+  return accountLabelFor(email, opts?.source);
+}
+
 export function storeCursorTokens(
   tokens: CursorTokenPair,
   opts?: { label?: string; forceNew?: boolean; source?: string },
 ): { accountId: string; created: boolean } {
   const email = tokens.email || emailFromCursorToken(tokens.accessToken);
-  const label =
-    opts?.label?.trim() || accountLabelFor(email, opts?.source);
+  const label = resolveCursorStoreLabel(email, opts);
   const isKey = looksLikeCursorApiKey(tokens.accessToken) && !tokens.refreshToken;
   if (isKey) {
     return upsertApiKey(CURSOR_PROVIDER_ID, tokens.accessToken, label, {
@@ -505,18 +595,22 @@ export async function importLocalCursorCredentials(): Promise<CursorImportResult
         "Or: forge login -p cursor",
     };
   }
+  const email =
+    local.email ||
+    emailFromCursorToken(local.accessToken) ||
+    (await fetchCursorAccountEmail(local.accessToken));
   const r = storeCursorTokens(
     {
       accessToken: local.accessToken,
       refreshToken: local.refreshToken,
       expiresAt: cursorTokenExpiryEpoch(local.accessToken),
-      email: local.email,
+      email,
     },
-    { source: local.source, label: accountLabelFor(local.email, local.source) },
+    { source: local.source, label: accountLabelFor(email, local.source) },
   );
   return {
     imported: true,
-    email: local.email,
+    email,
     expiresAt: cursorTokenExpiryEpoch(local.accessToken),
     source: local.source,
     accountId: r.accountId,
@@ -526,13 +620,22 @@ export async function importLocalCursorCredentials(): Promise<CursorImportResult
 
 export async function storeCursorFromAccessToken(
   accessToken: string,
-  opts?: { refreshToken?: string; label?: string; forceNew?: boolean },
+  opts?: {
+    refreshToken?: string;
+    label?: string;
+    forceNew?: boolean;
+    /** When false, skip the GetMe probe (tests). Default true. */
+    lookupEmail?: boolean;
+  },
 ): Promise<CursorImportResult> {
   const token = accessToken.trim();
   if (!token) {
     return { imported: false, reason: "Cursor token is empty" };
   }
-  const email = emailFromCursorToken(token);
+  let email = emailFromCursorToken(token);
+  if (!email && opts?.lookupEmail !== false) {
+    email = await fetchCursorAccountEmail(token);
+  }
   const r = storeCursorTokens(
     {
       accessToken: token,
@@ -556,15 +659,37 @@ export async function storeCursorFromAccessToken(
   };
 }
 
+/**
+ * Fill `cursor:subscription` (and other placeholder labels) from GetMe.
+ * Used by `forge accounts` / `/auth` so already-stored slots show the email.
+ */
+export async function ensureCursorAccountEmails(): Promise<number> {
+  const rows = listAccounts(CURSOR_PROVIDER_ID);
+  let upgraded = 0;
+  for (const a of rows) {
+    if (!isPlaceholderCursorLabel(a.accountLabel)) continue;
+    if (!a.accessToken) continue;
+    const email = await fetchCursorAccountEmail(a.accessToken);
+    if (!email) continue;
+    patchAccount(a.id, { accountLabel: `cursor:${email}` });
+    upgraded += 1;
+  }
+  return upgraded;
+}
+
 export async function refreshCursorSession(refreshToken: string): Promise<{
   accessToken: string;
   refreshToken?: string;
   expiresAt?: number;
+  email?: string;
 }> {
   const session = await refreshCursorToken(refreshToken);
+  const email =
+    session.email || (await fetchCursorAccountEmail(session.accessToken));
   return {
     accessToken: session.accessToken,
     refreshToken: session.refreshToken,
     expiresAt: session.expiresAt,
+    email,
   };
 }

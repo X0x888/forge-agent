@@ -82,8 +82,16 @@ export async function refreshCredentialIfNeeded(
   // POSTs it as Bearer to /auth/exchange_user_api_key.
   if (provider === "cursor") {
     try {
-      const { refreshCursorSession } = await import("./cursor.js");
+      const { isPlaceholderCursorLabel, refreshCursorSession } = await import(
+        "./cursor.js"
+      );
       const session = await refreshCursorSession(cred.refreshToken);
+      const accountLabel =
+        !isPlaceholderCursorLabel(cred.accountLabel)
+          ? cred.accountLabel
+          : session.email
+            ? `cursor:${session.email}`
+            : cred.accountLabel;
       upsertOAuth(provider, {
         accessToken: session.accessToken,
         refreshToken: session.refreshToken || cred.refreshToken,
@@ -91,7 +99,7 @@ export async function refreshCredentialIfNeeded(
         clientId: cred.clientId || "cursor-cli",
         method: cred.method,
         subscription: cred.subscription || "Cursor",
-        accountLabel: cred.accountLabel,
+        accountLabel,
         accountId: account.id,
       });
       const updated = getCredential(provider);

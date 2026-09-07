@@ -31,7 +31,7 @@ forge auth                   # status + multi-account table + refresh OAuth if n
 forge auth --json            # CI: {ok,authenticated,active,accounts[],stored[]} — never tokens; ok:false + exit 1 when unauthenticated
 forge accounts list --json   # multi-account inventory (autoSwitch + threshold + readiness)
 forge accounts status        # unattended readiness (eligible/cooldown/auto-switch)
-forge accounts switch <id|label>  # set active account; /accounts in REPL
+forge accounts switch <id|label>  # set active account; /accounts in REPL (Cursor rows show email when known)
 forge accounts clear-cooldown     # clear rate-limit cooldowns after recovery
 forge accounts auto-switch on --threshold 90  # smart switch on low plan usage / 429
 # Mid-run failover: FORGE_ACCOUNT_SWITCH_MAX (default 3); OAuth refresh before each switch

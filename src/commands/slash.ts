@@ -3411,6 +3411,8 @@ const stats = collectUsageStats({
 
     case "/auth":
     case "/login-status": {
+      const { ensureCursorAccountEmails } = await import("../auth/cursor.js");
+      await ensureCursorAccountEmails().catch(() => 0);
       const { formatAuthCard } = await import("../auth/accounts.js");
       return { handled: true, output: formatAuthCard() };
     }
@@ -3450,6 +3452,8 @@ const stats = collectUsageStats({
         return true;
       };
       const raw = (arg || "").trim();
+      const { ensureCursorAccountEmails } = await import("../auth/cursor.js");
+      await ensureCursorAccountEmails().catch(() => 0);
       if (!raw || raw === "list" || raw === "ls") {
         return { handled: true, output: formatAccountsCard({ surface: "repl" }) };
       }

@@ -13,6 +13,10 @@ import {
   decodeJwtPayload,
   cursorTokenExpiryEpoch,
   emailFromCursorToken,
+  emailFromCursorProfile,
+  isPlaceholderCursorLabel,
+  fetchCursorAccountEmail,
+  ensureCursorAccountEmails,
   looksLikeCursorApiKey,
   storeCursorFromAccessToken,
   refreshCursorToken,
@@ -820,6 +824,9 @@ describe("cursor refresh", () => {
     process.env.FORGE_HOME = tmp;
     clearAllCredentials();
     prevFetch = globalThis.fetch;
+    // Fail-open GetMe so storeCursorFromAccessToken does not hit the network.
+    globalThis.fetch = (async () =>
+      new Response("{}", { status: 404 })) as typeof fetch;
   });
 
   afterEach(() => {
@@ -937,5 +944,162 @@ describe("cursor refresh", () => {
     assert.equal(listAccounts(CURSOR_PROVIDER_ID).length, 2);
     assert.equal(getAccount(a.accountId!)?.accessToken, t1);
     assert.equal(getAccount(b.accountId!)?.accessToken, t2);
+  });
+});
+
+describe("cursor account email", () => {
+  let tmp: string;
+  let prevHome: string | undefined;
+  let prevFetch: typeof globalThis.fetch;
+
+  beforeEach(() => {
+    tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-cursor-email-"));
+    prevHome = process.env.FORGE_HOME;
+    process.env.FORGE_HOME = tmp;
+    clearAllCredentials();
+    prevFetch = globalThis.fetch;
+  });
+
+  afterEach(() => {
+    globalThis.fetch = prevFetch;
+    if (prevHome === undefined) delete process.env.FORGE_HOME;
+    else process.env.FORGE_HOME = prevHome;
+    fs.rmSync(tmp, { recursive: true, force: true });
+  });
+
+  it("isPlaceholderCursorLabel treats subscription / paste / path as unnamed", () => {
+    assert.equal(isPlaceholderCursorLabel(undefined), true);
+    assert.equal(isPlaceholderCursorLabel("cursor:subscription"), true);
+    assert.equal(isPlaceholderCursorLabel("cursor:subscription-326c84"), true);
+    assert.equal(isPlaceholderCursorLabel("api-key-paste"), true);
+    assert.equal(isPlaceholderCursorLabel("cursor:/Users/x/.cursor/auth.json"), true);
+    assert.equal(isPlaceholderCursorLabel("cursor:ada@cursor.test"), false);
+    assert.equal(isPlaceholderCursorLabel("work"), false);
+  });
+
+  it("emailFromCursorProfile reads GetMe email", () => {
+    assert.equal(
+      emailFromCursorProfile({ email: "ada@cursor.test", userId: "1" }),
+      "ada@cursor.test",
+    );
+    assert.equal(
+      emailFromCursorProfile({ user: { email: "nested@cursor.test" } }),
+      "nested@cursor.test",
+    );
+    assert.equal(emailFromCursorProfile({ membershipType: "pro" }), undefined);
+  });
+
+  it("storeCursorFromAccessToken labels from GetMe when JWT has no email", async () => {
+    const token = fakeJwt({
+      exp: Math.floor(Date.now() / 1000) + 7200,
+      sub: "google-oauth2|user_no_email",
+    });
+    globalThis.fetch = (async (url) => {
+      assert.ok(String(url).includes("DashboardService/GetMe"));
+      return new Response(JSON.stringify({ email: "ada@cursor.test" }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }) as typeof fetch;
+    const r = await storeCursorFromAccessToken(token, { refreshToken: "rt" });
+    assert.equal(r.imported, true);
+    assert.equal(r.email, "ada@cursor.test");
+    const cred = getCredential(CURSOR_PROVIDER_ID);
+    assert.equal(cred?.accountLabel, "cursor:ada@cursor.test");
+  });
+
+  it("storeCursorFromAccessToken keeps a custom --label over GetMe", async () => {
+    const token = fakeJwt({
+      exp: Math.floor(Date.now() / 1000) + 7200,
+      sub: "user-2",
+    });
+    globalThis.fetch = (async () =>
+      new Response(JSON.stringify({ email: "ada@cursor.test" }), {
+        status: 200,
+      })) as typeof fetch;
+    const r = await storeCursorFromAccessToken(token, {
+      refreshToken: "rt",
+      label: "work",
+    });
+    assert.equal(r.email, "ada@cursor.test");
+    assert.equal(getCredential(CURSOR_PROVIDER_ID)?.accountLabel, "work");
+  });
+
+  it("storeCursorFromAccessToken fail-opens to cursor:subscription when GetMe misses", async () => {
+    const token = fakeJwt({
+      exp: Math.floor(Date.now() / 1000) + 7200,
+      sub: "user-3",
+    });
+    globalThis.fetch = (async () =>
+      new Response("nope", { status: 401 })) as typeof fetch;
+    const r = await storeCursorFromAccessToken(token, { refreshToken: "rt" });
+    assert.equal(r.email, undefined);
+    assert.equal(
+      getCredential(CURSOR_PROVIDER_ID)?.accountLabel,
+      "cursor:subscription",
+    );
+  });
+
+  it("fetchCursorAccountEmail prefers JWT email and skips GetMe", async () => {
+    const token = fakeJwt({
+      exp: Math.floor(Date.now() / 1000) + 7200,
+      email: "jwt@cursor.test",
+    });
+    let called = 0;
+    globalThis.fetch = (async () => {
+      called += 1;
+      return new Response("{}", { status: 500 });
+    }) as typeof fetch;
+    assert.equal(await fetchCursorAccountEmail(token), "jwt@cursor.test");
+    assert.equal(called, 0);
+  });
+
+  it("ensureCursorAccountEmails upgrades a stored placeholder label", async () => {
+    const token = fakeJwt({
+      exp: Math.floor(Date.now() / 1000) + 7200,
+      sub: "user-backfill",
+    });
+    upsertOAuth("cursor", {
+      accessToken: token,
+      refreshToken: "rt",
+      expiresAt: Math.floor(Date.now() / 1000) + 7200,
+      clientId: "cursor-cli",
+      method: "subscription",
+      subscription: "Cursor",
+      accountLabel: "cursor:subscription",
+    });
+    globalThis.fetch = (async () =>
+      new Response(JSON.stringify({ email: "backfill@cursor.test" }), {
+        status: 200,
+      })) as typeof fetch;
+    const n = await ensureCursorAccountEmails();
+    assert.equal(n, 1);
+    assert.equal(
+      getCredential(CURSOR_PROVIDER_ID)?.accountLabel,
+      "cursor:backfill@cursor.test",
+    );
+  });
+
+  it("ensureCursorAccountEmails leaves a custom label alone", async () => {
+    const token = fakeJwt({
+      exp: Math.floor(Date.now() / 1000) + 7200,
+      sub: "user-custom",
+    });
+    upsertOAuth("cursor", {
+      accessToken: token,
+      refreshToken: "rt",
+      expiresAt: Math.floor(Date.now() / 1000) + 7200,
+      clientId: "cursor-cli",
+      method: "subscription",
+      subscription: "Cursor",
+      accountLabel: "work",
+    });
+    globalThis.fetch = (async () =>
+      new Response(JSON.stringify({ email: "ada@cursor.test" }), {
+        status: 200,
+      })) as typeof fetch;
+    const n = await ensureCursorAccountEmails();
+    assert.equal(n, 0);
+    assert.equal(getCredential(CURSOR_PROVIDER_ID)?.accountLabel, "work");
   });
 });
