@@ -349,6 +349,10 @@ describe("cycle orchestrator", () => {
     assert.equal(r?.committed?.skipped, "review blocked");
     assert.ok(!calls.some((c) => c.startsWith("commit:")));
     assert.equal(loadCycleState(sid)!.cycles[0].reviewVerdict, "blocked");
+    // review.md is the structured verdict the run used; the prose is kept beside it.
+    const dir = cycleArtifactsDir(sid, 1);
+    assert.match(fs.readFileSync(path.join(dir, "review.md"), "utf8"), /^# Cycle 1 review\nVerdict: blocked\nMust-fix:\n- Reviewer returned no parseable review/);
+    assert.equal(fs.readFileSync(path.join(dir, "review.failed.md"), "utf8").trim(), "looks fine to me");
   });
 
   it("fix rounds past the cap release with fix-cap and nothing committed", async () => {

@@ -469,11 +469,15 @@ async function runReviewer(s: CycleState, rt: CycleRuntime, executorCloser: stri
     architecture: [],
     operator: [],
   };
+  // A review that parsed is the artifact. Anything else — an errored child's
+  // transcript synthesis, prose — is kept beside it as review.failed.md, and
+  // review.md carries the structured blocked verdict the run actually used.
+  if (!parsed && raw.trim()) writeArtifact(s.sessionId, s.cycle, "review.failed.md", raw);
   const reviewPath = writeArtifact(
     s.sessionId,
     s.cycle,
     "review.md",
-    raw.trim() || `# Cycle ${s.cycle} review\nVerdict: blocked\nMust-fix:\n- ${notes.mustFix.join("\n- ")}\n`,
+    parsed ? raw : `# Cycle ${s.cycle} review\nVerdict: blocked\nMust-fix:\n- ${notes.mustFix.join("\n- ")}\n`,
   );
   if (record) {
     record.reviewPath = reviewPath;
