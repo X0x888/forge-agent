@@ -42,6 +42,8 @@ export interface TwoTurnOptions {
   singleBrief: (firstText: string) => string;
   firstMaxTurns?: number;
   secondMaxTurns?: number;
+  /** Turn 2 is report-only — emit the document, do not re-enter exploration. */
+  secondDocumentOnly?: boolean;
 }
 
 export interface TwoTurnResult {
@@ -104,6 +106,7 @@ export async function runRoleTwoTurn(
     resumeSessionId: first.sessionId,
     keepSession: true,
     ...(opts.secondMaxTurns ? { maxTurns: opts.secondMaxTurns } : {}),
+    ...(opts.secondDocumentOnly ? { documentOnly: true } : {}),
   });
   if (!second.ok && !second.text.trim()) {
     // The resume itself failed (session gone, provider error before a word):
@@ -121,13 +124,14 @@ export async function runRoleTurnAgain(
   role: CycleRole,
   sessionId: string,
   brief: string,
-  opts: { cycle: number; maxTurns?: number },
+  opts: { cycle: number; maxTurns?: number; documentOnly?: boolean },
 ): Promise<RoleRunResult> {
   return safeRun(rt, role, brief, {
     cycle: opts.cycle,
     resumeSessionId: sessionId,
     keepSession: true,
     ...(opts.maxTurns ? { maxTurns: opts.maxTurns } : {}),
+    ...(opts.documentOnly ? { documentOnly: true } : {}),
   });
 }
 

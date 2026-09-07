@@ -111,6 +111,8 @@ export interface SubagentRequest {
    * review). The caller owns the cleanup (`cleanupSubagentSession`).
    */
   keepSession?: boolean;
+  /** Every turn is report-only: emit the document, do not read/search/edit. */
+  documentOnly?: boolean;
   /** Harness role — fixes type, capability, isolation and the prompt frame. */
   role?: SubagentRole;
   /** Per-role model / effort override (config `[ulw] planner_model` …). */
@@ -384,6 +386,15 @@ export function resolveChildPermissionMode(
 
 /** File-editing tools a role that runs but does not edit never sees. */
 const EDIT_TOOLS = new Set(["write_file", "search_replace", "apply_patch", "edit", "Write", "Edit", "ApplyPatch"]);
+
+/**
+ * Whether a tool set lets its agent change files. A `denyEdits` role (the ULW
+ * Planner) has none, and the loop uses this to withhold the "fix until green"
+ * and verify nudges — an agent that owns no edit tool cannot be told to fix.
+ */
+export function toolSetCanEdit(tools: ToolDefinition[]): boolean {
+  return tools.some((t) => EDIT_TOOLS.has(t.function?.name));
+}
 
 export function filterToolsForSubagent(
   capability: SubagentCapability,
@@ -942,6 +953,7 @@ export async function runSubagent(
       lspAutostart: autostart,
       disableHarnessAutoArm: true,
       citeDeltaStop: subagentType === "explore",
+      documentOnly: req.documentOnly,
       resolveCostCap: createFamilyCostCapResolver({
         parentConfig: ctx.config,
         parentMeta: ctx.parentSession.meta,

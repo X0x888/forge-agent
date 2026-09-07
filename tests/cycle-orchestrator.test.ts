@@ -699,16 +699,23 @@ describe("cycle orchestrator", () => {
     assert.equal(loadCycleState(sid)!.verifyBaseline?.command, "npm test");
   });
 
-  it("a Planner that never parses releases as blocked with the failed artifact on disk", async () => {
+  it("a Planner that cannot produce a plan does not end the run — it becomes a direct-execute cycle", async () => {
     const sid = "orch-noparse";
     const { rt, calls } = fakeRuntime(cwd, { planner: ["I think we should do things", "still prose"] });
     const { armCycle } = await import("../src/harness/cycle/index.js");
     armCycle({ sessionId: sid, mandate: null, cwd });
     const out = await ensureCyclePlanned(sid, rt);
-    assert.ok(out?.released);
-    assert.equal(out.endReason, "blocked");
-    assert.equal(calls.filter((c) => c === "role:planner").length, 2, "one retry");
-    assert.ok(fs.existsSync(path.join(cycleArtifactsDir(sid, 1), "plan.failed.md")));
+    assert.equal(out?.released, false, "an unlimited run does not stop because the Planner stumbled");
+    assert.equal(out?.planAdmitted, true);
+    const s = loadCycleState(sid)!;
+    assert.equal(s.phase, "execute");
+    assert.equal(s.cycle, 1);
+    assert.ok(s.items.length >= 1, "the executor is handed work");
+    assert.match(s.planTitle ?? "", /Direct execute/);
+    assert.equal(s.directExecuteStreak, 1, "the synthesized cycle counts toward the no-progress wall");
+    assert.equal(calls.filter((c) => c === "role:planner").length, 2, "one retry before synthesizing");
+    assert.ok(fs.existsSync(path.join(cycleArtifactsDir(sid, 1), "plan.failed.md")), "the failed plan is kept");
+    assert.ok(fs.existsSync(path.join(cycleArtifactsDir(sid, 1), "plan.md")), "the synthesized work plan is on disk");
   });
 
   it("no runtime: an armed run that needs a role releases with runtime-unavailable", async () => {
@@ -921,21 +928,28 @@ describe("cycle orchestrator — two turns per role", () => {
     assert.equal(loadCycleState(sid)!.phase, "execute");
   });
 
-  it("a Planner whose plan turn never parses releases as blocked; the scout it wrote is on disk", async () => {
+  it("a Planner whose plan turn never parses becomes a direct-execute cycle; the scout it wrote survives", async () => {
     const sid = "orch2-noparse";
     const { rt, calls } = fakeRuntime(cwd, { twoTurn: true, planner: [SCOUT(1), "prose", "still prose"] });
     const { armCycle } = await import("../src/harness/cycle/index.js");
     armCycle({ sessionId: sid, mandate: null, cwd });
     const out = await ensureCyclePlanned(sid, rt);
-    assert.ok(out?.released);
-    assert.equal(out.endReason, "blocked");
+    assert.equal(out?.released, false);
+    assert.equal(out?.planAdmitted, true);
+    const s = loadCycleState(sid)!;
+    assert.equal(s.phase, "execute");
+    assert.match(s.planTitle ?? "", /Direct execute/);
+    assert.equal(s.directExecuteStreak, 1);
+    // the scout's identity/promises inform the synthesized cycle
+    assert.equal(s.identity, "a CLI for tests, scouted");
     assert.ok(fs.existsSync(path.join(cycleArtifactsDir(sid, 1), "scout.md")));
     assert.ok(fs.existsSync(path.join(cycleArtifactsDir(sid, 1), "plan.failed.md")));
     assert.equal(calls.filter((c) => c.startsWith("cleanup:")).length, 1);
   });
 
-  it("a review turn without its own Looked: takes the look's; a fulfilled plan's record keeps its scout", async () => {
+  it("a review turn without its own Looked: takes the look's; a mandate `fulfilled` still releases", async () => {
     const sid = "orch2-look-standin";
+    // A real mandate is present (armWithPlan defaults it), so fulfilled is terminal.
     armWithPlan({ sessionId: sid, cwd, verifyCommand: "npm test", items: [{ title: "ship" }] });
     const { rt } = fakeRuntime(cwd, { twoTurn: true, reviewer: [LOOK(1), REVIEW_OK], planner: [SCOUT(2), PLAN_FULFILLED] });
     const r = await evaluateCycleAtStop(sid, { runtime: rt, facts: facts() });
@@ -946,5 +960,87 @@ describe("cycle orchestrator — two turns per role", () => {
     assert.ok(st.cycles[1].scoutPath?.endsWith("scout.md"));
     assert.equal(st.cycles[1].planVerdict, "fulfilled");
     assert.match(st.cycles[1].looked ?? "", /no first-run card/, "the fulfilled record carries the scout's Looked:");
+  });
+});
+
+describe("cycle orchestrator — an unlimited run does not stop on the model's judgement", () => {
+  let home: string;
+  let cwd: string;
+  const SCOUT_ALL_KEPT = `# Cycle 2 scout\nIdentity: a CLI for tests\nLooked: ran every screen and navigated back out of each\nPromises:\n- README loads — kept — it loads\n- you can navigate back from every screen — kept — Esc works everywhere\nConsidered:\n- leave it — it genuinely looks fine`;
+  beforeEach(() => {
+    home = fs.mkdtempSync(path.join(os.tmpdir(), "forge-orch3-home-"));
+    process.env.FORGE_HOME = home;
+    process.env.FORGE_ULW_AUTO_COMMIT = "1";
+    delete process.env.FORGE_ULW_TWO_TURN;
+    cwd = mkGitRepo();
+  });
+  afterEach(() => {
+    delete process.env.FORGE_ULW_TWO_TURN;
+  });
+
+  it("a mandate `fulfilled` releases — a real ask that is met is a real answer", async () => {
+    const sid = "orch3-mandate-done";
+    const { rt } = fakeRuntime(cwd, { twoTurn: true, planner: [SCOUT(1), PLAN_FULFILLED] });
+    const { armCycle } = await import("../src/harness/cycle/index.js");
+    armCycle({ sessionId: sid, mandate: "add a --version flag", cwd });
+    const out = await ensureCyclePlanned(sid, rt);
+    assert.ok(out?.released);
+    assert.equal(out.endReason, "fulfilled");
+  });
+
+  it("a no-mandate `fulfilled` with a broken promise becomes a keep-promise cycle, not a release", async () => {
+    const sid = "orch3-fulfilled-broken";
+    const { rt } = fakeRuntime(cwd, { twoTurn: true, planner: [SCOUT(2), PLAN_FULFILLED] });
+    const { armCycle } = await import("../src/harness/cycle/index.js");
+    armCycle({ sessionId: sid, mandate: null, cwd });
+    const out = await ensureCyclePlanned(sid, rt);
+    assert.equal(out?.released, false, "the model does not get to call a product with a broken promise done");
+    assert.equal(out?.planAdmitted, true);
+    const s = loadCycleState(sid)!;
+    assert.equal(s.phase, "execute");
+    assert.match(s.planTitle ?? "", /Keep the promise/);
+    assert.ok(s.items.some((i) => /README: a first-run card/.test(i.title)), "the broken promise is the work");
+    assert.equal(s.directExecuteStreak, 1);
+  });
+
+  it("a no-mandate `fulfilled` with every promise kept becomes a go-deeper cycle, not a release", async () => {
+    const sid = "orch3-fulfilled-kept";
+    const { rt } = fakeRuntime(cwd, { twoTurn: true, planner: [SCOUT_ALL_KEPT, PLAN_FULFILLED] });
+    const { armCycle } = await import("../src/harness/cycle/index.js");
+    armCycle({ sessionId: sid, mandate: null, cwd });
+    const out = await ensureCyclePlanned(sid, rt);
+    assert.equal(out?.released, false, "'nothing worth a cycle' is a reason to look harder, not to stop");
+    const s = loadCycleState(sid)!;
+    assert.match(s.planTitle ?? "", /Go deeper/);
+    assert.match(s.items[0]?.title ?? "", /navigation into and back out of every screen/);
+    assert.equal(s.directExecuteStreak, 1);
+  });
+
+  it("the no-progress wall stops the run only after N synthesized cycles land nothing", async () => {
+    const sid = "orch3-wall";
+    const { rt } = fakeRuntime(cwd, { twoTurn: true, planner: [SCOUT(1), "prose", "still prose"] });
+    const { armCycle } = await import("../src/harness/cycle/index.js");
+    armCycle({ sessionId: sid, mandate: null, cwd });
+    const st = loadCycleState(sid)!;
+    st.directExecuteStreak = 3; // at the default cap
+    const { saveCycleState } = await import("../src/harness/cycle/state.js");
+    saveCycleState(st);
+    const out = await ensureCyclePlanned(sid, rt);
+    assert.ok(out?.released);
+    assert.equal(out.endReason, "no-progress");
+    assert.match(out.reason, /not making progress|shipped nothing/);
+  });
+
+  it("a committed cycle resets the no-progress streak", async () => {
+    const sid = "orch3-wall-reset";
+    armWithPlan({ sessionId: sid, cwd, verifyCommand: "npm test", items: [{ title: "ship" }] });
+    const st = loadCycleState(sid)!;
+    st.directExecuteStreak = 2;
+    const { saveCycleState } = await import("../src/harness/cycle/state.js");
+    saveCycleState(st);
+    const { rt } = fakeRuntime(cwd, { twoTurn: true, reviewer: [LOOK(1), REVIEW_OK], planner: [SCOUT(2), PLAN_FULFILLED] });
+    const r = await evaluateCycleAtStop(sid, { runtime: rt, facts: facts() });
+    assert.equal(r?.committed?.sha, "abc1");
+    assert.equal(loadCycleState(sid)!.directExecuteStreak, 0, "landing work clears the wall");
   });
 });

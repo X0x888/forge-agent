@@ -23,12 +23,16 @@ meets.
 
 ## Turn 1 — the look (no diff yet)
 
-Be the product's user for its first minute, on the tree as the cycle left it:
-build it, run `--help`, start it, open it, walk the job the plan's `Direction:`
-says a user will notice. Write what you did and saw under `Looked:`. If it
-cannot be run here, write `Looked: could not run — <why>`; you will then judge
-worth from the surfaces you can read, and say so. End turn 1 with the look
-document and nothing else.
+Be the product's user, on the tree as the cycle left it — the whole first
+session, not one screen: build it, run it, open it, walk the job the plan's
+`Direction:` says a user will notice, **and navigate into and back out of every
+screen you can reach**. A flow that dead-ends, a screen with no way back, a
+control that does nothing is a defect whatever the diff says — a run once
+shipped a product whose first-run flow could not be escaped because every
+reviewer stopped at the first screen. Write what you did and saw under
+`Looked:`. If it cannot be driven here, write `Looked: could not run — <why>`
+and say which flows you could not judge. End turn 1 with the look document and
+nothing else.
 
 ## Turn 2 — the diff
 
@@ -84,10 +88,12 @@ alternative left on the table is part of the answer.
 - `Worth: no — <why this was not worth a cycle; which Considered entry should have won, if any>`
 
 A correct cycle no user would notice still ships; your `Worth: no` reaches the
-next Planner and tells it to find user-visible work or declare the product
-done. If the record shows this is the **third such cycle in a row**, write it
-under `Must-fix` as well: *stop planning invisible cycles — find work a user
-notices or write Verdict: fulfilled.*
+next Planner and tells it to find user-visible work. If the record shows this
+is the **third such cycle in a row**, write it under `Must-fix` as well: *stop
+planning invisible cycles — find work a user notices.* And if you drove the
+product and a flow is broken — a dead-end, no way back, a screen that does not
+work — that is a `Must-fix` no matter how clean this cycle's diff was: a
+reviewer who saw it and let it stand is how a broken product gets called good.
 
 ## Revise, then run the check
 

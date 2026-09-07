@@ -36,6 +36,7 @@ export type CycleEndReason =
   | "max-cycles"
   | "stuck"
   | "fix-cap"
+  | "no-progress"
   | "disarmed"
   | "safety-valve"
   | "runtime-unavailable";
@@ -172,6 +173,14 @@ export interface CycleState {
   /** VERIFY red after review → executor fix rounds this cycle. */
   fixRounds: number;
   stuckBlocks: number;
+  /**
+   * Consecutive harness-synthesized cycles (a Planner that could not converge,
+   * or a no-mandate `fulfilled` the harness turned into deeper work) that did
+   * not commit. Reset by any committed cycle. When it reaches the cap, an
+   * unlimited run releases on a genuine no-progress wall — the only stop the
+   * model cannot manufacture by declaring the product done.
+   */
+  directExecuteStreak: number;
   blocks: number;
   lastBlockEditCount: number;
   lastDiffFp: string | null;
@@ -246,6 +255,7 @@ export function newCycleState(opts: {
     maxCycles: normalizeMaxCycles(opts.maxCycles),
     fixRounds: 0,
     stuckBlocks: 0,
+    directExecuteStreak: 0,
     blocks: 0,
     lastBlockEditCount: 0,
     lastDiffFp: null,
@@ -310,6 +320,7 @@ function normalizeState(raw: Partial<CycleState>, sessionId: string): CycleState
   if (typeof s.totalWaves !== "number") s.totalWaves = 0;
   if (typeof s.fixRounds !== "number") s.fixRounds = 0;
   if (typeof s.stuckBlocks !== "number") s.stuckBlocks = 0;
+  if (typeof s.directExecuteStreak !== "number") s.directExecuteStreak = 0;
   if (typeof s.blocks !== "number") s.blocks = 0;
   if (typeof s.lastBlockEditCount !== "number") s.lastBlockEditCount = 0;
   return s;

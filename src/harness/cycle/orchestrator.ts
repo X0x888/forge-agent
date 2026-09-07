@@ -92,6 +92,8 @@ export interface RoleRunOptions {
   keepSession?: boolean;
   /** Turn budget for this turn (a role's default otherwise). */
   maxTurns?: number;
+  /** Every turn is report-only: emit the document, do not explore (the plan turn). */
+  documentOnly?: boolean;
 }
 
 export interface CycleRuntime {
@@ -274,6 +276,9 @@ async function runPlanner(
     secondBrief: (scoutText) => buildPlannerPlanBrief({ ...planInput, scoutText }),
     singleBrief: (scoutText) => buildPlannerBrief({ ...planInput, ...(scoutText.trim() ? { scoutText } : {}) }),
     secondMaxTurns: plannerPlanTurns(),
+    // The plan turn is prose: the scouting is done, so it emits the plan and
+    // does not re-enter reading (that is how cycle 3 burned 60 turns and died).
+    secondDocumentOnly: true,
   });
   let tokens = roleTokens(tt);
   let scout: ScoutResult | undefined;
@@ -297,7 +302,7 @@ async function runPlanner(
     const note = `[Forge] Your previous plan did not parse: ${why}. Write the plan again and end with the contract exactly:\n${planArtifactContract(next)}`;
     const again =
       tt.mode === "two-turn" && tt.sessionId
-        ? await runRoleTurnAgain(rt, "planner", tt.sessionId, note, { cycle: next, maxTurns: plannerPlanTurns() })
+        ? await runRoleTurnAgain(rt, "planner", tt.sessionId, note, { cycle: next, maxTurns: plannerPlanTurns(), documentOnly: true })
         : await rt.runRole("planner", `${buildPlannerBrief({ ...planInput, ...(scoutRaw.trim() ? { scoutText: scoutRaw } : {}) })}\n\n${note}`, { cycle: next });
     tokens = roleTokens(tt, again);
     const againRaw = roleBody(again.text);
@@ -309,9 +314,117 @@ async function runPlanner(
   return { plan, raw, tokens, scout };
 }
 
+/** The no-progress wall: consecutive synthesized cycles that never commit. */
+function noProgressCap(): number {
+  return envPositiveInt("FORGE_ULW_NO_PROGRESS_CAP", 0) || 3;
+}
+
 /**
- * Run the Planner and admit its plan. Returns the Stop outcome that follows:
- * a blocked Stop carrying the plan admission, or a release.
+ * A plan the harness writes when the model tries to stop working on an
+ * unlimited run — because its Planner could not converge, or because it
+ * declared a no-mandate product "done." The unit of work is handed to the
+ * executor (which can edit); the run keeps improving the product instead of
+ * ending on a judgement the model made to escape the work.
+ */
+function synthesizeWorkPlan(
+  s: CycleState,
+  scout: ScoutResult | undefined,
+  kind: "no-plan" | "keep-promise" | "go-deeper",
+): { plan: ParsedPlan; raw: string } {
+  const promises = s.promises ?? scout?.parsed?.promises ?? [];
+  const unkept = promises.filter((p) => p.state !== "kept");
+  const considered = scout?.parsed?.considered ?? [];
+  const looked = scout?.parsed?.looked ?? "";
+
+  let title: string;
+  let direction: string;
+  let items: CyclePlanItem[];
+  if (kind === "keep-promise" && unkept.length) {
+    title = "Keep the promises the product does not keep";
+    direction =
+      "The Planner called the product done, but it does not keep its own promises. A promise the product makes and breaks is the first thing a demanding user notices. Make them kept.";
+    items = unkept.slice(0, 5).map((p, i) => ({
+      id: `i${i + 1}`,
+      title: `Keep the promise: ${p.text}${p.seen ? ` — today: ${p.seen}` : ""}`,
+      files: [],
+      serves: "a promise the product makes to its user",
+      redNow: p.seen || `the product does not keep this (${p.state})`,
+      proof: s.verifyCommand || "the promise holds when you use the product",
+      status: "open",
+    }));
+  } else if (kind === "go-deeper") {
+    title = "Go deeper — a flow the run has not walked";
+    direction =
+      "The Planner found nothing worth a cycle. On an unlimited run that is not a reason to stop — it is a reason to look harder. Walk a core flow end to end that earlier cycles did not, navigate into and back out of every screen, and ship the roughest edge a demanding user hits.";
+    items = [
+      {
+        id: "i1",
+        title:
+          "Walk a core flow this run has not exercised — the whole loop, and the navigation into and back out of every screen — and ship the single roughest edge a demanding user would hit (a broken flow, a dead-end with no way back, an unsatisfying screen). If you genuinely find nothing after using it hard, say so in the closer.",
+        files: [],
+        serves: "a demanding user's first hour",
+        redNow: looked ? `the scout only saw: ${looked.slice(0, 200)}` : "unwalked — exercise it now",
+        proof: s.verifyCommand || "the improvement is visible when you use the product",
+        status: "open",
+      },
+    ];
+  } else {
+    title = "Direct execute — ship what the scout found";
+    direction =
+      "The Planner could not converge on a plan within its budget. Do not stop: from what the scout found, ship the single improvement a demanding user would most notice.";
+    items = [
+      {
+        id: "i1",
+        title:
+          "Ship the highest-value improvement a user would notice from what the scout found — a broken flow, a navigation dead-end, a broken promise, or the roughest edge on the core loop. If the scout found nothing, use the product yourself and fix the worst thing you meet.",
+        files: [],
+        serves: "the user's next minute",
+        redNow: looked ? `the scout saw: ${looked.slice(0, 200)}` : "use the product and find it",
+        proof: s.verifyCommand || "the improvement is visible when you use the product",
+        status: "open",
+      },
+    ];
+  }
+
+  const raw = [
+    `# Cycle ${s.cycle + 1} plan — ${title}`,
+    `Verdict: continue`,
+    s.identity ? `Identity: ${s.identity}` : "",
+    looked ? `Looked: ${looked}` : "",
+    considered.length ? `Considered:\n${considered.map((c) => `- ${c}`).join("\n")}` : "",
+    `Direction: ${direction}`,
+    `Worth the cycle: the model tried to stop working on an unlimited run; a demanding user's product is never "done." This cycle turns that back into work a user would notice.`,
+    s.verifyCommand ? `Verify: \`${s.verifyCommand}\`` : "",
+    `Items:`,
+    ...items.map((it, i) => `${i + 1}. ${it.title}${it.files.length ? ` — files: ${it.files.join(", ")}` : ""} — serves: ${it.serves ?? ""} — red now: ${it.redNow ?? ""} — proof: ${it.proof ?? ""}`),
+    promises.length ? `Promises:\n${promises.map((p) => `- ${p.text} — ${p.state}${p.seen ? ` — ${p.seen}` : ""}`).join("\n")}` : "",
+  ]
+    .filter(Boolean)
+    .join("\n");
+
+  const plan: ParsedPlan = {
+    title,
+    verdict: "continue",
+    identity: s.identity,
+    direction,
+    looked: looked || undefined,
+    considered,
+    worthClaim: "the model tried to stop; this turns it back into user-visible work",
+    promises,
+    verifyCommand: undefined,
+    items,
+    outOfScope: [],
+    operator: [],
+  };
+  return { plan, raw };
+}
+
+/**
+ * Run the Planner and admit its plan. Returns the Stop outcome that follows.
+ * The only self-stops the harness honours are a mandate fulfilled, a Planner
+ * `blocked` (a secret / external / decision only the user can settle), the
+ * user's own controls, and the no-progress wall. A Planner that cannot
+ * produce a plan, or a no-mandate `fulfilled`, becomes work — never a release.
  */
 export async function planNextCycle(s: CycleState, rt: CycleRuntime): Promise<CycleStopOutcome> {
   s.phase = "plan";
@@ -319,31 +432,44 @@ export async function planNextCycle(s: CycleState, rt: CycleRuntime): Promise<Cy
   // The review the executor is about to hear: the cycle that just closed.
   const reviewForExecutor = reviewNotesForExecutor(s);
   const out = await runPlanner(s, rt);
-  if ("error" in out) {
-    const n = s.cycle + 1;
-    const p = writeArtifact(s.sessionId, n, "plan.failed.md", out.raw || out.error);
-    rt.log?.(`ULW planner failed: ${out.error} (${p})`);
-    return release(
-      s,
-      "blocked",
-      `Planner could not produce a plan for cycle ${n}: ${out.error}. Operator: read ${p} and re-arm with /ulw.`,
-    );
-  }
-  const { plan, raw, tokens, scout } = out;
-  const identity = plan.identity ?? scout?.parsed?.identity;
+  const scout = out.scout;
+  // Identity and promises are the Planner's inventory of the product; persist
+  // them from the plan or the scout whichever we got, for every outcome.
+  const parsedForInventory = "plan" in out ? out.plan : undefined;
+  const identity = parsedForInventory?.identity ?? scout?.parsed?.identity;
   if (identity) {
     s.identity = identity;
     safe(() => rt.rememberIdentity?.(identity), undefined);
   }
-  // The product's promises as the Planner inspected them this cycle: the
-  // scout's rows, or the plan's own when there was no separate scout.
-  const promises = scout?.parsed?.promises.length ? scout.parsed.promises : plan.promises;
+  const promises = scout?.parsed?.promises.length ? scout.parsed.promises : parsedForInventory?.promises ?? [];
   if (promises.length) {
     s.promises = promises;
     safe(() => rt.rememberPromises?.(promises), undefined);
   }
+
+  if ("error" in out) {
+    // The Planner burned its budget without a parseable plan. Keep the failed
+    // artifact, then — unless we have hit the no-progress wall — turn its
+    // findings into a direct-execute cycle rather than ending the run.
+    const n = s.cycle + 1;
+    writeArtifact(s.sessionId, n, "plan.failed.md", out.raw || out.error);
+    if (s.directExecuteStreak >= noProgressCap()) {
+      return release(
+        s,
+        "no-progress",
+        `ULW released — ${s.directExecuteStreak} synthesized cycle(s) in a row shipped nothing (last: the Planner could not produce a plan). The run is not making progress; re-arm with /ulw or give a mandate.`,
+      );
+    }
+    rt.log?.(`ULW planner did not converge for cycle ${n}; synthesizing a direct-execute cycle (streak ${s.directExecuteStreak + 1}/${noProgressCap()})`);
+    const synth = synthesizeWorkPlan(s, scout, "no-plan");
+    s.directExecuteStreak += 1;
+    return admitPlan(s, rt, synth.plan, synth.raw, out.tokens, scout, reviewForExecutor);
+  }
+
+  const { plan, raw, tokens } = out;
   if (plan.direction) s.direction = plan.direction;
-  if (plan.verdict !== "continue") {
+
+  if (plan.verdict === "blocked") {
     const n = s.cycle + 1;
     const planPath = writeArtifact(s.sessionId, n, "plan.md", raw);
     s.cycles.push({
@@ -364,21 +490,74 @@ export async function planNextCycle(s: CycleState, rt: CycleRuntime): Promise<Cy
     });
     const why = plan.verdictNote ? ` — ${plan.verdictNote.replace(/[.\s]+$/, "")}` : "";
     const ops = plan.operator.length ? ` Operator: ${plan.operator.join("; ")}` : "";
-    return release(
-      s,
-      plan.verdict,
-      plan.verdict === "fulfilled"
-        ? `Planner: ${s.mandate ? "mandate fulfilled" : "the product is in good shape — nothing left is worth a cycle"}${why}. ULW released after ${s.cycles.length - 1} committed cycle(s).${ops}`
-        : `Planner: blocked${why}.${ops}`,
-    );
+    return release(s, "blocked", `Planner: blocked${why}.${ops}`);
   }
-  // Admit the plan.
+
+  if (plan.verdict === "fulfilled") {
+    // A mandate that is met is a real, terminal answer. With no mandate,
+    // "the product is in good shape" is the escape the user forbade: the
+    // model looked at a broken product and called it done. It never ends the
+    // run — it becomes deeper work, targeting a broken promise first.
+    if (s.mandate != null) {
+      const n = s.cycle + 1;
+      const planPath = writeArtifact(s.sessionId, n, "plan.md", raw);
+      s.cycles.push({
+        n,
+        title: plan.title,
+        startedAt: nowIso(),
+        endedAt: nowIso(),
+        planPath,
+        ...(scout ? { scoutPath: scout.path } : {}),
+        looked: plan.looked ?? scout?.parsed?.looked,
+        planVerdict: plan.verdict,
+        itemsTotal: 0,
+        itemsDone: 0,
+        waves: 0,
+        mustFix: [],
+        plannerTokens: tokens,
+      });
+      const why = plan.verdictNote ? ` — ${plan.verdictNote.replace(/[.\s]+$/, "")}` : "";
+      const ops = plan.operator.length ? ` Operator: ${plan.operator.join("; ")}` : "";
+      return release(s, "fulfilled", `Planner: mandate fulfilled${why}. ULW released after ${s.cycles.filter((c) => c.commitSha).length} committed cycle(s).${ops}`);
+    }
+    if (s.directExecuteStreak >= noProgressCap()) {
+      return release(
+        s,
+        "no-progress",
+        `ULW released — ${s.directExecuteStreak} deeper cycle(s) in a row shipped nothing after the Planner declared the product done. Nothing more is landing; re-arm with /ulw or give a mandate to aim it.`,
+      );
+    }
+    const unkept = (s.promises ?? []).some((p) => p.state !== "kept");
+    const kind = unkept ? "keep-promise" : "go-deeper";
+    rt.log?.(`ULW Planner declared no-mandate fulfilled; ${unkept ? "a promise is unkept" : "all promises kept"} — synthesizing a ${kind} cycle (streak ${s.directExecuteStreak + 1}/${noProgressCap()})`);
+    const synth = synthesizeWorkPlan(s, scout, kind);
+    s.directExecuteStreak += 1;
+    return admitPlan(s, rt, synth.plan, synth.raw, tokens, scout, reviewForExecutor);
+  }
+
+  return admitPlan(s, rt, plan, raw, tokens, scout, reviewForExecutor);
+}
+
+/**
+ * Seed the executor's board from a plan (a real one or a synthesized work
+ * plan) and return the Stop outcome that admits it.
+ */
+async function admitPlan(
+  s: CycleState,
+  rt: CycleRuntime,
+  plan: ParsedPlan,
+  raw: string,
+  tokens: number,
+  scout: ScoutResult | undefined,
+  reviewForExecutor: ReviewNotesForExecutor | undefined,
+): Promise<CycleStopOutcome> {
   s.cycle += 1;
   s.phase = "execute";
   s.wave = 0;
   s.fixRounds = 0;
   s.stuckBlocks = 0;
   s.replanRequested = false;
+  if (plan.direction) s.direction = plan.direction;
   s.planTitle = plan.title;
   s.planVerdict = plan.verdict;
   s.items = plan.items;
@@ -730,8 +909,14 @@ async function advanceAfterCycle(
 async function finishCycle(s: CycleState, rt: CycleRuntime, accepted: CheckRun | null): Promise<CycleStopOutcome> {
   s.phase = "commit";
   const ac = commitCycle(s, rt);
-  if (ac.committed) rt.log?.(`ULW cycle ${s.cycle} committed ${ac.sha ?? ""} — ${ac.subject}`);
-  else if (ac.skipped) rt.log?.(`ULW cycle ${s.cycle} commit skipped: ${ac.skipped}`);
+  if (ac.committed) {
+    rt.log?.(`ULW cycle ${s.cycle} committed ${ac.sha ?? ""} — ${ac.subject}`);
+    // A cycle that landed is progress: the no-progress wall resets, whether
+    // this cycle came from a real plan or a synthesized work cycle.
+    s.directExecuteStreak = 0;
+  } else if (ac.skipped) {
+    rt.log?.(`ULW cycle ${s.cycle} commit skipped: ${ac.skipped}`);
+  }
   if (accepted && s.verifyCommand) {
     s.verifyBaseline = {
       command: accepted.command,

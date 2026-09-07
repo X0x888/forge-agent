@@ -36,6 +36,7 @@ import { languageIdForPath, DEFAULT_LSP_SERVERS } from "../src/lsp/types.js";
 import {
   filterToolsForSubagent,
   resolveRoleShape,
+  toolSetCanEdit,
   resolveSubagentType,
   resolveCapabilityMode,
   resolveChildPermissionMode,
@@ -672,6 +673,22 @@ describe("subagent helpers", () => {
     const reviewer = resolveRoleShape("reviewer");
     assert.equal(reviewer.denyEdits, false);
     assert.ok(filterToolsForSubagent("full", { denyEdits: false }).some((t) => t.function.name === "write_file"));
+  });
+
+  it("toolSetCanEdit is false for the Planner and true for an editing role — the loop's gate for fix-until-green", () => {
+    const planner = resolveRoleShape("planner");
+    const plannerTools = filterToolsForSubagent(planner.capabilityMode, {
+      allowSpawn: planner.allowSpawn,
+      denyEdits: planner.denyEdits,
+    });
+    // The HashPet Planner ran `npm test`, went red, and was told to "fix the
+    // root cause … until green" — 45 wasted turns on a tree it could not edit.
+    assert.equal(toolSetCanEdit(plannerTools), false, "a denyEdits role owns no file to fix");
+    const reviewer = resolveRoleShape("reviewer");
+    const reviewerTools = filterToolsForSubagent(reviewer.capabilityMode, { denyEdits: reviewer.denyEdits });
+    assert.equal(toolSetCanEdit(reviewerTools), true, "the Reviewer revises, so it still hears fix-until-green");
+    assert.equal(toolSetCanEdit(filterToolsForSubagent("full")), true);
+    assert.equal(toolSetCanEdit(filterToolsForSubagent("read-only")), false);
   });
 
   it("default depth is positive", () => {

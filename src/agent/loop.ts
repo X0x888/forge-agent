@@ -271,6 +271,7 @@ import {
   resolveSpawnSubagentType,
   runSubagentTracked,
   subagentTypeRawIsOmitted,
+  toolSetCanEdit,
   type SubagentRequest,
 } from "./subagent.js";
 import { mcpCallIsReadOnly } from "../mcp/tools.js";
@@ -370,6 +371,13 @@ export interface LoopOptions {
    * (information-gain stop, not a turn cap).
    */
   citeDeltaStop?: boolean;
+  /**
+   * Every turn is report-only: the run's job is to emit a document, not to
+   * read/search/edit. The ULW Planner's plan turn uses this — the scouting is
+   * already done, so a plan turn that keeps exploring only burns its budget
+   * and dies with no plan (the HashPet cycle-3 failure).
+   */
+  documentOnly?: boolean;
   /**
    * Resume the existing transcript after a continue-recoverable provider drop.
    * Does not push a new user turn — same as the expert typing "continue"
@@ -1159,6 +1167,12 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
   const baseToolDefs = opts.toolDefinitions ?? TOOL_DEFINITIONS;
   const toolsForMode = (): typeof baseToolDefs =>
     filterToolsForPermissionMode(baseToolDefs, config.permissionMode);
+  // A role that runs the product but cannot edit it (the ULW Planner:
+  // capability=full, denyEdits) must never hear "fix until green" or "run the
+  // check" — it owns no file to fix, and a HashPet Planner spent ~45 of its 60
+  // turns chasing a red test it structurally could not touch, then died with
+  // no plan. The signal is its own tool set: no edit tool ⇒ read-only intent.
+  const canEditFiles = toolSetCanEdit(baseToolDefs);
   let mcp =
     opts.mcp ??
     (subagentDepth === 0 ? getActiveMcpManager() ?? undefined : undefined);
@@ -1689,6 +1703,7 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
                 ...(roleOpts.resumeSessionId ? { resumeSessionId: roleOpts.resumeSessionId } : {}),
                 ...(roleOpts.keepSession ? { keepSession: true } : {}),
                 ...(roleOpts.maxTurns ? { maxTurns: roleOpts.maxTurns } : {}),
+                ...(roleOpts.documentOnly ? { documentOnly: true } : {}),
               },
               {
                 config,
@@ -3378,9 +3393,10 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
       }
 
       const lastTurnReportOnly =
-        subagentDepth > 0 &&
-        Number.isFinite(maxTurns) &&
-        turns === maxTurns;
+        Boolean(opts.documentOnly) ||
+        (subagentDepth > 0 &&
+          Number.isFinite(maxTurns) &&
+          turns === maxTurns);
       const citeReportOnly =
         Boolean(citeSeen) &&
         session.messages.some(
@@ -3416,6 +3432,7 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
           : lastTurnReportOnly
             ? "last-turn"
             : undefined,
+        canEdit: canEditFiles,
       });
       // Tools that cooperatively return "Aborted" still leave signal.aborted set —
       // exit the loop immediately rather than starting another provider turn.
@@ -3424,7 +3441,7 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
       // Mid-loop auto-verify nudge: after an edit streak without a fresh green
       // check, inject a synthetic user message so the model runs the project
       // check without waiting for the user to steer. Max 2 per user prompt.
-      if (verifyNudges < 2 && config.permissionMode !== "plan") {
+      if (verifyNudges < 2 && config.permissionMode !== "plan" && canEditFiles) {
         try {
           const lastUser = [...session.messages]
             .reverse()
@@ -4072,6 +4089,7 @@ async function runToolCalls(opts: {
   proofPoke?: import("../harness/proof-poke.js").ProofPokeState;
   reportOnly?: boolean;
   reportOnlyKind?: "last-turn" | "cite-delta";
+  canEdit?: boolean;
 }): Promise<void> {
   const {
     toolCalls,
@@ -4095,6 +4113,7 @@ async function runToolCalls(opts: {
     proofPoke,
     reportOnly,
     reportOnlyKind,
+    canEdit = true,
   } = opts;
 
   // Sequential by default; batch consecutive parallel-safe tools (read-only
@@ -4144,6 +4163,7 @@ async function runToolCalls(opts: {
       reportOnly,
       reportOnlyKind,
       planOrOrient,
+      canEdit,
     };
     if (batch.length === 0) break;
     const parallel = batch.every((tc) =>
@@ -4218,6 +4238,8 @@ type PrepareToolResultOpts = {
   reportOnly?: boolean;
   reportOnlyKind?: "last-turn" | "cite-delta";
   planOrOrient?: boolean;
+  /** False for a read-only role (denyEdits): withhold fix-until-green. */
+  canEdit?: boolean;
   landGate?: OrderGate;
   landTicket?: number;
 };
@@ -4260,6 +4282,7 @@ async function prepareToolResultInner(
     reportOnly,
     reportOnlyKind,
     planOrOrient = false,
+    canEdit = true,
     landGate,
     landTicket,
   } = opts;
@@ -4682,7 +4705,8 @@ async function prepareToolResultInner(
               off !== "false" &&
               off !== "off" &&
               off !== "no" &&
-              config.permissionMode !== "plan"
+              config.permissionMode !== "plan" &&
+              canEdit
             ) {
               const lastUser = [...session.messages]
                 .reverse()

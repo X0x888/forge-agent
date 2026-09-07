@@ -183,9 +183,11 @@ export function cycleReportFacts(s: CycleState | null | undefined): {
           ? `Stopped at max_cycles ${st.maxCycles}`
           : st.endReason === "fix-cap"
             ? `Blocked — the verify command stayed red in cycle ${st.cycle}`
-            : st.endReason === "blocked"
-              ? `Blocked — the Planner needs the user`
-              : st.endReason
+            : st.endReason === "no-progress"
+              ? `Stopped — ${st.directExecuteStreak} synthesized cycle(s) in a row landed nothing (no-progress wall); re-arm with /ulw or give a mandate`
+              : st.endReason === "blocked"
+                ? `Blocked — the Planner needs the user`
+                : st.endReason
                 ? `ULW ended (${st.endReason})`
                 : "";
   return { active: cycleActive(s), outcome, shipped, notDone, needsYou, verified };

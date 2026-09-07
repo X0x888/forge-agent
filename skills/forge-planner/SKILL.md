@@ -38,28 +38,44 @@ change under `Operator:` in turn 2 — never drift it silently.
 
 ### 2. Use it — before you read a line of source
 
-Be the product's user for its first minute. You may run any command; you may
-not edit a file (the editing tools are not yours; do not route an edit through
-the shell either).
+Be the product's user — not for one screen, for the **whole first session**.
+You may run any command; you may not edit a file (the editing tools are not
+yours; do not route an edit through the shell either).
 
-- CLI: build it, run `--help`, run the first command a new user would.
+- CLI: build it, run `--help`, run the first command a new user would, then
+  the next three. Try a wrong flag. Does the error help?
 - Web app / service: start it, open it in the browser (`call_mcp` → the
-  playwright tools), walk the first screen and the core job.
-- Browser extension: build it; if the browser tooling here can load an
-  unpacked extension, load it and open the popup; otherwise run the popup or
-  page in the tooling you have and read the components a user meets first.
-- Library: run the README example.
+  playwright tools), walk the core job **and navigate into and back out of
+  every screen** — can you always get back? Empty, error and loading states?
+- Browser extension: build it, load it (`call_mcp` → playwright, or CDP
+  `Extensions.loadUnpacked`), open the popup, and **click through the whole
+  first-run flow to the end and back** — every step, every back button.
+- Library: run the README example, then the second one.
 
-Write what you did and what you saw under `Looked:`. If it genuinely cannot be
-run here, write `Looked: could not run — <why>` and judge from the user-facing
-surfaces you can read. What you may never do is plan from `grep` alone.
+**Drive it, do not read it.** A product is broken in the places you only reach
+by clicking: a screen with no way back, a flow that dead-ends, a state that
+never clears, a control that does nothing. The HashPet run that declared the
+product "in good shape" had only ever looked at the first screen — the broken
+navigation and dead-end flows were one click past where it stopped. Reaching
+the end of the flow is the job, not a nicety.
+
+Write what you did and what you saw under `Looked:` — which screens you
+reached, which transitions worked, **what broke**. If a surface genuinely
+cannot be driven here (no browser, needs a device or a login), say so and mark
+those flows **UNKNOWN**, not kept: you have not seen them work. What you may
+never do is plan from `grep` alone, or pronounce a product good from a static
+read of its source or its screenshots — that is not using it.
 
 ### 3. Promises — the product's own checklist
 
 The product defines its own "better": what it promises. List every promise
 you can find — README claims, `--help` text, the tests as a spec, the
 identity's job — and mark each `kept | broken | absent` from what you saw in
-step 2 and in the tree, with where you saw it. Inspect the current state; do
+step 2 and in the tree, with where you saw it. **Navigation is a promise every
+UI makes**: that you can get back, escape a modal, leave a screen the way you
+came. A screen you could not return from is a `broken` promise, and it is
+usually the one a user hits first. A flow you could not drive here is `absent`
+until proven otherwise — never `kept` on faith. Inspect the current state; do
 not trust a previous cycle's list (the brief may carry one — re-check it).
 This is `forge-assay` applied to the run: a checklist against what is, never
 against memory.
@@ -148,11 +164,16 @@ removing existing doctrine is a proposal, not an edit.
 ### 11. Verdict — including "leave it"
 
 - `Verdict: continue` with items — the normal plan.
-- `Verdict: fulfilled — <why>` when the mandate is already met by the tree as
-  it stands. **With no mandate**, the same verdict when every promise is kept
-  and nothing left would be noticed by a user: say so, and the run stops. A
-  veteran's most valuable sentence is "this is fine — leave it." Never
-  invent work to avoid it.
+- `Verdict: fulfilled — <why>` when a **mandate** is already met by the tree as
+  it stands. **With no mandate, "fulfilled" is not yours to declare lightly.**
+  A demanding user's product is never "done"; a run left unattended is meant to
+  keep making it better. You may only write `fulfilled` when every promise is
+  `kept` (none `broken`, none `absent`, none `UNKNOWN`) **and** you drove the
+  core flows end to end and found nothing a user would notice. If you did not
+  drive the flows, or a promise is not kept, you have not earned "fulfilled" —
+  write a `continue` plan that fixes the roughest thing instead. The harness
+  will not stop a no-mandate run on a "fulfilled" you cannot back with a full
+  walk and kept promises; it will turn it into deeper work.
 - `Verdict: blocked — <what only the user can unblock>` when a secret, an
   external service, or a decision only the user can make stands in the way.
 

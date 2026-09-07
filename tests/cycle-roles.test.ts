@@ -83,6 +83,13 @@ describe("two-turn role runner", () => {
     assert.deepEqual(cleaned, [], "the runner never cleans up — the caller may still retry");
   });
 
+  it("secondDocumentOnly makes turn 2 report-only so the writing turn cannot re-enter exploration", async () => {
+    const { rt, calls } = fakeRt([{ text: "# Cycle 3 scout\nLooked: x" }, { text: "# Cycle 3 plan\nVerdict: fulfilled" }]);
+    await runRoleTwoTurn(rt, "planner", { ...opts, secondDocumentOnly: true });
+    assert.equal(calls[1].opts.documentOnly, true, "the plan turn is document-only");
+    assert.notEqual(calls[0].opts.documentOnly, true, "the scout turn still explores");
+  });
+
   it("a runtime that does not keep sessions gets one more call with the single brief and turn 1's text", async () => {
     const { rt, calls } = fakeRt([{ text: "# Cycle 3 scout\nLooked: x" }, {}], { keepsSessions: false });
     const r = await runRoleTwoTurn(rt, "planner", opts);

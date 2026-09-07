@@ -15,7 +15,20 @@ PLAN ──► EXECUTE ──► VERIFY ──► REVIEW ──► VERIFY ──
 - **REVIEW** — on a tree that passes the gate, a fresh-context **Reviewer** subagent runs in two turns too. Turn 1, the **look**: the product on the tree as the cycle left it, no diff — it uses it and writes `look.md` (`Looked:`). Turn 2, the **review**: it reads the plan (its `Considered:` included) and the cycle's cumulative diff (`git diff <cycle start>` + untracked files) as a reviewer and as an architect, **revises in place**, names the same class of change as a previous cycle a symptom (root cause under `Must-fix`), judges worth from what it saw as the user, and writes `review.md`. Because it runs after the gate, what the executor changed to get green is reviewed too. `Verdict: blocked` (or a review that does not parse) closes the cycle **without a commit**; the work stays in the tree and the next Planner starts from the `Must-fix`.
 - **VERIFY again** — the check runs once more over the Reviewer's revisions; red goes back to the executor (same `fix_rounds` budget), then commits without a second review.
 - **COMMIT** — one local commit per reviewed, green cycle (`ulw cycle N: <title>`; never pushed; `FORGE_ULW_AUTO_COMMIT=0` off).
-- **Re-plan** — a fresh Planner reads the previous plans, reviews, the Reviewer's `Must-fix`, unfinished items and anything the user typed since the last plan. `Verdict: fulfilled` ends the run. `/cycle 0` or `max_cycles` ends it after the commit.
+- **Re-plan** — a fresh Planner reads the previous plans, reviews, the Reviewer's `Must-fix`, unfinished items and anything the user typed since the last plan. A **mandate** `Verdict: fulfilled` ends the run; `/cycle 0` or `max_cycles` ends it after the commit. On a **no-mandate** run the model does not get to stop itself: a `fulfilled` becomes deeper work (below), and a Planner that cannot produce a plan becomes a direct-execute cycle rather than a release.
+
+## The run does not stop on the model's judgement
+
+An unlimited `/ulw` with no mandate is meant to keep making the product better until the user stops it (`/cycle 0`, `/ulw-off`, `max_cycles`). Two ways the model used to escape that — and no longer can (`orchestrator.ts` `planNextCycle`):
+
+- **The Planner could not produce a plan.** A HashPet run (`7067fd32`) ended after one commit because its cycle-3 Planner spent all 60 turns reading and never wrote a plan; the harness released the whole run as `blocked`. Now a plan-less Planner's findings become a **direct-execute cycle**: the harness synthesizes a one-item plan from the scout ("ship the roughest edge you found") and hands it to the executor, which can edit. The run keeps working.
+- **The Planner declared a no-mandate product "done."** "The product is in good shape" on a broken product is the same escape one level up. A no-mandate `fulfilled` never releases: if any promise is `broken`/`absent`/`UNKNOWN` it becomes a **keep-promise** cycle targeting it; if every promise is genuinely `kept` it becomes a **go-deeper** cycle ("walk a flow this run has not, navigate into and back out of every screen, ship the roughest edge"). A **mandate** `fulfilled` still releases — a real ask that is met is a real answer.
+
+The only self-stops the harness honours are a mandate fulfilled, a Planner `blocked` (a secret / external service / decision only the user can settle, with an `Operator:` line), the user's controls, and the **no-progress wall**: when `directExecuteStreak` consecutive synthesized cycles land no commit (`FORGE_ULW_NO_PROGRESS_CAP`, default 3), the run releases `no-progress` — an honest floor, not an escape. Any committed cycle resets the streak, so a run that keeps shipping never trips it. This is non-negotiable 2 ("never an infinite trap *without progress*") read literally: no progress is the only floor, and declaring the product perfect is not the same as making progress.
+
+**The waste that made the escape look reasonable is gone too.** A role that cannot edit (the Planner: `denyEdits`) no longer hears the "fix until green" or "run the check" nudges — the HashPet Planner ran the suite, went red, was told to "fix the root cause … until green," and burned ~45 of 60 turns chasing a failure it could not touch. The signal is the role's own tool set (`toolSetCanEdit`): no edit tool, no fix nudge. And the Planner's **plan turn is document-only** (`documentOnly`): the scouting is done on turn 1, so turn 2 emits the plan and cannot re-enter reading.
+
+Whether the model *notices* the product is broken is doctrine, not harness: `forge-planner` and `forge-reviewer` now require driving the **whole first session** — navigating into and back out of every screen, not stopping at the first — and treat navigation as a promise (a screen with no way back is `broken`), an undriveable flow as `UNKNOWN` (never `kept` on faith), and forbid declaring a product good from a static read of its source or screenshots.
 
 Nothing in the driver classifies prose. The Planner and Reviewer judge; the harness enforces the sequence and structural facts: no writes before a plan exists, no commit before a completed review and a green harness-run check, no Stop mid-cycle, what each role reads before what, every cycle leaves `scout.md`, `plan.md`, `look.md`, `review.md` and a commit (or a `blocked` review and no commit).
 
@@ -164,7 +177,7 @@ The executor's system prompt carries only the **ULW executor protocol**: ship th
 | `fix` | re-run the verify command; green → the Reviewer (if it has not run) or the commit; red → next fix round; past `fix_rounds` → release `fix-cap`, nothing committed, `Operator:` line |
 | `review` / `verify` / `commit` | resume the interrupted transition |
 
-Releases: `fulfilled`, `blocked` (Planner), `cycle-zero`, `max-cycles`, `fix-cap`, `runtime-unavailable` (no provider / subagent depth > 0), `disarmed`. A clean end stamps `lastError.code = ulw_done` (a designed outcome, not a problem); the others stamp `ulw_released`.
+Releases: `fulfilled` (mandate only), `blocked` (Planner needs the user), `cycle-zero`, `max-cycles`, `fix-cap`, `no-progress` (the synthesized-cycle wall), `runtime-unavailable` (no provider / subagent depth > 0), `disarmed`. A no-mandate `fulfilled` and a plan-less Planner do **not** release — they become work. A clean end stamps `lastError.code = ulw_done` (a designed outcome, not a problem); the others stamp `ulw_released`.
 
 Safety valves (cost cap, max turns, continue cap) set `/cycle 0` so a resume finishes the open cycle instead of re-blocking. Unlimited cycling's Stop-blocks never trip the process continue cap; a capped run or `/cycle 0` still fuses.
 
@@ -181,7 +194,7 @@ fix_rounds = 3
 stuck_threshold = 4
 ```
 
-Env: `FORGE_ULW=0` (driver off), `FORGE_ULW_AUTO_COMMIT=0`, `FORGE_ULW_VERIFY_TIMEOUT_MS` (20 min), `FORGE_ULW_FIX_ROUNDS`, `FORGE_ULW_STUCK_THRESHOLD`, `FORGE_ULW_PLANNER_MAX_TURNS`, `FORGE_ULW_PLANNER_PLAN_TURNS` (12), `FORGE_ULW_REVIEWER_LOOK_TURNS` (15), `FORGE_ULW_REVIEWER_MAX_TURNS`, `FORGE_ULW_TWO_TURN=0` (one brief per role), `FORGE_ULW_MAX_CONTINUES`.
+Env: `FORGE_ULW=0` (driver off), `FORGE_ULW_AUTO_COMMIT=0`, `FORGE_ULW_VERIFY_TIMEOUT_MS` (20 min), `FORGE_ULW_FIX_ROUNDS`, `FORGE_ULW_STUCK_THRESHOLD`, `FORGE_ULW_NO_PROGRESS_CAP` (3 — the synthesized-cycle wall), `FORGE_ULW_PLANNER_MAX_TURNS`, `FORGE_ULW_PLANNER_PLAN_TURNS` (12), `FORGE_ULW_REVIEWER_LOOK_TURNS` (15), `FORGE_ULW_REVIEWER_MAX_TURNS`, `FORGE_ULW_TWO_TURN=0` (one brief per role), `FORGE_ULW_MAX_CONTINUES`.
 
 ## Why this shape
 
