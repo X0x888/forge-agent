@@ -115,14 +115,14 @@ const SECTION_RE =
 const LEAVE_IT_RE = /^\*{0,2}leave\s+it\b/i;
 
 /**
- * `<promise> — kept | broken | absent — <where seen>`; `(kept)` at the end
+ * `<promise> — kept | broken | absent | unknown — <where seen>`; `(kept)` at the end
  * is the short form. A line with no state is not a promise row — the
  * harness does not guess which way the Planner meant it.
  */
 function parsePromiseLines(lines: string[] | undefined): CyclePromise[] {
   const out: CyclePromise[] = [];
   for (const b of bullets(lines)) {
-    const m = b.match(/^(.*?)\s+(?:—|–|-|\|)\s*\*{0,2}(kept|broken|absent)\*{0,2}\b\s*(?:[—–:|-]\s*)?(.*)$/i);
+    const m = b.match(/^(.*?)\s+(?:—|–|-|\|)\s*\*{0,2}(kept|broken|absent|unknown)\*{0,2}\b\s*(?:[—–:|-]\s*)?(.*)$/i);
     if (m) {
       const seen = (m[3] || "").trim();
       out.push({
@@ -132,7 +132,7 @@ function parsePromiseLines(lines: string[] | undefined): CyclePromise[] {
       });
       continue;
     }
-    const p = b.match(/^(.*?)\s*\(\s*(kept|broken|absent)\s*\)\s*$/i);
+    const p = b.match(/^(.*?)\s*\(\s*(kept|broken|absent|unknown)\s*\)\s*$/i);
     if (p) out.push({ text: p[1].trim().slice(0, 240), state: p[2].toLowerCase() as CyclePromise["state"] });
   }
   return out;
@@ -419,13 +419,11 @@ export function scoutArtifactContract(cycle: number): string {
     `Identity: <one paragraph: who uses this product, for what job>`,
     `Looked: <what you ran or opened as its user and what you saw — or: could not run — <why>>`,
     `Promises:`,
-    `- <what the product promises: README, --help, tests as spec, the identity> — kept | broken | absent — <where you saw it>`,
+    `- <what the product promises: README, --help, tests as spec, the identity> — kept | broken | absent | unknown — <where seen, or what remains unverified and why>`,
     `Considered:`,
-    `- missing capability: <candidate> — <one-line trade-off>`,
-    `- broken promise: <candidate> — <trade-off>`,
-    `- rough edge: <candidate> — <trade-off>`,
-    `- debt: <candidate> — <trade-off>`,
-    `- leave it — <why the product may be fine as it stands>`,
+    `- <evidenced candidate or consequential investigation> — <benefit, risk and cost>`,
+    `- <another credible alternative, if any> — <trade-off>`,
+    `- leave it — <why leaving this area unchanged may be better>`,
   ].join("\n");
 }
 
@@ -433,16 +431,16 @@ export function scoutArtifactContract(cycle: number): string {
 export function planArtifactContract(cycle: number): string {
   return [
     `# Cycle ${cycle} plan — <short title>`,
-    `Verdict: continue | fulfilled — <why the mandate is met, or why the product is in good shape and nothing left is worth a cycle> | blocked — <what only the user can unblock>`,
+    `Verdict: continue | fulfilled — <why the explicit mandate is met; no-mandate runs continue investigating> | blocked — <what prevents meaningful progress without the user>`,
     `Identity: <one paragraph: who uses this product, for what job — reaffirmed, or an Operator: line>`,
     `Looked: <what you ran or opened as its user and what you saw — or: could not run — <why>>`,
     `Considered:`,
-    `- <the alternatives you weighed, one per gap bin, struck or kept after the record — and always: leave it — <why it lost, or why it wins>>`,
-    `Direction: <this cycle's theme in one or two sentences: what a user will notice>`,
-    `Worth the cycle: <why this beats leave it for the user in Identity, and why it is from this product and not any product of its kind>`,
+    `- <credible alternatives weighed after the record — and always: leave it — <why it lost, or why it wins>>`,
+    `Direction: <this cycle's intended benefit or consequential question to resolve>`,
+    `Worth the cycle: <concrete benefit to this product's user, operator or maintainer; why its evidence justifies the cost and risk over leave it>`,
     `Verify: <the one command that proves the cycle, e.g. \`npm test\`> | none — <why this repo has no check>`,
     `Items:`,
-    `1. <ship title> — files: <path>, <path> — serves: <the job in Identity this serves, in words> — red now: <what you ran or saw that shows it is not yet so, or: unchecked — why> — proof: <command or observable, behaviour from the outside>`,
+    `1. <item title> — files: <path>, <path> — serves: <the job in Identity this serves> — red now: <observed defect, limitation, regression risk or evidence gap; or unchecked — why> — proof: <command or observable distinguishing improvement or resolving the question>`,
     `2. …`,
     `Out of scope:`,
     `- <what was deliberately passed on and why>`,
@@ -462,10 +460,10 @@ export function reviewArtifactContract(cycle: number): string {
     `Revisions:`,
     `- <what you changed and why>`,
     `Must-fix:`,
-    `- <defect you could not fix this review; the next plan's first items>`,
+    `- <repairable unresolved defect: ship-with-revisions sends it to the executor for same-cycle repair and fresh review before commit>`,
     `Architecture:`,
-    `- <shape observations: duplication, wide signatures, dead flags, narrating comments>`,
-    `Worth: <would a user notice this cycle? yes — <what> | no — <why this was not worth a cycle>>`,
+    `- <nonblocking observations or future improvements for the next Planner to weigh>`,
+    `Worth: yes — <evidenced benefit or consequential uncertainty resolved> | no — <why the benefit did not justify the cost or risk>`,
     `Operator: <only what a human must decide — else omit>`,
   ].join("\n");
 }

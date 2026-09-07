@@ -60,7 +60,7 @@ export interface CyclePlanItem {
  */
 export interface CyclePromise {
   text: string;
-  state: "kept" | "broken" | "absent";
+  state: "kept" | "broken" | "absent" | "unknown";
   seen?: string;
 }
 

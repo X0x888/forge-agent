@@ -1,5 +1,7 @@
 # Ultrawork (ULW) — the plan-cycle driver
 
+The [design audit](ULW-AUDIT.md) explains the improvement objective, the quality gates, and the remaining limits. Discovery weighs product-specific benefit and risk over its useful lifetime, including reliability, security, recovery, accessibility, performance, and maintainability. A cycle may resolve a consequential uncertainty without changing working code; unlimited duration does not require invented defects or edits.
+
 `/ulw [mandate]` (or `forge --ulw`, `forge run --ulw`) arms a **plan-cycle** driver. The unit of work is a **cycle**, not a wave:
 
 ```
@@ -9,26 +11,26 @@ PLAN ──► EXECUTE ──► VERIFY ──► REVIEW ──► VERIFY ──
  └──────────────── re-plan ◄───────────┴─────────────────────┴──────┘  (/cycle 0 · max_cycles · fulfilled)
 ```
 
-- **PLAN** — a fresh-context **Planner** subagent (empty transcript, its own model/effort) runs in **two turns of one kept session**. Turn 1, the **scout**: it is handed the product and the tree and nothing of the record — it uses the product, lists the product's own **promises** (README, `--help`, tests as spec, identity) as `kept | broken | absent`, researches the category, surveys the tree and writes `Considered:` — one candidate per gap bin plus `leave it` — into `scout.md`. Turn 2, the **plan**: the record arrives (what shipped, the last review, the executor's lines, the user's words, the spend); it strikes what is done, names a repeated class of change as one decision, and writes `plan.md`. The order is the doctrine enforced by sequence: a Planner that read the record first planned the record's next line.
+- **PLAN** — a fresh-context **Planner** runs two turns on one kept session. Its scout exercises the product through a representative public interface, inspects relevant promises as `kept | broken | absent | unknown`, and compares credible improvements or consequential investigations with `leave it`. Discovery considers the whole product without requiring a candidate from every category. The plan turn then receives the record, user interjections, and spend, strikes completed work, and writes one coherent cycle.
 - **EXECUTE** — the session model is the **executor**. The plan's items are its todo board. Every Stop is a wave boundary: open items → re-anchor; `Plan complete.` or an empty board → the cycle closes. As many waves as the plan needs.
-- **VERIFY** — the **harness itself** runs the verify command (the Planner's `Verify:` when it is a whole check; an isolate — one test file, a typecheck — is proof=ran, and the stack table's suite gates instead). The gate is judged against a **baseline**: the failures the suite already had before the cycle touched anything (run at cycle 1's admission on the user's tree, then the accepted set after each commit; and run again at any later admission whose gate command differs from the baseline's — a Planner that declares `npm run check` after cycles gated by `npm test`, or the first cycle to declare one at all — on the tree as the last commit left it, because a baseline keyed to another command matches nothing and every old failure would be red again). New failures are red and send the executor back with their names (`fix_rounds`, default 3); pre-existing ones are reported, not the executor's job. A red run that names no failing test (a crash, a timeout, an unknown runner) is red whatever the baseline says.
-- **REVIEW** — on a tree that passes the gate, a fresh-context **Reviewer** subagent runs in two turns too. Turn 1, the **look**: the product on the tree as the cycle left it, no diff — it uses it and writes `look.md` (`Looked:`). Turn 2, the **review**: it reads the plan (its `Considered:` included) and the cycle's cumulative diff (`git diff <cycle start>` + untracked files) as a reviewer and as an architect, **revises in place**, names the same class of change as a previous cycle a symptom (root cause under `Must-fix`), judges worth from what it saw as the user, and writes `review.md`. Because it runs after the gate, what the executor changed to get green is reviewed too. `Verdict: blocked` (or a review that does not parse) closes the cycle **without a commit**; the work stays in the tree and the next Planner starts from the `Must-fix`.
-- **VERIFY again** — the check runs once more over the Reviewer's revisions; red goes back to the executor (same `fix_rounds` budget), then commits without a second review.
-- **COMMIT** — one local commit per reviewed, green cycle (`ulw cycle N: <title>`; never pushed; `FORGE_ULW_AUTO_COMMIT=0` off).
+- **VERIFY** — the **harness itself** runs a whole project check. A Planner's isolate is recorded as proof=ran and the stack's suite gates instead. New named failures are red relative to the command's eligible baseline; pre-existing failures are reported. Cycle 1 measures the user's tree. Later baseline refresh requires a committed prior cycle and a confirmed clean repository root. A red run without named failures remains red. Verification and review repairs share `fix_rounds` (default 3).
+- **REVIEW** — on a tree that passes the gate, a fresh-context **Reviewer** first exercises the intended workflow or condition without the diff and writes `look.md`. It then reads the plan, cumulative cycle diff and prior record, revises in place, and writes `review.md`. It judges fulfillment, acceptance defects, architecture and evidenced benefit. An explicit `blocked` verdict or an unsuccessful, incomplete or unparseable review closes without a commit; the next Planner receives its findings. Repairable defects use `ship-with-revisions` with `Must-fix` and require same-cycle repair, as described below.
+- **VERIFY again** — the check runs once more over the Reviewer's revisions; red invalidates review approval and goes back to the executor (same `fix_rounds` budget). After repair, the harness verifies, runs a fresh Reviewer, verifies again, and only then commits. A nominal shipping review with unresolved `Must-fix` or partial/missing items also enters this bounded repair sequence. Failed or incomplete role results cannot approve work, even if their text contains a shipping verdict. Prior reviews are retained as `review.before-fix.<round>.md`.
+- **COMMIT** — one local commit per reviewed, green cycle (`ulw cycle N: <title>`; never pushed; `FORGE_ULW_AUTO_COMMIT=0` off). A later gate change may capture a fresh baseline only after a committed cycle with an independently confirmed clean repository root, including files outside a nested workspace. Otherwise the previous baseline remains and the changed command must pass; rejected or dirty work cannot become a new baseline. Cycle 1 still measures the user's initial tree, including existing edits.
 - **Re-plan** — a fresh Planner reads the previous plans, reviews, the Reviewer's `Must-fix`, unfinished items and anything the user typed since the last plan. A **mandate** `Verdict: fulfilled` ends the run; `/cycle 0` or `max_cycles` ends it after the commit. On a **no-mandate** run the model does not get to stop itself: a `fulfilled` becomes deeper work (below), and a Planner that cannot produce a plan becomes a direct-execute cycle rather than a release.
 
 ## The run does not stop on the model's judgement
 
 An unlimited `/ulw` with no mandate is meant to keep making the product better until the user stops it (`/cycle 0`, `/ulw-off`, `max_cycles`). Two ways the model used to escape that — and no longer can (`orchestrator.ts` `planNextCycle`):
 
-- **The Planner could not produce a plan.** A HashPet run (`7067fd32`) ended after one commit because its cycle-3 Planner spent all 60 turns reading and never wrote a plan; the harness released the whole run as `blocked`. Now a plan-less Planner's findings become a **direct-execute cycle**: the harness synthesizes a one-item plan from the scout ("ship the roughest edge you found") and hands it to the executor, which can edit. The run keeps working.
-- **The Planner declared a no-mandate product "done."** "The product is in good shape" on a broken product is the same escape one level up. A no-mandate `fulfilled` never releases: if any promise is `broken`/`absent`/`UNKNOWN` it becomes a **keep-promise** cycle targeting it; if every promise is genuinely `kept` it becomes a **go-deeper** cycle ("walk a flow this run has not, navigate into and back out of every screen, ship the roughest edge"). A **mandate** `fulfilled` still releases — a real ask that is met is a real answer.
+- **The Planner could not produce a plan.** After one document retry, its findings become a **direct-execute cycle**. The executor selects an evidenced improvement or investigates a consequential uncertainty, instead of ending the run on a missing document.
+- **The Planner declared a no-mandate product "done."** A no-mandate `fulfilled` continues: broken or absent promises prompt repair, and `unknown` promises prompt investigation before deciding whether repair is needed. Otherwise a **go-deeper** cycle investigates an untested core workflow or consequential risk through the appropriate app, CLI, library, or service interface. Finding no justified edit is a valid investigation result. An explicit mandate that is fulfilled still releases.
 
 The only self-stops the harness honours are a mandate fulfilled, a Planner `blocked` (a secret / external service / decision only the user can settle, with an `Operator:` line), the user's controls, and the **no-progress wall**: when `directExecuteStreak` consecutive synthesized cycles land no commit (`FORGE_ULW_NO_PROGRESS_CAP`, default 3), the run releases `no-progress` — an honest floor, not an escape. Any committed cycle resets the streak, so a run that keeps shipping never trips it. This is non-negotiable 2 ("never an infinite trap *without progress*") read literally: no progress is the only floor, and declaring the product perfect is not the same as making progress.
 
 **The waste that made the escape look reasonable is gone too.** A role that cannot edit (the Planner: `denyEdits`) no longer hears the "fix until green" or "run the check" nudges — the HashPet Planner ran the suite, went red, was told to "fix the root cause … until green," and burned ~45 of 60 turns chasing a failure it could not touch. The signal is the role's own tool set (`toolSetCanEdit`): no edit tool, no fix nudge. And the Planner's **plan turn is document-only** (`documentOnly`): the scouting is done on turn 1, so turn 2 emits the plan and cannot re-enter reading.
 
-Whether the model *notices* the product is broken is doctrine, not harness: `forge-planner` and `forge-reviewer` now require driving the **whole first session** — navigating into and back out of every screen, not stopping at the first — and treat navigation as a promise (a screen with no way back is `broken`), an undriveable flow as `UNKNOWN` (never `kept` on faith), and forbid declaring a product good from a static read of its source or screenshots.
+Whether the model notices a consequential gap remains a judgment. The role instructions require representative end-to-end use, including relevant failure and recovery conditions, and distinguish observed behavior from inference. Unobservable promises remain `unknown` in artifacts, state, status and reports; they are neither kept on faith nor presumed broken.
 
 Nothing in the driver classifies prose. The Planner and Reviewer judge; the harness enforces the sequence and structural facts: no writes before a plan exists, no commit before a completed review and a green harness-run check, no Stop mid-cycle, what each role reads before what, every cycle leaves `scout.md`, `plan.md`, `look.md`, `review.md` and a commit (or a `blocked` review and no commit).
 
@@ -38,19 +40,19 @@ The skills in `skills/forge-*` were written for a task and applied to a task. Th
 
 | Doctrine | At the run level | Where |
 |----------|------------------|-------|
-| `forge-planner` §2 use it first · §6 every cycle starts from the product | The scout turn has no record; the plan turn does | `roles.ts`, `buildPlannerScoutBrief` / `buildPlannerPlanBrief` |
-| `forge-shape` alternatives with trade-offs; fake consensus is not a plan | `Considered:` — one candidate per gap bin, one line each | `plan.md` (required for `continue`) |
+| `forge-planner` exercise the real job | The scout sees the product before the run record; interfaces and conditions follow the project's domain | `roles.ts`, Planner brief builders |
+| `forge-shape` alternatives with trade-offs | `Considered:` compares credible candidates and investigations; empty categories need no invented work | `plan.md` (required for `continue`) |
 | `forge-veteran` "this is fine — leave it" | `leave it` is always in `Considered:`, with why it lost or won — the null hypothesis every cycle beats in writing | `plan.md` (required) |
 | `forge-surface` every decision traceable to subject + audience + job; "would I make this for any similar page?" | `serves:` per item, in words; `Worth the cycle:` says why this is from *this* product | `plan.md` (required) |
-| `forge-redgreen` a test that already passes means the behaviour exists; behaviour from the outside, never the implementation mirrored | `red now:` per item — what the Planner ran or saw; proofs are observables or commands | `plan.md` (required) |
-| `forge-rootcause` no fix without root cause; three attempts → question the architecture | The same class of change twice is a symptom: the Planner plans the one decision or leaves it; the Reviewer puts the root cause under `Must-fix`, or `blocked` at three | both skills; `forge-rootcause` inlined into both roles |
+| `forge-redgreen` meaningful proof | `red now:` names an observed gap or concrete regression risk; test-only protection demonstrates a plausible fault it catches | `plan.md` item contract |
+| `forge-rootcause` investigate repeated defects | A recurring class prompts a search for a shared cause; evidence determines whether a shared correction is needed | Planner and Reviewer instructions |
 | `forge-prove` run, read, then claim | The Reviewer's look turn comes before the diff; `Worth:` is judged from `Looked:` | `roles.ts`, `buildReviewerLookBrief`; `review.md` `Looked:` |
-| `forge-assay` a checklist against current state, never memory | `Promises:` — the product's own claims, `kept | broken | absent` as inspected each cycle; the run's checklist; `fulfilled` means kept | `scout.md`, `ulw.json` `promises[]`, project memory `Promise:` rows |
+| `forge-assay` inspect current state | `Promises:` records `kept | broken | absent | unknown`; unknown requires evidence before repair | scout, state and project memory |
 | `forge-swarm` parallel reads with different lenses | The Planner's explore children get lenses: first-minute user, month-three user, next year's maintainer, a competitor's PM | `forge-planner` §4 |
 | `forge-absorb` push back with evidence | The executor's `Dispute:` line — a Reviewer revision it can show was wrong — reaches the next Planner | `forge-veteran`; `record.disputes` |
 | `forge-planner` "the way a boss does" | The plan brief carries the run's spend; `Worth the cycle:` is the claim before the spend, the Reviewer's `Worth:` the finding after — side by side in the record, `/cycle status` and the report | `runSpend`, `cycleLine`, `cycleReportFacts` |
 
-Presence and shape are parsed; content is judged by the next role and by whoever opens `cycles/<n>/`. A `continue` plan missing `Considered:` (with `leave it`) or an item's `serves:` / `red now:` comes back to the Planner once with what was missing — on the kept session, as one more short turn, so the scouting is not redone — then releases as `blocked` as before. `FORGE_ULW_TWO_TURN=0` runs each role on one brief (the old shape, the new contracts); a runtime that cannot keep a session, or a resume that fails, falls back to the same single brief with the scout inlined. Nothing in the mechanism releases a run.
+Presence and shape are parsed; content is judged by the next role and by whoever opens `cycles/<n>/`. A `continue` plan missing `Considered:` (with `leave it`) or an item's `serves:` / `red now:` comes back to the Planner once with what was missing, on the kept session without re-scouting. A second failure becomes a synthesized work cycle, subject to the no-progress wall. `FORGE_ULW_TWO_TURN=0` runs each role on one brief; a runtime that cannot keep a session, or a resume that fails, falls back to the same single brief with the scout inlined.
 
 ## Three cases, one procedure
 
@@ -87,7 +89,7 @@ CLI: `forge --ulw [--max-cycles N] "…"` · `forge run "…" --ulw --max-cycles
 
 Under `~/.forge/sessions/<id>/`:
 
-- `ulw.json` (schema 2) — `cycle`, `phase`, `items[]` (each with `serves` and `redNow`), `verifyCommand`, `promises[]` (the product's own claims as last inspected: `text`, `kept | broken | absent`, `seen`), `cycles[]` (title, items done/total, waves, review verdict, verify result, commit sha, tokens per role, `considered[]`, `worthClaim`, `worth`, `reviewerLooked`, `scoutPath` / `lookPath`), `ledger[]` (one row per Stop: edit delta, tree movement, proof ran), `identity`, `direction`, `lastReview`. A schema-1 sidecar from the retired wave engine loads as `legacy` and disabled; `/ulw` re-arms.
+- `ulw.json` (schema 2) — `cycle`, `phase`, `items[]` (each with `serves` and `redNow`), `verifyCommand`, `promises[]` (the product's own claims as last inspected: `text`, `kept | broken | absent | unknown`, `seen`), `cycles[]` (title, items done/total, waves, review verdict, verify result, commit sha, tokens per role, `considered[]`, `worthClaim`, `worth`, `reviewerLooked`, `scoutPath` / `lookPath`), `ledger[]` (one row per Stop: edit delta, tree movement, proof ran), `identity`, `direction`, `lastReview`. A schema-1 sidecar from the retired wave engine loads as `legacy` and disabled; `/ulw` re-arms.
 - `cycles/<n>/scout.md` (the Planner's turn 1, written before it saw the record), `plan.md`, `look.md` (the Reviewer's turn 1, before the diff), `review.md`, `verify.baseline.log` (cycle 1: the untouched tree; a later cycle whose gate command changed: the tree as the last commit left it), `verify.pre-review.log` / `verify.post-review.log` (`.<round>` after a red round), `plan.failed.md` when the Planner never produced a parseable plan. The cycle record also keeps the Reviewer's `revisions`, the items it `disputed` (partial / missing against the executor's board), and the executor's `serendipity` and `disputes` lines.
 - `decisions.json` gains a `Plan N: <title>` row per cycle; the product identity and its promises go to project memory (`Identity: …`, `Promise: … — kept|broken|absent`).
 
@@ -98,36 +100,34 @@ Under `~/.forge/sessions/<id>/`:
 Identity: <one paragraph: who uses this product, for what job>
 Looked: <what the Planner ran or opened as the product's user, and saw — or: could not run — <why>>
 Promises:
-- <what the product promises: README, --help, tests as spec, the identity> — kept | broken | absent — <where seen>
+- <what the product promises: README, --help, tests as spec, the identity> — kept | broken | absent | unknown — <where seen, or what remains unverified and why>
 Considered:
-- missing capability: <candidate> — <trade-off>
-- broken promise: <candidate> — <trade-off>
-- rough edge: <candidate> — <trade-off>
-- debt: <candidate> — <trade-off>
-- leave it — <why the product may be fine as it stands>
+- <evidenced candidate or consequential investigation> — <benefit, risk and cost>
+- <another credible alternative, if any> — <trade-off>
+- leave it — <why leaving this area unchanged may be better>
 ```
 
 ### plan.md contract (Planner, turn 2)
 
 ```text
 # Cycle N plan — <title>
-Verdict: continue | fulfilled — <why; with no mandate: the product is in good shape> | blocked — <what only the user can unblock>
+Verdict: continue | fulfilled — <why the explicit mandate is met; no-mandate runs continue investigating> | blocked — <what prevents progress without the user>
 Identity: <reaffirmed, or an Operator: line>
 Looked: <carried from the scout>
 Considered:
 - <the scout's candidates, struck or kept after the record; leave it always present, with why it lost or won>
-Direction: <this cycle's theme — what a user will notice>
-Worth the cycle: <why this beats leave it for the user in Identity, and why it is from this product and not any product of its kind>
+Direction: <this cycle's intended benefit or consequential question to resolve>
+Worth the cycle: <benefit to this product's user, operator or maintainer; why the evidence justifies the cost and risk over leave it>
 Verify: `npm test` | none — <why>
 Items:
-1. <ship title> — files: <path>, <path> — serves: <the job in Identity this serves> — red now: <what showed it is not yet so, or: unchecked — why> — proof: <command or observable, behaviour from the outside>
+1. <item title> — files: <path>, <path> — serves: <the job in Identity this serves> — red now: <observed defect, limitation, regression risk or evidence gap; or unchecked — why> — proof: <command or observable distinguishing improvement or resolving the question>
 Out of scope:
 - <passed on, and why>
 Guidelines: ok | fix: <what the AGENTS.md-class file needs>
 Operator: <secret / irreversible action / external blocker / identity change — else omit>
 ```
 
-`Verify:` goes through the strict check-command harvest (`looksLikeCheckCommand`): prose is refused, `none — why` falls back to the stack table so a wrong "none" cannot switch the gate off. `Guidelines: fix: …` becomes the plan's first item. A `continue` plan with no items, without `Considered:` carrying a `leave it` entry, or with an item lacking `serves:` or `red now:` does not parse; the Planner is retried once with what was missing named (`explainPlanParseFailure`), then the run releases as `blocked` with the artifact on disk. `Looked:` is the Planner's own record of having used the product before judging it — read the cycles' `Looked:` lines in a row to see whether a run planned from the product or from `grep`; read `Considered:` in a row to see whether `leave it` was ever weighed. In single-brief mode the plan carries a `Promises:` section too, since there is no scout.
+`Verify:` goes through the strict check-command harvest (`looksLikeCheckCommand`): prose is refused, `none — why` falls back to the stack table so a wrong "none" cannot switch the gate off. `Guidelines: fix: …` becomes the plan's first item. A `continue` plan with no items, without `Considered:` carrying a `leave it` entry, or with an item lacking `serves:` or `red now:` does not parse; the Planner is retried once with what was missing named (`explainPlanParseFailure`), then a synthesized work cycle continues from the available evidence, subject to the no-progress wall. `Looked:` is the Planner's own record of having used the product before judging it — read the cycles' `Looked:` lines in a row to see whether a run planned from the product or from `grep`; read `Considered:` in a row to see whether `leave it` was ever weighed. In single-brief mode the plan carries a `Promises:` section too, since there is no scout.
 
 **What the Planner is handed** (`briefs.ts`). Turn 1: workspace, mandate, identity, the promises as last recorded (to re-inspect, never copy), the tree, the stack table, steps 1–6 and the scout contract — **none of the record**. Turn 2: its scout, then the record — a one-line-per-cycle ledger of what this run has shipped (title · direction · review verdict · worth claimed · worth found · commit), the last review's `Must-fix` and `Architecture` notes, its `Worth: no` if it gave one, unfinished items, the executor's `Serendipity:` lines (what it noticed inside the work and left alone, newest cycle first, harvested from its closers at every Stop — evidence to weigh, not orders) and `Dispute:` lines (a Reviewer revision it can show was wrong, with the evidence), what the user typed since the last plan, the run's commits, the spend so far, the guideline survey, steps 7–11 and the plan contract. **Not** the previous plan's body or its `Out of scope` list — a 30-cycle HashPet run continued the last plan's theme and its out-of-scope backlog for nine cycles of one-string renames. The record tells the Planner what is done; every cycle starts from the product, and now it has to: the scout is written before the record exists in its transcript.
 
@@ -142,14 +142,14 @@ Fulfillment:
 Revisions:
 - <what changed and why>
 Must-fix:
-- <left for the next plan's first items>
+- <unresolved acceptance defect; the executor must repair it before fresh review>
 Architecture:
-- <duplication, wide signatures, dead flags, narrating comments>
-Worth: yes — <what a user would notice> | no — <why this was not worth a cycle>
+- <nonblocking observations and future improvements for the next Planner to weigh>
+Worth: yes — <evidenced benefit or consequential uncertainty resolved> | no — <why benefit did not justify cost or risk>
 Operator: <only what a human must decide>
 ```
 
-Fulfilment from the fresh reader beats the executor's board: `missing` reopens the item for the next plan. `Must-fix` and `Operator` lines flow into the next Planner brief and the run report. `Worth:` is the Reviewer judging the cycle, not only the diff, and from its own `Looked:` rather than the diff's effort: a correct cycle no user would notice still ships, its `Worth: no` reaches the next Planner ("find user-visible work or write `Verdict: fulfilled`"), and the Reviewer's brief carries the last four cycles' `Worth:` so a third invisible cycle in a row becomes a `Must-fix`. The Reviewer's brief also carries the run's record (so the same class of change as an earlier cycle is visible and named as a symptom under `Must-fix`), the plan's `Considered:` (so a better alternative left on the table is part of `Worth: no`), and the previous review's `Architecture` notes ("is any of it back?") so a recurrence is named as a `Must-fix` rather than re-discovered as a shape note. `Looked:` is optional in the review — a Reviewer that could not run the product still reviews — and is recorded on the cycle (`reviewerLooked`) from the look turn when the review omits it. No meter counts these; the roles read the record.
+Fulfilment from the fresh reader beats the executor's board: both `partial` and `missing` reopen an item, and either withholds commit. `Must-fix` identifies acceptance defects for repair within the current cycle. Nonblocking future improvements belong under `Architecture`. `Worth:` judges evidenced benefit, risk reduction or consequential uncertainty resolved against cost and complexity; immediate visibility is not required. These findings remain available to the executor, next Planner and run report.
 
 **The executor hears the review.** The review had two readers — the next Planner and the run report — and not its author. The plan admission after a reviewed cycle now carries *The Reviewer's notes on cycle N — standing for this run*: the verdict and `Worth:`, `Revisions` (what changed in the executor's work and why), the items the Reviewer judged partial or missing against the executor's board, and the `Architecture` notes, closed with the standing instruction that the Reviewer should not have to make the same revision twice. A review that changed nothing says so in one line. Without this the executor repeated the same craft defects every cycle and the Reviewer re-fixed them at up to 80 turns a cycle; with it the run improves inside itself.
 
@@ -174,7 +174,7 @@ The executor's system prompt carries only the **ULW executor protocol**: ship th
 |-------|--------|
 | `plan` | run the Planner (or yield when the user holds `/plan`) |
 | `execute` | stamp a wave; `Plan complete.` / empty board / `/replan` → close the cycle; `stuck_threshold` (default 4) no-progress Stops → close the cycle (the Reviewer takes over, never a release); else re-anchor with the open items |
-| `fix` | re-run the verify command; green → the Reviewer (if it has not run) or the commit; red → next fix round; past `fix_rounds` → release `fix-cap`, nothing committed, `Operator:` line |
+| `fix` | re-run the verify command; green → fresh Reviewer → verify → commit; unresolved review findings or red verification consume the shared fix budget; past `fix_rounds` → release `fix-cap`, nothing committed, `Operator:` line |
 | `review` / `verify` / `commit` | resume the interrupted transition |
 
 Releases: `fulfilled` (mandate only), `blocked` (Planner needs the user), `cycle-zero`, `max-cycles`, `fix-cap`, `no-progress` (the synthesized-cycle wall), `runtime-unavailable` (no provider / subagent depth > 0), `disarmed`. A no-mandate `fulfilled` and a plan-less Planner do **not** release — they become work. A clean end stamps `lastError.code = ulw_done` (a designed outcome, not a problem); the others stamp `ulw_released`.

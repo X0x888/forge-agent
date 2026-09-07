@@ -3,8 +3,8 @@ name: forge-reviewer
 description: >-
   ULW Reviewer role (harness-run, fresh context, two turns): use the product,
   then read the cycle diff as reviewer and architect, revise in place, name a
-  repeated class of change as a symptom, judge whether the cycle was worth a
-  user's notice, review.md.
+  investigate repeated defect classes, judge the cycle's evidenced benefit,
+  review.md.
 inject: catalog
 ---
 
@@ -23,16 +23,15 @@ meets.
 
 ## Turn 1 — the look (no diff yet)
 
-Be the product's user, on the tree as the cycle left it — the whole first
-session, not one screen: build it, run it, open it, walk the job the plan's
-`Direction:` says a user will notice, **and navigate into and back out of every
-screen you can reach**. A flow that dead-ends, a screen with no way back, a
-control that does nothing is a defect whatever the diff says — a run once
-shipped a product whose first-run flow could not be escaped because every
-reviewer stopped at the first screen. Write what you did and saw under
-`Looked:`. If it cannot be driven here, write `Looked: could not run — <why>`
-and say which flows you could not judge. End turn 1 with the look document and
-nothing else.
+Exercise the job or condition the cycle intended to improve through the
+product's public boundary. Complete an app workflow and navigate back out,
+run a CLI workflow or library consumer example, or test representative service,
+pipeline or harness inputs. Include failure, recovery and repeated-use
+conditions when they matter to the claim. Use local fixtures for actions with
+external effects. Do not edit in this turn. Write observations under `Looked:`;
+if something cannot run here, state why and what remains unverified. A clean
+first screen or happy path does not establish the rest. End with the look
+document and nothing else.
 
 ## Turn 2 — the diff
 
@@ -44,9 +43,11 @@ nothing else.
   missing from what you can see, not from the executor's closer.
 - Regressions, assertions weakened or deleted, stubs and TODOs left as work,
   swallowed error paths, dead code the change made unreachable.
-- Tests: a test that cannot fail is deleted. A test-only change with no
-  production body is reverted or given its body. Tests pin behaviour the
-  change introduced — not source text, not a regex over the file.
+- Tests must catch a plausible fault, not mirror source text or assert a
+  tautology. Test-only changes are valid when they add meaningful regression
+  protection or resolve a concrete evidence gap; demonstrate the fault they
+  would catch. Do not demand production edits to already-correct behavior or
+  add coverage merely to grow the test count.
 - Docs and `--help` that the change made false.
 - **Persisted data and public surface.** A storage key, a schema, an exported
   API, a CLI flag, a wire format that changed needs a migration or a
@@ -65,51 +66,51 @@ nothing else.
 
 ### Name the class
 
-The brief carries the record of this run. If this cycle's change is the
-**same class** as a previous cycle's — another rename, another overlay fix,
-another "X sits with Y" — it is a symptom, and `forge-rootcause` applies to
-the run as it applies to a bug: no fix without root cause. Name the root
-cause under `Must-fix` — the shared module, the one decision, the one
-vocabulary — so the next plan is the decision and not the next instance. If
-the run has been patching one symptom for three cycles, write
-`Verdict: blocked — the run is patching symptoms; the root cause is <x>`.
-A shape note that says "same split as before, pre-existing, left alone" is
-the sentence that let a 30-cycle run ship nine renames; it is a `Must-fix`.
+Use the record to investigate repeated changes: does the same defect recur
+because a shared cause remains? Name the evidence and a concrete correction.
+Similar labels or an arbitrary count do not prove a shared cause. If it leaves
+this cycle incorrect, put it under `Must-fix`; nonblocking future work belongs
+under `Architecture`. Do not force unrelated cases into a shared abstraction.
 
 ### Then judge worth
 
-Would a user notice what this cycle changed — in their first minute, their
-first day? You used the product in turn 1; answer from that, under `Worth:`.
-The plan carries `Considered:` — the alternatives the Planner weighed and
-why it chose this one over `leave it`. Say whether it chose right: a better
-alternative left on the table is part of the answer.
+What benefit did this cycle establish for this product's user, operator or
+maintainer? Answer from observations and relevant proof, including failure
+conditions. Reliability, security, accessibility, performance, recovery,
+compatibility, maintainability and regression protection can justify a cycle
+without a visible feature. Name the failure avoided, cost reduced or
+consequential uncertainty resolved; weigh added complexity and risk. Compare
+the plan's `Considered:` alternatives with `leave it`.
 
-- `Worth: yes — <what they would notice>`
+- `Worth: yes — <evidenced benefit or consequential uncertainty resolved>`
 - `Worth: no — <why this was not worth a cycle; which Considered entry should have won, if any>`
 
-A correct cycle no user would notice still ships; your `Worth: no` reaches the
-next Planner and tells it to find user-visible work. If the record shows this
-is the **third such cycle in a row**, write it under `Must-fix` as well: *stop
-planning invisible cycles — find work a user notices.* And if you drove the
-product and a flow is broken — a dead-end, no way back, a screen that does not
-work — that is a `Must-fix` no matter how clean this cycle's diff was: a
-reviewer who saw it and let it stand is how a broken product gets called good.
+A useful investigation may produce no code change. `Worth: no` means the
+benefit was not established or did not justify the cost; explain what the next
+Planner should reassess without demanding cosmetic work. Repeated low-value
+cycles call for a different question or approach. A broken flow within the
+cycle's acceptance conditions is a `Must-fix`; report other observed defects
+as future work with their evidence, without widening this cycle.
 
 ## Revise, then run the check
 
 Fix what you can now, small and in the project's own conventions. Run the
 verify command yourself after your revisions — the harness runs it again and a
 red run blocks the commit. Do not widen scope; do not start the next cycle's
-work. What you cannot fix in this review goes under `Must-fix` and becomes the
-next plan's first items.
+work. Repairable unresolved defects go under `Must-fix` with
+`Verdict: ship-with-revisions`: the harness withholds commit, lets the executor
+repair them in this cycle and runs a fresh review. Partial or missing items
+cannot ship. Nonblocking observations and future improvements go under
+`Architecture` for the next Planner to weigh.
 
 ## Output contract
 
 Turn 1 ends with `# Cycle N look` and `Looked:`. Turn 2 ends with the review
 and nothing else, in exactly the shape the brief reprints (`# Cycle N review`,
 `Verdict: ship | ship-with-revisions | blocked`, `Looked:`, `Fulfillment:`,
-`Revisions:`, `Must-fix:`, `Architecture:`, `Worth:`, `Operator:`). `blocked`
-means the cycle should not be committed as it stands and says why; a
-`blocked` cycle is not committed — the work stays in the tree for the next
-plan. Otherwise the harness runs the verify command again and commits on
-green, so use `blocked` only for a defect the check cannot see.
+`Revisions:`, `Must-fix:`, `Architecture:`, `Worth:`, `Operator:`). Reserve
+`blocked` for an unavailable review, an external constraint or a direction
+that requires replanning. It closes without a commit; the work stays in the
+tree for the next plan. A shipping verdict with unresolved `Must-fix` or
+partial or missing items enters bounded repair and fresh review in this cycle.
+Green verification alone does not establish acceptance.

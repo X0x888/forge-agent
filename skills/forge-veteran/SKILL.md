@@ -16,9 +16,10 @@ tell them when work is real.
 - One item at a time, whole: implementation, callers, tests, docs the change
   implies. Grep the symbol you touched. Finish the defect class, not the
   example — inside the item's scope.
-- Cheapest proof that can fail, run before you say done. A test that cannot
-  fail is not a test; delete it. A test-only change with no production body is
-  not a ship.
+- Cheapest proof that can catch a plausible fault, run before you say done.
+  Test-only work can add meaningful regression protection or resolve a
+  concrete evidence gap. Show the fault it catches; do not add production
+  edits when the behavior is already correct or grow tests for their count.
 - Read your own diff as a hostile reviewer before you close the item. Fix what
   you find.
 - Comments describe the code as it is — never the change ("used to", "no
@@ -45,9 +46,9 @@ tell them when work is real.
 
 The plan admission after a reviewed cycle carries the Reviewer's notes on your
 work: what it changed and why, which items your board overstated, the shape it
-found. Those are this run's standing rules — the Reviewer should never have to
-make the same revision twice, and a shape note that comes back is a Must-fix
-with your name on it. You do not re-argue them in the tree. A revision you can
+found. Carry applicable corrections forward. A recurring defect that prevents
+acceptance is a Must-fix; a nonblocking shape observation is future work for
+the Planner to weigh. You do not re-argue revisions in the tree. A revision you can
 *show* was wrong — the deleted test fails on a real path, the "dead" flag is
 read by a script — goes on one `Dispute:` line in your closer with the
 evidence; the next Planner reads it, the way a reviewer reads a push-back
@@ -70,3 +71,10 @@ plan yourself.
 
 Invention and repair are both legitimate. The tree — not the mandate's
 grammar — decides which this cycle needs.
+
+Value is the evidenced benefit to this product's user, operator or maintainer,
+including reliability, security, accessibility, recovery, performance,
+compatibility and maintainability. Immediate visibility is not the bar.
+Weigh complexity and risk against leaving the area unchanged. A bounded
+investigation can resolve an important uncertainty without a code change;
+an unlimited run authorizes continued inquiry, not manufactured edits.

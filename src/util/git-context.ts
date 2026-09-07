@@ -129,6 +129,18 @@ export function gitHeadSha(cwd: string): string | null {
   return /^[0-9a-f]{40}$/.test(sha) ? sha : null;
 }
 
+/** Whole-repository cleanliness for gates; unknown Git state never means clean. */
+export function gitIsClean(cwd: string): boolean | null {
+  const root = git(["rev-parse", "--show-toplevel"], cwd);
+  if (!root) return null;
+  const status = git(
+    ["status", "--porcelain=v1", "-z", "--untracked-files=all", "--ignore-submodules=none"],
+    root,
+    4000,
+  );
+  return status === null ? null : status.length === 0;
+}
+
 /**
  * Cumulative diff since a base commit: tracked changes (committed and dirty)
  * plus untracked files as `+++` bodies. Capped; `truncated` tells the reader

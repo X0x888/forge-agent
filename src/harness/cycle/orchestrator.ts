@@ -118,6 +118,8 @@ export interface CycleRuntime {
   gitDiffSince(head: string | null): { diff: string; files: string[]; truncated: boolean };
   gitLogSince(head: string | null): string;
   gitStatus(): string;
+  /** Exact repository-root cleanliness, including untracked files; null if unknown. */
+  gitIsClean?(): boolean | null;
   userMessagesSince(iso: string): string[];
   guidelineSurvey(): string;
   projectChecks(): string[];
@@ -323,8 +325,8 @@ function noProgressCap(): number {
  * A plan the harness writes when the model tries to stop working on an
  * unlimited run — because its Planner could not converge, or because it
  * declared a no-mandate product "done." The unit of work is handed to the
- * executor (which can edit); the run keeps improving the product instead of
- * ending on a judgement the model made to escape the work.
+ * executor (which can edit). Further investigation still owes evidence of
+ * a worthwhile change; an unlimited run does not require invented defects.
  */
 function synthesizeWorkPlan(
   s: CycleState,
@@ -340,52 +342,53 @@ function synthesizeWorkPlan(
   let direction: string;
   let items: CyclePlanItem[];
   if (kind === "keep-promise" && unkept.length) {
-    title = "Keep the promises the product does not keep";
+    title = "Keep the promises still broken or unverified";
     direction =
-      "The Planner called the product done, but it does not keep its own promises. A promise the product makes and breaks is the first thing a demanding user notices. Make them kept.";
+      "The inventory contains broken, absent, or unverified promises. Reproduce confirmed gaps and repair them; investigate unknown promises before deciding whether a change is needed. Preserve working behavior.";
     items = unkept.slice(0, 5).map((p, i) => ({
       id: `i${i + 1}`,
-      title: `Keep the promise: ${p.text}${p.seen ? ` — today: ${p.seen}` : ""}`,
+      title: `${p.state === "unknown" ? "Investigate the promise" : "Keep the promise"}: ${p.text}${p.seen ? ` — today: ${p.seen}` : ""}${p.state === "unknown" ? ". Establish whether it holds before editing; record the evidence or the remaining limit if it cannot be exercised." : ""}`,
       files: [],
       serves: "a promise the product makes to its user",
-      redNow: p.seen || `the product does not keep this (${p.state})`,
-      proof: s.verifyCommand || "the promise holds when you use the product",
+      redNow: p.seen || (p.state === "unknown" ? "not yet verified; this is not a confirmed defect" : `the product does not keep this (${p.state})`),
+      proof: "exercise the promise through its public interface; report the observation and any limits, plus the project gate for changes",
       status: "open",
     }));
   } else if (kind === "go-deeper") {
     title = "Go deeper — a flow the run has not walked";
     direction =
-      "The Planner found nothing worth a cycle. On an unlimited run that is not a reason to stop — it is a reason to look harder. Walk a core flow end to end that earlier cycles did not, navigate into and back out of every screen, and ship the roughest edge a demanding user hits.";
+      "The Planner found no justified change in the area it inspected. Investigate a core workflow or consequential risk that earlier cycles have not exercised, using the product's own interfaces. Improve it only when the evidence beats leaving it alone.";
     items = [
       {
         id: "i1",
         title:
-          "Walk a core flow this run has not exercised — the whole loop, and the navigation into and back out of every screen — and ship the single roughest edge a demanding user would hit (a broken flow, a dead-end with no way back, an unsatisfying screen). If you genuinely find nothing after using it hard, say so in the closer.",
+          "Exercise an untested core workflow or risk through the appropriate interface: screens and return paths for an app, public calls for a library, commands for a CLI, or requests and recovery for a service. Consider correctness, accessibility, security, performance, recovery, and maintenance where they matter to this product. Repair the best evidenced gap; if none is established, record what you tested and learned without inventing an edit.",
         files: [],
-        serves: "a demanding user's first hour",
+        serves: "the product's core job over its useful lifetime",
         redNow: looked ? `the scout only saw: ${looked.slice(0, 200)}` : "unwalked — exercise it now",
-        proof: s.verifyCommand || "the improvement is visible when you use the product",
+        proof: "a reproducible observation or measurement of the workflow or risk, plus the project gate for changes",
         status: "open",
       },
     ];
   } else {
     title = "Direct execute — ship what the scout found";
     direction =
-      "The Planner could not converge on a plan within its budget. Do not stop: from what the scout found, ship the single improvement a demanding user would most notice.";
+      "The Planner could not produce a plan within its budget. Use the scout's evidence to select one worthwhile improvement for this product's users or maintainers. Investigate first when the evidence is incomplete.";
     items = [
       {
         id: "i1",
         title:
-          "Ship the highest-value improvement a user would notice from what the scout found — a broken flow, a navigation dead-end, a broken promise, or the roughest edge on the core loop. If the scout found nothing, use the product yourself and fix the worst thing you meet.",
+          "From the scout's findings, reproduce the highest-value gap in a core workflow or consequential risk and improve it. If the scout found nothing concrete, exercise the product through its public interface and record evidence before choosing a change. Do not manufacture production edits to fill a cycle; an investigation with no justified change should report its findings and limits.",
         files: [],
-        serves: "the user's next minute",
+        serves: "the product's core job and the people who depend on it",
         redNow: looked ? `the scout saw: ${looked.slice(0, 200)}` : "use the product and find it",
-        proof: s.verifyCommand || "the improvement is visible when you use the product",
+        proof: "a reproducible observation or measurement of the selected gap, plus the project gate for changes",
         status: "open",
       },
     ];
   }
 
+  const worthClaim = "Further investigation can reveal a consequential gap the scout did not establish; any edit must be justified by what is observed, its benefit, and its cost.";
   const raw = [
     `# Cycle ${s.cycle + 1} plan — ${title}`,
     `Verdict: continue`,
@@ -393,7 +396,7 @@ function synthesizeWorkPlan(
     looked ? `Looked: ${looked}` : "",
     considered.length ? `Considered:\n${considered.map((c) => `- ${c}`).join("\n")}` : "",
     `Direction: ${direction}`,
-    `Worth the cycle: the model tried to stop working on an unlimited run; a demanding user's product is never "done." This cycle turns that back into work a user would notice.`,
+    `Worth the cycle: ${worthClaim}`,
     s.verifyCommand ? `Verify: \`${s.verifyCommand}\`` : "",
     `Items:`,
     ...items.map((it, i) => `${i + 1}. ${it.title}${it.files.length ? ` — files: ${it.files.join(", ")}` : ""} — serves: ${it.serves ?? ""} — red now: ${it.redNow ?? ""} — proof: ${it.proof ?? ""}`),
@@ -409,7 +412,7 @@ function synthesizeWorkPlan(
     direction,
     looked: looked || undefined,
     considered,
-    worthClaim: "the model tried to stop; this turns it back into user-visible work",
+    worthClaim,
     promises,
     verifyCommand: undefined,
     items,
@@ -614,7 +617,12 @@ async function admitPlan(
   // to have one) measures the tree as the last commit left it — otherwise
   // the baseline's command never matches and every old failure is red again.
   if (s.verifyCommand && s.verifyBaseline?.command !== s.verifyCommand) {
-    await captureBaseline(s, rt);
+    const previous = s.cycles.find((c) => c.n === s.cycle - 1);
+    if (s.cycle === 1 || (previous?.commitSha && safe(() => rt.gitIsClean?.(), null) === true)) {
+      await captureBaseline(s, rt);
+    } else {
+      rt.log?.("ULW baseline: a changed gate requires a clean tree after a committed cycle; retaining the prior baseline and requiring the new check to pass");
+    }
   }
   return {
     allowStop: false,
@@ -772,14 +780,15 @@ async function runReviewer(s: CycleState, rt: CycleRuntime, executorCloser: stri
     if (record) record.lookPath = lookPath;
   }
   const raw = roleBody(res.text);
-  const parsed = parseReviewArtifact(raw);
+  const completed = res.ok && res.status === "completed";
+  const parsed = completed ? parseReviewArtifact(raw) : null;
   // No parseable review is a review that did not happen: fail closed (no
   // commit); the work stays in the tree and the next Planner sees why.
   const notes: CycleReviewNotes = parsed ?? {
     verdict: "blocked",
     fulfillment: [],
     revisions: res.editCount > 0 ? [`${res.editCount} edit(s) by the reviewer (no parseable review)`] : [],
-    mustFix: [`Reviewer returned no parseable review (${res.status}${res.error ? `: ${res.error}` : ""})`],
+    mustFix: [`Reviewer ${completed ? "returned no parseable review" : "did not complete"} (${res.status}${res.error ? `: ${res.error}` : ""})`],
     architecture: [],
     operator: [],
   };
@@ -813,7 +822,7 @@ async function runReviewer(s: CycleState, rt: CycleRuntime, executorCloser: stri
     const item = s.items.find((i) => i.title.toLowerCase().includes(f.item.toLowerCase().slice(0, 40)));
     if (!item) continue;
     if (f.state === "done") item.status = "done";
-    else if (f.state === "missing") item.status = "open";
+    else item.status = "open";
   }
   s.lastReview = notes;
   saveCycleState(s);
@@ -964,6 +973,47 @@ function fixOrRelease(
   };
 }
 
+/** Executor fixes change the reviewed tree, so persist the loss of approval first. */
+function invalidateReview(s: CycleState): void {
+  const record = currentCycleRecord(s);
+  if (!record?.reviewPath) return;
+  const raw = readArtifact(record.reviewPath);
+  if (raw.trim()) writeArtifact(s.sessionId, s.cycle, `review.before-fix.${s.fixRounds + 1}.md`, raw);
+  record.reviewPath = undefined;
+  record.reviewVerdict = undefined;
+  saveCycleState(s);
+}
+
+function fixReviewOrRelease(
+  s: CycleState,
+  findings: string[],
+  cap: number,
+): CycleStopOutcome {
+  invalidateReview(s);
+  s.fixRounds += 1;
+  s.phase = "fix";
+  saveCycleState(s);
+  if (s.fixRounds > cap) {
+    return release(
+      s,
+      "fix-cap",
+      `Reviewer findings remain after ${cap} fix round(s) in cycle ${s.cycle}; nothing committed. Operator: ${findings.join("; ")}`,
+    );
+  }
+  return {
+    allowStop: false,
+    released: false,
+    reanchor: [
+      `[Forge ULW cycle driver] Cycle ${s.cycle} review requires fixes (fix round ${s.fixRounds}/${cap}).`,
+      ...findings.map((finding) => `- ${finding}`),
+      "Resolve these findings in the current cycle. The harness will verify, run a fresh Reviewer, and verify again before committing.",
+    ].join("\n"),
+    reason: `Cycle ${s.cycle} review requires fixes - fix round ${s.fixRounds}/${cap}`,
+    waveStamped: false,
+    phase: s.phase,
+  };
+}
+
 /**
  * EXECUTE is over. The sequence is verify → (fix) → review → verify → (fix)
  * → commit: the Reviewer reads a tree that already passes the gate, so what
@@ -979,7 +1029,17 @@ async function closeCycle(
   opts: { fixRoundsCap: number; why: string },
 ): Promise<CycleStopOutcome> {
   const record = currentCycleRecord(s);
-  const reviewed = Boolean(record?.reviewPath);
+  // Older sidecars retained approval while the executor repaired a red
+  // post-review check. A resumed fix must not inherit that stale approval.
+  if (record?.reviewVerdict !== "blocked" && (s.phase === "fix" || (s.phase === "verify" && record?.verifyPassed === false))) {
+    invalidateReview(s);
+  }
+  const reviewed = Boolean(record?.reviewPath && record.reviewVerdict);
+  // A Stop can resume after the blocked artifact was saved but before the
+  // next plan began. Its presence is not permission to commit.
+  if (reviewed && record?.reviewVerdict === "blocked") {
+    return advanceAfterCycle(s, rt, { skipped: "review blocked" });
+  }
   if (!reviewed) {
     if (s.phase === "execute") rt.log?.(`ULW cycle ${s.cycle} → verify (${opts.why})`);
     const pre = await verifyCycle(s, rt, s.fixRounds > 0 ? `pre-review.${s.fixRounds}` : "pre-review");
@@ -995,8 +1055,11 @@ async function closeCycle(
       return advanceAfterCycle(s, rt, { skipped: "review blocked" });
     }
   }
+  const findings = [...(record?.mustFix ?? []), ...(record?.disputed ?? [])];
+  if (findings.length) return fixReviewOrRelease(s, findings, opts.fixRoundsCap);
   const post = await verifyCycle(s, rt, s.fixRounds > 0 ? `post-review.${s.fixRounds}` : "post-review");
   if (post && !post.verdict.passed) {
+    invalidateReview(s);
     return fixOrRelease(s, post.run, post.verdict, { fixRoundsCap: opts.fixRoundsCap, reviewed: true });
   }
   return finishCycle(s, rt, post?.run ?? null);

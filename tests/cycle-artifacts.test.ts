@@ -207,6 +207,16 @@ Considered:
 `;
 
 describe("scout artifact parser", () => {
+  it("preserves unknown promises and their evidence limits in scouts and single-turn plans", () => {
+    const promises = `Promises:\n- Recovery after restart — UNKNOWN — cannot restart the service here\n- Offline delivery (unknown)\n`;
+    const expected = [
+      { text: "Recovery after restart", state: "unknown", seen: "cannot restart the service here" },
+      { text: "Offline delivery", state: "unknown" },
+    ];
+    assert.deepEqual(parseScoutArtifact(promises)?.promises, expected);
+    assert.deepEqual(parsePlanArtifact(`Verdict: fulfilled\n${promises}`)?.promises, expected);
+  });
+
   it("parses identity, looked, promises with states and where seen, considered", () => {
     const s = parseScoutArtifact(SCOUT);
     assert.ok(s);

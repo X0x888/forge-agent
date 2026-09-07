@@ -39,6 +39,13 @@ function state(): CycleState {
 }
 
 describe("/cycle status", () => {
+  it("keeps untested promises visible as unknown, not broken or kept", () => {
+    const s = state();
+    s.promises!.push({ text: "Recovery after restart", state: "unknown", seen: "service unavailable" });
+    assert.match(formatUlwStatus(s), /Promises: 2 kept · 1 broken · 1 absent · 1 unknown/);
+    assert.ok(cycleReportFacts(s).notDone.includes("Promise unknown: Recovery after restart — service unavailable"));
+  });
+
   it("tallies the promises and shows the Reviewer's worth beside the Planner's claim", () => {
     const text = formatUlwStatus(state());
     assert.match(text, /Promises: 2 kept · 1 broken · 1 absent/);

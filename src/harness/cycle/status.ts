@@ -86,8 +86,8 @@ function cycleRow(c: CycleRecord): string {
 function promiseTally(s: CycleState): string {
   const p = s.promises ?? [];
   if (!p.length) return "";
-  const n = (state: "kept" | "broken" | "absent") => p.filter((x) => x.state === state).length;
-  return `${n("kept")} kept · ${n("broken")} broken · ${n("absent")} absent`;
+  const n = (state: "kept" | "broken" | "absent" | "unknown") => p.filter((x) => x.state === state).length;
+  return `${n("kept")} kept · ${n("broken")} broken · ${n("absent")} absent${n("unknown") ? ` · ${n("unknown")} unknown` : ""}`;
 }
 
 export function formatUlwStatus(s: CycleState | null | undefined): string {
@@ -165,7 +165,7 @@ export function cycleReportFacts(s: CycleState | null | undefined): {
   for (const i of openItems(s)) notDone.push(`${i.title} (cycle ${s.cycle}, open)`);
   const last = s.cycles[s.cycles.length - 1];
   for (const m of last?.mustFix ?? []) notDone.push(`Must-fix: ${m}`);
-  // The product's own promises the tree does not keep are open work by definition.
+  // Unkept promises need repair; unknown promises still need evidence.
   for (const p of s.promises ?? []) {
     if (p.state === "kept") continue;
     notDone.push(`Promise ${p.state}: ${p.text}${p.seen ? ` — ${p.seen}` : ""}`);
@@ -182,7 +182,7 @@ export function cycleReportFacts(s: CycleState | null | undefined): {
         : st.endReason === "max-cycles"
           ? `Stopped at max_cycles ${st.maxCycles}`
           : st.endReason === "fix-cap"
-            ? `Blocked — the verify command stayed red in cycle ${st.cycle}`
+            ? `Blocked — verification or review findings remain in cycle ${st.cycle}`
             : st.endReason === "no-progress"
               ? `Stopped — ${st.directExecuteStreak} synthesized cycle(s) in a row landed nothing (no-progress wall); re-arm with /ulw or give a mandate`
               : st.endReason === "blocked"

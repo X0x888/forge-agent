@@ -167,6 +167,7 @@ import {
   getGitSnapshot,
   gitDiffSinceHead,
   gitHeadSha,
+  gitIsClean,
   gitLogSince,
   gitStatusShort,
   type GitSnapshot,
@@ -1832,6 +1833,7 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
           gitDiffSince: (head) => gitDiffSinceHead(workspace, head),
           gitLogSince: (head) => gitLogSince(workspace, head),
           gitStatus: () => gitStatusShort(workspace),
+          gitIsClean: () => gitIsClean(workspace),
           userMessagesSince: (iso) => userMessagesSince(session, iso),
           guidelineSurvey: () => {
             const s = surveyGuidelines(workspace);

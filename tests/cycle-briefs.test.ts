@@ -91,6 +91,19 @@ describe("Planner scout brief (turn 1)", () => {
     assert.equal(b.includes("resolveBadge"), false, "no must-fix from the record");
     assert.equal(b.includes("popup CSS"), false, "no serendipity from the record");
   });
+
+  it("grounds discovery in project consequences and preserves unverified promises", () => {
+    const b = buildPlannerScoutBrief({
+      state: runState(), workspace: "/w", gitStatus: "", projectChecks: ["npm test"],
+    });
+    assert.match(b, /library's consumer example/);
+    assert.match(b, /security and privacy/);
+    assert.match(b, /discovery lenses, not quotas or scores/);
+    assert.match(b, /not required bins/);
+    assert.match(b, /kept \| broken \| absent \| unknown/);
+    assert.match(b, /Unknown means unverified: investigate before proposing repair/);
+    assert.match(b, /An investigation that resolves a consequential unknown is legitimate work/);
+  });
 });
 
 describe("Planner plan brief (turn 2)", () => {
@@ -142,6 +155,18 @@ describe("Planner plan brief (turn 2)", () => {
     assert.ok(b.includes("Promises:"), "the plan carries the promises when there is no scout");
     assert.equal(b.includes("## Your scout (turn 1)"), false);
     assert.ok(b.includes("# Cycle 3 plan"));
+  });
+
+  it("both planning paths permit evidence work and distinguish continued inquiry from forced edits", () => {
+    for (const b of [buildPlannerPlanBrief(input()), buildPlannerBrief(input())]) {
+      assert.match(b, /Existing behavior may already pass while its regression protection is missing/);
+      assert.match(b, /a test-only item must identify the plausible fault its new check catches/);
+      assert.match(b, /Prevented data loss/);
+      assert.match(b, /fulfilled releases a run only when its explicit mandate is met/);
+      assert.match(b, /An investigation may conclude no change is justified/);
+      assert.match(b, /Never invent defects or edits to keep running/);
+      assert.doesNotMatch(b, /say so and the run stops|the behaviour exists and the item is not an item/);
+    }
   });
 });
 
@@ -197,6 +222,20 @@ describe("Reviewer review brief (turn 2)", () => {
     assert.ok(/before you read the diff/i.test(b));
     assert.ok(b.includes("```diff"));
     assert.ok(b.includes("# Cycle 2 review"));
+  });
+
+  it("both review paths accept invisible benefits and separate acceptance defects from future work", () => {
+    for (const b of [buildReviewerReviewBrief(input()), buildReviewerBrief(input())]) {
+      assert.match(b, /Reliability, security, accessibility, performance, recovery, compatibility, maintainability and regression protection can justify a cycle/);
+      assert.match(b, /Test-only changes are valid/);
+      assert.match(b, /Do not require a production edit for behavior that is already correct/);
+      assert.match(b, /A useful investigation may produce no code change/);
+      assert.match(b, /Partial or missing items cannot ship/);
+      assert.match(b, /Verdict: ship-with-revisions: the harness withholds commit/);
+      assert.match(b, /Reserve blocked for an unavailable review/);
+      assert.match(b, /Nonblocking observations and future improvements belong under Architecture/);
+      assert.doesNotMatch(b, /test-only change with no production body|stop planning invisible cycles|first minute, first day/);
+    }
   });
 });
 
