@@ -1,7 +1,7 @@
 # Project memory
 
 > Auto-maintained by Forge. Edit carefully — agent loads this across sessions.
-> key=d54ef9c78f11c027 · updated=2026-08-22T10:21:17.205Z
+> key=d54ef9c78f11c027 · updated=2026-09-07T11:56:19.756Z
 
 ## constraint
 
@@ -16,11 +16,12 @@
 - git apply --3way stages files; land path prefers plain apply then 3way+unstage so parent index stays clean. Unstage must use git() (trimEnd only) + parsePorcelainPath — never execFileSync().trim() on porcelain.
 - Never land src/agent/worktree.ts or AGENTS.md in worktree-land tests — a failed /undo restore deletes the file. Use disposable src/agent/__wt_land_* fixtures + journalLandedPreimages unit path.
 - `/auth` empty is `auth  ·  none` with no Next — login is not a › key. `/accounts` empty still closer `/auth`. `formatAuthCard` hides Next `/auth` so the lastErr key is not circular. `printAuthStatus()` is CLI-only (`forge auth`).
-- Foreground bash / idle !cmd / background bash journal git porcelain deltas into mutations.jsonl so /undo restores shell writes. Snapshot at start; porcelain applies on exit stamped with the launch turn (not live turnCount). /verify sets journal:false. FORGE_BASH_MUTATION_JOURNAL=0 off. /undo of the launch turn settles in-flight bg journals and SIGKILLs those writers. Designed empty: not a repo / clean tree / no recordMutation / still running (until exit or settle).
 - Safety checkpoints use a temp index (untracked in, secrets out), not git stash create. Restore is git restore --source=sha overwrite + mixed reset — never git stash apply. /checkpoint restore falls back to ulw.checkpointSha. Bare /checkpoint peeks; /checkpoint snap takes the snapshot.
 - /files and /last merge mutations.jsonl so bash / background / worktree-land writes appear (those tools have no path arg). Designed empty: no journal / FORGE_BASH_MUTATION_JOURNAL=0 / still-running bg until exit.
-- MCP/LSP stdio createChildEnv(keepSecrets) keeps GITHUB_TOKEN / GH_TOKEN / CONTEXT7_API_KEY (allowlist). AWS / DATABASE_URL / GROQ_API_KEY and other secret globs stay stripped. mcp.json env overlay (set) can pass a key on purpose.
 - apply_patch is a transaction: mid-apply write failure rolls back earlier ops (add→unlink, update→before, delete→rewrite, move→restore src + drop dest). Journal and onEdit run only after the batch commits. Rollback restamps noted files (refreshNotedFromDisk) so a retry is not blocked as changed-on-disk. Designed leftover: empty parent dirs from a rolled-back add.
+- Credential reads (auth.json, id_rsa / ~/.ssh private keys, Cursor auth.json) are hard-denied via isProtectedReadPath — YOLO and --read-outside allow cannot dump tokens into the model. Inspecting .git/hooks and workspace .env stays allowed. Seatbelt denies file-read of auth.json; bwrap binds /dev/null over it when the file exists.
+- Foreground bash / idle !cmd / background bash journal git porcelain deltas into mutations.jsonl so /undo restores shell writes. Snapshot at start; porcelain applies on exit stamped with the launch turn (not live turnCount). /verify sets journal:false. FORGE_BASH_MUTATION_JOURNAL=0 off. /undo of the launch turn settles in-flight bg journals and SIGKILLs those writers. Designed empty: not a repo / clean tree / no recordMutation / still running (until exit or settle).
+- MCP/LSP stdio createChildEnv(keepSecrets) keeps GITHUB_TOKEN / GH_TOKEN / CONTEXT7_API_KEY (allowlist) but never inherits Forge provider keys (XAI_API_KEY, CURSOR_ACCESS_TOKEN, OPENAI_API_KEY, … / PROVIDER_API_KEY_ENV). AWS / DATABASE_URL and other secret globs stay stripped. mcp.json env overlay (set) can pass a key on purpose.
 
 ## convention
 
@@ -28,11 +29,11 @@
 - Sit-down Next at › is a slash key, never a CLI dump (`npm test`, `forge accounts switch`, `forge login`). lastErr map: 429/quota → /accounts, auth → /auth, overflow → /compact, max_cost → /budget, else /retry. Headless `forge run` keeps CLI verbs.
 - Sit-down /budget is verdict-first (HIT / ok / none). HIT Next is /budget off. Raising or clearing the cap so it no longer hits clears lastError.code=max_cost. FORGE_MAX_COST_USD / config.toml stay off ›.
 - Sit-down /doctor Next is slash keys only (/auth /permissions /setup /status). forge login and forge doctor --json stay on surface:cli (forge doctor). Default formatDoctorCloser surface is repl.
-- isolation=worktree auto-lands into parent only when status=completed (FORGE_SUBAGENT_LAND=auto|keep|discard); incomplete_max_turns / abort / error / stop-hook skip apply and keep the worktree even if land=discard. Completed discard still drops without applying. Kept on conflict. FORGE_SUBAGENT_KEEP_WORKTREE=1 forces keep.
-- LAST reflect (`src/harness/last-reflect.ts`): after wrap, score this ULW run automatically (read-only Must-fix vs Live-with). Must-fix: none skips close-out. Listed must-fix holes get one mutation wave, then Cycle complete. FORGE_ULW_LAST_REFLECT=0 off. Score phase does not auto-commit. Fail-open after two missing scorecards.
 - `/budget` is a family spend cap. spawn_subagent pins the child to remaining (not a fresh config.maxCostUsd). Parent HIT refuses spawn. Copy the pre-worktree pin onto child.meta — do not re-pin after createSession (a sibling live-fold can refuse and leave the child uncapped). Live-fold so parallel children share remaining. Cost-cap handoff is `incomplete_cost_cap` (does not land).
 - lsp({ action: ensure }) is a mutation (npm install -g / rustup / go install). Plan / ULW PLAN / dontAsk / headless / session-tool on status do not auto-allow. diagnostics / status / install-guide / dry-run stay read-only. YOLO / allow rule still work. CLI forge lsp ensure is user-initiated.
-- Forge-spawned children use createChildEnv, not raw process.env. Git helpers (checkpoint, journal, worktree, /commit, /diff, auto-commit) must not inherit host GIT_DIR / GIT_INDEX_FILE. Extra env is policy set after the scrub. MCP/LSP stdio: createChildEnv(env, { keepSecrets: true }).
+- Forge-spawned children use createChildEnv, not raw process.env. Git helpers must not inherit host GIT_DIR / GIT_INDEX_FILE. Extra env is policy set after the scrub. MCP/LSP stdio: createChildEnv(env, { keepSecrets: true }) — keeps GITHUB_TOKEN; never inherit XAI_API_KEY / CURSOR_ACCESS_TOKEN / other PROVIDER_API_KEY_ENV names unless mcp.json env sets them.
+- isolation=worktree auto-lands into parent only when status=completed (FORGE_SUBAGENT_LAND=auto|keep|discard); incomplete_max_turns / abort / error / stop-hook skip apply and keep the worktree even if land=discard. Completed discard still drops without applying. Kept on conflict. FORGE_SUBAGENT_KEEP_WORKTREE=1 forces keep.
+- LAST reflect (`src/harness/last-reflect.ts`): after wrap, score this ULW run automatically (read-only Must-fix vs Live-with). Must-fix: none skips close-out. Listed must-fix holes get one mutation wave, then Cycle complete. FORGE_ULW_LAST_REFLECT=0 off. Score phase does not auto-commit. Fail-open after two missing scorecards.
 - workspace/strict OS sandbox write allow is CWD + ~/.forge/{sessions,logs,tmp} + temp — never the ~/.forge root (auth.json). Seatbelt deny-after-allow blocks .git/hooks / .ssh / .gnupg / shell rc / id_rsa even for python/sed/node. git commit/config stay allowed (.git/config and HEAD stay writable); git config core.hooksPath is hard-denied. Missing .git/hooks is mkdir'd so bwrap can ro-bind it. Background bash must use seatbeltProfile (no duplicate writer).
 
 ## fact
