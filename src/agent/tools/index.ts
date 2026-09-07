@@ -10,7 +10,9 @@ import { toolGlob, toolListDir } from "./glob-list.js";
 import { toolWebSearch } from "./web-search.js";
 import { toolWebFetch } from "./web-fetch.js";
 import { toolGetTaskOutput, toolKillTask } from "./task-tools.js";
-import { toolAskUser } from "./ask-user.js";
+import { toolAskUser, formatAskUserUnattended } from "./ask-user.js";
+import { cycleActive, loadCycleState } from "../../harness/cycle/state.js";
+import { loadSessionMeta, type SessionMeta } from "../../session/session.js";
 import { toolEnterPlanMode, toolExitPlanMode } from "./exit-plan-mode.js";
 import {
   toolSearchMcp,
@@ -123,6 +125,40 @@ export function normalizeToolName(name: string): string {
   return raw;
 }
 
+/** Hops up the subagent chain before the walk gives up (root → Planner → explore is two). */
+const UNATTENDED_CHAIN_MAX = 8;
+
+/**
+ * Why ask_user cannot run here, or null. An armed ULW cycle is an unattended
+ * run, and every session under the armed one is part of it: the Reviewer is
+ * its child, the Planner's explore children are its grandchildren, so the
+ * walk follows `subagent.parentId` to the root rather than one hop. A human
+ * `/plan` is the exception — the user has taken planning over and holds the
+ * keyboard until `/build`, so the driver being armed does not make the run
+ * unattended.
+ */
+export function askUserUnattendedReason(ctx: ToolContext): string | null {
+  let id: string | undefined = ctx.session?.meta?.id;
+  let meta: SessionMeta | null | undefined = ctx.session?.meta;
+  const seen = new Set<string>();
+  for (let hop = 0; id && hop < UNATTENDED_CHAIN_MAX; hop++) {
+    if (seen.has(id)) return null;
+    seen.add(id);
+    // The sidecar is keyed by id, so the armed root is found even when its
+    // meta cannot be read; the meta is only needed to find the next parent.
+    try {
+      const s = loadCycleState(id);
+      if (cycleActive(s)) return s?.humanPlan ? null : "the ULW cycle driver is armed (an unattended run)";
+    } catch {
+      /* sidecar unreadable — not armed */
+    }
+    const m = meta && meta.id === id ? meta : loadSessionMeta(id);
+    id = m?.subagent?.parentId;
+    meta = undefined;
+  }
+  return null;
+}
+
 export async function executeTool(
   name: string,
   rawArgs: string,
@@ -212,15 +248,21 @@ export async function executeTool(
         return await toolMemoryWrite(args, ctx);
       case "ask_user":
       case "AskUser":
-      case "question":
-        return await toolAskUser({
+      case "question": {
+        const askInput = {
           question: String(args.question || ""),
           choices: Array.isArray(args.choices)
             ? args.choices.map((c: unknown) => String(c))
             : undefined,
           context:
             args.context != null ? String(args.context) : undefined,
-        });
+        };
+        const unattended = askUserUnattendedReason(ctx);
+        if (unattended) {
+          return formatAskUserUnattended(askInput.question, askInput.choices ?? [], unattended);
+        }
+        return await toolAskUser(askInput);
+      }
       case "enter_plan_mode":
       case "EnterPlanMode":
       case "enterPlanMode":

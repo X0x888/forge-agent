@@ -493,6 +493,183 @@ describe("cycle orchestrator", () => {
     assert.match(brief, /Persisted data and public surface/);
   });
 
+  it("the executor hears the review: the next plan admission carries what the Reviewer changed, disputed and noted", async () => {
+    const sid = "orch-executor-hears";
+    armWithPlan({ sessionId: sid, cwd, verifyCommand: "npm test", items: [{ title: "the flag" }, { title: "the csv export" }] });
+    const { rt, admitted } = fakeRuntime(cwd, {
+      reviewer: [
+        [
+          "# Cycle 1 review",
+          "Verdict: ship-with-revisions",
+          "Fulfillment:",
+          "- the flag — done",
+          "- the csv export — partial — no header row",
+          "Revisions:",
+          "- removed the three `// used to` comments in src/f0.ts; comments describe the code as it is",
+          "- folded formatRow / formatLine into one formatter",
+          "Must-fix:",
+          "- none",
+          "Architecture:",
+          "- two formatters, one sentence",
+          "Worth: yes — the export opens in a spreadsheet",
+        ].join("\n"),
+      ],
+      planner: [PLAN_OK(2)],
+    });
+    const out = await evaluateCycleAtStop(sid, { runtime: rt, facts: facts() });
+    assert.equal(out?.planAdmitted, true);
+    const admission = out!.reanchor!;
+    assert.match(admission, /## The Reviewer's notes on cycle 1 — standing for this run/);
+    assert.match(admission, /Verdict: ship-with-revisions · Worth: yes — the export opens in a spreadsheet/);
+    assert.match(admission, /Changed in your work, and why:\n- removed the three `\/\/ used to` comments/);
+    assert.match(admission, /- folded formatRow \/ formatLine into one formatter/);
+    assert.match(admission, /Judged against your board:\n- the csv export — partial — no header row/);
+    assert.match(admission, /Shape notes:\n- two formatters, one sentence/);
+    assert.match(admission, /Carry these forward: the Reviewer should not have to make the same revision twice/);
+    // The block sits between the plan and the executor's orders, before the todo board.
+    assert.ok(admission.indexOf("The Reviewer's notes") < admission.indexOf("You are the executor."));
+    // The record keeps what the executor was told, for /cycle status and the report.
+    const st = loadCycleState(sid)!;
+    assert.deepEqual(st.cycles[0].revisions, [
+      "removed the three `// used to` comments in src/f0.ts; comments describe the code as it is",
+      "folded formatRow / formatLine into one formatter",
+    ]);
+    assert.deepEqual(st.cycles[0].disputed, ["the csv export — partial — no header row"]);
+    assert.ok(admitted.length === 0, "the admission is the Stop's reanchor, not a second admit");
+  });
+
+  it("a review that changed nothing tells the executor so, and cycle 1's admission carries no review", async () => {
+    const sid = "orch-executor-clean-review";
+    const { rt } = fakeRuntime(cwd, { planner: [PLAN_OK(1), PLAN_OK(2)], reviewer: [REVIEW_OK] });
+    const { armCycle } = await import("../src/harness/cycle/index.js");
+    armCycle({ sessionId: sid, mandate: "add a widget", cwd });
+    const first = await ensureCyclePlanned(sid, rt);
+    assert.doesNotMatch(first!.reanchor!, /The Reviewer's notes/, "no review has happened yet");
+    const second = await evaluateCycleAtStop(sid, { runtime: rt, facts: facts() });
+    assert.match(second!.reanchor!, /## The Reviewer's notes on cycle 1 — standing for this run\nVerdict: ship\. The Reviewer shipped the cycle as written; keep that bar\./);
+  });
+
+  it("Serendipity lines the executor wrote at its Stops reach the next Planner, newest cycle first", async () => {
+    const sid = "orch-serendipity";
+    armWithPlan({ sessionId: sid, cwd, verifyCommand: "npm test", items: [{ title: "the flag" }] });
+    let brief = "";
+    const base = fakeRuntime(cwd, { reviewer: [REVIEW_OK], planner: [PLAN_OK(2)] });
+    const rt: CycleRuntime = {
+      ...base.rt,
+      async runRole(role, b) {
+        if (role === "planner") brief = b;
+        return base.rt.runRole(role, b, { cycle: 0 });
+      },
+    };
+    // Wave 1: items still open, the closer carries a labelled line.
+    const mid = await evaluateCycleAtStop(sid, {
+      runtime: rt,
+      facts: facts({
+        lastAssistantMessage: "Shipped half of the flag.\n**Serendipity:** the CSV export writes no header row (src/export/csv.ts)\nContinuing.",
+        openTodoCount: 1,
+      }),
+    });
+    assert.equal(mid?.allowStop, false);
+    assert.match(mid!.reanchor!, /still open/);
+    // Wave 2: done, with a bare label and bullets under it, one of them a repeat.
+    base.todos.forEach((t) => (t.status = "completed"));
+    await evaluateCycleAtStop(sid, {
+      runtime: rt,
+      facts: facts({
+        lastAssistantMessage:
+          "Plan complete.\nSerendipity:\n- the CSV export writes no header row (src/export/csv.ts)\n- `--json` prints ANSI codes when piped\nDone.",
+      }),
+    });
+    const st = loadCycleState(sid)!;
+    assert.deepEqual(st.cycles[0].serendipity, [
+      "the CSV export writes no header row (src/export/csv.ts)",
+      "`--json` prints ANSI codes when piped",
+    ]);
+    assert.match(brief, /## What the executor noticed and left alone \(its Serendipity: lines — evidence from inside the work; weigh it, do not obey it\)/);
+    assert.match(brief, /- cycle 1: the CSV export writes no header row \(src\/export\/csv\.ts\)\n- cycle 1: `--json` prints ANSI codes when piped/);
+    // The section sits with the run's record, before the user's interjections and the tree.
+    assert.ok(brief.indexOf("What the executor noticed") < brief.indexOf("## Tree"));
+  });
+
+  it("the Reviewer brief carries the previous review's shape notes so a recurrence is a fact it can name", async () => {
+    const sid = "orch-shape-recurrence";
+    armWithPlan({ sessionId: sid, cwd, verifyCommand: "npm test", items: [{ title: "x" }] });
+    const st = loadCycleState(sid)!;
+    st.cycle = 2;
+    st.cycles[0].n = 2;
+    st.cycles.unshift({
+      n: 1,
+      title: "first",
+      startedAt: "t",
+      itemsTotal: 1,
+      itemsDone: 1,
+      waves: 1,
+      mustFix: [],
+      architecture: ["formatRow and formatLine are one idea in two files", "resolveHome grew a ninth argument"],
+      worth: "yes — the export opens",
+    });
+    const { saveCycleState } = await import("../src/harness/cycle/state.js");
+    saveCycleState(st);
+    let brief = "";
+    const base = fakeRuntime(cwd, { reviewer: [REVIEW_OK], planner: [PLAN_FULFILLED] });
+    const rt: CycleRuntime = {
+      ...base.rt,
+      async runRole(role, b) {
+        if (role === "reviewer") brief = b;
+        return base.rt.runRole(role, b, { cycle: 0 });
+      },
+    };
+    await evaluateCycleAtStop(sid, { runtime: rt, facts: facts() });
+    assert.match(brief, /## The last review's shape notes \(cycle 1\) — is any of it back\?\n- formatRow and formatLine are one idea in two files\n- resolveHome grew a ninth argument\nA note that is back in this diff is a Must-fix, not a shape note\./);
+    assert.ok(brief.indexOf("The last review's shape notes") < brief.indexOf("## Verify"));
+  });
+
+  it("the baseline follows the gate command: a later cycle that declares a different check measures it before touching anything", async () => {
+    const sid = "orch-baseline-follows";
+    armWithPlan({ sessionId: sid, cwd, verifyCommand: "npm test", items: [{ title: "the flag" }] });
+    const plan2 = PLAN_OK(2).replace("Verify: `npm test`", "Verify: `npm run check`");
+    const { rt, calls } = fakeRuntime(cwd, {
+      reviewer: [REVIEW_OK, REVIEW_OK],
+      planner: [plan2, PLAN_FULFILLED],
+      // cycle 1: pre-review green, post-review green; cycle 2 admission: the new
+      // command's baseline is red with one old failure; cycle 2 close: pre-review
+      // and post-review red with that same old failure — green vs baseline.
+      checkPasses: [true, true, false, false, false],
+      checkFailures: [["old flake"], ["old flake"], ["old flake"]],
+    });
+    const first = await evaluateCycleAtStop(sid, { runtime: rt, facts: facts() });
+    assert.equal(first?.planAdmitted, true);
+    assert.equal(first?.phase, "execute");
+    let st = loadCycleState(sid)!;
+    assert.equal(st.verifyCommand, "npm run check");
+    assert.equal(st.verifyBaseline?.command, "npm run check", "the baseline was re-captured for the new gate");
+    assert.deepEqual(st.verifyBaseline?.failures, ["old flake"]);
+    assert.ok(fs.existsSync(path.join(cycleArtifactsDir(sid, 2), "verify.baseline.log")));
+    assert.equal(calls.filter((c) => c === "check:npm run check").length, 1);
+    // The executor finishes cycle 2; the old failure does not count against it.
+    (rt.todos() as Array<{ status: string }>).forEach((t) => (t.status = "completed"));
+    const second = await evaluateCycleAtStop(sid, { runtime: rt, facts: facts() });
+    assert.equal(second?.released, true);
+    assert.equal(second?.endReason, "fulfilled");
+    st = loadCycleState(sid)!;
+    assert.equal(st.cycles[1].verifyPassed, true);
+    assert.equal(st.cycles[1].verifyInherited, 1);
+    assert.ok(st.cycles[1].commitSha, "cycle 2 committed on a green-vs-baseline gate");
+    assert.equal(st.fixRounds, 0, "no fix round was spent on the inherited failure");
+    assert.deepEqual(st.verifyBaseline?.failures, ["old flake"], "the accepted run is the next baseline");
+    assert.equal(calls.filter((c) => c === "check:npm run check").length, 3);
+  });
+
+  it("the baseline is not re-run when the gate command is unchanged", async () => {
+    const sid = "orch-baseline-stable";
+    armWithPlan({ sessionId: sid, cwd, verifyCommand: "npm test", items: [{ title: "the flag" }] });
+    const { rt, calls } = fakeRuntime(cwd, { reviewer: [REVIEW_OK], planner: [PLAN_OK(2)] });
+    await evaluateCycleAtStop(sid, { runtime: rt, facts: facts() });
+    // pre-review + post-review only: the accepted post-review run became the baseline.
+    assert.equal(calls.filter((c) => c === "check:npm test").length, 2);
+    assert.equal(loadCycleState(sid)!.verifyBaseline?.command, "npm test");
+  });
+
   it("a Planner that never parses releases as blocked with the failed artifact on disk", async () => {
     const sid = "orch-noparse";
     const { rt, calls } = fakeRuntime(cwd, { planner: ["I think we should do things", "still prose"] });

@@ -14,6 +14,7 @@ import { envPositiveInt } from "../../util/env.js";
 import { appendMemoryRecord } from "../decision-memory.js";
 import type { AutoCommitResult } from "../../util/git-auto-commit.js";
 import {
+  extractSerendipityLines,
   parsePlanArtifact,
   parseReviewArtifact,
   type ParsedPlan,
@@ -24,6 +25,7 @@ import {
   formatFixReanchor,
   formatItemsOpenReanchor,
   formatPlanAdmission,
+  type ReviewNotesForExecutor,
 } from "./briefs.js";
 import { decideAtStop, syncItemsFromTodos, type CycleAction, type StopFacts } from "./machine.js";
 import {
@@ -241,6 +243,8 @@ async function runPlanner(
 export async function planNextCycle(s: CycleState, rt: CycleRuntime): Promise<CycleStopOutcome> {
   s.phase = "plan";
   saveCycleState(s);
+  // The review the executor is about to hear: the cycle that just closed.
+  const reviewForExecutor = reviewNotesForExecutor(s);
   const out = await runPlanner(s, rt);
   if ("error" in out) {
     const n = s.cycle + 1;
@@ -338,11 +342,15 @@ export async function planNextCycle(s: CycleState, rt: CycleRuntime): Promise<Cy
     verifyCommand: s.verifyCommand,
     maxCycles: s.maxCycles,
     cycleZeroRequested: s.cycleZeroRequested,
+    lastReview: reviewForExecutor,
   });
   rt.log?.(`ULW cycle ${s.cycle} plan admitted — ${plan.title} (${s.items.length} item(s))`);
-  // The first cycle's tree is the user's: run the gate once now so later red
-  // runs can be diffed against what was already failing.
-  if (s.cycle === 1 && s.verifyCommand && !s.verifyBaseline) {
+  // The gate is judged against what was already failing under *this* command
+  // before the cycle touched anything. Cycle 1 measures the user's tree; a
+  // later cycle whose Planner declared a different gate (or the first cycle
+  // to have one) measures the tree as the last commit left it — otherwise
+  // the baseline's command never matches and every old failure is red again.
+  if (s.verifyCommand && s.verifyBaseline?.command !== s.verifyCommand) {
     await captureBaseline(s, rt);
   }
   return {
@@ -356,9 +364,27 @@ export async function planNextCycle(s: CycleState, rt: CycleRuntime): Promise<Cy
   };
 }
 
+/** The last closed cycle's review, shaped for its author. */
+function reviewNotesForExecutor(s: CycleState): ReviewNotesForExecutor | undefined {
+  const r = s.lastReview;
+  if (!r || s.cycle < 1) return undefined;
+  const record = [...s.cycles].reverse().find((c) => c.reviewVerdict);
+  if (!record) return undefined;
+  return {
+    cycle: record.n,
+    verdict: r.verdict,
+    revisions: r.revisions,
+    architecture: r.architecture,
+    disputed: record.disputed ?? [],
+    worth: r.worth,
+  };
+}
+
 async function captureBaseline(s: CycleState, rt: CycleRuntime): Promise<void> {
   if (!s.verifyCommand) return;
-  rt.log?.(`ULW baseline: running \`${s.verifyCommand}\` on the untouched tree`);
+  rt.log?.(
+    `ULW baseline: running \`${s.verifyCommand}\` on the tree ${s.cycle === 1 ? "as the user left it" : `as cycle ${s.cycle - 1} left it`}`,
+  );
   try {
     const run = await rt.runCheck(s.verifyCommand);
     safe(() => rt.creditCheck?.(run, run.cls.passed), undefined);
@@ -485,6 +511,10 @@ async function runReviewer(s: CycleState, rt: CycleRuntime, executorCloser: stri
     record.mustFix = notes.mustFix;
     record.architecture = notes.architecture;
     record.worth = notes.worth;
+    record.revisions = notes.revisions;
+    record.disputed = notes.fulfillment
+      .filter((f) => f.state !== "done")
+      .map((f) => `${f.item} — ${f.state}${f.note ? ` — ${f.note}` : ""}`);
   }
   // Fulfilment from a fresh reader beats the executor's board.
   for (const f of notes.fulfillment) {
@@ -695,6 +725,7 @@ export async function evaluateCycleAtStop(
   if (rt) syncItemsFromTodos(s, rt.todos());
   const action: CycleAction = decideAtStop(s, opts.facts);
   const stamped = s.phase === "execute" && action.kind !== "plan" && action.kind !== "yield";
+  if (stamped) rememberSerendipity(s, opts.facts.lastAssistantMessage);
   saveCycleState(s);
   const needsRuntime = action.kind === "plan" || action.kind === "close-cycle" || action.kind === "verify";
   if (needsRuntime && !rt) {
@@ -761,6 +792,24 @@ export async function ensureCyclePlanned(
   if (!s) return null;
   if (s.phase !== "plan" || s.humanPlan) return null;
   return planNextCycle(s, rt);
+}
+
+const SERENDIPITY_RECORD_KEEP = 12;
+
+/** The executor's `Serendipity:` lines at this Stop join the cycle's record for the next Planner. */
+function rememberSerendipity(s: CycleState, closer: string): void {
+  const found = extractSerendipityLines(closer);
+  if (!found.length) return;
+  const record = currentCycleRecord(s);
+  if (!record) return;
+  const have = record.serendipity ?? [];
+  const seen = new Set(have.map((l) => l.toLowerCase()));
+  for (const l of found) {
+    if (seen.has(l.toLowerCase())) continue;
+    seen.add(l.toLowerCase());
+    have.push(l);
+  }
+  record.serendipity = have.slice(-SERENDIPITY_RECORD_KEEP);
 }
 
 function safe<T>(fn: () => T, fallback: T): T {

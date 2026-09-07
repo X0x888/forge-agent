@@ -88,6 +88,12 @@ export interface CycleRecord {
   /** The Reviewer's shape notes and its answer to "would a user notice this cycle?" */
   architecture?: string[];
   worth?: string;
+  /** What the Reviewer changed in the executor's work, and why — the executor reads these at the next plan. */
+  revisions?: string[];
+  /** Plan items the Reviewer judged partial or missing against the executor's board. */
+  disputed?: string[];
+  /** `Serendipity:` lines the executor wrote at its Stops — what it noticed and left alone, for the next Planner. */
+  serendipity?: string[];
   plannerTokens?: number;
   reviewerTokens?: number;
 }
@@ -144,10 +150,13 @@ export interface CycleState {
   lastReview?: CycleReviewNotes;
   lastVerifyTail?: string;
   /**
-   * The verify command's failures before the cycle touched anything (taken
-   * at cycle 1's plan admission, then the accepted set after each commit).
-   * The gate is "no new failures", not "exit 0" — a repo with pre-existing
-   * environment failures is otherwise never green.
+   * The verify command's failures before the cycle touched anything: taken at
+   * the first plan admission whose gate is this command (cycle 1's tree, or
+   * the tree as the last commit left it when a later Planner declares a
+   * different check), then the accepted run after each commit. The gate is
+   * "no new failures", not "exit 0" — a repo with pre-existing environment
+   * failures is otherwise never green, and a baseline keyed to another
+   * command would match nothing.
    */
   verifyBaseline?: {
     command: string;

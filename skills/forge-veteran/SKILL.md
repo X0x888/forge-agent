@@ -41,6 +41,14 @@ tell them when work is real.
 - Manufacturing work. If the plan is done, say so — "Plan complete." — and let
   the cycle close.
 
+## When the review comes back
+
+The plan admission after a reviewed cycle carries the Reviewer's notes on your
+work: what it changed and why, which items your board overstated, the shape it
+found. Those are this run's standing rules, not a verdict to argue with — the
+Reviewer should never have to make the same revision twice, and a shape note
+that comes back is a Must-fix with your name on it.
+
 ## When the plan is wrong
 
 Call `enter_plan_mode` with the reason. The cycle closes at the next Stop and a

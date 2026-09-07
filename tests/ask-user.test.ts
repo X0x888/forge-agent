@@ -22,6 +22,94 @@ describe("ask_user", () => {
     else process.env.FORGE_HEADLESS = prevHeadless;
   });
 
+  it("fails closed while the ULW cycle driver is armed — the run is unattended, the root's arm covers every session under it, and a human /plan hands the keyboard back", async () => {
+    const fs = await import("node:fs");
+    const os = await import("node:os");
+    const path = await import("node:path");
+    const { armCycle, disarmCycle } = await import("../src/harness/cycle/index.js");
+    const { mkGitRepo } = await import("./helpers/cycle-arm.js");
+    const prevHome = process.env.FORGE_HOME;
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "forge-ask-ulw-home-"));
+    process.env.FORGE_HOME = home;
+    try {
+      const cwd = mkGitRepo("forge-ask-ulw-");
+      const sid = "ask-ulw-root";
+      armCycle({ sessionId: sid, mandate: "add a widget", cwd });
+      const asSession = (meta: Record<string, unknown>) => ({ session: { meta } as never });
+      const root = await executeTool(
+        "ask_user",
+        JSON.stringify({ question: "Ship the migration now, or wait?", choices: ["ship now", "wait"] }),
+        { workspace: cwd, ...asSession({ id: sid }) },
+      );
+      assert.equal(root.isError, true);
+      assert.match(root.output, /^ask_user is off: the ULW cycle driver is armed \(an unattended run\)\. Nobody is at the keyboard\./);
+      assert.match(root.output, /Decide it yourself and record the assumption in your closer/);
+      assert.match(root.output, /write an Operator: line and continue/);
+      assert.match(root.output, /Your choices were: 1\) ship now; 2\) wait\. Question was: Ship the migration now, or wait\?/);
+      assert.doesNotMatch(root.output, /headless/);
+      // A harness role (the Reviewer) is a child of the armed session.
+      const child = await executeTool(
+        "ask_user",
+        JSON.stringify({ question: "Keep the old key?" }),
+        { workspace: cwd, ...asSession({ id: "ask-ulw-child", subagent: { parentId: sid, type: "general-purpose", isolation: "none" } }) },
+      );
+      assert.match(child.output, /^ask_user is off: the ULW cycle driver is armed/);
+      // The Planner's explore child is a grandchild: its parent is the Planner's
+      // own session, which has no ulw.json. The walk follows the chain to the root.
+      const { createSession, saveSession } = await import("../src/session/session.js");
+      const planner = createSession({ cwd, provider: "xai", model: "grok-4", title: "cycle planner: test" });
+      planner.meta.subagent = { parentId: sid, type: "general-purpose", isolation: "none" };
+      saveSession(planner);
+      const grandchild = await executeTool(
+        "ask_user",
+        JSON.stringify({ question: "Which module holds the export?" }),
+        { workspace: cwd, ...asSession({ id: "ask-ulw-explore", subagent: { parentId: planner.meta.id, type: "explore", isolation: "none" } }) },
+      );
+      assert.match(grandchild.output, /^ask_user is off: the ULW cycle driver is armed/);
+      // A chain that ends in an unarmed, unknown parent is not unattended.
+      const orphan = await executeTool(
+        "ask_user",
+        JSON.stringify({ question: "Which module holds the export?" }),
+        { workspace: cwd, ...asSession({ id: "ask-ulw-orphan", subagent: { parentId: "no-such-session", type: "explore", isolation: "none" } }) },
+      );
+      assert.match(orphan.output, /headless\/non-interactive/);
+      // Human /plan: the user has taken planning over and holds the keyboard.
+      const { setHumanPlan } = await import("../src/harness/cycle/index.js");
+      setHumanPlan(sid, true);
+      const humanPlan = await executeTool(
+        "ask_user",
+        JSON.stringify({ question: "Ship the migration now, or wait?" }),
+        { workspace: cwd, ...asSession({ id: sid }) },
+      );
+      assert.match(humanPlan.output, /headless\/non-interactive/, "under /plan the ordinary path is back");
+      setHumanPlan(sid, false);
+      const armedAgain = await executeTool(
+        "ask_user",
+        JSON.stringify({ question: "Ship the migration now, or wait?" }),
+        { workspace: cwd, ...asSession({ id: sid }) },
+      );
+      assert.match(armedAgain.output, /^ask_user is off: the ULW cycle driver is armed/, "/build hands it back");
+      // Disarmed: the ordinary (headless here) path is back.
+      disarmCycle(sid);
+      const after = await executeTool(
+        "ask_user",
+        JSON.stringify({ question: "Keep the old key?" }),
+        { workspace: cwd, ...asSession({ id: sid }) },
+      );
+      assert.match(after.output, /headless\/non-interactive/);
+      // An unrelated session is untouched.
+      const other = await executeTool(
+        "ask_user",
+        JSON.stringify({ question: "Keep the old key?" }),
+        { workspace: cwd, ...asSession({ id: "ask-ulw-other" }) },
+      );
+      assert.match(other.output, /headless\/non-interactive/);
+    } finally {
+      if (prevHome === undefined) delete process.env.FORGE_HOME;
+      else process.env.FORGE_HOME = prevHome;
+    }
+  });
+
   it("is in TOOL_DEFINITIONS", () => {
     assert.ok(
       TOOL_DEFINITIONS.some(

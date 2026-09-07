@@ -1,4 +1,4 @@
-<!-- proofread 2026-09-03T20:45Z · forge -->
+<!-- proofread 2026-09-07T13:48Z · oh-my-claude -->
 
 # AGENTS.md — Forge CLI
 
@@ -9,7 +9,7 @@ Forge is a TypeScript (Node 20+) AI coding agent CLI. The product is the **harne
 ```bash
 npm install
 npm run typecheck        # tsc --noEmit (fast, run after every edit)
-npm test                 # node:test via tsx; ~2,400 tests in about two minutes; FORGE_HOME is sandboxed to .tmp/
+npm test                 # node:test via tsx; ≈2,450 tests in about a minute; FORGE_HOME is sandboxed to .tmp/
 npm run build            # tsc → dist/ (bin: forge)
 npm run dev -- "…"       # tsx src/cli.ts
 npm run smoke            # build + scripts/smoke.mjs
@@ -17,7 +17,7 @@ npm run smoke            # build + scripts/smoke.mjs
 
 One test file: `npx tsx --test tests/foo.test.ts` (an isolate is proof=ran, not proof=✓ — the suite is the bar).
 The script clears `.tmp/forge-*` first: `TMPDIR` is pinned inside the repo and fixtures leave their scratch behind, and a `.tmp` grown to six figures of files makes the background-task tests time out at 10s with an unrelated-looking failure.
-Known baseline: the markdown-renderer / NO_COLOR / HUD-width tests and the `forge run` CLI tests fail on a clean `main` without a TTY or a `dist/` build — diff the `✖` lines against a run at the merge-base before blaming a change.
+Known baseline: on a machine with `~/.cursor/hooks.json`, 11 loop tests die with `TypeError: m.hooks is not iterable` (the compat loader in `src/harness/hooks.ts` iterates Cursor's native entries, which have no `hooks[]`; unfixed), and the `reliability` doctor-card equality can differ between two renders — diff the `✖` lines against a run at the merge-base before blaming a change, and attribute by cause text first.
 
 ## Layout (where things live)
 
@@ -28,7 +28,7 @@ Known baseline: the markdown-renderer / NO_COLOR / HUD-width tests and the `forg
 - `src/agent/` also: `permissions.ts` / `rules.ts` / `sandbox.ts` / `shell-parse.ts` (deny > ask > allow; segment-strict bash), `subagent.ts` (explore / plan / general-purpose, worktree isolation).
 - `src/harness/` — the product:
   - `stop-guard.ts` composes, in order: user Stop hooks → `report-guard.ts` (attestation pass for `**Goal achieved.**`, **before the drivers**) → `goal.ts` → `cycle/` (the ULW driver) → `todo-gate.ts` → `handoff-guard.ts` → `proof-claim-guard.ts` → `report-guard.ts`. Every block is counted per guard in `guardBlocks` (run JSON · `metrics.jsonl` · `forge stats` harness row).
-  - `cycle/` — the ULW plan-cycle driver: `state.ts` (schema-2 `ulw.json`: cycle, phase, plan items, `cycles[]`, ledger), `machine.ts` (pure `decideAtStop`), `artifacts.ts` (`plan.md` / `review.md` parsers — labelled lines, never intent), `briefs.ts` (what the fresh Planner / Reviewer are handed), `orchestrator.ts` (runs the roles, the harness-run verify and the commit through an injected `CycleRuntime`; `ensureCyclePlanned` at turn start), `verify.ts`, `controls.ts` (`/cycle 0` = finish the open cycle then stop; `/replan`; `/max-cycles`), `status.ts`. There is **no mandate classifier and no wave meter**: the Planner decides `fulfilled`, the Reviewer judges the diff, the harness enforces sequence and facts (no writes before a plan, no commit before a completed review and a green harness-run check — green is "no new failures against the cycle-1 baseline", never an isolate; the order is verify → review → verify → commit so the Reviewer reads a tree that passes). HashPet (`~/.forge/sessions/23b2c2a5*`, 791 waves, every meter green, architecture 74 → 36) is why the meters became a Reviewer. `verification.ts` / `verify-command.ts` / `declared-checks.ts` classify what a check run is.
+  - `cycle/` — the ULW plan-cycle driver: `state.ts` (schema-2 `ulw.json`: cycle, phase, plan items, `cycles[]`, ledger), `machine.ts` (pure `decideAtStop`), `artifacts.ts` (`plan.md` / `review.md` parsers — labelled lines, never intent), `briefs.ts` (what the fresh Planner / Reviewer are handed, and what the executor hears of the last review at the next plan admission), `orchestrator.ts` (runs the roles, the harness-run verify and the commit through an injected `CycleRuntime`; `ensureCyclePlanned` at turn start), `verify.ts`, `controls.ts` (`/cycle 0` = finish the open cycle then stop; `/replan`; `/max-cycles`), `status.ts`. There is **no mandate classifier and no wave meter**: the Planner decides `fulfilled`, the Reviewer judges the diff, the harness enforces sequence and facts (no writes before a plan, no commit before a completed review and a green harness-run check — green is "no new failures against the baseline", never an isolate — the baseline is captured the first time each gate command is seen: cycle 1's tree, or the tree as the last commit left it when a later Planner declares a different check, then the accepted run after each commit; the order is verify → review → verify → commit so the Reviewer reads a tree that passes). HashPet (`~/.forge/sessions/23b2c2a5*`, 791 waves, every meter green, architecture 74 → 36) is why the meters became a Reviewer. `verification.ts` / `verify-command.ts` / `declared-checks.ts` classify what a check run is.
   - `context-admit.ts` — live counters as mid-conversation messages (never rewrite message[0]); `live-notices.ts`, `interjection.ts`.
   - `decision-memory.ts` (session `decisions.json`) and `project-memory.ts` (`~/.forge/project-memory/*.json` + tracked `.forge/MEMORY.md` mirror).
   - `guideline-audit.ts` — first action of a work turn: survey the `AGENTS.md`-class files the prompt actually loads; **fact defects** (dead paths, missing scripts, PM mismatch, clipped, empty) are fixed in place by the model, **doctrine** (long / conflict / no-commands) goes to a proposal outside the repo for `/guidelines diff|apply|discard` (or `guidelineAutoApply`); evidence-triggered, no Stop block (registry `~/.forge/guidelines/`); a look is an argument that resolves to the file, never a mention of its name.
@@ -66,4 +66,4 @@ Known baseline: the markdown-renderer / NO_COLOR / HUD-width tests and the `forg
 - Test fixtures must `git init` their temp workspace. An empty `.git` dir is not a repo, `TMPDIR` points inside this repo during `npm test`, and git walks up — a fixture that commits a cycle will otherwise commit the developer's working tree.
 - Real ULW runs are the ground truth for harness changes: `~/.forge/sessions/*/ulw.json` (`cycles[]`, ledger) and `cycles/<n>/plan.md` / `review.md`. Survey them before adding a rule.
 - Changelog: add an entry under `## Unreleased` in `CHANGELOG.md` for user-visible behaviour, in the same "job:" style as its neighbours.
-- Deep detail lives in `docs/HARNESS.md`, `docs/ULW.md` and the per-module contracts in `docs/MODULES.md` — extend those, not this file. This file is a map, not a manual: keep it under 12k chars so the prompt loader shows all of it.
+- Deep detail lives in `docs/HARNESS.md`, `docs/ULW.md` and the per-module contracts in `docs/MODULES.md` — extend those, not this file. This file is a map, not a manual: keep it under 12k chars — that is the per-file floor when several rule files load (`ruleFileBudget` in `src/agent/instruction-paths.ts`), and every char here is paid on every prompt.

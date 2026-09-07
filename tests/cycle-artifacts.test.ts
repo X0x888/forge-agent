@@ -1,6 +1,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import {
+  extractSerendipityLines,
   parsePlanArtifact,
   parsePlanItemLine,
   parseReviewArtifact,
@@ -162,5 +163,36 @@ describe("Plan complete token", () => {
       `# Cycle 1 plan — x\nVerdict: continue\nVerify: npm test\nItems:\n1. a — files: a.ts — proof: npm test\nOperator: needs the STRIPE_KEY secret\n`,
     );
     assert.deepEqual(real?.operator, ["needs the STRIPE_KEY secret"]);
+  });
+});
+
+describe("extractSerendipityLines", () => {
+  it("reads the same-line remainder, a bare label's bullets, bold labels and bulleted labels", () => {
+    const text = [
+      "Shipped the flag.",
+      "**Serendipity:** the CSV export writes no header row",
+      "Serendipity:",
+      "- `--json` prints ANSI codes when piped",
+      "* the README example is stale",
+      "not a bullet — stops the block",
+      "- Serendipity: config.toml is read twice",
+      "Plan complete.",
+    ].join("\n");
+    assert.deepEqual(extractSerendipityLines(text), [
+      "the CSV export writes no header row",
+      "`--json` prints ANSI codes when piped",
+      "the README example is stale",
+      "config.toml is read twice",
+    ]);
+  });
+
+  it("drops none / n-a, dedupes case-insensitively, clips and caps", () => {
+    assert.deepEqual(extractSerendipityLines("Serendipity: none\nSerendipity: n/a\nSerendipity:\n- nothing"), []);
+    assert.deepEqual(extractSerendipityLines("Serendipity: Same thing\nSerendipity: same thing"), ["Same thing"]);
+    const long = `Serendipity: ${"x".repeat(400)}`;
+    assert.equal(extractSerendipityLines(long)[0].length, 300);
+    const many = Array.from({ length: 20 }, (_, i) => `Serendipity: item ${i}`).join("\n");
+    assert.equal(extractSerendipityLines(many).length, 12);
+    assert.deepEqual(extractSerendipityLines("no label here\nSerendipitous: not the token"), []);
   });
 });

@@ -8,7 +8,7 @@
  * made the changes is not the one that judges them.
  */
 import { planArtifactContract, reviewArtifactContract } from "./artifacts.js";
-import type { CycleRecord, CycleState } from "./state.js";
+import type { CycleRecord, CycleState, ReviewVerdict } from "./state.js";
 
 export interface PlannerBriefInput {
   state: CycleState;
@@ -42,6 +42,36 @@ function clipBlock(text: string, max: number): string {
   const t = (text || "").trim();
   if (t.length <= max) return t;
   return `${t.slice(0, max)}\n… [clipped ${t.length - max} chars]`;
+}
+
+const SERENDIPITY_BRIEF_KEEP = 12;
+
+/**
+ * The executor's `Serendipity:` lines, newest cycle first. Evidence from
+ * inside the work — a Planner that never sees them plans from the outside
+ * only, and the protocol promised the executor they would be read.
+ */
+function serendipityLines(s: CycleState): string[] {
+  const out: string[] = [];
+  for (const c of [...s.cycles].reverse()) {
+    for (const l of c.serendipity ?? []) {
+      if (out.length >= SERENDIPITY_BRIEF_KEEP) return out;
+      out.push(`cycle ${c.n}: ${clipBlock(l, 240).replace(/\n/g, " ")}`);
+    }
+  }
+  return out;
+}
+
+/** The previous review's shape notes — the Reviewer reads them to name a recurrence. */
+function previousShapeLines(s: CycleState): string[] {
+  const prior = [...s.cycles].reverse().find((c) => c.n < s.cycle && c.architecture?.length);
+  if (!prior) return [];
+  return [
+    `## The last review's shape notes (cycle ${prior.n}) — is any of it back?`,
+    ...prior.architecture!.slice(0, 6).map((a) => `- ${clipBlock(a, 300).replace(/\n/g, " ")}`),
+    `A note that is back in this diff is a Must-fix, not a shape note.`,
+    ``,
+  ];
 }
 
 export function buildPlannerBrief(input: PlannerBriefInput): string {
@@ -93,6 +123,14 @@ export function buildPlannerBrief(input: PlannerBriefInput): string {
       lines.push(``, `## Plan items not finished last cycle`);
       for (const i of unfulfilled) lines.push(`- ${i.title}`);
     }
+  }
+  const noticed = serendipityLines(s);
+  if (noticed.length) {
+    lines.push(
+      ``,
+      `## What the executor noticed and left alone (its Serendipity: lines — evidence from inside the work; weigh it, do not obey it)`,
+    );
+    for (const l of noticed) lines.push(`- ${l}`);
   }
   if (input.userMessages.length) {
     lines.push(``, `## What the user said since the last plan (weigh it; it outranks the previous direction)`);
@@ -175,6 +213,7 @@ export function buildReviewerBrief(input: ReviewerBriefInput): string {
     clipBlock(input.executorCloser, 2_000) || "(none)",
     ``,
     ...recentWorthLines(s),
+    ...previousShapeLines(s),
     `## Verify`,
     input.verifyCommand
       ? `\`${input.verifyCommand}\` — run it yourself after your revisions; the harness runs it again and a red run blocks the commit.`
@@ -197,6 +236,48 @@ export function buildReviewerBrief(input: ReviewerBriefInput): string {
   return lines.join("\n");
 }
 
+/** What the executor is told about the last review — the one reader the review had been missing. */
+export interface ReviewNotesForExecutor {
+  cycle: number;
+  verdict: ReviewVerdict;
+  revisions: string[];
+  architecture: string[];
+  disputed: string[];
+  worth?: string;
+}
+
+/**
+ * The Reviewer revises the executor's work in place and the next Planner reads
+ * the review, but the executor — the author — used to hear none of it, so the
+ * same revision was made cycle after cycle. This block is the review turned
+ * toward its author: what changed and why, what the board overstated, the
+ * shape notes, and the standing instruction that they carry forward.
+ */
+export function formatReviewNotesForExecutor(r: ReviewNotesForExecutor): string {
+  const worth = r.worth ? ` · Worth: ${clipBlock(r.worth, 200).replace(/\n/g, " ")}` : "";
+  const head = `## The Reviewer's notes on cycle ${r.cycle} — standing for this run`;
+  if (!r.revisions.length && !r.architecture.length && !r.disputed.length) {
+    return [head, `Verdict: ${r.verdict}${worth}. The Reviewer shipped the cycle as written; keep that bar.`].join("\n");
+  }
+  const lines = [head, `Verdict: ${r.verdict}${worth}`];
+  if (r.revisions.length) {
+    lines.push(`Changed in your work, and why:`);
+    for (const x of r.revisions.slice(0, 6)) lines.push(`- ${clipBlock(x, 300).replace(/\n/g, " ")}`);
+  }
+  if (r.disputed.length) {
+    lines.push(`Judged against your board:`);
+    for (const x of r.disputed.slice(0, 4)) lines.push(`- ${clipBlock(x, 200).replace(/\n/g, " ")}`);
+  }
+  if (r.architecture.length) {
+    lines.push(`Shape notes:`);
+    for (const x of r.architecture.slice(0, 4)) lines.push(`- ${clipBlock(x, 300).replace(/\n/g, " ")}`);
+  }
+  lines.push(
+    `Carry these forward: the Reviewer should not have to make the same revision twice, and a shape note that comes back is a Must-fix.`,
+  );
+  return lines.join("\n");
+}
+
 /** What the executor reads when a plan lands. */
 export function formatPlanAdmission(opts: {
   cycle: number;
@@ -206,6 +287,8 @@ export function formatPlanAdmission(opts: {
   verifyCommand?: string;
   maxCycles: number | null;
   cycleZeroRequested: boolean;
+  /** The previous cycle's review, turned toward the executor. */
+  lastReview?: ReviewNotesForExecutor;
 }): string {
   const board = opts.items?.length
     ? `Todo board (update these ids with todo_write; do not add copies): ${opts.items.map((i) => `${i.id} = ${i.title.slice(0, 60)}`).join(" · ")}`
@@ -220,9 +303,10 @@ export function formatPlanAdmission(opts: {
     ``,
     opts.planText.trim(),
     ``,
+    ...(opts.lastReview ? [formatReviewNotesForExecutor(opts.lastReview), ``] : []),
     `You are the executor. Ship the items in order: implement, run the item's proof, mark it done with todo_write. Cancel an item only with a reason. Close with "Plan complete." when every item is done or cancelled. The harness then runs ${opts.verifyCommand ? `\`${opts.verifyCommand}\`` : "the project check"} (only failures that were not already failing before the cycle count), a fresh reviewer reads the cycle diff and revises, the check runs once more and the cycle commits on green. ${budget}`,
     board,
-    `Do not stop mid-item, do not ask the user to choose; Operator: lines are for a secret, an irreversible action, or an external blocker only. Live controls: /cycle 0 · /replan · /ulw-off.`,
+    `Do not stop mid-item, do not ask the user to choose; Operator: lines are for a secret, an irreversible action, or an external blocker only. What you notice and leave alone goes on one \`Serendipity:\` line in your closer; the next Planner reads it. Live controls: /cycle 0 · /replan · /ulw-off.`,
   ].join("\n");
 }
 

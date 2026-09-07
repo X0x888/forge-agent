@@ -18,6 +18,44 @@ import type {
 
 export const PLAN_COMPLETE_RE = /\*{0,2}Plan complete\.?\*{0,2}/i;
 
+/**
+ * `Serendipity:` — the executor's declared token for what it noticed and did
+ * not build (the protocol promises the line reaches the Reviewer and the next
+ * Planner). Read as a labelled line, never as intent: the same-line remainder
+ * and any bullet lines directly under a bare label.
+ */
+const SERENDIPITY_LABEL_RE = /^\s*(?:[-*•]\s*)?\*{0,2}Serendipity\*{0,2}\s*:\s*\*{0,2}\s*(.*)$/i;
+const SERENDIPITY_KEEP = 12;
+
+export function extractSerendipityLines(text: string): string[] {
+  const out: string[] = [];
+  const lines = String(text || "").replace(/\r\n/g, "\n").split("\n");
+  for (let i = 0; i < lines.length; i++) {
+    const m = lines[i].match(SERENDIPITY_LABEL_RE);
+    if (!m) continue;
+    const same = m[1].trim().replace(/\*{1,2}$/, "").trim();
+    if (same && !/^(?:none|nothing|n\/a|-)\.?$/i.test(same)) out.push(same);
+    if (same) continue;
+    for (let j = i + 1; j < lines.length; j++) {
+      const bm = lines[j].match(/^\s*[-*•]\s+(.+)$/);
+      if (!bm) break;
+      const body = bm[1].trim();
+      if (body && !/^(?:none|nothing|n\/a)\.?$/i.test(body)) out.push(body);
+      i = j;
+    }
+  }
+  const seen = new Set<string>();
+  return out
+    .map((l) => l.replace(/\s+/g, " ").slice(0, 300))
+    .filter((l) => {
+      const k = l.toLowerCase();
+      if (seen.has(k)) return false;
+      seen.add(k);
+      return true;
+    })
+    .slice(0, SERENDIPITY_KEEP);
+}
+
 export interface ParsedPlan {
   title: string;
   verdict: PlanVerdict;

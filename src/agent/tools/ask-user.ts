@@ -41,6 +41,31 @@ function askTimeoutMs(): number {
   return Math.floor(n);
 }
 
+/**
+ * An armed ULW cycle is an unattended run: nobody is at the keyboard to answer,
+ * and the executor protocol already says never to ask. In a TTY the prompt
+ * would otherwise sit for `FORGE_ASK_USER_TIMEOUT_MS` (5 min) per call. The
+ * refusal repeats the protocol so the model decides and moves on.
+ */
+export function formatAskUserUnattended(
+  question: string,
+  choices: string[],
+  why: string,
+): ToolResult {
+  const q = question.trim().slice(0, 400);
+  return {
+    output:
+      `ask_user is off: ${why}. Nobody is at the keyboard. ` +
+      "Decide it yourself and record the assumption in your closer; if only the user can decide it " +
+      "(a secret, an irreversible action, an external blocker), write an Operator: line and continue with what does not depend on it. " +
+      (choices.length
+        ? `Your choices were: ${choices.map((c, i) => `${i + 1}) ${c}`).join("; ")}. `
+        : "") +
+      `Question was: ${q}`,
+    isError: true,
+  };
+}
+
 export async function toolAskUser(input: AskUserInput): Promise<ToolResult> {
   const question = String(input.question || "").trim();
   if (!question) {
