@@ -277,6 +277,8 @@ async function main(): Promise<void> {
       `
 Examples:
   forge login
+  forge login --add
+  forge login -p cursor --oauth --add
   forge doctor --json
   forge run "fix CI" --permission-mode acceptEdits --json
   forge run "continue" --session <id> --json
@@ -1259,7 +1261,7 @@ Docs: docs/PRODUCTION.md
     .option("--device", "Device-code flow (headless SSH / remote)")
     .option(
       "--add",
-      "Add another account for this provider (keep existing; multi-account)",
+      "Add another account for this provider (keep existing). Cursor: forge login -p cursor --oauth --add",
     )
     .option(
       "--label <label>",
@@ -1595,12 +1597,12 @@ Docs: docs/PRODUCTION.md
         } catch {
           /* preferences are best-effort */
         }
-        if (loginResult?.created && !wantJson) {
-          log.dim(
-            `Multi-account: forge accounts list · forge accounts switch <id> · forge auth`,
-          );
-        }
         if (!wantJson) {
+          log.dim(
+            loginResult?.created
+              ? `Add another: forge login --add  ·  Cursor: forge login -p cursor --oauth --add  ·  switch: forge accounts switch <email>`
+              : `Add another account: forge login --add  ·  Cursor: forge login -p cursor --oauth --add`,
+          );
           log.info("Next: forge   ·   forge setup   ·   forge doctor");
         }
       } catch (err) {

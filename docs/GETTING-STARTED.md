@@ -25,6 +25,16 @@ forge login --api-key               # paste a key
 forge login -p anthropic            # or openai / openrouter / copilot / cursor
 ```
 
+Add another account without replacing the first (same email without `--add` updates the existing slot):
+
+```bash
+forge login --add                              # another SuperGrok / xAI
+forge login -p cursor --oauth --add            # another Cursor (`--oauth` skips re-importing the local session)
+forge login -p copilot --add
+forge accounts                                 # list
+forge accounts switch <email>                  # make it active
+```
+
 A bare `forge` on a TTY also offers this picker if you are not signed in. Type **1–4** (Enter = SuperGrok). A typo re-prompts; `q` quits. Headless / `--json` still fail closed.
 
 ## 3. First `forge`

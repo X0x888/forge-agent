@@ -13,6 +13,14 @@ export function normalizeCompletionShell(
   return null;
 }
 
+/** Comment block baked into generated bash/zsh/fish completions. */
+const ADD_ACCOUNT_NOTES = [
+  "# Add another account (same email without --add updates in place):",
+  "#   forge login --add",
+  "#   forge login -p cursor --oauth --add",
+  "#   forge accounts  ·  forge accounts switch <email>",
+].join("\n");
+
 export function shellCompletionScript(shell: string): string {
   const cmds =
     "run login logout auth accounts sessions init setup models doctor stats tips news logs config status completion prune-tool-output prune-metrics";
@@ -37,6 +45,7 @@ export function shellCompletionScript(shell: string): string {
     return [
       "#compdef forge",
       '# Install: forge completion zsh > "${fpath[1]}/_forge" && compinit',
+      ADD_ACCOUNT_NOTES,
       "_forge() {",
       "  local context state state_descr line",
       "  typeset -A opt_args",
@@ -160,6 +169,7 @@ export function shellCompletionScript(shell: string): string {
   if (normalized === "fish") {
     return [
       "# Install: forge completion fish > ~/.config/fish/completions/forge.fish",
+      ADD_ACCOUNT_NOTES,
       "complete -c forge -f",
       `complete -c forge -n "__fish_use_subcommand" -a "${cmds}"`,
       'complete -c forge -l help -d "Help"',
@@ -268,6 +278,7 @@ export function shellCompletionScript(shell: string): string {
   return [
     '# Install: eval "$(forge completion bash)"',
     "# or: forge completion bash > /usr/local/etc/bash_completion.d/forge",
+    ADD_ACCOUNT_NOTES,
     "_forge_completions() {",
     '  local cur="${COMP_WORDS[COMP_CWORD]}"',
     '  local prev_word="${COMP_WORDS[COMP_CWORD-1]}"',

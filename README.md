@@ -61,6 +61,10 @@ forge login --from-copilot          # reuse local GitHub Copilot CLI / VS Code s
 forge login -p copilot              # same: local import, then GitHub device code
 forge login --from-cursor           # reuse local Cursor CLI (`agent login`) / Desktop session
 forge login -p cursor               # same: local import, then Cursor browser login
+# another account (same email without --add updates in place):
+forge login --add
+forge login -p cursor --oauth --add # --oauth skips re-importing the local session
+forge accounts                      # list · switch <email>
 # or API key (CI / multi-day unattended):
 export XAI_API_KEY=xai-...          # or: forge login --api-key
 forge login --provider openai --device
@@ -103,6 +107,7 @@ Forge supports **both API keys and subscription/OAuth** where providers allow pu
 | **Local Cursor** | `forge login --from-cursor` / `-p cursor` | Import Cursor CLI `~/.cursor/auth.json` / keychain / `CURSOR_API_KEY` |
 | **Cursor browser login** | `forge login -p cursor --oauth` | Same poll flow as `agent login` — uses Cursor native quota + models (`forge models -p cursor --refresh`) |
 | **API key** | `XAI_API_KEY` / `forge login --api-key` | CI / multi-day unattended |
+| **Add another account** | `forge login --add` · Cursor: `forge login -p cursor --oauth --add` | Keeps existing slots. Same email without `--add` updates in place. |
 | **Stored session** | `~/.forge/auth.json` (mode `0600`) | Auto-used when env key absent; OAuth refresh when possible |
 
 Precedence when resolving credentials:

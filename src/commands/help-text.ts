@@ -190,7 +190,7 @@ Forge slash commands
   /resume [n|id|title|all] Resume #n from the picker, id prefix, or /title
   /sessions [all|search|delete|prune]  Title-first list (cwd) / search / delete [--force] / prune
   /auth                 Stored credentials · Next /accounts (not forge login)  [live]
-  /accounts [status|switch|…]  Verdict-first list · Next is /accounts switch  [live]
+  /accounts [status|switch|…]  List/switch · add another: forge login --add  ·  Cursor: -p cursor --oauth --add  [live]
   /doctor               Environment health check  [live]
   /skills               List skill packs (builtin forge-* · .forge/skills · .cursor/skills · ~/.forge/skills)  [live]
   /commands             List project/user custom slash templates (.forge/commands · .cursor/commands)  [live]

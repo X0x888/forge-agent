@@ -541,7 +541,11 @@ export {
   suggestSessionAction,
   SESSION_ACTIONS,
 } from "./util/suggest.js";
-export { copyToClipboard, saveClipboardImage } from "./util/clipboard.js";
+export {
+  copyToClipboard,
+  clipboardWritesDisabled,
+  saveClipboardImage,
+} from "./util/clipboard.js";
 export type { ClipboardResult, ClipboardImageResult } from "./util/clipboard.js";
 export {
   isBellEnabled,

@@ -23,6 +23,7 @@ forge models -p xai --json   # filter catalog; empty/invalid -p → invalid_prov
 forge status --watch --json # single-shot (no hang); omit --json for live TTY loop
 forge login                  # SuperGrok OIDC (browser) · --device · --from-grok · --from-copilot · --from-cursor · --api-key
 forge login --add            # add another account for the same provider (multi-account)
+forge login -p cursor --oauth --add  # another Cursor (must --oauth; bare -p cursor re-imports local)
 forge login --from-copilot   # reuse local GitHub Copilot CLI / VS Code session
 forge login -p copilot       # local import, then GitHub device code
 forge login --from-cursor    # reuse local Cursor CLI / Desktop session

@@ -2209,7 +2209,10 @@ describe("shell completion", () => {
     assert.match(out, /stats\) COMPREPLY=.*--days/);
     assert.match(out, /login\) COMPREPLY=.*--json/);
     assert.match(out, /logout\) COMPREPLY=.*--json/);
+    assert.match(out, /forge login --add/);
+    assert.match(out, /forge login -p cursor --oauth --add/);
     const zsh = shellCompletionScript("zsh");
+    assert.match(zsh, /forge login --add/);
     assert.match(zsh, /compdef/);
     assert.match(zsh, /--sandbox/);
     assert.match(zsh, /--format/);
@@ -3076,15 +3079,29 @@ describe("stream tool name merge + executeTool repair", () => {
 });
 
 describe("clipboard helper", () => {
-  it("copyToClipboard returns structured result", async () => {
-    const { copyToClipboard } = await import("../src/util/clipboard.js");
-    // Empty string is still valid clipboard content
+  it("copyToClipboard never writes the OS pasteboard under node:test", async () => {
+    const { copyToClipboard, clipboardWritesDisabled } = await import(
+      "../src/util/clipboard.js"
+    );
+    assert.equal(clipboardWritesDisabled(), true);
     const r = copyToClipboard("forge-clipboard-test");
-    assert.equal(typeof r.ok, "boolean");
-    if (r.ok) {
-      assert.ok(r.backend.length > 0);
-    } else {
-      assert.match(r.error, /clipboard|pbcopy|clip|wl-copy|xclip|xsel/i);
+    assert.equal(r.ok, false);
+    assert.match(r.error, /disabled/i);
+  });
+
+  it("FORGE_CLIPBOARD=0 disables even when NODE_TEST_CONTEXT is absent", async () => {
+    const { clipboardWritesDisabled } = await import("../src/util/clipboard.js");
+    const prevClip = process.env.FORGE_CLIPBOARD;
+    const prevCtx = process.env.NODE_TEST_CONTEXT;
+    process.env.FORGE_CLIPBOARD = "0";
+    delete process.env.NODE_TEST_CONTEXT;
+    try {
+      assert.equal(clipboardWritesDisabled(), true);
+    } finally {
+      if (prevClip === undefined) delete process.env.FORGE_CLIPBOARD;
+      else process.env.FORGE_CLIPBOARD = prevClip;
+      if (prevCtx === undefined) delete process.env.NODE_TEST_CONTEXT;
+      else process.env.NODE_TEST_CONTEXT = prevCtx;
     }
   });
 });

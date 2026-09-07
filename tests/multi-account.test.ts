@@ -669,6 +669,7 @@ describe("/accounts verdict-first card", () => {
     const cli = formatAccountsCard({ surface: "cli" });
     assert.match(cli, /^accounts  ·  none/);
     assert.doesNotMatch(cli, /accounts\s+·\s+ok/);
+    assert.doesNotMatch(cli, /Add another/);
     assert.match(cli, /Next  forge login/);
     const repl = formatAccountsCard({ surface: "repl" });
     assert.match(repl, /^accounts  ·  none/);
@@ -694,6 +695,8 @@ describe("/accounts verdict-first card", () => {
     const repl = formatAccountsCard({ surface: "repl" });
     assert.match(repl, /^accounts  ·  ok/);
     assert.doesNotMatch(repl, /^Next  /m);
+    assert.match(repl, /Add another  forge login --add/);
+    assert.match(repl, /cursor --oauth --add/);
     assert.deepEqual(accountsNextKeys(listAccountSummaries(), "repl"), []);
   });
 
@@ -736,7 +739,8 @@ describe("/accounts verdict-first card", () => {
     assert.match(out, /^auth  ·  ok/);
     assert.match(out, /Next  \/accounts switch alice/);
     assert.doesNotMatch(out, /Next  \/auth/);
-    assert.doesNotMatch(out, /forge login/);
+    assert.doesNotMatch(out, /^Next  forge login/m);
+    assert.match(out, /Add another  forge login --add/);
   });
 });
 

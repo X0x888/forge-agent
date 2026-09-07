@@ -30,6 +30,20 @@ function tryExec(
 }
 
 /**
+ * True when copyToClipboard must not touch the OS pasteboard.
+ * FORGE_CLIPBOARD=0/false/off always disables. node:test sets
+ * NODE_TEST_CONTEXT — a live write there is how `forge-clipboard-test`
+ * used to clobber the developer's clipboard on `npm test`.
+ * FORGE_CLIPBOARD=1 forces writes even under tests (integration only).
+ */
+export function clipboardWritesDisabled(): boolean {
+  const v = process.env.FORGE_CLIPBOARD?.trim().toLowerCase();
+  if (v === "0" || v === "false" || v === "off") return true;
+  if (v === "1" || v === "true" || v === "on") return false;
+  return Boolean(process.env.NODE_TEST_CONTEXT);
+}
+
+/**
  * Copy plain text to the OS clipboard.
  * Order: macOS pbcopy → Wayland wl-copy → X11 xclip → X11 xsel →
  * Windows clip → WSL clip.exe.
@@ -37,6 +51,9 @@ function tryExec(
 export function copyToClipboard(text: string): ClipboardResult {
   if (text == null) {
     return { ok: false, error: "nothing to copy" };
+  }
+  if (clipboardWritesDisabled()) {
+    return { ok: false, error: "clipboard writes disabled (FORGE_CLIPBOARD=0)" };
   }
   const body = String(text);
 

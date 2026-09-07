@@ -920,6 +920,9 @@ export function formatAccountsCard(opts?: {
         `${mark} ${idCol} ${r.provider.padEnd(10)} ${r.method.padEnd(12)} ${label}${flagStr}`,
       );
     }
+    lines.push(
+      "Add another  forge login --add  ·  Cursor: forge login -p cursor --oauth --add",
+    );
     if (issues.length) {
       lines.push("");
       for (const i of issues) {
