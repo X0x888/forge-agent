@@ -13,6 +13,8 @@ import { isFalsy } from "./bool.js";
 import { forgeHome, nowIso } from "./fs.js";
 import { createChildEnv } from "../agent/tools/env-policy.js";
 import { findGitRoot, parsePorcelainPath } from "../agent/worktree.js";
+import { ensureGitRepo } from "./git-ensure.js";
+import { rehomeFiles, removeChromeLookDirs } from "./look-cleanup.js";
 
 const SENSITIVE_RE =
   /(^|\/)(\.env(\..+)?|.*\.(pem|p12|pfx|key)|id_rsa|id_ed25519|id_dsa|auth\.json|credentials|secrets?\.json)$/i;
@@ -51,6 +53,8 @@ export function isForgeScratchRelPath(rel: string): boolean {
   return !FORGE_KEEP_RE.test(n);
 }
 
+export type AutoCommitKind = "docs" | "substance";
+
 export interface AutoCommitResult {
   committed: boolean;
   sha?: string;
@@ -59,6 +63,15 @@ export interface AutoCommitResult {
   skipped?: string;
   /** Look artefacts / scratch left unstaged on purpose (named in the admit). */
   leftUnstaged?: string[];
+  /** Looks moved out of the tree into the session looks dir. */
+  rehomed?: string[];
+  /** `.forge/chrome-look*` profiles deleted. */
+  removedScratch?: string[];
+  /** `git init` ran because the workspace was not a repository. */
+  initializedGit?: boolean;
+  /** docs-only vs any production/source path — no-progress wall uses this. */
+  commitKind?: AutoCommitKind;
+  stagedPaths?: string[];
 }
 
 export function ulwAutoCommitEnabled(): boolean {
@@ -169,6 +182,21 @@ export function isChangelogRelPath(rel: string): boolean {
   return /^changelog(\.(md|markdown|txt|rst))?$/i.test(base);
 }
 
+const DOCS_EXT_RE = /\.(md|markdown|txt|rst|adoc)$/i;
+const DOCS_BASENAME_RE = /^(license|copying|authors|notice|changelog|readme)(\.|$)/i;
+
+/** Markdown/license/changelog only — a rename mill this is not, but neither is it progress. */
+export function isDocsOnlyRelPath(rel: string): boolean {
+  const n = rel.replace(/\\/g, "/");
+  const base = n.split("/").pop() || "";
+  return DOCS_EXT_RE.test(base) || DOCS_BASENAME_RE.test(base);
+}
+
+export function classifyCommitKind(paths: string[]): AutoCommitKind {
+  if (!paths.length) return "docs";
+  return paths.every(isDocsOnlyRelPath) ? "docs" : "substance";
+}
+
 /**
  * Worktree-land tests write disposable files under `src/agent/__wt_land_*`
  * so `git status -uall` can see them. They are not product files.
@@ -246,6 +274,7 @@ export function commitDirtyTree(opts: {
   subject: string;
   body: string;
   permissionMode?: string;
+  sessionId?: string;
 }): AutoCommitResult {
   if (!ulwAutoCommitEnabled()) {
     return { committed: false, skipped: "FORGE_ULW_AUTO_COMMIT=0" };
@@ -253,8 +282,24 @@ export function commitDirtyTree(opts: {
   if (opts.permissionMode === "plan") {
     return { committed: false, skipped: "plan mode" };
   }
-  const root = findGitRoot(opts.cwd);
-  if (!root) return { committed: false, skipped: "not a git repository" };
+  let initializedGit = false;
+  let root = findGitRoot(opts.cwd);
+  if (!root) {
+    const ensured = ensureGitRepo(opts.cwd, { reason: "commit" });
+    if (ensured.inited) {
+      initializedGit = true;
+      root = ensured.root ?? findGitRoot(opts.cwd);
+    }
+  }
+  if (!root) {
+    return {
+      committed: false,
+      skipped: initializedGit
+        ? "git init ran but the tree is still not a repository"
+        : "not a git repository",
+      ...(initializedGit ? { initializedGit } : {}),
+    };
+  }
 
   let dirty: string[];
   try {
@@ -315,19 +360,49 @@ export function commitDirtyTree(opts: {
       leftUnstaged.push(...orphan);
     }
   }
+  const removedScratch = removeChromeLookDirs(opts.cwd);
+  if (removedScratch.length) {
+    const prefixes = removedScratch.map((p) => `${p.replace(/\\/g, "/")}/`);
+    for (let i = leftUnstaged.length - 1; i >= 0; i--) {
+      const p = leftUnstaged[i]!.replace(/\\/g, "/");
+      if (removedScratch.includes(p) || prefixes.some((pre) => p.startsWith(pre))) {
+        leftUnstaged.splice(i, 1);
+      }
+    }
+  }
+  let rehomed: string[] = [];
+  const looksToMove = leftUnstaged.filter(isLookArtefactRelPath);
+  if (looksToMove.length && opts.sessionId) {
+    const dest = sessionLooksDir(opts.sessionId);
+    const moved = rehomeFiles({ cwd: root, relPaths: looksToMove, destDir: dest });
+    if (moved.moved.length) {
+      const gone = new Set(moved.moved);
+      rehomed = moved.moved;
+      for (let i = leftUnstaged.length - 1; i >= 0; i--) {
+        if (gone.has(leftUnstaged[i]!)) leftUnstaged.splice(i, 1);
+      }
+    }
+  }
+  const side = {
+    ...(initializedGit ? { initializedGit: true } : {}),
+    ...(rehomed.length ? { rehomed } : {}),
+    ...(removedScratch.length ? { removedScratch } : {}),
+    ...(leftUnstaged.length ? { leftUnstaged } : {}),
+  };
   if (!toAdd.length) {
     return {
       committed: false,
-      skipped: leftUnstaged.length
-        ? "only look artefacts / scratch remain"
-        : dirty.every(isDisposableTestRelPath)
-          ? "only disposable test fixtures remain"
-          : "only sensitive paths remain",
-      ...(leftUnstaged.length ? { leftUnstaged } : {}),
+      skipped:
+        rehomed.length || leftUnstaged.length
+          ? "only look artefacts / scratch remain"
+          : dirty.every(isDisposableTestRelPath)
+            ? "only disposable test fixtures remain"
+            : "only sensitive paths remain",
+      ...side,
     };
   }
   if (toAdd.every((p) => isChangelogRelPath(p))) {
-    return { committed: false, skipped: "changelog-only" };
+    return { committed: false, skipped: "changelog-only", ...side };
   }
 
   const { staged, failed } = stageAutoCommitPaths(root, toAdd);
@@ -379,7 +454,9 @@ export function commitDirtyTree(opts: {
     sha: sha || undefined,
     subject,
     files: staged.length,
-    ...(leftUnstaged.length ? { leftUnstaged } : {}),
+    commitKind: classifyCommitKind(staged),
+    stagedPaths: staged,
+    ...side,
   };
 }
 
@@ -393,18 +470,46 @@ export function sessionLooksDir(sessionId: string): string {
  * the model stops writing them into the tree, not so it stages them.
  */
 export function formatLeftUnstagedAdmit(
-  result: Pick<AutoCommitResult, "leftUnstaged">,
+  result: Pick<AutoCommitResult, "leftUnstaged" | "rehomed" | "removedScratch" | "initializedGit">,
   sessionId: string,
 ): string | undefined {
   const left = result.leftUnstaged ?? [];
-  if (!left.length) return undefined;
-  const shown = left.slice(0, 4).join(", ");
-  const more = left.length > 4 ? ` (+${left.length - 4} more)` : "";
-  return [
-    "[Forge harness — mid-conversation update]",
-    `Auto-commit left ${left.length} file(s) unstaged — looks nothing in the product references, or \`.forge/\` scratch: ${shown}${more}.`,
-    `Screenshots, look HTML and browser profiles belong outside the repo: ${sessionLooksDir(sessionId)} (or --user-data-dir under ~/.forge/tmp). A sprite the product loads is a product file and commits as usual. Delete or move these; do not \`git add\` them.`,
-  ].join("\n");
+  const rehomed = result.rehomed ?? [];
+  const scratch = result.removedScratch ?? [];
+  if (!left.length && !rehomed.length && !scratch.length && !result.initializedGit) {
+    return undefined;
+  }
+  const lines = ["[Forge harness — mid-conversation update]"];
+  if (result.initializedGit) {
+    lines.push(
+      "This workspace was not a git repository; Forge ran `git init -b main` and wrote a starter `.gitignore` so the cycle could commit locally (never pushed). FORGE_AUTO_GIT=0 disables this.",
+    );
+  }
+  if (rehomed.length) {
+    const shown = rehomed.slice(0, 4).join(", ");
+    const more = rehomed.length > 4 ? ` (+${rehomed.length - 4} more)` : "";
+    lines.push(
+      `Moved ${rehomed.length} look artefact(s) out of the repo to ${sessionLooksDir(sessionId)}: ${shown}${more}.`,
+    );
+  }
+  if (scratch.length) {
+    lines.push(
+      `Removed ${scratch.length} leftover browser profile(s) under .forge/ (chrome-look*).`,
+    );
+  }
+  if (left.length) {
+    const shown = left.slice(0, 4).join(", ");
+    const more = left.length > 4 ? ` (+${left.length - 4} more)` : "";
+    lines.push(
+      `Left ${left.length} file(s) unstaged — looks nothing in the product references, or \`.forge/\` scratch: ${shown}${more}.`,
+      `Screenshots, look HTML and browser profiles belong outside the repo: ${sessionLooksDir(sessionId)} (or --user-data-dir under ~/.forge/tmp). A sprite the product loads is a product file and commits as usual. Delete or move these; do not \`git add\` them.`,
+    );
+  } else if (rehomed.length || scratch.length) {
+    lines.push(
+      `Screenshots, look HTML and browser profiles belong under ${sessionLooksDir(sessionId)}, never in the repo.`,
+    );
+  }
+  return lines.length > 1 ? lines.join("\n") : undefined;
 }
 
 export function autoCommitStamp(result: AutoCommitResult): {

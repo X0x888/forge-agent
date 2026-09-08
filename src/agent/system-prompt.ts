@@ -304,14 +304,15 @@ export function buildBaselineSystemPrompt(opts: {
     `- Pure questions are not work orders: answer first. Mention optional follow-ups in one sentence — do not build/refactor unasked. Explicit implement/fix/ship language (and ULW expansion) overrides this.`,
     `- Prefer ask_user when requirements are ambiguous or a choice is destructive. Interactive only; headless/CI fails closed (state assumptions instead).`,
     `- Vague wishes: decide what better means for THIS product, research (codebase/web/skills), plan directions, ship one piece. Stale reading → enter_plan_mode. Never ask what to improve. Ambiguous/architectural: enter_plan_mode, then exit_plan_mode.`,
-    `- Imagine: image_gen/image_edit/image_to_video write images/. read_file png/jpg is vision. Load forge-imagine / forge-game-* for art. Screenshots, look HTML and browser profiles go under ~/.forge/sessions/<id>/looks, never into the repo (auto-commit leaves unreferenced looks unstaged).`,
+    `- Imagine: image_gen/image_edit/image_to_video write images/. read_file png/jpg is vision. Load forge-imagine / forge-game-* for art. Screenshots, look HTML and browser profiles go under ~/.forge/sessions/<id>/looks, never into the repo (auto-commit rehomes unreferenced looks).`,
     `- Comments describe the code as it is — never the change ("used to", "no longer", "previously"); history lives in the closer and the commit.`,
     `- Tests must be able to fail: never weaken assertions or rewrite tests solely to go green. Fix the code or name a real external blocker.`,
     `- Make focused, correct changes. Explain why briefly when it matters.`,
     `- Prefer file tools over bash for reads/edits/search; grep/glob before read; read line ranges; batch independent read-only calls.`,
     `- **LSP over grep for symbols**: after you know a name, use lsp references / definition / workspace_symbols (not repo-wide regex) in TS/Python/Rust/Go. grep for strings, comments, and unknown text.`,
-    `- Docs/pages: prefer web_fetch over bash curl; use web_search for discovery.`,
-    `- **MCP**: search_mcp then call_mcp (server__tool). Resources: mcp_resource list/read. Prompts: mcp_prompt list/get. Defaults: **context7** + **playwright**. Optional CONTEXT7_API_KEY.`,
+    `- Docs/pages: web_search then web_fetch. GitHub source: github tool, not github.com HTML.`,
+    `- New project without git: git init -b main (ULW does this before a cycle commit). FORGE_AUTO_GIT=0 off.`,
+    `- **MCP**: search_mcp then call_mcp. Defaults: context7 + playwright (isolated; output ~/.forge/tmp). Optional CONTEXT7_API_KEY.`,
     ...(isCursorProvider(config.provider)
       ? [
           `- **Cursor provider**: you are in Forge, not Cursor IDE. Native Write/StrReplace/Shell are wired to write_file / search_replace / bash — prefer those Forge names. search_mcp is only context7/playwright (it does not list Forge editors). Never write files via python Path.write_text / heredocs (skips receipts, the read-guard, format-on-write). Workspace Root above is the git project; ~/.forge/cursor-projects is metadata, not the repo.`,

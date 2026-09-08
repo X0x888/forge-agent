@@ -232,6 +232,7 @@ const READ_ONLY_TOOLS = new Set([
   "list_dir",
   "web_search",
   "web_fetch",
+  "github",
   "todo_write",
   "get_task_output",
   "search_mcp",

@@ -177,6 +177,7 @@ import {
   commitDirtyTree,
   formatLeftUnstagedAdmit,
 } from "../util/git-auto-commit.js";
+import { cleanupAgentBrowserScratch } from "../util/look-cleanup.js";
 import { detectProjectIntel } from "../util/project-intel.js";
 import { appendProjectMemory } from "../harness/project-memory.js";
 import {
@@ -642,6 +643,7 @@ const READ_ONLY = new Set([
   "WebSearch",
   "web_fetch",
   "WebFetch",
+  "github",
   "get_task_output",
   "task_output",
   "search_mcp",
@@ -781,6 +783,7 @@ const PLAN_MODE_TOOL_NAMES = new Set([
   "WebSearch",
   "web_fetch",
   "WebFetch",
+  "github",
   "todo_write",
   "memory_write",
   "ask_user",
@@ -1785,8 +1788,12 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
               subject,
               body,
               permissionMode: config.permissionMode,
+              sessionId: session.meta.id,
             });
             session.meta.lastAutoCommit = autoCommitStamp(ac);
+            if (ac.initializedGit) {
+              log.info("Initialized git repository for this project (local only, never pushed)");
+            }
             if (ac.committed) {
               const sha = ac.sha || "HEAD";
               const line = `Committed ${sha} — ${ac.subject} (${ac.files ?? 0} file(s), not pushed)`;
@@ -3820,6 +3827,13 @@ export function installMcpLspExitHook(): void {
     // Sync best-effort: process is exiting; fire-and-forget dispose.
     void m?.dispose().catch(() => {});
     void l?.dispose().catch(() => {});
+    if (!m) {
+      try {
+        cleanupAgentBrowserScratch({});
+      } catch {
+        /* */
+      }
+    }
   };
   process.once("exit", cleanup);
   process.once("beforeExit", cleanup);

@@ -3,6 +3,7 @@
  */
 import { suggestNames } from "../util/suggest.js";
 import { boundToolOutput } from "../agent/tools/truncate.js";
+import { cleanupAgentBrowserScratch } from "../util/look-cleanup.js";
 import { loadMcpConfig, toolAllowedByFilters, type LoadedMcpConfig } from "./config.js";
 import { McpClient } from "./client.js";
 import {
@@ -81,6 +82,11 @@ export class McpManager {
     this.registry = [];
     this.started = false;
     await Promise.all(all.map((c) => c.dispose().catch(() => {})));
+    try {
+      cleanupAgentBrowserScratch({ workspace: this.workspace });
+    } catch {
+      /* best-effort — never fail the session over leftover Chromium */
+    }
   }
 
   /** Connect all servers and refresh tool registry (best-effort). */
@@ -566,7 +572,7 @@ export function formatMcpStatus(
   if (!statuses.length) {
     return [
       "mcp  ·  none",
-      "  Built-ins: context7 + playwright",
+      "  Built-ins: context7 + playwright (isolated); github is a native tool",
       "Next  /mcp connect",
     ].join("\n");
   }

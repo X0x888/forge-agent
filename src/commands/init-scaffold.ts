@@ -105,7 +105,7 @@ export async function runForgeInit(opts?: {
     }
     wrote.push(homeMcp);
     if (!quiet) {
-      log.success(`Wrote ${homeMcp} (default MCP: context7 + playwright)`);
+      log.success(`Wrote ${homeMcp} (default MCP: context7 + isolated playwright)`);
     }
   } else {
     existed.push(homeMcp);

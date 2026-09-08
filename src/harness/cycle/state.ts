@@ -112,6 +112,10 @@ export interface CycleRecord {
   verifyInherited?: number;
   commitSha?: string;
   commitSubject?: string;
+  /** Paths the cycle commit staged (facts for the next Planner — not a meter). */
+  commitFiles?: string[];
+  /** docs-only vs source/product; docs does not reset the no-progress wall. */
+  commitKind?: "docs" | "substance";
   mustFix: string[];
   /** The Reviewer's shape notes and its answer to "would a user notice this cycle?" */
   architecture?: string[];

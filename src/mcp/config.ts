@@ -11,6 +11,8 @@
  *
  * Env: FORGE_MCP=0 disables entirely. FORGE_MCP_CONFIG=path loads extra file last.
  *      FORGE_MCP_DEFAULTS=0 disables only the built-in context7/playwright pair.
+ *      Playwright is launched --isolated with output under ~/.forge/tmp
+ *      (FORGE_PLAYWRIGHT_ISOLATED=0 off). GitHub source is the native github tool.
  */
 import fs from "node:fs";
 import path from "node:path";
@@ -19,6 +21,7 @@ import { forgeHome, readJsonFile } from "../util/fs.js";
 import { isTruthy } from "../util/bool.js";
 import type { McpConfigFile, McpServerConfig } from "./types.js";
 import {
+  decoratePlaywrightServer,
   defaultMcpServers,
   defaultMcpServersEnabled,
 } from "./defaults.js";
@@ -171,6 +174,9 @@ export function loadMcpConfig(workspace: string): LoadedMcpConfig {
       /* */
     }
   }
+  for (const [name, cfg] of Object.entries(servers)) {
+    servers[name] = decoratePlaywrightServer(name, cfg);
+  }
   return {
     servers,
     sources,
@@ -200,7 +206,7 @@ export function defaultUserMcpJson(): string {
           },
           playwright: {
             command: "npx",
-            args: ["-y", "@playwright/mcp@latest"],
+            args: ["-y", "@playwright/mcp@latest", "--isolated"],
           },
         },
       },

@@ -9,6 +9,7 @@ import { mergeAbortSignals } from "../../util/abort.js";
 import { isTruthy } from "../../util/bool.js";
 import { numberFieldError } from "./arg-types.js";
 import { parseDurationMs } from "../../util/duration-ms.js";
+import { rewriteGithubBlobUrl } from "./github.js";
 
 const MAX_RESPONSE_BYTES = 5 * 1024 * 1024;
 const DEFAULT_TIMEOUT_MS = 30_000;
@@ -147,7 +148,7 @@ export async function toolWebFetch(
       isError: true,
     };
   }
-  const raw = String(args.url || "").trim();
+  const raw = rewriteGithubBlobUrl(String(args.url || "").trim());
   if (!raw) {
     return {
       output:

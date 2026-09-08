@@ -89,10 +89,13 @@ complexity and risk. Compare the plan's `Considered:` alternatives with
 - `Worth: yes — <evidenced benefit or consequential uncertainty resolved>`
 - `Worth: no — <why this was not worth a cycle; which Considered entry should have won, if any>`
 
-A useful investigation may produce no code change. `Worth: no` means the
-benefit was not established or did not justify the cost; explain what the next
-Planner should reassess without demanding cosmetic work. Repeated low-value
-cycles call for a different question or approach. A broken flow within the
+A cycle whose diff is copy, comments or names while a core workflow you just
+used is broken or untested is `Worth: no` and `Must-fix: this is not the job`
+— the easiest remaining file is not the cycle. A useful investigation may
+produce no code change. `Worth: no` means the benefit was not established or
+did not justify the cost; explain what the next Planner should reassess without
+demanding cosmetic work. Repeated low-value cycles call for a different
+question or approach. A broken flow within the
 cycle's acceptance conditions is a `Must-fix`; report other observed defects
 as future work with their evidence, without widening this cycle.
 

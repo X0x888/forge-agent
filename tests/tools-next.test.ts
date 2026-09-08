@@ -499,7 +499,9 @@ describe("TOOL_DEFINITIONS agent guidance", () => {
     assert.match(byName.grep || "", /ripgrep|regex/i);
     assert.match(byName.list_dir || "", /List entries/i);
     assert.match(byName.web_fetch || "", /loopback|SSRF|blocked/i);
-    assert.match(byName.web_search || "", /titles, URLs/i);
+    assert.match(byName.web_search || "", /titles, URLs|Brave|DuckDuckGo/i);
+    assert.match(byName.github || "", /GitHub/i);
+    assert.match(byName.github || "", /contents|readme|tree/i);
     assert.match(byName.kill_task || "", /Omit task_id|list active/i);
     assert.match(byName.get_task_output || "", /Omit task_id|list active/i);
     assert.match(byName.todo_write || "", /merge|status|id/i);

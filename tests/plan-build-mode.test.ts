@@ -505,6 +505,7 @@ describe("exit_plan_mode tool", () => {
     ).map((t) => t.function.name);
     assert.ok(names.includes("exit_plan_mode"));
     assert.ok(names.includes("read_file"));
+    assert.ok(names.includes("github"));
     assert.ok(names.includes("ask_user"));
     assert.ok(!names.includes("write_file"));
     assert.ok(names.includes("bash"));

@@ -379,8 +379,8 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     function: {
       name: "web_search",
       description:
-        "Search the web for up-to-date information. Returns titles, URLs, and snippets. " +
-        "For a known URL use web_fetch instead.",
+        "Search the web. Returns titles, URLs, snippets. Uses Brave/Tavily/Exa/SearXNG when their API keys are set, otherwise DuckDuckGo + Brave/Bing HTML. " +
+        "For GitHub source use the github tool; for a known URL use web_fetch.",
       parameters: {
         type: "object",
         properties: {
@@ -388,6 +388,38 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
           num_results: { type: "number", description: "Default 5, max 10" },
         },
         required: ["query"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "github",
+      description:
+        "Read GitHub: search repositories/code, repo metadata, file contents, README, tree. " +
+        "Prefer over web_search/web_fetch for github.com — returns source, not HTML chrome. " +
+        "Public repos work without a token; GITHUB_TOKEN or `gh auth login` raises limits and enables code search.",
+      parameters: {
+        type: "object",
+        properties: {
+          action: {
+            type: "string",
+            description: "search | repo | contents | readme | tree",
+          },
+          query: { type: "string", description: "search query (action=search)" },
+          repo: {
+            type: "string",
+            description: "owner/repo or github.com URL",
+          },
+          path: { type: "string", description: "file or directory (contents)" },
+          ref: { type: "string", description: "branch, tag, or commit SHA" },
+          type: {
+            type: "string",
+            description: "search type: repositories (default) or code",
+          },
+          num_results: { type: "number", description: "search hit cap (default 5, max 10)" },
+        },
+        required: ["action"],
       },
     },
   },

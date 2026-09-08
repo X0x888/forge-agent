@@ -184,9 +184,26 @@ describe("cycle orchestrator", () => {
     assert.equal(await ensureCyclePlanned(sid, rt), null);
   });
 
+  it("a mandate fulfilled without Looked: becomes go-deeper, not a release", async () => {
+    const sid = "orch-fulfilled-no-look";
+    const { rt } = fakeRuntime(cwd, {
+      planner: [`# Cycle 1 plan\nVerdict: fulfilled — hello world is enough`],
+    });
+    const { armCycle } = await import("../src/harness/cycle/index.js");
+    armCycle({ sessionId: sid, mandate: "build a chrome extension", cwd });
+    const out = await ensureCyclePlanned(sid, rt);
+    assert.equal(out?.released, false, "Looked: is required before a mandate can end the run");
+    assert.equal(out?.planAdmitted, true);
+    const s = loadCycleState(sid)!;
+    assert.match(s.planTitle ?? "", /Go deeper/);
+    assert.equal(s.directExecuteStreak, 1);
+  });
+
   it("a fulfilled first plan releases the run (case a already met)", async () => {
     const sid = "orch-fulfilled";
-    const { rt } = fakeRuntime(cwd, { planner: [PLAN_FULFILLED] });
+    const { rt } = fakeRuntime(cwd, {
+      planner: [`${PLAN_FULFILLED}\nLooked: ran the binary and npm test`],
+    });
     const { armCycle } = await import("../src/harness/cycle/index.js");
     armCycle({ sessionId: sid, mandate: "add --version", cwd });
     const out = await ensureCyclePlanned(sid, rt);
@@ -935,7 +952,7 @@ describe("cycle orchestrator", () => {
 
   it("a fulfilled verdict note does not double its period in the release line", async () => {
     const sid = "orch-period";
-    const { rt } = fakeRuntime(cwd, { planner: [`# Cycle 1 plan\nVerdict: fulfilled — the flag already exists.`] });
+    const { rt } = fakeRuntime(cwd, { planner: [`# Cycle 1 plan\nVerdict: fulfilled — the flag already exists.\nLooked: ran --help and the test`] });
     const { armCycle } = await import("../src/harness/cycle/index.js");
     armCycle({ sessionId: sid, mandate: "x", cwd });
     const out = await ensureCyclePlanned(sid, rt);

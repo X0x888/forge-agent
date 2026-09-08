@@ -14,6 +14,8 @@ import {
   isSensitiveRelPath,
   isChangelogRelPath,
   isDisposableTestRelPath,
+  classifyCommitKind,
+  isDocsOnlyRelPath,
   porcelainPaths,
   sessionLooksDir,
   stageAutoCommitPaths,
@@ -21,6 +23,7 @@ import {
   ULW_COMMIT_EMAIL,
   ULW_COMMIT_NAME,
 } from "../src/util/git-auto-commit.js";
+import { findGitRoot } from "../src/agent/worktree.js";
 
 const commit = (cwd: string, subject = "ulw cycle 1: test plan", permissionMode?: string) =>
   commitDirtyTree({ cwd, subject, body: "Plan-cycle commit — local only.", permissionMode });
@@ -339,22 +342,25 @@ describe("ULW cycle commit", () => {
       assert.equal(r.committed, true, r.skipped);
       assert.deepEqual(
         [...(r.leftUnstaged ?? [])].sort(),
-        [".forge/chrome-look/Default/Cookies", "images/death-care-look.png", "images/leftover-beat-look.html"],
+        ["images/death-care-look.png", "images/leftover-beat-look.html"],
       );
+      assert.deepEqual(r.removedScratch, [".forge/chrome-look"]);
       const committed = git(["show", "--name-only", "--format=", "HEAD"], root)
         .split("\n")
         .filter(Boolean)
         .sort();
       assert.deepEqual(committed, [".forge/commands/deploy.md", "images/sprite-idle.png", "src/lib/pet-face.ts"]);
-      // Left on disk, still dirty — not deleted, just not shipped.
+      // Looks stay on disk when the commit has no sessionId; the chrome profile is gone.
       assert.ok(fs.existsSync(path.join(root, "images", "death-care-look.png")));
+      assert.equal(fs.existsSync(path.join(root, ".forge", "chrome-look")), false);
       const dirty = porcelainPaths(root).sort();
-      assert.deepEqual(dirty, [".forge/chrome-look/Default/Cookies", "images/death-care-look.png", "images/leftover-beat-look.html"]);
+      assert.deepEqual(dirty, ["images/death-care-look.png", "images/leftover-beat-look.html"]);
 
       const admit = formatLeftUnstagedAdmit(r, sid)!;
       assert.match(admit, /^\[Forge harness — mid-conversation update\]/);
-      assert.match(admit, /left 3 file\(s\) unstaged/);
+      assert.match(admit, /Left 2 file\(s\) unstaged/);
       assert.match(admit, /death-care-look\.png/);
+      assert.match(admit, /chrome-look/);
       assert.ok(admit.includes(sessionLooksDir(sid)));
       assert.match(admit, /do not `git add` them/);
       assert.equal(formatLeftUnstagedAdmit({ leftUnstaged: [] }, sid), undefined);
@@ -381,6 +387,67 @@ describe("ULW cycle commit", () => {
       assert.deepEqual(committed, ["scratch/run-1/index.ts"]);
       assert.deepEqual(porcelainPaths(root), ["README.md"], "README.md was never staged");
     });
+  });
+
+  it("classifies docs-only vs substance commits", () => {
+    assert.equal(isDocsOnlyRelPath("README.md"), true);
+    assert.equal(isDocsOnlyRelPath("docs/guide.txt"), true);
+    assert.equal(isDocsOnlyRelPath("src/cli.ts"), false);
+    assert.equal(classifyCommitKind(["README.md", "CHANGELOG.md"]), "docs");
+    assert.equal(classifyCommitKind(["README.md", "src/cli.ts"]), "substance");
+  });
+
+  it("inits a git repo when ULW would otherwise skip the commit", () => {
+    const prevGit = process.env.FORGE_AUTO_GIT;
+    const prevHome = process.env.FORGE_HOME;
+    const prevFlag = process.env.FORGE_ULW_AUTO_COMMIT;
+    const prevCeil = process.env.GIT_CEILING_DIRECTORIES;
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "forge-ac-home-"));
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "forge-ac-new-"));
+    process.env.FORGE_HOME = home;
+    process.env.GIT_CEILING_DIRECTORIES = root;
+    delete process.env.FORGE_AUTO_GIT;
+    try {
+      fs.writeFileSync(path.join(root, "package.json"), '{"name":"fresh"}\n');
+      fs.writeFileSync(path.join(root, "index.ts"), "export const n = 1;\n");
+      const parent = findGitRoot(root);
+      if (parent && path.resolve(parent) !== path.resolve(root)) {
+        // npm test pins TMPDIR inside this repo; do not nest or commit into it.
+        const r = commitDirtyTree({
+          cwd: root,
+          subject: "ulw cycle 1: first files",
+          body: "Plan-cycle commit — local only.",
+        });
+        assert.equal(r.initializedGit, undefined);
+        assert.equal(r.committed, false);
+        return;
+      }
+      const r = commitDirtyTree({
+        cwd: root,
+        subject: "ulw cycle 1: first files",
+        body: "Plan-cycle commit — local only.",
+      });
+      if (r.skipped?.includes("git init failed") || r.skipped === "not a git repository") {
+        assert.ok(r.skipped);
+        return;
+      }
+      assert.equal(r.committed, true, r.skipped);
+      assert.equal(r.initializedGit, true);
+      assert.equal(r.commitKind, "substance");
+      assert.ok(fs.existsSync(path.join(root, ".git")));
+      assert.ok(fs.existsSync(path.join(root, ".gitignore")));
+    } finally {
+      if (prevHome === undefined) delete process.env.FORGE_HOME;
+      else process.env.FORGE_HOME = prevHome;
+      if (prevFlag === undefined) delete process.env.FORGE_ULW_AUTO_COMMIT;
+      else process.env.FORGE_ULW_AUTO_COMMIT = prevFlag;
+      if (prevGit === undefined) delete process.env.FORGE_AUTO_GIT;
+      else process.env.FORGE_AUTO_GIT = prevGit;
+      if (prevCeil === undefined) delete process.env.GIT_CEILING_DIRECTORIES;
+      else process.env.GIT_CEILING_DIRECTORIES = prevCeil;
+      fs.rmSync(home, { recursive: true, force: true });
+      fs.rmSync(root, { recursive: true, force: true });
+    }
   });
 
   it("a dirty tree of looks alone is not a commit", () => {

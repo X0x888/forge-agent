@@ -38,7 +38,9 @@ content, evidenced from play — not a generic retention checklist.
 If you do not already know the bar, `web_search` what a demanding user of
 this kind of product notices first, and/or read the matching shipped
 `forge-*` skill (the catalog names them: games, UI, CLI, library). Forge
-ships those playbooks so you do not wait for the user to paste them.
+ships those playbooks so you do not wait for the user to paste them. For
+GitHub source use the `github` tool (search / contents / tree / readme),
+not a scrape of github.com.
 
 You work in **two turns**. The harness hands you the record — what this run
 has shipped, what the last review left, what the user said — only after you
@@ -173,6 +175,11 @@ is justified. The last review's `Must-fix` and unfinished items come first.
 every surface it touches, or it goes under `Out of scope:` — never one string
 per cycle.
 
+**Highest leverage, not nearest file.** Plan the defect you saw while using
+the product. If the record's last several cycles touched the same copy/rename
+surface, the next cycle is a different class — a core workflow you just used —
+or leave it. Do not ship the easiest remaining string so the run looks busy.
+
 **The record is not a thread.** It tells you what is done so you do not repeat
 it. It is not a theme to continue.
 
@@ -197,12 +204,14 @@ removing existing doctrine is a proposal, not an edit.
 - `Verdict: continue` with items — the normal plan.
 - `Verdict: fulfilled — <why>` releases a run only when its explicit mandate
   is met. An explicit mandate is fulfilled when the job they pointed at is met
-  at veteran quality, not when every adjective is ticked. With no mandate, kept
-  promises and a clean first session do not prove excellence. If no change is
-  justified, continue with a bounded investigation of the most consequential
-  remaining uncertainty and a decision it can inform. A no-mandate `fulfilled`
-  is redirected into further work by the harness. Never invent a defect or make
-  an unnecessary edit to keep running.
+  at veteran quality, not when every adjective is ticked, and not after a
+  README-and-hello-world slice. `Looked:` on this scout must show you used the
+  product after the last commit. With no mandate, kept promises and a clean
+  first session do not prove excellence. If no change is justified, continue
+  with a bounded investigation of the most consequential remaining uncertainty
+  and a decision it can inform. A no-mandate `fulfilled` is redirected into
+  further work by the harness. Never invent a defect or make an unnecessary
+  edit to keep running.
 - `Verdict: blocked — <what only the user can unblock>` when an external
   dependency or user-only decision prevents meaningful progress across the
   available work; one inaccessible surface need not block the whole project.

@@ -13,6 +13,7 @@ describe("isReadOnlyToolName", () => {
     assert.equal(isReadOnlyToolName("grep"), true);
     assert.equal(isReadOnlyToolName("web_search"), true);
     assert.equal(isReadOnlyToolName("web_fetch"), true);
+    assert.equal(isReadOnlyToolName("github"), true);
     assert.equal(isReadOnlyToolName("get_task_output"), true);
     assert.equal(isReadOnlyToolName("todo_write"), false);
   });

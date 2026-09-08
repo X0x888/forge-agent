@@ -71,7 +71,7 @@ after(async () => {
 });
 
 describe("tool definitions include MCP/LSP/subagent", () => {
-  it("registers search_mcp, call_mcp, mcp_resource, mcp_prompt, spawn_subagent, lsp", () => {
+  it("registers search_mcp, call_mcp, mcp_resource, mcp_prompt, spawn_subagent, lsp, github", () => {
     const names = TOOL_DEFINITIONS.map((t) => t.function.name);
     for (const n of [
       "search_mcp",
@@ -80,6 +80,7 @@ describe("tool definitions include MCP/LSP/subagent", () => {
       "mcp_prompt",
       "spawn_subagent",
       "lsp",
+      "github",
     ]) {
       assert.ok(names.includes(n), `missing tool ${n}`);
     }
@@ -93,6 +94,7 @@ describe("tool definitions include MCP/LSP/subagent", () => {
 
   it("read-only classification", () => {
     assert.equal(isReadOnlyToolName("search_mcp"), true);
+    assert.equal(isReadOnlyToolName("github"), true);
     assert.equal(isReadOnlyToolName("lsp"), true);
     assert.equal(isReadOnlyToolName("call_mcp"), false);
     assert.equal(isReadOnlyToolName("spawn_subagent"), false); // parallel-safe is a different predicate
@@ -115,6 +117,37 @@ describe("MCP config + types", () => {
     assert.ok(
       cfg.servers.playwright.args?.some((a) => a.includes("@playwright/mcp")),
     );
+    assert.ok(
+      cfg.servers.playwright.args?.includes("--isolated"),
+      "playwright MCP must not leave a disk profile in the workspace",
+    );
+    assert.ok(
+      cfg.servers.playwright.args?.includes("--output-dir"),
+    );
+  });
+
+  it("decorates a stock playwright mcp.json with --isolated and an output dir", () => {
+    const home = process.env.FORGE_HOME!;
+    const mcp = path.join(home, "mcp.json");
+    fs.writeFileSync(
+      mcp,
+      JSON.stringify({
+        mcpServers: {
+          playwright: {
+            command: "npx",
+            args: ["-y", "@playwright/mcp@latest"],
+          },
+        },
+      }),
+    );
+    try {
+      const cfg = loadMcpConfig(path.join(tmpRoot, "decorated-playwright"));
+      const args = cfg.servers.playwright?.args ?? [];
+      assert.ok(args.includes("--isolated"));
+      assert.ok(args.includes("--output-dir"));
+    } finally {
+      fs.unlinkSync(mcp);
+    }
   });
 
   it("FORGE_MCP_DEFAULTS=0 disables only built-ins", () => {
@@ -626,6 +659,7 @@ describe("subagent helpers", () => {
     const names = ro.map((t) => t.function.name);
     assert.ok(names.includes("read_file"));
     assert.ok(names.includes("grep"));
+    assert.ok(names.includes("github"));
     assert.ok(names.includes("search_mcp"));
     assert.ok(names.includes("call_mcp"));
     assert.ok(names.includes("memory_write"));
@@ -667,6 +701,7 @@ describe("subagent helpers", () => {
       (t) => t.function.name,
     );
     assert.ok(names.includes("bash"));
+    assert.ok(names.includes("github"), "Planner reads GitHub source instead of scraping it");
     assert.ok(names.includes("call_mcp") || names.includes("search_mcp"), "browser looks go through MCP");
     assert.ok(names.includes("spawn_subagent"));
     for (const w of ["write_file", "search_replace", "apply_patch"]) assert.ok(!names.includes(w), `${w} is not a Planner tool`);

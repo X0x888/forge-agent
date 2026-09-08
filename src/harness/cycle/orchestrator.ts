@@ -10,6 +10,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { nowIso } from "../../util/fs.js";
+import { ensureGitRepo } from "../../util/git-ensure.js";
 import { envPositiveInt } from "../../util/env.js";
 import { appendMemoryRecord } from "../decision-memory.js";
 import type { AutoCommitResult } from "../../util/git-auto-commit.js";
@@ -108,7 +109,7 @@ export interface CycleRuntime {
    * when the exit code is not 0).
    */
   creditCheck?(run: CheckRun, passed: boolean): void;
-  commit(opts: { subject: string; body: string }): AutoCommitResult;
+  commit(opts: { subject: string; body: string; sessionId?: string }): AutoCommitResult;
   /** Replace the executor's board with the plan items (id = item id). */
   seedTodos(items: CyclePlanItem[]): void;
   todos(): ReadonlyArray<{ id: string; status: string }>;
@@ -430,6 +431,10 @@ function synthesizeWorkPlan(
  * produce a plan, or a no-mandate `fulfilled`, becomes work — never a release.
  */
 export async function planNextCycle(s: CycleState, rt: CycleRuntime): Promise<CycleStopOutcome> {
+  const git = ensureGitRepo(rt.workspace, { reason: "ulw" });
+  if (git.inited) {
+    rt.log?.(`ULW initialized git repository in ${git.root ?? rt.workspace} (local only; FORGE_AUTO_GIT=0 off)`);
+  }
   s.phase = "plan";
   saveCycleState(s);
   // The review the executor is about to hear: the cycle that just closed.
@@ -501,7 +506,14 @@ export async function planNextCycle(s: CycleState, rt: CycleRuntime): Promise<Cy
     // "the product is in good shape" is the escape the user forbade: the
     // model looked at a broken product and called it done. It never ends the
     // run — it becomes deeper work, targeting a broken promise first.
-    if (s.mandate != null) {
+    // Presence-only: a fulfilled plan (or its scout) must carry Looked: —
+    // otherwise this is the low-hanging-fruit escape (README + hello world).
+    const looked = (plan.looked || scout?.parsed?.looked || "").trim();
+    // A mandate fulfilled before anyone has used the product (no Looked:,
+    // no committed cycle) is the README-and-hello-world escape. After a
+    // reviewed commit the Reviewer already used it; honour fulfilled.
+    const usedTheProduct = Boolean(looked) || s.cycles.some((c) => c.commitSha);
+    if (s.mandate != null && usedTheProduct) {
       const n = s.cycle + 1;
       const planPath = writeArtifact(s.sessionId, n, "plan.md", raw);
       s.cycles.push({
@@ -532,7 +544,13 @@ export async function planNextCycle(s: CycleState, rt: CycleRuntime): Promise<Cy
     }
     const unkept = (s.promises ?? []).some((p) => p.state !== "kept");
     const kind = unkept ? "keep-promise" : "go-deeper";
-    rt.log?.(`ULW Planner declared no-mandate fulfilled; ${unkept ? "a promise is unkept" : "all promises kept"} — synthesizing a ${kind} cycle (streak ${s.directExecuteStreak + 1}/${noProgressCap()})`);
+    const whySynth =
+      s.mandate != null && !usedTheProduct
+        ? "mandate fulfilled without Looked: (use the product before declaring the job done)"
+        : unkept
+          ? "a promise is unkept"
+          : "all promises kept";
+    rt.log?.(`ULW Planner declared ${s.mandate != null ? "mandate" : "no-mandate"} fulfilled; ${whySynth} — synthesizing a ${kind} cycle (streak ${s.directExecuteStreak + 1}/${noProgressCap()})`);
     const synth = synthesizeWorkPlan(s, scout, kind);
     s.directExecuteStreak += 1;
     return admitPlan(s, rt, synth.plan, synth.raw, tokens, scout, reviewForExecutor);
@@ -843,10 +861,12 @@ function commitCycle(s: CycleState, rt: CycleRuntime): AutoCommitResult {
   ]
     .filter(Boolean)
     .join("\n");
-  const res = rt.commit({ subject, body });
+  const res = rt.commit({ subject, body, sessionId: s.sessionId });
   if (record) {
     record.commitSha = res.sha;
     record.commitSubject = res.committed ? subject : undefined;
+    if (res.stagedPaths?.length) record.commitFiles = res.stagedPaths.slice(0, 24);
+    if (res.commitKind) record.commitKind = res.commitKind;
     record.itemsDone = done;
     record.waves = s.wave;
   }
@@ -918,11 +938,14 @@ async function advanceAfterCycle(
 async function finishCycle(s: CycleState, rt: CycleRuntime, accepted: CheckRun | null): Promise<CycleStopOutcome> {
   s.phase = "commit";
   const ac = commitCycle(s, rt);
+  if (ac.initializedGit) {
+    rt.log?.(`ULW initialized git repository in ${rt.workspace} (local only; FORGE_AUTO_GIT=0 off)`);
+  }
   if (ac.committed) {
     rt.log?.(`ULW cycle ${s.cycle} committed ${ac.sha ?? ""} — ${ac.subject}`);
-    // A cycle that landed is progress: the no-progress wall resets, whether
-    // this cycle came from a real plan or a synthesized work cycle.
-    s.directExecuteStreak = 0;
+    // Docs-only commits are not progress: a rename mill of READMEs would
+    // otherwise reset the no-progress wall forever. Source/product files do.
+    if (ac.commitKind !== "docs") s.directExecuteStreak = 0;
   } else if (ac.skipped) {
     rt.log?.(`ULW cycle ${s.cycle} commit skipped: ${ac.skipped}`);
   }

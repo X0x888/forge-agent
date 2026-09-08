@@ -24,7 +24,7 @@ Known baseline: on a machine with `~/.cursor/hooks.json`, 11 loop tests die with
 - `src/cli.ts` — commander entry: interactive REPL, headless `forge run` (`--json`), `doctor`, `sessions`, `stats`.
 - `src/agent/loop.ts` — the agent loop: tool dispatch, Stop path (`runStopGuard`), safe-boundary admissions, background-task credit. Big; grep for the guard name you need.
 - `src/agent/system-prompt.ts` — baseline prompt (cache-stable) + project rules loader (`AGENTS.md` / `CLAUDE.md` / cursor / copilot; **28k total, split fairly across the loaded files, 12k floor per file** — `ruleFileBudget`; a clipped file gets a visible `[clipped …]` marker, a startup warning, a `/context` `loaded/total` line and a doctor row); `instruction-paths.ts` is the workspace → git-root walk it shares with the guideline audit — change the walk there, never in one of the two.
-- `src/agent/tools/` — file/bash/search/MCP/LSP/subagent tools; `file-read-state.ts` (stale-edit guard), `edit-receipt.ts`, `format-on-write.ts`.
+- `src/agent/tools/` — file/bash/search/github/MCP/LSP/subagent tools; `file-read-state.ts` (stale-edit guard), `edit-receipt.ts`, `format-on-write.ts`.
 - `src/agent/` also: `permissions.ts` / `rules.ts` / `sandbox.ts` / `shell-parse.ts` (deny > ask > allow; segment-strict bash), `subagent.ts` (explore / plan / general-purpose, worktree isolation).
 - `src/harness/` — the product:
   - `stop-guard.ts` composes, in order: user Stop hooks → `report-guard.ts` (attestation pass for `**Goal achieved.**`, **before the drivers**) → `goal.ts` → `cycle/` (the ULW driver) → `todo-gate.ts` → `handoff-guard.ts` → `proof-claim-guard.ts` → `report-guard.ts`. Every block is counted per guard in `guardBlocks` (run JSON · `metrics.jsonl` · `forge stats` harness row).
@@ -38,7 +38,7 @@ Known baseline: on a machine with `~/.cursor/hooks.json`, 11 loop tests die with
 - `src/auth/` — multi-account credentials (`auth.json` v2, mode 0600, never logged).
 - `src/commands/slash.ts` — every `/command` (+ `runDoctorCheck`); `help-text.ts`; `project-commands.ts` (`.forge/commands/*.md`).
 - `src/tui/` — REPL, bottom dock, status/turn/commit cards, markdown renderer.
-- `src/mcp/`, `src/lsp/` — MCP (defaults context7 + playwright) and LSP ensure packs.
+- `src/mcp/`, `src/lsp/` — MCP (defaults context7 + isolated playwright) and LSP ensure packs. GitHub source is the native `github` tool.
 - `skills/forge-*/` — built-in skill packs; `forge-planner` / `forge-reviewer` are the ULW role briefs, `forge-veteran` the shared doctrine; `docs/` — HARNESS, ULW, RELIABILITY, PRODUCTION, SAFETY, TOOLS.
 - `tests/*.test.ts` — one file per module; `tests/helpers/cycle-arm.ts` arms ULW with a plan already admitted (`armWithPlan`) and makes a real git repo (`mkGitRepo`); `tests/cycle-*.test.ts` drive the orchestrator with a fake `CycleRuntime`.
 

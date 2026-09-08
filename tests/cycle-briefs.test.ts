@@ -42,6 +42,7 @@ function runState(): CycleState {
       serendipity: ["the popup CSS loads twice"],
       disputes: ["the Reviewer called `catchAt` dead; scripts/seed.mjs reads it (run log attached)"],
       commitSha: "abc1234",
+      commitFiles: ["extension/src/face.ts", "extension/src/badge.ts"],
       plannerTokens: 12_000,
       reviewerTokens: 30_000,
     },
@@ -147,6 +148,8 @@ describe("Planner plan brief (turn 2)", () => {
     assert.ok(b.includes("opened the popup"));
     for (const t of HISTORY_TITLES) assert.ok(b.includes(t), t);
     assert.ok(b.includes("cycle 1 — Toolbar face"));
+    assert.match(b, /files: extension\/src\/face\.ts, extension\/src\/badge\.ts/);
+    assert.match(b, /never the easiest remaining string/);
     assert.ok(b.includes("claimed: the icon is what a toolbar-pet user watches all day"), "the Planner's claim before the spend");
     assert.ok(b.includes("found: yes — the badge moves"), "the Reviewer's finding after");
     assert.ok(b.includes("resolveBadge takes ten positional args"));

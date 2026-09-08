@@ -76,6 +76,9 @@ export function runSpend(s: CycleState): RunSpend {
  * reader sees whether the boss's sentence held.
  */
 function cycleLine(c: CycleRecord): string {
+  const files = c.commitFiles?.length
+    ? `files: ${c.commitFiles.slice(0, 4).join(", ")}${c.commitFiles.length > 4 ? ` +${c.commitFiles.length - 4}` : ""}`
+    : "";
   const bits = [
     `cycle ${c.n}${c.title ? ` — ${c.title}` : ""}`,
     c.direction ? clipBlock(c.direction, 220).replace(/\n/g, " ") : "",
@@ -83,6 +86,7 @@ function cycleLine(c: CycleRecord): string {
     c.worthClaim ? `worth claimed: ${clipBlock(c.worthClaim, 160).replace(/\n/g, " ")}` : "",
     c.worth ? `worth found: ${clipBlock(c.worth, 160).replace(/\n/g, " ")}` : "",
     c.commitSha ? `commit ${c.commitSha}` : c.endedAt ? "no commit" : "",
+    files,
   ].filter(Boolean);
   return bits.join(" · ");
 }
@@ -165,7 +169,7 @@ function previousShapeLines(s: CycleState): string[] {
  */
 export const MANDATE_QUALITY_BAR = [
   `The mandate is attention — what they care about — not a spec, not a checklist, and not a quality ceiling. Vague, hype or laundry-list wording does not license vague, hype or laundry-list work. A specific request is still that request, done like a veteran — not a product rewrite they did not ask for.`,
-  `Direction: is your sentence after using the product and knowing the category's bar. Do not copy their adjectives into Direction: or Items:. If you do not already know what a demanding user of this kind of product notices first, web_search it and/or read the matching shipped forge-* skill from the catalog (games: forge-game-assets / forge-game-ui / forge-imagine; UI: forge-surface / forge-polish; CLI: forge-shape). The bar is that user, not the prompt.`,
+  `Direction: is your sentence after using the product and knowing the category's bar. Do not copy their adjectives into Direction: or Items:. If you do not already know what a demanding user of this kind of product notices first, web_search it and/or read the matching shipped forge-* skill from the catalog (games: forge-game-assets / forge-game-ui / forge-imagine; UI: forge-surface / forge-polish; CLI: forge-shape). For GitHub source use the github tool, not a scrape of github.com. The bar is that user, not the prompt.`,
 ];
 
 function mandateLines(s: CycleState): string[] {
@@ -249,6 +253,9 @@ function recordLines(input: PlannerPlanInput): string[] {
       `## What this run has shipped (a record, not a thread — do not continue the last theme because it was last; start from the product)`,
     );
     for (const c of s.cycles) lines.push(`- ${cycleLine(c)}`);
+    lines.push(
+      `If the last several cycles' files are the same copy/rename surface, the next cycle is a different class you just saw while using the product, or leave it — never the easiest remaining string.`,
+    );
     // "The last review" is the last cycle a Reviewer read, not the last record.
     const last = [...s.cycles].reverse().find((c) => c.reviewVerdict) ?? s.cycles[s.cycles.length - 1];
     if (last?.mustFix.length) {

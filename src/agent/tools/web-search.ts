@@ -1,30 +1,65 @@
 /**
- * Best-effort web search without an API key.
- * 1) DuckDuckGo Instant Answer JSON
- * 2) DuckDuckGo HTML lite scrape (titles + links) when IA is empty
+ * Best-effort web search. Optional API keys (Brave / Tavily / Exa / SearXNG)
+ * first; DuckDuckGo Instant Answer plus DDG/Brave/Bing HTML in parallel as
+ * the key-free fallback. A short in-process cache avoids repeating the same
+ * query in one run. FORGE_WEB_SEARCH_CACHE=0 disables the cache.
  */
 import type { ToolContext, ToolResult } from "./types.js";
 import { boundToolOutput } from "./truncate.js";
-import { sliceUtf16Safe } from "../../util/json-utf8.js";
-import { mergeAbortSignals } from "../../util/abort.js";
-import { readBodyCapped, decodeCodePoint } from "./web-fetch.js";
 import { numberFieldError } from "./arg-types.js";
+import { isFalsy } from "../../util/bool.js";
+import {
+  configuredSearchProviders,
+  decodeHtml,
+  parseDdgHtml,
+  searchWeb,
+} from "./web-search-providers.js";
 
-const UA = "ForgeAgent/0.9 (+https://github.com/X0x888/forge-agent; web_search)";
-const SEARCH_TIMEOUT_MS = 15_000;
-/** Cap HTML scrape body so a hostile/huge page cannot OOM the process. */
-const MAX_HTML_BYTES = 2 * 1024 * 1024;
+export { decodeHtml, parseDdgHtml };
+
+const CACHE_TTL_MS = 120_000;
+const CACHE_MAX = 32;
+const cache = new Map<string, { at: number; text: string }>();
+
+function cacheEnabled(): boolean {
+  return !isFalsy(process.env.FORGE_WEB_SEARCH_CACHE);
+}
+
+function cacheGet(key: string): string | undefined {
+  if (!cacheEnabled()) return undefined;
+  const hit = cache.get(key);
+  if (!hit) return undefined;
+  if (Date.now() - hit.at > CACHE_TTL_MS) {
+    cache.delete(key);
+    return undefined;
+  }
+  return hit.text;
+}
+
+function cacheSet(key: string, text: string): void {
+  if (!cacheEnabled()) return;
+  if (cache.size >= CACHE_MAX) {
+    const first = cache.keys().next().value;
+    if (first !== undefined) cache.delete(first);
+  }
+  cache.set(key, { at: Date.now(), text });
+}
+
+/** Test helper. */
+export function _resetWebSearchCache(): void {
+  cache.clear();
+}
 
 function isAbortLike(err: unknown, signal?: AbortSignal): boolean {
   if (signal?.aborted) return true;
   if (!err || typeof err !== "object") return false;
   const name = String((err as { name?: string }).name || "");
   const msg = err instanceof Error ? err.message : String(err);
-  return (
-    name === "AbortError" ||
-    /aborted/i.test(msg) ||
-    msg === "Aborted"
-  );
+  return name === "AbortError" || /aborted/i.test(msg) || msg === "Aborted";
+}
+
+function looksLikeGithubQuery(query: string): boolean {
+  return /github\.com\//i.test(query) || /\brepo:[^\s]+/i.test(query);
 }
 
 export async function toolWebSearch(
@@ -53,9 +88,6 @@ export async function toolWebSearch(
       isError: true,
     };
   }
-  // Validate num_results before abort short-circuit so bad args are never masked.
-  // num_results: default 5, clamp 1–10. Explicit invalid fails closed.
-  // all|max|full → 10 (cap), parity with news count aliases.
   let n = 5;
   if (args.num_results != null && String(args.num_results).trim() !== "") {
     const key = String(args.num_results).trim().toLowerCase();
@@ -65,13 +97,12 @@ export async function toolWebSearch(
       const raw = Number(key);
       if (!Number.isFinite(raw) || raw < 1 || !/^\d+$/.test(key)) {
         return {
-          output:
-            numberFieldError(
-              "web_search",
-              "num_results",
-              args.num_results,
-              "Pass an integer 1–10 or all|max|full (default 5).",
-            ),
+          output: numberFieldError(
+            "web_search",
+            "num_results",
+            args.num_results,
+            "Pass an integer 1–10 or all|max|full (default 5).",
+          ),
           isError: true,
         };
       }
@@ -80,33 +111,37 @@ export async function toolWebSearch(
   }
   if (ctx.signal?.aborted) return { output: "Aborted", isError: true };
 
+  const cacheKey = `${n}\n${query}`;
+  const cached = cacheGet(cacheKey);
+  if (cached) return { output: cached };
+
   try {
-    const ia = await duckDuckGoInstantAnswer(query, n, ctx.signal);
+    const { hits, source } = await searchWeb(query, n, ctx.signal);
     if (ctx.signal?.aborted) return { output: "Aborted", isError: true };
-    if (ia.length) {
-      const managed = await boundToolOutput(ia.join("\n\n"));
-      return { output: managed.text };
+    if (!hits.length) {
+      const gh = looksLikeGithubQuery(query)
+        ? " For a GitHub repository use the github tool (action=search|contents|readme)."
+        : "";
+      return {
+        output:
+          `No structured results for "${query}". Try a more specific query, ` +
+          `or open a known docs URL with web_fetch when network is allowed.` +
+          gh,
+      };
     }
 
-    const html = await duckDuckGoHtmlLite(query, n, ctx.signal);
-    if (ctx.signal?.aborted) return { output: "Aborted", isError: true };
-    if (html.length) {
-      const managed = await boundToolOutput(
-        [
-          `## Search results for ${query}`,
-          ...html.map((r, i) => `${i + 1}. **${r.title}**\n   ${r.url}${r.snippet ? `\n   ${r.snippet}` : ""}`),
-          "",
-          "_Source: DuckDuckGo HTML (no API key). Prefer web_fetch on promising URLs._",
-        ].join("\n"),
-      );
-      return { output: managed.text };
-    }
-
-    return {
-      output:
-        `No structured results for "${query}". Try a more specific query, ` +
-        `or open a known docs URL with web_fetch when network is allowed.`,
-    };
+    const lines = [
+      `## Search results for ${query}`,
+      ...hits.map(
+        (r, i) =>
+          `${i + 1}. **${r.title}**\n   ${r.url}${r.snippet ? `\n   ${r.snippet}` : ""}`,
+      ),
+      "",
+      `_Source: ${source}. Prefer web_fetch on promising URLs; github tool for github.com source.${looksLikeGithubQuery(query) ? " This query looks like a GitHub lookup — github tool reads the repo." : ""} Providers: ${configuredSearchProviders().join(", ")}.`,
+    ];
+    const managed = await boundToolOutput(lines.join("\n"));
+    cacheSet(cacheKey, managed.text);
+    return { output: managed.text };
   } catch (err) {
     if (isAbortLike(err, ctx.signal)) {
       return { output: "Aborted", isError: true };
@@ -118,165 +153,4 @@ export async function toolWebSearch(
       isError: true,
     };
   }
-}
-
-async function duckDuckGoInstantAnswer(
-  query: string,
-  n: number,
-  external?: AbortSignal,
-): Promise<string[]> {
-  const url = `https://api.duckduckgo.com/?q=${encodeURIComponent(query)}&format=json&no_html=1&skip_disambig=1`;
-  const { signal, dispose } = mergeAbortSignals(external, SEARCH_TIMEOUT_MS);
-  try {
-    const resp = await fetch(url, {
-      headers: { "User-Agent": UA, Accept: "application/json" },
-      signal,
-    });
-    if (!resp.ok) return [];
-    const data = (await resp.json()) as {
-      AbstractText?: string;
-      AbstractURL?: string;
-      Heading?: string;
-      RelatedTopics?: Array<{
-        Text?: string;
-        FirstURL?: string;
-        Topics?: Array<{ Text?: string; FirstURL?: string }>;
-      }>;
-      Results?: Array<{ Text?: string; FirstURL?: string }>;
-    };
-    const lines: string[] = [];
-    if (data.Heading || data.AbstractText) {
-      lines.push(
-        `## ${data.Heading || query}\n${data.AbstractText || ""}\n${data.AbstractURL || ""}`.trim(),
-      );
-    }
-  const push = (text?: string, href?: string) => {
-      if (lines.length >= n + 1) return;
-      if (text && href) lines.push(`- ${text}\n  ${href}`);
-    };
-    for (const item of data.RelatedTopics || []) {
-      push(item.Text, item.FirstURL);
-      if (item.Topics) {
-        for (const t of item.Topics) push(t.Text, t.FirstURL);
-      }
-    }
-    for (const item of data.Results || []) push(item.Text, item.FirstURL);
-    return lines;
-  } finally {
-    dispose();
-  }
-}
-
-interface HtmlHit {
-  title: string;
-  url: string;
-  snippet?: string;
-}
-
-/**
- * Parse DuckDuckGo html.duckduckgo.com lite results.
- * Deliberately conservative — only extract result anchors we recognize.
- */
-async function duckDuckGoHtmlLite(
-  query: string,
-  n: number,
-  external?: AbortSignal,
-): Promise<HtmlHit[]> {
-  const url = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`;
-  const { signal, dispose } = mergeAbortSignals(external, SEARCH_TIMEOUT_MS);
-  try {
-    const resp = await fetch(url, {
-      headers: {
-        "User-Agent": UA,
-        Accept: "text/html",
-      },
-      signal,
-      redirect: "follow",
-    });
-    if (!resp.ok) return [];
-    const body = await readBodyCapped(resp, MAX_HTML_BYTES, signal);
-    if (body.tooLarge) return [];
-    return parseDdgHtml(body.buf.toString("utf8"), n);
-  } finally {
-    dispose();
-  }
-}
-
-/** Exported for unit tests. */
-export function parseDdgHtml(html: string, n: number): HtmlHit[] {
-  const hits: HtmlHit[] = [];
-  // Classic DDG HTML: <a rel="nofollow" class="result__a" href="...">Title</a>
-  const re =
-    /<a[^>]*class="[^"]*result__a[^"]*"[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi;
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(html)) && hits.length < n) {
-    const rawHref = decodeHtml(m[1]);
-    const title = stripTags(decodeHtml(m[2])).trim();
-    const href = unwrapDdgRedirect(rawHref);
-    if (!title || !href || !/^https?:\/\//i.test(href)) continue;
-    if (hits.some((h) => h.url === href)) continue;
-    hits.push({ title, url: href });
-  }
-
-  // Snippets (best-effort, aligned by order)
-  const snipRe = /class="result__snippet"[^>]*>([\s\S]*?)<\/a>/gi;
-  const snips: string[] = [];
-  while ((m = snipRe.exec(html)) && snips.length < n) {
-    snips.push(stripTags(decodeHtml(m[1])).trim());
-  }
-  // alternate snippet class
-  if (!snips.length) {
-    const snipRe2 = /class="result__snippet"[^>]*>([\s\S]*?)<\//gi;
-    while ((m = snipRe2.exec(html)) && snips.length < n) {
-      snips.push(stripTags(decodeHtml(m[1])).trim());
-    }
-  }
-  for (let i = 0; i < hits.length && i < snips.length; i++) {
-    if (snips[i]) hits[i].snippet = sliceUtf16Safe(snips[i], 0, 240);
-  }
-  return hits;
-}
-
-function unwrapDdgRedirect(href: string): string {
-  try {
-    // Relative paths are DDG chrome — not real results
-    if (href.startsWith("/") && !href.startsWith("//")) return "";
-    const u = new URL(href, "https://duckduckgo.com");
-    // //duckduckgo.com/l/?uddg=<encoded>
-    const uddg = u.searchParams.get("uddg");
-    if (uddg) return decodeURIComponent(uddg);
-    if (u.hostname.includes("duckduckgo.com") && u.pathname === "/l/") {
-      const q = u.searchParams.get("uddg");
-      if (q) return decodeURIComponent(q);
-    }
-    // Drop leftover DDG host links (ads/chrome)
-    if (u.hostname.includes("duckduckgo.com")) return "";
-    return u.href;
-  } catch {
-    return href.startsWith("http") ? href : "";
-  }
-}
-
-function stripTags(s: string): string {
-  return s.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ");
-}
-
-/**
- * Decode common entities for DDG scrape text. Uses web-fetch's guarded
- * decodeCodePoint so hostile entities (&#x110000;) never throw RangeError.
- * Exported for unit tests.
- */
-export function decodeHtml(s: string): string {
-  return s
-    .replace(/&amp;/g, "&")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/&#x([0-9a-f]+);/gi, (full, h: string) =>
-      decodeCodePoint(parseInt(h, 16), full),
-    )
-    .replace(/&#(\d+);/g, (full, d: string) =>
-      decodeCodePoint(Number(d), full),
-    );
 }

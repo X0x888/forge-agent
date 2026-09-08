@@ -9,6 +9,7 @@ import { toolGrep } from "./grep.js";
 import { toolGlob, toolListDir } from "./glob-list.js";
 import { toolWebSearch } from "./web-search.js";
 import { toolWebFetch } from "./web-fetch.js";
+import { toolGithub } from "./github.js";
 import { toolGetTaskOutput, toolKillTask } from "./task-tools.js";
 import { toolAskUser, formatAskUserUnattended } from "./ask-user.js";
 import { cycleActive, loadCycleState } from "../../harness/cycle/state.js";
@@ -36,7 +37,7 @@ export type { ToolContext, ToolResult } from "./types.js";
 export { TOOL_DEFINITIONS };
 
 const AVAILABLE =
-  "bash, get_task_output, kill_task, read_file, write_file, search_replace, apply_patch, grep, glob, list_dir, todo_write, memory_write, ask_user, enter_plan_mode, exit_plan_mode, web_search, web_fetch, search_mcp, call_mcp, mcp_resource, mcp_prompt, spawn_subagent, lsp, image_gen, image_edit, image_to_video, reference_to_video";
+  "bash, get_task_output, kill_task, read_file, write_file, search_replace, apply_patch, grep, glob, list_dir, todo_write, memory_write, ask_user, enter_plan_mode, exit_plan_mode, web_search, web_fetch, github, search_mcp, call_mcp, mcp_resource, mcp_prompt, spawn_subagent, lsp, image_gen, image_edit, image_to_video, reference_to_video";
 
 /** Canonical tool ids (used for doubled-name recovery). */
 const CANONICAL_TOOLS = [
@@ -68,6 +69,7 @@ const CANONICAL_TOOLS = [
   "question",
   "web_search",
   "web_fetch",
+  "github",
   "search_mcp",
   "call_mcp",
   "mcp_search",
@@ -280,6 +282,8 @@ export async function executeTool(
       case "web_search":
       case "WebSearch":
         return await toolWebSearch(args, ctx);
+      case "github":
+        return await toolGithub(args, ctx);
       case "web_fetch":
       case "WebFetch":
         return await toolWebFetch(args, ctx);

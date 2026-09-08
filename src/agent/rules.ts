@@ -85,6 +85,7 @@ function normalizeToolName(t: string): string {
     websearch: "web_search",
     web_fetch: "web_fetch",
     webfetch: "web_fetch",
+    github: "github",
     "*": "*",
   };
   return map[lower] || lower;

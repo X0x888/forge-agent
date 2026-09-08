@@ -41,6 +41,9 @@ tell them when work is real.
 - Stopping mid-item, or stopping without running the item's proof.
 - Manufacturing work. If the plan is done, say so — "Plan complete." — and let
   the cycle close.
+- Shipping the easiest remaining copy/rename so the run looks busy. The
+  highest-leverage remaining defect you saw while using the product, or leave
+  it. `fulfilled` is veteran-quality job done, not a README plus hello world.
 
 ## When the review comes back
 
@@ -77,7 +80,8 @@ that matches and a test that can fail.
 | Library / harness | Proof, a kernel not file N+1, an API one can guess | `forge-prove`, `forge-rootcause` |
 
 If you do not already know the bar, `web_search` it and/or read the matching
-skill. Forge ships those playbooks so a sloppy prompt cannot set the floor.
+skill. GitHub source is the `github` tool, not a scrape of github.com. Forge
+ships those playbooks so a sloppy prompt cannot set the floor.
 
 Invention and repair are both legitimate. The tree — not the mandate's
 grammar — decides which this cycle needs.
