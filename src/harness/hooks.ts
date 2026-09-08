@@ -182,6 +182,36 @@ function matcherHits(matcher: string | undefined, toolName: string | undefined):
   }
 }
 
+function asHookCommand(raw: unknown): HookCommand | null {
+  if (!raw || typeof raw !== "object") return null;
+  const o = raw as Record<string, unknown>;
+  const command = typeof o.command === "string" ? o.command : undefined;
+  const url = typeof o.url === "string" ? o.url : undefined;
+  if (!command && !url) return null;
+  const timeout = typeof o.timeout === "number" && Number.isFinite(o.timeout) ? o.timeout : undefined;
+  const type = o.type === "http" || url ? "http" : "command";
+  return { type, command, url, timeout };
+}
+
+/**
+ * Claude/Forge matchers are `{ matcher?, hooks: [{ type, command }] }`.
+ * Cursor's native `hooks.json` puts the command on the event entry itself
+ * (`{ command, matcher?, timeout }` — no `hooks[]`). Either shape is a matcher.
+ */
+function asHookMatcher(raw: unknown): HookMatcher | null {
+  if (!raw || typeof raw !== "object") return null;
+  const o = raw as Record<string, unknown>;
+  const matcher = typeof o.matcher === "string" ? o.matcher : undefined;
+  if (Array.isArray(o.hooks)) {
+    const hooks = o.hooks.map(asHookCommand).filter((h): h is HookCommand => h != null);
+    if (!hooks.length) return null;
+    return { matcher, hooks };
+  }
+  const one = asHookCommand(raw);
+  if (!one) return null;
+  return { matcher, hooks: [one] };
+}
+
 function loadHookFile(file: string): HooksConfig | null {
   try {
     const data = readJsonFile<HooksConfig | { hooks?: HooksConfig["hooks"] }>(file, {});
@@ -227,24 +257,35 @@ function collectHookFiles(config: ForgeConfig, cwd: string): string[] {
     files.push(...listHookJsonFiles(projectDir));
   }
 
+  // User-home Claude/Cursor files follow the developer machine, not the
+  // fixture. `node:test` sets NODE_TEST_CONTEXT — skip those paths so a
+  // host `~/.cursor/hooks.json` cannot crash or steer the suite.
+  const skipUserHomeCompat = Boolean(process.env.NODE_TEST_CONTEXT);
+
   // Claude compatibility
   if (config.compatClaudeHooks) {
-    for (const p of [
-      path.join(home, "..", ".claude", "settings.json"),
-      path.join(process.env.HOME || "", ".claude", "settings.json"),
+    const claude = [
       path.join(cwd, ".claude", "settings.json"),
       path.join(cwd, ".claude", "settings.local.json"),
-    ]) {
+    ];
+    if (!skipUserHomeCompat) {
+      claude.unshift(
+        path.join(home, "..", ".claude", "settings.json"),
+        path.join(process.env.HOME || "", ".claude", "settings.json"),
+      );
+    }
+    for (const p of claude) {
       if (pathExists(p)) files.push(p);
     }
   }
 
   // Cursor compatibility
   if (config.compatCursorHooks) {
-    for (const p of [
-      path.join(process.env.HOME || "", ".cursor", "hooks.json"),
-      path.join(cwd, ".cursor", "hooks.json"),
-    ]) {
+    const cursor = [path.join(cwd, ".cursor", "hooks.json")];
+    if (!skipUserHomeCompat) {
+      cursor.unshift(path.join(process.env.HOME || "", ".cursor", "hooks.json"));
+    }
+    for (const p of cursor) {
       if (pathExists(p)) files.push(p);
     }
   }
@@ -272,8 +313,10 @@ export class HookRunner {
         if (!Array.isArray(list)) continue;
         const event = normalizeEventName(rawEvent);
         const existing = this.matchers.get(event) || [];
-        // For Claude settings.json, hooks may live under settings.hooks
-        existing.push(...list);
+        for (const item of list) {
+          const matcher = asHookMatcher(item);
+          if (matcher) existing.push(matcher);
+        }
         this.matchers.set(event, existing);
       }
     }
@@ -293,7 +336,7 @@ export class HookRunner {
 
     for (const m of matchers) {
       if (!matcherHits(m.matcher, ctx.toolName)) continue;
-      for (const hook of m.hooks) {
+      for (const hook of m.hooks ?? []) {
         const r = await this.execOne(event, hook, ctx);
         if (r.additionalContext) contexts.push(r.additionalContext);
         if (r.systemMessage) messages.push(r.systemMessage);

@@ -15,9 +15,8 @@ npm run dev -- "…"       # tsx src/cli.ts
 npm run smoke            # build + scripts/smoke.mjs
 ```
 
-One test file: `npx tsx --test tests/foo.test.ts` (an isolate is proof=ran, not proof=✓ — the suite is the bar).
-The script clears `.tmp/forge-*` first: `TMPDIR` is pinned inside the repo and fixtures leave their scratch behind, and a `.tmp` grown to six figures of files makes the background-task tests time out at 10s with an unrelated-looking failure.
-Known baseline: on a machine with `~/.cursor/hooks.json`, 11 loop tests die with `TypeError: m.hooks is not iterable` (the compat loader in `src/harness/hooks.ts` iterates Cursor's native entries, which have no `hooks[]`; unfixed), and the `reliability` doctor-card equality can differ between two renders — diff the `✖` lines against a run at the merge-base before blaming a change, and attribute by cause text first.
+One test file: `npx tsx --test tests/foo.test.ts` (an isolate is proof=ran, not proof=✓ — the suite is the bar). Colour tests import `tests/helpers/pin-color.ts` first so `NO_COLOR` from a parent session cannot flip them.
+The script clears `.tmp/forge-*` first: `TMPDIR` is pinned inside the repo and fixtures leave their scratch behind, and a `.tmp` grown to six figures of files makes the background-task tests time out at 10s with an unrelated-looking failure. `npm test` also unsets `NO_COLOR` and sets `FORCE_COLOR=1`. User-home Claude/Cursor hooks are not loaded under `node:test`.
 
 ## Layout (where things live)
 

@@ -1,5 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { stripAnsi } from "./helpers/ansi.js";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -769,8 +770,8 @@ it("/model catalog typos suggest instead of saving broken id", async () => {
       config: { ...DEFAULT_CONFIG, provider: "xai", model: "grok-4.5" },
       hooks,
     });
-    assert.match(r2.output || "", /model  ·  my-custom-finetune-v3/);
-    assert.match(r2.output || "", /set · live/);
+    assert.match(stripAnsi(r2.output || ""), /model  ·  my-custom-finetune-v3/);
+    assert.match(stripAnsi(r2.output || ""), /set · live/);
   });
 
 it("session lookup miss suggests title typos", async () => {
@@ -1840,8 +1841,8 @@ it("/fork includes last-turn peek", async () => {
       title: "alpha",
     });
     const row = formatNumberedPickerRow(2, s.meta, [], 80);
-    assert.match(row, /3 /);
-    assert.match(row, /alpha/);
+    assert.match(stripAnsi(row), /3 /);
+    assert.match(stripAnsi(row), /alpha/);
   });
 
   it("/resume N loads the Nth same-cwd session", async () => {
@@ -1862,8 +1863,8 @@ it("/fork includes last-turn peek", async () => {
       hooks,
     };
     const listed = await handleSlash("/resume", ctx);
-    assert.match(String(listed.output || ""), /1 /);
-    assert.match(String(listed.output || ""), /\/resume 3/);
+    assert.match(stripAnsi(String(listed.output || "")), /1 /);
+    assert.match(stripAnsi(String(listed.output || "")), /\/resume 3/);
     const miss = await handleSlash("/resume 9", ctx);
     assert.match(String(miss.output || ""), /No session at index 9/);
     const hit = await handleSlash("/resume 1", ctx);

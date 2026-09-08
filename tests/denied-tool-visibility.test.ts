@@ -4,6 +4,7 @@
  */
 import { describe, it, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
+import { stripAnsi } from "./helpers/ansi.js";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -159,12 +160,14 @@ describe("denied tool visibility", () => {
     assert.equal(ends[0].isError, true);
     assert.match(String(ends[0].output), /denied|plan/i);
     assert.match(
-      formatToolEnd("write_file", {
-        isError: true,
-        ms: 0,
-        bytes: 20,
-        args: { path: "secret.txt" },
-      }),
+      stripAnsi(
+        formatToolEnd("write_file", {
+          isError: true,
+          ms: 0,
+          bytes: 20,
+          args: { path: "secret.txt" },
+        }),
+      ),
       /✗ write secret\.txt/,
     );
     assert.equal(

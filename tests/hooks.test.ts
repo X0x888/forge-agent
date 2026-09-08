@@ -334,4 +334,72 @@ describe("hooks", () => {
     },
   );
 
+  it("Cursor native hooks.json entries (no hooks[]) load without throwing", async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-hooks-cursor-"));
+    process.env.FORGE_HOME = path.join(tmp, "home");
+    fs.mkdirSync(path.join(tmp, ".cursor"), { recursive: true });
+    fs.writeFileSync(
+      path.join(tmp, ".cursor", "hooks.json"),
+      JSON.stringify({
+        version: 1,
+        hooks: {
+          beforeShellExecution: [{ command: "true", timeout: 5 }],
+        },
+      }),
+      "utf8",
+    );
+    const runner = new HookRunner(
+      { ...DEFAULT_CONFIG, compatCursorHooks: true, compatClaudeHooks: false },
+      tmp,
+    );
+    const r = await runner.run("PreToolUse", {
+      sessionId: "s1",
+      cwd: tmp,
+      workspaceRoot: tmp,
+      toolName: "bash",
+    });
+    assert.equal(r.blocked, false);
+    assert.ok((runner.list().PreToolUse ?? 0) >= 1);
+  });
+
+  it("does not load $HOME Cursor hooks under node:test", async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-hooks-home-"));
+    process.env.FORGE_HOME = path.join(tmp, "forge-home");
+    const fakeHome = path.join(tmp, "user-home");
+    fs.mkdirSync(path.join(fakeHome, ".cursor"), { recursive: true });
+    fs.writeFileSync(
+      path.join(fakeHome, ".cursor", "hooks.json"),
+      JSON.stringify({
+        hooks: {
+          stop: [
+            {
+              command:
+                "node -e \"console.log(JSON.stringify({decision:'block',reason:'home hook'})); process.exit(2)\"",
+              timeout: 5,
+            },
+          ],
+        },
+      }),
+      "utf8",
+    );
+    const prevHome = process.env.HOME;
+    process.env.HOME = fakeHome;
+    try {
+      const runner = new HookRunner(
+        { ...DEFAULT_CONFIG, compatCursorHooks: true, compatClaudeHooks: false },
+        path.join(tmp, "ws"),
+      );
+      const r = await runner.run("Stop", {
+        sessionId: "s1",
+        cwd: path.join(tmp, "ws"),
+        workspaceRoot: path.join(tmp, "ws"),
+      });
+      assert.equal(r.blocked, false, "host ~/.cursor/hooks.json must not run in the suite");
+      assert.equal(runner.list().Stop ?? 0, 0);
+    } finally {
+      if (prevHome == null) delete process.env.HOME;
+      else process.env.HOME = prevHome;
+    }
+  });
+
 });
