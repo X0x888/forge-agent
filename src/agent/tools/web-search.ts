@@ -14,6 +14,12 @@ import {
   parseDdgHtml,
   searchWeb,
 } from "./web-search-providers.js";
+import {
+  githubEnabled,
+  githubReposFromUrls,
+  queryLooksLikeGithubLookup,
+  toolGithub,
+} from "./github.js";
 
 export { decodeHtml, parseDdgHtml };
 
@@ -58,8 +64,15 @@ function isAbortLike(err: unknown, signal?: AbortSignal): boolean {
   return name === "AbortError" || /aborted/i.test(msg) || msg === "Aborted";
 }
 
-function looksLikeGithubQuery(query: string): boolean {
-  return /github\.com\//i.test(query) || /\brepo:[^\s]+/i.test(query);
+function githubFollowUp(urls: string[]): string {
+  const repos = githubReposFromUrls(urls);
+  if (!repos.length) return "";
+  const shown = repos.slice(0, 5).join(", ");
+  const more = repos.length > 5 ? ` (+${repos.length - 5} more)` : "";
+  return (
+    `\n\nGitHub repos in these hits: ${shown}${more}. ` +
+    `Read them with the github tool (action=readme|contents|tree) — do not scrape github.com.`
+  );
 }
 
 export async function toolWebSearch(
@@ -116,17 +129,25 @@ export async function toolWebSearch(
   if (cached) return { output: cached };
 
   try {
-    const { hits, source } = await searchWeb(query, n, ctx.signal);
+    const wantGithub =
+      githubEnabled() && queryLooksLikeGithubLookup(query);
+    const [web, gh] = await Promise.all([
+      searchWeb(query, n, ctx.signal),
+      wantGithub
+        ? toolGithub({ action: "search", query, num_results: n }, ctx)
+        : Promise.resolve(null),
+    ]);
     if (ctx.signal?.aborted) return { output: "Aborted", isError: true };
-    if (!hits.length) {
-      const gh = looksLikeGithubQuery(query)
+    const { hits, source } = web;
+    if (!hits.length && !(gh && !gh.isError && gh.output.trim())) {
+      const tip = wantGithub
         ? " For a GitHub repository use the github tool (action=search|contents|readme)."
         : "";
       return {
         output:
           `No structured results for "${query}". Try a more specific query, ` +
           `or open a known docs URL with web_fetch when network is allowed.` +
-          gh,
+          tip,
       };
     }
 
@@ -136,10 +157,17 @@ export async function toolWebSearch(
         (r, i) =>
           `${i + 1}. **${r.title}**\n   ${r.url}${r.snippet ? `\n   ${r.snippet}` : ""}`,
       ),
-      "",
-      `_Source: ${source}. Prefer web_fetch on promising URLs; github tool for github.com source.${looksLikeGithubQuery(query) ? " This query looks like a GitHub lookup — github tool reads the repo." : ""} Providers: ${configuredSearchProviders().join(", ")}.`,
     ];
-    const managed = await boundToolOutput(lines.join("\n"));
+    if (gh && !gh.isError && gh.output.trim()) {
+      lines.push("", gh.output.trim());
+    }
+    lines.push(
+      "",
+      `_Source: ${source}. Prefer web_fetch on promising URLs; github tool for github.com source. Providers: ${configuredSearchProviders().join(", ")}.`,
+    );
+    const follow = githubFollowUp(hits.map((h) => h.url));
+    const text = lines.join("\n") + follow;
+    const managed = await boundToolOutput(text);
     cacheSet(cacheKey, managed.text);
     return { output: managed.text };
   } catch (err) {

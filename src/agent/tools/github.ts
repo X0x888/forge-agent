@@ -89,6 +89,49 @@ export function rewriteGithubBlobUrl(url: string): string {
 let tokenCache: { value: string | null; at: number } | null = null;
 const TOKEN_TTL_MS = 60_000;
 
+/**
+ * True when this query is a GitHub lookup even if the user did not type
+ * "search GitHub": a github.com URL, `owner/repo`, or a `repo:` qualifier.
+ * File paths (`src/agent/foo.ts`) are not repos.
+ */
+export function queryLooksLikeGithubLookup(query: string): boolean {
+  const q = (query || "").trim();
+  if (!q) return false;
+  if (/github\.com\//i.test(q)) return true;
+  if (/\brepo:[^\s]+/i.test(q)) return true;
+  if (/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(q) && parseGithubRepo(q)) {
+    return true;
+  }
+  const head = q.match(/^([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)\b/);
+  if (head && parseGithubRepo(head[1])) {
+    const owner = head[1].split("/")[0].toLowerCase();
+    if (
+      !/^(src|lib|app|dist|build|test|tests|docs|bin|pkg|cmd|internal|scripts|packages)$/.test(
+        owner,
+      )
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/** Unique owner/repo ids from github.com URLs in search hits. */
+export function githubReposFromUrls(urls: string[]): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const u of urls) {
+    const p = parseGithubRepo(u);
+    if (!p) continue;
+    const id = `${p.owner}/${p.repo}`;
+    const key = id.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(id);
+  }
+  return out;
+}
+
 export function resolveGithubToken(): string | null {
   const env =
     process.env.GITHUB_TOKEN?.trim() ||
@@ -99,11 +142,24 @@ export function resolveGithubToken(): string | null {
   if (tokenCache && now - tokenCache.at < TOKEN_TTL_MS) return tokenCache.value;
   let value: string | null = null;
   try {
+    // `gh auth login` stores the token in gh's own config/keyring. Keep HOME
+    // and the GH_* config dir, and keepSecrets so a host GH_TOKEN still
+    // reaches gh if that is how they authenticated.
     const t = execFileSync("gh", ["auth", "token"], {
       encoding: "utf8",
       timeout: 3_000,
       stdio: ["ignore", "pipe", "pipe"],
-      env: createChildEnv(),
+      env: createChildEnv(
+        {
+          HOME: process.env.HOME,
+          PATH: process.env.PATH,
+          USER: process.env.USER,
+          XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME,
+          GH_CONFIG_DIR: process.env.GH_CONFIG_DIR,
+          GH_HOST: process.env.GH_HOST,
+        },
+        { keepSecrets: true },
+      ),
     }).trim();
     if (t && !/\s/.test(t) && t.length >= 8) value = t;
   } catch {

@@ -39,8 +39,8 @@ If you do not already know the bar, `web_search` what a demanding user of
 this kind of product notices first, and/or read the matching shipped
 `forge-*` skill (the catalog names them: games, UI, CLI, library). Forge
 ships those playbooks so you do not wait for the user to paste them. For
-GitHub source use the `github` tool (search / contents / tree / readme),
-not a scrape of github.com.
+GitHub source use the `github` tool (search / contents / tree / readme)
+even if the user did not say GitHub — not a scrape of github.com.
 
 You work in **two turns**. The harness hands you the record — what this run
 has shipped, what the last review left, what the user said — only after you

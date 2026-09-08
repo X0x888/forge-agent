@@ -380,7 +380,8 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       name: "web_search",
       description:
         "Search the web. Returns titles, URLs, snippets. Uses Brave/Tavily/Exa/SearXNG when their API keys are set, otherwise DuckDuckGo + Brave/Bing HTML. " +
-        "For GitHub source use the github tool; for a known URL use web_fetch.",
+        "Queries that look like a repo (github.com, owner/repo) also search GitHub. " +
+        "For GitHub source use the github tool even if the user did not say GitHub; for a known URL use web_fetch.",
       parameters: {
         type: "object",
         properties: {
@@ -397,8 +398,8 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       name: "github",
       description:
         "Read GitHub: search repositories/code, repo metadata, file contents, README, tree. " +
-        "Prefer over web_search/web_fetch for github.com — returns source, not HTML chrome. " +
-        "Public repos work without a token; GITHUB_TOKEN or `gh auth login` raises limits and enables code search.",
+        "Use this when researching a library or repo even if the user did not say GitHub — returns source, not HTML chrome. " +
+        "Public repos work without a token; a local `gh auth login` or GITHUB_TOKEN is picked up automatically.",
       parameters: {
         type: "object",
         properties: {

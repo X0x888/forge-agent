@@ -4,6 +4,8 @@ import {
   parseGithubRepo,
   rewriteGithubBlobUrl,
   githubEnabled,
+  githubReposFromUrls,
+  queryLooksLikeGithubLookup,
   toolGithub,
 } from "../src/agent/tools/github.js";
 
@@ -24,6 +26,23 @@ describe("github tool", () => {
     assert.equal(blob?.path, "packages/next/package.json");
     assert.equal(parseGithubRepo("https://example.com/x/y"), null);
     assert.equal(parseGithubRepo("../etc/passwd"), null);
+  });
+
+  it("treats github.com and owner/repo as a GitHub lookup, not src/ paths", () => {
+    assert.equal(queryLooksLikeGithubLookup("https://github.com/vercel/next.js"), true);
+    assert.equal(queryLooksLikeGithubLookup("vercel/next.js"), true);
+    assert.equal(queryLooksLikeGithubLookup("vercel/next.js app router"), true);
+    assert.equal(queryLooksLikeGithubLookup("repo:microsoft/playwright-mcp"), true);
+    assert.equal(queryLooksLikeGithubLookup("src/agent/loop.ts"), false);
+    assert.equal(queryLooksLikeGithubLookup("best chrome extension MV3 practices"), false);
+    assert.deepEqual(
+      githubReposFromUrls([
+        "https://github.com/microsoft/playwright-mcp",
+        "https://github.com/microsoft/playwright-mcp/blob/main/README.md",
+        "https://example.com/x",
+      ]),
+      ["microsoft/playwright-mcp"],
+    );
   });
 
   it("rewrites blob URLs to raw.githubusercontent.com and leaves trees alone", () => {

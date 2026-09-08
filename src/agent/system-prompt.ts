@@ -310,7 +310,7 @@ export function buildBaselineSystemPrompt(opts: {
     `- Make focused, correct changes. Explain why briefly when it matters.`,
     `- Prefer file tools over bash for reads/edits/search; grep/glob before read; read line ranges; batch independent read-only calls.`,
     `- **LSP over grep for symbols**: after you know a name, use lsp references / definition / workspace_symbols (not repo-wide regex) in TS/Python/Rust/Go. grep for strings, comments, and unknown text.`,
-    `- Docs/pages: web_search then web_fetch. GitHub source: github tool, not github.com HTML.`,
+    `- Docs/pages: web_search then web_fetch. Library/repo: github tool (unprompted); no github.com scrape.`,
     `- New project without git: git init -b main (ULW does this before a cycle commit). FORGE_AUTO_GIT=0 off.`,
     `- **MCP**: search_mcp then call_mcp. Defaults: context7 + playwright (isolated; output ~/.forge/tmp). Optional CONTEXT7_API_KEY.`,
     ...(isCursorProvider(config.provider)
