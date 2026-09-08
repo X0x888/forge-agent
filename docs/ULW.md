@@ -51,6 +51,7 @@ The skills in `skills/forge-*` were written for a task and applied to a task. Th
 | `forge-swarm` parallel reads with different lenses | The Planner's explore children get lenses: first-minute user, month-three user, next year's maintainer, a competitor's PM | `forge-planner` §4 |
 | `forge-absorb` push back with evidence | The executor's `Dispute:` line — a Reviewer revision it can show was wrong — reaches the next Planner | `forge-veteran`; `record.disputes` |
 | `forge-planner` "the way a boss does" | The plan brief carries the run's spend; `Worth the cycle:` is the claim before the spend, the Reviewer's `Worth:` the finding after — side by side in the record, `/cycle status` and the report | `runSpend`, `cycleLine`, `cycleReportFacts` |
+| `forge-planner` the user's words | The mandate is attention, not a spec and not a quality ceiling. The harness never rewrites it. `Direction:` is the Planner's sentence after using the product and knowing the category's bar (web_search or a shipped `forge-*` skill). A sloppy prompt does not license sloppy work; a specific request is still that request, done like a veteran. | `briefs.ts` `MANDATE_QUALITY_BAR`; `forge-planner`; `forge-veteran` |
 
 Presence and shape are parsed; content is judged by the next role and by whoever opens `cycles/<n>/`. A `continue` plan missing `Considered:` (with `leave it`) or an item's `serves:` / `red now:` comes back to the Planner once with what was missing, on the kept session without re-scouting. A second failure becomes a synthesized work cycle, subject to the no-progress wall. `FORGE_ULW_TWO_TURN=0` runs each role on one brief; a runtime that cannot keep a session, or a resume that fails, falls back to the same single brief with the scout inlined.
 
@@ -64,7 +65,7 @@ The mandate only changes where the direction comes from.
 | **b — direction** | `/ulw polish the first-run experience` | The direction frames every plan; the run cycles until fulfilled or `/cycle 0`. |
 | **c — no prompt** | `/ulw` | The Planner derives the direction from the product: identity (README, `--help`, manifests, tests as spec) + category research + the tree's gaps. |
 
-Invention and repair are both legitimate in every case; the tree decides which the cycle needs. There is no Bet contract and no mandate classifier.
+Invention and repair are both legitimate in every case; the tree decides which the cycle needs. There is no Bet contract and no mandate classifier. The user's words are passed through verbatim — they are **attention**, not a spec and not a quality ceiling. A laundry-list `/ulw make it more interesting, attractive, addictive, ship-ready` does not license a laundry-list cycle, and `/ulw add --version with a test` does not become a product rewrite. The Planner translates after using the product and knowing the category's bar (a shipped `forge-*` skill, or `web_search` if it does not already know). `Direction:` is that sentence. The Reviewer judges a demanding user of this product, not whether the diff matches the mandate's adjectives.
 
 ## Controls
 
@@ -116,7 +117,7 @@ Identity: <reaffirmed, or an Operator: line>
 Looked: <carried from the scout>
 Considered:
 - <the scout's candidates, struck or kept after the record; leave it always present, with why it lost or won>
-Direction: <this cycle's intended benefit or consequential question to resolve>
+Direction: <this cycle's intended benefit or consequential question, in your words after using the product — never a paraphrase of the mandate's adjectives>
 Worth the cycle: <benefit to this product's user, operator or maintainer; why the evidence justifies the cost and risk over leave it>
 Verify: `npm test` | none — <why>
 Items:

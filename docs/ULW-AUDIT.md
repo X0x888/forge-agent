@@ -30,6 +30,7 @@ helps expose those failure paths without requiring exhaustive dogfood.
 | Worth focused on first-minute visibility; test-only work was forbidden | Recovery, security, accessibility, regression evidence, and maintainability could lose to cosmetic work | Judge product-specific benefit, risk reduction, evidence, and cost over the useful lifetime; meaningful tests need no manufactured production edit |
 | The Planner could write UNKNOWN promises that the parser discarded | Unverified behavior disappeared from the inventory | Preserve unknown in artifacts, state, status, and reports; investigate before prescribing a repair |
 | Instructions said promptless fulfilled stops, while mechanics continued | Roles reasoned from a false lifecycle contract | State the actual continuation behavior and allow investigation to conclude without inventing edits |
+| A sloppy or laundry-list mandate was treated as a spec | Prompt quality set work quality; `Direction:` could paraphrase the user's adjectives | Mandate is attention, not a ceiling; `MANDATE_QUALITY_BAR` in every Planner brief; `Direction:` is the Planner's sentence after using the product and knowing the category bar; Reviewer judges a demanding user, not the prompt's adjectives |
 
 The existing plan-cycle separation remains useful: discovery precedes the run
 record, independent review follows execution, and the harness owns the check
@@ -56,6 +57,8 @@ improvement from merely changing the tree. Research and negative findings can
 improve that decision. They do not require an implementation change as a receipt.
 Repeated work is a reason to investigate a shared cause; the number of similar
 edits alone cannot determine whether an abstraction is warranted.
+
+| A sloppy or laundry-list mandate was treated as a spec | Prompt quality set work quality; `Direction:` could paraphrase the user's adjectives | Mandate is attention, not a ceiling; `MANDATE_QUALITY_BAR` in every Planner brief; `Direction:` is the Planner's sentence after using the product and knowing the category bar; Reviewer judges a demanding user, not the prompt's adjectives |
 
 ## Remaining limits
 

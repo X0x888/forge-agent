@@ -164,6 +164,13 @@ Always run smoke after deploy.
       });
       assert.match(ulwPrompt, /skill:forge-veteran/);
       assert.match(ulwPrompt, /Veteran doctrine/);
+      assert.match(ulwPrompt, /never the mandate's adjectives/);
+      const plannerPrompt = formatSkillsForPrompt(ws, {
+        inlineNames: ["forge-planner"],
+      });
+      assert.match(plannerPrompt, /skill:forge-planner/);
+      assert.match(plannerPrompt, /not a quality ceiling/);
+      assert.match(plannerPrompt, /Translate before you plan/);
       // Multi-line frontmatter description: >- must not leak as the description
       assert.ok(!/skill:forge-method.*—\s*>-/.test(prompt));
       assert.match(method.description, /built-in skills|playbook/i);

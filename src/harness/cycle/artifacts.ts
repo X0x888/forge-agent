@@ -436,7 +436,7 @@ export function planArtifactContract(cycle: number): string {
     `Looked: <what you ran or opened as its user and what you saw — or: could not run — <why>>`,
     `Considered:`,
     `- <credible alternatives weighed after the record — and always: leave it — <why it lost, or why it wins>>`,
-    `Direction: <this cycle's intended benefit or consequential question to resolve>`,
+    `Direction: <this cycle's intended benefit or consequential question, in your words after using the product — never a paraphrase of the mandate's adjectives>`,
     `Worth the cycle: <concrete benefit to this product's user, operator or maintainer; why its evidence justifies the cost and risk over leave it>`,
     `Verify: <the one command that proves the cycle, e.g. \`npm test\`> | none — <why this repo has no check>`,
     `Items:`,

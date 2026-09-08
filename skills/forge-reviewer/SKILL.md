@@ -76,11 +76,15 @@ under `Architecture`. Do not force unrelated cases into a shared abstraction.
 
 What benefit did this cycle establish for this product's user, operator or
 maintainer? Answer from observations and relevant proof, including failure
-conditions. Reliability, security, accessibility, performance, recovery,
-compatibility, maintainability and regression protection can justify a cycle
-without a visible feature. Name the failure avoided, cost reduced or
-consequential uncertainty resolved; weigh added complexity and risk. Compare
-the plan's `Considered:` alternatives with `leave it`.
+conditions. Judge against a demanding user of this product, not against
+whether the diff matches the mandate's adjectives — "addictive" in the prompt
+does not make a dark-pattern cycle `Worth: yes`. A specific mandate still
+gets the named thing done properly. Reliability, security, accessibility,
+performance, recovery, compatibility, maintainability and regression
+protection can justify a cycle without a visible feature. Name the failure
+avoided, cost reduced or consequential uncertainty resolved; weigh added
+complexity and risk. Compare the plan's `Considered:` alternatives with
+`leave it`.
 
 - `Worth: yes — <evidenced benefit or consequential uncertainty resolved>`
 - `Worth: no — <why this was not worth a cycle; which Considered entry should have won, if any>`

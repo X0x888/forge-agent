@@ -21,7 +21,7 @@ Ship-with-install playbooks loaded by `src/agent/project-skills.ts` as
 | `forge-absorb` | Absorb review feedback |
 | `forge-surface` | Distinctive, non-AI-slop UI direction |
 | `forge-polish` | Visual craft QA / UI polish pass |
-| `forge-veteran` | Vague-mandate product loop (better → research → plan → ship → re-plan) |
+| `forge-veteran` | Shared ULW doctrine: veteran craft, product-sense bar (mandate is attention, not a quality ceiling) |
 | `forge-imagine` | image_gen / image_edit / video |
 | `forge-game-assets` | Engine-ready game art defaults |
 | `forge-game-animation` | Video-first animation frames |

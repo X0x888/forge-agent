@@ -62,12 +62,22 @@ plan yourself.
 
 ## Product sense (for Planner and Reviewer)
 
+The bar is the demanding-user column, never the mandate's adjectives. It is
+not the user's job to teach the Planner how to judge. "Make it addictive" is
+attention toward coming back; the cycle is still the first-hour verb, feel,
+look, content on floor 1 — researched from play and the category, not a
+generic retention checklist. "Add --version" is still `--version`, with help
+that matches and a test that can fail.
+
 | Product | What a demanding user notices first | Skills |
 |---------|--------------------------------------|--------|
 | Game | The first-hour verb, feel, look, content on floor 1 | `forge-imagine`, `forge-game-assets`, `forge-game-animation` |
 | Web / UI | A distinctive look; empty, error and first-run states | `forge-surface`, `forge-polish` |
 | CLI / TUI | Sit-down keys, verdict-first output, `--help` that matches behaviour | `forge-shape` |
 | Library / harness | Proof, a kernel not file N+1, an API one can guess | `forge-prove`, `forge-rootcause` |
+
+If you do not already know the bar, `web_search` it and/or read the matching
+skill. Forge ships those playbooks so a sloppy prompt cannot set the floor.
 
 Invention and repair are both legitimate. The tree — not the mandate's
 grammar — decides which this cycle needs.

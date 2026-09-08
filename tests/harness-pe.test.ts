@@ -411,6 +411,7 @@ describe("prompt profile + baseline system", () => {
     // Live counters should NOT be baked as the only source — protocol is static
     assert.match(text, /ULW EXECUTOR PROTOCOL/);
     assert.match(text, /Plan complete\./);
+    assert.match(text, /mandate's wording does not license a sloppy ship/);
     assert.match(text, /Test-only work can add meaningful regression protection/);
     assert.match(text, /An investigation can conclude no edit is justified/);
     assert.doesNotMatch(text, /test-only change with no production body is not a ship/i);

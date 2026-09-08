@@ -218,6 +218,8 @@ Three prompts, one procedure:
 | direction | `/ulw polish the first-run experience` | fulfilled, `/cycle 0`, or `/max-cycles N` |
 | no prompt | `/ulw` | the Planner derives the direction from the product itself |
 
+The mandate is **attention**, not a spec and not a quality ceiling. A sloppy prompt does not license sloppy work; a specific request is still that request, done like a veteran. The Planner translates after using the product (`Direction:` is its sentence). There is no mandate rewriter.
+
 ```text
 /ulw [mandate]        # arm; bare /ulw lets the Planner derive the direction
 /cycle 0              # finish this cycle (execute → verify → review → verify → commit), then stop

@@ -5,7 +5,9 @@
  * enters: the Planner reads the mandate, the identity, the prior cycles'
  * plans and reviews, the user's interjections and the tree; the Reviewer
  * reads the plan and the cycle diff. Freshness is the point — the model that
- * made the changes is not the one that judges them.
+ * made the changes is not the one that judges them. The mandate is passed
+ * through verbatim (no rewriter, no classifier); quality is invariant — see
+ * MANDATE_QUALITY_BAR.
  *
  * Each role runs in two turns, and the split is the doctrine enforced by
  * sequence: the Planner's turn 1 (the scout) has the product and none of the
@@ -154,12 +156,25 @@ function previousShapeLines(s: CycleState): string[] {
   ];
 }
 
+/**
+ * The mandate is the user's attention, not a spec and not a quality ceiling.
+ * The harness never rewrites it — that was `ulwExpandedMandate` / `isSoftPrompt`,
+ * and a `/` in "UI/UX" once picked the wrong contract for a 250-wave run.
+ * The Planner translates after using the product; these lines are in every
+ * brief so a sloppy prompt cannot set the floor.
+ */
+export const MANDATE_QUALITY_BAR = [
+  `The mandate is attention — what they care about — not a spec, not a checklist, and not a quality ceiling. Vague, hype or laundry-list wording does not license vague, hype or laundry-list work. A specific request is still that request, done like a veteran — not a product rewrite they did not ask for.`,
+  `Direction: is your sentence after using the product and knowing the category's bar. Do not copy their adjectives into Direction: or Items:. If you do not already know what a demanding user of this kind of product notices first, web_search it and/or read the matching shipped forge-* skill from the catalog (games: forge-game-assets / forge-game-ui / forge-imagine; UI: forge-surface / forge-polish; CLI: forge-shape). The bar is that user, not the prompt.`,
+];
+
 function mandateLines(s: CycleState): string[] {
   return [
     `## Mandate`,
     s.mandate
       ? s.mandate
       : `(none) — the user gave no direction. Derive it from the product itself: what it is, who it serves, what it promises, what a tool of this kind is expected to do, and where this tree falls short. That gap is the direction.`,
+    ...MANDATE_QUALITY_BAR,
   ];
 }
 
@@ -168,7 +183,7 @@ const SCOUT_PROCEDURE = [
   `1. Identity: what is this product, who uses it, for what job. README, docs, --help, manifests, tests as spec. One paragraph.`,
   `2. Use it. Exercise a representative job end to end before proposing changes: build and run the CLI, navigate the app through completion and back out (call_mcp → playwright), run a library's consumer example, or exercise a service, pipeline or harness through its public boundary. Include relevant failure, recovery and repeated-use conditions; read setup or safety instructions first when needed. Use local fixtures for actions with external effects. Do not edit. Write observations and limits under Looked:. If a surface cannot run here, name what remains unverified; source inspection is evidence about implementation, not proof the flow works.`,
   `3. Promises: the product's own checklist. Claims in README, --help, tests and the identity are evidence of intended behavior, not an exhaustive definition of excellence. Mark each kept | broken | absent | unknown with where you saw it. Unknown means unverified: investigate before proposing repair, rather than calling it kept or missing. Preserve the product's purpose; removing a promise does not fulfill it. Re-inspect the current state rather than copying the previous list.`,
-  `4. Category: research relevant expectations and alternatives when that resolves uncertainty; competitors are context, not a feature checklist. Consider the first-session user, the repeat user, the operator and the maintainer. Delegate independent reads with different lenses when useful. Infer reasonable choices from this project's purpose and constraints; do not require a prompt to find its next improvement.`,
+  `4. Category: know the bar for this kind of product. If you do not, web_search what a demanding user of this category notices first, and/or read the matching shipped forge-* skill. Competitors are context, not a feature checklist. The user's adjectives are not the bar. Consider the first-session user, the repeat user, the operator and the maintainer. Delegate independent reads with different lenses when useful. Infer reasonable choices from this project's purpose and constraints; do not require a prompt to find its next improvement.`,
   `5. Tree: inspect the core job and its dependencies. Consider correctness, usability and accessibility, reliability and recovery, security and privacy, performance and resource cost, compatibility, operability, documentation and maintainability where they matter to this product. These are discovery lenses, not quotas or scores. Follow evidence to the most consequential gaps.`,
   `6. Considered: compare the strongest evidenced candidates with their benefits, risks and cost. Missing capability, broken promise, rough edge and architectural debt are possible sources, not required bins; do not invent a candidate for an empty bin. Always include leave it — <why leaving this area unchanged may be better>. An investigation that resolves a consequential unknown is legitimate work; state the question and the observation that would change the decision.`,
 ];
@@ -176,10 +191,10 @@ const SCOUT_PROCEDURE = [
 /** Steps 7–11: the record arrives; harmonize, price, verdict. */
 const PLAN_PROCEDURE = [
   `7. Strike what is done. Read the record below; drop the candidates it already covers. If the record shows the same kind of change twice, investigate whether a shared cause remains and whether one decision resolves the remaining instances. Similar labels alone do not prove a shared cause; independent defects need not become an abstraction. The record is not a thread; it tells you what is done, not what to continue.`,
-  `8. Harmonize: one coherent theme, as many items as it needs. Each item names its files; serves: the job in Identity it serves; red now: an observed defect, measured limitation, concrete regression risk or consequential evidence gap (unchecked — <why> only when you could not look); proof: the command or observable that would distinguish improvement from no improvement. Existing behavior may already pass while its regression protection is missing: a test-only item must identify the plausible fault its new check catches. An investigation may conclude no change is justified. A vocabulary, copy or consistency gap is one item across its affected surfaces, or Out of scope. The last review's Must-fix and unfinished items come first.`,
+  `8. Harmonize: one coherent theme, as many items as it needs. Direction: is the cycle's intended benefit in your words after using the product — never a restatement of the mandate. Each item names its files; serves: the job in Identity it serves; red now: an observed defect, measured limitation, concrete regression risk or consequential evidence gap (unchecked — <why> only when you could not look); proof: the command or observable that would distinguish improvement from no improvement. Existing behavior may already pass while its regression protection is missing: a test-only item must identify the plausible fault its new check catches. An investigation may conclude no change is justified. A vocabulary, copy or consistency gap is one item across its affected surfaces, or Out of scope. The last review's Must-fix and unfinished items come first.`,
   `9. Worth the cycle: identify the benefit to this product's user, operator or maintainer and the evidence for it; weigh added complexity, compatibility risk and ongoing cost against leave it. Prevented data loss, safer behavior, recovery, reduced resource use and effective regression protection can be valuable without a visible feature. A general practice earns a cycle through a concrete problem here, not its reputation. The spend so far is above.`,
   `10. Guidelines: does the AGENTS.md-class file describe this product and carry the conventions an executor needs? Fact defects and missing conventions are the plan's first item; removing existing doctrine is a proposal, not an edit.`,
-  `11. Verdict: fulfilled releases a run only when its explicit mandate is met. With no mandate the run continues investigating: kept promises and a clean first session are not proof of excellence. If no change is justified, plan a bounded investigation of the most consequential remaining uncertainty with a decision it can inform; leave that area unchanged when the evidence supports it. A no-mandate fulfilled is redirected into further work by the harness. Never invent defects or edits to keep running. Use blocked only when an external dependency or user-only decision prevents meaningful progress across the available work.`,
+  `11. Verdict: fulfilled releases a run only when its explicit mandate is met. An explicit mandate is fulfilled when the job they pointed at is met at veteran quality, not when every adjective is ticked. With no mandate the run continues investigating: kept promises and a clean first session are not proof of excellence. If no change is justified, plan a bounded investigation of the most consequential remaining uncertainty with a decision it can inform; leave that area unchanged when the evidence supports it. A no-mandate fulfilled is redirected into further work by the harness. Never invent defects or edits to keep running. Use blocked only when an external dependency or user-only decision prevents meaningful progress across the available work.`,
 ];
 
 /**
@@ -470,7 +485,7 @@ const REVIEWER_DUTY = [
   `- Persisted data and public surface: a storage key, schema, exported API, CLI flag or wire format that changed needs a migration or a compatibility path in this diff, or a Must-fix that names the break.`,
   `- Class: use the record to investigate recurring defects and their shared cause. Require evidence before demanding an abstraction or another repair; repeated labels alone are not a defect.`,
   `- Revise what you can now — small, correct, in the project's own conventions. Repairable unresolved defects belong under Must-fix with Verdict: ship-with-revisions: the harness withholds commit, lets the executor fix them in this cycle, then runs a fresh review. Partial or missing items cannot ship. Reserve blocked for an unavailable review, an external constraint or a direction that requires replanning. Nonblocking observations and future improvements belong under Architecture for the next Planner to weigh.`,
-  `- Worth: judge the benefit to this product's user, operator or maintainer from evidence, not visibility or the diff's effort. Reliability, security, accessibility, performance, recovery, compatibility, maintainability and regression protection can justify a cycle. Name the actual failure avoided, cost reduced or uncertainty resolved and weigh complexity and risk. Compare the plan's Considered: alternatives with leave it. A useful investigation may produce no code change. Worth: no means the benefit was not established or did not justify the cost; explain how the next Planner should reassess it without demanding cosmetic work. Repeated low-value cycles call for a different question or approach, not an arbitrary count-based defect.`,
+  `- Worth: judge the benefit to this product's user, operator or maintainer from evidence, not visibility or the diff's effort. Judge against a demanding user of this product, not against whether the diff matches the mandate's adjectives. Reliability, security, accessibility, performance, recovery, compatibility, maintainability and regression protection can justify a cycle. Name the actual failure avoided, cost reduced or uncertainty resolved and weigh complexity and risk. Compare the plan's Considered: alternatives with leave it. A useful investigation may produce no code change. Worth: no means the benefit was not established or did not justify the cost; explain how the next Planner should reassess it without demanding cosmetic work. Repeated low-value cycles call for a different question or approach, not an arbitrary count-based defect.`,
   `- Do not widen scope. Do not start the next cycle's work.`,
 ];
 
@@ -608,7 +623,7 @@ export function formatPlanAdmission(opts: {
     opts.planText.trim(),
     ``,
     ...(opts.lastReview ? [formatReviewNotesForExecutor(opts.lastReview), ``] : []),
-    `You are the executor. Complete the items in order: implement or investigate as planned, run the item's proof, mark it done with todo_write. An investigation can conclude no edit is justified; record its evidence and decision. Cancel an item only with a reason. Close with "Plan complete." when every item is done or cancelled. The harness then runs ${opts.verifyCommand ? `\`${opts.verifyCommand}\`` : "the project check"} (only failures that were not already failing before the cycle count), a fresh reviewer reads the cycle diff and revises, the check runs once more and changes commit only after an accepting review and green verification. ${budget}`,
+    `You are the executor. Complete the items in order: implement or investigate as planned, run the item's proof, mark it done with todo_write. An investigation can conclude no edit is justified; record its evidence and decision. Cancel an item only with a reason. Ship at veteran quality — the mandate's wording does not license a sloppy ship or extra unplanned scope. Close with "Plan complete." when every item is done or cancelled. The harness then runs ${opts.verifyCommand ? `\`${opts.verifyCommand}\`` : "the project check"} (only failures that were not already failing before the cycle count), a fresh reviewer reads the cycle diff and revises, the check runs once more and changes commit only after an accepting review and green verification. ${budget}`,
     board,
     `Do not stop mid-item, do not ask the user to choose; Operator: lines are for a secret, an irreversible action, or an external blocker only. What you notice and leave alone goes on one \`Serendipity:\` line in your closer; the next Planner reads it. Live controls: /cycle 0 · /replan · /ulw-off.`,
   ].join("\n");

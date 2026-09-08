@@ -184,6 +184,7 @@ describe("plan artifact parser", () => {
       assert.ok(c.includes(label), label);
     }
     assert.ok(c.includes("# Cycle 4 plan"));
+    assert.match(c, /never a paraphrase of the mandate's adjectives/);
   });
 });
 

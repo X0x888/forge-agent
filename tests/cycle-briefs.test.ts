@@ -7,6 +7,8 @@ import {
   buildReviewerBrief,
   buildReviewerLookBrief,
   buildReviewerReviewBrief,
+  formatPlanAdmission,
+  MANDATE_QUALITY_BAR,
   runSpend,
 } from "../src/harness/cycle/briefs.js";
 import { newCycleState, type CycleState } from "../src/harness/cycle/state.js";
@@ -104,6 +106,25 @@ describe("Planner scout brief (turn 1)", () => {
     assert.match(b, /Unknown means unverified: investigate before proposing repair/);
     assert.match(b, /An investigation that resolves a consequential unknown is legitimate work/);
   });
+
+  it("passes the user's mandate through verbatim and frames it as attention, not a spec", () => {
+    const laundry =
+      "Improve this game, make it more interesting, attractive, and addictive. Make the game finished with rich contents.";
+    const s = newCycleState({ sessionId: "mandate-bar", mandate: laundry });
+    const b = buildPlannerScoutBrief({
+      state: s, workspace: "/w", gitStatus: "", projectChecks: [],
+    });
+    const mandateBlock = b.split("## Mandate")[1]?.split("##")[0] ?? "";
+    assert.ok(mandateBlock.includes(laundry), "harness does not rewrite the user's words");
+    for (const line of MANDATE_QUALITY_BAR) {
+      assert.ok(b.includes(line), "quality bar is in the scout brief");
+    }
+    assert.match(b, /not a quality ceiling/);
+    assert.match(b, /Do not copy their adjectives/);
+    assert.match(b, /web_search/);
+    assert.match(b, /matching shipped forge-\* skill/);
+    assert.match(b, /user's adjectives are not the bar/);
+  });
 });
 
 describe("Planner plan brief (turn 2)", () => {
@@ -166,6 +187,17 @@ describe("Planner plan brief (turn 2)", () => {
       assert.match(b, /An investigation may conclude no change is justified/);
       assert.match(b, /Never invent defects or edits to keep running/);
       assert.doesNotMatch(b, /say so and the run stops|the behaviour exists and the item is not an item/);
+    }
+  });
+
+  it("both planning paths keep the quality bar and tell Direction: to be the Planner's sentence", () => {
+    for (const b of [buildPlannerPlanBrief(input()), buildPlannerBrief(input())]) {
+      for (const line of MANDATE_QUALITY_BAR) {
+        assert.ok(b.includes(line));
+      }
+      assert.match(b, /never a restatement of the mandate/);
+      assert.match(b, /job they pointed at is met at veteran quality/);
+      assert.match(b, /not when every adjective is ticked/);
     }
   });
 });
@@ -234,8 +266,25 @@ describe("Reviewer review brief (turn 2)", () => {
       assert.match(b, /Verdict: ship-with-revisions: the harness withholds commit/);
       assert.match(b, /Reserve blocked for an unavailable review/);
       assert.match(b, /Nonblocking observations and future improvements belong under Architecture/);
+      assert.match(b, /not against whether the diff matches the mandate's adjectives/);
       assert.doesNotMatch(b, /test-only change with no production body|stop planning invisible cycles|first minute, first day/);
     }
+  });
+});
+
+describe("plan admission", () => {
+  it("tells the executor the plan is the contract and the mandate does not license a sloppy ship", () => {
+    const text = formatPlanAdmission({
+      cycle: 1,
+      title: "First-hour verb",
+      planText: "# Cycle 1 plan — First-hour verb\nDirection: the jump feels like this game",
+      items: [{ id: "i1", title: "tighten jump" }],
+      verifyCommand: "npm test",
+      maxCycles: null,
+      cycleZeroRequested: false,
+    });
+    assert.match(text, /mandate's wording does not license a sloppy ship/);
+    assert.match(text, /extra unplanned scope/);
   });
 });
 

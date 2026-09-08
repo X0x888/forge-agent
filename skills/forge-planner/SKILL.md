@@ -20,6 +20,26 @@ observe its behavior, identify consequential gaps, and choose what to do.
 The tree and its users supply evidence; they do not reveal every preference
 or constraint. Make reasonable, reversible choices and name material uncertainty.
 
+## The user's words
+
+The mandate is attention, not a spec and not a quality ceiling. It is not
+the user's job to teach you how to judge. A sloppy, hype or laundry-list
+prompt does not license sloppy, hype or laundry-list work. A specific
+request (`add --version with a test`) is still that request, done the way
+a veteran would — help that matches, a test that can fail — not a product
+rewrite they did not ask for.
+
+Translate before you plan. Use the product, know the category's bar, then
+write `Direction:` in your own sentence. Do not copy their adjectives into
+`Direction:` or `Items:`. "Make it addictive" is attention toward coming
+back; the cycle is still this product's first-hour verb, feel, look and
+content, evidenced from play — not a generic retention checklist.
+
+If you do not already know the bar, `web_search` what a demanding user of
+this kind of product notices first, and/or read the matching shipped
+`forge-*` skill (the catalog names them: games, UI, CLI, library). Forge
+ships those playbooks so you do not wait for the user to paste them.
+
 You work in **two turns**. The harness hands you the record — what this run
 has shipped, what the last review left, what the user said — only after you
 have written the scout. That order is the point: every cycle starts from the
@@ -85,10 +105,13 @@ against memory.
 
 ### 4. Category — what a tool of this kind is expected to do
 
-Research category expectations when it resolves uncertainty. Competitors are
-context, not a feature checklist. Consider the first-session user, the repeat
-user, the operator and the maintainer. Delegate independent reads with these
-different lenses when useful; their conclusions still need project evidence.
+Know the bar for this kind of product. If you do not, `web_search` what a
+demanding user of this category notices first, and/or read the matching
+shipped `forge-*` skill. Competitors are context, not a feature checklist.
+The user's adjectives are not the bar. Consider the first-session user, the
+repeat user, the operator and the maintainer. Delegate independent reads with
+these different lenses when useful; their conclusions still need project
+evidence.
 
 ### 5. Tree — the whole tree, not a surface
 
@@ -133,7 +156,9 @@ prove a shared cause, and independent defects need not become an abstraction.
 
 ### 8. Harmonize — one coherent theme
 
-One theme, as many items as it needs (one or nine). Each item names the files
+One theme, as many items as it needs (one or nine). `Direction:` is the
+cycle's intended benefit in your words after using the product — never a
+restatement of the mandate. Each item names the files
 it lives in, the job in `Identity:` it **serves** (in words — `forge-surface`:
 every decision traceable to subject, audience and job), what you saw that
 shows it is **red now**: an observed defect, measured limitation, concrete
@@ -171,11 +196,13 @@ removing existing doctrine is a proposal, not an edit.
 
 - `Verdict: continue` with items — the normal plan.
 - `Verdict: fulfilled — <why>` releases a run only when its explicit mandate
-  is met. With no mandate, kept promises and a clean first session do not prove
-  excellence. If no change is justified, continue with a bounded investigation
-  of the most consequential remaining uncertainty and a decision it can inform.
-  A no-mandate `fulfilled` is redirected into further work by the harness.
-  Never invent a defect or make an unnecessary edit to keep running.
+  is met. An explicit mandate is fulfilled when the job they pointed at is met
+  at veteran quality, not when every adjective is ticked. With no mandate, kept
+  promises and a clean first session do not prove excellence. If no change is
+  justified, continue with a bounded investigation of the most consequential
+  remaining uncertainty and a decision it can inform. A no-mandate `fulfilled`
+  is redirected into further work by the harness. Never invent a defect or make
+  an unnecessary edit to keep running.
 - `Verdict: blocked — <what only the user can unblock>` when an external
   dependency or user-only decision prevents meaningful progress across the
   available work; one inaccessible surface need not block the whole project.
