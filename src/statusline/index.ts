@@ -16,6 +16,8 @@ export {
   renderTmux,
   renderCompactStrip,
   snapshotsToJson,
+  formatCwdChip,
+  formatGitChip,
   formatPlan,
   resetCountdown,
 } from "./render.js";

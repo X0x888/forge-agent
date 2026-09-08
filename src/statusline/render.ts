@@ -1,5 +1,11 @@
+import path from "node:path";
 import chalk from "chalk";
-import type { StatusSnapshot, StatuslineRenderOptions, PlanUsageInfo } from "./types.js";
+import type {
+  GitInfo,
+  StatusSnapshot,
+  StatuslineRenderOptions,
+  PlanUsageInfo,
+} from "./types.js";
 import { formatTokens, formatCost, clipAnsi } from "../util/format.js";
 import { getForgeVersion } from "../util/version.js";
 import { forgeHome } from "../util/fs.js";
@@ -231,6 +237,28 @@ function formatCompact(n: number): string {
   return String(Math.round(n * 10) / 10);
 }
 
+/**
+ * Last two path segments of a workspace, HUD/dock density (not the
+ * projectLabel intel suffix — that is `/status` only).
+ */
+export function formatCwdChip(cwd: string, levels = 2): string {
+  const resolved = path.resolve(cwd || ".");
+  const parts = resolved.split(path.sep).filter(Boolean);
+  if (parts.length === 0) return resolved || ".";
+  const slice = parts.length <= levels ? parts : parts.slice(-levels);
+  return slice.join("/");
+}
+
+/** `git:<branch>[*][+wt]` — omit when the snapshot has no branch. */
+export function formatGitChip(git: GitInfo | undefined): string | null {
+  if (!git?.branch) return null;
+  const branch =
+    git.branch.length > 24 ? `${git.branch.slice(0, 23)}…` : git.branch;
+  const dirty = git.dirty ? "*" : "";
+  const wt = git.isWorktree ? "+wt" : "";
+  return `git:${branch}${dirty}${wt}`;
+}
+
 /** Public for bottom dock + tests. */
 export function resetCountdown(iso: string): string | null {
   const t = Date.parse(iso);
@@ -260,10 +288,9 @@ function renderSession(
   // Line 1: project · git · provider/model · auth · flags · live
   const l1: string[] = [];
   l1.push(paint(c, snap.projectLabel, "bold"));
-  if (snap.git) {
-    const dirty = snap.git.dirty ? "*" : "";
-    const wt = snap.git.isWorktree ? "+wt" : "";
-    l1.push(paint(c, `git:${snap.git.branch}${dirty}${wt}`, "cyan"));
+  {
+    const gitChip = formatGitChip(snap.git);
+    if (gitChip) l1.push(paint(c, gitChip, "cyan"));
   }
   l1.push(
     paint(c, `${snap.provider}/${shortModel(snap.model)}`, "blue"),
@@ -432,9 +459,7 @@ export function renderTmux(snap: StatusSnapshot | undefined): string {
     `forge`,
     shortModel(snap.model),
     snap.projectLabel,
-    snap.git
-      ? `${snap.git.branch}${snap.git.dirty ? "*" : ""}${snap.git.isWorktree ? "+wt" : ""}`
-      : "",
+    snap.git ? formatGitChip(snap.git)?.replace(/^git:/, "") || "" : "",
     `ctx:${pct}%`,
     live,
   ].filter(Boolean);
@@ -476,6 +501,13 @@ export function renderCompactStrip(
   const c = colorEnabled(opts);
   const width = opts.width ?? process.stdout.columns ?? 100;
   const parts: string[] = [];
+
+  {
+    const folder = formatCwdChip(snap.cwd);
+    if (folder) parts.push(paint(c, folder, "bold"));
+    const gitChip = formatGitChip(snap.git);
+    if (gitChip) parts.push(paint(c, gitChip, "cyan"));
+  }
 
   parts.push(
     barColor(c, snap.context.percent, contextBar(snap.context.percent, 8)) +

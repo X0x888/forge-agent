@@ -277,7 +277,7 @@ export async function runRepl(opts: {
   });
 
   /**
-   * Sticky bottom dock — model + active-account quota + weekly reset.
+   * Sticky bottom dock — folder + git + model + active-account quota + weekly reset.
    * Plan is shared into statusCtx so the footer / /status HUD stay in sync.
    */
   const bottomDock = createBottomStatusDock({
@@ -353,7 +353,7 @@ export async function runRepl(opts: {
   const hbTimer = setInterval(pulseHeartbeat, 4_000);
   hbTimer.unref?.();
 
-  // Always-on bottom status region (model · use% · reset · ctx)
+  // Always-on bottom status region (folder · git · model · use% · reset · ctx)
   bottomDock.start();
 
   /** Dedup idle strip when the dock is off (FORGE_BOTTOM_STATUS=0). */

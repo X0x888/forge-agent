@@ -6,12 +6,12 @@ Native, **provider-agnostic** HUD for Forge — integrated into the REPL so you 
   xai/grok-4.5  ████░░░░  32%  18.2k ~$0.04  use:22%  27.8k/150.0k  reset 3d  todos:2  ● live
 [ULW c=1 GOAL] forge ›
 …
-⚒ forge  xai/grok-4.5  sub×2  ctx 32% 12.4k/500k  use:22%  27.8k/150.0k  reset 3d  ULW c=1
+⚒ forge  hobby/forge-agent  git:main  xai/grok-4.5  sub×2  ctx 32% 12.4k/500k  use:22%  27.8k/150.0k  reset 3d  ULW c=1
 ```
 
-The **bottom status region** is always on in a TTY REPL (model · auth · context ·
-active-account quota · weekly reset · harness flags). Disable with
-`FORGE_BOTTOM_STATUS=0`.
+The **bottom status region** is always on in a TTY REPL (folder · git · model ·
+auth · context · active-account quota · weekly reset · harness flags). Disable
+with `FORGE_BOTTOM_STATUS=0`.
 
 While the agent works (native live chrome — not idle-only):
 
@@ -22,7 +22,7 @@ live ✓ /cycle 0  Cycle flag → 0 (LAST)
 [ULW c=0] live › _
 ```
 
-Identity (model · ctx · ULW) stays on the bottom dock. `live ›` is phase +
+Identity (folder · git · model · ctx · ULW) stays on the bottom dock. `live ›` is phase +
 elapsed + work (`tool bash`, `wait retry 2/3`, `bg:N`). When the dock is off,
 the live prompt and turn footer still carry ctx / ULW themselves.
 
@@ -53,8 +53,8 @@ HUD/`forge status` project labels append detected **package manager** + cheapest
 
 | Surface | When | Shows |
 |---------|------|--------|
-| **Bottom status region** | Always (TTY REPL) | Model, auth, ctx %, **use:N%**, used/limit, **reset Nd**, ULW/GOAL/YOLO, bg |
-| **Prompt strip** | Only when the dock is off (`FORGE_BOTTOM_STATUS=0` / non-TTY) | Model, context bar, tokens, **plan quota**, todos, `bg:N`, liveness (deduped) |
+| **Bottom status region** | Always (TTY REPL) | Folder (last 2 path segments), **git:branch** (`*` dirty, `+wt` worktree), model, auth, ctx %, **use:N%**, used/limit, **reset Nd**, ULW/GOAL/YOLO, bg |
+| **Prompt strip** | Only when the dock is off (`FORGE_BOTTOM_STATUS=0` / non-TTY) | Folder, git, context bar, tokens, **plan quota**, todos, `bg:N`, liveness (deduped) |
 | **Prompt flags** | Idle input | `ULW`, `c=1/0`, `GOAL`, `PLAN`/`YOLO`/`auto`, `VERBOSE`, `bg:N` |
 | **Live run header** | Start of a turn **only when the bottom dock is off** | One identity line (model · effort · ULW/GOAL) — skipped when the dock already shows it |
 | **Busy status line** | Mid-turn (stderr; dock-off / fallback) | Spinner + honest phase (`waiting retry…`, not `waiting on bg`) + model + ULW |

@@ -2,8 +2,9 @@
  * Sticky bottom status region for the Forge REPL.
  *
  * Reserves the last terminal row via DECSTBM scroll margins so scrolling
- * transcript never overwrites the dock. Paints model + plan quota + weekly
- * reset + context without fighting the prompt editor (save/restore cursor).
+ * transcript never overwrites the dock. Paints folder + git + model + plan
+ * quota + weekly reset + context without fighting the prompt editor
+ * (save/restore cursor).
  *
  * Disable: FORGE_BOTTOM_STATUS=0 | false | off
  */
@@ -18,6 +19,8 @@ import {
 } from "../statusline/snapshot.js";
 import { collectPlanUsage } from "../statusline/plan.js";
 import {
+  formatCwdChip,
+  formatGitChip,
   formatPlan,
   resetCountdown,
 } from "../statusline/render.js";
@@ -185,9 +188,20 @@ export function renderBottomStatusLine(
   };
 
   // Higher prio survives narrow TTYs. Brand/auth/reset drop before
-  // ctx / budget / ULW / GOAL / YOLO — right-clip used to eat those first.
+  // folder / git / ctx / budget / ULW / GOAL / YOLO — right-clip used
+  // to eat those first.
   const bits: { text: string; prio: number }[] = [];
   bits.push({ text: paint("⚒ forge", "cyan"), prio: 0 });
+
+  // Where you are — last two path segments + git:<branch>[*][+wt].
+  // Prio 7: above model/plan/cache, below ctx/budget/YOLO so a split
+  // pane still names the repo.
+  const folder = formatCwdChip(snap.cwd);
+  if (folder) bits.push({ text: paint(folder, "bold"), prio: 7 });
+  {
+    const gitChip = formatGitChip(snap.git);
+    if (gitChip) bits.push({ text: paint(gitChip, "cyan"), prio: 7 });
+  }
 
   const effort = resolveReasoningEffort(config.model, config.reasoningEffort);
   bits.push({

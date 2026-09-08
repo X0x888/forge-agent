@@ -5,8 +5,8 @@
  * 2. Working indicator during agent turns (phase + elapsed)
  * 3. Post-turn footer (turn tokens / last✓ / harness; dock-off also prints ctx/ULW/GOAL)
  *
- * Session health (model · ctx · plan) lives on the always-on bottom dock,
- * not a second idle strip above the prompt.
+ * Session health (folder · git · model · ctx · plan) lives on the always-on
+ * bottom dock, not a second idle strip above the prompt.
  */
 import chalk from "chalk";
 import type { ForgeConfig } from "../config/types.js";

@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { execFileSync } from "node:child_process";
 import { createSession, saveSession } from "../src/session/session.js";
 import { DEFAULT_CONFIG } from "../src/config/types.js";
 import {
@@ -32,6 +33,8 @@ import {
   parseXaiBillingBody,
 } from "../src/statusline/plan.js";
 import {
+  formatCwdChip,
+  formatGitChip,
   formatPlan,
   resetCountdown,
 } from "../src/statusline/render.js";
@@ -62,7 +65,7 @@ import {
 import { clipAnsi, visibleWidth } from "../src/util/format.js";
 import type { ForgeConfig } from "../src/config/types.js";
 import type { ResolvedAuth } from "../src/auth/types.js";
-import { armWithPlan } from "./helpers/cycle-arm.js";
+import { armWithPlan, mkGitRepo } from "./helpers/cycle-arm.js";
 
 describe("statusline", () => {
   beforeEach(() => {
@@ -622,6 +625,75 @@ describe("statusline", () => {
     assert.match(s!, /reset 3d2h|reset 3d/);
   });
 
+  it("formatCwdChip keeps the last two path segments", () => {
+    assert.equal(formatCwdChip("/Users/s./code/hobby/forge-agent"), "hobby/forge-agent");
+    assert.equal(formatCwdChip("/tmp/foo"), "tmp/foo");
+    assert.equal(formatCwdChip("/only"), "only");
+  });
+
+  it("formatGitChip paints branch, dirty, worktree and omits empty", () => {
+    assert.equal(formatGitChip(undefined), null);
+    assert.equal(formatGitChip({ branch: "main", dirty: false }), "git:main");
+    assert.equal(formatGitChip({ branch: "main", dirty: true }), "git:main*");
+    assert.equal(
+      formatGitChip({ branch: "feat", dirty: false, isWorktree: true }),
+      "git:feat+wt",
+    );
+    assert.equal(
+      formatGitChip({
+        branch: "feature/a-very-long-branch-name-here",
+        dirty: true,
+      }),
+      "git:feature/a-very-long-bra…*",
+    );
+  });
+
+  it("bottom dock and compact strip show folder + git branch", () => {
+    const dir = mkGitRepo("forge-sl-cwd-");
+    execFileSync("git", ["branch", "-m", "dock-status"], { cwd: dir });
+    fs.writeFileSync(path.join(dir, "dirty.txt"), "untracked\n");
+    process.env.FORGE_HOME = fs.mkdtempSync(path.join(os.tmpdir(), "forge-sl-cwd-home-"));
+    const s = createSession({ cwd: dir, provider: "xai", model: "grok-4.6" });
+    const snap = sessionToSnapshot(s, { windowTokens: 500_000 });
+    assert.equal(snap.git?.branch, "dock-status");
+    assert.equal(snap.git?.dirty, true);
+    const folder = formatCwdChip(dir);
+    assert.match(folder, /forge-sl-cwd-/);
+
+    const config = {
+      ...DEFAULT_CONFIG,
+      provider: "xai",
+      model: "grok-4.6",
+      contextWindow: 500_000,
+    } as ForgeConfig;
+    const auth: ResolvedAuth = {
+      provider: "xai",
+      method: "subscription",
+      token: "t",
+      accountId: "xai:test",
+      accountLabel: "sub:test@example.com",
+    };
+    const line = renderBottomStatusLine(
+      { config, session: s, auth },
+      undefined,
+      { width: 160, plain: true },
+    );
+    assert.match(line, new RegExp(folder.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+    assert.match(line, /git:dock-status\*/);
+
+    const strip = renderCompactStrip(snap, { plain: true, width: 160 });
+    assert.match(strip, new RegExp(folder.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+    assert.match(strip, /git:dock-status\*/);
+
+    const squeezed = renderBottomStatusLine(
+      { config, session: s, auth },
+      undefined,
+      { width: 100, plain: true },
+    );
+    assert.match(squeezed, new RegExp(folder.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+    assert.match(squeezed, /git:dock-status\*/);
+  });
+
   it("bottom status line includes model + plan quota + reset", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-sl-bottom-"));
     process.env.FORGE_HOME = tmp;
@@ -648,7 +720,7 @@ describe("statusline", () => {
         product: "SuperGrok",
         source: "test",
       },
-      { width: 120, plain: true },
+      { width: 220, plain: true },
     );
     assert.match(line, /forge/);
     assert.match(line, /xai\/grok-4\.5/);
@@ -687,7 +759,7 @@ describe("statusline", () => {
     const line = renderBottomStatusLine(
       { config, session: s, auth },
       undefined,
-      { width: 160, plain: true },
+      { width: 220, plain: true },
     );
     assert.match(line, /cache 99%/);
   });
@@ -714,7 +786,7 @@ describe("statusline", () => {
     const line = renderBottomStatusLine(
       { config, session: s, auth },
       undefined,
-      { width: 160, plain: true },
+      { width: 220, plain: true },
     );
     assert.match(line, /~\$/);
   });
@@ -829,7 +901,7 @@ describe("statusline", () => {
   });
 
   it("dock paints running tool instead of the word tool", () => {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-sl-dock-tool-"));
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "forge-sl-dock-act-"));
     process.env.FORGE_HOME = tmp;
     const s = createSession({ cwd: tmp, provider: "xai", model: "grok-4.6" });
     const config = {
