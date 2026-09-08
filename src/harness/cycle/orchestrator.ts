@@ -52,7 +52,10 @@ import {
   safeCleanup,
 } from "./roles.js";
 import {
+  adoptLiveControls,
+  currentCycleAlreadyClosed,
   currentCycleRecord,
+  cycleActive,
   ensureCycleArtifactsDir,
   loadActiveCycle,
   openItems,
@@ -192,6 +195,72 @@ function release(s: CycleState, reason: CycleEndReason, line: string): CycleStop
     waveStamped: false,
     phase: s.phase,
   };
+}
+
+function closedCycleHow(s: CycleState): string {
+  const rec = currentCycleRecord(s);
+  if (rec?.commitSha) return ` and committed (${rec.commitSha})`;
+  if (rec?.endedAt) return " (not committed)";
+  return "";
+}
+
+/**
+ * `/ulw-off` (or any disk release) while the orchestrator held an armed copy.
+ * Live-control writes win; a harness release in memory is not revived.
+ */
+function ifUserDisarmed(s: CycleState): CycleStopOutcome | null {
+  adoptLiveControls(s);
+  if (cycleActive(s)) return null;
+  saveCycleState(s);
+  const reason = s.endReason ?? "disarmed";
+  return {
+    allowStop: true,
+    released: true,
+    endReason: reason,
+    reason: reason === "disarmed" ? "ULW released — /ulw-off." : `ULW released (${reason}).`,
+    waveStamped: false,
+    phase: s.phase,
+  };
+}
+
+/**
+ * After a Planner (or before admitting one): the previous cycle may already
+ * have closed. `/cycle 0` / `max_cycles` then stop without starting another;
+ * `/ulw-off` aborts; `/plan` yields. A first plan (cycle 0, nothing closed)
+ * is still admitted so `/cycle 0` means "that plan is the last".
+ */
+function stopBeforeAdmittingNextPlan(s: CycleState): CycleStopOutcome | null {
+  const disarmed = ifUserDisarmed(s);
+  if (disarmed) return disarmed;
+  if (s.humanPlan) {
+    saveCycleState(s);
+    return {
+      allowStop: true,
+      released: false,
+      reason: "ULW armed — the user owns planning (/plan); /build hands it back to the harness Planner.",
+      waveStamped: false,
+      phase: s.phase,
+    };
+  }
+  if (!currentCycleAlreadyClosed(s)) return null;
+  const how = closedCycleHow(s);
+  if (s.cycleZeroRequested) {
+    return {
+      ...release(s, "cycle-zero", `/cycle 0 — cycle ${s.cycle} reviewed${how}; ULW released.`),
+      cycleClosed: true,
+    };
+  }
+  if (s.maxCycles != null && s.cycle >= s.maxCycles) {
+    return {
+      ...release(
+        s,
+        "max-cycles",
+        `max_cycles ${s.maxCycles} reached — cycle ${s.cycle} reviewed${how}; ULW released.`,
+      ),
+      cycleClosed: true,
+    };
+  }
+  return null;
 }
 
 /** The Planner's turn-1 document, kept beside the plan as evidence it was written before the record. */
@@ -437,9 +506,13 @@ export async function planNextCycle(s: CycleState, rt: CycleRuntime): Promise<Cy
   }
   s.phase = "plan";
   saveCycleState(s);
+  const before = stopBeforeAdmittingNextPlan(s);
+  if (before) return before;
   // The review the executor is about to hear: the cycle that just closed.
   const reviewForExecutor = reviewNotesForExecutor(s);
   const out = await runPlanner(s, rt);
+  const stop = stopBeforeAdmittingNextPlan(s);
+  if (stop) return stop;
   const scout = out.scout;
   // Identity and promises are the Planner's inventory of the product; persist
   // them from the plan or the scout whichever we got, for every outcome.
@@ -629,6 +702,8 @@ async function admitPlan(
     lastReview: reviewForExecutor,
   });
   rt.log?.(`ULW cycle ${s.cycle} plan admitted — ${plan.title} (${s.items.length} item(s))`);
+  const abortAdmit = ifUserDisarmed(s);
+  if (abortAdmit) return abortAdmit;
   // The gate is judged against what was already failing under *this* command
   // before the cycle touched anything. Cycle 1 measures the user's tree; a
   // later cycle whose Planner declared a different gate (or the first cycle
@@ -642,6 +717,8 @@ async function admitPlan(
       rt.log?.("ULW baseline: a changed gate requires a clean tree after a committed cycle; retaining the prior baseline and requiring the new check to pass");
     }
   }
+  const abortAfterBaseline = ifUserDisarmed(s);
+  if (abortAfterBaseline) return abortAfterBaseline;
   return {
     allowStop: false,
     released: false,
@@ -917,19 +994,8 @@ async function advanceAfterCycle(
     record.waves = s.wave;
   }
   saveCycleState(s);
-  const how = committed?.sha ? ` and committed (${committed.sha})` : committed?.skipped ? ` (not committed: ${committed.skipped})` : "";
-  if (s.cycleZeroRequested) {
-    const out = release(s, "cycle-zero", `/cycle 0 — cycle ${s.cycle} reviewed${how}; ULW released.`);
-    return { ...out, cycleClosed: true, committed };
-  }
-  if (s.maxCycles != null && s.cycle >= s.maxCycles) {
-    const out = release(
-      s,
-      "max-cycles",
-      `max_cycles ${s.maxCycles} reached — cycle ${s.cycle} reviewed${how}; ULW released.`,
-    );
-    return { ...out, cycleClosed: true, committed };
-  }
+  const stop = stopBeforeAdmittingNextPlan(s);
+  if (stop) return { ...stop, cycleClosed: true, committed };
   const next = await planNextCycle(s, rt);
   return { ...next, cycleClosed: true, committed };
 }
@@ -1066,6 +1132,8 @@ async function closeCycle(
   if (!reviewed) {
     if (s.phase === "execute") rt.log?.(`ULW cycle ${s.cycle} → verify (${opts.why})`);
     const pre = await verifyCycle(s, rt, s.fixRounds > 0 ? `pre-review.${s.fixRounds}` : "pre-review");
+    const abortPre = ifUserDisarmed(s);
+    if (abortPre) return abortPre;
     if (pre && !pre.verdict.passed) {
       return fixOrRelease(s, pre.run, pre.verdict, { fixRoundsCap: opts.fixRoundsCap, reviewed: false });
     }
@@ -1073,6 +1141,8 @@ async function closeCycle(
     saveCycleState(s);
     rt.log?.(`ULW cycle ${s.cycle} → review`);
     const notes = await runReviewer(s, rt, facts.lastAssistantMessage);
+    const abortReview = ifUserDisarmed(s);
+    if (abortReview) return abortReview;
     if (notes.verdict === "blocked") {
       rt.log?.(`ULW cycle ${s.cycle} review: blocked — no commit; the next plan starts from the must-fix`);
       return advanceAfterCycle(s, rt, { skipped: "review blocked" });
@@ -1081,6 +1151,8 @@ async function closeCycle(
   const findings = [...(record?.mustFix ?? []), ...(record?.disputed ?? [])];
   if (findings.length) return fixReviewOrRelease(s, findings, opts.fixRoundsCap);
   const post = await verifyCycle(s, rt, s.fixRounds > 0 ? `post-review.${s.fixRounds}` : "post-review");
+  const abortPost = ifUserDisarmed(s);
+  if (abortPost) return abortPost;
   if (post && !post.verdict.passed) {
     invalidateReview(s);
     return fixOrRelease(s, post.run, post.verdict, { fixRoundsCap: opts.fixRoundsCap, reviewed: true });

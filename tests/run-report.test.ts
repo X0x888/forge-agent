@@ -20,7 +20,7 @@ import {
   statusHeadLines,
 } from "../src/harness/run-report.js";
 import { armWithPlan } from "./helpers/cycle-arm.js";
-import { saveCycleState, disarmCycle } from "../src/harness/cycle/index.js";
+import { saveCycleState, disarmCycle, setCycleFlag } from "../src/harness/cycle/index.js";
 import { looksLikeRunReport } from "../src/harness/report-guard.js";
 
 import { assembleStatusReport } from "../src/tui/status-card.js";
@@ -403,8 +403,7 @@ Done — the importer streams now and 3 waves shipped since the mandate.
     const resume = r.sections.find((x) => x.title === "Resume")!.lines.join("\n");
     assert.match(resume, /ULW is still ON \(cycle 1, execute\)/);
 
-    st.cycleZeroRequested = true;
-    saveCycleState(st);
+    setCycleFlag(s.meta.id, 0);
     const winding = buildRunReport({ session: s, workspace: cwd, noGit: true });
     assert.match(winding.outcome, /^Winding down — ULW cycle 1 in execute/);
     assert.match(

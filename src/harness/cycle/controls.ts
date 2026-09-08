@@ -8,11 +8,12 @@ import { gitHeadSha } from "../../util/git-context.js";
 import { clearSoftTodoGateOnWindDown } from "../todo-gate.js";
 import {
   cycleActive,
+  currentCycleAlreadyClosed,
   loadActiveCycle,
   loadCycleState,
   newCycleState,
   normalizeMaxCycles,
-  saveCycleState,
+  writeCycleState,
   type CycleState,
 } from "./state.js";
 
@@ -51,7 +52,7 @@ export function armCycle(opts: {
   });
   // A re-arm on the same session keeps the identity the run already learned.
   if (prev && !prev.legacy && prev.identity) s.identity = prev.identity;
-  saveCycleState(s);
+  writeCycleState(s);
   clearSoftTodoGateOnWindDown(opts.sessionId);
   return s;
 }
@@ -62,7 +63,7 @@ export function disarmCycle(sessionId: string): CycleState | null {
   s.enabled = false;
   s.phase = "released";
   s.endReason = "disarmed";
-  saveCycleState(s);
+  writeCycleState(s);
   clearSoftTodoGateOnWindDown(sessionId);
   return s;
 }
@@ -77,14 +78,16 @@ export function setCycleFlag(sessionId: string, flag: 0 | 1): { ok: boolean; lin
     return { ok: false, line: "ULW is not armed — /ulw [mandate] arms it." };
   }
   s.cycleZeroRequested = flag === 0;
-  saveCycleState(s);
+  writeCycleState(s);
   if (flag === 0) {
     const where =
       s.phase === "plan" && s.cycle === 0
         ? "no cycle has started yet — the run stops after the first plan is written"
-        : s.phase === "execute"
-          ? `cycle ${s.cycle} finishes its ${s.items.filter((i) => i.status === "open").length} open item(s), is reviewed and committed, then the run stops`
-          : `cycle ${s.cycle} finishes ${s.phase}, commits, then the run stops`;
+        : s.phase === "plan" && currentCycleAlreadyClosed(s)
+          ? `cycle ${s.cycle} already closed — the run stops without starting the next plan`
+          : s.phase === "execute"
+            ? `cycle ${s.cycle} finishes its ${s.items.filter((i) => i.status === "open").length} open item(s), is reviewed and committed, then the run stops`
+            : `cycle ${s.cycle} finishes ${s.phase}, commits, then the run stops`;
     return { ok: true, line: `ULW /cycle 0 — ${where}. /cycle 1 resumes cycling; /ulw-off aborts.` };
   }
   return { ok: true, line: `ULW /cycle 1 — the run re-plans after each committed cycle until the Planner says fulfilled.` };
@@ -97,7 +100,7 @@ export function requestReplan(sessionId: string): { ok: boolean; line: string } 
     return { ok: false, line: `ULW is in ${s.phase}; /replan applies while a plan is executing.` };
   }
   s.replanRequested = true;
-  saveCycleState(s);
+  writeCycleState(s);
   return {
     ok: true,
     line: `ULW /replan — cycle ${s.cycle} closes at the next Stop: verify, review, verify, commit, then a fresh plan.`,
@@ -109,7 +112,7 @@ export function setMaxCycles(sessionId: string, raw: number | null): { ok: boole
   if (!s) return { ok: false, line: "ULW is not armed — /ulw [mandate] arms it." };
   const n = normalizeMaxCycles(raw);
   s.maxCycles = n;
-  saveCycleState(s);
+  writeCycleState(s);
   if (n == null) return { ok: true, line: "ULW max_cycles cleared — unlimited until fulfilled or /cycle 0." };
   if (s.cycle >= n) {
     return {
@@ -128,7 +131,7 @@ export function setHumanPlan(sessionId: string, on: boolean): void {
   if (!on && s.phase === "plan") {
     // /build with no plan on disk: the next boundary runs the Planner.
   }
-  saveCycleState(s);
+  writeCycleState(s);
 }
 
 /** Cost / turn caps: finish the open cycle on resume instead of re-blocking. */
@@ -137,7 +140,7 @@ export function requestCycleZeroOnSafetyValve(sessionId: string): boolean {
   if (!s) return false;
   if (s.cycleZeroRequested) return false;
   s.cycleZeroRequested = true;
-  saveCycleState(s);
+  writeCycleState(s);
   return true;
 }
 

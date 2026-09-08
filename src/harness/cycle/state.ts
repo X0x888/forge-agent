@@ -330,11 +330,41 @@ function normalizeState(raw: Partial<CycleState>, sessionId: string): CycleState
   return s;
 }
 
-export function saveCycleState(s: CycleState): void {
+/**
+ * Overlay live controls from disk onto a long-lived in-memory copy.
+ *
+ * `/cycle 0`, `/max-cycles`, `/plan`, `/ulw-off` write the sidecar while the
+ * orchestrator may still hold the object it loaded minutes earlier (Planner,
+ * Reviewer, verify). A later persist of that stale copy must not clobber the
+ * keystroke. Disk wins for those fields; a harness `release()` in memory is
+ * not revived by an armed disk.
+ */
+export function adoptLiveControls(s: CycleState): void {
+  if (!s.sessionId) return;
+  const disk = loadCycleState(s.sessionId);
+  if (!disk || disk.legacy) return;
+  s.cycleZeroRequested = disk.cycleZeroRequested;
+  s.humanPlan = disk.humanPlan;
+  s.maxCycles = disk.maxCycles;
+  if (!cycleActive(disk) && cycleActive(s)) {
+    s.enabled = disk.enabled;
+    s.phase = disk.phase;
+    s.endReason = disk.endReason ?? s.endReason;
+  }
+}
+
+/** Authoritative persist — control writers and arm/reset. Does not overlay. */
+export function writeCycleState(s: CycleState): void {
   s.updatedAt = nowIso();
   if (s.ledger.length > LEDGER_KEEP) s.ledger = s.ledger.slice(-LEDGER_KEEP);
   if (s.seenDiffFps.length > DIFF_FP_KEEP) s.seenDiffFps = s.seenDiffFps.slice(-DIFF_FP_KEEP);
   writeJsonFile(ulwStatePath(s.sessionId), s);
+}
+
+/** Orchestrator persist: overlay live controls from disk, then write. */
+export function saveCycleState(s: CycleState): void {
+  adoptLiveControls(s);
+  writeCycleState(s);
 }
 
 /** Armed and driving — the only predicate the rest of the harness needs. */
@@ -356,11 +386,16 @@ export function currentCycleRecord(s: CycleState): CycleRecord | undefined {
   return s.cycles.find((c) => c.n === s.cycle);
 }
 
+/** True when the current cycle number has already closed (we are planning the next). */
+export function currentCycleAlreadyClosed(s: CycleState): boolean {
+  return Boolean(currentCycleRecord(s)?.endedAt);
+}
+
 /** Copy the sidecar for /fork so the branch keeps the driver. */
 export function copyCycleState(fromSessionId: string, toSessionId: string): boolean {
   const s = loadCycleState(fromSessionId);
   if (!s || s.legacy) return false;
-  saveCycleState({ ...s, sessionId: toSessionId });
+  writeCycleState({ ...s, sessionId: toSessionId });
   return true;
 }
 
@@ -368,7 +403,7 @@ export function copyCycleState(fromSessionId: string, toSessionId: string): bool
 export function resetCycleOnClear(sessionId: string): void {
   const s = loadCycleState(sessionId);
   if (!s) return;
-  saveCycleState({
+  writeCycleState({
     ...newCycleState({ sessionId, mandate: null }),
     enabled: false,
     phase: "released",

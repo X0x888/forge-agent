@@ -12,6 +12,9 @@ import {
   setCycleFlag,
   setMaxCycles,
   cycleArtifactsDir,
+  armCycle,
+  disarmCycle,
+  setHumanPlan,
   type CycleRuntime,
   type CycleRole,
   type CyclePlanItem,
@@ -263,6 +266,116 @@ describe("cycle orchestrator", () => {
     assert.equal(r.endReason, "cycle-zero");
     assert.equal(r.committed?.sha, "abc1");
     assert.ok(!calls.includes("role:planner"), "no re-plan after /cycle 0");
+  });
+
+  it("/cycle 0 during the next Planner (after a commit) releases without admitting another cycle", async () => {
+    const sid = "orch-cycle0-during-plan";
+    armWithPlan({ sessionId: sid, cwd, verifyCommand: "npm test" });
+    const { rt, calls } = fakeRuntime(cwd, { reviewer: [REVIEW_OK], planner: [PLAN_OK(2)] });
+    const orig = rt.runRole.bind(rt);
+    rt.runRole = async (role, brief, opts) => {
+      if (role === "planner") setCycleFlag(sid, 0);
+      return orig(role, brief, opts);
+    };
+    const r = await evaluateCycleAtStop(sid, { runtime: rt, facts: facts() });
+    assert.ok(r?.released);
+    assert.equal(r.endReason, "cycle-zero");
+    assert.equal(r.committed?.sha, "abc1");
+    const s = loadCycleState(sid)!;
+    assert.equal(s.cycle, 1, "did not admit cycle 2");
+    assert.equal(s.phase, "released");
+    assert.equal(s.cycles.length, 1);
+    assert.ok(calls.includes("role:planner"));
+    assert.ok(!calls.some((c) => c.startsWith("todos:")), "no next board");
+  });
+
+  it("/cycle 0 during the first Planner still admits cycle 1 as the last cycle", async () => {
+    const sid = "orch-cycle0-first-plan";
+    armCycle({ sessionId: sid, mandate: "add a widget", cwd });
+    const { rt } = fakeRuntime(cwd, { planner: [PLAN_OK(1, 2)] });
+    rt.gitIsClean = () => false;
+    const orig = rt.runRole.bind(rt);
+    rt.runRole = async (role, brief, opts) => {
+      if (role === "planner") setCycleFlag(sid, 0);
+      return orig(role, brief, opts);
+    };
+    const out = await ensureCyclePlanned(sid, rt);
+    assert.equal(out?.released, false);
+    assert.equal(out?.planAdmitted, true);
+    const s = loadCycleState(sid)!;
+    assert.equal(s.cycle, 1);
+    assert.equal(s.phase, "execute");
+    assert.equal(s.cycleZeroRequested, true);
+  });
+
+  it("/cycle 0 during the Reviewer still commits the open cycle, then releases", async () => {
+    const sid = "orch-cycle0-during-review";
+    armWithPlan({ sessionId: sid, cwd, verifyCommand: "npm test" });
+    const { rt, calls } = fakeRuntime(cwd, { reviewer: [REVIEW_OK], planner: [PLAN_OK(2)] });
+    const orig = rt.runRole.bind(rt);
+    rt.runRole = async (role, brief, opts) => {
+      if (role === "reviewer") setCycleFlag(sid, 0);
+      return orig(role, brief, opts);
+    };
+    const r = await evaluateCycleAtStop(sid, { runtime: rt, facts: facts() });
+    assert.ok(r?.released);
+    assert.equal(r.endReason, "cycle-zero");
+    assert.equal(r.committed?.sha, "abc1");
+    assert.ok(!calls.includes("role:planner"), "no re-plan after /cycle 0 mid-review");
+  });
+
+  it("/ulw-off during the next Planner aborts without admitting another cycle", async () => {
+    const sid = "orch-ulwoff-during-plan";
+    armWithPlan({ sessionId: sid, cwd, verifyCommand: "npm test" });
+    const { rt, calls } = fakeRuntime(cwd, { reviewer: [REVIEW_OK], planner: [PLAN_OK(2)] });
+    const orig = rt.runRole.bind(rt);
+    rt.runRole = async (role, brief, opts) => {
+      if (role === "planner") disarmCycle(sid);
+      return orig(role, brief, opts);
+    };
+    const r = await evaluateCycleAtStop(sid, { runtime: rt, facts: facts() });
+    assert.ok(r?.released);
+    assert.equal(r.endReason, "disarmed");
+    assert.equal(r.committed?.sha, "abc1");
+    const s = loadCycleState(sid)!;
+    assert.equal(s.cycle, 1);
+    assert.equal(s.phase, "released");
+    assert.ok(!calls.some((c) => c.startsWith("todos:")));
+  });
+
+  it("/plan during the next Planner stands down without admitting another cycle", async () => {
+    const sid = "orch-humanplan-during-plan";
+    armWithPlan({ sessionId: sid, cwd, verifyCommand: "npm test" });
+    const { rt, calls } = fakeRuntime(cwd, { reviewer: [REVIEW_OK], planner: [PLAN_OK(2)] });
+    const orig = rt.runRole.bind(rt);
+    rt.runRole = async (role, brief, opts) => {
+      if (role === "planner") setHumanPlan(sid, true);
+      return orig(role, brief, opts);
+    };
+    const r = await evaluateCycleAtStop(sid, { runtime: rt, facts: facts() });
+    assert.equal(r?.released, false);
+    assert.equal(r?.allowStop, true);
+    const s = loadCycleState(sid)!;
+    assert.equal(s.cycle, 1);
+    assert.equal(s.humanPlan, true);
+    assert.equal(s.enabled, true);
+    assert.ok(!calls.some((c) => c.startsWith("todos:")));
+  });
+
+  it("/ulw-off during the Reviewer aborts without committing", async () => {
+    const sid = "orch-ulwoff-during-review";
+    armWithPlan({ sessionId: sid, cwd, verifyCommand: "npm test" });
+    const { rt, calls } = fakeRuntime(cwd, { reviewer: [REVIEW_OK], planner: [PLAN_OK(2)] });
+    const orig = rt.runRole.bind(rt);
+    rt.runRole = async (role, brief, opts) => {
+      if (role === "reviewer") disarmCycle(sid);
+      return orig(role, brief, opts);
+    };
+    const r = await evaluateCycleAtStop(sid, { runtime: rt, facts: facts() });
+    assert.ok(r?.released);
+    assert.equal(r.endReason, "disarmed");
+    assert.ok(!calls.some((c) => c.startsWith("commit:")), "/ulw-off is immediate; no cycle commit");
+    assert.ok(!calls.includes("role:planner"));
   });
 
   it("max_cycles releases after the capped cycle commits", async () => {

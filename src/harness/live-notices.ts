@@ -1,9 +1,12 @@
 /**
  * Mid-run user control notices.
  *
- * Slash commands like /cycle 0 update harness state on disk immediately
- * (stop-guard reloads it). Notices additionally inject a short user message
- * before the *next* LLM call so the agent sees the flip without aborting.
+ * Slash commands like /cycle 0 update harness state on disk immediately.
+ * The orchestrator overlays those live-control fields from disk on every
+ * persist and after Planner / Reviewer / verify awaits, so a long-lived
+ * in-memory copy cannot clobber the keystroke. Notices additionally inject
+ * a short user message before the *next* LLM call so the agent sees the
+ * flip without aborting.
  */
 
 const noticesBySession = new Map<string, string[]>();
