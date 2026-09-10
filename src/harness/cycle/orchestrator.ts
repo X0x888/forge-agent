@@ -22,6 +22,8 @@ import {
   explainPlanParseFailure,
   extractDisputeLines,
   extractSerendipityLines,
+  isSurfaceSit,
+  lookCouldNotLook,
   parseLookArtifact,
   parsePlanArtifact,
   parseReviewArtifact,
@@ -896,6 +898,10 @@ async function runReviewer(s: CycleState, rt: CycleRuntime, executorCloser: stri
     architecture: [],
     operator: [],
   };
+  // The look is the Reviewer's own record of having used the product; the
+  // review's Looked: restates it, and stands in when the look turn wrote none
+  // (single-brief / FORGE_ULW_TWO_TURN=0 never writes look.md).
+  if (!notes.looked && lookLooked) notes.looked = lookLooked;
   // A surface-claim ship whose look never opened the product is the same
   // incomplete review as an unparseable body — no commit.
   if (surfaceLookGateBlocks(s, notes, { hasLookMd, couldNotLook: lookCouldNot })) {
@@ -907,9 +913,6 @@ async function runReviewer(s: CycleState, rt: CycleRuntime, executorCloser: stri
     parsed = null;
     rt.log?.(`ULW cycle ${s.cycle} look gate: surface ship without a look — blocked`);
   }
-  // The look is the Reviewer's own record of having used the product; the
-  // review's Looked: restates it, and stands in when the look turn wrote none.
-  if (!notes.looked && lookLooked) notes.looked = lookLooked;
   // A review that parsed is the artifact. Anything else — an errored child's
   // transcript synthesis, prose — is kept beside it as review.failed.md, and
   // review.md carries the structured blocked verdict the run actually used.
@@ -1277,18 +1280,6 @@ export async function ensureCyclePlanned(
   return planNextCycle(s, rt);
 }
 
-/** popup / first-hour / browser sit — not a CLI whose proof is npm test / JSON-RPC. */
-const SURFACE_SIT_RE =
-  /popup|screen|first[- ]hour|chrome|browser|sit |door|walk|gallery|file:\/\//i;
-const CLI_OR_RPC_PROOF_RE = /npm\s+test|json-rpc/i;
-
-function isSurfaceSit(items: readonly CyclePlanItem[]): boolean {
-  if (!items.length) return false;
-  const proofs = items.map((i) => (i.proof ?? "").trim()).filter(Boolean);
-  if (proofs.length > 0 && proofs.every((p) => CLI_OR_RPC_PROOF_RE.test(p))) return false;
-  return items.some((i) => SURFACE_SIT_RE.test(`${i.proof ?? ""} ${i.redNow ?? ""} ${i.title}`));
-}
-
 function surfaceLookGateBlocks(
   s: CycleState,
   notes: CycleReviewNotes,
@@ -1297,7 +1288,14 @@ function surfaceLookGateBlocks(
   if (isFalsy(process.env.FORGE_ULW_LOOK_GATE)) return false;
   if (notes.verdict !== "ship") return false;
   if (!isSurfaceSit(s.items)) return false;
-  return !look.hasLookMd || look.couldNotLook;
+  // Missing look.md is not a failed look when the review inlined a real Looked:.
+  const hasLook = look.hasLookMd || Boolean(notes.looked?.trim());
+  const couldNot = look.hasLookMd
+    ? look.couldNotLook
+    : notes.looked
+      ? lookCouldNotLook(notes.looked)
+      : true;
+  return !hasLook || couldNot;
 }
 
 /** Fail-open: never hold the Planner on a 120s MCP init. */

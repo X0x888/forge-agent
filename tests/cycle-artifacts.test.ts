@@ -5,6 +5,7 @@ import {
   extractDisputeLines,
   extractLabelledLines,
   extractSerendipityLines,
+  isSurfaceSit,
   parseLookArtifact,
   parsePlanArtifact,
   parsePlanItemLine,
@@ -276,7 +277,47 @@ describe("look artifact parser", () => {
     pin("never opened the popup", true);
     pin("did not open popup; MCP timed out", true);
     pin("loaded the unpacked extension and clicked the icon", false);
+    pin(
+      "Playwright MCP never initialized; opened leftover via bash Chrome — dock is empty",
+      false,
+    );
     assert.equal(parseLookArtifact("# Cycle 1 look\nIdentity: a pet"), null);
+  });
+});
+
+describe("surface sit classifier", () => {
+  const item = (
+    o: { title: string; proof?: string; redNow?: string },
+  ): Parameters<typeof isSurfaceSit>[0][number] => ({
+    id: "i1",
+    files: [],
+    status: "open",
+    ...o,
+  });
+
+  it("does not treat visit as a sit, or go-deeper walk/screen prose as a surface", () => {
+    assert.equal(isSurfaceSit([item({ title: "visit the API docs", proof: "curl /v1" })]), false);
+    assert.equal(
+      isSurfaceSit([item({ title: "a tab visit raised hunger", proof: "visit the API docs" })]),
+      false,
+    );
+    assert.equal(
+      isSurfaceSit([
+        item({
+          title:
+            "Go deeper — a flow the run has not walked. Exercise an untested core workflow: screens and return paths for an app, public calls for a library.",
+          redNow: "unwalked — exercise it now",
+          proof: "a reproducible observation or measurement of the workflow or risk, plus the project gate",
+        }),
+      ]),
+      false,
+    );
+  });
+
+  it("a leftover door / popup / first-hour claim is a surface sit; npm test is not", () => {
+    assert.equal(isSurfaceSit([item({ title: "Stay dock leftover", proof: "open leftover door" })]), true);
+    assert.equal(isSurfaceSit([item({ title: "the first-hour popup", proof: "click the icon" })]), true);
+    assert.equal(isSurfaceSit([item({ title: "ship the widget", proof: "npm test" })]), false);
   });
 });
 

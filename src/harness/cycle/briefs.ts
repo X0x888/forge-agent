@@ -26,7 +26,14 @@ export const LOOK_PATH_DOWN_LINE =
   "Look path: playwright down — use bash/browser lease; do not spend the scout waiting on MCP.";
 
 function lookPathLines(): string[] {
-  return playwrightLookStatus() === "down" ? [LOOK_PATH_DOWN_LINE] : [];
+  const st = playwrightLookStatus();
+  if (st === "down") return [LOOK_PATH_DOWN_LINE];
+  if (st === "connecting") {
+    return [
+      "Look path: playwright connecting — use bash/browser lease; do not spend the scout waiting on MCP.",
+    ];
+  }
+  return [];
 }
 
 export interface PlannerBriefInput {

@@ -254,6 +254,33 @@ describe("Reviewer look brief (turn 1)", () => {
       setActiveMcpManager(null);
     }
   });
+
+  it("the lease hint also fires while playwright is still connecting", () => {
+    const mgr = new McpManager({
+      workspace: "/w",
+      config: {
+        enabled: true,
+        sources: [],
+        servers: { playwright: { name: "playwright", command: "true" } },
+      },
+    });
+    mgr.start();
+    setActiveMcpManager(mgr);
+    try {
+      const scout = buildPlannerScoutBrief({
+        state: runState(),
+        workspace: "/w",
+        gitStatus: "M a.ts",
+        projectChecks: ["npm test"],
+      });
+      assert.match(
+        scout,
+        /Look path: playwright connecting — use bash\/browser lease; do not spend the scout waiting on MCP\./,
+      );
+    } finally {
+      setActiveMcpManager(null);
+    }
+  });
 });
 
 describe("Reviewer review brief (turn 2)", () => {

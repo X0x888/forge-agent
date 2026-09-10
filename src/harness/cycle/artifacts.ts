@@ -363,12 +363,40 @@ export function parsePlanArtifact(text: string): ParsedPlan | null {
 
 const LOOK_COULD_NOT_RE =
   /could not run|never opened|did not open popup|playwright mcp never/i;
+const LOOK_NEGATED_OPEN_RE =
+  /could not run|never opened|did not open(?: popup)?|playwright mcp never(?: initialized)?/gi;
+/** Opening evidence after stripping MCP-never / could-not-run — a bash lease still counts. */
+const LOOK_DID_OPEN_RE =
+  /\b(?:clicked|clicking|loaded|loading|opened|opening|navigated|unpacked|lease)\b|file:\/\/|bash chrome/i;
+
+/** True when Looked: reports a failed look and does not also describe opening the product. */
+export function lookCouldNotLook(looked: string): boolean {
+  const t = (looked || "").trim();
+  if (!t || !LOOK_COULD_NOT_RE.test(t)) return false;
+  const rest = t.replace(LOOK_NEGATED_OPEN_RE, " ");
+  return !LOOK_DID_OPEN_RE.test(rest);
+}
 
 /** The Reviewer's turn-1 document: what it ran or opened before the diff. Null when there is no Looked: line. */
 export function parseLookArtifact(text: string): { looked: string; couldNotLook: boolean } | null {
   const looked = paragraph(splitSections(text).get("looked"));
   if (!looked) return null;
-  return { looked, couldNotLook: LOOK_COULD_NOT_RE.test(looked) };
+  return { looked, couldNotLook: lookCouldNotLook(looked) };
+}
+
+/**
+ * A surface sit is a browser/popup/first-hour claim — not "visit", not
+ * go-deeper "walk"/"screen" prose, not a CLI whose proof is npm test / JSON-RPC.
+ */
+const SURFACE_SIT_RE =
+  /\b(?:popup|chrome|browser|sit|door|gallery)\b|first[- ]hour|file:\/\//i;
+const CLI_OR_RPC_PROOF_RE = /npm\s+test|json-rpc/i;
+
+export function isSurfaceSit(items: readonly CyclePlanItem[]): boolean {
+  if (!items.length) return false;
+  const proofs = items.map((i) => (i.proof ?? "").trim()).filter(Boolean);
+  if (proofs.length > 0 && proofs.every((p) => CLI_OR_RPC_PROOF_RE.test(p))) return false;
+  return items.some((i) => SURFACE_SIT_RE.test(`${i.proof ?? ""} ${i.redNow ?? ""} ${i.title}`));
 }
 
 /** The Planner's turn-1 document. Null only when none of its sections is there. */

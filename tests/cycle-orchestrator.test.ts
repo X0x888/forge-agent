@@ -157,6 +157,7 @@ describe("cycle orchestrator", () => {
   });
   afterEach(() => {
     delete process.env.FORGE_ULW_TWO_TURN;
+    delete process.env.FORGE_ULW_LOOK_GATE;
   });
 
   it("turn start: the Planner writes cycle 1, items seed the board, the plan is admitted", async () => {
@@ -1092,6 +1093,64 @@ describe("cycle orchestrator", () => {
     assert.match(plannerBrief, /scripts\/seed\.mjs reads it/);
   });
 
+  it("single-brief: a surface ship with a real Looked: still commits (no look.md)", async () => {
+    const sid = "orch-look-gate-single-real";
+    armWithPlan({
+      sessionId: sid,
+      cwd,
+      verifyCommand: "npm test",
+      maxCycles: 1,
+      items: [{ title: "Stay dock leftover", proof: "open leftover door" }],
+    });
+    const { rt } = fakeRuntime(cwd, {
+      reviewer: [
+        `# Cycle 1 review\nLooked: opened leftover\nVerdict: ship\nFulfillment:\n- item — done\nMust-fix:\n- none`,
+      ],
+    });
+    const r = await evaluateCycleAtStop(sid, { runtime: rt, facts: facts() });
+    assert.ok(r?.committed?.sha, "the review's Looked: stands in when two-turn is off");
+    assert.equal(loadCycleState(sid)!.cycles[0].reviewVerdict, "ship");
+  });
+
+  it("single-brief: a surface ship whose Looked: never opened still blocks", async () => {
+    const sid = "orch-look-gate-single-never";
+    armWithPlan({
+      sessionId: sid,
+      cwd,
+      verifyCommand: "npm test",
+      maxCycles: 1,
+      items: [{ title: "Stay dock leftover", proof: "open leftover door" }],
+    });
+    const { rt, calls } = fakeRuntime(cwd, {
+      reviewer: [
+        `# Cycle 1 review\nLooked: Playwright MCP never initialized\nVerdict: ship\nFulfillment:\n- item — done\nMust-fix:\n- none`,
+      ],
+    });
+    const r = await evaluateCycleAtStop(sid, { runtime: rt, facts: facts() });
+    assert.equal(r?.committed?.skipped, "review blocked");
+    assert.ok(!calls.some((c) => c.startsWith("commit:")));
+    assert.equal(loadCycleState(sid)!.lastReview?.mustFix[0], "look the surface");
+  });
+
+  it("a tab visit is not a surface sit and may ship without a look", async () => {
+    const sid = "orch-look-gate-visit";
+    armWithPlan({
+      sessionId: sid,
+      cwd,
+      verifyCommand: "npm test",
+      maxCycles: 1,
+      items: [{ title: "a tab visit raised hunger", proof: "visit the API docs" }],
+    });
+    const { rt } = fakeRuntime(cwd, {
+      reviewer: [
+        `# Cycle 1 review\nLooked: Playwright MCP never initialized\nVerdict: ship\nFulfillment:\n- item — done\nMust-fix:\n- none`,
+      ],
+    });
+    const r = await evaluateCycleAtStop(sid, { runtime: rt, facts: facts() });
+    assert.ok(r?.committed?.sha, "visit is not sit — the look gate does not fire");
+    assert.equal(loadCycleState(sid)!.cycles[0].reviewVerdict, "ship");
+  });
+
   it("a single-brief plan that carries Promises: persists them as the run's checklist", async () => {
     const sid = "orch-promises-single";
     const plan = PLAN_OK(1).replace(
@@ -1122,6 +1181,9 @@ describe("cycle orchestrator — two turns per role", () => {
     process.env.FORGE_ULW_AUTO_COMMIT = "1";
     delete process.env.FORGE_ULW_TWO_TURN;
     cwd = mkGitRepo();
+  });
+  afterEach(() => {
+    delete process.env.FORGE_ULW_LOOK_GATE;
   });
 
   it("the Reviewer looks then reviews, the Planner scouts then plans; the scout never sees the record, the plan does", async () => {
@@ -1262,6 +1324,7 @@ describe("cycle orchestrator — an unlimited run does not stop on the model's j
   });
   afterEach(() => {
     delete process.env.FORGE_ULW_TWO_TURN;
+    delete process.env.FORGE_ULW_LOOK_GATE;
   });
 
   it("a mandate `fulfilled` releases — a real ask that is met is a real answer", async () => {
@@ -1398,5 +1461,33 @@ describe("cycle orchestrator — an unlimited run does not stop on the model's j
     const r = await evaluateCycleAtStop(sid, { runtime: rt, facts: facts() });
     assert.ok(r?.committed?.sha, "not a surface sit — CLI/JSON-RPC proofs still ship");
     assert.equal(loadCycleState(sid)!.cycles[0].reviewVerdict, "ship");
+  });
+
+  it("FORGE_ULW_LOOK_GATE=0 lets a surface ship commit without a look", async () => {
+    const prev = process.env.FORGE_ULW_LOOK_GATE;
+    process.env.FORGE_ULW_LOOK_GATE = "0";
+    try {
+      const sid = "orch2-look-gate-off";
+      armWithPlan({
+        sessionId: sid,
+        cwd,
+        verifyCommand: "npm test",
+        maxCycles: 1,
+        items: [{ title: "Stay dock leftover", proof: "open leftover door" }],
+      });
+      const { rt } = fakeRuntime(cwd, {
+        twoTurn: true,
+        reviewer: [
+          `# Cycle 1 look\nLooked: Playwright MCP never initialized`,
+          REVIEW_OK,
+        ],
+      });
+      const r = await evaluateCycleAtStop(sid, { runtime: rt, facts: facts() });
+      assert.ok(r?.committed?.sha);
+      assert.equal(loadCycleState(sid)!.cycles[0].reviewVerdict, "ship");
+    } finally {
+      if (prev === undefined) delete process.env.FORGE_ULW_LOOK_GATE;
+      else process.env.FORGE_ULW_LOOK_GATE = prev;
+    }
   });
 });
