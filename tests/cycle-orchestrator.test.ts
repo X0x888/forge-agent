@@ -38,7 +38,11 @@ const REVIEW_MUSTFIX = `# Cycle 1 review\nVerdict: ship-with-revisions\nMust-fix
 const REVIEW_REVISED = `# Cycle 1 review\nVerdict: ship-with-revisions\nRevisions:\n- restored the flag output\nMust-fix:\n- none`;
 const SCOUT = (n: number) =>
   `# Cycle ${n} scout\nIdentity: a CLI for tests, scouted\nLooked: built dist and ran --help; no first-run card\nPromises:\n- README: a first-run card — broken — bare prompt\n- --help lists every command — kept — matches\nConsidered:\n- broken promise: the first-run card — the first thing a new user meets\n- leave it — the CLI works without it`;
+const SCOUT_KEPT = (n: number) =>
+  `# Cycle ${n} scout\nIdentity: a CLI for tests, scouted\nLooked: built dist and ran --help; the card shows\nPromises:\n- README: a first-run card — kept — the card shows\n- --help lists every command — kept — matches\nConsidered:\n- go deeper — a flow not walked\n- leave it — it works`;
 const LOOK = (n: number) => `# Cycle ${n} look\nLooked: ran node dist/cli.js in an empty dir — the card shows`;
+const REVIEW_LOOKED =
+  `# Cycle 1 review\nVerdict: ship\nLooked: opened the leftover door in Chrome\nFulfillment:\n- item — done\nRevisions:\n- none\nMust-fix:\n- none`;
 
 interface FakeOpts {
   planner?: string[];
@@ -158,6 +162,8 @@ describe("cycle orchestrator", () => {
   afterEach(() => {
     delete process.env.FORGE_ULW_TWO_TURN;
     delete process.env.FORGE_ULW_LOOK_GATE;
+    delete process.env.FORGE_ULW_PROMISE_FULFILL;
+    delete process.env.FORGE_ULW_CLASS_HOLD;
   });
 
   it("turn start: the Planner writes cycle 1, items seed the board, the plan is admitted", async () => {
@@ -1299,7 +1305,7 @@ describe("cycle orchestrator — two turns per role", () => {
     const sid = "orch2-look-standin";
     // A real mandate is present (armWithPlan defaults it), so fulfilled is terminal.
     armWithPlan({ sessionId: sid, cwd, verifyCommand: "npm test", items: [{ title: "ship" }] });
-    const { rt } = fakeRuntime(cwd, { twoTurn: true, reviewer: [LOOK(1), REVIEW_OK], planner: [SCOUT(2), PLAN_FULFILLED] });
+    const { rt } = fakeRuntime(cwd, { twoTurn: true, reviewer: [LOOK(1), REVIEW_OK], planner: [SCOUT_KEPT(2), PLAN_FULFILLED] });
     const r = await evaluateCycleAtStop(sid, { runtime: rt, facts: facts() });
     assert.equal(r?.released, true);
     const st = loadCycleState(sid)!;
@@ -1307,7 +1313,7 @@ describe("cycle orchestrator — two turns per role", () => {
     assert.match(st.cycles[0].reviewerLooked ?? "", /the card shows/);
     assert.ok(st.cycles[1].scoutPath?.endsWith("scout.md"));
     assert.equal(st.cycles[1].planVerdict, "fulfilled");
-    assert.match(st.cycles[1].looked ?? "", /no first-run card/, "the fulfilled record carries the scout's Looked:");
+    assert.match(st.cycles[1].looked ?? "", /the card shows/, "the fulfilled record carries the scout's Looked:");
   });
 });
 
@@ -1325,11 +1331,13 @@ describe("cycle orchestrator — an unlimited run does not stop on the model's j
   afterEach(() => {
     delete process.env.FORGE_ULW_TWO_TURN;
     delete process.env.FORGE_ULW_LOOK_GATE;
+    delete process.env.FORGE_ULW_PROMISE_FULFILL;
+    delete process.env.FORGE_ULW_CLASS_HOLD;
   });
 
   it("a mandate `fulfilled` releases — a real ask that is met is a real answer", async () => {
     const sid = "orch3-mandate-done";
-    const { rt } = fakeRuntime(cwd, { twoTurn: true, planner: [SCOUT(1), PLAN_FULFILLED] });
+    const { rt } = fakeRuntime(cwd, { twoTurn: true, planner: [SCOUT_KEPT(1), PLAN_FULFILLED] });
     const { armCycle } = await import("../src/harness/cycle/index.js");
     armCycle({ sessionId: sid, mandate: "add a --version flag", cwd });
     const out = await ensureCyclePlanned(sid, rt);
@@ -1406,7 +1414,7 @@ describe("cycle orchestrator — an unlimited run does not stop on the model's j
     st.directExecuteStreak = 2;
     const { saveCycleState } = await import("../src/harness/cycle/state.js");
     saveCycleState(st);
-    const { rt } = fakeRuntime(cwd, { twoTurn: true, reviewer: [LOOK(1), REVIEW_OK], planner: [SCOUT(2), PLAN_FULFILLED] });
+    const { rt } = fakeRuntime(cwd, { twoTurn: true, reviewer: [LOOK(1), REVIEW_OK], planner: [SCOUT_KEPT(2), PLAN_FULFILLED] });
     const r = await evaluateCycleAtStop(sid, { runtime: rt, facts: facts() });
     assert.equal(r?.committed?.sha, "abc1");
     assert.equal(loadCycleState(sid)!.directExecuteStreak, 0, "landing work clears the wall");
@@ -1489,5 +1497,195 @@ describe("cycle orchestrator — an unlimited run does not stop on the model's j
       if (prev === undefined) delete process.env.FORGE_ULW_LOOK_GATE;
       else process.env.FORGE_ULW_LOOK_GATE = prev;
     }
+  });
+
+  it("a mandate `fulfilled` with an unknown promise not on Operator: becomes keep-promise, not ulw_done", async () => {
+    const sid = "orch3-mandate-unknown";
+    const scout = `# Cycle 1 scout\nIdentity: mcp-codex-web\nLooked: loopback fixtures returned 200\nPromises:\n- ChatGPT-attach — unknown — no live OpenAI session\n- loopback ping — kept — fixtures pass\nConsidered:\n- investigate ChatGPT-attach\n- leave it — fixtures are green`;
+    const { rt } = fakeRuntime(cwd, { twoTurn: true, planner: [scout, PLAN_FULFILLED] });
+    const { armCycle } = await import("../src/harness/cycle/index.js");
+    armCycle({ sessionId: sid, mandate: "ship ChatGPT-attach", cwd });
+    const out = await ensureCyclePlanned(sid, rt);
+    assert.equal(out?.released, false, "unknown ChatGPT-attach is not a kept promise");
+    assert.equal(out?.endReason, undefined);
+    assert.equal(out?.planAdmitted, true);
+    const s = loadCycleState(sid)!;
+    assert.match(s.planTitle ?? "", /Keep the promise/);
+    assert.ok(s.items.some((i) => /ChatGPT-attach/.test(i.title)));
+    assert.equal(s.phase, "execute");
+  });
+
+  it("naming the unknown on Operator: still releases a mandate fulfilled", async () => {
+    const sid = "orch3-mandate-unknown-op";
+    const scout = `# Cycle 1 scout\nIdentity: mcp-codex-web\nLooked: loopback fixtures returned 200\nPromises:\n- ChatGPT-attach — unknown — no live OpenAI session\nConsidered:\n- investigate ChatGPT-attach\n- leave it`;
+    const plan = `# Cycle 1 plan\nVerdict: fulfilled — the mandate is met on fixtures\nLooked: loopback fixtures returned 200\nOperator:\n- ChatGPT-attach still needs a live OpenAI login`;
+    const { rt } = fakeRuntime(cwd, { twoTurn: true, planner: [scout, plan] });
+    const { armCycle } = await import("../src/harness/cycle/index.js");
+    armCycle({ sessionId: sid, mandate: "ship ChatGPT-attach", cwd });
+    const out = await ensureCyclePlanned(sid, rt);
+    assert.ok(out?.released);
+    assert.equal(out.endReason, "fulfilled");
+  });
+
+  it("FORGE_ULW_PROMISE_FULFILL=0 restores mandate release on Looked: even with unknown promises", async () => {
+    process.env.FORGE_ULW_PROMISE_FULFILL = "0";
+    const sid = "orch3-promise-fulfill-off";
+    const scout = `# Cycle 1 scout\nIdentity: mcp-codex-web\nLooked: loopback fixtures returned 200\nPromises:\n- ChatGPT-attach — unknown — no live OpenAI session\nConsidered:\n- leave it\n- keep going`;
+    const { rt } = fakeRuntime(cwd, { twoTurn: true, planner: [scout, PLAN_FULFILLED] });
+    const { armCycle } = await import("../src/harness/cycle/index.js");
+    armCycle({ sessionId: sid, mandate: "ship ChatGPT-attach", cwd });
+    const out = await ensureCyclePlanned(sid, rt);
+    assert.ok(out?.released);
+    assert.equal(out.endReason, "fulfilled");
+  });
+
+  it("an absent promise does not block a mandate fulfilled", async () => {
+    const sid = "orch3-mandate-absent";
+    const scout = `# Cycle 1 scout\nIdentity: a CLI\nLooked: ran --help\nPromises:\n- optional telemetry — absent — no claim in README\n- --help lists every command — kept — matches\nConsidered:\n- leave it\n- add telemetry`;
+    const { rt } = fakeRuntime(cwd, { twoTurn: true, planner: [scout, `${PLAN_FULFILLED}\nLooked: ran --help`] });
+    const { armCycle } = await import("../src/harness/cycle/index.js");
+    armCycle({ sessionId: sid, mandate: "add --help", cwd });
+    const out = await ensureCyclePlanned(sid, rt);
+    assert.ok(out?.released);
+    assert.equal(out.endReason, "fulfilled");
+  });
+
+  it("architecture recurrence: a continue plan that ignores the chew/Stay pile is retried then direct-executed with Must-fix", async () => {
+    process.env.FORGE_ULW_TWO_TURN = "0";
+    const sid = "orch3-class-hold";
+    armWithPlan({ sessionId: sid, cwd, verifyCommand: "npm test", items: [{ title: "x" }] });
+    const st = loadCycleState(sid)!;
+    st.phase = "plan";
+    st.cycle = 2;
+    st.cycles[0].commitSha = "aaa";
+    st.cycles[0].endedAt = new Date().toISOString();
+    st.cycles[0].reviewVerdict = "ship";
+    st.cycles[0].architecture = ["`chew` and Stay still pile in one module"];
+    st.cycles.push({
+      n: 2,
+      title: "another slice",
+      startedAt: new Date().toISOString(),
+      endedAt: new Date().toISOString(),
+      itemsTotal: 1,
+      itemsDone: 1,
+      waves: 1,
+      mustFix: [],
+      commitSha: "bbb",
+      reviewVerdict: "ship",
+      architecture: ["the chew/Stay pile grew another helper"],
+    });
+    const { saveCycleState } = await import("../src/harness/cycle/state.js");
+    saveCycleState(st);
+    const { rt } = fakeRuntime(cwd, { planner: [PLAN_OK(3), PLAN_OK(3)] });
+    const out = await ensureCyclePlanned(sid, rt);
+    assert.equal(out?.released, false);
+    assert.equal(out?.planAdmitted, true);
+    const s = loadCycleState(sid)!;
+    assert.match(s.planTitle ?? "", /Direct execute/);
+    assert.ok(s.cycles[s.cycle - 1]?.mustFix?.some((m) => /chew stay pile|architecture class/i.test(m)));
+    assert.ok(s.items.some((i) => /chew stay pile|architecture class/i.test(i.title)));
+  });
+
+  it("architecture recurrence: addressing the class, or leave-it, admits; FORGE_ULW_CLASS_HOLD=0 skips the hold", async () => {
+    process.env.FORGE_ULW_TWO_TURN = "0";
+    const seed = (sid: string) => {
+      armWithPlan({ sessionId: sid, cwd, verifyCommand: "npm test", items: [{ title: "x" }] });
+      const st = loadCycleState(sid)!;
+      st.phase = "plan";
+      st.cycle = 2;
+      st.cycles[0].commitSha = "aaa";
+      st.cycles[0].endedAt = new Date().toISOString();
+      st.cycles[0].reviewVerdict = "ship";
+      st.cycles[0].architecture = ["`chew` and Stay still pile in one module"];
+      st.cycles.push({
+        n: 2,
+        title: "slice",
+        startedAt: new Date().toISOString(),
+        endedAt: new Date().toISOString(),
+        itemsTotal: 1,
+        itemsDone: 1,
+        waves: 1,
+        mustFix: [],
+        commitSha: "bbb",
+        reviewVerdict: "ship",
+        architecture: ["the chew/Stay pile grew another helper"],
+      });
+      return st;
+    };
+    const { saveCycleState } = await import("../src/harness/cycle/state.js");
+    const addressed = PLAN_OK(3).replace("item 3.1", "collapse the chew/Stay pile");
+    saveCycleState(seed("orch3-class-item"));
+    const a = await ensureCyclePlanned("orch3-class-item", fakeRuntime(cwd, { planner: [addressed] }).rt);
+    assert.equal(a?.planAdmitted, true);
+    assert.match(loadCycleState("orch3-class-item")!.planTitle ?? "", /theme 3/);
+
+    const left = PLAN_OK(3).replace(
+      "leave it — the tree runs; the theme is what a user meets first",
+      "leave it — the chew/Stay pile is next year's work",
+    );
+    saveCycleState(seed("orch3-class-leave"));
+    const b = await ensureCyclePlanned("orch3-class-leave", fakeRuntime(cwd, { planner: [left] }).rt);
+    assert.equal(b?.planAdmitted, true);
+    assert.match(loadCycleState("orch3-class-leave")!.planTitle ?? "", /theme 3/);
+
+    process.env.FORGE_ULW_CLASS_HOLD = "0";
+    saveCycleState(seed("orch3-class-off"));
+    const c = await ensureCyclePlanned("orch3-class-off", fakeRuntime(cwd, { planner: [PLAN_OK(3)] }).rt);
+    assert.equal(c?.planAdmitted, true);
+    assert.match(loadCycleState("orch3-class-off")!.planTitle ?? "", /theme 3/);
+  });
+
+  it("roles.jsonl gains a line before the Planner session is wiped", async () => {
+    const sid = "orch3-roles-jsonl";
+    const { rt, calls } = fakeRuntime(cwd, { twoTurn: true, planner: [SCOUT_KEPT(1), PLAN_OK(1)] });
+    const { armCycle } = await import("../src/harness/cycle/index.js");
+    armCycle({ sessionId: sid, mandate: "add a widget", cwd });
+    await ensureCyclePlanned(sid, rt);
+    assert.ok(calls.some((c) => c.startsWith("cleanup:")));
+    const p = path.join(home, "sessions", sid, "roles.jsonl");
+    assert.ok(fs.existsSync(p), "roles.jsonl is written under the parent session");
+    const rec = JSON.parse(fs.readFileSync(p, "utf8").trim().split("\n")[0]) as {
+      id: string;
+      type: string;
+      status: string;
+      tokens: number;
+    };
+    assert.equal(rec.type, "planner");
+    assert.ok(rec.id);
+    assert.equal(rec.status, "completed");
+    assert.ok(rec.tokens > 0);
+  });
+
+  it("a surface-claim cycle with no verify command does not commit", async () => {
+    process.env.FORGE_ULW_TWO_TURN = "0";
+    const sid = "orch3-surface-no-verify";
+    armWithPlan({
+      sessionId: sid,
+      cwd,
+      maxCycles: 1,
+      items: [{ title: "Stay dock leftover", proof: "open leftover door" }],
+    });
+    const { rt, calls } = fakeRuntime(cwd, { reviewer: [REVIEW_LOOKED] });
+    const r = await evaluateCycleAtStop(sid, { runtime: rt, facts: facts() });
+    assert.equal(r?.committed?.sha, undefined);
+    assert.equal(r?.committed?.skipped, "surface sit without proof");
+    assert.ok(!calls.some((c) => c.startsWith("commit:")));
+  });
+
+  it("a surface-claim cycle does not commit on a clean-tree skip", async () => {
+    process.env.FORGE_ULW_TWO_TURN = "0";
+    const sid = "orch3-surface-clean";
+    armWithPlan({
+      sessionId: sid,
+      cwd,
+      verifyCommand: "npm test",
+      maxCycles: 1,
+      items: [{ title: "Stay dock leftover", proof: "open leftover door" }],
+    });
+    const { rt, calls } = fakeRuntime(cwd, { reviewer: [REVIEW_LOOKED], commitOk: false });
+    const r = await evaluateCycleAtStop(sid, { runtime: rt, facts: facts() });
+    assert.equal(r?.committed?.sha, undefined);
+    assert.equal(r?.committed?.skipped, "working tree clean");
+    assert.ok(calls.some((c) => c.startsWith("commit:")), "commit is attempted and skipped");
   });
 });

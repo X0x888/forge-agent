@@ -52,6 +52,11 @@ export function armCycle(opts: {
   });
   // A re-arm on the same session keeps the identity the run already learned.
   if (prev && !prev.legacy && prev.identity) s.identity = prev.identity;
+  // A previous designed end is a new report epoch so `/report` is not era A's.
+  if (prev && !prev.legacy && prev.endReason) {
+    const prior = typeof prev.reportEpoch === "number" && prev.reportEpoch > 0 ? prev.reportEpoch : 1;
+    s.reportEpoch = Math.floor(prior) + 1;
+  }
   writeCycleState(s);
   clearSoftTodoGateOnWindDown(opts.sessionId);
   return s;

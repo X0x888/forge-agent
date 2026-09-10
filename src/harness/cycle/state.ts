@@ -209,6 +209,11 @@ export interface CycleState {
     at: string;
   };
   endReason?: CycleEndReason;
+  /**
+   * Which report this arm belongs to. `/ulw` after a previous `endReason`
+   * increments it so era-A's `report.md` is not `/report` for era B.
+   */
+  reportEpoch: number;
   startedAt: string;
   updatedAt: string;
   /** Schema-1 wave-engine sidecar found on disk; disabled, re-arm with /ulw. */
@@ -266,6 +271,7 @@ export function newCycleState(opts: {
     seenDiffFps: [],
     ledger: [],
     cycles: [],
+    reportEpoch: 1,
     startedAt: now,
     updatedAt: now,
   };
@@ -327,6 +333,11 @@ function normalizeState(raw: Partial<CycleState>, sessionId: string): CycleState
   if (typeof s.directExecuteStreak !== "number") s.directExecuteStreak = 0;
   if (typeof s.blocks !== "number") s.blocks = 0;
   if (typeof s.lastBlockEditCount !== "number") s.lastBlockEditCount = 0;
+  if (typeof s.reportEpoch !== "number" || !Number.isFinite(s.reportEpoch) || s.reportEpoch < 1) {
+    s.reportEpoch = 1;
+  } else {
+    s.reportEpoch = Math.floor(s.reportEpoch);
+  }
   return s;
 }
 

@@ -18,7 +18,9 @@ import { ensureGitRepo } from "../../util/git-ensure.js";
 import { envPositiveInt } from "../../util/env.js";
 import { appendMemoryRecord } from "../decision-memory.js";
 import type { AutoCommitResult } from "../../util/git-auto-commit.js";
+import { appendRoleRunLine } from "../../session/subagent-usage.js";
 import {
+  architectureHoldMessage,
   explainPlanParseFailure,
   extractDisputeLines,
   extractSerendipityLines,
@@ -28,7 +30,9 @@ import {
   parsePlanArtifact,
   parseReviewArtifact,
   parseScoutArtifact,
+  planAddressesArchitectureClass,
   planArtifactContract,
+  recurringArchitectureClass,
   type ParsedPlan,
   type ParsedScout,
 } from "./artifacts.js";
@@ -56,6 +60,7 @@ import {
   runRoleTurnAgain,
   runRoleTwoTurn,
   safeCleanup,
+  type TwoTurnResult,
 } from "./roles.js";
 import {
   adoptLiveControls,
@@ -314,7 +319,7 @@ async function runPlanner(
   rt: CycleRuntime,
 ): Promise<
   | { plan: ParsedPlan; raw: string; tokens: number; scout?: ScoutResult }
-  | { error: string; raw: string; tokens: number; scout?: ScoutResult }
+  | { error: string; raw: string; tokens: number; scout?: ScoutResult; mustFix?: string[] }
 > {
   const lastPlanAt = currentCycleRecord(s)?.startedAt ?? s.startedAt;
   const next = s.cycle + 1;
@@ -370,14 +375,20 @@ async function runPlanner(
   }
   let raw = roleBody(tt.second.text);
   if (!tt.second.ok && !raw.trim()) {
-    await safeCleanup(rt, tt.sessionId);
+    await persistAndCleanupRole(s.sessionId, "planner", rt, tt);
     return { error: tt.second.error || `planner ${tt.second.status}`, raw, tokens, scout };
   }
   let plan = parsePlanArtifact(raw);
-  if (!plan) {
+  let hold = continueArchitectureHold(s, plan);
+  if (!plan || hold) {
     // One retry, with what was missing named (presence and shape, never intent).
-    const why = explainPlanParseFailure(raw) || "no `Verdict:` line, or `Verdict: continue` with an empty `Items:` list";
-    const note = `[Forge] Your previous plan did not parse: ${why}. Write the plan again and end with the contract exactly:\n${planArtifactContract(next)}`;
+    const why =
+      hold ||
+      explainPlanParseFailure(raw) ||
+      "no `Verdict:` line, or `Verdict: continue` with an empty `Items:` list";
+    const note = hold
+      ? `[Forge] ${why}. Write the plan again and end with the contract exactly:\n${planArtifactContract(next)}`
+      : `[Forge] Your previous plan did not parse: ${why}. Write the plan again and end with the contract exactly:\n${planArtifactContract(next)}`;
     const again =
       tt.mode === "two-turn" && tt.sessionId
         ? await runRoleTurnAgain(rt, "planner", tt.sessionId, note, { cycle: next, maxTurns: plannerPlanTurns(), documentOnly: true })
@@ -386,8 +397,13 @@ async function runPlanner(
     const againRaw = roleBody(again.text);
     if (againRaw.trim()) raw = againRaw;
     plan = parsePlanArtifact(againRaw);
+    hold = continueArchitectureHold(s, plan);
+    if (hold) {
+      await persistAndCleanupRole(s.sessionId, "planner", rt, tt, again);
+      return { error: hold, raw, tokens, scout, mustFix: [hold] };
+    }
   }
-  await safeCleanup(rt, tt.sessionId);
+  await persistAndCleanupRole(s.sessionId, "planner", rt, tt);
   if (!plan) return { error: "planner produced no parseable plan after a retry", raw, tokens, scout };
   return { plan, raw, tokens, scout };
 }
@@ -408,9 +424,10 @@ function synthesizeWorkPlan(
   s: CycleState,
   scout: ScoutResult | undefined,
   kind: "no-plan" | "keep-promise" | "go-deeper",
+  opts?: { targets?: CyclePromise[]; mustFix?: string[] },
 ): { plan: ParsedPlan; raw: string } {
   const promises = s.promises ?? scout?.parsed?.promises ?? [];
-  const unkept = promises.filter((p) => p.state !== "kept");
+  const unkept = (opts?.targets?.length ? opts.targets : promises.filter((p) => p.state !== "kept"));
   const considered = scout?.parsed?.considered ?? [];
   const looked = scout?.parsed?.looked ?? "";
 
@@ -462,6 +479,17 @@ function synthesizeWorkPlan(
         status: "open",
       },
     ];
+    if (opts?.mustFix?.[0]) {
+      items.unshift({
+        id: "i0",
+        title: opts.mustFix[0],
+        files: [],
+        serves: "the architecture class the last two shipped reviews named",
+        redNow: "the class recurred and the plan did not address or leave it",
+        proof: "the class is collapsed, bounded, or explicitly left",
+        status: "open",
+      });
+    }
   }
 
   const worthClaim = "Further investigation can reveal a consequential gap the scout did not establish; any edit must be justified by what is observed, its benefit, and its cost.";
@@ -549,9 +577,17 @@ export async function planNextCycle(s: CycleState, rt: CycleRuntime): Promise<Cy
       );
     }
     rt.log?.(`ULW planner did not converge for cycle ${n}; synthesizing a direct-execute cycle (streak ${s.directExecuteStreak + 1}/${noProgressCap()})`);
-    const synth = synthesizeWorkPlan(s, scout, "no-plan");
+    const synth = synthesizeWorkPlan(s, scout, "no-plan", { mustFix: out.mustFix });
     s.directExecuteStreak += 1;
-    return admitPlan(s, rt, synth.plan, synth.raw, out.tokens, scout, reviewForExecutor);
+    const admitted = await admitPlan(s, rt, synth.plan, synth.raw, out.tokens, scout, reviewForExecutor);
+    if (out.mustFix?.length) {
+      const rec = currentCycleRecord(s);
+      if (rec) {
+        rec.mustFix = [...new Set([...(rec.mustFix ?? []), ...out.mustFix])];
+        saveCycleState(s);
+      }
+    }
+    return admitted;
   }
 
   const { plan, raw, tokens } = out;
@@ -593,7 +629,10 @@ export async function planNextCycle(s: CycleState, rt: CycleRuntime): Promise<Cy
     // no committed cycle) is the README-and-hello-world escape. After a
     // reviewed commit the Reviewer already used it; honour fulfilled.
     const usedTheProduct = Boolean(looked) || s.cycles.some((c) => c.commitSha);
-    if (s.mandate != null && usedTheProduct) {
+    // A mandate cannot fulfil while broken/unknown promises have no Operator:.
+    // absent may remain. FORGE_ULW_PROMISE_FULFILL=0 restores Looked:+used release.
+    const outstanding = s.mandate != null ? unnamedBrokenOrUnknownPromises(s, plan) : [];
+    if (s.mandate != null && usedTheProduct && outstanding.length === 0) {
       const n = s.cycle + 1;
       const planPath = writeArtifact(s.sessionId, n, "plan.md", raw);
       s.cycles.push({
@@ -623,15 +662,17 @@ export async function planNextCycle(s: CycleState, rt: CycleRuntime): Promise<Cy
       );
     }
     const unkept = (s.promises ?? []).some((p) => p.state !== "kept");
-    const kind = unkept ? "keep-promise" : "go-deeper";
+    const kind = outstanding.length || unkept ? "keep-promise" : "go-deeper";
     const whySynth =
       s.mandate != null && !usedTheProduct
         ? "mandate fulfilled without Looked: (use the product before declaring the job done)"
-        : unkept
-          ? "a promise is unkept"
-          : "all promises kept";
+        : outstanding.length
+          ? "a broken or unknown promise is not named on Operator:"
+          : unkept
+            ? "a promise is unkept"
+            : "all promises kept";
     rt.log?.(`ULW Planner declared ${s.mandate != null ? "mandate" : "no-mandate"} fulfilled; ${whySynth} — synthesizing a ${kind} cycle (streak ${s.directExecuteStreak + 1}/${noProgressCap()})`);
-    const synth = synthesizeWorkPlan(s, scout, kind);
+    const synth = synthesizeWorkPlan(s, scout, kind, outstanding.length ? { targets: outstanding } : undefined);
     s.directExecuteStreak += 1;
     return admitPlan(s, rt, synth.plan, synth.raw, tokens, scout, reviewForExecutor);
   }
@@ -871,7 +912,7 @@ async function runReviewer(s: CycleState, rt: CycleRuntime, executorCloser: stri
     singleBrief: () => buildReviewerBrief(reviewInput),
     firstMaxTurns: reviewerLookTurns(),
   });
-  await safeCleanup(rt, tt.sessionId);
+  await persistAndCleanupRole(s.sessionId, "reviewer", rt, tt);
   const res = tt.second;
   if (record) record.reviewerTokens = (record.reviewerTokens ?? 0) + roleTokens(tt);
   const lookRaw = tt.first ? roleBody(tt.first.text) : "";
@@ -1186,6 +1227,10 @@ async function closeCycle(
     invalidateReview(s);
     return fixOrRelease(s, post.run, post.verdict, { fixRoundsCap: opts.fixRoundsCap, reviewed: true });
   }
+  if (surfaceSitBlocksCommit(s, post)) {
+    rt.log?.(`ULW cycle ${s.cycle} commit skipped: surface sit without proof`);
+    return advanceAfterCycle(s, rt, { skipped: "surface sit without proof" });
+  }
   return finishCycle(s, rt, post?.run ?? null);
 }
 
@@ -1343,4 +1388,61 @@ function safe<T>(fn: () => T, fallback: T): T {
   } catch {
     return fallback;
   }
+}
+
+function promiseNamedInOperator(p: CyclePromise, operator: string[]): boolean {
+  const blob = operator.join("\n").toLowerCase();
+  if (!blob.trim()) return false;
+  const text = p.text.toLowerCase();
+  if (blob.includes(text)) return true;
+  const ids = text.match(/[a-z0-9][a-z0-9-]{4,}/g) ?? [];
+  return ids.some((id) => blob.includes(id));
+}
+
+/** Broken/unknown promises not named on Operator:. Kill-switch restores mandate release. */
+function unnamedBrokenOrUnknownPromises(s: CycleState, plan: ParsedPlan): CyclePromise[] {
+  if (isFalsy(process.env.FORGE_ULW_PROMISE_FULFILL)) return [];
+  return (s.promises ?? []).filter((p) => {
+    if (p.state !== "broken" && p.state !== "unknown") return false;
+    return !promiseNamedInOperator(p, plan.operator);
+  });
+}
+
+function continueArchitectureHold(s: CycleState, plan: ParsedPlan | null): string {
+  if (isFalsy(process.env.FORGE_ULW_CLASS_HOLD)) return "";
+  if (!plan || plan.verdict !== "continue") return "";
+  const cls = recurringArchitectureClass(s.cycles);
+  if (!cls) return "";
+  if (planAddressesArchitectureClass(plan, cls)) return "";
+  return architectureHoldMessage(cls);
+}
+
+function surfaceSitBlocksCommit(
+  s: CycleState,
+  post: { run: CheckRun; verdict: GateVerdict } | null,
+): boolean {
+  if (!isSurfaceSit(s.items)) return false;
+  return !post;
+}
+
+async function persistAndCleanupRole(
+  parentId: string,
+  role: CycleRole,
+  rt: CycleRuntime,
+  tt: TwoTurnResult,
+  extra?: RoleRunResult,
+): Promise<void> {
+  const id = tt.sessionId;
+  if (id) {
+    const res = extra ?? tt.second;
+    appendRoleRunLine(parentId, {
+      id,
+      type: role,
+      status: res.status,
+      turns: tt.mode === "two-turn" ? (extra ? 3 : 2) : 1,
+      tokens: roleTokens(tt, ...(extra ? [extra] : [])),
+      error: res.error,
+    });
+  }
+  await safeCleanup(rt, tt.sessionId);
 }

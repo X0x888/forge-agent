@@ -155,6 +155,8 @@ the candidates the record already covers. Repeated changes warrant checking
 for a shared cause: would one decision resolve the remaining instances?
 Plan that decision when the evidence supports it. Similar labels alone do not
 prove a shared cause, and independent defects need not become an abstraction.
+If the last two shipped reviews named the same architecture class, this
+continue plan's items or a `leave it` in `Considered:` must name that class.
 
 ### 8. Harmonize — one coherent theme
 
@@ -206,7 +208,9 @@ removing existing doctrine is a proposal, not an edit.
   is met. An explicit mandate is fulfilled when the job they pointed at is met
   at veteran quality, not when every adjective is ticked, and not after a
   README-and-hello-world slice. `Looked:` on this scout must show you used the
-  product after the last commit. With no mandate, kept promises and a clean
+  product after the last commit. A `broken` or `unknown` promise still open
+  needs that promise on `Operator:`, or the harness keeps the work rather
+  than release. With no mandate, kept promises and a clean
   first session do not prove excellence. If no change is justified, continue
   with a bounded investigation of the most consequential remaining uncertainty
   and a decision it can inform. A no-mandate `fulfilled` is redirected into

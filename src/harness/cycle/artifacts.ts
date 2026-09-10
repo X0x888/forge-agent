@@ -12,6 +12,7 @@ import { looksLikeCheckCommand } from "../declared-checks.js";
 import type {
   CyclePlanItem,
   CyclePromise,
+  CycleRecord,
   CycleReviewNotes,
   PlanVerdict,
   ReviewVerdict,
@@ -397,6 +398,88 @@ export function isSurfaceSit(items: readonly CyclePlanItem[]): boolean {
   const proofs = items.map((i) => (i.proof ?? "").trim()).filter(Boolean);
   if (proofs.length > 0 && proofs.every((p) => CLI_OR_RPC_PROOF_RE.test(p))) return false;
   return items.some((i) => SURFACE_SIT_RE.test(`${i.proof ?? ""} ${i.redNow ?? ""} ${i.title}`));
+}
+
+/**
+ * Distinctive tokens in Architecture notes: backticked identifiers, or a
+ * normalized 3-word key. Not a meter — a class two shipped reviews named.
+ */
+const ARCH_STOP = new Set([
+  "the", "a", "an", "and", "or", "of", "to", "in", "is", "it", "for", "on",
+  "with", "this", "that", "same", "still", "left", "alone", "from", "was",
+  "were", "are", "be", "as", "by", "at", "not", "no", "one", "two", "its",
+  "but", "had", "has", "have", "been", "into", "over", "than", "then", "they",
+  "them", "when", "what", "which", "their", "pre", "existing",
+]);
+
+function archWords(text: string): string[] {
+  return text
+    .toLowerCase()
+    .replace(/`[^`]+`/g, (m) => ` ${m.slice(1, -1)} `)
+    .replace(/[^a-z0-9]+/g, " ")
+    .split(/\s+/)
+    .filter((w) => w.length >= 3 && !ARCH_STOP.has(w));
+}
+
+function normalizeArchHay(text: string): string {
+  return text
+    .toLowerCase()
+    .replace(/`/g, " ")
+    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/** Tokens a Reviewer's Architecture notes contribute to the class hold. */
+export function architectureClassTokens(notes: readonly string[]): string[] {
+  const out = new Set<string>();
+  for (const note of notes) {
+    const n = String(note || "");
+    for (const m of n.matchAll(/`([^`]+)`/g)) {
+      const t = m[1].trim().toLowerCase();
+      if (t.length >= 2) out.add(t);
+    }
+    const words = archWords(n);
+    for (let i = 0; i <= words.length - 3; i++) {
+      out.add(`${words[i]} ${words[i + 1]} ${words[i + 2]}`);
+    }
+  }
+  return [...out];
+}
+
+/**
+ * The class the last two shipped reviews both named, if any. Prefers a
+ * backticked identifier over a 3-word key; longer when tied.
+ */
+export function recurringArchitectureClass(
+  cycles: ReadonlyArray<Pick<CycleRecord, "commitSha" | "architecture">>,
+): string | undefined {
+  const shipped = cycles.filter((c) => c.commitSha && (c.architecture?.length ?? 0) > 0);
+  if (shipped.length < 2) return undefined;
+  const a = architectureClassTokens(shipped[shipped.length - 2].architecture ?? []);
+  const b = new Set(architectureClassTokens(shipped[shipped.length - 1].architecture ?? []));
+  const shared = a.filter((t) => b.has(t));
+  if (!shared.length) return undefined;
+  shared.sort((x, y) => {
+    const xs = x.includes(" ") ? 1 : 0;
+    const ys = y.includes(" ") ? 1 : 0;
+    return xs - ys || y.length - x.length;
+  });
+  return shared[0];
+}
+
+/** True when an item title/serves names the class, or Considered: leave-it does. */
+export function planAddressesArchitectureClass(plan: ParsedPlan, cls: string): boolean {
+  const needle = normalizeArchHay(cls);
+  if (!needle) return false;
+  const hit = (s: string) => normalizeArchHay(s).includes(needle);
+  if (plan.items.some((i) => hit(`${i.title} ${i.serves ?? ""}`))) return true;
+  if (hit(plan.title)) return true;
+  return plan.considered.some((c) => LEAVE_IT_RE.test(c) && hit(c));
+}
+
+export function architectureHoldMessage(cls: string): string {
+  return `the last two shipped reviews named the architecture class \`${cls}\`; a continue plan must include an item whose title/serves mentions that class, or \`leave it\` that class in Considered:`;
 }
 
 /** The Planner's turn-1 document. Null only when none of its sections is there. */

@@ -6,12 +6,15 @@
  * siblings share remaining, and the parent HIT valve cannot be bypassed
  * by a fresh child session.
  */
+import fs from "node:fs";
+import path from "node:path";
 import type { ForgeConfig } from "../config/types.js";
 import {
   costCapStatus,
   type CostCapStatus,
 } from "../util/cost-budget.js";
 import { estimateCostUsd, formatCost, formatTokens } from "../util/format.js";
+import { ensureDir, forgeHome } from "../util/fs.js";
 import type { SessionMeta } from "./session.js";
 
 export interface SubagentUsageRecord {
@@ -174,7 +177,14 @@ export function foldChildUsage(
     (parent.totalCacheReadTokens || 0) + delta.cacheReadTokens;
   if (idx >= 0) ledger[idx] = record;
   else ledger.push(record);
-  parent.subagentUsage = capSubagentLedger(ledger);
+  const capped = capSubagentLedger(ledger);
+  if (capped.length < ledger.length) {
+    const keep = new Set(capped.map((r) => r.sessionId));
+    for (const r of ledger) {
+      if (!keep.has(r.sessionId)) appendRoleRunFromUsage(parent.id, r);
+    }
+  }
+  parent.subagentUsage = capped;
   return { added: !prev, delta };
 }
 
@@ -347,6 +357,63 @@ export function familyCostJson(
     subagentCostUsd: b.childSum.estCostUsd,
     subagentUsage: b.children,
   };
+}
+
+export interface RoleRunLine {
+  id: string;
+  type: string;
+  status: string;
+  turns: number;
+  tokens: number;
+  error?: string;
+  at?: string;
+}
+
+export function rolesJsonlPath(parentSessionId: string): string {
+  return path.join(forgeHome(), "sessions", parentSessionId, "roles.jsonl");
+}
+
+/**
+ * One durable line per role/child run under the parent session. The in-memory
+ * `subagentUsage` cap is 32; this file is how later cycles are not lost, and
+ * how Planner/Reviewer children are recorded before their dirs are wiped.
+ */
+export function appendRoleRunLine(parentSessionId: string, rec: RoleRunLine): void {
+  const parent = String(parentSessionId || "").trim();
+  const id = String(rec.id || "").trim();
+  if (!parent || !id) return;
+  try {
+    const file = rolesJsonlPath(parent);
+    ensureDir(path.dirname(file));
+    const line =
+      JSON.stringify({
+        id: id.slice(0, 80),
+        type: String(rec.type || "").slice(0, 40),
+        status: String(rec.status || "").slice(0, 40),
+        turns: Math.max(0, Math.floor(rec.turns || 0)),
+        tokens: Math.max(0, Math.floor(rec.tokens || 0)),
+        ...(rec.error ? { error: String(rec.error).slice(0, 240) } : {}),
+        at: rec.at || new Date().toISOString(),
+      }) + "\n";
+    fs.appendFileSync(file, line, { encoding: "utf8", mode: 0o600 });
+    try {
+      fs.chmodSync(file, 0o600);
+    } catch {
+      /* windows */
+    }
+  } catch {
+    /* a missed role line is a gap in the ledger, not a failed cycle */
+  }
+}
+
+export function appendRoleRunFromUsage(parentSessionId: string, rec: SubagentUsageRecord): void {
+  appendRoleRunLine(parentSessionId, {
+    id: rec.sessionId,
+    type: rec.subagentType,
+    status: rec.status,
+    turns: rec.turns,
+    tokens: rec.promptTokens + rec.completionTokens,
+  });
 }
 
 export function formatLiveChildSpend(

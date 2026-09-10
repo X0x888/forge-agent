@@ -1,6 +1,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import {
+  architectureClassTokens,
   explainPlanParseFailure,
   extractDisputeLines,
   extractLabelledLines,
@@ -11,7 +12,9 @@ import {
   parsePlanItemLine,
   parseReviewArtifact,
   parseScoutArtifact,
+  planAddressesArchitectureClass,
   planArtifactContract,
+  recurringArchitectureClass,
   reviewArtifactContract,
   scoutArtifactContract,
   PLAN_COMPLETE_RE,
@@ -321,6 +324,29 @@ describe("surface sit classifier", () => {
     assert.equal(isSurfaceSit([item({ title: "Stay dock leftover", proof: "open leftover door" })]), true);
     assert.equal(isSurfaceSit([item({ title: "the first-hour popup", proof: "click the icon" })]), true);
     assert.equal(isSurfaceSit([item({ title: "ship the widget", proof: "npm test" })]), false);
+  });
+});
+
+describe("architecture class tokens", () => {
+  it("two shipped reviews sharing chew/Stay pile yield that class; a leave-it or item addresses it", () => {
+    const a = ["`chew` and Stay still pile in one module"];
+    const b = ["the chew/Stay pile grew another helper"];
+    assert.ok(architectureClassTokens(a).includes("chew stay pile") || architectureClassTokens(a).includes("chew"));
+    const cls = recurringArchitectureClass([
+      { commitSha: "aaa", architecture: a },
+      { commitSha: "bbb", architecture: b },
+    ]);
+    assert.ok(cls);
+    const plan = parsePlanArtifact(
+      `# Cycle 3 plan — theme\nVerdict: continue\nLooked: ran it\nConsidered:\n- rough edge: theme\n- leave it — the chew/Stay pile is next year's work\nDirection: theme\nWorth the cycle: x\nItems:\n1. item — files: a.ts — serves: first minute — red now: not there — proof: npm test\n`,
+    );
+    assert.ok(plan);
+    assert.equal(planAddressesArchitectureClass(plan, cls!), true);
+    const slice = parsePlanArtifact(
+      `# Cycle 3 plan — theme\nVerdict: continue\nLooked: ran it\nConsidered:\n- rough edge: theme\n- leave it — the tree runs; the theme is what a user meets first\nDirection: theme\nWorth the cycle: x\nItems:\n1. item — files: a.ts — serves: first minute — red now: not there — proof: npm test\n`,
+    );
+    assert.ok(slice);
+    assert.equal(planAddressesArchitectureClass(slice, cls!), false);
   });
 });
 

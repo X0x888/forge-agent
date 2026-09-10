@@ -1,5 +1,8 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import {
   buildSubagentUsageRecord,
   familyCostBreakdown,
@@ -375,5 +378,48 @@ describe("createFamilyCostCapResolver — siblings share remaining", () => {
     assert.ok(b1.spent >= a1.spent);
     assert.ok(a2.spent >= b1.spent);
     assert.equal(parent.subagentUsage?.length, 2);
+  });
+});
+
+describe("roles.jsonl persistence", () => {
+  it("evicted subagentUsage rows append to roles.jsonl", () => {
+    const prev = process.env.FORGE_HOME;
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "forge-roles-jsonl-"));
+    process.env.FORGE_HOME = home;
+    try {
+      const parent = meta({
+        id: "cap-parent",
+        totalPromptTokens: 0,
+        totalCompletionTokens: 0,
+        totalCacheReadTokens: 0,
+        subagentUsage: undefined,
+      });
+      for (let i = 0; i < 33; i++) {
+        foldChildUsage(
+          parent,
+          buildSubagentUsageRecord({
+            sessionId: `c${i}`,
+            description: `d${i}`,
+            subagentType: "explore",
+            status: "completed",
+            turns: 1,
+            maxTurns: 8,
+            usage: { promptTokens: 10, completionTokens: 1, cacheReadTokens: 0 },
+            provider: "xai",
+            at: "2026-01-01T00:00:00.000Z",
+          }),
+        );
+      }
+      assert.equal(parent.subagentUsage?.length, 32);
+      const file = path.join(home, "sessions", "cap-parent", "roles.jsonl");
+      assert.ok(fs.existsSync(file));
+      const lines = fs.readFileSync(file, "utf8").trim().split("\n");
+      assert.equal(lines.length, 1);
+      assert.equal(JSON.parse(lines[0]).id, "c0");
+      assert.equal(JSON.parse(lines[0]).type, "explore");
+    } finally {
+      if (prev === undefined) delete process.env.FORGE_HOME;
+      else process.env.FORGE_HOME = prev;
+    }
   });
 });

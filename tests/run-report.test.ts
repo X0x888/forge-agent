@@ -20,9 +20,10 @@ import {
   runReportPath,
   shouldPrintRunReport,
   statusHeadLines,
+  writeRunReport,
 } from "../src/harness/run-report.js";
-import { armWithPlan } from "./helpers/cycle-arm.js";
-import { saveCycleState, disarmCycle, setCycleFlag } from "../src/harness/cycle/index.js";
+import { armWithPlan, mkGitRepo } from "./helpers/cycle-arm.js";
+import { armCycle, saveCycleState, disarmCycle, setCycleFlag, loadCycleState } from "../src/harness/cycle/index.js";
 import { looksLikeRunReport } from "../src/harness/report-guard.js";
 
 import { assembleStatusReport } from "../src/tui/status-card.js";
@@ -532,5 +533,35 @@ Done — the importer streams now and 3 waves shipped since the mandate.
       [14],
       `label column bends: ${JSON.stringify(rows)}`,
     );
+  });
+
+  it("a second /ulw after endReason is a new report epoch; /report points at report-2.md", () => {
+    const cwd = mkGitRepo();
+    const s = createSession({ cwd, provider: "xai", model: "grok-4" });
+    saveSession(s);
+    const first = armCycle({ sessionId: s.meta.id, mandate: "era A", cwd });
+    assert.equal(first.reportEpoch, 1);
+    first.enabled = false;
+    first.phase = "released";
+    first.endReason = "fulfilled";
+    saveCycleState(first);
+    const eraA = path.join(process.env.FORGE_HOME!, "sessions", s.meta.id, "report.md");
+    fs.mkdirSync(path.dirname(eraA), { recursive: true });
+    fs.writeFileSync(eraA, "Era A stale HashPet report\n");
+    assert.equal(runReportPath(s.meta.id), eraA);
+
+    const second = armCycle({ sessionId: s.meta.id, mandate: "continue", cwd });
+    assert.equal(second.reportEpoch, 2);
+    assert.equal(loadCycleState(s.meta.id)!.reportEpoch, 2);
+    const latest = runReportPath(s.meta.id);
+    assert.match(latest, /report-2\.md$/);
+    assert.notEqual(latest, eraA);
+    const report = buildRunReport({ session: s, workspace: cwd, noGit: true, ulw: second });
+    assert.match(report.outcome, /^Era 2 — /);
+    assert.match(report.markdown, /Era 2/);
+    const saved = writeRunReport(s.meta.id, report);
+    assert.equal(saved, latest);
+    assert.ok(fs.existsSync(latest));
+    assert.equal(fs.readFileSync(eraA, "utf8"), "Era A stale HashPet report\n", "era A is not overwritten");
   });
 });

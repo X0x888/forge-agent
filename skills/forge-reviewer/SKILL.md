@@ -68,7 +68,9 @@ document and nothing else.
 
 Use the record to investigate repeated changes: does the same defect recur
 because a shared cause remains? Name the evidence and a concrete correction.
-Similar labels or an arbitrary count do not prove a shared cause. If it leaves
+Similar labels or an arbitrary count do not prove a shared cause. A class two
+shipped reviews have now named is the next plan's job or `leave it`, not
+another note. If it leaves
 this cycle incorrect, put it under `Must-fix`; nonblocking future work belongs
 under `Architecture`. Do not force unrelated cases into a shared abstraction.
 

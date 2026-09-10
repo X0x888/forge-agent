@@ -18,7 +18,12 @@
  * remain as the fallback when two turns are off or unavailable.
  */
 import { playwrightLookStatus } from "../../mcp/manager.js";
-import { planArtifactContract, reviewArtifactContract, scoutArtifactContract } from "./artifacts.js";
+import {
+  planArtifactContract,
+  recurringArchitectureClass,
+  reviewArtifactContract,
+  scoutArtifactContract,
+} from "./artifacts.js";
 import type { CycleRecord, CycleState, ReviewVerdict } from "./state.js";
 
 /** Role brief only — never message[0]. Shown when the look path cannot use MCP. */
@@ -282,6 +287,14 @@ function recordLines(input: PlannerPlanInput): string[] {
     if (last?.architecture?.length) {
       lines.push(``, `## The last Reviewer's shape notes`);
       for (const a of last.architecture.slice(0, 6)) lines.push(`- ${clipBlock(a, 300).replace(/\n/g, " ")}`);
+    }
+    const recurring = recurringArchitectureClass(s.cycles);
+    if (recurring) {
+      lines.push(
+        ``,
+        `## Recurring architecture class`,
+        `The last two shipped reviews both named \`${recurring}\`. A continue plan must include an item whose title or serves: mentions that class, or \`leave it\` that class in Considered:. Ignoring it for another slice is not a plan.`,
+      );
     }
     if (last?.worth && /^\s*no\b/i.test(last.worth)) {
       lines.push(

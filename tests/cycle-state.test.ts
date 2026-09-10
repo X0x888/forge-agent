@@ -95,6 +95,20 @@ describe("cycle live-control overlay", () => {
     assert.equal(next.phase, "plan");
   });
 
+  it("a second /ulw after endReason is a new report epoch", () => {
+    const sid = "overlay-epoch";
+    const first = armCycle({ sessionId: sid, mandate: "era A", cwd });
+    assert.equal(first.reportEpoch, 1);
+    first.enabled = false;
+    first.phase = "released";
+    first.endReason = "fulfilled";
+    writeCycleState(first);
+    const second = armCycle({ sessionId: sid, mandate: "continue", cwd });
+    assert.equal(second.reportEpoch, 2, "HashPet stale era-A report: re-arm is era B");
+    assert.equal(second.enabled, true);
+    assert.equal(second.endReason, undefined);
+  });
+
   it("/cycle 0 after a closed cycle says the run stops without starting the next plan", () => {
     const sid = "overlay-closed-msg";
     const s = armWithPlan({ sessionId: sid, cwd, mandate: "ship it" });

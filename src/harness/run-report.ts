@@ -400,7 +400,14 @@ export function buildRunReport(input: RunReportInput): RunReport {
     ...notDone.map((l) => `Open: ${l}`),
   ];
 
-  const markdown = renderRunReportMarkdown({ outcome, request, sections });
+  const epoch = reportEpochOf(ulw);
+  if (epoch > 1) outcome = `Era ${epoch} — ${outcome}`;
+  const markdown = renderRunReportMarkdown({
+    outcome,
+    request,
+    sections,
+    era: epoch > 1 ? epoch : undefined,
+  });
   return { outcome, request, sections, markdown, facts };
 }
 
@@ -408,8 +415,11 @@ export function renderRunReportMarkdown(r: {
   outcome: string;
   request: string;
   sections: RunReportSection[];
+  era?: number;
 }): string {
-  const out: string[] = [r.outcome];
+  const out: string[] = [];
+  if (r.era && r.era > 1 && !/^Era\s+\d+/i.test(r.outcome)) out.push(`Era ${r.era}`);
+  out.push(r.outcome);
   if (r.request) out.push(`Request: ${r.request}`);
   for (const s of r.sections) {
     out.push(``, `**${s.title}**`);
@@ -510,8 +520,22 @@ export function statusHeadLines(report: RunReport): string[] {
   return out;
 }
 
-export function runReportPath(sessionId: string): string {
-  return path.join(sessionDir(sessionId), "report.md");
+export function reportEpochOf(ulw?: CycleState | null): number {
+  const n = ulw?.reportEpoch;
+  return typeof n === "number" && Number.isFinite(n) && n > 1 ? Math.floor(n) : 1;
+}
+
+export function runReportPath(sessionId: string, epoch?: number): string {
+  let n = epoch;
+  if (n == null) {
+    try {
+      n = reportEpochOf(loadCycleState(sessionId));
+    } catch {
+      n = 1;
+    }
+  }
+  const dir = sessionDir(sessionId);
+  return n <= 1 ? path.join(dir, "report.md") : path.join(dir, `report-${n}.md`);
 }
 
 /** Persist the report beside the session (never in the repo). */
