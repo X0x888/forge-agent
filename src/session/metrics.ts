@@ -75,6 +75,43 @@ export interface SessionMetricsEvent {
   lastErrorCode?: string;
   /** Public account id (never a token). */
   accountId?: string;
+  /**
+   * Same-payload chat retries for this provider_round (session rounds.jsonl).
+   * HashPet fetch-failed storms were TUI-only until this rode the round log.
+   */
+  retries?: Array<{ attempt: number; reason: string; delayMs: number }>;
+}
+
+/** Session lifetime spend — crash run_end must not log $0 / 0 tokens. */
+export function sessionSpendForRunEnd(meta: {
+  totalPromptTokens?: number;
+  totalCompletionTokens?: number;
+  totalCacheReadTokens?: number;
+  lastRoundPromptTokens?: number;
+  lastRoundCacheReadTokens?: number;
+}): {
+  promptTokens: number;
+  completionTokens: number;
+  cacheReadTokens: number;
+  lastRoundPromptTokens?: number;
+  lastRoundCacheReadTokens?: number;
+  lastRoundCacheRatio?: number;
+} {
+  const promptTokens = Number(meta.totalPromptTokens) || 0;
+  const completionTokens = Number(meta.totalCompletionTokens) || 0;
+  const cacheReadTokens = Number(meta.totalCacheReadTokens) || 0;
+  const lastP = Number(meta.lastRoundPromptTokens) || 0;
+  const lastC = Number(meta.lastRoundCacheReadTokens) || 0;
+  return {
+    promptTokens,
+    completionTokens,
+    cacheReadTokens,
+    ...(lastP > 0 ? { lastRoundPromptTokens: lastP } : {}),
+    ...(lastC > 0 ? { lastRoundCacheReadTokens: lastC } : {}),
+    ...(lastP > 0
+      ? { lastRoundCacheRatio: Math.min(1, lastC / lastP) }
+      : {}),
+  };
 }
 
 /** Run-level events (`run_end` / `session_end`) — what `forge stats` reads. */

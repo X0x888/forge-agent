@@ -126,6 +126,26 @@ export function extractReasoningContent(source: unknown): string {
   return "";
 }
 
+function sanitizeRoundRetries(
+  retries?: Array<{ attempt: number; reason: string; delayMs: number }>,
+): Array<{ attempt: number; reason: string; delayMs: number }> | undefined {
+  if (!retries?.length) return undefined;
+  const out: Array<{ attempt: number; reason: string; delayMs: number }> = [];
+  for (const row of retries.slice(0, 8)) {
+    const reason = String(row?.reason || "")
+      .replace(/\s+/g, " ")
+      .trim()
+      .slice(0, 120);
+    if (!reason) continue;
+    out.push({
+      attempt: Math.max(0, Math.trunc(Number(row.attempt) || 0)),
+      reason,
+      delayMs: Math.max(0, Math.round(Number(row.delayMs) || 0)),
+    });
+  }
+  return out.length ? out : undefined;
+}
+
 export function appendProviderRoundMetrics(opts: {
   sessionId: string;
   provider: string;
@@ -138,8 +158,11 @@ export function appendProviderRoundMetrics(opts: {
   cacheDrop?: boolean;
   turn: number;
   accountId?: string;
+  /** Same-payload retries collected by this doChat's onRetry hook. */
+  retries?: Array<{ attempt: number; reason: string; delayMs: number }>;
 }): void {
   const ratio = cacheHitRatio(opts.promptTokens, opts.cacheReadTokens);
+  const retries = sanitizeRoundRetries(opts.retries);
   appendSessionMetrics({
     ts: new Date().toISOString(),
     type: "provider_round",
@@ -166,5 +189,6 @@ export function appendProviderRoundMetrics(opts: {
     pruneKind: opts.pruneKind && opts.pruneKind !== "off" ? opts.pruneKind : undefined,
     cacheDrop: opts.cacheDrop || undefined,
     providerRounds: opts.turn,
+    ...(retries ? { retries } : {}),
   });
 }

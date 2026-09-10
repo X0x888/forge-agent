@@ -168,6 +168,43 @@ describe("expandMessagesForVision tool results", () => {
       (last.content as Array<{ type: string }>).some((p) => p.type === "image_url"),
     );
   });
+
+  it("keeps only the last N vision images when maxImages is set", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "forge-vis-cap-"));
+    const msgs: ChatMessage[] = [{ role: "user", content: "look" }];
+    for (let i = 1; i <= 3; i++) {
+      const png = path.join(dir, `shot${i}.png`);
+      fs.writeFileSync(png, PNG_8X8);
+      msgs.push(
+        {
+          role: "assistant",
+          content: null,
+          tool_calls: [
+            {
+              id: `c${i}`,
+              type: "function",
+              function: { name: "read_file", arguments: `{"path":"shot${i}.png"}` },
+            },
+          ],
+        },
+        {
+          role: "tool",
+          tool_call_id: `c${i}`,
+          content: imageReadReceipt(`shot${i}.png`, PNG_8X8.length, {
+            width: 8,
+            height: 8,
+          }),
+        },
+      );
+    }
+    const out = expandMessagesForVision(msgs, dir, { maxImages: 2 });
+    const images = out.flatMap((m) =>
+      Array.isArray(m.content)
+        ? m.content.filter((p) => p.type === "image_url")
+        : [],
+    );
+    assert.equal(images.length, 2);
+  });
 });
 
 describe("image_gen tool", () => {

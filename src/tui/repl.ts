@@ -65,6 +65,7 @@ import {
   listTasks,
   killAllRunningTasks,
   installBackgroundTaskExitHook,
+  janitorBackgroundTasks,
   peekTaskLastLine,
 } from "../agent/tools/background-tasks.js";
 import { loadHistory, appendHistory } from "./history.js";
@@ -1011,6 +1012,11 @@ export async function runRepl(opts: {
       } catch {
         /* metrics never block REPL */
       }
+      try {
+        janitorBackgroundTasks();
+      } catch {
+        /* fail-open */
+      }
     } catch (err) {
       working.stop();
       toolStarts.flush();
@@ -1063,9 +1069,8 @@ export async function runRepl(opts: {
           }
         }
         try {
-          const { appendSessionMetrics, buildRunEndMetrics } = await import(
-            "../session/metrics.js"
-          );
+          const { appendSessionMetrics, buildRunEndMetrics, sessionSpendForRunEnd } =
+            await import("../session/metrics.js");
           appendSessionMetrics(
             buildRunEndMetrics({
               sessionId: session.meta.id,
@@ -1075,8 +1080,7 @@ export async function runRepl(opts: {
               turns: 0,
               stopContinues: 0,
               editCount: session.meta.editCount,
-              promptTokens: 0,
-              completionTokens: 0,
+              ...sessionSpendForRunEnd(session.meta),
               aborted: false,
               ok: false,
               headless: false,
@@ -1087,6 +1091,22 @@ export async function runRepl(opts: {
           );
         } catch {
           /* metrics never block REPL */
+        }
+        try {
+          const { persistRunReportOnEnd } = await import(
+            "../harness/run-report.js"
+          );
+          persistRunReportOnEnd({
+            session,
+            workspace: config.workspace || session.meta.cwd || process.cwd(),
+          });
+        } catch {
+          /* report is best-effort — never exit the TUI */
+        }
+        try {
+          janitorBackgroundTasks();
+        } catch {
+          /* fail-open */
         }
       } catch {
         log.error((err as Error).message);
@@ -1133,6 +1153,11 @@ export async function runRepl(opts: {
         }
       } catch {
         /* never block exit */
+      }
+      try {
+        janitorBackgroundTasks();
+      } catch {
+        /* fail-open */
       }
       rl.close();
     } catch (err) {

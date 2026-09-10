@@ -221,6 +221,8 @@ import {
   isDroppedConnectionError,
   isReconnectWithoutAuthDrop,
   isRetryableError,
+  noteFetchFailedRetry,
+  retryEventReason,
 } from "../util/retry.js";
 import { parseToolArguments } from "../util/json-repair.js";
 import { repairToolCallPairing } from "../session/message-repair.js";
@@ -903,6 +905,8 @@ export interface BuildChatRequestOpts {
   holdOmitIds?: string[] | null;
   /** Wave-1 / named-ship / explore-map files — prune keeps these tools. */
   jobKeepPaths?: string[];
+  /** After a fetch-failed storm, keep only the last N vision images. */
+  maxVisionImages?: number;
   onPrune?: (info: {
     kind: PruneKind;
     sticky?: RequestPruneSticky;
@@ -967,7 +971,9 @@ export function buildChatRequest(
   // Phase 6: expand [[image:path]] / @shot.png markers into multimodal parts
   // for vision-capable providers (inline data URLs). Stored session history
   // keeps the original string markers — only the outbound request expands.
-  const outbound = expandMessagesForVision(wire, config.workspace);
+  const outbound = expandMessagesForVision(wire, config.workspace, {
+    maxImages: opts?.maxVisionImages,
+  });
   return {
     model: config.model,
     messages: outbound,
@@ -1010,13 +1016,20 @@ function messageHasImageMarks(text: string): boolean {
 export function expandMessagesForVision(
   messages: ChatMessage[],
   workspace?: string,
+  opts?: { maxImages?: number },
 ): OutboundChatMessage[] {
+  const cap =
+    typeof opts?.maxImages === "number" &&
+    Number.isFinite(opts.maxImages) &&
+    opts.maxImages >= 0
+      ? Math.floor(opts.maxImages)
+      : 6;
   const out: OutboundChatMessage[] = [];
   const pending: ChatContentPart[] = [];
   const flushPending = () => {
     if (!pending.length) return;
     const parts = pending.splice(0, pending.length);
-    const images = parts.filter((p) => p.type === "image_url").slice(-6);
+    const images = parts.filter((p) => p.type === "image_url").slice(-cap);
     if (!images.length) return;
     out.push({
       role: "user",
@@ -1054,7 +1067,53 @@ export function expandMessagesForVision(
     out.push(m);
   }
   flushPending();
-  return out;
+  return typeof opts?.maxImages === "number"
+    ? keepLastVisionImages(out, cap)
+    : out;
+}
+
+/** Drop earlier image_url parts so a retry storm does not resend the whole look-loop. */
+function keepLastVisionImages(
+  messages: OutboundChatMessage[],
+  maxImages: number,
+): OutboundChatMessage[] {
+  if (!(maxImages >= 0)) return messages;
+  let keep = maxImages;
+  const reversed: OutboundChatMessage[] = [];
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i]!;
+    if (!Array.isArray(m.content)) {
+      reversed.push(m);
+      continue;
+    }
+    const parts: ChatContentPart[] = [];
+    for (let j = m.content.length - 1; j >= 0; j--) {
+      const p = m.content[j]!;
+      if (p.type === "image_url") {
+        if (keep > 0) {
+          parts.push(p);
+          keep -= 1;
+        }
+      } else {
+        parts.push(p);
+      }
+    }
+    parts.reverse();
+    const hasImage = parts.some((p) => p.type === "image_url");
+    const text = parts
+      .filter((p): p is { type: "text"; text: string } => p.type === "text")
+      .map((p) => p.text)
+      .join("");
+    if (
+      !hasImage &&
+      /Vision: images from the previous tool result/i.test(text)
+    ) {
+      continue;
+    }
+    reversed.push(parts.length ? { ...m, content: parts } : m);
+  }
+  reversed.reverse();
+  return reversed;
 }
 
 /**
@@ -1447,6 +1506,8 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
    * action must open a new Run; tool continuations still resume.
    */
   let cursorRebaseDue = false;
+  /** After two fetch-failed retries in one doChat, cap outbound vision images. */
+  let visionImageCap: number | undefined;
   const makeChatRequest = (effortOverride?: ReasoningEffort) => {
     const tools = toolsForMode();
     const estimated = estimateRequestTokens(session.messages, {
@@ -1485,6 +1546,7 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
       })(),
       rebaseConversation: cursorRebase,
       toolChoice: forceToolNext && tools.length ? "required" : undefined,
+      maxVisionImages: visionImageCap,
       onPrune: (info) => {
         lastPruneKind = info.kind;
         lastOutboundPruned = info.kind !== "off";
@@ -2281,6 +2343,35 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
         /* never block the turn on proactive refresh */
       }
       let response: Awaited<ReturnType<typeof provider.chat>> | undefined;
+      let roundRetries: Array<{ attempt: number; reason: string; delayMs: number }> =
+        [];
+      const flushRoundRetries = (usage?: {
+        promptTokens: number;
+        cacheReadTokens: number;
+        completionTokens: number;
+        cacheDrop?: boolean;
+      }) => {
+        if (!roundRetries.length && !usage) return;
+        try {
+          appendProviderRoundMetrics({
+            sessionId: session.meta.id,
+            provider: String(config.provider),
+            model: config.model,
+            promptTokens: usage?.promptTokens ?? 0,
+            cacheReadTokens: usage?.cacheReadTokens ?? 0,
+            completionTokens: usage?.completionTokens ?? 0,
+            pruned: lastOutboundPruned,
+            pruneKind: lastPruneKind,
+            cacheDrop: usage?.cacheDrop,
+            turn: turns,
+            accountId: session.meta.accountId,
+            retries: roundRetries.length ? roundRetries : undefined,
+          });
+        } catch {
+          /* metrics never fail the turn */
+        }
+        roundRetries = [];
+      };
       const fallbackTried = new Set<string>([
         normalizeFallbackModelId(String(config.provider), config.model),
       ]);
@@ -2303,8 +2394,12 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
         }
       }
       try {
-        const doChat = () =>
-          withRetry(
+        const doChat = () => {
+          roundRetries = [];
+          visionImageCap = undefined;
+          let dropRetries = 0;
+          let browsersReapedThisChat = false;
+          return withRetry(
             async () => {
               assertNotAborted(signal);
               if (stream && (events.onToken || events.onReasoning)) {
@@ -2339,6 +2434,24 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
                 return isRetryableError(e);
               },
               onRetry: ({ delayMs, attempt, retries, error }) => {
+                roundRetries.push({
+                  attempt,
+                  reason: retryEventReason(error),
+                  delayMs: Math.round(delayMs),
+                });
+                const storm = noteFetchFailedRetry(error, dropRetries);
+                dropRetries = storm.count;
+                if (storm.visionImageCap != null) {
+                  visionImageCap = storm.visionImageCap;
+                }
+                if (storm.reap && !browsersReapedThisChat) {
+                  browsersReapedThisChat = true;
+                  try {
+                    reapSessionBrowsers(session.meta.id, { workspace });
+                  } catch {
+                    /* fail-open */
+                  }
+                }
                 const why = isProviderApiError(error)
                   ? `HTTP ${error.status}${error.retryAfterMs != null ? " (Retry-After)" : ""}`
                   : error instanceof Error
@@ -2352,6 +2465,7 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
               },
             },
           );
+        };
 
         try {
           response = await doChat();
@@ -2816,6 +2930,7 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
           }
         }
       } catch (err) {
+        flushRoundRetries();
         if ((err as Error).message === "Aborted" || signal?.aborted) {
           aborted = true;
           break;
@@ -2892,23 +3007,18 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
             response.usage.prompt_tokens,
             response.usage.cache_read_input_tokens ?? 0,
           );
-          appendProviderRoundMetrics({
-            sessionId: session.meta.id,
-            provider: String(config.provider),
-            model: config.model,
+          flushRoundRetries({
             promptTokens: response.usage.prompt_tokens,
             cacheReadTokens: response.usage.cache_read_input_tokens ?? 0,
             completionTokens: response.usage.completion_tokens,
-            pruned: lastOutboundPruned,
-            pruneKind: lastPruneKind,
             cacheDrop: lastRoundCacheRatio > 0.9 && ratio < 0.05,
-            turn: turns,
-            accountId: session.meta.accountId,
           });
           lastRoundCacheRatio = ratio;
         } catch {
           /* metrics never fail the turn */
         }
+      } else {
+        flushRoundRetries();
       }
 
       const assistantMsg = response.message;

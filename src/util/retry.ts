@@ -111,6 +111,54 @@ export function isDroppedConnectionError(err: unknown): boolean {
   return false;
 }
 
+/**
+ * The HashPet look-loop storm: undici `fetch failed`, socket `ECONNRESET`,
+ * and `TypeError: terminated`. Counted in the chat `onRetry` hook so the
+ * round log can show it after the TUI is gone, and so two of these in one
+ * doChat budget reap session browsers.
+ */
+export function isFetchFailedRetryError(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err ?? "");
+  const name = err instanceof Error ? err.name : "";
+  if (/fetch failed/i.test(msg)) return true;
+  if (/\bECONNRESET\b/i.test(msg)) return true;
+  if (name === "TypeError" && /terminated/i.test(msg)) return true;
+  if (/^terminated$/i.test(msg.trim())) return true;
+  return false;
+}
+
+/** Counter-only reason for `provider_round.retries` — never bodies or tokens. */
+export function retryEventReason(err: unknown): string {
+  if (isProviderApiError(err)) {
+    return `HTTP ${err.status}`.slice(0, 120);
+  }
+  const msg = err instanceof Error ? err.message : String(err ?? "transient error");
+  const name = err instanceof Error ? err.name : "";
+  const raw =
+    name === "TypeError" && !/^TypeError/i.test(msg)
+      ? `TypeError: ${msg}`
+      : msg;
+  return raw.replace(/\s+/g, " ").trim().slice(0, 120) || "transient error";
+}
+
+/**
+ * After two fetch-failed / ECONNRESET / terminated retries in one doChat
+ * budget: reap browsers and cap the next attempt at the last 2 vision images.
+ */
+export function noteFetchFailedRetry(
+  err: unknown,
+  priorCount: number,
+): { count: number; reap: boolean; visionImageCap?: number } {
+  if (!isFetchFailedRetryError(err)) {
+    return { count: priorCount, reap: false };
+  }
+  const count = priorCount + 1;
+  if (count >= 2) {
+    return { count, reap: true, visionImageCap: 2 };
+  }
+  return { count, reap: false };
+}
+
 /** Cursor AgentService Connect-RPC `internal` (HTTP 400) — protocol, not a 400 capability miss. */
 export function isCursorProtocolInternalError(err: unknown): boolean {
   if (!isProviderApiError(err)) return false;

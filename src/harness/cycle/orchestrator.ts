@@ -10,6 +10,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { reapSessionBrowsers } from "../../agent/browser-lease.js";
+import { janitorBackgroundTasks } from "../../agent/tools/background-tasks.js";
 import { nowIso } from "../../util/fs.js";
 import { ensureGitRepo } from "../../util/git-ensure.js";
 import { envPositiveInt } from "../../util/env.js";
@@ -1018,6 +1019,7 @@ async function finishCycle(s: CycleState, rt: CycleRuntime, accepted: CheckRun |
       killed: 0,
       removed: [],
     });
+    safe(() => janitorBackgroundTasks(), { scanned: 0, removed: [] });
   } else if (ac.skipped) {
     rt.log?.(`ULW cycle ${s.cycle} commit skipped: ${ac.skipped}`);
   }

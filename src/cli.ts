@@ -116,6 +116,7 @@ import {
   formatUsageStats,
   metricsStats,
   pruneMetrics,
+  sessionSpendForRunEnd,
 } from "./session/metrics.js";
 import {
   acquireSessionLock,
@@ -130,6 +131,7 @@ import {
   killAllRunningTasks,
   listTasks,
   installBackgroundTaskExitHook,
+  janitorBackgroundTasks,
 } from "./agent/tools/background-tasks.js";
 import { loadSavedAllows } from "./agent/permission-saved.js";
 import { runAgentLoopThroughDrops } from "./agent/loop.js";
@@ -6204,6 +6206,11 @@ async function runHeadless(opts: {
     } catch {
       /* never fail exit on bg cleanup */
     }
+    try {
+      janitorBackgroundTasks();
+    } catch {
+      /* fail-open */
+    }
   };
 
   await opts.hooks.run("SessionStart", {
@@ -6385,8 +6392,7 @@ async function runHeadless(opts: {
         lastVerificationAt: opts.session.meta.lastVerificationAt ?? null,
         lastEditAt: opts.session.meta.lastEditAt ?? null,
         lastVerificationStale: isLastVerificationStale(opts.session.meta),
-        promptTokens: 0,
-        completionTokens: 0,
+        ...sessionSpendForRunEnd(opts.session.meta),
         durationMs: Date.now() - t0,
         aborted: ac.signal.aborted,
         timedOut,
@@ -6397,6 +6403,16 @@ async function runHeadless(opts: {
           recovery?.code || opts.session.meta.lastError?.code || undefined,
       }),
     );
+    try {
+      const { persistRunReportOnEnd } = await import("./harness/run-report.js");
+      persistRunReportOnEnd({
+        session: opts.session,
+        workspace:
+          opts.config.workspace || opts.session.meta.cwd || process.cwd(),
+      });
+    } catch {
+      /* report is best-effort */
+    }
     if (opts.json) {
       emitFailJson({
         reason: timedOut

@@ -18,6 +18,9 @@ import {
   isRetryableError,
   computeRetryDelayMs,
   withRetry,
+  isFetchFailedRetryError,
+  noteFetchFailedRetry,
+  retryEventReason,
 } from "../src/util/retry.js";
 import { mergeStreamedToolName } from "../src/providers/openai-compat.js";
 import { executeTool, normalizeToolName } from "../src/agent/tools/index.js";
@@ -313,6 +316,22 @@ describe("provider errors + retry", () => {
     });
     const d = computeRetryDelayMs(err, 0, { maxDelayMs: 12_000 });
     assert.equal(d, 2500);
+  });
+
+  it("counts fetch-failed / ECONNRESET / terminated for browser-reap", () => {
+    assert.equal(isFetchFailedRetryError(new Error("fetch failed")), true);
+    assert.equal(isFetchFailedRetryError(new Error("read ECONNRESET")), true);
+    const term = new Error("terminated");
+    term.name = "TypeError";
+    assert.equal(isFetchFailedRetryError(term), true);
+    assert.equal(isFetchFailedRetryError(new Error("API error 503 overloaded")), false);
+    const first = noteFetchFailedRetry(new Error("fetch failed"), 0);
+    assert.equal(first.count, 1);
+    assert.equal(first.reap, false);
+    const second = noteFetchFailedRetry(new Error("read ECONNRESET"), 1);
+    assert.equal(second.reap, true);
+    assert.equal(second.visionImageCap, 2);
+    assert.match(retryEventReason(term), /TypeError: terminated/);
   });
 
   it("withRetry respects abort and retries retryable errors", async () => {
@@ -1567,6 +1586,7 @@ describe("session metrics + permission timeout", () => {
       buildRunEndMetrics,
       metricsStats,
       metricsPath,
+      sessionSpendForRunEnd,
     } = await import("../src/session/metrics.js");
     const { permissionAskTimeoutMs } = await import(
       "../src/agent/permissions.js"
@@ -1649,6 +1669,29 @@ describe("session metrics + permission timeout", () => {
       .pop()!;
     assert.match(failLine, /"lastErrorCode":"rate_limited"/);
     assert.doesNotMatch(failLine, /api[_-]?key|sk-|password|secret/i);
+
+    const crashSpend = sessionSpendForRunEnd({
+      totalPromptTokens: 12_000,
+      totalCompletionTokens: 800,
+      totalCacheReadTokens: 4_000,
+      lastRoundPromptTokens: 3_000,
+      lastRoundCacheReadTokens: 2_700,
+    });
+    const crashEv = buildRunEndMetrics({
+      sessionId: "crash-1",
+      provider: "xai",
+      model: "grok-4",
+      turns: 0,
+      stopContinues: 0,
+      editCount: 2,
+      ...crashSpend,
+      ok: false,
+      lastErrorCode: "provider_error",
+    });
+    assert.equal(crashEv.promptTokens, 12_000);
+    assert.equal(crashEv.completionTokens, 800);
+    assert.equal(crashEv.ok, false);
+    assert.ok((crashEv.estCostUsd ?? 0) > 0);
 
     const { pruneMetrics } = await import("../src/session/metrics.js");
     for (let i = 0; i < 5; i++) {
@@ -1849,7 +1892,21 @@ describe("session metrics + permission timeout", () => {
     const { appendProviderRoundMetrics } = await import(
       "../src/session/prompt-cache.js"
     );
-    for (let i = 0; i < 20; i++) {
+    appendProviderRoundMetrics({
+      sessionId: "s1",
+      provider: "xai",
+      model: "m",
+      promptTokens: 1000,
+      cacheReadTokens: 900,
+      completionTokens: 10,
+      pruned: false,
+      turn: 1,
+      retries: [
+        { attempt: 1, reason: "fetch failed", delayMs: 800 },
+        { attempt: 2, reason: "TypeError: terminated", delayMs: 1600 },
+      ],
+    });
+    for (let i = 1; i < 20; i++) {
       appendProviderRoundMetrics({
         sessionId: "s1",
         provider: "xai",
@@ -1892,6 +1949,7 @@ describe("session metrics + permission timeout", () => {
       .filter((l) => l.trim());
     assert.equal(roundLines.length, 20);
     assert.ok(roundLines.every((l) => /"type":"provider_round"/.test(l)));
+    assert.match(roundLines[0]!, /"retries":\[\{"attempt":1,"reason":"fetch failed"/);
     // Every round is priced: a 7,970-round run used to sum to $0 here.
     const priced = roundLines.map((l) => JSON.parse(l) as { estCostUsd?: number });
     assert.ok(priced.every((r) => typeof r.estCostUsd === "number" && r.estCostUsd > 0));

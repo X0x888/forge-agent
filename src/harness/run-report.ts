@@ -18,6 +18,7 @@ import path from "node:path";
 import { execFileSync } from "node:child_process";
 import type { SessionData, TodoItem } from "../session/session.js";
 import {
+  isLastErrorProblem,
   isLastVerificationStale,
   isSyntheticUserMessage,
   sessionDir,
@@ -280,6 +281,9 @@ export function buildRunReport(input: RunReportInput): RunReport {
     outcome = `Stopped at the spend cap — ${filesPhrase}${verifyPhrase ? `, ${verifyPhrase}` : ""}.`;
   } else if (r.hitMaxTurns) {
     outcome = `Stopped at max turns — ${filesPhrase}${verifyPhrase ? `, ${verifyPhrase}` : ""}.`;
+  } else if (isLastErrorProblem(meta.lastError)) {
+    const err = meta.lastError!;
+    outcome = `Stopped — ${clip(err.message || err.code || "provider error", 120)}${err.code ? ` (${err.code})` : ""}. ${filesPhrase}${verifyPhrase ? `, ${verifyPhrase}` : ""}.`;
   } else if (ulw && cycleActive(ulw)) {
     outcome = `${ulw.cycleZeroRequested ? "Winding down" : "In progress"} — ULW cycle ${ulw.cycle}${ulw.maxCycles != null ? `/${ulw.maxCycles}` : ""} in ${ulw.phase}${ulw.planTitle ? ` (${clipProse(ulw.planTitle, 60)})` : ""}, ${cycles.filter((c) => c.commitSha).length} committed so far, ${filesPhrase}.`;
   } else if (goalActive) {
@@ -351,6 +355,11 @@ export function buildRunReport(input: RunReportInput): RunReport {
   if (r.hitCostCap) notDone.push("Run stopped at the spend cap (`/budget` to raise).");
   if (r.hitMaxTurns) notDone.push("Run stopped at max turns (`--max-turns` to raise).");
   if (r.stuckReleased) notDone.push("Driver released on a stuck-wall: repeated Stops without progress.");
+  if (isLastErrorProblem(meta.lastError) && meta.lastError) {
+    notDone.push(
+      `Run ended: ${clip(meta.lastError.message || "provider error", 120)} (${clip(meta.lastError.code || "error", 40)}).`,
+    );
+  }
   if (!notDone.length) notDone.push("Nothing left open.");
   sections.push({ title: "Not done", lines: notDone });
 
@@ -518,6 +527,27 @@ export function writeRunReport(sessionId: string, report: RunReport): string | n
 }
 
 /**
+ * Always write report.md (quota / bad_request / provider death). Fail-open.
+ * Replaces a stale era-A report so HashPet-style crashes leave a current card.
+ */
+export function persistRunReportOnEnd(opts: {
+  session: SessionData;
+  workspace: string;
+  result?: RunReportInput["result"];
+}): string | null {
+  try {
+    const report = buildRunReport({
+      session: opts.session,
+      workspace: opts.workspace,
+      result: opts.result,
+    });
+    return writeRunReport(opts.session.meta.id, report);
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Run endings where no guard read the closing message, so its shape proves
  * nothing: the stuck-wall and the continue cap release before the step-8
  * guard, and the cost / turn caps end the loop without a Stop evaluation.
@@ -595,6 +625,13 @@ export function maybeRenderRunReportForRun(opts: {
     !opts.force &&
     !shouldPrintRunReport({ ...result, editCount: session.meta.editCount })
   ) {
+    if (isLastErrorProblem(session.meta.lastError)) {
+      persistRunReportOnEnd({
+        session,
+        workspace: opts.workspace,
+        result,
+      });
+    }
     return null;
   }
   try {

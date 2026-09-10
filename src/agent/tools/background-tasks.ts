@@ -9,7 +9,8 @@ import os from "node:os";
 import path from "node:path";
 import { pushInterjection } from "../../harness/interjection.js";
 import { maybeDesktopNotify } from "../../util/attention.js";
-import { forgeHome, ensureDirAsync, nowIso } from "../../util/fs.js";
+import { envDurationMs } from "../../util/env.js";
+import { forgeHome, ensureDirAsync, isWithinRoot, nowIso } from "../../util/fs.js";
 import { createShellEnv } from "./env-policy.js";
 import {
   applyBashTreeDelta,
@@ -967,6 +968,96 @@ export function killAllRunningTasks(opts?: {
   }
   if (n > 0) publishBgActivity();
   return n;
+}
+
+const BG_TASK_DIR_RE = /^bg_[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
+const DEFAULT_BG_TASK_TTL_MS = 24 * 60 * 60 * 1000;
+
+function realPathOrResolve(p: string): string {
+  const resolved = path.resolve(p);
+  try {
+    return fs.realpathSync(resolved);
+  } catch {
+    return resolved;
+  }
+}
+
+function safeRemoveBgTaskDir(root: string, name: string): boolean {
+  if (!BG_TASK_DIR_RE.test(name)) return false;
+  if (name.includes("..") || name.includes("/") || name.includes("\\")) {
+    return false;
+  }
+  const dir = path.join(root, name);
+  const realRoot = realPathOrResolve(root);
+  const realDir = realPathOrResolve(dir);
+  const fh = realPathOrResolve(forgeHome());
+  if (realDir === realRoot || realDir === fh) return false;
+  if (!isWithinRoot(realRoot, realDir)) return false;
+  if (!isWithinRoot(fh, realDir)) return false;
+  try {
+    fs.rmSync(realDir, { recursive: true, force: true });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Delete settled `~/.forge/background-tasks/<id>` dirs older than TTL.
+ * Running in-memory tasks are skipped. Never removes paths outside that folder.
+ */
+export function janitorBackgroundTasks(opts?: {
+  maxAgeMs?: number;
+  nowMs?: number;
+}): { scanned: number; removed: string[] } {
+  const maxAgeMs =
+    typeof opts?.maxAgeMs === "number" && Number.isFinite(opts.maxAgeMs)
+      ? Math.max(0, Math.floor(opts.maxAgeMs))
+      : envDurationMs("FORGE_BG_TASK_TTL_MS", DEFAULT_BG_TASK_TTL_MS);
+  if (!(maxAgeMs > 0)) return { scanned: 0, removed: [] };
+  const now = typeof opts?.nowMs === "number" && Number.isFinite(opts.nowMs)
+    ? opts.nowMs
+    : Date.now();
+  const root = tasksDir();
+  let realRoot: string;
+  try {
+    if (!fs.existsSync(root)) return { scanned: 0, removed: [] };
+    realRoot = fs.realpathSync(root);
+  } catch {
+    return { scanned: 0, removed: [] };
+  }
+  const fh = realPathOrResolve(forgeHome());
+  if (!isWithinRoot(fh, realRoot)) {
+    return { scanned: 0, removed: [] };
+  }
+  let names: string[] = [];
+  try {
+    names = fs.readdirSync(realRoot);
+  } catch {
+    return { scanned: 0, removed: [] };
+  }
+  const removed: string[] = [];
+  let scanned = 0;
+  for (const name of names) {
+    if (!BG_TASK_DIR_RE.test(name)) continue;
+    const dir = path.join(realRoot, name);
+    let st: fs.Stats;
+    try {
+      st = fs.lstatSync(dir);
+    } catch {
+      continue;
+    }
+    if (st.isSymbolicLink()) continue;
+    if (!st.isDirectory()) continue;
+    scanned += 1;
+    const live = tasks.get(name);
+    if (live?.status === "running") continue;
+    const ended = live?.endedAt;
+    const ageMs = typeof ended === "number" ? now - ended : now - st.mtimeMs;
+    if (!(ageMs > maxAgeMs)) continue;
+    if (safeRemoveBgTaskDir(realRoot, name)) removed.push(name);
+  }
+  return { scanned, removed };
 }
 
 /** Test helper */

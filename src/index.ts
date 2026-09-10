@@ -587,6 +587,7 @@ export {
   isRetryableError,
   isContextOverflowError,
   isDroppedConnectionError,
+  isFetchFailedRetryError,
   isContinueRecoverableProviderError,
   isCursorProtocolInternalError,
   isHttp2ProtocolError,
@@ -763,6 +764,7 @@ export {
   getTask,
   readTaskOutput,
   installBackgroundTaskExitHook,
+  janitorBackgroundTasks,
 } from "./agent/tools/background-tasks.js";
 export {
   logSandboxEvent,
@@ -1142,6 +1144,7 @@ export {
   shouldPrintRunReport,
   endedUnshaped,
   maybeRenderRunReportForRun,
+  persistRunReportOnEnd,
   writeRunReport,
   runReportPath,
   operatorItemsFrom,

@@ -14,6 +14,7 @@ import {
   gitCommitsSince,
   maybeRenderRunReportForRun,
   operatorItemsFrom,
+  persistRunReportOnEnd,
   renderRunReportAddendum,
   renderRunReportText,
   runReportPath,
@@ -276,6 +277,32 @@ describe("run report", () => {
     assert.match(fs.readFileSync(runReportPath(s.meta.id), "utf8"), /\*\*Needs you\*\*/);
     const colored = renderRunReportText(buildRunReport({ session: s, workspace: cwd, noGit: true }), { color: true });
     assert.match(colored, /\x1b\[1m/);
+  });
+
+  it("writes report.md on lastError even when the card would not print", () => {
+    const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "forge-rr-err-"));
+    const s = createSession({ cwd, provider: "xai", model: "grok-4" });
+    s.meta.turnCount = 1;
+    s.meta.lastError = {
+      at: new Date().toISOString(),
+      code: "quota_exhausted",
+      message: "xai HTTP 402: insufficient quota",
+    };
+    saveSession(s);
+    assert.equal(
+      maybeRenderRunReportForRun({
+        session: s,
+        workspace: cwd,
+        result: { stopContinues: 0 },
+      }),
+      null,
+    );
+    assert.ok(fs.existsSync(runReportPath(s.meta.id)));
+    const md = fs.readFileSync(runReportPath(s.meta.id), "utf8");
+    assert.match(md, /quota_exhausted/);
+    assert.match(md, /insufficient quota/);
+    const forced = persistRunReportOnEnd({ session: s, workspace: cwd });
+    assert.ok(forced);
   });
 
   it("one report per run: a report-shaped closer gets the addendum, not a second copy", () => {
