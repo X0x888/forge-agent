@@ -117,6 +117,7 @@ import {
   metricsStats,
   pruneMetrics,
   sessionSpendForRunEnd,
+  snapshotRunSpend,
 } from "./session/metrics.js";
 import {
   acquireSessionLock,
@@ -6285,6 +6286,7 @@ async function runHeadless(opts: {
 
   const t0 = Date.now();
   const turnAtStart = opts.session.meta.turnCount;
+  const spendAtStart = snapshotRunSpend(opts.session.meta);
   if (!opts.json) {
     const open = formatUserTurnOpen(headlessPrompt);
     if (open) console.log(open);
@@ -6392,7 +6394,7 @@ async function runHeadless(opts: {
         lastVerificationAt: opts.session.meta.lastVerificationAt ?? null,
         lastEditAt: opts.session.meta.lastEditAt ?? null,
         lastVerificationStale: isLastVerificationStale(opts.session.meta),
-        ...sessionSpendForRunEnd(opts.session.meta),
+        ...sessionSpendForRunEnd(opts.session.meta, spendAtStart),
         durationMs: Date.now() - t0,
         aborted: ac.signal.aborted,
         timedOut,

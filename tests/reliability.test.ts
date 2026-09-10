@@ -1587,6 +1587,7 @@ describe("session metrics + permission timeout", () => {
       metricsStats,
       metricsPath,
       sessionSpendForRunEnd,
+      snapshotRunSpend,
     } = await import("../src/session/metrics.js");
     const { permissionAskTimeoutMs } = await import(
       "../src/agent/permissions.js"
@@ -1692,6 +1693,28 @@ describe("session metrics + permission timeout", () => {
     assert.equal(crashEv.completionTokens, 800);
     assert.equal(crashEv.ok, false);
     assert.ok((crashEv.estCostUsd ?? 0) > 0);
+
+    const snap = snapshotRunSpend({
+      totalPromptTokens: 10_000,
+      totalCompletionTokens: 500,
+      totalCacheReadTokens: 3_000,
+      turnCount: 4,
+    });
+    const deltaSpend = sessionSpendForRunEnd(
+      {
+        totalPromptTokens: 12_000,
+        totalCompletionTokens: 800,
+        totalCacheReadTokens: 4_000,
+        lastRoundPromptTokens: 3_000,
+        lastRoundCacheReadTokens: 2_700,
+        turnCount: 6,
+      },
+      snap,
+    );
+    assert.equal(deltaSpend.promptTokens, 2_000);
+    assert.equal(deltaSpend.completionTokens, 300);
+    assert.equal(deltaSpend.cacheReadTokens, 1_000);
+    assert.equal(deltaSpend.turns, 2);
 
     const { pruneMetrics } = await import("../src/session/metrics.js");
     for (let i = 0; i < 5; i++) {

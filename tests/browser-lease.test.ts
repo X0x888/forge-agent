@@ -155,6 +155,22 @@ describe("browser-lease", () => {
     });
   });
 
+  it("FORGE_BROWSER_REAP=0 skips kill and UDD removal", () => {
+    withForgeHome((home) => {
+      process.env.FORGE_BROWSER_REAP = "0";
+      const sid = "reapoff";
+      const udd = defaultBrowserUdd(sid, "keep");
+      fs.mkdirSync(udd, { recursive: true });
+      fs.writeFileSync(path.join(udd, "Local State"), "{}\n");
+      registerBrowserLease({ sessionId: sid, udd });
+      const r = reapSessionBrowsers(sid, { chromeLooks: false });
+      assert.equal(r.killed, 0);
+      assert.equal(r.removed.length, 0);
+      assert.equal(fs.existsSync(udd), true);
+      assert.equal(readLeases(home, sid).length, 1);
+    });
+  });
+
   it("invalid session id still registers under anon", () => {
     withForgeHome((home) => {
       const udd = defaultBrowserUdd("anon", "x");

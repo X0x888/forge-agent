@@ -369,6 +369,10 @@ export function reapSessionBrowsers(
   sessionId: string,
   opts?: { workspace?: string; chromeLooks?: boolean },
 ): { killed: number; removed: string[] } {
+  // Kill-switch: leave debug browsers (UDDs and lease records) alone.
+  if (browserReapDisabled()) {
+    return { killed: 0, removed: [] };
+  }
   const sid = safeSessionId(sessionId);
   const data = readStore(sid);
   const requirePath = [

@@ -1506,8 +1506,14 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
    * action must open a new Run; tool continuations still resume.
    */
   let cursorRebaseDue = false;
-  /** After two fetch-failed retries in one doChat, cap outbound vision images. */
+  /**
+   * After two fetch-failed retries, cap outbound vision images and skip a
+   * second reap. Kept for the rest of the turn — inner drop/auth/quota
+   * recovery re-enters doChat and must not resend the look-loop payload.
+   */
   let visionImageCap: number | undefined;
+  let dropRetries = 0;
+  let browsersReapedThisChat = false;
   const makeChatRequest = (effortOverride?: ReasoningEffort) => {
     const tools = toolsForMode();
     const estimated = estimateRequestTokens(session.messages, {
@@ -2394,12 +2400,8 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
         }
       }
       try {
-        const doChat = () => {
-          roundRetries = [];
-          visionImageCap = undefined;
-          let dropRetries = 0;
-          let browsersReapedThisChat = false;
-          return withRetry(
+        const doChat = () =>
+          withRetry(
             async () => {
               assertNotAborted(signal);
               if (stream && (events.onToken || events.onReasoning)) {
@@ -2447,7 +2449,12 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
                 if (storm.reap && !browsersReapedThisChat) {
                   browsersReapedThisChat = true;
                   try {
-                    reapSessionBrowsers(session.meta.id, { workspace });
+                    // Isolation-none children share the parent workspace;
+                    // never wipe chrome-look* mid-chat (Planner scout).
+                    reapSessionBrowsers(session.meta.id, {
+                      workspace,
+                      chromeLooks: false,
+                    });
                   } catch {
                     /* fail-open */
                   }
@@ -2465,7 +2472,6 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
               },
             },
           );
-        };
 
         try {
           response = await doChat();

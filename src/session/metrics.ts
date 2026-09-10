@@ -82,30 +82,77 @@ export interface SessionMetricsEvent {
   retries?: Array<{ attempt: number; reason: string; delayMs: number }>;
 }
 
-/** Session lifetime spend — crash run_end must not log $0 / 0 tokens. */
-export function sessionSpendForRunEnd(meta: {
+/** Counters at the start of a loop — crash run_end subtracts these. */
+export interface RunSpendSnapshot {
   totalPromptTokens?: number;
   totalCompletionTokens?: number;
   totalCacheReadTokens?: number;
-  lastRoundPromptTokens?: number;
-  lastRoundCacheReadTokens?: number;
-}): {
+  turnCount?: number;
+}
+
+export function snapshotRunSpend(meta: {
+  totalPromptTokens?: number;
+  totalCompletionTokens?: number;
+  totalCacheReadTokens?: number;
+  turnCount?: number;
+}): RunSpendSnapshot {
+  return {
+    totalPromptTokens: Number(meta.totalPromptTokens) || 0,
+    totalCompletionTokens: Number(meta.totalCompletionTokens) || 0,
+    totalCacheReadTokens: Number(meta.totalCacheReadTokens) || 0,
+    turnCount: Number(meta.turnCount) || 0,
+  };
+}
+
+/**
+ * Crash run_end spend. Prefer the per-run delta from `from` (same shape as a
+ * successful loop return). Lifetime totals only when no snapshot exists.
+ */
+export function sessionSpendForRunEnd(
+  meta: {
+    totalPromptTokens?: number;
+    totalCompletionTokens?: number;
+    totalCacheReadTokens?: number;
+    lastRoundPromptTokens?: number;
+    lastRoundCacheReadTokens?: number;
+    turnCount?: number;
+  },
+  from?: RunSpendSnapshot | null,
+): {
   promptTokens: number;
   completionTokens: number;
   cacheReadTokens: number;
+  turns?: number;
   lastRoundPromptTokens?: number;
   lastRoundCacheReadTokens?: number;
   lastRoundCacheRatio?: number;
 } {
-  const promptTokens = Number(meta.totalPromptTokens) || 0;
-  const completionTokens = Number(meta.totalCompletionTokens) || 0;
-  const cacheReadTokens = Number(meta.totalCacheReadTokens) || 0;
+  const nowP = Number(meta.totalPromptTokens) || 0;
+  const nowC = Number(meta.totalCompletionTokens) || 0;
+  const nowCache = Number(meta.totalCacheReadTokens) || 0;
+  const promptTokens = from
+    ? Math.max(0, nowP - (Number(from.totalPromptTokens) || 0))
+    : nowP;
+  const completionTokens = from
+    ? Math.max(0, nowC - (Number(from.totalCompletionTokens) || 0))
+    : nowC;
+  const cacheReadTokens = from
+    ? Math.max(0, nowCache - (Number(from.totalCacheReadTokens) || 0))
+    : nowCache;
   const lastP = Number(meta.lastRoundPromptTokens) || 0;
   const lastC = Number(meta.lastRoundCacheReadTokens) || 0;
   return {
     promptTokens,
     completionTokens,
     cacheReadTokens,
+    ...(from
+      ? {
+          turns: Math.max(
+            0,
+            (Number(meta.turnCount) || 0) - (Number(from.turnCount) || 0),
+          ),
+        }
+      : {}),
     ...(lastP > 0 ? { lastRoundPromptTokens: lastP } : {}),
     ...(lastC > 0 ? { lastRoundCacheReadTokens: lastC } : {}),
     ...(lastP > 0

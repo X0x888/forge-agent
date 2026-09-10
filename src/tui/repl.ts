@@ -712,6 +712,12 @@ export async function runRepl(opts: {
     abortController = new AbortController();
     // For the end-of-turn change summary: edits with turn > this landed now.
     const turnAtStart = session.meta.turnCount;
+    const spendAtStart = {
+      totalPromptTokens: Number(session.meta.totalPromptTokens) || 0,
+      totalCompletionTokens: Number(session.meta.totalCompletionTokens) || 0,
+      totalCacheReadTokens: Number(session.meta.totalCacheReadTokens) || 0,
+      turnCount: Number(session.meta.turnCount) || 0,
+    };
     // Live controls need stdin while working (editor stays open).
     beginTurn();
     pulseHeartbeat();
@@ -1080,7 +1086,7 @@ export async function runRepl(opts: {
               turns: 0,
               stopContinues: 0,
               editCount: session.meta.editCount,
-              ...sessionSpendForRunEnd(session.meta),
+              ...sessionSpendForRunEnd(session.meta, spendAtStart),
               aborted: false,
               ok: false,
               headless: false,

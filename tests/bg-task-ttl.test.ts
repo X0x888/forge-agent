@@ -96,4 +96,28 @@ describe("janitorBackgroundTasks", () => {
     assert.equal(fs.existsSync(dir), true);
     killTask(started.task.id);
   });
+
+  it("does not follow a bg_* symlink out of the folder", () => {
+    process.env.FORGE_HOME = fakeHome;
+    const root = path.join(forgeHome(), "background-tasks");
+    fs.mkdirSync(root, { recursive: true });
+    const target = path.join(fakeHome, "outside-target");
+    fs.mkdirSync(target, { recursive: true });
+    fs.writeFileSync(path.join(target, "secret.txt"), "keep");
+    const link = path.join(root, "bg_link_out");
+    fs.symlinkSync(target, link);
+    const oldSec = (Date.now() - 48 * 60 * 60 * 1000) / 1000;
+    try {
+      fs.lutimesSync(link, oldSec, oldSec);
+    } catch {
+      /* */
+    }
+    const r = janitorBackgroundTasks({
+      maxAgeMs: 1000,
+      nowMs: Date.now(),
+    });
+    assert.equal(r.removed.includes("bg_link_out"), false);
+    assert.equal(fs.lstatSync(link).isSymbolicLink(), true);
+    assert.equal(fs.existsSync(path.join(target, "secret.txt")), true);
+  });
 });
