@@ -153,6 +153,8 @@ export {
   pinSessionAccount,
   recordSessionAccountSwitch,
   shouldWaitForCooldown,
+  waitAndRetryQuotaSwitch,
+  quotaFailoverBlockedByTeamCap,
   accountCooldownWaitMaxSec,
   isPlanFresh,
   isPlanRemainingExhausted,

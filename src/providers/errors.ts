@@ -376,7 +376,7 @@ function isQuotaExhaustedish(text: string): boolean {
   );
 }
 
-const TEAM_SPEND_CAP_RE = /personal-team-blocked|spending-limit/i;
+const TEAM_SPEND_CAP_RE = /personal-team-blocked/i;
 
 function errorTextBlob(err: unknown): string {
   const chunks: string[] = [];

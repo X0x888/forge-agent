@@ -45,8 +45,11 @@ import {
   pinSessionAccount,
   recordSessionAccountSwitch,
   shouldWaitForCooldown,
+  waitAndRetryQuotaSwitch,
+  quotaFailoverBlockedByTeamCap,
   accountCooldownWaitMaxSec,
   formatQuotaFailoverExhausted,
+  isEnvAuthActive,
   formatAccountsTable,
   formatAccountsCard,
   formatAuthCard,
@@ -71,6 +74,7 @@ import {
 import { loadConfig } from "../src/config/load.js";
 import { ProviderApiError } from "../src/providers/errors.js";
 import { nowEpoch } from "../src/util/fs.js";
+import { abortableSleep } from "../src/util/retry.js";
 
 describe("multi-account auth store", () => {
   let tmp: string;
@@ -382,6 +386,80 @@ describe("smart account switching", () => {
     assert.ok(cooled?.cooldownUntil && cooled.cooldownUntil > nowEpoch());
   });
 
+  it("waitAndRetryQuotaSwitch restores the pin so a mid-wait active steal does not cool the alt", async () => {
+    const chestnut = upsertApiKey("xai", "sk-chestnut", "chestnutp426");
+    const sning = upsertApiKey("xai", "sk-sning", "sning.ic", { forceNew: true });
+    setActiveAccount(chestnut.accountId);
+    setAccountCooldown(sning.accountId, nowEpoch() + 180);
+    const session = { meta: { accountId: chestnut.accountId } };
+    const first = switchOnQuotaFailure("xai");
+    assert.equal(first.switched, false);
+    assert.ok(first.waitSec && first.waitSec > 0);
+
+    const retry = await waitAndRetryQuotaSwitch("xai", first, {
+      session,
+      sleep: async () => {
+        setActiveAccount(sning.accountId);
+        setAccountCooldown(sning.accountId, nowEpoch() - 1);
+      },
+    });
+    assert.equal(retry.switched, true);
+    assert.equal(retry.toId, sning.accountId);
+    const sningAcc = getAccount(sning.accountId);
+    assert.ok(
+      !sningAcc?.cooldownUntil || sningAcc.cooldownUntil <= nowEpoch(),
+      "recovered alt must not be put in a 15-minute cooldown",
+    );
+    const chestnutAcc = getAccount(chestnut.accountId);
+    assert.ok(
+      chestnutAcc?.cooldownUntil && chestnutAcc.cooldownUntil > nowEpoch(),
+    );
+  });
+
+  it("waitAndRetryQuotaSwitch does not sleep when max is 0, and abort rejects without switching", async () => {
+    const chestnut = upsertApiKey("xai", "sk-chestnut", "chestnut");
+    const sning = upsertApiKey("xai", "sk-sning", "sning", { forceNew: true });
+    setActiveAccount(chestnut.accountId);
+    setAccountCooldown(sning.accountId, nowEpoch() + 180);
+    const first = switchOnQuotaFailure("xai");
+    let slept = false;
+    const skipped = await waitAndRetryQuotaSwitch("xai", first, {
+      sleep: async () => {
+        slept = true;
+      },
+      waitMaxSec: 0,
+    });
+    assert.equal(slept, false);
+    assert.equal(skipped.switched, false);
+    assert.equal(skipped.reason, first.reason);
+
+    setActiveAccount(chestnut.accountId);
+    setAccountCooldown(sning.accountId, nowEpoch() + 180);
+    const waiting = switchOnQuotaFailure("xai");
+    const ac = new AbortController();
+    const p = waitAndRetryQuotaSwitch("xai", waiting, {
+      session: { meta: { accountId: chestnut.accountId } },
+      sleep: (ms) => abortableSleep(ms, ac.signal),
+    });
+    ac.abort();
+    await assert.rejects(p, /Aborted/);
+    assert.notEqual(getActiveAccount("xai")?.id, sning.accountId);
+  });
+
+  it("quotaFailoverBlockedByTeamCap stops a second hop", () => {
+    const err = new ProviderApiError({
+      provider: "xai",
+      status: 403,
+      body: '{"code":"personal-team-blocked:spending-limit","error":"You have run out of credits or need a Grok subscription."}',
+    });
+    assert.equal(quotaFailoverBlockedByTeamCap(err, false), false);
+    assert.equal(quotaFailoverBlockedByTeamCap(err, true), true);
+    assert.equal(
+      quotaFailoverBlockedByTeamCap(new Error("rate limit 429"), true),
+      false,
+    );
+  });
+
   it("isTeamSpendCapError matches HashPet personal-team-blocked body", () => {
     const body =
       '{"code":"personal-team-blocked:spending-limit","error":"You have run out of credits or need a Grok subscription."}';
@@ -408,6 +486,16 @@ describe("smart account switching", () => {
       ),
       false,
     );
+    assert.equal(
+      isTeamSpendCapError(
+        new ProviderApiError({
+          provider: "xai",
+          status: 403,
+          body: '{"error":"spending-limit","message":"You have hit a spend limit"}',
+        }),
+      ),
+      false,
+    );
     const msg = formatQuotaFailoverExhausted(
       `xai API error 403: ${body}`,
       { switched: false, reason: "alternate in cooldown", waitSec: 180 },
@@ -421,6 +509,7 @@ describe("smart account switching", () => {
   it("pinSessionAccount restores the pin when another account is globally active", () => {
     const a = upsertApiKey("xai", "sk-a", "alice");
     const b = upsertApiKey("xai", "sk-b", "bob", { forceNew: true });
+    setActiveAccount(a.accountId);
     const session = {
       meta: {} as {
         accountId?: string;
@@ -428,6 +517,7 @@ describe("smart account switching", () => {
       },
     };
     pinSessionAccount(session, "xai");
+    assert.equal(session.meta.accountId, a.accountId);
     const pinned = session.meta.accountId;
     assert.ok(pinned);
     const other = pinned === a.accountId ? b.accountId : a.accountId;
@@ -757,6 +847,39 @@ describe("smart account switching", () => {
     assert.match(t, /cooldown/);
     assert.match(t, /^accounts  ·  /m);
     assert.match(t, /Next  forge accounts (switch|clear-cooldown)/);
+  });
+
+  it("pinSessionAccount and resolveAuth leave env keys untouched", () => {
+    const a = upsertApiKey("xai", "sk-a", "alice");
+    const b = upsertApiKey("xai", "sk-b", "bob", { forceNew: true });
+    setActiveAccount(a.accountId);
+    process.env.XAI_API_KEY = "sk-env-must-win";
+    try {
+      assert.equal(isEnvAuthActive("xai"), true);
+      const session = { meta: {} as { accountId?: string } };
+      pinSessionAccount(session, "xai");
+      assert.equal(session.meta.accountId, undefined);
+      assert.equal(getActiveAccount("xai")?.id, a.accountId);
+      const cfg = loadConfig({}, tmp);
+      cfg.provider = "xai";
+      const auth = resolveAuth(cfg, undefined, { accountId: b.accountId });
+      assert.ok(auth);
+      assert.match(auth!.accountLabel || "", /^env:/);
+      assert.equal(auth!.accountId, undefined);
+      assert.equal(getActiveAccount("xai")?.id, a.accountId);
+    } finally {
+      delete process.env.XAI_API_KEY;
+    }
+  });
+
+  it("abortableSleep rejects on abort and does not hang", async () => {
+    const already = new AbortController();
+    already.abort();
+    await assert.rejects(abortableSleep(60_000, already.signal), /Aborted/);
+    const ac = new AbortController();
+    const p = abortableSleep(60_000, ac.signal);
+    ac.abort();
+    await assert.rejects(p, /Aborted/);
   });
 
   it("env API key blocks auto-switch (CI determinism)", () => {

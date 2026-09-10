@@ -173,6 +173,18 @@ describe("formatProviderError", () => {
       f.tips.some((t) => /login --add/i.test(t)),
       false,
     );
+    const generic = formatProviderError(
+      new ProviderApiError({
+        provider: "xai",
+        status: 403,
+        body: '{"error":"spending-limit","message":"You have hit a spend limit"}',
+      }),
+    );
+    assert.equal(generic.code, "quota_exhausted");
+    assert.equal(
+      generic.tips.some((t) => /team spend cap/i.test(t)),
+      false,
+    );
   });
 
   it("classifies 403 quota/billing as quota_exhausted (not auth_forbidden)", () => {

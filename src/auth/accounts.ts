@@ -589,7 +589,7 @@ export interface SessionAccountPin {
 
 /**
  * Keep this session on its account when another TUI moved auth.json `active`.
- * First call with no pin stores the best eligible id.
+ * First call with no pin freezes the current active login (not a re-rank).
  */
 export function pinSessionAccount(
   session: { meta: SessionAccountPin },
@@ -625,8 +625,13 @@ export function pinSessionAccount(
     }
   }
 
-  const best =
-    listEligibleAccounts(provider)[0] ?? getActiveAccount(provider);
+  const current = getActiveAccount(provider);
+  if (current && accountUsableForPin(current)) {
+    session.meta.accountId = current.id;
+    return { accountId: current.id, account: current, restored: false };
+  }
+
+  const best = listEligibleAccounts(provider)[0];
   if (!best) return { restored: false };
   session.meta.accountId = best.id;
   if (getActiveAccount(provider)?.id !== best.id) {
@@ -636,6 +641,59 @@ export function pinSessionAccount(
     }
   }
   return { accountId: best.id, account: best, restored: false };
+}
+
+/**
+ * After a short cooldown wait, restore this session's slot then retry.
+ * Another TUI may have moved `active` onto the recovered alt during the sleep.
+ */
+export async function waitAndRetryQuotaSwitch(
+  provider: string,
+  first: SwitchResult,
+  opts: {
+    session?: { meta: SessionAccountPin };
+    sleep: (ms: number) => Promise<void>;
+    onWaiting?: (waitSec: number) => void;
+    waitMaxSec?: number;
+  },
+): Promise<SwitchResult> {
+  if (
+    first.switched ||
+    !shouldWaitForCooldown(
+      first.waitSec,
+      opts.waitMaxSec ?? accountCooldownWaitMaxSec(),
+    )
+  ) {
+    return first;
+  }
+  const waitSec = first.waitSec ?? 0;
+  opts.onWaiting?.(waitSec);
+  await opts.sleep(waitSec * 1000);
+  if (opts.session) {
+    if (!opts.session.meta.accountId && first.fromId) {
+      opts.session.meta.accountId = first.fromId;
+    }
+    pinSessionAccount(opts.session, provider);
+  } else if (first.fromId) {
+    const acc = getAccount(first.fromId);
+    if (
+      acc &&
+      accountUsableForPin(acc) &&
+      getActiveAccount(provider)?.id !== first.fromId
+    ) {
+      setActiveAccount(first.fromId);
+    }
+  }
+  clearExpiredAccountCooldowns(provider);
+  return switchOnQuotaFailure(provider);
+}
+
+/** Second team-cap 403 must not hop back to the other same-team email. */
+export function quotaFailoverBlockedByTeamCap(
+  err: unknown,
+  alreadyTried: boolean,
+): boolean {
+  return alreadyTried && isTeamSpendCapError(err);
 }
 
 /** After a successful failover, keep the session pin on the new slot. */

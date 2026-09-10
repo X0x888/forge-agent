@@ -23,24 +23,31 @@ export interface RetryOptions {
   }) => void;
 }
 
-function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+/**
+ * Abort-safe delay. Listener is attached before the aborted check so Ctrl+C
+ * during a long wait cannot leave the timer running.
+ */
+export function abortableSleep(ms: number, signal?: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
-    if (signal?.aborted) {
-      reject(new Error("Aborted"));
-      return;
-    }
-    const onAbort = () => {
+    let settled = false;
+    const finish = (err?: Error) => {
+      if (settled) return;
+      settled = true;
       clearTimeout(t);
-      reject(new Error("Aborted"));
-    };
-    const t = setTimeout(() => {
-      // Detach on the happy path — the run-long signal would otherwise
-      // accumulate one listener per retry (MaxListenersExceededWarning).
       signal?.removeEventListener("abort", onAbort);
-      resolve();
-    }, ms);
+      if (err) reject(err);
+      else resolve();
+    };
+    const onAbort = () => finish(new Error("Aborted"));
+    const t = setTimeout(() => finish(), ms);
+    t.unref?.();
     signal?.addEventListener("abort", onAbort, { once: true });
+    if (signal?.aborted) onAbort();
   });
+}
+
+function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  return abortableSleep(ms, signal);
 }
 
 /**

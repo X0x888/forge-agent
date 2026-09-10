@@ -214,6 +214,7 @@ import { buildBaselineSystemPrompt } from "./system-prompt.js";
 import { log } from "../util/log.js";
 import { envPositiveInt } from "../util/env.js";
 import {
+  abortableSleep,
   withRetry,
   isContextOverflowError,
   isContinueRecoverableProviderError,
@@ -234,18 +235,18 @@ import {
   isTokenAuthFailure,
 } from "../auth/refresh.js";
 import {
-  clearExpiredAccountCooldowns,
   formatQuotaFailoverExhausted,
   getActiveAccount,
   isQuotaOrRateLimitError,
   isTeamSpendCapError,
   maybeProactiveSwitch,
   pinSessionAccount,
+  quotaFailoverBlockedByTeamCap,
   recordQuotaFailurePlan,
   recordSessionAccountSwitch,
-  shouldWaitForCooldown,
   switchOnAuthFailure,
   switchOnQuotaFailure,
+  waitAndRetryQuotaSwitch,
   type SwitchResult,
 } from "../auth/accounts.js";
 import {
@@ -1087,22 +1088,7 @@ function assertNotAborted(signal?: AbortSignal): void {
 }
 
 function abortableDelay(ms: number, signal?: AbortSignal): Promise<void> {
-  return new Promise((resolve, reject) => {
-    if (signal?.aborted) {
-      reject(new Error("Aborted"));
-      return;
-    }
-    const t = setTimeout(() => {
-      signal?.removeEventListener("abort", onAbort);
-      resolve();
-    }, ms);
-    const onAbort = () => {
-      clearTimeout(t);
-      reject(new Error("Aborted"));
-    };
-    signal?.addEventListener("abort", onAbort, { once: true });
-    t.unref?.();
-  });
+  return abortableSleep(ms, signal);
 }
 
 export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
@@ -2471,7 +2457,9 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
               }
               try {
                 const { resolveAuthFresh } = await import("../auth/resolve.js");
-                const fresh = await resolveAuthFresh(config);
+                const fresh = await resolveAuthFresh(config, undefined, {
+                  accountId: session.meta.accountId,
+                });
                 if (fresh?.token) {
                   updateCreds(fresh.token);
                   log.info(`Re-resolved credentials after ${why} — retrying`);
@@ -2532,7 +2520,7 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
               }
             }
 
-            if (quotaFail && teamSpendCapTried && isTeamSpendCapError(err)) {
+            if (quotaFail && quotaFailoverBlockedByTeamCap(err, teamSpendCapTried)) {
               throw new Error(
                 formatQuotaFailoverExhausted(msg, undefined, err, {
                   switchCount: accountSwitchCount,
@@ -2557,14 +2545,23 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
                 /* pin so we cooldown THIS session's slot */
               }
               let switched = switchOnQuotaFailure(String(config.provider));
-              if (!switched.switched && shouldWaitForCooldown(switched.waitSec)) {
-                const waitSec = switched.waitSec ?? 0;
-                events.onStatus?.(`Waiting ${waitSec}s for account cooldown…`);
-                events.onPhase?.("waiting", `account cooldown ${waitSec}s`);
-                await abortableDelay(waitSec * 1000, signal);
-                clearExpiredAccountCooldowns(String(config.provider));
-                switched = switchOnQuotaFailure(String(config.provider));
-              }
+              switched = await waitAndRetryQuotaSwitch(
+                String(config.provider),
+                switched,
+                {
+                  session,
+                  sleep: (ms) => abortableDelay(ms, signal),
+                  onWaiting: (waitSec) => {
+                    events.onStatus?.(
+                      `Waiting ${waitSec}s for account cooldown…`,
+                    );
+                    events.onPhase?.(
+                      "waiting",
+                      `account cooldown ${waitSec}s`,
+                    );
+                  },
+                },
+              );
               if (await applySwitchedAccount(switched, "quota/rate-limit")) {
                 response = await doChat();
               } else {
@@ -2731,7 +2728,9 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
                     const { resolveAuthFresh } = await import(
                       "../auth/resolve.js"
                     );
-                    const fresh = await resolveAuthFresh(config);
+                    const fresh = await resolveAuthFresh(config, undefined, {
+                      accountId: session.meta.accountId,
+                    });
                     token = fresh?.token;
                   } catch {
                     /* fall through */
