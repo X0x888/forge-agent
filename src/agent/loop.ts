@@ -1250,7 +1250,14 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
   if (!mcp && mcpAutostart) {
     mcp = new McpManager({ workspace, signal, sessionId: session.meta.id });
     mcp.start();
-    if (subagentDepth === 0) setActiveMcpManager(mcp);
+    if (subagentDepth === 0) {
+      setActiveMcpManager(mcp);
+      // Fire-and-forget: a 120s Playwright init must not block the first keystroke.
+      // node:test must not spawn npx @playwright/mcp as a side effect of autostart.
+      if (mcp.enabled && !process.env.NODE_TEST_CONTEXT) {
+        void mcp.prewarm(0).catch(() => {});
+      }
+    }
   }
   if (!lsp && lspAutostart) {
     lsp = new LspManager({ workspace, signal });

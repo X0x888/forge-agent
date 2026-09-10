@@ -43,6 +43,7 @@ export function defaultMcpServers(): Record<string, McpServerConfig> {
       env: {
         PLAYWRIGHT_MCP_ISOLATED: "1",
       },
+      // Cold npx + Chromium; initialize used to hard-cap at 30s and never came up.
       timeoutMs: 120_000,
     },
   };
@@ -65,7 +66,7 @@ function playwrightMcpArgs(): string[] {
   return ["-y", "@playwright/mcp@latest", "--isolated", "--output-dir", outDir];
 }
 
-function isPlaywrightMcp(cfg: McpServerConfig, name: string): boolean {
+export function isPlaywrightMcp(cfg: McpServerConfig, name: string): boolean {
   const blob = `${name} ${cfg.command || ""} ${(cfg.args || []).join(" ")}`;
   return /@playwright\/mcp/i.test(blob) || /^playwright$/i.test(name);
 }

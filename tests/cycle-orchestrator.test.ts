@@ -1348,4 +1348,55 @@ describe("cycle orchestrator — an unlimited run does not stop on the model's j
     assert.equal(r?.committed?.sha, "abc1");
     assert.equal(loadCycleState(sid)!.directExecuteStreak, 0, "landing work clears the wall");
   });
+
+  it("a surface-claim ship whose look never opened the product does not commit", async () => {
+    const sid = "orch2-look-gate-surface";
+    armWithPlan({
+      sessionId: sid,
+      cwd,
+      verifyCommand: "npm test",
+      maxCycles: 1,
+      items: [{ title: "Stay dock leftover", proof: "open leftover door" }],
+    });
+    const { rt, calls } = fakeRuntime(cwd, {
+      twoTurn: true,
+      reviewer: [
+        `# Cycle 1 look\nLooked: Playwright MCP never initialized`,
+        REVIEW_OK,
+      ],
+    });
+    const r = await evaluateCycleAtStop(sid, { runtime: rt, facts: facts() });
+    assert.equal(r?.committed?.sha, undefined);
+    assert.equal(r?.committed?.skipped, "review blocked");
+    assert.ok(!calls.some((c) => c.startsWith("commit:")));
+    const st = loadCycleState(sid)!;
+    assert.equal(st.cycles[0].reviewVerdict, "blocked");
+    assert.equal(st.cycles[0].commitSha, undefined);
+    assert.equal(st.lastReview?.mustFix[0], "look the surface");
+    assert.match(
+      fs.readFileSync(path.join(cycleArtifactsDir(sid, 1), "review.md"), "utf8"),
+      /Verdict: blocked\nMust-fix:\n- look the surface/,
+    );
+  });
+
+  it("a CLI cycle whose proof is npm test may still ship when the look could not run", async () => {
+    const sid = "orch2-look-gate-cli";
+    armWithPlan({
+      sessionId: sid,
+      cwd,
+      verifyCommand: "npm test",
+      maxCycles: 1,
+      items: [{ title: "ship the widget", proof: "npm test" }],
+    });
+    const { rt } = fakeRuntime(cwd, {
+      twoTurn: true,
+      reviewer: [
+        `# Cycle 1 look\nLooked: could not run — Playwright MCP never initialized`,
+        REVIEW_OK,
+      ],
+    });
+    const r = await evaluateCycleAtStop(sid, { runtime: rt, facts: facts() });
+    assert.ok(r?.committed?.sha, "not a surface sit — CLI/JSON-RPC proofs still ship");
+    assert.equal(loadCycleState(sid)!.cycles[0].reviewVerdict, "ship");
+  });
 });

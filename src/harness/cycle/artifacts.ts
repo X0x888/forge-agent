@@ -361,10 +361,14 @@ export function parsePlanArtifact(text: string): ParsedPlan | null {
   };
 }
 
+const LOOK_COULD_NOT_RE =
+  /could not run|never opened|did not open popup|playwright mcp never/i;
+
 /** The Reviewer's turn-1 document: what it ran or opened before the diff. Null when there is no Looked: line. */
-export function parseLookArtifact(text: string): { looked: string } | null {
+export function parseLookArtifact(text: string): { looked: string; couldNotLook: boolean } | null {
   const looked = paragraph(splitSections(text).get("looked"));
-  return looked ? { looked } : null;
+  if (!looked) return null;
+  return { looked, couldNotLook: LOOK_COULD_NOT_RE.test(looked) };
 }
 
 /** The Planner's turn-1 document. Null only when none of its sections is there. */

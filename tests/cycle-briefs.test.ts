@@ -8,10 +8,12 @@ import {
   buildReviewerLookBrief,
   buildReviewerReviewBrief,
   formatPlanAdmission,
+  LOOK_PATH_DOWN_LINE,
   MANDATE_QUALITY_BAR,
   runSpend,
 } from "../src/harness/cycle/briefs.js";
 import { newCycleState, type CycleState } from "../src/harness/cycle/state.js";
+import { McpManager, setActiveMcpManager } from "../src/mcp/manager.js";
 
 /** A run two cycles in: one committed, one blocked, with everything the briefs can carry. */
 function runState(): CycleState {
@@ -222,6 +224,35 @@ describe("Reviewer look brief (turn 1)", () => {
     assert.equal(b.includes("```diff"), false);
     assert.equal(b.includes("## Duty"), false);
     assert.ok(/do not edit/i.test(b));
+  });
+
+  it("names a down playwright so the scout does not wait on MCP", () => {
+    const mgr = new McpManager({
+      workspace: "/w",
+      config: {
+        enabled: true,
+        sources: [],
+        servers: { playwright: { name: "playwright", command: "true", disabled: true } },
+      },
+    });
+    setActiveMcpManager(mgr);
+    try {
+      const scout = buildPlannerScoutBrief({
+        state: runState(),
+        workspace: "/w",
+        gitStatus: "M a.ts",
+        projectChecks: ["npm test"],
+      });
+      const look = buildReviewerLookBrief({
+        state: runState(),
+        workspace: "/w",
+        direction: "stars",
+      });
+      assert.ok(scout.includes(LOOK_PATH_DOWN_LINE));
+      assert.ok(look.includes(LOOK_PATH_DOWN_LINE));
+    } finally {
+      setActiveMcpManager(null);
+    }
   });
 });
 

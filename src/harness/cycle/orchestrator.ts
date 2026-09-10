@@ -11,6 +11,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { reapSessionBrowsers } from "../../agent/browser-lease.js";
 import { janitorBackgroundTasks } from "../../agent/tools/background-tasks.js";
+import { getActiveMcpManager, MCP_PREWARM_ADMIT_WAIT_MS } from "../../mcp/manager.js";
+import { isFalsy } from "../../util/bool.js";
 import { nowIso } from "../../util/fs.js";
 import { ensureGitRepo } from "../../util/git-ensure.js";
 import { envPositiveInt } from "../../util/env.js";
@@ -502,6 +504,7 @@ function synthesizeWorkPlan(
  * produce a plan, or a no-mandate `fulfilled`, becomes work — never a release.
  */
 export async function planNextCycle(s: CycleState, rt: CycleRuntime): Promise<CycleStopOutcome> {
+  void prewarmLookPath(0);
   const git = ensureGitRepo(rt.workspace, { reason: "ulw" });
   if (git.inited) {
     rt.log?.(`ULW initialized git repository in ${git.root ?? rt.workspace} (local only; FORGE_AUTO_GIT=0 off)`);
@@ -871,17 +874,21 @@ async function runReviewer(s: CycleState, rt: CycleRuntime, executorCloser: stri
   if (record) record.reviewerTokens = (record.reviewerTokens ?? 0) + roleTokens(tt);
   const lookRaw = tt.first ? roleBody(tt.first.text) : "";
   let lookLooked: string | undefined;
-  if (lookRaw.trim()) {
+  let lookCouldNot = false;
+  const hasLookMd = Boolean(lookRaw.trim());
+  if (hasLookMd) {
     const lookPath = writeArtifact(s.sessionId, s.cycle, "look.md", lookRaw);
-    lookLooked = parseLookArtifact(lookRaw)?.looked;
+    const lookParsed = parseLookArtifact(lookRaw);
+    lookLooked = lookParsed?.looked;
+    lookCouldNot = !lookParsed || lookParsed.couldNotLook;
     if (record) record.lookPath = lookPath;
   }
   const raw = roleBody(res.text);
   const completed = res.ok && res.status === "completed";
-  const parsed = completed ? parseReviewArtifact(raw) : null;
+  let parsed = completed ? parseReviewArtifact(raw) : null;
   // No parseable review is a review that did not happen: fail closed (no
   // commit); the work stays in the tree and the next Planner sees why.
-  const notes: CycleReviewNotes = parsed ?? {
+  let notes: CycleReviewNotes = parsed ?? {
     verdict: "blocked",
     fulfillment: [],
     revisions: res.editCount > 0 ? [`${res.editCount} edit(s) by the reviewer (no parseable review)`] : [],
@@ -889,6 +896,17 @@ async function runReviewer(s: CycleState, rt: CycleRuntime, executorCloser: stri
     architecture: [],
     operator: [],
   };
+  // A surface-claim ship whose look never opened the product is the same
+  // incomplete review as an unparseable body — no commit.
+  if (surfaceLookGateBlocks(s, notes, { hasLookMd, couldNotLook: lookCouldNot })) {
+    notes = {
+      ...notes,
+      verdict: "blocked",
+      mustFix: ["look the surface", ...notes.mustFix.filter((m) => !/^look the surface$/i.test(m))],
+    };
+    parsed = null;
+    rt.log?.(`ULW cycle ${s.cycle} look gate: surface ship without a look — blocked`);
+  }
   // The look is the Reviewer's own record of having used the product; the
   // review's Looked: restates it, and stands in when the look turn wrote none.
   if (!notes.looked && lookLooked) notes.looked = lookLooked;
@@ -1255,7 +1273,43 @@ export async function ensureCyclePlanned(
   const s = loadActiveCycle(sessionId);
   if (!s) return null;
   if (s.phase !== "plan" || s.humanPlan) return null;
+  await prewarmLookPath(MCP_PREWARM_ADMIT_WAIT_MS);
   return planNextCycle(s, rt);
+}
+
+/** popup / first-hour / browser sit — not a CLI whose proof is npm test / JSON-RPC. */
+const SURFACE_SIT_RE =
+  /popup|screen|first[- ]hour|chrome|browser|sit |door|walk|gallery|file:\/\//i;
+const CLI_OR_RPC_PROOF_RE = /npm\s+test|json-rpc/i;
+
+function isSurfaceSit(items: readonly CyclePlanItem[]): boolean {
+  if (!items.length) return false;
+  const proofs = items.map((i) => (i.proof ?? "").trim()).filter(Boolean);
+  if (proofs.length > 0 && proofs.every((p) => CLI_OR_RPC_PROOF_RE.test(p))) return false;
+  return items.some((i) => SURFACE_SIT_RE.test(`${i.proof ?? ""} ${i.redNow ?? ""} ${i.title}`));
+}
+
+function surfaceLookGateBlocks(
+  s: CycleState,
+  notes: CycleReviewNotes,
+  look: { hasLookMd: boolean; couldNotLook: boolean },
+): boolean {
+  if (isFalsy(process.env.FORGE_ULW_LOOK_GATE)) return false;
+  if (notes.verdict !== "ship") return false;
+  if (!isSurfaceSit(s.items)) return false;
+  return !look.hasLookMd || look.couldNotLook;
+}
+
+/** Fail-open: never hold the Planner on a 120s MCP init. */
+async function prewarmLookPath(waitMs: number): Promise<void> {
+  if (process.env.NODE_TEST_CONTEXT) return;
+  const m = getActiveMcpManager();
+  if (!m?.enabled) return;
+  try {
+    await m.prewarm(waitMs);
+  } catch {
+    /* a down playwright is a brief line, not a Stop */
+  }
 }
 
 const EXECUTOR_LINES_KEEP = 12;

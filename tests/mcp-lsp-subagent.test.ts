@@ -19,8 +19,10 @@ import {
   McpManager,
   formatMcpStatus,
   formatMcpToolsList,
+  playwrightLookStatus,
   setActiveMcpManager,
 } from "../src/mcp/manager.js";
+import { mcpInitTimeoutMs } from "../src/mcp/client.js";
 import { mcpCallIsReadOnly } from "../src/mcp/tools.js";
 import {
   qualifyMcpTool,
@@ -390,6 +392,82 @@ describe("MCP config + types", () => {
     assert.ok(!r.isError);
     assert.match(r.output, /No MCP prompts/i);
     await manager.dispose();
+  });
+
+  it("FORGE_MCP_INIT_MS overrides initialize timeout; else the server timeout", () => {
+    const prev = process.env.FORGE_MCP_INIT_MS;
+    try {
+      delete process.env.FORGE_MCP_INIT_MS;
+      assert.equal(mcpInitTimeoutMs(120_000), 120_000);
+      assert.equal(mcpInitTimeoutMs(), 60_000);
+      process.env.FORGE_MCP_INIT_MS = "5000";
+      assert.equal(mcpInitTimeoutMs(120_000), 5_000);
+      process.env.FORGE_MCP_INIT_MS = "90s";
+      assert.equal(mcpInitTimeoutMs(120_000), 90_000);
+    } finally {
+      if (prev === undefined) delete process.env.FORGE_MCP_INIT_MS;
+      else process.env.FORGE_MCP_INIT_MS = prev;
+    }
+  });
+
+  it("prewarm returns before servers are ready and records playwright status", async () => {
+    const manager = new McpManager({
+      workspace: tmpRoot,
+      config: {
+        enabled: true,
+        sources: [],
+        servers: {
+          playwright: {
+            name: "playwright",
+            command: process.execPath,
+            args: ["-e", "setInterval(() => {}, 1000)"],
+            timeoutMs: 5_000,
+          },
+        },
+      },
+    });
+    try {
+      const t0 = Date.now();
+      await manager.prewarm(0);
+      assert.ok(Date.now() - t0 < 800, "prewarm(0) must not wait on initialize");
+      assert.equal(playwrightLookStatus(manager), "connecting");
+    } finally {
+      await manager.dispose();
+    }
+  });
+
+  it("playwright status is down when the server is disabled or fails", async () => {
+    const disabled = new McpManager({
+      workspace: tmpRoot,
+      config: {
+        enabled: true,
+        sources: [],
+        servers: {
+          playwright: { name: "playwright", command: "true", disabled: true },
+        },
+      },
+    });
+    assert.equal(playwrightLookStatus(disabled), "down");
+    const missing = new McpManager({
+      workspace: tmpRoot,
+      config: {
+        enabled: true,
+        sources: [],
+        servers: {
+          playwright: {
+            name: "playwright",
+            command: "no-such-forge-mcp-binary",
+            timeoutMs: 500,
+          },
+        },
+      },
+    });
+    try {
+      await missing.prewarm(1_500);
+      assert.equal(playwrightLookStatus(missing), "down");
+    } finally {
+      await missing.dispose();
+    }
   });
 });
 

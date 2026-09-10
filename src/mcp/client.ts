@@ -3,6 +3,7 @@
  * Spec-aligned initialize → tools/list → tools/call.
  */
 import { JsonRpcStdioClient } from "../util/jsonrpc-stdio.js";
+import { envDurationMs } from "../util/env.js";
 import { log } from "../util/log.js";
 import { expandServerEnv } from "./config.js";
 import type {
@@ -16,6 +17,11 @@ import type {
 
 const PROTOCOL_VERSION = "2024-11-05";
 const CLIENT_INFO = { name: "forge", version: "0.9.99" };
+
+/** Initialize timeout: FORGE_MCP_INIT_MS, else the server's timeoutMs (default 60s). */
+export function mcpInitTimeoutMs(cfgTimeoutMs?: number): number {
+  return envDurationMs("FORGE_MCP_INIT_MS", cfgTimeoutMs ?? 60_000);
+}
 
 export interface McpClientOptions {
   name: string;
@@ -253,6 +259,11 @@ export class McpClient {
     return this.cfg.timeoutMs ?? 60_000;
   }
 
+  /** Initialize only — FORGE_MCP_INIT_MS, else the server timeout (playwright is 120s). */
+  private initTimeoutMs(): number {
+    return mcpInitTimeoutMs(this.cfg.timeoutMs);
+  }
+
   private async connect(): Promise<void> {
     this.state = "connecting";
     this.lastError = undefined;
@@ -301,7 +312,7 @@ export class McpClient {
           },
           clientInfo: CLIENT_INFO,
         },
-        30_000,
+        this.initTimeoutMs(),
       )) as {
         capabilities?: {
           tools?: unknown;
@@ -369,7 +380,7 @@ export class McpClient {
       headers,
       body: JSON.stringify(initBody),
       signal: this.signal,
-      timeoutMs: 30_000,
+      timeoutMs: this.initTimeoutMs(),
     });
     if (!res.ok) {
       throw new Error(`HTTP MCP initialize failed: HTTP ${res.status}`);

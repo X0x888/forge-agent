@@ -6,6 +6,7 @@ import { boundToolOutput } from "../agent/tools/truncate.js";
 import { cleanupAgentBrowserScratch } from "../util/look-cleanup.js";
 import { loadMcpConfig, toolAllowedByFilters, type LoadedMcpConfig } from "./config.js";
 import { McpClient } from "./client.js";
+import { isPlaywrightMcp } from "./defaults.js";
 import {
   isMcpToolReadOnly,
   mcpToolNameLooksReadOnly,
@@ -35,6 +36,8 @@ export class McpManager {
   private config: LoadedMcpConfig;
   private registry: McpRegisteredTool[] = [];
   private started = false;
+  /** In-flight background connect; fail-open, never awaited past a short cap. */
+  private prewarmPromise: Promise<void> | null = null;
 
   constructor(opts: McpManagerOptions) {
     this.workspace = opts.workspace;
@@ -84,6 +87,7 @@ export class McpManager {
     this.clients.clear();
     this.registry = [];
     this.started = false;
+    this.prewarmPromise = null;
     await Promise.all(all.map((c) => c.dispose().catch(() => {})));
     try {
       cleanupAgentBrowserScratch({
@@ -93,6 +97,59 @@ export class McpManager {
     } catch {
       /* best-effort — never fail the session over leftover Chromium */
     }
+  }
+
+  /**
+   * Start Playwright (or every server if none is named playwright) in the
+   * background. waitMs 0 returns immediately; a short cap (3s at plan
+   * admission) continues while connect keeps running. Fail-open.
+   */
+  async prewarm(waitMs = 0): Promise<void> {
+    if (!this.enabled) return;
+    this.start();
+    if (!this.prewarmPromise) {
+      this.prewarmPromise = this.connectPlaywright().catch(() => {});
+    }
+    if (waitMs <= 0) return;
+    await raceTimeout(this.prewarmPromise, waitMs);
+  }
+
+  /** ready | connecting | down — undefined when MCP is off or no playwright server. */
+  playwrightStatus(): PlaywrightLookStatus | undefined {
+    if (!this.enabled) return undefined;
+    this.start();
+    for (const [name, client] of this.clients) {
+      const cfg = this.config.servers[name];
+      if (!cfg || !isPlaywrightMcp(cfg, name)) continue;
+      const st = client.getStatus().state;
+      if (st === "ready") return "ready";
+      if (st === "connecting" || st === "idle") return "connecting";
+      return "down";
+    }
+    for (const [name, cfg] of Object.entries(this.config.servers)) {
+      if (isPlaywrightMcp(cfg, name)) return "down";
+    }
+    return undefined;
+  }
+
+  private async connectPlaywright(): Promise<void> {
+    this.start();
+    const hits = [...this.clients.entries()].filter(([name]) => {
+      const cfg = this.config.servers[name];
+      return Boolean(cfg && isPlaywrightMcp(cfg, name));
+    });
+    const targets = hits.length ? hits : [...this.clients.entries()];
+    await Promise.all(
+      targets.map(async ([, client]) => {
+        try {
+          await client.ensureReady();
+          await client.listTools(true);
+        } catch {
+          /* status captures error — look path fail-open */
+        }
+      }),
+    );
+    this.rebuildRegistry();
   }
 
   /** Connect all servers and refresh tool registry (best-effort). */
@@ -564,6 +621,34 @@ export function setActiveMcpManager(m: McpManager | null): void {
 
 export function getActiveMcpManager(): McpManager | null {
   return activeManager;
+}
+
+export type PlaywrightLookStatus = "ready" | "connecting" | "down";
+
+/** Cap on the first ULW plan admission wait; connect continues in the background. */
+export const MCP_PREWARM_ADMIT_WAIT_MS = 3_000;
+
+export function playwrightLookStatus(
+  manager?: McpManager | null,
+): PlaywrightLookStatus | undefined {
+  return (manager ?? getActiveMcpManager())?.playwrightStatus();
+}
+
+function raceTimeout(p: Promise<void>, ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    const t = setTimeout(resolve, ms);
+    t.unref?.();
+    p.then(
+      () => {
+        clearTimeout(t);
+        resolve();
+      },
+      () => {
+        clearTimeout(t);
+        resolve();
+      },
+    );
+  });
 }
 
 /** `/mcp` status peek. Catalog is `/mcp tools`. */

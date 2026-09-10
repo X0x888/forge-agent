@@ -5,6 +5,7 @@ import {
   extractDisputeLines,
   extractLabelledLines,
   extractSerendipityLines,
+  parseLookArtifact,
   parsePlanArtifact,
   parsePlanItemLine,
   parseReviewArtifact,
@@ -262,6 +263,22 @@ Architecture:
 Worth: yes — a new user sees the card in their first minute
 Operator: none
 `;
+
+describe("look artifact parser", () => {
+  it("pins couldNotLook on Looked: lines that never opened the product", () => {
+    const pin = (text: string, could: boolean) => {
+      const p = parseLookArtifact(`# Cycle 1 look\nLooked: ${text}`);
+      assert.ok(p, text);
+      assert.equal(p.couldNotLook, could, text);
+    };
+    pin("Playwright MCP never initialized", true);
+    pin("could not run — no display", true);
+    pin("never opened the popup", true);
+    pin("did not open popup; MCP timed out", true);
+    pin("loaded the unpacked extension and clicked the icon", false);
+    assert.equal(parseLookArtifact("# Cycle 1 look\nIdentity: a pet"), null);
+  });
+});
 
 describe("review artifact parser", () => {
   it("parses verdict, looked, fulfillment states, revisions, must-fix, architecture, worth", () => {
