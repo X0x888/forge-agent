@@ -136,6 +136,7 @@ export {
   switchOnAuthFailure,
   maybeProactiveSwitch,
   isQuotaOrRateLimitError,
+  isTeamSpendCapError,
   formatAccountsTable,
   formatAccountsCard,
   formatAuthCard,
@@ -148,6 +149,11 @@ export {
   pickAlternateAccount,
   rankAccount,
   recordAccountPlan,
+  recordQuotaFailurePlan,
+  pinSessionAccount,
+  recordSessionAccountSwitch,
+  shouldWaitForCooldown,
+  accountCooldownWaitMaxSec,
   isPlanFresh,
   isPlanRemainingExhausted,
   isPlanProactivelyExhausted,
@@ -156,6 +162,7 @@ export {
   DEFAULT_COOLDOWN_SEC,
   AUTH_FAILURE_COOLDOWN_SEC,
   PLAN_STALE_SEC,
+  DEFAULT_ACCOUNT_COOLDOWN_WAIT_MAX_SEC,
 } from "./auth/accounts.js";
 export type {
   AccountCredential,

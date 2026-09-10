@@ -1,16 +1,22 @@
 import type { ForgeConfig, ProviderId } from "../config/types.js";
 import {
+  getAccount,
   getActiveAccount,
   getCredential,
   isExpired,
   listAccounts,
+  setActiveAccount,
 } from "./store.js";
 import type { ResolvedAuth } from "./types.js";
 import { readGrokXaiSession } from "./import-grok.js";
 import { nowEpoch } from "../util/fs.js";
 import { refreshCredentialIfNeeded } from "./refresh.js";
 import { log } from "../util/log.js";
-import { maybeProactiveSwitch, resolvedFromAccount } from "./accounts.js";
+import {
+  isEnvAuthActive,
+  maybeProactiveSwitch,
+  resolvedFromAccount,
+} from "./accounts.js";
 import { FORGE_API_KEY_ENV, PROVIDER_API_KEY_ENV } from "./env-keys.js";
 
 /**
@@ -27,10 +33,23 @@ import { FORGE_API_KEY_ENV, PROVIDER_API_KEY_ENV } from "./env-keys.js";
 export function resolveAuth(
   config: ForgeConfig,
   providerOverride?: string,
+  opts?: { accountId?: string },
 ): ResolvedAuth | null {
   const provider = (providerOverride ?? config.provider) as ProviderId | string;
   const pcfg = config.providers[provider];
   const baseUrl = config.baseUrl ?? pcfg?.baseUrl;
+
+  // Session pin: stay on this login even if another TUI moved active.xai.
+  if (opts?.accountId && !isEnvAuthActive(String(provider))) {
+    const pinned = getAccount(opts.accountId);
+    if (
+      pinned &&
+      String(pinned.provider) === String(provider) &&
+      !pinned.disabled
+    ) {
+      setActiveAccount(opts.accountId);
+    }
+  }
 
   // 1. Environment
   // Copilot env vars hold a GitHub OAuth token that must be exchanged first —
@@ -142,11 +161,12 @@ export function describeAuth(auth: ResolvedAuth | null): string {
 export async function resolveAuthFresh(
   config: ForgeConfig,
   providerOverride?: string,
+  opts?: { accountId?: string },
 ): Promise<ResolvedAuth | null> {
   const provider = (providerOverride ?? config.provider) as string;
 
   // Env keys never need refresh
-  const envFirst = resolveAuth(config, providerOverride);
+  const envFirst = resolveAuth(config, providerOverride, opts);
   if (envFirst?.method === "api_key" && envFirst.accountLabel?.startsWith("env:")) {
     return envFirst;
   }
@@ -297,5 +317,5 @@ export async function resolveAuthFresh(
     }
   }
 
-  return resolveAuth(config, providerOverride);
+  return resolveAuth(config, providerOverride, opts);
 }

@@ -35,7 +35,7 @@ forge accounts status        # unattended readiness (eligible/cooldown/auto-swit
 forge accounts switch <id|label>  # set active account; /accounts in REPL (Cursor rows show email when known)
 forge accounts clear-cooldown     # clear rate-limit cooldowns after recovery
 forge accounts auto-switch on --threshold 90  # smart switch on low plan usage / 429
-# Mid-run failover: FORGE_ACCOUNT_SWITCH_MAX (default 3); OAuth refresh before each switch
+# Mid-run failover: FORGE_ACCOUNT_SWITCH_MAX (default 3); FORGE_ACCOUNT_COOLDOWN_WAIT_MAX (default 180s, 0 = no wait); OAuth refresh before each switch
 forge login --api-key "$KEY" --json   # CI login (no interactive prompt)
 forge logout --json          # CI clear stored creds
 eval "$(forge completion bash)"   # optional shell completions

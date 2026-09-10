@@ -73,6 +73,8 @@ export interface SessionMetricsEvent {
   ultrawork?: boolean;
   /** Provider/run failure code when ok=false (never full bodies). */
   lastErrorCode?: string;
+  /** Public account id (never a token). */
+  accountId?: string;
 }
 
 /** Run-level events (`run_end` / `session_end`) — what `forge stats` reads. */
@@ -188,6 +190,7 @@ export function buildRunEndMetrics(opts: {
   headless?: boolean;
   ultrawork?: boolean;
   lastErrorCode?: string;
+  accountId?: string;
 }): SessionMetricsEvent {
   const guardBlocks = compactGuardBlocks(opts.guardBlocks);
   return {
@@ -264,6 +267,7 @@ export function buildRunEndMetrics(opts: {
     ...(opts.lastErrorCode
       ? { lastErrorCode: String(opts.lastErrorCode).slice(0, 64) }
       : {}),
+    ...(opts.accountId ? { accountId: opts.accountId } : {}),
   };
 }
 

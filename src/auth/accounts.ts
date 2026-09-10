@@ -10,14 +10,19 @@
  *
  * Production / unattended notes:
  *  - Mid-run switches are capped (`FORGE_ACCOUNT_SWITCH_MAX`, default 3)
+ *  - Short same-provider cooldowns can be waited (`FORGE_ACCOUNT_COOLDOWN_WAIT_MAX`)
+ *  - Sessions pin an account so concurrent TUIs do not stampede `active`
  *  - Stale plan probes are ignored for proactive ranking (see PLAN_STALE_SEC)
  *  - After a switch, callers should refresh OAuth on the new account before chat
  */
 import chalk from "chalk";
-import { nowEpoch } from "../util/fs.js";
+import { nowEpoch, nowIso } from "../util/fs.js";
+import { envPositiveInt } from "../util/env.js";
 import { visibleWidth } from "../util/format.js";
 import { log } from "../util/log.js";
+import { isTeamSpendCapError } from "../providers/errors.js";
 import {
+  getAccount,
   getActiveAccount,
   getAutoSwitchSettings,
   isAccountInCooldown,
@@ -52,8 +57,16 @@ export {
   accountSummary,
 } from "./store.js";
 
+export { isTeamSpendCapError } from "../providers/errors.js";
+
 /** Default cooldown after rate-limit / quota (15 min). */
 export const DEFAULT_COOLDOWN_SEC = 15 * 60;
+
+/** Default max seconds the loop will wait for an alternate's cooldown. */
+export const DEFAULT_ACCOUNT_COOLDOWN_WAIT_MAX_SEC = 180;
+
+/** Hard cap on `FORGE_ACCOUNT_COOLDOWN_WAIT_MAX` (do not freeze a run). */
+export const ACCOUNT_COOLDOWN_WAIT_HARD_CAP_SEC = 900;
 
 /** Shorter cooldown after auth/token failure switch (5 min) — token may recover via re-login. */
 export const AUTH_FAILURE_COOLDOWN_SEC = 5 * 60;
@@ -83,6 +96,7 @@ export function isEnvAuthActive(provider: string): boolean {
 
 /** Detect provider errors that warrant trying another account. */
 export function isQuotaOrRateLimitError(err: unknown): boolean {
+  if (isTeamSpendCapError(err)) return true;
   const status =
     err && typeof err === "object" && "status" in err
       ? Number((err as { status: unknown }).status)
@@ -300,6 +314,10 @@ export interface SwitchResult {
   toLabel?: string;
   reason?: string;
   account?: AccountCredential;
+  /** Epoch seconds when a same-provider alternate leaves cooldown. */
+  cooldownUntil?: number;
+  /** Seconds remaining on that cooldown (loop may wait if short). */
+  waitSec?: number;
 }
 
 /**
@@ -448,6 +466,8 @@ export function maybeProactiveSwitch(provider: string): SwitchResult {
 /**
  * Reactive switch after a rate-limit / quota error.
  * Marks current account in cooldown and activates the best alternate.
+ * When the only same-provider alt is cooling, reports waitSec instead of
+ * "add another login" — a 3-minute cooldown is not a missing account.
  */
 export function switchOnQuotaFailure(
   provider: string,
@@ -470,6 +490,19 @@ export function switchOnQuotaFailure(
       current.id,
       nowEpoch() + (opts?.cooldownSec ?? DEFAULT_COOLDOWN_SEC),
     );
+    const cooling = soonestCooldownAlternate(provider, current.id);
+    if (cooling?.cooldownUntil) {
+      const waitSec = Math.max(0, Math.ceil(cooling.cooldownUntil - nowEpoch()));
+      return {
+        switched: false,
+        fromId: current.id,
+        toId: cooling.id,
+        toLabel: cooling.accountLabel || cooling.subscription,
+        reason: "alternate in cooldown",
+        cooldownUntil: cooling.cooldownUntil,
+        waitSec,
+      };
+    }
     return {
       switched: false,
       fromId: current.id,
@@ -482,6 +515,179 @@ export function switchOnQuotaFailure(
     reason: "quota/rate-limit",
     cooldownPrevSec: opts?.cooldownSec ?? DEFAULT_COOLDOWN_SEC,
   });
+}
+
+function soonestCooldownAlternate(
+  provider: string,
+  excludeId?: string,
+): AccountCredential | undefined {
+  let soonest: AccountCredential | undefined;
+  for (const a of listEligibleAccounts(provider, {
+    excludeId,
+    allowCooldown: true,
+  })) {
+    if (!isAccountInCooldown(a)) continue;
+    if (!soonest || (a.cooldownUntil ?? 0) < (soonest.cooldownUntil ?? 0)) {
+      soonest = a;
+    }
+  }
+  return soonest;
+}
+
+/** `FORGE_ACCOUNT_COOLDOWN_WAIT_MAX` (default 180, hard cap 900). `0` = never wait. */
+export function accountCooldownWaitMaxSec(): number {
+  const raw = process.env.FORGE_ACCOUNT_COOLDOWN_WAIT_MAX?.trim();
+  if (raw === "0") return 0;
+  return Math.min(
+    ACCOUNT_COOLDOWN_WAIT_HARD_CAP_SEC,
+    envPositiveInt(
+      "FORGE_ACCOUNT_COOLDOWN_WAIT_MAX",
+      DEFAULT_ACCOUNT_COOLDOWN_WAIT_MAX_SEC,
+    ),
+  );
+}
+
+/** Whether the quota path should sleep `waitSec` instead of throwing. */
+export function shouldWaitForCooldown(
+  waitSec: number | undefined,
+  maxSec: number = accountCooldownWaitMaxSec(),
+): boolean {
+  if (maxSec <= 0) return false;
+  if (waitSec == null || waitSec <= 0) return false;
+  return waitSec <= maxSec;
+}
+
+/** Drop cooldowns whose until-time has passed so the next switch can see them. */
+export function clearExpiredAccountCooldowns(provider?: string): string[] {
+  const now = nowEpoch();
+  const ids: string[] = [];
+  for (const a of listAccounts(provider)) {
+    if (a.cooldownUntil && a.cooldownUntil <= now) {
+      setAccountCooldown(a.id, undefined);
+      ids.push(a.id);
+    }
+  }
+  return ids;
+}
+
+function accountUsableForPin(acc: AccountCredential): boolean {
+  if (acc.disabled) return false;
+  if (isExpired(acc, 60) && !acc.refreshToken) return false;
+  return true;
+}
+
+/** Session meta fields for the account pin (public id only — never a token). */
+export interface SessionAccountPin {
+  accountId?: string;
+  lastAccountSwitch?: {
+    from?: string;
+    to?: string;
+    reason?: string;
+    at: string;
+  };
+}
+
+/**
+ * Keep this session on its account when another TUI moved auth.json `active`.
+ * First call with no pin stores the best eligible id.
+ */
+export function pinSessionAccount(
+  session: { meta: SessionAccountPin },
+  provider: string,
+): {
+  accountId?: string;
+  account?: AccountCredential;
+  restored: boolean;
+} {
+  if (isEnvAuthActive(provider)) {
+    return { restored: false };
+  }
+
+  const pinnedId = session.meta.accountId;
+  if (pinnedId) {
+    const acc = getAccount(pinnedId);
+    if (
+      acc &&
+      String(acc.provider) === String(provider) &&
+      accountUsableForPin(acc)
+    ) {
+      if (getActiveAccount(provider)?.id === pinnedId) {
+        return { accountId: pinnedId, account: acc, restored: true };
+      }
+      const r = setActiveAccount(pinnedId);
+      if (r.ok) {
+        return {
+          accountId: pinnedId,
+          account: r.account ?? acc,
+          restored: true,
+        };
+      }
+    }
+  }
+
+  const best =
+    listEligibleAccounts(provider)[0] ?? getActiveAccount(provider);
+  if (!best) return { restored: false };
+  session.meta.accountId = best.id;
+  if (getActiveAccount(provider)?.id !== best.id) {
+    const r = setActiveAccount(best.id);
+    if (r.ok && r.account) {
+      return { accountId: best.id, account: r.account, restored: false };
+    }
+  }
+  return { accountId: best.id, account: best, restored: false };
+}
+
+/** After a successful failover, keep the session pin on the new slot. */
+export function recordSessionAccountSwitch(
+  session: { meta: SessionAccountPin },
+  result: SwitchResult,
+): void {
+  if (!result.switched || !result.toId) return;
+  session.meta.accountId = result.toId;
+  session.meta.lastAccountSwitch = {
+    from: result.fromId,
+    to: result.toId,
+    reason: result.reason,
+    at: nowIso(),
+  };
+}
+
+/** Fresh lastPlan so ranking does not sit on a week-old probe after a 403. */
+export function recordQuotaFailurePlan(accountId: string | undefined): void {
+  if (!accountId) return;
+  try {
+    recordAccountPlan(accountId, {
+      remaining: 0,
+      source: "quota-failure",
+    });
+  } catch {
+    /* never fail the run */
+  }
+}
+
+export function formatQuotaFailoverExhausted(
+  providerMsg: string,
+  switched: SwitchResult | undefined,
+  err: unknown,
+  opts?: { switchCount?: number; switchMax?: number },
+): string {
+  const cap =
+    opts?.switchCount != null &&
+    opts.switchMax != null &&
+    opts.switchCount >= opts.switchMax
+      ? ` (FORGE_ACCOUNT_SWITCH_MAX=${opts.switchMax})`
+      : "";
+  if (isTeamSpendCapError(err)) {
+    return (
+      `${providerMsg} (team spend cap — weekly SuperGrok % is a different meter; ` +
+      `forge status; try another provider). Multi-account failover exhausted${cap}.`
+    );
+  }
+  const hint = switched?.reason
+    ? ` (${switched.reason})`
+    : " — add another account: forge login --add";
+  return `${providerMsg}${hint}. Multi-account failover exhausted${cap}.`;
 }
 
 /**

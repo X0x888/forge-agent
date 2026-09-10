@@ -137,6 +137,7 @@ export function appendProviderRoundMetrics(opts: {
   pruneKind?: string;
   cacheDrop?: boolean;
   turn: number;
+  accountId?: string;
 }): void {
   const ratio = cacheHitRatio(opts.promptTokens, opts.cacheReadTokens);
   appendSessionMetrics({
@@ -145,6 +146,7 @@ export function appendProviderRoundMetrics(opts: {
     sessionId: opts.sessionId,
     provider: opts.provider,
     model: opts.model,
+    ...(opts.accountId ? { accountId: opts.accountId } : {}),
     promptTokens: opts.promptTokens,
     cacheReadTokens: opts.cacheReadTokens,
     completionTokens: opts.completionTokens,

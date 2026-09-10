@@ -158,6 +158,23 @@ describe("formatProviderError", () => {
     assert.ok(f.tips.some((t) => /rephrase|model/i.test(t)));
   });
 
+  it("classifies personal-team-blocked spending-limit as team spend cap", () => {
+    const body =
+      '{"code":"personal-team-blocked:spending-limit","error":"You have run out of credits or need a Grok subscription."}';
+    const err = new ProviderApiError({
+      provider: "xai",
+      status: 403,
+      body,
+    });
+    const f = formatProviderError(err);
+    assert.equal(f.code, "quota_exhausted");
+    assert.ok(f.tips.some((t) => /team spend cap/i.test(t)));
+    assert.equal(
+      f.tips.some((t) => /login --add/i.test(t)),
+      false,
+    );
+  });
+
   it("classifies 403 quota/billing as quota_exhausted (not auth_forbidden)", () => {
     const err = new ProviderApiError({
       provider: "openai",

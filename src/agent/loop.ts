@@ -234,10 +234,19 @@ import {
   isTokenAuthFailure,
 } from "../auth/refresh.js";
 import {
+  clearExpiredAccountCooldowns,
+  formatQuotaFailoverExhausted,
+  getActiveAccount,
   isQuotaOrRateLimitError,
+  isTeamSpendCapError,
   maybeProactiveSwitch,
+  pinSessionAccount,
+  recordQuotaFailurePlan,
+  recordSessionAccountSwitch,
+  shouldWaitForCooldown,
   switchOnAuthFailure,
   switchOnQuotaFailure,
+  type SwitchResult,
 } from "../auth/accounts.js";
 import {
   isImageDimensionError,
@@ -1117,6 +1126,7 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
   const maxAuthRecoveries = envPositiveInt("FORGE_AUTH_RECOVERY_MAX", 20);
   let accountSwitchCount = 0;
   const maxAccountSwitches = envPositiveInt("FORGE_ACCOUNT_SWITCH_MAX", 3);
+  let teamSpendCapTried = false;
   /** Socket drops / generic provider_error that a typed "continue" would recover. */
   let dropRecoveryCount = 0;
   const maxDropRecoveries = envPositiveInt(
@@ -2203,10 +2213,24 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
       // Unattended multi-hour runs: switch exhausted accounts before chat,
       // then renew near-expiry tokens so we never wait for a mid-stream 401.
       try {
+        const hadPin = Boolean(session.meta.accountId);
+        const pin = pinSessionAccount(session, String(config.provider));
+        if (!hadPin && session.meta.accountId) {
+          saveSession(session);
+        }
+        if (pin.account?.accessToken && provider.updateCredentials) {
+          provider.updateCredentials(pin.account.accessToken);
+        }
+      } catch {
+        /* never block the turn on session pin */
+      }
+      try {
         if (accountSwitchCount < maxAccountSwitches) {
           const proactive = maybeProactiveSwitch(String(config.provider));
           if (proactive.switched && proactive.account?.accessToken) {
             accountSwitchCount += 1;
+            recordSessionAccountSwitch(session, proactive);
+            saveSession(session);
             if (provider.updateCredentials) {
               provider.updateCredentials(proactive.account.accessToken);
             }
@@ -2244,6 +2268,8 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
           );
           const switched = switchOnAuthFailure(String(config.provider));
           if (switched.switched && switched.account?.accessToken) {
+            recordSessionAccountSwitch(session, switched);
+            saveSession(session);
             try {
               const r = await refreshCredentialIfNeeded(
                 String(config.provider),
@@ -2459,13 +2485,7 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
             };
 
             const applySwitchedAccount = async (
-              switched: {
-                switched: boolean;
-                account?: { accessToken?: string; id?: string };
-                toLabel?: string;
-                toId?: string;
-                reason?: string;
-              },
+              switched: SwitchResult,
               why: string,
             ): Promise<boolean> => {
               if (!switched.switched || !updateCreds) return false;
@@ -2496,33 +2516,63 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
               events.onStatus?.(
                 `Switched account → ${switched.toLabel || switched.toId} — retrying`,
               );
+              recordSessionAccountSwitch(session, switched);
+              saveSession(session);
               return true;
             };
+
+            if (quotaFail) {
+              try {
+                recordQuotaFailurePlan(
+                  session.meta.accountId ??
+                    getActiveAccount(String(config.provider))?.id,
+                );
+              } catch {
+                /* lastPlan refresh is best-effort */
+              }
+            }
+
+            if (quotaFail && teamSpendCapTried && isTeamSpendCapError(err)) {
+              throw new Error(
+                formatQuotaFailoverExhausted(msg, undefined, err, {
+                  switchCount: accountSwitchCount,
+                  switchMax: maxAccountSwitches,
+                }),
+              );
+            }
 
             if (
               quotaFail &&
               accountSwitchCount < maxAccountSwitches &&
               updateCreds
             ) {
+              if (isTeamSpendCapError(err)) teamSpendCapTried = true;
               accountSwitchCount += 1;
               events.onStatus?.(
                 `Quota/rate-limit — trying another account (${accountSwitchCount}/${maxAccountSwitches})…`,
               );
-              const switched = switchOnQuotaFailure(String(config.provider));
+              try {
+                pinSessionAccount(session, String(config.provider));
+              } catch {
+                /* pin so we cooldown THIS session's slot */
+              }
+              let switched = switchOnQuotaFailure(String(config.provider));
+              if (!switched.switched && shouldWaitForCooldown(switched.waitSec)) {
+                const waitSec = switched.waitSec ?? 0;
+                events.onStatus?.(`Waiting ${waitSec}s for account cooldown…`);
+                events.onPhase?.("waiting", `account cooldown ${waitSec}s`);
+                await abortableDelay(waitSec * 1000, signal);
+                clearExpiredAccountCooldowns(String(config.provider));
+                switched = switchOnQuotaFailure(String(config.provider));
+              }
               if (await applySwitchedAccount(switched, "quota/rate-limit")) {
                 response = await doChat();
               } else {
-                // Always surface switch reason or a recovery tip (do not drop the
-                // fallback when reason is empty — startsWith(" (") would hide it).
-                const hint = switched.reason
-                  ? ` (${switched.reason})`
-                  : " — add another account: forge login --add";
                 throw new Error(
-                  `${msg}${hint}. Multi-account failover exhausted${
-                    accountSwitchCount >= maxAccountSwitches
-                      ? ` (FORGE_ACCOUNT_SWITCH_MAX=${maxAccountSwitches})`
-                      : ""
-                  }.`,
+                  formatQuotaFailoverExhausted(msg, switched, err, {
+                    switchCount: accountSwitchCount,
+                    switchMax: maxAccountSwitches,
+                  }),
                 );
               }
             } else if (tokenAuthFail && authRecoveryCount >= maxAuthRecoveries) {
@@ -2854,6 +2904,7 @@ export async function runAgentLoop(opts: LoopOptions): Promise<LoopResult> {
             pruneKind: lastPruneKind,
             cacheDrop: lastRoundCacheRatio > 0.9 && ratio < 0.05,
             turn: turns,
+            accountId: session.meta.accountId,
           });
           lastRoundCacheRatio = ratio;
         } catch {

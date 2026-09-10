@@ -39,7 +39,14 @@ import {
   isPlanProactivelyExhausted,
   isHealthierSwitchTarget,
   isQuotaOrRateLimitError,
+  isTeamSpendCapError,
   recordAccountPlan,
+  recordQuotaFailurePlan,
+  pinSessionAccount,
+  recordSessionAccountSwitch,
+  shouldWaitForCooldown,
+  accountCooldownWaitMaxSec,
+  formatQuotaFailoverExhausted,
   formatAccountsTable,
   formatAccountsCard,
   formatAuthCard,
@@ -286,9 +293,11 @@ describe("smart account switching", () => {
     delete process.env.XAI_API_KEY;
     delete process.env.GROK_API_KEY;
     delete process.env.FORGE_API_KEY;
+    delete process.env.FORGE_ACCOUNT_COOLDOWN_WAIT_MAX;
   });
 
   afterEach(() => {
+    delete process.env.FORGE_ACCOUNT_COOLDOWN_WAIT_MAX;
     if (prevHome === undefined) delete process.env.FORGE_HOME;
     else process.env.FORGE_HOME = prevHome;
     try {
@@ -351,6 +360,132 @@ describe("smart account switching", () => {
 
     const cooled = listAccounts("xai").find((x) => x.id === b.accountId);
     assert.ok(cooled?.cooldownUntil && cooled.cooldownUntil > nowEpoch());
+  });
+
+  it("switchOnQuotaFailure waits on a cooling alternate instead of add-another", () => {
+    const chestnut = upsertApiKey("xai", "sk-chestnut", "chestnutp426");
+    const sning = upsertApiKey("xai", "sk-sning", "sning.ic", { forceNew: true });
+    setActiveAccount(chestnut.accountId);
+    setAccountCooldown(sning.accountId, nowEpoch() + 180);
+
+    const r = switchOnQuotaFailure("xai");
+    assert.equal(r.switched, false);
+    assert.equal(r.toId, sning.accountId);
+    assert.ok(
+      typeof r.waitSec === "number" && r.waitSec >= 178 && r.waitSec <= 181,
+      `waitSec should be ~180, got ${r.waitSec}`,
+    );
+    assert.ok(r.cooldownUntil && r.cooldownUntil > nowEpoch());
+    assert.match(r.reason || "", /cooldown/i);
+    assert.equal(/add another/i.test(r.reason || ""), false);
+    const cooled = listAccounts("xai").find((x) => x.id === chestnut.accountId);
+    assert.ok(cooled?.cooldownUntil && cooled.cooldownUntil > nowEpoch());
+  });
+
+  it("isTeamSpendCapError matches HashPet personal-team-blocked body", () => {
+    const body =
+      '{"code":"personal-team-blocked:spending-limit","error":"You have run out of credits or need a Grok subscription."}';
+    assert.equal(isTeamSpendCapError(body), true);
+    assert.equal(
+      isTeamSpendCapError(
+        new ProviderApiError({ provider: "xai", status: 403, body }),
+      ),
+      true,
+    );
+    assert.equal(
+      isQuotaOrRateLimitError(
+        new ProviderApiError({ provider: "xai", status: 403, body }),
+      ),
+      true,
+    );
+    assert.equal(
+      isTeamSpendCapError(
+        new ProviderApiError({
+          provider: "xai",
+          status: 403,
+          body: "OAuth2 access token could not be validated",
+        }),
+      ),
+      false,
+    );
+    const msg = formatQuotaFailoverExhausted(
+      `xai API error 403: ${body}`,
+      { switched: false, reason: "alternate in cooldown", waitSec: 180 },
+      new ProviderApiError({ provider: "xai", status: 403, body }),
+    );
+    assert.match(msg, /team spend cap/i);
+    assert.match(msg, /weekly/i);
+    assert.equal(/add another/i.test(msg), false);
+  });
+
+  it("pinSessionAccount restores the pin when another account is globally active", () => {
+    const a = upsertApiKey("xai", "sk-a", "alice");
+    const b = upsertApiKey("xai", "sk-b", "bob", { forceNew: true });
+    const session = {
+      meta: {} as {
+        accountId?: string;
+        lastAccountSwitch?: { from?: string; to?: string; reason?: string; at: string };
+      },
+    };
+    pinSessionAccount(session, "xai");
+    const pinned = session.meta.accountId;
+    assert.ok(pinned);
+    const other = pinned === a.accountId ? b.accountId : a.accountId;
+    setActiveAccount(other);
+    assert.notEqual(getActiveAccount("xai")?.id, pinned);
+    pinSessionAccount(session, "xai");
+    assert.equal(getActiveAccount("xai")?.id, pinned);
+    const cfg = loadConfig({}, tmp);
+    cfg.provider = "xai";
+    const auth = resolveAuth(cfg, undefined, { accountId: pinned });
+    assert.equal(auth?.accountId, pinned);
+    setActiveAccount(other);
+    const auth2 = resolveAuth(cfg);
+    assert.equal(auth2?.accountId, other);
+    pinSessionAccount(session, "xai");
+    const auth3 = resolveAuth(cfg);
+    assert.equal(auth3?.accountId, pinned);
+    recordSessionAccountSwitch(session, {
+      switched: true,
+      fromId: pinned,
+      toId: other,
+      reason: "quota/rate-limit",
+    });
+    assert.equal(session.meta.accountId, other);
+    assert.equal(session.meta.lastAccountSwitch?.to, other);
+  });
+
+  it("shouldWaitForCooldown is false when max is 0", () => {
+    assert.equal(shouldWaitForCooldown(180, 180), true);
+    assert.equal(shouldWaitForCooldown(181, 180), false);
+    assert.equal(shouldWaitForCooldown(180, 0), false);
+    assert.equal(shouldWaitForCooldown(0, 180), false);
+    assert.equal(shouldWaitForCooldown(undefined, 180), false);
+    process.env.FORGE_ACCOUNT_COOLDOWN_WAIT_MAX = "0";
+    assert.equal(accountCooldownWaitMaxSec(), 0);
+    assert.equal(shouldWaitForCooldown(180), false);
+    delete process.env.FORGE_ACCOUNT_COOLDOWN_WAIT_MAX;
+    assert.equal(accountCooldownWaitMaxSec(), 180);
+    assert.equal(shouldWaitForCooldown(180), true);
+  });
+
+  it("recordQuotaFailurePlan writes a fresh quota-failure snapshot", () => {
+    const a = upsertApiKey("xai", "sk-a", "a");
+    recordQuotaFailurePlan(a.accountId);
+    const acc = getAccount(a.accountId);
+    assert.equal(acc?.lastPlan?.source, "quota-failure");
+    assert.equal(acc?.lastPlan?.remaining, 0);
+    assert.equal(isPlanFresh(acc?.lastPlan), true);
+    assert.doesNotThrow(() => recordQuotaFailurePlan("xai:missing-no-throw"));
+  });
+
+  it("switchOnQuotaFailure still asks to add another when there is no alt", () => {
+    const a = upsertApiKey("xai", "sk-only", "only");
+    setActiveAccount(a.accountId);
+    const r = switchOnQuotaFailure("xai");
+    assert.equal(r.switched, false);
+    assert.equal(r.waitSec, undefined);
+    assert.match(r.reason || "", /add another/i);
   });
 
   it("maybeProactiveSwitch when usage above threshold", () => {

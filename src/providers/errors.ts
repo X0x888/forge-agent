@@ -152,7 +152,11 @@ export function formatProviderError(
     }
 
     // Body-first classification for ambiguous statuses (403 quota, 400 model, 529 overload).
-    if (isQuotaExhaustedish(bodyBlob) || err.status === 402) {
+    if (isTeamSpendCapError(err) || TEAM_SPEND_CAP_RE.test(bodyBlob)) {
+      code = "quota_exhausted";
+      tips.push("Team spend cap — weekly SuperGrok % is a different meter");
+      tips.push("forge status  ·  try another provider");
+    } else if (isQuotaExhaustedish(bodyBlob) || err.status === 402) {
       code = "quota_exhausted";
       tips.push("forge accounts switch  ·  forge login --add");
       tips.push("Check plan usage: forge status  ·  /status");
@@ -281,10 +285,20 @@ export function formatProviderError(
     } else if (isContextOverflowish(msg)) {
       code = "context_overflow";
       tips.push("/compact  ·  /new  ·  raise context_window");
-    } else if (isQuotaExhaustedish(msg) || /402|payment.?required/i.test(msg)) {
+    } else if (
+      isTeamSpendCapError(err) ||
+      TEAM_SPEND_CAP_RE.test(msg) ||
+      isQuotaExhaustedish(msg) ||
+      /402|payment.?required/i.test(msg)
+    ) {
       code = "quota_exhausted";
-      tips.push("forge accounts switch  ·  forge login --add");
-      tips.push("Check plan usage: forge status  ·  /status");
+      if (isTeamSpendCapError(err) || TEAM_SPEND_CAP_RE.test(msg)) {
+        tips.push("Team spend cap — weekly SuperGrok % is a different meter");
+        tips.push("forge status  ·  try another provider");
+      } else {
+        tips.push("forge accounts switch  ·  forge login --add");
+        tips.push("Check plan usage: forge status  ·  /status");
+      }
     } else if (isOverloadedish(msg)) {
       code = "provider_overloaded";
       tips.push("Transient overload — wait briefly, then /retry");
@@ -360,6 +374,29 @@ function isQuotaExhaustedish(text: string): boolean {
   return /insufficient.?quota|quota.?exceeded|quota.?exhausted|payment.?required|exceeded.+credit|out of credits|credit balance|spend.?limit|usage.?limit.?reached|billing.?hard.?limit|billing.?quota/i.test(
     text || "",
   );
+}
+
+const TEAM_SPEND_CAP_RE = /personal-team-blocked|spending-limit/i;
+
+function errorTextBlob(err: unknown): string {
+  const chunks: string[] = [];
+  if (typeof err === "string") chunks.push(err);
+  else if (err instanceof Error) chunks.push(err.message);
+  else if (err != null) chunks.push(String(err));
+  if (err && typeof err === "object") {
+    const o = err as { body?: unknown; code?: unknown };
+    if (typeof o.body === "string") chunks.push(o.body);
+    if (typeof o.code === "string") chunks.push(o.code);
+  }
+  return chunks.join("\n");
+}
+
+/**
+ * xAI `personal-team-blocked:spending-limit` is a team-wide spend cap,
+ * not weekly SuperGrok % and not a missing second login.
+ */
+export function isTeamSpendCapError(err: unknown): boolean {
+  return TEAM_SPEND_CAP_RE.test(errorTextBlob(err));
 }
 
 function isOverloadedish(text: string): boolean {

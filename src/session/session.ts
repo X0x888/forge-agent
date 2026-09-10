@@ -148,6 +148,18 @@ export interface SessionMeta {
   /** Last same-provider model hop this session (from → to). */
   lastModelFallback?: { from: string; to: string; at: string };
   /**
+   * Public account id this session is pinned to (never a token).
+   * Concurrent TUIs restore this before chat so they do not all follow
+   * auth.json `active` after one failover.
+   */
+  accountId?: string;
+  lastAccountSwitch?: {
+    from?: string;
+    to?: string;
+    reason?: string;
+    at: string;
+  };
+  /**
    * Last stop reason (expert recovery / JSON). Failures are recovery;
    * `ulw_done` is a designed ULW end — see `isLastErrorProblem`.
    * Cleared on a successful turn unless keepLastError. Never stores tokens.
